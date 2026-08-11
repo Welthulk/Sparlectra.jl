@@ -115,6 +115,47 @@ end
 
 _effective_bus_name(busNameByIdx::AbstractDict, net::Net, bus_idx::Int)::String = get(busNameByIdx, bus_idx, string(bus_idx))
 
+# External-grid source presentation (issue #299): the hidden internal
+# reference bus "<bus>__extgrid_int" reports type "SOURCE" instead of
+# "SLACK" — the grid connection is a source, the hidden bus only its
+# internal anchor. The solver-internal node type stays Slack; this is
+# presentation only (result table, structured report, CSV/JSON rows).
+_is_external_grid_internal_bus(name::AbstractString)::Bool = endswith(name, "__extgrid_int")
+
+function _bus_type_label(nodeType, name::AbstractString)::String
+  nodeType == Sparlectra.Slack && _is_external_grid_internal_bus(name) && return "SOURCE"
+  return toString(nodeType)
+end
+
+# One-line "slack or source" statement for the result header: names every
+# reference of the net, and for an external-grid source also its feeder data
+# (Sk''/R-X recovered from the native feeder record) and the internal slack
+# bus, so run.log states the chosen connection model explicitly.
+function _grid_connection_summary(net::Net, busNameByIdx::AbstractDict)::String
+  parts = String[]
+  for busIdx in net.slackVec
+    name = _effective_bus_name(busNameByIdx, net, busIdx)
+    if _is_external_grid_internal_bus(name)
+      terminal = name[1:(end - length("__extgrid_int"))]
+      vn = getNodeVn(net.nodeVec[busIdx])
+      sk = NaN
+      rx = NaN
+      for e in net.sc_sources.external_network_injections
+        (e.bus == terminal && e.maxInitialSymShCCurrent_A !== nothing) || continue
+        sk = sqrt(3.0) * vn * Float64(e.maxInitialSymShCCurrent_A) / 1000.0
+        rx = e.maxR1ToX1Ratio === nothing ? NaN : Float64(e.maxR1ToX1Ratio)
+        break
+      end
+      data = isfinite(sk) ? @sprintf("Sk'' = %.1f MVA, R/X = %s; ", sk, isfinite(rx) ? @sprintf("%.3g", rx) : "?") : ""
+      push!(parts, "external-grid source at $(terminal) ($(data)internal slack: $(name))")
+    else
+      push!(parts, "slack bus $(name)")
+    end
+  end
+  isempty(parts) && return "no reference registered"
+  return join(parts, "; ")
+end
+
 function _original_bus_name(busNameByIdx::AbstractDict, net::Net, bus_idx::Int)::String
   return get(net.busOriginalNameDict, bus_idx, _effective_bus_name(busNameByIdx, net, bus_idx))
 end
@@ -350,7 +391,7 @@ function buildACPFlowReport(net::Net; ct::Float64 = 0.0, ite::Int = 0, tol::Floa
       (
         bus = n.busIdx,
         bus_name = _effective_bus_name(busNameByIdx, net, n.busIdx),
-        type = toString(n._nodeType),
+        type = _bus_type_label(n._nodeType, _effective_bus_name(busNameByIdx, net, n.busIdx)),
         vm_pu = n._vm_pu,
         va_deg = n._va_deg,
         vn_kV = n.comp.cVN,
@@ -600,6 +641,7 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
   else
     @printf(io, "Nodes          :%10d (PV: %d PQ: %d Slack: %d)\n", busses, npv, npq, 1)
   end
+  @printf(io, "Grid connection: %s\n", _grid_connection_summary(net, busNameByIdx))
   if pf_nodes != busses
     @printf(io, "PF Nodes       :%10d (after active-link merge)\n", pf_nodes)
   end
@@ -698,7 +740,8 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
     else
       qShunt_str = ""
     end
-    typeStr = toString(n._nodeType)
+    nodeName = get(busNameByIdx, n.busIdx, n.comp.cName)
+    typeStr = _bus_type_label(n._nodeType, nodeName)
     controlStr = _cached_control_label(control_labels, n.busIdx)
 
     # Mark PV→PQ buses (hit Q-limit) with a star in the Type column
@@ -707,7 +750,6 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
     end
 
     v = n.comp.cVN * n._vm_pu
-    nodeName = get(busNameByIdx, n.busIdx, n.comp.cName)
     if !isnothing(n._vmin_pu) && !isnothing(n._vmax_pu)
       if !isIsolated(n) && (n._vm_pu < n._vmin_pu || n._vm_pu > n._vmax_pu)
         nodeName *= " !"

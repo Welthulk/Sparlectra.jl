@@ -294,6 +294,8 @@ export
   add2WTrafo!,                            # Add a two-winding transformer.
   addPIModelTrafo!,                       # Add a transformer PI model.
   addProsumer!,                           # Add generator/load prosumer data.
+  addExternalGrid!,                       # Add an external grid: slack-or-source PF side + native SC feeder data (#299).
+  convertSlackToExternalGrid!,            # Replace the marked slack by a non-ideal external-grid source (#299).
   lockNet!,                               # Finalize network topology before solving.
   validate!,                              # Validate network consistency.
   hasBusInNet,
@@ -391,6 +393,7 @@ export
   printShortCircuitCoverage,              # Readable rendering of the coverage rows.
   runShortCircuit!,                       # IEC 60909 balanced Ik'' max/min per fault bus (#277).
   ShortCircuitResult,                     # Result type of runShortCircuit! (safety-flagged rows).
+  NativeShortCircuitData,                 # Native SC source container on Net (filled by addExternalGrid!, #299).
   printShortCircuitResult,                # Pretty-printer for ShortCircuitResult (CSV via the service run).
   _createDict,
   apply_matpower_bus_voltage!,            # Apply MATPOWER bus voltage data.
@@ -576,6 +579,9 @@ include("node.jl")
 include("branch.jl")
 include("link.jl")
 include("shunt.jl")
+# Native short-circuit source container (issue #299) — must precede
+# network.jl because Net carries a typed sc_sources field.
+include("shortcircuit/native_sc_data.jl")
 include("network.jl")
 include("synthetic_grids.jl")
 include("tap_control.jl")

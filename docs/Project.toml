@@ -1,5 +1,7 @@
 [deps]
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
+JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
+Literate = "98b081ad-f1c9-55d3-8b20-4c87d4299306"
 Sparlectra = "31ce9bba-fd9d-44a1-b005-f5f509afda38"
 
 [sources]
@@ -7,4 +9,6 @@ Sparlectra = {path = ".."}
 
 [compat]
 Documenter = "1.14"
+JSON3 = "1"
+Literate = "2"
 julia = "1.12"

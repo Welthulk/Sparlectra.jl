@@ -114,6 +114,10 @@ function _webui_test_form(casefile, config_file, output_root)
     "power_flow_trust_region_step_mode" => "scaled",
     "power_flow_distributed_slack_enabled" => "false",
     "power_flow_distributed_slack_p_mode" => "pg_weighted",
+    "power_flow_external_grid_enabled" => "false",
+    "power_flow_external_grid_source" => "auto",
+    "power_flow_external_grid_sk_mva" => "2000.0",
+    "power_flow_external_grid_rx" => "0.1",
     "power_flow_linear_solver" => "umfpack",
     "power_flow_rescue" => "true",
     "power_flow_dc_fallback" => "false",
@@ -1697,6 +1701,10 @@ settings:
         "power_flow_trust_region_step_mode" => "power_flow.trust_region.step_mode",
         "power_flow_distributed_slack_enabled" => "power_flow.distributed_slack.enabled",
         "power_flow_distributed_slack_p_mode" => "power_flow.distributed_slack.p_mode",
+        "power_flow_external_grid_enabled" => "power_flow.external_grid.enabled",
+        "power_flow_external_grid_source" => "power_flow.external_grid.source",
+        "power_flow_external_grid_sk_mva" => "power_flow.external_grid.sk_MVA",
+        "power_flow_external_grid_rx" => "power_flow.external_grid.rx",
         "matpower_import_auto_profile" => "matpower_import.auto_profile",
         "matpower_import_ratio" => "matpower_import.ratio",
         "matpower_import_shift_sign" => "matpower_import.shift_sign",
@@ -1832,6 +1840,10 @@ settings:
       # power_flow_solver=dc is selected.
       @test count("data-nr-only-field", form_html) == 10
       @test occursin("<fieldset class=\"distributed-slack-options\" data-nr-only-field>", form_html)
+      # The external-grid conversion is a net transformation, not an NR-only
+      # solver option — it must stay usable with the APSLF and DC solvers, so
+      # its fieldset is deliberately NOT tagged data-nr-only-field.
+      @test occursin("<fieldset class=\"external-grid-options\">", form_html)
       @test occursin("<label data-nr-only-field><span class=\"field-label\">Maximum iterations ", form_html)
       @test occursin("<label data-nr-only-field><span class=\"field-label\">Q-limit enforcement mode ", form_html)
       @test occursin("<label data-nr-only-field><span class=\"field-label\">Wrong-branch detection ", form_html)

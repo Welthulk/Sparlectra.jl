@@ -86,6 +86,10 @@ function _run_sparlectra(; net::Union{Nothing,Net} = nothing, casefile::Union{No
     run_net = net
     run_cfg = cfg
   end
+  # power_flow.external_grid (issue #299): convert the marked slack into a
+  # non-ideal source before solving. Idempotent — CGMES runs may have applied
+  # it already in the API layer (with delivery-declared Sk''/RX values).
+  _apply_external_grid_config!(run_net, run_cfg.powerflow)
   execution = _execute_sparlectra_powerflow!(run_net, run_cfg; performance_profile = performance_profile)
   result = _build_sparlectra_result(run_net, run_cfg, execution, performance_profile)
   return _postprocess_sparlectra_result!(result, run_cfg; emit_output = emit_output)

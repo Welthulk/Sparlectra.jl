@@ -6,8 +6,10 @@ on:
       - main
   workflow_dispatch:
 
+# contents: write — the build job pushes regenerated Literate artifacts
+# (notebooks/, docs/src/generated/) back to the branch when they are stale.
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -50,6 +52,28 @@ jobs:
             Pkg.instantiate()
             Pkg.precompile()
           '
+
+      # Regenerate the Literate outputs (Documenter page + Colab notebook)
+      # BEFORE the docs build, so the deployed page is always fresh even if a
+      # contributor edited docs/lit/*.jl without regenerating locally.
+      - name: Regenerate Literate outputs
+        run: julia --project=docs docs/generate_notebooks.jl
+
+      # Colab loads notebooks/*.ipynb from the repository itself, so stale
+      # committed artifacts must be pushed back, not just rebuilt. Loop-safe:
+      # pushes made with GITHUB_TOKEN do not retrigger workflows, and a rerun
+      # would find no diff anyway.
+      - name: Commit regenerated Literate artifacts
+        run: |
+          git add notebooks docs/src/generated
+          if git diff --cached --quiet; then
+            echo "Literate artifacts are up to date."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "Regenerate Literate artifacts (docs page + notebook)"
+            git push origin HEAD:"$GITHUB_REF_NAME"
+          fi
 
       - name: Build documentation
         run: julia --project=docs docs/make.jl

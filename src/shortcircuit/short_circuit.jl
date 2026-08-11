@@ -426,6 +426,12 @@ end
 
 runShortCircuit!(result::CGMESImporter.CGMESImportResult; kwargs...) = runShortCircuit!(result.net, result.shortcircuit; kwargs...)
 
+# Native-data convenience (issue #299): run on the net's own sc_sources
+# (filled by addExternalGrid!). An entirely empty container already yields
+# :no_source rows through the engine's safety-flag machinery — deliberately
+# no pre-check here.
+runShortCircuit!(net::Net; buses = :all, case::Symbol = :max, c_factor::Real = 0.0) = runShortCircuit!(net, net.sc_sources; buses = buses, case = case, c_factor = c_factor)
+
 """
     printShortCircuitResult(io::IO, result::ShortCircuitResult; max_rows = 50)
     printShortCircuitResult(result::ShortCircuitResult; max_rows = 50)

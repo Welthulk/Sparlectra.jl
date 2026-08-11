@@ -35,6 +35,7 @@ function include_fast_tests()
   include("test_distributed_slack.jl")
   include("test_island_diagnostics.jl")
   include("test_short_circuit.jl")
+  include("test_external_grid.jl")
 end
 
 function include_extended_tests()
@@ -84,6 +85,7 @@ function run_fast_profile_tests()
     ("distributed_slack", () -> run_entry(:run_distributed_slack_tests)),
     ("island_diagnostics", () -> run_entry(:run_island_diagnostics_tests)),
     ("short_circuit", () -> run_entry(:run_short_circuit_tests)),
+    ("external_grid", () -> run_entry(:run_external_grid_tests)),
     ("controls", () -> begin
       run_entry(:run_voltage_dependent_control_tests)
       run_entry(:run_transformer_phase_shift_tests)

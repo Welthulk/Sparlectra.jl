@@ -1,3 +1,22 @@
+# Version 0.9.2 — 2026-08-11
+
+## Highlights
+
+**External grid element.** `addExternalGrid!` models the grid connection
+as an IEC 60909-0 network feeder — ideal slack by default, non-ideal
+source with `internal_impedance = true`. Its declared short-circuit power
+feeds `runShortCircuit!` directly, so hand-built and MATPOWER networks
+need no CGMES delivery for short-circuit studies. See
+[Slack Bus and External Grid Sources](slack_vs_source.md). (#299)
+
+## Improvements / Documentation
+
+- **Try Sparlectra in your browser:** two Colab workshop notebooks —
+  [introduction](generated/workshop_intro.md) and
+  [Slack Types and Short Circuit](generated/workshop_slack_short_circuit.md).
+- New theory page:
+  [Slack Bus and External Grid Sources](slack_vs_source.md). (#299)
+
 # Version 0.9.1 — 2026-08-01
 
 Fixes and refinements after the 0.9.0 release.

@@ -360,6 +360,29 @@ function _cgmes_delivery_paths(case_path::AbstractString, cgmes_cfg)::Tuple{Vect
   return paths, false
 end
 
+# Feeder data a CGMES delivery declares at the net's primary slack bus
+# (ExternalNetworkInjection max current + R/X), converted to the
+# (sk_MVA, rx) pair _apply_external_grid_config! consumes in :auto mode.
+# Returns nothing when the slack bus carries no usable declaration.
+function _cgmes_declared_slack_feeder(net::Net, shortcircuit)::Union{Nothing,NamedTuple}
+  isempty(net.slackVec) && return nothing
+  bus_names = Dict{Int,String}(idx => n for (n, idx) in net.busDict)
+  slack = get(bus_names, net.slackVec[1], nothing)
+  slack === nothing && return nothing
+  vn = getNodeVn(net.nodeVec[net.slackVec[1]])
+  for f in shortcircuit.external_network_injections
+    f.bus === nothing && continue
+    String(f.bus) == slack || continue
+    ik = f.maxInitialSymShCCurrent_A
+    (ik === nothing || !isfinite(Float64(ik)) || Float64(ik) <= 0.0) && continue
+    sk = sqrt(3.0) * vn * Float64(ik) / 1000.0
+    rx = f.maxR1ToX1Ratio
+    rxv = (rx === nothing || !isfinite(Float64(rx)) || Float64(rx) < 0.0) ? 0.1 : Float64(rx)
+    return (sk_MVA = sk, rx = rxv)
+  end
+  return nothing
+end
+
 function _looks_like_cgmes(case_path::AbstractString)::Bool
   isdir(case_path) && return true
   lowercase(splitext(case_path)[2]) == ".zip" || return false
@@ -858,6 +881,12 @@ function _run_sparlectra_api(;
       cgmes_export_sc_line_data = CGMESImporter.cgmesLineShortCircuitData(cgmes_result)
       cgmes_export_sc_source = cgmes_result.shortcircuit
     end
+    # power_flow.external_grid (issue #299) on a CGMES run: the delivery may
+    # declare the feeder data itself (ExternalNetworkInjection at the slack
+    # bus); in :auto mode those values win over the config numbers. Applied
+    # here — only this layer sees the short-circuit harvest; the generic hook
+    # in _run_sparlectra is idempotent and will skip the already-converted net.
+    external_grid_note = _apply_external_grid_config!(cgmes_result.net, cgmes_run_config.powerflow; declared = _cgmes_declared_slack_feeder(cgmes_result.net, cgmes_result.shortcircuit))
     raw_result = try
       open(logfile, "a") do io
         # run.log carries the narrative; the full importer report (files,
@@ -866,6 +895,7 @@ function _run_sparlectra_api(;
         # substituted values a reader of the narrative must not miss.
         println(io, "CGMES input (", length(paths), " path(s), ", length(cgmes_result.net.nodeVec), " buses)")
         println(io, start_decision)
+        external_grid_note === nothing || println(io, external_grid_note)
         cgmes_warnings = [m for m in cgmes_result.messages if startswith(m, "warning:")]
         println(io, "  importer messages: ", length(cgmes_result.messages), " (", length(cgmes_warnings), " warning(s)) — full report in cgmes.log")
         for m in cgmes_warnings

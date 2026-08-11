@@ -4,6 +4,9 @@
 [![Version](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2FWelthulk%2FSparlectra.jl%2Fmain%2FProject.toml&query=%24.version&label=version&prefix=v&color=blue)](https://github.com/Welthulk/Sparlectra.jl/blob/main/Project.toml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 [![Julia](https://img.shields.io/badge/Julia-1.x-9558B2.svg)](https://julialang.org/)
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_intro.ipynb)
+
+Try Sparlectra in your browser — no installation required: the Colab badge opens an introductory workshop notebook.
 
 **Sparlectra.jl is a Julia framework for AC power-flow and state-estimation studies.**
 

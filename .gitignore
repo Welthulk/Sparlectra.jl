@@ -56,6 +56,11 @@ Task_*.md
 .md
 
 
+# Local-only German draft of the slack-vs-source page (accidentally
+# committed once — keep untracked)
+docs/dev/slack_vs_source_de.md
+docs/dev/slack_vs_source_de.html
+
 .sparlectra_net_cache/
 data/CGMES/
 

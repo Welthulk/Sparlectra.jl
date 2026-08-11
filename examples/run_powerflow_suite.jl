@@ -26,6 +26,7 @@ const SUITE_SPECS = ExampleSpec[
   ExampleSpec(name = "powerflow_service", file = "powerflow/exp_powerflow_service.jl", purpose = "local PowerFlow service run with result lookup by run ID (no HTTP server)"),
   ExampleSpec(name = "current_iteration_start", file = "powerflow/exp_current_iteration_start.jl", purpose = "guarded current-iteration start pre-solve via API configuration overrides"),
   ExampleSpec(name = "q_limit_voltage_adjustment", file = "powerflow/example_q_limit_voltage_adjustment.jl", purpose = "compares Q-limit :adjust_vset outcomes across three PV->PQ scenarios"),
+  ExampleSpec(name = "external_grid_comparison", file = "powerflow/exp_external_grid_comparison.jl", purpose = "8-bus tables comparing ideal slack, non-ideal external-grid source and distributed slack (issue #299)"),
   ExampleSpec(name = "voltage_dependent_control", file = "powerflow/example_voltage_dependent_control_rectangular.jl", args = ["--no-plot"], purpose = "voltage-dependent control (Q(U)/P(U)) demo without plotting"),
   # No requires_config gate: the example runs on the resolved configuration
   # chain, whose shipped default (src/configuration.yaml.example, case14.m)

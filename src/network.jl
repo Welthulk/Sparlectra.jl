@@ -117,6 +117,10 @@ mutable struct Net
   # Filled by the CGMES importer, read by the CGMES exporter; empty for nets
   # from other sources (the exporter then mints deterministic uuid5 ids).
   cgmes_ids::Dict{String,String}
+  # Native short-circuit source records (issue #299): filled by
+  # addExternalGrid!, read by runShortCircuit!(net). Carrying data here must
+  # never change power-flow results by itself (participationFactor precedent).
+  sc_sources::NativeShortCircuitData
 
   #! format: off
   function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1, cooldown_iters::Int = 0, q_hyst_pu::Float64 = 0.0, flatstart::Bool = false, bus_shunt_model = :admittance)    
@@ -157,7 +161,8 @@ mutable struct Net
         String[],
         NamedTuple[],
         AbstractOuterController[],                 # machineControls
-        Dict{String,String}())                     # cgmes_ids
+        Dict{String,String}(),                     # cgmes_ids
+        NativeShortCircuitData())                  # sc_sources
   end
   #! format: on
   function Base.show(io::IO, net::Net)
@@ -1208,6 +1213,236 @@ function addProsumer!(;
     refreshBusTypesFromProsumers!(net)
     _buildQLimits!(net)
   end
+end
+
+"""
+    addExternalGrid!(; net, busName, sk_max_MVA, kwargs...)
+
+Add an external grid (IEC 60909-0 network feeder, issue #299): the ideal
+voltage source of the superordinate network plus its declared short-circuit
+data.
+
+Load-flow side: by default the connection bus becomes the reference (REF)
+bus, exactly as a manually added slack-type prosumer does — the external
+grid is ideal in the power flow, and the short-circuit attributes change
+**no** power-flow result (`participationFactor` precedent). With
+`internal_impedance = true` the source instead becomes non-ideal: a hidden
+auxiliary bus `<busName>__extgrid_int` carries the reference voltage, and a
+series branch with `z_pu = baseMVA / sk_max_MVA` (voltage factor `c = 1` —
+the c-factor is a short-circuit concept), split by `rx_max`, connects it to
+the terminal bus. The terminal bus then stays an ordinary solved bus. The
+auxiliary bus is tagged `isAux`; expect it in reports under its generated
+name. Very large `sk_max_MVA` values degrade Jacobian conditioning — use
+the default ideal representation when ideal behavior is wanted.
+
+Short-circuit side: `sk_max_MVA` (and optionally `sk_min_MVA`) with the
+`rx_max`/`rx_min` ratios are converted **at add time** into the feeder
+record consumed by [`runShortCircuit!`](@ref) — anchored at the physical
+connection bus also in the `internal_impedance` variant (the auxiliary
+branch is a dead end in the short-circuit network and carries no fault
+current).
+
+# Arguments
+- `net::Net`: the network.
+- `busName::String`: connection bus (must exist).
+- `vm_pu::Float64 = 1.0`, `va_deg::Float64 = 0.0`: reference voltage.
+- `sk_max_MVA::Float64`: declared initial symmetrical short-circuit power,
+  maximum case. Mandatory — without it the feeder cannot contribute to any
+  short circuit.
+- `sk_min_MVA::Union{Nothing,Float64} = nothing`: minimum case; without it
+  the `:min` case skips the feeder with the engine's safety flag.
+- `rx_max::Float64 = 0.1`: R/X ratio, maximum case (IEC 60909-0 default).
+- `rx_min::Union{Nothing,Float64} = nothing`: R/X ratio, minimum case.
+  Defaults to `rx_max` when `sk_min_MVA` is given, so a deliberately
+  declared minimum feeder does not carry a spurious defaulted-data flag.
+- `name::Union{Nothing,String} = nothing`: feeder name (default `busName`).
+- `internal_impedance::Bool = false`: non-ideal load-flow variant (above).
+
+Failure behavior: throws `ArgumentError` for a non-positive/non-finite
+`sk_max_MVA`, `sk_min_MVA > sk_max_MVA`, or negative R/X ratios. Multiple
+external grids on one bus are allowed and stack as parallel feeders.
+"""
+function addExternalGrid!(;
+  net::Net,
+  busName::String,
+  vm_pu::Float64 = 1.0,
+  va_deg::Float64 = 0.0,
+  sk_max_MVA::Float64,
+  sk_min_MVA::Union{Nothing,Float64} = nothing,
+  rx_max::Float64 = 0.1,
+  rx_min::Union{Nothing,Float64} = nothing,
+  name::Union{Nothing,String} = nothing,
+  internal_impedance::Bool = false,
+)
+  busIdx = geNetBusIdx(net = net, busName = busName)
+  (isfinite(sk_max_MVA) && sk_max_MVA > 0.0) || throw(ArgumentError("addExternalGrid!: sk_max_MVA must be finite and > 0; got $(sk_max_MVA)."))
+  if sk_min_MVA !== nothing
+    (isfinite(sk_min_MVA) && 0.0 < sk_min_MVA <= sk_max_MVA) || throw(ArgumentError("addExternalGrid!: sk_min_MVA must be finite and within (0, sk_max_MVA]; got $(sk_min_MVA) with sk_max_MVA = $(sk_max_MVA)."))
+  end
+  (isfinite(rx_max) && rx_max >= 0.0) || throw(ArgumentError("addExternalGrid!: rx_max must be finite and >= 0; got $(rx_max)."))
+  if rx_min !== nothing
+    (isfinite(rx_min) && rx_min >= 0.0) || throw(ArgumentError("addExternalGrid!: rx_min must be finite and >= 0; got $(rx_min)."))
+  end
+
+  # Task decision (issue #299): a declared minimum feeder without its own
+  # ratio inherits rx_max instead of `nothing`, so the :min case does not
+  # flag "no usable R/X ratio" for data the user deliberately provided.
+  eff_rx_min = rx_min !== nothing ? rx_min : (sk_min_MVA !== nothing ? rx_max : nothing)
+
+  if internal_impedance
+    # Non-ideal variant (Stage 2): the reference voltage moves to a hidden
+    # internal bus — the actual slack — behind z = c·Un²/Sk with c = 1. On
+    # the per-voltage-level impedance base (z_base = Un²/baseMVA) that is
+    # simply z_pu = baseMVA/Sk, independent of Un.
+    internalName = busName * "__extgrid_int"
+    haskey(net.busDict, internalName) && throw(ArgumentError("addExternalGrid!: internal bus $(internalName) already exists — one internal-impedance external grid per bus."))
+    vn_kV = getNodeVn(net.nodeVec[busIdx])
+    addBus!(net = net, busName = internalName, vn_kV = vn_kV, vm_pu = vm_pu, va_deg = va_deg, isAux = true)
+    z_pu = net.baseMVA / sk_max_MVA
+    x_pu = z_pu / sqrt(1.0 + rx_max^2)
+    r_pu = rx_max * x_pu
+    addPIModelACLine!(net = net, fromBus = internalName, toBus = busName, r_pu = r_pu, x_pu = x_pu, b_pu = 0.0, status = 1)
+    addProsumer!(net = net, busName = internalName, type = "EXTERNALNETWORKINJECTION", referencePri = internalName, vm_pu = vm_pu, va_deg = va_deg)
+  else
+    # Ideal variant (Stage 1): exactly the manual slack path — the prosumer
+    # with referencePri marks the connection bus REF via
+    # refreshBusTypesFromProsumers!.
+    addProsumer!(net = net, busName = busName, type = "EXTERNALNETWORKINJECTION", referencePri = busName, vm_pu = vm_pu, va_deg = va_deg)
+  end
+
+  # Feeder record for the short-circuit engine: full CGMES ENI tuple contract
+  # (all eleven keys, unknowns as `nothing`). `bus` must be the busDict key —
+  # the engine resolves it through net.busDict. The mrid is deterministic and
+  # unique per bus; the stamping falls back to it via something(name, mrid),
+  # so it must never be nothing. Parallel feeders continue after the highest
+  # existing suffix (not the record count) so the id stays unique even after
+  # a record is removed and another feeder added.
+  ik_max_A = sk_max_MVA * 1.0e6 / (sqrt(3.0) * getNodeVn(net.nodeVec[busIdx]) * 1.0e3)
+  ik_min_A = sk_min_MVA === nothing ? nothing : sk_min_MVA * 1.0e6 / (sqrt(3.0) * getNodeVn(net.nodeVec[busIdx]) * 1.0e3)
+  mrid_base = "native-eni-$(busName)"
+  max_suffix = 0
+  for e in net.sc_sources.external_network_injections
+    e.bus == busName || continue
+    m = String(e.mrid)
+    startswith(m, mrid_base) || continue
+    rest = m[(lastindex(mrid_base) + 1):end]
+    n = isempty(rest) ? 1 : something(tryparse(Int, lstrip(rest, '-')), 0)
+    max_suffix = max(max_suffix, n)
+  end
+  mrid = max_suffix == 0 ? mrid_base : "$(mrid_base)-$(max_suffix + 1)"
+  push!(
+    net.sc_sources.external_network_injections,
+    (
+      mrid = mrid,
+      name = name === nothing ? busName : name,
+      bus = busName,
+      maxInitialSymShCCurrent_A = ik_max_A,
+      minInitialSymShCCurrent_A = ik_min_A,
+      maxR1ToX1Ratio = rx_max,
+      minR1ToX1Ratio = eff_rx_min,
+      maxR0ToX0Ratio = nothing,
+      maxZ0ToZ1Ratio = nothing,
+      ikSecond = nothing,
+      governorSCD = nothing,
+    ),
+  )
+  return nothing
+end
+
+"""
+    convertSlackToExternalGrid!(; net, sk_max_MVA, kwargs...) -> String
+
+Replace the marked slack bus by a non-ideal external-grid source (issue
+#299): the slack marker moves to a hidden internal bus behind the feeder
+impedance, so the former slack bus becomes an ordinary solved bus whose
+voltage reacts to loading.
+
+Steps: the slack prosumers at the bus are demoted (reference marker and
+voltage regulation removed — their scheduled `p`/`q` injections stay), and
+`addExternalGrid!` with `internal_impedance = true` is added at the bus,
+carrying the former slack's voltage setpoint as the source's reference
+voltage. With multiple slack buses (island references) only the addressed
+bus is converted — every other island keeps its reference.
+
+# Arguments
+- `net::Net`: the network.
+- `busName::Union{Nothing,String} = nothing`: slack bus to convert; default
+  is the primary (first registered) slack bus.
+- `sk_max_MVA`, `sk_min_MVA`, `rx_max`, `rx_min`, `name`: forwarded to
+  [`addExternalGrid!`](@ref).
+
+Returns a short human-readable note describing the conversion (for run
+logs). Failure behavior: throws `ArgumentError` when the net has no slack
+bus or `busName` is not a slack bus.
+"""
+function convertSlackToExternalGrid!(;
+  net::Net,
+  busName::Union{Nothing,String} = nothing,
+  sk_max_MVA::Float64,
+  sk_min_MVA::Union{Nothing,Float64} = nothing,
+  rx_max::Float64 = 0.1,
+  rx_min::Union{Nothing,Float64} = nothing,
+  name::Union{Nothing,String} = nothing,
+)
+  isempty(net.slackVec) && throw(ArgumentError("convertSlackToExternalGrid!: the network has no slack bus to convert."))
+  busIdx = busName === nothing ? net.slackVec[1] : geNetBusIdx(net = net, busName = busName)
+  busIdx in net.slackVec || throw(ArgumentError("convertSlackToExternalGrid!: bus $(busName) is not a slack bus."))
+  bus_names = Dict{Int,String}(idx => n for (n, idx) in net.busDict)
+  target = bus_names[busIdx]
+
+  # The former slack's voltage setpoint becomes the source's reference
+  # voltage; fall back to the node's start voltage when no prosumer carries
+  # a setpoint (the ProSumer constructor defaults vm to 1.0 anyway).
+  vref = 1.0
+  varef = 0.0
+  demoted = 0
+  for ps in net.prosumpsVec
+    (isSlack(ps) && getPosumerBusIndex(ps) == busIdx) || continue
+    ps.vm_pu === nothing || (vref = ps.vm_pu)
+    ps.va_deg === nothing || (varef = ps.va_deg)
+    # Demote: no reference marker, no voltage holding — otherwise the bus
+    # would stay PV-held and the source's finite stiffness could never show.
+    ps.referencePri = nothing
+    ps.isRegulated = false
+    demoted += 1
+  end
+  # Re-derive bus types and Q-limits right after the demotion instead of
+  # relying on the addExternalGrid! → addProsumer! call below to do it as a
+  # side effect — the demotion must leave a consistent net on its own.
+  refreshBusTypesFromProsumers!(net)
+  _buildQLimits!(net)
+
+  addExternalGrid!(net = net, busName = target, vm_pu = vref, va_deg = varef, sk_max_MVA = sk_max_MVA, sk_min_MVA = sk_min_MVA, rx_max = rx_max, rx_min = rx_min, name = name, internal_impedance = true)
+  return "external grid: slack bus $(target) converted to a non-ideal source (Sk'' = $(sk_max_MVA) MVA, R/X = $(rx_max), $(demoted) slack prosumer(s) demoted; reference moved to $(target)__extgrid_int)"
+end
+
+"""
+    _apply_external_grid_config!(net, pf::PowerFlowConfig; declared = nothing) -> Union{Nothing,String}
+
+Apply `power_flow.external_grid` to a freshly imported net: when enabled,
+convert the marked slack bus into a non-ideal source via
+[`convertSlackToExternalGrid!`](@ref). `declared` optionally carries
+`(sk_MVA, rx)` read from the case data (CGMES `ExternalNetworkInjection`);
+it wins over the config numbers when `source = :auto`. Idempotent: a net
+that already contains an external-grid internal bus is left untouched, so
+re-runs and rescue retries cannot stack sources. Returns the conversion
+note (or `nothing` when nothing was done).
+"""
+function _apply_external_grid_config!(net::Net, pf; declared::Union{Nothing,NamedTuple} = nothing)::Union{Nothing,String}
+  eg = pf.external_grid
+  eg.enabled || return nothing
+  any(endswith(n, "__extgrid_int") for n in keys(net.busDict)) && return nothing
+  if isempty(net.slackVec)
+    @warn "power_flow.external_grid.enabled: the net registers no slack bus — nothing to convert (enable power_flow.auto_slack or mark a slack first)."
+    return nothing
+  end
+  use_declared = eg.source === :auto && declared !== nothing
+  sk = use_declared ? declared.sk_MVA : eg.sk_MVA
+  rx = use_declared ? declared.rx : eg.rx
+  note = convertSlackToExternalGrid!(net = net, sk_max_MVA = sk, rx_max = rx)
+  note *= use_declared ? " [Sk''/RX declared by the case data]" : " [Sk''/RX from power_flow.external_grid]"
+  @info note
+  return note
 end
 
 """

@@ -117,6 +117,18 @@ power_flow:
     #     B2: 1.0
     weights: {}
 
+  # Compute the marked slack as a non-ideal external-grid source (issue #299):
+  # the reference voltage moves to a hidden internal bus behind the feeder
+  # impedance z = Un²/Sk'', so the former slack bus reacts to loading.
+  external_grid:
+    enabled: false
+    # Allowed values: auto, config — auto prefers the Sk''/R-X values a CGMES
+    # delivery declares on the slack bus's ExternalNetworkInjection and falls
+    # back to the numbers below; config always uses the numbers below.
+    source: auto
+    sk_MVA: 2000.0
+    rx: 0.1
+
   # Start projection and warmstart controls.
   start_mode:
     # Allowed values: classic, dc, bus_va_blend, matpower_va

@@ -33,7 +33,9 @@ makedocs(
     # reference legitimately exceed Documenter's 100 KiB default.
     size_threshold_warn = 150 * 1024,
     size_threshold = 300 * 1024,
-    search_size_threshold_warn = 700 * 1024,
+    # 700 KiB left only ~0.5 KiB headroom; the Literate-generated workshop
+    # page pushed the index to ~706 KiB.
+    search_size_threshold_warn = 800 * 1024,
   ),
   pages = [
     "Home" => "index.md",
@@ -60,6 +62,7 @@ makedocs(
     "Network Reports" => "netreports.md",
     "Power Limits" => "powerlimits.md",
     "Solver" => "solver.md",
+    "Slack and External Grid Sources" => "slack_vs_source.md",
     "Synthetic Tiled Grids" => "synthetic_grids.md",
     "Voltage Dependent Control" => "voltage_dependent_control.md",
     "Control Framework" => "control_framework.md",
@@ -68,6 +71,10 @@ makedocs(
     "Examples Overview" => "examples_overview.md",
     "State Estimation" => "state_estimation.md",
     "Workshop" => "workshop.md",
+    # Literate.jl-generated page (committed output of docs/generate_notebooks.jl,
+    # not rebuilt here — edit docs/lit/workshop_intro.jl and regenerate).
+    "Try it in your Browser" => "generated/workshop_intro.md",
+    "Slack Types and Short Circuit" => "generated/workshop_slack_short_circuit.md",
     "Reference" => [
       "Overview" => "reference.md",
       "API and Web UI Service" => "reference_api.md",

@@ -206,6 +206,33 @@ const DISTRIBUTED_SLACK_P_MODE_VALUES = (:pg_weighted, :pmax_weighted, :headroom
 const DISTRIBUTED_SLACK_FALLBACK_VALUES = (:error, :ref_only)
 
 """
+    ExternalGridConfig
+
+Compute the marked slack bus as a non-ideal external-grid source (issue
+#299): the reference voltage moves to a hidden internal bus behind the
+feeder impedance `z = Un²/Sk''`, so the connection-bus voltage reacts to
+loading instead of being held ideally stiff.
+
+# Fields
+- `enabled::Bool`: off by default — the classical ideal slack.
+- `source::Symbol`: where `Sk''`/`R/X` come from — `:auto` prefers the
+  values a CGMES delivery declares on the slack bus's
+  `ExternalNetworkInjection` and falls back to the config numbers below
+  (MATPOWER/DTF carry no such data); `:config` always uses the config
+  numbers.
+- `sk_MVA::Float64`: initial symmetrical short-circuit power of the feeder.
+- `rx::Float64`: its R/X ratio.
+"""
+Base.@kwdef struct ExternalGridConfig
+  enabled::Bool = false
+  source::Symbol = :auto
+  sk_MVA::Float64 = 2000.0
+  rx::Float64 = 0.1
+end
+
+const EXTERNAL_GRID_SOURCE_VALUES = (:auto, :config)
+
+"""
     ApslfConfig
 
 Typed configuration for the AnalyticLoadFlow.jl-backed analytic power-series
@@ -278,6 +305,7 @@ Base.@kwdef struct PowerFlowConfig
   islands::IslandPowerFlowConfig = IslandPowerFlowConfig()
   dc::DcPowerFlowConfig = DcPowerFlowConfig()
   distributed_slack::DistributedSlackConfig = DistributedSlackConfig()
+  external_grid::ExternalGridConfig = ExternalGridConfig()
 end
 
 const WRONG_BRANCH_DETECTION_VALUES = [:off, :warn, :fail, :rescue]
@@ -972,6 +1000,7 @@ function PowerFlowConfig(raw::AbstractDict)
   apslf_start_raw = _raw_section(merged, "apslf_start")
   dc_raw = _raw_section(merged, "dc")
   distributed_slack_raw = _raw_section(merged, "distributed_slack")
+  external_grid_raw = _raw_section(merged, "external_grid")
   solver = _validate_allowed_symbol("power_flow.solver", _as_symbol_cfg(_raw_get(merged, "solver", :rectangular)), POWERFLOW_SOLVER_VALUES)
   apslf_cfg = ApslfConfig(apslf_raw)
   apslf_start_cfg = ApslfStartConfig(apslf_start_raw)
@@ -993,6 +1022,15 @@ function PowerFlowConfig(raw::AbstractDict)
   trust_region_cfg = TrustRegionConfig(trust_region_raw)
   if trust_region_cfg.enabled && autodamp
     throw(ArgumentError("power_flow.trust_region.enabled=true is incompatible with power_flow.autodamp=true. Both are Newton step-control mechanisms; layering them is undefined. Set power_flow.autodamp=false or power_flow.trust_region.enabled=false."))
+  end
+  distributed_slack_cfg = DistributedSlackConfig(distributed_slack_raw)
+  external_grid_cfg = ExternalGridConfig(external_grid_raw)
+  if external_grid_cfg.enabled && distributed_slack_cfg.enabled
+    throw(
+      ArgumentError(
+        "power_flow.external_grid.enabled=true is incompatible with power_flow.distributed_slack.enabled=true. Both decide who covers the island's power imbalance: the external-grid source imports it through the feeder, the distributed slack spreads it over the island's generators. Combined, the source's import would be forced to its participation share of zero and the source degenerates to a bare angle anchor. Enable at most one.",
+      ),
+    )
   end
   start_mode_cfg = StartModeConfig(merge(Dict{Any,Any}(merged), Dict{Any,Any}(start_raw)))
   if start_mode_cfg.dc_seed_unconditional
@@ -1034,7 +1072,8 @@ function PowerFlowConfig(raw::AbstractDict)
     qlimits = QLimitConfig(merge(Dict{Any,Any}(merged), Dict{Any,Any}(qlimit_raw))),
     islands = IslandPowerFlowConfig(islands_raw),
     dc = DcPowerFlowConfig(dc_raw),
-    distributed_slack = DistributedSlackConfig(distributed_slack_raw),
+    distributed_slack = distributed_slack_cfg,
+    external_grid = external_grid_cfg,
   )
 end
 
@@ -1044,6 +1083,13 @@ function DcPowerFlowConfig(raw::AbstractDict)
     ignore_out_of_service = _as_bool_cfg(_raw_get(raw, "ignore_out_of_service", true)),
     fallback = _as_bool_cfg(_raw_get(raw, "fallback", false)),
   )
+end
+
+function ExternalGridConfig(raw::AbstractDict)
+  source = _validate_allowed_symbol("power_flow.external_grid.source", _as_symbol_cfg(_raw_get(raw, "source", :auto)), EXTERNAL_GRID_SOURCE_VALUES)
+  sk = _validate_positive("power_flow.external_grid.sk_MVA", _as_float_cfg(_raw_get(raw, "sk_MVA", 2000.0)))
+  rx = _validate_nonnegative("power_flow.external_grid.rx", _as_float_cfg(_raw_get(raw, "rx", 0.1)))
+  return ExternalGridConfig(enabled = _as_bool_cfg(_raw_get(raw, "enabled", false)), source = source, sk_MVA = sk, rx = rx)
 end
 
 function DistributedSlackConfig(raw::AbstractDict)

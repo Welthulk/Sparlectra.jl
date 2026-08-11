@@ -275,6 +275,50 @@ compact summary with the top participants. In island-wise runs each island
 solves with its own independent `lambda_P`; the per-island values appear in
 the per-island solver statuses.
 
+## External grid source
+
+`power_flow.external_grid` computes the marked slack bus as a **non-ideal
+external-grid source** (issue #299): before the solve, the run converts the
+slack via `convertSlackToExternalGrid!` — the reference voltage moves to a
+hidden internal bus `<bus>__extgrid_int` behind the feeder impedance
+`z = Un²/Sk''` split by the R/X ratio, and the former slack bus becomes an
+ordinary solved bus whose voltage droops under load. The theory (both
+formulations of the changed equation system, the stiff limit, the effect on
+the short-circuit calculation) is on
+[Slack Bus and External Grid Sources](slack_vs_source.md).
+
+```yaml
+power_flow:
+  external_grid:
+    enabled: false
+    source: auto
+    sk_MVA: 2000.0
+    rx: 0.1
+```
+
+| YAML path | Type | Default | Allowed values | Meaning |
+|---|---:|---:|---|---|
+| `power_flow.external_grid.enabled` | Bool | `false` | `true`, `false` | Master switch. Off keeps the classical ideal slack. |
+| `power_flow.external_grid.source` | Symbol/String | `auto` | `auto`, `config` | Where `Sk''`/`R/X` come from. `auto` prefers the values a CGMES delivery declares on the slack bus's `ExternalNetworkInjection` (logged as *declared by the case data*) and falls back to the config numbers — MATPOWER/DTF cases carry no such data. `config` always uses the config numbers. |
+| `power_flow.external_grid.sk_MVA` | Float | `2000.0` | > 0 | Initial symmetrical short-circuit power of the feeder. The series impedance is `z_pu = baseMVA/sk_MVA` on the per-voltage-level base. |
+| `power_flow.external_grid.rx` | Float | `0.1` | ≥ 0 | R/X ratio of the feeder impedance. |
+
+Only the primary slack bus is converted; with `multi_slack` island
+references every other island keeps its reference. The conversion is
+idempotent per run (a net that already carries an external-grid internal bus
+is left untouched, so rescue retries cannot stack sources) and is logged in
+`run.log`; the classical result print states the chosen connection in its
+`Grid connection:` header line and reports the internal reference bus with
+type `SOURCE`. The corresponding Web UI controls live in the **External
+grid source** fieldset of the advanced run options.
+
+`power_flow.external_grid.enabled` is **mutually exclusive** with
+`power_flow.distributed_slack.enabled` (configuration error): both decide
+who covers the island's power imbalance — the source imports it through the
+feeder, the distributed slack spreads it over the island's generators.
+Combined, the source's import would be forced to its participation share of
+zero and the source degenerates to a bare angle anchor.
+
 ## Start mode options
 
 | YAML path | Type | Default | Allowed values | Meaning | Use when | Avoid when | Performance impact | Interactions |
