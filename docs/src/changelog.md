@@ -2,7 +2,7 @@
 
 ## Highlights
 
-**External grid element.** `addExternalGrid!` models the grid connection
+**(Source) External grid element.** `addExternalGrid!` models the grid connection
 as an IEC 60909-0 network feeder — ideal slack by default, non-ideal
 source with `internal_impedance = true`. Its declared short-circuit power
 feeds `runShortCircuit!` directly, so hand-built and MATPOWER networks
