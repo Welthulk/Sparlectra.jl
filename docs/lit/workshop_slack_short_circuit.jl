@@ -45,16 +45,21 @@
 # the short-circuit method is documented in the
 # [Short-Circuit Compendium](https://welthulk.github.io/Sparlectra.jl/short_circuit/).
 #
-# > **Note:** This notebook needs Sparlectra **≥ 0.9.2** (`addExternalGrid!`).
-# > On Google Colab the install cell takes a few minutes on a fresh session;
-# > Colab's Julia version may change over time — the notebook targets
-# > Julia ≥ 1.12.
+# > **Note:** On Google Colab the install cell takes a few minutes on a
+# > fresh session (package download and precompilation). Colab's Julia
+# > version may change over time; this notebook targets Julia ≥ 1.12.
 
 #nb # ## Setup (Colab)
 #nb # Installing Sparlectra takes a few minutes on a fresh Colab
 #nb # session (package download + precompilation). Run this cell first.
 #nb using Pkg
 #nb Pkg.add("Sparlectra")
+#nb ## This notebook uses addExternalGrid! (Sparlectra 0.9.2). Package-server
+#nb ## registry snapshots can lag a fresh release, so upgrade straight from
+#nb ## the release tag if the resolver delivered an older version:
+#nb if any(d.name == "Sparlectra" && d.version < v"0.9.2" for d in values(Pkg.dependencies()))
+#nb   Pkg.add(url = "https://github.com/Welthulk/Sparlectra.jl", rev = "v0.9.2")
+#nb end
 
 # ## Load the package
 
@@ -209,6 +214,9 @@ printShortCircuitResult(sc_min)
 #
 # ## Where to go next
 #
+# - New to Sparlectra? The
+#   [introduction notebook](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_intro.ipynb)
+#   builds a network from scratch step by step, directly in Colab.
 # - [Slack Bus and External Grid Sources](https://welthulk.github.io/Sparlectra.jl/slack_vs_source/) —
 #   the full theory: why the load flow needs a slack, the source model, and
 #   how the equation system changes.

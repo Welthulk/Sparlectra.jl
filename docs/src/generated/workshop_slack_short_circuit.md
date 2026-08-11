@@ -29,10 +29,9 @@ The theory behind the comparison is on
 the short-circuit method is documented in the
 [Short-Circuit Compendium](https://welthulk.github.io/Sparlectra.jl/short_circuit/).
 
-> **Note:** This notebook needs Sparlectra **≥ 0.9.2** (`addExternalGrid!`).
-> On Google Colab the install cell takes a few minutes on a fresh session;
-> Colab's Julia version may change over time — the notebook targets
-> Julia ≥ 1.12.
+> **Note:** On Google Colab the install cell takes a few minutes on a
+> fresh session (package download and precompilation). Colab's Julia
+> version may change over time; this notebook targets Julia ≥ 1.12.
 
 ## Load the package
 
@@ -203,6 +202,9 @@ less than a third of the connection-bus current.
 
 ## Where to go next
 
+- New to Sparlectra? The
+  [introduction notebook](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_intro.ipynb)
+  builds a network from scratch step by step, directly in Colab.
 - [Slack Bus and External Grid Sources](https://welthulk.github.io/Sparlectra.jl/slack_vs_source/) —
   the full theory: why the load flow needs a slack, the source model, and
   how the equation system changes.

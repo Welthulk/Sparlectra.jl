@@ -638,9 +638,11 @@ se = runse!(
 println("SE converged: ", se.converged, ", iterations: ", se.iterations)
 println("Final objective J: ", se.objectiveJ)
 
-# 6) Inspect the estimated network state
-printBusResults(net)
-printBranchResults(net)
+# 6) Inspect the estimated state (SEResult.voltages, one row per bus)
+for (name, idx) in sort(collect(net.busDict); by = last)
+    v = se.voltages[idx]
+    println(rpad(name, 4), "  Vm = ", round(abs(v); digits = 4), " pu   Va = ", round(rad2deg(angle(v)); digits = 3), "°")
+end
 ```
 
 ### Building measurement sets with helper functions

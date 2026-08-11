@@ -137,12 +137,16 @@ end
 # ## Where to go next
 #
 # You have built, validated, and solved a complete network in a few dozen
-# lines. From here, the hosted documentation takes over:
+# lines. From here:
 #
+# - [Slack types and short-circuit currents](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_slack_short_circuit.ipynb) —
+#   the follow-up notebook, directly in Colab: ideal slack vs. external-grid
+#   source vs. distributed slack, plus IEC 60909-0 fault currents.
 # - [Workshop](https://welthulk.github.io/Sparlectra.jl/workshop/) — file
 #   import and export, transformers, bus links, tap control, and Q-limits.
-# - [State Estimation](https://welthulk.github.io/Sparlectra.jl/state_estimation/) —
-#   estimate the network state from (noisy) measurements instead of a load
+# - [State estimation from noisy measurements](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_state_estimation.ipynb) —
+#   the estimation notebook, directly in Colab: reconstruct the network
+#   state from redundant, noisy measurements instead of a load
 #   specification.
 # - [Feature Matrix](https://welthulk.github.io/Sparlectra.jl/feature_matrix/) —
 #   what Sparlectra covers, at a glance.
