@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz                                             #src
+# Copyright 2023-2026 Udo Schmitz                                             #src
 #                                                                             #src
 # Licensed under the Apache License, Version 2.0 (the "License");             #src
 # you may not use this file except in compliance with the License.            #src
@@ -24,7 +24,7 @@
 #
 # A power flow computes the network state from an exact specification. A
 # real control room has the opposite problem: it receives many **redundant,
-# noisy measurements** — voltage magnitudes, injections, branch flows — and
+# noisy measurements** (voltage magnitudes, injections, branch flows) and
 # must reconstruct the most likely state from them. That is *state
 # estimation*: a weighted-least-squares (WLS) fit of the bus voltages to
 # the measurement set, where each measurement counts with the inverse of
@@ -33,7 +33,7 @@
 # In this notebook you build a 7-bus network with
 # [Sparlectra.jl](https://github.com/Welthulk/Sparlectra.jl), solve a
 # reference power flow, derive a noisy synthetic measurement set from it,
-# check observability, and run the estimator — the closed loop that lets
+# check observability, and run the estimator: the closed loop that lets
 # you judge estimation quality against a known truth.
 #
 # > **Note:** On Google Colab the install cell takes a few minutes on a
@@ -56,7 +56,7 @@ using Random
 
 # ## Build the study network
 #
-# Seven 110 kV buses in a ring with two cross-connections — enough meshing
+# Seven 110 kV buses in a ring with two cross-connections, enough meshing
 # that branch-flow measurements carry real information. An external network
 # injection at `B1` is the slack, a generator feeds at `B3`, the other
 # buses carry loads.
@@ -92,7 +92,7 @@ ok || error("Network validation failed: $msg")
 # ## Solve the reference power flow
 #
 # This solved state plays the role of the (in reality unknown) *true*
-# system state — the measurements are derived from it, and the estimator
+# system state: the measurements are derived from it, and the estimator
 # never sees it directly.
 
 ite_pf, status_pf = runpf!(net, 40, 1e-10, 0)
@@ -103,7 +103,7 @@ println("reference power flow converged in $ite_pf iterations")
 #
 # `measurementStdDevs` defines one standard deviation per measurement kind
 # (pu for voltages, MW/MVar for powers); `setMeasurementsFromPF!` then
-# reads the solved state and creates the measurements — with Gaussian noise
+# reads the solved state and creates the measurements, with Gaussian noise
 # of exactly those standard deviations, seeded for reproducibility. This is
 # the standard trick for exercising an estimator: the truth is known, so
 # the residuals are meaningful.
@@ -137,7 +137,7 @@ println("measurements: ", gobs.n_measurements, ", states: ", gobs.n_states)
 # `runse!` iterates the WLS normal equations from a flat start. With
 # `updateNet = true` the estimated voltages are written back into the
 # network, so the usual result printers show the *estimated* state. The
-# objective $J$ is the weighted sum of squared residuals — for healthy
+# objective $J$ is the weighted sum of squared residuals; for healthy
 # Gaussian noise it should land near the number of redundant measurements.
 
 se = runse!(
@@ -156,8 +156,8 @@ println("objective J:  ", round(se.objectiveJ; digits = 2))
 #
 # `SEResult.voltages` holds the estimated complex bus voltage per bus
 # index. Because the measurements carried only mild noise, the estimate
-# reproduces the reference power flow closely — magnitudes to a few
-# 1e-3 pu — and the slack reference `B1` comes back at 1.02 pu / 0°. The
+# reproduces the reference power flow closely (magnitudes to a few
+# 1e-3 pu), and the slack reference `B1` comes back at 1.02 pu / 0°. The
 # degrees of freedom (`dof`) and the 3σ check on $J$ summarize whether the
 # residuals are consistent with the declared measurement accuracies.
 
@@ -171,7 +171,7 @@ end
 
 # ## Building measurement sets manually
 #
-# Real measurement sets are not derived from a solved power flow — they
+# Real measurement sets are not derived from a solved power flow; they
 # arrive from SCADA one by one. The `add*Measurement!` helpers resolve bus
 # and branch references for you, so assembling a set works just like
 # building the network. A deliberately sparse set like this one is a good
@@ -197,11 +197,11 @@ println("measurements: ", obs.n_measurements, ", states: ", obs.n_states)
 # - New to Sparlectra? The
 #   [introduction notebook](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_intro.ipynb)
 #   builds a network from scratch step by step, directly in Colab.
-# - [Slack types and short-circuit currents](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_slack_short_circuit.ipynb) —
+# - [Slack types and short-circuit currents](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_slack_short_circuit.ipynb):
 #   the grid-connection notebook: slack representations and IEC 60909-0
 #   fault currents.
-# - [State Estimation](https://welthulk.github.io/Sparlectra.jl/state_estimation/) —
+# - [State Estimation](https://welthulk.github.io/Sparlectra.jl/state_estimation/):
 #   the full documentation: observability analysis, PMU angle measurements,
 #   bad-data handling, and the measurement model.
-# - [State-Estimation Configuration](https://welthulk.github.io/Sparlectra.jl/state_estimation_configuration/) —
+# - [State-Estimation Configuration](https://welthulk.github.io/Sparlectra.jl/state_estimation_configuration/):
 #   every `state_estimation.*` configuration key.

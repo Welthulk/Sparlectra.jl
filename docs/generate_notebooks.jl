@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # file: docs/generate_notebooks.jl
-# purpose: regenerate the committed Literate.jl outputs from docs/lit/*.jl —
+# purpose: regenerate the committed Literate.jl outputs from docs/lit/*.jl:
 #          a Documenter page under docs/src/generated/ and a Colab-ready
 #          notebook under notebooks/. Run manually after editing a source:
 #          `julia --project=docs docs/generate_notebooks.jl`. Both outputs
@@ -43,7 +43,7 @@ Rewrite the generated notebook's `metadata.kernelspec` to the generic
 selects its Julia runtime automatically when the notebook is opened.
 Literate stamps the kernelspec (and `language_info.version`) with the local
 Julia version, which would both confuse Colab's kernel matching and churn
-the committed file on every local Julia upgrade — `language_info` is
+the committed file on every local Julia upgrade; `language_info` is
 therefore normalized to a version-free form as well. The rewritten file is
 re-parsed to prove it is still valid JSON.
 """

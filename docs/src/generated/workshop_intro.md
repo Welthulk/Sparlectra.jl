@@ -8,8 +8,8 @@ EditURL = "../../lit/workshop_intro.jl"
 
 [Sparlectra.jl](https://github.com/Welthulk/Sparlectra.jl) is a Julia
 framework for AC power-flow and state-estimation studies. In this guided
-first tour you build a small 110 kV network from scratch — seven buses in a
-ring with two cross-connections — validate it, solve it with the built-in
+first tour you build a small 110 kV network from scratch (seven buses in a
+ring with two cross-connections), validate it, solve it with the built-in
 Newton-Raphson solver, and read the classical result tables. No input files
 are needed; everything is created programmatically.
 
@@ -38,7 +38,7 @@ net = Net(name = "workshop_intro", baseMVA = 100.0)
 
 `addBus!` creates the electrical nodes. `vn_kV` is the nominal voltage,
 `vm_pu` and `va_deg` provide the starting voltage for the solver. Note that
-the operational bus type (slack / PV / PQ) is *not* declared here — it is
+the operational bus type (slack / PV / PQ) is *not* declared here: it is
 derived later from the devices attached to each bus.
 
 ````@example workshop_intro
@@ -71,7 +71,7 @@ addPIModelACLine!(net = net, fromBus = "B3", toBus = "B6", r_pu = 0.009, x_pu = 
 
 Devices that consume or produce power are added with `addProsumer!`. The
 external network injection at `B1` references its own bus as the voltage
-reference — that makes `B1` the slack bus, which balances the network and
+reference: that makes `B1` the slack bus, which balances the network and
 fixes voltage magnitude and angle. The generator at `B3` feeds in 60 MW,
 and the remaining buses carry loads (`p` in MW, `q` in MVar).
 
@@ -115,7 +115,7 @@ end
 
 `calcNetLosses!` computes the branch flows and total network losses from
 the converged voltages; `printACPFlowResults` prints the classical result
-tables — bus voltages, branch flows, and losses.
+tables: bus voltages, branch flows, and losses.
 
 ````@example workshop_intro
 if erg == 0
@@ -131,15 +131,15 @@ end
 You have built, validated, and solved a complete network in a few dozen
 lines. From here:
 
-- [Slack types and short-circuit currents](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_slack_short_circuit.ipynb) —
+- [Slack types and short-circuit currents](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_slack_short_circuit.ipynb):
   the follow-up notebook, directly in Colab: ideal slack vs. external-grid
   source vs. distributed slack, plus IEC 60909-0 fault currents.
-- [Workshop](https://welthulk.github.io/Sparlectra.jl/workshop/) — file
+- [Workshop](https://welthulk.github.io/Sparlectra.jl/workshop/): file
   import and export, transformers, bus links, tap control, and Q-limits.
-- [State estimation from noisy measurements](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_state_estimation.ipynb) —
+- [State estimation from noisy measurements](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_state_estimation.ipynb):
   the estimation notebook, directly in Colab: reconstruct the network
   state from redundant, noisy measurements instead of a load
   specification.
-- [Feature Matrix](https://welthulk.github.io/Sparlectra.jl/feature_matrix/) —
+- [Feature Matrix](https://welthulk.github.io/Sparlectra.jl/feature_matrix/):
   what Sparlectra covers, at a glance.
 
