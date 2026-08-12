@@ -232,6 +232,18 @@ function _merge_distributed_slack_diagnostics(status_build, performance_profile,
     performance_profile[:distributed_slack_lambda_p_mw] = lambda_mw
   end
 
+  # Persist the participant table (bus name resolved here, dP in MW) so
+  # reporting code such as printACPFlowResults can show per-bus participation
+  # after the solve; the transient DistributedSlackState is gone by then.
+  participation_row = NamedTuple{(:bus, :bus_idx, :gen_index, :alpha, :dp_mw, :pg_mw),Tuple{String,Int,Int,Float64,Float64,Float64}}
+  participation = participation_row[]
+  if active
+    for r in dslack.gen_table
+      ps = net.prosumpsVec[r.gen_index]
+      push!(participation, (bus = getCompName(net.nodeVec[r.bus].comp), bus_idx = r.bus, gen_index = r.gen_index, alpha = r.alpha, dp_mw = r.alpha * lambda_mw, pg_mw = something(ps.pVal, 0.0)))
+    end
+  end
+
   extras = (
     distributed_slack_active = active,
     distributed_slack_mode = active ? dslack.mode : :none,
@@ -241,6 +253,7 @@ function _merge_distributed_slack_diagnostics(status_build, performance_profile,
     distributed_slack_alpha_sum = alpha_sum,
     distributed_slack_dropped = dropped,
     distributed_slack_p_limit_violations = p_limit_violations,
+    distributed_slack_participation = participation,
   )
   return merge(status_build, (status = (; status_build.status..., extras...),))
 end

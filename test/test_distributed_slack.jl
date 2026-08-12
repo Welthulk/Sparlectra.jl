@@ -139,6 +139,19 @@ function run_distributed_slack_tests()
       # Total distributed correction matches the classically REF-absorbed
       # imbalance up to the (small) loss shift of the changed dispatch.
       @test isapprox(sum(resid), resid0[1]; atol = 2e-3)
+
+      # Reporting surface: the participant table is persisted in the status
+      # and rendered by the classical result print (bus, alpha, dP).
+      part = st.distributed_slack_participation
+      @test length(part) == 2
+      @test isapprox(sort([r.alpha for r in part]), [0.4, 0.6]; atol = 1e-12)
+      @test isapprox(sum(r.dp_mw for r in part), st.distributed_slack_lambda_p_mw; atol = 1e-9)
+      buf = IOBuffer()
+      Sparlectra._print_distributed_slack_participation(buf, net2)
+      out = String(take!(buf))
+      @test occursin("Distributed slack: mode pg_weighted", out)
+      @test occursin("B2", out)
+      @test occursin("Pg eff [MW]", out)
     end
 
     @testset "equivalence: all weight on the REF bus reproduces classical" begin
@@ -223,6 +236,11 @@ function run_distributed_slack_tests()
       @test last(_dslack_vmva(net6)) == va0
       st = Sparlectra.rectangular_pf_status(net6)
       @test st.distributed_slack_active == false
+      @test isempty(st.distributed_slack_participation)
+      # inactive run: the print block stays silent
+      buf = IOBuffer()
+      Sparlectra._print_distributed_slack_participation(buf, net6)
+      @test isempty(String(take!(buf)))
     end
 
     @testset "Q-limit interaction: PV→PQ switch keeps participation" begin

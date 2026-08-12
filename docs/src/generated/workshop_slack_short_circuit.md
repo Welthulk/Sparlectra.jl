@@ -148,11 +148,16 @@ variant degenerates to Scenario 1.
 
 ## Scenario 3: distributed slack
 
-The single ideal slack is an accounting fiction: in reality, primary
-control spreads an imbalance over many machines. With
-`distributed_slack_enabled` the active-power mismatch is distributed over
-the generators, here weighted by their scheduled output
-(`:pg_weighted`: 60 MW ⇒ α = 0.6 for `B3`, 40 MW ⇒ α = 0.4 for `B6`).
+Scenarios 1 and 2 answer the question "who supplies the missing power?"
+the same way: one dedicated bus absorbs the whole imbalance plus all
+losses. That is an accounting fiction; in a real interconnection,
+primary control raises the output of many machines at once. The
+distributed slack models exactly that. The solver gains one unknown, the
+total correction `lambda_P`, and every participating generator covers
+its share `alpha * lambda_P`. The weights come from the scheduled output
+(`:pg_weighted`: 60 MW gives α = 0.6 for `B3`, 40 MW gives α = 0.4 for
+`B6`). The reference bus keeps the angle reference and the reactive
+balance, but its active import drops to zero.
 
 ````@example workshop_slack_short_circuit
 net_dist = build_grid(:slack)
@@ -160,14 +165,33 @@ etime, ite = solve!(net_dist; distributed_slack_enabled = true, distributed_slac
 printACPFlowResults(net_dist, etime, ite, 1e-8)
 ````
 
-Reading aid: compare with Scenario 1. The slack row at `B1` no longer
-imports any active power (empty `Pg`; only the *reactive* balance stays
-with the reference bus). The ≈ 61.5 MW of imbalance plus losses moved
-into the network: sum the printed branch flows around each generator bus
-and you find `B3` injecting ≈ 97 MW and `B6` ≈ 65 MW, their schedule
-plus the α-shares 0.6/0.4. Note that the `Pg` column still shows the
-60/40 MW *schedule*; the applied correction is part of the solver's
-structured status and of the compact summary printed at `verbose ≥ 1`.
+Reading aid: the **"Distributed slack"** block in the result header shows
+the participation directly: `B3` picks up α = 0.6 of the 61.5 MW
+correction (60 to 96.9 MW effective), `B6` the remaining α = 0.4 (40 to
+64.6 MW). The `Pg` column of the bus table keeps showing the *schedule*,
+and the slack row at `B1` no longer imports active power; only the
+reactive balance stays with the reference bus. The branch flows confirm
+the pickup: summing them around `B3` yields exactly the effective 96.9 MW.
+
+## The three scenarios side by side
+
+Same network, three grid-connection models. The losses differ because the
+flow pattern differs: in Scenario 3 the extra power from `B3` and `B6`
+travels longer paths through the ring, and in Scenario 2 the feeder
+branch itself dissipates a share. (A negative Q loss means the line
+charging produces more reactive power than the flows consume.)
+
+````@example workshop_slack_short_circuit
+println(rpad("scenario", 20), lpad("Vm(B1) pu", 11), lpad("P loss MW", 11), lpad("Q loss MVAr", 13), "   balanced by")
+for (label, net, by) in (
+  ("ideal slack", net_slack, "slack bus B1"),
+  ("non-ideal source", net_source, "hidden source bus"),
+  ("distributed slack", net_dist, "B3 (α=0.6) + B6 (α=0.4)"),
+)
+  pl, ql = getTotalLosses(net = net)
+  println(rpad(label, 20), lpad(string(round(get_bus_vm_pu(net, "B1"); digits = 4)), 11), lpad(string(round(pl; digits = 3)), 11), lpad(string(round(ql; digits = 3)), 13), "   ", by)
+end
+````
 
 ## Short-circuit currents (IEC 60909-0)
 

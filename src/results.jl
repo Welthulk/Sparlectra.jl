@@ -563,6 +563,39 @@ function _print_wrong_branch_summary_line(io::IO, net::Net)
   return nothing
 end
 
+"""
+    _print_distributed_slack_participation(io, net)
+
+One compact block inside the classical result header when the last solve ran
+with the distributed slack active: mode, the solved `lambda_P`, and one row
+per participating generator with its bus, alpha share, correction `dP`, and
+the scheduled versus effective output. The bus table's `Pg` column keeps
+showing the schedule (the correction lives in the solver state, not in the
+prosumer), so this block is the place where the participation becomes
+visible. Prints nothing when the feature was off or the net has no
+rectangular solver status.
+"""
+function _print_distributed_slack_participation(io::IO, net::Net)
+  rect_status = rectangular_pf_status(net)
+  _rect_status_get(rect_status, :distributed_slack_active, false) || return nothing
+
+  mode = _rect_status_get(rect_status, :distributed_slack_mode, :none)
+  lambda_mw = _rect_status_get(rect_status, :distributed_slack_lambda_p_mw, 0.0)
+  rows = _rect_status_get(rect_status, :distributed_slack_participation, nothing)
+
+  @printf(io, "Distributed slack: mode %s, lambda_P = %+.3f MW (imbalance + losses picked up by %d participant(s))\n", String(mode), lambda_mw, rows === nothing ? 0 : length(rows))
+  rows === nothing && return nothing
+  busNameByIdx = _bus_name_by_idx(net)
+  @printf(io, "  %-20s %8s %12s %16s %16s\n", "Bus", "alpha", "dP [MW]", "Pg sched [MW]", "Pg eff [MW]")
+  for r in rows
+    # user-facing bus name where available; the stored comp name is the
+    # fallback for rows persisted by older solves
+    name = hasproperty(r, :bus_idx) ? _effective_bus_name(busNameByIdx, net, r.bus_idx) : r.bus
+    @printf(io, "  %-20s %8.4f %+12.3f %16.3f %16.3f\n", name, r.alpha, r.dp_mw, r.pg_mw, r.pg_mw + r.dp_mw)
+  end
+  return nothing
+end
+
 function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFile::Bool = false, path::String = ""; converged::Bool = true, solver::Symbol = :NR, solver_time_s::Union{Nothing,Float64} = nothing, result_mode::Symbol = :classic, max_rows::Union{Nothing,Int} = nothing)
   if toFile
     filename = strip("result_$(net.name).txt")
@@ -660,6 +693,7 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
   @printf(io, "PV→PQ events   :%10d\n", num_iterative_events)
 
   _print_wrong_branch_summary_line(io, net)
+  _print_distributed_slack_participation(io, net)
 
   println(io, "\n", totalLosses)
   if result_mode === :summary
