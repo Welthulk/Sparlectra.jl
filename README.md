@@ -18,13 +18,14 @@ Every stage of the numerical pipeline is documented and accessible at runtime �
 
 ## Try it in your browser
 
-No installation required — the workshop notebooks run on Google Colab:
+No installation required, the workshop notebooks run on Google Colab:
 
 | Notebook | Open |
 |---|---|
-| **Introduction** — build a 7-bus network from scratch, solve the power flow, read the result tables | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_intro.ipynb) |
-| **Slack types and short circuit** — ideal slack vs. external-grid source vs. distributed slack on one 8-bus network, plus IEC 60909-0 fault currents | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_slack_short_circuit.ipynb) |
-| **State estimation** — derive a noisy measurement set from a reference power flow, check observability, run the WLS estimator, and see when observability breaks down | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_state_estimation.ipynb) |
+| **Workshop tour, all in one session**: install once, warm up once, then all chapters (power flow, slack types and short circuit, OLTC tap control, Q(U) control, remote voltage control, state estimation) | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour.ipynb) |
+| **Introduction**: build a 7-bus network from scratch, solve the power flow, read the result tables | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_intro.ipynb) |
+| **Slack types and short circuit**: ideal slack vs. external-grid source vs. distributed slack on one 8-bus network, plus IEC 60909-0 fault currents | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_slack_short_circuit.ipynb) |
+| **State estimation**: derive a noisy measurement set from a reference power flow, check observability, run the WLS estimator, and see when observability breaks down | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_state_estimation.ipynb) |
 
 The notebooks are generated from the Literate.jl sources in [docs/lit/](docs/lit/); the same content is on the documentation pages under [Notebooks](https://welthulk.github.io/Sparlectra.jl/generated/workshop_intro/).
 

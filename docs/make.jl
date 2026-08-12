@@ -75,6 +75,7 @@ makedocs(
     # not rebuilt here — edit docs/lit/*.jl and regenerate). New notebooks get
     # a nav entry inside this group.
     "Notebooks" => [
+      "Workshop Tour (all in one)" => "generated/workshop_tour.md",
       "Try it in your Browser" => "generated/workshop_intro.md",
       "Slack Types and Short Circuit" => "generated/workshop_slack_short_circuit.md",
       "State Estimation Basics" => "generated/workshop_state_estimation.md",
