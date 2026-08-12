@@ -1,14 +1,13 @@
-# Version 0.9.3 — unreleased
+# Version 0.9.3 — 2026-08-12
 
-**Distributed slack participation in the classical result print.** When a
-run solves with `power_flow.distributed_slack`, `printACPFlowResults` now
-shows who balances the network: one row per participating generator with
-bus, alpha share, correction `dP`, and scheduled versus effective output.
-The bus table's `Pg` column keeps showing the schedule, so this block is
-where the applied correction becomes visible. The table is also part of
-the structured solver status (`distributed_slack_participation`), see
+## Improvements
+
+**Distributed slack participation in the classical result print.** With
+`power_flow.distributed_slack`, `printACPFlowResults` now lists each
+participating generator with bus, alpha share, correction `dP`, and
+scheduled vs. effective output. Also available in the solver status as
+`distributed_slack_participation`, see
 [Power-Flow Configuration](powerflow_configuration.md).
-
 
 # Version 0.9.2 — 2026-08-11
 

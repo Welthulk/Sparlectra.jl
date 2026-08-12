@@ -183,6 +183,20 @@ net_dist = build_grid(:slack)
 etime, ite = solve!(net_dist; distributed_slack_enabled = true, distributed_slack_p_mode = :pg_weighted)
 printACPFlowResults(net_dist, etime, ite, 1e-8)
 
+# The three connection models side by side. The losses differ because the
+# flow pattern differs; a negative Q loss means the line charging produces
+# more reactive power than the flows consume.
+
+println(rpad("scenario", 20), lpad("Vm(B1) pu", 11), lpad("P loss MW", 11), lpad("Q loss MVAr", 13), "   balanced by")
+for (label, net, by) in (
+  ("ideal slack", net_slack, "slack bus B1"),
+  ("non-ideal source", net_source, "hidden source bus"),
+  ("distributed slack", net_dist, "B3 (α=0.6) + B6 (α=0.4)"),
+)
+  pl, ql = getTotalLosses(net = net)
+  println(rpad(label, 20), lpad(string(round(get_bus_vm_pu(net, "B1"); digits = 4)), 11), lpad(string(round(pl; digits = 3)), 11), lpad(string(round(ql; digits = 3)), 13), "   ", by)
+end
+
 # **Short circuit**: the feeder data declared in `addExternalGrid!` feeds
 # `runShortCircuit!` directly. $I_k''$ is largest at the connection bus and
 # decays with electrical distance.
