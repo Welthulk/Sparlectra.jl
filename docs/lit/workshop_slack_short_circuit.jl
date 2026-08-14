@@ -175,13 +175,14 @@ net_dist = build_grid(:slack)
 etime, ite = solve!(net_dist; distributed_slack_enabled = true, distributed_slack_p_mode = :pg_weighted)
 printACPFlowResults(net_dist, etime, ite, 1e-8)
 
-# Reading aid: the **"Distributed slack"** block in the result header lists
-# the participation directly: `B3` picks up α = 0.6 of the 61.5 MW
-# correction (60 to 96.9 MW effective), `B6` the remaining α = 0.4 (40 to
-# 64.6 MW). The `Pg` column of the bus table keeps showing the *schedule*,
-# and the slack row at `B1` no longer imports active power; only the
-# reactive balance stays with the reference bus. The branch flows confirm
-# the pickup: summing them around `B3` yields exactly the effective 96.9 MW.
+# Reading aid: the bus table now carries the participation directly in the
+# columns **`dSl alpha`** and **`Pg eff MW`**: `B3` picks up α = 0.6 of the
+# 61.5 MW correction (60 to 96.9 MW effective), `B6` the remaining α = 0.4
+# (40 to 64.6 MW). The `Pg` column keeps showing the *schedule*, the header
+# line above the table sums it up (mode and `lambda_P`), and the slack row
+# at `B1` no longer imports active power; only the reactive balance stays
+# with the reference bus. The branch flows confirm the pickup: summing them
+# around `B3` yields exactly the effective 96.9 MW.
 #
 # ## The three scenarios side by side
 #

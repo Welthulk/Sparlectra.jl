@@ -140,18 +140,29 @@ function run_distributed_slack_tests()
       # imbalance up to the (small) loss shift of the changed dispatch.
       @test isapprox(sum(resid), resid0[1]; atol = 2e-3)
 
-      # Reporting surface: the participant table is persisted in the status
-      # and rendered by the classical result print (bus, alpha, dP).
+      # Reporting surface: the participant table is persisted in the status,
+      # summarized as one header line, and rendered as per-bus columns of
+      # the classical bus table (dSl alpha, Pg eff MW).
       part = st.distributed_slack_participation
       @test length(part) == 2
       @test isapprox(sort([r.alpha for r in part]), [0.4, 0.6]; atol = 1e-12)
       @test isapprox(sum(r.dp_mw for r in part), st.distributed_slack_lambda_p_mw; atol = 1e-9)
       buf = IOBuffer()
-      Sparlectra._print_distributed_slack_participation(buf, net2)
+      Sparlectra._print_distributed_slack_summary_line(buf, net2)
       out = String(take!(buf))
       @test occursin("Distributed slack: mode pg_weighted", out)
-      @test occursin("B2", out)
-      @test occursin("Pg eff [MW]", out)
+      active, shares = Sparlectra._distributed_slack_bus_shares(net2)
+      @test active
+      @test length(shares) == 2
+      @test isapprox(sort([a for (a, _) in values(shares)]), [0.4, 0.6]; atol = 1e-12)
+      # full render: the bus table carries the participation columns
+      calcNetLosses!(net2)
+      tmp = mktempdir()
+      printACPFlowResults(net2, 0.1, 5, 1e-8, true, tmp)
+      rendered = read(joinpath(tmp, "result_$(net2.name).txt"), String)
+      @test occursin("dSl alpha", rendered)
+      @test occursin("Pg eff MW", rendered)
+      @test occursin("0.6000", rendered)
     end
 
     @testset "equivalence: all weight on the REF bus reproduces classical" begin
@@ -237,10 +248,13 @@ function run_distributed_slack_tests()
       st = Sparlectra.rectangular_pf_status(net6)
       @test st.distributed_slack_active == false
       @test isempty(st.distributed_slack_participation)
-      # inactive run: the print block stays silent
+      # inactive run: summary line silent, no participation columns
       buf = IOBuffer()
-      Sparlectra._print_distributed_slack_participation(buf, net6)
+      Sparlectra._print_distributed_slack_summary_line(buf, net6)
       @test isempty(String(take!(buf)))
+      active, shares = Sparlectra._distributed_slack_bus_shares(net6)
+      @test !active
+      @test isempty(shares)
     end
 
     @testset "Q-limit interaction: PV→PQ switch keeps participation" begin

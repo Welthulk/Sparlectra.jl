@@ -363,6 +363,7 @@ export
   clearMachineControllers!,
   addShuntVoltageControl!,                # Add an SVC-style shunt voltage controller.
   addSeriesReactanceControl!,             # Add a TCSC-like series-reactance controller on a line branch (#297).
+  printSeriesReactanceControllerSummary,  # Engineering-style summary of the registered TCSC controllers.
   clearShuntControllers!,
   controllableElements,                   # Generic controllable-element records of all registered controllers.
   buildMachineControllerReportRows,

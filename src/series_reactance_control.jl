@@ -295,6 +295,39 @@ function control_report_rows(ctrl::SeriesReactanceControl, net::Net, ::AbstractC
   )]
 end
 
+"""
+    printSeriesReactanceControllerSummary(io::IO, net::Net)
+    printSeriesReactanceControllerSummary(net::Net)
+
+Engineering-style summary of the registered series-reactance (TCSC)
+controllers, one block per controller: branch and direction, target versus
+achieved flow, reactance and range, deadband, and the honest limit flags.
+Prints nothing when no series controller is registered; the classical
+result print calls it unconditionally, mirroring the machine controller
+summary.
+"""
+function printSeriesReactanceControllerSummary(io::IO, net::Net)
+  ctrls = _series_reactance_controllers(net)
+  isempty(ctrls) && return
+  println(io, "\nSeries Reactance Control Summary (TCSC)")
+  println(io, "---------------------------------------")
+  for c in ctrls
+    println(io, control_name(c), " (branch ", c.fromBus, " -> ", c.toBus, ")")
+    println(io, "  target P           : ", @sprintf("%.3f MW", c.p_target_mw))
+    println(io, "  achieved P         : ", c.achieved_p_mw === nothing ? "-" : @sprintf("%.3f MW", c.achieved_p_mw))
+    println(io, "  series reactance   : ", @sprintf("%.5f pu", c.x_pu))
+    println(io, "  reactance range    : ", @sprintf("%.5f .. %.5f pu", c.x_min_pu, c.x_max_pu))
+    println(io, "  deadband           : ", @sprintf("%.3f MW", c.deadband_p_mw))
+    println(io, "  converged          : ", c.converged)
+    println(io, "  at_limit           : ", c.at_limit)
+    println(io, "  status             : ", c.status)
+    if !c.converged && c.at_limit
+      println(io, "  status detail      : target not reached, reactance clamped at the range end (fixed compensated line)")
+    end
+  end
+end
+printSeriesReactanceControllerSummary(net::Net) = printSeriesReactanceControllerSummary(stdout, net)
+
 function control_trace_rows(ctrl::SeriesReactanceControl, net::Net, ::AbstractControlState, context)
   return [(
     outer_iteration = context.outer_iteration,

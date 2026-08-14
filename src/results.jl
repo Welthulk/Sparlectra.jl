@@ -564,36 +564,47 @@ function _print_wrong_branch_summary_line(io::IO, net::Net)
 end
 
 """
-    _print_distributed_slack_participation(io, net)
+    _print_distributed_slack_summary_line(io, net)
 
-One compact block inside the classical result header when the last solve ran
-with the distributed slack active: mode, the solved `lambda_P`, and one row
-per participating generator with its bus, alpha share, correction `dP`, and
-the scheduled versus effective output. The bus table's `Pg` column keeps
-showing the schedule (the correction lives in the solver state, not in the
-prosumer), so this block is the place where the participation becomes
-visible. Prints nothing when the feature was off or the net has no
-rectangular solver status.
+One line inside the classical result header when the last solve ran with
+the distributed slack active: mode, the solved `lambda_P`, and the
+participant count. The per-bus participation itself lives in the bus table
+(columns `dSl alpha` and `Pg eff MW`, see
+[`_distributed_slack_bus_shares`](@ref)). Prints nothing when the feature
+was off or the net has no rectangular solver status.
 """
-function _print_distributed_slack_participation(io::IO, net::Net)
+function _print_distributed_slack_summary_line(io::IO, net::Net)
   rect_status = rectangular_pf_status(net)
   _rect_status_get(rect_status, :distributed_slack_active, false) || return nothing
-
   mode = _rect_status_get(rect_status, :distributed_slack_mode, :none)
   lambda_mw = _rect_status_get(rect_status, :distributed_slack_lambda_p_mw, 0.0)
   rows = _rect_status_get(rect_status, :distributed_slack_participation, nothing)
-
-  @printf(io, "Distributed slack: mode %s, lambda_P = %+.3f MW (imbalance + losses picked up by %d participant(s))\n", String(mode), lambda_mw, rows === nothing ? 0 : length(rows))
-  rows === nothing && return nothing
-  busNameByIdx = _bus_name_by_idx(net)
-  @printf(io, "  %-20s %8s %12s %16s %16s\n", "Bus", "alpha", "dP [MW]", "Pg sched [MW]", "Pg eff [MW]")
-  for r in rows
-    # user-facing bus name where available; the stored comp name is the
-    # fallback for rows persisted by older solves
-    name = hasproperty(r, :bus_idx) ? _effective_bus_name(busNameByIdx, net, r.bus_idx) : r.bus
-    @printf(io, "  %-20s %8.4f %+12.3f %16.3f %16.3f\n", name, r.alpha, r.dp_mw, r.pg_mw, r.pg_mw + r.dp_mw)
-  end
+  @printf(io, "Distributed slack: mode %s, lambda_P = %+.3f MW (imbalance + losses picked up by %d participant(s), see the dSl alpha column)\n", String(mode), lambda_mw, rows === nothing ? 0 : length(rows))
   return nothing
+end
+
+"""
+    _distributed_slack_bus_shares(net) -> (active::Bool, shares::Dict{Int,NTuple{2,Float64}})
+
+Per-bus distributed-slack participation for the bus table of the classical
+result print: bus index to `(alpha, dp_mw)`, aggregated over the
+generators of a bus (the persisted participation table is per generator).
+`active` is false when the last solve ran without the distributed slack or
+no solver status exists; the table then omits the participation columns.
+"""
+function _distributed_slack_bus_shares(net::Net)
+  rect_status = rectangular_pf_status(net)
+  active = _rect_status_get(rect_status, :distributed_slack_active, false)
+  shares = Dict{Int,NTuple{2,Float64}}()
+  active || return (false, shares)
+  rows = _rect_status_get(rect_status, :distributed_slack_participation, nothing)
+  rows === nothing && return (true, shares)
+  for r in rows
+    hasproperty(r, :bus_idx) || continue
+    a, d = get(shares, r.bus_idx, (0.0, 0.0))
+    shares[r.bus_idx] = (a + r.alpha, d + r.dp_mw)
+  end
+  return (true, shares)
 end
 
 function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFile::Bool = false, path::String = ""; converged::Bool = true, solver::Symbol = :NR, solver_time_s::Union{Nothing,Float64} = nothing, result_mode::Symbol = :classic, max_rows::Union{Nothing,Int} = nothing)
@@ -649,7 +660,8 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
   end
   shunts = length(net.shuntVec)
   tap_ctrl_count, qu_ctrl_count, pu_ctrl_count = _controller_counts(net)
-  total_ctrl_count = tap_ctrl_count + qu_ctrl_count + pu_ctrl_count
+  series_ctrl_count = count(c -> c.enabled, _series_reactance_controllers(net))
+  total_ctrl_count = tap_ctrl_count + qu_ctrl_count + pu_ctrl_count + series_ctrl_count
 
   @printf(io, "Date           :%20s\n", current_date)
   @printf(io, "Iterations     :%10d\n", ite)
@@ -685,7 +697,13 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
   @printf(io, "Generators     :%10d\n", gens)
   @printf(io, "Loads          :%10d\n", loads)
   @printf(io, "Shunts         :%10d\n", shunts)
-  @printf(io, "Controllers    :%10d (Tap: %d, Q(U): %d, P(U): %d)\n", total_ctrl_count, tap_ctrl_count, qu_ctrl_count, pu_ctrl_count)
+  # the TCSC count appears only when present, so nets without a series
+  # controller keep the byte-stable line for tools and parsers
+  if series_ctrl_count > 0
+    @printf(io, "Controllers    :%10d (Tap: %d, Q(U): %d, P(U): %d, TCSC: %d)\n", total_ctrl_count, tap_ctrl_count, qu_ctrl_count, pu_ctrl_count, series_ctrl_count)
+  else
+    @printf(io, "Controllers    :%10d (Tap: %d, Q(U): %d, P(U): %d)\n", total_ctrl_count, tap_ctrl_count, qu_ctrl_count, pu_ctrl_count)
+  end
 
   num_guarded_locks = length(net.qLimitEvents)
   num_iterative_events = length(net.qLimitLog)
@@ -693,7 +711,7 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
   @printf(io, "PV→PQ events   :%10d\n", num_iterative_events)
 
   _print_wrong_branch_summary_line(io, net)
-  _print_distributed_slack_participation(io, net)
+  _print_distributed_slack_summary_line(io, net)
 
   println(io, "\n", totalLosses)
   if result_mode === :summary
@@ -705,10 +723,16 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
 
   flowResults, _ = formatBranchResults(net; max_rows = max_rows)
   tap_target_vm = _tap_voltage_target_by_bus(net)
-  @printf(io, "==========================================================================================================================================================================================================================\n")
+  # distributed-slack participation columns appear only when the last solve
+  # ran with the feature active; plain runs keep the byte-stable table
+  ds_active, ds_shares = _distributed_slack_bus_shares(net)
+  ds_hdr = ds_active ? @sprintf(" %-10s | %-10s |", "dSl alpha", "Pg eff MW") : ""
+  ds_pad_eq = ds_active ? repeat("=", 26) : ""
+  ds_pad_dash = ds_active ? repeat("-", 26) : ""
+  @printf(io, "==========================================================================================================================================================================================================================%s\n", ds_pad_eq)
   @printf(
     io,
-    "| %-5s | %-20s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-12s | %-12s |\n",
+    "| %-5s | %-20s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-12s | %-12s |%s\n",
     "Nr",
     "Bus",
     "Vn [kV]",
@@ -723,9 +747,10 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
     "Qs [MVar]",
     "Type",
     "Control",
-    "Tap Vm tgt"
+    "Tap Vm tgt",
+    ds_hdr
   )
-  @printf(io, "==========================================================================================================================================================================================================================\n")
+  @printf(io, "==========================================================================================================================================================================================================================%s\n", ds_pad_eq)
 
   pGS = qGS = pLS = qLS = ""
   tpGS = tqGS = tpLS = tqLS = 0.0
@@ -791,14 +816,22 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
     end
 
     tap_target_str = haskey(tap_target_vm, n.busIdx) ? @sprintf("%.4f", tap_target_vm[n.busIdx]) : ""
-    @printf(io, "| %-5d | %-20s | %-10.1f | %-10.3f | %-10.3f | %-10.3f | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-12s | %-12s |\n", n.busIdx, _fitColumn(nodeName, 20), n.comp.cVN, v, n._vm_pu, n._va_deg, pGS, qGS, pLS, qLS, pShunt_str, qShunt_str, typeStr, controlStr, tap_target_str)
+    ds_cells = ""
+    if ds_active
+      share = get(ds_shares, n.busIdx, nothing)
+      # Pg eff = scheduled bus generation plus the alpha share of lambda_P;
+      # the Pg column keeps the schedule, this column shows what the
+      # participant actually delivers
+      ds_cells = share === nothing ? @sprintf(" %-10s | %-10s |", "", "") : @sprintf(" %-10s | %-10s |", @sprintf("%.4f", share[1]), @sprintf("%.3f", p_gen + share[2]))
+    end
+    @printf(io, "| %-5d | %-20s | %-10.1f | %-10.3f | %-10.3f | %-10.3f | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-12s | %-12s |%s\n", n.busIdx, _fitColumn(nodeName, 20), n.comp.cVN, v, n._vm_pu, n._va_deg, pGS, qGS, pLS, qLS, pShunt_str, qShunt_str, typeStr, controlStr, tap_target_str, ds_cells)
     shown_bus_rows += 1
   end
   if !isnothing(max_rows) && length(nodes) > shown_bus_rows
     @printf(io, "Bus results shown: %d / %d\n", shown_bus_rows, length(nodes))
   end
 
-  @printf(io, "--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n")
+  @printf(io, "--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------%s\n", ds_pad_dash)
   println(io, flowResults)
 
   if !isempty(net.linkVec)
@@ -831,6 +864,8 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
   # Machine remote voltage controllers print only when present — the "none"
   # marker above stays the deterministic anchor for parsers.
   printMachineControllerSummary(io, net)
+  # Series-reactance (TCSC) controllers print only when present as well.
+  printSeriesReactanceControllerSummary(io, net)
   if toFile
     close(io)
     #println("Results have been written to $(joinpath(path, filename))")

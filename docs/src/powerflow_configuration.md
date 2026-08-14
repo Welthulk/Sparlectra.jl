@@ -273,10 +273,12 @@ next to the wrong-branch metadata (`distributed_slack_active`,
 `distributed_slack_p_limit_violations`, and the per-participant table
 `distributed_slack_participation` with bus, alpha share, correction `dP`
 and scheduled output) and, at `verbose > 0`, prints a
-compact summary with the top participants. `printACPFlowResults` renders
-the participant table as a block in the classical result header, so the
-applied correction is visible next to the bus table (whose `Pg` column
-keeps showing the schedule). In island-wise runs each island
+compact summary with the top participants. `printACPFlowResults` shows the
+participation inside the bus table: the columns `dSl alpha` and
+`Pg eff MW` appear on participating buses when the run solved with the
+distributed slack (the `Pg` column keeps showing the schedule), and a
+one-line summary with mode and `lambda_P` sits in the result header. In
+island-wise runs each island
 solves with its own independent `lambda_P`; the per-island values appear in
 the per-island solver statuses.
 
