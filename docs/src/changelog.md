@@ -1,3 +1,20 @@
+# Version 0.9.4 - unreleased
+
+## Highlights
+
+**Series compensation (TCSC).** A variable series reactance on a line
+branch, steered onto a branch active-power target:
+`addSeriesReactanceControl!` registers a `SeriesReactanceControl` in the
+outer control loop, which moves `x_pu` within its range via secant
+iteration and reports honest `at_limit` when the target is out of reach.
+Prevents the classic loop-network surprise that flow follows reactance
+instead of intent. Transformer branches are rejected (taps own transformer
+reactance), degenerate ranges are refused by the resonance guard. Theory
+in [Series Compensation (TCSC)](series_compensation.md), runnable example
+`exp_tcsc_series_reactance_control.jl`, Colab notebook
+[TCSC Flow Steering](generated/workshop_series_compensation.md). (#297)
+
+
 # Version 0.9.3 — 2026-08-12
 
 ## Improvements

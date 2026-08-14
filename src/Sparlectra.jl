@@ -362,6 +362,7 @@ export
   addMachineVoltageControl!,              # Add a machine remote voltage controller.
   clearMachineControllers!,
   addShuntVoltageControl!,                # Add an SVC-style shunt voltage controller.
+  addSeriesReactanceControl!,             # Add a TCSC-like series-reactance controller on a line branch (#297).
   clearShuntControllers!,
   controllableElements,                   # Generic controllable-element records of all registered controllers.
   buildMachineControllerReportRows,
@@ -587,6 +588,7 @@ include("synthetic_grids.jl")
 include("tap_control.jl")
 include("machine_control.jl")
 include("shunt_control.jl")
+include("series_reactance_control.jl")
 include("busdata.jl")
 include("MatpowerIO.jl")
 include("createnet_powermat.jl")

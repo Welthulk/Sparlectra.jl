@@ -67,6 +67,7 @@ makedocs(
     "Voltage Dependent Control" => "voltage_dependent_control.md",
     "Control Framework" => "control_framework.md",
     "Remote Voltage Control" => "remote_voltage_control.md",
+    "Series Compensation (TCSC)" => "series_compensation.md",
     "Short-Circuit Compendium" => "short_circuit.md",
     "Examples Overview" => "examples_overview.md",
     "State Estimation" => "state_estimation.md",
@@ -79,6 +80,7 @@ makedocs(
       "Try it in your Browser" => "generated/workshop_intro.md",
       "Slack Types and Short Circuit" => "generated/workshop_slack_short_circuit.md",
       "State Estimation Basics" => "generated/workshop_state_estimation.md",
+      "TCSC Flow Steering" => "generated/workshop_series_compensation.md",
     ],
     "Reference" => [
       "Overview" => "reference.md",

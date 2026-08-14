@@ -46,6 +46,7 @@ summary at the end): `run_powerflow_suite.jl`, `run_others_suite.jl`,
 | `tap_control_schraeg_two_controllers.jl` | Split combined regulation: independent voltage/ratio and power/phase controllers on one unit | others |
 | `exp_pst_reactance_coupling.jl` | PST control with tap-dependent series reactance X(α) vs. a static-reactance run | others |
 | `exp_svc_shunt_voltage_control.jl` | SVC variable-shunt voltage control (in-range + honest at_limit) with the controllable-element view | others |
+| `exp_tcsc_series_reactance_control.jl` | TCSC series-reactance control steering a loop-network flow split onto a branch target ([theory](series_compensation.md)), incl. honest `at_limit` | others |
 | `exp_auto_slack_selection.jl` | Automatic slack selection (`power_flow.auto_slack` / `ensureSlack!`) when a case registers no voltage reference | others |
 | `exp_ac_rescue_dc_fallback.jl` | Non-convergence handling: `power_flow.rescue` strategy ladder plus `power_flow.dc.fallback` standalone-DC result | others |
 | `exp_cgmes_import_analysis.jl` | `analyzeCGMES` report naming the missing declared dependency of an incomplete CGMES delivery | others |

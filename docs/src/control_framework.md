@@ -147,6 +147,7 @@ purely reporting, no control behavior attached. Current devices:
 | Combined regulation | `:tap_ratio_and_phase_shift` | both |
 | Machine remote voltage control | `:machine_q_mvar` | `:bus_voltage` |
 | SVC (variable shunt) | `:shunt_bs_mvar` | `:bus_voltage` |
+| TCSC (series compensation) | `:series_x_pu` | `:branch_active_power` |
 
 ## SVC: variable-shunt voltage control
 
@@ -162,6 +163,20 @@ on the same bus is rejected, and a transformer tap controller regulating
 the same bus voltage triggers the cross-type warning. `runShortCircuit!`
 and the power flow see the SVC only through its shunt stamp — disabled or
 absent controllers leave results untouched.
+
+## TCSC: series-reactance flow control
+
+`addSeriesReactanceControl!(net; fromBus, toBus, p_target_mw, x_min_pu,
+x_max_pu, ...)` adds a TCSC-like controller on a line branch: the outer
+loop moves the branch series reactance `x_pu` within its range via secant
+iteration until the branch carries the active-power target (measured in
+the registered from to to direction). Every accepted step changes one
+branch stamp; the Y-bus is re-stamped before the next solve. At a range
+end the branch behaves as a fixed compensated line, reported honestly as
+`at_limit`. Transformer branches are rejected (taps own transformer
+reactance), and ranges whose series impedance magnitude enters the
+resonance guard `eps_z` are refused at registration. Theory and device
+mapping: [Series Compensation (TCSC)](series_compensation.md).
 
 ## Trace rows (transformer control)
 
