@@ -1,4 +1,4 @@
-# Version 0.9.4 - unreleased
+# Version 0.9.4 - 2026-08-14
 
 ## Highlights
 
