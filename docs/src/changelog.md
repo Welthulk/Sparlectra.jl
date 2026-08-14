@@ -3,16 +3,17 @@
 ## Highlights
 
 **Series compensation (TCSC).** `addSeriesReactanceControl!` steers a line
-branch onto an active-power target by moving `x_pu` within its range
-(secant outer loop, honest `at_limit` when the target is out of reach).
-Transformer branches and degenerate reactance ranges are rejected. Theory
-in [Series Compensation (TCSC)](series_compensation.md), example
+branch onto an active-power target by moving `x_pu` within its range,
+with honest `at_limit` when the target is out of reach. Shows up in the
+result tables like the tap controllers. Theory in
+[Series Compensation (TCSC)](series_compensation.md), example
 `exp_tcsc_series_reactance_control.jl`, Colab notebook
 [TCSC Flow Steering](generated/workshop_series_compensation.md). (#297)
 
 ## Improvements
 
-- **Distributed slack participation moved into the bus table.
+- Distributed slack participation moved into the bus table (`dSl alpha`,
+  `Pg eff MW`) instead of a separate block.
 
 
 # Version 0.9.3 — 2026-08-12

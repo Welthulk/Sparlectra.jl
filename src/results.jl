@@ -453,6 +453,21 @@ function formatBranchResults(net::Net; max_rows::Union{Nothing,Int} = nothing)
   for row in buildTapControllerReportRows(net)
     ctrl_by_branch[row.transformer_branch_index] = row
   end
+  # series-reactance (TCSC) controllers reuse the same Ctrl/P_tgt/Ctrl-status
+  # columns; TapPos stays "-" (no discrete positions), the moved reactance is
+  # in the TCSC summary block of the Control footer
+  for c in _series_reactance_controllers(net)
+    haskey(ctrl_by_branch, c.branch_idx) && continue
+    ctrl_by_branch[c.branch_idx] = (
+      control_type = :TCSC,
+      p_target_mw = c.p_target_mw,
+      ratio_tap_position = missing,
+      phase_tap_position = missing,
+      converged = c.converged,
+      at_limit = c.at_limit,
+      status = c.status,
+    )
+  end
 
   ctrl_status = function (row)
     if row.converged

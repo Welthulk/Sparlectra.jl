@@ -153,6 +153,21 @@ function run_series_reactance_control_tests()
       @test_throws ErrorException addSeriesReactanceControl!(net4; fromBus = "A", toBus = "M2", p_target_mw = 20.0, x_min_pu = 0.02, x_max_pu = 0.30)
     end
 
+    @testset "classic print: count line, branch table, footer summary" begin
+      net = _build_loop_net()
+      addSeriesReactanceControl!(net; fromBus = "A", toBus = "M2", p_target_mw = 35.0, x_min_pu = 0.02, x_max_pu = 0.30)
+      result = run_sparlectra(net = net)
+      @test result.final_converged
+      tmp = mktempdir()
+      printACPFlowResults(net, 0.1, result.iterations, 1e-8, true, tmp)
+      rendered = read(joinpath(tmp, "result_$(net.name).txt"), String)
+      @test occursin("TCSC: 1", rendered)
+      @test occursin("Series Reactance Control Summary (TCSC)", rendered)
+      # the controlled branch row carries type, target, and status in the
+      # generic controller columns of the branch table
+      @test occursin(r"TCSC\s+\|\s+35\.000\s+\|\s+-\s+\|\s+converged", rendered)
+    end
+
     @testset "deadband: met target moves nothing" begin
       net = _build_loop_net()
       # baseline corridor-2 flow is about 27.0 MW; a target inside the
