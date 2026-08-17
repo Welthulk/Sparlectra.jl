@@ -1513,6 +1513,7 @@ $(progress_html)<form method=\"post\" action=\"/webui/fast-start/build\">
 <ul>
   <li>The image takes effect on the <strong>next start</strong> of the Web UI (start_webui.sh / start_webui.bat pick it up automatically).</li>
   <li>With a valid image active, the start skips the JIT warm-up: the PowerFlow page is usable after a few seconds.</li>
+  <li>The build itself runs full power-flow and short-circuit cases (including one real service run of each), so the first click on Run or Short circuit after a fast start does not pay compilation either.</li>
   <li>Package or Julia updates make the image stale; the launchers then start without it and this page offers a rebuild.</li>
   <li><code>SPARLECTRA_NO_SYSIMAGE=1</code> skips the image unconditionally (debugging escape hatch).</li>
 </ul>

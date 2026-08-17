@@ -31,5 +31,25 @@ jobs:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
       - uses: julia-actions/cache@v3
+      # Cache the MATPOWER case files the test suite fetches on demand.
+      # raw.githubusercontent.com rate-limits shared runner IPs, which made
+      # runs fail transiently; after one populated run the tests no longer
+      # download at all. Saved via cache/save with always() so a red test
+      # step still keeps successfully downloaded cases for the next run.
+      # The key hashes the test sources: when tests start using additional
+      # cases, a new cache is saved, seeded from the previous one via the
+      # restore-keys prefix match.
+      - uses: actions/cache/restore@v4
+        id: matpower-cases
+        with:
+          path: data/mpower
+          key: matpower-cases-${{ hashFiles('test/**') }}
+          restore-keys: |
+            matpower-cases-
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
+      - uses: actions/cache/save@v4
+        if: always() && steps.matpower-cases.outputs.cache-hit != 'true'
+        with:
+          path: data/mpower
+          key: matpower-cases-${{ hashFiles('test/**') }}

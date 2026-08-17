@@ -36,7 +36,7 @@ function _log(msg::AbstractString)
   flush(stdout)
 end
 
-function _prepare_build_env(pkgm::Module)
+function _prepare_build_env(pkgm::Module)::Bool
   _log("activating shared build environment @$(_BUILD_ENV)")
   Base.invokelatest(pkgm.activate, _BUILD_ENV; shared = true)
   if Base.find_package("PackageCompiler") === nothing
@@ -54,8 +54,25 @@ function _prepare_build_env(pkgm::Module)
     _log("adding the released Sparlectra package")
     Base.invokelatest(pkgm.add, "Sparlectra")
   end
+  # When the user has AnalyticLoadFlow installed (APSLF solver), it must be
+  # part of the image: start_webui.jl loads it at startup, and loading a
+  # package AFTER the sysimage invalidates precompiled methods inside the
+  # image — the first run then silently recompiles them (measured 36 s
+  # instead of 1 s on case118). find_package sees the user's default
+  # environment through the load path, so this detects a plain
+  # `Pkg.add("AnalyticLoadFlow")` installation.
+  with_alf = Base.find_package("AnalyticLoadFlow") !== nothing
+  if with_alf
+    _log("AnalyticLoadFlow detected; baking it into the image as well")
+    try
+      Base.invokelatest(pkgm.add, "AnalyticLoadFlow")
+    catch err
+      _log("could not add AnalyticLoadFlow to the build environment ($(sprint(showerror, err))); building without it — the first run after start will recompile invalidated methods")
+      with_alf = false
+    end
+  end
   Base.invokelatest(pkgm.instantiate)
-  return nothing
+  return with_alf
 end
 
 function main()
@@ -82,7 +99,7 @@ function main()
 
   @eval using Pkg
   pkgm = Base.invokelatest(getfield, @__MODULE__, :Pkg)
-  _prepare_build_env(pkgm)
+  with_alf = _prepare_build_env(pkgm)
   @eval using PackageCompiler
   @eval using Sparlectra
   # same world-age pattern as above: both modules were loaded inside this
@@ -95,14 +112,29 @@ function main()
   manifest = Base.invokelatest(getglobal(spar, :webui_sysimage_manifest_path))
   mkpath(dirname(img))
 
-  # pre-fetch the workload case so the child process never needs the network
+  # pre-fetch the workload cases so the child process never needs the
+  # network: case14.m for the power-flow service run, the MiniGrid CGMES
+  # delivery for the short-circuit service run. A failed MiniGrid fetch
+  # only costs that trace (the workload logs the gap), never the build.
   _log("ensuring case14.m is cached for the workload")
   Base.invokelatest(getglobal(spar, :ensure_casefile), "case14.m")
+  case_cache = Base.invokelatest(getglobal(spar, :default_webui_case_cache_dir))
+  if !isfile(joinpath(case_cache, "cgmes_minigrid.zip"))
+    _log("fetching the MiniGrid CGMES delivery for the short-circuit workload")
+    try
+      cgmes = getglobal(spar, :CGMESImporter)
+      Base.invokelatest(getglobal(cgmes, :fetchCGMESTestSet), "minigrid"; outdir = case_cache)
+    catch err
+      _log("MiniGrid fetch failed ($(sprint(showerror, err))); the short-circuit service path will not be traced")
+    end
+  end
 
+  packages = with_alf ? ["Sparlectra", "AnalyticLoadFlow"] : ["Sparlectra"]
   workload = joinpath(@__DIR__, "sysimage_workload.jl")
   _log("building sysimage (this typically takes 10 to 20 minutes)...")
   _log("target: $(img)")
-  Base.invokelatest(getglobal(pc, :create_sysimage), ["Sparlectra"]; sysimage_path = img, precompile_execution_file = workload)
+  _log("packages: $(join(packages, ", "))")
+  Base.invokelatest(getglobal(pc, :create_sysimage), packages; sysimage_path = img, precompile_execution_file = workload)
 
   Base.invokelatest(getglobal(spar, :write_sysimage_meta), meta_path; manifest_path = manifest)
   elapsed = round((time() - started) / 60; digits = 1)

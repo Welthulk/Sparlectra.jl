@@ -6,10 +6,12 @@
 bakes Sparlectra into a PackageCompiler system image below the Web UI user
 root; the start scripts pick it up automatically when it matches the running
 Julia and the checkout `Manifest.toml`, and otherwise warn once and start
-normally. The new **Fast start** page in the Web UI shows the image state
-and triggers a background build with a `sysimage_build.log` artifact.
-Bypass with `SPARLECTRA_NO_SYSIMAGE=1`. See
-[Fast Start (Sysimage)](fast_start.md).
+normally. The build workload runs full power-flow and short-circuit cases
+(MATPOWER and CGMES) so the first real run after a fast start is fast too,
+and it bakes AnalyticLoadFlow into the image when installed. The new
+**Fast start** page in the Web UI shows the image state and triggers a
+background build with a `sysimage_build.log` artifact. Bypass with
+`SPARLECTRA_NO_SYSIMAGE=1`. See [Fast Start (Sysimage)](fast_start.md).
 
 ## Improvements
 
@@ -18,6 +20,9 @@ Bypass with `SPARLECTRA_NO_SYSIMAGE=1`. See
   results are now memoized per file state and prewarmed at startup.
 - With an active fast-start image the launcher skips the JIT warm-up; the
   Web UI is usable a few seconds after the start.
+- MATPOWER case downloads retry transient failures with a short backoff and
+  can no longer leave a truncated file behind that later runs would treat
+  as a valid cached case.
 
 
 # Version 0.9.4 - 2026-08-14

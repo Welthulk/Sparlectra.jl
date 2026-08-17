@@ -222,7 +222,15 @@ function create_state_estimation_passive_transit_net()::Net
   addACLine!(net = net, fromBus = "Transit", toBus = "Load", length = 8.0, r = 0.02, x = 0.2, c_nf_per_km = 0.0, tanδ = 0.0)
 
   addProsumer!(net = net, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "Slack")
-  addProsumer!(net = net, busName = "Load", type = "ENERGYCONSUMER", p = 40.0, q = 15.0)
+  # Moderate loading keeps the flat start inside the Gauss-Newton basin of
+  # attraction for the undamped WLS iteration. At 40 MW the flat start lies
+  # outside the basin and the iteration wanders chaotically before it locks
+  # in; the count then depends on BLAS/LAPACK rounding details (45 on Julia
+  # 1.12.6, 69 on 1.12.7 locally, >100 on the CI runner). At 10 MW it
+  # converges in 5 iterations on every platform tested. The passive-bus and
+  # observability properties this fixture exists for do not depend on the
+  # loading level.
+  addProsumer!(net = net, busName = "Load", type = "ENERGYCONSUMER", p = 10.0, q = 4.0)
 
   return net
 end
@@ -271,12 +279,10 @@ function test_state_estimation_passive_bus_zero_injection_helpers()::Bool
     @test isempty(zi_obs.numerical_critical_measurement_indices)
     @test isempty(zi_obs.structural_critical_measurement_indices)
 
-    # Iteration budget 100: the zero-injection weights (sigma 1e-6, weight
-    # 1e12) make the flat-start normal equations ill-conditioned, so the
-    # iteration count is sensitive to BLAS/LAPACK details. Julia 1.12.6
-    # converged within 45 iterations, Julia 1.12.7 needs 69 (measured
-    # 2026-08-17); the solution itself stays exact (J = 0, noise-free set).
-    result = runse!(deepcopy(net); maxIte = 100, tol = 1e-8, flatstart = true, jacEps = 1e-6, updateNet = false)
+    # 5 iterations measured; budget 20 leaves margin without accepting a
+    # chaotic wander (see the fixture comment on the loading level). The
+    # solution stays exact (J = 0, noise-free measurement set).
+    result = runse!(deepcopy(net); maxIte = 20, tol = 1e-8, flatstart = true, jacEps = 1e-6, updateNet = false)
     @test result.converged == true
     @test result.objectiveJ < 1e-6
     @test result.residualNorm < 1e-6

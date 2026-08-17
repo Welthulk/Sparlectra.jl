@@ -21,9 +21,23 @@ From a checkout, either:
 - **Script:** `julia tools/build_sysimage.jl`. The build runs in the shared
   environment `@sparlectra-sysimage-build` (PackageCompiler is installed
   there, never into the package `Project.toml`), executes the workload in
-  `tools/sysimage_workload.jl` (Web UI start with the reserved warm-up, one
-  `case14` run, clean shutdown; no run-history entries), and writes the
-  image below the Web UI user root.
+  `tools/sysimage_workload.jl`, and writes the image below the Web UI user
+  root. The workload covers the paths a session actually hits: Web UI start
+  with the reserved warm-up, the PowerFlow form render, one full MATPOWER
+  power-flow service run (`case14`), plus a CGMES power-flow run and a
+  CGMES short-circuit run on the MiniGrid delivery (fetched once into the
+  regular case cache if missing) so the CGMES import chain, the
+  CGMES-specific power-flow branch, and the short-circuit pipeline are all
+  compiled into the image; then a clean shutdown. No run-history entries
+  are created.
+
+When AnalyticLoadFlow (the APSLF solver) is installed, the build detects it
+and bakes it into the image as well. This is not only about the APSLF paths:
+`start_webui.jl` loads AnalyticLoadFlow at startup, and any package loaded
+*after* the sysimage invalidates precompiled methods inside the image — the
+first run then silently recompiles them (measured: 36 s instead of 1 s for
+the first `case118` service run). With the package inside the image the
+startup load is a no-op for compilation.
 - **Web UI:** the **Fast start** page (navigation bar) shows the current
   image state and offers a **Build fast-start image** button. The build
   runs as a separate Julia process; the Web UI stays usable, the progress

@@ -17,17 +17,46 @@
 #          (tools/build_sysimage.jl). Exercises the interactive paths beyond
 #          the shipped PrecompileTools workload: Web UI start with the
 #          reserved warm-up machinery (no run-history entries), one page
-#          request through the real socket handler, one run_sparlectra call
-#          on case14, then a clean shutdown. Never run this file directly;
-#          PackageCompiler executes it in a child process during the build.
+#          request through the real socket handler, one full power-flow
+#          service run, one full short-circuit service run (CGMES MiniGrid),
+#          one run_sparlectra call on case14, then a clean shutdown. Never
+#          run this file directly; PackageCompiler executes it in a child
+#          process during the build.
 
 using Sparlectra
 using Sockets
+
+# Load AnalyticLoadFlow exactly like start_webui.jl does when it is
+# installed. This matters beyond the APSLF paths themselves: a package
+# loaded AFTER the sysimage invalidates precompiled methods inside the
+# image, and the first run then recompiles them (measured: 36 s instead of
+# 1 s for the first case118 service run). Loading it during the build means
+# the image is compiled in the post-AnalyticLoadFlow method world, so the
+# runtime load becomes a no-op for compilation.
+if Base.find_package("AnalyticLoadFlow") !== nothing
+  @eval using AnalyticLoadFlow
+end
 
 # nonstandard ports so a Web UI the maintainer has open on 8080 does not
 # make the build silently skip the server paths; the first free candidate
 # wins (a REPL session may hold an earlier workload port)
 const _WORKLOAD_PORTS = 8091:8097
+
+# One service run into a throwaway output root; config_file and output_root
+# are filled in here so call sites only state what differs. Failures are
+# logged, not fatal: a workload gap costs first-click latency, not the build.
+function _workload_service_run(request::Dict{String,Any}; label::String)
+  mktempdir() do outdir
+    request["config_file"] = Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH
+    request["output_root"] = outdir
+    result = start_powerflow_run(request)
+    status = String(get(result, "status", ""))
+    status == "failed" && @warn "sysimage workload: $(label) service run failed" message = get(result, "message", "?")
+    run_id = get(result, "run_id", nothing)
+    run_id === nothing || get_powerflow_result(String(run_id))
+  end
+  return nothing
+end
 
 function _workload_request(port::Int, target::String)
   sock = Sockets.connect("127.0.0.1", port)
@@ -68,22 +97,43 @@ function run_workload()
     # after a fast start pays it as JIT time (measured ~11 s)
     _workload_request(port, "/powerflow")
     _workload_request(port, "/webui/fast-start")
-    # one real service run through the full pipeline (case resolution,
+    # real service runs through the full pipeline (case resolution,
     # artifact writers for the CSVs, result.json, run index, result
     # lookup): the first real Web UI run otherwise pays exactly this
-    # compilation. The temp output root keeps the user's run history clean.
-    mktempdir() do outdir
-      request = Dict{String,Any}(
-        "casefile" => Sparlectra.ensure_casefile("case14.m"),
-        "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH,
-        "output_root" => outdir,
+    # compilation. Temp output roots keep the user's run history clean.
+    # 1. MATPOWER power flow (case14).
+    _workload_service_run(Dict{String,Any}(
+      "casefile" => Sparlectra.ensure_casefile("case14.m"),
+      "config_overrides" => Dict{String,Any}("output.logfile_results" => "off", "benchmark.enabled" => false),
+    ); label = "matpower power-flow")
+    # The MiniGrid CGMES delivery covers the CGMES compile paths (ZIP and
+    # XML reading, profile harvesting, net construction, control mapping).
+    # It comes from the same case cache the Web UI uses; when absent it is
+    # fetched once through the existing registry (network). A failed fetch
+    # only skips these traces, never the build, but the gap is logged so
+    # the coverage loss is visible.
+    sc_zip = joinpath(server.runtime.case_directory, "cgmes_minigrid.zip")
+    if !isfile(sc_zip)
+      sc_zip = try
+        Sparlectra.CGMESImporter.fetchCGMESTestSet("minigrid"; outdir = server.runtime.case_directory)
+      catch err
+        @warn "sysimage workload: CGMES service paths NOT traced (MiniGrid fetch failed; the first CGMES run will pay JIT)" exception = err
+        nothing
+      end
+    end
+    if sc_zip !== nothing
+      # 2. CGMES power flow: import plus the PF branch specific to CGMES
+      # nets (tap/machine control mapping, SV handling).
+      _workload_service_run(Dict{String,Any}(
+        "casefile" => sc_zip,
         "config_overrides" => Dict{String,Any}("output.logfile_results" => "off", "benchmark.enabled" => false),
-      )
-      service_result = start_powerflow_run(request)
-      status = String(get(service_result, "status", ""))
-      status == "failed" && @warn "sysimage workload: service run failed" message = get(service_result, "message", "?")
-      run_id = get(service_result, "run_id", nothing)
-      run_id === nothing || get_powerflow_result(String(run_id))
+      ); label = "cgmes power-flow")
+      # 3. CGMES short circuit: Z-bus solve for both c-factor cases, CSV
+      # artifact writers, coverage report (the Short-circuit button path).
+      _workload_service_run(Dict{String,Any}(
+        "casefile" => sc_zip,
+        "short_circuit_mode" => true,
+      ); label = "cgmes short-circuit")
     end
     # one full interactive solve (the case is pre-fetched by the build
     # script); logfile output stays off so the workload never leaves

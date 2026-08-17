@@ -41,6 +41,9 @@ basename(path::AbstractString) = splitpath(path)[end]
 
 Downloads a MATPOWER *.m file from `url` into `outdir` (unless already present).
 Returns the local path to the downloaded file.
+
+Transient failures (raw.githubusercontent.com rate limits hit CI runners
+regularly) are retried three times with a short backoff before giving up.
 """
 function fetch_matpower_case(url::AbstractString, outdir::AbstractString; overwrite::Bool = false)::String
   mkpath(outdir)
@@ -52,8 +55,26 @@ function fetch_matpower_case(url::AbstractString, outdir::AbstractString; overwr
     return dst
   end
 
-  Downloads.download(url, dst)
-  return dst
+  # Download to a temp file and rename: a failed or interrupted attempt must
+  # never leave a truncated file at `dst`, because every later call would
+  # treat that partial file as a valid cached case.
+  tmp = dst * ".download"
+  backoffs = (2.0, 5.0)
+  attempts = length(backoffs) + 1
+  for attempt = 1:attempts
+    try
+      Downloads.download(url, tmp)
+      mv(tmp, dst; force = true)
+      return dst
+    catch err
+      rm(tmp; force = true)
+      err isa InterruptException && rethrow()
+      attempt == attempts && rethrow()
+      @warn "download failed, retrying" url attempt maxlog = 10
+      sleep(backoffs[attempt])
+    end
+  end
+  return dst # unreachable; loop either returns or rethrows
 end
 
 """
