@@ -24,9 +24,10 @@
 using Sparlectra
 using Sockets
 
-# nonstandard port so a Web UI the maintainer has open on 8080 does not make
-# the build silently skip the server paths
-const _WORKLOAD_PORT = 8091
+# nonstandard ports so a Web UI the maintainer has open on 8080 does not
+# make the build silently skip the server paths; the first free candidate
+# wins (a REPL session may hold an earlier workload port)
+const _WORKLOAD_PORTS = 8091:8097
 
 function _workload_request(port::Int, target::String)
   sock = Sockets.connect("127.0.0.1", port)
@@ -39,12 +40,24 @@ function _workload_request(port::Int, target::String)
 end
 
 function run_workload()
-  server = start_sparlectra_webui(open_browser = false, port = _WORKLOAD_PORT, warmup = true, warmup_store_result = false)
-  server === nothing && error("sysimage workload: port $(_WORKLOAD_PORT) is already serving a Sparlectra Web UI")
+  server = nothing
+  port = 0
+  for candidate in _WORKLOAD_PORTS
+    server = try
+      start_sparlectra_webui(open_browser = false, port = candidate, warmup = true, warmup_store_result = false)
+    catch err
+      err isa ArgumentError && occursin("already in use", sprint(showerror, err)) ? nothing : rethrow()
+    end
+    if server !== nothing
+      port = candidate
+      break
+    end
+  end
+  server === nothing && error("sysimage workload: no free port in $(_WORKLOAD_PORTS)")
   try
     # the warm-up waits for the first served page; request it through the
     # real socket path so the handler chain is part of the compile trace
-    _workload_request(_WORKLOAD_PORT, "/")
+    _workload_request(port, "/")
     deadline = time() + 180.0
     while server.runtime.warmup_state !== :done && time() < deadline
       sleep(0.2)
@@ -53,8 +66,25 @@ function run_workload()
     # after the warm-up the same route serves the real PowerFlow form; that
     # render path must be part of the trace, otherwise the first form view
     # after a fast start pays it as JIT time (measured ~11 s)
-    _workload_request(_WORKLOAD_PORT, "/powerflow")
-    _workload_request(_WORKLOAD_PORT, "/webui/fast-start")
+    _workload_request(port, "/powerflow")
+    _workload_request(port, "/webui/fast-start")
+    # one real service run through the full pipeline (case resolution,
+    # artifact writers for the CSVs, result.json, run index, result
+    # lookup): the first real Web UI run otherwise pays exactly this
+    # compilation. The temp output root keeps the user's run history clean.
+    mktempdir() do outdir
+      request = Dict{String,Any}(
+        "casefile" => Sparlectra.ensure_casefile("case14.m"),
+        "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH,
+        "output_root" => outdir,
+        "config_overrides" => Dict{String,Any}("output.logfile_results" => "off", "benchmark.enabled" => false),
+      )
+      service_result = start_powerflow_run(request)
+      status = String(get(service_result, "status", ""))
+      status == "failed" && @warn "sysimage workload: service run failed" message = get(service_result, "message", "?")
+      run_id = get(service_result, "run_id", nothing)
+      run_id === nothing || get_powerflow_result(String(run_id))
+    end
     # one full interactive solve (the case is pre-fetched by the build
     # script); logfile output stays off so the workload never leaves
     # run_case*.log files in examples/_out, regardless of any user
