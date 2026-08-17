@@ -26,19 +26,22 @@ const _REPO_ROOT = normpath(joinpath(@__DIR__, ".."))
 const _BUILD_ENV = "sparlectra-sysimage-build"
 const _DRY_RUN = ("--dry-run" in ARGS) || get(ENV, "SPARLECTRA_SYSIMAGE_DRY_RUN", "0") == "1"
 
-using Pkg
+# Pkg is deliberately NOT loaded at the top level: the dry-run path (used by
+# the test-suite smoke check) must work in environments whose load path has
+# no Pkg, such as the Pkg.test sandbox. The real build path loads Pkg inside
+# main() and resolves the module dynamically (Julia 1.12 world age).
 
 function _log(msg::AbstractString)
   println("[build_sysimage] ", msg)
   flush(stdout)
 end
 
-function _prepare_build_env()
+function _prepare_build_env(pkgm::Module)
   _log("activating shared build environment @$(_BUILD_ENV)")
-  Pkg.activate(_BUILD_ENV; shared = true)
+  Base.invokelatest(pkgm.activate, _BUILD_ENV; shared = true)
   if Base.find_package("PackageCompiler") === nothing
     _log("installing PackageCompiler into the build environment (one-time)")
-    Pkg.add("PackageCompiler")
+    Base.invokelatest(pkgm.add, "PackageCompiler")
   end
   # match how the script was invoked: from a checkout the repo itself is
   # developed into the build environment, otherwise the released package
@@ -46,12 +49,12 @@ function _prepare_build_env()
   in_checkout = isfile(project_file) && occursin("name = \"Sparlectra\"", read(project_file, String))
   if in_checkout
     _log("developing Sparlectra from $(_REPO_ROOT)")
-    Pkg.develop(path = _REPO_ROOT)
+    Base.invokelatest(pkgm.develop; path = _REPO_ROOT)
   else
     _log("adding the released Sparlectra package")
-    Pkg.add("Sparlectra")
+    Base.invokelatest(pkgm.add, "Sparlectra")
   end
-  Pkg.instantiate()
+  Base.invokelatest(pkgm.instantiate)
   return nothing
 end
 
@@ -77,7 +80,9 @@ function main()
     return nothing
   end
 
-  _prepare_build_env()
+  @eval using Pkg
+  pkgm = Base.invokelatest(getfield, @__MODULE__, :Pkg)
+  _prepare_build_env(pkgm)
   @eval using PackageCompiler
   @eval using Sparlectra
   # same world-age pattern as above: both modules were loaded inside this

@@ -339,11 +339,15 @@ function run_webui_fast_tests()
         response = Sparlectra.route_sparlectra_webui("POST", "/webui/fast-start/build"; output_root = root)
         @test response.status == 303
         @test Dict(response.headers)["Location"] == "/webui/fast-start"
-        # the status page renders the running state
+        # the status page renders the running state with a visible spinner
+        # and the elapsed time
         page = String(Sparlectra.route_sparlectra_webui("GET", "/webui/fast-start"; output_root = root).body)
         @test occursin("Fast start", page)
         @test occursin("build running", page)
         @test occursin("disabled", page)
+        @test occursin("warmup-spinner", page)
+        @test occursin("running for", page)
+        @test Sparlectra.sysimage_build_state().elapsed_seconds >= 0.0
         # wait for the fake build; the job finishes as completed
         ok = timedwait(() -> !Sparlectra.sysimage_build_state().running, 30.0) === :ok
         @test ok
@@ -369,6 +373,28 @@ function run_webui_fast_tests()
           Sparlectra._SYSIMAGE_BUILD_JOB[] = nothing
         end
       end
+    end
+
+    @testset "case-scan memo cache" begin
+      mktempdir() do dir
+        p = joinpath(dir, "SCAN.DAT")
+        write(p, _dtf_network_fixture())
+        @test Sparlectra._webui_classify_dat_content_cached(p) === :dtf_network_case
+        # second call answers from the (path, mtime, size) memo
+        @test Sparlectra._webui_classify_dat_content_cached(p) === :dtf_network_case
+        # a replaced file re-classifies (mtime resolution can be one second)
+        sleep(1.1)
+        write(p, _dtf_outage_fixture())
+        @test Sparlectra._webui_classify_dat_content_cached(p) === :dtf_outage_file
+        # the selector honors the refreshed classification
+        @test !Sparlectra._webui_is_user_selectable_case(p)
+      end
+    end
+
+    @testset "fast-start sysimage detection" begin
+      # the test process runs on the default system image, never on the
+      # fast-start image
+      @test Sparlectra.webui_sysimage_active() == false
     end
 
     @testset "fast-start build script dry run parses" begin

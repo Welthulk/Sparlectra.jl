@@ -50,6 +50,11 @@ function run_workload()
       sleep(0.2)
     end
     server.runtime.warmup_state === :done || @warn "sysimage workload: warm-up did not finish within 180 s; continuing with the paths compiled so far"
+    # after the warm-up the same route serves the real PowerFlow form; that
+    # render path must be part of the trace, otherwise the first form view
+    # after a fast start pays it as JIT time (measured ~11 s)
+    _workload_request(_WORKLOAD_PORT, "/powerflow")
+    _workload_request(_WORKLOAD_PORT, "/webui/fast-start")
     # one full interactive solve (the case is pre-fetched by the build
     # script); logfile output stays off so the workload never leaves
     # run_case*.log files in examples/_out, regardless of any user

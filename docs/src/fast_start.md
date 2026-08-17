@@ -32,11 +32,13 @@ From a checkout, either:
   `sysimage_build_finished` or `sysimage_build_failed`. One build at a
   time; the trigger is POST-only and loopback-only like every other route.
 
-Expect a build to take roughly 7 to 20 minutes and an image of a few
+Expect a build to take roughly 6 to 20 minutes and an image of a few
 hundred MB (reference measurement on a Linux workstation, Julia 1.12:
-7.1 minutes build time, 537 MB image; `start_webui.sh` reached the served
-PowerFlow page after 15 s with the image versus 45 s without). The image
-takes effect on the **next start**.
+6.5 minutes build time, 537 MB image). With the image the server is up
+after about 2 s and the warm-up is skipped; the first PowerFlow form view
+still pays a one-time scan of the case directory (prewarmed in the
+background, afterwards a few milliseconds per view). Without the image the
+same start took about 45 s. The image takes effect on the **next start**.
 
 ## Where the image lives
 
@@ -51,6 +53,15 @@ already holds runs, logs, configuration, and the MATPOWER cache:
 | macOS | `~/Library/Application Support/Sparlectra/WebUI/sysimage/` |
 | Windows | `%LOCALAPPDATA%\Sparlectra\WebUI\sysimage\` |
 
+Note that the user root follows the environment: a Flatpak-packaged IDE
+(for example VSCodium) sets its own `XDG_STATE_HOME`, so a build started
+from its integrated terminal lands under
+`~/.var/app/<app-id>/.local/state/...` while a plain terminal uses
+`~/.local/state/...`. If the launcher reports a missing image although one
+was built, check which of the two roots holds it and copy
+`sparlectra.<ext>` plus `sysimage_meta.toml` over, or rebuild from the
+environment you start from.
+
 ## Staleness rules
 
 `sysimage_meta.toml` is the validity contract: Sparlectra version, Julia
@@ -60,7 +71,10 @@ Julia version string and the manifest hash with plain shell tools before
 every start:
 
 - **Match:** the launcher appends `-J <image>` and prints one
-  `Fast start: using sysimage ...` line.
+  `Fast start: using sysimage ...` line. The start script then also skips
+  the JIT warm-up (its work is already compiled into the image), so the
+  PowerFlow page is usable after a few seconds instead of waiting for the
+  warm-up to finish.
 - **Mismatch or missing image:** the launcher prints one warning
   (`sysimage stale, starting without it; rebuild via
   tools/build_sysimage.jl`) and starts normally. A stale image never
@@ -70,6 +84,13 @@ Package updates (a changed `Manifest.toml`) and Julia updates therefore
 disable the image until the next rebuild; the Web UI page shows the exact
 mismatch reasons. There is no automatic rebuild by design: detect and warn
 only.
+
+One limitation applies to **development checkouts**: editing the Sparlectra
+source does not change `Manifest.toml`, so the launchers cannot detect that
+the image bakes an older code state. The started process then runs the
+image's code, not the edited files. After source changes, rebuild the image
+or start with `SPARLECTRA_NO_SYSIMAGE=1`; released installations are not
+affected (package updates always change the manifest).
 
 ## Escape hatch
 

@@ -24,6 +24,17 @@ function main()
   catch
     true
   end
+  # the warm-up exists to pay the JIT cost early; with the fast-start
+  # sysimage loaded that work is already compiled into the image, so the
+  # PowerFlow page can serve immediately (measured: page after ~2 s with
+  # the image versus ~15 s waiting for the warm-up to finish)
+  # isdefined guard: when running on a sysimage built from an older code
+  # state, the baked Sparlectra module may predate this helper; an outdated
+  # image must never break the start
+  if warmup && isdefined(Sparlectra, :webui_sysimage_active) && Base.invokelatest(Sparlectra.webui_sysimage_active)
+    @info "Fast-start sysimage active; skipping the Web UI warm-up (already compiled into the image)."
+    warmup = false
+  end
   server = Sparlectra.start_sparlectra_webui(open_browser = true, warmup = warmup)
   # nothing = a Sparlectra Web UI already runs on the port; it was opened in
   # the browser instead — there is no new server task to wait on.
@@ -41,7 +52,7 @@ function main()
   end
 end
 
-# getfield defers the binding lookup to call time: VS Code's inline eval runs
-# the whole file as one world age, where a direct `main` access would trigger
-# the Julia 1.12 "binding accessed before its definition world" warning.
-Base.invokelatest(getfield(@__MODULE__, :main))
+# VS Code's inline eval runs the whole file as one world age. Since Julia
+# 1.12.7 even a direct getfield counts as a binding access from the old
+# world, so the lookup itself must also go through invokelatest.
+Base.invokelatest(Base.invokelatest(getfield, @__MODULE__, :main))

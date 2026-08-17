@@ -1492,9 +1492,18 @@ function render_webui_fast_start(output_root::AbstractString)::String
     ""
   end
   log_html = isfile(webui_sysimage_build_log_path(output_root)) ? "<p><a href=\"/webui/fast-start/log\">Build log (sysimage_build.log)</a></p>" : ""
+  progress_html = ""
+  if build.running
+    minutes = floor(Int, build.elapsed_seconds / 60)
+    seconds = floor(Int, build.elapsed_seconds - 60 * minutes)
+    progress_html = """
+<div class=\"warmup-panel\"><span class=\"warmup-spinner\" aria-hidden=\"true\"></span>
+<p>Building the fast-start image, running for $(minutes) min $(seconds) s (typically 10 to 20 minutes in total). This page refreshes automatically until the build finishes; the Web UI stays usable meanwhile.</p></div>
+"""
+  end
   button_attrs = build.running ? " disabled" : ""
   build_form = """
-<form method=\"post\" action=\"/webui/fast-start/build\">
+$(progress_html)<form method=\"post\" action=\"/webui/fast-start/build\">
   <button type=\"submit\" class=\"button\"$(button_attrs)>Build fast-start image</button>
 </form>
 <p class=\"form-hint\">Building runs a separate Julia process (tools/build_sysimage.jl) and typically takes 10 to 20 minutes; the Web UI stays usable meanwhile.</p>
@@ -1503,6 +1512,7 @@ function render_webui_fast_start(output_root::AbstractString)::String
 <h2>Notes</h2>
 <ul>
   <li>The image takes effect on the <strong>next start</strong> of the Web UI (start_webui.sh / start_webui.bat pick it up automatically).</li>
+  <li>With a valid image active, the start skips the JIT warm-up: the PowerFlow page is usable after a few seconds.</li>
   <li>Package or Julia updates make the image stale; the launchers then start without it and this page offers a rebuild.</li>
   <li><code>SPARLECTRA_NO_SYSIMAGE=1</code> skips the image unconditionally (debugging escape hatch).</li>
 </ul>

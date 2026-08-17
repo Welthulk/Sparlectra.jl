@@ -139,6 +139,23 @@ const _SYSIMAGE_BUILD_JOB = Ref{Union{Nothing,Dict{String,Any}}}(nothing)
 webui_sysimage_build_log_path(output_root::AbstractString = default_webui_output_root())::String = joinpath(webui_sysimage_dir(output_root), "sysimage_build.log")
 
 """
+    webui_sysimage_active() -> Bool
+
+True when this process runs on the fast-start sysimage (the launcher passed
+`-J <user root>/sysimage/sparlectra.<ext>`). The start script uses this to
+skip the JIT warm-up, whose work the image already contains.
+"""
+function webui_sysimage_active()::Bool
+  img = try
+    unsafe_string(Base.JLOptions().image_file)
+  catch
+    return false
+  end
+  isempty(img) && return false
+  return abspath(img) == abspath(webui_sysimage_path())
+end
+
+"""
     sysimage_build_state() -> NamedTuple
 
 State of the background fast-start build for the Web UI page: `status`
@@ -148,9 +165,10 @@ finish timestamps of the most recent build in this server session.
 function sysimage_build_state()
   return lock(_SYSIMAGE_BUILD_LOCK) do
     job = _SYSIMAGE_BUILD_JOB[]
-    job === nothing && return (status = :idle, running = false, started_at = "", finished_at = "")
+    job === nothing && return (status = :idle, running = false, started_at = "", finished_at = "", elapsed_seconds = 0.0)
     status = Symbol(job["status"])
-    (status = status, running = status === :running, started_at = String(get(job, "started_at", "")), finished_at = String(get(job, "finished_at", "")))
+    elapsed = status === :running ? time() - Float64(get(job, "started_epoch", time())) : 0.0
+    (status = status, running = status === :running, started_at = String(get(job, "started_at", "")), finished_at = String(get(job, "finished_at", "")), elapsed_seconds = elapsed)
   end
 end
 
@@ -180,7 +198,7 @@ function start_sysimage_build!(output_root::AbstractString = default_webui_outpu
     julia_bin = joinpath(Sys.BINDIR, Base.julia_exename())
     cmd = _test_command === nothing ? Cmd([julia_bin, "--startup-file=no", script]) : _test_command
     process = run(pipeline(cmd; stdout = log_path, stderr = log_path); wait = false)
-    new_job = Dict{String,Any}("status" => "running", "started_at" => Dates.format(Dates.now(), "yyyy-mm-dd HH:MM:SS"), "finished_at" => "", "log_path" => log_path, "process" => process)
+    new_job = Dict{String,Any}("status" => "running", "started_at" => Dates.format(Dates.now(), "yyyy-mm-dd HH:MM:SS"), "started_epoch" => time(), "finished_at" => "", "log_path" => log_path, "process" => process)
     _SYSIMAGE_BUILD_JOB[] = new_job
     record_webui_operation!(operation_log, "sysimage_build_started"; log = basename(log_path))
     @async begin

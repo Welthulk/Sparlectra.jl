@@ -11,6 +11,14 @@ and triggers a background build with a `sysimage_build.log` artifact.
 Bypass with `SPARLECTRA_NO_SYSIMAGE=1`. See
 [Fast Start (Sysimage)](fast_start.md).
 
+## Improvements
+
+- The PowerFlow form no longer re-classifies every file of the case cache
+  on each render (large CGMES ZIPs made that seconds per page view);
+  results are now memoized per file state and prewarmed at startup.
+- With an active fast-start image the launcher skips the JIT warm-up; the
+  Web UI is usable a few seconds after the start.
+
 
 # Version 0.9.4 - 2026-08-14
 

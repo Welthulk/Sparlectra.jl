@@ -729,6 +729,22 @@ function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Inte
   end
   url_host = host_string == "::1" ? "[::1]" : host_string
   url = "http://$(url_host):$(port)/powerflow"
+  # Pre-warm the case-selector scan in the background: the first form render
+  # otherwise pays the content classification of the whole case directory
+  # (large CGMES ZIPs make that seconds). The memo cache in forms.jl keeps
+  # every later render fast; failures stay silent, startup must not depend
+  # on the cache directory being readable.
+  @async try
+    # short delay so the cooperative scheduler returns control to the
+    # startup path first: the server banner and the browser open within a
+    # couple of seconds, and the one-time scan then runs in the background
+    # (or inside the first form request, whichever comes first; the memo
+    # lock shares the per-file results between the two)
+    sleep(1.0)
+    _webui_casefile_options_in_directory(paths.case_directory)
+    _webui_for002_reference_options_in_directory(paths.case_directory)
+  catch
+  end
   browser_monitor_task = nothing
   if effective_warmup
     @async try

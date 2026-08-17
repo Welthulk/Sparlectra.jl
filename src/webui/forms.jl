@@ -249,6 +249,39 @@ to startup warm-up code by explicit path only. Generated Julia cache artifacts
 are also hidden from the selector; users can still enter an explicit path in the
 manual case field when they intentionally want to run such a file.
 """
+# Memoization for the per-file content checks of the case selector: the ZIP
+# boundary-set detection and the DAT role classification read file content,
+# and the form re-scans the whole case directory on every render (measured
+# ~10 s per render over a 59-file cache with large CGMES ZIPs). Results are
+# keyed by (absolute path, mtime, size); a replaced or edited file is
+# re-classified, deleted files age out via the key check on the next hit.
+const _WEBUI_CASE_SCAN_LOCK = ReentrantLock()
+const _WEBUI_CASE_SCAN_CACHE = Dict{String,Tuple{Float64,Int64,Any}}()
+
+function _webui_file_scan_memo(f::Function, path::AbstractString)
+  st = try
+    stat(path)
+  catch
+    return f(path)
+  end
+  key = string(abspath(path), "|", nameof(f))
+  mt = Float64(Base.Filesystem.mtime(st))
+  sz = Int64(st.size)
+  return lock(_WEBUI_CASE_SCAN_LOCK) do
+    hit = get(_WEBUI_CASE_SCAN_CACHE, key, nothing)
+    if hit !== nothing && hit[1] == mt && hit[2] == sz
+      hit[3]
+    else
+      value = f(path)
+      _WEBUI_CASE_SCAN_CACHE[key] = (mt, sz, value)
+      value
+    end
+  end
+end
+
+_webui_classify_dat_content_cached(path::AbstractString)::Symbol = _webui_file_scan_memo(_webui_classify_dat_content, path)
+_webui_is_cgmes_boundary_only_cached(path::AbstractString)::Bool = _webui_file_scan_memo(_webui_is_cgmes_boundary_only, path)
+
 function _webui_is_user_selectable_case(name::AbstractString)::Bool
   lowered_name = lowercase(basename(name))
   _, extension = splitext(lowered_name)
@@ -260,11 +293,11 @@ function _webui_is_user_selectable_case(name::AbstractString)::Bool
     # A boundary set is a companion delivery, not a runnable case — hide it
     # the same way FOR002 reference files are hidden.
     isfile(name) || return true
-    return !_webui_is_cgmes_boundary_only(name)
+    return !_webui_is_cgmes_boundary_only_cached(name)
   end
   if extension == ".dat"
     isfile(name) || return !_is_for002_reference_dat(name)
-    return _webui_is_runnable_dat_role(_webui_classify_dat_content(name))
+    return _webui_is_runnable_dat_role(_webui_classify_dat_content_cached(name))
   end
   return true
 end
@@ -282,7 +315,7 @@ function _webui_for002_reference_options_in_directory(directory::AbstractString)
   isdir(directory) || return String[]
   files = filter(readdir(directory)) do name
     path = joinpath(directory, name)
-    return isfile(path) && lowercase(splitext(name)[2]) == ".dat" && _webui_classify_dat_content(path) === :dtf_outage_or_reference
+    return isfile(path) && lowercase(splitext(name)[2]) == ".dat" && _webui_classify_dat_content_cached(path) === :dtf_outage_or_reference
   end
   return sort!(files; by = lowercase)
 end
