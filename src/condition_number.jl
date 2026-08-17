@@ -65,6 +65,51 @@ function condestJacobian(J::AbstractMatrix{<:Real}; exact::Bool = false)
 end
 
 """
+    condestJacobian(net::Net; exact::Bool = false) -> Float64
+
+Estimate the condition number of the rectangular Newton-Raphson Jacobian
+at the net's CURRENT voltage state (`_vm_pu` / `_va_deg` per node): after a
+solve that is the operating point, after a failed solve the last iterate,
+which is exactly where conditioning questions arise. Builds the same
+sparse PQ/PV Jacobian the solver factors (slack row fixed, PV rows as
+magnitude equations) and forwards to the matrix method.
+
+Throws an `ArgumentError` when the net has no slack bus or fewer than two
+buses.
+"""
+function condestJacobian(net::Net; exact::Bool = false)
+  nodes = net.nodeVec
+  n = length(nodes)
+  n >= 2 || throw(ArgumentError("condestJacobian needs a net with at least two buses"))
+  bus_types = Vector{Symbol}(undef, n)
+  for (k, node) in enumerate(nodes)
+    t = getNodeType(node)
+    # isolated buses stay neutral PQ rows, mirroring the solver's mapping
+    bus_types[k] = t == Slack ? :Slack : t == PV ? :PV : :PQ
+  end
+  slack_idx = findfirst(==(:Slack), bus_types)
+  slack_idx === nothing && throw(ArgumentError("condestJacobian: net has no slack bus"))
+  V = ComplexF64[something(node._vm_pu, 1.0) * cis(deg2rad(something(node._va_deg, 0.0))) for node in nodes]
+  Vset = _bus_voltage_setpoints_from_prosumers(net)
+  Ybus = createYBUS(net = net)
+  J = build_rectangular_jacobian_pq_pv_sparse(Ybus, V, bus_types, Vset, slack_idx)
+  return condestJacobian(J; exact = exact)
+end
+
+# Verdict shared by reportCondition and the result/diagnostics writers so
+# every surface grades identically.
+function _condition_verdict(kappa::Float64)::String
+  return kappa < 1e6 ? "well conditioned" : kappa < 1e10 ? "borderline" : kappa < 1e14 ? "poorly conditioned, convergence at risk" : "numerically singular (Float64 exhausted)"
+end
+
+# One formatted report line, shared by reportCondition, the classic result
+# log (output.condition_number = true) and diagnose.log.
+function _condition_report_line(kappa::Float64)::String
+  digits_lost = round(Int, log10(kappa))
+  return "kappa1(J) = $(round(kappa, sigdigits = 3)) (about $(digits_lost) digits lost, $(_condition_verdict(kappa)))"
+end
+
+"""
     reportCondition(J::AbstractMatrix{<:Real}; iter::Int = -1) -> Float64
 
 Print the estimated condition number of a Newton-Raphson Jacobian together
@@ -74,9 +119,7 @@ with the Newton iteration number when logging inside a solver loop.
 """
 function reportCondition(J::AbstractMatrix{<:Real}; iter::Int = -1)
   kappa = condestJacobian(J)
-  digits_lost = round(Int, log10(kappa))
   tag = iter >= 0 ? "it=$(iter) " : ""
-  verdict = kappa < 1e6 ? "well conditioned" : kappa < 1e10 ? "borderline" : kappa < 1e14 ? "poorly conditioned, convergence at risk" : "numerically singular (Float64 exhausted)"
-  println("$(tag)kappa1(J) = $(round(kappa, sigdigits = 3)) (about $(digits_lost) digits lost, $(verdict))")
+  println(tag, _condition_report_line(kappa))
   return kappa
 end

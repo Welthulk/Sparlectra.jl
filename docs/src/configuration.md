@@ -300,7 +300,7 @@ The check result — not just the setting — is surfaced in every output surfac
 
 - **`ACPFlowReport.metadata`** (`src/results.jl`, `buildACPFlowReport`): `wrong_branch_status` and `wrong_branch_reason`.
 - **AC island diagnostics CSV** (`ac_island_solver_summary.csv`, one row per AC island): trailing `wrong_branch_status`/`wrong_branch_reason` columns, alongside the existing `wrong_branch_detection` *setting* column. The matching per-island `ac_island_<id>_solver.log` also lists both fields.
-- **Console/log summary** (`printACPFlowResults`): a single `wrong-branch check: SUSPECT (...)` or `wrong-branch check: FAIL (...)` line is printed only when the result is neither `ok` nor `not_checked`; clean runs and `wrong_branch_detection = off` print nothing extra.
+- **Console/log summary** (`printACPFlowResults`): a single `Wrong-branch   : SUSPECT (...)` or `Wrong-branch   : FAIL (...)` line (label aligned with the other classical header lines) is printed only when the result is neither `ok` nor `not_checked`; clean runs and `wrong_branch_detection = off` print nothing extra.
 - **Web UI run result page**: a `status-badge` ("Wrong-branch check" row) using the same success/warning/error styling as the run-status badge; omitted entirely when the result is `not_checked`.
 - **`run_sparlectra_api` result metadata**: `wrong_branch_status`, `wrong_branch_reason`, `wrong_branch_low_vm_count`, `wrong_branch_high_vm_count`, `wrong_branch_angle_spread_deg`, `wrong_branch_branch_angle_violation_count`.
 
@@ -317,7 +317,7 @@ control:
   trace: true
   log_iterations: true
   stop_on_pf_failure: true
-  controllers: []
+  controllers: {}
 ```
 
 | Key | Type | Default | Meaning |
@@ -327,21 +327,51 @@ control:
 | `trace` | Bool | `true` | Collect machine-readable control trace rows. |
 | `log_iterations` | Bool | `true` | Enables optional per-iteration control logging hooks. |
 | `stop_on_pf_failure` | Bool | `true` | Stops control orchestration when inner PF fails. |
-| `controllers` | Vector | `[]` | Reserved for future YAML controller definitions; leave empty for current programmatic controller setup. |
+| `controllers` | Mapping | `{}` | Declarative controller instantiation (issue #305): one named mapping per controller, applied to the net before the outer loop. See [Control Framework](control_framework.md) for the schema. |
 
-In Stage 1, controllers are typically attached programmatically via
-`addTapController!` / `addPowerTransformerControl!`.
+### Declarative controllers (`control.controllers`)
+
+One named entry per controller; the `type` key selects the device function,
+the remaining keys mirror its keyword arguments (bus/branch/transformer
+references by name). Block style only: the minimal YAML reader has no
+`- item` sequences.
+
+```yaml
+control:
+  controllers:
+    tap_T1:
+      type: power_transformer
+      trafo: T1
+      mode: voltage
+      target_bus: B2
+      target_vm_pu: 1.02
+    tcsc_B1_B2:
+      type: series_reactance
+      from_bus: B1
+      to_bus: B2
+      p_target_mw: 80.0
+      x_min_pu: 0.05
+      x_max_pu: 0.30
+```
+
+Supported types: `power_transformer` (`addPowerTransformerControl!`),
+`machine_voltage` (`addMachineVoltageControl!`), `shunt_voltage`
+(`addShuntVoltageControl!`), `series_reactance`
+(`addSeriesReactanceControl!`). Unknown types or keys and missing required
+keys fail at configuration load; unknown bus/branch/transformer references
+and invalid limits fail at apply time naming the entry. Entries whose
+element already carries a controller of the same type are skipped, so
+repeated runs on one net stay idempotent
+(`applyConfiguredControllers!` applies a configuration to a
+programmatically built net directly).
 
 ### Demo controller YAML vs. central `control.controllers`
 
 The tap-control demo may read `examples/others/tap_control_demo_grid.yaml` for
 example setpoints and transformer tap/phase parameters (`oltc`, `pst`,
 `schraeg`). This is an example-specific
-input file consumed by `examples/others/tap_control_demo_grid.jl`.
-
-It does not define the central `control.controllers` schema. Today,
-`control.controllers` remains reserved/future and should be left as `[]` in
-central configuration files.
+input file consumed by `examples/others/tap_control_demo_grid.jl` and does
+not define the central `control.controllers` schema above.
 
 ## Migration notes
 

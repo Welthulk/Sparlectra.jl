@@ -123,6 +123,40 @@ net.control_result
 
 These expose the latest control run associated with the `Net` instance.
 
+## Declarative controllers in configuration (issue #305)
+
+Controllers can be declared under `control.controllers` instead of being
+attached programmatically: one named mapping per controller, `type`
+selecting the device function, the remaining keys mirroring its keyword
+arguments. The run pipeline applies the declarations to the net before the
+outer loop starts; `applyConfiguredControllers!` does the same for
+a programmatically built net. Schema, supported types, and validation
+behavior are documented in the control section of
+[Configuration](configuration.md).
+
+Declarations are idempotent per net: an element that already carries a
+controller of the declared type is skipped, so repeated
+`run_sparlectra(net = ...)` calls do not stack duplicates. To change an
+already-applied controller, rebuild the net or adjust it programmatically.
+
+### Public API decision: no generic `addController!`
+
+A generic `addController!(net, controller)` entry point is deliberately
+**not** exposed. Two reasons:
+
+- Attachment is device-specific: transformer controllers live on the
+  winding (`side.controls`), machine/shunt/series controllers in
+  `net.machineControls`. A generic attach would need per-type knowledge
+  anyway and would bypass the reference resolution, exclusivity checks,
+  and cross-controller warnings that live in the `add*Control!` functions.
+- User-defined `AbstractOuterController` subtypes already have a supported
+  path without touching the net:
+  `run_control!(net; controllers = [my_controller, ...])` accepts any
+  controller list explicitly.
+
+The device-specific `add*Control!` functions therefore remain the only
+public way to attach controllers to a `Net`.
+
 ## Controllable elements (generic view)
 
 Every registered controller describes itself in one shared vocabulary —

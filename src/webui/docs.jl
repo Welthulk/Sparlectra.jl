@@ -78,6 +78,7 @@ const WEBUI_HELP_TOPICS = Dict(
   "transformer.tap_changer_model" => (label = "Tap-changer model", page = "matpower_import", heading = "Option reference", selector = "`transformer.tap_changer_model`"),
   "matpower_export.write_solution" => (label = "Write solution into MATPOWER export", page = "matpower_import", heading = "Option reference", selector = "`matpower_export.write_solution`"),
   "output.logfile_results" => (label = "Logfile output mode", page = "performance_profiling", heading = "Output configuration", selector = "`output.logfile_results`"),
+  "output.condition_number" => (label = "Jacobian condition number in the result log", page = "performance_profiling", heading = "Output configuration", selector = "`output.condition_number`"),
   "benchmark.enabled" => (label = "Enable benchmark measurements", page = "performance_profiling", heading = "Benchmark configuration", selector = "`benchmark.enabled`"),
   "benchmark.samples" => (label = "Benchmark samples (max. repeated measurements)", page = "performance_profiling", heading = "Benchmark configuration", selector = "`benchmark.samples`"),
   "benchmark.seconds" => (label = "Benchmark max. time budget [s]", page = "performance_profiling", heading = "Benchmark configuration", selector = "`benchmark.seconds`"),
@@ -153,6 +154,7 @@ const WEBUI_FORM_HELP_TOPICS = Dict(
   "transformer_tap_changer_model" => "transformer.tap_changer_model",
   "matpower_export_write_solution" => "matpower_export.write_solution",
   "output_logfile_results" => "output.logfile_results",
+  "output_condition_number" => "output.condition_number",
   "benchmark_enabled" => "benchmark.enabled",
   "benchmark_samples" => "benchmark.samples",
   "benchmark_seconds" => "benchmark.seconds",
@@ -297,6 +299,7 @@ const WEBUI_DOC_PAGES = Dict(
   "cgmes_export" => (title = "CGMES Export", file = "cgmes_export.md"),
   "webui" => (title = "Local PowerFlow Web UI", file = "webui.md"),
   "feature_matrix" => (title = "Feature Matrix", file = "feature_matrix.md"),
+  "solver" => (title = "Solver", file = "solver.md"),
 )
 
 """Resolve an allowlisted Web UI help topic to its documentation metadata."""

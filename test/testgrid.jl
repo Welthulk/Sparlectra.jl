@@ -2276,7 +2276,7 @@ function test_wrong_branch_output_visibility()::Bool
     printACPFlowResults(clean_net, 0.0, 1, 1e-8, true, tmpdir; converged = true, solver = :rectangular, result_mode = :summary)
     read(joinpath(tmpdir, "result_$(clean_net.name).txt"), String)
   end
-  occursin("wrong-branch check:", clean_console) && return false
+  occursin("Wrong-branch   :", clean_console) && return false
 
   off_net = createTest3BusNet()
   _, erg_off = runpf!(off_net, 40, 1e-8, 0; method = :rectangular, wrong_branch_detection = :off)
@@ -2296,7 +2296,7 @@ function test_wrong_branch_output_visibility()::Bool
     printACPFlowResults(suspect_net, 0.0, 1, 1e-8, true, tmpdir; converged = true, solver = :rectangular, result_mode = :summary)
     read(joinpath(tmpdir, "result_$(suspect_net.name).txt"), String)
   end
-  occursin("wrong-branch check: SUSPECT (low_voltage_magnitude,", suspect_console) || return false
+  occursin("Wrong-branch   : SUSPECT (low_voltage_magnitude,", suspect_console) || return false
 
   # Two-island net (mirrors the AC-island fixture used elsewhere in this file) to
   # exercise the per-island diagnostics CSV.
@@ -3059,6 +3059,29 @@ function test_condition_number_estimator()::Bool
   catch err
     err isa ArgumentError || return false
   end
+
+  # net method: solver Jacobian at the current voltage state of a solved
+  # small net gives a finite, plausible estimate
+  net = Net(name = "cond_check", baseMVA = 100.0)
+  addBus!(net = net, busName = "Slack", vn_kV = 110.0)
+  addBus!(net = net, busName = "Load", vn_kV = 110.0)
+  addACLine!(net = net, fromBus = "Slack", toBus = "Load", r = 0.01, x = 0.05, length = 1.0)
+  addProsumer!(net = net, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "Slack")
+  addProsumer!(net = net, busName = "Load", type = "ENERGYCONSUMER", p = 10.0, q = 3.0)
+  ite, erg = runpf!(net, 20, 1e-8, 0; method = :rectangular)
+  erg == 0 || return false
+  knet = condestJacobian(net)
+  (isfinite(knet) && knet >= 1.0) || return false
+
+  # classic result log: the condition line appears exactly when the
+  # output.condition_number option is on
+  outdir = mktempdir()
+  Sparlectra.printACPFlowResults(net, 0.01, ite, 1e-8, true, outdir; converged = true, solver = :rectangular, condition_number = true)
+  out_on = read(joinpath(outdir, "result_$(net.name).txt"), String)
+  occursin("Jacobian cond. : kappa1(J)", out_on) || return false
+  Sparlectra.printACPFlowResults(net, 0.01, ite, 1e-8, true, outdir; converged = true, solver = :rectangular)
+  out_off = read(joinpath(outdir, "result_$(net.name).txt"), String)
+  occursin("Jacobian cond.", out_off) && return false
   return true
 end
 

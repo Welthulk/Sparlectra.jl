@@ -727,7 +727,22 @@ a plain-language verdict (well conditioned below `1e6`, borderline below
 kappa = reportCondition(J)          # prints and returns the estimate
 kappa = condestJacobian(J)          # estimate only
 kappa = condestJacobian(J; exact = true)  # dense SVD, small nets only
+kappa = condestJacobian(net)        # solver Jacobian at the net's current state
 ```
+
+The net method builds the same sparse PQ/PV Jacobian the rectangular
+solver factors, at the net's current voltage state: the operating point
+after a converged run, the last iterate after a failed one.
+
+Where it appears in run output:
+
+- **Diagnose runs** (`run_diagnostics = true`, the Web UI Diagnose button)
+  always contain the estimate in the `diagnose.log` Diagnosis section,
+  plus a recommendation when the Jacobian is ill-conditioned.
+- **Classic result log**: opt-in via `output.condition_number` (default
+  `false`; also an Advanced option in the Web UI PowerFlow form). When set
+  to `true` it adds one `Jacobian cond.` line with the verdict; costs one
+  extra LU factorization of the final Jacobian.
 
 A runnable walk-through, including how conditioning collapses when a bus
 becomes nearly disconnected, is in

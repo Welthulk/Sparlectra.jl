@@ -489,6 +489,9 @@ output:
   logfile_performance: full
   # Allowed values: off, summary, table, full
   logfile_warnings: full
+  # Extra line in the classic result output: Jacobian condition-number
+  # estimate with verdict (costs one LU factorization of the final Jacobian)
+  condition_number: false
 
 benchmark:
   enabled: true
@@ -517,11 +520,30 @@ control:
   log_iterations: true
   # Stop outer-loop orchestration if the inner power flow fails.
   stop_on_pf_failure: true
-  # Reserved for future YAML-based controller instantiation.
-  # Leave this empty for now.
-  # Transformer controllers are currently added programmatically via
-  # addTapController! or addPowerTransformerControl!.
-  controllers: []
+  # Declarative outer-loop controllers (issue #305): one named mapping per
+  # controller (block style; the minimal YAML reader has no "- item"
+  # sequences). The name becomes the controller name where the type
+  # supports one. Types and keys mirror the add* functions:
+  #   power_transformer -> addPowerTransformerControl! (trafo, mode, ...)
+  #   machine_voltage   -> addMachineVoltageControl!   (bus, target_bus, target_vm_pu, ...)
+  #   shunt_voltage     -> addShuntVoltageControl!     (bus, target_vm_pu, bs_min_mvar, bs_max_mvar, ...)
+  #   series_reactance  -> addSeriesReactanceControl!  (from_bus, to_bus, p_target_mw, x_min_pu, x_max_pu, ...)
+  # Example:
+  #   controllers:
+  #     tap_T1:
+  #       type: power_transformer
+  #       trafo: T1
+  #       mode: voltage
+  #       target_bus: B2
+  #       target_vm_pu: 1.02
+  #     tcsc_B1_B2:
+  #       type: series_reactance
+  #       from_bus: B1
+  #       to_bus: B2
+  #       p_target_mw: 80.0
+  #       x_min_pu: 0.05
+  #       x_max_pu: 0.30
+  controllers: {}
 
 webui:
   # Show the "Case-specific settings loaded from ..." notice on the Web UI

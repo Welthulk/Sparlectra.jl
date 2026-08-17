@@ -22,6 +22,7 @@ include(joinpath(@__DIR__, "internal", "example_suite_runner.jl"))
 # exp_current_iteration_start.jl and would run the same demo twice.
 const SUITE_SPECS = ExampleSpec[
   ExampleSpec(name = "dc_powerflow", file = "powerflow/exp_dc_powerflow.jl", purpose = "standalone DC power flow, optionally seeding the AC Newton-Raphson solve"),
+  ExampleSpec(name = "condition_number", file = "powerflow/exp_condition_number.jl", purpose = "Jacobian condition-number estimate at the solved operating point, incl. a stressed near-singular variant"),
   ExampleSpec(name = "programmatic_api", file = "powerflow/exp_programmatic_api.jl", purpose = "runs one MATPOWER case through the GUI-ready run_sparlectra_api contract"),
   ExampleSpec(name = "powerflow_service", file = "powerflow/exp_powerflow_service.jl", purpose = "local PowerFlow service run with result lookup by run ID (no HTTP server)"),
   ExampleSpec(name = "current_iteration_start", file = "powerflow/exp_current_iteration_start.jl", purpose = "guarded current-iteration start pre-solve via API configuration overrides"),

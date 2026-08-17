@@ -577,6 +577,10 @@ Base.@kwdef struct OutputConfig
   logfile_diagnostics::Symbol = :compact
   logfile_performance::Symbol = :compact
   logfile_warnings::Symbol = :table
+  # Jacobian condition-number line in the classic result output (estimate
+  # plus verdict, see condestJacobian). Off by default: it costs one extra
+  # LU factorization of the final Jacobian per run.
+  condition_number::Bool = false
 end
 
 """
@@ -1314,20 +1318,27 @@ function OutputConfig(raw::AbstractDict)
     logfile_diagnostics = _validate_allowed_symbol("output.logfile_diagnostics", _as_symbol_cfg(_raw_get(merged, "logfile_diagnostics", :compact)), OUTPUT_LOGFILE_DIAGNOSTICS_VALUES),
     logfile_performance = _validate_allowed_symbol("output.logfile_performance", _as_symbol_cfg(_raw_get(merged, "logfile_performance", :compact)), OUTPUT_LOGFILE_PERFORMANCE_VALUES),
     logfile_warnings = _validate_allowed_symbol("output.logfile_warnings", _as_symbol_cfg(_raw_get(merged, "logfile_warnings", :table)), OUTPUT_LOGFILE_WARNINGS_VALUES),
+    condition_number = _as_bool_cfg(_raw_get(merged, "condition_number", false)),
   )
 end
 
 function ControlConfig(raw::AbstractDict)
   merged = _merged_section(raw, "control")
-  raw_controllers = _raw_get(merged, "controllers", Any[])
-  raw_controllers isa AbstractVector || throw(ArgumentError("control.controllers must be a vector."))
+  # Named-mapping schema (issue #305): controllers is a mapping of
+  # name => {type, kwargs}. Normalization also accepts the empty "{}"
+  # placeholder and pre-normalized vectors; structural validation (known
+  # type, allowed keys, required keys) happens here at load time so a bad
+  # declaration fails before any solve. Network references are validated
+  # at apply time by applyConfiguredControllers!.
+  controllers = _normalize_controller_entries(_raw_get(merged, "controllers", nothing))
+  _validate_controller_entries(controllers)
   return ControlConfig(
     enabled = _as_bool_cfg(_raw_get(merged, "enabled", true)),
     max_outer_iterations = _as_int_cfg(_raw_get(merged, "max_outer_iterations", 20)),
     trace = _as_bool_cfg(_raw_get(merged, "trace", true)),
     log_iterations = _as_bool_cfg(_raw_get(merged, "log_iterations", true)),
     stop_on_pf_failure = _as_bool_cfg(_raw_get(merged, "stop_on_pf_failure", true)),
-    controllers = Any[raw_controllers...],
+    controllers = Any[controllers...],
   )
 end
 
@@ -1379,7 +1390,7 @@ end
 # configuration keys, so they are exempt from unknown-key validation. The
 # default file keeps a scalar "{}" placeholder because the minimal YAML
 # reader has no flow-mapping support.
-const _FREEFORM_MAPPING_CONFIG_KEYS = ("power_flow.distributed_slack.weights",)
+const _FREEFORM_MAPPING_CONFIG_KEYS = ("power_flow.distributed_slack.weights", "control.controllers")
 
 # Deprecated keys stay ACCEPTED so existing user/webui configuration files
 # keep loading (a hard "unknown key" error here would brick every stored

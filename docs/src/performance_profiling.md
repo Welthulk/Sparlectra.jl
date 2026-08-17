@@ -46,6 +46,7 @@ julia --project=. examples/powerflow/matpower_import.jl
 | `output.logfile_diagnostics` | Symbol/String | `compact` | `off`, `compact`, `full` | Diagnostic logfile detail. |
 | `output.logfile_performance` | Symbol/String | `compact` | `off`, `compact`, `full` | Performance profile logfile detail. |
 | `output.logfile_warnings` | Symbol/String | `table` | `off`, `summary`, `table`, `full` | Warning representation in logfile. |
+| `output.condition_number` | Bool | `false` | `true`, `false` | Extra `Jacobian cond.` line (estimate plus verdict) in the classic result output; costs one LU factorization. See [Solver](solver.md). |
 
 For API and Web UI runs, `classic` writes the standard result output and a
 compact timing/status summary. `full` additionally writes a **Full run details**

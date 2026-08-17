@@ -81,6 +81,7 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "webui.warmup",
   "transformer.tap_changer_model",
   "output.logfile_results",
+  "output.condition_number",
   "output.console_live",
   "output.detailed_result_csv_write_mode",
   "output.detailed_result_csv_exporter",

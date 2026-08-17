@@ -148,8 +148,19 @@ and a next step, instead of only reporting numbers.
 function _write_diagnosis_narrative(io::IO, result::SparlectraRunResult)
   println(io, "Diagnosis")
   println(io, "---------")
+  # Jacobian conditioning at the net's current voltage state (operating
+  # point after convergence, last iterate after a failure): tells an
+  # ill-conditioned system apart from a start/step-control problem. Never
+  # breaks the report; an estimate failure is only logged at debug level.
+  kappa = try
+    condestJacobian(result.net)
+  catch err
+    @debug "diagnose: Jacobian condition estimate skipped" exception = err
+    nothing
+  end
   if result.final_converged
     println(io, "The run converged in ", result.iterations, " iteration(s); final mismatch ", result.final_mismatch, " is within tolerance. No root-cause analysis is needed.")
+    kappa === nothing || println(io, "Jacobian conditioning at the solution: ", _condition_report_line(kappa))
     println(io)
     return nothing
   end
@@ -183,6 +194,7 @@ function _write_diagnosis_narrative(io::IO, result::SparlectraRunResult)
   if autodamp_failure === true
     println(io, "Autodamp diagnostics show repeated floor hits (", floor_hits, ") together with non-improving trial steps, consistent with the step-control damping being unable to make progress from the current start point.")
   end
+  kappa === nothing || println(io, "Jacobian conditioning at the last iterate: ", _condition_report_line(kappa))
   println(io)
 
   bus_index = _diag_value(result, :worst_mismatch_bus_index, "unavailable")
@@ -203,6 +215,9 @@ function _write_diagnosis_narrative(io::IO, result::SparlectraRunResult)
   end
   if trend === :stagnant
     push!(recommendations, "Check power_flow.qlimits and wrong-branch detection settings — a stagnant trend can indicate the active-set/outer loop, not the Newton step itself, is stuck.")
+  end
+  if kappa isa Float64 && kappa >= 1e10
+    push!(recommendations, "The Jacobian itself is ill-conditioned at the last iterate (kappa1 about $(round(kappa, sigdigits = 3))): look for nearly isolated buses, extreme impedance ratios, or unit errors in the network data before tuning step control; no damping strategy fixes a numerically singular system.")
   end
   push!(recommendations, "Run run_fixed_reference_self_check on this case to check whether the residual is already present at the case's own stored VM/VA (a network-model issue) rather than introduced by the solver's start guess.")
   for (i, rec) in enumerate(recommendations)

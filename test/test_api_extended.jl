@@ -487,6 +487,9 @@ power_flow:
       @test occursin("Q-limit validity:", diagnostic_log)
       @test occursin("Diagnosis", diagnostic_log)
       @test occursin("converged in ", diagnostic_log)
+      # the conditioning estimate is part of every diagnose run, also on the
+      # converged path
+      @test occursin("Jacobian conditioning at the solution: kappa1(J)", diagnostic_log)
       @test !occursin("Recommendations", diagnostic_log)
       @test !isfile(joinpath(output_dir, "diagnose.txt"))
       q_limit_log = read(joinpath(output_dir, "q_limit.log"), String)

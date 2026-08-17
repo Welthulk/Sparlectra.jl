@@ -574,7 +574,8 @@ function _print_wrong_branch_summary_line(io::IO, net::Net)
     string(reason)
   end
   label = status === :fail ? "FAIL" : "SUSPECT"
-  println(io, "wrong-branch check: ", label, " (", reason, ", ", detail, ")")
+  # same 15-character label rule as every other classical header line
+  println(io, "Wrong-branch   : ", label, " (", reason, ", ", detail, ")")
   return nothing
 end
 
@@ -594,7 +595,9 @@ function _print_distributed_slack_summary_line(io::IO, net::Net)
   mode = _rect_status_get(rect_status, :distributed_slack_mode, :none)
   lambda_mw = _rect_status_get(rect_status, :distributed_slack_lambda_p_mw, 0.0)
   rows = _rect_status_get(rect_status, :distributed_slack_participation, nothing)
-  @printf(io, "Distributed slack: mode %s, lambda_P = %+.3f MW (imbalance + losses picked up by %d participant(s), see the dSl alpha column)\n", String(mode), lambda_mw, rows === nothing ? 0 : length(rows))
+  # label padded to 15 characters: the classical result header aligns every
+  # colon at column 16
+  @printf(io, "Dist. slack    : mode %s, lambda_P = %+.3f MW (imbalance + losses picked up by %d participant(s), see the dSl alpha column)\n", String(mode), lambda_mw, rows === nothing ? 0 : length(rows))
   return nothing
 end
 
@@ -622,7 +625,7 @@ function _distributed_slack_bus_shares(net::Net)
   return (true, shares)
 end
 
-function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFile::Bool = false, path::String = ""; converged::Bool = true, solver::Symbol = :NR, solver_time_s::Union{Nothing,Float64} = nothing, result_mode::Symbol = :classic, max_rows::Union{Nothing,Int} = nothing)
+function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFile::Bool = false, path::String = ""; converged::Bool = true, solver::Symbol = :NR, solver_time_s::Union{Nothing,Float64} = nothing, result_mode::Symbol = :classic, max_rows::Union{Nothing,Int} = nothing, condition_number::Bool = false)
   if toFile
     filename = strip("result_$(net.name).txt")
     io = open(joinpath(path, filename), "w")
@@ -692,6 +695,17 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
   @printf(io, "Case           :%15s\n", net.name)
   @printf(io, "Cooldown iters :%10d\n", net.cooldown_iters)
   @printf(io, "Q-hysteresis   :%10.4f pu\n", net.q_hyst_pu)
+  # opt-in (output.condition_number): estimate at the net's current state,
+  # one extra LU factorization; a failed estimate never breaks the report
+  if condition_number
+    kappa = try
+      condestJacobian(net)
+    catch err
+      @debug "result output: Jacobian condition estimate skipped" exception = err
+      nothing
+    end
+    kappa === nothing || @printf(io, "Jacobian cond. : %s\n", _condition_report_line(kappa))
+  end
 
   @printf(io, "BaseMVA        :%10d\n", net.baseMVA)
   if auxb > 0 && niso > 0

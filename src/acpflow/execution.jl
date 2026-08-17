@@ -29,6 +29,11 @@ function _execute_sparlectra_powerflow!(net::Net, cfg::SparlectraConfig; perform
   elapsed_s = @elapsed begin
     try
       iterations, erg, control_status = _perf_profile_time!(performance_profile, :solver_total) do
+        # Controllers declared in configuration (control.controllers, issue
+        # #305) are instantiated onto the net before collection; already
+        # present ones are skipped so repeated runs on one net stay
+        # idempotent.
+        cfg.control.enabled && !isempty(cfg.control.controllers) && applyConfiguredControllers!(net, cfg.control)
         controllers = collect_outer_controllers(net)
         # Unconditional DC-seeded start (power_flow.start_mode.dc_seed_unconditional,
         # only reachable with solver=rectangular -- rejected at config time otherwise):

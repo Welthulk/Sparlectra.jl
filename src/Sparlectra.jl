@@ -363,6 +363,7 @@ export
   clearMachineControllers!,
   addShuntVoltageControl!,                # Add an SVC-style shunt voltage controller.
   addSeriesReactanceControl!,             # Add a TCSC-like series-reactance controller on a line branch (#297).
+  applyConfiguredControllers!,            # Instantiate controllers declared under control.controllers (#305).
   printSeriesReactanceControllerSummary,  # Engineering-style summary of the registered TCSC controllers.
   clearShuntControllers!,
   controllableElements,                   # Generic controllable-element records of all registered controllers.
@@ -594,6 +595,7 @@ include("tap_control.jl")
 include("machine_control.jl")
 include("shunt_control.jl")
 include("series_reactance_control.jl")
+include("controller_config.jl")
 include("busdata.jl")
 include("MatpowerIO.jl")
 include("createnet_powermat.jl")

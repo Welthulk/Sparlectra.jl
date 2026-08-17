@@ -577,6 +577,69 @@ function run_tap_controller_tests()
     @test result.converged == true
   end
 
+  @testset "YAML controller instantiation (#305)" begin
+    # Round trip through the real YAML reader: a declared power_transformer
+    # controller must be active and reproduce the programmatic setup.
+    net_prog, tbr_prog = _build_net()
+    addPowerTransformerControl!(net_prog; trafo = string(tbr_prog.branchIdx), mode = :voltage, target_bus = "Load", target_vm_pu = 0.98, control_ratio = true, control_phase = false)
+    cfg_prog = SparlectraConfig(powerflow = PowerFlowConfig(method = :rectangular, max_iter = 30, tol = 1e-9), control = ControlConfig(enabled = true, max_outer_iterations = 8, trace = false))
+    res_prog = run_sparlectra(net = net_prog, config = cfg_prog)
+    @test res_prog.numerical_converged
+
+    net_yaml, tbr_yaml = _build_net()
+    cfg_yaml = mktemp() do path, io
+      write(
+        io,
+        """
+power_flow:
+  max_iter: 30
+  tol: 1.0e-9
+control:
+  enabled: true
+  max_outer_iterations: 8
+  trace: false
+  controllers:
+    tap_main:
+      type: power_transformer
+      trafo: $(tbr_yaml.branchIdx)
+      mode: voltage
+      target_bus: Load
+      target_vm_pu: 0.98
+""",
+      )
+      close(io)
+      load_sparlectra_config(path; reload = true)
+    end
+    @test length(cfg_yaml.control.controllers) == 1
+    res_yaml = run_sparlectra(net = net_yaml, config = cfg_yaml)
+    @test res_yaml.numerical_converged
+    yaml_controllers = collect_outer_controllers(net_yaml)
+    @test length(yaml_controllers) == 1
+    @test first(yaml_controllers) isa PowerTransformerControl
+    # identical outcome: same controller, same solved state
+    vm_prog = [something(n._vm_pu, NaN) for n in net_prog.nodeVec]
+    vm_yaml = [something(n._vm_pu, NaN) for n in net_yaml.nodeVec]
+    @test isapprox(vm_prog, vm_yaml; atol = 1e-9)
+    # idempotency: applying the same declaration again adds nothing
+    @test applyConfiguredControllers!(net_yaml, cfg_yaml.control) == 0
+
+    # structural validation fails at config-load time with named entries
+    @test_throws ArgumentError ControlConfig(Dict("control" => Dict("controllers" => Dict("x" => Dict("type" => "bogus_type")))))
+    @test_throws ArgumentError ControlConfig(Dict("control" => Dict("controllers" => Dict("x" => Dict("type" => "series_reactance")))))
+    @test_throws ArgumentError ControlConfig(Dict("control" => Dict("controllers" => Dict("x" => Dict("type" => "shunt_voltage", "bus" => "B", "target_vm_pu" => 1.0, "bs_min_mvar" => -1.0, "bs_max_mvar" => 1.0, "typo_key" => 1)))))
+    # reference validation fails at apply time naming the entry
+    net_bad, _ = _build_net()
+    bad_cfg = ControlConfig(controllers = Any[Dict{String,Any}("type" => "shunt_voltage", "name" => "s1", "bus" => "NoSuchBus", "target_vm_pu" => 1.0, "bs_min_mvar" => -5.0, "bs_max_mvar" => 5.0)])
+    err = try
+      applyConfiguredControllers!(net_bad, bad_cfg)
+      nothing
+    catch e
+      e
+    end
+    @test err isa ArgumentError
+    @test occursin("control.controllers.s1", sprint(showerror, err))
+  end
+
   @testset "Outer-loop limits are separated from inner PF max_iter" begin
     net, tbr = _build_net()
     addPowerTransformerControl!(net;

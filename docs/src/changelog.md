@@ -2,41 +2,21 @@
 
 ## Highlights
 
-**Fast start for the Web UI (optional sysimage).** `tools/build_sysimage.jl`
-bakes Sparlectra into a PackageCompiler system image below the Web UI user
-root; the start scripts pick it up automatically when it matches the running
-Julia and the checkout `Manifest.toml`, and otherwise warn once and start
-normally. The build workload runs full power-flow and short-circuit cases
-(MATPOWER and CGMES) so the first real run after a fast start is fast too,
-and it bakes AnalyticLoadFlow into the image when installed. The new
-**Fast start** page in the Web UI shows the image state and triggers a
-background build with a `sysimage_build.log` artifact. Bypass with
-`SPARLECTRA_NO_SYSIMAGE=1`. See [Fast Start (Sysimage)](fast_start.md).
+**Fast start for the Web UI.** Optional PackageCompiler sysimage, built via
+`tools/build_sysimage.jl` or the new Fast start page; the start scripts use
+it automatically and skip the warm-up. See
+[Fast Start (Sysimage)](fast_start.md).
 
-**Jacobian condition-number diagnostics.** New `condestJacobian` estimates
-the 1-norm condition number of a power-flow Jacobian with the Hager/Higham
-estimator on the LU factorization (sparse friendly), and `reportCondition`
-prints it with a digits-lost verdict. Tells an ill-conditioned system from
-a start-value problem before the solver stalls. See [Solver](solver.md).
+**Controllers in configuration.** Outer-loop controllers can be declared
+under `control.controllers`, one named entry per controller. See
+[Control Framework](control_framework.md). (#305)
 
 ## Improvements
 
-- The PowerFlow form no longer re-classifies every file of the case cache
-  on each render (large CGMES ZIPs made that seconds per page view);
-  results are now memoized per file state and prewarmed at startup.
-- When the configuration file is newer than a case's saved settings, the
-  PowerFlow form now lists exactly which saved values it replaced (key,
-  saved value, configuration value) instead of a generic hint; a silent
-  flip had cost a converged CGMES case its SV start.
-- With an active fast-start image the launcher skips the JIT warm-up; the
-  Web UI is usable a few seconds after the start.
-- MATPOWER case downloads retry transient failures with a short backoff and
-  can no longer leave a truncated file behind that later runs would treat
-  as a valid cached case.
-- The run registry resolves symlinks when validating run paths, so a Web UI
-  user root shared between two environments (for example a Flatpak
-  `XDG_STATE_HOME` symlinked onto `~/.local/state`) shows every run in
-  both. See [Fast Start (Sysimage)](fast_start.md) for the setup.
+- Faster PowerFlow form renders (case-cache scan memoized) and an explicit
+  list of saved case settings a newer configuration file replaced.
+- MATPOWER case downloads retry transient failures; run paths tolerate a
+  symlinked user root.
 
 
 # Version 0.9.4 - 2026-08-14
