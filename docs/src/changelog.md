@@ -23,6 +23,10 @@ background build with a `sysimage_build.log` artifact. Bypass with
 - MATPOWER case downloads retry transient failures with a short backoff and
   can no longer leave a truncated file behind that later runs would treat
   as a valid cached case.
+- The run registry resolves symlinks when validating run paths, so a Web UI
+  user root shared between two environments (for example a Flatpak
+  `XDG_STATE_HOME` symlinked onto `~/.local/state`) shows every run in
+  both. See [Fast Start (Sysimage)](fast_start.md) for the setup.
 
 
 # Version 0.9.4 - 2026-08-14

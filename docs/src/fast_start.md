@@ -71,10 +71,20 @@ Note that the user root follows the environment: a Flatpak-packaged IDE
 (for example VSCodium) sets its own `XDG_STATE_HOME`, so a build started
 from its integrated terminal lands under
 `~/.var/app/<app-id>/.local/state/...` while a plain terminal uses
-`~/.local/state/...`. If the launcher reports a missing image although one
-was built, check which of the two roots holds it and copy
-`sparlectra.<ext>` plus `sysimage_meta.toml` over, or rebuild from the
-environment you start from.
+`~/.local/state/...`. Two separate roots mean two separate configurations,
+case caches, run histories, and images, and settings silently drift apart
+between them. The recommended permanent fix is one shared root via a
+symlink (merge any content you want to keep first):
+
+```bash
+mv ~/.var/app/<app-id>/.local/state/sparlectra ~/.var/app/<app-id>/.local/state/sparlectra.backup
+ln -s ~/.local/state/sparlectra ~/.var/app/<app-id>/.local/state/sparlectra
+```
+
+The run registry resolves symlinks during validation, so runs written from
+either environment stay visible in both. Alternatively copy
+`sparlectra.<ext>` plus `sysimage_meta.toml` between the roots, or rebuild
+from the environment you start from.
 
 ## Staleness rules
 

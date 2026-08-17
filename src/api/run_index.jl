@@ -33,6 +33,16 @@ function _indexed_run_paths(entry::AbstractDict, output_root::AbstractString)
   root = normpath(abspath(output_root))
   directory = normpath(abspath(output_dir))
   result_path = normpath(abspath(result_file))
+  # Resolve existing paths through realpath before the equality checks:
+  # index entries store the writer's absolute paths, and when two
+  # environments reach the same physical root under different names (a
+  # Flatpak XDG_STATE_HOME symlinked onto ~/.local/state), a purely
+  # lexical comparison would flag every run written by the other
+  # environment as unsafe_output_dir. Containment stays realpath-based
+  # in _existing_path_is_within, so symlinks still cannot escape the root.
+  ispath(root) && (root = realpath(root))
+  ispath(directory) && (directory = realpath(directory))
+  ispath(result_path) && (result_path = realpath(result_path))
   expected_directory = joinpath(root, String(run_id))
   directory == expected_directory || return (valid = false, reason = "unsafe_output_dir", run_id = run_id, output_dir = directory, result_file = result_path)
   _existing_path_is_within(directory, root) || return (valid = false, reason = "unsafe_output_dir", run_id = run_id, output_dir = directory, result_file = result_path)

@@ -68,6 +68,37 @@ function run_api_fast_tests()
       failed_transport = Sparlectra._api_failure("execution_error", "numerical failure"; casefile = casefile, config_file = template, output_dir = joinpath(tmpdir, "synthetic-failure"), logfile = joinpath(tmpdir, "synthetic-failure", "run.log"), result_file = joinpath(tmpdir, "synthetic-failure", "result.json"), metadata = Dict("solver_elapsed_s" => 0.001))
       @test Sparlectra.to_dict(failed_transport)["solver_elapsed_s"] > 0.0
     end
+
+    @testset "run index accepts symlinked output roots" begin
+      # Two environments can reach the same physical output root under
+      # different names (a Flatpak XDG_STATE_HOME symlinked onto
+      # ~/.local/state). Index entries store the writer's absolute paths,
+      # so validation must resolve symlinks instead of comparing lexically,
+      # in both directions: entry written under the real name and read
+      # through the alias, and the reverse.
+      if Sys.iswindows()
+        @info "run-index symlink test SKIPPED on Windows (symlink creation may need privileges)"
+      else
+        mktempdir() do tmpdir
+          real_root = joinpath(tmpdir, "real_root")
+          run_id = "11111111-2222-3333-4444-555555555555"
+          mkpath(joinpath(real_root, run_id))
+          write(joinpath(real_root, run_id, "result.json"), "{}")
+          alias_root = joinpath(tmpdir, "alias_root")
+          symlink(real_root, alias_root)
+          real_entry = Dict{String,Any}("run_id" => run_id, "output_dir" => joinpath(real_root, run_id), "result_file" => joinpath(real_root, run_id, "result.json"))
+          alias_entry = Dict{String,Any}("run_id" => run_id, "output_dir" => joinpath(alias_root, run_id), "result_file" => joinpath(alias_root, run_id, "result.json"))
+          @test Sparlectra._indexed_run_paths(real_entry, alias_root).valid
+          @test Sparlectra._indexed_run_paths(alias_entry, real_root).valid
+          # a symlink must still not smuggle a foreign directory into the root
+          outside = joinpath(tmpdir, "outside")
+          mkpath(outside)
+          write(joinpath(outside, "result.json"), "{}")
+          foreign_entry = Dict{String,Any}("run_id" => run_id, "output_dir" => outside, "result_file" => joinpath(outside, "result.json"))
+          @test !Sparlectra._indexed_run_paths(foreign_entry, real_root).valid
+        end
+      end
+    end
   end
 end
 
