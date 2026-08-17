@@ -25,6 +25,7 @@ summary at the end): `run_powerflow_suite.jl`, `run_others_suite.jl`,
 | `exp_powerflow_service.jl` | Local service run, result lookup by run ID, artifact listing — no HTTP server | powerflow |
 | `exp_distributed_slack_modes.jl` | Classical single slack vs distributed slack (`pg_weighted` vs imported `APF` shares, `lambda_P` metadata) | standalone |
 | `exp_dc_powerflow.jl` | Standalone DC power flow (`rundcpf!`), DC-seeded AC start | powerflow |
+| `exp_condition_number.jl` | Jacobian condition-number estimate at the solved operating point (`condestJacobian`, `reportCondition`), incl. a stressed near-singular variant | powerflow |
 | `exp_current_iteration_start.jl` | Guarded current-iteration start pre-solve via config overrides | powerflow |
 | `exp_diagnose_self_check.jl` | `run_fixed_reference_self_check` and the narrative `diagnose.log` report | others |
 | `exp_short_circuit.jl` | `runShortCircuit!` (IEC 60909-0) on a hand-built feeder+machine net — Ik'' max/min and the safety flag on defaulted data | short_circuit |

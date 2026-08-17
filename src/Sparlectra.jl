@@ -436,6 +436,10 @@ export
   # jacobian_full.jl
   runpf_full!,                            # Run full/polar PF variant.
 
+  # condition_number.jl
+  condestJacobian,                        # Hager 1-norm condition estimate for NR Jacobians.
+  reportCondition,                        # Print condition estimate with digits-lost verdict.
+
   # limits.jl
   printQLimitLog,
   printPVQLimitsTable,                    # Print PV Q-limit diagnostics.
@@ -599,6 +603,7 @@ include("cgmes/CGMESImporter.jl")
 import .CGMESImporter: summarizeCGMES, createNetFromCGMES, importCGMES, compareWithSV, shortCircuitCoverage, printShortCircuitCoverage, writeCGMESFiles, CGMESLineShortCircuit, cgmesLineShortCircuitData
 include("limits.jl")
 include("losses.jl")
+include("condition_number.jl")
 include("exportMatPower.jl")
 include("results.jl")
 include("acpflow.jl")

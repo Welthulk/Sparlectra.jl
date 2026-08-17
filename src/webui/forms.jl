@@ -503,17 +503,31 @@ function webui_form_state(; selected_casefile::AbstractString = "", selected_con
       end
     end
     applied_config_over_sidecar = false
+    # Human-visible record of the replaced values: without it, a newer
+    # configuration file silently flips saved case settings and the first
+    # symptom is a diverged run (cgmes_realgrid lost start_values=auto to a
+    # config carrying flat). Only fields whose values actually differ are
+    # listed; entries are (config key, saved value, config value).
+    config_over_sidecar_details = Vector{Tuple{String,String,String}}()
     for (field, value) in sidecar_profile
       field == "_profile_path" && continue
       haskey(_WEBUI_OPTION_BY_FIELD, String(field)) || continue
       if config_beats_sidecar && haskey(deliberate_config_values, String(field))
         applied_config_over_sidecar = true
+        sidecar_value = _webui_normalize_case_profile_form_value(String(field), value)
+        config_value = deliberate_config_values[String(field)]
+        if sidecar_value != config_value
+          spec = _WEBUI_OPTION_BY_FIELD[String(field)]
+          display_key = spec.config_key === nothing ? String(field) : String(spec.config_key)
+          push!(config_over_sidecar_details, (display_key, _webui_form_string(sidecar_value), _webui_form_string(config_value)))
+        end
         continue
       end
       values[String(field)] = _webui_normalize_case_profile_form_value(String(field), value)
     end
     haskey(sidecar_profile, "_profile_path") && (values["_profile_path"] = sidecar_profile["_profile_path"])
     applied_config_over_sidecar && (values["_config_newer_than_profile"] = true)
+    isempty(config_over_sidecar_details) || (values["_config_over_profile_details"] = sort!(config_over_sidecar_details))
   end
   if submitted_form isa AbstractDict
     for spec in WEBUI_OPTION_SPECS

@@ -707,3 +707,28 @@ local `|V|`, and local chain-rule terms are added to the Jacobian.
 
 For full derivation, formulas, API usage, and output semantics (`Type` vs
 `Control`), see [Voltage-dependent Control](voltage_dependent_control.md).
+
+---
+
+## Jacobian condition-number diagnostics
+
+When a Newton solve stalls or diverges, the first question is whether the
+Jacobian itself is numerically healthy at the operating point.
+`condestJacobian(J)` estimates the 1-norm condition number
+``\kappa_1(J) = \|J\|_1 \cdot \|J^{-1}\|_1`` with the Hager/Higham
+estimator on the LU factorization, so it works directly on the sparse
+Jacobians the Newton step factors anyway; `exact = true` switches to the
+exact dense 2-norm via SVD for small systems. `reportCondition(J)` prints
+the estimate with the rough number of significant Float64 digits lost and
+a plain-language verdict (well conditioned below `1e6`, borderline below
+`1e10`, convergence at risk below `1e14`, numerically singular above).
+
+```julia
+kappa = reportCondition(J)          # prints and returns the estimate
+kappa = condestJacobian(J)          # estimate only
+kappa = condestJacobian(J; exact = true)  # dense SVD, small nets only
+```
+
+A runnable walk-through, including how conditioning collapses when a bus
+becomes nearly disconnected, is in
+`examples/powerflow/exp_condition_number.jl`.

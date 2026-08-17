@@ -241,6 +241,12 @@ function run_webui_fast_tests()
       @test v["power_flow_max_iter"] == 99
       @test v["power_flow_autodamp_min"] == 0.07
       @test v["_config_newer_than_profile"] === true
+      # the replaced values are named explicitly (config key, saved, config):
+      # a silent flip cost a converged case its start_values before
+      @test v["_config_over_profile_details"] == [("power_flow.max_iter", "55", "99")]
+      rendered = Sparlectra.render_powerflow_form(output_root = mktempdir(), selected_config_file = cfg, case_profile = sidecar)
+      @test occursin("These saved values were replaced", rendered)
+      @test occursin("power_flow.max_iter", rendered)
       # sidecar newer again: saved case settings win as before
       sleep(1.1)
       write(prof, "placeholder2")

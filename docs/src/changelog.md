@@ -13,11 +13,21 @@ and it bakes AnalyticLoadFlow into the image when installed. The new
 background build with a `sysimage_build.log` artifact. Bypass with
 `SPARLECTRA_NO_SYSIMAGE=1`. See [Fast Start (Sysimage)](fast_start.md).
 
+**Jacobian condition-number diagnostics.** New `condestJacobian` estimates
+the 1-norm condition number of a power-flow Jacobian with the Hager/Higham
+estimator on the LU factorization (sparse friendly), and `reportCondition`
+prints it with a digits-lost verdict. Tells an ill-conditioned system from
+a start-value problem before the solver stalls. See [Solver](solver.md).
+
 ## Improvements
 
 - The PowerFlow form no longer re-classifies every file of the case cache
   on each render (large CGMES ZIPs made that seconds per page view);
   results are now memoized per file state and prewarmed at startup.
+- When the configuration file is newer than a case's saved settings, the
+  PowerFlow form now lists exactly which saved values it replaced (key,
+  saved value, configuration value) instead of a generic hint; a silent
+  flip had cost a converged CGMES case its SV start.
 - With an active fast-start image the launcher skips the JIT warm-up; the
   Web UI is usable a few seconds after the start.
 - MATPOWER case downloads retry transient failures with a short backoff and

@@ -3022,6 +3022,46 @@ function test_summary_result_output_closes_file_handle()::Bool
          occursin("PV→PQ events", out)
 end
 
+# Condition-number diagnostics (condition_number.jl): the Hager estimate
+# must match exactly computable cases, stay within its documented factor of
+# the true 1-norm condition number, flag near-singular systems, and reject
+# invalid input.
+function test_condition_number_estimator()::Bool
+  # diagonal case: kappa_1 is exactly max|d| * max|1/d|
+  D = Matrix(Diagonal([1.0, 2.0, 4.0]))
+  isapprox(condestJacobian(D), 4.0; rtol = 1e-12) || return false
+  isapprox(condestJacobian(D; exact = true), 4.0; rtol = 1e-12) || return false
+
+  # sparse diagonally dominant system: the estimate is a lower bound on the
+  # true 1-norm condition number and stays within its documented factor
+  A = spdiagm(0 => fill(4.0, 40), 1 => fill(-1.0, 39), -1 => fill(-1.0, 39))
+  est = condestJacobian(A)
+  exact1 = opnorm(Matrix(A), 1) * opnorm(inv(Matrix(A)), 1)
+  (est <= exact1 * (1 + 1e-9) && est >= exact1 / 3) || return false
+
+  # near-singular system must be flagged as such
+  S = Matrix(Diagonal([1.0, 1.0, 1e-13]))
+  condestJacobian(S) > 1e12 || return false
+
+  # reportCondition returns the same estimate it prints
+  isapprox(reportCondition(D), condestJacobian(D); rtol = 1e-12) || return false
+
+  # invalid input is rejected
+  try
+    condestJacobian(zeros(2, 3))
+    return false
+  catch err
+    err isa ArgumentError || return false
+  end
+  try
+    condestJacobian(zeros(0, 0))
+    return false
+  catch err
+    err isa ArgumentError || return false
+  end
+  return true
+end
+
 function run_grid_fast_tests()
   @testset "Grid and power-flow regression tests" begin
     @testset "Transformer and network validation" begin
@@ -3083,6 +3123,7 @@ function run_grid_fast_tests()
       @test test_solve_sparse_system_small_and_large_backends() == true
       @test test_rectangular_jacobian_and_dc_start_matrices_are_sparse() == true
       @test test_rectangular_singular_step_returns_nonconvergence() == true
+      @test test_condition_number_estimator() == true
       @test test_bus_type_resolution_from_prosumers() == true
       @test test_multiple_slack_prosumers_same_bus_supported() == true
       @test test_regulated_generator_bus_targets_include_unregulated_generators() == true

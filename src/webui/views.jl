@@ -337,7 +337,18 @@ function render_powerflow_form(;
   profile_values = webui_form_state(; selected_casefile, selected_config_file, sidecar_profile = case_profile, submitted_form)
   profile_path = String(get(profile_values, "_profile_path", ""))
   profile_location = isempty(profile_path) ? "the sidecar profile" : "<code>$(_webui_escape(profile_path))</code>"
-  config_newer_hint = get(profile_values, "_config_newer_than_profile", false) === true ? " The configuration file is newer than the saved settings — its values took precedence on this page load." : ""
+  config_newer_hint = if get(profile_values, "_config_newer_than_profile", false) === true
+    override_details = get(profile_values, "_config_over_profile_details", nothing)
+    detail_html = if override_details isa AbstractVector && !isempty(override_details)
+      items = join("<li><code>$(_webui_escape(String(key)))</code>: saved <code>$(_webui_escape(String(saved)))</code>, configuration uses <code>$(_webui_escape(String(cfg)))</code></li>" for (key, saved, cfg) in override_details)
+      " These saved values were replaced:<ul class=\"config-override-list\">$(items)</ul>"
+    else
+      ""
+    end
+    " The configuration file is newer than the saved settings, so its values took precedence on this page load.$(detail_html)"
+  else
+    ""
+  end
   profile_notice = if isempty(profile_path) || !show_case_settings_notice
     ""
   else
