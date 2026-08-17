@@ -255,6 +255,18 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
   elseif verb == "GET" && path == "/webui/last-errors"
     _webui_log_route!(log_root, "last_errors_opened", verb, path; status = "opened")
     return _webui_html(render_webui_last_errors(log_root))
+  elseif verb == "GET" && path == "/webui/fast-start"
+    # autorefresh polls while a build runs; suppress the log spam like the
+    # result-page poller does
+    get(query, "autorefresh", "") == "1" || _webui_log_route!(log_root, "fast_start_opened", verb, path; status = "opened")
+    return handle_webui_fast_start(output_root)
+  elseif verb == "GET" && path == "/webui/fast-start/log"
+    get(query, "autorefresh", "") == "1" || _webui_log_route!(log_root, "fast_start_log_opened", verb, path; status = "opened")
+    return handle_webui_fast_start_log(output_root)
+  elseif verb == "POST" && path == "/webui/fast-start/build"
+    started = start_sysimage_build!(output_root; operation_log = log_root)
+    _webui_log_route!(log_root, started.ok ? "sysimage_build_requested" : "sysimage_build_rejected", verb, path; status = started.ok ? "accepted" : "rejected", message = started.message)
+    return _webui_redirect("/webui/fast-start")
   elseif verb == "GET" && path == "/webui/operation-log/download"
     _webui_log_route!(log_root, "artifact_downloaded", verb, path; status = "succeeded", artifact = WEBUI_OPERATION_LOG_FILENAME)
     return handle_webui_operation_log(log_root; download = true)

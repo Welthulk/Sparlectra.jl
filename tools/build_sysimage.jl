@@ -1,0 +1,111 @@
+# Copyright 2023-2026 Udo Schmitz
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# file: tools/build_sysimage.jl
+# purpose: build the optional fast-start sysimage for the Web UI with
+#          PackageCompiler in the shared build environment
+#          @sparlectra-sysimage-build (the package Project.toml stays free
+#          of PackageCompiler). The image lands below the Web UI user root
+#          next to its sysimage_meta.toml validity contract; the launchers
+#          pick it up automatically. Run from the checkout:
+#          `julia tools/build_sysimage.jl` (a `--dry-run` flag prints the
+#          plan without building; the test suite uses it as a parse smoke).
+
+const _REPO_ROOT = normpath(joinpath(@__DIR__, ".."))
+const _BUILD_ENV = "sparlectra-sysimage-build"
+const _DRY_RUN = ("--dry-run" in ARGS) || get(ENV, "SPARLECTRA_SYSIMAGE_DRY_RUN", "0") == "1"
+
+using Pkg
+
+function _log(msg::AbstractString)
+  println("[build_sysimage] ", msg)
+  flush(stdout)
+end
+
+function _prepare_build_env()
+  _log("activating shared build environment @$(_BUILD_ENV)")
+  Pkg.activate(_BUILD_ENV; shared = true)
+  if Base.find_package("PackageCompiler") === nothing
+    _log("installing PackageCompiler into the build environment (one-time)")
+    Pkg.add("PackageCompiler")
+  end
+  # match how the script was invoked: from a checkout the repo itself is
+  # developed into the build environment, otherwise the released package
+  project_file = joinpath(_REPO_ROOT, "Project.toml")
+  in_checkout = isfile(project_file) && occursin("name = \"Sparlectra\"", read(project_file, String))
+  if in_checkout
+    _log("developing Sparlectra from $(_REPO_ROOT)")
+    Pkg.develop(path = _REPO_ROOT)
+  else
+    _log("adding the released Sparlectra package")
+    Pkg.add("Sparlectra")
+  end
+  Pkg.instantiate()
+  return nothing
+end
+
+function main()
+  started = time()
+  if _DRY_RUN
+    # parse-and-plan mode for the test suite: resolve everything that does
+    # not touch the package environment or PackageCompiler
+    _log("dry run: no build environment changes, no PackageCompiler call")
+    if Base.find_package("Sparlectra") !== nothing
+      @eval using Sparlectra
+      # the module binding is newer than this function invocation (Julia
+      # 1.12 world age); resolve it dynamically via invokelatest
+      spar = Base.invokelatest(getfield, @__MODULE__, :Sparlectra)
+      img = Base.invokelatest(getglobal(spar, :webui_sysimage_path))
+      meta = Base.invokelatest(getglobal(spar, :webui_sysimage_meta_path))
+      _log("would build: $(img)")
+      _log("would write: $(meta)")
+    else
+      _log("Sparlectra not loadable in this environment; dry run ends after parsing")
+    end
+    _log("dry run finished")
+    return nothing
+  end
+
+  _prepare_build_env()
+  @eval using PackageCompiler
+  @eval using Sparlectra
+  # same world-age pattern as above: both modules were loaded inside this
+  # function invocation
+  spar = Base.invokelatest(getfield, @__MODULE__, :Sparlectra)
+  pc = Base.invokelatest(getfield, @__MODULE__, :PackageCompiler)
+
+  img = Base.invokelatest(getglobal(spar, :webui_sysimage_path))
+  meta_path = Base.invokelatest(getglobal(spar, :webui_sysimage_meta_path))
+  manifest = Base.invokelatest(getglobal(spar, :webui_sysimage_manifest_path))
+  mkpath(dirname(img))
+
+  # pre-fetch the workload case so the child process never needs the network
+  _log("ensuring case14.m is cached for the workload")
+  Base.invokelatest(getglobal(spar, :ensure_casefile), "case14.m")
+
+  workload = joinpath(@__DIR__, "sysimage_workload.jl")
+  _log("building sysimage (this typically takes 10 to 20 minutes)...")
+  _log("target: $(img)")
+  Base.invokelatest(getglobal(pc, :create_sysimage), ["Sparlectra"]; sysimage_path = img, precompile_execution_file = workload)
+
+  Base.invokelatest(getglobal(spar, :write_sysimage_meta), meta_path; manifest_path = manifest)
+  elapsed = round((time() - started) / 60; digits = 1)
+  size_mb = round(filesize(img) / 1024^2; digits = 1)
+  _log("done in $(elapsed) min: $(img) ($(size_mb) MB)")
+  _log("start_webui.sh / start_webui.bat use the image automatically on the next start")
+  _log("bypass with SPARLECTRA_NO_SYSIMAGE=1; rebuild after package updates")
+  return nothing
+end
+
+Base.invokelatest(main)

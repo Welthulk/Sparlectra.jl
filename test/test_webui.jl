@@ -263,6 +263,135 @@ function run_webui_fast_tests()
       @test v3["power_flow_merit_enabled"] === true
       @test !haskey(v3, "_config_newer_than_profile")
     end
+
+    @testset "fast-start sysimage metadata contract" begin
+      mktempdir() do tmp
+        root = joinpath(tmp, "runs")
+        mkpath(root)
+        manifest = joinpath(tmp, "Manifest.toml")
+        write(manifest, "# manifest fixture\n[[deps.Example]]\nuuid = \"0\"\n")
+        img_path = Sparlectra.webui_sysimage_path(root)
+        meta_path = Sparlectra.webui_sysimage_meta_path(root)
+        mkpath(dirname(img_path))
+        write(img_path, "not a real image, size is all that matters here")
+
+        # fresh metadata next to an existing image: valid, no reasons
+        Sparlectra.write_sysimage_meta(meta_path; manifest_path = manifest)
+        st = Sparlectra.sysimage_status(output_root = root, manifest_path = manifest)
+        @test st.present
+        @test st.meta_present
+        @test st.valid
+        @test isempty(st.reasons)
+        @test st.size_bytes > 0
+        @test st.julia_version == string(VERSION)
+        @test st.sparlectra_version == string(Sparlectra.SparlectraVersion)
+
+        # wrong Julia version invalidates
+        meta = Sparlectra.read_sysimage_meta(meta_path)
+        meta["julia_version"] = "1.0.0"
+        open(meta_path, "w") do io
+          Sparlectra.TOML.print(io, meta)
+        end
+        st_julia = Sparlectra.sysimage_status(output_root = root, manifest_path = manifest)
+        @test !st_julia.valid
+        @test any(occursin("Julia version", r) for r in st_julia.reasons)
+
+        # wrong manifest hash invalidates (package update case)
+        Sparlectra.write_sysimage_meta(meta_path; manifest_path = manifest)
+        write(manifest, "# changed manifest\n")
+        st_sha = Sparlectra.sysimage_status(output_root = root, manifest_path = manifest)
+        @test !st_sha.valid
+        @test any(occursin("Manifest.toml changed", r) for r in st_sha.reasons)
+
+        # missing image file invalidates
+        Sparlectra.write_sysimage_meta(meta_path; manifest_path = manifest)
+        rm(img_path)
+        st_img = Sparlectra.sysimage_status(output_root = root, manifest_path = manifest)
+        @test !st_img.present
+        @test !st_img.valid
+        @test any(occursin("sysimage file missing", r) for r in st_img.reasons)
+
+        # missing metadata invalidates
+        write(img_path, "image again")
+        rm(meta_path)
+        st_meta = Sparlectra.sysimage_status(output_root = root, manifest_path = manifest)
+        @test st_meta.present
+        @test !st_meta.meta_present
+        @test !st_meta.valid
+      end
+    end
+
+    @testset "fast-start build job and routes" begin
+      mktempdir() do tmp
+        root = joinpath(tmp, "runs")
+        mkpath(root)
+        # the suite must never run a real PackageCompiler build; the job
+        # machinery is exercised with substitute commands
+        @test Sparlectra.sysimage_build_state().status in (:idle, :completed, :failed)
+        started = Sparlectra.start_sysimage_build!(root; _test_command = Cmd(["sleep", "1"]))
+        @test started.ok
+        @test Sparlectra.sysimage_build_state().running
+        # one build at a time: a second request is rejected, not queued
+        rejected = Sparlectra.start_sysimage_build!(root; _test_command = Cmd(["sleep", "1"]))
+        @test !rejected.ok
+        @test occursin("already running", rejected.message)
+        # POST route while running: redirect plus rejected operation event
+        response = Sparlectra.route_sparlectra_webui("POST", "/webui/fast-start/build"; output_root = root)
+        @test response.status == 303
+        @test Dict(response.headers)["Location"] == "/webui/fast-start"
+        # the status page renders the running state
+        page = String(Sparlectra.route_sparlectra_webui("GET", "/webui/fast-start"; output_root = root).body)
+        @test occursin("Fast start", page)
+        @test occursin("build running", page)
+        @test occursin("disabled", page)
+        # wait for the fake build; the job finishes as completed
+        ok = timedwait(() -> !Sparlectra.sysimage_build_state().running, 30.0) === :ok
+        @test ok
+        @test Sparlectra.sysimage_build_state().status === :completed
+        # failure path: a failing command ends as failed
+        failed = Sparlectra.start_sysimage_build!(root; _test_command = Cmd(["false"]))
+        @test failed.ok
+        @test timedwait(() -> !Sparlectra.sysimage_build_state().running, 30.0) === :ok
+        @test Sparlectra.sysimage_build_state().status === :failed
+        # operation log carries the build events
+        oplog = read(Sparlectra.webui_operation_log_path(root), String)
+        @test occursin("sysimage_build_started", oplog)
+        @test occursin("sysimage_build_finished", oplog)
+        @test occursin("sysimage_build_failed", oplog)
+        # idle page on a root without an image reports "not built"
+        page_idle = String(Sparlectra.route_sparlectra_webui("GET", "/webui/fast-start"; output_root = root).body)
+        @test occursin("not built", page_idle)
+        # log page renders the captured command output artifact
+        page_log = String(Sparlectra.route_sparlectra_webui("GET", "/webui/fast-start/log"; output_root = root).body)
+        @test occursin("Fast-start build log", page_log)
+        # leave the registry clean for other testsets
+        lock(Sparlectra._SYSIMAGE_BUILD_LOCK) do
+          Sparlectra._SYSIMAGE_BUILD_JOB[] = nothing
+        end
+      end
+    end
+
+    @testset "fast-start build script dry run parses" begin
+      script = joinpath(Sparlectra.SPARLECTRA_ROOT, "tools", "build_sysimage.jl")
+      @test isfile(script)
+      # the dry-run flag makes the script side-effect free: no build
+      # environment changes, no PackageCompiler; safe to include in-process
+      ENV["SPARLECTRA_SYSIMAGE_DRY_RUN"] = "1"
+      try
+        sandbox = Module()
+        text = mktemp() do path, io
+          redirect_stdout(io) do
+            Base.include(sandbox, script)
+          end
+          flush(io)
+          read(path, String)
+        end
+        @test occursin("dry run", text)
+        @test occursin("dry run finished", text)
+      finally
+        delete!(ENV, "SPARLECTRA_SYSIMAGE_DRY_RUN")
+      end
+    end
   end
 end
 

@@ -145,6 +145,7 @@ function _git_head_commit_sha(root::AbstractString)::Union{String,Nothing}
   end
 end
 
+include("sysimage.jl")
 include("options.jl")
 include("forms.jl")
 include("docs.jl")

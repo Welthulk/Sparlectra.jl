@@ -35,4 +35,40 @@ if [ ! -f "$DIR/Manifest.toml" ]; then
   julia --project="$DIR" -e "using Pkg; Pkg.instantiate()"
 fi
 
+# Fast start: use the optional PackageCompiler sysimage when it matches the
+# running Julia and the checkout Manifest (contract in sysimage_meta.toml,
+# written by tools/build_sysimage.jl). The path mirrors
+# Sparlectra.default_webui_output_root in src/webui/webui.jl; keep both in
+# sync. SPARLECTRA_NO_SYSIMAGE=1 skips the image unconditionally. A stale or
+# missing image never blocks the start.
+USE_SYSIMAGE=0
+if [ "${SPARLECTRA_NO_SYSIMAGE:-0}" != "1" ]; then
+  if [ "$(uname)" = "Darwin" ]; then
+    SYSIMAGE="$HOME/Library/Application Support/Sparlectra/WebUI/sysimage/sparlectra.dylib"
+  else
+    STATE_ROOT="${XDG_STATE_HOME:-$HOME/.local/state}"
+    SYSIMAGE="$STATE_ROOT/sparlectra/webui/sysimage/sparlectra.so"
+  fi
+  SYSMETA="$(dirname "$SYSIMAGE")/sysimage_meta.toml"
+  if [ -f "$SYSIMAGE" ] && [ -f "$SYSMETA" ]; then
+    META_JULIA=$(sed -n 's/^julia_version = "\(.*\)"$/\1/p' "$SYSMETA")
+    RUN_JULIA=$(julia --version | awk '{print $3}')
+    META_SHA=$(sed -n 's/^manifest_sha256 = "\(.*\)"$/\1/p' "$SYSMETA")
+    if command -v sha256sum >/dev/null 2>&1; then
+      CUR_SHA=$(sha256sum "$DIR/Manifest.toml" | awk '{print $1}')
+    else
+      CUR_SHA=$(shasum -a 256 "$DIR/Manifest.toml" | awk '{print $1}')
+    fi
+    if [ -n "$CUR_SHA" ] && [ "$META_JULIA" = "$RUN_JULIA" ] && [ "$META_SHA" = "$CUR_SHA" ]; then
+      USE_SYSIMAGE=1
+    else
+      echo "Fast start: sysimage stale, starting without it; rebuild via tools/build_sysimage.jl"
+    fi
+  fi
+fi
+
+if [ "$USE_SYSIMAGE" = "1" ]; then
+  echo "Fast start: using sysimage $SYSIMAGE"
+  exec julia "-J$SYSIMAGE" --project="$DIR" "$DIR/start_webui.jl"
+fi
 exec julia --project="$DIR" "$DIR/start_webui.jl"

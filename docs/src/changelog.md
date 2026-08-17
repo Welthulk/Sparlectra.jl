@@ -1,3 +1,17 @@
+# Version 0.9.5 - 2026-08-17
+
+## Highlights
+
+**Fast start for the Web UI (optional sysimage).** `tools/build_sysimage.jl`
+bakes Sparlectra into a PackageCompiler system image below the Web UI user
+root; the start scripts pick it up automatically when it matches the running
+Julia and the checkout `Manifest.toml`, and otherwise warn once and start
+normally. The new **Fast start** page in the Web UI shows the image state
+and triggers a background build with a `sysimage_build.log` artifact.
+Bypass with `SPARLECTRA_NO_SYSIMAGE=1`. See
+[Fast Start (Sysimage)](fast_start.md).
+
+
 # Version 0.9.4 - 2026-08-14
 
 ## Highlights

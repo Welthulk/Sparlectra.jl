@@ -37,5 +37,42 @@ if not exist "%DIR%Manifest.toml" (
   julia --project="%DIR%." -e "using Pkg; Pkg.instantiate()"
 )
 
-julia --project="%DIR%." "%DIR%start_webui.jl"
+rem Fast start: use the optional PackageCompiler sysimage when it matches the
+rem running Julia and the checkout Manifest (contract in sysimage_meta.toml,
+rem written by tools\build_sysimage.jl). The path mirrors
+rem Sparlectra.default_webui_output_root in src\webui\webui.jl; keep both in
+rem sync. SPARLECTRA_NO_SYSIMAGE=1 skips the image unconditionally. A stale
+rem or missing image never blocks the start.
+set "USE_SYSIMAGE="
+if "%SPARLECTRA_NO_SYSIMAGE%"=="1" goto run_webui
+set "SYSIMAGE=%LOCALAPPDATA%\Sparlectra\WebUI\sysimage\sparlectra.dll"
+set "SYSMETA=%LOCALAPPDATA%\Sparlectra\WebUI\sysimage\sysimage_meta.toml"
+if not exist "%SYSIMAGE%" goto run_webui
+if not exist "%SYSMETA%" goto run_webui
+set "META_JULIA="
+for /f "tokens=3" %%a in ('findstr /b "julia_version" "%SYSMETA%"') do set "META_JULIA=%%~a"
+set "RUN_JULIA="
+for /f "tokens=3" %%a in ('julia --version') do set "RUN_JULIA=%%a"
+set "META_SHA="
+for /f "tokens=3" %%a in ('findstr /b "manifest_sha256" "%SYSMETA%"') do set "META_SHA=%%~a"
+set "CUR_SHA="
+for /f "skip=1 tokens=1" %%a in ('certutil -hashfile "%DIR%Manifest.toml" SHA256') do (
+  if not defined CUR_SHA set "CUR_SHA=%%a"
+)
+if not defined CUR_SHA goto sysimage_stale
+if not "%META_JULIA%"=="%RUN_JULIA%" goto sysimage_stale
+if /i not "%META_SHA%"=="%CUR_SHA%" goto sysimage_stale
+set "USE_SYSIMAGE=1"
+goto run_webui
+
+:sysimage_stale
+echo Fast start: sysimage stale, starting without it; rebuild via tools\build_sysimage.jl
+
+:run_webui
+if defined USE_SYSIMAGE (
+  echo Fast start: using sysimage %SYSIMAGE%
+  julia "-J%SYSIMAGE%" --project="%DIR%." "%DIR%start_webui.jl"
+) else (
+  julia --project="%DIR%." "%DIR%start_webui.jl"
+)
 pause

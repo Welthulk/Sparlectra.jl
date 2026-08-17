@@ -45,6 +45,7 @@ makedocs(
     "Programmatic API" => "programmatic_api.md",
     "Local PowerFlow Service" => "powerflow_service.md",
     "Local PowerFlow Web UI" => "webui.md",
+    "Fast Start (Sysimage)" => "fast_start.md",
     "Power-Flow Configuration" => "powerflow_configuration.md",
     "Q-limit Switching Strategy" => "q_limit_switching_strategy.md",
     "MATPOWER Format" => "matpower_format.md",

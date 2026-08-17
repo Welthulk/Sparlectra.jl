@@ -691,6 +691,12 @@ function handle_powerflow_history(output_root::AbstractString)::SparlectraWebUIR
   return _webui_html(render_powerflow_history(list_powerflow_runs(output_root), output_root; active_run = get_active_webui_powerflow_job()))
 end
 
+"""Serve the fast-start (sysimage) status page."""
+handle_webui_fast_start(output_root::AbstractString)::SparlectraWebUIResponse = _webui_html(render_webui_fast_start(output_root))
+
+"""Serve the sysimage build-log page."""
+handle_webui_fast_start_log(output_root::AbstractString)::SparlectraWebUIResponse = _webui_html(render_webui_fast_start_log(output_root))
+
 function handle_webui_operation_log(output_root::AbstractString; download::Bool = false)::SparlectraWebUIResponse
   path = webui_operation_log_path(output_root)
   content = isfile(path) ? read(path, String) : ""

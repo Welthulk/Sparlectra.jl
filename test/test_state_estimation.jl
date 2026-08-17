@@ -271,8 +271,15 @@ function test_state_estimation_passive_bus_zero_injection_helpers()::Bool
     @test isempty(zi_obs.numerical_critical_measurement_indices)
     @test isempty(zi_obs.structural_critical_measurement_indices)
 
-    result = runse!(deepcopy(net); maxIte = 45, tol = 1e-8, flatstart = true, jacEps = 1e-6, updateNet = false)
+    # Iteration budget 100: the zero-injection weights (sigma 1e-6, weight
+    # 1e12) make the flat-start normal equations ill-conditioned, so the
+    # iteration count is sensitive to BLAS/LAPACK details. Julia 1.12.6
+    # converged within 45 iterations, Julia 1.12.7 needs 69 (measured
+    # 2026-08-17); the solution itself stays exact (J = 0, noise-free set).
+    result = runse!(deepcopy(net); maxIte = 100, tol = 1e-8, flatstart = true, jacEps = 1e-6, updateNet = false)
     @test result.converged == true
+    @test result.objectiveJ < 1e-6
+    @test result.residualNorm < 1e-6
   end
 
   return true
