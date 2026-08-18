@@ -126,6 +126,51 @@ printACPFlowResults(net1, etime, ite, 1e-8)
 # load, 60 MW of scheduled generation, and the network losses. All bus
 # voltages stay near 1.0 pu.
 
+# ### How much can you trust these numbers?
+#
+# Every Newton iteration solves the linear system $J \, \Delta x = -F$ with
+# the power-flow Jacobian $J$. The condition number $\kappa(J)$ measures how
+# strongly that solve amplifies tiny perturbations: rounding, measurement
+# noise in the input data, small parameter changes. The attainable relative
+# accuracy in Float64 is roughly $\kappa \cdot 2 \cdot 10^{-16}$, so every
+# power of ten in $\kappa$ costs one significant digit of the result.
+# `condestJacobian(net)` estimates $\kappa_1$ at the operating point the net
+# currently holds, on the same sparse Jacobian the solver factors:
+
+println("ring network: kappa = ", round(condestJacobian(net1), sigdigits = 3))
+
+# Around 45: excellent. Rule of thumb: below about $10^6$ well conditioned,
+# around $10^{10}$ borderline, beyond $10^{14}$ numerically singular in
+# Float64.
+#
+# The instructive part is how conditioning degrades when the physics
+# degenerate, long before the solver visibly fails. Take a small feeder with
+# a measurement stub at `B3` and make the stub line weaker in each round:
+
+for x_weak in (0.08, 800.0, 8.0e6, 8.0e10)
+  net = Net(name = "tour_cond", baseMVA = 100.0)
+  addBus!(net = net, busName = "B1", vn_kV = 110.0)
+  addBus!(net = net, busName = "B2", vn_kV = 110.0)
+  addBus!(net = net, busName = "B3", vn_kV = 110.0)
+  addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", referencePri = "B1", vm_pu = 1.0, va_deg = 0.0)
+  addProsumer!(net = net, busName = "B2", type = "ENERGYCONSUMER", p = 20.0, q = 5.0)
+  addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "B2", toBus = "B3", r_pu = x_weak / 8, x_pu = x_weak, b_pu = 0.0, status = 1)
+  etime, ite = solve!(net)
+  vm3 = round(something(net.nodeVec[3]._vm_pu, NaN); digits = 4)
+  println("x = ", lpad(x_weak, 8), " pu:  ", ite, " iterations,  Vm(B3) = ", vm3, ",  kappa = ", round(condestJacobian(net), sigdigits = 3))
+end
+
+# Reading aid: the solver converges in 4 iterations in every round, and
+# `Vm(B3)` prints the same plausible 0.9938 each time. Nothing in the result
+# table reveals that the last round sits at $\kappa \approx 10^{12}$, where
+# only about 4 significant digits survive: the printed voltage is already at
+# the edge of what the arithmetic can guarantee, and any sensitivity built
+# on this Jacobian (voltage per tap step, voltage per MVar) is numerically
+# meaningless. That is exactly what the estimate is for: the classic result
+# log reports it as a `Jacobian cond.` line, and diagnose runs grade it with
+# a plain-language verdict.
+
 # ## Chapter 2: slack types and short-circuit currents
 #
 # One grid connection, modeled three ways, plus an IEC 60909-0 fault-current
