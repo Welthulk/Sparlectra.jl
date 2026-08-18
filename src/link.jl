@@ -14,7 +14,7 @@
 
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 08.03.2026
-# file: src/links.jl
+# file: src/link.jl
 # purpose: BusLink, an impedance-less bus-to-bus connection outside the YBUS
 #          branch model, with status/flow/current setters used by
 #          post-power-flow KCL allocation
