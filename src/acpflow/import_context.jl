@@ -12,12 +12,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: src/acpflow/import_context.jl
+# Purpose: internal helper functions for the AC power-flow framework runner
+
 function _resolve_sparlectra_casefile(casefile::String, path::Union{Nothing,String})::String
   ext = lowercase(splitext(casefile)[2])
   ext in (".m", ".jl") || throw(ArgumentError("run_sparlectra: file extension $(ext) is not supported; use .m or .jl."))
-  filename = path === nothing ? joinpath(pwd(), "data", "mpower", strip(casefile)) : joinpath(path, strip(casefile))
-  isfile(filename) || error("File $(filename) not found")
-  return filename
+  c = String(strip(casefile))
+  if path !== nothing
+    filename = joinpath(path, c)
+    isfile(filename) || error("File $(filename) not found")
+    return filename
+  end
+  # explicit or cwd-relative path
+  isfile(c) && return abspath(c)
+  # legacy dev-checkout convention: <cwd>/data/mpower/<case>
+  legacy = joinpath(pwd(), "data", "mpower", c)
+  isfile(legacy) && return legacy
+  # a path-like argument that does not exist must fail explicitly instead of
+  # being treated as a downloadable bare case name
+  occursin(r"[\\/]", c) && error("File $(c) not found")
+  # bare case name: same resolution as run_sparlectra_cases (case cache,
+  # download on demand); removes the pwd() dependency for registered installs
+  return ensure_casefile(c)
 end
 
 function _resolve_matpower_lock_pv_to_pq_buses(net::Net, buses::AbstractVector{Int}; verbose::Int = 0)::Vector{Int}
@@ -98,12 +115,7 @@ function _cgmes_start_values_powerflow(pf_cfg::PowerFlowConfig, start_values::Sy
   pf_cfg.start_current_iteration.enabled && push!(overridden, "power_flow.start_current_iteration.enabled=true")
   pf_cfg.apslf_start.enabled && push!(overridden, "power_flow.apslf_start.enabled=true")
   start_mode = _copy_start_mode_with(pf_cfg.start_mode; flatstart = false, start_projection = false, dc_seed_unconditional = false)
-  return _copy_powerflow_with(
-    pf_cfg;
-    start_mode = start_mode,
-    start_current_iteration = _copy_start_current_iteration_with(pf_cfg.start_current_iteration; enabled = false),
-    apslf_start = ApslfStartConfig(enabled = false, order = pf_cfg.apslf_start.order),
-  ), overridden
+  return _copy_powerflow_with(pf_cfg; start_mode = start_mode, start_current_iteration = _copy_start_current_iteration_with(pf_cfg.start_current_iteration; enabled = false), apslf_start = ApslfStartConfig(enabled = false, order = pf_cfg.apslf_start.order)), overridden
 end
 
 function _resolve_matpower_powerflow_ids_after_import(net::Net, cfg::SparlectraConfig; verbose::Int = 0)::SparlectraConfig

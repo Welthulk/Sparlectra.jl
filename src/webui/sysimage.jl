@@ -33,8 +33,19 @@ webui_sysimage_path(output_root::AbstractString = default_webui_output_root())::
 """Return the metadata path next to the sysimage (`sysimage_meta.toml`)."""
 webui_sysimage_meta_path(output_root::AbstractString = default_webui_output_root())::String = joinpath(webui_sysimage_dir(output_root), "sysimage_meta.toml")
 
-"""Return the Manifest.toml whose state the sysimage is built against (the checkout manifest the launchers run with)."""
-webui_sysimage_manifest_path()::String = joinpath(SPARLECTRA_ROOT, "Manifest.toml")
+"""
+Return the Manifest.toml whose state the sysimage is built against: the
+checkout manifest when running from a dev checkout (the manifest the
+launchers run with), otherwise the manifest of the active environment
+(registered installations ship no Manifest.toml in the package directory).
+"""
+function webui_sysimage_manifest_path()::String
+  checkout = joinpath(SPARLECTRA_ROOT, "Manifest.toml")
+  isfile(checkout) && return checkout
+  proj = Base.active_project()
+  proj === nothing && return checkout
+  return joinpath(dirname(proj), "Manifest.toml")
+end
 
 """SHA-256 hex digest of a file, the manifest fingerprint of the metadata contract."""
 _sysimage_file_sha256(path::AbstractString)::String = bytes2hex(sha256(read(path)))
@@ -47,20 +58,23 @@ _sysimage_os_label()::String = Sys.iswindows() ? "windows" : (Sys.isapple() ? "m
 
 Write `sysimage_meta.toml`, the validity contract of the fast-start image:
 Sparlectra version, Julia `VERSION` string, OS label and architecture,
-SHA-256 of `manifest_path`, and the build timestamp. Returns the written
-dictionary. The launchers compare the Julia version string and the manifest
-hash with shell tools only, so both are stored as plain strings.
+SHA-256 and path of `manifest_path` (best effort, omitted when no manifest
+exists, e.g. registered installations), and the build timestamp. Returns the
+written dictionary. The launchers compare the Julia version string and the
+manifest hash with shell tools only, so both are stored as plain strings.
 """
 function write_sysimage_meta(meta_path::AbstractString; manifest_path::AbstractString = webui_sysimage_manifest_path())
-  isfile(manifest_path) || error("write_sysimage_meta: manifest not found at $(manifest_path)")
-  meta = Dict{String,Any}(
-    "sparlectra_version" => string(SparlectraVersion),
-    "julia_version" => string(VERSION),
-    "os" => _sysimage_os_label(),
-    "arch" => string(Sys.ARCH),
-    "manifest_sha256" => _sysimage_file_sha256(manifest_path),
-    "built_at" => Dates.format(Dates.now(), "yyyy-mm-ddTHH:MM:SS"),
-  )
+  meta = Dict{String,Any}("sparlectra_version" => string(SparlectraVersion), "julia_version" => string(VERSION), "os" => _sysimage_os_label(), "arch" => string(Sys.ARCH), "built_at" => Dates.format(Dates.now(), "yyyy-mm-ddTHH:MM:SS"))
+  # The manifest fingerprint is best effort: registered installations may
+  # legitimately lack a resolvable Manifest.toml. The sparlectra_version
+  # check in sysimage_status covers the package-update case there; a missing
+  # manifest must never fail the build after a 10-plus-minute compile.
+  if isfile(manifest_path)
+    meta["manifest_sha256"] = _sysimage_file_sha256(manifest_path)
+    meta["manifest_path"] = abspath(manifest_path)
+  else
+    @warn "write_sysimage_meta: no Manifest.toml found; staleness detection falls back to the Sparlectra/Julia version checks" manifest_path
+  end
   mkpath(dirname(abspath(meta_path)))
   open(meta_path, "w") do io
     TOML.print(io, meta)
@@ -105,11 +119,20 @@ function sysimage_status(; output_root::AbstractString = default_webui_output_ro
     stored_os == _sysimage_os_label() || push!(reasons, "operating system changed (image: $(stored_os))")
     stored_arch = get(meta, "arch", "")
     stored_arch == string(Sys.ARCH) || push!(reasons, "architecture changed (image: $(stored_arch))")
+    stored_sparlectra = get(meta, "sparlectra_version", "")
+    if !isempty(stored_sparlectra) && stored_sparlectra != string(SparlectraVersion)
+      push!(reasons, "Sparlectra version changed (image: $(stored_sparlectra), running: $(SparlectraVersion)); rebuild via tools/build_sysimage.jl")
+    end
+    # manifest check only when the build recorded a fingerprint; prefer the
+    # manifest the build actually hashed (stored path) over the local default
     stored_sha = get(meta, "manifest_sha256", "")
-    if !isfile(manifest_path)
-      push!(reasons, "Manifest.toml missing at $(manifest_path)")
-    elseif stored_sha != _sysimage_file_sha256(manifest_path)
-      push!(reasons, "Manifest.toml changed since the build (package update); rebuild via tools/build_sysimage.jl")
+    if !isempty(stored_sha)
+      check_path = get(meta, "manifest_path", manifest_path)
+      if !isfile(check_path)
+        push!(reasons, "Manifest.toml missing at $(check_path)")
+      elseif stored_sha != _sysimage_file_sha256(check_path)
+        push!(reasons, "Manifest.toml changed since the build (package update); rebuild via tools/build_sysimage.jl")
+      end
     end
   end
   return (

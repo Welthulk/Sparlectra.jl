@@ -80,6 +80,34 @@ Pkg.add("Sparlectra")
 using Sparlectra
 ```
 
+### Web UI: one-line install (no git, no GitHub checkout)
+
+The install scripts also run straight from this page. They install Julia
+when it is missing (official juliaup installer; on Windows via winget),
+download Sparlectra at its **latest tagged release** into a `Sparlectra/`
+folder inside the current directory, ask once whether to build the optional
+[fast-start sysimage](https://welthulk.github.io/Sparlectra.jl/fast_start/)
+(a one-time build of 6 to 20 minutes; later Web UI starts then skip the
+JIT warm-up, answering `n` or just pressing Enter skips it), and start the
+Web UI. Run the command in the directory where Sparlectra should live.
+
+Linux/macOS:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Welthulk/Sparlectra.jl/main/install_webui.sh | sh
+```
+
+Windows (PowerShell):
+
+```powershell
+iwr -useb https://raw.githubusercontent.com/Welthulk/Sparlectra.jl/main/install_webui.bat -OutFile install_webui.bat; .\install_webui.bat
+```
+
+For unattended installs, `SPARLECTRA_BUILD_SYSIMAGE=1` (build) or `=0`
+(skip) answers the sysimage question without a prompt. The sysimage can
+also be built later at any time: `julia tools/build_sysimage.jl` from the
+Sparlectra folder, or via the Web UI **Fast start** page.
+
 ### Web UI start scripts
 
 The repository root ships ready-made scripts for the local Web UI:
@@ -99,7 +127,8 @@ on Windows via winget, no git required there), obtain Sparlectra at its
 **latest tagged release** (an existing checkout is used in place; a clean
 git tree is moved to the release tag, local changes are never touched;
 outside a checkout the release is cloned or downloaded next to the script),
-and then start the Web UI.
+offer the optional fast-start sysimage build (see above), and then start
+the Web UI.
 
 ---
 

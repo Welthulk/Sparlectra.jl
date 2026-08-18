@@ -193,7 +193,6 @@ function _expand_ybus_for_isolated_nodes(Yred, n::Int, iso_nodes::Vector{Int})
   return Yfull
 end
 
-
 function _try_adjust_vset_on_q_limit!(net::Net, bus::Int, side::Symbol, it::Int, controllers::Dict{Int,NamedTuple{(:prosumer_idx, :config),Tuple{Int,VoltageAdjustConfig}}}, base_vset::Vector{Float64}, Vset::Vector{Float64}, adjust_counter::Vector{Int}, qlimit_max_outer::Int, verbose::Int)::Bool
   cname = _bus_label(net, bus)
   if !haskey(controllers, bus)
@@ -526,15 +525,7 @@ function runpf_rectangular!(
   # switching does not change participation. `nothing` (disabled, or ref_only
   # fallback with no valid participant) leaves the classical path untouched.
   dslack = if distributed_slack_enabled
-    build_distributed_slack_state(
-      net,
-      bus_types;
-      p_mode = distributed_slack_p_mode,
-      fallback = distributed_slack_fallback,
-      weights = distributed_slack_weights,
-      respect_p_limits = distributed_slack_respect_p_limits,
-      island_label = net.name,
-    )
+    build_distributed_slack_state(net, bus_types; p_mode = distributed_slack_p_mode, fallback = distributed_slack_fallback, weights = distributed_slack_weights, respect_p_limits = distributed_slack_respect_p_limits, island_label = net.name)
   else
     nothing
   end
@@ -598,19 +589,7 @@ function runpf_rectangular!(
     # APSLF start is a guarded start-value improver, not a solver: it only
     # candidates a profile for the Newton-Raphson solve below and is accepted
     # only if it strictly improves the rectangular mismatch.
-    _run_guarded_apslf_start(
-      Ybus,
-      V0,
-      S,
-      bus_types,
-      Vset,
-      slack_idx;
-      enabled = apslf_start_enabled,
-      order = apslf_start_order,
-      baseMVA = Sbase,
-      verbose = verbose,
-      performance_profile = performance_profile,
-    )
+    _run_guarded_apslf_start(Ybus, V0, S, bus_types, Vset, slack_idx; enabled = apslf_start_enabled, order = apslf_start_order, baseMVA = Sbase, verbose = verbose, performance_profile = performance_profile)
   end
   check_cancel()
 
@@ -810,16 +789,48 @@ function runpf_rectangular!(
 
     # --- Q-Limit Active Set: PV -> PQ, optional PQ -> PV (rectangular) ------
     set_phase("q_limit_processing")
-    qlimit_iter = qlimits_enabled ? _handle_rectangular_qlimit_iteration!(
-      net, it, nb, Ybus, V, S, bus_types, Vset, slack_idx, workspace, history,
-      qmin_pu, qmax_pu, pv_orig_mask, qlimit_mode, allow_reenable, q_hyst_pu,
-      cooldown_iters, lock_pv_to_pq_buses, qlimit_start_mode, qlimit_start_iter,
-      qlimit_auto_q_delta_pu, qlimit_trace_enabled, qlimit_trace_internal,
-      qlimit_lock_reason, qlimit_max_outer, controllers, base_vset, adjust_counter,
-      qlimit_guard_max_switches, qlimit_guard_freeze_after_repeated_switching,
-      qlimit_guard_violation_mode, qlimit_guard_violation_threshold_pu, tol,
-      verbose, pv_table_rows, performance_profile, dslack,
-    ) : (F = F, max_mis = max_mis, changed = false, reenabled = false, converged_this_iter = max_mis <= tol)
+    qlimit_iter =
+      qlimits_enabled ?
+      _handle_rectangular_qlimit_iteration!(
+        net,
+        it,
+        nb,
+        Ybus,
+        V,
+        S,
+        bus_types,
+        Vset,
+        slack_idx,
+        workspace,
+        history,
+        qmin_pu,
+        qmax_pu,
+        pv_orig_mask,
+        qlimit_mode,
+        allow_reenable,
+        q_hyst_pu,
+        cooldown_iters,
+        lock_pv_to_pq_buses,
+        qlimit_start_mode,
+        qlimit_start_iter,
+        qlimit_auto_q_delta_pu,
+        qlimit_trace_enabled,
+        qlimit_trace_internal,
+        qlimit_lock_reason,
+        qlimit_max_outer,
+        controllers,
+        base_vset,
+        adjust_counter,
+        qlimit_guard_max_switches,
+        qlimit_guard_freeze_after_repeated_switching,
+        qlimit_guard_violation_mode,
+        qlimit_guard_violation_threshold_pu,
+        tol,
+        verbose,
+        pv_table_rows,
+        performance_profile,
+        dslack,
+      ) : (F = F, max_mis = max_mis, changed = false, reenabled = false, converged_this_iter = max_mis <= tol)
     check_cancel()
     F = qlimit_iter.F
     max_mis = qlimit_iter.max_mis
@@ -845,14 +856,39 @@ function runpf_rectangular!(
       set_phase("linear_solve")
       V = _perf_profile_time!(performance_profile, :iteration_newton_step) do
         complex_newton_step_rectangular(
-          Ybus, V, S; slack_idx = slack_idx, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, bus_types = bus_types, Vset = Vset,
-          dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm, performance_profile = performance_profile, step_diagnostics = step_diagnostics,
-          merit_enabled = merit_enabled, armijo_c1 = merit_armijo_c1, scale_p = merit_scale_p, scale_q = merit_scale_q, scale_v = merit_scale_v,
-          fallback_max_mismatch = merit_fallback_max_mismatch, active_set_changed = (changed || reenabled), merit_log = merit_step_diagnostics,
-          trust_region_enabled = trust_region_enabled, tr_radius_ref = tr_radius_ref, tr_min_radius = trust_region_min_radius, tr_max_radius = trust_region_max_radius,
-          tr_eta_accept = trust_region_eta_accept, tr_shrink_factor = trust_region_shrink_factor, tr_expand_factor = trust_region_expand_factor,
-          tr_expand_threshold = trust_region_expand_threshold, tr_step_mode = trust_region_step_mode, tr_log = tr_step_diagnostics,
-          linear_ctx = linear_ctx, dslack = dslack,
+          Ybus,
+          V,
+          S;
+          slack_idx = slack_idx,
+          damp = damp,
+          autodamp = autodamp,
+          autodamp_min = autodamp_min,
+          bus_types = bus_types,
+          Vset = Vset,
+          dPinj_dVm = dPinj_dVm,
+          dQinj_dVm = dQinj_dVm,
+          performance_profile = performance_profile,
+          step_diagnostics = step_diagnostics,
+          merit_enabled = merit_enabled,
+          armijo_c1 = merit_armijo_c1,
+          scale_p = merit_scale_p,
+          scale_q = merit_scale_q,
+          scale_v = merit_scale_v,
+          fallback_max_mismatch = merit_fallback_max_mismatch,
+          active_set_changed = (changed || reenabled),
+          merit_log = merit_step_diagnostics,
+          trust_region_enabled = trust_region_enabled,
+          tr_radius_ref = tr_radius_ref,
+          tr_min_radius = trust_region_min_radius,
+          tr_max_radius = trust_region_max_radius,
+          tr_eta_accept = trust_region_eta_accept,
+          tr_shrink_factor = trust_region_shrink_factor,
+          tr_expand_factor = trust_region_expand_factor,
+          tr_expand_threshold = trust_region_expand_threshold,
+          tr_step_mode = trust_region_step_mode,
+          tr_log = tr_step_diagnostics,
+          linear_ctx = linear_ctx,
+          dslack = dslack,
         )
       end
       check_cancel()
@@ -981,24 +1017,7 @@ function runpf_rectangular!(
   end
 
   mismatch_diagnostics = _perf_profile_time!(performance_profile, :solver_final_mismatch_diagnostics) do
-    _rectangular_mismatch_diagnostics(
-      Ybus,
-      V,
-      S,
-      bus_types,
-      Vset,
-      slack_idx,
-      final_pv_voltage_residual;
-      net,
-      history,
-      step_diagnostics,
-      best_finite_iteration,
-      best_finite_voltage,
-      last_finite_iteration,
-      last_finite_voltage,
-      first_nonfinite_iteration,
-      first_nonfinite_voltage,
-    )
+    _rectangular_mismatch_diagnostics(Ybus, V, S, bus_types, Vset, slack_idx, final_pv_voltage_residual; net, history, step_diagnostics, best_finite_iteration, best_finite_voltage, last_finite_iteration, last_finite_voltage, first_nonfinite_iteration, first_nonfinite_voltage)
   end
 
   switch_counts, oscillating_buses, max_switching_exceeded, q_limit_active_set_ok, converged, rejection_reason, final_reason, final_status, status = _perf_profile_time!(performance_profile, :solver_status_bookkeeping) do
@@ -1036,6 +1055,16 @@ function runpf_rectangular!(
     status_build_ = _merge_trust_region_diagnostics(status_build_, performance_profile, tr_step_diagnostics, trust_region_enabled)
     status_build_ = _merge_linear_solver_diagnostics(status_build_, performance_profile, linear_solver, linear_ctx)
     status_build_ = _merge_distributed_slack_diagnostics(status_build_, performance_profile, net, dslack, Sbase, verbose)
+    # Lazy Jacobian condition estimate over the EXACT system this solve
+    # factored (post-merge topology, final Q-limit active set, final
+    # voltages). Stored as a cached closure: the solve pays nothing, the
+    # estimate is computed only when a report asks for it
+    # (output.condition_number, diagnose.log). The closure reduces to the
+    # active (non-isolated) subsystem first, because de-energized buses
+    # make the full Jacobian structurally singular; with distributed slack
+    # it rates the core PF Jacobian without the appended lambda row and
+    # column. See _make_rectangular_condest_thunk in condition_number.jl.
+    status_build_ = merge(status_build_, (status = (; status_build_.status..., jacobian_condest = _make_rectangular_condest_thunk(Ybus, V, bus_types, Vset, slack_idx, net.isoNodes)),))
     final_reason_ = status_build_.final_reason
     final_status_ = status_build_.final_status
     status_ = _store_and_print_rectangular_final_status!(net, status_build_.status, verbose)
@@ -1874,7 +1903,17 @@ function runpf!(
     performance_profile isa AbstractDict && (performance_profile[:ac_island_solver_statuses] = island_statuses)
     for row in island_report.rows
       if first_failure !== nothing && !islands_diagnostic_continue_after_failure
-        skipped_status = (; island_id = row.island_id, final_mismatch = NaN, iterations = 0, reason = :skipped_after_previous_failure, status = :skipped_after_previous_failure, stage = :skipped_after_previous_failure, exception_type = "", exception_message = "previous island failed and diagnostic continuation is disabled", stacktrace_top = "")
+        skipped_status = (;
+          island_id = row.island_id,
+          final_mismatch = NaN,
+          iterations = 0,
+          reason = :skipped_after_previous_failure,
+          status = :skipped_after_previous_failure,
+          stage = :skipped_after_previous_failure,
+          exception_type = "",
+          exception_message = "previous island failed and diagnostic continuation is disabled",
+          stacktrace_top = "",
+        )
         island_statuses[Int(row.island_id)] = skipped_status
         _set_rectangular_pf_status!(net, skipped_status)
         continue
@@ -1892,92 +1931,92 @@ function runpf!(
         inet = _prepare_island_net(wnet, row)
         stage = :pre_nr_setup
         it, status = runpf_rectangular!(
-        inet,
-        maxIte,
-        tolerance,
-        verbose;
-        damp = damp,
-        autodamp = autodamp,
-        autodamp_min = autodamp_min,
-        merit_enabled = merit_enabled,
-        merit_armijo_c1 = merit_armijo_c1,
-        merit_scale_p = merit_scale_p,
-        merit_scale_q = merit_scale_q,
-        merit_scale_v = merit_scale_v,
-        merit_fallback_max_mismatch = merit_fallback_max_mismatch,
-        trust_region_enabled = trust_region_enabled,
-        trust_region_initial_radius = trust_region_initial_radius,
-        trust_region_min_radius = trust_region_min_radius,
-        trust_region_max_radius = trust_region_max_radius,
-        trust_region_eta_accept = trust_region_eta_accept,
-        trust_region_shrink_factor = trust_region_shrink_factor,
-        trust_region_expand_factor = trust_region_expand_factor,
-        trust_region_expand_threshold = trust_region_expand_threshold,
-        trust_region_step_mode = trust_region_step_mode,
-        wrong_branch_detection = wrong_branch_detection,
-        wrong_branch_rescue = false,
-        wrong_branch_min_vm_pu = wrong_branch_min_vm_pu,
-        wrong_branch_max_vm_pu = wrong_branch_max_vm_pu,
-        wrong_branch_max_angle_spread_deg = wrong_branch_max_angle_spread_deg,
-        wrong_branch_max_branch_angle_deg = wrong_branch_max_branch_angle_deg,
-        wrong_branch_min_low_vm_count = wrong_branch_min_low_vm_count,
-        wrong_branch_rescue_max_attempts = 0,
-        opt_flatstart = opt_flatstart,
-        pv_table_rows = pv_table_rows,
-        lock_pv_to_pq_buses = lock_pv_to_pq_buses,
-        qlimit_mode = qlimit_mode,
-        qlimit_max_outer = qlimit_max_outer,
-        start_projection = start_projection,
-        start_projection_try_dc_start = start_projection_try_dc_start,
-        start_projection_try_blend_scan = start_projection_try_blend_scan,
-        start_projection_branch_guard = start_projection_branch_guard,
-        start_projection_measure_candidates = start_projection_measure_candidates,
-        start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start,
-        start_projection_blend_lambdas = start_projection_blend_lambdas,
-        start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
-        start_projection_requested_angle_mode = start_projection_requested_angle_mode,
-        start_projection_requested_voltage_mode = start_projection_requested_voltage_mode,
-        start_current_iteration_enabled = start_current_iteration_enabled,
-        start_current_iteration_max_iter = start_current_iteration_max_iter,
-        start_current_iteration_tol = start_current_iteration_tol,
-        start_current_iteration_damping = start_current_iteration_damping,
-        start_current_iteration_accept_only_if_improved = start_current_iteration_accept_only_if_improved,
-        start_current_iteration_min_improvement_factor = start_current_iteration_min_improvement_factor,
-        start_current_iteration_vm_min_pu = start_current_iteration_vm_min_pu,
-        start_current_iteration_vm_max_pu = start_current_iteration_vm_max_pu,
-        start_current_iteration_max_angle_step_deg = start_current_iteration_max_angle_step_deg,
-        start_current_iteration_only_for_large_cases = start_current_iteration_only_for_large_cases,
-        apslf_start_enabled = apslf_start_enabled,
-        apslf_start_order = apslf_start_order,
-        qlimit_start_iter = qlimit_start_iter,
-        qlimit_start_mode = qlimit_start_mode,
-        qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu,
-        qlimit_trace_buses = qlimit_trace_buses,
-        qlimit_lock_reason = qlimit_lock_reason,
-        qlimit_guard = qlimit_guard,
-        qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu,
-        qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode,
-        qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode,
-        qlimit_guard_log = qlimit_guard_log,
-        qlimit_guard_max_switches = qlimit_guard_max_switches,
-        qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations,
-        qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations,
-        qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
-        qlimit_guard_violation_mode = qlimit_guard_violation_mode,
-        qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
-        qlimits_enabled = qlimits_enabled,
-        qlimit_enforcement_mode = qlimit_enforcement_mode,
-        rectangular_workspace_reuse = rectangular_workspace_reuse,
-        rectangular_preallocate_workspace = rectangular_preallocate_workspace,
-        rectangular_workspace_min_buses = rectangular_workspace_min_buses,
-        linear_solver = linear_solver,
-        distributed_slack_enabled = distributed_slack_enabled,
-        distributed_slack_p_mode = distributed_slack_p_mode,
-        distributed_slack_respect_p_limits = distributed_slack_respect_p_limits,
-        distributed_slack_fallback = distributed_slack_fallback,
-        distributed_slack_weights = distributed_slack_weights,
-        performance_profile = performance_profile,
-      )
+          inet,
+          maxIte,
+          tolerance,
+          verbose;
+          damp = damp,
+          autodamp = autodamp,
+          autodamp_min = autodamp_min,
+          merit_enabled = merit_enabled,
+          merit_armijo_c1 = merit_armijo_c1,
+          merit_scale_p = merit_scale_p,
+          merit_scale_q = merit_scale_q,
+          merit_scale_v = merit_scale_v,
+          merit_fallback_max_mismatch = merit_fallback_max_mismatch,
+          trust_region_enabled = trust_region_enabled,
+          trust_region_initial_radius = trust_region_initial_radius,
+          trust_region_min_radius = trust_region_min_radius,
+          trust_region_max_radius = trust_region_max_radius,
+          trust_region_eta_accept = trust_region_eta_accept,
+          trust_region_shrink_factor = trust_region_shrink_factor,
+          trust_region_expand_factor = trust_region_expand_factor,
+          trust_region_expand_threshold = trust_region_expand_threshold,
+          trust_region_step_mode = trust_region_step_mode,
+          wrong_branch_detection = wrong_branch_detection,
+          wrong_branch_rescue = false,
+          wrong_branch_min_vm_pu = wrong_branch_min_vm_pu,
+          wrong_branch_max_vm_pu = wrong_branch_max_vm_pu,
+          wrong_branch_max_angle_spread_deg = wrong_branch_max_angle_spread_deg,
+          wrong_branch_max_branch_angle_deg = wrong_branch_max_branch_angle_deg,
+          wrong_branch_min_low_vm_count = wrong_branch_min_low_vm_count,
+          wrong_branch_rescue_max_attempts = 0,
+          opt_flatstart = opt_flatstart,
+          pv_table_rows = pv_table_rows,
+          lock_pv_to_pq_buses = lock_pv_to_pq_buses,
+          qlimit_mode = qlimit_mode,
+          qlimit_max_outer = qlimit_max_outer,
+          start_projection = start_projection,
+          start_projection_try_dc_start = start_projection_try_dc_start,
+          start_projection_try_blend_scan = start_projection_try_blend_scan,
+          start_projection_branch_guard = start_projection_branch_guard,
+          start_projection_measure_candidates = start_projection_measure_candidates,
+          start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start,
+          start_projection_blend_lambdas = start_projection_blend_lambdas,
+          start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
+          start_projection_requested_angle_mode = start_projection_requested_angle_mode,
+          start_projection_requested_voltage_mode = start_projection_requested_voltage_mode,
+          start_current_iteration_enabled = start_current_iteration_enabled,
+          start_current_iteration_max_iter = start_current_iteration_max_iter,
+          start_current_iteration_tol = start_current_iteration_tol,
+          start_current_iteration_damping = start_current_iteration_damping,
+          start_current_iteration_accept_only_if_improved = start_current_iteration_accept_only_if_improved,
+          start_current_iteration_min_improvement_factor = start_current_iteration_min_improvement_factor,
+          start_current_iteration_vm_min_pu = start_current_iteration_vm_min_pu,
+          start_current_iteration_vm_max_pu = start_current_iteration_vm_max_pu,
+          start_current_iteration_max_angle_step_deg = start_current_iteration_max_angle_step_deg,
+          start_current_iteration_only_for_large_cases = start_current_iteration_only_for_large_cases,
+          apslf_start_enabled = apslf_start_enabled,
+          apslf_start_order = apslf_start_order,
+          qlimit_start_iter = qlimit_start_iter,
+          qlimit_start_mode = qlimit_start_mode,
+          qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu,
+          qlimit_trace_buses = qlimit_trace_buses,
+          qlimit_lock_reason = qlimit_lock_reason,
+          qlimit_guard = qlimit_guard,
+          qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu,
+          qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode,
+          qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode,
+          qlimit_guard_log = qlimit_guard_log,
+          qlimit_guard_max_switches = qlimit_guard_max_switches,
+          qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations,
+          qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations,
+          qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
+          qlimit_guard_violation_mode = qlimit_guard_violation_mode,
+          qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
+          qlimits_enabled = qlimits_enabled,
+          qlimit_enforcement_mode = qlimit_enforcement_mode,
+          rectangular_workspace_reuse = rectangular_workspace_reuse,
+          rectangular_preallocate_workspace = rectangular_preallocate_workspace,
+          rectangular_workspace_min_buses = rectangular_workspace_min_buses,
+          linear_solver = linear_solver,
+          distributed_slack_enabled = distributed_slack_enabled,
+          distributed_slack_p_mode = distributed_slack_p_mode,
+          distributed_slack_respect_p_limits = distributed_slack_respect_p_limits,
+          distributed_slack_fallback = distributed_slack_fallback,
+          distributed_slack_weights = distributed_slack_weights,
+          performance_profile = performance_profile,
+        )
         total_iters += it
         island_rect_status = rectangular_pf_status(inet)
         if status != 0
@@ -2002,7 +2041,20 @@ function runpf!(
         top = isempty(frames) ? "" : sprint(show, first(frames))
         island_rect_status = inet === nothing ? nothing : rectangular_pf_status(inet)
         base_status = island_rect_status === nothing ? NamedTuple() : island_rect_status
-        failure_status = merge(base_status, (; island_id = row.island_id, final_mismatch = hasproperty(base_status, :final_mismatch) ? base_status.final_mismatch : NaN, iterations = it, reason = :solver_exception, status = :failed, stage = stage, exception_type = nameof(typeof(err)), exception_message = sprint(showerror, err), stacktrace_top = top))
+        failure_status = merge(
+          base_status,
+          (;
+            island_id = row.island_id,
+            final_mismatch = hasproperty(base_status, :final_mismatch) ? base_status.final_mismatch : NaN,
+            iterations = it,
+            reason = :solver_exception,
+            status = :failed,
+            stage = stage,
+            exception_type = nameof(typeof(err)),
+            exception_message = sprint(showerror, err),
+            stacktrace_top = top,
+          ),
+        )
         island_statuses[Int(row.island_id)] = failure_status
         _set_rectangular_pf_status!(net, failure_status)
         first_failure === nothing && (first_failure = err)
@@ -2015,10 +2067,7 @@ function runpf!(
       throw(ErrorException(island_message === nothing ? sprint(showerror, first_failure) : island_message))
     end
     updateShuntPowers!(net = wnet)
-    island_final_mismatches = Float64[
-      Float64(getproperty(status, :final_mismatch)) for status in values(island_statuses)
-      if hasproperty(status, :final_mismatch) && isfinite(Float64(getproperty(status, :final_mismatch)))
-    ]
+    island_final_mismatches = Float64[Float64(getproperty(status, :final_mismatch)) for status in values(island_statuses) if hasproperty(status, :final_mismatch) && isfinite(Float64(getproperty(status, :final_mismatch)))]
     aggregate_final_mismatch = isempty(island_final_mismatches) ? NaN : maximum(island_final_mismatches)
     aggregate_base_status = first(values(island_statuses))
     aggregate_status = merge(

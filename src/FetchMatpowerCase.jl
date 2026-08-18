@@ -273,6 +273,37 @@ function main(args = ARGS)
   return nothing
 end
 
+# True when the package root lies below a depot `packages` directory, i.e.
+# Sparlectra is a registered (immutable) installation rather than a dev
+# checkout. Registered package directories must never be written to (Pkg
+# marks them read-only on Windows and content-hashes them).
+function _in_depot_packages(pkgroot::AbstractString)::Bool
+  root = abspath(pkgroot)
+  for depot in Base.DEPOT_PATH
+    packages_dir = abspath(joinpath(depot, "packages"))
+    startswith(root, packages_dir) && return true
+  end
+  return false
+end
+
+# User-writable case cache for registered installations. Mirrors the Web UI
+# root resolution in src/webui/webui.jl (default_webui_case_cache_dir); kept
+# local so this module stays loadable standalone.
+function _user_case_cache_dir()::String
+  if Sys.iswindows()
+    root = get(ENV, "LOCALAPPDATA", "")
+    isempty(root) || return joinpath(root, "Sparlectra", "WebUI", "data", "mpower")
+  elseif Sys.isapple()
+    home = homedir()
+    isempty(home) || return joinpath(home, "Library", "Application Support", "Sparlectra", "WebUI", "data", "mpower")
+  elseif Sys.islinux()
+    root = get(ENV, "XDG_STATE_HOME", "")
+    isempty(root) && (root = joinpath(homedir(), ".local", "state"))
+    return joinpath(root, "sparlectra", "webui", "data", "mpower")
+  end
+  return joinpath(pwd(), "sparlectra_webui_data", "mpower")
+end
+
 """
     ensure_casefile(casefile; outdir=nothing, overwrite=false, to_jl=true) -> String
 
@@ -292,12 +323,18 @@ function ensure_casefile(casefile::AbstractString; outdir::Union{Nothing,Abstrac
   end
 
   # 2) Decide output directory.
-  # Prefer repo root: <repo>/data/mpower
+  # Dev checkout: <repo>/data/mpower as before. Registered installation:
+  # the user-writable case cache (the package directory is immutable and
+  # ships no case files; data/mpower/*.m is gitignored).
   if outdir === nothing
     # Find package root from Sparlectra source file location:
     # <pkg>/src/Sparlectra.jl -> <pkg>
     pkgroot = normpath(joinpath(@__DIR__, ".."))
-    outdir = normpath(joinpath(pkgroot, "data", "mpower"))
+    if _in_depot_packages(pkgroot)
+      outdir = _user_case_cache_dir()
+    else
+      outdir = normpath(joinpath(pkgroot, "data", "mpower"))
+    end
   end
   mkpath(outdir)
 
@@ -320,7 +357,7 @@ function ensure_casefile(casefile::AbstractString; outdir::Union{Nothing,Abstrac
     ensure_matpower_case(url = url, outdir = outdir, to_jl = to_jl, overwrite = overwrite)
     return joinpath(outdir, casefile)
   elseif endswith(lcase, ".jl")
-    mname = casefile[1:end-3] * ".m"
+    mname = casefile[1:(end-3)] * ".m"
     url = "https://raw.githubusercontent.com/MATPOWER/matpower/master/data/$(mname)"
     ensure_matpower_case(url = url, outdir = outdir, to_jl = true, overwrite = overwrite)
     return joinpath(outdir, casefile)

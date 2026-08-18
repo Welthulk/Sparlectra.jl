@@ -270,12 +270,8 @@ function test_matpower_import_defaults_no_reenable()::Bool
       1 3 0.0 0.0 0.0 0.0 1 1.0 0.0 110.0 1 1.1 0.9
       2 1 20.0 10.0 0.0 0.0 1 1.0 0.0 110.0 1 1.1 0.9
     ],
-    gen = [
-      1 30.0 0.0 999.0 -999.0 1.0 100.0 1 999.0 0.0 0 0 0 0 0 0 0 0 0 0 0
-    ],
-    branch = [
-      1 2 0.01 0.05 0.0 9999.0 0.0 0.0 0.0 0.0 1 -60.0 60.0
-    ],
+    gen = [1 30.0 0.0 999.0 -999.0 1.0 100.0 1 999.0 0.0 0 0 0 0 0 0 0 0 0 0 0],
+    branch = [1 2 0.01 0.05 0.0 9999.0 0.0 0.0 0.0 0.0 1 -60.0 60.0],
     gencost = nothing,
     bus_name = nothing,
   )
@@ -321,12 +317,18 @@ function test_matpower_flatstart_uses_generator_voltage_setpoints()::Bool
   busVec, _ = Sparlectra.getBusData(net.nodeVec, net.baseMVA, true; net = net)
 
   return slack_idx == 1 &&
-         isapprox(abs(V0[1]), 1.04; atol = 1e-12) && isapprox(angle(V0[1]), deg2rad(12.0); atol = 1e-12) &&
-         isapprox(abs(V0[2]), 1.0; atol = 1e-12) && isapprox(angle(V0[2]), 0.0; atol = 1e-12) &&
-         isapprox(abs(V0[3]), 1.02; atol = 1e-12) && isapprox(angle(V0[3]), 0.0; atol = 1e-12) &&
-         isapprox(busVec[1].vm_pu, 1.04; atol = 1e-12) && isapprox(busVec[1].va_rad, deg2rad(12.0); atol = 1e-12) &&
-         isapprox(busVec[2].vm_pu, 1.0; atol = 1e-12) && isapprox(busVec[2].va_rad, 0.0; atol = 1e-12) &&
-         isapprox(busVec[3].vm_pu, 1.02; atol = 1e-12) && isapprox(busVec[3].va_rad, 0.0; atol = 1e-12)
+         isapprox(abs(V0[1]), 1.04; atol = 1e-12) &&
+         isapprox(angle(V0[1]), deg2rad(12.0); atol = 1e-12) &&
+         isapprox(abs(V0[2]), 1.0; atol = 1e-12) &&
+         isapprox(angle(V0[2]), 0.0; atol = 1e-12) &&
+         isapprox(abs(V0[3]), 1.02; atol = 1e-12) &&
+         isapprox(angle(V0[3]), 0.0; atol = 1e-12) &&
+         isapprox(busVec[1].vm_pu, 1.04; atol = 1e-12) &&
+         isapprox(busVec[1].va_rad, deg2rad(12.0); atol = 1e-12) &&
+         isapprox(busVec[2].vm_pu, 1.0; atol = 1e-12) &&
+         isapprox(busVec[2].va_rad, 0.0; atol = 1e-12) &&
+         isapprox(busVec[3].vm_pu, 1.02; atol = 1e-12) &&
+         isapprox(busVec[3].va_rad, 0.0; atol = 1e-12)
 end
 
 function test_matpower_reference_override_controls_flatstart()::Bool
@@ -337,12 +339,8 @@ function test_matpower_reference_override_controls_flatstart()::Bool
       1 3 0.0 0.0 0.0 0.0 1 0.97 12.0 110.0 1 1.1 0.9
       2 1 20.0 8.0 0.0 0.0 1 0.93 -7.0 110.0 1 1.1 0.9
     ],
-    gen = [
-      1 30.0 0.0 999.0 -999.0 1.04 100.0 1 999.0 0.0 0 0 0 0 0 0 0 0 0 0 0
-    ],
-    branch = [
-      1 2 0.01 0.05 0.0 9999.0 0.0 0.0 0.0 0.0 1 -60.0 60.0
-    ],
+    gen = [1 30.0 0.0 999.0 -999.0 1.04 100.0 1 999.0 0.0 0 0 0 0 0 0 0 0 0 0 0],
+    branch = [1 2 0.01 0.05 0.0 9999.0 0.0 0.0 0.0 0.0 1 -60.0 60.0],
     gencost = nothing,
     bus_name = nothing,
   )
@@ -351,9 +349,7 @@ function test_matpower_reference_override_controls_flatstart()::Bool
   V0, slack_idx = Sparlectra.initialVrect(net; flatstart = true)
   busVec, _ = Sparlectra.getBusData(net.nodeVec, net.baseMVA, true; net = net)
 
-  return slack_idx == 1 &&
-         isapprox(abs(V0[1]), 1.01; atol = 1e-12) && isapprox(angle(V0[1]), deg2rad(-3.0); atol = 1e-12) &&
-         isapprox(busVec[1].vm_pu, 1.01; atol = 1e-12) && isapprox(busVec[1].va_rad, deg2rad(-3.0); atol = 1e-12)
+  return slack_idx == 1 && isapprox(abs(V0[1]), 1.01; atol = 1e-12) && isapprox(angle(V0[1]), deg2rad(-3.0); atol = 1e-12) && isapprox(busVec[1].vm_pu, 1.01; atol = 1e-12) && isapprox(busVec[1].va_rad, deg2rad(-3.0); atol = 1e-12)
 end
 
 function test_matpower_import_uses_bus_type_for_regulation()::Bool
@@ -390,12 +386,7 @@ function test_matpower_import_uses_bus_type_for_regulation()::Bool
   b2_gen = only(filter(isGenerator, b2_prosumers))
   b3_gen = only(filter(isGenerator, b3_prosumers))
 
-  return getNodeType(net.nodeVec[b2]) == Sparlectra.PQ &&
-         getNodeType(net.nodeVec[b3]) == Sparlectra.PV &&
-         !isnothing(b2_gen.puController) &&
-         !isnothing(b2_gen.quController) &&
-         isnothing(b3_gen.puController) &&
-         isnothing(b3_gen.quController)
+  return getNodeType(net.nodeVec[b2]) == Sparlectra.PQ && getNodeType(net.nodeVec[b3]) == Sparlectra.PV && !isnothing(b2_gen.puController) && !isnothing(b2_gen.quController) && isnothing(b3_gen.puController) && isnothing(b3_gen.quController)
 end
 
 function test_prosumer_aggregation_preserves_bus_types_and_injections()::Bool
@@ -420,65 +411,47 @@ function test_prosumer_aggregation_preserves_bus_types_and_injections()::Bool
   pv = geNetBusIdx(net = net, busName = "PV")
   pq = geNetBusIdx(net = net, busName = "PQ")
 
-  return getNodeType(net.nodeVec[slack]) == Sparlectra.Slack &&
-         getNodeType(net.nodeVec[pv]) == Sparlectra.PV &&
-         getNodeType(net.nodeVec[pq]) == Sparlectra.PQ &&
-         isapprox(S[pv], ComplexF64(0.40, 0.02); atol = 1e-12) &&
-         isapprox(S[pq], ComplexF64(-0.18, -0.06); atol = 1e-12)
+  return getNodeType(net.nodeVec[slack]) == Sparlectra.Slack && getNodeType(net.nodeVec[pv]) == Sparlectra.PV && getNodeType(net.nodeVec[pq]) == Sparlectra.PQ && isapprox(S[pv], ComplexF64(0.40, 0.02); atol = 1e-12) && isapprox(S[pq], ComplexF64(-0.18, -0.06); atol = 1e-12)
 end
 
 function test_rectangular_autodamp_backtracks_oversized_step()::Bool
   Y = ComplexF64[0.0 - 10.0im 0.0 + 10.0im; 0.0 + 10.0im 0.0 - 10.0im]
-  V = ComplexF64[1.0 + 0.0im, 1.0 + 0.0im]
-  S = ComplexF64[0.0 + 0.0im, -1.0 - 0.2im]
+  V = ComplexF64[1.0+0.0im, 1.0+0.0im]
+  S = ComplexF64[0.0+0.0im, -1.0-0.2im]
   bus_types = [:Slack, :PQ]
   Vset = [1.0, 1.0]
   F0 = Sparlectra.mismatch_rectangular(Y, V, S, bus_types, Vset, 1)
 
   oversized_delta = [0.0, -1.0]
-  alpha, Vtrial, trial_mismatch = Sparlectra.choose_rectangular_autodamp(
-    Y,
-    V,
-    S,
-    oversized_delta,
-    F0;
-    slack_idx = 1,
-    damp = 1.0,
-    autodamp_min = 1e-3,
-    bus_types = bus_types,
-    Vset = Vset,
-  )
-  full_step_mismatch = maximum(abs.(Sparlectra.mismatch_rectangular(Y, ComplexF64[1.0 + 0.0im, 1.0 - 1.0im], S, bus_types, Vset, 1)))
+  alpha, Vtrial, trial_mismatch = Sparlectra.choose_rectangular_autodamp(Y, V, S, oversized_delta, F0; slack_idx = 1, damp = 1.0, autodamp_min = 1e-3, bus_types = bus_types, Vset = Vset)
+  full_step_mismatch = maximum(abs.(Sparlectra.mismatch_rectangular(Y, ComplexF64[1.0+0.0im, 1.0-1.0im], S, bus_types, Vset, 1)))
 
-  return alpha < 1.0 &&
-         trial_mismatch < maximum(abs.(F0)) &&
-         trial_mismatch < full_step_mismatch &&
-         Vtrial[1] == V[1]
+  return alpha < 1.0 && trial_mismatch < maximum(abs.(F0)) && trial_mismatch < full_step_mismatch && Vtrial[1] == V[1]
 end
 
 function test_rectangular_nonfinite_mismatch_diagnostics_use_finite_history()::Bool
   Y = ComplexF64[0.0 - 10.0im 0.0 + 10.0im; 0.0 + 10.0im 0.0 - 10.0im]
-  S = ComplexF64[0.0 + 0.0im, -1.0 - 0.2im]
+  S = ComplexF64[0.0+0.0im, -1.0-0.2im]
   bus_types = [:Slack, :PQ]
   Vset = [1.0, 1.0]
-  V1 = ComplexF64[1.0 + 0.0im, 1.0 + 0.0im]
-  V2 = ComplexF64[1.0 + 0.0im, 0.9 - 0.1im]
+  V1 = ComplexF64[1.0+0.0im, 1.0+0.0im]
+  V2 = ComplexF64[1.0+0.0im, 0.9-0.1im]
   diagnostics = Sparlectra._rectangular_mismatch_diagnostics(
     Y,
-    ComplexF64[1.0 + 0.0im, NaN + NaN * im],
+    ComplexF64[1.0+0.0im, NaN+NaN*im],
     S,
     bus_types,
     Vset,
     1,
     0.0;
     history = [239.0, 1609.0, 5.55e290, NaN],
-    step_diagnostics = [(alpha = 0.05, trial_mismatch = 1609.0, accepted_improvement = false) for _ in 1:8],
+    step_diagnostics = [(alpha = 0.05, trial_mismatch = 1609.0, accepted_improvement = false) for _ = 1:8],
     best_finite_iteration = 1,
     best_finite_voltage = V1,
     last_finite_iteration = 3,
     last_finite_voltage = V2,
     first_nonfinite_iteration = 4,
-    first_nonfinite_voltage = ComplexF64[1.0 + 0.0im, NaN + NaN * im],
+    first_nonfinite_voltage = ComplexF64[1.0+0.0im, NaN+NaN*im],
   )
 
   return diagnostics.first_nonfinite_iteration == 4 &&
@@ -492,109 +465,47 @@ function test_rectangular_nonfinite_mismatch_diagnostics_use_finite_history()::B
 end
 
 function test_rectangular_final_status_best_mismatch_ignores_nan()::Bool
-  status = Sparlectra._build_rectangular_final_status(
-    Net(name = "diagnostic_status", baseMVA = 100.0),
-    false,
-    false,
-    false,
-    :nr_mismatch_not_converged,
-    nothing,
-    0.0,
-    [239.0, 1609.0, 5.55e290, NaN],
-    0,
-    0,
-    0,
-    Int[],
-    Sparlectra._wrong_branch_not_checked_result(),
-    :warn,
-    false,
-    :disabled,
-    NamedTuple(),
-  ).status
+  status =
+    Sparlectra._build_rectangular_final_status(Net(name = "diagnostic_status", baseMVA = 100.0), false, false, false, :nr_mismatch_not_converged, nothing, 0.0, [239.0, 1609.0, 5.55e290, NaN], 0, 0, 0, Int[], Sparlectra._wrong_branch_not_checked_result(), :warn, false, :disabled, NamedTuple()).status
 
-  return status.reason == :nr_nonfinite &&
-         status.status == :nr_nonfinite &&
-         status.best_mismatch == 239.0
+  return status.reason == :nr_nonfinite && status.status == :nr_nonfinite && status.best_mismatch == 239.0
 end
 
 function test_rectangular_start_projection_improves_dc_seed()::Bool
   Ydense = ComplexF64[0.0 - 10.0im 0.0 + 10.0im; 0.0 + 10.0im 0.0 - 10.0im]
   Y = sparse(Ydense)
-  Vraw = ComplexF64[1.0 + 0.0im, 1.0 + 0.0im]
-  S = ComplexF64[0.0 + 0.0im, -1.0 - 0.2im]
+  Vraw = ComplexF64[1.0+0.0im, 1.0+0.0im]
+  S = ComplexF64[0.0+0.0im, -1.0-0.2im]
   bus_types = [:Slack, :PQ]
   Vset = [1.0, 1.0]
   profile = Dict{Symbol,Any}(:enabled => true)
 
   raw_mismatch = maximum(abs.(Sparlectra.mismatch_rectangular(Y, Vraw, S, bus_types, Vset, 1)))
-  Vproj = Sparlectra.project_rectangular_start(
-    Y,
-    Vraw,
-    S,
-    bus_types,
-    Vset,
-    1;
-    enabled = true,
-    try_dc_start = true,
-    try_blend_scan = true,
-    blend_lambdas = [0.25, 0.5, 0.75],
-    dc_angle_limit_deg = 60.0,
-    performance_profile = profile,
-  )
+  Vproj = Sparlectra.project_rectangular_start(Y, Vraw, S, bus_types, Vset, 1; enabled = true, try_dc_start = true, try_blend_scan = true, blend_lambdas = [0.25, 0.5, 0.75], dc_angle_limit_deg = 60.0, performance_profile = profile)
   projected_mismatch = maximum(abs.(Sparlectra.mismatch_rectangular(Y, Vproj, S, bus_types, Vset, 1)))
   Vdc = Sparlectra._dc_angle_start_rectangular(Y, Vraw, S, bus_types, Vset, 1; dc_angle_limit_deg = 60.0)
 
-  return Vproj[1] == Vraw[1] &&
-         projected_mismatch < raw_mismatch &&
-         Vdc == Vproj &&
-         profile[:dc_matrix_size] == (1, 1) &&
-         profile[:dc_matrix_nnz] == 1 &&
-         profile[:dc_solve_backend] === :sparse_lu_umfpack &&
-         profile[:dc_solve_reduced_dimension] == 1
+  return Vproj[1] == Vraw[1] && projected_mismatch < raw_mismatch && Vdc == Vproj && profile[:dc_matrix_size] == (1, 1) && profile[:dc_matrix_nnz] == 1 && profile[:dc_solve_backend] === :sparse_lu_umfpack && profile[:dc_solve_reduced_dimension] == 1
 end
 
 function test_rectangular_start_projection_keeps_raw_without_finite_improvement()::Bool
   Ydense = ComplexF64[0.0 - 10.0im 0.0 + 10.0im; 0.0 + 10.0im 0.0 - 10.0im]
   Y = sparse(Ydense)
-  Vraw = ComplexF64[1.0 + 0.0im, 1.0 + 0.0im]
+  Vraw = ComplexF64[1.0+0.0im, 1.0+0.0im]
   bus_types = [:Slack, :PQ]
   Vset = [1.0, 1.0]
 
   unmeasured_profile = Dict{Symbol,Any}(:enabled => true)
-  Vunmeasured = Sparlectra.project_rectangular_start(
-    Y,
-    Vraw,
-    ComplexF64[0.0 + 0.0im, -1.0 - 0.2im],
-    bus_types,
-    Vset,
-    1;
-    enabled = true,
-    try_dc_start = true,
-    try_blend_scan = false,
-    measure_candidates = false,
-    performance_profile = unmeasured_profile,
-  )
+  Vunmeasured = Sparlectra.project_rectangular_start(Y, Vraw, ComplexF64[0.0+0.0im, -1.0-0.2im], bus_types, Vset, 1; enabled = true, try_dc_start = true, try_blend_scan = false, measure_candidates = false, performance_profile = unmeasured_profile)
 
   nonfinite_profile = Dict{Symbol,Any}(:enabled => true)
-  Vnonfinite = Sparlectra.project_rectangular_start(
-    Y,
-    Vraw,
-    ComplexF64[0.0 + 0.0im, NaN + 0.0im],
-    bus_types,
-    Vset,
-    1;
-    enabled = true,
-    try_dc_start = true,
-    try_blend_scan = false,
-    measure_candidates = true,
-    performance_profile = nonfinite_profile,
-  )
+  Vnonfinite = Sparlectra.project_rectangular_start(Y, Vraw, ComplexF64[0.0+0.0im, NaN+0.0im], bus_types, Vset, 1; enabled = true, try_dc_start = true, try_blend_scan = false, measure_candidates = true, performance_profile = nonfinite_profile)
 
   requested_dc_profile = Dict{Symbol,Any}(:enabled => true)
   Vrequested_dc = Sparlectra.project_rectangular_start(
     Y,
     Vraw,
-    ComplexF64[0.0 + 0.0im, 0.0 + 0.0im],
+    ComplexF64[0.0+0.0im, 0.0+0.0im],
     bus_types,
     Vset,
     1;
@@ -611,7 +522,7 @@ function test_rectangular_start_projection_keeps_raw_without_finite_improvement(
   Vinvalid_dc = Sparlectra.project_rectangular_start(
     Y,
     Vraw,
-    ComplexF64[0.0 + 0.0im, NaN + 0.0im],
+    ComplexF64[0.0+0.0im, NaN+0.0im],
     bus_types,
     Vset,
     1;
@@ -624,18 +535,39 @@ function test_rectangular_start_projection_keeps_raw_without_finite_improvement(
     performance_profile = invalid_dc_profile,
   )
 
-  required_fields = (:requested_angle_mode, :requested_voltage_mode, :dc_angle_start_built,
-                     :dc_angle_start_valid, :dc_angle_start_applied, :selected_start_candidate,
-                     :selection_reason, :raw_mismatch, :dc_mismatch, :best_blend_mismatch,
-                     :projected_mismatch, :fallback_to_raw, :fallback_reason,
-                     :raw_fallback_reason, :dc_angle_min_deg, :dc_angle_max_deg,
-                     :dc_angle_spread_deg, :dc_angle_mean_deg, :dc_angle_std_deg,
-                     :dc_angle_clipped_count, :dc_angle_clip_limit_deg,
-                     :dc_max_branch_angle_deg, :dc_branch_angle_violation_count,
-                     :worst_dc_branch_from_bus, :worst_dc_branch_to_bus,
-                     :worst_dc_branch_angle_deg, :dc_voltage_magnitude_min,
-                     :dc_voltage_magnitude_max, :dc_mismatch_ratio_vs_raw,
-                     :requested_dc_worse_than_raw, :dc_mismatch_growth_factor)
+  required_fields = (
+    :requested_angle_mode,
+    :requested_voltage_mode,
+    :dc_angle_start_built,
+    :dc_angle_start_valid,
+    :dc_angle_start_applied,
+    :selected_start_candidate,
+    :selection_reason,
+    :raw_mismatch,
+    :dc_mismatch,
+    :best_blend_mismatch,
+    :projected_mismatch,
+    :fallback_to_raw,
+    :fallback_reason,
+    :raw_fallback_reason,
+    :dc_angle_min_deg,
+    :dc_angle_max_deg,
+    :dc_angle_spread_deg,
+    :dc_angle_mean_deg,
+    :dc_angle_std_deg,
+    :dc_angle_clipped_count,
+    :dc_angle_clip_limit_deg,
+    :dc_max_branch_angle_deg,
+    :dc_branch_angle_violation_count,
+    :worst_dc_branch_from_bus,
+    :worst_dc_branch_to_bus,
+    :worst_dc_branch_angle_deg,
+    :dc_voltage_magnitude_min,
+    :dc_voltage_magnitude_max,
+    :dc_mismatch_ratio_vs_raw,
+    :requested_dc_worse_than_raw,
+    :dc_mismatch_growth_factor,
+  )
   requested_summary = requested_dc_profile[:start_projection_summary]
   invalid_summary = invalid_dc_profile[:start_projection_summary]
 
@@ -649,7 +581,7 @@ function test_rectangular_start_projection_keeps_raw_without_finite_improvement(
          nonfinite_profile[:start_projection_summary].selected === :raw &&
          nonfinite_profile[:start_projection_summary].reason === :no_finite_improvement &&
          ismissing(nonfinite_profile[:start_projection_summary].best_mismatch) &&
-         Vrequested_dc == Sparlectra._dc_angle_start_rectangular(Y, Vraw, ComplexF64[0.0 + 0.0im, 0.0 + 0.0im], bus_types, Vset, 1; dc_angle_limit_deg = 60.0) &&
+         Vrequested_dc == Sparlectra._dc_angle_start_rectangular(Y, Vraw, ComplexF64[0.0+0.0im, 0.0+0.0im], bus_types, Vset, 1; dc_angle_limit_deg = 60.0) &&
          requested_summary.selected === :dc_start &&
          requested_summary.reason === :requested_dc_angle_start &&
          requested_summary.dc_angle_start_built === true &&
@@ -678,12 +610,8 @@ function test_matpower_vmva_selfcheck_noncontiguous_bus_numbers()::Bool
       1 3 0.0 0.0 0.0 0.0 1 1.00 0.0 110.0 1 1.1 0.9
       9001 1 0.0 0.0 0.0 0.0 1 0.99 -3.0 110.0 1 1.1 0.9
     ],
-    [
-      1 0.0 0.0 999.0 -999.0 1.0 100.0 1 999.0 0.0 0 0 0 0 0 0 0 0 0 0 0
-    ],
-    [
-      1 9001 0.01 0.05 0.0 9999.0 0.0 0.0 0.0 0.0 1 -60.0 60.0
-    ],
+    [1 0.0 0.0 999.0 -999.0 1.0 100.0 1 999.0 0.0 0 0 0 0 0 0 0 0 0 0 0],
+    [1 9001 0.01 0.05 0.0 9999.0 0.0 0.0 0.0 0.0 1 -60.0 60.0],
     nothing,
     nothing,
   )
@@ -701,14 +629,12 @@ function test_matpower_vmva_selfcheck_ignores_slack_pq_spec()::Bool
       2 1 0.0 0.0 0.0 0.0 1 1.0 0.0 110.0 1 1.1 0.9
     ],
     [
-      # very large slack Pg/Qg that should NOT be enforced by PF equations
-      1 500.0 300.0 999.0 -999.0 1.0 100.0 1 999.0 0.0 0 0 0 0 0 0 0 0 0 0 0
-    ],
+    # very large slack Pg/Qg that should NOT be enforced by PF equations
+    1 500.0 300.0 999.0 -999.0 1.0 100.0 1 999.0 0.0 0 0 0 0 0 0 0 0 0 0 0],
     [
-      # no branch -> Scalc = 0 at all buses
-      # keep out-of-service branch to satisfy matrix width expectations
-      1 2 0.01 0.05 0.0 9999.0 0.0 0.0 0.0 0.0 0 -60.0 60.0
-    ],
+    # no branch -> Scalc = 0 at all buses
+    # keep out-of-service branch to satisfy matrix width expectations
+    1 2 0.01 0.05 0.0 9999.0 0.0 0.0 0.0 0.0 0 -60.0 60.0],
     nothing,
     nothing,
   )
@@ -733,12 +659,7 @@ function test_matpower_build_ybus_returns_sparse_expected_values()::Bool
   expected12 = -y / conj(tap)
   expected21 = -y / tap
 
-  return SparseArrays.issparse(ybus) &&
-         ybus isa SparseArrays.SparseMatrixCSC{ComplexF64,Int} &&
-         isapprox(ybus[1, 1], expected11; atol = 1e-12) &&
-         isapprox(ybus[2, 2], expected22; atol = 1e-12) &&
-         isapprox(ybus[1, 2], expected12; atol = 1e-12) &&
-         isapprox(ybus[2, 1], expected21; atol = 1e-12)
+  return SparseArrays.issparse(ybus) && ybus isa SparseArrays.SparseMatrixCSC{ComplexF64,Int} && isapprox(ybus[1, 1], expected11; atol = 1e-12) && isapprox(ybus[2, 2], expected22; atol = 1e-12) && isapprox(ybus[1, 2], expected12; atol = 1e-12) && isapprox(ybus[2, 1], expected21; atol = 1e-12)
 end
 
 function test_matpower_build_ybus_large_sparse_smoke()::Bool
@@ -776,12 +697,8 @@ function test_matpower_compare_vmva_wraps_angle_differences()::Bool
       1 3 0.0 0.0 0.0 0.0 1 1.00 0.0 110.0 1 1.1 0.9
       2 1 0.0 0.0 0.0 0.0 1 0.99 179.0 110.0 1 1.1 0.9
     ],
-    [
-      1 0.0 0.0 999.0 -999.0 1.0 100.0 1 999.0 0.0 0 0 0 0 0 0 0 0 0 0 0
-    ],
-    [
-      1 2 0.01 0.05 0.0 9999.0 0.0 0.0 0.0 0.0 0 -60.0 60.0
-    ],
+    [1 0.0 0.0 999.0 -999.0 1.0 100.0 1 999.0 0.0 0 0 0 0 0 0 0 0 0 0 0],
+    [1 2 0.01 0.05 0.0 9999.0 0.0 0.0 0.0 0.0 0 -60.0 60.0],
     nothing,
     nothing,
   )
@@ -931,18 +848,8 @@ function test_voltage_setpoint_lookup_uses_cached_linear_scan()::Bool
   profile = Dict{Symbol,Any}(:enabled => true, :show_allocations => true)
   elapsed = @elapsed Vset = Sparlectra._bus_voltage_setpoints_from_prosumers(net; performance_profile = profile)
   timings = profile[:timings]
-  phases_present = all(phase -> haskey(timings, phase), (
-    :vset_map_build,
-    :vset_generator_scan,
-    :vset_node_metadata_scan,
-    :vset_vector_fill,
-    :vset_fallback_bus_vm,
-    :vset_missing_online_gen_summary,
-  ))
-  values_ok = isapprox(Vset[1], 1.01; atol = 1e-12) &&
-              isapprox(Vset[2], 1.000002; atol = 1e-12) &&
-              isapprox(Vset[3], 0.9800003; atol = 1e-12) &&
-              isapprox(Vset[end], 1.0 + 1e-6 * nbus; atol = 1e-12)
+  phases_present = all(phase -> haskey(timings, phase), (:vset_map_build, :vset_generator_scan, :vset_node_metadata_scan, :vset_vector_fill, :vset_fallback_bus_vm, :vset_missing_online_gen_summary))
+  values_ok = isapprox(Vset[1], 1.01; atol = 1e-12) && isapprox(Vset[2], 1.000002; atol = 1e-12) && isapprox(Vset[3], 0.9800003; atol = 1e-12) && isapprox(Vset[end], 1.0 + 1e-6 * nbus; atol = 1e-12)
   # The old nested bus×prosumer scan is quadratic for this fixture; the cached
   # map/vector path should remain comfortably sub-second after compilation.
   return phases_present && values_ok && elapsed < 0.5 && timings[:vset_generator_scan].bytes > 0
@@ -1492,8 +1399,8 @@ function test_bus_shunt_model_modes()::Bool
   addShunt!(net = net_vdi, busName = "B1", pShunt = 10.0, qShunt = 20.0)
   Y_vdi = createYBUS(net = net_vdi, sparse = false, printYBUS = false)
 
-  S1, dP1, dQ1 = buildControlledSVec(net_vdi, ComplexF64[1.0 + 0.0im])
-  S2, dP2, dQ2 = buildControlledSVec(net_vdi, ComplexF64[2.0 + 0.0im])
+  S1, dP1, dQ1 = buildControlledSVec(net_vdi, ComplexF64[1.0+0.0im])
+  S2, dP2, dQ2 = buildControlledSVec(net_vdi, ComplexF64[2.0+0.0im])
 
   mpc = (
     name = "case2_shunt_modes",
@@ -1532,7 +1439,9 @@ end
 function test_matpower_file_import_honors_explicit_overrides()::Bool
   tmpdir = mktempdir()
   case_path = joinpath(tmpdir, "case_inline.m")
-  write(case_path, """
+  write(
+    case_path,
+    """
 function mpc = case_inline
 mpc.version = '2';
 mpc.baseMVA = 100;
@@ -1546,40 +1455,19 @@ mpc.gen = [
 mpc.branch = [
 1 2 0.01 0.05 0.0 999 999 999 1.0 20 1 -360 360;
 ];
-""")
+""",
+  )
   prev_cfg = Sparlectra.active_sparlectra_config()
-  global_cfg = Sparlectra.SparlectraConfig(Dict(
-    "power_flow" => Dict("start_mode" => Dict("flatstart" => true)),
-    "matpower_import" => Dict(
-      "bus_shunt_model" => "voltage_dependent_injection",
-      "shift_sign" => -1.0,
-      "shift_unit" => "rad",
-    ),
-  ))
-  run_cfg = Sparlectra.SparlectraConfig(Dict(
-    "power_flow" => Dict("start_mode" => Dict("flatstart" => false)),
-    "matpower_import" => Dict(
-      "bus_shunt_model" => "admittance",
-      "shift_sign" => 1.0,
-      "shift_unit" => "deg",
-    ),
-  ))
+  global_cfg = Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("start_mode" => Dict("flatstart" => true)), "matpower_import" => Dict("bus_shunt_model" => "voltage_dependent_injection", "shift_sign" => -1.0, "shift_unit" => "rad")))
+  run_cfg = Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("start_mode" => Dict("flatstart" => false)), "matpower_import" => Dict("bus_shunt_model" => "admittance", "shift_sign" => 1.0, "shift_unit" => "deg")))
   try
     Sparlectra.set_sparlectra_config!(global_cfg)
 
-    net_direct = Sparlectra.createNetFromMatPowerFile(
-      filename = case_path,
-      flatstart = false,
-      bus_shunt_model = :admittance,
-      matpower_shift_unit = :deg,
-    )
-    direct_ok = (net_direct.flatstart == false) &&
-                (net_direct.bus_shunt_model == :admittance)
+    net_direct = Sparlectra.createNetFromMatPowerFile(filename = case_path, flatstart = false, bus_shunt_model = :admittance, matpower_shift_unit = :deg)
+    direct_ok = (net_direct.flatstart == false) && (net_direct.bus_shunt_model == :admittance)
 
     result = Sparlectra.run_sparlectra(casefile = basename(case_path), path = dirname(case_path), config = run_cfg)
-    cfg_ok = (result isa Sparlectra.SparlectraRunResult) &&
-             (result.net.flatstart == false) &&
-             (result.net.bus_shunt_model == :admittance)
+    cfg_ok = (result isa Sparlectra.SparlectraRunResult) && (result.net.flatstart == false) && (result.net.bus_shunt_model == :admittance)
     return direct_ok && cfg_ok
   finally
     Sparlectra.set_sparlectra_config!(prev_cfg)
@@ -1589,7 +1477,9 @@ end
 function test_run_sparlectra_forwards_wrong_branch_config()::Bool
   tmpdir = mktempdir()
   case_path = joinpath(tmpdir, "case_wrong_branch_forwarding.m")
-  write(case_path, """
+  write(
+    case_path,
+    """
 function mpc = case_wrong_branch_forwarding
 mpc.version = '2';
 mpc.baseMVA = 100;
@@ -1603,16 +1493,11 @@ mpc.gen = [
 mpc.branch = [
 1 2 0.01 0.05 0.0 999 999 999 1.0 20 1 -360 360;
 ];
-""")
+""",
+  )
 
   function run_with_detection(mode::Symbol)
-    cfg = Sparlectra.SparlectraConfig(Dict(
-      "power_flow" => Dict(
-        "wrong_branch_detection" => String(mode),
-        "wrong_branch_max_branch_angle_deg" => 0.001,
-      ),
-      "output" => Dict("logfile_results" => "full"),
-    ))
+    cfg = Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("wrong_branch_detection" => String(mode), "wrong_branch_max_branch_angle_deg" => 0.001), "output" => Dict("logfile_results" => "full")))
     profile = Dict{Symbol,Any}(:enabled => true)
     result, output = mktemp() do output_path, io
       result = redirect_stdout(io) do
@@ -1626,82 +1511,84 @@ mpc.branch = [
 
   result_warn, st_warn, profile_warn, output_warn = run_with_detection(:warn)
   row_warn = Sparlectra._sparlectra_status_row(result_warn)
-  warn_ok = st_warn.wrong_branch_detection === :warn &&
-            st_warn.branch_quality_metrics.max_branch_angle_deg == 0.001 &&
-            st_warn.wrong_branch_status === :warn &&
-            st_warn.wrong_branch_reason === :branch_angle_exceeded &&
-            st_warn.wrong_branch_branch_angle_violation_count > 0 &&
-            st_warn.final_converged === true &&
-            result_warn.numerical_converged === true &&
-            result_warn.solution_available === true &&
-            result_warn.final_converged === true &&
-            row_warn.numerical_converged === true &&
-            row_warn.converged === true &&
-            row_warn.erg == 0 &&
-            row_warn.solution_available === true &&
-            hasproperty(row_warn, :q_limit_active_set_ok) &&
-            hasproperty(row_warn, :active_set_converged) &&
-            hasproperty(row_warn, :pv_q_limit_violations) &&
-            hasproperty(row_warn, :ref_q_limit_violations) &&
-            hasproperty(row_warn, :final_pv_voltage_residual) &&
-            row_warn.q_limit_active_set_ok === st_warn.q_limit_active_set_ok &&
-            row_warn.active_set_converged === st_warn.active_set_converged &&
-            row_warn.pv_q_limit_violations == st_warn.pv_q_limit_violations &&
-            row_warn.ref_q_limit_violations == st_warn.ref_q_limit_violations &&
-            isequal(row_warn.final_pv_voltage_residual, st_warn.final_pv_voltage_residual) &&
-            haskey(profile_warn[:timings], :postprocess_losses_and_flows) &&
-            occursin("AC Power Flow Results", output_warn)
+  warn_ok =
+    st_warn.wrong_branch_detection === :warn &&
+    st_warn.branch_quality_metrics.max_branch_angle_deg == 0.001 &&
+    st_warn.wrong_branch_status === :warn &&
+    st_warn.wrong_branch_reason === :branch_angle_exceeded &&
+    st_warn.wrong_branch_branch_angle_violation_count > 0 &&
+    st_warn.final_converged === true &&
+    result_warn.numerical_converged === true &&
+    result_warn.solution_available === true &&
+    result_warn.final_converged === true &&
+    row_warn.numerical_converged === true &&
+    row_warn.converged === true &&
+    row_warn.erg == 0 &&
+    row_warn.solution_available === true &&
+    hasproperty(row_warn, :q_limit_active_set_ok) &&
+    hasproperty(row_warn, :active_set_converged) &&
+    hasproperty(row_warn, :pv_q_limit_violations) &&
+    hasproperty(row_warn, :ref_q_limit_violations) &&
+    hasproperty(row_warn, :final_pv_voltage_residual) &&
+    row_warn.q_limit_active_set_ok === st_warn.q_limit_active_set_ok &&
+    row_warn.active_set_converged === st_warn.active_set_converged &&
+    row_warn.pv_q_limit_violations == st_warn.pv_q_limit_violations &&
+    row_warn.ref_q_limit_violations == st_warn.ref_q_limit_violations &&
+    isequal(row_warn.final_pv_voltage_residual, st_warn.final_pv_voltage_residual) &&
+    haskey(profile_warn[:timings], :postprocess_losses_and_flows) &&
+    occursin("AC Power Flow Results", output_warn)
 
   result_fail, st_fail, profile_fail, output_fail = run_with_detection(:fail)
   row_fail = Sparlectra._sparlectra_status_row(result_fail)
   summary_fail = Sparlectra._compact_run_summary(row_fail)
-  fail_ok = st_fail.wrong_branch_detection === :fail &&
-            st_fail.branch_quality_metrics.max_branch_angle_deg == 0.001 &&
-            st_fail.wrong_branch_status === :fail &&
-            st_fail.wrong_branch_reason === :wrong_branch_detected &&
-            st_fail.wrong_branch_branch_angle_violation_count > 0 &&
-            st_fail.numerical_converged === true &&
-            st_fail.final_converged === false &&
-            st_fail.status === :wrong_branch_detected &&
-            st_fail.reason === :wrong_branch_detected &&
-            result_fail.numerical_converged === true &&
-            result_fail.solution_available === false &&
-            result_fail.final_converged === false &&
-            row_fail.numerical_converged === true &&
-            row_fail.final_converged === false &&
-            row_fail.converged === false &&
-            row_fail.erg == 1 &&
-            row_fail.solution_available === false &&
-            row_fail.converged === row_fail.final_converged &&
-            row_fail.erg == (row_fail.final_converged ? 0 : 1) &&
-            row_fail.numerical_converged === result_fail.numerical_converged &&
-            row_fail.solution_available === result_fail.solution_available &&
-            row_fail.outcome === result_fail.outcome &&
-            row_fail.reason === result_fail.reason &&
-            hasproperty(row_fail, :wrong_branch_detection) &&
-            hasproperty(row_fail, :wrong_branch_status) &&
-            hasproperty(row_fail, :wrong_branch_reason) &&
-            hasproperty(row_fail, :wrong_branch_angle_spread_deg) &&
-            hasproperty(row_fail, :wrong_branch_max_branch_angle_deg) &&
-            hasproperty(row_fail, :wrong_branch_branch_angle_violation_count) &&
-            hasproperty(row_fail, :wrong_branch_worst_branch_angle_deg) &&
-            hasproperty(row_fail, :wrong_branch_rescue_attempted) &&
-            hasproperty(row_fail, :wrong_branch_rescue_reason) &&
-            row_fail.wrong_branch_detection === st_fail.wrong_branch_detection &&
-            row_fail.wrong_branch_status === st_fail.wrong_branch_status &&
-            row_fail.wrong_branch_reason === st_fail.wrong_branch_reason &&
-            row_fail.wrong_branch_angle_spread_deg == st_fail.wrong_branch_angle_spread_deg &&
-            row_fail.wrong_branch_max_branch_angle_deg == st_fail.wrong_branch_max_branch_angle_deg &&
-            row_fail.wrong_branch_branch_angle_violation_count == st_fail.wrong_branch_branch_angle_violation_count &&
-            row_fail.wrong_branch_worst_branch_angle_deg == st_fail.wrong_branch_worst_branch_angle_deg &&
-            row_fail.wrong_branch_rescue_attempted === st_fail.wrong_branch_rescue_attempted &&
-            row_fail.wrong_branch_rescue_reason === st_fail.wrong_branch_rescue_reason &&
-            !haskey(profile_fail[:timings], :postprocess_losses_and_flows) &&
-            !haskey(profile_fail[:timings], :result_output) &&
-            !occursin("AC Power Flow Results", output_fail) &&
-            occursin("numerical_solution=OK", summary_fail) &&
-            occursin("solution_available=false", summary_fail) &&
-            occursin("final_converged=false", summary_fail)
+  fail_ok =
+    st_fail.wrong_branch_detection === :fail &&
+    st_fail.branch_quality_metrics.max_branch_angle_deg == 0.001 &&
+    st_fail.wrong_branch_status === :fail &&
+    st_fail.wrong_branch_reason === :wrong_branch_detected &&
+    st_fail.wrong_branch_branch_angle_violation_count > 0 &&
+    st_fail.numerical_converged === true &&
+    st_fail.final_converged === false &&
+    st_fail.status === :wrong_branch_detected &&
+    st_fail.reason === :wrong_branch_detected &&
+    result_fail.numerical_converged === true &&
+    result_fail.solution_available === false &&
+    result_fail.final_converged === false &&
+    row_fail.numerical_converged === true &&
+    row_fail.final_converged === false &&
+    row_fail.converged === false &&
+    row_fail.erg == 1 &&
+    row_fail.solution_available === false &&
+    row_fail.converged === row_fail.final_converged &&
+    row_fail.erg == (row_fail.final_converged ? 0 : 1) &&
+    row_fail.numerical_converged === result_fail.numerical_converged &&
+    row_fail.solution_available === result_fail.solution_available &&
+    row_fail.outcome === result_fail.outcome &&
+    row_fail.reason === result_fail.reason &&
+    hasproperty(row_fail, :wrong_branch_detection) &&
+    hasproperty(row_fail, :wrong_branch_status) &&
+    hasproperty(row_fail, :wrong_branch_reason) &&
+    hasproperty(row_fail, :wrong_branch_angle_spread_deg) &&
+    hasproperty(row_fail, :wrong_branch_max_branch_angle_deg) &&
+    hasproperty(row_fail, :wrong_branch_branch_angle_violation_count) &&
+    hasproperty(row_fail, :wrong_branch_worst_branch_angle_deg) &&
+    hasproperty(row_fail, :wrong_branch_rescue_attempted) &&
+    hasproperty(row_fail, :wrong_branch_rescue_reason) &&
+    row_fail.wrong_branch_detection === st_fail.wrong_branch_detection &&
+    row_fail.wrong_branch_status === st_fail.wrong_branch_status &&
+    row_fail.wrong_branch_reason === st_fail.wrong_branch_reason &&
+    row_fail.wrong_branch_angle_spread_deg == st_fail.wrong_branch_angle_spread_deg &&
+    row_fail.wrong_branch_max_branch_angle_deg == st_fail.wrong_branch_max_branch_angle_deg &&
+    row_fail.wrong_branch_branch_angle_violation_count == st_fail.wrong_branch_branch_angle_violation_count &&
+    row_fail.wrong_branch_worst_branch_angle_deg == st_fail.wrong_branch_worst_branch_angle_deg &&
+    row_fail.wrong_branch_rescue_attempted === st_fail.wrong_branch_rescue_attempted &&
+    row_fail.wrong_branch_rescue_reason === st_fail.wrong_branch_rescue_reason &&
+    !haskey(profile_fail[:timings], :postprocess_losses_and_flows) &&
+    !haskey(profile_fail[:timings], :result_output) &&
+    !occursin("AC Power Flow Results", output_fail) &&
+    occursin("numerical_solution=OK", summary_fail) &&
+    occursin("solution_available=false", summary_fail) &&
+    occursin("final_converged=false", summary_fail)
 
   return warn_ok && fail_ok
 end
@@ -2322,9 +2209,12 @@ function test_wrong_branch_output_visibility()::Bool
     return (text, split(csv_lines[1], ','), [length(split(line, ',')) for line in csv_lines[2:end]])
   end
   isempty(csv_text) && return false
-  header_fields[end-1:end] == ["wrong_branch_status", "wrong_branch_reason"] || return false
+  header_fields[(end-1):end] == ["wrong_branch_status", "wrong_branch_reason"] || return false
   # Every existing column before the two appended ones keeps its original name/position.
-  header_fields[1:(end-2)] == split("island_id,n_bus,n_branch,ref_bus,chosen_ref_bus,n_pq,n_pv,n_ref,ref_promoted,initial_mismatch,first_mismatch,last_mismatch,best_mismatch,min_voltage_magnitude,max_voltage_magnitude,max_angle_step,first_nonfinite_iteration,last_finite_mismatch,worst_bus,worst_equation,iterations,final_mismatch,mismatch_status,final_status,failure_reason,stage,exception_type,exception_message,stacktrace_top,start_projection,autodamp,autodamp_min,max_iter,tol,angle_mode,voltage_mode,qlimits_enabled,qlimit_enforcement_mode,q_limit_processing_status,pv_pq_switching_events,qlimit_active_set_changes,qlimit_reenable_events,guarded_narrow_q_pv_buses,final_pv_voltage_residual,wrong_branch_detection,start_current_iteration_enabled,workspace_reuse,workspace_preallocate", ',') || return false
+  header_fields[1:(end-2)] == split(
+    "island_id,n_bus,n_branch,ref_bus,chosen_ref_bus,n_pq,n_pv,n_ref,ref_promoted,initial_mismatch,first_mismatch,last_mismatch,best_mismatch,min_voltage_magnitude,max_voltage_magnitude,max_angle_step,first_nonfinite_iteration,last_finite_mismatch,worst_bus,worst_equation,iterations,final_mismatch,mismatch_status,final_status,failure_reason,stage,exception_type,exception_message,stacktrace_top,start_projection,autodamp,autodamp_min,max_iter,tol,angle_mode,voltage_mode,qlimits_enabled,qlimit_enforcement_mode,q_limit_processing_status,pv_pq_switching_events,qlimit_active_set_changes,qlimit_reenable_events,guarded_narrow_q_pv_buses,final_pv_voltage_residual,wrong_branch_detection,start_current_iteration_enabled,workspace_reuse,workspace_preallocate",
+    ',',
+  ) || return false
   all(count -> count == length(header_fields), row_field_counts) || return false
   occursin("wrong_branch_status: warn", csv_text) || occursin(",warn,", csv_text) || return false
 
@@ -2368,7 +2258,9 @@ end
 function test_run_sparlectra_normalizes_projected_matpower_starts()::Bool
   tmpdir = mktempdir()
   case_path = joinpath(tmpdir, "case_projected_start.m")
-  write(case_path, """
+  write(
+    case_path,
+    """
 function mpc = case_projected_start
 mpc.version = '2';
 mpc.baseMVA = 100;
@@ -2385,7 +2277,8 @@ mpc.branch = [
 101 205 0.01 0.05 0.0 999 999 999 0 0 1 -360 360;
 205 309 0.01 0.05 0.0 999 999 999 0 0 1 -360 360;
 ];
-""")
+""",
+  )
 
   cases = (
     (voltage_mode = :profile_blend, angle_mode = :dc, expected_flatstart = false),
@@ -2396,10 +2289,7 @@ mpc.branch = [
   )
   for case in cases
     cfg = Sparlectra.SparlectraConfig(
-      powerflow = Sparlectra.PowerFlowConfig(
-        start_mode = Sparlectra.StartModeConfig(flatstart = true, voltage_mode = case.voltage_mode, angle_mode = case.angle_mode),
-        qlimits = Sparlectra.QLimitConfig(lock_pv_to_pq_buses = [205]),
-      ),
+      powerflow = Sparlectra.PowerFlowConfig(start_mode = Sparlectra.StartModeConfig(flatstart = true, voltage_mode = case.voltage_mode, angle_mode = case.angle_mode), qlimits = Sparlectra.QLimitConfig(lock_pv_to_pq_buses = [205])),
       output = Sparlectra.OutputConfig(console_summary = false, logfile_results = :off),
     )
     ctx = Sparlectra._import_sparlectra_context(basename(case_path), dirname(case_path), cfg)
@@ -2416,7 +2306,9 @@ end
 function test_run_sparlectra_resolves_matpower_lock_bus_ids()::Bool
   tmpdir = mktempdir()
   case_path = joinpath(tmpdir, "case_noncontiguous_lock.m")
-  write(case_path, """
+  write(
+    case_path,
+    """
 function mpc = case_noncontiguous_lock
 mpc.version = '2';
 mpc.baseMVA = 100;
@@ -2433,37 +2325,33 @@ mpc.branch = [
 101 205 0.01 0.05 0.0 999 999 999 0 0 1 -360 360;
 205 309 0.01 0.05 0.0 999 999 999 0 0 1 -360 360;
 ];
-""")
-  cfg = Sparlectra.SparlectraConfig(
-    powerflow = Sparlectra.PowerFlowConfig(
-      qlimits = Sparlectra.QLimitConfig(lock_pv_to_pq_buses = [205]),
-    ),
-    output = Sparlectra.OutputConfig(console_summary = false, logfile_results = :off),
+""",
   )
+  cfg = Sparlectra.SparlectraConfig(powerflow = Sparlectra.PowerFlowConfig(qlimits = Sparlectra.QLimitConfig(lock_pv_to_pq_buses = [205])), output = Sparlectra.OutputConfig(console_summary = false, logfile_results = :off))
 
   imported_net = Sparlectra._import_sparlectra_net(basename(case_path), dirname(case_path), cfg)
-  helper_ok = Sparlectra._resolve_matpower_lock_pv_to_pq_buses(imported_net, [205]) == [2] &&
-              Sparlectra._resolve_matpower_lock_pv_to_pq_buses(imported_net, [2]) == [2] &&
-              Sparlectra._resolve_matpower_lock_pv_to_pq_buses(imported_net, [999999]) == Int[] &&
-              Sparlectra._resolve_matpower_lock_pv_to_pq_buses(imported_net, [999999, 205, 2, 205]) == [2]
+  helper_ok =
+    Sparlectra._resolve_matpower_lock_pv_to_pq_buses(imported_net, [205]) == [2] &&
+    Sparlectra._resolve_matpower_lock_pv_to_pq_buses(imported_net, [2]) == [2] &&
+    Sparlectra._resolve_matpower_lock_pv_to_pq_buses(imported_net, [999999]) == Int[] &&
+    Sparlectra._resolve_matpower_lock_pv_to_pq_buses(imported_net, [999999, 205, 2, 205]) == [2]
   effective_cfg = Sparlectra._resolve_matpower_powerflow_ids_after_import(imported_net, cfg)
-  copied_cfg_ok = effective_cfg.powerflow.qlimits.lock_pv_to_pq_buses == [2] &&
-                  cfg.powerflow.qlimits.lock_pv_to_pq_buses == [205]
+  copied_cfg_ok = effective_cfg.powerflow.qlimits.lock_pv_to_pq_buses == [2] && cfg.powerflow.qlimits.lock_pv_to_pq_buses == [205]
 
   file_result = Sparlectra.run_sparlectra(casefile = basename(case_path), path = dirname(case_path), config = cfg)
-  file_path_ok = Sparlectra.getNodeType(file_result.net.nodeVec[2]) == Sparlectra.PV &&
-                 isempty(file_result.net.qLimitLog)
+  file_path_ok = Sparlectra.getNodeType(file_result.net.nodeVec[2]) == Sparlectra.PV && isempty(file_result.net.qLimitLog)
 
   memory_result = Sparlectra.run_sparlectra(net = imported_net, config = cfg)
-  memory_path_ok = Sparlectra.getNodeType(memory_result.net.nodeVec[2]) == Sparlectra.PQ &&
-                   any(event -> event.bus == 2, memory_result.net.qLimitLog)
+  memory_path_ok = Sparlectra.getNodeType(memory_result.net.nodeVec[2]) == Sparlectra.PQ && any(event -> event.bus == 2, memory_result.net.qLimitLog)
   return helper_ok && copied_cfg_ok && file_path_ok && memory_path_ok
 end
 
 function test_matpower_read_case_m_postprocessing()::Bool
   mfile = tempname() * ".m"
   open(mfile, "w") do io
-    write(io, """
+    write(
+      io,
+      """
 function mpc = case_postproc
 mpc.version = '2';
 mpc.baseMVA = 10;
@@ -2493,7 +2381,8 @@ pf = 0.85;
 mpc.bus(:, QD) = mpc.bus(:, PD) * sin(acos(pf));
 mpc.bus(:, PD) = mpc.bus(:, PD) * pf;
 end
-""")
+""",
+    )
   end
 
   mpc = Sparlectra.MatpowerIO.read_case_m(mfile; legacy_compat = false)
@@ -2550,21 +2439,11 @@ end
 
 function test_matpower_matrix_block_scanner_large_body()::Bool
   row_count = 25000
-  rows = join(("$(i) $(i + 1) $(i + 2);" for i in 1:row_count), '\n')
-  txt = string(
-    "function mpc = synthetic_large\n",
-    "mpc.version = '2';\n",
-    "mpc.baseMVA = 100;\n",
-    "mpc.bus = [\n",
-    rows,
-    "\n];\n",
-    "mpc.gen = [\n1 0 0;\n];\n",
-  )
+  rows = join(("$(i) $(i + 1) $(i + 2);" for i = 1:row_count), '\n')
+  txt = string("function mpc = synthetic_large\n", "mpc.version = '2';\n", "mpc.baseMVA = 100;\n", "mpc.bus = [\n", rows, "\n];\n", "mpc.gen = [\n1 0 0;\n];\n")
 
   parsed = Sparlectra.MatpowerIO.parse_matrix_block(txt, "mpc.bus"; ncols = 3)
-  return size(parsed) == (row_count, 3) &&
-         parsed[1, :] == [1.0, 2.0, 3.0] &&
-         parsed[end, :] == [row_count, row_count + 1, row_count + 2]
+  return size(parsed) == (row_count, 3) && parsed[1, :] == [1.0, 2.0, 3.0] && parsed[end, :] == [row_count, row_count + 1, row_count + 2]
 end
 
 function _assign_vset_controller!(net::Net, bus_name::String; vstep_pu::Union{Nothing,Float64}, tap_steps_down::Union{Nothing,Int}, tap_steps_up::Union{Nothing,Int}, all_generators::Bool = false)
@@ -2648,8 +2527,7 @@ end
 
 function test_q_limit_enforcement_mode_config_values()::Bool
   canonical_ok = all(mode -> Sparlectra.QLimitConfig(Dict("enforcement_mode" => String(mode))).enforcement_mode == mode, (:active_set, :classic_simultaneous, :classic_one_at_a_time))
-  aliases_ok = Sparlectra.QLimitConfig(Dict("enforcement_mode" => "matpower_simultaneous")).enforcement_mode == :classic_simultaneous &&
-               Sparlectra.QLimitConfig(Dict("enforcement_mode" => "matpower_one_at_a_time")).enforcement_mode == :classic_one_at_a_time
+  aliases_ok = Sparlectra.QLimitConfig(Dict("enforcement_mode" => "matpower_simultaneous")).enforcement_mode == :classic_simultaneous && Sparlectra.QLimitConfig(Dict("enforcement_mode" => "matpower_one_at_a_time")).enforcement_mode == :classic_one_at_a_time
   invalid_rejected = false
   try
     Sparlectra.QLimitConfig(Dict("enforcement_mode" => "classic"))
@@ -2683,15 +2561,8 @@ function test_q_limit_matpower_mode_dispatch_no_reenable()::Bool
   # call resetQLimitLog! on every outer round, silently discarding earlier rounds'
   # logQLimitHit! entries; only a violation-free final round ever survived, so
   # net.qLimitLog was empty even though real PV->PQ switching happened.
-  return !isnothing(st) &&
-         hasproperty(st, :qlimit_enforcement_mode) &&
-         st.qlimit_enforcement_mode == :classic_one_at_a_time &&
-         hasproperty(st, :qlimit_reenable_events) &&
-         st.qlimit_reenable_events == 0 &&
-         length(net.qLimitLog) == 1 &&
-         net.qLimitLog[1].side == :max
+  return !isnothing(st) && hasproperty(st, :qlimit_enforcement_mode) && st.qlimit_enforcement_mode == :classic_one_at_a_time && hasproperty(st, :qlimit_reenable_events) && st.qlimit_reenable_events == 0 && length(net.qLimitLog) == 1 && net.qLimitLog[1].side == :max
 end
-
 
 function test_q_limit_start_iter_delays_switching()::Bool
   net = createTest3BusNet(cooldown = 0, hyst_pu = 0.0, qlim_min = -15.0, qlim_max = 15.0)
@@ -2849,41 +2720,31 @@ end
 function test_solve_sparse_system_small_and_large_backends()::Bool
   smallA = sparse([1.0 1.0; 2.0 2.0])
   smallb = [1.0, 2.0]
-  small_diag = Dict{Symbol, Any}(:enabled => true)
+  small_diag = Dict{Symbol,Any}(:enabled => true)
   smallx = Sparlectra.solve_sparse_system(smallA, smallb; context = :test_small, diagnostics = small_diag)
-  small_ok = all(isfinite, smallx) &&
-    isapprox(smallA * smallx, smallb; atol = 1e-10, rtol = 0.0) &&
-    get(small_diag, :backend, :missing) in (:sparse_backslash, :sparse_qr_fallback, :dense_svd_fallback_small_system)
+  small_ok = all(isfinite, smallx) && isapprox(smallA * smallx, smallb; atol = 1e-10, rtol = 0.0) && get(small_diag, :backend, :missing) in (:sparse_backslash, :sparse_qr_fallback, :dense_svd_fallback_small_system)
 
   n = Sparlectra.DEFAULT_DENSE_FALLBACK_MAX_N + 4
   largeA = spdiagm(0 => fill(4.0, n), 1 => fill(-1.0, n - 1), -1 => fill(-1.0, n - 1))
   largeb = ones(Float64, n)
-  large_diag = Dict{Symbol, Any}(:enabled => true)
+  large_diag = Dict{Symbol,Any}(:enabled => true)
   largex = Sparlectra.solve_sparse_system(largeA, largeb; context = :test_large, diagnostics = large_diag)
-  large_ok = all(isfinite, largex) &&
-    isapprox(largeA * largex, largeb; atol = 1e-10, rtol = 1e-10) &&
-    get(large_diag, :backend, :missing) != :dense_svd_fallback_small_system
+  large_ok = all(isfinite, largex) && isapprox(largeA * largex, largeb; atol = 1e-10, rtol = 1e-10) && get(large_diag, :backend, :missing) != :dense_svd_fallback_small_system
 
   return small_ok && large_ok
 end
 
 function test_rectangular_jacobian_and_dc_start_matrices_are_sparse()::Bool
-  Ybus = sparse(
-    [1, 1, 2, 2, 2, 3, 3],
-    [1, 2, 1, 2, 3, 2, 3],
-    ComplexF64[8im, -8im, -8im, 14im, -6im, -6im, 6im],
-    3,
-    3,
-  )
-  V = ComplexF64[1.0 + 0im, 1.0 + 0im, 1.0 + 0im]
-  S = ComplexF64[0.0 + 0im, -0.3 - 0.1im, -0.2 - 0.08im]
+  Ybus = sparse([1, 1, 2, 2, 2, 3, 3], [1, 2, 1, 2, 3, 2, 3], ComplexF64[8im, -8im, -8im, 14im, -6im, -6im, 6im], 3, 3)
+  V = ComplexF64[1.0+0im, 1.0+0im, 1.0+0im]
+  S = ComplexF64[0.0+0im, -0.3-0.1im, -0.2-0.08im]
   bus_types = [:Slack, :PQ, :PQ]
   Vset = [1.0, 1.0, 1.0]
   slack_idx = 1
   J = Sparlectra.build_rectangular_jacobian_pq_pv(Ybus, V, bus_types, Vset, slack_idx)
   jac_ok = J isa SparseMatrixCSC
 
-  perf = Dict{Symbol, Any}(:enabled => true)
+  perf = Dict{Symbol,Any}(:enabled => true)
   _ = Sparlectra._dc_angle_start_rectangular_profiled(Ybus, V, S, bus_types, Vset, slack_idx; performance_profile = perf)
   dc_ok = get(perf, :dc_matrix_is_sparse, false) == true
 
@@ -2945,9 +2806,7 @@ function test_multiple_slack_prosumers_same_bus_supported()::Bool
 
   slack_bus = geNetBusIdx(net = net, busName = "SlackBus")
   load_bus = geNetBusIdx(net = net, busName = "LoadBus")
-  return getEffectiveBusType(net, slack_bus) == Sparlectra.Slack &&
-         getEffectiveBusType(net, load_bus) == Sparlectra.PQ &&
-         count(isSlack, getBusProsumers(net, slack_bus)) == 2
+  return getEffectiveBusType(net, slack_bus) == Sparlectra.Slack && getEffectiveBusType(net, load_bus) == Sparlectra.PQ && count(isSlack, getBusProsumers(net, slack_bus)) == 2
 end
 
 function test_regulated_generator_bus_targets_include_unregulated_generators()::Bool
@@ -2968,8 +2827,7 @@ function test_regulated_generator_bus_targets_include_unregulated_generators()::
 
   p_target_ok = isapprox(node._pƩGen, 27.5; atol = 1e-9, rtol = 0.0)
   q_target_ok = isapprox(node._qƩGen, 4.0; atol = 1e-9, rtol = 0.0)
-  q_limit_ok = isapprox(qmin_pu[pv_bus], -0.4; atol = 1e-9, rtol = 0.0) &&
-               isapprox(qmax_pu[pv_bus], 0.55; atol = 1e-9, rtol = 0.0)
+  q_limit_ok = isapprox(qmin_pu[pv_bus], -0.4; atol = 1e-9, rtol = 0.0) && isapprox(qmax_pu[pv_bus], 0.55; atol = 1e-9, rtol = 0.0)
   bus_type_ok = getEffectiveBusType(net = net, busName = "PVBus") == Sparlectra.PV
 
   return p_target_ok && q_target_ok && q_limit_ok && bus_type_ok
@@ -2992,10 +2850,7 @@ function test_addprosumer_auto_regulated_flags()::Bool
   ps_pq = only(getBusProsumers(net, geNetBusIdx(net = net, busName = "PQ")))
 
   flags_ok = ps_vm.isRegulated && ps_tap.isRegulated && !ps_pq.isRegulated
-  bus_types_ok =
-    getEffectiveBusType(net = net, busName = "PVVm") == Sparlectra.PV &&
-    getEffectiveBusType(net = net, busName = "PVTap") == Sparlectra.PV &&
-    getEffectiveBusType(net = net, busName = "PQ") == Sparlectra.PQ
+  bus_types_ok = getEffectiveBusType(net = net, busName = "PVVm") == Sparlectra.PV && getEffectiveBusType(net = net, busName = "PVTap") == Sparlectra.PV && getEffectiveBusType(net = net, busName = "PQ") == Sparlectra.PQ
 
   return flags_ok && bus_types_ok
 end
@@ -3017,9 +2872,7 @@ function test_summary_result_output_closes_file_handle()::Bool
     return false
   end
   out = read(result_file, String)
-  return occursin("AC Power Flow Results", out) &&
-         occursin("PV→PQ locks", out) &&
-         occursin("PV→PQ events", out)
+  return occursin("AC Power Flow Results", out) && occursin("PV→PQ locks", out) && occursin("PV→PQ events", out)
 end
 
 # Condition-number diagnostics (condition_number.jl): the Hager estimate
@@ -3073,6 +2926,16 @@ function test_condition_number_estimator()::Bool
   knet = condestJacobian(net)
   (isfinite(knet) && knet >= 1.0) || return false
 
+  # solver-status path: the rectangular solve stores a lazy, cached
+  # condition-estimate closure; repeated calls return the same value
+  # without refactorizing
+  st = Sparlectra.rectangular_pf_status(net)
+  st !== nothing || return false
+  hasproperty(st, :jacobian_condest) || return false
+  kthunk = st.jacobian_condest()
+  (isfinite(kthunk) && kthunk >= 1.0) || return false
+  st.jacobian_condest() == kthunk || return false
+
   # classic result log: the condition line appears exactly when the
   # output.condition_number option is on
   outdir = mktempdir()
@@ -3082,6 +2945,32 @@ function test_condition_number_estimator()::Bool
   Sparlectra.printACPFlowResults(net, 0.01, ite, 1e-8, true, outdir; converged = true, solver = :rectangular)
   out_off = read(joinpath(outdir, "result_$(net.name).txt"), String)
   occursin("Jacobian cond.", out_off) && return false
+
+  # regression: de-energized buses reduce the Ybus dimension below the bus
+  # count. The net-level estimate used to fail with a DimensionMismatch
+  # (reduced Ybus against full-length state vectors); it must now describe
+  # the active subsystem, and the result log must carry the line instead
+  # of the skip warning.
+  net_iso = Net(name = "cond_check_iso", baseMVA = 100.0)
+  addBus!(net = net_iso, busName = "Slack", vn_kV = 110.0)
+  addBus!(net = net_iso, busName = "Load", vn_kV = 110.0)
+  addBus!(net = net_iso, busName = "Dead", vn_kV = 110.0)
+  addACLine!(net = net_iso, fromBus = "Slack", toBus = "Load", r = 0.01, x = 0.05, length = 1.0)
+  addProsumer!(net = net_iso, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "Slack")
+  addProsumer!(net = net_iso, busName = "Load", type = "ENERGYCONSUMER", p = 10.0, q = 3.0)
+  markIsolatedBuses!(net = net_iso, log = false)
+  length(net_iso.isoNodes) == 1 || return false
+  ite_iso, erg_iso = runpf!(net_iso, 20, 1e-8, 0; method = :rectangular)
+  erg_iso == 0 || return false
+  k_iso = condestJacobian(net_iso)
+  (isfinite(k_iso) && k_iso >= 1.0) || return false
+  st_iso = Sparlectra.rectangular_pf_status(net_iso)
+  (st_iso !== nothing && hasproperty(st_iso, :jacobian_condest)) || return false
+  k_iso_solver = st_iso.jacobian_condest()
+  (isfinite(k_iso_solver) && k_iso_solver >= 1.0) || return false
+  Sparlectra.printACPFlowResults(net_iso, 0.01, ite_iso, 1e-8, true, outdir; converged = true, solver = :rectangular, condition_number = true)
+  out_iso = read(joinpath(outdir, "result_$(net_iso.name).txt"), String)
+  occursin("Jacobian cond. : kappa1(J)", out_iso) || return false
   return true
 end
 
