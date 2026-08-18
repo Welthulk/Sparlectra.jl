@@ -18,10 +18,22 @@
 #          installs Julia via the official juliaup installer when missing,
 #          obtains Sparlectra at its latest tagged release (uses this
 #          checkout when the script lies inside one, otherwise clones or
-#          downloads next to the script), then starts the Web UI.
+#          downloads next to the script), optionally builds the fast-start
+#          sysimage after asking the user, then starts the Web UI.
+#          Also works piped straight from the docs (no git, no GitHub
+#          checkout needed):
+#            curl -fsSL https://raw.githubusercontent.com/Welthulk/Sparlectra.jl/main/install_webui.sh | sh
+#          When piped, Sparlectra is placed in a Sparlectra/ folder inside
+#          the CURRENT directory; run the one-liner where it should live.
 
 set -e
-DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+# When executed from a file, everything is anchored next to the script.
+# When piped (curl | sh), $0 is the shell itself; anchoring at its dirname
+# would point at /bin, so fall back to the current directory instead.
+case "$0" in
+  *install_webui.sh) DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd) ;;
+  *) DIR=$(pwd) ;;
+esac
 REPO_URL="https://github.com/Welthulk/Sparlectra.jl"
 
 # --- 1. Julia ---------------------------------------------------------------
@@ -88,7 +100,39 @@ else
   fi
 fi
 
-# --- 3. Dependencies + start ------------------------------------------------
+# --- 3. Dependencies ---------------------------------------------------------
 echo "Resolving Julia dependencies..."
 julia --project="$SPARLECTRA_DIR" -e "using Pkg; Pkg.instantiate()"
+
+# --- 4. Optional fast-start sysimage ----------------------------------------
+# One ahead-of-time compiled image removes Julia's JIT warm-up from every
+# Web UI start (see docs: Fast Start). The build is optional, runs once and
+# takes roughly 6 to 20 minutes. The answer is read from the terminal even
+# when the script itself arrives via a pipe (curl | sh); without a terminal
+# the default is "no". SPARLECTRA_BUILD_SYSIMAGE=1 or =0 decides without
+# asking (unattended installs).
+BUILD_IMG="${SPARLECTRA_BUILD_SYSIMAGE:-}"
+if [ -z "$BUILD_IMG" ] && [ -r /dev/tty ]; then
+  printf "Build the optional fast-start sysimage now? One-time build of 6-20 minutes; later Web UI starts skip the warm-up. [y/N] "
+  read -r BUILD_IMG < /dev/tty 2>/dev/null || BUILD_IMG=""
+fi
+case "$BUILD_IMG" in
+  y|Y|yes|YES|1)
+    echo "Building the fast-start sysimage (this can take a while)..."
+    # A failed build must never block the installation: the launcher only
+    # uses an image whose metadata validates, so starting without one is
+    # always safe.
+    if ! julia "$SPARLECTRA_DIR/tools/build_sysimage.jl"; then
+      echo "Sysimage build failed - continuing without it. Retry later with:"
+      echo "  julia \"$SPARLECTRA_DIR/tools/build_sysimage.jl\""
+    fi
+    ;;
+  *)
+    echo "Skipping the sysimage build. Build it anytime with:"
+    echo "  julia \"$SPARLECTRA_DIR/tools/build_sysimage.jl\""
+    echo "or from the Web UI: Fast start page, button 'Build fast-start image'."
+    ;;
+esac
+
+# --- 5. Start ----------------------------------------------------------------
 exec julia --project="$SPARLECTRA_DIR" "$SPARLECTRA_DIR/start_webui.jl"

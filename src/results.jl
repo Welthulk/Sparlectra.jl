@@ -136,7 +136,7 @@ function _grid_connection_summary(net::Net, busNameByIdx::AbstractDict)::String
   for busIdx in net.slackVec
     name = _effective_bus_name(busNameByIdx, net, busIdx)
     if _is_external_grid_internal_bus(name)
-      terminal = name[1:(end - length("__extgrid_int"))]
+      terminal = name[1:(end-length("__extgrid_int"))]
       vn = getNodeVn(net.nodeVec[busIdx])
       sk = NaN
       rx = NaN
@@ -425,7 +425,31 @@ function buildACPFlowReport(net::Net; ct::Float64 = 0.0, ite::Int = 0, tol::Floa
 
     from_name = _effective_bus_name(busNameByIdx, net, br.fromBus)
     to_name = _effective_bus_name(busNameByIdx, net, br.toBus)
-    push!(branch_rows, (branch = br.comp.cName, branch_index = br.branchIdx, from_bus = br.fromBus, to_bus = br.toBus, status = br.status, p_from_MW = p_from, q_from_MVar = q_from, p_to_MW = p_to, q_to_MVar = q_to, p_loss_MW = p_loss, q_loss_MVar = q_loss, rated_MVA = rated, overloaded = overload, branch_name = br.comp.cName, original_branch_name = _original_branch_name(net, br), from_bus_name = from_name, to_bus_name = to_name, original_from_bus_name = _original_bus_name(busNameByIdx, net, br.fromBus), original_to_bus_name = _original_bus_name(busNameByIdx, net, br.toBus), branch_kind = _branch_kind_name(net, br)))
+    push!(
+      branch_rows,
+      (
+        branch = br.comp.cName,
+        branch_index = br.branchIdx,
+        from_bus = br.fromBus,
+        to_bus = br.toBus,
+        status = br.status,
+        p_from_MW = p_from,
+        q_from_MVar = q_from,
+        p_to_MW = p_to,
+        q_to_MVar = q_to,
+        p_loss_MW = p_loss,
+        q_loss_MVar = q_loss,
+        rated_MVA = rated,
+        overloaded = overload,
+        branch_name = br.comp.cName,
+        original_branch_name = _original_branch_name(net, br),
+        from_bus_name = from_name,
+        to_bus_name = to_name,
+        original_from_bus_name = _original_bus_name(busNameByIdx, net, br.fromBus),
+        original_to_bus_name = _original_bus_name(busNameByIdx, net, br.toBus),
+        branch_kind = _branch_kind_name(net, br),
+      ),
+    )
   end
 
   link_rows = NamedTuple[]
@@ -439,7 +463,20 @@ function buildACPFlowReport(net::Net; ct::Float64 = 0.0, ite::Int = 0, tol::Floa
   end
 
   p_loss_total, q_loss_total = getTotalLosses(net = net)
-  metadata = (case = net.name, baseMVA = net.baseMVA, converged = converged, elapsed_s = ct, iterations = ite, tolerance = tol, solver = solver, timestamp = Dates.now(), total_p_loss_MW = p_loss_total, total_q_loss_MVar = q_loss_total, wrong_branch_status = wrong_branch_status, wrong_branch_reason = wrong_branch_reason)
+  metadata = (
+    case = net.name,
+    baseMVA = net.baseMVA,
+    converged = converged,
+    elapsed_s = ct,
+    iterations = ite,
+    tolerance = tol,
+    solver = solver,
+    timestamp = Dates.now(),
+    total_p_loss_MW = p_loss_total,
+    total_q_loss_MVar = q_loss_total,
+    wrong_branch_status = wrong_branch_status,
+    wrong_branch_reason = wrong_branch_reason,
+  )
 
   # Keep structured tap-controller data as a dedicated relation in the report
   # (preferred over widening the branch table with sparse controller columns).
@@ -458,15 +495,7 @@ function formatBranchResults(net::Net; max_rows::Union{Nothing,Int} = nothing)
   # in the TCSC summary block of the Control footer
   for c in _series_reactance_controllers(net)
     haskey(ctrl_by_branch, c.branch_idx) && continue
-    ctrl_by_branch[c.branch_idx] = (
-      control_type = :TCSC,
-      p_target_mw = c.p_target_mw,
-      ratio_tap_position = missing,
-      phase_tap_position = missing,
-      converged = c.converged,
-      at_limit = c.at_limit,
-      status = c.status,
-    )
+    ctrl_by_branch[c.branch_idx] = (control_type = :TCSC, p_target_mw = c.p_target_mw, ratio_tap_position = missing, phase_tap_position = missing, converged = c.converged, at_limit = c.at_limit, status = c.status)
   end
 
   ctrl_status = function (row)
@@ -625,7 +654,20 @@ function _distributed_slack_bus_shares(net::Net)
   return (true, shares)
 end
 
-function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFile::Bool = false, path::String = ""; converged::Bool = true, solver::Symbol = :NR, solver_time_s::Union{Nothing,Float64} = nothing, result_mode::Symbol = :classic, max_rows::Union{Nothing,Int} = nothing, condition_number::Bool = false)
+function printACPFlowResults(
+  net::Net,
+  ct::Float64,
+  ite::Int,
+  tol::Float64,
+  toFile::Bool = false,
+  path::String = "";
+  converged::Bool = true,
+  solver::Symbol = :NR,
+  solver_time_s::Union{Nothing,Float64} = nothing,
+  result_mode::Symbol = :classic,
+  max_rows::Union{Nothing,Int} = nothing,
+  condition_number::Bool = false,
+)
   if toFile
     filename = strip("result_$(net.name).txt")
     io = open(joinpath(path, filename), "w")
@@ -695,16 +737,14 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
   @printf(io, "Case           :%15s\n", net.name)
   @printf(io, "Cooldown iters :%10d\n", net.cooldown_iters)
   @printf(io, "Q-hysteresis   :%10.4f pu\n", net.q_hyst_pu)
-  # opt-in (output.condition_number): estimate at the net's current state,
-  # one extra LU factorization; a failed estimate never breaks the report
+  # opt-in (output.condition_number): prefers the lazy estimate the solver
+  # stored for the exact system it factored (post-merge topology, final
+  # active set); falls back to a standalone reconstruction for non-NR runs.
+  # A failed estimate never breaks the report, but the reason must be
+  # visible (see _jacobian_condest, condition_number.jl).
   if condition_number
-    kappa = try
-      condestJacobian(net)
-    catch err
-      @debug "result output: Jacobian condition estimate skipped" exception = err
-      nothing
-    end
-    kappa === nothing || @printf(io, "Jacobian cond. : %s\n", _condition_report_line(kappa))
+    kappa = _jacobian_condest(net; context = "result output")
+    kappa === nothing || @printf(io, "Jacobian cond. : %s\n", _condition_report_line(kappa; tol = tol))
   end
 
   @printf(io, "BaseMVA        :%10d\n", net.baseMVA)
@@ -853,7 +893,26 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
       # participant actually delivers
       ds_cells = share === nothing ? @sprintf(" %-10s | %-10s |", "", "") : @sprintf(" %-10s | %-10s |", @sprintf("%.4f", share[1]), @sprintf("%.3f", p_gen + share[2]))
     end
-    @printf(io, "| %-5d | %-20s | %-10.1f | %-10.3f | %-10.3f | %-10.3f | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-12s | %-12s |%s\n", n.busIdx, _fitColumn(nodeName, 20), n.comp.cVN, v, n._vm_pu, n._va_deg, pGS, qGS, pLS, qLS, pShunt_str, qShunt_str, typeStr, controlStr, tap_target_str, ds_cells)
+    @printf(
+      io,
+      "| %-5d | %-20s | %-10.1f | %-10.3f | %-10.3f | %-10.3f | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-12s | %-12s |%s\n",
+      n.busIdx,
+      _fitColumn(nodeName, 20),
+      n.comp.cVN,
+      v,
+      n._vm_pu,
+      n._va_deg,
+      pGS,
+      qGS,
+      pLS,
+      qLS,
+      pShunt_str,
+      qShunt_str,
+      typeStr,
+      controlStr,
+      tap_target_str,
+      ds_cells
+    )
     shown_bus_rows += 1
   end
   if !isnothing(max_rows) && length(nodes) > shown_bus_rows

@@ -1,3 +1,8 @@
+# Version 0.9.6 - 2026-08-19
+* #309 Fix Sysimage for windows v0.9.5
+* #308 One-line Web UI install without a GitHub checkout; the install scripts now offer the optional fast-start sysimage build (y/N prompt, `SPARLECTRA_BUILD_SYSIMAGE=1/0` for unattended installs).
+* Condition estimate now comes from the solver (lazy, computed only when reports ask); fixed `condestJacobian(net)` on nets with de-energized buses (DimensionMismatch), the estimate describes the active subsystem.
+* 
 # Version 0.9.5 - 2026-08-18
 
 ## Highlights

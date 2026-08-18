@@ -16,6 +16,10 @@
 # log markers, and CSV schemas stable unless the artifact views and tests are
 # updated together.
 
+# file: src/api/run_diagnostic_artifacts.jl
+# purpose: write diagnostic artifacts (CSV, log) from a SparlectraRunResult and
+#          the run profile (diagnostic/self-check) metadata.
+
 """
     _write_start_residuals_artifact(output_dir, profile) -> Union{Nothing,String}
 
@@ -93,27 +97,46 @@ function _write_powerflow_mismatch_diagnostics(io::IO, result::SparlectraRunResu
   println(io, "iterations: ", result.iterations)
   println(io, "converged: ", result.final_converged)
   println(io, "failure_reason: ", result.final_converged ? "none" : result.reason)
-  for key in (:selected_start_candidate, :raw_mismatch, :dc_mismatch, :projected_mismatch,
-              :current_iteration_initial_mismatch, :current_iteration_final_mismatch,
-              :current_iteration_accepted, :current_iteration_reason)
+  for key in (:selected_start_candidate, :raw_mismatch, :dc_mismatch, :projected_mismatch, :current_iteration_initial_mismatch, :current_iteration_final_mismatch, :current_iteration_accepted, :current_iteration_reason)
     println(io, key, ": ", _diag_value(result, key))
   end
   if mode === :full
-    for key in (:best_blend_mismatch, :start_projection_mismatch_before,
-                :start_projection_mismatch_after, :current_iteration_candidate_mismatch,
-                :nr_initial_mismatch, :nr_final_mismatch, :max_active_power_mismatch,
-                :max_reactive_power_mismatch,
-                :max_voltage_residual_or_setpoint_residual_where_available,
-                :requested_angle_mode, :requested_voltage_mode, :selection_reason,
-                :fallback_to_raw, :raw_fallback_reason, :dc_angle_start_built,
-                :dc_angle_start_valid, :dc_angle_start_applied, :dc_angle_min_deg,
-                :dc_angle_max_deg, :dc_angle_spread_deg, :dc_angle_mean_deg,
-                :dc_angle_std_deg, :dc_angle_clipped_count, :dc_angle_clip_limit_deg,
-                :dc_max_branch_angle_deg, :dc_branch_angle_violation_count,
-                :worst_dc_branch_from_bus, :worst_dc_branch_to_bus,
-                :worst_dc_branch_angle_deg, :dc_voltage_magnitude_min,
-                :dc_voltage_magnitude_max, :dc_mismatch_ratio_vs_raw,
-                :requested_dc_worse_than_raw, :dc_mismatch_growth_factor)
+    for key in (
+      :best_blend_mismatch,
+      :start_projection_mismatch_before,
+      :start_projection_mismatch_after,
+      :current_iteration_candidate_mismatch,
+      :nr_initial_mismatch,
+      :nr_final_mismatch,
+      :max_active_power_mismatch,
+      :max_reactive_power_mismatch,
+      :max_voltage_residual_or_setpoint_residual_where_available,
+      :requested_angle_mode,
+      :requested_voltage_mode,
+      :selection_reason,
+      :fallback_to_raw,
+      :raw_fallback_reason,
+      :dc_angle_start_built,
+      :dc_angle_start_valid,
+      :dc_angle_start_applied,
+      :dc_angle_min_deg,
+      :dc_angle_max_deg,
+      :dc_angle_spread_deg,
+      :dc_angle_mean_deg,
+      :dc_angle_std_deg,
+      :dc_angle_clipped_count,
+      :dc_angle_clip_limit_deg,
+      :dc_max_branch_angle_deg,
+      :dc_branch_angle_violation_count,
+      :worst_dc_branch_from_bus,
+      :worst_dc_branch_to_bus,
+      :worst_dc_branch_angle_deg,
+      :dc_voltage_magnitude_min,
+      :dc_voltage_magnitude_max,
+      :dc_mismatch_ratio_vs_raw,
+      :requested_dc_worse_than_raw,
+      :dc_mismatch_growth_factor,
+    )
       println(io, key, ": ", _diag_value(result, key))
     end
   end
@@ -148,16 +171,12 @@ and a next step, instead of only reporting numbers.
 function _write_diagnosis_narrative(io::IO, result::SparlectraRunResult)
   println(io, "Diagnosis")
   println(io, "---------")
-  # Jacobian conditioning at the net's current voltage state (operating
+  # Jacobian conditioning of the system the solver factored (operating
   # point after convergence, last iterate after a failure): tells an
-  # ill-conditioned system apart from a start/step-control problem. Never
-  # breaks the report; an estimate failure is only logged at debug level.
-  kappa = try
-    condestJacobian(result.net)
-  catch err
-    @debug "diagnose: Jacobian condition estimate skipped" exception = err
-    nothing
-  end
+  # ill-conditioned system apart from a start/step-control problem.
+  # Prefers the solver-stored lazy estimate; never breaks the report, an
+  # estimate failure is only logged at debug level.
+  kappa = _jacobian_condest(result.net; warn_on_failure = false, context = "diagnose")
   if result.final_converged
     println(io, "The run converged in ", result.iterations, " iteration(s); final mismatch ", result.final_mismatch, " is within tolerance. No root-cause analysis is needed.")
     kappa === nothing || println(io, "Jacobian conditioning at the solution: ", _condition_report_line(kappa))
@@ -205,7 +224,10 @@ function _write_diagnosis_narrative(io::IO, result::SparlectraRunResult)
   println(io, "---------------")
   recommendations = String[]
   if !isempty(flagged_rows)
-    push!(recommendations, "Branch anomalies were found at the worst-mismatch bus (see \"Branch anomalies at worst-mismatch bus\" below) — review the flagged branch parameters and the MATPOWER import conventions (matpower_import.auto_profile/shift_sign/shift_unit/ratio) before adjusting solver settings.")
+    push!(
+      recommendations,
+      "Branch anomalies were found at the worst-mismatch bus (see \"Branch anomalies at worst-mismatch bus\" below) — review the flagged branch parameters and the MATPOWER import conventions (matpower_import.auto_profile/shift_sign/shift_unit/ratio) before adjusting solver settings.",
+    )
   end
   if trend === :diverging_to_nonfinite || autodamp_failure === true
     push!(recommendations, "Try a different start profile (power_flow.start_mode.angle_mode/voltage_mode) before tuning step control further — a poor start is a common cause of floor-hitting autodamp behavior.")
@@ -217,7 +239,10 @@ function _write_diagnosis_narrative(io::IO, result::SparlectraRunResult)
     push!(recommendations, "Check power_flow.qlimits and wrong-branch detection settings — a stagnant trend can indicate the active-set/outer loop, not the Newton step itself, is stuck.")
   end
   if kappa isa Float64 && kappa >= 1e10
-    push!(recommendations, "The Jacobian itself is ill-conditioned at the last iterate (kappa1 about $(round(kappa, sigdigits = 3))): look for nearly isolated buses, extreme impedance ratios, or unit errors in the network data before tuning step control; no damping strategy fixes a numerically singular system.")
+    push!(
+      recommendations,
+      "The Jacobian itself is ill-conditioned at the last iterate (kappa1 about $(round(kappa, sigdigits = 3))): look for nearly isolated buses, extreme impedance ratios, or unit errors in the network data before tuning step control; no damping strategy fixes a numerically singular system.",
+    )
   end
   push!(recommendations, "Run run_fixed_reference_self_check on this case to check whether the residual is already present at the case's own stored VM/VA (a network-model issue) rather than introduced by the solver's start guess.")
   for (i, rec) in enumerate(recommendations)
@@ -340,13 +365,7 @@ function _write_q_limit_detail_artifacts(output_path::AbstractString, net::Net; 
   snapshot_rows = isempty(net.qLimitInitialPVRows) ? snapshotPVQLimits!(net) : net.qLimitInitialPVRows
   for row in snapshot_rows
     bus = row.bus
-    push!(rows, (
-      bus = bus,
-      qmin_pu = row.qmin_MVAr / net.baseMVA,
-      qmax_pu = row.qmax_MVAr / net.baseMVA,
-      qmin_MVAr = row.qmin_MVAr,
-      qmax_MVAr = row.qmax_MVAr,
-    ))
+    push!(rows, (bus = bus, qmin_pu = row.qmin_MVAr / net.baseMVA, qmax_pu = row.qmax_MVAr / net.baseMVA, qmin_MVAr = row.qmin_MVAr, qmax_MVAr = row.qmax_MVAr))
   end
   if !isempty(rows)
     _write_namedtuple_csv(joinpath(output_path, "q_limit_initial_limits.csv"), rows, (:bus, :qmin_pu, :qmax_pu, :qmin_MVAr, :qmax_MVAr); format = format)
@@ -367,8 +386,7 @@ function _write_q_limit_detail_artifacts(output_path::AbstractString, net::Net; 
           generator_index = row.gen_index,
           violation_side = String(row.violation_side),
           action = String(row.action),
-        )
-        for row in outer_rows
+        ) for row in outer_rows
       ]
       columns = (:outer_iteration, :mode, :selected_count, :max_violation_MVAr, :ref_changed, :bus, :generator_index, :violation_side, :action)
       _write_namedtuple_csv(joinpath(output_path, "q_limit_classic_outer_loop.csv"), rows, columns; format = format)

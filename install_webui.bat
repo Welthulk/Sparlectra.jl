@@ -18,7 +18,11 @@ rem purpose: install-and-start for the Sparlectra Web UI (Windows): installs
 rem          Julia via winget/juliaup when missing, obtains Sparlectra at its
 rem          latest tagged release (uses this checkout when the script lies
 rem          inside one, otherwise downloads next to the script - no git
-rem          required), then starts the Web UI.
+rem          required), optionally builds the fast-start sysimage after
+rem          asking the user, then starts the Web UI.
+rem          Also works straight from the docs without a GitHub checkout;
+rem          run in PowerShell in the folder where Sparlectra should live:
+rem            iwr -useb https://raw.githubusercontent.com/Welthulk/Sparlectra.jl/main/install_webui.bat -OutFile install_webui.bat; .\install_webui.bat
 
 setlocal
 set "DIR=%~dp0"
@@ -72,8 +76,38 @@ if not exist "%SPARLECTRA_DIR%\Project.toml" (
 )
 
 :have_repo
-rem --- 3. Dependencies + start -----------------------------------------------
+rem --- 3. Dependencies ---------------------------------------------------------
 echo Resolving Julia dependencies...
 julia --project="%SPARLECTRA_DIR%" -e "using Pkg; Pkg.instantiate()"
+
+rem --- 4. Optional fast-start sysimage -----------------------------------------
+rem One ahead-of-time compiled image removes Julia's JIT warm-up from every
+rem Web UI start (see docs: Fast Start). Optional, one-time build of roughly
+rem 6 to 20 minutes. SPARLECTRA_BUILD_SYSIMAGE=1 or =0 decides without asking
+rem (unattended installs); otherwise the user is asked, default is no.
+set "BUILD_IMG=%SPARLECTRA_BUILD_SYSIMAGE%"
+if defined BUILD_IMG goto sysimage_decided
+set /p BUILD_IMG=Build the optional fast-start sysimage now? One-time build of 6-20 minutes; later Web UI starts skip the warm-up. [y/N] 
+:sysimage_decided
+if /i "%BUILD_IMG%"=="y" goto build_sysimage
+if /i "%BUILD_IMG%"=="yes" goto build_sysimage
+if "%BUILD_IMG%"=="1" goto build_sysimage
+echo Skipping the sysimage build. Build it anytime with:
+echo   julia "%SPARLECTRA_DIR%\tools\build_sysimage.jl"
+echo or from the Web UI: Fast start page, button "Build fast-start image".
+goto start_webui
+
+:build_sysimage
+echo Building the fast-start sysimage ^(this can take a while^)...
+rem A failed build must never block the installation: the launcher only uses
+rem an image whose metadata validates, so starting without one is always safe.
+julia "%SPARLECTRA_DIR%\tools\build_sysimage.jl"
+if errorlevel 1 (
+  echo Sysimage build failed - continuing without it. Retry later with:
+  echo   julia "%SPARLECTRA_DIR%\tools\build_sysimage.jl"
+)
+
+:start_webui
+rem --- 5. Start -----------------------------------------------------------------
 julia --project="%SPARLECTRA_DIR%" "%SPARLECTRA_DIR%\start_webui.jl"
 pause
