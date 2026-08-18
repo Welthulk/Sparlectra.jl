@@ -1,4 +1,4 @@
-# Version 0.9.7 - unreleased
+# Version 0.9.7 - 2026-08-20
 
 - Install scripts offer a desktop shortcut (Windows `.lnk`) or launcher
   (`.desktop` / symlink) for starting the Web UI;
