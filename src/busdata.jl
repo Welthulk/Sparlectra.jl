@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-# file: src/busdata.jl — Data type for NR / power flow
+# file: src/busdata.jl
 # purpose: BusData working type for the NR solver and helpers to build, sort,
 #          and map bus data between net.nodeVec and the solver vectors
 

@@ -13,7 +13,6 @@
 # limitations under the License.
 
 # Author: Udo Schmitz (https://github.com/Welthulk)
-# Purpose: network calculation
 
 # Naming Conventions:
 # The project follows the Julia Naming Conventions for the most part,
