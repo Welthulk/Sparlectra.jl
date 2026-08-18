@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: test/test_webui_support.jl
+# purpose: shared fixtures for the Web UI tests: small inline DTF network,
+#          outage, and FOR002 reference-report strings
 _dtf_network_fixture() = "P\nT\nN\nX\nY\n110\n2 1 0 0 SLACK\nL1A  PV       SLACK   1.0 2.0 0.0 0.0\n11   PV      110 0 0 0 10 2 -5 5\n21   SLACK   110 0 0 0 20 3 -10 10\n"
 _dtf_network_with_outage_fixture() = _dtf_network_fixture() * "AUSFALL\nL1A\nENDE\n"
 _dtf_outage_fixture() = "AUSFALL\nL1A\nENDE\n"

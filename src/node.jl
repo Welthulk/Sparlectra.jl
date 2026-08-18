@@ -15,6 +15,8 @@
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 10.05.2023
 # file: src/node.jl
+# purpose: Node bus type with per-bus load/generation/shunt power aggregation,
+#          voltage setters, and NodeType conversion and query helpers
 
 # Data type to describe the topology
 """

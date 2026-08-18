@@ -24,6 +24,9 @@
 # (_rectangular_status_diagnostics, _rectangular_run_status, ...).
 
 # file: src/powerflow_dc/dc_status_workspace.jl
+# purpose: weak-ref-keyed registry for DC power-flow status NamedTuples with
+#          the public reader dc_pf_status; kept separate from
+#          rectangular_pf_status so DC results never masquerade as AC statuses
 
 mutable struct _DcPFStatusTable
   entries::Vector{Tuple{UInt,WeakRef,Any}}

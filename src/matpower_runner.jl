@@ -15,6 +15,9 @@
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 20.5.2026
 # file: src/matpower_runner.jl
+# purpose: config-driven MATPOWER case runner (run_matpower_case): performance
+#          profiles and timing summaries, runtime-thread setup, output capture,
+#          and the import auto-profile convention scan
 
 """
     new_performance_profile(cfg::PerformanceConfig)

@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: src/api/artifacts.jl
+# purpose: artifact discovery for API runs: classifies generated files by
+#          kind and MIME type and collects them as SparlectraApiArtifact
+#          metadata (collect_sparlectra_api_artifacts)
 function _artifact_kind(path::AbstractString)::Symbol
   name = lowercase(basename(path))
   name == "effective_config.yaml" && return :effective_config

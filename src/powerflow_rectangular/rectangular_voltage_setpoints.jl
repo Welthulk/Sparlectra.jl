@@ -18,6 +18,9 @@
 
 # Date: 29.5.2026
 # file: src/powerflow_rectangular/rectangular_voltage_setpoints.jl
+# purpose: resolve per-bus voltage-magnitude setpoints from regulating
+#          prosumers with node-voltage and 1.0 pu fallbacks, phase-timed
+#          for profiling
 
 """
 Build per-bus voltage-magnitude setpoints for rectangular power-flow initialization.

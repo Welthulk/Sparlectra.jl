@@ -6,6 +6,8 @@
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 1.3.2026
 # file: src/synthetic_grids.jl
+# purpose: deterministic synthetic tiled-grid network builder
+#          (build_synthetic_tiled_grid_net) for benchmarks and scaling tests
 
 """
     synthetic_tiled_grid_bus_index(row::Int, col::Int, cols::Int)::Int

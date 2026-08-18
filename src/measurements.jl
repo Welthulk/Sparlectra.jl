@@ -13,6 +13,9 @@
 # limitations under the License.
 
 # file: src/measurements.jl
+# purpose: state-estimation measurement model: MeasurementType and Measurement,
+#          add helpers for Vm/Va/PMU/injection/flow/zero-injection measurements,
+#          and synthetic measurement generation from power-flow results
 
 using Random
 

@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: src/api/powerflow_service.jl
+# purpose: local PowerFlow service layer: in-memory run registry, Web UI case
+#          resolution, and the start_powerflow_run / get_powerflow_result
+#          service entry points
 const _POWERFLOW_SERVICE_RUNS = Dict{String,SparlectraApiResult}()
 const _POWERFLOW_SERVICE_LOCK = ReentrantLock()
 

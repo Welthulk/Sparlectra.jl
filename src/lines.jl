@@ -15,6 +15,9 @@
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 10.05.2023
 # file: src/lines.jl
+# purpose: ACLineSegment branch type with constructors for length-based
+#          parameters and per-unit PI-model data, plus accessor and show
+#          methods
 
 """
     ACLineSegment

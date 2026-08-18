@@ -12,6 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: src/DTFImporter.jl
+# purpose: DTFImporter module: native importer for legacy DTF network files,
+#          read_dtf parses the textual format and build_net constructs a
+#          solvable Net; includes transformer-control and outage helpers
+
 module DTFImporter
 
 using ..Sparlectra: Net, addBus!, addProsumer!, _addPIModelACLine_by_idx!, _addPIModelTrafo_by_idx!, geNetBusIdx, validate!, normalize_bus_shunt_model, PhaseTapChangerModel, calcPhaseTapAngleRatio, calcPhaseTapFraction, calcTapCorrectedRX, transformer_config

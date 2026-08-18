@@ -1,3 +1,12 @@
+# Version 0.9.7 - unreleased
+
+- Install scripts offer a desktop shortcut (Windows `.lnk`) or launcher
+  (`.desktop` / symlink) for starting the Web UI;
+  `SPARLECTRA_CREATE_SHORTCUT=1/0` for unattended installs.
+- The Jacobian condition estimate is always part of the result log and the
+  Web UI run overview (with verdict); the `output.condition_number` option
+  is removed, a leftover YAML key is ignored.
+
 # Version 0.9.6 - 2026-08-19
 * #309 Fix Sysimage for windows v0.9.5
 * #308 One-line Web UI install without a GitHub checkout; the install scripts now offer the optional fast-start sysimage build (y/N prompt, `SPARLECTRA_BUILD_SYSIMAGE=1/0` for unattended installs).

@@ -13,6 +13,9 @@
 # limitations under the License.
 
 # file: src/api/run_failures.jl
+# purpose: API failure construction helpers: build failed SparlectraApiResult
+#          values with consistent lifecycle metadata across CLI, API, and
+#          Web UI callers
 #
 # This file contains API failure construction helpers. It keeps backend failure
 # metadata consistent across CLI/API/Web UI callers.

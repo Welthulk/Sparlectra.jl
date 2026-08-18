@@ -13,9 +13,9 @@
 # limitations under the License.
 
 # Author: Udo Schmitz (https://github.com/Welthulk)
-# Purpose: factorization-reuse linear-solver backends (KLU, UMFPACK lu!) for
-#          the rectangular Newton step
 # file: src/powerflow_rectangular/rectangular_klu_solver.jl
+# purpose: factorization-reuse linear-solver backends (KLU, UMFPACK lu!) for
+#          the rectangular Newton step
 
 using KLU: KLU, klu, klu!
 

@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: test/test_qlimit_large_case_comparison.jl
+# purpose: tests compare_qlimit_large_case_modes with injected resolver and
+#          runner stubs: case resolution, the enforcement-mode run matrix,
+#          failure handling, and report aggregation
 function _fake_api_result(; status::Symbol, success::Bool, converged::Bool, output_dir::String, mode::String)
   mkpath(output_dir)
   effective_config = joinpath(output_dir, "effective_config.yaml")

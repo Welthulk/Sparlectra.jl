@@ -15,6 +15,9 @@
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 13.03.2025
 # file: src/remove_functions.jl
+# purpose: validated removal of network elements (removeBus!, removeBranch!,
+#          removeACLine!, removeTrafo!, removeShunt!, removeProsumer!) and
+#          isolated-bus cleanup via clearIsolatedBuses!
 
 """
     removeBus!(; net::Net, busName::String)

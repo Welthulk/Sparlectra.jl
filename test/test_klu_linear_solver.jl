@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: test/test_klu_linear_solver.jl
+# purpose: tests the klu and umfpack_reuse linear-solver backends of the
+#          rectangular Newton step: UMFPACK equivalence, factorization reuse,
+#          pattern-drift guards, singular fallback, config and Web UI wiring
 # Tests for the factorization-reuse linear-solver backends of the rectangular
 # Newton step (power_flow.linear_solver: umfpack | klu | umfpack_reuse).
 

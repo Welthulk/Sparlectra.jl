@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: src/webui/handlers.jl
+# purpose: Web UI response type and action handlers: case import/resolve/
+#          delete, run start, config refresh and editor, results, artifacts,
+#          and abort/reset endpoints
 struct SparlectraWebUIResponse
   status::Int
   headers::Vector{Pair{String,String}}

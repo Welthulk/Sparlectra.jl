@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: src/api/run_index.jl
+# purpose: persistent run index (powerflow_runs_index.json) for the PowerFlow
+#          service: entry validation with path-containment checks plus index
+#          read and update helpers
 const POWERFLOW_RUN_INDEX_FILENAME = "powerflow_runs_index.json"
 
 function _powerflow_index_path(output_root::AbstractString)::String

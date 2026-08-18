@@ -95,7 +95,7 @@ if "%BUILD_IMG%"=="1" goto build_sysimage
 echo Skipping the sysimage build. Build it anytime with:
 echo   julia "%SPARLECTRA_DIR%\tools\build_sysimage.jl"
 echo or from the Web UI: Fast start page, button "Build fast-start image".
-goto start_webui
+goto shortcut_prompt
 
 :build_sysimage
 echo Building the fast-start sysimage ^(this can take a while^)...
@@ -107,7 +107,35 @@ if errorlevel 1 (
   echo   julia "%SPARLECTRA_DIR%\tools\build_sysimage.jl"
 )
 
+:shortcut_prompt
+rem --- 5. Optional desktop shortcut ----------------------------------------------
+rem A desktop shortcut restarts the Web UI without hunting for start_webui.bat
+rem in the install folder. Default YES: the shortcut costs nothing and deleting
+rem one file reverses it. SPARLECTRA_CREATE_SHORTCUT=1 or =0 decides without
+rem asking (unattended installs).
+set "MAKE_SHORTCUT=%SPARLECTRA_CREATE_SHORTCUT%"
+if defined MAKE_SHORTCUT goto shortcut_decided
+set /p MAKE_SHORTCUT=Create a desktop shortcut to start the Web UI? [Y/n]
+:shortcut_decided
+if /i "%MAKE_SHORTCUT%"=="n" goto skip_shortcut
+if /i "%MAKE_SHORTCUT%"=="no" goto skip_shortcut
+if "%MAKE_SHORTCUT%"=="0" goto skip_shortcut
+rem Desktop path via .NET, never a hardcoded %%USERPROFILE%%\Desktop:
+rem OneDrive-redirected desktops resolve differently. An existing shortcut of
+rem the same name is overwritten so a re-install points it at the current
+rem location. A failure never blocks the installation or the Web UI start.
+powershell -NoProfile -Command "$ws = New-Object -ComObject WScript.Shell; $lnk = $ws.CreateShortcut((Join-Path ([Environment]::GetFolderPath('Desktop')) 'Sparlectra Web UI.lnk')); $lnk.TargetPath = '%SPARLECTRA_DIR%\start_webui.bat'; $lnk.WorkingDirectory = '%SPARLECTRA_DIR%'; $lnk.Description = 'Start the Sparlectra Web UI'; $lnk.Save()"
+if errorlevel 1 (
+  echo Could not create the desktop shortcut - start the Web UI manually with:
+  echo   "%SPARLECTRA_DIR%\start_webui.bat"
+) else (
+  echo Desktop shortcut created: "Sparlectra Web UI.lnk"
+)
+goto start_webui
+:skip_shortcut
+echo Skipping the desktop shortcut.
+
 :start_webui
-rem --- 5. Start -----------------------------------------------------------------
+rem --- 6. Start -----------------------------------------------------------------
 julia --project="%SPARLECTRA_DIR%" "%SPARLECTRA_DIR%\start_webui.jl"
 pause

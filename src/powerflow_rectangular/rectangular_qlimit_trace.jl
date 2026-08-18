@@ -20,6 +20,9 @@
 
 # Date: 29.5.2026
 # file: src/powerflow_rectangular/rectangular_qlimit_trace.jl
+# purpose: Q-limit trace helpers: map requested trace buses from original
+#          MATPOWER numbering to internal indices and preserve original bus
+#          IDs in diagnostics output
 
 _qlimit_original_bus_id(net::Net, bus::Int)::Int = haskey(net.busOrigIdxDict, bus) ? net.busOrigIdxDict[bus] : bus
 

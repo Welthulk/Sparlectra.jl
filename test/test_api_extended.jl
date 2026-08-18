@@ -1,3 +1,21 @@
+# Copyright 2023-2026 Udo Schmitz
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# file: test/test_api_extended.jl
+# purpose: extended tests for the GUI-ready run_sparlectra_api surface and
+#          the local PowerFlow service: case resolution, Q-limit metadata,
+#          the diagnose self-check report, and run deletion safety
 using Sparlectra
 using Test
 using Dates
@@ -193,6 +211,12 @@ function run_api_extended_tests()
       @test result.metadata["q_limit_runlog_max_rows"] == 0
       @test result.metadata["current_iteration_enabled"] === false
       @test result.metadata["current_iteration_attempted"] === false
+      # rectangular NR run: conditioning of the exact factored system travels
+      # in the run metadata (overview row), with the shared report line
+      @test result.metadata["jacobian_condition_estimate"] isa Float64
+      @test isfinite(result.metadata["jacobian_condition_estimate"])
+      @test result.metadata["jacobian_condition_verdict"] isa String
+      @test startswith(String(result.metadata["jacobian_condition_line"]), "kappa1(J) = ")
       no_dcline_mpc = Sparlectra.MatpowerIO.read_case(casefile; legacy_compat = false)
       @test Sparlectra.MatpowerIO.matpower_dcline_diagnostics(no_dcline_mpc)["matpower_dcline_active_count"] == 0
       empty_dcline_case = _write_api_dcline_case_ext(joinpath(tmpdir, "case_empty_dcline.m"); rows = "")

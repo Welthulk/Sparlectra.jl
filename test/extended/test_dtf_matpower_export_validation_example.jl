@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: test/extended/test_dtf_matpower_export_validation_example.jl
+# purpose: extended test for examples/internal/dtf_validation_matpower.jl:
+#          source-level checks always run, a full subprocess validation runs
+#          when the local FOR001/FOR002 data files are present
 function run_dtf_matpower_export_validation_example_tests()
   repo = dirname(dirname(@__DIR__))
   script = joinpath(repo, "examples", "internal", "dtf_validation_matpower.jl")

@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: src/webui/forms.jl
+# purpose: Web UI input resolution: application root and case directory
+#          lookup, case/config file selectors, upload classification, and
+#          form value parsing
 const _WEBUI_PACKAGE_ROOT = normpath(joinpath(@__DIR__, "..", ".."))
 
 """

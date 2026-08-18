@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: examples/internal/dtf_validation_outages.jl
+# purpose: NativeOutageValidation module that validates native DTF outage
+#          cases against the FOR002 outage blocks; runnable standalone or via
+#          the suite runner
 # Internal DTF validation module: native outage-case validation against FOR002.
 # Extracted from run_val_dtf_suite.jl; used by the suite runner and directly
 # runnable as its own CLI entry point.

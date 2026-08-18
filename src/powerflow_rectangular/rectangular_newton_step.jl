@@ -18,6 +18,9 @@
 
 # Date: 29.5.2026
 # file: src/powerflow_rectangular/rectangular_newton_step.jl
+# purpose: Newton-step application and autodamping helpers for the rectangular
+#          solver: damping validation, mismatch norms, and slack-preserving
+#          state updates from the solved delta
 
 function _validate_rectangular_damping(damp::Float64, autodamp_min::Float64)
   # Guard rails keep damping in the physically meaningful [0,1] step-length range.

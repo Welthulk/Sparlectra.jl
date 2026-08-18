@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: src/api/serialization.jl
+# purpose: transport-safe serialization of API results and artifacts: to_dict
+#          conversions and JSON/YAML-compatible value mapping
 _api_transport_value(value::Symbol) = String(value)
 _api_transport_value(value::Nothing) = nothing
 _api_transport_value(value::Missing) = nothing

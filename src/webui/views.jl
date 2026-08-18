@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: src/webui/views.jl
+# purpose: HTML rendering for all Web UI pages: run form, results, artifacts,
+#          history, docs and help, plus escaping and form-control helpers
 function _webui_escape(value)::String
   text = string(something(value, ""))
   return replace(text, '&' => "&amp;", '<' => "&lt;", '>' => "&gt;", '"' => "&quot;", '\'' => "&#39;")
@@ -590,7 +593,6 @@ $(isempty(profile_path) ? "" : "<fieldset class=\"saved-case-settings\">
 <label>$(_webui_field_label("benchmark_samples", "Benchmark samples (max. repeated measurements)"))<input name=\"benchmark_samples\" type=\"number\" min=\"1\" value=\"$(_webui_input_value(profile_values, "benchmark_samples", _webui_option_default("benchmark_samples")))\"></label>
 <label>$(_webui_field_label("benchmark_seconds", "Benchmark max. time budget [s]"))<input name=\"benchmark_seconds\" type=\"number\" step=\"any\" min=\"0\" value=\"$(_webui_input_value(profile_values, "benchmark_seconds", _webui_option_default("benchmark_seconds")))\"></label>
 </fieldset>
-<label class=\"check span-2\"><input name=\"output_condition_number\" type=\"hidden\" value=\"false\"><input name=\"output_condition_number\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "output_condition_number", _webui_option_default("output_condition_number")))>$(_webui_field_label("output_condition_number", "Jacobian condition number in the result log"))</label>
 <label class=\"check span-2\"><input name=\"ignore_webui_settings\" type=\"hidden\" value=\"false\"><input name=\"ignore_webui_settings\" type=\"checkbox\" value=\"true\">$(_webui_field_label("ignore_webui_settings", "Ignore Web UI settings and use configuration defaults"))</label>
 </details>
 <div class=\"span-2 actions\"><button class=\"powerflow-submit\" type=\"submit\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Start PowerFlow run</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running PowerFlow…</span></button><button class=\"powerflow-submit diagnose-submit\" type=\"submit\" name=\"diagnose_mode\" value=\"true\" title=\"Run this case in diagnostic mode: evaluates the mismatch at the case's own stored VM/VA (no corrective Newton step) and writes a diagnostic report to diagnose.log.\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Diagnose</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running diagnosis…</span></button><button class=\"powerflow-submit short-circuit-submit\" type=\"submit\" name=\"short_circuit_mode\" value=\"true\" data-short-circuit-button data-sc-state=\"$(sc_state)\"$(sc_disabled_attr) title=\"$(_webui_escape(sc_title))\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Short circuit</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Computing short circuit…</span></button></div></form>
@@ -1100,6 +1102,7 @@ const _WEBUI_RESULT_FIELDS = (
   "solution_available",
   "iterations",
   "final_mismatch",
+  "Jacobian condition",
   "reason",
   "message",
   "input_format",
@@ -1153,6 +1156,17 @@ function _webui_result_value(result::AbstractDict, field::AbstractString)
     return get(metadata, "q_limit_classic_outer_loop_passes", "n/a")
   elseif field == "Runtime casefile"
     return get(result, "runtime_casefile", get(get(result, "metadata", Dict{String,Any}()), "runtime_casefile", "n/a"))
+  elseif field == "Jacobian condition"
+    # single source of formatting: the metadata carries the identical line
+    # the classic result log prints; estimate plus verdict is the fallback
+    # for older run records, n/a for runs without a rectangular NR thunk
+    metadata = get(result, "metadata", Dict{String,Any}())
+    line = get(metadata, "jacobian_condition_line", nothing)
+    line isa AbstractString && !isempty(line) && return line
+    kappa = get(metadata, "jacobian_condition_estimate", nothing)
+    verdict = get(metadata, "jacobian_condition_verdict", nothing)
+    kappa isa Real && return string("kappa1(J) = ", round(Float64(kappa), sigdigits = 3), verdict isa AbstractString && !isempty(verdict) ? ", " * verdict : "")
+    return "n/a"
   end
   metadata = get(result, "metadata", Dict{String,Any}())
   value = get(result, field, get(metadata, field, nothing))

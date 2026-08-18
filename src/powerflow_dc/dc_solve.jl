@@ -17,6 +17,9 @@
 # This file is included inside module Sparlectra. Do not add a module wrapper here.
 
 # file: src/powerflow_dc/dc_solve.jl
+# purpose: DC power-flow linear solve (solve_dc_powerflow): reduced angle
+#          system with fixed slack, branch MW flow computation, and slack
+#          injection recovery from the solved flows
 
 _dc_bus_injection_pu(node::Node, baseMVA::Float64)::Float64 = (_bus_power_value(node._pƩGen) - _bus_power_value(node._pƩLoad)) / baseMVA
 

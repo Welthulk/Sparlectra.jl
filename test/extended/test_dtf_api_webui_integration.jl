@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: test/extended/test_dtf_api_webui_integration.jl
+# purpose: extended test running run_sparlectra_api end to end on the local
+#          DTF FOR001 case, checking artifacts, metadata, and classic run.log
+#          output; skips when local FOR001/FOR002 data is absent
 using Test
 using Sparlectra
 

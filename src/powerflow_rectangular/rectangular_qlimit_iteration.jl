@@ -18,6 +18,9 @@
 
 # Date: 29.5.2026
 # file: src/powerflow_rectangular/rectangular_qlimit_iteration.jl
+# purpose: per-iteration Q-limit active-set handling inside the rectangular
+#          Newton loop: PV/PQ switching with hysteresis, cooldown, and guard
+#          limits on repeated switching
 
 function _handle_rectangular_qlimit_iteration!(
   net,

@@ -16,6 +16,9 @@
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 10.05.2023
 # file: src/component.jl
+# purpose: component base types and enums (ComponentTyp, TrafoTyp, NodeType,
+#          ProSumptionType) plus the AbstractComponent/Component foundation
+#          used by all network elements
 
 
 @enum ComponentTyp begin

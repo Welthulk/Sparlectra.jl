@@ -489,9 +489,6 @@ output:
   logfile_performance: full
   # Allowed values: off, summary, table, full
   logfile_warnings: full
-  # Extra line in the classic result output: Jacobian condition-number
-  # estimate with verdict (costs one LU factorization of the final Jacobian)
-  condition_number: false
 
 benchmark:
   enabled: true

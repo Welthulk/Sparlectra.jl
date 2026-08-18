@@ -4,6 +4,9 @@
 # you may not use this file except in compliance with the License.
 
 # file: test/test_synthetic_grids.jl
+# purpose: tests the synthetic tiled grid builder and its YAML subset parser,
+#          final-acceptance semantics of PF performance rows, and that the
+#          synthetic example stays a thin wrapper
 
 function run_synthetic_grid_tests()
   @testset "YAML subset parser" begin

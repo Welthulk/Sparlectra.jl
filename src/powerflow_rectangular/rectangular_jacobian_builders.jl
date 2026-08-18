@@ -16,7 +16,10 @@
 #
 # This file is included inside module Sparlectra. Do not add a module wrapper here.
 # Date: 29.5.2026
-# file: src/powerflow_rectangular/rectangular_jacobian_builders.jl  
+# file: src/powerflow_rectangular/rectangular_jacobian_builders.jl
+# purpose: analytic sparse Jacobian builders for the rectangular NR solver,
+#          derived via Wirtinger identities on the Ybus sparsity pattern for
+#          PQ/PV equation rows with the slack bus eliminated
 
 """
     build_rectangular_jacobian_pq_pv_sparse(

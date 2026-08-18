@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: src/webui/routes.jl
+# purpose: Web UI request routing (route_sparlectra_webui) with URL decoding,
+#          query and form pair parsing, and configuration notices
 function _webui_urldecode(value::AbstractString)::String
   bytes = UInt8[]
   text = String(value)

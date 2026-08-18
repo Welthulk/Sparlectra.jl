@@ -18,6 +18,8 @@
 
 # Date: 29.5.2026
 # file: src/powerflow_rectangular/rectangular_result_updates.jl
+# purpose: write back final complex solver voltages into the Net bus records
+#          (update_net_voltages_from_complex!)
 
 """
     update_net_voltages_from_complex!(net, V)

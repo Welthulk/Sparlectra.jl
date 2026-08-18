@@ -13,6 +13,8 @@
 # limitations under the License.
 
 # file: src/utilities.jl
+# purpose: small solver utilities: Jacobian row zeroing and pretty-printing
+#          plus performance-profile timing helpers (_perf_profile_time!)
 # ------------------------------
 # Utility: set a full row of a CSC matrix to zero
 # ------------------------------

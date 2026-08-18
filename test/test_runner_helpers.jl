@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: test/test_runner_helpers.jl
+# purpose: helpers for the test runner: profile and verbosity selection from
+#          ARGS/ENV, plus quiet_test_output, which captures a test group's
+#          output and replays a bounded excerpt on failure
 function selected_test_profile(args = ARGS, env = ENV)
   profile_args = [strip(String(arg)) for arg in args if !startswith(strip(String(arg)), "--")]
   cli_profile = isempty(profile_args) ? nothing : Symbol(first(profile_args))

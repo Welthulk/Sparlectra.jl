@@ -15,7 +15,8 @@
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 07.09.2023
 # file: src/results.jl
-# Purpose: functions for formatting and printing results of power flow calculations
+# purpose: functions for formatting and printing results of power flow
+#          calculations, including the structured ACPFlowReport container
 """
     _fitColumn(text, width) -> String
 
@@ -666,7 +667,6 @@ function printACPFlowResults(
   solver_time_s::Union{Nothing,Float64} = nothing,
   result_mode::Symbol = :classic,
   max_rows::Union{Nothing,Int} = nothing,
-  condition_number::Bool = false,
 )
   if toFile
     filename = strip("result_$(net.name).txt")
@@ -737,15 +737,13 @@ function printACPFlowResults(
   @printf(io, "Case           :%15s\n", net.name)
   @printf(io, "Cooldown iters :%10d\n", net.cooldown_iters)
   @printf(io, "Q-hysteresis   :%10.4f pu\n", net.q_hyst_pu)
-  # opt-in (output.condition_number): prefers the lazy estimate the solver
-  # stored for the exact system it factored (post-merge topology, final
-  # active set); falls back to a standalone reconstruction for non-NR runs.
-  # A failed estimate never breaks the report, but the reason must be
-  # visible (see _jacobian_condest, condition_number.jl).
-  if condition_number
-    kappa = _jacobian_condest(net; context = "result output")
-    kappa === nothing || @printf(io, "Jacobian cond. : %s\n", _condition_report_line(kappa; tol = tol))
-  end
+  # Always on: prefers the lazy estimate the solver stored for the exact
+  # system it factored (post-merge topology, final active set); falls back
+  # to a standalone reconstruction for non-NR runs. A failed estimate never
+  # breaks the report, but the reason must be visible (see
+  # _jacobian_condest, condition_number.jl).
+  kappa = _jacobian_condest(net; context = "result output")
+  kappa === nothing || @printf(io, "Jacobian cond. : %s\n", _condition_report_line(kappa; tol = tol))
 
   @printf(io, "BaseMVA        :%10d\n", net.baseMVA)
   if auxb > 0 && niso > 0

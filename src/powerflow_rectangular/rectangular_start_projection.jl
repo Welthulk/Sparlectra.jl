@@ -18,6 +18,8 @@
 
 # Date: 29.5.2026
 # file: src/powerflow_rectangular/rectangular_start_projection.jl
+# purpose: start-value sanitization, voltage-magnitude projection, and
+#          DC-angle seeding for rectangular power-flow initialization
 
 function _sanitize_rectangular_start(V::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int)
   # Sanitize NaN/Inf/zero seeds before any projection candidate is evaluated.

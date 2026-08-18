@@ -18,6 +18,8 @@
 
 # Date: 29.5.2026
 # file: src/powerflow_rectangular/rectangular_qlimit_trace_logging.jl
+# purpose: per-iteration trace output for rectangular Q-limit handling,
+#          classifying Q violations and logging per-bus switch decisions
 
 function _bus_has_online_voltage_regulator(net::Net, bus::Int)::Bool
   for ps in net.prosumpsVec

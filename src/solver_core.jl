@@ -14,8 +14,10 @@
 
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 2024-06-01
-# Purpose: core functions for power flow solver
 # file: src/solver_core.jl
+# purpose: core power-flow solver helpers: bus current and injection
+#          calculation and the guarded sparse linear-system solve with
+#          QR fallback
 
 # ------------------------------------------------------------
 # Helper: bus currents and complex power injections

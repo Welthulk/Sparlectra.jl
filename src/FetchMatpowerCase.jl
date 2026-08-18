@@ -13,6 +13,9 @@
 # limitations under the License.
 #
 # file: src/FetchMatpowerCase.jl
+# purpose: FetchMatpowerCase module: on-demand download and local caching of
+#          MATPOWER .m case files (ensure_casefile, fetch_matpower_case) plus
+#          generation of Julia case files via emit_julia_case
 
 using Printf
 

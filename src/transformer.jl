@@ -15,6 +15,9 @@
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 10.05.2023
 # file: src/transformer.jl
+# purpose: power transformer models: windings, ratio and phase tap changers,
+#          R/X/G/B calculation from nameplate data, and 2WT/3WT construction
+#          helpers
 
 
 mutable struct TransformerModelParameters

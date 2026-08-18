@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: src/webui/operations.jl
+# purpose: Web UI operation log: locked JSONL appends with retention,
+#          size and entry-count pruning, and environment-variable overrides
 const WEBUI_OPERATION_LOG_FILENAME = "webui_operations.jsonl"
 const WEBUI_OPERATION_LOG_RETENTION_DAYS = 10
 const WEBUI_OPERATION_LOG_MAX_ENTRIES = 5_000

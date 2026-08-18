@@ -13,6 +13,9 @@
 # limitations under the License.
 
 # file: test/test_example_suites.jl
+# purpose: tests the example suite runners and their shared backend: CLI
+#          parsing, skip/filter logic, CSV and Markdown escaping, registry
+#          integrity, and a --help subprocess smoke test
 #
 # Tests the example suite runners (examples/run_powerflow_suite.jl,
 # run_state_estimation_suite.jl, run_others_suite.jl) and their shared

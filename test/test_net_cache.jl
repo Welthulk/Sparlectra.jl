@@ -13,6 +13,8 @@
 # limitations under the License.
 
 # file: test/test_net_cache.jl
+# purpose: tests the opt-in binary MATPOWER net cache: miss/store, identical
+#          hit results, fallback on corrupt entries, and key invalidation
 #
 # Tests the opt-in binary net cache (matpower_import.net_cache.enabled,
 # issue #292): miss/store, hit with identical results, silent fallback on

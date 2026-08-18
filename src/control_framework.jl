@@ -15,6 +15,9 @@
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 26.5.2026
 # file: src/control_framework.jl
+# purpose: generic outer-control framework: the AbstractOuterController
+#          interface, ControlConfig/ControlRunResult, and run_control! which
+#          iterates enabled controllers around repeated power-flow solves
 
 abstract type AbstractOuterController end
 abstract type AbstractControlState end

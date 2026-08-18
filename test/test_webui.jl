@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: test/test_webui.jl
+# purpose: fast Web UI tests without a live server: form parsing, selectors
+#          and rendering, commit sha resolution, saved case settings, and
+#          the fast-start sysimage metadata contract
 using Sparlectra
 using Test
 

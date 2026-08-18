@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: src/webui/options.jl
+# purpose: central Web UI run-option metadata (WEBUI_OPTION_SPECS) mapping
+#          form fields to configuration keys, defaults, and allowed values
 """Central metadata for one Web UI run-option form field."""
 struct WebUIOptionSpec
   config_key::Union{Nothing,String}
@@ -87,7 +90,6 @@ const WEBUI_OPTION_SPECS = (
   WebUIOptionSpec("transformer.tap_changer_model", "transformer_tap_changer_model", String, :select, "ideal", TRANSFORMER_TAP_CHANGER_MODEL_VALUES, :expert, true),
   WebUIOptionSpec("matpower_export.write_solution", "matpower_export_write_solution", Bool, :checkbox, true, (), :expert, true),
   WebUIOptionSpec("output.logfile_results", "output_logfile_results", String, :select, "compact", OUTPUT_LOGFILE_RESULTS_VALUES, :basic, true),
-  WebUIOptionSpec("output.condition_number", "output_condition_number", Bool, :checkbox, false, (), :expert, true),
   WebUIOptionSpec("benchmark.enabled", "benchmark_enabled", Bool, :checkbox, false, (), :expert, true),
   WebUIOptionSpec("benchmark.samples", "benchmark_samples", Int, :number, 10, (), :expert, true),
   WebUIOptionSpec("benchmark.seconds", "benchmark_seconds", Float64, :number, 1.0, (), :expert, true),

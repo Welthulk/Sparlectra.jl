@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: test/extended/runtests_extended.jl
+# purpose: extended-profile test runner: includes and invokes the DTF
+#          importer, FOR002 validation, MATPOWER export, and Web UI
+#          integration suites
 using Sparlectra
 using Test
 

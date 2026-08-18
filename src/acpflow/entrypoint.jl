@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: src/acpflow/entrypoint.jl
+# purpose: public framework entry points: run_sparlectra, run_sparlectra_cases
+#          for configured case batches, and the compatibility alias
+#          run_acpflow
 """
     run_sparlectra(; net=nothing, casefile=nothing, path=nothing, config=nothing, performance_profile=nothing) -> SparlectraRunResult
 

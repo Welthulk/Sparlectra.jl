@@ -13,6 +13,9 @@
 # limitations under the License.
 
 # file: test/test_dc_powerflow.jl
+# purpose: tests the standalone DC power flow (rundcpf!): reference values
+#          for hand-verified and MATPOWER cases, phase shifters, islands,
+#          config and dispatch wiring, and DC-seeded AC starts
 #
 # Tests the standalone DC power flow (rundcpf!, power_flow.solver=:dc):
 # reference-value comparisons, phase-shifter (Pfinj) coverage, island

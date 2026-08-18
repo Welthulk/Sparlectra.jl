@@ -17,6 +17,9 @@
 # This file is included inside module Sparlectra. Do not add a module wrapper here.
 
 # file: src/powerflow_dc/dc_bmatrix.jl
+# purpose: DC power-flow B matrix assembly (assemble_dc_bbus): MATPOWER-style
+#          Bbus, phase-shift injection vector, and per-branch _DcBranchTerm
+#          data for branch-flow reconstruction
 
 """
     _DcBranchTerm

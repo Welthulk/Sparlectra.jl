@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: src/api/service_json.jl
+# purpose: minimal dependency-free JSON parsing plus service failure and
+#          request helpers used by the PowerFlow service layer
 mutable struct _ServiceJsonParser
   text::String
   index::Int

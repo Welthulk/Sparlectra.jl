@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: src/api/run_lifecycle_metadata.jl
+# purpose: Web UI-visible run lifecycle metadata: stable key names and status
+#          strings for current-iteration, merit line-search, island, and
+#          solver outcome fields
 # API run lifecycle metadata helpers.
 #
 # These helpers centralize Web UI-visible lifecycle fields. Keep key names and
@@ -100,7 +104,15 @@ function _build_success_lifecycle_metadata(raw_result::SparlectraRunResult, conf
   classic_outer_loop_passes = rect_status !== nothing && hasproperty(rect_status, :matpower_outer_iterations) ? rect_status.matpower_outer_iterations : 0
   pv_to_pq_events = raw_result.net === nothing ? 0 : length(raw_result.net.qLimitLog)
   active_set_events = config.powerflow.qlimits.enforcement_mode === :active_set ? pv_to_pq_events : 0
+  # Jacobian conditioning of the exact system the rectangular solver
+  # factored (lazy thunk in the solver status, evaluated once here). Non-NR
+  # execution paths have no thunk and get nothing; no standalone
+  # reconstruction is attempted for the overview.
+  jacobian_kappa = raw_result.net === nothing ? nothing : _jacobian_condest(raw_result.net; warn_on_failure = false, context = "run metadata", require_thunk = true)
   metadata = merge(Dict{String,Any}(
+    "jacobian_condition_estimate" => jacobian_kappa,
+    "jacobian_condition_verdict" => jacobian_kappa === nothing ? nothing : _condition_verdict(jacobian_kappa),
+    "jacobian_condition_line" => jacobian_kappa === nothing ? nothing : _condition_report_line(jacobian_kappa; tol = config.powerflow.tol),
     "solver_status" => "completed",
     "service_status" => "completed",
     "numerical_status" => numerical_success ? "converged" : "not_converged",

@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: test/test_api.jl
+# purpose: fast API smoke tests: version contract against Project.toml, the
+#          profiling wrapper's success and exception recording, and run-index
+#          handling of symlinked output roots
 using Sparlectra
 using Test
 

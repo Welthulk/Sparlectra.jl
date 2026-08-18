@@ -17,6 +17,9 @@
 # DC power-flow reporting and the public rundcpf! entry point.
 
 # file: src/powerflow_dc/dc_report.jl
+# purpose: DC power-flow result reporting (DcPowerFlowReport,
+#          buildDcPowerFlowReport, printDcPowerFlowResults) and the public
+#          rundcpf! entry point with optional AC-start seeding
 
 """
     DcPowerFlowReport

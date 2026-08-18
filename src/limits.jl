@@ -16,6 +16,9 @@
 # and fills with a default value (via append!) up to the required length.
 
 # file: src/limits.jl
+# purpose: reactive-limit bookkeeping for PV buses: the Q-limit event log and
+#          its printers, PV limit snapshots, limit sanitation and validation,
+#          and the active_set_q_limits! switching helper
 
 function _ensure_bus_index!(v::Vector{T}, bus::Int, default::T) where {T}
   if length(v) < bus

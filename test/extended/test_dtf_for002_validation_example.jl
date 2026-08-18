@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: test/extended/test_dtf_for002_validation_example.jl
+# purpose: extended test for the native DTF/FOR002 base-case validation
+#          example (examples/internal/dtf_validation_base.jl), checking its
+#          artifacts and metric finiteness; skips without local DTF data
 using Test
 
 function _csv_data_rows(path::AbstractString)

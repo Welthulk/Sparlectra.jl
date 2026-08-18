@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: test/test_api_support.jl
+# purpose: shared helpers for the API tests: writers for small synthetic
+#          MATPOWER case files (basic, dcline, and two-island variants)
 function _write_api_test_case(path::AbstractString)
   write(path, """
 function mpc = case_api

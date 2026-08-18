@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: src/api/run_matpower_artifacts.jl
+# purpose: MATPOWER import artifact writers for API runs: effective-config
+#          matpower_import section updates and the matpower_auto_profile.log
+#          artifact
 # Keep MATPOWER import artifacts outside the API orchestrator so the run path
 # only decides when artifacts are needed, not how each artifact is written.
 

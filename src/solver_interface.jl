@@ -13,6 +13,9 @@
 # limitations under the License.
 
 # file: src/solver_interface.jl
+# purpose: solver-agnostic power-flow model bridge: buildPfModel export,
+#          external solver dispatch (solvePf, runpf_external!), and
+#          applyPfSolution! write-back into Net
 # solver_interface.jl — external solver bridge
 #
 # Goal:

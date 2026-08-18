@@ -18,6 +18,8 @@
 
 # Date: 11.6.2026
 # file: src/powerflow_rectangular/rectangular_voltage_helpers.jl
+# purpose: shared phasor helper that replaces a voltage magnitude while
+#          preserving the angle, with a zero-phasor fallback
 
 function _apply_voltage_magnitude_preserving_angle(V::ComplexF64, vm::Float64)::ComplexF64
   if iszero(V)

@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: src/api/run_self_check.jl
+# purpose: fixed-reference self check (run_fixed_reference_self_check): one
+#          NR iteration from the imported voltages with all start-value
+#          machinery forced off, measuring the case's own consistency
 # `power_flow.start_mode.start_projection` is not in `GUI_EDITABLE_CONFIG_KEYS`,
 # so the fixed-reference self-check settings below are applied via a merged,
 # temporary YAML configuration file rather than run_sparlectra_api's

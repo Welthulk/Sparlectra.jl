@@ -14,6 +14,8 @@
 
 
 # file: src/busdata.jl — Data type for NR / power flow
+# purpose: BusData working type for the NR solver and helpers to build, sort,
+#          and map bus data between net.nodeVec and the solver vectors
 
 mutable struct BusData
   idx::Int          # # PF index (non-iso compact), Bus index (after sorting)

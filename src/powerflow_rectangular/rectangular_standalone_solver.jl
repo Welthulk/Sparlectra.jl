@@ -18,6 +18,8 @@
 
 # Date: 29.5.2026
 # file: src/powerflow_rectangular/rectangular_standalone_solver.jl
+# purpose: standalone array-level rectangular Newton-Raphson solver
+#          (run_complex_nr_rectangular) without network-level finalization
 
 function run_complex_nr_rectangular(
   Ybus,

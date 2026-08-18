@@ -15,6 +15,9 @@
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 20.5.2026
 # file: src/configuration.jl
+# purpose: typed configuration surface: all *Config structs including
+#          SparlectraConfig, YAML loading and validation, and the active
+#          global configuration state
 
 using SHA
 
@@ -577,10 +580,6 @@ Base.@kwdef struct OutputConfig
   logfile_diagnostics::Symbol = :compact
   logfile_performance::Symbol = :compact
   logfile_warnings::Symbol = :table
-  # Jacobian condition-number line in the classic result output (estimate
-  # plus verdict, see condestJacobian). Off by default: it costs one extra
-  # LU factorization of the final Jacobian per run.
-  condition_number::Bool = false
 end
 
 """
@@ -1318,7 +1317,6 @@ function OutputConfig(raw::AbstractDict)
     logfile_diagnostics = _validate_allowed_symbol("output.logfile_diagnostics", _as_symbol_cfg(_raw_get(merged, "logfile_diagnostics", :compact)), OUTPUT_LOGFILE_DIAGNOSTICS_VALUES),
     logfile_performance = _validate_allowed_symbol("output.logfile_performance", _as_symbol_cfg(_raw_get(merged, "logfile_performance", :compact)), OUTPUT_LOGFILE_PERFORMANCE_VALUES),
     logfile_warnings = _validate_allowed_symbol("output.logfile_warnings", _as_symbol_cfg(_raw_get(merged, "logfile_warnings", :table)), OUTPUT_LOGFILE_WARNINGS_VALUES),
-    condition_number = _as_bool_cfg(_raw_get(merged, "condition_number", false)),
   )
 end
 
@@ -1397,6 +1395,12 @@ const _FREEFORM_MAPPING_CONFIG_KEYS = ("power_flow.distributed_slack.weights", "
 # config that still carries them). They are ignored with a warning naming the
 # replacement. The diagnostics.* entries were never-read duplicates of
 # output.* (logging cleanup, 2026-07-30).
+# Removed keys that are ignored WITHOUT a warning: the feature became
+# always-on, so a leftover key in an existing user/webui configuration file
+# carries no intent worth nagging about (output.condition_number, 0.9.7:
+# the condition line is now printed unconditionally).
+const _REMOVED_SILENT_CONFIG_KEYS = ("output.condition_number",)
+
 const _DEPRECATED_CONFIG_KEYS = Dict(
   "diagnostics.console_summary" => "output.console_summary",
   "diagnostics.console_auto_profile" => "output.console_auto_profile",
@@ -1425,6 +1429,7 @@ function _validate_known_config_keys(user::AbstractDict, defaults::AbstractDict;
       @warn "Configuration key $(current_path) is deprecated and ignored — use $(_DEPRECATED_CONFIG_KEYS[current_path])."
       continue
     end
+    current_path in _REMOVED_SILENT_CONFIG_KEYS && continue
     haskey(defaults, skey) || throw(ArgumentError("Unknown Sparlectra configuration key: $(current_path)"))
     if value isa AbstractDict
       current_path in _FREEFORM_MAPPING_CONFIG_KEYS && continue

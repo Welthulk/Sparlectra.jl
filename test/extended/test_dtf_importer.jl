@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: test/extended/test_dtf_importer.jl
+# purpose: extended tests for the native DTF importer: focused synthetic
+#          DTFCase checks, the configured tap-changer model, the typed
+#          phase-tap model on windings, and the untracked FOR001 fixture
 # The reference network is untracked; both documented drop-in locations are
 # accepted (test/fixtures/dtf/ takes precedence, data/DTF/ is where the
 # validation examples already read it from).

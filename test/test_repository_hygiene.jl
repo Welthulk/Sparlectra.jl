@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: test/test_repository_hygiene.jl
+# purpose: scans tracked source, docs, test, and example files for forbidden
+#          terminology tokens and fails with a bounded hit report
 using Test
 using Unicode
 

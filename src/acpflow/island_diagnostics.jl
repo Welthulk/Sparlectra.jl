@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: src/acpflow/island_diagnostics.jl
+# purpose: AC island detection and diagnostics for framework runs: connected
+#          component analysis, per-island solver status collection, and the
+#          island diagnostics and mismatch-history artifacts
 _island_bus_type_symbol(node) = getNodeType(node) == Slack ? :REF : getNodeType(node) == PV ? :PV : :PQ
 
 function _ac_island_components(net::Net)

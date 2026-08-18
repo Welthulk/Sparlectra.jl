@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: src/api/artifact_registry.jl
+# purpose: PowerFlow service artifact access: run-id validation, path
+#          containment checks, and list_powerflow_artifacts /
+#          resolve_powerflow_artifact for registered runs
 function _safe_powerflow_run_id(run_id::AbstractString)::Bool
   id = String(run_id)
   return !isempty(id) && !_unsafe_artifact_name(id) && occursin(r"^[A-Za-z0-9][A-Za-z0-9._-]*$", id)

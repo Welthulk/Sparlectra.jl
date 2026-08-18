@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: examples/internal/dtf_validation_audit.jl
+# purpose: ImportAudit module that inspects parsed DTF case content (buses,
+#          branches, transformer controls, outages) without solving; part of
+#          the internal DTF validation suite
 # Internal DTF validation module: DTF import audit.
 # Extracted from run_val_dtf_suite.jl; used by the suite runner.
 

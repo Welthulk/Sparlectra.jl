@@ -20,6 +20,8 @@
 
 # Date: 29.5.2026
 # file: src/powerflow_rectangular/rectangular_qlimit_vset_adjustment.jl
+# purpose: voltage-setpoint adjustment controllers for the rectangular
+#          Q-limit mode :adjust_vset, built from prosumer vstep/tap-step data
 
 function _build_vset_adjust_controllers(net::Net)
   controllers = Dict{Int,NamedTuple{(:prosumer_idx, :config),Tuple{Int,VoltageAdjustConfig}}}()

@@ -15,6 +15,9 @@
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 1.3.2026
 # file: src/tap_control.jl
+# purpose: transformer tap controllers for the outer control loop
+#          (addPowerTransformerControl!, run_tap_controllers_outer!) with
+#          ratio and phase tap probing plus controller report output
 
 @inline _voltage_within_deadband(vm::Float64, target_vm_pu::Float64, deadband_vm_pu::Float64)::Bool = abs(vm - target_vm_pu) <= deadband_vm_pu
 @inline _voltage_control_error(vm::Float64, target_vm_pu::Float64, metric::Symbol)::Float64 = metric == :vm2 ? vm^2 - target_vm_pu^2 : vm - target_vm_pu

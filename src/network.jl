@@ -15,6 +15,9 @@
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 01.04.2024
 # file: src/network.jl
+# purpose: the central Net container and its construction API: addBus!,
+#          addACLine!, add2WTrafo!, addProsumer!, addShunt!, addLink! and
+#          friends, plus validation, locking, and bus/branch lookup helpers
 """
     Net
 

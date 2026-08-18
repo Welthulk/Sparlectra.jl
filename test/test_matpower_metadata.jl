@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: test/test_matpower_metadata.jl
+# purpose: tests MATPOWER parsing and metadata import/export: tokenizer and
+#          comment-stripping edge cases, the Sparlectra transformer-loss
+#          extension, write_solution, and the tap-changer-model marker
 function _metadata_case(; branch_kind = ["L"], dcline = nothing)
   return Sparlectra.MatpowerIO.MatpowerCase(
     "metadata_case",

@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: src/powerflow_rectangular/ac_islands.jl
+# purpose: AC island handling: branch-only solver-view connectivity, electrical
+#          connectivity including closed links, island detection and reference
+#          validation, and island-net preparation and solution sync helpers
 # =============================================================================
 # AC island handling.
 #

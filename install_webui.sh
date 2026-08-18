@@ -134,5 +134,82 @@ case "$BUILD_IMG" in
     ;;
 esac
 
-# --- 5. Start ----------------------------------------------------------------
+# --- 5. Optional desktop launcher ---------------------------------------------
+# A launcher on the desktop / in the application menu restarts the Web UI
+# without hunting for start_webui.sh in the install folder. Same prompt
+# conventions as the sysimage question above, but default YES: the launcher
+# costs nothing and deleting one file reverses it.
+# SPARLECTRA_CREATE_SHORTCUT=1/0 decides without asking (unattended installs).
+create_launcher() {
+  START_SH="$SPARLECTRA_DIR/start_webui.sh"
+  if [ "$(uname)" = "Darwin" ]; then
+    # .desktop files mean nothing on macOS; a Desktop symlink is the simplest
+    # useful equivalent (a .app bundle is deliberately out of scope).
+    if [ -d "$HOME/Desktop" ] && ln -sf "$START_SH" "$HOME/Desktop/Sparlectra Web UI" 2>/dev/null; then
+      echo "Desktop link created: ~/Desktop/Sparlectra Web UI"
+      return 0
+    fi
+    return 1
+  fi
+  # Terminal=true: the Web UI logs to the terminal and is stopped there.
+  LAUNCHER_CONTENT="[Desktop Entry]
+Type=Application
+Name=Sparlectra Web UI
+Comment=Start the Sparlectra Web UI
+Exec=\"$START_SH\"
+Path=$SPARLECTRA_DIR
+Terminal=true"
+  APPS_DIR="$HOME/.local/share/applications"
+  DESK_DIR=""
+  if command -v xdg-user-dir >/dev/null 2>&1; then
+    DESK_DIR=$(xdg-user-dir DESKTOP 2>/dev/null) || DESK_DIR=""
+  fi
+  [ -d "$DESK_DIR" ] || DESK_DIR="$HOME/Desktop"
+  WROTE=""
+  # Application menu entry (always attempted); existing files are replaced so
+  # a re-install points the launcher at the current location.
+  if mkdir -p "$APPS_DIR" 2>/dev/null && printf '%s\n' "$LAUNCHER_CONTENT" > "$APPS_DIR/sparlectra-webui.desktop" 2>/dev/null; then
+    WROTE="menu"
+    echo "Application-menu launcher created: $APPS_DIR/sparlectra-webui.desktop"
+  fi
+  # Desktop copy only when a desktop directory exists (headless systems skip
+  # this silently).
+  if [ -d "$DESK_DIR" ] && printf '%s\n' "$LAUNCHER_CONTENT" > "$DESK_DIR/sparlectra-webui.desktop" 2>/dev/null; then
+    chmod +x "$DESK_DIR/sparlectra-webui.desktop" 2>/dev/null || true
+    WROTE="${WROTE:+$WROTE+}desktop"
+    echo "Desktop launcher created: $DESK_DIR/sparlectra-webui.desktop"
+    echo "Note: some desktops (GNOME) need a one-time right-click 'Allow Launching' on the icon."
+  fi
+  if [ -z "$WROTE" ]; then
+    # No XDG environment at all: a home-directory symlink still gives a
+    # stable entry point.
+    if ln -sf "$START_SH" "$HOME/sparlectra-webui" 2>/dev/null; then
+      echo "No desktop environment found - created symlink: ~/sparlectra-webui -> start_webui.sh"
+    else
+      return 1
+    fi
+  fi
+  return 0
+}
+MAKE_SHORTCUT="${SPARLECTRA_CREATE_SHORTCUT:-}"
+if [ -z "$MAKE_SHORTCUT" ] && [ -r /dev/tty ]; then
+  printf "Create a desktop launcher to start the Web UI? [Y/n] "
+  read -r MAKE_SHORTCUT < /dev/tty 2>/dev/null || MAKE_SHORTCUT=""
+fi
+case "$MAKE_SHORTCUT" in
+  n|N|no|NO|0)
+    echo "Skipping the desktop launcher."
+    ;;
+  *)
+    # A failed launcher creation must never block the installation or the
+    # Web UI start (the function call sits in a condition, so set -e does
+    # not abort on failures inside it).
+    if ! create_launcher; then
+      echo "Could not create a launcher - start the Web UI manually with:"
+      echo "  \"$SPARLECTRA_DIR/start_webui.sh\""
+    fi
+    ;;
+esac
+
+# --- 6. Start ----------------------------------------------------------------
 exec julia --project="$SPARLECTRA_DIR" "$SPARLECTRA_DIR/start_webui.jl"

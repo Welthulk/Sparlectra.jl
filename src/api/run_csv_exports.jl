@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: src/api/run_csv_exports.jl
+# purpose: detailed CSV export helpers for API runs: buffered and streaming
+#          writers with stable schemas and filenames consumed by API clients
+#          and the Web UI
 # API detailed CSV export helpers.
 #
 # This file owns CSV export orchestration and low-allocation writing details.

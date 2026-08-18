@@ -15,6 +15,9 @@
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 10.05.2023
 # file: src/prosumer.jl
+# purpose: ProSumer component model with voltage-dependent Q(U)/P(U)
+#          controllers, piecewise characteristics (linear, spline,
+#          polynomial), and type/query helpers
 
 abstract type AbstractVoltageDependentController end
 

@@ -15,6 +15,9 @@
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 01.10.2023
 # file: src/createnet_powermat.jl
+# purpose: build a Net from MATPOWER case data: createNetFromMatPowerCase and
+#          createNetFromMatPowerFile plus import helpers for ratio/shift
+#          conventions, bus names, dclines, and Sparlectra branch metadata
 # helper
 #! format: off
 

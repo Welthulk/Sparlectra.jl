@@ -15,6 +15,8 @@
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 10.05.2023
 # file: src/shunt.jl
+# purpose: Shunt component model with admittance, voltage-dependent
+#          injection, and legacy PQ variants plus per-unit accessors
 
 
 """

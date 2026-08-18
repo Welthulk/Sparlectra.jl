@@ -13,7 +13,9 @@
 # limitations under the License.
 
 # file: src/acpflow/import_context.jl
-# Purpose: internal helper functions for the AC power-flow framework runner
+# purpose: casefile resolution and import-context helpers for the framework
+#          runner: MATPOWER/CGMES import into a Net, config copy helpers, and
+#          PV/PQ lock-bus resolution
 
 function _resolve_sparlectra_casefile(casefile::String, path::Union{Nothing,String})::String
   ext = lowercase(splitext(casefile)[2])

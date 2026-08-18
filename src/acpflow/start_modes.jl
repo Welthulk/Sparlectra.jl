@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # file: src/acpflow/start_modes.jl
+# purpose: applies the configured MATPOWER start modes to the imported net:
+#          voltage_mode and angle_mode handling, profile blending, and DC
+#          angle starts ahead of the rectangular solve
 
 # review: 2024-06-17
 

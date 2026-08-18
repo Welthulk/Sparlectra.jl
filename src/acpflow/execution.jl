@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: src/acpflow/execution.jl
+# purpose: central framework execution: dispatches the configured solver
+#          (rectangular NR, DC, APSLF), applies configured controllers and
+#          DC seeding, and records solver timing and island diagnostics
 function _runner_verbose(cfg::SparlectraConfig)::Int
   return cfg.output.console_diagnostics === :full ? 1 : 0
 end

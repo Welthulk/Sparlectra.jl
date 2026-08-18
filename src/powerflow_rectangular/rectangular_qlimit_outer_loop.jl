@@ -14,6 +14,9 @@
 
 #
 # file: src/powerflow_rectangular/rectangular_qlimit_outer_loop.jl
+# purpose: MATPOWER-style classical Q-limit outer loop: computes per-bus
+#          reactive requirements, detects generator limit violations, clamps
+#          violators, and re-runs the Newton solve after PV to PQ conversions
 #
 
 # Rectangular Q-limit outer-loop helpers.

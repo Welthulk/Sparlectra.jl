@@ -14,6 +14,9 @@
 
 #
 # file: src/powerflow_rectangular/current_iteration_start.jl
+# purpose: guarded current-iteration start-value preconditioning for the
+#          rectangular solver; candidates that violate guards or do not
+#          improve the mismatch are rejected and the original start restored
 #
 
 # Rectangular current-iteration start helpers.

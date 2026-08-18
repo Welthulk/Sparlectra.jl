@@ -13,6 +13,9 @@
 # limitations under the License.
 
 # file: test/test_transformer_phase_shift.jl
+# purpose: tests transformer tap and phase-shift sign conventions, the
+#          central impedance-correction factor in equicircuit.jl, and that
+#          MATPOWER import applies the configured tap-changer model
 
 function run_transformer_phase_shift_tests()
   function _make_pi_trafo_branch(; shift_deg::Float64, ratio::Float64 = 1.0)::Branch

@@ -1,4 +1,21 @@
+# Copyright 2023-2026 Udo Schmitz
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 # file: test/test_phase_tap_table.jl
+# purpose: unit tests for the tabular phase-tap model: TapTablePoint and
+#          constructor validation, step-range derivation, calcPhaseTapTable
+#          lookup, and bit-identical agreement with the formula path
 
 function run_phase_tap_table_tests()
   @testset "TapTablePoint / PhaseTapChangerModel :tabular constructor validation" begin

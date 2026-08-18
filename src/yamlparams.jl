@@ -15,6 +15,9 @@
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 10.5.2026
 # file: src/yamlparams.jl
+# purpose: dependency-free YAML subset parser for example and benchmark
+#          configuration files (parse_yaml_scalar, load_yaml_dict,
+#          merge_yaml_dict!)
 
 """
     parse_yaml_scalar(raw::AbstractString)

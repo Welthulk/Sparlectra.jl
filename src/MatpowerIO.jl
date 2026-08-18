@@ -13,6 +13,9 @@
 # limitations under the License.
 
 # file: src/MatpowerIO.jl
+# purpose: MatpowerIO module: reads MATPOWER .m and generated .jl case files
+#          into MatpowerCase, builds the MATPOWER-side Ybus, and provides
+#          reference mismatch statistics and contingency helpers
 
 module MatpowerIO
 using LinearAlgebra, Printf, SparseArrays

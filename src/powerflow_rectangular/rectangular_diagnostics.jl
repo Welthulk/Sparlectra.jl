@@ -13,6 +13,9 @@
 # limitations under the License.
 
 # file: src/powerflow_rectangular/rectangular_diagnostics.jl
+# purpose: diagnostic assembly for rectangular power-flow runs: mismatch and
+#          step statistics, start/linesearch/trust-region summaries and logs,
+#          and island-aware artifact naming; never alters iteration behavior
 #
 # This file contains diagnostic assembly helpers for rectangular power-flow runs.
 # It must not change numerical iteration behavior.

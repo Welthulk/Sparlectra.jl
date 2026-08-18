@@ -13,6 +13,9 @@
 # limitations under the License.
 
 # file: test/test_state_estimation.jl
+# purpose: tests WLS state estimation (runse!): observability metrics and
+#          matrix helpers, measurement add helpers, zero-injection handling,
+#          bad-data diagnostics, and PMU angle measurements
 
 using Test
 using Sparlectra

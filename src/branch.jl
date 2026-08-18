@@ -15,6 +15,8 @@
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 10.05.2023
 # file: src/branch.jl
+# purpose: branch model types (Branch, BranchModel, BranchFlow) and
+#          admittance, ratio, flow, and loss helpers for network branches
 
 # helper
 """

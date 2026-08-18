@@ -13,6 +13,9 @@
 # limitations under the License.
 
 # file: test/test_pv_voltage_residuals.jl
+# purpose: tests PV voltage residual sign conventions in the rectangular
+#          solver: setpoint convergence, preserved start angles, and
+#          flat-start seeding that keeps imported PV setpoints
 
 function _create_pv_voltage_regression_net(; vset::Float64 = 1.05)
   net = Net(name = "pv_voltage_residual_regression", baseMVA = 100.0)

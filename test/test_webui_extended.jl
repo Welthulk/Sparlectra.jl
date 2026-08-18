@@ -1,3 +1,21 @@
+# Copyright 2023-2026 Udo Schmitz
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# file: test/test_webui_extended.jl
+# purpose: extended Web UI tests against a running local server: config
+#          editor and refresh, case selection/import/delete, contextual
+#          help, DC mode, the diagnose submitter, and the warm-up page
 using Sparlectra
 using Dates
 using Sockets
@@ -134,7 +152,6 @@ function _webui_test_form(casefile, config_file, output_root)
     "transformer_tap_changer_model" => "ideal",
     "matpower_export_write_solution" => "true",
     "output_logfile_results" => "compact",
-    "output_condition_number" => "false",
     "performance_timing" => "compact",
     "detailed_result_csv" => "on",
     "detailed_result_csv_format" => "excel_de",
@@ -1716,7 +1733,6 @@ settings:
         "transformer_tap_changer_model" => "transformer.tap_changer_model",
         "matpower_export_write_solution" => "matpower_export.write_solution",
         "output_logfile_results" => "output.logfile_results",
-        "output_condition_number" => "output.condition_number",
         "benchmark_enabled" => "benchmark.enabled",
         "benchmark_samples" => "benchmark.samples",
         "benchmark_seconds" => "benchmark.seconds",

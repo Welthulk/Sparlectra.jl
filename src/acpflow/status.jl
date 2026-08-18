@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: src/acpflow/status.jl
+# purpose: SparlectraRunResult type and framework status classification: maps
+#          rectangular solver status metadata onto outcome, reason, and
+#          diagnostics fields
 """
     SparlectraRunResult
 

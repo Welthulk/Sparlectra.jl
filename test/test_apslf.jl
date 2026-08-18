@@ -13,6 +13,9 @@
 # limitations under the License.
 
 # file: test/test_apslf.jl
+# purpose: tests the optional APSLF (AnalyticLoadFlow.jl) solver integration:
+#          config validation, Web UI form parsing, the not-installed error
+#          path, adapter mapping, and case14 agreement with Newton-Raphson
 #
 # Tests the APSLF (AnalyticLoadFlow.jl) integration: config validation,
 # controller rejection, WebUI form parsing, and the "not installed" error

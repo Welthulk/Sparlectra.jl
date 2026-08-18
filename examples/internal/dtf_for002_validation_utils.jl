@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: examples/internal/dtf_for002_validation_utils.jl
+# purpose: shared helpers for the internal DTF validation scripts: FOR002
+#          report parsing, bus-name normalization, numeric formatting, and
+#          CSV/Markdown output utilities
 using Printf
 using SparseArrays
 

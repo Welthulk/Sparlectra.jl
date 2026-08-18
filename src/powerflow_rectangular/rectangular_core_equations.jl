@@ -17,6 +17,9 @@
 # Rectangular power-flow core equation helpers.
 # Date: 29.5.2026
 # file: src/powerflow_rectangular/rectangular_core_equations.jl
+# purpose: core equation helpers for the rectangular NR formulation: complex
+#          Wirtinger Jacobian blocks (build_complex_jacobian), the residual
+#          mismatch_rectangular, and the PV voltage-residual check
 
 """
     build_complex_jacobian(Ybus, V)

@@ -18,6 +18,9 @@
 
 # Date: 29.5.2026
 # file: src/powerflow_rectangular/rectangular_qlimit_guard.jl
+# purpose: Q-limit guard preprocessing for the rectangular active set:
+#          reclassifies PV buses with zero or narrow reactive range as PQ
+#          before the Newton iteration starts
 
 """
     _lock_zero_range_pv_buses!(net, bus_types, S, Qload_pu, qmin_pu, qmax_pu; log, verbose) -> Vector{Int}

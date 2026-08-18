@@ -734,15 +734,22 @@ The net method builds the same sparse PQ/PV Jacobian the rectangular
 solver factors, at the net's current voltage state: the operating point
 after a converged run, the last iterate after a failed one.
 
-Where it appears in run output:
+Where it appears in run output (always on, no configuration):
 
+- **Classic result log**: one `Jacobian cond.` line with the verdict in
+  every report. The rectangular solver stores a lazy estimator over the
+  exact system it factored, so the line costs one Hager estimate on an
+  existing LU; non-NR runs fall back to a standalone reconstruction.
+- **Web UI run overview**: a `Jacobian condition` row with the identical
+  line for rectangular NR runs (`n/a` for execution paths without a stored
+  estimator, such as APSLF or DC); the raw values travel in the run
+  metadata as `jacobian_condition_estimate` / `_verdict` / `_line`.
 - **Diagnose runs** (`run_diagnostics = true`, the Web UI Diagnose button)
-  always contain the estimate in the `diagnose.log` Diagnosis section,
+  additionally get the estimate in the `diagnose.log` Diagnosis section,
   plus a recommendation when the Jacobian is ill-conditioned.
-- **Classic result log**: opt-in via `output.condition_number` (default
-  `false`; also an Advanced option in the Web UI PowerFlow form). When set
-  to `true` it adds one `Jacobian cond.` line with the verdict; costs one
-  extra LU factorization of the final Jacobian.
+
+The former opt-in `output.condition_number` was removed in 0.9.7; a
+leftover key in an existing YAML configuration is ignored.
 
 A runnable walk-through, including how conditioning collapses when a bus
 becomes nearly disconnected, is in

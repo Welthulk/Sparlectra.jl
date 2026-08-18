@@ -21,6 +21,8 @@
 # In this module, functions are written in CamelCase with a lowercase initial letter.
 
 # file: src/Sparlectra.jl
+# purpose: main package module: dependency loading, package-wide constants,
+#          include order of all source files, and the public export surface
 #! format: off
 
 module Sparlectra

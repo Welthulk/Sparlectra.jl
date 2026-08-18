@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: src/api/webui_jobs.jl
+# purpose: Web UI job management for PowerFlow runs: job registry with
+#          queued/running/aborting states, phase updates and operation log,
+#          and cooperative abort handling (PowerFlowAborted)
 const _POWERFLOW_WEBUI_JOBS = Dict{String,Dict{String,Any}}()
 const _POWERFLOW_WEBUI_ACTIVE_STATES = Set(("queued", "running", "aborting"))
 const WEBUI_ABORT_HARD_RESET_AFTER_SECONDS = 60

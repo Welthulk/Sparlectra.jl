@@ -18,6 +18,9 @@
 
 # Date: 29.5.2026
 # file: src/powerflow_rectangular/rectangular_wrong_branch.jl
+# purpose: wrong-branch diagnostics for rectangular power flow: angle
+#          wrapping, circular angle-spread metrics, and plausibility checks
+#          on converged solutions
 
 """
 Normalize an angle (degrees) to the interval `(-180, 180]`.

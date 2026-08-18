@@ -17,7 +17,9 @@
 # Rectangular power-flow status registry, iteration workspace, and status reporting helpers.
 
 # Date: 29.5.2026
-# file: src/powerflow_rectangular/rectangular_status_workspace.jl 
+# file: src/powerflow_rectangular/rectangular_status_workspace.jl
+# purpose: weak-reference per-Net status registry, preallocated iteration
+#          workspace, and status reporting for the rectangular solver
 
 mutable struct _RectangularPFStatusTable
   # Weak-reference registry keeps per-Net rectangular status without preventing GC.

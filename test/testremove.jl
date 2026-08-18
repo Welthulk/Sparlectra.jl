@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: test/testremove.jl
+# purpose: tests element removal on a small synthetic network: removeBus!,
+#          removeBranch!, removeShunt!, and removeProsumer!, including
+#          rejected removals and network integrity afterwards
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 13.03.2025
 # test/testremove.jl

@@ -13,6 +13,9 @@
 # limitations under the License.
 
 # file: test/test_solver_interface.jl
+# purpose: tests the external solver interface (PFModel/PFSolution) and the
+#          rectangular solver's control paths: Q-limit modes, merit line
+#          search, trust region, AC islands, and the rescue ladder
 
 using Test
 using Sparlectra

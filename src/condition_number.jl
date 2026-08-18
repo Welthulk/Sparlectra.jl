@@ -182,9 +182,13 @@ failure is logged as `@warn` (default) or `@debug`
 (`warn_on_failure = false`) with `context` as the message prefix, and
 never propagates into the report.
 """
-function _jacobian_condest(net::Net; warn_on_failure::Bool = true, context::String = "result output")
+function _jacobian_condest(net::Net; warn_on_failure::Bool = true, context::String = "result output", require_thunk::Bool = false)
   rect_status = rectangular_pf_status(net)
   thunk = rect_status !== nothing && hasproperty(rect_status, :jacobian_condest) ? rect_status.jacobian_condest : nothing
+  # require_thunk: run-overview metadata only rates the system the solver
+  # actually factored; without a thunk (APSLF, DC) it reports nothing
+  # instead of reconstructing a Jacobian the run never used.
+  thunk === nothing && require_thunk && return nothing
   try
     thunk !== nothing && return thunk()::Float64
     return condestJacobian(net)
@@ -205,7 +209,7 @@ function _condition_verdict(kappa::Float64)::String
 end
 
 # One formatted report line, shared by reportCondition, the classic result
-# log (output.condition_number = true) and diagnose.log. Reports the
+# log (always on since 0.9.7) and diagnose.log. Reports the
 # attainable relative accuracy kappa * eps(Float64) instead of an abstract
 # digits-lost count; when the solver tolerance is passed, states directly
 # whether that tolerance is reachable at this conditioning.

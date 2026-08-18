@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: examples/internal/dtf_validation_base.jl
+# purpose: NativeBaseValidation module that validates the native Testnetz13
+#          DTF base case (read_dtf -> build_net -> runpf!) against the FOR002
+#          reference report; runnable standalone or via the suite runner
 # Internal DTF validation module: native base-case validation against FOR002.
 # Extracted from run_val_dtf_suite.jl; used by the suite runner and directly
 # runnable as its own CLI entry point.

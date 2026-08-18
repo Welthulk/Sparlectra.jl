@@ -19,6 +19,9 @@
 # Rectangular power-flow final status and diagnostic helpers.
 # Date: 29.5.2026
 # file: src/powerflow_rectangular/rectangular_final_status.jl
+# purpose: post-solve status finalization: Q-limit summary acceptance policy,
+#          wrong-branch diagnostics, final status NamedTuple assembly, and
+#          status storage plus printing
 
 """
 Finalize Q-limit diagnostics after the numerical rectangular solve.

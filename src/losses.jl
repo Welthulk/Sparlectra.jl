@@ -15,6 +15,8 @@
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 04.09.2023
 # file: src/losses.jl
+# purpose: post-solve branch-flow and network-loss calculation (calcNetLosses!)
+#          and KCL-based flow allocation for bus links (calcLinkFlowsKCL!)
 
 """
     calcNetLosses!(net::Net)

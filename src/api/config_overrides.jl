@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: src/api/config_overrides.jl
+# purpose: GUI/API configuration override handling: the editable-key
+#          allowlist, override validation (validate_gui_config_overrides),
+#          and merging overrides into the loaded API configuration
 """Dotted configuration keys accepted from GUI/API override input."""
 const GUI_EDITABLE_CONFIG_KEYS = Set([
   "power_flow.method",
@@ -81,7 +85,6 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "webui.warmup",
   "transformer.tap_changer_model",
   "output.logfile_results",
-  "output.condition_number",
   "output.console_live",
   "output.detailed_result_csv_write_mode",
   "output.detailed_result_csv_exporter",

@@ -14,6 +14,9 @@
 
 #
 # file: src/powerflow_rectangular/rectangular_network_solver.jl
+# purpose: network-level orchestration and public entry glue for the
+#          rectangular power flow: runpf_rectangular! plus the standalone
+#          array-level Newton driver run_complex_nr_rectangular
 #
 
 # rectangular_network_solver.jl — Rectangular PF network-level orchestration and public entry glue
@@ -1058,8 +1061,8 @@ function runpf_rectangular!(
     # Lazy Jacobian condition estimate over the EXACT system this solve
     # factored (post-merge topology, final Q-limit active set, final
     # voltages). Stored as a cached closure: the solve pays nothing, the
-    # estimate is computed only when a report asks for it
-    # (output.condition_number, diagnose.log). The closure reduces to the
+    # estimate is computed only when a report asks for it (classic result
+    # log, run metadata, diagnose.log). The closure reduces to the
     # active (non-isolated) subsystem first, because de-energized buses
     # make the full Jacobian structurally singular; with distributed slack
     # it rates the core PF Jacobian without the appended lambda row and

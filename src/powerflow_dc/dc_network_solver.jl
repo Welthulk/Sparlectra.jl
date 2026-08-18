@@ -21,6 +21,9 @@
 # the AC/APSLF paths) is out of scope for this first iteration.
 
 # file: src/powerflow_dc/dc_network_solver.jl
+# purpose: DC power-flow per-island orchestration: island preparation and
+#          solve, solution write-back into the Net, and DC status assembly
+#          with failure aggregation
 
 # Minimal status NamedTuple for a DC solve. Deliberately does not reuse
 # _apslf_pf_status/rectangular_pf_status's field shape: DC has no

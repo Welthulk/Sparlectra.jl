@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: examples/experimental/qlimit_large_case_comparison.jl
+# purpose: compare_qlimit_large_case_modes driver that runs large MATPOWER
+#          cases across Q-limit enforcement modes and start profiles via
+#          run_sparlectra_api and writes a comparison summary
 # Experimental diagnostic tooling for large-case Q-limit comparison.
 # This file is not part of the stable Sparlectra API and may change.
 

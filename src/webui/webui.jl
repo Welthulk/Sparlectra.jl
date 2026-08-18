@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: src/webui/webui.jl
+# purpose: local Web UI server (start_sparlectra_webui): TCP request loop,
+#          output-root defaults, browser launch, warmup, and lifecycle and
+#          shutdown handling
 using Markdown
 using Sockets
 

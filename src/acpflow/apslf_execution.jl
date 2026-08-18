@@ -13,6 +13,9 @@
 # limitations under the License.
 
 # file: src/acpflow/apslf_execution.jl
+# purpose: solver wiring for power_flow.solver = :apslf: runs framework solves
+#          through the external analytic power-series solver per AC island
+#          while keeping the rectangular status and diagnostics contracts
 # Solver-selection wiring for power_flow.solver = :apslf: routes the central
 # framework run through the external-solver bridge (buildPfModel ->
 # solvePf(ApslfSolver) -> applyPfSolution!, via runpf_external!) instead of the

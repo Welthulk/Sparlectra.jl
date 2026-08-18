@@ -15,6 +15,9 @@
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 1.1.2026
 # file: src/state_estimation.jl
+# purpose: classical WLS state estimation (runse!) with observability and
+#          redundancy analysis and an optional PMU reference-angle offset
+#          state
 
 using Printf
 """

@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: src/api/api_types.jl
+# purpose: typed API result surface: SparlectraApiArtifact and
+#          SparlectraApiResult returned by run_sparlectra_api
 """
     SparlectraApiArtifact
 

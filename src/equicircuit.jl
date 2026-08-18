@@ -15,6 +15,9 @@
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 22.05.2023
 # file: src/equicircuit.jl
+# purpose: equivalent-circuit and per-unit conversion helpers: tap and phase
+#          tap changer ratio/correction math, toPU_RXBG/fromPU_RXBG, and
+#          admittance matrix assembly via createYBUS
 
 """
     cubicSplineCoefs(x::Vector{Float64}, y::Vector{Float64})::Tuple{Vector{Float64}, Vector{Float64}, Vector{Float64}, Vector{Float64}}

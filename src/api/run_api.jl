@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: src/api/run_api.jl
+# purpose: non-interactive API orchestrator run_sparlectra_api: executes a
+#          framework run with phase timings and writes result.json, logs, and
+#          CSV artifacts for API and Web UI consumers
 using UUIDs: uuid4
 
 const _SPARLECTRA_API_SCHEMA_VERSION = "1.0"

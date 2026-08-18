@@ -108,6 +108,11 @@ For unattended installs, `SPARLECTRA_BUILD_SYSIMAGE=1` (build) or `=0`
 also be built later at any time: `julia tools/build_sysimage.jl` from the
 Sparlectra folder, or via the Web UI **Fast start** page.
 
+The installer also offers a desktop shortcut (Windows `.lnk`) or launcher
+(`.desktop` file, symlink fallback) for restarting the Web UI later;
+`SPARLECTRA_CREATE_SHORTCUT=1` or `=0` answers that question without a
+prompt.
+
 ### Web UI start scripts
 
 The repository root ships ready-made scripts for the local Web UI:

@@ -13,6 +13,8 @@
 # limitations under the License.
 
 # file: src/api/run_metadata.jl
+# purpose: API run-result and metadata assembly: _api_result construction,
+#          runtime metadata payloads, and the run_metadata.yaml artifact
 #
 # This file contains API run-result and metadata assembly helpers. Keeping them
 # separate lets run_api.jl focus on orchestration.

@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: src/api/run_finalization.jl
+# purpose: run finalization helpers: run.log output capture with optional
+#          live console mirroring, and performance.log phase recording for
+#          the API orchestrator
 # Run finalization helpers own run.log/performance.log details so the API
 # orchestrator records phase boundaries without embedding every artifact format.
 

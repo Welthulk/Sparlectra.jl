@@ -13,6 +13,9 @@
 # limitations under the License.
 
 # file: test/testgrid.jl
+# purpose: grid and power-flow regression tests around the CIGRE HV benchmark
+#          network: transformer and network validation, MATPOWER
+#          import/export, PF scenarios, plus the extended scale/parser group
 
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 20.6.2023
@@ -2936,15 +2939,40 @@ function test_condition_number_estimator()::Bool
   (isfinite(kthunk) && kthunk >= 1.0) || return false
   st.jacobian_condest() == kthunk || return false
 
-  # classic result log: the condition line appears exactly when the
-  # output.condition_number option is on
+  # classic result log: the condition line is always printed, no option
+  # (0.9.7: output.condition_number removed)
   outdir = mktempdir()
-  Sparlectra.printACPFlowResults(net, 0.01, ite, 1e-8, true, outdir; converged = true, solver = :rectangular, condition_number = true)
+  Sparlectra.printACPFlowResults(net, 0.01, ite, 1e-8, true, outdir; converged = true, solver = :rectangular)
   out_on = read(joinpath(outdir, "result_$(net.name).txt"), String)
   occursin("Jacobian cond. : kappa1(J)", out_on) || return false
-  Sparlectra.printACPFlowResults(net, 0.01, ite, 1e-8, true, outdir; converged = true, solver = :rectangular)
-  out_off = read(joinpath(outdir, "result_$(net.name).txt"), String)
-  occursin("Jacobian cond.", out_off) && return false
+
+  # legacy config key: a YAML still carrying output.condition_number loads
+  # silently (no error, no warning), and the struct has no such field
+  legacy_cfg = mktemp() do path, io
+    write(io, "output:\n  condition_number: true\n")
+    close(io)
+    load_sparlectra_config(path; reload = true)
+  end
+  hasproperty(legacy_cfg.output, :condition_number) && return false
+  # API override path: the removed key follows the standard unknown-override
+  # error (it is neither a known config key nor GUI-editable anymore)
+  try
+    Sparlectra.validate_gui_config_overrides(Dict{String,Any}("output.condition_number" => true))
+    return false
+  catch err
+    err isa ArgumentError || return false
+    occursin("Unknown Sparlectra configuration override key", sprint(showerror, err)) || return false
+  end
+  # overview availability rule: without a stored rectangular thunk (unsolved
+  # net, APSLF, DC) the metadata path reports nothing instead of
+  # reconstructing a Jacobian the run never factored
+  net_unsolved = Net(name = "cond_no_thunk", baseMVA = 100.0)
+  addBus!(net = net_unsolved, busName = "Slack", vn_kV = 110.0)
+  addBus!(net = net_unsolved, busName = "Load", vn_kV = 110.0)
+  addACLine!(net = net_unsolved, fromBus = "Slack", toBus = "Load", r = 0.01, x = 0.05, length = 1.0)
+  addProsumer!(net = net_unsolved, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "Slack")
+  addProsumer!(net = net_unsolved, busName = "Load", type = "ENERGYCONSUMER", p = 10.0, q = 3.0)
+  Sparlectra._jacobian_condest(net_unsolved; warn_on_failure = false, require_thunk = true) === nothing || return false
 
   # regression: de-energized buses reduce the Ybus dimension below the bus
   # count. The net-level estimate used to fail with a DimensionMismatch
@@ -2968,7 +2996,7 @@ function test_condition_number_estimator()::Bool
   (st_iso !== nothing && hasproperty(st_iso, :jacobian_condest)) || return false
   k_iso_solver = st_iso.jacobian_condest()
   (isfinite(k_iso_solver) && k_iso_solver >= 1.0) || return false
-  Sparlectra.printACPFlowResults(net_iso, 0.01, ite_iso, 1e-8, true, outdir; converged = true, solver = :rectangular, condition_number = true)
+  Sparlectra.printACPFlowResults(net_iso, 0.01, ite_iso, 1e-8, true, outdir; converged = true, solver = :rectangular)
   out_iso = read(joinpath(outdir, "result_$(net_iso.name).txt"), String)
   occursin("Jacobian cond. : kappa1(J)", out_iso) || return false
   return true
