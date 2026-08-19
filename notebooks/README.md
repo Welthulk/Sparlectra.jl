@@ -1,10 +1,10 @@
 # Sparlectra workshop notebooks
 
 These notebooks run on Google Colab, no local installation required. The
-first cell installs Sparlectra into a fresh temporary environment (takes a
-few minutes); the isolation keeps Colab's preinstalled package stack out of
-the install, and a commented line in the same cell shows how to test an
-unreleased development version instead of the latest release.
+first cell installs Sparlectra from GitHub (branch `main`) into a fresh
+temporary environment (takes a few minutes); the isolation keeps Colab's
+preinstalled package stack out of the install, and commented lines in the
+same cell switch to another branch or to the latest registered release.
 
 | Notebook | What it covers | Open |
 |---|---|---|

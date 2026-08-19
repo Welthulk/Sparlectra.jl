@@ -97,7 +97,7 @@ terminal stays P-only.
   participates. Detection runs in every mode and names the pairs in the
   import messages (see [CGMES Import](cgmes_import.md)). Validated on the
   conformity FullGrid set (two links) and the ReliCapGrid combined model,
-  whose real border crossing yields transfer 109.1 MW with 9.1 MW loss
+  whose real border crossing yields transfer 109.118 MW with 9.098 MW loss
   from the two SSH operating points.
 
 ## Choosing the mode

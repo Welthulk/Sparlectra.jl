@@ -14,10 +14,10 @@ fixed injections stay the default. See
   kept as `Sparlectra.old`.
 - Leaner installs: the unused hard dependencies DataFrames and
   InlineStrings are removed, cutting the dependency tree from 76 to 54
-  packages. The workshop notebooks now install into a fresh temporary
-  environment, so on Colab the preinstalled runtime stack is no longer
-  re-precompiled; the setup cell also shows how to test an unreleased
-  development version (`Pkg.add(url = ..., rev = "main")`).
+  packages. The workshop notebooks now install from GitHub `main` into a
+  fresh temporary environment, so on Colab the preinstalled runtime stack
+  is no longer re-precompiled; commented lines in the setup cell switch to
+  another branch or to the registered release.
 
 # Version 0.9.7 - 2026-08-20
 

@@ -1411,12 +1411,18 @@ function run_cgmes_importer_tests()
     # Equipment.inService honored, per-island references and the single-sided
     # border equivalents standing in for the absent neighbours, Svedala alone
     # now solves AND reproduces its SV state; the testset asserts it.
-    svedala = joinpath(cache, "relicapgrid", "cgmes-3.0_ncp-2.5_tc-2.0", "Svedala")
-    if isdir(svedala)
+    # The per-model cache holds only the grid files; the border files and the
+    # commonData catalog are cached once in _shared (see _rcgMemberFiles). A
+    # raw model folder is therefore not importable on its own — resolve the
+    # delivery through the alias mechanism, which packs grid + borders +
+    # commonData into one ZIP and works without network when the cache is warm.
+    rcg_root = joinpath(cache, "relicapgrid", "cgmes-3.0_ncp-2.5_tc-2.0")
+    if isdir(joinpath(rcg_root, "Svedala")) && isdir(joinpath(rcg_root, "_shared"))
+      svedala = Sparlectra.CGMESImporter.fetchCGMESTestSet("svedala"; outdir = mktempdir())
       @testset "ReliCapGrid Svedala (CGMES 3.0)" begin
         s = summarizeCGMES(path = svedala)
         @test s.version == "3.0"
-        @test !s.boundary_missing_hint            # border files ship with the model
+        @test !s.boundary_missing_hint            # the alias ZIP carries the border files
         @test sum(v for (_, v) in s.class_histogram) == 14506
         @test length(s.class_histogram) == 52
         # 20 references stay unresolved even with commonData: they point into
@@ -1521,7 +1527,6 @@ function run_cgmes_importer_tests()
       # converges and reproduces the delivery's own SV state. Offline-safe:
       # fetchCGMESTestSet builds the ZIP from the per-model cache without
       # network when all member folders are present.
-      rcg_root = joinpath(cache, "relicapgrid", "cgmes-3.0_ncp-2.5_tc-2.0")
       rcg_members = ("Svedala", "Espheim", "Portheim", "Belgovia", "Galia", "Britheim", "Nordheim")
       if all(isdir(joinpath(rcg_root, m)) for m in rcg_members) && isdir(joinpath(rcg_root, "_shared"))
         @testset "ReliCapGrid combined model (multi-area assembly + Stage-0 HVDC)" begin
@@ -1542,13 +1547,13 @@ function run_cgmes_importer_tests()
           @test count(m -> occursin("HVDC pair detected", m), msgs) == 1
           @test isempty(Sparlectra._hvdc_pair_controllers(res.net))
 
-          # #297 Draft B: paired_control derives the GA-BH transfer and loss
-          # from the two SSH operating points (-100.0 / +109.1 MW)
+          # #297 Draft B: paired_control derives the DC-crossing transfer and
+          # loss from the two SSH operating points (-109.118 / +100.02 MW)
           res_paired = importCGMES(path = z, name = "ReliCapGrid_CGM_paired", multi_slack = true, hvdc_mode = :paired_control)
           paired = Sparlectra._hvdc_pair_controllers(res_paired.net)
           @test length(paired) == 1
-          @test only(paired).p_transfer_mw == 109.1
-          @test isapprox(only(paired).loss_mw, 9.1; atol = 1e-9)
+          @test isapprox(only(paired).p_transfer_mw, 109.118; atol = 1e-9)
+          @test isapprox(only(paired).loss_mw, 9.098; atol = 1e-9)
           @test any(m -> occursin("HVDC pair attached as controller", m), res_paired.messages)
 
           # the assembled model must solve and reproduce the delivery's SV

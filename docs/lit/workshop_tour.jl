@@ -46,16 +46,16 @@
 # > version may change over time; this notebook targets Julia ≥ 1.12.
 
 #nb # ## Setup (Colab)
-#nb # This cell installs Sparlectra into a fresh temporary environment.
-#nb # The isolation matters on Colab: the shared default environment ships
-#nb # many preinstalled packages, and installing anything there triggers
-#nb # precompilation of that whole stack. Run this cell first, once per
-#nb # session; it takes a few minutes (download + precompilation).
+#nb # This cell installs Sparlectra from GitHub (branch `main`) into a fresh
+#nb # temporary environment. The isolation matters on Colab: the shared
+#nb # default environment ships many preinstalled packages, and installing
+#nb # anything there triggers precompilation of that whole stack. Run this
+#nb # cell first, once per session; it takes a few minutes.
 #nb using Pkg
 #nb Pkg.activate(temp = true)
-#nb Pkg.add("Sparlectra")
-#nb ## To test an unreleased development version instead, use:
-#nb ## Pkg.add(url = "https://github.com/Welthulk/Sparlectra.jl", rev = "main")
+#nb Pkg.add(url = "https://github.com/Welthulk/Sparlectra.jl", rev = "main")
+#nb ## To test another branch, set rev to its name, e.g. rev = "dev/r0.9.8".
+#nb ## For the latest registered release use: Pkg.add("Sparlectra")
 
 # ## Warm-up
 #

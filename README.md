@@ -239,6 +239,8 @@ Key entry points:
 
 Contributions, bug reports, test cases and documentation improvements are welcome, particularly reproducible test networks, import edge cases (CGMES, MATPOWER, DTF), and improved diagnostics.
 
+Questions and feedback: see [Discussions](https://github.com/Welthulk/Sparlectra.jl/discussions).
+
 Please read [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) before contributing.
 
 ---

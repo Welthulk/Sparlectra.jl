@@ -1899,11 +1899,11 @@ settings:
       )
         @test occursin(field, form_html)
       end
-      # MATPOWER import conventions gray out for CGMES cases: 8 marked labels
-      # (all matpower_import_* plus the tap-changer model; Export Solution
-      # stays active) + the one JS querySelector occurrence = 9, plus the
-      # explanatory hint and the client-side toggle logic.
-      @test count("data-matpower-import-field", form_html) == 9
+      # MATPOWER import conventions gray out for CGMES cases: 9 marked labels
+      # (all matpower_import_* incl. the dcline mode, plus the tap-changer
+      # model; Export Solution stays active) + the one JS querySelector
+      # occurrence = 10, plus the explanatory hint and the toggle logic.
+      @test count("data-matpower-import-field", form_html) == 10
       @test occursin("data-import-conventions-hint", form_html)
       @test occursin("const updateImportConventionApplicability = function ()", form_html)
       # the change listener wraps updateImportConventionApplicability together
