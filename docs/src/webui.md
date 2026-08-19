@@ -71,10 +71,12 @@ For end users the repository root additionally ships platform scripts:
 `start_webui.sh` / `start_webui.bat` (start; point at the install script
 when Julia is missing) and `install_webui.sh` / `install_webui.bat`
 (install Julia via juliaup when missing, obtain Sparlectra at its latest
-tagged release, offer the optional [fast-start sysimage](fast_start.md)
+tagged release, offer the update when an existing copy is older than the
+latest release, offer the optional [fast-start sysimage](fast_start.md)
 build and a desktop shortcut/launcher for restarting the Web UI, then
-start it). Unattended installs answer both questions via
-`SPARLECTRA_BUILD_SYSIMAGE=1/0` and `SPARLECTRA_CREATE_SHORTCUT=1/0`. The
+start it). Unattended installs answer the questions via
+`SPARLECTRA_UPDATE=1/0`, `SPARLECTRA_BUILD_SYSIMAGE=1/0`, and
+`SPARLECTRA_CREATE_SHORTCUT=1/0`. The
 install scripts also run as a one-liner without any GitHub checkout, see
 the
 [README installation section](https://github.com/Welthulk/Sparlectra.jl#installation).

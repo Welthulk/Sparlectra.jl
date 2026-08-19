@@ -18,8 +18,10 @@
 #          installs Julia via the official juliaup installer when missing,
 #          obtains Sparlectra at its latest tagged release (uses this
 #          checkout when the script lies inside one, otherwise clones or
-#          downloads next to the script), optionally builds the fast-start
-#          sysimage after asking the user, then starts the Web UI.
+#          downloads next to the script), offers the update when an
+#          existing copy is older than the latest release, optionally
+#          builds the fast-start sysimage after asking the user, then
+#          starts the Web UI.
 #          Also works piped straight from the docs (no git, no GitHub
 #          checkout needed):
 #            curl -fsSL https://raw.githubusercontent.com/Welthulk/Sparlectra.jl/main/install_webui.sh | sh
@@ -97,6 +99,77 @@ else
     fi
   else
     echo "Using existing copy at $SPARLECTRA_DIR"
+    # Update check: an existing copy stays at the release it was installed
+    # at, and re-running this installer is the documented way to update.
+    # Detect a newer tagged release and offer the update (default yes;
+    # SPARLECTRA_UPDATE=1/0 decides without asking). A failed check or a
+    # failed download never blocks the start with the existing copy.
+    INSTALLED=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$SPARLECTRA_DIR/Project.toml" 2>/dev/null | head -n 1)
+    if [ -d "$SPARLECTRA_DIR/.git" ] && command -v git >/dev/null 2>&1; then
+      # Cloned copy: same tag mechanism as the in-checkout path above.
+      git -C "$SPARLECTRA_DIR" fetch --tags --quiet 2>/dev/null || true
+      LATEST=$(git -C "$SPARLECTRA_DIR" tag --sort=-v:refname | head -n 1)
+      CURRENT_TAG=$(git -C "$SPARLECTRA_DIR" describe --tags --exact-match 2>/dev/null || echo "")
+      if [ -n "$LATEST" ] && [ "$LATEST" != "$CURRENT_TAG" ]; then
+        if [ -n "$(git -C "$SPARLECTRA_DIR" status --porcelain 2>/dev/null)" ]; then
+          echo "A newer release ($LATEST) exists, but the copy has local changes - keeping the current state."
+        else
+          DO_UPDATE="${SPARLECTRA_UPDATE:-}"
+          if [ -z "$DO_UPDATE" ] && [ -r /dev/tty ]; then
+            printf "Installed: %s, latest release: %s. Update now? [Y/n] " "${CURRENT_TAG:-v$INSTALLED}" "$LATEST"
+            read -r DO_UPDATE < /dev/tty 2>/dev/null || DO_UPDATE=""
+          fi
+          case "$DO_UPDATE" in
+            n|N|no|NO|0)
+              echo "Keeping ${CURRENT_TAG:-v$INSTALLED}."
+              ;;
+            *)
+              echo "Updating to $LATEST..."
+              git -C "$SPARLECTRA_DIR" checkout --quiet "$LATEST"
+              echo "Note: an existing fast-start sysimage is stale after an update; rebuild it below or later."
+              ;;
+          esac
+        fi
+      fi
+    elif command -v curl >/dev/null 2>&1; then
+      # Tarball copy (no .git): compare the installed Project.toml version
+      # against the newest tag from the GitHub API.
+      LATEST=$(curl -fsSL "https://api.github.com/repos/Welthulk/Sparlectra.jl/tags" 2>/dev/null | grep -m 1 '"name"' | sed 's/.*"name": *"\([^"]*\)".*/\1/')
+      if [ -z "$LATEST" ]; then
+        echo "Update check skipped (could not reach the GitHub API)."
+      elif [ "v$INSTALLED" = "$LATEST" ]; then
+        echo "Already at the latest release (v$INSTALLED)."
+      else
+        DO_UPDATE="${SPARLECTRA_UPDATE:-}"
+        if [ -z "$DO_UPDATE" ] && [ -r /dev/tty ]; then
+          printf "Installed: v%s, latest release: %s. Update now? [Y/n] " "$INSTALLED" "$LATEST"
+          read -r DO_UPDATE < /dev/tty 2>/dev/null || DO_UPDATE=""
+        fi
+        case "$DO_UPDATE" in
+          n|N|no|NO|0)
+            echo "Keeping v$INSTALLED."
+            ;;
+          *)
+            echo "Downloading Sparlectra $LATEST..."
+            # Extract into a temp dir first: the existing copy is only
+            # replaced after a complete download, and it survives as
+            # Sparlectra.old (one backup slot) so the update is reversible.
+            UPDATE_TMP=$(mktemp -d "$DIR/.sparlectra_update.XXXXXX")
+            if curl -fsSL "$REPO_URL/archive/refs/tags/$LATEST.tar.gz" | tar -xz -C "$UPDATE_TMP" 2>/dev/null && [ -d "$UPDATE_TMP"/Sparlectra.jl-* ]; then
+              rm -rf "$DIR/Sparlectra.old" 2>/dev/null || true
+              mv "$SPARLECTRA_DIR" "$DIR/Sparlectra.old"
+              mv "$UPDATE_TMP"/Sparlectra.jl-* "$SPARLECTRA_DIR"
+              rmdir "$UPDATE_TMP" 2>/dev/null || true
+              echo "Updated to $LATEST. The previous copy is kept at $DIR/Sparlectra.old (delete it once the new version runs)."
+              echo "Note: an existing fast-start sysimage is stale after an update; rebuild it below or later."
+            else
+              rm -rf "$UPDATE_TMP" 2>/dev/null || true
+              echo "Update download failed - continuing with v$INSTALLED."
+            fi
+            ;;
+        esac
+      fi
+    fi
   fi
 fi
 

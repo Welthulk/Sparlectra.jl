@@ -113,6 +113,13 @@ The installer also offers a desktop shortcut (Windows `.lnk`) or launcher
 `SPARLECTRA_CREATE_SHORTCUT=1` or `=0` answers that question without a
 prompt.
 
+**Updating:** re-running the same command is the update path. With an
+existing `Sparlectra/` copy the installer compares it against the latest
+tagged release and offers the update (default yes; `SPARLECTRA_UPDATE=1`
+or `=0` answers without a prompt). The previous copy is kept as
+`Sparlectra.old` until you delete it, and a fast-start sysimage from the
+old version is detected as stale and can be rebuilt in the same run.
+
 ### Web UI start scripts
 
 The repository root ships ready-made scripts for the local Web UI:

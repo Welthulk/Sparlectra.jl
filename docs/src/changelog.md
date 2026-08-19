@@ -1,3 +1,10 @@
+# Version 0.9.8 - unreleased
+
+- Re-running the one-line install detects an existing copy that is older
+  than the latest tagged release and offers the update
+  (`SPARLECTRA_UPDATE=1/0` for unattended installs); the previous copy is
+  kept as `Sparlectra.old`.
+
 # Version 0.9.7 - 2026-08-20
 
 - Install scripts offer a desktop shortcut (Windows `.lnk`) or launcher

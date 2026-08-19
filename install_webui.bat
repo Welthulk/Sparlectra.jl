@@ -18,8 +18,9 @@ rem purpose: install-and-start for the Sparlectra Web UI (Windows): installs
 rem          Julia via winget/juliaup when missing, obtains Sparlectra at its
 rem          latest tagged release (uses this checkout when the script lies
 rem          inside one, otherwise downloads next to the script - no git
-rem          required), optionally builds the fast-start sysimage after
-rem          asking the user, then starts the Web UI.
+rem          required), offers the update when an existing copy is older
+rem          than the latest release, optionally builds the fast-start
+rem          sysimage after asking the user, then starts the Web UI.
 rem          Also works straight from the docs without a GitHub checkout;
 rem          run in PowerShell in the folder where Sparlectra should live:
 rem            iwr -useb https://raw.githubusercontent.com/Welthulk/Sparlectra.jl/main/install_webui.bat -OutFile install_webui.bat; .\install_webui.bat
@@ -56,10 +57,61 @@ set "SPARLECTRA_DIR=%DIR%."
 if exist "%DIR%Project.toml" if exist "%DIR%start_webui.jl" goto have_repo
 
 set "SPARLECTRA_DIR=%DIR%Sparlectra"
-if exist "%SPARLECTRA_DIR%\Project.toml" (
-  echo Using existing copy at %SPARLECTRA_DIR%
+if exist "%SPARLECTRA_DIR%\Project.toml" goto existing_copy
+goto fresh_download
+
+:existing_copy
+echo Using existing copy at %SPARLECTRA_DIR%
+rem Update check: an existing copy stays at the release it was installed at,
+rem and re-running this installer is the documented way to update. Detect a
+rem newer tagged release and offer the update (default yes;
+rem SPARLECTRA_UPDATE=1 or =0 decides without asking). A failed check or a
+rem failed download never blocks the start with the existing copy.
+set "INSTALLED="
+for /f "usebackq delims=" %%V in (`powershell -NoProfile -Command "((Get-Content '%SPARLECTRA_DIR%\Project.toml') -match '^version')[0].Split('\"')[1]"`) do set "INSTALLED=%%V"
+set "LATEST="
+for /f "usebackq delims=" %%T in (`powershell -NoProfile -Command "(Invoke-RestMethod 'https://api.github.com/repos/%REPO%/tags')[0].name" 2^>nul`) do set "LATEST=%%T"
+if not defined LATEST (
+  echo Update check skipped ^(could not reach the GitHub API^).
   goto have_repo
 )
+if "v%INSTALLED%"=="%LATEST%" (
+  echo Already at the latest release ^(v%INSTALLED%^).
+  goto have_repo
+)
+set "DO_UPDATE=%SPARLECTRA_UPDATE%"
+if defined DO_UPDATE goto update_decided
+set /p DO_UPDATE=Installed: v%INSTALLED%, latest release: %LATEST%. Update now? [Y/n]
+:update_decided
+if /i "%DO_UPDATE%"=="n" goto keep_installed
+if /i "%DO_UPDATE%"=="no" goto keep_installed
+if "%DO_UPDATE%"=="0" goto keep_installed
+echo Downloading Sparlectra %LATEST%...
+rem Extract into a temp dir first: the existing copy is only replaced after a
+rem complete download, and it survives as Sparlectra.old (one backup slot) so
+rem the update is reversible.
+powershell -NoProfile -Command "Invoke-WebRequest 'https://github.com/%REPO%/archive/refs/tags/%LATEST%.zip' -OutFile '%TEMP%\sparlectra_update.zip'; Expand-Archive '%TEMP%\sparlectra_update.zip' '%TEMP%\sparlectra_update' -Force"
+if not exist "%TEMP%\sparlectra_update" (
+  echo Update download failed - continuing with v%INSTALLED%.
+  goto have_repo
+)
+if exist "%DIR%Sparlectra.old" rd /s /q "%DIR%Sparlectra.old"
+move "%SPARLECTRA_DIR%" "%DIR%Sparlectra.old" >nul
+powershell -NoProfile -Command "Move-Item (Get-ChildItem '%TEMP%\sparlectra_update' -Directory | Select-Object -First 1).FullName '%SPARLECTRA_DIR%'"
+if not exist "%SPARLECTRA_DIR%\Project.toml" (
+  echo Update failed - restoring the previous copy.
+  if exist "%SPARLECTRA_DIR%" rd /s /q "%SPARLECTRA_DIR%"
+  move "%DIR%Sparlectra.old" "%SPARLECTRA_DIR%" >nul
+  goto have_repo
+)
+echo Updated to %LATEST%. The previous copy is kept at %DIR%Sparlectra.old ^(delete it once the new version runs^).
+echo Note: an existing fast-start sysimage is stale after an update; rebuild it below or later.
+goto have_repo
+:keep_installed
+echo Keeping v%INSTALLED%.
+goto have_repo
+
+:fresh_download
 echo Determining the latest Sparlectra release...
 for /f "usebackq delims=" %%T in (`powershell -NoProfile -Command "(Invoke-RestMethod 'https://api.github.com/repos/%REPO%/tags')[0].name"`) do set "LATEST=%%T"
 if not defined LATEST (
