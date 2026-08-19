@@ -301,6 +301,11 @@ cgmes_import:
   # RegulatingControl points at a different bus (instead of holding them PV at
   # their own bus). See docs/src/remote_voltage_control.md.
   machine_control: false
+  # HVDC converter handling. Allowed values: injections, paired_control
+  # injections keeps the Stage-0 fixed PCC injections; paired_control
+  # additionally attaches one steerable HVDC pair controller per detected
+  # converter pair (issue #297 Draft B).
+  hvdc_mode: injections
   # Diagnostic override: treat every terminal as connected. For snapshots whose
   # SSH connected flags contradict their own SV state.
   ignore_connected: false
@@ -385,7 +390,9 @@ matpower_import:
   apply_branch_names: false
   apply_branch_kind: false
   import_for001_contingencies: true
-  # Allowed values: reject_active, ignore_inactive, pf_injections
+  # Allowed values: reject_active, ignore_inactive, pf_injections, paired_control
+  # paired_control builds the same PF injections and additionally attaches
+  # one steerable HVDC pair controller per dcline row (issue #297 Draft B).
   matpower_dcline_mode: pf_injections
   net_cache:
     # Opt-in binary cache of the parsed case file, stored next to the case
@@ -525,6 +532,7 @@ control:
   #   machine_voltage   -> addMachineVoltageControl!   (bus, target_bus, target_vm_pu, ...)
   #   shunt_voltage     -> addShuntVoltageControl!     (bus, target_vm_pu, bs_min_mvar, bs_max_mvar, ...)
   #   series_reactance  -> addSeriesReactanceControl!  (from_bus, to_bus, p_target_mw, x_min_pu, x_max_pu, ...)
+  #   hvdc_pair         -> addHvdcPairControl!         (from_bus, to_bus, p_transfer_mw, loss_mw, ...)
   # Example:
   #   controllers:
   #     tap_T1:

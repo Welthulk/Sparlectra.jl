@@ -399,6 +399,10 @@ Base.@kwdef struct CGMESImportConfig
   # propagation) when the BaseVoltage catalog is absent — see
   # _inferNominalVoltages. Pair with require_boundary = false.
   infer_base_voltages::Bool = false
+  # HVDC converter handling (#297 Draft B): :injections keeps the Stage-0
+  # fixed PCC injections, :paired_control additionally attaches one
+  # steerable HvdcPairControl per detected converter pair.
+  hvdc_mode::Symbol = :injections
 end
 
 """
@@ -636,6 +640,7 @@ const CGMES_START_VALUES_VALUES = (:auto, :flat, :sv)
 # out of the solve with a warning; strict aborts the import instead — for
 # deliveries where silently dropping data is not acceptable
 const CGMES_PLACEHOLDER_GUARDS_VALUES = (:warn_skip, :strict)
+const CGMES_HVDC_MODE_VALUES = (:injections, :paired_control)
 const TRUST_REGION_STEP_MODE_VALUES = (:scaled, :dogleg)
 const QLIMIT_START_MODE_VALUES = (:iteration, :auto, :iteration_or_auto)
 const QLIMIT_ENFORCEMENT_MODE_VALUES = (:active_set, :classic_simultaneous, :classic_one_at_a_time)
@@ -657,7 +662,7 @@ const MATPOWER_SHIFT_UNIT_VALUES = (:deg, :rad)
 const MATPOWER_RATIO_VALUES = (:normal, :reciprocal)
 const MATPOWER_BUS_SHUNT_MODEL_VALUES = (:admittance, :voltage_dependent_injection)
 const MATPOWER_AUTO_PROFILE_VALUES = (:off, :recommend, :apply)
-const MATPOWER_DCLINE_MODE_VALUES = (:reject_active, :ignore_inactive, :pf_injections)
+const MATPOWER_DCLINE_MODE_VALUES = (:reject_active, :ignore_inactive, :pf_injections, :paired_control)
 
 # `reject_active` was the shipped template default of early releases, so
 # stored user/Web UI configuration files still carry it without it ever
@@ -1168,6 +1173,7 @@ function CGMESImportConfig(raw::AbstractDict)
     start_values = _validate_allowed_symbol("cgmes_import.start_values", _as_symbol_cfg(_raw_get(merged, "start_values", :auto)), CGMES_START_VALUES_VALUES),
     placeholder_guards = _validate_allowed_symbol("cgmes_import.placeholder_guards", _as_symbol_cfg(_raw_get(merged, "placeholder_guards", :warn_skip)), CGMES_PLACEHOLDER_GUARDS_VALUES),
     infer_base_voltages = _as_bool_cfg(_raw_get(merged, "infer_base_voltages", false)),
+    hvdc_mode = _validate_allowed_symbol("cgmes_import.hvdc_mode", _as_symbol_cfg(_raw_get(merged, "hvdc_mode", :injections)), CGMES_HVDC_MODE_VALUES),
   )
 end
 

@@ -1,9 +1,23 @@
 # Version 0.9.8 - unreleased
 
+**Steerable HVDC links.** `addHvdcPairControl!` couples the two converter
+injections of a back-to-back or point-to-point link (exact pairing
+invariant, losses, per-terminal Q or voltage target, honest `at_limit`).
+Opt-in from both importers: `matpower_import.matpower_dcline_mode =
+paired_control` and `cgmes_import.hvdc_mode = paired_control`; Stage-0
+fixed injections stay the default. See
+[HVDC Back-to-Back](hvdc_back_to_back.md). (#297)
+
 - Re-running the one-line install detects an existing copy that is older
   than the latest tagged release and offers the update
   (`SPARLECTRA_UPDATE=1/0` for unattended installs); the previous copy is
   kept as `Sparlectra.old`.
+- Leaner installs: the unused hard dependencies DataFrames and
+  InlineStrings are removed, cutting the dependency tree from 76 to 54
+  packages. The workshop notebooks now install into a fresh temporary
+  environment, so on Colab the preinstalled runtime stack is no longer
+  re-precompiled; the setup cell also shows how to test an unreleased
+  development version (`Pkg.add(url = ..., rev = "main")`).
 
 # Version 0.9.7 - 2026-08-20
 

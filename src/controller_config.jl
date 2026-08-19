@@ -51,6 +51,12 @@ const _CONTROLLER_TYPE_SPECS = Dict{String,NamedTuple}(
     symbols = (),
     supports_name = true,
   ),
+  "hvdc_pair" => (
+    required = ("from_bus", "to_bus", "p_transfer_mw"),
+    optional = ("loss_mw", "loss_fraction", "p_rating_mw", "from_q_mvar", "to_q_mvar", "from_vset_pu", "to_vset_pu", "from_qmin_mvar", "from_qmax_mvar", "to_qmin_mvar", "to_qmax_mvar", "deadband_vm_pu", "max_outer_iters", "enabled", "name", "from_prosumer", "to_prosumer"),
+    symbols = (),
+    supports_name = true,
+  ),
 )
 
 # Normalize the raw control.controllers value into a Vector{Dict{String,Any}}
@@ -116,6 +122,8 @@ function _configured_controller_exists(net::Net, typ::String, entry::Dict{String
     return any(c -> c isa ShuntVoltageControl && c.bus == string(entry["bus"]), net.machineControls)
   elseif typ == "series_reactance"
     return any(c -> c isa SeriesReactanceControl && c.from_bus == string(entry["from_bus"]) && c.to_bus == string(entry["to_bus"]), net.machineControls)
+  elseif typ == "hvdc_pair"
+    return any(c -> c isa HvdcPairControl && c.from_bus == string(entry["from_bus"]) && c.to_bus == string(entry["to_bus"]), net.machineControls)
   elseif typ == "power_transformer"
     return any(c -> c.trafo == string(entry["trafo"]), _tap_controllers(net))
   end
@@ -221,6 +229,30 @@ function applyConfiguredControllers!(net::Net, control_cfg::ControlConfig)::Int
           max_outer_iters = haskey(entry, "max_outer_iters") ? _controller_cfg_int(entry["max_outer_iters"], "max_outer_iters") : 20,
           enabled = haskey(entry, "enabled") ? _controller_cfg_bool(entry["enabled"], "enabled") : true,
           name = haskey(entry, "name") ? string(entry["name"]) : nothing,
+        )
+      elseif typ == "hvdc_pair"
+        addHvdcPairControl!(
+          net;
+          from_bus = string(entry["from_bus"]),
+          to_bus = string(entry["to_bus"]),
+          p_transfer_mw = _controller_cfg_float(entry["p_transfer_mw"], "p_transfer_mw"),
+          loss_mw = haskey(entry, "loss_mw") ? _controller_cfg_float(entry["loss_mw"], "loss_mw") : 0.0,
+          loss_fraction = haskey(entry, "loss_fraction") ? _controller_cfg_float(entry["loss_fraction"], "loss_fraction") : 0.0,
+          p_rating_mw = haskey(entry, "p_rating_mw") ? _controller_cfg_float(entry["p_rating_mw"], "p_rating_mw") : nothing,
+          from_q_mvar = haskey(entry, "from_q_mvar") ? _controller_cfg_float(entry["from_q_mvar"], "from_q_mvar") : nothing,
+          to_q_mvar = haskey(entry, "to_q_mvar") ? _controller_cfg_float(entry["to_q_mvar"], "to_q_mvar") : nothing,
+          from_vset_pu = haskey(entry, "from_vset_pu") ? _controller_cfg_float(entry["from_vset_pu"], "from_vset_pu") : nothing,
+          to_vset_pu = haskey(entry, "to_vset_pu") ? _controller_cfg_float(entry["to_vset_pu"], "to_vset_pu") : nothing,
+          from_qmin_mvar = haskey(entry, "from_qmin_mvar") ? _controller_cfg_float(entry["from_qmin_mvar"], "from_qmin_mvar") : nothing,
+          from_qmax_mvar = haskey(entry, "from_qmax_mvar") ? _controller_cfg_float(entry["from_qmax_mvar"], "from_qmax_mvar") : nothing,
+          to_qmin_mvar = haskey(entry, "to_qmin_mvar") ? _controller_cfg_float(entry["to_qmin_mvar"], "to_qmin_mvar") : nothing,
+          to_qmax_mvar = haskey(entry, "to_qmax_mvar") ? _controller_cfg_float(entry["to_qmax_mvar"], "to_qmax_mvar") : nothing,
+          deadband_vm_pu = haskey(entry, "deadband_vm_pu") ? _controller_cfg_float(entry["deadband_vm_pu"], "deadband_vm_pu") : 1e-3,
+          max_outer_iters = haskey(entry, "max_outer_iters") ? _controller_cfg_int(entry["max_outer_iters"], "max_outer_iters") : 20,
+          enabled = haskey(entry, "enabled") ? _controller_cfg_bool(entry["enabled"], "enabled") : true,
+          name = haskey(entry, "name") ? string(entry["name"]) : nothing,
+          from_prosumer = haskey(entry, "from_prosumer") ? _controller_cfg_int(entry["from_prosumer"], "from_prosumer") : nothing,
+          to_prosumer = haskey(entry, "to_prosumer") ? _controller_cfg_int(entry["to_prosumer"], "to_prosumer") : nothing,
         )
       end
     catch err

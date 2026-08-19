@@ -755,6 +755,7 @@ function _run_sparlectra_api(;
         multi_slack = cgmes_cfg.multi_slack,
         strict_placeholder_guards = cgmes_cfg.placeholder_guards === :strict,
         infer_base_voltages = cgmes_cfg.infer_base_voltages,
+        hvdc_mode = cgmes_cfg.hvdc_mode,
         name = basename(case_path),
       )
     catch err

@@ -86,6 +86,7 @@ makedocs(
     "Control Framework" => "control_framework.md",
     "Remote Voltage Control" => "remote_voltage_control.md",
     "Series Compensation (TCSC)" => "series_compensation.md",
+    "HVDC Back-to-Back" => "hvdc_back_to_back.md",
     "Short-Circuit Compendium" => "short_circuit.md",
     "Examples Overview" => "examples_overview.md",
     "State Estimation" => "state_estimation.md",

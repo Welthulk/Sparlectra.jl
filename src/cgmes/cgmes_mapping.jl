@@ -82,9 +82,13 @@ struct _MapCtx
   # cgmes_import.placeholder_guards = strict: a suspected placeholder value
   # aborts the import instead of being skipped with a warning
   strict_guards::Bool
+  # prosumer index per source mRID, filled during the pending flush; lets
+  # post-build steps (HVDC pair attachment) address the exact injection a
+  # CGMES object became instead of guessing by bus and value
+  prosumer_by_mrid::Dict{String,Int}
 end
 _MapCtx(tap_control::Bool = false, ignore_connected::Bool = false; machine_control::Bool = false, vset_min_pu::Float64 = CGMES_VSET_MIN_PU, vset_max_pu::Float64 = CGMES_VSET_MAX_PU, strict_guards::Bool = false) =
-  _MapCtx(String[], Dict{String,Tuple{Int,Symbol}}(), Set{String}(), tap_control, machine_control, ignore_connected, vset_min_pu, vset_max_pu, Dict{String,Dict{String,String}}(), NamedTuple[], Dict{Tuple{String,String},Int}(), strict_guards)
+  _MapCtx(String[], Dict{String,Tuple{Int,Symbol}}(), Set{String}(), tap_control, machine_control, ignore_connected, vset_min_pu, vset_max_pu, Dict{String,Dict{String,String}}(), NamedTuple[], Dict{Tuple{String,String},Int}(), strict_guards, Dict{String,Int}())
 
 # SSH `Terminal.connected` through the ctx switch: `ignore_connected = true`
 # treats everything as connected (diagnostic mode for snapshots whose SSH
@@ -1445,6 +1449,127 @@ function _resolveMachineControlPlans!(pending::Vector{NamedTuple}, net, slack_bu
 end
 
 """
+    _detectHvdcPairs(store) -> Vector{@NamedTuple{from::String, to::String, extra::Int, segments::Bool}}
+
+Group the HVDC converters (`VsConverter`/`CsConverter`) by their DC-side
+connectivity: every `ACDCConverterDCTerminal`/`DCTerminal` joins its DC
+conducting equipment's nodes (`DCBaseTerminal.DCNode`, node-breaker
+deliveries use `DCTopologicalNode`), so two converters joined through DC
+nodes, segments, or switches land in one component. A component with
+exactly two converters is a link candidate (back-to-back when no
+`DCLineSegment` participates, point-to-point otherwise); other component
+sizes are reported via `extra` so the caller can notice them. Reads the
+raw store only, no electrical DC model.
+"""
+function _detectHvdcPairs(store::CGMESStore)
+  # union-find over DC node mrids
+  parent = Dict{String,String}()
+  function _find(x::String)
+    get!(parent, x, x)
+    while parent[x] != x
+      parent[x] = parent[parent[x]]
+      x = parent[x]
+    end
+    return x
+  end
+  _union(a::String, b::String) = (parent[_find(a)] = _find(b); nothing)
+
+  eq_nodes = Dict{String,Vector{String}}()
+  for cls in (:ACDCConverterDCTerminal, :DCTerminal)
+    for t in objectsOf(store, cls)
+      eq = get(t.refs, :DCConductingEquipment, nothing)
+      node = get(t.refs, :DCNode, get(t.refs, :DCTopologicalNode, nothing))
+      (eq === nothing || node === nothing) && continue
+      push!(get!(Vector{String}, eq_nodes, String(eq)), String(node))
+    end
+  end
+  segment_ids = Set{String}(o.mrid for o in objectsOf(store, :DCLineSegment))
+  seg_roots = Set{String}()
+  for (eq, nodes) in eq_nodes
+    for n in nodes
+      _union(nodes[1], n)
+    end
+    eq in segment_ids && push!(seg_roots, _find(nodes[1]))
+  end
+
+  by_root = Dict{String,Vector{String}}()
+  for cls in (:VsConverter, :CsConverter)
+    for conv in objectsOf(store, cls)
+      nodes = get(eq_nodes, conv.mrid, nothing)
+      nodes === nothing && continue
+      push!(get!(Vector{String}, by_root, _find(nodes[1])), conv.mrid)
+    end
+  end
+  pairs = NamedTuple[]
+  for (root, convs) in by_root
+    if length(convs) == 2
+      a, b = sort(convs)
+      push!(pairs, (from = a, to = b, extra = 0, segments = _find(root) in Set(_find(r) for r in seg_roots)))
+    else
+      push!(pairs, (from = first(sort(convs)), to = "", extra = length(convs), segments = false))
+    end
+  end
+  return pairs
+end
+
+"""
+Attach the detected HVDC converter pairs as [`Sparlectra.addHvdcPairControl!`](@ref)
+controllers (`cgmes_import.hvdc_mode = :paired_control`). The from side is
+the converter whose PCC injection exports into the link (negative
+injection); the transfer and the loss come from the two SSH operating
+points, each terminal keeps its SSH reactive value as a fixed setpoint. A
+pair that cannot be attached (converter skipped at import, isolated bus,
+inconsistent snapshot signs, negative loss) degrades to the Stage-0 fixed
+injections with a notice; the import itself never fails here.
+"""
+function _attachHvdcPairs!(net, ctx::_MapCtx, store::CGMESStore)
+  for pair in _detectHvdcPairs(store)
+    if pair.extra != 0
+      push!(ctx.messages, "notice: HVDC component around $(pair.from) has $(pair.extra) converter(s) — only two-converter links are paired, kept as fixed injections")
+      continue
+    end
+    a_idx = get(ctx.prosumer_by_mrid, pair.from, nothing)
+    b_idx = get(ctx.prosumer_by_mrid, pair.to, nothing)
+    if a_idx === nothing || b_idx === nothing
+      push!(ctx.messages, "notice: HVDC pair $(pair.from)/$(pair.to) — a converter was not imported (skipped or out of service), kept as fixed injections")
+      continue
+    end
+    pa = net.prosumpsVec[a_idx].pVal === nothing ? 0.0 : net.prosumpsVec[a_idx].pVal
+    pb = net.prosumpsVec[b_idx].pVal === nothing ? 0.0 : net.prosumpsVec[b_idx].pVal
+    # the exporting side carries the negative injection
+    f_idx, t_idx = pa <= pb ? (a_idx, b_idx) : (b_idx, a_idx)
+    transfer = -(net.prosumpsVec[f_idx].pVal === nothing ? 0.0 : net.prosumpsVec[f_idx].pVal)
+    to_p = net.prosumpsVec[t_idx].pVal === nothing ? 0.0 : net.prosumpsVec[t_idx].pVal
+    loss = transfer - to_p
+    if transfer < 0.0 || loss < 0.0
+      push!(ctx.messages, "notice: HVDC pair $(pair.from)/$(pair.to) — SSH operating points are inconsistent (transfer $(round(transfer; digits = 1)) MW, loss $(round(loss; digits = 1)) MW), kept as fixed injections")
+      continue
+    end
+    from_bus = Sparlectra._effective_bus_name(Dict(idx => name for (name, idx) in net.busDict), net, Sparlectra.getPosumerBusIndex(net.prosumpsVec[f_idx]))
+    to_bus = Sparlectra._effective_bus_name(Dict(idx => name for (name, idx) in net.busDict), net, Sparlectra.getPosumerBusIndex(net.prosumpsVec[t_idx]))
+    try
+      Sparlectra.addHvdcPairControl!(
+        net;
+        from_bus = from_bus,
+        to_bus = to_bus,
+        p_transfer_mw = transfer,
+        loss_mw = loss,
+        from_q_mvar = net.prosumpsVec[f_idx].qVal,
+        to_q_mvar = net.prosumpsVec[t_idx].qVal,
+        name = string("HVDC_", from_bus, "_", to_bus),
+        from_prosumer = f_idx,
+        to_prosumer = t_idx,
+      )
+      kind = pair.segments ? "point-to-point" : "back-to-back"
+      push!(ctx.messages, "notice: HVDC pair attached as controller ($(kind)): $(from_bus) -> $(to_bus), transfer $(round(transfer; digits = 1)) MW, loss $(round(loss; digits = 1)) MW")
+    catch err
+      push!(ctx.messages, "notice: HVDC pair $(from_bus)/$(to_bus) could not be attached ($(sprint(showerror, err))), kept as fixed injections")
+    end
+  end
+  return nothing
+end
+
+"""
 Attach the surviving machine-control plans as `MachineVoltageControl`
 instances. Runs only after `refreshBusTypesFromProsumers!` and isolation
 marking, so the final node types and `isoNodes` are authoritative — a plan
@@ -1820,6 +1945,8 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
           qMax = -q_ssh,
           vm_pu = nothing,
           isRegulated = false,
+          # the mRID lets the HVDC pair attachment find this exact prosumer
+          mrid = conv.mrid,
         ),
       )
       push!(ctx.messages, "notice: $(cls) $(name) — HVDC converter: fixed PCC injection at $(bus) (p=$(round(-p_ssh; digits = 1)) MW, q=$(round(-q_ssh; digits = 1)) MVAr from SSH; DC side not mapped, no angle coupling)")
@@ -1920,6 +2047,9 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
       participationFactor = get(inj, :participationFactor, nothing),
       defer_bus_type_refresh = true,
     )
+    # Record the index per source mRID for post-build steps (HVDC pairs).
+    inj_mrid = get(inj, :mrid, nothing)
+    inj_mrid === nothing || (ctx.prosumer_by_mrid[String(inj_mrid)] = lastindex(net.prosumpsVec))
     # The prosumer constructor collapses the type string to a generic
     # Generator/Load component; keep the concrete class on the comp (same
     # pattern as the AsynchronousMachine marker) so a later CGMES export can
@@ -2084,9 +2214,11 @@ function importCGMES(;
   vset_max_pu::Float64 = CGMES_VSET_MAX_PU,
   strict_placeholder_guards::Bool = false,
   infer_base_voltages::Bool = false,
+  hvdc_mode::Symbol = :injections,
   name::Union{Nothing,String} = nothing,
 )::CGMESImportResult
   vset_min_pu <= vset_max_pu || throw(ArgumentError("importCGMES: vset_min_pu ($(vset_min_pu)) must not exceed vset_max_pu ($(vset_max_pu))"))
+  hvdc_mode in (:injections, :paired_control) || throw(ArgumentError("importCGMES: hvdc_mode must be :injections or :paired_control, got :$(hvdc_mode)"))
   store = loadCGMES(path)
   ctx = _MapCtx(tap_control, ignore_connected; machine_control = machine_control, vset_min_pu = vset_min_pu, vset_max_pu = vset_max_pu, strict_guards = strict_placeholder_guards)
   ignore_connected && push!(ctx.messages, "notice: ignore_connected = true — SSH Terminal.connected flags are overridden, everything is treated as in service")
@@ -2157,6 +2289,18 @@ function importCGMES(;
   n_iso > 0 && push!(ctx.messages, "notice: $(n_iso) isolated bus(es) without any in-service branch — marked isolated, excluded from the power flow")
   tap_control && _disableIneffectiveTapControllers!(net, ctx)
   machine_control && _attachMachineControls!(net, ctx)
+  # HVDC pairing (#297 Draft B): detection runs on the raw store, so even in
+  # the default Stage-0 mode the pairs are named in the messages; only
+  # :paired_control attaches steerable controllers.
+  if hvdc_mode === :paired_control
+    _attachHvdcPairs!(net, ctx, store)
+  else
+    for pair in _detectHvdcPairs(store)
+      pair.extra == 0 || continue
+      kind = pair.segments ? "point-to-point" : "back-to-back"
+      push!(ctx.messages, "notice: HVDC pair detected ($(kind)): $(pair.from) / $(pair.to) — fixed injections (Stage 0); set cgmes_import.hvdc_mode = paired_control for a steerable pair")
+    end
+  end
 
   sc = collectShortCircuitData(store, topo)
   isempty(sc.ac_line_segments) || push!(ctx.messages, "short-circuit data: $(length(sc.ac_line_segments)) lines (read, not evaluated)")

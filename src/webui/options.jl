@@ -80,6 +80,8 @@ const WEBUI_OPTION_SPECS = (
   WebUIOptionSpec("cgmes_import.start_values", "cgmes_start_values", String, :select, "auto", CGMES_START_VALUES_VALUES, :basic, true),
   WebUIOptionSpec("cgmes_import.require_boundary", "cgmes_require_boundary", Bool, :checkbox, true, (), :basic, true),
   WebUIOptionSpec("cgmes_import.infer_base_voltages", "cgmes_infer_base_voltages", Bool, :checkbox, false, (), :basic, true),
+  WebUIOptionSpec("cgmes_import.hvdc_mode", "cgmes_hvdc_mode", String, :select, "injections", CGMES_HVDC_MODE_VALUES, :basic, true),
+  WebUIOptionSpec("matpower_import.matpower_dcline_mode", "matpower_import_dcline_mode", String, :select, "pf_injections", MATPOWER_DCLINE_MODE_VALUES, :expert, true),
   WebUIOptionSpec("matpower_import.auto_profile", "matpower_import_auto_profile", String, :select, "off", MATPOWER_AUTO_PROFILE_VALUES, :expert, true),
   WebUIOptionSpec("matpower_import.ratio", "matpower_import_ratio", String, :select, "normal", MATPOWER_RATIO_VALUES, :expert, true),
   WebUIOptionSpec("matpower_import.shift_sign", "matpower_import_shift_sign", Float64, :number, 1.0, (), :expert, true),

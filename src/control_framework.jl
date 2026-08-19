@@ -59,7 +59,7 @@ control_is_blocked(::AbstractOuterController, ::AbstractControlState)::Bool = fa
 control_status(::AbstractOuterController, ::AbstractControlState)::Symbol = :active
 control_report_rows(::AbstractOuterController, ::Any, ::AbstractControlState, context)::Vector{NamedTuple} = NamedTuple[]
 control_trace_rows(::AbstractOuterController, ::Any, ::AbstractControlState, context)::Vector{NamedTuple} = NamedTuple[]
-collect_outer_controllers(net::Any)::Vector{AbstractOuterController} = AbstractOuterController[_tap_controllers(net)..., _machine_controllers(net)..., _shunt_controllers(net)..., _series_reactance_controllers(net)...]
+collect_outer_controllers(net::Any)::Vector{AbstractOuterController} = AbstractOuterController[_tap_controllers(net)..., _machine_controllers(net)..., _shunt_controllers(net)..., _series_reactance_controllers(net)..., _hvdc_pair_controllers(net)...]
 function control_max_outer_iterations(ctrl::AbstractOuterController)::Int
   hasproperty(ctrl, :max_outer_iters) || return typemax(Int)
   return Int(getproperty(ctrl, :max_outer_iters))

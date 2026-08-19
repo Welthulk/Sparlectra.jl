@@ -952,6 +952,8 @@ function printACPFlowResults(
   printMachineControllerSummary(io, net)
   # Series-reactance (TCSC) controllers print only when present as well.
   printSeriesReactanceControllerSummary(io, net)
+  # HVDC pair controllers print only when present as well.
+  printHvdcPairControllerSummary(io, net)
   if toFile
     close(io)
     #println("Results have been written to $(joinpath(path, filename))")

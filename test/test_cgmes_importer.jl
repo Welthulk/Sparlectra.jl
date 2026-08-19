@@ -1266,6 +1266,18 @@ function run_cgmes_importer_tests()
         s2 = summarizeCGMES(path = fgnb)
         @test s2.boundary_missing_hint
 
+        # #297 Draft B: the DC topology (ACDCConverterDCTerminal, DCNode,
+        # DCLineSegment) groups the four converters into two links; both are
+        # named in the default-mode messages and attached as controllers
+        # under paired_control (FullGrid SSH has a zero side, so the derived
+        # loss equals the transfer; the notice states the numbers honestly).
+        store_fg = Sparlectra.CGMESImporter.loadCGMES([fgbb, fgbd])
+        fg_pairs = Sparlectra.CGMESImporter._detectHvdcPairs(store_fg)
+        @test count(p -> p.extra == 0, fg_pairs) == 2
+        rp = importCGMES(path = [fgbb, fgbd], name = "FullGrid_paired", hvdc_mode = :paired_control)
+        @test length(Sparlectra._hvdc_pair_controllers(rp.net)) == 2
+        @test count(m -> occursin("HVDC pair attached as controller", m), rp.messages) == 2
+
         # Node-breaker sets ship the TP profile too, so they read as
         # bus-branch today: the NB variant must yield the same network as
         # the BB variant of the same grid (no node-breaker stage needed).
@@ -1526,6 +1538,18 @@ function run_cgmes_importer_tests()
           @test haskey(res.net.busDict, "BP_SD-EH_DC1") && haskey(res.net.busDict, "BP_SD-EH_DC1@2")
           # inline VSC stations become fixed PCC injections
           @test count(m -> occursin("HVDC converter: fixed PCC injection", m), msgs) == 2
+          # Stage 0 names the detected pair without attaching a controller
+          @test count(m -> occursin("HVDC pair detected", m), msgs) == 1
+          @test isempty(Sparlectra._hvdc_pair_controllers(res.net))
+
+          # #297 Draft B: paired_control derives the GA-BH transfer and loss
+          # from the two SSH operating points (-100.0 / +109.1 MW)
+          res_paired = importCGMES(path = z, name = "ReliCapGrid_CGM_paired", multi_slack = true, hvdc_mode = :paired_control)
+          paired = Sparlectra._hvdc_pair_controllers(res_paired.net)
+          @test length(paired) == 1
+          @test only(paired).p_transfer_mw == 109.1
+          @test isapprox(only(paired).loss_mw, 9.1; atol = 1e-9)
+          @test any(m -> occursin("HVDC pair attached as controller", m), res_paired.messages)
 
           # the assembled model must solve and reproduce the delivery's SV
           # state. Q-limits stay off here: the active-set path currently cannot

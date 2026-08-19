@@ -81,6 +81,7 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "matpower_import.import_for001_contingencies",
   "matpower_import.matpower_dcline_mode",
   "matpower_import.net_cache.enabled",
+  "cgmes_import.hvdc_mode",
   "matpower_export.write_solution",
   "webui.warmup",
   "transformer.tap_changer_model",
@@ -170,6 +171,8 @@ function _validate_gui_override_value(key::String, value)
     _validate_allowed_symbol(key, _as_symbol_cfg(value), MATPOWER_COMPARE_VOLTAGE_REFERENCE_VALUES)
   elseif key == "matpower_import.matpower_dcline_mode"
     _validate_allowed_symbol(key, _as_symbol_cfg(value), MATPOWER_DCLINE_MODE_VALUES)
+  elseif key == "cgmes_import.hvdc_mode"
+    _validate_allowed_symbol(key, _as_symbol_cfg(value), CGMES_HVDC_MODE_VALUES)
   elseif key == "transformer.tap_changer_model"
     _validate_allowed_symbol(key, _as_symbol_cfg(value), TRANSFORMER_TAP_CHANGER_MODEL_VALUES)
   elseif key == "output.logfile_results"

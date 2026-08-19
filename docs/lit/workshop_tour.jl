@@ -38,18 +38,24 @@
 # 3. Transformer tap control (OLTC)
 # 4. Voltage-dependent reactive power, Q(U)
 # 5. Remote voltage control by a machine
-# 6. State estimation
+# 6. A steerable HVDC link (back-to-back pairing)
+# 7. State estimation
 #
 # > **Note:** On Google Colab the install cell takes a few minutes on a
 # > fresh session (package download and precompilation). Colab's Julia
 # > version may change over time; this notebook targets Julia ≥ 1.12.
 
 #nb # ## Setup (Colab)
-#nb # Installing Sparlectra takes a few minutes on a fresh Colab
-#nb # session (package download + precompilation). Run this cell first,
-#nb # and only once per session.
+#nb # This cell installs Sparlectra into a fresh temporary environment.
+#nb # The isolation matters on Colab: the shared default environment ships
+#nb # many preinstalled packages, and installing anything there triggers
+#nb # precompilation of that whole stack. Run this cell first, once per
+#nb # session; it takes a few minutes (download + precompilation).
 #nb using Pkg
+#nb Pkg.activate(temp = true)
 #nb Pkg.add("Sparlectra")
+#nb ## To test an unreleased development version instead, use:
+#nb ## Pkg.add(url = "https://github.com/Welthulk/Sparlectra.jl", rev = "main")
 
 # ## Warm-up
 #
@@ -403,7 +409,54 @@ result2 = run_control!(net_rvc2; controllers = collect_outer_controllers(net_rvc
 println("limited:      Vm(Load) = ", round(get_bus_vm_pu(net_rvc2, "Load"); digits = 4), " pu (target 1.05)")
 printMachineControllerSummary(stdout, net_rvc2)
 
-# ## Chapter 6: state estimation
+# ## Chapter 6: a steerable HVDC link (back-to-back pairing)
+#
+# Two AC areas joined ONLY by an HVDC converter pair: no AC tie, no angle
+# coupling, so the areas stay two separate electrical islands with their
+# own references. The transfer through the link is a control setpoint, not
+# the result of an angle difference. First the Stage-0 view: two fixed
+# injections reproduce a snapshot of 80 MW transfer with 4 MW converter
+# loss.
+
+function build_b2b(name::String)
+  net = Net(name = name, baseMVA = 100.0)
+  for b in ("A1", "A2", "C1", "C2")
+    addBus!(net = net, busName = b, vn_kV = 380.0)
+  end
+  addPIModelACLine!(net = net, fromBus = "A1", toBus = "A2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "C1", toBus = "C2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+  addProsumer!(net = net, busName = "A1", type = "EXTERNALNETWORKINJECTION", referencePri = "A1", vm_pu = 1.0, va_deg = 0.0)
+  addProsumer!(net = net, busName = "C1", type = "EXTERNALNETWORKINJECTION", referencePri = "C1", vm_pu = 1.0, va_deg = 0.0)
+  addProsumer!(net = net, busName = "A2", type = "ENERGYCONSUMER", p = 40.0, q = 10.0)
+  addProsumer!(net = net, busName = "C2", type = "ENERGYCONSUMER", p = 50.0, q = 12.0)
+  addProsumer!(net = net, busName = "A2", type = "GENERATOR", p = -80.0, q = 0.0)  ## converter, exports
+  addProsumer!(net = net, busName = "C2", type = "GENERATOR", p = 76.0, q = 0.0)   ## converter, receives 80 - 4
+  return net
+end
+
+net6 = build_b2b("tour_b2b")
+etime, ite = solve!(net6; islands_enabled = true)
+println("two islands solved in ", ite, " iteration(s)")
+
+# Reading aid: both areas balance on their own reference; the link carries
+# whatever the snapshot says. To make it steerable, pair the two converter
+# injections: `addHvdcPairControl!` enforces the invariant
+# $P_\text{to} = P_\text{transfer} - P_\text{loss}$ exactly and lets you
+# retarget the transfer.
+
+addHvdcPairControl!(net6; from_bus = "A2", to_bus = "C2", p_transfer_mw = 120.0, loss_mw = 4.0, p_rating_mw = 150.0)
+result6 = run_control!(net6; controllers = collect_outer_controllers(net6), pf_config = PowerFlowConfig(method = :rectangular, max_iter = 25, tol = 1e-8), control_config = ControlConfig(max_outer_iterations = 8, trace = false))
+printHvdcPairControllerSummary(net6)
+
+# Reading aid: the link now carries 120 MW instead of 80, area A generates
+# 40 MW more, area C receives it (minus the 4 MW converter loss), and the
+# island structure is unchanged: HVDC never couples the angles. The same
+# controller attaches automatically on import when a MATPOWER case sets
+# `matpower_dcline_mode = paired_control` or a CGMES delivery is loaded
+# with `hvdc_mode = paired_control`. Theory:
+# [HVDC Back-to-Back](https://welthulk.github.io/Sparlectra.jl/hvdc_back_to_back/).
+
+# ## Chapter 7: state estimation
 #
 # Close the loop: solve a reference power flow on the chapter-1 network,
 # derive a noisy synthetic measurement set from it, check observability,

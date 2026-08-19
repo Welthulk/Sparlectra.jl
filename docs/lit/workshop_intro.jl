@@ -37,10 +37,16 @@
 # > notebook targets Julia ≥ 1.12.
 
 #nb # ## Setup (Colab)
-#nb # Installing Sparlectra takes a few minutes on a fresh Colab
-#nb # session (package download + precompilation). Run this cell first.
+#nb # This cell installs Sparlectra into a fresh temporary environment.
+#nb # The isolation matters on Colab: the shared default environment ships
+#nb # many preinstalled packages, and installing anything there triggers
+#nb # precompilation of that whole stack. Run this cell first, once per
+#nb # session; it takes a few minutes (download + precompilation).
 #nb using Pkg
+#nb Pkg.activate(temp = true)
 #nb Pkg.add("Sparlectra")
+#nb ## To test an unreleased development version instead, use:
+#nb ## Pkg.add(url = "https://github.com/Welthulk/Sparlectra.jl", rev = "main")
 
 # ## Load the package
 

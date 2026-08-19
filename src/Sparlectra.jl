@@ -364,6 +364,10 @@ export
   clearMachineControllers!,
   addShuntVoltageControl!,                # Add an SVC-style shunt voltage controller.
   addSeriesReactanceControl!,             # Add a TCSC-like series-reactance controller on a line branch (#297).
+  addHvdcPairControl!,                    # Add a back-to-back HVDC pairing controller on two converter injections (#297).
+  HvdcPairControl,                        # Controller type of the HVDC pair (element rows, isa checks).
+  clearHvdcPairControllers!,              # Remove all HVDC pair controllers from a net.
+  printHvdcPairControllerSummary,         # Engineering summary of the registered HVDC pairs.
   applyConfiguredControllers!,            # Instantiate controllers declared under control.controllers (#305).
   printSeriesReactanceControllerSummary,  # Engineering-style summary of the registered TCSC controllers.
   clearShuntControllers!,
@@ -596,6 +600,7 @@ include("tap_control.jl")
 include("machine_control.jl")
 include("shunt_control.jl")
 include("series_reactance_control.jl")
+include("hvdc_pair_control.jl")
 include("controller_config.jl")
 include("busdata.jl")
 include("MatpowerIO.jl")

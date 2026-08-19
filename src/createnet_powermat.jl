@@ -261,8 +261,8 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
   pv_voltage_source = MatpowerIO._normalize_pv_voltage_source(matpower_pv_voltage_source)
   pv_voltage_rows = MatpowerIO.pv_voltage_reference_rows(mpc; matpower_pv_voltage_source = pv_voltage_source, tol = matpower_pv_voltage_mismatch_tol_pu, warn = log)
   pv_vset_by_bus = Dict(row.busI => row.imported_vset for row in pv_voltage_rows)
-  matpower_dcline_mode in (:reject_active, :ignore_inactive, :pf_injections) || throw(ArgumentError("matpower_dcline_mode must be one of :reject_active, :ignore_inactive, :pf_injections."))
-  matpower_dcline_mode === :pf_injections || MatpowerIO.assert_no_active_dcline(mpc)
+  matpower_dcline_mode in (:reject_active, :ignore_inactive, :pf_injections, :paired_control) || throw(ArgumentError("matpower_dcline_mode must be one of :reject_active, :ignore_inactive, :pf_injections, :paired_control."))
+  matpower_dcline_mode in (:pf_injections, :paired_control) || MatpowerIO.assert_no_active_dcline(mpc)
   bus_name_by_orig = _matpower_bus_names(mpc, busData, BUS_I; apply_bus_names = apply_bus_names)
   bus_original_name_by_orig = Dict{Int,String}()
   raw_bus_names = _matpower_metadata_vector(mpc, :bus_name)
@@ -570,7 +570,7 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
     )
   end
 
-  if matpower_dcline_mode === :pf_injections
+  if matpower_dcline_mode in (:pf_injections, :paired_control)
     dcline = _matpower_metadata_vector(mpc, :dcline)
     if dcline !== nothing
       @inbounds for r in axes(dcline, 1)
@@ -639,6 +639,32 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
         ))
       end
       !isempty(myNet.matpowerDclineMetadata) && @info "MATPOWER active mpc.dcline rows imported using toggle_dcline-compatible PF injections" active_dcline_count = length(myNet.matpowerDclineMetadata)
+      # :paired_control (#297 Draft B): the same injections become steerable.
+      # One HvdcPairControl per dcline row, seeded with the row's transfer,
+      # loss model, and fixed terminal Q; a voltage-controlled terminal is
+      # already PV via its injection, so that side stays P-only.
+      if matpower_dcline_mode === :paired_control
+        for m in myNet.matpowerDclineMetadata
+          addHvdcPairControl!(
+            myNet;
+            from_bus = m.from_bus_name,
+            to_bus = m.to_bus_name,
+            p_transfer_mw = m.pf_mw,
+            loss_mw = m.loss0_mw,
+            loss_fraction = m.loss1,
+            from_q_mvar = m.from_voltage_controlled ? nothing : m.qf_mvar,
+            to_q_mvar = m.to_voltage_controlled ? nothing : m.qt_mvar,
+            from_qmin_mvar = m.qminf_mvar,
+            from_qmax_mvar = m.qmaxf_mvar,
+            to_qmin_mvar = m.qmint_mvar,
+            to_qmax_mvar = m.qmaxt_mvar,
+            name = string("DCLINE_", m.orig_index),
+            from_prosumer = m.from_prosumer,
+            to_prosumer = m.to_prosumer,
+          )
+        end
+        isempty(myNet.matpowerDclineMetadata) || @info "MATPOWER dcline rows attached as HVDC pair controllers (paired_control)" controller_count = length(myNet.matpowerDclineMetadata)
+      end
     end
   end
 
