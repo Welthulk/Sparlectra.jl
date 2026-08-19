@@ -1,26 +1,20 @@
-# Version 0.9.8 - unreleased
+# Version 0.9.8 - 2026-08-21
 
 **Steerable HVDC links.** `addHvdcPairControl!` couples the two converter
-injections of a back-to-back or point-to-point link (exact pairing
-invariant, losses, per-terminal Q or voltage target, honest `at_limit`).
-Opt-in from both importers: `matpower_import.matpower_dcline_mode =
-paired_control` and `cgmes_import.hvdc_mode = paired_control`; Stage-0
-fixed injections stay the default. A grid-forming variant
-(`mode = :island_feed`) feeds an island whose only source is the receiving
-converter: the island reference sits at the converter PCC and the sending
-side mirrors the island draw plus loss each outer iteration. See
+injections of a back-to-back link with exact loss accounting, per-terminal
+Q or voltage targets, and honest `at_limit`. Both importers attach pairs
+opt-in (`paired_control`); Stage-0 fixed injections stay the default. A
+grid-forming `mode = :island_feed` feeds an island whose only source is
+the receiving converter. See
 [HVDC Back-to-Back](hvdc_back_to_back.md). (#297)
 
-- Re-running the one-line install detects an existing copy that is older
-  than the latest tagged release and offers the update
-  (`SPARLECTRA_UPDATE=1/0` for unattended installs); the previous copy is
-  kept as `Sparlectra.old`.
-- Leaner installs: the unused hard dependencies DataFrames and
-  InlineStrings are removed, cutting the dependency tree from 76 to 54
-  packages. The workshop notebooks now install from GitHub `main` into a
-  fresh temporary environment, so on Colab the preinstalled runtime stack
-  is no longer re-precompiled; commented lines in the setup cell switch to
-  another branch or to the registered release.
+- The one-line install detects an older existing copy and offers the
+  update (`SPARLECTRA_UPDATE=1/0`); the previous copy is kept as
+  `Sparlectra.old`.
+- Leaner, faster installs: two unused hard dependencies dropped (76 to 54
+  packages), and the workshop notebooks now install into a fresh temporary
+  environment from GitHub `main`, keeping Colab's preinstalled stack out
+  of precompilation.
 
 # Version 0.9.7 - 2026-08-20
 
