@@ -20,7 +20,7 @@ jobs:
   sbom:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: julia-actions/setup-julia@v3
         with:
           version: '1'
@@ -46,7 +46,7 @@ jobs:
         run: gh release upload "${{ github.event.release.tag_name }}" "${{ steps.sbomname.outputs.file }}"
       - name: Upload as workflow artifact (manual run)
         if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: sbom
           path: ${{ steps.sbomname.outputs.file }}
