@@ -449,11 +449,37 @@ println("two islands solved in ", ite, " iteration(s)")
 
 addHvdcPairControl!(net6; from_bus = "A2", to_bus = "C2", p_transfer_mw = 120.0, loss_mw = 4.0, p_rating_mw = 150.0)
 result6 = run_control!(net6; controllers = collect_outer_controllers(net6), pf_config = PowerFlowConfig(method = :rectangular, max_iter = 25, tol = 1e-8), control_config = ControlConfig(max_outer_iterations = 8, trace = false))
-printHvdcPairControllerSummary(net6)
+calcNetLosses!(net6)
+printACPFlowResults(net6, etime, result6.last_pf_iterations, 1e-8)
 
-# Reading aid: the link now carries 120 MW instead of 80, area A generates
-# 40 MW more, area C receives it (minus the 4 MW converter loss), and the
-# island structure is unchanged: HVDC never couples the angles. The same
+# Reading aid: the HVDC pair reports inside the `Control` section of the
+# classical result output, in the same aligned label/value layout as the
+# transformer, machine, and TCSC summaries (`printHvdcPairControllerSummary`
+# prints the same block standalone). The link now carries 120 MW instead
+# of 80: in the branch table the line A1 -> A2 supplies 40 MW more (area
+# A's reference generates the export), while C1 -> C2 turns around and
+# carries the received power away from the converter bus.
+#
+# **Why does the solver still report two islands?** An AC voltage angle is
+# only defined *within* one synchronous island, relative to that island's
+# own reference. The link transfers power but no angle information (there
+# is no branch, no admittance, no angle coupling between the areas), so
+# each island keeps its own reference pinned at 0 degrees. The two-island
+# report is the model telling you the areas are asynchronous; it would be
+# wrong for it to disappear. The peek below makes that visible: both
+# reference buses sit at exactly 0.0 deg, and comparing an A-side angle
+# with a C-side angle carries no information, because each is measured
+# against a different zero.
+
+bus_va_deg(net, bus) = net.nodeVec[net.busDict[bus]]._va_deg  ## peek into the solved state
+for (bus, role) in (("A1", "reference of island A"), ("A2", "converter, exports 120 MW"), ("C1", "reference of island C"), ("C2", "converter, receives 116 MW"))
+  println(rpad(bus, 4), rpad(role, 27), ": Vm = ", round(get_bus_vm_pu(net6, bus); digits = 4), " pu, Va = ", round(bus_va_deg(net6, bus); digits = 3), " deg")
+end
+
+# Reading aid: within island A the angle falls toward A2 (the converter
+# bus imports 120 MW plus the local load from the reference), within
+# island C it rises toward C2 (the converter bus feeds the island). Each
+# gradient is meaningful only against its own 0-degree reference. The same
 # controller attaches automatically on import when a MATPOWER case sets
 # `matpower_dcline_mode = paired_control` or a CGMES delivery is loaded
 # with `hvdc_mode = paired_control`. Theory:
