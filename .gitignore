@@ -58,8 +58,9 @@ Task_*.md
 
 # Local-only German draft of the slack-vs-source page (accidentally
 # committed once — keep untracked)
-docs/dev/slack_vs_source_de.md
-docs/dev/slack_vs_source_de.html
+# Developer notes stay local (removed from the repo 2026-08-20; a copy
+# lives in ~/sparlectra-docs-dev-backup)
+docs/dev/
 
 .sparlectra_net_cache/
 data/CGMES/
