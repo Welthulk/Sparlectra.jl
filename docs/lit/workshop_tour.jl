@@ -56,6 +56,9 @@
 #nb Pkg.add(url = "https://github.com/Welthulk/Sparlectra.jl", rev = "main")
 #nb ## To test another branch, set rev to its name, e.g. rev = "dev/r0.9.8".
 #nb ## For the latest registered release use: Pkg.add("Sparlectra")
+#nb ## Switching versions in a running session? A "[loaded: ...]" note means
+#nb ## the old version is still active — restart the runtime, then rerun
+#nb ## this cell.
 
 # ## Warm-up
 #
