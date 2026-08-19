@@ -42,6 +42,24 @@ function _build_hvdc_two_area_net(name::String; seed_from_p::Float64 = -80.0, se
   return net, from_idx, to_idx
 end
 
+# island_feed fixture: island A keeps a classical reference, island C is fed
+# ONLY by the grid-forming converter at C2 (modeled as the island reference);
+# the island load hangs at the far end C1 so the PCC line carries real flow
+function _build_hvdc_island_feed_net(name::String; sending_mw::Float64 = 0.0)
+  net = Net(name = name, baseMVA = 100.0)
+  for b in ("A1", "A2", "C1", "C2")
+    addBus!(net = net, busName = b, vn_kV = 380.0)
+  end
+  addPIModelACLine!(net = net, fromBus = "A1", toBus = "A2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "C2", toBus = "C1", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+  addProsumer!(net = net, busName = "A1", type = "EXTERNALNETWORKINJECTION", referencePri = "A1", vm_pu = 1.0, va_deg = 0.0)
+  addProsumer!(net = net, busName = "A2", type = "ENERGYCONSUMER", p = 40.0, q = 10.0)
+  addProsumer!(net = net, busName = "C2", type = "EXTERNALNETWORKINJECTION", referencePri = "C2", vm_pu = 1.0, va_deg = 0.0)
+  addProsumer!(net = net, busName = "C1", type = "ENERGYCONSUMER", p = 50.0, q = 12.0)
+  addProsumer!(net = net, busName = "A2", type = "GENERATOR", p = sending_mw, q = 0.0)
+  return net, length(net.prosumpsVec)
+end
+
 function _hvdc_pf_cfg()
   return PowerFlowConfig(method = :rectangular, max_iter = 40, tol = 1e-9)
 end
@@ -236,6 +254,57 @@ mpc.dcline = [
       @test result2.converged == true
       @test net_paired.prosumpsVec[m.from_prosumer].pVal == -40.0
       @test net_paired.prosumpsVec[m.to_prosumer].pVal == 40.0 - (3.0 + 0.0125 * 40.0)
+    end
+
+    @testset "island_feed mode (grid-forming to side)" begin
+      # mode-dependent validation rules
+      net_val, _ = _build_hvdc_island_feed_net("hvdc_if_val")
+      @test_throws ErrorException addHvdcPairControl!(net_val; from_bus = "A2", to_bus = "C2", mode = :island_feed, p_transfer_mw = 10.0)
+      @test_throws ErrorException addHvdcPairControl!(net_val; from_bus = "A2", to_bus = "C2", mode = :island_feed, to_q_mvar = 5.0)
+      @test_throws ErrorException addHvdcPairControl!(net_val; from_bus = "A2", to_bus = "C2", mode = :bogus)
+      net_val2, _, _ = _build_hvdc_two_area_net("hvdc_if_val2")
+      # island_feed needs the to side AS the island reference ...
+      @test_throws ErrorException addHvdcPairControl!(net_val2; from_bus = "B2", to_bus = "B4", mode = :island_feed)
+      # ... and setpoint mode still needs its transfer
+      @test_throws ErrorException addHvdcPairControl!(net_val2; from_bus = "B2", to_bus = "B4")
+
+      # happy path: the mirror settles on island draw + loss without touching
+      # the reference injection
+      net, s_idx = _build_hvdc_island_feed_net("hvdc_if_run")
+      ctrl = addHvdcPairControl!(net; from_bus = "A2", to_bus = "C2", mode = :island_feed, loss_mw = 4.0)
+      result = _hvdc_run!(net)
+      @test result.converged
+      @test ctrl.converged && !ctrl.at_limit && ctrl.status == :converged
+      # island draw = 50 MW load plus a small line loss
+      draw = ctrl.p_transfer_mw - 4.0
+      @test 50.0 < draw < 51.0
+      # the sending side mirrors draw + loss exactly
+      @test isapprox(net.prosumpsVec[s_idx].pVal, -ctrl.p_transfer_mw; atol = 1e-9)
+      rows = Sparlectra.control_report_rows(ctrl, net, Sparlectra.NoControlState(), (outer_iteration = ctrl.outer_iters,))
+      @test rows[1].mode == :island_feed
+      elems = controllableElements(net)
+      row = only(filter(e -> e.actuator == :hvdc_p_transfer_mw, elems))
+      @test row.device == "back-to-back HVDC pair (grid-forming)"
+
+      # rating clamp: the island draws more than the link can carry; honest
+      # at_limit, sending side pinned at the rating (the island's slack still
+      # balances in the model, the flag marks the violated rating)
+      net_cl, s_cl = _build_hvdc_island_feed_net("hvdc_if_clamp")
+      ctrl_cl = addHvdcPairControl!(net_cl; from_bus = "A2", to_bus = "C2", mode = :island_feed, loss_mw = 4.0, p_rating_mw = 40.0)
+      result_cl = _hvdc_run!(net_cl)
+      @test result_cl.converged == true    # blocked counts as done (TCSC convention)
+      @test !ctrl_cl.converged
+      @test ctrl_cl.at_limit && ctrl_cl.status == :at_limit
+      @test isapprox(net_cl.prosumpsVec[s_cl].pVal, -40.0; atol = 1e-9)
+
+      # YAML declaration with mode: island_feed instantiates and converges
+      net_y, sy_idx = _build_hvdc_island_feed_net("hvdc_if_yaml")
+      cfg = ControlConfig(controllers = Any[Dict{String,Any}("type" => "hvdc_pair", "name" => "if_link", "from_bus" => "A2", "to_bus" => "C2", "mode" => "island_feed", "loss_mw" => 4.0)])
+      @test applyConfiguredControllers!(net_y, cfg) == 1
+      ctrl_y = only(Sparlectra._hvdc_pair_controllers(net_y))
+      @test ctrl_y.mode == :island_feed
+      _hvdc_run!(net_y)
+      @test isapprox(net_y.prosumpsVec[sy_idx].pVal, net.prosumpsVec[s_idx].pVal; atol = 1e-9)
     end
 
     @testset "element rows and summary output" begin

@@ -17,7 +17,10 @@
 # purpose: back-to-back HVDC pairing controller demo (#297 Draft B): two AC
 #          areas coupled only by a converter pair, solved as Stage-0 fixed
 #          injections first, then with addHvdcPairControl! steering the
-#          transfer to a new target while the pairing invariant holds
+#          transfer to a new target while the pairing invariant holds, and
+#          finally the grid-forming island_feed mode where the receiving
+#          converter IS the island reference and the sending side mirrors
+#          the island draw
 
 using Sparlectra
 
@@ -79,7 +82,30 @@ function main()
   for e in controllableElements(net1)
     println("  ", e.name, ": actuator ", e.actuator, " target ", e.target, " = ", e.target_value, " (status ", e.status, ")")
   end
-  return (stage0 = net0, paired = net1, result = result)
+
+  println()
+  println("=== Grid-forming: the link feeds an island without any other source ===")
+  # island C has no classical slack: the receiving converter at C2 is the
+  # island reference (grid-forming Vf), the load hangs at the far end C1,
+  # and the controller mirrors the island draw plus loss onto the sender
+  net2 = Net(name = "b2b_island_feed", baseMVA = 100.0)
+  for b in ("A1", "A2", "C1", "C2")
+    addBus!(net = net2, busName = b, vn_kV = 380.0)
+  end
+  addPIModelACLine!(net = net2, fromBus = "A1", toBus = "A2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net2, fromBus = "C2", toBus = "C1", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+  addProsumer!(net = net2, busName = "A1", type = "EXTERNALNETWORKINJECTION", referencePri = "A1", vm_pu = 1.0, va_deg = 0.0)
+  addProsumer!(net = net2, busName = "A2", type = "ENERGYCONSUMER", p = 40.0, q = 10.0)
+  addProsumer!(net = net2, busName = "C2", type = "EXTERNALNETWORKINJECTION", referencePri = "C2", vm_pu = 1.0, va_deg = 0.0)
+  addProsumer!(net = net2, busName = "C1", type = "ENERGYCONSUMER", p = 50.0, q = 12.0)
+  addProsumer!(net = net2, busName = "A2", type = "GENERATOR", p = 0.0, q = 0.0)
+  ctrl2 = addHvdcPairControl!(net2; from_bus = "A2", to_bus = "C2", mode = :island_feed, loss_mw = 4.0, p_rating_mw = 150.0)
+  result2 = run_control!(net2; controllers = collect_outer_controllers(net2), pf_config = PowerFlowConfig(method = :rectangular, max_iter = 30, tol = 1e-8), control_config = ControlConfig(max_outer_iterations = 10, trace = true))
+  println("outer loop: ", result2.status, " after ", result2.outer_iterations, " iteration(s)")
+  printHvdcPairControllerSummary(net2)
+  println("the island decided: draw ", round(ctrl2.p_transfer_mw - 4.0; digits = 3), " MW, mirrored as ", round(-ctrl2.p_transfer_mw; digits = 3), " MW on the sending side")
+
+  return (stage0 = net0, paired = net1, result = result, island_feed = net2)
 end
 
 run_example(main)

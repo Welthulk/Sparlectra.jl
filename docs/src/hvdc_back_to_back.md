@@ -77,8 +77,37 @@ controllers: `converged` only when the (possibly clamped) transfer equals
 the target and every voltage target sits inside its deadband; `at_limit`
 when the rating clamps the transfer or a voltage side is stuck at its
 reactive bound. The reference injection of an island can never be part of
-a pair (its power balances the island), and a PV-regulated converter
-terminal stays P-only.
+a setpoint pair (its power balances the island), and a PV-regulated
+converter terminal stays P-only.
+
+## Grid-forming mode (`mode = :island_feed`)
+
+A setpoint and a slack exclude each other: the pairing needs the transfer
+as a given, while a reference's power is the outcome of its island's
+balance. The controller therefore refuses to pair a reference bus. The
+converse is its own valid model, a **grid-forming (Vf) converter** feeding
+an island that has no other source, such as an offshore platform or an
+asynchronously supplied island grid.
+
+`addHvdcPairControl!(net; from_bus, to_bus, mode = :island_feed, ...)`
+models exactly that: the receiving converter is declared as the reference
+of its island (an `EXTERNALNETWORKINJECTION` with `referencePri` at the
+PCC), it holds voltage and angle there, and its output is whatever the
+island draws. The dependency of the pairing inverts: instead of
+`P_to = transfer - loss` with a given transfer, each outer iteration reads
+the island balance and mirrors it onto the sending side,
+`P_from = -(P_island + loss)`. `p_transfer_mw` must be omitted, the to
+side carries neither `q_mvar` nor `vset_pu` (the slack holds its own
+voltage), and the mirror counts as settled when applied and derived
+transfer agree within `deadband_p_mw` (default `1e-3` MW).
+
+`p_rating_mw` keeps its honest semantics: once the island draw exceeds the
+rating, the sending side is pinned at the rating with `at_limit = true`
+and `converged = false`. Note the model's limit here: the power flow's
+reference always balances its island, so the deficit does not appear as a
+voltage collapse in the solution; the flag is what marks the violated
+rating. Grid-forming links are attached programmatically or via YAML
+(`mode: island_feed`); the importers attach setpoint pairs only.
 
 ## Data sources
 

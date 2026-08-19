@@ -494,6 +494,93 @@ controller attaches automatically on import when a MATPOWER case sets
 with `hvdc_mode = paired_control`. Theory:
 [HVDC Back-to-Back](https://welthulk.github.io/Sparlectra.jl/hvdc_back_to_back/).
 
+### HVDC as the island's source (grid-forming)
+
+Can the converter itself BE the reference (slack) of island C? Not as
+one side of the paired controller: the pairing treats the transfer as a
+*setpoint* on both sides, while a slack's power is the *outcome* of its
+island's balance (load plus losses). One injection cannot be both at
+once, so `addHvdcPairControl!` refuses a reference bus by design.
+
+The converse is a perfectly valid model though, called a grid-forming
+(Vf) converter: the receiving converter IS the island's source. It
+holds voltage and angle at its PCC, and its power output follows from
+whatever the island draws. Think of an offshore platform or an
+asynchronously supplied island grid. Island C below has NO classical
+slack at all:
+
+````@example workshop_tour
+function build_b2b_source(name::String; sending_mw::Float64 = 0.0)
+  net = Net(name = name, baseMVA = 100.0)
+  for b in ("A1", "A2", "C1", "C2")
+    addBus!(net = net, busName = b, vn_kV = 380.0)
+  end
+  addPIModelACLine!(net = net, fromBus = "A1", toBus = "A2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "C2", toBus = "C1", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+  addProsumer!(net = net, busName = "A1", type = "EXTERNALNETWORKINJECTION", referencePri = "A1", vm_pu = 1.0, va_deg = 0.0)
+  addProsumer!(net = net, busName = "A2", type = "ENERGYCONSUMER", p = 40.0, q = 10.0)
+  # island C: no classical slack. The receiving converter is the
+  # grid-forming source, holding 1.0 pu / 0 deg at its PCC bus C2.
+  addProsumer!(net = net, busName = "C2", type = "EXTERNALNETWORKINJECTION", referencePri = "C2", vm_pu = 1.0, va_deg = 0.0)
+  addProsumer!(net = net, busName = "C1", type = "ENERGYCONSUMER", p = 50.0, q = 12.0)
+  # sending-side converter; mirrored below once the island balance is known
+  addProsumer!(net = net, busName = "A2", type = "GENERATOR", p = sending_mw, q = 0.0)
+  return net
+end
+
+net7 = build_b2b_source("tour_b2b_source")
+solve!(net7; islands_enabled = true)
+p_island_c = get_branch_p_from_to_mw(net7, "C2", "C1")
+println("grid-forming converter at C2 delivers ", round(p_island_c; digits = 3), " MW (island C load + line loss)")
+for bus in ("C2", "C1")
+  println("  ", bus, ": Vm = ", round(get_bus_vm_pu(net7, bus); digits = 4), " pu, Va = ", round(bus_va_deg(net7, bus); digits = 3), " deg")
+end
+````
+
+Reading aid: the transfer is no longer a setpoint. Island C decides how
+much it draws (load plus line loss), the converter delivers exactly
+that, and the island's reference sits at the converter PCC: 1.0 pu and
+0 degrees at C2, while the load bus C1 hangs below it. The sending side
+must now *mirror* the island draw plus the converter loss:
+
+````@example workshop_tour
+net8 = build_b2b_source("tour_b2b_mirrored"; sending_mw = -(p_island_c + 4.0))
+solve!(net8; islands_enabled = true)
+println("sending side A1 -> A2 carries ", round(get_branch_p_from_to_mw(net8, "A1", "A2"); digits = 3), " MW (40 MW local load + ", round(p_island_c + 4.0; digits = 3), " MW export + line loss)")
+````
+
+And the refusal from above, demonstrated: pairing the grid-forming
+converter is rejected, because its injection is the island balance, not
+a setpoint:
+
+````@example workshop_tour
+try
+  addHvdcPairControl!(net8; from_bus = "A2", to_bus = "C2", p_transfer_mw = 50.0)
+catch err
+  println(sprint(showerror, err))
+end
+````
+
+The pairing controller automates exactly this mirror: `mode =
+:island_feed` reads the island balance after each solve and keeps the
+sending side matched, with an honest `at_limit` once the island draw
+exceeds `p_rating_mw`. No transfer setpoint is given, the island
+decides:
+
+````@example workshop_tour
+net9 = build_b2b_source("tour_b2b_grid_forming")
+addHvdcPairControl!(net9; from_bus = "A2", to_bus = "C2", mode = :island_feed, loss_mw = 4.0, p_rating_mw = 150.0)
+result9 = run_control!(net9; controllers = collect_outer_controllers(net9), pf_config = PowerFlowConfig(method = :rectangular, max_iter = 25, tol = 1e-8), control_config = ControlConfig(max_outer_iterations = 8, trace = false))
+printHvdcPairControllerSummary(net9)
+````
+
+Reading aid: the summary shows the mirrored transfer (island draw plus
+the 4 MW converter loss) and marks the to injection as the island
+balance outcome. Try `p_rating_mw = 40.0`: the sending side pins at the
+rating with `at_limit = true` and `converged = false`. The island's
+reference still balances in the model (a power flow cannot show the
+collapse), so the honest flag is what marks the undeliverable draw.
+
 ## Chapter 7: state estimation
 
 Close the loop: solve a reference power flow on the chapter-1 network,

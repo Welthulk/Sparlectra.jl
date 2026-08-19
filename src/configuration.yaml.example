@@ -532,7 +532,8 @@ control:
   #   machine_voltage   -> addMachineVoltageControl!   (bus, target_bus, target_vm_pu, ...)
   #   shunt_voltage     -> addShuntVoltageControl!     (bus, target_vm_pu, bs_min_mvar, bs_max_mvar, ...)
   #   series_reactance  -> addSeriesReactanceControl!  (from_bus, to_bus, p_target_mw, x_min_pu, x_max_pu, ...)
-  #   hvdc_pair         -> addHvdcPairControl!         (from_bus, to_bus, p_transfer_mw, loss_mw, ...)
+  #   hvdc_pair         -> addHvdcPairControl!         (from_bus, to_bus, p_transfer_mw, loss_mw, ...;
+  #                        mode: island_feed feeds an island whose reference is the receiving converter)
   # Example:
   #   controllers:
   #     tap_T1:

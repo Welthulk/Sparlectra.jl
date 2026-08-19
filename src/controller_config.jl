@@ -52,8 +52,11 @@ const _CONTROLLER_TYPE_SPECS = Dict{String,NamedTuple}(
     supports_name = true,
   ),
   "hvdc_pair" => (
-    required = ("from_bus", "to_bus", "p_transfer_mw"),
-    optional = ("loss_mw", "loss_fraction", "p_rating_mw", "from_q_mvar", "to_q_mvar", "from_vset_pu", "to_vset_pu", "from_qmin_mvar", "from_qmax_mvar", "to_qmin_mvar", "to_qmax_mvar", "deadband_vm_pu", "max_outer_iters", "enabled", "name", "from_prosumer", "to_prosumer"),
+    # p_transfer_mw is required by the device function in setpoint mode and
+    # forbidden in island_feed, so the spec keeps it optional and lets
+    # addHvdcPairControl! enforce the mode-dependent rule
+    required = ("from_bus", "to_bus"),
+    optional = ("mode", "p_transfer_mw", "deadband_p_mw", "loss_mw", "loss_fraction", "p_rating_mw", "from_q_mvar", "to_q_mvar", "from_vset_pu", "to_vset_pu", "from_qmin_mvar", "from_qmax_mvar", "to_qmin_mvar", "to_qmax_mvar", "deadband_vm_pu", "max_outer_iters", "enabled", "name", "from_prosumer", "to_prosumer"),
     symbols = (),
     supports_name = true,
   ),
@@ -235,7 +238,9 @@ function applyConfiguredControllers!(net::Net, control_cfg::ControlConfig)::Int
           net;
           from_bus = string(entry["from_bus"]),
           to_bus = string(entry["to_bus"]),
-          p_transfer_mw = _controller_cfg_float(entry["p_transfer_mw"], "p_transfer_mw"),
+          mode = haskey(entry, "mode") ? Symbol(string(entry["mode"])) : :setpoint,
+          p_transfer_mw = haskey(entry, "p_transfer_mw") ? _controller_cfg_float(entry["p_transfer_mw"], "p_transfer_mw") : nothing,
+          deadband_p_mw = haskey(entry, "deadband_p_mw") ? _controller_cfg_float(entry["deadband_p_mw"], "deadband_p_mw") : 1e-3,
           loss_mw = haskey(entry, "loss_mw") ? _controller_cfg_float(entry["loss_mw"], "loss_mw") : 0.0,
           loss_fraction = haskey(entry, "loss_fraction") ? _controller_cfg_float(entry["loss_fraction"], "loss_fraction") : 0.0,
           p_rating_mw = haskey(entry, "p_rating_mw") ? _controller_cfg_float(entry["p_rating_mw"], "p_rating_mw") : nothing,

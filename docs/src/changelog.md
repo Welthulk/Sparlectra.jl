@@ -5,7 +5,10 @@ injections of a back-to-back or point-to-point link (exact pairing
 invariant, losses, per-terminal Q or voltage target, honest `at_limit`).
 Opt-in from both importers: `matpower_import.matpower_dcline_mode =
 paired_control` and `cgmes_import.hvdc_mode = paired_control`; Stage-0
-fixed injections stay the default. See
+fixed injections stay the default. A grid-forming variant
+(`mode = :island_feed`) feeds an island whose only source is the receiving
+converter: the island reference sits at the converter PCC and the sending
+side mirrors the island draw plus loss each outer iteration. See
 [HVDC Back-to-Back](hvdc_back_to_back.md). (#297)
 
 - Re-running the one-line install detects an existing copy that is older

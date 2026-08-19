@@ -20,6 +20,9 @@
 #          a fixed Q or a voltage target (per-side secant like the machine
 #          controller). No angle coupling is introduced: two areas joined
 #          only by the pair stay separate electrical islands.
+#          Two modes: :setpoint (transfer is a given) and :island_feed
+#          (grid-forming receiving converter IS the island reference; the
+#          sending side mirrors the island draw plus the converter loss).
 
 """
     HvdcPairControl <: AbstractOuterController
@@ -29,9 +32,18 @@ point-to-point) HVDC link. Sign convention follows the MATPOWER `dcline`:
 `p_transfer_mw` is the active power LEAVING the from-side AC bus into the
 link; the from-side injection is `-p_transfer_mw`, the to-side injection is
 `p_transfer_mw - loss` with `loss = loss_mw + loss_fraction * |p_transfer|`.
-The transfer is a control setpoint (HVDC has no angle coupling), so the
-active-power side needs no iteration; only voltage-target terminals iterate
-via the per-side secant on the terminal Q within its reactive range.
+In the default `:setpoint` mode the transfer is a control setpoint (HVDC
+has no angle coupling), so the active-power side needs no iteration; only
+voltage-target terminals iterate via the per-side secant on the terminal Q
+within its reactive range.
+
+In `:island_feed` mode the dependency inverts: the receiving converter is
+grid-forming, it IS the reference (slack) of its island, and its output is
+the island balance outcome. The controller then mirrors that outcome onto
+the sending side each outer iteration, `P_from = -(P_island + loss)`, with
+an honest `at_limit` once the island draw exceeds `p_rating_mw` (the power
+flow's slack still balances the island, so the model cannot show the real
+collapse; the flag marks the violated rating).
 State is owned by `run_control!`; construct via [`addHvdcPairControl!`](@ref).
 """
 mutable struct HvdcPairControl <: AbstractOuterController
@@ -74,6 +86,12 @@ mutable struct HvdcPairControl <: AbstractOuterController
   to_prev_q::Union{Nothing,Float64}
   to_prev_vm::Union{Nothing,Float64}
   outer_iters::Int
+  # :setpoint (transfer given) or :island_feed (grid-forming to-side slack,
+  # transfer mirrored from the island balance each outer iteration)
+  mode::Symbol
+  # island_feed only: the mirror is settled when the applied transfer and
+  # the freshly derived one agree within this band (MW)
+  deadband_p_mw::Float64
 end
 
 """
@@ -104,7 +122,7 @@ end
 # the pair controller then never touches Q there. It is rejected only when
 # the side also requests a fixed Q or a voltage target, because both would
 # fight the PV mechanism.
-function _hvdc_resolve_prosumer(net::Net, bus::String, explicit::Union{Nothing,Int}, side::String; wants_reactive::Bool)::Int
+function _hvdc_resolve_prosumer(net::Net, bus::String, explicit::Union{Nothing,Int}, side::String; wants_reactive::Bool, require_slack::Bool = false)::Int
   busIdx = geNetBusIdx(net = net, busName = bus)
   idx = if explicit !== nothing
     (1 <= explicit <= length(net.prosumpsVec)) || error("HvdcPairControl: $(side)_prosumer $(explicit) out of range")
@@ -117,9 +135,16 @@ function _hvdc_resolve_prosumer(net::Net, bus::String, explicit::Union{Nothing,I
     gens[1]
   end
   (wants_reactive && net.prosumpsVec[idx].isRegulated) && error("HvdcPairControl: the converter at $(bus) is voltage-regulating (PV); its Q is a solver outcome, so the $(side) side cannot carry q_mvar or vset_pu.")
-  # at the reference even P is a solver outcome; a slack-bus injection can
-  # never be one half of a controllable pair
-  getNodeType(net.nodeVec[busIdx]) == Slack && error("HvdcPairControl: bus $(bus) is the reference (slack); its injection balances the island and cannot be paired.")
+  is_slack = getNodeType(net.nodeVec[busIdx]) == Slack
+  if require_slack
+    # island_feed: the grid-forming converter IS the island reference; its
+    # output is the balance outcome the controller mirrors
+    is_slack || error("HvdcPairControl: island_feed needs the to-side converter as the island reference (slack), but bus $(bus) is not a reference. Model it as EXTERNALNETWORKINJECTION with referencePri.")
+  else
+    # at the reference even P is a solver outcome; a slack-bus injection can
+    # never be one half of a setpoint pair
+    is_slack && error("HvdcPairControl: bus $(bus) is the reference (slack); its injection balances the island and cannot be paired.")
+  end
   return idx
 end
 
@@ -150,8 +175,19 @@ injections at `from_bus` and `to_bus`.
 - `from_bus::String`, `to_bus::String`: AC terminal buses of the two
   converters. The pair fixes the sign convention: `p_transfer_mw` leaves
   the from side.
+- `mode::Symbol = :setpoint`: `:setpoint` steers a given transfer;
+  `:island_feed` models a grid-forming receiving converter that is the
+  reference (slack) of its island. There the transfer is derived from the
+  island balance each outer iteration and mirrored onto the sending side,
+  `P_from = -(P_island + loss)`; `p_transfer_mw` must be omitted and the
+  to side carries neither `q_mvar` nor `vset_pu` (the slack holds its own
+  voltage). The island draw is read at the reference bus (net injection
+  plus local load; a shunt at the PCC is not supported).
 - `p_transfer_mw::Float64`: transfer setpoint in MW (signed; negative
-  reverses the link).
+  reverses the link). Required in `:setpoint` mode, forbidden in
+  `:island_feed`.
+- `deadband_p_mw::Float64 = 1e-3`: island_feed only, the mirror counts as
+  settled when applied and derived transfer agree within this band.
 - `loss_mw::Float64 = 0.0`, `loss_fraction::Float64 = 0.0`: converter loss
   model, `loss = loss_mw + loss_fraction * |p_transfer_mw|` (the MATPOWER
   `LOSS0`/`LOSS1` pair maps directly).
@@ -180,7 +216,9 @@ function addHvdcPairControl!(
   net::Net;
   from_bus::String,
   to_bus::String,
-  p_transfer_mw::Float64,
+  mode::Symbol = :setpoint,
+  p_transfer_mw::Union{Nothing,Float64} = nothing,
+  deadband_p_mw::Float64 = 1e-3,
   loss_mw::Float64 = 0.0,
   loss_fraction::Float64 = 0.0,
   p_rating_mw::Union{Nothing,Float64} = nothing,
@@ -200,6 +238,16 @@ function addHvdcPairControl!(
   to_prosumer::Union{Nothing,Int} = nothing,
 )
   from_bus == to_bus && error("HvdcPairControl: from_bus equals to_bus ($(from_bus)); a pair couples two different terminals.")
+  mode in (:setpoint, :island_feed) || error("HvdcPairControl: unknown mode $(mode); use :setpoint or :island_feed.")
+  if mode == :setpoint
+    p_transfer_mw === nothing && error("HvdcPairControl: setpoint mode needs p_transfer_mw.")
+  else
+    # island_feed derives the transfer from the island balance; a setpoint
+    # would contradict the grid-forming semantics
+    p_transfer_mw === nothing || error("HvdcPairControl: island_feed derives the transfer from the island balance; omit p_transfer_mw.")
+    (to_q_mvar !== nothing || to_vset_pu !== nothing) && error("HvdcPairControl: island_feed's to side is the island reference and holds its own voltage; omit to_q_mvar/to_vset_pu.")
+  end
+  deadband_p_mw > 0.0 || error("HvdcPairControl: deadband_p_mw must be positive, got $(deadband_p_mw)")
   loss_mw >= 0.0 || error("HvdcPairControl: loss_mw must be nonnegative, got $(loss_mw)")
   (0.0 <= loss_fraction < 1.0) || error("HvdcPairControl: loss_fraction must be in [0, 1), got $(loss_fraction)")
   p_rating_mw === nothing || p_rating_mw > 0.0 || error("HvdcPairControl: p_rating_mw must be positive, got $(p_rating_mw)")
@@ -209,7 +257,7 @@ function addHvdcPairControl!(
   to_vset_pu === nothing || to_vset_pu > 0.0 || error("HvdcPairControl: to_vset_pu must be positive")
 
   f_idx = _hvdc_resolve_prosumer(net, from_bus, from_prosumer, "from"; wants_reactive = from_q_mvar !== nothing || from_vset_pu !== nothing)
-  t_idx = _hvdc_resolve_prosumer(net, to_bus, to_prosumer, "to"; wants_reactive = to_q_mvar !== nothing || to_vset_pu !== nothing)
+  t_idx = _hvdc_resolve_prosumer(net, to_bus, to_prosumer, "to"; wants_reactive = to_q_mvar !== nothing || to_vset_pu !== nothing, require_slack = mode == :island_feed)
   f_idx == t_idx && error("HvdcPairControl: from and to resolve to the same prosumer ($(f_idx)); a pair needs two converters.")
   for c in _hvdc_pair_controllers(net)
     c.enabled || continue
@@ -251,7 +299,9 @@ function addHvdcPairControl!(
   end
 
   _hvdc_unclamp!(fps)
-  _hvdc_unclamp!(tps)
+  # island_feed leaves the reference injection untouched: it is the island's
+  # balance, not an actuator of this controller
+  mode == :setpoint && _hvdc_unclamp!(tps)
 
   ctrl = HvdcPairControl(
     something(name, string("B2B_", from_bus, "_", to_bus)),
@@ -259,7 +309,9 @@ function addHvdcPairControl!(
     to_bus,
     f_idx,
     t_idx,
-    p_transfer_mw,
+    # island_feed starts at 0 and mirrors the island balance from the first
+    # outer iteration on
+    mode == :setpoint ? p_transfer_mw : 0.0,
     loss_mw,
     loss_fraction,
     p_rating_mw,
@@ -288,6 +340,8 @@ function addHvdcPairControl!(
     nothing,
     nothing,
     0,
+    mode,
+    deadband_p_mw,
   )
   push!(net.machineControls, ctrl)
   return ctrl
@@ -314,6 +368,42 @@ function _hvdc_pair_setpoints(ctrl::HvdcPairControl)
   return (from_p = -transfer, to_p = transfer - loss, transfer = transfer, loss = loss, clamped = clamped)
 end
 
+# island_feed: what the grid-forming converter currently delivers into its
+# island (MW), i.e. the terminal output of the reference injection at the
+# PCC. Single-island runs have the slack's NET injection in _pƩGen (add the
+# local load back). Island runs write only voltages back to the parent net,
+# so the fallback derives the output from the fresh branch flows instead
+# (run_control! calls calcNetLosses! after every inner solve): local load
+# plus the active power flowing from the PCC into its in-service branches.
+# Returns nothing before the first solve. A shunt at the PCC is not
+# supported (documented in addHvdcPairControl!).
+function _hvdc_island_delivered(net::Net, ctrl::HvdcPairControl)::Union{Nothing,Float64}
+  busIdx = geNetBusIdx(net = net, busName = ctrl.to_bus)
+  node = net.nodeVec[busIdx]
+  local_load = node._pƩLoad === nothing ? 0.0 : node._pƩLoad
+  node._pƩGen === nothing || return node._pƩGen + local_load
+  total = local_load
+  any_flow = false
+  for br in net.branchVec
+    br.status == 1 || continue
+    if br.fromBus == busIdx && br.fBranchFlow !== nothing
+      total += br.fBranchFlow.pFlow
+      any_flow = true
+    elseif br.toBus == busIdx && br.tBranchFlow !== nothing
+      total += br.tBranchFlow.pFlow
+      any_flow = true
+    end
+  end
+  return any_flow ? total : nothing
+end
+
+# invert the loss model: the transfer whose to-side delivery equals the
+# island draw, delivered = transfer - loss_mw - loss_fraction * |transfer|
+function _hvdc_island_feed_transfer(ctrl::HvdcPairControl, delivered::Float64)::Float64
+  num = delivered + ctrl.loss_mw
+  return num >= 0.0 ? num / (1.0 - ctrl.loss_fraction) : num / (1.0 + ctrl.loss_fraction)
+end
+
 # --- AbstractOuterController protocol ---------------------------------------
 
 control_name(ctrl::HvdcPairControl) = string(ctrl.name, " B2B")
@@ -330,7 +420,14 @@ _hvdc_side_converged(vset::Union{Nothing,Float64}, vm::Union{Nothing,Float64}, d
 function control_evaluate!(ctrl::HvdcPairControl, net::Net, ::AbstractControlState, context)
   ctrl.from_vm_now = get_bus_vm_pu(net, ctrl.from_bus)
   ctrl.to_vm_now = get_bus_vm_pu(net, ctrl.to_bus)
-  ctrl.converged = ctrl.p_applied && !ctrl.transfer_clamped && _hvdc_side_converged(ctrl.from_vset_pu, ctrl.from_vm_now, ctrl.deadband_vm_pu) && _hvdc_side_converged(ctrl.to_vset_pu, ctrl.to_vm_now, ctrl.deadband_vm_pu)
+  # island_feed: the mirror is settled when the applied transfer matches the
+  # one derived from the fresh island balance
+  mirror_ok = true
+  if ctrl.mode == :island_feed
+    delivered = _hvdc_island_delivered(net, ctrl)
+    mirror_ok = delivered !== nothing && abs(_hvdc_island_feed_transfer(ctrl, delivered) - ctrl.p_transfer_mw) <= ctrl.deadband_p_mw
+  end
+  ctrl.converged = ctrl.p_applied && !ctrl.transfer_clamped && mirror_ok && _hvdc_side_converged(ctrl.from_vset_pu, ctrl.from_vm_now, ctrl.deadband_vm_pu) && _hvdc_side_converged(ctrl.to_vset_pu, ctrl.to_vm_now, ctrl.deadband_vm_pu)
   ctrl.status = ctrl.converged ? :converged : (ctrl.at_limit ? :at_limit : :active)
   ctrl.outer_iters = context.outer_iteration
   return nothing
@@ -350,6 +447,11 @@ function _hvdc_side_q_step(vset::Float64, vm::Union{Nothing,Float64}, q0::Float6
 end
 
 function control_propose_update!(ctrl::HvdcPairControl, net::Net, ::AbstractControlState, context)
+  if ctrl.mode == :island_feed
+    # refresh the mirrored transfer from the island balance of the last solve
+    delivered = _hvdc_island_delivered(net, ctrl)
+    delivered === nothing || (ctrl.p_transfer_mw = _hvdc_island_feed_transfer(ctrl, delivered))
+  end
   sp = _hvdc_pair_setpoints(ctrl)
   # fixed-Q sides are one-shot setpoints like P; vset sides iterate
   new_from_q = if ctrl.from_vset_pu !== nothing
@@ -380,7 +482,16 @@ function control_apply_update!(ctrl::HvdcPairControl, net::Net, ::AbstractContro
   # controller's coherence rule
   f_p_now = fps.pVal === nothing ? 0.0 : fps.pVal
   t_p_now = tps.pVal === nothing ? 0.0 : tps.pVal
-  if !ctrl.p_applied || abs(f_p_now - update.from_p) > 1e-9 || abs(t_p_now - update.to_p) > 1e-9
+  if ctrl.mode == :island_feed
+    # only the sending side is an actuator; the to side is the island's
+    # reference and its injection stays the solver's balance outcome
+    if !ctrl.p_applied || abs(f_p_now - update.from_p) > 1e-9
+      addGenPower!(node = fnode, p = update.from_p - f_p_now, q = nothing)
+      fps.pVal = update.from_p
+      ctrl.p_applied = true
+      moved = true
+    end
+  elseif !ctrl.p_applied || abs(f_p_now - update.from_p) > 1e-9 || abs(t_p_now - update.to_p) > 1e-9
     addGenPower!(node = fnode, p = update.from_p - f_p_now, q = nothing)
     addGenPower!(node = tnode, p = update.to_p - t_p_now, q = nothing)
     fps.pVal = update.from_p
@@ -420,7 +531,7 @@ function control_element_descriptor(ctrl::HvdcPairControl, net::Net)::Union{Noth
   return (
     name = control_name(ctrl),
     element = string("hvdc@", ctrl.from_bus, "-", ctrl.to_bus),
-    device = "back-to-back HVDC pair",
+    device = ctrl.mode == :island_feed ? "back-to-back HVDC pair (grid-forming)" : "back-to-back HVDC pair",
     actuator = :hvdc_p_transfer_mw,
     actuator_min = ctrl.p_rating_mw === nothing ? -Inf : -ctrl.p_rating_mw,
     actuator_max = ctrl.p_rating_mw === nothing ? Inf : ctrl.p_rating_mw,
@@ -440,6 +551,7 @@ function control_report_rows(ctrl::HvdcPairControl, net::Net, ::AbstractControlS
   return [(
     controller_name = control_name(ctrl),
     controller_type = "HvdcPairControl",
+    mode = ctrl.mode,
     link = string(ctrl.from_bus, "->", ctrl.to_bus),
     status = ctrl.status,
     converged = ctrl.converged,
@@ -488,10 +600,11 @@ function printHvdcPairControllerSummary(io::IO, net::Net)
   for c in ctrls
     sp = _hvdc_pair_setpoints(c)
     println(io, control_name(c), " (link ", c.from_bus, " -> ", c.to_bus, ")")
-    println(io, "  transfer           : ", @sprintf("%.3f MW", sp.transfer), c.p_rating_mw === nothing ? "" : @sprintf(" (rating %.1f MW)", c.p_rating_mw))
+    c.mode == :island_feed && println(io, "  mode               : island_feed (grid-forming to side)")
+    println(io, "  transfer           : ", @sprintf("%.3f MW", sp.transfer), c.mode == :island_feed ? " (mirrored from island draw)" : "", c.p_rating_mw === nothing ? "" : @sprintf(" (rating %.1f MW)", c.p_rating_mw))
     println(io, "  loss               : ", @sprintf("%.3f MW", sp.loss))
     println(io, "  from injection     : ", @sprintf("%.3f MW / %.3f MVAr", sp.from_p, c.from_q_now))
-    println(io, "  to injection       : ", @sprintf("%.3f MW / %.3f MVAr", sp.to_p, c.to_q_now))
+    println(io, "  to injection       : ", @sprintf("%.3f MW / %.3f MVAr", sp.to_p, c.to_q_now), c.mode == :island_feed ? " (island balance outcome)" : "")
     c.from_vset_pu === nothing || println(io, "  from voltage       : ", c.from_vm_now === nothing ? "-" : @sprintf("%.4f pu", c.from_vm_now), @sprintf(" (target %.4f pu)", c.from_vset_pu))
     c.to_vset_pu === nothing || println(io, "  to voltage         : ", c.to_vm_now === nothing ? "-" : @sprintf("%.4f pu", c.to_vm_now), @sprintf(" (target %.4f pu)", c.to_vset_pu))
     println(io, "  converged          : ", c.converged)
