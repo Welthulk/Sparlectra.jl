@@ -362,6 +362,11 @@ function _sync_island_solution!(net::Net, inet::Net, row)
   for (new, bus) in enumerate(row.buses)
     net.nodeVec[bus]._vm_pu = inet.nodeVec[new]._vm_pu
     net.nodeVec[bus]._va_deg = inet.nodeVec[new]._va_deg
+    # solver-written bus power outcomes (slack P/Q, PV Q) travel with the
+    # voltages, so multi-island runs fill the classical result tables the
+    # same way single-island runs do (empty slack Pg/Qg columns otherwise)
+    net.nodeVec[bus]._pƩGen = inet.nodeVec[new]._pƩGen
+    net.nodeVec[bus]._qƩGen = inet.nodeVec[new]._qƩGen
   end
   for (new, bridx) in enumerate(row.branches)
     net.branchVec[bridx].fBranchFlow = inet.branchVec[new].fBranchFlow

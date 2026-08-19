@@ -94,6 +94,14 @@ using Sparlectra
 # 80 MW travel from source `A` to sink `B` over two parallel corridors.
 # The upper corridor (`A` to `M2` to `B`) has twice the reactance of the
 # lower one, so it naturally carries only one third of the transfer.
+#
+# ```text
+#          +---- M1 ----+      corridor 1: x = 0.10 per line (TCSC here)
+#          |            |
+#    A ----+            +---- B (load 80 MW)
+#  (slack) |            |
+#          +---- M2 ----+      corridor 2: x = 0.20 per line
+# ```
 
 function build_loop()
   net = Net(name = "tcsc_workshop", baseMVA = 100.0)

@@ -29,6 +29,16 @@ The theory behind the comparison is on
 the short-circuit method is documented in the
 [Short-Circuit Compendium](https://welthulk.github.io/Sparlectra.jl/short_circuit/).
 
+The test network is an eight-bus ring with two cross-ties (the middle
+verticals B2-B7 and B3-B6); the grid connection under study sits at B1:
+
+```text
+ (grid connection)
+   B1 ---- B2 ---- B3 ---- B4
+   |       |       |       |
+   B8 ---- B7 ---- B6 ---- B5
+```
+
 > **Note:** On Google Colab the install cell takes a few minutes on a
 > fresh session (package download and precompilation). Colab's Julia
 > version may change over time; this notebook targets Julia ≥ 1.12.

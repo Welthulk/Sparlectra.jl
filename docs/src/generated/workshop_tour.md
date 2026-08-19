@@ -71,6 +71,16 @@ The builder is a function because chapter 7 reuses the same network.
 The full guided version of this chapter is the
 [introduction notebook](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_intro.ipynb).
 
+```text
+ (slack)
+   B1 ---- B2 ---- B3 ---- B4
+   |         \    /         |
+   |          \  /          |
+   |           \/           |     diagonals: B2-B5 and B3-B6
+   |           /\           |
+   B7 ---- B6 ---- B5 ------+
+```
+
 ````@example workshop_tour
 function build_ring7(name::String)
   net = Net(name = name, baseMVA = 100.0)
@@ -424,6 +434,19 @@ the result of an angle difference. First the Stage-0 view: two fixed
 injections reproduce a snapshot of 80 MW transfer with 4 MW converter
 loss.
 
+Note that EACH island keeps a classical reference of its own (`A1` and
+`C1`); the converters at `A2`/`C2` are plain injections the controller
+will steer. The result header therefore reports `Slack: 2`, and both
+reference buses appear as `SLACK` rows in the bus table:
+
+```text
+     island A                          island C
+  A1 -------- A2  ===== DC link =====  C2 -------- C1
+(slack)    load 40 MW              load 50 MW    (slack)
+           + converter             + converter
+           (from side)             (to side)
+```
+
 ````@example workshop_tour
 function build_b2b(name::String)
   net = Net(name = name, baseMVA = 100.0)
@@ -506,8 +529,17 @@ The converse is a perfectly valid model though, called a grid-forming
 (Vf) converter: the receiving converter IS the island's source. It
 holds voltage and angle at its PCC, and its power output follows from
 whatever the island draws. Think of an offshore platform or an
-asynchronously supplied island grid. Island C below has NO classical
-slack at all:
+asynchronously supplied island grid. Island C below has NO source of its
+own; its reference moves onto the converter bus C2 (compare the sketch
+with the setpoint variant above):
+
+```text
+     island A                          island C
+  A1 -------- A2  ===== DC link =====  C2 -------- C1
+(slack)    load 40 MW            grid-forming    load 50 MW
+           + sending             converter
+           converter             (= island C reference)
+```
 
 ````@example workshop_tour
 function build_b2b_source(name::String; sending_mw::Float64 = 0.0)
@@ -571,15 +603,29 @@ decides:
 net9 = build_b2b_source("tour_b2b_grid_forming")
 addHvdcPairControl!(net9; from_bus = "A2", to_bus = "C2", mode = :island_feed, loss_mw = 4.0, p_rating_mw = 150.0)
 result9 = run_control!(net9; controllers = collect_outer_controllers(net9), pf_config = PowerFlowConfig(method = :rectangular, max_iter = 25, tol = 1e-8), control_config = ControlConfig(max_outer_iterations = 8, trace = false))
-printHvdcPairControllerSummary(net9)
+calcNetLosses!(net9)
+printACPFlowResults(net9, etime, result9.last_pf_iterations, 1e-8)
 ````
 
-Reading aid: the summary shows the mirrored transfer (island draw plus
-the 4 MW converter loss) and marks the to injection as the island
-balance outcome. Try `p_rating_mw = 40.0`: the sending side pins at the
-rating with `at_limit = true` and `converged = false`. The island's
-reference still balances in the model (a power flow cannot show the
-collapse), so the honest flag is what marks the undeliverable draw.
+Reading aid, and the direct comparison with the setpoint variant above.
+Both versions report `Slack: 2` in the header (one reference per island,
+always), but WHERE the references sit is the whole difference:
+
+- **Setpoint variant:** references at `A1` and `C1`, each island brings
+  its own source. Both converters are plain PQ injections steered by the
+  controller (`-120 / +116 MW` in the bus table), and the transfer is an
+  order the link follows. Look at C1's `Pg`: it is negative, island C's
+  own slack absorbs the surplus the link pumps in.
+- **Grid-forming variant (this table):** references at `A1` and `C2`.
+  The receiving converter itself is island C's `SLACK` row; its `Pg`
+  column is the island balance outcome (load plus line loss, no
+  setpoint anywhere), `C1` carries only load, and the HVDC block in the
+  `Control` section shows the transfer as "mirrored from island draw".
+
+Try `p_rating_mw = 40.0`: the sending side pins at the rating with
+`at_limit = true` and `converged = false`. The island's reference still
+balances in the model (a power flow cannot show the collapse), so the
+honest flag is what marks the undeliverable draw.
 
 ## Chapter 7: state estimation
 

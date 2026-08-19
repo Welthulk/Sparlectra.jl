@@ -13,6 +13,19 @@ ring with two cross-connections), validate it, solve it with the built-in
 Newton-Raphson solver, and read the classical result tables. No input files
 are needed; everything is created programmatically.
 
+The network at a glance (B1 carries the grid connection, the diagonals
+are the two cross-ties B2-B5 and B3-B6):
+
+```text
+ (slack)
+   B1 ---- B2 ---- B3 ---- B4
+   |         \    /         |
+   |          \  /          |
+   |           \/           |
+   |           /\           |
+   B7 ---- B6 ---- B5 ------+
+```
+
 > **Note:** When running this notebook on Google Colab, the install cell
 > takes a few minutes on a fresh session (package download and
 > precompilation). Colab's Julia version may change over time; this

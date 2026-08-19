@@ -706,10 +706,14 @@ function printACPFlowResults(
   npv = 0
   npq = 0
   niso = 0
+  # multi-island runs carry one reference per island, so the slack count is
+  # real data, not always 1
+  nslack = 0
   for n in nodes
     npv += n._nodeType == Sparlectra.PV ? 1 : 0
     npq += isPQNode(n) ? 1 : 0
     niso += isIsolated(n) ? 1 : 0
+    nslack += n._nodeType == Sparlectra.Slack ? 1 : 0
     if occursin("_Aux_", n.comp.cName)
       auxb += 1
     end
@@ -747,11 +751,11 @@ function printACPFlowResults(
 
   @printf(io, "BaseMVA        :%10d\n", net.baseMVA)
   if auxb > 0 && niso > 0
-    @printf(io, "Nodes          :%10d (PV: %d PQ: %d (Aux: %d) Iso: %d Slack: %d\n", busses, npv, npq, auxb, niso, 1)
+    @printf(io, "Nodes          :%10d (PV: %d PQ: %d (Aux: %d) Iso: %d Slack: %d\n", busses, npv, npq, auxb, niso, nslack)
   elseif auxb > 0
-    @printf(io, "Nodes          :%10d (PV: %d PQ: %d (Aux: %d) Slack: %d\n", busses, npv, npq, auxb, 1)
+    @printf(io, "Nodes          :%10d (PV: %d PQ: %d (Aux: %d) Slack: %d\n", busses, npv, npq, auxb, nslack)
   else
-    @printf(io, "Nodes          :%10d (PV: %d PQ: %d Slack: %d)\n", busses, npv, npq, 1)
+    @printf(io, "Nodes          :%10d (PV: %d PQ: %d Slack: %d)\n", busses, npv, npq, nslack)
   end
   @printf(io, "Grid connection: %s\n", _grid_connection_summary(net, busNameByIdx))
   if pf_nodes != busses

@@ -15,6 +15,9 @@ the receiving converter. See
   packages), and the workshop notebooks now install into a fresh temporary
   environment from GitHub `main`, keeping Colab's preinstalled stack out
   of precompilation.
+- The result header now counts every island reference (`Slack: n`) instead
+  of always printing 1; the workshop notebooks carry a network sketch per
+  model.
 
 # Version 0.9.7 - 2026-08-20
 

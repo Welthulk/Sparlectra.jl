@@ -322,6 +322,23 @@ mpc.dcline = [
       @test occursin("HVDC Pair Control Summary", out)
       @test occursin("link B2 -> B4", out)
       @test occursin("77.000 MW", out)
+      # regression (multi-slack header): a two-island net reports both
+      # references in the node-count line instead of a hardcoded 1
+      mktempdir() do d
+        cd(d) do
+          printACPFlowResults(net, 0.0, 1, 1e-8, true)
+          txt = read("result_$(net.name).txt", String)
+          @test occursin("Slack: 2", txt)
+        end
+      end
+      # regression (island writeback): the solver-written slack outcomes
+      # reach the parent net, so the bus table shows Pg/Qg per reference
+      for n in net.nodeVec
+        if Sparlectra.getNodeType(n) == Sparlectra.Slack
+          @test n._pƩGen !== nothing
+          @test n._qƩGen !== nothing
+        end
+      end
     end
   end
   return true

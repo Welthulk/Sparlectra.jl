@@ -20,6 +20,19 @@ reference power flow, derive a noisy synthetic measurement set from it,
 check observability, and run the estimator: the closed loop that lets
 you judge estimation quality against a known truth.
 
+The network is the workshop ring (B1 carries the grid connection, the
+diagonals are the cross-ties B2-B5 and B3-B6):
+
+```text
+ (slack)
+   B1 ---- B2 ---- B3 ---- B4
+   |         \    /         |
+   |          \  /          |
+   |           \/           |
+   |           /\           |
+   B7 ---- B6 ---- B5 ------+
+```
+
 > **Note:** On Google Colab the install cell takes a few minutes on a
 > fresh session (package download and precompilation). Colab's Julia
 > version may change over time; this notebook targets Julia ≥ 1.12.
