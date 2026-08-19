@@ -1,9 +1,17 @@
 # file: .github/workflows/SBOM.yml
-# purpose: generate the SPDX SBOM with tools/generate_sbom.jl on every
-#          published release and attach it as a release asset
-#          (Sparlectra-<tag>.spdx.json). A manual workflow_dispatch run has
-#          no release context and uploads the SBOM as a workflow artifact
-#          instead. If the license scan fails, the job retries once with
+# purpose: generate the SPDX SBOM with tools/generate_sbom.jl and attach it
+#          to the GitHub release as two assets: the versioned audit file
+#          Sparlectra-<tag>.spdx.json and the fixed-name copy
+#          Sparlectra.spdx.json that keeps the stable deep link
+#          releases/latest/download/Sparlectra.spdx.json (README badge)
+#          working. TagBot publishes releases with the default GITHUB_TOKEN,
+#          whose events cannot trigger other workflows (recursion guard), so
+#          the reliable trigger is workflow_run after TagBot completes: it
+#          picks the latest release and skips when the SBOM asset is already
+#          there. The release trigger stays as a fallback for releases
+#          published with a real token; a manual workflow_dispatch run has
+#          no release context and uploads the SBOM as a workflow artifact.
+#          If the license scan fails, the job retries once with
 #          SPARLECTRA_SBOM_NO_LICENSESCAN=1 and says so in the step log.
 #          The SBOM is intentionally NOT checked into the repository.
 name: SBOM
@@ -11,6 +19,9 @@ name: SBOM
 on:
   release:
     types: [published]
+  workflow_run:
+    workflows: [TagBot]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -21,31 +32,64 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Determine target release and skip when already covered
+        id: target
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # release event: the published release names the tag. workflow_run
+        # (TagBot finished): take the latest release, but only act when its
+        # SBOM asset is still missing; TagBot also runs on issue comments
+        # without publishing anything, and those runs must stay no-ops.
+        run: |
+          skip=false
+          tag=""
+          if [ "${{ github.event_name }}" = "release" ]; then
+            tag="${{ github.event.release.tag_name }}"
+          elif [ "${{ github.event_name }}" = "workflow_run" ]; then
+            tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName 2>/dev/null || true)
+            if [ -z "$tag" ]; then
+              skip=true
+            elif gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -qx "Sparlectra.spdx.json"; then
+              echo "release $tag already carries Sparlectra.spdx.json; nothing to do"
+              skip=true
+            fi
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "skip=$skip" >> "$GITHUB_OUTPUT"
       - uses: julia-actions/setup-julia@v3
+        if: steps.target.outputs.skip != 'true'
         with:
           version: '1'
       - uses: julia-actions/cache@v3
+        if: steps.target.outputs.skip != 'true'
       - name: Determine SBOM file name
         id: sbomname
+        if: steps.target.outputs.skip != 'true'
         run: |
-          if [ "${{ github.event_name }}" = "release" ]; then
-            echo "file=Sparlectra-${{ github.event.release.tag_name }}.spdx.json" >> "$GITHUB_OUTPUT"
+          if [ -n "${{ steps.target.outputs.tag }}" ]; then
+            echo "file=Sparlectra-${{ steps.target.outputs.tag }}.spdx.json" >> "$GITHUB_OUTPUT"
           else
             echo "file=Sparlectra.spdx.json" >> "$GITHUB_OUTPUT"
           fi
       - name: Generate SBOM
+        if: steps.target.outputs.skip != 'true'
         run: |
           if ! julia tools/generate_sbom.jl "${{ steps.sbomname.outputs.file }}"; then
             echo "license scan failed; retrying once with SPARLECTRA_SBOM_NO_LICENSESCAN=1"
             SPARLECTRA_SBOM_NO_LICENSESCAN=1 julia tools/generate_sbom.jl "${{ steps.sbomname.outputs.file }}"
           fi
-      - name: Upload as release asset
-        if: github.event_name == 'release'
+      - name: Upload as release assets
+        if: steps.target.outputs.skip != 'true' && steps.target.outputs.tag != ''
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.event.release.tag_name }}" "${{ steps.sbomname.outputs.file }}"
+        # versioned asset = audit artifact; fixed-name copy = stable deep
+        # link releases/latest/download/Sparlectra.spdx.json (README badge)
+        run: |
+          gh release upload "${{ steps.target.outputs.tag }}" "${{ steps.sbomname.outputs.file }}" --clobber
+          cp "${{ steps.sbomname.outputs.file }}" Sparlectra.spdx.json
+          gh release upload "${{ steps.target.outputs.tag }}" Sparlectra.spdx.json --clobber
       - name: Upload as workflow artifact (manual run)
-        if: github.event_name == 'workflow_dispatch'
+        if: steps.target.outputs.skip != 'true' && steps.target.outputs.tag == ''
         uses: actions/upload-artifact@v5
         with:
           name: sbom
