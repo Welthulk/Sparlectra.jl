@@ -270,6 +270,9 @@ function run_external_grid_tests()
         @test occursin("Grid connection: external-grid source at B1 (Sk'' = 500.0 MVA, R/X = 0.1; internal slack: B1__extgrid_int)", txt)
         @test occursin("SOURCE", txt)
         @test !occursin("| SLACK", txt)
+        # header counts the reference models separately: this net's only
+        # reference is the external-grid source, no plain slack remains
+        @test occursin("Slack: 0 Source: 1", txt)
       end
       report = buildACPFlowReport(net; ite = 3, converged = true)
       aux_row = only(r for r in report.nodes if r.bus_name == "B1__extgrid_int")

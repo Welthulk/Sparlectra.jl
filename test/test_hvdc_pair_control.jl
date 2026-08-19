@@ -285,6 +285,17 @@ mpc.dcline = [
       elems = controllableElements(net)
       row = only(filter(e -> e.actuator == :hvdc_p_transfer_mw, elems))
       @test row.device == "back-to-back HVDC pair (grid-forming)"
+      # the bus table marks the converter roles in the Control column: the
+      # steered sending injection as B2B, the grid-forming reference as
+      # "B2B src" (its Type stays SLACK: the model is an ideal reference at
+      # the PCC; SOURCE is reserved for the external-grid feeder element)
+      mktempdir() do d
+        cd(d) do
+          printACPFlowResults(net, 0.0, 1, 1e-8, true)
+          txt = read("result_$(net.name).txt", String)
+          @test occursin("B2B src", txt)
+        end
+      end
 
       # rating clamp: the island draws more than the link can carry; honest
       # at_limit, sending side pinned at the rating (the island's slack still

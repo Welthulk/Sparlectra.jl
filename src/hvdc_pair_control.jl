@@ -143,7 +143,7 @@ function _hvdc_resolve_prosumer(net::Net, bus::String, explicit::Union{Nothing,I
   else
     # at the reference even P is a solver outcome; a slack-bus injection can
     # never be one half of a setpoint pair
-    is_slack && error("HvdcPairControl: bus $(bus) is the reference (slack); its injection balances the island and cannot be paired.")
+    is_slack && error("HvdcPairControl: bus $(bus) is the reference (slack) of its island; its injection balances the island and cannot follow a transfer setpoint. For a grid-forming receiving converter use mode = :island_feed instead.")
   end
   return idx
 end

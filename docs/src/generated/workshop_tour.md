@@ -467,6 +467,7 @@ end
 net6 = build_b2b("tour_b2b")
 etime, ite = solve!(net6; islands_enabled = true)
 println("two islands solved in ", ite, " iteration(s)")
+printACPFlowResults(net6, etime, ite, 1e-8)
 ````
 
 Reading aid: both areas balance on their own reference; the link carries
@@ -529,9 +530,21 @@ The converse is a perfectly valid model though, called a grid-forming
 (Vf) converter: the receiving converter IS the island's source. It
 holds voltage and angle at its PCC, and its power output follows from
 whatever the island draws. Think of an offshore platform or an
-asynchronously supplied island grid. Island C below has NO source of its
-own; its reference moves onto the converter bus C2 (compare the sketch
-with the setpoint variant above):
+asynchronously supplied island grid.
+
+A word on terms: "slack" is the solver's name for an island's reference
+node, and every island has exactly one, however it is modeled. The ideal
+slack of chapter 2, the external-grid SOURCE behind an impedance, and
+the grid-forming converter here are three MODELS of that one reference.
+The result output keeps them apart: `SOURCE` in the bus table (and
+`Source: m` in the header) is reserved for the external-grid feeder
+element, because there the reference voltage sits BEHIND an impedance.
+The grid-forming converter is an ideal reference directly at its PCC, so
+its row honestly reads `SLACK`; its role is marked in the `Control`
+column instead: `B2B src` for the grid-forming reference, `B2B` for a
+steered converter injection. Island C below has NO source of its own;
+its reference moves onto the converter bus C2 (compare the sketch with
+the setpoint variant above):
 
 ```text
      island A                          island C
@@ -577,9 +590,15 @@ must now *mirror* the island draw plus the converter loss:
 
 ````@example workshop_tour
 net8 = build_b2b_source("tour_b2b_mirrored"; sending_mw = -(p_island_c + 4.0))
-solve!(net8; islands_enabled = true)
+etime8, ite8 = solve!(net8; islands_enabled = true)
 println("sending side A1 -> A2 carries ", round(get_branch_p_from_to_mw(net8, "A1", "A2"); digits = 3), " MW (40 MW local load + ", round(p_island_c + 4.0; digits = 3), " MW export + line loss)")
+printACPFlowResults(net8, etime8, ite8, 1e-8)
 ````
+
+Reading aid: compare the SLACK rows with the setpoint variant. The
+references are now `A1` and `C2`: the receiving converter itself is
+island C's reference, its `Pg` is the island draw, and `C1` carries only
+load.
 
 And the refusal from above, demonstrated: pairing the grid-forming
 converter is rejected, because its injection is the island balance, not
@@ -617,15 +636,58 @@ always), but WHERE the references sit is the whole difference:
   order the link follows. Look at C1's `Pg`: it is negative, island C's
   own slack absorbs the surplus the link pumps in.
 - **Grid-forming variant (this table):** references at `A1` and `C2`.
-  The receiving converter itself is island C's `SLACK` row; its `Pg`
-  column is the island balance outcome (load plus line loss, no
-  setpoint anywhere), `C1` carries only load, and the HVDC block in the
-  `Control` section shows the transfer as "mirrored from island draw".
+  The receiving converter itself is island C's `SLACK` row, marked
+  `B2B src` in the `Control` column; its `Pg` column is the island
+  balance outcome (load plus line loss, no setpoint anywhere), `C1`
+  carries only load, and the HVDC block in the `Control` section shows
+  the transfer as "mirrored from island draw".
 
 Try `p_rating_mw = 40.0`: the sending side pins at the rating with
 `at_limit = true` and `converged = false`. The island's reference still
 balances in the model (a power flow cannot show the collapse), so the
 honest flag is what marks the undeliverable draw.
+
+### Variant: grid-forming with droop (SOURCE model)
+
+The ideal reference above holds exactly 1.0 pu at the PCC no matter what
+the island draws. A real VSC has finite control stiffness. The
+external-grid element from chapter 2 models exactly that: the reference
+voltage sits BEHIND the impedance $Z_Q = U_n^2 / S_k''$, so the PCC
+voltage droops under load. Declaring the converter that way finally
+makes the bus table say `SOURCE`, and the header counts
+`Slack: 1 Source: 1`:
+
+````@example workshop_tour
+function build_b2b_droop(name::String; sending_mw::Float64 = 0.0, sk_mva::Float64 = 800.0)
+  net = Net(name = name, baseMVA = 100.0)
+  for b in ("A1", "A2", "C1", "C2")
+    addBus!(net = net, busName = b, vn_kV = 380.0)
+  end
+  addPIModelACLine!(net = net, fromBus = "A1", toBus = "A2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "C2", toBus = "C1", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+  addProsumer!(net = net, busName = "A1", type = "EXTERNALNETWORKINJECTION", referencePri = "A1", vm_pu = 1.0, va_deg = 0.0)
+  addProsumer!(net = net, busName = "A2", type = "ENERGYCONSUMER", p = 40.0, q = 10.0)
+  addProsumer!(net = net, busName = "C1", type = "ENERGYCONSUMER", p = 50.0, q = 12.0)
+  # the grid-forming converter as a non-ideal source: reference voltage
+  # behind Z_Q, declared by its short-circuit power like a real feeder
+  addExternalGrid!(net = net, busName = "C2", vm_pu = 1.0, sk_max_MVA = sk_mva, sk_min_MVA = sk_mva, rx_max = 0.1, internal_impedance = true)
+  addProsumer!(net = net, busName = "A2", type = "GENERATOR", p = sending_mw, q = 0.0)
+  return net
+end
+
+net10 = build_b2b_droop("tour_b2b_droop"; sending_mw = -(p_island_c + 4.0))
+etime10, ite10 = solve!(net10; islands_enabled = true)
+printACPFlowResults(net10, etime10, ite10, 1e-8)
+````
+
+Reading aid: the header reads `Slack: 1 Source: 1`, the grid connection
+line names the source with its feeder data, and the hidden anchor bus
+behind the impedance is the `SOURCE` row. The PCC bus `C2` is now a
+plain PQ bus whose voltage sags below 1.0 pu under the island load: that
+sag is the droop, and its size follows from the declared `sk_max_MVA`
+(stiffer converter = higher $S_k''$ = less droop). Pairing this
+source-model reference with the island_feed controller is a possible
+follow-up of the pairing controller.
 
 ## Chapter 7: state estimation
 

@@ -198,37 +198,49 @@ end
 struct BusControlFlags
   has_qu::Bool
   has_pu::Bool
+  # HVDC pair terminal role: :none, :terminal (steered converter injection),
+  # :gridforming (island_feed reference at the converter PCC)
+  hvdc::Symbol
 end
 
-const _NO_BUS_CONTROL_FLAGS = BusControlFlags(false, false)
+const _NO_BUS_CONTROL_FLAGS = BusControlFlags(false, false, :none)
 
 function _bus_control_flag_cache(net::Net)::Dict{Int,BusControlFlags}
   cache = Dict{Int,BusControlFlags}()
   for ps in net.prosumpsVec
     bus_idx = getPosumerBusIndex(ps)
     old = get(cache, bus_idx, _NO_BUS_CONTROL_FLAGS)
-    cache[bus_idx] = BusControlFlags(old.has_qu | has_qu_controller(ps), old.has_pu | has_pu_controller(ps))
+    cache[bus_idx] = BusControlFlags(old.has_qu | has_qu_controller(ps), old.has_pu | has_pu_controller(ps), old.hvdc)
+  end
+  # HVDC pair terminals: steered injections read "B2B", a grid-forming
+  # reference (island_feed to side) reads "B2B src" — the bus table then
+  # explains WHY a SLACK row is a converter and not a power plant
+  for c in _hvdc_pair_controllers(net)
+    c.enabled || continue
+    fidx = geNetBusIdx(net = net, busName = c.from_bus)
+    tidx = geNetBusIdx(net = net, busName = c.to_bus)
+    fold = get(cache, fidx, _NO_BUS_CONTROL_FLAGS)
+    cache[fidx] = BusControlFlags(fold.has_qu, fold.has_pu, :terminal)
+    told = get(cache, tidx, _NO_BUS_CONTROL_FLAGS)
+    cache[tidx] = BusControlFlags(told.has_qu, told.has_pu, c.mode == :island_feed ? :gridforming : :terminal)
   end
   return cache
 end
 
 @inline function _control_label(flags::BusControlFlags)::String
-  if flags.has_qu && flags.has_pu
-    return "Q(U), P(U)"
-  elseif flags.has_qu
-    return "Q(U)"
-  elseif flags.has_pu
-    return "P(U)"
-  else
-    return "-"
-  end
+  parts = String[]
+  flags.has_qu && push!(parts, "Q(U)")
+  flags.has_pu && push!(parts, "P(U)")
+  flags.hvdc == :terminal && push!(parts, "B2B")
+  flags.hvdc == :gridforming && push!(parts, "B2B src")
+  return isempty(parts) ? "-" : join(parts, ", ")
 end
 
 @inline _cached_control_label(cache::AbstractDict{Int,BusControlFlags}, bus_idx::Int)::String = _control_label(get(cache, bus_idx, _NO_BUS_CONTROL_FLAGS))
 
 function _control_label(net::Net, bus_idx::Int)::String
   has_qu, has_pu = _bus_control_flags(net, bus_idx)
-  return _control_label(BusControlFlags(has_qu, has_pu))
+  return _control_label(BusControlFlags(has_qu, has_pu, :none))
 end
 
 function _tap_voltage_target_by_bus(net::Net)::Dict{Int,Float64}
@@ -707,13 +719,24 @@ function printACPFlowResults(
   npq = 0
   niso = 0
   # multi-island runs carry one reference per island, so the slack count is
-  # real data, not always 1
+  # real data, not always 1. References modeled as external-grid sources are
+  # counted separately (nsource), matching the SOURCE label in the bus table:
+  # total references = nslack + nsource.
   nslack = 0
+  nsource = 0
   for n in nodes
     npv += n._nodeType == Sparlectra.PV ? 1 : 0
     npq += isPQNode(n) ? 1 : 0
     niso += isIsolated(n) ? 1 : 0
-    nslack += n._nodeType == Sparlectra.Slack ? 1 : 0
+    if n._nodeType == Sparlectra.Slack
+      # same name source as the bus-table label (_bus_type_label), so the
+      # header count and the SOURCE rows can never disagree
+      if _is_external_grid_internal_bus(_effective_bus_name(busNameByIdx, net, n.busIdx))
+        nsource += 1
+      else
+        nslack += 1
+      end
+    end
     if occursin("_Aux_", n.comp.cName)
       auxb += 1
     end
@@ -750,12 +773,15 @@ function printACPFlowResults(
   kappa === nothing || @printf(io, "Jacobian cond. : %s\n", _condition_report_line(kappa; tol = tol))
 
   @printf(io, "BaseMVA        :%10d\n", net.baseMVA)
+  # sources appear in the count only when present, keeping the common
+  # no-source header unchanged
+  slack_part = nsource > 0 ? @sprintf("Slack: %d Source: %d", nslack, nsource) : @sprintf("Slack: %d", nslack)
   if auxb > 0 && niso > 0
-    @printf(io, "Nodes          :%10d (PV: %d PQ: %d (Aux: %d) Iso: %d Slack: %d\n", busses, npv, npq, auxb, niso, nslack)
+    @printf(io, "Nodes          :%10d (PV: %d PQ: %d (Aux: %d) Iso: %d %s\n", busses, npv, npq, auxb, niso, slack_part)
   elseif auxb > 0
-    @printf(io, "Nodes          :%10d (PV: %d PQ: %d (Aux: %d) Slack: %d\n", busses, npv, npq, auxb, nslack)
+    @printf(io, "Nodes          :%10d (PV: %d PQ: %d (Aux: %d) %s\n", busses, npv, npq, auxb, slack_part)
   else
-    @printf(io, "Nodes          :%10d (PV: %d PQ: %d Slack: %d)\n", busses, npv, npq, nslack)
+    @printf(io, "Nodes          :%10d (PV: %d PQ: %d %s)\n", busses, npv, npq, slack_part)
   end
   @printf(io, "Grid connection: %s\n", _grid_connection_summary(net, busNameByIdx))
   if pf_nodes != busses

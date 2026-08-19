@@ -428,6 +428,30 @@ function run_webui_fast_tests()
         delete!(ENV, "SPARLECTRA_SYSIMAGE_DRY_RUN")
       end
     end
+
+    @testset "SBOM script dry run parses" begin
+      # same mechanism as the sysimage smoke: the dry-run flag keeps the
+      # script side-effect free (no build environment, no PkgToSoftwareBOM,
+      # no network); the full generation runs only in the release workflow
+      script = joinpath(Sparlectra.SPARLECTRA_ROOT, "tools", "generate_sbom.jl")
+      @test isfile(script)
+      ENV["SPARLECTRA_SBOM_DRY_RUN"] = "1"
+      try
+        sandbox = Module()
+        text = mktemp() do path, io
+          redirect_stdout(io) do
+            Base.include(sandbox, script)
+          end
+          flush(io)
+          read(path, String)
+        end
+        @test occursin("dry run", text)
+        @test occursin("Sparlectra.spdx.json", text)
+        @test occursin("dry run finished", text)
+      finally
+        delete!(ENV, "SPARLECTRA_SBOM_DRY_RUN")
+      end
+    end
   end
 end
 
