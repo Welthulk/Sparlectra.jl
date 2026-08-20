@@ -616,7 +616,7 @@ two sparse backends, selected via `power_flow.linear_solver` (default
   ~0.28s vs. 0.45s on the 164k `case_SyntheticUSA` Jacobian) — usually the
   fastest choice on large cases.
 
-A `klu` backend (SuiteSparse KLU) existed until 0.10.0 and was removed:
+A `klu` backend (SuiteSparse KLU) existed until 0.9.10 and was removed:
 KLU's left-looking factorization is optimized for circuit-simulation
 matrices and does not use BLAS-3 supernodes, and on power-flow Jacobians it
 measured slower than UMFPACK end to end (with `umfpack_reuse` faster

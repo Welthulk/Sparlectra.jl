@@ -205,7 +205,7 @@ function apply_single_branch_outage!(net::Net, branch_index::Int)
   1 <= branch_index <= length(net.branchVec) || throw(ArgumentError("branch index $branch_index is outside 1:$(length(net.branchVec))"))
   before = [br.status for br in net.branchVec]
   before[branch_index] == 1 || throw(ArgumentError("matched branch $branch_index was not initially in service"))
-  # aggregate outage: the setter keeps the terminal flags consistent (r0.10.0)
+  # aggregate outage: the setter keeps the terminal flags consistent (r0.9.10)
   setBranchStatus!(net.branchVec[branch_index], false)
   after = [br.status for br in net.branchVec]
   changed = findall(i -> before[i] != after[i], eachindex(before))

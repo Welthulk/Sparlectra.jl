@@ -14,7 +14,7 @@
 
 # Date: 2026-08-20
 # file: examples/others/exp_open_terminal_line.jl
-# purpose: one-sided open branches (r0.10.0): a long 380 kV line is solved
+# purpose: one-sided open branches (r0.9.10): a long 380 kV line is solved
 #          closed, then opened at the to end with setBranchTerminalStatus!.
 #          The open line still draws its FULL charging at the closed bus
 #          (plus the small r loss of the charging current), and the open-end

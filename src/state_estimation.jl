@@ -658,7 +658,7 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
   updateNet = cfg.update_net
   activeMeas = _active_measurements(measurements)
   isempty(activeMeas) && error("runse!: no active measurements")
-  # r0.10.0 scope guard: the estimator's measurement model does not carry
+  # r0.9.10 scope guard: the estimator's measurement model does not carry
   # the one-sided branch reduction yet; a flow measurement on a partially
   # open branch would be evaluated against the wrong model. Rejected with a
   # clear message (follow-up tracked in the terminal-status review notes);

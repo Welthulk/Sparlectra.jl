@@ -724,7 +724,7 @@ function _mapLines!(net, store, topo, created, svmap, baseMVA, ctx::_MapCtx)
         push!(ctx.skipped, line.mrid)
         continue
       end
-      # Terminal.connected handling (r0.10.0). Both ends open (or
+      # Terminal.connected handling (r0.9.10). Both ends open (or
       # Equipment.inService == false, a de-commissioned line contributes no
       # charging either) → the branch is out of service. Exactly ONE end
       # open → the branch is created with per-terminal flags and reduces to
@@ -844,7 +844,7 @@ function _map2WTrafo!(net, store, topo, created, svmap, svsteps, baseMVA, pt, en
   ratio, shift = _applyEndTaps(store, svsteps, e2, ratio, shift, false, ctx.messages; strict = ctx.strict_guards)
   b1 = _ensureBus!(net, created, topo, svmap, i1.tn)
   b2 = _ensureBus!(net, created, topo, svmap, i2.tn)
-  # per-terminal flags (r0.10.0): a transformer with exactly one open
+  # per-terminal flags (r0.9.10): a transformer with exactly one open
   # terminal stays in the model as its Schur reduction at the closed bus
   # (magnetizing branch seen through the ratio) instead of being dropped
   pt_in_service = _inService(ctx, pt)

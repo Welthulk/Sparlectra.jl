@@ -503,7 +503,7 @@ function buildACPFlowReport(net::Net; ct::Float64 = 0.0, ite::Int = 0, tol::Floa
         original_from_bus_name = _original_bus_name(busNameByIdx, net, br.fromBus),
         original_to_bus_name = _original_bus_name(busNameByIdx, net, br.toBus),
         branch_kind = _branch_kind_name(net, br),
-        # r0.10.0 per-terminal state plus the open-end voltage result of a
+        # r0.9.10 per-terminal state plus the open-end voltage result of a
         # one-sided open branch (missing when closed or fully open)
         terminal_state = _branch_terminal_state(br),
         open_end_vm_pu = br.open_end_vm_pu === nothing ? missing : br.open_end_vm_pu,
@@ -585,7 +585,7 @@ function formatBranchResults(net::Net; max_rows::Union{Nothing,Int} = nothing)
     toName = get(busNameByIdx, Int(to), string(to))
     connection = string(fromName, " -> ", toName)
     # only fully open branches print zeros; a one-sided open branch
-    # (r0.10.0) carries its stored one-sided flows (closed side = charging
+    # (r0.9.10) carries its stored one-sided flows (closed side = charging
     # draw, open side = 0)
     terminal_state = _branch_terminal_state(br)
     if terminal_state == :open || (isnothing(br.fBranchFlow)) || (isnothing(br.tBranchFlow))

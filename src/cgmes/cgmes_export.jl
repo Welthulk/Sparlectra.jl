@@ -886,7 +886,7 @@ function writeTPFile(net::Sparlectra.Net, ctx::CGMESContext, path::AbstractStrin
     end
 
     # Terminal -> TopologicalNode association. connected is written PER
-    # TERMINAL from the branch flags (r0.10.0): a one-sided open branch
+    # TERMINAL from the branch flags (r0.9.10): a one-sided open branch
     # exports one connected=false terminal, exactly what the importer maps
     # back onto from_status/to_status. The helper covers legacy nets whose
     # aggregate was forced to 0 without touching the flags.

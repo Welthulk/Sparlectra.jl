@@ -1608,7 +1608,7 @@ setNetBranchStatus!(net = network, branchNr = 1, status = 1)
 function setNetBranchStatus!(; net::Net, branchNr::Int, status::Int)
   @assert branchNr > 0 "Branch number must be greater than 0"
   @assert branchNr <= length(net.branchVec) "Branch $branchNr not found in the network"
-  # aggregate switch: keeps the per-terminal flags consistent (r0.10.0)
+  # aggregate switch: keeps the per-terminal flags consistent (r0.9.10)
   setBranchStatus!(net.branchVec[branchNr], status == 1)
   markIsolatedBuses!(net = net, log = false)
 end
@@ -1887,7 +1887,7 @@ function markIsolatedBuses!(; net::Net, log::Bool = false)
   connected_buses = Set{Int}()
 
   # Iterate through each branch in branchVec and add the corresponding buses
-  # to the set. A one-sided open branch (r0.10.0) connects only its CLOSED
+  # to the set. A one-sided open branch (r0.9.10) connects only its CLOSED
   # bus, and only when something can energize that bus: a prosumer there or
   # another closed branch. A dead closed end (no injection, no other
   # connection) stays isolated exactly like before the feature, its

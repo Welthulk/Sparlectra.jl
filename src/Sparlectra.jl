@@ -132,7 +132,7 @@ export
   getBranchLosses,
   setBranchLosses!,
   setBranchStatus!,
-  setBranchTerminalStatus!,               # Open or close individual branch terminals (r0.10.0, one-sided open branches).
+  setBranchTerminalStatus!,               # Open or close individual branch terminals (r0.9.10, one-sided open branches).
 
   # Link
   BusLink,

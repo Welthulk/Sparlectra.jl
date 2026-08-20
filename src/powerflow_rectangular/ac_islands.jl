@@ -196,7 +196,7 @@ function detect_ac_islands(net::Net)
     for bus in buses
       bus_to_island[bus] = island_id
     end
-    # a one-sided open branch (r0.10.0) belongs to the island of its CLOSED
+    # a one-sided open branch (r0.9.10) belongs to the island of its CLOSED
     # bus: its Schur stamp must travel with that island's subnet although
     # the open-side bus is isolated or lives elsewhere
     branches = [

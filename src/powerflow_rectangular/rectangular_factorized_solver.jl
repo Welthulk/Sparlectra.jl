@@ -15,7 +15,7 @@
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # file: src/powerflow_rectangular/rectangular_factorized_solver.jl
 # purpose: factorization-reuse linear-solver backend (UMFPACK lu!) for the
-#          rectangular Newton step. A KLU backend lived here until 0.10.0;
+#          rectangular Newton step. A KLU backend lived here until 0.9.10;
 #          it was removed after measurements showed no benefit on power-flow
 #          Jacobians (slower factorization on real cases, unsafe under
 #          shared-factor threading; see docs/dev/parallel_analysis.md).

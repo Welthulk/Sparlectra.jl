@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # file: test/test_terminal_status.jl
-# purpose: per-terminal branch status (r0.10.0, one-sided open branches):
+# purpose: per-terminal branch status (r0.9.10, one-sided open branches):
 #          the dangling-node reference anchor for lines and transformers,
 #          bitwise equivalence of both-open with status 0, reuse-backend pattern
 #          invalidation on terminal toggles, isolation of the open-side
@@ -37,7 +37,7 @@ function _ts_line_net(name::String; to_status::Int = 1, from_status::Int = 1, lo
 end
 
 function run_terminal_status_tests()
-  @testset "per-terminal branch status (r0.10.0)" begin
+  @testset "per-terminal branch status (r0.9.10)" begin
     @testset "state helper and setters" begin
       net = _ts_line_net("ts_helper")
       br = net.branchVec[1]

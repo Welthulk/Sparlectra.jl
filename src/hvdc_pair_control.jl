@@ -94,7 +94,7 @@ mutable struct HvdcPairControl <: AbstractOuterController
   deadband_p_mw::Float64
 end
 
-# canonical value sets (r0.10.0/parallel Phase 6): the result tables derive
+# canonical value sets (r0.9.10/parallel Phase 6): the result tables derive
 # their column widths from these, so a new mode or status can never
 # misalign a table again. Extend HERE when adding one.
 const HVDC_PAIR_MODES = (:setpoint, :island_feed)

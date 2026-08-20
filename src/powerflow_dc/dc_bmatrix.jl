@@ -73,7 +73,7 @@ function assemble_dc_bbus(net::Net)
   V = Float64[]
   @inbounds for br in net.branchVec
     # aggregate status == 1 means both terminals closed. A one-sided open
-    # branch (r0.10.0, aggregate 0) correctly contributes NOTHING here: the
+    # branch (r0.9.10, aggregate 0) correctly contributes NOTHING here: the
     # DC B' matrix ignores shunts, and the Schur reduction of a partially
     # open branch is a pure shunt at the closed bus.
     br.status == 1 || continue

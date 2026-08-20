@@ -539,7 +539,7 @@ Calculate branch flow in per unit for a given branch and voltage vector.
   if state == :open
     return 0.0 + 0.0im
   elseif state == :open_to || state == :open_from
-    # one-sided open (r0.10.0): the closed terminal sees the Schur input
+    # one-sided open (r0.9.10): the closed terminal sees the Schur input
     # admittance, the open terminal carries zero by definition
     closed = state == :open_to ? Int(branch.fromBus) : Int(branch.toBus)
     from == closed || return 0.0 + 0.0im
@@ -603,7 +603,7 @@ function createYBUS(; net::Net, sparse::Bool = true, printYBUS::Bool = false)
       continue
     end
     if state == :open_from || state == :open_to
-      # one-sided open branch (r0.10.0): the exact pi reduction stamps only
+      # one-sided open branch (r0.9.10): the exact pi reduction stamps only
       # the Schur complement Y_in onto the diagonal of the CLOSED bus; the
       # open bus gets no entry from this branch and there are no
       # off-diagonals. Only the closed-bus index is ever read here, so

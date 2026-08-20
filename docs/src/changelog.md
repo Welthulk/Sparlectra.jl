@@ -1,4 +1,4 @@
-# Version 0.10.0 - unreleased
+# Version 0.9.10 - unreleased
 
 Per-terminal branch status: one-sided open branches.
 

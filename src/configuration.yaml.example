@@ -21,7 +21,7 @@ power_flow:
   #   the first iteration is reused via lu! across NR iterations, usually
   #   the fastest choice on large cases.
   # The reuse backend falls back to the umfpack chain on factorization errors.
-  # (A klu backend existed until 0.10.0; removed, measured no benefit on
+  # (A klu backend existed until 0.9.10; removed, measured no benefit on
   # power-flow Jacobians.)
   linear_solver: umfpack
   # Options for solver: apslf.

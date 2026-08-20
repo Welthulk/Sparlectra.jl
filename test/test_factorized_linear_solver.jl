@@ -16,7 +16,7 @@
 # purpose: tests the umfpack_reuse linear-solver backend of the rectangular
 #          Newton step: UMFPACK equivalence, factorization reuse,
 #          pattern-drift guards, singular fallback, config and Web UI wiring.
-#          The former klu backend was removed in 0.10.0; the config and Web UI
+#          The former klu backend was removed in 0.9.10; the config and Web UI
 #          tests assert that "klu" is rejected.
 
 using Sparlectra

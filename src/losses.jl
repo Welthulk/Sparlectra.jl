@@ -53,7 +53,7 @@ function calcNetLosses!(net::Net, V::Vector{ComplexF64})
     @assert tapSide == 1 || tapSide == 2
     # the main loop dispatches on _branch_terminal_state and calls this
     # helper only for fully closed branches (the old `status < 0` test was
-    # dead for the 0/1 encoding and is gone, r0.10.0)
+    # dead for the 0/1 encoding and is gone, r0.9.10)
 
     # Base voltages taken directly from V (already includes vm and va)
     ui = V[from]
@@ -115,7 +115,7 @@ function calcNetLosses!(net::Net, V::Vector{ComplexF64})
         br.open_end_va_deg = nothing
         continue
       end
-      # one-sided open branch (r0.10.0): the closed terminal carries
+      # one-sided open branch (r0.9.10): the closed terminal carries
       # S = |U|^2 * conj(Y_in) (the full charging plus the r loss of the
       # charging current), the open terminal carries zero by definition.
       # Everything entering is dissipated or stored in the branch, so the
@@ -228,7 +228,7 @@ function calcLinkFlowsKCL!(net::Net; tol::Float64 = 1e-6)
   Q_branch_out = zeros(Float64, nbus)
   for br in net.branchVec
     # only fully open branches carry no terminal power; a one-sided open
-    # branch (r0.10.0) contributes its closed-terminal charging draw here
+    # branch (r0.9.10) contributes its closed-terminal charging draw here
     # (the stored open-side flow is zero, adding it is a no-op)
     _branch_terminal_state(br) == :open && continue
     if !isnothing(br.fBranchFlow)

@@ -414,7 +414,7 @@ function generateMeasurementsFromPF(
 
   for br in net.branchVec
     # no flow measurements on branches that are fully open or open at one
-    # terminal (r0.10.0): the estimator's measurement model rejects the
+    # terminal (r0.9.10): the estimator's measurement model rejects the
     # partial case, see the runse! scope guard
     _branch_terminal_state(br) == :closed || continue
     if includePflow

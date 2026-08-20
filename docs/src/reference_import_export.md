@@ -15,7 +15,7 @@ Pages = [
 ]
 ```
 
-## Per-terminal branch status in import and export (r0.10.0)
+## Per-terminal branch status in import and export (r0.9.10)
 
 - **CGMES:** `Terminal.connected` maps per terminal onto
   `from_status`/`to_status` on import. A line or two-winding transformer

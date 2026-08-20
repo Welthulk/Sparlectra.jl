@@ -28,7 +28,7 @@ Sparlectra.BranchFlow
 Sparlectra.BranchModel
 ```
 
-Since r0.10.0 a `Branch` carries per-terminal service flags
+Since r0.9.10 a `Branch` carries per-terminal service flags
 `from_status`/`to_status` (1 = closed, 0 = open) next to the aggregate
 `status`. Invariant: `status = 1` iff both terminals are closed;
 `setBranchStatus!` (the user-facing switch) sets all three consistently,

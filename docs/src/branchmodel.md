@@ -158,7 +158,7 @@ while keeping shunt effects in the nonlinear injection equations.
 
 ## One-sided open branches
 
-Since r0.10.0 a branch carries two terminal flags `from_status`/`to_status`
+Since r0.9.10 a branch carries two terminal flags `from_status`/`to_status`
 next to the aggregate `status`. The aggregate stays the user-facing switch
 (`setBranchStatus!` sets all three; `status = 1` iff both terminals are
 closed); `setBranchTerminalStatus!(br; from =, to =)` opens or closes

@@ -148,7 +148,7 @@ mutable struct Branch <: AbstractBranch
   phase_min_deg::Float64
   phase_max_deg::Float64
   phase_step_deg::Float64
-  # per-terminal service state (r0.10.0): 1 = closed, 0 = open. The
+  # per-terminal service state (r0.9.10): 1 = closed, 0 = open. The
   # aggregate `status` stays the user-facing switch and is kept consistent
   # by the setters (status = 1 iff both terminals closed); consumers must
   # read the state through _branch_terminal_state, never the raw fields.

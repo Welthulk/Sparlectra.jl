@@ -87,7 +87,7 @@ function _matpower_bus_shunts(net::Net)
     gs[sh.busIdx] = get(gs, sh.busIdx, 0.0) + real(sh.y_pu_shunt) * net.baseMVA
     bs[sh.busIdx] = get(bs, sh.busIdx, 0.0) + imag(sh.y_pu_shunt) * net.baseMVA
   end
-  # MATPOWER has no one-sided open branch state (r0.10.0). A partially open
+  # MATPOWER has no one-sided open branch state (r0.9.10). A partially open
   # branch exports as BR_STATUS = 0 plus its exact Schur input admittance
   # Y_in as a bus shunt at the closed bus, so a MATPOWER solve reproduces
   # the same Y-bus. The roundtrip loses the partial state: the branch comes

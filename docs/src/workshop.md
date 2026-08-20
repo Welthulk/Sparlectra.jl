@@ -272,7 +272,7 @@ usually part of iterative model editing:
 4. validate and solve again.
 
 Besides removing an element outright, a branch can be switched: the whole
-branch with the aggregate setter, or a single terminal (r0.10.0), which
+branch with the aggregate setter, or a single terminal (r0.9.10), which
 keeps the branch in the model as its pi reduction at the closed bus (full
 charging draw, open-end voltage as a result):
 
