@@ -430,6 +430,9 @@ mpc.dcline = [
           @test occursin("HVDC links     :         1", txt)
           @test occursin("HVDC Link Flows", txt)
           @test occursin("converter losses (HVDC)", txt)
+          # the link also appears as a marked row in the branch table
+          @test occursin("| Link   |", txt)
+          @test occursin("HVDC, not a branch", txt)
         end
       end
       # regression (multi-slack header): a two-island net reports both

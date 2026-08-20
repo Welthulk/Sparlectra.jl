@@ -607,6 +607,19 @@ function formatBranchResults(net::Net; max_rows::Union{Nothing,Int} = nothing)
     #! format: on
     shown_rows += 1
   end
+  # HVDC links look like branches (they connect two buses and move power)
+  # but are NOT Y-bus elements. They are appended as `Link` rows so the
+  # topology reads in one table, marked "not a branch" per row; the sign
+  # convention matches the branch rows (from side positive into the link,
+  # to side negative = receiving), Q is 0 (a DC link transfers no reactive
+  # power), Pv is the converter loss. Details in the HVDC Link Flows table.
+  for r in _hvdc_link_flow_rows(net)
+    connection = string(r.from_bus_name, " -> ", r.to_bus_name)
+    p_target = r.mode === :fixed ? "-" : @sprintf("%.3f", r.p_from_MW)
+    #! format: off
+    formatted_results *= @sprintf("| %-25s | %-6s | %-25s | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10s | %-10s | %-9s | %-22s |\n", _fitColumn(r.name, 25), "Link", _fitColumn(connection, 25), r.p_from_MW, 0.0, -r.p_to_MW, 0.0, r.loss_MW, 0.0, r.mode === :fixed ? "-" : String(r.mode), p_target, "-", "HVDC, not a branch")
+    #! format: on
+  end
   formatted_results *= @sprintf("--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n")
   (∑pv, ∑qv) = getTotalLosses(net = net)
   total_losses = @sprintf("total network power balance (Σ S_branch): P = %10.3f [MW], Q = %10.3f [MVar]\n", ∑pv, ∑qv)

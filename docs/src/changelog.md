@@ -4,7 +4,8 @@ HVDC link results and one-reference-per-island validation.
 
 - HVDC links are first-class results: every link (Stage-0 or paired, from
   MATPOWER, CGMES, or the API) is tracked on the net and reported in a new
-  `HVDC Link Flows` table, the result header, the generator-table terminal
+  `HVDC Link Flows` table, a `Link` row in the branch table (marked
+  "HVDC, not a branch"), the result header, the generator-table terminal
   markers, a converter-loss line, `ACPFlowReport.hvdc_links`, and
   `hvdc_links.csv`.
 - A synchronous island with more than one angle reference now fails with a

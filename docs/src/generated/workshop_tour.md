@@ -491,8 +491,12 @@ classical result output, in the same aligned label/value layout as the
 transformer, machine, and TCSC summaries (`printHvdcPairControllerSummary`
 prints the same block standalone). The link itself has its own `HVDC
 Link Flows` table right after the link table: ordered transfer,
-delivered power, loss, and the controller status per link. The link now
-carries 120 MW instead of 80: in the branch table the line A1 -> A2
+delivered power, loss, and the controller status per link. And look at
+the LAST row of the branch table: the link appears there too, typed
+`Link` and marked "HVDC, not a branch", so the topology reads in one
+table; it looks like a branch (two buses, power moves), but no Y-bus
+element exists behind it, Q is zero, and its Pv column is the converter
+loss. The link now carries 120 MW instead of 80: the line A1 -> A2
 supplies 40 MW more (area A's reference generates the export), while
 C1 -> C2 turns around and carries the received power away from the
 converter bus.
@@ -763,10 +767,12 @@ printACPFlowResults(netm2, etime, resultm.last_pf_iterations, 1e-8)
 ````
 
 Reading aid: ONE island, ONE `SLACK` row (`A1`), `C1` is an ordinary PV
-generator now. The `HVDC Link Flows` table still shows the ordered
-120 MW with 4 MW loss, and the tie `A1 -> C1` carries whatever the link
-over- or under-delivers relative to what area C draws. Retarget the pair
-and watch the exchange move between link and tie:
+generator now. The branch table shows the parallel paths side by side:
+three real AC branches plus the `Link` row marked "HVDC, not a branch".
+The `HVDC Link Flows` table still shows the ordered 120 MW with 4 MW
+loss, and the tie `A1 -> C1` carries whatever the link over- or
+under-delivers relative to what area C draws. Retarget the pair and
+watch the exchange move between link and tie:
 
 ````@example workshop_tour
 ctrlm = only(collect_outer_controllers(netm2))
