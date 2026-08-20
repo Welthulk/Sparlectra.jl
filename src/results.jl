@@ -32,6 +32,20 @@ function _fitColumn(text, width::Int)::String
   return first(str, width - 1) * "…"
 end
 
+# Column layout of the HVDC Link Flows table (parallel Phase 6): widths are
+# DERIVED from the canonical mode/status sets in hvdc_pair_control.jl, and
+# header, separator, and rows are generated from the same tuple, so a new
+# mode or status value can never misalign the table again.
+const _HVDC_COL_MODE = max(maximum(length(string(m)) for m in HVDC_PAIR_MODES), length("fixed"), length("Mode"))
+const _HVDC_COL_STATUS = max(maximum(length(string(s)) for s in HVDC_PAIR_STATUS_VALUES), length("Status"))
+const _HVDC_COL_BUS = 12
+const _HVDC_TABLE_COLUMNS = (("Nr", 5), ("Name", 14), ("From", _HVDC_COL_BUS), ("To", _HVDC_COL_BUS), ("Mode", _HVDC_COL_MODE), ("P_from [MW]", 11), ("P_to [MW]", 9), ("Loss [MW]", 9), ("Q_from [MVar]", 13), ("Q_to [MVar]", 11), ("Rating", 7), ("Status", _HVDC_COL_STATUS))
+
+# every cell passes through _fitColumn with its column width; no raw %-Ns on
+# free-form or enum strings
+_hvdc_table_line(cells) = string("| ", join((rpad(_fitColumn(string(c), w), w) for (c, (_, w)) in zip(cells, _HVDC_TABLE_COLUMNS)), " | "), " |")
+_hvdc_table_header() = _hvdc_table_line(Tuple(name for (name, _) in _HVDC_TABLE_COLUMNS))
+
 function format_version(version::VersionNumber)
   major = lpad(version.major, 1, '0')
   minor = lpad(version.minor, 1, '0')
@@ -629,9 +643,13 @@ function formatBranchResults(net::Net; max_rows::Union{Nothing,Int} = nothing)
   # power), Pv is the converter loss. Details in the HVDC Link Flows table.
   for r in _hvdc_link_flow_rows(net)
     connection = string(r.from_bus_name, " -> ", r.to_bus_name)
-    p_target = r.mode === :fixed ? "-" : @sprintf("%.3f", r.p_from_MW)
+    # P_tgt is the controller SETPOINT when one exists, "-" otherwise; the
+    # widths of the Ctrl (10) and status (22) columns are fixed by the
+    # branch header, so mode and note pass through _fitColumn with them
+    p_target = r.p_target_MW === missing ? "-" : @sprintf("%.3f", r.p_target_MW)
+    link_mode = r.mode === :fixed ? "-" : _fitColumn(string(r.mode), 10)
     #! format: off
-    formatted_results *= @sprintf("| %-25s | %-6s | %-25s | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10s | %-10s | %-9s | %-22s |\n", _fitColumn(r.name, 25), "Link", _fitColumn(connection, 25), r.p_from_MW, 0.0, -r.p_to_MW, 0.0, r.loss_MW, 0.0, r.mode === :fixed ? "-" : String(r.mode), p_target, "-", "HVDC, not a branch")
+    formatted_results *= @sprintf("| %-25s | %-6s | %-25s | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10s | %-10s | %-9s | %-22s |\n", _fitColumn(r.name, 25), "Link", _fitColumn(connection, 25), r.p_from_MW, 0.0, -r.p_to_MW, 0.0, r.loss_MW, 0.0, link_mode, _fitColumn(p_target, 10), "-", _fitColumn("HVDC, not a branch", 22))
     #! format: on
   end
   formatted_results *= @sprintf("--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n")
@@ -1035,13 +1053,18 @@ function printACPFlowResults(
   if !isempty(net.hvdcLinks)
     # P_from = power leaving the from bus into the link (positive for
     # export), P_to = power delivered into the to bus; Status is the
-    # controller status, "-" for Stage-0 fixed injections
-    @printf(io, "\n--------------------------------------------------- HVDC Link Flows ---------------------------------------------------\n")
-    @printf(io, "| %-5s | %-14s | %-8s | %-8s | %-11s | %-11s | %-9s | %-9s | %-13s | %-11s | %-7s | %-12s |\n", "Nr", "Name", "From", "To", "Mode", "P_from [MW]", "P_to [MW]", "Loss [MW]", "Q_from [MVar]", "Q_to [MVar]", "Rating", "Status")
-    @printf(io, "------------------------------------------------------------------------------------------------------------------------------------------------\n")
+    # controller status, "-" for Stage-0 fixed injections. Header,
+    # separator, and rows are generated from _HVDC_TABLE_COLUMNS, whose
+    # widths derive from the canonical mode/status sets (Phase 6).
+    header = _hvdc_table_header()
+    title = " HVDC Link Flows "
+    pad = max(0, length(header) - length(title))
+    println(io, "\n", "-"^(pad ÷ 2), title, "-"^(pad - pad ÷ 2))
+    println(io, header)
+    println(io, "-"^length(header))
     for r in _hvdc_link_flow_rows(net)
       rating = r.p_rating_MW === missing ? "-" : @sprintf("%.1f", r.p_rating_MW)
-      @printf(io, "| %-5d | %-14s | %-8s | %-8s | %-11s | %-11.3f | %-9.3f | %-9.3f | %-13.3f | %-11.3f | %-7s | %-12s |\n", r.nr, _fitColumn(r.name, 14), _fitColumn(r.from_bus_name, 8), _fitColumn(r.to_bus_name, 8), r.mode, r.p_from_MW, r.p_to_MW, r.loss_MW, r.q_from_MVar, r.q_to_MVar, rating, r.ctrl_status)
+      println(io, _hvdc_table_line((r.nr, r.name, r.from_bus_name, r.to_bus_name, r.mode, @sprintf("%.3f", r.p_from_MW), @sprintf("%.3f", r.p_to_MW), @sprintf("%.3f", r.loss_MW), @sprintf("%.3f", r.q_from_MVar), @sprintf("%.3f", r.q_to_MVar), rating, r.ctrl_status)))
     end
   end
   println(io, "\nControl")
@@ -1110,6 +1133,7 @@ function _hvdc_link_flow_rows(net::Net)::Vector{NamedTuple}
         q_from_MVar = _prosumer_q_result(net.prosumpsVec[l.from_prosumer]),
         q_to_MVar = _prosumer_q_result(net.prosumpsVec[l.to_prosumer]),
         p_rating_MW = missing,
+        p_target_MW = missing,
         status = l.status,
         ctrl_status = "-",
       ))
@@ -1127,6 +1151,8 @@ function _hvdc_link_flow_rows(net::Net)::Vector{NamedTuple}
         q_from_MVar = ctrl.from_q_now,
         q_to_MVar = ctrl.to_q_now,
         p_rating_MW = ctrl.p_rating_mw === nothing ? missing : ctrl.p_rating_mw,
+        # the controller SETPOINT (pre-clamp target), for the P_tgt column
+        p_target_MW = ctrl.p_transfer_mw,
         status = l.status,
         ctrl_status = string(ctrl.status),
       ))

@@ -396,6 +396,81 @@ mpc.dcline = [
       @test something(net4.prosumpsVec[s4].pVal, 0.0) == 0.0
     end
 
+    @testset "result table alignment across all modes and statuses (Phase 6)" begin
+      # two links, one per mode, and the LONGEST status value forced on the
+      # island_feed controller; the regression guard is structural: in both
+      # tables every row must carry the same number of column separators
+      # and the same line length as its header, for every mode/status combo
+      net = Net(name = "hvdc_align", baseMVA = 100.0)
+      for b in ("B1", "B2", "B3", "B4", "A1", "A2", "C1", "C2")
+        addBus!(net = net, busName = b, vn_kV = 380.0)
+      end
+      addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+      addPIModelACLine!(net = net, fromBus = "B3", toBus = "B4", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+      addPIModelACLine!(net = net, fromBus = "A1", toBus = "A2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+      addPIModelACLine!(net = net, fromBus = "C2", toBus = "C1", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+      addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", referencePri = "B1", vm_pu = 1.0, va_deg = 0.0)
+      addProsumer!(net = net, busName = "B3", type = "EXTERNALNETWORKINJECTION", referencePri = "B3", vm_pu = 1.0, va_deg = 0.0)
+      addProsumer!(net = net, busName = "A1", type = "EXTERNALNETWORKINJECTION", referencePri = "A1", vm_pu = 1.0, va_deg = 0.0)
+      addProsumer!(net = net, busName = "C2", type = "EXTERNALNETWORKINJECTION", referencePri = "C2", vm_pu = 1.0, va_deg = 0.0)
+      addProsumer!(net = net, busName = "B2", type = "ENERGYCONSUMER", p = 40.0, q = 10.0)
+      addProsumer!(net = net, busName = "B4", type = "ENERGYCONSUMER", p = 50.0, q = 12.0)
+      addProsumer!(net = net, busName = "A2", type = "ENERGYCONSUMER", p = 40.0, q = 10.0)
+      addProsumer!(net = net, busName = "C1", type = "ENERGYCONSUMER", p = 50.0, q = 12.0)
+      addProsumer!(net = net, busName = "B2", type = "GENERATOR", p = -80.0, q = 0.0)
+      addProsumer!(net = net, busName = "B4", type = "GENERATOR", p = 76.0, q = 0.0)
+      addProsumer!(net = net, busName = "A2", type = "GENERATOR", p = 0.0, q = 0.0)
+      ctrl1 = addHvdcPairControl!(net; from_bus = "B2", to_bus = "B4", p_transfer_mw = 100.0, loss_mw = 4.0, p_rating_mw = 150.0)
+      ctrl2 = addHvdcPairControl!(net; from_bus = "A2", to_bus = "C2", mode = :island_feed, loss_mw = 4.0)
+      result = _hvdc_run!(net)
+      @test result.converged
+      calcNetLosses!(net)
+      # cycle through EVERY status value defined in hvdc_pair_control.jl,
+      # including the 16-character :invalid_topology
+      for forced in Sparlectra.HVDC_PAIR_STATUS_VALUES
+        ctrl2.status = forced
+        txt = mktempdir() do d
+          cd(d) do
+            printACPFlowResults(net, 0.0, 1, 1e-8, true)
+            read("result_$(net.name).txt", String)
+          end
+        end
+        lines = split(txt, "\n")
+        # branch table: from its header to the separator after the rows
+        bh = findfirst(l -> startswith(l, "| Branch"), lines)
+        @test bh !== nothing
+        width = length(lines[bh])
+        pipes = count(==('|'), lines[bh])
+        i = bh + 2
+        while i <= length(lines) && startswith(lines[i], "|")
+          @test length(lines[i]) == width
+          @test count(==('|'), lines[i]) == pipes
+          i += 1
+        end
+        # HVDC Link Flows table
+        hh = findfirst(l -> startswith(l, "| Nr"), lines)
+        @test hh !== nothing
+        hwidth = length(lines[hh])
+        hpipes = count(==('|'), lines[hh])
+        j = hh + 2
+        while j <= length(lines) && startswith(lines[j], "|")
+          @test length(lines[j]) == hwidth
+          @test count(==('|'), lines[j]) == hpipes
+          j += 1
+        end
+      end
+      ctrl2.status = :converged
+      # P_tgt in the Link row is the controller setpoint, not the flow
+      txt2 = mktempdir() do d
+        cd(d) do
+          printACPFlowResults(net, 0.0, 1, 1e-8, true)
+          read("result_$(net.name).txt", String)
+        end
+      end
+      link_row = only(filter(l -> occursin("B2B_B2_B4", l) && occursin("Link", l), split(txt2, "\n")))
+      @test occursin("100.000", link_row)
+    end
+
     @testset "element rows and summary output" begin
       net, _, _ = _build_hvdc_two_area_net("hvdc_rows")
       addHvdcPairControl!(net; from_bus = "B2", to_bus = "B4", p_transfer_mw = 80.0, loss_mw = 3.0, p_rating_mw = 150.0)

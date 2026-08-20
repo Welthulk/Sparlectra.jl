@@ -94,6 +94,12 @@ mutable struct HvdcPairControl <: AbstractOuterController
   deadband_p_mw::Float64
 end
 
+# canonical value sets (r0.10.0/parallel Phase 6): the result tables derive
+# their column widths from these, so a new mode or status can never
+# misalign a table again. Extend HERE when adding one.
+const HVDC_PAIR_MODES = (:setpoint, :island_feed)
+const HVDC_PAIR_STATUS_VALUES = (:idle, :active, :converged, :at_limit, :invalid_topology)
+
 """
     _hvdc_pair_controllers(net) -> Vector{HvdcPairControl}
 
@@ -297,7 +303,7 @@ function addHvdcPairControl!(
   to_prosumer::Union{Nothing,Int} = nothing,
 )
   from_bus == to_bus && error("HvdcPairControl: from_bus equals to_bus ($(from_bus)); a pair couples two different terminals.")
-  mode in (:setpoint, :island_feed) || error("HvdcPairControl: unknown mode $(mode); use :setpoint or :island_feed.")
+  mode in HVDC_PAIR_MODES || error("HvdcPairControl: unknown mode $(mode); use one of $(HVDC_PAIR_MODES).")
   if mode == :setpoint
     p_transfer_mw === nothing && error("HvdcPairControl: setpoint mode needs p_transfer_mw.")
   else
