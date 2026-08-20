@@ -196,7 +196,23 @@ function detect_ac_islands(net::Net)
     for bus in buses
       bus_to_island[bus] = island_id
     end
-    branches = [i for (i, br) in enumerate(net.branchVec) if br.status == 1 && Int(br.fromBus) in busset && Int(br.toBus) in busset]
+    # a one-sided open branch (r0.10.0) belongs to the island of its CLOSED
+    # bus: its Schur stamp must travel with that island's subnet although
+    # the open-side bus is isolated or lives elsewhere
+    branches = [
+      i for (i, br) in enumerate(net.branchVec) if begin
+        st = _branch_terminal_state(br)
+        if st == :closed
+          Int(br.fromBus) in busset && Int(br.toBus) in busset
+        elseif st == :open_to
+          Int(br.fromBus) in busset
+        elseif st == :open_from
+          Int(br.toBus) in busset
+        else
+          false
+        end
+      end
+    ]
     prosumers = [ps for ps in net.prosumpsVec if Int(ps.comp.cFrom_bus) in busset]
     generators = [ps for ps in prosumers if isGenerator(ps)]
     loads = [ps for ps in prosumers if !isGenerator(ps)]
@@ -333,8 +349,22 @@ function _prepare_island_net(net::Net, row)
   inet.branchVec = [deepcopy(net.branchVec[i]) for i in row.branches]
   for (newidx, br) in enumerate(inet.branchVec)
     br.branchIdx = newidx
-    br.fromBus = busmap[Int(br.fromBus)]
-    br.toBus = busmap[Int(br.toBus)]
+    # a one-sided open branch carries an open-side bus that is NOT part of
+    # this island (isolated or elsewhere); remap it onto the closed bus.
+    # This is safe because no consumer reads the open-side index of a
+    # partial branch (createYBUS stamps only the closed diagonal, the flow
+    # and loss paths read the closed side, see _branch_terminal_state).
+    st = _branch_terminal_state(br)
+    if st == :open_to
+      br.fromBus = busmap[Int(br.fromBus)]
+      br.toBus = get(busmap, Int(br.toBus), Int(br.fromBus))
+    elseif st == :open_from
+      br.toBus = busmap[Int(br.toBus)]
+      br.fromBus = get(busmap, Int(br.fromBus), Int(br.toBus))
+    else
+      br.fromBus = busmap[Int(br.fromBus)]
+      br.toBus = busmap[Int(br.toBus)]
+    end
     hasproperty(br.comp, :cFrom_bus) && (br.comp.cFrom_bus = Int(br.fromBus))
     hasproperty(br.comp, :cTo_bus) && (br.comp.cTo_bus = Int(br.toBus))
   end

@@ -151,7 +151,8 @@ function _apply_single_branch_outage!(net, idx::Int)
   before[idx] == 1 || throw(ArgumentError("matched branch $idx was not initially in service"))
   # Apply exactly one native branch status change and verify no other branch
   # moved; this protects the single-branch DTF outage-card interpretation.
-  net.branchVec[idx].status = 0
+  # The aggregate setter keeps the per-terminal flags consistent (r0.10.0).
+  setBranchStatus!(net.branchVec[idx], false)
   after = [br.status for br in net.branchVec]
   changed = findall(i -> before[i] != after[i], eachindex(before))
   length(changed) == 1 && only(changed) == idx || throw(ArgumentError("branch outage changed $(length(changed)) branches, expected exactly one"))

@@ -271,6 +271,16 @@ usually part of iterative model editing:
 3. mark or clear isolated buses, and
 4. validate and solve again.
 
+Besides removing an element outright, a branch can be switched: the whole
+branch with the aggregate setter, or a single terminal (r0.10.0), which
+keeps the branch in the model as its pi reduction at the closed bus (full
+charging draw, open-end voltage as a result):
+
+```julia
+setBranchStatus!(net.branchVec[1], false)                 # both ends open
+setBranchTerminalStatus!(net.branchVec[1]; to = false)    # one end open
+```
+
 ```julia
 removeACLine!(net = net, fromBus = "1", toBus = "2")
 removeShunt!(net = net, busName = "2")

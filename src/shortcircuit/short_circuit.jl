@@ -269,7 +269,11 @@ function _sc_island_matrix(net::Net, island_buses::Vector{Int}, y_add::Dict{Int,
   J = Int[]
   V = ComplexF64[]
   for br in net.branchVec
-    br.status == 0 && continue
+    # only fully closed branches carry a series path. A one-sided open
+    # branch (r0.10.0) has no through connection, and its Schur input
+    # admittance is charging, which this series-only matrix deliberately
+    # drops for closed branches as well, so it contributes nothing here.
+    _branch_terminal_state(br) == :closed || continue
     f = get(local_index, Int(br.fromBus), 0)
     t = get(local_index, Int(br.toBus), 0)
     (f == 0 || t == 0) && continue

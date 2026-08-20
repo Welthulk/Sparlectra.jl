@@ -535,8 +535,15 @@ Calculate branch flow in per unit for a given branch and voltage vector.
 """
 @inline function branchFlow_pu(branch::Branch, from::Int, to::Int, tapSide::Int, V::Vector{ComplexF64})
   @assert tapSide == 1 || tapSide == 2
-  if branch.status == 0
+  state = _branch_terminal_state(branch)
+  if state == :open
     return 0.0 + 0.0im
+  elseif state == :open_to || state == :open_from
+    # one-sided open (r0.10.0): the closed terminal sees the Schur input
+    # admittance, the open terminal carries zero by definition
+    closed = state == :open_to ? Int(branch.fromBus) : Int(branch.toBus)
+    from == closed || return 0.0 + 0.0im
+    return abs2(V[closed]) * conj(_open_terminal_yin(branch))
   end
 
   ui = V[from]
@@ -589,9 +596,22 @@ function createYBUS(; net::Net, sparse::Bool = true, printYBUS::Bool = false)
     @assert branch isa AbstractBranch "branch $(branch) is not of type AbstractBranch"
     fromNode = branch.fromBus
     toNode = branch.toBus
-    # Skip branches that are out of service
-    if branch.status == 0
+    state = _branch_terminal_state(branch)
+    # Skip branches that are out of service (both terminals open)
+    if state == :open
       @debug "createYBUS: Branch $(branch) out of service, skipping "
+      continue
+    end
+    if state == :open_from || state == :open_to
+      # one-sided open branch (r0.10.0): the exact pi reduction stamps only
+      # the Schur complement Y_in onto the diagonal of the CLOSED bus; the
+      # open bus gets no entry from this branch and there are no
+      # off-diagonals. Only the closed-bus index is ever read here, so
+      # island subnets may remap the open-side index freely.
+      closed = state == :open_to ? Int(fromNode) : Int(toNode)
+      closed in net.isoNodes && continue
+      closed -= count(i -> i < closed, net.isoNodes)
+      Y[closed, closed] += _open_terminal_yin(branch)
       continue
     end
     # skip isolated nodes

@@ -51,9 +51,9 @@ function calcNetLosses!(net::Net, V::Vector{ComplexF64})
   # -------------------------------------------------------------------------
   function calcBranchFlow(from::Int, to::Int, br::Branch, tapSide::Int)
     @assert tapSide == 1 || tapSide == 2
-    if br.status < 0
-      return 0.0 + 0.0im
-    end
+    # the main loop dispatches on _branch_terminal_state and calls this
+    # helper only for fully closed branches (the old `status < 0` test was
+    # dead for the 0/1 encoding and is gone, r0.10.0)
 
     # Base voltages taken directly from V (already includes vm and va)
     ui = V[from]
@@ -95,11 +95,53 @@ function calcNetLosses!(net::Net, V::Vector{ComplexF64})
   ∑qv    = 0.0
 
   for br in branchVec
-    if br.status == 0
+    state = _branch_terminal_state(br)
+    if state == :open
       @debug "Branch: $(br.comp.cName) is out of service"
       setBranchLosses!(br, 0.0, 0.0)
+      br.open_end_vm_pu = nothing
+      br.open_end_va_deg = nothing
       continue
     end
+
+    if state == :open_to || state == :open_from
+      closed_bus = state == :open_to ? Int(br.fromBus) : Int(br.toBus)
+      if closed_bus in net.isoNodes
+        # dead closed end (bus without source, see markIsolatedBuses!):
+        # nothing is energized, same bookkeeping as fully open
+        setBranchLosses!(br, 0.0, 0.0)
+        setBranchFlow!(br, BranchFlow(nothing, nothing, 0.0, 0.0), BranchFlow(nothing, nothing, 0.0, 0.0))
+        br.open_end_vm_pu = nothing
+        br.open_end_va_deg = nothing
+        continue
+      end
+      # one-sided open branch (r0.10.0): the closed terminal carries
+      # S = |U|^2 * conj(Y_in) (the full charging plus the r loss of the
+      # charging current), the open terminal carries zero by definition.
+      # Everything entering is dissipated or stored in the branch, so the
+      # branch loss equals S at the closed terminal. The open-end voltage
+      # follows from the pi divider and is stored as a result on the branch
+      # (Ferranti rise), the open bus itself stays whatever it is.
+      closed = state == :open_to ? Int(br.fromBus) : Int(br.toBus)
+      u_closed = V[closed]
+      S_closed = abs2(u_closed) * conj(_open_terminal_yin(br)) * Sbase_MVA
+      zeroFlow = BranchFlow(nothing, nothing, 0.0, 0.0)
+      closedFlow = BranchFlow(nodes[closed]._vm_pu, nodes[closed]._va_deg, real(S_closed), imag(S_closed))
+      if state == :open_to
+        setBranchFlow!(br, zeroFlow, closedFlow)
+      else
+        setBranchFlow!(br, closedFlow, zeroFlow)
+      end
+      u_open = _open_end_voltage(br, u_closed)
+      br.open_end_vm_pu = abs(u_open)
+      br.open_end_va_deg = rad2deg(angle(u_open))
+      setBranchLosses!(br, real(S_closed), imag(S_closed))
+      ∑pv += real(S_closed)
+      ∑qv += imag(S_closed)
+      continue
+    end
+    br.open_end_vm_pu = nothing
+    br.open_end_va_deg = nothing
 
     # From-side flow (from -> to)
     from = br.fromBus
@@ -185,7 +227,10 @@ function calcLinkFlowsKCL!(net::Net; tol::Float64 = 1e-6)
   P_branch_out = zeros(Float64, nbus)
   Q_branch_out = zeros(Float64, nbus)
   for br in net.branchVec
-    br.status == 0 && continue
+    # only fully open branches carry no terminal power; a one-sided open
+    # branch (r0.10.0) contributes its closed-terminal charging draw here
+    # (the stored open-side flow is zero, adding it is a no-op)
+    _branch_terminal_state(br) == :open && continue
     if !isnothing(br.fBranchFlow)
       P_branch_out[br.fromBus] += br.fBranchFlow.pFlow
       Q_branch_out[br.fromBus] += br.fBranchFlow.qFlow

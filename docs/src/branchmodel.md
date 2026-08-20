@@ -156,6 +156,75 @@ injection term, never both. The injection mode is useful when a solver
 formulation wants the admittance matrix to contain only branch/network coupling
 while keeping shunt effects in the nonlinear injection equations.
 
+## One-sided open branches
+
+Since r0.10.0 a branch carries two terminal flags `from_status`/`to_status`
+next to the aggregate `status`. The aggregate stays the user-facing switch
+(`setBranchStatus!` sets all three; `status = 1` iff both terminals are
+closed); `setBranchTerminalStatus!(br; from =, to =)` opens or closes
+individual terminals. Consumers read the state through the single helper
+`_branch_terminal_state` (`:closed`, `:open_from`, `:open_to`, `:open`).
+
+### The pi reduction
+
+Take the pi model with series admittance $Y_s = 1/(r + jx)$ and shunt arms
+$Y_0 = (g + jb)/2$ at each end, terminal `to` open, `from` closed, no load
+at the open end. Seen from the closed bus the branch collapses exactly to
+the input admittance
+
+```math
+Y_{in} = Y_0 + \frac{Y_s Y_0}{Y_s + Y_0}
+```
+
+Because $|Y_s| \gg |Y_0|$ for any realistic line, $Y_{in} \approx 2 Y_0 =
+g + jb$: the one-sided open line draws its **full** charging, not half of
+it. (The earlier CGMES import substitute, half the charging as a shunt,
+was a pragmatic improvement over dropping the line, and undercounted this
+by roughly a factor of two.)
+
+The implementation uses the equivalent Schur-complement form on the
+two-port from `calcAdmittance`, which already carries the complex ratio:
+with the `to` end open $Y_{in} = Y_{11} - Y_{12} Y_{21} / Y_{22}$, with
+the `from` end open $Y_{in} = Y_{22} - Y_{21} Y_{12} / Y_{11}$. Lines and
+transformers (off-nominal ratio, phase shift) are covered uniformly, no
+case distinction.
+
+### Open-end voltage and power
+
+The voltage at the open terminal follows from the divider (zero current at
+the open end): with `to` open $U_{open} = -Y_{21}/Y_{22} \cdot U_{from}$.
+It reproduces the Ferranti rise ($|U_{open}| > |U_{from}|$ for $b > 0$)
+and is reported as a branch **result** (`open_end_vm_pu` /
+`open_end_va_deg`) without adding a node to the solved system; the open
+bus itself is isolated unless other branches feed it.
+
+The closed terminal carries $S = |U|^2 \cdot \overline{Y_{in}}$: its
+imaginary part is the charging reactive power, its real part is the power
+absorbed by $g$ plus the ohmic loss of the charging current in $r$, small
+but not zero. The open terminal carries $S = 0$ by definition, and the
+branch loss equals the closed-terminal power (everything entering is
+dissipated or stored in the branch).
+
+### The equivalent dangling-node formulation
+
+Keeping the full branch and attaching an auxiliary zero-injection PQ bus
+at the open end is exactly equivalent for a pure pi branch (the test suite
+uses it as the correctness anchor, agreement to 1e-10). It is not the
+production formulation because it adds one bus per open terminal and
+changes bus counts, island reports, result tables, and the CGMES roundtrip
+identity. It becomes necessary only when equipment (a shunt, a load) is
+connected at the open end, which is out of scope.
+
+In the solvers: the Y-bus stamps only $Y_{in}$ on the diagonal of the
+closed bus; the DC power flow ignores the branch entirely (its reduction
+is a pure shunt and $B'$ carries no shunts); the short-circuit matrix
+drops it like the charging arms of closed branches (series-only
+convention). The result surface marks partial rows `open@to`/`open@from`,
+counts them under `Open terminals` in the header, and carries
+`terminal_state` plus the open-end voltage in `ACPFlowReport.branches` and
+the detailed CSV. Runnable example: `exp_open_terminal_line.jl`; the
+workshop tour demonstrates it at the end of chapter 1.
+
 ## 3. Tap-changer modelling layers
 
 Transformer and PST semantics are richer than a single `ratio + shift` branch.

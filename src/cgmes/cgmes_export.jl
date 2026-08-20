@@ -885,7 +885,17 @@ function writeTPFile(net::Sparlectra.Net, ctx::CGMESContext, path::AbstractStrin
       println(io, "  </cim:TopologicalNode>")
     end
 
-    # Terminal -> TopologicalNode association.
+    # Terminal -> TopologicalNode association. connected is written PER
+    # TERMINAL from the branch flags (r0.10.0): a one-sided open branch
+    # exports one connected=false terminal, exactly what the importer maps
+    # back onto from_status/to_status. The helper covers legacy nets whose
+    # aggregate was forced to 0 without touching the flags.
+    terminal_connected = function (br, seq)
+      st = Sparlectra._branch_terminal_state(br)
+      return seq == 1 ? (st == :closed || st == :open_to) : (st == :closed || st == :open_from)
+    end
+    line_branches_tp = [br for br in net.branchVec if occursin("_ACL_", br.comp.cName)]
+    lines_aligned = length(line_branches_tp) == length(net.linesAC)
     for (i, line) in enumerate(net.linesAC)
       fromIdx = line.comp.cFrom_bus
       toIdx = line.comp.cTo_bus
@@ -896,21 +906,24 @@ function writeTPFile(net::Sparlectra.Net, ctx::CGMESContext, path::AbstractStrin
           @warn "CGMES-TP: line $(line.comp.cName) terminal $(seq) has no valid bus index — skipped"
           continue
         end
+        connected = lines_aligned ? terminal_connected(line_branches_tp[i], seq) : true
         println(io, "  <cim:Terminal rdf:about=\"#_$(termId)\">")
         println(io, "    <cim:Terminal.TopologicalNode rdf:resource=\"#_$(ctx.topoNodeIds[busIdx])\"/>")
-        println(io, "    <cim:ACDCTerminal.connected>true</cim:ACDCTerminal.connected>")
+        println(io, "    <cim:ACDCTerminal.connected>$(connected)</cim:ACDCTerminal.connected>")
         println(io, "  </cim:Terminal>")
       end
     end
 
-    # Transformer terminals: an out-of-service unit exports as disconnected
-    # on both ends, which is how the importer reads branch status back.
+    # Transformer terminals: per-terminal flags as well; an out-of-service
+    # unit exports as disconnected on both ends, which is how the importer
+    # reads branch status back.
     for rec in ctx.trafoRecs
+      br = net.branchVec[rec.branchIdx]
       for (e, busIdx) in ((1, rec.fromIdx), (2, rec.toIdx))
         haskey(ctx.topoNodeIds, busIdx) || continue
         println(io, "  <cim:Terminal rdf:about=\"#_$(rec.terminalIds[e])\">")
         println(io, "    <cim:Terminal.TopologicalNode rdf:resource=\"#_$(ctx.topoNodeIds[busIdx])\"/>")
-        println(io, "    <cim:ACDCTerminal.connected>$(rec.connected)</cim:ACDCTerminal.connected>")
+        println(io, "    <cim:ACDCTerminal.connected>$(terminal_connected(br, e))</cim:ACDCTerminal.connected>")
         println(io, "  </cim:Terminal>")
       end
     end

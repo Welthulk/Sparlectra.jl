@@ -658,6 +658,19 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
   updateNet = cfg.update_net
   activeMeas = _active_measurements(measurements)
   isempty(activeMeas) && error("runse!: no active measurements")
+  # r0.10.0 scope guard: the estimator's measurement model does not carry
+  # the one-sided branch reduction yet; a flow measurement on a partially
+  # open branch would be evaluated against the wrong model. Rejected with a
+  # clear message (follow-up tracked in the terminal-status review notes);
+  # measurement generation never creates such measurements.
+  for meas in activeMeas
+    meas.branchIdx === nothing && continue
+    (1 <= meas.branchIdx <= length(net.branchVec)) || continue
+    st = _branch_terminal_state(net.branchVec[meas.branchIdx])
+    if st == :open_from || st == :open_to
+      error("runse!: measurement $(meas.id) references branch $(meas.branchIdx), which is open at one terminal ($(st)). Flow measurements on partially open branches are not supported yet; remove the measurement or close the terminal.")
+    end
+  end
 
   nbus = length(net.nodeVec)
   slackIdx = _find_slack_idx(net)

@@ -19,7 +19,7 @@
 
 module DTFImporter
 
-using ..Sparlectra: Net, addBus!, addProsumer!, _addPIModelACLine_by_idx!, _addPIModelTrafo_by_idx!, geNetBusIdx, validate!, normalize_bus_shunt_model, PhaseTapChangerModel, calcPhaseTapAngleRatio, calcPhaseTapFraction, calcTapCorrectedRX, transformer_config
+using ..Sparlectra: Net, addBus!, addProsumer!, _addPIModelACLine_by_idx!, _addPIModelTrafo_by_idx!, geNetBusIdx, validate!, normalize_bus_shunt_model, PhaseTapChangerModel, calcPhaseTapAngleRatio, calcPhaseTapFraction, calcTapCorrectedRX, transformer_config, setBranchStatus!
 
 export DTFCase, DTFParams, DTFSize, DTFBranch, DTFBus, DTFCompensation, DTFTransformerControl, DTFOutage, DTFTrailingRecord, read_dtf, build_net,
   dtf_branch_key, find_outage_branch_indices, outage_match_diagnostic, apply_single_branch_outage!, case_summary, outage_label
@@ -205,7 +205,8 @@ function apply_single_branch_outage!(net::Net, branch_index::Int)
   1 <= branch_index <= length(net.branchVec) || throw(ArgumentError("branch index $branch_index is outside 1:$(length(net.branchVec))"))
   before = [br.status for br in net.branchVec]
   before[branch_index] == 1 || throw(ArgumentError("matched branch $branch_index was not initially in service"))
-  net.branchVec[branch_index].status = 0
+  # aggregate outage: the setter keeps the terminal flags consistent (r0.10.0)
+  setBranchStatus!(net.branchVec[branch_index], false)
   after = [br.status for br in net.branchVec]
   changed = findall(i -> before[i] != after[i], eachindex(before))
   length(changed) == 1 && only(changed) == branch_index || throw(ArgumentError("branch outage changed $(length(changed)) branches, expected exactly one"))

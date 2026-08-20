@@ -28,6 +28,7 @@ summary at the end): `run_powerflow_suite.jl`, `run_others_suite.jl`,
 | `exp_condition_number.jl` | Jacobian condition-number estimate at the solved operating point (`condestJacobian`, `reportCondition`), incl. a stressed near-singular variant | powerflow |
 | `exp_hvdc_b2b_pairing.jl` | Back-to-back HVDC pairing controller: Stage-0 snapshot vs steerable transfer on a two-island net (#297 Draft B) | others |
 | `exp_hvdc_meshed_ac_tie.jl` | HVDC pair in parallel to an AC tie: one reference per synchronous island, setpoint pair as parallel PQ path, `island_feed` rejected ([theory](hvdc_back_to_back.md)) | others |
+| `exp_open_terminal_line.jl` | One-sided open line: full charging draw at the closed bus and the Ferranti rise at the open end ([theory](branchmodel.md)) | others |
 | `exp_current_iteration_start.jl` | Guarded current-iteration start pre-solve via config overrides | powerflow |
 | `exp_diagnose_self_check.jl` | `run_fixed_reference_self_check` and the narrative `diagnose.log` report | others |
 | `exp_short_circuit.jl` | `runShortCircuit!` (IEC 60909-0) on a hand-built feeder+machine net — Ik'' max/min and the safety flag on defaulted data | short_circuit |

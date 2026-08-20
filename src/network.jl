@@ -700,7 +700,7 @@ Parameters:
 - `values_are_pu = false`: Boolean indicating if the values are in per unit (default is false).
 """
 
-function addBranch!(; net::Net, from::Int, to::Int, branch::AbstractBranch, status::Integer = 1, ratio = nothing, side = nothing, vn_kV = nothing, values_are_pu::Bool = false)
+function addBranch!(; net::Net, from::Int, to::Int, branch::AbstractBranch, status::Integer = 1, ratio = nothing, side = nothing, vn_kV = nothing, values_are_pu::Bool = false, from_status::Union{Nothing,Integer} = nothing, to_status::Union{Nothing,Integer} = nothing)
   @assert from != to "From and to bus must be different"
   idBrunch = length(net.branchVec) + 1
   fOrig = nothing
@@ -715,7 +715,7 @@ function addBranch!(; net::Net, from::Int, to::Int, branch::AbstractBranch, stat
   if isnothing(vn_kV)
     vn_kV = getNodeVn(net.nodeVec[from])
   end
-  br = Branch(branchIdx = idBrunch, from = from, to = to, baseMVA = net.baseMVA, branch = branch, id = idBrunch, status = status, ratio = ratio, side = side, vn_kV = vn_kV, fromOid = fOrig, toOid = tOrig, values_are_pu = values_are_pu)
+  br = Branch(branchIdx = idBrunch, from = from, to = to, baseMVA = net.baseMVA, branch = branch, id = idBrunch, status = status, ratio = ratio, side = side, vn_kV = vn_kV, fromOid = fOrig, toOid = tOrig, values_are_pu = values_are_pu, from_status = from_status, to_status = to_status)
   push!(net.branchVec, br)
 end
 
@@ -804,7 +804,7 @@ Parameters:
 - `ratedS::Union{Nothing, Float64}= nothing`: Rated power of the line segment in MVA (default is nothing).
 - `status::Int = 1`: Status of the line segment (default is 1).
 """
-function addACLine!(; net::Net, fromBus::String, toBus::String, length::Float64, r::Float64, x::Float64, b::Union{Nothing,Float64} = nothing, c_nf_per_km::Union{Nothing,Float64} = nothing, tanδ::Union{Nothing,Float64} = nothing, ratedS::Union{Nothing,Float64} = nothing, status::Int = 1)
+function addACLine!(; net::Net, fromBus::String, toBus::String, length::Float64, r::Float64, x::Float64, b::Union{Nothing,Float64} = nothing, c_nf_per_km::Union{Nothing,Float64} = nothing, tanδ::Union{Nothing,Float64} = nothing, ratedS::Union{Nothing,Float64} = nothing, status::Int = 1, from_status::Union{Nothing,Integer} = nothing, to_status::Union{Nothing,Integer} = nothing)
   @assert fromBus != toBus "From and to bus must be different"
   from = geNetBusIdx(net = net, busName = fromBus)
   to = geNetBusIdx(net = net, busName = toBus)
@@ -819,7 +819,7 @@ function addACLine!(; net::Net, fromBus::String, toBus::String, length::Float64,
   acseg = ACLineSegment(vn_kv = vn_kV, from = from, to = to, length = length, r = r, x = x, b = b, c_nf_per_km = c_nf_per_km, tanδ = tanδ, ratedS = ratedS, paramsBasedOnLength = _par_length, isPIModel = false)
   push!(net.linesAC, acseg)
 
-  addBranch!(net = net, from = from, to = to, branch = acseg, vn_kV = vn_kV, status = status, values_are_pu = true)
+  addBranch!(net = net, from = from, to = to, branch = acseg, vn_kV = vn_kV, status = status, values_are_pu = true, from_status = from_status, to_status = to_status)
 end
 
 """
@@ -843,7 +843,7 @@ Adds a PI model AC line to the network.
 addPIModelACLine!(net = network, fromBus = "Bus1", toBus = "Bus2", r_pu = 0.01, x_pu = 0.1, b_pu = 0.02, status = 1, ratedS = 100.0)
 ```
 """
-function _addPIModelACLine_by_idx!(; net::Net, from::Int, to::Int, r_pu::Float64, x_pu::Float64, b_pu::Float64, g_pu::Union{Nothing,Float64} = nothing, status::Int, ratedS::Union{Nothing,Float64} = nothing)
+function _addPIModelACLine_by_idx!(; net::Net, from::Int, to::Int, r_pu::Float64, x_pu::Float64, b_pu::Float64, g_pu::Union{Nothing,Float64} = nothing, status::Int, ratedS::Union{Nothing,Float64} = nothing, from_status::Union{Nothing,Integer} = nothing, to_status::Union{Nothing,Integer} = nothing)
   @assert from != to "From and to bus must be different"
   vn_kV = getNodeVn(net.nodeVec[from])
   vn_2_kV = getNodeVn(net.nodeVec[to])
@@ -851,13 +851,13 @@ function _addPIModelACLine_by_idx!(; net::Net, from::Int, to::Int, r_pu::Float64
   acseg = ACLineSegment(vn_kv = vn_kV, from = from, to = to, length = 1.0, r = r_pu, x = x_pu, b = b_pu, g = g_pu, ratedS = ratedS, paramsBasedOnLength = false, isPIModel = true)
   push!(net.linesAC, acseg)
 
-  addBranch!(net = net, from = from, to = to, branch = acseg, vn_kV = vn_kV, status = status, values_are_pu = true)
+  addBranch!(net = net, from = from, to = to, branch = acseg, vn_kV = vn_kV, status = status, values_are_pu = true, from_status = from_status, to_status = to_status)
 end
 
-function addPIModelACLine!(; net::Net, fromBus::String, toBus::String, r_pu::Float64, x_pu::Float64, b_pu::Float64, g_pu::Union{Nothing,Float64} = nothing, status::Int, ratedS::Union{Nothing,Float64} = nothing)
+function addPIModelACLine!(; net::Net, fromBus::String, toBus::String, r_pu::Float64, x_pu::Float64, b_pu::Float64, g_pu::Union{Nothing,Float64} = nothing, status::Int, ratedS::Union{Nothing,Float64} = nothing, from_status::Union{Nothing,Integer} = nothing, to_status::Union{Nothing,Integer} = nothing)
   from = geNetBusIdx(net = net, busName = fromBus)
   to = geNetBusIdx(net = net, busName = toBus)
-  return _addPIModelACLine_by_idx!(net = net, from = from, to = to, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, g_pu = g_pu, status = status, ratedS = ratedS)
+  return _addPIModelACLine_by_idx!(net = net, from = from, to = to, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, g_pu = g_pu, status = status, ratedS = ratedS, from_status = from_status, to_status = to_status)
 end
 
 """
@@ -893,6 +893,8 @@ function _addPIModelTrafo_by_idx!(;
   isAux::Bool = false,
   side::Int = 1,
   controls::Union{Nothing,Vector{PowerTransformerControl}} = nothing,
+  from_status::Union{Nothing,Integer} = nothing,
+  to_status::Union{Nothing,Integer} = nothing,
 )
   @assert from != to "From and to bus must be different"
   vn_hv_kV = getNodeVn(net.nodeVec[from])
@@ -910,7 +912,7 @@ function _addPIModelTrafo_by_idx!(;
   trafo = PowerTransformer(comp, false, w1, w2, nothing, Sparlectra.PIModel)
   push!(net.trafos, trafo)
 
-  addBranch!(net = net, from = from, to = to, branch = trafo, status = status, ratio = ratio, side = side, vn_kV = vn_hv_kV, values_are_pu = true)
+  addBranch!(net = net, from = from, to = to, branch = trafo, status = status, ratio = ratio, side = side, vn_kV = vn_hv_kV, values_are_pu = true, from_status = from_status, to_status = to_status)
   if !isnothing(controls)
     br = net.branchVec[end]
     target_controls = side == 1 ? net.trafos[end].side1.controls : net.trafos[end].side2.controls
@@ -935,10 +937,12 @@ function addPIModelTrafo!(;
   isAux::Bool = false,
   side::Int = 1,
   controls::Union{Nothing,Vector{PowerTransformerControl}} = nothing,
+  from_status::Union{Nothing,Integer} = nothing,
+  to_status::Union{Nothing,Integer} = nothing,
 )
   from = geNetBusIdx(net = net, busName = fromBus)
   to = geNetBusIdx(net = net, busName = toBus)
-  return _addPIModelTrafo_by_idx!(net = net, from = from, to = to, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, status = status, ratedU = ratedU, ratedS = ratedS, ratio = ratio, shift_deg = shift_deg, isAux = isAux, side = side, controls = controls)
+  return _addPIModelTrafo_by_idx!(net = net, from = from, to = to, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, status = status, ratedU = ratedU, ratedS = ratedS, ratio = ratio, shift_deg = shift_deg, isAux = isAux, side = side, controls = controls, from_status = from_status, to_status = to_status)
 end
 
 """
@@ -1093,7 +1097,7 @@ Add a two-winding transformer to the network.
 - `i0_percent::Float64`: No-load current percent of the transformer.
 - `status::Int`: The status of the transformer. Default is 1.
 """
-function add2WTrafo!(; net::Net, fromBus::String, toBus::String, sn_mva::Float64, vk_percent::Float64, vkr_percent::Float64, pfe_kw::Float64, i0_percent::Float64, status::Int = 1, controls::Union{Nothing,Vector{PowerTransformerControl}} = nothing)
+function add2WTrafo!(; net::Net, fromBus::String, toBus::String, sn_mva::Float64, vk_percent::Float64, vkr_percent::Float64, pfe_kw::Float64, i0_percent::Float64, status::Int = 1, controls::Union{Nothing,Vector{PowerTransformerControl}} = nothing, from_status::Union{Nothing,Integer} = nothing, to_status::Union{Nothing,Integer} = nothing)
   @assert fromBus != toBus "From and to bus must be different"
   from = geNetBusIdx(net = net, busName = fromBus)
   to = geNetBusIdx(net = net, busName = toBus)
@@ -1112,7 +1116,7 @@ function add2WTrafo!(; net::Net, fromBus::String, toBus::String, sn_mva::Float64
   ratio = calcTransformerRatio(trafo)
   push!(net.trafos, trafo)
 
-  addBranch!(net = net, from = from, to = to, branch = trafo, status = status, ratio = ratio, side = side, vn_kV = vn_hv_kV)
+  addBranch!(net = net, from = from, to = to, branch = trafo, status = status, ratio = ratio, side = side, vn_kV = vn_hv_kV, from_status = from_status, to_status = to_status)
   if !isnothing(controls)
     br = net.branchVec[end]
     target_controls = side == 1 ? net.trafos[end].side1.controls : net.trafos[end].side2.controls
@@ -1593,7 +1597,8 @@ setNetBranchStatus!(net = network, branchNr = 1, status = 1)
 function setNetBranchStatus!(; net::Net, branchNr::Int, status::Int)
   @assert branchNr > 0 "Branch number must be greater than 0"
   @assert branchNr <= length(net.branchVec) "Branch $branchNr not found in the network"
-  net.branchVec[branchNr].status = status
+  # aggregate switch: keeps the per-terminal flags consistent (r0.10.0)
+  setBranchStatus!(net.branchVec[branchNr], status == 1)
   markIsolatedBuses!(net = net, log = false)
 end
 
@@ -1870,14 +1875,33 @@ function markIsolatedBuses!(; net::Net, log::Bool = false)
   # Create a set to store the buses that appear in the branches in branchVec
   connected_buses = Set{Int}()
 
-  # Iterate through each branch in branchVec and add the corresponding buses to the set
+  # Iterate through each branch in branchVec and add the corresponding buses
+  # to the set. A one-sided open branch (r0.10.0) connects only its CLOSED
+  # bus, and only when something can energize that bus: a prosumer there or
+  # another closed branch. A dead closed end (no injection, no other
+  # connection) stays isolated exactly like before the feature, its
+  # charging has no source to draw from.
+  partial_closed = Int[]
   for br in net.branchVec
-    if br.status == 0
+    state = _branch_terminal_state(br)
+    if state == :open
       continue
+    elseif state == :open_to
+      push!(partial_closed, Int(br.fromBus))
+    elseif state == :open_from
+      push!(partial_closed, Int(br.toBus))
+    else
+      push!(connected_buses, br.fromBus)
+      push!(connected_buses, br.toBus)
     end
-
-    push!(connected_buses, br.fromBus)
-    push!(connected_buses, br.toBus)
+  end
+  if !isempty(partial_closed)
+    # only a reference can balance an island on its own; a machine or load
+    # behind a dead partial branch stays de-energized (pre-feature behavior)
+    reference_buses = Set{Int}(getPosumerBusIndex(ps) for ps in net.prosumpsVec if ps.referencePri !== nothing)
+    for bus in partial_closed
+      (bus in connected_buses || bus in reference_buses) && push!(connected_buses, bus)
+    end
   end
 
   # Iterate through all buses in nodeVec and mark the isolated buses

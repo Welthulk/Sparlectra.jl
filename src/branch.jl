@@ -148,6 +148,17 @@ mutable struct Branch <: AbstractBranch
   phase_min_deg::Float64
   phase_max_deg::Float64
   phase_step_deg::Float64
+  # per-terminal service state (r0.10.0): 1 = closed, 0 = open. The
+  # aggregate `status` stays the user-facing switch and is kept consistent
+  # by the setters (status = 1 iff both terminals closed); consumers must
+  # read the state through _branch_terminal_state, never the raw fields.
+  from_status::Int
+  to_status::Int
+  # open-end voltage of a one-sided open branch (result, not a bus
+  # voltage): filled by calcNetLosses! from the pi-model voltage divider,
+  # nothing while closed or fully open
+  open_end_vm_pu::Union{Nothing,Float64}
+  open_end_va_deg::Union{Nothing,Float64}
 
   function Branch(;
     branchIdx::Int,
@@ -164,7 +175,15 @@ mutable struct Branch <: AbstractBranch
     toOid::Union{Nothing,Int} = nothing,
     angle::Union{Nothing,Float64} = nothing,
     values_are_pu::Bool=false,
+    from_status::Union{Nothing,Integer} = nothing,
+    to_status::Union{Nothing,Integer} = nothing,
   )
+    # terminal flags default to the aggregate; the stored aggregate is then
+    # recomputed so that status = 1 iff both terminals are closed
+    fs = Int(something(from_status, status))
+    ts = Int(something(to_status, status))
+    fs in (0, 1) && ts in (0, 1) || error("Branch: from_status/to_status must be 0 or 1")
+    status = (fs == 1 && ts == 1) ? 1 : 0
     if isa(branch, ACLineSegment) # Line
       @assert !isnothing(vn_kV) "vn_kV must be set for an ACLineSegment"
       if isnothing(ratio)
@@ -181,7 +200,7 @@ mutable struct Branch <: AbstractBranch
       else 
         r_pu, x_pu, b_pu, g_pu = getLineRXBG_pu(branch, vn_kV, baseMVA)        
       end    
-      new(c, branchIdx, from, to, r_pu, x_pu, b_pu, g_pu, 0.0, 0.0, status, branch.ratedS, nothing, nothing, nothing, nothing, 1.0, 0.0, false, false, 0.9, 1.1, 0.00625, -30.0, 30.0, 1.25)
+      new(c, branchIdx, from, to, r_pu, x_pu, b_pu, g_pu, 0.0, 0.0, status, branch.ratedS, nothing, nothing, nothing, nothing, 1.0, 0.0, false, false, 0.9, 1.1, 0.00625, -30.0, 30.0, 1.25, fs, ts, nothing, nothing)
     elseif isa(branch, PowerTransformer) # Transformer     
       if (isnothing(side) && branch.isBiWinder)
         side = getSideNumber2WT(branch)
@@ -217,7 +236,7 @@ mutable struct Branch <: AbstractBranch
         tap_min, tap_max, tap_step = calcRatioTapRange(w.taps)
       end
 
-      new(c, branchIdx, from, to, r_pu, x_pu, b_pu, g_pu, ratio, angle, status, sn_MVA, nothing, nothing, nothing, nothing, ratio, angle, true, true, tap_min, tap_max, tap_step, -30.0, 30.0, 1.25)
+      new(c, branchIdx, from, to, r_pu, x_pu, b_pu, g_pu, ratio, angle, status, sn_MVA, nothing, nothing, nothing, nothing, ratio, angle, true, true, tap_min, tap_max, tap_step, -30.0, 30.0, 1.25, fs, ts, nothing, nothing)
     elseif isa(branch, BranchModel) # PI-Model
       @assert !isnothing(vn_kV) "vn_kV must be set for PI-Model"
 
@@ -230,7 +249,7 @@ mutable struct Branch <: AbstractBranch
       is_tap = branch.ratio != 0.0
       initial_ratio = is_tap ? branch.ratio : 1.0
       initial_angle = is_tap ? branch.angle : 0.0
-      new(c, branchIdx, from, to, branch.r_pu, branch.x_pu, branch.b_pu, branch.g_pu, branch.ratio, branch.angle, status, branch.sn_MVA, nothing, nothing, nothing, nothing, initial_ratio, initial_angle, is_tap, is_tap, 0.9, 1.1, 0.00625, -30.0, 30.0, 1.25)
+      new(c, branchIdx, from, to, branch.r_pu, branch.x_pu, branch.b_pu, branch.g_pu, branch.ratio, branch.angle, status, branch.sn_MVA, nothing, nothing, nothing, nothing, initial_ratio, initial_angle, is_tap, is_tap, 0.9, 1.1, 0.00625, -30.0, 30.0, 1.25, fs, ts, nothing, nothing)
     else
       error("Branch type not supported")
     end
@@ -250,6 +269,9 @@ mutable struct Branch <: AbstractBranch
     print(io, "ratio: ", b.ratio, ", ")
     print(io, "angle: ", b.angle, ", ")
     print(io, "status: ", b.status, ", ")
+    if _branch_terminal_state(b) != :closed
+      print(io, "terminal_state: ", _branch_terminal_state(b), ", ")
+    end
     if !isnothing(b.sn_MVA)
       print(io, "sn_MVA: ", b.sn_MVA, ", ")
     end
@@ -287,19 +309,107 @@ function calcAdmittance(branch::Branch, u_rated::Float64, s_rated::Float64)::Tup
   return (Y_11, Y_12, Y_21, Y_22)
 end
 
+"""
+    _open_terminal_yin(branch) -> ComplexF64
+
+Exact pi-model input admittance of a one-sided open branch seen from its
+closed bus, as the Schur complement of the two-port from `calcAdmittance`:
+with the TO end open `Y_in = Y11 - Y12*Y21/Y22`, with the FROM end open
+`Y_in = Y22 - Y21*Y12/Y11`. The two-port already carries the complex ratio,
+so lines and transformers (off-nominal ratio, phase shift) are covered
+uniformly without a case distinction. For `|Y_s| >> |Y_0|` this approaches
+the FULL line charging `g + jb` (not half of it).
+"""
+function _open_terminal_yin(branch::Branch)::ComplexF64
+  Y11, Y12, Y21, Y22 = calcAdmittance(branch, 1.0, 1.0)
+  st = _branch_terminal_state(branch)
+  if st == :open_to
+    abs(Y22) < 1e-12 && return 0.0 + 0.0im
+    return Y11 - Y12 * Y21 / Y22
+  elseif st == :open_from
+    abs(Y11) < 1e-12 && return 0.0 + 0.0im
+    return Y22 - Y21 * Y12 / Y11
+  end
+  error("_open_terminal_yin: branch $(branch.branchIdx) is $(st), not one-sided open")
+end
+
+"""
+    _open_end_voltage(branch, u_closed::ComplexF64) -> ComplexF64
+
+Voltage at the open terminal of a one-sided open branch from the pi-model
+voltage divider (zero current at the open end): with TO open
+`U_open = -Y21/Y22 * U_from`, with FROM open `U_open = -Y12/Y11 * U_to`.
+Reproduces the Ferranti rise (`|U_open| > |U_closed|` for b > 0) without
+adding a node to the solved system.
+"""
+function _open_end_voltage(branch::Branch, u_closed::ComplexF64)::ComplexF64
+  Y11, Y12, Y21, Y22 = calcAdmittance(branch, 1.0, 1.0)
+  st = _branch_terminal_state(branch)
+  if st == :open_to
+    abs(Y22) < 1e-12 && return u_closed
+    return -Y21 / Y22 * u_closed
+  elseif st == :open_from
+    abs(Y11) < 1e-12 && return u_closed
+    return -Y12 / Y11 * u_closed
+  end
+  error("_open_end_voltage: branch $(branch.branchIdx) is $(st), not one-sided open")
+end
+
 # helper
 function setBranchFlow!(branch::Branch, tfBranchFlow::BranchFlow, fBranchFlow::BranchFlow)
   branch.tBranchFlow = tfBranchFlow
   branch.fBranchFlow = fBranchFlow
 end
 
-# helper
+"""
+    _branch_terminal_state(br::Branch) -> Symbol
+
+Single source of truth for the service state of a branch: `:closed` (both
+terminals in service), `:open_from` / `:open_to` (exactly one terminal
+open, the branch reduces to its pi-model Schur complement at the closed
+bus), or `:open` (out of service: aggregate `status == 0` with untouched
+terminal flags, or both flags open). Every consumer reads the state
+through this helper, never the raw fields.
+"""
+function _branch_terminal_state(br::Branch)::Symbol
+  # aggregate forced open without touching the terminal flags (legacy
+  # direct writes of br.status): both flags still 1 means fully open
+  (br.status == 0 && br.from_status == 1 && br.to_status == 1) && return :open
+  br.from_status == 0 && br.to_status == 0 && return :open
+  br.from_status == 0 && return :open_from
+  br.to_status == 0 && return :open_to
+  return :closed
+end
+
+"""
+    setBranchStatus!(branch, service::Bool)
+
+User-facing aggregate switch: sets the aggregate `status` and BOTH
+terminal flags consistently (in service = all closed, out of service =
+all open).
+"""
 function setBranchStatus!(branch::Branch, service::Bool)
-  if (service)
-    branch.status = 1
-  else
-    branch.status = 0
-  end
+  v = service ? 1 : 0
+  branch.status = v
+  branch.from_status = v
+  branch.to_status = v
+  return branch
+end
+
+"""
+    setBranchTerminalStatus!(branch; from = nothing, to = nothing)
+
+Open or close individual branch terminals (`true` = closed, `false` =
+open; `nothing` leaves a terminal unchanged) and recompute the aggregate
+`status` (1 iff both terminals closed). A branch open at exactly one
+terminal stays in the model as its exact pi reduction at the closed bus,
+see the "One-sided open branches" section of the branch-model docs.
+"""
+function setBranchTerminalStatus!(branch::Branch; from::Union{Nothing,Bool} = nothing, to::Union{Nothing,Bool} = nothing)
+  from === nothing || (branch.from_status = from ? 1 : 0)
+  to === nothing || (branch.to_status = to ? 1 : 0)
+  branch.status = (branch.from_status == 1 && branch.to_status == 1) ? 1 : 0
+  return branch
 end
 
 function getBranchFlow(branch::Branch, from::Node, to::Node)

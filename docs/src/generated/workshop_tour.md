@@ -167,6 +167,44 @@ meaningless. That is exactly what the estimate is for: the classic result
 log reports it as a `Jacobian cond.` line, and diagnose runs grade it with
 a plain-language verdict.
 
+### Opening one end of a line
+
+A breaker can open a single terminal while the other stays connected.
+The line then carries no through flow, but it does NOT disappear: seen
+from the closed bus it collapses to its exact pi reduction and keeps
+drawing its FULL charging (for realistic lines the two shunt arms act
+almost in parallel, so it is `g + jb`, not half of it), plus the small
+ohmic loss of the charging current. The voltage at the open end rises
+above the feeding bus, the classical Ferranti effect, and is reported as
+a branch result without adding a bus. Open one end with
+`setBranchTerminalStatus!` and compare:
+
+````@example workshop_tour
+net_open = Net(name = "tour_open_end", baseMVA = 100.0)
+addBus!(net = net_open, busName = "A", vn_kV = 380.0)
+addBus!(net = net_open, busName = "B", vn_kV = 380.0)
+addProsumer!(net = net_open, busName = "A", type = "EXTERNALNETWORKINJECTION", referencePri = "A", vm_pu = 1.0, va_deg = 0.0)
+addProsumer!(net = net_open, busName = "B", type = "ENERGYCONSUMER", p = 120.0, q = 30.0)
+addPIModelACLine!(net = net_open, fromBus = "A", toBus = "B", r_pu = 0.02, x_pu = 0.16, b_pu = 0.9, g_pu = 0.004, status = 1)
+validate!(net = net_open)
+solve!(net_open)
+println("closed : line carries ", round(net_open.branchVec[1].fBranchFlow.pFlow; digits = 1), " MW to the load")
+
+setBranchTerminalStatus!(net_open.branchVec[1]; to = false)
+markIsolatedBuses!(net = net_open, log = false)
+solve!(net_open)
+br_open = net_open.branchVec[1]
+println("open@to: charging draw ", round(br_open.fBranchFlow.qFlow; digits = 1), " MVAr, active loss ", round(br_open.fBranchFlow.pFlow; digits = 3), " MW")
+println("         open-end voltage ", round(br_open.open_end_vm_pu; digits = 4), " pu (Ferranti rise above 1.0 at A)")
+````
+
+Reading aid: the branch table marks the row `open@to`, the header counts
+it under `Open terminals`, and bus `B` is reported isolated: the open end
+is a branch RESULT (`open_end_vm_pu`), not a solved bus. The full story,
+including the Schur reduction and why it is the full charging, is on the
+branch-model docs page under "One-sided open branches"; the runnable twin
+is `exp_open_terminal_line.jl`.
+
 ## Chapter 2: slack types and short-circuit currents
 
 One grid connection, modeled three ways, plus an IEC 60909-0 fault-current

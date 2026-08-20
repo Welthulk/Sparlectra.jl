@@ -121,3 +121,8 @@ The Web UI accepts `.DAT` uploads and classifies them by content before offering
 - `unknown_dat` is retained only when it passes upload safety checks and is not silently offered as a runnable case.
 
 Filename patterns such as `FOR002.DAT` are compatibility hints only; content classification controls primary-case selection.
+
+Note on per-terminal switching (r0.10.0): the DTF branch cards carry no
+per-end switch field, outage records identify whole branches. Partially
+open branches therefore cannot be expressed in DTF; the importer and the
+outage controls keep using the aggregate branch status.

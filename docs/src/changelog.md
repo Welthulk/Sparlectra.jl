@@ -1,3 +1,21 @@
+# Version 0.10.0 - unreleased
+
+Per-terminal branch status: one-sided open branches.
+
+- Branches carry `from_status`/`to_status` next to the aggregate `status`:
+  a branch open at exactly one terminal stays in the model as its exact pi
+  reduction (Schur complement stamped at the closed bus), draws its full
+  charging, and reports the open-end voltage (Ferranti rise) as a result.
+- CGMES `Terminal.connected` now maps to the terminal flags on import
+  (replacing the half-charging substitute shunt, which undercounted the
+  charging of a one-sided open line by about a factor of two; one-sided
+  open transformers are no longer dropped) and is written back per
+  terminal on export.
+- MATPOWER export represents a partially open branch as closed plus the
+  exact `Y_in` bus shunt with an `open_terminal=` comment marker (the
+  format has no partial state; a roundtrip loses the flags, voltages are
+  preserved).
+
 # Version 0.9.9 - 2026-08-22
 
 HVDC link results and one-reference-per-island validation.

@@ -44,6 +44,7 @@ function include_fast_tests()
   include("test_tap_controller.jl")
   include("test_series_reactance_control.jl")
   include("test_hvdc_pair_control.jl")
+  include("test_terminal_status.jl")
   include("test_tap_changer_model.jl")
   include("test_phase_tap_changer_model.jl")
   include("test_phase_tap_table.jl")  
@@ -96,6 +97,7 @@ function run_fast_profile_tests()
       run_entry(:run_grid_fast_tests)
       run_entry(:run_piline_g_tests)
     end),
+    ("terminal_status", () -> run_entry(:run_terminal_status_tests)),
     ("configuration", () -> run_entry(:run_configuration_coverage_tests)),
     ("matpower_metadata", () -> run_entry(:run_matpower_metadata_tests)),
     ("programmatic_api", () -> run_entry(:run_api_fast_tests)),

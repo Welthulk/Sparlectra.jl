@@ -87,6 +87,19 @@ function _matpower_bus_shunts(net::Net)
     gs[sh.busIdx] = get(gs, sh.busIdx, 0.0) + real(sh.y_pu_shunt) * net.baseMVA
     bs[sh.busIdx] = get(bs, sh.busIdx, 0.0) + imag(sh.y_pu_shunt) * net.baseMVA
   end
+  # MATPOWER has no one-sided open branch state (r0.10.0). A partially open
+  # branch exports as BR_STATUS = 0 plus its exact Schur input admittance
+  # Y_in as a bus shunt at the closed bus, so a MATPOWER solve reproduces
+  # the same Y-bus. The roundtrip loses the partial state: the branch comes
+  # back out of service plus a shunt (documented in the import/export docs).
+  for br in net.branchVec
+    st = _branch_terminal_state(br)
+    (st == :open_from || st == :open_to) || continue
+    closed = st == :open_to ? Int(br.fromBus) : Int(br.toBus)
+    yin = _open_terminal_yin(br)
+    gs[closed] = get(gs, closed, 0.0) + real(yin) * net.baseMVA
+    bs[closed] = get(bs, closed, 0.0) + imag(yin) * net.baseMVA
+  end
   return gs, bs
 end
 
@@ -294,7 +307,14 @@ function writeBranchData(net::Net, file; write_solution::Bool = true)
 
     type = br.comp.cName
 
-    if br.status == 0 # out of service
+    terminal_state = _branch_terminal_state(br)
+    if terminal_state == :open_from || terminal_state == :open_to
+      # partial state exported as out of service; the exact Y_in of the
+      # branch travels as a bus shunt (see _matpower_bus_shunts) and the
+      # marker preserves WHICH terminal was open for a human reader
+      status = 0
+      type = "open_terminal=" * (terminal_state == :open_to ? "to" : "from") * " " * type
+    elseif br.status == 0 # out of service
       type = "(no service) " * type
     end
 

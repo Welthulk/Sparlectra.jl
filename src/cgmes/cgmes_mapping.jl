@@ -724,28 +724,20 @@ function _mapLines!(net, store, topo, created, svmap, baseMVA, ctx::_MapCtx)
         push!(ctx.skipped, line.mrid)
         continue
       end
-      # Terminal.connected handling. Both ends open → the branch is out of
-      # service. Exactly ONE end open → the branch carries no longitudinal
-      # current, but it still exists: its half charging admittance keeps
-      # acting on the closed side. Dropping it outright would shift the
-      # reactive balance (RealGrid: 511 such lines against 228 fully open,
-      # concentrated on cable-rich sub-transmission levels), so the branch is
-      # replaced by that half admittance as a shunt at the closed bus.
-      # Equipment.inService == false counts as both ends open: no longitudinal
-      # current AND no charging contribution from a de-commissioned line.
-      nopen = _inService(ctx, line) ? (_conn(ctx, t1.connected) ? 0 : 1) + (_conn(ctx, t2.connected) ? 0 : 1) : 2
+      # Terminal.connected handling (r0.10.0). Both ends open (or
+      # Equipment.inService == false, a de-commissioned line contributes no
+      # charging either) → the branch is out of service. Exactly ONE end
+      # open → the branch is created with per-terminal flags and reduces to
+      # its exact pi Schur complement at the closed bus: it draws its FULL
+      # charging there (the earlier substitute shunt with HALF the charging
+      # undercounted it by about a factor of two; RealGrid carries 511 such
+      # lines against 228 fully open ones).
+      in_service = _inService(ctx, line)
+      c1 = in_service && _conn(ctx, t1.connected)
+      c2 = in_service && _conn(ctx, t2.connected)
+      nopen = (c1 ? 0 : 1) + (c2 ? 0 : 1)
       if nopen == 1
-        closed = _conn(ctx, t1.connected) ? t1 : t2
-        bus = _ensureBus!(net, created, topo, svmap, closed.tn)
-        if cls == :ACLineSegment
-          g_half = num(line, :gch, 0.0) / 2.0
-          b_half = num(line, :bch, 0.0) / 2.0
-          if g_half != 0.0 || b_half != 0.0
-            Sparlectra.addShuntMatpower!(net = net, busName = bus, Gs = g_half * closed.vn_kV^2, Bs = b_half * closed.vn_kV^2)
-          end
-        end
-        push!(ctx.messages, "notice: $(cls) $(name) has one open terminal — half charging admittance kept as shunt at $(bus)")
-        continue
+        push!(ctx.messages, "notice: $(cls) $(name) has one open terminal — kept as a partially open branch (full charging at the closed bus)")
       end
       status = nopen == 0 ? 1 : 0
       b1 = _busForTerminal!(net, created, topo, svmap, ctx, line, 1, t1.tn)
@@ -777,7 +769,7 @@ function _mapLines!(net, store, topo, created, svmap, baseMVA, ctx::_MapCtx)
         baseMVA = baseMVA,
       )
       if t1.vn_kV == t2.vn_kV
-        Sparlectra.addPIModelACLine!(net = net, fromBus = b1, toBus = b2, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, g_pu = g_pu, status = status)
+        Sparlectra.addPIModelACLine!(net = net, fromBus = b1, toBus = b2, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, g_pu = g_pu, status = status, from_status = c1 ? 1 : 0, to_status = c2 ? 1 : 0)
         _recordBranchTerminals!(ctx, net, topo, line)
         # Identity capture (line + its two terminals) for a later CGMES
         # export. Terminal keys use the equipment sequence (T1 = from side),
@@ -798,7 +790,7 @@ function _mapLines!(net, store, topo, created, svmap, baseMVA, ctx::_MapCtx)
         ratio = t2.vn_kV / t1.vn_kV
         from = Sparlectra.geNetBusIdx(net = net, busName = b1)
         to = Sparlectra.geNetBusIdx(net = net, busName = b2)
-        Sparlectra._addPIModelTrafo_by_idx!(net = net, from = from, to = to, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, g_pu = g_pu, status = status, ratio = ratio, shift_deg = 0.0)
+        Sparlectra._addPIModelTrafo_by_idx!(net = net, from = from, to = to, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, g_pu = g_pu, status = status, ratio = ratio, shift_deg = 0.0, from_status = c1 ? 1 : 0, to_status = c2 ? 1 : 0)
         _recordBranchTerminals!(ctx, net, topo, line)
         # the ratio branch counts as a transformer branch on this bus pair —
         # consume the PT counter (no capture: the source object is a line)
@@ -852,11 +844,18 @@ function _map2WTrafo!(net, store, topo, created, svmap, svsteps, baseMVA, pt, en
   ratio, shift = _applyEndTaps(store, svsteps, e2, ratio, shift, false, ctx.messages; strict = ctx.strict_guards)
   b1 = _ensureBus!(net, created, topo, svmap, i1.tn)
   b2 = _ensureBus!(net, created, topo, svmap, i2.tn)
-  status = (_conn(ctx, i1.connected) && _conn(ctx, i2.connected) && _inService(ctx, pt)) ? 1 : 0
+  # per-terminal flags (r0.10.0): a transformer with exactly one open
+  # terminal stays in the model as its Schur reduction at the closed bus
+  # (magnetizing branch seen through the ratio) instead of being dropped
+  pt_in_service = _inService(ctx, pt)
+  ptc1 = pt_in_service && _conn(ctx, i1.connected)
+  ptc2 = pt_in_service && _conn(ctx, i2.connected)
+  status = (ptc1 && ptc2) ? 1 : 0
+  (ptc1 != ptc2) && push!(ctx.messages, "notice: PowerTransformer $(name) has one open terminal — kept as a partially open branch")
   from = Sparlectra.geNetBusIdx(net = net, busName = b1)
   to = Sparlectra.geNetBusIdx(net = net, busName = b2)
   ratedS = num(e1, :ratedS)
-  Sparlectra._addPIModelTrafo_by_idx!(net = net, from = from, to = to, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, g_pu = g_pu, status = status, ratedU = U1, ratedS = ratedS, ratio = ratio, shift_deg = shift)
+  Sparlectra._addPIModelTrafo_by_idx!(net = net, from = from, to = to, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, g_pu = g_pu, status = status, ratedU = U1, ratedS = ratedS, ratio = ratio, shift_deg = shift, from_status = ptc1 ? 1 : 0, to_status = ptc2 ? 1 : 0)
   idx = net.branchVec[end].branchIdx
   tm1 = get(e1.refs, :Terminal, nothing)
   tm2 = get(e2.refs, :Terminal, nothing)

@@ -140,7 +140,7 @@ function _branch_csv_values(br)
 end
 
 const _DETAILED_BUS_CSV_COLUMNS = (:bus, :bus_name, :type, :vm_pu, :va_deg, :vn_kV, :v_re, :v_im, :v_complex, :v_kV, :p_gen_MW, :q_gen_MVar, :p_load_MW, :q_load_MVar, :q_limit_hit, :control, :original_bus_name)
-const _DETAILED_BRANCH_CSV_COLUMNS = (:branch, :branch_index, :from_bus, :to_bus, :status, :p_from_MW, :q_from_MVar, :p_to_MW, :q_to_MVar, :p_loss_MW, :q_loss_MVar, :rated_MVA, :overloaded, :branch_name, :original_branch_name, :from_bus_name, :to_bus_name, :original_from_bus_name, :original_to_bus_name, :branch_kind)
+const _DETAILED_BRANCH_CSV_COLUMNS = (:branch, :branch_index, :from_bus, :to_bus, :status, :p_from_MW, :q_from_MVar, :p_to_MW, :q_to_MVar, :p_loss_MW, :q_loss_MVar, :rated_MVA, :overloaded, :branch_name, :original_branch_name, :from_bus_name, :to_bus_name, :original_from_bus_name, :original_to_bus_name, :branch_kind, :terminal_state, :open_end_vm_pu, :open_end_va_deg)
 
 function _check_csv_abort(abort_checker, row_count::Integer)
   if abort_checker !== nothing && row_count % 1000 == 0
@@ -267,6 +267,9 @@ function _write_detailed_result_csv_artifacts_direct!(artifacts::Vector{String},
             _original_bus_name(busNameByIdx, net, br.fromBus),
             _original_bus_name(busNameByIdx, net, br.toBus),
             _branch_kind_name(net, br),
+            _branch_terminal_state(br),
+            br.open_end_vm_pu === nothing ? "" : br.open_end_vm_pu,
+            br.open_end_va_deg === nothing ? "" : br.open_end_va_deg,
           )
           _check_csv_abort(abort_checker, row_count)
         end

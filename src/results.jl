@@ -489,6 +489,11 @@ function buildACPFlowReport(net::Net; ct::Float64 = 0.0, ite::Int = 0, tol::Floa
         original_from_bus_name = _original_bus_name(busNameByIdx, net, br.fromBus),
         original_to_bus_name = _original_bus_name(busNameByIdx, net, br.toBus),
         branch_kind = _branch_kind_name(net, br),
+        # r0.10.0 per-terminal state plus the open-end voltage result of a
+        # one-sided open branch (missing when closed or fully open)
+        terminal_state = _branch_terminal_state(br),
+        open_end_vm_pu = br.open_end_vm_pu === nothing ? missing : br.open_end_vm_pu,
+        open_end_va_deg = br.open_end_va_deg === nothing ? missing : br.open_end_va_deg,
       ),
     )
   end
@@ -565,7 +570,11 @@ function formatBranchResults(net::Net; max_rows::Union{Nothing,Int} = nothing)
     fromName = get(busNameByIdx, Int(from), string(from))
     toName = get(busNameByIdx, Int(to), string(to))
     connection = string(fromName, " -> ", toName)
-    if br.status == 0 || (isnothing(br.fBranchFlow)) || (isnothing(br.tBranchFlow))
+    # only fully open branches print zeros; a one-sided open branch
+    # (r0.10.0) carries its stored one-sided flows (closed side = charging
+    # draw, open side = 0)
+    terminal_state = _branch_terminal_state(br)
+    if terminal_state == :open || (isnothing(br.fBranchFlow)) || (isnothing(br.tBranchFlow))
       pfromVal = qfromVal = ptoVal = qtoVal = pLossval = qLossval = 0.0
     else
       pfromVal = (br.fBranchFlow.pFlow === nothing) ? NaN : br.fBranchFlow.pFlow
@@ -601,6 +610,11 @@ function formatBranchResults(net::Net; max_rows::Union{Nothing,Int} = nothing)
       end
     end
     status = isnothing(ctrl) ? "-" : ctrl_status(ctrl)
+    # partial state marker in the status column: open@to / open@from
+    if terminal_state == :open_to || terminal_state == :open_from
+      marker = terminal_state == :open_to ? "open@to" : "open@from"
+      status = status == "-" ? marker : string(marker, ", ", status)
+    end
 
     #! format: off
     formatted_results *= @sprintf("| %-25s | %-6s | %-25s | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10s | %-10s | %-9s | %-22s |\n", _fitColumn(bName, 25), branchKind, _fitColumn(connection, 25), pfromVal, qfromVal, ptoVal, qtoVal, pLossval, qLossval, ctrl_type, p_target, tap_pos, status)
@@ -835,6 +849,10 @@ function printACPFlowResults(
     @printf(io, "PF Nodes       :%10d (after active-link merge)\n", pf_nodes)
   end
   @printf(io, "Branches       :%10d\n", branches)
+  # partially open branches are IN service (they draw their charging) and
+  # are counted separately from out-of-service ones; line only when present
+  n_partial = count(br -> _branch_terminal_state(br) in (:open_from, :open_to), net.branchVec)
+  n_partial > 0 && @printf(io, "Open terminals :%10d (branches open at one terminal)\n", n_partial)
   @printf(io, "Links          :%10d\n", links)
   # always printed, including 0: stable parser anchor (same rationale as
   # "Transformer controls: none")

@@ -413,7 +413,10 @@ function generateMeasurementsFromPF(
   end
 
   for br in net.branchVec
-    br.status == 0 && continue
+    # no flow measurements on branches that are fully open or open at one
+    # terminal (r0.10.0): the estimator's measurement model rejects the
+    # partial case, see the runse! scope guard
+    _branch_terminal_state(br) == :closed || continue
     if includePflow
       σ = stddev[PflowMeas]
       sfrom = branchFlow_pu(br, br.fromBus, br.toBus, 1, V) * net.baseMVA
