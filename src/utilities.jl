@@ -117,6 +117,70 @@ function _perf_profile_time!(f::F, profile, phase::Symbol) where {F}
   end
 end
 
+# Keys a parallel worker's child profile inherits from the parent by value.
+# Deliberately WITHOUT :phase_callback (mutates a shared recorder; the
+# orchestrator alone invokes it, per the Phase 0 review) and WITHOUT
+# :diagnostic_artifact_prefix (per-worker value, passed explicitly).
+# :cancellation_check stays: it closes over a Threads.Atomic{Bool}, safe to
+# poll from any task.
+const _PERF_PROFILE_CHILD_KEYS = (:enabled, :show_allocations, :capture_initial_residual_rows, :output_dir, :cancellation_check)
+
+"""
+    _perf_profile_child(profile) -> Dict{Symbol,Any} | nothing
+
+Create a fresh per-worker profile for a parallel work item (thread-safety
+Phase 1). Returns `nothing` when `profile` is not an enabled profile Dict;
+otherwise a new Dict carrying only the read-only seed keys
+(`_PERF_PROFILE_CHILD_KEYS`). Workers write timings, iteration rows, and
+scalar diagnostics into their child only; the orchestrator folds children
+back with [`_perf_profile_merge!`](@ref) after `fetch`, so the parent Dict
+is never touched concurrently.
+"""
+function _perf_profile_child(profile)
+  _perf_profile_enabled(profile) || return nothing
+  child = Dict{Symbol,Any}()
+  for key in _PERF_PROFILE_CHILD_KEYS
+    haskey(profile, key) && (child[key] = profile[key])
+  end
+  return child
+end
+
+"""
+    _perf_profile_merge!(parent, child, prefix::AbstractString)
+
+Fold a worker's child profile into the parent (serial, orchestrator-only).
+`:timings` rows are SUMMED into the parent's `:timings` under their original
+phase names, so the phase-name set of a parallel run stays identical to the
+serial run (calls/elapsed/bytes accumulate exactly like the serial loop
+did). `:iterations` rows are appended in call order. Every other child key
+is copied under `Symbol(prefix, key)` so per-worker scalars (backend names,
+matrix stats, start-projection summaries) stop overwriting each other.
+The wall-clock of the orchestrating fan-out is accounted separately by the
+caller via `_perf_profile_add!(parent, :parallel_wall_time, elapsed, 0)`,
+which keeps serial-sum versus wall-clock visible in performance.log.
+"""
+function _perf_profile_merge!(parent, child, prefix::AbstractString)
+  _perf_profile_enabled(parent) || return parent
+  child isa AbstractDict || return parent
+  for (key, value) in child
+    key in _PERF_PROFILE_CHILD_KEYS && continue
+    if key === :timings && value isa AbstractDict
+      timings = get!(parent, :timings) do
+        Dict{Symbol,Any}()
+      end
+      for (phase, row) in value
+        prev = get(timings, phase, (calls = 0, elapsed_s = 0.0, bytes = 0))
+        timings[phase] = (calls = prev.calls + row.calls, elapsed_s = prev.elapsed_s + Float64(row.elapsed_s), bytes = prev.bytes + Int(row.bytes))
+      end
+    elseif key === :iterations && value isa AbstractVector
+      append!(get!(parent, :iterations, NamedTuple[]), value)
+    else
+      parent[Symbol(prefix, key)] = value
+    end
+  end
+  return parent
+end
+
 function _solver_elapsed_from_profile(profile)
   timings = profile isa AbstractDict ? get(profile, :timings, nothing) : nothing
   row = timings isa AbstractDict ? get(timings, :solver_total, nothing) : nothing

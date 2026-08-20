@@ -172,6 +172,8 @@ export
   PerformanceConfig,
   BenchmarkConfig,
   RuntimeConfig,
+  ParallelRuntimeConfig,                  # runtime.parallel.* settings (enabled, max_tasks, min_work_items).
+  parallel_max_tasks,                     # Resolve max_tasks (auto = Threads.nthreads()) to a task count.
   DiagnosticsConfig,
   OutputConfig,
   SparlectraConfig,

@@ -88,7 +88,9 @@ end
 function _net_cache_store(path::AbstractString, components::Vector{Pair{String,String}}, mpc::MatpowerIO.MatpowerCase)
   try
     mkpath(dirname(path))
-    tmp = string(path, ".", getpid(), ".tmp")
+    # pid AND task identity: two tasks of one process importing the same
+    # case concurrently must not write the same temp file (Phase 1)
+    tmp = string(path, ".", getpid(), ".", objectid(current_task()), ".tmp")
     open(tmp, "w") do io
       serialize(io, (_NET_CACHE_MARKER, components, mpc))
     end

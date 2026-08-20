@@ -27,6 +27,12 @@ Per-terminal branch status: one-sided open branches.
   factorization is unsafe under threads. `power_flow.linear_solver`
   accepts `umfpack` and `umfpack_reuse`; a configured `klu` now fails
   validation with an actionable message.
+- Thread-safety foundation for multi-core execution: the solver status
+  registries moved onto the `Net` (the former global weak-ref tables raced
+  under concurrent solves), per-worker performance-profile helpers keep
+  parallel timings collision-free, and the new `runtime.parallel.*` keys
+  (`enabled`, default true) prepare island/sweep parallelism. No parallel
+  execution yet; behavior of serial runs is unchanged.
 
 # Version 0.9.9 - 2026-08-22
 

@@ -21,17 +21,13 @@
 # purpose: weak-reference per-Net status registry, preallocated iteration
 #          workspace, and status reporting for the rectangular solver
 
-mutable struct _RectangularPFStatusTable
-  # Weak-reference registry keeps per-Net rectangular status without preventing GC.
-  # Allows solver to track state across multiple solves on the same Net object
-  # without creating reference cycles or leaking memory when the Net is freed.
-  entries::Vector{Tuple{UInt,WeakRef,Any}}
-end
-
-const _RECTANGULAR_PF_STATUS = _RectangularPFStatusTable(Tuple{UInt,WeakRef,Any}[])
-# Global weak-reference registry for rectangular solver status.
-# Indexed by (objectid, WeakRef) to maintain per-Net status across Julia sessions
-# without preventing garbage collection of discarded networks.
+# The rectangular solver status lives directly on the Net
+# (net._rectangular_pf_status) since the thread-safety Phase 1 rework: the
+# former global weak-ref registry raced under concurrent solves (its reader
+# pruned, so even reads were writes), and every accessor already receives
+# the Net. deepcopy(net) carries the status with the copy by design; a
+# future saveNet-style serializer must skip the field (it holds solver
+# internals including closures, not model data).
 
 mutable struct RectangularIterationWorkspace
   # Reusable vectors avoid per-iteration allocations in rectangular NR runs.
@@ -58,31 +54,12 @@ function RectangularIterationWorkspace(nb::Int)
   )
 end
 
-function _prune_rectangular_pf_status!(table::_RectangularPFStatusTable)
-  # Dead weakrefs are removed opportunistically before any lookup/insert.
-  # This keeps the global registry bounded even if many Net objects are created and freed.
-  # Pruning is cheap (O(n) scan) and is performed before each status operation.
-  filter!(entry -> entry[2].value !== nothing, table.entries)
-  return table
-end
-
 function _set_rectangular_pf_status!(net::Net, status)
-  # Store or update solver status for a specific Net object.
-  # Uses objectid(net) + identity check (===) to distinguish between different Net objects,
-  # even if they happen to have the same memory address after GC.
-  # This prevents accidental status cross-contamination in stress tests or repeated solves.
-  _prune_rectangular_pf_status!(_RECTANGULAR_PF_STATUS)
-  key = objectid(net)
-  for i in eachindex(_RECTANGULAR_PF_STATUS.entries)
-    entry = _RECTANGULAR_PF_STATUS.entries[i]
-    if entry[1] == key && entry[2].value === net
-      # Found existing entry for this Net; update its status in-place.
-      _RECTANGULAR_PF_STATUS.entries[i] = (key, WeakRef(net), status)
-      return status
-    end
-  end
-  # No existing entry; append new one to registry.
-  push!(_RECTANGULAR_PF_STATUS.entries, (key, WeakRef(net), status))
+  # Store the solver status of the most recent solve on this Net. Plain
+  # field write: the concurrency contract is "one Net, one solver task at a
+  # time"; parallel island solves write to their own island Net copies and
+  # the orchestrator applies the outer-net status serially.
+  net._rectangular_pf_status = status
   return status
 end
 
@@ -91,15 +68,14 @@ end
 
 Retrieve the most recent rectangular power-flow solver status for a network.
 
-If no solver has run on this network, or the network has been garbage-collected,
-returns `nothing`. Otherwise returns a status struct (type depends on solver
-implementation) containing convergence flags, iteration counts, and diagnosis data.
+If no solver has run on this network, returns `nothing`. Otherwise returns a
+status struct (type depends on solver implementation) containing convergence
+flags, iteration counts, and diagnosis data.
 
-# Purpose
-Track solver outcome per Net object across multiple solve attempts without
-creating reference cycles or preventing garbage collection. This enables
-post-solve diagnostics, convergence checks, and iteration-count queries
-without modifying the Net data structure.
+The status is stored as a field on the `Net` itself, so `deepcopy(net)`
+carries the status with the copy, and reading it is a plain field access
+(thread-safe for concurrent readers). It is solver state, not model data:
+serializers must skip it.
 
 # Arguments
 - `net::Net`: Network object to query.
@@ -107,14 +83,7 @@ without modifying the Net data structure.
 # Returns
 - Status struct or `nothing` if no status is available.
 """
-function rectangular_pf_status(net::Net)
-  _prune_rectangular_pf_status!(_RECTANGULAR_PF_STATUS)
-  key = objectid(net)
-  for entry in _RECTANGULAR_PF_STATUS.entries
-    entry[1] == key && entry[2].value === net && return entry[3]
-  end
-  return nothing
-end
+rectangular_pf_status(net::Net) = net._rectangular_pf_status
 
 function _rectangular_rejection_reason_text(reason::Symbol)
   # Convert symbolic rejection reason to human-readable text.

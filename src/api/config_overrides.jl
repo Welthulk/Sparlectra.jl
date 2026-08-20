@@ -96,6 +96,7 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "benchmark.enabled",
   "benchmark.samples",
   "benchmark.seconds",
+  "runtime.parallel.enabled",
 ])
 
 function _flatten_config_keys!(keys_out::Set{String}, raw::AbstractDict, prefix::String = "")

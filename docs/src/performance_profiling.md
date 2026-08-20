@@ -4,9 +4,18 @@
 
 | YAML path | Type | Default | Allowed values | Meaning |
 |---|---:|---:|---|---|
-| `runtime.print_thread_config` | Bool | `true` | `true`, `false` | Print Julia/BLAS thread summary at startup. |
+| `runtime.print_thread_config` | Bool | `true` | `true`, `false` | Print Julia/BLAS thread summary at startup (now including a `parallel: enabled=... max_tasks=...` line). |
 | `runtime.julia_threads` | String | `keep` | `keep`, `default`, `off`, `auto`, or integer-like string | Julia thread policy for runner setup. Requires process startup (`--threads`) or script re-exec. |
 | `runtime.blas_threads` | String | `keep` | `keep`, `default`, `off`, `auto`, or integer-like string | BLAS thread policy for runner setup and can be applied at runtime. |
+| `runtime.parallel.enabled` | Bool | `true` | `true`, `false` | Master switch for in-process parallel execution of independent work items (island solves, short-circuit sweeps, contingency batches). `false` forces every parallel site onto the serial path (the same functions, not copies). |
+| `runtime.parallel.max_tasks` | String | `auto` | `auto` or positive integer string | Task cap for parallel sites. `auto` resolves to `Threads.nthreads()`; the cap is applied via chunking, so it also bounds `@threads` sites. |
+| `runtime.parallel.min_work_items` | Int | `4` | integer >= 1 | Work lists shorter than this run serially (avoids task overhead on tiny cases). |
+
+With `runtime.parallel.enabled: true` and a single-threaded Julia process
+the parallel sites still run serially; the startup summary prints a
+once-per-process hint to start with `julia --threads=auto`. Parallel fan-out
+phases account their wall clock under the `parallel_wall_time` entry in the
+performance profile, next to the serially summed per-phase times.
 
 For `examples/powerflow/matpower_import.jl`, Julia thread priority is:
 

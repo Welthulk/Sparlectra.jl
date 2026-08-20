@@ -41,7 +41,7 @@ The merged YAML is converted into:
   - `transformer::TransformerConfig`
   - `performance::PerformanceConfig`
   - `benchmark::BenchmarkConfig`
-  - `runtime::RuntimeConfig`
+  - `runtime::RuntimeConfig` (incl. `runtime.parallel.*` as `ParallelRuntimeConfig`)
   - `diagnostics::DiagnosticsConfig`
   - `output::OutputConfig`
   - `control::ControlConfig`

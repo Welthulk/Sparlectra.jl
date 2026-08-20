@@ -129,6 +129,15 @@ mutable struct Net
   # fixed injections or attached pair controller). Read by the result layer;
   # live values always come from the prosumers/controller.
   hvdcLinks::Vector{HvdcLink}
+  # Solver status of the most recent rectangular/DC solve on this Net
+  # (thread-safety Phase 1: replaces the former global weak-ref registries,
+  # which raced under concurrent solves). Contract: one Net is solved by at
+  # most one task at a time; deepcopy(net) deliberately carries the status
+  # with the copy (the island path relies on per-copy status), and any
+  # future saveNet-style serializer must SKIP both fields: they hold solver
+  # internals including closures (condition-estimate thunk), not model data.
+  _rectangular_pf_status::Any
+  _dc_pf_status::Any
 
   #! format: off
   function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1, cooldown_iters::Int = 0, q_hyst_pu::Float64 = 0.0, flatstart::Bool = false, bus_shunt_model = :admittance)    
@@ -171,7 +180,9 @@ mutable struct Net
         AbstractOuterController[],                 # machineControls
         Dict{String,String}(),                     # cgmes_ids
         NativeShortCircuitData(),                  # sc_sources
-        HvdcLink[])                                # hvdcLinks
+        HvdcLink[],                                # hvdcLinks
+        nothing,                                   # _rectangular_pf_status
+        nothing)                                   # _dc_pf_status
   end
   #! format: on
   function Base.show(io::IO, net::Net)

@@ -28,28 +28,15 @@
 #          the public reader dc_pf_status; kept separate from
 #          rectangular_pf_status so DC results never masquerade as AC statuses
 
-mutable struct _DcPFStatusTable
-  entries::Vector{Tuple{UInt,WeakRef,Any}}
-end
-
-const _DC_PF_STATUS = _DcPFStatusTable(Tuple{UInt,WeakRef,Any}[])
-
-function _prune_dc_pf_status!(table::_DcPFStatusTable)
-  filter!(entry -> entry[2].value !== nothing, table.entries)
-  return table
-end
+# The DC solver status lives directly on the Net (net._dc_pf_status) since
+# the thread-safety Phase 1 rework, same treatment as the rectangular
+# registry: the former global weak-ref table raced under concurrent solves.
+# Kept as a separate field so DC results never masquerade as AC statuses.
 
 function _set_dc_pf_status!(net::Net, status)
-  _prune_dc_pf_status!(_DC_PF_STATUS)
-  key = objectid(net)
-  for i in eachindex(_DC_PF_STATUS.entries)
-    entry = _DC_PF_STATUS.entries[i]
-    if entry[1] == key && entry[2].value === net
-      _DC_PF_STATUS.entries[i] = (key, WeakRef(net), status)
-      return status
-    end
-  end
-  push!(_DC_PF_STATUS.entries, (key, WeakRef(net), status))
+  # Plain field write; concurrency contract "one Net, one solver task at a
+  # time" (see rectangular_status_workspace.jl).
+  net._dc_pf_status = status
   return status
 end
 
@@ -57,16 +44,9 @@ end
     dc_pf_status(net::Net) -> Any
 
 Retrieve the most recent DC power-flow status for a network (set by
-[`rundcpf!`](@ref)), or `nothing` if `rundcpf!` has not run on this network
-(or it has been garbage-collected). Kept in a registry separate from
-`rectangular_pf_status` so a DC result is never mistaken for an AC one by
-AC-only status readers.
+[`rundcpf!`](@ref)), or `nothing` if `rundcpf!` has not run on this network.
+Stored as a field on the `Net` (separate from `rectangular_pf_status` so a
+DC result is never mistaken for an AC one); `deepcopy(net)` carries it,
+serializers must skip it.
 """
-function dc_pf_status(net::Net)
-  _prune_dc_pf_status!(_DC_PF_STATUS)
-  key = objectid(net)
-  for entry in _DC_PF_STATUS.entries
-    entry[1] == key && entry[2].value === net && return entry[3]
-  end
-  return nothing
-end
+dc_pf_status(net::Net) = net._dc_pf_status

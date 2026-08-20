@@ -526,6 +526,36 @@ Base.@kwdef struct BenchmarkConfig
 end
 
 """
+    ParallelRuntimeConfig
+
+Typed configuration of the in-process parallel execution of independent
+work items (island solves, short-circuit sweeps, contingency batches).
+`enabled = false` forces every parallel site onto the serial path (the
+serial functions themselves, not copies). `max_tasks = "auto"` resolves to
+`Threads.nthreads()`; an integer string caps the task count (applied via
+chunking, so it caps `Threads.@threads` sites too). Work lists shorter than
+`min_work_items` run serially to avoid task overhead on tiny cases.
+"""
+Base.@kwdef struct ParallelRuntimeConfig
+  enabled::Bool = true
+  max_tasks::String = "auto"
+  min_work_items::Int = 4
+end
+
+"""
+    parallel_max_tasks(cfg::ParallelRuntimeConfig) -> Int
+
+Resolve the configured `runtime.parallel.max_tasks` to a concrete task
+count: `"auto"` yields `Threads.nthreads()`, an integer string yields that
+number (validation guarantees it is positive).
+"""
+function parallel_max_tasks(cfg::ParallelRuntimeConfig)::Int
+  value = lowercase(strip(cfg.max_tasks))
+  value == "auto" && return Threads.nthreads()
+  return parse(Int, value)
+end
+
+"""
     RuntimeConfig
 
 Typed runtime/threading configuration for example and benchmark entry points.
@@ -538,6 +568,7 @@ Base.@kwdef struct RuntimeConfig
   case_name::String = ""
   case_source::String = ""
   configured_default_casefile::String = ""
+  parallel::ParallelRuntimeConfig = ParallelRuntimeConfig()
 end
 
 """
@@ -1260,8 +1291,22 @@ function PerformanceConfig(raw::AbstractDict)
   )
 end
 
+function ParallelRuntimeConfig(raw::AbstractDict)
+  max_tasks = _as_string_cfg(_raw_get(raw, "max_tasks", "auto"))
+  normalized = lowercase(strip(max_tasks))
+  if normalized != "auto"
+    parsed = tryparse(Int, normalized)
+    (parsed !== nothing && parsed >= 1) || throw(ArgumentError("runtime.parallel.max_tasks must be \"auto\" or a positive integer string, got $(repr(max_tasks))."))
+  end
+  min_work_items = _as_int_cfg(_raw_get(raw, "min_work_items", 4))
+  min_work_items >= 1 || throw(ArgumentError("runtime.parallel.min_work_items must be >= 1, got $(min_work_items)."))
+  return ParallelRuntimeConfig(enabled = _as_bool_cfg(_raw_get(raw, "enabled", true)), max_tasks = normalized == "auto" ? "auto" : normalized, min_work_items = min_work_items)
+end
+
 function RuntimeConfig(raw::AbstractDict)
   merged = _merged_section(raw, "runtime")
+  parallel_raw = _raw_get(merged, "parallel", Dict{String,Any}())
+  parallel_raw isa AbstractDict || throw(ArgumentError("runtime.parallel must be a mapping (enabled/max_tasks/min_work_items)."))
   return RuntimeConfig(
     julia_threads = _as_string_cfg(_raw_get(merged, "julia_threads", "keep")),
     blas_threads = _as_string_cfg(_raw_get(merged, "blas_threads", "keep")),
@@ -1270,6 +1315,7 @@ function RuntimeConfig(raw::AbstractDict)
     case_name = _as_string_cfg(_raw_get(merged, "case_name", "")),
     case_source = _as_string_cfg(_raw_get(merged, "case_source", "")),
     configured_default_casefile = _as_string_cfg(_raw_get(merged, "configured_default_casefile", "")),
+    parallel = ParallelRuntimeConfig(parallel_raw),
   )
 end
 

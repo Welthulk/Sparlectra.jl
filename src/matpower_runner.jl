@@ -56,6 +56,9 @@ _perf_timing_seconds(row)::Float64 = row isa NamedTuple && hasproperty(row, :ela
 _perf_timing_bytes(row)::Int = row isa NamedTuple && hasproperty(row, :bytes) ? Int(getproperty(row, :bytes)) : 0
 
 const _SESSION_REPRESENTATIVE_TIMING_SEEN = Set{Tuple{Symbol,Symbol}}()
+# The Set is process-global session state; the lock makes the
+# check-then-insert atomic under concurrent runner starts (Phase 1).
+const _SESSION_REPRESENTATIVE_TIMING_LOCK = ReentrantLock()
 
 function _auto_timing_mode(method::Symbol, warmup_runs::Int)::Symbol
   warmup_runs > 0 && return :warm_steady_state
@@ -64,12 +67,13 @@ function _auto_timing_mode(method::Symbol, warmup_runs::Int)::Symbol
   project_key = Symbol(isnothing(active_project) ? "__no_project__" : active_project)
   key = (method, project_key)
 
-  if key in _SESSION_REPRESENTATIVE_TIMING_SEEN
-    return :auto_warm_session_reuse
+  lock(_SESSION_REPRESENTATIVE_TIMING_LOCK) do
+    if key in _SESSION_REPRESENTATIVE_TIMING_SEEN
+      return :auto_warm_session_reuse
+    end
+    push!(_SESSION_REPRESENTATIVE_TIMING_SEEN, key)
+    return :auto_cold_session_first
   end
-
-  push!(_SESSION_REPRESENTATIVE_TIMING_SEEN, key)
-  return :auto_cold_session_first
 end
 
 function _timing_mode_label(mode::Symbol)::String
@@ -351,8 +355,13 @@ function runtime_thread_status(cfg::RuntimeConfig)
     julia_applied = julia_applied,
     julia_startup_required = julia_startup_required,
     blas_applied = blas_applied,
+    parallel_enabled = cfg.parallel.enabled,
+    parallel_max_tasks = parallel_max_tasks(cfg.parallel),
   )
 end
+
+# once per process, not per solve: parallel enabled but only one Julia thread
+const _PARALLEL_SINGLE_THREAD_HINTED = Ref(false)
 
 """
     print_runtime_thread_config(io, status)
@@ -365,6 +374,11 @@ function print_runtime_thread_config(io::IO, status)
   println(io, "CPU threads   : ", status.cpu_threads)
   println(io, "Julia threads : requested=", isnothing(status.requested_julia_threads_resolved) ? "keep" : status.requested_julia_threads_resolved, " active=", status.julia_threads, " applied=", status.julia_applied, " startup_required=", status.julia_startup_required)
   println(io, "BLAS threads  : requested=", isnothing(status.requested_blas_threads_resolved) ? "keep" : status.requested_blas_threads_resolved, " active=", status.blas_threads, " applied=", status.blas_applied)
+  println(io, "parallel: enabled=", status.parallel_enabled, " max_tasks=", status.parallel_max_tasks)
+  if status.parallel_enabled && status.julia_threads == 1 && !_PARALLEL_SINGLE_THREAD_HINTED[]
+    _PARALLEL_SINGLE_THREAD_HINTED[] = true
+    println(io, "Hint: runtime.parallel.enabled is true but Julia runs with 1 thread; start with julia --threads=auto to use it.")
+  end
   if status.julia_startup_required
     println(io, "Request not applied: Julia threads must be set at process startup.")
     println(io, "Start with:")

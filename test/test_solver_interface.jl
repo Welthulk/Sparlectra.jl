@@ -98,12 +98,24 @@ function run_solver_interface_tests()
   # external model API, Q-limit reporting/autocorrection, PV->PQ locking, and final-limit reporting.
   @testset "Solver interface" begin
     @test test_external_solver_interface() == true
-    @testset "Rectangular PF statuses use weak net keys" begin
-      @test isempty(Sparlectra._RECTANGULAR_PF_STATUS.entries) || all(entry[2] isa WeakRef for entry in Sparlectra._RECTANGULAR_PF_STATUS.entries)
+    @testset "Rectangular PF status lives on the Net" begin
+      # Phase 1 thread-safety rework: the former global weak-ref registry is
+      # gone; the status is a Net field, so distinct Nets are independent and
+      # deepcopy carries the status with the copy.
+      @test !isdefined(Sparlectra, :_RECTANGULAR_PF_STATUS)
 
       net = createTest3BusNet()
+      @test Sparlectra.rectangular_pf_status(net) === nothing
       status = (status = :test_status,)
       @test Sparlectra._set_rectangular_pf_status!(net, status) === status
+      @test Sparlectra.rectangular_pf_status(net) === status
+
+      other = createTest3BusNet()
+      @test Sparlectra.rectangular_pf_status(other) === nothing
+
+      copied = deepcopy(net)
+      @test Sparlectra.rectangular_pf_status(copied).status === :test_status
+      Sparlectra._set_rectangular_pf_status!(copied, (status = :copy_only,))
       @test Sparlectra.rectangular_pf_status(net) === status
     end
     @testset "Wrong-branch helper classification" begin

@@ -447,6 +447,17 @@ runtime:
   # keep = keep current process setting.
   julia_threads: keep  # requires process startup or script re-exec
   blas_threads: keep   # can be applied at runtime
+  # In-process parallel execution of independent work items (island solves,
+  # short-circuit sweeps, contingency batches). Threads come from the Julia
+  # process (--threads); with one thread the parallel sites run serially.
+  parallel:
+    # Master switch: false forces every parallel site onto the serial path.
+    enabled: true
+    # auto = Threads.nthreads(); an integer string caps the task count
+    # (applied via chunking, so it also caps @threads sites).
+    max_tasks: auto
+    # Below this many work items a parallel site runs serially.
+    min_work_items: 4
   # Runtime case fields are populated in API/Web UI effective_config.yaml artifacts.
   casefile: ""
   case_name: ""
