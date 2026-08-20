@@ -275,5 +275,56 @@ function run_short_circuit_tests()
       @test err isa ArgumentError
       @test occursin("short_circuit.c_factor", sprint(showerror, err))
     end
+
+    @testset "parallel all-bus sweep identity (Phase 3)" begin
+      # multi-island SC fixture: n feeder-fed rings with declared Sk''
+      function build_sweep_net(n, m)
+        net = Net(name = "sc_sweep_$(n)x$(m)", baseMVA = 100.0)
+        for k in 1:n
+          name = i -> "S$(k)_B$(i)"
+          for i in 1:m
+            addBus!(net = net, busName = name(i), vn_kV = 110.0)
+          end
+          addExternalGrid!(net = net, busName = name(1), vm_pu = 1.0, sk_max_MVA = 2000.0 + 100.0 * k, sk_min_MVA = 1500.0, rx_max = 0.1, internal_impedance = false)
+          for i in 1:m
+            addPIModelACLine!(net = net, fromBus = name(i), toBus = name(i == m ? 1 : i + 1), r_pu = 0.001, x_pu = 0.004, b_pu = 0.0, status = 1)
+          end
+        end
+        ok, _ = validate!(net = net)
+        @test ok
+        return net
+      end
+
+      net = build_sweep_net(3, 40)
+      for case in (:max, :min)
+        serial = runShortCircuit!(net; case = case, parallel_enabled = false)
+        # row-by-row equality, == on all fields, NaN-aware via isequal,
+        # for the capped-serial fallback AND the genuinely parallel sweep
+        for max_tasks in (1, Threads.nthreads())
+          par = runShortCircuit!(net; case = case, parallel_enabled = true, parallel_max_tasks = max_tasks, parallel_min_work_items = 2)
+          @test length(par.rows) == length(serial.rows)
+          @test isequal(serial.rows, par.rows)
+        end
+      end
+      if Threads.nthreads() > 1
+        println("sc parallel sweep: RAN with ", Threads.nthreads(), " threads")
+      else
+        println("sc parallel sweep: fallback-only run (single-threaded test process); the threaded path runs in the --threads=4 battery")
+      end
+
+      # case14 with buses = :all through the MATPOWER import (bundled case)
+      case14 = joinpath(Sparlectra.MPOWER_DIR, "case14.m")
+      if isfile(case14)
+        net14 = createNetFromMatPowerFile(filename = case14)
+        first_bus = argmin(name -> net14.busDict[name], collect(keys(net14.busDict)))
+        addExternalGrid!(net = net14, busName = first_bus, vm_pu = 1.06, sk_max_MVA = 3000.0, sk_min_MVA = 2000.0, rx_max = 0.1, internal_impedance = false)
+        s14 = runShortCircuit!(net14; buses = :all, case = :max, parallel_enabled = false)
+        p14 = runShortCircuit!(net14; buses = :all, case = :max, parallel_enabled = true, parallel_min_work_items = 2)
+        @test isequal(s14.rows, p14.rows)
+        println("sc parallel sweep case14: RAN")
+      else
+        println("sc parallel sweep case14: SKIPPED (bundled case14.m not found)")
+      end
+    end
   end
 end

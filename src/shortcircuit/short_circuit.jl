@@ -328,8 +328,26 @@ islands without any short-circuit source report `status = :no_source` with
 The function does not modify `net`; the `!` marks it as the acting entry
 point of the module family (`runpf!`, `rundcpf!`). Failure behavior: throws
 `ArgumentError` for an unknown bus name or an invalid `case`.
+
+All-bus sweeps fan out over Julia threads (Phase 3 of the multi-core work):
+the fault-bus list is split into `runtime.parallel.max_tasks` chunks, each
+task solving on its own `copy` of the island factorization with reusable
+RHS/solution buffers. Results are row-identical to the serial sweep. The
+keywords `parallel_enabled`, `parallel_max_tasks`, and
+`parallel_min_work_items` override the active `runtime.parallel.*`
+configuration (`nothing` = use the configured values); with one Julia
+thread or below `min_work_items` fault buses the sweep runs serially.
 """
-function runShortCircuit!(net::Net, sc_data; buses = :all, case::Symbol = :max, c_factor::Real = 0.0)::ShortCircuitResult
+function runShortCircuit!(
+  net::Net,
+  sc_data;
+  buses = :all,
+  case::Symbol = :max,
+  c_factor::Real = 0.0,
+  parallel_enabled::Union{Nothing,Bool} = nothing,
+  parallel_max_tasks::Union{Nothing,Int} = nothing,
+  parallel_min_work_items::Union{Nothing,Int} = nothing,
+)::ShortCircuitResult
   case in (:max, :min) || throw(ArgumentError("runShortCircuit!: case must be :max or :min; got $(case)."))
   c_override = Float64(c_factor)
   (c_override == 0.0 || (isfinite(c_override) && 0.5 <= c_override <= 1.2)) || throw(ArgumentError("runShortCircuit!: c_factor must be 0 (automatic Table 1) or within [0.5, 1.2]; got $(c_factor)."))
@@ -380,8 +398,14 @@ function runShortCircuit!(net::Net, sc_data; buses = :all, case::Symbol = :max, 
     island_solutions[comp.island_id] = (factor = LinearAlgebra.lu(Ysc), local_index = local_index)
   end
 
-  rows = NamedTuple[]
-  for bus in fault_buses
+  # Phase 3: the per-bus row is a pure function of its inputs (no shared
+  # container is touched), so the all-bus sweep can fan out over task
+  # chunks. `solution_for(island)` supplies the factorization (the shared
+  # one on the serial path, one `copy` per chunk on the parallel path;
+  # a shared UMFPACK factor would serialize on its internal lock) and
+  # `workspace_for(island, n)` supplies caller-owned RHS/solution buffers
+  # (the former per-bus `zeros` allocation was the sweep's hot spot).
+  compute_row = function (bus::Int, solution_for, workspace_for)
     node = net.nodeVec[bus]
     vn = getNodeVn(node)
     name = get(bus_names, bus, getCompName(node.comp))
@@ -392,20 +416,19 @@ function runShortCircuit!(net::Net, sc_data; buses = :all, case::Symbol = :max, 
     unique!(reasons)
     c = _sc_c_factor(vn, case, c_override)
     if bus in iso
-      push!(rows, (bus = name, bus_idx = bus, vn_kV = vn, island = island, status = :isolated, c = c, zk_ohm = NaN, rx_ratio = NaN, ik_kA = NaN, sk_MVA = NaN, kappa = NaN, ip_kA = NaN, contains_defaulted_data = !isempty(reasons), reasons = reasons))
-      continue
+      return (bus = name, bus_idx = bus, vn_kV = vn, island = island, status = :isolated, c = c, zk_ohm = NaN, rx_ratio = NaN, ik_kA = NaN, sk_MVA = NaN, kappa = NaN, ip_kA = NaN, contains_defaulted_data = !isempty(reasons), reasons = reasons)
     end
-    sol = get(island_solutions, island, nothing)
+    sol = solution_for(island)
     if sol === nothing || sol.factor === nothing
       push!(reasons, "no short-circuit source in island $(island) — fault current undefined")
-      push!(rows, (bus = name, bus_idx = bus, vn_kV = vn, island = island, status = :no_source, c = c, zk_ohm = NaN, rx_ratio = NaN, ik_kA = NaN, sk_MVA = NaN, kappa = NaN, ip_kA = NaN, contains_defaulted_data = true, reasons = reasons))
-      continue
+      return (bus = name, bus_idx = bus, vn_kV = vn, island = island, status = :no_source, c = c, zk_ohm = NaN, rx_ratio = NaN, ik_kA = NaN, sk_MVA = NaN, kappa = NaN, ip_kA = NaN, contains_defaulted_data = true, reasons = reasons)
     end
     li = sol.local_index[bus]
-    e = zeros(ComplexF64, length(sol.local_index))
-    e[li] = 1.0
-    zcol = sol.factor \ e
-    z_pu = zcol[li]
+    rhs, solbuf = workspace_for(island, length(sol.local_index))
+    fill!(rhs, 0.0 + 0.0im)
+    rhs[li] = 1.0
+    LinearAlgebra.ldiv!(solbuf, sol.factor, rhs)
+    z_pu = solbuf[li]
     z_base = vn^2 / net.baseMVA
     z_ohm = z_pu * z_base
     zk = abs(z_ohm)
@@ -422,7 +445,51 @@ function runShortCircuit!(net::Net, sc_data; buses = :all, case::Symbol = :max, 
       NaN
     end
     ip = isfinite(kappa) ? kappa * sqrt(2.0) * ik : NaN
-    push!(rows, (bus = name, bus_idx = bus, vn_kV = vn, island = island, status = :ok, c = c, zk_ohm = zk, rx_ratio = rx, ik_kA = ik, sk_MVA = sk, kappa = kappa, ip_kA = ip, contains_defaulted_data = !isempty(reasons), reasons = reasons))
+    return (bus = name, bus_idx = bus, vn_kV = vn, island = island, status = :ok, c = c, zk_ohm = zk, rx_ratio = rx, ik_kA = ik, sk_MVA = sk, kappa = kappa, ip_kA = ip, contains_defaulted_data = !isempty(reasons), reasons = reasons)
+  end
+
+  # lazily created per-owner workspaces: one (rhs, sol) buffer pair per
+  # island, sized to the island's reduced system
+  make_workspace_for = function ()
+    ws = Dict{Int,Tuple{Vector{ComplexF64},Vector{ComplexF64}}}()
+    return (island, n) -> get!(ws, island) do
+      (zeros(ComplexF64, n), zeros(ComplexF64, n))
+    end
+  end
+
+  parallel_on, parallel_cap, parallel_min_items = _resolve_parallel_runtime(parallel_enabled, parallel_max_tasks, parallel_min_work_items)
+  use_parallel = parallel_on && Threads.nthreads() > 1 && parallel_cap > 1 && length(fault_buses) >= parallel_min_items
+
+  if use_parallel
+    # one task per chunk (number of chunks = max_tasks), one factor COPY and
+    # one workspace pair per island PER CHUNK, never per bus; row slots are
+    # written at distinct indices, then collected in input order. The factor
+    # copies are created HERE, serially, before any task spawns: copy() on
+    # one shared UmfpackLU is not safe against concurrent copies of the same
+    # object (measured: silent garbage), only the SOLVES on distinct copies
+    # are concurrency-safe.
+    row_slots = Vector{Any}(undef, length(fault_buses))
+    chunks = collect(Iterators.partition(eachindex(fault_buses), cld(length(fault_buses), parallel_cap)))
+    chunk_solutions = [Dict{Int,Any}(island => (sol.factor === nothing ? sol : (factor = copy(sol.factor), local_index = sol.local_index)) for (island, sol) in island_solutions) for _ in chunks]
+    tasks = [
+      Threads.@spawn begin
+        # `local` is load-bearing: without it these assignments would bind
+        # the ENCLOSING function's variables (the serial branch defines the
+        # same names), and every task would share one boxed slot — a data
+        # race that silently corrupts results (measured before the fix)
+        local task_solution_for = island -> get(chunk_solutions[ci], island, nothing)
+        local task_workspace_for = make_workspace_for()
+        for idx in chunks[ci]
+          row_slots[idx] = compute_row(fault_buses[idx], task_solution_for, task_workspace_for)
+        end
+      end for ci in eachindex(chunks)
+    ]
+    foreach(wait, tasks)
+    rows = NamedTuple[row_slots[i] for i in eachindex(fault_buses)]
+  else
+    shared_solution_for = island -> get(island_solutions, island, nothing)
+    workspace_for = make_workspace_for()
+    rows = NamedTuple[compute_row(bus, shared_solution_for, workspace_for) for bus in fault_buses]
   end
 
   return ShortCircuitResult(case, net.baseMVA, c_override, rows, messages)
@@ -434,7 +501,7 @@ runShortCircuit!(result::CGMESImporter.CGMESImportResult; kwargs...) = runShortC
 # (filled by addExternalGrid!). An entirely empty container already yields
 # :no_source rows through the engine's safety-flag machinery — deliberately
 # no pre-check here.
-runShortCircuit!(net::Net; buses = :all, case::Symbol = :max, c_factor::Real = 0.0) = runShortCircuit!(net, net.sc_sources; buses = buses, case = case, c_factor = c_factor)
+runShortCircuit!(net::Net; kwargs...) = runShortCircuit!(net, net.sc_sources; kwargs...)
 
 """
     printShortCircuitResult(io::IO, result::ShortCircuitResult; max_rows = 50)

@@ -42,6 +42,11 @@ Per-terminal branch status: one-sided open branches.
   `parallel_wall_time` in the performance profile. Demo:
   `examples/powerflow/exp_parallel_islands.jl`. See
   [Power-Flow Configuration](powerflow_configuration.md).
+- Parallel short-circuit sweeps: `runShortCircuit!` fans an all-bus sweep
+  out over Julia threads (one factorization copy and reusable buffers per
+  task chunk, gated by `runtime.parallel.*`), with row-identical results
+  to the serial sweep. Measured 4.8x on an 8000-bus sweep with 16 threads.
+  Demo: `examples/others/exp_parallel_sc_sweep.jl`.
 
 # Version 0.9.9 - 2026-08-22
 

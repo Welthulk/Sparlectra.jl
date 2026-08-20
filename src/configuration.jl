@@ -758,6 +758,22 @@ function set_sparlectra_config!(cfg::SparlectraConfig)
   return cfg
 end
 
+"""
+    _resolve_parallel_runtime(enabled, max_tasks, min_work_items) -> (on, cap, min_items)
+
+Resolve per-call parallel overrides against the ACTIVE
+`runtime.parallel` configuration (`nothing` = take the configured value).
+Meant to be called ONCE by the orchestrating (serial) code of a parallel
+site before any task spawns; workers never touch the config globals.
+"""
+function _resolve_parallel_runtime(enabled::Union{Nothing,Bool}, max_tasks::Union{Nothing,Int}, min_work_items::Union{Nothing,Int})
+  pcfg = runtime_config().parallel
+  on = something(enabled, pcfg.enabled)
+  cap = max_tasks === nothing ? parallel_max_tasks(pcfg) : max_tasks
+  min_items = something(min_work_items, pcfg.min_work_items)
+  return (on, cap, min_items)
+end
+
 active_sparlectra_config()::SparlectraConfig = ACTIVE_SPARLECTRA_CONFIG[]
 powerflow_config()::PowerFlowConfig = active_sparlectra_config().powerflow
 matpower_import_config()::MatpowerImportConfig = active_sparlectra_config().matpower
