@@ -92,7 +92,10 @@ power_flow:
   # AC island diagnostic artifacts.
   islands:
     enabled: true
-    # Allowed values: solve_independent
+    # Allowed values: solve_independent, solve_parallel
+    # solve_parallel solves the detected islands concurrently on Julia
+    # threads (gated by runtime.parallel.*); results are identical to
+    # solve_independent, only the wall clock changes.
     mode: solve_independent
     # Allowed values: matpower_like
     reference_policy: matpower_like

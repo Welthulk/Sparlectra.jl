@@ -314,8 +314,8 @@ end
 const WRONG_BRANCH_DETECTION_VALUES = [:off, :warn, :fail, :rescue]
 const POWERFLOW_SOLVER_VALUES = (:rectangular, :apslf, :dc)
 const POWERFLOW_LINEAR_SOLVER_VALUES = (:umfpack, :umfpack_reuse)
-const POWERFLOW_ISLAND_MODE_VALUES = [:solve_independent]
-const POWERFLOW_ISLAND_REFERENCE_POLICY_VALUES = [:matpower_like]
+# (single definition further below, next to the other island constants; a
+# duplicate Vector-typed definition used to live here)
 
 """
     ObservabilityConfig
@@ -682,7 +682,7 @@ const QLIMIT_ENFORCEMENT_MODE_LEGACY_ALIASES = Dict(
 const QLIMIT_GUARD_ZERO_RANGE_MODE_VALUES = (:lock_pq,)
 const QLIMIT_GUARD_NARROW_RANGE_MODE_VALUES = (:prefer_pq, :lock_pq)
 const QLIMIT_GUARD_VIOLATION_MODE_VALUES = (:delayed_switch, :lock_pq)
-const POWERFLOW_ISLAND_MODE_VALUES = (:solve_independent,)
+const POWERFLOW_ISLAND_MODE_VALUES = (:solve_independent, :solve_parallel)
 const POWERFLOW_ISLAND_REFERENCE_POLICY_VALUES = (:matpower_like,)
 const RECTANGULAR_PREALLOCATE_WORKSPACE_VALUES = (:off, :on, :auto)
 const STATE_ESTIMATION_METHOD_VALUES = (:wls,)

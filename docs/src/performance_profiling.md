@@ -13,9 +13,15 @@
 
 With `runtime.parallel.enabled: true` and a single-threaded Julia process
 the parallel sites still run serially; the startup summary prints a
-once-per-process hint to start with `julia --threads=auto`. Parallel fan-out
-phases account their wall clock under the `parallel_wall_time` entry in the
-performance profile, next to the serially summed per-phase times.
+once-per-process hint to start with `julia --threads=auto`.
+
+Timing semantics under parallel execution: the per-phase timings in the
+performance profile (and performance.log) are CPU-time SUMS across all
+islands/workers, exactly as the serial loop accumulated them, so phase
+names and their meaning do not change between serial and parallel runs.
+The elapsed real time of a parallel fan-out is accounted separately under
+`parallel_wall_time`; on a parallel run it is smaller than the sum of the
+per-island phase times, and the ratio is the achieved speedup.
 
 For `examples/powerflow/matpower_import.jl`, Julia thread priority is:
 

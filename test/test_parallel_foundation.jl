@@ -93,6 +93,29 @@ function run_parallel_foundation_tests()
       off = Dict{Symbol,Any}(:enabled => false)
       @test Sparlectra._perf_profile_merge!(off, child, "x_") === off
       @test !haskey(off, :timings)
+
+      # Phase 2 contract: call sites never branch on the disabled case, the
+      # helpers swallow nothing children (and a nothing parent) themselves
+      before = deepcopy(parent)
+      @test Sparlectra._perf_profile_merge!(parent, nothing, "ac_island_9_") === parent
+      @test length(parent[:timings]) == length(before[:timings])
+      @test Sparlectra._perf_profile_merge!(nothing, child, "x_") === nothing
+    end
+
+    @testset "deepcopy carries the condest thunk" begin
+      # the solver status stores a lazy condition-estimate closure; a copied
+      # Net must keep a WORKING thunk (its own memo Ref), not a dead one
+      net = createTest3BusNet()
+      _, erg = runpf!(net, 20, 1e-8, 0)
+      @test erg == 0
+      copied = deepcopy(net)
+      # evaluate on the copy FIRST (fresh memo) and then on the original
+      kappa_copy = condestJacobian(copied)
+      kappa_orig = condestJacobian(net)
+      @test isfinite(kappa_copy) && kappa_copy > 0
+      @test kappa_copy == kappa_orig
+      # second evaluation hits the memo and stays identical
+      @test condestJacobian(copied) == kappa_copy
     end
 
     @testset "DC status lives on the Net" begin
@@ -127,6 +150,85 @@ function run_parallel_foundation_tests()
       GC.gc()
       GC.gc()
       @test keeper \ b == x_ref
+    end
+
+    @testset "island solve_parallel identity (Phase 2)" begin
+      # multi-island fixture: n disconnected 3-bus feeders, distinct loads
+      function build_multi_island(n)
+        net = Net(name = "mi_$(n)", baseMVA = 100.0)
+        for k in 1:n
+          a = "A$(k)"; b = "B$(k)"; c = "C$(k)"
+          for bus in (a, b, c)
+            addBus!(net = net, busName = bus, vn_kV = 110.0)
+          end
+          addProsumer!(net = net, busName = a, type = "EXTERNALNETWORKINJECTION", referencePri = a, vm_pu = 1.0, va_deg = 0.0)
+          addProsumer!(net = net, busName = b, type = "ENERGYCONSUMER", p = 10.0 + k, q = 3.0)
+          addProsumer!(net = net, busName = c, type = "ENERGYCONSUMER", p = 5.0 + k, q = 1.0)
+          addPIModelACLine!(net = net, fromBus = a, toBus = b, r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+          addPIModelACLine!(net = net, fromBus = b, toBus = c, r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+        end
+        validate!(net = net)
+        return net
+      end
+
+      solve_mode = function (mode; max_tasks = Threads.nthreads())
+        net = build_multi_island(5)
+        profile = Dict{Symbol,Any}(:enabled => true)
+        it, erg = runpf!(net, 25, 1e-8, 0; islands_enabled = true, islands_mode = mode, islands_parallel_max_tasks = max_tasks, islands_parallel_min_work_items = 2, performance_profile = profile)
+        return (; net, profile, it, erg)
+      end
+
+      serial = solve_mode(:solve_independent)
+      # BITWISE identity required (Phase 0 review item 5), for max_tasks=1
+      # (falls back to the serial loop, same functions) and max_tasks=auto
+      for max_tasks in (1, Threads.nthreads())
+        par = solve_mode(:solve_parallel; max_tasks = max_tasks)
+        @test par.erg == 0
+        @test par.it == serial.it
+        for i in eachindex(serial.net.nodeVec)
+          @test par.net.nodeVec[i]._vm_pu == serial.net.nodeVec[i]._vm_pu
+          @test par.net.nodeVec[i]._va_deg == serial.net.nodeVec[i]._va_deg
+        end
+        # phase-name set identical to serial (parallel adds only the wall clock)
+        par_phases = Set(keys(par.profile[:timings]))
+        delete!(par_phases, :parallel_wall_time)
+        @test par_phases == Set(keys(serial.profile[:timings]))
+        statuses = par.profile[:ac_island_solver_statuses]
+        @test length(statuses) == 5
+        @test all(st.status === :converged for (_, st) in statuses)
+      end
+
+      if Threads.nthreads() > 1
+        # the parallel path actually engaged: wall clock recorded, per-island
+        # scalars merged under their island prefix, no shared-slot leftovers
+        par = solve_mode(:solve_parallel)
+        @test haskey(par.profile[:timings], :parallel_wall_time)
+        @test haskey(par.profile, :ac_island_1_linear_solver_backend)
+        @test !haskey(par.profile, :diagnostic_artifact_prefix)
+        println("island solve_parallel: RAN with ", Threads.nthreads(), " threads")
+      else
+        println("island solve_parallel: fallback-only run (single-threaded test process); the threaded assertions run in the --threads=4 battery")
+      end
+
+      # failure semantics under parallel: all islands report their REAL
+      # status even with diagnostic_continue_after_failure = false
+      net_bad = build_multi_island(4)
+      # island 2 gets an absurd load so its solve fails
+      addProsumer!(net = net_bad, busName = "B2", type = "ENERGYCONSUMER", p = 1.0e6, q = 1.0e6)
+      profile_bad = Dict{Symbol,Any}(:enabled => true)
+      @test_throws Exception runpf!(net_bad, 15, 1e-8, 0; islands_enabled = true, islands_mode = :solve_parallel, islands_parallel_max_tasks = Threads.nthreads(), islands_parallel_min_work_items = 2, performance_profile = profile_bad)
+      statuses_bad = profile_bad[:ac_island_solver_statuses]
+      if Threads.nthreads() > 1
+        # parallel: every island already ran, all four report their REAL status
+        @test length(statuses_bad) == 4
+        @test all(st.status !== :skipped_after_previous_failure for (_, st) in statuses_bad)
+        @test any(st.status !== :converged for (_, st) in statuses_bad)
+        @test count(st.status === :converged for (_, st) in statuses_bad) == 3
+      else
+        # single-threaded fallback = serial loop: stops at the failing island,
+        # so exactly the islands up to and including the failure are recorded
+        @test length(statuses_bad) == 2
+      end
     end
 
     @testset "startup summary line" begin

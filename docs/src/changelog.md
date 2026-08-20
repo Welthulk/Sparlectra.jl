@@ -26,13 +26,22 @@ Per-terminal branch status: one-sided open branches.
   measured slower than UMFPACK on power-flow Jacobians, and a shared KLU
   factorization is unsafe under threads. `power_flow.linear_solver`
   accepts `umfpack` and `umfpack_reuse`; a configured `klu` now fails
-  validation with an actionable message.
+  validation with an actionable message. Migration: replace
+  `linear_solver: klu` with `linear_solver: umfpack_reuse` in YAML files
+  and case sidecars (same analyze-once/refactor-per-iteration behavior on
+  the UMFPACK kernel).
 - Thread-safety foundation for multi-core execution: the solver status
   registries moved onto the `Net` (the former global weak-ref tables raced
   under concurrent solves), per-worker performance-profile helpers keep
   parallel timings collision-free, and the new `runtime.parallel.*` keys
-  (`enabled`, default true) prepare island/sweep parallelism. No parallel
-  execution yet; behavior of serial runs is unchanged.
+  (`enabled`, default true) prepare island/sweep parallelism.
+- Parallel island solving: `power_flow.islands.mode: solve_parallel` runs
+  the detected AC islands concurrently on Julia threads (start with
+  `julia --threads=auto`). Results are bitwise identical to
+  `solve_independent`; the fan-out wall clock appears as
+  `parallel_wall_time` in the performance profile. Demo:
+  `examples/powerflow/exp_parallel_islands.jl`. See
+  [Power-Flow Configuration](powerflow_configuration.md).
 
 # Version 0.9.9 - 2026-08-22
 

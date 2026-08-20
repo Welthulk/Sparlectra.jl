@@ -139,7 +139,7 @@ power_flow:
 | YAML path | Type | Default | Allowed values | Meaning |
 |---|---:|---:|---|---|
 | `power_flow.islands.enabled` | Bool | `true` | `true`, `false` | Write AC island diagnostics before and after the solve. |
-| `power_flow.islands.mode` | Symbol/String | `solve_independent` | `solve_independent` | Reserved island solve mode; diagnostics preserve the island-wise solving concept. |
+| `power_flow.islands.mode` | Symbol/String | `solve_independent` | `solve_independent`, `solve_parallel` | Island solve mode. `solve_parallel` runs the detected islands concurrently on Julia threads (largest island first), gated by `runtime.parallel.enabled`, `max_tasks`, and `min_work_items`; with one thread, a disabled switch, or too few islands it falls back to the identical serial loop. Results are bitwise identical to `solve_independent`; the fan-out wall clock is recorded as `parallel_wall_time`. One semantic difference: with `diagnostic_continue_after_failure: false` a parallel run cannot skip islands after the first failure (they are already in flight), so every island reports its REAL status and the failure is raised after all islands finish; the serial mode keeps today's immediate stop. |
 | `power_flow.islands.reference_policy` | Symbol/String | `matpower_like` | `matpower_like` | Select the in-island REF bus when present, otherwise report the first PV/PQ bus that would be promoted for diagnostics. |
 | `power_flow.islands.diagnostic_continue_after_failure` | Bool | `true` | `true`, `false` | Keep diagnostics for all detected islands even when the combined run fails. |
 

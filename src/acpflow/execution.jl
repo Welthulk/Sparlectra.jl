@@ -67,7 +67,18 @@ function _execute_sparlectra_powerflow!(net::Net, cfg::SparlectraConfig; perform
           ite, status = _run_dc_powerflow!(net, pf_cfg; verbose = verbose, performance_profile = performance_profile)
           (ite, status, :none)
         elseif isempty(controllers)
-          ite, status = runpf!(net, solve_pf_cfg; verbose = verbose, pv_table_rows = qlimit_preview_rows, performance_profile = performance_profile)
+          # the executing SparlectraConfig owns the runtime.parallel switches;
+          # forward them so a non-active config still governs the island path
+          ite, status = runpf!(
+            net,
+            solve_pf_cfg;
+            verbose = verbose,
+            pv_table_rows = qlimit_preview_rows,
+            performance_profile = performance_profile,
+            islands_parallel_enabled = cfg.runtime.parallel.enabled,
+            islands_parallel_max_tasks = parallel_max_tasks(cfg.runtime.parallel),
+            islands_parallel_min_work_items = cfg.runtime.parallel.min_work_items,
+          )
           (ite, status, :none)
         else
           control_result = run_control!(net; controllers = controllers, pf_config = solve_pf_cfg, control_config = cfg.control, verbose = verbose, performance_profile = performance_profile)

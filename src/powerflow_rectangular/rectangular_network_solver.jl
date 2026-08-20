@@ -1302,7 +1302,7 @@ function runpf_rectangular!(
   return iters, erg
 end
 
-function _runpf_config_once!(net::Net, config::PowerFlowConfig; verbose::Int = 0, damp = 1.0, pv_table_rows::Int = 30, validate_limits_after_pf::Bool = false, q_limit_violation_headroom::Float64 = 0.0, qlimit_lock_reason::Symbol = :manual, performance_profile = nothing)
+function _runpf_config_once!(net::Net, config::PowerFlowConfig; verbose::Int = 0, damp = 1.0, pv_table_rows::Int = 30, validate_limits_after_pf::Bool = false, q_limit_violation_headroom::Float64 = 0.0, qlimit_lock_reason::Symbol = :manual, performance_profile = nothing, islands_parallel_enabled::Union{Nothing,Bool} = nothing, islands_parallel_max_tasks::Union{Nothing,Int} = nothing, islands_parallel_min_work_items::Union{Nothing,Int} = nothing)
   start = config.start_mode
   start_ci = config.start_current_iteration
   start_apslf = config.apslf_start
@@ -1394,6 +1394,9 @@ function _runpf_config_once!(net::Net, config::PowerFlowConfig; verbose::Int = 0
     islands_mode = config.islands_mode,
     islands_reference_policy = config.islands_reference_policy,
     islands_diagnostic_continue_after_failure = config.islands.diagnostic_continue_after_failure,
+    islands_parallel_enabled = islands_parallel_enabled,
+    islands_parallel_max_tasks = islands_parallel_max_tasks,
+    islands_parallel_min_work_items = islands_parallel_min_work_items,
     distributed_slack_enabled = config.distributed_slack.enabled,
     distributed_slack_p_mode = config.distributed_slack.p_mode,
     distributed_slack_respect_p_limits = config.distributed_slack.respect_p_limits,
@@ -1455,8 +1458,8 @@ function _rescue_config_variants(config::PowerFlowConfig)
   return variants
 end
 
-function _runpf_with_config!(net::Net, config::PowerFlowConfig; verbose::Int = 0, damp = 1.0, pv_table_rows::Int = 30, validate_limits_after_pf::Bool = false, q_limit_violation_headroom::Float64 = 0.0, qlimit_lock_reason::Symbol = :manual, performance_profile = nothing)
-  runtime = (; verbose, damp, pv_table_rows, validate_limits_after_pf, q_limit_violation_headroom, qlimit_lock_reason, performance_profile)
+function _runpf_with_config!(net::Net, config::PowerFlowConfig; verbose::Int = 0, damp = 1.0, pv_table_rows::Int = 30, validate_limits_after_pf::Bool = false, q_limit_violation_headroom::Float64 = 0.0, qlimit_lock_reason::Symbol = :manual, performance_profile = nothing, islands_parallel_enabled::Union{Nothing,Bool} = nothing, islands_parallel_max_tasks::Union{Nothing,Int} = nothing, islands_parallel_min_work_items::Union{Nothing,Int} = nothing)
+  runtime = (; verbose, damp, pv_table_rows, validate_limits_after_pf, q_limit_violation_headroom, qlimit_lock_reason, performance_profile, islands_parallel_enabled, islands_parallel_max_tasks, islands_parallel_min_work_items)
   wants_recovery = config.rescue || config.dc.fallback
   wants_recovery || return _runpf_config_once!(net, config; runtime...)
 
@@ -1520,7 +1523,17 @@ function _runpf_with_config!(net::Net, config::PowerFlowConfig; verbose::Int = 0
 end
 
 runpf!(net::Net, config::PowerFlowConfig; kwargs...) = _runpf_with_config!(net, config; kwargs...)
-runpf!(net::Net, config::SparlectraConfig; kwargs...) = _runpf_with_config!(net, config.powerflow; kwargs...)
+# A full SparlectraConfig carries the runtime.parallel switches: forward them
+# so an explicitly passed (non-active) configuration governs the island
+# fan-out; caller kwargs still win (later keywords override earlier ones).
+runpf!(net::Net, config::SparlectraConfig; kwargs...) = _runpf_with_config!(
+  net,
+  config.powerflow;
+  islands_parallel_enabled = config.runtime.parallel.enabled,
+  islands_parallel_max_tasks = parallel_max_tasks(config.runtime.parallel),
+  islands_parallel_min_work_items = config.runtime.parallel.min_work_items,
+  kwargs...,
+)
 
 function runpf!(net::Net; config::Union{Nothing,PowerFlowConfig,SparlectraConfig} = nothing, kwargs...)
   # Keep this entry strict: only runtime-only knobs are accepted as kwargs.
@@ -1855,6 +1868,12 @@ function runpf!(
   islands_mode::Symbol = :solve_independent,
   islands_reference_policy::Symbol = :matpower_like,
   islands_diagnostic_continue_after_failure::Bool = false,
+  # runtime.parallel.* overrides for the solve_parallel island path; nothing
+  # resolves from the ACTIVE configuration (runtime_config().parallel) at the
+  # fan-out site, read once by the orchestrator before any task spawns
+  islands_parallel_enabled::Union{Nothing,Bool} = nothing,
+  islands_parallel_max_tasks::Union{Nothing,Int} = nothing,
+  islands_parallel_min_work_items::Union{Nothing,Int} = nothing,
   distributed_slack_enabled::Bool = false,
   distributed_slack_p_mode::Symbol = :pg_weighted,
   distributed_slack_respect_p_limits::Bool = true,
@@ -1911,39 +1930,28 @@ function runpf!(
     if !islands_enabled
       error(AC_ISLAND_DISABLED_MESSAGE)
     end
-    islands_mode === :solve_independent || error("Unsupported power_flow.islands.mode=$(islands_mode).")
+    islands_mode in (:solve_independent, :solve_parallel) || error("Unsupported power_flow.islands.mode=$(islands_mode).")
     islands_reference_policy === :matpower_like || error("Unsupported power_flow.islands.reference_policy=$(islands_reference_policy).")
     _validate_island_references!(island_report)
     total_iters = 0
     first_failure = nothing
     island_statuses = Dict{Int,Any}()
     performance_profile isa AbstractDict && (performance_profile[:ac_island_solver_statuses] = island_statuses)
-    for row in island_report.rows
-      if first_failure !== nothing && !islands_diagnostic_continue_after_failure
-        skipped_status = (;
-          island_id = row.island_id,
-          final_mismatch = NaN,
-          iterations = 0,
-          reason = :skipped_after_previous_failure,
-          status = :skipped_after_previous_failure,
-          stage = :skipped_after_previous_failure,
-          exception_type = "",
-          exception_message = "previous island failed and diagnostic continuation is disabled",
-          stacktrace_top = "",
-        )
-        island_statuses[Int(row.island_id)] = skipped_status
-        _set_rectangular_pf_status!(net, skipped_status)
-        continue
-      end
+    # Phase 2: the island solve body is one closure shared by the serial and
+    # the parallel path (the serial path runs the SAME function, not a copy).
+    # A worker writes only into its own worker_profile: the shared profile on
+    # the serial path (today's behavior), a _perf_profile_child on the
+    # parallel path; the diagnostic prefix is therefore a per-worker value.
+    solve_island = function (row, worker_profile)
       local it = 0
       local status = 2
       local stage = :island_net_setup
       local inet = nothing
-      # Islands share one performance_profile/output_dir; without a per-island
-      # prefix, fixed-name diagnostic artifacts (merit_linesearch.log,
-      # trust_region.log, current_iteration_start.log, apslf_start.log) would
-      # be silently overwritten by each subsequent island's solve.
-      performance_profile isa AbstractDict && (performance_profile[:diagnostic_artifact_prefix] = "ac_island_$(row.island_id)_")
+      # Islands share one output_dir; without a per-island prefix, fixed-name
+      # diagnostic artifacts (merit_linesearch.log, trust_region.log,
+      # current_iteration_start.log, apslf_start.log) would be silently
+      # overwritten by each subsequent island's solve.
+      worker_profile isa AbstractDict && (worker_profile[:diagnostic_artifact_prefix] = "ac_island_$(row.island_id)_")
       try
         inet = _prepare_island_net(wnet, row)
         stage = :pre_nr_setup
@@ -2032,50 +2040,135 @@ function runpf!(
           distributed_slack_respect_p_limits = distributed_slack_respect_p_limits,
           distributed_slack_fallback = distributed_slack_fallback,
           distributed_slack_weights = distributed_slack_weights,
-          performance_profile = performance_profile,
+          performance_profile = worker_profile,
         )
-        total_iters += it
-        island_rect_status = rectangular_pf_status(inet)
-        if status != 0
-          stage = it == 0 ? :pre_nr_setup : :newton_iteration
-          failure_reason = island_rect_status !== nothing && hasproperty(island_rect_status, :reason) ? island_rect_status.reason : :nr_not_converged
-          failure_outcome = island_rect_status !== nothing && hasproperty(island_rect_status, :status) ? island_rect_status.status : :not_converged
-          failure_status = merge(island_rect_status === nothing ? NamedTuple() : island_rect_status, (; island_id = row.island_id, iterations = it, reason = failure_reason, status = failure_outcome, stage = stage, exception_type = "", exception_message = "", stacktrace_top = ""))
-          island_statuses[Int(row.island_id)] = failure_status
-          _set_rectangular_pf_status!(net, failure_status)
-          err = ErrorException("AC island $(row.island_id) power-flow solve failed:\n  buses=$(row.n_bus) branches=$(row.n_branch) ref=$(row.chosen_ref_bus)\n  bus_types: PV=$(row.n_pv) PQ=$(row.n_pq) REF=$(row.n_ref)\n  iterations=$(it) final_status=$(status)")
-          first_failure === nothing && (first_failure = err)
-          islands_diagnostic_continue_after_failure || throw(err)
-          continue
+        if status == 0
+          stage = :post_solve_validation
+          all(isfinite(something(wnode._vm_pu, NaN)) && isfinite(something(wnode._va_deg, NaN)) for wnode in inet.nodeVec) || error("AC island $(row.island_id) produced nonfinite voltage results.")
         end
-        stage = :post_solve_validation
-        all(isfinite(something(wnode._vm_pu, NaN)) && isfinite(something(wnode._va_deg, NaN)) for wnode in inet.nodeVec) || error("AC island $(row.island_id) produced nonfinite voltage results.")
-        success_status = merge(island_rect_status === nothing ? NamedTuple() : island_rect_status, (; island_id = row.island_id, iterations = it, status = :converged, reason = :none, stage = stage, exception_type = "", exception_message = "", stacktrace_top = ""))
-        island_statuses[Int(row.island_id)] = success_status
-        _sync_island_solution!(wnet, inet, row)
+        return (; it, status, inet, stage, error = nothing, stacktrace_top = "")
       catch err
         frames = stacktrace(catch_backtrace())
         top = isempty(frames) ? "" : sprint(show, first(frames))
-        island_rect_status = inet === nothing ? nothing : rectangular_pf_status(inet)
+        return (; it, status, inet, stage, error = err, stacktrace_top = top)
+      end
+    end
+
+    # Post-processing of one island result: status bookkeeping, outer-net
+    # status, solution write-back, failure collection. Runs serially in
+    # island-report order on BOTH paths, so status sequences and the merged
+    # solution are identical serial vs parallel.
+    handle_island_result! = function (row, res; throw_immediately::Bool)
+      if res.error !== nothing
+        err = res.error
+        island_rect_status = res.inet === nothing ? nothing : rectangular_pf_status(res.inet)
         base_status = island_rect_status === nothing ? NamedTuple() : island_rect_status
         failure_status = merge(
           base_status,
           (;
             island_id = row.island_id,
             final_mismatch = hasproperty(base_status, :final_mismatch) ? base_status.final_mismatch : NaN,
-            iterations = it,
+            iterations = res.it,
             reason = :solver_exception,
             status = :failed,
-            stage = stage,
+            stage = res.stage,
             exception_type = nameof(typeof(err)),
             exception_message = sprint(showerror, err),
-            stacktrace_top = top,
+            stacktrace_top = res.stacktrace_top,
           ),
         )
         island_statuses[Int(row.island_id)] = failure_status
         _set_rectangular_pf_status!(net, failure_status)
         first_failure === nothing && (first_failure = err)
-        islands_diagnostic_continue_after_failure || rethrow()
+        throw_immediately && throw(err)
+        return nothing
+      end
+      total_iters += res.it
+      island_rect_status = rectangular_pf_status(res.inet)
+      if res.status != 0
+        failure_stage = res.it == 0 ? :pre_nr_setup : :newton_iteration
+        failure_reason = island_rect_status !== nothing && hasproperty(island_rect_status, :reason) ? island_rect_status.reason : :nr_not_converged
+        failure_outcome = island_rect_status !== nothing && hasproperty(island_rect_status, :status) ? island_rect_status.status : :not_converged
+        failure_status = merge(island_rect_status === nothing ? NamedTuple() : island_rect_status, (; island_id = row.island_id, iterations = res.it, reason = failure_reason, status = failure_outcome, stage = failure_stage, exception_type = "", exception_message = "", stacktrace_top = ""))
+        island_statuses[Int(row.island_id)] = failure_status
+        _set_rectangular_pf_status!(net, failure_status)
+        err = ErrorException("AC island $(row.island_id) power-flow solve failed:\n  buses=$(row.n_bus) branches=$(row.n_branch) ref=$(row.chosen_ref_bus)\n  bus_types: PV=$(row.n_pv) PQ=$(row.n_pq) REF=$(row.n_ref)\n  iterations=$(res.it) final_status=$(res.status)")
+        first_failure === nothing && (first_failure = err)
+        throw_immediately && throw(err)
+        return nothing
+      end
+      success_status = merge(island_rect_status === nothing ? NamedTuple() : island_rect_status, (; island_id = row.island_id, iterations = res.it, status = :converged, reason = :none, stage = :post_solve_validation, exception_type = "", exception_message = "", stacktrace_top = ""))
+      island_statuses[Int(row.island_id)] = success_status
+      _sync_island_solution!(wnet, res.inet, row)
+      return nothing
+    end
+
+    # runtime.parallel resolution: explicit kwargs win, otherwise the ACTIVE
+    # configuration decides. Read ONCE here by the orchestrator, before any
+    # task spawns; workers never touch the config globals.
+    parallel_runtime = runtime_config().parallel
+    parallel_on = something(islands_parallel_enabled, parallel_runtime.enabled)
+    parallel_cap = islands_parallel_max_tasks === nothing ? parallel_max_tasks(parallel_runtime) : islands_parallel_max_tasks
+    parallel_min_items = something(islands_parallel_min_work_items, parallel_runtime.min_work_items)
+    use_parallel = islands_mode === :solve_parallel && parallel_on && Threads.nthreads() > 1 && parallel_cap > 1 && length(island_report.rows) >= parallel_min_items
+
+    if use_parallel
+      rows = island_report.rows
+      # spawn in DESCENDING bus-count order (largest island starts first for
+      # load balance); fetch and post-process in island-report order so the
+      # merged results and status sequences stay deterministic
+      spawn_order = sortperm(collect(eachindex(rows)); by = i -> rows[i].n_bus, rev = true)
+      children = Vector{Any}(undef, length(rows))
+      tasks = Vector{Task}(undef, length(rows))
+      # the semaphore enforces runtime.parallel.max_tasks (one task per
+      # island; chunking is unnecessary at island counts)
+      sem = Base.Semaphore(max(1, parallel_cap))
+      t_fanout = time_ns()
+      for i in spawn_order
+        let row_i = rows[i], child = _perf_profile_child(performance_profile)
+          children[i] = child
+          tasks[i] = Threads.@spawn begin
+            Base.acquire(sem)
+            try
+              solve_island(row_i, child)
+            finally
+              Base.release(sem)
+            end
+          end
+        end
+      end
+      results = [fetch(tasks[i]) for i in eachindex(rows)]
+      _perf_profile_add!(performance_profile, :parallel_wall_time, (time_ns() - t_fanout) / 1e9, 0)
+      for i in eachindex(rows)
+        _perf_profile_merge!(performance_profile, children[i], "ac_island_$(rows[i].island_id)_")
+      end
+      # diagnostic_continue_after_failure = false under parallel: every
+      # island is already in flight when the first failure surfaces, so all
+      # islands are recorded with their REAL status (never
+      # skipped_after_previous_failure); the failure is thrown after the
+      # aggregate merge below, exactly like the continue-after case.
+      for i in eachindex(rows)
+        handle_island_result!(rows[i], results[i]; throw_immediately = false)
+      end
+    else
+      for row in island_report.rows
+        if first_failure !== nothing && !islands_diagnostic_continue_after_failure
+          skipped_status = (;
+            island_id = row.island_id,
+            final_mismatch = NaN,
+            iterations = 0,
+            reason = :skipped_after_previous_failure,
+            status = :skipped_after_previous_failure,
+            stage = :skipped_after_previous_failure,
+            exception_type = "",
+            exception_message = "previous island failed and diagnostic continuation is disabled",
+            stacktrace_top = "",
+          )
+          island_statuses[Int(row.island_id)] = skipped_status
+          _set_rectangular_pf_status!(net, skipped_status)
+          continue
+        end
+        handle_island_result!(row, solve_island(row, performance_profile); throw_immediately = !islands_diagnostic_continue_after_failure)
       end
     end
     performance_profile isa AbstractDict && delete!(performance_profile, :diagnostic_artifact_prefix)
