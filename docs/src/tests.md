@@ -55,7 +55,7 @@ Current extended-only groups are:
 
 - `core_model_extended`
 - `powerflow_rectangular`
-- `klu_linear_solver`
+- `factorized_linear_solver`
 - `3wt_phase_taps`
 - `programmatic_api_extended`
 - `webui_extended`
@@ -69,7 +69,7 @@ Current extended-only groups are:
 |---|---|---|
 | `legacy/remove` | `test/testremove.jl` | Remove/delete behavior and consistency after structural edits |
 | `powerflow_rectangular` | `test/test_solver_interface.jl` | Rectangular power-flow API behavior, sparse-only solver path, AC-island detection/reference validation/independent solving including aggregate all-island convergence status and iteration accounting, Q-limit and typed configuration entry checks, current-iteration start rejection diagnostics on a tiny synthetic case, including accepted and rejected framework control-status composition, ordered local MATPOWER batch execution, the thin `run_acpflow` alias, legacy-keyword rejection, the optional merit-function Armijo line search (value/scaling, acceptance/fallback/active-set-skip reasons, config validation, merit.enabled=false regression, and a converging flatstart/Q-limit-switching functional case), the optional scaled-Newton trust-region step control (config validation, acceptance/collapse unit coverage, trust_region.enabled=false regression, a converging functional case with log/diagnostics assertions, and radius-collapse non-convergence reporting), and wrong-branch detection output visibility across ACPFlowReport metadata, the AC island diagnostics CSV, and the console summary line, including the highest-voltage-level scope regression (a dip below the top level never triggers; the same dip on the top level does), and the AC rescue ladder / DC fallback (`power_flow.rescue` recovers a poisoned start and records the winning strategy, `power_flow.dc.fallback` leaves a DC state with the AC status honestly non-converged, defaults leave both mechanisms off) |
-| `klu_linear_solver` | `test/test_klu_linear_solver.jl` | KLU/UMFPACK linear-solver selection and factorization-reuse behavior for the rectangular power-flow Jacobian path |
+| `factorized_linear_solver` | `test/test_factorized_linear_solver.jl` | umfpack_reuse linear-solver selection and factorization-reuse behavior for the rectangular power-flow Jacobian path, including rejection of the removed klu value |
 | `3wt_phase_taps` | `test/test_3wt_phase_taps.jl` | `create3WTWindings!`'s `phase_tap_side`/`phase_taps` keywords — existing-behaviour snapshot, single-winding attachment, ratio+phase coexisting on one winding, and validation errors |
 | `pv_voltage_residuals` | `test/test_pv_voltage_residuals.jl` | PV-voltage residual behavior, angle-preserving voltage-setpoint starts, phase-shifted PV integration coverage, and related solver diagnostics |
 | `matpower_examples` | `test/test_matpower_example.jl` | MATPOWER example runner path, output routing, performance/profile rendering, and runtime configuration forwarding, removed start-voltage alias rejection, and canonical profile-blend parsing |

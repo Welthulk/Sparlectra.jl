@@ -15,6 +15,18 @@ Per-terminal branch status: one-sided open branches.
   exact `Y_in` bus shunt with an `open_terminal=` comment marker (the
   format has no partial state; a roundtrip loses the flags, voltages are
   preserved).
+- New notebooks: distributed slack (how the participation weights are
+  determined and normalized, including the fallback) and transformer taps
+  (OLTC vs PST device math, the phase-tap control loop with the X(alpha)
+  characteristic, and the 3WT star equivalent); every workshop notebook
+  now opens with a topic warmup cell, and the tour gained sections on bus
+  links (impedance-less ring, minimum-norm flows) and one-sided open
+  branches.
+- Removed the `klu` linear-solver backend (and the KLU.jl dependency):
+  measured slower than UMFPACK on power-flow Jacobians, and a shared KLU
+  factorization is unsafe under threads. `power_flow.linear_solver`
+  accepts `umfpack` and `umfpack_reuse`; a configured `klu` now fails
+  validation with an actionable message.
 
 # Version 0.9.9 - 2026-08-22
 

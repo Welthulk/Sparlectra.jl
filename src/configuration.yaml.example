@@ -15,15 +15,14 @@ power_flow:
   solver: rectangular
   # Sparse linear-algebra backend for the Newton step of the rectangular
   # solver (not to be confused with solver above, which picks the power-flow
-  # method). Allowed values: umfpack, klu, umfpack_reuse
+  # method). Allowed values: umfpack, umfpack_reuse
   # - umfpack: standard sparse direct solve (current default behavior).
   # - umfpack_reuse: same UMFPACK factorization, but the symbolic analysis of
-  #   the first iteration is reused via lu! across NR iterations — usually
+  #   the first iteration is reused via lu! across NR iterations, usually
   #   the fastest choice on large cases.
-  # - klu: SuiteSparse KLU with symbolic-factorization reuse across NR
-  #   iterations; benefit is case-dependent (measured slower than UMFPACK on
-  #   large power-flow Jacobians with heavy fill-in).
-  # Both reuse backends fall back to the umfpack chain on factorization errors.
+  # The reuse backend falls back to the umfpack chain on factorization errors.
+  # (A klu backend existed until 0.10.0; removed, measured no benefit on
+  # power-flow Jacobians.)
   linear_solver: umfpack
   # Options for solver: apslf.
   apslf:

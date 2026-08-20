@@ -15,7 +15,7 @@
 # file: test/test_terminal_status.jl
 # purpose: per-terminal branch status (r0.10.0, one-sided open branches):
 #          the dangling-node reference anchor for lines and transformers,
-#          bitwise equivalence of both-open with status 0, KLU pattern
+#          bitwise equivalence of both-open with status 0, reuse-backend pattern
 #          invalidation on terminal toggles, isolation of the open-side
 #          bus, MATPOWER export shunt substitution, and the result surface
 #          (flows, open-end voltage, table markers).
@@ -145,7 +145,7 @@ function run_terminal_status_tests()
       @test Ya == Yb
     end
 
-    @testset "terminal toggle between two solves (KLU pattern invalidation)" begin
+    @testset "terminal toggle between two solves (reuse-backend pattern invalidation)" begin
       # three buses so the net stays solvable with the branch open: A - B
       # (under test) and A - C carrying a load
       net = Net(name = "ts_toggle", baseMVA = 100.0)

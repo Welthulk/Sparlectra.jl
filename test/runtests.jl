@@ -66,7 +66,7 @@ function include_extended_tests()
   isdefined(@__MODULE__, :run_grid_extended_tests) || include("testgrid.jl")
   include("test_3wt_phase_taps.jl")
   include("test_solver_interface.jl")
-  include("test_klu_linear_solver.jl")
+  include("test_factorized_linear_solver.jl")
   include("test_api_extended.jl")
   include("test_webui_extended.jl")
   include("testremove.jl")
@@ -136,7 +136,7 @@ function run_extended_profile_tests()
     ("legacy/remove", () -> run_entry(:run_remove_tests)),
     ("core_model_extended", () -> run_entry(:run_grid_extended_tests)),
     ("powerflow_rectangular", () -> run_entry(:run_solver_interface_tests)),
-    ("klu_linear_solver", () -> run_entry(:run_klu_linear_solver_tests)),
+    ("factorized_linear_solver", () -> run_entry(:run_factorized_linear_solver_tests)),
     ("3wt_phase_taps", () -> run_entry(:run_3wt_phase_taps_tests)),
     ("programmatic_api_extended", () -> run_entry(:run_api_extended_tests)),
     ("webui_extended", () -> run_entry(:run_webui_extended_tests)),

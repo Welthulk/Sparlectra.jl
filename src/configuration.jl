@@ -313,7 +313,7 @@ end
 
 const WRONG_BRANCH_DETECTION_VALUES = [:off, :warn, :fail, :rescue]
 const POWERFLOW_SOLVER_VALUES = (:rectangular, :apslf, :dc)
-const POWERFLOW_LINEAR_SOLVER_VALUES = (:umfpack, :klu, :umfpack_reuse)
+const POWERFLOW_LINEAR_SOLVER_VALUES = (:umfpack, :umfpack_reuse)
 const POWERFLOW_ISLAND_MODE_VALUES = [:solve_independent]
 const POWERFLOW_ISLAND_REFERENCE_POLICY_VALUES = [:matpower_like]
 

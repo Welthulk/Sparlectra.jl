@@ -376,7 +376,7 @@ function runpf_rectangular!(
 )
   merit_enabled && !autodamp && throw(ArgumentError("runpf_rectangular!: merit_enabled=true requires autodamp=true."))
   trust_region_enabled && autodamp && throw(ArgumentError("runpf_rectangular!: trust_region_enabled=true is incompatible with autodamp=true."))
-  linear_solver in (:umfpack, :klu, :umfpack_reuse) || throw(ArgumentError("runpf_rectangular!: unsupported linear_solver=$(linear_solver). Supported: :umfpack, :klu, :umfpack_reuse."))
+  linear_solver in (:umfpack, :umfpack_reuse) || throw(ArgumentError("runpf_rectangular!: unsupported linear_solver=$(linear_solver). Supported: :umfpack, :umfpack_reuse."))
   _validate_rectangular_powerflow_options(method = method, sparse = true)
   qlimit_enforcement_mode = _canonical_qlimit_enforcement_mode(qlimit_enforcement_mode)
   qlimit_enforcement_mode in QLIMIT_ENFORCEMENT_MODES || error("Unsupported qlimit_enforcement_mode=$(qlimit_enforcement_mode). Supported: $(QLIMIT_ENFORCEMENT_MODES).")
@@ -1107,7 +1107,7 @@ Arguments:
 - `method::Symbol`: must be `:rectangular`
 - `autodamp::Bool`: enable residual-based backtracking for rectangular Newton steps
 - `autodamp_min::Float64`: minimum automatic damping factor when `autodamp = true`
-- `linear_solver::Symbol`: sparse linear-algebra backend for the Newton step, `:umfpack` (default) or `:klu` (symbolic-factorization reuse across iterations)
+- `linear_solver::Symbol`: sparse linear-algebra backend for the Newton step, `:umfpack` (default) or `:umfpack_reuse` (symbolic-analysis reuse across iterations via `lu!`)
 - `qlimit_start_iter::Int`: first Newton iteration where PV→PQ Q-limit switching may run in `:iteration` mode
 - `qlimit_start_mode::Symbol`: `:iteration`, `:auto`, or `:iteration_or_auto` start criterion for PV→PQ switching
 - `qlimit_auto_q_delta_pu::Float64`: PV reactive-power request change threshold for automatic switching start

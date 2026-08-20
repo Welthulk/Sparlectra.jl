@@ -12,20 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# file: test/test_klu_linear_solver.jl
-# purpose: tests the klu and umfpack_reuse linear-solver backends of the
-#          rectangular Newton step: UMFPACK equivalence, factorization reuse,
-#          pattern-drift guards, singular fallback, config and Web UI wiring
-# Tests for the factorization-reuse linear-solver backends of the rectangular
-# Newton step (power_flow.linear_solver: umfpack | klu | umfpack_reuse).
+# file: test/test_factorized_linear_solver.jl
+# purpose: tests the umfpack_reuse linear-solver backend of the rectangular
+#          Newton step: UMFPACK equivalence, factorization reuse,
+#          pattern-drift guards, singular fallback, config and Web UI wiring.
+#          The former klu backend was removed in 0.10.0; the config and Web UI
+#          tests assert that "klu" is rejected.
 
 using Sparlectra
 using Test
 using SparseArrays
 using LinearAlgebra
 
-function _klu_two_island_net()::Net
-  island_net = Net(name = "klu_islands", baseMVA = 100.0)
+function _reuse_two_island_net()::Net
+  island_net = Net(name = "reuse_islands", baseMVA = 100.0)
   for busName in ("A1", "A2", "B1", "B2")
     addBus!(net = island_net, busName = busName, vn_kV = 110.0)
   end
@@ -38,46 +38,9 @@ function _klu_two_island_net()::Net
   return island_net
 end
 
-function run_klu_linear_solver_tests()
-  @testset "KLU linear-solver backend" begin
-    @testset "umfpack/klu equivalence" begin
-      net_umf = createTest3BusNet()
-      _, erg_umf = runpf!(net_umf, 20, 1e-8, 0; method = :rectangular)
-      net_klu = createTest3BusNet()
-      _, erg_klu = runpf!(net_klu, 20, 1e-8, 0; method = :rectangular, linear_solver = :klu)
-      @test erg_umf == 0
-      @test erg_klu == 0
-      for i in eachindex(net_umf.nodeVec)
-        @test isapprox(net_umf.nodeVec[i]._vm_pu, net_klu.nodeVec[i]._vm_pu; atol = 1e-10)
-        @test isapprox(net_umf.nodeVec[i]._va_deg, net_klu.nodeVec[i]._va_deg; atol = 1e-10)
-      end
-      status_umf = Sparlectra.rectangular_pf_status(net_umf)
-      status_klu = Sparlectra.rectangular_pf_status(net_klu)
-      @test status_umf.status == status_klu.status
-      @test status_umf.linear_solver === :umfpack
-      @test status_klu.linear_solver === :klu
-      @test status_klu.linear_solver_analyze_count >= 1
-      @test status_klu.linear_solver_fallback_count == 0
-      @test status_umf.linear_solver_analyze_count == 0
-      @test status_umf.linear_solver_refactor_count == 0
-    end
-
-    @testset "Refactorization reuse across iterations" begin
-      for backend in (:klu, :umfpack_reuse)
-        net = createTest3BusNet()
-        _, erg = runpf!(net, 20, 1e-10, 0; method = :rectangular, linear_solver = backend, qlimits_enabled = false)
-        @test erg == 0
-        status = Sparlectra.rectangular_pf_status(net)
-        @test status.linear_solver === backend
-        # With the structural (value-independent) Jacobian pattern exactly one
-        # symbolic analysis runs; everything else is numeric refactorization.
-        @test status.linear_solver_analyze_count == 1
-        @test status.linear_solver_refactor_count >= 1
-        @test status.linear_solver_fallback_count == 0
-      end
-    end
-
-    @testset "umfpack_reuse equivalence" begin
+function run_factorized_linear_solver_tests()
+  @testset "Factorized linear-solver backend (umfpack_reuse)" begin
+    @testset "umfpack_reuse equivalence and counters" begin
       net_umf = createTest3BusNet()
       _, erg_umf = runpf!(net_umf, 20, 1e-8, 0; method = :rectangular)
       net_reuse = createTest3BusNet()
@@ -88,21 +51,43 @@ function run_klu_linear_solver_tests()
         @test isapprox(net_umf.nodeVec[i]._vm_pu, net_reuse.nodeVec[i]._vm_pu; atol = 1e-10)
         @test isapprox(net_umf.nodeVec[i]._va_deg, net_reuse.nodeVec[i]._va_deg; atol = 1e-10)
       end
+      status_umf = Sparlectra.rectangular_pf_status(net_umf)
+      status_reuse = Sparlectra.rectangular_pf_status(net_reuse)
+      @test status_umf.status == status_reuse.status
+      @test status_umf.linear_solver === :umfpack
+      @test status_reuse.linear_solver === :umfpack_reuse
+      @test status_reuse.linear_solver_analyze_count >= 1
+      @test status_reuse.linear_solver_fallback_count == 0
+      @test status_umf.linear_solver_analyze_count == 0
+      @test status_umf.linear_solver_refactor_count == 0
+    end
+
+    @testset "Refactorization reuse across iterations" begin
+      net = createTest3BusNet()
+      _, erg = runpf!(net, 20, 1e-10, 0; method = :rectangular, linear_solver = :umfpack_reuse, qlimits_enabled = false)
+      @test erg == 0
+      status = Sparlectra.rectangular_pf_status(net)
+      @test status.linear_solver === :umfpack_reuse
+      # With the structural (value-independent) Jacobian pattern exactly one
+      # symbolic analysis runs; everything else is numeric refactorization.
+      @test status.linear_solver_analyze_count == 1
+      @test status.linear_solver_refactor_count >= 1
+      @test status.linear_solver_fallback_count == 0
     end
 
     @testset "Q-limit active-set pattern change re-analyzes" begin
       net = createTest3BusNet()
       setQLimits!(net = net, qmin_MVar = -1.0, qmax_MVar = 1.0, busName = "STATION1")
-      _, erg = runpf!(net, 20, 1e-6, 0; method = :rectangular, linear_solver = :klu)
+      _, erg = runpf!(net, 20, 1e-6, 0; method = :rectangular, linear_solver = :umfpack_reuse)
       @test erg == 0
       @test getNodeType(net.nodeVec[2]) == Sparlectra.PQ
       status = Sparlectra.rectangular_pf_status(net)
-      @test status.linear_solver === :klu
+      @test status.linear_solver === :umfpack_reuse
       @test status.linear_solver_analyze_count >= 2
     end
 
-    @testset "Structural guard catches silent pattern drift ($(nameof(C)))" for C in (KLUNewtonContext, UmfpackReuseNewtonContext)
-      ctx = C()
+    @testset "Structural guard catches silent pattern drift" begin
+      ctx = UmfpackReuseNewtonContext()
       rhs = [1.0, 2.0]
       J1 = sparse([1.0 2.0; 3.0 4.0])
       x1 = solve_newton_factorized!(ctx, J1, rhs; pattern_changed = false)
@@ -184,8 +169,8 @@ function run_klu_linear_solver_tests()
       @test J3 !== J2
     end
 
-    @testset "Singular system falls back to the umfpack chain ($(nameof(C)))" for C in (KLUNewtonContext, UmfpackReuseNewtonContext)
-      ctx = C()
+    @testset "Singular system falls back to the umfpack chain" begin
+      ctx = UmfpackReuseNewtonContext()
       J_singular = sparse([1.0 1.0; 1.0 1.0])
       rhs = [1.0, 1.0]
       x = solve_newton_factorized!(ctx, J_singular, rhs; pattern_changed = false)
@@ -200,33 +185,34 @@ function run_klu_linear_solver_tests()
     end
 
     @testset "Multi-island run carries per-island counters" begin
-      island_net = _klu_two_island_net()
+      island_net = _reuse_two_island_net()
       profile = Dict{Symbol,Any}()
-      _, erg = runpf!(island_net, 20, 1e-8, 0; method = :rectangular, linear_solver = :klu, islands_enabled = true, performance_profile = profile)
+      _, erg = runpf!(island_net, 20, 1e-8, 0; method = :rectangular, linear_solver = :umfpack_reuse, islands_enabled = true, performance_profile = profile)
       @test erg == 0
       statuses = profile[:ac_island_solver_statuses]
       @test length(statuses) == 2
       for (_, island_status) in statuses
         @test island_status.status == :converged
-        @test island_status.linear_solver === :klu
+        @test island_status.linear_solver === :umfpack_reuse
         @test island_status.linear_solver_analyze_count >= 1
       end
     end
 
-    @testset "Configuration validation and defaults" begin
+    @testset "Configuration validation and defaults (klu rejected)" begin
       @test Sparlectra.PowerFlowConfig(Dict{String,Any}()).linear_solver === :umfpack
       @test powerflow_config().linear_solver === :umfpack
-      raw_klu = Dict{String,Any}("power_flow" => Dict{String,Any}("linear_solver" => "klu"))
-      @test Sparlectra.PowerFlowConfig(raw_klu).linear_solver === :klu
       raw_reuse = Dict{String,Any}("power_flow" => Dict{String,Any}("linear_solver" => "umfpack_reuse"))
       @test Sparlectra.PowerFlowConfig(raw_reuse).linear_solver === :umfpack_reuse
+      # the removed klu backend and arbitrary values are rejected alike
+      raw_klu = Dict{String,Any}("power_flow" => Dict{String,Any}("linear_solver" => "klu"))
+      @test_throws ArgumentError Sparlectra.PowerFlowConfig(raw_klu)
       raw_bad = Dict{String,Any}("power_flow" => Dict{String,Any}("linear_solver" => "nonsense"))
       @test_throws ArgumentError Sparlectra.PowerFlowConfig(raw_bad)
       net = createTest3BusNet()
-      @test_throws ArgumentError runpf_rectangular!(net; linear_solver = :bogus)
-      overrides = Sparlectra.validate_gui_config_overrides(Dict{String,Any}("power_flow.linear_solver" => "klu"))
-      @test overrides["power_flow"]["linear_solver"] == "klu"
-      @test_throws ArgumentError Sparlectra.validate_gui_config_overrides(Dict{String,Any}("power_flow.linear_solver" => "nonsense"))
+      @test_throws ArgumentError runpf_rectangular!(net; linear_solver = :klu)
+      overrides = Sparlectra.validate_gui_config_overrides(Dict{String,Any}("power_flow.linear_solver" => "umfpack_reuse"))
+      @test overrides["power_flow"]["linear_solver"] == "umfpack_reuse"
+      @test_throws ArgumentError Sparlectra.validate_gui_config_overrides(Dict{String,Any}("power_flow.linear_solver" => "klu"))
     end
 
     @testset "Web UI option spec, rendering, and sidecar round-trip" begin
@@ -236,10 +222,10 @@ function run_klu_linear_solver_tests()
       @test spec.control === :select
       @test spec.section === :expert
       @test spec.save_in_case_sidecar
-      @test Tuple(String(v) for v in spec.allowed_values) == ("umfpack", "klu", "umfpack_reuse")
+      @test Tuple(String(v) for v in spec.allowed_values) == ("umfpack", "umfpack_reuse")
       @test "power_flow_linear_solver" in Sparlectra._WEBUI_CASE_PROFILE_FIELDS
-      @test Sparlectra._webui_normalize_case_profile_form_value("power_flow_linear_solver", "klu") == "klu"
-      @test_throws ArgumentError Sparlectra._webui_normalize_case_profile_form_value("power_flow_linear_solver", "nonsense")
+      @test Sparlectra._webui_normalize_case_profile_form_value("power_flow_linear_solver", "umfpack_reuse") == "umfpack_reuse"
+      @test_throws ArgumentError Sparlectra._webui_normalize_case_profile_form_value("power_flow_linear_solver", "klu")
 
       form_html = Sparlectra.render_powerflow_form()
       expert_parts = split(form_html, "<summary>Advanced options</summary>")
@@ -247,8 +233,8 @@ function run_klu_linear_solver_tests()
       expert_html = expert_parts[2]
       @test occursin("name=\"power_flow_linear_solver\"", expert_html)
       @test occursin("<option value=\"umfpack\" selected>", expert_html)
-      @test occursin("<option value=\"klu\"", expert_html)
       @test occursin("<option value=\"umfpack_reuse\"", expert_html)
+      @test !occursin("<option value=\"klu\"", expert_html)
       @test occursin("href=\"/help/power_flow.linear_solver\"", form_html)
       @test Sparlectra.resolve_webui_help_topic("power_flow.linear_solver") !== nothing
       excerpt = Sparlectra.load_webui_help_excerpt("power_flow.linear_solver")

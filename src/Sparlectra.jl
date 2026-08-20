@@ -520,10 +520,8 @@ export
   calc_currents,                          # Compute bus currents.
   solve_linear,
   solve_sparse_system,                    # Solve a sparse linear system.
-  KLUNewtonContext,                       # Reusable KLU factorization context for the rectangular Newton step.
   UmfpackReuseNewtonContext,              # Reusable UMFPACK lu! factorization context for the rectangular Newton step.
-  solve_newton_factorized!,               # Analyze/refactor solve with shared fallback chain (KLU or UMFPACK lu!).
-  solve_newton_klu!,                      # KLU-named alias of solve_newton_factorized!.
+  solve_newton_factorized!,               # Analyze/refactor solve (UMFPACK lu! reuse) with shared fallback chain.
   build_pos_map,
   slack_elimination_indices,
   extract_bus_types_and_vset,             # Extract solver bus types and V targets.
@@ -633,10 +631,10 @@ include("matpower_runner.jl")
 include("remove_functions.jl")
 include("solver_core.jl")
 # Rectangular power-flow helper layers. Keep dependency order:
-# KLU linear-solver backend -> core equations -> voltage helpers -> Jacobian builders -> Newton step -> diagnostics/start/result helpers -> solver loop.
-# The KLU backend comes first: it only depends on solve_sparse_system from
+# factorized linear-solver backend -> core equations -> voltage helpers -> Jacobian builders -> Newton step -> diagnostics/start/result helpers -> solver loop.
+# The factorized backend comes first: it only depends on solve_sparse_system from
 # solver_core.jl (its fallback chain) and is referenced by the Newton step.
-include("powerflow_rectangular/rectangular_klu_solver.jl")
+include("powerflow_rectangular/rectangular_factorized_solver.jl")
 include("powerflow_rectangular/rectangular_distributed_slack.jl")
 include("powerflow_rectangular/rectangular_core_equations.jl")
 include("powerflow_rectangular/rectangular_voltage_helpers.jl")

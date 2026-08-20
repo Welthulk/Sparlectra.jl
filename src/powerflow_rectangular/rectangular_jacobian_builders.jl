@@ -109,7 +109,7 @@ function build_rectangular_jacobian_pq_pv_sparse(
   # structural_pattern=true stores entries even when their current value is
   # exactly zero, so the sparsity pattern depends only on the Ybus structure
   # and the bus types — not on the iterate. Factorization-reuse backends
-  # (KLU) require this invariance; the default path keeps dropping numeric
+  # (umfpack_reuse) require this invariance; the default path keeps dropping numeric
   # zeros to stay bit-for-bit identical to the historical behavior.
   # `assembly` (requires structural_pattern) reuses triplet buffers and, once
   # a pattern is recorded, refreshes the retained CSC's nzval in place.

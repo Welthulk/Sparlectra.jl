@@ -435,7 +435,7 @@ function _format_branch_anomaly_rows(rows)::String
 end
 
 # Records which sparse linear-solver backend served the main Newton solves
-# and, for the KLU backend, its analyze/refactor/fallback counters. Merged
+# and, for the reuse backend, its analyze/refactor/fallback counters. Merged
 # into the final status (so island statuses carry per-island counters) and
 # written into the performance profile next to the workspace metadata.
 function _merge_linear_solver_diagnostics(status_build, performance_profile, linear_solver::Symbol, linear_ctx)

@@ -542,7 +542,7 @@ function complex_newton_step_rectangular(
     build_rectangular_jacobian_pq_pv(Ybus, V, bus_types, Vset, slack_idx; dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm, structural_pattern = linear_ctx !== nothing, assembly = linear_ctx === nothing ? nothing : linear_ctx.assembly, dslack = dslack)
   end
 
-  # Solve J * δx = -F. With a reuse context (KLU or UMFPACK lu!) the symbolic
+  # Solve J * δx = -F. With a reuse context (UMFPACK lu!) the symbolic
   # analysis is reused across iterations; without one the default direct
   # solve path stays untouched.
   δx = _perf_profile_time!(performance_profile, :newton_step_linear_solve) do

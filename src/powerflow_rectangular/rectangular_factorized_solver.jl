@@ -13,17 +13,18 @@
 # limitations under the License.
 
 # Author: Udo Schmitz (https://github.com/Welthulk)
-# file: src/powerflow_rectangular/rectangular_klu_solver.jl
-# purpose: factorization-reuse linear-solver backends (KLU, UMFPACK lu!) for
-#          the rectangular Newton step
-
-using KLU: KLU, klu, klu!
+# file: src/powerflow_rectangular/rectangular_factorized_solver.jl
+# purpose: factorization-reuse linear-solver backend (UMFPACK lu!) for the
+#          rectangular Newton step. A KLU backend lived here until 0.10.0;
+#          it was removed after measurements showed no benefit on power-flow
+#          Jacobians (slower factorization on real cases, unsafe under
+#          shared-factor threading; see docs/dev/parallel_analysis.md).
 
 """
     AbstractNewtonSolverContext
 
 Common supertype of the factorization-reuse contexts for the rectangular
-Newton step (`power_flow.linear_solver`). All concrete contexts hold the
+Newton step (`power_flow.linear_solver`). A concrete context holds the
 reusable factorization, a fingerprint of the analyzed sparsity pattern
 (`colptr`/`rowval` copies), and diagnostic counters. Lifetime is one
 `runpf_rectangular!` invocation (= one island solve on the island path); a
@@ -37,7 +38,7 @@ abstract type AbstractNewtonSolverContext end
 Reusable buffers for the rectangular Jacobian build (issue #292): the COO
 triplet vectors, the retained `SparseMatrixCSC`, and a position map from
 emit order to `nzval` index. Under the structural (value-independent)
-sparsity pattern of the reuse backends, the emit order is identical in every
+sparsity pattern of the reuse backend, the emit order is identical in every
 iteration with an unchanged active set, so subsequent builds can overwrite
 `nzval` in place instead of allocating fresh triplets plus a new CSC.
 `valid` is cleared on PV↔PQ active-set changes (pattern changes) and by the
@@ -54,28 +55,6 @@ mutable struct RectangularJacobianAssembly
 end
 
 RectangularJacobianAssembly() = RectangularJacobianAssembly(Int[], Int[], Float64[], nothing, Int[], ComplexF64[], false)
-
-"""
-    KLUNewtonContext
-
-Reuse context for the SuiteSparse KLU backend (`linear_solver = :klu`):
-symbolic analysis once per sparsity pattern, `klu!` numeric refactorization
-per iteration.
-"""
-mutable struct KLUNewtonContext <: AbstractNewtonSolverContext
-  fact::Union{Nothing,KLU.KLUFactorization{Float64,Int64}}
-  nvar::Int
-  colptr::Vector{Int64}
-  rowval::Vector{Int64}
-  analyze_count::Int
-  refactor_count::Int
-  fallback_count::Int
-  rhs::Vector{Float64}
-  sol::Vector{Float64}
-  assembly::RectangularJacobianAssembly
-end
-
-KLUNewtonContext() = KLUNewtonContext(nothing, 0, Int64[], Int64[], 0, 0, 0, Float64[], Float64[], RectangularJacobianAssembly())
 
 """
     UmfpackReuseNewtonContext
@@ -100,9 +79,7 @@ end
 
 UmfpackReuseNewtonContext() = UmfpackReuseNewtonContext(nothing, 0, Int64[], Int64[], 0, 0, 0, Float64[], Float64[], RectangularJacobianAssembly())
 
-_newton_full_factorization(::KLUNewtonContext, J::SparseMatrixCSC{Float64,Int64}) = klu(J)
 _newton_full_factorization(::UmfpackReuseNewtonContext, J::SparseMatrixCSC{Float64,Int64}) = lu(J)
-_newton_refactorize!(ctx::KLUNewtonContext, J::SparseMatrixCSC{Float64,Int64}) = klu!(ctx.fact, J)
 _newton_refactorize!(ctx::UmfpackReuseNewtonContext, J::SparseMatrixCSC{Float64,Int64}) = lu!(ctx.fact, J)
 
 """
@@ -155,24 +132,13 @@ function solve_newton_factorized!(ctx::AbstractNewtonSolverContext, J::SparseMat
 end
 
 """
-    solve_newton_klu!(ctx, J, rhs; pattern_changed=false) -> x
-
-KLU-specific name kept for readability at KLU call sites; identical to
-[`solve_newton_factorized!`](@ref).
-"""
-solve_newton_klu!(ctx::KLUNewtonContext, J::SparseMatrixCSC{Float64,Int64}, rhs::AbstractVector{Float64}; pattern_changed::Bool = false) =
-  solve_newton_factorized!(ctx, J, rhs; pattern_changed = pattern_changed)
-
-"""
     newton_linear_solver_context(linear_solver::Symbol)
 
 Map a validated `power_flow.linear_solver` value to a fresh per-solve
-context: `:klu` → [`KLUNewtonContext`](@ref), `:umfpack_reuse` →
-[`UmfpackReuseNewtonContext`](@ref), `:umfpack` → `nothing` (default direct
-`solve_linear` path).
+context: `:umfpack_reuse` → [`UmfpackReuseNewtonContext`](@ref),
+`:umfpack` → `nothing` (default direct `solve_linear` path).
 """
 function newton_linear_solver_context(linear_solver::Symbol)
-  linear_solver === :klu && return KLUNewtonContext()
   linear_solver === :umfpack_reuse && return UmfpackReuseNewtonContext()
   return nothing
 end

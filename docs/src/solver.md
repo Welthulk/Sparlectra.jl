@@ -599,7 +599,7 @@ Configuration keys and result metadata are documented in
 ## Linear solver backends
 
 The linear solve of the rectangular Newton step (`J · δx = −F`) supports
-three sparse backends, selected via `power_flow.linear_solver` (default
+two sparse backends, selected via `power_flow.linear_solver` (default
 `umfpack`):
 
 * **`umfpack`** — the standard sparse direct solve (`J \ F` through
@@ -615,21 +615,17 @@ three sparse backends, selected via `power_flow.linear_solver` (default
   win whenever refactorization is cheaper than analyze + factor (measured
   ~0.28s vs. 0.45s on the 164k `case_SyntheticUSA` Jacobian) — usually the
   fastest choice on large cases.
-* **`klu`** — SuiteSparse KLU (via KLU.jl) with the same
-  analyze-once/refactor-per-iteration scheme through `klu`/`klu!`.
 
-A note on expectations: whether `klu` is actually faster is case- and
-platform-dependent. KLU's left-looking factorization is optimized for
-circuit-simulation matrices with near-block-triangular structure and does not
-use BLAS-3 supernodes; on large power-flow Jacobians with significant
-fill-in, UMFPACK's multifrontal factorization can beat even KLU's numeric
-refactorization (measured on the bundled `case_SyntheticUSA`: UMFPACK
-remained faster end to end, and `umfpack_reuse` faster still). Treat `klu`
-as a measurable alternative, not a guaranteed speedup — the recorded
-diagnostics counters and the `newton_step_linear_solve` phase time in the
-performance profile make the comparison cheap.
+A `klu` backend (SuiteSparse KLU) existed until 0.10.0 and was removed:
+KLU's left-looking factorization is optimized for circuit-simulation
+matrices and does not use BLAS-3 supernodes, and on power-flow Jacobians it
+measured slower than UMFPACK end to end (with `umfpack_reuse` faster
+still). Concurrency measurements during the multi-core groundwork also
+showed that a KLU factorization shared across threads produces silently
+wrong results, while UMFPACK factorizations can be duplicated cheaply per
+task. A config value of `klu` now fails validation with the allowed values.
 
-Behavior details of the reuse backends (`umfpack_reuse` and `klu`):
+Behavior details of the reuse backend (`umfpack_reuse`):
 
 * **Active-set pattern changes**: a PV↔PQ switch changes the Jacobian
   sparsity pattern, so the solver re-runs the full analyze + factor step in
