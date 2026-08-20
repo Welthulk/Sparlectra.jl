@@ -1,4 +1,4 @@
-# Version 0.9.9 - unreleased
+# Version 0.9.9 - 2026-08-22
 
 HVDC link results and one-reference-per-island validation.
 
