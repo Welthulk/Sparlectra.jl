@@ -58,6 +58,7 @@ function include_fast_tests()
   include("test_short_circuit.jl")
   include("test_external_grid.jl")
   include("test_parallel_foundation.jl")
+  include("test_contingency.jl")
 end
 
 function include_extended_tests()
@@ -110,6 +111,7 @@ function run_fast_profile_tests()
     ("short_circuit", () -> run_entry(:run_short_circuit_tests)),
     ("external_grid", () -> run_entry(:run_external_grid_tests)),
     ("parallel_foundation", () -> run_entry(:run_parallel_foundation_tests)),
+    ("contingency", () -> run_entry(:run_contingency_tests)),
     ("controls", () -> begin
       run_entry(:run_voltage_dependent_control_tests)
       run_entry(:run_transformer_phase_shift_tests)

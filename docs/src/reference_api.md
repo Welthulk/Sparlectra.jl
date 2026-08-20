@@ -1,5 +1,9 @@
 # [API and Web UI Service Reference](@id reference_api)
 
+The N-1 contingency batch API (`runContingencies!`, `generateN1Branches`,
+`generateContingenciesFromFOR001`, result printer and CSV writer) is
+documented on its own page: [N-1 Contingency Analysis](contingency.md).
+
 ```@autodocs
 Modules = [Sparlectra]
 Pages = [

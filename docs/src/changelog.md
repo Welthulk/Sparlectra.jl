@@ -47,6 +47,13 @@ Per-terminal branch status: one-sided open branches.
   task chunk, gated by `runtime.parallel.*`), with row-identical results
   to the serial sweep. Measured 4.8x on an 8000-bus sweep with 16 threads.
   Demo: `examples/others/exp_parallel_sc_sweep.jl`.
+- **N-1 contingency batches.** New `runContingencies!` API: branch-outage
+  cases (`generateN1Branches`, FOR001 import) solved warm-started on
+  template copies of the base case, evaluated against the voltage band and
+  `sn_MVA` loadings, with islanding and non-convergence reported per case
+  instead of thrown, and table/CSV output. The batch fans out over Julia
+  threads: full N-1 on case1354pegase (1991 cases) measured 71.7 s serial
+  vs 17.6 s on 16 threads. See [N-1 Contingency Analysis](contingency.md).
 
 # Version 0.9.9 - 2026-08-22
 

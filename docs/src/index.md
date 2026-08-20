@@ -20,6 +20,7 @@ Markdown.parse(readme_text)
 
 * [Feature Matrix](feature_matrix.md)
 * [Central Configuration](configuration.md)
+* [N-1 Contingency Analysis](contingency.md)
 * [Q-limit Switching Strategy](q_limit_switching_strategy.md)
 * [Synthetic Tiled Grids](synthetic_grids.md)
 * [Branch Model](branchmodel.md)

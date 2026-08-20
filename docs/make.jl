@@ -88,6 +88,7 @@ makedocs(
     "Series Compensation (TCSC)" => "series_compensation.md",
     "HVDC Back-to-Back" => "hvdc_back_to_back.md",
     "Short-Circuit Compendium" => "short_circuit.md",
+    "N-1 Contingency Analysis" => "contingency.md",
     "Examples Overview" => "examples_overview.md",
     "State Estimation" => "state_estimation.md",
     "Workshop" => "workshop.md",

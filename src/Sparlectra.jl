@@ -405,6 +405,15 @@ export
   printShortCircuitCoverage,              # Readable rendering of the coverage rows.
   runShortCircuit!,                       # IEC 60909 balanced Ik'' max/min per fault bus (#277).
   ShortCircuitResult,                     # Result type of runShortCircuit! (safety-flagged rows).
+
+  # contingency.jl (N-1 batch, multi-core Phase 4)
+  ContingencyCase,                        # One branch-outage case (name, kind = :branch, element).
+  ContingencyResult,                      # Outcome of one case: convergence, envelope, loadings, violations.
+  runContingencies!,                      # Evaluate a case batch on template copies, optionally threaded.
+  generateN1Branches,                     # One case per in-service branch (transformers optional).
+  generateContingenciesFromFOR001,        # Cases from imported MATPOWER FOR001 metadata.
+  printContingencyResults,                # Fixed-width result table (style of printShortCircuitResult).
+  writeContingencyResultsCSV,             # Semicolon CSV writer for the result batch.
   NativeShortCircuitData,                 # Native SC source container on Net (filled by addExternalGrid!, #299).
   printShortCircuitResult,                # Pretty-printer for ShortCircuitResult (CSV via the service run).
   _createDict,
@@ -677,6 +686,10 @@ include("state_estimation.jl")
 # Net + the CGMES short-circuit harvest; reuses the equicircuit branch
 # helpers and the AC-island decomposition — the PF solver stays untouched.
 include("shortcircuit/short_circuit.jl")
+# N-1 contingency batch API (multi-core Phase 4): needs the rectangular
+# solver, remove functions, island detection, and the parallel runtime
+# helpers included above.
+include("contingency.jl")
 # Web UI/service short-circuit run: needs the ShortCircuitResult
 # type above and the API result helpers included earlier.
 include("api/run_short_circuit_service.jl")
