@@ -98,6 +98,8 @@ makedocs(
       "Workshop Tour (all in one)" => "generated/workshop_tour.md",
       "Try it in your Browser" => "generated/workshop_intro.md",
       "Slack Types and Short Circuit" => "generated/workshop_slack_short_circuit.md",
+      "Distributed Slack" => "generated/workshop_distributed_slack.md",
+      "Transformer Taps" => "generated/workshop_transformers.md",
       "State Estimation Basics" => "generated/workshop_state_estimation.md",
       "TCSC Flow Steering" => "generated/workshop_series_compensation.md",
     ],

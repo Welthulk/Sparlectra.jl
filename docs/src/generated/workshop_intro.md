@@ -31,10 +31,25 @@ are the two cross-ties B2-B5 and B3-B6):
 > precompilation). Colab's Julia version may change over time; this
 > notebook targets Julia ≥ 1.12.
 
-## Load the package
+## Warm-up and shared imports
+
+Julia compiles each function on first use, so the very first solve of a
+session carries the compilation cost. This cell loads the package and
+warms the power-flow path on a tiny throwaway network; every solve in
+the actual walkthrough then runs at full speed.
 
 ````@example workshop_intro
 using Sparlectra
+
+wnet = Net(name = "warmup", baseMVA = 100.0)
+addBus!(net = wnet, busName = "A", vn_kV = 110.0)
+addBus!(net = wnet, busName = "B", vn_kV = 110.0)
+addProsumer!(net = wnet, busName = "A", type = "EXTERNALNETWORKINJECTION", referencePri = "A", vm_pu = 1.0, va_deg = 0.0)
+addProsumer!(net = wnet, busName = "B", type = "ENERGYCONSUMER", p = 10.0, q = 3.0)
+addPIModelACLine!(net = wnet, fromBus = "A", toBus = "B", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+t_first = @elapsed runpf!(wnet, 10, 1e-8, 0)
+t_second = @elapsed runpf!(wnet, 10, 1e-8, 0)
+println("first solve (includes compilation): ", round(t_first; digits = 2), " s, second: ", round(t_second * 1000; digits = 2), " ms")
 ````
 
 ## Create an empty network

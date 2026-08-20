@@ -27,32 +27,20 @@ the chapters are:
 > fresh session (package download and precompilation). Colab's Julia
 > version may change over time; this notebook targets Julia ≥ 1.12.
 
-## Warm-up
+## Warm-up and shared helpers
 
-Julia compiles each function on first use. The tiny network below triggers
-that compilation for the solver path once, so every later chapter runs at
-full speed. The two timings make the effect visible.
+Julia compiles each function on first use. This one cell warms EVERY
+path the chapters exercise, so nothing stalls mid-tour: the
+Newton-Raphson solver, the IEC 60909 short circuit (chapter 2), the HVDC
+pair controller (chapter 6), and the WLS state estimator (chapter 7).
+The `using` clauses and the small helpers of the whole tour live here
+too, collected up top so they cannot be missed.
 
 ````@example workshop_tour
 using Sparlectra
+using Random
 
-wnet = Net(name = "warmup", baseMVA = 100.0)
-addBus!(net = wnet, busName = "A", vn_kV = 110.0)
-addBus!(net = wnet, busName = "B", vn_kV = 110.0)
-addProsumer!(net = wnet, busName = "A", type = "EXTERNALNETWORKINJECTION", referencePri = "A", vm_pu = 1.0, va_deg = 0.0)
-addProsumer!(net = wnet, busName = "B", type = "ENERGYCONSUMER", p = 10.0, q = 3.0)
-addPIModelACLine!(net = wnet, fromBus = "A", toBus = "B", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
-
-t_first = @elapsed runpf!(wnet, 10, 1e-8, 0)
-t_second = @elapsed runpf!(wnet, 10, 1e-8, 0)
-println("first solve (includes compilation): ", round(t_first; digits = 2), " s")
-println("second solve (compiled):            ", round(t_second * 1000; digits = 2), " ms")
-````
-
-A solve helper used by all chapters (25 iterations maximum, tolerance
-$10^{-8}$):
-
-````@example workshop_tour
+# solve helper used by all chapters (25 iterations, tolerance 1e-8)
 function solve!(net; kwargs...)
   etime = @elapsed begin
     ite, erg = runpf!(net, 25, 1e-8, 0; kwargs...)
@@ -61,6 +49,46 @@ function solve!(net; kwargs...)
   calcNetLosses!(net)
   return etime, ite
 end
+
+# peek into the solved state (chapter 6 reads bus angles with it)
+bus_va_deg(net, bus) = net.nodeVec[net.busDict[bus]]._va_deg
+
+# tiny warm-up net: a grid connection WITH declared short-circuit data
+wnet = Net(name = "warmup", baseMVA = 100.0)
+addBus!(net = wnet, busName = "A", vn_kV = 110.0)
+addBus!(net = wnet, busName = "B", vn_kV = 110.0)
+addExternalGrid!(net = wnet, busName = "A", vm_pu = 1.0, sk_max_MVA = 2000.0, sk_min_MVA = 1500.0, rx_max = 0.1, internal_impedance = false)
+addProsumer!(net = wnet, busName = "B", type = "ENERGYCONSUMER", p = 10.0, q = 3.0)
+addPIModelACLine!(net = wnet, fromBus = "A", toBus = "B", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+
+t_first = @elapsed runpf!(wnet, 10, 1e-8, 0)
+t_second = @elapsed runpf!(wnet, 10, 1e-8, 0)
+println("power flow     : first solve ", round(t_first; digits = 2), " s (compiles), second ", round(t_second * 1000; digits = 2), " ms")
+
+t_sc = @elapsed runShortCircuit!(wnet; case = :max)
+println("short circuit  : ", round(t_sc; digits = 2), " s")
+
+# HVDC pair path: two 2-bus islands coupled by a controller
+whv = Net(name = "warmup_hvdc", baseMVA = 100.0)
+for b in ("W1", "W2", "W3", "W4")
+  addBus!(net = whv, busName = b, vn_kV = 110.0)
+end
+addProsumer!(net = whv, busName = "W1", type = "EXTERNALNETWORKINJECTION", referencePri = "W1", vm_pu = 1.0, va_deg = 0.0)
+addProsumer!(net = whv, busName = "W3", type = "EXTERNALNETWORKINJECTION", referencePri = "W3", vm_pu = 1.0, va_deg = 0.0)
+addProsumer!(net = whv, busName = "W2", type = "ENERGYCONSUMER", p = 5.0, q = 1.0)
+addProsumer!(net = whv, busName = "W4", type = "ENERGYCONSUMER", p = 5.0, q = 1.0)
+addPIModelACLine!(net = whv, fromBus = "W1", toBus = "W2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+addPIModelACLine!(net = whv, fromBus = "W3", toBus = "W4", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+addProsumer!(net = whv, busName = "W2", type = "GENERATOR", p = -5.0, q = 0.0)
+addProsumer!(net = whv, busName = "W4", type = "GENERATOR", p = 5.0, q = 0.0)
+addHvdcPairControl!(whv; from_bus = "W2", to_bus = "W4", p_transfer_mw = 5.0)
+t_hvdc = @elapsed run_control!(whv; controllers = collect_outer_controllers(whv), pf_config = PowerFlowConfig(method = :rectangular, max_iter = 15, tol = 1e-8), control_config = ControlConfig(max_outer_iterations = 4, trace = false))
+println("HVDC control   : ", round(t_hvdc; digits = 2), " s")
+
+# state-estimation path: synthetic measurements plus one WLS run
+setMeasurementsFromPF!(wnet; includeVm = true, includePinj = true, includeQinj = true, includePflow = true, includeQflow = true, noise = false)
+t_se = @elapsed runse!(wnet; maxIte = 8, tol = 1e-6, flatstart = true, jacEps = 1e-6, updateNet = false)
+println("state estimator: ", round(t_se; digits = 2), " s, everything warm")
 ````
 
 ## Chapter 1: a first power flow
@@ -151,9 +179,9 @@ for x_weak in (0.08, 800.0, 8.0e6, 8.0e10)
   addProsumer!(net = net, busName = "B2", type = "ENERGYCONSUMER", p = 20.0, q = 5.0)
   addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
   addPIModelACLine!(net = net, fromBus = "B2", toBus = "B3", r_pu = x_weak / 8, x_pu = x_weak, b_pu = 0.0, status = 1)
-  etime, ite = solve!(net)
+  _, ite_weak = solve!(net)
   vm3 = round(something(net.nodeVec[3]._vm_pu, NaN); digits = 4)
-  println("x = ", lpad(x_weak, 8), " pu:  ", ite, " iterations,  Vm(B3) = ", vm3, ",  kappa = ", round(condestJacobian(net), sigdigits = 3))
+  println("x = ", lpad(x_weak, 8), " pu:  ", ite_weak, " iterations,  Vm(B3) = ", vm3, ",  kappa = ", round(condestJacobian(net), sigdigits = 3))
 end
 ````
 
@@ -195,7 +223,8 @@ markIsolatedBuses!(net = net_open, log = false)
 solve!(net_open)
 br_open = net_open.branchVec[1]
 println("open@to: charging draw ", round(br_open.fBranchFlow.qFlow; digits = 1), " MVAr, active loss ", round(br_open.fBranchFlow.pFlow; digits = 3), " MW")
-println("         open-end voltage ", round(br_open.open_end_vm_pu; digits = 4), " pu (Ferranti rise above 1.0 at A)")
+println("         voltage at the OPEN end: ", round(br_open.open_end_vm_pu; digits = 4), " pu, HIGHER than the ", round(get_bus_vm_pu(net_open, "A"); digits = 2), " pu at the feeding bus A")
+println("         (Ferranti effect: the charging current flowing through the line reactance lifts the voltage toward the open end)")
 ````
 
 Reading aid: the branch table marks the row `open@to`, the header counts
@@ -204,6 +233,74 @@ is a branch RESULT (`open_end_vm_pu`), not a solved bus. The full story,
 including the Schur reduction and why it is the full charging, is on the
 branch-model docs page under "One-sided open branches"; the runnable twin
 is `exp_open_terminal_line.jl`.
+
+### Links: connections without impedance
+
+A link (`addLink!`) models a busbar coupler or sectionalizer: a closed
+switch between two buses. It is NOT a branch. It has no impedance, it is
+never stamped into the Y-bus, and it never appears in the branch table.
+Instead the solver contracts every cluster of buses joined by closed
+links onto one representative bus before the Y-bus is built, so all
+linked buses share one voltage by construction. (Do not confuse these
+links with the HVDC "Link" rows of chapter 6: a bus link is a switch,
+an HVDC link is a converter pair.)
+
+Because the link has no admittance, the power flow cannot tell how much
+power crosses it: that is reconstructed AFTER the solve, from Kirchhoff's
+current law, with `calcLinkFlowsKCL!`. The interesting case is a ring of
+links, a zero-impedance cycle:
+
+```text
+     S (slack)
+     |
+     |  real line (r = 0.01, x = 0.08)
+     |
+     R1
+    /  \            R1, R2, R3 joined by three closed links:
+   /    \           an impedance-less ring, electrically ONE node
+  R3 --- R2
+(20 MW) (30 MW)
+```
+
+In a zero-impedance loop the flow split is physically NOT unique: any
+circulating current can be added without changing a single voltage.
+Sparlectra returns the minimum-norm KCL solution (Moore-Penrose
+pseudoinverse), the unique split with zero artificial circulation, so
+the result is deterministic and reproducible:
+
+````@example workshop_tour
+net_ring = Net(name = "tour_link_ring", baseMVA = 100.0)
+addBus!(net = net_ring, busName = "S", vn_kV = 110.0)
+for b in ("R1", "R2", "R3")
+  addBus!(net = net_ring, busName = b, vn_kV = 110.0)
+end
+addProsumer!(net = net_ring, busName = "S", type = "EXTERNALNETWORKINJECTION", referencePri = "S", vm_pu = 1.0, va_deg = 0.0)
+addProsumer!(net = net_ring, busName = "R2", type = "ENERGYCONSUMER", p = 30.0, q = 8.0)
+addProsumer!(net = net_ring, busName = "R3", type = "ENERGYCONSUMER", p = 20.0, q = 5.0)
+addPIModelACLine!(net = net_ring, fromBus = "S", toBus = "R1", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+addLink!(net = net_ring, fromBus = "R1", toBus = "R2", status = 1)
+addLink!(net = net_ring, fromBus = "R2", toBus = "R3", status = 1)
+addLink!(net = net_ring, fromBus = "R3", toBus = "R1", status = 1)
+validate!(net = net_ring)
+solve!(net_ring)
+calcLinkFlowsKCL!(net_ring)
+
+println("one voltage for the whole ring: Vm(R1/R2/R3) = ", join((round(get_bus_vm_pu(net_ring, b); digits = 5) for b in ("R1", "R2", "R3")), " / "), " pu")
+ring_bus_name = Dict(v => k for (k, v) in net_ring.busDict)   ## BusLink stores bus INDICES
+for l in net_ring.linkVec
+  println("link ", ring_bus_name[l.fromBus], " -> ", ring_bus_name[l.toBus], ": ", lpad(round(l.pFlow_MW; digits = 2), 7), " MW")
+end
+````
+
+Reading aid: 50 MW enter the ring at `R1`. The minimum-norm split sends
+26.67 MW directly to the 30 MW load at `R2` and 23.33 MW the other way
+round to `R3`; the third coupler carries only the 3.33 MW that `R2` still
+needs. A negative sign just means the flow runs against the link's
+from-to direction. Any other split (say 30 and 20 with an idle third
+coupler) would satisfy KCL too, but only by adding a circulating
+component; the pseudoinverse is exactly the split without one. The
+links page of the docs has the math and the modeling guidelines (for
+example: never link the slack bus itself).
 
 ## Chapter 2: slack types and short-circuit currents
 
@@ -551,7 +648,7 @@ with a C-side angle carries no information, because each is measured
 against a different zero.
 
 ````@example workshop_tour
-bus_va_deg(net, bus) = net.nodeVec[net.busDict[bus]]._va_deg  ## peek into the solved state
+# bus_va_deg comes from the warm-up cell (shared helpers up top)
 for (bus, role) in (("A1", "reference of island A"), ("A2", "converter, exports 120 MW"), ("C1", "reference of island C"), ("C2", "converter, receives 116 MW"))
   println(rpad(bus, 4), rpad(role, 27), ": Vm = ", round(get_bus_vm_pu(net6, bus); digits = 4), " pu, Va = ", round(bus_va_deg(net6, bus); digits = 3), " deg")
 end
@@ -840,8 +937,6 @@ the
 [state-estimation notebook](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_state_estimation.ipynb).
 
 ````@example workshop_tour
-using Random
-
 net_se = build_ring7("tour_se")
 ite_pf, status_pf = runpf!(net_se, 40, 1e-10, 0)
 status_pf == 0 || error("Power flow did not converge")

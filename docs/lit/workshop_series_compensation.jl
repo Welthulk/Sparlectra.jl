@@ -54,9 +54,27 @@
 #nb ## the old version is still active — restart the runtime, then rerun
 #nb ## this cell.
 
-# ## Load the package
+# ## Warm-up
+#
+# Julia compiles each function on first use. This cell loads the package
+# and warms the two paths this notebook exercises, the power-flow solver
+# and the outer control loop with a series-reactance controller, on a tiny
+# throwaway corridor, so the real study runs at full speed.
 
 using Sparlectra
+
+wnet = Net(name = "warmup", baseMVA = 100.0)
+for b in ("A", "M", "B")
+  addBus!(net = wnet, busName = b, vn_kV = 110.0)
+end
+addProsumer!(net = wnet, busName = "A", type = "EXTERNALNETWORKINJECTION", referencePri = "A", vm_pu = 1.0, va_deg = 0.0)
+addProsumer!(net = wnet, busName = "B", type = "ENERGYCONSUMER", p = 10.0, q = 3.0)
+addPIModelACLine!(net = wnet, fromBus = "A", toBus = "M", r_pu = 0.01, x_pu = 0.10, b_pu = 0.0, status = 1)
+addPIModelACLine!(net = wnet, fromBus = "M", toBus = "B", r_pu = 0.01, x_pu = 0.10, b_pu = 0.0, status = 1)
+addPIModelACLine!(net = wnet, fromBus = "A", toBus = "B", r_pu = 0.02, x_pu = 0.20, b_pu = 0.0, status = 1)
+addSeriesReactanceControl!(wnet; fromBus = "A", toBus = "M", p_target_mw = 6.0, x_min_pu = 0.05, x_max_pu = 0.2)
+t_ctrl = @elapsed run_control!(wnet; controllers = collect_outer_controllers(wnet), pf_config = PowerFlowConfig(method = :rectangular, max_iter = 15, tol = 1e-8), control_config = ControlConfig(max_outer_iterations = 4, trace = false))
+println("warm: power flow plus series-reactance control ", round(t_ctrl; digits = 2), " s (first calls compile)")
 
 # ## Why a series reactance steers flow
 #

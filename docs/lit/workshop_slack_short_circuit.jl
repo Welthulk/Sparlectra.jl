@@ -74,9 +74,34 @@
 #nb ## the old version is still active — restart the runtime, then rerun
 #nb ## this cell.
 
-# ## Load the package
+# ## Warm-up and shared helpers
+#
+# Julia compiles each function on first use. This cell loads the package,
+# collects the solve helper up top, and warms BOTH paths this notebook
+# exercises: the power-flow solver and the IEC 60909 short-circuit engine,
+# on a tiny throwaway feeder with declared short-circuit power.
 
 using Sparlectra
+
+## solve helper used by every scenario (25 iterations, tolerance 1e-8)
+function solve!(net; kwargs...)
+  etime = @elapsed begin
+    ite, erg = runpf!(net, 25, 1e-8, 0; kwargs...)
+  end
+  erg == 0 || error("Power flow did not converge (status = $erg)")
+  calcNetLosses!(net)
+  return etime, ite
+end
+
+wnet = Net(name = "warmup", baseMVA = 100.0)
+addBus!(net = wnet, busName = "A", vn_kV = 110.0)
+addBus!(net = wnet, busName = "B", vn_kV = 110.0)
+addExternalGrid!(net = wnet, busName = "A", vm_pu = 1.0, sk_max_MVA = 2000.0, sk_min_MVA = 1500.0, rx_max = 0.1, internal_impedance = false)
+addProsumer!(net = wnet, busName = "B", type = "ENERGYCONSUMER", p = 10.0, q = 3.0)
+addPIModelACLine!(net = wnet, fromBus = "A", toBus = "B", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+t_pf = @elapsed solve!(wnet)
+t_sc = @elapsed runShortCircuit!(wnet; case = :max)
+println("warm: power flow ", round(t_pf; digits = 2), " s, short circuit ", round(t_sc; digits = 2), " s (first calls compile)")
 
 # ## The study network
 #
@@ -130,17 +155,7 @@ function build_grid(mode::Symbol)
   return net
 end
 
-# A small solve helper so every scenario runs identically (25 iterations
-# maximum, tolerance $10^{-8}$):
-
-function solve!(net; kwargs...)
-  etime = @elapsed begin
-    ite, erg = runpf!(net, 25, 1e-8, 0; kwargs...)
-  end
-  erg == 0 || error("Power flow did not converge (status = $erg)")
-  calcNetLosses!(net)
-  return etime, ite
-end
+# The `solve!` helper comes from the warm-up cell (shared helpers up top).
 
 # ## Scenario 1: ideal slack
 #
@@ -258,6 +273,9 @@ printShortCircuitResult(sc_min)
 # - [Slack Bus and External Grid Sources](https://welthulk.github.io/Sparlectra.jl/slack_vs_source/):
 #   the full theory: why the load flow needs a slack, the source model, and
 #   how the equation system changes.
+# - [Distributed slack notebook](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_distributed_slack.ipynb):
+#   where the participation weights come from (schedule, headroom, imported
+#   APF/normalPF, explicit) and the fallback when no participant is valid.
 # - [Short-Circuit Compendium](https://welthulk.github.io/Sparlectra.jl/short_circuit/):
 #   method, c-factors, safety flagging, and CGMES-fed short circuits.
 # - `examples/powerflow/exp_external_grid_comparison.jl` in the repository:

@@ -76,6 +76,24 @@
 using Sparlectra
 using Random
 
+# ## Warm-up
+#
+# Julia compiles each function on first use. This cell warms the two paths
+# the notebook exercises, the power-flow solver (which produces the
+# reference state) and the WLS estimator, on a tiny throwaway network, so
+# the real study runs at full speed.
+
+wnet = Net(name = "warmup", baseMVA = 100.0)
+addBus!(net = wnet, busName = "A", vn_kV = 110.0)
+addBus!(net = wnet, busName = "B", vn_kV = 110.0)
+addProsumer!(net = wnet, busName = "A", type = "EXTERNALNETWORKINJECTION", referencePri = "A", vm_pu = 1.0, va_deg = 0.0)
+addProsumer!(net = wnet, busName = "B", type = "ENERGYCONSUMER", p = 10.0, q = 3.0)
+addPIModelACLine!(net = wnet, fromBus = "A", toBus = "B", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+t_pf = @elapsed runpf!(wnet, 10, 1e-8, 0)
+setMeasurementsFromPF!(wnet; includeVm = true, includePinj = true, includeQinj = true, includePflow = true, includeQflow = true, noise = false)
+t_se = @elapsed runse!(wnet; maxIte = 8, tol = 1e-6, flatstart = true, jacEps = 1e-6, updateNet = false)
+println("warm: power flow ", round(t_pf; digits = 2), " s, estimator ", round(t_se; digits = 2), " s (first calls compile)")
+
 # ## Build the study network
 #
 # Seven 110 kV buses in a ring with two cross-connections, enough meshing
