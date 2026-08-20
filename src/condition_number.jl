@@ -193,7 +193,11 @@ function _jacobian_condest(net::Net; warn_on_failure::Bool = true, context::Stri
     thunk !== nothing && return thunk()::Float64
     return condestJacobian(net)
   catch err
-    if warn_on_failure
+    # a single active bus (e.g. a two-bus net whose line was opened at one
+    # terminal) has no meaningful condition number: expected model state,
+    # not a failure, so it never warns in the result output
+    degenerate = err isa ArgumentError && occursin("at least two active", err.msg)
+    if warn_on_failure && !degenerate
       @warn "$(context): Jacobian condition estimate skipped" exception = err
     else
       @debug "$(context): Jacobian condition estimate skipped" exception = err
