@@ -365,6 +365,7 @@ export
   addShuntVoltageControl!,                # Add an SVC-style shunt voltage controller.
   addSeriesReactanceControl!,             # Add a TCSC-like series-reactance controller on a line branch (#297).
   addHvdcPairControl!,                    # Add a back-to-back HVDC pairing controller on two converter injections (#297).
+  addHvdcLink!,                           # Register a Stage-0 HVDC link record on a hand-built net (r0.9.9 result reporting).
   HvdcPairControl,                        # Controller type of the HVDC pair (element rows, isa checks).
   clearHvdcPairControllers!,              # Remove all HVDC pair controllers from a net.
   printHvdcPairControllerSummary,         # Engineering summary of the registered HVDC pairs.
@@ -594,6 +595,9 @@ include("shunt.jl")
 # Native short-circuit source container (issue #299) — must precede
 # network.jl because Net carries a typed sc_sources field.
 include("shortcircuit/native_sc_data.jl")
+# HVDC link record: must precede network.jl for the same reason (typed
+# hvdcLinks field); the pair controller itself loads later.
+include("hvdc_link.jl")
 include("network.jl")
 include("synthetic_grids.jl")
 include("tap_control.jl")

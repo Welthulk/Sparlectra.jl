@@ -1,3 +1,22 @@
+# Version 0.9.9 - unreleased
+
+HVDC link results and one-reference-per-island validation.
+
+- HVDC links are first-class results: every link (Stage-0 or paired, from
+  MATPOWER, CGMES, or the API) is tracked on the net and reported in a new
+  `HVDC Link Flows` table, the result header, the generator-table terminal
+  markers, a converter-loss line, `ACPFlowReport.hvdc_links`, and
+  `hvdc_links.csv`.
+- A synchronous island with more than one angle reference now fails with a
+  message naming the island and its reference buses (both solver paths)
+  instead of the generic unsupported-bus-type error; an `island_feed` pair
+  whose grid-forming reference was demoted reports `invalid_topology`. See
+  [HVDC Back-to-Back](hvdc_back_to_back.md), example
+  `exp_hvdc_meshed_ac_tie.jl`, and the meshed-operation tour subsection.
+- Branch `Type` column and report rows agree again: the printed label
+  consults the import metadata first (PST heuristic pending the typed
+  branch kind).
+
 # Version 0.9.8 - 2026-08-21
 
 **Steerable HVDC links.** `addHvdcPairControl!` couples the two converter

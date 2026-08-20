@@ -1277,6 +1277,9 @@ function run_cgmes_importer_tests()
         rp = importCGMES(path = [fgbb, fgbd], name = "FullGrid_paired", hvdc_mode = :paired_control)
         @test length(Sparlectra._hvdc_pair_controllers(rp.net)) == 2
         @test count(m -> occursin("HVDC pair attached as controller", m), rp.messages) == 2
+        # r0.9.9: both links are persistent records carrying their controller
+        @test length(rp.net.hvdcLinks) == 2
+        @test all(l -> l.source == :cgmes && l.controller_name !== nothing, rp.net.hvdcLinks)
 
         # Node-breaker sets ship the TP profile too, so they read as
         # bus-branch today: the NB variant must yield the same network as
@@ -1546,6 +1549,9 @@ function run_cgmes_importer_tests()
           # Stage 0 names the detected pair without attaching a controller
           @test count(m -> occursin("HVDC pair detected", m), msgs) == 1
           @test isempty(Sparlectra._hvdc_pair_controllers(res.net))
+          # r0.9.9: the Stage-0 link is a persistent record without controller
+          @test length(res.net.hvdcLinks) == 1
+          @test res.net.hvdcLinks[1].source == :cgmes && res.net.hvdcLinks[1].controller_name === nothing
 
           # #297 Draft B: paired_control derives the DC-crossing transfer and
           # loss from the two SSH operating points (-109.118 / +100.02 MW)
@@ -1555,6 +1561,9 @@ function run_cgmes_importer_tests()
           @test isapprox(only(paired).p_transfer_mw, 109.118; atol = 1e-9)
           @test isapprox(only(paired).loss_mw, 9.098; atol = 1e-9)
           @test any(m -> occursin("HVDC pair attached as controller", m), res_paired.messages)
+          # r0.9.9: paired mode updates the same persistent record
+          @test length(res_paired.net.hvdcLinks) == 1
+          @test res_paired.net.hvdcLinks[1].controller_name == only(paired).name
 
           # the assembled model must solve and reproduce the delivery's SV
           # state. Q-limits stay off here: the active-set path currently cannot

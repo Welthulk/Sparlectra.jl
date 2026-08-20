@@ -1522,8 +1522,29 @@ pair that cannot be attached (converter skipped at import, isolated bus,
 inconsistent snapshot signs, negative loss) degrades to the Stage-0 fixed
 injections with a notice; the import itself never fails here.
 """
+# persistent link record for the result layer (r0.9.9): one HvdcLink per
+# detected two-converter pair whose terminals were imported; runs in every
+# hvdc_mode. Orientation matches the attach rule (exporting side = from).
+# Returns the record or nothing when a converter is missing from the net.
+function _push_cgmes_hvdc_link!(net, ctx::_MapCtx, pair)
+  pair.extra == 0 || return nothing
+  a_idx = get(ctx.prosumer_by_mrid, pair.from, nothing)
+  b_idx = get(ctx.prosumer_by_mrid, pair.to, nothing)
+  (a_idx === nothing || b_idx === nothing) && return nothing
+  pa = net.prosumpsVec[a_idx].pVal === nothing ? 0.0 : net.prosumpsVec[a_idx].pVal
+  pb = net.prosumpsVec[b_idx].pVal === nothing ? 0.0 : net.prosumpsVec[b_idx].pVal
+  f_idx, t_idx = pa <= pb ? (a_idx, b_idx) : (b_idx, a_idx)
+  fbus = Sparlectra.getPosumerBusIndex(net.prosumpsVec[f_idx])
+  tbus = Sparlectra.getPosumerBusIndex(net.prosumpsVec[t_idx])
+  names = Dict(idx => name for (name, idx) in net.busDict)
+  link = Sparlectra.HvdcLink(string("HVDC_", get(names, fbus, string(fbus)), "_", get(names, tbus, string(tbus))), fbus, tbus, f_idx, t_idx, 1, :cgmes, pair.segments ? :p2p : :b2b, nothing)
+  push!(net.hvdcLinks, link)
+  return link
+end
+
 function _attachHvdcPairs!(net, ctx::_MapCtx, store::CGMESStore)
   for pair in _detectHvdcPairs(store)
+    _push_cgmes_hvdc_link!(net, ctx, pair)
     if pair.extra != 0
       push!(ctx.messages, "notice: HVDC component around $(pair.from) has $(pair.extra) converter(s) — only two-converter links are paired, kept as fixed injections")
       continue
@@ -2297,6 +2318,9 @@ function importCGMES(;
   else
     for pair in _detectHvdcPairs(store)
       pair.extra == 0 || continue
+      # Stage-0 keeps the fixed injections but still records the link for
+      # the result layer (r0.9.9)
+      _push_cgmes_hvdc_link!(net, ctx, pair)
       kind = pair.segments ? "point-to-point" : "back-to-back"
       push!(ctx.messages, "notice: HVDC pair detected ($(kind)): $(pair.from) / $(pair.to) — fixed injections (Stage 0); set cgmes_import.hvdc_mode = paired_control for a steerable pair")
     end

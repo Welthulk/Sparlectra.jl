@@ -108,11 +108,70 @@ end
 """
     clearHvdcPairControllers!(net)
 
-Remove all HVDC pair controllers from `net` (other controllers stay).
+Remove all HVDC pair controllers from `net` (other controllers stay). The
+persistent link records in `net.hvdcLinks` are kept, only their
+`controller_name` is reset: the link exists independently of how it is
+steered.
 """
 function clearHvdcPairControllers!(net::Net)
   filter!(c -> !(c isa HvdcPairControl), net.machineControls)
+  for (i, l) in enumerate(net.hvdcLinks)
+    l.controller_name === nothing || (net.hvdcLinks[i] = _hvdc_link_with_controller(l, nothing))
+  end
   return net
+end
+
+"""
+    addHvdcLink!(net; from_bus, to_bus, name = nothing, kind = :b2b,
+                 status = 1, from_prosumer = nothing, to_prosumer = nothing)
+
+Register a Stage-0 HVDC link record on a hand-built net so the result layer
+reports it (`HVDC Link Flows` table, `ACPFlowReport.hvdc_links`,
+`hvdc_links.csv`). Importers and [`addHvdcPairControl!`](@ref) register
+links automatically; this helper covers programmatic nets that keep fixed
+converter injections without a controller (including a grid-forming
+reference terminal, which a setpoint pair could not carry). Terminals
+resolve like the pair controller (unique generator-type injection per bus,
+explicit index on ambiguity) but without role restrictions: the record is
+bookkeeping, not an actuator. Returns the created [`HvdcLink`](@ref).
+"""
+function addHvdcLink!(net::Net; from_bus::String, to_bus::String, name::Union{Nothing,String} = nothing, kind::Symbol = :b2b, status::Int = 1, from_prosumer::Union{Nothing,Int} = nothing, to_prosumer::Union{Nothing,Int} = nothing)
+  kind in (:b2b, :p2p) || error("addHvdcLink!: kind must be :b2b or :p2p, got $(kind)")
+  resolve = function (bus::String, explicit::Union{Nothing,Int}, side::String)
+    busIdx = geNetBusIdx(net = net, busName = bus)
+    explicit === nothing || begin
+      (1 <= explicit <= length(net.prosumpsVec)) || error("addHvdcLink!: $(side)_prosumer $(explicit) out of range")
+      getPosumerBusIndex(net.prosumpsVec[explicit]) == busIdx || error("addHvdcLink!: $(side)_prosumer $(explicit) is not connected to bus $(bus)")
+      return explicit
+    end
+    gens = [i for (i, p) in enumerate(net.prosumpsVec) if isGenerator(p) && getPosumerBusIndex(p) == busIdx]
+    isempty(gens) && error("addHvdcLink!: no injection found at $(side) bus $(bus)")
+    length(gens) > 1 && error("addHvdcLink!: $(length(gens)) injections at $(side) bus $(bus); pass $(side)_prosumer to pick one.")
+    return gens[1]
+  end
+  f_idx = resolve(from_bus, from_prosumer, "from")
+  t_idx = resolve(to_bus, to_prosumer, "to")
+  f_idx == t_idx && error("addHvdcLink!: from and to resolve to the same prosumer ($(f_idx)).")
+  link = HvdcLink(something(name, string("HVDC_", from_bus, "_", to_bus)), geNetBusIdx(net = net, busName = from_bus), geNetBusIdx(net = net, busName = to_bus), f_idx, t_idx, status, :api, kind, nothing)
+  push!(net.hvdcLinks, link)
+  return link
+end
+
+# register the controller on the persistent link record: match on the
+# terminal prosumers, update in place when the importer already pushed the
+# link, otherwise create one (API-built net; kind defaults to :b2b, the
+# controller's own abstraction)
+function _hvdc_register_link!(net::Net, ctrl::HvdcPairControl)
+  for (i, l) in enumerate(net.hvdcLinks)
+    if (l.from_prosumer == ctrl.from_prosumer && l.to_prosumer == ctrl.to_prosumer) || (l.from_prosumer == ctrl.to_prosumer && l.to_prosumer == ctrl.from_prosumer)
+      net.hvdcLinks[i] = _hvdc_link_with_controller(l, ctrl.name)
+      return nothing
+    end
+  end
+  fbus = geNetBusIdx(net = net, busName = ctrl.from_bus)
+  tbus = geNetBusIdx(net = net, busName = ctrl.to_bus)
+  push!(net.hvdcLinks, HvdcLink(ctrl.name, fbus, tbus, ctrl.from_prosumer, ctrl.to_prosumer, 1, :api, :b2b, ctrl.name))
+  return nothing
 end
 
 # Resolve the converter prosumer at a bus: explicit index wins, otherwise
@@ -344,6 +403,7 @@ function addHvdcPairControl!(
     deadband_p_mw,
   )
   push!(net.machineControls, ctrl)
+  _hvdc_register_link!(net, ctrl)
   return ctrl
 end
 
@@ -420,6 +480,17 @@ _hvdc_side_converged(vset::Union{Nothing,Float64}, vm::Union{Nothing,Float64}, d
 function control_evaluate!(ctrl::HvdcPairControl, net::Net, ::AbstractControlState, context)
   ctrl.from_vm_now = get_bus_vm_pu(net, ctrl.from_bus)
   ctrl.to_vm_now = get_bus_vm_pu(net, ctrl.to_bus)
+  # island_feed requires the grid-forming to bus to BE the island reference
+  # at runtime, not only at registration: a user who demoted it (e.g. after
+  # synchronously tying the islands) invalidates the mirror semantics. The
+  # controller reports that honestly and stops mirroring; it never switches
+  # modes silently.
+  if ctrl.mode == :island_feed && getNodeType(net.nodeVec[geNetBusIdx(net = net, busName = ctrl.to_bus)]) != Slack
+    ctrl.converged = false
+    ctrl.status = :invalid_topology
+    ctrl.outer_iters = context.outer_iteration
+    return nothing
+  end
   # island_feed: the mirror is settled when the applied transfer matches the
   # one derived from the fresh island balance
   mirror_ok = true
@@ -447,7 +518,7 @@ function _hvdc_side_q_step(vset::Float64, vm::Union{Nothing,Float64}, q0::Float6
 end
 
 function control_propose_update!(ctrl::HvdcPairControl, net::Net, ::AbstractControlState, context)
-  if ctrl.mode == :island_feed
+  if ctrl.mode == :island_feed && ctrl.status != :invalid_topology
     # refresh the mirrored transfer from the island balance of the last solve
     delivered = _hvdc_island_delivered(net, ctrl)
     delivered === nothing || (ctrl.p_transfer_mw = _hvdc_island_feed_transfer(ctrl, delivered))
@@ -484,8 +555,9 @@ function control_apply_update!(ctrl::HvdcPairControl, net::Net, ::AbstractContro
   t_p_now = tps.pVal === nothing ? 0.0 : tps.pVal
   if ctrl.mode == :island_feed
     # only the sending side is an actuator; the to side is the island's
-    # reference and its injection stays the solver's balance outcome
-    if !ctrl.p_applied || abs(f_p_now - update.from_p) > 1e-9
+    # reference and its injection stays the solver's balance outcome.
+    # invalid_topology stops all mirroring until the user fixes the model.
+    if ctrl.status != :invalid_topology && (!ctrl.p_applied || abs(f_p_now - update.from_p) > 1e-9)
       addGenPower!(node = fnode, p = update.from_p - f_p_now, q = nothing)
       fps.pVal = update.from_p
       ctrl.p_applied = true

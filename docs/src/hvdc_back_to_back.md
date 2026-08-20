@@ -129,6 +129,26 @@ rating. Grid-forming links are attached programmatically or via YAML
   whose real border crossing yields transfer 109.118 MW with 9.098 MW loss
   from the two SSH operating points.
 
+## Meshed operation (AC tie in parallel to the link)
+
+Once the two areas are ALSO tied by an AC branch they form one synchronous
+island, and one synchronous island carries exactly ONE angle reference.
+Keeping both former references fails fast with a message naming the island
+and its reference buses (`AC island 1 has 2 angle references (A1, C1). ...`)
+instead of the generic unsupported-bus-type abort; the solver never demotes
+a reference on its own, the user decides which one survives.
+
+After demoting one reference to PV (an `ExternalNetworkInjection` without
+`referencePri`, or a voltage-regulated generator), the setpoint pair keeps
+working unchanged as a parallel PQ path: the link carries its ordered
+transfer, the AC tie carries the angle coupling and the remainder of the
+exchange. `mode = :island_feed` is different: a grid-forming converter
+inside a synchronous grid is physically a different device model and out of
+scope; the controller reports `invalid_topology` once its reference bus was
+demoted rather than silently changing modes. Runnable walkthrough:
+`examples/others/exp_hvdc_meshed_ac_tie.jl` and the "Meshed operation"
+subsection of the workshop tour.
+
 ## Choosing the mode
 
 Stage 0 is right whenever the task is reproducing a snapshot: it is exact,

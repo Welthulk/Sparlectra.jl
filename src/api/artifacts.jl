@@ -22,6 +22,7 @@ function _artifact_kind(path::AbstractString)::Symbol
   name == "run_metadata.yaml" && return :run_metadata
   name == "matpower_auto_profile.log" && return :matpower_auto_profile
   name == "matpower_dcline.csv" && return :matpower_dcline
+  name == "hvdc_links.csv" && return :hvdc_links
   # Independently solved AC islands prefix these fixed-name diagnostic logs
   # with "ac_island_<id>_" (see _diagnostic_artifact_prefix) so per-island
   # files coexist instead of overwriting each other; match by suffix so both

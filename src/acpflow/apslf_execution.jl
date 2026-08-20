@@ -90,6 +90,9 @@ function _run_apslf_powerflow!(net::Net, pf_cfg::PowerFlowConfig; verbose::Int =
     error("power_flow.solver=apslf: voltage-dependent injections, including P(U)/Q(U) controllers and bus_shunt_model=voltage_dependent_injection, are not supported with active-link merge handling. Disable merges or use a topology without internal isolated buses.")
   end
   island_report = detect_ac_islands(wnet)
+  # same rule as the rectangular entry: one angle reference per synchronous
+  # island, rejected early with an actionable message
+  _validate_single_reference_per_island!(wnet, island_report)
   multi_island = length(island_report.rows) > 1 && any(row -> row.n_branch > 0, island_report.rows)
 
   sync_merges_back! = () -> begin

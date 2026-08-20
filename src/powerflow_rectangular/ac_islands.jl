@@ -271,6 +271,35 @@ function _validate_island_references!(report)
 end
 
 """
+One synchronous island carries exactly ONE angle reference. Two references
+in one island (typically two formerly asynchronous areas that got tied by a
+new AC branch while each kept its Slack, or a grid-forming HVDC converter
+whose island was synchronously tied) leave the angles overdetermined; the
+mismatch assembly would abort later with the generic unsupported-bus-type
+error. This shared validation fails early with an actionable message
+naming the island and its reference buses. Runs on the (link-merged) net
+of both solver paths, single- and multi-island, using the already-computed
+island report.
+"""
+function _validate_single_reference_per_island!(net::Net, report)
+  bad = [row for row in report.rows if row.n_ref > 1]
+  isempty(bad) && return nothing
+  # user-facing bus names (busDict), not the internal component names: the
+  # message must name the buses the user modelled (error path only)
+  name_by_idx = Dict(idx => name for (name, idx) in net.busDict)
+  parts = String[]
+  for row in bad
+    refs = [bus for bus in row.buses if getNodeType(net.nodeVec[bus]) == Slack]
+    names = join((get(name_by_idx, b, _bus_display_name(net, b)) for b in refs), ", ")
+    push!(parts, "AC island $(row.island_id) has $(length(refs)) angle references ($(names)).")
+  end
+  error(
+    join(parts, " ") *
+    " One synchronous island can carry exactly one reference. Demote the others to PV (an ExternalNetworkInjection without referencePri, or a voltage-regulated generator), or remove the AC tie if the areas are meant to be asynchronous. For an HVDC link in mode = :island_feed the grid-forming converter cannot stay the reference once its island is synchronously tied.",
+  )
+end
+
+"""
 Cut one island out of `net` as a standalone `Net` that the solver can run on
 unchanged. Every bus index is renumbered to 1..n_island, so all index-carrying
 containers have to be rebuilt consistently -- missing one of them yields a net
@@ -309,6 +338,10 @@ function _prepare_island_net(net::Net, row)
     hasproperty(br.comp, :cFrom_bus) && (br.comp.cFrom_bus = Int(br.fromBus))
     hasproperty(br.comp, :cTo_bus) && (br.comp.cTo_bus = Int(br.toBus))
   end
+  # The HVDC link records carry net-wide bus/prosumer indices that are
+  # meaningless after the renumbering, and nothing inside an island solve
+  # consumes them (the result layer reads them on the parent net only).
+  empty!(inet.hvdcLinks)
   # Prosumers and shunts are bus-local, so island membership follows from their
   # bus alone. cTo_bus is set to the same bus: for a bus-local element both
   # terminals are the same node.

@@ -230,6 +230,10 @@ mpc.dcline = [
       net_paired = createNetFromMatPowerFile(filename = path, matpower_dcline_mode = :paired_control)
       ctrl = only(Sparlectra._hvdc_pair_controllers(net_paired))
       @test ctrl.name == "DCLINE_1"
+      # r0.9.9: the persistent link record exists and carries the controller
+      @test length(net_paired.hvdcLinks) == 1
+      @test net_paired.hvdcLinks[1].controller_name == "DCLINE_1"
+      @test net_paired.hvdcLinks[1].source == :matpower && net_paired.hvdcLinks[1].kind == :p2p
       @test ctrl.p_transfer_mw == 80.0
       @test ctrl.loss_mw == 3.0
       @test ctrl.loss_fraction == 0.0125
@@ -242,6 +246,9 @@ mpc.dcline = [
       # consistency anchor: with the target equal to the row's PF, the
       # controlled solve reproduces the pf_injections solve
       net_fixed = createNetFromMatPowerFile(filename = path, matpower_dcline_mode = :pf_injections)
+      # r0.9.9: Stage-0 import records the link without a controller
+      @test length(net_fixed.hvdcLinks) == 1
+      @test net_fixed.hvdcLinks[1].controller_name === nothing
       _, erg = runpf!(net_fixed, 40, 1e-9, 0; method = :rectangular, islands_enabled = true)
       @test erg == 0
       vm_fixed = [something(n._vm_pu, NaN) for n in net_fixed.nodeVec]
@@ -318,6 +325,77 @@ mpc.dcline = [
       @test isapprox(net_y.prosumpsVec[sy_idx].pVal, net.prosumpsVec[s_idx].pVal; atol = 1e-9)
     end
 
+    @testset "meshed AC tie: one reference per synchronous island" begin
+      # two formerly asynchronous areas tied by a new AC branch: both old
+      # references survive -> actionable multi-reference error, both APIs
+      net, _, _ = _build_hvdc_two_area_net("hvdc_mesh_two_refs")
+      addPIModelACLine!(net = net, fromBus = "B1", toBus = "B3", r_pu = 0.02, x_pu = 0.16, b_pu = 0.0, status = 1)
+      err = try
+        runpf!(net, 40, 1e-9, 0; method = :rectangular, islands_enabled = true)
+        nothing
+      catch e
+        e
+      end
+      @test err isa ErrorException
+      @test occursin("angle references", sprint(showerror, err))
+      @test occursin("B1", sprint(showerror, err)) && occursin("B3", sprint(showerror, err))
+
+      # demote the second reference to a plain PV generator: the setpoint
+      # pair keeps its invariant as a parallel PQ path next to the AC tie
+      net2 = Net(name = "hvdc_mesh_pv", baseMVA = 100.0)
+      for b in ("B1", "B2", "B3", "B4")
+        addBus!(net = net2, busName = b, vn_kV = 380.0)
+      end
+      addPIModelACLine!(net = net2, fromBus = "B1", toBus = "B2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+      addPIModelACLine!(net = net2, fromBus = "B3", toBus = "B4", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+      addPIModelACLine!(net = net2, fromBus = "B1", toBus = "B3", r_pu = 0.02, x_pu = 0.16, b_pu = 0.0, status = 1)
+      addProsumer!(net = net2, busName = "B1", type = "EXTERNALNETWORKINJECTION", referencePri = "B1", vm_pu = 1.0, va_deg = 0.0)
+      addProsumer!(net = net2, busName = "B3", type = "GENERATOR", p = 20.0, q = 0.0, vm_pu = 1.0, isRegulated = true)
+      addProsumer!(net = net2, busName = "B2", type = "ENERGYCONSUMER", p = 40.0, q = 10.0)
+      addProsumer!(net = net2, busName = "B4", type = "ENERGYCONSUMER", p = 50.0, q = 12.0)
+      addProsumer!(net = net2, busName = "B2", type = "GENERATOR", p = -80.0, q = 0.0)
+      f2 = length(net2.prosumpsVec)
+      addProsumer!(net = net2, busName = "B4", type = "GENERATOR", p = 76.0, q = 0.0)
+      t2 = length(net2.prosumpsVec)
+      addHvdcPairControl!(net2; from_bus = "B2", to_bus = "B4", p_transfer_mw = 100.0, loss_mw = 4.0, from_prosumer = f2, to_prosumer = t2)
+      result = _hvdc_run!(net2)
+      @test result.converged
+      @test net2.prosumpsVec[f2].pVal == -100.0
+      @test net2.prosumpsVec[t2].pVal == 96.0
+
+      # island_feed with an AC tie: the grid-forming reference makes the
+      # synchronous island carry two references -> same early error
+      net3, _ = _build_hvdc_island_feed_net("hvdc_mesh_if")
+      addPIModelACLine!(net = net3, fromBus = "A1", toBus = "C1", r_pu = 0.02, x_pu = 0.16, b_pu = 0.0, status = 1)
+      addHvdcPairControl!(net3; from_bus = "A2", to_bus = "C2", mode = :island_feed, loss_mw = 4.0)
+      err3 = try
+        _hvdc_run!(net3)
+        nothing
+      catch e
+        e
+      end
+      @test err3 isa ErrorException
+      @test occursin("angle references", sprint(showerror, err3))
+
+      # demoting the grid-forming reference afterwards invalidates the
+      # island_feed semantics: honest invalid_topology, no silent mode switch
+      net4, s4 = _build_hvdc_island_feed_net("hvdc_mesh_if_demoted")
+      addPIModelACLine!(net = net4, fromBus = "A1", toBus = "C1", r_pu = 0.02, x_pu = 0.16, b_pu = 0.0, status = 1)
+      ctrl4 = addHvdcPairControl!(net4; from_bus = "A2", to_bus = "C2", mode = :island_feed, loss_mw = 4.0)
+      # demote: the reference injection at C2 loses its reference role
+      for ps in net4.prosumpsVec
+        if Sparlectra.getPosumerBusIndex(ps) == net4.busDict["C2"] && ps.referencePri !== nothing
+          ps.referencePri = nothing
+        end
+      end
+      refreshBusTypesFromProsumers!(net4)
+      result4 = _hvdc_run!(net4)
+      @test ctrl4.status == :invalid_topology
+      @test !ctrl4.converged
+      # the mirror never fired: the sending injection kept its build value
+      @test something(net4.prosumpsVec[s4].pVal, 0.0) == 0.0
+    end
+
     @testset "element rows and summary output" begin
       net, _, _ = _build_hvdc_two_area_net("hvdc_rows")
       addHvdcPairControl!(net; from_bus = "B2", to_bus = "B4", p_transfer_mw = 80.0, loss_mw = 3.0, p_rating_mw = 150.0)
@@ -333,6 +411,27 @@ mpc.dcline = [
       @test occursin("HVDC Pair Control Summary", out)
       @test occursin("link B2 -> B4", out)
       @test occursin("77.000 MW", out)
+      # r0.9.9 result surface: link table, header count, report rows, and
+      # the fixed-mode row of a hand-registered Stage-0 link
+      report = buildACPFlowReport(net; ite = 1, converged = true)
+      @test length(report.hvdc_links) == 1
+      row = only(report.hvdc_links)
+      @test row.mode == :setpoint && row.p_from_MW == 80.0 && row.loss_MW == 3.0
+      net_s0, _, _ = _build_hvdc_two_area_net("hvdc_rows_stage0")
+      link = addHvdcLink!(net_s0; from_bus = "B2", to_bus = "B4")
+      @test link.source == :api && link.controller_name === nothing
+      row0 = only(Sparlectra._hvdc_link_flow_rows(net_s0))
+      @test row0.mode == :fixed
+      @test row0.p_from_MW == 80.0 && row0.p_to_MW == 76.0 && row0.loss_MW == 4.0
+      mktempdir() do d
+        cd(d) do
+          printACPFlowResults(net, 0.0, 1, 1e-8, true)
+          txt = read("result_$(net.name).txt", String)
+          @test occursin("HVDC links     :         1", txt)
+          @test occursin("HVDC Link Flows", txt)
+          @test occursin("converter losses (HVDC)", txt)
+        end
+      end
       # regression (multi-slack header): a two-island net reports both
       # references in the node-count line instead of a hardcoded 1
       mktempdir() do d

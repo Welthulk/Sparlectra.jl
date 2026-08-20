@@ -1754,6 +1754,16 @@ function _merged_pf_net(net::Net)
   # branch-less pockets behind. The inherited list from the copy is stale.
   empty!(wnet.isoNodes)
   markIsolatedBuses!(net = wnet, log = false)
+  # HVDC link records carry bus indices too; map them onto the cluster
+  # representatives so the merged workspace stays self-consistent for
+  # diagnostics (prosumer indices are unaffected by the merge).
+  for (i, l) in enumerate(wnet.hvdcLinks)
+    fb = (1 <= l.from_bus <= n) ? reps[l.from_bus] : l.from_bus
+    tb = (1 <= l.to_bus <= n) ? reps[l.to_bus] : l.to_bus
+    if fb != l.from_bus || tb != l.to_bus
+      wnet.hvdcLinks[i] = HvdcLink(l.name, fb, tb, l.from_prosumer, l.to_prosumer, l.status, l.source, l.kind, l.controller_name)
+    end
+  end
   return wnet, reps, true
 end
 
@@ -1883,6 +1893,10 @@ function runpf!(
 
   has_vdep_control = has_voltage_dependent_control(wnet)
   island_report = detect_ac_islands(wnet)
+  # one angle reference per synchronous island, enforced on BOTH paths
+  # (single- and multi-island): a second reference would otherwise surface
+  # later as the generic unsupported-bus-type abort in the mismatch assembly
+  _validate_single_reference_per_island!(wnet, island_report)
   if length(island_report.rows) > 1 && any(row -> row.n_branch > 0, island_report.rows)
     _print_ac_island_summary(island_report)
     try

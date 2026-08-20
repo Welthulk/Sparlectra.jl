@@ -20,7 +20,7 @@ the chapters are:
 3. Transformer tap control (OLTC)
 4. Voltage-dependent reactive power, Q(U)
 5. Remote voltage control by a machine
-6. A steerable HVDC link (back-to-back pairing)
+6. A steerable HVDC link (back-to-back pairing, incl. meshed operation)
 7. State estimation
 
 > **Note:** On Google Colab the install cell takes a few minutes on a
@@ -465,6 +465,9 @@ function build_b2b(name::String)
 end
 
 net6 = build_b2b("tour_b2b")
+# register the hand-built link so the result tables report it (importers
+# and addHvdcPairControl! do this automatically)
+addHvdcLink!(net6; from_bus = "A2", to_bus = "C2")
 etime, ite = solve!(net6; islands_enabled = true)
 println("two islands solved in ", ite, " iteration(s)")
 printACPFlowResults(net6, etime, ite, 1e-8)
@@ -486,10 +489,13 @@ printACPFlowResults(net6, etime, result6.last_pf_iterations, 1e-8)
 Reading aid: the HVDC pair reports inside the `Control` section of the
 classical result output, in the same aligned label/value layout as the
 transformer, machine, and TCSC summaries (`printHvdcPairControllerSummary`
-prints the same block standalone). The link now carries 120 MW instead
-of 80: in the branch table the line A1 -> A2 supplies 40 MW more (area
-A's reference generates the export), while C1 -> C2 turns around and
-carries the received power away from the converter bus.
+prints the same block standalone). The link itself has its own `HVDC
+Link Flows` table right after the link table: ordered transfer,
+delivered power, loss, and the controller status per link. The link now
+carries 120 MW instead of 80: in the branch table the line A1 -> A2
+supplies 40 MW more (area A's reference generates the export), while
+C1 -> C2 turns around and carries the received power away from the
+converter bus.
 
 **Why does the solver still report two islands?** An AC voltage angle is
 only defined *within* one synchronous island, relative to that island's
@@ -590,6 +596,7 @@ must now *mirror* the island draw plus the converter loss:
 
 ````@example workshop_tour
 net8 = build_b2b_source("tour_b2b_mirrored"; sending_mw = -(p_island_c + 4.0))
+addHvdcLink!(net8; from_bus = "A2", to_bus = "C2")  ## Stage-0 record for the result tables
 etime8, ite8 = solve!(net8; islands_enabled = true)
 println("sending side A1 -> A2 carries ", round(get_branch_p_from_to_mw(net8, "A1", "A2"); digits = 3), " MW (40 MW local load + ", round(p_island_c + 4.0; digits = 3), " MW export + line loss)")
 printACPFlowResults(net8, etime8, ite8, 1e-8)
@@ -640,7 +647,9 @@ always), but WHERE the references sit is the whole difference:
   `B2B src` in the `Control` column; its `Pg` column is the island
   balance outcome (load plus line loss, no setpoint anywhere), `C1`
   carries only load, and the HVDC block in the `Control` section shows
-  the transfer as "mirrored from island draw".
+  the transfer as "mirrored from island draw". The `HVDC Link Flows`
+  table lists the same link with `mode = island_feed` and the mirrored
+  transfer in its `P_from` column.
 
 Try `p_rating_mw = 40.0`: the sending side pins at the rating with
 `at_limit = true` and `converged = false`. The island's reference still
@@ -688,6 +697,95 @@ sag is the droop, and its size follows from the declared `sk_max_MVA`
 (stiffer converter = higher $S_k''$ = less droop). Pairing this
 source-model reference with the island_feed controller is a possible
 follow-up of the pairing controller.
+
+### Meshed operation: the two areas get an AC tie
+
+So far the link was the ONLY connection. Now close an AC branch between
+`A1` and `C1`: the two areas become one synchronous island, and one
+synchronous island carries exactly ONE angle reference. The link
+transfers power, the tie transfers the angle.
+
+```text
+     one synchronous island
+  A1 -------- A2  ===== DC link =====  C2 -------- C1
+  |                                                 |
+  +------------------- AC tie ---------------------+
+```
+
+````@example workshop_tour
+function build_meshed(name::String; c1_model::Symbol)
+  net = Net(name = name, baseMVA = 100.0)
+  for b in ("A1", "A2", "C1", "C2")
+    addBus!(net = net, busName = b, vn_kV = 380.0)
+  end
+  addPIModelACLine!(net = net, fromBus = "A1", toBus = "A2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "C1", toBus = "C2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "A1", toBus = "C1", r_pu = 0.02, x_pu = 0.16, b_pu = 0.0, status = 1)
+  addProsumer!(net = net, busName = "A1", type = "EXTERNALNETWORKINJECTION", referencePri = "A1", vm_pu = 1.0, va_deg = 0.0)
+  if c1_model === :reference
+    # scene 1: island C keeps its old reference although the tie closed
+    addProsumer!(net = net, busName = "C1", type = "EXTERNALNETWORKINJECTION", referencePri = "C1", vm_pu = 1.0, va_deg = 0.0)
+  else
+    # scenes 2+: demoted to a voltage-regulated generator (PV)
+    addProsumer!(net = net, busName = "C1", type = "GENERATOR", p = 20.0, q = 0.0, vm_pu = 1.0, isRegulated = true)
+  end
+  addProsumer!(net = net, busName = "A2", type = "ENERGYCONSUMER", p = 40.0, q = 10.0)
+  addProsumer!(net = net, busName = "C2", type = "ENERGYCONSUMER", p = 50.0, q = 12.0)
+  addProsumer!(net = net, busName = "A2", type = "GENERATOR", p = -80.0, q = 0.0)  ## converter, exports
+  addProsumer!(net = net, busName = "C2", type = "GENERATOR", p = 76.0, q = 0.0)   ## converter, receives
+  return net
+end
+````
+
+Keeping BOTH old references fails fast, with the buses named. The solver
+never demotes a reference on its own; you decide which one survives:
+
+````@example workshop_tour
+netm = build_meshed("tour_meshed_two_refs"; c1_model = :reference)
+try
+  solve!(netm; islands_enabled = true)
+catch err
+  println(sprint(showerror, err))
+end
+````
+
+Reading aid: this is the same one-reference-per-island rule from the
+beginning of the chapter, now seen from the other side. Demote `C1` to a
+voltage-regulated generator and the meshed net solves; the pair keeps
+its setpoint and the tie carries the balance:
+
+````@example workshop_tour
+netm2 = build_meshed("tour_meshed"; c1_model = :pv)
+addHvdcPairControl!(netm2; from_bus = "A2", to_bus = "C2", p_transfer_mw = 120.0, loss_mw = 4.0, p_rating_mw = 150.0)
+resultm = run_control!(netm2; controllers = collect_outer_controllers(netm2), pf_config = PowerFlowConfig(method = :rectangular, max_iter = 25, tol = 1e-8), control_config = ControlConfig(max_outer_iterations = 8, trace = false))
+calcNetLosses!(netm2)
+printACPFlowResults(netm2, etime, resultm.last_pf_iterations, 1e-8)
+````
+
+Reading aid: ONE island, ONE `SLACK` row (`A1`), `C1` is an ordinary PV
+generator now. The `HVDC Link Flows` table still shows the ordered
+120 MW with 4 MW loss, and the tie `A1 -> C1` carries whatever the link
+over- or under-delivers relative to what area C draws. Retarget the pair
+and watch the exchange move between link and tie:
+
+````@example workshop_tour
+ctrlm = only(collect_outer_controllers(netm2))
+for target in (120.0, 40.0)
+  ctrlm.p_transfer_mw = target
+  ctrlm.p_applied = false
+  run_control!(netm2; controllers = collect_outer_controllers(netm2), pf_config = PowerFlowConfig(method = :rectangular, max_iter = 25, tol = 1e-8), control_config = ControlConfig(max_outer_iterations = 8, trace = false))
+  calcNetLosses!(netm2)
+  println("transfer ", target, " MW ordered: AC tie A1 -> C1 carries ", round(get_branch_p_from_to_mw(netm2, "A1", "C1"); digits = 3), " MW")
+end
+````
+
+Reading aid: the pair keeps its order exactly (that is what a setpoint
+means), so every retarget shows up one-to-one in the tie flow. And
+`mode = :island_feed`? A grid-forming converter inside a synchronous
+grid is a different device model and out of scope: with the tie closed
+the registration is rejected by the same one-reference rule, and a
+demoted reference afterwards makes the controller report
+`invalid_topology` instead of silently changing modes.
 
 ## Chapter 7: state estimation
 

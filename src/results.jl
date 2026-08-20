@@ -57,6 +57,8 @@ be converted directly to `DataFrame`s if `DataFrames.jl` is available, e.g.
 - `transformer_controls`: Tap-controller state rows with typed `missing` for
   non-applicable engineering values.
 - `q_limit_events`: PV→PQ limit-hit markers.
+- `hvdc_links`: One row per HVDC link (`net.hvdcLinks`): terminal flows,
+  loss, mode, rating, controller status (see `_hvdc_link_flow_rows`).
 """
 struct ACPFlowReport
   metadata::NamedTuple
@@ -65,6 +67,7 @@ struct ACPFlowReport
   links::Vector{NamedTuple}
   transformer_controls::Vector{NamedTuple}
   q_limit_events::Vector{NamedTuple}
+  hvdc_links::Vector{NamedTuple}
 end
 
 """
@@ -100,6 +103,8 @@ function Base.show(io::IO, report::ACPFlowReport)
     length(report.transformer_controls),
     ", q_limit_events=",
     length(report.q_limit_events),
+    ", hvdc_links=",
+    length(report.hvdc_links),
     ")",
   )
 end
@@ -368,17 +373,40 @@ function _bus_power_components(cache::AbstractDict{Int,BusPowerComponents}, bus_
   return Tuple(get(cache, bus_idx, BusPowerComponents(0.0, 0.0, 0.0, 0.0)))
 end
 
-function _branch_kind_label(br::Branch)::String
-  name = br.comp.cName
-  if occursin("_ACL_", name)
-    return "Line"
-  elseif occursin("_2WT_", name)
-    return "Trafo"
-  elseif occursin("_PI_", name)
-    return "PI"
+# Printed Type column of the branch table. Consult the import metadata
+# first so print and report rows (_branch_kind_name) agree for the same
+# branch, then fall back to the name marker. The PST label is a heuristic
+# (phase tap present, nonzero shift, no ratio tap) pending the typed
+# BranchKind enum (tracked separately).
+function _branch_kind_label(net::Net, br::Branch)::String
+  meta = get(net.matpower_branch_metadata, br.branchIdx, nothing)
+  kind = if meta !== nothing && hasproperty(meta, :orig_kind)
+    Symbol(getproperty(meta, :orig_kind))
+  elseif meta !== nothing && hasproperty(meta, :dtf_kind)
+    Symbol(getproperty(meta, :dtf_kind))
   else
-    return "Branch"
+    nothing
   end
+  label = if kind === :transformer
+    "Trafo"
+  elseif kind === :line
+    "Line"
+  else
+    name = br.comp.cName
+    if occursin("_ACL_", name)
+      "Line"
+    elseif occursin("_2WT_", name)
+      "Trafo"
+    elseif occursin("_PI_", name)
+      "PI"
+    else
+      "Branch"
+    end
+  end
+  if label == "Trafo" && br.has_phase_tap && !br.has_ratio_tap && abs(br.phase_shift_deg) > 0.0
+    return "PST"
+  end
+  return label
 end
 
 """
@@ -494,7 +522,7 @@ function buildACPFlowReport(net::Net; ct::Float64 = 0.0, ite::Int = 0, tol::Floa
   # Keep structured tap-controller data as a dedicated relation in the report
   # (preferred over widening the branch table with sparse controller columns).
   tap_control_rows = _build_transformer_control_rows(net)
-  return ACPFlowReport(metadata, node_rows, branch_rows, link_rows, tap_control_rows, q_events)
+  return ACPFlowReport(metadata, node_rows, branch_rows, link_rows, tap_control_rows, q_events, _hvdc_link_flow_rows(net))
 end
 
 function formatBranchResults(net::Net; max_rows::Union{Nothing,Int} = nothing)
@@ -533,7 +561,7 @@ function formatBranchResults(net::Net; max_rows::Union{Nothing,Int} = nothing)
     from = br.fromBus
     to = br.toBus
     bName = br.comp.cName
-    branchKind = _branch_kind_label(br)
+    branchKind = _branch_kind_label(net, br)
     fromName = get(busNameByIdx, Int(from), string(from))
     toName = get(busNameByIdx, Int(to), string(to))
     connection = string(fromName, " -> ", toName)
@@ -695,6 +723,12 @@ function printACPFlowResults(
   totalLosses = let (∑pv, ∑qv) = getTotalLosses(net = net)
     @sprintf("total network power balance (Σ S_branch): P = %10.3f [MW], Q = %10.3f [MVar]\n", ∑pv, ∑qv)
   end
+  # converter losses are NOT part of getTotalLosses (no Y-bus branch exists
+  # for an HVDC link); the extra line below the balance keeps them visible
+  if !isempty(net.hvdcLinks)
+    hvdc_loss = sum(r.loss_MW for r in _hvdc_link_flow_rows(net) if r.status == 1; init = 0.0)
+    totalLosses *= @sprintf("converter losses (HVDC): P = %10.3f [MW]\n", hvdc_loss)
+  end
 
   @printf(io, "================================================================================\n")
   @printf(io, "| SPARLECTRA Version %-10s - AC Power Flow Results                        |\n", formatted_version)
@@ -789,6 +823,9 @@ function printACPFlowResults(
   end
   @printf(io, "Branches       :%10d\n", branches)
   @printf(io, "Links          :%10d\n", links)
+  # always printed, including 0: stable parser anchor (same rationale as
+  # "Transformer controls: none")
+  @printf(io, "HVDC links     :%10d\n", length(net.hvdcLinks))
   @printf(io, "Lines          :%10d\n", lines)
   @printf(io, "Trafos         :%10d\n", trafos)
   @printf(io, "Generators     :%10d\n", gens)
@@ -964,6 +1001,18 @@ function printACPFlowResults(
       @printf(io, "| %-5d | %-8s | %-8s | %-6d | %-12.3f | %-12.3f | %-12.4f | %-12.4f |\n", l.linkIdx, _fitColumn(fromName, 8), _fitColumn(toName, 8), l.status, p, q, ifrom, ito)
     end
   end
+  if !isempty(net.hvdcLinks)
+    # P_from = power leaving the from bus into the link (positive for
+    # export), P_to = power delivered into the to bus; Status is the
+    # controller status, "-" for Stage-0 fixed injections
+    @printf(io, "\n--------------------------------------------------- HVDC Link Flows ---------------------------------------------------\n")
+    @printf(io, "| %-5s | %-14s | %-8s | %-8s | %-11s | %-11s | %-9s | %-9s | %-13s | %-11s | %-7s | %-12s |\n", "Nr", "Name", "From", "To", "Mode", "P_from [MW]", "P_to [MW]", "Loss [MW]", "Q_from [MVar]", "Q_to [MVar]", "Rating", "Status")
+    @printf(io, "------------------------------------------------------------------------------------------------------------------------------------------------\n")
+    for r in _hvdc_link_flow_rows(net)
+      rating = r.p_rating_MW === missing ? "-" : @sprintf("%.1f", r.p_rating_MW)
+      @printf(io, "| %-5d | %-14s | %-8s | %-8s | %-11s | %-11.3f | %-9.3f | %-9.3f | %-13.3f | %-11.3f | %-7s | %-12s |\n", r.nr, _fitColumn(r.name, 14), _fitColumn(r.from_bus_name, 8), _fitColumn(r.to_bus_name, 8), r.mode, r.p_from_MW, r.p_to_MW, r.loss_MW, r.q_from_MVar, r.q_to_MVar, rating, r.ctrl_status)
+    end
+  end
   println(io, "\nControl")
   if !isnothing(max_rows) && (length(nodes) > shown_bus_rows || length(net.branchVec) > max_rows)
     println(io, "Large-case result output is row-limited: $(shown_bus_rows) bus rows and $(min(max_rows, length(net.branchVec))) branch rows shown.")
@@ -990,11 +1039,89 @@ function printACPFlowResults(
   end
 end
 
+# prosumer result accessors shared by the generator table and the HVDC rows:
+# prefer solved results, fall back to the specification values
+_prosumer_p_result(ps) = something(ps.pRes === nothing ? ps.pVal : ps.pRes, 0.0)
+_prosumer_q_result(ps) = something(ps.qRes === nothing ? ps.qVal : ps.qRes, 0.0)
+
+"""
+    _hvdc_link_flow_rows(net) -> Vector{NamedTuple}
+
+One row per `HvdcLink` for the `HVDC Link Flows` table, `ACPFlowReport`, and
+the CSV export. Sign convention: `p_from_MW` is the power leaving the from
+bus into the link (positive for export), `p_to_MW` the power delivered into
+the to bus. With an attached controller the values come from its setpoints
+and live terminal state (`mode` is the controller mode); without one they
+come from the terminal prosumers (`mode = :fixed`,
+`loss = -(P_from_injection + P_to_injection)` in the MATPOWER convention
+where the from injection is negative).
+"""
+function _hvdc_link_flow_rows(net::Net)::Vector{NamedTuple}
+  ctrl_by_name = Dict{String,Any}(c.name => c for c in _hvdc_pair_controllers(net))
+  rows = NamedTuple[]
+  for (nr, l) in enumerate(net.hvdcLinks)
+    busNameByIdx = _bus_name_by_idx(net)
+    from_name = _effective_bus_name(busNameByIdx, net, l.from_bus)
+    to_name = _effective_bus_name(busNameByIdx, net, l.to_bus)
+    ctrl = l.controller_name === nothing ? nothing : get(ctrl_by_name, l.controller_name, nothing)
+    if ctrl === nothing
+      fp = _prosumer_p_result(net.prosumpsVec[l.from_prosumer])
+      tp = _prosumer_p_result(net.prosumpsVec[l.to_prosumer])
+      push!(rows, (
+        nr = nr,
+        name = l.name,
+        from_bus_name = from_name,
+        to_bus_name = to_name,
+        mode = :fixed,
+        p_from_MW = -fp,
+        p_to_MW = tp,
+        loss_MW = -(fp + tp),
+        q_from_MVar = _prosumer_q_result(net.prosumpsVec[l.from_prosumer]),
+        q_to_MVar = _prosumer_q_result(net.prosumpsVec[l.to_prosumer]),
+        p_rating_MW = missing,
+        status = l.status,
+        ctrl_status = "-",
+      ))
+    else
+      sp = _hvdc_pair_setpoints(ctrl)
+      push!(rows, (
+        nr = nr,
+        name = l.name,
+        from_bus_name = from_name,
+        to_bus_name = to_name,
+        mode = ctrl.mode,
+        p_from_MW = sp.transfer,
+        p_to_MW = sp.to_p,
+        loss_MW = sp.loss,
+        q_from_MVar = ctrl.from_q_now,
+        q_to_MVar = ctrl.to_q_now,
+        p_rating_MW = ctrl.p_rating_mw === nothing ? missing : ctrl.p_rating_mw,
+        status = l.status,
+        ctrl_status = string(ctrl.status),
+      ))
+    end
+  end
+  return rows
+end
+
+# generator-table terminal marker per prosumer index: "B2B from"/"B2B to"
+# for back-to-back links, "HVDC from"/"HVDC to" for point-to-point
+function _hvdc_terminal_labels(net::Net)::Dict{Int,String}
+  labels = Dict{Int,String}()
+  for l in net.hvdcLinks
+    prefix = l.kind == :p2p ? "HVDC" : "B2B"
+    labels[l.from_prosumer] = string(prefix, " from")
+    labels[l.to_prosumer] = string(prefix, " to")
+  end
+  return labels
+end
+
 function formatProsumerResults(net::Net)
   buf = IOBuffer()
 
   # Rebuild mapping: bus index -> bus name
   busNameByIdx = _bus_name_by_idx(net)
+  hvdc_labels = _hvdc_terminal_labels(net)
 
   # Collect indices per bus, separated into generators and loads
   gens_by_bus  = Dict{Int,Vector{Int}}()
@@ -1050,7 +1177,9 @@ function formatProsumerResults(net::Net)
       p = ps.pRes === nothing ? ps.pVal : ps.pRes
       q = ps.qRes === nothing ? ps.qVal : ps.qRes
 
-      status = status_from_Q(ps, q)
+      # HVDC terminals are converters, not machines: the marker replaces the
+      # Q-limit status text (P/Q columns stay untouched)
+      status = haskey(hvdc_labels, idx) ? hvdc_labels[idx] : status_from_Q(ps, q)
 
       @printf(buf, "%-8s %4d %12.3f %12.3f   %-14s\n", busName, k, p === nothing ? 0.0 : p, q === nothing ? 0.0 : q, status)
     end

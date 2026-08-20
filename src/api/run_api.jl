@@ -22,6 +22,7 @@ const _SPARLECTRA_API_SCHEMA_VERSION = "1.0"
 const WEBUI_PERFORMANCE_TIMING_VALUES = (:off, :compact, :full)
 const Q_LIMIT_LOG_ARTIFACT = "q_limit.log"
 const MATPOWER_DCLINE_ARTIFACT = "matpower_dcline.csv"
+const HVDC_LINKS_ARTIFACT = "hvdc_links.csv"
 
 
 mutable struct PowerFlowPhaseTimingRecorder
@@ -70,6 +71,16 @@ function _write_matpower_dcline_artifact(output_path::AbstractString, net::Net; 
   )
   _write_namedtuple_csv(joinpath(output_path, MATPOWER_DCLINE_ARTIFACT), rows, columns; format = format)
   return MATPOWER_DCLINE_ARTIFACT
+end
+
+# one row per HVDC link (r0.9.9): same shape as the HVDC Link Flows table
+# and ACPFlowReport.hvdc_links; nothing when the net carries no links
+function _write_hvdc_links_artifact(output_path::AbstractString, net::Net; format = "technical")::Union{Nothing,String}
+  rows = _hvdc_link_flow_rows(net)
+  isempty(rows) && return nothing
+  columns = (:nr, :name, :from_bus_name, :to_bus_name, :mode, :p_from_MW, :p_to_MW, :loss_MW, :q_from_MVar, :q_to_MVar, :p_rating_MW, :status, :ctrl_status)
+  _write_namedtuple_csv(joinpath(output_path, HVDC_LINKS_ARTIFACT), rows, columns; format = format)
+  return HVDC_LINKS_ARTIFACT
 end
 
 function _effective_config_with_runtime_case(effective_raw, case_path::AbstractString, config::SparlectraConfig; config_sources = nothing)
@@ -1138,6 +1149,13 @@ function _run_sparlectra_api(;
     open(logfile, "a") do io
       println(io, "MATPOWER active mpc.dcline rows imported through toggle_dcline-compatible PF injections.")
       println(io, "MATPOWER DC-line artifact: ", matpower_dcline_artifact)
+    end
+  end
+  hvdc_links_artifact = raw_result.net === nothing ? nothing : _write_hvdc_links_artifact(output_path, raw_result.net; format = "technical")
+  if hvdc_links_artifact !== nothing
+    operation_callback("hvdc_links_reported"; run_id = run_id, hvdc_link_count = length(raw_result.net.hvdcLinks), artifact = hvdc_links_artifact)
+    open(logfile, "a") do io
+      println(io, "HVDC link flows artifact: ", hvdc_links_artifact)
     end
   end
   csv_artifacts = String[]

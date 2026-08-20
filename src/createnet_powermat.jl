@@ -637,6 +637,9 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
           from_voltage_controlled = from_voltage_controlled,
           to_voltage_controlled = to_voltage_controlled,
         ))
+        # persistent link record for the result layer (r0.9.9); in
+        # paired_control mode addHvdcPairControl! below sets controller_name
+        push!(myNet.hvdcLinks, HvdcLink(string("DCLINE_", r), geNetBusIdx(net = myNet, busName = f_name), geNetBusIdx(net = myNet, busName = t_name), from_prosumer, to_prosumer, 1, :matpower, :p2p, nothing))
       end
       !isempty(myNet.matpowerDclineMetadata) && @info "MATPOWER active mpc.dcline rows imported using toggle_dcline-compatible PF injections" active_dcline_count = length(myNet.matpowerDclineMetadata)
       # :paired_control (#297 Draft B): the same injections become steerable.

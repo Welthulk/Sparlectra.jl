@@ -124,6 +124,11 @@ mutable struct Net
   # addExternalGrid!, read by runShortCircuit!(net). Carrying data here must
   # never change power-flow results by itself (participationFactor precedent).
   sc_sources::NativeShortCircuitData
+  # Persistent HVDC link records (r0.9.9): one entry per link regardless of
+  # source (MATPOWER dcline, CGMES DC-topology pair, API) or mode (Stage-0
+  # fixed injections or attached pair controller). Read by the result layer;
+  # live values always come from the prosumers/controller.
+  hvdcLinks::Vector{HvdcLink}
 
   #! format: off
   function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1, cooldown_iters::Int = 0, q_hyst_pu::Float64 = 0.0, flatstart::Bool = false, bus_shunt_model = :admittance)    
@@ -165,7 +170,8 @@ mutable struct Net
         NamedTuple[],
         AbstractOuterController[],                 # machineControls
         Dict{String,String}(),                     # cgmes_ids
-        NativeShortCircuitData())                  # sc_sources
+        NativeShortCircuitData(),                  # sc_sources
+        HvdcLink[])                                # hvdcLinks
   end
   #! format: on
   function Base.show(io::IO, net::Net)
