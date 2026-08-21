@@ -101,18 +101,56 @@ every `Z_ii` of a large network in one pass, without ever forming the
 dense inverse. A full-network fault-level study therefore scales like one
 factorization, not like `n` solves.
 
-Sparlectra implements both: per-bus faults use the column solve, and
-all-bus sweeps can opt into the Takahashi sparse inverse with
+**The equations.** Write the (scaled, permuted) factorization as
+$A = L\,D\,\tilde U$ with $L$ unit lower triangular, $D$ the pivot
+diagonal, and $\tilde U$ unit upper triangular, and let $Z = A^{-1}$.
+Multiplying $Z A = I$ and $A Z = I$ out and rearranging gives the two
+Erisman-Tinney identities
+
+```math
+Z = D^{-1}L^{-1} + (I - \tilde U)\,Z,
+\qquad
+Z = \tilde U^{-1}D^{-1} + Z\,(I - L).
+```
+
+Because $D^{-1}L^{-1}$ is lower triangular and $I - \tilde U$ is strictly
+upper triangular, the first identity expresses every diagonal and upper
+entry of $Z$ through entries of $Z$ with LARGER row index; the second does
+the same for the lower entries through larger column indices:
+
+```math
+Z_{jj} = \frac{1}{d_j} - \sum_{k > j} \tilde U_{jk} Z_{kj},
+\qquad
+Z_{ij} = -\sum_{k > i} \tilde U_{ik} Z_{kj} \;\; (i < j),
+\qquad
+Z_{ij} = -\sum_{k > j} Z_{ik} L_{kj} \;\; (i > j).
+```
+
+Processing columns from $n$ down to $1$ therefore needs no entry that has
+not been computed yet. The key structural result is that, restricted to
+the sparsity pattern of $(L + U)^{\mathsf T}$ (the FILLED factors), these
+sums only ever reference entries inside that same pattern - the recurrence
+is self-contained, and the whole selected inverse costs one backward pass
+over $\mathrm{nnz}(L) + \mathrm{nnz}(U)$ entries, comparable to the
+factorization itself. The diagonal of the original matrix stays inside
+that pattern as long as the row and column pivot orders coincide, which is
+what UMFPACK's symmetric strategy produces on the structurally symmetric
+$Y_{sc}$; the implementation checks exactly this and counts every
+out-of-pattern reference defensively.
+
+Sparlectra implements both approaches: per-bus faults use the column
+solve, and all-bus sweeps can opt into the Takahashi sparse inverse with
 `runShortCircuit!(net; sweep_method = :takahashi)`. One selected-inverse
 pass per island then replaces the per-bus solves (measured 34x to 264x
 over the serial sweep between 2000 and 16000 buses, growing with size).
 The results agree with the default `sweep_method = :solves` to machine
 precision (about `1e-15` relative) but not bitwise, which is why the
 solve-based sweep remains the default; islands where the method does not
-apply (an unsymmetric UMFPACK pivot ordering) fall back to column solves
-automatically. Threaded sweeps (`runtime.parallel.*`) and the Takahashi
-pass compose: the selected inverse removes the per-bus solve cost, the
-threads cover whatever solves remain.
+apply (an unsymmetric UMFPACK pivot ordering, a pattern-closure
+violation) fall back to column solves automatically. Threaded sweeps
+(`runtime.parallel.*`) and the Takahashi pass compose: the selected
+inverse removes the per-bus solve cost, the threads cover whatever solves
+remain.
 
 ## How Sparlectra does it
 

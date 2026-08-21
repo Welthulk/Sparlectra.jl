@@ -1,77 +1,65 @@
-# Version 0.9.10 - unreleased
+# Version 0.9.10 - 2026-08-21
 
-Per-terminal branch status: one-sided open branches.
+Multi-core execution, N-1 contingency analysis, and one-sided open branches.
 
-- Branches carry `from_status`/`to_status` next to the aggregate `status`:
-  a branch open at exactly one terminal stays in the model as its exact pi
-  reduction (Schur complement stamped at the closed bus), draws its full
-  charging, and reports the open-end voltage (Ferranti rise) as a result.
-- CGMES `Terminal.connected` now maps to the terminal flags on import
-  (replacing the half-charging substitute shunt, which undercounted the
-  charging of a one-sided open line by about a factor of two; one-sided
-  open transformers are no longer dropped) and is written back per
-  terminal on export.
-- MATPOWER export represents a partially open branch as closed plus the
-  exact `Y_in` bus shunt with an `open_terminal=` comment marker (the
-  format has no partial state; a roundtrip loses the flags, voltages are
-  preserved).
-- New notebooks: distributed slack (how the participation weights are
-  determined and normalized, including the fallback) and transformer taps
-  (OLTC vs PST device math, the phase-tap control loop with the X(alpha)
-  characteristic, and the 3WT star equivalent); every workshop notebook
-  now opens with a topic warmup cell, and the tour gained sections on bus
-  links (impedance-less ring, minimum-norm flows) and one-sided open
-  branches.
-- Removed the `klu` linear-solver backend (and the KLU.jl dependency):
-  measured slower than UMFPACK on power-flow Jacobians, and a shared KLU
-  factorization is unsafe under threads. `power_flow.linear_solver`
-  accepts `umfpack` and `umfpack_reuse`; a configured `klu` now fails
-  validation with an actionable message. Migration: replace
-  `linear_solver: klu` with `linear_solver: umfpack_reuse` in YAML files
-  and case sidecars (same analyze-once/refactor-per-iteration behavior on
-  the UMFPACK kernel).
-- Thread-safety foundation for multi-core execution: the solver status
-  registries moved onto the `Net` (the former global weak-ref tables raced
-  under concurrent solves), per-worker performance-profile helpers keep
-  parallel timings collision-free, and the new `runtime.parallel.*` keys
-  (`enabled`, default true) prepare island/sweep parallelism.
-- Parallel island solving: `power_flow.islands.mode: solve_parallel` runs
-  the detected AC islands concurrently on Julia threads (start with
-  `julia --threads=auto`). Results are bitwise identical to
-  `solve_independent`; the fan-out wall clock appears as
-  `parallel_wall_time` in the performance profile. Demo:
-  `examples/powerflow/exp_parallel_islands.jl`. See
-  [Power-Flow Configuration](powerflow_configuration.md). Two subtle
-  serial-path changes from the shared solve refactor: a failing island now
-  raises its error from the result handler (same error, the backtrace no
-  longer points into the original catch), and an island that fails the
-  nonfinite-voltage validation no longer adds its iterations to the
-  aggregate count (that count is only reported on all-converged runs).
-- Parallel short-circuit sweeps: `runShortCircuit!` fans an all-bus sweep
-  out over Julia threads (one factorization copy and reusable buffers per
-  task chunk, gated by `runtime.parallel.*`), with row-identical results
-  to the serial sweep. Measured 4.8x on an 8000-bus sweep with 16 threads.
-  Demo: `examples/others/exp_parallel_sc_sweep.jl`.
-- **Takahashi sparse inverse for all-bus sweeps.** Opt-in
-  `runShortCircuit!(net; sweep_method = :takahashi)`: all Thevenin
-  impedances of an island from ONE selected-inverse pass over the LU
-  factors instead of one triangular solve per bus (Takahashi/Erisman-
-  Tinney; measured 34x to 264x over the serial sweep, growing with island
-  size). Agrees with the default `:solves` to machine precision, not
-  bitwise; inapplicable islands fall back automatically. See the
+## Highlights
+
+- **Multi-core execution.** Independent work now runs on Julia threads
+  (start with `julia --threads=auto`): AC islands
+  (`power_flow.islands.mode: solve_parallel`), all-bus short-circuit
+  sweeps, and contingency batches, gated by the new `runtime.parallel.*`
+  keys (`enabled`, default true). Results stay identical to the serial
+  runs, island for island and row for row. Measured on 16 cores: 4.8x on
+  an 8000-bus fault sweep, 4.1x on a full N-1 over case1354pegase. The
+  demos live in `examples/run_parallel_suite.jl`.
+- **N-1 contingency analysis.** New `runContingencies!` batch API:
+  branch-outage cases from `generateN1Branches` or imported FOR001 lists,
+  solved warm-started on copies of the base case (never mutating it) and
+  checked against the voltage band and `sn_MVA` loadings. Islanding and
+  non-convergence are reported per case instead of thrown, parallel
+  circuits get their own cases, and results print as a table or CSV. The
+  solves run without the rescue ladder; `retry_flat_start = true` grants
+  one flat retry per failed case. See
+  [N-1 Contingency Analysis](contingency.md).
+- **One-sided open branches.** Branches carry `from_status`/`to_status`
+  next to the aggregate `status`: open at exactly one terminal, a branch
+  stays in the model as its exact pi reduction, draws its full charging,
+  and reports the open-end voltage (Ferranti rise) as a branch result.
+  CGMES `Terminal.connected` maps to the flags on import and export
+  (replacing the half-charging substitute shunt); MATPOWER export
+  represents the state as the exact `Y_in` bus shunt with an
+  `open_terminal=` marker.
+
+## Performance
+
+- **Takahashi sparse inverse** for all-bus fault sweeps, opt-in via
+  `runShortCircuit!(net; sweep_method = :takahashi)`: the whole Thevenin
+  diagonal of an island from one pass over the LU factors instead of one
+  solve per bus, measured 34x to 264x over the serial sweep. Values agree
+  with the default to machine precision; inapplicable islands fall back
+  automatically. Theory in the
   [Short-Circuit Compendium](short_circuit.md).
-- **N-1 contingency batches.** New `runContingencies!` API: branch-outage
-  cases (`generateN1Branches`, FOR001 import) solved warm-started on
-  template copies of the base case, evaluated against the voltage band and
-  `sn_MVA` loadings, with islanding and non-convergence reported per case
-  instead of thrown, and table/CSV output. The batch fans out over Julia
-  threads: full N-1 on case1354pegase (1991 cases) measured 71.7 s serial
-  vs 17.6 s on 16 threads. Parallel circuits sharing one component name
-  get disambiguated cases (`name#branchIdx`), so each circuit's outage is
-  evaluated (a bare name would silently test the first circuit twice).
-  Contingency solves are plain `runpf!` runs without the `run_sparlectra`
-  rescue ladder; `retry_flat_start = true` grants one bounded flat-start
-  retry per failed case. See [N-1 Contingency Analysis](contingency.md).
+- The solver status moved from global registries onto the `Net`, and
+  per-island performance entries no longer overwrite each other. Two
+  subtle serial-path details changed with the shared island solve: a
+  failing island raises its error from the result handler (different
+  backtrace origin, same error), and a nonfinite-voltage failure no
+  longer counts its iterations into the aggregate.
+
+## Notebooks
+
+- New: distributed slack (where the participation weights come from and
+  what happens without a valid participant) and transformer taps (OLTC vs
+  PST device math, the phase-tap control loop, the 3WT star equivalent).
+  Every notebook now opens with a topic warmup cell; the tour gained
+  chapters on bus links, one-sided open branches, and parallel sweeps.
+
+## Removed
+
+- The `klu` linear-solver backend and the KLU.jl dependency: measured
+  slower than UMFPACK on power-flow Jacobians, and a shared KLU
+  factorization is unsafe under threads. Migration: replace
+  `linear_solver: klu` with `linear_solver: umfpack_reuse`.
 
 # Version 0.9.9 - 2026-08-22
 
