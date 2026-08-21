@@ -34,7 +34,11 @@ sparlectra_version = project_toml["version"]
 DocMeta.setdocmeta!(Sparlectra, :DocTestSetup, :(using Sparlectra); recursive = true, warn = false)
 
 makedocs(
-  sitename = "Sparlectra.jl v$(sparlectra_version)",
+  # Discoverability: the sitename doubles as the <title> suffix on every
+  # page. The longer "Julia AC Power Flow and State Estimation" variant
+  # exceeded 70 characters together with subpage-name prefixes, so the
+  # short disambiguation form is used (task 2.1 fallback).
+  sitename = "Sparlectra.jl v$(sparlectra_version), Julia power flow",
   repo = "https://github.com/Welthulk/Sparlectra.jl/blob/{commit}{path}#L{line}",
   modules = [Sparlectra],
   clean = true,
@@ -42,6 +46,12 @@ makedocs(
   checkdocs = :none,
   format = Documenter.HTML(
     assets = ["assets/tablestyle.css"],
+    # Site-wide meta description (also emitted as og:description and
+    # twitter:description by Documenter). 153 characters: the 160-char
+    # budget forced dropping the vessel-disambiguation sentence AND the
+    # word "open-source" (task 2.2). Documenter also emits og:image tags
+    # automatically from assets/preview.png plus the canonical URL.
+    description = "Sparlectra.jl: Julia package for AC power flow (Newton-Raphson), DC power flow, WLS state estimation, IEC 60909 short circuit, CGMES and MATPOWER import.",
     prettyurls = get(ENV, "CI", "false") == "true",
     collapselevel = 1,
     canonical = "https://welthulk.github.io/Sparlectra.jl",
@@ -117,3 +127,61 @@ makedocs(
     ],
   ],
 )
+
+const SITE_CANONICAL = "https://welthulk.github.io/Sparlectra.jl"
+
+"""
+    write_sitemap(build_dir, canonical)
+
+Post-build sitemap generator (discoverability task 1.3): walk the built
+site, collect every rendered page (`index.html` per directory in
+prettyurls mode, every non-asset `*.html` otherwise), and write
+`sitemap.xml` at the build root with `<loc>` entries under the canonical
+URL and `<lastmod>` set to the build date. `search/` and `assets/` never
+carry content pages and are skipped; `generated/` pages are part of the
+nav and are included. No package dependency: the file is plain string
+assembly, well-formedness is asserted by the acceptance check.
+"""
+function write_sitemap(build_dir::AbstractString, canonical::AbstractString)
+  base = rstrip(canonical, '/')
+  lastmod = Libc.strftime("%Y-%m-%d", time())
+  locs = String[]
+  for (root, _dirs, files) in walkdir(build_dir)
+    rel = relpath(root, build_dir)
+    parts = rel == "." ? String[] : splitpath(rel)
+    if !isempty(parts) && first(parts) in ("assets", "search")
+      continue
+    end
+    for file in files
+      endswith(file, ".html") || continue
+      if file == "index.html"
+        push!(locs, rel == "." ? "$(base)/" : "$(base)/" * join(parts, "/") * "/")
+      else
+        push!(locs, "$(base)/" * (rel == "." ? file : join(parts, "/") * "/" * file))
+      end
+    end
+  end
+  sort!(unique!(locs))
+  open(joinpath(build_dir, "sitemap.xml"), "w") do io
+    println(io, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
+    println(io, "<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">")
+    for loc in locs
+      println(io, "  <url><loc>", loc, "</loc><lastmod>", lastmod, "</lastmod></url>")
+    end
+    println(io, "</urlset>")
+  end
+  return joinpath(build_dir, "sitemap.xml")
+end
+
+# Root placement (task 1.4): Documenter copies docs/src/assets/* to
+# build/assets/; robots.txt and llms.txt must live at the SITE ROOT to be
+# honored by crawlers. sitemap.xml is generated directly at the root.
+let build_dir = joinpath(@__DIR__, "build")
+  for rootfile in ("robots.txt", "llms.txt")
+    src = joinpath(build_dir, "assets", rootfile)
+    isfile(src) || error("expected $(src) from docs/src/assets/ in the build")
+    mv(src, joinpath(build_dir, rootfile); force = true)
+  end
+  sitemap = write_sitemap(build_dir, SITE_CANONICAL)
+  @info "discoverability artifacts in place" robots = joinpath(build_dir, "robots.txt") llms = joinpath(build_dir, "llms.txt") sitemap
+end

@@ -1,5 +1,7 @@
 # Sparlectra.jl
 
+Julia package for AC power flow, DC power flow, state estimation and IEC 60909 short circuit
+
 [![Documentation](https://github.com/Welthulk/Sparlectra.jl/actions/workflows/jekyll-gh-pages.yml/badge.svg)](https://welthulk.github.io/Sparlectra.jl/)
 [![Version](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2FWelthulk%2FSparlectra.jl%2Fmain%2FProject.toml&query=%24.version&label=version&prefix=v&color=blue)](https://github.com/Welthulk/Sparlectra.jl/blob/main/Project.toml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
@@ -67,6 +69,11 @@ The notebooks are generated from the Literate.jl sources in [docs/lit/](docs/lit
 - External-solver integration via the `PFModel` / `PFSolution` interface, including an optional analytic power-series solver (APSLF, via AnalyticLoadFlow.jl) usable standalone, as the primary solver, or as a Newton-Raphson start-value generator.
 - Nonlinear weighted-least-squares state estimation.
 - Machine-readable reporting (`ACPFlowReport`) and an optional local Web UI.
+
+## Scope
+
+- In scope: steady-state grid analysis: AC and DC power flow, WLS state estimation, IEC 60909 short-circuit currents, N-1 contingency batches, CGMES/MATPOWER/DTF exchange.
+- Out of scope: dynamic simulation (RMS/EMT), optimal power flow, protection coordination beyond IEC 60909 currents.
 
 ---
 
