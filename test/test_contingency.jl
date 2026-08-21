@@ -175,3 +175,29 @@ function run_contingency_tests()
     end
   end
 end
+
+# Extended profile: a small N-1 identity slice on the real case1354pegase
+# (needs the Web UI case cache; states RAN or SKIPPED). Serial vs parallel
+# field equality on a branch subset with max_tasks = 1 and auto, plus the
+# retry_flat_start smoke (must not change converged cases).
+function run_contingency_extended_tests()
+  @testset "N-1 identity on case1354pegase (extended)" begin
+    case_path = joinpath(homedir(), ".local", "state", "sparlectra", "webui", "data", "mpower", "case1354pegase.m")
+    if !isfile(case_path)
+      println("contingency extended case1354: SKIPPED (case not cached under the Web UI data directory)")
+      @test true
+      return
+    end
+    net = createNetFromMatPowerFile(filename = case_path, matpower_shift_unit = :rad, matpower_shift_sign = -1.0)
+    cases = generateN1Branches(net)[1:60]
+    serial = runContingencies!(net, cases; parallel_enabled = false)
+    @test length(serial) == 60
+    for max_tasks in (1, Threads.nthreads())
+      par = runContingencies!(net, cases; parallel_enabled = true, parallel_max_tasks = max_tasks, parallel_min_work_items = 2)
+      @test all(_contingency_results_equal(serial[i], par[i]) for i in eachindex(serial))
+    end
+    retried = runContingencies!(net, cases; parallel_enabled = true, parallel_min_work_items = 2, retry_flat_start = true)
+    @test all(!serial[i].converged || _contingency_results_equal(serial[i], retried[i]) for i in eachindex(serial))
+    println("contingency extended case1354: RAN (", count(r -> r.converged, serial), "/60 converged, threads = ", Threads.nthreads(), ")")
+  end
+end

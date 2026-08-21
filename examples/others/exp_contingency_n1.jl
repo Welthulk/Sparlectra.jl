@@ -45,8 +45,9 @@ function main()
   println("Julia threads : ", Threads.nthreads(), Threads.nthreads() == 1 ? "  <- start with julia --threads=auto to see the parallel effect" : "")
   println("case          : case1354pegase, ", length(net.nodeVec), " buses, ", length(net.branchVec), " branches -> ", length(cases), " contingencies")
 
+  deepcopy(net)   # first call compiles deepcopy for the Net type tree (~0.5 s once per process)
   t_copy = @elapsed deepcopy(net)
-  println("deepcopy(net) : ", round(t_copy * 1000; digits = 1), " ms per contingency worker (structural-sharing copy is the known follow-up)")
+  println("deepcopy(net) : ", round(t_copy * 1000; digits = 1), " ms per contingency worker (warm; about a quarter of one case's cost)")
   println()
 
   # warm start evidence for the analysis report: the template is the solved

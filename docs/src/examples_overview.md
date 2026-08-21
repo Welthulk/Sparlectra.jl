@@ -12,7 +12,8 @@ julia --project=. examples/<folder>/<example>.jl
 or run a whole topic through its suite runner (fresh subprocess per example,
 summary at the end): `run_powerflow_suite.jl`, `run_others_suite.jl`,
 `run_state_estimation_suite.jl`, `run_val_dtf_suite.jl`,
-`run_cgmes_suite.jl`, `run_short_circuit_suite.jl`.
+`run_cgmes_suite.jl`, `run_short_circuit_suite.jl`,
+`run_parallel_suite.jl` (parallel-vs-serial demos with identity checks).
 
 ## Power flow and network operation
 
@@ -28,6 +29,9 @@ summary at the end): `run_powerflow_suite.jl`, `run_others_suite.jl`,
 | `exp_condition_number.jl` | Jacobian condition-number estimate at the solved operating point (`condestJacobian`, `reportCondition`), incl. a stressed near-singular variant | powerflow |
 | `exp_hvdc_b2b_pairing.jl` | Back-to-back HVDC pairing controller: Stage-0 snapshot vs steerable transfer on a two-island net (#297 Draft B) | others |
 | `exp_hvdc_meshed_ac_tie.jl` | HVDC pair in parallel to an AC tie: one reference per synchronous island, setpoint pair as parallel PQ path, `island_feed` rejected ([theory](hvdc_back_to_back.md)) | others |
+| `exp_parallel_islands.jl` | `islands.mode solve_parallel` vs `solve_independent` on an 8-island net, wall clocks side by side, bitwise-identical voltages | parallel |
+| `exp_parallel_sc_sweep.jl` | IEC 60909-0 all-bus sweep serial vs threaded chunks (8000 fault locations), row-identical results | parallel |
+| `exp_contingency_n1.jl` | Full branch N-1 on case1354pegase (`runContingencies!`): serial vs parallel, warm-start evidence, top-10 worst contingencies ([theory](contingency.md)) | parallel |
 | `exp_open_terminal_line.jl` | One-sided open line: full charging draw at the closed bus and the Ferranti rise at the open end ([theory](branchmodel.md)) | others |
 | `exp_current_iteration_start.jl` | Guarded current-iteration start pre-solve via config overrides | powerflow |
 | `exp_diagnose_self_check.jl` | `run_fixed_reference_self_check` and the narrative `diagnose.log` report | others |

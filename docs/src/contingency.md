@@ -36,6 +36,12 @@ showcase is `examples/others/exp_contingency_n1.jl` (case1354pegase, all
   case itself does not converge, the batch falls back to flat starts and
   prints one warning (on large imported cases a flat start frequently
   diverges, so treat that warning as "fix the base case first").
+- Plain solves: contingency solves run `runpf!` directly, WITHOUT the
+  `run_sparlectra` rescue ladder (alternate start, settled Q-limits, DC
+  seed). A case that would need the ladder reports `converged = false`.
+  `retry_flat_start = true` grants one bounded flat-start retry per failed
+  case (off by default; measured on case1354pegase it rescues none of the
+  failures, since flat starts diverge there, but on small nets it can help).
 - Failures are REPORTED, never thrown: a case that does not converge, that
   splits off an island without any reference or promotable generator
   (`error = "islanded without reference"`), or whose element cannot be

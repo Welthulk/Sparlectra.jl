@@ -180,7 +180,7 @@ end
 # one worker evaluation: template copy -> outage -> solve -> metrics.
 # Pure per-case function: touches no shared container, all mutation happens
 # on the case-local deepcopy.
-function _run_one_contingency(template::Net, case::ContingencyCase, vm_min_pu::Float64, vm_max_pu::Float64, maxIte::Int, tol::Float64, pf_kwargs)
+function _run_one_contingency(template::Net, case::ContingencyCase, vm_min_pu::Float64, vm_max_pu::Float64, maxIte::Int, tol::Float64, retry_flat_start::Bool, pf_kwargs)
   cnet = deepcopy(template)
   idx = _resolve_contingency_branch(cnet, case.element)
   if idx === nothing
@@ -192,6 +192,18 @@ function _run_one_contingency(template::Net, case::ContingencyCase, vm_min_pu::F
   it = 0
   try
     it, erg = runpf!(cnet, maxIte, tol, 0; islands_enabled = true, pf_kwargs...)
+    if erg != 0 && retry_flat_start
+      # optional single retry from a flat start (follow-up item 2): plain
+      # contingency solves run WITHOUT the run_sparlectra rescue ladder, so
+      # this is the one bounded second chance a case gets
+      cnet = deepcopy(template)
+      cnet.flatstart = true
+      removeBranch!(net = cnet, branchNr = idx)
+      markIsolatedBuses!(net = cnet, log = false)
+      it2, erg2 = runpf!(cnet, maxIte, tol, 0; islands_enabled = true, pf_kwargs...)
+      it += it2
+      erg = erg2
+    end
     if erg != 0
       return ContingencyResult(case.name, false, it, NaN, NaN, NaN, String[], String[], island_count, "power flow did not converge (status $(erg))")
     end
@@ -230,6 +242,13 @@ islanding without reference, unknown element) are REPORTED in the result,
 never thrown.
 
 Remaining `kwargs...` are forwarded to the contingency `runpf!` solves.
+Note that these are PLAIN solves: the `run_sparlectra` rescue ladder
+(alternate start, settled Q-limits, DC seed) is NOT in the loop, so a case
+that would need it reports `converged = false`. With
+`retry_flat_start = true` a non-converged case gets exactly one bounded
+second attempt from a flat start (off by default; on large imported cases
+flat starts often diverge, so treat it as a cheap probe, not a rescue).
+
 The batch fans out over Julia threads in `runtime.parallel.max_tasks`
 chunks (gated by `runtime.parallel.*`; the three `parallel_*` keywords
 override the active configuration). Parallel and serial runs produce
@@ -242,6 +261,7 @@ function runContingencies!(
   vm_max_pu::Float64 = 1.1,
   maxIte::Int = 30,
   tol::Float64 = 1e-8,
+  retry_flat_start::Bool = false,
   parallel_enabled::Union{Nothing,Bool} = nothing,
   parallel_max_tasks::Union{Nothing,Int} = nothing,
   parallel_min_work_items::Union{Nothing,Int} = nothing,
@@ -265,6 +285,15 @@ function runContingencies!(
     template = deepcopy(net)
     template.flatstart = true
   end
+  # template hygiene (follow-up item 1): the workers need the solved
+  # VOLTAGES, not the base solver status or its Q-limit event logs. Clearing
+  # them keeps every per-case deepcopy lean (and avoids the one-time
+  # deepcopy compile of the status closure types on the first worker).
+  template._rectangular_pf_status = nothing
+  template._dc_pf_status = nothing
+  empty!(template.qLimitLog)
+  empty!(template.qLimitEvents)
+  empty!(template.qLimitInitialPVRows)
 
   pf_kwargs = kwargs
   results = Vector{Any}(undef, length(cases))
@@ -276,14 +305,14 @@ function runContingencies!(
     tasks = [
       Threads.@spawn begin
         for idx in chunks[ci]
-          results[idx] = _run_one_contingency(template, cases[idx], vm_min_pu, vm_max_pu, maxIte, tol, pf_kwargs)
+          results[idx] = _run_one_contingency(template, cases[idx], vm_min_pu, vm_max_pu, maxIte, tol, retry_flat_start, pf_kwargs)
         end
       end for ci in eachindex(chunks)
     ]
     foreach(wait, tasks)
   else
     for idx in eachindex(cases)
-      results[idx] = _run_one_contingency(template, cases[idx], vm_min_pu, vm_max_pu, maxIte, tol, pf_kwargs)
+      results[idx] = _run_one_contingency(template, cases[idx], vm_min_pu, vm_max_pu, maxIte, tol, retry_flat_start, pf_kwargs)
     end
   end
   return ContingencyResult[results[i] for i in eachindex(cases)]

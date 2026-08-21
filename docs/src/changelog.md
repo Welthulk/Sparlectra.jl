@@ -41,7 +41,12 @@ Per-terminal branch status: one-sided open branches.
   `solve_independent`; the fan-out wall clock appears as
   `parallel_wall_time` in the performance profile. Demo:
   `examples/powerflow/exp_parallel_islands.jl`. See
-  [Power-Flow Configuration](powerflow_configuration.md).
+  [Power-Flow Configuration](powerflow_configuration.md). Two subtle
+  serial-path changes from the shared solve refactor: a failing island now
+  raises its error from the result handler (same error, the backtrace no
+  longer points into the original catch), and an island that fails the
+  nonfinite-voltage validation no longer adds its iterations to the
+  aggregate count (that count is only reported on all-converged runs).
 - Parallel short-circuit sweeps: `runShortCircuit!` fans an all-bus sweep
   out over Julia threads (one factorization copy and reusable buffers per
   task chunk, gated by `runtime.parallel.*`), with row-identical results
@@ -53,7 +58,12 @@ Per-terminal branch status: one-sided open branches.
   `sn_MVA` loadings, with islanding and non-convergence reported per case
   instead of thrown, and table/CSV output. The batch fans out over Julia
   threads: full N-1 on case1354pegase (1991 cases) measured 71.7 s serial
-  vs 17.6 s on 16 threads. See [N-1 Contingency Analysis](contingency.md).
+  vs 17.6 s on 16 threads. Parallel circuits sharing one component name
+  get disambiguated cases (`name#branchIdx`), so each circuit's outage is
+  evaluated (a bare name would silently test the first circuit twice).
+  Contingency solves are plain `runpf!` runs without the `run_sparlectra`
+  rescue ladder; `retry_flat_start = true` grants one bounded flat-start
+  retry per failed case. See [N-1 Contingency Analysis](contingency.md).
 
 # Version 0.9.9 - 2026-08-22
 
