@@ -1,3 +1,14 @@
+# Version 0.9.11 - unreleased
+
+Search-engine and AI-agent discoverability.
+
+- The docs site now ships `robots.txt`, a generated `sitemap.xml`, and an
+  `llms.txt` summary at the site root, plus a meta description, Open Graph
+  and Twitter preview tags, and a disambiguated page title ("Sparlectra.jl
+  v<version>, Julia power flow"). The README carries a subtitle line and a
+  short Scope section; `tools/REPO_METADATA.md` lists the recommended
+  GitHub description, topics, and the one-time search-console submissions.
+
 # Version 0.9.10 - 2026-08-21
 
 Multi-core execution, N-1 contingency analysis, and one-sided open branches.
