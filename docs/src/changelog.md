@@ -52,6 +52,14 @@ Per-terminal branch status: one-sided open branches.
   task chunk, gated by `runtime.parallel.*`), with row-identical results
   to the serial sweep. Measured 4.8x on an 8000-bus sweep with 16 threads.
   Demo: `examples/others/exp_parallel_sc_sweep.jl`.
+- **Takahashi sparse inverse for all-bus sweeps.** Opt-in
+  `runShortCircuit!(net; sweep_method = :takahashi)`: all Thevenin
+  impedances of an island from ONE selected-inverse pass over the LU
+  factors instead of one triangular solve per bus (Takahashi/Erisman-
+  Tinney; measured 34x to 264x over the serial sweep, growing with island
+  size). Agrees with the default `:solves` to machine precision, not
+  bitwise; inapplicable islands fall back automatically. See the
+  [Short-Circuit Compendium](short_circuit.md).
 - **N-1 contingency batches.** New `runContingencies!` API: branch-outage
   cases (`generateN1Branches`, FOR001 import) solved warm-started on
   template copies of the base case, evaluated against the voltage band and

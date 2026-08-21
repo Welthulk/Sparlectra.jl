@@ -101,9 +101,18 @@ every `Z_ii` of a large network in one pass, without ever forming the
 dense inverse. A full-network fault-level study therefore scales like one
 factorization, not like `n` solves.
 
-Sparlectra's approach follows this pattern: per-bus faults via the column
-solve; the Takahashi sparse inverse is the designated optimization for
-all-bus fault-level sweeps on large networks.
+Sparlectra implements both: per-bus faults use the column solve, and
+all-bus sweeps can opt into the Takahashi sparse inverse with
+`runShortCircuit!(net; sweep_method = :takahashi)`. One selected-inverse
+pass per island then replaces the per-bus solves (measured 34x to 264x
+over the serial sweep between 2000 and 16000 buses, growing with size).
+The results agree with the default `sweep_method = :solves` to machine
+precision (about `1e-15` relative) but not bitwise, which is why the
+solve-based sweep remains the default; islands where the method does not
+apply (an unsymmetric UMFPACK pivot ordering) fall back to column solves
+automatically. Threaded sweeps (`runtime.parallel.*`) and the Takahashi
+pass compose: the selected inverse removes the per-bus solve cost, the
+threads cover whatever solves remain.
 
 ## How Sparlectra does it
 

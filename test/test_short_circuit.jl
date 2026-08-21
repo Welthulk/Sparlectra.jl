@@ -312,6 +312,32 @@ function run_short_circuit_tests()
         println("sc parallel sweep: fallback-only run (single-threaded test process); the threaded path runs in the --threads=4 battery")
       end
 
+      # sweep_method = :takahashi: one selected-inverse pass per island;
+      # must agree with :solves to machine precision (documented: not
+      # bitwise) with identical statuses/flags, serial and parallel alike
+      @test_throws ArgumentError runShortCircuit!(net; sweep_method = :bogus)
+      solves_ref = runShortCircuit!(net; case = :max, parallel_enabled = false)
+      for parallel in (false, true)
+        tak = runShortCircuit!(net; case = :max, sweep_method = :takahashi, parallel_enabled = parallel, parallel_min_work_items = 2)
+        @test length(tak.rows) == length(solves_ref.rows)
+        for i in eachindex(solves_ref.rows)
+          a, b = solves_ref.rows[i], tak.rows[i]
+          @test a.status === b.status
+          @test a.contains_defaulted_data == b.contains_defaulted_data
+          if a.status === :ok
+            @test isapprox(a.ik_kA, b.ik_kA; rtol = 1e-10)
+            @test isapprox(a.zk_ohm, b.zk_ohm; rtol = 1e-10)
+            @test isapprox(a.sk_MVA, b.sk_MVA; rtol = 1e-10)
+          else
+            @test isequal(a.ik_kA, b.ik_kA)
+          end
+        end
+      end
+      # the takahashi sweep is deterministic: repeated runs are bitwise equal
+      tak1 = runShortCircuit!(net; case = :max, sweep_method = :takahashi, parallel_enabled = false)
+      tak2 = runShortCircuit!(net; case = :max, sweep_method = :takahashi, parallel_enabled = false)
+      @test isequal(tak1.rows, tak2.rows)
+
       # case14 with buses = :all through the MATPOWER import (bundled case)
       case14 = joinpath(Sparlectra.MPOWER_DIR, "case14.m")
       if isfile(case14)
