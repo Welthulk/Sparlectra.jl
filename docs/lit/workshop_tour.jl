@@ -40,6 +40,7 @@
 # 5. Remote voltage control by a machine
 # 6. A steerable HVDC link (back-to-back pairing, incl. meshed operation)
 # 7. State estimation
+# 8. Using your cores: parallel sweeps on Julia threads
 #
 # > **Note:** On Google Colab the install cell takes a few minutes on a
 # > fresh session (package download and precompilation). Colab's Julia
@@ -939,6 +940,54 @@ end
 # to a few 1e-3 pu, and $J$ lands near the degrees of freedom, the
 # textbook health check for a WLS estimator.
 #
+# ## Chapter 8: using your cores
+#
+# Independent work items — island solves, short-circuit fault sweeps, N-1
+# contingency batches — fan out over Julia THREADS since 0.9.10, gated by
+# `runtime.parallel.*` (default on). Threads are fixed at process start:
+# `julia --threads=auto` uses all cores, and without the flag everything
+# runs serially through the identical code path. First: how many do we
+# have right now?
+
+println("this session runs on ", Threads.nthreads(), " Julia thread(s)")
+
+# The mechanics on a fault sweep: eight feeder-fed rings, every bus a
+# fault location, once serial and once parallel. The results must be
+# IDENTICAL — parallelism only changes the wall clock, never a number:
+
+net_par = Net(name = "tour_parallel", baseMVA = 100.0)
+for k in 1:8
+  bus = i -> "P$(k)_B$(i)"
+  for i in 1:500
+    addBus!(net = net_par, busName = bus(i), vn_kV = 110.0)
+  end
+  addExternalGrid!(net = net_par, busName = bus(1), vm_pu = 1.0, sk_max_MVA = 2000.0 + 100.0 * k, sk_min_MVA = 1500.0, rx_max = 0.1, internal_impedance = false)
+  for i in 1:500
+    addPIModelACLine!(net = net_par, fromBus = bus(i), toBus = bus(i == 500 ? 1 : i + 1), r_pu = 0.001, x_pu = 0.004, b_pu = 0.0, status = 1)
+  end
+end
+validate!(net = net_par)
+
+runShortCircuit!(net_par; case = :max, parallel_enabled = false)      ## warm both paths
+runShortCircuit!(net_par; case = :max, parallel_min_work_items = 2)
+t_ser = @elapsed sc_ser = runShortCircuit!(net_par; case = :max, parallel_enabled = false)
+t_par = @elapsed sc_par = runShortCircuit!(net_par; case = :max, parallel_min_work_items = 2)
+println("fault sweep over ", length(sc_ser.rows), " buses: serial ", round(t_ser * 1000; digits = 1), " ms, parallel ", round(t_par * 1000; digits = 1), " ms (", round(t_ser / t_par; digits = 2), "x)")
+println("rows identical: ", isequal(sc_ser.rows, sc_par.rows))
+
+# Reading aid: on Colab's free tier you usually get 1-2 vCPUs, so the
+# factor here stays modest (with one thread the parallel call falls back
+# to the very same serial function). The real effect wants your local
+# machine: `julia --threads=auto --project=.
+# examples/run_parallel_suite.jl` runs the three dedicated demos — island
+# solving (`power_flow.islands.mode: solve_parallel`), this fault sweep at
+# 8000 buses, and a full N-1 contingency batch on case1354pegase (measured
+# 71.7 s serial vs 17.6 s on 16 threads) — each asserting serial/parallel
+# identity. The N-1 API itself is one call:
+# `runContingencies!(net, generateN1Branches(net))`, documented on the
+# [N-1 Contingency Analysis](https://welthulk.github.io/Sparlectra.jl/contingency/)
+# page.
+
 # ## Where to go next
 #
 # The focused notebooks with the full narrative:
