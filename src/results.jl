@@ -624,9 +624,13 @@ function formatBranchResults(net::Net; max_rows::Union{Nothing,Int} = nothing)
       end
     end
     status = isnothing(ctrl) ? "-" : ctrl_status(ctrl)
-    # partial state marker in the status column: open@to / open@from
+    # partial state marker in the status column: open@to / open@from, with
+    # the fictitious open-terminal voltage when the solve produced one
     if terminal_state == :open_to || terminal_state == :open_from
       marker = terminal_state == :open_to ? "open@to" : "open@from"
+      if br.open_end_vm_pu !== nothing
+        marker = string(marker, @sprintf(" %.4fpu", br.open_end_vm_pu))
+      end
       status = status == "-" ? marker : string(marker, ", ", status)
     end
 
@@ -871,6 +875,26 @@ function printACPFlowResults(
   # are counted separately from out-of-service ones; line only when present
   n_partial = count(br -> _branch_terminal_state(br) in (:open_from, :open_to), net.branchVec)
   n_partial > 0 && @printf(io, "Open terminals :%10d (branches open at one terminal)\n", n_partial)
+  # one status line per one-sided open branch: the fictitious open-terminal
+  # voltage (Ferranti rise) with its overhang relative to the feeding bus.
+  # Printed only when such branches exist, so fully closed nets keep the
+  # byte-stable summary.
+  for br in net.branchVec
+    st = _branch_terminal_state(br)
+    st in (:open_from, :open_to) || continue
+    br.open_end_vm_pu === nothing && continue
+    open_bus = st == :open_to ? Int(br.toBus) : Int(br.fromBus)
+    closed_bus = st == :open_to ? Int(br.fromBus) : Int(br.toBus)
+    open_name = get(busNameByIdx, open_bus, string(open_bus))
+    closed_name = get(busNameByIdx, closed_bus, string(closed_bus))
+    closed_vm = net.nodeVec[closed_bus]._vm_pu
+    if closed_vm !== nothing && isfinite(closed_vm) && closed_vm > 0.0
+      rise_pct = (br.open_end_vm_pu / closed_vm - 1.0) * 100.0
+      @printf(io, "  open end     : %s at %s: Vm %.4f pu, Va %.3f deg (%+.2f %% vs feeding bus %s at %.4f pu)\n", getCompName(br.comp), open_name, br.open_end_vm_pu, something(br.open_end_va_deg, NaN), rise_pct, closed_name, closed_vm)
+    else
+      @printf(io, "  open end     : %s at %s: Vm %.4f pu, Va %.3f deg\n", getCompName(br.comp), open_name, br.open_end_vm_pu, something(br.open_end_va_deg, NaN))
+    end
+  end
   @printf(io, "Links          :%10d\n", links)
   # always printed, including 0: stable parser anchor (same rationale as
   # "Transformer controls: none")
@@ -935,6 +959,17 @@ function printACPFlowResults(
   )
   @printf(io, "==========================================================================================================================================================================================================================%s\n", ds_pad_eq)
 
+  # buses sitting at the OPEN terminal of a one-sided open branch get an
+  # "open-end" marker in the Control column; the fictitious terminal
+  # voltage itself is on the summary's open-end status lines (the bus
+  # voltage here is NOT that value: the branch is disconnected from it)
+  open_end_buses = Set{Int}()
+  for br in net.branchVec
+    st = _branch_terminal_state(br)
+    st == :open_to && push!(open_end_buses, Int(br.toBus))
+    st == :open_from && push!(open_end_buses, Int(br.fromBus))
+  end
+
   pGS = qGS = pLS = qLS = ""
   tpGS = tqGS = tpLS = tqLS = 0.0
   pShunt_str = qShunt_str = ""
@@ -985,6 +1020,9 @@ function printACPFlowResults(
     nodeName = get(busNameByIdx, n.busIdx, n.comp.cName)
     typeStr = _bus_type_label(n._nodeType, nodeName)
     controlStr = _cached_control_label(control_labels, n.busIdx)
+    if n.busIdx in open_end_buses
+      controlStr = (isempty(controlStr) || controlStr == "-") ? "open-end" : string(controlStr, ",open-end")
+    end
 
     # Mark PV→PQ buses (hit Q-limit) with a star in the Type column
     if haskey(net.qLimitEvents, n.busIdx)

@@ -21,16 +21,18 @@
 #          system with fixed slack, branch MW flow computation, and slack
 #          injection recovery from the solved flows
 
-_dc_bus_injection_pu(node::Node, baseMVA::Float64)::Float64 = (_bus_power_value(node._pƩGen) - _bus_power_value(node._pƩLoad)) / baseMVA
-
 """
     solve_dc_powerflow(net::Net, slack_idx::Int; angle_reference_rad=0.0, performance_profile=nothing)
         -> (theta::Vector{Float64}, Pf::Vector{Float64}, Pt::Vector{Float64}, slack_p_mw::Float64, terms::Vector{_DcBranchTerm})
 
 Solve `Bbus * theta = Pbus - Pbusinj` for bus angles (radians), with the
-slack bus fixed. `Pbus[k] = (node._pƩGen - node._pƩLoad)/baseMVA` — MATPOWER's
-`Pbus`, built from specified generation/load, independent of any AC solve
-(shunts are deliberately excluded: the lossless DC model has no shunt term).
+slack bus fixed. `Pbus[k] = Re(S[k])` — MATPOWER's `Pbus`, built from the
+PROSUMER specification via `buildComplexSVec`, the same source the
+rectangular AC solver reads (issue #323: the node-level sums are a
+result/report layer — an AC solve writes solved values back into them and
+manual edits there never reached the AC solver, so reading them here made
+DC and AC disagree about what the network is). Shunts are deliberately
+excluded: the lossless DC model has no shunt term.
 
 The reduced linear system is built assuming a zero slack angle (matching
 MATPOWER's `dcpf.m` convention and reusing `reduce_susceptance_to_nonslack`
@@ -70,7 +72,11 @@ function solve_dc_powerflow(net::Net, slack_idx::Int; angle_reference_rad::Float
   if nred > 0
     pos = build_pos_map(non_slack, n)
     Bred = reduce_susceptance_to_nonslack(Bbus, non_slack, pos, slack_idx, nred; value_of = x -> -x)
-    Pbus = [_dc_bus_injection_pu(net.nodeVec[i], net.baseMVA) for i in non_slack]
+    # one specification source for every solver (#323): prosumer-built
+    # injections, identical to the AC solver's buildComplexSVec view; like
+    # the rectangular solver, isolated buses are forced to zero injection
+    S = buildComplexSVec(net)
+    Pbus = [isIsolated(net.nodeVec[i]) ? 0.0 : real(S[i]) for i in non_slack]
     P = Pbus .- Pbusinj[non_slack]
     θred = _solve_dc_angle_system(Bred, P, performance_profile, nred)
     @inbounds for (k, i) in enumerate(non_slack)

@@ -67,6 +67,13 @@ if [ "${SPARLECTRA_NO_SYSIMAGE:-0}" != "1" ]; then
   fi
 fi
 
+# Multi-core by default: the threaded surfaces (island solves, short-circuit
+# sweeps, N-1 batches) need Julia THREADS, which are fixed at process start.
+# "auto" uses all cores of this machine; an explicit user setting wins.
+if [ -z "${JULIA_NUM_THREADS:-}" ]; then
+  export JULIA_NUM_THREADS=auto
+fi
+
 if [ "$USE_SYSIMAGE" = "1" ]; then
   echo "Fast start: using sysimage $SYSIMAGE"
   exec julia "-J$SYSIMAGE" --project="$DIR" "$DIR/start_webui.jl"

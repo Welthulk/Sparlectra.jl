@@ -263,5 +263,42 @@ function run_dc_powerflow_tests()
       @test dc_pf_status(net).solver === :dc
       @test Sparlectra.rectangular_pf_status(net) === nothing
     end
+
+    @testset "One specification source for AC and DC (#323)" begin
+      # the DC injections come from the prosumers (buildComplexSVec), the
+      # same source the rectangular AC solver reads. Two directions:
+      # a node-sum edit moves NEITHER solver, a prosumer edit moves BOTH.
+      base = _dc3_net()
+      rep0 = rundcpf!(base)
+      @test rep0.metadata.converged
+      pf0 = [br.fBranchFlow.pFlow for br in base.branchVec]
+
+      # node-sum helper: report layer only, DC result identical
+      nsum = _dc3_net()
+      addBusLoadPower!(net = nsum, busName = "B3", p = 30.0, q = 5.0)
+      rep1 = rundcpf!(nsum)
+      @test rep1.metadata.converged
+      pf1 = [br.fBranchFlow.pFlow for br in nsum.branchVec]
+      @test pf1 == pf0
+
+      # prosumer edit: both solvers see the heavier load
+      pros = _dc3_net()
+      addProsumer!(net = pros, busName = "B3", type = "ENERGYCONSUMER", p = 30.0, q = 5.0)
+      refreshBusTypesFromProsumers!(pros)
+      rep2 = rundcpf!(pros)
+      @test rep2.metadata.converged
+      pf2 = [br.fBranchFlow.pFlow for br in pros.branchVec]
+      @test pf2 != pf0
+      # the DC spec equals the real part of the AC specification vector
+      S = Sparlectra.buildComplexSVec(pros)
+      p_b3 = real(S[geNetBusIdx(net = pros, busName = "B3")]) * pros.baseMVA
+      @test p_b3 ≈ -(45.0 + 30.0) atol = 1e-9
+      pros_ac = _dc3_net()
+      addProsumer!(net = pros_ac, busName = "B3", type = "ENERGYCONSUMER", p = 30.0, q = 5.0)
+      refreshBusTypesFromProsumers!(pros_ac)
+      _, erg_ac = runpf!(pros_ac, 25, 1e-8, 0)
+      @test erg_ac == 0
+      @test real(Sparlectra.buildComplexSVec(pros_ac)) == real(S)
+    end
   end
 end

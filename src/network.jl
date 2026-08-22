@@ -1473,14 +1473,13 @@ end
 Add active/reactive power to the NODE-level generation sum of a bus
 (`node._pƩGen`/`node._qƩGen`).
 
-!!! warning "Report layer only — the AC solver will not see this"
-    The rectangular AC power-flow solver builds its injections from the
-    PROSUMER objects (`buildComplexSVec` reads `net.prosumpsVec`), not from
-    the node sums, so this edit does NOT change an AC solve. The node sums
-    feed reporting, MATPOWER export, measurement generation, and the DC
-    power flow. To change what the AC solver computes, edit the prosumer
-    (e.g. `ps.pVal`/`ps.qVal`) or add one (`addProsumer!`). Tracked in
-    issue #323.
+!!! warning "Report layer only — no solver reads this"
+    Every solver builds its injections from the PROSUMER objects
+    (`buildComplexSVec` reads `net.prosumpsVec`; since 0.9.12 the DC solver
+    uses the same source, issue #323), so this edit does NOT change any
+    solve. The node sums feed reporting, MATPOWER export, and measurement
+    generation. To change what the solvers compute, edit the prosumer
+    (e.g. `ps.pVal`/`ps.qVal`) or add one (`addProsumer!`).
 
 # Arguments
 - `net::Net`: The network object.
@@ -1497,14 +1496,13 @@ end
 Add active/reactive power to the NODE-level load sum of a bus
 (`node._pƩLoad`/`node._qƩLoad`).
 
-!!! warning "Report layer only — the AC solver will not see this"
-    The rectangular AC power-flow solver builds its injections from the
-    PROSUMER objects (`buildComplexSVec` reads `net.prosumpsVec`), not from
-    the node sums, so this edit does NOT change an AC solve. The node sums
-    feed reporting, MATPOWER export, measurement generation, and the DC
-    power flow. To add load the AC solver sees, add a prosumer instead:
+!!! warning "Report layer only — no solver reads this"
+    Every solver builds its injections from the PROSUMER objects
+    (`buildComplexSVec` reads `net.prosumpsVec`; since 0.9.12 the DC solver
+    uses the same source, issue #323), so this edit does NOT change any
+    solve. The node sums feed reporting, MATPOWER export, and measurement
+    generation. To add load the solvers see, add a prosumer instead:
     `addProsumer!(net = net, busName = ..., type = "LOAD", p = ..., q = ...)`.
-    Tracked in issue #323.
 
 # Arguments
 - `net::Net`: The network object.

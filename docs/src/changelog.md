@@ -1,3 +1,42 @@
+# Version 0.9.12 - 2026-08-22
+
+The workshop splits in two, and every solver reads the same network.
+
+## Behavior change
+
+- **The DC power flow now reads the same specification as the AC solver**
+  (issue #323). Both solvers build their injections from the prosumer
+  objects; the node-level sums (`addBusLoadPower!`/`addBusGenPower!`) are
+  a report layer that NO solver reads anymore. Before, a node-sum edit
+  changed a DC solve but not an AC solve, so the two could silently
+  disagree about what the network is. Affected: only workflows that
+  edited node sums and then ran the DC solver; the fix is one line, add
+  the load as a prosumer. Imported cases fill both layers identically and
+  are not affected.
+
+## Highlights
+
+- **The workshop tour splits into basic and advanced.** The basic tour
+  carries Newcomer to Advanced (first network to Q(U) control); the new
+  [advanced tour](generated/workshop_tour_advanced.md) carries Expert and
+  Beyond with room to breathe: remote voltage control, HVDC pairing,
+  state estimation, the FACTS limit workshop (now with the in-range view
+  and the generic element table), the N-1 workshop (now with worst-case
+  ranking and CSV export), and the threaded sweeps.
+- **Half-open branches show themselves in the classical result.** The
+  summary prints one status line per one-sided open branch with the
+  open-end voltage and its Ferranti rise over the feeding bus, the bus
+  table marks the open-terminal bus (`open-end` in the Control column),
+  and the branch row carries the open-end voltage next to its
+  `open@to`/`open@from` marker.
+
+## Improvements
+
+- The Web UI start scripts launch Julia with `JULIA_NUM_THREADS=auto`
+  (unless already set), so the threaded surfaces actually use the
+  machine's cores; `runtime.parallel.*` was already on by default and
+  sizes itself from the thread count.
+
 # Version 0.9.11 - 2026-08-22
 
 FACTS limit modes, one workshop notebook, and better discoverability.

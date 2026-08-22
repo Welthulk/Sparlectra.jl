@@ -10,9 +10,9 @@ reactance, or a converter power, driven toward a target by the
 
 This page collects the device family, the limit characteristics that
 distinguish the devices from each other, and the modeling decisions behind
-Sparlectra's implementations. Hands-on: chapter 9 of the
-[workshop tour](generated/workshop_tour.md) and the example
-`examples/others/exp_facts_limit_modes.jl`.
+Sparlectra's implementations. Hands-on: chapter 4 of the
+[advanced workshop tour](generated/workshop_tour_advanced.md) and the
+example `examples/others/exp_facts_limit_modes.jl`.
 
 ## Device family and where each one lives
 
@@ -216,4 +216,5 @@ constraint is future work.
 - `examples/others/exp_facts_limit_modes.jl`: the three limit
   characteristics side by side on one weak corridor plus the SSSC window
   on a loop network.
-- Workshop tour chapter 9 walks the same contrasts interactively.
+- Chapter 4 of the advanced workshop tour walks the same contrasts
+  interactively.

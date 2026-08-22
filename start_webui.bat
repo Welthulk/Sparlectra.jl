@@ -69,6 +69,9 @@ goto run_webui
 echo Fast start: sysimage stale, starting without it; rebuild via tools\build_sysimage.jl
 
 :run_webui
+REM Multi-core by default: the threaded surfaces need Julia THREADS, fixed at
+REM process start. "auto" uses all cores; an explicit user setting wins.
+if not defined JULIA_NUM_THREADS set "JULIA_NUM_THREADS=auto"
 if defined USE_SYSIMAGE (
   echo Fast start: using sysimage %SYSIMAGE%
   julia "-J%SYSIMAGE%" --project="%DIR%." "%DIR%start_webui.jl"
