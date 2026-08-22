@@ -226,6 +226,46 @@ two actuators with a DC-link coupling constraint do not fit the
 single-actuator pattern of this loop; the design note and the stationary
 approximation are on the [FACTS Devices](@ref facts_devices) page.
 
+## Master/slave groups for parallel transformers
+
+Two transformers in parallel between the same busbars cannot be regulated
+independently: unequal tap positions drive a circulating reactive power
+around the loop (on the doc example, one step apart in opposite
+directions splits the transformer flows into -35 and +53 MVAr at an
+unchanged busbar voltage), and two independent secant loops on one target
+voltage oscillate against each other. Registering a second independent
+voltage controller on an already-regulated target bus therefore triggers
+a warning naming the trap; the supported form is the GROUP (issue #322):
+
+```julia
+addPowerTransformerControl!(net; trafo = "1", followers = ["2"],
+                            mode = :voltage, target_bus = "LV",
+                            target_vm_pu = 1.0, deadband_vm_pu = 5e-3)
+```
+
+The master runs the normal discrete voltage loop; every accepted master
+move is mirrored onto the followers STEP-synchronously (whole steps of
+each follower's own `tap_step`, clamped to its range), so units with
+different neutral ratios stay aligned in positions. A follower cannot
+carry its own ratio controller and cannot follow two groups; the
+registration enforces both. Mind the DEADBAND: synchronized steps
+multiply the voltage effect per master step by the group size, so the
+deadband must cover at least half the aggregated step effect, or the
+group cannot settle. Declaratively the group is the `followers` list on a
+`power_transformer` entry.
+
+**CGMES.** The standard models exactly this case: several
+`RatioTapChanger`s reference ONE shared `RegulatingControl`
+(`TapChanger.TapChangerControl`), with the per-changer `controlEnabled`
+flag expressing master/follower by tool convention. The importer groups
+by that shared object: the first enabled tap changer of a control becomes
+the master, every further one joins as a follower (message
+`follows the group of ...`) instead of spawning a fighting second
+controller. Tap changers with `controlEnabled = false` stay at their
+fixed position, as before. Export-side grouping is not applicable yet:
+the CGMES exporter flattens tap machinery into the fixed ratio and writes
+no `TapChangerControl` objects.
+
 ## Trace rows (transformer control)
 
 Minimal row schema:

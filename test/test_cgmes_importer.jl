@@ -1062,6 +1062,36 @@ function run_cgmes_importer_tests()
         step_sv = 16         # SvTapStep position of BE-TR2_1
         @test abs(step_controlled - step_sv) <= 1
       end
+
+      # #322: several RatioTapChangers referencing ONE TapChangerControl are
+      # a regulated parallel-transformer group; the importer must create ONE
+      # master with followers, not independent controllers that fight over
+      # the same target bus. Patch a COPY of the fixture: BE-TR2_2's tap
+      # changer is repointed onto BE-TR2_3's control object and enabled.
+      @testset "Shared TapChangerControl imports as master/follower (#322)" begin
+        tmp = mktempdir()
+        bec = joinpath(tmp, "BE")
+        bdc = joinpath(tmp, "BD")
+        cp(be, bec)
+        cp(bd, bdc)
+        eqf = joinpath(bec, "20171002T0930Z_BE_EQ_2.xml")
+        sshf = joinpath(bec, "20171002T0930Z_1D_BE_SSH_2.xml")
+        # repoint every REFERENCE to BE-TR2_2's own control onto the shared
+        # one (the orphaned control definition keeps its rdf:ID and stays)
+        write(eqf, replace(read(eqf, String), "#_ee42c6c2-39e7-43c2-9bdd-d397c5dc980b" => "#_97110e84-7da6-479c-846c-696fdaa83d56"))
+        # enable the second tap changer (the SSH ships controlEnabled=false)
+        write(sshf, replace(read(sshf, String), r"(rdf:about=\"#_955d9cd0-4a10-4031-b008-60c0dc340a07\">\s*<cim:TapChanger.step>10</cim:TapChanger.step>\s*<cim:TapChanger.controlEnabled>)false" => s"\1true"))
+        res322 = importCGMES(path = [bec, bdc], tap_control = true, name = "s322")
+        ctrls322 = collect(Sparlectra._tap_controllers(res322.net))
+        # still exactly one PST and ONE voltage controller (the group
+        # master), not two independent voltage controllers
+        @test length(ctrls322) == 2
+        vc = only(filter(c -> c.mode == :voltage, ctrls322))
+        @test length(vc.followers) == 1
+        fbr322 = Sparlectra._find_trafo_branch(res322.net, only(vc.followers))
+        @test fbr322.has_ratio_tap        # the follower keeps its tap machinery
+        @test any(m -> occursin("follows the group", m), res322.messages)
+      end
     else
       @info "CGMES MicroGrid fixture not cached — skipping ENTSO-E fixture tests (run examples/experimental/cgmes_fetch_testsets.jl to enable)"
     end

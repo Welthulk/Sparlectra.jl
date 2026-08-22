@@ -86,9 +86,14 @@ struct _MapCtx
   # post-build steps (HVDC pair attachment) address the exact injection a
   # CGMES object became instead of guessing by bus and value
   prosumer_by_mrid::Dict{String,Int}
+  # tap controller per TapChangerControl mRID (#322): several tap changers
+  # referencing ONE RegulatingControl are a regulated parallel-transformer
+  # GROUP; the first one becomes the master controller, later ones join as
+  # followers instead of spawning a second, fighting controller
+  tap_group_masters::Dict{String,Any}
 end
 _MapCtx(tap_control::Bool = false, ignore_connected::Bool = false; machine_control::Bool = false, vset_min_pu::Float64 = CGMES_VSET_MIN_PU, vset_max_pu::Float64 = CGMES_VSET_MAX_PU, strict_guards::Bool = false) =
-  _MapCtx(String[], Dict{String,Tuple{Int,Symbol}}(), Set{String}(), tap_control, machine_control, ignore_connected, vset_min_pu, vset_max_pu, Dict{String,Dict{String,String}}(), NamedTuple[], Dict{Tuple{String,String},Int}(), strict_guards, Dict{String,Int}())
+  _MapCtx(String[], Dict{String,Tuple{Int,Symbol}}(), Set{String}(), tap_control, machine_control, ignore_connected, vset_min_pu, vset_max_pu, Dict{String,Dict{String,String}}(), NamedTuple[], Dict{Tuple{String,String},Int}(), strict_guards, Dict{String,Int}(), Dict{String,Any}())
 
 # SSH `Terminal.connected` through the ctx switch: `ignore_connected = true`
 # treats everything as connected (diagnostic mode for snapshots whose SSH
@@ -241,6 +246,19 @@ function _attachTapControl!(net, store::CGMESStore, topo::CGMESTopology, ctx::_M
       br.tap_min = min(r1, r2)
       br.tap_max = max(r1, r2)
       br.tap_step = abs(rho_nom * num(tc, :stepVoltageIncrement, 0.0) / 100.0)
+      # master/slave group dedup (#322): several tap changers referencing
+      # ONE TapChangerControl are a regulated parallel-transformer group.
+      # The first one becomes the master controller; every later one joins
+      # as a FOLLOWER (its branch keeps the tap machinery set above so the
+      # master can mirror its moves) instead of spawning a second
+      # independent controller on the same target bus, which would fight
+      # the first through circulating reactive power.
+      if haskey(ctx.tap_group_masters, tcc.mrid)
+        master = ctx.tap_group_masters[tcc.mrid]
+        push!(master.followers, string(branch_idx))
+        push!(ctx.messages, "tap control: $(trafo_name)/$(name) follows the group of $(master.trafo) (shared TapChangerControl)")
+        continue
+      end
       # regulated bus from the TapChangerControl terminal
       tinfo = _regulatedBus(store, topo, tcc)
       tinfo === nothing && (push!(ctx.messages, "notice: tap controller $(name) — control terminal unresolved, skipped"); continue)
@@ -257,6 +275,11 @@ function _attachTapControl!(net, store::CGMESStore, topo::CGMESTopology, ctx::_M
         control_ratio = true,
         control_phase = false,
       )
+      # remember the master by its unambiguous trafo id (one voltage
+      # controller per imported transformer)
+      for c in Sparlectra._tap_controllers(net)
+        c.trafo == string(branch_idx) && (ctx.tap_group_masters[tcc.mrid] = c)
+      end
       push!(ctx.messages, "tap control: $(trafo_name)/$(name) → voltage $(round(target / tinfo.vn_kV; digits = 4)) pu at $(tinfo.bus)")
     elseif tc.class != :RatioTapChanger && endswith(mode, ".activePower")
       # phase tap: translate step range into branch phase limits around the

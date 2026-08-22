@@ -212,6 +212,21 @@ function control_apply_update!(ctrl::PowerTransformerControl, net::Net, ::Abstra
     br.tap_ratio = update.new_ratio
     br.ratio = update.new_ratio
     moved = true
+    # master/slave group (#322): mirror the master's move onto every
+    # follower STEP-synchronously (whole steps of the follower's own
+    # tap_step, so units with different neutral ratios stay aligned in
+    # positions, not in absolute ratios), clamped to the follower's range.
+    for fname in ctrl.followers
+      fbr = _find_trafo_branch(net, fname)
+      if br.tap_step > 0.0 && fbr.tap_step > 0.0
+        nsteps = round((update.new_ratio - update.old_ratio) / br.tap_step)
+        fnew = clamp(fbr.tap_ratio + nsteps * fbr.tap_step, fbr.tap_min, fbr.tap_max)
+      else
+        fnew = clamp(fbr.tap_ratio + (update.new_ratio - update.old_ratio), fbr.tap_min, fbr.tap_max)
+      end
+      fbr.tap_ratio = fnew
+      fbr.ratio = fnew
+    end
   end
   if update.new_phase != update.old_phase
     br.phase_shift_deg = update.new_phase
@@ -264,9 +279,11 @@ function control_element_descriptor(ctrl::PowerTransformerControl, net::Net)::Un
   target = ctrl.target_bus !== nothing ? ctrl.target_bus : ctrl.target_branch === nothing ? "" : string(ctrl.target_branch[1], "->", ctrl.target_branch[2])
   target_value = ctrl.target_vm_pu !== nothing ? ctrl.target_vm_pu : ctrl.p_target_mw
   amin, amax = phase && !ratio ? (br.phase_min_deg, br.phase_max_deg) : (br.tap_min, br.tap_max)
+  # a master of a group names its unit count: "T1 (+2 followers)"
+  element_label = isempty(ctrl.followers) ? br.comp.cName : string(br.comp.cName, " (+", length(ctrl.followers), " follower", length(ctrl.followers) == 1 ? "" : "s", ")")
   return (
     name = control_name(ctrl),
-    element = br.comp.cName,
+    element = element_label,
     device = _controller_type_label(ctrl, br),
     actuator = actuator,
     actuator_min = amin,
@@ -376,6 +393,7 @@ Validation rules:
 function addPowerTransformerControl!(
   net::Net;
   trafo::String,
+  followers::Vector{String} = String[],
   mode::Symbol,
   target_bus::Union{Nothing,String} = nothing,
   target_branch::Union{Nothing,Tuple{String,String}} = nothing,
@@ -396,12 +414,56 @@ function addPowerTransformerControl!(
   # Per-actuator exclusivity: a second active controller on the same
   # transformer is allowed only when it drives a disjoint actuator set
   # (e.g. voltage/ratio + active-power/phase on one Schrägregler unit).
+  # A transformer that FOLLOWS in a master/slave group counts as occupied:
+  # its ratio tap is driven by the group's master.
   for c in _tap_controllers(net)
     c.enabled || continue
+    for fname in c.followers
+      fbr = _find_trafo_branch(net, fname)
+      if fbr.branchIdx == br.branchIdx && control_ratio
+        error("PowerTransformerControl: transformer $(trafo) already follows the group of $(c.trafo); a follower's ratio tap is driven by its master.")
+      end
+    end
     cbr = _find_trafo_branch(net, c.trafo)
     cbr.branchIdx == br.branchIdx || continue
     if (control_ratio && c.control_ratio) || (control_phase && c.control_phase)
       error("PowerTransformerControl: transformer $(trafo) already has an active controller for this actuator (ratio/phase); use disjoint actuators or disable the existing controller.")
+    end
+  end
+  # two independent tap controllers steering ONE bus voltage fight each
+  # other through circulating reactive power (#322); the group (followers)
+  # is the supported way to regulate parallel units
+  if mode in (:voltage, :voltage_and_branch_active_power) && target_bus !== nothing
+    for c in _tap_controllers(net)
+      c.enabled || continue
+      cbr = _find_trafo_branch(net, c.trafo)
+      cbr.branchIdx == br.branchIdx && continue
+      if c.target_bus == target_bus && c.target_vm_pu !== nothing
+        @warn "PowerTransformerControl: a tap controller ($(c.trafo)) already regulates the voltage of target bus $(target_bus) — two independent controllers on one voltage fight each other via circulating reactive power; regulate parallel units as a GROUP (followers = [...]) instead."
+      end
+    end
+  end
+  # master/slave group validation (#322): voltage/ratio groups only; every
+  # follower needs its own ratio-tap machinery, must be a different unit,
+  # and must not be regulated or followed elsewhere
+  if !isempty(followers)
+    mode == :voltage || error("PowerTransformerControl: followers are supported for mode = :voltage groups (parallel transformers on one busbar); got mode = $(mode).")
+    seen_followers = Set{Int}()
+    for fname in followers
+      fbr = _find_trafo_branch(net, fname)
+      fbr.branchIdx == br.branchIdx && error("PowerTransformerControl: follower $(fname) is the master transformer itself.")
+      fbr.has_ratio_tap || error("PowerTransformerControl: follower $(fname) has no ratio-tap machinery (has_ratio_tap = false).")
+      fbr.branchIdx in seen_followers && error("PowerTransformerControl: follower $(fname) listed twice.")
+      push!(seen_followers, fbr.branchIdx)
+      for c in _tap_controllers(net)
+        c.enabled || continue
+        cbr = _find_trafo_branch(net, c.trafo)
+        cbr.branchIdx == fbr.branchIdx && c.control_ratio && error("PowerTransformerControl: follower $(fname) already has its own active ratio controller; a unit cannot regulate and follow at once.")
+        for other in c.followers
+          obr = _find_trafo_branch(net, other)
+          obr.branchIdx == fbr.branchIdx && error("PowerTransformerControl: follower $(fname) already follows the group of $(c.trafo).")
+        end
+      end
     end
   end
   mode in (:voltage, :branch_active_power, :voltage_and_branch_active_power) || error("PowerTransformerControl: unsupported mode=$(mode)")
@@ -419,6 +481,7 @@ function addPowerTransformerControl!(
 
   ctrl = PowerTransformerControl(;
     trafo = trafo,
+    followers = followers,
     mode = mode,
     target_bus = target_bus,
     target_branch = target_branch,

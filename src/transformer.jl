@@ -336,6 +336,9 @@ Transformer outer-loop transformer controller channel.
 """
 mutable struct PowerTransformerControl <: AbstractOuterController
   trafo::String
+  # master/slave group (#322): follower transformer ids that mirror this
+  # controller's ratio moves step-synchronously; empty for a single unit
+  followers::Vector{String}
   mode::Symbol
   target_bus::Union{Nothing,String}
   target_branch::Union{Nothing,Tuple{String,String}}
@@ -358,12 +361,12 @@ mutable struct PowerTransformerControl <: AbstractOuterController
   outer_iters::Int
 end
 
-function PowerTransformerControl(; trafo::String, mode::Symbol, target_bus::Union{Nothing,String} = nothing, target_branch::Union{Nothing,Tuple{String,String}} = nothing,
+function PowerTransformerControl(; trafo::String, followers::Vector{String} = String[], mode::Symbol, target_bus::Union{Nothing,String} = nothing, target_branch::Union{Nothing,Tuple{String,String}} = nothing,
   target_vm_pu::Union{Nothing,Float64} = nothing, p_target_mw::Union{Nothing,Float64} = nothing, q_target_mvar::Union{Nothing,Float64} = nothing,
   control_ratio::Bool = true, control_phase::Bool = false, is_discrete::Bool = true, deadband_vm_pu::Float64 = 1e-3, deadband_p_mw::Float64 = 0.5,
   voltage_error_metric::Symbol = :vm, max_outer_iters::Int = 20, enabled::Bool = true)
   voltage_error_metric in (:vm, :vm2) || error("PowerTransformerControl: unsupported voltage_error_metric=$(voltage_error_metric). Use :vm or :vm2.")
-  return PowerTransformerControl(trafo, mode, target_bus, target_branch, target_vm_pu, p_target_mw, q_target_mvar, control_ratio, control_phase, is_discrete,
+  return PowerTransformerControl(trafo, followers, mode, target_bus, target_branch, target_vm_pu, p_target_mw, q_target_mvar, control_ratio, control_phase, is_discrete,
     deadband_vm_pu, deadband_p_mw, voltage_error_metric, max_outer_iters, enabled, false, false, :idle, nothing, nothing, 0)
 end
 

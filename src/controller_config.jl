@@ -28,8 +28,10 @@
 # dispatcher makes "unknown key" and "missing key" errors self-updating.
 const _CONTROLLER_TYPE_SPECS = Dict{String,NamedTuple}(
   "power_transformer" => (
+    # followers (list of trafo ids) makes the entry a master/slave group
+    # (#322); the add function enforces the voltage-mode-only rule
     required = ("trafo", "mode"),
-    optional = ("target_bus", "target_branch", "target_vm_pu", "p_target_mw", "q_target_mvar", "control_ratio", "control_phase", "is_discrete", "deadband_vm_pu", "deadband_p_mw", "voltage_error_metric", "max_outer_iters", "enabled"),
+    optional = ("followers", "target_bus", "target_branch", "target_vm_pu", "p_target_mw", "q_target_mvar", "control_ratio", "control_phase", "is_discrete", "deadband_vm_pu", "deadband_p_mw", "voltage_error_metric", "max_outer_iters", "enabled"),
     symbols = ("mode", "voltage_error_metric"),
     supports_name = false,
   ),
@@ -184,9 +186,17 @@ function applyConfiguredControllers!(net::Net, control_cfg::ControlConfig)::Int
         else
           nothing
         end
+        followers_list = if haskey(entry, "followers")
+          fl = entry["followers"]
+          fl isa AbstractVector || throw(ArgumentError("followers must be a list of transformer ids"))
+          String[string(x) for x in fl]
+        else
+          String[]
+        end
         addPowerTransformerControl!(
           net;
           trafo = string(entry["trafo"]),
+          followers = followers_list,
           mode = Symbol(string(entry["mode"])),
           target_bus = haskey(entry, "target_bus") ? string(entry["target_bus"]) : nothing,
           target_branch = target_branch,

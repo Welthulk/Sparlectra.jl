@@ -1,32 +1,31 @@
-# Version 0.9.14 - unreleased
+# Version 0.9.14 - 2026-08-22
 
-Switched shunt banks, and observability you can see.
+Intentionally identical to 0.9.13: the registry needs the gapless number,
+the project prefers not to stay on it. Install this one.
 
-## Highlights
+# Version 0.9.13 - 2026-08-22
 
-- **MSC/MSR switched shunt banks** (issue #324). The shunt voltage
-  controller can now act as a mechanically switched capacitor/reactor
-  bank: `step_mvar` makes the susceptance move in whole blocks, truncated
-  toward the target so the bank approaches from one side and never
-  overshoots, which rules out hunting between two adjacent steps by
-  construction. When no whole block improves the voltage further the
-  controller parks on the reached step (`status = :parked`, deliberately
-  the last step before crossing); the outermost block keeps the familiar
-  constant-B limit region. Theory on [FACTS Devices](facts.md), hands-on
-  in the advanced tour's FACTS chapter.
-- **Observability, explained where it happens.** The state-estimation
-  workshop gained a section that walks the global and local observability
-  outputs on a drawn network: what the measurement counts, rank, and
-  quality verdicts mean, where measurements must sit (and which placements
-  quietly break a corner of the network), plus a PMU phasor example with
-  the estimated reference-angle offset.
+Coordinated transformers, switched shunt banks, and observability you can
+see.
 
-## Documentation
-
-- Every workshop notebook now states its level (Advanced or Expert) next
-  to the tier structure of the two tours.
-
-(Version note: 0.9.13 is skipped by the project's numbering convention.)
+- **Parallel transformers regulate as a group** (#322). Two independent
+  tap controllers on one busbar fight each other through circulating
+  reactive power, and CGMES deliveries produce exactly that setup whenever
+  several tap changers share one `RegulatingControl`. Now the group is the
+  model: the master runs the voltage loop, followers mirror its steps
+  (`followers` on `addPowerTransformerControl!`), and the importer turns
+  shared controls into one group instead of fighting controllers. Part 3
+  of the workshop tour walks the whole story, from the circulating-current
+  trap to the CGMES data.
+- **MSC/MSR switched shunt banks** (#324). `step_mvar` turns the shunt
+  voltage controller into a mechanically switched bank: whole blocks only,
+  never overshooting the target, parking on the reached step instead of
+  hunting between two.
+- **Observability you can see.** The state-estimation workshop now shows
+  what the observability numbers mean on a drawn network, where
+  measurements must sit (and how a missing one darkens a corner), and how
+  a PMU's time-base offset is estimated. Every workshop notebook states
+  its level.
 
 # Version 0.9.12 - 2026-08-22
 

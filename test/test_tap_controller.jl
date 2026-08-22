@@ -296,6 +296,86 @@ function run_tap_controller_tests()
     @test trows[1].discrete === true
   end
 
+  @testset "Master/slave transformer group (#322)" begin
+    # substation fixture: two identical parallel transformers HV -> LV
+    build_substation = function ()
+      gnet = Net(name = "tap_group", baseMVA = 100.0)
+      addBus!(net = gnet, busName = "HV", vn_kV = 110.0)
+      addBus!(net = gnet, busName = "LV", vn_kV = 20.0)
+      addBus!(net = gnet, busName = "Feeder", vn_kV = 20.0)
+      addProsumer!(net = gnet, busName = "HV", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "HV")
+      addProsumer!(net = gnet, busName = "Feeder", type = "ENERGYCONSUMER", p = 40.0, q = 12.0)
+      addPIModelTrafo!(net = gnet, fromBus = "HV", toBus = "LV", r_pu = 0.006, x_pu = 0.12, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1)
+      addPIModelTrafo!(net = gnet, fromBus = "HV", toBus = "LV", r_pu = 0.006, x_pu = 0.12, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1)
+      addPIModelACLine!(net = gnet, fromBus = "LV", toBus = "Feeder", r_pu = 0.01, x_pu = 0.05, b_pu = 0.0, status = 1)
+      for br in gnet.branchVec
+        if br.ratio != 0.0
+          br.has_ratio_tap = true
+          br.tap_min = 0.9
+          br.tap_max = 1.1
+          br.tap_step = 0.0125
+        end
+      end
+      ok, msg = validate!(net = gnet)
+      ok || error("test net invalid: $msg")
+      ids = [string(br.branchIdx) for br in gnet.branchVec if br.ratio != 0.0]
+      return gnet, ids
+    end
+
+    # the physics this feature prevents: misaligned FIXED taps on parallel
+    # units drive a circulating reactive power through the loop
+    cnet, _ = build_substation()
+    ct = [br for br in cnet.branchVec if br.ratio != 0.0]
+    ct[1].tap_ratio = 1.05
+    ct[1].ratio = 1.05
+    ct[2].tap_ratio = 0.95
+    ct[2].ratio = 0.95
+    _, cerg = runpf!(cnet, 30, 1e-8, 0)
+    @test cerg == 0
+    calcNetLosses!(cnet)
+    @test abs(ct[1].fBranchFlow.qFlow - ct[2].fBranchFlow.qFlow) > 30.0   # massive Q split
+
+    # group control: master steps toward a target that REQUIRES movement,
+    # the follower mirrors step-synchronously, the loop stays circulation-free
+    # NOTE the deadband: synchronized steps double the voltage effect per
+    # master step, so a group needs a deadband of at least half its
+    # AGGREGATED step effect (documented in control_framework.md); the
+    # single-unit default of 1e-3 pu is finer than this group can resolve
+    gnet, ids = build_substation()
+    addPowerTransformerControl!(gnet; trafo = ids[1], followers = [ids[2]], mode = :voltage, target_bus = "Feeder", target_vm_pu = 1.03, deadband_vm_pu = 5e-3)
+    gres = run_control!(gnet)
+    @test gres.converged
+    b1 = Sparlectra._find_trafo_branch(gnet, ids[1])
+    b2 = Sparlectra._find_trafo_branch(gnet, ids[2])
+    @test b1.tap_ratio != 1.0                                  # the master actually moved
+    @test isapprox(b1.tap_ratio, b2.tap_ratio; atol = 1e-9)    # taps stay aligned
+    @test abs(get_bus_vm_pu(gnet, "Feeder") - 1.03) <= 5e-3 + 1e-9
+    calcNetLosses!(gnet)
+    tq1 = b1.fBranchFlow.qFlow
+    tq2 = b2.fBranchFlow.qFlow
+    @test abs(tq1 - tq2) < 1.0                                 # near-equal sharing, no circulation
+    # element view names the group
+    gels = controllableElements(gnet)
+    @test occursin("+1 follower", only(filter(e -> e.actuator in (:tap_ratio, :tap_ratio_and_phase_shift), gels)).element)
+
+    # validation: self-follow, occupied follower, double-follow, and a
+    # controller on a bus that already follows
+    vnet, vids = build_substation()
+    @test_throws ErrorException addPowerTransformerControl!(vnet; trafo = vids[1], followers = [vids[1]], mode = :voltage, target_bus = "Feeder", target_vm_pu = 1.0)
+    addPowerTransformerControl!(vnet; trafo = vids[1], followers = [vids[2]], mode = :voltage, target_bus = "Feeder", target_vm_pu = 1.0)
+    @test_throws ErrorException addPowerTransformerControl!(vnet; trafo = vids[2], mode = :voltage, target_bus = "Feeder", target_vm_pu = 1.0)
+    wnet2, wids = build_substation()
+    @test_throws ErrorException addPowerTransformerControl!(wnet2; trafo = wids[1], followers = [wids[2], wids[2]], mode = :voltage, target_bus = "Feeder", target_vm_pu = 1.0)
+    @test_throws ErrorException addPowerTransformerControl!(wnet2; trafo = wids[1], followers = [wids[2]], mode = :branch_active_power, target_branch = ("HV", "LV"), p_target_mw = 10.0, control_ratio = false, control_phase = true)
+
+    # config surface: followers list instantiates the group
+    ynet, yids = build_substation()
+    ycfg = ControlConfig(enabled = true, controllers = Any[Dict{String,Any}("type" => "power_transformer", "trafo" => yids[1], "followers" => Any[yids[2]], "mode" => "voltage", "target_bus" => "Feeder", "target_vm_pu" => 1.0)])
+    @test applyConfiguredControllers!(ynet, ycfg) == 1
+    yc = only(Sparlectra._tap_controllers(ynet))
+    @test yc.followers == [yids[2]]
+  end
+
   @testset "MSC/MSR discrete shunt bank (#324)" begin
     build_sag = function ()
       snet = Net(name = "msc_ctrl", baseMVA = 100.0)
