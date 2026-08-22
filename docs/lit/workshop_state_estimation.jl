@@ -242,6 +242,28 @@ println("measurements: ", obs.n_measurements, ", states: ", obs.n_states)
 # result mean, which placements make a network observable, and how the
 # local check points at the corner that a missing meter leaves dark.
 #
+# First the two concepts in plain words:
+#
+# **Global observability** asks: does the measurement set determine the
+# COMPLETE network state, every voltage magnitude and every angle, as one
+# consistent picture? If yes, the WLS estimator has a unique solution; if
+# no, whole regions of the state can drift without any measurement
+# noticing, and the normal equations are singular. It is a property of the
+# WHOLE set against the WHOLE state.
+#
+# **Local observability** asks the same question for a chosen PART of the
+# state, typically the voltage and angle of one bus or one area: do the
+# measurements that touch these states pin them down? A network can be
+# globally unobservable while most of it is locally fine, and the local
+# check is the tool that finds the dark corner. Think of it as zooming the
+# rank question into a neighborhood.
+#
+# Both are decided by the same object, the measurement Jacobian $H$: one
+# row per measurement, one column per state, entry = sensitivity of that
+# measurement to that state. Global observability is full column rank of
+# $H$; local observability is full rank of the columns you zoomed into,
+# using only the rows that touch them.
+#
 # The study network again, as a picture (ring plus two chords):
 #
 # ```text
@@ -290,6 +312,28 @@ for (f, t) in tree
 end
 addVmMeasurement!(net; busName = "B1", value = net.nodeVec[net.busDict["B1"]]._vm_pu, sigma = 0.002)
 
+# The same placement, drawn into the line diagram. Legend: `x` = voltage
+# meter (Vm), `o` = P/Q flow pair on the branch, `(o)` = P/Q injection
+# pair at the bus (used in the repair below):
+#
+# ```text
+#     [x]B1 ──o── B2 ──o── B3
+#       /          │        │ ╲
+#     B7           │        │  o
+#      │           │        │   ╲
+#      o           └─ B5 ───┼─── B4
+#      │              o     │
+#      └─── B6 ───────┴─────┘
+#             (chords B2─B5, B3─B6 and ring closure B7─B1: UNMEASURED)
+#
+#     x  voltage meter        o  P/Q flow pair on the branch
+# ```
+#
+# The picture already tells the placement story: the six `o` pairs walk a
+# spanning tree (every bus is reached), the single `x` anchors the
+# magnitude level, and the three unmeasured branches are exactly where
+# redundancy would come from.
+
 gmin = evaluate_global_observability(net; flatstart = true, jacEps = 1e-6)
 println("minimal tree set: quality = ", gmin.quality, " (", gmin.n_measurements, " rows, ", gmin.n_states, " states)")
 println("  structurally observable: ", gmin.structural_observable, ", numerically observable: ", gmin.numerical_observable, " (rank ", gmin.numerical_rank, ")")
@@ -300,6 +344,16 @@ println("  redundancy dof = ", gmin.dof, ", critical measurements: ", length(gmi
 # some part of the state. Real placements add the ring-closing and chord
 # flows (or injections) precisely to buy redundancy; the `dof` count is
 # what the bad-data machinery later feeds on.
+#
+# The matrix behind all of this is one call away: `measurement_jacobian`
+# returns $H$ with described rows and labeled state columns, ready for a
+# placement report (the state-estimation example suite writes exactly such
+# a matrix-plus-stability page on every run):
+
+mj = measurement_jacobian(net)
+println("H is ", size(mj.H, 1), " x ", size(mj.H, 2), "; columns: ", join(mj.cols[1:4], ", "), ", ...")
+r1 = mj.rows[1]
+println("row 1: ", r1.type, " at ", r1.location, " touches ", count(j -> abs(mj.H[1, j]) > 1e-9, eachindex(mj.cols)), " states")
 #
 # ### Breaking a corner, and finding it with the local check
 #

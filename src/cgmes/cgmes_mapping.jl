@@ -221,13 +221,16 @@ end
 
 """Branch tap-range fields and controller for one controlled transformer end."""
 function _attachTapControl!(net, store::CGMESStore, topo::CGMESTopology, ctx::_MapCtx, svsteps::Dict{String,Float64}, e::CIMObject, branch_idx::Int, on_from_side::Bool, trafo_name::String)
+  # loop-invariant: branch_idx is a function argument, resolve it once
+  br_pos = findfirst(b -> b.branchIdx == branch_idx, net.branchVec)
+  br_pos === nothing && return nothing
   for tc in _tapChangersOfEnd(store, e.mrid)
     something(boolval(tc, :controlEnabled), false) || continue
     tcc = ref(store, tc, :TapChangerControl)
     tcc === nothing && continue
     something(boolval(tcc, :enabled), false) || continue
     mode = something(enumval(tcc, :mode), "")
-    br = net.branchVec[findfirst(b -> b.branchIdx == branch_idx, net.branchVec)]
+    br = net.branchVec[br_pos]
     low = Int(round(num(tc, :lowStep, 0.0)))
     high = Int(round(num(tc, :highStep, 0.0)))
     neutral = Int(round(num(tc, :neutralStep, 0.0)))
@@ -1558,7 +1561,7 @@ function _push_cgmes_hvdc_link!(net, ctx::_MapCtx, pair)
   f_idx, t_idx = pa <= pb ? (a_idx, b_idx) : (b_idx, a_idx)
   fbus = Sparlectra.getPosumerBusIndex(net.prosumpsVec[f_idx])
   tbus = Sparlectra.getPosumerBusIndex(net.prosumpsVec[t_idx])
-  names = Dict(idx => name for (name, idx) in net.busDict)
+  names = Sparlectra._bus_name_by_idx(net)
   link = Sparlectra.HvdcLink(string("HVDC_", get(names, fbus, string(fbus)), "_", get(names, tbus, string(tbus))), fbus, tbus, f_idx, t_idx, 1, :cgmes, pair.segments ? :p2p : :b2b, nothing)
   push!(net.hvdcLinks, link)
   return link
@@ -1588,8 +1591,9 @@ function _attachHvdcPairs!(net, ctx::_MapCtx, store::CGMESStore)
       push!(ctx.messages, "notice: HVDC pair $(pair.from)/$(pair.to) — SSH operating points are inconsistent (transfer $(round(transfer; digits = 1)) MW, loss $(round(loss; digits = 1)) MW), kept as fixed injections")
       continue
     end
-    from_bus = Sparlectra._effective_bus_name(Dict(idx => name for (name, idx) in net.busDict), net, Sparlectra.getPosumerBusIndex(net.prosumpsVec[f_idx]))
-    to_bus = Sparlectra._effective_bus_name(Dict(idx => name for (name, idx) in net.busDict), net, Sparlectra.getPosumerBusIndex(net.prosumpsVec[t_idx]))
+    bus_names = Sparlectra._bus_name_by_idx(net)
+    from_bus = Sparlectra._effective_bus_name(bus_names, net, Sparlectra.getPosumerBusIndex(net.prosumpsVec[f_idx]))
+    to_bus = Sparlectra._effective_bus_name(bus_names, net, Sparlectra.getPosumerBusIndex(net.prosumpsVec[t_idx]))
     try
       Sparlectra.addHvdcPairControl!(
         net;

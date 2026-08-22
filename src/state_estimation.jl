@@ -567,6 +567,64 @@ function evaluate_global_observability(net::Net; flatstart::Bool = true, jacEps:
 end
 
 """
+    measurement_jacobian(net; flatstart=true, jacEps=1e-6, pmuRefOffset=...) -> NamedTuple
+
+Build the measurement Jacobian `H` of the ACTIVE measurements on `net`,
+labeled for humans: the matrix the observability checks and the WLS
+normal equations run on, with one described row per measurement and one
+described column per state.
+
+Returns `(H, rows, cols)`:
+- `H::Matrix{Float64}`: m x n finite-difference Jacobian at the flat (or
+  stored) start state, the same evaluation `evaluate_global_observability`
+  uses.
+- `rows`: one NamedTuple per active measurement,
+  `(index, type, location, sigma)`; `index` is the position in
+  `net.measurements`, `location` names the bus (injections, voltages) or
+  the oriented branch (flows).
+- `cols`: state-column labels in Jacobian order, `"Va(bus)"` for every
+  non-slack bus, then `"Vm(bus)"` for every bus, plus `"alpha"` when PMU
+  `Va` measurements activate the reference-offset state.
+
+Errors when no active measurement exists. Intended for measurement-matrix
+reports and placement studies; see the state-estimation suite summary and
+the workshop's observability deep dive.
+"""
+function measurement_jacobian(net::Net; flatstart::Bool = true, jacEps::Float64 = 1e-6, pmuRefOffset::Symbol = state_estimation_config().pmu_ref_offset)
+  activeMeas, activeIdx = _active_measurements_with_indices(Measurement[m for m in net.measurements])
+  isempty(activeMeas) && error("measurement_jacobian: no active measurements")
+  nbus = length(net.nodeVec)
+  slackIdx = _find_slack_idx(net)
+  Ybus = createYBUS(net = net)
+  withVaOffset = _va_offset_active(activeMeas, pmuRefOffset)
+  x = _initial_state_vector(net, slackIdx; flatstart = flatstart, withVaOffset = withVaOffset)
+  H, _ = _measurement_jacobian_fd(activeMeas, net, x, slackIdx, nbus, Ybus; eps = jacEps, withVaOffset = withVaOffset)
+
+  name_by_idx = _bus_name_by_idx(net)
+  busname(i) = get(name_by_idx, i, string(i))
+  rows = NamedTuple[]
+  for (k, m) in enumerate(activeMeas)
+    location = if m.typ in (PflowMeas, QflowMeas)
+      br = net.branchVec[m.branchIdx]
+      ends = (busname(Int(br.fromBus)), busname(Int(br.toBus)))
+      m.direction === :to ? string(ends[2], "->", ends[1]) : string(ends[1], "->", ends[2])
+    else
+      busname(m.busIdx)
+    end
+    push!(rows, (index = activeIdx[k], type = m.typ, location = location, sigma = m.sigma))
+  end
+  cols = String[]
+  for i = 1:nbus
+    i == slackIdx || push!(cols, string("Va(", busname(i), ")"))
+  end
+  for i = 1:nbus
+    push!(cols, string("Vm(", busname(i), ")"))
+  end
+  withVaOffset && push!(cols, "alpha")
+  return (H = H, rows = rows, cols = cols)
+end
+
+"""
     evaluate_local_observability(net, measurements, stateCols; kwargs...) -> NamedTuple
 
 Evaluate local observability on selected Jacobian columns (`stateCols`).

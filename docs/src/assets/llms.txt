@@ -9,7 +9,7 @@
 - Balanced short-circuit analysis per IEC 60909-0 (Ik'' max/min, Sk'', peak current i_p) with safety flagging of substituted defaults.
 - N-1 contingency batches on branch outages with voltage-band and loading evaluation, table and CSV output.
 - Grid data exchange: ENTSO-E CGMES 2.4.15 and 3.0 import and export (roundtrip-stable identities), MATPOWER cases, native DTF files.
-- Outer-loop controller framework: transformer tap and phase-shifter regulation, remote voltage control, SVC-style shunt control, TCSC series compensation, back-to-back HVDC pairs.
+- Outer-loop controller framework: transformer tap and phase-shifter regulation incl. master/slave groups for parallel units, remote voltage control incl. the STATCOM current-based limit mode, SVC-style shunt control incl. MSC/MSR switched banks, TCSC series compensation incl. the SSSC injected-voltage limit mode, back-to-back HVDC pairs.
 - Multi-core execution of independent work (island solves, short-circuit sweeps, contingency batches) on Julia threads with results identical to the serial runs.
 - Local browser Web UI for MATPOWER/CGMES power-flow runs with persistent run history; loopback only.
 

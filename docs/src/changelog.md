@@ -1,3 +1,26 @@
+# Version 0.9.15 - unreleased
+
+Fix and polish.
+
+- **The estimation problem shows its matrix.** New `measurement_jacobian(net)`
+  returns the labeled Jacobian H (described measurement rows, named state
+  columns); the state-estimation example suite writes a measurement-matrix
+  page with a stability verdict (rank, redundancy, cond(H)) on every run.
+  The workshop's observability deep dive now explains what global and
+  local observability ARE and draws the meters into the line diagram.
+- **Docs sweep.** Stale claims corrected across the pages (RealGrid has
+  6209 buses, `control.controllers` is implemented, `hvdc_pair` is a
+  supported type, chapter pointers follow the tour split, two release
+  dates fixed); the drifted hand-written config key index now points at
+  the canonical `configuration.yaml.example`; the transformer control
+  theory lives once, on the Control Framework page.
+- **Code sweep.** Dead code removed, including four dead public bindings
+  (`addBusShuntPower!`, a deprecated no-op, plus `zero_row!`,
+  `print_jacobian`, `recalc_trafo_model_data`) and six unused private
+  helpers; the Y-bus assembly no longer rescans the isolated-bus list per
+  branch, result tables build without quadratic string growth, and the
+  reverse bus-name lookups are unified.
+
 # Version 0.9.14 - 2026-08-22
 
 Intentionally identical to 0.9.13: the registry needs the gapless number,
@@ -172,7 +195,7 @@ Multi-core execution, N-1 contingency analysis, and one-sided open branches.
   factorization is unsafe under threads. Migration: replace
   `linear_solver: klu` with `linear_solver: umfpack_reuse`.
 
-# Version 0.9.9 - 2026-08-22
+# Version 0.9.9 - 2026-08-20
 
 HVDC link results and one-reference-per-island validation.
 
@@ -192,7 +215,7 @@ HVDC link results and one-reference-per-island validation.
   consults the import metadata first (PST heuristic pending the typed
   branch kind).
 
-# Version 0.9.8 - 2026-08-21
+# Version 0.9.8 - 2026-08-19
 
 **Steerable HVDC links.** `addHvdcPairControl!` couples the two converter
 injections of a back-to-back link with exact loss accounting, per-terminal

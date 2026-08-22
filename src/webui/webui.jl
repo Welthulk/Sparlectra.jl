@@ -502,19 +502,6 @@ function _webui_request_shutdown!(runtime::_SparlectraWebUIRuntime; reason::Unio
   return nothing
 end
 
-function _webui_monitor_browser_process(runtime::_SparlectraWebUIRuntime, browser_process)
-  try
-    wait(browser_process)
-  catch err
-    err isa InvalidStateException || @debug "Web UI browser process monitor ended without shutdown" exception = (err, catch_backtrace())
-    return nothing
-  end
-  should_shutdown = lock(runtime.lock) do
-    runtime.shutdown_on_browser_close && runtime.listener !== nothing && isopen(runtime.listener)
-  end
-  should_shutdown && _webui_request_shutdown!(runtime; reason = :browser_window_close)
-  return nothing
-end
 
 """
     start_sparlectra_webui(; host="127.0.0.1", port=8080,

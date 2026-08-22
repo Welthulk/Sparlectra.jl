@@ -223,7 +223,7 @@ convention). The result surface marks partial rows `open@to`/`open@from`,
 counts them under `Open terminals` in the header, and carries
 `terminal_state` plus the open-end voltage in `ACPFlowReport.branches` and
 the detailed CSV. Runnable example: `exp_open_terminal_line.jl`; the
-workshop tour demonstrates it at the end of chapter 1.
+basic workshop tour demonstrates it in chapter 2.
 
 ## 3. Tap-changer modelling layers
 
@@ -481,19 +481,12 @@ regulation.
 
 ### Numerical method
 
-Tap control is an outer loop around the power flow:
-
-1. Solve PF with current taps
-2. Evaluate the control error
-3. Update the tap(s) (continuous or discrete)
-4. Re-run PF
-5. Stop on convergence, limits, or iteration cap
-
-No augmentation of the Newton system is performed. Taps are supervisory control
-updates, not algebraic unknowns. This keeps the Jacobian/state vector
-untouched, allows simpler solver backends, centralizes control logic
-(deadbands, limits, discrete steps), and gives deterministic post-processing
-between iterations.
+Tap control is an outer loop around the power flow: solve, evaluate the
+control error, step the tap, re-solve. The loop mechanics, deadbands,
+limits, and the hook interface are documented once, in the
+[Control Framework](control_framework.md); this page keeps only what is
+specific to the BRANCH MODEL: the complex tap in the PI equivalent and
+the tap-dependent reactance below.
 
 ### Tap-dependent reactance X(α)
 
@@ -536,87 +529,16 @@ on the active model:
 4. In control: if `P_ab < target`, move `phi` in the direction that increases
    `P_ab`; otherwise move it the opposite way.
 
-See `examples/example_transformer_phase_shift_control.jl`.
+See `examples/others/exp_pst_reactance_coupling.jl`.
 
-### Controller framework
+### Controllers
 
-Transformer tap/phase control is implemented as an `AbstractOuterController`.
-Controllers are collected by `collect_outer_controllers(net)` (and, for
-tap-specific resolution, `_tap_controllers(net)` from
-`PowerTransformerWinding.controls`), deduplicated by identity, and used
-consistently for execution and reporting. When at least one controller is
-present, `run_sparlectra` calls `run_control!` for outer-loop orchestration.
-The controllers adjust `ratio`/`shift` directly within their limits; they do
-not depend on the CGMES tap-changer classification.
-
-### API
-
-```julia
-addPowerTransformerControl!(net;
-  trafo = "1",
-  mode = :voltage,
-  target_bus = "B5",
-  target_vm_pu = 1.01,
-  control_ratio = true,
-  control_phase = false,
-  is_discrete = true)
-```
-
-Active-power control on a branch:
-
-```julia
-addPowerTransformerControl!(net;
-  trafo = "1",
-  mode = :branch_active_power,
-  target_branch = ("B1", "B2"),
-  p_target_mw = 250.0,
-  control_ratio = false,
-  control_phase = true,
-  is_discrete = true)
-```
-
-Combined voltage + active-power regulation:
-
-```julia
-addPowerTransformerControl!(net;
-  trafo = "1",
-  mode = :voltage_and_branch_active_power,
-  target_bus = "B5",
-  target_vm_pu = 1.01,
-  target_branch = ("B1", "B2"),
-  p_target_mw = 250.0,
-  control_ratio = true,
-  control_phase = true,
-  is_discrete = true)
-```
-
-Alternatively, the combined-regulation unit can run **two independent
-controllers with disjoint actuators** — a voltage controller on the ratio tap
-plus an active-power controller on the phase tap, each with its own target,
-deadband, and convergence status. Background (OLTC/PST/combined regulation,
-per-actuator exclusivity, discrete-step deadband sizing) and setup in the
-[transformer regulation theory](@ref transformer_regulation_theory) section
-of the Control Framework page.
-
-Advanced direct use and result inspection:
-
-```julia
-result = run_control!(
-  net;
-  pf_config = powerflow_config(),
-  control_config = control_config(),
-)
-
-result = latest_control_result(net)
-println(result.status)            # outer control-loop terminal state
-println(result.outer_iterations)
-println(result.powerflow_solves)
-println(result.controllers)
-println(result.trace)             # machine-readable, no console parsing
-```
-
-`result.status` is the outer control-loop terminal state, separate from
-numerical PF success/failure.
+Registration (`addPowerTransformerControl!` with its full keyword set,
+master/slave groups via `followers`, declarative YAML entries) and the
+controller result surfaces are documented in the
+[Control Framework](control_framework.md). Branch-model specific is only
+the INLINE form: a controller can be attached while the transformer
+branch is created.
 
 ### Inline controller definition
 
@@ -648,20 +570,19 @@ addPIModelTrafo!(
 
 Sparlectra supports basic remote voltage control: a `target_bus` measurement,
 one transformer tap as actuator, and a `target_vm_pu ± deadband` objective —
-i.e. single-controller remote regulation. A complete implementation as used in
-real grid control systems or CGMES-based coordination additionally requires
-multiple transformers controlling the same remote bus, coordination between
-controllers (participation factors / priority rules), limit handling with
-redistribution when a transformer hits its tap limit, anti-hunting mechanisms,
-and deterministic group convergence. Currently controllers operate
-independently with no grouping or shared objective; coordinated multi-actuator
-remote voltage control is not yet implemented.
+i.e. single-controller remote regulation. Parallel transformers regulating
+the same bus are supported as a master/slave group (`followers` on
+`addPowerTransformerControl!`); see the section "Master/slave groups for
+parallel transformers" in [Control Framework](control_framework.md). Still
+open are participation-factor allocation between group members and
+redistribution when a follower hits its tap limit.
 
 ### Limits / scope
 
 - no auxiliary transformer nodes
 - no coupling of tap variables into the Newton iteration
-- no coordinated multi-transformer control
+- no participation-factor allocation or tap-limit redistribution within
+  transformer groups
 
 ## 5. CGMES / ENTSO-E mapping
 
@@ -704,5 +625,5 @@ provided. MATPOWER's raw `TAP`/`SHIFT` corresponds to the CGMES "General Case".
   `examples/others/tap_control_schraeg_two_controllers.jl` (split combined
   regulation: two independent controllers with disjoint actuators on one
   transformer) and
-  `examples/example_transformer_phase_shift_control.jl` (phase-shift direction
-  probe).
+  `examples/others/exp_pst_reactance_coupling.jl` (phase-shift direction and
+  tap-dependent series reactance).

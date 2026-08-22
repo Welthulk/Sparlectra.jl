@@ -418,9 +418,6 @@ function _dtf_effective_transformer_tap(case::DTFCase, branch::DTFBranch, contro
     phase_model = phase_model)
 end
 
-function _dtf_transformer_ratio(case::DTFCase, branch::DTFBranch, control::Union{Nothing,DTFTransformerControl}, from_bus::DTFBus, to_bus::DTFBus)
-  return _dtf_effective_transformer_tap(case, branch, control, from_bus, to_bus).ratio
-end
 
 """
     build_net(case; bus_shunt_model = :admittance) -> Net

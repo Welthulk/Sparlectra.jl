@@ -84,6 +84,8 @@ makedocs(
     "Performance and Profiling" => "performance_profiling.md",
     "Tests" => "tests.md",
     "Branch Model" => "branchmodel.md",
+    "Component Types" => "component_types.md",
+    "Component Removal" => "remove_functions.md",
     "External Solvers" => "external_solvers.md",
     "Import" => "import.md",
     "Links" => "links.md",

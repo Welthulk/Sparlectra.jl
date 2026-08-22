@@ -113,12 +113,6 @@ end
 _is_linear_singularity_error(e) = e isa LinearAlgebra.SingularException
 _is_linear_fallback_error(e) = e isa LinearAlgebra.LAPACKException || e isa ArgumentError || e isa LinearAlgebra.SingularException
 
-function _allfinite_matrix(A)::Bool
-  if A isa SparseArrays.AbstractSparseMatrixCSC
-    return all(isfinite, nonzeros(A))
-  end
-  return all(isfinite, A)
-end
 
 function _dense_svd_fallback_allowed(A)::Bool
   return max(size(A)...) <= DEFAULT_DENSE_FALLBACK_MAX_N

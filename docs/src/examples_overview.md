@@ -17,31 +17,32 @@ summary at the end): `run_powerflow_suite.jl`, `run_others_suite.jl`,
 
 ## Power flow and network operation
 
-| Example (`examples/powerflow/`) | Demonstrates | Suite |
-|---|---|---|
-| `matpower_import.jl` | Minimal MATPOWER import and solve | powerflow |
-| `matpower_import_multi_config.jl` | One case under several configurations | powerflow |
-| `exp_configured_matpower_cases.jl` | Ordered `matpower_import.cases` batches via `run_sparlectra_cases` | powerflow |
-| `exp_programmatic_api.jl` | GUI-ready `run_sparlectra_api` contract, explicit artifacts | powerflow |
-| `exp_powerflow_service.jl` | Local service run, result lookup by run ID, artifact listing — no HTTP server | powerflow |
-| `exp_distributed_slack_modes.jl` | Classical single slack vs distributed slack (`pg_weighted` vs imported `APF` shares, `lambda_P` metadata) | standalone |
-| `exp_dc_powerflow.jl` | Standalone DC power flow (`rundcpf!`), DC-seeded AC start | powerflow |
-| `exp_condition_number.jl` | Jacobian condition-number estimate at the solved operating point (`condestJacobian`, `reportCondition`), incl. a stressed near-singular variant | powerflow |
-| `exp_hvdc_b2b_pairing.jl` | Back-to-back HVDC pairing controller: Stage-0 snapshot vs steerable transfer on a two-island net (#297 Draft B) | others |
-| `exp_hvdc_meshed_ac_tie.jl` | HVDC pair in parallel to an AC tie: one reference per synchronous island, setpoint pair as parallel PQ path, `island_feed` rejected ([theory](hvdc_back_to_back.md)) | others |
-| `exp_parallel_islands.jl` | `islands.mode solve_parallel` vs `solve_independent` on an 8-island net, wall clocks side by side, bitwise-identical voltages | parallel |
-| `exp_parallel_sc_sweep.jl` | IEC 60909-0 all-bus sweep serial vs threaded chunks (8000 fault locations), row-identical results | parallel |
-| `exp_contingency_n1.jl` | Full branch N-1 on case1354pegase (`runContingencies!`): serial vs parallel, warm-start evidence, top-10 worst contingencies ([theory](contingency.md)) | parallel |
-| `exp_open_terminal_line.jl` | One-sided open line: full charging draw at the closed bus and the Ferranti rise at the open end ([theory](branchmodel.md)) | others |
-| `exp_current_iteration_start.jl` | Guarded current-iteration start pre-solve via config overrides | powerflow |
-| `exp_diagnose_self_check.jl` | `run_fixed_reference_self_check` and the narrative `diagnose.log` report | others |
-| `exp_short_circuit.jl` | `runShortCircuit!` (IEC 60909-0) on a hand-built feeder+machine net — Ik'' max/min and the safety flag on defaulted data | short_circuit |
-| `exp_short_circuit_reference.jl` | PASS/FAIL check against the documented reference table (`docs/dev/short_circuit_reference_table.md`) | short_circuit |
-| `exp_short_circuit_cgmes.jl` | `runShortCircuit!` on the ENTSO-E MicroGrid BE delivery from the local test-set cache | short_circuit |
-| `exp_synthetic_tiled_grid_pf_perf.jl` | Synthetic tiled-grid PF performance study | powerflow |
-| `qlimit_large_case_mode_comparison.jl` | Q-limit enforcement modes on large cases | powerflow |
-| `apslf_demo.jl` | APSLF analytic solver as standalone/primary/start-value backend | powerflow |
-| `mc_probabilistic_powerflow.jl` | Monte-Carlo load scaling on `case14.m` (N = 1000): per-bus Vm statistics, band violations, convergence rate | powerflow |
+| Example | Folder | Demonstrates | Suite |
+|---|---|---|---|
+| `matpower_import.jl` | `powerflow` | Minimal MATPOWER import and solve | powerflow |
+| `matpower_import_multi_config.jl` | `powerflow` | One case under several configurations | powerflow |
+| `exp_configured_matpower_cases.jl` | `powerflow` | Ordered `matpower_import.cases` batches via `run_sparlectra_cases` | powerflow |
+| `exp_programmatic_api.jl` | `powerflow` | GUI-ready `run_sparlectra_api` contract, explicit artifacts | powerflow |
+| `exp_powerflow_service.jl` | `powerflow` | Local service run, result lookup by run ID, artifact listing (no HTTP server) | powerflow |
+| `exp_distributed_slack_modes.jl` | `powerflow` | Classical single slack vs distributed slack (`pg_weighted` vs imported `APF` shares, `lambda_P` metadata) | standalone |
+| `exp_external_grid_comparison.jl` | `powerflow` | Grid-connection modeling comparison on an 8-bus ring (issue #299): ideal slack at two alternative buses, non-ideal external-grid source with internal impedance, and distributed slack, tabulated per bus | powerflow |
+| `exp_dc_powerflow.jl` | `powerflow` | Standalone DC power flow (`rundcpf!`), DC-seeded AC start | powerflow |
+| `exp_condition_number.jl` | `powerflow` | Jacobian condition-number estimate at the solved operating point (`condestJacobian`, `reportCondition`), incl. a stressed near-singular variant | powerflow |
+| `exp_hvdc_b2b_pairing.jl` | `others` | Back-to-back HVDC pairing controller: Stage-0 snapshot vs steerable transfer on a two-island net (#297 Draft B) | others |
+| `exp_hvdc_meshed_ac_tie.jl` | `others` | HVDC pair in parallel to an AC tie: one reference per synchronous island, setpoint pair as parallel PQ path, `island_feed` rejected ([theory](hvdc_back_to_back.md)) | others |
+| `exp_parallel_islands.jl` | `powerflow` | `islands.mode solve_parallel` vs `solve_independent` on an 8-island net, wall clocks side by side, bitwise-identical voltages | parallel |
+| `exp_parallel_sc_sweep.jl` | `others` | IEC 60909-0 all-bus sweep serial vs threaded chunks (8000 fault locations), row-identical results | parallel |
+| `exp_contingency_n1.jl` | `others` | Full branch N-1 on case1354pegase (`runContingencies!`): serial vs parallel, warm-start evidence, top-10 worst contingencies ([theory](contingency.md)) | parallel |
+| `exp_open_terminal_line.jl` | `others` | One-sided open line: full charging draw at the closed bus and the Ferranti rise at the open end ([theory](branchmodel.md)) | others |
+| `exp_current_iteration_start.jl` | `powerflow` | Guarded current-iteration start pre-solve via config overrides | powerflow |
+| `exp_diagnose_self_check.jl` | `others` | `run_fixed_reference_self_check` and the narrative `diagnose.log` report | others |
+| `exp_short_circuit.jl` | `others` | `runShortCircuit!` (IEC 60909-0) on a hand-built feeder+machine net: Ik'' max/min and the safety flag on defaulted data | short_circuit |
+| `exp_short_circuit_reference.jl` | `others` | PASS/FAIL check against the documented reference table (`docs/dev/short_circuit_reference_table.md`) | short_circuit |
+| `exp_short_circuit_cgmes.jl` | `others` | `runShortCircuit!` on the ENTSO-E MicroGrid BE delivery from the local test-set cache | short_circuit |
+| `exp_synthetic_tiled_grid_pf_perf.jl` | `powerflow` | Synthetic tiled-grid PF performance study | powerflow |
+| `qlimit_large_case_mode_comparison.jl` | `powerflow` | Q-limit enforcement modes on large cases | powerflow |
+| `apslf_demo.jl` | `powerflow` | APSLF analytic solver as standalone/primary/start-value backend | powerflow |
+| `mc_probabilistic_powerflow.jl` | `powerflow` | Monte-Carlo load scaling on `case14.m` (N = 1000): per-bus Vm statistics, band violations, convergence rate | powerflow |
 
 ## Transformers and controllers
 

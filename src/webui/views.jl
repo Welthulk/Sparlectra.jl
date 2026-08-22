@@ -65,12 +65,6 @@ function _webui_select(name, values, selected, extra_attrs::AbstractString = "")
 end
 
 """Render a file-path dropdown while showing only each file's basename."""
-function _webui_path_select(name::AbstractString, paths, selected::AbstractString)::String
-  selected_path = isempty(selected) ? (isempty(paths) ? "" : first(paths)) : selected
-  option_paths = isempty(selected_path) || selected_path in paths ? paths : [selected_path; paths]
-  options = join((_webui_option(path, basename(path), selected_path) for path in option_paths), "")
-  return "<select id=\"$(name)\" name=\"$(name)\" required>$(options)</select>"
-end
 
 const WEBUI_STATUS_AUTO_REFRESH_SECONDS = 2
 const _WEBUI_ACTIVE_RUN_STATUSES = Set(("queued", "running", "aborting"))

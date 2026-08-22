@@ -123,3 +123,16 @@ thresholds.
 | `benchmark.show_once` | Bool | `false` | `true`, `false` | Run one full visible solve before timing loop. |
 | `benchmark.show_once_output` | Symbol/String | `classic` | `classic`, `dataframe`, `compact` | Output format for `show_once`. |
 | `benchmark.show_once_max_nodes` | Int | `0` | non-negative integer | Row cap for one-shot output. |
+
+## Solver workspace and warmup keys
+
+Performance-relevant keys that live outside the `performance.*` section
+proper:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `power_flow.rectangular_workspace_reuse` | `true` | Reuse the rectangular solver's workspace between solves of one session instead of reallocating. |
+| `power_flow.rectangular_preallocate_workspace` | `auto` | Preallocate the workspace up front (`off`, `on`, `auto`; `auto` decides by case size). |
+| `power_flow.rectangular_workspace_min_buses` | `1000` | Case size from which `auto` preallocates. |
+| `performance.representative_warmup_runs` | `0` | Untimed warmup solves before a timed representative run. |
+| `performance.compare_cold_warm` | `false` | Report the cold (first) and warm (subsequent) timings side by side. |

@@ -28,8 +28,9 @@ showcase is `examples/others/exp_contingency_n1.jl` (case1354pegase, all
 
 - The base `net` is NEVER mutated. `runContingencies!` first solves a
   template copy of the base case; every contingency then works on a
-  `deepcopy` of that template (the copy cost is measured in the analysis
-  notes; a structural-sharing copy is a known follow-up), removes its
+  `deepcopy` of that template (measured warm per-case copy cost: about
+  9 ms on case1354pegase; the once-observed 470 ms was first-call compile
+  time, so no structural-sharing copy is needed), removes its
   branch via `removeBranch!`, re-marks isolated buses, and solves.
 - Warm start: because the template carries the solved base voltages, every
   contingency solve starts from the base operating point. When the base

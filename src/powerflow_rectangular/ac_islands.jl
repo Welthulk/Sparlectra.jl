@@ -302,7 +302,7 @@ function _validate_single_reference_per_island!(net::Net, report)
   isempty(bad) && return nothing
   # user-facing bus names (busDict), not the internal component names: the
   # message must name the buses the user modelled (error path only)
-  name_by_idx = Dict(idx => name for (name, idx) in net.busDict)
+  name_by_idx = _bus_name_by_idx(net)
   parts = String[]
   for row in bad
     refs = [bus for bus in row.buses if getNodeType(net.nodeVec[bus]) == Slack]

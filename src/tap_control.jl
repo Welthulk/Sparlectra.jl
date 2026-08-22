@@ -716,17 +716,8 @@ end
 """
     run_tap_controllers_outer!(net; ...)
 
-Run outer-loop transformer control around `runpf!`.
-
-Loop per iteration:
-1. Solve PF.
-2. Evaluate controller errors.
-3. Update ratio and/or phase (discrete or continuous-like step).
-4. Re-solve PF.
-5. Stop when all controllers are converged, blocked at limits, or no movement is
-   possible; otherwise stop at `max_outer_iters`.
-
-Returns `(iterations, erg)` where `erg == 0` means successful PF termination.
+Removed from the public control API; always throws. Use
+`run_control!(net; pf_config = ..., control_config = ...)` instead.
 """
 function run_tap_controllers_outer!(net::Net; kwargs...)
   throw(ArgumentError("run_tap_controllers_outer! has been removed from the public control API; use run_control!(net; pf_config=..., control_config=...)"))

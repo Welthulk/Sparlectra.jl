@@ -73,4 +73,6 @@ links_df = DataFrame(report.links)
 
 ## Full runnable example
 
-See `examples/using_netreports.jl` for a complete script.
+The "Build a report" snippet above is a complete runnable script: paste it
+into a `julia --project=.` session and follow it with the access and
+DataFrame-conversion lines from this page.

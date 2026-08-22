@@ -568,9 +568,10 @@ function formatBranchResults(net::Net; max_rows::Union{Nothing,Int} = nothing)
     end
   end
   #! format: off
-  formatted_results = @sprintf("\n==========================================================================================================================================================================================================================\n")
-  formatted_results *= @sprintf("| %-25s | %-6s | %-25s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-9s | %-22s |\n", "Branch", "Type", "Connection", "P [MW]", "Q [MVar]", "P [MW]", "Q [MVar]", "Pv [MW]", "Qv [MVar]", "Ctrl", "P_tgt", "TapPos", "Ctrl status")
-  formatted_results *= @sprintf("==========================================================================================================================================================================================================================\n")
+  fr_io = IOBuffer()
+  @printf(fr_io, "\n==========================================================================================================================================================================================================================\n")
+  @printf(fr_io, "| %-25s | %-6s | %-25s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-9s | %-22s |\n", "Branch", "Type", "Connection", "P [MW]", "Q [MVar]", "P [MW]", "Q [MVar]", "Pv [MW]", "Qv [MVar]", "Ctrl", "P_tgt", "TapPos", "Ctrl status")
+  @printf(fr_io, "==========================================================================================================================================================================================================================\n")
   #! format: on
   shown_rows = 0
   for br in net.branchVec
@@ -635,7 +636,7 @@ function formatBranchResults(net::Net; max_rows::Union{Nothing,Int} = nothing)
     end
 
     #! format: off
-    formatted_results *= @sprintf("| %-25s | %-6s | %-25s | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10s | %-10s | %-9s | %-22s |\n", _fitColumn(bName, 25), branchKind, _fitColumn(connection, 25), pfromVal, qfromVal, ptoVal, qtoVal, pLossval, qLossval, ctrl_type, p_target, tap_pos, status)
+    @printf(fr_io, "| %-25s | %-6s | %-25s | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10s | %-10s | %-9s | %-22s |\n", _fitColumn(bName, 25), branchKind, _fitColumn(connection, 25), pfromVal, qfromVal, ptoVal, qtoVal, pLossval, qLossval, ctrl_type, p_target, tap_pos, status)
     #! format: on
     shown_rows += 1
   end
@@ -653,17 +654,17 @@ function formatBranchResults(net::Net; max_rows::Union{Nothing,Int} = nothing)
     p_target = r.p_target_MW === missing ? "-" : @sprintf("%.3f", r.p_target_MW)
     link_mode = r.mode === :fixed ? "-" : _fitColumn(string(r.mode), 10)
     #! format: off
-    formatted_results *= @sprintf("| %-25s | %-6s | %-25s | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10s | %-10s | %-9s | %-22s |\n", _fitColumn(r.name, 25), "Link", _fitColumn(connection, 25), r.p_from_MW, 0.0, -r.p_to_MW, 0.0, r.loss_MW, 0.0, link_mode, _fitColumn(p_target, 10), "-", _fitColumn("HVDC, not a branch", 22))
+    @printf(fr_io, "| %-25s | %-6s | %-25s | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10s | %-10s | %-9s | %-22s |\n", _fitColumn(r.name, 25), "Link", _fitColumn(connection, 25), r.p_from_MW, 0.0, -r.p_to_MW, 0.0, r.loss_MW, 0.0, link_mode, _fitColumn(p_target, 10), "-", _fitColumn("HVDC, not a branch", 22))
     #! format: on
   end
-  formatted_results *= @sprintf("--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n")
+  @printf(fr_io, "--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n")
   (∑pv, ∑qv) = getTotalLosses(net = net)
   total_losses = @sprintf("total network power balance (Σ S_branch): P = %10.3f [MW], Q = %10.3f [MVar]\n", ∑pv, ∑qv)
 
   if !isnothing(max_rows) && length(net.branchVec) > shown_rows
-    formatted_results *= @sprintf("Branch results shown: %d / %d\n", shown_rows, length(net.branchVec))
+    @printf(fr_io, "Branch results shown: %d / %d\n", shown_rows, length(net.branchVec))
   end
-  return formatted_results, total_losses
+  return String(take!(fr_io)), total_losses
 end
 
 """
@@ -1151,8 +1152,8 @@ where the from injection is negative).
 function _hvdc_link_flow_rows(net::Net)::Vector{NamedTuple}
   ctrl_by_name = Dict{String,Any}(c.name => c for c in _hvdc_pair_controllers(net))
   rows = NamedTuple[]
+  busNameByIdx = _bus_name_by_idx(net)
   for (nr, l) in enumerate(net.hvdcLinks)
-    busNameByIdx = _bus_name_by_idx(net)
     from_name = _effective_bus_name(busNameByIdx, net, l.from_bus)
     to_name = _effective_bus_name(busNameByIdx, net, l.to_bus)
     ctrl = l.controller_name === nothing ? nothing : get(ctrl_by_name, l.controller_name, nothing)

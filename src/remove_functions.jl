@@ -464,16 +464,12 @@ function clearIsolatedBuses!(; net::Net)::Int
   # Make sure isolated buses are marked
   markIsolatedBuses!(net = net)
 
-  # Collect isolated bus names
+  # Collect isolated bus names (one reverse lookup instead of a scan per node)
+  name_by_idx = _bus_name_by_idx(net)
   isolatedBusNames = String[]
   for node in net.nodeVec
-    if isIsolated(node)
-      for (name, idx) in net.busDict
-        if idx == node.busIdx
-          push!(isolatedBusNames, name)
-          break
-        end
-      end
+    if isIsolated(node) && haskey(name_by_idx, node.busIdx)
+      push!(isolatedBusNames, name_by_idx[node.busIdx])
     end
   end
 

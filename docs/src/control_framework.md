@@ -6,10 +6,13 @@ The inner numerical solver remains `runpf!`. The generic orchestration layer is 
 
 `run_sparlectra` automatically dispatches through `run_control!` when `collect_outer_controllers(net)` returns at least one controller.
 
-Built-in controllers: `PowerTransformerControl` (tap changers — voltage,
-active power, combined; theory below) and `MachineVoltageControl`
-(remote voltage regulation via machine reactive power — theory in
-[Remote Voltage Control](remote_voltage_control.md)).
+Built-in controllers: `PowerTransformerControl` (tap changers: voltage,
+active power, combined; theory below), `MachineVoltageControl`
+(remote voltage regulation via machine reactive power, theory in
+[Remote Voltage Control](remote_voltage_control.md)),
+`ShuntVoltageControl` (SVC, and MSC/MSR switched banks via `step_mvar`),
+`SeriesReactanceControl` (TCSC, and SSSC via `v_inj_max_pu`), and
+`HvdcPairControl` (back-to-back HVDC pairs).
 
 ## Architecture
 
@@ -181,7 +184,9 @@ purely reporting, no control behavior attached. Current devices:
 | Combined regulation | `:tap_ratio_and_phase_shift` | both |
 | Machine remote voltage control | `:machine_q_mvar` | `:bus_voltage` |
 | SVC (variable shunt) | `:shunt_bs_mvar` | `:bus_voltage` |
+| MSC/MSR (switched shunt bank) | `:shunt_bs_mvar` | `:bus_voltage` |
 | TCSC (series compensation) | `:series_x_pu` | `:branch_active_power` |
+| Back-to-back HVDC pair | `:hvdc_p_transfer_mw` | `:hvdc_transfer` |
 
 ## SVC: variable-shunt voltage control
 
@@ -196,7 +201,10 @@ point of the device model). The bus must be PQ; a second shunt controller
 on the same bus is rejected, and a transformer tap controller regulating
 the same bus voltage triggers the cross-type warning. `runShortCircuit!`
 and the power flow see the SVC only through its shunt stamp — disabled or
-absent controllers leave results untouched.
+absent controllers leave results untouched. Setting `step_mvar` switches
+the same controller into the discrete MSC/MSR switched-bank mode; see the
+section "Discrete banks: MSC/MSR" on the
+[FACTS Devices](@ref facts_devices) page.
 
 The machine controller offers a STATCOM alternative for the same task
 (`addMachineVoltageControl!` with `s_max_mva`): current-based limit,

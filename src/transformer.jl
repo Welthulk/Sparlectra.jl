@@ -50,26 +50,6 @@ mutable struct TransformerModelParameters
   end
 end
 
-#helper
-#=
-function tap_adjust_impedance(tap_pos, tap_min, tap_max, tap_nom, xk, xk_min, xk_max)
-    if tap_pos <= max(tap_nom, tap_max) && tap_pos >= min(tap_nom, tap_max)
-        if tap_max == tap_nom
-            return xk
-        end
-
-        xk_increment_per_tap = (xk_max - xk) / (tap_max - tap_nom)
-        return xk + (tap_pos - tap_nom) * xk_increment_per_tap
-    end
-
-    if tap_min == tap_nom
-        return xk
-    end
-
-    xk_increment_per_tap = (xk_min - xk) / (tap_min - tap_nom)
-    return xk + (tap_pos - tap_nom) * xk_increment_per_tap
-end
-=#
 
 function calcTransformerRXGB(Vn_kV::Float64, modelData::TransformerModelParameters)::Tuple{Float64,Float64,Float64,Float64}
   z_base = Vn_kV^2 / modelData.sn_MVA
@@ -379,28 +359,6 @@ end
   return 0
 end
 
-#= not implemented
-function adjustVkDep(Vk::Float64, Vkmax::Float64, Vkmin::Float64, tap::PowerTransformerTaps)
-  if isnothing(tap)
-    return Vk
-  end
-
-   #if tap.neutralStep <= max(tap.neutralStep, tap.highStep) >= min(tap.neutralStep, tap.highStep)
-
-    if tap.step <= max(tap.neutralStep, tap.highStep) && tap.step >= min(tap.neutralStep, tap.highStep)
-        if tap_max == tap_nom
-            return xk
-        end
-        cor = (xk_max - xk) / (tap_max - tap_nom)
-        return xk + (tap_pos - tap_nom) * xk_increment_per_tap
-    end
-    if tap_min == tap_nom
-        return xk
-    end
-    xk_increment_per_tap = (xk_min - xk) / (tap_min - tap_nom)
-    return xk + (tap_pos - tap_nom) * xk_increment_per_tap
-end
-=#
 
 """
     PowerTransformerWinding
@@ -536,53 +494,6 @@ mutable struct PowerTransformerWinding
   end
 end
 
-#=
-purpose: recalculation model data of transformer
-input:
-baseMVA: 
-Sn_MVA: rated power of transformer, MVA
-ratedU_kV: rated voltage, kV
-r_pu: short circuit resistance, p.u.
-x_pu: short circuit reaktance, p.u.
-bm: open loop magnitacation, p.u.
-hint: gm is set to zero, g_pu = 0.0!
-=#
-function recalc_trafo_model_data(; baseMVA::Float64, Sn_MVA::Float64, ratedU_kV::Float64, r_pu::Float64, x_pu::Float64, b_pu::Float64, isPerUnit::Bool)::TransformerModelParameters
-  Pfe_kW = 0.0 # -> g_pu = 0.0
-  if isPerUnit
-    base_power_3p = baseMVA
-    base_power_1p = base_power_3p / 3.0
-    base_i_to = base_power_3p / (ratedU_kV * Wurzel3)
-    base_y_to = base_i_to * base_i_to / base_power_1p
-    base_z_to = 1.0 / base_y_to
-
-    # g_pu = 0.0!
-    y_shunt = b_pu
-    Y_shunt = y_shunt * base_y_to
-    i0 = 100.0 * Y_shunt * ratedU_kV^2 / Sn_MVA
-
-    z_ser_pu = sqrt(r_pu^2 + x_pu^2)
-    Z_Series_abs = z_ser_pu * base_z_to
-    uk = 100.0 * Z_Series_abs * Sn_MVA / ratedU_kV^2
-    Rk = r_pu * base_z_to
-    P_kW = 100.0 * Rk * Sn_MVA^2 / ratedU_kV^2
-  else
-    u_quad = ratedU_kV^2
-    z_base = u_quad / Sn_MVA
-    y_base = Sn_MVA / u_quad
-
-    Y_shunt = b_pu
-    i0 = Y_shunt * z_base * 100.0
-
-    Z_Series_abs = sqrt(r_pu^2 + x_pu^2)
-    uk = Z_Series_abs * y_base
-
-    Rk = r_pu
-    P_kW = 100.0 * Rk * Sn_MVA^2 / u_quad
-  end
-
-  return TransformerModelParameters(sn_MVA = Sn_MVA, vk_percent = uk, pk_kW = P_kW, i0_percent = i0, p0_kW = Pfe_kW)
-end
 
 function getTrafoRXBG(o::PowerTransformerWinding)::Tuple{Float64,Float64,Union{Nothing,Float64},Union{Nothing,Float64}}
   return (o.r, o.x, o.b, o.g)

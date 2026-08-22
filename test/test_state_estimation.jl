@@ -78,6 +78,24 @@ function test_state_estimation_observability_metrics()::Bool
     gobs = evaluate_global_observability(net, meas; flatstart = true, jacEps = 1e-6)
     @test gobs.n_states == 2 * length(net.nodeVec) - 1
     @test gobs.n_measurements == count(m -> m.active, meas)
+
+    # measurement_jacobian: the labeled H behind the observability checks
+    # (same evaluation, plus described rows and state-column labels)
+    empty!(net.measurements)
+    append!(net.measurements, meas)
+    mj = measurement_jacobian(net; flatstart = true, jacEps = 1e-6)
+    @test size(mj.H) == (gobs.n_measurements, gobs.n_states)
+    @test length(mj.rows) == gobs.n_measurements
+    @test length(mj.cols) == gobs.n_states
+    @test count(c -> startswith(c, "Va("), mj.cols) == length(net.nodeVec) - 1
+    @test count(c -> startswith(c, "Vm("), mj.cols) == length(net.nodeVec)
+    # a flow row is labeled with its oriented branch, a bus row with its bus
+    @test any(r -> r.type == Sparlectra.PflowMeas && occursin("->", r.location), mj.rows)
+    @test any(r -> r.type == Sparlectra.VmMeas && !occursin("->", r.location), mj.rows)
+    # every row touches at least one state; the rank matches the check above
+    @test all(i -> any(j -> abs(mj.H[i, j]) > 1e-12, axes(mj.H, 2)), axes(mj.H, 1))
+    @test Sparlectra.numeric_rank(mj.H) == gobs.numerical_rank
+    empty!(net.measurements)
     @test gobs.redundancy == gobs.n_measurements - gobs.n_states
     @test isapprox(gobs.redundancy_ratio, gobs.n_measurements / gobs.n_states)
     @test gobs.dof == gobs.redundancy

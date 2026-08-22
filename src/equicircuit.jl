@@ -592,6 +592,15 @@ function createYBUS(; net::Net, sparse::Bool = true, printYBUS::Bool = false)
 
   n == 0 && return Y
 
+  # isolated-node bookkeeping, hoisted out of the branch/shunt loops: the
+  # membership test and the index shift below were linear scans per branch
+  # terminal, executed on every Y-bus rebuild (once per outer iteration).
+  # A local sorted copy makes both O(log n) without assuming net.isoNodes
+  # arrives sorted from every producer.
+  iso_sorted = sort(net.isoNodes)
+  @inline is_iso(b::Int) = insorted(b, iso_sorted)
+  @inline iso_shift(b::Int) = b - (searchsortedfirst(iso_sorted, b) - 1)
+
   for branch in net.branchVec
     @assert branch isa AbstractBranch "branch $(branch) is not of type AbstractBranch"
     fromNode = branch.fromBus
@@ -609,19 +618,19 @@ function createYBUS(; net::Net, sparse::Bool = true, printYBUS::Bool = false)
       # off-diagonals. Only the closed-bus index is ever read here, so
       # island subnets may remap the open-side index freely.
       closed = state == :open_to ? Int(fromNode) : Int(toNode)
-      closed in net.isoNodes && continue
-      closed -= count(i -> i < closed, net.isoNodes)
+      is_iso(closed) && continue
+      closed = iso_shift(closed)
       Y[closed, closed] += _open_terminal_yin(branch)
       continue
     end
     # skip isolated nodes
-    if fromNode in net.isoNodes || toNode in net.isoNodes
+    if is_iso(Int(fromNode)) || is_iso(Int(toNode))
       continue
     end
 
     # correct the indices based on the isolated nodes
-    fromNode -= count(i -> i < fromNode, net.isoNodes)
-    toNode -= count(i -> i < toNode, net.isoNodes)
+    fromNode = iso_shift(Int(fromNode))
+    toNode = iso_shift(Int(toNode))
     # Y-Matrix
     y_11, y_12, y_21, y_22 = calcAdmittance(branch, branch.comp.cVN, net.baseMVA)
     Y[fromNode, fromNode] += y_11
@@ -636,18 +645,21 @@ function createYBUS(; net::Net, sparse::Bool = true, printYBUS::Bool = false)
     # in the mismatch/injection path, so it must not also be stamped into Ybus.
     sh.model == :Y || continue
     bus = sh.busIdx
-    bus in net.isoNodes && continue
-    bus -= count(i -> i < bus, net.isoNodes)
+    is_iso(bus) && continue
+    bus = iso_shift(bus)
 
     # Shunt-Admittanz diagonal addieren
     Y[bus, bus] += sh.y_pu_shunt
   end
 
-  if printYBUS
+  if printYBUS && n > 30
+    # a dense n x n dump is unreadable and slow beyond toy sizes; the flag
+    # stays honored for the small nets it was made for
+    println("\nYBUS: suppressed (", n, " x ", n, " buses > 30; the dense dump is for toy nets)")
+  elseif printYBUS
     println("\nYBUS:\n")
     red_text = "\x1b[31m"  # ANSI escape code for red text
     reset_text = "\x1b[0m"  # ANSI escape code to reset text color
-    green_text = "\x1b[32m"  # ANSI escape code for green text
 
     for j = 1:n
       farbe = reset_text

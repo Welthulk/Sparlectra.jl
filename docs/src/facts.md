@@ -112,7 +112,7 @@ blocks (e.g. four times 10 MVAr):
   unchanged, the delivered Q follows $V^2$ with the last block connected.
 
 The classical coordination case, a switched bank plus an OLTC on one bus,
-is tracked in issue #322.
+remains open follow-up work.
 
 ## Series side: fixed window versus voltage-bounded window
 

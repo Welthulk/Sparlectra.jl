@@ -149,8 +149,6 @@ export
   # functions
 
   # utilities.jl
-  zero_row!,
-  print_jacobian,
 
   # yamlparams.jl
   parse_yaml_scalar,
@@ -222,7 +220,6 @@ export
   getSideNumber2WT,
   getWinding2WT,
   calcTransformerRatio,                   # Compute transformer off-nominal ratio.
-  recalc_trafo_model_data,                # Recompute transformer equivalent model data.
   create2WTRatioTransformerNoTaps,
   create3WTWindings!,
   getTrafoImpPGMComp,
@@ -305,7 +302,6 @@ export
   hasBusInNet,
   addBusGenPower!,
   addBusLoadPower!,
-  addBusShuntPower!,
   setNodeVoltage!,
   setNodeAngle!,
   getNetOrigBusIdx,
@@ -570,6 +566,7 @@ export
   evaluate_observability_matrix,
   evaluate_local_observability_matrix,
   evaluate_global_observability,          # Evaluate global SE observability.
+  measurement_jacobian,                   # Labeled measurement Jacobian H (rows/cols described) for matrix reports.
   evaluate_local_observability,           # Evaluate local SE observability.
 
   # rectangular network solver

@@ -63,7 +63,7 @@ This typed model is the canonical internal representation that should be consume
 | `output` | `OutputConfig` | Console/logfile behavior and result table sizing | Public / supported |
 | `performance` | `PerformanceConfig` | Profiling/reporting toggles and diagnostic volume controls | Public / supported |
 | `benchmark` | `BenchmarkConfig` | Repeated benchmark-run controls | Public / supported |
-| `control` | `ControlConfig` | Generic controller outer-loop orchestration controls (`control.controllers` reserved for future YAML definitions) | Public / supported |
+| `control` | `ControlConfig` | Generic controller outer-loop orchestration controls; `control.controllers` holds declarative controller definitions (implemented, issue #305), see the controllers section below | Public / supported |
 | `runtime` | `RuntimeConfig` | Julia/BLAS thread control knobs for entry workflows | Public / supported |
 | `diagnostics` | `DiagnosticsConfig` | Effective-config logging (`log_effective_config` only — the former `diagnostics.console_*`/`logfile_diagnostics` duplicates of `output.*` are deprecated and ignored with a warning) | Public / supported |
 | `webui` | `WebUIConfig` | Web UI presentation preferences (e.g. `webui.show_case_settings_notice`) | Public / supported |
@@ -308,6 +308,17 @@ The check result — not just the setting — is surfaced in every output surfac
 
 The rescue retry loop is intentionally not implemented. `wrong_branch_detection = rescue` is a reserved mode that reports `wrong_branch_rescue_not_implemented` rather than retrying. Supported mitigations for hard flat-start cases are detection with full output visibility (this section) and the APSLF solver as an alternative start/solve path (see [External Solvers](external_solvers.md)).
 
+Tuning keys of the detector (all under `power_flow.`):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `power_flow.wrong_branch_min_vm_pu` | `0.70` | Lower edge of the plausibility band; solved magnitudes below it count as suspicious. |
+| `power_flow.wrong_branch_max_vm_pu` | `1.30` | Upper edge of the plausibility band. |
+| `power_flow.wrong_branch_min_low_vm_count` | `1` | How many sub-band buses it takes to raise the finding. |
+| `power_flow.wrong_branch_max_angle_spread_deg` | `180.0` | Maximum admissible total angle spread of the solution. |
+| `power_flow.wrong_branch_rescue` | `false` | Reserved switch for the unimplemented rescue loop; reports instead of retrying. |
+| `power_flow.wrong_branch_rescue_max_attempts` | `2` | Attempt bound for that reserved mode. |
+
 ## Control configuration (generic outer loop)
 
 ```yaml
@@ -357,7 +368,8 @@ control:
 Supported types: `power_transformer` (`addPowerTransformerControl!`),
 `machine_voltage` (`addMachineVoltageControl!`), `shunt_voltage`
 (`addShuntVoltageControl!`), `series_reactance`
-(`addSeriesReactanceControl!`). Unknown types or keys and missing required
+(`addSeriesReactanceControl!`), `hvdc_pair`
+(`addHvdcPairControl!`). Unknown types or keys and missing required
 keys fail at configuration load; unknown bus/branch/transformer references
 and invalid limits fail at apply time naming the entry. Entries whose
 element already carries a controller of the same type are skipped, so
@@ -372,6 +384,30 @@ example setpoints and transformer tap/phase parameters (`oltc`, `pst`,
 `schraeg`). This is an example-specific
 input file consumed by `examples/others/tap_control_demo_grid.jl` and does
 not define the central `control.controllers` schema above.
+
+The section's plain switches:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `control.enabled` | `true` | Run the outer control loop (`run_control!`) around the inner solver when controllers exist. |
+| `control.max_outer_iterations` | `20` | Outer-loop budget shared by all active controllers. |
+| `control.trace` | `true` | Collect machine-readable rows in `ControlRunResult.trace`. |
+| `control.log_iterations` | `true` | Reserved for per-iteration control logging. |
+| `control.stop_on_pf_failure` | `true` | Abort the orchestration when the inner power flow fails. |
+
+## Bookkeeping and console keys
+
+A few keys exist for run bookkeeping and console behavior rather than for
+solver tuning:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `runtime.casefile`, `runtime.case_name`, `runtime.case_source`, `runtime.configured_default_casefile` | `""` | Populated by the API/Web UI into the `effective_config.yaml` run artifact; they record which case a run actually used and where it came from. Not user inputs. |
+| `output.console_live` | `false` | Mirror captured run output live to the real console during API/service runs; the archived `run.log` stays identical. |
+| `output.result_table_max_rows` | `200` | Row cap for the classical result tables. |
+| `output.result_table_large_case_threshold_buses` | `1000` | Bus count from which a case counts as large for result rendering. |
+| `output.result_table_large_case_mode` | `summary` | What large cases print instead of full tables (`summary`, `classic`, `full`). |
+| `webui.warmup` | `true` | Compile the hot paths once at Web UI start (a few seconds) so the first run does not pay them; `false` for a minimal-footprint start. |
 
 ## Migration notes
 
@@ -391,176 +427,11 @@ not define the central `control.controllers` schema above.
 
 ## Complete default-key index
 
-The following canonical keys are currently present in `src/configuration.yaml.example`:
-
-- `benchmark`
-- `benchmark.enabled`
-- `benchmark.methods`
-- `benchmark.samples`
-- `benchmark.seconds`
-- `benchmark.show_once`
-- `benchmark.show_once_max_nodes`
-- `benchmark.show_once_output`
-- `control`
-- `control.controllers`
-- `control.enabled`
-- `control.log_iterations`
-- `control.max_outer_iterations`
-- `control.stop_on_pf_failure`
-- `control.trace`
-- `diagnostics`
-- `diagnostics.log_effective_config`
-- `extensions`
-- `extensions.reserved`
-- `matpower_export`
-- `matpower_export.write_solution`
-- `matpower_import`
-- `matpower_import.auto_profile`
-- `matpower_import.auto_profile_log`
-- `matpower_import.bus_shunt_model`
-- `matpower_import.case`
-- `matpower_import.cases`
-- `matpower_import.compare_voltage_reference`
-- `matpower_import.enable_pq_gen_controllers`
-- `matpower_import.preallocate_min_buses`
-- `matpower_import.preallocate_network`
-- `matpower_import.pv_voltage_mismatch_tol_pu`
-- `matpower_import.pv_voltage_source`
-- `matpower_import.ratio`
-- `matpower_import.shift_sign`
-- `matpower_import.shift_unit`
-- `output`
-- `output.console_auto_profile`
-- `output.console_diagnostics`
-- `output.console_max_rows`
-- `output.console_q_limit_events`
-- `output.console_live`
-- `output.console_summary`
-- `output.logfile_diagnostics`
-- `output.logfile_performance`
-- `output.logfile_results`
-- `output.logfile_warnings`
-- `output.result_table_large_case_mode`
-- `output.result_table_large_case_threshold_buses`
-- `output.result_table_max_rows`
-- `performance`
-- `performance.compact_logging`
-- `performance.compare_cold_warm`
-- `performance.enabled`
-- `performance.level`
-- `performance.max_diagnostic_rows`
-- `performance.print_to_console`
-- `performance.representative_warmup_runs`
-- `performance.show_allocations`
-- `performance.show_iteration_table`
-- `performance.skip_branch_neighborhood_report`
-- `performance.skip_expensive_diagnostics`
-- `performance.skip_reference_comparison`
-- `performance.write_to_logfile`
-- `power_flow`
-- `power_flow.autodamp`
-- `power_flow.autodamp_min`
-- `power_flow.auto_slack`
-- `power_flow.rescue`
-- `power_flow.dc.fallback`
-- `power_flow.wrong_branch_detection`
-- `power_flow.wrong_branch_rescue`
-- `power_flow.wrong_branch_min_vm_pu`
-- `power_flow.wrong_branch_max_vm_pu`
-- `power_flow.wrong_branch_max_angle_spread_deg`
-- `power_flow.wrong_branch_max_branch_angle_deg`
-- `power_flow.wrong_branch_min_low_vm_count`
-- `power_flow.wrong_branch_rescue_max_attempts`
-- `power_flow.flatstart`
-- `power_flow.max_iter`
-- `power_flow.merit`
-- `power_flow.merit.armijo_c1`
-- `power_flow.merit.enabled`
-- `power_flow.merit.fallback_max_mismatch`
-- `power_flow.merit.scale_p`
-- `power_flow.merit.scale_q`
-- `power_flow.merit.scale_v`
-- `power_flow.trust_region`
-- `power_flow.trust_region.enabled`
-- `power_flow.trust_region.initial_radius`
-- `power_flow.trust_region.min_radius`
-- `power_flow.trust_region.max_radius`
-- `power_flow.trust_region.eta_accept`
-- `power_flow.trust_region.shrink_factor`
-- `power_flow.trust_region.expand_factor`
-- `power_flow.trust_region.expand_threshold`
-- `power_flow.trust_region.step_mode`
-- `power_flow.method`
-- `power_flow.qlimits`
-- `power_flow.qlimits.auto_q_delta_pu`
-- `power_flow.qlimits.cooldown_iters`
-- `power_flow.qlimits.enabled`
-- `power_flow.qlimits.enforcement_mode`
-- `power_flow.qlimits.guard`
-- `power_flow.qlimits.guard.accept_bounded_violations`
-- `power_flow.qlimits.guard.enabled`
-- `power_flow.qlimits.guard.freeze_after_repeated_switching`
-- `power_flow.qlimits.guard.log`
-- `power_flow.qlimits.guard.max_remaining_violations`
-- `power_flow.qlimits.guard.max_switches`
-- `power_flow.qlimits.guard.min_q_range_pu`
-- `power_flow.qlimits.guard.narrow_range_mode`
-- `power_flow.qlimits.guard.violation_mode`
-- `power_flow.qlimits.guard.violation_threshold_pu`
-- `power_flow.qlimits.guard.zero_range_mode`
-- `power_flow.qlimits.hysteresis_pu`
-- `power_flow.qlimits.lock_pv_to_pq_buses`
-- `power_flow.qlimits.start_iter`
-- `power_flow.qlimits.start_mode`
-- `power_flow.qlimits.trace_buses`
-- `power_flow.rectangular_preallocate_workspace`
-- `power_flow.rectangular_workspace_min_buses`
-- `power_flow.rectangular_workspace_reuse`
-- `power_flow.start_mode`
-- `power_flow.start_mode.accept_unmeasured_dc_start`
-- `power_flow.start_mode.angle_mode`
-- `power_flow.start_mode.blend_lambdas`
-- `power_flow.start_mode.branch_guard`
-- `power_flow.start_mode.dc_angle_limit_deg`
-- `power_flow.start_mode.measure_candidates`
-- `power_flow.start_mode.profile_source`
-- `power_flow.start_mode.reuse_import_data`
-- `power_flow.start_mode.start_projection`
-- `power_flow.start_mode.try_blend_scan`
-- `power_flow.start_mode.try_dc_start`
-- `power_flow.start_mode.voltage_mode`
-- `power_flow.start_current_iteration`
-- `power_flow.start_current_iteration.accept_only_if_improved`
-- `power_flow.start_current_iteration.damping`
-- `power_flow.start_current_iteration.enabled`
-- `power_flow.start_current_iteration.max_angle_step_deg`
-- `power_flow.start_current_iteration.max_iter`
-- `power_flow.start_current_iteration.min_improvement_factor`
-- `power_flow.start_current_iteration.only_for_large_cases`
-- `power_flow.start_current_iteration.tol`
-- `power_flow.start_current_iteration.vm_max_pu`
-- `power_flow.start_current_iteration.vm_min_pu`
-- `power_flow.tol`
-- `runtime`
-- `runtime.blas_threads`
-- `runtime.case_name`
-- `runtime.case_source`
-- `runtime.casefile`
-- `runtime.configured_default_casefile`
-- `runtime.julia_threads`
-- `runtime.print_thread_config`
-- `state_estimation`
-- `state_estimation.enabled`
-- `state_estimation.flatstart`
-- `state_estimation.jac_eps`
-- `state_estimation.max_iter`
-- `state_estimation.method`
-- `state_estimation.observability`
-- `state_estimation.observability.enabled`- `state_estimation.tol`
-- `state_estimation.pmu_ref_offset`
-- `state_estimation.update_net`
-- `transformer`
-- `transformer.tap_changer_model`
-- `webui`
-- `webui.show_case_settings_notice`
-- `webui.warmup`
+The canonical key set lives in ONE place,
+[`src/configuration.yaml.example`](https://github.com/Welthulk/Sparlectra.jl/blob/main/src/configuration.yaml.example):
+the version-controlled default configuration that the loader validates
+every user YAML against. A hand-maintained copy of that list used to sit
+here and drifted (it was missing about sixty keys); read the file itself,
+it is commented per key and always current. The effective configuration
+of a run, with every default and override resolved, prints via
+`print_effective_config`.

@@ -49,16 +49,6 @@ function _write_namedtuple_csv_row(io::IO, row, columns, delimiter::Char, resolv
   return nothing
 end
 
-function _write_csv_row_values(io::IO, values, delimiter::Char, resolved_format)
-  first = true
-  for value in values
-    first || print(io, delimiter)
-    print(io, _csv_field(value, delimiter, resolved_format))
-    first = false
-  end
-  println(io)
-  return nothing
-end
 
 function _write_namedtuple_csv_buffered(path::AbstractString, rows::AbstractVector, columns, delimiter::Char, resolved_format; initial_bytes::Integer = _DETAILED_CSV_BUFFER_INITIAL_BYTES_DEFAULT)
   buffer = IOBuffer(; sizehint = max(0, Int(initial_bytes)))
@@ -127,17 +117,6 @@ function _complex_voltage_rows(node_rows::AbstractVector, format)
   ]
 end
 
-function _branch_csv_values(br)
-  f = br.fBranchFlow
-  t = br.tBranchFlow
-  p_from = isnothing(f) || isnothing(f.pFlow) ? 0.0 : f.pFlow
-  q_from = isnothing(f) || isnothing(f.qFlow) ? 0.0 : f.qFlow
-  p_to = isnothing(t) || isnothing(t.pFlow) ? 0.0 : t.pFlow
-  q_to = isnothing(t) || isnothing(t.qFlow) ? 0.0 : t.qFlow
-  rated = isnothing(br.sn_MVA) ? 0.0 : br.sn_MVA
-  overloaded = rated > 0.0 && max(abs(p_from), abs(p_to)) > rated
-  return (br.comp.cName, br.branchIdx, br.fromBus, br.toBus, br.status, p_from, q_from, p_to, q_to, _default0(br.pLosses), _default0(br.qLosses), rated, overloaded)
-end
 
 const _DETAILED_BUS_CSV_COLUMNS = (:bus, :bus_name, :type, :vm_pu, :va_deg, :vn_kV, :v_re, :v_im, :v_complex, :v_kV, :p_gen_MW, :q_gen_MVar, :p_load_MW, :q_load_MVar, :q_limit_hit, :control, :original_bus_name)
 const _DETAILED_BRANCH_CSV_COLUMNS = (:branch, :branch_index, :from_bus, :to_bus, :status, :p_from_MW, :q_from_MVar, :p_to_MW, :q_to_MVar, :p_loss_MW, :q_loss_MVar, :rated_MVA, :overloaded, :branch_name, :original_branch_name, :from_bus_name, :to_bus_name, :original_from_bus_name, :original_to_bus_name, :branch_kind, :terminal_state, :open_end_vm_pu, :open_end_va_deg)

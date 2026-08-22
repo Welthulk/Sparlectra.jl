@@ -73,7 +73,6 @@ Represents an electrical network.
 - `hasBusInNet(; net::Net, busName::String)`: Checks if a bus exists in the network.
 - `addBusGenPower!(; net::Net, busName::String, pGen::Float64, qGen::Float64)`: Adds generator power to a bus.
 - `addBusLoadPower!(; net::Net, busName::String, pLoad::Float64, qLoad::Float64)`: Adds load power to a bus.
-- `addBusShuntPower!(; net::Net, busName::String, pShunt::Float64, qShunt::Float64)`: Adds shunt power to a bus.
 - `getNetBranch(; net::Net, fromBus::String, toBus::String)`: Retrieves the branch between two specified buses in the network.
 """
 
@@ -1065,34 +1064,6 @@ function add3WTPiModelTrafo!(; net::Net, HBBus::String, MBBus::String, LVBus::St
   return aux_bus
 end
 
-"""
-Add a transformer with PI model to the network.
-
-# Arguments
-- `net::Net`: The network to which the transformer will be added.
-- `fromBus::String`: The name of the bus where the transformer originates.
-- `toBus::String`: The name of the bus where the transformer terminates.
-- `r_pu::Float64`: The per-unit resistance of the transformer.
-- `x_pu::Float64`: The per-unit reactance of the transformer.
-- `b_pu::Float64`: The per-unit susceptance of the transformer.
-- `status::Int`: The status of the transformer.
-- `ratedU::Union{Nothing, Float64}`: Rated voltage of the transformer. Default is `nothing`.
-- `ratedS::Union{Nothing, Float64}`: Rated apparent power of the transformer. Default is `nothing`.
-- `ratio::Union{Nothing, Float64}`: Ratio of the transformer. Default is `nothing`.
-- `shift_deg::Union{Nothing, Float64}`: Phase shift angle of the transformer. Default is `nothing`.
-"""
-function add2WTTrafo!(; net::Net, fromBus::String, toBus::String, side::Int = 1, r::Float64, x::Float64, b::Float64, status::Int, ratedU::Union{Nothing,Float64} = nothing, ratedS::Union{Nothing,Float64} = nothing, ratio::Union{Nothing,Float64} = nothing, shift_deg::Union{Nothing,Float64} = nothing)
-  @assert fromBus != toBus "From and to bus must be different"
-  if isnothing(ratedU)
-    from = geNetBusIdx(net = net, busName = fromBus)
-    V1 = getNodeVn(net.nodeVec[from])
-    to = geNetBusIdx(net = net, busName = toBus)
-    V2 = getNodeVn(net.nodeVec[to])
-    ratedU = max(V1, V2)
-  end
-  r_pu, x_pu, b_pu, g_pu = toPU_RXBG(r = r, x = x, g = 0.0, b = b, v_kv = ratedU, baseMVA = net.baseMVA)
-  addPIModelTrafo!(net = net, fromBus = fromBus, toBus = toBus, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, status = status, ratedU = ratedU, ratedS = ratedS, ratio = ratio, shift_deg = shift_deg, isAux = false, side = side)
-end
 
 """
 Add a two-winding transformer to the network.
@@ -1513,42 +1484,6 @@ Add active/reactive power to the NODE-level load sum of a bus
 function addBusLoadPower!(; net::Net, busName::String, p::Union{Nothing,Float64} = nothing, q::Union{Nothing,Float64} = nothing)
   busIdx = geNetBusIdx(net = net, busName = busName)
   addLoadPower!(node = net.nodeVec[busIdx], p = p, q = q)
-end
-
-"""
-Update the active and reactive power of a shunt connected to a bus in the network.
-
-# Arguments
-- `net::Net`: The network object.
-- `busName::String`: The name of the bus.
-- `p::Float64`: The active power to update. 
-- `q::Float64`: The reactive power to update.
-
-# Examples
-```julia
-result = run_sparlectra(casefile = "a_case.m") # run the configured framework workflow
-net = result.net
-updateBusPower!(net = net, busName = "Bus1", p = 0.5, q = 0.2) # Update the power of Bus1 to 0.5 MW and 0.2 MVar
-run_sparlectra(net = net) # rerun with the active SparlectraConfig
-```
-"""
-function addBusShuntPower!(; net::Net, busName::String, p::Float64, q::Float64)
-  @warn "addBusShuntPower! is deprecated"
-  #=
-  if !hasShunt!(net = net, busName = busName)
-    @info "add a new shunt to bus $busName"
-    addShunt!(net = net, busName = busName, pShunt = p, qShunt = q)
-  else
-    @info "update shunt power at bus $busName to $p MW and $q MVar"
-    sh = getShunt!(net = net, busName = busName) # get the shunt-reference(!) connected to the bus, we are manipulating the shunt-reference!
-    _p, _q = getPQShunt(sh)
-    pVal = isnothing(_p) ? p : p + _p
-    qVal = isnothing(_q) ? q : q + _q
-    updatePQShunt!(sh, pVal, qVal) # we need updated values to update shunt power
-    busIdx = geNetBusIdx(net = net, busName = busName)
-    addShuntPower!(node = net.nodeVec[busIdx], p = p, q = q) # we need given values to update the bus power
-  end
-  =#
 end
 
 """

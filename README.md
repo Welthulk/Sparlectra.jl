@@ -246,7 +246,7 @@ Full documentation: <https://welthulk.github.io/Sparlectra.jl/>
 Key entry points:
 
 - [Local Web UI](https://welthulk.github.io/Sparlectra.jl/webui/): browser-based local power-flow workflow
-- [Networks](docs/src/networks.md): building and manipulating network models
+- [Workshop Tour](docs/src/generated/workshop_tour.md): building and manipulating network models step by step
 - [Import/Export](docs/src/import.md) · [CGMES Import](docs/src/cgmes_import.md) · [CGMES Export](docs/src/cgmes_export.md): reading and writing grid data
 - [Short-Circuit Analysis](docs/src/short_circuit.md): balanced short-circuit currents per IEC 60909-0
 - [Branch Model](docs/src/branchmodel.md) · [Remote Voltage Control](docs/src/remote_voltage_control.md): line/transformer modeling, tap and voltage control

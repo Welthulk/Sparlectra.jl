@@ -198,6 +198,16 @@ of state columns (for example one bus angle and one bus magnitude).
 
 This is useful for sensor-placement studies and for identifying vulnerable areas.
 
+### The matrix itself
+
+`measurement_jacobian(net; ...)` returns the labeled Jacobian behind both
+checks: `H` together with one described row per active measurement (type,
+location, sigma) and named state columns (`Va(bus)`, `Vm(bus)`, plus
+`alpha` when PMU angle measurements activate the reference-offset state).
+Intended for measurement-matrix reports and placement studies; the
+state-estimation example suite writes such a page, including a stability
+verdict from rank, redundancy, and `cond(H)`, on every run.
+
 ## Integration with the Net workflow
 
 SE is designed to run on the same `Net` data model used for power flow:
@@ -364,7 +374,7 @@ Literature on PMU-based state estimation:
 
 ## Further examples and workshop material
 
-* Extended tutorial and a simple 7-bus setup: [workshop tour](generated/workshop_tour.md)
+* Extended tutorial and a simple 7-bus setup: the state-estimation chapter of the [advanced workshop tour](generated/workshop_tour_advanced.md) and the dedicated [state-estimation notebook](generated/workshop_state_estimation.md)
 * Detailed WLS reporting example script: `examples/state_estimation/state_estimation_wls.jl`
 * PMU angle measurements and the reference-offset state α: `examples/state_estimation/state_estimation_pmu_angles.jl`
 * Observability-focused scenario script: `examples/state_estimation/state_estimation_observability.jl`

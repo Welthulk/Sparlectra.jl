@@ -147,7 +147,7 @@ inside a synchronous grid is physically a different device model and out of
 scope; the controller reports `invalid_topology` once its reference bus was
 demoted rather than silently changing modes. Runnable walkthrough:
 `examples/others/exp_hvdc_meshed_ac_tie.jl` and the "Meshed operation"
-subsection of the workshop tour.
+subsection in chapter 2 of the advanced workshop tour.
 
 ## Choosing the mode
 
