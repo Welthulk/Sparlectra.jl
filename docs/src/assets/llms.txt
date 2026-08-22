@@ -14,9 +14,6 @@
 - Local browser Web UI for MATPOWER/CGMES power-flow runs with persistent run history; loopback only.
 
 ## What it is not
-
-- No dynamic simulation (RMS/EMT).
-- No optimal power flow.
 - No commercial support.
 - Not affiliated with any commercial power system tool.
 
