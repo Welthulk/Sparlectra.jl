@@ -18,7 +18,8 @@ example `examples/others/exp_facts_limit_modes.jl`.
 
 | Device | Kind | Actuator | Sparlectra controller | Theory |
 |---|---|---|---|---|
-| SVC (thyristor-controlled reactor/capacitor) | shunt | susceptance $B$ | `addShuntVoltageControl!` | this page, [Control Framework](control_framework.md) |
+| SVC (thyristor-controlled reactor/capacitor) | shunt | susceptance $B$, continuous | `addShuntVoltageControl!` | this page, [Control Framework](control_framework.md) |
+| MSC/MSR (mechanically switched capacitor/reactor bank) | shunt | susceptance $B$, whole blocks | `addShuntVoltageControl!` with `step_mvar` | this page |
 | STATCOM (VSC shunt converter) | shunt | reactive current | `addMachineVoltageControl!` with `s_max_mva` | this page, [Remote Voltage Control](remote_voltage_control.md) |
 | TCSC (thyristor-controlled series capacitor) | series | reactance $x$ in a fixed window | `addSeriesReactanceControl!` with `x_min_pu`/`x_max_pu` | [Series Compensation](series_compensation.md) |
 | SSSC (VSC series converter) | series | reactance deviation, voltage-bounded | `addSeriesReactanceControl!` with `v_inj_max_pu` | this page, [Series Compensation](series_compensation.md) |
@@ -90,6 +91,29 @@ The machine column is idealized (a real machine derates too, through its
 capability curve); the STATCOM/SVC columns are the model behavior and match
 the device physics to first order.
 
+## Discrete banks: MSC/MSR
+
+Strictly speaking a switched capacitor/reactor bank is not power
+electronics, but it is the working end of most voltage-control schemes and
+shares the shunt physics above, so it lives in the same controller
+(issue #324). With `step_mvar` the susceptance moves in whole switched
+blocks (e.g. four times 10 MVAr):
+
+- the secant proposal is TRUNCATED toward the target to whole steps, so
+  the bank approaches the voltage target from one side and never
+  overshoots; this is the anti-hunting guarantee, a bank that never
+  crosses its target cannot oscillate between two adjacent blocks;
+- when no whole block improves the voltage further, the controller PARKS
+  on the reached step (`status = :parked`, deliberately the last step
+  BEFORE crossing: conservative under-compensation instead of a possible
+  overvoltage) and releases itself when another controller moves the
+  operating point far enough that a block helps again;
+- at the outermost admissible block the constant-B limit region applies
+  unchanged, the delivered Q follows $V^2$ with the last block connected.
+
+The classical coordination case, a switched bank plus an OLTC on one bus,
+is tracked in issue #322.
+
 ## Series side: fixed window versus voltage-bounded window
 
 **TCSC (fixed reactance window).** The thyristor-controlled series
@@ -147,6 +171,11 @@ Programmatic (see the docstrings for the full keyword sets):
 # SVC: continuous susceptance, quadratic limit collapse
 addShuntVoltageControl!(net; bus = "B", target_vm_pu = 1.0,
                         bs_min_mvar = -60.0, bs_max_mvar = 60.0)
+
+# MSC/MSR: the same controller as a switched bank, whole 10-MVAr blocks
+addShuntVoltageControl!(net; bus = "B", target_vm_pu = 1.0,
+                        bs_min_mvar = -40.0, bs_max_mvar = 40.0,
+                        step_mvar = 10.0)
 
 # STATCOM: current-based limit, linear in V
 addMachineVoltageControl!(net; bus = "B", target_bus = "C",

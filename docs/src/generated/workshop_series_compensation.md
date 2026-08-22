@@ -4,6 +4,8 @@ EditURL = "../../lit/workshop_series_compensation.jl"
 
 # Series compensation: steering flow with a TCSC
 
+> **Level: Expert**, companion of the advanced tour's FACTS chapter.
+
 [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_series_compensation.ipynb)
 
 In a meshed AC network, power does not follow contracts, it follows

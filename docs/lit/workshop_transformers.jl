@@ -25,6 +25,8 @@
 
 # # Transformer taps: moving voltage, moving power
 #
+# > **Level: Advanced**, companion of basic-tour chapter 4.
+#
 # [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_transformers.ipynb)
 #
 # A transformer enters the power flow with exactly two adjustable numbers:

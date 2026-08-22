@@ -35,7 +35,7 @@
 # 1. Remote voltage control by a machine
 # 2. A steerable HVDC link (back-to-back pairing, incl. meshed operation)
 # 3. State estimation
-# 4. FACTS devices and their limits (STATCOM vs SVC, TCSC vs SSSC)
+# 4. FACTS devices and their limits (STATCOM vs SVC, switched banks, TCSC vs SSSC)
 # 5. N-1 contingency analysis
 #
 # **Beyond**
@@ -649,6 +649,36 @@ println("all three at their capacitive limit, rated ", facts_rating, " MVAr at 1
 println("  machine box : Q = ", round(box_ctrl.q_mvar; digits = 2), " MVAr (constant)")
 println("  STATCOM     : Q = ", round(st_ctrl.q_mvar; digits = 2), " MVAr = V*S_max at V = ", round(v_st; digits = 4), " pu (", round(100 * st_ctrl.q_mvar / facts_rating; digits = 1), " % of rating)")
 println("  SVC         : Q = ", round(v_svc^2 * svc_ctrl.bs_mvar; digits = 2), " MVAr = V^2*B at V = ", round(v_svc; digits = 4), " pu (", round(100 * v_svc^2 * svc_ctrl.bs_mvar / facts_rating; digits = 1), " % of rating)")
+
+# Most voltage control in real grids is not an SVC but a mechanically
+# SWITCHED bank (MSC/MSR): whole capacitor blocks go in or out, nothing in
+# between. The same controller models that with `step_mvar` (issue #324).
+# Two design rules make a switched bank usable in a solver loop: it moves
+# in WHOLE blocks truncated toward the target (approaching from one side,
+# never overshooting, so it cannot hunt between two adjacent steps), and
+# when no whole block improves the voltage further it PARKS on the reached
+# step, deliberately the last one BEFORE crossing the target
+# (under-compensation instead of a possible overvoltage):
+
+## the same corridor and target once with a continuous SVC, once as a bank
+cont_net = build_sag_corridor("tour_facts_cont"; with_machine = false)
+addShuntVoltageControl!(cont_net; bus = "Mid", target_vm_pu = 0.95, bs_min_mvar = -40.0, bs_max_mvar = 40.0)
+run_control!(cont_net)
+cont_ctrl = only([c for c in cont_net.machineControls if c isa ShuntVoltageControl])
+println("continuous SVC: Bs = ", round(cont_ctrl.bs_mvar; digits = 2), " MVAr, Vm(Mid) = ", round(get_bus_vm_pu(cont_net, "Mid"); digits = 4), " pu, status = ", cont_ctrl.status)
+
+msc_net = build_sag_corridor("tour_facts_msc"; with_machine = false)
+addShuntVoltageControl!(msc_net; bus = "Mid", target_vm_pu = 0.95, bs_min_mvar = -40.0, bs_max_mvar = 40.0, step_mvar = 10.0)
+msc_res = run_control!(msc_net)
+msc_ctrl = only([c for c in msc_net.machineControls if c isa ShuntVoltageControl])
+println("MSC bank (4 x 10 MVAr blocks): Bs = ", msc_ctrl.bs_mvar, " MVAr (block ", round(Int, msc_ctrl.bs_mvar / 10.0), " of 4), Vm(Mid) = ", round(get_bus_vm_pu(msc_net, "Mid"); digits = 4), " pu")
+println("  status = ", msc_ctrl.status, " after ", msc_res.outer_iterations, " outer iterations (parked on the step grid, no hunting)")
+
+# Reading aid: the continuous SVC settles wherever the secant sends it
+# (about 24.7 MVAr here) and converges; the bank can only offer 20 or 30
+# and stops at 20, the last block before crossing the 0.95-pu target.
+# `status = :parked` is the bank's third state next to `converged` and
+# `at_limit`: the step resolution, not the rating, ended the movement.
 
 # The series side has the same split. A TCSC owns a FIXED reactance window
 # and keeps it at any loading; an SSSC injects a series voltage, so its

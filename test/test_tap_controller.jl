@@ -296,6 +296,85 @@ function run_tap_controller_tests()
     @test trows[1].discrete === true
   end
 
+  @testset "MSC/MSR discrete shunt bank (#324)" begin
+    build_sag = function ()
+      snet = Net(name = "msc_ctrl", baseMVA = 100.0)
+      for bus in ("Slack", "Mid", "Load")
+        addBus!(net = snet, busName = bus, vn_kV = 110.0)
+      end
+      addProsumer!(net = snet, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "Slack")
+      addProsumer!(net = snet, busName = "Load", type = "LOAD", p = 60.0, q = 25.0)
+      addPIModelACLine!(net = snet, fromBus = "Slack", toBus = "Mid", r_pu = 0.02, x_pu = 0.20, b_pu = 0.0, status = 1)
+      addPIModelACLine!(net = snet, fromBus = "Mid", toBus = "Load", r_pu = 0.02, x_pu = 0.20, b_pu = 0.0, status = 1)
+      ok, msg = validate!(net = snet)
+      ok || error("test net invalid: $msg")
+      return snet
+    end
+
+    # registration validation: bad step, no admissible block in the range,
+    # start value snapped onto the grid
+    vnet = build_sag()
+    @test_throws ErrorException addShuntVoltageControl!(vnet; bus = "Mid", target_vm_pu = 1.0, bs_min_mvar = -40.0, bs_max_mvar = 40.0, step_mvar = -5.0)
+    @test_throws ErrorException addShuntVoltageControl!(vnet; bus = "Mid", target_vm_pu = 1.0, bs_min_mvar = 3.0, bs_max_mvar = 7.0, step_mvar = 10.0)
+    snap = addShuntVoltageControl!(vnet; bus = "Mid", target_vm_pu = 1.0, bs_min_mvar = -40.0, bs_max_mvar = 40.0, step_mvar = 10.0, bs_start_mvar = 13.0)
+    @test snap.bs_mvar == 10.0                       # 13 snapped to the nearest block
+    @test snap.name == "MSC_Mid"
+    clearShuntControllers!(vnet)
+
+    # park behavior: the bank steps toward the target in whole blocks,
+    # never overshoots (trunc semantics), and parks on the last step
+    # BEFORE crossing when no whole block improves further — without
+    # exhausting the outer-iteration budget (anti-hunting)
+    pnet = build_sag()
+    ctrl = addShuntVoltageControl!(pnet; bus = "Mid", target_vm_pu = 0.95, bs_min_mvar = -40.0, bs_max_mvar = 40.0, step_mvar = 10.0)
+    pres = run_control!(pnet)
+    @test ctrl.bs_mvar % 10.0 == 0.0
+    @test !ctrl.converged
+    @test ctrl.parked
+    @test ctrl.status == :parked
+    @test !ctrl.at_limit
+    @test pres.outer_iterations < ctrl.max_outer_iters       # parked, not exhausted
+    @test get_bus_vm_pu(pnet, "Mid") < 0.95                  # approached from below, never crossed
+
+    # outermost block: an unreachable target clamps on the last block and
+    # reports at_limit (the constant-B region applies unchanged)
+    lnet = build_sag()
+    lctrl = addShuntVoltageControl!(lnet; bus = "Mid", target_vm_pu = 1.0, bs_min_mvar = -20.0, bs_max_mvar = 20.0, step_mvar = 10.0)
+    run_control!(lnet)
+    @test lctrl.at_limit
+    @test lctrl.status == :at_limit
+    @test lctrl.bs_mvar == 20.0
+
+    # element view and report rows carry the bank vocabulary
+    els = controllableElements(pnet)
+    @test length(els) == 1
+    @test els[1].device == "MSC/MSR (switched shunt bank)"
+    @test els[1].discrete === true
+    prow = only(Sparlectra.control_report_rows(ctrl, pnet, Sparlectra.NoControlState(), (outer_iteration = 0,)))
+    @test prow.step_mvar ≈ 10.0
+    @test prow.step_position == round(Int, ctrl.bs_mvar / 10.0)
+    @test prow.parked === true
+
+    # continuous SVC untouched: inert mode field, unchanged vocabulary
+    cnet = build_sag()
+    cctrl = addShuntVoltageControl!(cnet; bus = "Mid", target_vm_pu = 0.95, bs_min_mvar = -40.0, bs_max_mvar = 40.0)
+    run_control!(cnet)
+    @test cctrl.step_mvar === nothing
+    @test cctrl.converged
+    cels = controllableElements(cnet)
+    @test cels[1].device == "SVC (variable shunt)"
+    @test cels[1].discrete === false
+
+    # config surface: step_mvar instantiates the discrete bank, re-apply
+    # skips (idempotency)
+    ynet = build_sag()
+    ycfg = ControlConfig(enabled = true, controllers = Any[Dict{String,Any}("type" => "shunt_voltage", "name" => "bank_mid", "bus" => "Mid", "target_vm_pu" => 0.95, "bs_min_mvar" => -40.0, "bs_max_mvar" => 40.0, "step_mvar" => 10.0)])
+    @test applyConfiguredControllers!(ynet, ycfg) == 1
+    yctrl = only(Sparlectra._shunt_controllers(ynet))
+    @test yctrl.step_mvar ≈ 10.0
+    @test applyConfiguredControllers!(ynet, ycfg) == 0
+  end
+
   @testset "STATCOM current-limit mode (#297 Draft A)" begin
     # weak two-line corridor: the load bus sags visibly, the compensator at
     # Mid works against the sag. NOTE: closure-local nets must not shadow a

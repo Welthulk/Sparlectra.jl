@@ -42,8 +42,10 @@ const _CONTROLLER_TYPE_SPECS = Dict{String,NamedTuple}(
     supports_name = true,
   ),
   "shunt_voltage" => (
+    # step_mvar switches the controller into the discrete MSC/MSR bank
+    # mode (#324); without it the actuator is the continuous SVC
     required = ("bus", "target_vm_pu", "bs_min_mvar", "bs_max_mvar"),
-    optional = ("bs_start_mvar", "deadband_vm_pu", "max_outer_iters", "enabled", "name"),
+    optional = ("step_mvar", "bs_start_mvar", "deadband_vm_pu", "max_outer_iters", "enabled", "name"),
     symbols = (),
     supports_name = true,
   ),
@@ -223,6 +225,7 @@ function applyConfiguredControllers!(net::Net, control_cfg::ControlConfig)::Int
           target_vm_pu = _controller_cfg_float(entry["target_vm_pu"], "target_vm_pu"),
           bs_min_mvar = _controller_cfg_float(entry["bs_min_mvar"], "bs_min_mvar"),
           bs_max_mvar = _controller_cfg_float(entry["bs_max_mvar"], "bs_max_mvar"),
+          step_mvar = haskey(entry, "step_mvar") ? _controller_cfg_float(entry["step_mvar"], "step_mvar") : nothing,
           bs_start_mvar = haskey(entry, "bs_start_mvar") ? _controller_cfg_float(entry["bs_start_mvar"], "bs_start_mvar") : 0.0,
           deadband_vm_pu = haskey(entry, "deadband_vm_pu") ? _controller_cfg_float(entry["deadband_vm_pu"], "deadband_vm_pu") : 1e-3,
           max_outer_iters = haskey(entry, "max_outer_iters") ? _controller_cfg_int(entry["max_outer_iters"], "max_outer_iters") : 20,

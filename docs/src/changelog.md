@@ -1,3 +1,33 @@
+# Version 0.9.14 - unreleased
+
+Switched shunt banks, and observability you can see.
+
+## Highlights
+
+- **MSC/MSR switched shunt banks** (issue #324). The shunt voltage
+  controller can now act as a mechanically switched capacitor/reactor
+  bank: `step_mvar` makes the susceptance move in whole blocks, truncated
+  toward the target so the bank approaches from one side and never
+  overshoots, which rules out hunting between two adjacent steps by
+  construction. When no whole block improves the voltage further the
+  controller parks on the reached step (`status = :parked`, deliberately
+  the last step before crossing); the outermost block keeps the familiar
+  constant-B limit region. Theory on [FACTS Devices](facts.md), hands-on
+  in the advanced tour's FACTS chapter.
+- **Observability, explained where it happens.** The state-estimation
+  workshop gained a section that walks the global and local observability
+  outputs on a drawn network: what the measurement counts, rank, and
+  quality verdicts mean, where measurements must sit (and which placements
+  quietly break a corner of the network), plus a PMU phasor example with
+  the estimated reference-angle offset.
+
+## Documentation
+
+- Every workshop notebook now states its level (Advanced or Expert) next
+  to the tier structure of the two tours.
+
+(Version note: 0.9.13 is skipped by the project's numbering convention.)
+
 # Version 0.9.12 - 2026-08-22
 
 The workshop splits in two, and every solver reads the same network.

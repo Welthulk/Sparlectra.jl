@@ -22,6 +22,8 @@
 
 # # Distributed slack: who covers the imbalance?
 #
+# > **Level: Advanced**, deepens the slack chapters of the basic tour.
+#
 # [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_distributed_slack.ipynb)
 #
 # A classical power flow gives the entire active-power imbalance, every

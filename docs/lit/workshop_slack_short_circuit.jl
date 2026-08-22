@@ -20,6 +20,8 @@
 
 # # Slack types and short-circuit currents
 #
+# > **Level: Advanced**, companion of basic-tour chapter 3.
+#
 # [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_slack_short_circuit.ipynb)
 #
 # Every AC power flow needs one bus that balances the network: the *slack*.

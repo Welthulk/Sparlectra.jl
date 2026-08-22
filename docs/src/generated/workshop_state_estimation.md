@@ -4,6 +4,8 @@ EditURL = "../../lit/workshop_state_estimation.jl"
 
 # State estimation from noisy measurements
 
+> **Level: Advanced to Expert**, companion of the advanced tour's state-estimation chapter; the observability section is the advanced deep dive.
+
 [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_state_estimation.ipynb)
 
 A power flow computes the network state from an exact specification. A
@@ -218,6 +220,157 @@ println("measurements: ", obs.n_measurements, ", states: ", obs.n_states)
 
 Five measurements against 13 states: the check reports the shortfall
 instead of letting the estimator run into a rank-deficient system.
+
+## Observability deep dive: where measurements must sit (advanced)
+
+The checks above said WHETHER the state is observable. This section is
+about the WHY and the WHERE: what the numbers in the observability
+result mean, which placements make a network observable, and how the
+local check points at the corner that a missing meter leaves dark.
+
+The study network again, as a picture (ring plus two chords):
+
+```text
+     B1 ──── B2 ──── B3
+    /        │        │ ╲
+  B7         │        │  B4
+    │        │        │  │
+    │        └─ B5 ───┼──┘
+    │           │     │      chords: B2─B5 and B3─B6
+    └─── B6 ────┴─────┘      ring:   B1-B2-B3-B4-B5-B6-B7-B1
+```
+
+The STATE the estimator solves for has 13 entries: one voltage angle per
+non-slack bus (columns 1..6 for B2..B7; the slack B1 provides the angle
+reference) and one voltage magnitude per bus (columns 7..13 for
+B1..B7). Every measurement is one ROW of the measurement Jacobian $H$;
+the state is observable exactly when those rows span all 13 columns,
+i.e. $\mathrm{rank}(H) = 13$. `evaluate_global_observability` answers
+that twice: STRUCTURALLY (a bipartite matching on the sparsity pattern,
+`structural_matching` of 13 means every state column can be paired with
+its own measurement row) and NUMERICALLY (the actual rank; a placement
+can be structurally fine but numerically degenerate). The `quality`
+verdict compresses it: `:good` needs observability AND redundancy
+without critical single points; `:critical` is observable but one lost
+measurement would blind it; `:not_observable` speaks for itself.
+
+### A minimal placement, built by hand
+
+The classical minimal recipe: a P/Q flow pair on every branch of a
+SPANNING TREE (six branches for seven buses), plus one voltage-magnitude
+anchor. The flow pairs fix all relative angles and magnitude ratios
+along the tree, the anchor pins the absolute magnitude level, the slack
+pins the absolute angle. That is 6 x 2 + 1 = 13 rows for 13 states,
+observability with ZERO redundancy:
+
+````@example workshop_state_estimation
+empty!(net.measurements)
+# re-solve the reference so the branch flows are available as true values
+ite_ref, status_ref = runpf!(net, 40, 1e-10, 0)
+status_ref == 0 || error("reference power flow did not converge")
+calcNetLosses!(net)
+
+tree = [("B1", "B2"), ("B2", "B3"), ("B3", "B4"), ("B4", "B5"), ("B5", "B6"), ("B6", "B7")]
+for (f, t) in tree
+  addPflowMeasurement!(net; fromBus = f, toBus = t, value = get_branch_p_from_to_mw(net, f, t), sigma = 0.8, direction = :from)
+  addQflowMeasurement!(net; fromBus = f, toBus = t, value = get_branch_q_from_to_mvar(net, f, t), sigma = 0.8, direction = :from)
+end
+addVmMeasurement!(net; busName = "B1", value = net.nodeVec[net.busDict["B1"]]._vm_pu, sigma = 0.002)
+
+gmin = evaluate_global_observability(net; flatstart = true, jacEps = 1e-6)
+println("minimal tree set: quality = ", gmin.quality, " (", gmin.n_measurements, " rows, ", gmin.n_states, " states)")
+println("  structurally observable: ", gmin.structural_observable, ", numerically observable: ", gmin.numerical_observable, " (rank ", gmin.numerical_rank, ")")
+println("  redundancy dof = ", gmin.dof, ", critical measurements: ", length(gmin.numerical_critical_measurement_indices), " of ", gmin.n_measurements)
+````
+
+Reading aid: observable, but `quality = :critical` and EVERY row is on
+the critical list: with zero redundancy, losing any single meter blinds
+some part of the state. Real placements add the ring-closing and chord
+flows (or injections) precisely to buy redundancy; the `dof` count is
+what the bad-data machinery later feeds on.
+
+### Breaking a corner, and finding it with the local check
+
+Drop the B6-B7 flow pair: the spur toward B7 loses its only meters.
+Globally the verdict flips to `:not_observable`; LOCALLY the check can
+say which states went dark. `evaluate_local_observability(net, cols)`
+restricts $H$ to selected state columns; for B7 those are angle column 6
+and magnitude column 13:
+
+````@example workshop_state_estimation
+empty!(net.measurements)
+for (f, t) in tree[1:5]   ## tree WITHOUT B6-B7
+  addPflowMeasurement!(net; fromBus = f, toBus = t, value = get_branch_p_from_to_mw(net, f, t), sigma = 0.8, direction = :from)
+  addQflowMeasurement!(net; fromBus = f, toBus = t, value = get_branch_q_from_to_mvar(net, f, t), sigma = 0.8, direction = :from)
+end
+addVmMeasurement!(net; busName = "B1", value = net.nodeVec[net.busDict["B1"]]._vm_pu, sigma = 0.002)
+
+gbroken = evaluate_global_observability(net; flatstart = true, jacEps = 1e-6)
+println("without B6-B7: quality = ", gbroken.quality, " (rank ", gbroken.numerical_rank, " of ", gbroken.n_states, ")")
+
+# local check on B2 (angle col 1, magnitude col 8): still fully covered
+lb2 = evaluate_local_observability(net, [1, 8]; flatstart = true, jacEps = 1e-6)
+println("local B2: numerically observable = ", lb2.numerical_observable)
+# local check on B7 (angle col 6, magnitude col 13): NO measurement even
+# touches these states anymore, which the check reports as an error
+try
+  evaluate_local_observability(net, [6, 13]; flatstart = true, jacEps = 1e-6)
+catch err
+  println("local B7: ", sprint(showerror, err))
+end
+````
+
+### Repairing with an injection
+
+A meter does not have to sit ON the dark bus pair. An INJECTION
+measurement at B7 couples B7 to every neighbor (B6 and B1), because the
+injected power is the sum over its incident branches; its Jacobian row
+touches all their states. P and Q injection at B7 restore rank 13:
+
+````@example workshop_state_estimation
+p7 = net.nodeVec[net.busDict["B7"]]._pƩGen === nothing ? 0.0 : net.nodeVec[net.busDict["B7"]]._pƩGen
+addPinjMeasurement!(net; busName = "B7", value = p7 - 20.0, sigma = 1.0)   ## net injection: 20 MW load
+addQinjMeasurement!(net; busName = "B7", value = -6.0, sigma = 1.0)
+grepaired = evaluate_global_observability(net; flatstart = true, jacEps = 1e-6)
+println("with P/Q injection at B7: quality = ", grepaired.quality, " (rank ", grepaired.numerical_rank, " of ", grepaired.n_states, ")")
+````
+
+Placement rules, condensed: flow pairs see the two ends of their branch,
+injections see the bus AND all its neighbors, `Vm` anchors the magnitude
+level (at least one required), and the slack anchors the angles. A bus
+is dark exactly when no row of any of these reaches its columns.
+
+### PMU phasors and the reference-angle offset
+
+A PMU measures the voltage PHASOR: magnitude plus absolute angle,
+GPS-synchronized. In the estimator that is a tightly weighted `VmMeas`
+and a `VaMeas` in degrees (`addPmuPhasorMeasurement!` adds the pair).
+One subtlety makes PMU angles interesting: the PMU time base rarely
+coincides with the slack reference, so all PMU angles share a common
+unknown OFFSET. With `state_estimation.pmu_ref_offset = auto` (the
+default) the estimator adds that offset as an extra state and solves for
+it; watch `n_states` grow from 13 to 14. We simulate two PMUs whose time
+base is shifted by exactly 2 degrees:
+
+````@example workshop_state_estimation
+pmu_shift_deg = 2.0
+for bus in ("B4", "B6")
+  idx = net.busDict[bus]
+  addPmuPhasorMeasurement!(net; busName = bus, vm_pu = net.nodeVec[idx]._vm_pu, va_deg = net.nodeVec[idx]._va_deg + pmu_shift_deg, sigmaVm = 0.002, sigmaVa = 0.02)
+end
+gpmu = evaluate_global_observability(net; flatstart = true, jacEps = 1e-6)
+println("with 2 PMUs: quality = ", gpmu.quality, " (", gpmu.n_measurements, " rows, ", gpmu.n_states, " states, offset state included)")
+
+se_pmu = runse!(net; maxIte = 15, tol = 1e-6, flatstart = true, jacEps = 1e-6, updateNet = false)
+println("SE converged: ", se_pmu.converged, ", estimated PMU reference offset: ", round(se_pmu.vaRefOffsetDeg; digits = 3), "° (true shift ", pmu_shift_deg, "°)")
+````
+
+Reading aid: the estimator recovers the 2° time-base shift as the extra
+state instead of bending the bus angles toward it, and the estimated
+network state stays anchored to the slack reference. Without the offset
+state (`pmu_ref_offset = off`) the shifted PMU angles would fight the
+flow measurements and inflate $J$. Theory and the measurement model:
+[State Estimation](https://welthulk.github.io/Sparlectra.jl/state_estimation/).
 
 ## Where to go next
 
