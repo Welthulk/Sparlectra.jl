@@ -40,7 +40,7 @@ before Newton-Raphson or state-estimation routines are executed.
 ## Where to find what
 
 - For a practical editing sequence with code examples, see the
-  [Workshop](workshop.md).
+  [workshop tour](generated/workshop_tour.md).
 - For generated API docs of `removeBus!`, `removeBranch!`, `removeACLine!`,
   `removeTrafo!`, `removeShunt!`, `removeProsumer!`, and
   `clearIsolatedBuses!`, see the [Function Reference](reference.md).

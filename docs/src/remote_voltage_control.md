@@ -98,6 +98,36 @@ of a PV bus switching to PQ under Q-limit enforcement, and it is reported
 honestly instead of iterating further: the report row carries
 `at_limit = true`, `converged = false` and the achieved voltage.
 
+## STATCOM mode: current-based limit (issue #297 Draft A)
+
+The constant box above models a synchronous machine. A STATCOM is a
+voltage-source converter, and its bound is the converter CURRENT: the
+deliverable reactive power scales with the terminal voltage,
+
+```math
+Q_{lim}(V) = V \cdot S_{max}
+```
+
+with $S_{max}$ the converter rating at 1.0 pu (`s_max_mva`, alternatively
+`i_max_ka` converted via $\sqrt{3}\,U_n I_{max}$ at registration). The
+controller keeps the full secant machinery and replaces only the limit
+handling:
+
+- the symmetric bounds $\pm V \cdot S_{max}$ are re-evaluated from the
+  solved machine-bus voltage before every outer step (LIVE bounds; the
+  element row shows the currently deliverable range, not the nameplate);
+- an at-limit STATCOM whose bound still moves keeps adjusting, so the
+  delivered Q TRACKS the sagging or recovering voltage linearly; it parks
+  `at_limit` only once the bound has settled;
+- the machine's own `minQ`/`maxQ` are deliberately ignored in this mode:
+  the converter current is the limit.
+
+The linear collapse ($Q \propto V$) is the STATCOM's defining advantage
+over the SVC's quadratic one ($Q \propto V^2$); the comparison table and
+the device taxonomy live on the [FACTS Devices](@ref facts_devices) page.
+In range, the mode behaves like the constant-Q controller and converges
+into the same deadband.
+
 ## Interaction with the rest of the solver
 
 - **Bus typing.** The machine bus stays PQ throughout; the target bus stays
@@ -139,6 +169,11 @@ addMachineVoltageControl!(net;
   target_vm_pu = 1.02,
   deadband_vm_pu = 1e-3,     # convergence band
   # qmin_mvar / qmax_mvar default to the machine's minQ/maxQ
+)
+# STATCOM variant: current-based limit instead of the constant box
+addMachineVoltageControl!(net;
+  bus = "StatcomBus", target_bus = "Load", target_vm_pu = 1.0,
+  s_max_mva = 25.0,          # converter rating at 1.0 pu; Q_lim = V * S_max
 )
 result = run_control!(net; controllers = collect_outer_controllers(net))
 printMachineControllerSummary(stdout, net)

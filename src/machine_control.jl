@@ -17,7 +17,10 @@
 # purpose: outer-loop remote voltage control for machines — a generator held
 #          as PQ injection whose reactive output is adjusted between power-flow
 #          solves until the voltage at a *different* (remote) bus reaches its
-#          target, bounded by the machine's reactive limits.
+#          target, bounded by the machine's reactive limits. Includes the
+#          STATCOM limit mode (issue #297 Draft A): the bound is the converter
+#          CURRENT, so the available Q scales with the terminal voltage,
+#          Q_lim = V * S_max, re-evaluated every outer iteration.
 
 """
     MachineVoltageControl <: AbstractOuterController
@@ -39,6 +42,20 @@ points. Reaching a reactive limit with the target still outside the deadband
 parks the controller `at_limit` — the exact analogue of PV→PQ switching under
 Q limits, and honest about what the machine can actually deliver.
 
+Two limit modes (`limit_mode`):
+- `:constant_q` (default): fixed machine limits `[qmin_mvar, qmax_mvar]`,
+  the classical synchronous-machine capability box.
+- `:current`: STATCOM behavior (issue #297 Draft A). The device is a VSC
+  whose bound is the converter current, so the deliverable reactive power
+  scales with the terminal voltage: `Q_lim = V_machine_bus * s_max_mva`,
+  symmetric (`qmin = -Q_lim`, `qmax = +Q_lim`), re-evaluated from the solved
+  machine-bus voltage before every outer step. At the limit the injected Q
+  therefore TRACKS the sagging or recovering voltage linearly — the defining
+  contrast to the SVC's quadratic `V^2 * B` collapse (see
+  [`ShuntVoltageControl`](@ref)) and to the constant-Q machine box. An
+  at-limit STATCOM keeps adjusting while its voltage-dependent bound still
+  moves and only parks `at_limit` once the bound has settled.
+
 Runtime fields (`status`, `converged`, `at_limit`, `achieved_vm_pu`, …) are
 owned by `run_control!`; construct instances via [`addMachineVoltageControl!`](@ref).
 """
@@ -49,8 +66,10 @@ mutable struct MachineVoltageControl <: AbstractOuterController
   target_bus::String          # regulated (remote) bus
   target_vm_pu::Float64
   deadband_vm_pu::Float64
-  qmin_mvar::Float64
+  qmin_mvar::Float64          # live bound in :current mode (refreshed per outer iteration)
   qmax_mvar::Float64
+  limit_mode::Symbol          # :constant_q (machine box) or :current (STATCOM, Q_lim = V * s_max)
+  s_max_mva::Union{Nothing,Float64}   # converter rating at 1.0 pu; nothing in :constant_q mode
   max_outer_iters::Int
   enabled::Bool
   # runtime state, owned by the control loop
@@ -58,6 +77,7 @@ mutable struct MachineVoltageControl <: AbstractOuterController
   converged::Bool
   at_limit::Bool
   achieved_vm_pu::Union{Nothing,Float64}
+  machine_vm_pu::Union{Nothing,Float64} # terminal voltage, scales the :current bounds
   q_mvar::Float64                       # current reactive setpoint (injection, MVAr)
   prev_q_mvar::Union{Nothing,Float64}   # previous secant point
   prev_vm_pu::Union{Nothing,Float64}
@@ -114,15 +134,27 @@ voltage magnitude at `target_bus`.
 - `target_vm_pu::Float64`: voltage target at `target_bus` in p.u.
 - `qmin_mvar`, `qmax_mvar`: reactive actuator range in MVAr. Default to the
   machine's own `minQ`/`maxQ`; required explicitly when the machine carries no
-  scalar limits.
+  scalar limits. Constant-Q mode only.
+- `s_max_mva::Union{Nothing,Float64}`: STATCOM mode (issue #297 Draft A).
+  The converter rating as MVA at 1.0 p.u. terminal voltage; the reactive
+  bound becomes voltage-dependent, `Q_lim = V_machine_bus * s_max_mva`,
+  symmetric around zero and refreshed every outer iteration. Mutually
+  exclusive with `qmin_mvar`/`qmax_mvar` (the machine's own `minQ`/`maxQ`
+  are deliberately ignored in this mode: the converter current IS the
+  limit). Theory in [FACTS Devices](@ref facts_devices).
+- `i_max_ka::Union{Nothing,Float64}`: alternative STATCOM rating as maximum
+  converter current in kA; converted at add time via
+  `s_max_mva = sqrt(3) * vn_kV(bus) * i_max_ka`. Mutually exclusive with
+  `s_max_mva`.
 - `deadband_vm_pu::Float64 = 1e-3`: convergence band around the target.
 - `prosumer_index::Union{Nothing,Int}`: which prosumer to control when several
   generators sit at `bus`; defaults to the single generator there.
 - `max_outer_iters::Int = 20`, `enabled::Bool = true`: outer-loop budget/switch.
 
 Fails with an error for a missing bus, a missing or ambiguous machine, a
-voltage-regulating (PV) machine, a non-PQ target bus, an inverted Q range, or
-a second active controller on the same machine or target bus.
+voltage-regulating (PV) machine, a non-PQ target bus, an inverted Q range,
+a non-positive or doubly specified STATCOM rating, or a second active
+controller on the same machine or target bus.
 """
 function addMachineVoltageControl!(
   net::Net;
@@ -131,6 +163,8 @@ function addMachineVoltageControl!(
   target_vm_pu::Float64,
   qmin_mvar::Union{Nothing,Float64} = nothing,
   qmax_mvar::Union{Nothing,Float64} = nothing,
+  s_max_mva::Union{Nothing,Float64} = nothing,
+  i_max_ka::Union{Nothing,Float64} = nothing,
   deadband_vm_pu::Float64 = 1e-3,
   prosumer_index::Union{Nothing,Int} = nothing,
   name::Union{Nothing,String} = nothing,
@@ -178,10 +212,39 @@ function addMachineVoltageControl!(
   # is a solver outcome, not a settable injection.
   ps.isRegulated && error("MachineVoltageControl: the machine at $(bus) is voltage-regulating (PV) — a remote controller needs a PQ machine.")
 
-  qlo = something(qmin_mvar, ps.minQ === nothing ? nothing : ps.minQ)
-  qhi = something(qmax_mvar, ps.maxQ === nothing ? nothing : ps.maxQ)
-  (qlo === nothing || qhi === nothing) && error("MachineVoltageControl: machine at $(bus) has no scalar minQ/maxQ — pass qmin_mvar/qmax_mvar explicitly.")
-  qlo < qhi || error("MachineVoltageControl: empty reactive range [$(qlo), $(qhi)] MVAr")
+  # limit-mode resolution: a converter rating switches the controller into
+  # STATCOM mode; the constant machine box and the current limit are
+  # mutually exclusive by construction (a device has one or the other).
+  (s_max_mva !== nothing && i_max_ka !== nothing) && error("MachineVoltageControl: pass either s_max_mva or i_max_ka, not both.")
+  s_rating = s_max_mva
+  if i_max_ka !== nothing
+    i_max_ka > 0.0 || error("MachineVoltageControl: i_max_ka must be positive, got $(i_max_ka)")
+    # Q[MVAr] = sqrt(3) * U_LL[kV] * I[kA]; at 1.0 pu the terminal voltage is
+    # the bus nominal voltage, so the rating at 1.0 pu is sqrt(3)*Un*Imax.
+    s_rating = sqrt(3.0) * getNodeVn(net.nodeVec[busIdx]) * i_max_ka
+  end
+  local limit_mode::Symbol
+  local qlo::Float64
+  local qhi::Float64
+  if s_rating !== nothing
+    (qmin_mvar !== nothing || qmax_mvar !== nothing) && error("MachineVoltageControl: qmin_mvar/qmax_mvar and a STATCOM rating (s_max_mva/i_max_ka) are mutually exclusive — the converter current is the limit in STATCOM mode.")
+    s_rating > 0.0 || error("MachineVoltageControl: s_max_mva must be positive, got $(s_rating)")
+    limit_mode = :current
+    # initial symmetric bounds from the CURRENT bus voltage (start profile);
+    # control_evaluate! refreshes them from every solved operating point
+    vm0 = net.nodeVec[busIdx]._vm_pu
+    qlim0 = (isfinite(vm0) && vm0 > 0.0 ? vm0 : 1.0) * s_rating
+    qlo = -qlim0
+    qhi = qlim0
+  else
+    limit_mode = :constant_q
+    qlo_raw = something(qmin_mvar, ps.minQ === nothing ? nothing : ps.minQ)
+    qhi_raw = something(qmax_mvar, ps.maxQ === nothing ? nothing : ps.maxQ)
+    (qlo_raw === nothing || qhi_raw === nothing) && error("MachineVoltageControl: machine at $(bus) has no scalar minQ/maxQ — pass qmin_mvar/qmax_mvar explicitly (or a STATCOM rating s_max_mva/i_max_ka).")
+    qlo = qlo_raw
+    qhi = qhi_raw
+    qlo < qhi || error("MachineVoltageControl: empty reactive range [$(qlo), $(qhi)] MVAr")
+  end
 
   # per-actuator and per-target exclusivity, mirroring the tap-controller rule
   for c in _machine_controllers(net)
@@ -192,7 +255,7 @@ function addMachineVoltageControl!(
 
   q0 = ps.qVal === nothing ? 0.0 : ps.qVal
   ctrl = MachineVoltageControl(
-    something(name, string("machine@", bus)),
+    something(name, string(limit_mode === :current ? "STATCOM@" : "machine@", bus)),
     bus,
     ps_idx,
     target_bus,
@@ -200,11 +263,14 @@ function addMachineVoltageControl!(
     deadband_vm_pu,
     qlo,
     qhi,
+    limit_mode,
+    s_rating,
     max_outer_iters,
     enabled,
     :active,
     false,
     false,
+    nothing,
     nothing,
     clamp(q0, qlo, qhi),
     nothing,
@@ -217,16 +283,37 @@ end
 
 # --- AbstractOuterController protocol ---------------------------------------
 
-control_name(ctrl::MachineVoltageControl) = string(ctrl.name, " RVC")
+control_name(ctrl::MachineVoltageControl) = string(ctrl.name, ctrl.limit_mode === :current ? " STATCOM" : " RVC")
 control_enabled(ctrl::MachineVoltageControl) = ctrl.enabled
 control_initialize!(::MachineVoltageControl, ::Net, context) = NoControlState()
 control_status(ctrl::MachineVoltageControl, ::AbstractControlState)::Symbol = ctrl.status
 control_is_converged(ctrl::MachineVoltageControl, ::AbstractControlState)::Bool = ctrl.converged
 control_is_blocked(ctrl::MachineVoltageControl, ::AbstractControlState)::Bool = ctrl.at_limit
 
+# In :current mode an at-limit controller may only BLOCK once its
+# voltage-dependent bound has stopped moving; while the bound still shifts
+# with the terminal voltage, the outer loop must keep running so the
+# delivered Q tracks V * S_max (the defining STATCOM behavior). This
+# tolerance decides "stopped moving" (MVAr).
+const _STATCOM_BOUND_TRACK_TOL_MVAR = 1e-3
+
 function control_evaluate!(ctrl::MachineVoltageControl, net::Net, ::AbstractControlState, context)
   vm = get_bus_vm_pu(net, ctrl.target_bus)
   ctrl.achieved_vm_pu = vm
+  if ctrl.limit_mode === :current
+    # refresh the symmetric current-based bounds from the solved terminal
+    # voltage; propose/apply in this same outer iteration clamp against them
+    vt = get_bus_vm_pu(net, ctrl.bus)
+    ctrl.machine_vm_pu = vt
+    qlim = (isfinite(vt) && vt > 0.0 ? vt : 1.0) * ctrl.s_max_mva
+    ctrl.qmin_mvar = -qlim
+    ctrl.qmax_mvar = qlim
+    # release a parked controller whose bound moved: the previous clamp no
+    # longer sits on the current limit, so there is tracking work left
+    if ctrl.at_limit && min(abs(ctrl.q_mvar - ctrl.qmin_mvar), abs(ctrl.q_mvar - ctrl.qmax_mvar)) > _STATCOM_BOUND_TRACK_TOL_MVAR
+      ctrl.at_limit = false
+    end
+  end
   ctrl.converged = _voltage_within_deadband(vm, ctrl.target_vm_pu, ctrl.deadband_vm_pu)
   ctrl.status = ctrl.converged ? :converged : (ctrl.at_limit ? :at_limit : :active)
   ctrl.outer_iters = context.outer_iteration
@@ -293,8 +380,10 @@ function control_element_descriptor(ctrl::MachineVoltageControl, net::Net)::Unio
   return (
     name = control_name(ctrl),
     element = string("machine@", ctrl.bus),
-    device = "machine remote voltage control",
+    device = ctrl.limit_mode === :current ? "STATCOM (VSC)" : "machine remote voltage control",
     actuator = :machine_q_mvar,
+    # live bounds in :current mode: the descriptor shows the range of the
+    # LAST evaluated operating point, V * S_max at the solved terminal voltage
     actuator_min = ctrl.qmin_mvar,
     actuator_max = ctrl.qmax_mvar,
     quantity = :bus_voltage,
@@ -359,6 +448,9 @@ function buildMachineControllerReportRows(net::Net; only::Union{Nothing,MachineV
         q_mvar = ctrl.q_mvar,
         qmin_mvar = ctrl.qmin_mvar,
         qmax_mvar = ctrl.qmax_mvar,
+        limit_mode = ctrl.limit_mode,
+        s_max_mva = ctrl.s_max_mva === nothing ? missing : ctrl.s_max_mva,
+        machine_vm_pu = ctrl.machine_vm_pu === nothing ? missing : ctrl.machine_vm_pu,
         deadband_vm_pu = ctrl.deadband_vm_pu,
         converged = ctrl.converged,
         at_limit = ctrl.at_limit,
@@ -384,7 +476,12 @@ function printMachineControllerSummary(io::IO, net::Net)
     println(io, "  target Vm          : ", @sprintf("%.4f pu", row.target_vm_pu))
     println(io, "  achieved Vm        : ", ismissing(row.achieved_vm_pu) ? "-" : @sprintf("%.4f pu", row.achieved_vm_pu))
     println(io, "  reactive output    : ", @sprintf("%.3f MVAr", row.q_mvar))
-    println(io, "  reactive range     : ", @sprintf("%.3f .. %.3f MVAr", row.qmin_mvar, row.qmax_mvar))
+    if row.limit_mode === :current
+      println(io, "  limit mode         : STATCOM current limit, S_max = ", @sprintf("%.3f MVA at 1.0 pu", row.s_max_mva))
+      println(io, "  live Q range       : ", @sprintf("%.3f .. %.3f MVAr (at Vt = %s pu)", row.qmin_mvar, row.qmax_mvar, ismissing(row.machine_vm_pu) ? "-" : @sprintf("%.4f", row.machine_vm_pu)))
+    else
+      println(io, "  reactive range     : ", @sprintf("%.3f .. %.3f MVAr", row.qmin_mvar, row.qmax_mvar))
+    end
     println(io, "  deadband           : ", @sprintf("%.4f pu", row.deadband_vm_pu))
     println(io, "  converged          : ", row.converged)
     println(io, "  at_limit           : ", row.at_limit)

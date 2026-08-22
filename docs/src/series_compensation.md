@@ -132,3 +132,40 @@ uses.
 clamped at a range end and the target is still outside the deadband:
 the controller does not pretend convergence, and the solve itself remains
 valid with the branch as a fixed compensated line.
+
+## SSSC mode: injected-voltage limit (issue #297 Draft F)
+
+The fixed window above models a TCSC, whose hardware defines an admissible
+reactance range independent of loading. A static synchronous series
+compensator (SSSC) is a voltage-source converter injecting a voltage in
+quadrature with the line current; in steady state that acts as a reactance
+deviation from the natural line reactance $x_{base}$, bounded by the
+injectable voltage magnitude:
+
+```math
+|V_{inj}| = |I| \cdot |x - x_{base}| \le V_{inj,max}
+\quad\Longleftrightarrow\quad
+|x - x_{base}| \le \frac{V_{inj,max}}{|I|}
+```
+
+`addSeriesReactanceControl!` with `v_inj_max_pu` (instead of
+`x_min_pu`/`x_max_pu`) switches the controller into this mode. The same
+secant machinery runs on a LIVE window:
+
+- the bounds $x_{base} \pm V_{inj,max}/|I|$ are re-evaluated from the
+  solved branch current (measured at the registered from side,
+  $|I| = |S|/V$) before every outer step;
+- the window SHRINKS with loading: at high transfer, exactly when a large
+  flow correction would need a large reactance swing, the SSSC saturates,
+  while a TCSC keeps its full window (the defining contrast between the
+  two devices, see [FACTS Devices](@ref facts_devices));
+- a floor on $|I|$ keeps the window finite on a currentless branch
+  (physically an SSSC injects no voltage without current), and the `eps_z`
+  resonance guard is applied as a clamp on the window instead of an error,
+  so a transient operating point can never abort the run;
+- an at-limit SSSC whose window still moves keeps adjusting and parks
+  `at_limit` only once the window has settled; at the limit the effective
+  injected voltage $|I| \cdot |x - x_{base}|$ sits at $V_{inj,max}$.
+
+The element row and the summary printer show the live window, the natural
+reactance, the measured current, and the currently injected voltage.

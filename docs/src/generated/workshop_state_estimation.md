@@ -222,7 +222,7 @@ instead of letting the estimator run into a rank-deficient system.
 ## Where to go next
 
 - New to Sparlectra? The
-  [introduction notebook](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_intro.ipynb)
+  [workshop tour](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour.ipynb)
   builds a network from scratch step by step, directly in Colab.
 - [Slack types and short-circuit currents](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_slack_short_circuit.ipynb):
   the grid-connection notebook: slack representations and IEC 60909-0

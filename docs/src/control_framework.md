@@ -198,6 +198,12 @@ the same bus voltage triggers the cross-type warning. `runShortCircuit!`
 and the power flow see the SVC only through its shunt stamp — disabled or
 absent controllers leave results untouched.
 
+The machine controller offers a STATCOM alternative for the same task
+(`addMachineVoltageControl!` with `s_max_mva`): current-based limit,
+linear $V \cdot S_{max}$ collapse instead of the SVC's quadratic
+$V^2 B$ one. The device taxonomy and the limit-characteristic comparison
+live on the [FACTS Devices](@ref facts_devices) page.
+
 ## TCSC: series-reactance flow control
 
 `addSeriesReactanceControl!(net; fromBus, toBus, p_target_mw, x_min_pu,
@@ -211,6 +217,14 @@ end the branch behaves as a fixed compensated line, reported honestly as
 reactance), and ranges whose series impedance magnitude enters the
 resonance guard `eps_z` are refused at registration. Theory and device
 mapping: [Series Compensation (TCSC)](series_compensation.md).
+
+The same controller carries the SSSC mode (`v_inj_max_pu` instead of the
+fixed window): the admissible reactance deviation is bounded by the
+injectable series voltage and shrinks with the branch current. A UPFC
+(coupled shunt plus series converter) is deliberately NOT implemented:
+two actuators with a DC-link coupling constraint do not fit the
+single-actuator pattern of this loop; the design note and the stationary
+approximation are on the [FACTS Devices](@ref facts_devices) page.
 
 ## Trace rows (transformer control)
 

@@ -1470,23 +1470,23 @@ function _apply_external_grid_config!(net::Net, pf; declared::Union{Nothing,Name
 end
 
 """
-Update the active and reactive power of a generator connected to a bus in the network.
+Add active/reactive power to the NODE-level generation sum of a bus
+(`node._pƩGen`/`node._qƩGen`).
+
+!!! warning "Report layer only — the AC solver will not see this"
+    The rectangular AC power-flow solver builds its injections from the
+    PROSUMER objects (`buildComplexSVec` reads `net.prosumpsVec`), not from
+    the node sums, so this edit does NOT change an AC solve. The node sums
+    feed reporting, MATPOWER export, measurement generation, and the DC
+    power flow. To change what the AC solver computes, edit the prosumer
+    (e.g. `ps.pVal`/`ps.qVal`) or add one (`addProsumer!`). Tracked in
+    issue #323.
 
 # Arguments
 - `net::Net`: The network object.
 - `busName::String`: The name of the bus.
-- `p::Union{Nothing, Float64}`: The active power to update. Default is `nothing`.
-- `q::Union{Nothing, Float64}`: The reactive power to update. Default is `nothing`.
-
->Note: the corresponding prosumer object will not be updated.
-
-# Examples
-```julia
-result = run_sparlectra(casefile = "a_case.m") # run the configured framework workflow
-net = result.net
-updateBusPower!(net = net, busName = "Bus1", p = 0.5, q = 0.2) # Update the power of Bus1 to 0.5 MW and 0.2 MVar
-run_sparlectra(net = net) # rerun with the active SparlectraConfig
-```
+- `p::Union{Nothing, Float64}`: active power to add in MW. Default `nothing`.
+- `q::Union{Nothing, Float64}`: reactive power to add in MVAr. Default `nothing`.
 """
 function addBusGenPower!(; net::Net, busName::String, p::Union{Nothing,Float64} = nothing, q::Union{Nothing,Float64} = nothing)
   busIdx = geNetBusIdx(net = net, busName = busName)
@@ -1494,23 +1494,23 @@ function addBusGenPower!(; net::Net, busName::String, p::Union{Nothing,Float64} 
 end
 
 """
-Update the active and reactive power of a load connected to a bus in the network.
+Add active/reactive power to the NODE-level load sum of a bus
+(`node._pƩLoad`/`node._qƩLoad`).
+
+!!! warning "Report layer only — the AC solver will not see this"
+    The rectangular AC power-flow solver builds its injections from the
+    PROSUMER objects (`buildComplexSVec` reads `net.prosumpsVec`), not from
+    the node sums, so this edit does NOT change an AC solve. The node sums
+    feed reporting, MATPOWER export, measurement generation, and the DC
+    power flow. To add load the AC solver sees, add a prosumer instead:
+    `addProsumer!(net = net, busName = ..., type = "LOAD", p = ..., q = ...)`.
+    Tracked in issue #323.
 
 # Arguments
 - `net::Net`: The network object.
 - `busName::String`: The name of the bus.
-- `p::Union{Nothing, Float64}`: The active power to update. Default is `nothing`.
-- `q::Union{Nothing, Float64}`: The reactive power to update. Default is `nothing`.
-
->Note: the corresponding prosumer object will not be updated.
-
-# Examples
-```julia
-result = run_sparlectra(casefile = "a_case.m") # run the configured framework workflow
-net = result.net
-updateBusPower!(net = net, busName = "Bus1", p = 0.5, q = 0.2) # Update the power of Bus1 to 0.5 MW and 0.2 MVar
-run_sparlectra(net = net) # rerun with the active SparlectraConfig
-```
+- `p::Union{Nothing, Float64}`: active power to add in MW. Default `nothing`.
+- `q::Union{Nothing, Float64}`: reactive power to add in MVAr. Default `nothing`.
 """
 function addBusLoadPower!(; net::Net, busName::String, p::Union{Nothing,Float64} = nothing, q::Union{Nothing,Float64} = nothing)
   busIdx = geNetBusIdx(net = net, busName = busName)

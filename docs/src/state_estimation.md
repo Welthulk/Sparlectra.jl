@@ -364,7 +364,7 @@ Literature on PMU-based state estimation:
 
 ## Further examples and workshop material
 
-* Extended tutorial and a simple 7-bus setup: [Workshop](workshop.md)
+* Extended tutorial and a simple 7-bus setup: [workshop tour](generated/workshop_tour.md)
 * Detailed WLS reporting example script: `examples/state_estimation/state_estimation_wls.jl`
 * PMU angle measurements and the reference-offset state α: `examples/state_estimation/state_estimation_pmu_angles.jl`
 * Observability-focused scenario script: `examples/state_estimation/state_estimation_observability.jl`

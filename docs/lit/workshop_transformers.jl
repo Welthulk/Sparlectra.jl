@@ -149,7 +149,7 @@ end
 # roughly the same amount, in the opposite direction: raising tau means
 # more turns on the primary, so the secondary voltage drops. This manual
 # sweep is exactly what the OLTC CONTROLLER automates against a voltage
-# target; the closed loop is chapter 3 of the
+# target; the closed loop is chapter 4 of the
 # [workshop tour](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour.ipynb).
 #
 # ## Chapter 2: the phase tap (PST) moves power

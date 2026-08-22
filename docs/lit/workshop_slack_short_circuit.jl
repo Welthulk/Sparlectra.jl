@@ -14,8 +14,8 @@
 #                                                                             #src
 # file: docs/lit/workshop_slack_short_circuit.jl                              #src
 # purpose: Literate.jl source of the slack-representations and short-circuit  #src
-#          workshop notebook and its Documenter page. Follow-up to            #src
-#          workshop_intro.jl; regenerate the committed outputs with           #src
+#          workshop notebook and its Documenter page. Deep dive on the       #src
+#          tour's slack chapter; regenerate the committed outputs with        #src
 #          `julia --project=docs docs/generate_notebooks.jl`.                 #src
 
 # # Slack types and short-circuit currents
@@ -267,8 +267,8 @@ printShortCircuitResult(sc_min)
 #
 # ## Where to go next
 #
-# - New to Sparlectra? The
-#   [introduction notebook](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_intro.ipynb)
+# - New to Sparlectra? Chapter 1 of the
+#   [workshop tour](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour.ipynb)
 #   builds a network from scratch step by step, directly in Colab.
 # - [Slack Bus and External Grid Sources](https://welthulk.github.io/Sparlectra.jl/slack_vs_source/):
 #   the full theory: why the load flow needs a slack, the source model, and

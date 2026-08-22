@@ -1,6 +1,6 @@
 # Sparlectra.jl
 
-> Sparlectra.jl is a Julia framework for AC power-flow and state-estimation studies.
+> Sparlectra.jl is a Julia framework for steady-state grid analysis: power flow, state estimation, IEC 60909 short circuit, and N-1 contingency studies, with CGMES and MATPOWER exchange.
 
 ## What it is
 

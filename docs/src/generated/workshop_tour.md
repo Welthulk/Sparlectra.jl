@@ -6,23 +6,35 @@ EditURL = "../../lit/workshop_tour.jl"
 
 [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour.ipynb)
 
-All workshop examples in **one session**: install
+This tour IS the Sparlectra workshop: install
 [Sparlectra.jl](https://github.com/Welthulk/Sparlectra.jl) once, warm the
-compiler up once, and then walk through the chapters without waiting
-again. The focused single-topic notebooks cover the same ground with more
-narrative; this tour is the fast lane.
+compiler up once, and then climb from the very first bus to threaded
+sweeps in one session. The focused single-topic notebooks go deeper on
+individual chapters; everything they need as a starting point is here.
 
 After the warm-up (compilation happens there, everything after is fast)
-the chapters are:
+the chapters climb five tiers:
 
-1. A first power flow
-2. Slack types and short-circuit currents
-3. Transformer tap control (OLTC)
-4. Voltage-dependent reactive power, Q(U)
-5. Remote voltage control by a machine
-6. A steerable HVDC link (back-to-back pairing, incl. meshed operation)
-7. State estimation
-8. Using your cores: parallel sweeps on Julia threads
+**Newcomer**
+1. Your first network, built step by step
+
+**Beginner**
+2. Working with the model: trust, switching, editing, Q-limits
+
+**Advanced**
+3. Slack types and short-circuit currents
+4. Transformer tap control (OLTC)
+5. Voltage-dependent reactive power, Q(U)
+
+**Expert**
+6. Remote voltage control by a machine
+7. A steerable HVDC link (back-to-back pairing, incl. meshed operation)
+8. State estimation
+9. FACTS devices and their limits (STATCOM vs SVC, TCSC vs SSSC)
+10. N-1 contingency analysis
+
+**Beyond**
+11. Using your cores: parallel sweeps on Julia threads
 
 > **Note:** On Google Colab the install cell takes a few minutes on a
 > fresh session (package download and precompilation). Colab's Julia
@@ -32,10 +44,11 @@ the chapters are:
 
 Julia compiles each function on first use. This one cell warms EVERY
 path the chapters exercise, so nothing stalls mid-tour: the
-Newton-Raphson solver, the IEC 60909 short circuit (chapter 2), the HVDC
-pair controller (chapter 6), and the WLS state estimator (chapter 7).
-The `using` clauses and the small helpers of the whole tour live here
-too, collected up top so they cannot be missed.
+Newton-Raphson solver, the IEC 60909 short circuit (chapter 3), the HVDC
+pair controller (chapter 7), the WLS state estimator (chapter 8), the
+FACTS controller loop (chapter 9), and the contingency batch
+(chapter 10). The `using` clauses and the small helpers of the whole
+tour live here too, collected up top so they cannot be missed.
 
 ````@example workshop_tour
 using Sparlectra
@@ -51,7 +64,7 @@ function solve!(net; kwargs...)
   return etime, ite
 end
 
-# peek into the solved state (chapter 6 reads bus angles with it)
+# peek into the solved state (chapter 7 reads bus angles with it)
 bus_va_deg(net, bus) = net.nodeVec[net.busDict[bus]]._va_deg
 
 # tiny warm-up net: a grid connection WITH declared short-circuit data
@@ -89,16 +102,20 @@ println("HVDC control   : ", round(t_hvdc; digits = 2), " s")
 # state-estimation path: synthetic measurements plus one WLS run
 setMeasurementsFromPF!(wnet; includeVm = true, includePinj = true, includeQinj = true, includePflow = true, includeQflow = true, noise = false)
 t_se = @elapsed runse!(wnet; maxIte = 8, tol = 1e-6, flatstart = true, jacEps = 1e-6, updateNet = false)
-println("state estimator: ", round(t_se; digits = 2), " s, everything warm")
+println("state estimator: ", round(t_se; digits = 2), " s")
+
+# chapter-10 path: one single-case contingency batch on the warm-up net
+t_n1 = @elapsed runContingencies!(wnet, generateN1Branches(wnet))
+println("contingency    : ", round(t_n1; digits = 2), " s, everything warm")
 ````
 
-## Chapter 1: a first power flow
+## Part I: Newcomer
 
-Seven 110 kV buses in a ring with two cross-connections, an external
-network injection as slack at `B1`, a generator at `B3`, loads elsewhere.
-The builder is a function because chapter 7 reuses the same network.
-The full guided version of this chapter is the
-[introduction notebook](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_intro.ipynb).
+## Chapter 1: your first network, built step by step
+
+No input files, no configuration: a complete 110 kV network from scratch,
+validated, solved, and read. The network is seven buses in a ring with
+two cross-connections; `B1` carries the grid connection:
 
 ```text
  (slack)
@@ -109,6 +126,77 @@ The full guided version of this chapter is the
    |           /\           |
    B7 ---- B6 ---- B5 ------+
 ```
+
+Every Sparlectra model starts from a `Net` object; `baseMVA` is the
+system base power for all per-unit conversions. `addBus!` creates the
+electrical nodes (`vn_kV` nominal voltage, `vm_pu`/`va_deg` the solver's
+starting voltage). Note what is NOT declared here: the operational bus
+type (slack / PV / PQ) is derived later from the devices attached to
+each bus.
+
+````@example workshop_tour
+net1 = Net(name = "tour_first_pf", baseMVA = 100.0)
+addBus!(net = net1, busName = "B1", vn_kV = 110.0, vm_pu = 1.02, va_deg = 0.0)
+for i in 2:7
+  addBus!(net = net1, busName = "B$(i)", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
+end
+````
+
+`addPIModelACLine!` connects buses with a line as a pi-equivalent branch
+in per-unit (`r_pu`, `x_pu`, and `b_pu` for the total charging):
+
+````@example workshop_tour
+addPIModelACLine!(net = net1, fromBus = "B1", toBus = "B2", r_pu = 0.010, x_pu = 0.080, b_pu = 0.0, status = 1)
+addPIModelACLine!(net = net1, fromBus = "B2", toBus = "B3", r_pu = 0.011, x_pu = 0.085, b_pu = 0.0, status = 1)
+addPIModelACLine!(net = net1, fromBus = "B3", toBus = "B4", r_pu = 0.012, x_pu = 0.090, b_pu = 0.0, status = 1)
+addPIModelACLine!(net = net1, fromBus = "B4", toBus = "B5", r_pu = 0.010, x_pu = 0.080, b_pu = 0.0, status = 1)
+addPIModelACLine!(net = net1, fromBus = "B5", toBus = "B6", r_pu = 0.011, x_pu = 0.085, b_pu = 0.0, status = 1)
+addPIModelACLine!(net = net1, fromBus = "B6", toBus = "B7", r_pu = 0.012, x_pu = 0.090, b_pu = 0.0, status = 1)
+addPIModelACLine!(net = net1, fromBus = "B7", toBus = "B1", r_pu = 0.010, x_pu = 0.080, b_pu = 0.0, status = 1)
+addPIModelACLine!(net = net1, fromBus = "B2", toBus = "B5", r_pu = 0.009, x_pu = 0.070, b_pu = 0.0, status = 1)
+addPIModelACLine!(net = net1, fromBus = "B3", toBus = "B6", r_pu = 0.009, x_pu = 0.070, b_pu = 0.0, status = 1)
+````
+
+Devices that consume or produce power are `addProsumer!` calls. The
+external network injection at `B1` references its OWN bus as the voltage
+reference; that is what makes `B1` the slack bus. The generator at `B3`
+feeds in 60 MW, the remaining buses carry loads (`p` in MW, `q` in MVar):
+
+````@example workshop_tour
+addProsumer!(net = net1, busName = "B1", type = "EXTERNALNETWORKINJECTION", referencePri = "B1", vm_pu = 1.02, va_deg = 0.0)
+addProsumer!(net = net1, busName = "B3", type = "GENERATOR", p = 60.0, q = 10.0)
+addProsumer!(net = net1, busName = "B2", type = "LOAD", p = 35.0, q = 10.0)
+addProsumer!(net = net1, busName = "B4", type = "LOAD", p = 45.0, q = 15.0)
+addProsumer!(net = net1, busName = "B5", type = "LOAD", p = 25.0, q = 8.0)
+addProsumer!(net = net1, busName = "B6", type = "LOAD", p = 30.0, q = 10.0)
+addProsumer!(net = net1, busName = "B7", type = "LOAD", p = 20.0, q = 6.0)
+````
+
+`validate!` checks the model for structural problems (unconnected buses,
+missing slack, inconsistent parameters) BEFORE any numerics run; make it
+a habit after every round of model edits. Then `runpf!` runs the
+rectangular Newton-Raphson solver (max iterations, tolerance, verbosity;
+status `0` means converged), `calcNetLosses!` derives branch flows and
+losses from the converged voltages, and `printACPFlowResults` prints the
+classical result tables:
+
+````@example workshop_tour
+ok1, msg1 = validate!(net = net1)
+ok1 || error("Network validation failed: $msg1")
+etime, ite = solve!(net1)   ## solve! wraps exactly runpf! + calcNetLosses! (see warm-up)
+printACPFlowResults(net1, etime, ite, 1e-8)
+````
+
+Reading aid: the slack at `B1` covers the difference between 155 MW of
+load, 60 MW of scheduled generation, and the network losses; all bus
+voltages stay near 1.0 pu. Loading a case from a FILE instead is one
+call through the framework workflow:
+`run_sparlectra(casefile = "case14.m", path = ...)` after
+`ensure_casefile("case14.m")`, which downloads the case on demand; the
+result carries the solved net as `result.net`.
+
+The same construction, packed into a function: later chapters (state
+estimation, model editing) reuse this network.
 
 ````@example workshop_tour
 function build_ring7(name::String)
@@ -137,15 +225,16 @@ function build_ring7(name::String)
   ok || error("Network validation failed: $msg")
   return net
 end
-
-net1 = build_ring7("tour_first_pf")
-etime, ite = solve!(net1)
-printACPFlowResults(net1, etime, ite, 1e-8)
 ````
 
-Reading aid: the slack at `B1` covers the difference between 155 MW of
-load, 60 MW of scheduled generation, and the network losses. All bus
-voltages stay near 1.0 pu.
+## Part II: Beginner
+
+## Chapter 2: working with the model
+
+Solving once is the easy part. This chapter covers what day-to-day work
+actually consists of: judging how much the numbers can be trusted,
+editing and switching the model, exporting it, and letting the solver
+enforce reactive-power limits.
 
 ### How much can you trust these numbers?
 
@@ -196,6 +285,78 @@ meaningless. That is exactly what the estimate is for: the classic result
 log reports it as a `Jacobian cond.` line, and diagnose runs grade it with
 a plain-language verdict.
 
+### Editing, switching, exporting
+
+Model work is iterative: change a parameter, switch an element, remove
+one, validate, solve again. The dedicated helpers keep the bookkeeping
+consistent (branch indices, prosumer injections, isolated buses):
+
+````@example workshop_tour
+net_edit = build_ring7("tour_edit")
+# stiffen the B1-B2 line (per-branch parameter update)
+brVec = getNetBranchNumberVec(net = net_edit, fromBus = "B1", toBus = "B2")
+updateBranchParameters!(net = net_edit, branchNr = brVec[1], branch = BranchModel(0.005, 0.040, 0.0, 0.0, 0.0, 0.0, 100.0))
+# add 5 MW / 1 MVAr of load at B4. Loads and generators are PROSUMER
+# objects and the AC solver reads its injections from them, so growing a
+# load means adding (or editing) a prosumer. The node-sum helpers
+# (addBusLoadPower!) only feed the report layer, not the AC solve (#323).
+addProsumer!(net = net_edit, busName = "B4", type = "LOAD", p = 5.0, q = 1.0)
+# switch the B3-B6 cross-tie out of service (aggregate switch; a single
+# terminal would be setBranchTerminalStatus!, see the next section)
+tie = getNetBranchNumberVec(net = net_edit, fromBus = "B3", toBus = "B6")
+setNetBranchStatus!(net = net_edit, branchNr = tie[1], status = 0)
+# remove the B2-B5 cross-tie outright, then re-validate and solve
+removeACLine!(net = net_edit, fromBus = "B2", toBus = "B5")
+markIsolatedBuses!(net = net_edit, log = false)
+ok_e, msg_e = validate!(net = net_edit)
+ok_e || error("edit round left the net invalid: $msg_e")
+_, ite_e = solve!(net_edit)
+println("edited net solves in ", ite_e, " iterations; branches now: ", length(net_edit.branchVec))
+# the edited model exports as a MATPOWER case file
+case_out = joinpath(mktempdir(), "tour_edit.m")
+writeMatpowerCasefile(net_edit, case_out)
+println("exported: ", case_out, " (", filesize(case_out), " bytes)")
+````
+
+Reading aid: removal helpers (`removeACLine!`, `removeTrafo!`,
+`removeProsumer!`, ...) mutate the net and can leave isolated buses
+behind; `markIsolatedBuses!` flags them for the solver and
+`clearIsolatedBuses!` deletes the safe ones. `removeBus!` deliberately
+only CHECKS removability. Re-validate after every edit round.
+
+### Reactive-power limits (PV to PQ switching)
+
+A voltage-regulating machine holds its bus voltage only while its
+reactive power stays inside `[qMin, qMax]`. When the solver hits a
+limit, it switches the bus from PV to PQ at the violated bound within
+the Newton iteration (the active-set strategy) and reports every event:
+
+````@example workshop_tour
+net_q = Net(name = "tour_qlimits", baseMVA = 100.0)
+for b in ("Q1", "Q2", "Q3")
+  addBus!(net = net_q, busName = b, vn_kV = 110.0)
+end
+addProsumer!(net = net_q, busName = "Q1", type = "EXTERNALNETWORKINJECTION", referencePri = "Q1", vm_pu = 1.0, va_deg = 0.0)
+addProsumer!(net = net_q, busName = "Q2", type = "GENERATOR", p = 20.0, vm_pu = 1.05, qMin = -5.0, qMax = 5.0)
+addProsumer!(net = net_q, busName = "Q3", type = "ENERGYCONSUMER", p = 45.0, q = 20.0)
+addPIModelACLine!(net = net_q, fromBus = "Q1", toBus = "Q2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+addPIModelACLine!(net = net_q, fromBus = "Q2", toBus = "Q3", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+validate!(net = net_q)
+solve!(net_q)
+println("Vm(Q2) = ", round(get_bus_vm_pu(net_q, "Q2"); digits = 4), " pu (setpoint was 1.05)")
+printQLimitLog(net_q)
+distributeBusResults!(net_q)
+````
+
+Reading aid: holding 1.05 pu at `Q2` would need more than the 5 MVar the
+machine may deliver, so the solver pins Q at `qMax` and lets the voltage
+float below the setpoint; the log names bus, iteration, and bound.
+`distributeBusResults!` pushes the solved bus totals back onto the
+individual prosumers; with several machines on one bus it redistributes
+water-filling style, so no unit leaves its Q range. The deep dive
+(enforcement modes, guards, oscillation handling) is on the
+[Q-limit strategy page](https://welthulk.github.io/Sparlectra.jl/q_limit_switching_strategy/).
+
 ### Opening one end of a line
 
 A breaker can open a single terminal while the other stays connected.
@@ -243,7 +404,7 @@ never stamped into the Y-bus, and it never appears in the branch table.
 Instead the solver contracts every cluster of buses joined by closed
 links onto one representative bus before the Y-bus is built, so all
 linked buses share one voltage by construction. (Do not confuse these
-links with the HVDC "Link" rows of chapter 6: a bus link is a switch,
+links with the HVDC "Link" rows of chapter 7: a bus link is a switch,
 an HVDC link is a converter pair.)
 
 Because the link has no admittance, the power flow cannot tell how much
@@ -303,7 +464,9 @@ component; the pseudoinverse is exactly the split without one. The
 links page of the docs has the math and the modeling guidelines (for
 example: never link the slack bus itself).
 
-## Chapter 2: slack types and short-circuit currents
+## Part III: Advanced
+
+## Chapter 3: slack types and short-circuit currents
 
 One grid connection, modeled three ways, plus an IEC 60909-0 fault-current
 sweep from the declared feeder data. The detailed walk-through with full
@@ -393,7 +556,7 @@ printShortCircuitResult(runShortCircuit!(net_slack; case = :max))
 printShortCircuitResult(runShortCircuit!(net_slack; case = :min))
 ````
 
-## Chapter 3: transformer tap control (OLTC)
+## Chapter 4: transformer tap control (OLTC)
 
 A transformer with a ratio tap changer holds the voltage at a remote load
 bus. The outer control loop moves the discrete tap until the target is
@@ -453,7 +616,7 @@ Reading aid: the summary shows the chosen tap position and the achieved
 voltage. With a discrete 0.0125 step the controller stops as soon as the
 target is inside the deadband, not at the exact setpoint.
 
-## Chapter 4: voltage-dependent reactive power, Q(U)
+## Chapter 5: voltage-dependent reactive power, Q(U)
 
 A machine can follow a Q(U) droop characteristic: absorb reactive power
 when its voltage is high, inject when it is low. Unlike the outer-loop
@@ -512,7 +675,9 @@ Reading aid: compare the `Qg` value and the `Control` column (`Q(U)`) of
 bus `B2` between the two tables; the sign flips with the voltage level,
 exactly along the declared characteristic.
 
-## Chapter 5: remote voltage control by a machine
+## Part IV: Expert
+
+## Chapter 6: remote voltage control by a machine
 
 A machine regulates the voltage at a **different** bus via its reactive
 output, the counterpart of a CGMES `RegulatingControl` at a foreign
@@ -561,7 +726,7 @@ println("limited:      Vm(Load) = ", round(get_bus_vm_pu(net_rvc2, "Load"); digi
 printMachineControllerSummary(stdout, net_rvc2)
 ````
 
-## Chapter 6: a steerable HVDC link (back-to-back pairing)
+## Chapter 7: a steerable HVDC link (back-to-back pairing)
 
 Two AC areas joined ONLY by an HVDC converter pair: no AC tie, no angle
 coupling, so the areas stay two separate electrical islands with their
@@ -680,7 +845,7 @@ asynchronously supplied island grid.
 
 A word on terms: "slack" is the solver's name for an island's reference
 node, and every island has exactly one, however it is modeled. The ideal
-slack of chapter 2, the external-grid SOURCE behind an impedance, and
+slack of chapter 3, the external-grid SOURCE behind an impedance, and
 the grid-forming converter here are three MODELS of that one reference.
 The result output keeps them apart: `SOURCE` in the bus table (and
 `Source: m` in the header) is reserved for the external-grid feeder
@@ -800,7 +965,7 @@ honest flag is what marks the undeliverable draw.
 
 The ideal reference above holds exactly 1.0 pu at the PCC no matter what
 the island draws. A real VSC has finite control stiffness. The
-external-grid element from chapter 2 models exactly that: the reference
+external-grid element from chapter 3 models exactly that: the reference
 voltage sits BEHIND the impedance $Z_Q = U_n^2 / S_k''$, so the PCC
 voltage droops under load. Declaring the converter that way finally
 makes the bus table say `SOURCE`, and the header counts
@@ -929,7 +1094,7 @@ the registration is rejected by the same one-reference rule, and a
 demoted reference afterwards makes the controller report
 `invalid_topology` instead of silently changing modes.
 
-## Chapter 7: state estimation
+## Chapter 8: state estimation
 
 Close the loop: solve a reference power flow on the chapter-1 network,
 derive a noisy synthetic measurement set from it, check observability,
@@ -971,10 +1136,177 @@ Reading aid: with mild noise the estimate reproduces the reference state
 to a few 1e-3 pu, and $J$ lands near the degrees of freedom, the
 textbook health check for a WLS estimator.
 
-## Chapter 8: using your cores
+## Chapter 9: FACTS devices and their limits
 
-Independent work items — island solves, short-circuit fault sweeps, N-1
-contingency batches — fan out over Julia THREADS since 0.9.10, gated by
+FACTS devices use power electronics to control voltage and flow. The
+tour has met two members already: the phase-shifting tap (chapter 4's
+family) and the HVDC pair (chapter 7). This chapter is about the
+LIMIT characteristics, because that is where the devices actually
+differ. In range, every shunt compensator holds its voltage target the
+same way; at the limit:
+
+- a classical machine keeps its constant reactive box `[Qmin, Qmax]`,
+- a STATCOM is current-limited, it delivers $Q = V \cdot S_{max}$
+  (LINEAR collapse under a sag),
+- an SVC is susceptance-limited, it delivers $Q = V^2 \cdot B$
+  (QUADRATIC collapse).
+
+The ranking shows exactly under the depressed voltage the compensator
+was installed for. We build one weak corridor that sags to about
+0.92 pu and give all three devices the SAME 10-MVAr rating at 1.0 pu:
+
+````@example workshop_tour
+facts_rating = 10.0
+function build_sag_corridor(name::String; with_machine::Bool)
+  cnet = Net(name = name, baseMVA = 100.0)
+  for bus in ("Slack", "Mid", "Load")
+    addBus!(net = cnet, busName = bus, vn_kV = 110.0)
+  end
+  addProsumer!(net = cnet, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "Slack")
+  addProsumer!(net = cnet, busName = "Load", type = "LOAD", p = 60.0, q = 25.0)
+  with_machine && addProsumer!(net = cnet, busName = "Mid", type = "GENERATOR", p = 0.0, q = 0.0)
+  addPIModelACLine!(net = cnet, fromBus = "Slack", toBus = "Mid", r_pu = 0.02, x_pu = 0.20, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = cnet, fromBus = "Mid", toBus = "Load", r_pu = 0.02, x_pu = 0.20, b_pu = 0.0, status = 1)
+  ok, msg = validate!(net = cnet)
+  ok || error("corridor net invalid: $msg")
+  return cnet
+end
+
+# classical machine: constant reactive box, the outer loop parks at_limit
+box_net = build_sag_corridor("tour_facts_box"; with_machine = true)
+addMachineVoltageControl!(box_net; bus = "Mid", target_bus = "Load", target_vm_pu = 1.0, qmin_mvar = -facts_rating, qmax_mvar = facts_rating)
+run_control!(box_net)
+box_ctrl = only([c for c in box_net.machineControls if c isa MachineVoltageControl])
+
+# STATCOM: the SAME controller with a converter rating instead of the box;
+# the bound Q_lim = V * S_max is refreshed from the solved terminal
+# voltage every outer iteration, so the delivered Q tracks the sag
+st_net = build_sag_corridor("tour_facts_statcom"; with_machine = true)
+addMachineVoltageControl!(st_net; bus = "Mid", target_bus = "Load", target_vm_pu = 1.0, s_max_mva = facts_rating)
+run_control!(st_net)
+st_ctrl = only([c for c in st_net.machineControls if c isa MachineVoltageControl])
+v_st = get_bus_vm_pu(st_net, "Mid")
+
+# SVC: continuous susceptance; at the clamp the Y-bus stamp makes the
+# delivered Q follow V^2 all by itself
+svc_net = build_sag_corridor("tour_facts_svc"; with_machine = false)
+addShuntVoltageControl!(svc_net; bus = "Mid", target_vm_pu = 1.0, bs_min_mvar = -facts_rating, bs_max_mvar = facts_rating)
+run_control!(svc_net)
+svc_ctrl = only([c for c in svc_net.machineControls if c isa ShuntVoltageControl])
+v_svc = get_bus_vm_pu(svc_net, "Mid")
+
+println("all three at their capacitive limit, rated ", facts_rating, " MVAr at 1.0 pu:")
+println("  machine box : Q = ", round(box_ctrl.q_mvar; digits = 2), " MVAr (constant)")
+println("  STATCOM     : Q = ", round(st_ctrl.q_mvar; digits = 2), " MVAr = V*S_max at V = ", round(v_st; digits = 4), " pu (", round(100 * st_ctrl.q_mvar / facts_rating; digits = 1), " % of rating)")
+println("  SVC         : Q = ", round(v_svc^2 * svc_ctrl.bs_mvar; digits = 2), " MVAr = V^2*B at V = ", round(v_svc; digits = 4), " pu (", round(100 * v_svc^2 * svc_ctrl.bs_mvar / facts_rating; digits = 1), " % of rating)")
+````
+
+The series side has the same split. A TCSC owns a FIXED reactance window
+and keeps it at any loading; an SSSC injects a series voltage, so its
+usable window $|x - x_{base}| \le V_{inj,max}/|I|$ SHRINKS with the
+branch current: it saturates exactly at high transfer. Same two-corridor
+loop, same 35-MW target, once per device:
+
+````@example workshop_tour
+function build_facts_loop(name::String)
+  lnet = Net(name = name, baseMVA = 100.0)
+  for bus in ("A", "M1", "M2", "B")
+    addBus!(net = lnet, busName = bus, vn_kV = 110.0)
+  end
+  addProsumer!(net = lnet, busName = "A", type = "EXTERNALNETWORKINJECTION", referencePri = "A", vm_pu = 1.0, va_deg = 0.0)
+  addProsumer!(net = lnet, busName = "B", type = "ENERGYCONSUMER", p = 80.0, q = 20.0)
+  addPIModelACLine!(net = lnet, fromBus = "A", toBus = "M1", r_pu = 0.01, x_pu = 0.10, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = lnet, fromBus = "M1", toBus = "B", r_pu = 0.01, x_pu = 0.10, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = lnet, fromBus = "A", toBus = "M2", r_pu = 0.02, x_pu = 0.20, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = lnet, fromBus = "M2", toBus = "B", r_pu = 0.02, x_pu = 0.20, b_pu = 0.0, status = 1)
+  ok, msg = validate!(net = lnet)
+  ok || error("loop net invalid: $msg")
+  return lnet
+end
+
+tcsc_net = build_facts_loop("tour_facts_tcsc")
+tcsc_ctrl = addSeriesReactanceControl!(tcsc_net; fromBus = "A", toBus = "M2", p_target_mw = 35.0, x_min_pu = 0.02, x_max_pu = 0.30)
+run_control!(tcsc_net)
+println("TCSC window 0.02..0.30 pu : P = ", round(tcsc_ctrl.achieved_p_mw; digits = 2), " MW at x = ", round(tcsc_ctrl.x_pu; digits = 4), " pu, converged = ", tcsc_ctrl.converged)
+
+sssc_net = build_facts_loop("tour_facts_sssc")
+sssc_ctrl = addSeriesReactanceControl!(sssc_net; fromBus = "A", toBus = "M2", p_target_mw = 35.0, v_inj_max_pu = 0.01)
+run_control!(sssc_net)
+println("SSSC V_inj,max 0.01 pu    : P = ", round(sssc_ctrl.achieved_p_mw; digits = 2), " MW at x = ", round(sssc_ctrl.x_pu; digits = 4), " pu, at_limit = ", sssc_ctrl.at_limit)
+println("  live window [", round(sssc_ctrl.x_min_pu; digits = 4), ", ", round(sssc_ctrl.x_max_pu; digits = 4), "] pu around x_base ", sssc_ctrl.x_base_pu, ", injected voltage ", round(abs(sssc_ctrl.x_pu - sssc_ctrl.x_base_pu) * sssc_ctrl.i_pu; digits = 4), " pu of 0.01 available")
+````
+
+Reading aid: the TCSC reaches the 35-MW target (x moves from 0.20 down
+to about 0.07 pu), the SSSC pins at its injectable voltage with the flow
+stuck near 28.6 MW: its whole window is $\pm 0.033$ pu at this loading.
+Both devices report the miss honestly as `at_limit` instead of
+pretending convergence. The full taxonomy (incl. why a UPFC is
+deliberately NOT implemented and what to use instead) is on the
+[FACTS Devices](https://welthulk.github.io/Sparlectra.jl/facts/) page;
+`examples/others/exp_facts_limit_modes.jl` runs these contrasts as a
+script, and the TCSC has its own
+[notebook](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_series_compensation.ipynb).
+
+## Chapter 10: N-1 contingency analysis
+
+Would the network survive the loss of any single branch? An N-1 batch
+answers that by outaging every branch in turn and re-solving. The API
+does the bookkeeping that is easy to get wrong: every case works on its
+own copy of the SOLVED base case (warm start, the base net is never
+mutated), and failures are REPORTED per case, never thrown.
+
+The chapter-1 ring is too forgiving for a demo (every single outage
+leaves a connected path), so we hang a two-bus spur B8-B9 on a single
+line from B4. Losing that line strands the PAIR as an island with a live
+branch but no voltage reference, and the report has to say so instead of
+crashing. (A single stranded bus would not do: `markIsolatedBuses!`
+inside the batch marks buses without any in-service branch as isolated
+and solves the rest, so a one-bus stub converges cleanly.)
+
+````@example workshop_tour
+net_n1 = build_ring7("tour_n1")
+addBus!(net = net_n1, busName = "B8", vn_kV = 110.0)
+addBus!(net = net_n1, busName = "B9", vn_kV = 110.0)
+addPIModelACLine!(net = net_n1, fromBus = "B4", toBus = "B8", r_pu = 0.02, x_pu = 0.10, b_pu = 0.0, status = 1)
+addPIModelACLine!(net = net_n1, fromBus = "B8", toBus = "B9", r_pu = 0.02, x_pu = 0.10, b_pu = 0.0, status = 1)
+addProsumer!(net = net_n1, busName = "B8", type = "LOAD", p = 6.0, q = 2.0)
+addProsumer!(net = net_n1, busName = "B9", type = "LOAD", p = 4.0, q = 1.0)
+ok_n1, msg_n1 = validate!(net = net_n1)
+ok_n1 || error("N-1 net invalid: $msg_n1")
+
+cases = generateN1Branches(net_n1)
+println(length(cases), " single-branch outage cases")
+results = runContingencies!(net_n1, cases; vm_min_pu = 0.95, vm_max_pu = 1.05)
+printContingencyResults(results)
+````
+
+Reading aid, three things to check in the table:
+
+- the `B_ACL_110_4_8` outage (the B4-B8 spur line) reports
+  `islanded without reference`: the B8-B9 pair loses its only feed and
+  the case is a reported failure, not a crash;
+- the ring outages converge, and the tight 0.95-pu floor flags the
+  voltage sags an outage causes (the `V-viol` column counts the buses
+  outside the band per case; the B1-B2 outage sags the ring to 0.86 pu);
+- iterations stay small: every case starts from the solved base-case
+  voltages (warm start), not from flat.
+
+Two knobs worth knowing: `retry_flat_start = true` grants one bounded
+flat-start retry per failed case (the rescue ladder is deliberately NOT
+in this loop), and `writeContingencyResultsCSV(path, results)` exports
+the table. `generateN1Branches` disambiguates parallel circuits as
+`name#branchIdx`, and imported MATPOWER FOR001 outage lists work as case
+sources too; see
+[N-1 Contingency Analysis](https://welthulk.github.io/Sparlectra.jl/contingency/).
+On a real case this batch is exactly what the threads in the next
+chapter are for.
+
+## Part V: Beyond
+
+## Chapter 11: using your cores
+
+Independent work items (island solves, short-circuit fault sweeps, N-1
+contingency batches) fan out over Julia THREADS since 0.9.10, gated by
 `runtime.parallel.*` (default on). Threads are fixed at process start:
 `julia --threads=auto` uses all cores, and without the flag everything
 runs serially through the identical code path. First: how many do we
@@ -986,7 +1318,7 @@ println("this session runs on ", Threads.nthreads(), " Julia thread(s)")
 
 The mechanics on a fault sweep: eight feeder-fed rings, every bus a
 fault location, once serial and once parallel. The results must be
-IDENTICAL — parallelism only changes the wall clock, never a number:
+IDENTICAL: parallelism only changes the wall clock, never a number.
 
 ````@example workshop_tour
 net_par = Net(name = "tour_parallel", baseMVA = 100.0)
@@ -1014,28 +1346,29 @@ Reading aid: on Colab's free tier you usually get 1-2 vCPUs, so the
 factor here stays modest (with one thread the parallel call falls back
 to the very same serial function). The real effect wants your local
 machine: `julia --threads=auto --project=.
-examples/run_parallel_suite.jl` runs the three dedicated demos — island
+examples/run_parallel_suite.jl` runs the three dedicated demos, island
 solving (`power_flow.islands.mode: solve_parallel`), this fault sweep at
 8000 buses, and a full N-1 contingency batch on case1354pegase (measured
-71.7 s serial vs 17.6 s on 16 threads) — each asserting serial/parallel
-identity. The N-1 API itself is one call:
-`runContingencies!(net, generateN1Branches(net))`, documented on the
-[N-1 Contingency Analysis](https://welthulk.github.io/Sparlectra.jl/contingency/)
-page.
+71.7 s serial vs 17.6 s on 16 threads), each asserting serial/parallel
+identity. The N-1 batch itself is chapter 10; on a large case it is the
+prime customer of these threads.
 
 ## Where to go next
 
 The focused notebooks with the full narrative:
 
-- [Introduction](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_intro.ipynb)
 - [Slack types and short circuit](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_slack_short_circuit.ipynb)
+- [Distributed slack](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_distributed_slack.ipynb)
+- [Transformer taps](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_transformers.ipynb)
+- [TCSC flow steering](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_series_compensation.ipynb)
 - [State estimation](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_state_estimation.ipynb)
 
-And the documentation for the chapters that have no own notebook yet:
+And the documentation for going further:
 
-- [Control Framework](https://welthulk.github.io/Sparlectra.jl/control_framework/) and
-  the [Workshop](https://welthulk.github.io/Sparlectra.jl/workshop/) tap-control section
+- [Control Framework](https://welthulk.github.io/Sparlectra.jl/control_framework/)
 - [Voltage Dependent Control](https://welthulk.github.io/Sparlectra.jl/voltage_dependent_control/)
 - [Remote Voltage Control](https://welthulk.github.io/Sparlectra.jl/remote_voltage_control/)
+- [FACTS Devices](https://welthulk.github.io/Sparlectra.jl/facts/)
+- [N-1 Contingency Analysis](https://welthulk.github.io/Sparlectra.jl/contingency/)
 - [Feature Matrix](https://welthulk.github.io/Sparlectra.jl/feature_matrix/)
 

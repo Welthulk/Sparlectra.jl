@@ -1,13 +1,45 @@
-# Version 0.9.11 - unreleased
+# Version 0.9.11 - 2026-08-22
 
-Search-engine and AI-agent discoverability.
+FACTS limit modes, one workshop notebook, and better discoverability.
 
-- The docs site now ships `robots.txt`, a generated `sitemap.xml`, and an
-  `llms.txt` summary at the site root, plus a meta description, Open Graph
-  and Twitter preview tags, and a disambiguated page title ("Sparlectra.jl
-  v<version>, Julia power flow"). The README carries a subtitle line and a
-  short Scope section; `tools/REPO_METADATA.md` lists the recommended
-  GitHub description, topics, and the one-time search-console submissions.
+## Highlights
+
+- **STATCOM and SSSC limit modes.** A compensator shows its character at
+  its limit, and that is usually during the voltage sag it was installed
+  for. The machine voltage controller can now act as a STATCOM
+  (`s_max_mva`): the bound is the converter current, so the deliverable Q
+  follows the terminal voltage linearly instead of freezing at a fixed
+  box, and instead of collapsing with V² like the SVC. The series
+  controller can act as an SSSC (`v_inj_max_pu`): its reactance window is
+  set by the injectable series voltage and narrows as the branch current
+  grows. Both bounds follow the solved operating point from iteration to
+  iteration. Why a UPFC is not on this list, and what to use instead,
+  is explained on the new [FACTS Devices](facts.md) page. (#297)
+- **The whole workshop in one notebook.** The introduction notebook and
+  the workshop page are gone as separate things; the tour now carries
+  everything in five tiers from Newcomer to Beyond, including two new
+  Expert chapters on the FACTS limits and on N-1 contingency batches.
+
+## Documentation
+
+- Search engines and AI agents get proper signposts: `robots.txt`,
+  `sitemap.xml`, `llms.txt`, meta description and preview image, and a
+  page title that no longer collides with a bulk carrier of similar name.
+- The feature matrix gives each analysis domain its own table. State
+  estimation is no longer graded against power-flow features it never
+  claimed to have, and every warning marker now says why it is there.
+
+## Bugfixes
+
+- The docs landing page showed broken image references where the README
+  logo and the Web UI screenshots belong; the README embed now rewrites
+  the image paths for the site.
+- Re-running a configuration with a declared `series_reactance` controller
+  crashed instead of recognizing the controller was already there.
+- `addBusLoadPower!` and `addBusGenPower!` change sums the AC solver never
+  reads, which made them silent no-ops for AC studies. Their docstrings
+  now say so and point to the prosumer-based way; the underlying AC/DC
+  inconsistency is #323.
 
 # Version 0.9.10 - 2026-08-21
 
@@ -193,8 +225,9 @@ need no CGMES delivery for short-circuit studies. See
 
 ## Improvements / Documentation
 
-- **Try Sparlectra in your browser:** two Colab workshop notebooks —
-  [introduction](generated/workshop_intro.md) and
+- **Try Sparlectra in your browser:** two Colab workshop notebooks:
+  an introduction (since merged into the
+  [workshop tour](generated/workshop_tour.md)) and
   [Slack Types and Short Circuit](generated/workshop_slack_short_circuit.md).
 - New theory page:
   [Slack Bus and External Grid Sources](slack_vs_source.md). (#299)

@@ -6,10 +6,10 @@ Julia package for AC power flow, DC power flow, state estimation and IEC 60909 s
 [![Version](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2FWelthulk%2FSparlectra.jl%2Fmain%2FProject.toml&query=%24.version&label=version&prefix=v&color=blue)](https://github.com/Welthulk/Sparlectra.jl/blob/main/Project.toml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 [![Julia](https://img.shields.io/badge/Julia-1.x-9558B2.svg)](https://julialang.org/)
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_intro.ipynb)
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour.ipynb)
 [![SBOM: SPDX](https://img.shields.io/badge/SBOM-SPDX-blue.svg)](https://github.com/Welthulk/Sparlectra.jl/releases/latest/download/Sparlectra.spdx.json)
 
-**Sparlectra.jl is a Julia framework for AC power-flow and state-estimation studies.**
+**Sparlectra.jl is a Julia framework for steady-state grid analysis: power flow, state estimation, IEC 60909 short circuit, and N-1 contingency studies, with CGMES and MATPOWER exchange.**
 
 <a href="https://github.com/Welthulk/Sparlectra.jl/tree/main/"><img align="left" width="100" src="docs/src/assets/logo.png" style="margin-right: 20px" /></a>
 
@@ -25,14 +25,14 @@ No installation required, the workshop notebooks run on Google Colab:
 
 | Notebook | Open |
 |---|---|
-| **Workshop tour, all in one session**: install once, warm up once, then all chapters (power flow, slack types and short circuit, OLTC tap control, Q(U) control, remote voltage control, a steerable HVDC link, state estimation, parallel sweeps on Julia threads) | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour.ipynb) |
-| **Introduction**: build a 7-bus network from scratch, solve the power flow, read the result tables | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_intro.ipynb) |
+| **Workshop tour, the full workshop in one session**: five tiers from Newcomer to Beyond: first network step by step, model editing and Q-limits, slack types and short circuit, OLTC tap control, Q(U) control, remote voltage control, a steerable HVDC link, state estimation, parallel sweeps on Julia threads | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour.ipynb) |
 | **Slack types and short circuit**: ideal slack vs. external-grid source vs. distributed slack on one 8-bus network, plus IEC 60909-0 fault currents | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_slack_short_circuit.ipynb) |
 | **Distributed slack**: how the participation weights are determined (schedule, capacity, headroom, imported APF/normalPF, explicit), how they are normalized, and the fallback when no valid participant exists | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_distributed_slack.ipynb) |
 | **Transformer taps**: ratio taps (OLTC) move voltage, phase taps (PST/Schrägregler) move power; device tap math, the closed control loop with the X(α) characteristic, and the 3WT star equivalent | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_transformers.ipynb) |
+| **Series compensation (TCSC)**: why flow follows reactance, and how the series-reactance controller steers a loop-network flow split onto a branch target, including the at_limit case | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_series_compensation.ipynb) |
 | **State estimation**: derive a noisy measurement set from a reference power flow, check observability, run the WLS estimator, and see when observability breaks down | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_state_estimation.ipynb) |
 
-The notebooks are generated from the Literate.jl sources in [docs/lit/](docs/lit/); the same content is on the documentation pages under [Notebooks](https://welthulk.github.io/Sparlectra.jl/generated/workshop_intro/).
+The notebooks are generated from the Literate.jl sources in [docs/lit/](docs/lit/); the same content is on the documentation pages under [Notebooks](https://welthulk.github.io/Sparlectra.jl/generated/workshop_tour/).
 
 ---
 
@@ -62,8 +62,8 @@ The notebooks are generated from the Literate.jl sources in [docs/lit/](docs/lit
 - Distributed active-power slack over configurable participation factors: the primary-control picture instead of a single slack machine.
 - Grid import from ENTSO-E CGMES 2.4.15 and 3.0 (EQ/SSH/TP/SV, boundary sets, multi-area assemblies, tap controllers, validation against the delivered SV profile, measured across the full ENTSO-E conformity collection including the 6209-bus RealGrid; per-case results incl. the documented non-converging completeness sets in [docs/dev/cgmes_testset_overview.md](docs/dev/cgmes_testset_overview.md)), MATPOWER cases and native DTF files.
 - CGMES export as a complete delivery (EQ + TP + SSH + SV, optionally one re-importable ZIP: buses, lines, 2W/3W transformers incl. tap machinery, loads, machines, injections, SVCs, shunts, links, operating point and voltage state) with roundtrip-stable object identity: an exported and re-imported network solves to the same power flow and reproduces the original short-circuit evaluation; imported mRIDs are preserved, everything else gets deterministic ids.
-- Balanced short-circuit analysis per IEC 60909-0 (`runShortCircuit!`): initial symmetrical current Ik'' (max/min case), Sk'' and peak current i_p per fault bus from harvested CGMES short-circuit data, with explicit safety flagging where defaults were substituted.
-- Comprehensive network modeling: buses, lines, transformers, generators, loads, shunts, links, and π-equivalent branch models.
+- Balanced short-circuit analysis per IEC 60909-0 (`runShortCircuit!`): initial symmetrical current Ik'' (max/min case), Sk'' and peak current i_p per fault bus from harvested CGMES short-circuit data, with explicit safety flagging where defaults were substituted; all-bus sweeps run on Julia threads or via the Takahashi selected inverse (`sweep_method = :takahashi`).
+- Network modeling: buses, lines, transformers, generators, loads, shunts, links, and π-equivalent branch models.
 - Outer-loop control framework: transformer tap/voltage control (OLTC, PST with tap-dependent reactance, combined regulation), remote voltage control via machine reactive power, and SVC-style variable-shunt voltage control, all reported through one generic controllable-element view.
 - Configuration-driven batch execution for systematic case studies.
 - External-solver integration via the `PFModel` / `PFSolution` interface, including an optional analytic power-series solver (APSLF, via AnalyticLoadFlow.jl) usable standalone, as the primary solver, or as a Newton-Raphson start-value generator.
@@ -213,15 +213,11 @@ Sparlectra ships with an optional browser-based local Web UI for power-flow stud
 
 **Configuration**: case selection, solver settings, control options and output configuration on a single page:
 
-<p align="center">
-  <a href="docs/src/assets/webui_v0.8.15.png"><img src="docs/src/assets/webui_v0.8.15.png" alt="Sparlectra Web UI: PowerFlow run configuration" width="850"></a>
-</p>
+[![Sparlectra Web UI: PowerFlow run configuration](docs/src/assets/webui_v0.8.15.png)](docs/src/assets/webui_v0.8.15.png)
 
 **Power flow run & history**: result with convergence report (left) and the run history (right):
 
-<p align="center">
-  <a href="docs/src/assets/webui_powerflow_history.png"><img src="docs/src/assets/webui_powerflow_history.png" alt="Sparlectra Web UI: PowerFlow result and run history" width="850"></a>
-</p>
+[![Sparlectra Web UI: PowerFlow result and run history](docs/src/assets/webui_powerflow_history.png)](docs/src/assets/webui_powerflow_history.png)
 
 ---
 
@@ -255,7 +251,7 @@ Key entry points:
 - [Solver Guide](docs/src/solver.md) · [External Solvers](docs/src/external_solvers.md): numerical formulations and the `PFModel`/`PFSolution` interface
 - [State Estimation](docs/src/state_estimation.md): WLS state-estimation workflow
 - [Feature Matrix](docs/src/feature_matrix.md): capability overview
-- [Function Reference](docs/src/reference.md) · [Workshop](docs/src/workshop.md): API reference and guided examples
+- [Function Reference](docs/src/reference.md) · [Workshop tour](docs/src/generated/workshop_tour.md): API reference and guided examples
 - [Changelog](docs/src/changelog.md): version history
 
 ---

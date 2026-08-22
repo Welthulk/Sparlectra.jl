@@ -93,6 +93,7 @@ makedocs(
     "Slack and External Grid Sources" => "slack_vs_source.md",
     "Synthetic Tiled Grids" => "synthetic_grids.md",
     "Voltage Dependent Control" => "voltage_dependent_control.md",
+    "FACTS Devices" => "facts.md",
     "Control Framework" => "control_framework.md",
     "Remote Voltage Control" => "remote_voltage_control.md",
     "Series Compensation (TCSC)" => "series_compensation.md",
@@ -101,13 +102,11 @@ makedocs(
     "N-1 Contingency Analysis" => "contingency.md",
     "Examples Overview" => "examples_overview.md",
     "State Estimation" => "state_estimation.md",
-    "Workshop" => "workshop.md",
     # Literate.jl-generated pages (committed output of docs/generate_notebooks.jl,
     # not rebuilt here — edit docs/lit/*.jl and regenerate). New notebooks get
     # a nav entry inside this group.
     "Notebooks" => [
       "Workshop Tour (all in one)" => "generated/workshop_tour.md",
-      "Try it in your Browser" => "generated/workshop_intro.md",
       "Slack Types and Short Circuit" => "generated/workshop_slack_short_circuit.md",
       "Distributed Slack" => "generated/workshop_distributed_slack.md",
       "Transformer Taps" => "generated/workshop_transformers.md",

@@ -1,7 +1,7 @@
 # Network Module
 
 The practical guidance for creating, modifying, validating, and solving
-networks now lives in [workshop.md](workshop.md).
+networks now lives in the [workshop tour](generated/workshop_tour.md).
 
 Use the workshop as the primary entry point for:
 

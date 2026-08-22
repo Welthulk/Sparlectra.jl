@@ -55,6 +55,7 @@ summary at the end): `run_powerflow_suite.jl`, `run_others_suite.jl`,
 | `exp_pst_reactance_coupling.jl` | PST control with tap-dependent series reactance X(α) vs. a static-reactance run | others |
 | `exp_svc_shunt_voltage_control.jl` | SVC variable-shunt voltage control (in-range + honest at_limit) with the controllable-element view | others |
 | `exp_tcsc_series_reactance_control.jl` | TCSC series-reactance control steering a loop-network flow split onto a branch target ([theory](series_compensation.md)), incl. honest `at_limit` | others |
+| `exp_facts_limit_modes.jl` | FACTS limit characteristics side by side ([theory](facts.md)): constant-Q box vs STATCOM `V*S_max` vs SVC `V^2*B`, plus SSSC injected-voltage window vs TCSC fixed window (#297 Drafts A/E/F) | others |
 | `exp_auto_slack_selection.jl` | Automatic slack selection (`power_flow.auto_slack` / `ensureSlack!`) when a case registers no voltage reference | others |
 | `exp_ac_rescue_dc_fallback.jl` | Non-convergence handling: `power_flow.rescue` strategy ladder plus `power_flow.dc.fallback` standalone-DC result | others |
 | `exp_cgmes_import_analysis.jl` | `analyzeCGMES` report naming the missing declared dependency of an incomplete CGMES delivery | others |
@@ -102,7 +103,7 @@ External FOR001/FOR002 datasets are not shipped; place files under
 | `state_estimation_pmu_angles.jl` | PMU angle measurements and the reference-offset state α | state_estimation |
 | `usage_state_estimation_diagnostics.jl` | Practical diagnostics workflow | state_estimation |
 | `h_matrix_observability_demo.jl` | Matrix-level observability/redundancy exploration | state_estimation |
-| `mc_state_estimation_study.jl` | Monte-Carlo WLS error statistics on the 7-bus [workshop network](workshop.md) (M = 500) | state_estimation |
+| `mc_state_estimation_study.jl` | Monte-Carlo WLS error statistics on the 7-bus [workshop-tour network](generated/workshop_tour.md) (M = 500) | state_estimation |
 
 The **suite** column names the runner that executes the example
 (`standalone` = run directly, not part of a suite; `optional` = skipped when

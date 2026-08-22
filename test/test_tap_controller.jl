@@ -296,6 +296,164 @@ function run_tap_controller_tests()
     @test trows[1].discrete === true
   end
 
+  @testset "STATCOM current-limit mode (#297 Draft A)" begin
+    # weak two-line corridor: the load bus sags visibly, the compensator at
+    # Mid works against the sag. NOTE: closure-local nets must not shadow a
+    # testset-local `net` (Julia closure capture, see the SVC testset).
+    build_weak_net = function (p_load = 60.0, q_load = 25.0)
+      wnet = Net(name = "statcom_ctrl", baseMVA = 100.0)
+      for bus in ("Slack", "Mid", "Load")
+        addBus!(net = wnet, busName = bus, vn_kV = 110.0)
+      end
+      addProsumer!(net = wnet, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "Slack")
+      # NOTE the sign convention: type LOAD with POSITIVE p/q consumes (the
+      # SVC testset's ENERGYCONSUMER uses negative values for the same thing).
+      # Loads are PROSUMER objects: the AC solver builds its injections from
+      # prosumpsVec (buildComplexSVec), so load variants are parameterized
+      # here instead of edited via the node-sum helpers.
+      addProsumer!(net = wnet, busName = "Load", type = "LOAD", p = p_load, q = q_load)
+      addProsumer!(net = wnet, busName = "Mid", type = "GENERATOR", p = 0.0, q = 0.0)
+      addPIModelACLine!(net = wnet, fromBus = "Slack", toBus = "Mid", r_pu = 0.02, x_pu = 0.20, b_pu = 0.0, status = 1)
+      addPIModelACLine!(net = wnet, fromBus = "Mid", toBus = "Load", r_pu = 0.02, x_pu = 0.20, b_pu = 0.0, status = 1)
+      ok, msg = validate!(net = wnet)
+      ok || error("test net invalid: $msg")
+      return wnet
+    end
+
+    # registration validation
+    vnet = build_weak_net()
+    @test_throws ErrorException addMachineVoltageControl!(vnet; bus = "Mid", target_bus = "Load", target_vm_pu = 1.0, s_max_mva = 12.0, i_max_ka = 0.1)      # both ratings
+    @test_throws ErrorException addMachineVoltageControl!(vnet; bus = "Mid", target_bus = "Load", target_vm_pu = 1.0, s_max_mva = 12.0, qmin_mvar = -5.0)    # rating + box
+    @test_throws ErrorException addMachineVoltageControl!(vnet; bus = "Mid", target_bus = "Load", target_vm_pu = 1.0, s_max_mva = -3.0)                       # negative rating
+    @test_throws ErrorException addMachineVoltageControl!(vnet; bus = "Mid", target_bus = "Load", target_vm_pu = 1.0, i_max_ka = -0.1)                        # negative current
+
+    # i_max_ka converts via sqrt(3) * Un * Imax at registration
+    cnet = build_weak_net()
+    addMachineVoltageControl!(cnet; bus = "Mid", target_bus = "Load", target_vm_pu = 1.0, i_max_ka = 0.05)
+    cctrl = only([c for c in cnet.machineControls if c isa MachineVoltageControl])
+    @test cctrl.limit_mode === :current
+    @test cctrl.s_max_mva ≈ sqrt(3.0) * 110.0 * 0.05 atol = 1e-12
+
+    # at the limit the delivered Q tracks V * S_max: the defining STATCOM
+    # acceptance (issue #297 Draft A) — a small rating cannot lift the sag,
+    # the controller parks at_limit and q sits ON the live bound
+    net = build_weak_net()
+    addMachineVoltageControl!(net; bus = "Mid", target_bus = "Load", target_vm_pu = 1.0, s_max_mva = 12.0)
+    run_control!(net)
+    ctrl = only([c for c in net.machineControls if c isa MachineVoltageControl])
+    vt = get_bus_vm_pu(net, "Mid")
+    @test !ctrl.converged
+    @test ctrl.at_limit
+    @test ctrl.status == :at_limit
+    @test ctrl.q_mvar ≈ vt * 12.0 atol = 2e-2
+    @test ctrl.qmax_mvar ≈ vt * 12.0 atol = 1e-9      # live bound from the solved terminal voltage
+    @test ctrl.qmin_mvar ≈ -vt * 12.0 atol = 1e-9     # symmetric converter limit
+    @test vt < 1.0                                     # depressed voltage: bound BELOW the 1.0-pu rating
+    # element view: STATCOM vocabulary with live bounds
+    els = controllableElements(net)
+    @test length(els) == 1
+    @test els[1].device == "STATCOM (VSC)"
+    @test els[1].actuator == :machine_q_mvar
+    @test els[1].actuator_max ≈ vt * 12.0 atol = 1e-9
+    @test els[1].at_limit === true
+    # report row carries the mode fields
+    row = only(buildMachineControllerReportRows(net))
+    @test row.limit_mode === :current
+    @test row.s_max_mva ≈ 12.0
+    @test !ismissing(row.machine_vm_pu)
+
+    # deeper sag moves the bound: heavier load, fresh run — the delivered Q
+    # must FOLLOW the lower terminal voltage (linear V * I_max tracking)
+    hnet = build_weak_net(75.0, 30.0)
+    addMachineVoltageControl!(hnet; bus = "Mid", target_bus = "Load", target_vm_pu = 1.0, s_max_mva = 12.0)
+    run_control!(hnet)
+    hctrl = only([c for c in hnet.machineControls if c isa MachineVoltageControl])
+    hvt = get_bus_vm_pu(hnet, "Mid")
+    @test hctrl.at_limit
+    @test hvt < vt
+    @test hctrl.q_mvar ≈ hvt * 12.0 atol = 2e-2
+    @test hctrl.q_mvar < ctrl.q_mvar                   # less Q available at the deeper sag
+
+    # in range the STATCOM behaves like the constant-Q controller: with a
+    # rating that never binds, both modes converge into the same deadband
+    # around the target. (The trajectories differ slightly — the bootstrap
+    # step is a fraction of the AVAILABLE headroom, which the live bound
+    # changes — so the comparison is deadband-level, not bitwise.)
+    anet = build_weak_net()
+    addMachineVoltageControl!(anet; bus = "Mid", target_bus = "Load", target_vm_pu = 0.95, s_max_mva = 200.0)
+    run_control!(anet)
+    bnet = build_weak_net()
+    addMachineVoltageControl!(bnet; bus = "Mid", target_bus = "Load", target_vm_pu = 0.95, qmin_mvar = -200.0, qmax_mvar = 200.0)
+    run_control!(bnet)
+    actrl = only([c for c in anet.machineControls if c isa MachineVoltageControl])
+    bctrl = only([c for c in bnet.machineControls if c isa MachineVoltageControl])
+    @test actrl.converged
+    @test bctrl.converged
+    @test abs(get_bus_vm_pu(anet, "Load") - 0.95) <= actrl.deadband_vm_pu
+    @test abs(get_bus_vm_pu(bnet, "Load") - 0.95) <= bctrl.deadband_vm_pu
+    @test actrl.q_mvar ≈ bctrl.q_mvar atol = 1.0
+
+    # constant-Q mode is untouched by the STATCOM addition: mode fields are
+    # inert defaults and the descriptor keeps the RVC vocabulary
+    @test bctrl.limit_mode === :constant_q
+    @test bctrl.s_max_mva === nothing
+    bels = controllableElements(bnet)
+    @test bels[1].device == "machine remote voltage control"
+  end
+
+  @testset "SVC vs STATCOM limit characteristic (#297 Draft E)" begin
+    # The Draft E acceptance: on the SAME depressed-voltage case the SVC's
+    # delivered Q collapses with V^2 (constant clamped susceptance through
+    # the Y-bus) while the STATCOM's falls only linearly with V (constant
+    # current). Both devices are rated identically at 1.0 pu, so at V < 1
+    # the STATCOM must deliver MORE reactive support by the factor 1/V.
+    rating_mvar = 10.0
+    build_sag_net = function ()
+      snet = Net(name = "limit_contrast", baseMVA = 100.0)
+      for bus in ("Slack", "Mid", "Load")
+        addBus!(net = snet, busName = bus, vn_kV = 110.0)
+      end
+      addProsumer!(net = snet, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "Slack")
+      # positive LOAD values consume: the corridor sags below 1.0 pu
+      addProsumer!(net = snet, busName = "Load", type = "LOAD", p = 60.0, q = 25.0)
+      addPIModelACLine!(net = snet, fromBus = "Slack", toBus = "Mid", r_pu = 0.02, x_pu = 0.20, b_pu = 0.0, status = 1)
+      addPIModelACLine!(net = snet, fromBus = "Mid", toBus = "Load", r_pu = 0.02, x_pu = 0.20, b_pu = 0.0, status = 1)
+      return snet
+    end
+
+    # SVC at Mid, clamped capacitive: Q_delivered = V^2 * B_max
+    svcnet = build_sag_net()
+    addShuntVoltageControl!(svcnet; bus = "Mid", target_vm_pu = 1.0, bs_min_mvar = -rating_mvar, bs_max_mvar = rating_mvar)
+    run_sparlectra(net = svcnet)
+    svc = only(Sparlectra._shunt_controllers(svcnet))
+    @test svc.at_limit
+    @test svc.bs_mvar == rating_mvar
+    v_svc = get_bus_vm_pu(svcnet, "Mid")
+    q_svc = v_svc^2 * rating_mvar                     # constant-B limit region
+    sh = svcnet.shuntVec[svc.shunt_idx]
+    @test imag(sh.y_pu_shunt) * svcnet.baseMVA ≈ rating_mvar atol = 1e-9
+
+    # STATCOM at Mid (needs a machine there), same 1.0-pu rating
+    stnet = build_sag_net()
+    addProsumer!(net = stnet, busName = "Mid", type = "GENERATOR", p = 0.0, q = 0.0)
+    ok, msg = validate!(net = stnet)
+    ok || error(msg)
+    addMachineVoltageControl!(stnet; bus = "Mid", target_bus = "Load", target_vm_pu = 1.0, s_max_mva = rating_mvar)
+    run_control!(stnet)
+    st = only([c for c in stnet.machineControls if c isa MachineVoltageControl])
+    @test st.at_limit
+    v_st = get_bus_vm_pu(stnet, "Mid")
+    q_st = st.q_mvar
+
+    # the characteristic split: quadratic vs linear collapse under sag
+    @test v_svc < 1.0
+    @test v_st < 1.0
+    @test q_st ≈ v_st * rating_mvar atol = 2e-2       # linear: V * I_max
+    @test q_svc < v_svc * rating_mvar                  # quadratic sits BELOW the linear law at V < 1
+    @test q_st / rating_mvar ≈ v_st atol = 2e-3        # normalized delivered Q equals V ...
+    @test q_svc / rating_mvar ≈ v_svc^2 atol = 2e-3    # ... versus V^2
+  end
+
   @testset "Voltage deadband is evaluated in pu Vm space" begin
     @test Sparlectra._voltage_within_deadband(1.2009, 1.200, 1e-3)
     @test !Sparlectra._voltage_within_deadband(1.2025, 1.200, 1e-3)
@@ -639,6 +797,41 @@ control:
     @test isapprox(vm_prog, vm_yaml; atol = 1e-9)
     # idempotency: applying the same declaration again adds nothing
     @test applyConfiguredControllers!(net_yaml, cfg_yaml.control) == 0
+
+    # FACTS limit modes through the config surface (#297 Drafts A/F): a
+    # STATCOM machine controller (s_max_mva) and an SSSC series controller
+    # (v_inj_max_pu) instantiate from declarations, and re-applying skips
+    # both. The series re-apply is a REGRESSION test: the idempotency check
+    # used the wrong field names (from_bus/to_bus instead of fromBus/toBus)
+    # and crashed with a FieldError instead of skipping.
+    facts_net = Net(name = "yaml_facts", baseMVA = 100.0)
+    for b in ("A", "M1", "M2", "B")
+      addBus!(net = facts_net, busName = b, vn_kV = 110.0)
+    end
+    addProsumer!(net = facts_net, busName = "A", type = "EXTERNALNETWORKINJECTION", referencePri = "A", vm_pu = 1.0, va_deg = 0.0)
+    addProsumer!(net = facts_net, busName = "B", type = "ENERGYCONSUMER", p = -60.0, q = -20.0)
+    addProsumer!(net = facts_net, busName = "M1", type = "GENERATOR", p = 0.0, q = 0.0)
+    addPIModelACLine!(net = facts_net, fromBus = "A", toBus = "M1", r_pu = 0.01, x_pu = 0.10, b_pu = 0.0, status = 1)
+    addPIModelACLine!(net = facts_net, fromBus = "M1", toBus = "B", r_pu = 0.01, x_pu = 0.10, b_pu = 0.0, status = 1)
+    addPIModelACLine!(net = facts_net, fromBus = "A", toBus = "M2", r_pu = 0.02, x_pu = 0.20, b_pu = 0.0, status = 1)
+    addPIModelACLine!(net = facts_net, fromBus = "M2", toBus = "B", r_pu = 0.02, x_pu = 0.20, b_pu = 0.0, status = 1)
+    okf, msgf = validate!(net = facts_net)
+    okf || error("facts net invalid: $msgf")
+    facts_cfg = ControlConfig(
+      enabled = true,
+      controllers = Any[
+        Dict{String,Any}("type" => "machine_voltage", "name" => "statcom_m1", "bus" => "M1", "target_bus" => "B", "target_vm_pu" => 0.97, "s_max_mva" => 25.0),
+        Dict{String,Any}("type" => "series_reactance", "name" => "sssc_a_m2", "from_bus" => "A", "to_bus" => "M2", "p_target_mw" => 30.0, "v_inj_max_pu" => 0.05),
+      ],
+    )
+    @test applyConfiguredControllers!(facts_net, facts_cfg) == 2
+    fac_machine = only([c for c in facts_net.machineControls if c isa MachineVoltageControl])
+    fac_series = only([c for c in facts_net.machineControls if c isa Sparlectra.SeriesReactanceControl])
+    @test fac_machine.limit_mode === :current
+    @test fac_machine.s_max_mva ≈ 25.0
+    @test fac_series.limit_mode === :injected_voltage
+    @test fac_series.v_inj_max_pu ≈ 0.05
+    @test applyConfiguredControllers!(facts_net, facts_cfg) == 0
 
     # structural validation fails at config-load time with named entries
     @test_throws ArgumentError ControlConfig(Dict("control" => Dict("controllers" => Dict("x" => Dict("type" => "bogus_type")))))

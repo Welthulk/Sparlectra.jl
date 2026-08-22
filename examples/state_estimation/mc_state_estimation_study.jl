@@ -30,7 +30,7 @@ const SEED_BASE = 20260700      # run k uses MersenneTwister(SEED_BASE + k)
 const SE_MAX_ITER = 12
 const SE_TOL = 1e-6
 
-"""Build the 7-bus ring network from the workshop documentation (docs/src/workshop.md)."""
+"""Build the 7-bus ring network from the workshop tour (docs/lit/workshop_tour.jl, chapter 1)."""
 function buildWorkshop7BusNet()::Net
   net = Net(name = "mc_se_7bus", baseMVA = 100.0)
 

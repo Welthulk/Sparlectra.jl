@@ -34,8 +34,10 @@ const _CONTROLLER_TYPE_SPECS = Dict{String,NamedTuple}(
     supports_name = false,
   ),
   "machine_voltage" => (
+    # s_max_mva / i_max_ka switch the controller into STATCOM mode (#297
+    # Draft A); the add function enforces exclusivity with qmin/qmax
     required = ("bus", "target_bus", "target_vm_pu"),
-    optional = ("qmin_mvar", "qmax_mvar", "deadband_vm_pu", "prosumer_index", "max_outer_iters", "enabled", "name"),
+    optional = ("qmin_mvar", "qmax_mvar", "s_max_mva", "i_max_ka", "deadband_vm_pu", "prosumer_index", "max_outer_iters", "enabled", "name"),
     symbols = (),
     supports_name = true,
   ),
@@ -46,8 +48,10 @@ const _CONTROLLER_TYPE_SPECS = Dict{String,NamedTuple}(
     supports_name = true,
   ),
   "series_reactance" => (
-    required = ("from_bus", "to_bus", "p_target_mw", "x_min_pu", "x_max_pu"),
-    optional = ("deadband_p_mw", "max_outer_iters", "enabled", "name"),
+    # x_min_pu/x_max_pu (TCSC window) or v_inj_max_pu (SSSC, #297 Draft F);
+    # the add function enforces exactly one of the two limit forms
+    required = ("from_bus", "to_bus", "p_target_mw"),
+    optional = ("x_min_pu", "x_max_pu", "v_inj_max_pu", "deadband_p_mw", "max_outer_iters", "enabled", "name"),
     symbols = (),
     supports_name = true,
   ),
@@ -124,7 +128,10 @@ function _configured_controller_exists(net::Net, typ::String, entry::Dict{String
   elseif typ == "shunt_voltage"
     return any(c -> c isa ShuntVoltageControl && c.bus == string(entry["bus"]), net.machineControls)
   elseif typ == "series_reactance"
-    return any(c -> c isa SeriesReactanceControl && c.from_bus == string(entry["from_bus"]) && c.to_bus == string(entry["to_bus"]), net.machineControls)
+    # NOTE: the struct fields are fromBus/toBus (bugfix: from_bus/to_bus
+    # threw a FieldError here, so the idempotency check crashed instead of
+    # skipping on the second apply of a series_reactance entry)
+    return any(c -> c isa SeriesReactanceControl && c.fromBus == string(entry["from_bus"]) && c.toBus == string(entry["to_bus"]), net.machineControls)
   elseif typ == "hvdc_pair"
     return any(c -> c isa HvdcPairControl && c.from_bus == string(entry["from_bus"]) && c.to_bus == string(entry["to_bus"]), net.machineControls)
   elseif typ == "power_transformer"
@@ -201,6 +208,8 @@ function applyConfiguredControllers!(net::Net, control_cfg::ControlConfig)::Int
           target_vm_pu = _controller_cfg_float(entry["target_vm_pu"], "target_vm_pu"),
           qmin_mvar = haskey(entry, "qmin_mvar") ? _controller_cfg_float(entry["qmin_mvar"], "qmin_mvar") : nothing,
           qmax_mvar = haskey(entry, "qmax_mvar") ? _controller_cfg_float(entry["qmax_mvar"], "qmax_mvar") : nothing,
+          s_max_mva = haskey(entry, "s_max_mva") ? _controller_cfg_float(entry["s_max_mva"], "s_max_mva") : nothing,
+          i_max_ka = haskey(entry, "i_max_ka") ? _controller_cfg_float(entry["i_max_ka"], "i_max_ka") : nothing,
           deadband_vm_pu = haskey(entry, "deadband_vm_pu") ? _controller_cfg_float(entry["deadband_vm_pu"], "deadband_vm_pu") : 1e-3,
           prosumer_index = haskey(entry, "prosumer_index") ? _controller_cfg_int(entry["prosumer_index"], "prosumer_index") : nothing,
           name = haskey(entry, "name") ? string(entry["name"]) : nothing,
@@ -226,8 +235,9 @@ function applyConfiguredControllers!(net::Net, control_cfg::ControlConfig)::Int
           fromBus = string(entry["from_bus"]),
           toBus = string(entry["to_bus"]),
           p_target_mw = _controller_cfg_float(entry["p_target_mw"], "p_target_mw"),
-          x_min_pu = _controller_cfg_float(entry["x_min_pu"], "x_min_pu"),
-          x_max_pu = _controller_cfg_float(entry["x_max_pu"], "x_max_pu"),
+          x_min_pu = haskey(entry, "x_min_pu") ? _controller_cfg_float(entry["x_min_pu"], "x_min_pu") : nothing,
+          x_max_pu = haskey(entry, "x_max_pu") ? _controller_cfg_float(entry["x_max_pu"], "x_max_pu") : nothing,
+          v_inj_max_pu = haskey(entry, "v_inj_max_pu") ? _controller_cfg_float(entry["v_inj_max_pu"], "v_inj_max_pu") : nothing,
           deadband_p_mw = haskey(entry, "deadband_p_mw") ? _controller_cfg_float(entry["deadband_p_mw"], "deadband_p_mw") : 0.5,
           max_outer_iters = haskey(entry, "max_outer_iters") ? _controller_cfg_int(entry["max_outer_iters"], "max_outer_iters") : 20,
           enabled = haskey(entry, "enabled") ? _controller_cfg_bool(entry["enabled"], "enabled") : true,

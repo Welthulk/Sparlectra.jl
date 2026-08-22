@@ -14,7 +14,8 @@
 #                                                                             #src
 # file: docs/lit/workshop_state_estimation.jl                                 #src
 # purpose: Literate.jl source of the state-estimation workshop notebook and   #src
-#          its Documenter page. Follow-up to workshop_intro.jl; regenerate    #src
+#          its Documenter page. Deep dive on the tour's estimation chapter;   #src
+#          regenerate                                                          #src
 #          the committed outputs with                                         #src
 #          `julia --project=docs docs/generate_notebooks.jl`.                 #src
 
@@ -235,7 +236,7 @@ println("measurements: ", obs.n_measurements, ", states: ", obs.n_states)
 # ## Where to go next
 #
 # - New to Sparlectra? The
-#   [introduction notebook](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_intro.ipynb)
+#   [workshop tour](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour.ipynb)
 #   builds a network from scratch step by step, directly in Colab.
 # - [Slack types and short-circuit currents](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_slack_short_circuit.ipynb):
 #   the grid-connection notebook: slack representations and IEC 60909-0

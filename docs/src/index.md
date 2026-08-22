@@ -10,8 +10,14 @@ using Markdown
 readme_path = normpath(joinpath(@__DIR__, "..", "..", "README.md"))
 readme_text = read(readme_path, String)
 
-# Keep docs-internal links working after reusing README content.
+# Keep docs-internal links working after reusing README content. The README
+# addresses images and pages relative to the repository root; on the built
+# site the same targets live relative to this page. Markdown links AND raw
+# HTML img/anchor attributes must be rewritten (the screenshots and the logo
+# are plain <img> tags, invisible to the Markdown-link regex).
 readme_text = replace(readme_text, r"\(docs/src/([^)]+)\)" => s"(\1)")
+readme_text = replace(readme_text, r"src=\"docs/src/([^\"]+)\"" => s"src=\"\1\"")
+readme_text = replace(readme_text, r"href=\"docs/src/([^\"]+)\"" => s"href=\"\1\"")
 
 Markdown.parse(readme_text)
 ```
