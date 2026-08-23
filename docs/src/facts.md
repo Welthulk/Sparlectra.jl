@@ -25,7 +25,7 @@ example `examples/others/exp_facts_limit_modes.jl`.
 | SSSC (VSC series converter) | series | reactance deviation, voltage-bounded | `addSeriesReactanceControl!` with `v_inj_max_pu` | this page, [Series Compensation](series_compensation.md) |
 | PST / Schrägregler (phase-shifting transformer) | phase | tap angle | `addPowerTransformerControl!` (`mode = :branch_active_power`) | [Control Framework](control_framework.md) |
 | HVDC back-to-back (paired VSC/LCC converters) | converter | paired P injections, Q or voltage per terminal | `addHvdcPairControl!` | [HVDC Back-to-Back](hvdc_back_to_back.md) |
-| UPFC (combined shunt + series converter) | combined | series voltage (quadrature) + shunt reactive current | `addUpfcControl!` (stationary quadrature composite, see the note below) | this page |
+| UPFC (combined shunt + series converter) | combined | series voltage (quadrature composite, or arbitrary-phase full model) + shunt | `addUpfcControl!` (`model = :quadrature` or `:full`, see the notes below) | this page |
 
 All controllers report through the same surfaces: `ControlRunResult`,
 `controllableElements` (element, device, actuator with live range, target,
@@ -243,19 +243,15 @@ named device:
   `UPFC series/shunt (VSC pair, stationary quadrature model)`.
 
 What the composite is NOT: it has no series ACTIVE-power injection. The
-phase-shifter degree of freedom a real UPFC feeds through its DC link is
-out of scope, and independent P and Q steering of the line via an injected
-voltage of arbitrary phase stays unavailable. For stationary P steering
-beyond the quadrature reach, the tap/phase-shift path (PST) on the same
-corridor remains the answer; a dedicated multi-actuator controller with the
-DC-link coupling constraint stays future work.
+phase-shifter degree of freedom stays unavailable, and independent P and Q
+steering of the line needs the full model below.
 
 ```yaml
 control:
   enabled: true
   controllers:
     upfc_main:
-      type: upfc
+      type: upfc                 # model: quadrature is the default
       from_bus: A
       to_bus: B
       shunt_bus: B
@@ -264,6 +260,80 @@ control:
       p_target_mw: 35.0
       v_inj_max_pu: 0.05
       s_max_mva: 25.0
+```
+
+## UPFC: the full DC-link-coupled model
+
+The full model (issue #326, `model = :full`) delivers the phase-shifter
+degree of freedom: a series voltage `V_se` of ARBITRARY phase, so the line
+carries INDEPENDENT active and reactive targets at once. The active part of
+the series injection, `P_se = Re(V_se·conj(I_s))`, flows through the DC link
+and is balanced by the shunt converter (`P_sh = -P_se`). In quadrature the
+in-phase component is zero and the device collapses onto the composite
+above; the picture is the split of the injected voltage relative to the line
+current:
+
+```text
+        Im (quadrature to I_s: reactance, NO DC power)
+         ^
+         |      V_se
+         |     /
+         |    /  in-phase part -> P_se -> DC link -> shunt   (the UPFC DOF)
+         |   /
+         +--------------->  Re, aligned with the line current I_s
+```
+
+The series source is realised as an equivalent series impedance
+`z_add = V_se / I_s` added to the branch (`Re(z_add) < 0` when the converter
+injects active power), so the line stays an ordinary branch and no fictitious
+injection is created. With the terminal voltages frozen each outer iteration
+the from-end flow is affine in `V_se`, so the series step is an exact 2x2
+solve; the coupled iteration is globalised with an adaptive damping line
+search.
+
+- one call, one controller (not a pair): `model = :full` steers the from-end
+  line flow to `p_target_mw` AND `q_target_mvar`;
+- the shunt converter provides the DC-link balance plus a reactive SETPOINT
+  `q_shunt_mvar`, inside the current-based rating whose reactive headroom is
+  coupled to the active load, `Q_max = sqrt((V·s_max)^2 - P_sh^2)`;
+- the result row carries `V_se` magnitude and angle, `P_se`, `P_sh`, the
+  shunt Q, and the DC-link residual `|P_se + P_sh|` (a genuine convergence
+  quantity, since the balance holds by construction only at the frozen state);
+- `series_phase = :quadrature` forces `P_se = 0` and reproduces the composite.
+
+Honest limitations of the first cut:
+
+- **Stationary model.** No dynamics or transients; IPFC (a shared DC bus
+  across several lines) is out of scope.
+- **Shunt reactive SETPOINT, not closed-loop voltage.** Coupling a
+  shunt-voltage secant with the line reactive-flow control does not converge
+  in the sequential outer loop (a known behaviour of injection-model UPFCs);
+  closed-loop shunt voltage regulation is a follow-up that needs the AC
+  power-flow sensitivity framework (issue #217) or an augmented in-solver
+  state.
+- **No explicit series current limit.** Only the injected-voltage magnitude
+  `|V_se| <= v_inj_max_pu` is clamped, not the series-converter current
+  `|I_s| <= i_max`; adding it is one more clamp on the same step.
+- **Convergence regime.** The full model converges reliably for feasible,
+  moderate flow targets (the realistic operating envelope of a UPFC). Very
+  aggressive targets near the injectable-voltage limit may not converge in
+  the outer loop; a robust envelope needs the sensitivity/Jacobian work above.
+
+```yaml
+control:
+  enabled: true
+  controllers:
+    upfc_full:
+      type: upfc
+      model: full
+      from_bus: I
+      to_bus: J
+      shunt_bus: I
+      p_target_mw: 40.0
+      q_target_mvar: 10.0
+      q_shunt_mvar: 0.0
+      v_inj_max_pu: 0.20
+      s_max_mva: 120.0
 ```
 
 ## Validation
@@ -276,10 +346,13 @@ control:
 - `test/test_series_reactance_control.jl`: SSSC registration validation,
   converged operation inside the live window, pinned operation with the
   effective injected voltage at $V_{inj,max}$, and TCSC-mode regression.
-- `test/test_upfc_control.jl`: the composite equals the manually registered
-  SSSC+STATCOM pair to machine precision, both limit characteristics at
-  their clamps, all-or-nothing registration, and the YAML type `upfc` with
-  the double-apply no-op.
+- `test/test_upfc_control.jl`: the quadrature composite equals the manually
+  registered SSSC+STATCOM pair to machine precision, both limit
+  characteristics at their clamps, all-or-nothing registration, and the YAML
+  type `upfc` with the double-apply no-op; the full model reaches independent
+  P and Q on one line simultaneously with the DC-link balance closed, reduces
+  to the SSSC when the series phase is forced to quadrature, and round-trips
+  through `model: full` in YAML.
 - `examples/others/exp_facts_limit_modes.jl`: the three limit
   characteristics side by side on one weak corridor plus the SSSC window
   on a loop network.

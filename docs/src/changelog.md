@@ -2,6 +2,16 @@
 
 CGMES without the topology file, and a tour that teaches CGMES itself.
 
+- **Full UPFC: independent P and Q on one line.** `addUpfcControl!(model =
+  :full)` (#326) steers the line active AND reactive flow at once through a
+  series voltage injection of arbitrary phase, with the active part balanced
+  across the DC link by the shunt converter; the #325 quadrature composite
+  stays the default. The series source is realised as an equivalent branch
+  impedance (no fictitious injection), and `series_phase = :quadrature`
+  reduces it to the SSSC. First cut: the shunt runs on a reactive setpoint
+  (closed-loop voltage regulation deferred), and convergence is reliable for
+  feasible moderate targets. See [FACTS Devices](facts.md).
+
 - **Node-breaker deliveries import without a TP profile.** Real EMS and
   substation exports often ship EQ+SSH only; until now the import needed
   the sender's `TopologicalNode`s. A topology processor now derives the

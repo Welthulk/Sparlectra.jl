@@ -363,7 +363,7 @@ export
   clearMachineControllers!,
   addShuntVoltageControl!,                # Add an SVC-style shunt voltage controller.
   addSeriesReactanceControl!,             # Add a TCSC-like series-reactance controller on a line branch (#297).
-  addUpfcControl!,                        # Register a UPFC as SSSC+STATCOM composite, stationary quadrature model (#325).
+  addUpfcControl!,                        # Register a UPFC: model=:quadrature SSSC+STATCOM composite (#325) or model=:full DC-link-coupled independent-P/Q model (#326).
   addHvdcPairControl!,                    # Add a back-to-back HVDC pairing controller on two converter injections (#297).
   addHvdcLink!,                           # Register a Stage-0 HVDC link record on a hand-built net (r0.9.9 result reporting).
   HvdcPairControl,                        # Controller type of the HVDC pair (element rows, isa checks).
@@ -616,6 +616,10 @@ include("series_reactance_control.jl")
 # the UPFC composite registers a series plus a machine controller, so it
 # loads after both device files
 include("upfc_control.jl")
+# the full UPFC (#326) is a single multi-actuator controller; addUpfcControl!
+# forwards to it for model = :full (resolved at call time, so include order
+# after upfc_control.jl is fine)
+include("upfc_full_control.jl")
 include("hvdc_pair_control.jl")
 include("controller_config.jl")
 include("busdata.jl")

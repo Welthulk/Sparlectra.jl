@@ -125,7 +125,31 @@ function main()
     println("  ", rpad(row.name, 26), rpad(row.device, 48), "actuator ", rpad(string(row.actuator), 18), "at_limit = ", row.at_limit)
   end
 
+  # Part 4: the FULL UPFC (#326), independent P and Q on one line. Needs the
+  # shunt at the sending bus, so a small mesh: S(slack)-I=[UPFC]=J-L(load)
+  # plus a parallel S-L path.
+  fnet = Net(name = "facts_upfc_full", baseMVA = 100.0)
+  for b in ("S", "I", "J", "L")
+    addBus!(net = fnet, busName = b, vn_kV = 110.0)
+  end
+  addProsumer!(net = fnet, busName = "S", type = "EXTERNALNETWORKINJECTION", referencePri = "S", vm_pu = 1.0, va_deg = 0.0)
+  addProsumer!(net = fnet, busName = "I", type = "GENERATOR", p = 0.0, q = 0.0)
+  addProsumer!(net = fnet, busName = "L", type = "ENERGYCONSUMER", p = 90.0, q = 30.0)
+  addPIModelACLine!(net = fnet, fromBus = "S", toBus = "I", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = fnet, fromBus = "I", toBus = "J", r_pu = 0.02, x_pu = 0.18, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = fnet, fromBus = "J", toBus = "L", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = fnet, fromBus = "S", toBus = "L", r_pu = 0.02, x_pu = 0.16, b_pu = 0.0, status = 1)
+  validate!(net = fnet)
+  full = addUpfcControl!(fnet; model = :full, fromBus = "I", toBus = "J", shunt_bus = "I",
+                         p_target_mw = 40.0, q_target_mvar = 10.0, q_shunt_mvar = 0.0,
+                         v_inj_max_pu = 0.30, s_max_mva = 120.0,
+                         deadband_p_mw = 1e-2, deadband_q_mvar = 1e-2, max_outer_iters = 80)
+  run_control!(fnet; control_config = ControlConfig(max_outer_iterations = 80))
+  fu = full.upfc
+
   return (
+    upfc_full = (p = fu.achieved_p_mw, q = fu.achieved_q_mvar, p_se = fu.p_se_mw, p_sh = fu.p_sh_mw, dc = fu.dc_residual_mw),
+
     rating = rating,
     box = (q = box.q_mvar, v = get_bus_vm_pu(box_net, "Mid"), at_limit = box.at_limit),
     statcom = (q = st.q_mvar, v = v_st, at_limit = st.at_limit),
@@ -153,3 +177,7 @@ println()
 println("UPFC composite (", result.upfc.name, "), one call, two converters:")
 println("  series: P = ", round(result.upfc.p; digits = 2), " MW toward 35 MW, converged = ", result.upfc.series_converged)
 println("  shunt : V = ", round(result.upfc.vm; digits = 4), " pu at B with Q = ", round(result.upfc.q; digits = 2), " MVAr, at_limit = ", result.upfc.shunt_at_limit)
+println()
+println("FULL UPFC (model = :full), independent P and Q on line I->J:")
+println("  line   : P = ", round(result.upfc_full.p; digits = 2), " MW (target 40) and Q = ", round(result.upfc_full.q; digits = 2), " MVAr (target 10), both at once")
+println("  DC link: P_se = ", round(result.upfc_full.p_se; digits = 3), " MW, P_sh = ", round(result.upfc_full.p_sh; digits = 3), " MW, residual = ", round(result.upfc_full.dc; digits = 4), " MW")

@@ -229,11 +229,14 @@ mapping: [Series Compensation (TCSC)](series_compensation.md).
 The same controller carries the SSSC mode (`v_inj_max_pu` instead of the
 fixed window): the admissible reactance deviation is bounded by the
 injectable series voltage and shrinks with the branch current. A UPFC is
-available as the stationary quadrature composite `addUpfcControl!` (one
-call registers the SSSC plus STATCOM pair as one named device); the full
-two-actuator device with the DC-link coupling constraint stays out of the
-single-actuator pattern of this loop. Model, limitation, and YAML example:
-the [FACTS Devices](@ref facts_devices) page.
+available through `addUpfcControl!` in two models: `model = :quadrature`
+registers the SSSC plus STATCOM pair as one named device, and `model = :full`
+is a single multi-actuator controller steering line P and Q independently
+through an arbitrary-phase series injection with the DC-link active balance
+on the shunt (the first controller that owns more than one actuator and an
+internal constraint, solved as a small local system each outer iteration).
+Models, limitations, and YAML examples: the
+[FACTS Devices](@ref facts_devices) page.
 
 ## Master/slave groups for parallel transformers
 

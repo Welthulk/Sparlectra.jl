@@ -85,19 +85,60 @@ function addUpfcControl!(
   fromBus::String,
   toBus::String,
   shunt_bus::String,
-  target_bus::String,
-  target_vm_pu::Float64,
   p_target_mw::Float64,
   v_inj_max_pu::Float64,
+  model::Symbol = :quadrature,
+  target_bus::Union{Nothing,String} = nothing,
+  target_vm_pu::Union{Nothing,Float64} = nothing,
+  q_target_mvar::Union{Nothing,Float64} = nothing,
+  q_shunt_mvar::Float64 = 0.0,
+  series_phase::Symbol = :free,
   s_max_mva::Union{Nothing,Float64} = nothing,
   i_max_ka::Union{Nothing,Float64} = nothing,
   deadband_vm_pu::Float64 = 1e-3,
   deadband_p_mw::Float64 = 0.5,
+  deadband_q_mvar::Float64 = 0.5,
   prosumer_index::Union{Nothing,Int} = nothing,
   name::Union{Nothing,String} = nothing,
   max_outer_iters::Int = 20,
   enabled::Bool = true,
 )
+  model in (:quadrature, :full) || error("UpfcControl: model must be :quadrature (default, #325 SSSC+STATCOM composite) or :full (#326 DC-link-coupled model), got $(model).")
+  # the full model owns an independent Q DOF; the quadrature composite has
+  # none, so q_target_mvar is required for :full and rejected for :quadrature
+  if model === :full
+    q_target_mvar === nothing && error("UpfcControl: model = :full needs q_target_mvar (the independent reactive line-flow target); the quadrature composite has no independent Q degree of freedom.")
+    # the full model's shunt runs on a reactive setpoint (q_shunt_mvar), not a
+    # voltage target; closed-loop shunt voltage regulation is deferred (#217)
+    (target_bus === nothing && target_vm_pu === nothing) || error("UpfcControl: model = :full uses q_shunt_mvar for the shunt reactive setpoint, not target_bus/target_vm_pu (closed-loop shunt voltage regulation is a follow-up); drop those keywords.")
+    cname = something(name, string("UPFC_", fromBus, "_", toBus))
+    upfc = addUpfcFullControl!(
+      net;
+      fromBus = fromBus,
+      toBus = toBus,
+      shunt_bus = shunt_bus,
+      p_target_mw = p_target_mw,
+      q_target_mvar = q_target_mvar,
+      q_shunt_mvar = q_shunt_mvar,
+      v_inj_max_pu = v_inj_max_pu,
+      s_max_mva = s_max_mva,
+      i_max_ka = i_max_ka,
+      series_phase = series_phase,
+      deadband_p_mw = deadband_p_mw,
+      deadband_q_mvar = deadband_q_mvar,
+      prosumer_index = prosumer_index,
+      name = cname,
+      max_outer_iters = max_outer_iters,
+      enabled = enabled,
+    )
+    upfc.upfc_group = cname
+    return (name = cname, upfc = upfc)
+  end
+  q_target_mvar === nothing || error("UpfcControl: q_target_mvar is only for model = :full; the quadrature composite steers one line quantity, not an independent P/Q pair.")
+  # the quadrature composite's shunt is a remote voltage controller (STATCOM),
+  # so it needs target_bus/target_vm_pu
+  target_bus === nothing && error("UpfcControl: model = :quadrature needs target_bus (the shunt's remote voltage bus).")
+  target_vm_pu === nothing && error("UpfcControl: model = :quadrature needs target_vm_pu (the shunt's voltage target).")
   # composite-level validation BEFORE any registration, so a rejected call
   # leaves the net untouched (no half-registered device)
   (s_max_mva === nothing) == (i_max_ka === nothing) && error("UpfcControl: pass exactly one shunt converter rating, s_max_mva or i_max_ka.")

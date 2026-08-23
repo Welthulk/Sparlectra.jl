@@ -848,17 +848,82 @@ result rows: each converter keeps its own actuator and its own `at_limit`
 rating cannot lift bus B to 0.99 pu and parks at its limit). What the
 quadrature model does NOT have is series ACTIVE-power injection, the
 phase-shifter degree of freedom a real UPFC feeds through its DC link;
-independent P and Q steering of the line stays out of scope, and for
-stationary P steering beyond the quadrature reach the PST of the
-transformer workshop remains the tool.
+independent P and Q steering of the line stays out of scope in Example 4.5.
+
+**Example 4.6: the FULL UPFC, independent P and Q on one line.** Lifting the
+quadrature restriction lets the series converter inject a voltage of
+ARBITRARY phase. Its in-phase component (relative to the line current) now
+carries active power `P_se`, which flows through the DC link and is
+balanced by the shunt converter (`P_sh = -P_se`); that is the phase-shifter
+degree of freedom, and it lets the line hold INDEPENDENT P and Q targets.
+The full model needs the shunt at the SENDING bus of its line, so this uses
+a small meshed corridor (the parallel `S->L` path lets the flow be steered):
+
+```text
+   S (slack) --- I ==[UPFC series]== J --- L (load)
+                 |                            S ------------- L
+           shunt converter at I               (parallel path)
+```
+
+````@example workshop_tour_advanced
+function build_facts_mesh(name::String)
+  m = Net(name = name, baseMVA = 100.0)
+  for b in ("S", "I", "J", "L")
+    addBus!(net = m, busName = b, vn_kV = 110.0)
+  end
+  addProsumer!(net = m, busName = "S", type = "EXTERNALNETWORKINJECTION", referencePri = "S", vm_pu = 1.0, va_deg = 0.0)
+  addProsumer!(net = m, busName = "I", type = "GENERATOR", p = 0.0, q = 0.0)   # shunt converter
+  addProsumer!(net = m, busName = "L", type = "ENERGYCONSUMER", p = 90.0, q = 30.0)
+  addPIModelACLine!(net = m, fromBus = "S", toBus = "I", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = m, fromBus = "I", toBus = "J", r_pu = 0.02, x_pu = 0.18, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = m, fromBus = "J", toBus = "L", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = m, fromBus = "S", toBus = "L", r_pu = 0.02, x_pu = 0.16, b_pu = 0.0, status = 1)
+  ok, msg = validate!(net = m)
+  ok || error("mesh net invalid: $msg")
+  return m
+end
+
+full_net = build_facts_mesh("tour_facts_upfc_full")
+full = addUpfcControl!(full_net; model = :full, fromBus = "I", toBus = "J", shunt_bus = "I",
+                       p_target_mw = 40.0, q_target_mvar = 10.0, q_shunt_mvar = 0.0,
+                       v_inj_max_pu = 0.30, s_max_mva = 120.0,
+                       deadband_p_mw = 1e-2, deadband_q_mvar = 1e-2, max_outer_iters = 80)
+run_control!(full_net; control_config = ControlConfig(max_outer_iterations = 80))
+u = full.upfc
+println("FULL UPFC on I->J:")
+println("  line P = ", round(u.achieved_p_mw; digits = 2), " MW (target 40), Q = ", round(u.achieved_q_mvar; digits = 2), " MVAr (target 10) -- both, at once")
+println("  series V_se = ", round(abs(u.v_se_pu); digits = 4), " pu at ", round(rad2deg(angle(u.v_se_pu)); digits = 1), " deg, P_se = ", round(u.p_se_mw; digits = 3), " MW")
+println("  DC-link balance: P_se + P_sh = ", round(u.p_se_mw + u.p_sh_mw; digits = 4), " MW (residual ", round(u.dc_residual_mw; digits = 4), ")")
+````
+
+Forcing the series phase back to quadrature collapses onto Example 4.5's
+behaviour: the in-phase component vanishes, P_se drops to zero.
+
+````@example workshop_tour_advanced
+quad_net = build_facts_mesh("tour_facts_upfc_quad")
+quad = addUpfcControl!(quad_net; model = :full, series_phase = :quadrature, fromBus = "I", toBus = "J",
+                       shunt_bus = "I", p_target_mw = 40.0, q_target_mvar = 0.0, q_shunt_mvar = 0.0,
+                       v_inj_max_pu = 0.30, s_max_mva = 120.0, deadband_p_mw = 1e-2, max_outer_iters = 80)
+run_control!(quad_net; control_config = ControlConfig(max_outer_iterations = 80))
+println("quadrature-forced: P_se = ", round(quad.upfc.p_se_mw; digits = 4), " MW (zero: no phase-shifter DOF)")
+````
+
+Reading aid (Example 4.6): the number that makes independent P and Q
+possible is `P_se`, the active power the series converter pushes through
+the DC link (nonzero here, exactly zero when forced to quadrature). The
+line holds BOTH its P and its Q target at once, which the quadrature
+composite of Example 4.5 cannot. First-cut honesty: the shunt runs on a
+reactive setpoint (closed-loop shunt voltage regulation is a follow-up),
+and the model converges for feasible, moderate flow targets; the
+[FACTS Devices](https://welthulk.github.io/Sparlectra.jl/facts/) page
+states the full limitation list.
 
 The same devices are available declaratively, as named entries under
 `control.controllers` in a configuration file (types `machine_voltage`
-with `s_max_mva`, `series_reactance` with `v_inj_max_pu`, `upfc` for the
-composite); see the
+with `s_max_mva`, `series_reactance` with `v_inj_max_pu`, `upfc` with
+`model: quadrature` or `model: full`); see the
 [Control Framework](https://welthulk.github.io/Sparlectra.jl/control_framework/)
-page. The full taxonomy (incl. the UPFC quadrature model and its
-limitation) is on the
+page. The full taxonomy (both UPFC models and their limitations) is on the
 [FACTS Devices](https://welthulk.github.io/Sparlectra.jl/facts/) page;
 `examples/others/exp_facts_limit_modes.jl` runs these contrasts as a
 script, and the TCSC has its own

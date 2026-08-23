@@ -547,9 +547,10 @@ control:
   #   series_reactance  -> addSeriesReactanceControl!  (from_bus, to_bus, p_target_mw, x_min_pu, x_max_pu, ...)
   #   hvdc_pair         -> addHvdcPairControl!         (from_bus, to_bus, p_transfer_mw, loss_mw, ...;
   #                        mode: island_feed feeds an island whose reference is the receiving converter)
-  #   upfc              -> addUpfcControl!             (from_bus, to_bus, shunt_bus, target_bus, target_vm_pu,
-  #                        p_target_mw, v_inj_max_pu, s_max_mva | i_max_ka; registers the SSSC+STATCOM pair
-  #                        as one device, stationary quadrature model without series active-power injection)
+  #   upfc              -> addUpfcControl!             (from_bus, to_bus, shunt_bus, p_target_mw, v_inj_max_pu,
+  #                        s_max_mva | i_max_ka; model: quadrature (default) needs target_bus/target_vm_pu and
+  #                        registers the SSSC+STATCOM pair; model: full needs q_target_mvar (+ optional
+  #                        q_shunt_mvar) and steers line P and Q independently via the DC-link-coupled model)
   # Example:
   #   controllers:
   #     tap_T1:

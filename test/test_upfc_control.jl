@@ -184,5 +184,146 @@ function run_upfc_control_tests()
       @test_throws ArgumentError Sparlectra._validate_controller_entries([Dict{String,Any}("type" => "upfc", "name" => "x", "from_bus" => "A", "to_bus" => "M2", "shunt_bus" => "M2", "target_bus" => "B", "target_vm_pu" => 0.99, "p_target_mw" => 35.0, "v_inj_max_pu" => 0.08, "typo_key" => 1)])
       @test_throws ArgumentError Sparlectra._validate_controller_entries([Dict{String,Any}("type" => "upfc", "name" => "x", "from_bus" => "A", "to_bus" => "M2")])
     end
+
+    # ---- full model (#326): DC-link-coupled UPFC ---------------------------
+    # a meshed corridor with the shunt converter at the SENDING bus I and the
+    # UPFC on the line I->J; the parallel path S->L lets the UPFC steer the
+    # I->J flow. Diagram:
+    #   S(slack) --- I ==[UPFC]== J --- L(load)      S ---------------- L
+    #                (shunt at I)                     (parallel path)
+    function _build_upfc_mesh(; load_p = 90.0, load_q = 30.0)
+      net = Net(name = "upfc_full_mesh", baseMVA = 100.0)
+      for b in ("S", "I", "J", "L")
+        addBus!(net = net, busName = b, vn_kV = 110.0)
+      end
+      addProsumer!(net = net, busName = "S", type = "EXTERNALNETWORKINJECTION", referencePri = "S", vm_pu = 1.0, va_deg = 0.0)
+      addProsumer!(net = net, busName = "I", type = "GENERATOR", p = 0.0, q = 0.0)   # shunt converter
+      addProsumer!(net = net, busName = "L", type = "ENERGYCONSUMER", p = load_p, q = load_q)
+      addPIModelACLine!(net = net, fromBus = "S", toBus = "I", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+      addPIModelACLine!(net = net, fromBus = "I", toBus = "J", r_pu = 0.02, x_pu = 0.18, b_pu = 0.0, status = 1)  # UPFC line
+      addPIModelACLine!(net = net, fromBus = "J", toBus = "L", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+      addPIModelACLine!(net = net, fromBus = "S", toBus = "L", r_pu = 0.02, x_pu = 0.16, b_pu = 0.0, status = 1)  # parallel path
+      ok, msg = validate!(net = net)
+      ok || error("mesh net invalid: $msg")
+      return net
+    end
+
+    @testset "full UPFC: independent P and Q on one line (#326)" begin
+      # the headline capability the #325 quadrature composite cannot deliver:
+      # distinct P AND Q targets on the same line reached simultaneously.
+      # tight deadbands + a generous outer budget so the assertion is on the
+      # fixed point, not on the deadband width
+      for (pt, qt, qsh) in ((40.0, 10.0, 0.0), (35.0, 20.0, -10.0), (38.0, 15.0, 10.0))
+        net = _build_upfc_mesh()
+        r = addUpfcControl!(net; model = :full, fromBus = "I", toBus = "J", shunt_bus = "I",
+                            p_target_mw = pt, q_target_mvar = qt, q_shunt_mvar = qsh,
+                            v_inj_max_pu = 0.60, s_max_mva = 120.0,
+                            deadband_p_mw = 1e-3, deadband_q_mvar = 1e-3, max_outer_iters = 80)
+        runpf!(net, 30, 1e-8, 0)
+        cres = run_control!(net; control_config = ControlConfig(max_outer_iterations = 80))
+        u = r.upfc
+        @test cres.status == :converged
+        @test u.converged
+        # both targets hit simultaneously (independent P and Q)
+        @test abs(u.achieved_p_mw - pt) <= 0.05
+        @test abs(u.achieved_q_mvar - qt) <= 0.05
+        # the series injection carries an active component (the phase-shifter
+        # DOF): P_se is nonzero here, unlike the quadrature composite
+        @test abs(u.p_se_mw) > 1e-3
+        # DC-link balance holds on the re-solved state
+        @test u.dc_residual_mw <= 0.05
+        # shunt reactive setpoint delivered (within its coupled rating)
+        @test isapprox(u.q_sh_mvar, qsh; atol = 1e-6)
+        @test u.upfc_group == "UPFC_I_J"
+        @test u.series_phase == :free
+      end
+    end
+
+    @testset "full UPFC: quadrature series reduces to the SSSC (#326)" begin
+      # series_phase = :quadrature constrains V_se perpendicular to I_s, so
+      # P_se = 0 exactly and the series converter is a pure reactance change.
+      # With the shunt inactive (q_shunt = 0, P_se = 0) the full UPFC in
+      # quadrature equals a standalone SSSC targeting the same line P.
+      netq = _build_upfc_mesh()
+      rq = addUpfcControl!(netq; model = :full, series_phase = :quadrature, fromBus = "I", toBus = "J", shunt_bus = "I",
+                           p_target_mw = 40.0, q_target_mvar = 0.0, q_shunt_mvar = 0.0,
+                           v_inj_max_pu = 0.60, s_max_mva = 40.0, deadband_p_mw = 1e-3, max_outer_iters = 80)
+      runpf!(netq, 30, 1e-8, 0)
+      run_control!(netq; control_config = ControlConfig(max_outer_iterations = 80))
+      @test rq.upfc.p_se_mw == 0.0                 # quadrature: no active injection
+      @test abs(rq.upfc.achieved_p_mw - 40.0) <= 0.05
+
+      # standalone SSSC with a wide reactance window (so neither device clamps)
+      nets = _build_upfc_mesh()
+      addSeriesReactanceControl!(nets; fromBus = "I", toBus = "J", p_target_mw = 40.0, x_min_pu = -0.10, x_max_pu = 0.60, deadband_p_mw = 1e-3)
+      runpf!(nets, 30, 1e-8, 0)
+      run_control!(nets; control_config = ControlConfig(max_outer_iterations = 80))
+      vq = sort([n._vm_pu for n in netq.nodeVec])
+      vs = sort([n._vm_pu for n in nets.nodeVec])
+      # both reach the same line P via a reactance change, so the solved states
+      # agree (the small residual is the two secants' deadband slop)
+      @test maximum(abs.(vq .- vs)) <= 5e-3
+      @test isapprox(get_branch_p_from_to_mw(nets, "I", "J"), rq.upfc.achieved_p_mw; atol = 0.1)
+    end
+
+    @testset "full UPFC: result rows and element view (#326)" begin
+      net = _build_upfc_mesh()
+      r = addUpfcControl!(net; model = :full, fromBus = "I", toBus = "J", shunt_bus = "I",
+                          p_target_mw = 38.0, q_target_mvar = 15.0, q_shunt_mvar = 10.0,
+                          v_inj_max_pu = 0.60, s_max_mva = 120.0, deadband_p_mw = 1e-3, deadband_q_mvar = 1e-3, max_outer_iters = 80)
+      runpf!(net, 30, 1e-8, 0)
+      run_control!(net; control_config = ControlConfig(max_outer_iterations = 80))
+      els = [e for e in controllableElements(net) if e.actuator == :upfc_series_voltage]
+      @test length(els) == 1
+      @test els[1].device == "UPFC (full, DC-link coupled)"
+      @test els[1].element == "branch@I-J"
+      @test els[1].quantity == :branch_pq
+      # one controller (not a pair): full model is a single multi-actuator device
+      @test length(Sparlectra._upfc_full_controllers(net)) == 1
+    end
+
+    @testset "full UPFC: registration validation (#326)" begin
+      # model = :full needs q_target_mvar and rejects the quadrature-only keys
+      net = _build_upfc_mesh()
+      @test_throws ErrorException addUpfcControl!(net; model = :full, fromBus = "I", toBus = "J", shunt_bus = "I", p_target_mw = 40.0, v_inj_max_pu = 0.6, s_max_mva = 120.0)  # no q_target_mvar
+      @test length(net.machineControls) == 0
+      @test_throws ErrorException addUpfcControl!(net; model = :full, fromBus = "I", toBus = "J", shunt_bus = "I", p_target_mw = 40.0, q_target_mvar = 10.0, v_inj_max_pu = 0.6, s_max_mva = 120.0, target_bus = "J", target_vm_pu = 1.0)  # :full rejects target_bus/target_vm_pu
+      @test length(net.machineControls) == 0
+      # both / neither shunt rating
+      @test_throws ErrorException addUpfcControl!(net; model = :full, fromBus = "I", toBus = "J", shunt_bus = "I", p_target_mw = 40.0, q_target_mvar = 10.0, v_inj_max_pu = 0.6, s_max_mva = 120.0, i_max_ka = 0.5)
+      @test_throws ErrorException addUpfcControl!(net; model = :full, fromBus = "I", toBus = "J", shunt_bus = "I", p_target_mw = 40.0, q_target_mvar = 10.0, v_inj_max_pu = 0.6)
+      # non-positive injected-voltage limit; no branch; no generator at shunt bus
+      @test_throws ErrorException addUpfcControl!(net; model = :full, fromBus = "I", toBus = "J", shunt_bus = "I", p_target_mw = 40.0, q_target_mvar = 10.0, v_inj_max_pu = 0.0, s_max_mva = 120.0)
+      @test_throws ErrorException addUpfcControl!(net; model = :full, fromBus = "I", toBus = "S", shunt_bus = "I", p_target_mw = 40.0, q_target_mvar = 10.0, v_inj_max_pu = 0.6, s_max_mva = 120.0)  # no I-S? (there is S-I; wrong order) -> orientation error
+      @test_throws ErrorException addUpfcControl!(net; model = :full, fromBus = "I", toBus = "J", shunt_bus = "J", p_target_mw = 40.0, q_target_mvar = 10.0, v_inj_max_pu = 0.6, s_max_mva = 120.0)  # no generator at J
+      @test length(net.machineControls) == 0
+      # bad model symbol
+      @test_throws ErrorException addUpfcControl!(net; model = :bogus, fromBus = "I", toBus = "J", shunt_bus = "I", p_target_mw = 40.0, v_inj_max_pu = 0.6, s_max_mva = 120.0)
+    end
+
+    @testset "full UPFC: YAML type upfc with model=full (#326)" begin
+      net_prog = _build_upfc_mesh()
+      addUpfcControl!(net_prog; model = :full, fromBus = "I", toBus = "J", shunt_bus = "I",
+                      p_target_mw = 38.0, q_target_mvar = 15.0, q_shunt_mvar = 10.0,
+                      v_inj_max_pu = 0.60, s_max_mva = 120.0, name = "upfc_full", max_outer_iters = 80)
+      run_control!(net_prog; control_config = ControlConfig(max_outer_iterations = 80))
+
+      net_yaml = _build_upfc_mesh()
+      cfg = ControlConfig(controllers = Any[Dict{String,Any}("type" => "upfc", "name" => "upfc_full", "model" => "full",
+        "from_bus" => "I", "to_bus" => "J", "shunt_bus" => "I", "p_target_mw" => 38.0, "q_target_mvar" => 15.0,
+        "q_shunt_mvar" => 10.0, "v_inj_max_pu" => 0.60, "s_max_mva" => 120.0)])
+      @test applyConfiguredControllers!(net_yaml, cfg) == 1
+      @test length(Sparlectra._upfc_full_controllers(net_yaml)) == 1
+      u = only(Sparlectra._upfc_full_controllers(net_yaml))
+      @test u.name == "upfc_full"
+      @test u.upfc_group == "upfc_full"
+      run_control!(net_yaml; control_config = ControlConfig(max_outer_iterations = 80))
+      vm_a = sort([n._vm_pu for n in net_prog.nodeVec])
+      vm_b = sort([n._vm_pu for n in net_yaml.nodeVec])
+      @test maximum(abs.(vm_a .- vm_b)) <= 1e-9
+      # double apply is a no-op
+      @test applyConfiguredControllers!(net_yaml, cfg) == 0
+      @test length(Sparlectra._upfc_full_controllers(net_yaml)) == 1
+    end
   end
 end

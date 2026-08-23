@@ -370,7 +370,8 @@ Supported types: `power_transformer` (`addPowerTransformerControl!`),
 (`addShuntVoltageControl!`), `series_reactance`
 (`addSeriesReactanceControl!`), `hvdc_pair`
 (`addHvdcPairControl!`), `upfc`
-(`addUpfcControl!`, one entry registers the SSSC+STATCOM pair, see
+(`addUpfcControl!`; `model: quadrature` registers the SSSC+STATCOM pair,
+`model: full` the DC-link-coupled independent-P/Q model, see
 [FACTS Devices](facts.md)). Unknown types or keys and missing required
 keys fail at configuration load; unknown bus/branch/transformer references
 and invalid limits fail at apply time naming the entry. Entries whose
