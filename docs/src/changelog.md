@@ -1,54 +1,53 @@
-# Version 0.9.16 - unreleased
+# Version 0.9.16 - 2026-08-23
 
-CGMES without the topology file, and a tour that teaches CGMES itself.
+CGMES deliveries that arrive without their topology file, and a UPFC that
+finally steers a line's active and reactive flow at the same time.
 
-- **Full UPFC: independent P and Q on one line.** `addUpfcControl!(model =
-  :full)` (#326) steers the line active AND reactive flow at once through a
-  series voltage injection of arbitrary phase, with the active part balanced
-  across the DC link by the shunt converter; the #325 quadrature composite
-  stays the default. The series source is realised as an equivalent branch
-  impedance (no fictitious injection), and `series_phase = :quadrature`
-  reduces it to the SSSC. First cut: the shunt runs on a reactive setpoint
-  (closed-loop voltage regulation deferred), and convergence is reliable for
-  feasible moderate targets. See [FACTS Devices](facts.md).
+## Highlights
 
-- **Node-breaker deliveries import without a TP profile.** Real EMS and
-  substation exports often ship EQ+SSH only; until now the import needed
-  the sender's `TopologicalNode`s. A topology processor now derives the
-  bus partition itself: connectivity nodes aggregate across closed
-  switches (SSH state wins over `normalOpen`, out-of-service counts as
-  open), retained switches stay bus couplers, boundary nodes adopt the
-  boundary set. TP-carrying deliveries are untouched, and the derived
-  partition reproduces the shipped TP bus for bus on the conformity sets.
-  A delivery with neither TP nor connectivity nodes now aborts with the
-  import analysis instead of a confusing downstream error. See
-  [CGMES Import](cgmes_import.md).
-- **A CGMES workshop tour.** New expert-level Colab tour on the official
-  ENTSO-E conformity sets: anatomy of a delivery, the import analysis on
-  a broken one, bus-branch import with SV validation, node-breaker with
-  and without TP, and the export round trip.
-- **`analyzeCGMES` is exported.** The analysis entry point was documented
-  but reachable only as `Sparlectra.CGMESImporter.analyzeCGMES`; it now
-  loads with `using Sparlectra`.
-- **Workshop editorial pass.** Every example in every workshop carries a
-  unique number (`Example <chapter>.<n>`), comments reference the numbers
-  they discuss, and every introduced test network shows a line diagram or
-  points at one. All workshops state their AI-assisted origin.
-- **UPFC as a stationary composite.** `addUpfcControl!` registers the SSSC
-  series converter plus the STATCOM shunt converter as one named device
-  (YAML type `upfc`), with both limit characteristics honored per converter
-  side. The quadrature model carries no series active-power injection, the
-  phase-shifter degree of freedom of a real UPFC stays out of scope. See
-  [FACTS Devices](facts.md).
-- **CGMES summary prints readably everywhere.** `print(summarizeCGMES(...))`
-  now renders the multi-line report instead of a one-line struct dump, and
-  the CGMES tour shows the classical result tables after its first solve.
-- **Ferranti voltage in the bus table.** An isolated open-end bus now shows
-  the open-end voltage of its one-sided-open branch in the classical bus
-  table (V columns, `open-end` flag) instead of a meaningless start value;
-  the basic tour's open-terminal example additionally contrasts the correct
-  pi-stub model against a full disconnect, which silently drops the
-  charging draw.
+**Node-breaker CGMES imports without a TP profile.** EMS and substation
+exports often ship only EQ and SSH, leaving the bus partition implicit in
+the connectivity nodes and switch states. Sparlectra now works it out
+itself: connectivity nodes merge across closed switches (an open switch in
+the SSH wins over the equipment default, out-of-service counts as open),
+retained switches stay as bus couplers, and boundary nodes hook into the
+boundary set. Deliveries that do ship a TP are untouched, and on the
+conformity sets the derived partition matches the sender's bus for bus. A
+delivery with neither a TP nor connectivity nodes now stops with the import
+analysis rather than a puzzling error further down. See
+[CGMES Import](cgmes_import.md).
+
+**The UPFC, both ways.** `addUpfcControl!` gives you the unified power flow
+controller. The default `model = :quadrature` pairs an SSSC and a STATCOM as
+one named device; `model = :full` (#326) lifts the quadrature restriction so
+the series converter injects a voltage of arbitrary phase and the line holds
+independent P and Q at once, with the active part balanced across the DC
+link. Forcing the series phase back to quadrature collapses the full model
+onto the composite. Honest about the first cut: the shunt follows a reactive
+setpoint (closed-loop voltage regulation is still to come) and convergence
+is dependable for realistic, moderate targets. See [FACTS Devices](facts.md).
+
+**A CGMES workshop tour.** A new expert-level Colab tour walks the official
+ENTSO-E conformity sets end to end: what a delivery is, reading a broken one
+with the import analysis, bus-branch import with SV validation, node-breaker
+with and without a TP, and the export round trip.
+
+## The rest
+
+- **The classical result knows about FACTS now.** Every outer-loop
+  controller (STATCOM, SVC, TCSC/SSSC, HVDC pair, UPFC) shows up in the
+  power-flow result: counted in the header, marked on its branch or bus, and
+  summarised in the control footer. The FACTS tour prints these tables for
+  each device.
+- **Ferranti voltage in the bus table.** An isolated open-end bus shows the
+  open-end voltage of its one-sided-open branch (flagged `open-end`) instead
+  of a meaningless start value; the basic tour contrasts the correct pi-stub
+  model against a full disconnect, which quietly drops the charging draw.
+- **Smaller things.** `analyzeCGMES` now loads with `using Sparlectra`;
+  `print(summarizeCGMES(...))` renders the readable multi-line report
+  instead of a one-line dump; and every workshop example carries a unique
+  number, a line diagram for each network it introduces, and a note on its
+  AI-assisted origin.
 
 # Version 0.9.15 - 2026-08-23
 
