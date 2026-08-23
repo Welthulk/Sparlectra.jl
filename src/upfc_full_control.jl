@@ -449,3 +449,38 @@ function control_report_rows(ctrl::UpfcFullControl, net::Net, ::AbstractControlS
 end
 
 control_trace_rows(::UpfcFullControl, ::Net, ::AbstractControlState, context) = NamedTuple[]
+
+"""
+    printUpfcFullControllerSummary(io::IO, net::Net)
+    printUpfcFullControllerSummary(net::Net)
+
+Engineering-style summary of the registered full UPFC controllers (#326), one
+block per device: the controlled line and its P/Q targets versus achieved, the
+series injected voltage (magnitude and angle), the series/shunt active powers
+with the DC-link residual, the shunt reactive setpoint, and the honest limit
+flags. Prints nothing when no full UPFC is registered; the classical result's
+"Transformer controls: none" line stays the deterministic parser anchor.
+"""
+function printUpfcFullControllerSummary(io::IO, net::Net)
+  ctrls = _upfc_full_controllers(net)
+  isempty(ctrls) && return
+  println(io, "\nUPFC Control Summary (full, DC-link coupled)")
+  println(io, "-------------------------------------------")
+  for c in ctrls
+    println(io, control_name(c), " (line ", c.fromBus, " -> ", c.toBus, ", shunt at ", c.shunt_bus, ")")
+    println(io, "  line P target/achieved : ", @sprintf("%.3f", c.p_target_mw), " / ", c.achieved_p_mw === nothing ? "-" : @sprintf("%.3f MW", c.achieved_p_mw))
+    println(io, "  line Q target/achieved : ", @sprintf("%.3f", c.q_target_mvar), " / ", c.achieved_q_mvar === nothing ? "-" : @sprintf("%.3f MVar", c.achieved_q_mvar))
+    println(io, "  series voltage V_se    : ", @sprintf("%.4f pu at %.1f deg", abs(c.v_se_pu), rad2deg(angle(c.v_se_pu))), c.series_phase === :quadrature ? " (quadrature)" : "")
+    println(io, "  series/shunt active    : ", @sprintf("P_se %.3f MW, P_sh %.3f MW", c.p_se_mw, c.p_sh_mw))
+    println(io, "  DC-link residual       : ", c.dc_residual_mw === nothing ? "-" : @sprintf("%.4f MW", c.dc_residual_mw))
+    println(io, "  shunt reactive Q_sh    : ", @sprintf("%.3f MVar (bound +-%.1f)", c.q_sh_mvar, c.qmax_mvar))
+    println(io, "  injected-voltage limit : ", @sprintf("%.4f pu", c.v_inj_max_pu))
+    println(io, "  converged / at_limit   : ", c.converged, " / ", c.at_limit)
+    println(io, "  status                 : ", c.status)
+    if !c.converged && c.at_limit
+      println(io, "  status detail          : target not reached, series injected voltage or shunt reactive clamped at its limit")
+    end
+  end
+end
+
+printUpfcFullControllerSummary(net::Net) = printUpfcFullControllerSummary(stdout, net)

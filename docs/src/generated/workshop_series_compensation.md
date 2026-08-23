@@ -2,9 +2,12 @@
 EditURL = "../../lit/workshop_series_compensation.jl"
 ```
 
-# Series compensation: steering flow with a TCSC
+# FACTS flow control: from the TCSC to the UPFC
 
 > **Level: Expert**, companion of the advanced tour's FACTS chapter.
+> Covers the series-reactance controller (TCSC) and builds up to the full
+> **UPFC** (unified power flow controller), including the DC-link-coupled
+> model that steers a line's active and reactive flow independently.
 
 [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_series_compensation.ipynb)
 
@@ -173,8 +176,127 @@ println("limited: corridor 2 (A->M2) = ", round(get_branch_p_from_to_mw(net2, "A
 println("         x_pu = ", round(ctrl2.x_pu; digits = 4), " (clamped), at_limit = ", ctrl2.at_limit, ", converged = ", ctrl2.converged)
 ````
 
+## From series reactance to the UPFC
+
+The TCSC above steers flow by changing a series REACTANCE: its injected
+voltage is in quadrature with the line current, so it exchanges no active
+power. A UPFC (unified power flow controller) removes that restriction. It
+adds a SHUNT converter at one line end and couples the two converters
+through a DC link, so the SERIES converter may inject a voltage of ARBITRARY
+phase. The in-phase component now carries active power, balanced through the
+DC link by the shunt, and that is the extra degree of freedom: the line can
+hold INDEPENDENT active and reactive targets at once.
+
+```text
+   bus i (from)      series converter        bus j (to)
+     V_i o----+---[ + V_se - ]---[ line ]---o  V_j
+              |                                 controlled flow ->
+        [ shunt conv ]  P_sh = -P_se (DC balance) + Q_sh
+              |
+             === DC link ===   (couples the two converters)
+```
+
+**Example 4: the quadrature composite (SSSC + STATCOM).** In the quadrature
+limit `P_se = 0`, the DC link idles, and the UPFC is exactly an SSSC on the
+branch plus a STATCOM at the bus. `addUpfcControl!` (default `model =
+:quadrature`) registers that pair as one device, on the loop of Example 1
+(diagram above) with a machine added at `M2` for the shunt converter:
+
+````@example workshop_series_compensation
+netu = build_loop()
+addProsumer!(net = netu, busName = "M2", type = "GENERATOR", p = 0.0, q = 0.0)
+upfc = addUpfcControl!(netu; fromBus = "A", toBus = "M2", shunt_bus = "M2",
+                       target_bus = "B", target_vm_pu = 0.99, p_target_mw = 35.0,
+                       v_inj_max_pu = 0.08, s_max_mva = 40.0)
+run_control!(netu)
+println("quadrature UPFC: two converter rows for one device:")
+for row in controllableElements(netu)
+  println("  ", rpad(row.device, 48), row.actuator, ", at_limit = ", row.at_limit)
+end
+````
+
+Reading aid (Example 4): one call, one composite name, but honestly TWO
+result rows, the series (SSSC) and the shunt (STATCOM), each with its own
+`at_limit`. This is the whole device in the quadrature limit; it steers ONE
+line quantity plus the shunt voltage, but not independent P and Q.
+
+**Example 5: the full model, independent P and Q.** Lifting the quadrature
+restriction (`model = :full`) lets the series converter inject an
+arbitrary-phase voltage; the line then holds distinct P and Q targets, with
+the active part balanced across the DC link. The full model needs the shunt
+at the SENDING bus, so a small mesh (the parallel `S->L` path lets the flow
+be steered):
+
+```text
+   S (slack) --- I ==[UPFC series]== J --- L (load)
+                 |                            S ------------- L
+           shunt converter at I               (parallel path)
+```
+
+````@example workshop_series_compensation
+function build_upfc_mesh()
+  m = Net(name = "upfc_mesh", baseMVA = 100.0)
+  for b in ("S", "I", "J", "L")
+    addBus!(net = m, busName = b, vn_kV = 110.0)
+  end
+  addProsumer!(net = m, busName = "S", type = "EXTERNALNETWORKINJECTION", referencePri = "S", vm_pu = 1.0, va_deg = 0.0)
+  addProsumer!(net = m, busName = "I", type = "GENERATOR", p = 0.0, q = 0.0)   # shunt converter
+  addProsumer!(net = m, busName = "L", type = "ENERGYCONSUMER", p = 90.0, q = 30.0)
+  addPIModelACLine!(net = m, fromBus = "S", toBus = "I", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = m, fromBus = "I", toBus = "J", r_pu = 0.02, x_pu = 0.18, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = m, fromBus = "J", toBus = "L", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = m, fromBus = "S", toBus = "L", r_pu = 0.02, x_pu = 0.16, b_pu = 0.0, status = 1)
+  ok, msg = validate!(net = m)
+  ok || error("mesh net invalid: $msg")
+  return m
+end
+
+netf = build_upfc_mesh()
+full = addUpfcControl!(netf; model = :full, fromBus = "I", toBus = "J", shunt_bus = "I",
+                       p_target_mw = 40.0, q_target_mvar = 10.0, q_shunt_mvar = 0.0,
+                       v_inj_max_pu = 0.30, s_max_mva = 120.0,
+                       deadband_p_mw = 1e-2, deadband_q_mvar = 1e-2, max_outer_iters = 80)
+run_control!(netf; control_config = ControlConfig(max_outer_iterations = 80))
+f = full.upfc
+println("full UPFC on I->J:")
+println("  line P = ", round(f.achieved_p_mw; digits = 2), " MW (target 40) and Q = ", round(f.achieved_q_mvar; digits = 2), " MVAr (target 10), both at once")
+println("  series V_se = ", round(abs(f.v_se_pu); digits = 4), " pu, P_se = ", round(f.p_se_mw; digits = 3), " MW")
+println("  DC-link balance P_se + P_sh = ", round(f.p_se_mw + f.p_sh_mw; digits = 4), " MW")
+````
+
+The classical result tables carry the whole picture: the "Controllers" line
+now counts the UPFC, and the "UPFC Control Summary" block reports the line
+P/Q targets vs achieved, the series voltage, and the DC-link residual.
+
+````@example workshop_series_compensation
+calcNetLosses!(netf)
+printACPFlowResults(netf, 0.0, 1, 1e-8)
+````
+
+Forcing the series phase back to quadrature collapses P_se to zero, back to
+the Example 4 behaviour:
+
+````@example workshop_series_compensation
+netfq = build_upfc_mesh()
+fq = addUpfcControl!(netfq; model = :full, series_phase = :quadrature, fromBus = "I", toBus = "J",
+                     shunt_bus = "I", p_target_mw = 40.0, q_target_mvar = 0.0, q_shunt_mvar = 0.0,
+                     v_inj_max_pu = 0.30, s_max_mva = 120.0, deadband_p_mw = 1e-2, max_outer_iters = 80)
+run_control!(netfq; control_config = ControlConfig(max_outer_iterations = 80))
+println("quadrature-forced: P_se = ", round(fq.upfc.p_se_mw; digits = 4), " MW (zero: no phase-shifter DOF)")
+````
+
+Reading aid (Example 5): the number that unlocks independent P and Q is
+`P_se`, the active power the series converter pushes through the DC link
+(nonzero here, exactly zero when forced to quadrature). First-cut honesty:
+the shunt runs on a reactive setpoint (closed-loop shunt voltage is a
+follow-up), and the model converges for feasible, moderate targets. The full
+limitation list and the phasor picture are on the FACTS Devices page.
+
 ## Where to go next
 
+- [FACTS Devices](https://welthulk.github.io/Sparlectra.jl/facts/):
+  the device taxonomy (STATCOM, SVC, SSSC, TCSC, both UPFC models), the
+  limit-characteristic comparison, and the UPFC phasor picture.
 - [Series Compensation (TCSC)](https://welthulk.github.io/Sparlectra.jl/series_compensation/):
   the theory page, compensation degree, device versus model, and the
   resonance guard.

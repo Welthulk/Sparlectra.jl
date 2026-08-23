@@ -282,6 +282,42 @@ function run_upfc_control_tests()
       @test length(Sparlectra._upfc_full_controllers(net)) == 1
     end
 
+    @testset "full UPFC: classical result reports the controller (#326)" begin
+      # the classical printACPFlowResults must count the UPFC and print its
+      # summary block (the FACTS controllers used to be invisible there)
+      net = _build_upfc_mesh()
+      addUpfcControl!(net; model = :full, fromBus = "I", toBus = "J", shunt_bus = "I",
+                      p_target_mw = 40.0, q_target_mvar = 10.0, q_shunt_mvar = 0.0,
+                      v_inj_max_pu = 0.30, s_max_mva = 120.0, deadband_p_mw = 1e-2, deadband_q_mvar = 1e-2, max_outer_iters = 80)
+      run_control!(net; control_config = ControlConfig(max_outer_iterations = 80))
+      calcNetLosses!(net)
+      txt = mktempdir() do d
+        cd(d) do
+          printACPFlowResults(net, 0.0, 1, 1e-8, true)
+          read("result_$(net.name).txt", String)
+        end
+      end
+      @test occursin("UPFC: 1", txt)                              # counted on the Controllers line
+      @test occursin("UPFC Control Summary", txt)                 # engineering summary block
+      @test occursin("DC-link residual", txt)                     # the coupling quantity is reported
+      @test occursin("line P target/achieved", txt)
+      # the standalone summary printer works too
+      sub = sprint(printUpfcFullControllerSummary, net)
+      @test occursin("UPFC_I_J", sub)
+      # base net without the UPFC keeps the byte-stable "none" anchor
+      base = _build_upfc_mesh()
+      btxt = mktempdir() do d
+        cd(d) do
+          runpf!(base, 30, 1e-8, 0)
+          calcNetLosses!(base)
+          printACPFlowResults(base, 0.0, 1, 1e-8, true)
+          read("result_$(base.name).txt", String)
+        end
+      end
+      @test occursin("Transformer controls: none", btxt)
+      @test !occursin("UPFC Control Summary", btxt)
+    end
+
     @testset "full UPFC: low-current guard keeps z_add finite (#326)" begin
       # z_add = V_se / I_s is ill-conditioned as the line current vanishes; the
       # `_UPFC_MIN_CURRENT_PU` floor must keep every result finite (no NaN/Inf)

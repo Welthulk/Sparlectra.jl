@@ -863,6 +863,11 @@ println("  line P = ", round(u.achieved_p_mw; digits = 2), " MW (target 40), Q =
 println("  series V_se = ", round(abs(u.v_se_pu); digits = 4), " pu at ", round(rad2deg(angle(u.v_se_pu)); digits = 1), " deg, P_se = ", round(u.p_se_mw; digits = 3), " MW")
 println("  DC-link balance: P_se + P_sh = ", round(u.p_se_mw + u.p_sh_mw; digits = 4), " MW (residual ", round(u.dc_residual_mw; digits = 4), ")")
 
+# the classical result tables report the UPFC too: the "Controllers" line
+# counts it and the "UPFC Control Summary" block shows its state
+calcNetLosses!(full_net)
+printACPFlowResults(full_net, 0.0, 1, 1e-8)
+
 # Forcing the series phase back to quadrature collapses onto Example 4.5's
 # behaviour: the in-phase component vanishes, P_se drops to zero.
 quad_net = build_facts_mesh("tour_facts_upfc_quad")

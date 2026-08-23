@@ -832,7 +832,8 @@ function printACPFlowResults(
   shunts = length(net.shuntVec)
   tap_ctrl_count, qu_ctrl_count, pu_ctrl_count = _controller_counts(net)
   series_ctrl_count = count(c -> c.enabled, _series_reactance_controllers(net))
-  total_ctrl_count = tap_ctrl_count + qu_ctrl_count + pu_ctrl_count + series_ctrl_count
+  upfc_ctrl_count = count(c -> c.enabled, _upfc_full_controllers(net))
+  total_ctrl_count = tap_ctrl_count + qu_ctrl_count + pu_ctrl_count + series_ctrl_count + upfc_ctrl_count
 
   @printf(io, "Date           :%20s\n", current_date)
   @printf(io, "Iterations     :%10d\n", ite)
@@ -905,13 +906,12 @@ function printACPFlowResults(
   @printf(io, "Generators     :%10d\n", gens)
   @printf(io, "Loads          :%10d\n", loads)
   @printf(io, "Shunts         :%10d\n", shunts)
-  # the TCSC count appears only when present, so nets without a series
-  # controller keep the byte-stable line for tools and parsers
-  if series_ctrl_count > 0
-    @printf(io, "Controllers    :%10d (Tap: %d, Q(U): %d, P(U): %d, TCSC: %d)\n", total_ctrl_count, tap_ctrl_count, qu_ctrl_count, pu_ctrl_count, series_ctrl_count)
-  else
-    @printf(io, "Controllers    :%10d (Tap: %d, Q(U): %d, P(U): %d)\n", total_ctrl_count, tap_ctrl_count, qu_ctrl_count, pu_ctrl_count)
-  end
+  # the TCSC and UPFC sub-counts appear only when present, so nets without a
+  # series/UPFC controller keep the byte-stable line for tools and parsers
+  ctrl_detail = @sprintf("Tap: %d, Q(U): %d, P(U): %d", tap_ctrl_count, qu_ctrl_count, pu_ctrl_count)
+  series_ctrl_count > 0 && (ctrl_detail *= @sprintf(", TCSC: %d", series_ctrl_count))
+  upfc_ctrl_count > 0 && (ctrl_detail *= @sprintf(", UPFC: %d", upfc_ctrl_count))
+  @printf(io, "Controllers    :%10d (%s)\n", total_ctrl_count, ctrl_detail)
 
   num_guarded_locks = length(net.qLimitEvents)
   num_iterative_events = length(net.qLimitLog)
@@ -1143,6 +1143,8 @@ function printACPFlowResults(
   printSeriesReactanceControllerSummary(io, net)
   # HVDC pair controllers print only when present as well.
   printHvdcPairControllerSummary(io, net)
+  # full UPFC controllers (#326) print only when present as well.
+  printUpfcFullControllerSummary(io, net)
   if toFile
     close(io)
     #println("Results have been written to $(joinpath(path, filename))")

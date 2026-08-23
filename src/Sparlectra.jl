@@ -371,6 +371,7 @@ export
   printHvdcPairControllerSummary,         # Engineering summary of the registered HVDC pairs.
   applyConfiguredControllers!,            # Instantiate controllers declared under control.controllers (#305).
   printSeriesReactanceControllerSummary,  # Engineering-style summary of the registered TCSC controllers.
+  printUpfcFullControllerSummary,         # Engineering-style summary of the registered full UPFC controllers (#326).
   clearShuntControllers!,
   controllableElements,                   # Generic controllable-element records of all registered controllers.
   buildMachineControllerReportRows,
