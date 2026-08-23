@@ -353,6 +353,32 @@ function run_upfc_control_tests()
       end
       @test err !== nothing
       @test occursin("negative series resistance", sprint(showerror, err))
+
+      # symmetric with the SC guard: neither interchange export may write the
+      # compensated (negative-r) operating point silently
+      mktempdir() do d
+        base_ok = _build_upfc_mesh()
+        runpf!(base_ok, 30, 1e-8, 0)
+        calcNetLosses!(base_ok)
+        bdir = mkpath(joinpath(d, "base_cgmes"))
+        writeCGMESFiles(base_ok; path = bdir)                 # base net exports fine
+        writeMatpowerCasefile(base_ok, joinpath(d, "base.m"))
+        udir = mkpath(joinpath(d, "upfc_cgmes"))
+        cg = try
+          writeCGMESFiles(net; path = udir)
+          nothing
+        catch e
+          e
+        end
+        @test cg !== nothing && occursin("negative series resistance", sprint(showerror, cg))
+        mp = try
+          writeMatpowerCasefile(net, joinpath(d, "upfc.m"))
+          nothing
+        catch e
+          e
+        end
+        @test mp !== nothing && occursin("negative series resistance", sprint(showerror, mp))
+      end
     end
 
     @testset "full UPFC: registration validation (#326)" begin

@@ -439,6 +439,28 @@ function calcBranchYser(branch::Branch)::ComplexF64
   return inv((branch.r_pu + branch.x_pu * im))
 end
 
+"""
+    assertPhysicalBranchImpedances(net, context)
+
+Refuse to proceed when any closed branch carries a NEGATIVE series resistance.
+A physical line/transformer has `r >= 0`; a negative value only appears when a
+full UPFC (#326, `model = :full`) has modified the branch impedance in place
+during a power-flow control run (its series converter's active injection maps
+to `Re(z_add) < 0`). That is a steady-state OPERATING POINT, not the physical
+EQUIPMENT model, so feeding it to a fault calculation or an interchange export
+would emit non-physical data silently. `context` names the caller (e.g.
+"CGMES export", "MATPOWER export") in the error. Run the operation on the
+unmodified base network instead.
+"""
+function assertPhysicalBranchImpedances(net, context::AbstractString)
+  for br in net.branchVec
+    if br.r_pu < 0.0
+      error("$(context): branch $(getCompName(br.comp)) has a negative series resistance (r = $(br.r_pu) pu) from a full-UPFC (#326) power-flow control run. This is the compensated operating point, not the physical equipment; run on the unmodified base network (or before the control run).")
+    end
+  end
+  return nothing
+end
+
 function calcBranchYshunt(branch::Branch)::ComplexF64
   return (branch.g_pu + branch.b_pu * im)
 end

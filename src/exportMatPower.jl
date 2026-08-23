@@ -457,6 +457,10 @@ writeMatpowerCasefile(net, "casefile.m")
 ```
 """
 function writeMatpowerCasefile(net::Net, pathfilename::String; write_solution::Union{Nothing,Bool} = nothing)
+  # an interchange file must carry the physical equipment impedance, never a
+  # full-UPFC compensated operating point (negative series resistance); refuse
+  # loudly, symmetric with the short-circuit and CGMES-export guards
+  assertPhysicalBranchImpedances(net, "MATPOWER export")
   base, ext = splitext(pathfilename)
 
   case = basename(base)

@@ -1264,6 +1264,10 @@ v<version> on <stamp>` header comment and a matching `md:Model.description`
 — where the stamp is the `created` timestamp.
 """
 function writeCGMESFiles(net::Sparlectra.Net; path::AbstractString = pwd(), sc_line_data::Dict{Int,CGMESLineShortCircuit} = Dict{Int,CGMESLineShortCircuit}(), sc_source::Union{Nothing,CGMESShortCircuitData} = nothing, created::Dates.DateTime = Dates.now(), notices::Union{Nothing,Vector{String}} = nothing, zip::Bool = false)
+  # an interchange file must carry the physical equipment impedance, never a
+  # full-UPFC compensated operating point (negative series resistance); refuse
+  # loudly, symmetric with the short-circuit guard
+  Sparlectra.assertPhysicalBranchImpedances(net, "CGMES export")
   ctx = buildContext(net)
   if notices === nothing
     for n in ctx.notices
