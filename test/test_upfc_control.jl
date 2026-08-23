@@ -282,6 +282,79 @@ function run_upfc_control_tests()
       @test length(Sparlectra._upfc_full_controllers(net)) == 1
     end
 
+    @testset "full UPFC: low-current guard keeps z_add finite (#326)" begin
+      # z_add = V_se / I_s is ill-conditioned as the line current vanishes; the
+      # `_UPFC_MIN_CURRENT_PU` floor must keep every result finite (no NaN/Inf)
+      # and leave the branch at its base impedance on a (near) dead line.
+      function _chain(load_mw)
+        m = Net(name = "upfc_chain", baseMVA = 100.0)
+        for b in ("S", "I", "J", "L")
+          addBus!(net = m, busName = b, vn_kV = 110.0)
+        end
+        addProsumer!(net = m, busName = "S", type = "EXTERNALNETWORKINJECTION", referencePri = "S", vm_pu = 1.0, va_deg = 0.0)
+        addProsumer!(net = m, busName = "I", type = "GENERATOR", p = 0.0, q = 0.0)
+        addProsumer!(net = m, busName = "L", type = "ENERGYCONSUMER", p = load_mw, q = load_mw * 0.3)
+        addPIModelACLine!(net = m, fromBus = "S", toBus = "I", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+        addPIModelACLine!(net = m, fromBus = "I", toBus = "J", r_pu = 0.02, x_pu = 0.18, b_pu = 0.0, status = 1)
+        addPIModelACLine!(net = m, fromBus = "J", toBus = "L", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+        ok, msg = validate!(net = m)
+        ok || error("chain net invalid: $msg")
+        return m
+      end
+      for load in (5.0, 0.05, 0.0005)
+        net = _chain(load)
+        r = addUpfcControl!(net; model = :full, fromBus = "I", toBus = "J", shunt_bus = "I",
+                            p_target_mw = 0.0, q_target_mvar = 0.0, q_shunt_mvar = 0.0,
+                            v_inj_max_pu = 0.30, s_max_mva = 120.0,
+                            deadband_p_mw = 1e-3, deadband_q_mvar = 1e-3, max_outer_iters = 60)
+        run_control!(net; control_config = ControlConfig(max_outer_iterations = 60))
+        u = r.upfc
+        brij = getNetBranch(net = net, fromBus = "I", toBus = "J")
+        @test all(isfinite, (real(u.v_se_pu), imag(u.v_se_pu), brij.r_pu, brij.x_pu, u.p_se_mw))
+        @test isfinite(u.dc_residual_mw)
+      end
+      # the smallest load drives |I_s| below the 1e-4 pu floor; the guard then
+      # holds the branch at its base impedance (no blow-up)
+      net = _chain(0.0005)
+      r = addUpfcControl!(net; model = :full, fromBus = "I", toBus = "J", shunt_bus = "I",
+                          p_target_mw = 0.0, q_target_mvar = 0.0, q_shunt_mvar = 0.0,
+                          v_inj_max_pu = 0.30, s_max_mva = 120.0, deadband_p_mw = 1e-3, deadband_q_mvar = 1e-3, max_outer_iters = 60)
+      run_control!(net; control_config = ControlConfig(max_outer_iterations = 60))
+      brij = getNetBranch(net = net, fromBus = "I", toBus = "J")
+      @test abs(r.upfc.i_s_pu) < 1e-4                 # below the guard floor
+      @test isapprox(brij.r_pu, 0.02; atol = 1e-9)    # base impedance kept
+      @test isapprox(brij.x_pu, 0.18; atol = 1e-9)
+    end
+
+    @testset "full UPFC: negative-r branch is rejected by short circuit (#326)" begin
+      # the full model maps the series converter's active injection to a
+      # NEGATIVE branch resistance, persisted in place. A subsequent IEC 60909
+      # short circuit must FAIL LOUDLY on that non-physical branch instead of
+      # silently computing wrong fault currents (the converter is bypassed
+      # under fault; the SC needs the physical impedance).
+      _feeder(bus) = (mrid = bus, name = "F_" * bus, bus = bus, maxInitialSymShCCurrent_A = 20_000.0, minInitialSymShCCurrent_A = 16_000.0, maxR1ToX1Ratio = 0.1, minR1ToX1Ratio = 0.1, maxR0ToX0Ratio = nothing, maxZ0ToZ1Ratio = nothing, ikSecond = nothing, governorSCD = nothing)
+      scd = Sparlectra.CGMESImporter.CGMESShortCircuitData([_feeder("S")], NamedTuple[], NamedTuple[], NamedTuple[], NamedTuple[], NamedTuple[])
+      # base network (no UPFC): the short circuit runs normally
+      base = _build_upfc_mesh()
+      rb = runShortCircuit!(base, scd; case = :max)
+      @test length(rb.rows) >= 1
+      # after a full-UPFC control run the I->J branch carries a negative r
+      net = _build_upfc_mesh()
+      addUpfcControl!(net; model = :full, fromBus = "I", toBus = "J", shunt_bus = "I",
+                      p_target_mw = 48.0, q_target_mvar = 8.0, q_shunt_mvar = 0.0,
+                      v_inj_max_pu = 0.30, s_max_mva = 120.0, deadband_p_mw = 1e-2, deadband_q_mvar = 1e-2, max_outer_iters = 80)
+      run_control!(net; control_config = ControlConfig(max_outer_iterations = 80))
+      @test getNetBranch(net = net, fromBus = "I", toBus = "J").r_pu < 0.0
+      err = try
+        runShortCircuit!(net, scd; case = :max)
+        nothing
+      catch e
+        e
+      end
+      @test err !== nothing
+      @test occursin("negative series resistance", sprint(showerror, err))
+    end
+
     @testset "full UPFC: registration validation (#326)" begin
       # model = :full needs q_target_mvar and rejects the quadrature-only keys
       net = _build_upfc_mesh()

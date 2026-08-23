@@ -384,6 +384,17 @@ function _sc_island_matrix(net::Net, island_buses::Vector{Int}, y_add::Dict{Int,
     f = get(local_index, Int(br.fromBus), 0)
     t = get(local_index, Int(br.toBus), 0)
     (f == 0 || t == 0) && continue
+    # A physical line/transformer has r >= 0. A NEGATIVE series resistance can
+    # only reach this point when a full UPFC (#326, model = :full) has modified
+    # the branch impedance in place during a power-flow control run: its series
+    # converter's active injection maps to Re(z_add) < 0. That effective
+    # compensated impedance is a steady-state power-flow construct, not the
+    # physical line, and a fault calculation must use the physical impedance
+    # (the converter is bypassed under fault). Fail loudly instead of feeding a
+    # non-physical negative resistance silently into the IEC 60909-0 matrix.
+    if br.r_pu < 0.0
+      error("runShortCircuit!: branch $(getCompName(br.comp)) has a negative series resistance (r = $(br.r_pu) pu). This net carries a full-UPFC (#326) branch modification from a power-flow control run; run the short circuit on the unmodified base network (the UPFC series converter is bypassed under fault).")
+    end
     ys = calcBranchYser(br)
     ratio = calcBranchRatio(br)
     # Same stamping convention as calcAdmittance, minus the shunt halves.

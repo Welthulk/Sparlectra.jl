@@ -314,6 +314,19 @@ Honest limitations of the first cut:
 - **No explicit series current limit.** Only the injected-voltage magnitude
   `|V_se| <= v_inj_max_pu` is clamped, not the series-converter current
   `|I_s| <= i_max`; adding it is one more clamp on the same step.
+- **The branch impedance is modified in place** (like the SSSC/TCSC): the
+  equivalent series impedance `z_add` stays on the branch after the control
+  run, and for the full model its resistance part goes NEGATIVE. That is the
+  correct steady-state power-flow construct, but not the physical line, so a
+  short circuit or an export run on the SAME net must use the base network:
+  `runShortCircuit!` FAILS LOUDLY on a negative-resistance branch (the
+  converter is bypassed under fault), and a CGMES/MATPOWER export would write
+  the compensated impedance, not the physical one. Run the fault calculation
+  or the export on the unmodified network, or before the control run.
+- **Low line current.** `z_add = V_se / I_s` is floored at a minimum current
+  (`|I_s|` guard) so a lightly loaded or dead line stays finite and keeps its
+  base impedance; a UPFC on an essentially currentless line has nothing to
+  steer.
 - **Convergence regime.** The full model converges reliably for feasible,
   moderate flow targets (the realistic operating envelope of a UPFC). Very
   aggressive targets near the injectable-voltage limit may not converge in
