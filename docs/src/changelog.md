@@ -1,6 +1,18 @@
-# Version 0.9.15 - unreleased
+# Version 0.9.15 - 2026-08-23
 
-Fix and polish.
+Fix and polish, and observability theory you can execute.
+
+- **Dark states, named.** A not-observable set now reports
+  `unobservable_state_columns`: the states the null space of the
+  measurement Jacobian touches, i.e. exactly what no meter pins down. The
+  column-restricted local check documents its limitation (necessary, not
+  sufficient); the workshop shows the two disagreeing verdicts on the
+  smallest possible counterexample.
+- **The state-estimation workshop teaches the theory.** WLS foundation
+  and normal equations, the null-space criterion with observable islands,
+  the spanning-tree counting identity, criticality as a zero residual,
+  J/dof as the after-run health number, matrices small enough to read,
+  and a zero-injection section with the honest sigma trade-off.
 
 - **The estimation problem shows its matrix.** New `measurement_jacobian(net)`
   returns the labeled Jacobian H (described measurement rows, named state
