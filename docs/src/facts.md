@@ -25,7 +25,7 @@ example `examples/others/exp_facts_limit_modes.jl`.
 | SSSC (VSC series converter) | series | reactance deviation, voltage-bounded | `addSeriesReactanceControl!` with `v_inj_max_pu` | this page, [Series Compensation](series_compensation.md) |
 | PST / Schrägregler (phase-shifting transformer) | phase | tap angle | `addPowerTransformerControl!` (`mode = :branch_active_power`) | [Control Framework](control_framework.md) |
 | HVDC back-to-back (paired VSC/LCC converters) | converter | paired P injections, Q or voltage per terminal | `addHvdcPairControl!` | [HVDC Back-to-Back](hvdc_back_to_back.md) |
-| UPFC (combined shunt + series converter) | combined | two coupled actuators | not implemented, see the design note below | this page |
+| UPFC (combined shunt + series converter) | combined | series voltage (quadrature) + shunt reactive current | `addUpfcControl!` (stationary quadrature composite, see the note below) | this page |
 
 All controllers report through the same surfaces: `ControlRunResult`,
 `controllableElements` (element, device, actuator with live range, target,
@@ -211,26 +211,60 @@ control:
       v_inj_max_pu: 0.05
 ```
 
-## UPFC: design status
+## UPFC: the stationary quadrature composite
 
 The unified power flow controller combines a STATCOM (shunt side, bus
-voltage) and an SSSC (series side, branch P and Q) behind one DC link; the
+voltage) and an SSSC (series side, branch flow) behind one DC link; the
 link couples the two converters through an active-power balance. That makes
-it a TWO-actuator controller with one coupling constraint, which does not
-fit the single-actuator secant pattern the outer loop is built on: each
-Sparlectra controller today owns one actuator and one target, and the loop
-coordinates controllers only through the shared power flow.
+the full device a TWO-actuator controller with one coupling constraint,
+which does not fit the single-actuator secant pattern the outer loop is
+built on: each Sparlectra controller owns one actuator and one target, and
+the loop coordinates controllers only through the shared power flow. That
+was the reason for deferring the UPFC in issue #297 Draft G, and it still
+holds for the full device.
 
-The UPFC therefore stays UNIMPLEMENTED by decision (issue #297 Draft G).
-The stationary approximation that IS expressible today: place a PST (angle),
-a series controller (TCSC or SSSC mode), and a STATCOM on the same corridor.
-This reproduces the three control channels of a UPFC (angle, series
-compensation, shunt voltage) but NOT the DC-link power balance between the
-shunt and series converters; the three controllers converge through the
-outer loop as independent devices. For studies where the coupling matters,
-the approximation overestimates the device's degrees of freedom, and the
-honest answer is that a dedicated multi-actuator controller with a coupling
-constraint is future work.
+The way in is the QUADRATURE argument (issue #325): restrict the injected
+series voltage to quadrature with the line current. Then the series
+converter exchanges (approximately) no active power with the line, the DC
+link carries about zero, the coupling constraint degenerates, and what
+remains is exactly an SSSC on the branch plus a STATCOM at the bus. Both
+controllers exist, so `addUpfcControl!` registers them together as one
+named device:
+
+- one call, one composite name; the series controller steers the branch
+  active power inside the injected-voltage limit `v_inj_max_pu`, the shunt
+  controller holds a remote bus voltage inside the current-based rating
+  `s_max_mva` (or `i_max_ka`);
+- registration is all-or-nothing (a rejected call leaves the net
+  untouched), and the composite behaves exactly like the manually
+  registered pair, to machine precision;
+- the result table keeps one row per actuator with `at_limit` per converter
+  side; both rows carry the device string
+  `UPFC series/shunt (VSC pair, stationary quadrature model)`.
+
+What the composite is NOT: it has no series ACTIVE-power injection. The
+phase-shifter degree of freedom a real UPFC feeds through its DC link is
+out of scope, and independent P and Q steering of the line via an injected
+voltage of arbitrary phase stays unavailable. For stationary P steering
+beyond the quadrature reach, the tap/phase-shift path (PST) on the same
+corridor remains the answer; a dedicated multi-actuator controller with the
+DC-link coupling constraint stays future work.
+
+```yaml
+control:
+  enabled: true
+  controllers:
+    upfc_main:
+      type: upfc
+      from_bus: A
+      to_bus: B
+      shunt_bus: B
+      target_bus: LOAD
+      target_vm_pu: 1.0
+      p_target_mw: 35.0
+      v_inj_max_pu: 0.05
+      s_max_mva: 25.0
+```
 
 ## Validation
 
@@ -242,6 +276,10 @@ constraint is future work.
 - `test/test_series_reactance_control.jl`: SSSC registration validation,
   converged operation inside the live window, pinned operation with the
   effective injected voltage at $V_{inj,max}$, and TCSC-mode regression.
+- `test/test_upfc_control.jl`: the composite equals the manually registered
+  SSSC+STATCOM pair to machine precision, both limit characteristics at
+  their clamps, all-or-nothing registration, and the YAML type `upfc` with
+  the double-apply no-op.
 - `examples/others/exp_facts_limit_modes.jl`: the three limit
   characteristics side by side on one weak corridor plus the SSSC window
   on a loop network.

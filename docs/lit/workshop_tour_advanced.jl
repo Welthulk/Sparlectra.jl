@@ -791,12 +791,43 @@ for e in controllableElements(ok_net)
 end
 println("in range: Vm(Load) = ", round(get_bus_vm_pu(ok_net, "Load"); digits = 4), " pu (target 0.95)")
 
+# **Example 4.5: the combined device, a UPFC in one call.** A UPFC couples
+# an SSSC (series converter, line flow) and a STATCOM (shunt converter, bus
+# voltage) through one DC link. In the stationary model the series
+# injection is in quadrature with the line current and exchanges no active
+# power, so the DC link carries about zero and the pair decouples:
+# `addUpfcControl!` registers exactly that pair as ONE named device. Back
+# on the loop of Example 4.3 (diagram there), with the shunt converter's
+# machine added at M2:
+
+upfc_net = build_facts_loop("tour_facts_upfc")
+addProsumer!(net = upfc_net, busName = "M2", type = "GENERATOR", p = 0.0, q = 0.0)
+upfc = addUpfcControl!(upfc_net; fromBus = "A", toBus = "M2", shunt_bus = "M2", target_bus = "B", target_vm_pu = 0.99, p_target_mw = 35.0, v_inj_max_pu = 0.08, s_max_mva = 40.0)
+run_control!(upfc_net)
+println("UPFC ", upfc.name, ":")
+println("  series: P(A->M2) = ", round(upfc.series.achieved_p_mw; digits = 2), " MW toward 35, converged = ", upfc.series.converged)
+println("  shunt : Vm(B) = ", round(upfc.shunt.achieved_vm_pu; digits = 4), " pu toward 0.99, Q = ", round(upfc.shunt.q_mvar; digits = 2), " MVAr, at_limit = ", upfc.shunt.at_limit)
+for e in controllableElements(upfc_net)
+  println("  row: ", e.device, " (", e.actuator, "), at_limit = ", e.at_limit)
+end
+
+# Reading aid (Example 4.5): one call, one composite name, but honestly TWO
+# result rows: each converter keeps its own actuator and its own `at_limit`
+# (here the series side reaches the 35-MW target while the 40-MVA shunt
+# rating cannot lift bus B to 0.99 pu and parks at its limit). What the
+# quadrature model does NOT have is series ACTIVE-power injection, the
+# phase-shifter degree of freedom a real UPFC feeds through its DC link;
+# independent P and Q steering of the line stays out of scope, and for
+# stationary P steering beyond the quadrature reach the PST of the
+# transformer workshop remains the tool.
+#
 # The same devices are available declaratively, as named entries under
 # `control.controllers` in a configuration file (types `machine_voltage`
-# with `s_max_mva`, `series_reactance` with `v_inj_max_pu`); see the
+# with `s_max_mva`, `series_reactance` with `v_inj_max_pu`, `upfc` for the
+# composite); see the
 # [Control Framework](https://welthulk.github.io/Sparlectra.jl/control_framework/)
-# page. The full taxonomy (incl. why a UPFC is
-# deliberately NOT implemented and what to use instead) is on the
+# page. The full taxonomy (incl. the UPFC quadrature model and its
+# limitation) is on the
 # [FACTS Devices](https://welthulk.github.io/Sparlectra.jl/facts/) page;
 # `examples/others/exp_facts_limit_modes.jl` runs these contrasts as a
 # script, and the TCSC has its own

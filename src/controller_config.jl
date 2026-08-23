@@ -59,6 +59,16 @@ const _CONTROLLER_TYPE_SPECS = Dict{String,NamedTuple}(
     symbols = (),
     supports_name = true,
   ),
+  "upfc" => (
+    # stationary quadrature composite (#325): one entry registers the SSSC
+    # series converter plus the STATCOM shunt converter as one device pair;
+    # addUpfcControl! enforces the exactly-one-rating rule and the
+    # shunt-bus-on-corridor rule
+    required = ("from_bus", "to_bus", "shunt_bus", "target_bus", "target_vm_pu", "p_target_mw", "v_inj_max_pu"),
+    optional = ("s_max_mva", "i_max_ka", "deadband_vm_pu", "deadband_p_mw", "prosumer_index", "max_outer_iters", "enabled", "name"),
+    symbols = (),
+    supports_name = true,
+  ),
   "hvdc_pair" => (
     # p_transfer_mw is required by the device function in setpoint mode and
     # forbidden in island_feed, so the spec keeps it optional and lets
@@ -136,6 +146,11 @@ function _configured_controller_exists(net::Net, typ::String, entry::Dict{String
     # threw a FieldError here, so the idempotency check crashed instead of
     # skipping on the second apply of a series_reactance entry)
     return any(c -> c isa SeriesReactanceControl && c.fromBus == string(entry["from_bus"]) && c.toBus == string(entry["to_bus"]), net.machineControls)
+  elseif typ == "upfc"
+    # a upfc entry counts as present when its series side already carries a
+    # composite marker on the same branch; NOTE the struct fields are
+    # fromBus/toBus, not from_bus/to_bus (same trap as series_reactance)
+    return any(c -> c isa SeriesReactanceControl && c.fromBus == string(entry["from_bus"]) && c.toBus == string(entry["to_bus"]) && c.upfc_group !== nothing, net.machineControls)
   elseif typ == "hvdc_pair"
     return any(c -> c isa HvdcPairControl && c.from_bus == string(entry["from_bus"]) && c.to_bus == string(entry["to_bus"]), net.machineControls)
   elseif typ == "power_transformer"
@@ -150,7 +165,8 @@ end
 Instantiate the outer-loop controllers declared under `control.controllers`
 onto `net` by calling the matching device function
 (`addPowerTransformerControl!`, `addMachineVoltageControl!`,
-`addShuntVoltageControl!`, `addSeriesReactanceControl!`). Returns the number
+`addShuntVoltageControl!`, `addSeriesReactanceControl!`,
+`addHvdcPairControl!`, `addUpfcControl!`). Returns the number
 of controllers added.
 
 Entries whose controlled element already carries a controller of the same
@@ -255,6 +271,25 @@ function applyConfiguredControllers!(net::Net, control_cfg::ControlConfig)::Int
           max_outer_iters = haskey(entry, "max_outer_iters") ? _controller_cfg_int(entry["max_outer_iters"], "max_outer_iters") : 20,
           enabled = haskey(entry, "enabled") ? _controller_cfg_bool(entry["enabled"], "enabled") : true,
           name = haskey(entry, "name") ? string(entry["name"]) : nothing,
+        )
+      elseif typ == "upfc"
+        addUpfcControl!(
+          net;
+          fromBus = string(entry["from_bus"]),
+          toBus = string(entry["to_bus"]),
+          shunt_bus = string(entry["shunt_bus"]),
+          target_bus = string(entry["target_bus"]),
+          target_vm_pu = _controller_cfg_float(entry["target_vm_pu"], "target_vm_pu"),
+          p_target_mw = _controller_cfg_float(entry["p_target_mw"], "p_target_mw"),
+          v_inj_max_pu = _controller_cfg_float(entry["v_inj_max_pu"], "v_inj_max_pu"),
+          s_max_mva = haskey(entry, "s_max_mva") ? _controller_cfg_float(entry["s_max_mva"], "s_max_mva") : nothing,
+          i_max_ka = haskey(entry, "i_max_ka") ? _controller_cfg_float(entry["i_max_ka"], "i_max_ka") : nothing,
+          deadband_vm_pu = haskey(entry, "deadband_vm_pu") ? _controller_cfg_float(entry["deadband_vm_pu"], "deadband_vm_pu") : 1e-3,
+          deadband_p_mw = haskey(entry, "deadband_p_mw") ? _controller_cfg_float(entry["deadband_p_mw"], "deadband_p_mw") : 0.5,
+          prosumer_index = haskey(entry, "prosumer_index") ? _controller_cfg_int(entry["prosumer_index"], "prosumer_index") : nothing,
+          name = haskey(entry, "name") ? string(entry["name"]) : nothing,
+          max_outer_iters = haskey(entry, "max_outer_iters") ? _controller_cfg_int(entry["max_outer_iters"], "max_outer_iters") : 20,
+          enabled = haskey(entry, "enabled") ? _controller_cfg_bool(entry["enabled"], "enabled") : true,
         )
       elseif typ == "hvdc_pair"
         addHvdcPairControl!(

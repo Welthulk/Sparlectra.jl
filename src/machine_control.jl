@@ -82,6 +82,10 @@ mutable struct MachineVoltageControl <: AbstractOuterController
   prev_q_mvar::Union{Nothing,Float64}   # previous secant point
   prev_vm_pu::Union{Nothing,Float64}
   outer_iters::Int
+  # composite membership (issue #325): set by addUpfcControl! to the composite
+  # name when this controller is the shunt converter of a UPFC pair; only the
+  # result-row device string reads it, the control behavior is unchanged
+  upfc_group::Union{Nothing,String}
 end
 
 """
@@ -276,6 +280,7 @@ function addMachineVoltageControl!(
     nothing,
     nothing,
     0,
+    nothing,   # upfc_group: set by addUpfcControl! only
   )
   push!(net.machineControls, ctrl)
   return net
@@ -380,7 +385,9 @@ function control_element_descriptor(ctrl::MachineVoltageControl, net::Net)::Unio
   return (
     name = control_name(ctrl),
     element = string("machine@", ctrl.bus),
-    device = ctrl.limit_mode === :current ? "STATCOM (VSC)" : "machine remote voltage control",
+    # a controller registered through addUpfcControl! names its composite so
+    # the pairing of the two converter rows is visible in the result table
+    device = ctrl.upfc_group !== nothing ? "UPFC shunt (VSC pair, stationary quadrature model)" : (ctrl.limit_mode === :current ? "STATCOM (VSC)" : "machine remote voltage control"),
     actuator = :machine_q_mvar,
     # live bounds in :current mode: the descriptor shows the range of the
     # LAST evaluated operating point, V * S_max at the solved terminal voltage

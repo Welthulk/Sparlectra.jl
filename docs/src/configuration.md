@@ -369,7 +369,9 @@ Supported types: `power_transformer` (`addPowerTransformerControl!`),
 `machine_voltage` (`addMachineVoltageControl!`), `shunt_voltage`
 (`addShuntVoltageControl!`), `series_reactance`
 (`addSeriesReactanceControl!`), `hvdc_pair`
-(`addHvdcPairControl!`). Unknown types or keys and missing required
+(`addHvdcPairControl!`), `upfc`
+(`addUpfcControl!`, one entry registers the SSSC+STATCOM pair, see
+[FACTS Devices](facts.md)). Unknown types or keys and missing required
 keys fail at configuration load; unknown bus/branch/transformer references
 and invalid limits fail at apply time naming the entry. Entries whose
 element already carries a controller of the same type are skipped, so

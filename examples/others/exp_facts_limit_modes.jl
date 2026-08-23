@@ -37,6 +37,14 @@ Part 2, series side: on a two-corridor loop the same flow target is given
 to a TCSC (fixed reactance window, reaches the target) and to an SSSC with
 a tight injectable voltage (window x_base +- V_inj,max/|I| shrinks with the
 branch current, pins at the limit with the injected voltage exhausted).
+
+Part 3, the combined device: the same loop with a machine at M2 gets a
+UPFC in ONE call (`addUpfcControl!`, issue #325): the SSSC series converter
+steers the corridor flow, the STATCOM shunt converter holds the load-bus
+voltage, registered as one named device pair. The result rows show the two
+actuators of one device with `at_limit` per converter side. The stationary
+quadrature model carries no series active-power injection (see
+docs/src/facts.md for the limitation).
 """
 function main()
   print_example_banner("examples/others/exp_facts_limit_modes.jl", "FACTS limit characteristics: constant-Q vs STATCOM (V*S_max) vs SVC (V^2*B), and the SSSC injected-voltage window vs the TCSC fixed window")
@@ -106,6 +114,17 @@ function main()
   run_control!(sssc_net)
   printSeriesReactanceControllerSummary(stdout, sssc_net)
 
+  # Part 3: the UPFC composite, one call for the SSSC+STATCOM pair
+  upfc_net = build_loop()
+  addProsumer!(net = upfc_net, busName = "M2", type = "GENERATOR", p = 0.0, q = 0.0)
+  upfc = addUpfcControl!(upfc_net; fromBus = "A", toBus = "M2", shunt_bus = "M2", target_bus = "B", target_vm_pu = 0.99, p_target_mw = 35.0, v_inj_max_pu = 0.08, s_max_mva = 40.0)
+  run_control!(upfc_net)
+  println()
+  println("UPFC composite ", upfc.name, ": one device, two converter rows:")
+  for row in controllableElements(upfc_net)
+    println("  ", rpad(row.name, 26), rpad(row.device, 48), "actuator ", rpad(string(row.actuator), 18), "at_limit = ", row.at_limit)
+  end
+
   return (
     rating = rating,
     box = (q = box.q_mvar, v = get_bus_vm_pu(box_net, "Mid"), at_limit = box.at_limit),
@@ -113,6 +132,7 @@ function main()
     svc = (q = v_svc^2 * svc.bs_mvar, v = v_svc, bs = svc.bs_mvar, at_limit = svc.at_limit),
     tcsc = (p = tcsc.achieved_p_mw, x = tcsc.x_pu, converged = tcsc.converged),
     sssc = (p = sssc.achieved_p_mw, x = sssc.x_pu, x_base = sssc.x_base_pu, i_pu = sssc.i_pu, v_inj = abs(sssc.x_pu - sssc.x_base_pu) * sssc.i_pu, at_limit = sssc.at_limit),
+    upfc = (name = upfc.name, p = upfc.series.achieved_p_mw, series_converged = upfc.series.converged, vm = upfc.shunt.achieved_vm_pu, q = upfc.shunt.q_mvar, shunt_at_limit = upfc.shunt.at_limit),
   )
 end
 
@@ -129,3 +149,7 @@ println("Series side, both steering the A->M2 corridor to 35 MW:")
 println("  TCSC (window 0.02..0.30 pu): P = ", round(result.tcsc.p; digits = 2), " MW at x = ", round(result.tcsc.x; digits = 4), " pu, converged = ", result.tcsc.converged)
 println("  SSSC (V_inj,max 0.01 pu)   : P = ", round(result.sssc.p; digits = 2), " MW at x = ", round(result.sssc.x; digits = 4), " pu (x_base ", result.sssc.x_base, ", |I| = ", round(result.sssc.i_pu; digits = 3), " pu)")
 println("    injected voltage ", round(result.sssc.v_inj; digits = 4), " pu of ", 0.01, " pu available, at_limit = ", result.sssc.at_limit)
+println()
+println("UPFC composite (", result.upfc.name, "), one call, two converters:")
+println("  series: P = ", round(result.upfc.p; digits = 2), " MW toward 35 MW, converged = ", result.upfc.series_converged)
+println("  shunt : V = ", round(result.upfc.vm; digits = 4), " pu at B with Q = ", round(result.upfc.q; digits = 2), " MVAr, at_limit = ", result.upfc.shunt_at_limit)

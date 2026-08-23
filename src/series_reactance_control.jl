@@ -85,6 +85,10 @@ mutable struct SeriesReactanceControl <: AbstractOuterController
   prev_x_pu::Union{Nothing,Float64}
   prev_p_mw::Union{Nothing,Float64}
   outer_iters::Int
+  # composite membership (issue #325): set by addUpfcControl! to the composite
+  # name when this controller is the series converter of a UPFC pair; only the
+  # result-row device string reads it, the control behavior is unchanged
+  upfc_group::Union{Nothing,String}
 end
 
 """
@@ -232,6 +236,7 @@ function addSeriesReactanceControl!(
     nothing,
     nothing,
     0,
+    nothing,   # upfc_group: set by addUpfcControl! only
   )
   push!(net.machineControls, ctrl)
   return ctrl
@@ -362,7 +367,9 @@ function control_element_descriptor(ctrl::SeriesReactanceControl, net::Net)::Uni
   return (
     name = control_name(ctrl),
     element = string("branch@", ctrl.fromBus, "-", ctrl.toBus),
-    device = ctrl.limit_mode === :injected_voltage ? "SSSC (VSC)" : "TCSC (series compensation)",
+    # a controller registered through addUpfcControl! names its composite so
+    # the pairing of the two converter rows is visible in the result table
+    device = ctrl.upfc_group !== nothing ? "UPFC series (VSC pair, stationary quadrature model)" : (ctrl.limit_mode === :injected_voltage ? "SSSC (VSC)" : "TCSC (series compensation)"),
     actuator = :series_x_pu,
     # live bounds in :injected_voltage mode: the window of the LAST evaluated
     # operating point, x_base +- v_inj_max/|I| at the solved branch current

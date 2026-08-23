@@ -131,8 +131,17 @@ other workshops do applies from here:
 res = importCGMES(path = [microgrid_be, microgrid_bd], name = "microgrid_be")
 net = res.net
 println("imported: ", length(net.nodeVec), " buses, ", length(net.branchVec), " branches, ", length(net.prosumpsVec), " injections")
-ite, erg = runpf!(net, 30, 1e-8, 0; islands_enabled = true)
+etime = @elapsed ((ite, erg) = runpf!(net, 30, 1e-8, 0; islands_enabled = true))
 println("solved: status ", erg, " in ", ite, " iterations")
+````
+
+The classical result tables, exactly as in the basic tour:
+`calcNetLosses!` derives branch flows and losses from the converged
+voltages, `printACPFlowResults` prints bus voltages and branch flows.
+
+````@example workshop_tour_cgmes
+calcNetLosses!(net)
+printACPFlowResults(net, etime, ite, 1e-8)
 ````
 
 The delivery also carries the sender's solved state (SV), which makes it

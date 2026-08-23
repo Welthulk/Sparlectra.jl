@@ -222,8 +222,14 @@ drops it like the charging arms of closed branches (series-only
 convention). The result surface marks partial rows `open@to`/`open@from`,
 counts them under `Open terminals` in the header, and carries
 `terminal_state` plus the open-end voltage in `ACPFlowReport.branches` and
-the detailed CSV. Runnable example: `exp_open_terminal_line.jl`; the
-basic workshop tour demonstrates it in chapter 2.
+the detailed CSV. In the classical bus table an ISOLATED open-end bus
+shows the open-end (Ferranti) voltage in its V/phi columns, flagged
+`open-end` in the Control column (the dead busbar behind the breaker has
+no solved voltage of its own; the substitution is skipped when it would be
+ambiguous, i.e. when several one-sided-open branches end at the bus, and
+an energized bus always keeps its real solved voltage). Runnable example:
+`exp_open_terminal_line.jl`; the basic workshop tour demonstrates it in
+chapter 2.
 
 ## 3. Tap-changer modelling layers
 

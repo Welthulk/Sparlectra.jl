@@ -278,6 +278,11 @@ function printShortCircuitCoverage(io::IO, sc::CGMESShortCircuitData)
   return nothing
 end
 
+# plain `print(s)`/`string(s)` must render the same multi-line report as the
+# REPL display: without this delegation they fall back to the default struct
+# show, which dumps every field into one unreadable line (seen in notebooks)
+Base.show(io::IO, s::CGMESSummary) = show(io, MIME"text/plain"(), s)
+
 function Base.show(io::IO, ::MIME"text/plain", s::CGMESSummary)
   println(io, "CGMES summary")
   println(io, "  version: ", isempty(s.version) ? "unknown/mixed" : s.version)

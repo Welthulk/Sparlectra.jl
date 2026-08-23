@@ -961,14 +961,21 @@ function printACPFlowResults(
   @printf(io, "==========================================================================================================================================================================================================================%s\n", ds_pad_eq)
 
   # buses sitting at the OPEN terminal of a one-sided open branch get an
-  # "open-end" marker in the Control column; the fictitious terminal
-  # voltage itself is on the summary's open-end status lines (the bus
-  # voltage here is NOT that value: the branch is disconnected from it)
+  # "open-end" marker in the Control column. For an ISOLATED such bus the
+  # solved state carries no voltage of its own (dead busbar behind the open
+  # breaker), so the row shows the branch's open-end (Ferranti) voltage
+  # instead of the meaningless start value; the substitution needs exactly
+  # one open branch end at the bus to be unambiguous, and an energized bus
+  # (fed from elsewhere) always keeps its real solved voltage.
   open_end_buses = Set{Int}()
+  open_end_v = Dict{Int,Vector{Tuple{Float64,Float64}}}()
   for br in net.branchVec
     st = _branch_terminal_state(br)
-    st == :open_to && push!(open_end_buses, Int(br.toBus))
-    st == :open_from && push!(open_end_buses, Int(br.fromBus))
+    bus = st == :open_to ? Int(br.toBus) : (st == :open_from ? Int(br.fromBus) : 0)
+    bus == 0 && continue
+    push!(open_end_buses, bus)
+    br.open_end_vm_pu === nothing && continue
+    push!(get!(open_end_v, bus, Tuple{Float64,Float64}[]), (br.open_end_vm_pu, something(br.open_end_va_deg, NaN)))
   end
 
   pGS = qGS = pLS = qLS = ""
@@ -1030,7 +1037,17 @@ function printACPFlowResults(
       typeStr *= "*"
     end
 
-    v = n.comp.cVN * n._vm_pu
+    # isolated open-end bus: show the open-end (Ferranti) voltage in the
+    # V/phi columns (see the open_end_v comment above). Isolation is read
+    # from net.isoNodes: the solver resets the node TYPE of excluded buses
+    # to PQ with a 1.0-pu start value before solving, so isIsolated(n) is
+    # false again at print time.
+    vm_show = n._vm_pu
+    va_show = n._va_deg
+    if (n.busIdx in net.isoNodes || isIsolated(n)) && length(get(open_end_v, n.busIdx, Tuple{Float64,Float64}[])) == 1
+      vm_show, va_show = only(open_end_v[n.busIdx])
+    end
+    v = n.comp.cVN * vm_show
     if !isnothing(n._vmin_pu) && !isnothing(n._vmax_pu)
       if !isIsolated(n) && (n._vm_pu < n._vmin_pu || n._vm_pu > n._vmax_pu)
         nodeName *= " !"
@@ -1053,8 +1070,8 @@ function printACPFlowResults(
       _fitColumn(nodeName, 20),
       n.comp.cVN,
       v,
-      n._vm_pu,
-      n._va_deg,
+      vm_show,
+      va_show,
       pGS,
       qGS,
       pLS,

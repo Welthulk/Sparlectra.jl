@@ -24,6 +24,21 @@ CGMES without the topology file, and a tour that teaches CGMES itself.
   unique number (`Example <chapter>.<n>`), comments reference the numbers
   they discuss, and every introduced test network shows a line diagram or
   points at one. All workshops state their AI-assisted origin.
+- **UPFC as a stationary composite.** `addUpfcControl!` registers the SSSC
+  series converter plus the STATCOM shunt converter as one named device
+  (YAML type `upfc`), with both limit characteristics honored per converter
+  side. The quadrature model carries no series active-power injection, the
+  phase-shifter degree of freedom of a real UPFC stays out of scope. See
+  [FACTS Devices](facts.md).
+- **CGMES summary prints readably everywhere.** `print(summarizeCGMES(...))`
+  now renders the multi-line report instead of a one-line struct dump, and
+  the CGMES tour shows the classical result tables after its first solve.
+- **Ferranti voltage in the bus table.** An isolated open-end bus now shows
+  the open-end voltage of its one-sided-open branch in the classical bus
+  table (V columns, `open-end` flag) instead of a meaningless start value;
+  the basic tour's open-terminal example additionally contrasts the correct
+  pi-stub model against a full disconnect, which silently drops the
+  charging draw.
 
 # Version 0.9.15 - 2026-08-23
 

@@ -374,43 +374,73 @@ drawing its FULL charging (for realistic lines the two shunt arms act
 almost in parallel, so it is `g + jb`, not half of it), plus the small
 ohmic loss of the charging current. The voltage at the open end rises
 above the feeding bus, the classical Ferranti effect, and is reported as
-a branch result without adding a bus. **Example 2.6: the Ferranti rise
-on an open-ended line.** Open one end with `setBranchTerminalStatus!`
-and compare:
+a branch result without adding a bus. **Example 2.6: the Ferranti rise,
+and why "fully disconnected" is the wrong model for it.** Three states of
+the same network: line closed, the breaker at the B end open, and the
+line treated as completely disconnected. The second corridor to `C` keeps
+the system solvable in every state, so the states are comparable:
 
 ```text
- (slack)
-   A ---------------- B     one 380-kV line, b_pu = 0.9;
-        load 120 MW         the breaker at the B end opens
+         (slack)
+  C ------- A =============== B     A=B: one long 380-kV line, b_pu = 0.9;
+  50 MW           120 MW           the breaker at the B end opens
 ```
 
 ````@example workshop_tour
+# Example 2.6, state 1 (closed): the long line feeds the 120-MW load
 net_open = Net(name = "tour_open_end", baseMVA = 100.0)
-addBus!(net = net_open, busName = "A", vn_kV = 380.0)
-addBus!(net = net_open, busName = "B", vn_kV = 380.0)
+for b in ("A", "B", "C")
+  addBus!(net = net_open, busName = b, vn_kV = 380.0)
+end
 addProsumer!(net = net_open, busName = "A", type = "EXTERNALNETWORKINJECTION", referencePri = "A", vm_pu = 1.0, va_deg = 0.0)
 addProsumer!(net = net_open, busName = "B", type = "ENERGYCONSUMER", p = 120.0, q = 30.0)
+addProsumer!(net = net_open, busName = "C", type = "ENERGYCONSUMER", p = 50.0, q = 10.0)
 addPIModelACLine!(net = net_open, fromBus = "A", toBus = "B", r_pu = 0.02, x_pu = 0.16, b_pu = 0.9, g_pu = 0.004, status = 1)
+addPIModelACLine!(net = net_open, fromBus = "A", toBus = "C", r_pu = 0.01, x_pu = 0.08, b_pu = 0.02, status = 1)
 validate!(net = net_open)
 solve!(net_open)
-println("closed : line carries ", round(net_open.branchVec[1].fBranchFlow.pFlow; digits = 1), " MW to the load")
+println("state 1, closed : line A=B carries ", round(get_branch_p_from_to_mw(net_open, "A", "B"); digits = 1), " MW to the load")
 
+# Example 2.6, state 2 (open@to): open the breaker at the B end and
+# re-solve; the classical result tables below show the consequences
 setBranchTerminalStatus!(net_open.branchVec[1]; to = false)
 markIsolatedBuses!(net = net_open, log = false)
-solve!(net_open)
+etime_open, ite_open = solve!(net_open)
 br_open = net_open.branchVec[1]
-println("open@to: charging draw ", round(br_open.fBranchFlow.qFlow; digits = 1), " MVAr, active loss ", round(br_open.fBranchFlow.pFlow; digits = 3), " MW")
+q_slack_open = get_branch_q_from_to_mvar(net_open, "A", "B") + get_branch_q_from_to_mvar(net_open, "A", "C")
+println("state 2, open@to: charging draw ", round(br_open.fBranchFlow.qFlow; digits = 1), " MVAr, active loss ", round(br_open.fBranchFlow.pFlow; digits = 3), " MW")
 println("         voltage at the OPEN end: ", round(br_open.open_end_vm_pu; digits = 4), " pu, HIGHER than the ", round(get_bus_vm_pu(net_open, "A"); digits = 2), " pu at the feeding bus A")
 println("         (Ferranti effect: the charging current flowing through the line reactance lifts the voltage toward the open end)")
+
+# the classical result print of state 2: the branch row carries the
+# open@to marker, the header counts one open terminal, and the isolated
+# bus B shows the OPEN-END voltage in its V columns (the Ferranti value,
+# flagged open-end in the Control column)
+printACPFlowResults(net_open, etime_open, ite_open, 1e-8)
+
+# Example 2.6, state 3 (fully disconnected): the WRONG model for an open
+# breaker end; the pi stub vanishes from the Y-bus and with it the
+# charging draw and the Ferranti information
+setBranchTerminalStatus!(net_open.branchVec[1]; from = false)
+markIsolatedBuses!(net = net_open, log = false)
+solve!(net_open)
+q_slack_off = get_branch_q_from_to_mvar(net_open, "A", "C")
+println("state 3, fully disconnected: open-end voltage ", br_open.open_end_vm_pu === nothing ? "gone" : "?", ", slack reactive supply now ", round(q_slack_off; digits = 1), " MVAr")
+println("reactive balance shift state 2 -> state 3: ", round(q_slack_off - q_slack_open; digits = 1), " MVAr of charging draw silently vanished")
 ````
 
-Reading aid (Example 2.6): the branch table marks the row `open@to`,
-the header counts
-it under `Open terminals`, and bus `B` is reported isolated: the open end
-is a branch RESULT (`open_end_vm_pu`), not a solved bus. The full story,
-including the Schur reduction and why it is the full charging, is on the
-branch-model docs page under "One-sided open branches"; the runnable twin
-is `exp_open_terminal_line.jl`.
+Reading aid (Example 2.6): in state 2 the classical tables carry the
+whole story: the branch row is marked `open@to` with the open-end
+voltage, the header counts it under `Open terminals`, and the isolated
+bus `B` shows the Ferranti voltage (1.0775 pu) in its V columns, flagged
+`open-end` because it is a branch RESULT (`open_end_vm_pu`) measured at
+the open breaker, not a solved bus voltage. State 3 is the modeling trap
+the feature exists for: treating the one-sided opening as a full
+disconnect hides roughly 93 MVAr of charging draw from the reactive
+balance and erases the Ferranti overvoltage a protection engineer would
+care about. The full story, including the Schur reduction and why it is
+the full charging, is on the branch-model docs page under "One-sided open
+branches"; the runnable twin is `exp_open_terminal_line.jl`.
 
 ### Links: connections without impedance
 
