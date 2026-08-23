@@ -316,6 +316,22 @@ function run_upfc_control_tests()
       end
       @test occursin("Transformer controls: none", btxt)
       @test !occursin("UPFC Control Summary", btxt)
+
+      # the quadrature composite (SSSC + STATCOM) is now counted honestly too:
+      # the machine (STATCOM) side used to be uncounted on the Controllers line
+      netq = _build_upfc_net()
+      addUpfcControl!(netq; fromBus = "A", toBus = "M2", shunt_bus = "M2", target_bus = "B",
+                      target_vm_pu = 0.99, p_target_mw = 35.0, v_inj_max_pu = 0.08, s_max_mva = 40.0)
+      run_control!(netq)
+      calcNetLosses!(netq)
+      qtxt = mktempdir() do d
+        cd(d) do
+          printACPFlowResults(netq, 0.0, 1, 1e-8, true)
+          read("result_$(netq.name).txt", String)
+        end
+      end
+      @test occursin("MachV: 1", qtxt)   # the STATCOM shunt side
+      @test occursin("TCSC: 1", qtxt)    # the SSSC series side
     end
 
     @testset "full UPFC: low-current guard keeps z_add finite (#326)" begin

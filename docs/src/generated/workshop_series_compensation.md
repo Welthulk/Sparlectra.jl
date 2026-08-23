@@ -215,6 +215,15 @@ for row in controllableElements(netu)
 end
 ````
 
+The classical result tables show the composite as its two sub-controllers:
+the series side under the TCSC/SSSC summary, the shunt side under the
+machine (STATCOM) summary, both counted on the "Controllers" line.
+
+````@example workshop_series_compensation
+calcNetLosses!(netu)
+printACPFlowResults(netu, 0.0, 1, 1e-8)
+````
+
 Reading aid (Example 4): one call, one composite name, but honestly TWO
 result rows, the series (SSSC) and the shunt (STATCOM), each with its own
 `at_limit`. This is the whole device in the quadrature limit; it steers ONE
