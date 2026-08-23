@@ -41,6 +41,7 @@ const SUITE_SPECS = ExampleSpec[
   ExampleSpec(name = "ac_rescue_dc_fallback", file = "others/exp_ac_rescue_dc_fallback.jl", purpose = "non-convergence handling: power_flow.rescue strategy ladder plus power_flow.dc.fallback standalone-DC result"),
   ExampleSpec(name = "cgmes_import_analysis", file = "others/exp_cgmes_import_analysis.jl", purpose = "analyzeCGMES report naming the missing declared dependency of an incomplete CGMES delivery"),
   ExampleSpec(name = "cgmes_infer_base_voltages", file = "others/exp_cgmes_infer_base_voltages.jl", purpose = "cgmes_import.infer_base_voltages: reconstruct missing nominal voltages from the SV state and solve"),
+  ExampleSpec(name = "cgmes_topology_processor", file = "others/exp_cgmes_topology_processor.jl", purpose = "node-breaker import without a TP profile (#314): derived bus partition vs. the shipped TP on MiniGrid"),
   ExampleSpec(name = "export_solution", file = "others/export_solution.jl", args = ["case9.m"], purpose = "exports a solver-agnostic PFModel/PFSolution for case9"),
   ExampleSpec(name = "network_analyzer", file = "others/network_analyzer.jl", purpose = "topology analysis of a small network before and after removing a branch"),
   ExampleSpec(name = "using_links", file = "others/using_links.jl", purpose = "busbar coupler modeled as a bus link, demonstrating open/close link behavior"),

@@ -6,6 +6,9 @@ EditURL = "../../lit/workshop_tour.jl"
 
 [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour.ipynb)
 
+> **Note:** This workshop was created with AI assistance and is reviewed
+> and curated by the maintainer; it is not a fully machine-generated text.
+
 This tour is the FIRST HALF of the Sparlectra workshop: install
 [Sparlectra.jl](https://github.com/Welthulk/Sparlectra.jl) once, warm the
 compiler up once, and then climb from the very first bus to the solver's
@@ -37,7 +40,8 @@ the chapters climb three tiers:
 
 Julia compiles each function on first use. This one cell warms the
 paths the chapters exercise, so nothing stalls mid-tour: the
-Newton-Raphson solver and the IEC 60909 short circuit (chapter 3). The
+Newton-Raphson solver and the IEC 60909 short circuit (chapter 3,
+Example 3.4). The
 `using` clauses and the small helpers of the whole tour live here too,
 collected up top so they cannot be missed.
 
@@ -75,8 +79,9 @@ println("short circuit  : ", round(t_sc; digits = 2), " s, everything warm")
 
 ## Chapter 1: your first network, built step by step
 
-No input files, no configuration: a complete 110 kV network from scratch,
-validated, solved, and read. The network is seven buses in a ring with
+**Example 1.1: a 7-bus ring, built and solved.** No input files, no
+configuration: a complete 110 kV network from scratch, validated,
+solved, and read. The network is seven buses in a ring with
 two cross-connections; `B1` carries the grid connection:
 
 ```text
@@ -149,7 +154,8 @@ etime, ite = solve!(net1)   ## solve! wraps exactly runpf! + calcNetLosses! (see
 printACPFlowResults(net1, etime, ite, 1e-8)
 ````
 
-Reading aid: the slack at `B1` covers the difference between 155 MW of
+Reading aid (Example 1.1): the slack at `B1` covers the difference
+between 155 MW of
 load, 60 MW of scheduled generation, and the network losses; all bus
 voltages stay near 1.0 pu. Loading a case from a FILE instead is one
 call through the framework workflow:
@@ -157,8 +163,9 @@ call through the framework workflow:
 `ensure_casefile("case14.m")`, which downloads the case on demand; the
 result carries the solved net as `result.net`.
 
-The same construction, packed into a function: later chapters (state
-estimation, model editing) reuse this network.
+The same construction, packed into a function: later examples reuse
+this network (model editing in Examples 2.3 and 2.4, state estimation
+in the advanced tour).
 
 ````@example workshop_tour
 function build_ring7(name::String)
@@ -207,19 +214,28 @@ noise in the input data, small parameter changes. The attainable relative
 accuracy in Float64 is roughly $\kappa \cdot 2 \cdot 10^{-16}$, so every
 power of ten in $\kappa$ costs one significant digit of the result.
 `condestJacobian(net)` estimates $\kappa_1$ at the operating point the net
-currently holds, on the same sparse Jacobian the solver factors:
+currently holds, on the same sparse Jacobian the solver factors.
+**Example 2.1: the condition number of the healthy ring.** First the
+solved 7-bus ring of Example 1.1 (diagram there):
 
 ````@example workshop_tour
 println("ring network: kappa = ", round(condestJacobian(net1), sigdigits = 3))
 ````
 
-Around 45: excellent. Rule of thumb: below about $10^6$ well conditioned,
-around $10^{10}$ borderline, beyond $10^{14}$ numerically singular in
-Float64.
+Reading aid (Example 2.1): around 45, excellent. Rule of thumb: below
+about $10^6$ well conditioned, around $10^{10}$ borderline, beyond
+$10^{14}$ numerically singular in Float64.
 
 The instructive part is how conditioning degrades when the physics
-degenerate, long before the solver visibly fails. Take a small feeder with
-a measurement stub at `B3` and make the stub line weaker in each round:
+degenerate, long before the solver visibly fails. **Example 2.2: a
+feeder with a degenerating stub.** Take a small feeder with a
+measurement stub at `B3` and make the stub line weaker in each round:
+
+```text
+ (slack)
+   B1 -------- B2 - - - - B3     stub line B2-B3: x_pu grows
+             20 MW               from 0.08 to 8e10 per round
+```
 
 ````@example workshop_tour
 for x_weak in (0.08, 800.0, 8.0e6, 8.0e10)
@@ -237,7 +253,8 @@ for x_weak in (0.08, 800.0, 8.0e6, 8.0e10)
 end
 ````
 
-Reading aid: the solver converges in 4 iterations in every round, and
+Reading aid (Example 2.2): the solver converges in 4 iterations in
+every round, and
 `Vm(B3)` prints the same plausible 0.9938 each time. Nothing in the result
 table reveals that the last round sits at $\kappa \approx 10^{12}$, where
 only about 4 significant digits survive: the printed voltage is already at
@@ -249,8 +266,10 @@ a plain-language verdict.
 
 ### Editing, switching, exporting
 
-Model work is iterative: change a parameter, switch an element, remove
-one, validate, solve again. The dedicated helpers keep the bookkeeping
+**Example 2.3: an edit round on the ring.** Model work is iterative:
+change a parameter, switch an element, remove one, validate, solve
+again; the stage is a fresh copy of the 7-bus ring of Example 1.1
+(diagram there). The dedicated helpers keep the bookkeeping
 consistent (branch indices, prosumer injections, isolated buses):
 
 ````@example workshop_tour
@@ -264,7 +283,7 @@ updateBranchParameters!(net = net_edit, branchNr = brVec[1], branch = BranchMode
 # (addBusLoadPower!) only feed the report layer, not the AC solve (#323).
 addProsumer!(net = net_edit, busName = "B4", type = "LOAD", p = 5.0, q = 1.0)
 # switch the B3-B6 cross-tie out of service (aggregate switch; a single
-# terminal would be setBranchTerminalStatus!, see the next section)
+# terminal would be setBranchTerminalStatus!, see Example 2.6)
 tie = getNetBranchNumberVec(net = net_edit, fromBus = "B3", toBus = "B6")
 setNetBranchStatus!(net = net_edit, branchNr = tie[1], status = 0)
 # remove the B2-B5 cross-tie outright, then re-validate and solve
@@ -280,16 +299,17 @@ writeMatpowerCasefile(net_edit, case_out)
 println("exported: ", case_out, " (", filesize(case_out), " bytes)")
 ````
 
-Reading aid: removal helpers (`removeACLine!`, `removeTrafo!`,
+Reading aid (Example 2.3): removal helpers (`removeACLine!`, `removeTrafo!`,
 `removeProsumer!`, ...) mutate the net and can leave isolated buses
 behind; `markIsolatedBuses!` flags them for the solver and
 `clearIsolatedBuses!` deletes the safe ones. `removeBus!` deliberately
 only CHECKS removability. Re-validate after every edit round.
 
-One trap worth demonstrating (issue #323): there are also NODE-level
-power helpers (`addBusLoadPower!`, `addBusGenPower!`). They edit report
-sums that NO solver reads; the solvers build their injections from the
-prosumer objects. So this "edit" changes nothing:
+**Example 2.4: the node-level power trap.** One trap worth demonstrating
+(issue #323), still on the edited ring of Example 2.3: there are also
+NODE-level power helpers (`addBusLoadPower!`, `addBusGenPower!`). They
+edit report sums that NO solver reads; the solvers build their
+injections from the prosumer objects. So this "edit" changes nothing:
 
 ````@example workshop_tour
 vm_before = get_bus_vm_pu(net_edit, "B4")
@@ -306,7 +326,17 @@ println("after addProsumer!(LOAD, 25 MW): Vm(B4) = ", round(get_bus_vm_pu(net_ed
 A voltage-regulating machine holds its bus voltage only while its
 reactive power stays inside `[qMin, qMax]`. When the solver hits a
 limit, it switches the bus from PV to PQ at the violated bound within
-the Newton iteration (the active-set strategy) and reports every event:
+the Newton iteration (the active-set strategy) and reports every event.
+**Example 2.5: a machine pinned at its Q-limit.** A three-bus chain, the
+regulating machine in the middle:
+
+```text
+ (slack)
+   Q1 -------- Q2 -------- Q3
+          gen 20 MW      load 45 MW / 20 MVAr
+          1.05 pu, Q in
+          [-5, 5] MVAr
+```
 
 ````@example workshop_tour
 net_q = Net(name = "tour_qlimits", baseMVA = 100.0)
@@ -325,7 +355,8 @@ printQLimitLog(net_q)
 distributeBusResults!(net_q)
 ````
 
-Reading aid: holding 1.05 pu at `Q2` would need more than the 5 MVar the
+Reading aid (Example 2.5): holding 1.05 pu at `Q2` would need more
+than the 5 MVar the
 machine may deliver, so the solver pins Q at `qMax` and lets the voltage
 float below the setpoint; the log names bus, iteration, and bound.
 `distributeBusResults!` pushes the solved bus totals back onto the
@@ -343,8 +374,15 @@ drawing its FULL charging (for realistic lines the two shunt arms act
 almost in parallel, so it is `g + jb`, not half of it), plus the small
 ohmic loss of the charging current. The voltage at the open end rises
 above the feeding bus, the classical Ferranti effect, and is reported as
-a branch result without adding a bus. Open one end with
-`setBranchTerminalStatus!` and compare:
+a branch result without adding a bus. **Example 2.6: the Ferranti rise
+on an open-ended line.** Open one end with `setBranchTerminalStatus!`
+and compare:
+
+```text
+ (slack)
+   A ---------------- B     one 380-kV line, b_pu = 0.9;
+        load 120 MW         the breaker at the B end opens
+```
 
 ````@example workshop_tour
 net_open = Net(name = "tour_open_end", baseMVA = 100.0)
@@ -366,7 +404,8 @@ println("         voltage at the OPEN end: ", round(br_open.open_end_vm_pu; digi
 println("         (Ferranti effect: the charging current flowing through the line reactance lifts the voltage toward the open end)")
 ````
 
-Reading aid: the branch table marks the row `open@to`, the header counts
+Reading aid (Example 2.6): the branch table marks the row `open@to`,
+the header counts
 it under `Open terminals`, and bus `B` is reported isolated: the open end
 is a branch RESULT (`open_end_vm_pu`), not a solved bus. The full story,
 including the Schur reduction and why it is the full charging, is on the
@@ -381,13 +420,14 @@ never stamped into the Y-bus, and it never appears in the branch table.
 Instead the solver contracts every cluster of buses joined by closed
 links onto one representative bus before the Y-bus is built, so all
 linked buses share one voltage by construction. (Do not confuse these
-links with the HVDC "Link" rows of chapter 7: a bus link is a switch,
-an HVDC link is a converter pair.)
+links with the HVDC "Link" rows of the advanced tour's chapter 2: a bus
+link is a switch, an HVDC link is a converter pair.)
 
 Because the link has no admittance, the power flow cannot tell how much
 power crosses it: that is reconstructed AFTER the solve, from Kirchhoff's
-current law, with `calcLinkFlowsKCL!`. The interesting case is a ring of
-links, a zero-impedance cycle:
+current law, with `calcLinkFlowsKCL!`. **Example 2.7: a zero-impedance
+ring of links.** The interesting case is a ring of links, a
+zero-impedance cycle:
 
 ```text
      S (slack)
@@ -431,7 +471,8 @@ for l in net_ring.linkVec
 end
 ````
 
-Reading aid: 50 MW enter the ring at `R1`. The minimum-norm split sends
+Reading aid (Example 2.7): 50 MW enter the ring at `R1`. The
+minimum-norm split sends
 26.67 MW directly to the 30 MW load at `R2` and 23.33 MW the other way
 round to `R3`; the third coupler carries only the 3.33 MW that `R2` still
 needs. A negative sign just means the flow runs against the link's
@@ -449,6 +490,20 @@ One grid connection, modeled three ways, plus an IEC 60909-0 fault-current
 sweep from the declared feeder data. The detailed walk-through with full
 reading aids is the
 [slack-types notebook](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_slack_short_circuit.ipynb).
+
+All examples of this chapter share one 8-bus network (`build_grid`):
+a ring with two chords, generators at `B3` and `B6`, loads at `B2`,
+`B4`, `B7`, and `B8`, and at `B1` the grid connection whose model the
+examples vary:
+
+```text
+ (grid)                G
+   B1 ------ B2 ------ B3 ------ B4
+   |          |         |         |     ring of eight buses plus
+   |          |         |         |     the chords B2-B7 and B3-B6
+   B8 ------ B7 ------ B6 ------ B5
+                        G
+```
 
 ````@example workshop_tour
 function build_grid(mode::Symbol)
@@ -479,8 +534,8 @@ function build_grid(mode::Symbol)
 end
 ````
 
-**Ideal slack**: `B1` is pinned at exactly 1.02 pu / 0° and absorbs the
-whole imbalance (the `SLACK` row).
+**Example 3.1: the ideal slack.** `B1` is pinned at exactly
+1.02 pu / 0° and absorbs the whole imbalance (the `SLACK` row).
 
 ````@example workshop_tour
 net_slack = build_grid(:slack)
@@ -488,9 +543,9 @@ etime, ite = solve!(net_slack)
 printACPFlowResults(net_slack, etime, ite, 1e-8)
 ````
 
-**Non-ideal source**: with `internal_impedance = true` the setpoint moves
-to the hidden internal bus (last row, type `SOURCE`); the terminal `B1`
-in the first row droops below 1.02 pu.
+**Example 3.2: the non-ideal source.** With `internal_impedance = true`
+the setpoint moves to the hidden internal bus (last row, type `SOURCE`);
+the terminal `B1` in the first row droops below 1.02 pu.
 
 ````@example workshop_tour
 net_source = build_grid(:source)
@@ -498,9 +553,9 @@ etime, ite = solve!(net_source)
 printACPFlowResults(net_source, etime, ite, 1e-8)
 ````
 
-**Distributed slack**: the generators pick up the imbalance according to
-their scheduled output (0.6/0.4); the slack row keeps only the reactive
-balance.
+**Example 3.3: distributed slack.** The generators pick up the imbalance
+according to their scheduled output (0.6/0.4); the slack row keeps only
+the reactive balance.
 
 ````@example workshop_tour
 net_dist = build_grid(:slack)
@@ -508,9 +563,9 @@ etime, ite = solve!(net_dist; distributed_slack_enabled = true, distributed_slac
 printACPFlowResults(net_dist, etime, ite, 1e-8)
 ````
 
-The three connection models side by side. The losses differ because the
-flow pattern differs; a negative Q loss means the line charging produces
-more reactive power than the flows consume.
+The three connection models of Examples 3.1 to 3.3 side by side. The
+losses differ because the flow pattern differs; a negative Q loss means
+the line charging produces more reactive power than the flows consume.
 
 ````@example workshop_tour
 println(rpad("scenario", 20), lpad("Vm(B1) pu", 11), lpad("P loss MW", 11), lpad("Q loss MVAr", 13), "   balanced by")
@@ -524,9 +579,10 @@ for (label, net, by) in (
 end
 ````
 
-**Short circuit**: the feeder data declared in `addExternalGrid!` feeds
-`runShortCircuit!` directly. $I_k''$ is largest at the connection bus and
-decays with electrical distance.
+**Example 3.4: the IEC 60909 fault sweep.** The feeder data declared in
+`addExternalGrid!` feeds `runShortCircuit!` directly, here on the
+ideal-slack net of Example 3.1. $I_k''$ is largest at the connection bus
+and decays with electrical distance.
 
 ````@example workshop_tour
 printShortCircuitResult(runShortCircuit!(net_slack; case = :max))
@@ -535,10 +591,17 @@ printShortCircuitResult(runShortCircuit!(net_slack; case = :min))
 
 ## Chapter 4: transformer tap control (OLTC)
 
-A transformer with a ratio tap changer holds the voltage at a remote load
-bus. The outer control loop moves the discrete tap until the target is
-inside the deadband; the power flow itself stays untouched. Details:
+**Example 4.1: an OLTC holding a remote bus.** A transformer with a
+ratio tap changer holds the voltage at a remote load bus. The outer
+control loop moves the discrete tap until the target is inside the
+deadband; the power flow itself stays untouched. Details:
 [Control Framework](https://welthulk.github.io/Sparlectra.jl/control_framework/).
+
+```text
+ (slack)
+   Slack ==T1== MV -------- Load       T1: ratio taps 0.9..1.1,
+                       60 MW / 20 MVAr     step 0.0125
+```
 
 ````@example workshop_tour
 function build_oltc()
@@ -589,7 +652,8 @@ println("controlled:   Vm(Load) = ", round(get_bus_vm_pu(net_oltc, "Load"); digi
 printTapControllerSummary(stdout, net_oltc)
 ````
 
-Reading aid: the summary shows the chosen tap position and the achieved
+Reading aid (Example 4.1): the summary shows the chosen tap position
+and the achieved
 voltage. With a discrete 0.0125 step the controller stops as soon as the
 target is inside the deadband, not at the exact setpoint.
 
@@ -599,6 +663,16 @@ A machine can follow a Q(U) droop characteristic: absorb reactive power
 when its voltage is high, inject when it is low. Unlike the outer-loop
 controllers above, Q(U) is solved **inside** Newton-Raphson. Details:
 [Voltage Dependent Control](https://welthulk.github.io/Sparlectra.jl/voltage_dependent_control/).
+
+Both examples of this chapter run one three-bus feeder with the Q(U)
+machine in the middle; only the load at `B3` changes:
+
+```text
+ (slack, 1.02 pu)
+   B1 -------- B2 -------- B3
+          Q(U) machine   load (light in Example 5.1,
+          10 MW          heavy in Example 5.2)
+```
 
 ````@example workshop_tour
 function build_qu(p_load::Float64, q_load::Float64)
@@ -630,8 +704,8 @@ function build_qu(p_load::Float64, q_load::Float64)
 end
 ````
 
-Light load: the machine bus sits above 110 kV, so the characteristic asks
-the machine to **absorb** reactive power (negative Q).
+**Example 5.1: light load.** The machine bus sits above 110 kV, so the
+characteristic asks the machine to **absorb** reactive power (negative Q).
 
 ````@example workshop_tour
 net_qu_light = build_qu(5.0, 1.0)
@@ -639,8 +713,9 @@ etime, ite = solve!(net_qu_light)
 printACPFlowResults(net_qu_light, etime, ite, 1e-8)
 ````
 
-Heavy load: the voltage sags below 110 kV and the same characteristic
-turns the machine into a reactive power **injector** (positive Q).
+**Example 5.2: heavy load.** The voltage sags below 110 kV and the same
+characteristic turns the machine into a reactive power **injector**
+(positive Q).
 
 ````@example workshop_tour
 net_qu_heavy = build_qu(80.0, 25.0)
@@ -648,9 +723,9 @@ etime, ite = solve!(net_qu_heavy)
 printACPFlowResults(net_qu_heavy, etime, ite, 1e-8)
 ````
 
-Reading aid: compare the `Qg` value and the `Control` column (`Q(U)`) of
-bus `B2` between the two tables; the sign flips with the voltage level,
-exactly along the declared characteristic.
+Reading aid (Examples 5.1 and 5.2): compare the `Qg` value and the
+`Control` column (`Q(U)`) of bus `B2` between the two tables; the sign
+flips with the voltage level, exactly along the declared characteristic.
 
 ## Where to go next
 

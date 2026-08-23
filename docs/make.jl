@@ -111,6 +111,7 @@ makedocs(
       "Workshop Tour (basic)" => "generated/workshop_tour.md",
       "Workshop Tour (advanced)" => "generated/workshop_tour_advanced.md",
       "Workshop Tour (part 3: coordinated control)" => "generated/workshop_tour_control.md",
+      "Workshop Tour (CGMES)" => "generated/workshop_tour_cgmes.md",
       "Slack Types and Short Circuit" => "generated/workshop_slack_short_circuit.md",
       "Distributed Slack" => "generated/workshop_distributed_slack.md",
       "Transformer Taps" => "generated/workshop_transformers.md",

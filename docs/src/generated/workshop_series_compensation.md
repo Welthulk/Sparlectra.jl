@@ -8,6 +8,9 @@ EditURL = "../../lit/workshop_series_compensation.jl"
 
 [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_series_compensation.ipynb)
 
+> **Note:** This workshop was created with AI assistance and is reviewed
+> and curated by the maintainer; it is not a fully machine-generated text.
+
 In a meshed AC network, power does not follow contracts, it follows
 impedance: parallel paths split the transfer in inverse proportion to
 their reactances. A TCSC (thyristor controlled series capacitor) exploits
@@ -80,7 +83,8 @@ to watch.
 
 ## A loop network with two corridors
 
-80 MW travel from source `A` to sink `B` over two parallel corridors.
+**Example 1: the natural flow split.** 80 MW travel from source `A` to
+sink `B` over two parallel corridors.
 The upper corridor (`A` to `M2` to `B`) has twice the reactance of the
 lower one, so it naturally carries only one third of the transfer.
 
@@ -115,13 +119,16 @@ println("natural split: corridor 1 (A->M1) = ", round(get_branch_p_from_to_mw(ne
 println("               corridor 2 (A->M2) = ", round(get_branch_p_from_to_mw(net, "A", "M2"); digits = 2), " MW")
 ````
 
-The 2:1 reactance ratio produces the 2:1 flow split, independent of any
-thermal ratings: the low-reactance corridor attracts the flow.
+Reading aid (Example 1): the 2:1 reactance ratio produces the 2:1 flow
+split, independent of any thermal ratings: the low-reactance corridor
+attracts the flow.
 
 ## Attach the TCSC and steer the split
 
+**Example 2: steering the split onto a target.**
 `addSeriesReactanceControl!` registers the controller on the line from
-`A` to `M2`. The target of 35 MW needs a visible reactance move: the
+`A` to `M2`, continuing on the Example 1 network (diagram above).
+The target of 35 MW needs a visible reactance move: the
 outer loop measures the branch flow after each converged solve, steps
 `x_pu` via secant iteration (the first step is a bounded probe, because
 the sign of $dP/dX$ depends on the network), and stops inside the
@@ -134,7 +141,7 @@ println("steered:  corridor 2 (A->M2) = ", round(get_branch_p_from_to_mw(net, "A
 println("          x_pu moved 0.20 -> ", round(ctrl.x_pu; digits = 4), ", status = ", ctrl.status)
 ````
 
-The controller row from the last control run and the generic
+The controller row from the last control run (Example 2) and the generic
 controllable-element view carry the shared vocabulary (actuator, range,
 quantity, target) that all outer controllers report:
 
@@ -151,8 +158,10 @@ end
 
 ## The honest limit
 
-Ask the same corridor for 70 MW and the range `[0.02, 0.30]` is not
-enough: the reactance clamps at the capacitive end, the branch behaves
+**Example 3: the honest limit.** Ask the same corridor for 70 MW, on a
+fresh copy of the Example 1 loop (diagram there), and the range
+`[0.02, 0.30]` is not enough: the reactance clamps at the capacitive
+end, the branch behaves
 as a fixed compensated line, and the controller reports `at_limit`
 instead of pretending convergence. The power flow itself stays valid.
 

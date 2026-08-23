@@ -35,7 +35,7 @@ from filenames.
 
 | CGMES source | Result |
 |---|---|
-| `TopologicalNode` (TP) | buses, nominal voltage from `BaseVoltage` |
+| `TopologicalNode` (TP) | buses, nominal voltage from `BaseVoltage`; without a TP profile the buses are derived from `ConnectivityNode`s and switch states (see [the topology processor](@ref topology_processor)) |
 | `ACLineSegment`, `SeriesCompensator` | π-model branches; lines spanning two nominal voltages become ratio branches (boundary lines) |
 | `PowerTransformer` (2 and 3 windings) | π-model transformers; 3-winding as star equivalent with an AUX bus |
 | `RatioTapChanger`, phase tap changers | fixed tap positions, or outer-loop controllers with `tap_control = true`; `PhaseTapChangerTabular` resolves its `PhaseTapChangerTable` row (ratio and angle) at the tap position. Tap angles fold with end-referral semantics: an end-2 (to-side) angle enters negated (`θ_eff = θ1 − θ2`), pinned by RealGrid's SV state — the ENTSO-E PSEI `PTE2` conformity toys expect the unflipped angle and deviate by ≈0.3° by design of this choice |
@@ -97,6 +97,56 @@ external injection, the largest synchronous machine.
 **Sourceless parts.** Components without any generator are de-energized
 deliberately (injections zeroed, buses isolated) with one message each,
 instead of aborting the power flow with "island without reference".
+
+## [Node-breaker deliveries without a TP profile](@id topology_processor)
+
+Real EMS and substation-level exports sometimes ship EQ+SSH only: topology
+expressed as `ConnectivityNode`s plus switches, with no sender-side topology
+processor ever run. Since 0.9.16 the importer derives the bus partition
+itself before the bus-branch mapping starts:
+
+- **Trigger.** The processor runs only when the delivery contains
+  `ConnectivityNode`s and no non-boundary `TopologicalNode`. A TP-carrying
+  delivery takes the unchanged bus-branch path; nothing about existing
+  imports changes.
+- **Aggregation.** Connectivity nodes merge across closed, non-retained
+  switches (`Switch`, `Breaker`, `Disconnector`, `LoadBreakSwitch`,
+  `Jumper`, `ProtectedSwitch`). A switch counts as open when SSH
+  `Switch.open` says so (overriding EQ `normalOpen`), and out-of-service
+  switches count as open. Retained switches are never merged; they become
+  the same zero-impedance bus links a TP delivery gets.
+- **Result.** Each connectivity group becomes a synthetic
+  `TopologicalNode`, named after a busbar section in the group where one
+  exists. Nominal voltage resolves through the container chain
+  (`ConnectivityNode` to `VoltageLevel`, hopping over `Bay` containers) to
+  the `BaseVoltage`. Boundary connectivity nodes adopt the boundary set's
+  existing TP_BD nodes instead of spawning new ones, so cross-border
+  stitching works exactly as with a shipped TP.
+- **Visibility.** The processor announces itself in the import messages
+  (`topology processor: derived N topological node(s) from M connectivity
+  node(s) ...`); its absence from the messages means the shipped TP was
+  used.
+
+A delivery with neither a TP profile nor connectivity nodes carries no
+topology information at all; the import aborts with the import analysis and
+an explicit message instead of failing somewhere downstream.
+
+Two honest findings from the ENTSO-E conformity sweep (MiniGrid, SmallGrid,
+FullGrid node-breaker sets, plus the T1/T2 variants):
+
+- The derived partition reproduces the shipped TP bus for bus on MiniGrid
+  and SmallGrid (solved voltages agree to numerical precision, order
+  1e-15). FullGrid's completeness set is the exception, and it is a data
+  finding, not a processor gap: its TP assigns the terminals of ONE
+  connectivity node (the shared load node of `BE-Load_1`/`BE_CL_1`/
+  `BE_NC_1`) to TWO different topological nodes. No processor can derive
+  that split from the connectivity graph; the derived one-CN-one-bus
+  partition is the graph-consistent answer, and 10 MW of load sit one bus
+  apart.
+- Dead network fragments (all equipment out of service, T1 variant) may be
+  partitioned differently than the sender's TP places them; the live part
+  of the network is unaffected. Such fragments show up as extra isolated,
+  de-energized buses.
 
 ## Configuration (`cgmes_import`)
 
@@ -312,9 +362,11 @@ recorded in `docs/dev/cgmes_testset_overview.md`.
 - CGMES 3.0 deliveries are read (`dcat:Dataset` headers, per-border boundary
   files, SSH `Equipment.inService`), validated against the ReliCapGrid/Svedala
   3.0 sets; conformity coverage beyond those deliveries is still limited.
-- Node-breaker modelling is not implemented; it is not needed in practice
-  because CGMES deliveries ship the TP profile alongside, which the importer
-  reads as bus-branch.
+- Node-breaker deliveries are imported at bus-branch granularity: with a
+  shipped TP profile directly, without one via
+  [the topology processor](@ref topology_processor). Individual switches do
+  not become model elements (retained ones become bus links); per-switch
+  state analysis beyond the partition is out of scope.
 - Per-step `r`/`x`/`g`/`b` corrections of tabular phase-tap tables are not
   folded into the branch impedance (the table's ratio and angle are); rows
   with such corrections are flagged in the import messages.

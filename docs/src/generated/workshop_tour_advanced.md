@@ -26,6 +26,9 @@ purpose: Literate.jl source of the ADVANCED workshop tour (Expert and
 
 [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour_advanced.ipynb)
 
+> **Note:** This workshop was created with AI assistance and is reviewed
+> and curated by the maintainer; it is not a fully machine-generated text.
+
 This is the second half of the Sparlectra workshop: it picks up where the
 [basic tour](https://welthulk.github.io/Sparlectra.jl/generated/workshop_tour/)
 (Newcomer to Advanced: first network, model work, slack types and short
@@ -76,8 +79,8 @@ end
 # peek into the solved state (chapter 2 reads bus angles with it)
 bus_va_deg(net, bus) = net.nodeVec[net.busDict[bus]]._va_deg
 
-# the 7-bus double ring from the basic tour's chapter 1, packed as a
-# helper: two chapters here (state estimation, N-1) reuse it
+# the 7-bus double ring of the basic tour's Example 1.1, packed as a
+# helper: two chapters here reuse it (Examples 3.1 and 5.1)
 function build_ring7(name::String)
   net = Net(name = name, baseMVA = 100.0)
   addBus!(net = net, busName = "B1", vn_kV = 110.0, vm_pu = 1.02, va_deg = 0.0)
@@ -158,6 +161,17 @@ is met, and parks honestly `at_limit` when the reactive range is too
 small. Details:
 [Remote Voltage Control](https://welthulk.github.io/Sparlectra.jl/remote_voltage_control/).
 
+**Example 1.1: a machine holding a remote bus.** The corridor: slack,
+machine bus, and the remote target bus at the end; first uncontrolled,
+then with the controller attached (Q range ±50 MVAr):
+
+```text
+ (slack, 1.02 pu)
+   Slack -------- GenBus -------- Load
+             machine 30 MW,   controlled bus,
+             Q range varied   target 1.05 pu
+```
+
 ````@example workshop_tour_advanced
 function build_rvc(qmin_mvar::Float64, qmax_mvar::Float64)
   net = Net(name = "tour_rvc", baseMVA = 100.0)
@@ -185,9 +199,10 @@ println("loop: status = ", result.status, ", outer iterations = ", result.outer_
 printMachineControllerSummary(stdout, net_rvc)
 ````
 
-The honest failure mode: cut the reactive range to ±2 MVAr and the same
-target is out of reach. The controller parks at its limit and says so
-instead of pretending convergence.
+**Example 1.2: the honest failure mode.** Cut the reactive range to
+±2 MVAr on the same corridor as Example 1.1 and the same target is out
+of reach. The controller parks at its limit and says so instead of
+pretending convergence.
 
 ````@example workshop_tour_advanced
 net_rvc2 = build_rvc(-2.0, 2.0)
@@ -203,9 +218,9 @@ printMachineControllerSummary(stdout, net_rvc2)
 Two AC areas joined ONLY by an HVDC converter pair: no AC tie, no angle
 coupling, so the areas stay two separate electrical islands with their
 own references. The transfer through the link is a control setpoint, not
-the result of an angle difference. First the Stage-0 view: two fixed
-injections reproduce a snapshot of 80 MW transfer with 4 MW converter
-loss.
+the result of an angle difference. **Example 2.1: the Stage-0 snapshot.**
+First the Stage-0 view: two fixed injections reproduce a snapshot of
+80 MW transfer with 4 MW converter loss.
 
 Note that EACH island keeps a classical reference of its own (`A1` and
 `C1`); the converters at `A2`/`C2` are plain injections the controller
@@ -246,9 +261,10 @@ println("two islands solved in ", ite, " iteration(s)")
 printACPFlowResults(net6, etime, ite, 1e-8)
 ````
 
-Reading aid: both areas balance on their own reference; the link carries
-whatever the snapshot says. To make it steerable, pair the two converter
-injections: `addHvdcPairControl!` enforces the invariant
+Reading aid (Example 2.1): both areas balance on their own reference;
+the link carries whatever the snapshot says. **Example 2.2: pairing the
+converters.** To make it steerable on the same net, pair the two
+converter injections: `addHvdcPairControl!` enforces the invariant
 $P_\text{to} = P_\text{transfer} - P_\text{loss}$ exactly and lets you
 retarget the transfer.
 
@@ -259,8 +275,9 @@ calcNetLosses!(net6)
 printACPFlowResults(net6, etime, result6.last_pf_iterations, 1e-8)
 ````
 
-Reading aid: the HVDC pair reports inside the `Control` section of the
-classical result output, in the same aligned label/value layout as the
+Reading aid (Example 2.2): the HVDC pair reports inside the `Control`
+section of the classical result output, in the same aligned label/value
+layout as the
 transformer, machine, and TCSC summaries (`printHvdcPairControllerSummary`
 prints the same block standalone). The link itself has its own `HVDC
 Link Flows` table right after the link table: ordered transfer,
@@ -292,7 +309,8 @@ for (bus, role) in (("A1", "reference of island A"), ("A2", "converter, exports 
 end
 ````
 
-Reading aid: within island A the angle falls toward A2 (the converter
+Reading aid (Example 2.2): within island A the angle falls toward A2
+(the converter
 bus imports 120 MW plus the local load from the reference), within
 island C it rises toward C2 (the converter bus feeds the island). Each
 gradient is meaningful only against its own 0-degree reference. The same
@@ -317,17 +335,19 @@ asynchronously supplied island grid.
 
 A word on terms: "slack" is the solver's name for an island's reference
 node, and every island has exactly one, however it is modeled. The ideal
-slack of the basic tour's chapter 3, the external-grid SOURCE behind an impedance, and
-the grid-forming converter here are three MODELS of that one reference.
+slack of the basic tour's chapter 3 (Example 3.1 there), the
+external-grid SOURCE behind an impedance, and the grid-forming converter
+here are three MODELS of that one reference.
 The result output keeps them apart: `SOURCE` in the bus table (and
 `Source: m` in the header) is reserved for the external-grid feeder
 element, because there the reference voltage sits BEHIND an impedance.
 The grid-forming converter is an ideal reference directly at its PCC, so
 its row honestly reads `SLACK`; its role is marked in the `Control`
 column instead: `B2B src` for the grid-forming reference, `B2B` for a
-steered converter injection. Island C below has NO source of its own;
-its reference moves onto the converter bus C2 (compare the sketch with
-the setpoint variant above):
+steered converter injection. **Example 2.3: the grid-forming
+converter.** Island C below has NO source of its own; its reference
+moves onto the converter bus C2 (compare the sketch with the setpoint
+variant of Example 2.1):
 
 ```text
      island A                          island C
@@ -365,11 +385,12 @@ for bus in ("C2", "C1")
 end
 ````
 
-Reading aid: the transfer is no longer a setpoint. Island C decides how
-much it draws (load plus line loss), the converter delivers exactly
-that, and the island's reference sits at the converter PCC: 1.0 pu and
-0 degrees at C2, while the load bus C1 hangs below it. The sending side
-must now *mirror* the island draw plus the converter loss:
+Reading aid (Example 2.3): the transfer is no longer a setpoint.
+Island C decides how much it draws (load plus line loss), the converter
+delivers exactly that, and the island's reference sits at the converter
+PCC: 1.0 pu and 0 degrees at C2, while the load bus C1 hangs below it.
+**Example 2.4: mirroring the sending side.** On the same corridor, the
+sending side must now *mirror* the island draw plus the converter loss:
 
 ````@example workshop_tour_advanced
 net8 = build_b2b_source("tour_b2b_mirrored"; sending_mw = -(p_island_c + 4.0))
@@ -379,12 +400,13 @@ println("sending side A1 -> A2 carries ", round(get_branch_p_from_to_mw(net8, "A
 printACPFlowResults(net8, etime8, ite8, 1e-8)
 ````
 
-Reading aid: compare the SLACK rows with the setpoint variant. The
-references are now `A1` and `C2`: the receiving converter itself is
-island C's reference, its `Pg` is the island draw, and `C1` carries only
-load.
+Reading aid (Example 2.4): compare the SLACK rows with the setpoint
+variant (Examples 2.1 and 2.2). The references are now `A1` and `C2`:
+the receiving converter itself is island C's reference, its `Pg` is the
+island draw, and `C1` carries only load.
 
-And the refusal from above, demonstrated: pairing the grid-forming
+**Example 2.5: the pairing refusal.** And the refusal from above,
+demonstrated on the net of Example 2.4: pairing the grid-forming
 converter is rejected, because its injection is the island balance, not
 a setpoint:
 
@@ -396,7 +418,8 @@ catch err
 end
 ````
 
-The pairing controller automates exactly this mirror: `mode =
+**Example 2.6: island_feed mode.** The pairing controller automates
+exactly this mirror on the corridor of Example 2.3: `mode =
 :island_feed` reads the island balance after each solve and keeps the
 sending side matched, with an honest `at_limit` once the island draw
 exceeds `p_rating_mw`. No transfer setpoint is given, the island
@@ -410,16 +433,17 @@ calcNetLosses!(net9)
 printACPFlowResults(net9, etime, result9.last_pf_iterations, 1e-8)
 ````
 
-Reading aid, and the direct comparison with the setpoint variant above.
-Both versions report `Slack: 2` in the header (one reference per island,
-always), but WHERE the references sit is the whole difference:
+Reading aid (Example 2.6), and the direct comparison with the setpoint
+variant of Example 2.2. Both versions report `Slack: 2` in the header
+(one reference per island, always), but WHERE the references sit is the
+whole difference:
 
-- **Setpoint variant:** references at `A1` and `C1`, each island brings
+- **Setpoint variant (Example 2.2):** references at `A1` and `C1`, each island brings
   its own source. Both converters are plain PQ injections steered by the
   controller (`-120 / +116 MW` in the bus table), and the transfer is an
   order the link follows. Look at C1's `Pg`: it is negative, island C's
   own slack absorbs the surplus the link pumps in.
-- **Grid-forming variant (this table):** references at `A1` and `C2`.
+- **Grid-forming variant (this table, Example 2.6):** references at `A1` and `C2`.
   The receiving converter itself is island C's `SLACK` row, marked
   `B2B src` in the `Control` column; its `Pg` column is the island
   balance outcome (load plus line loss, no setpoint anywhere), `C1`
@@ -435,13 +459,15 @@ honest flag is what marks the undeliverable draw.
 
 ### Variant: grid-forming with droop (SOURCE model)
 
-The ideal reference above holds exactly 1.0 pu at the PCC no matter what
-the island draws. A real VSC has finite control stiffness. The
-external-grid element from the basic tour's chapter 3 models exactly that: the reference
-voltage sits BEHIND the impedance $Z_Q = U_n^2 / S_k''$, so the PCC
-voltage droops under load. Declaring the converter that way finally
-makes the bus table say `SOURCE`, and the header counts
-`Slack: 1 Source: 1`:
+**Example 2.7: grid-forming with droop.** The ideal reference of
+Example 2.3 holds exactly 1.0 pu at the PCC no matter what the island
+draws. A real VSC has finite control stiffness. The external-grid
+element from the basic tour's chapter 3 (Example 3.2 there) models
+exactly that: the reference voltage sits BEHIND the impedance
+$Z_Q = U_n^2 / S_k''$, so the PCC voltage droops under load. Declaring
+the converter that way (same corridor as Example 2.3, the receiving
+converter now an external-grid feeder) finally makes the bus table say
+`SOURCE`, and the header counts `Slack: 1 Source: 1`:
 
 ````@example workshop_tour_advanced
 function build_b2b_droop(name::String; sending_mw::Float64 = 0.0, sk_mva::Float64 = 800.0)
@@ -466,7 +492,8 @@ etime10, ite10 = solve!(net10; islands_enabled = true)
 printACPFlowResults(net10, etime10, ite10, 1e-8)
 ````
 
-Reading aid: the header reads `Slack: 1 Source: 1`, the grid connection
+Reading aid (Example 2.7): the header reads `Slack: 1 Source: 1`, the
+grid connection
 line names the source with its feeder data, and the hidden anchor bus
 behind the impedance is the `SOURCE` row. The PCC bus `C2` is now a
 plain PQ bus whose voltage sags below 1.0 pu under the island load: that
@@ -514,8 +541,9 @@ function build_meshed(name::String; c1_model::Symbol)
 end
 ````
 
-Keeping BOTH old references fails fast, with the buses named. The solver
-never demotes a reference on its own; you decide which one survives:
+**Example 2.8: two references in one island.** Keeping BOTH old
+references fails fast, with the buses named. The solver never demotes a
+reference on its own; you decide which one survives:
 
 ````@example workshop_tour_advanced
 netm = build_meshed("tour_meshed_two_refs"; c1_model = :reference)
@@ -526,10 +554,11 @@ catch err
 end
 ````
 
-Reading aid: this is the same one-reference-per-island rule from the
-beginning of the chapter, now seen from the other side. Demote `C1` to a
-voltage-regulated generator and the meshed net solves; the pair keeps
-its setpoint and the tie carries the balance:
+Reading aid (Example 2.8): this is the same one-reference-per-island
+rule from the beginning of the chapter, now seen from the other side.
+**Example 2.9: the meshed pair.** Demote `C1` to a voltage-regulated
+generator and the meshed net solves (same topology, diagram above); the
+pair keeps its setpoint and the tie carries the balance:
 
 ````@example workshop_tour_advanced
 netm2 = build_meshed("tour_meshed"; c1_model = :pv)
@@ -539,7 +568,8 @@ calcNetLosses!(netm2)
 printACPFlowResults(netm2, etime, resultm.last_pf_iterations, 1e-8)
 ````
 
-Reading aid: ONE island, ONE `SLACK` row (`A1`), `C1` is an ordinary PV
+Reading aid (Example 2.9): ONE island, ONE `SLACK` row (`A1`), `C1` is
+an ordinary PV
 generator now. The branch table shows the parallel paths side by side:
 three real AC branches plus the `Link` row marked "HVDC, not a branch".
 The `HVDC Link Flows` table still shows the ordered 120 MW with 4 MW
@@ -558,7 +588,8 @@ for target in (120.0, 40.0)
 end
 ````
 
-Reading aid: the pair keeps its order exactly (that is what a setpoint
+Reading aid (Example 2.9): the pair keeps its order exactly (that is
+what a setpoint
 means), so every retarget shows up one-to-one in the tie flow. And
 `mode = :island_feed`? A grid-forming converter inside a synchronous
 grid is a different device model and out of scope: with the tie closed
@@ -568,10 +599,11 @@ demoted reference afterwards makes the controller report
 
 ## Chapter 3: state estimation
 
-Close the loop: solve a reference power flow on the basic tour's 7-bus ring (build_ring7, see the warm-up),
-derive a noisy synthetic measurement set from it, check observability,
-and let the WLS estimator reconstruct the state. The full narrative is
-the
+**Example 3.1: WLS estimation on the ring.** Close the loop: solve a
+reference power flow on the 7-bus ring of the basic tour's Example 1.1
+(`build_ring7`, see the warm-up; diagram in the basic tour), derive a
+noisy synthetic measurement set from it, check observability, and let
+the WLS estimator reconstruct the state. The full narrative is the
 [state-estimation notebook](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_state_estimation.ipynb).
 
 ````@example workshop_tour_advanced
@@ -604,7 +636,8 @@ for (name, idx) in sort(collect(net_se.busDict); by = last)
 end
 ````
 
-Reading aid: with mild noise the estimate reproduces the reference state
+Reading aid (Example 3.1): with mild noise the estimate reproduces the
+reference state
 to a few 1e-3 pu, and $J$ lands near the degrees of freedom, the
 textbook health check for a WLS estimator.
 
@@ -624,8 +657,17 @@ same way; at the limit:
   (QUADRATIC collapse).
 
 The ranking shows exactly under the depressed voltage the compensator
-was installed for. We build one weak corridor that sags to about
-0.92 pu and give all three devices the SAME 10-MVAr rating at 1.0 pu:
+was installed for. **Example 4.1: three shunt devices at the same
+rating.** We build one weak corridor (`build_sag_corridor`, reused by
+Examples 4.2 and 4.4) that sags to about 0.92 pu and give all three
+devices the SAME 10-MVAr rating at 1.0 pu:
+
+```text
+ (slack, 1.0 pu)
+   Slack -------- Mid -------- Load
+             compensator    60 MW / 25 MVAr
+             under test
+```
 
 ````@example workshop_tour_advanced
 facts_rating = 10.0
@@ -675,7 +717,9 @@ println("  SVC         : Q = ", round(v_svc^2 * svc_ctrl.bs_mvar; digits = 2), "
 
 Most voltage control in real grids is not an SVC but a mechanically
 SWITCHED bank (MSC/MSR): whole capacitor blocks go in or out, nothing in
-between. The same controller models that with `step_mvar` (issue #324).
+between. **Example 4.2: a switched bank vs a continuous SVC.** The same
+controller models the bank with `step_mvar` (issue #324), here on the
+sag corridor of Example 4.1.
 Two design rules make a switched bank usable in a solver loop: it moves
 in WHOLE blocks truncated toward the target (approaching from one side,
 never overshooting, so it cannot hunt between two adjacent steps), and
@@ -699,7 +743,8 @@ println("MSC bank (4 x 10 MVAr blocks): Bs = ", msc_ctrl.bs_mvar, " MVAr (block 
 println("  status = ", msc_ctrl.status, " after ", msc_res.outer_iterations, " outer iterations (parked on the step grid, no hunting)")
 ````
 
-Reading aid: the continuous SVC settles wherever the secant sends it
+Reading aid (Example 4.2): the continuous SVC settles wherever the
+secant sends it
 (about 24.7 MVAr here) and converges; the bank can only offer 20 or 30
 and stops at 20, the last block before crossing the 0.95-pu target.
 `status = :parked` is the bank's third state next to `converged` and
@@ -708,8 +753,16 @@ and stops at 20, the last block before crossing the 0.95-pu target.
 The series side has the same split. A TCSC owns a FIXED reactance window
 and keeps it at any loading; an SSSC injects a series voltage, so its
 usable window $|x - x_{base}| \le V_{inj,max}/|I|$ SHRINKS with the
-branch current: it saturates exactly at high transfer. Same two-corridor
-loop, same 35-MW target, once per device:
+branch current: it saturates exactly at high transfer. **Example 4.3:
+TCSC vs SSSC on a two-corridor loop.** Same loop (`build_facts_loop`),
+same 35-MW target, once per device:
+
+```text
+ (slack)
+   A ------ M1 ------ B     load 80 MW / 20 MVAr at B
+   |                  |
+   +------ M2 --------+     series device in the A-M2 leg
+```
 
 ````@example workshop_tour_advanced
 function build_facts_loop(name::String)
@@ -740,16 +793,19 @@ println("SSSC V_inj,max 0.01 pu    : P = ", round(sssc_ctrl.achieved_p_mw; digit
 println("  live window [", round(sssc_ctrl.x_min_pu; digits = 4), ", ", round(sssc_ctrl.x_max_pu; digits = 4), "] pu around x_base ", sssc_ctrl.x_base_pu, ", injected voltage ", round(abs(sssc_ctrl.x_pu - sssc_ctrl.x_base_pu) * sssc_ctrl.i_pu; digits = 4), " pu of 0.01 available")
 ````
 
-Reading aid: the TCSC reaches the 35-MW target (x moves from 0.20 down
+Reading aid (Example 4.3): the TCSC reaches the 35-MW target (x moves
+from 0.20 down
 to about 0.07 pu), the SSSC pins at its injectable voltage with the flow
 stuck near 28.6 MW: its whole window is $\pm 0.033$ pu at this loading.
 Both devices report the miss honestly as `at_limit` instead of
 pretending convergence.
 
-IN range, the converter devices are ordinary voltage/flow controllers:
-with a rating that never binds, the STATCOM settles into the same
-deadband as the classical constant-Q controller. All registered devices
-describe themselves through one generic view, `controllableElements`:
+**Example 4.4: in range, with the generic element view.** IN range, the
+converter devices are ordinary voltage/flow controllers: with a rating
+that never binds, the STATCOM settles into the same deadband as the
+classical constant-Q controller (back on the sag corridor of
+Example 4.1). All registered devices describe themselves through one
+generic view, `controllableElements`:
 element, device, actuator with its LIVE range (for the STATCOM that is
 $\pm V \cdot S_{max}$ of the last solved operating point, not the
 nameplate), target, and status:
@@ -783,9 +839,17 @@ does the bookkeeping that is easy to get wrong: every case works on its
 own copy of the SOLVED base case (warm start, the base net is never
 mutated), and failures are REPORTED per case, never thrown.
 
-The 7-bus ring is too forgiving for a demo (every single outage
-leaves a connected path), so we hang a two-bus spur B8-B9 on a single
-line from B4. Losing that line strands the PAIR as an island with a live
+**Example 5.1: an N-1 batch with a stranded spur.** The 7-bus ring of
+the basic tour's Example 1.1 (diagram there) is too forgiving for a demo
+(every single outage leaves a connected path), so we hang a two-bus spur
+B8-B9 on a single line from B4:
+
+```text
+ (ring of Example 1.1) B4 ------ B8 ------ B9
+                                6 MW      4 MW
+```
+
+Losing that line strands the PAIR as an island with a live
 branch but no voltage reference, and the report has to say so instead of
 crashing. (A single stranded bus would not do: `markIsolatedBuses!`
 inside the batch marks buses without any in-service branch as isolated
@@ -808,7 +872,7 @@ results = runContingencies!(net_n1, cases; vm_min_pu = 0.95, vm_max_pu = 1.05)
 printContingencyResults(results)
 ````
 
-Reading aid, three things to check in the table:
+Reading aid (Example 5.1), three things to check in the table:
 
 - the `B_ACL_110_4_8` outage (the B4-B8 spur line) reports
   `islanded without reference`: the B8-B9 pair loses its only feed and
@@ -859,9 +923,17 @@ have right now?
 println("this session runs on ", Threads.nthreads(), " Julia thread(s)")
 ````
 
-The mechanics on a fault sweep: eight feeder-fed rings, every bus a
+**Example 6.1: a fault sweep, serial vs parallel.** The mechanics on a
+fault sweep: eight feeder-fed rings of 500 buses each, every bus a
 fault location, once serial and once parallel. The results must be
 IDENTICAL: parallelism only changes the wall clock, never a number.
+
+```text
+ (grid k)
+   Pk_B1 ---- Pk_B2 ---- ... ---- Pk_B500
+     |                               |
+     +-------------------------------+     k = 1..8 independent rings
+```
 
 ````@example workshop_tour_advanced
 net_par = Net(name = "tour_parallel", baseMVA = 100.0)
@@ -885,7 +957,8 @@ println("fault sweep over ", length(sc_ser.rows), " buses: serial ", round(t_ser
 println("rows identical: ", isequal(sc_ser.rows, sc_par.rows))
 ````
 
-Reading aid: on Colab's free tier you usually get 1-2 vCPUs, so the
+Reading aid (Example 6.1): on Colab's free tier you usually get 1-2
+vCPUs, so the
 factor here stays modest (with one thread the parallel call falls back
 to the very same serial function). The real effect wants your local
 machine: `julia --threads=auto --project=.
@@ -893,8 +966,8 @@ examples/run_parallel_suite.jl` runs the three dedicated demos, island
 solving (`power_flow.islands.mode: solve_parallel`), this fault sweep at
 8000 buses, and a full N-1 contingency batch on case1354pegase (measured
 71.7 s serial vs 17.6 s on 16 threads), each asserting serial/parallel
-identity. The N-1 batch itself is chapter 5; on a large case it is the
-prime customer of these threads.
+identity. The N-1 batch itself is chapter 5 (Example 5.1); on a large
+case it is the prime customer of these threads.
 
 ## Where to go next
 

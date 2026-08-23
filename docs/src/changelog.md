@@ -1,3 +1,30 @@
+# Version 0.9.16 - unreleased
+
+CGMES without the topology file, and a tour that teaches CGMES itself.
+
+- **Node-breaker deliveries import without a TP profile.** Real EMS and
+  substation exports often ship EQ+SSH only; until now the import needed
+  the sender's `TopologicalNode`s. A topology processor now derives the
+  bus partition itself: connectivity nodes aggregate across closed
+  switches (SSH state wins over `normalOpen`, out-of-service counts as
+  open), retained switches stay bus couplers, boundary nodes adopt the
+  boundary set. TP-carrying deliveries are untouched, and the derived
+  partition reproduces the shipped TP bus for bus on the conformity sets.
+  A delivery with neither TP nor connectivity nodes now aborts with the
+  import analysis instead of a confusing downstream error. See
+  [CGMES Import](cgmes_import.md).
+- **A CGMES workshop tour.** New expert-level Colab tour on the official
+  ENTSO-E conformity sets: anatomy of a delivery, the import analysis on
+  a broken one, bus-branch import with SV validation, node-breaker with
+  and without TP, and the export round trip.
+- **`analyzeCGMES` is exported.** The analysis entry point was documented
+  but reachable only as `Sparlectra.CGMESImporter.analyzeCGMES`; it now
+  loads with `using Sparlectra`.
+- **Workshop editorial pass.** Every example in every workshop carries a
+  unique number (`Example <chapter>.<n>`), comments reference the numbers
+  they discuss, and every introduced test network shows a line diagram or
+  points at one. All workshops state their AI-assisted origin.
+
 # Version 0.9.15 - 2026-08-23
 
 Fix and polish, and observability theory you can execute.

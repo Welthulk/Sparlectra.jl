@@ -436,6 +436,12 @@ function run_webui_fast_tests()
       script = joinpath(Sparlectra.SPARLECTRA_ROOT, "tools", "generate_sbom.jl")
       @test isfile(script)
       ENV["SPARLECTRA_SBOM_DRY_RUN"] = "1"
+      # the script reads the process-global ARGS for its output path; when
+      # the test runner itself was invoked with a CLI profile argument
+      # (`runtests.jl all`), that argument would leak in as the outfile
+      # ("would write: .../all") and break the filename assertion below
+      prev_args = copy(ARGS)
+      empty!(ARGS)
       try
         sandbox = Module()
         text = mktemp() do path, io
@@ -449,6 +455,7 @@ function run_webui_fast_tests()
         @test occursin("Sparlectra.spdx.json", text)
         @test occursin("dry run finished", text)
       finally
+        append!(ARGS, prev_args)
         delete!(ENV, "SPARLECTRA_SBOM_DRY_RUN")
       end
     end

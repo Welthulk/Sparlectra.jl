@@ -61,6 +61,7 @@ summary at the end): `run_powerflow_suite.jl`, `run_others_suite.jl`,
 | `exp_ac_rescue_dc_fallback.jl` | Non-convergence handling: `power_flow.rescue` strategy ladder plus `power_flow.dc.fallback` standalone-DC result | others |
 | `exp_cgmes_import_analysis.jl` | `analyzeCGMES` report naming the missing declared dependency of an incomplete CGMES delivery | others |
 | `exp_cgmes_infer_base_voltages.jl` | `cgmes_import.infer_base_voltages`: reconstruct missing nominal voltages from the SV state and solve | others |
+| `exp_cgmes_topology_processor.jl` | Node-breaker import without a TP profile (#314): derived bus partition compared bus for bus against the shipped TP on MiniGrid | others |
 | `machine_remote_voltage_control.jl` | Remote voltage control via machine reactive power ([theory](remote_voltage_control.md)), incl. the honest `at_limit` outcome | others |
 | `using_links.jl` | Busbar coupler as bus link, open/close behavior | others |
 | `network_analyzer.jl` | Topology analysis before/after removing a branch | others |

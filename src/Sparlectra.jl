@@ -391,6 +391,7 @@ export
   createNetFromDTFFile,                   # Import a legacy DTF file as Net.
   CGMESImporter,                          # Lean CGMES reader and diagnostics (Stage 0).
   summarizeCGMES,                         # Diagnose a CGMES delivery without building a Net.
+  analyzeCGMES,                           # Explain why a delivery cannot import (missing dependencies, unresolved refs).
   createNetFromCGMES,                     # Import a CGMES delivery as Net (Stage 1).
   importCGMES,                            # CGMES import with full result (Net + SC data + report).
   compareWithSV,                          # Compare a solved CGMES import against its SV profile.
@@ -619,7 +620,7 @@ include("createnet_powermat.jl")
 include("equicircuit.jl")
 include("DTFImporter.jl")
 include("cgmes/CGMESImporter.jl")
-import .CGMESImporter: summarizeCGMES, createNetFromCGMES, importCGMES, compareWithSV, shortCircuitCoverage, printShortCircuitCoverage, writeCGMESFiles, CGMESLineShortCircuit, cgmesLineShortCircuitData
+import .CGMESImporter: summarizeCGMES, createNetFromCGMES, importCGMES, compareWithSV, analyzeCGMES, shortCircuitCoverage, printShortCircuitCoverage, writeCGMESFiles, CGMESLineShortCircuit, cgmesLineShortCircuitData
 include("limits.jl")
 include("losses.jl")
 include("condition_number.jl")

@@ -659,6 +659,12 @@ end
 # open → ignored. SSH `open` overrides the EQ default `normalOpen`.
 const _SWITCH_CLASSES = (:Switch, :Breaker, :Disconnector, :LoadBreakSwitch, :Jumper, :ProtectedSwitch)
 
+# THE switch-openness rule, shared verbatim by the bus-branch link mapping
+# below and the node-breaker topology processor (#314): SSH `open`
+# overrides the EQ default `normalOpen`, and an out-of-service switch
+# cannot conduct whatever its open flag says.
+_switchIsOpen(ctx::_MapCtx, sw::CIMObject)::Bool = something(boolval(sw, :open), boolval(sw, :normalOpen), false) || !_inService(ctx, sw)
+
 function _mapSwitches!(net, store, topo, created, svmap, ctx::_MapCtx)
   for cls in _SWITCH_CLASSES
     for sw in objectsOf(store, cls)
@@ -2304,6 +2310,22 @@ function importCGMES(;
     for ((cls, key), n) in sort!(collect(counts))
       push!(ctx.messages, "notice: multi-valued reference $(cls).$(key) on $(n) object(s) — ref() reads the first value, the full list is in refsAll")
     end
+  end
+
+  # node-breaker deliveries without a TP profile (#314): derive the bus
+  # partition from connectivity nodes and switch states BEFORE the
+  # bus-branch topology is built; TP-carrying deliveries skip this
+  applyNodeBreakerTopologyProcessor!(store, ctx)
+
+  # with neither a TP profile nor node-breaker connectivity there is no
+  # topology information at all; explain instead of mapping into a void
+  # (boundary-set TNs alone do not count: TP_BD only describes the seam,
+  # so a delivery whose own area has no TN would otherwise fall through
+  # to a confusing downstream error, e.g. "no slack candidate")
+  if !any(tn -> !(tn.mrid in store.boundary), objectsOf(store, :TopologicalNode))
+    analysis = importFailureAnalysis(store)
+    print(analysis)
+    throw(CGMESImportError("CGMES import: the delivery carries no topology information, neither a TP profile (TopologicalNode) nor usable node-breaker data (ConnectivityNode plus switches). A bus-branch delivery needs its TP file; a node-breaker delivery needs its EQ connectivity. See the import analysis (CLI: printed above; Web UI runs: cgmes.log).", analysis))
   end
 
   topo = buildTopology(store; infer_base_voltages = infer_base_voltages, messages = ctx.messages)

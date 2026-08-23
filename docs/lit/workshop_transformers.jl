@@ -29,6 +29,9 @@
 #
 # [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_transformers.ipynb)
 #
+# > **Note:** This workshop was created with AI assistance and is reviewed
+# > and curated by the maintainer; it is not a fully machine-generated text.
+#
 # A transformer enters the power flow with exactly two adjustable numbers:
 # the winding ratio $\tau$ and the phase shift $\varphi$. The ratio tap
 # (OLTC) moves $\tau$ and thereby VOLTAGE; the phase tap (PST, in German a
@@ -117,7 +120,8 @@ println("warm: power flow ", round(t_pf; digits = 2), " s, control loop ", round
 #
 # ## Chapter 1: the ratio tap (OLTC) moves voltage
 #
-# A 380/110 kV transformer feeds a 60 MW load. The OLTC has 19 positions
+# **Example 1: the ratio tap moves voltage.** A 380/110 kV transformer
+# feeds a 60 MW load. The OLTC has 19 positions
 # (-9 to +9) of 3.8 kV each, exactly 1 percent of 380 kV per step. We
 # compute $\tau$ for a few positions with the device formula and watch the
 # load-side voltage follow:
@@ -147,7 +151,7 @@ for step in (-5, 0, 5)
   println("step ", lpad(step, 3), ": tau = ", round(tau; digits = 4), "  ->  Vm(B) = ", bus_vm(net, "B"), " pu")
 end
 
-# Reading aid: five steps move tau by 5 percent and the load voltage by
+# Reading aid (Example 1): five steps move tau by 5 percent and the load voltage by
 # roughly the same amount, in the opposite direction: raising tau means
 # more turns on the primary, so the secondary voltage drops. This manual
 # sweep is exactly what the OLTC CONTROLLER automates against a voltage
@@ -156,7 +160,8 @@ end
 #
 # ## Chapter 2: the phase tap (PST) moves power
 #
-# Now the loop network every PST lives for: a transformer in parallel with
+# **Example 2: the phase tap moves power.** Now the loop network every
+# PST lives for: a transformer in parallel with
 # a line. Without a phase shift the flow splits by impedance and stays
 # put. Every phase-tap step tilts the angle across the transformer and
 # REROUTES active power between the two parallel paths:
@@ -194,7 +199,7 @@ for step in (-6, 0, 6)
   println("step ", lpad(step, 3), ": phi = ", lpad(round(tap.effective_shift_deg; digits = 2), 6), " deg, tau = ", round(tap.effective_ratio; digits = 4), "  ->  P(trafo) = ", round(get_branch_p_from_to_mw(net, "S", "M"); digits = 1), " MW of 70")
 end
 
-# Reading aid: at neutral the transformer takes the larger share (it has
+# Reading aid (Example 2): at neutral the transformer takes the larger share (it has
 # the lower reactance). Six steps of phase shift swing tens of MW from
 # one parallel path to the other while the total delivery stays 70 MW
 # plus losses: the PST does not produce power, it REROUTES it. The
@@ -203,10 +208,13 @@ end
 #
 # ## Chapter 3: closing the loop, and the X(alpha) subtlety
 #
-# In operation nobody dials raw steps: a target flow is given and the
-# outer control loop moves the tap. `addPowerTransformerControl!` with
+# **Example 3: closing the loop.** In operation nobody dials raw steps: a
+# target flow is given and the
+# outer control loop moves the tap, here on the same S/M/L parallel-path
+# loop as Example 2 (diagram there), with the source raised to 1.02 pu.
+# `addPowerTransformerControl!` with
 # `control_phase = true` regulates the active power through the
-# transformer. One physical subtlety makes the difference to chapter 2:
+# transformer. One physical subtlety makes the difference to Example 2:
 # a real PST's series reactance is not constant, it follows the device
 # characteristic $X(\alpha)$ as the boost winding moves. Attach a
 # `PhaseTapChangerModel` with `x_min`/`x_max` to the winding and every
@@ -238,7 +246,7 @@ run_sparlectra(net = net)
 println("controller: P(trafo) ", round(p0; digits = 1), " -> ", round(get_branch_p_from_to_mw(net, "S", "M"); digits = 1), " MW (target ", round(p0 - 8.0; digits = 1), ")")
 println("            settled at phi = ", tbr.phase_shift_deg, " deg with x_pu = ", round(tbr.x_pu; digits = 4), " (device characteristic, not the 0.08 import value)")
 
-# Reading aid: the converged reactance sits ABOVE the import-time 0.08 pu
+# Reading aid (Example 3): the converged reactance sits ABOVE the import-time 0.08 pu
 # because the controller left neutral and the branch follows
 # $X(\alpha)$. Without the typed model the loop would steer the same
 # target with a slightly wrong (static) reactance; the runnable
@@ -247,16 +255,21 @@ println("            settled at phi = ", tbr.phase_shift_deg, " deg with x_pu = 
 #
 # ## Chapter 4: the three-winding transformer
 #
-# A 3WT is solved as its STAR EQUIVALENT: one auxiliary bus in the middle
+# **Example 4: the three-winding transformer.** A 3WT is solved as its
+# STAR EQUIVALENT: one auxiliary bus in the middle
 # and three two-winding legs, one per winding. A tap changer always sits
-# on ONE winding, so in the equivalent it lands on one leg:
+# on ONE winding, so in the equivalent it lands on one leg. The test
+# network hangs the star between a slack feeder and an MV load:
 #
 # ```text
-#   B2 (380 kV, HV) ==leg 1==+
-#                            |
-#   B3 (110 kV, MV) ==leg 2==+ AUX (star point)
-#                            |
-#   B4 ( 20 kV, LV) ==leg 3==+
+#   B1 (slack) ---- B2 (380 kV, HV) ==leg 1==+
+#                                            |
+#   B5 (load) ----- B3 (110 kV, MV) ==leg 2==+ AUX (star point)
+#                                            |
+#                   B4 ( 20 kV, LV) ==leg 3==+
+#
+#   ----  AC line    ==leg==  2WT leg of the star equivalent
+#   B5 carries the 80 MW load, B4 a 5 MVAr shunt
 # ```
 
 function build_3wt(; oltc_step::Int)
@@ -288,7 +301,7 @@ for step in (0, 5)
   println("OLTC step ", step, " on the HV leg: Vm(B3) = ", bus_vm(net3wt, "B3"), " pu, Vm(B4) = ", bus_vm(net3wt, "B4"), " pu")
 end
 
-# Reading aid: the tap sits on the HV leg, so BOTH output windings move
+# Reading aid (Example 4): the tap sits on the HV leg, so BOTH output windings move
 # together; a tap on the MV leg would move only B3. One honest note: the
 # tap objects that `create3WTWindings!` can carry are not yet wired into
 # the Net-building 3WT path, so this notebook computes the correction

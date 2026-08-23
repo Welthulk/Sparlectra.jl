@@ -8,6 +8,9 @@ EditURL = "../../lit/workshop_distributed_slack.jl"
 
 [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_distributed_slack.ipynb)
 
+> **Note:** This workshop was created with AI assistance and is reviewed
+> and curated by the maintainer; it is not a fully machine-generated text.
+
 A classical power flow gives the entire active-power imbalance, every
 megawatt of load not covered by scheduled generation, plus all network
 losses, to ONE reference bus. Real interconnections do not work that way:
@@ -38,7 +41,8 @@ so the chapters below run at full speed.
 using Sparlectra
 ````
 
-The study case as a MATPOWER file: a four-bus ring with a DELIBERATE
+The study case as a MATPOWER file: a four-bus ring, drawn as a diagram
+in the study-case section below, with a DELIBERATE
 20 MW shortfall (70 MW load, only 50 MW scheduled PV generation), so
 somebody must visibly cover the gap. The 21st generator column is the
 MATPOWER participation factor APF: 0.75 for G2 and 0.25 for G3,
@@ -122,7 +126,8 @@ the network losses are the imbalance $\lambda$ someone has to deliver.
 
 ## Chapter 1: the classical single slack
 
-Without distributed slack, the answer is brutal: the REF bus alone
+**Example 1: the classical single slack.** Without distributed slack,
+the answer is brutal: the REF bus alone
 absorbs everything. The PV buses deliver exactly their schedule, to the
 kilowatt, no matter how large the gap is.
 
@@ -133,13 +138,15 @@ println("classical single slack:")
 print_beyond_schedule(net)
 ````
 
-Reading aid: G1 delivers the 20 MW shortfall plus all losses. On a small
+Reading aid (Example 1): G1 delivers the 20 MW shortfall plus all
+losses. On a small
 demo that is harmless; on a real interconnection it concentrates hundreds
 of MW on one arbitrary bus, distorts the flows around it, and tells you
 nothing about how the fleet would actually respond.
 
 ## Chapter 2: pg_weighted, share by schedule (the default)
 
+**Example 2: share by schedule.**
 `distributed_slack_enabled = true` turns the imbalance into a solver
 state. The weights come from `p_mode`. The default `:pg_weighted` uses
 the SCHEDULED Pg of every generator-type prosumer at a REF or PV bus:
@@ -157,6 +164,7 @@ print_beyond_schedule(net)
 
 ## Chapter 3: imported, share by declared participation factors
 
+**Example 3: share by declared participation factors.**
 Grid data often DECLARES the participation: MATPOWER carries it in the
 optional `APF` generator column, CGMES in `normalPF`. Sparlectra imports
 both into `ProSumer.participationFactor`, and `p_mode = :imported` uses
@@ -174,11 +182,13 @@ print_beyond_schedule(net)
 
 ## Chapter 4: headroom_weighted, share by free capacity
 
+**Example 4: share by free capacity.**
 `:headroom_weighted` uses `max(maxP - Pg, 0)`: whoever has the most
 UNUSED capacity takes the most. Two things change against the earlier
-modes. First, the REFERENCE generator joins the pool: candidates are
-the generators at REF or PV buses, and under pg_weighted (Pg = 0) and
-imported (no APF) the slack unit was dropped as invalid, but its
+modes (Examples 2 and 3). First, the REFERENCE generator joins the
+pool: candidates are the generators at REF or PV buses, and under
+pg_weighted (Example 2, Pg = 0) and imported (Example 3, no APF) the
+slack unit was dropped as invalid, but its
 headroom of 250 MW is a perfectly valid weight. The raw weights are
 therefore 250 : 70 : 80. Second, note the reversal among the PV units:
 G3, the SMALLER unit, now takes more than G2, because 100 - 20 leaves
@@ -195,6 +205,7 @@ print_beyond_schedule(net)
 
 ## Chapter 5: explicit, you decide
 
+**Example 5: explicit weights.**
 `p_mode = :explicit` takes the weights from a table you pass in (config
 key `power_flow.distributed_slack.weights`, or the keyword below), keyed
 by bus name or bus index. Weights need not sum to one; normalization is
@@ -226,7 +237,8 @@ Whatever the mode, the same pipeline runs per synchronous island:
 
 ## The honest failure: no valid participant
 
-What if the declared data is missing? `:imported` on a case WITHOUT any
+**Example 6: the honest failure.** What if the declared data is missing?
+`:imported` (Example 3) on a case WITHOUT any
 APF column drops every candidate. The default
 `distributed_slack_fallback = :error` refuses to guess and throws an
 actionable error; `fallback = :ref_only` warns and solves classically
@@ -242,7 +254,7 @@ println("fallback ref_only: solved classically, the slack absorbs everything aga
 print_beyond_schedule(no_apf)
 ````
 
-Reading aid: with `:error` (the default) the message names the island,
+Reading aid (Example 6): with `:error` (the default) the message names the island,
 the mode, and the number of dropped candidates, and points at
 `fallback=ref_only`; nothing silently degrades to a single slack.
 

@@ -23,6 +23,9 @@
 #
 # [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour_control.ipynb)
 #
+# > **Note:** This workshop was created with AI assistance and is reviewed
+# > and curated by the maintainer; it is not a fully machine-generated text.
+#
 # > **Level: Advanced and up.** You should have the
 # > [basic tour](https://welthulk.github.io/Sparlectra.jl/generated/workshop_tour/)
 # > behind you (building nets, reading results, chapter 4's tap control);
@@ -53,9 +56,11 @@
 
 # ## Warm-up and the substation
 #
-# The study network is the classical two-transformer substation: a strong
+# **Example 1.1: the substation, and a first innocent solve.** The study
+# network is the classical two-transformer substation: a strong
 # 110-kV grid connection, two identical 110/20-kV units in parallel onto
-# one 20-kV busbar, and a feeder load behind it.
+# one 20-kV busbar, and a feeder load behind it. All later examples run
+# fresh copies of this network (`build_substation`).
 #
 # ```text
 #            HV (110 kV, slack 1.02 pu)
@@ -107,12 +112,15 @@ t0 = [br for br in net0.branchVec if br.ratio != 0.0]
 println("aligned taps: T1 carries ", round(t0[1].fBranchFlow.pFlow; digits = 2), " MW / ", round(t0[1].fBranchFlow.qFlow; digits = 2), " MVAr, ",
         "T2 carries ", round(t0[2].fBranchFlow.pFlow; digits = 2), " MW / ", round(t0[2].fBranchFlow.qFlow; digits = 2), " MVAr")
 
-# Reading aid: identical units, identical taps, so the load splits evenly.
-# This is the healthy state every coordination scheme wants to preserve.
+# Reading aid (Example 1.1): identical units, identical taps, so the load
+# splits evenly. This is the healthy state every coordination scheme
+# wants to preserve.
 #
 # ## The circulating-current trap
 #
-# Now the deliberate mistake: T1 steps four taps UP, T2 four taps DOWN.
+# **Example 2.1: misaligned taps.** Now the deliberate mistake, on a fresh
+# copy of the Example 1.1 substation (diagram above): T1 steps four taps
+# UP, T2 four taps DOWN.
 # The busbar voltage barely moves (the two errors cancel at the LV node),
 # but the RATIO MISMATCH drives a reactive current around the
 # HV-T1-LV-T2-HV loop that does nothing except heat both transformers:
@@ -125,7 +133,8 @@ solve!(net1)
 println("misaligned taps: T1 carries ", round(t1[1].fBranchFlow.qFlow; digits = 2), " MVAr, T2 carries ", round(t1[2].fBranchFlow.qFlow; digits = 2), " MVAr")
 println("LV busbar voltage: ", round(get_bus_vm_pu(net1, "LV"); digits = 4), " pu (vs ", round(get_bus_vm_pu(net0, "LV"); digits = 4), " pu aligned)")
 
-# Reading aid: the load still needs only 12 MVAr, but the loop now pushes
+# Reading aid (Example 2.1): the load still needs only 12 MVAr, but the
+# loop now pushes
 # tens of MVAr through one unit and pulls them back through the other,
 # with opposite signs: that difference is pure circulation. Nothing in the
 # busbar voltage betrays it; you have to look at the per-unit flows. THIS
@@ -134,18 +143,21 @@ println("LV busbar voltage: ", round(get_bus_vm_pu(net1, "LV"); digits = 4), " p
 #
 # ## Why two independent controllers make it worse
 #
-# The tempting setup, one voltage controller per transformer on the same
-# busbar target, is exactly such a scheme. Each controller measures the
-# same voltage but steps its own tap; nothing forces the two taps to move
-# together. Sparlectra warns at registration when a second independent
-# tap controller targets an already-regulated bus:
+# **Example 3.1: two independent controllers.** The tempting setup, one
+# voltage controller per transformer on the same busbar target, is
+# exactly such a scheme (again a fresh copy of the Example 1.1
+# substation). Each controller measures the same voltage but steps its
+# own tap; nothing forces the two taps to move together. Sparlectra warns
+# at registration when a second independent tap controller targets an
+# already-regulated bus:
 
 net2 = build_substation("fighting")
 addPowerTransformerControl!(net2; trafo = trafo_ids[1], mode = :voltage, target_bus = "Feeder", target_vm_pu = 1.0)
 ## the second registration triggers the warning naming the trap
 addPowerTransformerControl!(net2; trafo = trafo_ids[2], mode = :voltage, target_bus = "Feeder", target_vm_pu = 1.0)
 
-# Reading aid: the warning (look above) says it plainly: two controllers
+# Reading aid (Example 3.1): the warning (look above) says it plainly:
+# two controllers
 # on one voltage fight each other via circulating reactive power. On
 # well-behaved cases they may happen to move in lockstep; on any
 # asymmetry (unequal starting taps, one unit at a range end, measurement
@@ -156,8 +168,9 @@ addPowerTransformerControl!(net2; trafo = trafo_ids[2], mode = :voltage, target_
 #
 # ## The master/slave group
 #
-# One controller owns the group: the MASTER runs the ordinary discrete
-# voltage loop, and every accepted master step is mirrored onto the
+# **Example 4.1: the master/slave group.** One controller owns the group
+# (once more the substation of Example 1.1): the MASTER runs the ordinary
+# discrete voltage loop, and every accepted master step is mirrored onto the
 # FOLLOWERS step-synchronously (whole steps of each follower's own
 # `tap_step`, clamped to its range). Followers cannot carry their own
 # ratio controller and cannot follow two groups; both are enforced at
@@ -181,11 +194,11 @@ for e in controllableElements(net3)
   println("  element view: ", e.element, " -> ", e.quantity, " @ ", e.target, ", status = ", e.status)
 end
 
-# Reading aid: the master stepped, the follower mirrored, the taps stayed
-# aligned, and the reactive power splits evenly again: the healthy picture
-# from the first solve, now WITH the voltage target met. Declaratively the
-# same group is one `power_transformer` entry with a `followers` list
-# under `control.controllers`.
+# Reading aid (Example 4.1): the master stepped, the follower mirrored,
+# the taps stayed aligned, and the reactive power splits evenly again: the
+# healthy picture from Example 1.1, now WITH the voltage target met.
+# Declaratively the same group is one `power_transformer` entry with a
+# `followers` list under `control.controllers`.
 #
 # ## Where the data comes from: CGMES RegulatingControl
 #
@@ -202,7 +215,7 @@ end
 # the master, every further one joins as a follower, reported in the
 # import messages as `follows the group of ...`. Without that grouping, a
 # delivery with a regulated parallel pair would import as two independent,
-# fighting controllers, the exact trap from the previous chapter, produced
+# fighting controllers, the exact trap of Example 3.1, produced
 # straight from the data with no user error involved. Tap changers with
 # `controlEnabled = false` stay at their fixed position.
 #

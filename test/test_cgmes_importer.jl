@@ -1096,6 +1096,108 @@ function run_cgmes_importer_tests()
       @info "CGMES MicroGrid fixture not cached — skipping ENTSO-E fixture tests (run examples/experimental/cgmes_fetch_testsets.jl to enable)"
     end
 
+    # #314: node-breaker deliveries WITHOUT their TP profile import through
+    # the topology processor (derived bus partition from connectivity nodes
+    # and switch states). Reference: the same delivery WITH its TP file.
+    nb_mini = joinpath(cache, "extracted", "MiniGrid", "NodeBreaker")
+    nb_small = joinpath(cache, "extracted", "SmallGrid", "NodeBreaker")
+    nb_full = joinpath(cache, "extracted", "FullGrid")
+    if isdir(nb_mini) && isdir(nb_small) && isdir(nb_full)
+      @testset "Node-breaker topology processor without TP (#314)" begin
+        # both sides load the SAME profile subset (EQ+SSH, no SV so tap
+        # positions come from SSH on both); only the TP file differs
+        no_sv_files(dir) = [f for f in readdir(dir; join = true) if endswith(f, ".xml") && !occursin("_SV", basename(f))]
+        no_tp_files(dir) = [f for f in no_sv_files(dir) if !occursin("_TP", basename(f))]
+        ran_processor(res) = any(m -> occursin("topology processor", m), res.messages)
+        sorted_vm(net) = sort([n._vm_pu for n in net.nodeVec])
+
+        # exact = the derived partition reproduces the shipped TP exactly.
+        # FullGrid: false, and that is a DATA finding, not a processor gap:
+        # its TP assigns the terminals of ONE ConnectivityNode (the shared
+        # load node of BE-Load_1/BE_CL_1/BE_NC_1) to TWO different
+        # TopologicalNodes. No processor can derive that split from the
+        # connectivity graph; the derived one-CN-one-bus partition is the
+        # graph-consistent answer, and 10 MW of load sit one bus apart.
+        cases = [
+          ("MiniGrid NB BaseCase", joinpath(nb_mini, "CGMES_v2.4.15_MiniGridTestConfiguration_BaseCase_Complete_v3"), joinpath(nb_mini, "CGMES_v2.4.15_MiniGridTestConfiguration_Boundary_v3"), true),
+          ("SmallGrid NB BaseCase", joinpath(nb_small, "CGMES_v2.4.15_SmallGridTestConfiguration_BaseCase_Complete_v3.0.0"), joinpath(nb_small, "CGMES_v2.4.15_SmallGridTestConfiguration_Boundary_v3.0.0"), true),
+          ("FullGrid NB", joinpath(nb_full, "CGMES_v2.4.15_FullGridTestConfiguration_NB_BE_v4"), joinpath(nb_full, "CGMES_v2.4.15_FullGridTestConfiguration_BD_v1"), false),
+        ]
+        for (label, dir, bdset, exact) in cases
+          isdir(dir) || continue
+          a = importCGMES(path = vcat(no_tp_files(dir), bdset), name = "nb_no_tp")
+          b = importCGMES(path = vcat(no_sv_files(dir), bdset), name = "nb_tp")
+          @test ran_processor(a)
+          @test !ran_processor(b)                       # TP path untouched
+          # identical partition size and identical element sets
+          @test length(a.net.nodeVec) == length(b.net.nodeVec)
+          @test length(a.net.branchVec) == length(b.net.branchVec)
+          @test length(a.net.linkVec) == length(b.net.linkVec)   # FullGrid: 4 retained couplers
+          # flat start on BOTH sides: the comparison is about the derived
+          # partition, not about start values (the no-TP side has no SV by
+          # construction, and FullGrid's shipped SV state is known to be
+          # inconsistent with its own model)
+          a.net.flatstart = true
+          b.net.flatstart = true
+          _, ea = runpf!(a.net, 60, 1e-8, 0; islands_enabled = true)
+          _, eb = runpf!(b.net, 60, 1e-8, 0; islands_enabled = true)
+          @test ea == 0
+          @test eb == 0
+          if exact
+            # identical power flow up to bus naming: the sorted magnitude
+            # multisets must agree
+            @test maximum(abs.(sorted_vm(a.net) .- sorted_vm(b.net))) < 1e-8
+          else
+            # FullGrid known deviation (see the cases comment): the split
+            # load node moves 10 MW one bus over; the solutions stay close
+            # but are legitimately not identical
+            @test maximum(abs.(sorted_vm(a.net) .- sorted_vm(b.net))) < 0.05
+          end
+        end
+
+        # T1 (out-of-service equipment): the sender's TP may place DEAD
+        # fragments differently than the processor derives them; extra
+        # buses are admissible only for such fragments. The live solution
+        # must still contain every TP-side bus voltage.
+        t1 = joinpath(nb_mini, "CGMES_v2.4.15_MiniGridTestConfiguration_T1_Complete_v3")
+        bdm = joinpath(nb_mini, "CGMES_v2.4.15_MiniGridTestConfiguration_Boundary_v3")
+        if isdir(t1)
+          a = importCGMES(path = vcat(no_tp_files(t1), bdm), name = "t1_no_tp")
+          b = importCGMES(path = vcat(no_sv_files(t1), bdm), name = "t1_tp")
+          @test ran_processor(a)
+          @test length(a.net.branchVec) == length(b.net.branchVec)
+          @test length(a.net.nodeVec) >= length(b.net.nodeVec)
+          _, ea = runpf!(a.net, 60, 1e-8, 0; islands_enabled = true)
+          _, eb = runpf!(b.net, 60, 1e-8, 0; islands_enabled = true)
+          @test ea == 0
+          @test eb == 0
+          va = sorted_vm(a.net)
+          for v in sorted_vm(b.net)   # TP multiset is contained in the derived one
+            @test any(x -> abs(x - v) < 1e-8, va)
+          end
+        end
+
+        # no topology information at all (bus-branch EQ without its TP,
+        # no ConnectivityNodes): the import must abort with the explaining
+        # analysis instead of falling through to a downstream error;
+        # boundary-set TNs alone must not count as topology
+        mg_be = joinpath(cache, "extracted", "MicroGrid", "BaseCase_BC", "CGMES_v2.4.15_MicroGridTestConfiguration_BC_BE_v2")
+        mg_bd = joinpath(cache, "extracted", "MicroGrid", "BaseCase_BC", "CGMES_v2.4.15_MicroGridTestConfiguration_BD_v2")
+        if isdir(mg_be)
+          err = try
+            importCGMES(path = vcat(no_tp_files(mg_be), mg_bd), name = "no_topo", require_boundary = false)
+            nothing
+          catch e
+            e
+          end
+          @test err isa Sparlectra.CGMESImporter.CGMESImportError
+          @test occursin("no topology information", err.message)
+        end
+      end
+    else
+      @info "CGMES node-breaker fixtures not cached, skipping topology-processor tests (#314)"
+    end
+
     @testset "3W-leg tap controller from TapChangerControl (#294 point 4)" begin
       dir = _cgmes_synth3w_dir()
       # without tap_control: no controllers, taps stay at their SSH position

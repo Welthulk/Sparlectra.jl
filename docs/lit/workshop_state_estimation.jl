@@ -25,6 +25,9 @@
 #
 # [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_state_estimation.ipynb)
 #
+# > **Note:** This workshop was created with AI assistance and is reviewed
+# > and curated by the maintainer; it is not a fully machine-generated text.
+#
 # A power flow computes the network state from an exact specification. A
 # real control room has the opposite problem: it receives many **redundant,
 # noisy measurements** (voltage magnitudes, injections, branch flows) and
@@ -101,10 +104,14 @@ println("warm: power flow ", round(t_pf; digits = 2), " s, estimator ", round(t_
 
 # ## Build the study network
 #
-# Seven 110 kV buses in a ring with two cross-connections, enough meshing
+# **Example 1: the closed estimation loop, from network build to estimated
+# state.** Seven 110 kV buses in a ring with two cross-connections, the
+# ring drawn in the introduction above, enough meshing
 # that branch-flow measurements carry real information. An external network
 # injection at `B1` is the slack, a generator feeds at `B3`, the other
-# buses carry loads.
+# buses carry loads. The sections up to the state inspection all belong to
+# this example: reference power flow, noisy measurement set, observability
+# check, estimation.
 
 net = Net(name = "workshop_se_7bus", baseMVA = 100.0)
 
@@ -240,7 +247,8 @@ end
 
 # ## Building measurement sets manually
 #
-# Real measurement sets are not derived from a solved power flow; they
+# **Example 2: a deliberately sparse manual set.** Real measurement sets
+# are not derived from a solved power flow; they
 # arrive from SCADA one by one. The `add*Measurement!` helpers resolve bus
 # and branch references for you, so assembling a set works just like
 # building the network. A deliberately sparse set like this one is a good
@@ -258,13 +266,17 @@ obs = evaluate_global_observability(net; flatstart = true, jacEps = 1e-6)
 println("sparse manual set quality: ", obs.quality)
 println("measurements: ", obs.n_measurements, ", states: ", obs.n_states)
 
-# Five measurements against 13 states: the check reports the shortfall
-# instead of letting the estimator run into a rank-deficient system.
+# Reading aid (Example 2): five measurements against 13 states: the check
+# reports the shortfall instead of letting the estimator run into a
+# rank-deficient system.
 #
 # ## Observability on paper: three small matrices
 #
 # Before the network-sized deep dive, the whole theory on matrices small
-# enough to read. First the MINIMAL case: three measurements, three
+# enough to read: three numbered examples (Examples 3 to 5), each comment
+# names the matrix it talks about.
+#
+# **Example 3 (`H_B`), the minimal case:** three measurements, three
 # states, the identity. Observable (structurally: every column finds its
 # own row in the matching; numerically: rank 3), but with $m = n$ every
 # single row is CRITICAL, losing any one loses a state:
@@ -278,7 +290,8 @@ obs_B = evaluate_observability_matrix(H_B)
 println("H_B: observable = ", obs_B.numerical_observable, ", dof = ", obs_B.dof)
 println("  critical rows: ", obs_B.numerical_critical_measurement_indices)
 
-# Now two extra rows, but BOTH duplicating the same information about
+# **Example 4 (`H_A`), duplicated information:** the same identity plus
+# two extra rows, but BOTH duplicating the same information about
 # states 1 and 2. The lesson: redundancy is PER STATE, not global. The
 # set has dof = 2, yet row 3 stays critical, because it is still the only
 # row that sees state 3; the two spare rows protect the wrong place:
@@ -297,16 +310,28 @@ for i in axes(H_A, 1)
   println("  row ", i, ": ", numerical_row_redundant(H_A, i) ? "redundant" : "CRITICAL", " (structural: ", structural_row_redundant(H_A, i) ? "redundant" : "CRITICAL", ")")
 end
 
-# Finally the bridge to NETWORKS: an incidence-like matrix. Read each row
-# as a measurement on a 4-bus chain: a flow between buses a and b becomes
-# the pair +1/-1 in columns a and b (a flow sees a DIFFERENCE), an
-# injection at bus k becomes a single +1 (it anchors one state). This is
-# how measurement placement turns into sparsity structure:
+# **Example 5 (`H_E`), the bridge to networks:** an incidence-like matrix
+# for a 4-bus chain, one row per measurement (the listing below says
+# which). In this
+# idealized form you can READ the measurement type off the numbers: a
+# flow between buses a and b sees only their DIFFERENCE, so its row is
+# the pair +1 in column a and -1 in column b; an injection at bus k
+# anchors one state, so its row has a single +1 in column k. Check it
+# row by row: rows 1, 2, 3, 5 each carry a +1/-1 pair (flows), row 4 is
+# the only single-entry row (the injection at bus 2).
 #
 # ```text
 #   row 1: flow 1-2    row 2: flow 2-3    row 3: flow 3-4
 #   row 4: injection at 2                 row 5: flow 1-3
 # ```
+#
+# One honest caveat before transferring this: the legibility is a
+# property of the TOY. In a real AC measurement Jacobian an injection row
+# touches its bus AND every neighbor, a flow row touches three or four
+# states, and the entries are sensitivities, not ones (the
+# `measurement_jacobian` output below, in Example 7, says "PflowMeas at
+# B1->B2 touches 3 states"). There the row DESCRIPTIONS carry the
+# what-and-where; the numbers only carry the coupling.
 
 H_E = [
   1.0 -1.0 0.0 0.0
@@ -319,12 +344,13 @@ obs_E = evaluate_observability_matrix(H_E)
 println("H_E: observable = ", obs_E.numerical_observable, ", dof = ", obs_E.dof)
 println("  critical rows: ", obs_E.numerical_critical_measurement_indices)
 
-# Reading aid: row 3 (the only path to bus 4) is critical; rows 1, 2, 5
-# form a triangle of alternatives around buses 1..3 and are redundant.
+# Reading aid (Example 5): row 3 (the only path to bus 4) is critical;
+# rows 1, 2, 5 form a triangle of alternatives around buses 1..3 and are
+# redundant.
 # Exactly this pattern, at network scale, is what the deep dive below
-# builds and breaks. The extended version of these examples (with a toy
-# spanning-tree game and tolerance experiments) lives in
-# `examples/state_estimation/h_matrix_observability_demo.jl`.
+# builds and breaks (Examples 7 and 8). The extended version of these
+# examples (with a toy spanning-tree game and tolerance experiments)
+# lives in `examples/state_estimation/h_matrix_observability_demo.jl`.
 #
 # ## Observability deep dive: where measurements must sit (advanced)
 #
@@ -363,7 +389,8 @@ println("  critical rows: ", obs_E.numerical_critical_measurement_indices)
 # Sparlectra reports exactly these components as
 # `unobservable_state_columns` on a not-observable global result.
 #
-# One warning before using the LOCAL check: restricting $H$ to the
+# **Example 6: why a local verdict can mislead.** One warning before
+# using the LOCAL check: restricting $H$ to the
 # columns you zoomed into (with the rows that touch them) is a NECESSARY
 # test, not a sufficient one. The smallest counterexample: a single flow
 # measurement between buses 1 and 2,
@@ -382,8 +409,9 @@ println("null space of H:           ", vec(round.(nullspace(H_flow); digits = 4)
 glob_flow = evaluate_observability_matrix(H_flow)
 println("global dark states:        ", glob_flow.unobservable_state_columns, "  (the rigorous answer)")
 
-# The local check remains useful, it localizes candidate regions fast,
-# but a positive local verdict must be confirmed globally; the docstrings
+# Reading aid (Example 6): the local check remains useful, it localizes
+# candidate regions fast, but a positive local verdict must be confirmed
+# globally; the docstrings
 # of both local helpers carry the same warning.
 #
 # The study network again, as a picture (ring plus two chords):
@@ -414,7 +442,8 @@ println("global dark states:        ", glob_flow.unobservable_state_columns, "  
 #
 # ### A minimal placement, built by hand
 #
-# The classical minimal recipe: a P/Q flow pair on every branch of a
+# **Example 7: a minimal placement, built by hand.** The classical
+# minimal recipe: a P/Q flow pair on every branch of a
 # SPANNING TREE (six branches for seven buses), plus one voltage-magnitude
 # anchor. The flow pairs fix all relative angles and magnitude ratios
 # along the tree, the anchor pins the absolute magnitude level, the slack
@@ -442,7 +471,7 @@ addVmMeasurement!(net; busName = "B1", value = net.nodeVec[net.busDict["B1"]]._v
 
 # The same placement, drawn into the line diagram. Legend: `x` = voltage
 # meter (Vm), `o` = P/Q flow pair on the branch, `(o)` = P/Q injection
-# pair at the bus (used in the repair below):
+# pair at the bus (used in the repair below, Example 9):
 #
 # ```text
 #     [x]B1 ──o── B2 ──o── B3
@@ -467,7 +496,7 @@ println("minimal tree set: quality = ", gmin.quality, " (", gmin.n_measurements,
 println("  structurally observable: ", gmin.structural_observable, ", numerically observable: ", gmin.numerical_observable, " (rank ", gmin.numerical_rank, ")")
 println("  redundancy dof = ", gmin.dof, ", critical measurements: ", length(gmin.numerical_critical_measurement_indices), " of ", gmin.n_measurements)
 
-# Reading aid: observable, but `quality = :critical` and EVERY row is on
+# Reading aid (Example 7): observable, but `quality = :critical` and EVERY row is on
 # the critical list: with zero redundancy, losing any single meter blinds
 # some part of the state. There is a beautiful residual-side view of the
 # same fact:
@@ -485,7 +514,8 @@ println("  redundancy dof = ", gmin.dof, ", critical measurements: ", length(gmi
 # (or injections) precisely to buy this redundancy.
 #
 # The matrix behind all of this is one call away: `measurement_jacobian`
-# returns $H$ with described rows and labeled state columns, ready for a
+# returns $H$, here for the Example 7 placement, with described rows and
+# labeled state columns, ready for a
 # placement report (the state-estimation example suite writes exactly such
 # a matrix-plus-stability page on every run):
 
@@ -496,7 +526,8 @@ println("row 1: ", r1.type, " at ", r1.location, " touches ", count(j -> abs(mj.
 #
 # ### Breaking a corner, and finding it with the local check
 #
-# Drop the B6-B7 flow pair: the spur toward B7 loses its only meters.
+# **Example 8: breaking a corner.** Drop the B6-B7 flow pair from the
+# Example 7 tree: the spur toward B7 loses its only meters.
 # Globally the verdict flips to `:not_observable`; LOCALLY the check can
 # say which states went dark. `evaluate_local_observability(net, cols)`
 # restricts $H$ to selected state columns; for B7 those are angle column 6
@@ -521,7 +552,7 @@ println("local B2: numerically observable = ", lb2.numerical_observable)
 ## local check on B7 (angle col 6, magnitude col 13): NO measurement even
 ## touches these states anymore, which the check reports as an error;
 ## this is the EASY case for the local test, the hard case (touched but
-## still dark) is the counterexample above, which only the global
+## still dark) is the Example 6 counterexample, which only the global
 ## null-space answer catches
 try
   evaluate_local_observability(net, [6, 13]; flatstart = true, jacEps = 1e-6)
@@ -531,13 +562,16 @@ end
 
 # ### Repairing with an injection
 #
-# A meter does not have to sit ON the dark bus pair. An INJECTION
-# measurement at B7 couples B7 to every neighbor (B6 and B1), because the
+# **Example 9: repairing with an injection.** A meter does not have to
+# sit ON the dark bus pair. Starting from the broken set of Example 8, an
+# INJECTION measurement at B7 couples B7 to every neighbor (B6 and B1),
+# because the
 # injected power is the sum over its incident branches; its Jacobian row
 # touches all their states. P and Q injection at B7 restore rank 13:
 
-p7 = net.nodeVec[net.busDict["B7"]]._pƩGen === nothing ? 0.0 : net.nodeVec[net.busDict["B7"]]._pƩGen
-addPinjMeasurement!(net; busName = "B7", value = p7 - 20.0, sigma = 1.0)   ## net injection: 20 MW load
+## B7 carries exactly its 20 MW / 6 MVAr load, so the true net injection
+## is -20 MW / -6 MVAr (consumption counts negative)
+addPinjMeasurement!(net; busName = "B7", value = -20.0, sigma = 1.0)
 addQinjMeasurement!(net; busName = "B7", value = -6.0, sigma = 1.0)
 grepaired = evaluate_global_observability(net; flatstart = true, jacEps = 1e-6)
 println("with P/Q injection at B7: quality = ", grepaired.quality, " (rank ", grepaired.numerical_rank, " of ", grepaired.n_states, ")")
@@ -564,9 +598,10 @@ println("with P/Q injection at B7: quality = ", grepaired.quality, " (rank ", gr
 # twelve orders of magnitude between rows of one matrix, which is why the
 # documentation flags a conditioning risk for tiny sigmas.
 #
-# Demonstration: demote B7 to a passive bus (drop its load in a local
-# copy), leave it dark with the broken-tree set, and watch the FREE
-# zero-injection knowledge repair observability:
+# **Example 10: the zero-injection repair.** The demonstration: demote B7
+# to a passive bus (drop its load in a local copy), leave it dark with
+# the broken-tree set of Example 8, and watch the FREE zero-injection
+# knowledge repair observability:
 
 net_p = deepcopy(net)
 removeProsumer!(net = net_p, busName = "B7", type = "LOAD")
@@ -588,12 +623,14 @@ println(length(added), " zero-injection rows added at the passive bus")
 g_zib = evaluate_global_observability(net_p; flatstart = true, jacEps = 1e-6)
 println("with ZIB:    quality = ", g_zib.quality, ", dof = ", g_zib.dof)
 
-# Reading aid: the ZIB pair acts exactly like the injection repair above,
-# it couples B7 to its neighbors, but it costs nothing: the information
+# Reading aid (Example 10): the ZIB pair acts exactly like the injection
+# repair of Example 9, it couples B7 to its neighbors, but it costs
+# nothing: the information
 # was in the model all along. The dof moves from -2 (a SHORTFALL of two
 # equations) to 0.
 #
-# How much does the sigma matter? The same set estimated twice, once with
+# **Example 11: the sigma trade-off.** How much does the sigma matter?
+# The same set as Example 10, estimated twice: once with
 # the near-constraint sigma and once with a soft one:
 
 for zib_sigma in (1e-6, 1e-2)
@@ -609,7 +646,7 @@ for zib_sigma in (1e-6, 1e-2)
   println("ZIB sigma = ", zib_sigma, ": converged = ", sev.converged, ", J = ", round(sev.objectiveJ; digits = 6), ", Vm(B7) = ", round(vm_b7; digits = 5), " pu, max/min weight ratio = ", round((0.8 / zib_sigma)^2; digits = 1))
 end
 
-# Reading aid: with clean synthetic data both sigmas land on the same
+# Reading aid (Example 11): with clean synthetic data both sigmas land on the same
 # state (the constraint is consistent with the flows), and $J$ stays near
 # zero. The difference is the CONDITIONING headroom: the weight ratio of
 # the normal equations grows from about 6.4e3 at sigma 1e-2 to 6.4e11 at
@@ -620,7 +657,8 @@ end
 #
 # ### PMU phasors and the reference-angle offset
 #
-# A PMU measures the voltage PHASOR: magnitude plus absolute angle,
+# **Example 12: PMU phasors and the reference-angle offset.** A PMU
+# measures the voltage PHASOR: magnitude plus absolute angle,
 # GPS-synchronized. In the estimator that is a tightly weighted `VmMeas`
 # and a `VaMeas` in degrees (`addPmuPhasorMeasurement!` adds the pair).
 # One subtlety makes PMU angles interesting: the PMU time base rarely
@@ -628,7 +666,8 @@ end
 # unknown OFFSET. With `state_estimation.pmu_ref_offset = auto` (the
 # default) the estimator adds that offset as an extra state and solves for
 # it; watch `n_states` grow from 13 to 14. We simulate two PMUs whose time
-# base is shifted by exactly 2 degrees:
+# base is shifted by exactly 2 degrees, added on top of the repaired
+# measurement set from Example 9:
 
 pmu_shift_deg = 2.0
 for bus in ("B4", "B6")
@@ -641,7 +680,7 @@ println("with 2 PMUs: quality = ", gpmu.quality, " (", gpmu.n_measurements, " ro
 se_pmu = runse!(net; maxIte = 15, tol = 1e-6, flatstart = true, jacEps = 1e-6, updateNet = false)
 println("SE converged: ", se_pmu.converged, ", estimated PMU reference offset: ", round(se_pmu.vaRefOffsetDeg; digits = 3), "° (true shift ", pmu_shift_deg, "°)")
 
-# Reading aid: the estimator recovers the 2° time-base shift as the extra
+# Reading aid (Example 12): the estimator recovers the 2° time-base shift as the extra
 # state instead of bending the bus angles toward it, and the estimated
 # network state stays anchored to the slack reference. Without the offset
 # state (`pmu_ref_offset = off`) the shifted PMU angles would fight the
