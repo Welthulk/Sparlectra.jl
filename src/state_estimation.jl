@@ -433,6 +433,23 @@ function _evaluate_observability_from_jacobian(H::Matrix{Float64}, activeOrigina
 
   hasCritical = !isempty(criticalNum) || !isempty(criticalStr)
 
+  # Unobservable state columns (the "dark" states): computed only on the
+  # not-observable path so observable sets pay nothing extra. The null
+  # space of H spans exactly the state directions no measurement sees;
+  # a state column with a nonzero component in ANY basis vector cannot be
+  # estimated (its value can drift inside the null space without changing
+  # a single measurement). `nullspace` returns an ORTHONORMAL basis, so a
+  # small absolute threshold on the entries is meaningful. Dense SVD cost:
+  # acceptable at workshop and distribution-network sizes (a 2700 x 2700
+  # null-space probe is seconds), and it only runs on failures.
+  dark = Int[]
+  if !numObs && n > 0 && m > 0
+    ns = nullspace(H)
+    for j = 1:n
+      any(k -> abs(ns[j, k]) > 1e-8, axes(ns, 2)) && push!(dark, j)
+    end
+  end
+
   return (
     numerical_observable = numObs,
     structural_observable = strObs,
@@ -445,6 +462,7 @@ function _evaluate_observability_from_jacobian(H::Matrix{Float64}, activeOrigina
     dof = ν,
     numerical_critical_measurement_indices = criticalNum,
     structural_critical_measurement_indices = criticalStr,
+    unobservable_state_columns = dark,
     quality = _redundancy_quality(numObs && strObs, ν, hasCritical),
   )
 end
@@ -496,6 +514,14 @@ end
 
 Evaluate global observability and single-row criticality directly on a matrix
 `H` (without building a network model).
+
+The result includes `unobservable_state_columns::Vector{Int}`: for a
+numerically NOT observable `H`, the state columns with a component above
+tolerance in any null-space basis vector, i.e. exactly the states no
+measurement pins down (their union partitions the network into observable
+islands). Empty for observable systems; computed only on the
+not-observable path (a dense null-space probe, fine at workshop and
+distribution-network sizes).
 """
 function evaluate_observability_matrix(H::AbstractMatrix{<:Real}; tol = nothing)
   m, _ = size(H)
@@ -508,6 +534,12 @@ end
 
 Evaluate local observability on a matrix `H` restricted to selected
 `stateCols`.
+
+Limitation: this column-restricted submatrix test is NECESSARY but not
+sufficient; a positive verdict can be wrong when the touching rows couple
+the selected states to neighbor states that are themselves undetermined
+(the rigorous per-state answer is `unobservable_state_columns` from the
+global check).
 """
 function evaluate_local_observability_matrix(H::AbstractMatrix{<:Real}, stateCols::Vector{Int}; tol = nothing)
   isempty(stateCols) && error("evaluate_local_observability_matrix: stateCols must not be empty")
@@ -541,12 +573,20 @@ measurement Jacobian.
 Includes global redundancy metrics
 - `redundancy = r = m - n`
 - `redundancy_ratio = ρ = m / n`
-- `dof = ν = m - n`
+- `dof = ν = m - n` (a COUNT difference: for an observable set it equals
+  `m - rank(H)`; for an unobservable set it can be negative and then reads
+  as a shortfall, not a redundancy)
 
 Quality classes:
 - `:good`: observable and no critical single measurement
 - `:critical`: observable, but at least one single critical measurement (or ν <= 0)
 - `:not_observable`: not observable
+
+For a not-observable set the result additionally names the dark states in
+`unobservable_state_columns` (state columns touched by the null space of
+`H`); empty when observable. This is the rigorous per-state answer that
+the column-restricted local check cannot give (see
+[`evaluate_local_observability`](@ref)).
 """
 function evaluate_global_observability(net::Net, measurements::Vector{Measurement}; flatstart::Bool = true, jacEps::Float64 = 1e-6, tol = nothing, pmuRefOffset::Symbol = state_estimation_config().pmu_ref_offset)
   activeMeas, activeIdx = _active_measurements_with_indices(measurements)
@@ -645,6 +685,12 @@ Interpretation:
   single critical measurement.
 - `:critical` means still observable but vulnerable to a single outage (or ν <= 0).
 - `:not_observable` means local states cannot be uniquely reconstructed.
+
+Limitation: this column-restricted test is NECESSARY but not sufficient; a
+positive verdict can be wrong when the touching rows couple the selected
+states to neighbor states that are themselves undetermined. The rigorous
+per-state answer is `unobservable_state_columns` from
+[`evaluate_global_observability`](@ref).
 """
 function evaluate_local_observability(net::Net, measurements::Vector{Measurement}, stateCols::Vector{Int}; flatstart::Bool = true, jacEps::Float64 = 1e-6, tol = nothing, pmuRefOffset::Symbol = state_estimation_config().pmu_ref_offset)
   isempty(stateCols) && error("evaluate_local_observability: stateCols must not be empty")

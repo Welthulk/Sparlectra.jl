@@ -166,6 +166,62 @@ end
 function test_state_estimation_matrix_observability_helpers()::Bool
   # Unit-checks matrix-only observability helpers (rank/matching/redundancy),
   # including local-column selection and expected error paths.
+  @testset "Unobservable state columns (null-space dark states)" begin
+    # the column-restricted local test is necessary but NOT sufficient: one
+    # flow between two buses makes the 1x1 submatrix for column 1 full
+    # rank, yet only the difference x1 - x2 is determined. The global
+    # null-space answer names both columns as dark.
+    H = [1.0 -1.0]
+    sub = evaluate_local_observability_matrix(H, [1])
+    @test sub.numerical_observable                         # the misleading positive verdict
+    glob = evaluate_observability_matrix(H)
+    @test !glob.numerical_observable
+    @test glob.unobservable_state_columns == [1, 2]        # the rigorous answer
+
+    # 7-bus workshop network: a spanning-tree flow set plus one Vm anchor
+    # is observable (empty dark list); dropping the B6-B7 pair leaves
+    # exactly B7's states dark: angle column 6 and magnitude column 13
+    net7 = Net(name = "dark_states", baseMVA = 100.0)
+    addBus!(net = net7, busName = "B1", vn_kV = 110.0, vm_pu = 1.02, va_deg = 0.0)
+    for i in 2:7
+      addBus!(net = net7, busName = "B$(i)", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
+    end
+    ring = [("B1", "B2"), ("B2", "B3"), ("B3", "B4"), ("B4", "B5"), ("B5", "B6"), ("B6", "B7"), ("B7", "B1"), ("B2", "B5"), ("B3", "B6")]
+    for (f, t) in ring
+      addPIModelACLine!(net = net7, fromBus = f, toBus = t, r_pu = 0.010, x_pu = 0.080, b_pu = 0.0, status = 1)
+    end
+    addProsumer!(net = net7, busName = "B1", type = "EXTERNALNETWORKINJECTION", referencePri = "B1", vm_pu = 1.02, va_deg = 0.0)
+    addProsumer!(net = net7, busName = "B3", type = "GENERATOR", p = 60.0, q = 10.0)
+    for (b, p, q) in [("B2", 35.0, 10.0), ("B4", 45.0, 15.0), ("B5", 25.0, 8.0), ("B6", 30.0, 10.0), ("B7", 20.0, 6.0)]
+      addProsumer!(net = net7, busName = b, type = "LOAD", p = p, q = q)
+    end
+    ok7, msg7 = validate!(net = net7)
+    ok7 || error("test net invalid: $msg7")
+    _, erg7 = runpf!(net7, 40, 1e-10, 0)
+    @test erg7 == 0
+    calcNetLosses!(net7)
+
+    tree = [("B1", "B2"), ("B2", "B3"), ("B3", "B4"), ("B4", "B5"), ("B5", "B6"), ("B6", "B7")]
+    fill_tree! = function (n, pairs)
+      empty!(n.measurements)
+      for (f, t) in pairs
+        addPflowMeasurement!(n; fromBus = f, toBus = t, value = get_branch_p_from_to_mw(n, f, t), sigma = 0.8, direction = :from)
+        addQflowMeasurement!(n; fromBus = f, toBus = t, value = get_branch_q_from_to_mvar(n, f, t), sigma = 0.8, direction = :from)
+      end
+      addVmMeasurement!(n; busName = "B1", value = n.nodeVec[n.busDict["B1"]]._vm_pu, sigma = 0.002)
+    end
+
+    fill_tree!(net7, tree)
+    intact = evaluate_global_observability(net7; flatstart = true, jacEps = 1e-6)
+    @test intact.numerical_observable
+    @test intact.unobservable_state_columns == Int[]
+
+    fill_tree!(net7, tree[1:5])
+    broken = evaluate_global_observability(net7; flatstart = true, jacEps = 1e-6)
+    @test !broken.numerical_observable
+    @test broken.unobservable_state_columns == [6, 13]
+  end
+
   @testset "State estimation matrix observability helpers" begin
     H = [
       1.0 0.0 0.0

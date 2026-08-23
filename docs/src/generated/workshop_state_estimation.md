@@ -42,11 +42,13 @@ diagonals are the cross-ties B2-B5 and B3-B6):
 ## Load the packages
 
 `Random` (standard library) provides the seeded generator that makes the
-synthetic measurement noise reproducible.
+synthetic measurement noise reproducible; `LinearAlgebra` (standard
+library) contributes `nullspace` for the observability deep dive.
 
 ````@example workshop_state_estimation
 using Sparlectra
 using Random
+using LinearAlgebra
 ````
 
 ## Warm-up
@@ -146,8 +148,23 @@ println(length(net.measurements), " measurements created")
 ## Check observability
 
 Estimation only works where the measurement set actually determines the
-state. The global check compares measurement count against state count
-and probes the numerical rank of the measurement Jacobian.
+state. Why that is a RANK question follows from what the estimator
+minimizes. With $m$ measurements $z_i$, their models $h_i(x)$, and
+accuracies $\sigma_i$, WLS minimizes the weighted squared residuals
+
+$$J(x) = \sum_{i=1}^{m} \frac{(z_i - h_i(x))^2}{\sigma_i^2}$$
+
+and every Newton step solves the normal equations
+
+$$G\,\Delta x = H^{\top} W r, \qquad G = H^{\top} W H, \qquad W = \mathrm{diag}(1/\sigma_i^2)$$
+
+with $H$ the measurement Jacobian. $G$ is invertible exactly when
+$\mathrm{rank}(H) = n$, the number of states: observability is not an
+extra condition on top of the estimator, it IS the solvability of these
+equations. For this workshop network $n = 2\,n_{bus} - 1 = 13$ (one
+magnitude per bus, one angle per non-slack bus), so the 13 appearing
+below is a formula, not a coincidence. The global check compares $m$
+against $n$ and probes the numerical rank of $H$.
 
 ````@example workshop_state_estimation
 gobs = evaluate_global_observability(net; flatstart = true, jacEps = 1e-6)
@@ -186,7 +203,16 @@ reproduces the reference power flow closely (magnitudes to a few
 degrees of freedom (`dof`) and the 3σ check on $J$ summarize whether the
 residuals are consistent with the declared measurement accuracies.
 
+$J$ is more than a convergence number, it is a QUALITY measure: under
+the assumed noise model, $J(\hat{x})$ is approximately chi-square
+distributed with $\mathrm{dof} = m - n$ degrees of freedom, so its
+expected value is about `dof`. A $J$ far ABOVE `dof` signals bad data or
+a wrong model; far BELOW signals overfitted (too pessimistic) sigmas.
+The ratio is the one number worth glancing at after every run:
+
 ````@example workshop_state_estimation
+println("J / dof = ", round(se.objectiveJ / se.dof; digits = 3), "  (healthy noise: approximately 1)")
+
 println("dof (redundant measurements): ", se.dof)
 println("J within 3σ band:             ", se.jWithin3Sigma)
 println()
@@ -221,6 +247,77 @@ println("measurements: ", obs.n_measurements, ", states: ", obs.n_states)
 Five measurements against 13 states: the check reports the shortfall
 instead of letting the estimator run into a rank-deficient system.
 
+## Observability on paper: three small matrices
+
+Before the network-sized deep dive, the whole theory on matrices small
+enough to read. First the MINIMAL case: three measurements, three
+states, the identity. Observable (structurally: every column finds its
+own row in the matching; numerically: rank 3), but with $m = n$ every
+single row is CRITICAL, losing any one loses a state:
+
+````@example workshop_state_estimation
+H_B = [
+  1.0 0.0 0.0
+  0.0 1.0 0.0
+  0.0 0.0 1.0
+]
+obs_B = evaluate_observability_matrix(H_B)
+println("H_B: observable = ", obs_B.numerical_observable, ", dof = ", obs_B.dof)
+println("  critical rows: ", obs_B.numerical_critical_measurement_indices)
+````
+
+Now two extra rows, but BOTH duplicating the same information about
+states 1 and 2. The lesson: redundancy is PER STATE, not global. The
+set has dof = 2, yet row 3 stays critical, because it is still the only
+row that sees state 3; the two spare rows protect the wrong place:
+
+````@example workshop_state_estimation
+H_A = [
+  1.0 0.0 0.0
+  0.0 1.0 0.0
+  0.0 0.0 1.0
+  1.0 1.0 0.0
+  1.0 1.0 0.0
+]
+obs_A = evaluate_observability_matrix(H_A)
+println("H_A: observable = ", obs_A.numerical_observable, ", dof = ", obs_A.dof)
+println("  critical rows: ", obs_A.numerical_critical_measurement_indices)
+for i in axes(H_A, 1)
+  println("  row ", i, ": ", numerical_row_redundant(H_A, i) ? "redundant" : "CRITICAL", " (structural: ", structural_row_redundant(H_A, i) ? "redundant" : "CRITICAL", ")")
+end
+````
+
+Finally the bridge to NETWORKS: an incidence-like matrix. Read each row
+as a measurement on a 4-bus chain: a flow between buses a and b becomes
+the pair +1/-1 in columns a and b (a flow sees a DIFFERENCE), an
+injection at bus k becomes a single +1 (it anchors one state). This is
+how measurement placement turns into sparsity structure:
+
+```text
+  row 1: flow 1-2    row 2: flow 2-3    row 3: flow 3-4
+  row 4: injection at 2                 row 5: flow 1-3
+```
+
+````@example workshop_state_estimation
+H_E = [
+  1.0 -1.0 0.0 0.0
+  0.0 1.0 -1.0 0.0
+  0.0 0.0 1.0 -1.0
+  0.0 1.0 0.0 0.0
+  1.0 0.0 -1.0 0.0
+]
+obs_E = evaluate_observability_matrix(H_E)
+println("H_E: observable = ", obs_E.numerical_observable, ", dof = ", obs_E.dof)
+println("  critical rows: ", obs_E.numerical_critical_measurement_indices)
+````
+
+Reading aid: row 3 (the only path to bus 4) is critical; rows 1, 2, 5
+form a triangle of alternatives around buses 1..3 and are redundant.
+Exactly this pattern, at network scale, is what the deep dive below
+builds and breaks. The extended version of these examples (with a toy
+spanning-tree game and tolerance experiments) lives in
+`examples/state_estimation/h_matrix_observability_demo.jl`.
+
 ## Observability deep dive: where measurements must sit (advanced)
 
 The checks above said WHETHER the state is observable. This section is
@@ -247,8 +344,41 @@ rank question into a neighborhood.
 Both are decided by the same object, the measurement Jacobian $H$: one
 row per measurement, one column per state, entry = sensitivity of that
 measurement to that state. Global observability is full column rank of
-$H$; local observability is full rank of the columns you zoomed into,
-using only the rows that touch them.
+$H$; the sharpest way to say it uses the NULL SPACE:
+
+$$H \nu = 0,\ \nu \neq 0 \quad\Longrightarrow\quad \text{state } i \text{ is unobservable when } \nu_i \neq 0$$
+
+The null-space vectors are the dark regions: directions the state can
+drift without any measurement changing. The set of their nonzero
+components partitions the network into OBSERVABLE ISLANDS (the term to
+search the literature for is Monticelli's observable-island analysis).
+Sparlectra reports exactly these components as
+`unobservable_state_columns` on a not-observable global result.
+
+One warning before using the LOCAL check: restricting $H$ to the
+columns you zoomed into (with the rows that touch them) is a NECESSARY
+test, not a sufficient one. The smallest counterexample: a single flow
+measurement between buses 1 and 2,
+
+$$H = \begin{pmatrix} 1 & -1 \end{pmatrix}$$
+
+The submatrix for state 1 is just $(1)$, full rank, so the local test
+says observable. But only the DIFFERENCE $x_1 - x_2$ is determined; the
+null-space vector $\nu = (1, 1)$ has a nonzero first component, so
+state 1 is not estimable. Both verdicts side by side:
+
+````@example workshop_state_estimation
+H_flow = [1.0 -1.0]
+loc = evaluate_local_observability_matrix(H_flow, [1])
+println("submatrix test on state 1: observable = ", loc.numerical_observable, "  (misleading)")
+println("null space of H:           ", vec(round.(nullspace(H_flow); digits = 4)))
+glob_flow = evaluate_observability_matrix(H_flow)
+println("global dark states:        ", glob_flow.unobservable_state_columns, "  (the rigorous answer)")
+````
+
+The local check remains useful, it localizes candidate regions fast,
+but a positive local verdict must be confirmed globally; the docstrings
+of both local helpers carry the same warning.
 
 The study network again, as a picture (ring plus two chords):
 
@@ -282,8 +412,14 @@ The classical minimal recipe: a P/Q flow pair on every branch of a
 SPANNING TREE (six branches for seven buses), plus one voltage-magnitude
 anchor. The flow pairs fix all relative angles and magnitude ratios
 along the tree, the anchor pins the absolute magnitude level, the slack
-pins the absolute angle. That is 6 x 2 + 1 = 13 rows for 13 states,
-observability with ZERO redundancy:
+pins the absolute angle. The counting identity says why this is exactly
+minimal:
+
+$$m = 2\,(n_{bus} - 1) + 1 = 2\,n_{bus} - 1 = n$$
+
+a spanning tree has $n_{bus} - 1$ branches, each contributing a P and a
+Q row, plus the one anchor; $m = n$ means observability with ZERO
+redundancy, every equation is needed:
 
 ````@example workshop_state_estimation
 empty!(net.measurements)
@@ -331,9 +467,20 @@ println("  redundancy dof = ", gmin.dof, ", critical measurements: ", length(gmi
 
 Reading aid: observable, but `quality = :critical` and EVERY row is on
 the critical list: with zero redundancy, losing any single meter blinds
-some part of the state. Real placements add the ring-closing and chord
-flows (or injections) precisely to buy redundancy; the `dof` count is
-what the bad-data machinery later feeds on.
+some part of the state. There is a beautiful residual-side view of the
+same fact:
+
+$$\mathrm{dof} = m - n, \qquad S = I - H\,G^{-1} H^{\top} W, \qquad \text{measurement } i \text{ critical} \iff S_{ii} = 0$$
+
+$S$ maps measurements to their residuals; a critical measurement has
+residual EXACTLY zero, whatever its value, so a gross error in it is
+invisible to bad-data detection. That is why `dof` is what the bad-data
+machinery feeds on: only redundant measurements leave residual traces.
+One precision on Sparlectra's `dof` field: it is the COUNT difference
+$m - n$. For an observable set that equals $m - \mathrm{rank}(H)$; for
+an unobservable set it can be negative and then reads as a shortfall,
+not a redundancy. Real placements add the ring-closing and chord flows
+(or injections) precisely to buy this redundancy.
 
 The matrix behind all of this is one call away: `measurement_jacobian`
 returns $H$ with described rows and labeled state columns, ready for a
@@ -365,12 +512,18 @@ addVmMeasurement!(net; busName = "B1", value = net.nodeVec[net.busDict["B1"]]._v
 
 gbroken = evaluate_global_observability(net; flatstart = true, jacEps = 1e-6)
 println("without B6-B7: quality = ", gbroken.quality, " (rank ", gbroken.numerical_rank, " of ", gbroken.n_states, ")")
+# the rigorous per-state answer, straight from the null space: exactly
+# B7's states are dark (angle column 6, magnitude column 13)
+println("dark states (unobservable_state_columns): ", gbroken.unobservable_state_columns)
 
 # local check on B2 (angle col 1, magnitude col 8): still fully covered
 lb2 = evaluate_local_observability(net, [1, 8]; flatstart = true, jacEps = 1e-6)
 println("local B2: numerically observable = ", lb2.numerical_observable)
 # local check on B7 (angle col 6, magnitude col 13): NO measurement even
-# touches these states anymore, which the check reports as an error
+# touches these states anymore, which the check reports as an error;
+# this is the EASY case for the local test, the hard case (touched but
+# still dark) is the counterexample above, which only the global
+# null-space answer catches
 try
   evaluate_local_observability(net, [6, 13]; flatstart = true, jacEps = 1e-6)
 catch err
@@ -397,6 +550,81 @@ Placement rules, condensed: flow pairs see the two ends of their branch,
 injections see the bus AND all its neighbors, `Vm` anchors the magnitude
 level (at least one required), and the slack anchors the angles. A bus
 is dark exactly when no row of any of these reaches its columns.
+
+### Passive buses: zero-injection pseudo-measurements
+
+A PASSIVE bus carries no load and no generation, so its injection is
+exactly zero, and that knowledge is itself a measurement pair
+$P = 0,\ Q = 0$, free of charge and free of noise. Sparlectra models it
+as PSEUDO-measurements with a very small sigma
+(`addZeroInjectionMeasurements!`), not as hard constraints. The
+trade-off is honest: the smaller the sigma, the closer to a true
+constraint, but the weight $1/\sigma^2$ explodes and degrades the
+conditioning of $G$. The ratio between a ZIB row at $\sigma = 10^{-6}$
+and a normal injection row at $\sigma = 1$ is
+
+$$\frac{1/(10^{-6})^2}{1/1^2} = 10^{12}$$
+
+twelve orders of magnitude between rows of one matrix, which is why the
+documentation flags a conditioning risk for tiny sigmas.
+
+Demonstration: demote B7 to a passive bus (drop its load in a local
+copy), leave it dark with the broken-tree set, and watch the FREE
+zero-injection knowledge repair observability:
+
+````@example workshop_state_estimation
+net_p = deepcopy(net)
+removeProsumer!(net = net_p, busName = "B7", type = "LOAD")
+empty!(net_p.measurements)
+_, erg_p = runpf!(net_p, 40, 1e-10, 0)
+erg_p == 0 || error("passive-bus reference power flow did not converge")
+calcNetLosses!(net_p)
+for (f, t) in tree[1:5]   ## broken tree again: B7 unmetered
+  addPflowMeasurement!(net_p; fromBus = f, toBus = t, value = get_branch_p_from_to_mw(net_p, f, t), sigma = 0.8, direction = :from)
+  addQflowMeasurement!(net_p; fromBus = f, toBus = t, value = get_branch_q_from_to_mvar(net_p, f, t), sigma = 0.8, direction = :from)
+end
+addVmMeasurement!(net_p; busName = "B1", value = net_p.nodeVec[net_p.busDict["B1"]]._vm_pu, sigma = 0.002)
+
+g_no_zib = evaluate_global_observability(net_p; flatstart = true, jacEps = 1e-6)
+println("without ZIB: quality = ", g_no_zib.quality, ", dof = ", g_no_zib.dof, ", dark states = ", g_no_zib.unobservable_state_columns)
+
+added = addZeroInjectionMeasurements!(net_p; sigma = 1e-6)   ## auto-detects the passive B7
+println(length(added), " zero-injection rows added at the passive bus")
+g_zib = evaluate_global_observability(net_p; flatstart = true, jacEps = 1e-6)
+println("with ZIB:    quality = ", g_zib.quality, ", dof = ", g_zib.dof)
+````
+
+Reading aid: the ZIB pair acts exactly like the injection repair above,
+it couples B7 to its neighbors, but it costs nothing: the information
+was in the model all along. The dof moves from -2 (a SHORTFALL of two
+equations) to 0.
+
+How much does the sigma matter? The same set estimated twice, once with
+the near-constraint sigma and once with a soft one:
+
+````@example workshop_state_estimation
+for zib_sigma in (1e-6, 1e-2)
+  netv = deepcopy(net_p)
+  empty!(netv.measurements)
+  for m in net_p.measurements
+    m.id !== nothing && startswith(something(m.id, ""), "ZI") && continue
+    push!(netv.measurements, m)
+  end
+  addZeroInjectionMeasurements!(netv; sigma = zib_sigma)
+  sev = runse!(netv; maxIte = 15, tol = 1e-6, flatstart = true, jacEps = 1e-6, updateNet = false)
+  vm_b7 = abs(sev.voltages[netv.busDict["B7"]])
+  println("ZIB sigma = ", zib_sigma, ": converged = ", sev.converged, ", J = ", round(sev.objectiveJ; digits = 6), ", Vm(B7) = ", round(vm_b7; digits = 5), " pu, max/min weight ratio = ", round((0.8 / zib_sigma)^2; digits = 1))
+end
+````
+
+Reading aid: with clean synthetic data both sigmas land on the same
+state (the constraint is consistent with the flows), and $J$ stays near
+zero. The difference is the CONDITIONING headroom: the weight ratio of
+the normal equations grows from about 6.4e3 at sigma 1e-2 to 6.4e11 at
+sigma 1e-6, and every order of magnitude eats digits in $G$'s
+factorization. Rule of thumb: as small as the constraint needs, as
+large as the conditioning allows; with noisy real data a too-soft sigma
+lets the passive bus drift, a too-hard one amplifies rounding.
 
 ### PMU phasors and the reference-angle offset
 
