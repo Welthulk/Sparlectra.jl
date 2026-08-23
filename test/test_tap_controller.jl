@@ -246,6 +246,19 @@ function run_tap_controller_tests()
     # the actuated shunt carries the same susceptance (MATPOWER stamping)
     sh = net.shuntVec[ctrl.shunt_idx]
     @test imag(sh.y_pu_shunt) * net.baseMVA ≈ ctrl.bs_mvar atol = 1e-9
+    # the classical result reports the SVC: counted on the Controllers line,
+    # its own summary block, and the regulated bus marked in the Control column
+    calcNetLosses!(net)
+    stxt = mktempdir() do d
+      cd(d) do
+        printACPFlowResults(net, 0.0, 1, 1e-8, true)
+        read("result_$(net.name).txt", String)
+      end
+    end
+    @test occursin("SVC: 1", stxt)
+    @test occursin("Shunt Voltage Control Summary", stxt)
+    @test any(l -> occursin("Load", l) && occursin("SVC", l), split(stxt, "\n"))
+    @test occursin("SVC", sprint(printShuntVoltageControllerSummary, net))
 
     # honest limit region: an unreachable target clamps the susceptance and
     # reports at_limit — constant-B, the reactive output then follows V²

@@ -372,6 +372,7 @@ export
   applyConfiguredControllers!,            # Instantiate controllers declared under control.controllers (#305).
   printSeriesReactanceControllerSummary,  # Engineering-style summary of the registered TCSC controllers.
   printUpfcFullControllerSummary,         # Engineering-style summary of the registered full UPFC controllers (#326).
+  printShuntVoltageControllerSummary,     # Engineering-style summary of the registered SVC/MSC shunt controllers.
   clearShuntControllers!,
   controllableElements,                   # Generic controllable-element records of all registered controllers.
   buildMachineControllerReportRows,

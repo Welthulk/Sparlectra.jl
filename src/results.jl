@@ -557,6 +557,13 @@ function formatBranchResults(net::Net; max_rows::Union{Nothing,Int} = nothing)
     haskey(ctrl_by_branch, c.branch_idx) && continue
     ctrl_by_branch[c.branch_idx] = (control_type = :TCSC, p_target_mw = c.p_target_mw, ratio_tap_position = missing, phase_tap_position = missing, converged = c.converged, at_limit = c.at_limit, status = c.status)
   end
+  # full UPFC (#326) marks its line branch with the same Ctrl/P_tgt/Ctrl-status
+  # columns; P_tgt shows the active target (the Q target, series voltage, and
+  # DC-link balance are in the UPFC summary block of the Control footer)
+  for c in _upfc_full_controllers(net)
+    haskey(ctrl_by_branch, c.branch_idx) && continue
+    ctrl_by_branch[c.branch_idx] = (control_type = :UPFC, p_target_mw = c.p_target_mw, ratio_tap_position = missing, phase_tap_position = missing, converged = c.converged, at_limit = c.at_limit, status = c.status)
+  end
 
   ctrl_status = function (row)
     if row.converged
@@ -988,6 +995,21 @@ function printACPFlowResults(
     push!(get!(open_end_v, bus, Tuple{Float64,Float64}[]), (br.open_end_vm_pu, something(br.open_end_va_deg, NaN)))
   end
 
+  # buses whose voltage an outer-loop FACTS controller holds get a device
+  # marker in the Control column (appended at render time, so the Q(U)/P(U)
+  # flag cache and its tests are untouched): the machine controller regulates
+  # its target bus (STATCOM in current-limit mode, else RVC), the shunt
+  # controller its own bus (SVC continuous, MSC discrete bank).
+  facts_bus_labels = Dict{Int,String}()
+  for c in _machine_controllers(net)
+    c.enabled || continue
+    facts_bus_labels[geNetBusIdx(net = net, busName = c.target_bus)] = c.limit_mode === :current ? "STATCOM" : "RVC"
+  end
+  for c in _shunt_controllers(net)
+    c.enabled || continue
+    facts_bus_labels[geNetBusIdx(net = net, busName = c.bus)] = c.step_mvar === nothing ? "SVC" : "MSC"
+  end
+
   pGS = qGS = pLS = qLS = ""
   tpGS = tqGS = tpLS = tqLS = 0.0
   pShunt_str = qShunt_str = ""
@@ -1040,6 +1062,10 @@ function printACPFlowResults(
     controlStr = _cached_control_label(control_labels, n.busIdx)
     if n.busIdx in open_end_buses
       controlStr = (isempty(controlStr) || controlStr == "-") ? "open-end" : string(controlStr, ",open-end")
+    end
+    facts_label = get(facts_bus_labels, n.busIdx, nothing)
+    if facts_label !== nothing
+      controlStr = (isempty(controlStr) || controlStr == "-") ? facts_label : string(controlStr, ",", facts_label)
     end
 
     # Mark PV→PQ buses (hit Q-limit) with a star in the Type column
@@ -1149,6 +1175,8 @@ function printACPFlowResults(
   # Machine remote voltage controllers print only when present — the "none"
   # marker above stays the deterministic anchor for parsers.
   printMachineControllerSummary(io, net)
+  # Shunt voltage controllers (SVC / MSC-MSR bank) print only when present.
+  printShuntVoltageControllerSummary(io, net)
   # Series-reactance (TCSC) controllers print only when present as well.
   printSeriesReactanceControllerSummary(io, net)
   # HVDC pair controllers print only when present as well.

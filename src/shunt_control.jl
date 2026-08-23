@@ -356,3 +356,40 @@ function control_trace_rows(ctrl::ShuntVoltageControl, net::Net, ::AbstractContr
     bs_mvar = ctrl.bs_mvar,
   )]
 end
+
+"""
+    printShuntVoltageControllerSummary(io::IO, net::Net)
+    printShuntVoltageControllerSummary(net::Net)
+
+Engineering-style summary of the registered shunt voltage controllers, one
+block per device: the controlled bus and its voltage target versus achieved,
+the actuator susceptance in MVar with its range, the mode (continuous SVC or
+discrete MSC/MSR switched bank with its step and block position), and the
+honest limit flags. Prints nothing when no shunt controller is registered; the
+classical result's "Transformer controls: none" line stays the deterministic
+parser anchor.
+"""
+function printShuntVoltageControllerSummary(io::IO, net::Net)
+  ctrls = _shunt_controllers(net)
+  isempty(ctrls) && return
+  println(io, "\nShunt Voltage Control Summary (SVC / MSC)")
+  println(io, "----------------------------------------")
+  for c in ctrls
+    println(io, control_name(c), " (bus ", c.bus, ")")
+    println(io, "  target Vm          : ", @sprintf("%.4f pu", c.target_vm_pu))
+    println(io, "  achieved Vm        : ", c.achieved_vm_pu === nothing ? "-" : @sprintf("%.4f pu", c.achieved_vm_pu))
+    println(io, "  susceptance Bs     : ", @sprintf("%.3f MVar (range %.3f .. %.3f)", c.bs_mvar, c.bs_min_mvar, c.bs_max_mvar))
+    if c.step_mvar === nothing
+      println(io, "  mode               : continuous SVC (susceptance actuator)")
+    else
+      println(io, "  mode               : discrete MSC/MSR bank, step ", @sprintf("%.3f MVar", c.step_mvar), ", block ", round(Int, c.bs_mvar / c.step_mvar))
+    end
+    println(io, "  deadband           : ", @sprintf("%.4f pu", c.deadband_vm_pu))
+    println(io, "  converged          : ", c.converged)
+    println(io, "  at_limit           : ", c.at_limit)
+    c.step_mvar === nothing || println(io, "  parked             : ", c.parked)
+    println(io, "  status             : ", c.status)
+  end
+end
+
+printShuntVoltageControllerSummary(net::Net) = printShuntVoltageControllerSummary(stdout, net)

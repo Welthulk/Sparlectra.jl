@@ -301,6 +301,8 @@ function run_upfc_control_tests()
       @test occursin("UPFC Control Summary", txt)                 # engineering summary block
       @test occursin("DC-link residual", txt)                     # the coupling quantity is reported
       @test occursin("line P target/achieved", txt)
+      # the controlled branch row is marked (Ctrl = UPFC, its P target, status)
+      @test any(l -> occursin("I -> J", l) && occursin("UPFC", l) && occursin("40.000", l), split(txt, "\n"))
       # the standalone summary printer works too
       sub = sprint(printUpfcFullControllerSummary, net)
       @test occursin("UPFC_I_J", sub)
