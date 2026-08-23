@@ -159,6 +159,16 @@ for e in controllableElements(net)
 end
 ````
 
+The same information lands in the classical result tables: the "Controllers"
+line counts the TCSC, and the controlled A->M2 line carries the Ctrl = TCSC
+marker with its P target and status (the moved reactance is in the Series
+Reactance Control Summary of the Control footer).
+
+````@example workshop_series_compensation
+calcNetLosses!(net)
+printACPFlowResults(net, 0.0, 1, 1e-8)
+````
+
 ## The honest limit
 
 **Example 3: the honest limit.** Ask the same corridor for 70 MW, on a
@@ -174,6 +184,15 @@ ctrl2 = addSeriesReactanceControl!(net2; fromBus = "A", toBus = "M2", p_target_m
 run_sparlectra(net = net2)
 println("limited: corridor 2 (A->M2) = ", round(get_branch_p_from_to_mw(net2, "A", "M2"); digits = 2), " MW (target 70)")
 println("         x_pu = ", round(ctrl2.x_pu; digits = 4), " (clamped), at_limit = ", ctrl2.at_limit, ", converged = ", ctrl2.converged)
+````
+
+In the classical result the honest limit is visible in the branch row: the
+A->M2 line's Ctrl status reads "at_limit_not_converged" instead of pretending
+convergence.
+
+````@example workshop_series_compensation
+calcNetLosses!(net2)
+printACPFlowResults(net2, 0.0, 1, 1e-8)
 ````
 
 ## From series reactance to the UPFC
