@@ -44,8 +44,8 @@ function run_3wt_phase_taps_tests()
 
     # Pre-existing tap_side side-selection convention (documented [1,2,3], 0 = no tap) currently
     # never attaches `tap` for tap_side != 0, because the loop reuses/overwrites the `tap` local
-    # binding on every non-matching side before the matching side is reached (see docs/dev report
-    # for issue #261 Stage: 3WT phase taps). This test snapshots that existing behaviour; it is
+    # binding on every non-matching side before the matching side is reached (Issue #261,
+    # Stage: 3WT phase taps). This test snapshots that existing behaviour; it is
     # intentionally not "fixed" here.
     @test isnothing(w1.taps)
     @test isnothing(w2.taps)

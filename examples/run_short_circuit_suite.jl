@@ -20,7 +20,7 @@ include(joinpath(@__DIR__, "internal", "example_suite_runner.jl"))
 
 const SUITE_SPECS = ExampleSpec[
   ExampleSpec(name = "short_circuit", file = "others/exp_short_circuit.jl", purpose = "runShortCircuit! on a hand-built feeder+machine net — Ik'' max/min and the safety flag on defaulted data"),
-  ExampleSpec(name = "short_circuit_reference", file = "others/exp_short_circuit_reference.jl", purpose = "PASS/FAIL check against the documented reference table (docs/dev/short_circuit_reference_table.md, analytic IEC 60909-0 values)"),
+  ExampleSpec(name = "short_circuit_reference", file = "others/exp_short_circuit_reference.jl", purpose = "PASS/FAIL check against the analytic IEC 60909-0 reference values"),
   ExampleSpec(name = "short_circuit_cgmes", file = "others/exp_short_circuit_cgmes.jl", purpose = "runShortCircuit! on the ENTSO-E MicroGrid BE delivery (local test-set cache; explains the fetch and skips cleanly when absent)"),
 ]
 

@@ -37,7 +37,7 @@ summary at the end): `run_powerflow_suite.jl`, `run_others_suite.jl`,
 | `exp_current_iteration_start.jl` | `powerflow` | Guarded current-iteration start pre-solve via config overrides | powerflow |
 | `exp_diagnose_self_check.jl` | `others` | `run_fixed_reference_self_check` and the narrative `diagnose.log` report | others |
 | `exp_short_circuit.jl` | `others` | `runShortCircuit!` (IEC 60909-0) on a hand-built feeder+machine net: Ik'' max/min and the safety flag on defaulted data | short_circuit |
-| `exp_short_circuit_reference.jl` | `others` | PASS/FAIL check against the documented reference table (`docs/dev/short_circuit_reference_table.md`) | short_circuit |
+| `exp_short_circuit_reference.jl` | `others` | PASS/FAIL check against the analytic IEC 60909-0 reference values | short_circuit |
 | `exp_short_circuit_cgmes.jl` | `others` | `runShortCircuit!` on the ENTSO-E MicroGrid BE delivery from the local test-set cache | short_circuit |
 | `exp_synthetic_tiled_grid_pf_perf.jl` | `powerflow` | Synthetic tiled-grid PF performance study | powerflow |
 | `qlimit_large_case_mode_comparison.jl` | `powerflow` | Q-limit enforcement modes on large cases | powerflow |

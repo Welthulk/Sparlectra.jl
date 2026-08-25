@@ -669,7 +669,7 @@ function runContingencies!(
       template.flatstart = true
     end
   end
-  # template hygiene (follow-up item 1): the workers need the solved
+  # template hygiene: the workers need the solved
   # VOLTAGES, not the base solver status or its Q-limit event logs. Clearing
   # them keeps every per-case deepcopy lean (and avoids the one-time
   # deepcopy compile of the status closure types on the first worker).

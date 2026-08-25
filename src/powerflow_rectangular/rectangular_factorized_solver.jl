@@ -18,7 +18,7 @@
 #          rectangular Newton step. A KLU backend lived here until 0.9.10;
 #          it was removed after measurements showed no benefit on power-flow
 #          Jacobians (slower factorization on real cases, unsafe under
-#          shared-factor threading; see docs/dev/parallel_analysis.md).
+#          shared-factor threading).
 
 """
     AbstractNewtonSolverContext

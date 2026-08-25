@@ -1,3 +1,15 @@
+# Version 0.9.18 - 2026-08-25
+
+Tidy-up release: the internal development notes under `docs/dev/` no longer
+ship with the package.
+
+Those files were scratch notes (analysis write-ups, a short-circuit reference
+table, a few issue drafts) that were never meant to be part of a release. They
+are kept local only from now on, and the handful of docs and examples that
+linked to them now state the reference inline. Nothing about the solver, the
+API, or the numbers changes.
+
+
 # Version 0.9.17 - 2026-08-25
 
 ## Improvements
@@ -605,7 +617,7 @@ DC power flow, faster linear solves, Web UI overhaul
 * Added an `AbstractTapChangerModel` supertype and an explicit `PowerTransformerTaps.convention` field (currently only `:neutral_relative`), documenting the ratio-tap correction convention on the struct itself instead of leaving it implicit. See `docs/src/branchmodel.md` for the tap-changer/PST modeling layering (Issue #261 Stage 2).
 * Added a CGMES-style `PhaseTapChangerModel <: AbstractTapChangerModel` (`:symmetrical`/`:asymmetrical`, `:tabular` staged for later) and three pure formula functions in `equicircuit.jl`: `calcPhaseTapFraction`, `calcPhaseTapAngleRatio` (effective ratio/shift/regulating vector per CGMES v2.4 ch. 4.2/6.2), and `calcPhaseTapReactance` (CGMES ch. 3 `X(α)` interpolation, standalone for now — not yet wired into branch `x_pu` or the outer control loop). `PowerTransformerWinding` gained a parallel `phase_taps` field (Issue #261 Stage 3).
 * Added `kind = :tabular` support to `PhaseTapChangerModel`, backed by a new `TapTablePoint` struct (`step`, `ratio`, `angle_deg`, optional `x_pu`) and a `calcPhaseTapTable` exact lookup in `equicircuit.jl`. A table overrides formula-based reconstruction whenever present, integrated into `calcPhaseTapAngleRatio`/`calcPhaseTapFraction`/`calcPhaseTapReactance`. No interpolation between table steps; no importer produces tabular data yet (Issue #261 Stage 4).
-* Added `phase_tap_side::Int` / `phase_taps::Union{Nothing,PhaseTapChangerModel}` keywords to `create3WTWindings!`, letting one winding of a three-winding transformer (MVA-method, star/AUX-bus model) carry a `PhaseTapChangerModel` — i.e. a Schrägregler on a single 3WT winding, optionally combined with a ratio tap on the same winding. Validated: `phase_tap_side ∈ 0:3`, and `phase_tap_side`/`phase_taps` must be set together. Resolving the attached model into an effective branch ratio/shift, and addressing a single 3WT winding from the outer-loop `PowerTransformerControl` framework, are analysed but intentionally not implemented — see `docs/dev/3wt_phase_tap_controller_addressing.md` (Issue #261).
+* Added `phase_tap_side::Int` / `phase_taps::Union{Nothing,PhaseTapChangerModel}` keywords to `create3WTWindings!`, letting one winding of a three-winding transformer (MVA-method, star/AUX-bus model) carry a `PhaseTapChangerModel` — i.e. a Schrägregler on a single 3WT winding, optionally combined with a ratio tap on the same winding. Validated: `phase_tap_side ∈ 0:3`, and `phase_tap_side`/`phase_taps` must be set together. Resolving the attached model into an effective branch ratio/shift, and addressing a single 3WT winding from the outer-loop `PowerTransformerControl` framework, are analysed but intentionally not implemented (Issue #261).
 
 ### Improvements
 
@@ -614,7 +626,7 @@ DC power flow, faster linear solves, Web UI overhaul
 
 ### Bug Fixes
 
-* `create3WTWindings!` previously raised a `MethodError` for every call, including its own docstring example: the `PowerTransformerWinding(...)` positional call had drifted out of sync with the struct's field order (a `ratio` field was inserted ahead of `shift_degree` without updating this call site), so every argument from `shift_degree` onward landed one field too early. Fixed by inserting the missing `ratio` slot; the pre-existing `tap_side` side-selection logic itself (documented as 1-based `[1,2,3]`, `0` = no tap) was left unchanged — see `docs/dev/3wt_phase_tap_controller_addressing.md` for the remaining discrepancy between that documentation and the current implementation.
+* `create3WTWindings!` previously raised a `MethodError` for every call, including its own docstring example: the `PowerTransformerWinding(...)` positional call had drifted out of sync with the struct's field order (a `ratio` field was inserted ahead of `shift_degree` without updating this call site), so every argument from `shift_degree` onward landed one field too early. Fixed by inserting the missing `ratio` slot; the pre-existing `tap_side` side-selection logic itself (documented as 1-based `[1,2,3]`, `0` = no tap) was left unchanged. The remaining discrepancy between that documentation and the current implementation is tracked with Issue #261.
 
 # Version 0.8.11 — 2026-07-17
 

@@ -18,8 +18,8 @@
 #          filters) and per-case weights (#331 Phase 2), generator outages with
 #          auto/distributed slack (#331 Phase 3), then full branch N-1 serial vs
 #          parallel timing side by side, top 10 worst contingencies, plus the
-#          deepcopy cost and warm-start iteration numbers the analysis report
-#          records. Needs the case1354pegase.m from the Web UI case cache; skips
+#          deepcopy cost and warm-start iteration numbers it prints. Needs the
+#          case1354pegase.m from the Web UI case cache; skips
 #          with a message when it is not cached. Run with threads:
 #          julia --threads=auto --project=. examples/others/exp_contingency_n1.jl
 
@@ -79,8 +79,8 @@ function main()
   println("deepcopy(net) : ", round(t_copy * 1000; digits = 1), " ms per contingency worker (warm; about a quarter of one case's cost)")
   println()
 
-  # warm start evidence for the analysis report: the template is the solved
-  # base case, so contingency solves start from the base voltages. The flat
+  # warm start: the template is the solved base case, so contingency solves
+  # start from the base voltages. The flat
   # variant forces flatstart on the template; its base solve then fails (the
   # printed warning is expected) and most flat contingency solves diverge:
   # on this case the warm start is not an iteration saver but the

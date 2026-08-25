@@ -474,9 +474,8 @@ w1, w2, w3 = create3WTWindings!(u_kV = [110.0, 20.0, 10.0], sn_MVA = [100.0, 80.
 
 Resolving `w2.phase_taps` into an effective ratio/shift on the AUX-bus branch,
 and addressing a single 3WT winding from the outer-loop
-`PowerTransformerControl` framework, are not implemented yet — see the
-analysis report at `docs/dev/3wt_phase_tap_controller_addressing.md` for the
-current gaps.
+`PowerTransformerControl` framework, are not implemented yet. The current gaps
+are tracked with Issue #261.
 
 ## 4. Transformer control (outer loop)
 

@@ -14,17 +14,16 @@
 
 # Date: 2026-07-30
 # file: examples/others/exp_short_circuit_reference.jl
-# purpose: checks runShortCircuit! against the documented reference table (docs/dev/short_circuit_reference_table.md) — analytic IEC 60909-0 values, PASS/FAIL per quantity
+# purpose: checks runShortCircuit! against the analytic IEC 60909-0 reference values, PASS/FAIL per quantity
 
 using Sparlectra
 
 include(joinpath(@__DIR__, "..", "internal", "example_header.jl"))
 
-# The four reference cases and their expected values are DEFINED in
-# docs/dev/short_circuit_reference_table.md (analytic IEC 60909-0 hand
-# derivations, plus a pandapower snippet for an external cross-check that is
-# deliberately NOT executed from this repository). Keep this file and that
-# table in sync — the table is the source of record.
+# The four reference cases and their expected values are the analytic
+# IEC 60909-0 hand derivations (with a pandapower snippet kept for an external
+# cross-check that is deliberately NOT executed from this repository). The
+# expected values encoded below are the source of record.
 
 const _RTOL = 1e-6
 
@@ -61,7 +60,7 @@ function _case_r4()
 end
 
 function main()
-  print_example_banner("examples/others/exp_short_circuit_reference.jl", "checks runShortCircuit! against the documented reference table (docs/dev/short_circuit_reference_table.md)")
+  print_example_banner("examples/others/exp_short_circuit_reference.jl", "checks runShortCircuit! against the analytic IEC 60909-0 reference values")
 
   net_ql, sc_ql = _case_r1_r2()
   rmax = runShortCircuit!(net_ql, sc_ql; case = :max)
@@ -100,10 +99,10 @@ function main()
   println()
   if failures == 0
     println("All ", length(checks), " reference quantities match within rtol ", _RTOL, ".")
-    println("Definitions, hand derivations, and the external pandapower cross-check")
-    println("snippet: docs/dev/short_circuit_reference_table.md")
+    println("Definitions and analytic IEC 60909-0 hand derivations are documented")
+    println("inline in this example file.")
   else
-    error("$(failures) reference quantit(y/ies) deviate beyond rtol $(_RTOL) — see table above and docs/dev/short_circuit_reference_table.md")
+    error("$(failures) reference quantit(y/ies) deviate beyond rtol $(_RTOL); see the table above")
   end
   return failures == 0
 end

@@ -352,10 +352,9 @@ State Variables profile:
 De-energized and isolated buses are excluded so the metrics describe the
 solved grid.
 
-A full sweep over every cached/fetchable test set — import, solve, SV
+A full sweep over every cached/fetchable test set (import, solve, SV
 deviation, one table row per case incl. RealGrid and the ReliCapGrid/Svedala
-3.0 family — is part of `examples/run_cgmes_suite.jl`; the measured state is
-recorded in `docs/dev/cgmes_testset_overview.md`.
+3.0 family) is part of `examples/run_cgmes_suite.jl`.
 
 ## Limitations
 

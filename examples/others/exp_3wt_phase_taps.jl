@@ -32,8 +32,8 @@ const LEG_NAMES = ("HV (AUX→B2)", "MV (AUX→B3)", "LV (AUX→B4)")
 # add3WTPiModelTrafo! (the only 3WT path actually wired into a Net) always
 # builds all three AUX-bus legs with ratio=1.0 / shift_deg=0.0 — it has no
 # hook for a tap position, and create3WTWindings!'s PowerTransformerTaps /
-# PhaseTapChangerModel objects are not wired into any Net at all (see
-# docs/dev/3wt_phase_tap_controller_addressing.md, §3).
+# PhaseTapChangerModel objects are not wired into any Net at all (Issue #261
+# Stage 3).
 #
 # This helper mirrors add3WTPiModelTrafo!'s own internal logic 1:1 (same
 # AUX-bus creation, same three add2WTPIModelTrafo! calls), but adds the one
@@ -202,8 +202,8 @@ function print_task_description()
   println("           HV/MV/LV = 380/110/20 kV.")
   println()
   println("Note: create3WTWindings!'s PowerTransformerTaps/PhaseTapChangerModel objects")
-  println("are not wired into add3WTPiModelTrafo! (the only Net-capable 3WT path) — see")
-  println("docs/dev/3wt_phase_tap_controller_addressing.md. The ratio/shift_deg below are")
+  println("are not wired into add3WTPiModelTrafo! (the only Net-capable 3WT path,")
+  println("Issue #261). The ratio/shift_deg below are")
   println("computed with the real tap-changer formulas and applied directly to the")
   println("affected AUX leg, as a manual stand-in for that missing wiring.")
   println("="^78)
