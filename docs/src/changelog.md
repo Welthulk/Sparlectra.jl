@@ -1,13 +1,6 @@
 # Version 0.9.18 - 2026-08-25
 
-Tidy-up release: the internal development notes under `docs/dev/` no longer
-ship with the package.
-
-Those files were scratch notes (analysis write-ups, a short-circuit reference
-table, a few issue drafts) that were never meant to be part of a release. They
-are kept local only from now on, and the handful of docs and examples that
-linked to them now state the reference inline. Nothing about the solver, the
-API, or the numbers changes.
+Housekeeping
 
 
 # Version 0.9.17 - 2026-08-25
