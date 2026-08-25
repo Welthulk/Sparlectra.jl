@@ -789,6 +789,11 @@ function updateBranchParameters!(; net::Net, branchNr::Int, branch::BranchModel)
   br = net.branchVec[branchNr]
   br.r_pu = branch.r_pu
   br.x_pu = branch.x_pu
+  # a real equipment edit moves the physical base too (#329), so short circuit
+  # and export follow the new model; a later series-FACTS stamp overwrites only
+  # the live r_pu/x_pu, leaving this base intact
+  br.r_base_pu = branch.r_pu
+  br.x_base_pu = branch.x_pu
   br.b_pu = branch.b_pu
   br.g_pu = branch.g_pu
   br.ratio = branch.ratio

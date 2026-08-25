@@ -1,3 +1,6 @@
+# Version 0.9.19 - 2026-08-25
+* - Short circuit and CGMES/MATPOWER export now use the physical base branch impedance instead of the FACTS compensated operating point (#329)
+
 # Version 0.9.18 - 2026-08-25
 
 Housekeeping

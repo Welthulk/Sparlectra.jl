@@ -126,8 +126,15 @@ mutable struct Branch <: AbstractBranch
   branchIdx::Int
   fromBus::Integer
   toBus::Integer
-  r_pu::Float64                          # resistance
-  x_pu::Float64                          # reactance
+  r_pu::Float64                          # resistance (live; a series-FACTS control run stamps its operating point here)
+  x_pu::Float64                          # reactance (live; a series-FACTS control run stamps its operating point here)
+  # physical equipment impedance (#329): equals r_pu/x_pu until a series-FACTS
+  # controller (TCSC/SSSC, full UPFC) writes a compensated operating point onto
+  # the live fields during a power-flow control run. Short circuit and the
+  # CGMES/MATPOWER exports read these base values so they see the equipment, not
+  # the operating point; the power flow keeps reading the live r_pu/x_pu.
+  r_base_pu::Float64
+  x_base_pu::Float64
   b_pu::Float64                          # total line charging susceptance
   g_pu::Float64                          # total line charging conductance
   ratio::Float64                         # nominal turns ratio
@@ -200,7 +207,7 @@ mutable struct Branch <: AbstractBranch
       else 
         r_pu, x_pu, b_pu, g_pu = getLineRXBG_pu(branch, vn_kV, baseMVA)        
       end    
-      new(c, branchIdx, from, to, r_pu, x_pu, b_pu, g_pu, 0.0, 0.0, status, branch.ratedS, nothing, nothing, nothing, nothing, 1.0, 0.0, false, false, 0.9, 1.1, 0.00625, -30.0, 30.0, 1.25, fs, ts, nothing, nothing)
+      new(c, branchIdx, from, to, r_pu, x_pu, r_pu, x_pu, b_pu, g_pu, 0.0, 0.0, status, branch.ratedS, nothing, nothing, nothing, nothing, 1.0, 0.0, false, false, 0.9, 1.1, 0.00625, -30.0, 30.0, 1.25, fs, ts, nothing, nothing)
     elseif isa(branch, PowerTransformer) # Transformer     
       if (isnothing(side) && branch.isBiWinder)
         side = getSideNumber2WT(branch)
@@ -236,7 +243,7 @@ mutable struct Branch <: AbstractBranch
         tap_min, tap_max, tap_step = calcRatioTapRange(w.taps)
       end
 
-      new(c, branchIdx, from, to, r_pu, x_pu, b_pu, g_pu, ratio, angle, status, sn_MVA, nothing, nothing, nothing, nothing, ratio, angle, true, true, tap_min, tap_max, tap_step, -30.0, 30.0, 1.25, fs, ts, nothing, nothing)
+      new(c, branchIdx, from, to, r_pu, x_pu, r_pu, x_pu, b_pu, g_pu, ratio, angle, status, sn_MVA, nothing, nothing, nothing, nothing, ratio, angle, true, true, tap_min, tap_max, tap_step, -30.0, 30.0, 1.25, fs, ts, nothing, nothing)
     elseif isa(branch, BranchModel) # PI-Model
       @assert !isnothing(vn_kV) "vn_kV must be set for PI-Model"
 
@@ -249,7 +256,7 @@ mutable struct Branch <: AbstractBranch
       is_tap = branch.ratio != 0.0
       initial_ratio = is_tap ? branch.ratio : 1.0
       initial_angle = is_tap ? branch.angle : 0.0
-      new(c, branchIdx, from, to, branch.r_pu, branch.x_pu, branch.b_pu, branch.g_pu, branch.ratio, branch.angle, status, branch.sn_MVA, nothing, nothing, nothing, nothing, initial_ratio, initial_angle, is_tap, is_tap, 0.9, 1.1, 0.00625, -30.0, 30.0, 1.25, fs, ts, nothing, nothing)
+      new(c, branchIdx, from, to, branch.r_pu, branch.x_pu, branch.r_pu, branch.x_pu, branch.b_pu, branch.g_pu, branch.ratio, branch.angle, status, branch.sn_MVA, nothing, nothing, nothing, nothing, initial_ratio, initial_angle, is_tap, is_tap, 0.9, 1.1, 0.00625, -30.0, 30.0, 1.25, fs, ts, nothing, nothing)
     else
       error("Branch type not supported")
     end
@@ -440,25 +447,55 @@ function calcBranchYser(branch::Branch)::ComplexF64
 end
 
 """
+    calcBranchYserBase(branch)
+
+Series admittance from the PHYSICAL equipment impedance (`r_base_pu`/`x_base_pu`,
+issue #329). Short circuit and the CGMES/MATPOWER exports use this instead of
+`calcBranchYser` so a series-FACTS operating point stamped onto the live
+`r_pu`/`x_pu` does not leak into fault or interchange data. The power flow keeps
+using `calcBranchYser` (the live, compensated value).
+"""
+function calcBranchYserBase(branch::Branch)::ComplexF64
+  return inv((branch.r_base_pu + branch.x_base_pu * im))
+end
+
+"""
     assertPhysicalBranchImpedances(net, context)
 
-Refuse to proceed when any closed branch carries a NEGATIVE series resistance.
-A physical line/transformer has `r >= 0`; a negative value only appears when a
-full UPFC (#326, `model = :full`) has modified the branch impedance in place
-during a power-flow control run (its series converter's active injection maps
-to `Re(z_add) < 0`). That is a steady-state OPERATING POINT, not the physical
-EQUIPMENT model, so feeding it to a fault calculation or an interchange export
-would emit non-physical data silently. `context` names the caller (e.g.
-"CGMES export", "MATPOWER export") in the error. Run the operation on the
-unmodified base network instead.
+Defensive check (#329): refuse to proceed when any branch carries a NEGATIVE
+BASE series resistance. A physical line/transformer has `r >= 0`. Since short
+circuit and the CGMES/MATPOWER exports read the base (equipment) impedance
+`r_base_pu`/`x_base_pu`, a series-FACTS operating point stamped onto the live
+`r_pu`/`x_pu` (e.g. a full UPFC's `Re(z_add) < 0`, #326) no longer reaches
+them; this assertion is therefore expected NOT to fire in the normal FACTS plus
+export/SC workflow. It stays as a last-resort guard against a corrupted base
+model. `context` names the caller (e.g. "CGMES export", "MATPOWER export").
 """
 function assertPhysicalBranchImpedances(net, context::AbstractString)
   for br in net.branchVec
-    if br.r_pu < 0.0
-      error("$(context): branch $(getCompName(br.comp)) has a negative series resistance (r = $(br.r_pu) pu) from a full-UPFC (#326) power-flow control run. This is the compensated operating point, not the physical equipment; run on the unmodified base network (or before the control run).")
+    if br.r_base_pu < 0.0
+      error("$(context): branch $(getCompName(br.comp)) has a negative base series resistance (r_base = $(br.r_base_pu) pu). The physical equipment impedance must be non-negative; check the branch model, not a FACTS operating point.")
     end
   end
   return nothing
+end
+
+"""
+    restoreBaseImpedances!(net)
+
+Reset every branch's live series impedance (`r_pu`/`x_pu`) to its physical base
+(`r_base_pu`/`x_base_pu`), discarding any series-FACTS operating point that a
+power-flow control run stamped in place (#329). Non-FACTS branches are
+unchanged (their base equals the live value). Use this to return a net to its
+equipment model, for example before a second, independent study on the same
+net. Returns `net`.
+"""
+function restoreBaseImpedances!(net)
+  for br in net.branchVec
+    br.r_pu = br.r_base_pu
+    br.x_pu = br.x_base_pu
+  end
+  return net
 end
 
 function calcBranchYshunt(branch::Branch)::ComplexF64

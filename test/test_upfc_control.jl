@@ -380,59 +380,63 @@ function run_upfc_control_tests()
       @test isapprox(brij.x_pu, 0.18; atol = 1e-9)
     end
 
-    @testset "full UPFC: negative-r branch is rejected by short circuit (#326)" begin
-      # the full model maps the series converter's active injection to a
-      # NEGATIVE branch resistance, persisted in place. A subsequent IEC 60909
-      # short circuit must FAIL LOUDLY on that non-physical branch instead of
-      # silently computing wrong fault currents (the converter is bypassed
-      # under fault; the SC needs the physical impedance).
+    @testset "full UPFC: SC and export use the physical base impedance (#329)" begin
+      # The full model stamps the series converter's active injection onto the
+      # LIVE branch impedance (its resistance part can go negative). Short
+      # circuit and the interchange exports must read the PHYSICAL BASE impedance
+      # (r_base_pu/x_base_pu) instead, so a UPFC control run no longer
+      # contaminates fault or export data. The base net (no UPFC) and the
+      # compensated net must then agree.
       _feeder(bus) = (mrid = bus, name = "F_" * bus, bus = bus, maxInitialSymShCCurrent_A = 20_000.0, minInitialSymShCCurrent_A = 16_000.0, maxR1ToX1Ratio = 0.1, minR1ToX1Ratio = 0.1, maxR0ToX0Ratio = nothing, maxZ0ToZ1Ratio = nothing, ikSecond = nothing, governorSCD = nothing)
       scd = Sparlectra.CGMESImporter.CGMESShortCircuitData([_feeder("S")], NamedTuple[], NamedTuple[], NamedTuple[], NamedTuple[], NamedTuple[])
-      # base network (no UPFC): the short circuit runs normally
+      # base network (no UPFC): the short circuit reference result
       base = _build_upfc_mesh()
       rb = runShortCircuit!(base, scd; case = :max)
       @test length(rb.rows) >= 1
-      # after a full-UPFC control run the I->J branch carries a negative r
+      base_brij = getNetBranch(net = base, fromBus = "I", toBus = "J")
+
+      # after a full-UPFC control run the I->J branch carries a NEGATIVE live r,
+      # while its physical base is preserved
       net = _build_upfc_mesh()
       addUpfcControl!(net; model = :full, fromBus = "I", toBus = "J", shunt_bus = "I",
                       p_target_mw = 48.0, q_target_mvar = 8.0, q_shunt_mvar = 0.0,
                       v_inj_max_pu = 0.30, s_max_mva = 120.0, deadband_p_mw = 1e-2, deadband_q_mvar = 1e-2, max_outer_iters = 80)
       run_control!(net; control_config = ControlConfig(max_outer_iterations = 80))
-      @test getNetBranch(net = net, fromBus = "I", toBus = "J").r_pu < 0.0
-      err = try
-        runShortCircuit!(net, scd; case = :max)
-        nothing
-      catch e
-        e
-      end
-      @test err !== nothing
-      @test occursin("negative series resistance", sprint(showerror, err))
+      brij = getNetBranch(net = net, fromBus = "I", toBus = "J")
+      @test brij.r_pu < 0.0                                    # live operating point: negative r
+      @test brij.r_base_pu > 0.0                               # physical base preserved
+      @test isapprox(brij.r_base_pu, base_brij.r_pu; atol = 1e-12)
+      @test isapprox(brij.x_base_pu, base_brij.x_pu; atol = 1e-12)
 
-      # symmetric with the SC guard: neither interchange export may write the
-      # compensated (negative-r) operating point silently
+      # short circuit now SUCCEEDS on the compensated net (it reads the base) and
+      # matches the base-net fault currents bus for bus
+      ru = runShortCircuit!(net, scd; case = :max)
+      @test length(ru.rows) == length(rb.rows)
+      for (a, b) in zip(sort(rb.rows; by = r -> r.bus_idx), sort(ru.rows; by = r -> r.bus_idx))
+        @test a.bus_idx == b.bus_idx
+        @test (isnan(a.ik_kA) && isnan(b.ik_kA)) || isapprox(a.ik_kA, b.ik_kA; atol = 1e-9)
+      end
+
+      # both interchange exports now SUCCEED on the compensated net, writing the
+      # base impedance instead of rejecting the negative-r operating point
       mktempdir() do d
         base_ok = _build_upfc_mesh()
         runpf!(base_ok, 30, 1e-8, 0)
         calcNetLosses!(base_ok)
-        bdir = mkpath(joinpath(d, "base_cgmes"))
-        writeCGMESFiles(base_ok; path = bdir)                 # base net exports fine
+        writeCGMESFiles(base_ok; path = mkpath(joinpath(d, "base_cgmes")))
         writeMatpowerCasefile(base_ok, joinpath(d, "base.m"))
-        udir = mkpath(joinpath(d, "upfc_cgmes"))
-        cg = try
-          writeCGMESFiles(net; path = udir)
-          nothing
-        catch e
-          e
-        end
-        @test cg !== nothing && occursin("negative series resistance", sprint(showerror, cg))
-        mp = try
-          writeMatpowerCasefile(net, joinpath(d, "upfc.m"))
-          nothing
-        catch e
-          e
-        end
-        @test mp !== nothing && occursin("negative series resistance", sprint(showerror, mp))
+        calcNetLosses!(net)
+        @test (writeCGMESFiles(net; path = mkpath(joinpath(d, "upfc_cgmes"))); true)
+        @test (writeMatpowerCasefile(net, joinpath(d, "upfc.m")); true)
       end
+
+      # restoreBaseImpedances! and clearUpfcFullControllers! return the live
+      # field to the physical base (#329)
+      restoreBaseImpedances!(net)
+      @test isapprox(brij.r_pu, brij.r_base_pu; atol = 1e-12)
+      @test isapprox(brij.x_pu, brij.x_base_pu; atol = 1e-12)
+      clearUpfcFullControllers!(net)
+      @test isempty([c for c in net.machineControls if c isa Sparlectra.UpfcFullControl])
     end
 
     @testset "full UPFC: registration validation (#326)" begin

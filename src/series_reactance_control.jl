@@ -107,9 +107,19 @@ end
 """
     clearSeriesReactanceControllers!(net)
 
-Remove all series-reactance controllers from `net` (other controllers stay).
+Remove all series-reactance controllers (TCSC/SSSC) from `net`, restoring each
+controlled branch to its physical base impedance (#329) so the cleared net
+carries the equipment model, not the last compensated operating point. Other
+controllers stay. Returns `net`.
 """
 function clearSeriesReactanceControllers!(net::Net)
+  # restore each controlled branch to its base impedance before dropping the
+  # controller, so a cleared net exports / short-circuits on the equipment model
+  for c in _series_reactance_controllers(net)
+    br = _find_controlled_series_branch(net, c)
+    br.r_pu = br.r_base_pu
+    br.x_pu = br.x_base_pu
+  end
   filter!(c -> !(c isa SeriesReactanceControl), net.machineControls)
   return net
 end

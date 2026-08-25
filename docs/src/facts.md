@@ -317,12 +317,15 @@ Honest limitations of the first cut:
 - **The branch impedance is modified in place** (like the SSSC/TCSC): the
   equivalent series impedance `z_add` stays on the branch after the control
   run, and for the full model its resistance part goes NEGATIVE. That is the
-  correct steady-state power-flow construct, but not the physical line, so a
-  short circuit or an export run on the SAME net must use the base network:
-  `runShortCircuit!` FAILS LOUDLY on a negative-resistance branch (the
-  converter is bypassed under fault), and a CGMES/MATPOWER export would write
-  the compensated impedance, not the physical one. Run the fault calculation
-  or the export on the unmodified network, or before the control run.
+  correct steady-state power-flow construct, not the physical line. Sparlectra
+  keeps the two apart (issue #329): every branch carries its physical base
+  impedance (`r_base_pu`/`x_base_pu`) next to the live value, and
+  `runShortCircuit!` and the CGMES/MATPOWER exports read the BASE. A fault
+  calculation or an interchange export therefore matches the equipment network
+  automatically, with no manual reset, while the power flow keeps solving with
+  the live (compensated) impedance. `restoreBaseImpedances!(net)` returns the
+  live field to the base, and `clearUpfcFullControllers!(net)` does the same
+  while dropping the controller.
 - **Low line current.** `z_add = V_se / I_s` is floored at a minimum current
   (`|I_s|` guard) so a lightly loaded or dead line stays finite and keeps its
   base impedance; a UPFC on an essentially currentless line has nothing to
@@ -364,10 +367,15 @@ control:
   characteristics at their clamps, all-or-nothing registration, and the YAML
   type `upfc` with the double-apply no-op; the full model reaches independent
   P and Q on one line simultaneously with the DC-link balance closed, reduces
-  to the SSSC when the series phase is forced to quadrature, and round-trips
-  through `model: full` in YAML.
+  to the SSSC when the series phase is forced to quadrature, round-trips
+  through `model: full` in YAML, and (after a full-model control run) has short
+  circuit and the CGMES/MATPOWER exports read the physical base impedance so
+  the compensated net matches the equipment network (#329).
 - `examples/others/exp_facts_limit_modes.jl`: the three limit
   characteristics side by side on one weak corridor plus the SSSC window
   on a loop network.
+- `examples/others/exp_facts_base_impedance.jl`: a full UPFC on a meshed
+  corridor, then short circuit and MATPOWER export reading the physical base
+  impedance so the compensated net matches the equipment net (#329).
 - Chapter 4 of the advanced workshop tour walks the same contrasts
   interactively.

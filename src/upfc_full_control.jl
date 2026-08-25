@@ -120,6 +120,26 @@ function _upfc_full_controllers(net)::Vector{UpfcFullControl}
   return UpfcFullControl[c for c in net.machineControls if c isa UpfcFullControl]
 end
 
+"""
+    clearUpfcFullControllers!(net)
+
+Remove all full-UPFC controllers (`model = :full`) from `net`, restoring each
+controlled branch to its physical base impedance (#329) so the cleared net
+carries the equipment model rather than the compensated operating point (whose
+resistance part can be negative). Other controllers stay. Returns `net`.
+"""
+function clearUpfcFullControllers!(net::Net)
+  # restore the controlled branch to its base impedance before dropping the
+  # controller (the full UPFC can have stamped Re(z) < 0 onto the live field)
+  for c in _upfc_full_controllers(net)
+    br = _upfc_branch(net, c)
+    br.r_pu = br.r_base_pu
+    br.x_pu = br.x_base_pu
+  end
+  filter!(c -> !(c isa UpfcFullControl), net.machineControls)
+  return net
+end
+
 # complex bus voltage in pu from the solved state
 function _upfc_vc(net::Net, busName::String)::ComplexF64
   idx = geNetBusIdx(net = net, busName = busName)

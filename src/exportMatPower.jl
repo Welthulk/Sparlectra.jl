@@ -284,8 +284,10 @@ function writeBranchData(net::Net, file; write_solution::Bool = true)
   for (i, br) in enumerate(branchVec)
     fbus = br.fromBus
     tbus = br.toBus
-    r = br.r_pu
-    x = br.x_pu
+    # export the PHYSICAL equipment impedance (#329), not a series-FACTS
+    # operating point a control run stamped onto the live r_pu/x_pu
+    r = br.r_base_pu
+    x = br.x_base_pu
     b = br.b_pu
     g = br.g_pu
     if abs(g) > 1e-6

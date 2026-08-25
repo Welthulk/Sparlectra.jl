@@ -249,6 +249,8 @@ export
   # Branch
   getBranchIdx,
   calcBranchYser,
+  calcBranchYserBase,                     # Series admittance from the physical base impedance (#329).
+  restoreBaseImpedances!,                 # Reset live branch impedance to the physical base, discarding a series-FACTS operating point (#329).
   calcBranchYshunt,
   calcBranchRatio,
   calcAdmittance,
@@ -363,7 +365,9 @@ export
   clearMachineControllers!,
   addShuntVoltageControl!,                # Add an SVC-style shunt voltage controller.
   addSeriesReactanceControl!,             # Add a TCSC-like series-reactance controller on a line branch (#297).
+  clearSeriesReactanceControllers!,       # Remove all TCSC/SSSC controllers, restoring each branch to its base impedance (#329).
   addUpfcControl!,                        # Register a UPFC: model=:quadrature SSSC+STATCOM composite (#325) or model=:full DC-link-coupled independent-P/Q model (#326).
+  clearUpfcFullControllers!,              # Remove all full-UPFC controllers, restoring each branch to its base impedance (#329).
   addHvdcPairControl!,                    # Add a back-to-back HVDC pairing controller on two converter injections (#297).
   addHvdcLink!,                           # Register a Stage-0 HVDC link record on a hand-built net (r0.9.9 result reporting).
   HvdcPairControl,                        # Controller type of the HVDC pair (element rows, isa checks).
