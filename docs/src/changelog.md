@@ -1,5 +1,7 @@
 # Version 0.9.19 - 2026-08-25
-* - Short circuit and CGMES/MATPOWER export now use the physical base branch impedance instead of the FACTS compensated operating point (#329)
+
+* Branches carry their physical equipment impedance (`r_base_pu`/`x_base_pu`) alongside the live operating point; short circuit and the MATPOWER export read the base, and the CGMES export guard no longer blocks after a series-FACTS run (#329).
+* New: `restoreBaseImpedances!`, `clearUpfcFullControllers!`; `clearSeriesReactanceControllers!` restores the base impedance.
 
 # Version 0.9.18 - 2026-08-25
 
