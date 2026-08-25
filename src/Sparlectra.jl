@@ -407,13 +407,20 @@ export
   ShortCircuitResult,                     # Result type of runShortCircuit! (safety-flagged rows).
 
   # contingency.jl (N-1 batch, multi-core Phase 4)
-  ContingencyCase,                        # One branch-outage case (name, kind = :branch, element).
-  ContingencyResult,                      # Outcome of one case: convergence, envelope, loadings, violations.
+  ContingencyCase,                        # One outage case (name, kind = :branch/:gen, element, weight).
+  ContingencyResult,                      # Outcome of one case: convergence, envelope, overloads, shed load, weight.
+  OverloadRecord,                         # One overloaded branch under a case (name + loading %).
+  ContingencyReport,                      # Aggregate over a batch (counts, load shed, worst loading, top overloads).
   runContingencies!,                      # Evaluate a case batch on template copies, optionally threaded.
-  generateN1Branches,                     # One case per in-service branch (transformers optional).
+  generateN1Branches,                     # One case per in-service branch (transformer/voltage/rating/name filters).
+  generateN1Generators,                   # One case per in-service generator (kind = :gen; Pg/name filters).
   generateContingenciesFromFOR001,        # Cases from imported MATPOWER FOR001 metadata.
+  applyContingencyWeights,                # Attach per-case weights (by name) to a case list.
+  readContingencyWeightsCSV,              # Read case name -> outage weight from a two-column CSV.
   printContingencyResults,                # Fixed-width result table (style of printShortCircuitResult).
   writeContingencyResultsCSV,             # Semicolon CSV writer for the result batch.
+  buildContingencyReport,                 # Aggregate a result batch into a ContingencyReport.
+  printContingencyReport,                 # Print the aggregate report summary block.
   NativeShortCircuitData,                 # Native SC source container on Net (filled by addExternalGrid!, #299).
   printShortCircuitResult,                # Pretty-printer for ShortCircuitResult (CSV via the service run).
   _createDict,
@@ -702,6 +709,9 @@ include("contingency.jl")
 # type above and the API result helpers included earlier.
 include("api/run_short_circuit_service.jl")
 include("api/run_import_analysis_service.jl")
+# Web UI/service N-1 contingency run (#331 Phase 5): needs the contingency
+# batch API above and the shared config-driven import + API result helpers.
+include("api/run_contingency_service.jl")
 include("precompile.jl")
 #! format: on
 end # module Sparlectra

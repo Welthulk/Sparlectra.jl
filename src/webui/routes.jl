@@ -162,6 +162,17 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
     return handle_powerflow_case_settings_reset(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root)
   elseif verb == "POST" && path == "/powerflow/delete-case"
     return handle_powerflow_case_delete(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root)
+  elseif verb == "GET" && path == "/powerflow/contingency-weights"
+    config_file = get(query, "config_file", runtime === nothing ? DEFAULT_SPARLECTRA_CONFIG_PATH : runtime.config_file)
+    return handle_contingency_weights_page(query; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, config_file = config_file, operation_log = log_root)
+  elseif verb == "GET" && path == "/powerflow/contingency-weights/download"
+    return handle_contingency_weights_download(query; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory)
+  elseif verb == "POST" && path == "/powerflow/contingency-weights/upload"
+    return handle_contingency_weights_upload(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root)
+  elseif verb == "POST" && path == "/powerflow/contingency-weights/save"
+    return handle_contingency_weights_save(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root)
+  elseif verb == "POST" && path == "/powerflow/contingency-weights/reset"
+    return handle_contingency_weights_reset(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root)
   elseif verb == "POST" && path == "/powerflow/config/check"
     return handle_powerflow_config_refresh(form; write = false, operation_log = log_root)
   elseif verb == "POST" && path == "/powerflow/config/refresh"

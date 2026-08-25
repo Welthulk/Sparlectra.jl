@@ -1,3 +1,17 @@
+# Version 0.9.17 - 2026-08-25
+
+## Improvements
+
+- N-1 contingency: per-case start-value ladder (`contingency.rescue_ladder`), case filters, weights, generator outages, overload reporting, Web UI button and weight editor (issue #331).
+
+## Breaking
+
+- Breaking: `ContingencyResult.overloaded_branches` replaced by `overloads::Vector{OverloadRecord}`.
+
+## Fixes
+- Deprecated `retry_flat_start`: appends `:flat` to the ladder, kept one minor cycle.
+
+
 # Version 0.9.16 - 2026-08-23
 
 CGMES deliveries that arrive without their topology file, and a UPFC that

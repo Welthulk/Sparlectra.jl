@@ -592,7 +592,7 @@ $(isempty(profile_path) ? "" : "<fieldset class=\"saved-case-settings\">
 </fieldset>
 <label class=\"check span-2\"><input name=\"ignore_webui_settings\" type=\"hidden\" value=\"false\"><input name=\"ignore_webui_settings\" type=\"checkbox\" value=\"true\">$(_webui_field_label("ignore_webui_settings", "Ignore Web UI settings and use configuration defaults"))</label>
 </details>
-<div class=\"span-2 actions\"><button class=\"powerflow-submit\" type=\"submit\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Start PowerFlow run</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running PowerFlow…</span></button><button class=\"powerflow-submit diagnose-submit\" type=\"submit\" name=\"diagnose_mode\" value=\"true\" title=\"Run this case in diagnostic mode: evaluates the mismatch at the case's own stored VM/VA (no corrective Newton step) and writes a diagnostic report to diagnose.log.\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Diagnose</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running diagnosis…</span></button><button class=\"powerflow-submit short-circuit-submit\" type=\"submit\" name=\"short_circuit_mode\" value=\"true\" data-short-circuit-button data-sc-state=\"$(sc_state)\"$(sc_disabled_attr) title=\"$(_webui_escape(sc_title))\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Short circuit</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Computing short circuit…</span></button></div></form>
+<div class=\"span-2 actions\"><button class=\"powerflow-submit\" type=\"submit\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Start PowerFlow run</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running PowerFlow…</span></button><button class=\"powerflow-submit diagnose-submit\" type=\"submit\" name=\"diagnose_mode\" value=\"true\" title=\"Run this case in diagnostic mode: evaluates the mismatch at the case's own stored VM/VA (no corrective Newton step) and writes a diagnostic report to diagnose.log.\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Diagnose</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running diagnosis…</span></button><button class=\"powerflow-submit short-circuit-submit\" type=\"submit\" name=\"short_circuit_mode\" value=\"true\" data-short-circuit-button data-sc-state=\"$(sc_state)\"$(sc_disabled_attr) title=\"$(_webui_escape(sc_title))\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Short circuit</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Computing short circuit…</span></button><label class=\"contingency-kind\">N-1 kind <select name=\"contingency_kind\" data-contingency-kind><option value=\"branch\">branch</option><option value=\"gen\">generator</option></select></label><a class=\"weights-link\" href=\"/powerflow/contingency-weights?case=$(_webui_urlencode(selected_casefile))\" title=\"Upload or edit the per-case N-1 weight list\">edit N-1 weights</a><button class=\"powerflow-submit contingency-submit\" type=\"submit\" name=\"contingency_mode\" value=\"true\" data-contingency-button title=\"Run an N-1 contingency analysis: take each in-service element (branch or generator, per the selector) out one at a time, check the base case, and report convergence, overloads, voltage violations, load shed, and severity. Writes contingency_n1.csv and a report to run.log.\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Contingency (N-1)</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running N-1...</span></button></div></form>
 <script>
 document.addEventListener('DOMContentLoaded', function () {
   const powerflowForm = document.getElementById('powerflow-run-form');
@@ -1261,6 +1261,64 @@ function _webui_short_circuit_summary(result::AbstractDict)::Union{Nothing,Strin
   return "<code>" * _webui_escape(text) * "</code>" * badge
 end
 
+# N-1 contingency runs: one summary row with the outcome counts and the worst
+# loading. Names the slack-unit outage (a generator N-1 that removes the only
+# reference) so it does not read as a tool failure. Returns nothing otherwise.
+function _webui_contingency_summary(result::AbstractDict)::Union{Nothing,String}
+  metadata = get(result, "metadata", Dict{String,Any}())
+  metadata isa AbstractDict || return nothing
+  get(metadata, "run_mode", "") == "contingency" || return nothing
+  kind = string(get(metadata, "contingency_kind", "branch")) == "gen" ? "generator" : "branch"
+  n = get(metadata, "contingency_cases", 0)
+  conv = get(metadata, "contingency_converged", 0)
+  isl = get(metadata, "contingency_islanded", 0)
+  nonconv = get(metadata, "contingency_nonconverged", 0)
+  no_slack = get(metadata, "contingency_no_slack", 0)
+  shed = get(metadata, "contingency_total_shed_mw", 0.0)
+  worst = get(metadata, "contingency_worst_loading_pct", NaN)
+  weighted = get(metadata, "contingency_weights_applied", false) === true
+  wcount = get(metadata, "contingency_weighted_cases", 0)
+  fmt = x -> x isa Real && isfinite(x) ? string(round(Float64(x); digits = 1)) : "n/a"
+  # state the weighting explicitly, so a severity ranking that used a weight file
+  # is never read as if it were unweighted
+  weight_note = weighted ? ", weighted ($(wcount) case$(wcount == 1 ? "" : "s"))" : ", unweighted"
+  text = string(kind, " N-1: ", conv, "/", n, " converged, ", isl, " islanded (", fmt(shed), " MW shed), worst loading ", fmt(worst), "%", weight_note)
+  badge = ""
+  if nonconv isa Real && nonconv > 0
+    label = no_slack isa Real && no_slack > 0 ? "$(nonconv) non-converged incl. $(no_slack) that removed the only slack (auto_slack resolves it)" : "$(nonconv) non-converged"
+    badge = " <span class=\"status-badge status-warning\">$(label)</span>"
+  end
+  return "<code>" * _webui_escape(text) * "</code>" * badge
+end
+
+# N-1 contingency weights editor (issue #331 Phase 5 follow-up). `elements` is
+# the (already capped) list of element names seeded from the case; `stored` maps
+# element name to its stored weight; `raw_text` is the current file content for
+# the free-text editor. `net_error` set means the seeded table could not be
+# built (e.g. a non-N-1 format) so only the raw editor / upload are shown.
+function render_contingency_weights_editor(; case::AbstractString, cases::AbstractVector{<:AbstractString}, elements::AbstractVector{<:AbstractString}, stored::AbstractDict, raw_text::AbstractString, message::AbstractString = "", filter::AbstractString = "", total_count::Int = 0, net_error::AbstractString = "")::String
+  esc = _webui_escape
+  msg_html = isempty(message) ? "" : "<p class=\"notice\">$(esc(message))</p>"
+  options = join(("<option value=\"$(esc(c))\"$(c == case ? " selected" : "")>$(esc(c))</option>" for c in cases), "")
+  selector = "<form method=\"get\" action=\"/powerflow/contingency-weights\" class=\"panel\"><label>Case <select name=\"case\" onchange=\"this.form.submit()\">$(options)</select></label> <noscript><button type=\"submit\">Load</button></noscript></form>"
+  if isempty(case)
+    return _webui_layout("N-1 weights", string(selector, msg_html, "<p>Select a case to edit its N-1 contingency weights. Weights only reorder the severity ranking; they never skip a case.</p>"); show_back = true)
+  end
+  cesc = esc(case)
+  cenc = _webui_urlencode(case)
+  upload = "<section class=\"panel\"><h2>Upload / download</h2><form method=\"post\" action=\"/powerflow/contingency-weights/upload\" enctype=\"multipart/form-data\"><input type=\"hidden\" name=\"casefile\" value=\"$(cesc)\"><input type=\"file\" name=\"weights_file\" accept=\".csv\" required> <button type=\"submit\">Upload (replaces existing)</button></form><p><a href=\"/powerflow/contingency-weights/download?case=$(cenc)\">download current file</a></p><form method=\"post\" action=\"/powerflow/contingency-weights/reset\"><input type=\"hidden\" name=\"casefile\" value=\"$(cesc)\"><button type=\"submit\">reset (delete the weight file)</button></form></section>"
+  table_html = if !isempty(net_error)
+    "<section class=\"panel\"><h2>Weights table</h2><p class=\"notice\">Element names could not be listed for this case ($(esc(net_error))). Edit the raw CSV below or upload a file.</p></section>"
+  else
+    rows = join(("<tr><td>$(esc(e))</td><td><input type=\"hidden\" name=\"element\" value=\"$(esc(e))\"><input name=\"weight\" type=\"number\" step=\"any\" min=\"0\" value=\"$(get(stored, e, 1.0))\"></td></tr>" for e in elements), "")
+    cap_note = length(elements) < total_count ? "<p class=\"notice\">Showing $(length(elements)) of $(total_count) elements; use the filter or edit the raw CSV.</p>" : ""
+    filter_form = "<form method=\"get\" action=\"/powerflow/contingency-weights\"><input type=\"hidden\" name=\"case\" value=\"$(cesc)\"><label>Filter by name <input name=\"filter\" value=\"$(esc(filter))\"></label> <button type=\"submit\">Filter</button></form>"
+    "<section class=\"panel\"><h2>Weights table ($(total_count) elements)</h2>$(filter_form)$(cap_note)<form method=\"post\" action=\"/powerflow/contingency-weights/save\"><input type=\"hidden\" name=\"casefile\" value=\"$(cesc)\"><table><thead><tr><th>element</th><th>weight</th></tr></thead><tbody>$(rows)</tbody></table><button type=\"submit\">Save table (rows at 1.0 are omitted)</button></form></section>"
+  end
+  textarea = "<section class=\"panel\"><h2>Raw CSV</h2><form method=\"post\" action=\"/powerflow/contingency-weights/save\"><input type=\"hidden\" name=\"casefile\" value=\"$(cesc)\"><textarea name=\"weights_text\" rows=\"12\" cols=\"64\">$(esc(raw_text))</textarea><br><button type=\"submit\">Save raw CSV</button></form></section>"
+  return _webui_layout("N-1 weights: $(case)", string(selector, msg_html, upload, table_html, textarea); show_back = true)
+end
+
 # Import-analysis runs: one summary row with the verdict and the gap counts.
 # Returns nothing for other runs.
 function _webui_import_analysis_summary(result::AbstractDict)::Union{Nothing,String}
@@ -1355,6 +1413,8 @@ function render_powerflow_result(result::AbstractDict)::String
     sc_summary === nothing || push!(base, ("Short circuit", sc_summary))
     ia_summary = _webui_import_analysis_summary(result)
     ia_summary === nothing || push!(base, ("Import analysis", ia_summary))
+    contingency_summary = _webui_contingency_summary(result)
+    contingency_summary === nothing || push!(base, ("Contingency (N-1)", contingency_summary))
     cgmes_export_summary = _webui_cgmes_export_summary(result)
     cgmes_export_summary === nothing || push!(base, ("CGMES export", cgmes_export_summary))
     Tuple(base)

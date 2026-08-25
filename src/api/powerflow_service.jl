@@ -220,6 +220,12 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
   import_analysis_mode = _service_request_value(request, "import_analysis_mode", false)
   import_analysis_mode isa Bool || return _service_failure("invalid_request", "import_analysis_mode must be boolean.")
   (import_analysis_mode && (diagnose_mode || short_circuit_mode)) && return _service_failure("invalid_request", "import_analysis_mode excludes diagnose_mode and short_circuit_mode.")
+  contingency_mode = _service_request_value(request, "contingency_mode", false)
+  contingency_mode isa Bool || return _service_failure("invalid_request", "contingency_mode must be boolean.")
+  (contingency_mode && (diagnose_mode || short_circuit_mode || import_analysis_mode)) && return _service_failure("invalid_request", "contingency_mode excludes diagnose_mode, short_circuit_mode and import_analysis_mode.")
+  # outage kind is a RUN parameter (branch vs generator N-1), not a config key
+  contingency_kind = _service_request_value(request, "contingency_kind", "branch")
+  (contingency_kind isa AbstractString && contingency_kind in ("branch", "gen")) || return _service_failure("invalid_request", "contingency_kind must be \"branch\" or \"gen\".")
   detailed_result_csv = _service_request_value(request, "detailed_result_csv", false)
   detailed_result_csv isa Bool || return _service_failure("invalid_request", "detailed_result_csv must be boolean.")
   export_cgmes = _service_request_value(request, "export_cgmes", false)
@@ -311,6 +317,39 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
       return _service_failure("run_index_error", sprint(showerror, err, catch_backtrace()); run_id = run_id)
     end
     return to_dict(sc_result)
+  end
+  # N-1 contingency runs (#331 Phase 5) also bypass the single power-flow
+  # pipeline: build the net, run the batch for the requested outage kind, write
+  # the CSV + report artifacts (see _run_contingency_service). Same result and
+  # registry conventions as the short-circuit path.
+  if contingency_mode
+    # a per-case weight list lives next to the resolved case as
+    # <stem>.contingency-weights.csv (issue #331 Phase 5 follow-up). Its PRESENCE
+    # is the switch: pass the path only when the file exists, no request key.
+    ct_weights_path = try
+      wp = _webui_case_weights_path(casefile)
+      isfile(wp) ? wp : nothing
+    catch
+      nothing
+    end
+    ct_result = try
+      _run_contingency_service(casefile, config_file, output_dir, run_id, contingency_kind; weights_path = ct_weights_path)
+    catch err
+      err isa PowerFlowAborted && rethrow()
+      return _service_failure("execution_error", sprint(showerror, err, catch_backtrace()); run_id = run_id)
+    end
+    try
+      lock(_POWERFLOW_SERVICE_LOCK) do
+        _POWERFLOW_SERVICE_RUNS[ct_result.run_id] = ct_result
+        _write_powerflow_run_index!(root, ct_result)
+      end
+    catch err
+      lock(_POWERFLOW_SERVICE_LOCK) do
+        delete!(_POWERFLOW_SERVICE_RUNS, ct_result.run_id)
+      end
+      return _service_failure("run_index_error", sprint(showerror, err, catch_backtrace()); run_id = run_id)
+    end
+    return to_dict(ct_result)
   end
   # Phase timings collected before the API handoff become service metadata, not
   # operation-log events for every internal solver step.

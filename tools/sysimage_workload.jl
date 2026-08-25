@@ -18,7 +18,8 @@
 #          the shipped PrecompileTools workload: Web UI start with the
 #          reserved warm-up machinery (no run-history entries), one page
 #          request through the real socket handler, one full power-flow
-#          service run, one full short-circuit service run (CGMES MiniGrid),
+#          service run, one N-1 contingency service run (the Contingency button
+#          path), one full short-circuit service run (CGMES MiniGrid),
 #          one run_sparlectra call on case14, then a clean shutdown. Never
 #          run this file directly; PackageCompiler executes it in a child
 #          process during the build.
@@ -97,6 +98,15 @@ function run_workload()
     # after a fast start pays it as JIT time (measured ~11 s)
     _workload_request(port, "/powerflow")
     _workload_request(port, "/webui/fast-start")
+    # the N-1 weights editor seeds a table from the case's element names (builds
+    # the net); trace it so the first "edit N-1 weights" open is not JIT. case14
+    # must live in the server's case directory for the seeded-name path.
+    try
+      cp(Sparlectra.ensure_casefile("case14.m"), joinpath(server.runtime.case_directory, "case14.m"); force = true)
+    catch err
+      @warn "sysimage workload: could not stage case14 for the weights editor" exception = err
+    end
+    _workload_request(port, "/powerflow/contingency-weights?case=case14.m")
     # real service runs through the full pipeline (case resolution,
     # artifact writers for the CSVs, result.json, run index, result
     # lookup): the first real Web UI run otherwise pays exactly this
@@ -106,6 +116,15 @@ function run_workload()
       "casefile" => Sparlectra.ensure_casefile("case14.m"),
       "config_overrides" => Dict{String,Any}("output.logfile_results" => "off", "benchmark.enabled" => false),
     ); label = "matpower power-flow")
+    # N-1 contingency (#331 Phase 5): the "Contingency (N-1)" button path through
+    # runContingencies!, the CSV/report writers, and the result registry, so the
+    # first click after a fast start is not paid as JIT. Branch kind on case14
+    # covers the shared code; the generator kind reuses the same service.
+    _workload_service_run(Dict{String,Any}(
+      "casefile" => Sparlectra.ensure_casefile("case14.m"),
+      "contingency_mode" => true,
+      "contingency_kind" => "branch",
+    ); label = "matpower contingency n-1")
     # The MiniGrid CGMES delivery covers the CGMES compile paths (ZIP and
     # XML reading, profile harvesting, net construction, control mapping).
     # It comes from the same case cache the Web UI uses; when absent it is

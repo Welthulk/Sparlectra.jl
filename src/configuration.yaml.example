@@ -522,6 +522,14 @@ benchmark:
   # 0 disables node-count limit for one-shot output.
   show_once_max_nodes: 0
 
+contingency:
+  # Per-case start-value ladder for the N-1 contingency batch (issue #331):
+  # an ordered, duplicate-free subset of the stages below, tried in order
+  # until one converges. [warm] reproduces the pre-#331 single warm solve.
+  # Allowed stages: warm (base-case voltages), apslf (APSLF start, needs
+  # AnalyticLoadFlow.jl), dc (flat magnitudes, DC-projected angles), flat.
+  rescue_ladder: [warm]
+
 control:
   # Enable the generic outer-loop control framework.
   # If a network contains registered controllers, high-level runners such as

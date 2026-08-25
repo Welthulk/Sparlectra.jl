@@ -290,6 +290,7 @@ function _webui_is_user_selectable_case(name::AbstractString)::Bool
   lowered_name = lowercase(basename(name))
   _, extension = splitext(lowered_name)
   endswith(lowered_name, ".sparlectra-webui.yaml") && return false
+  endswith(lowered_name, ".contingency-weights.csv") && return false
   startswith(lowered_name, "warmup_") && extension in (".m", ".jl") && return false
   extension == ".jl" && return false
   extension in (".m", ".dat", ".zip") || return false
@@ -407,6 +408,24 @@ function _webui_case_settings_path(output_root::AbstractString, casefile::Abstra
   source = isabspath(strip(String(casefile))) ? normpath(String(casefile)) : _webui_resolve_case_profile_source(casefile; case_directory)
   isempty(source) && throw(ArgumentError("Unsafe MATPOWER case path for case-settings profile."))
   return joinpath(dirname(source), _webui_case_settings_filename(source))
+end
+
+# Per-case N-1 contingency weight list (issue #331 Phase 5 follow-up): stored
+# next to the case as `<stem>.contingency-weights.csv`, the exact two-column
+# format `readContingencyWeightsCSV` parses. Mirrors the sidecar-YAML naming so
+# it is human-editable and travels with the case (list-excluded, delete-cascaded).
+function _webui_case_weights_filename(casefile::AbstractString)::String
+  stem = splitext(basename(strip(String(casefile))))[1]
+  isempty(stem) && throw(ArgumentError("Contingency weights file requires a case filename."))
+  return string(stem, ".contingency-weights.csv")
+end
+
+# No output_root parameter (unlike the sidecar helper it mirrors): the file
+# lives next to the case, output_root is irrelevant, so it is left out.
+function _webui_case_weights_path(casefile::AbstractString; case_directory::Union{Nothing,AbstractString} = nothing)::String
+  source = isabspath(strip(String(casefile))) ? normpath(String(casefile)) : _webui_resolve_case_profile_source(casefile; case_directory)
+  isempty(source) && throw(ArgumentError("Unsafe MATPOWER case path for contingency weights."))
+  return joinpath(dirname(source), _webui_case_weights_filename(source))
 end
 
 function _webui_log_case_settings_load(output_root::AbstractString, event::AbstractString; fields...)
@@ -753,6 +772,10 @@ function powerflow_webui_request(form::AbstractDict; default_output_root::Abstra
     "diagnose_mode" => _webui_parse_form_value(_webui_form_value(form, "diagnose_mode", "false"), Bool, "diagnose_mode"),
     "short_circuit_mode" => _webui_parse_form_value(_webui_form_value(form, "short_circuit_mode", "false"), Bool, "short_circuit_mode"),
     "import_analysis_mode" => _webui_parse_form_value(_webui_form_value(form, "import_analysis_mode", "false"), Bool, "import_analysis_mode"),
+    "contingency_mode" => _webui_parse_form_value(_webui_form_value(form, "contingency_mode", "false"), Bool, "contingency_mode"),
+    # N-1 outage kind is a RUN parameter (branch / generator), read as a plain
+    # request key like dtf_outage_selection, not a config override
+    "contingency_kind" => strip(String(something(_webui_form_value(form, "contingency_kind", "branch"), "branch"))),
     "detailed_result_csv" => request_options["detailed_result_csv"],
     "detailed_result_csv_format" => request_options["detailed_result_csv_format"],
     "export_cgmes" => request_options["export_cgmes"],

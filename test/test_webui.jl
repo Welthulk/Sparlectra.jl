@@ -231,6 +231,87 @@ function run_webui_fast_tests()
       @test Sparlectra.handle_powerflow_case_settings_reset(Dict("casefile" => "../evil.m"); output_root = root, case_directory = cases, operation_log = root).status == 303
     end
 
+    @testset "contingency weights editor and storage (#331 Phase 5 follow-up)" begin
+      dir = mktempdir()
+      cases = joinpath(dir, "cases")
+      mkpath(cases)
+      root = joinpath(dir, "runs")
+      mkpath(root)
+      real14 = joinpath(pkgdir(Sparlectra), "test", "testdata", "mpower", "case14.m")
+      isfile(real14) || (real14 = joinpath(pkgdir(Sparlectra), "data", "mpower", "case14.m"))
+      cp(real14, joinpath(cases, "case14.m"))
+      wf = Sparlectra._webui_case_weights_path("case14.m"; case_directory = cases)
+
+      # the weight file lives next to the case as <stem>.contingency-weights.csv
+      @test basename(wf) == "case14.contingency-weights.csv"
+      @test dirname(wf) == normpath(cases)
+
+      # list exclusion: a weights file must not be offered as a selectable case
+      touch(wf)
+      opts = Sparlectra._webui_casefile_options_in_directory(cases)
+      @test "case14.m" in opts
+      @test !any(occursin("contingency-weights", o) for o in opts)
+      rm(wf)
+
+      # real element names for the fixtures
+      net = redirect_stdout(devnull) do
+        Sparlectra._import_sparlectra_net(joinpath(cases, "case14.m"), nothing, Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true))
+      end
+      bnames = [c.name for c in generateN1Branches(net)]
+      bytes = s -> Vector{UInt8}(codeunits(s))
+      up = (fname, data) -> Sparlectra.handle_contingency_weights_upload(Dict{String,Any}("casefile" => "case14.m", "casefiles" => [Sparlectra.WebUICaseUpload(fname, data)]); output_root = root, case_directory = cases, operation_log = root)
+      loc = r -> first(p for (k, p) in r.headers if k == "Location")
+
+      # upload a valid weight file
+      r = up("w.csv", bytes("name;weight\n$(bnames[1]);3.0\n"))
+      @test r.status == 303
+      @test isfile(wf)
+      # a malformed CSV is rejected with the parser's line-numbered message and
+      # the existing file is left untouched
+      before = read(wf, String)
+      rbad = up("bad.csv", bytes("name;weight\n$(bnames[2]);nope\n"))
+      @test occursin("rejected", loc(rbad))
+      @test occursin("line", loc(rbad))
+      @test read(wf, String) == before
+      # non-csv extension, oversized file, and a path-separator name all rejected
+      @test occursin("rejected", loc(up("w.txt", UInt8[])))
+      @test occursin("rejected", loc(up("w.csv", zeros(UInt8, Sparlectra.WEBUI_CONTINGENCY_WEIGHTS_MAX_BYTES + 1))))
+      @test occursin("rejected", loc(Sparlectra.handle_contingency_weights_upload(Dict{String,Any}("casefile" => "../evil", "casefiles" => [Sparlectra.WebUICaseUpload("w.csv", UInt8[])]); output_root = root, case_directory = cases, operation_log = root)))
+      # uploading again replaces the file and says so
+      @test occursin("replaced", loc(up("w.csv", bytes("name;weight\n$(bnames[1]);2.0\n"))))
+
+      # the editor page seeds the case's real element names plus a raw-CSV editor
+      page = redirect_stdout(devnull) do
+        Sparlectra.handle_contingency_weights_page(Dict{String,Any}("case" => "case14.m"); output_root = root, case_directory = cases, operation_log = root)
+      end
+      body = String(page.body)
+      @test page.status == 200
+      @test occursin(bnames[1], body)
+      @test occursin("Raw CSV", body)
+
+      # saving from the seeded table omits rows left at exactly 1.0
+      Sparlectra.handle_contingency_weights_save(Dict{String,Any}("casefile" => "case14.m", "element" => [bnames[1], bnames[2]], "weight" => ["2.5", "1.0"]); output_root = root, case_directory = cases, operation_log = root)
+      saved = read(wf, String)
+      @test occursin(bnames[1], saved)
+      @test !occursin(bnames[2], saved)
+
+      # download serves the stored file as an attachment
+      dl = Sparlectra.handle_contingency_weights_download(Dict{String,Any}("case" => "case14.m"); output_root = root, case_directory = cases)
+      @test dl.status == 200
+      @test any(k == "Content-Disposition" for (k, _) in dl.headers)
+      @test !isempty(dl.body)
+
+      # reset deletes the weight file
+      @test Sparlectra.handle_contingency_weights_reset(Dict{String,Any}("casefile" => "case14.m"); output_root = root, case_directory = cases, operation_log = root).status == 303
+      @test !isfile(wf)
+
+      # deleting the case cascades to its weight file
+      touch(wf)
+      Sparlectra.handle_powerflow_case_delete(Dict{String,Any}("casefile" => "case14.m"); output_root = root, case_directory = cases, operation_log = root)
+      @test !isfile(joinpath(cases, "case14.m"))
+      @test !isfile(wf)
+    end
+
     @testset "config edits win over older case settings" begin
       dir = mktempdir()
       cfg = joinpath(dir, "conf.yaml")

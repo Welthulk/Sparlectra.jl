@@ -39,6 +39,12 @@ end
 const _WEBUI_LOGO_PATH = normpath(joinpath(@__DIR__, "..", "..", "docs", "src", "assets", "logo.png"))
 const WEBUI_CASE_IMPORT_MAX_FILE_BYTES = 100 * 1024 * 1024
 const WEBUI_CASE_IMPORT_MAX_REQUEST_BYTES = 250 * 1024 * 1024
+# a contingency weight list is text (one line per element); the 100 MB case cap
+# is wrong here (issue #331 Phase 5 follow-up)
+const WEBUI_CONTINGENCY_WEIGHTS_MAX_BYTES = 5 * 1024 * 1024
+# cap on RENDERED editor rows: a large case has thousands of elements; showing
+# them all as number inputs is unusable, so cap and offer a name filter instead
+const WEBUI_CONTINGENCY_WEIGHTS_MAX_ROWS = 200
 
 struct WebUICaseUpload
   filename::String
@@ -230,6 +236,10 @@ function handle_powerflow_case_delete(form::AbstractDict; output_root::AbstractS
         rm(target)
         sidecar = _webui_case_settings_path(output_root, requested; case_directory = directory)
         isfile(sidecar) && rm(sidecar; force = true)
+        # the per-case N-1 weight list travels with the case (issue #331 Phase 5
+        # follow-up); remove it too so a deleted case leaves no orphan behind
+        weights = _webui_case_weights_path(requested; case_directory = directory)
+        isfile(weights) && rm(weights; force = true)
       catch err
         error_text = sprint(showerror, err)
       end
@@ -275,6 +285,232 @@ function handle_powerflow_case_settings_reset(form::AbstractDict; output_root::A
   end
   record_webui_operation!(operation_log, "case_settings_reset_completed"; route = "/powerflow/case-settings/reset", method = "POST", user_action = true, casefile = requested)
   return _webui_redirect("/powerflow?casefile=$(_webui_urlencode(requested))&import_message=$(_webui_urlencode("Saved settings for '$(requested)' deleted — the form now uses the configuration defaults."))")
+end
+
+# --- Contingency weights editor (issue #331 Phase 5 follow-up) ---
+
+# redirect back to the weights editor for a case, carrying a status message
+function _webui_weights_redirect(casefile::AbstractString, message::AbstractString)::SparlectraWebUIResponse
+  prefix = isempty(casefile) ? "?" : "?case=$(_webui_urlencode(casefile))&"
+  return _webui_redirect(string("/powerflow/contingency-weights", prefix, "weights_message=", _webui_urlencode(message)))
+end
+
+"""
+    handle_contingency_weights_upload(form; output_root, application_root, case_directory, operation_log)
+
+Store (or replace) the per-case N-1 contingency weight file
+`<stem>.contingency-weights.csv` next to the case. The target case comes from
+the form's `casefile` key; the uploaded file arrives under `casefiles` (the
+multipart parser collects every file part there regardless of the input's name,
+see `_webui_parse_multipart_form`). The upload is validated with
+`readContingencyWeightsCSV` from a temp copy BEFORE anything is stored, so a
+malformed CSV is rejected with the parser's line-numbered message and any
+existing file is left untouched. Unlike case import, uploading REPLACES an
+existing weight file (a weight list is a working document); the replacement is
+stated in the redirect message.
+"""
+function handle_contingency_weights_upload(form::AbstractDict; output_root::AbstractString = "results/powerflow_service", application_root::AbstractString = _webui_application_root(), case_directory::Union{Nothing,AbstractString} = nothing, operation_log::AbstractString = output_root)::SparlectraWebUIResponse
+  directory = _webui_case_directory(; case_directory = case_directory, application_root = application_root, output_root = output_root)
+  requested = strip(String(something(_webui_form_value(form, "casefile", ""), "")))
+  route = "/powerflow/contingency-weights/upload"
+  reject = function (msg::AbstractString)
+    record_webui_operation!(operation_log, "contingency_weights_upload_failed"; route = route, method = "POST", user_action = true, casefile = requested, message = msg)
+    return _webui_weights_redirect(requested, "Weights upload rejected: $(msg)")
+  end
+  isempty(requested) && return reject("no case selected")
+  (basename(requested) != requested || occursin(r"[\\/]", requested)) && return reject("invalid case name")
+  isfile(joinpath(directory, requested)) || return reject("case \"$(requested)\" not found")
+  # every uploaded file part arrives under "casefiles" regardless of the input's
+  # name attribute (multipart parser); the weights file is here too
+  uploads = _webui_case_import_uploads(form)
+  isempty(uploads) && return reject("no file uploaded")
+  upload = first(uploads)
+  lowercase(splitext(basename(upload.filename))[2]) == ".csv" || return reject("weights file must be a .csv")
+  length(upload.data) > WEBUI_CONTINGENCY_WEIGHTS_MAX_BYTES && return reject("file exceeds $(div(WEBUI_CONTINGENCY_WEIGHTS_MAX_BYTES, 1024 * 1024)) MB")
+  # validate BEFORE storing: parse a temp copy; readContingencyWeightsCSV names
+  # the offending line, and nothing is written on failure
+  try
+    tmp = tempname()
+    write(tmp, upload.data)
+    try
+      readContingencyWeightsCSV(tmp)
+    finally
+      rm(tmp; force = true)
+    end
+  catch err
+    return reject(first(split(sprint(showerror, err), '\n')))
+  end
+  dest = try
+    _webui_case_weights_path(requested; case_directory = directory)
+  catch err
+    return reject(first(split(sprint(showerror, err), '\n')))
+  end
+  startswith(normpath(dest), normpath(directory)) || return reject("invalid destination")
+  replaced = isfile(dest)
+  # atomic replace (unlike case import, which rejects an existing file)
+  temp = tempname(dirname(dest))
+  try
+    write(temp, upload.data)
+    mv(temp, dest; force = true)
+  catch err
+    rm(temp; force = true)
+    return reject(first(split(sprint(showerror, err), '\n')))
+  end
+  record_webui_operation!(operation_log, "contingency_weights_upload_completed"; route = route, method = "POST", user_action = true, casefile = requested, replaced = replaced)
+  return _webui_weights_redirect(requested, replaced ? "Weights replaced for '$(requested)'." : "Weights uploaded for '$(requested)'.")
+end
+
+"""
+    handle_contingency_weights_page(query; ...) -> SparlectraWebUIResponse
+
+Render the N-1 contingency weights editor for `query["case"]`. Seeds the table
+with the case's real element names (`generateN1Branches` + `generateN1Generators`
+on the net built through the shared config-driven import), so the user never
+types names blind; a large case is capped to `WEBUI_CONTINGENCY_WEIGHTS_MAX_ROWS`
+rendered rows with a name filter. A case whose format cannot be listed here (e.g.
+CGMES/DTF through this MATPOWER import) falls back to the raw-CSV editor.
+"""
+function handle_contingency_weights_page(query::AbstractDict; output_root::AbstractString = "results/powerflow_service", application_root::AbstractString = _webui_application_root(), case_directory::Union{Nothing,AbstractString} = nothing, config_file::AbstractString = DEFAULT_SPARLECTRA_CONFIG_PATH, operation_log::AbstractString = output_root)::SparlectraWebUIResponse
+  directory = _webui_case_directory(; case_directory = case_directory, application_root = application_root, output_root = output_root)
+  cases = _webui_casefile_options_in_directory(directory)
+  case = strip(String(get(query, "case", "")))
+  message = String(get(query, "weights_message", ""))
+  filter_text = strip(String(get(query, "filter", "")))
+  _webui_log_route!(operation_log, "contingency_weights_opened", "GET", "/powerflow/contingency-weights"; case = case)
+  if isempty(case) || basename(case) != case || occursin(r"[\\/]", case)
+    note = isempty(case) ? message : "Invalid case name."
+    return _webui_html(render_contingency_weights_editor(; case = "", cases = cases, elements = String[], stored = Dict{String,Float64}(), raw_text = "", message = note))
+  end
+  wf = _webui_case_weights_path(case; case_directory = directory)
+  raw_text = isfile(wf) ? read(wf, String) : ""
+  stored = Dict{String,Float64}()
+  isfile(wf) && try
+    stored = readContingencyWeightsCSV(wf)
+  catch
+  end
+  # seed element names from the case (expensive: build the net once)
+  net_error = ""
+  all_elements = String[]
+  case_path = joinpath(directory, case)
+  if isfile(case_path)
+    try
+      config = load_sparlectra_config(config_file; reload = true)
+      net = _import_sparlectra_net(case_path, nothing, config)
+      all_elements = vcat([c.name for c in generateN1Branches(net)], [c.name for c in generateN1Generators(net)])
+    catch err
+      net_error = first(split(sprint(showerror, err), '\n'))
+    end
+  else
+    net_error = "case file not found"
+  end
+  total = length(all_elements)
+  shown = isempty(filter_text) ? all_elements : [e for e in all_elements if occursin(lowercase(filter_text), lowercase(e))]
+  capped = first(shown, WEBUI_CONTINGENCY_WEIGHTS_MAX_ROWS)
+  return _webui_html(render_contingency_weights_editor(; case = case, cases = cases, elements = capped, stored = stored, raw_text = raw_text, message = message, filter = filter_text, total_count = total, net_error = net_error))
+end
+
+"""
+    handle_contingency_weights_save(form; ...) -> SparlectraWebUIResponse
+
+Write the per-case weight file from the editor. The raw-CSV textarea wins when
+submitted (empty means clear); otherwise the file is built from the seeded
+table's `element`/`weight` pairs, OMITTING rows left at exactly 1.0 so the file
+stays a diff of the default. The result is validated with
+`readContingencyWeightsCSV` before it replaces the stored file; a table that
+produces no non-default row deletes the file.
+"""
+function handle_contingency_weights_save(form::AbstractDict; output_root::AbstractString = "results/powerflow_service", application_root::AbstractString = _webui_application_root(), case_directory::Union{Nothing,AbstractString} = nothing, operation_log::AbstractString = output_root)::SparlectraWebUIResponse
+  directory = _webui_case_directory(; case_directory = case_directory, application_root = application_root, output_root = output_root)
+  requested = strip(String(something(_webui_form_value(form, "casefile", ""), "")))
+  route = "/powerflow/contingency-weights/save"
+  reject = function (msg::AbstractString)
+    record_webui_operation!(operation_log, "contingency_weights_save_failed"; route = route, method = "POST", user_action = true, casefile = requested, message = msg)
+    return _webui_weights_redirect(requested, "Save rejected: $(msg)")
+  end
+  isempty(requested) && return reject("no case selected")
+  (basename(requested) != requested || occursin(r"[\\/]", requested)) && return reject("invalid case name")
+  dest = try
+    _webui_case_weights_path(requested; case_directory = directory)
+  catch err
+    return reject(first(split(sprint(showerror, err), '\n')))
+  end
+  startswith(normpath(dest), normpath(directory)) || return reject("invalid destination")
+  raw = _webui_form_value(form, "weights_text", nothing)
+  text = if raw !== nothing
+    String(raw)                               # textarea form; empty means clear
+  else
+    els = _webui_form_value(form, "element", String[])
+    wts = _webui_form_value(form, "weight", String[])
+    els = els isa AbstractVector ? String.(els) : (isempty(strip(String(els))) ? String[] : [String(els)])
+    wts = wts isa AbstractVector ? String.(wts) : (isempty(strip(String(wts))) ? String[] : [String(wts)])
+    lines = String["name;weight"]
+    for (e, w) in zip(els, wts)
+      v = tryparse(Float64, strip(w))
+      v === nothing && return reject("weight for '$(e)' is not a number")
+      v == 1.0 && continue                     # omit default rows: a diff, not a dump
+      push!(lines, string(e, ";", v))
+    end
+    length(lines) == 1 ? "" : string(join(lines, "\n"), "\n")
+  end
+  if isempty(strip(text))
+    isfile(dest) && rm(dest; force = true)
+    record_webui_operation!(operation_log, "contingency_weights_cleared"; route = route, method = "POST", user_action = true, casefile = requested)
+    return _webui_weights_redirect(requested, "Weights cleared for '$(requested)' (no non-default rows).")
+  end
+  try
+    tmp = tempname()
+    write(tmp, text)
+    try
+      readContingencyWeightsCSV(tmp)
+    finally
+      rm(tmp; force = true)
+    end
+  catch err
+    return reject(first(split(sprint(showerror, err), '\n')))
+  end
+  temp = tempname(dirname(dest))
+  try
+    write(temp, text)
+    mv(temp, dest; force = true)
+  catch err
+    rm(temp; force = true)
+    return reject(first(split(sprint(showerror, err), '\n')))
+  end
+  record_webui_operation!(operation_log, "contingency_weights_saved"; route = route, method = "POST", user_action = true, casefile = requested)
+  return _webui_weights_redirect(requested, "Weights saved for '$(requested)'.")
+end
+
+"""Serve the stored per-case weight file as a CSV download."""
+function handle_contingency_weights_download(query::AbstractDict; output_root::AbstractString = "results/powerflow_service", application_root::AbstractString = _webui_application_root(), case_directory::Union{Nothing,AbstractString} = nothing)::SparlectraWebUIResponse
+  directory = _webui_case_directory(; case_directory = case_directory, application_root = application_root, output_root = output_root)
+  case = strip(String(get(query, "case", "")))
+  (isempty(case) || basename(case) != case || occursin(r"[\\/]", case)) && return _webui_weights_redirect(case, "invalid case name")
+  wf = try
+    _webui_case_weights_path(case; case_directory = directory)
+  catch
+    return _webui_weights_redirect(case, "invalid case name")
+  end
+  isfile(wf) || return _webui_weights_redirect(case, "no weight file for '$(case)'")
+  return SparlectraWebUIResponse(200, Pair{String,String}["Content-Type" => "text/csv; charset=utf-8", "Content-Disposition" => "attachment; filename=\"$(basename(wf))\""], read(wf))
+end
+
+"""Delete the per-case weight file (the reset action of the weights editor)."""
+function handle_contingency_weights_reset(form::AbstractDict; output_root::AbstractString = "results/powerflow_service", application_root::AbstractString = _webui_application_root(), case_directory::Union{Nothing,AbstractString} = nothing, operation_log::AbstractString = output_root)::SparlectraWebUIResponse
+  directory = _webui_case_directory(; case_directory = case_directory, application_root = application_root, output_root = output_root)
+  requested = strip(String(something(_webui_form_value(form, "casefile", ""), "")))
+  route = "/powerflow/contingency-weights/reset"
+  if isempty(requested) || basename(requested) != requested || occursin(r"[\\/]", requested)
+    record_webui_operation!(operation_log, "contingency_weights_reset_failed"; route = route, method = "POST", user_action = true, casefile = requested, message = "invalid case name")
+    return _webui_weights_redirect(requested, "invalid case name")
+  end
+  wf = _webui_case_weights_path(requested; case_directory = directory)
+  if !isfile(wf)
+    record_webui_operation!(operation_log, "contingency_weights_reset_noop"; route = route, method = "POST", user_action = true, casefile = requested, status = "no_file")
+    return _webui_weights_redirect(requested, "No weight file to delete for '$(requested)'.")
+  end
+  rm(wf; force = true)
+  record_webui_operation!(operation_log, "contingency_weights_reset_completed"; route = route, method = "POST", user_action = true, casefile = requested)
+  return _webui_weights_redirect(requested, "Weight file deleted for '$(requested)'.")
 end
 
 """Run a PowerFlow request through the Web UI form-to-service boundary."""

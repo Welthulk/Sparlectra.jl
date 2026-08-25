@@ -12,14 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Date: 2026-08-20
+# Date: 2026-08-25
 # file: examples/others/exp_contingency_n1.jl
-# purpose: N-1 showcase (Phase 4 of the multi-core work): full branch N-1 on
-#          case1354pegase, serial vs parallel timing side by side, top 10
-#          worst contingencies, plus the deepcopy cost and warm-start
-#          iteration numbers the analysis report records. Needs the
-#          case1354pegase.m from the Web UI case cache; skips with a message
-#          when it is not cached. Run with threads to see the effect:
+# purpose: N-1 showcase on case1354pegase: case screening (voltage/rating
+#          filters) and per-case weights (#331 Phase 2), generator outages with
+#          auto/distributed slack (#331 Phase 3), then full branch N-1 serial vs
+#          parallel timing side by side, top 10 worst contingencies, plus the
+#          deepcopy cost and warm-start iteration numbers the analysis report
+#          records. Needs the case1354pegase.m from the Web UI case cache; skips
+#          with a message when it is not cached. Run with threads:
 #          julia --threads=auto --project=. examples/others/exp_contingency_n1.jl
 
 using Sparlectra
@@ -37,13 +38,41 @@ function main()
     return nothing
   end
 
-  # PEGASE convention: branch angles are radians with inverted sign (the
-  # auto-profile residual scan identifies this; recorded in the project
-  # notes). qlimits stay on: case1354 converges with the active set.
-  net = createNetFromMatPowerFile(filename = CASE_PATH, matpower_shift_unit = :rad, matpower_shift_sign = -1.0)
+  # PEGASE convention (from the case sidecar): branch angles are radians with
+  # inverted sign, tap ratio normal (the default; the convention with the
+  # fewest NR iterations is the correct one, which the auto-profile residual
+  # scan confirms). qlimits stay on: case1354 converges with the active set.
+  net = createNetFromMatPowerFile(filename = CASE_PATH, matpower_shift_unit = :rad, matpower_shift_sign = -1.0, matpower_ratio = :normal)
   cases = generateN1Branches(net)
   println("Julia threads : ", Threads.nthreads(), Threads.nthreads() == 1 ? "  <- start with julia --threads=auto to see the parallel effect" : "")
   println("case          : case1354pegase, ", length(net.nodeVec), " buses, ", length(net.branchVec), " branches -> ", length(cases), " contingencies")
+
+  # --- case screening and weights (#331 Phase 2) ---
+  # On a large grid you rarely simulate every outage: screen the list down to
+  # the top voltage level (and, if you like, to rated branches only).
+  ehv = generateN1Branches(net; min_vn_kV = 300.0)
+  rated = generateN1Branches(net; min_sn_MVA = 1.0)
+  println("screening     : ", length(ehv), " outages at >= 300 kV, ", length(rated), " with a branch rating (of ", length(cases), ")")
+  # Attach per-branch weights (here the EHV outages count double); in practice
+  # read a name->rate map from a CSV with readContingencyWeightsCSV. The weight
+  # rides through to the result and shows up in the table's weight column.
+  weights = Dict(c.name => 2.0 for c in ehv)
+  ehv_weighted = applyContingencyWeights(ehv, weights)
+  ehv_res = runContingencies!(net, ehv_weighted[1:min(8, end)]; parallel_enabled = false)
+  println("screened EHV subset (weight column carries the per-case weight):")
+  printContingencyResults(stdout, ehv_res; max_rows = 8)
+  println()
+
+  # --- generator outages (#331 Phase 3) ---
+  # One case per generator; auto_slack lets the solver promote a survivor when
+  # the outage removes the system slack itself (otherwise that one case reports
+  # "no slack bus"). distributed_slack shares the lost output over the rest.
+  gcases = generateN1Generators(net)
+  gres = runContingencies!(net, gcases; parallel_enabled = true, parallel_min_work_items = 2, auto_slack = true)
+  gres_ds = runContingencies!(net, gcases; parallel_enabled = true, parallel_min_work_items = 2, auto_slack = true, distributed_slack_enabled = true)
+  println("generator N-1   : ", length(gcases), " units ; ", count(r -> r.converged, gres),
+          " converge (auto_slack), ", count(r -> r.converged, gres_ds), " with distributed slack")
+  println()
 
   deepcopy(net)   # first call compiles deepcopy for the Net type tree (~0.5 s once per process)
   t_copy = @elapsed deepcopy(net)
@@ -81,11 +110,15 @@ function main()
   println("converged: ", count(r -> r.converged, serial), " of ", length(serial), ", islanding cases: ", count(r -> r.island_count > 1, serial))
   println()
 
-  # top 10 worst: by loading when ratings exist, else by violation count
-  has_loading = any(r -> !isnan(r.max_branch_loading_pct), serial)
-  worst = sort([r for r in serial if r.converged]; by = r -> has_loading ? -(isnan(r.max_branch_loading_pct) ? -Inf : r.max_branch_loading_pct) : -(length(r.voltage_violations)))
-  println("top 10 worst contingencies (by ", has_loading ? "max branch loading" : "voltage-violation count", "):")
-  printContingencyResults(stdout, worst[1:min(10, end)]; max_rows = 10)
+  # the table ranks by severity (failures first, then the heaviest weighted
+  # overloads), so max_rows = 10 already surfaces the worst contingencies
+  println("worst 10 contingencies (severity-ranked, failures first):")
+  printContingencyResults(stdout, serial; max_rows = 10)
+  println()
+
+  # aggregate report (#331 Phase 4): outcome counts, load shed, worst loading,
+  # worst severity, and the branches overloaded by the most contingencies
+  printContingencyReport(buildContingencyReport(serial))
   return nothing
 end
 

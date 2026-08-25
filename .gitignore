@@ -62,6 +62,10 @@ Task_*.md
 # lives in ~/sparlectra-docs-dev-backup)
 docs/dev/
 
+# Local-only maintainer tooling (GitHub mentions digest, run from cron); keep
+# untracked, it carries no package function.
+tools/sparlectra_mentions.py
+
 .sparlectra_net_cache/
 data/CGMES/
 

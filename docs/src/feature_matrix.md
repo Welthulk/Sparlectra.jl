@@ -55,10 +55,14 @@ flow.
 | Feature | Status | Notes |
 |---|:---:|---|
 | Branch-outage batches (`runContingencies!`) | ✅ | Cases run warm-started on template copies of the solved base case (the base net is never mutated) and are checked against the voltage band and `sn_MVA` loadings. See [N-1 Contingency Analysis](contingency.md). |
-| Case sources | ✅ | `generateN1Branches` (all in-service branches, transformer filter, parallel circuits disambiguated as `name#branchIdx`) and imported MATPOWER FOR001 lists. |
-| Failure semantics | ✅ | Islanding without a promotable reference, non-convergence, and unresolvable elements are reported per case instead of thrown; `retry_flat_start` grants one bounded retry. |
+| Case sources | ✅ | `generateN1Branches` (all in-service branches, transformer filter, parallel circuits disambiguated as `name#branchIdx`) and imported MATPOWER FOR001 lists. Screening filters `min_vn_kV` / `min_sn_MVA` / `name_pattern` keep the list to the outages worth simulating. |
+| Generator outages | ✅ | `generateN1Generators` builds `kind = :gen` cases (one unit each, `min_pg_MW` / `name_pattern` filters). The slack absorbs the loss, or `distributed_slack_enabled = true` shares it; `auto_slack = true` promotes a survivor when the slack unit itself is the outage, and stranding an island with injection but no reference is reported as generation stranded. |
+| Case weights | ✅ | Each case carries a `weight` (default 1.0) for a probability/severity-weighted ranking, carried into the result and CSV; `readContingencyWeightsCSV` + `applyContingencyWeights` attach per-branch outage rates. |
+| Failure semantics | ✅ | Islanding without a promotable reference, non-convergence, and unresolvable elements are reported per case instead of thrown; a per-case start-value ladder (`contingency.rescue_ladder`) tries several starts, and a load-only island is reported as a quantified load-shed result. |
 | Parallel execution | ✅ | The case list fans out over Julia threads (`runtime.parallel.*`), results identical to the serial run; full N-1 on case1354pegase measured 71.7 s serial vs 17.6 s on 16 threads. |
-| Output | ✅ | `printContingencyResults` table and `writeContingencyResultsCSV`. |
+| Output | ✅ | `printContingencyResults` table (severity-ranked, failures first) and `writeContingencyResultsCSV`, both carrying the overload loadings with base/delta (`OverloadRecord`), shed load, weight, and severity per case. |
+| Aggregate report | ✅ | `buildContingencyReport` folds a batch into a `ContingencyReport` (outcome counts, total/worst load shed, worst branch loading, worst weighted severity, most-overloaded branches); `printContingencyReport` prints it. |
+| Web UI | ✅ | A "Contingency (N-1)" button with a branch/generator selector runs the batch through the shared service/run/case-cache path (a mode flag on `POST /powerflow/run`, no separate workflow), writes `contingency_n1.csv` + a `run.log` report, and shows an outcome summary; a slack-unit outage is named, not shown as a failure. |
 
 ## State estimation (WLS)
 

@@ -209,6 +209,23 @@ const DISTRIBUTED_SLACK_P_MODE_VALUES = (:pg_weighted, :pmax_weighted, :headroom
 const DISTRIBUTED_SLACK_FALLBACK_VALUES = (:error, :ref_only)
 
 """
+    ContingencyConfig
+
+Configuration of the N-1 contingency batch (issue #331).
+
+# Fields
+- `rescue_ladder::Vector{Symbol}`: the per-case start-value ladder, an ordered,
+  duplicate-free subset of `(:warm, :apslf, :dc, :flat)`. Default `[:warm]`
+  reproduces the pre-#331 single warm solve. Each stage is one bounded solve
+  with a distinct start recipe, tried in order until one converges. The allowed
+  stages and their recipes are documented on [`runContingencies!`](@ref); the
+  set is validated (subset, no duplicates) by `_validate_contingency_ladder`.
+"""
+Base.@kwdef struct ContingencyConfig
+  rescue_ladder::Vector{Symbol} = [:warm]
+end
+
+"""
     ExternalGridConfig
 
 Compute the marked slack bus as a non-ideal external-grid source (issue
@@ -647,6 +664,7 @@ Base.@kwdef struct SparlectraConfig
   transformer::TransformerConfig = TransformerConfig()
   performance::PerformanceConfig = PerformanceConfig()
   benchmark::BenchmarkConfig = BenchmarkConfig()
+  contingency::ContingencyConfig = ContingencyConfig()
   runtime::RuntimeConfig = RuntimeConfig()
   diagnostics::DiagnosticsConfig = DiagnosticsConfig()
   output::OutputConfig = OutputConfig()
@@ -1352,6 +1370,15 @@ function BenchmarkConfig(raw::AbstractDict)
   )
 end
 
+function ContingencyConfig(raw::AbstractDict)
+  merged = _merged_section(raw, "contingency")
+  ladder = _as_symbol_vector_cfg(_raw_get(merged, "rescue_ladder", [:warm]))
+  # validate the ladder the same way the runContingencies! keyword does
+  # (non-empty, allowed stages only, no duplicates)
+  ladder = _validate_contingency_ladder(ladder; context = "contingency.rescue_ladder")
+  return ContingencyConfig(rescue_ladder = ladder)
+end
+
 # The deprecated diagnostics.* duplicates of output.* are warned about (and
 # ignored) once, in `_validate_known_config_keys` — see
 # `_DEPRECATED_CONFIG_KEYS`. This constructor only reads the surviving key.
@@ -1427,6 +1454,7 @@ function SparlectraConfig(raw::AbstractDict)
     transformer = TransformerConfig(raw),
     performance = PerformanceConfig(raw),
     benchmark = BenchmarkConfig(raw),
+    contingency = ContingencyConfig(raw),
     runtime = RuntimeConfig(raw),
     diagnostics = DiagnosticsConfig(raw),
     output = OutputConfig(raw),

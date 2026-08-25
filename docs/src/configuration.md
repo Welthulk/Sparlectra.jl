@@ -41,6 +41,7 @@ The merged YAML is converted into:
   - `transformer::TransformerConfig`
   - `performance::PerformanceConfig`
   - `benchmark::BenchmarkConfig`
+  - `contingency::ContingencyConfig`
   - `runtime::RuntimeConfig` (incl. `runtime.parallel.*` as `ParallelRuntimeConfig`)
   - `diagnostics::DiagnosticsConfig`
   - `output::OutputConfig`
@@ -63,6 +64,7 @@ This typed model is the canonical internal representation that should be consume
 | `output` | `OutputConfig` | Console/logfile behavior and result table sizing | Public / supported |
 | `performance` | `PerformanceConfig` | Profiling/reporting toggles and diagnostic volume controls | Public / supported |
 | `benchmark` | `BenchmarkConfig` | Repeated benchmark-run controls | Public / supported |
+| `contingency` | `ContingencyConfig` | N-1 contingency batch controls; `contingency.rescue_ladder` is the per-case start-value ladder (subset of `warm`/`apslf`/`dc`/`flat`, see [N-1 Contingency Analysis](contingency.md)) | Public / supported |
 | `control` | `ControlConfig` | Generic controller outer-loop orchestration controls; `control.controllers` holds declarative controller definitions (implemented, issue #305), see the controllers section below | Public / supported |
 | `runtime` | `RuntimeConfig` | Julia/BLAS thread control knobs for entry workflows | Public / supported |
 | `diagnostics` | `DiagnosticsConfig` | Effective-config logging (`log_effective_config` only — the former `diagnostics.console_*`/`logfile_diagnostics` duplicates of `output.*` are deprecated and ignored with a warning) | Public / supported |
