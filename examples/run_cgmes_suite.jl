@@ -36,7 +36,7 @@ const CGMES_CACHE = get(ENV, "SPARLECTRA_CGMES_CACHE", joinpath(dirname(@__DIR__
 
 if !isdir(joinpath(CGMES_CACHE, "extracted"))
   println("ENTSO-E test sets not cached yet — fetching (~22 MB, one-time) ...")
-  include(joinpath(@__DIR__, "experimental", "cgmes_fetch_testsets.jl"))
+  include(joinpath(@__DIR__, "cgmes", "cgmes_fetch_testsets.jl"))
   main(String[])
 end
 

@@ -35,7 +35,7 @@ using Sparlectra
 using Printf
 using Dates
 
-include(joinpath(@__DIR__, "..", "internal", "example_header.jl"))
+include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 using Random
 
 const OUTDIR = joinpath(@__DIR__, "..", "_out")

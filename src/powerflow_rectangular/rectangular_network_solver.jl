@@ -242,7 +242,10 @@ Run a complex-state Newton-Raphson power flow in rectangular coordinates on a Sp
 # Arguments
 - `net::Net`: Network object containing bus, branch, and generation data
 - `maxiter::Int=20`: Maximum number of Newton-Raphson iterations
-- `tol::Float64=1e-8`: Convergence tolerance for maximum mismatch
+- `tol::Float64=1e-8`: Convergence tolerance for the LARGEST SINGLE bus
+  mismatch (infinity norm over the stacked active/reactive residual
+  vector; PV rows contribute their voltage residual in pu). Readable
+  physically as `tol * baseMVA`: 1e-8 pu equals 1 W at a 100 MVA base
 - `damp::Float64=0.2`: Damping factor for Newton step (0 < damp ≤ 1)
 - `verbose::Int=0`: Verbosity level (0=quiet, 1=basic info, 2=detailed)
 
@@ -311,6 +314,11 @@ function runpf_rectangular!(
   trust_region_expand_threshold::Float64 = 0.75,
   trust_region_step_mode::Symbol = :scaled,
   opt_flatstart::Bool = net.flatstart,
+  # Same pattern as opt_flatstart: a configured run passes both values from
+  # its run configuration, so an auto-mode rewrite of the switching keys
+  # reaches the attempt; a config-less call keeps the network's stamp.
+  opt_cooldown_iters::Union{Nothing,Int} = nothing,
+  opt_q_hyst_pu::Union{Nothing,Float64} = nothing,
   pv_table_rows::Int = 30,
   lock_pv_to_pq_buses::AbstractVector{Int} = Int[],
   qlimit_mode::Symbol = :switch_to_pq,
@@ -410,6 +418,8 @@ function runpf_rectangular!(
       trust_region_expand_threshold = trust_region_expand_threshold,
       trust_region_step_mode = trust_region_step_mode,
       opt_flatstart = opt_flatstart,
+    opt_cooldown_iters = opt_cooldown_iters,
+    opt_q_hyst_pu = opt_q_hyst_pu,
       pv_table_rows = pv_table_rows,
       qlimit_max_outer = qlimit_max_outer,
       start_projection = start_projection,
@@ -660,8 +670,8 @@ function runpf_rectangular!(
     mask
   end
 
-  cooldown_iters = hasfield(typeof(net), :cooldown_iters) ? net.cooldown_iters : 0
-  q_hyst_pu      = hasfield(typeof(net), :q_hyst_pu) ? net.q_hyst_pu : 0.0
+  cooldown_iters = opt_cooldown_iters !== nothing ? opt_cooldown_iters : (hasfield(typeof(net), :cooldown_iters) ? net.cooldown_iters : 0)
+  q_hyst_pu      = opt_q_hyst_pu !== nothing ? opt_q_hyst_pu : (hasfield(typeof(net), :q_hyst_pu) ? net.q_hyst_pu : 0.0)
   allow_reenable = (cooldown_iters > 0) || (q_hyst_pu > 0.0)
   qlimit_mode in (:switch_to_pq, :adjust_vset) || error("Unsupported qlimit_mode=$(qlimit_mode). Supported: :switch_to_pq, :adjust_vset.")
   qlimit_max_outer > 0 || error("qlimit_max_outer must be > 0 (got $(qlimit_max_outer)).")
@@ -733,7 +743,7 @@ function runpf_rectangular!(
     @info "Starting rectangular complex NR power flow..."
     @info "Initial complex voltages V0:" V0
     @info "Slack bus index:" slack_idx
-    @info "maxiter = $maxiter, tol = $tol, damp = $damp, autodamp = $autodamp, autodamp_min = $autodamp_min, start_projection = $start_projection"
+    @info "maxiter = $maxiter, tol = $tol ($(format_tolerance_physical(tol, Sbase))), damp = $damp, autodamp = $autodamp, autodamp_min = $autodamp_min, start_projection = $start_projection"
   end
 
   qlimit_active_set_changes = 0
@@ -761,6 +771,10 @@ function runpf_rectangular!(
     F = _perf_profile_time!(performance_profile, :iteration_mismatch) do
       mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx; dslack = dslack)
     end
+    # abort check per Newton iteration (see sparlectra_check_abort): a
+    # long run on a large network stops within one iteration instead of
+    # running to max_iter after the user pressed abort
+    sparlectra_check_abort()
     max_mis = maximum(abs.(F))
     push!(history, max_mis)
     if isfinite(max_mis)
@@ -1146,6 +1160,8 @@ function runpf_rectangular!(
   trust_region_expand_threshold::Float64 = 0.75,
   trust_region_step_mode::Symbol = :scaled,
   opt_flatstart::Bool = net.flatstart,
+  opt_cooldown_iters::Union{Nothing,Int} = nothing,
+  opt_q_hyst_pu::Union{Nothing,Float64} = nothing,
   pv_table_rows::Int = 30,
   validate_limits_after_pf::Bool = false,
   q_limit_violation_headroom::Float64 = 0.0,
@@ -1236,6 +1252,8 @@ function runpf_rectangular!(
     trust_region_step_mode = trust_region_step_mode,
     verbose = verbose,
     opt_flatstart = opt_flatstart,
+    opt_cooldown_iters = opt_cooldown_iters,
+    opt_q_hyst_pu = opt_q_hyst_pu,
     pv_table_rows = pv_table_rows,
     lock_pv_to_pq_buses = lock_pv_to_pq_buses,
     qlimit_mode = qlimit_mode,
@@ -1316,6 +1334,13 @@ function _runpf_config_once!(net::Net, config::PowerFlowConfig; verbose::Int = 0
     verbose;
     method = config.method,
     opt_flatstart = start.flatstart,
+    # the run configuration decides the switching parameters here, exactly
+    # like the flat start: an auto-mode attempt that rewrites
+    # power_flow.qlimits.hysteresis_pu / cooldown_iters reaches the solver
+    # through its config, while the values stamped on the network at import
+    # stay the default for config-less calls (private issue #3)
+    opt_cooldown_iters = qlim.cooldown_iters,
+    opt_q_hyst_pu = qlim.hysteresis_pu,
     damp = damp,
     autodamp = config.autodamp,
     autodamp_min = config.autodamp_min,
@@ -1458,7 +1483,24 @@ function _rescue_config_variants(config::PowerFlowConfig)
   return variants
 end
 
+## Resolve power_flow.tol_MW against the network base (task_tol_watts part
+## B). Returns the configuration unchanged when the key is not set, so the
+## default path allocates nothing and behaves exactly as before.
+function _resolve_tolerance_for_net(config::PowerFlowConfig, net::Net; verbose::Int = 0)
+  config.tol_MW === nothing && return config
+  base = net.baseMVA
+  base > 0.0 || throw(ArgumentError("power_flow.tol_MW needs a positive network base (baseMVA = $(base)) to convert into per unit."))
+  converted = config.tol_MW / base
+  verbose > 0 && @info "power_flow.tol_MW overrides power_flow.tol: $(config.tol_MW) MW at $(base) MVA base is $(converted) pu (configured tol $(config.tol) pu is not used)."
+  return _copy_powerflow_with(config; tol = converted)
+end
+
 function _runpf_with_config!(net::Net, config::PowerFlowConfig; verbose::Int = 0, damp = 1.0, pv_table_rows::Int = 30, validate_limits_after_pf::Bool = false, q_limit_violation_headroom::Float64 = 0.0, qlimit_lock_reason::Symbol = :manual, performance_profile = nothing, islands_parallel_enabled::Union{Nothing,Bool} = nothing, islands_parallel_max_tasks::Union{Nothing,Int} = nothing, islands_parallel_min_work_items::Union{Nothing,Int} = nothing)
+  # power_flow.tol_MW wins over power_flow.tol and is converted HERE, the
+  # first place where the configuration meets a network and its base is
+  # known (task_tol_watts part B; a conversion at configuration load time
+  # is impossible, the base belongs to the case)
+  config = _resolve_tolerance_for_net(config, net; verbose = verbose)
   runtime = (; verbose, damp, pv_table_rows, validate_limits_after_pf, q_limit_violation_headroom, qlimit_lock_reason, performance_profile, islands_parallel_enabled, islands_parallel_max_tasks, islands_parallel_min_work_items)
   wants_recovery = config.rescue || config.dc.fallback
   wants_recovery || return _runpf_config_once!(net, config; runtime...)
@@ -1535,6 +1577,15 @@ runpf!(net::Net, config::SparlectraConfig; kwargs...) = _runpf_with_config!(
   kwargs...,
 )
 
+"""
+    runpf!(net, maxIte, tol, verbose; method, kwargs...) -> (iterations, result)
+    runpf!(net; config, kwargs...)
+
+Run the Newton-Raphson power flow on the network. The positional form takes
+the solver options as keywords; the config form reads them from a
+configuration and passes the run-level values (flat start, Q-limit
+switching) explicitly.
+"""
 function runpf!(net::Net; config::Union{Nothing,PowerFlowConfig,SparlectraConfig} = nothing, kwargs...)
   # Keep this entry strict: only runtime-only knobs are accepted as kwargs.
   # All solver-behavior options must come from config objects for consistency.
@@ -1805,6 +1856,8 @@ function runpf!(
   trust_region_expand_threshold::Float64 = 0.75,
   trust_region_step_mode::Symbol = :scaled,
   opt_flatstart::Bool = net.flatstart,
+  opt_cooldown_iters::Union{Nothing,Int} = nothing,
+  opt_q_hyst_pu::Union{Nothing,Float64} = nothing,
   pv_table_rows::Int = 30,
   validate_limits_after_pf::Bool = false,
   q_limit_violation_headroom::Float64 = 0.0,
@@ -1987,6 +2040,8 @@ function runpf!(
           wrong_branch_min_low_vm_count = wrong_branch_min_low_vm_count,
           wrong_branch_rescue_max_attempts = 0,
           opt_flatstart = opt_flatstart,
+    opt_cooldown_iters = opt_cooldown_iters,
+    opt_q_hyst_pu = opt_q_hyst_pu,
           pv_table_rows = pv_table_rows,
           lock_pv_to_pq_buses = lock_pv_to_pq_buses,
           qlimit_mode = qlimit_mode,
@@ -2277,6 +2332,8 @@ function runpf!(
         wrong_branch_min_low_vm_count = wrong_branch_min_low_vm_count,
         wrong_branch_rescue_max_attempts = wrong_branch_rescue_max_attempts,
         opt_flatstart = opt_flatstart,
+    opt_cooldown_iters = opt_cooldown_iters,
+    opt_q_hyst_pu = opt_q_hyst_pu,
         pv_table_rows = pv_table_rows,
         lock_pv_to_pq_buses = lock_pv_to_pq_buses,
         qlimit_mode = qlimit_mode,
@@ -2365,6 +2422,8 @@ function runpf!(
         wrong_branch_min_low_vm_count = wrong_branch_min_low_vm_count,
         wrong_branch_rescue_max_attempts = wrong_branch_rescue_max_attempts,
         opt_flatstart = opt_flatstart,
+    opt_cooldown_iters = opt_cooldown_iters,
+    opt_q_hyst_pu = opt_q_hyst_pu,
         pv_table_rows = pv_table_rows,
         lock_pv_to_pq_buses = lock_pv_to_pq_buses,
         qlimit_mode = qlimit_mode,

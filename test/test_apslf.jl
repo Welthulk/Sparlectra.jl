@@ -18,23 +18,16 @@
 #          path, adapter mapping, and case14 agreement with Newton-Raphson
 #
 # Tests the APSLF (AnalyticLoadFlow.jl) integration: config validation,
-# controller rejection, WebUI form parsing, and the "not installed" error
-# path always run. The adapter-mapping, standalone-solve, and start-value
-# generator tests additionally require AnalyticLoadFlow.jl to be resolvable
-# in the active Julia environment (it is only a weak dependency of
-# Sparlectra, loaded via ext/SparlectraAnalyticLoadFlowExt.jl) — they are
-# skipped with an informational message otherwise, matching the weak-
-# dependency design: production code never requires AnalyticLoadFlow.jl to
-# be installed. To exercise the full test surface locally, `Pkg.add`
-# AnalyticLoadFlow.jl into a Julia environment stacking this checkout and
-# `using AnalyticLoadFlow` before running the extended test profile.
+# controller rejection, Web UI form parsing, the adapter mapping, the
+# standalone solve, and the start-value generator. AnalyticLoadFlow.jl is a
+# REQUIRED dependency since 0.10.0, so nothing here is conditional any more:
+# the whole surface runs in every profile that includes this file.
 
 using Sparlectra
 using Test
 using Random
 
-const _APSLF_AVAILABLE = Base.find_package("AnalyticLoadFlow") !== nothing
-_APSLF_AVAILABLE && @eval import AnalyticLoadFlow
+import AnalyticLoadFlow
 
 function run_apslf_tests()
   @testset "APSLF (AnalyticLoadFlow.jl) integration" begin
@@ -65,15 +58,15 @@ function run_apslf_tests()
       @test cfg_hybrid.powerflow.solver === :rectangular
 
       # Unknown keys under the new sections are rejected like any other section.
-      bad_key_file = tempname() * ".yaml"
+      bad_key_file = test_scratch_path(".yaml")
       write(bad_key_file, "power_flow:\n  apslf:\n    bogus_key: 1\n")
       @test_throws ArgumentError Sparlectra.load_sparlectra_config(bad_key_file; reload = true)
     end
 
     @testset "Controller + APSLF solver rejection" begin
-      mpc = Sparlectra.MatpowerIO.read_case(ensure_casefile("case14.m"))
-      net = Sparlectra.createNetFromMatPowerCase(mpc = mpc, flatstart = true)
-      addPowerTransformerControl!(net; trafo = "B_2WT_1_4_7", mode = :voltage, target_bus = "7", target_vm_pu = 1.0, control_ratio = true)
+      # load_fixture_net: the shipped sp_case14 carries a REAL declared tap
+      # controller (no download, no hand-attached controller)
+      net = Sparlectra.importSCF(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json")))
       @test length(Sparlectra.collect_outer_controllers(net)) == 1
 
       cfg = Sparlectra.SparlectraConfig(powerflow = Sparlectra.PowerFlowConfig(solver = :apslf), output = OutputConfig(logfile_results = :off))
@@ -133,33 +126,24 @@ function run_apslf_tests()
       @test_throws ArgumentError Sparlectra._load_api_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, conflict_nested)
     end
 
-    @testset "AnalyticLoadFlow.jl \"not installed\" error path" begin
-      if _APSLF_AVAILABLE
-        @info "AnalyticLoadFlow.jl is resolvable in this test session; skipping the not-installed error-path check (would require an actually uninstalled environment)."
-      else
-        err = try
-          Sparlectra.apslf_solver()
-          nothing
-        catch caught
-          caught
-        end
-        @test err isa ErrorException
-        message = sprint(showerror, err)
-        @test occursin("AnalyticLoadFlow.jl", message)
-        @test occursin("nicht installiert", message)
-      end
+    @testset "the solver is always available" begin
+      # AnalyticLoadFlow.jl is a required dependency: `using Sparlectra` is
+      # enough, there is no session that has to load anything extra and no
+      # not-installed error path left to take
+      solver = Sparlectra.apslf_solver()
+      @test solver isa Sparlectra.ApslfSolver
+      @test solver isa Sparlectra.AbstractExternalSolver
+      @test solver.order == 40 && solver.use_pade && solver.nr_polish && solver.mode === :direct
+      tuned = Sparlectra.apslf_solver(order = 24, use_pade = false, nr_polish = false, mode = :outer)
+      @test (tuned.order, tuned.use_pade, tuned.nr_polish, tuned.mode) == (24, false, false, :outer)
     end
 
-    if _APSLF_AVAILABLE
       @testset "Adapter mapping (PFModel -> AnalyticLoadFlow spec, PF ordering)" begin
-        ext = Base.get_extension(Sparlectra, :SparlectraAnalyticLoadFlowExt)
-        @test ext !== nothing
-
         net = createTest3BusNet()
         model = buildPfModel(net; flatstart = true, include_limits = false)
         n = length(model.busIdx_net)
 
-        spec = ext._apslf_spec_from_model(model)
+        spec = Sparlectra._apslf_spec_from_model(model)
         @test spec.Y === model.Ybus
         @test spec.bustype == model.busType
         @test spec.Pspec ≈ real.(model.Sspec)
@@ -170,11 +154,11 @@ function run_apslf_tests()
         @test spec.slack == model.slack_idx
 
         model_q = buildPfModel(net; flatstart = true, include_limits = true)
-        spec_q = ext._apslf_spec_from_model(model_q)
+        spec_q = Sparlectra._apslf_spec_from_model(model_q)
         @test spec_q.Qmin == model_q.qmin_pu
         @test spec_q.Qmax == model_q.qmax_pu
 
-        solver = ext.ApslfSolver(order = 20, use_pade = true, nr_polish = true)
+        solver = Sparlectra.ApslfSolver(order = 20, use_pade = true, nr_polish = true)
         sol = solvePf(solver, model)
         @test sol isa PFSolution
         @test length(sol.V) == n
@@ -182,14 +166,17 @@ function run_apslf_tests()
         @test sol.meta.mode isa Symbol
       end
 
-      @testset "Standalone APSLF run on case14 (convergence + NR agreement)" begin
-        mpc = Sparlectra.MatpowerIO.read_case(ensure_casefile("case14.m"))
-
-        net_nr = Sparlectra.createNetFromMatPowerCase(mpc = mpc, flatstart = true)
+      @testset "Standalone APSLF run on sp_case5 (convergence + NR agreement)" begin
+        # load_fixture_net: the agreement property is case-agnostic, so it
+        # runs on the shipped controller-free sp_case5 (the framework run
+        # below would reject a net with declared controllers); both nets
+        # start from the file's identical start state
+        scf5 = abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case5.scf.json"))
+        net_nr = Sparlectra.importSCF(scf5)
         iters_nr, status_nr = runpf!(net_nr, 30, 1e-8, 0)
         @test status_nr == 0
 
-        net_apslf = Sparlectra.createNetFromMatPowerCase(mpc = mpc, flatstart = true)
+        net_apslf = Sparlectra.importSCF(scf5)
         solver = apslf_solver(order = 40, use_pade = true, nr_polish = true)
         iters_apslf, status_apslf, sol = runpf_external!(net_apslf, solver; tol = 1e-8)
         @test status_apslf == 0
@@ -200,19 +187,18 @@ function run_apslf_tests()
         @test max_dVm < 1e-6
         @test max_dVa < 1e-4
 
-        # Task 3 wiring: routing through the framework run path yields the
+        # Framework wiring: routing through the framework run path yields the
         # same solver identity and result contract as the direct external-
         # solver call above.
         cfg = Sparlectra.SparlectraConfig(powerflow = Sparlectra.PowerFlowConfig(solver = :apslf), output = OutputConfig(logfile_results = :off))
-        net_framework = Sparlectra.createNetFromMatPowerCase(mpc = mpc, flatstart = true)
+        net_framework = Sparlectra.importSCF(scf5)
         result = run_sparlectra(net = net_framework, config = cfg)
         @test result.final_converged
         @test result.diagnostics.solver === :apslf
       end
 
       @testset "APSLF start-value generator guard and nr_polish=false in start mode" begin
-        mpc = Sparlectra.MatpowerIO.read_case(ensure_casefile("case14.m"))
-        net = Sparlectra.createNetFromMatPowerCase(mpc = mpc, flatstart = true)
+        net = Sparlectra.importSCF(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case5.scf.json")))
         model = buildPfModel(net; flatstart = true, include_limits = false)
 
         # Disabled: no-op, restores the exact incoming vector.
@@ -254,9 +240,6 @@ function run_apslf_tests()
         @test V_bad != bad
         @test all(v -> isfinite(real(v)) && isfinite(imag(v)), V_bad)
       end
-    else
-      @info "AnalyticLoadFlow.jl is not resolvable in this Julia environment; skipping APSLF adapter-mapping, standalone-run, and start-generator tests. Add it to a stacked environment and rerun the extended profile to exercise them."
-    end
   end
   return true
 end

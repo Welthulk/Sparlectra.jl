@@ -16,7 +16,7 @@
 # file: examples/run_short_circuit_suite.jl
 # purpose: suite runner for the IEC 60909 short-circuit examples (issue #277) in fresh subprocesses with a summary report
 
-include(joinpath(@__DIR__, "internal", "example_suite_runner.jl"))
+include(joinpath(@__DIR__, "others", "example_suite_runner.jl"))
 
 const SUITE_SPECS = ExampleSpec[
   ExampleSpec(name = "short_circuit", file = "others/exp_short_circuit.jl", purpose = "runShortCircuit! on a hand-built feeder+machine net — Ik'' max/min and the safety flag on defaulted data"),

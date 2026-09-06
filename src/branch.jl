@@ -166,6 +166,20 @@ mutable struct Branch <: AbstractBranch
   # nothing while closed or fully open
   open_end_vm_pu::Union{Nothing,Float64}
   open_end_va_deg::Union{Nothing,Float64}
+  # tap estimation release (0.10.0): :none | :ratio | :pst | :both.
+  # The angle regulator direction alpha is nameplate data (a Vorgabe, never
+  # estimated). Set through setTapEstimation!, honored by the SE overlay.
+  tap_est_mode::Symbol
+  tap_est_alpha_deg::Float64
+  # additional-voltage phase stepper (Delta-u PST, 0.10.0): the mechanical
+  # grid is the ADDITIONAL-VOLTAGE amplitude per step (r2 = n * phase_du_step
+  # in the cascade, direction psi = tap_est_alpha_deg); the shift angle
+  # follows as atan and is NOT the grid. 0 = degree-grid mode (the classic
+  # phase_step_deg fields apply). Set by the mpc.sparlectra.tap_changers
+  # import; the fixation rounds r2 linearly on this grid.
+  phase_du_step::Float64
+  phase_du_min_step::Float64
+  phase_du_max_step::Float64
 
   function Branch(;
     branchIdx::Int,
@@ -207,7 +221,7 @@ mutable struct Branch <: AbstractBranch
       else 
         r_pu, x_pu, b_pu, g_pu = getLineRXBG_pu(branch, vn_kV, baseMVA)        
       end    
-      new(c, branchIdx, from, to, r_pu, x_pu, r_pu, x_pu, b_pu, g_pu, 0.0, 0.0, status, branch.ratedS, nothing, nothing, nothing, nothing, 1.0, 0.0, false, false, 0.9, 1.1, 0.00625, -30.0, 30.0, 1.25, fs, ts, nothing, nothing)
+      new(c, branchIdx, from, to, r_pu, x_pu, r_pu, x_pu, b_pu, g_pu, 0.0, 0.0, status, branch.ratedS, nothing, nothing, nothing, nothing, 1.0, 0.0, false, false, 0.9, 1.1, 0.00625, -30.0, 30.0, 1.25, fs, ts, nothing, nothing, :none, 0.0, 0.0, 0.0, 0.0)
     elseif isa(branch, PowerTransformer) # Transformer     
       if (isnothing(side) && branch.isBiWinder)
         side = getSideNumber2WT(branch)
@@ -243,7 +257,7 @@ mutable struct Branch <: AbstractBranch
         tap_min, tap_max, tap_step = calcRatioTapRange(w.taps)
       end
 
-      new(c, branchIdx, from, to, r_pu, x_pu, r_pu, x_pu, b_pu, g_pu, ratio, angle, status, sn_MVA, nothing, nothing, nothing, nothing, ratio, angle, true, true, tap_min, tap_max, tap_step, -30.0, 30.0, 1.25, fs, ts, nothing, nothing)
+      new(c, branchIdx, from, to, r_pu, x_pu, r_pu, x_pu, b_pu, g_pu, ratio, angle, status, sn_MVA, nothing, nothing, nothing, nothing, ratio, angle, true, true, tap_min, tap_max, tap_step, -30.0, 30.0, 1.25, fs, ts, nothing, nothing, :none, 0.0, 0.0, 0.0, 0.0)
     elseif isa(branch, BranchModel) # PI-Model
       @assert !isnothing(vn_kV) "vn_kV must be set for PI-Model"
 
@@ -256,7 +270,7 @@ mutable struct Branch <: AbstractBranch
       is_tap = branch.ratio != 0.0
       initial_ratio = is_tap ? branch.ratio : 1.0
       initial_angle = is_tap ? branch.angle : 0.0
-      new(c, branchIdx, from, to, branch.r_pu, branch.x_pu, branch.r_pu, branch.x_pu, branch.b_pu, branch.g_pu, branch.ratio, branch.angle, status, branch.sn_MVA, nothing, nothing, nothing, nothing, initial_ratio, initial_angle, is_tap, is_tap, 0.9, 1.1, 0.00625, -30.0, 30.0, 1.25, fs, ts, nothing, nothing)
+      new(c, branchIdx, from, to, branch.r_pu, branch.x_pu, branch.r_pu, branch.x_pu, branch.b_pu, branch.g_pu, branch.ratio, branch.angle, status, branch.sn_MVA, nothing, nothing, nothing, nothing, initial_ratio, initial_angle, is_tap, is_tap, 0.9, 1.1, 0.00625, -30.0, 30.0, 1.25, fs, ts, nothing, nothing, :none, 0.0)
     else
       error("Branch type not supported")
     end
@@ -301,6 +315,12 @@ mutable struct Branch <: AbstractBranch
   end
 end
 
+"""
+    calcAdmittance(branch, u_rated, s_rated) -> (yaa, yab, yba, ybb)
+
+The four admittance-matrix entries of the branch on the given base,
+including ratio and phase shift.
+"""
 function calcAdmittance(branch::Branch, u_rated::Float64, s_rated::Float64)::Tuple{ComplexF64,ComplexF64,ComplexF64,ComplexF64}
   # Series Admittance ys
   ys = calcBranchYser(branch)
@@ -363,6 +383,11 @@ function _open_end_voltage(branch::Branch, u_closed::ComplexF64)::ComplexF64
 end
 
 # helper
+"""
+    setBranchFlow!(branch, tfBranchFlow, fBranchFlow)
+
+Store the solved flows of both branch ends.
+"""
 function setBranchFlow!(branch::Branch, tfBranchFlow::BranchFlow, fBranchFlow::BranchFlow)
   branch.tBranchFlow = tfBranchFlow
   branch.fBranchFlow = fBranchFlow
@@ -419,6 +444,11 @@ function setBranchTerminalStatus!(branch::Branch; from::Union{Nothing,Bool} = no
   return branch
 end
 
+"""
+    getBranchFlow(branch, from, to) -> BranchFlow
+
+The stored flow record for the given orientation of the branch.
+"""
 function getBranchFlow(branch::Branch, from::Node, to::Node)
   if (branch.fromBus == from.busIdx && branch.toBus == to.busIdx)
     return branch.fBranchFlow
@@ -429,19 +459,39 @@ function getBranchFlow(branch::Branch, from::Node, to::Node)
   end
 end
 
+"""
+    getBranchIdx(branch) -> Int
+
+The position of the branch in the network's branch vector.
+"""
 function getBranchIdx(branch::Branch)
   return branch.branchIdx
 end
 
+"""
+    getBranchLosses(branch) -> (p, q)
+
+The stored losses of the branch in MW/MVar.
+"""
 function getBranchLosses(branch::Branch)
   return branch.pLosses, branch.qLosses
 end
 
+"""
+    setBranchLosses!(branch, pLosses, qLosses)
+
+Store the solved losses of the branch in MW/MVar.
+"""
 function setBranchLosses!(branch::Branch, pLosses::Float64, qLosses::Float64)
   branch.pLosses = pLosses
   branch.qLosses = qLosses
 end
 
+"""
+    calcBranchYser(branch) -> ComplexF64
+
+The series admittance of the branch in per unit.
+"""
 function calcBranchYser(branch::Branch)::ComplexF64
   return inv((branch.r_pu + branch.x_pu * im))
 end
@@ -498,10 +548,20 @@ function restoreBaseImpedances!(net)
   return net
 end
 
+"""
+    calcBranchYshunt(branch) -> ComplexF64
+
+The total shunt admittance of the branch in per unit.
+"""
 function calcBranchYshunt(branch::Branch)::ComplexF64
   return (branch.g_pu + branch.b_pu * im)
 end
 
+"""
+    calcBranchRatio(branch) -> ComplexF64
+
+The complex winding ratio of the branch (magnitude and phase shift).
+"""
 function calcBranchRatio(branch::Branch)::ComplexF64
   ratio = (branch.ratio == 0.0) ? 1.0 : branch.tap_ratio
   shift = (branch.ratio == 0.0) ? 0.0 : branch.phase_shift_deg
@@ -519,4 +579,102 @@ function getBranchComp(Vn_kV::Float64, from::Int, to::Int, idx::Int, kind::Strin
   name = "B_$(kind)_$(string(convert(Int,trunc(Vn_kV))))_$(Int(from))_$(Int(to))"
   cID = "#" * name * "#" * string(idx)
   return ImpPGMComp(cID, name, cTyp, Vn_kV, from, to)
+end
+
+"""
+    applyTapNameplate!(branch; tap_step, tap_min_step, tap_max_step,
+                       tap_current_step, phase_step_deg, phase_min_step,
+                       phase_max_step, phase_current_step, psi_deg = 0.0,
+                       phase_du_step = 0.0, context = "tap changer")
+
+Apply nameplate tap-changer data to a transformer branch: the branch's own
+`ratio`/`angle` stay the NEUTRAL position, and the current steps move the
+LIVE `tap_ratio`/`phase_shift_deg` off it on the same mechanical grids the
+tap estimation fixes to.
+
+- Ratio changer: `tap = neutral / (1 + n * tap_step)` (cascade convention);
+  a `tap_step` of 0 explicitly declares "no ratio tap changer" and keeps the
+  transformer out of the estimator's mass release.
+- Phase changer, additional-voltage form (`phase_du_step > 0`): the
+  mechanical grid is the additional-voltage amplitude `r2 = n *
+  phase_du_step` along the nameplate direction `psi_deg`; the shift angle
+  follows from the cascade and is NOT the grid.
+- Phase changer, degree form (`phase_step_deg > 0`): additive degrees on the
+  neutral shift; the band is stored relative to neutral, which is what the
+  fixation compares against.
+
+`phase_step_deg` and `phase_du_step` are exclusive (a changer has one
+mechanical grid). `context` prefixes the error messages, so a MATPOWER
+`mpc.sparlectra.tap_changers` row and an SCF `tap_changer` entry report in
+their own vocabulary. This is the single tap-nameplate application path;
+every importer routes through it.
+"""
+function applyTapNameplate!(
+  br::Branch;
+  # zero means "this changer is not present", which is what a transformer
+  # with only a ratio tap (or only a phase tap) declares; importers pass the
+  # full set, a hand-built net passes what it has
+  tap_step::Float64 = 0.0,
+  tap_min_step::Float64 = 0.0,
+  tap_max_step::Float64 = 0.0,
+  tap_current_step::Float64 = 0.0,
+  phase_step_deg::Float64 = 0.0,
+  phase_min_step::Float64 = 0.0,
+  phase_max_step::Float64 = 0.0,
+  phase_current_step::Float64 = 0.0,
+  psi_deg::Float64 = 0.0,
+  phase_du_step::Float64 = 0.0,
+  context::AbstractString = "tap changer",
+)
+  br.ratio != 0.0 || throw(ArgumentError("$(context): not a transformer branch (its neutral ratio is 0)."))
+  base = br.ratio
+  if tap_step > 0.0
+    (tap_min_step <= 0.0 <= tap_max_step) || throw(ArgumentError("$(context): the neutral position 0 must lie inside [tap_min_step, tap_max_step]."))
+    (tap_min_step <= tap_current_step <= tap_max_step) || throw(ArgumentError("$(context): tap_current_step $(tap_current_step) outside [$(tap_min_step), $(tap_max_step)]."))
+    br.has_ratio_tap = true
+    br.tap_step = tap_step
+    # ratio bounds from the step band on the cascade grid: the highest step
+    # gives the smallest multiplier
+    br.tap_min = base / (1.0 + tap_max_step * tap_step)
+    br.tap_max = base / (1.0 + tap_min_step * tap_step)
+    br.tap_ratio = base / (1.0 + tap_current_step * tap_step)
+  else
+    br.has_ratio_tap = false
+  end
+  (phase_step_deg > 0.0 && phase_du_step > 0.0) && throw(ArgumentError("$(context): phase_step_deg and phase_du_step are exclusive (a changer has ONE mechanical grid)."))
+  if phase_du_step > 0.0
+    (phase_min_step <= 0.0 <= phase_max_step) || throw(ArgumentError("$(context): the neutral position 0 must lie inside [phase_min_step, phase_max_step]."))
+    (phase_min_step <= phase_current_step <= phase_max_step) || throw(ArgumentError("$(context): phase_current_step $(phase_current_step) outside [$(phase_min_step), $(phase_max_step)]."))
+    br.has_phase_tap = true
+    br.phase_du_step = phase_du_step
+    br.phase_du_min_step = phase_min_step
+    br.phase_du_max_step = phase_max_step
+    br.phase_step_deg = 0.0
+    # psi carried in tap_est_alpha_deg: inert while tap_est_mode is :none,
+    # and the marker that says this phase changer is DECLARED nameplate
+    # data (plain constructor defaults never join the mass release)
+    br.tap_est_alpha_deg = psi_deg != 0.0 ? psi_deg : 90.0
+    tbase = (base == 0.0 ? 1.0 : base) * cis(deg2rad(br.angle))
+    tlive = tbase / (1.0 + phase_current_step * phase_du_step * cis(deg2rad(br.tap_est_alpha_deg)))
+    br.tap_ratio = abs(tlive)
+    br.phase_shift_deg = rad2deg(angle(tlive))
+    # informative degree band (atan of the band ends); the fixation works on
+    # the Delta-u grid, not on these
+    br.phase_min_deg = br.angle - rad2deg(angle(1.0 + phase_max_step * phase_du_step * cis(deg2rad(br.tap_est_alpha_deg))))
+    br.phase_max_deg = br.angle - rad2deg(angle(1.0 + phase_min_step * phase_du_step * cis(deg2rad(br.tap_est_alpha_deg))))
+  elseif phase_step_deg > 0.0
+    (phase_min_step <= 0.0 <= phase_max_step) || throw(ArgumentError("$(context): the neutral position 0 must lie inside [phase_min_step, phase_max_step]."))
+    (phase_min_step <= phase_current_step <= phase_max_step) || throw(ArgumentError("$(context): phase_current_step $(phase_current_step) outside [$(phase_min_step), $(phase_max_step)]."))
+    br.has_phase_tap = true
+    br.phase_step_deg = phase_step_deg
+    # the fixation compares the REGULATING-VECTOR angle (relative to
+    # neutral) against this band, so the band is stored relative
+    br.phase_min_deg = phase_min_step * phase_step_deg
+    br.phase_max_deg = phase_max_step * phase_step_deg
+    br.phase_shift_deg = br.angle + phase_current_step * phase_step_deg
+    br.tap_est_alpha_deg = psi_deg != 0.0 ? psi_deg : 90.0
+  else
+    br.has_phase_tap = false
+  end
+  return br
 end

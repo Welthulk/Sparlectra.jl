@@ -6,6 +6,9 @@ This directory is used for **locally downloaded** MATPOWER-compatible test cases
 - This directory is **not populated by default**.
 - Files placed here are **not part of the repository distribution**.
 - Contents are expected to be excluded from version control (e.g. via `.gitignore`).
+- One tracked exception: `warmup_casePST.m`, a self-built PST example case
+  (busbar link, Harry Potter bus names) with no external license, used as a
+  small demo and test network.
 
 ## Usage
 Test cases may be downloaded automatically by example scripts or helper

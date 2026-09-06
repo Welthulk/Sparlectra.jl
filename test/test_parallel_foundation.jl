@@ -246,7 +246,8 @@ function run_parallel_foundation_tests()
       @test spec.default === true
       @test spec.control === :checkbox
       @test spec.section === :expert
-      form_html = Sparlectra.render_powerflow_form()
+      # stage 4A block 3: the expert options render on the Settings page
+      form_html = Sparlectra.render_settings_page()
       @test occursin("name=\"runtime_parallel_enabled\"", form_html)
       overrides = Sparlectra.validate_gui_config_overrides(Dict{String,Any}("runtime.parallel.enabled" => "false"))
       @test overrides["runtime"]["parallel"]["enabled"] == "false"

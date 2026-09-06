@@ -20,13 +20,21 @@ mutable struct _ServiceJsonParser
   index::Int
 end
 
-function _service_failure(reason::AbstractString, message::AbstractString; run_id = nothing)::Dict{String,Any}
+function _service_failure(reason::AbstractString, message::AbstractString; run_id = nothing, run_mode = nothing)::Dict{String,Any}
   failure = Dict{String,Any}(
     "status" => "failed",
     "success" => false,
     "reason" => String(reason),
     "message" => String(message),
   )
+  # A rejected submission is rendered by render_powerflow_result like any
+  # other result, so it needs the run kind too: without it every rejected
+  # state estimation, short circuit or N-1 came back on a page titled
+  # "PowerFlow result". The most common trigger is submitting while another
+  # run is active.
+  if run_mode !== nothing && !isempty(String(run_mode))
+    failure["metadata"] = Dict{String,Any}("run_mode" => String(run_mode))
+  end
   run_id === nothing || (failure["run_id"] = String(run_id))
   return failure
 end

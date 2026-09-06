@@ -156,7 +156,7 @@ injection term, never both. The injection mode is useful when a solver
 formulation wants the admittance matrix to contain only branch/network coupling
 while keeping shunt effects in the nonlinear injection equations.
 
-## One-sided open branches
+## 3. One-sided open branches
 
 Since r0.9.10 a branch carries two terminal flags `from_status`/`to_status`
 next to the aggregate `status`. The aggregate stays the user-facing switch
@@ -231,7 +231,7 @@ an energized bus always keeps its real solved voltage). Runnable example:
 `exp_open_terminal_line.jl`; the basic workshop tour demonstrates it in
 chapter 2.
 
-## 3. Tap-changer modelling layers
+## 4. Tap-changer modelling layers
 
 Transformer and PST semantics are richer than a single `ratio + shift` branch.
 Sparlectra separates the concerns into explicit layers so that source-format
@@ -440,7 +440,7 @@ between control iterations.
 ### Existing tap-impedance correction
 
 Independent of the typed PST models, Sparlectra also offers an imported-case
-tap-changer reactance treatment selected by `transformer.tap_changer_model`:
+tap-changer reactance treatment selected by `model.tap_changer_model`:
 `ideal` (default) keeps the tap changer free of series-impedance feedback,
 while `impedance_correction` re-refers transformer R/X through the tapped
 winding via `|1 + f·e^{jφ}|²`. It applies to all transformers of an imported
@@ -477,7 +477,7 @@ and addressing a single 3WT winding from the outer-loop
 `PowerTransformerControl` framework, are not implemented yet. The current gaps
 are tracked with Issue #261.
 
-## 4. Transformer control (outer loop)
+## 5. Transformer control (outer loop)
 
 Sparlectra regulates transformers within the branch PI model using the complex
 tap `t = τ·e^{jφ}` and **without auxiliary nodes**: `τ` for voltage control,
@@ -589,7 +589,7 @@ redistribution when a follower hits its tap limit.
 - no participation-factor allocation or tap-limit redistribution within
   transformer groups
 
-## 5. CGMES / ENTSO-E mapping
+## 6. CGMES / ENTSO-E mapping
 
 The typed tap-changer models are aligned with the CGMES data model, so that
 CIM-based exchange maps onto Sparlectra with minimal reinterpretation:
@@ -614,7 +614,7 @@ honours this: a `:tabular` model overrides the formula path, and the formula
 kinds (`:symmetrical`, `:asymmetrical`) are used only when no table is
 provided. MATPOWER's raw `TAP`/`SHIFT` corresponds to the CGMES "General Case".
 
-## 6. Related documents
+## 7. Related documents
 
 - ENTSO-E, *Phase Shift Transformers Modelling*, CGMES v2.4, 28 May 2014 — the
   reference for PST technology classification (symmetrical / asymmetrical),

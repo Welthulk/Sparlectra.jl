@@ -1,11 +1,14 @@
 # N-1 Contingency Analysis
 
-The contingency batch API evaluates single-branch outages (N-1) on a solved
-base case: which line or transformer outage violates voltage limits,
-overloads other branches, or splits the network. It is the third parallel
-execution surface of the multi-core work (after island solving and
-short-circuit sweeps): every contingency is an independent solve on its own
-copy of the network, so the batch scales with Julia threads.
+The contingency batch API evaluates a list of outages or scenarios on a
+solved base case: which line, transformer or generator outage, or which
+combined patch scenario, violates voltage limits, overloads other
+branches, or splits the network. Case lists come from the N-1 generators
+(`generateN1Branches`, `generateN1Generators`), from imported FOR001
+metadata, or from a case file's scenarios block (`runScenarios!`). It is
+the third parallel execution surface of the multi-core work (after island
+solving and short-circuit sweeps): the batch fans out over Julia threads,
+one reused working copy per chunk.
 
 ## Quick start
 
@@ -20,17 +23,24 @@ writeContingencyResultsCSV("n1.csv", results)
 ```
 
 Start Julia with `julia --threads=auto` to use all cores; with one thread
-the batch runs serially and produces identical results. The runnable
-showcase is `examples/others/exp_contingency_n1.jl` (case1354pegase, all
-1991 branches, serial vs parallel side by side).
+the batch runs serially and produces identical results. Screening is off by
+default; `:flag` is a deliberate opt-in whose reasoning the Screening
+section below explains. The runnable showcase is
+`examples/others/exp_contingency_n1.jl` (case1354pegase, all 1991 branches,
+serial vs parallel side by side); note that pegase is a convergence and
+scaling instance whose base case already carries overloads, so the example
+demonstrates throughput, not N-1 evaluation on an operated grid.
 
 ## Execution model
 
-- The base `net` is NEVER mutated. `runContingencies!` first solves a
-  template copy of the base case; every contingency then works on a
-  `deepcopy` of that template (about 9 ms per case on case1354pegase),
-  removes its branch via `removeBranch!`, re-marks isolated buses, and
-  solves.
+- The base `net` is never mutated. `runContingencies!` solves a template
+  copy of the base case inside the scenario engine; each chunk of the
+  batch then evaluates its cases on one reused working copy (apply the
+  outage, re-mark isolated buses, solve, measure, reset the worker to the
+  template state bitwise). This replaced the former deepcopy-per-case
+  fan-out in the 0.10.0 cycle; on the case118 batch of 240 cases the
+  change measured 3.20 s / 923 MiB before against 1.98 s / 788 MiB after
+  on one thread, byte-identical results.
 - Warm start: because the template carries the solved base voltages, every
   contingency solve starts from the base operating point. When the base
   case itself does not converge, it is retried through the full solver
@@ -43,8 +53,8 @@ showcase is `examples/others/exp_contingency_n1.jl` (case1354pegase, all
   distinct start recipe, tried in order until one converges; the stage that
   won is reported as `start_used`:
   - `:warm` starts from the base-case (template) voltages;
-  - `:apslf` uses an APSLF start (needs `using AnalyticLoadFlow`; the stage
-    is dropped with a warning when the extension is not loaded);
+  - `:apslf` uses an APSLF start (AnalyticLoadFlow.jl is a required
+    dependency, so the stage is always available);
   - `:dc` uses flat magnitudes with DC-projected start angles;
   - `:flat` forces `flatstart = true`.
   The heavier solver-config variants (`:settled_qlimits`, `:autodamp`) are
@@ -133,14 +143,77 @@ showcase is `examples/others/exp_contingency_n1.jl` (case1354pegase, all
   unchanged into the [`ContingencyResult`](@ref) and shown in the table and
   CSV. Attach outage rates in bulk with `applyContingencyWeights(cases,
   weights)`, reading the name-to-weight map from a two-column CSV via
-  `readContingencyWeightsCSV`.
+  `readContingencyWeightsCSV`. Two weight sources exist and do not mix: a
+  weight file applies to case-list runs (the historical outage-kind
+  selector and the `n1_*` scenario sources), while a scenario run from a
+  case file's block or an external scenario JSON uses the per-scenario
+  `weight` of the block, and the weight file is not consulted there.
+
+Since the direct import (2026-09-04), every format's importer builds
+the network the contingencies run on directly; nothing converts on
+import. The one place a typed SCF case still appears for a non-SCF
+case is the scenario-source bridge: a scenario file or block addresses
+components by SCF ids, so the explicit converter provides the ID INDEX
+while the electrics that run remain the imported net.
+
+## Screening
+
+With `screening_mode = :flag` (keyword on `runContingencies!` and
+`runScenarios!`, or `contingency.screening.mode` for the service and the
+Web UI) every non-islanding single outage is estimated first with one
+Woodbury-corrected Newton step on the factorized base Jacobian, and only
+scenarios whose estimate comes within `screening.margin_pct` (default 10)
+of a limit get the full solve; `:only` reports the estimates without full
+runs. Screened rows carry `start_used = :screen`, `screened = true`, and
+the estimate; the CSV appends the `screened` and `screening_estimate`
+columns. With `:off` (the default everywhere) results and CSV stay the
+historical byte-stable full-solve output.
+
+Screening is an opt-in, and the reason is structural, not cosmetic. A
+linearized step cannot see a bus-type switch. In the calibration
+(2026-09-03, case300) the outage of a generator with a zero schedule left
+a one-step residual of 4e-13: the estimate declared the case perfectly
+solved and kept the bus minimum at 0.93 pu, while the full solve dropped
+it to 0.87 pu (a 0.06 pu miss), because the bus had lost reactive
+capability, clamped at the smaller Q limit and fell to PQ. No residual
+gate can see that class. The engine therefore flags it structurally: a
+generator outage at a bus carrying regulating generation (whether the bus
+is currently PV or already Q-clamped to PQ) always gets the full solve,
+as do bridge outages (they island by construction), slack units, and
+scenarios whose one-step residual stays above the 0.005 pu trust gate or
+does not shrink. Patch scenarios and distributed-slack last-participant
+outages are never screened. The finding stands for the method: switch
+`:flag` on only after checking, on your own network, the screening share
+and that the flagged margins carry the violations; the reported
+`screened` count and the reason breakdown in the calibration report are
+exactly that check.
+
+The 2026-09-03 calibration (five networks, 1478 N-1 cases, margin 10, the
+0.005 pu trust gate, the structural flags active) measured zero false
+negatives on every network, with these screening shares:
+
+| Network | Cases | Screened | Estimable (reasons of the rest) |
+|---|---|---|---|
+| case118 | 240 | 30.4 % | 224 ok; 9 bridge, 6 structural, 1 slack unit |
+| case300 | 480 | 13.3 % | 379 ok; 89 bridge, 11 structural, 1 slack unit |
+| synthetic 12x10 tiled grid | 319 | 98.7 % | 318 ok; 1 slack unit |
+| synthetic 2x60 tiled grid | 239 | 0 % (every case near the band under N-1) | 238 ok; 1 slack unit |
+| RealGrid, 200-case sample | 200 | 0 % (the base state itself violates band and rating) | 139 ok; 59 bridge, 2 structural |
+
+The point cloud of one-step residual against true estimate error ends at
+0.0104 pu residual for a 0.088 pu error (case300, the case that set the
+gate at 0.005, a factor of two below); the synthetic grids give a much
+narrower cloud (worst errors 0.0008 and 0.0015 pu), which is exactly why
+the gate is taken from the widest grown network, not from an average. The
+zero-share rows are the honest outcome on those networks, not a defect:
+screening cannot help where the base case already sits at its limits.
 
 ## Generator outages
 
 `generateN1Generators(net; min_pg_MW, name_pattern)` builds one
 `kind = :gen` case per in-service generator (any injection: generator,
 external-grid feed-in, or synchronous machine), filtered optionally by output
-`|Pg|` or name. A generator outage removes ONLY that unit's injection, so the
+`|Pg|` or name. A generator outage removes only that unit's injection, so the
 topology is unchanged and the lost active power must be picked up elsewhere:
 
 - By default the slack bus absorbs it. Pass `distributed_slack_enabled = true`
@@ -148,9 +221,9 @@ topology is unchanged and the lost active power must be picked up elsewhere:
   through to `runpf!`; it needs a surviving reference and does not itself
   supply one).
 - Removing a bus's last voltage-regulating unit demotes it to PQ. Removing the
-  system's ONLY slack leaves it reference-less and is reported as
-  `no slack bus registered` (the honest N-1 finding that the slack unit is
-  critical). For meaningful generator N-1 on a real grid, pass
+  system's only slack leaves it reference-less and is reported as
+  `no slack bus registered`, which is the N-1 answer that this unit is
+  critical. For meaningful generator N-1 on a real grid, pass
   `auto_slack = true` so the solver promotes the strongest surviving generator
   to slack, mirroring real frequency control.
 - When a generator outage strands a SEPARATE island that still carries
@@ -185,9 +258,9 @@ on the single run endpoint, not a separate workflow), so the case is resolved
 and built through the shared config-driven import path; `rescue_ladder` is read
 from `contingency.rescue_ladder`. The run writes `contingency_n1.csv` and a
 `run.log` report and shows an outcome summary. A generator outage that removes
-the system's only slack is named as the expected N-1 finding, not a tool
-failure; rerun the case with `auto_slack = true` if you want the solver to
-promote a surviving generator instead.
+the system's only slack is named as such in the summary; rerun the case with
+`auto_slack = true` if you want the solver to promote a surviving generator
+instead.
 
 ### Weights in the Web UI
 
@@ -197,7 +270,7 @@ weights editor. Weights live next to the case as
 `readContingencyWeightsCSV` parses; the file travels with the case (it is hidden
 from the case list and deleted with the case). The editor seeds a table with the
 case's real element names (so you never type them blind), offers a raw-CSV text
-area, and a file upload. Uploading REPLACES an existing weight file (a weight
+area, and a file upload. Uploading replaces an existing weight file (a weight
 list is a working document, unlike a case import), and the upload is validated
 before it is stored, so a malformed CSV is rejected with the line number and the
 old file is left untouched. Rows left at exactly `1.0` are omitted when the table
@@ -214,19 +287,5 @@ or an importance rating by voltage level.
 
 ## API
 
-```@docs
-ContingencyCase
-ContingencyResult
-OverloadRecord
-ContingencyReport
-runContingencies!
-generateN1Branches
-generateN1Generators
-generateContingenciesFromFOR001
-applyContingencyWeights
-readContingencyWeightsCSV
-printContingencyResults
-writeContingencyResultsCSV
-buildContingencyReport
-printContingencyReport
-```
+The contingency types and functions are documented on the
+[Contingency reference page](reference_contingency.md).

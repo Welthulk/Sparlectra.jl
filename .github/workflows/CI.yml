@@ -30,6 +30,13 @@ jobs:
         with:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
+      # julia-actions/cache@v3 already caches ~/.julia/compiled by default
+      # (cache-compiled: true, matrix folded into the key), so Sparlectra's
+      # precompile pkgimage from julia-buildpkg is reused across runs; do
+      # not add a second compiled-cache step. A CI sysimage is deliberately
+      # NOT built: measured 2026-09-02, building costs ~700 s while the
+      # fast profile saves ~140 s, and any src push invalidates the image,
+      # so it only pays off for runs that touch no src file.
       - uses: julia-actions/cache@v3
       # Cache the MATPOWER case files the test suite fetches on demand.
       # raw.githubusercontent.com rate-limits shared runner IPs, which made
@@ -47,7 +54,15 @@ jobs:
           restore-keys: |
             matpower-cases-
       - uses: julia-actions/julia-buildpkg@v1
+      # The fast profile is the risk-based gate: it carries every numerics,
+      # model and format group (rectangular solver, factorized linear
+      # solver, PV voltage residuals, 3WT phase taps included), so CI tests
+      # the solver core on every push. The extended profile (Web UI,
+      # services, documentation, fixture suites) runs in the developer
+      # workflow before merges.
       - uses: julia-actions/julia-runtest@v1
+        env:
+          SPARLECTRA_TEST_PROFILE: fast
       - uses: actions/cache/save@v4
         if: always() && steps.matpower-cases.outputs.cache-hit != 'true'
         with:

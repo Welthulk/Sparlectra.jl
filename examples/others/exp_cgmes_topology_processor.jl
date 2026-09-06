@@ -19,7 +19,7 @@
 
 using Sparlectra
 
-include(joinpath(@__DIR__, "..", "internal", "example_header.jl"))
+include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
 # Offline-safe: the ENTSO-E MiniGrid node-breaker fixture is used from the
 # local test-set cache only. Without the cache the example explains how to
@@ -46,7 +46,7 @@ function main()
   print_example_banner("examples/others/exp_cgmes_topology_processor.jl", "CGMES node-breaker import without a TP profile: derived buses vs. the shipped TP")
   paths = _minigrid_nb_paths()
   if paths === nothing
-    println("MiniGrid node-breaker fixture not cached, run examples/experimental/cgmes_fetch_testsets.jl once, then retry.")
+    println("MiniGrid node-breaker fixture not cached, run examples/cgmes/cgmes_fetch_testsets.jl once, then retry.")
     return nothing
   end
   base, bd = paths

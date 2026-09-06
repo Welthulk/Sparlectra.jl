@@ -15,11 +15,11 @@
 
 # Date: 2026-05-30
 # file: examples/powerflow/exp_configured_matpower_cases.jl
-# purpose: runs ordered matpower_import.cases entries sequentially through run_sparlectra_cases and prints each case's outcome
+# purpose: runs ordered runtime.cases entries sequentially through run_sparlectra_cases and prints each case's outcome
 
 using Sparlectra
 
-include(joinpath(@__DIR__, "..", "internal", "example_header.jl"))
+include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
 function main(args = ARGS)
   print_example_banner("examples/powerflow/exp_configured_matpower_cases.jl", "runs ordered matpower_import.cases entries sequentially through run_sparlectra_cases and prints each case's outcome")

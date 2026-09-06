@@ -22,7 +22,7 @@ using Sparlectra
 using Printf
 using Random
 
-include(joinpath(@__DIR__, "..", "internal", "example_header.jl"))
+include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
 function build_passive_transit_example_net()
   net = Net(name = "se_passive_transit_example", baseMVA = 100.0)

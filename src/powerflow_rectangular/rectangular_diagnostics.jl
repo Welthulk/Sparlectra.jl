@@ -250,7 +250,7 @@ function _rectangular_mismatch_trend(history::AbstractVector{<:Real}; window::In
   all(abs(d) <= tol for d in diffs) && return :stagnant
   signs = [d > tol ? 1 : d < -tol ? -1 : 0 for d in diffs]
   nonzero = filter(!=(0), signs)
-  length(nonzero) >= 2 && any(nonzero[i] != nonzero[i - 1] for i in 2:length(nonzero)) && return :oscillatory
+  length(nonzero) >= 2 && any(nonzero[i] != nonzero[i-1] for i in (firstindex(nonzero)+1):lastindex(nonzero)) && return :oscillatory
   abs(tail[end] - minimum(tail)) <= tol && return :stagnant
   return :mixed
 end

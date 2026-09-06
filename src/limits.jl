@@ -78,6 +78,12 @@ Base.@kwdef struct QLimitEvent
   side::Symbol   # :min | :max
 end
 
+"""
+    logQLimitHit!(net, iter, bus, side)
+
+Record a Q-limit hit (bus, iteration, min or max side) in the network's
+Q-limit log.
+"""
 function logQLimitHit!(net::Net, iter::Int, bus::Int, side::Symbol)
   push!(net.qLimitLog, QLimitEvent(iter = iter, bus = bus, side = side))
   net.qLimitEvents[bus] = side
@@ -105,6 +111,11 @@ function lastQLimitIter(net::Net, bus::Int)
   return nothing
 end
 
+"""
+    resetQLimitLog!(net)
+
+Clear the Q-limit event log of the network.
+"""
 function resetQLimitLog!(net::Net)
   empty!(net.qLimitEvents)
   empty!(net.qLimitLog)
@@ -193,6 +204,11 @@ end
 # ------------------------------
 # Q-limit helpers (local arrays)
 # ------------------------------
+"""
+    has_q_limits(qmin_pu, qmax_pu, i) -> Bool
+
+Whether bus `i` carries a finite reactive band.
+"""
 @inline function has_q_limits(qmin_pu::AbstractVector, qmax_pu::AbstractVector, i::Int)::Bool
   has_lo = (i <= length(qmin_pu)) && isfinite(qmin_pu[i])
   has_hi = (i <= length(qmax_pu)) && isfinite(qmax_pu[i])
@@ -435,6 +451,25 @@ function active_set_q_limits!(
     end
   end
 
+  # Per-bus Q-limit event count. The guard below and the re-enable branch both
+  # ask "how often has this bus switched so far", which used to be a `count`
+  # over the whole event log PER BUS PER ITERATION: on a 13659-bus network
+  # that made the Q-limit handling 70 percent of the power flow (7731 of
+  # 10957 profile samples, 60 s for 8 iterations). The log GROWS while this
+  # function runs (every switch appends), so the counts cannot be built once
+  # up front - they are carried forward from where the last lookup stopped,
+  # which is exactly what the repeated scan computed, amortized to O(1).
+  switch_counts = Dict{Int,Int}()
+  counted_upto = 0
+  switch_count = function (bus::Int)
+    @inbounds while counted_upto < length(net.qLimitLog)
+      counted_upto += 1
+      ev_bus = net.qLimitLog[counted_upto].bus
+      switch_counts[ev_bus] = get(switch_counts, ev_bus, 0) + 1
+    end
+    return get(switch_counts, bus, 0)
+  end
+
   # --- PV -> PQ ------------------------------------------------------------
   @inbounds for bus = 1:nb
     is_pv(bus) || continue
@@ -477,10 +512,10 @@ function active_set_q_limits!(
     end
     side == :none && continue
 
-    if qlimit_guard_freeze_after_repeated_switching && qlimit_switch_count(net, bus) >= qlimit_guard_max_switches
+    if qlimit_guard_freeze_after_repeated_switching && switch_count(bus) >= qlimit_guard_max_switches
       if verbose > 0
         if max_console_rows < 0 || printed_events < max_console_rows
-          @printf(io, "PV->PQ Bus %d: switching suppressed after %d Q-limit event(s); bus remains in its current active-set state (it=%d)\n", bus, qlimit_switch_count(net, bus), it)
+          @printf(io, "PV->PQ Bus %d: switching suppressed after %d Q-limit event(s); bus remains in its current active-set state (it=%d)\n", bus, switch_count(bus), it)
           printed_events += 1
         else
           omitted_events += 1
@@ -536,7 +571,7 @@ function active_set_q_limits!(
       # A re-enabled bus that violates its Q limit again is likely chattering
       # between the PQ clamp and the PV voltage constraint. Keep it clamped
       # after the first retry instead of re-enabling it indefinitely.
-      prior_hits = count(ev -> ev.bus == bus, net.qLimitLog)
+      prior_hits = switch_count(bus)
       prior_hits > 1 && continue
 
       qreq = get_qreq_pu(bus)

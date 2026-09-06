@@ -16,7 +16,7 @@
 # file: examples/run_state_estimation_suite.jl
 # purpose: suite runner that executes the state-estimation example programs (WLS, observability, diagnostics, Monte-Carlo study) in fresh subprocesses and reports a summary
 
-include(joinpath(@__DIR__, "internal", "example_suite_runner.jl"))
+include(joinpath(@__DIR__, "others", "example_suite_runner.jl"))
 using Sparlectra
 using LinearAlgebra: svdvals
 
@@ -30,6 +30,11 @@ const SUITE_SPECS = ExampleSpec[
   ExampleSpec(name = "passive_bus_zib_comparison", file = "state_estimation/state_estimation_passive_bus_zib_comparison.jl", purpose = "WLS state estimation with and without zero-injection (ZIB) measurements"),
   ExampleSpec(name = "pmu_angles", file = "state_estimation/state_estimation_pmu_angles.jl", purpose = "PMU voltage-angle measurements with the reference-angle offset state alpha (aligned vs. shifted PMU time base)"),
   ExampleSpec(name = "diagnostics", file = "state_estimation/usage_state_estimation_diagnostics.jl", purpose = "bad-data diagnostics: inject a bad measurement, validate, deactivate and rerun"),
+  ExampleSpec(name = "imag_bad_data", file = "state_estimation/state_estimation_imag_bad_data.jl", purpose = "current-magnitude measurements (ImagMeas) raising bad-data localizability (wii), sequential elimination with trace, and the 3 sigma value gate"),
+  ExampleSpec(name = "shunt_estimation", file = "state_estimation/state_estimation_shunt_estimation.jl", purpose = "shunt estimation: recover a stale reactor susceptance as an estimator state (case A, setShuntEstimation!/updateShunts) and derive a SHDERIV bay pseudo-measurement (case B)"),
+  ExampleSpec(name = "links_facts", file = "state_estimation/state_estimation_links_facts.jl", purpose = "SE on the contracted net (busbar coupler): LINKAGG cluster aggregation, member voltage sync, W2 allocation with a link measurement (calcLinkFlowsSE!), and the se_view frozen-operating-point report"),
+  ExampleSpec(name = "robust", file = "state_estimation/state_estimation_robust.jl", purpose = "robust R modification suppressing a 10 sigma gross error (solve/diagnosis separation) and the Wilson-Hilferty band test with its :high and :low failure directions"),
+  ExampleSpec(name = "chain", file = "state_estimation/state_estimation_chain.jl", purpose = "measurement CSV v1 roundtrip, SE, and the PF started from the estimate (se_state model-authoritative vs se_snapshot balance takeover with immediate convergence)"),
   ExampleSpec(name = "h_matrix_observability", file = "state_estimation/h_matrix_observability_demo.jl", purpose = "small measurement Jacobians H and the public observability helpers"),
   ExampleSpec(name = "mc_study", file = "state_estimation/mc_state_estimation_study.jl", timeout_s = 1200, purpose = "Monte-Carlo WLS state-estimation error study on the 7-bus workshop net"),
 ]
@@ -70,7 +75,9 @@ function write_measurement_matrix_report(output_dir::AbstractString)
 
   mj = measurement_jacobian(net)
   gobs = evaluate_global_observability(net; flatstart = true, jacEps = 1e-6)
-  sv = svdvals(mj.H)
+  # H is sparse since task_se_sparse; the workshop-size matrix is tiny, so
+  # the exact dense singular values stay affordable here
+  sv = svdvals(Matrix(mj.H))
   cond_H = sv[end] > 0.0 ? sv[1] / sv[end] : Inf
   # heuristic verdict on the WLS problem's conditioning: the normal
   # equations square the condition of H, so cond(H) above ~1e7 means the

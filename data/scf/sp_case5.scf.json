@@ -1,0 +1,682 @@
+{
+  "version": "1.0",
+  "type": "input",
+  "is_batch": false,
+  "attributes": {},
+  "data": {
+    "fault": [
+      {
+        "fault_object": 4,
+        "fault_type": "three_phase",
+        "id": 37,
+        "r_f": 0.0,
+        "status": 1,
+        "x_f": 0.0
+      },
+      {
+        "fault_object": 2,
+        "fault_type": "three_phase",
+        "id": 38,
+        "r_f": 0.0,
+        "status": 1,
+        "x_f": 0.0
+      }
+    ],
+    "generic_branch": [
+      {
+        "b1": 0.0,
+        "from_node": 2,
+        "from_status": 1,
+        "g1": 0.0,
+        "id": 10,
+        "k": 1.0,
+        "r1": 0.05,
+        "sn": 4.0e7,
+        "theta": 0.0,
+        "to_node": 3,
+        "to_status": 1,
+        "x1": 0.998749217771909
+      }
+    ],
+    "line": [
+      {
+        "c1": 0.0,
+        "from_node": 1,
+        "from_status": 1,
+        "i_n": 157.4591643244434,
+        "id": 6,
+        "r1": 12.100000000000001,
+        "tan1": 0.0,
+        "to_node": 2,
+        "to_status": 1,
+        "x1": 42.349999999999994
+      },
+      {
+        "c1": 0.0,
+        "from_node": 4,
+        "from_status": 1,
+        "i_n": 157.4591643244434,
+        "id": 7,
+        "r1": 12.100000000000001,
+        "tan1": 0.0,
+        "to_node": 1,
+        "to_status": 1,
+        "x1": 42.349999999999994
+      },
+      {
+        "c1": 0.0,
+        "from_node": 4,
+        "from_status": 1,
+        "i_n": 157.4591643244434,
+        "id": 8,
+        "r1": 12.100000000000001,
+        "tan1": 0.0,
+        "to_node": 5,
+        "to_status": 1,
+        "x1": 42.349999999999994
+      },
+      {
+        "c1": 0.0,
+        "from_node": 5,
+        "from_status": 1,
+        "i_n": 157.4591643244434,
+        "id": 9,
+        "r1": 12.100000000000001,
+        "tan1": 0.0,
+        "to_node": 2,
+        "to_status": 1,
+        "x1": 42.349999999999994
+      }
+    ],
+    "node": [
+      {
+        "id": 1,
+        "u_rated": 110000.0
+      },
+      {
+        "id": 2,
+        "u_rated": 110000.0
+      },
+      {
+        "id": 3,
+        "u_rated": 20000.0
+      },
+      {
+        "id": 4,
+        "u_rated": 110000.0
+      },
+      {
+        "id": 5,
+        "u_rated": 110000.0
+      }
+    ],
+    "sym_gen": [
+      {
+        "id": 13,
+        "node": 4,
+        "p_specified": 0.0,
+        "q_specified": 0.0,
+        "status": 1,
+        "type": 0
+      },
+      {
+        "id": 14,
+        "node": 5,
+        "p_specified": 1.2e7,
+        "q_specified": 0.0,
+        "status": 1,
+        "type": 0
+      }
+    ],
+    "sym_load": [
+      {
+        "id": 11,
+        "node": 2,
+        "p_specified": 2.0e7,
+        "q_specified": 6.0e6,
+        "status": 1,
+        "type": 0
+      },
+      {
+        "id": 12,
+        "node": 3,
+        "p_specified": 1.2e7,
+        "q_specified": 4.0e6,
+        "status": 1,
+        "type": 0
+      }
+    ],
+    "sym_power_sensor": [
+      {
+        "id": 22,
+        "measured_object": 4,
+        "measured_terminal_type": "node",
+        "p_measured": 2.031050289392691e7,
+        "power_sigma": 1.0e6,
+        "q_measured": 1.0622276788732711e7
+      },
+      {
+        "id": 23,
+        "measured_object": 1,
+        "measured_terminal_type": "node",
+        "p_measured": -480642.85577534203,
+        "power_sigma": 1.0e6,
+        "q_measured": 2.741165858796093e6
+      },
+      {
+        "id": 24,
+        "measured_object": 5,
+        "measured_terminal_type": "node",
+        "p_measured": 1.2600005347588863e7,
+        "power_sigma": 1.0e6,
+        "q_measured": 4.1585868235005573e6
+      },
+      {
+        "id": 25,
+        "measured_object": 2,
+        "measured_terminal_type": "node",
+        "p_measured": -2.1451550755553e7,
+        "power_sigma": 1.0e6,
+        "q_measured": -5.60466996011563e6
+      },
+      {
+        "id": 26,
+        "measured_object": 3,
+        "measured_terminal_type": "node",
+        "p_measured": -1.1748354252756972e7,
+        "power_sigma": 1.0e6,
+        "q_measured": -2.6529830076978486e6
+      },
+      {
+        "id": 27,
+        "measured_object": 7,
+        "measured_terminal_type": "branch_from",
+        "p_measured": 1.0467500760705175e7,
+        "power_sigma": 1.0e6,
+        "q_measured": 4.735409456230619e6
+      },
+      {
+        "id": 28,
+        "measured_object": 7,
+        "measured_terminal_type": "branch_to",
+        "p_measured": -1.2514652185943391e7,
+        "power_sigma": 1.0e6,
+        "q_measured": -4.935662750044279e6
+      },
+      {
+        "id": 29,
+        "measured_object": 6,
+        "measured_terminal_type": "branch_from",
+        "p_measured": 1.331873407310957e7,
+        "power_sigma": 1.0e6,
+        "q_measured": 5.295858041480601e6
+      },
+      {
+        "id": 30,
+        "measured_object": 6,
+        "measured_terminal_type": "branch_to",
+        "p_measured": -1.3310788669814223e7,
+        "power_sigma": 1.0e6,
+        "q_measured": -4.53096318346563e6
+      },
+      {
+        "id": 31,
+        "measured_object": 8,
+        "measured_terminal_type": "branch_from",
+        "p_measured": 8.305986047911043e6,
+        "power_sigma": 1.0e6,
+        "q_measured": 4.170307479834543e6
+      },
+      {
+        "id": 32,
+        "measured_object": 8,
+        "measured_terminal_type": "branch_to",
+        "p_measured": -6.55533270383296e6,
+        "power_sigma": 1.0e6,
+        "q_measured": -3.7167335665956014e6
+      },
+      {
+        "id": 33,
+        "measured_object": 9,
+        "measured_terminal_type": "branch_from",
+        "p_measured": 2.04764141651141e7,
+        "power_sigma": 1.0e6,
+        "q_measured": 8.40610218179863e6
+      },
+      {
+        "id": 34,
+        "measured_object": 9,
+        "measured_terminal_type": "branch_to",
+        "p_measured": -1.7555184690227777e7,
+        "power_sigma": 1.0e6,
+        "q_measured": -7.599034075457844e6
+      },
+      {
+        "id": 35,
+        "measured_object": 10,
+        "measured_terminal_type": "branch_from",
+        "p_measured": 1.3892268978019511e7,
+        "power_sigma": 1.0e6,
+        "q_measured": 5.28328041224575e6
+      },
+      {
+        "id": 36,
+        "measured_object": 10,
+        "measured_terminal_type": "branch_to",
+        "p_measured": -1.2388321366001185e7,
+        "power_sigma": 1.0e6,
+        "q_measured": -4.993066172397056e6
+      }
+    ],
+    "sym_voltage_sensor": [
+      {
+        "id": 17,
+        "measured_object": 4,
+        "u_measured": 111172.69950474614,
+        "u_sigma": 550.0
+      },
+      {
+        "id": 18,
+        "measured_object": 1,
+        "u_measured": 109679.24547494242,
+        "u_sigma": 550.0
+      },
+      {
+        "id": 19,
+        "measured_object": 5,
+        "u_measured": 109936.62561232173,
+        "u_sigma": 550.0
+      },
+      {
+        "id": 20,
+        "measured_object": 2,
+        "u_measured": 105734.66256357924,
+        "u_sigma": 550.0
+      },
+      {
+        "id": 21,
+        "measured_object": 3,
+        "u_measured": 18899.259282441955,
+        "u_sigma": 100.0
+      }
+    ],
+    "voltage_regulator": [
+      {
+        "id": 15,
+        "q_max": 2.0e7,
+        "q_min": -2.0e7,
+        "regulated_object": 14,
+        "status": 1,
+        "u_ref": 1.0
+      }
+    ]
+  },
+  "sparlectra": {
+    "components": {
+      "sc_source": [
+        {
+          "bus": "Sandau_110",
+          "governorSCD": null,
+          "ikSecond": null,
+          "kind": "external_network_injection",
+          "maxInitialSymShCCurrent_A": 10497.277621629559,
+          "maxR0ToX0Ratio": null,
+          "maxR1ToX1Ratio": 0.1,
+          "maxZ0ToZ1Ratio": null,
+          "minInitialSymShCCurrent_A": 7872.9582162221695,
+          "minR1ToX1Ratio": 0.1,
+          "mrid": "native-eni-Sandau_110",
+          "name": "ExtGrid_Sandau",
+          "node": 4
+        }
+      ],
+      "tap_changer": [
+        {
+          "angle_base_deg": 0.0,
+          "branch": 10,
+          "control": {
+            "mode": "fixed"
+          },
+          "controllers": [
+            {
+              "alpha_deg": 0.0,
+              "index": 1,
+              "pos": 0,
+              "pos_max": 18,
+              "pos_min": -15,
+              "step": 0.00625
+            },
+            {
+              "alpha_deg": 0.0,
+              "index": 2,
+              "pos": 0,
+              "pos_max": 24,
+              "pos_min": -24,
+              "step_deg": 1.25
+            }
+          ],
+          "id": 16,
+          "ratio_base": 1.0,
+          "side": "from"
+        }
+      ]
+    },
+    "extra": {
+      "1": {
+        "bus_index": 2,
+        "external_id": "HV2",
+        "name": "Borntal_110",
+        "node_type": "PQ"
+      },
+      "10": {
+        "branch_index": 5,
+        "external_id": "#B_2WT_110_4_5#5",
+        "meta": {
+          "neutral_ratio": 1.0,
+          "sn_mva": 40.0
+        },
+        "name": "Lindhof_110_20"
+      },
+      "11": {
+        "element_index": 3,
+        "external_id": "#Ld_110.0\\_4\\_#3",
+        "name": "Ld_110.0",
+        "prosumption_class": "Consumption",
+        "prosumption_type": "Load"
+      },
+      "12": {
+        "element_index": 4,
+        "external_id": "#Ld_20.0\\_5\\_#4",
+        "name": "Ld_20.0",
+        "prosumption_class": "Consumption",
+        "prosumption_type": "Load"
+      },
+      "13": {
+        "element_index": 1,
+        "external_id": "#Gen_110\\_1\\_#1",
+        "name": "Gen_110",
+        "prosumption_class": "Injection",
+        "prosumption_type": "Generator",
+        "reference_pri": true,
+        "regulated": true,
+        "vm_pu": 1.02
+      },
+      "14": {
+        "element_index": 2,
+        "external_id": "#Gen_110\\_3\\_#2",
+        "max_q_mvar": 20.0,
+        "min_q_mvar": -20.0,
+        "name": "Gen_110",
+        "prosumption_class": "Injection",
+        "prosumption_type": "Generator",
+        "regulated": true
+      },
+      "2": {
+        "bus_index": 4,
+        "external_id": "HV4",
+        "name": "Lindhof_110",
+        "node_type": "PQ"
+      },
+      "3": {
+        "bus_index": 5,
+        "external_id": "MV1",
+        "name": "Lindhof_20",
+        "node_type": "PQ"
+      },
+      "4": {
+        "bus_index": 1,
+        "external_id": "HV1",
+        "name": "Sandau_110",
+        "node_type": "Slack"
+      },
+      "5": {
+        "bus_index": 3,
+        "external_id": "HV3",
+        "name": "Steinau_110",
+        "node_type": "PV"
+      },
+      "6": {
+        "branch_index": 2,
+        "external_id": "#B_ACL_110_2_4#2",
+        "meta": {
+          "sn_mva": 30.0
+        },
+        "name": "Borntal_Lindhof"
+      },
+      "7": {
+        "branch_index": 1,
+        "external_id": "#B_ACL_110_1_2#1",
+        "meta": {
+          "sn_mva": 30.0
+        },
+        "name": "Sandau_Borntal"
+      },
+      "8": {
+        "branch_index": 3,
+        "external_id": "#B_ACL_110_1_3#3",
+        "meta": {
+          "sn_mva": 30.0
+        },
+        "name": "Sandau_Steinau"
+      },
+      "9": {
+        "branch_index": 4,
+        "external_id": "#B_ACL_110_3_4#4",
+        "meta": {
+          "sn_mva": 30.0
+        },
+        "name": "Steinau_Lindhof"
+      }
+    },
+    "format_version": "1.0",
+    "measurements": {
+      "provenance": {
+        "noise": true,
+        "seed": 20260903,
+        "source": "generateMeasurementsFromPF"
+      },
+      "rows": [
+        {
+          "positions": [1],
+          "sensor": 17,
+          "sigmas": [0.005],
+          "sparlectra_ids": ["Vm_bus_1"]
+        },
+        {
+          "positions": [4],
+          "sensor": 18,
+          "sigmas": [0.005],
+          "sparlectra_ids": ["Vm_bus_2"],
+          "values": [0.9970840497722038]
+        },
+        {
+          "positions": [7],
+          "sensor": 19,
+          "sigmas": [0.005],
+          "sparlectra_ids": ["Vm_bus_3"]
+        },
+        {
+          "positions": [10],
+          "sensor": 20,
+          "sigmas": [0.005],
+          "sparlectra_ids": ["Vm_bus_4"]
+        },
+        {
+          "positions": [13],
+          "sensor": 21,
+          "sigmas": [0.005],
+          "sparlectra_ids": ["Vm_bus_5"],
+          "values": [0.9449629641220977]
+        },
+        {
+          "positions": [2, 3],
+          "sensor": 22,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pinj_bus_1", "Qinj_bus_1"]
+        },
+        {
+          "positions": [5, 6],
+          "sensor": 23,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pinj_bus_2", "Qinj_bus_2"]
+        },
+        {
+          "positions": [8, 9],
+          "sensor": 24,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pinj_bus_3", "Qinj_bus_3"]
+        },
+        {
+          "positions": [11, 12],
+          "sensor": 25,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pinj_bus_4", "Qinj_bus_4"]
+        },
+        {
+          "positions": [14, 15],
+          "sensor": 26,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pinj_bus_5", "Qinj_bus_5"]
+        },
+        {
+          "positions": [16, 18],
+          "sensor": 27,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_1_from", "Qflow_branch_1_from"]
+        },
+        {
+          "positions": [17, 19],
+          "sensor": 28,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_1_to", "Qflow_branch_1_to"]
+        },
+        {
+          "positions": [20, 22],
+          "sensor": 29,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_2_from", "Qflow_branch_2_from"]
+        },
+        {
+          "positions": [21, 23],
+          "sensor": 30,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_2_to", "Qflow_branch_2_to"]
+        },
+        {
+          "positions": [24, 26],
+          "sensor": 31,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_3_from", "Qflow_branch_3_from"]
+        },
+        {
+          "positions": [25, 27],
+          "sensor": 32,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_3_to", "Qflow_branch_3_to"],
+          "values": [-6.55533270383296, -3.7167335665956016]
+        },
+        {
+          "positions": [28, 30],
+          "sensor": 33,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_4_from", "Qflow_branch_4_from"]
+        },
+        {
+          "positions": [29, 31],
+          "sensor": 34,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_4_to", "Qflow_branch_4_to"]
+        },
+        {
+          "positions": [32, 34],
+          "sensor": 35,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_5_from", "Qflow_branch_5_from"]
+        },
+        {
+          "positions": [33, 35],
+          "sensor": 36,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_5_to", "Qflow_branch_5_to"]
+        }
+      ]
+    },
+    "meta": {
+      "case_name": "sp_case5",
+      "created_by": "Sparlectra 0.10.0",
+      "f_nom": 50.0,
+      "intended_calculations": ["power_flow", "state_estimation", "short_circuit", "contingency", "scenarios"],
+      "notes": "Self-built Sparlectra demo network; the bus count in the name does not make it the IEEE case of that size, and no data was taken from MATPOWER, DTF or any other source.",
+      "s_base": 1.0e8
+    },
+    "roles": {
+      "slack": {
+        "mode": "single",
+        "nodes": [4]
+      }
+    },
+    "scenarios": {
+      "mode": "explicit",
+      "scenarios": [
+        {
+          "name": "line_Borntal_Lindhof_out",
+          "ops": [
+            {
+              "id": 6,
+              "op": "status",
+              "target": "branch",
+              "value": 0.0
+            }
+          ],
+          "weight": 1.0
+        },
+        {
+          "name": "evening_peak",
+          "ops": [
+            {
+              "factor": 1.15,
+              "id": 11,
+              "op": "scale",
+              "target": "load"
+            },
+            {
+              "factor": 1.15,
+              "id": 12,
+              "op": "scale",
+              "target": "load"
+            }
+          ],
+          "weight": 1.0
+        }
+      ]
+    },
+    "short_circuit": {
+      "buses": ["Sandau_110", "Lindhof_110"]
+    },
+    "start_state": {
+      "nodes": {
+        "1": {
+          "va_deg": -2.3532570931793044,
+          "vm_pu": 0.9872603372847158
+        },
+        "2": {
+          "va_deg": -4.863368065814093,
+          "vm_pu": 0.9562984410588318
+        },
+        "3": {
+          "va_deg": -6.734398885156987,
+          "vm_pu": 0.9436146693293063
+        },
+        "4": {
+          "va_deg": 0.0,
+          "vm_pu": 1.02
+        },
+        "5": {
+          "va_deg": -1.2492434708252893,
+          "vm_pu": 1.0
+        }
+      },
+      "source": "solved_power_flow"
+    }
+  }
+}

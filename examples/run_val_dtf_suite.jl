@@ -18,7 +18,7 @@
 
 # Unified DTF validation suite.
 #
-# Thin CLI runner over the shared modules in examples/internal/
+# Thin CLI runner over the shared modules in examples/dtf/
 # (dtf_validation_base/outages/matpower/audit plus
 # dtf_for002_validation_utils.jl). It combines:
 #   - DTF import audit
@@ -35,11 +35,11 @@ using Sparlectra
 
 
 
-include(joinpath(@__DIR__, "internal", "dtf_validation_base.jl"))
-include(joinpath(@__DIR__, "internal", "dtf_validation_outages.jl"))
-include(joinpath(@__DIR__, "internal", "dtf_validation_matpower.jl"))
-include(joinpath(@__DIR__, "internal", "dtf_validation_audit.jl"))
-include(joinpath(@__DIR__, "internal", "example_header.jl"))
+include(joinpath(@__DIR__, "dtf", "dtf_validation_base.jl"))
+include(joinpath(@__DIR__, "dtf", "dtf_validation_outages.jl"))
+include(joinpath(@__DIR__, "dtf", "dtf_validation_matpower.jl"))
+include(joinpath(@__DIR__, "dtf", "dtf_validation_audit.jl"))
+include(joinpath(@__DIR__, "others", "example_header.jl"))
 
 const _SUITE_MODES = ("audit", "base", "outages", "matpower")
 
@@ -262,7 +262,7 @@ function _finite_max(values)
   return isempty(usable) ? missing : maximum(usable)
 end
 
-# Keep in sync with the identical helper in examples/internal/dtf_for002_validation_utils.jl.
+# Keep in sync with the identical helper in examples/dtf/dtf_for002_validation_utils.jl.
 function _fmt_num(x::AbstractFloat)::String
   isfinite(x) || return string(x)
   x == 0.0 && return "0.0"

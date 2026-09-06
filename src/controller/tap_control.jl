@@ -1,0 +1,774 @@
+# Copyright 2023–2026 Udo Schmitz
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Author: Udo Schmitz (https://github.com/Welthulk)
+# Date: 1.3.2026
+# file: src/controller/tap_control.jl
+# purpose: transformer tap controllers for the outer control loop
+#          (addPowerTransformerControl!, run_tap_controllers_outer!) with
+#          ratio and phase tap probing plus controller report output
+
+@inline _voltage_within_deadband(vm::Float64, target_vm_pu::Float64, deadband_vm_pu::Float64)::Bool = abs(vm - target_vm_pu) <= deadband_vm_pu
+@inline _voltage_control_error(vm::Float64, target_vm_pu::Float64, metric::Symbol)::Float64 = metric == :vm2 ? vm^2 - target_vm_pu^2 : vm - target_vm_pu
+
+"""
+    _tap_controllers(net)
+
+Collect all tap controllers configured in `net` from transformer windings.
+"""
+function _tap_controllers(net::Net)::Vector{PowerTransformerControl}
+  controllers = PowerTransformerControl[]
+  seen = IdDict{PowerTransformerControl,Bool}()
+
+  for trafo in net.trafos
+    for winding in (trafo.side1, trafo.side2, trafo.side3)
+      isnothing(winding) && continue
+      for ctrl in winding.controls
+        haskey(seen, ctrl) && continue
+        seen[ctrl] = true
+        push!(controllers, ctrl)
+      end
+    end
+  end
+  return controllers
+end
+
+"""
+    clearTapControllers!(net)
+
+Remove all tap controllers from transformer windings in `net`.
+"""
+function clearTapControllers!(net::Net)
+  for trafo in net.trafos
+    empty!(trafo.side1.controls)
+    empty!(trafo.side2.controls)
+    if !isnothing(trafo.side3)
+      empty!(trafo.side3.controls)
+    end
+  end
+  return net
+end
+
+"""
+    _find_trafo_branch(net, name)
+
+Internal helper to resolve a transformer branch by component name, component id,
+or branch index represented as string.
+"""
+function _find_trafo_branch(net::Net, name::String)::Branch
+  for br in net.branchVec
+    if br.ratio != 0.0 && (br.comp.cName == name || br.comp.cID == name || string(br.branchIdx) == name)
+      return br
+    end
+  end
+  error("PowerTransformerControl: transformer $(name) not found. Use branch component name/id or branch index as String.")
+end
+
+"""
+    get_bus_vm_pu(net, bus_name)
+
+Return solved voltage magnitude in p.u. for bus `bus_name`.
+"""
+function get_bus_vm_pu(net::Net, bus_name::String)
+  bus = geNetBusIdx(net = net, busName = bus_name)
+  return net.nodeVec[bus]._vm_pu
+end
+
+"""
+    get_branch_p_from_to_mw(net, from_bus, to_bus)
+
+Return active power flow in MW for the oriented branch direction
+`from_bus -> to_bus`.
+"""
+function get_branch_p_from_to_mw(net::Net, from_bus::String, to_bus::String)
+  br = getNetBranch(net = net, fromBus = from_bus, toBus = to_bus)
+  from = geNetBusIdx(net = net, busName = from_bus)
+  return br.fromBus == from ? br.fBranchFlow.pFlow : br.tBranchFlow.pFlow
+end
+
+"""
+    get_branch_q_from_to_mvar(net, from_bus, to_bus)
+
+Return reactive power flow in MVAr for the oriented branch direction
+`from_bus -> to_bus`.
+"""
+function get_branch_q_from_to_mvar(net::Net, from_bus::String, to_bus::String)
+  br = getNetBranch(net = net, fromBus = from_bus, toBus = to_bus)
+  from = geNetBusIdx(net = net, busName = from_bus)
+  return br.fromBus == from ? br.fBranchFlow.qFlow : br.tBranchFlow.qFlow
+end
+
+@inline _controller_mode_label(mode::Symbol) = String(mode)
+function control_name(ctrl::PowerTransformerControl)
+  base = strip(ctrl.trafo)
+  mode = ctrl.mode == :voltage ? "OLTC" : (ctrl.mode == :branch_active_power ? "PST" : "SCHRAEG")
+  return isempty(base) ? mode : string(base, " ", mode)
+end
+control_enabled(ctrl::PowerTransformerControl) = ctrl.enabled
+control_initialize!(::PowerTransformerControl, ::Net, context) = NoControlState()
+control_status(ctrl::PowerTransformerControl, ::AbstractControlState)::Symbol = ctrl.status
+control_is_converged(ctrl::PowerTransformerControl, ::AbstractControlState)::Bool = ctrl.converged
+control_is_blocked(ctrl::PowerTransformerControl, ::AbstractControlState)::Bool = ctrl.at_limit
+function control_evaluate!(ctrl::PowerTransformerControl, net::Net, ::AbstractControlState, context)
+  br = _find_trafo_branch(net, ctrl.trafo)
+  ctrl.at_limit = false
+  converged_v = true
+  converged_p = true
+  if ctrl.mode in (:voltage, :voltage_and_branch_active_power)
+    vm = get_bus_vm_pu(net, ctrl.target_bus)
+    ctrl.achieved_vm_pu = vm
+    converged_v = _voltage_within_deadband(vm, ctrl.target_vm_pu, ctrl.deadband_vm_pu)
+  end
+  if ctrl.mode in (:branch_active_power, :voltage_and_branch_active_power)
+    p = get_branch_p_from_to_mw(net, ctrl.target_branch[1], ctrl.target_branch[2])
+    ctrl.achieved_p_mw = p
+    converged_p = abs(p - ctrl.p_target_mw) <= ctrl.deadband_p_mw
+  end
+  ctrl.converged = converged_v && converged_p
+  ctrl.status = ctrl.converged ? :converged : :active
+  ctrl.outer_iters = context.outer_iteration
+  return nothing
+end
+function control_propose_update!(ctrl::PowerTransformerControl, net::Net, ::AbstractControlState, context)
+  br = _find_trafo_branch(net, ctrl.trafo)
+  old_ratio = br.tap_ratio
+  old_phase = br.phase_shift_deg
+  new_ratio = old_ratio
+  new_phase = old_phase
+  # The probe solves must follow the configured start strategy: imported
+  # networks (CGMES/MATPOWER) with off-nominal ratio branches routinely fail
+  # from a flat start while converging from their stored profile.
+  probe_flatstart = context.pf_config.start_mode.flatstart
+  if !ctrl.converged && ctrl.control_ratio && ctrl.mode in (:voltage, :voltage_and_branch_active_power)
+    direction = _ratio_probe_direction(net, br, ctrl, context.pf_config.max_iter, context.pf_config.tol, 0, context.pf_config.method; opt_flatstart = probe_flatstart)
+    direction == 0.0 && (direction = -1.0)
+    Δ = ctrl.is_discrete ? br.tap_step : 0.25 * br.tap_step
+    e_v = _voltage_control_error(ctrl.achieved_vm_pu, ctrl.target_vm_pu, ctrl.voltage_error_metric)
+    new_ratio = clamp(old_ratio + ((e_v < 0.0) ? direction * Δ : -direction * Δ), br.tap_min, br.tap_max)
+  end
+  if !ctrl.converged && ctrl.control_phase && ctrl.mode in (:branch_active_power, :voltage_and_branch_active_power)
+    direction = _phase_probe_direction(net, br, ctrl, context.pf_config.max_iter, context.pf_config.tol, 0, context.pf_config.method; opt_flatstart = probe_flatstart)
+    direction == 0.0 && (direction = -1.0)
+    Δ = ctrl.is_discrete ? br.phase_step_deg : 0.25 * br.phase_step_deg
+    e_p = ctrl.achieved_p_mw - ctrl.p_target_mw
+    new_phase = clamp(old_phase + ((e_p < 0.0) ? direction * Δ : -direction * Δ), br.phase_min_deg, br.phase_max_deg)
+  end
+  return (old_ratio = old_ratio, new_ratio = new_ratio, old_phase = old_phase, new_phase = new_phase)
+end
+# Typed phase-tap model of the winding that carries this controller —
+# `nothing` for controllers on windings without one (MATPOWER general-case
+# PSTs, CGMES-flattened PSTs), which keep static reactance.
+function _phase_tap_model_of(net::Net, ctrl::PowerTransformerControl)::Union{Nothing,PhaseTapChangerModel}
+  for tf in net.trafos
+    for w in (tf.side1, tf.side2, tf.side3)
+      w === nothing && continue
+      any(c -> c === ctrl, w.controls) && return w.phase_taps
+    end
+  end
+  return nothing
+end
+
+# X(α) of the controlled PST at a continuous controller angle, in pu.
+# Formula models (symmetrical/asymmetrical with x_min/x_max) evaluate
+# calcPhaseTapReactance directly at the continuous angle; tabular models snap
+# to the nearest table row by angle (no interpolation — the #261 Stage-4
+# decision) and use its per-step x_pu. Returns `nothing` when the model
+# carries no reactance data, which keeps the coupling strictly opt-in.
+function _phase_tap_reactance_at(net::Net, ctrl::PowerTransformerControl, angle_deg::Float64)::Union{Nothing,Float64}
+  model = _phase_tap_model_of(net, ctrl)
+  model === nothing && return nothing
+  if model.kind === :tabular
+    model.table === nothing && return nothing
+    best = nothing
+    bestd = Inf
+    for p in model.table
+      d = abs(p.angle_deg - angle_deg)
+      if d < bestd
+        best = p
+        bestd = d
+      end
+    end
+    return best === nothing ? nothing : best.x_pu
+  end
+  (model.x_min === nothing || model.x_max === nothing) && return nothing
+  return calcPhaseTapReactance(model, angle_deg)
+end
+
+function control_apply_update!(ctrl::PowerTransformerControl, net::Net, ::AbstractControlState, update::NamedTuple, context)::Bool
+  br = _find_trafo_branch(net, ctrl.trafo)
+  moved = false
+  if update.new_ratio != update.old_ratio
+    br.tap_ratio = update.new_ratio
+    br.ratio = update.new_ratio
+    moved = true
+    # master/slave group (#322): mirror the master's move onto every
+    # follower STEP-synchronously (whole steps of the follower's own
+    # tap_step, so units with different neutral ratios stay aligned in
+    # positions, not in absolute ratios), clamped to the follower's range.
+    for fname in ctrl.followers
+      fbr = _find_trafo_branch(net, fname)
+      if br.tap_step > 0.0 && fbr.tap_step > 0.0
+        nsteps = round((update.new_ratio - update.old_ratio) / br.tap_step)
+        fnew = clamp(fbr.tap_ratio + nsteps * fbr.tap_step, fbr.tap_min, fbr.tap_max)
+      else
+        fnew = clamp(fbr.tap_ratio + (update.new_ratio - update.old_ratio), fbr.tap_min, fbr.tap_max)
+      end
+      fbr.tap_ratio = fnew
+      fbr.ratio = fnew
+    end
+  end
+  if update.new_phase != update.old_phase
+    br.phase_shift_deg = update.new_phase
+    br.angle = update.new_phase
+    # tap-dependent reactance X(α): the next outer-loop solve re-stamps the
+    # Y-bus from br.x_pu, so assigning here is all the coupling needed
+    x_new = _phase_tap_reactance_at(net, ctrl, update.new_phase)
+    x_new === nothing || (br.x_pu = x_new)
+    moved = true
+  end
+  ctrl.at_limit = isapprox(br.tap_ratio, br.tap_min; atol = 1e-12) || isapprox(br.tap_ratio, br.tap_max; atol = 1e-12)
+  ctrl.at_limit = ctrl.at_limit || isapprox(br.phase_shift_deg, br.phase_min_deg; atol = 1e-12) || isapprox(br.phase_shift_deg, br.phase_max_deg; atol = 1e-12)
+  ctrl.status = ctrl.at_limit ? :at_limit : ctrl.status
+  return moved
+end
+# Filter by the per-controller row name, not the transformer id: with two
+# disjoint-actuator controllers on one transformer (split Schrägregelung),
+# a transformer-id filter would duplicate both rows into each controller.
+function control_report_rows(ctrl::PowerTransformerControl, net::Net, ::AbstractControlState, context)
+  br = _find_trafo_branch(net, ctrl.trafo)
+  own = string(br.comp.cName, " ", _controller_type_label(ctrl, br))
+  return filter(row -> row.controller_name == own, buildTapControllerReportRows(net))
+end
+function control_trace_rows(ctrl::PowerTransformerControl, net::Net, ::AbstractControlState, context)
+  br = _find_trafo_branch(net, ctrl.trafo)
+  return [(
+    outer_iteration = context.outer_iteration,
+    controller_name = control_name(ctrl),
+    controller_type = "PowerTransformerControl",
+    transformer_id = br.comp.cName,
+    mode = string(ctrl.mode),
+    status = ctrl.status,
+    converged = ctrl.converged,
+    at_limit = ctrl.at_limit,
+    achieved_vm_pu = isnothing(ctrl.achieved_vm_pu) ? missing : ctrl.achieved_vm_pu,
+    target_vm_pu = isnothing(ctrl.target_vm_pu) ? missing : ctrl.target_vm_pu,
+    achieved_p_mw = isnothing(ctrl.achieved_p_mw) ? missing : ctrl.achieved_p_mw,
+    target_p_mw = isnothing(ctrl.p_target_mw) ? missing : ctrl.p_target_mw,
+    tap_ratio = br.tap_ratio,
+    phase_shift_deg = br.phase_shift_deg,
+  )]
+end
+
+function control_element_descriptor(ctrl::PowerTransformerControl, net::Net)::Union{Nothing,NamedTuple}
+  br = _find_trafo_branch(net, ctrl.trafo)
+  ratio = ctrl.control_ratio && br.has_ratio_tap
+  phase = ctrl.control_phase && br.has_phase_tap
+  actuator = ratio && phase ? :tap_ratio_and_phase_shift : ratio ? :tap_ratio : phase ? :phase_shift_deg : :none
+  quantity = ctrl.mode === :voltage ? :bus_voltage : ctrl.mode === :branch_active_power ? :branch_active_power : :bus_voltage_and_branch_active_power
+  target = ctrl.target_bus !== nothing ? ctrl.target_bus : ctrl.target_branch === nothing ? "" : string(ctrl.target_branch[1], "->", ctrl.target_branch[2])
+  target_value = ctrl.target_vm_pu !== nothing ? ctrl.target_vm_pu : ctrl.p_target_mw
+  amin, amax = phase && !ratio ? (br.phase_min_deg, br.phase_max_deg) : (br.tap_min, br.tap_max)
+  # a master of a group names its unit count: "T1 (+2 followers)"
+  element_label = isempty(ctrl.followers) ? br.comp.cName : string(br.comp.cName, " (+", length(ctrl.followers), " follower", length(ctrl.followers) == 1 ? "" : "s", ")")
+  return (
+    name = control_name(ctrl),
+    element = element_label,
+    device = _controller_type_label(ctrl, br),
+    actuator = actuator,
+    actuator_min = amin,
+    actuator_max = amax,
+    quantity = quantity,
+    target = target,
+    target_value = target_value === nothing ? missing : target_value,
+    discrete = ctrl.is_discrete,
+    enabled = ctrl.enabled,
+    status = ctrl.status,
+    converged = ctrl.converged,
+    at_limit = ctrl.at_limit,
+  )
+end
+
+function _controller_type_label(ctrl::PowerTransformerControl, br::Branch)::String
+  ratio = ctrl.control_ratio && br.has_ratio_tap
+  phase = ctrl.control_phase && br.has_phase_tap
+  if ratio && phase
+    return "OLTC+PST"
+  elseif ratio
+    return "OLTC"
+  elseif phase
+    return "PST"
+  end
+  return "fixed transformer"
+end
+
+function _controller_status_label(ctrl::PowerTransformerControl)::String
+  !ctrl.enabled && return "inactive"
+  ctrl.converged && return "converged"
+  ctrl.at_limit && return "at_limit"
+  ctrl.status == :max_outer_iters && return "not_converged"
+  return "active"
+end
+
+@inline function _tap_position(value::Float64, neutral::Float64, step::Float64)
+  step <= 0.0 && return missing
+  return round(Int, (value - neutral) / step)
+end
+
+"""
+    buildTapControllerReportRows(net::Net)
+
+Build typed, machine-readable tap-controller report rows with engineering fields
+for textual and DataFrame-based reporting.
+"""
+function buildTapControllerReportRows(net::Net)::Vector{NamedTuple}
+  rows = NamedTuple[]
+  for ctrl in _tap_controllers(net)
+    br = _find_trafo_branch(net, ctrl.trafo)
+    target_bus = ctrl.target_bus
+    target_branch = ctrl.target_branch
+    achieved_vm = isnothing(target_bus) ? missing : get_bus_vm_pu(net, target_bus)
+    achieved_p = isnothing(target_branch) ? missing : get_branch_p_from_to_mw(net, target_branch[1], target_branch[2])
+    push!(
+      rows,
+      (
+        controller_name = string(br.comp.cName, " ", _controller_type_label(ctrl, br)),
+        transformer_id = br.comp.cName,
+        transformer_branch_index = br.branchIdx,
+        from_bus = br.fromBus,
+        to_bus = br.toBus,
+        control_type = _controller_type_label(ctrl, br),
+        mode = _controller_mode_label(ctrl.mode),
+        target_bus = isnothing(target_bus) ? missing : target_bus,
+        target_vm_pu = isnothing(ctrl.target_vm_pu) ? missing : ctrl.target_vm_pu,
+        achieved_vm_pu = achieved_vm,
+        target_branch_from = isnothing(target_branch) ? missing : target_branch[1],
+        target_branch_to = isnothing(target_branch) ? missing : target_branch[2],
+        p_target_mw = isnothing(ctrl.p_target_mw) ? missing : ctrl.p_target_mw,
+        achieved_p_mw = achieved_p,
+        tap_ratio = br.tap_ratio,
+        phase_shift_deg = br.phase_shift_deg,
+        ratio_tap_position = ctrl.is_discrete && br.has_ratio_tap ? _tap_position(br.tap_ratio, 1.0, br.tap_step) : missing,
+        phase_tap_position = ctrl.is_discrete && br.has_phase_tap ? _tap_position(br.phase_shift_deg, 0.0, br.phase_step_deg) : missing,
+        ratio_tap_min = br.has_ratio_tap ? br.tap_min : missing,
+        ratio_tap_max = br.has_ratio_tap ? br.tap_max : missing,
+        ratio_tap_step = br.has_ratio_tap ? br.tap_step : missing,
+        phase_tap_min_deg = br.has_phase_tap ? br.phase_min_deg : missing,
+        phase_tap_max_deg = br.has_phase_tap ? br.phase_max_deg : missing,
+        phase_tap_step_deg = br.has_phase_tap ? br.phase_step_deg : missing,
+        discrete = ctrl.is_discrete,
+        converged = ctrl.converged,
+        at_limit = ctrl.at_limit,
+        status = _controller_status_label(ctrl),
+        power_direction = isnothing(target_branch) ? missing : string(target_branch[1], " -> ", target_branch[2]),
+      ),
+    )
+  end
+  return rows
+end
+
+"""
+    addPowerTransformerControl!(net; ...)
+
+Add and validate a transformer tap controller.
+
+Validation rules:
+- Each actuator (ratio tap, phase tap) of a transformer may be driven by at
+  most one active controller. Two controllers may coexist on one transformer
+  when they drive disjoint actuators — the classic Schrägregelung split of a
+  voltage controller (ratio tap) plus an active-power controller (phase tap).
+- Required target fields must be set according to `mode`.
+- `control_ratio` / `control_phase` must match the chosen mode.
+"""
+function addPowerTransformerControl!(
+  net::Net;
+  trafo::String,
+  followers::Vector{String} = String[],
+  mode::Symbol,
+  target_bus::Union{Nothing,String} = nothing,
+  target_branch::Union{Nothing,Tuple{String,String}} = nothing,
+  target_vm_pu::Union{Nothing,Float64} = nothing,
+  p_target_mw::Union{Nothing,Float64} = nothing,
+  q_target_mvar::Union{Nothing,Float64} = nothing,
+  control_ratio::Bool = true,
+  control_phase::Bool = false,
+  is_discrete::Bool = true,
+  deadband_vm_pu::Float64 = 1e-3,
+  deadband_p_mw::Float64 = 0.5,
+  voltage_error_metric::Symbol = :vm,
+  max_outer_iters::Int = 20,
+  enabled::Bool = true,
+)
+  br = _find_trafo_branch(net, trafo)
+  trafo_obj = findfirst(t -> t.comp.cFrom_bus == br.comp.cFrom_bus && t.comp.cTo_bus == br.comp.cTo_bus, net.trafos)
+  # Per-actuator exclusivity: a second active controller on the same
+  # transformer is allowed only when it drives a disjoint actuator set
+  # (e.g. voltage/ratio + active-power/phase on one Schrägregler unit).
+  # A transformer that FOLLOWS in a master/slave group counts as occupied:
+  # its ratio tap is driven by the group's master.
+  for c in _tap_controllers(net)
+    c.enabled || continue
+    for fname in c.followers
+      fbr = _find_trafo_branch(net, fname)
+      if fbr.branchIdx == br.branchIdx && control_ratio
+        error("PowerTransformerControl: transformer $(trafo) already follows the group of $(c.trafo); a follower's ratio tap is driven by its master.")
+      end
+    end
+    cbr = _find_trafo_branch(net, c.trafo)
+    cbr.branchIdx == br.branchIdx || continue
+    if (control_ratio && c.control_ratio) || (control_phase && c.control_phase)
+      error("PowerTransformerControl: transformer $(trafo) already has an active controller for this actuator (ratio/phase); use disjoint actuators or disable the existing controller.")
+    end
+  end
+  # two independent tap controllers steering ONE bus voltage fight each
+  # other through circulating reactive power (#322); the group (followers)
+  # is the supported way to regulate parallel units
+  if mode in (:voltage, :voltage_and_branch_active_power) && target_bus !== nothing
+    for c in _tap_controllers(net)
+      c.enabled || continue
+      cbr = _find_trafo_branch(net, c.trafo)
+      cbr.branchIdx == br.branchIdx && continue
+      if c.target_bus == target_bus && c.target_vm_pu !== nothing
+        @warn "PowerTransformerControl: a tap controller ($(c.trafo)) already regulates the voltage of target bus $(target_bus) — two independent controllers on one voltage fight each other via circulating reactive power; regulate parallel units as a GROUP (followers = [...]) instead."
+      end
+    end
+  end
+  # master/slave group validation (#322): voltage/ratio groups only; every
+  # follower needs its own ratio-tap machinery, must be a different unit,
+  # and must not be regulated or followed elsewhere
+  if !isempty(followers)
+    mode == :voltage || error("PowerTransformerControl: followers are supported for mode = :voltage groups (parallel transformers on one busbar); got mode = $(mode).")
+    seen_followers = Set{Int}()
+    for fname in followers
+      fbr = _find_trafo_branch(net, fname)
+      fbr.branchIdx == br.branchIdx && error("PowerTransformerControl: follower $(fname) is the master transformer itself.")
+      fbr.has_ratio_tap || error("PowerTransformerControl: follower $(fname) has no ratio-tap machinery (has_ratio_tap = false).")
+      fbr.branchIdx in seen_followers && error("PowerTransformerControl: follower $(fname) listed twice.")
+      push!(seen_followers, fbr.branchIdx)
+      for c in _tap_controllers(net)
+        c.enabled || continue
+        cbr = _find_trafo_branch(net, c.trafo)
+        cbr.branchIdx == fbr.branchIdx && c.control_ratio && error("PowerTransformerControl: follower $(fname) already has its own active ratio controller; a unit cannot regulate and follow at once.")
+        for other in c.followers
+          obr = _find_trafo_branch(net, other)
+          obr.branchIdx == fbr.branchIdx && error("PowerTransformerControl: follower $(fname) already follows the group of $(c.trafo).")
+        end
+      end
+    end
+  end
+  mode in (:voltage, :branch_active_power, :voltage_and_branch_active_power) || error("PowerTransformerControl: unsupported mode=$(mode)")
+
+  if mode in (:voltage, :voltage_and_branch_active_power)
+    isnothing(target_bus) && error("PowerTransformerControl: target_bus is required for mode=$(mode)")
+    isnothing(target_vm_pu) && error("PowerTransformerControl: target_vm_pu is required for mode=$(mode)")
+    !control_ratio && error("PowerTransformerControl: control_ratio must be true for voltage control")
+  end
+  if mode in (:branch_active_power, :voltage_and_branch_active_power)
+    isnothing(target_branch) && error("PowerTransformerControl: target_branch is required for mode=$(mode)")
+    isnothing(p_target_mw) && error("PowerTransformerControl: p_target_mw is required for mode=$(mode)")
+    !control_phase && error("PowerTransformerControl: control_phase must be true for branch active power control")
+  end
+
+  ctrl = PowerTransformerControl(;
+    trafo = trafo,
+    followers = followers,
+    mode = mode,
+    target_bus = target_bus,
+    target_branch = target_branch,
+    target_vm_pu = target_vm_pu,
+    p_target_mw = p_target_mw,
+    q_target_mvar = q_target_mvar,
+    control_ratio = control_ratio,
+    control_phase = control_phase,
+    is_discrete = is_discrete,
+    deadband_vm_pu = deadband_vm_pu,
+    deadband_p_mw = deadband_p_mw,
+    voltage_error_metric = voltage_error_metric,
+    max_outer_iters = max_outer_iters,
+    enabled = enabled,
+  )
+  if isnothing(trafo_obj)
+    error("PowerTransformerControl: no transformer object found for branch $(br.branchIdx)")
+  end
+  push!(net.trafos[trafo_obj].side1.controls, ctrl)
+  return net
+end
+
+"""
+    addTapController!(net; kwargs...)
+
+Attach a tap controller to a transformer; alias of
+[`addPowerTransformerControl!`](@ref).
+"""
+addTapController!(net::Net; kwargs...) = addPowerTransformerControl!(net; kwargs...)
+
+"""
+    _phase_probe_direction(...)
+
+Internal helper: determines the empirical sign of `ΔP_from_to` for a positive
+phase increment (`+phase_step_deg`) on the controlled transformer and branch.
+Returns `-1`, `0`, or `+1`.
+"""
+function _phase_probe_direction(
+  net::Net,
+  br::Branch,
+  ctrl::PowerTransformerControl,
+  max_ite::Int,
+  tol::Float64,
+  verbose::Int,
+  method::Symbol;
+  opt_flatstart::Bool = true,
+  pv_table_rows::Int = 30,
+  validate_limits_after_pf::Bool = false,
+  q_limit_violation_headroom::Float64 = 0.0,
+  lock_pv_to_pq_buses::AbstractVector{Int} = Int[],
+  qlimit_trace_buses::AbstractVector{Int} = Int[],
+  qlimit_lock_reason::Symbol = :manual,
+  qlimit_guard::Bool = false,
+  qlimit_guard_min_q_range_pu::Float64 = 1e-4,
+  qlimit_guard_zero_range_mode::Symbol = :lock_pq,
+  qlimit_guard_narrow_range_mode::Symbol = :prefer_pq,
+  qlimit_guard_log::Bool = true,
+  qlimit_guard_max_switches::Int = 10,
+  qlimit_guard_accept_bounded_violations::Bool = false,
+  qlimit_guard_max_remaining_violations::Int = 0,
+  qlimit_guard_freeze_after_repeated_switching::Bool = true,
+  qlimit_guard_violation_mode::Symbol = :delayed_switch,
+  qlimit_guard_violation_threshold_pu::Float64 = 1e-4,
+)
+  oldphi = br.phase_shift_deg
+  step = br.phase_step_deg
+  _, erg = runpf!(
+    net,
+    max_ite,
+    tol,
+    verbose;
+    method = method,
+    opt_flatstart = opt_flatstart,
+    pv_table_rows = pv_table_rows,
+    validate_limits_after_pf = validate_limits_after_pf,
+    q_limit_violation_headroom = q_limit_violation_headroom,
+    lock_pv_to_pq_buses = lock_pv_to_pq_buses,
+    qlimit_trace_buses = qlimit_trace_buses,
+    qlimit_lock_reason = qlimit_lock_reason,
+    qlimit_guard = qlimit_guard,
+    qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu,
+    qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode,
+    qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode,
+    qlimit_guard_log = qlimit_guard_log,
+    qlimit_guard_max_switches = qlimit_guard_max_switches,
+    qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations,
+    qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations,
+    qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
+    qlimit_guard_violation_mode = qlimit_guard_violation_mode,
+    qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
+  )
+  erg != 0 && return -1.0
+  # branch flows live in fBranchFlow/tBranchFlow, which only calcNetLosses!
+  # rewrites — without the refresh both probe reads return the same stale
+  # values and the estimated direction is always 0
+  calcNetLosses!(net)
+  p0 = get_branch_p_from_to_mw(net, ctrl.target_branch[1], ctrl.target_branch[2])
+  oldx = br.x_pu
+  br.phase_shift_deg = clamp(oldphi + step, br.phase_min_deg, br.phase_max_deg)
+  br.angle = br.phase_shift_deg
+  # perturb the reactance consistently with the apply step (X(α) coupling);
+  # without a typed model the probe keeps today's static-x behaviour
+  x_probe = _phase_tap_reactance_at(net, ctrl, br.phase_shift_deg)
+  x_probe === nothing || (br.x_pu = x_probe)
+  _, erg2 = runpf!(
+    net,
+    max_ite,
+    tol,
+    verbose;
+    method = method,
+    opt_flatstart = opt_flatstart,
+    pv_table_rows = pv_table_rows,
+    validate_limits_after_pf = validate_limits_after_pf,
+    q_limit_violation_headroom = q_limit_violation_headroom,
+    lock_pv_to_pq_buses = lock_pv_to_pq_buses,
+    qlimit_trace_buses = qlimit_trace_buses,
+    qlimit_lock_reason = qlimit_lock_reason,
+    qlimit_guard = qlimit_guard,
+    qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu,
+    qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode,
+    qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode,
+    qlimit_guard_log = qlimit_guard_log,
+    qlimit_guard_max_switches = qlimit_guard_max_switches,
+    qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations,
+    qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations,
+    qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
+    qlimit_guard_violation_mode = qlimit_guard_violation_mode,
+    qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
+  )
+  erg2 == 0 && calcNetLosses!(net)
+  p1 = erg2 == 0 ? get_branch_p_from_to_mw(net, ctrl.target_branch[1], ctrl.target_branch[2]) : p0
+  br.phase_shift_deg = oldphi
+  br.angle = oldphi
+  br.x_pu = oldx
+  return sign(p1 - p0)
+end
+
+"""
+    _ratio_probe_direction(...)
+
+Internal helper: determines the empirical sign of `ΔVm_target` for a positive
+ratio increment (`+tap_step`) on the controlled transformer and target bus.
+Returns `-1`, `0`, or `+1`.
+"""
+function _ratio_probe_direction(
+  net::Net,
+  br::Branch,
+  ctrl::PowerTransformerControl,
+  max_ite::Int,
+  tol::Float64,
+  verbose::Int,
+  method::Symbol;
+  opt_flatstart::Bool = true,
+  pv_table_rows::Int = 30,
+  validate_limits_after_pf::Bool = false,
+  q_limit_violation_headroom::Float64 = 0.0,
+  lock_pv_to_pq_buses::AbstractVector{Int} = Int[],
+  qlimit_trace_buses::AbstractVector{Int} = Int[],
+  qlimit_lock_reason::Symbol = :manual,
+  qlimit_guard::Bool = false,
+  qlimit_guard_min_q_range_pu::Float64 = 1e-4,
+  qlimit_guard_zero_range_mode::Symbol = :lock_pq,
+  qlimit_guard_narrow_range_mode::Symbol = :prefer_pq,
+  qlimit_guard_log::Bool = true,
+  qlimit_guard_max_switches::Int = 10,
+  qlimit_guard_accept_bounded_violations::Bool = false,
+  qlimit_guard_max_remaining_violations::Int = 0,
+  qlimit_guard_freeze_after_repeated_switching::Bool = true,
+  qlimit_guard_violation_mode::Symbol = :delayed_switch,
+  qlimit_guard_violation_threshold_pu::Float64 = 1e-4,
+)
+  oldratio = br.tap_ratio
+  step = br.tap_step
+  _, erg = runpf!(
+    net,
+    max_ite,
+    tol,
+    verbose;
+    method = method,
+    opt_flatstart = opt_flatstart,
+    pv_table_rows = pv_table_rows,
+    validate_limits_after_pf = validate_limits_after_pf,
+    q_limit_violation_headroom = q_limit_violation_headroom,
+    lock_pv_to_pq_buses = lock_pv_to_pq_buses,
+    qlimit_trace_buses = qlimit_trace_buses,
+    qlimit_lock_reason = qlimit_lock_reason,
+    qlimit_guard = qlimit_guard,
+    qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu,
+    qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode,
+    qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode,
+    qlimit_guard_log = qlimit_guard_log,
+    qlimit_guard_max_switches = qlimit_guard_max_switches,
+    qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations,
+    qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations,
+    qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
+    qlimit_guard_violation_mode = qlimit_guard_violation_mode,
+    qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
+  )
+  erg != 0 && return -1.0
+  vm0 = get_bus_vm_pu(net, ctrl.target_bus)
+  newratio = clamp(oldratio + step, br.tap_min, br.tap_max)
+  if isapprox(newratio, oldratio; atol = 1e-12)
+    return 0.0
+  end
+  br.tap_ratio = newratio
+  br.ratio = newratio
+  _, erg2 = runpf!(
+    net,
+    max_ite,
+    tol,
+    verbose;
+    method = method,
+    opt_flatstart = opt_flatstart,
+    pv_table_rows = pv_table_rows,
+    validate_limits_after_pf = validate_limits_after_pf,
+    q_limit_violation_headroom = q_limit_violation_headroom,
+    lock_pv_to_pq_buses = lock_pv_to_pq_buses,
+    qlimit_trace_buses = qlimit_trace_buses,
+    qlimit_lock_reason = qlimit_lock_reason,
+    qlimit_guard = qlimit_guard,
+    qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu,
+    qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode,
+    qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode,
+    qlimit_guard_log = qlimit_guard_log,
+    qlimit_guard_max_switches = qlimit_guard_max_switches,
+    qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations,
+    qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations,
+    qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
+    qlimit_guard_violation_mode = qlimit_guard_violation_mode,
+    qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
+  )
+  vm1 = erg2 == 0 ? get_bus_vm_pu(net, ctrl.target_bus) : vm0
+  br.tap_ratio = oldratio
+  br.ratio = oldratio
+  return sign(vm1 - vm0)
+end
+
+"""
+    run_tap_controllers_outer!(net; ...)
+
+Removed from the public control API; always throws. Use
+`run_control!(net; pf_config = ..., control_config = ...)` instead.
+"""
+function run_tap_controllers_outer!(net::Net; kwargs...)
+  throw(ArgumentError("run_tap_controllers_outer! has been removed from the public control API; use run_control!(net; pf_config=..., control_config=...)"))
+end
+
+"""
+    printTapControllerSummary(io, net)
+
+Print a compact controller summary block for all configured tap controllers.
+"""
+function printTapControllerSummary(io::IO, net::Net)
+  if isempty(_tap_controllers(net))
+    println(io, "\nControl")
+    println(io, "-------")
+    println(io, "Transformer controls: none")
+    return
+  end
+  rows = buildTapControllerReportRows(net)
+  println(io, "\nTransformer Control Summary")
+  println(io, "---------------------------")
+  println(io, "Power sign convention: achieved_p_mw is positive in the configured target branch direction (from -> to).")
+  for row in rows
+    println(io, row.controller_name, " (", row.transformer_id, ", ", row.from_bus, " -> ", row.to_bus, ")")
+    println(io, "  controller type    : ", row.control_type)
+    println(io, "  mode               : ", row.mode)
+    println(io, "  target bus         : ", ismissing(row.target_bus) ? "-" : row.target_bus)
+    println(io, "  target Vm          : ", ismissing(row.target_vm_pu) ? "-" : @sprintf("%.4f pu", row.target_vm_pu))
+    println(io, "  achieved Vm        : ", ismissing(row.achieved_vm_pu) ? "-" : @sprintf("%.4f pu", row.achieved_vm_pu))
+    println(io, "  target branch      : ", ismissing(row.target_branch_from) ? "-" : string(row.target_branch_from, " -> ", row.target_branch_to))
+    println(io, "  target P           : ", ismissing(row.p_target_mw) ? "-" : @sprintf("%.3f MW", row.p_target_mw))
+    println(io, "  achieved P         : ", ismissing(row.achieved_p_mw) ? "-" : @sprintf("%.3f MW", row.achieved_p_mw))
+    println(io, "  tap ratio          : ", @sprintf("%.5f", row.tap_ratio))
+    println(io, "  phase shift        : ", @sprintf("%.5f deg", row.phase_shift_deg))
+    println(io, "  tap position       : ", ismissing(row.ratio_tap_position) ? "-" : @sprintf("%+d", row.ratio_tap_position))
+    println(io, "  phase position     : ", ismissing(row.phase_tap_position) ? "-" : @sprintf("%+d", row.phase_tap_position))
+    println(io, "  ratio range        : ", ismissing(row.ratio_tap_min) ? "-" : @sprintf("%.5f .. %.5f", row.ratio_tap_min, row.ratio_tap_max))
+    println(io, "  ratio step         : ", ismissing(row.ratio_tap_step) ? "-" : @sprintf("%.5f", row.ratio_tap_step))
+    println(io, "  phase range        : ", ismissing(row.phase_tap_min_deg) ? "-" : @sprintf("%.5f .. %.5f deg", row.phase_tap_min_deg, row.phase_tap_max_deg))
+    println(io, "  phase step         : ", ismissing(row.phase_tap_step_deg) ? "-" : @sprintf("%.5f deg", row.phase_tap_step_deg))
+    println(io, "  discrete           : ", row.discrete)
+    println(io, "  converged          : ", row.converged)
+    println(io, "  at_limit           : ", row.at_limit)
+    println(io, "  status             : ", row.status)
+    if !row.converged && row.at_limit
+      println(io, "  status detail      : target not fully reached because tap/phase limit was hit")
+    end
+  end
+end

@@ -16,7 +16,7 @@
 # file: examples/run_powerflow_suite.jl
 # purpose: suite runner that executes the power-flow example programs (AC/DC solves, MATPOWER import, Q-limit and control demos) in fresh subprocesses and reports a summary
 
-include(joinpath(@__DIR__, "internal", "example_suite_runner.jl"))
+include(joinpath(@__DIR__, "others", "example_suite_runner.jl"))
 
 # Not registered: current_iteration_start.jl is a legacy include-alias of
 # exp_current_iteration_start.jl and would run the same demo twice.
@@ -34,7 +34,7 @@ const SUITE_SPECS = ExampleSpec[
   # always exists — a user configuration.yaml is optional, not required.
   ExampleSpec(name = "matpower_import", file = "powerflow/matpower_import.jl", purpose = "CLI MATPOWER import via run_matpower_case using the resolved configuration"),
   ExampleSpec(name = "matpower_import_multi_config", file = "powerflow/matpower_import_multi_config.jl", purpose = "compares one MATPOWER case across configuration files"),
-  ExampleSpec(name = "configured_matpower_cases", file = "powerflow/exp_configured_matpower_cases.jl", purpose = "runs ordered matpower_import.cases config entries via run_sparlectra_cases"),
+  ExampleSpec(name = "configured_matpower_cases", file = "powerflow/exp_configured_matpower_cases.jl", purpose = "runs ordered runtime.cases config entries via run_sparlectra_cases"),
   ExampleSpec(name = "mc_probabilistic_powerflow", file = "powerflow/mc_probabilistic_powerflow.jl", purpose = "Monte-Carlo probabilistic power flow on case14"),
   ExampleSpec(name = "synthetic_tiled_grid_pf_perf", file = "powerflow/exp_synthetic_tiled_grid_pf_perf.jl", heavy = true, timeout_s = 1800, purpose = "synthetic tiled-grid power-flow performance benchmark"),
   ExampleSpec(name = "qlimit_large_case_mode_comparison", file = "powerflow/qlimit_large_case_mode_comparison.jl", heavy = true, timeout_s = 1800, purpose = "Q-limit start-profile/enforcement-mode comparison on very large MATPOWER cases"),

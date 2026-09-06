@@ -18,7 +18,7 @@
 
 using Sparlectra
 
-include(joinpath(@__DIR__, "..", "internal", "example_header.jl"))
+include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
 # Deliberately mis-scale one branch reactance so the case's own stored VM/VA
 # is no longer close to power balance under Sparlectra's imported model —

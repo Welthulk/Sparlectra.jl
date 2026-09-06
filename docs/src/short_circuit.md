@@ -139,15 +139,19 @@ $Y_{sc}$; the implementation checks exactly this and counts every
 out-of-pattern reference defensively.
 
 Sparlectra implements both approaches: per-bus faults use the column
-solve, and all-bus sweeps can opt into the Takahashi sparse inverse with
-`runShortCircuit!(net; sweep_method = :takahashi)`. One selected-inverse
-pass per island then replaces the per-bus solves (measured 34x to 264x
-over the serial sweep between 2000 and 16000 buses, growing with size).
-The results agree with the default `sweep_method = :solves` to machine
-precision (about `1e-15` relative) but not bitwise, which is why the
-solve-based sweep remains the default; islands where the method does not
-apply (an unsymmetric UMFPACK pivot ordering, a pattern-closure
-violation) fall back to column solves automatically. Threaded sweeps
+solve, and all-bus sweeps use the Takahashi sparse inverse. One
+selected-inverse pass per island then replaces the per-bus solves
+(measured 34x to 264x over the serial sweep between 2000 and 16000
+buses, growing with size). The default `sweep_method = :auto` applies the
+pass to islands with at least `short_circuit.takahashi_min_buses` buses
+(default 50; below that the pass setup costs more than it saves) and
+keeps plain solves for smaller islands; `:takahashi` and `:solves` force
+one method for every island. The results agree with `:solves` to machine
+precision (about `1e-15` relative) but not bitwise; islands where the
+method does not apply (an unsymmetric UMFPACK pivot ordering, a
+pattern-closure violation) fall back to column solves automatically. The
+service and Web UI short-circuit paths honor
+`short_circuit.sweep_method`. Threaded sweeps
 (`runtime.parallel.*`) and the Takahashi pass compose: the selected
 inverse removes the per-bus solve cost, the threads cover whatever solves
 remain.

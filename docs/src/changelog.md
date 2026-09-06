@@ -1,3 +1,31 @@
+# Version 0.10.0 - 2026-09-06
+
+## New
+
+* State estimation: current and PMU phasor measurements, tap estimation, shunt estimation, island-wise solving, bad-data localization, topology validation, Web UI page. 
+* Scenarios and N-1: patch model on component ids, engine with reusable working copies, Woodbury screening, Web UI editor.
+* Sparlectra Case Format (SCF): self-describing case file, `data` section is a valid power-grid-model dataset, byte-identical round trip, study blocks executed.
+* Automatic power-flow mode (`power_flow.mode: auto`) with escalation ladder and decision log.
+* `buildSysimage()` and `buildApp()`: fast-start sysimage and standalone executable, one call each.
+* Takahashi selected inverse, shared by short-circuit sweeps and state-estimation diagnostics (34x to 264x).
+* MATPOWER busbar couplers and tap-changer nameplates, CGMES export of regulated tap groups.
+
+## Changed
+
+* Every format has its own importer; SCF is the preferred working format, not a mandatory way station.
+* AnalyticLoadFlow.jl is a required dependency, so the APSLF solver is always available.
+* Chi-square band test uses Wilson-Hilferty; multi-island nets are estimated per island.
+
+## Fixed
+
+* DC power flow did not contract closed busbar couplers (sections of one node split by up to 13.6 degrees).
+* State estimation and the case selector refused case files; exported files could not be resolved or run.
+* Generated measurement sets were ignored, added instead of replacing, and foreign sets were preselected.
+* Case files lost voltage limits, Q-limit hysteresis, phase-tap bands and machine operating points.
+* Round-trip defects on real MATPOWER cases: shunt sign, bus order, numeric names, ratings, skew angle.
+* Q-limit handling scanned its whole event log per bus and iteration, which dominated the power flow on large networks (13659 buses: 60 s, now 13.5 s, same result).
+
+
 # Version 0.9.19 - 2026-08-25
 
 * Branches carry their physical equipment impedance (`r_base_pu`/`x_base_pu`) alongside the live operating point; short circuit and the MATPOWER export read the base, and the CGMES export guard no longer blocks after a series-FACTS run (#329).
@@ -347,7 +375,7 @@ the receiving converter. See
 **Fast start for the Web UI.** Optional PackageCompiler sysimage, built via
 `tools/build_sysimage.jl` or the new Fast start page; the start scripts use
 it automatically and skip the warm-up. See
-[Fast Start (Sysimage)](fast_start.md).
+[Sysimage](sysimage.md).
 
 **Controllers in configuration.** Outer-loop controllers can be declared
 under `control.controllers`, one named entry per controller. See

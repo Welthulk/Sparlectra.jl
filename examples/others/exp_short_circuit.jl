@@ -18,7 +18,7 @@
 
 using Sparlectra
 
-include(joinpath(@__DIR__, "..", "internal", "example_header.jl"))
+include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
 # Hand-built two-bus network mirroring the CGMES harvest shape: a 110 kV
 # feeder (declared 10 kA / R/X 0.1) feeding a line to a second bus. The same

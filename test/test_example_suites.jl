@@ -19,7 +19,7 @@
 #
 # Tests the example suite runners (examples/run_powerflow_suite.jl,
 # run_state_estimation_suite.jl, run_others_suite.jl) and their shared
-# backend examples/internal/example_suite_runner.jl: CLI parsing, skip/filter
+# backend examples/others/example_suite_runner.jl: CLI parsing, skip/filter
 # logic, CSV escaping, registry integrity, and a --help subprocess smoke
 # test. The registered examples themselves are not executed here; their
 # coverage lives in the dedicated example tests.
@@ -50,9 +50,14 @@ function _include_with_no_main(path::AbstractString)
   end
 end
 
-@testset "Example suites" begin
+function run_example_suite_infra_tests()
+  @testset "Example suites" begin
   runner = _sandbox_module()
-  Base.include(runner, joinpath(_EXAMPLES_DIR, "internal", "example_suite_runner.jl"))
+  Base.include(runner, joinpath(_EXAMPLES_DIR, "others", "example_suite_runner.jl"))
+  # the include just defined the runner's methods; everything below runs
+  # through invokelatest so the enclosing function's world can call them
+  # (Julia 1.12 world-age rule for just-included code)
+  Base.invokelatest() do
 
   @testset "CLI parsing" begin
     specs = [runner.ExampleSpec(name = "alpha", file = "alpha.jl", purpose = "p"), runner.ExampleSpec(name = "beta", file = "beta.jl", purpose = "p", heavy = true)]
@@ -154,4 +159,6 @@ end
       @test success(proc)
     end
   end
+end
+end
 end

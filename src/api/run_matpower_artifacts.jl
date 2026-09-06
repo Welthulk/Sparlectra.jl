@@ -22,13 +22,17 @@
 function _update_effective_matpower_raw!(raw::Dict{String,Any}, cfg::SparlectraConfig)
   mat_raw = get!(raw, "matpower_import", Dict{String,Any}())
   mat_raw isa Dict{String,Any} || return raw
-  mat_raw["auto_profile"] = String(cfg.matpower.auto_profile)
   mat_raw["ratio"] = String(cfg.matpower.ratio)
   mat_raw["shift_sign"] = cfg.matpower.shift_sign
   mat_raw["shift_unit"] = String(cfg.matpower.shift_unit)
-  mat_raw["bus_shunt_model"] = String(cfg.matpower.bus_shunt_model)
   mat_raw["pv_voltage_source"] = String(cfg.matpower.pv_voltage_source)
   mat_raw["compare_voltage_reference"] = String(cfg.matpower.compare_voltage_reference)
+  # auto_profile and bus_shunt_model live in the model block since the
+  # version-1 configuration layout
+  model_raw = get!(raw, "model", Dict{String,Any}())
+  model_raw isa Dict{String,Any} || return raw
+  model_raw["auto_profile"] = String(cfg.model.auto_profile)
+  model_raw["bus_shunt_model"] = String(cfg.model.bus_shunt_model)
   return raw
 end
 
@@ -37,7 +41,9 @@ function _write_matpower_auto_profile_artifact(output_path::AbstractString, prof
   open(artifact, "w") do io
     println(io, "MATPOWER import auto-profile artifact")
     println(io, "====================================")
-    write_matpower_import_auto_profile(io, profile, cfg; casefile = casefile)
+    # the artifact is the DETAILED record, independent of how quiet the
+    # console is configured to be
+    write_matpower_import_auto_profile(io, profile, cfg; casefile = casefile, verbosity = :full)
   end
   return artifact
 end

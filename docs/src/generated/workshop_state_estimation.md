@@ -699,6 +699,11 @@ flow measurements and inflate $J$. Theory and the measurement model:
 
 ## Where to go next
 
+- The sequel notebook,
+  [bad data and parameter estimation](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_se_diagnostics.ipynb):
+  what happens when $J/\mathrm{dof}$ is NOT near one: normalized
+  residuals and localizability, sequential elimination, robust
+  estimation, current measurements, and shunt-parameter estimation.
 - New to Sparlectra? The
   [workshop tour](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour.ipynb)
   builds a network from scratch step by step, directly in Colab.

@@ -317,7 +317,7 @@ Trust-region step control with two step-construction modes selected by
   current radius when it exceeds it; direction unchanged. Byte-for-byte the
   original scaled-Newton-only implementation.
 - `:dogleg`: blends the Newton direction with a steepest-descent (Cauchy)
-  step along the dogleg path (see [`_rectangular_dogleg_step`](@ref)) so the
+  step along the dogleg path (see `_rectangular_dogleg_step`) so the
   solver can still make progress when the Newton direction degrades. See
   [Trust-Region Step Control](@ref), "Dogleg step mode".
 

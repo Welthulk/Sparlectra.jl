@@ -113,6 +113,25 @@ function run_dtf_importer_tests()
     @test net.name == "synthetic"
   end
 
+  # SCF export of a DTF-sourced net (issue #342): the writer is net-based,
+  # not format-based, so a DTF import must reach the case format with its
+  # reference names and its tap data intact.
+  @testset "SCF export of a DTF-sourced net" begin
+    dtf_net = Sparlectra.DTFImporter.build_net(_synthetic_dtf_case_with_tap_control(longitudinal_range_percent = 10.0, actual_tap_step = 7, max_tap_step = 10))
+    root = Sparlectra.net_to_scf(dtf_net; source_format = "dtf", source_reference = "synthetic")
+    @test root["sparlectra"]["meta"]["source_format"] == "dtf"
+    # bus reference names (the DTF station names) survive the export
+    names = Set(String(e["name"]) for e in values(root["sparlectra"]["extra"]))
+    @test all(bus -> bus in names, keys(dtf_net.busDict))
+    # the transformer reaches data.generic_branch with a live ratio
+    @test haskey(root["data"], "generic_branch")
+    @test all(r -> r["k"] > 0.0, root["data"]["generic_branch"])
+    d = mktempdir()
+    a = exportSCF(dtf_net; file = joinpath(d, "a.scf.json"), source_format = "dtf")
+    b = exportSCF(dtf_net; file = joinpath(d, "b.scf.json"), source_format = "dtf")
+    @test read(a, String) == read(b, String)
+  end
+
   @testset "native DTF importer honors configured tap-changer model" begin
     case = _synthetic_dtf_case_with_tap_control(longitudinal_range_percent = 10.0, actual_tap_step = 7, max_tap_step = 10)
 

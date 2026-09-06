@@ -445,7 +445,7 @@ power_flow:
       effective_cfg = Sparlectra.load_sparlectra_config(effective_config_path; reload = true)
       @test effective_cfg.powerflow.tol == 1.0e-9
       @test effective_cfg.powerflow.max_iter == 40
-      @test effective_cfg.matpower.case == "case14.m"
+      @test effective_cfg.runtime.case == "case14.m"
       @test normpath(effective_cfg.runtime.casefile) == normpath(casefile)
       @test effective_cfg.runtime.case_name == "case_api"
       @test effective_cfg.runtime.case_source == "webui_mpower_data"
@@ -467,10 +467,13 @@ power_flow:
       @test occursin("Q-limit detail artifact  : q_limit.log", run_log)
       @test occursin("full details        : q_limit.log", run_log)
       @test !occursin("full details     : q_limit_initial_limits.csv", run_log)
-      @test occursin("Runtime casefile:", run_log)
-      @test occursin("Original MATPOWER import options", run_log)
-      @test occursin("Final effective MATPOWER import options", run_log)
-      @test occursin("matpower_import.auto_profile: recommend", run_log)
+      # the console (and with it run.log) is COMPACT since 2026-09-05: it
+      # names the case and summarizes the convention checks instead of
+      # printing three MATPOWER option blocks per run. The detailed record
+      # lives in the matpower_auto_profile.log artifact, checked below.
+      @test occursin("Case: ", run_log)
+      @test occursin("Import conventions:", run_log)
+      @test !occursin("Original MATPOWER import options", run_log)
       @test occursin("Total time  :", run_log)
       @test occursin("Output time :", run_log)
       @test occursin("Solver time :", run_log)
@@ -811,14 +814,29 @@ power_flow:
         @test residuals_csv[1] == "bus_id,bus_name,vn_kV,bus_type,vm_pu_start,va_deg_start,p_residual,q_residual,has_sv,n_transformer_terminals,n_shunts"
         @test length(residuals_csv) - 1 == length(self_check.raw_result.net.nodeVec)
 
-        # MATPOWER regression guard: the case14 self-check residual is a fixed
-        # property of the case data; the forced flatstart=false path must
-        # reproduce the pre-CGMES-support value (recorded 2026-07-30).
-        case14 = ensure_casefile("case14.m")
-        case14_check = run_fixed_reference_self_check(casefile = case14, output_dir = joinpath(tmpdir, "self_check_case14"))
-        @test case14_check.raw_result !== nothing
-        @test isapprox(case14_check.raw_result.final_mismatch, 0.04218283919133408; rtol = 1e-8)
-        @test case14_check.raw_result.iterations == 1
+        # Non-CGMES regression guard (load_fixture_net): the shipped
+        # sp_case14 replaces the downloaded case14 here. Its start_state is
+        # the solved base case, so the forced flatstart=false path must take
+        # it verbatim: the mismatch sits at machine precision (banded, the
+        # exact float depends on BLAS summation order) and the iteration
+        # count is a fixed property of the file (derived 2026-09-04:
+        # 5.2e-12, 4 iterations). The historical case14 anchor value
+        # (0.0422, recorded 2026-07-30) still runs below when the case is
+        # cached locally.
+        sp14 = abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json"))
+        sp14_check = run_fixed_reference_self_check(casefile = sp14, output_dir = joinpath(tmpdir, "self_check_sp14"))
+        @test sp14_check.raw_result !== nothing
+        @test sp14_check.raw_result.final_mismatch < 1e-10
+        @test sp14_check.raw_result.iterations == 4
+        case14 = joinpath(dirname(@__DIR__), "data", "mpower", "case14.m")
+        if !isfile(case14)
+          println("      self-check case14 anchor: SKIPPED (data/mpower/case14.m not present)")
+        else
+          case14_check = run_fixed_reference_self_check(casefile = case14, output_dir = joinpath(tmpdir, "self_check_case14"))
+          @test case14_check.raw_result !== nothing
+          @test isapprox(case14_check.raw_result.final_mismatch, 0.04218283919133408; rtol = 1e-8)
+          @test case14_check.raw_result.iterations == 1
+        end
 
         bad_config_dir = joinpath(tmpdir, "self_check_missing_config")
         @test_throws ArgumentError run_fixed_reference_self_check(casefile = casefile, config_file = joinpath(tmpdir, "does_not_exist.yaml"), output_dir = bad_config_dir)
@@ -947,13 +965,13 @@ power_flow:
       @test invalid_enum.reason == "invalid_config_override"
       @test occursin("must be one of", something(invalid_enum.message, ""))
 
-      import_overrides = validate_gui_config_overrides(Dict("matpower_import.auto_profile" => "apply", "matpower_import.ratio" => "reciprocal", "matpower_import.shift_sign" => -1.0, "matpower_import.shift_unit" => "rad", "matpower_import.bus_shunt_model" => "voltage_dependent_injection"))
-      @test import_overrides["matpower_import"]["auto_profile"] == "apply"
+      import_overrides = validate_gui_config_overrides(Dict("model.auto_profile" => "apply", "matpower_import.ratio" => "reciprocal", "matpower_import.shift_sign" => -1.0, "matpower_import.shift_unit" => "rad", "model.bus_shunt_model" => "voltage_dependent_injection"))
+      @test import_overrides["model"]["auto_profile"] == "apply"
       @test import_overrides["matpower_import"]["ratio"] == "reciprocal"
       @test import_overrides["matpower_import"]["shift_sign"] == -1.0
       @test import_overrides["matpower_import"]["shift_unit"] == "rad"
-      @test import_overrides["matpower_import"]["bus_shunt_model"] == "voltage_dependent_injection"
-      @test_throws ArgumentError validate_gui_config_overrides(Dict("matpower_import.auto_profile" => "nonsense"))
+      @test import_overrides["model"]["bus_shunt_model"] == "voltage_dependent_injection"
+      @test_throws ArgumentError validate_gui_config_overrides(Dict("model.auto_profile" => "nonsense"))
       @test_throws ArgumentError validate_gui_config_overrides(Dict("matpower_import.ratio" => "sideways"))
       @test_throws ArgumentError validate_gui_config_overrides(Dict("matpower_import.shift_sign" => 0.0))
 
@@ -962,24 +980,25 @@ power_flow:
         casefile = casefile,
         config_file = template,
         output_dir = manual_import_output,
-        config_overrides = Dict("matpower_import.auto_profile" => "off", "matpower_import.ratio" => "reciprocal", "matpower_import.shift_sign" => -1.0, "matpower_import.shift_unit" => "rad", "benchmark.enabled" => false),
+        config_overrides = Dict("model.auto_profile" => "off", "matpower_import.ratio" => "reciprocal", "matpower_import.shift_sign" => -1.0, "matpower_import.shift_unit" => "rad", "benchmark.enabled" => false),
       )
       @test manual_import_result.success
       manual_effective_cfg = Sparlectra.load_sparlectra_config(joinpath(manual_import_output, "effective_config.yaml"); reload = true)
-      @test manual_effective_cfg.matpower.auto_profile === :off
+      @test manual_effective_cfg.model.auto_profile === :off
       @test manual_effective_cfg.matpower.ratio === :reciprocal
       @test manual_effective_cfg.matpower.shift_sign == -1.0
       @test manual_effective_cfg.matpower.shift_unit === :rad
       manual_run_log = read(joinpath(manual_import_output, "run.log"), String)
-      @test occursin("Original MATPOWER import options", manual_run_log)
-      @test occursin("Final effective MATPOWER import options", manual_run_log)
-      @test occursin("matpower_import.auto_profile: off", manual_run_log)
-      @test occursin("matpower_import.ratio: reciprocal", manual_run_log)
-      @test occursin("matpower_import.shift_sign: -1.0", manual_run_log)
-      @test occursin("matpower_import.shift_unit: rad", manual_run_log)
+      # auto-profile off and a compact console: the conventions that move
+      # results are still named, on one line instead of two option blocks.
+      # The complete set stays in effective_config.yaml (asserted above).
+      @test occursin("Import conventions: ratio=reciprocal", manual_run_log)
+      @test occursin("shift=rad", manual_run_log)
+      @test occursin("sign -1.0", manual_run_log)
+      @test !occursin("Original MATPOWER import options", manual_run_log)
 
       auto_profile_output = joinpath(tmpdir, "auto_profile_recommend")
-      auto_profile_result = run_sparlectra_api(casefile = casefile, config_file = template, output_dir = auto_profile_output, config_overrides = Dict("matpower_import.auto_profile" => "recommend", "benchmark.enabled" => false))
+      auto_profile_result = run_sparlectra_api(casefile = casefile, config_file = template, output_dir = auto_profile_output, config_overrides = Dict("model.auto_profile" => "recommend", "benchmark.enabled" => false))
       @test auto_profile_result.success
       @test isfile(joinpath(auto_profile_output, "matpower_auto_profile.log"))
       @test any(artifact -> artifact.kind === :matpower_auto_profile, auto_profile_result.artifacts)
@@ -991,13 +1010,13 @@ power_flow:
       @test occursin("matpower_import.ratio", auto_profile_log)
       @test occursin("Final effective MATPOWER auto-profile options", auto_profile_log)
       recommend_effective_cfg = Sparlectra.load_sparlectra_config(joinpath(auto_profile_output, "effective_config.yaml"); reload = true)
-      @test recommend_effective_cfg.matpower.auto_profile === :recommend
+      @test recommend_effective_cfg.model.auto_profile === :recommend
       @test recommend_effective_cfg.matpower.ratio === :normal
       @test recommend_effective_cfg.matpower.shift_sign == 1.0
       @test recommend_effective_cfg.matpower.shift_unit === :deg
 
       auto_profile_apply_output = joinpath(tmpdir, "auto_profile_apply")
-      auto_profile_apply_result = run_sparlectra_api(casefile = casefile, config_file = template, output_dir = auto_profile_apply_output, config_overrides = Dict("matpower_import.auto_profile" => "apply", "benchmark.enabled" => false))
+      auto_profile_apply_result = run_sparlectra_api(casefile = casefile, config_file = template, output_dir = auto_profile_apply_output, config_overrides = Dict("model.auto_profile" => "apply", "benchmark.enabled" => false))
       @test auto_profile_apply_result.success
       apply_effective_text = read(joinpath(auto_profile_apply_output, "effective_config.yaml"), String)
       apply_profile_log = read(joinpath(auto_profile_apply_output, "matpower_auto_profile.log"), String)
@@ -1084,9 +1103,9 @@ power_flow:
       @test trust_region_dogleg_result.success
       @test trust_region_dogleg_result.metadata["trust_region_enabled"] === true
 
-      trust_region_bad_key = run_sparlectra_api(casefile = casefile, config_file = template, output_dir = joinpath(tmpdir, "trust_region_bad_key"), config_overrides = Dict("power_flow.trust_region.unknown_key" => true))
-      @test !trust_region_bad_key.success
-      @test trust_region_bad_key.reason == "invalid_config_override"
+      # the unknown-key failure contract is covered once by merit_bad_key
+      # above; a second full service run for the trust-region spelling of the
+      # same contract added runtime without a distinct behavior (step 3b)
     end
   end
   @testset "Local PowerFlow service" begin
@@ -1207,7 +1226,11 @@ power_flow:
 
       qlimit_mode_run_ids = String[]
       @testset "Q-limit mode metadata and result visibility" begin
-        for mode in ("active_set", "classic_simultaneous", "classic_one_at_a_time")
+        # one representative per dimension plus one mixed row: active_set is
+        # the default path, classic_one_at_a_time exercises the outer-loop
+        # artifact prefixing (the second classic mode added a third full
+        # service run without a distinct contract; task_test_suite step 3b)
+        for mode in ("active_set", "classic_one_at_a_time")
           mode_run = start_powerflow_run(
             Dict(
               "casefile" => casefile,
@@ -1297,7 +1320,18 @@ power_flow:
       @test occursin("Current phase:", aborted["message"])
       @test !aborted["success"]
       @test Sparlectra.abort_webui_powerflow_run(active["run_id"])["abort_status"] == "already_aborting"
-      @test Sparlectra.start_webui_powerflow_run(async_request; runner = controlled_runner)["reason"] == "active_run"
+      # an ABORTING run no longer blocks a new submission (maintainer
+      # 2026-09-04: a 25k-bus import sat in a non-interruptible call, the
+      # job stayed "aborting", and the whole Web UI refused every further
+      # start, which is exactly what the abort was meant to escape). The
+      # previous expectation here asserted that lock-up as correct; the
+      # docstring of start_webui_powerflow_run always promised the
+      # opposite ("releases the UI immediately").
+      @test Sparlectra._webui_active_job(; states = Sparlectra._POWERFLOW_WEBUI_BLOCKING_STATES) === nothing
+      @test Sparlectra.get_active_webui_powerflow_job()["run_id"] == active["run_id"]   # still reported as active for the UI
+      quick_after_abort = Sparlectra.start_webui_powerflow_run(merge(async_request, Dict("output_root" => joinpath(tmpdir, "after-abort"))); runner = (request; case_directory = nothing) -> start_powerflow_run(request; case_directory))
+      @test quick_after_abort["status"] in ("queued", "running")
+      wait(Sparlectra._POWERFLOW_WEBUI_JOBS[quick_after_abort["run_id"]]["task"])
       @test Sparlectra.abort_webui_powerflow_run("../unsafe")["reason"] == "unsafe_run_id"
       wait(Sparlectra._POWERFLOW_WEBUI_JOBS[active["run_id"]]["task"])
       @test get_powerflow_result(active["run_id"])["status"] == "aborted"

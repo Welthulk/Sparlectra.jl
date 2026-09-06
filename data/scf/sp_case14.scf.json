@@ -1,0 +1,1854 @@
+{
+  "version": "1.0",
+  "type": "input",
+  "is_batch": false,
+  "attributes": {},
+  "data": {
+    "fault": [
+      {
+        "fault_object": 10,
+        "fault_type": "three_phase",
+        "id": 110,
+        "r_f": 0.0,
+        "status": 1,
+        "x_f": 0.0
+      },
+      {
+        "fault_object": 8,
+        "fault_type": "three_phase",
+        "id": 111,
+        "r_f": 0.0,
+        "status": 1,
+        "x_f": 0.0
+      }
+    ],
+    "generic_branch": [
+      {
+        "b1": 0.0,
+        "from_node": 7,
+        "from_status": 1,
+        "g1": 0.0,
+        "id": 30,
+        "k": 1.0,
+        "r1": 0.05,
+        "sn": 4.0e7,
+        "theta": 0.0,
+        "to_node": 8,
+        "to_status": 1,
+        "x1": 1.0988630487917954
+      },
+      {
+        "b1": 0.0,
+        "from_node": 13,
+        "from_status": 1,
+        "g1": 0.0,
+        "id": 31,
+        "k": 1.0,
+        "r1": 0.08,
+        "sn": 2.5e7,
+        "theta": 0.0,
+        "to_node": 14,
+        "to_status": 1,
+        "x1": 1.5979987484350544
+      }
+    ],
+    "line": [
+      {
+        "c1": 0.0,
+        "from_node": 1,
+        "from_status": 1,
+        "i_n": 236.18874648666508,
+        "id": 15,
+        "r1": 12.100000000000001,
+        "tan1": 0.0,
+        "to_node": 10,
+        "to_status": 1,
+        "x1": 42.349999999999994
+      },
+      {
+        "c1": 0.0,
+        "from_node": 2,
+        "from_status": 1,
+        "i_n": 236.18874648666508,
+        "id": 16,
+        "r1": 12.100000000000001,
+        "tan1": 0.0,
+        "to_node": 11,
+        "to_status": 1,
+        "x1": 42.349999999999994
+      },
+      {
+        "c1": 0.0,
+        "from_node": 3,
+        "from_status": 1,
+        "i_n": 236.18874648666508,
+        "id": 17,
+        "r1": 12.100000000000001,
+        "tan1": 0.0,
+        "to_node": 13,
+        "to_status": 1,
+        "x1": 42.349999999999994
+      },
+      {
+        "c1": 0.0,
+        "from_node": 4,
+        "from_status": 1,
+        "i_n": 577.3502691896258,
+        "id": 18,
+        "r1": 1.0,
+        "tan1": 0.0,
+        "to_node": 6,
+        "to_status": 1,
+        "x1": 0.44
+      },
+      {
+        "c1": 0.0,
+        "from_node": 5,
+        "from_status": 1,
+        "i_n": 183.7023583785173,
+        "id": 19,
+        "r1": 12.100000000000001,
+        "tan1": 0.0,
+        "to_node": 11,
+        "to_status": 1,
+        "x1": 42.349999999999994
+      },
+      {
+        "c1": 0.0,
+        "from_node": 6,
+        "from_status": 1,
+        "i_n": 577.3502691896258,
+        "id": 20,
+        "r1": 1.0,
+        "tan1": 0.0,
+        "to_node": 12,
+        "to_status": 1,
+        "x1": 0.44
+      },
+      {
+        "c1": 0.0,
+        "from_node": 7,
+        "from_status": 1,
+        "i_n": 236.18874648666508,
+        "id": 21,
+        "r1": 12.100000000000001,
+        "tan1": 0.0,
+        "to_node": 2,
+        "to_status": 1,
+        "x1": 42.349999999999994
+      },
+      {
+        "c1": 0.0,
+        "from_node": 8,
+        "from_status": 1,
+        "i_n": 577.3502691896258,
+        "id": 22,
+        "r1": 1.0,
+        "tan1": 0.0,
+        "to_node": 4,
+        "to_status": 1,
+        "x1": 0.44
+      },
+      {
+        "c1": 0.0,
+        "from_node": 7,
+        "from_status": 1,
+        "i_n": 183.7023583785173,
+        "id": 23,
+        "r1": 12.100000000000001,
+        "tan1": 0.0,
+        "to_node": 13,
+        "to_status": 1,
+        "x1": 42.349999999999994
+      },
+      {
+        "c1": 0.0,
+        "from_node": 9,
+        "from_status": 1,
+        "i_n": 183.7023583785173,
+        "id": 24,
+        "r1": 12.100000000000001,
+        "tan1": 0.0,
+        "to_node": 5,
+        "to_status": 1,
+        "x1": 42.349999999999994
+      },
+      {
+        "c1": 0.0,
+        "from_node": 9,
+        "from_status": 1,
+        "i_n": 236.18874648666508,
+        "id": 25,
+        "r1": 12.100000000000001,
+        "tan1": 0.0,
+        "to_node": 7,
+        "to_status": 1,
+        "x1": 42.349999999999994
+      },
+      {
+        "c1": 0.0,
+        "from_node": 10,
+        "from_status": 1,
+        "i_n": 236.18874648666508,
+        "id": 26,
+        "r1": 12.100000000000001,
+        "tan1": 0.0,
+        "to_node": 9,
+        "to_status": 1,
+        "x1": 42.349999999999994
+      },
+      {
+        "c1": 0.0,
+        "from_node": 10,
+        "from_status": 1,
+        "i_n": 236.18874648666508,
+        "id": 27,
+        "r1": 12.100000000000001,
+        "tan1": 0.0,
+        "to_node": 9,
+        "to_status": 1,
+        "x1": 42.349999999999994
+      },
+      {
+        "c1": 0.0,
+        "from_node": 11,
+        "from_status": 1,
+        "i_n": 236.18874648666508,
+        "id": 28,
+        "r1": 12.100000000000001,
+        "tan1": 0.0,
+        "to_node": 3,
+        "to_status": 1,
+        "x1": 42.349999999999994
+      },
+      {
+        "c1": 0.0,
+        "from_node": 13,
+        "from_status": 1,
+        "i_n": 236.18874648666508,
+        "id": 29,
+        "r1": 12.100000000000001,
+        "tan1": 0.0,
+        "to_node": 1,
+        "to_status": 1,
+        "x1": 42.349999999999994
+      }
+    ],
+    "node": [
+      {
+        "id": 1,
+        "u_rated": 110000.0
+      },
+      {
+        "id": 2,
+        "u_rated": 110000.0
+      },
+      {
+        "id": 3,
+        "u_rated": 110000.0
+      },
+      {
+        "id": 4,
+        "u_rated": 20000.0
+      },
+      {
+        "id": 5,
+        "u_rated": 110000.0
+      },
+      {
+        "id": 6,
+        "u_rated": 20000.0
+      },
+      {
+        "id": 7,
+        "u_rated": 110000.0
+      },
+      {
+        "id": 8,
+        "u_rated": 20000.0
+      },
+      {
+        "id": 9,
+        "u_rated": 110000.0
+      },
+      {
+        "id": 10,
+        "u_rated": 110000.0
+      },
+      {
+        "id": 11,
+        "u_rated": 110000.0
+      },
+      {
+        "id": 12,
+        "u_rated": 20000.0
+      },
+      {
+        "id": 13,
+        "u_rated": 110000.0
+      },
+      {
+        "id": 14,
+        "u_rated": 20000.0
+      }
+    ],
+    "shunt": [
+      {
+        "b1": 0.0125,
+        "g1": 0.0,
+        "id": 43,
+        "node": 8,
+        "status": 1
+      }
+    ],
+    "sym_gen": [
+      {
+        "id": 40,
+        "node": 10,
+        "p_specified": 0.0,
+        "q_specified": 0.0,
+        "status": 1,
+        "type": 0
+      },
+      {
+        "id": 41,
+        "node": 2,
+        "p_specified": 3.0e7,
+        "q_specified": 0.0,
+        "status": 1,
+        "type": 0
+      },
+      {
+        "id": 42,
+        "node": 3,
+        "p_specified": 2.0e7,
+        "q_specified": 0.0,
+        "status": 1,
+        "type": 0
+      }
+    ],
+    "sym_load": [
+      {
+        "id": 32,
+        "node": 11,
+        "p_specified": 1.8e7,
+        "q_specified": 6.0e6,
+        "status": 1,
+        "type": 0
+      },
+      {
+        "id": 33,
+        "node": 1,
+        "p_specified": 1.4e7,
+        "q_specified": 4.0e6,
+        "status": 1,
+        "type": 0
+      },
+      {
+        "id": 34,
+        "node": 5,
+        "p_specified": 1.0e7,
+        "q_specified": 3.0e6,
+        "status": 1,
+        "type": 0
+      },
+      {
+        "id": 35,
+        "node": 8,
+        "p_specified": 6.0e6,
+        "q_specified": 2.0e6,
+        "status": 1,
+        "type": 0
+      },
+      {
+        "id": 36,
+        "node": 4,
+        "p_specified": 5.0e6,
+        "q_specified": 1.5e6,
+        "status": 1,
+        "type": 0
+      },
+      {
+        "id": 37,
+        "node": 6,
+        "p_specified": 4.0e6,
+        "q_specified": 1.2e6,
+        "status": 1,
+        "type": 0
+      },
+      {
+        "id": 38,
+        "node": 12,
+        "p_specified": 3.0e6,
+        "q_specified": 1.0e6,
+        "status": 1,
+        "type": 0
+      },
+      {
+        "id": 39,
+        "node": 14,
+        "p_specified": 8.0e6,
+        "q_specified": 2.5e6,
+        "status": 1,
+        "type": 0
+      }
+    ],
+    "sym_power_sensor": [
+      {
+        "id": 62,
+        "measured_object": 10,
+        "measured_terminal_type": "node",
+        "p_measured": 1.921437666288495e7,
+        "power_sigma": 1.0e6,
+        "q_measured": 1.481627234845958e7
+      },
+      {
+        "id": 63,
+        "measured_object": 9,
+        "measured_terminal_type": "node",
+        "p_measured": -748973.2516907551,
+        "power_sigma": 1.0e6,
+        "q_measured": 402129.607270588
+      },
+      {
+        "id": 64,
+        "measured_object": 7,
+        "measured_terminal_type": "node",
+        "p_measured": 1.5174011192126425e6,
+        "power_sigma": 1.0e6,
+        "q_measured": 2.664019958274397e6
+      },
+      {
+        "id": 65,
+        "measured_object": 2,
+        "measured_terminal_type": "node",
+        "p_measured": 2.998821987815416e7,
+        "power_sigma": 1.0e6,
+        "q_measured": 6.712442288752145e6
+      },
+      {
+        "id": 66,
+        "measured_object": 11,
+        "measured_terminal_type": "node",
+        "p_measured": -1.8519695665419534e7,
+        "power_sigma": 1.0e6,
+        "q_measured": -6.050508553620737e6
+      },
+      {
+        "id": 67,
+        "measured_object": 3,
+        "measured_terminal_type": "node",
+        "p_measured": 2.0311579072735067e7,
+        "power_sigma": 1.0e6,
+        "q_measured": 1.480282026496099e6
+      },
+      {
+        "id": 68,
+        "measured_object": 13,
+        "measured_terminal_type": "node",
+        "p_measured": 1.127471429951442e6,
+        "power_sigma": 1.0e6,
+        "q_measured": 393470.23333773157
+      },
+      {
+        "id": 69,
+        "measured_object": 1,
+        "measured_terminal_type": "node",
+        "p_measured": -1.417242370588716e7,
+        "power_sigma": 1.0e6,
+        "q_measured": -4.0026401616097386e6
+      },
+      {
+        "id": 70,
+        "measured_object": 5,
+        "measured_terminal_type": "node",
+        "p_measured": -1.2095786824660627e7,
+        "power_sigma": 1.0e6,
+        "q_measured": -3.765246637489321e6
+      },
+      {
+        "id": 71,
+        "measured_object": 8,
+        "measured_terminal_type": "node",
+        "p_measured": -7.738606521652628e6,
+        "power_sigma": 1.0e6,
+        "q_measured": -2.9346159629162056e6
+      },
+      {
+        "id": 72,
+        "measured_object": 4,
+        "measured_terminal_type": "node",
+        "p_measured": -3.7592271937346966e6,
+        "power_sigma": 1.0e6,
+        "q_measured": -1.7656493738719863e6
+      },
+      {
+        "id": 73,
+        "measured_object": 6,
+        "measured_terminal_type": "node",
+        "p_measured": -3.5518518747257213e6,
+        "power_sigma": 1.0e6,
+        "q_measured": -1.5775636208244604e6
+      },
+      {
+        "id": 74,
+        "measured_object": 12,
+        "measured_terminal_type": "node",
+        "p_measured": -1.1397392236508525e6,
+        "power_sigma": 1.0e6,
+        "q_measured": -848925.4909699861
+      },
+      {
+        "id": 75,
+        "measured_object": 14,
+        "measured_terminal_type": "node",
+        "p_measured": -8.152026304147108e6,
+        "power_sigma": 1.0e6,
+        "q_measured": -1.8539284453823161e6
+      },
+      {
+        "id": 76,
+        "measured_object": 26,
+        "measured_terminal_type": "branch_from",
+        "p_measured": 6.543879399471449e6,
+        "power_sigma": 1.0e6,
+        "q_measured": 4.155991237813998e6
+      },
+      {
+        "id": 77,
+        "measured_object": 26,
+        "measured_terminal_type": "branch_to",
+        "p_measured": -4.1877481992502823e6,
+        "power_sigma": 1.0e6,
+        "q_measured": -2.5869683906502444e6
+      },
+      {
+        "id": 78,
+        "measured_object": 27,
+        "measured_terminal_type": "branch_from",
+        "p_measured": 4.862406767301012e6,
+        "power_sigma": 1.0e6,
+        "q_measured": 4.304714617466051e6
+      },
+      {
+        "id": 79,
+        "measured_object": 27,
+        "measured_terminal_type": "branch_to",
+        "p_measured": -4.207001108627167e6,
+        "power_sigma": 1.0e6,
+        "q_measured": -3.565049108566956e6
+      },
+      {
+        "id": 80,
+        "measured_object": 25,
+        "measured_terminal_type": "branch_from",
+        "p_measured": 4.1109700912425737e6,
+        "power_sigma": 1.0e6,
+        "q_measured": 4.081946628937388e6
+      },
+      {
+        "id": 81,
+        "measured_object": 25,
+        "measured_terminal_type": "branch_to",
+        "p_measured": -3.4226361678837044e6,
+        "power_sigma": 1.0e6,
+        "q_measured": -2.75661513323274e6
+      },
+      {
+        "id": 82,
+        "measured_object": 21,
+        "measured_terminal_type": "branch_from",
+        "p_measured": -1.5721595108891439e7,
+        "power_sigma": 1.0e6,
+        "q_measured": 33616.646893382174
+      },
+      {
+        "id": 83,
+        "measured_object": 21,
+        "measured_terminal_type": "branch_to",
+        "p_measured": 1.7012996794973556e7,
+        "power_sigma": 1.0e6,
+        "q_measured": 2.2032697033663676e6
+      },
+      {
+        "id": 84,
+        "measured_object": 16,
+        "measured_terminal_type": "branch_from",
+        "p_measured": 1.4887420044602951e7,
+        "power_sigma": 1.0e6,
+        "q_measured": 2.263512675752212e6
+      },
+      {
+        "id": 85,
+        "measured_object": 16,
+        "measured_terminal_type": "branch_to",
+        "p_measured": -1.376993765853337e7,
+        "power_sigma": 1.0e6,
+        "q_measured": -4.0950148336260365e6
+      },
+      {
+        "id": 86,
+        "measured_object": 28,
+        "measured_terminal_type": "branch_from",
+        "p_measured": -8.489561571013646e6,
+        "power_sigma": 1.0e6,
+        "q_measured": -3.3606995813486213e6
+      },
+      {
+        "id": 87,
+        "measured_object": 28,
+        "measured_terminal_type": "branch_to",
+        "p_measured": 7.787186624383874e6,
+        "power_sigma": 1.0e6,
+        "q_measured": 2.1910698520437265e6
+      },
+      {
+        "id": 88,
+        "measured_object": 17,
+        "measured_terminal_type": "branch_from",
+        "p_measured": 1.0527611908140449e7,
+        "power_sigma": 1.0e6,
+        "q_measured": 929798.6400595608
+      },
+      {
+        "id": 89,
+        "measured_object": 17,
+        "measured_terminal_type": "branch_to",
+        "p_measured": -9.946085035729904e6,
+        "power_sigma": 1.0e6,
+        "q_measured": -1.451527645708039e6
+      },
+      {
+        "id": 90,
+        "measured_object": 29,
+        "measured_terminal_type": "branch_from",
+        "p_measured": 3.0402265003098953e6,
+        "power_sigma": 1.0e6,
+        "q_measured": -1.7453609070575451e6
+      },
+      {
+        "id": 91,
+        "measured_object": 29,
+        "measured_terminal_type": "branch_to",
+        "p_measured": -1.9692817940187675e6,
+        "power_sigma": 1.0e6,
+        "q_measured": 503168.39988428133
+      },
+      {
+        "id": 92,
+        "measured_object": 15,
+        "measured_terminal_type": "branch_from",
+        "p_measured": -1.0189801291581448e7,
+        "power_sigma": 1.0e6,
+        "q_measured": -5.655700003923526e6
+      },
+      {
+        "id": 93,
+        "measured_object": 15,
+        "measured_terminal_type": "branch_to",
+        "p_measured": 1.0232474784744069e7,
+        "power_sigma": 1.0e6,
+        "q_measured": 5.739309676619661e6
+      },
+      {
+        "id": 94,
+        "measured_object": 24,
+        "measured_terminal_type": "branch_from",
+        "p_measured": 6.419085792476339e6,
+        "power_sigma": 1.0e6,
+        "q_measured": 4.404860520126891e6
+      },
+      {
+        "id": 95,
+        "measured_object": 24,
+        "measured_terminal_type": "branch_to",
+        "p_measured": -5.655912741648016e6,
+        "power_sigma": 1.0e6,
+        "q_measured": -3.2908331049965895e6
+      },
+      {
+        "id": 96,
+        "measured_object": 19,
+        "measured_terminal_type": "branch_from",
+        "p_measured": -4.306444273875788e6,
+        "power_sigma": 1.0e6,
+        "q_measured": 418812.5193698452
+      },
+      {
+        "id": 97,
+        "measured_object": 19,
+        "measured_terminal_type": "branch_to",
+        "p_measured": 4.168824905774495e6,
+        "power_sigma": 1.0e6,
+        "q_measured": -1.497959375090832e6
+      },
+      {
+        "id": 98,
+        "measured_object": 23,
+        "measured_terminal_type": "branch_from",
+        "p_measured": 605997.5508551871,
+        "power_sigma": 1.0e6,
+        "q_measured": 293878.50286576187
+      },
+      {
+        "id": 99,
+        "measured_object": 23,
+        "measured_terminal_type": "branch_to",
+        "p_measured": -598061.1405825462,
+        "power_sigma": 1.0e6,
+        "q_measured": -60011.85476211901
+      },
+      {
+        "id": 100,
+        "measured_object": 22,
+        "measured_terminal_type": "branch_from",
+        "p_measured": 1.2379194321393581e7,
+        "power_sigma": 1.0e6,
+        "q_measured": 4.395248803253443e6
+      },
+      {
+        "id": 101,
+        "measured_object": 22,
+        "measured_terminal_type": "branch_to",
+        "p_measured": -1.0833713300794424e7,
+        "power_sigma": 1.0e6,
+        "q_measured": -4.479155102111892e6
+      },
+      {
+        "id": 102,
+        "measured_object": 18,
+        "measured_terminal_type": "branch_from",
+        "p_measured": 6.398884647568007e6,
+        "power_sigma": 1.0e6,
+        "q_measured": 5.237833042911859e6
+      },
+      {
+        "id": 103,
+        "measured_object": 18,
+        "measured_terminal_type": "branch_to",
+        "p_measured": -6.591397704857293e6,
+        "power_sigma": 1.0e6,
+        "q_measured": -1.6368083798871047e6
+      },
+      {
+        "id": 104,
+        "measured_object": 20,
+        "measured_terminal_type": "branch_from",
+        "p_measured": 1.96055517643915e6,
+        "power_sigma": 1.0e6,
+        "q_measured": 1.9872047431224906e6
+      },
+      {
+        "id": 105,
+        "measured_object": 20,
+        "measured_terminal_type": "branch_to",
+        "p_measured": -3.972117427929713e6,
+        "power_sigma": 1.0e6,
+        "q_measured": -1.4235849997399414e6
+      },
+      {
+        "id": 106,
+        "measured_object": 30,
+        "measured_terminal_type": "branch_from",
+        "p_measured": 1.915172914524546e7,
+        "power_sigma": 1.0e6,
+        "q_measured": 2.681209864467796e6
+      },
+      {
+        "id": 107,
+        "measured_object": 30,
+        "measured_terminal_type": "branch_to",
+        "p_measured": -1.9113050257334717e7,
+        "power_sigma": 1.0e6,
+        "q_measured": 532501.6445313737
+      },
+      {
+        "id": 108,
+        "measured_object": 31,
+        "measured_terminal_type": "branch_from",
+        "p_measured": 6.70504195273719e6,
+        "power_sigma": 1.0e6,
+        "q_measured": 2.4930873973953626e6
+      },
+      {
+        "id": 109,
+        "measured_object": 31,
+        "measured_terminal_type": "branch_to",
+        "p_measured": -7.838962665885763e6,
+        "power_sigma": 1.0e6,
+        "q_measured": -1.6974211751636234e6
+      }
+    ],
+    "sym_voltage_sensor": [
+      {
+        "id": 48,
+        "measured_object": 10,
+        "u_measured": 112467.1338689552,
+        "u_sigma": 550.0
+      },
+      {
+        "id": 49,
+        "measured_object": 9,
+        "u_measured": 111443.39646274596,
+        "u_sigma": 550.0
+      },
+      {
+        "id": 50,
+        "measured_object": 7,
+        "u_measured": 108762.04362741181,
+        "u_sigma": 550.0
+      },
+      {
+        "id": 51,
+        "measured_object": 2,
+        "u_measured": 111774.91539942476,
+        "u_sigma": 550.0
+      },
+      {
+        "id": 52,
+        "measured_object": 11,
+        "u_measured": 108365.03360897853,
+        "u_sigma": 550.0
+      },
+      {
+        "id": 53,
+        "measured_object": 3,
+        "u_measured": 110821.12390653687,
+        "u_sigma": 550.0
+      },
+      {
+        "id": 54,
+        "measured_object": 13,
+        "u_measured": 107473.60944091083,
+        "u_sigma": 550.0
+      },
+      {
+        "id": 55,
+        "measured_object": 1,
+        "u_measured": 109699.91254400555,
+        "u_sigma": 550.0
+      },
+      {
+        "id": 56,
+        "measured_object": 5,
+        "u_measured": 108050.21518782282,
+        "u_sigma": 550.0
+      },
+      {
+        "id": 57,
+        "measured_object": 8,
+        "u_measured": 19761.956419800677,
+        "u_sigma": 100.0
+      },
+      {
+        "id": 58,
+        "measured_object": 4,
+        "u_measured": 18860.99920190399,
+        "u_sigma": 100.0
+      },
+      {
+        "id": 59,
+        "measured_object": 6,
+        "u_measured": 18507.14438479171,
+        "u_sigma": 100.0
+      },
+      {
+        "id": 60,
+        "measured_object": 12,
+        "u_measured": 18396.68486410032,
+        "u_sigma": 100.0
+      },
+      {
+        "id": 61,
+        "measured_object": 14,
+        "u_measured": 19507.29361568174,
+        "u_sigma": 100.0
+      }
+    ],
+    "voltage_regulator": [
+      {
+        "id": 44,
+        "q_max": 2.5e7,
+        "q_min": -2.5e7,
+        "regulated_object": 41,
+        "status": 1,
+        "u_ref": 1.01
+      },
+      {
+        "id": 45,
+        "q_max": 1.5e7,
+        "q_min": -1.5e7,
+        "regulated_object": 42,
+        "status": 1,
+        "u_ref": 1.0
+      }
+    ]
+  },
+  "sparlectra": {
+    "components": {
+      "controllers": {
+        "tap_Moorau_110_20": {
+          "control_phase": false,
+          "control_ratio": true,
+          "deadband_p_mw": 0.5,
+          "deadband_vm_pu": 0.01,
+          "enabled": true,
+          "is_discrete": true,
+          "max_outer_iters": 20,
+          "mode": "voltage",
+          "target_bus": "Moorau_20",
+          "target_vm_pu": 1.0,
+          "trafo": "Moorau_110_20",
+          "type": "power_transformer",
+          "voltage_error_metric": "vm"
+        }
+      },
+      "sc_source": [
+        {
+          "bus": "Ostheim_110",
+          "governorSCD": null,
+          "ikSecond": null,
+          "kind": "external_network_injection",
+          "maxInitialSymShCCurrent_A": 15745.916432444339,
+          "maxR0ToX0Ratio": null,
+          "maxR1ToX1Ratio": 0.1,
+          "maxZ0ToZ1Ratio": null,
+          "minInitialSymShCCurrent_A": 11547.005383792515,
+          "minR1ToX1Ratio": 0.1,
+          "mrid": "native-eni-Ostheim_110",
+          "name": "ExtGrid_Ostheim",
+          "node": 10
+        }
+      ],
+      "tap_changer": [
+        {
+          "angle_base_deg": 0.0,
+          "branch": 30,
+          "control": {
+            "mode": "fixed"
+          },
+          "controllers": [
+            {
+              "alpha_deg": 0.0,
+              "index": 1,
+              "pos": 0,
+              "pos_max": 9,
+              "pos_min": -7,
+              "step": 0.0125
+            },
+            {
+              "alpha_deg": 0.0,
+              "index": 2,
+              "pos": 0,
+              "pos_max": 24,
+              "pos_min": -24,
+              "step_deg": 1.25
+            }
+          ],
+          "id": 46,
+          "ratio_base": 1.0,
+          "side": "from"
+        },
+        {
+          "angle_base_deg": 0.0,
+          "branch": 31,
+          "control": {
+            "mode": "fixed"
+          },
+          "controllers": [
+            {
+              "alpha_deg": 0.0,
+              "index": 1,
+              "pos": 4,
+              "pos_max": 22,
+              "pos_min": -11,
+              "step": 0.00625
+            },
+            {
+              "alpha_deg": 0.0,
+              "index": 2,
+              "pos": 0,
+              "pos_max": 24,
+              "pos_min": -24,
+              "step_deg": 1.25
+            }
+          ],
+          "id": 47,
+          "ratio_base": 1.025,
+          "side": "from"
+        }
+      ]
+    },
+    "extra": {
+      "1": {
+        "bus_index": 8,
+        "external_id": "H8",
+        "name": "Blanksee_110",
+        "node_type": "PQ"
+      },
+      "10": {
+        "bus_index": 1,
+        "external_id": "H1",
+        "name": "Ostheim_110",
+        "node_type": "Slack"
+      },
+      "11": {
+        "bus_index": 5,
+        "external_id": "H5",
+        "name": "Roggau_110",
+        "node_type": "PQ"
+      },
+      "12": {
+        "bus_index": 13,
+        "external_id": "M5",
+        "name": "Torfloh_20",
+        "node_type": "PQ"
+      },
+      "13": {
+        "bus_index": 7,
+        "external_id": "H7",
+        "name": "Wehrden_110",
+        "node_type": "PQ"
+      },
+      "14": {
+        "bus_index": 14,
+        "external_id": "M4",
+        "name": "Wehrden_20",
+        "node_type": "PQ"
+      },
+      "15": {
+        "branch_index": 9,
+        "external_id": "#B_ACL_110_8_1#9",
+        "meta": {
+          "sn_mva": 45.0
+        },
+        "name": "Blanksee_Ostheim"
+      },
+      "16": {
+        "branch_index": 5,
+        "external_id": "#B_ACL_110_4_5#5",
+        "meta": {
+          "sn_mva": 45.0
+        },
+        "name": "Dallwitz_Roggau"
+      },
+      "17": {
+        "branch_index": 7,
+        "external_id": "#B_ACL_110_6_7#7",
+        "meta": {
+          "sn_mva": 45.0
+        },
+        "name": "Eichloh_Wehrden"
+      },
+      "18": {
+        "branch_index": 14,
+        "external_id": "#B_ACL_20_11_12#14",
+        "meta": {
+          "sn_mva": 20.0
+        },
+        "name": "Hassel_Kleinau"
+      },
+      "19": {
+        "branch_index": 11,
+        "external_id": "#B_ACL_110_9_5#11",
+        "meta": {
+          "sn_mva": 35.0
+        },
+        "name": "Ilmrode_Roggau"
+      },
+      "2": {
+        "bus_index": 4,
+        "external_id": "H4",
+        "name": "Dallwitz_110",
+        "node_type": "PV"
+      },
+      "20": {
+        "branch_index": 15,
+        "external_id": "#B_ACL_20_12_13#15",
+        "meta": {
+          "sn_mva": 20.0
+        },
+        "name": "Kleinau_Torfloh"
+      },
+      "21": {
+        "branch_index": 4,
+        "external_id": "#B_ACL_110_3_4#4",
+        "meta": {
+          "sn_mva": 45.0
+        },
+        "name": "Moorau_Dallwitz"
+      },
+      "22": {
+        "branch_index": 13,
+        "external_id": "#B_ACL_20_10_11#13",
+        "meta": {
+          "sn_mva": 20.0
+        },
+        "name": "Moorau_Hassel"
+      },
+      "23": {
+        "branch_index": 12,
+        "external_id": "#B_ACL_110_3_7#12",
+        "meta": {
+          "sn_mva": 35.0
+        },
+        "name": "Moorau_Wehrden"
+      },
+      "24": {
+        "branch_index": 10,
+        "external_id": "#B_ACL_110_2_9#10",
+        "meta": {
+          "sn_mva": 35.0
+        },
+        "name": "Neuwiese_Ilmrode"
+      },
+      "25": {
+        "branch_index": 3,
+        "external_id": "#B_ACL_110_2_3#3",
+        "meta": {
+          "sn_mva": 45.0
+        },
+        "name": "Neuwiese_Moorau"
+      },
+      "26": {
+        "branch_index": 1,
+        "external_id": "#B_ACL_110_1_2#1",
+        "meta": {
+          "sn_mva": 45.0
+        },
+        "name": "Ostheim_Neuwiese_1"
+      },
+      "27": {
+        "branch_index": 2,
+        "external_id": "#B_ACL_110_1_2#2",
+        "meta": {
+          "sn_mva": 45.0
+        },
+        "name": "Ostheim_Neuwiese_2"
+      },
+      "28": {
+        "branch_index": 6,
+        "external_id": "#B_ACL_110_5_6#6",
+        "meta": {
+          "sn_mva": 45.0
+        },
+        "name": "Roggau_Eichloh"
+      },
+      "29": {
+        "branch_index": 8,
+        "external_id": "#B_ACL_110_7_8#8",
+        "meta": {
+          "sn_mva": 45.0
+        },
+        "name": "Wehrden_Blanksee"
+      },
+      "3": {
+        "bus_index": 6,
+        "external_id": "H6",
+        "name": "Eichloh_110",
+        "node_type": "PV"
+      },
+      "30": {
+        "branch_index": 16,
+        "external_id": "#B_2WT_110_3_10#16",
+        "meta": {
+          "neutral_ratio": 1.0,
+          "sn_mva": 40.0
+        },
+        "name": "Moorau_110_20"
+      },
+      "31": {
+        "branch_index": 17,
+        "external_id": "#B_2WT_110_7_14#17",
+        "meta": {
+          "neutral_ratio": 1.025,
+          "sn_mva": 25.0
+        },
+        "name": "Wehrden_110_20"
+      },
+      "32": {
+        "element_index": 4,
+        "external_id": "#Ld_110.0\\_5\\_#4",
+        "name": "Ld_110.0",
+        "prosumption_class": "Consumption",
+        "prosumption_type": "Load"
+      },
+      "33": {
+        "element_index": 5,
+        "external_id": "#Ld_110.0\\_8\\_#5",
+        "name": "Ld_110.0",
+        "prosumption_class": "Consumption",
+        "prosumption_type": "Load"
+      },
+      "34": {
+        "element_index": 6,
+        "external_id": "#Ld_110.0\\_9\\_#6",
+        "name": "Ld_110.0",
+        "prosumption_class": "Consumption",
+        "prosumption_type": "Load"
+      },
+      "35": {
+        "element_index": 7,
+        "external_id": "#Ld_20.0\\_10\\_#7",
+        "name": "Ld_20.0",
+        "prosumption_class": "Consumption",
+        "prosumption_type": "Load"
+      },
+      "36": {
+        "element_index": 8,
+        "external_id": "#Ld_20.0\\_11\\_#8",
+        "name": "Ld_20.0",
+        "prosumption_class": "Consumption",
+        "prosumption_type": "Load"
+      },
+      "37": {
+        "element_index": 9,
+        "external_id": "#Ld_20.0\\_12\\_#9",
+        "name": "Ld_20.0",
+        "prosumption_class": "Consumption",
+        "prosumption_type": "Load"
+      },
+      "38": {
+        "element_index": 10,
+        "external_id": "#Ld_20.0\\_13\\_#10",
+        "name": "Ld_20.0",
+        "prosumption_class": "Consumption",
+        "prosumption_type": "Load"
+      },
+      "39": {
+        "element_index": 11,
+        "external_id": "#Ld_20.0\\_14\\_#11",
+        "name": "Ld_20.0",
+        "prosumption_class": "Consumption",
+        "prosumption_type": "Load"
+      },
+      "4": {
+        "bus_index": 11,
+        "external_id": "M2",
+        "name": "Hassel_20",
+        "node_type": "PQ"
+      },
+      "40": {
+        "element_index": 1,
+        "external_id": "#Gen_110\\_1\\_#1",
+        "name": "Gen_110",
+        "prosumption_class": "Injection",
+        "prosumption_type": "Generator",
+        "reference_pri": true,
+        "regulated": true,
+        "vm_pu": 1.02
+      },
+      "41": {
+        "element_index": 2,
+        "external_id": "#Gen_110\\_4\\_#2",
+        "max_q_mvar": 25.0,
+        "min_q_mvar": -25.0,
+        "name": "Gen_110",
+        "prosumption_class": "Injection",
+        "prosumption_type": "Generator",
+        "regulated": true
+      },
+      "42": {
+        "element_index": 3,
+        "external_id": "#Gen_110\\_6\\_#3",
+        "max_q_mvar": 15.0,
+        "min_q_mvar": -15.0,
+        "name": "Gen_110",
+        "prosumption_class": "Injection",
+        "prosumption_type": "Generator",
+        "regulated": true
+      },
+      "43": {
+        "external_id": "#Sh_10_20.0\\_#1",
+        "name": "Sh_10_20.0",
+        "shunt_index": 1
+      },
+      "5": {
+        "bus_index": 9,
+        "external_id": "H9",
+        "name": "Ilmrode_110",
+        "node_type": "PQ"
+      },
+      "6": {
+        "bus_index": 12,
+        "external_id": "M3",
+        "name": "Kleinau_20",
+        "node_type": "PQ"
+      },
+      "7": {
+        "bus_index": 3,
+        "external_id": "H3",
+        "name": "Moorau_110",
+        "node_type": "PQ"
+      },
+      "8": {
+        "bus_index": 10,
+        "external_id": "M1",
+        "name": "Moorau_20",
+        "node_type": "PQ"
+      },
+      "9": {
+        "bus_index": 2,
+        "external_id": "H2",
+        "name": "Neuwiese_110",
+        "node_type": "PQ"
+      }
+    },
+    "format_version": "1.0",
+    "measurements": {
+      "provenance": {
+        "noise": true,
+        "seed": 20260914,
+        "source": "generateMeasurementsFromPF"
+      },
+      "rows": [
+        {
+          "positions": [1],
+          "sensor": 48,
+          "sigmas": [0.005],
+          "sparlectra_ids": ["Vm_bus_1"]
+        },
+        {
+          "positions": [4],
+          "sensor": 49,
+          "sigmas": [0.005],
+          "sparlectra_ids": ["Vm_bus_2"]
+        },
+        {
+          "positions": [7],
+          "sensor": 50,
+          "sigmas": [0.005],
+          "sparlectra_ids": ["Vm_bus_3"]
+        },
+        {
+          "positions": [10],
+          "sensor": 51,
+          "sigmas": [0.005],
+          "sparlectra_ids": ["Vm_bus_4"]
+        },
+        {
+          "positions": [13],
+          "sensor": 52,
+          "sigmas": [0.005],
+          "sparlectra_ids": ["Vm_bus_5"]
+        },
+        {
+          "positions": [16],
+          "sensor": 53,
+          "sigmas": [0.005],
+          "sparlectra_ids": ["Vm_bus_6"]
+        },
+        {
+          "positions": [19],
+          "sensor": 54,
+          "sigmas": [0.005],
+          "sparlectra_ids": ["Vm_bus_7"]
+        },
+        {
+          "positions": [22],
+          "sensor": 55,
+          "sigmas": [0.005],
+          "sparlectra_ids": ["Vm_bus_8"]
+        },
+        {
+          "positions": [25],
+          "sensor": 56,
+          "sigmas": [0.005],
+          "sparlectra_ids": ["Vm_bus_9"]
+        },
+        {
+          "positions": [28],
+          "sensor": 57,
+          "sigmas": [0.005],
+          "sparlectra_ids": ["Vm_bus_10"],
+          "values": [0.988097820990034]
+        },
+        {
+          "positions": [31],
+          "sensor": 58,
+          "sigmas": [0.005],
+          "sparlectra_ids": ["Vm_bus_11"]
+        },
+        {
+          "positions": [34],
+          "sensor": 59,
+          "sigmas": [0.005],
+          "sparlectra_ids": ["Vm_bus_12"],
+          "values": [0.9253572192395855]
+        },
+        {
+          "positions": [37],
+          "sensor": 60,
+          "sigmas": [0.005],
+          "sparlectra_ids": ["Vm_bus_13"],
+          "values": [0.9198342432050161]
+        },
+        {
+          "positions": [40],
+          "sensor": 61,
+          "sigmas": [0.005],
+          "sparlectra_ids": ["Vm_bus_14"],
+          "values": [0.975364680784087]
+        },
+        {
+          "positions": [2, 3],
+          "sensor": 62,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pinj_bus_1", "Qinj_bus_1"]
+        },
+        {
+          "positions": [5, 6],
+          "sensor": 63,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pinj_bus_2", "Qinj_bus_2"]
+        },
+        {
+          "positions": [8, 9],
+          "sensor": 64,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pinj_bus_3", "Qinj_bus_3"]
+        },
+        {
+          "positions": [11, 12],
+          "sensor": 65,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pinj_bus_4", "Qinj_bus_4"]
+        },
+        {
+          "positions": [14, 15],
+          "sensor": 66,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pinj_bus_5", "Qinj_bus_5"],
+          "values": [-18.519695665419533, -6.050508553620737]
+        },
+        {
+          "positions": [17, 18],
+          "sensor": 67,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pinj_bus_6", "Qinj_bus_6"]
+        },
+        {
+          "positions": [20, 21],
+          "sensor": 68,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pinj_bus_7", "Qinj_bus_7"]
+        },
+        {
+          "positions": [23, 24],
+          "sensor": 69,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pinj_bus_8", "Qinj_bus_8"]
+        },
+        {
+          "positions": [26, 27],
+          "sensor": 70,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pinj_bus_9", "Qinj_bus_9"]
+        },
+        {
+          "positions": [29, 30],
+          "sensor": 71,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pinj_bus_10", "Qinj_bus_10"],
+          "values": [-7.738606521652628, -2.9346159629162054]
+        },
+        {
+          "positions": [32, 33],
+          "sensor": 72,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pinj_bus_11", "Qinj_bus_11"],
+          "values": [-3.759227193734697, -1.7656493738719863]
+        },
+        {
+          "positions": [35, 36],
+          "sensor": 73,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pinj_bus_12", "Qinj_bus_12"]
+        },
+        {
+          "positions": [38, 39],
+          "sensor": 74,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pinj_bus_13", "Qinj_bus_13"]
+        },
+        {
+          "positions": [41, 42],
+          "sensor": 75,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pinj_bus_14", "Qinj_bus_14"]
+        },
+        {
+          "positions": [43, 45],
+          "sensor": 76,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_1_from", "Qflow_branch_1_from"]
+        },
+        {
+          "positions": [44, 46],
+          "sensor": 77,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_1_to", "Qflow_branch_1_to"]
+        },
+        {
+          "positions": [47, 49],
+          "sensor": 78,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_2_from", "Qflow_branch_2_from"]
+        },
+        {
+          "positions": [48, 50],
+          "sensor": 79,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_2_to", "Qflow_branch_2_to"]
+        },
+        {
+          "positions": [51, 53],
+          "sensor": 80,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_3_from", "Qflow_branch_3_from"]
+        },
+        {
+          "positions": [52, 54],
+          "sensor": 81,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_3_to", "Qflow_branch_3_to"]
+        },
+        {
+          "positions": [55, 57],
+          "sensor": 82,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_4_from", "Qflow_branch_4_from"]
+        },
+        {
+          "positions": [56, 58],
+          "sensor": 83,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_4_to", "Qflow_branch_4_to"]
+        },
+        {
+          "positions": [59, 61],
+          "sensor": 84,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_5_from", "Qflow_branch_5_from"]
+        },
+        {
+          "positions": [60, 62],
+          "sensor": 85,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_5_to", "Qflow_branch_5_to"]
+        },
+        {
+          "positions": [63, 65],
+          "sensor": 86,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_6_from", "Qflow_branch_6_from"]
+        },
+        {
+          "positions": [64, 66],
+          "sensor": 87,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_6_to", "Qflow_branch_6_to"]
+        },
+        {
+          "positions": [67, 69],
+          "sensor": 88,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_7_from", "Qflow_branch_7_from"]
+        },
+        {
+          "positions": [68, 70],
+          "sensor": 89,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_7_to", "Qflow_branch_7_to"]
+        },
+        {
+          "positions": [71, 73],
+          "sensor": 90,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_8_from", "Qflow_branch_8_from"]
+        },
+        {
+          "positions": [72, 74],
+          "sensor": 91,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_8_to", "Qflow_branch_8_to"]
+        },
+        {
+          "positions": [75, 77],
+          "sensor": 92,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_9_from", "Qflow_branch_9_from"]
+        },
+        {
+          "positions": [76, 78],
+          "sensor": 93,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_9_to", "Qflow_branch_9_to"]
+        },
+        {
+          "positions": [79, 81],
+          "sensor": 94,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_10_from", "Qflow_branch_10_from"]
+        },
+        {
+          "positions": [80, 82],
+          "sensor": 95,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_10_to", "Qflow_branch_10_to"]
+        },
+        {
+          "positions": [83, 85],
+          "sensor": 96,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_11_from", "Qflow_branch_11_from"]
+        },
+        {
+          "positions": [84, 86],
+          "sensor": 97,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_11_to", "Qflow_branch_11_to"]
+        },
+        {
+          "positions": [87, 89],
+          "sensor": 98,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_12_from", "Qflow_branch_12_from"]
+        },
+        {
+          "positions": [88, 90],
+          "sensor": 99,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_12_to", "Qflow_branch_12_to"]
+        },
+        {
+          "positions": [91, 93],
+          "sensor": 100,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_13_from", "Qflow_branch_13_from"]
+        },
+        {
+          "positions": [92, 94],
+          "sensor": 101,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_13_to", "Qflow_branch_13_to"]
+        },
+        {
+          "positions": [95, 97],
+          "sensor": 102,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_14_from", "Qflow_branch_14_from"]
+        },
+        {
+          "positions": [96, 98],
+          "sensor": 103,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_14_to", "Qflow_branch_14_to"]
+        },
+        {
+          "positions": [99, 101],
+          "sensor": 104,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_15_from", "Qflow_branch_15_from"]
+        },
+        {
+          "positions": [100, 102],
+          "sensor": 105,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_15_to", "Qflow_branch_15_to"]
+        },
+        {
+          "positions": [103, 105],
+          "sensor": 106,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_16_from", "Qflow_branch_16_from"]
+        },
+        {
+          "positions": [104, 106],
+          "sensor": 107,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_16_to", "Qflow_branch_16_to"]
+        },
+        {
+          "positions": [107, 109],
+          "sensor": 108,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_17_from", "Qflow_branch_17_from"]
+        },
+        {
+          "positions": [108, 110],
+          "sensor": 109,
+          "sigmas": [1.0, 1.0],
+          "sparlectra_ids": ["Pflow_branch_17_to", "Qflow_branch_17_to"]
+        }
+      ]
+    },
+    "meta": {
+      "case_name": "sp_case14",
+      "created_by": "Sparlectra 0.10.0",
+      "f_nom": 50.0,
+      "intended_calculations": ["power_flow", "state_estimation", "short_circuit", "contingency", "scenarios"],
+      "notes": "Self-built Sparlectra demo network; the bus count in the name does not make it the IEEE case of that size, and no data was taken from MATPOWER, DTF or any other source.",
+      "s_base": 1.0e8
+    },
+    "roles": {
+      "slack": {
+        "mode": "single",
+        "nodes": [10]
+      }
+    },
+    "scenarios": {
+      "mode": "explicit",
+      "scenarios": [
+        {
+          "name": "trafo_Moorau_out_feeder_island",
+          "ops": [
+            {
+              "id": 30,
+              "op": "status",
+              "target": "transformer",
+              "value": 0.0
+            }
+          ],
+          "weight": 2.0
+        },
+        {
+          "name": "double_circuit_Ostheim_Neuwiese_out",
+          "ops": [
+            {
+              "id": 26,
+              "op": "status",
+              "target": "branch",
+              "value": 0.0
+            },
+            {
+              "id": 27,
+              "op": "status",
+              "target": "branch",
+              "value": 0.0
+            }
+          ],
+          "weight": 1.0
+        },
+        {
+          "name": "evening_peak",
+          "ops": [
+            {
+              "factor": 1.1,
+              "id": 32,
+              "op": "scale",
+              "target": "load"
+            },
+            {
+              "factor": 1.1,
+              "id": 33,
+              "op": "scale",
+              "target": "load"
+            },
+            {
+              "factor": 1.1,
+              "id": 34,
+              "op": "scale",
+              "target": "load"
+            },
+            {
+              "factor": 1.1,
+              "id": 35,
+              "op": "scale",
+              "target": "load"
+            },
+            {
+              "factor": 1.1,
+              "id": 36,
+              "op": "scale",
+              "target": "load"
+            },
+            {
+              "factor": 1.1,
+              "id": 37,
+              "op": "scale",
+              "target": "load"
+            },
+            {
+              "factor": 1.1,
+              "id": 38,
+              "op": "scale",
+              "target": "load"
+            },
+            {
+              "factor": 1.1,
+              "id": 39,
+              "op": "scale",
+              "target": "load"
+            }
+          ],
+          "weight": 1.0
+        }
+      ]
+    },
+    "short_circuit": {
+      "buses": ["Ostheim_110", "Moorau_20"]
+    },
+    "start_state": {
+      "nodes": {
+        "1": {
+          "va_deg": -1.8369592700934765,
+          "vm_pu": 0.9890405812603911
+        },
+        "10": {
+          "va_deg": 0.0,
+          "vm_pu": 1.02
+        },
+        "11": {
+          "va_deg": -0.552443611221411,
+          "vm_pu": 0.9839634050227137
+        },
+        "12": {
+          "va_deg": -4.556468507496318,
+          "vm_pu": 0.9163370083616786
+        },
+        "13": {
+          "va_deg": -1.0937737884909715,
+          "vm_pu": 0.9869986431519134
+        },
+        "14": {
+          "va_deg": -2.968008629551263,
+          "vm_pu": 0.9745809048448062
+        },
+        "2": {
+          "va_deg": 2.0345071671042256,
+          "vm_pu": 1.01
+        },
+        "3": {
+          "va_deg": 1.1270353925624124,
+          "vm_pu": 1.0
+        },
+        "4": {
+          "va_deg": -4.35869947584881,
+          "vm_pu": 0.9473398918949691
+        },
+        "5": {
+          "va_deg": -1.5412568876265254,
+          "vm_pu": 0.9831311344304211
+        },
+        "6": {
+          "va_deg": -4.502433329780152,
+          "vm_pu": 0.9257226133937286
+        },
+        "7": {
+          "va_deg": -1.1130428771146468,
+          "vm_pu": 0.9908231253374908
+        },
+        "8": {
+          "va_deg": -4.115892129063541,
+          "vm_pu": 0.9839054790841837
+        },
+        "9": {
+          "va_deg": -0.6522433569153596,
+          "vm_pu": 1.003417922867611
+        }
+      },
+      "source": "solved_power_flow"
+    }
+  }
+}

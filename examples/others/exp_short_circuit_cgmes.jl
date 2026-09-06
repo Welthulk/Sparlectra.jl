@@ -18,7 +18,7 @@
 
 using Sparlectra
 
-include(joinpath(@__DIR__, "..", "internal", "example_header.jl"))
+include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
 # Offline-safe: the ENTSO-E MicroGrid fixture is used from the local test-set
 # cache only. Without the cache the example explains how to fetch it and
@@ -35,7 +35,7 @@ function main()
   print_example_banner("examples/others/exp_short_circuit_cgmes.jl", "runShortCircuit! on the ENTSO-E MicroGrid BE delivery — Ik'' max/min per bus from the import's short-circuit harvest")
   paths = _microgrid_paths()
   if paths === nothing
-    println("MicroGrid fixture not cached — run examples/experimental/cgmes_fetch_testsets.jl once, then retry.")
+    println("MicroGrid fixture not cached — run examples/cgmes/cgmes_fetch_testsets.jl once, then retry.")
     return nothing
   end
   be, bd = paths

@@ -123,6 +123,11 @@ function calcVKDependence(xTaps::Vector{Int}, yVKs::Vector{Float64}, tapPos::Flo
   return vk
 end
 
+"""
+    calcComplexRatio(; tapRatio, angleInDegrees) -> ComplexF64
+
+The complex winding ratio from a magnitude ratio and a phase-shift angle.
+"""
 function calcComplexRatio(; tapRatio::Float64, angleInDegrees::Float64)::ComplexF64
   return tapRatio * cis(deg2rad(angleInDegrees))
 end
@@ -549,9 +554,13 @@ Calculate branch flow in per unit for a given branch and voltage vector.
   ui = V[from]
   uj = V[to]
 
-  ratio = (branch.ratio != 0.0) ? branch.ratio : 1.0
-  angle = (branch.ratio != 0.0) ? branch.angle : 0.0
-  tap = calcComplexRatio(tapRatio = ratio, angleInDegrees = angle)
+  # LIVE tap position via calcBranchRatio (tap_ratio/phase_shift_deg), the
+  # same complex ratio the Ybus stamps. Reading the neutral ratio/angle
+  # here made generated flow measurements and SE flow predictions
+  # inconsistent with the (Ybus-based) injections whenever the live tap
+  # left neutral (generator tap deviation, tap-controller moves): the
+  # measured KCL then missed at the transformer corners (case57 4/18).
+  tap = calcBranchRatio(branch)
 
   if tapSide == 1
     ui /= tap

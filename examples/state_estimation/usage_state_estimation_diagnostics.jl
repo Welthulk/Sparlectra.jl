@@ -29,7 +29,7 @@ using Sparlectra
 using Random
 using Printf
 
-include(joinpath(@__DIR__, "..", "internal", "example_header.jl"))
+include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
 function _create_demo_net()
   net = Net(name = "se_diagnostics_demo", baseMVA = 100.0)

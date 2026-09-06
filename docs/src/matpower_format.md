@@ -169,17 +169,60 @@ therefore compute different transformer active losses. When Sparlectra reimports
 one of these files it restores the branch conductance metadata without adding
 terminal bus-shunt approximations.
 
+The extension namespace also carries impedance-less busbar couplers, which
+standard MATPOWER cannot model: `mpc.sparlectra.links` holds one row per
+coupler with the columns `fbus tbus status` (status `1` = closed). Each row
+is imported as a Sparlectra `BusLink`; a closed link merges its two buses
+into one electrical node for the power flow (the same contraction CGMES
+switch imports use), while an open link keeps them separated. Exported `.m`
+files write the block back from `net.linkVec`, so links survive a MATPOWER
+roundtrip. Rows referencing unknown bus numbers or a wrong column count are
+rejected at import instead of being skipped.
+
+Tap-changer nameplate data is the third extension block. Standard MATPOWER
+knows only the continuous `TAP`/`SHIFT` columns (the current ratio and
+angle), so step size, position band, and neutral position are otherwise
+Sparlectra defaults. `mpc.sparlectra.tap_changers` holds one row per
+transformer branch with the columns `branch tap_step tap_min_step
+tap_max_step tap_current_step phase_step_deg phase_min_step phase_max_step
+phase_current_step` plus the optional columns `psi_deg` (the PST
+regulating-vector direction, `0` = unspecified, defaulting to the
+symmetric 90 degrees) and `phase_du_step`. With the block present, the
+`TAP`/`SHIFT` columns are the NEUTRAL position and the current steps move
+the live position off it (ratio grid: `tap = neutral / (1 + n *
+tap_step)`, the same grid the tap estimation fixes to).
+
+Phase tap changers come in two mechanical flavors, and the block
+distinguishes them explicitly (declaring both grids at once is rejected):
+a `phase_step_deg` changer steps the shift ANGLE in degrees, while a
+`phase_du_step` changer is an ADDITIONAL-VOLTAGE stepper (the common
+Delta-u PST): each step adds `phase_du_step` per unit of additional
+voltage in the direction `psi_deg`, the shift angle merely follows from
+the cascade (`atan`), and the step columns then count Delta-u steps. The
+tap estimation fixes a Delta-u PST linearly on the additional-voltage
+grid, exactly like a ratio changer on its fraction grid. A `tap_step` of
+`0` explicitly declares a transformer ratio-less (a pure phase shifter),
+which keeps it out of the estimator's ratio mass release; declared phase
+changers join the mass release in `:pst` mode along their nameplate
+direction. Current steps may be fractional (a controller can leave a tap
+between mechanical positions), and trailing columns may be omitted (short
+rows are zero-padded like MATPOWER optional trailing columns).
+Exports write the block back for every transformer whose live position sits
+off neutral or whose grid deviates from the defaults. Rows referencing
+non-transformer branches, unknown branches, or positions outside the
+declared band are rejected at import.
+
 ## Sparlectra MATPOWER import options overview
 
 The options below are the most common import-convention controls users may need when a case was converted from another tool or carries optional metadata. See the full [MATPOWER import configuration reference](matpower_import.md) for allowed values, defaults and interactions.
 
 | Option | User-facing purpose |
 |---|---|
-| `matpower_import.auto_profile` | Runs a pre-run profile that can log or safely apply import-convention recommendations. |
-| `matpower_import.auto_profile_log` | Controls whether auto-profile reasoning and final effective options are printed/logged. |
+| `model.auto_profile` | Runs a pre-run profile that can log or safely apply import-convention recommendations. |
+| `model.auto_profile_log` | Controls whether auto-profile reasoning and final effective options are printed/logged. |
 | `matpower_import.pv_voltage_source` | Selects whether PV voltage setpoints come from generator `VG`, bus `VM`, or an automatic/strict policy. |
 | `matpower_import.compare_voltage_reference` | Chooses the voltage reference used for MATPOWER comparison diagnostics. |
-| `matpower_import.bus_shunt_model` | Selects how MATPOWER bus shunts are interpreted during import. |
+| `model.bus_shunt_model` | Selects how MATPOWER bus shunts are interpreted during import. |
 | `matpower_import.shift_unit` | Declares whether branch phase-shift values are in degrees or radians. |
 | `matpower_import.shift_sign` | Controls the phase-shift sign convention used for branch import. |
 | `matpower_import.ratio` | Controls the transformer tap-ratio interpretation. |

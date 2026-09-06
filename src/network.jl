@@ -76,6 +76,12 @@ Represents an electrical network.
 - `getNetBranch(; net::Net, fromBus::String, toBus::String)`: Retrieves the branch between two specified buses in the network.
 """
 
+"""
+The in-memory network: buses, branches, prosumers, shunts, links and the
+run-level state the solvers read (Q-limit parameters, flat-start flag,
+measurements, solver status). Built by the importers or by the `add*!`
+constructors.
+"""
 mutable struct Net
   name::String
   baseMVA::Float64
@@ -248,6 +254,11 @@ function log_bus_shunt_model(net::Net)
   @info "Bus shunt model" bus_shunt_model = String(net.bus_shunt_model) bus_shunt_count = totals.count bus_shunt_total_g_pu = totals.total_g_pu bus_shunt_total_b_pu = totals.total_b_pu
 end
 
+"""
+    showNet(io, net; verbose = false)
+
+Print a component summary of the network; `verbose` lists the elements.
+"""
 function showNet(io::IO, net::Net; verbose::Bool = false)
   if !verbose
     show(io, net)
@@ -455,6 +466,11 @@ function getNetOrigBusIdx(; net::Net, busName::String)::Int
   return net.busOrigIdxDict[id]
 end
 
+"""
+    getBusProsumers(net, busIdx) -> Vector{ProSumer}
+
+Every prosumer attached to the bus.
+"""
 function getBusProsumers(net::Net, busIdx::Int)::Vector{ProSumer}
   bus_ps = ProSumer[]
   for ps in net.prosumpsVec
@@ -465,6 +481,12 @@ function getBusProsumers(net::Net, busIdx::Int)::Vector{ProSumer}
   return bus_ps
 end
 
+"""
+    getEffectiveBusType(net, busIdx) -> NodeType
+
+The bus type as the solver sees it, derived from the attached prosumers
+(slack wins over PV, PV over PQ).
+"""
 function getEffectiveBusType(net::Net, busIdx::Int)::NodeType
   has_slack = false
   has_regulating = false
@@ -493,6 +515,52 @@ function getEffectiveBusType(; net::Net, busName::String)::NodeType
   return getEffectiveBusType(net, busIdx)
 end
 
+"""
+    _apply_config_net_parameters!(net, pf_cfg) -> Net
+
+Stamp the solver-behaviour parameters the configuration owns onto a network:
+the Q-limit switching cooldown and hysteresis, and the flat-start flag. Every
+construction path calls this, and no path carries its own copy of the
+assignments, because four paths setting them differently is exactly how a
+case file came to run with hysteresis 0 whatever the configuration said.
+
+`bus_shunt_model` is NOT among them on purpose: it is consumed while the
+shunts are built (`addShuntMatpower!` reads it from the network at that
+moment) and never again, so it has to reach the constructor of the path in
+question. Setting it afterwards would change the field without changing a
+single shunt.
+
+Reach of the flat-start stamp: a CONFIGURED run overrides it anyway, because
+the solver entry passes `opt_flatstart = start.flatstart` from the run
+configuration directly (see `rectangular_network_solver.jl`), and on CGMES
+runs the `cgmes_import.start_values` rewrite wins on that route as intended.
+The stamp is what makes config-less direct solves (`runpf!(net, ...)`,
+library use, SE internals) follow the configuration that was in hand at
+import. The two switching parameters have no such override and are read off
+the network on every path.
+"""
+# task_import_direct D12 audit: the stamping happens exactly once per
+# importer; this atomic exists for the format test that proves it and
+# costs one integer add per import
+const _NET_PARAM_STAMP_COUNT = Base.Threads.Atomic{Int}(0)
+
+function _apply_config_net_parameters!(net::Net, pf_cfg)
+  Base.Threads.atomic_add!(_NET_PARAM_STAMP_COUNT, 1)
+  net.cooldown_iters = pf_cfg.qlimits.cooldown_iters
+  net.q_hyst_pu = pf_cfg.qlimits.hysteresis_pu
+  net.flatstart = pf_cfg.start_mode.flatstart
+  return net
+end
+
+_apply_config_net_parameters!(net::Net, cfg::SparlectraConfig) = _apply_config_net_parameters!(net, cfg.powerflow)
+
+"""
+    refreshBusTypesFromProsumers!(net)
+
+Rebuild the effective bus types (slack, PV, PQ) from the attached
+prosumers. Called once per import; per-element calls made the reader
+quadratic.
+"""
 function refreshBusTypesFromProsumers!(net::Net)
   nbus = length(net.nodeVec)
   has_slack = falses(nbus)
@@ -543,6 +611,12 @@ Parameters:
 """
 const _addbus_bus_type_warned = Ref(false)
 
+"""
+    addBus!(; net, busName, vn_kV, ...)
+
+Add a bus to the network. Voltage limits default to the network's; `area`,
+`zone` and the source bus number are optional identity data.
+"""
 function addBus!(;
   net::Net,
   busName::String,
@@ -653,6 +727,24 @@ function addShunt!(; net::Net, busName::String, pShunt::Float64, qShunt::Float64
   return nothing
 end
 """
+    setShuntEstimation!(net; busName, enabled=true)
+
+Release (or freeze) the shunt at `busName` for state-estimation susceptance
+estimation (SE phase 2, case A). A released shunt contributes one additional
+state (its susceptance `B` in pu) to `runse!`, provided at least one active
+direct shunt measurement (`ShuntQMeas` or a bus-referenced `ImagMeas`)
+references its bus; without one the estimator freezes it at the model value
+with a warning. Errors when the bus carries no shunt. Returns the `Shunt`.
+"""
+function setShuntEstimation!(net::Net; busName::String, enabled::Bool = true)
+  busIdx = geNetBusIdx(net = net, busName = busName)
+  haskey(net.shuntDict, busIdx) || error("setShuntEstimation!: no shunt at bus $(busName)")
+  sh = net.shuntVec[net.shuntDict[busIdx]]
+  sh.estimate = enabled
+  return sh
+end
+
+"""
     hasShunt!(; net::Net, busName::String)::Bool
 
 Checks if a shunt exists at the specified bus in the network.
@@ -730,10 +822,19 @@ function addBranch!(; net::Net, from::Int, to::Int, branch::AbstractBranch, stat
 end
 
 """
-    addLink!(; net::Net, fromBus::String, toBus::String, status::Int = 1)::Int
+    addLink!(; net, fromBus, toBus, status = 1) -> Int
 
-Adds an impedance-less topological bus link (e.g. busbar coupler) used for
-post-power-flow KCL allocation.
+Add an impedance-less topological busbar link (e.g. a busbar coupler)
+between two buses of the SAME bus type, used for post-power-flow KCL
+allocation, and return its index in `net.linkVec`.
+
+Links are NOT branches: they live in `net.linkVec`, carry no component
+object and no name, and the solver contracts closed-link clusters onto one
+electrical node. In particular, `net.branchVec[end]` right after this call
+is an UNRELATED branch; renaming or mutating it there silently corrupts a
+different element (this exact slip broke a demo case's same-name
+double-circuit exercise, 2026-09-03). Address links by the returned index,
+e.g. through [`setNetLinkStatus!`](@ref).
 """
 function addLink!(; net::Net, fromBus::String, toBus::String, status::Int = 1)::Int
   @assert !net._locked "Network is locked"
@@ -869,6 +970,11 @@ function _addPIModelACLine_by_idx!(; net::Net, from::Int, to::Int, r_pu::Float64
   addBranch!(net = net, from = from, to = to, branch = acseg, vn_kV = vn_kV, status = status, values_are_pu = true, from_status = from_status, to_status = to_status)
 end
 
+"""
+    addPIModelACLine!(; net, fromBus, toBus, r_pu, x_pu, b_pu, status, ...)
+
+Add an AC line branch from PI-model per-unit parameters.
+"""
 function addPIModelACLine!(; net::Net, fromBus::String, toBus::String, r_pu::Float64, x_pu::Float64, b_pu::Float64, g_pu::Union{Nothing,Float64} = nothing, status::Int, ratedS::Union{Nothing,Float64} = nothing, from_status::Union{Nothing,Integer} = nothing, to_status::Union{Nothing,Integer} = nothing)
   from = geNetBusIdx(net = net, busName = fromBus)
   to = geNetBusIdx(net = net, busName = toBus)
@@ -937,6 +1043,11 @@ function _addPIModelTrafo_by_idx!(;
   end
 end
 
+"""
+    addPIModelTrafo!(; net, fromBus, toBus, r_pu, x_pu, ...)
+
+Add a two-winding transformer branch from PI-model per-unit parameters.
+"""
 function addPIModelTrafo!(;
   net::Net,
   fromBus::String,
@@ -1565,6 +1676,11 @@ setBusVoltage!(net = network, busName = "Bus1", vm_pu = 1.02, va_deg = 5.0)
 ```
 """
 
+"""
+    setNodeVoltage!(; net, busName, vm_pu, va_deg)
+
+Set the voltage state of one bus by name.
+"""
 function setNodeVoltage!(; net::Net, busName::String, vm_pu::Float64, va_deg::Float64)
   @debug "Set bus voltage for $busName to vm_pu = $vm_pu and va_deg = $va_deg"
   busIdx = geNetBusIdx(net = net, busName = busName)
@@ -1942,6 +2058,12 @@ the aggregated bus-level Q-limits (`qmin_pu`, `qmax_pu`).
 - With `busName`: only generators connected to the specified bus receive the new limits.
 """
 
+"""
+    setQLimits!(; net, qmin_MVar, qmax_MVar, busName = nothing)
+
+Set the reactive band of the regulating machines, at one bus, a list of
+buses, or everywhere when no name is given.
+"""
 function setQLimits!(; net::Net, qmin_MVar::Float64, qmax_MVar::Float64, busName::Union{Nothing,AbstractString,AbstractVector{<:AbstractString}} = nothing)
 
   # Normalize busName to a set of bus indices or `nothing`
@@ -1981,6 +2103,11 @@ end
   Only applicable for buses of type "PV" and for testing purpose.
 """
 
+"""
+    setPVBusVset!(; net, busName, vm_pu)
+
+Set the voltage setpoint of the regulating machine at the bus.
+"""
 function setPVBusVset!(; net::Net, busName::String, vm_pu::Float64)
   bus = geNetBusIdx(net = net, busName = busName)
   net.nodeVec[bus]._vm_pu = vm_pu
@@ -2124,6 +2251,12 @@ function distribute_bus_loads!(net::Net, bus::Int)
   end
 end
 
+"""
+    distributeBusResults!(net)
+
+Write the solved bus results back onto the attached prosumers and shunts
+(per-machine P/Q, shunt injections).
+"""
 function distributeBusResults!(net::Net)
   # reset results
   for ps in net.prosumpsVec
@@ -2341,6 +2474,11 @@ function buildComplexSVec(net::Net)
   return S
 end
 
+"""
+    has_voltage_dependent_control(net) -> Bool
+
+Whether any prosumer carries a Q(U) or P(U) controller.
+"""
 function has_voltage_dependent_control(net::Net)::Bool
   for sh in net.shuntVec
     if sh.status != 0 && sh.model == :VoltageDependentInjection

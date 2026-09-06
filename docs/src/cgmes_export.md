@@ -87,7 +87,7 @@ Optional keyword arguments:
   reconstruction is not exact). Without a sink the same lines are emitted
   as warnings. An empty notice list means the export is model-complete.
 
-A runnable example lives in `examples/experimental/cgmes_export_demo.jl`.
+A runnable example lives in `examples/cgmes/cgmes_export_demo.jl`.
 
 ## Identity and mRIDs on export
 

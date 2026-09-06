@@ -2,8 +2,8 @@
 
 All runnable examples live under `examples/`, grouped by topic:
 `examples/powerflow/`, `examples/others/`, `examples/state_estimation/`,
-`examples/dtf/`, shared infrastructure in `examples/internal/`, experimental
-material in `examples/experimental/`. Run any example directly:
+`examples/dtf/`, shared suite infrastructure in `examples/others/`, CGMES tooling
+material in `examples/cgmes/`. Run any example directly:
 
 ```bash
 julia --project=. examples/<folder>/<example>.jl
@@ -21,7 +21,7 @@ summary at the end): `run_powerflow_suite.jl`, `run_others_suite.jl`,
 |---|---|---|---|
 | `matpower_import.jl` | `powerflow` | Minimal MATPOWER import and solve | powerflow |
 | `matpower_import_multi_config.jl` | `powerflow` | One case under several configurations | powerflow |
-| `exp_configured_matpower_cases.jl` | `powerflow` | Ordered `matpower_import.cases` batches via `run_sparlectra_cases` | powerflow |
+| `exp_configured_matpower_cases.jl` | `powerflow` | Ordered `runtime.cases` batches via `run_sparlectra_cases` | powerflow |
 | `exp_programmatic_api.jl` | `powerflow` | GUI-ready `run_sparlectra_api` contract, explicit artifacts | powerflow |
 | `exp_powerflow_service.jl` | `powerflow` | Local service run, result lookup by run ID, artifact listing (no HTTP server) | powerflow |
 | `exp_distributed_slack_modes.jl` | `powerflow` | Classical single slack vs distributed slack (`pg_weighted` vs imported `APF` shares, `lambda_P` metadata) | standalone |
@@ -80,9 +80,9 @@ summary at the end): `run_powerflow_suite.jl`, `run_others_suite.jl`,
 | Example | Demonstrates | Suite |
 |---|---|---|
 | `run_cgmes_suite.jl` | Guided walkthrough (diagnose → import → solve → SV validation) plus the full sweep over every ENTSO-E/ReliCapGrid test set with a result table | cgmes |
-| `experimental/cgmes_fetch_testsets.jl` | One-time fetch of the ENTSO-E test-set package into the local cache | standalone |
-| `experimental/cgmes_export_demo.jl` | CGMES export (`writeCGMESFiles`) on a small net | others (optional) |
-| `experimental/val_realgrid_remeasure.jl` | RealGrid measurement ladder: baseline, Q-limits, distributed slack, machine control | standalone |
+| `cgmes/cgmes_fetch_testsets.jl` | One-time fetch of the ENTSO-E test-set package into the local cache | standalone |
+| `cgmes/cgmes_export_demo.jl` | CGMES export (`writeCGMESFiles`) on a small net | others (optional) |
+| `cgmes/val_realgrid_remeasure.jl` | RealGrid measurement ladder: baseline, Q-limits, distributed slack, machine control | standalone |
 
 ## DTF validation (Testnetz13 / FOR001-FOR002)
 
@@ -105,6 +105,12 @@ External FOR001/FOR002 datasets are not shipped; place files under
 | `state_estimation_passive_bus_zib_comparison.jl` | Passive-bus / ZIB handling comparison | state_estimation |
 | `state_estimation_pmu_angles.jl` | PMU angle measurements and the reference-offset state α | state_estimation |
 | `usage_state_estimation_diagnostics.jl` | Practical diagnostics workflow | state_estimation |
+| `state_estimation_imag_bad_data.jl` | Current-magnitude measurements (`ImagMeas`) raising localizability (`wii`), sequential elimination trace, value gate | state_estimation |
+| `state_estimation_shunt_estimation.jl` | Shunt estimation: stale reactor susceptance recovered as a state (case A), `SHDERIV` bay pseudo-measurement derived (case B) | state_estimation |
+| `state_estimation_links_facts.jl` | SE on the contracted net (busbar coupler): `LINKAGG` aggregation, member sync, measured W2 allocation, `se_view` | state_estimation |
+| `state_estimation_robust.jl` | Robust R modification suppressing a gross error (statistics on original sigmas), Wilson-Hilferty `:high`/`:low` | state_estimation |
+| `state_estimation_chain.jl` | Measurement CSV v1 roundtrip and the SE-started PF (`se_state`/`se_snapshot`, `runpf_from_se!`) | state_estimation |
+| `bench_takahashi_diagnostics.jl` | Benchmark: dense `pinv` vs Takahashi selected inverse over a synthetic-grid size sweep (calibrates `takahashi_min_states`) | (manual, not in suite) |
 | `h_matrix_observability_demo.jl` | Matrix-level observability/redundancy exploration | state_estimation |
 | `mc_state_estimation_study.jl` | Monte-Carlo WLS error statistics on the 7-bus [workshop-tour network](generated/workshop_tour.md) (M = 500) | state_estimation |
 

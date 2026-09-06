@@ -33,6 +33,34 @@ function calcNetLosses!(net::Net)
 end
 
 """
+    _closed_branch_flow_pu(V, from, to, br, tapSide) -> ComplexF64
+
+Complex branch power S_ij in per unit from bus `from` to bus `to` of a
+fully CLOSED branch, evaluated on the complex voltage vector `V`. This is
+the flow formula `calcNetLosses!` uses (extracted so the contingency
+screening can estimate loadings from a trial voltage vector without
+writing the net); `tapSide` says which terminal carries the tap (1 =
+`from`, 2 = `to`).
+"""
+function _closed_branch_flow_pu(V::Vector{ComplexF64}, from::Int, to::Int, br::Branch, tapSide::Int)
+  @assert tapSide == 1 || tapSide == 2
+  ui = V[from]
+  uj = V[to]
+  # tap handling (magnitude + angle)
+  ratio = (br.ratio != 0.0) ? br.ratio : 1.0
+  angle = (br.ratio != 0.0) ? br.angle : 0.0
+  tap = calcComplexRatio(tapRatio = ratio, angleInDegrees = angle)
+  if tapSide == 1
+    ui /= tap
+  elseif tapSide == 2
+    uj /= tap
+  end
+  Yik = inv(br.r_pu + im * br.x_pu)
+  Y0ik = 0.5 * (br.g_pu + im * br.b_pu)
+  return abs(ui)^2 * conj(Y0ik + Yik) - ui * conj(uj) * conj(Yik)
+end
+
+"""
     calcNetLosses!(net::Net, V::Vector{ComplexF64})
 
 Calculates branch flows and network losses using an externally provided complex
@@ -49,40 +77,10 @@ function calcNetLosses!(net::Net, V::Vector{ComplexF64})
   # -------------------------------------------------------------------------
   # Local helper: complex branch power S_ij (per unit) from bus `from` to `to`
   # -------------------------------------------------------------------------
-  function calcBranchFlow(from::Int, to::Int, br::Branch, tapSide::Int)
-    @assert tapSide == 1 || tapSide == 2
-    # the main loop dispatches on _branch_terminal_state and calls this
-    # helper only for fully closed branches (the old `status < 0` test was
-    # dead for the 0/1 encoding and is gone, r0.9.10)
-
-    # Base voltages taken directly from V (already includes vm and va)
-    ui = V[from]
-    uj = V[to]
-
-    # Tap handling (magnitude + angle)
-    ratio = (br.ratio != 0.0) ? br.ratio : 1.0
-    angle = (br.ratio != 0.0) ? br.angle : 0.0
-    tap   = calcComplexRatio(tapRatio = ratio, angleInDegrees = angle)
-
-    if tapSide == 1
-      ui /= tap
-    elseif tapSide == 2
-      uj /= tap
-    end
-
-    rpu = br.r_pu
-    xpu = br.x_pu
-    bpu = br.b_pu
-    gpu = br.g_pu
-
-    Yik  = inv(rpu + im * xpu)
-    Y0ik = 0.5 * (gpu + im * bpu)
-
-    # Complex power S_ij in per unit
-    s = abs(ui)^2 * conj(Y0ik + Yik) - ui * conj(uj) * conj(Yik)
-
-    return s
-  end # calcBranchFlow
+  # the main loop dispatches on _branch_terminal_state and calls this helper
+  # only for fully closed branches; the formula lives in the module-level
+  # _closed_branch_flow_pu so the contingency screening shares it
+  calcBranchFlow(from::Int, to::Int, br::Branch, tapSide::Int) = _closed_branch_flow_pu(V, from, to, br, tapSide)
 
   # -------------------------------------------------------------------------
   # Main loop over all branches
@@ -202,10 +200,66 @@ Notes:
   least-squares solution consistent with KCL.
 """
 function calcLinkFlowsKCL!(net::Net; tol::Float64 = 1e-6)
-  isempty(net.linkVec) && return
+  _link_flow_allocation!(net; tol = tol)
+  return nothing
+end
+
+"""
+    calcLinkFlowsSE!(net; tol=1e-6) -> Union{Nothing,Vector{NamedTuple}}
+
+W2 link-flow allocation with measurements (SE phase 3): the KCL allocation of
+`calcLinkFlowsKCL!` extended to a weighted least-squares split per link
+component. Active link flow measurements on `net.measurements` (`PflowMeas`/
+`QflowMeas` with a `linkIdx`) enter as extra rows `f_j = z_j` with weight
+`1/sigma^2` (P rows into the P solve, Q rows into the Q solve); the nodal
+balance rows keep weight 1. With no link measurements the result equals
+`calcLinkFlowsKCL!` exactly (shared core, identical code path).
+
+Link measurements constrain only the flow split, never the system state: the
+estimator excludes them from the WLS (the link is not in the Ybus).
+
+The balance construction reads solved branch flows (`fBranchFlow`/
+`tBranchFlow`, filled by `calcNetLosses!`, which `runse!(updateNet = true)`
+calls) and the shunt injections (`node._pShunt/_qShunt`, refreshed by the
+SE write-back). Run after `runse!` with `updateNet = true`.
+
+Returns one row per active link: `(linkIdx, name, pFlow_MW, qFlow_MVar,
+source, p_meas_residual, q_meas_residual)` with `source = :kcl` (no
+measurement on that link) or `:measured_ls`, and the measurement residuals
+`f_est - z` (NaN when unmeasured). `nothing` when the net has no active
+link.
+"""
+function calcLinkFlowsSE!(net::Net; tol::Float64 = 1e-6)
+  pMeas = [(linkIdx = m.linkIdx, value = m.value, sigma = m.sigma) for m in net.measurements if m.active && m.linkIdx !== nothing && m.typ == PflowMeas]
+  qMeas = [(linkIdx = m.linkIdx, value = m.value, sigma = m.sigma) for m in net.measurements if m.active && m.linkIdx !== nothing && m.typ == QflowMeas]
+  return _link_flow_allocation!(net; tol = tol, pMeas = pMeas, qMeas = qMeas)
+end
+
+# Shared allocation core. Without measurement rows this is EXACTLY the
+# original KCL algorithm (same operations, bitwise-identical results); the
+# measurement branches only run when a matching row exists in the component.
+function _link_flow_allocation!(net::Net; tol::Float64 = 1e-6, pMeas = nothing, qMeas = nothing)
+  isempty(net.linkVec) && return nothing
 
   active = [l for l in net.linkVec if l.status == 1]
-  isempty(active) && return
+  isempty(active) && return nothing
+
+  # link measurements by position in `active` (the incidence columns)
+  activePos = Dict{Int,Int}(l.linkIdx => j for (j, l) in enumerate(active))
+  pByCol = Dict{Int,Tuple{Float64,Float64}}()   # col -> (value, sigma)
+  qByCol = Dict{Int,Tuple{Float64,Float64}}()
+  for (meas, target) in ((pMeas, pByCol), (qMeas, qByCol))
+    meas === nothing && continue
+    for mm in meas
+      j = get(activePos, mm.linkIdx, 0)
+      if j == 0
+        @warn "link-flow allocation: measurement on link $(mm.linkIdx) ignored (link not active)"
+        continue
+      end
+      haskey(target, j) && @warn "link-flow allocation: several measurements on link $(mm.linkIdx); the last one wins"
+      target[j] = (mm.value, mm.sigma)
+    end
+  end
 
   nbus = length(net.nodeVec)
 
@@ -316,9 +370,23 @@ function calcLinkFlowsKCL!(net::Net; tol::Float64 = 1e-6)
     end
 
     # 7) Least-squares solve. `pinv` also handles singular meshed components
-    #    (e.g., rings) by returning the minimum-norm solution.
-    fp = pinv(Ab) * bbP
-    fq = pinv(Ab) * bbQ
+    #    (e.g., rings) by returning the minimum-norm solution. With link
+    #    measurements in this component (W2, SE phase 3) one weighted row
+    #    `f_j = z_j` per measurement is appended AFTER the sum-zero
+    #    correction; the balance rows keep weight 1 and the minimum-norm
+    #    property survives through the pinv of the row-scaled system.
+    compP = [(k, pByCol[gj]) for (k, gj) in enumerate(comp_links) if haskey(pByCol, gj)]
+    compQ = [(k, qByCol[gj]) for (k, gj) in enumerate(comp_links) if haskey(qByCol, gj)]
+    fp = if isempty(compP)
+      pinv(Ab) * bbP
+    else
+      _weighted_link_solve(Ab, bbP, compP)
+    end
+    fq = if isempty(compQ)
+      pinv(Ab) * bbQ
+    else
+      _weighted_link_solve(Ab, bbQ, compQ)
+    end
 
     for (k, gj) in enumerate(comp_links)
       flowsP[gj] = fp[k]
@@ -331,6 +399,7 @@ function calcLinkFlowsKCL!(net::Net; tol::Float64 = 1e-6)
     setLinkFlow!(l, 0.0, 0.0)
     setLinkCurrent!(l, 0.0, 0.0)
   end
+  rows = NamedTuple[]
   for (j, l) in enumerate(active)
     p = flowsP[j]
     q = flowsQ[j]
@@ -345,5 +414,39 @@ function calcLinkFlowsKCL!(net::Net; tol::Float64 = 1e-6)
     ifrom = (vf_kV > 1e-12) ? (s_abs / (Wurzel3 * vf_kV)) : NaN
     ito = (vt_kV > 1e-12) ? (s_abs / (Wurzel3 * vt_kV)) : NaN
     setLinkCurrent!(l, ifrom, ito)
+
+    # report row: allocation source and, where measured, the residual f - z
+    measured = haskey(pByCol, j) || haskey(qByCol, j)
+    push!(
+      rows,
+      (
+        linkIdx = l.linkIdx,
+        name = l.cName,
+        pFlow_MW = p,
+        qFlow_MVar = q,
+        source = measured ? :measured_ls : :kcl,
+        p_meas_residual = haskey(pByCol, j) ? p - pByCol[j][1] : NaN,
+        q_meas_residual = haskey(qByCol, j) ? q - qByCol[j][1] : NaN,
+      ),
+    )
   end
+  return rows
+end
+
+# Weighted least-squares split for one component: balance rows (weight 1) plus
+# one row per measured link, scaled by sqrt(1/sigma^2). pinv keeps minimum
+# norm in the directions no row constrains.
+function _weighted_link_solve(Ab::Matrix{Float64}, bb::Vector{Float64}, meas::Vector{<:Tuple{Int,Tuple{Float64,Float64}}})
+  nrow, ncol = size(Ab)
+  M = zeros(Float64, nrow + length(meas), ncol)
+  rhs = zeros(Float64, nrow + length(meas))
+  M[1:nrow, :] .= Ab
+  rhs[1:nrow] .= bb
+  for (r, (col, vz)) in enumerate(meas)
+    z, σ = vz
+    sw = σ > 0.0 ? 1.0 / σ : 1.0
+    M[nrow+r, col] = sw
+    rhs[nrow+r] = sw * z
+  end
+  return pinv(M) * rhs
 end

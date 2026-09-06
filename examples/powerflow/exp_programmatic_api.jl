@@ -18,7 +18,7 @@
 
 using Sparlectra
 
-include(joinpath(@__DIR__, "..", "internal", "example_header.jl"))
+include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
 function main(; casefile::AbstractString = "case5.m", output_dir::AbstractString = joinpath(@__DIR__, "..", "_out", "api_run"))
   print_example_banner("examples/powerflow/exp_programmatic_api.jl", "runs one MATPOWER case through the GUI-ready run_sparlectra_api contract and lists explicit artifacts")

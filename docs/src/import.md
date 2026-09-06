@@ -44,8 +44,8 @@ for result in results
 end
 ```
 
-Configured order is preserved. A non-empty `matpower_import.cases` list wins
-over `matpower_import.case`; the single-case setting is used as a fallback when
+Configured order is preserved. A non-empty `runtime.cases` list wins
+over `runtime.case`; the single-case setting is used as a fallback when
 the list is empty. Bare standard MATPOWER case names are resolved through
 `ensure_casefile` and downloaded on demand. Pass `path` when the listed cases
 are local fixtures or site-specific files. Batch-level performance-profile

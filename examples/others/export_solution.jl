@@ -29,7 +29,7 @@ using Sparlectra
 using Dates
 using Printf
 
-include(joinpath(@__DIR__, "..", "internal", "example_header.jl"))
+include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
 const EXPORT_OUTDIR = joinpath(@__DIR__, "..", "_out", "export_solution")
 
@@ -148,8 +148,8 @@ function main(args = ARGS)
 
   resolved_case = if !isempty(cli.case_override)
     cli.case_override
-  elseif !isempty(cfg.matpower.case)
-    cfg.matpower.case
+  elseif !isempty(cfg.runtime.case)
+    cfg.runtime.case
   else
     throw(ArgumentError("No MATPOWER case provided. Pass a casefile as first positional argument or set `matpower.case` in configuration."))
   end

@@ -17,8 +17,12 @@
 # DC power-flow per-island orchestration and Net write-back.
 # Mirrors _run_apslf_powerflow! (src/acpflow/apslf_execution.jl)'s shape:
 # detect_ac_islands -> per island _prepare_island_net/solve/_sync_island_solution!
-# -> failure aggregation. Parallel-link merge handling (_merged_pf_net, used by
-# the AC/APSLF paths) is out of scope for this first iteration.
+# -> failure aggregation, INCLUDING the closed-link contraction
+# (_merged_pf_net) the AC/APSLF paths use: without it the DC graph treats
+# the two sections of one closed busbar coupler as separate nodes, which
+# either splits off a false reference-less island (warmup_casePST) or
+# silently solves the sections at different angles (found 2026-09-04:
+# 13.6 deg across the closed sp_case188 coupler).
 
 # file: src/powerflow_dc/dc_network_solver.jl
 # purpose: DC power-flow per-island orchestration: island preparation and
@@ -73,10 +77,12 @@ _dc_island_local_slack(inet::Net)::Int = something(findfirst(n -> getNodeType(n)
     _run_dc_powerflow!(net::Net, pf_cfg::PowerFlowConfig; verbose=0, performance_profile=nothing) -> (iterations::Int, erg::Int)
 
 Solve `net`'s DC power flow (`power_flow.solver = :dc`), respecting
-`power_flow.islands`: each AC island (`detect_ac_islands`, reused unmodified)
-is solved independently via [`solve_dc_powerflow`](@ref) with its own
-`matpower_like` reference bus, and the result is written back via
-[`_write_dc_solution!`](@ref) + `_sync_island_solution!` (reused unmodified).
+`power_flow.islands`: closed busbar couplers are contracted first
+(`_merged_pf_net`, same as the AC/APSLF paths, solution mirrored back onto
+the caller's net), then each AC island (`detect_ac_islands`, reused
+unmodified) is solved independently via [`solve_dc_powerflow`](@ref) with
+its own `matpower_like` reference bus, and the result is written back via
+`_write_dc_solution!` + `_sync_island_solution!` (reused unmodified).
 Sets [`dc_pf_status`](@ref) on `net`. `iterations` is always `1` (a direct
 linear solve, not an iterative process); `erg == 0` means every island
 solved (a linear solve either succeeds or throws — there is no partial
@@ -84,15 +90,42 @@ convergence state to report).
 """
 function _run_dc_powerflow!(net::Net, pf_cfg::PowerFlowConfig; verbose::Int = 0, performance_profile = nothing)::Tuple{Int,Int}
   refreshBusTypesFromProsumers!(net)
+  # closed busbar couplers are contracted exactly like the AC/APSLF paths
+  # do it (the merged working net aggregates the members' injections onto
+  # the representative); the solution is mirrored back below. On the
+  # merge-free common case _merged_pf_net hands back `net` itself.
+  wnet, reps, has_merges = _merged_pf_net(net)
   angle_reference_rad = deg2rad(pf_cfg.dc.angle_reference_deg)
-  island_report = detect_ac_islands(net)
+  island_report = detect_ac_islands(wnet)
   multi_island = length(island_report.rows) > 1 && any(row -> row.n_branch > 0, island_report.rows)
 
+  # every cluster member takes its representative's solved state; the
+  # branch flows travel by index (the merge rewires endpoints, it never
+  # reorders the branch vector). Only the real slack node carries the
+  # solved slack injection.
+  sync_merges_back! = () -> begin
+    for i in eachindex(net.nodeVec)
+      src = wnet.nodeVec[reps[i]]
+      net.nodeVec[i]._vm_pu = src._vm_pu
+      net.nodeVec[i]._va_deg = src._va_deg
+      getNodeType(net.nodeVec[i]) == Slack && (net.nodeVec[i]._pƩGen = src._pƩGen)
+    end
+    for i in eachindex(net.branchVec)
+      src = wnet.branchVec[i]
+      dst = net.branchVec[i]
+      dst.fBranchFlow = src.fBranchFlow
+      dst.tBranchFlow = src.tBranchFlow
+      dst.pLosses = src.pLosses
+      dst.qLosses = src.qLosses
+    end
+  end
+
   if !multi_island
-    slack_idx = _dc_island_local_slack(net)
+    slack_idx = _dc_island_local_slack(wnet)
     slack_idx == 0 && error("DC power flow requires a Slack/REF bus; none found.")
-    theta, Pf, Pt, slack_p_mw, terms = solve_dc_powerflow(net, slack_idx; angle_reference_rad, performance_profile)
-    _write_dc_solution!(net, slack_idx, theta, Pf, Pt, slack_p_mw, terms)
+    theta, Pf, Pt, slack_p_mw, terms = solve_dc_powerflow(wnet, slack_idx; angle_reference_rad, performance_profile)
+    _write_dc_solution!(wnet, slack_idx, theta, Pf, Pt, slack_p_mw, terms)
+    has_merges && sync_merges_back!()
     _set_dc_pf_status!(net, _dc_pf_status(true, 1))
     verbose > 0 && println("DC power flow solved: 1 island, ", length(terms), " branches, slack bus ", slack_idx, ", slack injection = ", round(slack_p_mw; digits = 4), " MW")
     return 1, 0
@@ -115,14 +148,14 @@ function _run_dc_powerflow!(net::Net, pf_cfg::PowerFlowConfig; verbose::Int = 0,
       continue
     end
     try
-      inet = _prepare_island_net(net, row)
+      inet = _prepare_island_net(wnet, row)
       slack_idx = _dc_island_local_slack(inet)
       slack_idx == 0 && error("AC island $(row.island_id) has no Slack/REF bus after preparation.")
       theta, Pf, Pt, slack_p_mw, terms = solve_dc_powerflow(inet, slack_idx; angle_reference_rad, performance_profile)
       _write_dc_solution!(inet, slack_idx, theta, Pf, Pt, slack_p_mw, terms)
       success = _dc_pf_status(true, 1; extra = (island_id = row.island_id,))
       island_statuses[Int(row.island_id)] = success
-      _sync_island_solution!(net, inet, row)
+      _sync_island_solution!(wnet, inet, row)
     catch err
       frames = stacktrace(catch_backtrace())
       top = isempty(frames) ? "" : sprint(show, first(frames))
@@ -139,6 +172,7 @@ function _run_dc_powerflow!(net::Net, pf_cfg::PowerFlowConfig; verbose::Int = 0,
     throw(ErrorException(island_message === nothing ? sprint(showerror, first_failure) : island_message))
   end
 
+  has_merges && sync_merges_back!()
   aggregate = _dc_pf_status(true, 1; extra = (reason_text = "All AC islands solved independently.", island_wise_all_converged = true, stage = :island_wise_complete))
   _set_dc_pf_status!(net, aggregate)
   performance_profile isa AbstractDict && (performance_profile[:island_wise_all_converged] = true)

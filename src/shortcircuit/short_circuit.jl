@@ -72,112 +72,13 @@ end
 # below that (HV machines), 0.15·x''d for LV machines.
 _sc_generator_resistance(x_pu::Float64, ratedS_MVA::Float64, ratedU_kV::Float64)::Float64 = (ratedU_kV > 1.0 ? (ratedS_MVA >= 100.0 ? 0.05 : 0.07) : 0.15) * x_pu
 
-"""
-    _takahashi_diag(F) -> (diagZ::Vector{ComplexF64}, ok::Bool, info::String)
-
-Compute the full diagonal of `inv(A)` from the UMFPACK factorization `F`
-of `A` via the Takahashi/Erisman-Tinney selected-inverse recurrences on
-the filled factor pattern: one backward pass over `nnz(L) + nnz(U)`
-entries instead of one triangular solve per bus, the algorithmic
-alternative for all-bus short-circuit sweeps (measured 34x to 264x over
-the serial sweep between n = 2000 and n = 16000, agreeing with direct
-solves to about 1e-15 relative).
-
-Applicability guard: requires the symmetric pivot ordering (`F.p == F.q`)
-that UMFPACK's symmetric strategy picks on the structurally symmetric
-`Ysc`; with an unsymmetric ordering the original-diagonal positions leave
-the factor pattern. Returns `ok = false` with the reason in `info` in that
-case (or on a pattern-closure violation, counted defensively); callers
-must fall back to per-bus solves.
-"""
-function _takahashi_diag(F)
-  p = F.p
-  q = F.q
-  p == q || return (ComplexF64[], false, "unsymmetric pivot ordering (p != q)")
-  L = F.L
-  U = F.U
-  Rs = F.Rs
-  n = size(L, 1)
-  dU = Vector{ComplexF64}(undef, n)
-  for j in 1:n
-    dU[j] = U[j, j]
-  end
-  any(iszero, dU) && return (ComplexF64[], false, "zero pivot in U")
-  all(isone, diag(L)) || return (ComplexF64[], false, "L is not unit-lower")
-
-  # row access of U and L via their CSC transposes (column i = row i)
-  Ut = SparseMatrixCSC(transpose(U))
-  Lt = SparseMatrixCSC(transpose(L))
-  Utc = Ut.colptr
-  Utr = Ut.rowval
-  Utv = Ut.nzval
-  Lp = L.colptr
-  Lr = L.rowval
-  Lv = L.nzval
-  Ltc = Lt.colptr
-  Ltr = Lt.rowval
-
-  # Z entries live on the pattern of (L + U)^T; per Erisman-Tinney the
-  # recurrences restricted to that (filled) pattern are self-contained
-  Z = Dict{Tuple{Int,Int},ComplexF64}()
-  sizehint!(Z, nnz(L) + nnz(U))
-  misses = 0
-  uppers = Int[]
-  for j in n:-1:1
-    # lower entries of column j (positions i > j with U[j, i] != 0):
-    # Z[i, j] = -sum_{k > j} Z[i, k] * L[k, j]
-    for t in Utc[j]:(Utc[j+1]-1)
-      i = Utr[t]
-      i > j || continue
-      acc = zero(ComplexF64)
-      for s2 in Lp[j]:(Lp[j+1]-1)
-        k = Lr[s2]
-        k > j || continue
-        z = get(Z, (i, k), nothing)
-        z === nothing ? (misses += 1) : (acc += z * Lv[s2])
-      end
-      Z[(i, j)] = -acc
-    end
-    # diagonal: Z[j, j] = 1/d_j - sum_{k > j} (U[j, k]/d_j) * Z[k, j]
-    accd = zero(ComplexF64)
-    for t in Utc[j]:(Utc[j+1]-1)
-      k = Utr[t]
-      k > j || continue
-      z = get(Z, (k, j), nothing)
-      z === nothing ? (misses += 1) : (accd += (Utv[t] / dU[j]) * z)
-    end
-    Z[(j, j)] = inv(dU[j]) - accd
-    # upper entries of column j (positions i < j with L[j, i] != 0),
-    # descending i: Z[i, j] = -sum_{k > i} (U[i, k]/d_i) * Z[k, j]
-    empty!(uppers)
-    for t in Ltc[j]:(Ltc[j+1]-1)
-      Ltr[t] < j && push!(uppers, Ltr[t])
-    end
-    sort!(uppers; rev = true)
-    for i in uppers
-      acc = zero(ComplexF64)
-      for t in Utc[i]:(Utc[i+1]-1)
-        k = Utr[t]
-        k > i || continue
-        z = get(Z, (k, j), nothing)
-        z === nothing ? (misses += 1) : (acc += (Utv[t] / dU[i]) * z)
-      end
-      Z[(i, j)] = -acc
-    end
-  end
-  misses == 0 || return (ComplexF64[], false, "pattern closure violated at $(misses) lookups")
-
-  # map back: with L*U == (Rs .* A)[p, q] and p == q,
-  # inv(A)[i, i] = Rs[i] * Z[r, r] at r = pinv[i]
-  pinv = invperm(p)
-  diagZ = Vector{ComplexF64}(undef, n)
-  for i in 1:n
-    z = get(Z, (pinv[i], pinv[i]), nothing)
-    z === nothing && return (ComplexF64[], false, "diagonal position missing from pattern")
-    diagZ[i] = Rs[i] * z
-  end
-  return (diagZ, true, "ok")
-end
+# The Takahashi/Erisman-Tinney recursion moved to the shared module
+# src/takahashi.jl (the SE diagnostics reuse the identical backward pass
+# for the selected inverse). This alias keeps every short-circuit call
+# site and its behavior bitwise unchanged; see `takahashi_diag` for the
+# full docstring including the applicability guards and the measured
+# 34x to 264x speedup over the serial sweep.
+const _takahashi_diag = takahashi_diag
 
 # One source-admittance table for the whole net: bus index → added shunt
 # admittance (pu on `base_mva`), plus per-bus and per-island safety-flag
@@ -367,7 +268,7 @@ end
 # and shunt compensators are dropped), source admittances on the diagonal.
 # Reuses the equivalent-circuit helpers (calcBranchYser/calcBranchRatio)
 # instead of re-implementing the branch model; deliberately NOT a patched
-# createYBUS — the PF assembly stays untouched (task scope) and the
+# createYBUS — the PF assembly stays untouched by design and the
 # series-only variant needs no sparsity bookkeeping beyond this COO loop.
 function _sc_island_matrix(net::Net, island_buses::Vector{Int}, y_add::Dict{Int,ComplexF64})
   local_index = Dict{Int,Int}(bus => i for (i, bus) in enumerate(island_buses))
@@ -455,13 +356,18 @@ keywords `parallel_enabled`, `parallel_max_tasks`, and
 configuration (`nothing` = use the configured values); with one Julia
 thread or below `min_work_items` fault buses the sweep runs serially.
 
-`sweep_method = :takahashi` (opt-in; default `:solves`) computes all
-Thevenin impedances of an island in ONE selected-inverse pass over the
-factorization instead of one triangular solve per bus
-([`_takahashi_diag`](@ref); measured 34x to 264x over the serial sweep,
+`sweep_method` selects the all-bus Thevenin sweep strategy. `:takahashi`
+computes all Thevenin impedances of an island in ONE selected-inverse
+pass over the factorization instead of one triangular solve per bus
+([`takahashi_diag`](@ref); measured 34x to 264x over the serial sweep,
 growing with island size). Values agree with `:solves` to machine
 precision but not bitwise; islands where the method does not apply
-(unsymmetric pivot ordering) automatically fall back to solves.
+(unsymmetric pivot ordering) automatically fall back to solves. The
+default `:auto` uses Takahashi for islands with at least
+`takahashi_min_buses` buses and plain solves below (the pass overhead
+only pays off from a certain island size); `:solves` forces the per-bus
+solves everywhere. The service and Web UI paths take both settings from
+`short_circuit.sweep_method` / `short_circuit.takahashi_min_buses`.
 """
 function runShortCircuit!(
   net::Net,
@@ -472,10 +378,12 @@ function runShortCircuit!(
   parallel_enabled::Union{Nothing,Bool} = nothing,
   parallel_max_tasks::Union{Nothing,Int} = nothing,
   parallel_min_work_items::Union{Nothing,Int} = nothing,
-  sweep_method::Symbol = :solves,
+  sweep_method::Symbol = :auto,
+  takahashi_min_buses::Int = 50,
 )::ShortCircuitResult
   case in (:max, :min) || throw(ArgumentError("runShortCircuit!: case must be :max or :min; got $(case)."))
-  sweep_method in (:solves, :takahashi) || throw(ArgumentError("runShortCircuit!: sweep_method must be :solves or :takahashi; got $(sweep_method)."))
+  sweep_method in (:auto, :solves, :takahashi) || throw(ArgumentError("runShortCircuit!: sweep_method must be :auto, :solves, or :takahashi; got $(sweep_method)."))
+  takahashi_min_buses >= 1 || throw(ArgumentError("runShortCircuit!: takahashi_min_buses must be at least 1; got $(takahashi_min_buses)."))
   c_override = Float64(c_factor)
   (c_override == 0.0 || (isfinite(c_override) && 0.5 <= c_override <= 1.2)) || throw(ArgumentError("runShortCircuit!: c_factor must be 0 (automatic Table 1) or within [0.5, 1.2]; got $(c_factor)."))
 
@@ -531,9 +439,13 @@ function runShortCircuit!(
   # symmetric Ysc). Islands where it does not apply fall back to solves;
   # values agree with :solves to machine precision, not bitwise.
   island_diag = Dict{Int,Vector{ComplexF64}}()
-  if sweep_method === :takahashi
+  if sweep_method !== :solves
+    # :auto gates the pass per island: below takahashi_min_buses the
+    # per-bus solves are cheaper than the selected-inverse setup
+    island_sizes = Dict{Int,Int}(comp.island_id => length(comp.buses) for comp in components)
     for (island, sol) in island_solutions
       sol.factor === nothing && continue
+      sweep_method === :auto && get(island_sizes, island, 0) < takahashi_min_buses && continue
       diagZ, ok, _ = _takahashi_diag(sol.factor)
       ok && (island_diag[island] = diagZ)
     end
@@ -626,6 +538,10 @@ function runShortCircuit!(
         local task_solution_for = island -> get(chunk_solutions[ci], island, nothing)
         local task_workspace_for = make_workspace_for()
         for idx in chunks[ci]
+          # an all-bus sweep is the longest short-circuit run there is, so it
+          # has to be interruptible; the token is process-wide, so it is
+          # visible inside this spawned task
+          sparlectra_check_abort()
           row_slots[idx] = compute_row(fault_buses[idx], task_solution_for, task_workspace_for)
         end
       end for ci in eachindex(chunks)
@@ -635,13 +551,15 @@ function runShortCircuit!(
   else
     shared_solution_for = island -> get(island_solutions, island, nothing)
     workspace_for = make_workspace_for()
-    rows = NamedTuple[compute_row(bus, shared_solution_for, workspace_for) for bus in fault_buses]
+    rows = NamedTuple[(sparlectra_check_abort(); compute_row(bus, shared_solution_for, workspace_for)) for bus in fault_buses]
   end
 
   return ShortCircuitResult(case, net.baseMVA, c_override, rows, messages)
 end
 
-runShortCircuit!(result::CGMESImporter.CGMESImportResult; kwargs...) = runShortCircuit!(result.net, result.shortcircuit; kwargs...)
+# the CGMES-result convenience overload lives in the adapters block
+# (src/adapters/cgmes_glue.jl): it dispatches on an adapter type, and the
+# core block must not reference adapter types at definition time (stage 5)
 
 # Native-data convenience (issue #299): run on the net's own sc_sources
 # (filled by addExternalGrid!). An entirely empty container already yields

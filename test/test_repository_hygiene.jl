@@ -14,7 +14,9 @@
 
 # file: test/test_repository_hygiene.jl
 # purpose: scans tracked source, docs, test, and example files for forbidden
-#          terminology tokens and fails with a bounded hit report
+#          terminology tokens and fails with a bounded hit report; also
+#          asserts that every src/ Julia file is listed on exactly one
+#          reference page or on the explicit exclusion list below
 using Test
 using Unicode
 
@@ -75,6 +77,65 @@ function _bounded_hygiene_failure(hits::Vector{String}; limit::Int = 20)::String
   return sizeof(msg) > 16 * 1024 ? String(take!(IOBuffer(codeunits(msg)[1:16 * 1024]))) : msg
 end
 
+# Source files that deliberately appear on no reference page: the Web UI
+# server and the build tools have no pages of their own; their exported entry
+# points render on reference_api.md (Application entry points section).
+const _REFERENCE_PAGE_EXCLUDED_SRC = Set([
+  "src/build/precompile.jl",
+  "src/build/sysimage_builder.jl",
+  "src/webui/docs.jl",
+  "src/webui/forms.jl",
+  "src/webui/handlers.jl",
+  "src/webui/operations.jl",
+  "src/webui/options.jl",
+  "src/webui/routes.jl",
+  "src/webui/sysimage.jl",
+  "src/webui/views.jl",
+  "src/webui/webui.jl",
+])
+
+# Collect every src/ file named in a reference page Pages list, mapped to the
+# pages naming it. A page lists each file twice (Public API and Internals
+# blocks share one Pages list), so pages are deduplicated per file.
+function _reference_page_src_entries(repo::AbstractString)::Dict{String,Vector{String}}
+  docsdir = joinpath(repo, "docs", "src")
+  out = Dict{String,Vector{String}}()
+  for name in sort!(filter(n -> startswith(n, "reference_") && endswith(n, ".md"), readdir(docsdir)))
+    for m in eachmatch(r"^\s*\"(src/[^\"]+\.jl)\",$"m, read(joinpath(docsdir, name), String))
+      pages = get!(out, String(m.captures[1]), String[])
+      name in pages || push!(pages, name)
+    end
+  end
+  return out
+end
+
+# Every tracked src/ Julia file must be on exactly one reference page or on
+# the exclusion list; stale Pages entries and stale exclusions fail too, so
+# a moved or deleted file cannot silently keep a dead reference.
+function _reference_page_coverage_violations(repo::AbstractString)::Vector{String}
+  entries = _reference_page_src_entries(repo)
+  tracked = filter(f -> endswith(f, ".jl"), split(chomp(read(`git -C $repo ls-files src`, String)), "\n"))
+  violations = String[]
+  for rel in tracked
+    listed = get(entries, rel, String[])
+    excluded = rel in _REFERENCE_PAGE_EXCLUDED_SRC
+    if excluded && !isempty(listed)
+      push!(violations, "$(rel): excluded from reference pages but listed on $(join(listed, ", "))")
+    elseif !excluded && isempty(listed)
+      push!(violations, "$(rel): on no reference page and not on the exclusion list")
+    elseif length(listed) > 1
+      push!(violations, "$(rel): listed on more than one reference page ($(join(listed, ", ")))")
+    end
+  end
+  for rel in sort!(collect(keys(entries)))
+    rel in tracked || push!(violations, "$(rel): reference page entry has no tracked source file")
+  end
+  for rel in sort!(collect(_REFERENCE_PAGE_EXCLUDED_SRC))
+    rel in tracked || push!(violations, "$(rel): exclusion list entry has no tracked source file")
+  end
+  return violations
+end
+
 function run_repository_hygiene_tests()
   @testset "repository hygiene" begin
     repo = _repository_root()
@@ -87,7 +148,9 @@ function run_repository_hygiene_tests()
     for rel in _tracked_hygiene_files(repo)
       rel == "test/test_repository_hygiene.jl" && continue
       normalized_rel = _hygiene_normalize(replace(rel, '\\' => '/'))
-      text = _hygiene_normalize(read(joinpath(repo, rel), String))
+      # a tracked path can be absent from the worktree (staged rename or
+      # delete); an absent file has no content to scan, its path is checked
+      text = isfile(joinpath(repo, rel)) ? _hygiene_normalize(read(joinpath(repo, rel), String)) : ""
       for term in forbidden_terms
         occursin(term, normalized_rel) && push!(hits, "$(rel): path contains forbidden token")
         occursin(term, text) && push!(hits, "$(rel): content contains forbidden token")
@@ -95,6 +158,34 @@ function run_repository_hygiene_tests()
     end
     if !isempty(hits)
       error(_bounded_hygiene_failure(hits))
+    end
+    coverage = _reference_page_coverage_violations(repo)
+    if !isempty(coverage)
+      error(join(["reference page coverage violated:"; coverage], "\n"))
+    end
+    # The maintainer's working repository carries further checks here that a
+    # published checkout has no subject for, the private-to-public boundary
+    # among them. They live in their own files, found by convention rather
+    # than by name, so this file never points at something a public reader
+    # cannot have. Their absence is STATED, not skipped quietly: a silent
+    # skip reads as a pass and hides a coverage gap, the defect class this
+    # repository removed twice in the week of 2026-09-06.
+    extra = sort(filter(f -> startswith(f, "private_") && endswith(f, ".jl"), readdir(@__DIR__)))
+    if isempty(extra)
+      # the word SKIPPED is load-bearing: the group runner surfaces exactly
+      # those lines through its output capture, so the absence reaches the
+      # report instead of being swallowed
+      println("      SKIPPED maintainer-only repository checks: none present in this checkout. ",
+              "They verify the private-to-public boundary, which has no subject in a published ",
+              "tree, so nothing beyond the checks above was verified here.")
+    else
+      for f in extra
+        include(joinpath(@__DIR__, f))
+      end
+      # Base.invokelatest: the include above defines the function in a NEWER
+      # world than this frame, so a direct call raises "the applicable method
+      # may be too new" on Julia 1.12
+      @test Base.invokelatest(run_private_boundary_check, repo) == true
     end
     @test true
   end

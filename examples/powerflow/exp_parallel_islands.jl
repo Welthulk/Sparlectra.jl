@@ -23,7 +23,7 @@
 
 using Sparlectra
 
-include(joinpath(@__DIR__, "..", "internal", "example_header.jl"))
+include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
 # One island = a meshed ring of `m` buses fed by one grid connection, with
 # distributed loads. `n` disconnected copies form the multi-island net; the

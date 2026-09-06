@@ -72,8 +72,11 @@ end
 end
 
 # Emitter replaying the recorded emit order into an existing CSC's nzval
-# (in-place refresh path). `overflow` flags an emit count beyond the recorded
-# position map; the caller then falls back to a structural rebuild.
+# (in-place refresh path). Only the emit ORDER matters here: the coordinates
+# are part of the shared emitter interface but the recorded position map
+# already fixes where each value lands. `overflow` flags an emit count
+# beyond the recorded position map; the caller then falls back to a
+# structural rebuild.
 mutable struct _JacobianPosMapEmitter
   nz::Vector{Float64}
   pos_map::Vector{Int}
@@ -81,7 +84,7 @@ mutable struct _JacobianPosMapEmitter
   overflow::Bool
 end
 
-@inline function (e::_JacobianPosMapEmitter)(row::Int, col::Int, val::Float64)
+@inline function (e::_JacobianPosMapEmitter)(_row::Int, _col::Int, val::Float64)
   k = e.k + 1
   e.k = k
   if k <= length(e.pos_map)
@@ -428,128 +431,6 @@ function _assemble_rectangular_jacobian!(
   return nothing
 end
 
-"""
-    build_rectangular_jacobian_pq_pv_dense(
-        Ybus, V, bus_types, Vset, slack_idx
-    ) -> J::Matrix{Float64}
-
-Build the analytic rectangular Jacobian for the mismatch vector `F(V)`
-defined in `mismatch_rectangular`.
-
-- State vector: x = [Vr(non-slack); Vi(non-slack)]
-- Rows: for each non-slack bus i
-    * PQ: [ΔP_i; ΔQ_i]
-    * PV: [ΔP_i; ΔV_i]  with ΔV_i = |V_i| - Vset[i]
-
-`bus_types` and `Vset` must be consistent with `mismatch_rectangular`.
-"""
-function build_rectangular_jacobian_pq_pv_dense(Ybus, V::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int; dPinj_dVm::Vector{Float64} = zeros(Float64, length(V)), dQinj_dVm::Vector{Float64} = zeros(Float64, length(V)), vm_eps::Float64 = 1e-9, dslack::Union{Nothing,DistributedSlackState} = nothing)
-  dslack === nothing || error("build_rectangular_jacobian_pq_pv_dense: distributed slack requires the sparse Jacobian path (power_flow.sparse = true).")
-  # Dense variant is primarily for diagnostics/parity checks; sparse is default path.
-  n = length(V)
-  @assert length(bus_types) == n
-  @assert length(Vset) == n
-  @assert length(dPinj_dVm) == n
-  @assert length(dQinj_dVm) == n
-
-  # --- 1) Wirtinger blocks for S(V) = V .* conj(Ybus * V)
-  J11, J12, J21, J22 = build_complex_jacobian(Ybus, V)
-
-  # --- 2) Full 2n×2n rectangular J for ΔP/ΔQ wrt Vr/Vi (all buses)
-  # Rows: [ΔP_1..ΔP_n; ΔQ_1..ΔQ_n]
-  # Cols: [Vr_1..Vr_n; Vi_1..Vi_n]
-  Jrect_full = zeros(Float64, 2n, 2n)
-
-  @inbounds for j = 1:n
-    col_sum  = J11[:, j] .+ J12[:, j]  # corresponds to dS/dVr_j
-    col_diff = J11[:, j] .- J12[:, j]  # used for dS/dVi_j
-
-    # dP/dVr_j, dQ/dVr_j
-    @views Jrect_full[1:n, j]      .= real.(col_sum)
-    @views Jrect_full[(n+1):2n, j] .= imag.(col_sum)
-
-    # dP/dVi_j, dQ/dVi_j
-    @views Jrect_full[1:n, n+j]      .= -imag.(col_diff)
-    @views Jrect_full[(n+1):2n, n+j] .= real.(col_diff)
-  end
-
-  # --- 3) Reduce to non-slack variables and rows matching mismatch_rectangular
-
-  non_slack = collect(1:n)
-  deleteat!(non_slack, slack_idx)
-
-  nvar = 2 * (n - 1)
-  m    = 2 * (n - 1)
-  @assert nvar == m
-
-  pos_map = build_pos_map(non_slack, n)
-
-  # Column indices in the full rectangular J that correspond to
-  # [Vr(non_slack); Vi(non_slack)]
-  col_idx_full = vcat(non_slack, n .+ non_slack)
-
-  J = zeros(Float64, m, nvar)
-
-  row = 1
-  @inbounds for i = 1:n
-    if i == slack_idx
-      continue
-    end
-
-    # First row for this bus: ΔP_i
-    rowP_full = i                  # P row index in full J
-    @views J[row, :] .= Jrect_full[rowP_full, col_idx_full]
-
-    # Second row: ΔQ_i (PQ) or ΔV_i (PV)
-    if bus_types[i] == :PQ
-      rowQ_full = n + i          # Q row index in full J
-      @views J[row+1, :] .= Jrect_full[rowQ_full, col_idx_full]
-
-    elseif bus_types[i] == :PV
-      # ΔV_i = |V_i| - Vset[i]
-      J[row+1, :] .= 0.0
-
-      pos = pos_map[i]
-      if pos != 0
-        vm = abs(V[i])
-        if vm > 0.0
-          dVr = real(V[i]) / vm
-          dVi = imag(V[i]) / vm
-
-          # Columns in reduced J:
-          #   Vr_i -> index pos
-          #   Vi_i -> index (n-1) + pos
-          J[row+1, pos]       = dVr
-          J[row+1, (n-1)+pos] = dVi
-        end
-      end
-    else
-      error("build_rectangular_jacobian_pq_pv: unsupported bus type $(bus_types[i]) at bus $i")
-    end
-
-    row += 2
-  end
-
-  for i in non_slack
-    rowP = 2 * pos_map[i] - 1
-    pos = pos_map[i]
-    vm = abs(V[i])
-    vm_safe = vm > vm_eps ? vm : vm_eps
-    dvm_dvr = real(V[i]) / vm_safe
-    dvm_dvi = imag(V[i]) / vm_safe
-
-    J[rowP, pos] -= dPinj_dVm[i] * dvm_dvr
-    J[rowP, (n-1)+pos] -= dPinj_dVm[i] * dvm_dvi
-
-    if bus_types[i] == :PQ
-      rowQ = rowP + 1
-      J[rowQ, pos] -= dQinj_dVm[i] * dvm_dvr
-      J[rowQ, (n-1)+pos] -= dQinj_dVm[i] * dvm_dvi
-    end
-  end
-
-  return J
-end
 
 """
     build_rectangular_jacobian_pq_pv(

@@ -48,7 +48,7 @@ The script runs two scenarios:
 
 using Sparlectra
 
-include(joinpath(@__DIR__, "..", "internal", "example_header.jl"))
+include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
 function build_link_demo_net(; link_closed::Bool)
   net = Net(name = link_closed ? "using_links_closed" : "using_links_open", baseMVA = 100.0)

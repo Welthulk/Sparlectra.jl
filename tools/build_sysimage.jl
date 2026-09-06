@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # file: tools/build_sysimage.jl
-# purpose: build the optional fast-start sysimage for the Web UI with
+# purpose: build the sysimage for the Web UI with
 #          PackageCompiler in the shared build environment
 #          @sparlectra-sysimage-build (the package Project.toml stays free
 #          of PackageCompiler). The image lands below the Web UI user root
@@ -21,6 +21,9 @@
 #          pick it up automatically. Run from the checkout:
 #          `julia tools/build_sysimage.jl` (a `--dry-run` flag prints the
 #          plan without building; the test suite uses it as a parse smoke).
+#          Library users call the same build through the exported
+#          Sparlectra.buildSysimage() one-liner, which runs this script in
+#          a child process.
 
 const _REPO_ROOT = normpath(joinpath(@__DIR__, ".."))
 const _BUILD_ENV = "sparlectra-sysimage-build"
@@ -54,25 +57,13 @@ function _prepare_build_env(pkgm::Module)::Bool
     _log("adding the released Sparlectra package")
     Base.invokelatest(pkgm.add, "Sparlectra")
   end
-  # When the user has AnalyticLoadFlow installed (APSLF solver), it must be
-  # part of the image: start_webui.jl loads it at startup, and loading a
-  # package AFTER the sysimage invalidates precompiled methods inside the
-  # image — the first run then silently recompiles them (measured 36 s
-  # instead of 1 s on case118). find_package sees the user's default
-  # environment through the load path, so this detects a plain
-  # `Pkg.add("AnalyticLoadFlow")` installation.
-  with_alf = Base.find_package("AnalyticLoadFlow") !== nothing
-  if with_alf
-    _log("AnalyticLoadFlow detected; baking it into the image as well")
-    try
-      Base.invokelatest(pkgm.add, "AnalyticLoadFlow")
-    catch err
-      _log("could not add AnalyticLoadFlow to the build environment ($(sprint(showerror, err))); building without it — the first run after start will recompile invalidated methods")
-      with_alf = false
-    end
-  end
+  # AnalyticLoadFlow (the APSLF solver) is a REQUIRED dependency, so resolving
+  # Sparlectra brings it into the build environment and the image contains it.
+  # That matters beyond convenience: loading a package AFTER the sysimage
+  # invalidates precompiled methods inside the image, and the first run then
+  # silently recompiles them (measured 36 s instead of 1 s on case118).
   Base.invokelatest(pkgm.instantiate)
-  return with_alf
+  return true
 end
 
 function main()
@@ -99,7 +90,7 @@ function main()
 
   @eval using Pkg
   pkgm = Base.invokelatest(getfield, @__MODULE__, :Pkg)
-  with_alf = _prepare_build_env(pkgm)
+  _prepare_build_env(pkgm)
   @eval using PackageCompiler
   @eval using Sparlectra
   # same world-age pattern as above: both modules were loaded inside this
@@ -112,12 +103,14 @@ function main()
   manifest = Base.invokelatest(getglobal(spar, :webui_sysimage_manifest_path))
   mkpath(dirname(img))
 
-  # pre-fetch the workload cases so the child process never needs the
-  # network: case14.m for the power-flow service run, the MiniGrid CGMES
-  # delivery for the short-circuit service run. A failed MiniGrid fetch
-  # only costs that trace (the workload logs the gap), never the build.
-  _log("ensuring case14.m is cached for the workload")
-  Base.invokelatest(getglobal(spar, :ensure_casefile), "case14.m")
+  # The MATPOWER, SCF and DTF traces run on TRACKED cases (data/mpower,
+  # data/scf, data/DTF), so the build needs no network for them. It used to
+  # fetch case14.m here, which is not shipped: on a fresh checkout that made
+  # the build depend on a download, and on this machine it only worked
+  # because an older run had left the file in the cache.
+  # The MiniGrid CGMES delivery is the one exception, because a CGMES
+  # delivery cannot be assembled from the raw model directories; a failed
+  # fetch only costs that trace (the workload logs the gap), never the build.
   case_cache = Base.invokelatest(getglobal(spar, :default_webui_case_cache_dir))
   if !isfile(joinpath(case_cache, "cgmes_minigrid.zip"))
     _log("fetching the MiniGrid CGMES delivery for the short-circuit workload")
@@ -129,7 +122,9 @@ function main()
     end
   end
 
-  packages = with_alf ? ["Sparlectra", "AnalyticLoadFlow"] : ["Sparlectra"]
+  # both are baked in: AnalyticLoadFlow is a required dependency, and a
+  # package loaded after the image would invalidate its precompiled methods
+  packages = ["Sparlectra", "AnalyticLoadFlow"]
   workload = joinpath(@__DIR__, "sysimage_workload.jl")
   _log("building sysimage (this typically takes 10 to 20 minutes)...")
   _log("target: $(img)")

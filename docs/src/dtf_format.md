@@ -33,7 +33,7 @@ The size card gives the expected counts for buses, branches, compensation record
 
 Branch cards describe lines and transformers. The card kind identifies transformer records with `T`; other branch records are treated as AC lines. The branch voltage-level index controls R/X/G/B per-unit conversion. Transformer transverse conductance and susceptance are represented by the native PI branch fields `g_pu` and `b_pu`; the resulting `G/2` arms are internal branch shunt arms, not separate node shunts.
 
-With `transformer.tap_changer_model = impedance_correction` (see [Transformer
+With `model.tap_changer_model = impedance_correction` (see [Transformer
 tap-changer model](configuration.md#transformer-tap-changer-model)), the
 `tap_fraction`/`skew_angle_deg` values derived from the DTF
 transformer-control cards are additionally folded into the transformer series

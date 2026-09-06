@@ -144,28 +144,21 @@ to avoid global display side effects.
 
 `ApslfSolver` is a built-in `AbstractExternalSolver` implementation that bridges
 to [AnalyticLoadFlow.jl](https://github.com/Welthulk/AnalyticLoadFlow.jl), an
-analytic power-series (holomorphic-embedding-style) load-flow solver. It ships
-as a Julia [package extension](https://pkgdocs.julialang.org/v1/creating-packages/#Conditional-loading-of-code-in-packages-(extensions))
-in `ext/SparlectraAnalyticLoadFlowExt.jl`: AnalyticLoadFlow.jl is only a
-**weak dependency** of Sparlectra, so it never gets installed for users who
-don't need it. The adapter, its config keys, and the framework wiring only
-become active once the host session loads both packages:
+analytic power-series (holomorphic-embedding-style) load-flow solver. It lives
+in `src/acpflow/apslf_solver.jl`, and AnalyticLoadFlow.jl is a **required dependency**
+of Sparlectra since 0.10.0, so the solver is always there:
 
 ```julia
-using Sparlectra
-using AnalyticLoadFlow   # activates ext/SparlectraAnalyticLoadFlowExt.jl
+using Sparlectra                 # AnalyticLoadFlow comes with it
+
+solver = apslf_solver(order = 40, use_pade = true, nr_polish = true)
 ```
 
-### Constructing a solver
-
-```julia
-solver = apslf_solver(; order = 40, use_pade = true, nr_polish = true, mode = :direct)
-```
-
-`apslf_solver` is the public reachability point in the base package: if
-AnalyticLoadFlow.jl is not loaded, it raises a clear error
-(`"AnalyticLoadFlow.jl nicht installiert — ..."`) instead of silently doing
-nothing or falling back to another solver.
+Up to 0.10.0 it was a weak dependency behind a package extension: a session
+had to `using AnalyticLoadFlow` itself, and the constructor raised a
+"not installed" error otherwise. Nothing has to be loaded any more, and the
+`:apslf` stages of the contingency rescue ladder and the automatic
+power-flow mode are always available instead of being skipped.
 
 - `order::Int` — highest power-series coefficient to compute.
 - `use_pade::Bool` — evaluate the voltage series via Padé `[L/M]` approximants

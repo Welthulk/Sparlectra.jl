@@ -123,7 +123,7 @@ function run_external_grid_tests()
 
     @testset "min case and R/X flag semantics" begin
       # With sk_min: the :min case uses it; rx_min defaults to rx_max
-      # (task decision) so the deliberately declared minimum is NOT flagged.
+      # by design so the deliberately declared minimum is NOT flagged.
       net = Net(name = "sc_min", baseMVA = 100.0)
       addBus!(net = net, busName = "B1", vn_kV = 110.0)
       addExternalGrid!(net = net, busName = "B1", sk_max_MVA = 3000.0, sk_min_MVA = 1500.0, rx_max = 0.2)

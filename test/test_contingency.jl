@@ -15,7 +15,7 @@
 # file: test/test_contingency.jl
 # purpose: N-1 contingency batch API (multi-core Phase 4): case generation
 #          (all branches, transformer filter, FOR001 mapping), serial vs
-#          parallel result equality on case14, islanding-without-reference
+#          parallel result equality on the shipped sp_case14 (load_fixture_net), islanding-without-reference
 #          and non-convergence reported (not thrown), base net immutability,
 #          table printer and CSV writer.
 
@@ -26,15 +26,16 @@ _contingency_results_equal(a::ContingencyResult, b::ContingencyResult) = all(ise
 
 function run_contingency_tests()
   @testset "N-1 contingency batch (Phase 4)" begin
-    case14 = joinpath(Sparlectra.MPOWER_DIR, "case14.m")
+    # load_fixture_net: the service legs run on the shipped SCF case
+    service_case = abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json"))
 
     @testset "case generation" begin
-      net = createNetFromMatPowerFile(filename = case14)
+      net = load_fixture_net("sp_case14")
       cases = generateN1Branches(net)
       @test length(cases) == length(net.branchVec)
       @test all(c.kind === :branch for c in cases)
       lines_only = generateN1Branches(net; include_transformers = false)
-      @test length(lines_only) == 17   # case14: 17 lines, 3 transformers
+      @test length(lines_only) == 15   # sp_case14: 15 lines, 2 transformers
       @test_throws ArgumentError ContingencyCase("x", :bus, "x")
 
       empty!(net.for001Contingencies)
@@ -105,14 +106,16 @@ function run_contingency_tests()
       @test_throws ArgumentError ContingencyCase("x", :branch, "x", -1.0)
     end
 
-    @testset "case14 full N-1: serial and parallel identical" begin
-      net = createNetFromMatPowerFile(filename = case14)
+    @testset "sp_case14 full N-1: serial and parallel identical" begin
+      net = load_fixture_net("sp_case14")
       before_branches = length(net.branchVec)
       before_vm = [n._vm_pu for n in net.nodeVec]
       cases = generateN1Branches(net)
       serial = runContingencies!(net, cases; parallel_enabled = false)
       @test length(serial) == length(cases)
-      @test count(r -> r.converged, serial) >= length(cases) - 1
+      # sp_case14 islands its load-only feeder on three N-1 outages by
+      # design (the demo fixture pins 14 of 17 converged)
+      @test count(r -> r.converged, serial) >= length(cases) - 3
       for max_tasks in (1, Threads.nthreads())
         par = runContingencies!(net, cases; parallel_enabled = true, parallel_max_tasks = max_tasks, parallel_min_work_items = 2)
         @test all(_contingency_results_equal(serial[i], par[i]) for i in eachindex(serial))
@@ -199,7 +202,7 @@ function run_contingency_tests()
     end
 
     @testset "printer and CSV writer" begin
-      net = createNetFromMatPowerFile(filename = case14)
+      net = load_fixture_net("sp_case14")
       cases = generateN1Branches(net)[1:5]
       results = runContingencies!(net, cases; parallel_enabled = false)
       txt = sprint(io -> printContingencyResults(io, results; max_rows = 3))
@@ -214,7 +217,7 @@ function run_contingency_tests()
     end
 
     @testset "case weights (#331 Phase 2)" begin
-      net = createNetFromMatPowerFile(filename = case14)
+      net = load_fixture_net("sp_case14")
       cases = generateN1Branches(net)[1:5]
 
       # applyContingencyWeights: looked up by name, default for unlisted names
@@ -268,10 +271,11 @@ function run_contingency_tests()
     end
 
     @testset "generator outages (#331 Phase 3)" begin
-      net = createNetFromMatPowerFile(filename = case14)
+      net = load_fixture_net("sp_case14")
       gcases = generateN1Generators(net)
-      # case14 has 5 generators; every case is kind = :gen
-      @test length(gcases) == 5
+      # sp_case14 has 3 generator-type units (external grid plus two
+      # machines); every case is kind = :gen
+      @test length(gcases) == 3
       @test all(c -> c.kind === :gen, gcases)
       # generator names are not unique, so they are disambiguated by index
       @test all(c -> occursin("#", c.element), gcases)
@@ -281,17 +285,17 @@ function run_contingency_tests()
       @test length(generateN1Generators(net; name_pattern = r"NoSuchGen")) == 0
 
       # a generator outage removes only that unit; the slack picks up the loss.
-      # Removing case14's single slack leaves the net reference-less (reported,
+      # Removing sp_case14's single slack leaves the net reference-less (reported,
       # not thrown); auto_slack promotes the strongest survivor so all solve.
       res = runContingencies!(net, gcases; parallel_enabled = false)
-      @test count(r -> r.converged, res) == 4
+      @test count(r -> r.converged, res) == 2
       @test any(r -> !r.converged && occursin("no slack bus", r.error), res)
       res_auto = runContingencies!(net, gcases; parallel_enabled = false, auto_slack = true)
-      @test count(r -> r.converged, res_auto) == 5
+      @test count(r -> r.converged, res_auto) == 3
 
       # distributed slack flows through as a keyword; the batch still solves
       res_ds = runContingencies!(net, gcases; parallel_enabled = false, auto_slack = true, distributed_slack_enabled = true)
-      @test count(r -> r.converged, res_ds) == 5
+      @test count(r -> r.converged, res_ds) == 3
 
       # serial vs parallel identity holds for generator cases too
       gs = runContingencies!(net, gcases; parallel_enabled = false)
@@ -413,7 +417,7 @@ function run_contingency_tests()
       for kind in ("branch", "gen")
         od = joinpath(root, "ct_$(kind)")
         res = redirect_stdout(devnull) do
-          Sparlectra._run_contingency_service(case14, cfg, od, "ct_$(kind)", kind)
+          Sparlectra._run_contingency_service(service_case, cfg, od, "ct_$(kind)", kind)
         end
         d = Sparlectra.to_dict(res)
         dicts[kind] = d
@@ -428,7 +432,7 @@ function run_contingency_tests()
         @test md["run_status"] == "completed"
         @test Sparlectra._webui_contingency_summary(d) !== nothing
       end
-      # a generator outage on case14 removes the only slack: reported (not thrown),
+      # a generator outage on sp_case14 removes the only slack: reported (not thrown),
       # counted as no_slack, and named in the summary badge so it does not read
       # as a tool failure
       @test dicts["gen"]["metadata"]["contingency_no_slack"] >= 1
@@ -437,7 +441,7 @@ function run_contingency_tests()
       @test Sparlectra._webui_contingency_summary(Dict("metadata" => Dict("run_mode" => "powerflow"))) === nothing
       # invalid kind is rejected, not thrown
       bad = redirect_stdout(devnull) do
-        Sparlectra._run_contingency_service(case14, cfg, joinpath(root, "ct_bad"), "ct_bad", "nonsense")
+        Sparlectra._run_contingency_service(service_case, cfg, joinpath(root, "ct_bad"), "ct_bad", "nonsense")
       end
       @test Sparlectra.to_dict(bad)["status"] == "failed"
       @test Sparlectra.to_dict(bad)["reason"] == "invalid_request"
@@ -446,8 +450,8 @@ function run_contingency_tests()
       # present next to the case, warned (not fatal) on unmatched names, and
       # absent by default. A copy in a temp dir keeps the packaged case clean.
       wdir = mktempdir()
-      w14 = joinpath(wdir, "case14.m")
-      cp(case14, w14)
+      w14 = joinpath(wdir, "sp_case14.scf.json")
+      cp(service_case, w14)
       wnames = redirect_stdout(devnull) do
         [c.name for c in generateN1Branches(Sparlectra._import_sparlectra_net(w14, nothing, Sparlectra.load_sparlectra_config(cfg; reload = true)))]
       end
@@ -470,7 +474,7 @@ function run_contingency_tests()
     end
 
     @testset "start-value ladder (#331 Phase 1)" begin
-      net = createNetFromMatPowerFile(filename = case14)
+      net = load_fixture_net("sp_case14")
       cases = generateN1Branches(net)
 
       # default [:warm]: converged cases report :warm, failed cases :none
@@ -495,14 +499,14 @@ function run_contingency_tests()
 
       # retry_flat_start is a deprecated alias for appending :flat; converged
       # cases are unchanged
-      retried = runContingencies!(net, cases; retry_flat_start = true)
+      retried = @test_logs (:warn, r"retry_flat_start is deprecated") match_mode = :any runContingencies!(net, cases; retry_flat_start = true)
       @test all(base[i].converged ? _contingency_results_equal(base[i], retried[i]) : true for i in eachindex(base))
 
       # alias collision: retry_flat_start = true with a ladder that ALREADY
       # contains :flat must not trip the duplicate validation; the alias is a
       # no-op there (no throw, identical results to the plain ladder)
       with_flat = runContingencies!(net, cases; rescue_ladder = [:warm, :flat])
-      with_flat_alias = runContingencies!(net, cases; rescue_ladder = [:warm, :flat], retry_flat_start = true)
+      with_flat_alias = @test_logs (:warn, r"retry_flat_start is deprecated") match_mode = :any runContingencies!(net, cases; rescue_ladder = [:warm, :flat], retry_flat_start = true)
       @test all(_contingency_results_equal(with_flat[i], with_flat_alias[i]) for i in eachindex(with_flat))
 
       # serial vs parallel identity holds with a multi-stage ladder too
@@ -565,10 +569,14 @@ end
 # retry_flat_start smoke (must not change converged cases).
 function run_contingency_extended_tests()
   @testset "N-1 identity on case1354pegase (extended)" begin
-    case_path = joinpath(homedir(), ".local", "state", "sparlectra", "webui", "data", "mpower", "case1354pegase.m")
-    if !isfile(case_path)
-      println("contingency extended case1354: SKIPPED (case not cached under the Web UI data directory)")
-      @test true
+    # the large case comes ONLY from SPARLECTRA_LARGE_CASES_DIR (no home
+    # directory paths in tests, task_test_suite step 3e); without the
+    # variable the testset states SKIPPED explicitly, without a silent
+    # counting pass
+    large_dir = get(ENV, "SPARLECTRA_LARGE_CASES_DIR", "")
+    case_path = isempty(large_dir) ? "" : joinpath(large_dir, "case1354pegase.m")
+    if isempty(large_dir) || !isfile(case_path)
+      println("contingency extended case1354: SKIPPED (", isempty(large_dir) ? "SPARLECTRA_LARGE_CASES_DIR not set" : string("case1354pegase.m not found under ", large_dir), ")")
       return
     end
     # canonical pegase import convention (from the case sidecar): angles in rad,

@@ -16,12 +16,12 @@
 # file: examples/run_others_suite.jl
 # purpose: suite runner that executes the remaining example programs (transformer/tap demos, exports, network analysis, diagnostics) in fresh subprocesses and reports a summary
 
-include(joinpath(@__DIR__, "internal", "example_suite_runner.jl"))
+include(joinpath(@__DIR__, "others", "example_suite_runner.jl"))
 
 # Not registered here: the DTF validation examples
 # (dtf_validation_report.jl, for002_matpower_metadata_validation.jl) are
 # covered by examples/run_val_dtf_suite.jl; library files
-# (experimental/qlimit_large_case_comparison.jl, internal/*) are not
+# (internal/*) are not
 # standalone programs.
 const SUITE_SPECS = ExampleSpec[
   ExampleSpec(name = "3wt_phase_taps", file = "others/exp_3wt_phase_taps.jl", purpose = "3WT in three tap configurations (OLTC, PST/Schraegregler, combined) solved with runpf!"),
@@ -47,7 +47,7 @@ const SUITE_SPECS = ExampleSpec[
   ExampleSpec(name = "network_analyzer", file = "others/network_analyzer.jl", purpose = "topology analysis of a small network before and after removing a branch"),
   ExampleSpec(name = "using_links", file = "others/using_links.jl", purpose = "busbar coupler modeled as a bus link, demonstrating open/close link behavior"),
   ExampleSpec(name = "diagnose_self_check", file = "others/exp_diagnose_self_check.jl", purpose = "run_fixed_reference_self_check and the narrative diagnose.log report"),
-  ExampleSpec(name = "cgmes_export_demo", file = joinpath("experimental", "cgmes_export_demo.jl"), optional = true, purpose = "CGMES 2.4.15 export (writeCGMESFiles) on a small net"),
+  ExampleSpec(name = "cgmes_export_demo", file = joinpath("cgmes", "cgmes_export_demo.jl"), optional = true, purpose = "CGMES 2.4.15 export (writeCGMESFiles) on a small net"),
 ]
 
 const SUITE_NOTES = [

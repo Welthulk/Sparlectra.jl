@@ -22,7 +22,7 @@ using Sparlectra
 using LinearAlgebra
 using SparseArrays
 
-include(joinpath(@__DIR__, "..", "internal", "example_header.jl"))
+include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
 # The rectangular Newton-Raphson solves a REAL system; assemble the complex
 # power-flow Jacobian blocks dS/dV, dS/dconj(V) into the equivalent real

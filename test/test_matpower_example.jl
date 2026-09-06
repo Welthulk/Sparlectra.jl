@@ -28,8 +28,8 @@ function run_matpower_example_tests()
     @test cfg.powerflow.islands.enabled === true
     @test cfg.powerflow.islands.diagnostic_continue_after_failure === true
 
-    missing_safe_defaults_cfg = tempname() * ".yaml"
-    write(missing_safe_defaults_cfg, "power_flow:\n  tol: 1.0e-8\nmatpower_import:\n  auto_profile: off\n")
+    missing_safe_defaults_cfg = test_scratch_path(".yaml")
+    write(missing_safe_defaults_cfg, "config_version: 1\nscope: general\npower_flow:\n  tol: 1.0e-8\nmodel:\n  auto_profile: off\n")
     missing_safe_defaults = Sparlectra.load_sparlectra_config(missing_safe_defaults_cfg; reload = true)
     @test missing_safe_defaults.matpower.matpower_dcline_mode === :pf_injections
     @test missing_safe_defaults.powerflow.islands.enabled === true
@@ -37,25 +37,25 @@ function run_matpower_example_tests()
     # reject_active in a configuration FILE is deprecated (stale early-template
     # default) and normalizes to pf_injections with a warning; the strict mode
     # stays a programmatic-only choice.
-    explicit_strict_cfg = tempname() * ".yaml"
-    write(explicit_strict_cfg, "power_flow:\n  islands:\n    enabled: false\nmatpower_import:\n  matpower_dcline_mode: reject_active\n")
+    explicit_strict_cfg = test_scratch_path(".yaml")
+    write(explicit_strict_cfg, "config_version: 1\nscope: general\npower_flow:\n  islands:\n    enabled: false\nmatpower_import:\n  matpower_dcline_mode: reject_active\n")
     explicit_strict = @test_logs (:warn, r"reject_active is deprecated in configuration files") Sparlectra.load_sparlectra_config(explicit_strict_cfg; reload = true)
     @test explicit_strict.matpower.matpower_dcline_mode === :pf_injections
     @test explicit_strict.powerflow.islands.enabled === false
 
-    bad_method_cfg = tempname() * ".yaml"
+    bad_method_cfg = test_scratch_path(".yaml")
     write(bad_method_cfg, "power_flow:\n  method: polar\n")
     @test_throws ArgumentError Sparlectra.load_sparlectra_config(bad_method_cfg; reload = true)
 
-    bad_sparse_cfg = tempname() * ".yaml"
+    bad_sparse_cfg = test_scratch_path(".yaml")
     write(bad_sparse_cfg, "power_flow:\n  sparse: true\n")
     @test_throws ArgumentError Sparlectra.load_sparlectra_config(bad_sparse_cfg; reload = true)
 
-    bad_unknown_cfg = tempname() * ".yaml"
+    bad_unknown_cfg = test_scratch_path(".yaml")
     write(bad_unknown_cfg, "power_flow:\n  typo_tol: 1.0e-4\n")
     @test_throws ArgumentError Sparlectra.load_sparlectra_config(bad_unknown_cfg; reload = true)
 
-    removed_key_cfg = tempname() * ".yaml"
+    removed_key_cfg = test_scratch_path(".yaml")
     write(removed_key_cfg, "matpower_import:\n  benchmark: true\n")
     err_removed = try
       Sparlectra.load_sparlectra_config(removed_key_cfg; reload = true)
@@ -67,17 +67,17 @@ function run_matpower_example_tests()
     @test occursin("matpower_import.benchmark", sprint(showerror, err_removed))
     @test occursin("benchmark.enabled", sprint(showerror, err_removed))
 
-    bench_cfg = tempname() * ".yaml"
+    bench_cfg = test_scratch_path(".yaml")
     write(bench_cfg, "benchmark:\n  enabled: false\n  methods: [rectangular]\n  seconds: 0.1\n  samples: 2\n  show_once: true\n")
     cfg_bench = Sparlectra.load_sparlectra_config(bench_cfg; reload = true)
     @test cfg_bench.benchmark.enabled === false
     @test cfg_bench.benchmark.methods == [:rectangular]
 
-    bad_bench_method_cfg = tempname() * ".yaml"
+    bad_bench_method_cfg = test_scratch_path(".yaml")
     write(bad_bench_method_cfg, "benchmark:\n  methods: [polar]\n")
     @test_throws ArgumentError Sparlectra.load_sparlectra_config(bad_bench_method_cfg; reload = true)
 
-    startmode_cfg = tempname() * ".yaml"
+    startmode_cfg = test_scratch_path(".yaml")
     write(startmode_cfg, """
 power_flow:
   start_mode:
@@ -89,7 +89,7 @@ power_flow:
     @test cfg_startmode.powerflow.start_mode.voltage_mode === :pv_gen_vg
     @test cfg_startmode.powerflow.start_current_iteration.enabled === false
 
-    current_iteration_cfg = tempname() * ".yaml"
+    current_iteration_cfg = test_scratch_path(".yaml")
     write(current_iteration_cfg, """
 power_flow:
   start_current_iteration:
@@ -110,11 +110,11 @@ power_flow:
     @test cfg_current_iteration.powerflow.start_current_iteration.damping == 0.75
     @test cfg_current_iteration.powerflow.start_current_iteration.accept_only_if_improved === false
     @test cfg_current_iteration.powerflow.start_current_iteration.only_for_large_cases === true
-    bad_current_iteration_cfg = tempname() * ".yaml"
+    bad_current_iteration_cfg = test_scratch_path(".yaml")
     write(bad_current_iteration_cfg, "power_flow:\n  start_current_iteration:\n    damping: 2.0\n")
     @test_throws ArgumentError Sparlectra.load_sparlectra_config(bad_current_iteration_cfg; reload = true)
 
-    old_refresh_cfg = tempname() * ".yaml"
+    old_refresh_cfg = test_scratch_path(".yaml")
     write(old_refresh_cfg, "power_flow:\n  tol: 2.0e-6\n")
     refresh = Sparlectra.refresh_sparlectra_config_file(old_refresh_cfg; write = false, backup = false)
     @test "power_flow.start_current_iteration" in refresh.missing_keys
@@ -122,19 +122,19 @@ power_flow:
     @test occursin("tol: 2.0e-6", refresh.refreshed_text)
 
     for mode in ("classic", "dc", "bus_va_blend", "matpower_va")
-      cfg_mode = tempname() * ".yaml"
+      cfg_mode = test_scratch_path(".yaml")
       write(cfg_mode, "power_flow:\n  start_mode:\n    angle_mode: $(mode)\n")
       cfg_loaded = Sparlectra.load_sparlectra_config(cfg_mode; reload = true)
       @test cfg_loaded.powerflow.start_mode.angle_mode === Symbol(mode)
     end
 
     for mode in ("classic", "pv_gen_vg", "pv_bus_vm", "all_bus_vm", "profile_blend")
-      cfg_mode = tempname() * ".yaml"
+      cfg_mode = test_scratch_path(".yaml")
       write(cfg_mode, "power_flow:\n  start_mode:\n    voltage_mode: $(mode)\n")
       cfg_loaded = Sparlectra.load_sparlectra_config(cfg_mode; reload = true)
       @test cfg_loaded.powerflow.start_mode.voltage_mode === Symbol(mode)
     end
-    cfg_legacy = tempname() * ".yaml"
+    cfg_legacy = test_scratch_path(".yaml")
     write(cfg_legacy, "power_flow:\n  start_mode:\n    voltage_mode: bus_vm_va_blend\n")
     err_legacy = try
       Sparlectra.load_sparlectra_config(cfg_legacy; reload = true)
@@ -146,13 +146,13 @@ power_flow:
     @test occursin("bus_vm_va_blend alias has been removed", sprint(showerror, err_legacy))
     @test occursin("profile_source: matpower_reference", sprint(showerror, err_legacy))
 
-    cfg_canonical = tempname() * ".yaml"
+    cfg_canonical = test_scratch_path(".yaml")
     write(cfg_canonical, "power_flow:\n  start_mode:\n    voltage_mode: profile_blend\n    profile_source: matpower_reference\n")
     cfg_canonical_loaded = Sparlectra.load_sparlectra_config(cfg_canonical; reload = true)
     @test cfg_canonical_loaded.powerflow.start_mode.voltage_mode === :profile_blend
     @test cfg_canonical_loaded.powerflow.start_mode.profile_source === :matpower_reference
 
-    bad_startmode_cfg = tempname() * ".yaml"
+    bad_startmode_cfg = test_scratch_path(".yaml")
     write(bad_startmode_cfg, "power_flow:\n  start_mode:\n    voltage_mode: nonsense\n")
     err_startmode = try
       Sparlectra.load_sparlectra_config(bad_startmode_cfg; reload = true)
@@ -164,7 +164,7 @@ power_flow:
     @test occursin("power_flow.start_mode.voltage_mode", sprint(showerror, err_startmode))
     @test occursin("pv_gen_vg", sprint(showerror, err_startmode))
 
-    cfg_roundtrip = tempname() * ".yaml"
+    cfg_roundtrip = test_scratch_path(".yaml")
     write(cfg_roundtrip, """
 power_flow:
   qlimits:
@@ -174,6 +174,7 @@ power_flow:
 matpower_import:
   enable_pq_gen_controllers: false
   ratio: reciprocal
+model:
   bus_shunt_model: voltage_dependent_injection
 state_estimation:
   method: wls
@@ -184,25 +185,25 @@ state_estimation:
     @test cfg_loaded.powerflow.qlimits.cooldown_iters == 7
     @test cfg_loaded.matpower.enable_pq_gen_controllers === false
     @test cfg_loaded.matpower.ratio === :reciprocal
-    @test cfg_loaded.matpower.bus_shunt_model === :voltage_dependent_injection
+    @test cfg_loaded.model.bus_shunt_model === :voltage_dependent_injection
     @test cfg_loaded.state_estimation.method === :wls
 
     for mode in ("gen_vg", "bus_vm", "auto", "strict_check")
-      cfg_mode = tempname() * ".yaml"
+      cfg_mode = test_scratch_path(".yaml")
       write(cfg_mode, "matpower_import:\n  pv_voltage_source: $(mode)\n")
       @test Sparlectra.load_sparlectra_config(cfg_mode; reload = true).matpower.pv_voltage_source === Symbol(mode)
     end
     for mode in ("bus_vm", "gen_vg", "imported_setpoint", "hybrid")
-      cfg_mode = tempname() * ".yaml"
+      cfg_mode = test_scratch_path(".yaml")
       write(cfg_mode, "matpower_import:\n  compare_voltage_reference: $(mode)\n")
       @test Sparlectra.load_sparlectra_config(cfg_mode; reload = true).matpower.compare_voltage_reference === Symbol(mode)
     end
     for mode in ("off", "on", "auto")
-      cfg_mode = tempname() * ".yaml"
+      cfg_mode = test_scratch_path(".yaml")
       write(cfg_mode, "power_flow:\n  rectangular_preallocate_workspace: $(mode)\n")
       @test Sparlectra.load_sparlectra_config(cfg_mode; reload = true).powerflow.rectangular_preallocate_workspace === Symbol(mode)
     end
-    bad_ws_cfg = tempname() * ".yaml"
+    bad_ws_cfg = test_scratch_path(".yaml")
     write(bad_ws_cfg, "power_flow:\n  rectangular_preallocate_workspace: invalid\n")
     @test_throws ArgumentError Sparlectra.load_sparlectra_config(bad_ws_cfg; reload = true)
 
@@ -253,7 +254,7 @@ state_estimation:
   end
 
   @testset "MATPOWER runner operational output" begin
-    test_cfg = tempname() * ".yaml"
+    test_cfg = test_scratch_path(".yaml")
     write(test_cfg, """
 benchmark:
   enabled: false
@@ -492,7 +493,7 @@ matpower_import:
   end
 
   @testset "MATPOWER benchmark output routing" begin
-    test_cfg = tempname() * ".yaml"
+    test_cfg = test_scratch_path(".yaml")
     write(test_cfg, """
 benchmark:
   enabled: true
@@ -554,7 +555,7 @@ matpower_import:
   end
 
   @testset "MATPOWER warmup output and compact console hygiene" begin
-    test_cfg = tempname() * ".yaml"
+    test_cfg = test_scratch_path(".yaml")
     write(test_cfg, """
 benchmark:
   enabled: false
@@ -614,7 +615,7 @@ matpower_import:
   end
 
   @testset "Runtime config accepts numeric thread values" begin
-    cfg_file = tempname() * ".yaml"
+    cfg_file = test_scratch_path(".yaml")
     write(cfg_file, "runtime:
   julia_threads: 4
   blas_threads: 16

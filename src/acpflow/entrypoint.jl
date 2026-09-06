@@ -32,7 +32,7 @@ end
     run_sparlectra_cases(; config=nothing, path=nothing, performance_profile=nothing) -> Vector{SparlectraRunResult}
 
 Run configured MATPOWER cases sequentially in deterministic order. A non-empty
-`config.matpower.cases` list takes precedence over `config.matpower.case`. Bare
+`config.runtime.cases` list takes precedence over `config.runtime.case`. Bare
 case names are resolved through [`ensure_casefile`](@ref), which downloads
 standard MATPOWER cases on demand. Batch-level performance-profile aggregation
 is not supported; profile individual [`run_sparlectra`](@ref) calls instead.
@@ -82,6 +82,7 @@ function _run_sparlectra(; net::Union{Nothing,Net} = nothing, casefile::Union{No
   (net === nothing) == (casefile === nothing) && throw(ArgumentError("run_sparlectra: pass exactly one of net or casefile."))
   net !== nothing && path !== nothing && throw(ArgumentError("run_sparlectra: path is only valid with casefile."))
   cfg = config === nothing ? active_sparlectra_config() : config
+  _maybe_print_startup_latency_hint(cfg)
   if net === nothing
     import_ctx = _import_sparlectra_context(casefile::String, path, cfg; performance_profile = performance_profile)
     run_net = import_ctx.net
@@ -93,8 +94,17 @@ function _run_sparlectra(; net::Union{Nothing,Net} = nothing, casefile::Union{No
   # power_flow.external_grid (issue #299): convert the marked slack into a
   # non-ideal source before solving. Idempotent — CGMES runs may have applied
   # it already in the API layer (with delivery-declared Sk''/RX values).
-  _apply_external_grid_config!(run_net, run_cfg.powerflow)
-  execution = _execute_sparlectra_powerflow!(run_net, run_cfg; performance_profile = performance_profile)
+  # the net's own feeder data wins in :auto mode (a CGMES ExternalNetworkInjection
+  # or a case file's PGM `source` with sk/rx_ratio); without any, the config numbers apply
+  _apply_external_grid_config!(run_net, run_cfg.powerflow; declared = _declared_slack_feeder(run_net, run_net.sc_sources))
+  # power_flow.mode = auto: feature-driven strategy selection plus the
+  # bounded escalation ladder; manual keeps the exact configured behavior.
+  # The auto record lands on the net (auto_pf_record) for the service layer.
+  execution = if run_cfg.powerflow.mode === :auto
+    _execute_auto_sparlectra_powerflow!(run_net, run_cfg; performance_profile = performance_profile)
+  else
+    _execute_sparlectra_powerflow!(run_net, run_cfg; performance_profile = performance_profile)
+  end
   result = _build_sparlectra_result(run_net, run_cfg, execution, performance_profile)
   return _postprocess_sparlectra_result!(result, run_cfg; emit_output = emit_output)
 end

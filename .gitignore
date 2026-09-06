@@ -5,6 +5,10 @@ test/workshop*.jl
 data/mpower/*.*
 data/mpower/*.m
 data/mpower/*.jl
+# Tracked exceptions: self-built PST/busbar-link warmup case (no external
+# license) and its standard well-behaved measurement set
+!data/mpower/warmup_casePST.m
+!data/mpower/warmup_casePST.measurements.csv
 
 data/mpower/result_*
 
@@ -21,7 +25,6 @@ docs/build
 TODO.md
 Roadmap.md
 AGENTS.md
-CLAUDE.md
 network_dump.txt
 test/test_experments.jl
 test/test_experment.jl
@@ -49,18 +52,9 @@ run.log
 effective_config.yaml
 matpower_auto_profile.log
 setup_linux.md
-CL*.md
-TASK*.md
-task_*.md
-Task_*.md
-.md
+.claude/
 
 
-# Local-only German draft of the slack-vs-source page (accidentally
-# committed once — keep untracked)
-# Developer notes stay local (removed from the repo 2026-08-20; a copy
-# lives in ~/sparlectra-docs-dev-backup)
-docs/dev/
 
 # Local-only maintainer tooling (GitHub mentions digest, run from cron); keep
 # untracked, it carries no package function.

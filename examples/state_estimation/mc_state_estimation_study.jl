@@ -22,7 +22,7 @@ using Random
 using Statistics
 using Printf
 
-include(joinpath(@__DIR__, "..", "internal", "example_header.jl"))
+include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
 # --- Study parameters --------------------------------------------------------
 const M_RUNS = 500              # Monte-Carlo runs (one noisy measurement set each)

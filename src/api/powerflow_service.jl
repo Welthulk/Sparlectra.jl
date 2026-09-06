@@ -74,9 +74,9 @@ function _resolve_powerflow_casefile(
   # the importer unchanged (its container layer resolves them).
   isdir(requested) && return abspath(requested)
   extension = lowercase(splitext(requested)[2])
-  extension in (".m", ".jl", ".dat", ".zip") || throw(ArgumentError("Unsupported casefile extension: $(requested) (expected .m, .jl, .DAT, or .zip)"))
+  extension in (".m", ".jl", ".dat", ".zip", ".json") || throw(ArgumentError("Unsupported casefile extension: $(requested) (expected .m, .jl, .DAT, .zip, or .json)"))
   if isfile(requested)
-    if extension == ".zip"
+    if extension in (".zip", ".json")
       return abspath(requested)
     end
     if extension == ".dat"
@@ -105,6 +105,14 @@ function _resolve_powerflow_casefile(
     isfile(local_zip) && return abspath(local_zip)
     throw(ArgumentError("Case file not found: $(requested)"))
   end
+  # A Sparlectra Case Format case (#342) lives in the case directory like any
+  # other case; there is nothing to fetch or generate for it, so a miss is a
+  # plain not-found rather than a MATPOWER download attempt.
+  if extension == ".json"
+    local_scf = joinpath(trusted_directory, requested)
+    isfile(local_scf) && return abspath(local_scf)
+    throw(ArgumentError("Case file not found: $(requested)"))
+  end
   if extension == ".dat"
     local_dat = joinpath(trusted_directory, requested)
     if isfile(local_dat)
@@ -129,6 +137,38 @@ function _resolve_powerflow_casefile(
   end
   isfile(resolved) || throw(ArgumentError("Resolved MATPOWER case file not found: $(resolved)"))
   return _canonical_matpower_source_for_webui(resolved, trusted_directory)
+end
+
+## Optional state-estimation settings from a service request: absent (or
+## empty) means "not stated", and the estimator resolves it against the
+## effective configuration. Without this the service layer would have to
+## name a default of its own, which is how the same run reached different
+## thresholds through different entry points (task_se_bad_data_v0100).
+function _se_optional_float(request::AbstractDict, key::AbstractString)::Union{Nothing,Float64}
+  raw = _service_request_value(request, key, nothing)
+  raw === nothing && return nothing
+  raw isa AbstractString && isempty(strip(raw)) && return nothing
+  return Float64(raw isa AbstractString ? something(tryparse(Float64, strip(raw)), throw(ArgumentError("$(key) must be a number, got $(repr(raw))."))) : raw)
+end
+
+function _se_optional_int(request::AbstractDict, key::AbstractString)::Union{Nothing,Int}
+  v = _se_optional_float(request, key)
+  return v === nothing ? nothing : Int(round(v))
+end
+
+function _se_optional_bool(request::AbstractDict, key::AbstractString)::Union{Nothing,Bool}
+  raw = _service_request_value(request, key, nothing)
+  raw === nothing && return nothing
+  raw isa AbstractString && isempty(strip(raw)) && return nothing
+  return Bool(raw)
+end
+
+function _se_optional_symbol(request::AbstractDict, key::AbstractString)::Union{Nothing,Symbol}
+  raw = _service_request_value(request, key, nothing)
+  raw === nothing && return nothing
+  text = lowercase(strip(String(raw)))
+  isempty(text) && return nothing
+  return Symbol(text)
 end
 
 """
@@ -226,6 +266,49 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
   # outage kind is a RUN parameter (branch vs generator N-1), not a config key
   contingency_kind = _service_request_value(request, "contingency_kind", "branch")
   (contingency_kind isa AbstractString && contingency_kind in ("branch", "gen")) || return _service_failure("invalid_request", "contingency_kind must be \"branch\" or \"gen\".")
+  # scenario task step 5: scenario source, external scenario file, and the
+  # screening mode are run parameters; absent keys keep the historical
+  # behavior (kind/contingencies case list, screening from the configuration)
+  contingency_scenario_source = _service_request_value(request, "scenario_source", nothing)
+  if contingency_scenario_source !== nothing
+    (contingency_scenario_source isa AbstractString && contingency_scenario_source in ("file_block", "external_file", "n1_all", "n1_branches", "n1_generators")) || return _service_failure("invalid_request", "scenario_source must be one of file_block, external_file, n1_all, n1_branches, n1_generators.")
+  end
+  contingency_scenario_file = _service_request_value(request, "scenario_file", nothing)
+  (contingency_scenario_file === nothing || contingency_scenario_file isa AbstractString) || return _service_failure("invalid_request", "scenario_file must be a path string.")
+  contingency_screening_mode = _service_request_value(request, "screening_mode", nothing)
+  if contingency_screening_mode !== nothing
+    (contingency_screening_mode isa AbstractString && lowercase(contingency_screening_mode) in ("off", "flag", "only")) || return _service_failure("invalid_request", "screening_mode must be off, flag, or only.")
+  end
+  contingency_screening_margin = _service_request_value(request, "screening_margin_pct", nothing)
+  if contingency_screening_margin !== nothing
+    (contingency_screening_margin isa Real && isfinite(contingency_screening_margin) && contingency_screening_margin >= 0) || return _service_failure("invalid_request", "screening_margin_pct must be a finite number >= 0.")
+  end
+  # state estimation (SE phase 5): its own run kind, exclusive with the others
+  se_mode = _service_request_value(request, "se_mode", false)
+  se_mode isa Bool || return _service_failure("invalid_request", "se_mode must be boolean.")
+  (se_mode && (diagnose_mode || short_circuit_mode || import_analysis_mode || contingency_mode)) && return _service_failure("invalid_request", "se_mode excludes diagnose_mode, short_circuit_mode, import_analysis_mode and contingency_mode.")
+  measurement_file = _service_request_value(request, "measurement_file", nothing)
+  # A Sparlectra Case Format case carries its measurements with the model, so
+  # the request may omit the set for one; every other format still has to name
+  # a measurement file, and the service reports a missing one by name.
+  if se_mode && !(measurement_file isa AbstractString && !isempty(strip(measurement_file)))
+    case_is_scf = try
+      _detect_case_format(_resolve_powerflow_casefile(String(casefile), case_directory === nothing ? "" : String(case_directory))) === :scf
+    catch
+      false
+    end
+    case_is_scf || return _service_failure("invalid_request", "se_mode requires measurement_file (a Sparlectra Case Format case may carry its measurements instead).")
+    measurement_file = ""
+  end
+  # SE-started chain (SE phase 5): a PF or N-1 run that starts from a
+  # preceding SE run's se_state.csv; combinable with contingency_mode only
+  se_start_run_id = _service_request_value(request, "se_start_run_id", nothing)
+  se_start_mode = _service_request_value(request, "se_start_mode", "se_state")
+  (se_start_mode isa AbstractString && se_start_mode in ("se_state", "se_snapshot")) || return _service_failure("invalid_request", "se_start_mode must be \"se_state\" or \"se_snapshot\".")
+  if se_start_run_id !== nothing
+    se_start_run_id isa AbstractString || return _service_failure("invalid_request", "se_start_run_id must be a string.")
+    (se_mode || diagnose_mode || short_circuit_mode || import_analysis_mode) && return _service_failure("invalid_request", "se_start_run_id combines only with a plain power flow or contingency_mode.")
+  end
   detailed_result_csv = _service_request_value(request, "detailed_result_csv", false)
   detailed_result_csv isa Bool || return _service_failure("invalid_request", "detailed_result_csv must be boolean.")
   export_cgmes = _service_request_value(request, "export_cgmes", false)
@@ -332,8 +415,16 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
     catch
       nothing
     end
+    # SE-started N-1 base case (SE phase 5 chain): resolve the preceding SE
+    # run's state artifact and hand it to the contingency service
+    ct_se_state = nothing
+    if se_start_run_id !== nothing
+      art = resolve_powerflow_artifact(String(se_start_run_id), "se_state.csv")
+      art isa Dict && return _service_failure("se_state_missing", "Cannot resolve se_state.csv of SE run $(se_start_run_id): $(get(art, "message", "unknown reason")) Runs resolve within the service session that created them; rerun the state estimation if the service was restarted."; run_id = run_id)
+      ct_se_state = art.path
+    end
     ct_result = try
-      _run_contingency_service(casefile, config_file, output_dir, run_id, contingency_kind; weights_path = ct_weights_path)
+      _run_contingency_service(casefile, config_file, output_dir, run_id, contingency_kind; weights_path = ct_weights_path, se_state_file = ct_se_state, se_run_id = se_start_run_id === nothing ? nothing : String(se_start_run_id), se_start_mode = String(se_start_mode), scenario_source = contingency_scenario_source, scenario_file = contingency_scenario_file, screening_mode = contingency_screening_mode, screening_margin_pct = contingency_screening_margin)
     catch err
       err isa PowerFlowAborted && rethrow()
       return _service_failure("execution_error", sprint(showerror, err, catch_backtrace()); run_id = run_id)
@@ -350,6 +441,87 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
       return _service_failure("run_index_error", sprint(showerror, err, catch_backtrace()); run_id = run_id)
     end
     return to_dict(ct_result)
+  end
+  if se_mode
+    # state estimation run (SE phase 5): measurement file resolved against the
+    # case cache when it is a bare name
+    mf = String(measurement_file)
+    if case_directory !== nothing && !isfile(mf) && !occursin(r"[\\/]", mf)
+      cached = joinpath(abspath(case_directory), mf)
+      isfile(cached) && (mf = abspath(cached))
+    end
+    se_result = try
+      _run_state_estimation_service(
+        casefile,
+        config_file,
+        output_dir,
+        run_id,
+        mf;
+        # `nothing` where the request says nothing: the estimator run then
+        # takes the value from the effective configuration. A literal here
+        # would silently outrank the configured default (that is how a run
+        # kept using k_suppress 6.0 while the configuration said 4.0).
+        max_iter = _se_optional_int(request, "se_max_iter"),
+        tol = _se_optional_float(request, "se_tol"),
+        flatstart = _se_optional_bool(request, "se_flatstart"),
+        robust = Bool(_service_request_value(request, "se_robust", false)),
+        max_eliminations = _se_optional_int(request, "se_max_eliminations"),
+        update_shunts = Bool(_service_request_value(request, "se_update_shunts", false)),
+        report_correlation = Bool(_service_request_value(request, "se_report_correlation", false)),
+        tap_estimation = Bool(_service_request_value(request, "se_tap_estimation", false)),
+        k_eliminate = _se_optional_float(request, "se_k_eliminate"),
+        robust_mode = _se_optional_symbol(request, "se_robust_mode"),
+        robust_k1 = _se_optional_float(request, "se_robust_k1"),
+        robust_k2 = _se_optional_float(request, "se_robust_k2"),
+        k_suppress = _se_optional_float(request, "se_k_suppress"),
+        suppression_sigma = _se_optional_float(request, "se_suppression_sigma"),
+        # a bare .DAT is ambiguous (FOR001 network vs FOR002 reference), so
+        # the SE path needs the same explicit format the power flow gets.
+        # The request carries it as a string; the normalizer validates it.
+        case_format = _normalize_case_format(case_format),
+        # the status page reads the JOB phase: without this the page stayed
+        # on preparing_configuration for the whole estimation
+        phase_callback = phase_callback,
+      )
+    catch err
+      err isa PowerFlowAborted && rethrow()
+      return _service_failure("execution_error", sprint(showerror, err, catch_backtrace()); run_id = run_id)
+    end
+    try
+      lock(_POWERFLOW_SERVICE_LOCK) do
+        _POWERFLOW_SERVICE_RUNS[se_result.run_id] = se_result
+        _write_powerflow_run_index!(root, se_result)
+      end
+    catch err
+      lock(_POWERFLOW_SERVICE_LOCK) do
+        delete!(_POWERFLOW_SERVICE_RUNS, se_result.run_id)
+      end
+      return _service_failure("run_index_error", sprint(showerror, err, catch_backtrace()); run_id = run_id)
+    end
+    return to_dict(se_result)
+  end
+  if se_start_run_id !== nothing
+    # SE-started plain power flow (SE phase 5 chain)
+    art = resolve_powerflow_artifact(String(se_start_run_id), "se_state.csv")
+    art isa Dict && return _service_failure("se_state_missing", "Cannot resolve se_state.csv of SE run $(se_start_run_id): $(get(art, "message", "unknown reason")) Runs resolve within the service session that created them; rerun the state estimation if the service was restarted."; run_id = run_id)
+    pf_result = try
+      _run_pf_from_se_service(casefile, config_file, output_dir, run_id, art.path, String(se_start_run_id), String(se_start_mode))
+    catch err
+      err isa PowerFlowAborted && rethrow()
+      return _service_failure("execution_error", sprint(showerror, err, catch_backtrace()); run_id = run_id)
+    end
+    try
+      lock(_POWERFLOW_SERVICE_LOCK) do
+        _POWERFLOW_SERVICE_RUNS[pf_result.run_id] = pf_result
+        _write_powerflow_run_index!(root, pf_result)
+      end
+    catch err
+      lock(_POWERFLOW_SERVICE_LOCK) do
+        delete!(_POWERFLOW_SERVICE_RUNS, pf_result.run_id)
+      end
+      return _service_failure("run_index_error", sprint(showerror, err, catch_backtrace()); run_id = run_id)
+    end
+    return to_dict(pf_result)
   end
   # Phase timings collected before the API handoff become service metadata, not
   # operation-log events for every internal solver step.
@@ -386,6 +558,16 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
     return _service_failure("execution_error", sprint(showerror, err, catch_backtrace()); run_id = run_id)
   end
   if diagnose_mode
+    # A diagnostic run is its own kind on the result page and in the history.
+    # Without this the mode was written nowhere on the success path, so a
+    # finished diagnostic run read "PowerFlow result" as soon as the job left
+    # memory, while a FAILED one got its kind from the job marker: the same
+    # run type labelled two different ways depending on its outcome.
+    try
+      result.metadata isa AbstractDict && (result.metadata["run_mode"] = "diagnose")
+    catch err
+      @warn "could not tag the diagnostic run" exception = err
+    end
     # Same self-check summary the programmatic run_fixed_reference_self_check
     # writes: which start machinery was forced off, the start-state residual,
     # and the CGMES SV-coverage caveat — next to diagnose.log.

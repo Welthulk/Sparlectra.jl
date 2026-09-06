@@ -10,16 +10,25 @@
 
 body {
   margin: 0;
+  /* the header carries brand, seven nav entries, and the stop button on
+     ONE line; below this width the page scrolls horizontally instead of
+     wrapping the labels (desktop tool, no mobile layout intended) */
+  min-width: 1280px;
 }
 
 header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 1.5rem;
-  padding: 1rem 5vw;
+  gap: 1.25rem;
+  padding: 1rem clamp(1rem, 2.5vw, 2.5rem);
   background: #14233d;
   color: #fff;
+}
+
+header a,
+header .exit-button {
+  white-space: nowrap;
 }
 
 header a {
@@ -58,6 +67,43 @@ header a {
   font-size: .78rem;
   font-weight: 500;
   letter-spacing: .01em;
+  white-space: nowrap;
+}
+
+.runtime-flavor {
+  color: #9fb3d1;
+  font-size: .72rem;
+  font-weight: 500;
+  letter-spacing: .01em;
+  white-space: nowrap;
+}
+
+.latency-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: .5rem clamp(1rem, 2.5vw, 2.5rem);
+  background: #fff7e0;
+  border-bottom: 1px solid #e8d9a8;
+  color: #5b4a12;
+  font-size: .88rem;
+}
+
+.latency-banner button {
+  flex: none;
+  padding: .2rem .7rem;
+  cursor: pointer;
+}
+
+.auto-hints {
+  margin: .4rem 0 0;
+  padding-left: 1.1rem;
+  font-size: .85rem;
+}
+
+.auto-hints li {
+  margin-bottom: .15rem;
 }
 
 nav {
@@ -139,6 +185,19 @@ nav {
 .topbar-info-panel code {
   overflow-wrap: anywhere;
   user-select: text;
+}
+
+/* Citation pointer stays at the very bottom of the panel as small print
+   (maintainer 2026-09-04: the note and its link must not stand out). */
+.topbar-info-panel .matpower-citation-note {
+  margin: 1rem 0 0;
+  font-size: .78rem;
+  color: #64748b;
+}
+
+.topbar-info-panel .matpower-citation-note a {
+  color: inherit;
+  text-decoration: underline;
 }
 
 .project-docs-link {
@@ -251,6 +310,58 @@ button,
   align-items: center;
   align-self: end;
   padding: .6rem 0;
+}
+
+/* The "Apply to" fieldset is a full-width block, not a grid cell: without
+   this it occupied one of the two columns and the next field (Tolerance)
+   was pulled up beside it, so the input looked like it stuck into the box
+   (maintainer 2026-09-04). */
+.settings-form-card .settings-target {
+  grid-column: 1 / -1;
+}
+
+/* The save-target explanations are small print under their option, not
+   part of the label: as label text they set the whole line in the bold
+   form-label size and dominated the page (maintainer 2026-09-04). */
+.settings-target-hint {
+  display: block;
+  margin: -.25rem 0 .55rem 1.75rem;
+  font-size: .78rem;
+  font-weight: 400;
+  color: #60708a;
+}
+
+.settings-target-hint code {
+  font-size: .78rem;
+  overflow-wrap: anywhere;
+}
+
+/* Section index of a long documentation page: dense, two columns, so it
+   costs a few lines instead of a screen. */
+.docs-toc {
+  margin: 0 0 1.25rem;
+  padding: .6rem .9rem;
+  background: #f4f7fb;
+  border: 1px solid #dbe3ef;
+  border-radius: 8px;
+}
+
+.docs-toc summary {
+  cursor: pointer;
+  font-weight: 700;
+  font-size: .85rem;
+}
+
+.docs-toc ul {
+  columns: 2;
+  margin: .5rem 0 0;
+  padding-left: 1.1rem;
+  font-size: .85rem;
+}
+
+.docs-toc li {
+  break-inside: avoid;
+  margin-bottom: .15rem;
 }
 
 .tolerance-field {
@@ -437,7 +548,10 @@ button,
 [data-ac-only-field].disabled,
 [data-nr-only-field].disabled,
 [data-apslf-solver-options].disabled,
-[data-apslf-start-options].disabled {
+[data-apslf-start-options].disabled,
+/* Bad-data limits: the fields of the mode that is NOT selected gray out and
+   disable, so the form says which limit is in effect without jumping. */
+[data-se-limit-group].disabled {
   opacity: .55;
 }
 
@@ -488,6 +602,13 @@ button,
   flex-wrap: wrap;
   gap: .75rem;
   margin-top: .5rem;
+}
+
+/* a download link sitting in an actions row next to real buttons: the
+   button rules style it, this keeps it on the same baseline */
+.case-download-link {
+  display: inline-block;
+  line-height: normal;
 }
 
 .active-run-banner {
@@ -581,12 +702,20 @@ button:disabled {
 
 /* Visual signal only. NEVER disable input here: if the class survives a
    navigation (back button, bfcache, cancelled navigation) a pointer-events
-   lock would leave the whole form — including Start — permanently dead. */
+   lock would leave the whole form - including Start - permanently dead. */
 .case-loading {
   opacity: .55;
 }
 
-.form-grid.is-submitting .submit-spinner {
+/* The button spinner alone is easy to miss on a long page, so a form that
+   announces itself as slow (data-busy) dims while it works. Only those: the
+   run form redirects to a status page immediately and needs no dimming.
+   Never pointer-events here, for the reason given above. */
+form[data-busy].is-submitting {
+  opacity: .6;
+}
+
+.is-submitting .submit-spinner {
   animation: submit-spin .8s linear infinite;
   border: 2px solid rgb(255 255 255 / 45%);
   border-radius: 50%;
@@ -596,11 +725,11 @@ button:disabled {
   width: 1rem;
 }
 
-.form-grid.is-submitting .submit-label {
+.is-submitting .submit-label {
   display: none;
 }
 
-.form-grid.is-submitting .submit-progress-label {
+.is-submitting .submit-progress-label {
   display: inline;
 }
 
@@ -608,25 +737,6 @@ button:disabled {
   to {
     transform: rotate(360deg);
   }
-}
-
-.warmup-panel {
-  align-items: center;
-  display: flex;
-  flex-direction: column;
-  gap: 1.25rem;
-  padding: 3rem 1.5rem;
-  text-align: center;
-}
-
-.warmup-spinner {
-  animation: submit-spin .8s linear infinite;
-  border: 3px solid #dbe3ef;
-  border-radius: 50%;
-  border-top-color: #14233d;
-  display: inline-block;
-  height: 2.5rem;
-  width: 2.5rem;
 }
 
 .inline-form {
@@ -829,6 +939,34 @@ dialog.feedback-modal::backdrop {
   min-width: 0;
 }
 
+/* State-estimation page: option fieldsets lay out as left-aligned inline
+   rows (the flex .field-label otherwise stacks and centers the inputs). */
+fieldset.se-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem 1.4rem;
+  align-items: center;
+  justify-content: flex-start;
+  margin: .5rem 0;
+}
+
+fieldset.se-options label {
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+  margin: 0;
+}
+
+fieldset.se-options .field-label {
+  display: inline-flex;
+}
+
+.se-recommend {
+  color: #555;
+  font-size: .92em;
+  margin: .3rem 0 .6rem 0;
+}
+
 .help-link {
   display: inline-flex;
   flex-shrink: 0;
@@ -950,4 +1088,28 @@ nav {
 .shutdown-message {
   max-width: 40rem;
   margin: 4rem auto;
+}
+
+/* Stage 4A block 4: Runs-page sections (SE block and N-1 editor tabs) */
+.se-section {
+  margin-top: 1.5rem;
+}
+
+.se-section .se-tab,
+.editor-tab {
+  margin: 0.75rem 0;
+  border: 1px solid #d5dbe4;
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  background: #fbfcfe;
+}
+
+.se-section .se-tab > summary,
+.editor-tab > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.weights-fragment-slot {
+  margin-top: 0.5rem;
 }

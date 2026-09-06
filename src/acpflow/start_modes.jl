@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,49 +12,89 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # file: src/acpflow/start_modes.jl
-# purpose: applies the configured MATPOWER start modes to the imported net:
-#          voltage_mode and angle_mode handling, profile blending, and DC
-#          angle starts ahead of the rectangular solve
+# purpose: applies the configured start modes to the imported net ahead of
+#          the rectangular solve: voltage_mode and angle_mode handling,
+#          profile blending, and DC angle starts. Format independent since
+#          stage 3a (D10): the raw source start values come from the typed
+#          case's start_state, not from a MATPOWER container.
 
-# review: 2024-06-17
+"""
+    _apply_start_modes!(net, case, start_cfg; performance_profile) -> Nothing
 
-function _apply_matpower_start_modes!(net::Net, mpc, start_cfg::StartModeConfig, mat_cfg::MatpowerImportConfig; performance_profile = nothing)
+Apply the configured start voltage and angle modes with the RAW source
+start values of `case.sparlectra.start_state` as the reference profile
+(design decision D10). PV and slack classification and the resolved
+voltage setpoints come from the built net itself: the adapter resolved
+the source system's setpoint choice at conversion time, so the historical
+distinction between the raw generator setpoint and the imported setpoint
+collapses onto the value the machines actually regulate to.
+"""
+# task_import_direct: the projection core is import-path neutral. The raw
+# start voltages arrive index-aligned with net.nodeVec (nothing = no raw
+# value for that node); each import path builds that vector from ITS
+# source of truth, the SCF start_state or the parsed MATPOWER bus rows.
+function _apply_start_modes!(net::Net, case::SCFCase, start_cfg::StartModeConfig; performance_profile = nothing)
+  spar = case.sparlectra
+  start_nodes = spar === nothing ? Dict{Int,SCFStartNode}() : spar.start_state.nodes
+  ids = _perf_profile_time!(performance_profile, :start_projection_source_bus_map) do
+    scf_node_ids_in_build_order(case)
+  end
+  raw_starts = Union{Nothing,NamedTuple}[k <= length(ids) ? (raw = get(start_nodes, ids[k], nothing); raw === nothing ? nothing : (vm_pu = raw.vm_pu, va_deg = raw.va_deg)) : nothing for k in eachindex(net.nodeVec)]
+  return _apply_start_modes!(net, raw_starts, start_cfg; performance_profile = performance_profile)
+end
+
+"""
+    _matpower_raw_starts(mpc) -> Vector
+
+The raw per-bus start voltages of a parsed MATPOWER case, index-aligned
+with the direct import's node order (which is the bus row order).
+"""
+function _matpower_raw_starts(mpc)
+  busDict, _, _ = _createDict()
+  VM = busDict["Vm"]
+  VA = busDict["Va"]
+  busData = convert(Matrix{Float64}, getproperty(mpc, :bus))
+  return Union{Nothing,NamedTuple}[(vm_pu = row[VM], va_deg = row[VA]) for row in eachrow(busData)]
+end
+
+function _apply_start_modes!(net::Net, raw_starts::AbstractVector, start_cfg::StartModeConfig; performance_profile = nothing)
   vmode = start_cfg.voltage_mode
   amode = start_cfg.angle_mode
   psource = start_cfg.profile_source
   vmode in (:classic, :pv_gen_vg, :pv_bus_vm, :all_bus_vm, :profile_blend) || error("power_flow.start_mode.voltage_mode must be classic, pv_gen_vg, pv_bus_vm, all_bus_vm, or profile_blend")
   amode in (:classic, :dc, :bus_va_blend, :matpower_va) || error("power_flow.start_mode.angle_mode must be classic, dc, bus_va_blend, or matpower_va")
-  busrow = _perf_profile_time!(performance_profile, :start_projection_matpower_bus_map) do
-    MatpowerIO.bus_row_index(mpc)
-  end
-  _perf_profile_time!(performance_profile, :start_projection_matpower_branch_map) do
-    count(e -> size(mpc.branch, 2) < 11 || mpc.branch[e, 11] != 0.0, axes(mpc.branch, 1))
-  end
-  pv_rows = _perf_profile_time!(performance_profile, :start_projection_matpower_reference_lookup) do
-    MatpowerIO.pv_voltage_reference_rows(mpc; matpower_pv_voltage_source = mat_cfg.pv_voltage_source, tol = mat_cfg.pv_voltage_mismatch_tol_pu, warn = false)
-  end
-  imported_vset = Dict(row.busI => row.imported_vset for row in pv_rows)
-  gen_vset = Dict(row.busI => (isempty(row.gen_vgs) ? row.bus_vm : row.gen_vgs[1]) for row in pv_rows)
 
   for k in eachindex(net.nodeVec)
     node = net.nodeVec[k]
-    busI = get(net.busOrigIdxDict, k, k)
-    haskey(busrow, busI) || continue
-    r = busrow[busI]
-    btype = Int(mpc.bus[r, 2])
-    bus_vm = Float64(mpc.bus[r, 8])
-    bus_va = Float64(mpc.bus[r, 9])
-    if vmode == :pv_gen_vg && (btype == 2 || btype == 3)
-      setVmVa!(node = node, vm_pu = get(gen_vset, busI, bus_vm))
-    elseif vmode == :pv_bus_vm && (btype == 2 || btype == 3)
+    k <= length(raw_starts) || continue
+    raw = raw_starts[k]
+    raw === nothing && continue
+    bus_vm = raw.vm_pu === nothing ? something(node._vm_pu, 1.0) : raw.vm_pu
+    bus_va = raw.va_deg === nothing ? something(node._va_deg, 0.0) : raw.va_deg
+    ntype = getNodeType(node)
+    is_setpoint_bus = ntype == PV || ntype == Slack
+    # the resolved setpoint the build laid down (regulator u_ref); for a
+    # setpoint bus without one the raw start value stands in, exactly like
+    # the historical BUS.VM fallback of gen-less PV buses
+    setpoint = something(node._vm_pu, bus_vm)
+    if vmode == :pv_gen_vg && is_setpoint_bus
+      setVmVa!(node = node, vm_pu = setpoint)
+    elseif vmode == :pv_bus_vm && is_setpoint_bus
       setVmVa!(node = node, vm_pu = bus_vm)
     elseif vmode == :all_bus_vm
       setVmVa!(node = node, vm_pu = bus_vm)
     elseif vmode == :profile_blend
-      psource == :matpower_reference || error("profile_blend currently requires profile_source=:matpower_reference for MATPOWER imports.")
-      setVmVa!(node = node, vm_pu = 0.5 * (something(node._vm_pu, 1.0) + bus_vm))
-    elseif vmode == :classic && (btype == 2 || btype == 3)
-      setVmVa!(node = node, vm_pu = get(imported_vset, busI, bus_vm))
+      if psource == :state_estimation || psource == :se_snapshot
+        # SE chain start (phase 5): the start voltages come from the
+        # estimated state that runpf_from_se!/the SE chain runner already
+        # wrote into the net; blending them with the source reference
+        # would corrupt the estimate, so the blend is a deliberate no-op.
+      else
+        psource == :matpower_reference || error("profile_blend currently requires profile_source=:matpower_reference for imported cases (or the SE chain sources :state_estimation/:se_snapshot, which keep the estimated voltages untouched).")
+        setVmVa!(node = node, vm_pu = 0.5 * (something(node._vm_pu, 1.0) + bus_vm))
+      end
+    elseif vmode == :classic && is_setpoint_bus
+      setVmVa!(node = node, vm_pu = setpoint)
     end
     if amode == :matpower_va
       setVmVa!(node = node, vm_pu = something(node._vm_pu, bus_vm), va_deg = bus_va)

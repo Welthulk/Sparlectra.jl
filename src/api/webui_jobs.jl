@@ -18,6 +18,16 @@
 #          and cooperative abort handling (PowerFlowAborted)
 const _POWERFLOW_WEBUI_JOBS = Dict{String,Dict{String,Any}}()
 const _POWERFLOW_WEBUI_ACTIVE_STATES = Set(("queued", "running", "aborting"))
+## States that BLOCK a new submission. "aborting" is deliberately NOT one
+## of them (maintainer 2026-09-04): cancellation is cooperative, so a run
+## stuck in a non-interruptible numerical call (a 25k-bus import, say)
+## stayed "aborting" indefinitely and locked the whole Web UI, which is
+## what the abort was supposed to escape. The docstring of
+## start_webui_powerflow_run already promised that an abort "releases the
+## UI immediately"; this makes it true. The abandoned worker keeps
+## running to its next cancellation point and discards its result, so no
+## stale result can reach the user.
+const _POWERFLOW_WEBUI_BLOCKING_STATES = Set(("queued", "running"))
 const WEBUI_ABORT_HARD_RESET_AFTER_SECONDS = 60
 const _WEBUI_OPERATION_LOG_PHASES = Set((
   "resolving_case",
@@ -32,6 +42,13 @@ const _WEBUI_OPERATION_LOG_PHASES = Set((
   "applying_import_options",
   "preparing_start_values",
   "solving_powerflow",
+  # state-estimation phases: without them a SE run stopped reporting after
+  # preparing_configuration and the status page showed that one phase for the
+  # whole run (maintainer had to abort a 13659-bus run blind, 2026-09-05)
+  "importing_case",
+  "topology_precheck",
+  "state_estimation",
+  "estimation_diagnostics",
   "postprocessing_result",
   "writing_artifacts",
   "finalizing_success",
@@ -41,6 +58,96 @@ const _WEBUI_OPERATION_LOG_PHASES = Set((
 
 struct PowerFlowAborted <: Exception end
 Base.showerror(io::IO, ::PowerFlowAborted) = print(io, "PowerFlow run aborted by user.")
+
+## Task-local abort hook (maintainer 2026-09-04: "the abort must stop the
+## running SE or PF"). A Julia task cannot be killed from outside, so the
+## solver loops have to ASK. The worker deposits its token in its own task
+## storage, and every iteration of the Newton and the WLS loop calls
+## `sparlectra_abort_requested()`, which is a dictionary lookup and costs
+## nothing next to one factorization. Task storage rather than a global:
+## it is isolated per run by construction, and a solver called directly
+## from the library sees no token and never checks.
+## What this job computes, for every message the user reads. The request
+## flags are the same ones the service dispatches on.
+function _webui_run_kind_label(request::AbstractDict)::String
+  truthy = key -> begin
+    v = _service_request_value(request, key, nothing)
+    v === true || (v isa AbstractString && lowercase(strip(v)) in ("true", "1", "yes", "on"))
+  end
+  truthy("se_mode") && return "State estimation"
+  truthy("contingency_mode") && return "N-1 contingency run"
+  truthy("short_circuit_mode") && return "Short-circuit run"
+  truthy("import_analysis_mode") && return "Import analysis"
+  truthy("diagnose_mode") && return "Diagnostic run"
+  return "PowerFlow run"
+end
+
+## The run_mode the SERVICE writes into result.json for this request kind.
+## The lifecycle metadata below overwrites the service metadata, so without
+## this the mode was lost on every worker-written result and the result page
+## fell back to its default title: a failed state estimation was labelled
+## "PowerFlow result". Reported four times before the cause was found.
+function _webui_request_run_mode(request::AbstractDict)::Union{Nothing,String}
+  truthy = key -> begin
+    v = _service_request_value(request, key, nothing)
+    v === true || (v isa AbstractString && lowercase(strip(v)) in ("true", "1", "yes", "on"))
+  end
+  truthy("se_mode") && return "se"
+  truthy("contingency_mode") && return "contingency"
+  truthy("short_circuit_mode") && return "short_circuit"
+  truthy("import_analysis_mode") && return "import_analysis"
+  truthy("diagnose_mode") && return "diagnose"
+  # an SE-started power flow is its own kind on the result page
+  v = _service_request_value(request, "se_start_run_id", nothing)
+  (v isa AbstractString && !isempty(strip(v))) && return "powerflow_se_start"
+  return nothing
+end
+
+const _SPARLECTRA_ABORT_KEY = :sparlectra_abort_token
+
+## The armed token of the run currently executing. It is deliberately NOT
+## task-local: `Threads.@spawn` gives every worker a fresh, empty task-local
+## storage, so a token stored there is invisible inside the parallel island
+## solve, the parallel N-1 batch and the short-circuit sweep - exactly the
+## long runs a user wants to abort. The Web UI executes one run at a time
+## (_POWERFLOW_WEBUI_BLOCKING_STATES), so one process-wide slot is the honest
+## model; the task-local copy is still written so an existing nested arming
+## keeps working.
+const _SPARLECTRA_ABORT_SLOT = Ref{Any}(nothing)
+
+function sparlectra_arm_abort_token!(token)
+  token === nothing && return nothing
+  task_local_storage(_SPARLECTRA_ABORT_KEY, token)
+  _SPARLECTRA_ABORT_SLOT[] = token
+  return nothing
+end
+
+## Clear the process-wide slot when a run finishes, so a later solver call
+## outside any job never sees a stale token.
+function sparlectra_disarm_abort_token!()
+  _SPARLECTRA_ABORT_SLOT[] = nothing
+  return nothing
+end
+
+"""
+    sparlectra_abort_requested() -> Bool
+
+True when the surrounding Web UI job has been asked to abort. Solver loops
+call this once per iteration and stop with `PowerFlowAborted`. Works inside
+spawned tasks as well, which task-local storage does not.
+"""
+function sparlectra_abort_requested()::Bool
+  token = get(task_local_storage(), _SPARLECTRA_ABORT_KEY, nothing)
+  token === nothing && (token = _SPARLECTRA_ABORT_SLOT[])
+  token === nothing && return false
+  return token[]
+end
+
+## Throwing form for the loops.
+function sparlectra_check_abort()
+  sparlectra_abort_requested() && throw(PowerFlowAborted())
+  return nothing
+end
 
 function _check_powerflow_cancelled!(token)
   token === nothing && return nothing
@@ -123,10 +230,10 @@ function _merge_webui_job_snapshot_with_persisted_result(snapshot::AbstractDict,
   return merged
 end
 
-function _webui_active_job()
+function _webui_active_job(; states = _POWERFLOW_WEBUI_ACTIVE_STATES)
   return lock(_POWERFLOW_SERVICE_LOCK) do
     for job in values(_POWERFLOW_WEBUI_JOBS)
-      get(job, "status", "") in _POWERFLOW_WEBUI_ACTIVE_STATES && return job
+      get(job, "status", "") in states && return job
     end
     return nothing
   end
@@ -173,7 +280,7 @@ function _write_aborted_powerflow_result!(job::AbstractDict)
 end
 
 function _webui_job_lifecycle_metadata(job::AbstractDict; run_status = get(job, "run_status", get(job, "status", "unknown")), final_outcome = get(job, "final_outcome", nothing))
-  return Dict{String,Any}(
+  meta = Dict{String,Any}(
     "solver_status" => string(get(job, "solver_status", "not_started")),
     "artifact_status" => string(get(job, "artifact_status", "not_started")),
     "run_status" => string(run_status),
@@ -181,6 +288,11 @@ function _webui_job_lifecycle_metadata(job::AbstractDict; run_status = get(job, 
     "last_heartbeat" => string(get(job, "last_heartbeat", "")),
     "final_outcome" => final_outcome,
   )
+  # carry the run kind, otherwise the result page cannot tell a failed state
+  # estimation from a failed power flow
+  mode = get(job, "run_mode", nothing)
+  mode isa AbstractString && !isempty(mode) && (meta["run_mode"] = mode)
+  return meta
 end
 
 function _write_webui_job_marker!(job::AbstractDict, status::Symbol, reason::String, message::String)
@@ -244,13 +356,21 @@ is accepted at a time. Cancellation is cooperative: an abort request releases
 the UI immediately and the worker discards any later solver success.
 """
 function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{Nothing,AbstractString} = nothing, runner = start_powerflow_run, event_callback = (event; fields...) -> nothing)::Dict{String,Any}
-  active = _webui_active_job()
-  active === nothing || return _service_failure("active_run", "A PowerFlow run is already active. Abort it or wait for it to finish."; run_id = active["run_id"])
+  # only a queued or running job blocks; an aborting one has released the
+  # UI by design (see _POWERFLOW_WEBUI_BLOCKING_STATES)
+  active = _webui_active_job(; states = _POWERFLOW_WEBUI_BLOCKING_STATES)
+  active === nothing || return _service_failure("active_run", "A run is already active. Abort it or wait for it to finish."; run_id = active["run_id"], run_mode = _webui_request_run_mode(request))
   output_root = _service_request_value(request, "output_root")
   output_root isa AbstractString && !isempty(strip(output_root)) || return _service_failure("invalid_request", "PowerFlow service request requires a nonempty output_root.")
   run_id = string(uuid4())
   webui_request_settings = _webui_request_settings_for_profile(request)
+  # the job says WHICH calculation it runs, so every message and the
+  # status page name it (maintainer 2026-09-04: a running state
+  # estimation announced itself as a PowerFlow run)
+  kind_label = _webui_run_kind_label(request)
   job = Dict{String,Any}(
+    "kind_label" => kind_label,
+    "run_mode" => something(_webui_request_run_mode(request), ""),
     "run_id" => run_id,
     "status" => "queued",
     "casefile" => _service_request_value(request, "casefile"),
@@ -260,7 +380,7 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
     "output_dir" => joinpath(abspath(output_root), run_id),
     "started_at" => Dates.now(Dates.UTC),
     "finished_at" => nothing,
-    "message" => "PowerFlow run queued.",
+    "message" => "$(kind_label) queued.",
     "abort_requested" => Threads.Atomic{Bool}(false),
     "abort_requested_at" => nothing,
     "current_phase" => "queued",
@@ -272,11 +392,21 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
     "phase_started_at" => Dates.now(Dates.UTC),
     "last_progress_at" => Dates.now(Dates.UTC),
     "webui_request_settings" => webui_request_settings,
-    "metadata" => Dict{String,Any}("webui_request_settings" => webui_request_settings),
+    # The status page of a QUEUED or RUNNING job renders from this snapshot,
+    # not from result.json, so the run kind has to be in here too. Without it
+    # a running state estimation showed "PowerFlow result" while its own
+    # result.json already said run_mode = se (third place this had to be
+    # carried: service metadata, worker lifecycle block, and this snapshot).
+    "metadata" => begin
+      md = Dict{String,Any}("webui_request_settings" => webui_request_settings)
+      m = _webui_request_run_mode(request)
+      m === nothing || (md["run_mode"] = m)
+      md
+    end,
   )
   lock(_POWERFLOW_SERVICE_LOCK) do
     _POWERFLOW_WEBUI_JOBS[run_id] = job
-    _write_webui_job_marker!(job, :queued, "webui_job_active", "PowerFlow run queued.")
+    _write_webui_job_marker!(job, :queued, "webui_job_active", string(get(job, "kind_label", "PowerFlow run"), " queued."))
   end
   event_callback("powerflow_submitted"; run_id, requested_case = job["casefile"], status = "accepted")
   job["task"] = Threads.@spawn begin
@@ -284,7 +414,7 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
       lock(_POWERFLOW_SERVICE_LOCK) do
         job["status"] = "running"
         job["run_status"] = "running"
-        job["message"] = "PowerFlow run is active."
+        job["message"] = "$(kind_label) is running."
       end
       _webui_phase_event!(job, "resolving_case", event_callback)
       event_callback("powerflow_started"; run_id, requested_case = job["casefile"], status = "running")
@@ -298,6 +428,10 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
       worker_request = Dict{String,Any}(String(key) => value for (key, value) in request)
       worker_request["run_id"] = run_id
       worker_request["cancellation_token"] = job["abort_requested"]
+      # the solver loops read the token from task storage, so an abort
+      # reaches code that never saw the request dictionary (state
+      # estimation above all)
+      sparlectra_arm_abort_token!(job["abort_requested"])
       worker_request["phase_callback"] = phase -> _webui_phase_event!(job, phase, event_callback)
       worker_request["operation_callback"] = (event; fields...) -> event_callback(event; fields...)
       result = try
@@ -305,6 +439,9 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
       catch err
         err isa PowerFlowAborted ? Dict{String,Any}("status" => "aborted", "success" => false) :
           _service_failure("execution_error", sprint(showerror, err, catch_backtrace()); run_id)
+      finally
+        # the slot is process-wide, so it must not outlive this run
+        sparlectra_disarm_abort_token!()
       end
       hard_reset_requested = lock(_POWERFLOW_SERVICE_LOCK) do
         get(job, "status", "") == "aborted_unknown"
@@ -342,7 +479,7 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
           for key in ("converged", "numerical_converged", "solution_available", "iterations", "final_mismatch", "reason")
             haskey(result, key) && (job[key] = result[key])
           end
-          job["message"] = something(get(result, "message", nothing), job["status"] == "success" ? "PowerFlow run completed." : (job["status"] == "not_converged" ? "PowerFlow run completed, but numerical solver did not converge." : "PowerFlow run failed."))
+          job["message"] = something(get(result, "message", nothing), job["status"] == "success" ? "$(kind_label) completed." : (job["status"] == "not_converged" ? "$(kind_label) completed, but numerical solver did not converge." : "$(kind_label) failed."))
           job["resolved_casefile"] = get(result, "casefile", nothing)
           if haskey(result, "run_id") && result["run_id"] != run_id
             delete!(_POWERFLOW_WEBUI_JOBS, run_id)
@@ -388,7 +525,7 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
           job["status"] = job["abort_requested"][] ? "aborted" : "failed"
           job["run_status"] = job["status"]
           job["final_outcome"] = job["abort_requested"][] ? "aborted_by_user" : "worker_exited_without_terminal_result"
-          job["message"] = job["abort_requested"][] ? "Run aborted by user." : "PowerFlow worker exited before reaching a terminal result."
+          job["message"] = job["abort_requested"][] ? "Run aborted by user." : string(get(job, "kind_label", "PowerFlow run"), ": worker exited before reaching a terminal result.")
           _write_webui_job_marker!(job, Symbol(job["status"]), String(job["final_outcome"]), String(job["message"]))
         end
       end

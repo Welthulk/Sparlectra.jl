@@ -19,7 +19,7 @@
 
 using Sparlectra
 
-include(joinpath(@__DIR__, "..", "internal", "example_header.jl"))
+include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
 # A two-bus delivery WITHOUT any BaseVoltage object: grid injection at BUS_1,
 # load at BUS_2, one line. The SV voltages (112.2 / 108.9 kV) are the only

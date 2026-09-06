@@ -1,0 +1,124 @@
+{
+  "case": "sp_case14",
+  "control": {
+    "converged": true,
+    "outer_iterations": 2,
+    "parameters": {
+      "tap_Moorau_110_20": {
+        "control_phase": false,
+        "control_ratio": true,
+        "deadband_p_mw": 0.5,
+        "deadband_vm_pu": 0.01,
+        "enabled": true,
+        "is_discrete": true,
+        "max_outer_iters": 20,
+        "mode": "voltage",
+        "target_bus": "Moorau_20",
+        "target_vm_pu": 1.0,
+        "trafo": "Moorau_110_20",
+        "type": "power_transformer",
+        "voltage_error_metric": "vm"
+      }
+    },
+    "powerflow_solves": 2
+  },
+  "n1": {
+    "converged": 14,
+    "overloads": 0,
+    "total": 17
+  },
+  "power_flow": {
+    "bus_state": {
+      "1": {
+        "va_deg": -1.836959,
+        "vm_pu": 0.989041
+      },
+      "10": {
+        "va_deg": 0.0,
+        "vm_pu": 1.02
+      },
+      "11": {
+        "va_deg": -0.552444,
+        "vm_pu": 0.983963
+      },
+      "12": {
+        "va_deg": -4.556469,
+        "vm_pu": 0.916337
+      },
+      "13": {
+        "va_deg": -1.093774,
+        "vm_pu": 0.986999
+      },
+      "14": {
+        "va_deg": -2.968009,
+        "vm_pu": 0.974581
+      },
+      "2": {
+        "va_deg": 2.034507,
+        "vm_pu": 1.01
+      },
+      "3": {
+        "va_deg": 1.127035,
+        "vm_pu": 1.0
+      },
+      "4": {
+        "va_deg": -4.358699,
+        "vm_pu": 0.94734
+      },
+      "5": {
+        "va_deg": -1.541257,
+        "vm_pu": 0.983131
+      },
+      "6": {
+        "va_deg": -4.502433,
+        "vm_pu": 0.925723
+      },
+      "7": {
+        "va_deg": -1.113043,
+        "vm_pu": 0.990823
+      },
+      "8": {
+        "va_deg": -4.115892,
+        "vm_pu": 0.983905
+      },
+      "9": {
+        "va_deg": -0.652243,
+        "vm_pu": 1.003418
+      }
+    },
+    "iterations": 1,
+    "losses_mw": 1.68228
+  },
+  "provenance": "Self-built Sparlectra demo network; the bus count in the name does not make it the IEEE case of that size, and no data was taken from MATPOWER, DTF or any other source.",
+  "scenarios": {
+    "explicit": {
+      "double_circuit_Ostheim_Neuwiese_out": {
+        "converged": true,
+        "max_branch_loading_pct": 66.386243
+      },
+      "evening_peak": {
+        "converged": true,
+        "max_branch_loading_pct": 73.394968
+      },
+      "trafo_Moorau_out_feeder_island": {
+        "converged": false
+      }
+    },
+    "mode": "explicit"
+  },
+  "short_circuit": {
+    "Moorau_20": {
+      "ik_kA": 4.980238,
+      "sk_MVA": 172.520502
+    },
+    "Ostheim_110": {
+      "ik_kA": 15.745916,
+      "sk_MVA": 3000.0
+    }
+  },
+  "state_estimation": {
+    "dof": 83,
+    "objective": 78.403364,
+    "seed": 20260914
+  }
+}

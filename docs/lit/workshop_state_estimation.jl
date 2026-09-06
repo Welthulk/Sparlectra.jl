@@ -76,6 +76,8 @@
 
 # ## Load the packages
 #
+# Every printed number sits next to an @assert (the scenarios-workshop     #src
+# pattern, task_se_visibility): the notebook cannot drift silently.        #src
 # `Random` (standard library) provides the seeded generator that makes the
 # synthetic measurement noise reproducible; `LinearAlgebra` (standard
 # library) contributes `nullspace` for the observability deep dive.
@@ -101,6 +103,7 @@ t_pf = @elapsed runpf!(wnet, 10, 1e-8, 0)
 setMeasurementsFromPF!(wnet; includeVm = true, includePinj = true, includeQinj = true, includePflow = true, includeQflow = true, noise = false)
 t_se = @elapsed runse!(wnet; maxIte = 8, tol = 1e-6, flatstart = true, jacEps = 1e-6, updateNet = false)
 println("warm: power flow ", round(t_pf; digits = 2), " s, estimator ", round(t_se; digits = 2), " s (first calls compile)")
+@assert t_pf > 0.0 && t_se > 0.0
 
 # ## Build the study network
 #
@@ -150,6 +153,7 @@ ok || error("Network validation failed: $msg")
 ite_pf, status_pf = runpf!(net, 40, 1e-10, 0)
 status_pf == 0 || error("Power flow did not converge")
 println("reference power flow converged in $ite_pf iterations")
+@assert ite_pf == 5
 
 # ## Derive a noisy measurement set
 #
@@ -173,6 +177,7 @@ setMeasurementsFromPF!(
   rng = MersenneTwister(42),
 )
 println(length(net.measurements), " measurements created")
+@assert length(net.measurements) == 57
 
 # ## Check observability
 #
@@ -197,7 +202,9 @@ println(length(net.measurements), " measurements created")
 
 gobs = evaluate_global_observability(net; flatstart = true, jacEps = 1e-6)
 println("global observability quality: ", gobs.quality)
+@assert gobs.quality == :good
 println("measurements: ", gobs.n_measurements, ", states: ", gobs.n_states)
+@assert gobs.n_measurements == 57 && gobs.n_states == 13
 
 # ## Run the estimator
 #
@@ -217,7 +224,9 @@ se = runse!(
 )
 
 println("SE converged: ", se.converged, " in ", se.iterations, " iterations")
+@assert se.converged && se.iterations == 3
 println("objective J:  ", round(se.objectiveJ; digits = 2))
+@assert 30 < se.objectiveJ < 70
 
 # ## Inspect the estimated state
 #
@@ -236,13 +245,17 @@ println("objective J:  ", round(se.objectiveJ; digits = 2))
 # The ratio is the one number worth glancing at after every run:
 
 println("J / dof = ", round(se.objectiveJ / se.dof; digits = 3), "  (healthy noise: approximately 1)")
+@assert 0.5 < se.objectiveJ / se.dof < 2.0
 
 println("dof (redundant measurements): ", se.dof)
+@assert se.dof == 44
 println("J within 3σ band:             ", se.jWithin3Sigma)
+@assert se.jWithin3Sigma === true
 println()
 for (name, idx) in sort(collect(net.busDict); by = last)
   v = se.voltages[idx]
   println(rpad(name, 4), "  Vm = ", round(abs(v); digits = 4), " pu   Va = ", round(rad2deg(angle(v)); digits = 3), "°")
+  @assert 0.9 < abs(v) < 1.1 && abs(rad2deg(angle(v))) < 10
 end
 
 # ## Building measurement sets manually
@@ -264,7 +277,9 @@ addQflowMeasurement!(net; branchNr = 1, value = 7.0, sigma = 0.8, direction = :t
 
 obs = evaluate_global_observability(net; flatstart = true, jacEps = 1e-6)
 println("sparse manual set quality: ", obs.quality)
+@assert obs.quality == :not_observable
 println("measurements: ", obs.n_measurements, ", states: ", obs.n_states)
+@assert obs.n_measurements == 5 && obs.n_states == 13
 
 # Reading aid (Example 2): five measurements against 13 states: the check
 # reports the shortfall instead of letting the estimator run into a
@@ -288,7 +303,9 @@ H_B = [
 ]
 obs_B = evaluate_observability_matrix(H_B)
 println("H_B: observable = ", obs_B.numerical_observable, ", dof = ", obs_B.dof)
+@assert obs_B.numerical_observable === true && obs_B.dof == 0
 println("  critical rows: ", obs_B.numerical_critical_measurement_indices)
+@assert obs_B.numerical_critical_measurement_indices == [1, 2, 3]
 
 # **Example 4 (`H_A`), duplicated information:** the same identity plus
 # two extra rows, but BOTH duplicating the same information about
@@ -305,9 +322,12 @@ H_A = [
 ]
 obs_A = evaluate_observability_matrix(H_A)
 println("H_A: observable = ", obs_A.numerical_observable, ", dof = ", obs_A.dof)
+@assert obs_A.numerical_observable === true && obs_A.dof == 2
 println("  critical rows: ", obs_A.numerical_critical_measurement_indices)
+@assert obs_A.numerical_critical_measurement_indices == [3]
 for i in axes(H_A, 1)
   println("  row ", i, ": ", numerical_row_redundant(H_A, i) ? "redundant" : "CRITICAL", " (structural: ", structural_row_redundant(H_A, i) ? "redundant" : "CRITICAL", ")")
+  @assert numerical_row_redundant(H_A, i) == (i != 3)
 end
 
 # **Example 5 (`H_E`), the bridge to networks:** an incidence-like matrix
@@ -342,7 +362,9 @@ H_E = [
 ]
 obs_E = evaluate_observability_matrix(H_E)
 println("H_E: observable = ", obs_E.numerical_observable, ", dof = ", obs_E.dof)
+@assert obs_E.numerical_observable === true && obs_E.dof == 1
 println("  critical rows: ", obs_E.numerical_critical_measurement_indices)
+@assert obs_E.numerical_critical_measurement_indices == [3, 4]
 
 # Reading aid (Example 5): row 3 (the only path to bus 4) is critical;
 # rows 1, 2, 5 form a triangle of alternatives around buses 1..3 and are
@@ -405,9 +427,14 @@ println("  critical rows: ", obs_E.numerical_critical_measurement_indices)
 H_flow = [1.0 -1.0]
 loc = evaluate_local_observability_matrix(H_flow, [1])
 println("submatrix test on state 1: observable = ", loc.numerical_observable, "  (misleading)")
+@assert loc.numerical_observable === true
 println("null space of H:           ", vec(round.(nullspace(H_flow); digits = 4)))
+let ns = vec(nullspace(H_flow))
+  @assert length(ns) == 2 && isapprox(abs(ns[1]), abs(ns[2]); atol = 1e-9)
+end
 glob_flow = evaluate_observability_matrix(H_flow)
 println("global dark states:        ", glob_flow.unobservable_state_columns, "  (the rigorous answer)")
+@assert glob_flow.unobservable_state_columns == [1, 2]
 
 # Reading aid (Example 6): the local check remains useful, it localizes
 # candidate regions fast, but a positive local verdict must be confirmed
@@ -493,8 +520,11 @@ addVmMeasurement!(net; busName = "B1", value = net.nodeVec[net.busDict["B1"]]._v
 
 gmin = evaluate_global_observability(net; flatstart = true, jacEps = 1e-6)
 println("minimal tree set: quality = ", gmin.quality, " (", gmin.n_measurements, " rows, ", gmin.n_states, " states)")
+@assert gmin.quality == :critical && gmin.n_measurements == 13 && gmin.n_states == 13
 println("  structurally observable: ", gmin.structural_observable, ", numerically observable: ", gmin.numerical_observable, " (rank ", gmin.numerical_rank, ")")
+@assert gmin.structural_observable && gmin.numerical_observable && gmin.numerical_rank == 13
 println("  redundancy dof = ", gmin.dof, ", critical measurements: ", length(gmin.numerical_critical_measurement_indices), " of ", gmin.n_measurements)
+@assert gmin.dof == 0 && length(gmin.numerical_critical_measurement_indices) == 13
 
 # Reading aid (Example 7): observable, but `quality = :critical` and EVERY row is on
 # the critical list: with zero redundancy, losing any single meter blinds
@@ -521,8 +551,10 @@ println("  redundancy dof = ", gmin.dof, ", critical measurements: ", length(gmi
 
 mj = measurement_jacobian(net)
 println("H is ", size(mj.H, 1), " x ", size(mj.H, 2), "; columns: ", join(mj.cols[1:4], ", "), ", ...")
+@assert size(mj.H) == (13, 13)
 r1 = mj.rows[1]
 println("row 1: ", r1.type, " at ", r1.location, " touches ", count(j -> abs(mj.H[1, j]) > 1e-9, eachindex(mj.cols)), " states")
+@assert count(j -> abs(mj.H[1, j]) > 1e-9, eachindex(mj.cols)) == 3
 #
 # ### Breaking a corner, and finding it with the local check
 #
@@ -542,13 +574,16 @@ addVmMeasurement!(net; busName = "B1", value = net.nodeVec[net.busDict["B1"]]._v
 
 gbroken = evaluate_global_observability(net; flatstart = true, jacEps = 1e-6)
 println("without B6-B7: quality = ", gbroken.quality, " (rank ", gbroken.numerical_rank, " of ", gbroken.n_states, ")")
+@assert gbroken.quality == :not_observable && gbroken.numerical_rank == 11 && gbroken.n_states == 13
 ## the rigorous per-state answer, straight from the null space: exactly
 ## B7's states are dark (angle column 6, magnitude column 13)
 println("dark states (unobservable_state_columns): ", gbroken.unobservable_state_columns)
+@assert gbroken.unobservable_state_columns == [6, 13]
 
 ## local check on B2 (angle col 1, magnitude col 8): still fully covered
 lb2 = evaluate_local_observability(net, [1, 8]; flatstart = true, jacEps = 1e-6)
 println("local B2: numerically observable = ", lb2.numerical_observable)
+@assert lb2.numerical_observable === true
 ## local check on B7 (angle col 6, magnitude col 13): NO measurement even
 ## touches these states anymore, which the check reports as an error;
 ## this is the EASY case for the local test, the hard case (touched but
@@ -558,6 +593,7 @@ try
   evaluate_local_observability(net, [6, 13]; flatstart = true, jacEps = 1e-6)
 catch err
   println("local B7: ", sprint(showerror, err))
+  @assert occursin("no active measurement", sprint(showerror, err))
 end
 
 # ### Repairing with an injection
@@ -575,6 +611,7 @@ addPinjMeasurement!(net; busName = "B7", value = -20.0, sigma = 1.0)
 addQinjMeasurement!(net; busName = "B7", value = -6.0, sigma = 1.0)
 grepaired = evaluate_global_observability(net; flatstart = true, jacEps = 1e-6)
 println("with P/Q injection at B7: quality = ", grepaired.quality, " (rank ", grepaired.numerical_rank, " of ", grepaired.n_states, ")")
+@assert grepaired.quality == :critical && grepaired.numerical_rank == 13
 
 # Placement rules, condensed: flow pairs see the two ends of their branch,
 # injections see the bus AND all its neighbors, `Vm` anchors the magnitude
@@ -617,11 +654,14 @@ addVmMeasurement!(net_p; busName = "B1", value = net_p.nodeVec[net_p.busDict["B1
 
 g_no_zib = evaluate_global_observability(net_p; flatstart = true, jacEps = 1e-6)
 println("without ZIB: quality = ", g_no_zib.quality, ", dof = ", g_no_zib.dof, ", dark states = ", g_no_zib.unobservable_state_columns)
+@assert g_no_zib.quality == :not_observable && g_no_zib.dof == -2 && g_no_zib.unobservable_state_columns == [6, 13]
 
 added = addZeroInjectionMeasurements!(net_p; sigma = 1e-6)   ## auto-detects the passive B7
 println(length(added), " zero-injection rows added at the passive bus")
+@assert length(added) == 2
 g_zib = evaluate_global_observability(net_p; flatstart = true, jacEps = 1e-6)
 println("with ZIB:    quality = ", g_zib.quality, ", dof = ", g_zib.dof)
+@assert g_zib.quality == :critical && g_zib.dof == 0
 
 # Reading aid (Example 10): the ZIB pair acts exactly like the injection
 # repair of Example 9, it couples B7 to its neighbors, but it costs
@@ -644,6 +684,7 @@ for zib_sigma in (1e-6, 1e-2)
   sev = runse!(netv; maxIte = 15, tol = 1e-6, flatstart = true, jacEps = 1e-6, updateNet = false)
   vm_b7 = abs(sev.voltages[netv.busDict["B7"]])
   println("ZIB sigma = ", zib_sigma, ": converged = ", sev.converged, ", J = ", round(sev.objectiveJ; digits = 6), ", Vm(B7) = ", round(vm_b7; digits = 5), " pu, max/min weight ratio = ", round((0.8 / zib_sigma)^2; digits = 1))
+  @assert sev.converged && sev.objectiveJ < 1e-8 && isapprox(vm_b7, 1.00672; atol = 1e-3)
 end
 
 # Reading aid (Example 11): with clean synthetic data both sigmas land on the same
@@ -676,9 +717,11 @@ for bus in ("B4", "B6")
 end
 gpmu = evaluate_global_observability(net; flatstart = true, jacEps = 1e-6)
 println("with 2 PMUs: quality = ", gpmu.quality, " (", gpmu.n_measurements, " rows, ", gpmu.n_states, " states, offset state included)")
+@assert gpmu.quality == :critical && gpmu.n_measurements == 17 && gpmu.n_states == 14
 
 se_pmu = runse!(net; maxIte = 15, tol = 1e-6, flatstart = true, jacEps = 1e-6, updateNet = false)
 println("SE converged: ", se_pmu.converged, ", estimated PMU reference offset: ", round(se_pmu.vaRefOffsetDeg; digits = 3), "° (true shift ", pmu_shift_deg, "°)")
+@assert se_pmu.converged && isapprox(se_pmu.vaRefOffsetDeg, pmu_shift_deg; atol = 0.05)
 
 # Reading aid (Example 12): the estimator recovers the 2° time-base shift as the extra
 # state instead of bending the bus angles toward it, and the estimated
@@ -689,6 +732,11 @@ println("SE converged: ", se_pmu.converged, ", estimated PMU reference offset: "
 #
 # ## Where to go next
 #
+# - The sequel notebook,
+#   [bad data and parameter estimation](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_se_diagnostics.ipynb):
+#   what happens when $J/\mathrm{dof}$ is NOT near one: normalized
+#   residuals and localizability, sequential elimination, robust
+#   estimation, current measurements, and shunt-parameter estimation.
 # - New to Sparlectra? The
 #   [workshop tour](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour.ipynb)
 #   builds a network from scratch step by step, directly in Colab.

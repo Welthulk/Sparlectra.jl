@@ -32,7 +32,7 @@ Run from project root:
 using Sparlectra
 using Printf
 
-include(joinpath(@__DIR__, "..", "internal", "example_header.jl"))
+include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
 abstract type Meas end
 struct FlowMeas <: Meas

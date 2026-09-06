@@ -261,10 +261,10 @@ function run_short_circuit_tests()
 
     @testset "short_circuit.c_factor config coverage" begin
       @test Sparlectra.ShortCircuitConfig().c_factor == 0.0
-      ok_yaml = tempname() * ".yaml"
+      ok_yaml = test_scratch_path(".yaml")
       write(ok_yaml, "short_circuit:\n  c_factor: 1.05\n")
       @test Sparlectra.load_sparlectra_config(ok_yaml; reload = true).shortcircuit.c_factor == 1.05
-      bad_yaml = tempname() * ".yaml"
+      bad_yaml = test_scratch_path(".yaml")
       write(bad_yaml, "short_circuit:\n  c_factor: 1.4\n")
       err = try
         Sparlectra.load_sparlectra_config(bad_yaml; reload = true)
@@ -316,7 +316,16 @@ function run_short_circuit_tests()
       # must agree with :solves to machine precision (documented: not
       # bitwise) with identical statuses/flags, serial and parallel alike
       @test_throws ArgumentError runShortCircuit!(net; sweep_method = :bogus)
-      solves_ref = runShortCircuit!(net; case = :max, parallel_enabled = false)
+      @test_throws ArgumentError runShortCircuit!(net; takahashi_min_buses = 0)
+      solves_ref = runShortCircuit!(net; case = :max, sweep_method = :solves, parallel_enabled = false)
+      # sweep_method = :auto (the default): below the island threshold it is
+      # bitwise the solves sweep, with threshold 1 bitwise the takahashi
+      # sweep; the strategy choice itself never changes a row
+      auto_small = runShortCircuit!(net; case = :max, sweep_method = :auto, takahashi_min_buses = 10_000, parallel_enabled = false)
+      @test isequal(auto_small.rows, solves_ref.rows)
+      auto_tak = runShortCircuit!(net; case = :max, sweep_method = :auto, takahashi_min_buses = 1, parallel_enabled = false)
+      tak_ref = runShortCircuit!(net; case = :max, sweep_method = :takahashi, parallel_enabled = false)
+      @test isequal(auto_tak.rows, tak_ref.rows)
       for parallel in (false, true)
         tak = runShortCircuit!(net; case = :max, sweep_method = :takahashi, parallel_enabled = parallel, parallel_min_work_items = 2)
         @test length(tak.rows) == length(solves_ref.rows)
@@ -338,19 +347,14 @@ function run_short_circuit_tests()
       tak2 = runShortCircuit!(net; case = :max, sweep_method = :takahashi, parallel_enabled = false)
       @test isequal(tak1.rows, tak2.rows)
 
-      # case14 with buses = :all through the MATPOWER import (bundled case)
-      case14 = joinpath(Sparlectra.MPOWER_DIR, "case14.m")
-      if isfile(case14)
-        net14 = createNetFromMatPowerFile(filename = case14)
-        first_bus = argmin(name -> net14.busDict[name], collect(keys(net14.busDict)))
-        addExternalGrid!(net = net14, busName = first_bus, vm_pu = 1.06, sk_max_MVA = 3000.0, sk_min_MVA = 2000.0, rx_max = 0.1, internal_impedance = false)
-        s14 = runShortCircuit!(net14; buses = :all, case = :max, parallel_enabled = false)
-        p14 = runShortCircuit!(net14; buses = :all, case = :max, parallel_enabled = true, parallel_min_work_items = 2)
-        @test isequal(s14.rows, p14.rows)
-        println("sc parallel sweep case14: RAN")
-      else
-        println("sc parallel sweep case14: SKIPPED (bundled case14.m not found)")
-      end
+      # parallel sweep equality with buses = :all on the shipped operated
+      # grid (load_fixture_net: runs on every install; the case declares
+      # its own IEC 60909 source, so no hand-attached external grid)
+      net60 = load_fixture_net("sp_case60")
+      s60 = runShortCircuit!(net60; buses = :all, case = :max, parallel_enabled = false)
+      p60 = runShortCircuit!(net60; buses = :all, case = :max, parallel_enabled = true, parallel_min_work_items = 2)
+      @test isequal(s60.rows, p60.rows)
+      println("sc parallel sweep sp_case60: RAN")
     end
   end
 end

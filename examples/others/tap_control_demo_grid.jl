@@ -19,7 +19,7 @@
 using Sparlectra
 using Printf
 
-include(joinpath(@__DIR__, "..", "internal", "example_header.jl"))
+include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
 function demo_yaml_path(args::AbstractVector{String} = ARGS)
   if length(args) >= 1

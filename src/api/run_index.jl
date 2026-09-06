@@ -16,6 +16,10 @@
 # purpose: persistent run index (powerflow_runs_index.json) for the PowerFlow
 #          service: entry validation with path-containment checks plus index
 #          read and update helpers
+"""
+File name of the persistent run index the service writes under its output
+root.
+"""
 const POWERFLOW_RUN_INDEX_FILENAME = "powerflow_runs_index.json"
 
 function _powerflow_index_path(output_root::AbstractString)::String
@@ -55,9 +59,38 @@ function _indexed_run_paths(entry::AbstractDict, output_root::AbstractString)
   return (valid = true, reason = nothing, run_id = String(run_id), output_dir = directory, result_file = result_path)
 end
 
-function _powerflow_run_index_entry(result::SparlectraApiResult)::Dict{String,Any}
+"""
+Method name for the run history, taken from what ACTUALLY ran.
+
+The history used a hard `"rectangular"` default whenever the run outcome
+carried no solver of its own. That claimed the rectangular Newton-Raphson
+power flow for every kind of run: a state estimation solves weighted least
+squares, a short circuit is a direct IEC 60909 solve, and an import
+analysis solves nothing at all. Reported by the maintainer 2026-09-06 on an
+SE run listed as `rectangular`.
+
+The names match the configuration keys a user can set
+(`power_flow.method`, `state_estimation.method`), so the column and the
+configuration speak the same language. An import analysis reports an empty
+method rather than an invented one.
+"""
+function _powerflow_run_index_solver(result::SparlectraApiResult)::String
   final_outcome = get(result.metadata, "final_outcome", Dict{String,Any}())
-  solver = final_outcome isa AbstractDict ? String(get(final_outcome, "solver", "rectangular")) : "rectangular"
+  if final_outcome isa AbstractDict
+    reported = String(get(final_outcome, "solver", ""))
+    isempty(reported) || return reported
+  end
+  mode = String(get(result.metadata, "run_mode", ""))
+  mode == "se" && return "wls"
+  mode == "short_circuit" && return "iec60909"
+  mode == "import_analysis" && return ""
+  # plain power flow, an SE-started power flow and every contingency case
+  # do run the rectangular Newton-Raphson
+  return "rectangular"
+end
+
+function _powerflow_run_index_entry(result::SparlectraApiResult)::Dict{String,Any}
+  solver = _powerflow_run_index_solver(result)
   return Dict{String,Any}(
     "run_id" => result.run_id,
     "schema_version" => result.schema_version,
@@ -70,6 +103,10 @@ function _powerflow_run_index_entry(result::SparlectraApiResult)::Dict{String,An
     "final_mismatch" => result.final_mismatch,
     "iterations" => result.iterations,
     "solver" => solver,
+    # run kind (SE phase 5): surfaced so the history can tell an SE or
+    # contingency run from a plain power flow; "" = plain PF (also the value
+    # older index files fall back to)
+    "run_mode" => String(get(result.metadata, "run_mode", "")),
     "timestamp" => Dates.format(Dates.now(), "yyyy-mm-dd HH:MM:SS"),
   )
 end

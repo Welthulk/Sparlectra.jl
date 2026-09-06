@@ -26,7 +26,7 @@
 # subprocesses. Respect an explicit user setting, default to auto.
 haskey(ENV, "JULIA_NUM_THREADS") || (ENV["JULIA_NUM_THREADS"] = "auto")
 
-include(joinpath(@__DIR__, "internal", "example_suite_runner.jl"))
+include(joinpath(@__DIR__, "others", "example_suite_runner.jl"))
 
 const SUITE_SPECS = ExampleSpec[
   ExampleSpec(name = "parallel_islands", file = "powerflow/exp_parallel_islands.jl", purpose = "power_flow.islands.mode solve_parallel vs solve_independent on an 8-island net, bitwise-identical voltages"),

@@ -1461,8 +1461,8 @@ mpc.branch = [
 """,
   )
   prev_cfg = Sparlectra.active_sparlectra_config()
-  global_cfg = Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("start_mode" => Dict("flatstart" => true)), "matpower_import" => Dict("bus_shunt_model" => "voltage_dependent_injection", "shift_sign" => -1.0, "shift_unit" => "rad")))
-  run_cfg = Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("start_mode" => Dict("flatstart" => false)), "matpower_import" => Dict("bus_shunt_model" => "admittance", "shift_sign" => 1.0, "shift_unit" => "deg")))
+  global_cfg = Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("start_mode" => Dict("flatstart" => true)), "model" => Dict("bus_shunt_model" => "voltage_dependent_injection"), "matpower_import" => Dict("shift_sign" => -1.0, "shift_unit" => "rad")))
+  run_cfg = Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("start_mode" => Dict("flatstart" => false)), "model" => Dict("bus_shunt_model" => "admittance"), "matpower_import" => Dict("shift_sign" => 1.0, "shift_unit" => "deg")))
   try
     Sparlectra.set_sparlectra_config!(global_cfg)
 
@@ -2350,7 +2350,7 @@ mpc.branch = [
 end
 
 function test_matpower_read_case_m_postprocessing()::Bool
-  mfile = tempname() * ".m"
+  mfile = test_scratch_path(".m")
   open(mfile, "w") do io
     write(
       io,
@@ -3002,8 +3002,54 @@ function test_condition_number_estimator()::Bool
   return true
 end
 
+# Compact remove-functions coverage (replaces the former legacy/remove
+# group, task_test_suite step 3c): one small net, every public remover once,
+# acceptance and rejection paths with network integrity afterwards. The
+# rejection paths log @error by design; NullLogger keeps the run output
+# clean exactly like the retired testremove.jl did.
+function test_remove_functions_compact()
+  net = Net(name = "remove_compact", baseMVA = 100.0)
+  addBus!(net = net, busName = "B1", vn_kV = 110.0)
+  addBus!(net = net, busName = "B2", vn_kV = 110.0)
+  addBus!(net = net, busName = "B3", vn_kV = 110.0)
+  addBus!(net = net, busName = "B5", vn_kV = 110.0)
+  addBus!(net = net, busName = "B6", vn_kV = 20.0)
+  addACLine!(net = net, fromBus = "B1", toBus = "B2", length = 10.0, r = 0.01, x = 0.1, c_nf_per_km = 10.0, tanδ = 0.0, ratedS = 100.0)
+  addACLine!(net = net, fromBus = "B2", toBus = "B3", length = 15.0, r = 0.01, x = 0.1, c_nf_per_km = 10.0, tanδ = 0.0, ratedS = 100.0)
+  addACLine!(net = net, fromBus = "B2", toBus = "B5", length = 15.0, r = 0.01, x = 0.1, c_nf_per_km = 10.0, tanδ = 0.0, ratedS = 100.0)
+  add2WTrafo!(net = net, fromBus = "B1", toBus = "B6", sn_mva = 100.0, vk_percent = 10.0, vkr_percent = 0.5, pfe_kw = 20.0, i0_percent = 0.1)
+  addShunt!(net = net, busName = "B2", pShunt = 0.0, qShunt = 10.0)
+  addProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER", p = 50.0, q = 20.0)
+  addProsumer!(net = net, busName = "B5", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.03, va_deg = 0.0, referencePri = "B5")
+  ok, msg = validate!(net = net)
+  @test ok
+  n_branch = length(net.branchVec)
+  Logging.with_logger(Logging.NullLogger()) do
+    @test removeACLine!(net = net, fromBus = "B2", toBus = "B3")
+    @test length(net.branchVec) == n_branch - 1
+    @test !removeACLine!(net = net, fromBus = "B2", toBus = "B3")   # already gone
+    @test removeTrafo!(net = net, fromBus = "B1", toBus = "B6")
+    @test !removeTrafo!(net = net, fromBus = "B1", toBus = "B6")
+    @test removeShunt!(net = net, busName = "B2")
+    @test isempty(net.shuntVec)
+    @test !removeShunt!(net = net, busName = "B2")
+    n_pros = length(net.prosumpsVec)
+    @test removeProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER")
+    @test length(net.prosumpsVec) == n_pros - 1
+    # removeBus! validates only: slack and connected buses are refused,
+    # a fully detached bus reports removable
+    @test !removeBus!(net = net, busName = "B5")   # slack
+    @test !removeBus!(net = net, busName = "B2")   # still carries branches
+    @test removeBus!(net = net, busName = "B3")    # detached now
+  end
+  return true
+end
+
 function run_grid_fast_tests()
   @testset "Grid and power-flow regression tests" begin
+    @testset "Remove functions" begin
+      @test test_remove_functions_compact() == true
+    end
     @testset "Transformer and network validation" begin
       @test test_2WTPITrafo() == true
       @test test_3WTPITrafo() == true

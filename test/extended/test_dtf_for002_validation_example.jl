@@ -14,7 +14,7 @@
 
 # file: test/extended/test_dtf_for002_validation_example.jl
 # purpose: extended test for the native DTF/FOR002 base-case validation
-#          example (examples/internal/dtf_validation_base.jl), checking its
+#          example (examples/dtf/dtf_validation_base.jl), checking its
 #          artifacts and metric finiteness; skips without local DTF data
 using Test
 
@@ -39,7 +39,7 @@ end
 function run_dtf_for002_validation_example_tests()
   @testset "native DTF/FOR002 validation example" begin
     repo = normpath(joinpath(@__DIR__, "..", ".."))
-    script = joinpath(repo, "examples", "internal", "dtf_validation_base.jl")
+    script = joinpath(repo, "examples", "dtf", "dtf_validation_base.jl")
     source = read(script, String)
     @test occursin("DTFImporter.read_dtf", source)
     @test occursin("DTFImporter.build_net", source)

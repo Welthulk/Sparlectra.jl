@@ -1,0 +1,85 @@
+name;weight;converged;iterations;start_used;min_vm_pu;max_vm_pu;max_branch_loading_pct;severity;overloads;voltage_violations;island_count;shed_load_mw;error
+B_ACL_220_1_2#1;1.0;true;4;warm;0.9218719753791736;1.03;48.67535232715436;0.0;;;1;0.0;
+B_ACL_220_1_2#2;1.0;true;4;warm;0.9218719753791736;1.03;48.67535232715436;0.0;;;1;0.0;
+B_ACL_220_2_3#3;1.0;true;4;warm;0.922563692109804;1.03;48.67029340394852;0.0;;;1;0.0;
+B_ACL_220_2_3#4;1.0;true;4;warm;0.922563692109804;1.03;48.67029340394852;0.0;;;1;0.0;
+B_ACL_220_3_4#5;1.0;true;4;warm;0.9225636921096443;1.03;48.670293403950225;0.0;;;1;0.0;
+B_ACL_220_3_4#6;1.0;true;4;warm;0.9225636921096443;1.03;48.670293403950225;0.0;;;1;0.0;
+B_ACL_220_4_5#7;1.0;true;4;warm;0.9216579527890448;1.03;48.67453527894935;0.0;;;1;0.0;
+B_ACL_220_4_5#8;1.0;true;4;warm;0.9216579527890448;1.03;48.67453527894935;0.0;;;1;0.0;
+B_ACL_220_5_6#9;1.0;true;4;warm;0.9225374745747897;1.03;48.66803420377718;0.0;;;1;0.0;
+B_ACL_220_5_6#10;1.0;true;4;warm;0.9225374745747897;1.03;48.66803420377718;0.0;;;1;0.0;
+B_ACL_220_6_1#11;1.0;true;4;warm;0.9225048116813745;1.03;48.67278183421757;0.0;;;1;0.0;
+B_ACL_220_6_1#12;1.0;true;4;warm;0.9225048116813745;1.03;48.67278183421757;0.0;;;1;0.0;
+B_ACL_110_8_9;1.0;true;4;warm;0.9223005195041556;1.035746045729471;48.648114973579695;0.0;;;1;0.0;
+B_ACL_110_9_10;1.0;true;4;warm;0.9232686905040326;1.034491096250456;48.65178761099938;0.0;;;1;0.0;
+B_ACL_110_10_11;1.0;true;4;warm;0.9232377591185503;1.0324356842412648;48.65783479952616;0.0;;;1;0.0;
+B_ACL_110_11_12;1.0;true;4;warm;0.9176251613150191;1.03;48.685480045671426;0.0;;;1;0.0;
+B_ACL_110_12_13;1.0;true;4;warm;0.9218038115087378;1.03;48.670515108000615;0.0;;;1;0.0;
+B_ACL_110_13_14;1.0;true;5;warm;0.9175973138778565;1.03;54.913243234747696;0.0;;;1;0.0;
+B_ACL_110_14_15;1.0;true;5;warm;0.9075115432535691;1.03;48.68884399942237;0.0;;;1;0.0;
+B_ACL_110_15_16;1.0;true;4;warm;0.9253466774066679;1.030231923602015;48.66436290332872;0.0;;;1;0.0;
+B_ACL_110_16_7;1.0;true;4;warm;0.913705965764104;1.03;48.669074493554625;0.0;;;1;0.0;
+B_ACL_110_8_17;1.0;true;4;warm;0.9200836971358031;1.03;48.666125169933494;0.0;;;1;0.0;
+B_ACL_110_17_12;1.0;true;4;warm;0.9230592756449008;1.031435025248961;48.66079327932078;0.0;;;1;0.0;
+B_ACL_110_10_18;1.0;true;4;warm;0.9225086950704586;1.03;48.67598981025083;0.0;;;1;0.0;
+B_ACL_110_17_19;1.0;true;5;warm;0.9102882991890718;1.0328326456941026;48.65666380042446;0.0;;;1;0.0;
+B_ACL_110_19_20;1.0;true;3;warm;0.9234060573017314;1.03;48.6696159008218;0.0;;;1;0.0;
+B_ACL_110_16_20;1.0;true;5;warm;0.9125854755133693;1.03;48.67968164893428;0.0;;;1;0.0;
+B_ACL_110_7_8;1.0;true;4;warm;0.9226312688214406;1.03;48.67104434176859;0.0;;;1;0.0;
+B_ACL_110_21_8;1.0;true;4;warm;0.9226312688214406;1.03;48.67104434176859;0.0;;;1;0.0;
+B_ACL_110_12_20;1.0;true;5;warm;0.9077678056082766;1.03;52.925271791966985;0.0;;;1;0.0;
+B_ACL_110_22_23;1.0;true;5;warm;0.9018765854914168;1.03;48.67519237605031;0.0;;;1;0.0;
+B_ACL_110_23_24;1.0;true;5;warm;0.901876585491416;1.03;48.67519237604849;0.0;;;1;0.0;
+B_ACL_110_24_25;1.0;true;6;warm;0.7936125168793532;1.03;51.704791557661025;0.0;;Neuberg_110,Oberfeld_110,Ostdorf_110,Waldhof_110,Steineck_110,Lindkamp_110,Falkloh_110,Bornried_110,Waldhof_20,Holtbrok_20,Rossau_20,Sandbach_20,Altfeld_20,Neudorf_20,Obertal_20,Ostsee_20,Westhof_20,Nordeck_20,Waldkamp_20,Steinheim_20;1;0.0;
+B_ACL_110_25_26;1.0;true;5;warm;0.8233504351993223;1.03;48.68485514318511;0.0;;Nordsee_110,Waldhof_110,Steineck_110,Lindkamp_110,Falkloh_110,Bornried_110,Waldhof_20,Holtbrok_20,Rossau_20,Sandbach_20,Altfeld_20,Neudorf_20,Obertal_20,Ostsee_20,Westhof_20,Nordeck_20,Waldkamp_20,Steinheim_20;1;0.0;
+B_ACL_110_26_27;1.0;true;5;warm;0.8233504351848308;1.03;48.68485514318761;0.0;;Waldhof_110,Steineck_110,Lindkamp_110,Falkloh_110,Bornried_110,Waldhof_20,Holtbrok_20,Rossau_20,Sandbach_20,Altfeld_20,Neudorf_20,Obertal_20,Ostsee_20,Westhof_20,Nordeck_20,Waldkamp_20,Steinheim_20;1;0.0;
+B_ACL_110_27_28;1.0;true;4;warm;0.9211653423238559;1.03;48.6704326307373;0.0;;;1;0.0;
+B_ACL_110_28_29;1.0;true;5;warm;0.9072310668841496;1.03;48.67112777314415;0.0;;;1;0.0;
+B_ACL_110_29_22;1.0;true;5;warm;0.9072310668846675;1.03;48.671127773144484;0.0;;;1;0.0;
+B_ACL_110_25_30;1.0;false;0;none;NaN;NaN;NaN;NaN;;;2;12.0;islanded: load-only, 12.0 MW load disconnected
+B_ACL_110_30_31;1.0;true;1;warm;0.9229519826979068;1.03;48.66869172160647;0.0;;;1;0.0;
+B_ACL_110_27_32;1.0;false;0;none;NaN;NaN;NaN;NaN;;;2;10.0;islanded: load-only, 10.0 MW load disconnected
+B_ACL_110_32_33;1.0;true;1;warm;0.9229519826979068;1.03;48.66869172160647;0.0;;;1;0.0;
+B_ACL_110_22_27;1.0;true;5;warm;0.9030704563411908;1.03;48.67191170488412;0.0;;;1;0.0;
+B_ACL_110_20_22;1.0;true;10;warm;0.907397425406152;1.0346704466518957;62.12273576074274;0.0;;;2;0.0;
+B_ACL_20_34_35;1.0;false;0;none;NaN;NaN;NaN;NaN;;;2;27.0;islanded without reference: 27.0 MW load, 16.0 MW generation stranded (no voltage-controlled source)
+B_ACL_20_35_36;1.0;false;0;none;NaN;NaN;NaN;NaN;;;2;18.0;islanded without reference: 18.0 MW load, 12.0 MW generation stranded (no voltage-controlled source)
+B_ACL_20_36_37;1.0;false;0;none;NaN;NaN;NaN;NaN;;;2;15.0;islanded without reference: 15.0 MW load, 8.0 MW generation stranded (no voltage-controlled source)
+B_ACL_20_37_38;1.0;false;0;none;NaN;NaN;NaN;NaN;;;2;9.0;islanded without reference: 9.0 MW load, 4.0 MW generation stranded (no voltage-controlled source)
+B_ACL_20_38_39;1.0;false;0;none;NaN;NaN;NaN;NaN;;;2;6.0;islanded without reference: 6.0 MW load, 4.0 MW generation stranded (no voltage-controlled source)
+B_ACL_20_39_40;1.0;false;0;none;NaN;NaN;NaN;NaN;;;2;3.0;islanded without reference: 3.0 MW load, 4.0 MW generation stranded (no voltage-controlled source)
+B_ACL_20_40_41;1.0;true;4;warm;0.9234755337247789;1.036589592446138;44.433397892550495;0.0;;;1;0.0;
+B_ACL_20_35_42;1.0;false;0;none;NaN;NaN;NaN;NaN;;;2;6.0;islanded without reference: 6.0 MW load, 4.0 MW generation stranded (no voltage-controlled source)
+B_ACL_20_42_43;1.0;false;0;none;NaN;NaN;NaN;NaN;;;2;3.0;islanded without reference: 3.0 MW load, 4.0 MW generation stranded (no voltage-controlled source)
+B_ACL_20_43_44;1.0;true;4;warm;0.9234442695942919;1.036065007251873;44.4346128505764;0.0;;;1;0.0;
+B_ACL_20_37_45;1.0;false;0;none;NaN;NaN;NaN;NaN;;;2;6.0;islanded without reference: 6.0 MW load, 4.0 MW generation stranded (no voltage-controlled source)
+B_ACL_20_45_46;1.0;false;0;none;NaN;NaN;NaN;NaN;;;2;6.0;islanded without reference: 6.0 MW load, 4.0 MW generation stranded (no voltage-controlled source)
+B_ACL_20_46_47;1.0;false;0;none;NaN;NaN;NaN;NaN;;;2;3.0;islanded without reference: 3.0 MW load, 4.0 MW generation stranded (no voltage-controlled source)
+B_ACL_20_47_48;1.0;true;4;warm;0.9234689488076715;1.0364790932471608;44.43365373126972;0.0;;;1;0.0;
+B_ACL_20_49_50;1.0;false;0;none;NaN;NaN;NaN;NaN;;;2;15.0;islanded without reference: 15.0 MW load, 6.0 MW generation stranded (no voltage-controlled source)
+B_ACL_20_50_51;1.0;false;0;none;NaN;NaN;NaN;NaN;;;2;10.0;islanded without reference: 10.0 MW load, 3.0 MW generation stranded (no voltage-controlled source)
+B_ACL_20_51_52;1.0;false;0;none;NaN;NaN;NaN;NaN;;;2;10.0;islanded without reference: 10.0 MW load, 3.0 MW generation stranded (no voltage-controlled source)
+B_ACL_20_52_53;1.0;false;0;none;NaN;NaN;NaN;NaN;;;2;2.5;islanded without reference: 2.5 MW load, 3.0 MW generation stranded (no voltage-controlled source)
+B_ACL_20_53_54;1.0;true;4;warm;0.9468546838823154;1.03;48.66511529521981;0.0;;;1;0.0;
+B_ACL_20_50_55;1.0;false;0;none;NaN;NaN;NaN;NaN;;;2;2.5;islanded without reference: 2.5 MW load, 3.0 MW generation stranded (no voltage-controlled source)
+B_ACL_20_55_56;1.0;false;0;none;NaN;NaN;NaN;NaN;;;2;2.5;islanded without reference: 2.5 MW load, 3.0 MW generation stranded (no voltage-controlled source)
+B_ACL_20_56_57;1.0;true;4;warm;0.9055377478541871;1.03;52.91137849612464;0.0;;;1;0.0;
+B_ACL_20_52_58;1.0;false;0;none;NaN;NaN;NaN;NaN;;;2;5.0;islanded: load-only, 5.0 MW load disconnected
+B_ACL_20_58_59;1.0;false;0;none;NaN;NaN;NaN;NaN;;;2;2.5;islanded: load-only, 2.5 MW load disconnected
+B_ACL_20_59_60;1.0;true;4;warm;0.9525434143840343;1.0300003593549307;48.665051545054574;0.0;;;1;0.0;
+B_2WT_220_2_7;1.0;true;5;warm;0.9097155560944785;1.03;55.24225345256563;0.0;;;1;0.0;
+B_2WT_220_5_14;1.0;true;6;warm;0.9018054490999436;1.03;56.127191383526416;0.0;;;1;0.0;
+B_2WT_220_6_18;1.0;true;5;warm;0.9225086950486552;1.03;48.67598981292261;0.0;;;1;0.0;
+B_2WT_110_9_34;1.0;false;0;none;NaN;NaN;NaN;NaN;;;2;27.0;islanded without reference: 27.0 MW load, 16.0 MW generation stranded (no voltage-controlled source)
+B_2WT_110_27_49;1.0;false;0;none;NaN;NaN;NaN;NaN;;;2;15.0;islanded without reference: 15.0 MW load, 6.0 MW generation stranded (no voltage-controlled source)
+Gen_220#1;1.0;false;0;none;NaN;NaN;NaN;NaN;;;1;0.0;initialVrect: no slack bus registered — the network needs one voltage reference (referencePriority, an ExternalNetworkInjection, or a generator marked as slack). Enable power_flow.auto_slack to let the solver pick the strongest candidate itself.
+Gen_220#2;1.0;true;5;warm;0.9212421583872965;1.03;48.67839599339836;0.0;;;1;0.0;
+Gen_110#3;1.0;true;5;warm;0.8976761379002371;1.03;48.82703722484586;0.0;;Steinheim_20;1;0.0;
+Gen_110#4;1.0;false;30;none;NaN;NaN;NaN;NaN;;;1;0.0;power flow did not converge (status 1)
+Gen_20#28;1.0;true;4;warm;0.9223276235639729;1.03;65.19170114900989;0.0;;;1;0.0;
+Gen_20#29;1.0;true;4;warm;0.9222523724916263;1.03;66.08031247231483;0.0;;;1;0.0;
+Gen_20#30;1.0;true;4;warm;0.9223383351805069;1.03;65.06535180333252;0.0;;;1;0.0;
+Gen_20#31;1.0;true;4;warm;0.9222635105235466;1.03;65.94868396676667;0.0;;;1;0.0;
+Gen_20#32;1.0;true;4;warm;0.8972880626075526;1.03;53.54480147497963;0.0;;Steinheim_20;1;0.0;
+Gen_20#33;1.0;true;4;warm;0.9055377478946584;1.03;52.91137849152428;0.0;;;1;0.0;

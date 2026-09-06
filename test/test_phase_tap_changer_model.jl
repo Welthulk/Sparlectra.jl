@@ -92,7 +92,7 @@ function run_phase_tap_changer_model_tests()
     @test isapprox(calcPhaseTapReactance(m_asym_x, alpha_mid_asym), expected_mid_asym; atol = 1e-12)
   end
 
-  @testset "DTF _dtf_effective_transformer_tap equivalence with pre-migration formula" begin
+  @testset "DTF _dtf_effective_transformer_tap: longitudinal range and added angle" begin
     nominal_voltages_kv = [110.0]
     from_bus = Sparlectra.DTFImporter.DTFBus("", 1, 1, 1, "PV", 110.0, 0.0, 0.0, 0.0, 10.0, 2.0, -5.0, 5.0)
     to_bus = Sparlectra.DTFImporter.DTFBus("", 2, 2, 1, "SLACK", 110.0, 0.0, 0.0, 0.0, 20.0, 3.0, -10.0, 10.0)

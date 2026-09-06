@@ -14,14 +14,14 @@
 
 # file: test/extended/test_dtf_for002_outage_validation_example.jl
 # purpose: extended test for the native DTF/FOR002 outage validation example
-#          (examples/internal/dtf_validation_outages.jl), checking CSV and
+#          (examples/dtf/dtf_validation_outages.jl), checking CSV and
 #          markdown artifacts and CLI output; skips without local DTF data
 using Test
 
 function run_dtf_for002_outage_validation_example_tests()
   @testset "native DTF/FOR002 outage validation example" begin
     repo = normpath(joinpath(@__DIR__, "..", ".."))
-    script = joinpath(repo, "examples", "internal", "dtf_validation_outages.jl")
+    script = joinpath(repo, "examples", "dtf", "dtf_validation_outages.jl")
     source = read(script, String)
     @test occursin("DTFImporter.read_dtf", source)
     @test occursin("DTFImporter.build_net", source)

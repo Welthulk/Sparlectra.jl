@@ -87,12 +87,17 @@ function run_dtf_api_webui_integration_tests()
       @test outage.metadata["dtf_outage_results"][1]["converged"] == true
       @test any(a -> occursin("dtf_outage_1_metrics.csv", a.name), outage.artifacts)
 
-      form_html = Sparlectra.render_powerflow_form(output_root = tmp, case_directory = dirname(dtf), selected_casefile = basename(dtf))
+      # stage 4A: the input-format options render on the Case page; the run
+      # page keeps the DTF outage run details
+      form_html = Sparlectra.render_case_page(output_root = tmp, case_directory = dirname(dtf), selected_casefile = basename(dtf))
       @test occursin("Input format", form_html)
       @test occursin("DTF diagnostics (experimental/internal)", form_html)
       @test occursin("MATPOWER", form_html)
       @test occursin("option value=\"auto\">Auto", form_html)
       @test !occursin("New: full DTF support", form_html)
+      run_form_html = Sparlectra.render_powerflow_form(output_root = tmp, case_directory = dirname(dtf), selected_casefile = basename(dtf))
+      @test occursin("DTF outage run", run_form_html)
+      @test occursin("name=\"dtf_outage_selection_mode\"", run_form_html)
 
       request = Sparlectra.powerflow_webui_request(Dict(
         "casefile" => basename(dtf),
