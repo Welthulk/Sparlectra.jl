@@ -166,6 +166,36 @@ function run_configuration_coverage_tests()
     @test cfg0.model.bus_shunt_model === :voltage_dependent_injection
     @test cfg0.model.tap_changer_model === :impedance_correction
     @test cfg0.runtime.case == "case57.m"
+    # ONE alias warning per file, not one per key (2026-09-07): a user file
+    # with six legacy names produced six boxed warnings at every start, which
+    # is what a Windows start reported as "still all those warnings". The
+    # information that matters is WHICH names are still in use, and that fits
+    # in a single line. TestLogger, not the message count on the console:
+    # maxlog suppression is a property of the logger, the emission is not.
+    v0_many = joinpath(dir, "v0_many.yaml")
+    write(v0_many, "matpower_import:\n  auto_profile: true\n  auto_profile_log: false\n  preallocate_network: true\n  preallocate_min_buses: 500\n  case: case57.m\ntransformer:\n  tap_changer_model: impedance_correction\n")
+    logger = Test.TestLogger(min_level = Logging.Warn)
+    Logging.with_logger(logger) do
+      Sparlectra.load_sparlectra_config(v0_many; reload = true)
+    end
+    alias_records = [r for r in logger.logs if occursin("legacy key name", r.message)]
+    @test length(alias_records) == 1
+    # and it names every one of them, so nothing is lost by collapsing
+    for key in ("matpower_import.auto_profile", "matpower_import.auto_profile_log",
+                "matpower_import.preallocate_network", "matpower_import.preallocate_min_buses",
+                "matpower_import.case", "transformer.tap_changer_model")
+      @test (key, occursin(key, alias_records[1].message)) == (key, true)
+    end
+    # after the documented one-time refresh the file loads without any of it
+    Sparlectra.refresh_sparlectra_config_file(v0_many; write = true, backup = false)
+    quiet = Test.TestLogger(min_level = Logging.Warn)
+    migrated = Logging.with_logger(quiet) do
+      Sparlectra.load_sparlectra_config(v0_many; reload = true)
+    end
+    @test isempty([r for r in quiet.logs if occursin("legacy key name", r.message)])
+    @test migrated.model.tap_changer_model === :impedance_correction
+    @test migrated.runtime.case == "case57.m"
+    @test migrated.model.preallocate_min_buses == 500
     # a version newer than the running Sparlectra is an error, not a guess
     v9 = joinpath(dir, "v9.yaml")
     write(v9, "config_version: 99\n")

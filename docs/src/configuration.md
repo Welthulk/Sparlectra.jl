@@ -47,12 +47,15 @@ config_version: 1
 scope: general
 ```
 
-A file without `config_version` reads as version 0: it still loads, with one
-warning, and the documented version-0 aliases are applied (the `model.*` keys
-below lived in `matpower_import`/`transformer`, and `runtime.case`/`runtime.cases`
-lived in `matpower_import`). `refresh_sparlectra_config_file` rewrites such a
-file to the current layout. A `config_version` newer than the running
-Sparlectra is an error. `scope` states what the file configures: `general`
+A file without `config_version` reads as version 0: it still loads, and the
+documented version-0 aliases are applied (the `model.*` keys below lived in
+`matpower_import`/`transformer`, and `runtime.case`/`runtime.cases` lived in
+`matpower_import`). It says so in **two lines**, one for the missing version
+and one naming every legacy key that was translated, however many there are.
+`refresh_sparlectra_config_file` rewrites such a file to the current layout,
+and a [sysimage](sysimage.md) build does it for the Web UI configuration on
+its own, so the notice disappears after the next build. A `config_version`
+newer than the running Sparlectra is an error. `scope` states what the file configures: `general`
 for the installation-wide file, `case` for a per-case configuration file next
 to its case.
 
