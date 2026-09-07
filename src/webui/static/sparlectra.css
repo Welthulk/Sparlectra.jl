@@ -1113,3 +1113,61 @@ nav {
 .weights-fragment-slot {
   margin-top: 0.5rem;
 }
+
+/* --- sysimage page ------------------------------------------------------- */
+/* The build progress must stay readable while the page auto-refreshes every
+   two seconds, so nothing here animates or reflows: the phase line and the
+   bar are the only parts that change between polls. */
+
+.alert-info {
+  background: #e8f0fb;
+  color: #1f3d66;
+}
+
+.sysimage-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.4rem 1rem;
+  margin: 0;
+}
+
+.sysimage-facts dt {
+  font-weight: 600;
+}
+
+.sysimage-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.sysimage-reason {
+  color: #7a4b00;
+}
+
+.sysimage-phase {
+  font-size: 1.05rem;
+  margin-bottom: 0.5rem;
+}
+
+.sysimage-detail {
+  color: #46556c;
+}
+
+.sysimage-clock {
+  font-variant-numeric: tabular-nums;
+  margin-left: 0.5rem;
+}
+
+.sysimage-progress progress {
+  width: 100%;
+  height: 0.9rem;
+}
+
+.sysimage-log-tail {
+  max-height: 18rem;
+  overflow: auto;
+  background: #f4f6f9;
+  padding: 0.75rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+}

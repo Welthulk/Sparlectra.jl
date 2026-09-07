@@ -15,16 +15,25 @@
 # file: tools/sysimage_workload.jl
 # purpose: precompile execution workload for the sysimage build
 #          (tools/build_sysimage.jl). Exercises the interactive paths beyond
-#          the shipped PrecompileTools workload: Web UI start with the
-#          reserved warm-up machinery (no run-history entries), one page
-#          request through the real socket handler, one full power-flow
-#          service run, one N-1 contingency service run (the Contingency button
-#          path), one full short-circuit service run (CGMES MiniGrid),
-#          one run_sparlectra call on the tracked MATPOWER case, and a power flow plus state
-#          estimation for EVERY import format (MATPOWER, SCF, CGMES, DTF),
-#          then a clean shutdown. Never
-#          run this file directly; PackageCompiler executes it in a child
-#          process during the build.
+#          the shipped PrecompileTools workload: Web UI start, page requests
+#          through the real socket handler, and one full service run per
+#          capability (power flow, N-1 contingency, short circuit, state
+#          estimation) for EVERY import format (MATPOWER, SCF, CGMES, DTF),
+#          then a clean shutdown. Never run this file directly;
+#          PackageCompiler executes it in a child process during the build.
+#
+#          Scope, decided 2026-09-07: the important paths ONCE, nothing else.
+#          This file used to run the whole fast test profile plus the Web UI
+#          test group as its trace, which dominated the build time by a wide
+#          margin (the image itself compiles in about three minutes) without
+#          reaching a single Web UI path the steps below miss. The test trace
+#          is still available for a maintainer comparison via
+#          SPARLECTRA_SYSIMAGE_TRACE_TESTS=1.
+#
+#          Output: everything printed here is captured by the parent build
+#          script into sysimage_build.log. Lines prefixed with the progress
+#          marker additionally drive the parent's console progress line, so
+#          each step below is visible while it runs.
 
 using Sparlectra
 
@@ -35,66 +44,55 @@ let expected = normpath(joinpath(@__DIR__, "..", "src")), actual = normpath(Stri
   startswith(actual, expected) || error("tools guard: Sparlectra loaded from " * actual * ", expected under " * expected * "; start julia with --project=" * normpath(joinpath(@__DIR__, "..")))
 end
 using Sockets
-using Logging
-
-# --- console versus log ------------------------------------------------------
-# The workload is a compile TRACE, and it used to stream every line of it to
-# the console: the whole fast test profile, the Web UI group, every service
-# run and every warning any of them produced. On Windows that buried the one
-# line that mattered (maintainer, 2026-09-07).
-#
-# From here the console gets a progress line per phase and nothing else; the
-# detail goes to sysimage_workload.log next to the image, where a failure can
-# be read afterwards. `_CONSOLE` is captured BEFORE any redirection, because
-# `stdout` inside a redirected block is the log file.
-const _CONSOLE = stdout
-const _WORKLOAD_LOG_PATH = try
-  joinpath(dirname(String(Base.invokelatest(Sparlectra.webui_sysimage_path))), "sysimage_workload.log")
-catch
-  joinpath(tempdir(), "sparlectra_sysimage_workload.log")
-end
-const _WORKLOAD_LOG = try
-  mkpath(dirname(_WORKLOAD_LOG_PATH))
-  open(_WORKLOAD_LOG_PATH, "w")
-catch
-  devnull
-end
-
-_console(msg) = (println(_CONSOLE, msg); flush(_CONSOLE))
-
-## Run one phase of the trace with its output captured. NOTHING here may
-## abort the build: the workload is a trace, and a gap costs first-click
-## latency, not correctness. That was the intent all along, but the guard
-## was missing at two levels and a Windows-only failure (a temp directory
-## that cannot be removed while a file in it is still open) took the whole
-## build down with a stacktrace.
-function _phase(label::AbstractString, f::Function)
-  print(_CONSOLE, "  ", rpad(label, 40), " ")
-  flush(_CONSOLE)
-  t0 = time()
-  outcome = "ok"
-  try
-    redirect_stdio(stdout = _WORKLOAD_LOG, stderr = _WORKLOAD_LOG) do
-      with_logger(SimpleLogger(_WORKLOAD_LOG)) do
-        f()
-      end
-    end
-  catch err
-    outcome = "FAILED"
-    println(_WORKLOAD_LOG, "\n=== phase ", label, " failed ===")
-    showerror(_WORKLOAD_LOG, err, catch_backtrace())
-    println(_WORKLOAD_LOG)
-  end
-  flush(_WORKLOAD_LOG)
-  println(_CONSOLE, rpad(outcome, 8), round(time() - t0; digits = 1), " s")
-  flush(_CONSOLE)
-  return outcome == "ok"
-end
 
 # AnalyticLoadFlow.jl is a required dependency, so `using Sparlectra` already
 # brought it in; the explicit import keeps the APSLF paths in the traced world
 # age of the image.
 using AnalyticLoadFlow
+
+# Must match PROGRESS_MARKER in tools/build_sysimage.jl: the parent tees this
+# process's output, so one prefixed line is the whole progress protocol
+# between the two. No second file, no second channel.
+const _MARKER = "@@SPARLECTRA_STEP@@"
+
+# Step counter for the log; the console shows the label, the log gets both.
+const _STEP = Ref(0)
+
+"Announce the step that starts now. Reaches the parent's console progress line."
+function _step(label::AbstractString)
+  _STEP[] += 1
+  println(stdout, _MARKER, " ", label)
+  flush(stdout)
+  return nothing
+end
+
+"""
+Run one traced step. NOTHING here may abort the build: the workload is a
+TRACE, and a gap costs first-click latency, not correctness. That was the
+intent all along, but the guard was missing at two levels and a Windows-only
+failure (a temp directory that cannot be removed while a file in it is still
+open) took the whole build down with a stacktrace.
+
+Every step prints its outcome, successful ones included. A silent success is
+indistinguishable from a trace that never ran, and exactly that cost an hour
+of hunting a "missing" DTF trace that had in fact executed (2026-09-05).
+"""
+function _traced(label::AbstractString, f::Function)
+  _step(label)
+  t0 = time()
+  ok = true
+  try
+    f()
+  catch err
+    ok = false
+    println("workload step FAILED (build continues): ", label)
+    showerror(stdout, err, catch_backtrace())
+    println()
+  end
+  println("workload step ", rpad(label, 34), rpad(ok ? "ok" : "FAILED", 8), round(time() - t0; digits = 1), " s")
+  flush(stdout)
+  return ok
+end
 
 # nonstandard ports so a Web UI the maintainer has open on 8080 does not
 # make the build silently skip the server paths; the first free candidate
@@ -102,13 +100,7 @@ using AnalyticLoadFlow
 const _WORKLOAD_PORTS = 8091:8097
 
 # One service run into a throwaway output root; config_file and output_root
-# are filled in here so call sites only state what differs. Failures are
-# logged, not fatal: a workload gap costs first-click latency, not the build.
-#
-# Every run prints one line, successful ones included. That is deliberate:
-# a silent success is indistinguishable from a trace that never ran, and
-# exactly that cost an hour of hunting a "missing" DTF trace that had in
-# fact executed (2026-09-05). The build log now names what was traced.
+# are filled in here so call sites only state what differs.
 function _workload_service_run(request::Dict{String,Any}; label::String)
   t0 = time()
   # The temp directory is created and removed BY HAND, not through
@@ -127,7 +119,7 @@ function _workload_service_run(request::Dict{String,Any}; label::String)
     status == "failed" && @warn "sysimage workload: $(label) service run failed" message = get(result, "message", "?")
     run_id = get(result, "run_id", nothing)
     run_id === nothing || get_powerflow_result(String(run_id))
-    println("sysimage workload: ", rpad(label, 28), rpad(isempty(status) ? "?" : status, 12), round(time() - t0; digits = 1), " s")
+    println("  service run ", rpad(label, 28), rpad(isempty(status) ? "?" : status, 12), round(time() - t0; digits = 1), " s")
   catch err
     @warn "sysimage workload: $(label) trace failed (build continues)" exception = (err, catch_backtrace())
   finally
@@ -156,9 +148,215 @@ end
 # along, which the state-estimation trace uses.
 _workload_matpower_case() = joinpath(pkgdir(Sparlectra), "data", "mpower", "warmup_casePST.m")
 
+_workload_config() = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true)
+
+# --- the traced steps --------------------------------------------------------
+
+function _trace_pages(server, port::Int)
+  # request the pages through the real socket path so the whole handler
+  # chain is part of the compile trace, not just the render functions.
+  # Without this the first form view paid it as JIT time (measured ~11 s).
+  _workload_request(port, "/")
+  _workload_request(port, "/powerflow")
+  _workload_request(port, "/powerflow/case")
+  _workload_request(port, "/powerflow/settings")
+  _workload_request(port, "/powerflow/history")
+  # since stage 4A block 4 the SE section renders on the Runs page and
+  # /stateestimation only redirects there, which this request still exercises
+  _workload_request(port, "/stateestimation")
+  _workload_request(port, "/webui/operation-log")
+  # the N-1 weights editor seeds a table from the case's element names (builds
+  # the net); trace it so the first "edit N-1 weights" open is not JIT. The case
+  # must live in the server's case directory for the seeded-name path.
+  try
+    cp(_workload_matpower_case(), joinpath(server.runtime.case_directory, "warmup_casePST.m"); force = true)
+  catch err
+    @warn "sysimage workload: could not stage the MATPOWER case for the weights editor" exception = err
+  end
+  _workload_request(port, "/powerflow/contingency-weights?case=warmup_casePST.m")
+  return nothing
+end
+
+function _trace_matpower(server)
+  # real service runs through the full pipeline (case resolution, artifact
+  # writers for the CSVs, result.json, run index, result lookup): the first
+  # real Web UI run otherwise pays exactly this compilation. Temp output
+  # roots keep the user's run history clean.
+  _workload_service_run(Dict{String,Any}(
+    "casefile" => _workload_matpower_case(),
+    "config_overrides" => Dict{String,Any}("output.logfile_results" => "off", "benchmark.enabled" => false),
+  ); label = "matpower power-flow")
+  return nothing
+end
+
+function _trace_contingency(server)
+  # N-1 contingency (#331 Phase 5): the "Contingency (N-1)" button path through
+  # runContingencies!, the CSV/report writers, and the result registry, so the
+  # first click after a start on the image is not paid as JIT. Branch kind on
+  # the case covers the shared code; the generator kind reuses the same service.
+  _workload_service_run(Dict{String,Any}(
+    "casefile" => _workload_matpower_case(),
+    "contingency_mode" => true,
+    "contingency_kind" => "branch",
+  ); label = "matpower contingency n-1")
+  return nothing
+end
+
+function _trace_state_estimation(server)
+  # measurement CSV read, observability, WLS solve, bad-data diagnostics and
+  # the se_state.csv chain anchor, so the first SE click is not estimator JIT
+  se_case = _workload_matpower_case()
+  isfile(se_case) || return nothing
+  wnet = Sparlectra._import_sparlectra_net(se_case, nothing, _workload_config())
+  runpf!(wnet, 40, 1e-8, 0; method = :rectangular)
+  append!(wnet.measurements, generateMeasurementsFromPF(wnet; noise = false))
+  se_meas = joinpath(server.runtime.case_directory, "warmup_casePST.measurements.csv")
+  writeMeasurementsCSV(wnet; file = se_meas)
+  _workload_service_run(Dict{String,Any}("casefile" => se_case, "se_mode" => true, "measurement_file" => se_meas); label = "state estimation")
+  return nothing
+end
+
+function _trace_reports(server)
+  # losses and the human-facing print/report paths: calcNetLosses!, the report
+  # builder, the result printer and the SE diagnostics printer (into devnull),
+  # otherwise the first "show results" click after a start pays their JIT
+  case = _workload_matpower_case()
+  isfile(case) || return nothing
+  pnet = Sparlectra._import_sparlectra_net(case, nothing, _workload_config())
+  ite, erg = runpf!(pnet, 40, 1e-8, 0; method = :rectangular)
+  erg == 0 || return nothing
+  calcNetLosses!(pnet)
+  buildACPFlowReport(pnet; ct = 0.0, ite = ite, converged = true)
+  redirect_stdout(devnull) do
+    printACPFlowResults(pnet, 0.0, ite, 1e-8)
+  end
+  append!(pnet.measurements, generateMeasurementsFromPF(pnet; noise = false))
+  diag = runse_diagnostics(pnet; max_eliminations = 0)
+  print_se_diagnostics(devnull, diag.diagnostics)
+  return nothing
+end
+
+# Every IMPORT FORMAT gets a power flow and a state estimation, not only
+# MATPOWER: the importers and the estimator specialize per format, so a format
+# missing from this trace pays its JIT on the user's first click (maintainer
+# 2026-09-05: "vor dem Sysimage muessen matpower, cgmes und dtf PF + SE +
+# sp_cases gemacht werden"). Each step fails softly - a missing fixture costs
+# the trace, never the build.
+
+function _trace_scf(server)
+  scf_case = joinpath(pkgdir(Sparlectra), "data", "scf", "sp_case14.scf.json")
+  isfile(scf_case) || return nothing
+  snet = importSCF(scf_case)
+  runpf!(snet, 40, 1e-8, 0; method = :rectangular)
+  # the SCF case carries its own measurement set, which is the path a user
+  # takes when running SE straight from a case file
+  if !isempty(snet.measurements)
+    runse!(snet, Vector{Sparlectra.Measurement}(snet.measurements), Sparlectra.StateEstimationConfig(max_iter = 8))
+  end
+  exportSCF(snet; file = joinpath(server.runtime.case_directory, "workload_roundtrip.scf.json"))
+  _workload_service_run(Dict{String,Any}("casefile" => scf_case); label = "SCF power flow")
+  _workload_service_run(Dict{String,Any}("casefile" => scf_case, "se_mode" => true, "measurement_file" => "case"); label = "SCF state estimation")
+  return nothing
+end
+
+function _trace_dtf(server)
+  dtf_case = joinpath(pkgdir(Sparlectra), "data", "DTF", "FOR001.DAT")
+  isfile(dtf_case) || return nothing
+  # The DTF parser is a large body of code and one service run does not reach
+  # all of it: measured after a first attempt, the first DTF run in a fresh
+  # image still cost 2.25 s against 0.007 s for the second. So the native path
+  # is exercised directly as well - reader, net builder and case summary - and
+  # on a second file, because the branch/outage shapes differ per file.
+  for f in ("FOR001.DAT", "FOR001B.DAT")
+    fp = joinpath(pkgdir(Sparlectra), "data", "DTF", f)
+    isfile(fp) || continue
+    try
+      dcase = Sparlectra.DTFImporter.read_dtf(fp)
+      Sparlectra.DTFImporter.case_summary(dcase)
+      dnet = Sparlectra.DTFImporter.build_net(dcase)
+      runpf!(dnet, 40, 1e-8, 0; method = :rectangular)
+      calcNetLosses!(dnet)
+    catch err
+      @warn "sysimage workload: DTF direct trace skipped for $(f)" exception = err
+    end
+  end
+  # .DAT alone is ambiguous (FOR002 reference files share it), so the native
+  # path has to be named explicitly - the same way the Web UI form does it
+  _workload_service_run(Dict{String,Any}("casefile" => dtf_case, "case_format" => "dtf_for001"); label = "DTF power flow")
+  # PF and SE per format is the requirement, so DTF gets its estimator run
+  # too: the measurements come from the solved net, the service then reads
+  # them back through the CSV path like a real request.
+  dse = Sparlectra.DTFImporter.build_net(Sparlectra.DTFImporter.read_dtf(dtf_case))
+  runpf!(dse, 40, 1e-8, 0; method = :rectangular)
+  append!(dse.measurements, generateMeasurementsFromPF(dse; noise = false))
+  dmeas = joinpath(server.runtime.case_directory, "dtf_for001.measurements.csv")
+  writeMeasurementsCSV(dse; file = dmeas)
+  _workload_service_run(Dict{String,Any}("casefile" => dtf_case, "case_format" => "dtf_for001", "se_mode" => true, "measurement_file" => dmeas); label = "DTF state estimation")
+  return nothing
+end
+
+"""
+Resolve the MiniGrid CGMES delivery, which covers the CGMES compile paths
+(ZIP and XML reading, profile harvesting, net construction, control mapping).
+It comes from the same case cache the Web UI uses; when absent it is fetched
+once through the existing registry (network). A failed fetch only skips the
+CGMES traces, never the build, but the gap is logged so the coverage loss is
+visible rather than silent.
+"""
+function _workload_cgmes_zip(server)
+  zip = joinpath(server.runtime.case_directory, "cgmes_minigrid.zip")
+  isfile(zip) && return zip
+  return try
+    Sparlectra.CGMESImporter.fetchCGMESTestSet("minigrid"; outdir = server.runtime.case_directory)
+  catch err
+    @warn "sysimage workload: CGMES service paths NOT traced (MiniGrid fetch failed; the first CGMES run will pay JIT)" exception = err
+    nothing
+  end
+end
+
+function _trace_cgmes(server, sc_zip)
+  sc_zip === nothing && return nothing
+  # CGMES power flow: import plus the PF branch specific to CGMES nets
+  # (tap/machine control mapping, SV handling).
+  _workload_service_run(Dict{String,Any}(
+    "casefile" => sc_zip,
+    "config_overrides" => Dict{String,Any}("output.logfile_results" => "off", "benchmark.enabled" => false),
+  ); label = "cgmes power-flow")
+  # CGMES state estimation: the estimator on a CGMES-built net, whose
+  # tap/machine controls and SV start state differ from the MATPOWER path, so
+  # its specializations are separate. Measurements are generated from the
+  # solved state, the same route the Web UI generator takes.
+  cnet = Sparlectra._se_import_case_net(sc_zip, _workload_config())
+  runpf!(cnet, 40, 1e-8, 0; method = :rectangular)
+  append!(cnet.measurements, generateMeasurementsFromPF(cnet; noise = false))
+  cmeas = joinpath(server.runtime.case_directory, "cgmes_minigrid.measurements.csv")
+  writeMeasurementsCSV(cnet; file = cmeas)
+  _workload_service_run(Dict{String,Any}("casefile" => sc_zip, "se_mode" => true, "measurement_file" => cmeas); label = "cgmes state estimation")
+  return nothing
+end
+
+function _trace_short_circuit(server, sc_zip)
+  sc_zip === nothing && return nothing
+  # Z-bus solve for both c-factor cases, CSV artifact writers, coverage
+  # report: the "Short circuit" button path.
+  _workload_service_run(Dict{String,Any}("casefile" => sc_zip, "short_circuit_mode" => true); label = "cgmes short-circuit")
+  return nothing
+end
+
+function _trace_api()
+  # one full interactive solve through the programmatic entry point; logfile
+  # output stays off so the workload never leaves run_case*.log files in
+  # examples/_out, regardless of any user configuration
+  cfg = SparlectraConfig(output = OutputConfig(logfile_results = :off))
+  result = run_sparlectra(casefile = _workload_matpower_case(), config = cfg)
+  result.final_converged || @warn "sysimage workload: MATPOWER run did not converge" outcome = result.outcome
+  return nothing
+end
+
 function run_workload()
   server = nothing
   port = 0
+  _step("starting the Web UI")
   for candidate in _WORKLOAD_PORTS
     # ANY failure means "this port is not usable", never "abort the build".
     # The old form rethrew unless the message said "already in use", and the
@@ -177,229 +375,47 @@ function run_workload()
   end
   if server === nothing
     @warn "sysimage workload: no free port in $(_WORKLOAD_PORTS); the Web UI paths are not traced (the build continues, the first page view pays the compilation)"
+    _traced("programmatic API", _trace_api)
     return nothing
   end
   try
-    # request the pages through the real socket path so the whole handler
-    # chain is part of the compile trace, not just the render functions.
-    # Without this the first form view paid it as JIT time (measured ~11 s).
-    _workload_request(port, "/")
-    _workload_request(port, "/powerflow")
-    # the N-1 weights editor seeds a table from the case's element names (builds
-    # the net); trace it so the first "edit N-1 weights" open is not JIT. The case
-    # must live in the server's case directory for the seeded-name path.
-    try
-      cp(_workload_matpower_case(), joinpath(server.runtime.case_directory, "warmup_casePST.m"); force = true)
-    catch err
-      @warn "sysimage workload: could not stage the MATPOWER case for the weights editor" exception = err
-    end
-    _workload_request(port, "/powerflow/contingency-weights?case=warmup_casePST.m")
-    # real service runs through the full pipeline (case resolution,
-    # artifact writers for the CSVs, result.json, run index, result
-    # lookup): the first real Web UI run otherwise pays exactly this
-    # compilation. Temp output roots keep the user's run history clean.
-    # 1. MATPOWER power flow (the tracked warm-up PST case).
-    _workload_service_run(Dict{String,Any}(
-      "casefile" => _workload_matpower_case(),
-      "config_overrides" => Dict{String,Any}("output.logfile_results" => "off", "benchmark.enabled" => false),
-    ); label = "matpower power-flow")
-    # N-1 contingency (#331 Phase 5): the "Contingency (N-1)" button path through
-    # runContingencies!, the CSV/report writers, and the result registry, so the
-    # first click after a start on the image is not paid as JIT. Branch kind on the case
-    # covers the shared code; the generator kind reuses the same service.
-    _workload_service_run(Dict{String,Any}(
-      "casefile" => _workload_matpower_case(),
-      "contingency_mode" => true,
-      "contingency_kind" => "branch",
-    ); label = "matpower contingency n-1")
-    # State estimation: since stage 4A block 4 the SE section renders on
-    # the Runs page (/stateestimation only redirects there, which this
-    # request still exercises), plus one SE service run (measurement CSV
-    # read, observability, WLS solve, bad-data diagnostics, se_state.csv
-    # chain anchor), so the first SE click on the image does not pay
-    # the estimator JIT. A failure only costs the trace, never the build.
-    _workload_request(port, "/stateestimation")
-    _workload_request(port, "/powerflow")
-    try
-      se_case = _workload_matpower_case()
-      if isfile(se_case)
-        cfgw = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true)
-        wnet = Sparlectra._import_sparlectra_net(se_case, nothing, cfgw)
-        runpf!(wnet, 40, 1e-8, 0; method = :rectangular)
-        append!(wnet.measurements, generateMeasurementsFromPF(wnet; noise = false))
-        se_meas = joinpath(server.runtime.case_directory, "warmup_casePST.measurements.csv")
-        writeMeasurementsCSV(wnet; file = se_meas)
-        _workload_service_run(Dict{String,Any}("casefile" => se_case, "se_mode" => true, "measurement_file" => se_meas); label = "state estimation")
-      end
-    catch err
-      @warn "sysimage workload: SE trace skipped" exception = err
-    end
-    # losses and the human-facing print/report paths: calcNetLosses!, the
-    # report builder, the result printer, and the SE diagnostics printer
-    # (into devnull) — otherwise the first "show results" click after a
-    # start on the image pays their JIT
-    try
-      se_case2 = _workload_matpower_case()
-      if isfile(se_case2)
-        cfg2 = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true)
-        pnet = Sparlectra._import_sparlectra_net(se_case2, nothing, cfg2)
-        ite2, erg2 = runpf!(pnet, 40, 1e-8, 0; method = :rectangular)
-        if erg2 == 0
-          calcNetLosses!(pnet)
-          buildACPFlowReport(pnet; ct = 0.0, ite = ite2, converged = true)
-          redirect_stdout(devnull) do
-            printACPFlowResults(pnet, 0.0, ite2, 1e-8)
-          end
-          append!(pnet.measurements, generateMeasurementsFromPF(pnet; noise = false))
-          diag2 = runse_diagnostics(pnet; max_eliminations = 0)
-          print_se_diagnostics(devnull, diag2.diagnostics)
-        end
-      end
-    catch err
-      @warn "sysimage workload: losses/print trace skipped" exception = err
-    end
-    # Every IMPORT FORMAT gets a power flow and a state estimation here, not
-    # only MATPOWER: the importers and the estimator specialize per format, so
-    # a format missing from this trace pays its JIT on the user's first click
-    # (maintainer 2026-09-05: "vor dem Sysimage muessen matpower, cgmes und
-    # dtf PF + SE + sp_cases gemacht werden"). Each block fails softly - a
-    # missing fixture costs the trace, never the build.
-    try
-      scf_case = joinpath(pkgdir(Sparlectra), "data", "scf", "sp_case14.scf.json")
-      if isfile(scf_case)
-        snet = importSCF(scf_case)
-        runpf!(snet, 40, 1e-8, 0; method = :rectangular)
-        # the SCF case carries its own measurement set, which is the path a
-        # user takes when running SE straight from a case file
-        if !isempty(snet.measurements)
-          runse!(snet, Vector{Sparlectra.Measurement}(snet.measurements), Sparlectra.StateEstimationConfig(max_iter = 8))
-        end
-        exportSCF(snet; file = joinpath(server.runtime.case_directory, "workload_roundtrip.scf.json"))
-        _workload_service_run(Dict{String,Any}("casefile" => scf_case); label = "SCF power flow")
-        _workload_service_run(Dict{String,Any}("casefile" => scf_case, "se_mode" => true, "measurement_file" => "case"); label = "SCF state estimation")
-      end
-    catch err
-      @warn "sysimage workload: SCF trace skipped" exception = err
-    end
-    try
-      dtf_case = joinpath(pkgdir(Sparlectra), "data", "DTF", "FOR001.DAT")
-      if isfile(dtf_case)
-        # The DTF parser is a large body of code and one service run does not
-        # reach all of it: measured after a first attempt, the first DTF run
-        # in a fresh image still cost 2.25 s against 0.007 s for the second.
-        # So the native path is exercised directly as well - reader, net
-        # builder and case summary - and on a second file, because the
-        # branch/outage shapes differ per file.
-        for f in ("FOR001.DAT", "FOR001B.DAT")
-          fp = joinpath(pkgdir(Sparlectra), "data", "DTF", f)
-          isfile(fp) || continue
-          try
-            dcase = Sparlectra.DTFImporter.read_dtf(fp)
-            Sparlectra.DTFImporter.case_summary(dcase)
-            dnet = Sparlectra.DTFImporter.build_net(dcase)
-            runpf!(dnet, 40, 1e-8, 0; method = :rectangular)
-            calcNetLosses!(dnet)
-          catch err
-            @warn "sysimage workload: DTF direct trace skipped for $(f)" exception = err
-          end
-        end
-        # .DAT alone is ambiguous (FOR002 reference files share it), so the
-        # native path has to be named explicitly - the same way the Web UI
-        # form does it
-        _workload_service_run(Dict{String,Any}("casefile" => dtf_case, "case_format" => "dtf_for001"); label = "DTF power flow")
-        # PF and SE per format is the requirement, so DTF gets its estimator
-        # run too: the measurements come from the solved net, the service
-        # then reads them back through the CSV path like a real request.
-        dse = Sparlectra.DTFImporter.build_net(Sparlectra.DTFImporter.read_dtf(dtf_case))
-        runpf!(dse, 40, 1e-8, 0; method = :rectangular)
-        append!(dse.measurements, generateMeasurementsFromPF(dse; noise = false))
-        dmeas = joinpath(server.runtime.case_directory, "dtf_for001.measurements.csv")
-        writeMeasurementsCSV(dse; file = dmeas)
-        _workload_service_run(Dict{String,Any}("casefile" => dtf_case, "case_format" => "dtf_for001", "se_mode" => true, "measurement_file" => dmeas); label = "DTF state estimation")
-      end
-    catch err
-      @warn "sysimage workload: DTF trace skipped" exception = err
-    end
-    # The MiniGrid CGMES delivery covers the CGMES compile paths (ZIP and
-    # XML reading, profile harvesting, net construction, control mapping).
-    # It comes from the same case cache the Web UI uses; when absent it is
-    # fetched once through the existing registry (network). A failed fetch
-    # only skips these traces, never the build, but the gap is logged so
-    # the coverage loss is visible.
-    sc_zip = joinpath(server.runtime.case_directory, "cgmes_minigrid.zip")
-    if !isfile(sc_zip)
-      sc_zip = try
-        Sparlectra.CGMESImporter.fetchCGMESTestSet("minigrid"; outdir = server.runtime.case_directory)
-      catch err
-        @warn "sysimage workload: CGMES service paths NOT traced (MiniGrid fetch failed; the first CGMES run will pay JIT)" exception = err
-        nothing
-      end
-    end
-    if sc_zip !== nothing
-      # 2. CGMES power flow: import plus the PF branch specific to CGMES
-      # nets (tap/machine control mapping, SV handling).
-      _workload_service_run(Dict{String,Any}(
-        "casefile" => sc_zip,
-        "config_overrides" => Dict{String,Any}("output.logfile_results" => "off", "benchmark.enabled" => false),
-      ); label = "cgmes power-flow")
-      # 3. CGMES short circuit: Z-bus solve for both c-factor cases, CSV
-      # artifact writers, coverage report (the Short-circuit button path).
-      _workload_service_run(Dict{String,Any}(
-        "casefile" => sc_zip,
-        "short_circuit_mode" => true,
-      ); label = "cgmes short-circuit")
-      # 4. CGMES state estimation: the estimator on a CGMES-built net, whose
-      # tap/machine controls and SV start state differ from the MATPOWER
-      # path, so its specializations are separate. Measurements are generated
-      # from the solved state, the same route the Web UI generator takes.
-      try
-        cnet = Sparlectra._se_import_case_net(sc_zip, Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true))
-        runpf!(cnet, 40, 1e-8, 0; method = :rectangular)
-        append!(cnet.measurements, generateMeasurementsFromPF(cnet; noise = false))
-        cmeas = joinpath(server.runtime.case_directory, "cgmes_minigrid.measurements.csv")
-        writeMeasurementsCSV(cnet; file = cmeas)
-        _workload_service_run(Dict{String,Any}("casefile" => sc_zip, "se_mode" => true, "measurement_file" => cmeas); label = "cgmes state estimation")
-      catch err
-        @warn "sysimage workload: CGMES SE trace skipped" exception = err
-      end
-    end
-    # one full interactive solve (the case is pre-fetched by the build
-    # script); logfile output stays off so the workload never leaves
-    # run_case*.log files in examples/_out, regardless of any user
-    # configuration
-    workload_cfg = SparlectraConfig(output = OutputConfig(logfile_results = :off))
-    result = run_sparlectra(casefile = _workload_matpower_case(), config = workload_cfg)
-    result.final_converged || @warn "sysimage workload: MATPOWER run did not converge" outcome = result.outcome
+    _traced("Web UI pages", () -> _trace_pages(server, port))
+    _traced("MATPOWER power flow", () -> _trace_matpower(server))
+    _traced("N-1 contingency", () -> _trace_contingency(server))
+    _traced("state estimation", () -> _trace_state_estimation(server))
+    _traced("losses and reports", () -> _trace_reports(server))
+    _traced("SCF import", () -> _trace_scf(server))
+    _traced("DTF import", () -> _trace_dtf(server))
+    sc_zip = nothing
+    _traced("CGMES delivery", () -> (sc_zip = _workload_cgmes_zip(server)))
+    _traced("CGMES import", () -> _trace_cgmes(server, sc_zip))
+    _traced("short circuit", () -> _trace_short_circuit(server, sc_zip))
+    _traced("programmatic API", _trace_api)
   finally
     close(server)
   end
   return nothing
 end
 
-_console("[workload] tracing the interactive paths; detail in " * _WORKLOAD_LOG_PATH)
+Base.invokelatest(run_workload)
 
-_phase("service and Web UI paths", () -> Base.invokelatest(run_workload))
-
-# Test-suite trace: run the fast-profile test cases so everything they touch
-# is compiled into the image as well. Since the risk-based profile resort the
-# fast profile carries numerics and model groups only; the full sysimage is
-# built FOR the Web UI, so the webui group is traced explicitly afterwards.
-# A test failure must not abort the build: the suite is a TRACE here, not a
-# gate (the gates run in CI and the developer workflow), and a failing case
-# has still compiled everything it touched on the way to failing.
-_phase("test profile (fast)", function ()
-  ENV["SPARLECTRA_TEST_PROFILE"] = "fast"
-  Base.invokelatest(include, joinpath(pkgdir(Sparlectra), "test", "runtests.jl"))
-end)
-
-_phase("Web UI test group", function ()
-  Base.invokelatest(include, joinpath(pkgdir(Sparlectra), "test", "test_webui.jl"))
-  runner = Base.invokelatest(getfield, Main, :run_webui_fast_tests)
-  Base.invokelatest(runner)
-end)
-
-_console("[workload] done; a FAILED phase above is a trace gap, not a broken image")
-try
-  close(_WORKLOAD_LOG)
-catch
+# Opt-in comparison trace for the maintainer: the fast test profile plus the
+# Web UI test group. This used to run on every build and dominated its
+# runtime; it stays available because it is the only way to check whether the
+# curated steps above still cover what the suite reaches. A test failure must
+# not abort the build - the suite is a TRACE here, not a gate (the gates run
+# in CI and the developer workflow), and a failing case has still compiled
+# everything it touched on the way to failing.
+if get(ENV, "SPARLECTRA_SYSIMAGE_TRACE_TESTS", "0") == "1"
+  _traced("fast test profile", function ()
+    ENV["SPARLECTRA_TEST_PROFILE"] = "fast"
+    Base.invokelatest(include, joinpath(pkgdir(Sparlectra), "test", "runtests.jl"))
+  end)
+  _traced("Web UI test group", function ()
+    Base.invokelatest(include, joinpath(pkgdir(Sparlectra), "test", "test_webui.jl"))
+    runner = Base.invokelatest(getfield, Main, :run_webui_fast_tests)
+    Base.invokelatest(runner)
+  end)
 end
+
+println("workload done; a FAILED step above is a trace gap, not a broken image")

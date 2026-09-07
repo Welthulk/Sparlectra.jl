@@ -119,6 +119,28 @@ plainly before it happens. Files whose names start with the reserved
 `warmup_` prefix are bundled precompile workloads and stay hidden from the
 case selector.
 
+### Refreshing the sysimage
+
+The **Info** panel on the run pages names the build that is serving them
+(`sysimage, built ...` or `native session`) and links to the **Sysimage**
+page at `/webui/sysimage`. That page states whether the image on disk is
+still valid, and if not, which check failed, and it carries a **Refresh
+sysimage** button.
+
+Use it when the image is marked as needing a rebuild, and equally when a
+page paused to compile while you were working: an image that was correct
+when it was built is still incomplete for any path its workload never
+touched, and a refresh folds whatever compiled at run time into the trace.
+
+The build runs as a separate background process. It survives a browser
+reload and a Web UI shutdown, reports its phase on the page while it works,
+and only replaces the image file at the very end, so the session that
+started it keeps running throughout. The running process keeps the image it
+booted from, though: after a successful refresh the page says so and asks
+for a restart, which is the point where the new image takes effect. Details
+of the build are in `sysimage_build.log` next to the image; see
+[Sysimage](sysimage.md).
+
 ## Starting a PowerFlow run
 
 Web UI submissions start in a background worker task and redirect immediately to

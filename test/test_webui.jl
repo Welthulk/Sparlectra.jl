@@ -1235,6 +1235,153 @@ function run_webui_fast_tests()
       @test sl(:sysimage_path) == Sparlectra.webui_sysimage_path()
     end
 
+    @testset "the Info menu stays in the header on every page" begin
+      # Regression (2026-09-07): the Info control was passed to the layout by
+      # the Case, Settings and Runs renderers only, so it disappeared as soon
+      # as the user clicked Operation Log, Run history, Last errors, Docs or a
+      # result page. Everything it shows describes the running server, not the
+      # page, so the header builds it itself now.
+      root = Sparlectra.default_webui_output_root()
+      for path in ("/powerflow", "/powerflow/case", "/powerflow/settings", "/powerflow/history",
+                   "/webui/operation-log", "/webui/last-errors", "/docs", "/webui/sysimage")
+        response = Sparlectra.route_sparlectra_webui("GET", path; output_root = root)
+        body = String(response.body)
+        # the tuple form names the offending page in the failure output
+        @test (path, occursin("topbar-info-menu", body)) == (path, true)
+      end
+      # error pages carry it as well: they are where a user looks for the
+      # output root and the operation log in the first place
+      @test occursin("topbar-info-menu", Sparlectra.render_webui_error(404, "not found"))
+    end
+
+    @testset "sysimage validity: launcher and package agree" begin
+      # Sparlectra.webui_sysimage_problem answers the same question for the
+      # Web UI's sysimage page that SysimageLauncher.sysimage_problem answers
+      # for the start decision. The launcher cannot call the package one (it
+      # runs before the package is loaded), so the two implementations are
+      # held together HERE: every fixture state below has to produce the same
+      # verdict on both sides, or the sysimage page will one day claim an
+      # image is fine that the launcher refuses to start from.
+      launcher = Module(:LauncherParity)
+      Base.include(launcher, joinpath(Sparlectra.SPARLECTRA_ROOT, "tools", "sysimage_launcher.jl"))
+      SL = getfield(launcher, :SysimageLauncher)
+      sl(name, args...) = Base.invokelatest(Base.invokelatest(getfield, SL, name), args...)
+      both(img, proj) = (sl(:sysimage_problem, img, proj), Sparlectra.webui_sysimage_problem(image_path = img, project_dir = proj))
+      mktempdir() do tmp
+        proj = joinpath(tmp, "proj")
+        mkpath(joinpath(proj, "src"))
+        manifest = joinpath(proj, "Manifest.toml")
+        write(manifest, "# manifest fixture\n")
+        write(joinpath(proj, "src", "Fixture.jl"), "module Fixture end\n")
+        imgdir = joinpath(tmp, "image")
+        mkpath(imgdir)
+        img = joinpath(imgdir, "sparlectra.so")
+        meta = joinpath(imgdir, "sysimage_meta.toml")
+        sha = bytes2hex(open(SHA.sha256, manifest))
+        states = Pair{String,Function}[
+          "missing image" => () -> nothing,
+          "image without metadata" => () -> write(img, "not a real image"),
+          "wrong julia version" => () -> write(meta, "julia_version = \"9.9.9\"\nmanifest_sha256 = \"$(sha)\"\n"),
+          "manifest mismatch" => () -> write(meta, string("julia_version = \"", VERSION, "\"\nmanifest_sha256 = \"deadbeef\"\n")),
+          "valid" => () -> (write(meta, string("julia_version = \"", VERSION, "\"\nmanifest_sha256 = \"", sha, "\"\n")); touch(img)),
+          "source newer than image" => () -> (sleep(1.1); touch(joinpath(proj, "src", "Fixture.jl"))),
+          "unreadable metadata" => () -> write(meta, "kaputt = [[["),
+        ]
+        for (name, mutate) in states
+          mutate()
+          launcher_verdict, package_verdict = both(img, proj)
+          # the tuple form puts the disagreeing verdicts into the failure output
+          @test (name, launcher_verdict) == (name, package_verdict)
+        end
+        # and the verdicts are the expected ones, not merely equal
+        @test Sparlectra.webui_sysimage_problem(image_path = img, project_dir = proj) == "the sysimage metadata is unreadable"
+      end
+    end
+
+    @testset "sysimage build progress and rebuild page" begin
+      mktempdir() do tmp
+        # webui_sysimage_dir puts the image NEXT TO the runs root, so an
+        # output_root inside the temp directory keeps the whole fixture there
+        out = joinpath(tmp, "runs")
+        mkpath(out)
+        imgdir = Sparlectra.webui_sysimage_dir(out)
+        mkpath(imgdir)
+        progress = Sparlectra.webui_sysimage_progress_path(out)
+
+        # no build has ever run here
+        @test Sparlectra.read_sysimage_build_progress(output_root = out) === nothing
+        @test Sparlectra.sysimage_build_active(output_root = out) == false
+
+        _progress_file(state, updated) = write(progress, string(
+          "state = \"", state, "\"\nstep = 3\nsteps = 4\n",
+          "phase = \"compiling the system image\"\ndetail = \"\"\nmessage = \"\"\n",
+          "elapsed_seconds = 42.0\nupdated_at = ", updated, "\npid = 1\n",
+          "log = \"", replace(Sparlectra.webui_sysimage_build_log_path(out), "\\" => "\\\\"), "\"\n"))
+
+        _progress_file("running", round(time(); digits = 1))
+        read_back = Sparlectra.read_sysimage_build_progress(output_root = out)
+        @test read_back !== nothing
+        @test read_back["phase"] == "compiling the system image"
+        @test Sparlectra.sysimage_build_active(output_root = out) == true
+
+        # a builder that stopped reporting is gone, not busy: a crashed build
+        # must never lock the refresh button for the rest of the session
+        _progress_file("running", round(time() - 3600; digits = 1))
+        @test Sparlectra.sysimage_build_active(output_root = out) == false
+        _progress_file("failed", round(time(); digits = 1))
+        @test Sparlectra.sysimage_build_active(output_root = out) == false
+
+        # the page renders in every state and offers the button when idle
+        _progress_file("done", round(time(); digits = 1))
+        idle_page = Sparlectra.render_webui_sysimage_page(output_root = out)
+        @test occursin("/webui/sysimage/rebuild", idle_page)
+        # the ATTRIBUTE with a value, not the bare name: the page skeleton
+        # always carries `main[data-refresh-url]` inside its polling script,
+        # so the bare name matches every page and proves nothing
+        @test !occursin("data-refresh-url=", idle_page)
+        _progress_file("running", round(time(); digits = 1))
+        busy_page = Sparlectra.render_webui_sysimage_page(output_root = out)
+        # while a build runs the page polls instead of offering a second build
+        @test occursin("data-refresh-url=\"/webui/sysimage?autorefresh=1\"", busy_page)
+        @test !occursin("/webui/sysimage/rebuild", busy_page)
+        @test occursin("compiling the system image", busy_page)
+
+        # a failed build shows the reason and the tail of the build log
+        write(Sparlectra.webui_sysimage_build_log_path(out), "line one\nERROR: linker died\n")
+        _progress_file("failed", round(time(); digits = 1))
+        failed_page = Sparlectra.render_webui_sysimage_page(output_root = out)
+        @test occursin("ERROR: linker died", failed_page)
+
+        # A progress file that exists but does not parse must not read as
+        # "no build has ever run here": the reader returns nothing for both,
+        # and only the page can tell them apart.
+        write(progress, "kaputt = [[[")
+        @test Sparlectra.read_sysimage_build_progress(output_root = out) === nothing
+        @test occursin("cannot be read", Sparlectra.render_webui_sysimage_page(output_root = out))
+        rm(progress)
+        @test !occursin("cannot be read", Sparlectra.render_webui_sysimage_page(output_root = out))
+        _progress_file("failed", round(time(); digits = 1))
+
+        # route smoke: the page is reachable
+        response = Sparlectra.route_sparlectra_webui("GET", "/webui/sysimage"; output_root = out)
+        @test response.status == 200
+        @test occursin("Sysimage", String(response.body))
+
+        # The POST is exercised against the "already running" guard ON
+        # PURPOSE: start_sysimage_rebuild! spawns the real build script,
+        # which writes to the user's own sysimage directory and works for
+        # minutes. A test may not do that, so what is asserted here is the
+        # wiring (route reaches the handler, handler redirects back with a
+        # message) and the guard that stops a second build. The spawn itself
+        # is covered by running a build, not by the suite.
+        _progress_file("running", round(time(); digits = 1))
+        rebuild = Sparlectra.route_sparlectra_webui("POST", "/webui/sysimage/rebuild"; output_root = out)
+        @test rebuild.status == 303
+        @test any(h -> first(h) == "Location" && startswith(last(h), "/webui/sysimage"), rebuild.headers)
+        @test any(h -> first(h) == "Location" && occursin("already", last(h)), rebuild.headers)
+      end
+    end
+
     @testset "case-scan memo cache" begin
       mktempdir() do dir
         p = joinpath(dir, "SCAN.DAT")
