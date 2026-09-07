@@ -334,7 +334,6 @@ Ensure a MATPOWER-compatible case file exists locally.
 
 Returns the local path to the requested case file.
 """
-
 function ensure_casefile(casefile::AbstractString; outdir::Union{Nothing,AbstractString} = nothing, overwrite::Bool = false, to_jl::Bool = true)::String
 
   # 1) If user passed an existing file path, just use it.

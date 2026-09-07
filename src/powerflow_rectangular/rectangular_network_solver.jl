@@ -288,7 +288,6 @@ polar formulations.
 - `mismatch_rectangular()`: Core mismatch function for PQ/PV constraints
 - `build_rectangular_jacobian_pq_pv()`: Analytic Jacobian construction
 """
-
 function runpf_rectangular!(
   net::Net;
   method::Symbol = :rectangular,

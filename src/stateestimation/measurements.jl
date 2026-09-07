@@ -519,7 +519,6 @@ Selection rules:
 These pseudo-measurements are the current way to encode equality constraints
 `P_inj = 0` and `Q_inj = 0` in the WLS estimator.
 """
-
 function addZeroInjectionMeasurements!(measurements::Vector; net::Net, sigma::Real = ZERO_INJECTION_SIGMA, busNames::Union{Nothing,Vector{String}} = nothing, busIdxs::Union{Nothing,Vector{Int}} = nothing, active::Bool = true, idPrefix::AbstractString = "ZI")
   selected = if !isnothing(busIdxs)
     copy(busIdxs)
