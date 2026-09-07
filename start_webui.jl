@@ -25,7 +25,15 @@
 # no package load. Julia can only take an image at process start (-J), so a
 # process that wants one has to start itself again.
 include(joinpath(@__DIR__, "tools", "sysimage_launcher.jl"))
-using .SysimageLauncher: handle_sysimage
+using .SysimageLauncher: handle_sysimage, unresolved_dependencies, repair_environment
+
+# The environment FIRST, then the sysimage question. A user who is about to be
+# asked whether to spend minutes on a build should not be asked on top of a
+# broken checkout.
+let project_dir = abspath(@__DIR__), missing_deps = Base.invokelatest(unresolved_dependencies, project_dir)
+  isempty(missing_deps) || Base.invokelatest(repair_environment, project_dir,
+    "The package environment is not resolved: " * join(missing_deps, ", ") * ".")
+end
 
 handle_sysimage(copy(ARGS), @__FILE__, abspath(@__DIR__))
 
@@ -51,27 +59,14 @@ handle_sysimage(copy(ARGS), @__FILE__, abspath(@__DIR__))
 # call instantiate alone, so it turned one unhelpful error into another
 # (reported from a Windows 11 checkout, 2026-09-07). `resolve` rewrites the
 # manifest from Project.toml and covers the missing-manifest case as well.
+# Second line of defence. The check above reads TOML and therefore sees only
+# what TOML can show; a depot with a missing artifact, a half-written package
+# directory or a compat conflict that only surfaces on load gets here instead.
 try
   @eval using Sparlectra
 catch err
-  println("Preparing the package environment; this happens once after a checkout or a dependency change.")
-  println("(", first(sprint(showerror, err), 160), ")")
-  @eval using Pkg
-  pkgm = Base.invokelatest(getfield, @__MODULE__, :Pkg)
-  try
-    Base.invokelatest(pkgm.resolve)
-    Base.invokelatest(pkgm.instantiate)
-  catch resolve_err
-    println()
-    println("Could not prepare the dependencies of this checkout.")
-    println("Run this once in the checkout directory and start again:")
-    println("    julia --project=. -e \"using Pkg; Pkg.resolve(); Pkg.instantiate()\"")
-    println()
-    println("If that fails too, delete Manifest.toml and repeat. It is not tracked,")
-    println("and a manifest left over from an older Sparlectra is the usual reason.")
-    println()
-    rethrow(resolve_err)
-  end
+  Base.invokelatest(repair_environment, abspath(@__DIR__),
+    "Loading Sparlectra failed (" * first(sprint(showerror, err), 160) * ").")
   @eval using Sparlectra
 end
 

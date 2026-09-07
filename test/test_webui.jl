@@ -1254,7 +1254,64 @@ function run_webui_fast_tests()
       @test occursin("topbar-info-menu", Sparlectra.render_webui_error(404, "not found"))
     end
 
-    @testset "start_webui.jl resolves before it instantiates" begin
+    @testset "the environment is checked before the sysimage question" begin
+      # Regression 2026-09-07 (Windows 11). A checkout carried a Manifest.toml
+      # from before AnalyticLoadFlow became a required dependency. The start
+      # asked whether to build a sysimage FIRST, the user declined, and only
+      # then did `using Sparlectra` fail with a KeyError deep in
+      # Base.Precompilation. Answering yes would have been worse: the build
+      # works in the separate @sparlectra-sysimage-build environment and would
+      # have spent eleven minutes before the checkout's own manifest turned
+      # out to be the problem.
+      #
+      # unresolved_dependencies answers that from two TOML reads, with no
+      # package load, which is what lets it run before the question.
+      launcher = Module(:LauncherEnvCheck)
+      Base.include(launcher, joinpath(Sparlectra.SPARLECTRA_ROOT, "tools", "sysimage_launcher.jl"))
+      SL = getfield(launcher, :SysimageLauncher)
+      unresolved(dir) = Base.invokelatest(Base.invokelatest(getfield, SL, :unresolved_dependencies), dir)
+
+      # this very checkout is resolvable, so the check stays silent
+      @test isempty(unresolved(Sparlectra.SPARLECTRA_ROOT))
+
+      mktempdir() do dir
+        json = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
+        toml = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
+        # a manifest that predates a dependency: exactly the reported case
+        stale = joinpath(dir, "stale")
+        mkpath(stale)
+        write(joinpath(stale, "Project.toml"), "[deps]\nJSON = \"$(json)\"\nTOML = \"$(toml)\"\n")
+        write(joinpath(stale, "Manifest.toml"), "julia_version = \"$(VERSION)\"\nmanifest_format = \"2.0\"\n\n[deps]\n[[deps.TOML]]\nuuid = \"$(toml)\"\n")
+        @test unresolved(stale) == ["JSON"]
+
+        # a fresh checkout has no manifest at all
+        fresh = joinpath(dir, "fresh")
+        mkpath(fresh)
+        write(joinpath(fresh, "Project.toml"), "[deps]\nJSON = \"$(json)\"\n")
+        @test unresolved(fresh) == ["<no Manifest.toml>"]
+
+        # a complete manifest is silent
+        good = joinpath(dir, "good")
+        mkpath(good)
+        write(joinpath(good, "Project.toml"), "[deps]\nTOML = \"$(toml)\"\n")
+        write(joinpath(good, "Manifest.toml"), "julia_version = \"$(VERSION)\"\nmanifest_format = \"2.0\"\n\n[deps]\n[[deps.TOML]]\nuuid = \"$(toml)\"\n")
+        @test isempty(unresolved(good))
+
+        # an unreadable manifest counts as unresolved, not as fine: the
+        # environment cannot be trusted either way
+        broken = joinpath(dir, "broken")
+        mkpath(broken)
+        write(joinpath(broken, "Project.toml"), "[deps]\n")
+        write(joinpath(broken, "Manifest.toml"), "kaputt = [[[")
+        broken_result = redirect_stdout(devnull) do
+          unresolved(broken)
+        end
+        @test length(broken_result) == 1
+        @test occursin("unreadable", broken_result[1])
+      end
+    end
+
+    @testset "the repair resolves before it instantiates" begin
       # Regression 2026-09-07 (Windows 11). A checkout carried a Manifest.toml
       # from before AnalyticLoadFlow became a required dependency. `using
       # Sparlectra` failed with a KeyError deep in Base.Precompilation, the
@@ -1268,7 +1325,7 @@ function run_webui_fast_tests()
       # this test guards, and a text check is the honest tool for it: the
       # recovery lives at the top level of a script, which cannot be called
       # without starting a Web UI.
-      script = read(joinpath(Sparlectra.SPARLECTRA_ROOT, "start_webui.jl"), String)
+      script = read(joinpath(Sparlectra.SPARLECTRA_ROOT, "tools", "sysimage_launcher.jl"), String)
       resolve_at = findfirst("pkgm.resolve", script)
       instantiate_at = findfirst("pkgm.instantiate", script)
       @test resolve_at !== nothing
