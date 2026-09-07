@@ -15,17 +15,14 @@
 * Every format has its own importer; SCF is the preferred working format, not a mandatory way station.
 * AnalyticLoadFlow.jl is a required dependency, so the APSLF solver is always available.
 * Chi-square band test uses Wilson-Hilferty; multi-island nets are estimated per island.
-* The Web UI launchers start Julia without a startup file. A personal `startup.jl` that loads Revise invalidated a large part of the sysimage, so the image was rebuilt on the fly at every start; `SPARLECTRA_STARTUP_FILE=yes` restores the old behavior.
+
 
 ## Fixed
 
 * DC power flow did not contract closed busbar couplers (sections of one node split by up to 13.6 degrees).
-* State estimation and the case selector refused case files; exported files could not be resolved or run.
 * Generated measurement sets were ignored, added instead of replacing, and foreign sets were preselected.
 * Case files lost voltage limits, Q-limit hysteresis, phase-tap bands and machine operating points.
-* Round-trip defects on real MATPOWER cases: shunt sign, bus order, numeric names, ratings, skew angle.
 * Q-limit handling scanned its whole event log per bus and iteration, which dominated the power flow on large networks (13659 buses: 60 s, now 13.5 s, same result).
-* A configuration file without `config_version` printed one warning per legacy key at every start. It is one line now, and a sysimage build brings the file up to date by itself.
 
 
 # Version 0.9.19 - 2026-08-25
