@@ -354,6 +354,12 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
   elseif verb == "GET" && path == "/webui/operation-log/download"
     _webui_log_route!(log_root, "artifact_downloaded", verb, path; status = "succeeded", artifact = WEBUI_OPERATION_LOG_FILENAME)
     return handle_webui_operation_log(log_root; download = true)
+  elseif verb == "GET" && path == "/webui/sysimage"
+    # the autorefresh poll while a build runs must not fill the operation log
+    get(query, "autorefresh", "") == "1" || _webui_log_route!(log_root, "sysimage_page_opened", verb, path; status = "opened")
+    return handle_webui_sysimage(; output_root, message = get(query, "message", ""))
+  elseif verb == "POST" && path == "/webui/sysimage/rebuild"
+    return handle_webui_sysimage_rebuild(; output_root, operation_log = log_root)
   elseif verb == "POST" && path == "/webui/heartbeat"
     runtime === nothing || _webui_record_heartbeat!(runtime)
     return SparlectraWebUIResponse(204, ""; content_type = "text/plain; charset=utf-8")

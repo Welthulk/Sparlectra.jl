@@ -130,3 +130,188 @@ function webui_runtime_flavor()
   end
   return (kind = :native, built = nothing)
 end
+
+# --- refreshing the image from the Web UI ------------------------------------
+# A session can work for hours on an image that was correct when it was built
+# and still pay JIT, simply because a path was never traced. "Refresh the
+# image" is therefore a normal user action, not a maintenance chore, and it
+# has to be reachable without leaving the browser.
+
+"""Return the build log the sysimage build writes next to the image."""
+webui_sysimage_build_log_path(output_root::AbstractString = default_webui_output_root())::String = joinpath(webui_sysimage_dir(output_root), "sysimage_build.log")
+
+"""Return the progress file a running sysimage build updates while it works."""
+webui_sysimage_progress_path(output_root::AbstractString = default_webui_output_root())::String = joinpath(webui_sysimage_dir(output_root), "sysimage_build_progress.toml")
+
+"""
+    webui_sysimage_problem(; image_path, project_dir) -> Union{Nothing,String}
+
+Return `nothing` when the image on disk can be used, otherwise a short reason
+naming what is wrong: wrong Julia version, dependencies changed
+(Manifest.toml), or a source file newer than the image.
+
+The third check is the expensive lesson: the metadata pins the Julia version
+and the Manifest hash, i.e. the DEPENDENCIES, and says nothing about this
+package's own code. Editing `src/` leaves the Manifest untouched, so an image
+built before the edit still looked fresh and the Web UI silently served the
+old code.
+
+!!! note "Kept in sync with the launcher by a test"
+    `SysimageLauncher.sysimage_problem` in `tools/sysimage_launcher.jl` makes
+    the same decision and cannot call this one: it runs BEFORE the package is
+    loaded, because what it decides is whether this process should be
+    replaced by one that boots from the image. The two implementations are
+    held together by `test/test_webui.jl`, which asserts they agree.
+"""
+function webui_sysimage_problem(; image_path::AbstractString = webui_sysimage_path(), project_dir::AbstractString = SPARLECTRA_ROOT)::Union{Nothing,String}
+  meta_path = joinpath(dirname(image_path), "sysimage_meta.toml")
+  (isfile(image_path) && isfile(meta_path)) || return "no sysimage found"
+  meta = try
+    TOML.parsefile(meta_path)
+  catch
+    return "the sysimage metadata is unreadable"
+  end
+  built_for = get(meta, "julia_version", "")
+  built_for == string(VERSION) || return "the sysimage was built for Julia $(built_for), this is $(VERSION)"
+  manifest = joinpath(project_dir, "Manifest.toml")
+  if isfile(manifest)
+    current = bytes2hex(open(sha256, manifest))
+    get(meta, "manifest_sha256", "") == current || return "the sysimage does not match the current Manifest.toml"
+  end
+  image_time = mtime(image_path)
+  src = joinpath(project_dir, "src")
+  if isdir(src)
+    for (root, _, files) in walkdir(src), f in files
+      endswith(f, ".jl") || continue
+      mtime(joinpath(root, f)) > image_time && return "the sysimage is older than $(src)"
+    end
+  end
+  return nothing
+end
+
+"""
+    read_sysimage_build_progress(; output_root) -> Union{Nothing,Dict{String,Any}}
+
+Read the progress file `tools/build_sysimage.jl` keeps while it builds, or
+`nothing` when no build has ever run here. Keys: `state` (`running`, `done`,
+`failed`), `step`/`steps`, `phase`, `detail`, `message`, `elapsed_seconds`,
+`updated_at`, `pid`, `log`.
+"""
+function read_sysimage_build_progress(; output_root::AbstractString = default_webui_output_root())::Union{Nothing,Dict{String,Any}}
+  path = webui_sysimage_progress_path(output_root)
+  isfile(path) || return nothing
+  return try
+    TOML.parsefile(path)
+  catch err
+    # expected failure: the builder is writing the file right now, so a read
+    # can land on a partial line. Reporting "no progress yet" for one poll is
+    # correct; the next refresh a second later gets the complete file.
+    @debug "read_sysimage_build_progress: progress file not parseable yet" path exception = err
+    nothing
+  end
+end
+
+"""Seconds since a running build last reported progress; `nothing` without a build."""
+function _sysimage_build_age(progress)::Union{Nothing,Float64}
+  progress === nothing && return nothing
+  updated = get(progress, "updated_at", nothing)
+  updated isa Number || return nothing
+  return max(0.0, time() - Float64(updated))
+end
+
+# The builder refreshes the progress file about every five seconds even while
+# nothing changes, so a build that stopped reporting for a minute is gone
+# (killed, crashed hard, machine rebooted) rather than merely busy.
+const _SYSIMAGE_BUILD_STALE_SECONDS = 60.0
+
+"""
+    sysimage_build_active(; output_root) -> Bool
+
+Whether a sysimage build is running right now. A build that stopped updating
+its progress file for more than a minute counts as gone, not as active: a
+crashed builder must never lock the refresh button forever.
+"""
+function sysimage_build_active(; output_root::AbstractString = default_webui_output_root())::Bool
+  progress = read_sysimage_build_progress(; output_root)
+  progress === nothing && return false
+  get(progress, "state", "") == "running" || return false
+  age = _sysimage_build_age(progress)
+  return age === nothing || age < _SYSIMAGE_BUILD_STALE_SECONDS
+end
+
+"""
+    start_sysimage_rebuild!(; output_root) -> NamedTuple
+
+Start `tools/build_sysimage.jl` in a DETACHED child process and return
+immediately: `(started, message, log)`. The build takes minutes, so it must
+outlive both the request and the Web UI session that triggered it.
+
+Two details are load-bearing:
+
+  * The child is started from the plain Julia executable, never through
+    `Base.julia_cmd()`. That command carries the `-J` of the CURRENT session,
+    and when the Web UI itself runs on the Sparlectra image, PackageCompiler
+    would build the new image incrementally on top of the old one.
+  * The build writes to a staging file and moves it into place at the end, so
+    this very session can keep running on the image being replaced (`mv`
+    swaps the directory entry and leaves the old inode mapped).
+"""
+function start_sysimage_rebuild!(; output_root::AbstractString = default_webui_output_root())
+  log = webui_sysimage_build_log_path(output_root)
+  sysimage_build_active(; output_root) && return (started = false, message = "A sysimage build is already running.", log = log)
+  pkgroot = pkgdir(@__MODULE__)
+  pkgroot === nothing && return (started = false, message = "Cannot locate the Sparlectra package directory.", log = log)
+  script = joinpath(pkgroot, "tools", "build_sysimage.jl")
+  isfile(script) || return (started = false, message = "The build script is missing at $(script); a registry installation without tools/ cannot rebuild the image.", log = log)
+  exe = joinpath(Sys.BINDIR, Base.julia_exename())
+  cmd = Cmd(`$(exe) --startup-file=no --project=$(pkgroot) $(script)`; dir = pkgroot)
+  try
+    # Progress and log go to files, so the child needs no streams of its own.
+    run(pipeline(detach(cmd); stdout = devnull, stderr = devnull); wait = false)
+  catch err
+    return (started = false, message = "Could not start the build: $(sprint(showerror, err))", log = log)
+  end
+  return (started = true, message = "The sysimage build has started. It runs in the background and takes a few minutes.", log = log)
+end
+
+# Which image file this SESSION is running on, remembered the first time it is
+# asked. A refresh replaces the image by `mv`, so the running process keeps its
+# old mapped inode while the path already points at the new file: after a
+# successful rebuild the Web UI still serves the code it started with, and it
+# has to say so instead of letting the user wonder why the JIT pause is back.
+const _SESSION_IMAGE_MTIME = Ref(0.0)
+const _SESSION_IMAGE_SEEN = Ref(false)
+
+function _session_image_mtime()::Float64
+  if !_SESSION_IMAGE_SEEN[]
+    img = try
+      unsafe_string(Base.JLOptions().image_file)
+    catch
+      ""
+    end
+    _SESSION_IMAGE_MTIME[] = isempty(img) || !isfile(img) ? 0.0 : mtime(img)
+    _SESSION_IMAGE_SEEN[] = true
+  end
+  return _SESSION_IMAGE_MTIME[]
+end
+
+"""
+    sysimage_restart_pending(; output_root) -> Bool
+
+True when the image on disk is newer than the one this session booted from,
+i.e. a rebuild finished and only a restart of the Web UI will actually use it.
+False for a native session, which has no image to be behind.
+"""
+function sysimage_restart_pending(; output_root::AbstractString = default_webui_output_root())::Bool
+  flavor = try
+    webui_runtime_flavor()
+  catch
+    (kind = :native, built = nothing)
+  end
+  flavor.kind === :sysimage || return false
+  stamp = _session_image_mtime()
+  stamp == 0.0 && return false
+  img = webui_sysimage_path(output_root)
+  # one second of slack: mtime resolution differs per filesystem
+  return isfile(img) && mtime(img) > stamp + 1.0
+end

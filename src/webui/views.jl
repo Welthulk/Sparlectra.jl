@@ -203,6 +203,25 @@ function _webui_total_elapsed_seconds(result::AbstractDict)
   return parsed !== nothing && isfinite(parsed) ? max(0.0, parsed) : nothing
 end
 
+# Everything the fallback Info menu shows is fixed for the life of the
+# process, and building it is not free: resolving the case directory probes
+# it with a temporary file. Without this memo the result page would do that
+# probe on every one of its two-second auto-refreshes.
+const _WEBUI_DEFAULT_INFO_MENU = Ref("")
+
+function _webui_default_info_menu()::String
+  if isempty(_WEBUI_DEFAULT_INFO_MENU[])
+    root = default_webui_output_root()
+    _WEBUI_DEFAULT_INFO_MENU[] = _webui_powerflow_info_menu(;
+      output_root = root,
+      config_file = DEFAULT_SPARLECTRA_CONFIG_PATH,
+      case_directory = _webui_case_directory(),
+      operation_log = webui_operation_log_path(root),
+    )
+  end
+  return _WEBUI_DEFAULT_INFO_MENU[]
+end
+
 function _webui_layout(title::AbstractString, content::AbstractString; show_back::Bool = false, main_class::AbstractString = "page", refresh_url = nothing, refresh_seconds::Integer = WEBUI_STATUS_AUTO_REFRESH_SECONDS, header_info::AbstractString = "")::String
   back_button = show_back ? "<div class=\"page-toolbar\"><a class=\"button back-button\" href=\"/powerflow\" onclick=\"if (document.referrer.startsWith(location.origin)) { history.back(); return false; }\" aria-label=\"Go back to the previous page\">← Back</a></div>" : ""
   version_text = "Sparlectra.jl v$(version())"
@@ -233,6 +252,14 @@ function _webui_layout(title::AbstractString, content::AbstractString; show_back
     hint_on && (latency_banner = "<div class=\"latency-banner\" id=\"latency-banner\"><span>First run in a fresh Julia process includes compilation and is slow; later runs are fast. Keep the process running, or start it again and let it build the sysimage.</span><button type=\"button\" onclick=\"try{localStorage.setItem('sparlectra-latency-dismissed','1')}catch(e){};document.getElementById('latency-banner').remove()\">Dismiss</button></div><script>try{localStorage.getItem('sparlectra-latency-dismissed')==='1'&&document.getElementById('latency-banner').remove()}catch(e){}</script>")
   end
   runtime_info = "<span class=\"runtime-info\" title=\"Package path: $(_webui_escape(package_path))\"><span class=\"runtime-title\">$(_webui_escape(version_text))</span>$(commit_html)$(flavor_html)</span>"
+  # The Info control belongs to the HEADER, not to three particular pages.
+  # It used to be passed in by the Case, Settings and Runs renderers only, so
+  # it vanished the moment the user clicked Operation Log, Run history, Last
+  # errors, Docs or a result page (reported 2026-09-07). Everything it shows
+  # is a property of the running server, not of the page, so a page that
+  # knows better still overrides `header_info` and every other page now gets
+  # the same menu built from the defaults those pages would resolve to.
+  isempty(header_info) && (header_info = _webui_default_info_menu())
   refresh_attrs = refresh_url === nothing ? "" : " data-refresh-url=\"$(_webui_escape(refresh_url))\" data-refresh-seconds=\"$(refresh_seconds)\""
   return """<!doctype html>
 <html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
@@ -308,7 +335,7 @@ function _webui_powerflow_info_menu(; output_root::AbstractString, config_file::
 <dl>
 <dt>Version</dt><dd><code>Sparlectra.jl v$(_webui_escape(string(version())))</code></dd>
 <dt>Commit</dt><dd><code>$(_webui_escape(commit_text))</code></dd>
-<dt>Started from</dt><dd><code>$(_webui_escape(flavor_text))</code></dd>
+<dt>Started from</dt><dd><code>$(_webui_escape(flavor_text))</code> <a href=\"/webui/sysimage\">Sysimage</a></dd>
 <dt>Output root</dt><dd><code>$(_webui_escape(output_root))</code></dd>
 <dt>Config file</dt><dd><code>$(_webui_escape(config_file))</code></dd>
 <dt>Case cache</dt><dd><code>$(_webui_escape(case_directory))</code></dd>
@@ -2803,4 +2830,140 @@ function render_se_form(; cases::Vector{String} = String[], measurements::Vector
   info_tab = isempty(info_html) ? "" : "<details class=\"se-tab se-set-info\" open><summary>Measurement set details</summary>$(info_html)</details>"
   upload_tab = "<details class=\"se-tab se-upload\"><summary>Upload measurement file</summary>$(upload_form)</details>"
   return "<section class=\"panel se-section\" id=\"state-estimation\"><h2>State estimation</h2>$(banner)$(msg_html)$(run_form)$(generator_tab)$(info_tab)$(upload_tab)</section>"
+end
+
+# --- sysimage page -----------------------------------------------------------
+
+"Human-readable size of an existing file, empty string when it is missing."
+function _webui_sysimage_size(path::AbstractString)::String
+  isfile(path) || return ""
+  return string(round(filesize(path) / 1024^2; digits = 1), " MB")
+end
+
+"Last `n` non-empty lines of the build log, for the failure case."
+function _webui_sysimage_log_tail(path::AbstractString, n::Int = 20)::Vector{String}
+  isfile(path) || return String[]
+  lines = try
+    readlines(path)
+  catch err
+    # expected failure: the builder holds the file open and may be rotating it
+    return ["(build log not readable: $(sprint(showerror, err)))"]
+  end
+  filter!(l -> !isempty(strip(l)), lines)
+  return lines[max(1, end - n + 1):end]
+end
+
+"""
+    render_webui_sysimage_page(; output_root, message) -> String
+
+The sysimage page: what the image on disk is, whether it is still valid, what
+a running build is doing right now, and the button that starts a refresh.
+
+The page auto-refreshes ONLY while a build runs, through the same
+`data-refresh-url` mechanism the run status page uses; once the build ends the
+rendered page carries no refresh attribute, which makes the client do a real
+reload and land on the final state.
+"""
+function render_webui_sysimage_page(; output_root::AbstractString, message::AbstractString = "")::String
+  image = webui_sysimage_path(output_root)
+  progress = read_sysimage_build_progress(; output_root)
+  active = sysimage_build_active(; output_root)
+  build_log = webui_sysimage_build_log_path(output_root)
+  problem = try
+    webui_sysimage_problem(; image_path = image)
+  catch err
+    "the validity check failed: $(sprint(showerror, err))"
+  end
+  flavor = try
+    webui_runtime_flavor()
+  catch
+    (kind = :native, built = nothing)
+  end
+  flavor_text = flavor.kind === :native ? "native session (no sysimage)" :
+                flavor.kind === :app ? "standalone app" :
+                flavor.built === nothing ? "sysimage" : "sysimage, built $(replace(first(String(flavor.built), 19), "T" => " "))"
+
+  status_html = if problem === nothing
+    "<span class=\"status-badge status-success\">up to date</span>"
+  else
+    "<span class=\"status-badge status-warning\">needs a rebuild</span> <span class=\"sysimage-reason\">$(_webui_escape(problem))</span>"
+  end
+  size_text = _webui_sysimage_size(image)
+
+  facts = string(
+    "<dl class=\"sysimage-facts\">",
+    "<dt>Status</dt><dd>", status_html, "</dd>",
+    "<dt>Image file</dt><dd><code>", _webui_escape(image), "</code>", isempty(size_text) ? "" : " (" * _webui_escape(size_text) * ")", "</dd>",
+    "<dt>This session</dt><dd><code>", _webui_escape(flavor_text), "</code></dd>",
+    "<dt>Build log</dt><dd><code>", _webui_escape(build_log), "</code></dd>",
+    "</dl>",
+  )
+
+  # A finished rebuild does NOT reach the running process: it kept the image
+  # it booted from (see sysimage_restart_pending). Saying that here is the
+  # difference between "the refresh worked" and "why is it still slow".
+  restart_notice = sysimage_restart_pending(; output_root) ?
+                   "<div class=\"alert alert-info\" role=\"status\">A newer image is on disk. This Web UI still runs on the one it started with, so <strong>stop and start it again</strong> to use the new image.</div>" : ""
+
+  # A progress file that exists but does not parse looks EXACTLY like "no
+  # build has ever run here", and that is the kind of plausible wrong answer
+  # a page must never give: the reader returns nothing for a partial read
+  # during a write, which is right for one poll and wrong forever.
+  unreadable_progress = progress === nothing && isfile(webui_sysimage_progress_path(output_root)) ?
+                        "<div class=\"alert alert-error\" role=\"alert\"><span>The build-progress file exists but cannot be read, so the state of the last build is unknown. Look at the build log, or start a fresh build.</span></div>" : ""
+
+  message_html = isempty(message) ? "" : "<div class=\"alert alert-info\" role=\"status\">$(_webui_escape(message))</div>"
+
+  action_html = if active
+    step = get(progress, "step", 0)
+    steps = get(progress, "steps", 4)
+    phase = String(get(progress, "phase", "working"))
+    detail = String(get(progress, "detail", ""))
+    elapsed = get(progress, "elapsed_seconds", 0.0)
+    minutes = Int(fld(elapsed, 60))
+    seconds = Int(floor(elapsed)) % 60
+    detail_html = isempty(detail) ? "" : " <span class=\"sysimage-detail\">- $(_webui_escape(detail))</span>"
+    string(
+      "<section class=\"panel sysimage-progress\">",
+      "<h2>Build running</h2>",
+      "<p class=\"sysimage-phase\"><strong>[", step, "/", steps, "]</strong> ", _webui_escape(phase), detail_html,
+      " <span class=\"sysimage-clock\">", lpad(minutes, 2, '0'), ":", lpad(seconds, 2, '0'), "</span></p>",
+      "<progress max=\"", steps, "\" value=\"", step, "\"></progress>",
+      "<p class=\"field-help\">The build runs in its own process and survives a browser reload. It keeps working even if you close this page; the previous image stays in use until the new one is finished.</p>",
+      "</section>",
+    )
+  else
+    last_html = ""
+    if progress !== nothing
+      state = String(get(progress, "state", ""))
+      note = String(get(progress, "message", ""))
+      if state == "failed"
+        tail = _webui_sysimage_log_tail(build_log)
+        last_html = string(
+          "<div class=\"alert alert-error\" role=\"alert\"><span>The last build FAILED: ", _webui_escape(note), "</span></div>",
+          isempty(tail) ? "" : "<pre class=\"sysimage-log-tail\">" * _webui_escape(join(tail, "\n")) * "</pre>",
+        )
+      elseif state == "done"
+        last_html = "<p class=\"field-help\">Last build: finished, $(_webui_escape(note)).</p>"
+      end
+    end
+    string(
+      "<section class=\"panel sysimage-actions\">",
+      "<h2>Refresh the image</h2>",
+      last_html,
+      "<form method=\"post\" action=\"/webui/sysimage/rebuild\"><button type=\"submit\">Refresh sysimage</button></form>",
+      "<p class=\"field-help\">Rebuild the image with the code that is on disk right now. Use this when the image is marked as needing a rebuild, or when a page still paused to compile while you were working: whatever had to be compiled at run time is part of the trace afterwards.</p>",
+      "<p class=\"field-help\">It takes a few minutes and runs in the background. The image in use is only replaced at the very end, so this session keeps working while the build runs.</p>",
+      "</section>",
+    )
+  end
+
+  content = string(
+    restart_notice,
+    unreadable_progress,
+    message_html,
+    "<section class=\"panel sysimage-status\"><h2>Current image</h2>", facts, "</section>",
+    action_html,
+  )
+  return _webui_layout("Sysimage", content; show_back = true, refresh_url = active ? "/webui/sysimage?autorefresh=1" : nothing)
 end

@@ -46,19 +46,13 @@ using Sparlectra
 buildSysimage()
 ```
 
-One call, no arguments. **Plan for it**: the build typically takes 10 to
-20 minutes, needs a few GB of RAM, and the image is roughly half a GB on
-disk; run it once after installing or updating Sparlectra, not before
-every session. It runs the build in a child process (your session keeps
-its active project), installs PackageCompiler into the shared
-`@sparlectra-sysimage-build` environment on first use, and executes the
-full workload: power flow on the embedded cases from
-small to large (case3, case14, case118), a state-estimation run with
-bad-data diagnostics, an N-1 contingency run, a CGMES import with short
-circuit, network losses, and the result/diagnostics printers; the build
-then also traces the fast-profile test suite, so everything the tests
-touch is compiled into the image as well.
-`buildSysimage(dry_run = true)` only reports the target paths.
+One call, no arguments. **Plan for it**: the build takes a few minutes,
+needs a few GB of RAM, and the image is roughly half a GB on disk; run it
+once after installing or updating Sparlectra, not before every session. It
+runs the build in a child process (your session keeps its active project) and
+installs PackageCompiler into the shared `@sparlectra-sysimage-build`
+environment on first use. `buildSysimage(dry_run = true)` only reports the
+target paths.
 
 Equivalent alternatives from a checkout:
 
@@ -66,14 +60,64 @@ Equivalent alternatives from a checkout:
   environment `@sparlectra-sysimage-build` (PackageCompiler is installed
   there, never into the package `Project.toml`), executes the workload in
   `tools/sysimage_workload.jl`, and writes the image below the Web UI user
-  root. The workload covers the paths a session actually hits, one trace
-  per import format so no format compiles on its first click: a power flow
-  and a state estimation each for MATPOWER (`case14`), SCF (the shipped
-  demo case, including its export), DTF (`FOR001.DAT`, reader and net
-  builder directly as well) and CGMES (MiniGrid, fetched once into the
-  regular case cache if missing), plus a CGMES short circuit, an N-1 run,
-  the Web UI start with its form renders, and a clean shutdown. No
-  run-history entries are created.
+  root.
+
+### What the workload traces
+
+The workload runs the important paths ONCE each, and one trace per import
+format so no format compiles on its first click: a power flow and a state
+estimation each for MATPOWER (`warmup_casePST`), SCF (the shipped demo
+case, including its export), DTF (`FOR001.DAT`, reader and net builder
+directly as well) and CGMES (MiniGrid, fetched once into the regular case
+cache if missing), plus a CGMES short circuit, an N-1 contingency run, the
+network losses and the result/diagnostics printers, the Web UI start with
+its page renders through the real socket handler, one `run_sparlectra`
+call, and a clean shutdown. No run-history entries are created.
+
+It deliberately does NOT run the test suite. Tracing the whole fast profile
+plus the Web UI test group is what the build used to do, and it dominated
+the build time by a wide margin without reaching a Web UI path the steps
+above miss. For a maintainer comparison the old behavior is still one
+variable away:
+
+```bash
+SPARLECTRA_SYSIMAGE_TRACE_TESTS=1 julia --project=. tools/build_sysimage.jl
+```
+
+A step that fails is a gap in the trace, never a failed build: the affected
+path simply compiles on its first use. Every step reports its outcome in
+the build log, successful ones included, because a silent success cannot be
+told apart from a step that never ran.
+
+### What the build prints
+
+The console gets one line that rewrites itself:
+
+```text
+  [3/4] compiling the system image  04:21
+```
+
+Everything else - Pkg resolution, the workload trace, PackageCompiler, the
+linker - goes to `sysimage_build.log` next to the image, and is written as
+it happens rather than at the end, so it can be watched and survives a
+killed build. When the console is not a terminal (output redirected to a
+file, a CI log), the progress line is replaced by one line per phase
+change, about fifteen for a whole build. `--verbose` streams everything to
+the console instead.
+
+A build that fails prints the tail of the log directly, and leaves the
+PREVIOUS image untouched: the new one is compiled to a staging file and
+moved into place only after it is complete.
+
+### Refreshing the image from the Web UI
+
+The Web UI's **Sysimage** page (`/webui/sysimage`, linked from the Info
+panel) shows the same validity verdict and starts the same build in the
+background. Because the finished image is moved into place with `mv`, the
+directory entry is replaced while the old file stays mapped, so a Web UI
+running on the image being replaced keeps working. It also keeps running
+the OLD code: the page says so afterwards and asks for a restart. See
+[Web UI](webui.md).
 
 When AnalyticLoadFlow (the APSLF solver) is installed, the build detects it
 and bakes it into the image as well. This is not only about the APSLF paths:
@@ -82,9 +126,11 @@ and bakes it into the image as well. This is not only about the APSLF paths:
 first run then silently recompiles them (measured: 36 s instead of 1 s for
 the first `case118` service run). With the package inside the image the
 startup load is a no-op for compilation.
-Expect a build to take roughly 6 to 20 minutes and an image of a few
-hundred MB (reference measurement on a Linux workstation, Julia 1.12:
-6.5 minutes build time, 537 MB image). With the image the server is up
+A build takes a few minutes and produces an image of a few hundred MB. The
+time splits roughly evenly between resolving and precompiling the build
+environment, the workload trace, and the image compilation itself; a cold
+build environment adds the one-time PackageCompiler installation.
+With the image the server is up
 after about 2 s; the first PowerFlow form view still pays a one-time scan
 of the case directory (prewarmed in the background, afterwards a few
 milliseconds per view). Without the image the same start took about 45 s.
@@ -147,8 +193,9 @@ from the environment you start from.
 
 `sysimage_meta.toml` is the validity contract: Sparlectra version, Julia
 version, OS and architecture, the SHA-256 of the checkout `Manifest.toml`,
-and the build timestamp. `start_webui.jl` checks three things before every
-start and names the one that fails:
+and the build timestamp. `start_webui.jl` checks these before every start,
+and the Web UI's Sysimage page shows the same verdict, naming the one that
+fails:
 
 | Check | Message |
 |---|---|

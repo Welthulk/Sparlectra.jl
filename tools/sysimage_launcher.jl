@@ -50,6 +50,12 @@ hash, i.e. the DEPENDENCIES, and says nothing about this package's own code.
 Editing `src/` leaves the Manifest untouched, so an image built before the
 edit still looked fresh and the Web UI silently served the old code. A
 source file newer than the image therefore counts as outdated.
+
+`Sparlectra.webui_sysimage_problem` makes the same decision for the Web UI's
+sysimage page and cannot be called from here: this function decides whether
+the current process should be REPLACED by one booting from the image, which
+is settled before the package is loaded. `test/test_webui.jl` asserts that
+both implementations agree, so the duplication cannot drift unnoticed.
 """
 function sysimage_problem(path::AbstractString, project_dir::AbstractString)::Union{Nothing,String}
   meta_path = joinpath(dirname(path), "sysimage_meta.toml")
@@ -105,7 +111,9 @@ end
 
 function build_sysimage(project_dir::AbstractString)::Bool
   exe = joinpath(Sys.BINDIR, Base.julia_exename())
-  println("Building the sysimage (this window stays busy until it is done)...")
+  # No banner here: the build script prints its own header and then keeps ONE
+  # progress line up to date. Anything printed around it would scroll that
+  # line away, which is exactly what the quiet console is for.
   # The build script directly, not through `using Sparlectra; buildSysimage()`:
   # that intermediate process would load (and possibly precompile) the whole
   # package just to spawn the same script. A checkout without tools/ (an
@@ -185,8 +193,8 @@ function handle_sysimage(args::Vector{String}, script::AbstractString, project_d
     println("Rebuilding the sysimage on request ($(REBUILD_FLAG)).")
   else
     println("Sysimage: ", problem, ".")
-    println("Building one takes roughly 10 to 15 minutes. Afterwards the Web UI starts")
-    println("in seconds and no page has to compile on first use.")
+    println("Building one takes a few minutes. Afterwards the Web UI starts in seconds")
+    println("and no page has to compile on first use.")
     if !ask_build("Build the sysimage now? [Y/n] ")
       println("Starting without a sysimage: Julia compiles every code path on first")
       println("use, so the first click on each page takes noticeably longer.")

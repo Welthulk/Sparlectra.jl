@@ -61,8 +61,15 @@ function buildSysimage(; dry_run::Bool = false, quiet::Bool = false)
   end
   # run the script against THIS package's project: without it the child
   # would load whatever Sparlectra version the default environment holds
-  # (seen: an older registered version without the sysimage helpers)
-  cmd = dry_run ? `$(Base.julia_cmd()) --project=$(pkgroot) $(script) --dry-run` : `$(Base.julia_cmd()) --project=$(pkgroot) $(script)`
+  # (seen: an older registered version without the sysimage helpers).
+  #
+  # The plain executable, NOT Base.julia_cmd(): that command repeats the -J of
+  # the calling session, and when the caller already runs on the Sparlectra
+  # image (the Web UI does, and it offers a refresh button) PackageCompiler
+  # would build the new image incrementally on top of the old one instead of
+  # on the stock Julia image.
+  exe = joinpath(Sys.BINDIR, Base.julia_exename())
+  cmd = dry_run ? `$(exe) --startup-file=no --project=$(pkgroot) $(script) --dry-run` : `$(exe) --startup-file=no --project=$(pkgroot) $(script)`
   io_out = quiet ? devnull : stdout
   io_err = quiet ? devnull : stderr
   run(pipeline(Cmd(cmd; dir = pkgroot); stdout = io_out, stderr = io_err))

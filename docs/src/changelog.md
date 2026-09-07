@@ -6,7 +6,7 @@
 * Scenarios and N-1: patch model on component ids, engine with reusable working copies, Woodbury screening, Web UI editor.
 * Sparlectra Case Format (SCF): self-describing case file, `data` section is a valid power-grid-model dataset, byte-identical round trip, study blocks executed.
 * Automatic power-flow mode (`power_flow.mode: auto`) with escalation ladder and decision log.
-* `buildSysimage()` and `buildApp()`: fast-start sysimage and standalone executable, one call each.
+* `buildSysimage()` and `buildApp()`: fast-start sysimage and standalone executable, one call each; the Web UI refreshes the sysimage in the background while it keeps running on the old one.
 * Takahashi selected inverse, shared by short-circuit sweeps and state-estimation diagnostics (34x to 264x).
 * MATPOWER busbar couplers and tap-changer nameplates, CGMES export of regulated tap groups.
 

@@ -2101,3 +2101,27 @@ function handle_se_reset_settings(form::AbstractDict; output_root::AbstractStrin
   record_webui_operation!(operation_log, "se_case_settings_reset"; route = "/stateestimation/reset-settings", method = "POST", user_action = true, casefile = casefile)
   return redirectq("saved settings for $(basename(casefile)) deleted; the forms are back to the defaults")
 end
+
+"""
+    handle_webui_sysimage(; output_root, message) -> SparlectraWebUIResponse
+
+Render the sysimage page (state of the image, a running build, the refresh
+button). Pure rendering, no side effects, so the auto-refresh poll while a
+build runs costs nothing but a file read.
+"""
+function handle_webui_sysimage(; output_root::AbstractString, message::AbstractString = "")::SparlectraWebUIResponse
+  return _webui_html(render_webui_sysimage_page(; output_root, message))
+end
+
+"""
+    handle_webui_sysimage_rebuild(; output_root, operation_log) -> SparlectraWebUIResponse
+
+Start a sysimage rebuild in the background and go back to the sysimage page
+with the outcome as a message. The redirect matters: a POST that renders its
+own page turns the browser's reload button into a second build.
+"""
+function handle_webui_sysimage_rebuild(; output_root::AbstractString, operation_log::AbstractString)::SparlectraWebUIResponse
+  result = start_sysimage_rebuild!(; output_root)
+  record_webui_operation!(operation_log, "sysimage_rebuild_requested"; route = "/webui/sysimage/rebuild", method = "POST", user_action = true, status = result.started ? "started" : "rejected", message = result.message)
+  return _webui_redirect("/webui/sysimage?message=$(_webui_urlencode(result.message))")
+end
