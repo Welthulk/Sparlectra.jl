@@ -1254,6 +1254,31 @@ function run_webui_fast_tests()
       @test occursin("topbar-info-menu", Sparlectra.render_webui_error(404, "not found"))
     end
 
+    @testset "start_webui.jl resolves before it instantiates" begin
+      # Regression 2026-09-07 (Windows 11). A checkout carried a Manifest.toml
+      # from before AnalyticLoadFlow became a required dependency. `using
+      # Sparlectra` failed with a KeyError deep in Base.Precompilation, the
+      # recovery block caught it and ran Pkg.instantiate, and instantiate
+      # cannot add a package the manifest never mentioned: it failed with
+      # "AnalyticLoadFlow is a direct dependency, but does not appear in the
+      # manifest ... run Pkg.resolve()". One unhelpful error became another.
+      #
+      # Verified in a throwaway environment: instantiate alone reproduces that
+      # message, resolve followed by instantiate succeeds. The order is what
+      # this test guards, and a text check is the honest tool for it: the
+      # recovery lives at the top level of a script, which cannot be called
+      # without starting a Web UI.
+      script = read(joinpath(Sparlectra.SPARLECTRA_ROOT, "start_webui.jl"), String)
+      resolve_at = findfirst("pkgm.resolve", script)
+      instantiate_at = findfirst("pkgm.instantiate", script)
+      @test resolve_at !== nothing
+      @test instantiate_at !== nothing
+      @test first(resolve_at) < first(instantiate_at)
+      # and the advice printed on failure has to name the same two calls, or a
+      # user who runs it by hand hits exactly the error we just fixed
+      @test occursin("Pkg.resolve(); Pkg.instantiate()", script)
+    end
+
     @testset "sysimage validity: launcher and package agree" begin
       # Sparlectra.webui_sysimage_problem answers the same question for the
       # Web UI's sysimage page that SysimageLauncher.sysimage_problem answers
