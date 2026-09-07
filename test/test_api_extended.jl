@@ -815,19 +815,23 @@ power_flow:
         @test length(residuals_csv) - 1 == length(self_check.raw_result.net.nodeVec)
 
         # Non-CGMES regression guard (load_fixture_net): the shipped
-        # sp_case14 replaces the downloaded case14 here. Its start_state is
-        # the solved base case, so the forced flatstart=false path must take
-        # it verbatim: the mismatch sits at machine precision (banded, the
-        # exact float depends on BLAS summation order) and the iteration
-        # count is a fixed property of the file (derived 2026-09-04:
-        # 5.2e-12, 4 iterations). The historical case14 anchor value
-        # (0.0422, recorded 2026-07-30) still runs below when the case is
-        # cached locally.
+        # sp_case14 replaces the downloaded case14 here. A case configuration
+        # file lies next to it, and its mere EXISTENCE used to disable the
+        # entire forced set: CASE-scope keys skip the general configuration
+        # file in that situation (resolve_config, D5), so the self-check ran
+        # as an ordinary solve. That is where the previous expectation here
+        # came from, recorded on 2026-09-04 as a "fixed property of the
+        # file": 4 iterations to 5.2e-12, which is a converged run, not a
+        # fixed-reference check. With the forced settings on the override
+        # level the contract holds again: exactly one iteration from the
+        # imported state, and the residual OF that state is the answer.
+        # The historical case14 anchor value (0.0422, recorded 2026-07-30)
+        # still runs below when the case is cached locally.
         sp14 = abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json"))
         sp14_check = run_fixed_reference_self_check(casefile = sp14, output_dir = joinpath(tmpdir, "self_check_sp14"))
         @test sp14_check.raw_result !== nothing
-        @test sp14_check.raw_result.final_mismatch < 1e-10
-        @test sp14_check.raw_result.iterations == 4
+        @test sp14_check.raw_result.iterations == 1
+        @test isapprox(sp14_check.raw_result.final_mismatch, 0.09082632227760662; rtol = 1e-6)
         case14 = large_case_path("case14.m")
         if case14 === nothing
           println("      self-check case14 anchor: SKIPPED (case14.m not in the large-case directory)")
@@ -837,6 +841,30 @@ power_flow:
           @test isapprox(case14_check.raw_result.final_mismatch, 0.04218283919133408; rtol = 1e-8)
           @test case14_check.raw_result.iterations == 1
         end
+
+        # Neither a case configuration file nor a caller override may move
+        # the fixed reference. Both were possible until 2026-09-07: the file
+        # because case-scope keys fall through to the packaged defaults as
+        # soon as one exists, the override because the forced settings only
+        # travelled in a configuration FILE, which sits below the override
+        # level. The Web UI form submits power_flow.max_iter with every run.
+        sidecar_dir = mktempdir(tmpdir)
+        sidecar_case = joinpath(sidecar_dir, "case_api.m")
+        cp(casefile, sidecar_case)
+        write(joinpath(sidecar_dir, "case_api.config.yaml"), "config_version: 1\nscope: case\ncase: case_api.m\npower_flow:\n  max_iter: 80\n  rescue: true\n")
+        sidecar_check = run_fixed_reference_self_check(casefile = sidecar_case, config_file = template, output_dir = joinpath(tmpdir, "self_check_sidecar"))
+        plain_check = run_fixed_reference_self_check(casefile = casefile, config_file = template, output_dir = joinpath(tmpdir, "self_check_plain"))
+        @test sidecar_check.raw_result.iterations == 1
+        @test sidecar_check.raw_result.iterations == plain_check.raw_result.iterations
+        @test isapprox(sidecar_check.raw_result.final_mismatch, plain_check.raw_result.final_mismatch; rtol = 1e-8)
+        forced_overrides = Sparlectra._self_check_effective_overrides(Dict{String,Any}("power_flow.max_iter" => 80, "power_flow.rescue" => true, "power_flow.tol" => 1.0e-4))
+        @test forced_overrides["power_flow.max_iter"] == 1
+        @test forced_overrides["power_flow.rescue"] === false
+        # everything the self-check does not force stays the caller's choice
+        @test forced_overrides["power_flow.tol"] == 1.0e-4
+        # the two keys the override allowlist does not admit travel by file
+        @test !haskey(forced_overrides, "power_flow.flatstart")
+        @test !haskey(forced_overrides, "power_flow.start_mode.start_projection")
 
         bad_config_dir = joinpath(tmpdir, "self_check_missing_config")
         @test_throws ArgumentError run_fixed_reference_self_check(casefile = casefile, config_file = joinpath(tmpdir, "does_not_exist.yaml"), output_dir = bad_config_dir)
@@ -1207,6 +1235,16 @@ power_flow:
       @test self_check_yaml["power_flow"]["start_mode"]["voltage_mode"] == "all_bus_vm"
       @test self_check_yaml["power_flow"]["start_mode"]["start_projection"] === false
       @test self_check_yaml["power_flow"]["qlimits"]["enabled"] === false
+      # The file above SAYS max_iter=1; only the run proves it. The Web UI
+      # form submits power_flow.max_iter with every run, and until 2026-09-07
+      # that form value won, because the forced settings travelled in a
+      # configuration file and overrides sit above it.
+      diagnose_forced = start_powerflow_run(Dict("casefile" => casefile, "config_file" => config_file, "output_root" => output_root, "diagnose_mode" => true, "config_overrides" => Dict("benchmark.enabled" => false, "power_flow.max_iter" => 80, "power_flow.rescue" => true)))
+      @test diagnose_forced["iterations"] == 1
+      diagnose_effective = Sparlectra.load_yaml_dict(joinpath(diagnose_forced["output_dir"], "effective_config.yaml"))
+      @test diagnose_effective["power_flow"]["max_iter"] == 1
+      @test diagnose_effective["power_flow"]["rescue"] === false
+
       diagnose_bad_config = start_powerflow_run(Dict("casefile" => casefile, "config_file" => joinpath(tmpdir, "does_not_exist_diagnose.yaml"), "output_root" => output_root, "diagnose_mode" => true))
       @test diagnose_bad_config["success"] === false
 
@@ -1425,7 +1463,7 @@ power_flow:
       @test get_powerflow_result(started["run_id"])["reason"] == "run_not_found"
       refresh = refresh_powerflow_run_registry!(output_root)
       @test refresh["status"] == "succeeded"
-      @test Set(refresh["loaded_runs"]) == Set([started["run_id"], diagnose_started["run_id"], resolved_run["run_id"], failed["run_id"], qlimit_mode_run_ids...])
+      @test Set(refresh["loaded_runs"]) == Set([started["run_id"], diagnose_started["run_id"], diagnose_forced["run_id"], resolved_run["run_id"], failed["run_id"], qlimit_mode_run_ids...])
       @test get_powerflow_result(started["run_id"])["run_id"] == started["run_id"]
       recovered_artifacts = list_powerflow_artifacts(started["run_id"])
       recovered_names = Set(artifact["name"] for artifact in recovered_artifacts)
