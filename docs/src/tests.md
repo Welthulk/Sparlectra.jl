@@ -61,6 +61,12 @@ PackageCompiler precompile run; every skipped group is printed at the start
 of the run so a skip can never be mistaken for a pass. Do not use it to get
 a green development or CI run.
 
+`tools/run_gates.sh` starts Julia with `--startup-file=no`. A gate is not an
+interactive session, and a personal `startup.jl` that loads Revise invalidates
+472 method instances of the stock Julia system image, which the run then infers
+again for nothing. Use the same flag when running `test/runtests.jl` by hand on
+a machine whose `startup.jl` loads packages.
+
 The **sysimage** workload does not trace the test suite at all any more: it
 runs a curated list of interactive paths once each (see
 [Sysimage](sysimage.md)). Tracing the whole fast profile dominated the

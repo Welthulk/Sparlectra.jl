@@ -126,17 +126,22 @@ date > "$lockdir/started"
 echo $$ > "$lockdir/pid"
 trap 'rm -rf "$lockdir"' EXIT INT TERM
 
+# --startup-file=no: a gate is not an interactive session, and a personal
+# startup.jl usually loads Revise. Measured 2026-09-07: loading Revise
+# invalidates 472 method instances of the STOCK Julia system image, which the
+# run then has to infer again, and it buys a gate nothing. (On the Sparlectra
+# sysimage the same load costs 1530 instances; see tools/sysimage_launcher.jl.)
 status=0
 if [ "$gate" = "fast" ]
 then
-  julia --project="$repo_root" "$repo_root/test/runtests.jl"
+  julia --startup-file=no --project="$repo_root" "$repo_root/test/runtests.jl"
   status=$?
 elif [ "$gate" = "extended" ]
 then
-  SPARLECTRA_TEST_PROFILE=extended julia --project="$repo_root" "$repo_root/test/runtests.jl"
+  SPARLECTRA_TEST_PROFILE=extended julia --startup-file=no --project="$repo_root" "$repo_root/test/runtests.jl"
   status=$?
 else
-  julia --project="$repo_root/docs" "$repo_root/docs/make.jl"
+  julia --startup-file=no --project="$repo_root/docs" "$repo_root/docs/make.jl"
   status=$?
 fi
 exit $status
