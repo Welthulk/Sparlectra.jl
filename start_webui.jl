@@ -29,7 +29,36 @@ using .SysimageLauncher: handle_sysimage
 
 handle_sysimage(copy(ARGS), @__FILE__, abspath(@__DIR__))
 
-using Sparlectra
+# --- package environment -----------------------------------------------------
+# `using Sparlectra` needs a RESOLVED environment, and Manifest.toml is not
+# tracked, so a fresh checkout has none. Julia does not say that in a way a
+# user can act on: the dependency scan fails deep inside Base with
+#
+#   KeyError: key Base.PkgId(UUID("19ecf91d-..."), "AnalyticLoadFlow") not found
+#
+# and a stacktrace through Base.Precompilation (reported from a Windows 11
+# checkout, 2026-09-07). Nothing in that names the actual problem, which is
+# simply that the dependencies were never installed. Resolve once and retry,
+# so the first start after a clone works without the user knowing about Pkg.
+try
+  @eval using Sparlectra
+catch err
+  println("Resolving the package environment; this happens once after a fresh checkout.")
+  println("(", first(sprint(showerror, err), 120), ")")
+  @eval using Pkg
+  pkgm = Base.invokelatest(getfield, @__MODULE__, :Pkg)
+  try
+    Base.invokelatest(pkgm.instantiate)
+  catch resolve_err
+    println()
+    println("Could not install the dependencies of this checkout.")
+    println("Run this once in the checkout directory and start again:")
+    println("    julia --project=. -e \"using Pkg; Pkg.instantiate()\"")
+    println()
+    rethrow(resolve_err)
+  end
+  @eval using Sparlectra
+end
 
 function main()
   # No warm-up: either this process runs on the sysimage, where the code is

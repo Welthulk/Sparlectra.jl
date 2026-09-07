@@ -35,6 +35,61 @@ let expected = normpath(joinpath(@__DIR__, "..", "src")), actual = normpath(Stri
   startswith(actual, expected) || error("tools guard: Sparlectra loaded from " * actual * ", expected under " * expected * "; start julia with --project=" * normpath(joinpath(@__DIR__, "..")))
 end
 using Sockets
+using Logging
+
+# --- console versus log ------------------------------------------------------
+# The workload is a compile TRACE, and it used to stream every line of it to
+# the console: the whole fast test profile, the Web UI group, every service
+# run and every warning any of them produced. On Windows that buried the one
+# line that mattered (maintainer, 2026-09-07).
+#
+# From here the console gets a progress line per phase and nothing else; the
+# detail goes to sysimage_workload.log next to the image, where a failure can
+# be read afterwards. `_CONSOLE` is captured BEFORE any redirection, because
+# `stdout` inside a redirected block is the log file.
+const _CONSOLE = stdout
+const _WORKLOAD_LOG_PATH = try
+  joinpath(dirname(String(Base.invokelatest(Sparlectra.webui_sysimage_path))), "sysimage_workload.log")
+catch
+  joinpath(tempdir(), "sparlectra_sysimage_workload.log")
+end
+const _WORKLOAD_LOG = try
+  mkpath(dirname(_WORKLOAD_LOG_PATH))
+  open(_WORKLOAD_LOG_PATH, "w")
+catch
+  devnull
+end
+
+_console(msg) = (println(_CONSOLE, msg); flush(_CONSOLE))
+
+## Run one phase of the trace with its output captured. NOTHING here may
+## abort the build: the workload is a trace, and a gap costs first-click
+## latency, not correctness. That was the intent all along, but the guard
+## was missing at two levels and a Windows-only failure (a temp directory
+## that cannot be removed while a file in it is still open) took the whole
+## build down with a stacktrace.
+function _phase(label::AbstractString, f::Function)
+  print(_CONSOLE, "  ", rpad(label, 40), " ")
+  flush(_CONSOLE)
+  t0 = time()
+  outcome = "ok"
+  try
+    redirect_stdio(stdout = _WORKLOAD_LOG, stderr = _WORKLOAD_LOG) do
+      with_logger(SimpleLogger(_WORKLOAD_LOG)) do
+        f()
+      end
+    end
+  catch err
+    outcome = "FAILED"
+    println(_WORKLOAD_LOG, "\n=== phase ", label, " failed ===")
+    showerror(_WORKLOAD_LOG, err, catch_backtrace())
+    println(_WORKLOAD_LOG)
+  end
+  flush(_WORKLOAD_LOG)
+  println(_CONSOLE, rpad(outcome, 8), round(time() - t0; digits = 1), " s")
+  flush(_CONSOLE)
+  return outcome == "ok"
+end
 
 # AnalyticLoadFlow.jl is a required dependency, so `using Sparlectra` already
 # brought it in; the explicit import keeps the APSLF paths in the traced world
@@ -56,7 +111,15 @@ const _WORKLOAD_PORTS = 8091:8097
 # fact executed (2026-09-05). The build log now names what was traced.
 function _workload_service_run(request::Dict{String,Any}; label::String)
   t0 = time()
-  mktempdir() do outdir
+  # The temp directory is created and removed BY HAND, not through
+  # `mktempdir() do ... end`: on Windows a directory cannot be removed while
+  # a file inside it is still open, and a service run leaves log and artifact
+  # handles behind. The do-block form raises on cleanup, and that exception
+  # used to escape the whole workload and abort the build with a stacktrace
+  # (Windows only, maintainer 2026-09-07). A leftover temp directory costs
+  # nothing; a failed build costs the user the sysimage.
+  outdir = mktempdir(; cleanup = false)
+  try
     request["config_file"] = Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH
     request["output_root"] = outdir
     result = start_powerflow_run(request)
@@ -65,6 +128,14 @@ function _workload_service_run(request::Dict{String,Any}; label::String)
     run_id = get(result, "run_id", nothing)
     run_id === nothing || get_powerflow_result(String(run_id))
     println("sysimage workload: ", rpad(label, 28), rpad(isempty(status) ? "?" : status, 12), round(time() - t0; digits = 1), " s")
+  catch err
+    @warn "sysimage workload: $(label) trace failed (build continues)" exception = (err, catch_backtrace())
+  finally
+    try
+      rm(outdir; recursive = true, force = true)
+    catch err
+      @warn "sysimage workload: temporary output root could not be removed (harmless)" dir = outdir exception = err
+    end
   end
   return nothing
 end
@@ -89,17 +160,25 @@ function run_workload()
   server = nothing
   port = 0
   for candidate in _WORKLOAD_PORTS
+    # ANY failure means "this port is not usable", never "abort the build".
+    # The old form rethrew unless the message said "already in use", and the
+    # wording differs per platform: on Windows the same condition arrives as
+    # an IOError with a different text, so the build died on a busy port.
     server = try
       start_sparlectra_webui(open_browser = false, port = candidate)
     catch err
-      err isa ArgumentError && occursin("already in use", sprint(showerror, err)) ? nothing : rethrow()
+      @warn "sysimage workload: port $(candidate) not usable" exception = err
+      nothing
     end
     if server !== nothing
       port = candidate
       break
     end
   end
-  server === nothing && error("sysimage workload: no free port in $(_WORKLOAD_PORTS)")
+  if server === nothing
+    @warn "sysimage workload: no free port in $(_WORKLOAD_PORTS); the Web UI paths are not traced (the build continues, the first page view pays the compilation)"
+    return nothing
+  end
   try
     # request the pages through the real socket path so the whole handler
     # chain is part of the compile trace, not just the render functions.
@@ -297,24 +376,30 @@ function run_workload()
   return nothing
 end
 
-Base.invokelatest(run_workload)
+_console("[workload] tracing the interactive paths; detail in " * _WORKLOAD_LOG_PATH)
+
+_phase("service and Web UI paths", () -> Base.invokelatest(run_workload))
 
 # Test-suite trace: run the fast-profile test cases so everything they touch
 # is compiled into the image as well. Since the risk-based profile resort the
 # fast profile carries numerics and model groups only; the full sysimage is
 # built FOR the Web UI, so the webui group is traced explicitly afterwards.
-# A test failure must not abort the build: warn and continue, the suite is a
-# trace here, not a gate (the gates run in CI and the developer workflow).
-try
+# A test failure must not abort the build: the suite is a TRACE here, not a
+# gate (the gates run in CI and the developer workflow), and a failing case
+# has still compiled everything it touched on the way to failing.
+_phase("test profile (fast)", function ()
   ENV["SPARLECTRA_TEST_PROFILE"] = "fast"
   Base.invokelatest(include, joinpath(pkgdir(Sparlectra), "test", "runtests.jl"))
-catch err
-  @warn "sysimage workload: test-suite trace failed (build continues)" exception = err
-end
-try
+end)
+
+_phase("Web UI test group", function ()
   Base.invokelatest(include, joinpath(pkgdir(Sparlectra), "test", "test_webui.jl"))
   runner = Base.invokelatest(getfield, Main, :run_webui_fast_tests)
   Base.invokelatest(runner)
-catch err
-  @warn "sysimage workload: webui trace failed (build continues)" exception = err
+end)
+
+_console("[workload] done; a FAILED phase above is a trace gap, not a broken image")
+try
+  close(_WORKLOAD_LOG)
+catch
 end
