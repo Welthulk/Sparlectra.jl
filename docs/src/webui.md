@@ -143,9 +143,18 @@ when it was built is still incomplete for any path its workload never
 touched, and a refresh folds whatever compiled at run time into the trace.
 
 The build runs as a separate background process. It survives a browser
-reload and a Web UI shutdown, reports its phase on the page while it works,
-and only replaces the image file at the very end, so the session that
-started it keeps running throughout. The running process keeps the image it
+reload and a Web UI shutdown, and only replaces the image file at the very
+end, so the session that started it keeps running throughout.
+
+While it works, the page shows which of the four steps is running, what that
+step is currently doing, and how long the build has been going, and it
+refreshes itself every two seconds. The counter starts with the button, not
+with the build process: Julia needs seconds to boot before it can report
+anything, and a page that sits still for that long reads as broken. When the
+build ends, the page reloads once and shows the result, a size and a duration
+for a successful build, or the reason and the tail of the build log for a
+failed one. There is no notification outside that page: navigate away and you
+have to come back to it to see the outcome. The running process keeps the image it
 booted from, though: after a successful refresh the page says so and asks
 for a restart, which is the point where the new image takes effect. Details
 of the build are in `sysimage_build.log` next to the image; see
