@@ -1,6 +1,6 @@
 # Sparlectra.jl
 
-Power-system analysis in Julia: AC and DC power flow, WLS state estimation, IEC 60909 short circuit, N-1 contingency, CGMES and MATPOWER exchange.
+Power-system analysis in Julia: AC and DC power flow, WLS state estimation, IEC 60909 short circuit, scenarios and N-1 contingency, import and export in various formats.
 
 [![Documentation](https://github.com/Welthulk/Sparlectra.jl/actions/workflows/jekyll-gh-pages.yml/badge.svg)](https://welthulk.github.io/Sparlectra.jl/)
 [![Version](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2FWelthulk%2FSparlectra.jl%2Fmain%2FProject.toml&query=%24.version&label=version&prefix=v&color=blue)](https://github.com/Welthulk/Sparlectra.jl/blob/main/Project.toml)
