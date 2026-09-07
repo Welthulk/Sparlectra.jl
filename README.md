@@ -11,11 +11,10 @@ Power-system analysis in Julia: AC and DC power flow, WLS state estimation, IEC 
 
 <a href="https://github.com/Welthulk/Sparlectra.jl/tree/main/"><img align="left" width="100" src="docs/src/assets/logo.png" style="margin-right: 20px" /></a>
 
-Sparlectra reads a grid (ENTSO-E CGMES 2.4.15 and 3.0, MATPOWER, DTF, Sparlectra Case Format, or built in code), solves it, and reports the result in machine-readable form. The Newton-Raphson solver works in rectangular complex coordinates and is open at every stage: model construction, Jacobian assembly, PV/PQ switching and convergence can be inspected and instrumented. Runs are deterministic and configuration-driven, which makes it usable for grid studies as well as for solver development and teaching.
+
+Nothing in Sparlectra is a black box. The rectangular Newton-Raphson solver exposes model construction, Jacobian assembly, PV/PQ switching and convergence at runtime; a DC power flow and the analytic APSLF backend (AnalyticLoadFlow.jl) are available alongside it. State estimation reports observability and bad data, short-circuit sweeps and SE diagnostics use the Takahashi selected inverse. Every run is deterministic and configuration-driven, results are machine-readable. This suits grid studies as well as solver development and teaching.
 
 The full capability list is in the [feature matrix](docs/src/feature_matrix.md).
-
-In scope: steady-state analysis. Out of scope: dynamic simulation (RMS/EMT), optimal power flow, protection coordination beyond IEC 60909 currents.
 
 ---
 
@@ -71,8 +70,8 @@ iwr -useb https://raw.githubusercontent.com/Welthulk/Sparlectra.jl/main/tools/in
 Re-running the command updates an existing copy (the old one is kept as `Sparlectra.old`). From a checkout, `./start_webui.sh` or `start_webui.bat` starts the Web UI directly. Environment variables for unattended installs and all other options: [Web UI documentation](https://welthulk.github.io/Sparlectra.jl/webui/).
 
 ### Startup time
-
-Julia compiles on first use, so the first run in a fresh process is slow. The installer offers to build a sysimage once (10 to 20 minutes); afterwards `using Sparlectra` returns at once. How to build and use it in your own scripts: [integration guide](https://welthulk.github.io/Sparlectra.jl/integration/).
+> [!IMPORTANT]
+> Julia compiles on first use, so the first run in a fresh process is slow. The installer offers to build a sysimage once (10 to 20 minutes); afterwards `using Sparlectra` returns at once. How to build and use it in your own scripts: [integration guide](https://welthulk.github.io/Sparlectra.jl/integration/).
 
 ### SBOM
 
