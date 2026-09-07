@@ -91,7 +91,7 @@ function run_dc_powerflow_tests()
       # (the always-on DC anchors are the hand-verified 3-bus fixture above
       # and the hand-checkable sp_case5 dispatch below)
       if !fixture_net_available("case9")
-        println("      dc reference case9: SKIPPED (data/mpower/case9.m not cached)")
+        println("      dc reference case9: SKIPPED (case9.m not in the large-case directory)")
       else
       net = load_fixture_net("case9")
       report = rundcpf!(net)
@@ -112,7 +112,7 @@ function run_dc_powerflow_tests()
     @testset "Reference values: MATPOWER case14 (off-nominal-tap transformers)" begin
       # same external-oracle premise as the case9 leg above
       if !fixture_net_available("case14")
-        println("      dc reference case14: SKIPPED (data/mpower/case14.m not cached)")
+        println("      dc reference case14: SKIPPED (case14.m not in the large-case directory)")
       else
       net = load_fixture_net("case14")
       report = rundcpf!(net)

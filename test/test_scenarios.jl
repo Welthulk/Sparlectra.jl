@@ -328,9 +328,9 @@ function run_scenario_engine_extended_tests()
     # from a worktree of that commit). The net is built with the pinned
     # packaged-default import options the fixture generation used.
     fixture = abspath(joinpath(@__DIR__, "fixtures", "contingency_case118_n1_7438b6e.csv"))
-    case_path = abspath(joinpath(dirname(@__DIR__), "data", "mpower", "case118.m"))
-    if !isfile(case_path)
-      println("      scenario engine: case118 CSV gate SKIPPED (data/mpower/case118.m not present)")
+    case_path = large_case_path("case118.m")
+    if case_path === nothing
+      println("      scenario engine: case118 CSV gate SKIPPED (case118.m not in the large-case directory)")
     else
       @test isfile(fixture)
       net = Sparlectra.createNetFromMatPowerFile(filename = case_path, flatstart = false, enable_pq_gen_controllers = true, bus_shunt_model = :admittance, matpower_shift_sign = 1.0, matpower_shift_unit = :deg, matpower_ratio = :normal, tap_changer_model = :ideal)
@@ -474,9 +474,9 @@ function run_scenario_engine_extended_tests()
     # margin 10 with the 0.005 pu trust gate (its outage 57-63 forced the
     # gate: buses 63/64/526 collapse to 0.84 pu behind a 0.0104 pu one-step
     # residual); loud SKIPPED when the untracked case file is absent
-    case_path = abspath(joinpath(dirname(@__DIR__), "data", "mpower", "case300.m"))
-    if !isfile(case_path)
-      println("      scenario engine case300: SKIPPED (data/mpower/case300.m not present)")
+    case_path = large_case_path("case300.m")
+    if case_path === nothing
+      println("      scenario engine case300: SKIPPED (case300.m not in the large-case directory)")
     else
       net = Sparlectra.createNetFromMatPowerFile(filename = case_path, flatstart = false, enable_pq_gen_controllers = true, bus_shunt_model = :admittance, matpower_shift_sign = 1.0, matpower_shift_unit = :deg, matpower_ratio = :normal, tap_changer_model = :ideal)
       cases = vcat(Sparlectra.generateN1Branches(net), Sparlectra.generateN1Generators(net))
@@ -496,9 +496,9 @@ function run_scenario_engine_extended_tests()
     # carries an @assert next to every printed number; RUNNING it here is
     # what keeps the notebook from drifting silently. Gated on the local
     # case118 (the workshop's Colab path downloads instead).
-    case_path = abspath(joinpath(dirname(@__DIR__), "data", "mpower", "case118.m"))
-    if !isfile(case_path)
-      println("      scenarios workshop: SKIPPED (data/mpower/case118.m not present)")
+    case_path = large_case_path("case118.m")
+    if case_path === nothing
+      println("      scenarios workshop: SKIPPED (case118.m not in the large-case directory)")
     else
       workshop = abspath(joinpath(dirname(@__DIR__), "docs", "lit", "workshop_scenarios.jl"))
       @test isfile(workshop)

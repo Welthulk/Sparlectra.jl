@@ -140,7 +140,11 @@ function run_profile_group(i::Int, total::Int, name::AbstractString, runner::Fun
     println("FAIL")
     rethrow()
   end
-  @printf("PASS %.3f s, %.1f MiB allocated, %.3f s GC\n", timed.time, timed.bytes / 1024.0^2, timed.gctime)
+  # compile_time and recompile_time come from @timed since Julia 1.11 and are
+  # the whole point of this line: without them a slow group is indistinguishable
+  # from a group that merely compiled a lot, and the two need opposite remedies.
+  @printf("PASS %.3f s (%.3f s compile, %.3f s recompile), %.1f MiB allocated, %.3f s GC\n",
+          timed.time, timed.compile_time, timed.recompile_time, timed.bytes / 1024.0^2, timed.gctime)
   for line in skipped
     println("        ", line)
   end
@@ -201,9 +205,40 @@ function load_fixture_net(name::AbstractString)
   return deepcopy(net)
 end
 
-# legacy MATPOWER fixtures are cache-only; callers gate on this and print
-# a spoken SKIPPED line instead of downloading
-fixture_net_available(name::AbstractString) = startswith(String(name), "sp_case") || isfile(joinpath(Sparlectra.MPOWER_DIR, string(name, ".m")))
+"""
+    large_case_dir() -> Union{Nothing,String}
+
+The shared large-case directory from `Sparlectra.large_cases_dir()`, or
+`nothing` when it does not exist. The package resolves it: the
+`SPARLECTRA_LARGE_CASES_DIR` override first, otherwise the Web UI user case
+directory, so a case downloaded once through the Web UI is available here too.
+
+The suite used to resolve these out of `data/mpower` in the checkout, which is
+where the package downloaded into: having used the package decided how many
+assertions ran, 7180 against 7121 on a fresh tree, and nothing said so.
+"""
+function large_case_dir()::Union{Nothing,String}
+  dir = Sparlectra.large_cases_dir()
+  return isdir(dir) ? abspath(dir) : nothing
+end
+
+"""
+    large_case_path(filename) -> Union{Nothing,String}
+
+Path of `filename` under [`large_case_dir`](@ref), or `nothing` when the
+directory is absent or the file is not in it. Callers gate on the result and
+print a spoken SKIPPED line; nothing downloads.
+"""
+function large_case_path(filename::AbstractString)::Union{Nothing,String}
+  dir = large_case_dir()
+  dir === nothing && return nothing
+  path = joinpath(dir, String(filename))
+  return isfile(path) ? path : nothing
+end
+
+# legacy MATPOWER fixtures come from the shared large-case directory; callers
+# gate on this and print a spoken SKIPPED line instead of downloading
+fixture_net_available(name::AbstractString) = startswith(String(name), "sp_case") || String(name) == "warmup_casePST" || large_case_path(string(name, ".m")) !== nothing
 
 function _import_fixture_net(name::String)
   if startswith(name, "sp_case")
@@ -211,9 +246,11 @@ function _import_fixture_net(name::String)
     isfile(path) || error(string("unknown fixture net: ", name, " (shipped cases: sp_case5, sp_case14, sp_case60, sp_case188)"))
     return Sparlectra.importSCF(path)
   end
-  name in ("warmup_casePST", "case9", "case14", "case57") || error(string("unknown fixture net: ", name, " (known: sp_case5, sp_case14, sp_case60, sp_case188 and warmup_casePST shipped; case9, case14, case57 cache-only)"))
-  path = joinpath(Sparlectra.MPOWER_DIR, string(name, ".m"))
-  isfile(path) || error(string("fixture case file missing (cache-only legacy fixture, gate on fixture_net_available): ", path))
+  name in ("warmup_casePST", "case9", "case14", "case57") || error(string("unknown fixture net: ", name, " (known: sp_case5, sp_case14, sp_case60, sp_case188 and warmup_casePST shipped; case9, case14, case57 from SPARLECTRA_LARGE_CASES_DIR)"))
+  # warmup_casePST is TRACKED and lives in the checkout; the legacy cases are
+  # not shipped and come from SPARLECTRA_LARGE_CASES_DIR
+  path = name == "warmup_casePST" ? joinpath(Sparlectra.MPOWER_DIR, string(name, ".m")) : large_case_path(string(name, ".m"))
+  (path === nothing || !isfile(path)) && error(string("fixture case file missing (gate on fixture_net_available): ", name, ".m; set SPARLECTRA_LARGE_CASES_DIR to a directory that holds it"))
   return Sparlectra.createNetFromMatPowerFile(filename = path, flatstart = false, enable_pq_gen_controllers = true, bus_shunt_model = :admittance, matpower_shift_sign = 1.0, matpower_shift_unit = :deg, matpower_ratio = :normal, tap_changer_model = :ideal)
 end
 

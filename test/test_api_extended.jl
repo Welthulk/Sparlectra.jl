@@ -828,9 +828,9 @@ power_flow:
         @test sp14_check.raw_result !== nothing
         @test sp14_check.raw_result.final_mismatch < 1e-10
         @test sp14_check.raw_result.iterations == 4
-        case14 = joinpath(dirname(@__DIR__), "data", "mpower", "case14.m")
-        if !isfile(case14)
-          println("      self-check case14 anchor: SKIPPED (data/mpower/case14.m not present)")
+        case14 = large_case_path("case14.m")
+        if case14 === nothing
+          println("      self-check case14 anchor: SKIPPED (case14.m not in the large-case directory)")
         else
           case14_check = run_fixed_reference_self_check(casefile = case14, output_dir = joinpath(tmpdir, "self_check_case14"))
           @test case14_check.raw_result !== nothing

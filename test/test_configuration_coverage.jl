@@ -68,7 +68,21 @@ function _auto_profile_pv_mismatch_case()
   return Sparlectra.MatpowerIO.MatpowerCase("auto_profile_pv", mpc.baseMVA, bus, gen, mpc.branch, nothing, nothing)
 end
 
-function run_configuration_coverage_tests()
+# One function per @testset, called by the runner from a list.
+#
+# Measured 2026-09-07 with SnoopCompile on the sysimage: as ONE body these
+# nineteen testsets cost 13.242 s of inference in a single MethodInstance
+# (n=1), 61 percent of the whole group. The state-estimation group, which is
+# already split this way, does three times the inference work (9191 nodes
+# against 3027) for less than half the cost in Main, so the shape is the
+# expense and not the content.
+#
+# The split is mechanical: testset names, order, nesting and assertion count
+# are unchanged, so the test output is the same line for line. Nothing is
+# shared between these functions - the monolith had no state at function
+# level either, which is why it could be cut without untangling anything.
+
+function test_configuration_yaml_key_coverage()
   @testset "Configuration YAML key coverage" begin
     leaves = _canonical_yaml_leaf_keys()
 
@@ -155,7 +169,10 @@ function run_configuration_coverage_tests()
     @test all(haskey(expected_consumers, key) for key in keys(expected_consumers))
     @test expected_consumers["extensions.reserved"] === :Reserved
   end
+  return nothing
+end
 
+function test_configuration_version_scope_and_case_precedence()
   @testset "configuration version, scope, and case precedence" begin
     dir = mktempdir()
     # a file without config_version reads as version 0, with one warning and
@@ -302,7 +319,10 @@ function run_configuration_coverage_tests()
     Sparlectra.write_case_config(plain, Dict{String,Any}())
     @test !isfile(written)
   end
+  return nothing
+end
 
+function test_configuration_yaml_scalar_round_trip()
   @testset "YAML scalar write/read round trip" begin
     # the writer's self-inverse contract: every string written by
     # _yaml_scalar_text must come back from the repository's own reader
@@ -321,7 +341,10 @@ function run_configuration_coverage_tests()
       @test Sparlectra.parse_yaml_scalar(Sparlectra._yaml_scalar_text(v)) === v
     end
   end
+  return nothing
+end
 
+function test_configuration_runner_output_modes()
   @testset "Test runner output mode helpers" begin
     @test selected_test_profile(String[], Dict("SPARLECTRA_TEST_PROFILE" => "extended")) === :extended
     @test selected_test_profile(["fast"], Dict("SPARLECTRA_TEST_PROFILE" => "extended")) === :fast
@@ -381,7 +404,10 @@ function run_configuration_coverage_tests()
       @test occursin("Runtime casefile: visible", read(io, String))
     end
   end
+  return nothing
+end
 
+function test_configuration_sentinel_forwarding()
   @testset "Configuration forwarding with sentinel values" begin
     cfgfile = test_scratch_path(".yaml")
     write(cfgfile, """
@@ -444,7 +470,10 @@ matpower_export:
     @test cfg.benchmark.enabled === false
     @test cfg.matpower_export.write_solution === false
   end
+  return nothing
+end
 
+function test_configuration_qlimit_enforcement_keys()
   @testset "Q-limit enforcement mode user YAML keys" begin
     for mode in (:active_set, :classic_simultaneous, :classic_one_at_a_time)
       cfgfile = test_scratch_path(".yaml")
@@ -475,7 +504,10 @@ power_flow:
     @test err isa ArgumentError
     @test occursin("classic_simultaneous", sprint(showerror, err))
   end
+  return nothing
+end
 
+function test_configuration_matpower_auto_profile_rules()
   @testset "MATPOWER auto-profile decision rules" begin
     mpc = _auto_profile_shift_case()
     cfg = Sparlectra.SparlectraConfig(Dict(
@@ -605,7 +637,10 @@ power_flow:
     @test isempty(oom_result.applied)
     @test any(row -> occursin("matpower_auto_profile_scan_skipped", row.reason), oom_result.rows)
   end
+  return nothing
+end
 
+function test_configuration_value_domain_validation()
   @testset "Configuration value-domain validation" begin
     tol_bad = test_scratch_path(".yaml")
     write(tol_bad, "power_flow:\n  tol: 0\n")
@@ -694,7 +729,10 @@ power_flow:
     @test pg_err isa ArgumentError
     @test occursin("cgmes_import.placeholder_guards", sprint(showerror, pg_err))
   end
+  return nothing
+end
 
+function test_configuration_tolerance_in_mw()
   @testset "Tolerance can be stated in MW" begin
     # power_flow.tol_MW existed since task_tol_watts and was reachable only
     # by editing a YAML file, and even that failed because the template did
@@ -728,7 +766,10 @@ power_flow:
     @test cfg.powerflow.tol_MW == 1.0
     @test Sparlectra.validate_gui_config_overrides(Dict{String,Any}("power_flow.tol_MW" => 0.002))["power_flow"]["tol_MW"] == 0.002
   end
+  return nothing
+end
 
+function test_configuration_every_key_arrives()
   @testset "Every configuration key arrives (task_config_arrival_v0100)" begin
     # Four settings were found in one day that exist, are documented, are
     # shown, and do not act. This closes the class instead of the cases: the
@@ -893,12 +934,23 @@ power_flow:
       @test (got isa Symbol ? String(got) : got) == differing
     end
   end
+  return nothing
+end
 
+function test_configuration_webui_keys_both_directions()
   @testset "Web UI keys are reachable in both directions" begin
     # tol_MW failed the first direction (a key the UI was allowed to set,
     # with no field to set it in) and stale fields fail the second. Both are
     # asserted, because each direction hides a different defect.
-    specs = [s for s in Sparlectra.WEBUI_OPTION_SPECS if s.config_key !== nothing]
+    # collect FIRST, filter second. WEBUI_OPTION_SPECS is an NTuple of 97
+    # elements: Julia unrolls tuple iteration, and filtering makes the result
+    # length unknown, so a comprehension straight off the tuple ends in
+    # Base.grow_to! over a 97-way unrolled generator. Measured 2026-09-07,
+    # that single line cost 5.61 s of the 5.93 s this group spent inferring
+    # generator machinery, and it was the largest item in the whole group.
+    # collect() on a tuple with a concrete eltype knows both length and type,
+    # and filter() on the resulting Vector is one specialization.
+    specs = filter(s -> s.config_key !== nothing, collect(Sparlectra.WEBUI_OPTION_SPECS))
     have = Set(String(s.config_key) for s in specs)
     @test length(specs) >= 60
 
@@ -951,7 +1003,10 @@ power_flow:
       @test !(key in have)
     end
   end
+  return nothing
+end
 
+function test_configuration_form_defaults()
   @testset "Form defaults do not drift from the code they mirror" begin
     # Step 5 of task_config_arrival_v0100: no numeric literal in a service or
     # API signature may duplicate something the configuration owns. After the
@@ -974,7 +1029,10 @@ power_flow:
     @test Sparlectra._webui_option_default("se_k_eliminate") == se.k_eliminate
     @test Sparlectra._webui_option_default("se_max_iter") == se.max_iter
   end
+  return nothing
+end
 
+function test_configuration_removed_diagnostics_rejected()
   @testset "Removed diagnostics keys are rejected" begin
     removed_diag_keys = (
       "matpower_reference",
@@ -992,7 +1050,10 @@ power_flow:
       @test_throws ArgumentError Sparlectra.load_sparlectra_config(cfg_bad; reload = true)
     end
   end
+  return nothing
+end
 
+function test_configuration_stored_survives_removed_keys()
   @testset "Stored configurations survive removed keys" begin
     # The startup warm-up is gone (0.10.0), but every stored user and Web UI
     # configuration written before that still carries `webui.warmup`. Without
@@ -1007,7 +1068,10 @@ power_flow:
     # a config key and not GUI-editable either
     @test_throws ArgumentError Sparlectra.validate_gui_config_overrides(Dict{String,Any}("webui.warmup" => true))
   end
+  return nothing
+end
 
+function test_configuration_qlimit_start_mode_values()
   @testset "Q-limit start mode public values" begin
     for mode in ("iteration", "auto", "iteration_or_auto")
       cfg = Sparlectra.SparlectraConfig(Dict(
@@ -1016,7 +1080,10 @@ power_flow:
       @test cfg.powerflow.qlimits.start_mode === Symbol(mode)
     end
   end
+  return nothing
+end
 
+function test_configuration_network_parameters_reach_paths()
   @testset "Configuration-derived network parameters reach every construction path" begin
     # The table from the task, executed. Four paths set these differently once,
     # and a case built through the wrong one ran with hysteresis 0 whatever the
@@ -1053,9 +1120,9 @@ power_flow:
 
     # DTF: the importer takes the model into its constructor, the switching
     # parameters are stamped afterwards, exactly as the service does it
-    dtf = abspath(joinpath(dirname(@__DIR__), "data", "mpower", "FOR001.DAT"))
-    isfile(dtf) || println("      configuration coverage: DTF stamping leg SKIPPED (data/mpower/FOR001.DAT not present)")
-    if isfile(dtf)
+    dtf = large_case_path("FOR001.DAT")
+    dtf === nothing && println("      configuration coverage: DTF stamping leg SKIPPED (FOR001.DAT not in the large-case directory)")
+    if dtf !== nothing
       dnet = Sparlectra.DTFImporter.build_net(Sparlectra.DTFImporter.read_dtf(dtf); bus_shunt_model = cfg.model.bus_shunt_model)
       @test dnet.bus_shunt_model === :voltage_dependent_injection
       Sparlectra._apply_config_net_parameters!(dnet, cfg)
@@ -1063,7 +1130,10 @@ power_flow:
       @test dnet.q_hyst_pu == 0.05
     end
   end
+  return nothing
+end
 
+function test_configuration_refresh()
   @testset "Configuration refresh" begin
     stale = test_scratch_path(".yaml")
     write(stale, "power_flow:\n  tol: 1.0e-6\n  start_mode:\n    voltage_mode: bus_vm_va_blend\n  qlimits:\n    enabled: true\n")
@@ -1145,7 +1215,10 @@ power_flow:
     @test "output.detailed_result_csv_exporter" in dup_result.duplicate_keys
     @test occursin("direct", read(dup, String))
   end
+  return nothing
+end
 
+function test_configuration_console_live_capture()
   @testset "console_live capture tees to console and archive identically" begin
     # live=false: output only in the archive stream. The archive must be a
     # real OS stream here (redirect_stdout rejects IOBuffer) — exactly what
@@ -1200,7 +1273,10 @@ power_flow:
     @test !Sparlectra.OutputConfig().console_live
     @test Sparlectra.OutputConfig(Dict("output" => Dict("console_live" => true))).console_live
   end
+  return nothing
+end
 
+function test_configuration_deprecated_diagnostics_warn()
   @testset "Deprecated diagnostics.* keys load with a warning, not an error" begin
     # Regression (2026-07-30): stored user/webui configs still carry the old
     # diagnostics.console_* duplicates of output.*; after their removal from
@@ -1227,4 +1303,32 @@ power_flow:
     @test !occursin("console_diagnostics", diag_block.captures[1])
     @test occursin("log_effective_config", diag_block.captures[1])
   end
+  return nothing
+end
+
+function run_configuration_coverage_tests()
+  for testfn in (
+    test_configuration_yaml_key_coverage,
+    test_configuration_version_scope_and_case_precedence,
+    test_configuration_yaml_scalar_round_trip,
+    test_configuration_runner_output_modes,
+    test_configuration_sentinel_forwarding,
+    test_configuration_qlimit_enforcement_keys,
+    test_configuration_matpower_auto_profile_rules,
+    test_configuration_value_domain_validation,
+    test_configuration_tolerance_in_mw,
+    test_configuration_every_key_arrives,
+    test_configuration_webui_keys_both_directions,
+    test_configuration_form_defaults,
+    test_configuration_removed_diagnostics_rejected,
+    test_configuration_stored_survives_removed_keys,
+    test_configuration_qlimit_start_mode_values,
+    test_configuration_network_parameters_reach_paths,
+    test_configuration_refresh,
+    test_configuration_console_live_capture,
+    test_configuration_deprecated_diagnostics_warn,
+  )
+    testfn()
+  end
+  return nothing
 end

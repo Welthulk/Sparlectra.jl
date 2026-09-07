@@ -207,10 +207,12 @@ function testNetwork()::Bool
   return result
 end
 
+# The MATPOWER export target. It used to be <pwd>/data/mpower/cigre.m, so
+# running the suite from the checkout WROTE a case file into the repository,
+# where the presence of files decides which availability-gated legs run. Test
+# output belongs in the scratch directory (2026-09-07).
 function getTestFilePathName()
-  filename = "cigre.m"
-  jpath = joinpath(pwd(), "data", "mpower", filename)
-  return jpath
+  return test_scratch_path("_cigre.m")
 end
 
 function testExportMatpower()

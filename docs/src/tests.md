@@ -54,6 +54,31 @@ content commits).
 julia --project=. -e 'using Pkg; Pkg.test()'
 ```
 
+## Large case files
+
+Large MATPOWER and DTF cases are not part of the repository. The test suite
+looks for them in the shared case directory resolved by
+`Sparlectra.large_cases_dir()`:
+
+1. `SPARLECTRA_LARGE_CASES_DIR`, if set (override for CI and special setups)
+2. otherwise the Web UI user case directory
+   (`~/.local/state/sparlectra/webui/data/mpower` on Linux,
+   `%LOCALAPPDATA%\Sparlectra\WebUI\data\mpower` on Windows)
+
+Test groups that need a large case check availability and report `SKIPPED`
+when the file is absent. The fast profile does not depend on any large case.
+Tests only read from this directory; generated files go to `mktempdir`.
+`data/mpower/` in the repository holds fixtures only, and the gate check
+fails on untracked files there.
+
+**The assertion count therefore depends on that directory, and a measurement
+has to say which count it was taken with.** With the large cases present the
+fast profile runs 7179 assertions; without them, which is CI and any checkout
+whose user directory holds no cases, it runs 7121. Both are correct runs of the
+same suite, and the `SKIPPED` lines say which one happened. A compile-time
+baseline table does not, so it has to record the number alongside its timings,
+or the next measurement compares two different suites.
+
 `SPARLECTRA_TEST_SKIP_GROUPS` (comma-separated group names, default empty)
 excludes profile groups from a run. It exists for the app build workload
 (`tools/app_workload_runtime.jl`), which traces the fast profile as a
@@ -249,7 +274,7 @@ The experimental large-case Q-limit comparison test block is suppressed from the
 
 Large measurement networks are picked by what a test actually judges (rule 2026-09-03). The pegase cases (`case1354pegase`, `case13659pegase`) are convergence and scaling instances from the OPF world: their base states carry overloads and non-converging outages by construction (case1354's base holds a branch above 108 percent, and 56 of its 2251 N-1 cases do not converge). They stay the oracle for convergence, import conventions (rad, shift sign -1.0), start ladders, Q-limit switching, and runtime/memory scaling, and nothing else. Anything that presupposes an operated grid, screening quality, N-1 loading margins, voltage bands, or scenario evaluation, is judged on RealGrid (ENTSO-E CGMES, 6051 buses, local cache, imported through the CGMES adapter) and `case300` as the small local MATPOWER case; ACTIVSg2000 joins when it becomes available locally. A screening run that flags every pegase case says nothing about the screening.
 
-Default fast-profile output is intentionally compact: the runner prints the selected profile, one `[n/8]` marker per group, and Julia's final test summary. MATPOWER import diagnostics, auto-profile tables, runtime casefile banners, Q-limit tables, and similar artifact-oriented diagnostic blocks are suppressed in normal test stdout so progress remains scannable. Two exceptions surface immediately instead of being captured away. Availability-gated skips: captured lines containing `SKIPPED` are re-printed under the group's `PASS` line, so a gated testset (startup-hint under a sysimage session, the pegase slice without `SPARLECTRA_LARGE_CASES_DIR`) never skips invisibly and a lower-than-documented assertion count has its explanation right in the log. And test failures: a plain `@test` failure throws nothing until the outer suite aggregates, so the runner scans each group's capture for `Test Failed at` / `Error During Test at` blocks and replays them to stderr right under the group line (capped per block and per group), which spares the `--verbose` rerun that diagnosing a swallowed failure used to need.
+Default fast-profile output is intentionally compact: the runner prints the selected profile, one line for the include phase, one `[n/8]` marker per group, and Julia's final test summary. Each group's `PASS` line carries wall time, **compile and recompile time** (from `@timed`, Julia 1.11 and newer), allocations and GC time, so a slow group can be told apart from a group that merely compiled a lot: the two need opposite remedies. The include line measures what the groups cannot, namely parsing and compiling the testset bodies before any group runs. MATPOWER import diagnostics, auto-profile tables, runtime casefile banners, Q-limit tables, and similar artifact-oriented diagnostic blocks are suppressed in normal test stdout so progress remains scannable. Two exceptions surface immediately instead of being captured away. Availability-gated skips: captured lines containing `SKIPPED` are re-printed under the group's `PASS` line, so a gated testset (startup-hint under a sysimage session, the pegase slice without `SPARLECTRA_LARGE_CASES_DIR`) never skips invisibly and a lower-than-documented assertion count has its explanation right in the log. And test failures: a plain `@test` failure throws nothing until the outer suite aggregates, so the runner scans each group's capture for `Test Failed at` / `Error During Test at` blocks and replays them to stderr right under the group line (capped per block and per group), which spares the `--verbose` rerun that diagnosing a swallowed failure used to need.
 
 Fast profile example on Windows / Julia 1.12.6: 934 tests passed in approximately 95 seconds. Runtime is machine-dependent and is not a CI threshold.
 
