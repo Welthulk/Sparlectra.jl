@@ -111,7 +111,7 @@ end
     _self_check_forced_gui_overrides() -> Dict{String,Any}
 
 The forced self-check settings as flat override keys, i.e. the subset of
-[`_self_check_forced_overrides`](@ref) that `GUI_EDITABLE_CONFIG_KEYS` admits.
+`_self_check_forced_overrides` that `GUI_EDITABLE_CONFIG_KEYS` admits.
 """
 _self_check_forced_gui_overrides()::Dict{String,Any} = _flatten_forced_overrides!(Dict{String,Any}(), "", _self_check_forced_overrides())
 
