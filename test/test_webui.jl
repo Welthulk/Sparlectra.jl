@@ -1132,6 +1132,50 @@ function run_webui_fast_tests()
       @test v_cfg_only["power_flow_max_iter"] == 99
     end
 
+    @testset "browser opening falls back to the system default" begin
+      # Reported 2026-09-07 from Windows 11 with Edge uninstalled and only
+      # Firefox present: nothing happened on start, the user had to type
+      # 127.0.0.1:8080 by hand. Cause: the app-window attempt knows only the
+      # Chromium family (they alone support the chromeless --app= window),
+      # and the generic fallback returned early unless the platform was
+      # Linux. Windows and macOS therefore had NO fallback at all.
+      url = "http://127.0.0.1:8080/powerflow"
+      no_exe(_) = nothing
+      no_path(_) = false
+      no_env = Dict{String,String}()
+
+      # the reported case: Windows, not one Chromium browser anywhere
+      win = Sparlectra._webui_browser_open_command(url; platform = :windows,
+        executable_lookup = no_exe, path_exists = no_path, environment = no_env)
+      @test win !== nothing
+      @test win[2] == :windows_start
+      # cmd builtin, and the empty "" is the window TITLE: without it cmd
+      # takes the quoted URL as a title and opens a console window
+      @test occursin("cmd", string(win[1]))
+      @test occursin(url, string(win[1]))
+
+      # macOS keeps `open` as its fallback
+      mac_open(name) = name == "open" ? "/usr/bin/open" : nothing
+      mac = Sparlectra._webui_browser_open_command(url; platform = :macos,
+        executable_lookup = mac_open, path_exists = no_path, environment = no_env)
+      @test mac !== nothing
+      @test mac[2] == :macos_open
+
+      # Linux is unchanged
+      lin_xdg(name) = name == "xdg-open" ? "/usr/bin/xdg-open" : nothing
+      lin = Sparlectra._webui_browser_open_command(url; platform = :linux,
+        executable_lookup = lin_xdg, path_exists = no_path, environment = no_env)
+      @test lin !== nothing
+      @test lin[2] == :xdg_open
+
+      # and the precedence still holds: where a Chromium browser exists it
+      # wins, because the app window is the nicer result
+      chrome(name) = name == "chrome.exe" ? "C:\\chrome.exe" : nothing
+      win_chrome = Sparlectra._webui_browser_open_command(url; platform = :windows,
+        executable_lookup = chrome, path_exists = no_path, environment = no_env)
+      @test win_chrome[2] == :app_window
+    end
+
     @testset "sysimage launcher decision" begin
       # The launcher decides whether the Web UI starts from the image or
       # compiles on first use. It runs on plain Base BEFORE the package is

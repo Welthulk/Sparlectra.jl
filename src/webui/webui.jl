@@ -322,7 +322,31 @@ function _webui_app_window_command(url::String; platform::Symbol = _webui_platfo
   return `$executable --app=$url --window-size=$(_WEBUI_APP_WINDOW_SIZE)`
 end
 
+## Open the URL with whatever the SYSTEM has registered as the default
+## browser. This is the fallback after the app-window attempt above, which
+## only knows the Chromium family (Edge, Chrome, Chromium, Brave) because
+## only those support the chromeless `--app=` window.
+##
+## Windows and macOS had NO fallback here until 2026-09-07: the function
+## returned early unless the platform was Linux. A Windows 11 machine with
+## Edge uninstalled and only Firefox therefore reached "manual_only", and
+## the user had to type 127.0.0.1:8080 by hand (maintainer report). Every
+## desktop platform has a system-wide "open this URL" mechanism; using it
+## costs the app window but always finds the user's own browser.
 function _webui_generic_open_command(url::String; platform::Symbol = _webui_platform(), executable_lookup = Sys.which)::Union{Tuple{Cmd,Symbol},Nothing}
+  if platform == :windows
+    # `start` is a cmd builtin, hence `cmd /c`. The empty "" is the window
+    # TITLE argument: without it cmd takes the first quoted token as the
+    # title and opens a console window instead of the URL.
+    return (`cmd /c start "" $url`, :windows_start)
+  end
+
+  if platform == :macos
+    open_cmd = executable_lookup("open")
+    open_cmd === nothing || return (`$(String(open_cmd)) $url`, :macos_open)
+    return nothing
+  end
+
   platform == :linux || return nothing
 
   xdg_open = executable_lookup("xdg-open")
