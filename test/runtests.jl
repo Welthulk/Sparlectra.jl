@@ -200,19 +200,37 @@ function run_extended_profile_tests()
   end
 end
 
+"""
+    timed_include(label, f)
+
+Run one of the `include_*_tests` phases and print what it cost.
+
+The per-group `PASS` lines account for everything the GROUPS do, and for
+nothing that happens before them: including the test files parses and
+compiles every testset body in the profile, and that time is attributed
+nowhere. Measuring it is the difference between "the tests are slow" and
+"loading the tests is slow", which is not the same lever.
+"""
+function timed_include(label::AbstractString, f::Function)
+  timed = @timed f()
+  @printf("include %s: %.3f s (%.3f s compile, %.3f s recompile), %.1f MiB allocated\n",
+          label, timed.time, timed.compile_time, timed.recompile_time, timed.bytes / 1024.0^2)
+  return timed.value
+end
+
 function main()
   if TEST_PROFILE === :fast
     print_test_progress_header(:fast)
-    include_fast_tests()
+    timed_include("fast", include_fast_tests)
     run_fast_profile_tests()
   elseif TEST_PROFILE === :extended
     print_test_progress_header(:extended)
-    include_extended_tests()
+    timed_include("extended", include_extended_tests)
     run_extended_profile_tests()
   elseif TEST_PROFILE === :all
     print_test_progress_header(:all)
-    include_fast_tests()
-    include_extended_tests()
+    timed_include("fast", include_fast_tests)
+    timed_include("extended", include_extended_tests)
     run_fast_profile_tests()
     run_extended_profile_tests()
   else

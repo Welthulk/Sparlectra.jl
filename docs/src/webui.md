@@ -48,7 +48,13 @@ results are written beneath `%LOCALAPPDATA%\Sparlectra\WebUI\runs` on Windows,
 `~/Library/Application Support/Sparlectra/WebUI/runs` on macOS. Directories
 are created automatically. The operation log is in the sibling user Web UI
 `logs` directory, and downloaded/generated MATPOWER cases are cached in the
-sibling user Web UI `data/mpower` directory. On first start, the internal
+sibling user Web UI `data/mpower` directory.
+
+The same directory is used by `ensure_casefile` and by the test suite for
+large cases, so a case downloaded once through the Web UI is available to all
+three. `SPARLECTRA_LARGE_CASES_DIR` overrides the location for all of them.
+
+On first start, the internal
 `warmup_case*.jl` workloads are copied there; they are not shown in the
 normal user-selectable case list (the sysimage build workload runs the
 shipped `sp_case5`/`sp_case60` demo cases).
@@ -865,7 +871,7 @@ The picker also accepts a Sparlectra Case Format `.json` file; that one is parse
 
 The exported name drops a format suffix the case already carries, so exporting `case14.scf.json` as plain PGM gives `case14.pgm.json` rather than a growing chain of suffixes. Both export products, `.scf.json` and the plain `.pgm.json`, appear in the case selector afterwards; they are runnable cases, not just files. The way back out is the **Download selected case** link in the export row: it hands over whatever the case selector currently shows, and after an export the page additionally offers the file that was just written by name. Only plain files inside the case directory are served: a bare name resolves against it, an absolute path is accepted when it points into it (the form carries one back after saving case settings), and anything outside, plus a CGMES delivery directory, is refused with a message. Both sides are resolved through their real path first, because the Web UI state directory is reachable through a symlink (a Flatpak app data path pointing at `~/.local/state`) and the two spellings would otherwise not match.
 
-Uploaded files land in the case directory the form shows, which the selector also reads: `data/mpower` in a development checkout, and the writable Web UI data directory in an installed context. A manual full path still overrides the selector.
+Uploaded files land in the case directory the form shows, which the selector also reads: the user Web UI `data/mpower` directory, in a development checkout as well. A manual full path still overrides the selector.
 
 Limits are 100 MiB per file and 250 MiB per request; oversized files are reported in the import summary. An existing file is never overwritten (the upload is rejected as `already exists` while the other selected files still import). Filenames are treated as untrusted, so anything that would resolve outside the case directory is refused.
 

@@ -40,8 +40,49 @@ function _autopf_step_control_ok(options::AbstractDict)
   return !(merit && trust) && (!merit || auto) && !(trust && auto)
 end
 
+# The same exclusion rules as _autopf_step_control_ok, but on a PowerFlowConfig
+# instead of an option dict: the escalation ladder hands configs around, not
+# dicts, so the invariant has to be checkable on both sides.
+function _autopf_config_step_control_ok(pf)
+  merit = pf.merit.enabled
+  trust = pf.trust_region.enabled
+  return !(merit && trust) && (!merit || pf.autodamp) && !(trust && pf.autodamp)
+end
+
 function run_auto_powerflow_tests()
   @testset "auto powerflow" begin
+    @testset "escalation ladder keeps the step-control exclusions (issue #5)" begin
+      # A hard_case profile starts with autodamp AND merit, a consistent pair.
+      # A ladder stage used to switch autodamp off while leaving merit on, and
+      # runpf_rectangular! rightly refused with
+      #   ArgumentError: merit_enabled=true requires autodamp=true
+      # The profiles the suite exercised before (case14: profile_assisted,
+      # small_default) never produced that pair, which is why nothing caught
+      # it. warmup_casePST is the case that classifies as hard_case, and it is
+      # tracked, so this runs everywhere.
+      cfg = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true)
+      case = joinpath(dirname(@__DIR__), "data", "mpower", "warmup_casePST.m")
+      net = redirect_stdout(devnull) do
+        Sparlectra._import_sparlectra_net(case, nothing, cfg)
+      end
+      decision = Sparlectra.select_auto_pf_strategy(Sparlectra.collect_auto_pf_features(net))
+      # the premise of the regression: if this case stops classifying as
+      # hard_case the test silently stops testing anything
+      @test decision.profile === :hard_case
+      @test _autopf_step_control_ok(decision.options)
+
+      pf = Sparlectra._apply_auto_pf_options(cfg.powerflow, decision.options, Set{String}())[1]
+      @test _autopf_config_step_control_ok(pf)
+      evidence = Sparlectra._auto_pf_qlimit_evidence(net)
+      for stage in Sparlectra._auto_pf_escalation_stages(pf)
+        open_gate, _ = stage.gate(evidence, pf)
+        open_gate || continue
+        pf = stage.transform(pf, evidence)[1]
+        # the tuple form names the offending stage in the failure output
+        @test (stage.id, _autopf_config_step_control_ok(pf)) == (stage.id, true)
+      end
+    end
+
     @testset "feature extraction on the four case classes" begin
       cfg = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true)
       # class 1: small transmission case (load_fixture_net: the shipped

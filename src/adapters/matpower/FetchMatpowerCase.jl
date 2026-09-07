@@ -30,7 +30,7 @@ Note:
 """
 module FetchMatpowerCase
 
-export ensure_matpower_case, fetch_matpower_case, emit_julia_case, ensure_casefile, main
+export ensure_matpower_case, fetch_matpower_case, emit_julia_case, ensure_casefile, large_cases_dir, main
 
 using Downloads
 using SHA
@@ -276,22 +276,10 @@ function main(args = ARGS)
   return nothing
 end
 
-# True when the package root lies below a depot `packages` directory, i.e.
-# Sparlectra is a registered (immutable) installation rather than a dev
-# checkout. Registered package directories must never be written to (Pkg
-# marks them read-only on Windows and content-hashes them).
-function _in_depot_packages(pkgroot::AbstractString)::Bool
-  root = abspath(pkgroot)
-  for depot in Base.DEPOT_PATH
-    packages_dir = abspath(joinpath(depot, "packages"))
-    startswith(root, packages_dir) && return true
-  end
-  return false
-end
-
-# User-writable case cache for registered installations. Mirrors the Web UI
-# root resolution in src/webui/webui.jl (default_webui_case_cache_dir); kept
-# local so this module stays loadable standalone.
+# User-writable case cache. Every installation writes here now, registered or
+# development: the checkout is not a cache. Mirrors the Web UI root resolution
+# in src/webui/webui.jl (default_webui_case_cache_dir); kept local so this
+# module stays loadable standalone.
 function _user_case_cache_dir()::String
   if Sys.iswindows()
     root = get(ENV, "LOCALAPPDATA", "")
@@ -308,6 +296,34 @@ function _user_case_cache_dir()::String
 end
 
 """
+    large_cases_dir() -> String
+
+The shared directory for large MATPOWER and DTF cases, resolved in two steps:
+
+ 1. `SPARLECTRA_LARGE_CASES_DIR`, if set (override for CI and special setups)
+ 2. otherwise the Web UI user case directory
+    (`~/.local/state/sparlectra/webui/data/mpower` on Linux,
+    `%LOCALAPPDATA%\\Sparlectra\\WebUI\\data\\mpower` on Windows)
+
+`ensure_casefile` downloads here, the Web UI keeps its imported cases here, and
+the test suite reads large cases from here, so a case fetched once is available
+to all three and one variable moves the location for all of them.
+
+This function only resolves a path. It does not write, and it does not create
+the directory; callers that need it to exist say so themselves.
+
+It is deliberately not the checkout. Downloading used to write into
+`<repo>/data/mpower`, where the test suite gates several legs on files being
+present: having used the package decided how many assertions the suite ran,
+7180 against 7121 on a fresh tree, and nothing said so.
+"""
+function large_cases_dir()::String
+  override = strip(get(ENV, "SPARLECTRA_LARGE_CASES_DIR", ""))
+  isempty(override) || return abspath(String(override))
+  return _user_case_cache_dir()
+end
+
+"""
     ensure_casefile(casefile; outdir=nothing, overwrite=false, to_jl=true) -> String
 
 Ensure a MATPOWER-compatible case file exists locally.
@@ -318,6 +334,7 @@ Ensure a MATPOWER-compatible case file exists locally.
 
 Returns the local path to the requested case file.
 """
+
 function ensure_casefile(casefile::AbstractString; outdir::Union{Nothing,AbstractString} = nothing, overwrite::Bool = false, to_jl::Bool = true)::String
 
   # 1) If user passed an existing file path, just use it.
@@ -325,23 +342,25 @@ function ensure_casefile(casefile::AbstractString; outdir::Union{Nothing,Abstrac
     return abspath(casefile)
   end
 
-  # 2) Decide output directory.
-  # Dev checkout: <repo>/data/mpower as before. Registered installation:
-  # the user-writable case cache (the package directory is immutable and
-  # ships no case files; data/mpower/*.m is gitignored).
-  if outdir === nothing
-    # Find package root from Sparlectra source file location:
-    # <pkg>/src/Sparlectra.jl -> <pkg>
-    # three levels since the stage-3 move into src/adapters/matpower (the
-    # same dirname trap the CGMES cache anchor hit a day earlier: a stale
-    # depth silently caches and re-downloads under src/data)
-    pkgroot = normpath(joinpath(@__DIR__, "..", "..", ".."))
-    if _in_depot_packages(pkgroot)
-      outdir = _user_case_cache_dir()
-    else
-      outdir = normpath(joinpath(pkgroot, "data", "mpower"))
-    end
-  end
+  # 2) Decide output directory: the shared large-case directory, never the
+  # checkout.
+  #
+  # A development checkout used to receive the downloads under
+  # <repo>/data/mpower. Two things came of that, and the second one is the
+  # reason this changed (maintainer, 2026-09-07: "wenn ich was downloade
+  # moechte ich nicht immer eine Aenderung in git"):
+  #
+  #   * downloaded cases landed inside the repository, where they are only
+  #     invisible because .gitignore covers data/mpower/*.*;
+  #   * the test suite gates several legs on files being present THERE, so
+  #     downloading a case silently changed what the suite covered. A fresh
+  #     worktree and CI ran 7121 assertions where a used checkout ran 7180,
+  #     and nothing said so.
+  #
+  # data/mpower now holds tracked fixtures and nothing else. Tests reach large
+  # cases exclusively through SPARLECTRA_LARGE_CASES_DIR, which is an explicit
+  # opt-in rather than a side effect of having used the package.
+  outdir === nothing && (outdir = large_cases_dir())
   mkpath(outdir)
 
   # 3) If looks like a path but does not exist, fail explicitly.

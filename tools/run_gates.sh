@@ -102,7 +102,41 @@ then
   fi
 fi
 
-lockdir="$repo_root/.git/sparlectra_gate.lock"
+# The lock lives in the COMMON git directory, not in "$repo_root/.git". In a
+# linked worktree that path is a FILE, so mkdir fails with ENOTDIR, the stale
+# takeover below removes nothing and the second mkdir fails the same way: the
+# gate then refused every start with "lock takeover raced another start".
+# rev-parse --git-common-dir points at the one real git directory from any
+# worktree, which also makes the lock SHARED between them, and that is what it
+# is for: two Julia first-starts on the same package must not run at once.
+git_common=$(git -C "$repo_root" rev-parse --git-common-dir)
+case "$git_common" in
+  /*) ;;
+  *) git_common="$repo_root/$git_common" ;;
+esac
+lockdir="$git_common/sparlectra_gate.lock"
+
+# --- data/mpower holds TRACKED fixtures and nothing else ---------------------
+# The suite gates several legs on case files being present, and that directory
+# used to double as the download cache. Whoever had once downloaded a case ran
+# more assertions than a fresh worktree or CI, and nothing said so: 7180 here
+# against 7121 there (measured 2026-09-07). Downloads go to the user cache now
+# and the large cases reach the suite only through SPARLECTRA_LARGE_CASES_DIR,
+# so anything else in that directory is a leftover that can only skew the run.
+# An ERROR, not a warning: a warning is how the drift got in.
+stray=$(git -C "$repo_root" ls-files --others --ignored --exclude-standard --directory -- data/mpower)
+if [ -n "$stray" ]
+then
+  echo "run_gates: REFUSED: untracked files in data/mpower/. That directory holds tracked fixtures only; anything else changes which availability-gated legs run and makes the assertion count depend on this machine." >&2
+  echo "$stray" >&2
+  echo "" >&2
+  echo "Move the case files to the directory the suite reads them from, and delete the rest:" >&2
+  echo "  mkdir -p \"\${SPARLECTRA_LARGE_CASES_DIR:-\$HOME/sparlectra-cases}\"" >&2
+  echo "  mv data/mpower/*.m data/mpower/*.jl data/mpower/*.DAT \"\${SPARLECTRA_LARGE_CASES_DIR:-\$HOME/sparlectra-cases}\"/" >&2
+  echo "  rm -rf data/mpower/.sparlectra_net_cache" >&2
+  echo "(keep data/mpower/README.md, warmup_casePST.m and warmup_casePST.measurements.csv: those are tracked)" >&2
+  exit 1
+fi
 if ! mkdir "$lockdir" 2>/dev/null
 then
   # stale-lock takeover: the lock records the runner's PID; a lock whose

@@ -22,9 +22,14 @@
 # the shared capture helper needs both stdlibs when this file runs standalone
 using Logging
 
+# warmup_casePST.m is TRACKED and lives in the checkout; anything else has to
+# come from SPARLECTRA_LARGE_CASES_DIR, so a caller passing another name gates
+# on large_case_path first
 function _scf_test_net(name::AbstractString = "warmup_casePST.m")
   cfg = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true)
-  return Sparlectra._se_import_case_net(abspath(joinpath(dirname(@__DIR__), "data", "mpower", name)), cfg)
+  path = name == "warmup_casePST.m" ? abspath(joinpath(dirname(@__DIR__), "data", "mpower", name)) : large_case_path(name)
+  path === nothing && error(string("_scf_test_net: ", name, " is not in the large-case directory; gate on large_case_path before calling"))
+  return Sparlectra._se_import_case_net(path, cfg)
 end
 
 
@@ -575,10 +580,10 @@ function run_scf_tests()
       # bus names, unlimited ratings, a neutral tap outside its band) have
       # no shipped equivalent, so the legs run from the LOCAL cache only; a
       # fresh install skips them loudly instead of downloading
-      real_legs = [(c, cfg) for (c, cfg) in (("case14.m", base_cfg), ("case57.m", vdi_cfg)) if isfile(joinpath(dirname(@__DIR__), "data", "mpower", c))]
-      length(real_legs) < 2 && println("      scf round trip: real-MATPOWER legs SKIPPED for ", join(setdiff(["case14.m", "case57.m"], first.(real_legs)), ", "), " (not in data/mpower cache)")
+      real_legs = [(c, cfg) for (c, cfg) in (("case14.m", base_cfg), ("case57.m", vdi_cfg)) if large_case_path(c) !== nothing]
+      length(real_legs) < 2 && println("      scf round trip: real-MATPOWER legs SKIPPED for ", join(setdiff(["case14.m", "case57.m"], first.(real_legs)), ", "), " (not in the large-case directory)")
       for (case, cfg) in real_legs
-        cached = joinpath(dirname(@__DIR__), "data", "mpower", case)
+        cached = large_case_path(case)
         src = joinpath(d, case)
         cp(cached, src)
         net = Sparlectra._se_import_case_net(src, cfg)
@@ -636,9 +641,9 @@ function run_scf_tests()
       # SMALL case only - the structural vectors above are the detector now.
       # Same cache-only premise as the loop (force: the loop already staged
       # this file into the same tempdir)
-      if isfile(joinpath(dirname(@__DIR__), "data", "mpower", "case14.m"))
+      if large_case_path("case14.m") !== nothing
         case = "case14.m"
-        cached = joinpath(dirname(@__DIR__), "data", "mpower", case)
+        cached = large_case_path(case)
         src = joinpath(d, case)
         cp(cached, src; force = true)
         net = Sparlectra._se_import_case_net(src, base_cfg)

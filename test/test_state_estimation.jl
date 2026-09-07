@@ -1940,9 +1940,9 @@ function test_state_estimation_takahashi_diagnostics()::Bool
       println("      fd coloring ", demo, ": ", ncolors, " colors for ", size(H1, 2), " states")
       @test ncolors < size(H1, 2) / 5
     end
-    big1354 = joinpath(dirname(@__DIR__), "data", "mpower", "case1354pegase.m")
-    if !isfile(big1354)
-      println("      fd coloring case1354pegase: SKIPPED (data/mpower/case1354pegase.m not cached)")
+    big1354 = large_case_path("case1354pegase.m")
+    if big1354 === nothing
+      println("      fd coloring case1354pegase: SKIPPED (case1354pegase.m not in the large-case directory)")
     else
       netp = Sparlectra.createNetFromMatPowerFile(filename = big1354, flatstart = false, bus_shunt_model = :admittance, matpower_shift_sign = -1.0, matpower_shift_unit = :rad, matpower_ratio = :normal, tap_changer_model = :ideal)
       runpf!(netp, 60, 1e-8, 0)

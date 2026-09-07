@@ -798,7 +798,7 @@ include("adapters/matpower/exportMatPower.jl")
 include("adapters/adapters.jl")
 include("import/case_import.jl")
 include("adapters/matpower/FetchMatpowerCase.jl")
-using .FetchMatpowerCase: ensure_casefile
+using .FetchMatpowerCase: ensure_casefile, large_cases_dir
 include("adapters/matpower/matpower_runner.jl")
 
 # --- api: run services and their metadata/artifact plumbing ----------------
