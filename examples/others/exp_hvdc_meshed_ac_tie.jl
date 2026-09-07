@@ -23,7 +23,7 @@
 
 using Sparlectra
 
-include(joinpath(@__DIR__, "..", "internal", "example_header.jl"))
+include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
 # The workshop-tour B2B topology (A1, A2, C1, C2) plus the AC tie A1 -> C1.
 # c1_model picks how the former island-C reference is modeled once the tie

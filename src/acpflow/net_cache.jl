@@ -17,8 +17,8 @@
 # purpose: opt-in binary cache of the parsed MATPOWER case and the built Net, keyed by file hash + import-option fingerprint (issue #292)
 
 # Cache design:
-# - Opt-in via matpower_import.net_cache.enabled (default false) and only
-#   active when matpower_import.auto_profile == off (auto-profile derives
+# - Opt-in via model.net_cache_enabled (default false) and only
+#   active when model.auto_profile == off (auto-profile derives
 #   config rewrites from the parsed case; keeping the gate here makes hit and
 #   miss runs behave identically).
 # - v1 caches the PARSED CASE (mpc), not the built Net: measured on an
@@ -37,15 +37,23 @@
 
 using Serialization
 
-const NET_CACHE_FORMAT_VERSION = 1
+const NET_CACHE_FORMAT_VERSION = 2
 const _NET_CACHE_MARKER = "sparlectra_net_cache"
 
 function _net_cache_components(filename::AbstractString, cfg::SparlectraConfig)::Vector{Pair{String,String}}
+  # since stage 3a the cached artifact is the CONVERTED case (its SCF
+  # JSON), so the conversion conventions are part of the identity: a cache
+  # written under one shift convention must miss under another. The key
+  # derivation scheme itself is unchanged; the option fingerprint is one
+  # more component.
+  opts = matpower_adapter_options(cfg)
+  fingerprint = join(String[string(f, "=", getfield(opts, f)) for f in fieldnames(MatpowerAdapterOptions) if f !== :log], ";")
   return [
     "format" => string(NET_CACHE_FORMAT_VERSION),
     "sparlectra" => string(pkgversion(Sparlectra)),
     "julia" => string(VERSION),
     "case_sha256" => bytes2hex(sha256(read(filename))),
+    "adapter_options" => fingerprint,
   ]
 end
 
@@ -63,21 +71,23 @@ function _net_cache_path(filename::AbstractString, key::AbstractString)::String
 end
 
 """
-    _net_cache_load(path, components) -> Union{Nothing,MatpowerIO.MatpowerCase}
+    _net_cache_load(path, components) -> Union{Nothing,SCFCase}
 
-Returns the cached parsed case or `nothing`. Beyond the key in the file
-name, the stored component list must match exactly — a hash-prefix collision
-or stale format silently misses instead of producing a wrong case.
+Returns the cached CONVERTED case (stored as its canonical SCF JSON since
+stage 3a) or `nothing`. Beyond the key in the file name, the stored
+component list must match exactly, and the JSON goes through the reader's
+parse and conversion, so a stale or truncated artifact silently misses
+instead of producing a wrong case.
 """
 function _net_cache_load(path::AbstractString, components::Vector{Pair{String,String}})
   isfile(path) || return nothing
   try
     payload = open(deserialize, path, "r")
-    payload isa Tuple{String,Vector{Pair{String,String}},MatpowerIO.MatpowerCase} || return nothing
-    marker, stored_components, mpc = payload
+    payload isa Tuple{String,Vector{Pair{String,String}},String} || return nothing
+    marker, stored_components, json = payload
     marker == _NET_CACHE_MARKER || return nothing
     stored_components == components || return nothing
-    return mpc
+    return scfcase_from_root(scf_json_parse(json))
   catch err
     err isa InterruptException && rethrow(err)
     @debug "net cache read failed; falling back to a fresh parse" path error = err
@@ -85,14 +95,14 @@ function _net_cache_load(path::AbstractString, components::Vector{Pair{String,St
   end
 end
 
-function _net_cache_store(path::AbstractString, components::Vector{Pair{String,String}}, mpc::MatpowerIO.MatpowerCase)
+function _net_cache_store(path::AbstractString, components::Vector{Pair{String,String}}, case::SCFCase)
   try
     mkpath(dirname(path))
     # pid AND task identity: two tasks of one process importing the same
     # case concurrently must not write the same temp file (Phase 1)
     tmp = string(path, ".", getpid(), ".", objectid(current_task()), ".tmp")
     open(tmp, "w") do io
-      serialize(io, (_NET_CACHE_MARKER, components, mpc))
+      serialize(io, (_NET_CACHE_MARKER, components, scf_json_string(scf_root_dict(case))))
     end
     mv(tmp, path; force = true)
   catch err

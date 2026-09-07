@@ -27,6 +27,18 @@ Sparlectra therefore provides more than one Q-limit enforcement mode.
 - `classic_simultaneous` is a classical reference mode. It first solves the base power flow with Q-limit switching disabled. If the base solution converges, all detected Q-limit violations are clamped and converted in one outer-loop pass.
 - `classic_one_at_a_time` follows the same classical principle, but handles only the largest violation per outer-loop pass. This can make the switching sequence easier to inspect.
 
+There is one outcome worth recognizing by name. A run can converge
+numerically and still fail to hold every reactive limit: the solver then
+reports the status `converged_limits_failed` with the reason
+`remaining_pv_q_limit_violations`, and the run counts as unsuccessful even
+though the bus balances are satisfied. This is not a numerical failure and
+not a wrong result being sold as a good one, it is the honest report that
+no admissible active set was reached. Measured example: on `case300` the
+default `active_set` ends this way after 6 iterations, while
+`classic_simultaneous` reaches a limit-respecting solution after 18
+iterations with four more switching events. Seeing that status is the
+signal to try a classical mode on this network.
+
 A practical diagnostic workflow is to compare modes. If a case fails in `active_set` because the active set changes repeatedly, but behaves more clearly in a classical mode, the problem may be dominated by discrete switching rather than by the continuous Newton iteration alone. If the base power flow itself does not converge in a classical mode, the issue is upstream of Q-limit enforcement and should be investigated separately.
 
 The key point is that Q-limits are not just post-processing. They change the structure of the power-flow problem. Reliable large-network analysis therefore needs not only a Newton solver, but also a controlled strategy for the discrete switching between PV and PQ.

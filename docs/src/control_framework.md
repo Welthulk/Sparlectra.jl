@@ -274,9 +274,14 @@ by that shared object: the first enabled tap changer of a control becomes
 the master, every further one joins as a follower (message
 `follows the group of ...`) instead of spawning a fighting second
 controller. Tap changers with `controlEnabled = false` stay at their
-fixed position, as before. Export-side grouping is not applicable yet:
-the CGMES exporter flattens tap machinery into the fixed ratio and writes
-no `TapChangerControl` objects.
+fixed position, as before. The exporter writes the matching structure:
+each active voltage tap controller becomes ONE shared `TapChangerControl`
+(mode voltage, terminal of the regulated bus in EQ; `enabled`,
+`targetValue`/`targetDeadband` in kV in SSH), referenced by the master's
+AND every follower's `RatioTapChanger`, all with `controlEnabled = true`
+(a false follower would fall out of the group on reimport). A regulated
+parallel group therefore survives a CGMES roundtrip as one group, and a
+receiving tool never sees fighting independent controllers.
 
 ## Trace rows (transformer control)
 

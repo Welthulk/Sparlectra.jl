@@ -106,15 +106,11 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
   elseif verb == "GET" && startswith(path, "/docs/")
     return handle_webui_doc_page(_webui_urldecode(path[(lastindex("/docs/") + 1):end]))
   elseif verb == "GET" && path in ("/", "/powerflow")
-    if runtime !== nothing && _webui_warmup_in_progress(runtime)
-      response = _webui_html(render_powerflow_warmup())
-      # Only after the warm-up page went out does the deferred warm-up solve
-      # start (see start_sparlectra_webui), so the user sees the message first.
-      _webui_mark_warmup_page_served!(runtime)
-      return response
-    end
     _webui_log_route!(log_root, "powerflow_form_opened", verb, path; status = "opened")
+    # stage 4A harmonization: without an explicit ?casefile the run page uses
+    # the case remembered by the Case page (plain nav links carry no query)
     selected_casefile = get(query, "casefile", "")
+    selected_casefile = isempty(selected_casefile) ? _webui_recall_selected_case(output_root) : _webui_remember_selected_case!(output_root, selected_casefile)
     case_profile = isempty(selected_casefile) ? nothing : _webui_load_case_settings(output_root, selected_casefile; case_directory = runtime === nothing ? nothing : runtime.case_directory)
     selected_config_file = get(query, "config_file", runtime === nothing ? "" : runtime.config_file)
     return _webui_html(render_powerflow_form(;
@@ -124,11 +120,53 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
       selected_casefile,
       selected_config_file,
       import_message = get(query, "import_message", ""),
+      download_file = get(query, "download", ""),
       error_message = runtime === nothing ? nothing : runtime.startup_config_error,
       config_notice = _powerflow_config_notice(runtime === nothing ? "" : runtime.config_file),
       case_profile,
       show_case_settings_notice = _powerflow_show_case_settings_notice(selected_config_file),
+      # stage 4A block 4: the SE section on this page reads its query keys
+      # (message, sticky g_* generator values) from the page query
+      se_query = query,
     ))
+  elseif verb == "GET" && path == "/powerflow/case"
+    # stage 4A: case management page (chooser, upload, export, import options)
+    _webui_log_route!(log_root, "case_page_opened", verb, path; status = "opened")
+    # an explicit ?casefile updates the shared selected-case memory; without
+    # one the page reopens on the remembered case
+    case_page_casefile = get(query, "casefile", "")
+    case_page_casefile = isempty(case_page_casefile) ? _webui_recall_selected_case(output_root) : _webui_remember_selected_case!(output_root, case_page_casefile)
+    case_page_profile = isempty(case_page_casefile) ? nothing : _webui_load_case_settings(output_root, case_page_casefile; case_directory = runtime === nothing ? nothing : runtime.case_directory)
+    return _webui_html(render_case_page(;
+      output_root,
+      case_directory = runtime === nothing ? nothing : runtime.case_directory,
+      operation_log = runtime === nothing ? webui_operation_log_path(output_root) : runtime.operation_log,
+      selected_casefile = case_page_casefile,
+      selected_config_file = get(query, "config_file", runtime === nothing ? "" : runtime.config_file),
+      import_message = get(query, "import_message", ""),
+      download_file = get(query, "download", ""),
+      case_profile = case_page_profile,
+    ))
+  elseif verb == "GET" && path == "/powerflow/settings"
+    # stage 4A block 3: solver/output/expert options page
+    _webui_log_route!(log_root, "settings_page_opened", verb, path; status = "opened")
+    settings_casefile = get(query, "casefile", "")
+    settings_casefile = isempty(settings_casefile) ? _webui_recall_selected_case(output_root) : _webui_remember_selected_case!(output_root, settings_casefile)
+    settings_profile = isempty(settings_casefile) ? nothing : _webui_load_case_settings(output_root, settings_casefile; case_directory = runtime === nothing ? nothing : runtime.case_directory)
+    return _webui_html(render_settings_page(;
+      output_root,
+      case_directory = runtime === nothing ? nothing : runtime.case_directory,
+      operation_log = runtime === nothing ? webui_operation_log_path(output_root) : runtime.operation_log,
+      selected_casefile = settings_casefile,
+      selected_config_file = get(query, "config_file", runtime === nothing ? "" : runtime.config_file),
+      save_message = get(query, "save_message", ""),
+      case_profile = settings_profile,
+      show_case_settings_notice = _powerflow_show_case_settings_notice(get(query, "config_file", runtime === nothing ? "" : runtime.config_file)),
+    ))
+  elseif verb == "POST" && path == "/powerflow/settings/save"
+    return handle_settings_save(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root)
+  elseif verb == "POST" && path == "/powerflow/case/options/save"
+    return handle_case_options_save(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root)
   elseif verb == "POST" && path == "/powerflow/run"
     try
       result = handle_powerflow_run(form; default_output_root = output_root, case_directory = runtime === nothing ? nothing : runtime.case_directory, runner = runtime === nothing ? start_powerflow_run : runtime.runner, operation_log = log_root)
@@ -160,11 +198,15 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
     return handle_powerflow_case_resolve(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root)
   elseif verb == "POST" && path == "/powerflow/case-settings/reset"
     return handle_powerflow_case_settings_reset(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root)
+  elseif verb == "POST" && path == "/powerflow/export-scf"
+    return handle_powerflow_export_scf(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root)
   elseif verb == "POST" && path == "/powerflow/delete-case"
     return handle_powerflow_case_delete(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root)
   elseif verb == "GET" && path == "/powerflow/contingency-weights"
     config_file = get(query, "config_file", runtime === nothing ? DEFAULT_SPARLECTRA_CONFIG_PATH : runtime.config_file)
     return handle_contingency_weights_page(query; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, config_file = config_file, operation_log = log_root)
+  elseif verb == "GET" && path == "/powerflow/case/download"
+    return handle_powerflow_case_download(query; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory)
   elseif verb == "GET" && path == "/powerflow/contingency-weights/download"
     return handle_contingency_weights_download(query; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory)
   elseif verb == "POST" && path == "/powerflow/contingency-weights/upload"
@@ -173,6 +215,42 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
     return handle_contingency_weights_save(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root)
   elseif verb == "POST" && path == "/powerflow/contingency-weights/reset"
     return handle_contingency_weights_reset(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root)
+  elseif verb == "GET" && path == "/powerflow/scenarios"
+    scen_config = get(query, "config_file", runtime === nothing ? DEFAULT_SPARLECTRA_CONFIG_PATH : runtime.config_file)
+    return handle_scenarios_page(query; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, config_file = scen_config, operation_log = log_root)
+  elseif verb == "POST" && path == "/powerflow/scenarios/save"
+    scen_config = runtime === nothing ? DEFAULT_SPARLECTRA_CONFIG_PATH : runtime.config_file
+    return handle_scenarios_save(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, config_file = scen_config, operation_log = log_root)
+  elseif verb == "POST" && path == "/powerflow/scenarios/delete"
+    return handle_scenarios_delete(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root)
+  elseif verb == "GET" && startswith(path, "/stateestimation/measurements/download")
+    return handle_se_measurement_download(query; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory)
+  elseif verb == "GET" && path == "/stateestimation"
+    # stage 4A block 4: the SE surface lives on the Runs page. This is a
+    # REAL redirect, not a rendering alias: two routes rendering the same
+    # surface would recreate exactly the divergence stage 4 removes. The
+    # query travels along (case becomes the shared casefile key; message
+    # and the sticky g_* generator values pass through), and the anchor
+    # lands the browser on the SE section.
+    se_pairs = String[]
+    for (k, v) in query
+      key = String(k) == "case" ? "casefile" : String(k)
+      push!(se_pairs, string(_webui_urlencode(key), "=", _webui_urlencode(String(v))))
+    end
+    se_target = isempty(se_pairs) ? "/powerflow" : string("/powerflow?", join(se_pairs, "&"))
+    return _webui_redirect(string(se_target, "#state-estimation"))
+  elseif verb == "POST" && path == "/stateestimation/generate-measurements"
+    return handle_se_generate_measurements(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root)
+  elseif verb == "POST" && path == "/stateestimation/add-noise"
+    return handle_se_add_noise(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root)
+  elseif verb == "POST" && path == "/stateestimation/reset-settings"
+    return handle_se_reset_settings(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root)
+  elseif verb == "POST" && path == "/stateestimation/measurements/save"
+    return handle_se_measurement_save(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root)
+  elseif verb == "POST" && path == "/stateestimation/measurements/update-values"
+    return handle_se_measurement_update_values(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root)
+  elseif verb == "POST" && path == "/stateestimation/topology-hypotheses"
+    return handle_se_topology_hypotheses(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root)
   elseif verb == "POST" && path == "/powerflow/config/check"
     return handle_powerflow_config_refresh(form; write = false, operation_log = log_root)
   elseif verb == "POST" && path == "/powerflow/config/refresh"
@@ -195,7 +273,9 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
       _webui_log_route!(log_root, "case_settings_notice_dismiss_failed", verb, path; status = "rejected", config_file, message = sprint(showerror, err))
       return _webui_html(render_webui_error(400, sprint(showerror, err)); status = 400)
     end
-    redirect_target = isempty(casefile) ? "/powerflow" : "/powerflow?casefile=$(_webui_urlencode(casefile))"
+    # back to the Settings page: since stage 4A block 3 the notice (and its
+    # dismiss button) renders there
+    redirect_target = isempty(casefile) ? "/powerflow/settings" : "/powerflow/settings?casefile=$(_webui_urlencode(casefile))"
     return _webui_redirect(redirect_target)
   elseif verb == "GET" && startswith(path, "/powerflow/result/")
     run_id = _webui_urldecode(path[(lastindex("/powerflow/result/") + 1):end])
@@ -269,18 +349,8 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
   elseif verb == "GET" && path == "/webui/last-errors"
     _webui_log_route!(log_root, "last_errors_opened", verb, path; status = "opened")
     return _webui_html(render_webui_last_errors(log_root))
-  elseif verb == "GET" && path == "/webui/fast-start"
-    # autorefresh polls while a build runs; suppress the log spam like the
-    # result-page poller does
-    get(query, "autorefresh", "") == "1" || _webui_log_route!(log_root, "fast_start_opened", verb, path; status = "opened")
-    return handle_webui_fast_start(output_root)
-  elseif verb == "GET" && path == "/webui/fast-start/log"
-    get(query, "autorefresh", "") == "1" || _webui_log_route!(log_root, "fast_start_log_opened", verb, path; status = "opened")
-    return handle_webui_fast_start_log(output_root)
-  elseif verb == "POST" && path == "/webui/fast-start/build"
-    started = start_sysimage_build!(output_root; operation_log = log_root)
-    _webui_log_route!(log_root, started.ok ? "sysimage_build_requested" : "sysimage_build_rejected", verb, path; status = started.ok ? "accepted" : "rejected", message = started.message)
-    return _webui_redirect("/webui/fast-start")
+  elseif verb == "POST" && path == "/webui/operation-log/clear"
+    return handle_webui_operation_log_clear(log_root)
   elseif verb == "GET" && path == "/webui/operation-log/download"
     _webui_log_route!(log_root, "artifact_downloaded", verb, path; status = "succeeded", artifact = WEBUI_OPERATION_LOG_FILENAME)
     return handle_webui_operation_log(log_root; download = true)

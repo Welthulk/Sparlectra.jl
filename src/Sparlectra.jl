@@ -26,6 +26,7 @@
 
 module Sparlectra
 
+using AnalyticLoadFlow
 using BenchmarkTools
 using Dates
 using LinearAlgebra
@@ -37,6 +38,9 @@ using TOML
 const SPARLECTRA_ROOT = normpath(joinpath(@__DIR__, ".."))
 const MPOWER_DIR = normpath(joinpath(SPARLECTRA_ROOT, "data", "mpower"))
 
+"""
+The square root of three, the line-to-line factor of three-phase power.
+"""
 const Wurzel3 = 1.7320508075688772
 
 function _read_project_version()::VersionNumber
@@ -59,8 +63,16 @@ end
 Base.include_dependency(joinpath(SPARLECTRA_ROOT, "Project.toml"))
 const SparlectraVersion = _read_project_version()
 
+"""
+    version() -> VersionNumber
+
+The version of the loaded Sparlectra package.
+"""
 version() = SparlectraVersion
 
+"""
+Supertype of every branch-like element (lines, transformers).
+"""
 abstract type AbstractBranch end
 
 const _MODULE_DOC = """
@@ -128,7 +140,6 @@ export
   BranchFlow,
   getBranchFlow,
   setBranchFlow!,
-  getBranchNumber,
   getBranchLosses,
   setBranchLosses!,
   setBranchStatus!,
@@ -148,7 +159,7 @@ export
 
   # functions
 
-  # utilities.jl
+  # performance_profile.jl
 
   # yamlparams.jl
   parse_yaml_scalar,
@@ -166,7 +177,7 @@ export
   StateEstimationConfig,
   MatpowerImportConfig,
   MatpowerExportConfig,                   # MATPOWER export settings (write_solution).
-  TransformerConfig,                      # Transformer-modeling settings (tap-changer model).
+  ModelConfig,                            # Model-construction settings (shunt model, tap-changer model, auto profile, cache, preallocation).
   PerformanceConfig,
   BenchmarkConfig,
   RuntimeConfig,
@@ -184,7 +195,7 @@ export
   powerflow_config,                       # Access the active power-flow settings.
   matpower_import_config,                 # Access MATPOWER import settings.
   matpower_export_config,                 # Access MATPOWER export settings.
-  transformer_config,                     # Access transformer-modeling settings.
+  model_config,                           # Access model-construction settings.
   configured_matpower_cases,              # Resolve configured MATPOWER batch order.
   state_estimation_config,
   diagnostics_config,
@@ -230,7 +241,6 @@ export
   getTrafoRXBG_pu,
 
   # Nodes
-  setRatedS!,
   setVmVa!,                               # Set voltage magnitude and angle on a node.
   addShuntPower!,
   addLoadPower!,
@@ -296,6 +306,7 @@ export
   addPIModelACLine!,                      # Add an AC line as a PI model.
   add2WTrafo!,                            # Add a two-winding transformer.
   addPIModelTrafo!,                       # Add a transformer PI model.
+  applyTapNameplate!,                     # Declare a transformer's tap-changer nameplate (step size, position band, live position) - the one path importers and hand-built nets share.
   addProsumer!,                           # Add generator/load prosumer data.
   addExternalGrid!,                       # Add an external grid: slack-or-source PF side + native SC feeder data (#299).
   convertSlackToExternalGrid!,            # Replace the marked slack by a non-ideal external-grid source (#299).
@@ -349,6 +360,9 @@ export
   setNetLinkStatus!,
   getNetLinks,
   calcLinkFlowsKCL!,                      # Compute bus-link flows from KCL.
+  calcLinkFlowsSE!,                       # W2 link-flow allocation with link measurements (SE phase 3).
+  se_view,                                # Static SE view: frozen controllers, shunt releases, link clusters, excluded measurements.
+  print_se_view,                          # Formatted se_view report.
   collect_outer_controllers,
   run_control!,                           # Run outer-loop control workflow.
   latest_control_result,
@@ -390,7 +404,6 @@ export
   removeShunt!,                           # Remove a shunt.
   removeProsumer!,                        # Remove prosumer data.
   clearIsolatedBuses!,                    # Remove isolated imported buses.
-  apply_mp_isolated_buses!,
 
   # import.jl
   createNetFromMatPowerFile,              # Import a MATPOWER case file as Net.
@@ -408,6 +421,50 @@ export
   cgmesLineShortCircuitData,              # Harvested zero-sequence line data as writeCGMESFiles input.
   printShortCircuitCoverage,              # Readable rendering of the coverage rows.
   runShortCircuit!,                       # IEC 60909 balanced Ik'' max/min per fault bus (#277).
+  exportSCF,                              # Write a Net as a Sparlectra Case Format file (PGM-compatible, #342).
+  net_to_scf,                             # Build the SCF root object of a Net without writing it (#342).
+  importSCF,                              # Read a Sparlectra Case Format file into a Net (#342).
+  scf_to_net,                             # Build a Net from a parsed SCF root object (#342).
+  SCFCase,                                # Typed in-memory form of one SCF document (adapter stage 2, D1).
+  read_scf_json,                          # Read a case file into its typed SCFCase form.
+  write_scf_json,                         # Serialize an SCFCase to its canonical file bytes.
+  build_net,                              # The one network constructor of the run path over an SCFCase (D2/D12).
+  net_to_scfcase,                         # The typed case a Net exports as (same keywords as exportSCF).
+  FormatAdapter,                          # Abstract input-format adapter contract (stage 3, D3).
+  MatpowerAdapter,                        # MATPOWER adapter: convert_case(mpc) -> SCFCase (stage 3a).
+  MatpowerAdapterOptions,                 # Adapter-scope options of the MATPOWER conversion.
+  convert_case,                           # Adapter contract: source -> SCFCase.
+  matpower_adapter_options,               # MatpowerAdapterOptions from an effective run configuration.
+  DTFAdapter,                             # DTF adapter: convert_case(DTFCase) -> SCFCase (stage 3b).
+  DTFAdapterOptions,                      # Adapter-scope options of the DTF conversion.
+  dtf_adapter_options,                    # DTFAdapterOptions from an effective run configuration.
+  CGMESAdapter,                           # CGMES adapter: configured import captured as SCFCase (stage 3c).
+  CGMESAdapterOptions,                    # Adapter-scope options of the CGMES conversion.
+  cgmes_adapter_options,                  # CGMESAdapterOptions from an effective run configuration.
+  cgmes_enrich_case!,                     # Attach the mRID registry and per-component mRIDs to a typed case.
+  PGMAdapter,                             # power-grid-model adapter: plain dataset through the shared pipeline (stage 3d).
+  PGMAdapterOptions,                      # Contract options of the PGM conversion (none).
+  PatchOp,                                # One scenario patch operation on an SCF component id (scenario task D1).
+  Scenario,                               # Named, weighted, ordered patch list (D2).
+  ScenarioSet,                            # Scenario vector plus N-1 mode and exclusions.
+  ScenarioIndex,                          # SCF id to component class and internal index, from the typed case.
+  validate_scenarios,                     # Load-time validation with scenario name and op index in every error.
+  expand_scenarios,                       # Expand the N-1 modes through the existing generators.
+  scf_case_scenarios,                     # The scenario set a typed case carries (scenarios or mapped contingencies).
+  scenario_set_dict,                      # Document form of a scenario set.
+  scenario_set_from_dict,                 # Read a sparlectra.scenarios block.
+  scenario_set_from_contingencies,        # Map the legacy contingencies block onto the scenario model (D3).
+  UndoLog,                                # Reversible record of one apply! (scenario task D4).
+  apply!,                                 # Apply patch operations to a working copy with an undo log.
+  restore!,                               # Replay the undo log in reverse; the copy returns to the base bitwise.
+  runScenarios!,                          # Evaluate a scenario set on the engine (D9); N-1 status ops match runContingencies! exactly.
+  ScenarioResult,                         # ContingencyResult surface plus screened flag and screening estimate (D8).
+  scf_case_config,                        # The dotted configuration overrides a case file carries (#342).
+  scf_is_case_config_key,                 # Whether a configuration key describes the case or the installation (#342).
+  scf_case_studies,                       # The contingency and short-circuit study definitions of a case file (#342).
+  scf_extra_names,                        # Component id to reference name, so study blocks can be resolved against a network (#342).
+  scf_validate_dataset,                   # File-level validation of a parsed case file, without building the network (#342).
+  scf_fault_nodes,                        # The buses a case file's PGM fault rows point at (#342).
   ShortCircuitResult,                     # Result type of runShortCircuit! (safety-flagged rows).
 
   # contingency.jl (N-1 batch, multi-core Phase 4)
@@ -428,8 +485,6 @@ export
   NativeShortCircuitData,                 # Native SC source container on Net (filled by addExternalGrid!, #299).
   printShortCircuitResult,                # Pretty-printer for ShortCircuitResult (CSV via the service run).
   _createDict,
-  apply_matpower_bus_voltage!,            # Apply MATPOWER bus voltage data.
-  apply_mp_bus_vmva_init!,                # Initialize Vm/Va from MATPOWER data.
 
   # exportMatPower.jl
   writeMatpowerCasefile,                  # Export a network as MATPOWER case file.
@@ -455,16 +510,11 @@ export
   branchFlow_pu,                          # Compute branch flow in per unit.
 
   # nbi.jl
-  getNBI,                                 # Compute node-branch incidence data.
-  mdoRCM,                                 # Run RCM ordering helper.
 
   # jacobian.jl
   runpf!,                                 # Run the classic Newton-Raphson PF solver.
-  setJacobianDebug,
-  setJacobianAngleLimit,
 
   # jacobian_full.jl
-  runpf_full!,                            # Run full/polar PF variant.
 
   # condition_number.jl
   condestJacobian,                        # Hager 1-norm condition estimate for NR Jacobians.
@@ -531,6 +581,7 @@ export
   default_webui_case_cache_dir,           # Return the user-writable Web UI case cache.
   default_webui_operation_log_path,       # Return the user-writable Web UI operation-log path.
   start_sparlectra_webui,                 # Start the loopback-only local PowerFlow Web UI.
+  buildSysimage,                          # One-call sysimage build (10-20 min, see docstring).
   to_dict,                                # Convert API results and artifacts to dictionaries.
   to_namedtuple,                          # Convert API results to named tuples.
   to_json,                                # Serialize API results as JSON.
@@ -555,8 +606,10 @@ export
   MeasurementType,
   Measurement,
   measurementStdDevs,
+  measurementSigmaFloors,                 # Per-type sigma floors for relative-sigma measurement generation.
   generateMeasurementsFromPF,             # Generate synthetic SE measurements from PF.
   setMeasurementsFromPF!,                 # Replace measurements from PF results.
+  addMeasurementNoise!,                   # Perturb the measurement values a net already holds, without a power flow (an ideal set becomes a realistic one).
   addMeasurement!,
   addVmMeasurement!,                      # Add voltage-magnitude measurement.
   addVaMeasurement!,                      # Add PMU voltage-angle measurement.
@@ -565,6 +618,23 @@ export
   addQinjMeasurement!,                    # Add reactive-power injection measurement.
   addPflowMeasurement!,                   # Add active branch-flow measurement.
   addQflowMeasurement!,                   # Add reactive branch-flow measurement.
+  addImagMeasurement!,                    # Add current-magnitude measurement (ampere, auxiliary): branch or shunt-bay variant (SE phases 1/2).
+  addIaMeasurement!,                      # Add PMU current-phasor angle measurement (degrees, alpha-referenced like VaMeas).
+  addCurrentPhasorMeasurement!,           # Add a full PMU current phasor as the ImagMeas + IaMeas pair.
+  setTapEstimation!,                      # Release transformer tap positions as SE states (cascade model).
+  calcMachineTrafoTapFromSE,              # Back-calculate a machine (GSU) transformer tap after an SE (mutually exclusive with a release).
+  validate_topology,                      # Stage-1 topology pre-checks (advisory: findings only, never a mutation).
+  test_topology_hypotheses,               # Stage-3 status-toggle hypothesis test on working copies (recommendations only).
+  addShuntQMeasurement!,                  # Add shunt-bay reactive-power measurement (MVar; SE phase 2 case A).
+  deriveShuntPseudoMeasurements!,         # Derive ShuntQ pseudo-measurements from bay current plus Vm (SE phase 2 case B).
+  readMeasurementsCSV!,                   # Read a measurement CSV v1 file (atomic import; SE phase 5).
+  writeMeasurementsCSV,                   # Write net.measurements as a measurement CSV v1 file (lossless roundtrip).
+  runpf_from_se!,                         # Power flow starting from the last SE result (:se_state or :se_snapshot).
+  takahashi_diag,                         # Diagonal of inv(A) from a UMFPACK factorization (shared Takahashi recursion).
+  takahashi_selected_inverse,             # Selected inverse on the factor pattern (SE diagnostics Omega_ii).
+  writeSEStateCSV,                        # Persist the last SE start state as a CSV artifact (SE -> PF chain).
+  readSEStateCSV!,                        # Restore an SE start state from CSV and register it for runpf_from_se!.
+  setShuntEstimation!,                    # Release a shunt susceptance as an estimator state (SE phase 2 case A).
   findPassiveBuses,
   addZeroInjectionMeasurements!,          # Add zero-injection constraints.
   SEResult,
@@ -598,14 +668,28 @@ export
   applyPfSolution!,                       # Apply an external PF solution to Net.
   solvePf,                                # Solve through an external solver interface.
   runpf_external!,                        # Run PF via external solver interface.
-  apslf_solver,                           # Reachability point for the AnalyticLoadFlow.jl-backed solver (weak dep).
+  apslf_solver,                           # Constructor for the AnalyticLoadFlow.jl-backed analytic power-series solver.
+  ApslfSolver,                            # The solver type itself (analytic power series with optional Pade evaluation and NR polishing).
   ensure_casefile                         # Resolve or fetch a case file.
 
 
-include("utilities.jl")
-include("yamlparams.jl")
-include("control_framework.jl")
-include("configuration.jl")
+# ---------------------------------------------------------------------------
+# Include order (stage 5): four blocks with a fixed direction of
+# dependency, core -> adapters -> api -> webui. No file of an earlier
+# block references a later block at DEFINITION time; runtime calls flow
+# forward only through function names resolved at call time. Within each
+# block the relative order of the previous layout is preserved, and the
+# load-bearing adjacency comments travel with their lines.
+# ---------------------------------------------------------------------------
+
+# --- core: types, configuration, network model, solvers, SE, SC, N-1 ------
+include("performance_profile.jl")
+include("config/yamlparams.jl")
+include("controller/control_framework.jl")
+include("config/configuration.jl")
+# configuration resolution (D5 precedence chain) lives with the
+# configuration it resolves (stage 5; moved from src/api)
+include("config/config_overrides.jl")
 include("component.jl")
 include("lines.jl")
 include("transformer.jl")
@@ -621,45 +705,31 @@ include("shortcircuit/native_sc_data.jl")
 # hvdcLinks field); the pair controller itself loads later.
 include("hvdc_link.jl")
 include("network.jl")
-include("synthetic_grids.jl")
-include("tap_control.jl")
-include("machine_control.jl")
-include("shunt_control.jl")
-include("series_reactance_control.jl")
+include("synthetic/synthetic_grids.jl")
+include("controller/tap_control.jl")
+include("controller/machine_control.jl")
+include("controller/shunt_control.jl")
+include("controller/series_reactance_control.jl")
 # the UPFC composite registers a series plus a machine controller, so it
 # loads after both device files
-include("upfc_control.jl")
+include("controller/upfc_control.jl")
 # the full UPFC (#326) is a single multi-actuator controller; addUpfcControl!
 # forwards to it for model = :full (resolved at call time, so include order
 # after upfc_control.jl is fine)
-include("upfc_full_control.jl")
-include("hvdc_pair_control.jl")
-include("controller_config.jl")
+include("controller/upfc_full_control.jl")
+include("controller/hvdc_pair_control.jl")
+include("controller/controller_config.jl")
 include("busdata.jl")
-include("MatpowerIO.jl")
-include("createnet_powermat.jl")
 include("equicircuit.jl")
-include("DTFImporter.jl")
-include("cgmes/CGMESImporter.jl")
-import .CGMESImporter: summarizeCGMES, createNetFromCGMES, importCGMES, compareWithSV, analyzeCGMES, shortCircuitCoverage, printShortCircuitCoverage, writeCGMESFiles, CGMESLineShortCircuit, cgmesLineShortCircuitData
 include("limits.jl")
 include("losses.jl")
-include("condition_number.jl")
-include("exportMatPower.jl")
+include("numerics/condition_number.jl")
 include("results.jl")
-include("acpflow.jl")
+include("adapters/scf/scf.jl")
+include("acpflow/acpflow.jl")
 include("acpflow/island_diagnostics.jl")
-include("api/api_types.jl")
-include("api/config_overrides.jl")
-include("api/serialization.jl")
-include("api/artifacts.jl")
-include("api/run_metadata.jl")
-include("api/run_api.jl")
-include("api/powerflow_service.jl")
-include("webui/webui.jl")
-include("matpower_runner.jl")
 include("remove_functions.jl")
-include("solver_core.jl")
+include("acpflow/solver_core.jl")
 # Rectangular power-flow helper layers. Keep dependency order:
 # factorized linear-solver backend -> core equations -> voltage helpers -> Jacobian builders -> Newton step -> diagnostics/start/result helpers -> solver loop.
 # The factorized backend comes first: it only depends on solve_sparse_system from
@@ -696,11 +766,15 @@ include("powerflow_dc/dc_solve.jl")
 include("powerflow_dc/dc_status_workspace.jl")
 include("powerflow_dc/dc_network_solver.jl")
 include("powerflow_dc/dc_report.jl")
-include("solver_interface.jl")
-include("FetchMatpowerCase.jl")
-using .FetchMatpowerCase: ensure_casefile
-include("measurements.jl")
-include("state_estimation.jl")
+include("acpflow/solver_interface.jl")
+# the AnalyticLoadFlow.jl adapter: a package extension while that package was
+# a weak dependency, a normal part of the module since it became a required one
+include("acpflow/apslf_solver.jl")
+include("stateestimation/measurements.jl")
+include("numerics/takahashi.jl")
+include("stateestimation/tap_estimation.jl")
+include("stateestimation/state_estimation.jl")
+include("stateestimation/topology_validation.jl")
 # IEC 60909 balanced short-circuit evaluation (issue #277). Consumes
 # Net + the CGMES short-circuit harvest; reuses the equicircuit branch
 # helpers and the AC-island decomposition — the PF solver stays untouched.
@@ -708,7 +782,32 @@ include("shortcircuit/short_circuit.jl")
 # N-1 contingency batch API (multi-core Phase 4): needs the rectangular
 # solver, remove functions, island detection, and the parallel runtime
 # helpers included above.
-include("contingency.jl")
+include("contingency/contingency.jl")
+include("scenario/patch.jl")
+include("scenario/apply.jl")
+include("scenario/engine.jl")
+
+# --- adapters: format readers, converters, the registry --------------------
+include("adapters/matpower/MatpowerIO.jl")
+include("adapters/matpower/createnet_powermat.jl")
+include("adapters/dtf/DTFImporter.jl")
+include("adapters/cgmes/CGMESImporter.jl")
+import .CGMESImporter: summarizeCGMES, createNetFromCGMES, importCGMES, compareWithSV, analyzeCGMES, shortCircuitCoverage, printShortCircuitCoverage, writeCGMESFiles, CGMESLineShortCircuit, cgmesLineShortCircuitData
+include("adapters/cgmes/glue.jl")
+include("adapters/matpower/exportMatPower.jl")
+include("adapters/adapters.jl")
+include("import/case_import.jl")
+include("adapters/matpower/FetchMatpowerCase.jl")
+using .FetchMatpowerCase: ensure_casefile
+include("adapters/matpower/matpower_runner.jl")
+
+# --- api: run services and their metadata/artifact plumbing ----------------
+include("api/api_types.jl")
+include("api/serialization.jl")
+include("api/artifacts.jl")
+include("api/run_metadata.jl")
+include("api/run_api.jl")
+include("api/powerflow_service.jl")
 # Web UI/service short-circuit run: needs the ShortCircuitResult
 # type above and the API result helpers included earlier.
 include("api/run_short_circuit_service.jl")
@@ -716,6 +815,11 @@ include("api/run_import_analysis_service.jl")
 # Web UI/service N-1 contingency run (#331 Phase 5): needs the contingency
 # batch API above and the shared config-driven import + API result helpers.
 include("api/run_contingency_service.jl")
-include("precompile.jl")
+include("api/run_state_estimation_service.jl")
+
+# --- webui: the local browser UI plus the sysimage build tooling -----------
+include("webui/webui.jl")
+include("build/sysimage_builder.jl")
+include("build/precompile.jl")
 #! format: on
 end # module Sparlectra

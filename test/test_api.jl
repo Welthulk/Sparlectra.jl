@@ -23,6 +23,42 @@ include("test_api_support.jl")
 
 function run_api_fast_tests()
   @testset "API fast smoke and timing contracts" begin
+    @testset "net parameters stamped exactly once per importer (task_import_direct D12)" begin
+      # D12, corrected by task_import_direct: the stamping happens exactly
+      # once PER IMPORTER, at the place each importer finishes; this test
+      # is the guard against pulling the four call sites back together
+      cfg = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true)
+      repo = dirname(@__DIR__)
+      stamps() = Sparlectra._NET_PARAM_STAMP_COUNT[]
+      assert_one = function (path, label; requested_format = :auto)
+        before = stamps()
+        imported = Sparlectra.import_case(path, cfg; requested_format = requested_format)
+        @test stamps() - before == 1
+        @test imported.net.cooldown_iters == cfg.powerflow.qlimits.cooldown_iters
+        println("      import stamp: ", label, " ran (exactly once)")
+        return imported
+      end
+      assert_one(joinpath(repo, "data", "mpower", "warmup_casePST.m"), "matpower")
+      assert_one(joinpath(repo, "data", "scf", "sp_case5.scf.json"), "scf")
+      dtf = joinpath(repo, "data", "DTF", "FOR001.DAT")
+      if isfile(dtf)
+        assert_one(dtf, "dtf"; requested_format = :dtf_for001)
+      else
+        println("      import stamp: dtf SKIPPED (data/DTF/FOR001.DAT not present)")
+      end
+      cgmes_dir = joinpath(repo, "data", "CGMES", "cases")
+      cgmes_zip = ""
+      if isdir(cgmes_dir)
+        zips = sort(filter(f -> endswith(f, ".zip"), readdir(cgmes_dir; join = true)); by = filesize)
+        isempty(zips) || (cgmes_zip = first(zips))
+      end
+      if isempty(cgmes_zip)
+        println("      import stamp: cgmes SKIPPED (no cached delivery under data/CGMES/cases)")
+      else
+        assert_one(cgmes_zip, string("cgmes (", basename(cgmes_zip), ")"); requested_format = :cgmes)
+      end
+    end
+
     # Version-independent on purpose: assert only that the precompile-baked
     # version() matches the current Project.toml, so a version bump alone
     # cannot break the test.

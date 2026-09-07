@@ -19,9 +19,9 @@
 using Printf
 using Sparlectra
 
-include(joinpath(@__DIR__, "..", "internal", "dtf_for002_validation_utils.jl"))
-include(joinpath(@__DIR__, "..", "internal", "dtf_validation_base.jl"))
-include(joinpath(@__DIR__, "..", "internal", "example_header.jl"))
+include(joinpath(@__DIR__, "dtf_for002_validation_utils.jl"))
+include(joinpath(@__DIR__, "dtf_validation_base.jl"))
+include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
 run_validation(args = ARGS; return_details::Bool = false) = NativeBaseValidation.run_validation(args; return_details = return_details)
 

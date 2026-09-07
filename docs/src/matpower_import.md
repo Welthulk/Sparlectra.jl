@@ -13,22 +13,22 @@
 
 | YAML path | Type | Default | Allowed values | Meaning | Use when | Avoid when | Performance impact | Interactions |
 |---|---:|---:|---|---|---|---|---|---|
-| `matpower_import.case` | String | `case14.m` | case path/name | Compatible single-case selector and fallback when `cases` is empty. | Single case studies and benchmarks. | Invalid/missing paths. | Parse/solve scales with case size. | `matpower_import.cases`, runtime/profile. |
-| `matpower_import.cases` | Vector{String} | `[case14.m, case118.m]` | non-empty case names | Ordered batch selector for `run_sparlectra_cases`; a non-empty list takes precedence over `case`. | Deterministic multi-case validation and release checks. | Empty case names or expecting `run_sparlectra` to return a vector. | Sequential parse/solve cost per case. | `matpower_import.case`, `run_sparlectra_cases`. |
-| `matpower_import.auto_profile` | Symbol/String | `recommend` | `off`, `recommend`, `apply` | Run a MATPOWER pre-run profile. `off` disables it, `recommend` logs decisions without changing the active config, and `apply` changes only safe import-convention recommendations with clear evidence. Solver-start and Q-limit recommendations remain logged but skipped unless configured directly. | Development, large-case investigation, reproducible robust imports. | Expecting YAML files to be rewritten; applying ambiguous diagnostics. | Low; scans existing VM/VA residuals before the solve. | Output profile visibility options. |
-| `matpower_import.auto_profile_log` | Bool | `true` | `true`, `false` | Print/log auto-profile reasoning and final effective options. | Debug import decisions and reproduce final settings. | Quiet high-volume runs. | Logging overhead only. | `output.console_auto_profile`, logfile settings. |
+| `runtime.case` | String | `case14.m` | case path/name | Compatible single-case selector and fallback when `cases` is empty. | Single case studies and benchmarks. | Invalid/missing paths. | Parse/solve scales with case size. | `runtime.cases`, runtime/profile. |
+| `runtime.cases` | Vector{String} | `[case14.m, case118.m]` | non-empty case names | Ordered batch selector for `run_sparlectra_cases`; a non-empty list takes precedence over `case`. | Deterministic multi-case validation and release checks. | Empty case names or expecting `run_sparlectra` to return a vector. | Sequential parse/solve cost per case. | `runtime.case`, `run_sparlectra_cases`. |
+| `model.auto_profile` | Symbol/String | `recommend` | `off`, `recommend`, `apply` | Run a MATPOWER pre-run profile. `off` disables it, `recommend` logs decisions without changing the active config, and `apply` changes only safe import-convention recommendations with clear evidence. Solver-start and Q-limit recommendations remain logged but skipped unless configured directly. | Development, large-case investigation, reproducible robust imports. | Expecting YAML files to be rewritten; applying ambiguous diagnostics. | Low; scans existing VM/VA residuals before the solve. | Output profile visibility options. |
+| `model.auto_profile_log` | Bool | `true` | `true`, `false` | Print/log auto-profile reasoning and final effective options. | Debug import decisions and reproduce final settings. | Quiet high-volume runs. | Logging overhead only. | `output.console_auto_profile`, logfile settings. |
 | `matpower_import.pv_voltage_source` | Symbol/String | `gen_vg` | `gen_vg`, `bus_vm`, `auto`, `strict_check` | PV voltage setpoint source policy. | Standard MATPOWER semantics. | Nonstandard conversion assumptions. | None. | `compare_voltage_reference`, PF starts. |
 | `matpower_import.pv_voltage_mismatch_tol_pu` | Float64 | `1e-4` | nonnegative real | Tolerance for PV voltage mismatch checks. | Tight validation studies. | Overly strict noisy data. | Low. | `compare_voltage_reference`. |
 | `matpower_import.compare_voltage_reference` | Symbol/String | `imported_setpoint` | `bus_vm`, `gen_vg`, `imported_setpoint`, `hybrid` | Voltage reference used for comparisons. Auto-profile recommends `hybrid` when BUS.VM / GEN.VG mismatches are detected. | MATPOWER comparison workflows. | When historical/SCADA ref should dominate. | Low. | `pv_voltage_source`, diagnostics. |
-| `matpower_import.bus_shunt_model` | Symbol/String | `admittance` | `admittance`, `voltage_dependent_injection` | Bus shunt interpretation model. | Default import path. | Alternative modeling studies without residual evidence. | None. | Import convention diagnostics. |
+| `model.bus_shunt_model` | Symbol/String | `admittance` | `admittance`, `voltage_dependent_injection` | Bus shunt interpretation model. | Default import path. | Alternative modeling studies without residual evidence. | None. | Import convention diagnostics. |
 | `matpower_import.shift_unit` | Symbol/String | `deg` | `deg`, `rad` | Phase-shift input unit. | Cases with radians metadata. | Wrong unit declaration. | Negligible. | `shift_sign`, branch shift diagnostics. |
 | `matpower_import.shift_sign` | Float64 | `1.0` | real (typ. `1.0`, `-1.0`) | Phase-shift sign convention. | Cross-tool convention alignment. | Unnecessary flipping. | None. | `shift_unit`, branch-shift diagnostics. |
 | `matpower_import.ratio` | Symbol/String | `normal` | `normal`, `reciprocal` | Branch ratio interpretation mode. | Standard MATPOWER import. | Unsupported alternate conventions. | None. | Transformer/tap interpretation. |
-| `transformer.tap_changer_model` | Symbol/String | `ideal` | `ideal`, `impedance_correction` | Tap-changer model applied to all transformers after import; see [Transformer tap-changer model](configuration.md#transformer-tap-changer-model). | Cases where reference data corrects R/X with the tap position. | Standard ideal-tap-changer imports. | None (constant per-branch scale factor). | Shared with the native DTF importer; implemented centrally in `src/equicircuit.jl`. |
-| `matpower_export.write_solution` | Bool | `true` | `true`, `false` | Whether [`writeMatpowerCasefile`](@ref) writes the solved bus `VM`/`VA` state and branch result columns 14–17 (`PF`/`QF`/`PT`/`QT`) into the export, marked with `mpc.sparlectra.solution_written`. When `false`, `mpc.branch` keeps its historical 13 columns and `VM = 1.0`/`VA = 0.0` for all non-slack/non-PV buses (slack and PV setpoints are preserved). | Exporting a solved case for downstream tools or roundtrip validation. | Exporting a pure, state-independent model file. | None; sourced from the existing branch-flow report, no recomputation. | If the network is unsolved, falls back to a 13-column model-only export with a warning; interacts with `transformer.tap_changer_model` through the `mpc.sparlectra.tap_changer_model` roundtrip marker (see [Tap-impedance correction and reimport](#tap-impedance-correction-and-reimport)). |
+| `model.tap_changer_model` | Symbol/String | `ideal` | `ideal`, `impedance_correction` | Tap-changer model applied to all transformers after import; see [Transformer tap-changer model](configuration.md#transformer-tap-changer-model). | Cases where reference data corrects R/X with the tap position. | Standard ideal-tap-changer imports. | None (constant per-branch scale factor). | Shared with the native DTF importer; implemented centrally in `src/equicircuit.jl`. |
+| `matpower_export.write_solution` | Bool | `true` | `true`, `false` | Whether [`writeMatpowerCasefile`](@ref) writes the solved bus `VM`/`VA` state and branch result columns 14–17 (`PF`/`QF`/`PT`/`QT`) into the export, marked with `mpc.sparlectra.solution_written`. When `false`, `mpc.branch` keeps its historical 13 columns and `VM = 1.0`/`VA = 0.0` for all non-slack/non-PV buses (slack and PV setpoints are preserved). | Exporting a solved case for downstream tools or roundtrip validation. | Exporting a pure, state-independent model file. | None; sourced from the existing branch-flow report, no recomputation. | If the network is unsolved, falls back to a 13-column model-only export with a warning; interacts with `model.tap_changer_model` through the `mpc.sparlectra.tap_changer_model` roundtrip marker (see [Tap-impedance correction and reimport](#tap-impedance-correction-and-reimport)). |
 | `matpower_import.enable_pq_gen_controllers` | Bool | `true` | `true`, `false` | Enable controller behavior on imported PQ generators. | Realistic controlled studies. | Raw imported behavior reproduction. | Small control bookkeeping cost. | PF Q-limit behavior. |
-| `matpower_import.preallocate_network` | Symbol/String | `auto` | `off`, `on`, `auto` | Controls import-time `sizehint!` preallocation for large MATPOWER network construction. | Large imports where construction allocations dominate runtime. | Tiny cases where tuning is unnecessary. | Can reduce import allocations/time; no model changes. | `matpower_import.preallocate_min_buses`. |
-| `matpower_import.preallocate_min_buses` | Int | `1000` | positive integer | Bus-count threshold used when `preallocate_network = auto`. | Auto-tuning preallocation trigger for site-specific case sizes. | If fixed always-on/off behavior is preferred. | Threshold only; no model changes. | `matpower_import.preallocate_network`. |
+| `model.preallocate_network` | Symbol/String | `auto` | `off`, `on`, `auto` | Controls import-time `sizehint!` preallocation for large MATPOWER network construction. | Large imports where construction allocations dominate runtime. | Tiny cases where tuning is unnecessary. | Can reduce import allocations/time; no model changes. | `model.preallocate_min_buses`. |
+| `model.preallocate_min_buses` | Int | `1000` | positive integer | Bus-count threshold used when `preallocate_network = auto`. | Auto-tuning preallocation trigger for site-specific case sizes. | If fixed always-on/off behavior is preferred. | Threshold only; no model changes. | `model.preallocate_network`. |
 | `matpower_import.apply_bus_names` | Bool | `false` | `true`, `false` | Use standard `mpc.bus_name` metadata for imported bus names. | FOR001/FOR002 validation and named-bus workflows. | Preserve historical numeric names. | None. | Fails on duplicate names. |
 | `matpower_import.apply_branch_names` | Bool | `false` | `true`, `false` | Attach user-defined `mpc.branch_name` metadata to `net.matpower_branch_metadata`. | Outage and contingency mapping. | Cases without branch metadata. | None. | `import_for001_contingencies`. |
 | `matpower_import.apply_branch_kind` | Bool | `false` | `true`, `false` | Use user-defined `mpc.branch_kind` to override line/transformer classification. | Conversion workflows that know row kinds. | Prefer electrical heuristic. | None. | Accepts `L`/`LINE`/`ACL` and `T`/`TRAFO`/`TRANSFORMER`/`2WT`. |
@@ -55,14 +55,14 @@ pre-slack active-power imbalance for each island.
 
 ### Tap-impedance correction and reimport
 
-When a case was built with `transformer.tap_changer_model =
+When a case was built with `model.tap_changer_model =
 impedance_correction`, the exported `BR_R`/`BR_X` values already carry the
 tap-impedance correction (see [Transformer tap-changer
 model](configuration.md#transformer-tap-changer-model)). `writeMatpowerCasefile`
 records this with a `mpc.sparlectra.tap_changer_model = 'impedance_correction'`
 roundtrip marker. When such a file is reimported, `createNetFromMatPowerFile`/
 `createNetFromMatPowerCase` detect the marker and skip reapplying
-`calcTapCorrectedRX`, regardless of the active `transformer.tap_changer_model`
+`calcTapCorrectedRX`, regardless of the active `model.tap_changer_model`
 configuration at reimport time — otherwise the reimport would stack a second,
 differently-derived correction (MATPOWER reimport uses the `ratio`-based
 factor, `1/ratio²`, while the native DTF importer uses the `tap_fraction`-based
@@ -72,7 +72,7 @@ import exactly as before.
 
 ## Auto-profile pre-run
 
-`matpower_import.auto_profile` is evaluated by the MATPOWER runner before the
+`model.auto_profile` is evaluated by the MATPOWER runner before the
 main solve. The pre-run reads the MATPOWER case, computes compact diagnostics,
 and emits a table with the option path, current value, recommended value,
 action, reason, and diagnostic evidence. The shipped default is
@@ -111,7 +111,7 @@ effective options (or enable
 
 `examples/powerflow/matpower_import_multi_config.jl` is a developer-oriented helper for
 running the same MATPOWER case against several YAML configuration files. It is
-useful for checking whether options such as `matpower_import.auto_profile`,
+useful for checking whether options such as `model.auto_profile`,
 `power_flow.wrong_branch_detection`, or start-mode settings affect the final
 rectangular solver status.
 
@@ -141,33 +141,29 @@ cite MATPOWER as recommended by the official guidance page:
 
 - <https://matpower.org/citing/>
 
+The reference the guidance asks for is:
+
+> R. D. Zimmerman, C. E. Murillo-Sanchez, and R. J. Thomas, "MATPOWER:
+> Steady-State Operations, Planning and Analysis Tools for Power Systems
+> Research and Education," IEEE Transactions on Power Systems, 26(1),
+> 12-19, 2011. <https://doi.org/10.1109/TPWRS.2010.2051168>
+
+Some MATPOWER case files, such as ACTIVSg, PEGASE, and RTE cases, request
+additional case-specific citations in their file headers.
+
 When Sparlectra documentation mentions case names (for example `case300.m`,
 `case1354pegase.m`, `case1951rte.m`, or `case_ACTIVSg10k.m`), users should obtain
 the original files from MATPOWER and/or the original data sources and follow the
 applicable license, citation, and redistribution terms.
 
-## Binary case cache (`matpower_import.net_cache`)
+## Binary case cache (`model.net_cache_enabled`): inert
 
-`matpower_import.net_cache.enabled` (default `false`) opt-in caches the
-**parsed** MATPOWER case as a binary snapshot, so repeated runs of an
-unchanged case file skip the text-parsing phase (and its allocations); the
-network itself is always built fresh from the cached case, so all import
-options keep taking effect without being part of the cache key.
-
-Measured design note: v1 deliberately does not cache the constructed
-network — deserializing the large per-bus object graph is slower than
-rebuilding it (measured on an 82k-bus case), while the parsed matrices
-deserialize in a fraction of the parse time. The versioned format leaves
-room for a flat network representation later.
-
-- **Location**: `<case directory>/.sparlectra_net_cache/<case>.<key>.v1.jls`.
-  The directory is safe to delete at any time.
-- **Key**: SHA-256 over the case-file bytes, the cache format version, and
-  the Sparlectra and Julia versions. Any change produces a new key; stale
-  entries are simply ignored.
-- **Requires `matpower_import.auto_profile: off`**; with auto-profile active
-  the cache stays inactive and an informational log line says so.
-- **Failure behavior**: unreadable, corrupt, or mismatching cache files fall
-  back silently to a fresh parse; cache writes never fail a run (read-only
-  directories are tolerated).
-
+Since the direct import (2026-09-04), every importer builds its network
+straight from its own format and nothing converts on the way in, so the
+cache has nothing left to store: setting `model.net_cache_enabled: true`
+is INERT and logs a warning saying so. Measured before removal: the
+direct import undercuts what a cache hit ever delivered
+(case13659pegase builds directly in 0.12 s where the conversion-based
+path took 0.40 s), so the removal costs nothing. The key remains
+readable for old configuration files; delete any leftover
+`.sparlectra_net_cache` directories at will.

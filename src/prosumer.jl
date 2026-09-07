@@ -19,6 +19,9 @@
 #          controllers, piecewise characteristics (linear, spline,
 #          polynomial), and type/query helpers
 
+"""
+Supertype of the voltage-dependent prosumer controllers (Q(U), P(U)).
+"""
 abstract type AbstractVoltageDependentController end
 
 """
@@ -129,6 +132,10 @@ struct PUController <: AbstractVoltageDependentController
   pmax_pu::Union{Nothing,Float64}
 end
 
+"""
+Step-voltage regulation data of a prosumer: step size in per unit and the
+number of steps below and above the neutral position.
+"""
 struct VoltageAdjustConfig
   vstep_pu::Float64
   tap_steps_down::Int
@@ -236,6 +243,12 @@ function evaluate_characteristic(ch::PiecewiseLinearCharacteristic, u_pu::Float6
   return pts[end][2], 0.0
 end
 
+"""
+    evaluate_controller(ctrl, u_pu) -> Float64
+
+Evaluate a voltage-dependent controller characteristic at the voltage
+`u_pu` and return the controlled quantity (Q or P) it demands there.
+"""
 function evaluate_controller(ctrl::QUController, u_pu::Float64)
   value, slope = evaluate_characteristic(ctrl.characteristic, u_pu)
   return _apply_limits(value, slope, ctrl.qmin_pu, ctrl.qmax_pu)
@@ -482,11 +495,21 @@ mutable struct ProSumer
   end
 end
 
+"""
+    setPQResult!(ps, p, q)
+
+Store the solved injection of the machine (MW/MVar) as its result fields.
+"""
 function setPQResult!(ps::ProSumer, p::Float64, q::Float64)
   ps.pRes = p
   ps.qRes = q
 end
 
+"""
+    getPosumerBusIndex(ps) -> Int
+
+The bus index a prosumer is attached to.
+"""
 function getPosumerBusIndex(ps::ProSumer)::Int
   c = ps.comp
   if hasproperty(c, :cFrom_bus) && getfield(c, :cFrom_bus) !== nothing
@@ -497,10 +520,21 @@ function getPosumerBusIndex(ps::ProSumer)::Int
   error("ProSumer: cannot determine bus index (component has neither :cFrom_bus nor :cTo_bus).")
 end
 
+"""
+    isAPUNode(o) -> Bool
+
+Whether the prosumer marks its bus as an active-power/voltage (APU) node.
+"""
 function isAPUNode(o::ProSumer)
   return o.isAPUNode
 end
 
+"""
+    isGenerator(x) -> Bool
+
+Whether a prosumer (or prosumption type) injects power, as opposed to
+consuming it.
+"""
 function isGenerator(c::Sparlectra.ProSumptionType)::Bool
   if c == Injection
     return true
@@ -513,7 +547,17 @@ function isGenerator(o::ProSumer)::Bool
   return isGenerator(o.proSumptionType)
 end # isGenerator
 
+"""
+    has_qu_controller(ps) -> Bool
+
+Whether the prosumer carries a Q(U) controller.
+"""
 @inline has_qu_controller(ps::ProSumer)::Bool = !isnothing(ps.quController)
+"""
+    has_pu_controller(ps) -> Bool
+
+Whether the prosumer carries a P(U) controller.
+"""
 @inline has_pu_controller(ps::ProSumer)::Bool = !isnothing(ps.puController)
 
 function getProSumPGMComp(Vn::Float64, from::Int, isGen::Bool, id::Int)
@@ -523,14 +567,30 @@ function getProSumPGMComp(Vn::Float64, from::Int, isGen::Bool, id::Int)
   return ImpPGMComp(cID, cName, cTyp, Vn, from, from)
 end
 
+"""
+    setQGenReplacement!(o, q)
+
+Fix the machine's reactive output at `q` after a Q-limit switch.
+"""
 function setQGenReplacement!(o::ProSumer, q::Float64)
   o.qGenRepl = q
 end
 
+"""
+    getQGenReplacement(o) -> Union{Nothing,Float64}
+
+The reactive output a Q-limit switch fixed for this machine, `nothing`
+while it regulates freely.
+"""
 function getQGenReplacement(o::ProSumer)::Union{Nothing,Float64}
   return o.qGenRepl
 end
 
+"""
+    updatePQ!(o, p, q)
+
+Update the specified P/Q of the prosumer; `nothing` leaves a value as is.
+"""
 function updatePQ!(o::ProSumer, p::Union{Nothing,Float64}, q::Union{Nothing,Float64})
   if !isnothing(p)
     o.pVal = p
@@ -540,6 +600,11 @@ function updatePQ!(o::ProSumer, p::Union{Nothing,Float64}, q::Union{Nothing,Floa
   end
 end
 
+"""
+    isSlack(o) -> Bool
+
+Whether this prosumer carries the reference (slack) role.
+"""
 function isSlack(o::ProSumer)
   if !isnothing(o.referencePri) && o.referencePri > 0
     return true
@@ -548,11 +613,23 @@ function isSlack(o::ProSumer)
   end
 end
 
+"""
+    isRegulating(o) -> Bool
+
+Whether the machine takes part in voltage regulation: it is marked
+regulated or carries a step/tap voltage controller.
+"""
 function isRegulating(o::ProSumer)::Bool
   has_controller = !isnothing(o.vset_adjust) || !isnothing(o.vstep_pu) || !isnothing(o.tap_steps_down) || !isnothing(o.tap_steps_up)
   return o.isRegulated || has_controller
 end
 
+"""
+    toProSumptionType(t) -> ProSumptionType
+
+Map a component type (Generator, EnergyConsumer, ...) onto the coarse
+Injection/Consumption class.
+"""
 function toProSumptionType(o::ComponentTyp)::ProSumptionType
   if o == Generator || o == ExternalNetworkInjection || o == SynchronousMachine || o == StaticVarCompensator
     return Injection

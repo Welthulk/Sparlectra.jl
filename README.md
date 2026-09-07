@@ -13,7 +13,7 @@ Julia package for AC power flow, DC power flow, state estimation and IEC 60909 s
 
 <a href="https://github.com/Welthulk/Sparlectra.jl/tree/main/"><img align="left" width="100" src="docs/src/assets/logo.png" style="margin-right: 20px" /></a>
 
-Sparlectra covers the complete workflow from network import through solving to configurable reporting. Grid data can be read from ENTSO-E CGMES (2.4.15 and 3.0), MATPOWER and native DTF sources, or built programmatically. Three solver backends are available: the built-in rectangular Newton-Raphson solver, a linear DC power flow, and an optional analytic power-series solver (APSLF, via the AnalyticLoadFlow.jl package extension) usable standalone, as the primary solver, or as a guarded start-value generator ahead of Newton-Raphson.
+Sparlectra covers the complete workflow from network import through solving to configurable reporting. Grid data can be read from ENTSO-E CGMES (2.4.15 and 3.0), MATPOWER, native DTF, and the Sparlectra Case Format (a power-grid-model compatible JSON case), or built programmatically. Three solver backends are available: the built-in rectangular Newton-Raphson solver, a linear DC power flow, and the analytic power-series solver APSLF (AnalyticLoadFlow.jl, a required dependency) usable standalone, as the primary solver, or as a guarded start-value generator ahead of Newton-Raphson.
 
 Every stage of the numerical pipeline is documented and accessible at runtime: model construction, Jacobian assembly, PV/PQ active-set handling and convergence behaviour can be inspected and instrumented. Together with deterministic, configuration-driven runs, explicit Q-limit and AC-island handling and machine-readable reporting, this suits production grid studies and planning work as well as algorithm development and solver benchmarking.
 
@@ -33,6 +33,7 @@ No installation required, the workshop notebooks run on Google Colab:
 | `[Slack]` **Distributed slack** (Advanced): how the participation weights are determined (schedule, capacity, headroom, imported APF/normalPF, explicit), how they are normalized, and the fallback when no valid participant exists | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_distributed_slack.ipynb) |
 | `[Trafo taps]` **Transformer taps** (Advanced): ratio taps (OLTC) move voltage, phase taps (PST/Schrägregler) move power; device tap math, the closed control loop with the X(α) characteristic, and the 3WT star equivalent | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_transformers.ipynb) |
 | `[FACTS]` **FACTS flow control: TCSC to UPFC** (Expert): why flow follows reactance, how the series-reactance controller (TCSC) steers a loop-network flow split onto a branch target, and the full **UPFC** (unified power flow controller): the SSSC+STATCOM composite and the DC-link-coupled model that holds a line's P and Q independently | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_series_compensation.ipynb) |
+| `[N-1]` **Scenarios and screening** (Advanced): outages and operating changes as data in the SCF scenarios block, N-1 expansion, hand-written patch scenarios through `runScenarios!`, contingency screening off against flag, and the block written back into the case file | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_scenarios.ipynb) |
 | `[SE]` **State estimation** (Advanced to Expert): derive a noisy measurement set from a reference power flow, check observability with a placement deep dive (incl. PMU phasors and the reference-angle offset), run the WLS estimator, and see when observability breaks down | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_state_estimation.ipynb) |
 
 The notebooks are generated from the Literate.jl sources in [docs/lit/](docs/lit/); the same content is on the documentation pages under [Notebooks](https://welthulk.github.io/Sparlectra.jl/generated/workshop_tour/).
@@ -46,8 +47,9 @@ The notebooks are generated from the Literate.jl sources in [docs/lit/](docs/lit
 | Reproducible AC power-flow studies | Deterministic, configuration-driven framework runs |
 | Insight into Newton-Raphson internals | Rectangular complex-state formulation, open at every stage |
 | Robust PV/PQ handling | Explicit Q-limit enforcement with active-set diagnostics |
-| Grid data exchange | ENTSO-E CGMES (2.4.15 and 3.0), MATPOWER and native DTF import with validation against the delivered solution; CGMES export with roundtrip-stable mRIDs |
+| Grid data exchange | ENTSO-E CGMES (2.4.15 and 3.0), MATPOWER, native DTF and Sparlectra Case Format import with validation against the delivered solution; CGMES, MATPOWER and case-format export |
 | Short-circuit analysis | Balanced short-circuit currents (Ik'', Sk'', i_p) per IEC 60909-0 from CGMES short-circuit data, with safety flagging of substituted defaults |
+| State estimation with observability | Nonlinear WLS estimation with global/local observability checks, critical-measurement reporting, normalized-residual bad-data identification and island-wise solving |
 | Custom solver integration | Clean `PFModel` / `PFSolution` interface for external solvers |
 | Voltage- and tap-control studies | Outer-loop control framework: transformer regulation (OLTC/PST/combined incl. tap-dependent PST reactance), remote voltage control via machine reactive power, and SVC-style variable-shunt voltage control |
 | Realistic slack modeling | Distributed active-power slack with configurable participation factors (incl. imported MATPOWER `APF` / CGMES `normalPF`) |
@@ -63,14 +65,14 @@ The notebooks are generated from the Literate.jl sources in [docs/lit/](docs/lit
 - Sparse-matrix-oriented implementation for realistic network studies.
 - PV/PQ bus handling with Q-limit enforcement (machine capability curves where the data provides them) and active-set diagnostics.
 - Distributed active-power slack over configurable participation factors: the primary-control picture instead of a single slack machine.
-- Grid import from ENTSO-E CGMES 2.4.15 and 3.0 (EQ/SSH/TP/SV, boundary sets, multi-area assemblies, tap controllers, validation against the delivered SV profile, measured across the full ENTSO-E conformity collection including the 6209-bus RealGrid; per-case results incl. the documented non-converging completeness sets in [docs/dev/cgmes_testset_overview.md](docs/dev/cgmes_testset_overview.md)), MATPOWER cases and native DTF files.
+- Grid import from ENTSO-E CGMES 2.4.15 and 3.0 (EQ/SSH/TP/SV, boundary sets, multi-area assemblies, tap controllers, validation against the delivered SV profile, measured across the full ENTSO-E conformity collection including the 6209-bus RealGrid; the non-converging completeness sets are known and documented), MATPOWER cases and native DTF files.
 - CGMES export as a complete delivery (EQ + TP + SSH + SV, optionally one re-importable ZIP: buses, lines, 2W/3W transformers incl. tap machinery, loads, machines, injections, SVCs, shunts, links, operating point and voltage state) with roundtrip-stable object identity: an exported and re-imported network solves to the same power flow and reproduces the original short-circuit evaluation; imported mRIDs are preserved, everything else gets deterministic ids.
 - Balanced short-circuit analysis per IEC 60909-0 (`runShortCircuit!`): initial symmetrical current Ik'' (max/min case), Sk'' and peak current i_p per fault bus from harvested CGMES short-circuit data, with explicit safety flagging where defaults were substituted; all-bus sweeps run on Julia threads or via the Takahashi selected inverse (`sweep_method = :takahashi`).
 - Network modeling: buses, lines, transformers, generators, loads, shunts, links, and π-equivalent branch models.
 - Outer-loop control framework: transformer tap/voltage control (OLTC, PST with tap-dependent reactance, combined regulation), remote voltage control via machine reactive power, and SVC-style variable-shunt voltage control, all reported through one generic controllable-element view.
 - Configuration-driven batch execution for systematic case studies.
 - External-solver integration via the `PFModel` / `PFSolution` interface, including an optional analytic power-series solver (APSLF, via AnalyticLoadFlow.jl) usable standalone, as the primary solver, or as a Newton-Raphson start-value generator.
-- Nonlinear weighted-least-squares state estimation.
+- Nonlinear weighted-least-squares state estimation (`runse!`) with built-in observability analysis: global and local observability with structural and numerical checks (`evaluate_global_observability` / `evaluate_local_observability`), critical-versus-redundant measurement classification, bad-data identification through normalized residuals on the residual covariance with w_ii as the localizability indicator and a correlation bound for singly redundant groups, zero-injection handling, island-wise solving, PMU current phasors with the reference-angle offset as an estimated state, and the Takahashi selected inverse powering the diagnostics.
 - Machine-readable reporting (`ACPFlowReport`) and an optional local Web UI.
 
 ## Scope
@@ -79,6 +81,32 @@ The notebooks are generated from the Literate.jl sources in [docs/lit/](docs/lit
 - Out of scope: dynamic simulation (RMS/EMT), optimal power flow, protection coordination beyond IEC 60909 currents.
 
 ---
+
+## Startup latency
+
+Julia compiles on first use: the first power-flow run in a fresh process is
+slow, later runs in the same process are fast. Keep the process running, or
+build a sysimage once with `buildSysimage()`. Sparlectra runs on an
+installed Julia; the sysimage shortens the start, it does not replace the
+installation.
+
+The sysimage is not tied to the Web UI. Build it once and start any Julia
+session with it:
+
+```julia
+using Sparlectra
+buildSysimage()          # prints the path it wrote
+```
+
+```bash
+julia --sysimage ~/.local/state/sparlectra/webui/sysimage/sparlectra.so --project=. my_script.jl
+```
+
+The session then has Sparlectra compiled in: `using Sparlectra` returns at
+once and the first `runpf!` runs at full speed, whether the script opens
+the Web UI, runs a batch, or is used interactively. Details and a
+copy-paste quickstart are in the
+[integration guide](https://welthulk.github.io/Sparlectra.jl/integration/).
 
 ## Installation
 
@@ -98,28 +126,34 @@ using Sparlectra
 The install scripts also run straight from this page. They install Julia
 when it is missing (official juliaup installer; on Windows via winget),
 download Sparlectra at its **latest tagged release** into a `Sparlectra/`
-folder inside the current directory, ask once whether to build the optional
-[fast-start sysimage](https://welthulk.github.io/Sparlectra.jl/fast_start/)
-(a one-time build of 6 to 20 minutes; later Web UI starts then skip the
-JIT warm-up, answering `n` or just pressing Enter skips it), and start the
-Web UI. Run the command in the directory where Sparlectra should live.
+folder inside the current directory, and start the Web UI. Run the command
+in the directory where Sparlectra should live. The first start offers to
+build the [sysimage](https://welthulk.github.io/Sparlectra.jl/sysimage/)
+(a one-time build of 10 to 20 minutes; afterwards no page compiles on first
+use). No answer means yes; `n` starts without it.
 
 Linux/macOS:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Welthulk/Sparlectra.jl/main/install_webui.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Welthulk/Sparlectra.jl/main/tools/install_webui.sh | sh
 ```
 
 Windows (PowerShell):
 
 ```powershell
-iwr -useb https://raw.githubusercontent.com/Welthulk/Sparlectra.jl/main/install_webui.bat -OutFile install_webui.bat; .\install_webui.bat
+iwr -useb https://raw.githubusercontent.com/Welthulk/Sparlectra.jl/main/tools/install_webui.bat -OutFile install_webui.bat; .\install_webui.bat
 ```
 
-For unattended installs, `SPARLECTRA_BUILD_SYSIMAGE=1` (build) or `=0`
-(skip) answers the sysimage question without a prompt. The sysimage can
-also be built later at any time: `julia tools/build_sysimage.jl` from the
-Sparlectra folder, or via the Web UI **Fast start** page.
+**Security note:** these one-line commands download a script from the
+network and execute it directly, which is inherently risky. Review
+[tools/install_webui.sh](tools/install_webui.sh) or
+[tools/install_webui.bat](tools/install_webui.bat) before running them, or
+clone the repository and start from the checkout instead.
+
+For unattended installs, `SPARLECTRA_BUILD_SYSIMAGE=1` builds the image
+during the installation instead of at the first start. It can also be
+rebuilt at any time: `./start_webui.sh --rebuild-sysimage`, or
+`julia tools/build_sysimage.jl` from the Sparlectra folder.
 
 The installer also offers a desktop shortcut (Windows `.lnk`) or launcher
 (`.desktop` file, symlink fallback) for restarting the Web UI later;
@@ -130,8 +164,8 @@ prompt.
 existing `Sparlectra/` copy the installer compares it against the latest
 tagged release and offers the update (default yes; `SPARLECTRA_UPDATE=1`
 or `=0` answers without a prompt). The previous copy is kept as
-`Sparlectra.old` until you delete it, and a fast-start sysimage from the
-old version is detected as stale and can be rebuilt in the same run.
+`Sparlectra.old` until you delete it, and a sysimage from the old version
+is detected as stale, so the next start offers a rebuild.
 
 ### Software Bill of Materials (SBOM)
 
@@ -150,12 +184,13 @@ never enters the package `Project.toml`);
 
 ### Web UI start scripts
 
-The repository root ships ready-made scripts for the local Web UI:
+The repository ships ready-made scripts for the local Web UI (start
+scripts in the root, the installers under `tools/`):
 
 | | Linux/macOS | Windows |
 |---|---|---|
 | Start (Julia already installed) | `./start_webui.sh` | `start_webui.bat` |
-| Install and start | `./install_webui.sh` | `install_webui.bat` |
+| Install and start | `./tools/install_webui.sh` | `tools\\install_webui.bat` |
 
 `start_webui.sh` / `start_webui.bat` start the Web UI from the checkout
 (resolving Julia dependencies once on first start). If Julia is missing they
@@ -167,8 +202,7 @@ on Windows via winget, no git required there), obtain Sparlectra at its
 **latest tagged release** (an existing checkout is used in place; a clean
 git tree is moved to the release tag, local changes are never touched;
 outside a checkout the release is cloned or downloaded next to the script),
-offer the optional fast-start sysimage build (see above), and then start
-the Web UI.
+and then start the Web UI, which offers the sysimage build (see above).
 
 ---
 
@@ -237,6 +271,8 @@ Sparlectra ships with an optional browser-based local Web UI for power-flow stud
 | Import | `importCGMES` / `createNetFromCGMES` | Read an ENTSO-E CGMES delivery into a `Net`, with `summarizeCGMES` for diagnosis and `compareWithSV` for validation |
 | Export | `writeCGMESFiles` | Write a `Net` as a complete CGMES delivery (EQ+TP+SSH+SV, optional ZIP) with roundtrip-stable mRIDs |
 | Short circuit | `runShortCircuit!` | Balanced short-circuit currents (IEC 60909-0) from harvested CGMES short-circuit data |
+| State estimation | `runse!` | Weighted-least-squares estimation on the net's measurement set, with bad-data diagnostics and the se_view summary |
+| Observability | `evaluate_global_observability` / `evaluate_local_observability` | Structural and numerical observability, quality labels, critical-measurement classification; the local form runs on a chosen state subset for placement studies |
 
 ---
 

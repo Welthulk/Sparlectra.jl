@@ -85,7 +85,15 @@ function run_dc_powerflow_tests()
     end
 
     @testset "Reference values: MATPOWER case9" begin
-      net = createNetFromMatPowerFile(filename = ensure_casefile("case9.m"))
+      # load_fixture_net: this va/flow table is an EXTERNAL MATPOWER oracle;
+      # re-deriving it on a shipped case would make it circular, so the leg
+      # runs from the local cache only and a fresh install skips it loudly
+      # (the always-on DC anchors are the hand-verified 3-bus fixture above
+      # and the hand-checkable sp_case5 dispatch below)
+      if !fixture_net_available("case9")
+        println("      dc reference case9: SKIPPED (data/mpower/case9.m not cached)")
+      else
+      net = load_fixture_net("case9")
       report = rundcpf!(net)
       @test report.metadata.converged
       va_expected = [0.0, 9.796019, 5.06056, -2.211159, -3.738091, 2.206657, 0.822441, 3.959011, -4.0634]
@@ -98,10 +106,15 @@ function run_dc_powerflow_tests()
       end
       slack_row = only(filter(row -> row.bus == 1, report.nodes))
       @test isapprox(slack_row.p_gen_MW, 67.0; atol = 1e-6)
+      end
     end
 
     @testset "Reference values: MATPOWER case14 (off-nominal-tap transformers)" begin
-      net = createNetFromMatPowerFile(filename = ensure_casefile("case14.m"))
+      # same external-oracle premise as the case9 leg above
+      if !fixture_net_available("case14")
+        println("      dc reference case14: SKIPPED (data/mpower/case14.m not cached)")
+      else
+      net = load_fixture_net("case14")
       report = rundcpf!(net)
       @test report.metadata.converged
       va_expected = [0.0, -5.012011, -12.953663, -10.583667, -9.093894, -14.852079, -13.907055, -13.907055, -15.694689, -15.974123, -15.61885, -15.967077, -16.139704, -17.188288]
@@ -109,6 +122,7 @@ function run_dc_powerflow_tests()
       @test all(isapprox(a, b; atol = 1e-3) for (a, b) in zip(va, va_expected))
       slack_row = only(filter(row -> row.bus == 1, report.nodes))
       @test isapprox(slack_row.p_gen_MW, 219.0; atol = 1e-6)
+      end
     end
 
     @testset "Phase-shifter coverage (Pfinj)" begin
@@ -129,12 +143,36 @@ function run_dc_powerflow_tests()
     end
 
     @testset "Property: net injection balances to zero (lossless)" begin
-      for (casefile, atol) in (("case9.m", 1e-6), ("case14.m", 1e-6))
-        net = createNetFromMatPowerFile(filename = ensure_casefile(casefile))
+      # load_fixture_net: the lossless-balance property is case-agnostic, so
+      # it runs on tracked/shipped cases instead of downloaded IEEE cases (a
+      # fresh install downloads nothing); warmup_casePST doubles as the
+      # closed-link regression case below
+      nets = (
+        ("warmup_casePST", load_fixture_net("warmup_casePST")),
+        ("sp_case14", load_fixture_net("sp_case14")),
+        ("sp_case5", load_fixture_net("sp_case5")),
+      )
+      for (label, net) in nets
         report = rundcpf!(net)
         total = sum(row.p_gen_MW - row.p_load_MW for row in report.nodes)
-        @test isapprox(total, 0.0; atol = atol)
+        @test (label, isapprox(total, 0.0; atol = 1e-6)) == (label, true)
       end
+    end
+
+    @testset "closed busbar couplers are contracted (link merge regression)" begin
+      # before 2026-09-04 the DC path skipped _merged_pf_net: the two
+      # sections of a CLOSED coupler were separate DC nodes, which either
+      # split off a false reference-less island (warmup_casePST, its second
+      # section hangs on the link alone) or silently solved the sections
+      # 3.1/13.6 deg apart (sp_case60/sp_case188). The contraction makes
+      # them one node: identical angles by construction.
+      net60 = load_fixture_net("sp_case60")
+      rep60 = rundcpf!(net60)
+      va = Dict(row.bus_name => row.va_deg for row in rep60.nodes)
+      @test va["Neubach_110"] == va["Neubach_110b"]
+      # warmup_casePST solving AT ALL is the reference-less-island
+      # regression; the balance property above already asserts its numbers
+      @test rundcpf!(load_fixture_net("warmup_casePST")).metadata.converged
     end
 
     @testset "Island coverage: two independent islands" begin
@@ -171,9 +209,10 @@ function run_dc_powerflow_tests()
     end
 
     @testset "Controller + DC solver rejection" begin
-      mpc = Sparlectra.MatpowerIO.read_case(ensure_casefile("case14.m"))
-      net = Sparlectra.createNetFromMatPowerCase(mpc = mpc, flatstart = true)
-      addPowerTransformerControl!(net; trafo = "B_2WT_1_4_7", mode = :voltage, target_bus = "7", target_vm_pu = 1.0, control_ratio = true)
+      # load_fixture_net: the shipped sp_case14 carries a REAL declared tap
+      # controller, so the rejection is tested against the file's own
+      # controller instead of one hand-attached to a downloaded case
+      net = Sparlectra.importSCF(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json")))
       @test length(Sparlectra.collect_outer_controllers(net)) == 1
 
       cfg = Sparlectra.SparlectraConfig(powerflow = Sparlectra.PowerFlowConfig(solver = :dc), output = OutputConfig(logfile_results = :off))
@@ -182,12 +221,13 @@ function run_dc_powerflow_tests()
 
     @testset "run_sparlectra dispatch: power_flow.solver=:dc" begin
       cfg = Sparlectra.SparlectraConfig(powerflow = Sparlectra.PowerFlowConfig(solver = :dc), output = OutputConfig(logfile_results = :off))
-      result = run_sparlectra(casefile = "case9.m", path = joinpath(dirname(ensure_casefile("case9.m"))), config = cfg)
+      result = run_sparlectra(casefile = "sp_case5.scf.json", path = joinpath(dirname(@__DIR__), "data", "scf"), config = cfg)
       @test result.method === :dc
       @test result.final_converged
       @test result.diagnostics.solver === :dc
-      slack_row = only(filter(n -> n.busIdx == 1, result.net.nodeVec))
-      @test isapprox(slack_row._pƩGen, 67.0; atol = 1e-6)
+      # hand-checkable: 32 MW load minus the 12 MW PV machine, lossless DC
+      slack_row = result.net.nodeVec[result.net.busDict["Sandau_110"]]
+      @test isapprox(slack_row._pƩGen, 20.0; atol = 1e-6)
     end
 
     @testset "angle_reference_deg is an exact uniform shift" begin
@@ -205,7 +245,8 @@ function run_dc_powerflow_tests()
     end
 
     @testset "seed_ac_start: DC-seeded AC Newton-Raphson solve" begin
-      net = createNetFromMatPowerFile(filename = ensure_casefile("case9.m"))
+      # load_fixture_net: property-style, runs on the shipped case
+      net = load_fixture_net("sp_case5")
       report = rundcpf!(net; seed_ac_start = true)
       @test report.metadata.seed_ac_start === true
       @test report.metadata.ac_converged === true
@@ -235,7 +276,7 @@ function run_dc_powerflow_tests()
 
     @testset "dc_seed_unconditional: config-driven DC-seeded AC Newton-Raphson solve" begin
       cfg = Sparlectra.SparlectraConfig(powerflow = Sparlectra.PowerFlowConfig(start_mode = Sparlectra.StartModeConfig(dc_seed_unconditional = true)), output = OutputConfig(logfile_results = :off))
-      result = run_sparlectra(casefile = "case9.m", path = joinpath(dirname(ensure_casefile("case9.m"))), config = cfg)
+      result = run_sparlectra(casefile = "sp_case5.scf.json", path = joinpath(dirname(@__DIR__), "data", "scf"), config = cfg)
       @test result.method === :rectangular
       @test result.final_converged
       @test result.diagnostics.solver === :rectangular
@@ -251,7 +292,7 @@ function run_dc_powerflow_tests()
 
       # Regression: default (dc_seed_unconditional=false) still converges the same case.
       cfg_default = Sparlectra.SparlectraConfig(output = OutputConfig(logfile_results = :off))
-      result_default = run_sparlectra(casefile = "case9.m", path = joinpath(dirname(ensure_casefile("case9.m"))), config = cfg_default)
+      result_default = run_sparlectra(casefile = "sp_case5.scf.json", path = joinpath(dirname(@__DIR__), "data", "scf"), config = cfg_default)
       @test result_default.final_converged
       @test result_default.diagnostics.solver === :rectangular
     end

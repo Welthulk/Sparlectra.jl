@@ -97,6 +97,46 @@ function run_solver_interface_tests()
   # Covers solver-interface integration and option behavior:
   # external model API, Q-limit reporting/autocorrection, PV->PQ locking, and final-limit reporting.
   @testset "Solver interface" begin
+    @testset "tolerance physical equivalent (task_tol_watts)" begin
+      # the run log, the diagnostics and the docs show tol * baseMVA in a
+      # readable unit; the default 1e-8 pu at the 100 MVA base is 1 W
+      @test Sparlectra.format_tolerance_physical(1.0e-8, 100.0) == "1.0e-8 pu, equals 1 W at 100.0 MVA base"
+      @test Sparlectra.format_tolerance_physical(1.0e-5, 100.0) == "1.0e-5 pu, equals 1 kW at 100.0 MVA base"
+      @test Sparlectra.format_tolerance_physical(0.01, 100.0) == "0.01 pu, equals 1 MW at 100.0 MVA base"
+      @test occursin("W at 50.0 MVA base", Sparlectra.format_tolerance_physical(1.0e-8, 50.0))
+    end
+
+    @testset "power_flow.tol_MW wins over tol at the case base (part B)" begin
+      # absent: nothing changes, the per-unit default stands
+      base_cfg = Sparlectra.SparlectraConfig()
+      @test base_cfg.powerflow.tol_MW === nothing
+      @test base_cfg.powerflow.tol == 1.0e-8
+      net = Sparlectra.importSCF(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case5.scf.json")))
+      @test Sparlectra._resolve_tolerance_for_net(base_cfg.powerflow, net) === base_cfg.powerflow
+      # set: converted with the NETWORK base, and it outranks tol
+      cfg = Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("tol" => 1.0e-5, "tol_MW" => 0.002)))
+      @test cfg.powerflow.tol_MW == 0.002
+      eff = Sparlectra._resolve_tolerance_for_net(cfg.powerflow, net)
+      @test eff.tol == 0.002 / net.baseMVA
+      @test eff.tol != cfg.powerflow.tol
+      # validation: zero and negative are errors NAMING the key, an
+      # implausibly coarse bound is a warning and stays usable
+      for bad in (0.0, -1.0)
+        err = try
+          Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("tol_MW" => bad)))
+          nothing
+        catch e
+          e
+        end
+        @test err isa ArgumentError
+        @test occursin("power_flow.tol_MW", sprint(showerror, err))
+      end
+      coarse = Test.@test_logs (:warn, r"very coarse convergence bound") match_mode = :any Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("tol_MW" => 5.0)))
+      @test coarse.powerflow.tol_MW == 5.0
+      # the key travels through the override surface like any other
+      @test "power_flow.tol_MW" in Sparlectra.GUI_EDITABLE_CONFIG_KEYS
+    end
+
     @test test_external_solver_interface() == true
     @testset "Rectangular PF status lives on the Net" begin
       # Phase 1 thread-safety rework: the former global weak-ref registry is
@@ -610,7 +650,9 @@ end
       @test isdefined(Main, :ensure_casefile)
       @test Sparlectra.ensure_casefile === Sparlectra.FetchMatpowerCase.ensure_casefile
 
-      pf_config = PowerFlowConfig(max_iter = 40, tol = 1e-8, sparse = true, start_mode = StartModeConfig(flatstart = true))
+      # no `sparse` keyword any more: sparse matrices are mandatory since
+      # 0.9.x, so the field was deleted rather than kept as a constant true
+      pf_config = PowerFlowConfig(max_iter = 40, tol = 1e-8, start_mode = StartModeConfig(flatstart = true))
 
       net_direct = createTest3BusNet()
       _, erg_direct = runpf!(net_direct; config = pf_config)
@@ -759,18 +801,18 @@ end
     end
 
     @testset "Configured MATPOWER batch parsing and deterministic local execution" begin
-      cfg_cases = SparlectraConfig(Dict("matpower" => Dict("cases" => [" case_a.m ", "case_b.m"])))
-      @test cfg_cases.matpower.cases == ["case_a.m", "case_b.m"]
+      cfg_cases = SparlectraConfig(Dict("runtime" => Dict("cases" => [" case_a.m ", "case_b.m"])))
+      @test cfg_cases.runtime.cases == ["case_a.m", "case_b.m"]
       @test configured_matpower_cases(cfg_cases) == ["case_a.m", "case_b.m"]
 
-      cfg_single = SparlectraConfig(Dict("matpower" => Dict("case" => " case_single.m ")))
+      cfg_single = SparlectraConfig(Dict("runtime" => Dict("case" => " case_single.m ")))
       @test configured_matpower_cases(cfg_single) == ["case_single.m"]
 
-      cfg_precedence = SparlectraConfig(Dict("matpower_import" => Dict("case" => "case_single.m", "cases" => ["case_a.m", "case_b.m"])))
+      cfg_precedence = SparlectraConfig(Dict("runtime" => Dict("case" => "case_single.m", "cases" => ["case_a.m", "case_b.m"])))
       @test configured_matpower_cases(cfg_precedence) == ["case_a.m", "case_b.m"]
-      @test_throws ArgumentError SparlectraConfig(Dict("matpower" => Dict("cases" => "case_a.m")))
-      @test_throws ArgumentError SparlectraConfig(Dict("matpower" => Dict("cases" => ["case_a.m", " "])))
-      @test_throws ArgumentError run_sparlectra_cases(config = SparlectraConfig(matpower = MatpowerImportConfig(case = "")))
+      @test_throws ArgumentError SparlectraConfig(Dict("runtime" => Dict("cases" => "case_a.m")))
+      @test_throws ArgumentError SparlectraConfig(Dict("runtime" => Dict("cases" => ["case_a.m", " "])))
+      @test_throws ArgumentError run_sparlectra_cases(config = SparlectraConfig())
       @test_throws ArgumentError run_sparlectra_cases(config = cfg_single, performance_profile = Dict{Symbol,Any}())
 
       mktempdir() do tmpdir
@@ -880,19 +922,19 @@ mpc.branch = [
       end
 
       @testset "Config validation" begin
-        armijo_bad = tempname() * ".yaml"
+        armijo_bad = test_scratch_path(".yaml")
         write(armijo_bad, "power_flow:\n  autodamp: true\n  merit:\n    armijo_c1: 0.5\n")
         @test_throws ArgumentError Sparlectra.load_sparlectra_config(armijo_bad; reload = true)
 
-        scale_bad = tempname() * ".yaml"
+        scale_bad = test_scratch_path(".yaml")
         write(scale_bad, "power_flow:\n  autodamp: true\n  merit:\n    scale_p: -1.0\n")
         @test_throws ArgumentError Sparlectra.load_sparlectra_config(scale_bad; reload = true)
 
-        enabled_without_autodamp = tempname() * ".yaml"
+        enabled_without_autodamp = test_scratch_path(".yaml")
         write(enabled_without_autodamp, "power_flow:\n  autodamp: false\n  merit:\n    enabled: true\n")
         @test_throws ArgumentError Sparlectra.load_sparlectra_config(enabled_without_autodamp; reload = true)
 
-        ok_cfg = tempname() * ".yaml"
+        ok_cfg = test_scratch_path(".yaml")
         write(ok_cfg, "power_flow:\n  autodamp: true\n  merit:\n    enabled: true\n")
         loaded = Sparlectra.load_sparlectra_config(ok_cfg; reload = true)
         @test loaded.powerflow.merit.enabled == true
@@ -1000,34 +1042,34 @@ mpc.branch = [
 
     @testset "Trust-region step control" begin
       @testset "Config validation" begin
-        min_ge_initial = tempname() * ".yaml"
+        min_ge_initial = test_scratch_path(".yaml")
         write(min_ge_initial, "power_flow:\n  trust_region:\n    initial_radius: 1.0\n    min_radius: 1.0\n")
         @test_throws ArgumentError Sparlectra.load_sparlectra_config(min_ge_initial; reload = true)
 
-        bad_shrink = tempname() * ".yaml"
+        bad_shrink = test_scratch_path(".yaml")
         write(bad_shrink, "power_flow:\n  trust_region:\n    shrink_factor: 1.5\n")
         @test_throws ArgumentError Sparlectra.load_sparlectra_config(bad_shrink; reload = true)
 
-        bad_expand = tempname() * ".yaml"
+        bad_expand = test_scratch_path(".yaml")
         write(bad_expand, "power_flow:\n  trust_region:\n    expand_factor: 0.5\n")
         @test_throws ArgumentError Sparlectra.load_sparlectra_config(bad_expand; reload = true)
 
-        mutually_exclusive = tempname() * ".yaml"
+        mutually_exclusive = test_scratch_path(".yaml")
         write(mutually_exclusive, "power_flow:\n  autodamp: true\n  trust_region:\n    enabled: true\n")
         @test_throws ArgumentError Sparlectra.load_sparlectra_config(mutually_exclusive; reload = true)
 
-        ok_cfg = tempname() * ".yaml"
+        ok_cfg = test_scratch_path(".yaml")
         write(ok_cfg, "power_flow:\n  autodamp: false\n  trust_region:\n    enabled: true\n    initial_radius: 2.0\n")
         loaded = Sparlectra.load_sparlectra_config(ok_cfg; reload = true)
         @test loaded.powerflow.trust_region.enabled == true
         @test loaded.powerflow.trust_region.initial_radius == 2.0
         @test loaded.powerflow.trust_region.step_mode === :scaled
 
-        bad_step_mode = tempname() * ".yaml"
+        bad_step_mode = test_scratch_path(".yaml")
         write(bad_step_mode, "power_flow:\n  trust_region:\n    step_mode: bogus\n")
         @test_throws ArgumentError Sparlectra.load_sparlectra_config(bad_step_mode; reload = true)
 
-        dogleg_cfg = tempname() * ".yaml"
+        dogleg_cfg = test_scratch_path(".yaml")
         write(dogleg_cfg, "power_flow:\n  autodamp: false\n  trust_region:\n    enabled: true\n    step_mode: dogleg\n")
         loaded_dogleg = Sparlectra.load_sparlectra_config(dogleg_cfg; reload = true)
         @test loaded_dogleg.powerflow.trust_region.step_mode === :dogleg

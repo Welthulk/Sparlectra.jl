@@ -18,7 +18,7 @@
 
 using Sparlectra
 include(joinpath(@__DIR__, "..", "experimental", "qlimit_large_case_comparison.jl"))
-include(joinpath(@__DIR__, "..", "internal", "example_header.jl"))
+include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
 function _parse_args(args)
   cases = String[]

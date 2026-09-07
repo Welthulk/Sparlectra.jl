@@ -14,7 +14,7 @@
 
 # file: src/webui/webui.jl
 # purpose: local Web UI server (start_sparlectra_webui): TCP request loop,
-#          output-root defaults, browser launch, warmup, and lifecycle and
+#          output-root defaults, browser launch, and lifecycle and
 #          shutdown handling
 using Markdown
 using Sockets
@@ -33,7 +33,6 @@ mutable struct _SparlectraWebUIRuntime
   shutdown_reason::Union{Symbol,Nothing}
   lifecycle_io::IO
   lock::ReentrantLock
-  warmup_state::Symbol
 end
 
 """
@@ -398,45 +397,6 @@ function _webui_open_browser(url::String)
   return nothing
 end
 
-function _webui_set_warmup_state!(runtime::_SparlectraWebUIRuntime, state::Symbol)
-  lock(runtime.lock) do
-    runtime.warmup_state = state
-  end
-  return nothing
-end
-
-function _webui_warmup_in_progress(runtime::_SparlectraWebUIRuntime)::Bool
-  return lock(runtime.lock) do
-    # :waiting_first_page → server up, warm-up solve deliberately deferred
-    # until the warm-up page has been served once; :page_served → page went
-    # out, solve about to start; :warming → solve running.
-    runtime.warmup_state in (:waiting_first_page, :page_served, :warming)
-  end
-end
-
-"""Flip the warm-up gate once the warm-up page has been rendered for the
-browser, so the CPU-bound warm-up solve only starts after the user can see
-the "warming up" message instead of a blank tab."""
-function _webui_mark_warmup_page_served!(runtime::_SparlectraWebUIRuntime)
-  lock(runtime.lock) do
-    runtime.warmup_state === :waiting_first_page && (runtime.warmup_state = :page_served)
-  end
-  return nothing
-end
-
-_webui_mark_warmup_page_served!(::Any) = nothing
-
-function _webui_warmup_page_served(runtime::_SparlectraWebUIRuntime)::Bool
-  return lock(runtime.lock) do
-    runtime.warmup_state !== :waiting_first_page
-  end
-end
-
-# Some tests pass a lightweight NamedTuple stand-in for `runtime` (only the
-# fields a particular handler needs) instead of a full _SparlectraWebUIRuntime;
-# such stand-ins never warm up.
-_webui_warmup_in_progress(::Any)::Bool = false
-
 function _webui_record_heartbeat!(runtime::_SparlectraWebUIRuntime)
   lock(runtime.lock) do
     runtime.heartbeat_received = true
@@ -508,10 +468,7 @@ end
                             output_root=nothing,
                             config_file=DEFAULT_SPARLECTRA_CONFIG_PATH,
                             open_browser=false,
-                            shutdown_on_browser_close=false,
-                            warmup=false, warmup_casefile=nothing,
-                            warmup_store_result=false,
-                            warmup_delay_seconds=2.0) -> Union{Nothing,SparlectraWebUIServer}
+                            shutdown_on_browser_close=false) -> Union{Nothing,SparlectraWebUIServer}
 
 Start the loopback-only PowerFlow interface and load its persistent run registry
 before accepting requests. The returned handle can be stopped with
@@ -523,96 +480,7 @@ that instance first to actually restart. A foreign process on the port
 still raises the explicit `ArgumentError`. Browser-process
 lifetime is not used for automatic shutdown by default because common browsers
 may return a short-lived launcher process instead of a reliably owned window.
-`warmup` defaults to `nothing`: the configuration decides (`webui.warmup`,
-default `true`, editable under the form's Advanced options); an explicit
-`true`/`false` always wins. When warm-up is active, hidden asynchronous runs
-compile the common import/API/solver path plus the short-circuit path.
-When `warmup=true`, hidden asynchronous runs compile the common import/API/
-solver path. By default the bundled synthetic 3-bus case runs first (plumbing),
-followed by the bundled synthetic 118-bus case (realistic sparse-solve and
-reporting paths), each in a temporary output directory, so no run-history
-entries are added and no artifacts retained. An explicit `warmup_casefile`
-replaces the whole sequence. Set `warmup_store_result=true` to retain warm-up
-artifacts beneath the configured output root (one subdirectory per case).
-
-The warm-up run is scheduled on a background task, but Julia's single-threaded
-cooperative scheduler still means a CPU-bound solve of that task can delay the
-HTTP server from responding to the *first* browser request until the solve
-reaches a yield point. The warm-up solve therefore only starts after the
-"warming up" page has actually been served once (with a 30 s fallback when no
-browser connects), followed by a `warmup_delay_seconds` grace period (default
-`2.0`) so the browser can paint it. After the solve, the PowerFlow form render
-path is pre-compiled as well, so the automatic refresh that replaces the
-warm-up page is fast.
 """
-function _run_sparlectra_webui_warmup(output_root::AbstractString; warmup_casefile::Union{Nothing,AbstractString} = nothing, warmup_store_result::Bool = false, runner = run_sparlectra_api)
-  # Default warm-up sequence: the 3-bus case warms the plumbing (parser, config,
-  # result pipeline), the synthetic 118-bus case afterwards warms the realistic
-  # sparse-solve and reporting paths, so the user's first real run does not pay
-  # that compilation. An explicit warmup_casefile replaces the whole sequence.
-  casefiles = if warmup_casefile === nothing
-    [joinpath(_WEBUI_PACKAGE_ROOT, "data", "webui", "warmup_case3.jl"), joinpath(_WEBUI_PACKAGE_ROOT, "data", "webui", "warmup_case118.jl")]
-  else
-    [abspath(warmup_casefile)]
-  end
-  for f in casefiles
-    isfile(f) || throw(ArgumentError("Web UI warm-up case file not found: $(f)"))
-  end
-  execute(casefile, output_dir) = runner(
-    casefile = casefile,
-    config_file = DEFAULT_SPARLECTRA_CONFIG_PATH,
-    output_dir = output_dir,
-    config_overrides = Dict("output.logfile_results" => "off", "benchmark.enabled" => false),
-    performance_timing = :off,
-    run_diagnostics = false,
-  )
-  # Each case gets its own output directory (the runner writes fixed-name
-  # artifacts). The last result is returned; a failed run aborts the sequence
-  # and returns its result so the caller sees the failure.
-  result = nothing
-  for casefile in casefiles
-    result = if warmup_store_result
-      output_dir = joinpath(abspath(output_root), "webui-warmup", first(splitext(basename(casefile))))
-      mkpath(output_dir)
-      execute(casefile, output_dir)
-    else
-      mktempdir() do output_dir
-        execute(casefile, output_dir)
-      end
-    end
-    (result !== nothing && hasproperty(result, :success) && !result.success) && return result
-  end
-  _warm_up_short_circuit_path()
-  return result
-end
-
-# The Short-circuit button hits a code path the power-flow warm-up never
-# touches (Z-bus column solve, IEC c-factor table, result/coverage types),
-# so its first click paid the full compilation. Warm it on a throwaway
-# two-bus net with one feeder — no CGMES delivery needed, `runShortCircuit!`
-# accepts any `Net` plus harvested data. Failures stay silent: warm-up must
-# never affect startup.
-function _warm_up_short_circuit_path()
-  try
-    net = Net(name = "webui_warmup_sc", baseMVA = 100.0)
-    addBus!(net = net, busName = "WU1", vn_kV = 110.0)
-    addBus!(net = net, busName = "WU2", vn_kV = 110.0)
-    addPIModelACLine!(net = net, fromBus = "WU1", toBus = "WU2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
-    addProsumer!(net = net, busName = "WU1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "WU1")
-    addProsumer!(net = net, busName = "WU2", type = "ENERGYCONSUMER", p = 10.0, q = 2.0)
-    feeder = (; mrid = "warmup_feeder", name = "WU_FEEDER", bus = "WU1",
-      maxInitialSymShCCurrent_A = 20000.0, minInitialSymShCCurrent_A = 15000.0,
-      maxR1ToX1Ratio = 0.1, minR1ToX1Ratio = 0.1)
-    sc_data = CGMESImporter.CGMESShortCircuitData([feeder], NamedTuple[], NamedTuple[], NamedTuple[], NamedTuple[], NamedTuple[])
-    for case in (:max, :min)
-      runShortCircuit!(net, sc_data; case = case)
-    end
-  catch err
-    @debug "Web UI short-circuit warm-up skipped" exception = (err, catch_backtrace())
-  end
-  return nothing
-end
-
 function _provision_webui_runtime!(root::AbstractString, config_file::Union{Nothing,AbstractString})
   configuration = config_file === nothing ? default_webui_config_path(root) : abspath(config_file)
   case_directory = default_webui_case_cache_dir(root)
@@ -620,7 +488,7 @@ function _provision_webui_runtime!(root::AbstractString, config_file::Union{Noth
   mkpath.(unique((abspath(root), dirname(configuration), case_directory, dirname(operation_log))))
   config_file === nothing && !isfile(configuration) && cp(DEFAULT_SPARLECTRA_CONFIG_PATH, configuration)
   isfile(configuration) || throw(ArgumentError("Web UI configuration file not found: $(configuration)"))
-  for warmup_name in ("warmup_case3.jl", "warmup_case118.jl")
+  for warmup_name in ("warmup_case3.jl", "warmup_case14.jl", "warmup_case118.jl")
     source = joinpath(_WEBUI_PACKAGE_ROOT, "data", "webui", warmup_name)
     isfile(source) || continue
     destination = joinpath(case_directory, basename(source))
@@ -638,7 +506,13 @@ function _webui_validate_startup_config(configuration::AbstractString)
   end
 end
 
-function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Integer = 8080, output_root::Union{Nothing,AbstractString} = nothing, config_file::Union{Nothing,AbstractString} = nothing, open_browser::Bool = false, shutdown_on_browser_close::Bool = false, auto_shutdown_on_browser_close::Union{Nothing,Bool} = nothing, browser_heartbeat_timeout_seconds::Real = 15.0, warmup::Union{Nothing,Bool} = nothing, warmup_casefile::Union{Nothing,AbstractString} = nothing, warmup_store_result::Bool = false, warmup_delay_seconds::Real = 2.0, _test_runner = start_powerflow_run, _lifecycle_io::IO = stdout, _browser_opener = _webui_open_browser)::Union{Nothing,SparlectraWebUIServer}
+"""
+    start_sparlectra_webui(; host, port, output_root, config_file, ...) -> SparlectraWebUIServer
+
+Start the local Web UI server; returns the server handle (stop it with the
+page's own button or by closing the process).
+"""
+function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Integer = 8080, output_root::Union{Nothing,AbstractString} = nothing, config_file::Union{Nothing,AbstractString} = nothing, open_browser::Bool = false, shutdown_on_browser_close::Bool = false, auto_shutdown_on_browser_close::Union{Nothing,Bool} = nothing, browser_heartbeat_timeout_seconds::Real = 15.0, _test_runner = start_powerflow_run, _lifecycle_io::IO = stdout, _browser_opener = _webui_open_browser)::Union{Nothing,SparlectraWebUIServer}
   host_string = String(host)
   host_string in ("127.0.0.1", "localhost", "::1") || (err = ArgumentError("Sparlectra Web UI only accepts loopback hosts: 127.0.0.1, localhost, or ::1."); _webui_startup_failure!(_lifecycle_io, err, catch_backtrace(); phase = "validate_arguments"); throw(err))
   1 <= port <= 65535 || (err = ArgumentError("Web UI port must be between 1 and 65535."); _webui_startup_failure!(_lifecycle_io, err, catch_backtrace(); phase = "validate_arguments"); throw(err))
@@ -654,9 +528,24 @@ function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Inte
     throw(wrapped)
   end
   # Prune once at startup so normal requests keep append-only operation logging
-  # unless a size safety cap is reached later.
+  # unless a size safety cap is reached later. The retention comes from the
+  # configuration (webui.operation_log_retention_days, default 10 days); the
+  # environment variable still wins for headless runs that read no file.
+  #
+  # EVERY known operation log is pruned, not only the runtime's: a caller that
+  # passes an output root directly (a service or API call without a Web UI
+  # runtime) writes a second log next to the runs, and that one used to age
+  # without limit - the oldest entry found in the wild was two months old.
   try
-    _prune_webui_operation_log!(paths.operation_log; _webui_operation_log_options()...)
+    configured_days = try
+      load_sparlectra_config(paths.config_file; reload = true).webui.operation_log_retention_days
+    catch
+      nothing   # a broken configuration must not stop the pruning
+    end
+    options = _webui_operation_log_options(; retention_days = configured_days)
+    for log_path in unique((paths.operation_log, webui_operation_log_path(root)))
+      isfile(log_path) && _prune_webui_operation_log!(log_path; options...)
+    end
   catch err
     @warn "Could not prune Web UI operation log during startup" exception = (err, catch_backtrace())
   end
@@ -695,11 +584,7 @@ function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Inte
   end
   _webui_startup_log(_lifecycle_io, "webui_server_bound"; operation_log = paths.operation_log, status = "bound", host = host_string, port = Int(port))
   effective_shutdown_on_browser_close = auto_shutdown_on_browser_close === nothing ? shutdown_on_browser_close : Bool(auto_shutdown_on_browser_close)
-  # The library default stays "no warm-up" (a programmatic caller should not
-  # silently pay compile runs); `webui.warmup` governs the user-facing
-  # launchers, which read it and pass the value explicitly.
-  effective_warmup = warmup === nothing ? false : Bool(warmup)
-  runtime = _SparlectraWebUIRuntime(listener, paths.case_directory, paths.config_file, paths.operation_log, config_error, _test_runner, effective_shutdown_on_browser_close, false, 0.0, 0, nothing, _lifecycle_io, ReentrantLock(), effective_warmup ? :waiting_first_page : :disabled)
+  runtime = _SparlectraWebUIRuntime(listener, paths.case_directory, paths.config_file, paths.operation_log, config_error, _test_runner, effective_shutdown_on_browser_close, false, 0.0, 0, nothing, _lifecycle_io, ReentrantLock())
   task = @async begin
     try
       while isopen(listener)
@@ -737,34 +622,6 @@ function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Inte
   catch
   end
   browser_monitor_task = nothing
-  if effective_warmup
-    @async try
-      # Serve the warm-up page before the CPU-bound warm-up solve starts: on
-      # Julia's single-threaded cooperative scheduler a busy warm-up task
-      # delays the HTTP response to the first browser request, leaving the
-      # user staring at a blank tab. Wait until the warm-up page has actually
-      # been rendered once (with a fallback timeout in case no browser
-      # connects), then give the browser a short grace period to paint it.
-      waited = 0.0
-      while waited < 30.0 && !_webui_warmup_page_served(runtime)
-        sleep(0.2)
-        waited += 0.2
-      end
-      delay = Float64(warmup_delay_seconds)
-      isfinite(delay) && delay > 0 && sleep(delay)
-      _webui_set_warmup_state!(runtime, :warming)
-      warmup_result = _run_sparlectra_webui_warmup(root; warmup_casefile, warmup_store_result)
-      warmup_result.success || @warn "Sparlectra Web UI warm-up run did not converge" reason = warmup_result.reason message = warmup_result.message
-      # Pre-compile the PowerFlow form render path too, so the automatic
-      # refresh that replaces the warm-up page does not pay the first-render
-      # JIT cost while the user is waiting.
-      render_powerflow_form(output_root = root, case_directory = paths.case_directory, operation_log = paths.operation_log, selected_config_file = paths.config_file)
-    catch err
-      @warn "Sparlectra Web UI warm-up failed; normal runs remain available" exception = (err, catch_backtrace())
-    finally
-      _webui_set_warmup_state!(runtime, :done)
-    end
-  end
   if open_browser
     browser_process = _browser_opener(url)
     if browser_process !== nothing && effective_shutdown_on_browser_close

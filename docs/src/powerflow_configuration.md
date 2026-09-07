@@ -16,9 +16,10 @@
 | YAML path | Type | Default | Allowed values | Meaning | Use when | Avoid when | Performance impact | Interactions |
 |---|---:|---:|---|---|---|---|---|---|
 | `power_flow.method` | Symbol/String | `rectangular` | `rectangular` | AC solver formulation. | Always (current core). | N/A | Fixed single implementation. | Must match `benchmark.methods`. |
-| `power_flow.sparse` | Bool | `true` | `true` | Sparse linear algebra mode. | Always (required). | N/A | Scales better for large systems. | Validated together with `method`. |
+| `power_flow.mode` | Symbol | `manual` | `manual`, `auto` | `manual` keeps every option exactly as configured. `auto` inspects the imported network (size, AC islands, R/X profile, phase shifters, start profile, generator Q limits) and fills the start-value, step-control, and Q-limit strategy for keys the user did NOT set explicitly; explicit keys (overrides, or file values differing from the template default) always win. On non-convergence a bounded escalation ladder retries (step-control switch, guarded pre-solve, full start projection, Q-limit relax/mode switch, APSLF-seeded NR, optional DC fallback via `power_flow.dc.fallback`); the tolerance is never changed. Decisions, conflicts, attempts, and hints land in the `auto_mode_decision.log` artifact and the result metadata (`auto_profile`, `auto_final_stage`, `auto_final_solver`, `auto_hints`). | Integrations that should just work without reading this page (see [Integration Guide](integration.md)). | Strict reproducibility studies where every option must be pinned. | Feature extraction is one cheap pass; escalations only run on failed solves. | The solver-internal `power_flow.rescue` ladder stays active inside every auto attempt; the escalation stages add the strategies it does not cover. |
 | `power_flow.flatstart` | Bool | `false` | `true`, `false` | Legacy flatstart toggle; `false` keeps imported start voltages (MATPOWER `VM`/`VA`, CGMES `SvVoltage`). On CGMES runs `cgmes_import.start_values` (`flat` default / `sv`) wins over this key — see [CGMES Import](cgmes_import.md). | Synthetic starts. | When start projection and imported starts are used — `true` silently discards a CGMES SV start. | Low. | Combined into `start_mode`. |
-| `power_flow.tol` | Float64 | `1.0e-5` | positive real | PF tolerance. | Accuracy-sensitive studies. | Overly tight on big batches. | Tighter means more iterations. | `max_iter`. |
+| `power_flow.tol` | Float64 | `1.0e-8` | positive real | Convergence bound for the largest single bus mismatch (infinity norm, active and reactive alike; PV rows contribute their voltage residual). Physically `tol * baseMVA`: 1e-8 pu equals 1 W at a 100 MVA base, and the run log and diagnostics print the equivalent. | Accuracy-sensitive studies. | Overly tight on big batches. | Tighter means more iterations. | `max_iter`. |
+| `power_flow.tol_MW` | Float64 or unset | unset | positive real | The same bound in physical units. When set it WINS over `power_flow.tol` and is converted with the case base at run time (`tol = tol_MW / baseMVA`), because the base belongs to the network, not to the configuration. Unset changes nothing. | Stating the accuracy in MW instead of per unit; the run form offers it next to the per-unit tolerance (leave it empty to use per unit). | A value near the network's own power scale accepts an unsolved state; values at or above 1 MW are warned about. | Zero or negative is refused by name. | `tol`. |
 | `power_flow.max_iter` | Int | `80` | positive integer | Iteration cap. | Hard cases. | Very low values. | Upper runtime bound. | `tol`, `qlimits`. |
 | `power_flow.autodamp` | Bool | `true` | `true`, `false` | Adaptive damping. | Difficult convergence. | Strict algorithm comparison. | Small overhead, often fewer failures. | `autodamp_min`. |
 | `power_flow.autodamp_min` | Float64 | `0.05` | positive real | Minimum damping factor. | Stabilizing hard cases. | Near-zero damping on easy grids. | Lower can increase iterations. | Active only with `autodamp=true`. |
@@ -34,9 +35,8 @@ solution; it is independent of `power_flow.method`, which fixes the AC
 formulation family (currently always `rectangular`). `apslf` routes the run
 through the external-solver bridge (`buildPfModel` → `solvePf(ApslfSolver(...))`
 → `applyPfSolution!`) to AnalyticLoadFlow.jl's analytic power-series solver
-instead of the internal Newton-Raphson loop. It requires the optional
-AnalyticLoadFlow.jl dependency to be loaded (`using AnalyticLoadFlow`); see
-`apslf_solver`.
+instead of the internal Newton-Raphson loop. AnalyticLoadFlow.jl is a
+required dependency, so nothing has to be loaded for it; see `apslf_solver`.
 
 ```yaml
 power_flow:
@@ -80,7 +80,7 @@ solve: a linear screening model built from branch series reactance only
 inside `B'` itself. `Vm` is implicitly `1.0 pu` at every bus and there are
 no losses — both by definition of the DC model, not solver limitations. It
 can also be called directly, independent of `run_sparlectra`/`power_flow.solver`,
-via [`rundcpf!`](@ref reference_powerflow_dc).
+via [`rundcpf!`](@ref).
 
 ```yaml
 power_flow:
@@ -306,7 +306,7 @@ power_flow:
 | YAML path | Type | Default | Allowed values | Meaning |
 |---|---:|---:|---|---|
 | `power_flow.external_grid.enabled` | Bool | `false` | `true`, `false` | Master switch. Off keeps the classical ideal slack. |
-| `power_flow.external_grid.source` | Symbol/String | `auto` | `auto`, `config` | Where `Sk''`/`R/X` come from. `auto` prefers the values a CGMES delivery declares on the slack bus's `ExternalNetworkInjection` (logged as *declared by the case data*) and falls back to the config numbers — MATPOWER/DTF cases carry no such data. `config` always uses the config numbers. |
+| `power_flow.external_grid.source` | Symbol/String | `auto` | `auto`, `config` | Where `Sk''`/`R/X` come from. `auto` prefers the values the CASE declares on the slack bus (a CGMES `ExternalNetworkInjection`, or a Sparlectra Case Format `source` with `sk`/`rx_ratio`; logged as *declared by the case data*) and falls back to the config numbers — MATPOWER/DTF cases carry no such data. `config` always uses the config numbers. |
 | `power_flow.external_grid.sk_MVA` | Float | `2000.0` | > 0 | Initial symmetrical short-circuit power of the feeder. The series impedance is `z_pu = baseMVA/sk_MVA` on the per-voltage-level base. |
 | `power_flow.external_grid.rx` | Float | `0.1` | ≥ 0 | R/X ratio of the feeder impedance. |
 
@@ -332,7 +332,9 @@ zero and the source degenerates to a bare angle anchor.
 |---|---:|---:|---|---|---|---|---|---|
 | `power_flow.start_mode.angle_mode` | Symbol/String | `dc` | `classic`, `dc`, `bus_va_blend`, `matpower_va` | Angle initialization source mode. | Transmission-like starts. | If trusted measured/historical state exists. | Can reduce iterations. | `try_dc_start`, `dc_angle_limit_deg`. |
 | `power_flow.start_mode.voltage_mode` | Symbol/String | `profile_blend` | `classic`, `pv_gen_vg`, `pv_bus_vm`, `all_bus_vm`, `profile_blend` | Voltage-magnitude/angle blend strategy. | Imported-reference assisted starts. | Untrusted imported data. | Small startup overhead. | `blend_lambdas`, `reuse_import_data`. |
-| `power_flow.start_mode.profile_source` | Symbol/String | `matpower_reference` | `flat`, `dc`, `bus_metadata`, `historical_profile`, `matpower_reference`, `state_estimation`, `scada_snapshot` | Source for external or model-derived start profiles. `matpower_reference` means imported `BUS.VM`/`BUS.VA` values for regression/benchmarking/import reproduction. | Profile-aware starts. | When source data is unavailable or untrusted. | Minimal parsing overhead. | Keep source explicit for diagnostics and reproducibility. |
+| `power_flow.start_mode.profile_source` | Symbol/String | `matpower_reference` | `flat`, `dc`, `bus_metadata`, `historical_profile`, `matpower_reference`, `state_estimation`, `se_snapshot`, `scada_snapshot` | Source for external or model-derived start profiles. `matpower_reference` means imported `BUS.VM`/`BUS.VA` values for regression/benchmarking/import reproduction. | Profile-aware starts. | When source data is unavailable or untrusted. | Minimal parsing overhead. | Keep source explicit for diagnostics and reproducibility. |
+| `power_flow.start_mode.profile_source = state_estimation` | Symbol/String | see above | see above | SE chain start: the power flow starts from the estimated VOLTAGES of a preceding state estimation; the model injections stay authoritative, the measurement/model difference goes into the slack. Programmatic entry `runpf_from_se!(...; mode = :se_state)`. | Model-authoritative PF after an SE. | No preceding SE result (clear error). | Starts near the solution. | `runse!(updateNet = true)`, `readSEStateCSV!`, the Web UI chain action. |
+| `power_flow.start_mode.profile_source = se_snapshot` | Symbol/String | see above | see above | SE chain start with balance takeover: additionally the nodal balances come from the estimation (working net only, the persistent model is never mutated). Converges in 0 or 1 iterations with the slack pickup below tolerance. Programmatic entry `runpf_from_se!(...; mode = :se_snapshot)`. | Snapshot-authoritative PF (reproduce the estimated operating point). | The model injections must stay authoritative (use `state_estimation`). | Immediate convergence. | Result metadata records the slack pickup. |
 | `power_flow.start_mode.start_projection` | Bool | `true` | `true`, `false` | Enables start-projection workflow. | Robustness on hard cases. | Minimal-path microbench runs. | Extra startup pass. | Gates start-projection sub-options. |
 | `power_flow.start_mode.try_dc_start` | Bool | `true` | `true`, `false` | Try DC candidate start. | Large transmission cases. | Highly resistive distribution cases. | Low overhead. | `dc_angle_limit_deg`. |
 | `power_flow.start_mode.try_blend_scan` | Bool | `true` | `true`, `false` | Scan blend candidates. | Mixed/tricky start data. | Easy cases needing speed. | Startup cost ∝ lambda count. | `blend_lambdas`. |
@@ -659,7 +661,7 @@ The Web UI mirrors these rules client-side: the *Autodamping & merit-function li
 
 ## Safe configuration refresh
 
-Use `refresh_sparlectra_config_file(path; write=false)` to check an existing user YAML against the current template without modifying it. The refresh helper preserves existing user-provided values, adds missing keys from `src/configuration.yaml.example`, reports duplicate keys, and can normalize known deprecated aliases when `normalize_deprecated=true`.
+Use `refresh_sparlectra_config_file(path; write=false)` to check an existing user YAML against the current template without modifying it. The refresh helper preserves existing user-provided values, adds missing keys from `src/config/configuration.yaml.example`, reports duplicate keys, and can normalize known deprecated aliases when `normalize_deprecated=true`.
 
 Writing is explicit: pass `write=true` to update the file. By default a timestamped `.bak-YYYYmmdd-HHMMSS` backup is created before writing, and duplicate keys prevent automatic writes. This refresh mechanism is a maintenance tool only; normal configuration loading still accepts supported Q-limit enforcement legacy aliases, and Sparlectra never silently rewrites user YAML during startup.
 
@@ -677,11 +679,11 @@ the named profiles refer to the start-mode/import options documented above.
 | `case1951rte.m` | 1 951 buses | ✅ (6 it) | standard import + DC-seeded blend start; expect legitimate PV→PQ switches |
 | `case2869pegase.m` | 2 869 buses | ✅ (3 it) | PEGASE shift convention (as above) |
 | `case9241pegase.m` | 9 241 buses | ✅ (4 it) | PEGASE shift convention + DC-seeded `profile_blend` start |
-| `case_ACTIVSg10k.m` | 10 000 buses | ✅ | DC-seeded `profile_blend` start (`matpower_import.auto_profile = recommend` selects it) |
+| `case_ACTIVSg10k.m` | 10 000 buses | ✅ | DC-seeded `profile_blend` start (`model.auto_profile = recommend` selects it) |
 | `case13659pegase.m` | 13 659 buses | ✅ (6 it) | start from the case's own reference (`angle_mode = matpower_va`, `voltage_mode = all_bus_vm`) — the usually-robust DC blend start does **not** converge on this case |
 | `case_ACTIVSg25k.m` | 25 000 buses | ✅ (8 it) | DC-seeded blend start + Q-limit guard (many zero/narrow-Q generators) |
 | `case_SyntheticUSA.m` | 82 000 buses, 3 islands | ✅ | DC-seeded `profile_blend` start with autodamping; islands solve independently, `mpc.dcline` rows import as fixed injections. A plain flat start does not converge |
 
-The rule of thumb: `matpower_import.auto_profile = recommend` picks the
+The rule of thumb: `model.auto_profile = recommend` picks the
 right convention and start profile for all of the above except
 `case13659pegase.m`, which needs the stored-reference start.

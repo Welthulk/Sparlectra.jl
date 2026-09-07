@@ -178,6 +178,11 @@ function getNodeComp(Vn_kV::Float64, node_idx::Int, nodeType, isAux::Bool = fals
   return ImpPGMComp(cID, name, cTyp, Vn_kV, node_idx, node_idx)
 end
 
+"""
+    addShuntPower!(; node, p, q)
+
+Add a shunt draw (MW/MVar at 1 pu) to the bus aggregate.
+"""
 function addShuntPower!(; node::Node, p::Float64, q::Float64)
   if !isnothing(p)
     if (isnothing(node._pShunt))
@@ -194,6 +199,11 @@ function addShuntPower!(; node::Node, p::Float64, q::Float64)
   end
 end
 
+"""
+    addLoadPower!(; node, p, q)
+
+Add load P/Q (MW/MVar) to the bus aggregate; `nothing` adds nothing.
+"""
 function addLoadPower!(; node::Node, p::Union{Nothing,Float64}, q::Union{Nothing,Float64})
   if !isnothing(p)
     if (isnothing(node._pƩLoad))
@@ -209,6 +219,11 @@ function addLoadPower!(; node::Node, p::Union{Nothing,Float64}, q::Union{Nothing
   end
 end
 
+"""
+    addGenPower!(; node, p, q)
+
+Add generation P/Q (MW/MVar) to the bus aggregate; `nothing` adds nothing.
+"""
 function addGenPower!(; node::Node, p::Union{Nothing,Float64}, q::Union{Nothing,Float64})
   if !isnothing(p)
     if (isnothing(node._pƩGen))
@@ -225,10 +240,20 @@ function addGenPower!(; node::Node, p::Union{Nothing,Float64}, q::Union{Nothing,
   end
 end
 
+"""
+    busComparison(node1, node2) -> Bool
+
+Order two buses by their index; the sort predicate of the node vector.
+"""
 function busComparison(node1::Node, node2::Node)
   node1.busIdx < node2.busIdx
 end
 
+"""
+    setVmVa!(; node, vm_pu, va_deg = nothing)
+
+Set the voltage state of the node; a missing angle keeps the stored one.
+"""
 function setVmVa!(; node::Node, vm_pu::Float64, va_deg::Union{Nothing,Float64} = nothing)
   node._vm_pu = vm_pu
   if !isnothing(va_deg)
@@ -244,14 +269,29 @@ function isSlack(o::Node)
   end
 end
 
+"""
+    getNodeVm(o) -> Float64
+
+The voltage magnitude of the node in per unit (1.0 when unset).
+"""
 function getNodeVm(o::Node)::Float64
   return o._vm_pu
 end
 
+"""
+    getNodeVn(o) -> Float64
+
+The rated voltage of the node in kV.
+"""
 function getNodeVn(o::Node)::Float64
   return o.comp.cVN
 end
 
+"""
+    isPQNode(o) -> Bool
+
+Whether the node is a PQ bus.
+"""
 function isPQNode(o::Node)
   if o._nodeType == PQ
     return true
@@ -260,6 +300,11 @@ function isPQNode(o::Node)
   end
 end
 
+"""
+    isPVNode(o) -> Bool
+
+Whether the node is a PV bus.
+"""
 function isPVNode(o::Node)
   if o._nodeType == PV || o._nodeType == Slack
     return true
@@ -268,10 +313,20 @@ function isPVNode(o::Node)
   end
 end
 
+"""
+    getNodeType(o) -> NodeType
+
+The bus type (Slack, PV, PQ, Isolated) of the node.
+"""
 function getNodeType(o::Node)::NodeType
   return o._nodeType
 end
 
+"""
+    isIsolated(o) -> Bool
+
+Whether the node is marked isolated (out of every island).
+"""
 function isIsolated(o::Node)
   if o._nodeType == Isolated
     return true
@@ -280,6 +335,11 @@ function isIsolated(o::Node)
   end
 end
 
+"""
+    toNodeType(x) -> NodeType
+
+Map a MATPOWER bus-type number (or a string name) onto the NodeType enum.
+"""
 function toNodeType(o::Int)::NodeType
   if o == 1
     return PQ
@@ -323,6 +383,11 @@ function toString(o::NodeType)::String
   end
 end
 
+"""
+    setNodeType!(o, typ)
+
+Set the bus type from its string name ("Slack", "PV", "PQ", "Isolated").
+"""
 function setNodeType!(o::Node, typ::String)
   o._nodeType = toNodeType(typ)
 end

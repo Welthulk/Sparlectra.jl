@@ -71,16 +71,31 @@ mutable struct BusLink <: AbstractComponent
   end
 end
 
+"""
+    setLinkStatus!(link, status)
+
+Set the in-service status of a busbar link.
+"""
 function setLinkStatus!(link::BusLink, status::Int)
   @assert status in (0, 1) "status must be 0 or 1"
   link.status = status
 end
 
+"""
+    setLinkFlow!(link, pFlow_MW, qFlow_MVar)
+
+Store the solved flow of a busbar link.
+"""
 function setLinkFlow!(link::BusLink, pFlow_MW::Float64, qFlow_MVar::Float64)
   link.pFlow_MW = pFlow_MW
   link.qFlow_MVar = qFlow_MVar
 end
 
+"""
+    setLinkCurrent!(link, iFrom_kA, iTo_kA)
+
+Store the solved end currents of a busbar link.
+"""
 function setLinkCurrent!(link::BusLink, iFrom_kA::Float64, iTo_kA::Float64)
   link.iFrom_kA = iFrom_kA
   link.iTo_kA = iTo_kA

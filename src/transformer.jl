@@ -20,6 +20,10 @@
 #          helpers
 
 
+"""
+Nameplate model parameters of a transformer (short-circuit voltage, copper
+and iron losses, no-load current) used to derive the PI-model impedances.
+"""
 mutable struct TransformerModelParameters
   sn_MVA::Float64 # PGM-Parameter sn in VA
   vk_percent::Float64 # PGM-Parameter sn in percent  
@@ -495,10 +499,21 @@ mutable struct PowerTransformerWinding
 end
 
 
+"""
+    getTrafoRXBG(o) -> (r, x, b, g)
+
+The winding impedance and magnetising admittance as stored on the winding.
+"""
 function getTrafoRXBG(o::PowerTransformerWinding)::Tuple{Float64,Float64,Union{Nothing,Float64},Union{Nothing,Float64}}
   return (o.r, o.x, o.b, o.g)
 end
 
+"""
+    getTrafoRXBG_pu(o, vn_kV, baseMVA) -> (r, x, b, g)
+
+The winding impedance and magnetising admittance converted to per unit on
+the given base.
+"""
 function getTrafoRXBG_pu(o::PowerTransformerWinding, vn_kV::Float64, baseMVA::Float64)::Tuple{Float64,Float64,Union{Nothing,Float64},Union{Nothing,Float64}}
   if isPerUnit_RXGB(o)
     return (o.r, o.x, o.b, o.g)
@@ -524,6 +539,11 @@ end
   return isnothing(x) ? 0 : length(x.controls)
 end
 
+"""
+    isPerUnit_RXGB(o) -> Union{Nothing,Bool}
+
+Whether the winding stores its R/X/G/B already in per unit.
+"""
 function isPerUnit_RXGB(o::PowerTransformerWinding)
   if isnothing(o.isPu_RXGB)
     return false
@@ -532,6 +552,11 @@ function isPerUnit_RXGB(o::PowerTransformerWinding)
   end
 end
 
+"""
+    getWindingRatedS(o) -> Union{Nothing,Float64}
+
+The rated apparent power of the winding in MVA.
+"""
 function getWindingRatedS(o::PowerTransformerWinding)
   if isnothing(o.ratedS)
     if isnothing(o.modelData)
@@ -569,6 +594,10 @@ A mutable structure representing a power transformer in a power system.
 - `Base.show(io::IO, x::PowerTransformer)`: Prints the `PowerTransformer` instance.
 """
 # PowerTransformer should be a subtype of AbstractBranch
+"""
+A power transformer with up to three windings, its tap changers and the
+nameplate data the importers deliver.
+"""
 mutable struct PowerTransformer <: AbstractBranch
   comp::AbstractComponent
   trafoTyp::TrafoTyp
@@ -662,11 +691,22 @@ mutable struct PowerTransformer <: AbstractBranch
   end
 end
 
+"""
+    getWinding2WT(x) -> PowerTransformerWinding
+
+The winding that models a two-winding transformer (the one carrying the
+impedance).
+"""
 function getWinding2WT(x::PowerTransformer)
   @assert x.isBiWinder "Transformer is not a 2WT"
   return !x.side1._isEmpty ? x.side1 : x.side2
 end
 
+"""
+    getSideNumber2WT(x) -> Int
+
+Which side (1 or 2) of a two-winding transformer carries the tapped winding.
+"""
 function getSideNumber2WT(x::PowerTransformer)
   @assert x.isBiWinder "Transformer is not a 2WT"
   return !x.side1._isEmpty ? 1 : 2
@@ -698,6 +738,11 @@ function isTapInNeutralPosition(x::PowerTransformer)
   end
 end
 
+"""
+    calcTransformerRatio(x) -> Float64
+
+The effective winding ratio of the transformer at its current tap.
+"""
 function calcTransformerRatio(x::PowerTransformer)
   @assert x.isBiWinder "Transformer is not a 2WT"
   @assert !isnothing(x.side1.Vn) "Vn must be set for winding 1"
@@ -725,6 +770,11 @@ function calcTransformerRatio(x::PowerTransformer)
   end
 end
 
+"""
+    toString(x) -> String
+
+Human-readable name of an enum value (transformer type, prosumption type).
+"""
 function toString(o::TrafoTyp)::String
   if o == Ratio
     return "Ratio"
@@ -737,6 +787,12 @@ function toString(o::TrafoTyp)::String
   end
 end
 
+"""
+    create2WTRatioTransformerNoTaps(; from, to, vn_hv_kV, vn_lv_kV, sn_mva, vk_percent, vkr_percent, pfe_kw, i0_percent) -> PowerTransformer
+
+Build a two-winding ratio transformer from nameplate data, without a tap
+changer.
+"""
 function create2WTRatioTransformerNoTaps(; from::Int, to::Int, vn_hv_kV::Float64, vn_lv_kV::Float64, sn_mva::Float64, vk_percent::Float64, vkr_percent::Float64, pfe_kw::Float64, i0_percent::Float64)::PowerTransformer
   c = getTrafoImpPGMComp(false, vn_hv_kV, from, to)
 
@@ -814,8 +870,8 @@ function create3WTWindings!(; u_kV::Array{Float64,1}, sn_MVA::Array{Float64,1}, 
     end
   end
 
-  vkVec = []
-  vkrVec = []
+  vkVec = Float64[]
+  vkrVec = Float64[]
   for side = 1:3
     fak = addEx_Side[1].sn_MVA / (min(addEx_Side[side].sn_MVA, addEx_Side[(side%3)+1].sn_MVA))
     push!(vkVec, (addEx_Side[side].vk_percent * fak))
@@ -830,12 +886,12 @@ function create3WTWindings!(; u_kV::Array{Float64,1}, sn_MVA::Array{Float64,1}, 
   vkrVec[2] = 0.5 * (vkrVec[2] + vkrVec[1] - vkVec[3]) * addEx_Side[2].sn_MVA / addEx_Side[1].sn_MVA
   vkrVec[3] = 0.5 * (vkrVec[2] + vkrVec[3] - vkVec[1]) * addEx_Side[3].sn_MVA / addEx_Side[1].sn_MVA
 
-  pVec = []
+  pVec = NTuple{4,Float64}[]
   for side = 1:3
     push!(pVec, calcTransformerRXGB(u_kV[side], addEx_Side[side]))
   end
 
-  wVec = []
+  wVec = PowerTransformerWinding[]
   for side = 1:3
     tap = (side - 1 == tap_side) ? tap : nothing
     wpt = (side == phase_tap_side) ? phase_taps : nothing
@@ -859,12 +915,24 @@ function getWT3BusID(Vn::Float64, from::Int, to::Int, to3::Int)
 end
 
 # in the case of parallel transformers, the `to3` connections should always be distinct
+"""
+    getWT3AuxBusID(Vn, from, to, to3) -> String
+
+The generated identity of the auxiliary star bus of a three-winding
+transformer.
+"""
 function getWT3AuxBusID(Vn::Float64, from::Int, to::Int, to3::Int)
   name = "3WT_Aux_$(string(convert(Int, trunc(Vn))))"
   id = "#$name\\_$from\\_$to\\_$to3"
   return name, id
 end
 
+"""
+    getTrafoImpPGMComp(aux, Vn, from, to, to3 = nothing) -> ImpPGMComp
+
+Build the component identity of a transformer branch (name embeds voltage
+and bus numbers; `aux` marks a three-winding star leg).
+"""
 function getTrafoImpPGMComp(aux::Bool, Vn::Float64, from::Int, to::Int, to3::Union{Nothing,Int} = nothing)
   cName, cID = aux ? getWT3AuxBusID(Vn, from, to, to3) : isnothing(to3) ? getWT2BusID(Vn, from, to) : getWT3BusID(Vn, from, to, to3)
   return aux ? ImpPGMComp3WT(cID, cName, toComponentTyp("POWERTRANSFORMER"), Vn, from, to, to3) : ImpPGMComp(cID, cName, toComponentTyp("POWERTRANSFORMER"), Vn, from, to)

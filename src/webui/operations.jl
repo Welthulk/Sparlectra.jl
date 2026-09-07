@@ -41,7 +41,10 @@ function _webui_operation_log_options(; retention_days = nothing, max_bytes = no
   resolved_max_entries = max(0, resolved_max_entries)
   resolved_keep_entries = clamp(resolved_keep_entries, 0, resolved_max_entries)
   return (
-    retention_days = retention_days === nothing ? _webui_operation_log_int("SPARLECTRA_WEBUI_OPERATION_LOG_RETENTION_DAYS", WEBUI_OPERATION_LOG_RETENTION_DAYS) : max(0, Int(retention_days)),
+    # a caller-supplied retention (the configured webui.operation_log_retention_days)
+    # is the DEFAULT for the environment lookup, so the variable keeps winning
+    # for headless runs while the configuration steers a normal Web UI start
+    retention_days = _webui_operation_log_int("SPARLECTRA_WEBUI_OPERATION_LOG_RETENTION_DAYS", retention_days === nothing ? WEBUI_OPERATION_LOG_RETENTION_DAYS : max(0, Int(retention_days))),
     max_bytes = max_bytes === nothing ? _webui_operation_log_int("SPARLECTRA_WEBUI_OPERATION_LOG_MAX_BYTES", _WEBUI_OPERATION_LOG_MAX_BYTES; minimum = 1) : max(1, Int(max_bytes)),
     max_entries = resolved_max_entries,
     keep_entries = resolved_keep_entries,

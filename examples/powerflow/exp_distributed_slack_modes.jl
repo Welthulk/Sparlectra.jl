@@ -20,7 +20,7 @@
 
 using Sparlectra
 
-include(joinpath(@__DIR__, "..", "internal", "example_header.jl"))
+include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
 # Small 4-bus case with a deliberate 20 MW shortfall (70 MW load vs 50 MW
 # scheduled PV generation) and the optional 21st gen column (APF): the two PV

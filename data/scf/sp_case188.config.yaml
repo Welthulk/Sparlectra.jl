@@ -1,0 +1,5 @@
+config_version: 1
+scope: case
+case: sp_case188.scf.json
+power_flow:
+  tol: 1.0e-8

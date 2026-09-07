@@ -17,6 +17,10 @@
 # purpose: BusData working type for the NR solver and helpers to build, sort,
 #          and map bus data between net.nodeVec and the solver vectors
 
+"""
+Per-bus working record of the solvers: type, voltage state and the
+aggregated injections in per unit.
+"""
 mutable struct BusData
   idx::Int          # # PF index (non-iso compact), Bus index (after sorting)
   nodeIdx::Int      # index in net.nodeVec (original)
@@ -45,6 +49,11 @@ function Base.show(io::IO, bus::BusData)
   print(io, "BusData($(bus.idx), $(bus.vm_pu), $(va_deg)°), $(bus.pƩ), $(bus.qƩ), $(bus._pRes), $(bus._qRes), $(bus.type))")
 end
 
+"""
+    getBusData(nodes, Sbase_MVA, flatStart; net = nothing) -> Vector{BusData}
+
+Build the per-bus solver records from the node vector.
+"""
 function getBusData(nodes::Vector{Node}, Sbase_MVA::Float64, flatStart; net::Union{Nothing,Net} = nothing)
   if !isnothing(net)
     refreshBusTypesFromProsumers!(net)
@@ -136,6 +145,11 @@ function getBusData(nodes::Vector{Node}, Sbase_MVA::Float64, flatStart; net::Uni
 end # getBusData
 
 # helper function to count number of nodes of type = value [PQ, PV]
+"""
+    getBusTypeVec(busVec) -> Vector{NodeType}
+
+The bus types of the solver records, in order.
+"""
 function getBusTypeVec(busVec::Vector{BusData})
   busTypeVec = Vector{NodeType}()
   slackIdx = 0
@@ -152,6 +166,11 @@ function getBusTypeVec(busVec::Vector{BusData})
 end
 
 # count number of nodes of type = value [PQ, PV]
+"""
+    countNodes(busTypeVec, pos, value) -> Int
+
+Count buses of the given type up to position `pos`.
+"""
 function countNodes(busTypeVec::Vector{NodeType}, pos, value::NodeType)
   sum = 0
 

@@ -19,7 +19,7 @@
 
 using Sparlectra
 
-include(joinpath(@__DIR__, "..", "internal", "example_header.jl"))
+include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
 function main(args = ARGS)
   print_example_banner("examples/powerflow/exp_synthetic_tiled_grid_pf_perf.jl", "runs a synthetic tiled-grid power-flow performance benchmark via run_synthetic_tiled_grid_pf_perf")

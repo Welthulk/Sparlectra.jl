@@ -1,4 +1,34 @@
-# Programmatic Power-Flow API
+# Programmatic API
+
+This page is the entry point for driving Sparlectra from code. The stable
+programmatic surface consists of a small set of entry points; everything else
+on the [reference pages](reference.md) is internal and may change between
+versions.
+
+## Stable entry points
+
+- [`run_sparlectra`](@ref): run a configured power flow on a network or case
+  file and return the full run result. This is the core execution framework
+  every service path uses.
+- [`importCGMES`](@ref): import a CGMES delivery. The
+  `importCGMES(config; path, name)` form applies everything the configuration
+  says about the import in one call.
+- [`load_sparlectra_config`](@ref): load a Sparlectra YAML configuration file
+  into a [`SparlectraConfig`](@ref).
+- [`createNetFromMatPowerFile`](@ref): parse a MATPOWER `.m`/`.jl` case file
+  and build the network. The underlying pair
+  [`Sparlectra.MatpowerIO.read_case`](@ref) and [`Sparlectra.createNetFromMatPowerCase`](@ref)
+  separates parsing from construction when the case object is needed.
+- [`run_sparlectra_api`](@ref): the non-interactive service contract described
+  below, for local applications and GUI integrations.
+- [`runContingencies!`](@ref) / [`runScenarios!`](@ref): the N-1 and scenario
+  batch entries. Screening defaults to `:off` everywhere (the byte stable
+  full-solve result); the service and the Web UI follow the configured
+  `contingency.screening.mode`, and `:flag` is a deliberate opt-in after
+  checking share and margins on the target network; see
+  [N-1 Contingency Analysis](contingency.md).
+
+## Service API: run_sparlectra_api
 
 `run_sparlectra_api` is the stable, non-interactive backend contract intended
 for local applications and future GUI integrations. It accepts a MATPOWER case,

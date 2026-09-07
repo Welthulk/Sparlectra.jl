@@ -1,0 +1,337 @@
+{
+  "case": "sp_case60",
+  "control": {
+    "converged": true,
+    "outer_iterations": 11,
+    "parameters": {
+      "SVC_Bornloh": {
+        "bs_max_mvar": 25.0,
+        "bs_min_mvar": -25.0,
+        "bus": "Bornloh_110",
+        "deadband_vm_pu": 0.001,
+        "enabled": true,
+        "max_outer_iters": 20,
+        "name": "SVC_Bornloh",
+        "target_vm_pu": 1.0,
+        "type": "shunt_voltage"
+      },
+      "tap_Nordtal_220_110_PST": {
+        "control_phase": true,
+        "control_ratio": true,
+        "deadband_p_mw": 2.0,
+        "deadband_vm_pu": 0.001,
+        "enabled": true,
+        "is_discrete": true,
+        "max_outer_iters": 20,
+        "mode": "branch_active_power",
+        "p_target_mw": 30.0,
+        "target_branch": ["Nordtal_220", "Nordtal_110"],
+        "trafo": "Nordtal_220_110_PST",
+        "type": "power_transformer",
+        "voltage_error_metric": "vm"
+      },
+      "tap_Steinhof_110_20": {
+        "control_phase": true,
+        "control_ratio": true,
+        "deadband_p_mw": 3.0,
+        "deadband_vm_pu": 0.01,
+        "enabled": true,
+        "is_discrete": true,
+        "max_outer_iters": 20,
+        "mode": "voltage_and_branch_active_power",
+        "p_target_mw": 11.0,
+        "target_branch": ["Steinhof_110", "Steinhof_20"],
+        "target_bus": "Steinhof_20",
+        "target_vm_pu": 1.0,
+        "trafo": "Steinhof_110_20",
+        "type": "power_transformer",
+        "voltage_error_metric": "vm"
+      }
+    },
+    "powerflow_solves": 11
+  },
+  "n1": {
+    "converged": 51,
+    "overloads": 0,
+    "total": 74
+  },
+  "power_flow": {
+    "bus_state": {
+      "1": {
+        "va_deg": 0.0,
+        "vm_pu": 1.03
+      },
+      "10": {
+        "va_deg": -6.703163,
+        "vm_pu": 0.99209
+      },
+      "11": {
+        "va_deg": -7.117788,
+        "vm_pu": 1.001984
+      },
+      "12": {
+        "va_deg": -21.212578,
+        "vm_pu": 1.014759
+      },
+      "13": {
+        "va_deg": -24.247088,
+        "vm_pu": 0.941231
+      },
+      "14": {
+        "va_deg": -6.434939,
+        "vm_pu": 1.007799
+      },
+      "15": {
+        "va_deg": -6.561569,
+        "vm_pu": 0.995218
+      },
+      "16": {
+        "va_deg": -24.018598,
+        "vm_pu": 0.953313
+      },
+      "17": {
+        "va_deg": -5.136988,
+        "vm_pu": 0.989758
+      },
+      "18": {
+        "va_deg": -5.98194,
+        "vm_pu": 1.015562
+      },
+      "19": {
+        "va_deg": -2.869653,
+        "vm_pu": 1.01618
+      },
+      "2": {
+        "va_deg": -9.572537,
+        "vm_pu": 0.981324
+      },
+      "20": {
+        "va_deg": -6.554768,
+        "vm_pu": 0.997164
+      },
+      "21": {
+        "va_deg": -21.121303,
+        "vm_pu": 0.964543
+      },
+      "22": {
+        "va_deg": -1.427124,
+        "vm_pu": 1.016287
+      },
+      "23": {
+        "va_deg": -1.427124,
+        "vm_pu": 1.016287
+      },
+      "24": {
+        "va_deg": 0.639154,
+        "vm_pu": 1.016118
+      },
+      "25": {
+        "va_deg": -18.270592,
+        "vm_pu": 0.969355
+      },
+      "26": {
+        "va_deg": -24.699037,
+        "vm_pu": 0.932073
+      },
+      "27": {
+        "va_deg": -6.695684,
+        "vm_pu": 0.994031
+      },
+      "28": {
+        "va_deg": -24.875842,
+        "vm_pu": 0.929028
+      },
+      "29": {
+        "va_deg": -6.053222,
+        "vm_pu": 1.013077
+      },
+      "3": {
+        "va_deg": -6.481198,
+        "vm_pu": 0.999697
+      },
+      "30": {
+        "va_deg": -20.446564,
+        "vm_pu": 0.991354
+      },
+      "31": {
+        "va_deg": -0.20865,
+        "vm_pu": 1.020491
+      },
+      "32": {
+        "va_deg": 0.664454,
+        "vm_pu": 1.018567
+      },
+      "33": {
+        "va_deg": 4.641436,
+        "vm_pu": 1.015586
+      },
+      "34": {
+        "va_deg": -6.770096,
+        "vm_pu": 0.991491
+      },
+      "35": {
+        "va_deg": -20.250767,
+        "vm_pu": 0.983302
+      },
+      "36": {
+        "va_deg": -23.9669,
+        "vm_pu": 0.953294
+      },
+      "37": {
+        "va_deg": -22.17333,
+        "vm_pu": 0.998391
+      },
+      "38": {
+        "va_deg": 8.62846,
+        "vm_pu": 1.02
+      },
+      "39": {
+        "va_deg": -23.9152,
+        "vm_pu": 0.953277
+      },
+      "4": {
+        "va_deg": -24.576762,
+        "vm_pu": 0.935079
+      },
+      "40": {
+        "va_deg": -6.702527,
+        "vm_pu": 0.992079
+      },
+      "41": {
+        "va_deg": -24.321594,
+        "vm_pu": 0.944189
+      },
+      "42": {
+        "va_deg": -6.196883,
+        "vm_pu": 1.007918
+      },
+      "43": {
+        "va_deg": -6.97634,
+        "vm_pu": 1.012177
+      },
+      "44": {
+        "va_deg": -24.630494,
+        "vm_pu": 0.935093
+      },
+      "45": {
+        "va_deg": -9.648464,
+        "vm_pu": 0.979612
+      },
+      "46": {
+        "va_deg": -23.99341,
+        "vm_pu": 0.96214
+      },
+      "47": {
+        "va_deg": -25.124418,
+        "vm_pu": 0.922952
+      },
+      "48": {
+        "va_deg": -4.469163,
+        "vm_pu": 1.019723
+      },
+      "49": {
+        "va_deg": -5.567349,
+        "vm_pu": 1.028779
+      },
+      "5": {
+        "va_deg": -21.212578,
+        "vm_pu": 1.014759
+      },
+      "50": {
+        "va_deg": -6.124975,
+        "vm_pu": 1.010583
+      },
+      "51": {
+        "va_deg": -5.988501,
+        "vm_pu": 1.013653
+      },
+      "52": {
+        "va_deg": -22.225162,
+        "vm_pu": 0.96361
+      },
+      "53": {
+        "va_deg": -23.65752,
+        "vm_pu": 0.965424
+      },
+      "54": {
+        "va_deg": -24.999722,
+        "vm_pu": 0.925988
+      },
+      "55": {
+        "va_deg": -3.571997,
+        "vm_pu": 1.015285
+      },
+      "56": {
+        "va_deg": -0.233284,
+        "vm_pu": 1.008687
+      },
+      "57": {
+        "va_deg": 2.475468,
+        "vm_pu": 1.008674
+      },
+      "58": {
+        "va_deg": -23.746742,
+        "vm_pu": 0.956201
+      },
+      "59": {
+        "va_deg": -6.845021,
+        "vm_pu": 0.988941
+      },
+      "6": {
+        "va_deg": -3.942695,
+        "vm_pu": 1.01
+      },
+      "60": {
+        "va_deg": -18.766323,
+        "vm_pu": 1.02
+      },
+      "7": {
+        "va_deg": -6.628712,
+        "vm_pu": 0.994632
+      },
+      "8": {
+        "va_deg": -4.542463,
+        "vm_pu": 0.976783
+      },
+      "9": {
+        "va_deg": -24.247088,
+        "vm_pu": 0.941231
+      }
+    },
+    "iterations": 1,
+    "losses_mw": 11.077413
+  },
+  "provenance": "Self-built Sparlectra demo network; the bus count in the name does not make it the IEEE case of that size, and no data was taken from MATPOWER, DTF or any other source.",
+  "scenarios": {
+    "explicit": {
+      "bridge_out_zone_b_island": {
+        "converged": true,
+        "max_branch_loading_pct": 62.122736
+      },
+      "high_wind_dg": {
+        "converged": true,
+        "max_branch_loading_pct": 40.574057
+      },
+      "same_name_double_circuit_leg_out": {
+        "converged": true,
+        "max_branch_loading_pct": 48.671044
+      }
+    },
+    "mode": "explicit"
+  },
+  "short_circuit": {
+    "Altau_220": {
+      "ik_kA": 20.994555,
+      "sk_MVA": 8000.0
+    },
+    "Neuberg_110": {
+      "ik_kA": 0.757756,
+      "sk_MVA": 144.371841
+    }
+  },
+  "state_estimation": {
+    "dof": 209,
+    "objective": 158.831854,
+    "seed": 20260960
+  }
+}

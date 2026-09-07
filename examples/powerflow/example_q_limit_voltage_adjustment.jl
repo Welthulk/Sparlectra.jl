@@ -18,7 +18,7 @@
 
 using Sparlectra
 
-include(joinpath(@__DIR__, "..", "internal", "example_header.jl"))
+include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
 function build_case(; qmin = -15.0, qmax = 15.0)
   net = Net(name = "q_limit_adjust_demo", baseMVA = 100.0)

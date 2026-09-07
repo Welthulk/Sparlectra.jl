@@ -18,7 +18,7 @@
 
 using Sparlectra
 
-include(joinpath(@__DIR__, "..", "internal", "example_header.jl"))
+include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
 # Physical parameters of the three AUX-bus legs (Ohm/Siemens/MVA), shared by
 # build_case_net and print_case_topology so both stay in sync.
@@ -184,7 +184,7 @@ end
 
 function print_task_description()
   println("="^78)
-  println("Task: the same small 3WT test grid is solved three times (one runpf! each).")
+  println("Setup: the same small 3WT test grid is solved three times (one runpf! each).")
   println("Topology, load, shunt and slack stay identical — only the tap setting on one")
   println("leg of the 3WT star-equivalent changes between cases.")
   println()

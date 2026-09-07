@@ -1,0 +1,708 @@
+# Sparlectra central default configuration.
+#
+# Copy this file to examples/configuration.yaml for local user overrides.
+# The local override file is intentionally ignored by Git.
+
+# Version of the configuration file format. Files without it read as
+# version 0 and the documented key aliases are applied with a warning.
+config_version: 1
+# What this file configures: general (installation-wide). A case
+# configuration file next to a case declares scope: case instead.
+scope: general
+
+power_flow:
+  # Allowed values: rectangular
+  # Rectangular is the supported public AC power-flow path.
+  method: rectangular
+  # Allowed values: manual, auto
+  # manual keeps every option below exactly as configured. auto inspects the
+  # imported network (size, islands, R/X profile, phase shifters, start
+  # profile, generator Q limits) and fills the start-value, step-control,
+  # and Q-limit strategy for keys you did NOT set explicitly; explicit user
+  # keys always win. Decisions land in auto_mode_decision.log of the run.
+  mode: manual
+  # Selects which solver actually computes the power-flow solution.
+  # Allowed values: rectangular, apslf
+  # - rectangular: the internal Newton-Raphson solver (rectangular_network_solver.jl).
+  # - apslf: the AnalyticLoadFlow.jl-backed analytic power-series solver (ApslfSolver);
+  #   AnalyticLoadFlow.jl is a required dependency, so it is always available.
+  solver: rectangular
+  # Sparse linear-algebra backend for the Newton step of the rectangular
+  # solver (not to be confused with solver above, which picks the power-flow
+  # method). Allowed values: umfpack, umfpack_reuse
+  # - umfpack: standard sparse direct solve (current default behavior).
+  # - umfpack_reuse: same UMFPACK factorization, but the symbolic analysis of
+  #   the first iteration is reused via lu! across NR iterations, usually
+  #   the fastest choice on large cases.
+  # The reuse backend falls back to the umfpack chain on factorization errors.
+  # (A klu backend existed until 0.9.10; removed, measured no benefit on
+  # power-flow Jacobians.)
+  linear_solver: umfpack
+  # Options for solver: apslf.
+  apslf:
+    # Highest power-series coefficient to compute.
+    order: 40
+    # Evaluate the voltage series via Pade [L/M] approximants instead of direct Taylor summation.
+    use_pade: true
+    # Run a Newton-Raphson polishing step on the series result.
+    nr_polish: true
+  # Use the APSLF solver as a start-value generator ahead of the rectangular
+  # Newton-Raphson solve. Incompatible with solver: apslf (start generator is
+  # only meaningful ahead of NR). No use_pade/nr_polish here: polishing is left
+  # to the downstream NR solve (nr_polish=false internally).
+  apslf_start:
+    enabled: false
+    order: 40
+  # Legacy start switch (true = synthetic flat start). Keep aligned with start_mode below.
+  # Default false: imported start voltages (MATPOWER VM/VA, CGMES SvVoltage) reach the
+  # solver — a flat start silently discarded the CGMES SV state (RealGrid divergence,
+  # 2026-07-30) while MATPOWER runs only masked it via the projected start modes.
+  flatstart: false
+  # Positive solver tolerance and iteration cap.
+  tol: 1.0e-5
+  # The same bound in MEGAWATT. null means unset, and then the per-unit
+  # tolerance above applies; a value here WINS and is converted with the
+  # network's own base when the tolerance meets the net
+  # (tol = tol_MW / baseMVA). The key has to BE here even when unset: the
+  # loader rejects every key this template does not carry, which is how
+  # tol_MW ended up documented, offered in the form, and refused on use.
+  tol_MW: null
+  max_iter: 80
+  # Automatic damping for difficult cases.
+  autodamp: true
+  autodamp_min: 0.05
+  # Promote the strongest injection (external network injection preferred,
+  # then largest generator) to slack when the case registers none.
+  auto_slack: false
+  # Retry a non-converged AC solve from the original start state with a fixed
+  # strategy ladder: alternate start, autodamp, DC-seeded projection, and
+  # settled Q-limits (merit line search + low damping floor + Q-limit
+  # switching held back until the reactive requests settle). Only failed
+  # runs pay for the retries. Set false for solver studies that must see the
+  # raw failure instead of a rescued result.
+  rescue: true
+  dc:
+    # After a failed AC solve (and failed rescue ladder), run the standalone
+    # DC power flow so the net carries usable angles and branch P flows.
+    # The AC status honestly stays "not converged".
+    fallback: false
+    # Uniform angle offset added to every bus after the DC solve. The DC
+    # model fixes angle DIFFERENCES only, so this shifts the whole profile
+    # without changing a single flow.
+    angle_reference_deg: 0.0
+    # Documents that branches with status 0 stay out of the DC system, the
+    # same way they stay out of the AC solve.
+    ignore_out_of_service: true
+  # Wrong-branch plausibility checks after numerical convergence.
+  # Allowed values: off, warn, fail, rescue
+  wrong_branch_detection: warn
+  # Modes:
+  # - off: disable post-convergence plausibility checks
+  # - warn: keep converged PF result, but report suspicious branch-quality metadata
+  # - fail: treat suspicious converged result as PF failure
+  # - rescue: reserved mode; currently reports "rescue requested but not available"
+  #   and does not run retry attempts yet
+  wrong_branch_rescue: false
+  wrong_branch_min_vm_pu: 0.70
+  wrong_branch_max_vm_pu: 1.30
+  wrong_branch_max_angle_spread_deg: 180.0
+  # Maximum allowed absolute angle difference across active branches (degrees).
+  wrong_branch_max_branch_angle_deg: 90.0
+  wrong_branch_min_low_vm_count: 1
+  wrong_branch_rescue_max_attempts: 2
+
+  # Rectangular workspace handling.
+  rectangular_workspace_reuse: true
+  # Allowed values: off, on, auto
+  rectangular_preallocate_workspace: auto
+  rectangular_workspace_min_buses: 1000
+
+  # AC island diagnostic artifacts.
+  islands:
+    enabled: true
+    # Allowed values: solve_independent, solve_parallel
+    # solve_parallel solves the detected islands concurrently on Julia
+    # threads (gated by runtime.parallel.*); results are identical to
+    # solve_independent, only the wall clock changes.
+    mode: solve_independent
+    # Allowed values: matpower_like
+    reference_policy: matpower_like
+    diagnostic_continue_after_failure: true
+
+  # Distributed active-power slack (issue #192): the REF bus keeps the angle
+  # reference, the island imbalance is absorbed by participating generators
+  # via one lambda_P per island. Disabled reproduces the classical behavior.
+  distributed_slack:
+    enabled: false
+    # Allowed values: pg_weighted, pmax_weighted, headroom_weighted, imported, explicit
+    # imported reads ProSumer.participationFactor (MATPOWER APF / CGMES normalPF).
+    p_mode: pg_weighted
+    # Diagnostic only: WARN when a corrected P leaves [minP, maxP]; no re-dispatch.
+    respect_p_limits: true
+    # Allowed values: error, ref_only (per-island fallback when no valid participant)
+    fallback: error
+    # explicit mode only: bus name (or index) => weight, block style:
+    #   weights:
+    #     B1: 2.0
+    #     B2: 1.0
+    weights: {}
+
+  # Compute the marked slack as a non-ideal external-grid source (issue #299):
+  # the reference voltage moves to a hidden internal bus behind the feeder
+  # impedance z = Un²/Sk'', so the former slack bus reacts to loading.
+  external_grid:
+    enabled: false
+    # Allowed values: auto, config — auto prefers the Sk''/R-X values a CGMES
+    # delivery declares on the slack bus's ExternalNetworkInjection and falls
+    # back to the numbers below; config always uses the numbers below.
+    source: auto
+    sk_MVA: 2000.0
+    rx: 0.1
+
+  # Start projection and warmstart controls.
+  start_mode:
+    # Allowed values: classic, dc, bus_va_blend, matpower_va
+    angle_mode: dc
+    # Allowed values: classic, pv_gen_vg, pv_bus_vm, all_bus_vm, profile_blend
+    # To use imported MATPOWER reference values, keep profile_blend with profile_source: matpower_reference.
+    voltage_mode: profile_blend
+    # Allowed values: flat, dc, bus_metadata, historical_profile, matpower_reference, state_estimation, scada_snapshot
+    profile_source: matpower_reference
+    # Enable projection-based candidate selection instead of direct start.
+    start_projection: true
+    # Try a DC-angle candidate start.
+    try_dc_start: true
+    # Scan blend_lambdas as additional candidates.
+    try_blend_scan: true
+    # Apply branch sanity checks to candidate starts.
+    branch_guard: true
+    # Measure/score candidate starts before selection.
+    measure_candidates: true
+    # Accept DC start even without candidate measurements.
+    accept_unmeasured_dc_start: false
+    # Unconditionally run a full standalone DC power flow first and seed the
+    # rectangular Newton-Raphson solve's start angles from it (voltage
+    # magnitudes are not affected: the DC model has no voltage-magnitude
+    # solution, so Slack/PV setpoints and the usual voltage_mode still apply).
+    # Bypasses the angle_mode/try_dc_start/measure_candidates candidate
+    # selection above entirely -- no quality gate, matching rundcpf!'s
+    # seed_ac_start=true behavior. Mutually exclusive with
+    # power_flow.apslf_start.enabled and power_flow.solver in (apslf, dc).
+    dc_seed_unconditional: false
+    # Reuse imported MATPOWER reference values during start generation.
+    reuse_import_data: true
+    # Candidate blend factors used when try_blend_scan=true.
+    blend_lambdas: [0.25, 0.5, 0.75]
+    # Positive DC-angle clamp in degrees.
+    dc_angle_limit_deg: 60.0
+
+  # Optional guarded current-injection pre-solve after start modes and before NR.
+  start_current_iteration:
+    enabled: false
+    max_iter: 10
+    tol: 1.0e-3
+    damping: 0.5
+    accept_only_if_improved: true
+    min_improvement_factor: 0.98
+    vm_min_pu: 0.5
+    vm_max_pu: 1.5
+    max_angle_step_deg: 30.0
+    only_for_large_cases: false
+
+  # Optional Armijo merit-function line search inside the autodamp backtracking
+  # loop. enabled=false (default) leaves today's max-mismatch autodamp behavior
+  # unchanged. enabled=true requires autodamp=true (validation error otherwise).
+  merit:
+    enabled: false
+    # Sufficient-decrease constant, must be in (0, 0.5).
+    armijo_c1: 1.0e-4
+    # Diagonal scaling weights for P/Q/voltage residuals (positive reals).
+    scale_p: 1.0
+    scale_q: 1.0
+    scale_v: 1.0
+    # true = fall back to the max-mismatch criterion if no trial satisfies Armijo;
+    # false = fall back to the most conservative finite trial (today's autodamp fallback).
+    fallback_max_mismatch: true
+
+  # Optional scaled-Newton trust-region step control: an alternative to
+  # autodamp that caps the Newton step norm at an adaptive radius and
+  # accepts/rejects steps by merit decrease. enabled=false (default) leaves
+  # the solver unchanged. Mutually exclusive with autodamp=true (validation
+  # error otherwise).
+  trust_region:
+    enabled: false
+    # Initial trust-region radius, in per-unit state-vector (2-)norm.
+    initial_radius: 1.0
+    # Radius floor; falling below it declares non-convergence
+    # (reason = :trust_region_collapsed) instead of looping forever.
+    min_radius: 1.0e-4
+    # Radius ceiling.
+    max_radius: 10.0
+    # Minimum actual/predicted reduction ratio (rho) required to accept a step.
+    eta_accept: 0.1
+    # Radius multiplier on a rejected step, in (0, 1).
+    shrink_factor: 0.5
+    # Radius multiplier on a strongly successful boundary step, > 1.
+    expand_factor: 2.0
+    # rho threshold (in (0, 1)) above which a boundary-hitting accepted step expands the radius.
+    expand_threshold: 0.75
+    # scaled: rescale the full Newton direction to the radius (default, unchanged
+    # behavior). dogleg: blend the Newton direction with a steepest-descent
+    # (Cauchy) step when the radius shrinks below the Newton step norm.
+    step_mode: scaled
+
+  # Reactive-power limit switching.
+  qlimits:
+    enabled: true
+
+    # Q-limit enforcement strategy.
+    # Allowed values:
+    # - active_set: dynamic in-iteration PV/PQ switching
+    # - classic_simultaneous: classical outer loop; solve the base PF first,
+    #   then switch all Q-limit violations after successful convergence
+    # - classic_one_at_a_time: classical outer loop; solve the base PF first,
+    #   then switch the largest Q-limit violation per outer-loop pass
+    #
+    # Legacy aliases still accepted for old YAML files:
+    # - matpower_simultaneous  -> classic_simultaneous
+    # - matpower_one_at_a_time -> classic_one_at_a_time
+    enforcement_mode: active_set
+
+    # First iteration where Q-limit switching is allowed.
+    # Classical outer-loop modes ignore in-iteration switching and check Q limits
+    # only after a successful base PF.
+    start_iter: 3
+    # Allowed values: iteration, auto, iteration_or_auto
+    start_mode: iteration_or_auto
+    auto_q_delta_pu: 1.0e-4
+    hysteresis_pu: 0.01
+    cooldown_iters: 1
+    # Optional bus-id filters for focused diagnostics/policies.
+    trace_buses: []
+    lock_pv_to_pq_buses: []
+    guard:
+      enabled: true
+      min_q_range_pu: 0.02
+      # Allowed values: prefer_pq, lock_pq
+      narrow_range_mode: lock_pq
+      # Allowed values: lock_pq
+      zero_range_mode: lock_pq
+      # Allowed values: delayed_switch, lock_pq
+      violation_mode: lock_pq
+      violation_threshold_pu: 1.0e-4
+      max_switches: 3
+      max_remaining_violations: 0
+      accept_bounded_violations: false
+      freeze_after_repeated_switching: true
+      log: true
+
+state_estimation:
+  enabled: true
+  # Allowed values: wls
+  method: wls
+  # At the finite-difference noise floor (jac_eps), not below it: a tighter
+  # tolerance cannot be reached and the run clamps it with a log line.
+  tol: 1.0e-6
+  # The same cap the service and the Web UI form use. A CGMES run with
+  # released taps needed between 36 and 40 iterations in its first solve, so
+  # 30 was too tight; the count a run reports afterwards is that of the LAST
+  # solve and hides this.
+  max_iter: 50
+  # Flat start for state-estimation initialization.
+  flatstart: true
+  jac_eps: 1.0e-6
+  update_net: true
+  # PMU voltage-angle (VaMeas) reference handling. auto estimates a common
+  # reference-angle offset between the PMU time base and the slack reference
+  # as an additional state whenever Va measurements are present; off assumes
+  # PMU angles are already slack-referenced.
+  # Allowed values: auto, off
+  pmu_ref_offset: auto
+  # First WLS iteration in which current-magnitude rows (ImagMeas) enter the
+  # update step; earlier iterations run on power and voltage only.
+  imag_activation_iteration: 2
+  # Activity floor for PMU current ANGLES without a paired magnitude, in ampere.
+  ia_current_floor_A: 10.0
+  # Write estimated shunt susceptances / fixed tap positions back into the
+  # model after a converged run. Off by default: an estimation never
+  # overwrites model data silently.
+  update_shunts: false
+  update_taps: false
+  # Residual-correlation (K-matrix) columns in the bad-data report. Off by
+  # default: one dense m x m pass, refused above 20000 rows.
+  report_residual_correlation: false
+  # Bad data. Two limits, both on the NORMALIZED residual
+  # rn = r / sqrt(Omega_ii): k_eliminate REMOVES a row from the estimate,
+  # k_suppress DOWN-WEIGHTS it. See docs/src/state_estimation.md.
+  k_eliminate: 3.0
+  # Down-weighting family: off (plain WLS), staged (two-stage R modification
+  # with the knees below, on the raw ratio |r|/sigma), replacement (fixed
+  # replacement sigma past k_suppress, on rn).
+  # Allowed values: off, staged, replacement
+  robust_mode: off
+  # Deprecated alias for robust_mode = staged, read only while robust_mode
+  # is off. Set robust_mode instead, never both.
+  robust: false
+  robust_start_iteration: 3
+  robust_k1: 3.0
+  robust_k2: 6.0
+  k_suppress: 4.0
+  # NOT a limit: the sigma a down-weighted row is solved with, in the unit
+  # of the measurement. Statistics keep the original sigma.
+  suppression_sigma: 2000.0
+  # Budget of the sequential elimination: at most this many rows may be
+  # removed in one diagnostics run. 0 disables the elimination.
+  max_eliminations: 3
+  # FD-aware rank tolerance factor for the observability rank decision.
+  rank_tol_factor: 10.0
+  # State count from which the residual diagnostics use the sparse Takahashi
+  # selected inverse instead of the dense pinv.
+  takahashi_min_states: 200
+  # Advisory topology pre-checks at the start of every estimation, and their
+  # sigma multiples. Findings warn; nothing is ever switched automatically.
+  topology_precheck: true
+  topology_open_flow_k: 4.0
+  topology_dead_flow_k: 3.0
+  topology_voltage_k: 4.0
+  topology_kcl_k: 4.0
+  topology_cluster_min: 3
+  observability:
+    enabled: true
+
+# ENTSO-E CGMES import (see docs/src/cgmes_import.md)
+cgmes_import:
+  # Delivery location(s): folder or ZIP; separate multiple parts (base case
+  # and boundary set) with ";". Empty means "no CGMES input configured".
+  path: ""
+  # System base in MVA — CGMES does not define one.
+  base_mva: 100.0
+  # Fail when topology references stay unresolved (usually a missing boundary set).
+  require_boundary: true
+  # Start from the SSH tap positions and attach the CGMES-defined tap
+  # controllers instead of importing the solved SvTapStep positions as fixed taps.
+  tap_control: false
+  # Attach outer-loop remote voltage controllers for machines whose voltage
+  # RegulatingControl points at a different bus (instead of holding them PV at
+  # their own bus). See docs/src/remote_voltage_control.md.
+  machine_control: false
+  # HVDC converter handling. Allowed values: injections, paired_control
+  # injections keeps the Stage-0 fixed PCC injections; paired_control
+  # additionally attaches one steerable HVDC pair controller per detected
+  # converter pair (issue #297 Draft B).
+  hvdc_mode: injections
+  # Diagnostic override: treat every terminal as connected. For snapshots whose
+  # SSH connected flags contradict their own SV state.
+  ignore_connected: false
+  # Plausibility band for a voltage RegulatingControl target, in p.u. of the
+  # regulated bus's nominal voltage. Outside the band the target is treated as a
+  # placeholder: ignored, unit held PV at the bus voltage derived from the
+  # nominal data, reported as "warning:". Across all ENTSO-E/ReliCapGrid sets the
+  # real targets span 0.92..1.15 pu, so the default has ample margin. Widen it to
+  # accept a delivery's own values; vset_min_pu: 0 with a large vset_max_pu
+  # disables the check.
+  vset_min_pu: 0.5
+  vset_max_pu: 1.5
+  # Give every electrical island its own SV-declared angle reference (at most
+  # one per island). Required for multi-island deliveries — without it every
+  # island beyond the primary has no reference and the island-wise power flow
+  # refuses to run. false forces the legacy single-reference behavior.
+  multi_slack: true
+  # Newton-Raphson start state for CGMES runs.
+  # - auto (default): use the delivery's own SvVoltage state when it carries
+  #   one, else the synthetic flat start. Real deliveries are built around
+  #   their operating point; starting elsewhere makes them diverge for no
+  #   good reason (measured on a 6209-bus delivery: flat 80 iterations
+  #   without convergence, SV 4 iterations).
+  # - sv: always start from the imported SvVoltage state.
+  # - flat: always use the synthetic flat start (the solver earns the
+  #   solution itself — for method studies).
+  # sv/auto-with-SV force-disable the competing start-value machines for the
+  # run. On CGMES runs this wins over power_flow.flatstart; MATPOWER/DTF runs
+  # ignore it. The SV comparison (sv_compare.csv) runs either way.
+  # Allowed values: auto, flat, sv
+  start_values: auto
+  # Behavior of the placeholder guards (implausible shunt admittances, tap
+  # corrections outside 0.5..2.0): warn_skip keeps the filler value out of
+  # the solve with a warning; strict aborts the import instead. Allowed
+  # values: warn_skip, strict
+  placeholder_guards: warn_skip
+  # Reconstruct missing nominal voltages when the delivery ships without its
+  # BaseVoltage catalog (it lives in the boundary EQ of real ENTSO-E
+  # deliveries): seed from the SV voltages (kV, snapped to standard levels)
+  # and transformer rated voltages, then propagate across level-preserving
+  # equipment. Substitutions are summarized as a warning. Pair with
+  # require_boundary: false.
+  infer_base_voltages: false
+
+# IEC 60909 balanced short-circuit evaluation (runShortCircuit!, SC-1).
+short_circuit:
+  # Scalar override for the IEC 60909-0 voltage factor c. 0 = automatic
+  # Table-1 defaults by voltage level and case (c_max/c_min); a positive
+  # value (0.5..1.2) replaces the table for every bus — for expert or
+  # verification runs where a worked example prescribes the factor.
+  c_factor: 0.0
+  # Allowed values: auto, solves, takahashi
+  # All-bus Thevenin sweep strategy. auto picks the Takahashi selected
+  # inverse for islands with at least takahashi_min_buses buses (measured
+  # 34x to 264x over per-bus solves, machine-precision identical values,
+  # automatic per-island fallback where the factor ordering does not
+  # apply) and plain per-bus solves below. solves/takahashi force one
+  # method for every island.
+  sweep_method: auto
+  takahashi_min_buses: 50
+
+matpower_import:
+  # Allowed values: gen_vg, bus_vm, auto, strict_check
+  pv_voltage_source: gen_vg
+  pv_voltage_mismatch_tol_pu: 1.0e-4
+  # Allowed values: bus_vm, gen_vg, imported_setpoint, hybrid
+  compare_voltage_reference: imported_setpoint
+  # Allowed values: deg, rad
+  shift_unit: deg
+  # Typical values: 1.0 (standard), -1.0 (opposite sign convention)
+  shift_sign: 1.0
+  # Allowed values: normal, reciprocal
+  ratio: normal
+  enable_pq_gen_controllers: true
+  apply_bus_names: false
+  apply_branch_names: false
+  apply_branch_kind: false
+  import_for001_contingencies: true
+  # Allowed values: reject_active, ignore_inactive, pf_injections, paired_control
+  # paired_control builds the same PF injections and additionally attaches
+  # one steerable HVDC pair controller per dcline row (issue #297 Draft B).
+  matpower_dcline_mode: pf_injections
+
+# How an imported case becomes a network, independent of its format. These
+# keys lived in matpower_import and transformer before configuration format
+# version 1; old files are rewritten through the documented aliases.
+model:
+  # Allowed values: admittance, voltage_dependent_injection
+  bus_shunt_model: admittance
+  # Tap-changer model used by all network importers.
+  # Allowed values: ideal, impedance_correction
+  # - ideal: tap steps only change the complex winding ratio; transformer R/X
+  #   keep their neutral-position values (no impedance feedback).
+  # - impedance_correction: tap steps re-refer the transformer series impedance
+  #   through the tapped winding; R and X are scaled with |1 + f*e^(j*phi)|^2.
+  tap_changer_model: ideal
+  # Allowed values: off, recommend, apply
+  # recommend prints a pre-run table without changing the active run.
+  # apply may change only convention settings with clear residual evidence;
+  # user YAML files are never rewritten.
+  auto_profile: recommend
+  auto_profile_log: true
+  # Opt-in binary cache of the parsed case file, stored next to the case
+  # file in .sparlectra_net_cache/ and keyed by the case file hash and the
+  # Sparlectra/Julia versions. The network is always built fresh from the
+  # cached case, so import options keep taking effect. Only active when
+  # auto_profile is off; any stale or unreadable cache entry silently
+  # falls back to a fresh parse. Safe to delete the cache directory.
+  # Allowed values: true, false
+  net_cache_enabled: false
+  # Allowed values: off, on, auto
+  preallocate_network: auto
+  preallocate_min_buses: 500
+
+matpower_export:
+  # Whether writeMatpowerCasefile writes the solved AC power-flow state back
+  # into the exported case.
+  # - true (default): bus VM/VA reflect the solved node state, and mpc.branch
+  #   gains the standard MATPOWER result columns 14-17 (PF, QF, PT, QT) sourced
+  #   from the existing branch-flow report path. A
+  #   mpc.sparlectra.solution_written = 1 marker documents this. If the network
+  #   has not been solved, the exporter warns and falls back to the 13-column
+  #   model-only export.
+  # - false: pure model file. mpc.branch keeps its historical 13 columns, and
+  #   VM = 1.0 / VA = 0.0 for all non-slack/non-PV buses (slack and PV
+  #   setpoints are preserved).
+  write_solution: true
+
+performance:
+  enabled: true
+  # Allowed values: off, summary, iteration, full
+  level: iteration
+  print_to_console: true
+  write_to_logfile: true
+  show_allocations: false
+  show_iteration_table: true
+  compact_logging: true
+  representative_warmup_runs: 0
+  compare_cold_warm: false
+  skip_reference_comparison: false
+  skip_expensive_diagnostics: true
+  skip_branch_neighborhood_report: true
+  max_diagnostic_rows: 25
+
+runtime:
+  # Case filename/path resolved by single-case runner paths.
+  case: case14.m
+  # Ordered batch list for run_sparlectra_cases; non-empty cases take precedence over case.
+  cases: [case14.m, case118.m]
+  print_thread_config: true
+  # keep = keep current process setting.
+  julia_threads: keep  # requires process startup or script re-exec
+  blas_threads: keep   # can be applied at runtime
+  # In-process parallel execution of independent work items (island solves,
+  # short-circuit sweeps, contingency batches). Threads come from the Julia
+  # process (--threads); with one thread the parallel sites run serially.
+  parallel:
+    # Master switch: false forces every parallel site onto the serial path.
+    enabled: true
+    # auto = Threads.nthreads(); an integer string caps the task count
+    # (applied via chunking, so it also caps @threads sites).
+    max_tasks: auto
+    # Below this many work items a parallel site runs serially.
+    min_work_items: 4
+  # Runtime case fields are populated in API/Web UI effective_config.yaml artifacts.
+  casefile: ""
+  case_name: ""
+  case_source: ""
+  configured_default_casefile: ""
+
+# Console/logfile output options live under `output:` — the former
+# diagnostics.console_*/logfile_diagnostics duplicates are deprecated and
+# ignored (the parser warns when one is set).
+diagnostics:
+  # Append the resolved effective configuration to the interactive MATPOWER
+  # runner logfile (the API always writes it as effective_config.yaml).
+  log_effective_config: false
+
+output:
+  console_summary: true
+  # Mirror the captured run output live to the real console during API/service
+  # runs (the archived run.log stays identical). Default off: API runs quiet.
+  console_live: false
+  # Allowed values: off, compact, full
+  console_auto_profile: compact
+  # Allowed values: off, compact, summary, full
+  console_diagnostics: compact
+  # Allowed values: off, summary, full
+  console_q_limit_events: summary
+  console_max_rows: 100
+  # Allowed values: off, compact, classic, full
+  logfile_results: full
+  result_table_max_rows: 200
+  result_table_large_case_threshold_buses: 1000
+  # Allowed values: summary, classic, full
+  result_table_large_case_mode: summary
+  # Detailed CSV artifacts use buffered writing for normal cases and streaming
+  # for very large cases by default.
+  # Allowed values: auto, buffered, streaming
+  detailed_result_csv_write_mode: auto
+  # Allowed values: auto, report, direct
+  detailed_result_csv_exporter: auto
+  detailed_result_csv_direct_threshold_buses: 10000
+  detailed_result_csv_buffer_initial_bytes: 8388608
+  detailed_result_csv_buffer_max_bytes: 67108864
+  detailed_result_csv_streaming_threshold_rows: 100000
+  # Allowed values: off, compact, full
+  logfile_diagnostics: compact
+  # Allowed values: off, compact, full
+  logfile_performance: full
+  # Allowed values: off, summary, table, full
+  logfile_warnings: full
+  # One info line per process when running WITHOUT a sysimage or compiled
+  # executable: the first run in a fresh Julia process pays JIT compilation
+  # and is slow, later runs are fast. false silences the hint.
+  startup_latency_hint: true
+
+benchmark:
+  enabled: true
+  # Allowed values: rectangular
+  methods: [rectangular]
+  seconds: 2.0
+  samples: 50
+  show_once: false
+  # Allowed values: classic, dataframe, compact
+  show_once_output: classic
+  # 0 disables node-count limit for one-shot output.
+  show_once_max_nodes: 0
+
+contingency:
+  # Per-case start-value ladder for the N-1 contingency batch (issue #331):
+  # an ordered, duplicate-free subset of the stages below, tried in order
+  # until one converges. [warm] reproduces the pre-#331 single warm solve.
+  # Allowed stages: warm (base-case voltages), apslf (APSLF start, needs
+  # AnalyticLoadFlow.jl), dc (flat magnitudes, DC-projected angles), flat.
+  rescue_ladder: [warm]
+  # Contingency screening on the base Jacobian factorization: every
+  # non-islanding outage is estimated with ONE Woodbury-corrected Newton
+  # step (no refactorization, no full solve), and only scenarios whose
+  # estimate comes close to a limit get the full solve.
+  screening:
+    # off  = every scenario gets the full solve (DEFAULT; the calibration
+    #        2026-09-03 showed outage classes a residual step cannot see,
+    #        so screening is an opt-in, not a default)
+    # flag = estimate first, full solve only for flagged scenarios; opt in
+    #        after checking the screening share and margins on your network
+    # only = report the estimates; full solve only where no estimate exists
+    #        (islanding outages, screening steps that do not reduce the
+    #        mismatch)
+    mode: off
+    # Flagging margin in percent: flag when an estimated loading reaches
+    # (100 - margin) percent, or an estimated voltage comes within margin
+    # percent of a band limit.
+    margin_pct: 10.0
+
+control:
+  # Enable the generic outer-loop control framework.
+  # If a network contains registered controllers, high-level runners such as
+  # run_sparlectra(net=...) can use run_control! around the inner runpf! solver.
+  enabled: true
+  # Global maximum number of outer controller iterations.
+  # This is independent from power_flow.max_iter, which limits the inner
+  # Newton / power-flow iterations.
+  max_outer_iterations: 20
+  # Collect machine-readable control trace rows in ControlRunResult.trace.
+  trace: true
+  # Reserved for future or implementation-dependent per-iteration control logging.
+  log_iterations: true
+  # Stop outer-loop orchestration if the inner power flow fails.
+  stop_on_pf_failure: true
+  # Declarative outer-loop controllers (issue #305): one named mapping per
+  # controller (block style; the minimal YAML reader has no "- item"
+  # sequences). The name becomes the controller name where the type
+  # supports one. Types and keys mirror the add* functions:
+  #   power_transformer -> addPowerTransformerControl! (trafo, mode, ...)
+  #   machine_voltage   -> addMachineVoltageControl!   (bus, target_bus, target_vm_pu, ...)
+  #   shunt_voltage     -> addShuntVoltageControl!     (bus, target_vm_pu, bs_min_mvar, bs_max_mvar, ...)
+  #   series_reactance  -> addSeriesReactanceControl!  (from_bus, to_bus, p_target_mw, x_min_pu, x_max_pu, ...)
+  #   hvdc_pair         -> addHvdcPairControl!         (from_bus, to_bus, p_transfer_mw, loss_mw, ...;
+  #                        mode: island_feed feeds an island whose reference is the receiving converter)
+  #   upfc              -> addUpfcControl!             (from_bus, to_bus, shunt_bus, p_target_mw, v_inj_max_pu,
+  #                        s_max_mva | i_max_ka; model: quadrature (default) needs target_bus/target_vm_pu and
+  #                        registers the SSSC+STATCOM pair; model: full needs q_target_mvar (+ optional
+  #                        q_shunt_mvar) and steers line P and Q independently via the DC-link-coupled model)
+  # Example:
+  #   controllers:
+  #     tap_T1:
+  #       type: power_transformer
+  #       trafo: T1
+  #       mode: voltage
+  #       target_bus: B2
+  #       target_vm_pu: 1.02
+  #     tcsc_B1_B2:
+  #       type: series_reactance
+  #       from_bus: B1
+  #       to_bus: B2
+  #       p_target_mw: 80.0
+  #       x_min_pu: 0.05
+  #       x_max_pu: 0.30
+  controllers: {}
+
+webui:
+  # Show the "Case-specific settings loaded from ..." notice on the Web UI
+  # PowerFlow form whenever the selected case has a saved settings profile
+  # (a .sparlectra-webui.yaml sidecar). Set to false once you know a case has
+  # saved settings and no longer want the reminder.
+  show_case_settings_notice: true
+  # How far the operation log reaches back, in days. Every Web UI start drops
+  # older entries from every operation log it knows; 0 keeps only the current
+  # session. Lower this when the log page grows unwieldy (the size comes from
+  # the number of entries, not from their age).
+  operation_log_retention_days: 10
+
+extensions:
+  # Reserved for future extension schemas.
+  reserved: true

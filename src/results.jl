@@ -752,6 +752,12 @@ function _distributed_slack_bus_shares(net::Net)
   return (true, shares)
 end
 
+"""
+    printACPFlowResults(net, ...; kwargs...)
+
+Print the solved power-flow result tables (buses, branches, summary) to the
+console or a file.
+"""
 function printACPFlowResults(
   net::Net,
   ct::Float64,
@@ -1378,6 +1384,11 @@ function formatProsumerResults(net::Net)
   return String(take!(buf))
 end
 
+"""
+    printProsumerResults(net)
+
+Print the per-machine result table of the solved network.
+"""
 function printProsumerResults(net::Net)
   prosText = formatProsumerResults(net)
   println(prosText)

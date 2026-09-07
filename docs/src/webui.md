@@ -48,9 +48,10 @@ results are written beneath `%LOCALAPPDATA%\Sparlectra\WebUI\runs` on Windows,
 `~/Library/Application Support/Sparlectra/WebUI/runs` on macOS. Directories
 are created automatically. The operation log is in the sibling user Web UI
 `logs` directory, and downloaded/generated MATPOWER cases are cached in the
-sibling user Web UI `data/mpower` directory. On first start,
-`warmup_case3.jl` is copied there only for internal startup warm-up and is not
-shown in the normal user-selectable case list.
+sibling user Web UI `data/mpower` directory. On first start, the internal
+`warmup_case*.jl` workloads are copied there; they are not shown in the
+normal user-selectable case list (the sysimage build workload runs the
+shipped `sp_case5`/`sp_case60` demo cases).
 
 On first startup, the Web UI copies the package configuration template to its user-writable `config/configuration.yaml`. Pass `output_root="my_sparlectra_runs"` or `config_file="my_configuration.yaml"` to override these defaults; an explicit configuration file is never overwritten.
 The effective configuration, output root, MATPOWER cache, and operation log are displayed by
@@ -69,10 +70,10 @@ startup and default-path behavior to `start_sparlectra_webui`.
 
 For end users the repository root additionally ships platform scripts:
 `start_webui.sh` / `start_webui.bat` (start; point at the install script
-when Julia is missing) and `install_webui.sh` / `install_webui.bat`
+when Julia is missing) and `tools/install_webui.sh` / `tools/install_webui.bat`
 (install Julia via juliaup when missing, obtain Sparlectra at its latest
 tagged release, offer the update when an existing copy is older than the
-latest release, offer the optional [fast-start sysimage](fast_start.md)
+latest release, leave the [sysimage](sysimage.md) build to the Web UI start
 build and a desktop shortcut/launcher for restarting the Web UI, then
 start it). Unattended installs answer the questions via
 `SPARLECTRA_UPDATE=1/0`, `SPARLECTRA_BUILD_SYSIMAGE=1/0`, and
@@ -96,8 +97,11 @@ Brave. If none is installed, Sparlectra logs the local URL instead of falling
 back to a regular tab; open `http://127.0.0.1:8080/powerflow` manually if
 needed.
 
-For safety, the first prototype accepts loopback hosts only: `127.0.0.1`,
-`localhost`, or `::1`. It is not intended for public or multi-user deployment.
+The server accepts loopback hosts only: `127.0.0.1`, `localhost`, or `::1`.
+That is the intended deployment model, a single-user tool on the machine that
+does the computing, not a limitation waiting to be lifted: there is no
+authentication, so any wider binding would expose the run directory and the
+configuration editor to whoever can reach the port.
 
 The shared page header uses the existing Sparlectra documentation logo from
 `docs/src/assets/logo.png`. The Web UI serves that single PNG through its local
@@ -105,25 +109,15 @@ asset route, and no additional branding configuration is required.
 The shared header and footer display the running package version from
 `Sparlectra.version()`, for example `Sparlectra.jl v0.8.4`.
 
-### Startup warm-up
+### Startup
 
-`start_sparlectra_webui` accepts `warmup`, `warmup_casefile`, and
-`warmup_store_result`. `warmup` defaults to `nothing`, which means the
-configuration decides: **`webui.warmup`** (default `true`) is editable as
-**Warm up on start** under the form's Advanced options and takes effect at
-the next Web UI start; an explicit `warmup = true/false` in the call always
-wins. Besides the power-flow path, the warm-up also compiles the
-short-circuit path (Z-bus solve, IEC c-factor table, result and coverage
-types) on a throwaway two-bus network, so the first **Short circuit** click
-no longer pays that compilation. Warm-up runs asynchronously and fails
-softly. With
-`warmup_store_result=false`, it uses a temporary directory and creates no
-normal run-history entry. The bundled `data/webui/warmup_case3.jl` file is an
-original Sparlectra-owned synthetic three-bus MATPOWER-compatible Julia case,
-not a derivative of an external MATPOWER case. Files whose names start with the
-reserved `warmup_` prefix are internal-only and are hidden from the case
-selector; pass `warmup_casefile` when a different explicit warm-up case is
-needed.
+`start_sparlectra_webui` serves as soon as the server is bound; there is no
+hidden warm-up run. What the first click costs depends on how the session
+started: on the [sysimage](sysimage.md) the code is already compiled, and
+without it Julia compiles each path on first use, which the start says
+plainly before it happens. Files whose names start with the reserved
+`warmup_` prefix are bundled precompile workloads and stay hidden from the
+case selector.
 
 ## Starting a PowerFlow run
 
@@ -218,7 +212,7 @@ The current-iteration controls in **Advanced start values** write the same
 They configure a guarded start-value preconditioner that runs after the normal
 start modes and optional start projection, before Newton-Raphson. They do not
 add a new start-voltage/start-angle mode and do not replace the rectangular
-Newton-Raphson solver. When case-specific sidecar saving is enabled, these
+Newton-Raphson solver. When case-specific settings saving is enabled, these
 fields are saved and restored through the same profile mechanism as the other
 Web UI form options.
 
@@ -328,6 +322,15 @@ branch flows are never mistaken for an AC result. `iterations` is reported
 as-is from the DC solve (always `1`, a direct linear solve, not a Newton
 iteration count).
 
+The **Solver** column names the method that actually ran, which is not the
+power-flow solver for every run kind: a state estimation reports `wls`
+(weighted least squares), a short circuit `iec60909` (a direct solve, not a
+Newton iteration), and an import analysis leaves the column empty because it
+solves nothing. A plain power flow, a power flow started from an estimate,
+and every contingency case report the power-flow solver. The value is
+derived from the run kind when a run carries no method of its own, so runs
+recorded before this distinction existed also show the right method.
+
 ### Case-specific settings profiles
 
 Case-specific Web UI settings are optional. When a terminal result page shows a
@@ -355,11 +358,53 @@ sets take precedence on the next page load (the notice says so), while fields
 the YAML does not set keep their saved case values. Editing the configuration
 therefore shows up on a simple page refresh — no Web UI restart needed.
 
+Since the stage-4A page split, run-independent options live on their own
+pages: the **Case** page carries the case chooser, upload, export, and
+the per-format import options; the **Settings** page carries the solver,
+start, output, and expert options together with the configuration block
+(configuration file display, check/refresh actions, saved case settings,
+and the ignore switch). Settings values reach a run through the
+configuration precedence (`resolve_config`), not through the run form:
+saving with target "this case" writes case-scope keys into the case's
+configuration file, target "configuration file" merges into the general
+YAML (with a `.settings-save.bak` backup). The run page keeps only the
+run parameters (modes, N-1 kind, scenario source, screening, the DTF
+outage run fields, and the benchmark trigger).
+
+With block 4 the run page became the **Runs** page (nav entry "Runs"):
+below the PowerFlow form it carries the state-estimation section
+(estimator options and measurement-set selection posting to the same
+`/powerflow/run` action with `se_mode`, plus the measurement generator,
+set details with inline editors, and the measurement upload as fold-out
+tabs) and the N-1 editors as tabs: the scenario editor embeds directly
+(SCF cases), while the weights editor loads on first open through the
+standalone route (seeding its element names builds the net once). The
+former `/stateestimation` page is a real redirect to the Runs page's SE
+anchor; its POST action routes are unchanged. The SE section always uses
+the shared case selection from the Case page; it has no case selector of
+its own anymore.
+
+Stage 4B generates the Case page's format-bound option sections from the
+adapters themselves: the field set of each section derives from the
+adapter's option struct (`options_type`) and the option specs, so the
+form cannot drift from what a conversion actually accepts. Visibility
+follows the decided Basic criterion (keys that appear in at least one
+workshop, or in the example configuration without a default): the small
+Basic set renders directly on the Settings and Case pages, everything
+else folds into the Advanced sections, and the DTF diagnostics on the
+Runs page sit behind the same Advanced fold. Deleting a case now removes
+ALL of its companion files (configuration, weights, measurement CSVs),
+enumerated by one definition.
+
 The existing-case selector is MATPOWER-oriented by default and lists
 user-selectable `.m` files plus runnable DTF `.DAT` candidates when they
-are supported by the current Web UI case-resolution logic. Generated `.jl`
-cache artifacts are hidden from the selector, and files with the reserved
-`warmup_` prefix are internal-only. FOR002-like `.DAT` files are not primary
+are supported by the current Web UI case-resolution logic. The shipped
+demo cases (`sp_case5` to `sp_case188`, see
+[Shipped Demo Cases](demo_cases.md)) are always offered as well; picking
+one stages it into the case cache together with its sidecar files (the
+per-case configuration and the measurement CSVs) on first use. Generated
+`.jl` cache artifacts are hidden from the selector, and files with the
+reserved `warmup_` prefix are internal-only. FOR002-like `.DAT` files are not primary
 cases; use the optional FOR002 reference field for those validation references.
 The FOR002 reference field is used only for legacy reference comparison
 diagnostics: enter an absolute path, a path copied from the same case cache
@@ -404,6 +449,46 @@ input containing a path separator is rejected instead of downloaded, and URL
 input is not accepted. The browser cannot select runtime directories. The
 read-only configuration path is the provisioned user file or the explicit file
 passed at startup.
+
+## Scenarios and N-1 on the run form
+
+The action row of the run form carries the N-1 controls: the outage-kind
+selector (branch/generator), a **scenario source** selector (generated
+N-1 lists, or, for an SCF case that carries one, the case file's own
+scenarios block), a **screening mode** selector (configured / off / flag /
+only) with a **margin** field (empty means the configured
+`contingency.screening.margin_pct`), and the links to the weights editor
+and, for SCF cases, the scenario editor. Screening is off by default and
+is a deliberate opt-in; see [N-1 Contingency Analysis](contingency.md)
+for the reasoning and the calibration. The run summary names the screened
+count and the case-list source, and the result page renders the N-1 /
+scenario results as a table for every case format: name, weight,
+convergence, iterations, start, voltage envelope, worst loading,
+severity, islands, shed load, and (when screening ran) the screened
+marker column. Rows are ranked by severity with failures first and capped
+at 100; the CSV artifact keeps the complete list in input order and is
+linked from the table. A row with a screening estimate carries an
+always-visible detail line: for a screened row the values are the
+one-step estimate itself (no full solve), for a flagged row the estimate
+stands next to the full-run values; a failed case shows its error text in
+the row.
+
+Scenarios are available for SCF cases only in this version. For MATPOWER,
+DTF and CGMES cases the form offers the generated N-1 sources and shows
+one line, "Scenarios need an SCF case; export this case as SCF first",
+next to the export action. The **scenario editor**
+(`/powerflow/scenarios`) lists the open SCF case's scenarios (name,
+weight, op count; edit, duplicate, delete, new) and edits one scenario
+through a form of op rows: op (status/set/scale), target class, a
+component selector populated from the case as `id: name (from-to)` and
+filtered by class, then the fields the op needs (value for status, field
+plus value for set, factor for scale). Validation is server side with the
+scenario rules; errors show next to the form with the scenario name and
+op index, and a tap patch on a regulated transformer is rejected with the
+controller named. "Save into case file" writes the scenarios block into
+the SCF through the existing writer; nothing is kept in the browser. The
+run starts from the run form with the scenario source set to the case
+file's scenarios.
 
 ## Run artifacts and output modes
 
@@ -638,12 +723,27 @@ message, and timing fields when available. Every event also records
 `sparlectra_version` and a millisecond-precision UTC timestamp using
 `yyyy-mm-ddTHH:MM:SS.sssZ`. They never include artifact
 contents, local file contents, or complete configuration bodies. Logging is
-best effort and cannot fail a normal Web UI request. After an append takes the
-file above 10,000 valid JSONL entries, compaction atomically keeps the newest
-1,000 valid entries and drops empty or malformed lines encountered during
-compaction. When the current file reaches 10 MiB, it is replaced after being
-retained as `webui_operations.jsonl.1`; this byte-size guard remains independent
-of entry-count compaction. The viewer and download read the current file.
+best effort and cannot fail a normal Web UI request.
+
+Retention is time-based first: **every Web UI start drops entries older than
+`webui.operation_log_retention_days`** (default 10, `0` keeps only the current
+session), and it does so for every operation log it knows, including one a
+service call wrote next to the runs. The environment variable
+`SPARLECTRA_WEBUI_OPERATION_LOG_RETENTION_DAYS` overrides the configuration for
+headless runs that read no file. Size and entry count are safety guards on top,
+applied during an append: above 1 MiB the log is compacted, and more than 5,000
+valid entries are reduced to the newest 1,000, dropping empty or malformed
+lines on the way. The viewer and download read the current file.
+
+The page states its own size (entries and kB) next to the controls and
+carries a **Clear operation log** button: it empties the file in place and
+writes one entry recording the deletion, so the log never becomes silently
+empty and the following entries have a visible starting point.
+
+If the log page feels unwieldy, the number of ENTRIES is what makes it large,
+not their age: a busy day writes well over a thousand. Clearing it is the
+immediate remedy, lowering the retention to two or three days the lasting
+one.
 
 Development reports distinguish external **Verification limitations**, such as
 an unavailable browser executable or an HTTP 403/proxy failure while installing
@@ -687,25 +787,26 @@ old Julia process or start the Web UI with a different `port` value.
 
 ## Current limitations
 
-This first prototype is intentionally synchronous and local. It has no State
-Estimation UI, authentication, public-server mode, background queue, live
-progress stream, WebSockets, database, topology view, or advanced plotting.
-It uses a compact Julia `Sockets` HTTP layer to avoid a heavy web-framework
-dependency.
+The Web UI is local by design: it binds to loopback, has no authentication and
+no public-server mode, and keeps no database. There is no push channel
+(WebSockets or server-sent events), so a running job reports its phase through
+the page rather than streaming it, and there is no topology view and no
+advanced plotting. The HTTP layer is a compact Julia `Sockets` implementation,
+chosen to avoid a heavy web-framework dependency.
 
 ### Configuration check and refresh
 
-The PowerFlow page includes explicit **Check configuration** and **Refresh configuration** actions for user YAML files. They exist because the package configuration template can gain new options over time while existing local files remain in place. A check performs a dry run only: it compares the selected configuration against `src/configuration.yaml.example`, reports missing keys, known deprecated aliases, duplicate YAML keys, and shows a refreshed YAML preview without writing.
+The PowerFlow page includes explicit **Check configuration** and **Refresh configuration** actions for user YAML files. They exist because the package configuration template can gain new options over time while existing local files remain in place. A check performs a dry run only: it compares the selected configuration against `src/config/configuration.yaml.example`, reports missing keys, known deprecated aliases, duplicate YAML keys, and shows a refreshed YAML preview without writing.
 
 Refresh is conservative and user-initiated. It preserves existing user values, adds missing keys with current template defaults, and may normalize known deprecated aliases in user files to canonical start-mode settings or legacy `matpower_*` Q-limit mode names. It never rewrites YAML during Web UI startup. When writing a server-local configuration file, Sparlectra first creates a timestamped backup next to the original file. If duplicate YAML keys are detected, refresh refuses to write so the file can be reviewed manually. Browser-uploaded or pasted YAML is not rewritten in place; the refreshed YAML is offered as a download instead.
 
 ## Configuration precedence and artifact downloads
 
-PowerFlow API and Web UI runs apply configuration in a deterministic order: built-in defaults from `src/configuration.yaml.example`, the selected user YAML file, saved case-sidecar settings when the Web UI loads them into the run form, enabled Web UI form/runtime values, explicit API `config_overrides`, and intentional post-processing such as `matpower_import.auto_profile: apply`. Each run writes the actual `effective_config.yaml`; the file includes `_config_sources` metadata for the diagnostic options most likely to affect MATPOWER DC-line and island-aware solves, including Q-limit handling, start-current iteration, island mode, tolerance, iteration limits, start modes, and MATPOWER DC-line mode.
+PowerFlow API and Web UI runs apply configuration in a deterministic order: built-in defaults from `src/config/configuration.yaml.example`, the selected user YAML file, saved per-case settings from the case configuration file (`<stem>.config.yaml` next to the case) when the Web UI loads them into the run form, enabled Web UI form/runtime values, explicit API `config_overrides`, and intentional post-processing such as `model.auto_profile: apply`. Each run writes the actual `effective_config.yaml`; the file includes `_config_sources` metadata for the diagnostic options most likely to affect MATPOWER DC-line and island-aware solves, including Q-limit handling, start-current iteration, island mode, tolerance, iteration limits, start modes, and MATPOWER DC-line mode.
 
-Web UI runtime controls are applied by default, so checked/enabled options and values entered or selected on the PowerFlow form are intentional runtime overrides. Boolean values are distinct from override participation: an unchecked functional checkbox can intentionally override YAML to `false`. The advanced **Ignore Web UI settings and use configuration defaults** checkbox inverts that behavior for diagnostic runs: when checked, the run ignores the form controls and uses the selected YAML/default configuration values instead. `matpower_import.auto_profile: apply` may still adjust supported MATPOWER import conventions after GUI and API values are assembled, and `effective_config.yaml` records those auto-profile applications. Active MATPOWER DC lines are supported by default as fixed terminal injections; they do not add Ybus connections, so AC islands are detected and solved independently by default. This is a power-flow approximation, not a complete HVDC converter or DC-grid model. When the YAML editor saves successfully, the server reloads the saved file so the PowerFlow form reflects the new YAML values on the next page load.
+Web UI runtime controls are applied by default, so checked/enabled options and values entered or selected on the PowerFlow form are intentional runtime overrides. Boolean values are distinct from override participation: an unchecked functional checkbox can intentionally override YAML to `false`. The advanced **Ignore Web UI settings and use configuration defaults** checkbox inverts that behavior for diagnostic runs: when checked, the run ignores the form controls and uses the selected YAML/default configuration values instead. `model.auto_profile: apply` may still adjust supported MATPOWER import conventions after GUI and API values are assembled, and `effective_config.yaml` records those auto-profile applications. Active MATPOWER DC lines are supported by default as fixed terminal injections; they do not add Ybus connections, so AC islands are detected and solved independently by default. This is a power-flow approximation, not a complete HVDC converter or DC-grid model. When the YAML editor saves successfully, the server reloads the saved file so the PowerFlow form reflects the new YAML values on the next page load.
 
-The plain **Configuration Editor** link on the PowerFlow page opens the active YAML in a textarea, validates it with the same lightweight YAML parser and duplicate-key checks used by configuration refresh, writes only after validation succeeds, and creates a timestamped backup next to the edited file. If case-sidecar settings exist for a selected case, they can still override the global YAML via the prefilled form; the editor warns about that interaction so stale case-specific settings are not mistaken for global configuration changes.
+The plain **Configuration Editor** link on the PowerFlow page opens the active YAML in a textarea, validates it with the same lightweight YAML parser and duplicate-key checks used by configuration refresh, writes only after validation succeeds, and creates a timestamped backup next to the edited file. If a case configuration file exists for a selected case, they can still override the global YAML via the prefilled form; the editor warns about that interaction so stale case-specific settings are not mistaken for global configuration changes.
 
 Result pages and artifact lists include **Download all artifacts as ZIP**. The ZIP is named `sparlectra_run_<run_id>_artifacts.zip` and is assembled only from files already exposed as artifacts for that run directory. Missing optional artifacts are skipped, and unsafe names are ignored rather than allowing path traversal.
 
@@ -719,9 +820,13 @@ Importing is a copy-only operation. It does not submit the PowerFlow form, creat
 
 Pressing Enter in the **Or type case file path** field resolves the typed value the same copy-only way instead of starting a run: a bare MATPOWER case name (for example `case300.m`) is downloaded through [`ensure_casefile`](@ref) into the case directory, an entry of the form `cgmes:<alias>` fetches an ENTSO-E CGMES test configuration (see below), while a full local path to an existing file is copied into the case directory with the same validation as file import (unsupported extensions, oversized files, and name collisions are rejected with an inline message). Either way the resolved file then appears in the **Existing case file** selector; it does not submit the PowerFlow form or invoke the solver.
 
-Uploaded files are stored in the same effective Web UI case directory shown in the form and used by the selector. Development checkouts use the writable `data/mpower` directory when it is available; installed or immutable package contexts fall back to the user-writable Web UI application data directory, specifically the sibling `data/mpower` directory next to the configured Web UI output root. The directory is created as needed. Manual full paths remain available for advanced users and continue to override the selector when filled in.
+The picker also accepts a Sparlectra Case Format `.json` file; that one is parsed and validated BEFORE it is stored, so an arbitrary JSON never lands in the case directory.
 
-Upload limits are centralized in the Web UI implementation: 100 MiB per file and 250 MiB per multipart request. Oversized files are rejected cleanly and reported in the import summary. Existing files are not overwritten; conflicting uploads are rejected as `already exists`, while other selected files can still be imported. Filenames are treated as untrusted: directory components, traversal attempts, empty names, control characters, and names that would resolve outside the case directory are rejected. Writes are staged through a temporary file in the destination directory and then renamed into place.
+The exported name drops a format suffix the case already carries, so exporting `case14.scf.json` as plain PGM gives `case14.pgm.json` rather than a growing chain of suffixes. Both export products, `.scf.json` and the plain `.pgm.json`, appear in the case selector afterwards; they are runnable cases, not just files. The way back out is the **Download selected case** link in the export row: it hands over whatever the case selector currently shows, and after an export the page additionally offers the file that was just written by name. Only plain files inside the case directory are served: a bare name resolves against it, an absolute path is accepted when it points into it (the form carries one back after saving case settings), and anything outside, plus a CGMES delivery directory, is refused with a message. Both sides are resolved through their real path first, because the Web UI state directory is reachable through a symlink (a Flatpak app data path pointing at `~/.local/state`) and the two spellings would otherwise not match.
+
+Uploaded files land in the case directory the form shows, which the selector also reads: `data/mpower` in a development checkout, and the writable Web UI data directory in an installed context. A manual full path still overrides the selector.
+
+Limits are 100 MiB per file and 250 MiB per request; oversized files are reported in the import summary. An existing file is never overwritten (the upload is rejected as `already exists` while the other selected files still import). Filenames are treated as untrusted, so anything that would resolve outside the case directory is refused.
 
 The normal case selector continues to use the existing Web UI filtering rules. Imported MATPOWER `.m` files and runnable DTF `.DAT` files appear after refresh. FOR002 reference `.DAT` files may be copied for validation workflows but remain hidden from the normal runnable-case selector and belong in the optional FOR002 reference field.
 

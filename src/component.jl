@@ -21,6 +21,10 @@
 #          used by all network elements
 
 
+"""
+The component vocabulary of the model (buses, lines, transformers, machine
+and load kinds), shared by every importer.
+"""
 @enum ComponentTyp begin
   UnknownC
   NodeC
@@ -41,12 +45,19 @@
   SymmetricalPhaseShifterC
 end
 
+"""
+Transformer kinds: ratio transformer, phase shifter, phase tap changer, or
+a plain PI-model branch.
+"""
 @enum TrafoTyp UnknownT = 0 Ratio = 1 PhaseShifter = 2 PhaseTapChanger = 3 PIModel = 4
 
 @enum NodeType UnknownN = 0 PQ = 1 PV = 2 Slack = 3 Isolated = 4
 
 @enum ProSumptionType UnknownP = 0 Injection = 1 Consumption = 2
 
+"""
+Supertype of every identifiable network component (name, id, type).
+"""
 abstract type AbstractComponent end
 """
     Component
@@ -101,6 +112,10 @@ mutable struct Component <: AbstractComponent
   end
 end
 
+"""
+Component identity in the power-grid-model style: generated name, external
+id, component type, and the bus indices the element connects.
+"""
 mutable struct ImpPGMComp <: AbstractComponent
   cID::String
   cName::String
@@ -141,6 +156,10 @@ mutable struct ImpPGMComp <: AbstractComponent
   end
 end
 
+"""
+Component identity of a three-winding transformer, carrying all three bus
+indices next to the common identity fields.
+"""
 mutable struct ImpPGMComp3WT <: AbstractComponent
   cID::String
   cName::String
@@ -168,6 +187,11 @@ mutable struct ImpPGMComp3WT <: AbstractComponent
 end
 
 # helper
+"""
+    toComponentTyp(s) -> ComponentTyp
+
+Map a component-type name (case insensitive) onto the enum.
+"""
 function toComponentTyp(o::String)::ComponentTyp
   val = uppercase(o)
   if val == "ACLINESEGMENT"
@@ -209,10 +233,20 @@ function toComponentTyp(o::String)::ComponentTyp
   end
 end
 
+"""
+    getCompName(c) -> String
+
+The reference name of the component.
+"""
 function getCompName(c::AbstractComponent)::String
   return c.cName
 end
 
+"""
+    getCompID(c) -> String
+
+The external (source-system) id of the component.
+"""
 function getCompID(c::AbstractComponent)::String
   return c.cID
 end

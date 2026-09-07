@@ -18,7 +18,7 @@
 
 using Sparlectra
 
-include(joinpath(@__DIR__, "..", "internal", "example_header.jl"))
+include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
 function main(; casefile::AbstractString = "case9.m")
   print_example_banner("examples/powerflow/exp_dc_powerflow.jl", "solves a standalone DC power flow (MATPOWER rundcpf equivalent) and optionally seeds the AC Newton-Raphson solve from it")

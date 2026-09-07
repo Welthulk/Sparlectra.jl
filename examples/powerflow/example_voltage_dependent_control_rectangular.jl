@@ -18,7 +18,7 @@
 
 using Sparlectra
 
-include(joinpath(@__DIR__, "..", "internal", "example_header.jl"))
+include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
 function main(args = ARGS)
   print_example_banner("examples/powerflow/example_voltage_dependent_control_rectangular.jl", "runs the voltage-dependent control (Q(U)/P(U)) demo via run_voltage_dependent_control_demo, optionally plotting the control curve")

@@ -10,6 +10,11 @@ Typical use cases:
 * Sectionalizers
 * Node splitting / merging in CIM imports
 
+Links enter a network in three ways: directly via `addLink!`, from retained
+CGMES switches, or from the MATPOWER extension block `mpc.sparlectra.links`
+(one `fbus tbus status` row per coupler, written back on MATPOWER export;
+see [MATPOWER Case Format](matpower_format.md)).
+
 A link is **not a physical branch**:
 
 * It has **no impedance**

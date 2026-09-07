@@ -24,7 +24,7 @@
 
 using Sparlectra
 
-include(joinpath(@__DIR__, "..", "internal", "example_header.jl"))
+include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
 # Two areas, each with its own reference, joined ONLY by the converter pair
 # at B2 (from side, exports) and B4 (to side, receives). No AC tie exists,

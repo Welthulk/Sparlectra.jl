@@ -129,7 +129,7 @@ function _check_wrong_branch_solution(V::Vector{ComplexF64}, bus_types::Vector{S
   end
 
   # Wrong-branch heuristics judge only the network's HIGHEST voltage level
-  # (maintainer decision 2026-07-30): sub-transmission dips are normal
+  # by design: sub-transmission dips are normal
   # operating spread, not a wrong-branch indicator — a real 6209-bus CGMES
   # snapshot flagged healthy 45 kV feeders at 0.94 pu as SUSPECT while its
   # 380 kV level was clean. Without a net (pure vector call) or without

@@ -255,6 +255,182 @@ mpc.dcline = [
       end
     end
 
+    @testset "Sparlectra links extension (busbar coupler)" begin
+      mktempdir() do dir
+        # Bus 2 carries the load but has no branch: it is fed only through
+        # the closed impedance-less link onto busbar bus 3, so the test
+        # covers the galvanic link contraction end to end.
+        path = joinpath(dir, "case_link.m")
+        write(path, """
+function mpc = case_link
+mpc.version = '2';
+mpc.baseMVA = 100;
+mpc.bus = [
+1 3 0 0 0 0 1 1 0 110 1 1.1 0.9;
+2 1 40 10 0 0 1 1 0 110 1 1.1 0.9;
+3 1 0 0 0 0 1 1 0 110 1 1.1 0.9;
+];
+mpc.gen = [
+1 50 0 100 -100 1 100 1 100 0 0 0 0 0 0 0 0 0 0 0 0;
+];
+mpc.branch = [
+1 3 0.01 0.05 0 100 0 0 0 0 1 -360 360;
+];
+mpc.sparlectra = struct();
+mpc.sparlectra.format_version = 1;
+mpc.sparlectra.links = [
+2 3 1;
+];
+""")
+        mpc_link = Sparlectra.MatpowerIO.read_case_m(path; legacy_compat = false)
+        @test mpc_link.sparlectra !== nothing
+        @test mpc_link.sparlectra.links == [2.0 3.0 1.0]
+
+        net_link = Sparlectra.createNetFromMatPowerFile(filename = path)
+        @test length(net_link.linkVec) == 1
+        l = only(net_link.linkVec)
+        @test l.status == 1
+        @test Set([Int(l.fromBus), Int(l.toBus)]) == Set([net_link.busDict["2"], net_link.busDict["3"]])
+
+        _, erg = runpf!(net_link, 30, 1e-8, 0)
+        @test erg == 0
+        # closed link => the two buses are one electrical node
+        @test Sparlectra.get_bus_vm_pu(net_link, "2") ≈ Sparlectra.get_bus_vm_pu(net_link, "3") atol = 1e-12
+
+        path2 = joinpath(dir, "case_link_roundtrip.m")
+        Sparlectra.writeMatpowerCasefile(net_link, path2; write_solution = false)
+        txt = read(path2, String)
+        @test occursin("mpc.sparlectra.links", txt)
+        net_link2 = Sparlectra.createNetFromMatPowerFile(filename = path2)
+        @test length(net_link2.linkVec) == 1
+        @test only(net_link2.linkVec).status == 1
+
+        # malformed block: wrong column count must be rejected, not guessed
+        bad = joinpath(dir, "case_link_bad.m")
+        write(bad, replace(read(path, String), "2 3 1;" => "2 3;"))
+        @test_throws ArgumentError Sparlectra.MatpowerIO.read_case_m(bad; legacy_compat = false)
+      end
+    end
+
+    @testset "Sparlectra tap-changers extension (nameplate data)" begin
+      mktempdir() do dir
+        # branch 2 is a transformer at neutral ratio 1.0; the extension
+        # declares a +-2 x 2.5 percent changer standing at step 1 and a
+        # pure phase shifter on branch 3 (tap_step 0 = no ratio changer)
+        path = joinpath(dir, "case_taps.m")
+        write(path, """
+function mpc = case_taps
+mpc.version = '2';
+mpc.baseMVA = 100;
+mpc.bus = [
+1 3 0 0 0 0 1 1 0 110 1 1.1 0.9;
+2 1 40 10 0 0 1 1 0 20 1 1.1 0.9;
+3 1 20 5 0 0 1 1 0 20 1 1.1 0.9;
+];
+mpc.gen = [
+1 70 0 100 -100 1 100 1 100 0 0 0 0 0 0 0 0 0 0 0 0;
+];
+mpc.branch = [
+1 2 0.002 0.06 0 100 0 0 1.0 0 1 -360 360;
+1 3 0.002 0.06 0 100 0 0 1.0 -2.0 1 -360 360;
+2 3 0.02 0.1 0 100 0 0 0 0 1 -360 360;
+];
+mpc.sparlectra = struct();
+mpc.sparlectra.format_version = 1;
+mpc.sparlectra.tap_changers = [
+1 0.025 -2 2 1 0 0 0 0;
+2 0 0 0 0 0.5 -10 10 -2;
+];
+""")
+        net = Sparlectra.createNetFromMatPowerFile(filename = path)
+        b1 = net.branchVec[1]
+        @test b1.has_ratio_tap
+        @test b1.tap_step == 0.025
+        @test b1.ratio == 1.0                       # neutral stays the TAP column
+        @test b1.tap_ratio ≈ 1.0 / 1.025            # standing at step 1
+        @test b1.tap_min ≈ 1.0 / 1.05
+        @test b1.tap_max ≈ 1.0 / 0.95
+        b2 = net.branchVec[2]
+        @test !b2.has_ratio_tap                     # tap_step 0: declared ratio-less
+        @test b2.has_phase_tap
+        @test b2.phase_step_deg == 0.5
+        @test b2.angle == -2.0                      # neutral shift stays the SHIFT column
+        @test b2.phase_shift_deg ≈ -3.0             # -2 deg neutral + (-2 steps) * 0.5 deg
+        # the band is stored RELATIVE to neutral (the fixation compares the
+        # regulating-vector angle, which passes 0 at the neutral position)
+        @test b2.phase_min_deg ≈ -5.0 && b2.phase_max_deg ≈ 5.0
+
+        # the live positions enter the power flow and the generated flows
+        # stay consistent with the injections (branchFlow_pu live-tap rule)
+        _, terg = runpf!(net, 40, 1e-10, 0)
+        @test terg == 0
+        tmeas = generateMeasurementsFromPF(net; noise = false)
+        for bus in eachindex(net.nodeVec)
+          pinj = only(m.value for m in tmeas if m.typ == Sparlectra.PinjMeas && m.busIdx == bus)
+          pfl = sum(m.value for m in tmeas if m.typ == Sparlectra.PflowMeas && ((m.direction == :from && Int(net.branchVec[m.branchIdx].fromBus) == bus) || (m.direction == :to && Int(net.branchVec[m.branchIdx].toBus) == bus)); init = 0.0)
+          @test isapprox(pinj, pfl; atol = 1e-8)
+        end
+
+        # export writes the nameplate rows back; the reimport restores the
+        # grid and the live positions
+        path2 = joinpath(dir, "case_taps_roundtrip.m")
+        Sparlectra.writeMatpowerCasefile(net, path2; write_solution = false)
+        @test occursin("mpc.sparlectra.tap_changers", read(path2, String))
+        net2 = Sparlectra.createNetFromMatPowerFile(filename = path2)
+        @test net2.branchVec[1].tap_step == 0.025
+        @test net2.branchVec[1].tap_ratio ≈ b1.tap_ratio
+        @test !net2.branchVec[2].has_ratio_tap
+        @test net2.branchVec[2].phase_shift_deg ≈ -3.0
+
+        # Delta-u PST (11th column): the mechanical grid is the
+        # additional-voltage amplitude, the shift angle follows via atan
+        pathdu = joinpath(dir, "case_taps_du.m")
+        write(pathdu, replace(read(path, String), "2 0 0 0 0 0.5 -10 10 -2;" => "2 0 0 0 0 0 -10 10 -2 90 0.01;"))
+        netdu = Sparlectra.createNetFromMatPowerFile(filename = pathdu)
+        bdu = netdu.branchVec[2]
+        @test bdu.has_phase_tap && !bdu.has_ratio_tap
+        @test bdu.phase_du_step == 0.01
+        @test bdu.tap_est_alpha_deg == 90.0
+        # live polar position from the cascade at r2 = -2 * 0.01
+        tb = 1.0 * cis(deg2rad(-2.0))
+        tl = tb / (1.0 + (-2 * 0.01) * cis(deg2rad(90.0)))
+        @test bdu.tap_ratio ≈ abs(tl)
+        @test bdu.phase_shift_deg ≈ rad2deg(angle(tl))
+        # roundtrip keeps the Delta-u grid and the live position
+        pathdu2 = joinpath(dir, "case_taps_du_rt.m")
+        Sparlectra.writeMatpowerCasefile(netdu, pathdu2; write_solution = false)
+        netdu2 = Sparlectra.createNetFromMatPowerFile(filename = pathdu2)
+        @test netdu2.branchVec[2].phase_du_step == 0.01
+        @test netdu2.branchVec[2].tap_ratio ≈ bdu.tap_ratio
+        @test netdu2.branchVec[2].phase_shift_deg ≈ bdu.phase_shift_deg
+        # both phase grids at once are contradictory nameplate data
+        badgrid = joinpath(dir, "case_taps_badgrid.m")
+        write(badgrid, replace(read(path, String), "2 0 0 0 0 0.5 -10 10 -2;" => "2 0 0 0 0 0.5 -10 10 -2 90 0.01;"))
+        @test_throws ArgumentError Sparlectra.createNetFromMatPowerFile(filename = badgrid)
+
+        # short rows are zero-padded like MATPOWER optional trailing
+        # columns (the phase columns of a pure ratio changer may be
+        # omitted); rejections: too many columns, unknown branch, line
+        # target, and a current step outside the declared band
+        shortr = joinpath(dir, "case_taps_short.m")
+        write(shortr, replace(read(path, String), "1 0.025 -2 2 1 0 0 0 0;" => "1 0.025 -2 2 1;"))
+        nshort = Sparlectra.createNetFromMatPowerFile(filename = shortr)
+        @test nshort.branchVec[1].tap_ratio ≈ 1.0 / 1.025
+        badc = joinpath(dir, "case_taps_badcols.m")
+        write(badc, replace(read(path, String), "1 0.025 -2 2 1 0 0 0 0;" => "1 0.025 -2 2 1 0 0 0 0 7 7 7;"))
+        @test_throws ArgumentError Sparlectra.MatpowerIO.read_case_m(badc; legacy_compat = false)
+        badb = joinpath(dir, "case_taps_badbranch.m")
+        write(badb, replace(read(path, String), "1 0.025 -2 2 1 0 0 0 0;" => "9 0.025 -2 2 1 0 0 0 0;"))
+        @test_throws ArgumentError Sparlectra.createNetFromMatPowerFile(filename = badb)
+        badl = joinpath(dir, "case_taps_online.m")
+        write(badl, replace(read(path, String), "1 0.025 -2 2 1 0 0 0 0;" => "3 0.025 -2 2 1 0 0 0 0;"))
+        @test_throws ArgumentError Sparlectra.createNetFromMatPowerFile(filename = badl)
+        bado = joinpath(dir, "case_taps_outofband.m")
+        write(bado, replace(read(path, String), "1 0.025 -2 2 1 0 0 0 0;" => "1 0.025 -2 2 5 0 0 0 0;"))
+        @test_throws ArgumentError Sparlectra.createNetFromMatPowerFile(filename = bado)
+      end
+    end
+
     dcline = [1.0 2.0 1.0 100.0 0.0 4.0 5.0 1.0 1.0 0.0 200.0 -50.0 50.0 -50.0 50.0 2.0 0.01]
     mpc_dcline = Sparlectra.MatpowerIO.legacy_sort_bus(_metadata_case(dcline = dcline))
     @test_throws Sparlectra.MatpowerIO.UnsupportedMatpowerDclineError Sparlectra.createNetFromMatPowerCase(mpc = mpc_dcline, matpower_dcline_mode = :reject_active)

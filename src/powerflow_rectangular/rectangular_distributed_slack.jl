@@ -75,7 +75,7 @@ end
                                   p_mode, fallback, weights,
                                   respect_p_limits, island_label) -> state | nothing
 
-Discover participants and build the per-island alpha vector (Task 3 of #192).
+Discover participants and build the per-island alpha vector (#192).
 
 Candidates are the generator-type prosumers at the island's REF or PV buses.
 Raw weights per mode: `:pg_weighted` scheduled Pg, `:pmax_weighted` maxP,
@@ -169,7 +169,7 @@ end
 """
     _merge_distributed_slack_diagnostics(status_build, performance_profile, net, dslack, Sbase, verbose) -> status_build
 
-Task 5 of #192: attach distributed-slack result metadata to the solver status
+#192: attach distributed-slack result metadata to the solver status
 NamedTuple (flat `distributed_slack_*` keys, following the `wrong_branch_*`
 naming of the existing metadata) and print a compact console summary at
 `verbose > 0`. The full participant table goes to the debug log only — the

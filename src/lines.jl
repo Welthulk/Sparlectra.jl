@@ -45,6 +45,10 @@ A mutable structure representing an AC line segment in a power system.
 - `Base.show(io::IO, acseg::ACLineSegment)`: Prints the `ACLineSegment` instance.
 """
 # ACLineSegment should be a subtype of AbstractBranch
+"""
+An AC line with its physical parameters (ohm, siemens per length or
+absolute) and the PI-model form the solver consumes.
+"""
 mutable struct ACLineSegment <: AbstractBranch
   comp::AbstractComponent
   length::Float64
@@ -147,6 +151,11 @@ function getLineRXBG(o::ACLineSegment)::Tuple{Float64,Float64,Union{Nothing,Floa
   end
 end
 
+"""
+    getLineRXBG_pu(o, vn_kV, baseMVA) -> (r, x, b, g)
+
+The line parameters converted to per unit on the given base.
+"""
 function getLineRXBG_pu(o::ACLineSegment, vn_kV::Float64, baseMVA::Float64)
   # Matpower import stores r/x/b already in pu -> do NOT convert again
   # If you have a proper flag, use it; otherwise this vn_kV==1.0 check is a temporary guard.
@@ -186,6 +195,11 @@ function get_line_parameters(line::ACLineSegment)
   return parameters
 end
 
+"""
+    isLinePIModel(line) -> Bool
+
+Whether the line was built directly from per-unit PI-model parameters.
+"""
 function isLinePIModel(line::ACLineSegment)
   return line._isPIModel
 end

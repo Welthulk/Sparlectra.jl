@@ -1,0 +1,41 @@
+# sparlectra-measurements v1
+# baddata: row 21 value scaled by 10 for the diagnostics demo
+# case: sp_case5.scf.json
+# generator: Sparlectra measurement generator, seed=20260903
+# noise: gaussian per-type stddev (measurementStdDevs)
+type,bus,from_bus,to_bus,branch_nr,link_nr,direction,value,sigma,active,id
+VmMeas,Sandau_110,,,,,,1.0106609045886012,0.005,true,Vm_bus_1
+PinjMeas,Sandau_110,,,,,,20.310502893926913,1.0,true,Pinj_bus_1
+QinjMeas,Sandau_110,,,,,,10.62227678873271,1.0,true,Qinj_bus_1
+VmMeas,Borntal_110,,,,,,0.9970840497722038,0.005,true,Vm_bus_2
+PinjMeas,Borntal_110,,,,,,-0.48064285577534205,1.0,true,Pinj_bus_2
+QinjMeas,Borntal_110,,,,,,2.741165858796093,1.0,true,Qinj_bus_2
+VmMeas,Steinau_110,,,,,,0.9994238692029248,0.005,true,Vm_bus_3
+PinjMeas,Steinau_110,,,,,,12.600005347588864,1.0,true,Pinj_bus_3
+QinjMeas,Steinau_110,,,,,,4.158586823500557,1.0,true,Qinj_bus_3
+VmMeas,Lindhof_110,,,,,,0.9612242051234476,0.005,true,Vm_bus_4
+PinjMeas,Lindhof_110,,,,,,-21.451550755553,1.0,true,Pinj_bus_4
+QinjMeas,Lindhof_110,,,,,,-5.60466996011563,1.0,true,Qinj_bus_4
+VmMeas,Lindhof_20,,,,,,0.9449629641220977,0.005,true,Vm_bus_5
+PinjMeas,Lindhof_20,,,,,,-11.748354252756972,1.0,true,Pinj_bus_5
+QinjMeas,Lindhof_20,,,,,,-2.6529830076978484,1.0,true,Qinj_bus_5
+PflowMeas,,Sandau_110,Borntal_110,1,,from,104.67500760705175,1.0,true,Pflow_branch_1_from
+PflowMeas,,Sandau_110,Borntal_110,1,,to,-12.51465218594339,1.0,true,Pflow_branch_1_to
+QflowMeas,,Sandau_110,Borntal_110,1,,from,4.735409456230619,1.0,true,Qflow_branch_1_from
+QflowMeas,,Sandau_110,Borntal_110,1,,to,-4.935662750044279,1.0,true,Qflow_branch_1_to
+PflowMeas,,Borntal_110,Lindhof_110,2,,from,13.318734073109571,1.0,true,Pflow_branch_2_from
+PflowMeas,,Borntal_110,Lindhof_110,2,,to,-13.310788669814224,1.0,true,Pflow_branch_2_to
+QflowMeas,,Borntal_110,Lindhof_110,2,,from,5.295858041480601,1.0,true,Qflow_branch_2_from
+QflowMeas,,Borntal_110,Lindhof_110,2,,to,-4.53096318346563,1.0,true,Qflow_branch_2_to
+PflowMeas,,Sandau_110,Steinau_110,3,,from,8.305986047911043,1.0,true,Pflow_branch_3_from
+PflowMeas,,Sandau_110,Steinau_110,3,,to,-6.55533270383296,1.0,true,Pflow_branch_3_to
+QflowMeas,,Sandau_110,Steinau_110,3,,from,4.170307479834543,1.0,true,Qflow_branch_3_from
+QflowMeas,,Sandau_110,Steinau_110,3,,to,-3.7167335665956016,1.0,true,Qflow_branch_3_to
+PflowMeas,,Steinau_110,Lindhof_110,4,,from,20.4764141651141,1.0,true,Pflow_branch_4_from
+PflowMeas,,Steinau_110,Lindhof_110,4,,to,-17.555184690227776,1.0,true,Pflow_branch_4_to
+QflowMeas,,Steinau_110,Lindhof_110,4,,from,8.40610218179863,1.0,true,Qflow_branch_4_from
+QflowMeas,,Steinau_110,Lindhof_110,4,,to,-7.599034075457844,1.0,true,Qflow_branch_4_to
+PflowMeas,,Lindhof_110,Lindhof_20,5,,from,13.892268978019512,1.0,true,Pflow_branch_5_from
+PflowMeas,,Lindhof_110,Lindhof_20,5,,to,-12.388321366001184,1.0,true,Pflow_branch_5_to
+QflowMeas,,Lindhof_110,Lindhof_20,5,,from,5.283280412245751,1.0,true,Qflow_branch_5_from
+QflowMeas,,Lindhof_110,Lindhof_20,5,,to,-4.9930661723970555,1.0,true,Qflow_branch_5_to

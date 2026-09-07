@@ -22,7 +22,7 @@
 
 using Sparlectra
 
-include(joinpath(@__DIR__, "..", "internal", "example_header.jl"))
+include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
 # Meshed 110 kV ring (B1..B8) with two chords, two PV generators and four
 # loads. Scheduled generation (100 MW) deliberately undershoots the load

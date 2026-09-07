@@ -24,7 +24,7 @@
 
 using Sparlectra
 
-include(joinpath(@__DIR__, "..", "internal", "example_header.jl"))
+include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
 # One IEC 60909-0 network feeder record (max/min initial symmetrical currents).
 _feeder(bus) = (mrid = bus, name = "F_" * bus, bus = bus,

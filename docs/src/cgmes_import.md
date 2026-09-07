@@ -277,6 +277,39 @@ delivery patterns are handled:
 - **Explicit converters** (`VsConverter`, `CsConverter`): mapped as fixed
   injections with the SSH operating point (p, q). The setpoint difference
   between the two stations of a link is the DC loss.
+
+!!! note "Converters that regulate the DC voltage"
+    In CIM the active power of a DC-voltage-controlling converter is a
+    RESULT of the DC power balance, not a setpoint, so an SSH snapshot
+    legitimately carries `ACDCConverter.p = 0` at that end while the
+    opposite end carries the schedule. Taken literally that injects the
+    transfer at one end and nothing at the other, and the link swallows its
+    whole throughput. The importer therefore derives the power of an end
+    that declares `targetUdc > 0` from the opposite end, reduced by both
+    converters' `idleLoss`, and says so in the import messages. On the
+    FullGrid test configuration that turns a 150 MW link with a 150 MW loss
+    into 150 MW in and 148 MW out, and halves the largest angle deviation
+    against the SV profile (21.9 to 10.9 degrees).
+
+!!! note "Current-source links that state a current and a voltage"
+    A classic current-source (LCC) link declares no active power at either
+    end: its operating point is a DC CURRENT on the current-controlling
+    converter (`CsConverter.targetIdc`, `pPccControl = dcCurrent`) and a DC
+    VOLTAGE on the other (`ACDCConverter.targetUdc`,
+    `pPccControl = dcVoltage`). The setpoint is present, it is just spread
+    over two attributes on two converters, and their product is the DC
+    power. The importer derives it with the same rule as above, only from a
+    different source attribute; `CsConverter.operatingMode` says which end
+    draws (`rectifier`) and which delivers (`inverter`).
+
+    On FullGrid that is 150 kV times 500 A, so 75 MW, and the SV profile
+    confirms the derivation (`udc` 150.0 and 151.25 kV, `idc` 500 A,
+    `poleLossP` 0.31 MW at both converters). The DC line resistance is
+    deliberately not applied: it would make the two ends differ (75.625 MW
+    drawn against 75.0 MW delivered) and needs the DC-side model this
+    importer does not build. A pair that declares neither a current nor a
+    voltage target is reported as not recoverable rather than given an
+    invented number.
 - **DC border crossings in assembled multi-area models**: a boundary node
   whose equivalent-injection pair does *not* cancel is such a crossing (a
   cancelling pair is two declarations of the same AC exchange and is

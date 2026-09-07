@@ -145,7 +145,7 @@ end
 
 Guarded start-value preconditioner ahead of the rectangular Newton-Raphson
 solve (`power_flow.apslf_start`), analogous to
-[`_run_guarded_current_iteration_start`](@ref) but sourcing the candidate
+`_run_guarded_current_iteration_start` but sourcing the candidate
 profile from the AnalyticLoadFlow.jl-backed analytic power-series solver
 instead of a manual current-injection update.
 

@@ -19,7 +19,7 @@
 
 using Sparlectra
 
-include(joinpath(@__DIR__, "..", "internal", "example_header.jl"))
+include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
 # A minimal EQ file whose header declares a prerequisite model that is not
 # part of the input — exactly how a real delivery references its boundary set.

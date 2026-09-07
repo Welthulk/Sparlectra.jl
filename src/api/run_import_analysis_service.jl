@@ -37,10 +37,12 @@ function _run_import_analysis_service(case_path::AbstractString, config_file::Ab
   result_file = joinpath(output_dir, "result.json")
   base_metadata = Dict{String,Any}("run_mode" => "import_analysis")
 
+  # same precedence as every other service run (resolve_config, D5); a case
+  # configuration file next to a delivery steers the analysis import too
   config = try
-    load_sparlectra_config(config_file; reload = true)
+    resolve_config(config_file, case_path).config
   catch err
-    return _api_failure("invalid_configuration", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
+    return _api_failure(_config_resolve_reason(err), sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
   end
 
   if _detect_case_format(case_path) !== :cgmes

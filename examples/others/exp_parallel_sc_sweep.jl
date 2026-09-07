@@ -22,7 +22,7 @@
 
 using Sparlectra
 
-include(joinpath(@__DIR__, "..", "internal", "example_header.jl"))
+include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
 # feeder-fed rings with declared short-circuit power: every island has one
 # ExternalNetworkInjection with Sk'' data, so the sweep has real sources

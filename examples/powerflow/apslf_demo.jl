@@ -52,7 +52,7 @@ using Sparlectra
 using AnalyticLoadFlow
 using Printf
 
-include(joinpath(@__DIR__, "..", "internal", "example_header.jl"))
+include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
 """
     _apslf_demo_options(path) -> (order, use_pade, nr_polish)

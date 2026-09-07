@@ -19,7 +19,7 @@
 # Tests for the CGMES importer (see docs/src/cgmes_import.md):
 # generic reader semantics on a synthetic in-memory fixture, plus
 # summarizeCGMES assertions on the ENTSO-E MicroGrid when the local test-set
-# cache exists (fetched by examples/experimental/cgmes_fetch_testsets.jl;
+# cache exists (fetched by examples/cgmes/cgmes_fetch_testsets.jl;
 # skipped otherwise — no network access from tests).
 
 using Sparlectra.CGMESImporter:
@@ -369,6 +369,29 @@ function run_cgmes_importer_tests()
       @test !eqinfo.skipped
     end
 
+    @testset "SV angle alignment reaches the parent island detection" begin
+      # Regression 2026-09-06. compareWithSV removes ONE angle offset per
+      # island, because an angle is only defined up to a constant per island.
+      # That call sits in the submodule CGMESImporter while detect_ac_islands
+      # lives in the parent, so it must be qualified: an unqualified name
+      # compiles fine and throws UndefVarError at RUNTIME, where the
+      # surrounding catch turned it into a single global offset without any
+      # visible sign. The per-island alignment was dead from the day it was
+      # written, and it only surfaced when the reported improvement was
+      # reproduced on the run that motivated it instead of recalculated.
+      @test Core.eval(Sparlectra.CGMESImporter, :(Sparlectra.detect_ac_islands)) isa Function
+      # the unqualified name is genuinely absent, which is why it has to be
+      # written out; if this ever becomes true the qualification stops being
+      # load-bearing and the test above still holds
+      @test !isdefined(Sparlectra.CGMESImporter, :detect_ac_islands)
+      src = read(joinpath(pkgdir(Sparlectra), "src", "adapters", "cgmes", "cgmes_report.jl"), String)
+      @test occursin("Sparlectra.detect_ac_islands(net)", src)
+      # and the fallback must not be silent any more: a comparison that lost
+      # the island map reports secondary islands as tens of degrees off, so
+      # the degraded mode has to announce itself
+      @test occursin("island detection failed", src)
+    end
+
     @testset "DifferenceModel files are skipped with reason (D-6)" begin
       diffinfo = only(filter(f -> occursin("DIFF", f.name), store.files))
       @test diffinfo.skipped
@@ -676,6 +699,29 @@ function run_cgmes_importer_tests()
         @test_throws Sparlectra.CGMESImporter.CGMESImportError importCGMES(path = be)
       end
 
+      # SCF export of a CGMES delivery (issue #342): a delivery-sourced net
+      # must reach the case format with its source identity intact, which is
+      # what makes results readable for an integrator.
+      @testset "SCF export of a CGMES delivery" begin
+        res = importCGMES(path = [be, bd], name = "MicroGrid_SCF")
+        root = Sparlectra.net_to_scf(res.net; source_format = "cgmes", source_reference = "MicroGrid_BC_BE")
+        # external_id carries the delivery mRID, not the internal component
+        # id, wherever the importer captured one
+        extra = root["sparlectra"]["extra"]
+        tagged = [e for e in values(extra) if get(e, "source_id_kind", "") == "cgmes_mrid"]
+        @test !isempty(tagged)
+        @test all(e -> !startswith(String(e["external_id"]), "#"), tagged)
+        # bus reference names survive (measurements and reports resolve
+        # against them)
+        names = Set(String(e["name"]) for e in values(extra))
+        @test all(bus -> bus in names, keys(res.net.busDict))
+        # the file is deterministic for a delivery too
+        d = mktempdir()
+        a = exportSCF(res.net; file = joinpath(d, "a.scf.json"), source_format = "cgmes")
+        b = exportSCF(res.net; file = joinpath(d, "b.scf.json"), source_format = "cgmes")
+        @test read(a, String) == read(b, String)
+      end
+
       if isdir(asm)
         @testset "Stage 1: assembled model (both sides + X-node EI skip)" begin
           res = importCGMES(path = [asm, bd], name = "MicroGrid_Assembled")
@@ -823,7 +869,16 @@ function run_cgmes_importer_tests()
       # MiniGrid island was flagged).
       @testset "runShortCircuit! MiniGrid: motors computed, no flags" begin
         mini = Sparlectra.CGMESImporter.fetchCGMESTestSet("minigrid"; outdir = mktempdir())
+        # the fourth construction path of the configuration table: the shunt
+        # model reaches the importer (it is consumed while the shunts are
+        # built) and the switching parameters are stamped afterwards
+        vdi = importCGMES(path = mini, name = "MiniGrid_SC", bus_shunt_model = :voltage_dependent_injection)
+        @test vdi.net.bus_shunt_model === :voltage_dependent_injection
+        cfg_vdi = Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("qlimits" => Dict("cooldown_iters" => 3, "hysteresis_pu" => 0.05))))
+        Sparlectra._apply_config_net_parameters!(vdi.net, cfg_vdi)
+        @test vdi.net.cooldown_iters == 3 && vdi.net.q_hyst_pu == 0.05
         res = importCGMES(path = mini, name = "MiniGrid_SC")
+        @test res.net.bus_shunt_model === :admittance
         @test !isempty(res.shortcircuit.asynchronous_machines)
         @test all(m.iaIrRatio !== nothing && m.rxLockedRotorRatio !== nothing for m in res.shortcircuit.asynchronous_machines)
         smax = runShortCircuit!(res; case = :max)
@@ -861,7 +916,7 @@ function run_cgmes_importer_tests()
         @test occursin("SynchronousMachine", read(joinpath(root, rid, "run.log"), String))
 
         # MATPOWER case: explicit rejection, no artifacts
-        mp = start_powerflow_run(Dict("casefile" => ensure_casefile("case14.m"), "config_file" => cfgsc, "output_root" => root, "short_circuit_mode" => true))
+        mp = start_powerflow_run(Dict("casefile" => abspath(joinpath(dirname(@__DIR__), "data", "mpower", "warmup_casePST.m")), "config_file" => cfgsc, "output_root" => root, "short_circuit_mode" => true))
         @test mp["success"] === false
         @test mp["reason"] == "short_circuit_requires_cgmes"
 
@@ -911,7 +966,7 @@ function run_cgmes_importer_tests()
         @test occursin("absent-boundary", read(joinpath(root, badresp["run_id"], "import_analysis.txt"), String))
 
         # Non-CGMES case: explicit rejection.
-        mpia = start_powerflow_run(Dict("casefile" => ensure_casefile("case14.m"), "config_file" => cfgia, "output_root" => root, "import_analysis_mode" => true))
+        mpia = start_powerflow_run(Dict("casefile" => abspath(joinpath(dirname(@__DIR__), "data", "mpower", "warmup_casePST.m")), "config_file" => cfgia, "output_root" => root, "import_analysis_mode" => true))
         @test mpia["success"] === false
         @test mpia["reason"] == "import_analysis_requires_cgmes"
 
@@ -974,7 +1029,7 @@ function run_cgmes_importer_tests()
         mp_out = mktempdir()
         mp_cfg = joinpath(mp_out, "c.yaml")
         write(mp_cfg, "cgmes_import:\n  start_values: sv\n")
-        mp = run_sparlectra_api(casefile = ensure_casefile("case14.m"), config_file = mp_cfg, output_dir = mp_out)
+        mp = run_sparlectra_api(casefile = abspath(joinpath(dirname(@__DIR__), "data", "mpower", "warmup_casePST.m")), config_file = mp_cfg, output_dir = mp_out)
         @test mp.status == :succeeded
         @test !isfile(joinpath(mp_out, "sv_compare.csv"))
         @test !haskey(mp.metadata, "cgmes_start_values")
@@ -1093,7 +1148,7 @@ function run_cgmes_importer_tests()
         @test any(m -> occursin("follows the group", m), res322.messages)
       end
     else
-      @info "CGMES MicroGrid fixture not cached — skipping ENTSO-E fixture tests (run examples/experimental/cgmes_fetch_testsets.jl to enable)"
+      @info "CGMES MicroGrid fixture not cached — skipping ENTSO-E fixture tests (run examples/cgmes/cgmes_fetch_testsets.jl to enable)"
     end
 
     # #314: node-breaker deliveries WITHOUT their TP profile import through
@@ -1309,7 +1364,7 @@ function run_cgmes_importer_tests()
         @test !any(m -> occursin("skip: PhaseTapChangerTabular", m), res_tab.messages)
       end
     else
-      @info "CGMES PSEI PST fixtures not cached — PST sign/tabular tests skipped (fetch via examples/experimental/cgmes_fetch_testsets.jl)"
+      @info "CGMES PSEI PST fixtures not cached — PST sign/tabular tests skipped (fetch via examples/cgmes/cgmes_fetch_testsets.jl)"
     end
 
     # RealGrid is the deciding data-faithfulness fixture for both the tabular
@@ -1352,7 +1407,7 @@ function run_cgmes_importer_tests()
         @test cmp.flows.max_dp < 20.0
       end
     else
-      @info "CGMES RealGrid fixture not cached — tabular-PST SV regression skipped (fetch via examples/experimental/cgmes_fetch_testsets.jl)"
+      @info "CGMES RealGrid fixture not cached — tabular-PST SV regression skipped (fetch via examples/cgmes/cgmes_fetch_testsets.jl)"
     end
 
     # Distributed slack (#192): positive GeneratingUnit.normalPF must arrive
@@ -1370,7 +1425,7 @@ function run_cgmes_importer_tests()
         @test all(==(1.0), pfs)
       end
     else
-      @info "CGMES MiniGrid fixture not cached — normalPF arrival test skipped (fetch via examples/experimental/cgmes_fetch_testsets.jl)"
+      @info "CGMES MiniGrid fixture not cached — normalPF arrival test skipped (fetch via examples/cgmes/cgmes_fetch_testsets.jl)"
     end
 
     # FullGrid is ENTSO-E's import/export completeness set: it extends
@@ -1401,11 +1456,46 @@ function run_cgmes_importer_tests()
         # #297 Draft B: the DC topology (ACDCConverterDCTerminal, DCNode,
         # DCLineSegment) groups the four converters into two links; both are
         # named in the default-mode messages and attached as controllers
-        # under paired_control (FullGrid SSH has a zero side, so the derived
-        # loss equals the transfer; the notice states the numbers honestly).
+        # under paired_control.
         store_fg = Sparlectra.CGMESImporter.loadCGMES([fgbb, fgbd])
         fg_pairs = Sparlectra.CGMESImporter._detectHvdcPairs(store_fg)
         @test count(p -> p.extra == 0, fg_pairs) == 2
+
+        # Regression 2026-09-06: a converter regulating the DC VOLTAGE reports
+        # ACDCConverter.p as a RESULT of the DC balance, not as a setpoint, so
+        # FullGrid's SSH carries 0 at VSC1 while VSC_2 carries the 150 MW
+        # schedule. Reading both ends literally injected the transfer at one
+        # end and nothing at the other: the link swallowed its whole
+        # throughput (loss_MW 150 on a 150 MW link) and produced the largest
+        # angle deltas of the delivery against SV (max |dva| 21.9 deg, 10.9
+        # after the derivation). VSC1 must now carry the derived value.
+        rfg = importCGMES(path = [fgbb, fgbd], name = "FullGrid_hvdc")
+        fg_names = Sparlectra._bus_name_by_idx(rfg.net)
+        p_at(busname) = begin
+          i = findfirst(ps -> get(fg_names, Sparlectra.getPosumerBusIndex(ps), "") == busname, rfg.net.prosumpsVec)
+          i === nothing ? nothing : rfg.net.prosumpsVec[i].pVal
+        end
+        # injection convention: the exporting end draws 150 MW, the
+        # DC-slack end delivers it less both converters' idleLoss (1 + 1)
+        @test p_at("BE_Busbar_HVDC2") ≈ -150.0 atol = 1e-6
+        @test p_at("BE_Busbar_HVDC1") ≈ 148.0 atol = 1e-6
+        @test count(m -> occursin("regulates the DC voltage", m), rfg.messages) == 1
+        # The second pair is a current-source (LCC) link: it carries zero at
+        # BOTH ends of ACDCConverter.p because its operating point is stated
+        # as a DC CURRENT and a DC VOLTAGE instead. The setpoint is present,
+        # just in two attributes on two converters, and their product is the
+        # transfer: targetUdc 150 kV times targetIdc 500 A is 75 MW. The SV
+        # profile confirms it (udc 150.0/151.25 kV, idc 500 A, poleLossP
+        # 0.31 MW on both converters). Leaving it at zero cost the delivery
+        # its whole second link.
+        @test count(m -> occursin("DC current and DC voltage", m), rfg.messages) == 1
+        @test p_at("BE_HVDC_BUS2") ≈ -75.0 atol = 1e-6      # rectifier draws
+        @test p_at("N1230816360") ≈ 75.0 atol = 1e-6        # inverter delivers
+        # and the link record now reads physically instead of losing 100 %:
+        # the exporting end is the one drawing power, the receiving end
+        # delivers 2 MW less
+        fg_link = only(filter(l -> get(fg_names, l.from_bus, "") == "BE_Busbar_HVDC2", rfg.net.hvdcLinks))
+        @test get(fg_names, fg_link.to_bus, "") == "BE_Busbar_HVDC1"
         rp = importCGMES(path = [fgbb, fgbd], name = "FullGrid_paired", hvdc_mode = :paired_control)
         @test length(Sparlectra._hvdc_pair_controllers(rp.net)) == 2
         @test count(m -> occursin("HVDC pair attached as controller", m), rp.messages) == 2
@@ -1501,7 +1591,7 @@ function run_cgmes_importer_tests()
         @test cmp.flows.rms_dp < 0.05
       end
     else
-      @info "CGMES MiniGrid fixture not cached — AsynchronousMachine SV test skipped (fetch via examples/experimental/cgmes_fetch_testsets.jl)"
+      @info "CGMES MiniGrid fixture not cached — AsynchronousMachine SV test skipped (fetch via examples/cgmes/cgmes_fetch_testsets.jl)"
     end
 
     sgbase = joinpath(cache, "extracted", "SmallGrid", "BusBranch")

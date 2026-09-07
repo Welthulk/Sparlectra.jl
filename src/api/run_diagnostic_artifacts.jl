@@ -163,8 +163,8 @@ Write the "Diagnosis" and "Recommendations" sections of `diagnose.log`: a short
 prose summary of what the worst-mismatch bus, mismatch trend, and autodamp
 behavior indicate, followed by a "Worst-mismatch bus" data section (reusing
 the same `top_mismatch_rows` already computed once per solve by
-[`_rectangular_mismatch_diagnostics`](@ref)) and a "Branch anomalies" section
-from [`_branch_anomaly_diagnostics`](@ref) for the branches incident to that
+`_rectangular_mismatch_diagnostics`) and a "Branch anomalies" section
+from `_branch_anomaly_diagnostics` for the branches incident to that
 bus. This turns a flat key/value dump into a report that names a likely cause
 and a next step, instead of only reporting numbers.
 """
@@ -178,7 +178,7 @@ function _write_diagnosis_narrative(io::IO, result::SparlectraRunResult)
   # estimate failure is only logged at debug level.
   kappa = _jacobian_condest(result.net; warn_on_failure = false, context = "diagnose")
   if result.final_converged
-    println(io, "The run converged in ", result.iterations, " iteration(s); final mismatch ", result.final_mismatch, " is within tolerance. No root-cause analysis is needed.")
+    println(io, "The run converged in ", result.iterations, " iteration(s); final mismatch ", result.final_mismatch, " pu (", format_tolerance_physical(result.final_mismatch, result.net.baseMVA), "; largest single bus residual) is within tolerance. No root-cause analysis is needed.")
     kappa === nothing || println(io, "Jacobian conditioning at the solution: ", _condition_report_line(kappa))
     println(io)
     return nothing
@@ -226,7 +226,7 @@ function _write_diagnosis_narrative(io::IO, result::SparlectraRunResult)
   if !isempty(flagged_rows)
     push!(
       recommendations,
-      "Branch anomalies were found at the worst-mismatch bus (see \"Branch anomalies at worst-mismatch bus\" below) — review the flagged branch parameters and the MATPOWER import conventions (matpower_import.auto_profile/shift_sign/shift_unit/ratio) before adjusting solver settings.",
+      "Branch anomalies were found at the worst-mismatch bus (see \"Branch anomalies at worst-mismatch bus\" below) — review the flagged branch parameters and the MATPOWER import conventions (model.auto_profile, matpower_import shift_sign/shift_unit/ratio) before adjusting solver settings.",
     )
   end
   if trend === :diverging_to_nonfinite || autodamp_failure === true

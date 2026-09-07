@@ -1,0 +1,130 @@
+# sparlectra-measurements v1
+# case: warmup_casePST.m
+# generator: v2
+# seed: 42
+# truth: fresh solve, 5 iteration(s), tol 1.0e-8, island-wise
+# flow_ends: both
+# passive: balance rows Pinj/Qinj = 0 with sigma 0.05 at 2 9
+# sparlectra-taps v1
+# branch,mrid,name,from_bus,to_bus,neutral_ratio,step,electrical_step,fixed_step,transferred_step,generation_deviation_steps
+# 7,,B_2WT_15_1_2,1,2,1.0,0.025,0.0,0,0,0.0
+# 8,,B_2WT_230_2_3,2,3,1.0,0.01,0.0,0,0,0.0
+# truth_value,Vm_1,1.0
+# truth_value,Pinj_1,619.3479183209724
+# truth_value,Qinj_1,-160.4670872012777
+# truth_value,Vm_2,1.0005235593150918
+# truth_value,Pinj_2,0.0
+# truth_value,Qinj_2,0.0
+# truth_value,Vm_3,1.0171644826202484
+# truth_value,Pinj_3,8.706741340782952e-13
+# truth_value,Qinj_3,1.1463936137566169e-11
+# truth_value,Vm_4,0.9965975367160743
+# truth_value,Pinj_4,-3.579617709439228e-13
+# truth_value,Qinj_4,2.02799910071357e-13
+# truth_value,Vm_5,0.9922069176770211
+# truth_value,Pinj_5,-100.00000000000011
+# truth_value,Qinj_5,1.6469464680923807e-12
+# truth_value,Vm_6,0.9926724608395349
+# truth_value,Pinj_6,-99.99999999999987
+# truth_value,Qinj_6,8.968086689931098e-13
+# truth_value,Vm_7,0.99242934654452
+# truth_value,Pinj_7,-199.99999999999906
+# truth_value,Qinj_7,2.3800406090401793e-12
+# truth_value,Vm_8,0.9924402593631728
+# truth_value,Pinj_8,-199.99999999999986
+# truth_value,Qinj_8,1.3350431871117507e-12
+# truth_value,Vm_9,1.0005235593150918
+# truth_value,Pinj_9,0.0
+# truth_value,Qinj_9,0.0
+# truth_value,Pflow_B_ACL_230_2_7_from,79.91438413366438
+# truth_value,Pflow_B_ACL_230_2_7_to,-79.62962927737021
+# truth_value,Qflow_B_ACL_230_2_7_from,33.96089747172937
+# truth_value,Qflow_B_ACL_230_2_7_to,-32.821878799728665
+# truth_value,Pflow_B_ACL_230_9_8_from,201.53541492879333
+# truth_value,Pflow_B_ACL_230_9_8_to,-199.99999999999983
+# truth_value,Qflow_B_ACL_230_9_8_from,6.14165565400242
+# truth_value,Qflow_B_ACL_230_9_8_to,7.105427357601002e-13
+# truth_value,Pflow_B_ACL_230_4_5_from,222.87858438630525
+# truth_value,Pflow_B_ACL_230_4_5_to,-220.9679021705595
+# truth_value,Qflow_B_ACL_230_4_5_from,-22.78903077924781
+# truth_value,Qflow_B_ACL_230_4_5_to,30.431754588478555
+# truth_value,Pflow_B_ACL_230_4_6_from,100.38367417452498
+# truth_value,Pflow_B_ACL_230_4_6_to,-99.99999999999964
+# truth_value,Qflow_B_ACL_230_4_6_from,1.5346956832821945
+# truth_value,Qflow_B_ACL_230_4_6_to,7.105427357601002e-13
+# truth_value,Pflow_B_ACL_230_5_7_from,120.96790217055968
+# truth_value,Pflow_B_ACL_230_5_7_to,-120.37037072262873
+# truth_value,Qflow_B_ACL_230_5_7_from,-30.431754588477844
+# truth_value,Qflow_B_ACL_230_5_7_to,32.8218787997308
+# truth_value,Pflow_B_ACL_230_3_4_from,333.9196418099675
+# truth_value,Pflow_B_ACL_230_3_4_to,-323.3673398244193
+# truth_value,Qflow_B_ACL_230_3_4_from,-227.999245865459
+# truth_value,Qflow_B_ACL_230_3_4_to,21.254335095965615
+# truth_value,Pflow_B_2WT_15_1_2_from,619.3479183209718
+# truth_value,Pflow_B_2WT_15_1_2_to,-615.4789040476863
+# truth_value,Qflow_B_2WT_15_1_2_from,-160.46708720127754
+# truth_value,Qflow_B_2WT_15_1_2_to,175.94314429441908
+# truth_value,Pflow_B_2WT_230_2_3_from,334.02910498522675
+# truth_value,Pflow_B_2WT_230_2_3_to,-334.02910498522675
+# truth_value,Qflow_B_2WT_230_2_3_from,-216.04569742016793
+# truth_value,Qflow_B_2WT_230_2_3_to,227.9992458654732
+type,bus,from_bus,to_bus,branch_nr,link_nr,direction,value,sigma,active,id
+VmMeas,1,,,,,,1.0060514101102451,0.005,true,Vm_1
+PinjMeas,1,,,,,,618.8586421091891,6.193479183209725,true,Pinj_1
+QinjMeas,1,,,,,,-159.8195835572862,1.6046708720127771,true,Qinj_1
+VmMeas,2,,,,,,1.0019740739346992,0.005002617796575459,true,Vm_2
+PinjMeas,2,,,,,,0.06026879900896448,0.05,true,Pinj_2
+QinjMeas,2,,,,,,0.05846265818855861,0.05,true,Qinj_2
+VmMeas,3,,,,,,1.0223364826547992,0.005085822413101242,true,Vm_3
+PinjMeas,3,,,,,,-0.002693199703630197,0.05,true,Pinj_3
+QinjMeas,3,,,,,,-0.028519361851594087,0.05,true,Qinj_3
+VmMeas,4,,,,,,0.9923234450198463,0.0049829876835803715,true,Vm_4
+PinjMeas,4,,,,,,-0.010572578991976262,0.05,true,Pinj_4
+QinjMeas,4,,,,,,-0.04268366055095924,0.05,true,Qinj_4
+VmMeas,5,,,,,,0.9943876288185824,0.004961034588385106,true,Vm_5
+PinjMeas,5,,,,,,-101.31490853326719,1.000000000000001,true,Pinj_5
+QinjMeas,5,,,,,,0.008845062539717737,0.05,true,Qinj_5
+VmMeas,6,,,,,,0.9914077696208408,0.004963362304197675,true,Vm_6
+PinjMeas,6,,,,,,-101.7773689723893,0.9999999999999988,true,Pinj_6
+QinjMeas,6,,,,,,-0.06347593013087931,0.05,true,Qinj_6
+VmMeas,7,,,,,,0.9994331391956262,0.0049621467327226,true,Vm_7
+PinjMeas,7,,,,,,-198.8299281588133,1.9999999999999907,true,Pinj_7
+QinjMeas,7,,,,,,0.045951084409207955,0.05,true,Qinj_7
+VmMeas,8,,,,,,1.0012102101567766,0.004962201296815864,true,Vm_8
+PinjMeas,8,,,,,,-197.2365505063554,1.9999999999999987,true,Pinj_8
+QinjMeas,8,,,,,,0.020061184259821875,0.05,true,Qinj_8
+VmMeas,9,,,,,,0.9954309032535064,0.005002617796575459,true,Vm_9
+PinjMeas,9,,,,,,0.0034082747214050353,0.05,true,Pinj_9
+QinjMeas,9,,,,,,-0.03423756307204159,0.05,true,Qinj_9
+PflowMeas,,2,7,1,,from,79.38970520165955,0.7991438413366438,true,Pflow_B_ACL_230_2_7_from
+PflowMeas,,2,7,1,,to,-79.45744713935616,0.7962962927737022,true,Pflow_B_ACL_230_2_7_to
+QflowMeas,,2,7,1,,from,34.00261153706737,0.3396089747172937,true,Qflow_B_ACL_230_2_7_from
+QflowMeas,,2,7,1,,to,-32.86138987293025,0.32821878799728665,true,Qflow_B_ACL_230_2_7_to
+PflowMeas,,9,8,2,,from,205.02424408459467,2.0153541492879334,true,Pflow_B_ACL_230_9_8_from
+PflowMeas,,9,8,2,,to,-198.72454000280055,1.9999999999999984,true,Pflow_B_ACL_230_9_8_to
+QflowMeas,,9,8,2,,from,6.151381496466667,0.0614165565400242,true,Qflow_B_ACL_230_9_8_from
+QflowMeas,,9,8,2,,to,0.0010668749054334715,0.05,true,Qflow_B_ACL_230_9_8_to
+PflowMeas,,4,5,3,,from,224.525323717315,2.2287858438630526,true,Pflow_B_ACL_230_4_5_from
+PflowMeas,,4,5,3,,to,-221.66010510263496,2.209679021705595,true,Pflow_B_ACL_230_4_5_to
+QflowMeas,,4,5,3,,from,-22.65390001195002,0.2278903077924781,true,Qflow_B_ACL_230_4_5_from
+QflowMeas,,4,5,3,,to,29.437473497411588,0.30431754588478555,true,Qflow_B_ACL_230_4_5_to
+PflowMeas,,4,6,4,,from,99.73506264113443,1.0038367417452498,true,Pflow_B_ACL_230_4_6_from
+PflowMeas,,4,6,4,,to,-100.69761567000815,0.9999999999999964,true,Pflow_B_ACL_230_4_6_to
+QflowMeas,,4,6,4,,from,1.5920730116037105,0.05,true,Qflow_B_ACL_230_4_6_from
+QflowMeas,,4,6,4,,to,-0.0013965695850463558,0.05,true,Qflow_B_ACL_230_4_6_to
+PflowMeas,,5,7,5,,from,122.63469054944326,1.2096790217055968,true,Pflow_B_ACL_230_5_7_from
+PflowMeas,,5,7,5,,to,-119.49821766934623,1.2037037072262873,true,Pflow_B_ACL_230_5_7_to
+QflowMeas,,5,7,5,,from,-30.53480877195404,0.30431754588477844,true,Qflow_B_ACL_230_5_7_from
+QflowMeas,,5,7,5,,to,33.299865606292876,0.32821878799730797,true,Qflow_B_ACL_230_5_7_to
+PflowMeas,,3,4,6,,from,334.76637325455226,3.339196418099675,true,Pflow_B_ACL_230_3_4_from
+PflowMeas,,3,4,6,,to,-317.0528812824498,3.2336733982441928,true,Pflow_B_ACL_230_3_4_to
+QflowMeas,,3,4,6,,from,-229.33752910536353,2.27999245865459,true,Qflow_B_ACL_230_3_4_from
+QflowMeas,,3,4,6,,to,20.91349459490321,0.21254335095965615,true,Qflow_B_ACL_230_3_4_to
+PflowMeas,,1,2,7,,from,620.9867494597263,6.193479183209718,true,Pflow_B_2WT_15_1_2_from
+PflowMeas,,1,2,7,,to,-606.7266186466535,6.154789040476864,true,Pflow_B_2WT_15_1_2_to
+QflowMeas,,1,2,7,,from,-159.60061180328813,1.6046708720127754,true,Qflow_B_2WT_15_1_2_from
+QflowMeas,,1,2,7,,to,175.7622657708658,1.7594314429441908,true,Qflow_B_2WT_15_1_2_to
+PflowMeas,,2,3,8,,from,334.75766444003085,3.3402910498522678,true,Pflow_B_2WT_230_2_3_from
+PflowMeas,,2,3,8,,to,-331.20124802739394,3.3402910498522678,true,Pflow_B_2WT_230_2_3_to
+QflowMeas,,2,3,8,,from,-218.86795994139763,2.1604569742016793,true,Qflow_B_2WT_230_2_3_from
+QflowMeas,,2,3,8,,to,228.90771886982745,2.279992458654732,true,Qflow_B_2WT_230_2_3_to

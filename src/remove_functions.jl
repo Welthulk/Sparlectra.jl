@@ -319,6 +319,11 @@ Removes a shunt at the specified bus from the network.
 removeShunt!(net = network, busName = "Bus1")
 """
 
+"""
+    removeShunt!(; net, busName) -> Bool
+
+Remove the shunt at the bus; returns whether one was removed.
+"""
 function removeShunt!(; net::Net, busName::String)::Bool
   # is missing !
 
@@ -370,6 +375,12 @@ removeProsumer!(net = network, busName = "Bus1", type = "GENERATOR")
 ```
 """
 
+"""
+    removeProsumer!(; net, busName, type = "") -> Bool
+
+Remove a prosumer from the bus (optionally by type) and refresh the bus
+types; returns whether one was removed.
+"""
 function removeProsumer!(; net::Net, busName::String, type::String = "")::Bool
   if net._locked
     @error "Network is locked"

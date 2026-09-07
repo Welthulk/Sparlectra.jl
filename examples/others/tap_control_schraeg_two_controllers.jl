@@ -38,7 +38,7 @@
 using Sparlectra
 using Printf
 
-include(joinpath(@__DIR__, "..", "internal", "example_header.jl"))
+include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
 function build_net()
   net = Net(name = "schraeg_split_demo", baseMVA = 100.0)

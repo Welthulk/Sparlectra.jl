@@ -92,7 +92,7 @@ function _effective_config_with_runtime_case(effective_raw, case_path::AbstractS
   runtime["casefile"] = String(case_path)
   runtime["case_name"] = splitext(basename(case_path))[1]
   runtime["case_source"] = "webui_mpower_data"
-  runtime["configured_default_casefile"] = config.matpower.case
+  runtime["configured_default_casefile"] = config.runtime.case
   if config_sources !== nothing
     raw["_config_sources"] = config_sources
   end
@@ -341,7 +341,7 @@ const DTF_FOR001_UNSUPPORTED_DCLINE_MESSAGE = "DC lines are currently not suppor
 
 function _normalize_case_format(value)::Symbol
   format = value isa Symbol ? value : Symbol(lowercase(strip(String(value))))
-  format in (:auto, :matpower, :dtf_for001, :cgmes) || throw(ArgumentError("case_format must be auto, matpower, dtf_for001, or cgmes; got $(repr(value))."))
+  format in (:auto, :matpower, :dtf_for001, :cgmes, :scf) || throw(ArgumentError("case_format must be auto, matpower, dtf_for001, cgmes, or scf; got $(repr(value))."))
   return format
 end
 
@@ -375,11 +375,14 @@ function _cgmes_delivery_paths(case_path::AbstractString, cgmes_cfg)::Tuple{Vect
   return paths, false
 end
 
-# Feeder data a CGMES delivery declares at the net's primary slack bus
+# Feeder data a CASE declares at the net's primary slack bus
 # (ExternalNetworkInjection max current + R/X), converted to the
 # (sk_MVA, rx) pair _apply_external_grid_config! consumes in :auto mode.
+# A CGMES delivery declares it, and so does a case file whose PGM `source`
+# states `sk`/`rx_ratio` - PGM models a source as a voltage source BEHIND
+# that impedance, so the numbers belong to the model, not to the metadata.
 # Returns nothing when the slack bus carries no usable declaration.
-function _cgmes_declared_slack_feeder(net::Net, shortcircuit)::Union{Nothing,NamedTuple}
+function _declared_slack_feeder(net::Net, shortcircuit)::Union{Nothing,NamedTuple}
   isempty(net.slackVec) && return nothing
   bus_names = Dict{Int,String}(idx => n for (n, idx) in net.busDict)
   slack = get(bus_names, net.slackVec[1], nothing)
@@ -396,33 +399,6 @@ function _cgmes_declared_slack_feeder(net::Net, shortcircuit)::Union{Nothing,Nam
     return (sk_MVA = sk, rx = rxv)
   end
   return nothing
-end
-
-function _looks_like_cgmes(case_path::AbstractString)::Bool
-  isdir(case_path) && return true
-  lowercase(splitext(case_path)[2]) == ".zip" || return false
-  try
-    return !isempty(CGMESImporter.collectCGMESFiles(case_path))
-  catch
-    return false
-  end
-end
-
-function _detect_case_format(case_path::AbstractString; requested::Symbol = :auto)::Symbol
-  requested !== :auto && return requested
-  _looks_like_cgmes(case_path) && return :cgmes
-  ext = lowercase(splitext(case_path)[2])
-  ext in (".m", ".jl") && return :matpower
-  text = read(case_path, String)
-  # Native FOR001 test data has explicit section cards and a DTF size card.  Do
-  # not infer arbitrary .DAT files unless these FOR001 markers are present.
-  has_for001_sections = occursin("##Z", text) && occursin("##L", text) && occursin("##K", text)
-  has_size_card = occursin(r"(?m)^##G\s+\d+\s+\d+", text)
-  if has_for001_sections && has_size_card
-    return :dtf_for001
-  end
-  ext == ".dat" && throw(ArgumentError("Ambiguous .DAT input; set case_format = :dtf_for001 to use the experimental/internal native DTF path."))
-  return :matpower
 end
 
 function _reject_dtf_dcline_like_content!(case_path::AbstractString)
@@ -523,11 +499,17 @@ end
 
 function _run_dtf_outages(case_path::AbstractString, case, config, output_path::AbstractString; mode=:none, selection=String[], write_artifacts::Bool=true, write_matpower_exports::Bool=false, performance_profile=nothing)
   results = Dict{String,Any}[]
+  # task_import_direct: every outage net comes from the IMPORTER, exactly
+  # like the base case; the old conversion detour gave the outage nets a
+  # different lineage than the base run for nothing. Still one
+  # construction per outage (no re-parse); the scenario engine's
+  # apply!/restore! pattern remains the future replacement for the
+  # build-per-outage.
   for outage in _selected_dtf_outages(case, mode, selection)
     matches = DTFImporter.find_outage_branch_indices(case, outage)
     length(matches) == 1 || throw(ArgumentError("missing_ambiguous_outage_branch_matching: " * DTFImporter.outage_match_diagnostic(case, outage, matches)))
-    fresh_case = DTFImporter.read_dtf(case_path)
-    net = DTFImporter.build_net(fresh_case; tap_changer_model = config.transformer.tap_changer_model)
+    net = DTFImporter.build_net(case; bus_shunt_model = config.model.bus_shunt_model, tap_changer_model = config.model.tap_changer_model)
+    _apply_config_net_parameters!(net, config)
     branch_index = only(matches)
     DTFImporter.apply_single_branch_outage!(net, branch_index)
     raw = _run_sparlectra(net = net, config = config, performance_profile = performance_profile, emit_output = false)
@@ -687,20 +669,20 @@ function _run_sparlectra_api(;
   isfile(config_path) || return _api_failure("config_file_not_found", "Configuration file not found: $(config_path)"; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
 
   config_start = time_ns()
-  nested_overrides = try
-    validate_gui_config_overrides(config_overrides)
+  # The one configuration precedence of the run path lives in
+  # resolve_config (design decision D5), highest first: explicit API/CLI
+  # overrides, the case configuration file next to the case, the case
+  # file's own deprecated `sparlectra.config` block, the YAML file, the
+  # template defaults. An omitted key falls through to the next level.
+  resolved = try
+    resolve_config(config_path, case_path, config_overrides)
   catch err
-    return _api_failure("invalid_config_override", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
+    return _api_failure(_config_resolve_reason(err), sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
   end
-
-  config = nothing
-  effective_raw = nothing
-  try
-    config, effective_raw = _load_api_config(config_path, nested_overrides)
-  catch err
-    return _api_failure("invalid_configuration", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
-  end
-  config_sources = _config_source_report(config_path, nested_overrides, effective_raw; override_source = config_override_source)
+  config = resolved.config
+  effective_raw = resolved.effective_raw
+  nested_overrides = resolved.nested_overrides
+  config_sources = _config_source_report(config_path, nested_overrides, effective_raw; override_source = config_override_source, explicit_overrides = config_overrides, case_config = resolved.case_config, scf_config = resolved.scf_config)
   effective_config = joinpath(output_path, "effective_config.yaml")
   _write_yaml_file(effective_config, _effective_config_with_runtime_case(effective_raw, case_path, config; config_sources))
   _write_run_metadata_artifact(output_path; case_path = case_path)
@@ -749,26 +731,9 @@ function _run_sparlectra_api(;
   cgmes_export_sc_line_data = nothing
   cgmes_export_sc_source = nothing
   if detected_case_format === :cgmes
-    emit_phase("reading_cgmes_delivery")
     cgmes_cfg = config.cgmes
-    paths, boundary_autodetected = _cgmes_delivery_paths(case_path, cgmes_cfg)
-    boundary_autodetected && emit_phase("cgmes_boundary_autodetected")
-    cgmes_result = try
-      importCGMES(
-        path = length(paths) == 1 ? paths[1] : paths,
-        baseMVA = cgmes_cfg.base_mva,
-        require_boundary = cgmes_cfg.require_boundary,
-        tap_control = cgmes_cfg.tap_control,
-        machine_control = cgmes_cfg.machine_control,
-        ignore_connected = cgmes_cfg.ignore_connected,
-        vset_min_pu = cgmes_cfg.vset_min_pu,
-        vset_max_pu = cgmes_cfg.vset_max_pu,
-        multi_slack = cgmes_cfg.multi_slack,
-        strict_placeholder_guards = cgmes_cfg.placeholder_guards === :strict,
-        infer_base_voltages = cgmes_cfg.infer_base_voltages,
-        hvdc_mode = cgmes_cfg.hvdc_mode,
-        name = basename(case_path),
-      )
+    imported_cgmes = try
+      import_case(case_path, config; requested_format = :cgmes, name = basename(case_path), phase_callback = phase -> emit_phase(phase))
     catch err
       message = sprint(showerror, err)
       # The typed import error carries the full importFailureAnalysis report
@@ -776,6 +741,11 @@ function _run_sparlectra_api(;
       # histogram, verdict). Write it into cgmes.log — the place the error
       # message points the Web UI user at.
       import_analysis = err isa CGMESImporter.CGMESImportError ? err.analysis : ""
+      paths = try
+        first(_cgmes_delivery_paths(case_path, cgmes_cfg))
+      catch
+        [case_path]
+      end
       # A failed import is exactly when the report matters most, so write a
       # diagnostic cgmes.log from what can still be read (summarizeCGMES works
       # on incomplete deliveries) before returning the failure.
@@ -816,27 +786,15 @@ function _run_sparlectra_api(;
       metadata = Dict("input_format" => String(requested_case_format), "input_format_detected" => "cgmes")
       return _api_execution_failure(reason, message; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing, total_start_ns = total_start, metadata = metadata)
     end
-    # cgmes_import.start_values wins over power_flow(.start_mode).flatstart on
-    # CGMES runs: :flat = synthetic flat start (default), :sv = the imported
-    # SvVoltage state with every competing start-value machine forced off.
-    # `auto` resolves only now: whether the delivery actually carries a usable
-    # SvVoltage state is an import result, not a configuration property. A
-    # delivery is built around its own operating point, so starting there is
-    # the honest default; a delivery without SV keeps the flat start.
-    sv_bus_count = length(cgmes_result.net.nodeVec) - length(cgmes_result.no_sv_buses)
-    effective_start_values = if cgmes_cfg.start_values === :auto
-      sv_bus_count > 0 ? :sv : :flat
-    else
-      cgmes_cfg.start_values
-    end
-    cgmes_run_powerflow, start_overridden = _cgmes_start_values_powerflow(config.powerflow, effective_start_values)
-    cgmes_run_config = _copy_sparlectra_with_powerflow(config, cgmes_run_powerflow)
-    start_decision = string(
-      "CGMES start values: ", effective_start_values,
-      cgmes_cfg.start_values === :auto ? string(" (auto: ", sv_bus_count > 0 ? "delivery carries SvVoltage for $(sv_bus_count) bus(es)" : "no SvVoltage in this delivery", ")") : "",
-      effective_start_values === :sv ? " (imported SvVoltage state; start-value machines forced off: start_projection, dc_seed_unconditional, start_current_iteration, apslf_start)" : " (synthetic flat start)",
-      isempty(start_overridden) ? "" : string(" — overrides: ", join(start_overridden, ", ")),
-    )
+    # the import entry point resolved the delivery paths, imported the case
+    # and took the start-values decision; the branch keeps its artifacts
+    cgmes_result = imported_cgmes.provenance["cgmes_result"]
+    paths = imported_cgmes.provenance["cgmes_paths"]
+    boundary_autodetected = imported_cgmes.provenance["cgmes_boundary_autodetected"]::Bool
+    sv_bus_count = imported_cgmes.provenance["cgmes_sv_bus_count"]::Int
+    effective_start_values = imported_cgmes.provenance["cgmes_effective_start_values"]::Symbol
+    start_decision = imported_cgmes.provenance["cgmes_start_decision"]::String
+    cgmes_run_config = imported_cgmes.config
     # Dedicated cgmes.log: everything the importer saw and decided, next to
     # run.log and diagnose.log, so a CGMES run can be audited without
     # digging through the general run output.
@@ -902,7 +860,7 @@ function _run_sparlectra_api(;
     # bus); in :auto mode those values win over the config numbers. Applied
     # here — only this layer sees the short-circuit harvest; the generic hook
     # in _run_sparlectra is idempotent and will skip the already-converted net.
-    external_grid_note = _apply_external_grid_config!(cgmes_result.net, cgmes_run_config.powerflow; declared = _cgmes_declared_slack_feeder(cgmes_result.net, cgmes_result.shortcircuit))
+    external_grid_note = _apply_external_grid_config!(cgmes_result.net, cgmes_run_config.powerflow; declared = _declared_slack_feeder(cgmes_result.net, cgmes_result.shortcircuit))
     raw_result = try
       open(logfile, "a") do io
         # run.log carries the narrative; the full importer report (files,
@@ -1013,21 +971,24 @@ function _run_sparlectra_api(;
     )
   elseif detected_case_format === :dtf_for001
     emit_phase("reading_dtf_for001_case")
-    dtf_case = try
-      _reject_dtf_dcline_like_content!(case_path)
-      DTFImporter.read_dtf(case_path)
+    # one import entry point; the two failure classes keep their distinct
+    # reasons (a rejected DC line names itself in its message, everything
+    # else in the parse or the build is a build error)
+    imported_dtf = try
+      import_case(case_path, config; requested_format = :dtf_for001, phase_callback = phase -> emit_phase(phase))
     catch err
       message = sprint(showerror, err)
-      reason = occursin("unsupported_dtf_dc_line", message) ? "unsupported_dtf_dc_line" : "dtf_parse_error"
-      metadata = Dict("input_format" => String(requested_case_format), "input_format_detected" => "dtf_for001", "native_dtf_import_used" => false, "unsupported_dcline_status" => reason)
-      return _api_execution_failure(reason, message; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing, total_start_ns = total_start, metadata = metadata)
+      if occursin("unsupported_dtf_dc_line", message)
+        metadata = Dict("input_format" => String(requested_case_format), "input_format_detected" => "dtf_for001", "native_dtf_import_used" => false, "unsupported_dcline_status" => "unsupported_dtf_dc_line")
+        return _api_execution_failure("unsupported_dtf_dc_line", message; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing, total_start_ns = total_start, metadata = metadata)
+      end
+      # parse and build share one call now; everything that is not the DC-line
+      # rejection reports as a parse failure, the overwhelmingly common class
+      metadata = Dict("input_format" => String(requested_case_format), "input_format_detected" => "dtf_for001", "native_dtf_import_used" => false, "unsupported_dcline_status" => "dtf_parse_error")
+      return _api_execution_failure("dtf_parse_error", message; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing, total_start_ns = total_start, metadata = metadata)
     end
-    emit_phase("building_sparlectra_net")
-    dtf_net = try
-      DTFImporter.build_net(dtf_case; tap_changer_model = config.transformer.tap_changer_model)
-    catch err
-      return _api_execution_failure("dtf_build_net_error", sprint(showerror, err, catch_backtrace()); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing, total_start_ns = total_start)
-    end
+    dtf_case = imported_dtf.provenance["dtf_case"]
+    dtf_net = imported_dtf.net
     raw_result = try
       open(logfile, "a") do io
         println(io, "Native DTF input (experimental/internal)")
@@ -1071,17 +1032,26 @@ function _run_sparlectra_api(;
     dtf_metadata["compare_for002_outages"] = compare_for002_outages
     operation_callback("dtf_for001_import_summary"; run_id = run_id, _metadata_kwargs(dtf_metadata)...)
     # Rejoin the normal artifact/finalization path with a native Net result.
-  elseif detected_case_format !== :matpower
+  elseif !(detected_case_format in (:matpower, :scf))
     return _api_failure("invalid_case_format", "Unsupported detected case format: $(detected_case_format)"; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
   end
-  if detected_case_format === :matpower
-    emit_phase("reading_matpower_case")
+  # This branch opens the whole execution block below; a Sparlectra Case
+  # Format file runs the same way (its own reader replaces the MATPOWER
+  # parse inside the framework import), so both formats enter here.
+  if detected_case_format in (:matpower, :scf)
+    emit_phase(detected_case_format === :scf ? "reading_scf_case" : "reading_matpower_case")
   try
     open(logfile, "a") do io
       _write_resolved_q_limit_options(io, qlimit_metadata)
       _capture_run_output(io; live = config.output.console_live) do
         cd(output_path) do
-          raw_result = run_sparlectra(casefile = basename(case_path), path = dirname(case_path), config = config, performance_profile = api_performance_profile)
+          # the one import entry point; the run takes the imported net and the
+          # effective configuration (auto profile, projected start) the import
+          # produced. Console output of the import stays captured in run.log
+          # exactly as before, and the shared performance profile carries the
+          # auto-profile records the artifact writer reads below.
+          imported = import_case(case_path, config; performance_profile = api_performance_profile)
+          raw_result = run_sparlectra(net = imported.net, config = imported.config, performance_profile = api_performance_profile)
         end
       end
     end
@@ -1121,7 +1091,7 @@ function _run_sparlectra_api(;
   if auto_profile_result !== nothing
     config = auto_profile_result.config
     _update_effective_matpower_raw!(effective_raw, config)
-    config_sources = _config_source_report(config_path, nested_overrides, effective_raw; override_source = config_override_source, auto_profile_result = auto_profile_result)
+    config_sources = _config_source_report(config_path, nested_overrides, effective_raw; override_source = config_override_source, auto_profile_result = auto_profile_result, explicit_overrides = config_overrides, case_config = resolved.case_config, scf_config = resolved.scf_config)
     _write_yaml_file(effective_config, _effective_config_with_runtime_case(effective_raw, case_path, config; config_sources))
     _write_matpower_auto_profile_artifact(output_path, auto_profile_result, config; casefile = String(auto_profile_casefile))
     operation_callback("powerflow_effective_options"; run_id = run_id, case = basename(case_path), _metadata_kwargs(qlimit_metadata)..., _metadata_kwargs(_resolved_matpower_import_runtime_options(config))...)
@@ -1367,8 +1337,33 @@ function _run_sparlectra_api(;
   isempty(dtf_metadata) || merge!(final_metadata, dtf_metadata)
   isempty(cgmes_metadata) || merge!(final_metadata, cgmes_metadata)
   isempty(cgmes_export_metadata) || merge!(final_metadata, cgmes_export_metadata)
+  # auto power-flow mode (power_flow.mode = auto): metadata mirror plus the
+  # decision-log artifact; manual runs only carry auto_mode_enabled = false.
+  # A DC fallback stays converged = false for the AC problem and is flagged
+  # separately so integrators can never mistake it for an AC solution.
+  auto_rec = raw_result.net === nothing ? nothing : auto_pf_record(raw_result.net)
+  final_metadata["auto_mode_enabled"] = auto_rec !== nothing
+  if auto_rec !== nothing
+    final_metadata["auto_profile"] = String(auto_rec.profile)
+    final_metadata["auto_escalation_stages"] = count(a -> a.stage !== :base && !isempty(a.solver), auto_rec.attempts)
+    final_metadata["auto_final_stage"] = String(auto_rec.final_stage)
+    final_metadata["auto_final_solver"] = auto_rec.final_solver
+    final_metadata["auto_hints"] = String[h.text for h in auto_rec.hints]
+    final_metadata["auto_hint_ids"] = String[String(h.id) for h in auto_rec.hints]
+    final_metadata["dc_fallback_solution"] = begin
+      # the flag lives on the solver status of the net (the diagnostics
+      # mapping does not carry it); read it from there
+      st = rectangular_pf_status(raw_result.net)
+      st !== nothing && hasproperty(st, :dc_fallback_applied) && st.dc_fallback_applied === true
+    end
+    try
+      _write_auto_mode_decision_log(joinpath(output_path, "auto_mode_decision.log"), auto_rec)
+    catch err
+      @warn "auto mode: decision log could not be written" exception = err
+    end
+  end
   _write_run_metadata_artifact(output_path; case_path = case_path, lifecycle = final_metadata)
-  message = numerical_success ? "PowerFlow run completed." : raw_result.reason_text
+  message = numerical_success ? "PowerFlow run completed." : (get(final_metadata, "dc_fallback_solution", false) === true ? string(raw_result.reason_text, " A DC fallback solution is available (approximation; the AC problem did not converge).") : raw_result.reason_text)
   result = _api_result(
     run_id = run_id,
     status = numerical_success ? :succeeded : :not_converged,

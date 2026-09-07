@@ -227,7 +227,8 @@ function run_factorized_linear_solver_tests()
       @test Sparlectra._webui_normalize_case_profile_form_value("power_flow_linear_solver", "umfpack_reuse") == "umfpack_reuse"
       @test_throws ArgumentError Sparlectra._webui_normalize_case_profile_form_value("power_flow_linear_solver", "klu")
 
-      form_html = Sparlectra.render_powerflow_form()
+      # stage 4A block 3: the expert options render on the Settings page
+      form_html = Sparlectra.render_settings_page()
       expert_parts = split(form_html, "<summary>Advanced options</summary>")
       @test length(expert_parts) == 2
       expert_html = expert_parts[2]

@@ -44,7 +44,7 @@ function run_tap_changer_model_tests()
     @test isapprox(calcRatioTapCorrection(taps), 1.0 + (taps.step - taps.neutralStep) * taps.tapStepPercent / 100.0; atol = 1e-12)
   end
 
-  @testset "calcRatioTapRange matches previous inline branch.jl math" begin
+  @testset "calcRatioTapRange: ratio band and step, including an inverted range" begin
     taps = PowerTransformerTaps(Vn_kV = 110.0, step = 0, lowStep = -4, highStep = 6, neutralStep = 1, voltageIncrement_kV = 1.1)
     pu_per_step = taps.tapStepPercent / 100.0
     expected_min = min(1.0 + (taps.lowStep - taps.neutralStep) * pu_per_step, 1.0 + (taps.highStep - taps.neutralStep) * pu_per_step)

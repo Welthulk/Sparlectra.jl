@@ -23,7 +23,7 @@
 
 using Sparlectra
 
-include(joinpath(@__DIR__, "..", "internal", "example_header.jl"))
+include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
 # a long 380 kV line (several hundred km equivalent): substantial charging
 # so the effect is not lost in rounding

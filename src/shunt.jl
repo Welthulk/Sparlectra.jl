@@ -44,6 +44,10 @@ A mutable structure representing a shunt in a power system.
 - `Base.show(io::IO, shunt::Shunt)`: Prints the `Shunt` instance.
 """
 
+"""
+A bus shunt: its admittance in per unit, the nominal draw it was built
+from, its model (admittance or voltage-dependent injection) and status.
+"""
 mutable struct Shunt
   comp::AbstractComponent
   vn_kV::Float64
@@ -64,6 +68,11 @@ mutable struct Shunt
   # Semantics
   model::Symbol      # :Y, :VoltageDependentInjection, or legacy :PQ
   status::Int
+
+  # State estimation (SE phase 2): released for B-susceptance estimation.
+  # Default false keeps every existing call site and workflow unchanged; set
+  # via setShuntEstimation!.
+  estimate::Bool
 
   function Shunt(; fromBus::Int, id::Int, base_MVA::Float64, vn_kV_shunt::Float64,
                  p_shunt::Union{Nothing,Float64}=nothing,
@@ -115,7 +124,7 @@ mutable struct Shunt
     p0 = 0.0
     q0 = 0.0
 
-    return new(comp, vn_kV_shunt, base_MVA, busIdx, p0, q0, G, B, y_pu_shunt, model, status)
+    return new(comp, vn_kV_shunt, base_MVA, busIdx, p0, q0, G, B, y_pu_shunt, model, status, false)
  end
 
  function Base.show(io::IO, shunt::Shunt)
@@ -134,14 +143,29 @@ mutable struct Shunt
 
 end
 
+"""
+    getGBShunt(o) -> (g, b)
+
+The shunt admittance in per unit.
+"""
 function getGBShunt(o::Shunt)::Tuple{Float64,Float64}
   return (o.G_shunt, o.B_shunt)
 end
 
+"""
+    getPQShunt(o) -> (p, q)
+
+The nominal shunt draw in MW/MVar at 1 pu voltage.
+"""
 function getPQShunt(o::Shunt)::Tuple{Float64,Float64}
   return (o.p_shunt, o.q_shunt)
 end
 
+"""
+    updatePQShunt!(o, p, q)
+
+Update the shunt draw and recompute its per-unit admittance.
+"""
 function updatePQShunt!(o::Shunt, p::Float64, q::Float64)
   o.p_shunt = p
   o.q_shunt = q

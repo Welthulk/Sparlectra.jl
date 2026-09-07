@@ -151,11 +151,11 @@ end
 
 function _resolved_matpower_import_runtime_options(config::SparlectraConfig)::Dict{String,Any}
   return Dict{String,Any}(
-    "matpower_auto_profile" => String(config.matpower.auto_profile),
+    "matpower_auto_profile" => String(config.model.auto_profile),
     "matpower_ratio" => String(config.matpower.ratio),
     "matpower_shift_sign" => config.matpower.shift_sign,
     "matpower_shift_unit" => String(config.matpower.shift_unit),
-    "matpower_bus_shunt_model" => String(config.matpower.bus_shunt_model),
+    "matpower_bus_shunt_model" => String(config.model.bus_shunt_model),
     "matpower_pv_voltage_source" => String(config.matpower.pv_voltage_source),
     "matpower_compare_reference" => String(config.matpower.compare_voltage_reference),
     "matpower_apply_bus_names" => config.matpower.apply_bus_names,
@@ -287,7 +287,54 @@ function _compact_performance_profile_value(key::Symbol, value)::Union{Nothing,S
   return text
 end
 
-function _write_performance_log(path::AbstractString, mode::Symbol, phases::AbstractDict, result::SparlectraRunResult, phase_timings::AbstractVector = Dict{String,Any}[])
+"""
+    _write_service_performance_log!(output_dir, recorder, total_start_ns; headline, status, label)
+
+Write `performance.log` for a service run that has no `SparlectraRunResult`
+of its own: state estimation, contingency, short circuit, import analysis.
+The power-flow path writes the same file through `_write_performance_log`
+with its result object; these runs supply only their phase recorder.
+
+`headline` maps the summary keys at the top of the file to phase names of
+this service, for example
+`(:case_loading_network_solver => "importing_case", :solver => "state_estimation")`.
+Phases that never ran are left out instead of printed as zero.
+
+Called on the success path AND on early exits worth timing (a
+non-converged estimation is exactly the run whose timing someone wants to
+see). Never raises: a failed timing file must not turn a finished run into
+an error. Returns the recorder's timings so the caller can put them into
+`result.json` as `service_phase_timings`.
+"""
+function _write_service_performance_log!(
+  output_dir::AbstractString,
+  recorder::PowerFlowPhaseTimingRecorder,
+  total_start_ns::UInt64;
+  headline = (),
+  status::AbstractString = "completed",
+  label::AbstractString = "run",
+)
+  try
+    _finalize_service_timings!(recorder, total_start_ns; status = status)
+    phases = Dict{Symbol,Float64}()
+    total = _phase_elapsed_lookup(recorder.timings, "total_service")
+    total === nothing || (phases[:total] = total)
+    for (key, phase) in headline
+      value = _phase_elapsed_lookup(recorder.timings, String(phase))
+      value === nothing || (phases[Symbol(key)] = value)
+    end
+    _write_performance_log(joinpath(output_dir, "performance.log"), :compact, phases, nothing, recorder.timings)
+  catch err
+    @warn "could not write performance.log for the $(label) run" exception = err
+  end
+  return recorder.timings
+end
+
+## `result` is `nothing` for runs that have no power-flow result object to
+## report internal sub-timings from (the state estimation writes the same
+## file from its own phase recorder); the aggregate sections are skipped
+## then, the phase table is not.
+function _write_performance_log(path::AbstractString, mode::Symbol, phases::AbstractDict, result::Union{Nothing,SparlectraRunResult}, phase_timings::AbstractVector = Dict{String,Any}[])
   open(path, "w") do io
     println(io, "Sparlectra single-run phase timing")
     println(io, "==================================")
@@ -302,9 +349,11 @@ function _write_performance_log(path::AbstractString, mode::Symbol, phases::Abst
       println(io)
       _write_service_phase_summary(io, phase_timings)
     end
-    _write_compact_internal_timing_aggregates(io, result)
-    _write_internal_subtimings(io, result)
-    if mode === :full && result.performance_profile isa AbstractDict
+    if result !== nothing
+      _write_compact_internal_timing_aggregates(io, result)
+      _write_internal_subtimings(io, result)
+    end
+    if mode === :full && result !== nothing && result.performance_profile isa AbstractDict
       println(io)
       println(io, "Available internal performance profile")
       println(io, "--------------------------------------")

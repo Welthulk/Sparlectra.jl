@@ -14,7 +14,7 @@ The main entry point is `Sparlectra.load_sparlectra_config(...)`, which:
 
 | Item | Path / mechanism | Role |
 |---|---|---|
-| Default config | `src/configuration.yaml.example` | Version-controlled baseline for all options. |
+| Default config | `src/config/configuration.yaml.example` | Version-controlled baseline for all options. |
 | User override | `examples/configuration.yaml` | Local override file (project default user path). |
 | Explicit config path | `load_sparlectra_config("/path/to/file.yaml")` | Replaces default user override path for that load call. |
 | Environment-based path selection helper | `SPARLECTRA_CONFIGURATION_YAML` via `configuration_path_from_inputs(...)` | Used by script/example path resolution workflows. |
@@ -23,12 +23,38 @@ The main entry point is `Sparlectra.load_sparlectra_config(...)`, which:
 
 Configuration precedence (low → high):
 
-1. `src/configuration.yaml.example`
+1. `src/config/configuration.yaml.example`
 2. `examples/configuration.yaml` (or explicit `user_path`)
 3. `cli_overrides`
 4. `overrides`
 
 Unknown keys are rejected during validation. Removed keys are also rejected with migration hints (for example `matpower_import.benchmark` → `benchmark.enabled`).
+
+Exception whenever a case ships its own configuration file
+(`<stem>.config.yaml`, any input format): case-scope keys then skip
+level 2 and resolve from the case levels straight to the packaged
+defaults, so the same case-plus-config pair computes the same numbers on
+every installation; only machine-scope keys (`output.*`, `benchmark.*`,
+`runtime.*`, `webui.*`, `matpower_export.*`) still read the user file.
+See [Configuration precedence](scf.md#Configuration-precedence).
+
+## File version and scope
+
+Every configuration file declares its format as the first keys:
+
+```yaml
+config_version: 1
+scope: general
+```
+
+A file without `config_version` reads as version 0: it still loads, with one
+warning, and the documented version-0 aliases are applied (the `model.*` keys
+below lived in `matpower_import`/`transformer`, and `runtime.case`/`runtime.cases`
+lived in `matpower_import`). `refresh_sparlectra_config_file` rewrites such a
+file to the current layout. A `config_version` newer than the running
+Sparlectra is an error. `scope` states what the file configures: `general`
+for the installation-wide file, `case` for a per-case configuration file next
+to its case.
 
 ## Typed central object
 
@@ -38,7 +64,7 @@ The merged YAML is converted into:
   - `powerflow::PowerFlowConfig`
   - `state_estimation::StateEstimationConfig`
   - `matpower::MatpowerImportConfig`
-  - `transformer::TransformerConfig`
+  - `model::ModelConfig`
   - `performance::PerformanceConfig`
   - `benchmark::BenchmarkConfig`
   - `contingency::ContingencyConfig`
@@ -55,18 +81,18 @@ This typed model is the canonical internal representation that should be consume
 
 | YAML section | Typed section | Purpose | Status |
 |---|---|---|---|
-| `power_flow` | `PowerFlowConfig` | Rectangular power-flow solver controls, start mode, Q-limits | Public / supported |
-| `matpower_import` | `MatpowerImportConfig` | MATPOWER case path + import interpretation options | Public / supported |
+| `power_flow` | `PowerFlowConfig` | Rectangular power-flow solver controls, start mode, Q-limits; `power_flow.mode` switches between `manual` and the network-driven `auto` strategy (see [Power-Flow Configuration](powerflow_configuration.md) and the [Integration Guide](integration.md)) | Public / supported |
+| `matpower_import` | `MatpowerImportConfig` | MATPOWER import interpretation options | Public / supported |
 | `cgmes_import` | `CGMESImportConfig` | CGMES delivery path + import options (see [CGMES Import](cgmes_import.md)) | Public / supported |
-| `short_circuit` | `ShortCircuitConfig` | IEC 60909 short-circuit evaluation; `short_circuit.c_factor` overrides the Table-1 voltage factor (see [Short-Circuit Analysis](short_circuit.md)) | Public / supported |
-| `transformer` | `TransformerConfig` | Transformer-modeling options shared by all importers (tap-changer model) | Public / supported |
+| `short_circuit` | `ShortCircuitConfig` | IEC 60909 short-circuit evaluation; `short_circuit.c_factor` overrides the Table-1 voltage factor, `short_circuit.sweep_method` (`auto`/`solves`/`takahashi`) selects the all-bus Thevenin sweep and `short_circuit.takahashi_min_buses` the island size from which the selected inverse is used (see [Short-Circuit Analysis](short_circuit.md)) | Public / supported |
+| `model` | `ModelConfig` | Model construction shared by all importers (bus shunt model, tap-changer model, auto profile, net cache, preallocation) | Public / supported |
 | `state_estimation` | `StateEstimationConfig` | State-estimation runtime controls | Public / supported |
-| `output` | `OutputConfig` | Console/logfile behavior and result table sizing | Public / supported |
+| `output` | `OutputConfig` | Console/logfile behavior and result table sizing; `output.startup_latency_hint` silences the one-per-process note about JIT warm-up in sessions without a sysimage or executable (see [Sysimage](sysimage.md)) | Public / supported |
 | `performance` | `PerformanceConfig` | Profiling/reporting toggles and diagnostic volume controls | Public / supported |
 | `benchmark` | `BenchmarkConfig` | Repeated benchmark-run controls | Public / supported |
-| `contingency` | `ContingencyConfig` | N-1 contingency batch controls; `contingency.rescue_ladder` is the per-case start-value ladder (subset of `warm`/`apslf`/`dc`/`flat`, see [N-1 Contingency Analysis](contingency.md)) | Public / supported |
+| `contingency` | `ContingencyConfig` | N-1 contingency batch controls; `contingency.rescue_ladder` is the per-case start-value ladder (subset of `warm`/`apslf`/`dc`/`flat`), `contingency.screening.mode` (`off`/`flag`/`only`, default `off`; screening is a deliberate opt-in) switches the base-factorization outage screening on the service path, and `contingency.screening.margin_pct` (default `10.0`) is its flagging margin; see [N-1 Contingency Analysis](contingency.md) | Public / supported |
 | `control` | `ControlConfig` | Generic controller outer-loop orchestration controls; `control.controllers` holds declarative controller definitions (implemented, issue #305), see the controllers section below | Public / supported |
-| `runtime` | `RuntimeConfig` | Julia/BLAS thread control knobs for entry workflows | Public / supported |
+| `runtime` | `RuntimeConfig` | Case selection (`runtime.case`/`runtime.cases`) and Julia/BLAS thread control knobs for entry workflows | Public / supported |
 | `diagnostics` | `DiagnosticsConfig` | Effective-config logging (`log_effective_config` only — the former `diagnostics.console_*`/`logfile_diagnostics` duplicates of `output.*` are deprecated and ignored with a warning) | Public / supported |
 | `webui` | `WebUIConfig` | Web UI presentation preferences (e.g. `webui.show_case_settings_notice`) | Public / supported |
 | `extensions` | reserved (not mapped to typed runtime fields) | Future extension placeholder | Reserved |
@@ -79,7 +105,7 @@ The supported public power-flow solver path is **rectangular** (`power_flow.meth
 
 Sparlectra docs distinguish option categories:
 
-- **Public / supported**: keys in `src/configuration.yaml.example` and typed section constructors.
+- **Public / supported**: keys in `src/config/configuration.yaml.example` and typed section constructors.
 - **Reserved**: schema placeholders such as `extensions.reserved` for forward compatibility.
 - **Deprecated compatibility aliases**: accepted for migration but not preferred in new YAML (for example `max_ite` and some start-projection alias keys).
 - **Removed**: explicitly rejected keys with migration error guidance (for example `matpower_import.benchmark`).
@@ -123,12 +149,12 @@ reference, and status diagnostics.
 
 ### Transformer tap-changer model
 
-`transformer.tap_changer_model` selects, for **all** transformers of an
+`model.tap_changer_model` selects, for **all** transformers of an
 imported case, whether the tap changer is treated as electrically ideal or as
 affecting the series impedance:
 
 ```yaml
-transformer:
+model:
   # Allowed values: ideal, impedance_correction
   tap_changer_model: ideal
 ```
@@ -162,7 +188,7 @@ correction and reimport](matpower_import.md#tap-impedance-correction-and-reimpor
 
 ### Key validation
 
-- User YAML keys and override keys are validated against the default-schema tree from `src/configuration.yaml.example`.
+- User YAML keys and override keys are validated against the default-schema tree from `src/config/configuration.yaml.example`.
 - Unknown keys throw `ArgumentError`.
 - Type/domain checks are applied while constructing typed config objects (for example Symbol allow-lists and positivity checks).
 
@@ -269,7 +295,7 @@ and rerun without PQ→PV re-enable inside that enforcement loop. Legacy aliases
 `matpower_simultaneous` and `matpower_one_at_a_time` are still accepted for old
 YAML files and are normalized to the corresponding `classic_*` value.
 
-`matpower_import.auto_profile` controls a MATPOWER pre-run profile. Use `off`
+`model.auto_profile` controls a MATPOWER pre-run profile. Use `off`
 to disable it, `recommend` to print/log a recommendation table without changing
 the active configuration, or `apply` to apply only unambiguous import-convention
 recommendations. The runner also logs final effective MATPOWER options; it never
@@ -412,7 +438,7 @@ solver tuning:
 | `output.result_table_max_rows` | `200` | Row cap for the classical result tables. |
 | `output.result_table_large_case_threshold_buses` | `1000` | Bus count from which a case counts as large for result rendering. |
 | `output.result_table_large_case_mode` | `summary` | What large cases print instead of full tables (`summary`, `classic`, `full`). |
-| `webui.warmup` | `true` | Compile the hot paths once at Web UI start (a few seconds) so the first run does not pay them; `false` for a minimal-footprint start. |
+| `webui.operation_log_retention_days` | Int | `10` | >= 0 | How far the operation log reaches back. Every Web UI start drops older entries from every operation log it knows; `0` keeps only the current session. Lower it when the log page grows unwieldy: its size comes from the number of entries, not from their age. The environment variable `SPARLECTRA_WEBUI_OPERATION_LOG_RETENTION_DAYS` still wins, for headless runs that read no configuration file. |
 
 ## Migration notes
 
@@ -433,7 +459,7 @@ solver tuning:
 ## Complete default-key index
 
 The canonical key set lives in ONE place,
-[`src/configuration.yaml.example`](https://github.com/Welthulk/Sparlectra.jl/blob/main/src/configuration.yaml.example):
+[`src/config/configuration.yaml.example`](https://github.com/Welthulk/Sparlectra.jl/blob/main/src/config/configuration.yaml.example):
 the version-controlled default configuration that the loader validates
 every user YAML against. A hand-maintained copy of that list used to sit
 here and drifted (it was missing about sixty keys); read the file itself,

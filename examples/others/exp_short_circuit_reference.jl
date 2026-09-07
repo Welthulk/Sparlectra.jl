@@ -18,7 +18,7 @@
 
 using Sparlectra
 
-include(joinpath(@__DIR__, "..", "internal", "example_header.jl"))
+include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
 # The four reference cases and their expected values are the analytic
 # IEC 60909-0 hand derivations (with a pandapower snippet kept for an external
