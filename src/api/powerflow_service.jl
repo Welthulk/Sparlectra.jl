@@ -333,11 +333,15 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
   output_dir = joinpath(root, run_id)
   if diagnose_mode
     # Diagnose mode forces the fixed-reference self-check settings (see
-    # `_self_check_forced_overrides`) on top of the requested config_file. Some
-    # of those settings (e.g. start_projection) are not GUI-editable, so they
-    # cannot go through `config_overrides`; the merged result is written into
-    # the run's own output directory both as the config Sparlectra actually
-    # runs with and as a visible, self-documenting run artifact.
+    # `_self_check_forced_overrides`) on top of the requested config_file. Two
+    # of them (`power_flow.flatstart`, `power_flow.start_mode.start_projection`)
+    # are not GUI-editable and travel in this merged file, which is written into
+    # the run's own output directory both as the config Sparlectra actually runs
+    # with and as a visible, self-documenting run artifact. Everything else goes
+    # through `_self_check_effective_overrides` below, because a configuration
+    # FILE does not reach the solver at all for CASE-scope keys once a case
+    # configuration file exists next to the case, and because the Web UI form
+    # submits `power_flow.max_iter` and friends as overrides with every run.
     mkpath(output_dir)
     config_file = try
       self_check_path = joinpath(output_dir, "diagnose_self_check_config.yaml")
@@ -346,13 +350,10 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
     catch err
       return _service_failure("invalid_configuration", sprint(showerror, err, catch_backtrace()); run_id = run_id)
     end
-    # The Web UI form submits cgmes_start_values as a GUI-editable override;
-    # applied on top of the merged self-check config it would re-flatten the
-    # start (default "flat") and break the fixed-reference contract. The
-    # self-check's forced start_values=sv must win, so drop the form value.
-    if config_overrides isa AbstractDict && haskey(config_overrides, "cgmes_import.start_values")
-      config_overrides = Dict{String,Any}(k => v for (k, v) in config_overrides if k != "cgmes_import.start_values")
-    end
+    # The forced settings win over every form value, cgmes_import.start_values
+    # among them: the form submits it with the default "flat", which would
+    # re-flatten the start and break the fixed-reference contract.
+    config_overrides = _self_check_effective_overrides(config_overrides isa AbstractDict ? config_overrides : Dict{String,Any}())
   end
   # Import-analysis runs stop even earlier than short-circuit runs: only the
   # CGMES delivery files are parsed (no mapping, no solve) and the

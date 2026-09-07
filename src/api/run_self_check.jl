@@ -16,10 +16,23 @@
 # purpose: fixed-reference self check (run_fixed_reference_self_check): one
 #          NR iteration from the imported voltages with all start-value
 #          machinery forced off, measuring the case's own consistency
-# `power_flow.start_mode.start_projection` is not in `GUI_EDITABLE_CONFIG_KEYS`,
-# so the fixed-reference self-check settings below are applied via a merged,
-# temporary YAML configuration file rather than run_sparlectra_api's
-# `config_overrides` dict (which is validated against that allowlist).
+# The forced settings below travel on TWO levels, and both are needed:
+#
+# - as explicit `config_overrides`, the only level above a case configuration
+#   file. As soon as such a file lies next to the case, its mere EXISTENCE
+#   makes every CASE-scope key fall through from the case levels straight to
+#   the packaged defaults (resolve_config, D5), so a configuration FILE no
+#   longer reaches the solver for them. Measured 2026-09-07 with a case
+#   configuration next to case14.m that did not even carry a `power_flow`
+#   block: the self-check ran with max_iter=80 and rescue=true instead of 1
+#   and false, and still wrote its "start values taken verbatim" line.
+# - as a merged, temporary YAML configuration file, for the two forced keys
+#   that are NOT in `GUI_EDITABLE_CONFIG_KEYS` (`power_flow.flatstart` and
+#   `power_flow.start_mode.start_projection`). Those two are also not case
+#   scope, so no case configuration file can set them and the file still
+#   reaches the solver for them. `_SELF_CHECK_FILE_ONLY_KEYS` names them, and
+#   a forced key that is in neither class raises instead of silently missing
+#   the solver.
 #
 # Every start-value machine is forced off so the imported bus voltages reach
 # the solver verbatim, whatever the base configuration says:
@@ -67,6 +80,53 @@ function _self_check_forced_overrides()::Dict{String,Any}
     # evaluate at the imported state, so force sv. Inert for MATPOWER/DTF.
     "cgmes_import" => Dict{String,Any}("start_values" => "sv"),
   )
+end
+
+# Forced keys that cannot ride the override level because they are not in
+# `GUI_EDITABLE_CONFIG_KEYS`. They are not case scope either, so a case
+# configuration file cannot set them and the merged file below still wins.
+const _SELF_CHECK_FILE_ONLY_KEYS = Set([
+  "power_flow.flatstart",
+  "power_flow.start_mode.start_projection",
+])
+
+function _flatten_forced_overrides!(flat::Dict{String,Any}, prefix::AbstractString, d::AbstractDict)
+  for (k, v) in d
+    key = isempty(prefix) ? String(k) : string(prefix, ".", k)
+    if v isa AbstractDict
+      _flatten_forced_overrides!(flat, key, v)
+    elseif key in GUI_EDITABLE_CONFIG_KEYS
+      flat[key] = v
+    elseif !(key in _SELF_CHECK_FILE_ONLY_KEYS)
+      # Not a run-time condition: this can only fire when a forced setting is
+      # added without deciding how it reaches the solver, and the symptom
+      # would be a self-check that silently does not force it.
+      error("self-check forced key $(key) is neither GUI-editable nor declared in _SELF_CHECK_FILE_ONLY_KEYS")
+    end
+  end
+  return flat
+end
+
+"""
+    _self_check_forced_gui_overrides() -> Dict{String,Any}
+
+The forced self-check settings as flat override keys, i.e. the subset of
+`_self_check_forced_overrides` that `GUI_EDITABLE_CONFIG_KEYS` admits.
+"""
+_self_check_forced_gui_overrides()::Dict{String,Any} = _flatten_forced_overrides!(Dict{String,Any}(), "", _self_check_forced_overrides())
+
+"""
+    _self_check_effective_overrides(config_overrides) -> Dict{String,Any}
+
+Caller overrides with the forced self-check settings ON TOP. A caller may
+adjust everything the self-check does not force (`power_flow.tol`, for
+instance); a forced key cannot be overridden, because a fixed reference that
+the caller can move is not a reference. The Web UI form is such a caller: it
+submits `power_flow.max_iter` and friends with every run.
+"""
+function _self_check_effective_overrides(config_overrides::AbstractDict = Dict{String,Any}())::Dict{String,Any}
+  caller = Dict{String,Any}(String(k) => v for (k, v) in config_overrides)
+  return merge(caller, _self_check_forced_gui_overrides())
 end
 
 function _write_self_check_config_file(config_file::AbstractString)::String
@@ -170,12 +230,17 @@ Supported inputs:
 - `output_dir`: forwarded to `run_sparlectra_api`; all normal run artifacts
   (including `diagnose.log`) are written here, plus `self_check.log` and
   `self_check_residuals.csv`.
-- `config_overrides`: optional further `GUI_EDITABLE_CONFIG_KEYS` overrides,
-  applied on top of the self-check settings (e.g. to adjust `power_flow.tol`
-  for the reported mismatch classification).
+- `config_overrides`: optional further `GUI_EDITABLE_CONFIG_KEYS` overrides.
+  They adjust everything the self-check does not force (`power_flow.tol` for
+  the reported mismatch classification, for instance); a forced key stays
+  forced, because a fixed reference the caller can move is not a reference.
 
 # How
-Forces `power_flow.max_iter = 1`, `power_flow.qlimits.enabled = false`, and
+The forced settings ride the explicit override level, the only one above a
+case configuration file, plus a merged temporary configuration file for the
+two keys the override allowlist does not admit (see the comment at the top of
+`src/api/run_self_check.jl`). Forces `power_flow.max_iter = 1`,
+`power_flow.qlimits.enabled = false`, and
 every start-value machine off (`start_mode.flatstart = false`,
 `start_mode.start_projection = false`, `start_mode.dc_seed_unconditional =
 false`, `start_current_iteration.enabled = false`, `apslf_start.enabled =
@@ -206,7 +271,7 @@ function run_fixed_reference_self_check(;
       config_file = self_check_config_file,
       output_dir = output_dir,
       case_format = case_format,
-      config_overrides = config_overrides,
+      config_overrides = _self_check_effective_overrides(config_overrides),
       run_diagnostics = true,
     )
     try

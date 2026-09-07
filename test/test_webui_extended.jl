@@ -2987,7 +2987,17 @@ result = get_powerflow_result(run_id)
         diagnose_run_id = basename(only(header.second for header in diagnose_response.headers if header.first == "Location"))
         wait(Sparlectra._POWERFLOW_WEBUI_JOBS[diagnose_run_id]["task"])
         diagnose_result = get_powerflow_result(diagnose_run_id)
-        @test diagnose_result["success"]
+        # A diagnose run takes ONE step from the case's own stored VM/VA, so
+        # a residual is the normal outcome and `success` (which mirrors
+        # convergence) is false: the service completed, the numerics did not
+        # converge, and that residual IS the diagnosis. This asserted
+        # `success` until 2026-09-07, when the forced settings still lost to
+        # the case configuration file and the run was secretly an ordinary
+        # solve.
+        @test diagnose_result["success"] === false
+        @test diagnose_result["service_status"] == "completed"
+        @test diagnose_result["run_status"] == "completed_nonconverged"
+        @test diagnose_result["iterations"] == 1
         diagnose_log_path = joinpath(diagnose_result["output_dir"], "diagnose.log")
         @test isfile(diagnose_log_path)
         @test filesize(diagnose_log_path) > 0

@@ -24,6 +24,7 @@
 * Case files lost voltage limits, Q-limit hysteresis, phase-tap bands and machine operating points.
 * Q-limit handling scanned its whole event log per bus and iteration, which dominated the power flow on large networks (13659 buses: 60 s, now 13.5 s, same result).
 * Test suite and `ensure_casefile` share the Web UI case directory; `SPARLECTRA_LARGE_CASES_DIR` remains as override.
+* Diagnose runs took the form's iteration limit and start settings instead of their own, so the button reported an ordinary converged run instead of the residual of the imported state.
 
 
 # Version 0.9.19 - 2026-08-25
