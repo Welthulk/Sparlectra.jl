@@ -801,7 +801,6 @@ Parameters:
 - `vn_kV::Union{Nothing,Float64} = nothing`: Nominal voltage of the branch in kV (default is nothing).
 - `values_are_pu = false`: Boolean indicating if the values are in per unit (default is false).
 """
-
 function addBranch!(; net::Net, from::Int, to::Int, branch::AbstractBranch, status::Integer = 1, ratio = nothing, side = nothing, vn_kV = nothing, values_are_pu::Bool = false, from_status::Union{Nothing,Integer} = nothing, to_status::Union{Nothing,Integer} = nothing)
   @assert from != to "From and to bus must be different"
   idBrunch = length(net.branchVec) + 1
