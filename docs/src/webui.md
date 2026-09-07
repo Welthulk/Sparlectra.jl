@@ -609,7 +609,10 @@ the count of buses without a usable `SvVoltage`, which start at the flat
 `self_check_residuals.csv` (full per-bus P/Q residuals at the start state,
 with per-bus SV coverage plus transformer-terminal and shunt counts for
 attribution). The merged self-check configuration is written alongside the
-other artifacts as `diagnose_self_check_config.yaml` for inspection.
+other artifacts as `diagnose_self_check_config.yaml` for inspection. The
+forced settings outrank both the values the run form submits and a case
+configuration file lying next to the case: a reference that moves with the
+form is not a reference.
 Programmatically, the same behavior is available as
 [`run_fixed_reference_self_check`](@ref).
 
