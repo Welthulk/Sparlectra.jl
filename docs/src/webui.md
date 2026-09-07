@@ -68,6 +68,16 @@ julia --project=. start_webui.jl
 `start_webui.jl` is the single maintained developer launcher and delegates
 startup and default-path behavior to `start_sparlectra_webui`.
 
+Before anything else it compares the direct dependencies in `Project.toml`
+against `Manifest.toml`, which costs two TOML reads and no package load. When
+one is missing, or when there is no manifest, it resolves and instantiates the
+environment once and says so; otherwise it stays silent. `Manifest.toml` is not
+tracked, so this covers both a fresh clone and a manifest left over from an
+older Sparlectra that never learned about a dependency added since. The check
+runs BEFORE the [sysimage](sysimage.md) question on purpose: nobody should be
+asked whether to spend minutes on a build while the checkout itself cannot be
+loaded.
+
 For end users the repository root additionally ships platform scripts:
 `start_webui.sh` / `start_webui.bat` (start; point at the install script
 when Julia is missing) and `tools/install_webui.sh` / `tools/install_webui.bat`

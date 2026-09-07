@@ -13,9 +13,9 @@
 # limitations under the License.
 #
 # file: tools/sysimage_launcher.jl
-# purpose: the sysimage decision every Sparlectra launcher shares: is there a
-#          usable image, should one be built, and relaunching the process
-#          through it. Deliberately a module on plain Base (TOML and SHA are
+# purpose: the decisions every Sparlectra launcher has to make BEFORE the
+#          package can be loaded: is this checkout's environment resolvable
+#          at all, and is there a usable sysimage to relaunch through. Deliberately a module on plain Base (TOML and SHA are
 #          stdlib): start_webui.jl includes it BEFORE `using Sparlectra`,
 #          because the whole point is to decide whether this process should
 #          be replaced by one that starts from the image. Being a module also
@@ -26,7 +26,7 @@ module SysimageLauncher
 using TOML
 using SHA
 
-export handle_sysimage
+export handle_sysimage, unresolved_dependencies, repair_environment
 
 const REBUILD_FLAG = "--rebuild-sysimage"
 const NO_IMAGE_FLAG = "--no-sysimage"
@@ -168,6 +168,72 @@ function relaunch_with_sysimage(image::AbstractString, script::AbstractString, p
     0
   end
   exit(code)
+end
+
+"""
+    unresolved_dependencies(project_dir) -> Vector{String}
+
+Direct dependencies of `Project.toml` that `Manifest.toml` does not know, or
+`["<no Manifest.toml>"]` when there is no manifest at all. Empty means the
+environment can be loaded.
+
+Two TOML reads, no package load, a few milliseconds. That cheapness is the
+point: it runs BEFORE the sysimage question, and the order matters. Answering
+"no" to that question and then walking into an unloadable environment is what
+happened on a Windows 11 checkout (2026-09-07); answering "yes" would have been
+worse, because the build works in the SEPARATE @sparlectra-sysimage-build
+environment and would have spent eleven minutes before the checkout's own
+manifest turned out to be the problem.
+"""
+function unresolved_dependencies(project_dir::AbstractString)::Vector{String}
+  project = joinpath(project_dir, "Project.toml")
+  manifest = joinpath(project_dir, "Manifest.toml")
+  isfile(project) || return String[]
+  isfile(manifest) || return ["<no Manifest.toml>"]
+  deps, known = try
+    d = get(TOML.parsefile(project), "deps", Dict{String,Any}())
+    m = TOML.parsefile(manifest)
+    # manifest_format 2.0 nests everything under [deps]; 1.0 puts the packages
+    # at the top level next to the metadata keys
+    n = haskey(m, "deps") ? keys(m["deps"]) : setdiff(keys(m), ("julia_version", "manifest_format", "project_hash", "manifest_version"))
+    (keys(d), n)
+  catch err
+    # expected failure: a truncated or hand-edited TOML. Saying "unresolved"
+    # here is right - the environment cannot be trusted either way - and the
+    # repair below reports what Pkg makes of it.
+    println("Could not read the package environment (", first(sprint(showerror, err), 120), "); trying to repair it.")
+    return ["<unreadable Project.toml or Manifest.toml>"]
+  end
+  return sort!([String(d) for d in deps if !(d in known)])
+end
+
+"""
+Bring the environment into a loadable state, printing only when something is
+actually wrong. `resolve` before `instantiate`, in that order: instantiate
+installs what the manifest lists and cannot add a package the manifest never
+mentioned.
+"""
+function repair_environment(project_dir::AbstractString, reason::AbstractString)
+  println(reason)
+  println("Resolving the package environment; this happens once after a checkout or a dependency change.")
+  @eval using Pkg
+  pkgm = Base.invokelatest(getfield, @__MODULE__, :Pkg)
+  try
+    Base.invokelatest(pkgm.resolve)
+    Base.invokelatest(pkgm.instantiate)
+    println("Package environment resolved.")
+  catch err
+    println()
+    println("Could not prepare the dependencies of this checkout.")
+    println("Run this once in the checkout directory and start again:")
+    println("    julia --project=. -e \"using Pkg; Pkg.resolve(); Pkg.instantiate()\"")
+    println()
+    println("If that fails too, delete Manifest.toml and repeat. It is not tracked,")
+    println("and a manifest left over from an older Sparlectra is the usual reason.")
+    println()
+    rethrow(err)
+  end
+  return nothing
 end
 
 """
