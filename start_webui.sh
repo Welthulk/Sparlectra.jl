@@ -45,7 +45,17 @@ if [ -z "${JULIA_NUM_THREADS:-}" ]; then
   export JULIA_NUM_THREADS=auto
 fi
 
+# No startup file. The Web UI is a server process, not a REPL, and a personal
+# startup.jl usually loads Revise: measured on the Sparlectra sysimage, loading
+# Revise INVALIDATES 1530 precompiled method instances of that image, which are
+# then inferred again on first use. That is the "still slow with the image"
+# report from 2026-09-07, and it was paid twice, because the launcher and the
+# relaunched child both read the file. Set SPARLECTRA_STARTUP_FILE=yes to get
+# the old behavior back.
+: "${SPARLECTRA_STARTUP_FILE:=no}"
+export SPARLECTRA_STARTUP_FILE
+
 # start_webui.jl checks for a usable sysimage, offers to build one when it is
 # missing or outdated, and relaunches itself through the image. Arguments are
 # passed on: --rebuild-sysimage forces a fresh build, --no-sysimage skips it.
-exec julia --project="$DIR" "$DIR/start_webui.jl" "$@"
+exec julia --startup-file="$SPARLECTRA_STARTUP_FILE" --project="$DIR" "$DIR/start_webui.jl" "$@"

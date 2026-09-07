@@ -1924,16 +1924,27 @@ by applying every alias step in order. A value is moved only when the new
 key is not set (an explicitly set new key wins over a stale old one).
 """
 function _apply_config_aliases!(raw::AbstractDict, version::Int, context::AbstractString)
+  # Collected, not warned one by one. A file carrying nine version-0 names
+  # produced nine boxed warnings at EVERY start, which is what a user reports
+  # as "still all those warnings" (Windows, 2026-09-07). The information that
+  # matters is WHICH old keys are still in use, and that fits in one line per
+  # file; the per-key form only multiplied the same statement.
+  applied = Pair{String,String}[]
   for step in version:(CONFIG_VERSION_CURRENT-1)
     for (old_key, new_key) in get(_CONFIG_ALIASES, step, Pair{String,String}[])
       value = _dotted_config_get(raw, old_key)
       value === nothing && continue
-      # maxlog per key, not per file: the interesting part is WHICH old key
-      # is still in use, and that repeats across files
-      @warn "Configuration key $(old_key) in $(context) is a version-$(step) name; applied as $(new_key). The file can be updated with refresh_sparlectra_config_file." maxlog = 1 _id = Symbol("cfg_alias_", old_key)
+      push!(applied, old_key => new_key)
       _dotted_config_delete!(raw, old_key)
       _dotted_config_get(raw, new_key) === nothing && _dotted_config_set!(raw, new_key, value)
     end
+  end
+  if !isempty(applied)
+    mapping = join((string(o, " -> ", n) for (o, n) in applied), ", ")
+    # maxlog keyed on the SET of old keys: a session that reads many files
+    # with the same legacy names (the test suite writes one per case) says it
+    # once, while a file with a different set still gets its own line.
+    @warn "Configuration file $(context) uses $(length(applied)) legacy key name(s), applied through the documented aliases: $(mapping). Update the file once with refresh_sparlectra_config_file." maxlog = 1 _id = Symbol("cfg_alias_", hash(mapping))
   end
   return raw
 end

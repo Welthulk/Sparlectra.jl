@@ -41,9 +41,18 @@ REM Multi-core by default: the threaded surfaces need Julia THREADS, fixed at
 REM process start. "auto" uses all cores; an explicit user setting wins.
 if not defined JULIA_NUM_THREADS set "JULIA_NUM_THREADS=auto"
 
+REM No startup file. The Web UI is a server process, not a REPL, and a personal
+REM startup.jl usually loads Revise: measured on the Sparlectra sysimage,
+REM loading Revise INVALIDATES 1530 precompiled method instances of that image,
+REM which are then inferred again on first use. That is the "still slow with the
+REM image" report from 2026-09-07, and it was paid twice, because the launcher
+REM and the relaunched child both read the file. Set SPARLECTRA_STARTUP_FILE=yes
+REM to get the old behavior back.
+if not defined SPARLECTRA_STARTUP_FILE set "SPARLECTRA_STARTUP_FILE=no"
+
 rem start_webui.jl checks for a usable sysimage, offers to build one when it
 rem is missing or outdated, and relaunches itself through the image. The same
 rem code runs on Linux, macOS and Windows. Arguments are passed on:
 rem --rebuild-sysimage forces a fresh build, --no-sysimage skips it.
-julia --project="%DIR%." "%DIR%start_webui.jl" %*
+julia --startup-file=%SPARLECTRA_STARTUP_FILE% --project="%DIR%." "%DIR%start_webui.jl" %*
 pause

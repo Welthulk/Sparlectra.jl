@@ -253,6 +253,47 @@ function _prepare_build_env(pkgm::Module)::Bool
 end
 
 """
+Raised when the user configuration carries legacy keys that cannot be migrated
+automatically. The build stops on it: an image built against a configuration
+the user still has to edit by hand is an image they cannot use.
+"""
+struct ConfigNotMigratable <: Exception
+  path::String
+  reasons::Vector{String}
+end
+
+"""
+Bring the user's Web UI configuration up to the current key layout, in place.
+
+At most ONE console line, and only when something actually changed (maintainer,
+2026-09-07). A version-0 file otherwise produces an alias notice at every
+single start, and telling the user to run a function by hand is work the build
+can simply do: it already writes to that directory and it already takes
+minutes. A timestamped backup is kept.
+
+Returns normally when the configuration is usable, and throws
+`ConfigNotMigratable` when it is not: duplicate YAML keys need human judgement,
+and guessing which of two values was meant is the one thing a migration must
+never do.
+"""
+function _refresh_user_config(spar::Module)
+  path = Base.invokelatest(getglobal(spar, :default_webui_config_path))
+  isfile(path) || return nothing          # nothing provisioned yet, nothing to migrate
+  result = try
+    Base.invokelatest(getglobal(spar, :refresh_sparlectra_config_file), path; write = true, backup = true)
+  catch err
+    # expected failure: an unreadable or syntactically broken YAML. The user
+    # has to fix that themselves, so it is reported, not swallowed.
+    throw(ConfigNotMigratable(path, [sprint(showerror, err)]))
+  end
+  result.changed || return nothing
+  result.written || throw(ConfigNotMigratable(path, isempty(result.warnings) ? ["the refreshed file could not be written"] : result.warnings))
+  backup = result.backup_path === nothing ? "" : " (previous version kept as $(basename(result.backup_path)))"
+  _console("Configuration updated to the current key names: $(path)$(backup)")
+  return nothing
+end
+
+"""
 The build itself, with stdout/stderr already teed into the log by `main`.
 Returns the finished image path.
 
@@ -275,6 +316,9 @@ function _run_build()
   # function invocation
   spar = Base.invokelatest(getfield, @__MODULE__, :Sparlectra)
   pc = Base.invokelatest(getfield, @__MODULE__, :PackageCompiler)
+
+  # before anything expensive: the image is built FOR this configuration
+  _refresh_user_config(spar)
 
   img = Base.invokelatest(getglobal(spar, :webui_sysimage_path))
   meta_path = Base.invokelatest(getglobal(spar, :webui_sysimage_meta_path))
@@ -462,6 +506,21 @@ function main()
   end
 
   elapsed = round((time() - started) / 60; digits = 1)
+  if failure isa ConfigNotMigratable
+    # not a build defect: the user has to edit their file, and until then the
+    # Web UI has to run without an image
+    _PROGRESS.state = "failed"
+    _PROGRESS.message = "the configuration needs manual changes"
+    _write_progress()
+    _console("No sysimage was built: the configuration needs changes that cannot be made automatically.")
+    _console("  File: $(failure.path)")
+    for reason in failure.reasons
+      _console("  " * reason)
+    end
+    _console("Start without an image until it is fixed:  SPARLECTRA_NO_SYSIMAGE=1  (or --no-sysimage),")
+    _console("edit the file, then build again.")
+    exit(2)
+  end
   if failure !== nothing
     _PROGRESS.message = first(sprint(showerror, failure), 300)
     _write_progress()

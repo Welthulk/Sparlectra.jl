@@ -157,6 +157,29 @@ commands `webui`, `run`, `se`, `n1` and `version`, takes the normal
 library YAML through `--config`/`--set`, and `bin/sparlectra help` prints
 its own overview.
 
+### The launchers read no startup file
+
+`start_webui.sh` / `start_webui.bat` and the relaunch through the image start
+Julia with `--startup-file=no`. The Web UI is a server process, not a REPL, and
+a personal `startup.jl` typically loads `Revise`: loading Revise on top of the
+Sparlectra image INVALIDATES a large part of it, and the invalidated methods
+are then inferred again on first use. Building an image and throwing much of it
+away at startup is worse than not building one. It was paid twice, because the
+launcher and the relaunched child both read the file.
+
+Set `SPARLECTRA_STARTUP_FILE=yes` to get the old behavior back for a session
+where Revise in the server process is actually wanted.
+
+### The configuration is brought up to date
+
+A build first rewrites the Web UI configuration to the current key layout
+(`refresh_sparlectra_config_file`, keeping a timestamped backup) and says so in
+one line. A configuration that cannot be migrated automatically, a file with
+duplicate YAML keys for example, stops the build with the reason named: an
+image built against a configuration the user still has to edit by hand is an
+image they cannot use. Start with `SPARLECTRA_NO_SYSIMAGE=1` until the file is
+fixed, then build again.
+
 ## Where the image lives
 
 `<user root>/sysimage/sparlectra.<ext>` next to its metadata

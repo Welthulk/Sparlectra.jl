@@ -119,8 +119,8 @@ function build_sysimage(project_dir::AbstractString)::Bool
   # package just to spawn the same script. A checkout without tools/ (an
   # installation from the registry) falls back to the package entry point.
   script = joinpath(project_dir, "tools", "build_sysimage.jl")
-  cmd = isfile(script) ? `$(exe) --project=$(project_dir) $(script)` :
-        `$(exe) --project=$(project_dir) -e "using Sparlectra; buildSysimage()"`
+  cmd = isfile(script) ? `$(exe) --startup-file=no --project=$(project_dir) $(script)` :
+        `$(exe) --startup-file=no --project=$(project_dir) -e "using Sparlectra; buildSysimage()"`
   try
     run(cmd)
     return true
@@ -148,7 +148,14 @@ function relaunch_with_sysimage(image::AbstractString, script::AbstractString, p
   ENV["SPARLECTRA_SYSIMAGE_CHECKED"] = "1"
   thread_flag = String[]
   haskey(ENV, "JULIA_NUM_THREADS") || push!(thread_flag, "--threads=$(Threads.nthreads())")
-  cmd = `$(exe) -J$(image) --project=$(project_dir) $(thread_flag) $(script) $(args)`
+  # NO startup file in the child, unless the caller insists. The child is the
+  # process that RUNS on the image, and a personal startup.jl usually loads
+  # Revise: measured, loading Revise invalidates 1530 precompiled method
+  # instances of this image, which then have to be inferred again on first
+  # use. Building an image and then throwing a third of it away on startup is
+  # the "still slow with the sysimage" report of 2026-09-07.
+  startup = get(ENV, "SPARLECTRA_STARTUP_FILE", "no")
+  cmd = `$(exe) -J$(image) --startup-file=$(startup) --project=$(project_dir) $(thread_flag) $(script) $(args)`
   println("Sysimage: ", image)
   # Ctrl+C reaches the whole process group, so it hits this process too. The
   # child prints its own "closing Sparlectra Web UI"; a stack trace from the
