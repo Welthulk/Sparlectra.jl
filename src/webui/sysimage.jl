@@ -224,19 +224,71 @@ end
 # (killed, crashed hard, machine rebooted) rather than merely busy.
 const _SYSIMAGE_BUILD_STALE_SECONDS = 60.0
 
+# The `starting` state has no heartbeat yet: it is written before the build
+# process exists, and the entry stands until that process has booted Julia and
+# written its own first entry. On a cold Windows start that takes tens of
+# seconds, so this window is deliberately much wider than the running one.
+const _SYSIMAGE_BUILD_STARTING_SECONDS = 180.0
+
 """
     sysimage_build_active(; output_root) -> Bool
 
-Whether a sysimage build is running right now. A build that stopped updating
-its progress file for more than a minute counts as gone, not as active: a
-crashed builder must never lock the refresh button forever.
+Whether a sysimage build is running right now, which includes the seconds
+between pressing the button and the build process reporting for the first
+time. A build that stopped updating its progress file counts as gone, not as
+active: a crashed builder must never lock the refresh button forever.
 """
 function sysimage_build_active(; output_root::AbstractString = default_webui_output_root())::Bool
   progress = read_sysimage_build_progress(; output_root)
   progress === nothing && return false
-  get(progress, "state", "") == "running" || return false
+  state = get(progress, "state", "")
+  state in ("running", "starting") || return false
   age = _sysimage_build_age(progress)
-  return age === nothing || age < _SYSIMAGE_BUILD_STALE_SECONDS
+  age === nothing && return true
+  return age < (state == "starting" ? _SYSIMAGE_BUILD_STARTING_SECONDS : _SYSIMAGE_BUILD_STALE_SECONDS)
+end
+
+"""
+    _write_sysimage_build_progress(output_root; state, phase, message)
+
+Write a minimal progress entry from the Web UI side.
+
+This exists for the gap between pressing the refresh button and the build
+process being alive: the page only polls while a build is active, and until
+2026-09-07 "active" required the child's first progress entry. Julia needs
+seconds to boot before it can write one, tens of seconds on a cold Windows,
+and during that window the page sat there looking dead (reported by the
+maintainer, who asked whether there is a status display at all).
+
+The state written here is `starting`, not `running`, and that distinction is
+load-bearing: the build script refuses to start when it finds a FRESH
+`running` entry, so writing `running` here would make the Web UI block the
+very build it just launched.
+"""
+function _write_sysimage_build_progress(output_root::AbstractString; state::AbstractString, phase::AbstractString, message::AbstractString = "")
+  esc(v) = replace(String(v), "\\" => "\\\\", "\"" => "\\\"", "\n" => " ")
+  path = webui_sysimage_progress_path(output_root)
+  try
+    mkpath(dirname(path))
+    open(path, "w") do io
+      println(io, "state = \"", esc(state), "\"")
+      println(io, "step = 0")
+      println(io, "steps = 4")
+      println(io, "phase = \"", esc(phase), "\"")
+      println(io, "detail = \"\"")
+      println(io, "message = \"", esc(message), "\"")
+      println(io, "elapsed_seconds = 0.0")
+      println(io, "updated_at = ", round(time(); digits = 1))
+      println(io, "pid = 0")
+      println(io, "log = \"", esc(webui_sysimage_build_log_path(output_root)), "\"")
+    end
+  catch err
+    # expected failure: an unwritable or full state directory. The build still
+    # runs, only its progress cannot be shown, so this is reported and not
+    # turned into a failed rebuild.
+    @warn "Could not write the sysimage build progress file; the build runs, but the page cannot show its progress." path exception = err
+  end
+  return nothing
 end
 
 """
@@ -265,11 +317,18 @@ function start_sysimage_rebuild!(; output_root::AbstractString = default_webui_o
   isfile(script) || return (started = false, message = "The build script is missing at $(script); a registry installation without tools/ cannot rebuild the image.", log = log)
   exe = joinpath(Sys.BINDIR, Base.julia_exename())
   cmd = Cmd(`$(exe) --startup-file=no --project=$(pkgroot) $(script)`; dir = pkgroot)
+  # BEFORE spawning: the page polls only while a build is active, and the child
+  # needs seconds to boot before it can report anything. Writing the entry
+  # first also means a spawn that throws leaves a truthful `failed` entry
+  # rather than a phantom build.
+  _write_sysimage_build_progress(output_root; state = "starting", phase = "starting the build process")
   try
     # Progress and log go to files, so the child needs no streams of its own.
     run(pipeline(detach(cmd); stdout = devnull, stderr = devnull); wait = false)
   catch err
-    return (started = false, message = "Could not start the build: $(sprint(showerror, err))", log = log)
+    reason = "Could not start the build: $(sprint(showerror, err))"
+    _write_sysimage_build_progress(output_root; state = "failed", phase = "starting the build process", message = reason)
+    return (started = false, message = reason, log = log)
   end
   return (started = true, message = "The sysimage build has started. It runs in the background and takes a few minutes.", log = log)
 end

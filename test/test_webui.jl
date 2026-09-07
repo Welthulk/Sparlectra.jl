@@ -1362,6 +1362,27 @@ function run_webui_fast_tests()
         @test !occursin("cannot be read", Sparlectra.render_webui_sysimage_page(output_root = out))
         _progress_file("failed", round(time(); digits = 1))
 
+        # The seconds between the button and the build process reporting for
+        # the first time (2026-09-07): the page only polls while a build is
+        # active, and "active" used to require the CHILD's first entry. Julia
+        # needs seconds to boot before it can write one, tens of seconds on a
+        # cold Windows, and the page sat there looking dead meanwhile.
+        rm(progress; force = true)
+        Sparlectra._write_sysimage_build_progress(out; state = "starting", phase = "starting the build process")
+        @test Sparlectra.sysimage_build_active(output_root = out) == true
+        starting_page = Sparlectra.render_webui_sysimage_page(output_root = out)
+        @test occursin("data-refresh-url=\"/webui/sysimage?autorefresh=1\"", starting_page)
+        @test occursin("starting the build process", starting_page)
+        @test !occursin("/webui/sysimage/rebuild", starting_page)
+        # The state must be `starting`, never `running`: tools/build_sysimage.jl
+        # refuses to start when it finds a fresh `running` entry, so writing
+        # `running` here would make the Web UI block the very build it just
+        # launched.
+        @test Sparlectra.read_sysimage_build_progress(output_root = out)["state"] == "starting"
+        # a start that never produced a process is gone after the wider window
+        _progress_file("starting", round(time() - 3 * 3600; digits = 1))
+        @test Sparlectra.sysimage_build_active(output_root = out) == false
+
         # route smoke: the page is reachable
         response = Sparlectra.route_sparlectra_webui("GET", "/webui/sysimage"; output_root = out)
         @test response.status == 200
