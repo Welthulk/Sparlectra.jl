@@ -143,9 +143,19 @@ mutable struct Net
   # internals including closures (condition-estimate thunk), not model data.
   _rectangular_pf_status::Any
   _dc_pf_status::Any
+  # The configuration this network was BUILT with (`import_case` fills it).
+  # `runpf!(net; ...)` without an explicit `config` uses it instead of the
+  # globally active configuration, so a net imported under one configuration
+  # is not silently solved under another. Found 2026-09-08: a whole
+  # measurement series ran with the package defaults although every net had
+  # been imported with an explicit configuration, and nothing said so; the
+  # tell was identical residuals to the last digit across settings that must
+  # differ. Same skip rule as the two status fields above: solver/session
+  # state, not model data.
+  _import_config::Any
 
   #! format: off
-  function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1, cooldown_iters::Int = 0, q_hyst_pu::Float64 = 0.0, flatstart::Bool = false, bus_shunt_model = :admittance)    
+  function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1, cooldown_iters::Int = 0, q_hyst_pu::Float64 = 0.0, flatstart::Bool = false, bus_shunt_model = :admittance)
     shunt_model = normalize_bus_shunt_model(bus_shunt_model)
     
     new(name, # name
@@ -187,7 +197,8 @@ mutable struct Net
         NativeShortCircuitData(),                  # sc_sources
         HvdcLink[],                                # hvdcLinks
         nothing,                                   # _rectangular_pf_status
-        nothing)                                   # _dc_pf_status
+        nothing,                                   # _dc_pf_status
+        nothing)                                   # _import_config
   end
   #! format: on
   function Base.show(io::IO, net::Net)

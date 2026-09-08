@@ -349,7 +349,11 @@ function _write_final_q_limit_validation(io::IO, result::SparlectraRunResult)
     println(io, "  Final PV/REF Q-limit validation: OK")
     println(io, "  PV/REF Q-limit violations: 0")
     println(io, "  Outer-loop selected violations, if any, are reported in the event sections above.")
-    return (q_violations = 0, v_violations = 0)
+    # A clean Q-limit validation says the limits were ENFORCED; it says
+    # nothing about whether the enforced state is physical. This is the path
+    # a normal converged run takes, so the Q-V check has to run here too.
+    qv = printQVCharacteristicCheck(result.net; io = io, converged = true)
+    return (q_violations = 0, v_violations = 0, qv_violations = length(qv))
   end
   return printFinalLimitValidation(result.net; io, converged = result.numerical_converged)
 end

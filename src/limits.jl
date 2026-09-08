@@ -381,7 +381,119 @@ function printFinalLimitValidation(net::Net; q_headroom::Float64 = 0.20, io::IO 
     end
   end
 
-  return (q_violations = length(qrows), v_violations = length(vrows))
+  qv = printQVCharacteristicCheck(net; io = io, converged = converged)
+
+  return (q_violations = length(qrows), v_violations = length(vrows), qv_violations = length(qv))
+end
+
+"""
+    _qv_effective_qgen(net, bus) -> Float64
+
+The reactive generation at `bus` as the Q-V check must read it. Neither single
+source is right on its own:
+
+- `node._qƩGen` carries the value the solver clamped a PV bus to, including
+  the active-set path, but stays 0 for a machine under Q(U) control;
+- `_effective_bus_power_components` evaluates the Q(U) characteristic (and the
+  classic outer loop's clamp, which it writes to the prosumer), but falls back
+  to `_qƩGen` only on Slack and PV buses, not on a bus that was switched to PQ.
+
+So: a Q(U) machine is read from its characteristic, everything else from the
+bus aggregate where the solver left one.
+"""
+function _qv_effective_qgen(net::Net, bus::Int)::Float64
+  node = net.nodeVec[bus]
+  controlled = any(ps -> getPosumerBusIndex(ps) == bus && has_qu_controller(ps), net.prosumpsVec)
+  if !controlled && !isnothing(node._qƩGen)
+    return Float64(node._qƩGen)
+  end
+  _, q_gen, _, _ = _effective_bus_power_components(net, bus)
+  return Float64(q_gen)
+end
+
+"""
+    qvCharacteristicViolations(net; band_pu = 1e-4) -> Vector{NamedTuple}
+
+Generators that ended a solve AT a reactive limit while their voltage sits on
+the WRONG side of their own setpoint:
+
+- `Q = Qmax` with `Vm > Vset`, or
+- `Q = Qmin` with `Vm < Vset`.
+
+Such a point satisfies the power-flow equations and still contradicts the
+physical Q-V characteristic: a machine that is already at its upper reactive
+limit cannot hold a voltage that is above its setpoint. The literature calls
+this a *non-physical* solution (Zeng, Chiang, Neves, Alberto, IJEPES 147
+(2023) 108905) or an *anomalous* one (Sundaresh, Rao 2015), and it is a
+property of the PV/PQ switching strategy, not of the network.
+
+Each row carries `(bus, side, vm_pu, vset_pu, dv_pu, q_MVAr, limit_MVAr,
+significant)`. `dv_pu` is `Vm - Vset` and therefore signed; `significant` is
+`abs(dv_pu) > band_pu`. The band exists because a converged solve leaves
+voltages within its tolerance of the setpoint, so a bus that sits ON its
+setpoint can fall to either side by rounding. Report BOTH counts: the raw one
+is the literature's definition, the significant one is what a reader can act
+on.
+
+Returns an empty vector when no bus hit a limit, and also when the state does
+not come from a converged solve (`converged = false` at the call site).
+"""
+function qvCharacteristicViolations(net::Net; band_pu::Float64 = 1.0e-4)
+  rows = NamedTuple[]
+  isempty(net.qLimitEvents) && return rows
+  vset = _bus_voltage_setpoints_from_prosumers(net)
+  qmin_pu, qmax_pu = getQLimits_pu(net)
+  for (bus, side) in net.qLimitEvents
+    (1 <= bus <= length(net.nodeVec) && bus <= length(vset)) || continue
+    node = net.nodeVec[bus]
+    isnothing(node._vm_pu) && continue
+    isfinite(vset[bus]) || continue
+    limit_pu = side === :max ? (bus <= length(qmax_pu) ? qmax_pu[bus] : Inf) : (bus <= length(qmin_pu) ? qmin_pu[bus] : -Inf)
+    isfinite(limit_pu) || continue
+    limit_mvar = limit_pu * net.baseMVA
+    q = _qv_effective_qgen(net, bus)
+    isfinite(q) || continue
+    # only a bus that really sits ON the limit can be non-physical; a stale
+    # event whose machine has moved back inside its band is not a violation
+    isapprox(q, limit_mvar; atol = 1.0e-6 * max(1.0, abs(limit_mvar))) || continue
+    vm = Float64(node._vm_pu)
+    dv = vm - vset[bus]
+    wrong_side = (side === :max && dv > 0.0) || (side === :min && dv < 0.0)
+    wrong_side || continue
+    push!(rows, (bus = bus, side = side, vm_pu = vm, vset_pu = vset[bus], dv_pu = dv,
+      q_MVAr = q, limit_MVAr = limit_mvar, significant = abs(dv) > band_pu))
+  end
+  sort!(rows; by = r -> r.bus)
+  return rows
+end
+
+"""
+    printQVCharacteristicCheck(net; io=stdout, band_pu=1e-4, converged=true) -> Vector{NamedTuple}
+
+Print the [`qvCharacteristicViolations`](@ref) of the current solution and
+return them. On a non-converged solve the check is skipped with a note: the
+state is not a solution, so the question does not apply.
+"""
+function printQVCharacteristicCheck(net::Net; io::IO = stdout, band_pu::Float64 = 1.0e-4, converged::Bool = true)
+  if !converged
+    println(io, "  Q-V characteristic: skipped (no converged solution).")
+    return NamedTuple[]
+  end
+  rows = qvCharacteristicViolations(net; band_pu = band_pu)
+  if isempty(rows)
+    println(io, "  Q-V characteristic: no non-physical generator states.")
+    return rows
+  end
+  strong = count(r -> r.significant, rows)
+  @printf(io, "  Q-V characteristic: %d non-physical generator state(s), %d beyond %.0e pu.\n", length(rows), strong, band_pu)
+  println(io, "  A machine at its reactive limit whose voltage sits on the wrong side of its")
+  println(io, "  setpoint solves the equations but contradicts the physical Q-V curve.")
+  println(io, "  Bus │ Side │        Vm │      Vset │        dV │  Q [MVAr] │ limit [MVAr]")
+  for r in rows
+    @printf(io, " %4d │ %-4s │ %9.5f │ %9.5f │ %+9.5f │ %9.3f │ %12.3f%s\n",
+      r.bus, String(r.side), r.vm_pu, r.vset_pu, r.dv_pu, r.q_MVAr, r.limit_MVAr, r.significant ? "" : "  (within band)")
+  end
+  return rows
 end
 
 """

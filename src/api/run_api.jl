@@ -341,7 +341,13 @@ const DTF_FOR001_UNSUPPORTED_DCLINE_MESSAGE = "DC lines are currently not suppor
 
 function _normalize_case_format(value)::Symbol
   format = value isa Symbol ? value : Symbol(lowercase(strip(String(value))))
-  format in (:auto, :matpower, :dtf_for001, :cgmes, :scf) || throw(ArgumentError("case_format must be auto, matpower, dtf_for001, cgmes, or scf; got $(repr(value))."))
+  # `pgm` is an accepted spelling of `scf`, not a second reader: a
+  # power-grid-model `input.json` and a Sparlectra `.scf.json` go through the
+  # same importer, and the `sparlectra` block is optional there
+  # (`scf_import.jl:85-97`). Callers who have a PGM file should not have to
+  # know that it is read by something called SCF.
+  format === :pgm && return :scf
+  format in (:auto, :matpower, :dtf_for001, :cgmes, :scf) || throw(ArgumentError("case_format must be auto, matpower, dtf_for001, cgmes, scf, or pgm; got $(repr(value))."))
   return format
 end
 

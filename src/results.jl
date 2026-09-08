@@ -1189,6 +1189,12 @@ function printACPFlowResults(
   printHvdcPairControllerSummary(io, net)
   # full UPFC controllers (#326) print only when present as well.
   printUpfcFullControllerSummary(io, net)
+  # Q-V characteristic of the machines that ended at a reactive limit. A
+  # solution can satisfy the equations and still be non-physical (Q at Qmax
+  # with the voltage ABOVE the setpoint, or Q at Qmin with it below), and
+  # nothing else in this report would say so. Prints one line when there is
+  # nothing to report, so its absence is never mistaken for a clean result.
+  printQVCharacteristicCheck(net; io = io, converged = converged)
   if toFile
     close(io)
     #println("Results have been written to $(joinpath(path, filename))")

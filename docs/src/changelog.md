@@ -1,3 +1,19 @@
+# Version 0.11.0 - 2026-09-10
+
+Two runs side by side, and a configuration trap in the solver call.
+
+## Highlights
+
+- **Compare two runs.** Run history has a selection column and a **Compare selected runs** button. The comparison page shows where the two runs differ: configuration keys with both values, buses where Q limits engaged, total active and reactive losses, and the largest voltage deviation between the results. Until now this took two browser tabs and a good memory.
+- **A grid is solved under the configuration it was imported with.** `runpf!` without an explicit configuration used the globally active one, not the grid's. Importing a grid with its own configuration and then solving it returned a result under foreign settings, without a warning and without a visible difference in the call. A passed configuration still wins.
+- **Non-physical generator states appear in the result.** When a machine sits at its Q limit while the voltage is on the wrong side of its setpoint, the classic result print now names bus, side, voltage, setpoint, Q and limit. On case118 this is the one line that separates the enforcement methods.
+
+## Usability
+
+- **Q limit handling is one control.** Checkbox and mode sat in different places of the form. A mode selected with handling switched off did nothing and looked like it did something. Both are together now, and the mode accepts `off`.
+- **Diagnostics report a diagnosis.** The self test deliberately runs one step from the stored voltages; the residual is its result. It was rendered as a failed power flow, so every diagnosis looked like a crash. History and result page now say "diagnosed".
+- **Case input format names SCF and power-grid-model.** The same importer reads both formats; now they can be named that way.
+
 # Version 0.10.0 - 2026-09-06
 
 ## New

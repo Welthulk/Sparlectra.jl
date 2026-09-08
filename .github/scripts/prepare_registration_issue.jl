@@ -46,7 +46,11 @@ function parseChangelog(path::AbstractString)::Vector{ChangelogEntry}
     version = VersionNumber(m.captures[1])
     date = m.captures[2]
     bodyStart = m.offset + ncodeunits(m.match)
-    bodyStop = i < length(matches) ? matches[i+1].offset : ncodeunits(text)
+    # up to the character BEFORE the next heading: including its offset drags
+    # that heading's leading '#' into the notes, and those notes are what
+    # JuliaRegistrator copies into the registry pull request (seen while
+    # preparing 0.11.0, as a stray empty heading above "Breaking changes")
+    bodyStop = i < length(matches) ? prevind(text, matches[i+1].offset) : ncodeunits(text)
     body = strip(text[bodyStart:bodyStop])
     push!(entries, ChangelogEntry(version, date, body))
   end

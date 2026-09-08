@@ -1254,6 +1254,195 @@ function run_webui_fast_tests()
       @test occursin("topbar-info-menu", Sparlectra.render_webui_error(404, "not found"))
     end
 
+    # Two runs of the same case under different settings are the normal way to
+    # look at a Q-limit mode or a solver choice. The history could list them but
+    # not put them side by side, so the comparison had to happen in the head or
+    # in two browser tabs.
+    @testset "run comparison" begin
+      @testset "history offers a selection and a compare button" begin
+        root = Sparlectra.default_webui_output_root()
+        body = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow/history"; output_root = root).body)
+        @test occursin("action=\"/powerflow/compare\"", body)
+        @test occursin("Compare selected runs", body)
+        @test occursin("<th>Compare</th>", body)
+      end
+
+      @testset "the route insists on exactly two runs" begin
+        root = Sparlectra.default_webui_output_root()
+        for target in ("/powerflow/compare", "/powerflow/compare?run=only-one")
+          response = Sparlectra.route_sparlectra_webui("GET", target; output_root = root)
+          @test (target, response.status) == (target, 400)
+        end
+        missing_response = Sparlectra.route_sparlectra_webui("GET", "/powerflow/compare?run=nope-a&run=nope-b"; output_root = root)
+        @test missing_response.status == 404
+      end
+
+      @testset "repeated query keys survive the parser" begin
+        # `_webui_parse_pairs` returns a Dict and keeps only the last value;
+        # a set of checkboxes with one name needs all of them
+        @test Sparlectra._webui_query_values("/powerflow/compare?run=a&run=b", "run") == ["a", "b"]
+        @test Sparlectra._webui_query_values("/powerflow/compare?other=x", "run") == String[]
+        @test Sparlectra._webui_query_values("/powerflow/compare", "run") == String[]
+      end
+
+      @testset "the page reads what the runs wrote" begin
+        dir_a = mktempdir()
+        dir_b = mktempdir()
+        write(joinpath(dir_a, "effective_config.yaml"), "power_flow:\n  tol: 1.0e-8\n  qlimits:\n    enforcement_mode: active_set\n")
+        write(joinpath(dir_b, "effective_config.yaml"), "power_flow:\n  tol: 1.0e-8\n  qlimits:\n    enforcement_mode: classic_simultaneous\n")
+        diff = Sparlectra._webui_compare_config_diff(dir_a, dir_b)
+        # the nested key keeps its real path; a "remember the last section"
+        # reader concatenated every section it had ever seen
+        @test diff == [("power_flow.qlimits.enforcement_mode", "active_set", "classic_simultaneous")]
+
+        write(joinpath(dir_a, "q_limit_events.csv"), "iteration,bus,side\n2,19,min\n2,32,min\n")
+        write(joinpath(dir_b, "q_limit_events.csv"), "iteration,bus,side\n1,19,min\n")
+        @test Sparlectra._webui_compare_qlimit_buses(dir_a) == [19, 32]
+        @test Sparlectra._webui_compare_qlimit_buses(dir_b) == [19]
+        @test Sparlectra._webui_compare_qlimit_buses(mktempdir()) === nothing
+
+        # The detailed export writes one of three formats, and A carries the
+        # German one: ';' delimiter, decimal comma. A comma-splitting reader
+        # found no columns there and the page then claimed the two runs had
+        # nothing in common ("The two runs share no bus names", reported
+        # 2026-09-08). The fixtures below are the real header of
+        # bus_voltages_complex.csv, both formats, so the parser is judged on
+        # what the runs actually write.
+        head_de = "bus;bus_name;type;vm_pu;va_deg;vn_kV;q_limit_hit;original_bus_name"
+        head_us = "bus,bus_name,type,vm_pu,va_deg,vn_kV,q_limit_hit,original_bus_name"
+        write(joinpath(dir_a, "bus_voltages_complex.csv"),
+          "$(head_de)\n1;11001;PQ;1;0;138;false;NEWBERRY 1\n2;11002;PQ;0,99;-1,5;69;false;NEWBERRY 2\n")
+        write(joinpath(dir_b, "bus_voltages_complex.csv"),
+          "$(head_us)\n1,11001,PQ,1.0,0.0,138,false,NEWBERRY 1\n2,11002,PQ,0.98,-1.0,69,false,NEWBERRY 2\n")
+        va = Sparlectra._webui_compare_voltages(dir_a)
+        vb = Sparlectra._webui_compare_voltages(dir_b)
+        @test va["2"].vm == 0.99
+        @test va["2"].va == -1.5           # decimal comma, not a second field
+        @test va["2"].name == "NEWBERRY 2"  # the name a reader recognizes
+        @test vb["2"].vm == 0.98
+        @test Sparlectra._webui_compare_voltages(mktempdir()) === nothing
+
+        # grouped thousands, and a quoted cell because the group separator IS
+        # the delimiter in the excel_us format
+        @test Sparlectra._webui_compare_split_csv("a,\"1,234.5\",b", ',') == ["a", "1,234.5", "b"]
+        @test Sparlectra._webui_compare_number("1,234.5", '.', ',') == 1234.5
+        @test Sparlectra._webui_compare_number("1.234,5", ',', '.') == 1234.5
+
+        # losses come from the branch table the run wrote, summed
+        write(joinpath(dir_a, "branch_flows.csv"),
+          "branch;from_bus;to_bus;p_loss_MW;q_loss_MVar\nB1;1;2;0,5;1,25\nB2;2;3;0,25;0,75\n")
+        write(joinpath(dir_b, "branch_flows.csv"),
+          "branch,from_bus,to_bus,p_loss_MW,q_loss_MVar\nB1,1,2,0.4,1.25\nB2,2,3,0.25,0.75\n")
+        la = Sparlectra._webui_compare_losses(dir_a)
+        @test la.p_MW ≈ 0.75
+        @test la.q_MVAr ≈ 2.0
+        @test la.branches == 2
+        @test Sparlectra._webui_compare_losses(mktempdir()) === nothing
+
+        a = Dict{String,Any}("run_id" => "run-a", "output_dir" => dir_a, "casefile" => "case118.m",
+          "status" => "succeeded", "converged" => true, "iterations" => 6, "final_mismatch" => 1.0e-13)
+        b = Dict{String,Any}("run_id" => "run-b", "output_dir" => dir_b, "casefile" => "case118.m",
+          "status" => "succeeded", "converged" => true, "iterations" => 23, "final_mismatch" => 7.4e-12)
+        html = Sparlectra.render_powerflow_compare(a, b)
+        @test occursin("Configuration differences (1)", html)
+        @test occursin("power_flow.qlimits.enforcement_mode", html)
+        @test occursin("The runs clamped different buses", html)
+        @test occursin("max |dVm|", html)
+        @test occursin("0.01", html)          # 0.99 gegen 0.98
+        @test occursin("NEWBERRY 2", html)
+        @test occursin("Losses", html)
+        @test occursin("0.1 MW", html) || occursin("0.09999", html)  # 0.75 gegen 0.65
+        @test occursin("/powerflow/result/run-a", html)
+
+        # two identical runs say so in one line instead of a table of zeros
+        same = Sparlectra.render_powerflow_compare(a, a)
+        @test occursin("Both runs end on the same voltages", same)
+        @test occursin("Both runs end on the same losses", same)
+      end
+    end
+
+    # Reported from a live session 2026-09-08: "Case input format" offered
+    # MATPOWER, DTF and CGMES but neither SCF nor power-grid-model, although
+    # the API has accepted `scf` all along and a PGM `input.json` is read by
+    # that very importer.
+    @testset "case input format offers SCF and power-grid-model" begin
+      @test Sparlectra._normalize_case_format(:scf) === :scf
+      # pgm is a spelling of scf, not a second reader
+      @test Sparlectra._normalize_case_format(:pgm) === :scf
+      @test Sparlectra._normalize_case_format("pgm") === :scf
+      @test_throws ArgumentError Sparlectra._normalize_case_format("nonsense")
+
+      root = mktempdir()
+      cases = mktempdir()
+      write(joinpath(cases, "fmt_probe.m"), "function mpc = fmt_probe\nmpc.baseMVA = 100;\n")
+      rt = (; case_directory = cases, config_file = Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, operation_log = Sparlectra.webui_operation_log_path(root), startup_config_error = nothing, runner = Sparlectra.start_powerflow_run)
+      body = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow/case"; output_root = root, runtime = rt).body)
+      @test occursin("value=\"scf\"", body)
+      @test occursin("value=\"pgm\"", body)
+
+      # the two whitelists that persist the choice (save, read back) both have
+      # to know the new values, or the selection is silently dropped to auto
+      Sparlectra.route_sparlectra_webui("POST", "/powerflow/case/options/save",
+        Dict{String,Any}("casefile" => "fmt_probe.m", "case_format" => "pgm"); output_root = root, runtime = rt)
+      @test Sparlectra._webui_case_form_defaults("fmt_probe.m", cases)["case_format"] == "pgm"
+    end
+
+    # Also reported live: the mode was set and nothing happened, because the
+    # enable checkbox sat elsewhere in the form and stayed off. Both controls
+    # now live in one block, and the mode itself can say "off".
+    @testset "Q-limit handling reads as one setting" begin
+      root = mktempdir()
+      rt = (; case_directory = mktempdir(), config_file = Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, operation_log = Sparlectra.webui_operation_log_path(root), startup_config_error = nothing, runner = Sparlectra.start_powerflow_run)
+      body = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow/settings"; output_root = root, runtime = rt).body)
+      block_start = findfirst("Q-limit handling", body)
+      @test block_start !== nothing
+      block = body[block_start[1]:min(lastindex(body), block_start[1] + 1200)]
+      @test occursin("power_flow_qlimits_enabled", block)
+      @test occursin("value=\"off\"", block)
+
+      # "off" disables the handling instead of being sent as a mode the
+      # configuration would reject
+      form = Dict{String,String}(
+        "casefile" => "case14.m",
+        "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH,
+        "power_flow_qlimits_enforcement_mode" => "off",
+        "power_flow_qlimits_enabled" => "true",
+      )
+      overrides = get(Sparlectra.powerflow_webui_request(form), "config_overrides", Dict{String,Any}())
+      @test !haskey(overrides, "power_flow.qlimits.enforcement_mode")
+      @test overrides["power_flow.qlimits.enabled"] === false
+
+      # a real mode is passed through untouched
+      form["power_flow_qlimits_enforcement_mode"] = "classic_simultaneous"
+      overrides2 = get(Sparlectra.powerflow_webui_request(form), "config_overrides", Dict{String,Any}())
+      @test overrides2["power_flow.qlimits.enforcement_mode"] == "classic_simultaneous"
+    end
+
+    # A diagnose run takes ONE step from the case's own voltages, so it never
+    # converges by design. Reported as a failed power flow it was unusable:
+    # every diagnosis looked like a crash.
+    @testset "a completed diagnose run reads as a diagnosis" begin
+      probe = Dict{String,Any}("run_mode" => "diagnose", "status" => "not_converged", "success" => false)
+      @test Sparlectra._webui_is_completed_diagnose(probe)
+      @test Sparlectra.webui_status_class(probe) == "status-info"
+
+      # a result page has no run_mode; the self-check configuration the
+      # diagnose flow writes is the marker there
+      by_artifact = Dict{String,Any}("status" => "not_converged",
+        "artifacts" => [Dict{String,Any}("name" => "diagnose_self_check_config.yaml")])
+      @test Sparlectra._webui_is_completed_diagnose(by_artifact)
+
+      # a diagnose run that could NOT run keeps the failure vocabulary
+      broken = Dict{String,Any}("run_mode" => "diagnose", "status" => "failed", "success" => false)
+      @test !Sparlectra._webui_is_completed_diagnose(broken)
+      @test Sparlectra.webui_status_class(broken) == "status-error"
+
+      # an ordinary non-converged run stays an error
+      plain = Dict{String,Any}("run_mode" => "", "status" => "not_converged", "success" => false)
+      @test !Sparlectra._webui_is_completed_diagnose(plain)
+      @test Sparlectra.webui_status_class(plain) == "status-error"
+    end
+
     @testset "the environment is checked before the sysimage question" begin
       # Regression 2026-09-07 (Windows 11). A checkout carried a Manifest.toml
       # from before AnalyticLoadFlow became a required dependency. The start

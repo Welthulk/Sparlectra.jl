@@ -58,6 +58,21 @@ function _webui_case_import_message(imported::Vector{String}, rejected)::String
   return isempty(header) ? join(lines, " · ") : header * ": " * join(lines, " · ")
 end
 
+"""
+    _webui_qlimit_mode_selection(profile_values) -> String
+
+Which entry the Q-limit enforcement-mode control shows. The pair of controls
+(a checkbox for `power_flow.qlimits.enabled`, a select for the mode) reads as
+one setting to a user, and a mode picked while the handling is off does
+nothing: the select therefore shows "off" in that state, and picking "off"
+turns the handling off (see the form override mapping).
+"""
+function _webui_qlimit_mode_selection(profile_values)
+  enabled = _webui_form_bool(get(profile_values, "power_flow_qlimits_enabled", _webui_option_default("power_flow_qlimits_enabled")))
+  enabled || return "off"
+  return _webui_selected(profile_values, "power_flow_qlimits_enforcement_mode", _webui_option_default("power_flow_qlimits_enforcement_mode"))
+end
+
 function _webui_select(name, values, selected, extra_attrs::AbstractString = "")
   options = join((_webui_option(value, replace(_webui_form_string(value), '_' => ' '), selected) for value in values), "")
   attrs = isempty(extra_attrs) ? "" : " $(extra_attrs)"
@@ -1042,7 +1057,8 @@ $(dat_hint_html)
 <details$(dtf_details_attrs)>
 <summary>Input format</summary>
 <fieldset>
-<label>$(_webui_field_label("case_format", "Case input format"))<select name="case_format"><option value="auto"$(_webui_form_string(case_format_value) == "auto" ? " selected" : "")>Auto</option><option value="matpower"$(_webui_form_string(case_format_value) == "matpower" ? " selected" : "")>MATPOWER</option><option value="dtf_for001"$(_webui_form_string(case_format_value) == "dtf_for001" ? " selected" : "")>DTF diagnostics (experimental/internal)</option><option value="cgmes"$(_webui_form_string(case_format_value) == "cgmes" ? " selected" : "")>CGMES (ENTSO-E, folder or ZIP)</option></select></label>
+<label>$(_webui_field_label("case_format", "Case input format"))<select name="case_format"><option value="auto"$(_webui_form_string(case_format_value) == "auto" ? " selected" : "")>Auto</option><option value="matpower"$(_webui_form_string(case_format_value) == "matpower" ? " selected" : "")>MATPOWER</option><option value="dtf_for001"$(_webui_form_string(case_format_value) == "dtf_for001" ? " selected" : "")>DTF diagnostics (experimental/internal)</option><option value="cgmes"$(_webui_form_string(case_format_value) == "cgmes" ? " selected" : "")>CGMES (ENTSO-E, folder or ZIP)</option><option value="scf"$(_webui_form_string(case_format_value) == "scf" ? " selected" : "")>Sparlectra Case Format (.scf.json)</option><option value="pgm"$(_webui_form_string(case_format_value) == "pgm" ? " selected" : "")>power-grid-model JSON (input.json)</option></select></label>
+<p class="field-help">SCF and power-grid-model JSON are read by the same importer; the <code>sparlectra</code> block is optional, so a plain power-grid-model dataset loads as well. <em>Auto</em> already resolves every <code>.json</code> to that reader, so these two entries only matter when the extension does not say it.</p>
 $(_webui_adapter_options_html(:cgmes, profile_values))
 <p class="field-help" data-cgmes-start-values-field>CGMES only: <em>Flat start</em> lets the solver earn the solution itself; <em>Imported SV state</em> starts Newton-Raphson from the delivery's own SvVoltage solution (competing start-value machines are forced off). The SV comparison check (<code>sv_compare.csv</code>) runs either way.</p>
 </fieldset>
@@ -1086,7 +1102,6 @@ function _webui_settings_sections_html(; profile_values, config_default, profile
   return """
 <label data-ac-only-field title=\"Convergence bound for the largest single bus mismatch (active and reactive alike). Readable in physical units as tol times the case base: 1e-8 pu equals 1 W at a 100 MVA base.\">$(_webui_field_label("power_flow_tol", "Tolerance"))<span class=\"tolerance-field\"><input name=\"power_flow_tol\" type=\"text\" autocomplete=\"off\" spellcheck=\"false\" data-tolerance-input value=\"$(_webui_input_value(profile_values, "power_flow_tol", _webui_option_default("power_flow_tol")))\"><span class=\"tolerance-spin\"><button type=\"button\" class=\"tolerance-spin-up\" data-tolerance-direction=\"up\" aria-label=\"Increase tolerance exponent\">&#9650;</button><button type=\"button\" class=\"tolerance-spin-down\" data-tolerance-direction=\"down\" aria-label=\"Decrease tolerance exponent\">&#9660;</button></span></span></label><label data-ac-only-field class=\"tolerance-unit\" title=\"The unit of the tolerance value. MW states the convergence bound physically: the run converts it with the case's own base (1 MW at a 100 MVA base is 1e-2 pu, 0.001 MW is 1 kW). pu states it per unit, the classical form. The value field to the left holds the number either way.\">$(_webui_field_label("power_flow_tol_unit", "Unit"))<select name=\"power_flow_tol_unit\"><option value=\"pu\"$(_webui_input_value(profile_values, "power_flow_tol_unit", _webui_option_default("power_flow_tol_unit")) == "MW" ? "" : " selected")>pu</option><option value=\"MW\"$(_webui_input_value(profile_values, "power_flow_tol_unit", _webui_option_default("power_flow_tol_unit")) == "MW" ? " selected" : "")>MW</option></select></label>
 <label data-nr-only-field>$(_webui_field_label("power_flow_max_iter", "Maximum iterations"))<input name=\"power_flow_max_iter\" type=\"number\" min=\"1\" value=\"$(_webui_input_value(profile_values, "power_flow_max_iter", _webui_option_default("power_flow_max_iter")))\"></label>
-<label class=\"check\"><input name=\"power_flow_qlimits_enabled\" type=\"hidden\" value=\"false\"><input name=\"power_flow_qlimits_enabled\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_qlimits_enabled", _webui_option_default("power_flow_qlimits_enabled")))>$(_webui_field_label("power_flow_qlimits_enabled", "Q-limit handling enabled"))</label>
 <fieldset class=\"distributed-slack-options\" data-nr-only-field>
 <legend>Distributed slack</legend>
 <label class=\"check span-2\"><input name=\"power_flow_distributed_slack_enabled\" type=\"hidden\" value=\"false\"><input name=\"power_flow_distributed_slack_enabled\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_distributed_slack_enabled", _webui_option_default("power_flow_distributed_slack_enabled")))>$(_webui_field_label("power_flow_distributed_slack_enabled", "Distribute active-power slack over participating generators"))</label>
@@ -1131,7 +1146,9 @@ $(config_maintenance)
 </details>
 <details class=\"span-2 step-control-options\" data-ac-only-field>
 <summary>Q-limit handling</summary>
-<label data-nr-only-field>$(_webui_field_label("power_flow_qlimits_enforcement_mode", "Q-limit enforcement mode"))$(_webui_select("power_flow_qlimits_enforcement_mode", _webui_option_allowed_values("power_flow_qlimits_enforcement_mode"), _webui_selected(profile_values, "power_flow_qlimits_enforcement_mode", _webui_option_default("power_flow_qlimits_enforcement_mode"))))</label>
+<label class=\"check\"><input name=\"power_flow_qlimits_enabled\" type=\"hidden\" value=\"false\"><input name=\"power_flow_qlimits_enabled\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_qlimits_enabled", _webui_option_default("power_flow_qlimits_enabled")))>$(_webui_field_label("power_flow_qlimits_enabled", "Q-limit handling enabled"))</label>
+<label data-nr-only-field>$(_webui_field_label("power_flow_qlimits_enforcement_mode", "Q-limit enforcement mode"))$(_webui_select("power_flow_qlimits_enforcement_mode", vcat(["off"], collect(_webui_option_allowed_values("power_flow_qlimits_enforcement_mode"))), _webui_qlimit_mode_selection(profile_values)))</label>
+<p class=\"field-help span-2\">\"off\" switches Q-limit handling off; it is the same thing as clearing the box above, offered here because a mode picked while the handling is off does nothing and looks like it does.</p>
 </details>
 <details class="span-2 solver-mode-options" open>
 <summary>$(_webui_field_label("power_flow_solver", "Solver"))</summary>
@@ -2082,7 +2099,9 @@ function render_powerflow_result(result::AbstractDict)::String
   rows = join(("<tr><th>$(_webui_escape(field))</th><td>$(_webui_escape(_webui_result_value(result, field)))</td></tr>" for field in _WEBUI_RESULT_FIELDS), "")
   status = lowercase(string(get(result, "status", "unknown")))
   active = status in _WEBUI_ACTIVE_RUN_STATUSES
-  status_badge = "<span class=\"status-badge $(webui_status_class(result))\">$(_webui_escape(status))</span>"
+  diagnose_probe = _webui_is_completed_diagnose(result)
+  status_text = diagnose_probe ? "diagnosed" : status
+  status_badge = "<span class=\"status-badge $(webui_status_class(result))\" title=\"$(_webui_escape(status))\">$(_webui_escape(status_text))</span>"
   final_outcome_value = get(result, "final_outcome", nothing)
   stored_solver = final_outcome_value isa AbstractDict ? String(get(final_outcome_value, "solver", "")) : ""
   meta_for_mode = get(result, "metadata", Dict{String,Any}())
@@ -2146,6 +2165,10 @@ function render_powerflow_result(result::AbstractDict)::String
   metadata = get(result, "metadata", Dict{String,Any}())
   override_source = String(get(result, "config_override_source", get(metadata, "config_override_source", "")))
   runtime_notice = override_source == "user_yaml" ? "<div class=\"alert warning\"><strong>Web UI settings ignored.</strong> This run used YAML/default configuration values because the run was submitted with Web UI settings ignored.</div>" : ""
+  # A diagnose run is a one-step residual probe. Without this line the page
+  # reads like a crashed power flow, and the residual it measured (which IS
+  # the answer) looks like the symptom of one.
+  diagnose_probe && (runtime_notice *= "<div class=\"alert info\"><strong>This is a diagnosis, not a solve.</strong> The self-check takes exactly one step from the case's own stored voltages (<code>max_iter = 1</code>, no rescue, Q-limit handling off), so a remaining residual is the RESULT and not a failure. The numbers below therefore show one iteration and a non-zero mismatch by design; <code>diagnose.log</code> names the worst bus and what to do about it.</div>")
   return _webui_layout(_webui_result_page_title(result), "<section class=\"panel\">$(result_summary)$(runtime_notice)<table class=\"details\">$(rows)</table>$(active_hint)$(links)$(se_chain_section)</section>$(n1_table_section)$(se_tap_section)$(se_topology_section)$(save_section)"; show_back = true, refresh_url)
 end
 
@@ -2248,9 +2271,38 @@ function render_powerflow_artifacts(run_id::AbstractString, artifacts)::String
   return _webui_layout("Artifacts", table; show_back = true)
 end
 
+"""
+    _webui_is_completed_diagnose(run) -> Bool
+
+A Diagnose run that did its job. The self-check takes exactly ONE step from the
+case's own stored voltages (`max_iter = 1`, no rescue), so a remaining residual
+is its RESULT, not its failure: that residual is the diagnosis. Reported as a
+failed power flow it is unusable, because every diagnosis then looks like a
+crash (reported from a live session 2026-09-08).
+
+A diagnose run that could not run at all keeps the failure vocabulary; only the
+"completed, did not converge" combination is a finished probe.
+"""
+function _webui_is_completed_diagnose(run::AbstractDict)::Bool
+  # The history rows carry `run_mode` from the index; a result page does not,
+  # so the self-check configuration the diagnose flow writes is the marker
+  # there. Both paths have to agree, or the badge and the page contradict.
+  is_diagnose = lowercase(string(get(run, "run_mode", ""))) == "diagnose"
+  if !is_diagnose
+    artifacts = get(run, "artifacts", nothing)
+    is_diagnose = artifacts isa AbstractVector &&
+                  any(a -> a isa AbstractDict && String(get(a, "name", "")) == "diagnose_self_check_config.yaml", artifacts)
+  end
+  is_diagnose || return false
+  status = lowercase(string(get(run, "status", "")))
+  run_status = lowercase(string(get(run, "run_status", "")))
+  return status == "not_converged" || run_status == "completed_nonconverged"
+end
+
 function webui_status_class(run::AbstractDict)::String
   status = lowercase(string(get(run, "status", "unknown")))
   success = get(run, "success", nothing)
+  _webui_is_completed_diagnose(run) && return "status-info"
   status in ("running", "pending", "queued", "aborting") && return "status-running"
   status in ("aborted", "aborted_unknown", "interrupted", "cancelled", "canceled") && return "status-aborted"
   status in ("warning", "partial", "questionable") && return "status-warning"
@@ -2273,9 +2325,13 @@ function render_powerflow_history(runs, output_root::AbstractString; active_run 
   rows = join((begin
     run_id = string(get(run, "run_id", ""))
     available = get(run, "available", false)
+    # Two runs of the same case under different settings are the normal way to
+    # look at a Q-limit mode or a solver choice; the history could list them
+    # but not put them side by side. The checkbox feeds /powerflow/compare.
+    pick = available ? "<td><input type=\"checkbox\" name=\"run\" value=\"$(_webui_escape(run_id))\" aria-label=\"Select run $(_webui_escape(run_id)) for comparison\"></td>" : "<td></td>"
     link = available ? "<a href=\"/powerflow/result/$(_webui_urlencode(run_id))\">$(_webui_escape(run_id))</a>" : _webui_escape(run_id)
-    status = string(get(run, "status", "unknown"))
-    status_badge = "<span class=\"status-badge $(webui_status_class(run))\">$(_webui_escape(status))</span>"
+    status = _webui_is_completed_diagnose(run) ? "diagnosed" : string(get(run, "status", "unknown"))
+    status_badge = "<span class=\"status-badge $(webui_status_class(run))\" title=\"$(_webui_escape(string(get(run, "status", ""))))\">$(_webui_escape(status))</span>"
     delete_form = "<form method=\"post\" action=\"/powerflow/delete/$(_webui_urlencode(run_id))\" class=\"delete-run-form\"><button type=\"submit\" class=\"danger-button\">Delete</button></form>"
     abort_form = lowercase(status) in ("queued", "running") ? "<form method=\"post\" action=\"/powerflow/abort/$(_webui_urlencode(run_id))\"><button type=\"submit\" class=\"danger-button\">Abort</button></form>" : ""
     # run kind (SE phase 5): "" = plain power flow, also what pre-0.10 index
@@ -2284,10 +2340,295 @@ function render_powerflow_history(runs, output_root::AbstractString; active_run 
     kind_label = isempty(kind) ? "powerflow" : kind
     fields = (_webui_run_timestamp(run), link, status_badge, kind_label, available, _webui_run_method(run, String(get(run, "solver", ""))), get(run, "iterations", ""), get(run, "final_mismatch", ""), get(run, "casefile", ""), get(run, "config_file", ""))
     cells = "<td>$(_webui_escape(fields[1]))</td><td>$(fields[2])</td><td>$(fields[3])</td>" * join(("<td>$(_webui_escape(field))</td>" for field in fields[4:end]), "")
-    "<tr>$(cells)<td>$(abort_form)$(delete_form)</td></tr>"
+    "<tr>$(pick)$(cells)<td>$(abort_form)$(delete_form)</td></tr>"
   end for run in ordered_runs), "")
-  content = "$(_webui_active_run_banner(active_run))<section class=\"panel history-actions\"><p><strong>Output root:</strong> <code>$(_webui_escape(output_root))</code></p><div class=\"actions\"><form method=\"post\" action=\"/powerflow/refresh\"><button type=\"submit\">Refresh registry</button></form><form method=\"post\" action=\"/powerflow/delete_all\"><button type=\"submit\" class=\"danger-button\">Delete all runs</button></form></div></section>\n<section class=\"panel\"><table><thead><tr><th>Date/Time</th><th>Run ID</th><th>Status</th><th>Kind</th><th>Available</th><th>Solver</th><th>Iterations</th><th>Final mismatch</th><th>Case file</th><th>Config file</th><th>Delete</th></tr></thead><tbody>$(rows)</tbody></table></section>"
+  # The compare button submits the surrounding form; the handler is the place
+  # that insists on exactly two runs, so the page stays usable without JS.
+  compare_hint = "<p class=\"field-hint\">Tick two runs and press Compare to see them side by side: status, iterations, residual, the configuration keys that differ, the Q-limit events and, where both runs wrote bus voltages, the largest voltage deviation.</p>"
+  content = "$(_webui_active_run_banner(active_run))<section class=\"panel history-actions\"><p><strong>Output root:</strong> <code>$(_webui_escape(output_root))</code></p><div class=\"actions\"><form method=\"post\" action=\"/powerflow/refresh\"><button type=\"submit\">Refresh registry</button></form><form method=\"post\" action=\"/powerflow/delete_all\"><button type=\"submit\" class=\"danger-button\">Delete all runs</button></form></div></section>\n<section class=\"panel\"><form method=\"get\" action=\"/powerflow/compare\">$(compare_hint)<div class=\"actions\"><button type=\"submit\" class=\"secondary-button\">Compare selected runs</button></div><table><thead><tr><th>Compare</th><th>Date/Time</th><th>Run ID</th><th>Status</th><th>Kind</th><th>Available</th><th>Solver</th><th>Iterations</th><th>Final mismatch</th><th>Case file</th><th>Config file</th><th>Delete</th></tr></thead><tbody>$(rows)</tbody></table></form></section>"
   return _webui_layout("Run history", content; show_back = true)
+end
+
+"""
+    _webui_compare_config_diff(a_dir, b_dir) -> Vector{Tuple{String,String,String}}
+
+The configuration keys two runs disagree on, read from the `effective_config.yaml`
+each run writes. Line based on purpose: the file is the record of what a run
+actually used, and a line diff needs no schema knowledge and cannot go stale
+when the configuration grows a section.
+"""
+function _webui_compare_config_diff(a_dir::AbstractString, b_dir::AbstractString)
+  read_keys(dir) = begin
+    path = joinpath(dir, "effective_config.yaml")
+    out = Dict{String,String}()
+    isfile(path) || return out
+    # indent stack, so a nested key gets its real dotted path: a plain
+    # "remember the last section" would concatenate every section it ever saw
+    stack = Tuple{Int,String}[]
+    for line in eachline(path)
+      isempty(strip(line)) && continue
+      startswith(strip(line), "#") && continue
+      indent = length(line) - length(lstrip(line))
+      m = match(r"^\s*([A-Za-z0-9_.]+):\s*(.*)$", line)
+      m === nothing && continue
+      key, value = String(m.captures[1]), strip(String(m.captures[2]))
+      while !isempty(stack) && stack[end][1] >= indent
+        pop!(stack)
+      end
+      prefix = isempty(stack) ? "" : string(join((s[2] for s in stack), "."), ".")
+      if isempty(value)
+        push!(stack, (indent, key))
+        continue
+      end
+      out[string(prefix, key)] = value
+    end
+    return out
+  end
+  a = read_keys(a_dir)
+  b = read_keys(b_dir)
+  rows = Tuple{String,String,String}[]
+  for key in sort(collect(union(keys(a), keys(b))))
+    # `_config_sources` records where each value came from. It mirrors every
+    # difference a second time, which reads like two findings instead of one.
+    startswith(key, "_config_sources.") && continue
+    va = get(a, key, "-")
+    vb = get(b, key, "-")
+    va == vb || push!(rows, (key, va, vb))
+  end
+  return rows
+end
+
+"""
+    _webui_compare_qlimit_buses(dir) -> Vector{Int} or nothing
+
+Clamped buses of a run, from the `q_limit_events.csv` it wrote. The file
+follows the run's CSV format like every other artifact (its writer takes the
+same `format` argument), so it is read by column name rather than by position.
+"""
+function _webui_compare_qlimit_buses(dir::AbstractString)
+  table = _webui_compare_csv_table(joinpath(dir, "q_limit_events.csv"))
+  table === nothing && return nothing
+  buses = Int[]
+  for row in table.rows
+    bus = tryparse(Int, strip(get(row, "bus", "")))
+    bus === nothing || push!(buses, bus)
+  end
+  return sort!(unique!(buses))
+end
+
+"""
+    _webui_compare_split_csv(line, delimiter) -> Vector{String}
+
+One CSV line into its fields, honoring quoted fields. The detailed export
+quotes any cell that contains the delimiter, which the `excel_us` format
+produces for every grouped number (`"1,234.5"` in a comma-delimited file).
+"""
+function _webui_compare_split_csv(line::AbstractString, delimiter::Char)::Vector{String}
+  fields = String[]
+  buffer = IOBuffer()
+  in_quotes = false
+  i = firstindex(line)
+  while i <= lastindex(line)
+    c = line[i]
+    if in_quotes
+      if c == '"'
+        # a doubled quote inside a quoted field is one literal quote
+        if i < lastindex(line) && line[nextind(line, i)] == '"'
+          print(buffer, '"')
+          i = nextind(line, i)
+        else
+          in_quotes = false
+        end
+      else
+        print(buffer, c)
+      end
+    elseif c == '"'
+      in_quotes = true
+    elseif c == delimiter
+      push!(fields, String(take!(buffer)))
+    else
+      print(buffer, c)
+    end
+    i = nextind(line, i)
+  end
+  push!(fields, String(take!(buffer)))
+  return fields
+end
+
+"""
+    _webui_compare_csv_table(path) -> NamedTuple or nothing
+
+A detailed-export CSV as named rows, in whichever of the three formats the run
+was written with. The delimiter comes from the header line and settles the
+number format with it (`run_api.jl`: `technical` = `,` and `.`; `excel_de` =
+`;`, `,` decimals, `.` grouping; `excel_us` = `,`, `.` decimals, `,` grouping),
+so one rule reads all three. Getting this wrong is not loud: a comma-splitting
+reader on a semicolon file finds no columns at all and the page then claims the
+two runs have nothing in common (reported 2026-09-08).
+"""
+function _webui_compare_csv_table(path::AbstractString)
+  isfile(path) || return nothing
+  lines = readlines(path)
+  isempty(lines) && return nothing
+  head = strip(lines[1])
+  delimiter = count(==(';'), head) > count(==(','), head) ? ';' : ','
+  decimal = delimiter == ';' ? ',' : '.'
+  thousands = delimiter == ';' ? '.' : ','
+  header = _webui_compare_split_csv(head, delimiter)
+  rows = Vector{Dict{String,String}}()
+  for line in Iterators.drop(lines, 1)
+    isempty(strip(line)) && continue
+    parts = _webui_compare_split_csv(strip(line), delimiter)
+    length(parts) == length(header) || continue
+    push!(rows, Dict(header[k] => parts[k] for k in eachindex(header)))
+  end
+  return (rows = rows, decimal = decimal, thousands = thousands)
+end
+
+"A number as the detailed export wrote it, in the format that table uses."
+function _webui_compare_number(text::AbstractString, decimal::Char, thousands::Char)
+  cleaned = replace(strip(text), string(thousands) => "")
+  decimal == '.' || (cleaned = replace(cleaned, decimal => '.'))
+  return tryparse(Float64, cleaned)
+end
+
+"""
+    _webui_compare_voltages(dir) -> Dict or nothing
+
+Bus voltages of a run from `bus_voltages_complex.csv` (detailed CSV export),
+keyed by the bus index, which is what two runs of the same case share. The bus
+name travels along for the table, because an index alone says nothing to
+someone reading the page.
+"""
+function _webui_compare_voltages(dir::AbstractString)
+  table = _webui_compare_csv_table(joinpath(dir, "bus_voltages_complex.csv"))
+  table === nothing && return nothing
+  out = Dict{String,NamedTuple{(:vm, :va, :name),Tuple{Float64,Float64,String}}}()
+  for row in table.rows
+    bus = strip(get(row, "bus", ""))
+    vm = _webui_compare_number(get(row, "vm_pu", ""), table.decimal, table.thousands)
+    va = _webui_compare_number(get(row, "va_deg", ""), table.decimal, table.thousands)
+    (isempty(bus) || vm === nothing || va === nothing) && continue
+    # the case's own name if it has one, otherwise the index it is keyed by
+    name = strip(get(row, "original_bus_name", ""))
+    isempty(name) && (name = strip(get(row, "bus_name", "")))
+    out[String(bus)] = (vm = vm, va = va, name = isempty(name) ? String(bus) : String(name))
+  end
+  return isempty(out) ? nothing : out
+end
+
+"""
+    _webui_compare_losses(dir) -> NamedTuple or nothing
+
+Total branch losses of a run, summed over the `p_loss_MW`/`q_loss_MVar` columns
+the run wrote into `branch_flows.csv`. The sum is the only arithmetic this page
+does; every number in it is otherwise read as written.
+"""
+function _webui_compare_losses(dir::AbstractString)
+  table = _webui_compare_csv_table(joinpath(dir, "branch_flows.csv"))
+  table === nothing && return nothing
+  p = 0.0
+  q = 0.0
+  n = 0
+  for row in table.rows
+    dp = _webui_compare_number(get(row, "p_loss_MW", ""), table.decimal, table.thousands)
+    dq = _webui_compare_number(get(row, "q_loss_MVar", ""), table.decimal, table.thousands)
+    dp === nothing && continue
+    p += dp
+    q += dq === nothing ? 0.0 : dq
+    n += 1
+  end
+  return n == 0 ? nothing : (p_MW = p, q_MVAr = q, branches = n)
+end
+
+"""
+    render_powerflow_compare(a, b) -> String
+
+Two finished runs side by side. Everything shown comes from what the runs
+themselves wrote; nothing is recomputed, so the page also works for runs from
+an earlier session.
+"""
+function render_powerflow_compare(a::AbstractDict, b::AbstractDict)::String
+  id(r) = string(get(r, "run_id", ""))
+  cell(r, key, default = "-") = _webui_escape(string(get(r, key, default)))
+  head = string(
+    "<section class=\"panel\"><h2>Two runs side by side</h2><table><thead><tr><th>Property</th>",
+    "<th>A: $(cell(a, "run_id"))</th><th>B: $(cell(b, "run_id"))</th></tr></thead><tbody>",
+  )
+  for (label, key) in (("Case file", "casefile"), ("Status", "status"), ("Converged", "converged"),
+    ("Iterations", "iterations"), ("Final mismatch", "final_mismatch"), ("Config file", "config_file"))
+    head *= "<tr><td>$(_webui_escape(label))</td><td>$(cell(a, key))</td><td>$(cell(b, key))</td></tr>"
+  end
+  head *= "</tbody></table><p class=\"actions\"><a href=\"/powerflow/result/$(_webui_urlencode(id(a)))\">Open A</a> &middot; <a href=\"/powerflow/result/$(_webui_urlencode(id(b)))\">Open B</a></p></section>"
+
+  dir_a = String(get(a, "output_dir", ""))
+  dir_b = String(get(b, "output_dir", ""))
+
+  diff = _webui_compare_config_diff(dir_a, dir_b)
+  cfg_section = if isempty(diff)
+    "<section class=\"panel\"><h2>Configuration</h2><p>Both runs used the same effective configuration.</p></section>"
+  else
+    rows = join(("<tr><td><code>$(_webui_escape(k))</code></td><td>$(_webui_escape(va))</td><td>$(_webui_escape(vb))</td></tr>" for (k, va, vb) in diff), "")
+    "<section class=\"panel\"><h2>Configuration differences ($(length(diff)))</h2><table><thead><tr><th>Key</th><th>A</th><th>B</th></tr></thead><tbody>$(rows)</tbody></table></section>"
+  end
+
+  qa = _webui_compare_qlimit_buses(dir_a)
+  qb = _webui_compare_qlimit_buses(dir_b)
+  q_section = if qa === nothing && qb === nothing
+    "<section class=\"panel\"><h2>Q-limit events</h2><p>Neither run recorded Q-limit events.</p></section>"
+  else
+    only_a = setdiff(something(qa, Int[]), something(qb, Int[]))
+    only_b = setdiff(something(qb, Int[]), something(qa, Int[]))
+    same = isempty(only_a) && isempty(only_b)
+    note = same ? "<p>Both runs clamped the same buses.</p>" :
+           "<p><strong>The runs clamped different buses.</strong> Only in A: $(_webui_escape(string(only_a))). Only in B: $(_webui_escape(string(only_b))).</p>"
+    "<section class=\"panel\"><h2>Q-limit events</h2>$(note)<table><thead><tr><th></th><th>Clamped buses</th></tr></thead><tbody><tr><td>A</td><td>$(_webui_escape(string(something(qa, "no file"))))</td></tr><tr><td>B</td><td>$(_webui_escape(string(something(qb, "no file"))))</td></tr></tbody></table></section>"
+  end
+
+  la = _webui_compare_losses(dir_a)
+  lb = _webui_compare_losses(dir_b)
+  loss_section = if la === nothing || lb === nothing
+    "<section class=\"panel\"><h2>Losses</h2><p>At least one run has no <code>branch_flows.csv</code>; it is written when the detailed result CSV export is on.</p></section>"
+  else
+    dp = la.p_MW - lb.p_MW
+    dq = la.q_MVAr - lb.q_MVAr
+    # a difference far below the convergence tolerance is the same operating
+    # point written twice, not a finding
+    verdict = abs(dp) < 1e-6 ? "<p>Both runs end on the same losses.</p>" :
+              "<p><strong>The runs differ by $(round(dp; sigdigits = 4)) MW</strong> of active losses ($(round(100 * dp / max(abs(lb.p_MW), eps()); sigdigits = 3)) % of B).</p>"
+    body = string(
+      "<tr><td>Active losses [MW]</td><td>$(round(la.p_MW; digits = 4))</td><td>$(round(lb.p_MW; digits = 4))</td><td>$(round(dp; sigdigits = 4))</td></tr>",
+      "<tr><td>Reactive losses [MVAr]</td><td>$(round(la.q_MVAr; digits = 4))</td><td>$(round(lb.q_MVAr; digits = 4))</td><td>$(round(dq; sigdigits = 4))</td></tr>",
+      "<tr><td>Branches summed</td><td>$(la.branches)</td><td>$(lb.branches)</td><td>$(la.branches - lb.branches)</td></tr>",
+    )
+    "<section class=\"panel\"><h2>Losses</h2>$(verdict)<table><thead><tr><th>Quantity</th><th>A</th><th>B</th><th>A - B</th></tr></thead><tbody>$(body)</tbody></table></section>"
+  end
+
+  va = _webui_compare_voltages(dir_a)
+  vb = _webui_compare_voltages(dir_b)
+  v_section = if va === nothing || vb === nothing
+    "<section class=\"panel\"><h2>Bus voltages</h2><p>At least one run has no readable <code>bus_voltages_complex.csv</code>; it is written when the detailed result CSV export is on.</p></section>"
+  else
+    shared = sort(collect(intersect(keys(va), keys(vb))); by = k -> something(tryparse(Int, k), typemax(Int)))
+    if isempty(shared)
+      "<section class=\"panel\"><h2>Bus voltages</h2><p>The two runs have no bus in common, so they are not two runs of the same network.</p></section>"
+    else
+      deltas = [(bus, va[bus].vm - vb[bus].vm, va[bus].va - vb[bus].va) for bus in shared]
+      sort!(deltas; by = t -> -abs(t[2]))
+      maxdvm = maximum(abs(t[2]) for t in deltas)
+      maxdva = maximum(abs(t[3]) for t in deltas)
+      if maxdvm < 1e-9 && maxdva < 1e-9
+        # a table of zeros over every bus hides the one thing it says
+        "<section class=\"panel\"><h2>Bus voltages</h2><p>Both runs end on the same voltages at all $(length(shared)) shared buses.</p></section>"
+      else
+        rows = join(("<tr><td>$(_webui_escape(bus))</td><td>$(_webui_escape(va[bus].name))</td><td>$(round(va[bus].vm; digits = 6))</td><td>$(round(vb[bus].vm; digits = 6))</td><td>$(round(dvm; sigdigits = 4))</td><td>$(round(dva; sigdigits = 4))</td></tr>" for (bus, dvm, dva) in first(deltas, 10)), "")
+        summary = "<p>max |dVm| = <strong>$(round(maxdvm; sigdigits = 4)) pu</strong>, max |dVa| = $(round(maxdva; sigdigits = 4)) deg, over $(length(shared)) shared buses. The ten largest deviations:</p>"
+        "<section class=\"panel\"><h2>Bus voltages</h2>$(summary)<table><thead><tr><th>Bus</th><th>Name</th><th>A Vm [pu]</th><th>B Vm [pu]</th><th>dVm</th><th>dVa [deg]</th></tr></thead><tbody>$(rows)</tbody></table></section>"
+      end
+    end
+  end
+
+  return _webui_layout("Compare runs", string(head, cfg_section, q_section, loss_section, v_section); show_back = true)
 end
 
 function render_webui_operation_log(content::AbstractString; entries::Integer = 0, bytes::Integer = 0)::String

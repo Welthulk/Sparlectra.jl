@@ -1011,7 +1011,9 @@ function handle_case_options_save(form::AbstractDict; output_root::AbstractStrin
   end
   form_updates = Dict{String,Any}()
   fmt = lowercase(strip(String(something(_webui_form_value(form, "case_format", ""), ""))))
-  fmt in ("auto", "matpower", "dtf_for001", "cgmes") && (form_updates["case_format"] = fmt)
+  # scf and pgm name the same reader; both are accepted so the choice
+  # made in the form survives the save (see _normalize_case_format)
+  fmt in ("auto", "matpower", "dtf_for001", "cgmes", "scf", "pgm") && (form_updates["case_format"] = fmt)
   written = try
     _webui_merge_case_config_write(source, keep, form_updates; on_unreadable = err -> record_webui_operation!(operation_log, "case_options_save_replaced_unreadable"; route, method = "POST", user_action = true, casefile = case, status = "replaced", message = sprint(showerror, err)))
   catch err
@@ -1542,6 +1544,27 @@ end
 
 function handle_powerflow_history(output_root::AbstractString)::SparlectraWebUIResponse
   return _webui_html(render_powerflow_history(list_powerflow_runs(output_root), output_root; active_run = get_active_webui_powerflow_job()))
+end
+
+"""
+    handle_powerflow_compare(run_ids) -> SparlectraWebUIResponse
+
+Two finished runs side by side. Exactly two ids are required, and both must be
+loadable; anything else is answered with a message instead of a half-filled
+page, because a comparison against a missing run is worse than none.
+"""
+function handle_powerflow_compare(run_ids::Vector{String})::SparlectraWebUIResponse
+  ids = [String(strip(id)) for id in run_ids if !isempty(strip(id))]
+  if length(ids) != 2
+    return _webui_html(render_webui_error(400,
+      "Comparing needs exactly two runs; $(length(ids)) were selected. Go back to the run history, tick two rows and press Compare."); status = 400)
+  end
+  a = get_webui_powerflow_job(ids[1])
+  b = get_webui_powerflow_job(ids[2])
+  for (id, entry) in zip(ids, (a, b))
+    get(entry, "reason", "") == "run_not_found" && return _webui_html(render_webui_error(404, "Run $(id) was not found."); status = 404)
+  end
+  return _webui_html(render_powerflow_compare(a, b))
 end
 
 function handle_webui_operation_log(output_root::AbstractString; download::Bool = false)::SparlectraWebUIResponse
