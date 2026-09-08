@@ -1441,6 +1441,16 @@ function run_webui_fast_tests()
       plain = Dict{String,Any}("run_mode" => "", "status" => "not_converged", "success" => false)
       @test !Sparlectra._webui_is_completed_diagnose(plain)
       @test Sparlectra.webui_status_class(plain) == "status-error"
+
+      # The tooltip carries the raw status only where the label says something
+      # else. Putting it on every badge changed the markup of every ordinary
+      # run and broke a live-page assertion in the extended profile
+      # (test_webui_extended.jl, 2026-09-08); repeating "running" on hover
+      # tells a reader nothing anyway.
+      @test Sparlectra._webui_status_badge("status-running", "running", "running") ==
+            "<span class=\"status-badge status-running\">running</span>"
+      @test Sparlectra._webui_status_badge("status-info", "diagnosed", "not_converged") ==
+            "<span class=\"status-badge status-info\" title=\"not_converged\">diagnosed</span>"
     end
 
     @testset "the environment is checked before the sysimage question" begin

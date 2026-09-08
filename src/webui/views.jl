@@ -2101,7 +2101,7 @@ function render_powerflow_result(result::AbstractDict)::String
   active = status in _WEBUI_ACTIVE_RUN_STATUSES
   diagnose_probe = _webui_is_completed_diagnose(result)
   status_text = diagnose_probe ? "diagnosed" : status
-  status_badge = "<span class=\"status-badge $(webui_status_class(result))\" title=\"$(_webui_escape(status))\">$(_webui_escape(status_text))</span>"
+  status_badge = _webui_status_badge(webui_status_class(result), status_text, status)
   final_outcome_value = get(result, "final_outcome", nothing)
   stored_solver = final_outcome_value isa AbstractDict ? String(get(final_outcome_value, "solver", "")) : ""
   meta_for_mode = get(result, "metadata", Dict{String,Any}())
@@ -2299,6 +2299,19 @@ function _webui_is_completed_diagnose(run::AbstractDict)::Bool
   return status == "not_converged" || run_status == "completed_nonconverged"
 end
 
+"""
+    _webui_status_badge(css_class, label, raw_status) -> String
+
+A status badge. The tooltip carries the raw status ONLY where the label says
+something else ("diagnosed" for a `not_converged` self-check); a badge whose
+label already is the status gets no tooltip, because repeating the word on
+hover tells the reader nothing.
+"""
+function _webui_status_badge(css_class::AbstractString, label::AbstractString, raw_status::AbstractString)::String
+  title = label == raw_status ? "" : " title=\"$(_webui_escape(raw_status))\""
+  return "<span class=\"status-badge $(css_class)\"$(title)>$(_webui_escape(label))</span>"
+end
+
 function webui_status_class(run::AbstractDict)::String
   status = lowercase(string(get(run, "status", "unknown")))
   success = get(run, "success", nothing)
@@ -2331,7 +2344,7 @@ function render_powerflow_history(runs, output_root::AbstractString; active_run 
     pick = available ? "<td><input type=\"checkbox\" name=\"run\" value=\"$(_webui_escape(run_id))\" aria-label=\"Select run $(_webui_escape(run_id)) for comparison\"></td>" : "<td></td>"
     link = available ? "<a href=\"/powerflow/result/$(_webui_urlencode(run_id))\">$(_webui_escape(run_id))</a>" : _webui_escape(run_id)
     status = _webui_is_completed_diagnose(run) ? "diagnosed" : string(get(run, "status", "unknown"))
-    status_badge = "<span class=\"status-badge $(webui_status_class(run))\" title=\"$(_webui_escape(string(get(run, "status", ""))))\">$(_webui_escape(status))</span>"
+    status_badge = _webui_status_badge(webui_status_class(run), status, string(get(run, "status", "")))
     delete_form = "<form method=\"post\" action=\"/powerflow/delete/$(_webui_urlencode(run_id))\" class=\"delete-run-form\"><button type=\"submit\" class=\"danger-button\">Delete</button></form>"
     abort_form = lowercase(status) in ("queued", "running") ? "<form method=\"post\" action=\"/powerflow/abort/$(_webui_urlencode(run_id))\"><button type=\"submit\" class=\"danger-button\">Abort</button></form>" : ""
     # run kind (SE phase 5): "" = plain power flow, also what pre-0.10 index
