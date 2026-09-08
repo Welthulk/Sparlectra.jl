@@ -1561,6 +1561,62 @@ mpc.branch = [
       @test occursin("Last-iteration Q-limit diagnostic (NR did not converge; values are not a valid final solution)", String(take!(io)))
     end
 
+    # A solved state can satisfy every limit and still be non-physical: a
+    # machine pinned at Qmax whose voltage ends ABOVE its setpoint cannot be
+    # an operating point, because a machine at its upper reactive limit has
+    # nothing left to raise the voltage with. The counter is what makes the
+    # difference between two enforcement modes visible at all.
+    @testset "Q-V characteristic check finds non-physical generator states" begin
+      # STATION1 carries the machine with vm_pu = 1.027273 and the Q band
+      net = createTest3BusNet(qlim_min = -20.0, qlim_max = 20.0)
+      bus = Sparlectra.geNetBusIdx(net = net, busName = "STATION1")
+
+      # the machine sits at Qmax and the voltage ended ABOVE its setpoint
+      net.qLimitEvents[bus] = :max
+      net.nodeVec[bus]._qƩGen = 20.0
+      Sparlectra.setVmVa!(node = net.nodeVec[bus], vm_pu = 1.0300, va_deg = 0.0)
+      rows = qvCharacteristicViolations(net)
+      @test length(rows) == 1
+      @test rows[1].bus == bus
+      @test rows[1].side === :max
+      @test rows[1].significant
+      @test rows[1].dv_pu > 0
+
+      # same clamp, voltage BELOW the setpoint: that is the physical case
+      Sparlectra.setVmVa!(node = net.nodeVec[bus], vm_pu = 1.0200, va_deg = 0.0)
+      @test isempty(qvCharacteristicViolations(net))
+
+      # voltage on the wrong side again, but the machine is no longer at the
+      # limit: a stale switching event is not a violation
+      Sparlectra.setVmVa!(node = net.nodeVec[bus], vm_pu = 1.0300, va_deg = 0.0)
+      net.nodeVec[bus]._qƩGen = 19.0
+      @test isempty(qvCharacteristicViolations(net))
+
+      # within the band around the setpoint the state counts, but not as
+      # significant: a converged solve may land on either side by rounding
+      net.nodeVec[bus]._qƩGen = 20.0
+      Sparlectra.setVmVa!(node = net.nodeVec[bus], vm_pu = 1.027273 + 1.0e-5, va_deg = 0.0)
+      band_rows = qvCharacteristicViolations(net)
+      @test length(band_rows) == 1
+      @test !band_rows[1].significant
+
+      # printing: the section is always there, so a missing line can never be
+      # mistaken for a clean result
+      Sparlectra.setVmVa!(node = net.nodeVec[bus], vm_pu = 1.0300, va_deg = 0.0)
+      io = IOBuffer()
+      printQVCharacteristicCheck(net; io = io)
+      out = String(take!(io))
+      @test occursin("Q-V characteristic:", out)
+      @test occursin("non-physical generator state", out)
+      io = IOBuffer()
+      printQVCharacteristicCheck(net; io = io, converged = false)
+      @test occursin("skipped (no converged solution)", String(take!(io)))
+      io = IOBuffer()
+      empty!(net.qLimitEvents)
+      printQVCharacteristicCheck(net; io = io)
+      @test occursin("no non-physical generator states", String(take!(io)))
+    end
+
     @testset "AC rescue ladder and DC fallback" begin
       # NOTE: private inner name — an anonymous fixture assigning to a name
       # that also exists in the enclosing testset would rebind that local.

@@ -46,6 +46,15 @@ struct ImportedCase
   provenance::Dict{String,Any}
   studies::NamedTuple
   overrides::Dict{String,Any}
+
+  # The imported network carries the configuration it was built with, so a
+  # later `runpf!(net; ...)` without an explicit `config` solves it under that
+  # configuration instead of the globally active one. One inner constructor
+  # covers every format path, so no importer can forget it.
+  function ImportedCase(net::Net, config::SparlectraConfig, format::Symbol, provenance::Dict{String,Any}, studies::NamedTuple, overrides::Dict{String,Any})
+    net._import_config = config
+    return new(net, config, format, provenance, studies, overrides)
+  end
 end
 
 const _EMPTY_CASE_STUDIES = (contingencies = Dict{String,Any}(), short_circuit = Dict{String,Any}())

@@ -25,6 +25,8 @@
 const _DEMO_CASE_DIR = normpath(joinpath(dirname(@__DIR__), "data", "scf"))
 const _DEMO_CASE_FIXTURES = normpath(joinpath(@__DIR__, "fixtures", "demo_cases"))
 const _DEMO_CASE_NAMES = ("sp_case5", "sp_case14", "sp_case60", "sp_case188")
+# same rule for the provenance stamp as the SCF tests use
+include("test_scf_support.jl")
 # the fixtures are machine-neutral: they were taken against the PACKAGE
 # defaults (colleague review 2026-09-03), so the comparison must never
 # resolve through this machine's configuration.yaml
@@ -152,6 +154,53 @@ function run_demo_case_tests()
     all_files = filter(f -> startswith(f, "sp_case"), readdir(_DEMO_CASE_DIR))
     @test sum(filesize(joinpath(_DEMO_CASE_DIR, f)) for f in all_files) < 900_000
 
+    # Why there is no byte round trip for these four, in case someone reaches
+    # for one here: importing a shipped case and exporting it again does NOT
+    # reproduce the file. `scenarios`, the `short_circuit` block with its PGM
+    # `fault` row, the `extra` names and the measurement provenance are EXPORT
+    # ARGUMENTS, not network state (measured 2026-09-08: sp_case5 comes back as
+    # 15354 characters against the shipped 16643). Handing those blocks back to
+    # the exporter from the file under test would compare it against its own
+    # input. These files are built by a generator that passes those arguments
+    # and is their provenance record, not by a re-export; the property such a
+    # comparison would be reaching for is checked directly below instead.
+    #
+    # Colleague review 2026-09-08, after the 0.10.0 -> 0.11.0 bump turned a
+    # fixture comparison red: a test that goes red on every version bump
+    # trains the reflex to regenerate the file, and the next time the diff
+    # may be more than the stamp line, with the regeneration hiding it. The
+    # shipped cases must therefore not depend on the release recorded in
+    # them at all. A copy stamped with a version that does not exist has to
+    # import to the same network and solve to the same result; nothing may
+    # read `created_by` except a human looking for provenance.
+    @testset "the provenance stamp does not reach behavior" begin
+      d = mktempdir()
+      for name in _DEMO_CASE_NAMES
+        original = joinpath(_DEMO_CASE_DIR, "$(name).scf.json")
+        # the case config next to the file pins the tolerance; it has to
+        # travel with the copy or the comparison resolves differently
+        cp(Sparlectra.case_config_path(original), joinpath(d, basename(Sparlectra.case_config_path(original))); force = true)
+        foreign = scf_with_foreign_stamp(original, d)
+        @test occursin("Sparlectra 0.0.0-nonexistent", read(foreign, String))
+        # and it is the ONLY difference
+        @test scf_without_stamp(read(foreign, String)) == scf_without_stamp(read(original, String))
+
+        ref = Sparlectra.import_case(original, _DEMO_REF_CONFIG()).net
+        alt = Sparlectra.import_case(foreign, _DEMO_REF_CONFIG()).net
+        @test length(alt.nodeVec) == length(ref.nodeVec)
+        @test length(alt.branchVec) == length(ref.branchVec)
+        @test length(alt.measurements) == length(ref.measurements)
+        ite_ref, erg_ref = runpf!(ref; verbose = 0)
+        ite_alt, erg_alt = runpf!(alt; verbose = 0)
+        @test (ite_alt, erg_alt) == (ite_ref, erg_ref)
+        calcNetLosses!(ref)
+        calcNetLosses!(alt)
+        p_ref, q_ref = Sparlectra.getTotalLosses(net = ref)
+        p_alt, q_alt = Sparlectra.getTotalLosses(net = alt)
+        @test p_alt == p_ref && q_alt == q_ref
+      end
+    end
+
     # maintainer request 2026-09-03: the shipped cases load through the Web
     # UI. The chooser offers them without any cache copy, and the run path
     # stages a bundled case into the cache WITH its sidecars (the per-case
@@ -197,43 +246,65 @@ function run_demo_case_tests()
       @test Sparlectra._webui_stage_bundled_case!(app_root, cache, "sp_nope.scf.json") === nothing
     end
 
-    # colleague follow-up 2026-09-03: the per-case config must neutralize a
-    # general config that changes the SOLUTION, not just the accuracy. Two
-    # legs: warm from the shipped start_state, and COLD with the start
-    # wiped, where the hostile max_iter 6 and 1e-3 tolerance would bite if
-    # anything leaked through (probed: cold runs take 5 to 6 genuine
-    # iterations and land on the same fixtures).
-    @testset "hostile general config cannot move the shipped fixtures (warm and cold start)" begin
-      hostile = Sparlectra.SparlectraConfig(Dict{String,Any}(
-        "power_flow" => Dict{String,Any}(
-          "tol" => 1.0e-3,
-          "max_iter" => 6,
-          "autodamp" => false,
-          "qlimits" => Dict{String,Any}("enabled" => false, "enforcement_mode" => "classic_simultaneous"),
-          "distributed_slack" => Dict{String,Any}("enabled" => true, "p_mode" => "pmax_weighted"),
-        ),
-      ))
-      for name in _DEMO_CASE_NAMES
-        fixture = _demo_fixture(name)
-        bus_state = fixture["power_flow"]["bus_state"]
-        scf_path = joinpath(_DEMO_CASE_DIR, "$(name).scf.json")
-        for cold in (false, true)
-          net = Sparlectra.import_case(scf_path, hostile).net
-          if cold
-            for nd in net.nodeVec
-              Sparlectra.setVmVa!(node = nd, vm_pu = 1.0, va_deg = 0.0)
-            end
-          end
-          ite, erg = runpf!(net; verbose = 0)
-          @test erg == 0
-          # the cold leg must genuinely iterate, or it proves nothing
-          cold && @test ite > 1
-          ids = Sparlectra.scf_id_map(net)
-          for i in eachindex(net.nodeVec)
-            @test isapprox(net.nodeVec[i]._vm_pu, bus_state[string(ids.node[i])]["vm_pu"]; atol = 1e-6)
-          end
-        end
+    # REPLACES the former testset "hostile general config cannot move the
+    # shipped fixtures" (2026-09-03 to 2026-09-08). That test could not fail:
+    # it handed a hostile configuration to `import_case` and then called
+    # `runpf!(net; verbose = 0)`, and that call form solved under the GLOBAL
+    # configuration, so the hostile values never reached the solver. Its
+    # premise was wrong twice over: `import_case` does not merge the case
+    # sidecar at all (that happens in `resolve_config`, on the service path),
+    # and a sidecar that pins only `power_flow.tol` cannot neutralize a
+    # hostile `distributed_slack` anyway. Measured on 2026-09-08: with the
+    # hostile configuration actually applied, sp_case14 throws
+    # "distributed slack: no valid participant ... p_mode=pmax_weighted".
+    #
+    # What holds instead, and what this testset guards: the configuration a
+    # net was imported with is the one it is solved under.
+    @testset "the imported configuration reaches the solver" begin
+      scf_path = joinpath(_DEMO_CASE_DIR, "sp_case14.scf.json")
+
+      # structural: the net carries what it was built with
+      strict = Sparlectra.SparlectraConfig(Dict{String,Any}("power_flow" => Dict{String,Any}("max_iter" => 1)))
+      carried = Sparlectra.import_case(scf_path, strict).net._import_config
+      @test carried isa Sparlectra.SparlectraConfig
+      @test carried.powerflow.max_iter == 1
+
+      # behavioural, and the actual regression: a cold start cannot converge
+      # in a single iteration. Under the old behaviour this run silently used
+      # the global max_iter and converged, which is exactly what hid the bug.
+      cold_net = Sparlectra.import_case(scf_path, strict).net
+      for nd in cold_net.nodeVec
+        Sparlectra.setVmVa!(node = nd, vm_pu = 1.0, va_deg = 0.0)
       end
+      _, erg_strict = runpf!(cold_net; verbose = 0)
+      @test erg_strict != 0
+
+      # the same cold start converges under the package defaults, so the
+      # failure above comes from the configuration and not from the case
+      ref_net = Sparlectra.import_case(scf_path, _DEMO_REF_CONFIG()).net
+      for nd in ref_net.nodeVec
+        Sparlectra.setVmVa!(node = nd, vm_pu = 1.0, va_deg = 0.0)
+      end
+      ite_ref, erg_ref = runpf!(ref_net; verbose = 0)
+      @test erg_ref == 0
+      @test ite_ref > 1
+
+      # and it still lands on the shipped fixture
+      fixture = _demo_fixture("sp_case14")
+      bus_state = fixture["power_flow"]["bus_state"]
+      ids = Sparlectra.scf_id_map(ref_net)
+      for i in eachindex(ref_net.nodeVec)
+        @test isapprox(ref_net.nodeVec[i]._vm_pu, bus_state[string(ids.node[i])]["vm_pu"]; atol = 1e-6)
+      end
+
+      # an explicit `config` still wins over the carried one
+      loose = Sparlectra.SparlectraConfig(Dict{String,Any}("power_flow" => Dict{String,Any}("max_iter" => 50)))
+      win_net = Sparlectra.import_case(scf_path, strict).net
+      for nd in win_net.nodeVec
+        Sparlectra.setVmVa!(node = nd, vm_pu = 1.0, va_deg = 0.0)
+      end
+      _, erg_win = runpf!(win_net, loose; verbose = 0)
+      @test erg_win == 0
     end
   end
 end

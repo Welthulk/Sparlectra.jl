@@ -1577,6 +1577,28 @@ runpf!(net::Net, config::SparlectraConfig; kwargs...) = _runpf_with_config!(
 )
 
 """
+    _runpf_effective_config(net, config) -> Union{Nothing,PowerFlowConfig,SparlectraConfig}
+
+Which configuration a `runpf!(net; ...)` call actually solves under. Precedence:
+
+1. an explicitly passed `config`,
+2. the configuration the net was IMPORTED with (`Net._import_config`),
+3. the globally active configuration.
+
+Step 2 exists since 0.10.1. Before it, a net imported under an explicit
+configuration was solved under the global one, silently: the Q-limit
+enforcement mode, the tolerance and even "Q limits off" never reached the
+solver, and every run looked plausible. The tell was identical residuals to
+the last digit across settings that cannot produce the same answer.
+"""
+function _runpf_effective_config(net::Net, config)
+  config === nothing || return config
+  carried = net._import_config
+  (carried isa SparlectraConfig || carried isa PowerFlowConfig) && return carried
+  return nothing
+end
+
+"""
     runpf!(net, maxIte, tol, verbose; method, kwargs...) -> (iterations, result)
     runpf!(net; config, kwargs...)
 
@@ -1584,12 +1606,24 @@ Run the Newton-Raphson power flow on the network. The positional form takes
 the solver options as keywords; the config form reads them from a
 configuration and passes the run-level values (flat start, Q-limit
 switching) explicitly.
+
+Without an explicit `config` the net's own imported configuration is used
+(see [`_runpf_effective_config`](@ref)), and only if the net carries none
+does the globally active configuration apply.
 """
 function runpf!(net::Net; config::Union{Nothing,PowerFlowConfig,SparlectraConfig} = nothing, kwargs...)
   # Keep this entry strict: only runtime-only knobs are accepted as kwargs.
   # All solver-behavior options must come from config objects for consistency.
   runtime_keys = Set((:verbose, :damp, :pv_table_rows, :validate_limits_after_pf, :q_limit_violation_headroom, :qlimit_lock_reason, :performance_profile))
-  cfg0 = config === nothing ? powerflow_config() : (config isa SparlectraConfig ? config.powerflow : config)
+  effective = _runpf_effective_config(net, config)
+  cfg0 = effective === nothing ? powerflow_config() : (effective isa SparlectraConfig ? effective.powerflow : effective)
+  # A full SparlectraConfig also carries the island fan-out switches; forward
+  # them exactly as the two-argument method does, so both ways of supplying
+  # the same configuration behave alike.
+  parallel = effective isa SparlectraConfig ?
+             (; islands_parallel_enabled = effective.runtime.parallel.enabled,
+    islands_parallel_max_tasks = parallel_max_tasks(effective.runtime.parallel),
+    islands_parallel_min_work_items = effective.runtime.parallel.min_work_items) : NamedTuple()
 
   if !isempty(kwargs)
     raw = Dict{String,Any}(String(k) => v for (k, v) in pairs(kwargs))
@@ -1604,12 +1638,13 @@ function runpf!(net::Net; config::Union{Nothing,PowerFlowConfig,SparlectraConfig
         q_limit_violation_headroom = Float64(get(raw, "q_limit_violation_headroom", 0.0)),
         qlimit_lock_reason = Symbol(get(raw, "qlimit_lock_reason", :manual)),
         performance_profile = get(raw, "performance_profile", nothing),
+        parallel...,
       )
     else
       throw(ArgumentError("runpf!: solver options must be supplied through PowerFlowConfig or set_sparlectra_config!; only runtime keywords $(collect(runtime_keys)) are accepted."))
     end
   end
-  return _runpf_with_config!(net, cfg0)
+  return _runpf_with_config!(net, cfg0; parallel...)
 end
 
 """

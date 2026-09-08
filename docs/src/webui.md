@@ -461,6 +461,11 @@ when one is offered. The **Case input format** selector defaults to
 and — where the FOR001 markers are unambiguous — native DTF input. Selecting
 **CGMES (ENTSO-E, folder or ZIP)** forces the CGMES importer; the option is
 preselected automatically when the chosen case is a `.zip` or a directory.
+**Sparlectra Case Format (.scf.json)** and **power-grid-model JSON
+(input.json)** name the same reader: the `sparlectra` block of an SCF file is
+optional, so a plain power-grid-model dataset loads as well. *Auto* already
+resolves every `.json` to that reader, so the two entries matter when the file
+extension does not say what the file is.
 The native DTF path is experimental/internal and intended for diagnostics and
 validation, not the primary workflow. For the
 selected-outage-records mode, the **Selected DTF outage labels/indices** field
@@ -616,6 +621,15 @@ form is not a reference.
 Programmatically, the same behavior is available as
 [`run_fixed_reference_self_check`](@ref).
 
+Because the self-check takes exactly one step, a diagnose run practically
+never converges, and that is its point: the remaining residual is the
+measurement. The run history and the result page therefore label a finished
+diagnose run **diagnosed** on a neutral badge rather than as a failed power
+flow, with the raw status in the badge's tooltip, and the result page states
+in one line why the numbers below it show one iteration and a non-zero
+mismatch. A diagnose run that could not run at all keeps the failure
+vocabulary.
+
 ### Short circuit action
 
 The **Short circuit** button next to Diagnose evaluates the balanced
@@ -661,6 +675,14 @@ The **Non-convergence handling** block under Advanced options exposes
 `power_flow.rescue` (retry ladder for failed AC solves) and
 `power_flow.dc.fallback` (standalone DC result when AC has no solution) —
 see [Power-Flow Configuration](powerflow_configuration.md).
+
+The **Q-limit handling** block holds both controls that decide the behavior:
+the checkbox for `power_flow.qlimits.enabled` and the enforcement-mode
+selector. They belong together because a mode chosen while the handling is
+switched off has no effect while still reading like a setting. The selector
+therefore also offers **off**, which switches the handling off, and it shows
+`off` whenever the handling is off, so the form cannot state a mode the run
+will not use.
 
 The **Export detailed result CSV files** checkbox is off by default because
 large networks can produce large files. When enabled for a successful run, it
@@ -812,6 +834,28 @@ status text, status badge, solver summary fields, and actions. Green, yellow,
 red, gray, and blue badges distinguish successful, warning/partial, failed,
 unknown, and running states while retaining visible text for accessibility.
 Older indexes without timestamps use the `result.json` modification time.
+
+### Comparing two runs
+
+Two runs of the same case under different settings are the usual way to look at
+a Q-limit enforcement mode, a solver choice or a start strategy. Tick the
+**Compare** box on two rows and press **Compare selected runs**; the page at
+`/powerflow/compare` puts them next to each other:
+
+- case file, status, converged flag, iterations and final mismatch side by side,
+  with a link to each result page;
+- the configuration keys the two runs actually disagree on, read from the
+  `effective_config.yaml` each run wrote (the `_config_sources` bookkeeping is
+  left out, so one difference is listed once);
+- the buses each run clamped, from `q_limit_events.csv`, and which buses only
+  one of the two clamped;
+- the largest voltage deviation and the ten buses that differ most, when both
+  runs wrote `bus_voltages_complex.csv` (that file needs the detailed result
+  CSV export).
+
+Everything shown comes from what the runs themselves wrote, so runs from an
+earlier session compare as well as fresh ones. Exactly two runs are required;
+anything else answers with a message rather than a half-filled page.
 
 Each registered run has a **Delete** action, and **Delete all runs** removes all
 safely registered runs for the current configured root. These actions update

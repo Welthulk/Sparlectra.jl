@@ -603,7 +603,7 @@
     },
     "meta": {
       "case_name": "sp_case5",
-      "created_by": "Sparlectra 0.10.0",
+      "created_by": "Sparlectra 0.11.0",
       "f_nom": 50.0,
       "intended_calculations": ["power_flow", "state_estimation", "short_circuit", "contingency", "scenarios"],
       "notes": "Self-built Sparlectra demo network; the bus count in the name does not make it the IEEE case of that size, and no data was taken from MATPOWER, DTF or any other source.",

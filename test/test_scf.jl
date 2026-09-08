@@ -22,6 +22,9 @@
 # the shared capture helper needs both stdlibs when this file runs standalone
 using Logging
 
+# the fixture comparison lives with the demo-case tests, so both use one rule
+include("test_scf_support.jl")
+
 # warmup_casePST.m is TRACKED and lives in the checkout; anything else has to
 # come from SPARLECTRA_LARGE_CASES_DIR, so a caller passing another name gates
 # on large_case_path first
@@ -55,6 +58,7 @@ const _SCF_RT_ALLOWED = Dict{Symbol,Dict{Symbol,String}}(
     :_locked => "construction state",
     :_rectangular_pf_status => "a run result",
     :_dc_pf_status => "a run result",
+    :_import_config => "the configuration the net was imported with; session state, like the two status fields above, and not part of the model",
     :busOriginalNameDict => "source-format naming aid; the reference names are compared directly",
     :busOrigIdxDict => "source-format index aid; the bus order is compared directly",
     :cgmes_ids => "CGMES mRIDs travel in `external_id` and are compared through the names",
@@ -503,7 +507,14 @@ function run_scf_tests()
       d = mktempdir()
       pristine = importSCF(fixture)
       again = exportSCF(pristine; file = joinpath(d, "again.scf.json"), case_name = "warmup_casePST", source_format = "matpower", source_reference = "warmup_casePST.m", intended_calculations = String["power_flow", "state_estimation"], include_start_state = true, notes = root["sparlectra"]["meta"]["notes"])
-      @test read(again, String) == read(fixture, String)
+      # This is the PERMANENT v1 format fixture: it keeps the version stamp of
+      # the release that wrote it, on purpose, so a re-export cannot match it
+      # byte for byte across a release. A plain equality broke on the
+      # 0.10.0 -> 0.11.0 bump for exactly that reason, with nothing wrong in
+      # the round trip (see test_scf_support.jl).
+      verdict = scf_matches_fixture(again, fixture)
+      @test verdict.stamp_is_current
+      @test verdict.rest_identical
     end
 
     @testset "reader validation: unknown keys and broken references" begin

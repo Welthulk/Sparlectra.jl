@@ -55,6 +55,25 @@ function _webui_split_target(target::AbstractString)
   return parts[1], length(parts) == 2 ? _webui_parse_pairs(parts[2]) : Dict{String,String}()
 end
 
+"""
+    _webui_query_values(target, key) -> Vector{String}
+
+Every value a repeated query key carries, in order. `_webui_parse_pairs` keeps
+only the last one because it returns a `Dict`; a set of checkboxes with one
+name (the run comparison) needs them all.
+"""
+function _webui_query_values(target::AbstractString, key::AbstractString)::Vector{String}
+  parts = split(String(target), '?'; limit = 2)
+  length(parts) == 2 || return String[]
+  out = String[]
+  for pair in split(parts[2], '&')
+    kv = split(pair, '='; limit = 2)
+    _webui_urldecode(kv[1]) == key || continue
+    push!(out, length(kv) == 2 ? _webui_urldecode(kv[2]) : "")
+  end
+  return out
+end
+
 function _powerflow_config_notice(config_file::AbstractString)
   isempty(strip(config_file)) && return nothing
   isfile(config_file) || return nothing
@@ -329,6 +348,13 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
   elseif verb == "GET" && path == "/powerflow/history"
     _webui_log_route!(log_root, "history_opened", verb, path; status = "opened")
     return handle_powerflow_history(output_root)
+  elseif verb == "GET" && path == "/powerflow/compare"
+    # the checkboxes of the history table all carry the name "run", so the
+    # values have to be read from the raw query, not from the pair dictionary
+    selected = _webui_query_values(target, "run")
+    response = handle_powerflow_compare(selected)
+    _webui_log_route!(log_root, "runs_compared", verb, path; status = response.status, run_id = join(selected, ","))
+    return response
   elseif verb == "POST" && path == "/powerflow/refresh"
     handle_powerflow_refresh(output_root)
     _webui_log_route!(log_root, "history_refreshed", verb, path; status = "succeeded")

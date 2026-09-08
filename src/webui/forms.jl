@@ -781,7 +781,9 @@ function _webui_case_form_defaults(casefile::AbstractString, case_directory)::Di
   raw_format = get(block, "case_format", nothing)
   if raw_format !== nothing
     fmt = lowercase(strip(String(raw_format)))
-    fmt in ("auto", "matpower", "dtf_for001", "cgmes") && (values["case_format"] = fmt)
+    # scf and pgm name the same reader; both are accepted so the choice
+    # made in the form survives the save (see _normalize_case_format)
+    fmt in ("auto", "matpower", "dtf_for001", "cgmes", "scf", "pgm") && (values["case_format"] = fmt)
   end
   return values
 end
@@ -1115,6 +1117,15 @@ function powerflow_webui_request(form::AbstractDict; default_output_root::Abstra
       # clearing any numeric field would fail the run with a parse error.
       raw isa AbstractString && isempty(strip(raw)) && continue
       overrides[config_key] = _webui_parse_form_value(raw, type, field)
+    end
+    # "off" in the enforcement-mode control means "no Q-limit handling". The
+    # control pair (checkbox + mode) reads as one setting, and a mode picked
+    # while the handling is off does nothing while looking like it does
+    # (reported from a live session 2026-09-08).
+    mode_key = "power_flow.qlimits.enforcement_mode"
+    if haskey(overrides, mode_key) && lowercase(strip(String(overrides[mode_key]))) == "off"
+      delete!(overrides, mode_key)
+      overrides["power_flow.qlimits.enabled"] = false
     end
   end
   # The tolerance is ONE value with a unit, not two competing fields: the
