@@ -25,6 +25,7 @@ const CHANGELOG_FILE = joinpath(REPO_ROOT, "docs", "src", "changelog.md")
 const PROJECT_TOML_FILE = joinpath(REPO_ROOT, "Project.toml")
 const TITLE_FILE = joinpath(REPO_ROOT, "release_issue_title.txt")
 const BODY_FILE = joinpath(REPO_ROOT, "release_issue_body.txt")
+const BREAKING_FILE = joinpath(REPO_ROOT, "release_issue_breaking.txt")
 
 struct ChangelogEntry
   version::VersionNumber
@@ -78,8 +79,51 @@ function isSequentialSuccessor(latest::VersionNumber, next::VersionNumber)::Bool
   return next == VersionNumber(latest.major, latest.minor, latest.patch + 1) || next == VersionNumber(latest.major, latest.minor + 1, 0) || next == VersionNumber(latest.major + 1, 0, 0)
 end
 
-function checkSequentialVersion(next::VersionNumber)
-  latest = latestRegisteredVersion()
+# Julia's pre-1.0 convention, which RegistryCI shares: below 1.0 the MINOR
+# bump is the breaking one (0.9.19 -> 0.10.0), from 1.0 on it is the major
+# bump. AutoMerge labels such a registration BREAKING and refuses to merge it
+# unless the release notes mention "breaking" or "changelog":
+# https://juliaregistries.github.io/RegistryCI.jl/stable/guidelines/
+# 0.10.0 was blocked by exactly this on 2026-09-07 and had to be re-triggered
+# by hand.
+function isBreakingBump(previous::VersionNumber, next::VersionNumber)::Bool
+  next.major > previous.major && return true
+  return previous.major == 0 && next.major == 0 && next.minor > previous.minor
+end
+
+mentionsBreakingOrChangelog(text::AbstractString)::Bool = occursin(r"breaking|changelog"i, text)
+
+# Offline stand-in for the registry lookup: TagBot creates a vX.Y.Z tag after
+# every merged registration, so the highest tag tracks the registry closely
+# enough to decide whether this bump is breaking.
+function highestTaggedVersion(tags)::Union{VersionNumber,Nothing}
+  versions = VersionNumber[]
+  for tag in tags
+    m = match(r"^v([0-9]+\.[0-9]+\.[0-9]+)$", tag)
+    isnothing(m) || push!(versions, VersionNumber(m.captures[1]))
+  end
+  return isempty(versions) ? nothing : maximum(versions)
+end
+
+# The notes AutoMerge sees. A breaking registration whose changelog section
+# happens to use neither word gets an explicit section appended; one that
+# already says "breaking" or points at the changelog is left alone, so the
+# maintainer's own wording always wins.
+function releaseNotesFor(entry, previous::Union{VersionNumber,Nothing})::AbstractString
+  notes = entry.body
+  isnothing(previous) && return notes
+  isBreakingBump(previous, entry.version) || return notes
+  mentionsBreakingOrChangelog(notes) && return notes
+  return notes * """
+
+
+  ## Breaking changes
+
+  Version $(entry.version) follows $(previous), and below 1.0 the minor bump is the breaking one, so this release is breaking. What changed is listed above and in the changelog (`docs/src/changelog.md`).
+  """
+end
+
+function checkSequentialVersion(next::VersionNumber, latest::Union{VersionNumber,Nothing})
   isnothing(latest) && return
   if next <= latest
     error("Version $next is not newer than the latest registered version $latest.")
@@ -103,7 +147,18 @@ function main()
     error("Unreleased changelog version ($(entry.version)) does not match Project.toml ($projectVersion). " * "Align docs/src/changelog.md and Project.toml before requesting registration.")
   end
 
-  checkSequentialVersion(entry.version)
+  # One registry lookup per run, used for both the sequential-version check
+  # and the breaking decision; the local tags stand in when it fails.
+  previous = latestRegisteredVersion()
+  isnothing(previous) && (previous = highestTaggedVersion(tags))
+  checkSequentialVersion(entry.version, previous)
+
+  breaking = !isnothing(previous) && isBreakingBump(previous, entry.version)
+  if isnothing(previous)
+    println("::warning::Neither the registry nor a vX.Y.Z tag gave a previous version; the release notes carry no breaking notice. If this bump IS breaking, AutoMerge will block the registry PR until you re-trigger with notes that mention \"breaking\".")
+  elseif breaking
+    println("::notice::Breaking bump $previous -> $(entry.version): the release notes state it, which is what AutoMerge requires.")
+  end
 
   title = "JuliaRegistrator register v$(entry.version)"
   body = """
@@ -114,13 +169,19 @@ function main()
   ## Version $(entry.version)
   Released $(entry.date)
 
-  $(entry.body)
+  $(releaseNotesFor(entry, previous))
   """
 
   write(TITLE_FILE, title)
   write(BODY_FILE, body)
+  write(BREAKING_FILE, breaking ? "true" : "false")
 
   println("Prepared registration issue for v$(entry.version): \"$title\"")
 end
 
-main()
+# Base.invokelatest: Julia 1.12 warns when a script entry point is called from
+# a world older than its definition. The guard also lets a test include this
+# file to exercise the helpers without creating an issue.
+if abspath(PROGRAM_FILE) == @__FILE__
+  Base.invokelatest(main)
+end

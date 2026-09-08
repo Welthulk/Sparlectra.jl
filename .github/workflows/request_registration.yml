@@ -56,8 +56,15 @@ jobs:
               body,
             });
             core.notice(`Created registration issue #${issue.data.number}: ${issue.data.html_url}`);
+            // Ein brechender Sprung (unter 1.0 der Minor-Sprung, 0.9.19 -> 0.10.0)
+            // wird von AutoMerge nur gemergt, wenn die Release Notes das Wort
+            // "breaking" oder "changelog" enthalten. Der Generator sorgt dafuer;
+            // die Zusammenfassung sagt, ob dieser Lauf betroffen war.
+            const breaking = fs.readFileSync('release_issue_breaking.txt', 'utf8').trim() === 'true';
             await core.summary
               .addHeading(title)
               .addLink(`Registrierungs-Issue #${issue.data.number}`, issue.data.html_url)
               .addRaw(`\n\nRegistriert wird der Stand von main: \`${context.sha}\``)
+              .addRaw(`\n\nBrechender Sprung: ${breaking ? 'JA, die Release Notes benennen es (AutoMerge verlangt das)' : 'nein'}`)
+              .addRaw('\n\nBeim Nachtriggern den GANZEN Block erneut posten, samt Abschnitt "Release notes:". JuliaRegistrator liest ausschliesslich den Kommentar, der ihn ausloest; ein Kommentar mit nur der Trigger-Zeile loescht die Notes aus der Registry-PR (passiert bei 0.10.0 am 2026-09-07).')
               .write();
