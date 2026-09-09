@@ -1267,6 +1267,81 @@ function run_webui_fast_tests()
         @test occursin("<th>Compare</th>", body)
       end
 
+      # Maintainer 2026-09-09: the box should appear only where the two runs
+      # are comparable, and NOT decided by network size, because the same
+      # case with an external-grid source and with a slack is a pair one
+      # wants side by side. The criterion is the run kind: the page reads
+      # power-flow artifacts, so only power-flow kinds qualify.
+      @testset "only finished power-flow runs offer the box" begin
+        @test Sparlectra._webui_comparable_kind("")
+        @test Sparlectra._webui_comparable_kind("powerflow")
+        @test Sparlectra._webui_comparable_kind("diagnose")
+        @test Sparlectra._webui_comparable_kind("powerflow_se_start")
+        for kind in ("se", "short_circuit", "contingency", "import_analysis")
+          @test !Sparlectra._webui_comparable_kind(kind)
+        end
+
+        pf = Dict{String,Any}("run_id" => "pf-1", "available" => true, "status" => "succeeded", "run_mode" => "",
+          "timestamp" => "2026-09-09 01:00:00", "casefile" => "/very/long/path/to/cases/case118.m", "config_file" => "/etc/sparlectra/configuration.yaml")
+        se = merge(pf, Dict{String,Any}("run_id" => "se-1", "run_mode" => "se"))
+        running = merge(pf, Dict{String,Any}("run_id" => "pf-2", "status" => "running"))
+        gone = merge(pf, Dict{String,Any}("run_id" => "pf-3", "available" => false))
+        @test Sparlectra._webui_run_comparable(pf)
+        @test !Sparlectra._webui_run_comparable(se)
+        @test !Sparlectra._webui_run_comparable(running)
+        @test !Sparlectra._webui_run_comparable(gone)
+
+        html = Sparlectra.render_powerflow_history([pf, se], mktempdir())
+        @test occursin("name=\"run\" value=\"pf-1\"", html)
+        @test !occursin("name=\"run\" value=\"se-1\"", html)
+        # the paths no longer fit the row: name in the cell, path in the tooltip
+        @test occursin("<td title=\"/very/long/path/to/cases/case118.m\">case118.m</td>", html)
+        @test occursin("<td title=\"/etc/sparlectra/configuration.yaml\">configuration.yaml</td>", html)
+        @test !occursin("<td>/very/long/path/to/cases/case118.m</td>", html)
+      end
+
+      # The result page names the case and the phase up top, where a reader
+      # looks first; the rows that carried the path twice and the
+      # final_outcome row that said nothing are gone (maintainer 2026-09-09).
+      @testset "result page: case and phase up top, path rows gone" begin
+        probe = Dict{String,Any}("run_id" => "r-1", "status" => "succeeded", "success" => true, "converged" => true,
+          "casefile" => "/some/where/sp_case14.scf.json", "resolved_casefile" => "/some/where/sp_case14.scf.json",
+          "current_phase" => "finished", "final_outcome" => Dict{String,Any}("solver" => "rectangular"), "artifacts" => Any[])
+        html = Sparlectra.render_powerflow_result(probe)
+        @test occursin("<span class=\"summary-label\">Case</span><code title=\"/some/where/sp_case14.scf.json\">sp_case14.scf.json</code>", html)
+        @test occursin("<span class=\"summary-label\">Phase</span><code>finished</code>", html)
+        for gone in ("<th>casefile</th>", "<th>resolved_casefile</th>", "<th>current_phase</th>", "<th>final_outcome</th>")
+          @test !occursin(gone, html)
+        end
+        # an active run carries the same two cards
+        active = merge(probe, Dict{String,Any}("status" => "running", "current_phase" => "linear_solve"))
+        active_html = Sparlectra.render_powerflow_result(active)
+        @test occursin("<span class=\"summary-label\">Phase</span><code>linear_solve</code>", active_html)
+        @test occursin(">sp_case14.scf.json</code>", active_html)
+      end
+
+      # A native file input speaks the BROWSER's language ("Durchsuchen",
+      # "Keine Datei ausgewählt" on a German browser) on an English page
+      # (maintainer 2026-09-09). The input stays in the form, off screen; a
+      # label is the button and a span names the selection.
+      @testset "file pickers speak the page's language" begin
+        one = Sparlectra._webui_file_input("weights_file"; accept = ".csv", required = true)
+        many = Sparlectra._webui_file_input("casefiles"; accept = ".m,.zip", multiple = true)
+        alias = Sparlectra._webui_file_input("casefiles"; accept = ".csv", id = "measurements")
+        @test occursin("type=\"file\" name=\"weights_file\" accept=\".csv\" required>", one)
+        @test occursin("<label for=\"file-field-weights_file\" class=\"button secondary-button file-field-button\">Choose file</label>", one)
+        @test occursin("No file selected", one)
+        @test occursin("multiple>", many)
+        @test occursin(">Choose files</label>", many)
+        # two pickers with one field name on one page need distinct ids
+        @test occursin("id=\"file-field-measurements\"", alias)
+        @test occursin("name=\"casefiles\"", alias)
+        # the script that keeps the span current is part of every page
+        page = Sparlectra._webui_layout("t", "<p>x</p>")
+        @test occursin("data-file-field-input", page)
+        @test occursin("'No file selected'", page)
+      end
+
       @testset "the route insists on exactly two runs" begin
         root = Sparlectra.default_webui_output_root()
         for target in ("/powerflow/compare", "/powerflow/compare?run=only-one")

@@ -1171,3 +1171,39 @@ nav {
   border-radius: 6px;
   font-size: 0.85rem;
 }
+
+/* File pickers: the native control speaks the browser's language
+   ("Durchsuchen", "Keine Datei ausgewählt" on a German browser) while the
+   page is English. The input stays in the form but off screen; the label
+   is the visible button and the span names the selection (2026-09-09). */
+.file-field {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .55rem;
+}
+
+.file-field-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.file-field-button {
+  display: inline-block;
+  cursor: pointer;
+}
+
+.file-field-input:focus-visible + .file-field-button {
+  outline: 2px solid #1768d4;
+  outline-offset: 2px;
+}
+
+.file-field-name {
+  color: #60708a;
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
