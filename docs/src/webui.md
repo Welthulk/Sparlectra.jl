@@ -849,13 +849,27 @@ a Q-limit enforcement mode, a solver choice or a start strategy. Tick the
   left out, so one difference is listed once);
 - the buses each run clamped, from `q_limit_events.csv`, and which buses only
   one of the two clamped;
-- the largest voltage deviation and the ten buses that differ most, when both
-  runs wrote `bus_voltages_complex.csv` (that file needs the detailed result
-  CSV export).
+- total active and reactive losses, summed from the `branch_flows.csv` each
+  run wrote, with their difference;
+- the largest voltage deviation and the ten buses that differ most, by bus
+  index and name, when both runs wrote `bus_voltages_complex.csv` (both files
+  need the detailed result CSV export).
 
 Everything shown comes from what the runs themselves wrote, so runs from an
 earlier session compare as well as fresh ones. Exactly two runs are required;
 anything else answers with a message rather than a half-filled page.
+
+The **Compare** box is offered only on rows the page could read: finished
+power-flow runs (plain, diagnose, or started from a state estimate) whose
+result is still on disk. A state estimation, short circuit, N-1 or import
+analysis run gets no box, because the comparison reads power-flow artifacts and
+would have nothing to show. Network size is deliberately not a criterion: the
+same case modelled with an external-grid source and with a slack is exactly the
+pair one wants side by side, and the page says so when the two runs share no
+bus.
+
+The **Case file** and **Config file** columns show the file name; the full path
+is in the cell's tooltip.
 
 Each registered run has a **Delete** action, and **Delete all runs** removes all
 safely registered runs for the current configured root. These actions update

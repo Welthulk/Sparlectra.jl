@@ -1563,6 +1563,12 @@ function handle_powerflow_compare(run_ids::Vector{String})::SparlectraWebUIRespo
   b = get_webui_powerflow_job(ids[2])
   for (id, entry) in zip(ids, (a, b))
     get(entry, "reason", "") == "run_not_found" && return _webui_html(render_webui_error(404, "Run $(id) was not found."); status = 404)
+    # the page reads power-flow artifacts; another kind has nothing it would
+    # show, and a half-empty comparison reads like a finding
+    metadata = get(entry, "metadata", Dict{String,Any}())
+    kind = metadata isa AbstractDict ? string(get(metadata, "run_mode", "")) : ""
+    _webui_comparable_kind(kind) || return _webui_html(render_webui_error(400,
+      "Run $(id) is a $(kind) run. The comparison reads power-flow results (configuration, Q-limit events, losses, bus voltages), so both runs have to be power-flow runs."); status = 400)
   end
   return _webui_html(render_powerflow_compare(a, b))
 end

@@ -1,3 +1,7 @@
+# Version 0.11.1 - 2026-09-10
+
+- **Fix.** Cosmetic changes in the Web UI: file pickers speak the page's language, run history and result pages name the case instead of its path, and only power-flow runs offer the comparison checkbox.
+
 # Version 0.11.0 - 2026-09-10
 
 Two runs side by side, and a configuration trap in the solver call.

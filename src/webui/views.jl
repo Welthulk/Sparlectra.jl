@@ -150,6 +150,64 @@ const _WEBUI_BUSY_FORM_SCRIPT = """<script>
 })();
 </script>"""
 
+# A native <input type="file"> renders its button and its "no file selected"
+# text in the BROWSER's language, so on a German browser an otherwise English
+# page said "Durchsuchen" and "Keine Datei ausgewählt" (maintainer, reported
+# 2026-09-09). The native input stays in the form (it is what carries the
+# bytes and the `required` check) but is moved off screen; a label styled as
+# a button opens it, and a span next to it names what was picked. The span is
+# kept current by the script below, wired into the layout, so any page can
+# use `_webui_file_input` without further work.
+const _WEBUI_FILE_FIELD_SCRIPT = """<script>
+(function () {
+  var describe = function (input) {
+    var field = input.closest('[data-file-field]');
+    if (field === null) return;
+    var name = field.querySelector('[data-file-field-name]');
+    if (name === null) return;
+    var files = input.files;
+    if (!files || files.length === 0) {
+      name.textContent = 'No file selected';
+    } else if (files.length === 1) {
+      name.textContent = files[0].name;
+    } else {
+      name.textContent = files.length + ' files selected';
+    }
+  };
+  document.addEventListener('change', function (event) {
+    var target = event.target;
+    if (target && target.matches && target.matches('input[type=file][data-file-field-input]')) describe(target);
+  });
+  // bfcache restores the input's selection but not our text
+  window.addEventListener('pageshow', function () {
+    document.querySelectorAll('input[type=file][data-file-field-input]').forEach(describe);
+  });
+})();
+</script>"""
+
+"""
+    _webui_file_input(name; accept, multiple, required, id) -> String
+
+A file picker whose button and status text are in the page's language rather
+than the browser's. `id` defaults to `name`; pass one when a page carries two
+pickers with the same field name.
+"""
+function _webui_file_input(name::AbstractString; accept::AbstractString = "", multiple::Bool = false, required::Bool = false, id::AbstractString = name)::String
+  input_id = "file-field-$(id)"
+  attrs = string(
+    isempty(accept) ? "" : " accept=\"$(_webui_escape(accept))\"",
+    multiple ? " multiple" : "",
+    required ? " required" : "",
+  )
+  return string(
+    "<span class=\"file-field\" data-file-field>",
+    "<input id=\"$(input_id)\" class=\"file-field-input\" data-file-field-input type=\"file\" name=\"$(_webui_escape(name))\"$(attrs)>",
+    "<label for=\"$(input_id)\" class=\"button secondary-button file-field-button\">$(multiple ? "Choose files" : "Choose file")</label>",
+    "<span class=\"file-field-name\" data-file-field-name>No file selected</span>",
+    "</span>",
+  )
+end
+
 """Render a file-path dropdown while showing only each file's basename."""
 
 const WEBUI_STATUS_AUTO_REFRESH_SECONDS = 2
@@ -321,7 +379,7 @@ $(latency_banner)<main class="$(main_class)"$(refresh_attrs)>$(back_button)<h1>$
   };
   scheduleAutoRefresh();
 })();
-</script>$(_WEBUI_BUSY_FORM_SCRIPT)</body></html>"""
+</script>$(_WEBUI_BUSY_FORM_SCRIPT)$(_WEBUI_FILE_FIELD_SCRIPT)</body></html>"""
 end
 
 function _webui_powerflow_info_menu(; output_root::AbstractString, config_file::AbstractString, case_directory::AbstractString, operation_log::AbstractString)::String
@@ -1035,7 +1093,7 @@ function render_case_page(;
   info_menu = _webui_powerflow_info_menu(; output_root, config_file = config_default, case_directory = effective_case_directory, operation_log)
   import_form = """
 <form id=\"case-import-form\" method=\"post\" action=\"/powerflow/import-cases\" enctype=\"multipart/form-data\" class=\"panel form-grid case-import-form\">
-<label class=\"span-2\">$(_webui_field_label("casefiles", "Import case files"))<input type=\"file\" name=\"casefiles\" accept=\".m,.M,.dat,.DAT,.zip,.ZIP,.json\" multiple></label>
+<label class=\"span-2\">$(_webui_field_label("casefiles", "Import case files"))$(_webui_file_input("casefiles"; accept = ".m,.M,.dat,.DAT,.zip,.ZIP,.json", multiple = true))</label>
 <div class=\"actions span-2\"><button class=\"secondary-button\" type=\"submit\">Import case files</button></div>
 </form>
 """
@@ -1649,13 +1707,10 @@ const _WEBUI_RESULT_FIELDS = (
   "Q-limit active-set events",
   "Classical Q-limit outer-loop passes",
   "Runtime casefile",
-  "casefile",
-  "resolved_casefile",
   "config_file",
   "started_at",
   "elapsed_seconds",
   "output_dir",
-  "current_phase",
   "phase_started_at",
   "last_progress_at",
   "abort_requested_at",
@@ -1666,7 +1721,6 @@ const _WEBUI_RESULT_FIELDS = (
   "run_status",
   "last_phase",
   "last_heartbeat",
-  "final_outcome",
 )
 
 const _WEBUI_IMPORTANT_RESULT_FIELDS = Set(("converged", "numerical_converged", "solution_available", "iterations", "final_mismatch", "reason"))
@@ -1858,7 +1912,7 @@ function _webui_weights_editor_fragment(; case::AbstractString, elements::Abstra
   msg_html = isempty(message) ? "" : "<p class=\"notice\">$(esc(message))</p>"
   cesc = esc(case)
   cenc = _webui_urlencode(case)
-  upload = "<section class=\"panel\"><h2>Upload / download</h2><form method=\"post\" action=\"/powerflow/contingency-weights/upload\" enctype=\"multipart/form-data\"><input type=\"hidden\" name=\"casefile\" value=\"$(cesc)\"><input type=\"file\" name=\"weights_file\" accept=\".csv\" required> <button type=\"submit\">Upload (replaces existing)</button></form><p><a href=\"/powerflow/contingency-weights/download?case=$(cenc)\">download current file</a></p><form method=\"post\" action=\"/powerflow/contingency-weights/reset\"><input type=\"hidden\" name=\"casefile\" value=\"$(cesc)\"><button type=\"submit\">reset (delete the weight file)</button></form></section>"
+  upload = "<section class=\"panel\"><h2>Upload / download</h2><form method=\"post\" action=\"/powerflow/contingency-weights/upload\" enctype=\"multipart/form-data\"><input type=\"hidden\" name=\"casefile\" value=\"$(cesc)\">$(_webui_file_input("weights_file"; accept = ".csv", required = true)) <button type=\"submit\">Upload (replaces existing)</button></form><p><a href=\"/powerflow/contingency-weights/download?case=$(cenc)\">download current file</a></p><form method=\"post\" action=\"/powerflow/contingency-weights/reset\"><input type=\"hidden\" name=\"casefile\" value=\"$(cesc)\"><button type=\"submit\">reset (delete the weight file)</button></form></section>"
   table_html = if !isempty(net_error)
     "<section class=\"panel\"><h2>Weights table</h2><p class=\"notice\">Element names could not be listed for this case ($(esc(net_error))). Edit the raw CSV below or upload a file.</p></section>"
   else
@@ -2106,10 +2160,27 @@ function render_powerflow_result(result::AbstractDict)::String
   stored_solver = final_outcome_value isa AbstractDict ? String(get(final_outcome_value, "solver", "")) : ""
   meta_for_mode = get(result, "metadata", Dict{String,Any}())
   solver_name = _webui_run_method(meta_for_mode isa AbstractDict ? meta_for_mode : Dict{String,Any}(), stored_solver)
+  # The case by name and the phase, up top where a reader looks first. The
+  # `casefile`/`resolved_casefile` rows below carried the same path twice and
+  # broke the layout; `final_outcome` said nothing a reader could use
+  # (maintainer 2026-09-09). The path survives in the tooltip.
+  # A live job snapshot carries `nothing` for what the run has not produced
+  # yet, and `string(nothing)` is the word "nothing": the card said so during
+  # every run and named the case only at the end (maintainer 2026-09-10).
+  # First non-empty of the resolved path and the requested one; the requested
+  # one is known from the first second.
+  text = value -> (value === nothing || value === missing) ? "" : String(strip(string(value)))
+  case_path = text(get(result, "resolved_casefile", nothing))
+  isempty(case_path) && (case_path = text(get(result, "casefile", nothing)))
+  case_card = ("Case", "<code title=\"$(_webui_escape(case_path))\">$(_webui_escape(isempty(case_path) ? "n/a" : basename(case_path)))</code>")
+  phase = text(get(result, "current_phase", nothing))
+  isempty(phase) && (phase = text(get(result, "last_phase", nothing)))
+  isempty(phase) && (phase = "n/a")
+  phase_card = ("Phase", "<code>$(_webui_escape(phase))</code>")
   summary_rows = if active
-    (("Run status", status_badge), ("Elapsed time", "<strong>$(_webui_escape(_format_elapsed_duration(_webui_elapsed_seconds(result, active))))</strong>"))
+    (("Run status", status_badge), case_card, phase_card, ("Elapsed time", "<strong>$(_webui_escape(_format_elapsed_duration(_webui_elapsed_seconds(result, active))))</strong>"))
   else
-    base = [("Run status", status_badge), ("Solver", "<code>$(_webui_escape(solver_name))</code>")]
+    base = [("Run status", status_badge), case_card, phase_card, ("Solver", "<code>$(_webui_escape(solver_name))</code>")]
     solver_name == "dc" && push!(base, ("Model", "<span class=\"status-badge status-info\">DC solution</span>"))
     solver_elapsed = _webui_solver_elapsed_seconds(result)
     solver_elapsed === nothing || push!(base, ("Solver time", "<strong>$(_webui_escape(_format_elapsed_duration(solver_elapsed)))</strong>"))
@@ -2333,6 +2404,26 @@ function _webui_run_timestamp(run::AbstractDict)::String
   return isempty(strip(string(timestamp))) ? "Unknown" : string(timestamp)
 end
 
+"""
+    _webui_comparable_kind(kind) -> Bool
+
+Whether a run of this kind can go into the side-by-side comparison. The page
+reads power-flow artifacts (effective configuration, Q-limit events, branch
+flows, bus voltages), so a plain power flow, a diagnose probe and a power flow
+started from a state estimate qualify; a state estimation, short circuit, N-1
+or import analysis has nothing the page would read. Deliberately NOT decided
+by network size: the same case modelled with an external-grid source and with
+a slack is exactly the pair one wants side by side (maintainer 2026-09-09).
+"""
+_webui_comparable_kind(kind::AbstractString)::Bool = lowercase(strip(kind)) in ("", "powerflow", "diagnose", "powerflow_se_start")
+
+"A history row that may be ticked for comparison: comparable kind, finished, and its result still on disk."
+function _webui_run_comparable(run::AbstractDict)::Bool
+  get(run, "available", false) == true || return false
+  _webui_comparable_kind(string(get(run, "run_mode", ""))) || return false
+  return !(lowercase(string(get(run, "status", ""))) in _WEBUI_ACTIVE_RUN_STATUSES)
+end
+
 function render_powerflow_history(runs, output_root::AbstractString; active_run = nothing)::String
   ordered_runs = sort!(collect(runs); by = run -> _webui_run_timestamp(run), rev = true)
   rows = join((begin
@@ -2340,8 +2431,9 @@ function render_powerflow_history(runs, output_root::AbstractString; active_run 
     available = get(run, "available", false)
     # Two runs of the same case under different settings are the normal way to
     # look at a Q-limit mode or a solver choice; the history could list them
-    # but not put them side by side. The checkbox feeds /powerflow/compare.
-    pick = available ? "<td><input type=\"checkbox\" name=\"run\" value=\"$(_webui_escape(run_id))\" aria-label=\"Select run $(_webui_escape(run_id)) for comparison\"></td>" : "<td></td>"
+    # but not put them side by side. The checkbox feeds /powerflow/compare and
+    # is offered only where the comparison has something to read.
+    pick = _webui_run_comparable(run) ? "<td><input type=\"checkbox\" name=\"run\" value=\"$(_webui_escape(run_id))\" aria-label=\"Select run $(_webui_escape(run_id)) for comparison\"></td>" : "<td></td>"
     link = available ? "<a href=\"/powerflow/result/$(_webui_urlencode(run_id))\">$(_webui_escape(run_id))</a>" : _webui_escape(run_id)
     status = _webui_is_completed_diagnose(run) ? "diagnosed" : string(get(run, "status", "unknown"))
     status_badge = _webui_status_badge(webui_status_class(run), status, string(get(run, "status", "")))
@@ -2351,8 +2443,12 @@ function render_powerflow_history(runs, output_root::AbstractString; active_run 
     # entries without the field fall back to
     kind = string(get(run, "run_mode", ""))
     kind_label = isempty(kind) ? "powerflow" : kind
-    fields = (_webui_run_timestamp(run), link, status_badge, kind_label, available, _webui_run_method(run, String(get(run, "solver", ""))), get(run, "iterations", ""), get(run, "final_mismatch", ""), get(run, "casefile", ""), get(run, "config_file", ""))
-    cells = "<td>$(_webui_escape(fields[1]))</td><td>$(fields[2])</td><td>$(fields[3])</td>" * join(("<td>$(_webui_escape(field))</td>" for field in fields[4:end]), "")
+    fields = (_webui_run_timestamp(run), link, status_badge, kind_label, available, _webui_run_method(run, String(get(run, "solver", ""))), get(run, "iterations", ""), get(run, "final_mismatch", ""))
+    # The two paths no longer fit the row. The name says which case and
+    # which configuration; the tooltip keeps the path for whoever needs it
+    # (maintainer 2026-09-09).
+    path_cell = path -> "<td title=\"$(_webui_escape(string(path)))\">$(_webui_escape(basename(string(path))))</td>"
+    cells = "<td>$(_webui_escape(fields[1]))</td><td>$(fields[2])</td><td>$(fields[3])</td>" * join(("<td>$(_webui_escape(field))</td>" for field in fields[4:end]), "") * path_cell(get(run, "casefile", "")) * path_cell(get(run, "config_file", ""))
     "<tr>$(pick)$(cells)<td>$(abort_form)$(delete_form)</td></tr>"
   end for run in ordered_runs), "")
   # The compare button submits the surrounding form; the handler is the place
@@ -3073,7 +3169,7 @@ function render_se_form(; cases::Vector{String} = String[], measurements::Vector
     "<form method=\"post\" action=\"/powerflow/import-cases\" enctype=\"multipart/form-data\">",
     "<input type=\"hidden\" name=\"return_to\" value=\"stateestimation\">",
     "<input type=\"hidden\" name=\"return_case\" value=\"$(esc(selected_case))\">",
-    "<label title=\"Upload a measurement CSV v1 (content-sniffed; lands in the case cache and appears in the set selector)\">Upload measurement file <input type=\"file\" name=\"casefiles\" accept=\".csv\"></label> ",
+    "<label title=\"Upload a measurement CSV v1 (content-sniffed; lands in the case cache and appears in the set selector)\">Upload measurement file $(_webui_file_input("casefiles"; accept = ".csv", id = "measurements"))</label> ",
     "<button type=\"submit\">Upload</button>",
     "</form>",
   )
