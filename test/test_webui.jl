@@ -1318,6 +1318,15 @@ function run_webui_fast_tests()
         active_html = Sparlectra.render_powerflow_result(active)
         @test occursin("<span class=\"summary-label\">Phase</span><code>linear_solve</code>", active_html)
         @test occursin(">sp_case14.scf.json</code>", active_html)
+        # A live snapshot carries `nothing` where the run has not produced
+        # the value yet; the card once printed that word for the whole run
+        # and named the case only at the end (maintainer 2026-09-10).
+        live = Dict{String,Any}("run_id" => "r-2", "status" => "running", "success" => false,
+          "casefile" => "/some/where/case14.m", "resolved_casefile" => nothing, "current_phase" => nothing, "last_phase" => nothing, "artifacts" => Any[])
+        live_html = Sparlectra.render_powerflow_result(live)
+        @test occursin("<span class=\"summary-label\">Case</span><code title=\"/some/where/case14.m\">case14.m</code>", live_html)
+        @test occursin("<span class=\"summary-label\">Phase</span><code>n/a</code>", live_html)
+        @test !occursin(">nothing<", live_html)
       end
 
       # A native file input speaks the BROWSER's language ("Durchsuchen",

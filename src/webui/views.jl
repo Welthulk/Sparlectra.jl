@@ -2164,11 +2164,18 @@ function render_powerflow_result(result::AbstractDict)::String
   # `casefile`/`resolved_casefile` rows below carried the same path twice and
   # broke the layout; `final_outcome` said nothing a reader could use
   # (maintainer 2026-09-09). The path survives in the tooltip.
-  case_path = string(get(result, "resolved_casefile", ""))
-  isempty(strip(case_path)) && (case_path = string(get(result, "casefile", "")))
-  case_card = ("Case", "<code title=\"$(_webui_escape(case_path))\">$(_webui_escape(isempty(strip(case_path)) ? "n/a" : basename(case_path)))</code>")
-  phase = string(get(result, "current_phase", ""))
-  isempty(strip(phase)) && (phase = string(get(result, "last_phase", "n/a")))
+  # A live job snapshot carries `nothing` for what the run has not produced
+  # yet, and `string(nothing)` is the word "nothing": the card said so during
+  # every run and named the case only at the end (maintainer 2026-09-10).
+  # First non-empty of the resolved path and the requested one; the requested
+  # one is known from the first second.
+  text = value -> (value === nothing || value === missing) ? "" : String(strip(string(value)))
+  case_path = text(get(result, "resolved_casefile", nothing))
+  isempty(case_path) && (case_path = text(get(result, "casefile", nothing)))
+  case_card = ("Case", "<code title=\"$(_webui_escape(case_path))\">$(_webui_escape(isempty(case_path) ? "n/a" : basename(case_path)))</code>")
+  phase = text(get(result, "current_phase", nothing))
+  isempty(phase) && (phase = text(get(result, "last_phase", nothing)))
+  isempty(phase) && (phase = "n/a")
   phase_card = ("Phase", "<code>$(_webui_escape(phase))</code>")
   summary_rows = if active
     (("Run status", status_badge), case_card, phase_card, ("Elapsed time", "<strong>$(_webui_escape(_format_elapsed_duration(_webui_elapsed_seconds(result, active))))</strong>"))
