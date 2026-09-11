@@ -101,3 +101,16 @@ version bump.
 
 `pgm_interop.json` is the plain power-grid-model interoperability probe
 used by the adapter detection tests.
+
+## sp_case14_qu
+
+`sp_case14` plus one synchronous machine at the load bus `Ilmrode_110` (a PQ
+bus) with a voltage-dependent Q(U) characteristic: three points in per unit
+(`[0.95, 0.30], [1.00, 0.00], [1.05, -0.20]`), natural cubic spline, band
++-20 MVAr. It demonstrates that the case file carries the characteristic
+(`extra.<machine>.qu_control`) and that the result names the machine as `Q(U)`
+in the `Control` column, with `Qg` following the curve (2.86 MVAr at 0.994 pu).
+Power flow only (no measurement rows); rectangular solver, 4 iterations. The
+apslf and dc solvers refuse it by name, as they refuse every network with
+voltage-dependent control. Built from `sp_case14` by a maintainer script that
+adds the machine and exports the file; rerunning it reproduces the file.

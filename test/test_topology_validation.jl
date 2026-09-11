@@ -139,10 +139,18 @@ function test_topology_stage2_fingerprint()::Bool
     diag = runse_diagnostics(net, meas; max_eliminations = 2, maxIte = 100, tol = 1e-8)
     @test diag.stop_reason == :max_eliminations
     @test diag.topology_findings !== nothing
-    f = first(something(diag.topology_findings, NamedTuple[]))
-    @test f.kind == :topology_error_suspected_at_station
-    @test occursin("H2", f.location) || occursin("L2", f.location)
-    @test f.severity == :strong
+    findings = something(diag.topology_findings, NamedTuple[])
+    @test all(f -> f.kind == :topology_error_suspected_at_station && f.severity == :strong, findings)
+    # The open transformer's terminals H2 and L2 are among the suspected
+    # stations. NOT "the first finding names them": the fingerprint ranks
+    # stations by suspect count, largest residual and label (a total order
+    # since 2026-09-11), and under that ranking the neighbouring station H1,
+    # which shares the strongest residual with H2 and carries more suspects,
+    # comes first. The old `first(...)` assertion passed on Julia 1.12 only
+    # through Dict iteration order and failed on 1.13.
+    @test any(f -> occursin("H2", f.location), findings)
+    @test any(f -> occursin("L2", f.location), findings)
+    f = first(findings)
 
     # control: a curable gross error NEVER produces a topology finding,
     # the ordinary elimination handles it (full-fingerprint requirement)

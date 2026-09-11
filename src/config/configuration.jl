@@ -1258,7 +1258,13 @@ function ApslfStartConfig(raw::AbstractDict)
 end
 
 function QLimitConfig(raw::AbstractDict)
-  qlimits_enabled = _raw_get(raw, "enabled", true)
+  # `enforcement_mode: off` means "no Q-limit handling", the same as
+  # `enabled: false`. The Web UI offers "off" in its mode control, and its
+  # settings pages up to 0.11.1 saved the word into configuration files,
+  # which this loader then rejected on every following run of that case.
+  mode_raw = _as_symbol_cfg(_raw_get(raw, "enforcement_mode", :active_set))
+  mode_off = mode_raw === :off
+  qlimits_enabled = mode_off ? false : _raw_get(raw, "enabled", true)
   guard_raw = _raw_get(raw, "guard", Dict{String,Any}())
   guard_enabled_default = guard_raw isa AbstractDict ? _as_bool_cfg(_raw_get(guard_raw, "enabled", false)) : _as_bool_cfg(guard_raw)
   guard_cfg = guard_raw isa AbstractDict ? guard_raw : Dict{String,Any}()
@@ -1290,8 +1296,8 @@ function QLimitConfig(raw::AbstractDict)
     guard_log = _as_bool_cfg(_raw_get(merged, "log", _raw_get(merged, "guard_log", _raw_get(merged, "qlimit_guard_log", true)))),
     trace_buses = _as_int_vector_cfg(_raw_get(merged, "trace_buses", _raw_get(merged, "qlimit_trace_buses", Int[]))),
     lock_pv_to_pq_buses = _as_int_vector_cfg(_raw_get(merged, "lock_pv_to_pq_buses", Int[])),
-    ignore_q_limits = _as_bool_cfg(_raw_get(raw, "ignore_q_limits", qlimits_enabled == false)),
-    enforcement_mode = _canonical_qlimit_enforcement_mode(_as_symbol_cfg(_raw_get(merged, "enforcement_mode", :active_set))),
+    ignore_q_limits = mode_off || _as_bool_cfg(_raw_get(raw, "ignore_q_limits", qlimits_enabled == false)),
+    enforcement_mode = mode_off ? :active_set : _canonical_qlimit_enforcement_mode(mode_raw),
   )
 end
 

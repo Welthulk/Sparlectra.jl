@@ -210,6 +210,28 @@ Notes:
   Sparlectra maps `Pmin/Pmax/Qmin/Qmax` to constant `P(U)`/`Q(U)` controllers
   (fixed characteristic with limits) and emits an import log message.
 
+## Where to configure
+
+Three places, with different reach:
+
+- **API**: `make_characteristic` plus `QUController`/`PUController` on
+  `addProsumer!`, as above. The only way to set the interpolation mode and the
+  points from code.
+- **Case file (SCF)**: `extra.<machine>.qu_control` / `pu_control` carry the
+  points in per unit, the interpolation mode and the limits in MVAr / MW, and
+  `exportSCF` writes them for every machine that has a controller. A network
+  with a characteristic survives the round trip through the file, and a file
+  written by hand is validated when it is read. See [SCF](scf.md).
+- **MATPOWER, CGMES**: MATPOWER import maps a PQ-bus generator's limits to
+  constant P(U)/Q(U) controllers (a fixed value with limits, no curve); CGMES
+  carries no Q(U) characteristic at all. The YAML configuration has no entry
+  either: a characteristic is network data, not a setting.
+
+Whatever the source, the slope the Jacobian uses is the analytic derivative of
+the interpolated curve (segment slope, spline derivative or polynomial
+derivative), not a difference quotient; outside the point range and at a
+limit it is zero.
+
 ## Solver support and limitation
 
 - Supported: the default rectangular solver path.

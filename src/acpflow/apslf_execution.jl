@@ -77,8 +77,10 @@ Q-limit-switching options do not apply and are ignored, since APSLF always
 starts from its own canonical analytic germ and performs its own internal
 PV/Q-limit handling.
 
-Callers must reject active outer-loop controllers (tap/PST/Q(U)/P(U)) before
-calling this function; it does not check for them itself.
+Callers must reject active controllers before calling this function; it does
+not check for them itself. That covers the outer-loop tap/PST controllers and
+the voltage-dependent Q(U)/P(U) controllers, which are not outer-loop: they
+act inside the rectangular Newton step and have no counterpart here.
 """
 function _run_apslf_powerflow!(net::Net, pf_cfg::PowerFlowConfig; verbose::Int = 0, performance_profile = nothing)::Tuple{Int,Int}
   solver = _apslf_solver_from_config(pf_cfg)

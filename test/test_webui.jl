@@ -1248,6 +1248,9 @@ function run_webui_fast_tests()
         body = String(response.body)
         # the tuple form names the offending page in the failure output
         @test (path, occursin("topbar-info-menu", body)) == (path, true)
+        # the box names the Julia the server runs on (maintainer 2026-09-11):
+        # with 1.12 and 1.13 both in use, a screenshot has to say which
+        @test occursin("<dt>Julia</dt><dd><code>$(VERSION)</code></dd>", body)
       end
       # error pages carry it as well: they are where a user looks for the
       # output root and the operation log in the first place
@@ -1327,6 +1330,14 @@ function run_webui_fast_tests()
         @test occursin("<span class=\"summary-label\">Case</span><code title=\"/some/where/case14.m\">case14.m</code>", live_html)
         @test occursin("<span class=\"summary-label\">Phase</span><code>n/a</code>", live_html)
         @test !occursin(">nothing<", live_html)
+
+        # a Q(U) machine read from a case file is named on the page, not only
+        # in the Control column of the result print (task qu_scf, 2026-09-11);
+        # a run without controllers keeps its summary short
+        @test !occursin("summary-label\">Controllers<", html)
+        with_ctrl = merge(probe, Dict{String,Any}("metadata" => Dict{String,Any}("controllers" => Dict{String,Any}("tap" => 1, "qu" => 1, "pu" => 0))))
+        @test occursin("<span class=\"summary-label\">Controllers</span><code>Q(U) 1 · tap 1</code>", Sparlectra.render_powerflow_result(with_ctrl))
+        @test Sparlectra._webui_control_summary(Dict{String,Any}("metadata" => Dict{String,Any}("controllers" => Dict{String,Any}("tap" => 0, "qu" => 0, "pu" => 0)))) === nothing
       end
 
       # A native file input speaks the BROWSER's language ("Durchsuchen",
@@ -1500,6 +1511,38 @@ function run_webui_fast_tests()
       form["power_flow_qlimits_enforcement_mode"] = "classic_simultaneous"
       overrides2 = get(Sparlectra.powerflow_webui_request(form), "config_overrides", Dict{String,Any}())
       @test overrides2["power_flow.qlimits.enforcement_mode"] == "classic_simultaneous"
+
+      # The same word saved from the settings page (2026-09-11: "Q-Limit
+      # an, aber mode auf off" ended in an ArgumentError on the next run):
+      # the case file and the configuration file get `enabled: false` and
+      # no mode key, and a file that already carries `off` still loads.
+      cache = rt.case_directory
+      Sparlectra._webui_stage_bundled_case!(normpath(dirname(@__DIR__)), cache, "sp_case14.scf.json")
+      off_form = Dict{String,Any}("casefile" => "sp_case14.scf.json", "settings_target" => "this_case", "power_flow_qlimits_enabled" => "true", "power_flow_qlimits_enforcement_mode" => "off")
+      resp_case = Sparlectra.route_sparlectra_webui("POST", "/powerflow/settings/save", off_form; output_root = root, runtime = rt)
+      @test resp_case.status in (302, 303)
+      saved = Sparlectra.load_case_config(joinpath(cache, "sp_case14.scf.json"))
+      @test saved["power_flow.qlimits.enabled"] === false
+      @test !haskey(saved, "power_flow.qlimits.enforcement_mode")
+      cfg_general = joinpath(root, "configuration.yaml")
+      cp(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, cfg_general)
+      resp_general = Sparlectra.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("settings_target" => "general", "config_file" => cfg_general, "power_flow_qlimits_enabled" => "true", "power_flow_qlimits_enforcement_mode" => "off"); output_root = root)
+      @test resp_general.status in (302, 303)
+      general_cfg = Sparlectra.load_sparlectra_config(cfg_general; reload = true)
+      @test general_cfg.powerflow.qlimits.ignore_q_limits
+      @test general_cfg.powerflow.qlimits.enforcement_mode === :active_set
+      # the case-options save follows the same rule
+      opts_form = Dict{String,Any}("casefile" => "sp_case14.scf.json", "power_flow_qlimits_enforcement_mode" => "off")
+      Sparlectra.route_sparlectra_webui("POST", "/powerflow/case/options/save", opts_form; output_root = root, runtime = rt)
+      @test !haskey(Sparlectra.load_case_config(joinpath(cache, "sp_case14.scf.json")), "power_flow.qlimits.enforcement_mode")
+      # a file written by 0.11.1 with the word inside runs as "disabled"
+      stale = joinpath(root, "stale.yaml")
+      write(stale, "power_flow:\n  qlimits:\n    enforcement_mode: off\n")
+      stale_cfg = Sparlectra.load_sparlectra_config(stale; reload = true)
+      @test stale_cfg.powerflow.qlimits.ignore_q_limits
+      @test stale_cfg.powerflow.qlimits.enforcement_mode === :active_set
+      stale_run = Sparlectra.start_powerflow_run(Dict{String,Any}("casefile" => "sp_case14.scf.json", "config_file" => stale, "output_root" => joinpath(root, "stale_runs"), "config_overrides" => Dict{String,Any}("power_flow.qlimits.enforcement_mode" => "off")); case_directory = cache)
+      @test stale_run["status"] == "succeeded"
     end
 
     # A diagnose run takes ONE step from the case's own voltages, so it never
@@ -1844,6 +1887,26 @@ function run_webui_fast_tests()
       @test length(collect(eachmatch(r"<li>", toc))) > 8
       # a short page gets no index (it would be noise)
       @test Sparlectra._webui_doc_page_toc("# T\n\n## One\n\ntext\n") == ""
+      # Documenter cross references (maintainer 2026-09-11: the CGMES page
+      # showed its labelled heading as a dead link): the `(@id ...)` label
+      # leaves the heading text, `(@ref ...)` becomes the page-local anchor,
+      # a label on another served page its /docs route, an unknown target
+      # stays disabled; the section index uses the rendered heading ids
+      cgmes_md = read(joinpath(pkgdir(Sparlectra), "docs", "src", "cgmes_import.md"), String)
+      cgmes_html = Sparlectra.render_webui_markdown(cgmes_md; current_page = "cgmes_import")
+      @test !occursin("@id", cgmes_html)
+      @test !occursin("@ref topology_processor", cgmes_html)
+      @test occursin("id=\"node-breaker-deliveries-without-a-tp-profile\"", cgmes_html)
+      @test count("href=\"#node-breaker-deliveries-without-a-tp-profile\"", cgmes_html) == 2
+      cgmes_ids = Set(m.captures[1] for m in eachmatch(r"<h[1-6] id=\"([^\"]*)\"", cgmes_html))
+      cgmes_toc = Sparlectra._webui_doc_page_toc(cgmes_md)
+      @test occursin(">Node-breaker deliveries without a TP profile<", cgmes_toc)
+      @test all(m.captures[1] in cgmes_ids for m in eachmatch(r"href=\"#([^\"]*)\"", cgmes_toc))
+      ref_html = Sparlectra.render_webui_markdown("[taps](@ref transformer-support) [unknown](@ref no_such_label) [fn](@ref)"; current_page = "webui")
+      @test occursin("href=\"/docs/feature_matrix#transformer-support\"", ref_html)
+      @test count("aria-disabled=\"true\"", ref_html) == 2
+      # a Documenter-style capitalized anchor reaches the lowercase heading id
+      @test occursin("href=\"/docs/scf#configuration-precedence\"", Sparlectra.render_webui_markdown("[p](scf.md#Configuration-precedence)"; current_page = "configuration"))
       # the save-target explanations are small print, not label text
       stg = Sparlectra.render_settings_page(output_root = mktempdir(), selected_casefile = "sp_case14.scf.json")
       @test occursin("settings-target-hint", stg)

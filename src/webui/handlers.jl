@@ -1005,6 +1005,7 @@ function handle_case_options_save(form::AbstractDict; output_root::AbstractStrin
         push!(dropped, String(config_key))
       end
     end
+    _webui_apply_qlimits_off!(keep)
   catch err
     record_webui_operation!(operation_log, "case_options_save_failed"; route, method = "POST", user_action = true, casefile = case, status = "rejected", message = sprint(showerror, err))
     return redirect_message(case, "Could not save case options: $(sprint(showerror, err))")
@@ -1053,6 +1054,7 @@ function handle_settings_save(form::AbstractDict; output_root::AbstractString = 
       raw === nothing && continue
       config_updates[String(config_key)] = _webui_parse_form_value(raw, type, field)
     end
+    _webui_apply_qlimits_off!(config_updates)
   catch err
     record_webui_operation!(operation_log, "settings_save_failed"; route, method = "POST", user_action = true, casefile = case, target, status = "rejected", message = sprint(showerror, err))
     return back("Could not save settings: $(sprint(showerror, err))")

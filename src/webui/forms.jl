@@ -1075,6 +1075,28 @@ end
 _webui_parse_form_value(value, ::Type{String}, field::String) = strip(String(something(value, "")))
 
 """
+    _webui_apply_qlimits_off!(updates) -> updates
+
+"off" in the enforcement-mode control means "no Q-limit handling". The
+control pair (checkbox + mode) reads as one setting, and a mode picked
+while the handling is off does nothing while looking like it does
+(reported from a live session 2026-09-08). The word is not a mode the
+configuration knows, so every path that turns form fields into
+configuration keys (the run request, the settings page, the case options)
+replaces it here by `enabled = false` and drops the mode key; a saved
+"off" reached the loader as an `ArgumentError` on the next run
+(reported 2026-09-11).
+"""
+function _webui_apply_qlimits_off!(updates::AbstractDict)
+  mode_key = "power_flow.qlimits.enforcement_mode"
+  haskey(updates, mode_key) || return updates
+  lowercase(strip(String(updates[mode_key]))) == "off" || return updates
+  delete!(updates, mode_key)
+  updates["power_flow.qlimits.enabled"] = false
+  return updates
+end
+
+"""
     powerflow_webui_request(form; default_output_root="results/powerflow_service")
 
 Convert browser form values into the dictionary accepted by
@@ -1118,15 +1140,7 @@ function powerflow_webui_request(form::AbstractDict; default_output_root::Abstra
       raw isa AbstractString && isempty(strip(raw)) && continue
       overrides[config_key] = _webui_parse_form_value(raw, type, field)
     end
-    # "off" in the enforcement-mode control means "no Q-limit handling". The
-    # control pair (checkbox + mode) reads as one setting, and a mode picked
-    # while the handling is off does nothing while looking like it does
-    # (reported from a live session 2026-09-08).
-    mode_key = "power_flow.qlimits.enforcement_mode"
-    if haskey(overrides, mode_key) && lowercase(strip(String(overrides[mode_key]))) == "off"
-      delete!(overrides, mode_key)
-      overrides["power_flow.qlimits.enabled"] = false
-    end
+    _webui_apply_qlimits_off!(overrides)
   end
   # The tolerance is ONE value with a unit, not two competing fields: the
   # unit decides which configuration key the number becomes. MW is the

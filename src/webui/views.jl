@@ -407,6 +407,7 @@ function _webui_powerflow_info_menu(; output_root::AbstractString, config_file::
 <h2>Run information</h2>
 <dl>
 <dt>Version</dt><dd><code>Sparlectra.jl v$(_webui_escape(string(version())))</code></dd>
+<dt>Julia</dt><dd><code>$(_webui_escape(string(VERSION)))</code></dd>
 <dt>Commit</dt><dd><code>$(_webui_escape(commit_text))</code></dd>
 <dt>Started from</dt><dd><code>$(_webui_escape(flavor_text))</code> <a href=\"/webui/sysimage\">Sysimage</a></dd>
 <dt>Output root</dt><dd><code>$(_webui_escape(output_root))</code></dd>
@@ -2187,6 +2188,8 @@ function render_powerflow_result(result::AbstractDict)::String
     push!(base, ("Total time", "<strong>$(_webui_escape(_format_elapsed_duration(_webui_total_elapsed_seconds(result))))</strong>"))
     wrong_branch_badge = _webui_wrong_branch_badge(result)
     wrong_branch_badge === nothing || push!(base, ("Wrong-branch check", wrong_branch_badge))
+    control_summary = _webui_control_summary(result)
+    control_summary === nothing || push!(base, ("Controllers", "<code>$(_webui_escape(control_summary))</code>"))
     sv_summary = _webui_sv_compare_summary(result)
     sv_summary === nothing || push!(base, ("SV comparison", sv_summary))
     sc_summary = _webui_short_circuit_summary(result)
@@ -2793,8 +2796,10 @@ function _webui_doc_page_toc(markdown_text::AbstractString)::String
     startswith(line, "## ") || continue
     title = strip(line[4:end])
     isempty(title) && continue
-    anchor = lowercase(replace(title, r"[^\w\s-]" => "", r"\s+" => "-"))
-    push!(entries, "<li><a href=\"#$(_webui_escape(anchor))\">$(_webui_escape(title))</a></li>")
+    # the same slug the rendered heading gets (rewrite_webui_doc_links);
+    # a Documenter `(@id ...)` label is not part of the title
+    anchor = _webui_markdown_heading_slug(title)
+    push!(entries, "<li><a href=\"#$(_webui_escape(anchor))\">$(_webui_escape(_webui_documenter_heading_text(title)))</a></li>")
   end
   length(entries) < 4 && return ""
   return "<details class=\"docs-toc\" open><summary>On this page ($(length(entries)) sections)</summary><ul>$(join(entries, ""))</ul></details>"
@@ -2824,6 +2829,29 @@ function _webui_auto_mode_summary(result::AbstractDict)::Union{Nothing,String}
     s *= "<ul class=\"auto-hints\">" * join(("<li>$(_webui_escape(String(h)))</li>" for h in hints), "") * "</ul>"
   end
   return s
+end
+
+"""
+    _webui_control_summary(result) -> String or nothing
+
+The controllers the solved network carried, as one line for the summary cards:
+tap changers, Q(U) and P(U) machines. Nothing when the run had none, so an
+ordinary case keeps its summary short. The counts come from the run's own
+metadata (`controllers`), written by the service.
+"""
+function _webui_control_summary(result::AbstractDict)::Union{Nothing,String}
+  metadata = get(result, "metadata", Dict{String,Any}())
+  metadata isa AbstractDict || return nothing
+  counts = get(metadata, "controllers", nothing)
+  counts isa AbstractDict || return nothing
+  n(key) = something(tryparse(Int, string(get(counts, key, 0))), 0)
+  tap, qu, pu = n("tap"), n("qu"), n("pu")
+  tap + qu + pu > 0 || return nothing
+  parts = String[]
+  qu > 0 && push!(parts, "Q(U) $(qu)")
+  pu > 0 && push!(parts, "P(U) $(pu)")
+  tap > 0 && push!(parts, "tap $(tap)")
+  return join(parts, " · ")
 end
 
 function _webui_se_summary(result::AbstractDict)::Union{Nothing,String}

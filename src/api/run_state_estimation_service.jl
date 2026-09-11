@@ -146,6 +146,20 @@ function _se_apply_pf_voltage_csv!(net::Net, file::AbstractString)
 end
 
 """
+    _seeded_permutation(rng, v) -> Vector
+
+A random permutation of `v` that depends only on the RNG's Float64 stream.
+`Random.shuffle` changed its algorithm in Julia 1.13: the same
+`MersenneTwister` seed then drew other rows than on 1.12, so a generated
+set with "bad data on 1 row" hit a different measurement per Julia version
+(found 2026-09-11 when the extended profile went red on 1.13 only). The
+Float64 stream of the Mersenne Twister is the same on both, so ordering
+by one uniform draw per element keeps "the seed decides which rows" true
+across Julia versions.
+"""
+_seeded_permutation(rng::Random.AbstractRNG, v::AbstractVector) = v[sortperm(rand(rng, length(v)))]
+
+"""
     _se_generate_measurement_set(case_path, out_path; kwargs...) -> NamedTuple
 
 Service backend of the Web UI measurement generator (the Web UI layer never
@@ -247,7 +261,7 @@ function _se_generate_measurement_set(
     # all, and the estimator run warns there.
     rng_tap = Random.MersenneTwister(seed * 4093 + 11)
     pool = !isempty(pool1) ? pool1 : (!isempty(pool2) ? pool2 : pool3)
-    picks = Random.shuffle(rng_tap, pool)
+    picks = _seeded_permutation(rng_tap, pool)
     tap_branches = sort!(picks[1:min(tap_count, length(picks))])
     tap_limit_note = length(tap_branches) < tap_count ? " (limited to $(length(tap_branches)) eligible transformer(s), max $(tap_count) requested)" : ""
     nby = _bus_name_by_idx(net)
@@ -396,7 +410,7 @@ function _se_generate_measurement_set(
     eligible = [i for (i, m) in enumerate(meas) if m.active && !startswith(m.id, "ZI")]
     if !isempty(eligible)
       rng_gross = Random.MersenneTwister(seed * 7919 + 13)
-      picks = Random.shuffle(rng_gross, eligible)[1:min(gross_count, length(eligible))]
+      picks = _seeded_permutation(rng_gross, eligible)[1:min(gross_count, length(eligible))]
       sort!(picks)
       gross_ids = String[]
       for gi in picks

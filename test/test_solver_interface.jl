@@ -1615,6 +1615,31 @@ mpc.branch = [
       empty!(net.qLimitEvents)
       printQVCharacteristicCheck(net; io = io)
       @test occursin("no non-physical generator states", String(take!(io)))
+
+      # The check must read the CLAMPED reactive power, the same value the
+      # result print shows as Qg. It read the node sum instead, and the
+      # classical outer loop applies its clamp in the solver's specification
+      # without writing it back to the node: on the Zeng case the check saw
+      # 54.17 MVAr at a 50 MVAr limit and reported nothing while the print
+      # showed 50.000 (2026-09-11). Under every enforcement mode a clamped
+      # machine's Q as the check sees it is its limit.
+      for mode in (:active_set, :classic_simultaneous, :classic_one_at_a_time)
+        fnet = Net(name = "feeder_$(mode)", baseMVA = 100.0)
+        addBus!(net = fnet, busName = "B1", vn_kV = 110.0)
+        addBus!(net = fnet, busName = "B2", vn_kV = 110.0)
+        addBus!(net = fnet, busName = "B3", vn_kV = 110.0)
+        addProsumer!(net = fnet, busName = "B1", type = "EXTERNALNETWORKINJECTION", referencePri = "B1", vm_pu = 1.02, va_deg = 0.0)
+        addPIModelACLine!(net = fnet, fromBus = "B1", toBus = "B2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+        addPIModelACLine!(net = fnet, fromBus = "B2", toBus = "B3", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+        addProsumer!(net = fnet, busName = "B2", type = "SYNCHRONOUSMACHINE", p = 10.0, q = 0.0, vm_pu = 1.0, qMin = -10.0, qMax = 10.0)
+        addProsumer!(net = fnet, busName = "B3", type = "ENERGYCONSUMER", p = 80.0, q = 25.0)
+        @test validate!(net = fnet)[1]
+        _, ferg = runpf!(fnet, 40, 1e-8, 0; qlimits_enabled = true, qlimit_enforcement_mode = mode)
+        @test ferg == 0
+        fb2 = Sparlectra.geNetBusIdx(net = fnet, busName = "B2")
+        @test get(fnet.qLimitEvents, fb2, nothing) === :max
+        @test isapprox(Sparlectra._qv_effective_qgen(fnet, fb2, 10.0), 10.0; atol = 1e-6)
+      end
     end
 
     @testset "AC rescue ladder and DC fallback" begin
