@@ -1,0 +1,911 @@
+{
+  "version": "1.0",
+  "type": "input",
+  "is_batch": false,
+  "attributes": {},
+  "data": {
+    "generic_branch": [
+      {
+        "b1": 0.0,
+        "from_node": 7,
+        "from_status": 1,
+        "g1": 0.0,
+        "id": 30,
+        "k": 1.0,
+        "r1": 0.05,
+        "sn": 4.0e7,
+        "theta": 0.0,
+        "to_node": 8,
+        "to_status": 1,
+        "x1": 1.0988630487917954
+      },
+      {
+        "b1": 0.0,
+        "from_node": 13,
+        "from_status": 1,
+        "g1": 0.0,
+        "id": 31,
+        "k": 1.0,
+        "r1": 0.08,
+        "sn": 2.5e7,
+        "theta": 0.0,
+        "to_node": 14,
+        "to_status": 1,
+        "x1": 1.5979987484350544
+      }
+    ],
+    "line": [
+      {
+        "c1": 0.0,
+        "from_node": 10,
+        "from_status": 1,
+        "i_n": 236.18874648666508,
+        "id": 15,
+        "r1": 12.100000000000001,
+        "tan1": 0.0,
+        "to_node": 9,
+        "to_status": 1,
+        "x1": 42.349999999999994
+      },
+      {
+        "c1": 0.0,
+        "from_node": 10,
+        "from_status": 1,
+        "i_n": 236.18874648666508,
+        "id": 16,
+        "r1": 12.100000000000001,
+        "tan1": 0.0,
+        "to_node": 9,
+        "to_status": 1,
+        "x1": 42.349999999999994
+      },
+      {
+        "c1": 0.0,
+        "from_node": 9,
+        "from_status": 1,
+        "i_n": 236.18874648666508,
+        "id": 17,
+        "r1": 12.100000000000001,
+        "tan1": 0.0,
+        "to_node": 7,
+        "to_status": 1,
+        "x1": 42.349999999999994
+      },
+      {
+        "c1": 0.0,
+        "from_node": 9,
+        "from_status": 1,
+        "i_n": 183.7023583785173,
+        "id": 18,
+        "r1": 12.100000000000001,
+        "tan1": 0.0,
+        "to_node": 5,
+        "to_status": 1,
+        "x1": 42.349999999999994
+      },
+      {
+        "c1": 0.0,
+        "from_node": 7,
+        "from_status": 1,
+        "i_n": 236.18874648666508,
+        "id": 19,
+        "r1": 12.100000000000001,
+        "tan1": 0.0,
+        "to_node": 2,
+        "to_status": 1,
+        "x1": 42.349999999999994
+      },
+      {
+        "c1": 0.0,
+        "from_node": 7,
+        "from_status": 1,
+        "i_n": 183.7023583785173,
+        "id": 20,
+        "r1": 12.100000000000001,
+        "tan1": 0.0,
+        "to_node": 13,
+        "to_status": 1,
+        "x1": 42.349999999999994
+      },
+      {
+        "c1": 0.0,
+        "from_node": 2,
+        "from_status": 1,
+        "i_n": 236.18874648666508,
+        "id": 21,
+        "r1": 12.100000000000001,
+        "tan1": 0.0,
+        "to_node": 11,
+        "to_status": 1,
+        "x1": 42.349999999999994
+      },
+      {
+        "c1": 0.0,
+        "from_node": 11,
+        "from_status": 1,
+        "i_n": 236.18874648666508,
+        "id": 22,
+        "r1": 12.100000000000001,
+        "tan1": 0.0,
+        "to_node": 3,
+        "to_status": 1,
+        "x1": 42.349999999999994
+      },
+      {
+        "c1": 0.0,
+        "from_node": 3,
+        "from_status": 1,
+        "i_n": 236.18874648666508,
+        "id": 23,
+        "r1": 12.100000000000001,
+        "tan1": 0.0,
+        "to_node": 13,
+        "to_status": 1,
+        "x1": 42.349999999999994
+      },
+      {
+        "c1": 0.0,
+        "from_node": 13,
+        "from_status": 1,
+        "i_n": 236.18874648666508,
+        "id": 24,
+        "r1": 12.100000000000001,
+        "tan1": 0.0,
+        "to_node": 1,
+        "to_status": 1,
+        "x1": 42.349999999999994
+      },
+      {
+        "c1": 0.0,
+        "from_node": 1,
+        "from_status": 1,
+        "i_n": 236.18874648666508,
+        "id": 25,
+        "r1": 12.100000000000001,
+        "tan1": 0.0,
+        "to_node": 10,
+        "to_status": 1,
+        "x1": 42.349999999999994
+      },
+      {
+        "c1": 0.0,
+        "from_node": 5,
+        "from_status": 1,
+        "i_n": 183.7023583785173,
+        "id": 26,
+        "r1": 12.100000000000001,
+        "tan1": 0.0,
+        "to_node": 11,
+        "to_status": 1,
+        "x1": 42.349999999999994
+      },
+      {
+        "c1": 0.0,
+        "from_node": 8,
+        "from_status": 1,
+        "i_n": 577.3502691896258,
+        "id": 27,
+        "r1": 1.0,
+        "tan1": 0.0,
+        "to_node": 4,
+        "to_status": 1,
+        "x1": 0.44
+      },
+      {
+        "c1": 0.0,
+        "from_node": 4,
+        "from_status": 1,
+        "i_n": 577.3502691896258,
+        "id": 28,
+        "r1": 1.0,
+        "tan1": 0.0,
+        "to_node": 6,
+        "to_status": 1,
+        "x1": 0.44
+      },
+      {
+        "c1": 0.0,
+        "from_node": 6,
+        "from_status": 1,
+        "i_n": 577.3502691896258,
+        "id": 29,
+        "r1": 1.0,
+        "tan1": 0.0,
+        "to_node": 12,
+        "to_status": 1,
+        "x1": 0.44
+      }
+    ],
+    "node": [
+      {
+        "id": 1,
+        "u_rated": 110000.0
+      },
+      {
+        "id": 2,
+        "u_rated": 110000.0
+      },
+      {
+        "id": 3,
+        "u_rated": 110000.0
+      },
+      {
+        "id": 4,
+        "u_rated": 20000.0
+      },
+      {
+        "id": 5,
+        "u_rated": 110000.0
+      },
+      {
+        "id": 6,
+        "u_rated": 20000.0
+      },
+      {
+        "id": 7,
+        "u_rated": 110000.0
+      },
+      {
+        "id": 8,
+        "u_rated": 20000.0
+      },
+      {
+        "id": 9,
+        "u_rated": 110000.0
+      },
+      {
+        "id": 10,
+        "u_rated": 110000.0
+      },
+      {
+        "id": 11,
+        "u_rated": 110000.0
+      },
+      {
+        "id": 12,
+        "u_rated": 20000.0
+      },
+      {
+        "id": 13,
+        "u_rated": 110000.0
+      },
+      {
+        "id": 14,
+        "u_rated": 20000.0
+      }
+    ],
+    "shunt": [
+      {
+        "b1": 0.0125,
+        "g1": 0.0,
+        "id": 44,
+        "node": 8,
+        "status": 1
+      }
+    ],
+    "sym_gen": [
+      {
+        "id": 40,
+        "node": 10,
+        "p_specified": 0.0,
+        "q_specified": 0.0,
+        "status": 1,
+        "type": 0
+      },
+      {
+        "id": 41,
+        "node": 2,
+        "p_specified": 3.0e7,
+        "q_specified": 0.0,
+        "status": 1,
+        "type": 0
+      },
+      {
+        "id": 42,
+        "node": 3,
+        "p_specified": 2.0e7,
+        "q_specified": 0.0,
+        "status": 1,
+        "type": 0
+      },
+      {
+        "id": 43,
+        "node": 5,
+        "p_specified": 5.0e6,
+        "q_specified": 0.0,
+        "status": 1,
+        "type": 0
+      }
+    ],
+    "sym_load": [
+      {
+        "id": 32,
+        "node": 11,
+        "p_specified": 1.8e7,
+        "q_specified": 6.0e6,
+        "status": 1,
+        "type": 0
+      },
+      {
+        "id": 33,
+        "node": 1,
+        "p_specified": 1.4e7,
+        "q_specified": 4.0e6,
+        "status": 1,
+        "type": 0
+      },
+      {
+        "id": 34,
+        "node": 5,
+        "p_specified": 1.0e7,
+        "q_specified": 3.0e6,
+        "status": 1,
+        "type": 0
+      },
+      {
+        "id": 35,
+        "node": 8,
+        "p_specified": 6.0e6,
+        "q_specified": 2.0e6,
+        "status": 1,
+        "type": 0
+      },
+      {
+        "id": 36,
+        "node": 4,
+        "p_specified": 5.0e6,
+        "q_specified": 1.5e6,
+        "status": 1,
+        "type": 0
+      },
+      {
+        "id": 37,
+        "node": 6,
+        "p_specified": 4.0e6,
+        "q_specified": 1.2e6,
+        "status": 1,
+        "type": 0
+      },
+      {
+        "id": 38,
+        "node": 12,
+        "p_specified": 3.0e6,
+        "q_specified": 1.0e6,
+        "status": 1,
+        "type": 0
+      },
+      {
+        "id": 39,
+        "node": 14,
+        "p_specified": 8.0e6,
+        "q_specified": 2.5e6,
+        "status": 1,
+        "type": 0
+      }
+    ],
+    "voltage_regulator": [
+      {
+        "id": 45,
+        "q_max": 2.5e7,
+        "q_min": -2.5e7,
+        "regulated_object": 41,
+        "status": 1,
+        "u_ref": 1.01
+      },
+      {
+        "id": 46,
+        "q_max": 1.5e7,
+        "q_min": -1.5e7,
+        "regulated_object": 42,
+        "status": 1,
+        "u_ref": 1.0
+      }
+    ]
+  },
+  "sparlectra": {
+    "components": {
+      "controllers": {
+        "tap_16": {
+          "control_phase": false,
+          "control_ratio": true,
+          "deadband_p_mw": 0.5,
+          "deadband_vm_pu": 0.01,
+          "enabled": true,
+          "is_discrete": true,
+          "max_outer_iters": 20,
+          "mode": "voltage",
+          "target_bus": "Moorau_20",
+          "target_vm_pu": 1.0,
+          "trafo": "16",
+          "type": "power_transformer",
+          "voltage_error_metric": "vm"
+        }
+      },
+      "sc_source": [
+        {
+          "bus": "Ostheim_110",
+          "governorSCD": null,
+          "ikSecond": null,
+          "kind": "external_network_injection",
+          "maxInitialSymShCCurrent_A": 15745.916432444339,
+          "maxR0ToX0Ratio": null,
+          "maxR1ToX1Ratio": 0.1,
+          "maxZ0ToZ1Ratio": null,
+          "minInitialSymShCCurrent_A": 11547.005383792515,
+          "minR1ToX1Ratio": 0.1,
+          "mrid": "native-eni-Ostheim_110",
+          "name": "ExtGrid_Ostheim",
+          "node": 10
+        }
+      ],
+      "tap_changer": [
+        {
+          "angle_base_deg": 0.0,
+          "branch": 30,
+          "control": {
+            "mode": "fixed"
+          },
+          "controllers": [
+            {
+              "alpha_deg": 0.0,
+              "index": 1,
+              "pos": 0,
+              "pos_max": 9,
+              "pos_min": -7,
+              "step": 0.0125
+            },
+            {
+              "alpha_deg": 0.0,
+              "index": 2,
+              "pos": 0,
+              "pos_max": 24,
+              "pos_min": -24,
+              "step_deg": 1.25
+            }
+          ],
+          "id": 47,
+          "ratio_base": 1.0,
+          "side": "from"
+        },
+        {
+          "angle_base_deg": 0.0,
+          "branch": 31,
+          "control": {
+            "mode": "fixed"
+          },
+          "controllers": [
+            {
+              "alpha_deg": 0.0,
+              "index": 1,
+              "pos": 4,
+              "pos_max": 22,
+              "pos_min": -11,
+              "step": 0.00625
+            },
+            {
+              "alpha_deg": 0.0,
+              "index": 2,
+              "pos": 0,
+              "pos_max": 24,
+              "pos_min": -24,
+              "step_deg": 1.25
+            }
+          ],
+          "id": 48,
+          "ratio_base": 1.025,
+          "side": "from"
+        }
+      ]
+    },
+    "extra": {
+      "1": {
+        "bus_index": 8,
+        "external_id": "H8",
+        "name": "Blanksee_110",
+        "node_type": "PQ"
+      },
+      "10": {
+        "bus_index": 1,
+        "external_id": "H1",
+        "name": "Ostheim_110",
+        "node_type": "Slack"
+      },
+      "11": {
+        "bus_index": 5,
+        "external_id": "H5",
+        "name": "Roggau_110",
+        "node_type": "PQ"
+      },
+      "12": {
+        "bus_index": 13,
+        "external_id": "M5",
+        "name": "Torfloh_20",
+        "node_type": "PQ"
+      },
+      "13": {
+        "bus_index": 7,
+        "external_id": "H7",
+        "name": "Wehrden_110",
+        "node_type": "PQ"
+      },
+      "14": {
+        "bus_index": 14,
+        "external_id": "M4",
+        "name": "Wehrden_20",
+        "node_type": "PQ"
+      },
+      "15": {
+        "branch_index": 1,
+        "external_id": "#B_ACL_110_1_2#1",
+        "meta": {
+          "sn_mva": 45.0
+        },
+        "name": "B_ACL_110_1_2"
+      },
+      "16": {
+        "branch_index": 2,
+        "external_id": "#B_ACL_110_1_2#2",
+        "meta": {
+          "sn_mva": 45.0
+        },
+        "name": "B_ACL_110_1_2"
+      },
+      "17": {
+        "branch_index": 3,
+        "external_id": "#B_ACL_110_2_3#3",
+        "meta": {
+          "sn_mva": 45.0
+        },
+        "name": "B_ACL_110_2_3"
+      },
+      "18": {
+        "branch_index": 10,
+        "external_id": "#B_ACL_110_2_9#10",
+        "meta": {
+          "sn_mva": 35.0
+        },
+        "name": "B_ACL_110_2_9"
+      },
+      "19": {
+        "branch_index": 4,
+        "external_id": "#B_ACL_110_3_4#4",
+        "meta": {
+          "sn_mva": 45.0
+        },
+        "name": "B_ACL_110_3_4"
+      },
+      "2": {
+        "bus_index": 4,
+        "external_id": "H4",
+        "name": "Dallwitz_110",
+        "node_type": "PV"
+      },
+      "20": {
+        "branch_index": 12,
+        "external_id": "#B_ACL_110_3_7#12",
+        "meta": {
+          "sn_mva": 35.0
+        },
+        "name": "B_ACL_110_3_7"
+      },
+      "21": {
+        "branch_index": 5,
+        "external_id": "#B_ACL_110_4_5#5",
+        "meta": {
+          "sn_mva": 45.0
+        },
+        "name": "B_ACL_110_4_5"
+      },
+      "22": {
+        "branch_index": 6,
+        "external_id": "#B_ACL_110_5_6#6",
+        "meta": {
+          "sn_mva": 45.0
+        },
+        "name": "B_ACL_110_5_6"
+      },
+      "23": {
+        "branch_index": 7,
+        "external_id": "#B_ACL_110_6_7#7",
+        "meta": {
+          "sn_mva": 45.0
+        },
+        "name": "B_ACL_110_6_7"
+      },
+      "24": {
+        "branch_index": 8,
+        "external_id": "#B_ACL_110_7_8#8",
+        "meta": {
+          "sn_mva": 45.0
+        },
+        "name": "B_ACL_110_7_8"
+      },
+      "25": {
+        "branch_index": 9,
+        "external_id": "#B_ACL_110_8_1#9",
+        "meta": {
+          "sn_mva": 45.0
+        },
+        "name": "B_ACL_110_8_1"
+      },
+      "26": {
+        "branch_index": 11,
+        "external_id": "#B_ACL_110_9_5#11",
+        "meta": {
+          "sn_mva": 35.0
+        },
+        "name": "B_ACL_110_9_5"
+      },
+      "27": {
+        "branch_index": 13,
+        "external_id": "#B_ACL_20_10_11#13",
+        "meta": {
+          "sn_mva": 20.0
+        },
+        "name": "B_ACL_20_10_11"
+      },
+      "28": {
+        "branch_index": 14,
+        "external_id": "#B_ACL_20_11_12#14",
+        "meta": {
+          "sn_mva": 20.0
+        },
+        "name": "B_ACL_20_11_12"
+      },
+      "29": {
+        "branch_index": 15,
+        "external_id": "#B_ACL_20_12_13#15",
+        "meta": {
+          "sn_mva": 20.0
+        },
+        "name": "B_ACL_20_12_13"
+      },
+      "3": {
+        "bus_index": 6,
+        "external_id": "H6",
+        "name": "Eichloh_110",
+        "node_type": "PV"
+      },
+      "30": {
+        "branch_index": 16,
+        "external_id": "#B_2WT_110_3_10#16",
+        "meta": {
+          "neutral_ratio": 1.0,
+          "sn_mva": 40.0
+        },
+        "name": "B_2WT_110_3_10"
+      },
+      "31": {
+        "branch_index": 17,
+        "external_id": "#B_2WT_110_7_14#17",
+        "meta": {
+          "neutral_ratio": 1.025,
+          "sn_mva": 25.0
+        },
+        "name": "B_2WT_110_7_14"
+      },
+      "32": {
+        "element_index": 4,
+        "external_id": "#Ld_110.0\\_5\\_#4",
+        "name": "Ld_110.0",
+        "prosumption_class": "Consumption",
+        "prosumption_type": "Load"
+      },
+      "33": {
+        "element_index": 5,
+        "external_id": "#Ld_110.0\\_8\\_#5",
+        "name": "Ld_110.0",
+        "prosumption_class": "Consumption",
+        "prosumption_type": "Load"
+      },
+      "34": {
+        "element_index": 6,
+        "external_id": "#Ld_110.0\\_9\\_#6",
+        "name": "Ld_110.0",
+        "prosumption_class": "Consumption",
+        "prosumption_type": "Load"
+      },
+      "35": {
+        "element_index": 7,
+        "external_id": "#Ld_20.0\\_10\\_#7",
+        "name": "Ld_20.0",
+        "prosumption_class": "Consumption",
+        "prosumption_type": "Load"
+      },
+      "36": {
+        "element_index": 8,
+        "external_id": "#Ld_20.0\\_11\\_#8",
+        "name": "Ld_20.0",
+        "prosumption_class": "Consumption",
+        "prosumption_type": "Load"
+      },
+      "37": {
+        "element_index": 9,
+        "external_id": "#Ld_20.0\\_12\\_#9",
+        "name": "Ld_20.0",
+        "prosumption_class": "Consumption",
+        "prosumption_type": "Load"
+      },
+      "38": {
+        "element_index": 10,
+        "external_id": "#Ld_20.0\\_13\\_#10",
+        "name": "Ld_20.0",
+        "prosumption_class": "Consumption",
+        "prosumption_type": "Load"
+      },
+      "39": {
+        "element_index": 11,
+        "external_id": "#Ld_20.0\\_14\\_#11",
+        "name": "Ld_20.0",
+        "prosumption_class": "Consumption",
+        "prosumption_type": "Load"
+      },
+      "4": {
+        "bus_index": 11,
+        "external_id": "M2",
+        "name": "Hassel_20",
+        "node_type": "PQ"
+      },
+      "40": {
+        "element_index": 1,
+        "external_id": "#Gen_110\\_1\\_#1",
+        "name": "Gen_110",
+        "prosumption_class": "Injection",
+        "prosumption_type": "Generator",
+        "reference_pri": true,
+        "regulated": true,
+        "vm_pu": 1.02
+      },
+      "41": {
+        "element_index": 2,
+        "external_id": "#Gen_110\\_4\\_#2",
+        "max_q_mvar": 25.0,
+        "min_q_mvar": -25.0,
+        "name": "Gen_110",
+        "prosumption_class": "Injection",
+        "prosumption_type": "Generator",
+        "regulated": true
+      },
+      "42": {
+        "element_index": 3,
+        "external_id": "#Gen_110\\_6\\_#3",
+        "max_q_mvar": 15.0,
+        "min_q_mvar": -15.0,
+        "name": "Gen_110",
+        "prosumption_class": "Injection",
+        "prosumption_type": "Generator",
+        "regulated": true
+      },
+      "43": {
+        "element_index": 12,
+        "external_id": "#Gen_110\\_9\\_#12",
+        "name": "Gen_110",
+        "prosumption_class": "Injection",
+        "prosumption_type": "Generator",
+        "qu_control": {
+          "interpolation": "spline",
+          "points": [
+            [0.95, 0.3],
+            [1.0, 0.0],
+            [1.05, -0.2]
+          ],
+          "qmax_mvar": 20.0,
+          "qmin_mvar": -20.0
+        }
+      },
+      "44": {
+        "external_id": "#Sh_10_20.0\\_#1",
+        "name": "Sh_10_20.0",
+        "shunt_index": 1
+      },
+      "5": {
+        "bus_index": 9,
+        "external_id": "H9",
+        "name": "Ilmrode_110",
+        "node_type": "PQ"
+      },
+      "6": {
+        "bus_index": 12,
+        "external_id": "M3",
+        "name": "Kleinau_20",
+        "node_type": "PQ"
+      },
+      "7": {
+        "bus_index": 3,
+        "external_id": "H3",
+        "name": "Moorau_110",
+        "node_type": "PQ"
+      },
+      "8": {
+        "bus_index": 10,
+        "external_id": "M1",
+        "name": "Moorau_20",
+        "node_type": "PQ"
+      },
+      "9": {
+        "bus_index": 2,
+        "external_id": "H2",
+        "name": "Neuwiese_110",
+        "node_type": "PQ"
+      }
+    },
+    "format_version": "1.0",
+    "meta": {
+      "case_name": "sp_case14_qu",
+      "created_by": "Sparlectra 0.12.0",
+      "f_nom": 50.0,
+      "intended_calculations": ["power_flow"],
+      "notes": "Self-built Sparlectra demo network (sp_case14) plus one synchronous machine at Ilmrode_110 with a voltage-dependent Q(U) characteristic: three points in per unit, natural cubic spline, +-20 MVAr. Shows that the case file carries the characteristic (extra.<machine>.qu_control) and that the result names the machine as Q(U) in the Control column. The bus count in the name does not make it the IEEE case of that size; no data was taken from MATPOWER, DTF or any other source.",
+      "s_base": 1.0e8,
+      "source_format": "scf",
+      "source_reference": "sp_case14.scf.json"
+    },
+    "roles": {
+      "slack": {
+        "mode": "single",
+        "nodes": [10]
+      }
+    },
+    "start_state": {
+      "nodes": {
+        "1": {
+          "va_deg": -1.8369592700934765,
+          "vm_pu": 0.9890405812603911
+        },
+        "10": {
+          "va_deg": 0.0,
+          "vm_pu": 1.02
+        },
+        "11": {
+          "va_deg": -0.552443611221411,
+          "vm_pu": 0.9839634050227137
+        },
+        "12": {
+          "va_deg": -4.556468507496318,
+          "vm_pu": 0.9163370083616786
+        },
+        "13": {
+          "va_deg": -1.0937737884909715,
+          "vm_pu": 0.9869986431519134
+        },
+        "14": {
+          "va_deg": -2.968008629551263,
+          "vm_pu": 0.9745809048448062
+        },
+        "2": {
+          "va_deg": 2.0345071671042256,
+          "vm_pu": 1.01
+        },
+        "3": {
+          "va_deg": 1.1270353925624124,
+          "vm_pu": 1.0
+        },
+        "4": {
+          "va_deg": -4.35869947584881,
+          "vm_pu": 0.9473398918949691
+        },
+        "5": {
+          "va_deg": -1.5412568876265254,
+          "vm_pu": 0.9831311344304211
+        },
+        "6": {
+          "va_deg": -4.502433329780152,
+          "vm_pu": 0.9257226133937286
+        },
+        "7": {
+          "va_deg": -1.1130428771146468,
+          "vm_pu": 0.9908231253374908
+        },
+        "8": {
+          "va_deg": -4.115892129063541,
+          "vm_pu": 0.9839054790841837
+        },
+        "9": {
+          "va_deg": -0.6522433569153596,
+          "vm_pu": 1.003417922867611
+        }
+      },
+      "source": "solved_power_flow"
+    }
+  }
+}

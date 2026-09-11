@@ -574,6 +574,93 @@ function run_scf_tests()
       @test c2.limit_mode == c1.limit_mode
       restoreBaseImpedances!(back)
       @test read(exportSCF(back; file = joinpath(d, "ctrl2.scf.json")), String) == read(f, String)
+
+      # Voltage-dependent control travels in extra.<machine> as its points,
+      # its interpolation mode and its limits (task qu_scf, 2026-09-11). Before
+      # that, exporting a network with a Q(U) machine and reading it back lost
+      # the control silently. sp_case14 is the base because warmup_casePST
+      # carries active links, which the solver refuses next to voltage-
+      # dependent injections.
+      qnet = importSCF(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json")))
+      qu = QUController(make_characteristic([(0.95, 0.30), (1.00, 0.0), (1.05, -0.20)]; interpolation = :spline); qmin_MVAr = -50.0, qmax_MVAr = 50.0, sbase_MVA = qnet.baseMVA)
+      pu = PUController(make_characteristic([(0.90, 0.10), (1.10, 0.10)]); pmin_MW = 0.0, pmax_MW = 20.0, sbase_MVA = qnet.baseMVA)
+      addProsumer!(net = qnet, busName = "Ilmrode_110", type = "SYNCHRONOUSMACHINE", p = 10.0, q = 0.0, qu_controller = qu, pu_controller = pu)
+      @test validate!(net = qnet)[1]
+      qf = exportSCF(qnet; file = joinpath(d, "qu.scf.json"))
+      qroot = Sparlectra.scf_json_parse(read(qf, String))
+      qentry = only(v for v in values(qroot["sparlectra"]["extra"]) if haskey(v, "qu_control"))
+      @test qentry["qu_control"]["points"] == [[0.95, 0.30], [1.0, 0.0], [1.05, -0.20]]
+      @test qentry["qu_control"]["interpolation"] == "spline"
+      @test qentry["qu_control"]["qmin_mvar"] == -50.0 && qentry["qu_control"]["qmax_mvar"] == 50.0
+      # linear is the default and is not written, like every other default
+      @test !haskey(qentry["pu_control"], "interpolation")
+      @test qentry["pu_control"]["pmin_mw"] == 0.0 && qentry["pu_control"]["pmax_mw"] == 20.0
+      @test !haskey(qentry, "pq_gen_controller")
+      qback = importSCF(qf)
+      qps = only(filter(has_qu_controller, qback.prosumpsVec))
+      @test qps.quController.characteristic.points == qu.characteristic.points
+      @test qps.quController.characteristic.interpolation === :spline
+      @test (qps.quController.qmin_pu, qps.quController.qmax_pu) == (qu.qmin_pu, qu.qmax_pu)
+      @test qps.puController.characteristic.points == pu.characteristic.points
+      @test (qps.puController.pmin_pu, qps.puController.pmax_pu) == (pu.pmin_pu, pu.pmax_pu)
+      runpf!(qnet, 30, 1e-10, 0)
+      runpf!(qback, 30, 1e-10, 0)
+      @test maximum(abs(getNodeVm(qnet.nodeVec[i]) - getNodeVm(qback.nodeVec[i])) for i in eachindex(qnet.nodeVec)) < 1e-9
+      @test read(exportSCF(qback; file = joinpath(d, "qu2.scf.json")), String) == read(qf, String)
+
+      # the file is validated when it is read, by component name, not when
+      # it is solved
+      text = read(qf, String)
+      # the writer puts one point per line; the block is matched as a whole
+      qu_points = r"\"points\": \[\s*\[0\.95, 0\.3\],\s*\[1\.0, 0\.0\],\s*\[1\.05, -0\.2\]\s*\]"
+      @test occursin(qu_points, text)
+      broken = (
+        ("one point", replace(text, qu_points => "\"points\": [[1.0, 0.0]]")),
+        ("unknown mode", replace(text, "\"interpolation\": \"spline\"" => "\"interpolation\": \"cubic\"")),
+        ("limits crossed", replace(text, "\"qmin_mvar\": -50.0" => "\"qmin_mvar\": 60.0")),
+        ("voltages not increasing", replace(text, qu_points => "\"points\": [[1.0, 0.3], [0.95, 0.0], [1.05, -0.2]]")),
+      )
+      for (label, content) in broken
+        @test content != text
+        bf = joinpath(d, "broken.scf.json")
+        write(bf, content)
+        @test_throws ArgumentError importSCF(bf)
+        err = try; importSCF(bf); nothing; catch e; e; end
+        @test occursin("SCF: ", sprint(showerror, err))
+      end
+
+      # The MATPOWER converter's constant controllers (a PQ-bus generator's
+      # limits) keep their short form: the flag, not an object, so every
+      # existing case file written from MATPOWER stays byte for byte. The
+      # shipped MATPOWER cases in the checkout have no PQ-bus generator, so
+      # the case is built here.
+      write(joinpath(d, "case_pq.m"), """
+function mpc = case_pq
+mpc.version = '2';
+mpc.baseMVA = 100;
+mpc.bus = [
+1 3 0 0 0 0 1 1.0 0 110 1 1.1 0.9;
+2 1 40 15 0 0 1 1.0 0 110 1 1.1 0.9;
+3 1 30 10 0 0 1 1.0 0 110 1 1.1 0.9;
+];
+mpc.gen = [
+1 100 0 300 -300 1.02 100 1 300 0;
+2 20 5 30 -30 1.0 100 1 50 0;
+];
+mpc.branch = [
+1 2 0.01 0.05 0.0 999 999 999 0 0 1 -360 360;
+2 3 0.01 0.05 0.0 999 999 999 0 0 1 -360 360;
+];
+""")
+      mnet = Sparlectra._se_import_case_net(joinpath(d, "case_pq.m"), Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true))
+      @test count(has_qu_controller, mnet.prosumpsVec) == 1 && count(has_pu_controller, mnet.prosumpsVec) == 1
+      mf = exportSCF(mnet; file = joinpath(d, "pq.scf.json"))
+      mextra = values(Sparlectra.scf_json_parse(read(mf, String))["sparlectra"]["extra"])
+      @test count(v -> get(v, "pq_gen_controller", false) === true, mextra) == 1
+      @test count(v -> haskey(v, "qu_control") || haskey(v, "pu_control"), mextra) == 0
+      mback = importSCF(mf)
+      @test count(has_qu_controller, mback.prosumpsVec) == 1
+      @test read(exportSCF(mback; file = joinpath(d, "pq2.scf.json")), String) == read(mf, String)
     end
 
     @testset "real MATPOWER cases survive the round trip" begin
@@ -722,6 +809,44 @@ function run_scf_tests()
     end
 
     @testset "power-grid-model interoperability" begin
+      # A PGM `source` is the reference by definition: its u_ref is the slack
+      # voltage whether or not a hand-written sparlectra block marks the
+      # machine `regulated`. Found on the meeting files of 2026-09-11: a
+      # hand-written feeder with u_ref 1.02 and an extra entry without the
+      # flag solved with the slack at 1.0 pu, every other bus 0.02 pu low,
+      # while the plain PGM twin of the same network solved at 1.02.
+      let hand = mktempdir()
+        text = """
+{"version": "1.0", "type": "input", "is_batch": false, "attributes": {},
+ "data": {
+  "node": [{"id": 1, "u_rated": 110000.0}, {"id": 2, "u_rated": 110000.0}],
+  "line": [{"id": 3, "from_node": 1, "to_node": 2, "from_status": 1, "to_status": 1, "r1": 1.21, "x1": 9.68, "c1": 0.0, "tan1": 0.0}],
+  "source": [{"id": 4, "node": 1, "status": 1, "u_ref": 1.02, "u_ref_angle": 0.0}],
+  "sym_load": [{"id": 5, "node": 2, "status": 1, "type": 0, "p_specified": 20000000.0, "q_specified": 5000000.0}]
+ },
+ "sparlectra": {"format_version": "1.0", "meta": {"case_name": "hand", "s_base": 100000000.0, "f_nom": 50.0, "intended_calculations": ["power_flow"]},
+  "roles": {"slack": {"mode": "single", "nodes": [1]}},
+  "extra": {"1": {"name": "B1"}, "2": {"name": "B2"}, "4": {"name": "Grid", "reference_pri": true}}}
+}
+"""
+        hf = joinpath(hand, "hand.scf.json")
+        write(hf, text)
+        hnet = importSCF(hf)
+        # the setpoint reaches the node when the bus types are resolved for
+        # the solve; what the reader must get right is the machine itself
+        hsrc = only(filter(p -> p.referencePri !== nothing, hnet.prosumpsVec))
+        @test hsrc.vm_pu == 1.02 && hsrc.isRegulated
+        runpf!(hnet, 30, 1e-10, 0)
+        @test getNodeVm(hnet.nodeVec[1]) == 1.02
+        # the same network without the sparlectra block is a plain PGM file and
+        # has always solved at u_ref; both must agree
+        plain = replace(text, r",\s*\"sparlectra\": \{.*\}\}\s*\}\s*$"s => "}")
+        pf = joinpath(hand, "plain.json")
+        write(pf, plain)
+        pnet = importSCF(pf)
+        runpf!(pnet, 30, 1e-10, 0)
+        @test abs(getNodeVm(pnet.nodeVec[2]) - getNodeVm(hnet.nodeVec[2])) < 1e-12
+      end
       # A file written by PGM itself: no namespaced block at all, `source`
       # instead of a slack flag, and a generic_branch (the component PGM users
       # have the fewest examples for).
@@ -832,6 +957,12 @@ function run_scf_tests()
       full = Sparlectra.scf_json_parse(read(exportSCF(net; file = joinpath(d, "full.scf.json")), String))
       @test haskey(full, "sparlectra") && haskey(full["sparlectra"], "extra")
       @test filesize(joinpath(d, "strict.json")) < filesize(joinpath(d, "full.scf.json"))
+
+      # a voltage-dependent controller has no PGM counterpart; the strict
+      # writer names it among what the plain dataset does not carry
+      qnet = importSCF(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14_qu.scf.json")))
+      @test any(has_qu_controller, qnet.prosumpsVec)
+      @test_logs (:warn, r"voltage-dependent Q\(U\)/P\(U\) control") match_mode = :any exportSCF(qnet; file = joinpath(d, "strict_qu.json"), strict_pgm = true)
     end
 
     @testset "three-winding transformer from a nameplate" begin

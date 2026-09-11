@@ -1327,6 +1327,14 @@ function run_webui_fast_tests()
         @test occursin("<span class=\"summary-label\">Case</span><code title=\"/some/where/case14.m\">case14.m</code>", live_html)
         @test occursin("<span class=\"summary-label\">Phase</span><code>n/a</code>", live_html)
         @test !occursin(">nothing<", live_html)
+
+        # a Q(U) machine read from a case file is named on the page, not only
+        # in the Control column of the result print (task qu_scf, 2026-09-11);
+        # a run without controllers keeps its summary short
+        @test !occursin("summary-label\">Controllers<", html)
+        with_ctrl = merge(probe, Dict{String,Any}("metadata" => Dict{String,Any}("controllers" => Dict{String,Any}("tap" => 1, "qu" => 1, "pu" => 0))))
+        @test occursin("<span class=\"summary-label\">Controllers</span><code>Q(U) 1 · tap 1</code>", Sparlectra.render_powerflow_result(with_ctrl))
+        @test Sparlectra._webui_control_summary(Dict{String,Any}("metadata" => Dict{String,Any}("controllers" => Dict{String,Any}("tap" => 0, "qu" => 0, "pu" => 0)))) === nothing
       end
 
       # A native file input speaks the BROWSER's language ("Durchsuchen",

@@ -56,13 +56,13 @@ function _execute_sparlectra_powerflow!(net::Net, cfg::SparlectraConfig; perform
         end
         if pf_cfg.solver === :apslf
           if !isempty(controllers) || has_voltage_dependent_control(net)
-            throw(ArgumentError("power_flow.solver=apslf does not support active outer-loop controllers (tap-changer, phase-shifting transformer, Q(U), or P(U) control). Disable the controllers or set power_flow.solver=rectangular."))
+            throw(ArgumentError("power_flow.solver=apslf does not support active controllers: neither the outer-loop tap-changer and phase-shifting transformer controllers nor the voltage-dependent Q(U)/P(U) controllers, which act inside the Newton step. Disable the controllers or set power_flow.solver=rectangular."))
           end
           ite, status = _run_apslf_powerflow!(net, pf_cfg; verbose = verbose, performance_profile = performance_profile)
           (ite, status, :none)
         elseif pf_cfg.solver === :dc
           if !isempty(controllers) || has_voltage_dependent_control(net)
-            throw(ArgumentError("power_flow.solver=dc does not support active outer-loop controllers (tap-changer, phase-shifting transformer, Q(U), or P(U) control). A phase-shifting transformer's current, fixed angle is still represented in the DC model; only the outer control loop that adjusts it is unsupported. Disable the controllers or set power_flow.solver=rectangular."))
+            throw(ArgumentError("power_flow.solver=dc does not support active controllers: neither the outer-loop tap-changer and phase-shifting transformer controllers nor the voltage-dependent Q(U)/P(U) controllers, which act inside the Newton step. A phase-shifting transformer's current, fixed angle is still represented in the DC model; only the outer control loop that adjusts it is unsupported. Disable the controllers or set power_flow.solver=rectangular."))
           end
           ite, status = _run_dc_powerflow!(net, pf_cfg; verbose = verbose, performance_profile = performance_profile)
           (ite, status, :none)

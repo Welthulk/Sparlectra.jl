@@ -92,7 +92,7 @@ power_flow:
 
 | YAML path | Type | Default | Allowed values | Meaning | Use when | Avoid when | Performance impact | Interactions |
 |---|---:|---:|---|---|---|---|---|---|
-| `power_flow.solver` | Symbol/String | `rectangular` | `rectangular`, `apslf`, `dc` | Selects the executing solver. | `dc` for a fast linear screening solve or as an AC start-value source. | `dc` when Vm/Q/loss results are required (the model doesn't define them). | `dc` is a single direct linear solve — no iteration. | Rejects active outer-loop controllers (tap/PST/Q(U)/P(U)), mirrors `apslf`. |
+| `power_flow.solver` | Symbol/String | `rectangular` | `rectangular`, `apslf`, `dc` | Selects the executing solver. | `dc` for a fast linear screening solve or as an AC start-value source. | `dc` when Vm/Q/loss results are required (the model doesn't define them). | `dc` is a single direct linear solve — no iteration. | Rejects active controllers (the outer-loop tap/PST controllers and the Q(U)/P(U) controllers that act inside the Newton step), mirrors `apslf`. |
 | `power_flow.dc.angle_reference_deg` | Float64 | `0.0` | any real | Uniform angle offset added to every bus after the slack-referenced solve; the slack bus itself is fixed at this reference. | Matching an external reference-angle convention. | N/A | None (exact post-hoc shift, not a re-solve). | None — mathematically independent of the rest of the DC solve. |
 | `power_flow.dc.ignore_out_of_service` | Bool | `true` | `true` | Documents that `status == 0` branches are always excluded from `B'`. | Always (current fixed behavior). | N/A | N/A | Not currently a live toggle. |
 

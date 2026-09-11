@@ -1,3 +1,18 @@
+# Version 0.12.0 - 2026-09-11
+
+A Q(U) or P(U) characteristic travels in the case file.
+
+## Highlights
+
+- **Voltage-dependent control in the Sparlectra Case Format.** A machine's Q(U) or P(U) characteristic (points, interpolation mode, limits) is written to and read from the case file, so a network with such a controller survives the round trip; before, exporting it and reading it back silently lost the control. Hand-written files are validated when read. Shipped demo: `sp_case14_qu.scf.json`. See [SCF](scf.md) and [Voltage-dependent control](voltage_dependent_control.md).
+- **The result page names the controllers.** A run whose network carries tap changers or Q(U)/P(U) machines shows them in the summary; the result print already marked them in the `Control` column.
+
+## Fixes
+
+- The apslf and dc solvers refused a network with Q(U)/P(U) control under the wrong name ("outer-loop controllers"); the message now names both kinds for what they are.
+- `exportSCF(strict_pgm = true)` names voltage-dependent control among what the plain power-grid-model dataset does not carry.
+- A case file's `source` sets the slack voltage whether or not a hand-written `extra` entry marks it `regulated`; without the flag the slack solved at 1.0 pu instead of its `u_ref`. Files written by Sparlectra carry the flag and are unaffected.
+
 # Version 0.11.1 - 2026-09-10
 
 - **Fix.** Cosmetic changes in the Web UI: file pickers speak the page's language, run history and result pages name the case instead of its path, and only power-flow runs offer the comparison checkbox.

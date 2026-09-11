@@ -951,6 +951,45 @@ function _scf_tap_changers(net::Net, ids::ScfIdMap)
   return rows
 end
 
+# The MATPOWER converter turns a PQ generator's limits into two constant
+# controllers (points at 0.0 and 2.0 pu, the value being the machine's own
+# setpoint). That pair is written back as the flag it came from, so every
+# existing case file stays byte for byte; anything else is a real
+# characteristic and is written as one. The check is EXACT on those two
+# voltages: a constant two-point controller a user set deliberately at other
+# voltages is a characteristic and stays one.
+function _scf_matpower_constant(ch::PiecewiseLinearCharacteristic, setpoint_pu::Float64)::Bool
+  ch.interpolation === :linear && length(ch.points) == 2 || return false
+  (u1, y1), (u2, y2) = ch.points
+  return u1 == 0.0 && u2 == 2.0 && y1 == y2 && isapprox(y1, setpoint_pu; rtol = 1.0e-12, atol = 1.0e-15)
+end
+
+function _scf_characteristic_dict(ch::PiecewiseLinearCharacteristic, lo, hi, lo_key::AbstractString, hi_key::AbstractString, s_base::Float64)
+  d = Dict{String,Any}("points" => [[u, y] for (u, y) in ch.points])
+  # the constructor's default is not written, like every other default
+  ch.interpolation === :linear || (d["interpolation"] = String(ch.interpolation))
+  # limits in MW / MVAr like max_q_mvar; an unlimited side is stated by absence
+  (lo === nothing || !isfinite(lo)) || (d[lo_key] = lo * s_base)
+  (hi === nothing || !isfinite(hi)) || (d[hi_key] = hi * s_base)
+  return d
+end
+
+"Voltage-dependent control of a machine into its `extra` entry (see the note on the MATPOWER constant form above)."
+function _scf_write_voltage_control!(d::Dict{String,Any}, ps::ProSumer, s_base::Float64)
+  qu = ps.quController
+  pu = ps.puController
+  (qu === nothing && pu === nothing) && return d
+  if qu !== nothing && pu !== nothing &&
+     _scf_matpower_constant(qu.characteristic, something(ps.qVal, 0.0) / s_base) &&
+     _scf_matpower_constant(pu.characteristic, something(ps.pVal, 0.0) / s_base)
+    d["pq_gen_controller"] = true
+    return d
+  end
+  qu === nothing || (d["qu_control"] = _scf_characteristic_dict(qu.characteristic, qu.qmin_pu, qu.qmax_pu, "qmin_mvar", "qmax_mvar", s_base))
+  pu === nothing || (d["pu_control"] = _scf_characteristic_dict(pu.characteristic, pu.pmin_pu, pu.pmax_pu, "pmin_mw", "pmax_mw", s_base))
+  return d
+end
+
 function _scf_extra(net::Net, ids::ScfIdMap)
   extra = Dict{String,Any}()
   put(id, d) = (extra[string(id)] = d)
@@ -1032,6 +1071,7 @@ function _scf_extra(net::Net, ids::ScfIdMap)
     # bus the reference as well (case57).
     ps.referencePri === nothing || (d["reference_pri"] = true)
     ps.isRegulated && (d["regulated"] = true)
+    _scf_write_voltage_control!(d, ps, net.baseMVA)
     put(ids.prosumer[i], d)
   end
   for i in eachindex(net.shuntVec)
@@ -1184,6 +1224,7 @@ function net_to_scf(
       haskey(comps, "shunt_state") && push!(dropped, "shunt state")
     end
     haskey(spar, "measurements") && push!(dropped, "measurement rows")
+    any(ps -> has_qu_controller(ps) || has_pu_controller(ps), net.prosumpsVec) && push!(dropped, "voltage-dependent Q(U)/P(U) control")
     haskey(spar, "start_state") && push!(dropped, "start state")
     (haskey(spar, "contingencies") || haskey(spar, "short_circuit")) && push!(dropped, "study definitions")
     # g1 on a line row is the SCF extension for a conductance tan1 cannot

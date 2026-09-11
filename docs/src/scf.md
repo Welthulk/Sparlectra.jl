@@ -246,7 +246,28 @@ reactive band of every machine, its voltage setpoint, and whether it
 regulates at all travel in `extra` (`max_q_mvar`, `min_q_mvar`, `vm_pu`,
 `regulated`), because a machine written as a PGM `source` has no
 `voltage_regulator` row to keep them in, and an unlimited band has no JSON
-representation in the dataset at all. A setpoint alone must not promote a
+representation in the dataset at all. A voltage-dependent controller travels
+there as well: `extra.<machine>.qu_control` and `pu_control` carry the
+characteristic's points in per unit (voltage, power on `meta.s_base`), its
+interpolation mode and its limits in MVAr / MW, so a Q(U) or P(U) machine
+comes back as the machine it was:
+
+```json
+"qu_control": {
+  "points": [[0.95, 0.30], [1.00, 0.00], [1.05, -0.20]],
+  "interpolation": "spline",
+  "qmin_mvar": -50.0,
+  "qmax_mvar": 50.0
+}
+```
+
+`interpolation` is `linear`, `spline` or `polynomial` (see [Voltage-dependent
+control](voltage_dependent_control.md)); the file is validated when it is
+read, by component name (at least two points, strictly increasing voltages, a
+known mode, `qmin_mvar` not above `qmax_mvar`). The MATPOWER converter's
+constant controllers keep their short form, the flag `pq_gen_controller`;
+an explicit `qu_control`/`pu_control` object wins over that flag where both
+are present. A setpoint alone must not promote a
 machine either: the constructor treats any setpoint as regulation, so the
 reader restores the flag the file states. Read the case file back, solve it,
 and the voltages match the source network to the last bits.
@@ -295,6 +316,8 @@ being a valid PGM dataset.
 | `extra.<machine>.vm_pu` | absent | the machine does not regulate (a regulating one keeps its setpoint in its `voltage_regulator` row, the reference in `source.u_ref`) |
 | `extra.<machine>.max_q_mvar`, `min_q_mvar` | absent | no reactive limit |
 | `extra.<machine>.max_p_mw`, `min_p_mw` | absent | no active limit |
+| `extra.<machine>.qu_control.interpolation`, `pu_control.interpolation` | `"linear"` | piecewise linear characteristic |
+| `extra.<machine>.qu_control.qmin_mvar`, `qmax_mvar`, `pu_control.pmin_mw`, `pmax_mw` | absent | no limit on the controlled value |
 | `extra.<machine>.regulated`, `apu_node` | `false` | |
 | `extra.<branch>.meta.sn_mva` | absent | no rating recorded |
 | `components.tap_changer[].tap_est_mode` | `"none"` | the tap is not released for estimation |

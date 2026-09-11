@@ -208,7 +208,8 @@ depth. Concretely, compared to the internal rectangular path:
   the embedding construction, not a missing feature.
 - **No OLTC / tap-changer / phase-shifting-transformer control and no
   Q(U)/P(U) voltage-dependent control.** Runs with `power_flow.solver =
-  apslf` and any active outer-loop controller (tap, PST, Q(U), P(U)) are
+  apslf` and any active controller (the outer-loop tap and PST controllers,
+  and the Q(U)/P(U) controllers that act inside the Newton step) are
   rejected up front with a clear error — there is no silent fallback to a
   partially-controlled solve.
 - **Q-limits are simple PV→PQ only.** AnalyticLoadFlow.jl performs its own

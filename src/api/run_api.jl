@@ -1115,6 +1115,13 @@ function _run_sparlectra_api(;
   operation_callback("powerflow_lifecycle_status"; run_id = run_id, solver_status = "completed", artifact_status = "running", run_status = "finalizing", last_phase = "writing_artifacts")
   run_diagnostics && _write_powerflow_diagnostics(joinpath(output_path, "diagnose.log"), raw_result; mode = config.output.logfile_diagnostics)
   run_diagnostics && _write_start_residuals_artifact(output_path, api_performance_profile)
+  # which controllers the solved network carried: the result page names them,
+  # because a Q(U) machine read from a case file is otherwise visible only in
+  # the Control column of the result print (task qu_scf, 2026-09-11)
+  if raw_result.net !== nothing
+    tap_n, qu_n, pu_n = _controller_counts(raw_result.net)
+    qlimit_metadata["controllers"] = Dict{String,Any}("tap" => tap_n, "qu" => qu_n, "pu" => pu_n)
+  end
   q_limit_artifacts = raw_result.net !== nothing ? [_write_q_limit_log_artifact(output_path, raw_result, qlimit_metadata)] : String[]
   if (run_diagnostics || detailed_result_csv) && raw_result.net !== nothing
     append!(q_limit_artifacts, _write_q_limit_detail_artifacts(output_path, raw_result.net; format = "technical"))

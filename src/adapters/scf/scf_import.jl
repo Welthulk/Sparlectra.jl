@@ -36,6 +36,40 @@ function _scf_require(d::AbstractDict, key::AbstractString, context::AbstractStr
   return d[key]
 end
 
+# A voltage-dependent controller in `extra.<machine>`: `qu_control` and
+# `pu_control` carry the characteristic points in per unit (voltage, power on
+# `meta.s_base`), the interpolation mode and the limits in MVAr / MW. The file
+# is validated HERE, with the component's name: a bad characteristic that only
+# surfaced as a solver error three calls later would name nothing a reader
+# can find in the file.
+const _SCF_CONTROL_INTERPOLATIONS = ("linear", "spline", "polynomial")
+
+function _scf_read_characteristic(obj, key::AbstractString, name::AbstractString)
+  obj isa AbstractDict || throw(ArgumentError("SCF: $(name) $(key) must be an object with `points` and optionally `interpolation` and limits"))
+  raw = get(obj, "points", nothing)
+  (raw isa AbstractVector && length(raw) >= 2) || throw(ArgumentError("SCF: $(name) $(key).points needs at least two [u_pu, value_pu] pairs"))
+  points = Tuple{Float64,Float64}[]
+  for (i, pair) in enumerate(raw)
+    (pair isa AbstractVector && length(pair) == 2 && all(x -> x isa Number, pair)) || throw(ArgumentError("SCF: $(name) $(key).points[$(i)] must be a [u_pu, value_pu] pair of numbers"))
+    push!(points, (Float64(pair[1]), Float64(pair[2])))
+  end
+  for i in Iterators.drop(eachindex(points), 1)
+    points[i][1] > points[i-1][1] || throw(ArgumentError("SCF: $(name) $(key).points must have strictly increasing voltages (point $(i) has $(points[i][1]) pu after $(points[i-1][1]) pu)"))
+  end
+  mode = string(get(obj, "interpolation", "linear"))
+  mode in _SCF_CONTROL_INTERPOLATIONS || throw(ArgumentError("SCF: $(name) $(key).interpolation \"$(mode)\" is unknown; use one of $(join(_SCF_CONTROL_INTERPOLATIONS, ", "))"))
+  return make_characteristic(points; interpolation = Symbol(mode))
+end
+
+# a limit stated in the object, in MW / MVAr; absent means no limit, and the
+# infinity sentinel means the same thing
+function _scf_control_limits(obj, key::AbstractString, lo_key::AbstractString, hi_key::AbstractString, name::AbstractString)
+  lo = haskey(obj, lo_key) ? scf_number_or_sentinel(obj[lo_key], "extra.$(key).$(lo_key)") : nothing
+  hi = haskey(obj, hi_key) ? scf_number_or_sentinel(obj[hi_key], "extra.$(key).$(hi_key)") : nothing
+  (lo !== nothing && hi !== nothing && lo > hi) && throw(ArgumentError("SCF: $(name) $(key) has $(lo_key) = $(lo) above $(hi_key) = $(hi)"))
+  return lo, hi
+end
+
 _scf_num(v, context::AbstractString)::Float64 = v isa Number ? Float64(v) : throw(ArgumentError("SCF: $(context) must be a number, got $(repr(v))."))
 _scf_int(v, context::AbstractString)::Int = v isa Integer ? Int(v) : (v isa AbstractFloat && isinteger(v) ? Int(v) : throw(ArgumentError("SCF: $(context) must be an integer, got $(repr(v)).")))
 
@@ -659,7 +693,23 @@ function _scf_net_from_case(case::SCFCase)::Net
       # existing case file's behavior untouched
       pu_ctrl = nothing
       qu_ctrl = nothing
-      if _scf_get(e, "pq_gen_controller", false) === true
+      # An explicit characteristic (`qu_control` / `pu_control`) says more
+      # than the flag and wins over it; a file carrying both is told so, by
+      # component name, rather than silently taking one of them.
+      ctrl_name = string(_scf_get(e, "name", string(id)))
+      has_characteristic = haskey(e, "qu_control") || haskey(e, "pu_control")
+      if has_characteristic && _scf_get(e, "pq_gen_controller", false) === true
+        @info "SCF: $(ctrl_name) carries pq_gen_controller and an explicit characteristic; the characteristic is used"
+      end
+      if haskey(e, "qu_control")
+        qmin_c, qmax_c = _scf_control_limits(e["qu_control"], "qu_control", "qmin_mvar", "qmax_mvar", ctrl_name)
+        qu_ctrl = QUController(_scf_read_characteristic(e["qu_control"], "qu_control", ctrl_name); qmin_MVAr = qmin_c, qmax_MVAr = qmax_c, sbase_MVA = s_base)
+      end
+      if haskey(e, "pu_control")
+        pmin_c, pmax_c = _scf_control_limits(e["pu_control"], "pu_control", "pmin_mw", "pmax_mw", ctrl_name)
+        pu_ctrl = PUController(_scf_read_characteristic(e["pu_control"], "pu_control", ctrl_name); pmin_MW = pmin_c, pmax_MW = pmax_c, sbase_MVA = s_base)
+      end
+      if !has_characteristic && _scf_get(e, "pq_gen_controller", false) === true
         p_mw = something(row.p_specified, 0.0) / 1.0e6
         q_mw = something(row.q_specified, 0.0) / 1.0e6
         p_pu = p_mw / s_base
@@ -704,7 +754,12 @@ function _scf_net_from_case(case::SCFCase)::Net
         # regulated ones on every read (measured on case1354: 260 regulated
         # machines became 933). A foreign PGM file has no `extra` entry at
         # all, and there the row IS the statement of regulation.
-        isRegulated = isempty(e) ? reg !== nothing : _scf_get(e, "regulated", false) === true,
+        # A `source` is the reference by definition: its u_ref is the slack
+        # voltage whether or not a hand-written extra entry carries the flag
+        # (a file without it solved with the slack at 1.0 instead of 1.02,
+        # every bus 0.02 pu low; the exporter always writes the flag, so
+        # written files are unaffected).
+        isRegulated = kind == "source" ? true : (isempty(e) ? reg !== nothing : _scf_get(e, "regulated", false) === true),
         # refreshing the bus types per appliance is O(prosumers) EACH TIME, so
         # a case with n appliances pays n^2 (measured: 6.9 s for case13659,
         # 0.5 s with the deferral). The MATPOWER importer defers the same way
@@ -724,7 +779,7 @@ function _scf_net_from_case(case::SCFCase)::Net
       # addProsumer! auto-regulates anything that carries a voltage setpoint,
       # so restoring the setpoint of an UNREGULATED machine would silently
       # promote it to a PV generator. The file knows which it was.
-      isempty(e) || (ps.isRegulated = _scf_get(e, "regulated", false) === true)
+      (isempty(e) || kind == "source") || (ps.isRegulated = _scf_get(e, "regulated", false) === true)
       # addProsumer! derives the component type from "is this a generator", so
       # the SPECIFIC type (external network injection, synchronous machine,
       # energy consumer) has to be restored here. Without it a PGM `source`

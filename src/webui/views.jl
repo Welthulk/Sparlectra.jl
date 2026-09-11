@@ -2187,6 +2187,8 @@ function render_powerflow_result(result::AbstractDict)::String
     push!(base, ("Total time", "<strong>$(_webui_escape(_format_elapsed_duration(_webui_total_elapsed_seconds(result))))</strong>"))
     wrong_branch_badge = _webui_wrong_branch_badge(result)
     wrong_branch_badge === nothing || push!(base, ("Wrong-branch check", wrong_branch_badge))
+    control_summary = _webui_control_summary(result)
+    control_summary === nothing || push!(base, ("Controllers", "<code>$(_webui_escape(control_summary))</code>"))
     sv_summary = _webui_sv_compare_summary(result)
     sv_summary === nothing || push!(base, ("SV comparison", sv_summary))
     sc_summary = _webui_short_circuit_summary(result)
@@ -2824,6 +2826,29 @@ function _webui_auto_mode_summary(result::AbstractDict)::Union{Nothing,String}
     s *= "<ul class=\"auto-hints\">" * join(("<li>$(_webui_escape(String(h)))</li>" for h in hints), "") * "</ul>"
   end
   return s
+end
+
+"""
+    _webui_control_summary(result) -> String or nothing
+
+The controllers the solved network carried, as one line for the summary cards:
+tap changers, Q(U) and P(U) machines. Nothing when the run had none, so an
+ordinary case keeps its summary short. The counts come from the run's own
+metadata (`controllers`), written by the service.
+"""
+function _webui_control_summary(result::AbstractDict)::Union{Nothing,String}
+  metadata = get(result, "metadata", Dict{String,Any}())
+  metadata isa AbstractDict || return nothing
+  counts = get(metadata, "controllers", nothing)
+  counts isa AbstractDict || return nothing
+  n(key) = something(tryparse(Int, string(get(counts, key, 0))), 0)
+  tap, qu, pu = n("tap"), n("qu"), n("pu")
+  tap + qu + pu > 0 || return nothing
+  parts = String[]
+  qu > 0 && push!(parts, "Q(U) $(qu)")
+  pu > 0 && push!(parts, "P(U) $(pu)")
+  tap > 0 && push!(parts, "tap $(tap)")
+  return join(parts, " · ")
 end
 
 function _webui_se_summary(result::AbstractDict)::Union{Nothing,String}
