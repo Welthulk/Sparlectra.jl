@@ -3613,7 +3613,13 @@ function runse_diagnostics(
       end
     end
     rows = NamedTuple[]
-    for (st, suspects) in sort(collect(byStation); by = x -> -length(last(x)))
+    # A total order, so the strongest station comes first on every Julia
+    # version: most suspects, then the largest normalized residual among
+    # them, then the label. Sorting by count alone left ties in Dict
+    # iteration order, which changed between Julia 1.12 and 1.13 and moved a
+    # different station to the front (found on the CI run of 2026-09-11).
+    station_rank(x) = (-length(last(x)), -maximum(r.abs_normalized_residual for r in last(x)), _topology_station_label(net, first(x), mems))
+    for (st, suspects) in sort(collect(byStation); by = station_rank)
       length(suspects) >= clusterMin || continue
       notes = Symbol[]
       st in preStations && push!(notes, :precheck_agreement)

@@ -161,7 +161,9 @@ function _validate_gui_override_value(key::String, value)
   elseif key == "power_flow.linear_solver"
     _validate_allowed_symbol(key, _as_symbol_cfg(value), POWERFLOW_LINEAR_SOLVER_VALUES)
   elseif key == "power_flow.qlimits.enforcement_mode"
-    _canonical_qlimit_enforcement_mode(_as_symbol_cfg(value))
+    # "off" is the disabled state, accepted like in `QLimitConfig`
+    mode = _as_symbol_cfg(value)
+    mode === :off || _canonical_qlimit_enforcement_mode(mode)
   elseif key == "power_flow.wrong_branch_detection"
     _validate_allowed_symbol(key, _as_symbol_cfg(value), WRONG_BRANCH_DETECTION_VALUES)
   elseif key == "power_flow.start_mode.angle_mode"

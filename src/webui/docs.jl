@@ -511,7 +511,11 @@ end
 
 function _webui_heading_slug(heading_html::AbstractString)::String
   text = replace(String(heading_html), r"<[^>]+>" => "")
-  text = lowercase(replace(text, "&amp;" => "and", "&quot;" => "", "&#39;" => ""))
+  # Julia's Markdown writes parentheses and similar characters as numeric
+  # entities (`&#40;`); decoded first, they separate words like any other
+  # punctuation instead of leaving their code points in the slug
+  text = replace(text, r"&#(\d+);" => m -> string(Char(parse(Int, m[3:prevind(m, lastindex(m))]))))
+  text = lowercase(replace(text, "&amp;" => "and", "&quot;" => "", "'" => ""))
   return strip(replace(text, r"[^a-z0-9]+" => "-"), '-')
 end
 
@@ -519,7 +523,9 @@ function _webui_rewritten_doc_href(target::AbstractString; current_page::Union{N
   href = String(target)
   startswith(href, "https://") && return href
   startswith(href, "http://") && return href
-  startswith(href, "#") && return current_page === nothing ? nothing : href
+  # heading ids are lowercase here (see rewrite_webui_doc_links), while the
+  # pages link Documenter-style anchors such as `#Configuration-precedence`
+  startswith(href, "#") && return current_page === nothing ? nothing : lowercase(href)
   (startswith(href, "/") || occursin('\\', href) || occursin(':', href)) && return nothing
 
   relative = startswith(href, "./") ? href[3:end] : href
@@ -529,7 +535,7 @@ function _webui_rewritten_doc_href(target::AbstractString; current_page::Union{N
   metadata = resolve_webui_doc_page(page)
   metadata === nothing && return nothing
   metadata.file == "$(page).md" || return nothing
-  fragment = something(matched.captures[2], "")
+  fragment = lowercase(something(matched.captures[2], ""))
   return "/docs/$(page)$(fragment)"
 end
 
@@ -630,9 +636,66 @@ function _webui_render_math(markdown_text::AbstractString)::String
   return s
 end
 
+## Documenter cross references (maintainer 2026-09-11: the CGMES page
+## showed its "Node-breaker deliveries without a TP profile" heading as a
+## dead link). `[text](@id name)` labels a heading and `[text](@ref name)`
+## points at it, possibly from another page; Julia's Markdown renders both
+## as ordinary links whose target the href rewriter then disables. The
+## label is dropped from the heading text, and a reference becomes the
+## page-local `#slug` or `page.md#slug` link the rewriter already handles.
+## References without a known label (docstring refs such as
+## [`addACLine!`](@ref), or ids on pages the viewer does not serve) stay as
+## they are and render disabled, as before.
+const _WEBUI_DOCUMENTER_ID_PATTERN = r"\[([^\]]+)\]\(@id\s+([A-Za-z0-9_.-]+)\)"
+const _WEBUI_DOCUMENTER_REF_PATTERN = r"\[([^\]]+)\]\(@ref\s+([A-Za-z0-9_.-]+)\)"
+
+"""Drop a Documenter `[text](@id name)` label from heading text, keeping the text."""
+_webui_documenter_heading_text(text::AbstractString) = replace(String(text), _WEBUI_DOCUMENTER_ID_PATTERN => s"\1")
+
+"""Anchor slug of a Markdown heading, the same one the rendered heading gets."""
+function _webui_markdown_heading_slug(text::AbstractString)::String
+  plain = _webui_documenter_heading_text(text)
+  # the rendered heading carries the code spans as tags (stripped by the
+  # slug) and the ampersand escaped (turned into "and")
+  return _webui_heading_slug(replace(plain, "`" => "", "&" => "&amp;"))
+end
+
+"""Map every Documenter `@id` label on the served pages to `(page, slug)`."""
+function _webui_documenter_id_index()::Dict{String,Tuple{String,String}}
+  index = Dict{String,Tuple{String,String}}()
+  for (page, metadata) in WEBUI_DOC_PAGES
+    path = _webui_doc_path(metadata)
+    isfile(path) || continue
+    for line in eachline(path)
+      heading = _webui_markdown_heading(line)
+      heading === nothing && continue
+      for matched in eachmatch(_WEBUI_DOCUMENTER_ID_PATTERN, heading.text)
+        index[String(matched.captures[2])] = (page, _webui_markdown_heading_slug(heading.text))
+      end
+    end
+  end
+  return index
+end
+
+"""Resolve Documenter `@id`/`@ref` syntax into links the viewer's href rewriter understands."""
+function _webui_resolve_documenter_refs(markdown_text::AbstractString; current_page::Union{Nothing,String} = nothing)::String
+  s = replace(String(markdown_text), _WEBUI_DOCUMENTER_ID_PATTERN => s"\1")
+  occursin("(@ref ", s) || return s
+  index = _webui_documenter_id_index()
+  return replace(s, _WEBUI_DOCUMENTER_REF_PATTERN => matched_text -> begin
+    matched = match(_WEBUI_DOCUMENTER_REF_PATTERN, String(matched_text))
+    target = get(index, String(matched.captures[2]), nothing)
+    target === nothing && return String(matched_text)
+    page, slug = target
+    href = page == current_page ? "#$(slug)" : "$(page).md#$(slug)"
+    "[$(matched.captures[1])]($(href))"
+  end)
+end
+
 """Render trusted repository Markdown as HTML using Julia's Markdown standard library."""
 function render_webui_markdown(markdown_text::AbstractString; current_page::Union{Nothing,String} = nothing)::String
   io = IOBuffer()
-  show(io, MIME"text/html"(), Markdown.parse(_webui_render_math(String(markdown_text))))
+  resolved = _webui_resolve_documenter_refs(String(markdown_text); current_page = current_page)
+  show(io, MIME"text/html"(), Markdown.parse(_webui_render_math(resolved)))
   return rewrite_webui_doc_links(String(take!(io)); current_page = current_page)
 end

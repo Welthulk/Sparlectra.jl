@@ -9,8 +9,12 @@ A Q(U) or P(U) characteristic travels in the case file.
 
 ## Fixes
 
+- Web UI: choosing `off` as the Q-limit enforcement mode and saving it (settings page or case options) wrote the word into the configuration file, and every following run of that case failed with `ArgumentError: power_flow.qlimits.enforcement_mode must be one of ...`. The save now stores `enabled: false` instead, and a file that already carries `off` loads as disabled.
+- Web UI: the in-app documentation viewer showed Documenter cross references (`@id` labels, `@ref` links) as dead links; the CGMES page's "Node-breaker deliveries without a TP profile" heading was one. They now resolve to the section, on the same page or across pages.
+- Julia 1.13 is supported. Its new hash seed changes `Dict` iteration order, which decided ties in the state-estimation topology fingerprint; the suspected stations are now ranked by a total order (suspect count, largest normalized residual, label) and come out the same on every Julia version.
 - The apslf and dc solvers refused a network with Q(U)/P(U) control under the wrong name ("outer-loop controllers"); the message now names both kinds for what they are.
 - `exportSCF(strict_pgm = true)` names voltage-dependent control among what the plain power-grid-model dataset does not carry.
+- The Q-V check now finds a non-physical state under every enforcement mode. It read the node's reactive sum, which only the active set writes; a machine the classical outer loop had clamped was invisible to it, and `classic_simultaneous` on the published IEEE-14 case reported nothing while the result print showed the machines at their limits.
 - A case file's `source` sets the slack voltage whether or not a hand-written `extra` entry marks it `regulated`; without the flag the slack solved at 1.0 pu instead of its `u_ref`. Files written by Sparlectra carry the flag and are unaffected.
 
 # Version 0.11.1 - 2026-09-10

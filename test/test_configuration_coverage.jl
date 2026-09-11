@@ -485,6 +485,15 @@ power_flow:
       cfg = Sparlectra.load_sparlectra_config(cfgfile; reload = true)
       @test cfg.powerflow.qlimits.enforcement_mode === mode
     end
+    # `off` is the disabled state, not a mode: the Web UI settings pages up
+    # to 0.11.1 saved the word, and the loader rejected the file afterwards
+    let cfgfile = test_scratch_path(".yaml")
+      write(cfgfile, "power_flow:\n  qlimits:\n    enabled: true\n    enforcement_mode: off\n")
+      cfg = Sparlectra.load_sparlectra_config(cfgfile; reload = true)
+      @test cfg.powerflow.qlimits.ignore_q_limits
+      @test cfg.powerflow.qlimits.enforcement_mode === :active_set
+      @test Sparlectra.validate_gui_config_overrides(Dict{String,Any}("power_flow.qlimits.enforcement_mode" => "off"))["power_flow"]["qlimits"]["enforcement_mode"] == "off"
+    end
     for (legacy, canonical) in ((:matpower_simultaneous, :classic_simultaneous), (:matpower_one_at_a_time, :classic_one_at_a_time))
       cfgfile = test_scratch_path(".yaml")
       write(cfgfile, """

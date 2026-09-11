@@ -407,6 +407,7 @@ function _webui_powerflow_info_menu(; output_root::AbstractString, config_file::
 <h2>Run information</h2>
 <dl>
 <dt>Version</dt><dd><code>Sparlectra.jl v$(_webui_escape(string(version())))</code></dd>
+<dt>Julia</dt><dd><code>$(_webui_escape(string(VERSION)))</code></dd>
 <dt>Commit</dt><dd><code>$(_webui_escape(commit_text))</code></dd>
 <dt>Started from</dt><dd><code>$(_webui_escape(flavor_text))</code> <a href=\"/webui/sysimage\">Sysimage</a></dd>
 <dt>Output root</dt><dd><code>$(_webui_escape(output_root))</code></dd>
@@ -2795,8 +2796,10 @@ function _webui_doc_page_toc(markdown_text::AbstractString)::String
     startswith(line, "## ") || continue
     title = strip(line[4:end])
     isempty(title) && continue
-    anchor = lowercase(replace(title, r"[^\w\s-]" => "", r"\s+" => "-"))
-    push!(entries, "<li><a href=\"#$(_webui_escape(anchor))\">$(_webui_escape(title))</a></li>")
+    # the same slug the rendered heading gets (rewrite_webui_doc_links);
+    # a Documenter `(@id ...)` label is not part of the title
+    anchor = _webui_markdown_heading_slug(title)
+    push!(entries, "<li><a href=\"#$(_webui_escape(anchor))\">$(_webui_escape(_webui_documenter_heading_text(title)))</a></li>")
   end
   length(entries) < 4 && return ""
   return "<details class=\"docs-toc\" open><summary>On this page ($(length(entries)) sections)</summary><ul>$(join(entries, ""))</ul></details>"

@@ -387,28 +387,32 @@ function printFinalLimitValidation(net::Net; q_headroom::Float64 = 0.20, io::IO 
 end
 
 """
-    _qv_effective_qgen(net, bus) -> Float64
+    _qv_effective_qgen(net, bus, limit_mvar = NaN) -> Float64
 
-The reactive generation at `bus` as the Q-V check must read it. Neither single
-source is right on its own:
-
-- `node._qƩGen` carries the value the solver clamped a PV bus to, including
-  the active-set path, but stays 0 for a machine under Q(U) control;
-- `_effective_bus_power_components` evaluates the Q(U) characteristic (and the
-  classic outer loop's clamp, which it writes to the prosumer), but falls back
-  to `_qƩGen` only on Slack and PV buses, not on a bus that was switched to PQ.
-
-So: a Q(U) machine is read from its characteristic, everything else from the
-bus aggregate where the solver left one.
+The reactive power a clamped machine at `bus` really injects, in MVAr. Two
+places hold it and each enforcement mode writes only one of them: the active
+set writes the clamp back to the node (`_qƩGen`) and leaves the specification
+alone, the classical outer loop applies the clamp in the specification (what
+`_effective_bus_power_components` reads) and leaves the node alone. Reading
+one of them alone therefore misses every machine the OTHER mode clamped: on
+the Zeng case the node said 54.17 MVAr at a 50 MVAr limit under the classical
+loop and the check reported nothing, and the specification said 42.4 under the
+active set (measured 2026-09-11). With a `limit_mvar` given, the candidate
+closer to that limit is the one the solver enforced; a re-enabled machine
+sits on neither, and stays invisible to the check as it should. A
+Q(U)-controlled machine has its own source, the characteristic.
 """
-function _qv_effective_qgen(net::Net, bus::Int)::Float64
+function _qv_effective_qgen(net::Net, bus::Int, limit_mvar::Float64 = NaN)::Float64
   node = net.nodeVec[bus]
   controlled = any(ps -> getPosumerBusIndex(ps) == bus && has_qu_controller(ps), net.prosumpsVec)
-  if !controlled && !isnothing(node._qƩGen)
-    return Float64(node._qƩGen)
-  end
-  _, q_gen, _, _ = _effective_bus_power_components(net, bus)
-  return Float64(q_gen)
+  _, q_spec, _, _ = _effective_bus_power_components(net, bus)
+  q_spec = Float64(q_spec)
+  controlled && return q_spec
+  q_node = isnothing(node._qƩGen) ? NaN : Float64(node._qƩGen)
+  isfinite(q_node) || return q_spec
+  isfinite(q_spec) || return q_node
+  isfinite(limit_mvar) || return q_node
+  return abs(q_node - limit_mvar) <= abs(q_spec - limit_mvar) ? q_node : q_spec
 end
 
 """
@@ -451,7 +455,7 @@ function qvCharacteristicViolations(net::Net; band_pu::Float64 = 1.0e-4)
     limit_pu = side === :max ? (bus <= length(qmax_pu) ? qmax_pu[bus] : Inf) : (bus <= length(qmin_pu) ? qmin_pu[bus] : -Inf)
     isfinite(limit_pu) || continue
     limit_mvar = limit_pu * net.baseMVA
-    q = _qv_effective_qgen(net, bus)
+    q = _qv_effective_qgen(net, bus, limit_mvar)
     isfinite(q) || continue
     # only a bus that really sits ON the limit can be non-physical; a stale
     # event whose machine has moved back inside its band is not a violation
