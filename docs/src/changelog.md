@@ -1,3 +1,7 @@
+# Version 0.12.1 - 2026-09-11
+
+- **Tests.** Warnings the suite provokes on purpose (version-less and legacy configuration files, the in-file config block, a coarse tolerance, a skipped feeder, the topology advisory, a strict export) are captured and checked instead of printed; a green run shows no warnings.
+
 # Version 0.12.0 - 2026-09-11
 
 A Q(U) or P(U) characteristic travels in the case file.

@@ -714,7 +714,9 @@ mpc.branch = [
         # with the start state, because carrying it is opt-in and the
         # comparison must see the same operating point on both sides
         full = exportSCF(net; file = joinpath(d, "full_$(case).json"), source_format = "matpower", include_start_state = true)
-        via_service = Sparlectra._import_sparlectra_net(full, nothing, cfg)
+        # a tap-band advisory on some cases is the import's business, not a
+        # finding of this round trip: captured, anything else fails
+        via_service = run_with_expected_warnings(() -> Sparlectra._import_sparlectra_net(full, nothing, cfg), (r"neutral tap position",))
         diffs = scf_roundtrip_field_diffs(net, via_service)
         @test (case, diffs) == (case, String[])
         # A setpoint is written only where it ACTS. The check belongs on the
@@ -1137,7 +1139,10 @@ mpc.branch = [
       Sparlectra.readMeasurementsCSV!(se_net; file = abspath(joinpath(dirname(@__DIR__), "data", "mpower", "warmup_casePST.measurements.csv")))
       se_case = exportSCF(se_net; file = joinpath(d, "se_case.scf.json"), intended_calculations = String["power_flow", "state_estimation"])
       @test !isempty(importSCF(se_case).measurements)
-      res_se = redirect_stdout(devnull) do
+      # the service's SE run advises on the topology of these small sets by
+      # design; the advisory is captured, anything else that warns fails
+      se_quiet(f) = run_with_expected_warnings(() -> redirect_stdout(f, devnull), (r"topology precheck reported",))
+      res_se = se_quiet() do
         Sparlectra._run_state_estimation_service(se_case, cfg, joinpath(d, "run_se"), "scf_se", joinpath(d, "no_such_set.csv"))
       end
       d_se = Sparlectra.to_dict(res_se)
@@ -1184,7 +1189,7 @@ mpc.branch = [
       @test back["tap_deviations"][1]["steps"] == 2.0
       @test length(back["truth_values"]) == 1
       @test Sparlectra._scf_source_reference(prov_case) == "warmup_casePST.m"
-      res_prov = redirect_stdout(devnull) do
+      res_prov = se_quiet() do
         Sparlectra._run_state_estimation_service(prov_case, cfg, joinpath(d, "run_prov"), "scf_prov", joinpath(d, "no_such_set.csv"))
       end
       @test Sparlectra.to_dict(res_prov)["status"] == "succeeded"
@@ -1214,7 +1219,7 @@ mpc.branch = [
       @test length(dbl_back.measurements) == length(doubled)
       @test sort([m.id for m in dbl_back.measurements]) == sort([m.id for m in doubled])
       @test sort([m.value for m in dbl_back.measurements]) == sort([m.value for m in doubled])
-      res_dbl = redirect_stdout(devnull) do
+      res_dbl = se_quiet() do
         Sparlectra._run_state_estimation_service(dbl_case, cfg, joinpath(d, "run_dbl"), "scf_dbl", joinpath(d, "no_such_set.csv"))
       end
       d_dbl = Sparlectra.to_dict(res_dbl)
@@ -1224,7 +1229,7 @@ mpc.branch = [
       # a case file WITHOUT measurements says what is missing instead of
       # failing on a file that was never there
       plain_case = exportSCF(_scf_test_net(); file = joinpath(d, "plain_case.scf.json"))
-      res_none = redirect_stdout(devnull) do
+      res_none = se_quiet() do
         Sparlectra._run_state_estimation_service(plain_case, cfg, joinpath(d, "run_se_none"), "scf_se_none", joinpath(d, "no_such_set.csv"))
       end
       d_none = Sparlectra.to_dict(res_none)
@@ -1454,7 +1459,7 @@ mpc.branch = [
       se_run = Sparlectra.start_powerflow_run(Dict("casefile" => "warmup_casePST.pgm.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(root, "runs_se_gen"), "se_mode" => true, "measurement_file" => "warmup_casePST.pgm.measurements.csv"); case_directory = cases)
       @test se_run["status"] == "succeeded"
       # exporting a case FILE again must not grow format suffixes
-      Sparlectra.route_sparlectra_webui("POST", "/powerflow/export-scf", Dict{String,Any}("casefile" => "warmup_casePST.scf.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "scf_strict_pgm" => "true"); output_root = root, runtime = rt)
+      @test_logs (:warn, r"strict_pgm = true") match_mode = :any Sparlectra.route_sparlectra_webui("POST", "/powerflow/export-scf", Dict{String,Any}("casefile" => "warmup_casePST.scf.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "scf_strict_pgm" => "true"); output_root = root, runtime = rt)
       @test !isfile(joinpath(cases, "warmup_casePST.scf.pgm.json"))
       @test isfile(joinpath(cases, "warmup_casePST.pgm.json"))
 

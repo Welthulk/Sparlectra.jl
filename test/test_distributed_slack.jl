@@ -283,7 +283,7 @@ function run_distributed_slack_tests()
       # treat it (and nothing/"") as an empty table instead of throwing —
       # otherwise EVERY default-merged load_sparlectra_config call fails.
       p0 = test_scratch_path(".yaml")
-      write(p0, "power_flow:\n  tol: 1.0e-8\n")
+      write(p0, "config_version: 1\npower_flow:\n  tol: 1.0e-8\n")
       cfg = Sparlectra.load_sparlectra_config(p0; reload = true)
       @test cfg.powerflow.distributed_slack.enabled == false
       @test isempty(cfg.powerflow.distributed_slack.weights)
@@ -291,6 +291,7 @@ function run_distributed_slack_tests()
       # (bus names) and must pass unknown-key validation.
       p1 = test_scratch_path(".yaml")
       write(p1, """
+config_version: 1
 power_flow:
   distributed_slack:
     enabled: true

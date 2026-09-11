@@ -150,7 +150,8 @@ function run_external_grid_tests()
       addExternalGrid!(net = net, busName = "B1", sk_max_MVA = 3000.0)
       resmax = runShortCircuit!(net; case = :max)
       @test only(resmax.rows).status === :ok
-      resmin = runShortCircuit!(net; case = :min)
+      # the skipped feeder is the tested behavior: its warning is captured, not printed
+      resmin = @test_logs (:warn, r"no usable minInitialSymShCCurrent") match_mode = :any runShortCircuit!(net; case = :min)
       rowmin = only(resmin.rows)
       @test rowmin.status === :no_source
       @test rowmin.contains_defaulted_data == true
@@ -215,10 +216,10 @@ function run_external_grid_tests()
       # must reject the pair (same pattern as autodamp vs. trust region).
       mktempdir() do dir
         bad = joinpath(dir, "both.yaml")
-        write(bad, "power_flow:\n  external_grid:\n    enabled: true\n  distributed_slack:\n    enabled: true\n")
+        write(bad, "config_version: 1\npower_flow:\n  external_grid:\n    enabled: true\n  distributed_slack:\n    enabled: true\n")
         @test_throws ArgumentError load_sparlectra_config(bad; reload = true)
         ok = joinpath(dir, "one.yaml")
-        write(ok, "power_flow:\n  external_grid:\n    enabled: true\n")
+        write(ok, "config_version: 1\npower_flow:\n  external_grid:\n    enabled: true\n")
         cfg = load_sparlectra_config(ok; reload = true)
         @test cfg.powerflow.external_grid.enabled
         @test !cfg.powerflow.distributed_slack.enabled

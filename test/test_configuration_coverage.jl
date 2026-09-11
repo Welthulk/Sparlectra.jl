@@ -1315,6 +1315,19 @@ function test_configuration_deprecated_diagnostics_warn()
   return nothing
 end
 
+# Version-less and legacy fixtures, the in-file config block, a coarse tol_MW
+# and the deprecated dcline mode are the tested behavior here, so they warn
+# by design. Captured, not printed (maintainer 2026-09-11: a printed warning
+# in a green run reads as a problem), and anything else that warns fails the
+# group; see run_with_expected_warnings.
+const CONFIG_EXPECTED_WARNINGS = (
+  r"declares no config_version",
+  r"legacy key name",
+  r"sparlectra\.config inside .* is deprecated",
+  r"is a very coarse convergence bound",
+  r"reject_active is deprecated",
+)
+
 function run_configuration_coverage_tests()
   for testfn in (
     test_configuration_yaml_key_coverage,
@@ -1337,7 +1350,7 @@ function run_configuration_coverage_tests()
     test_configuration_console_live_capture,
     test_configuration_deprecated_diagnostics_warn,
   )
-    testfn()
+    run_with_expected_warnings(testfn, CONFIG_EXPECTED_WARNINGS)
   end
   return nothing
 end

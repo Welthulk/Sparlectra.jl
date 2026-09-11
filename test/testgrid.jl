@@ -2951,7 +2951,7 @@ function test_condition_number_estimator()::Bool
   # legacy config key: a YAML still carrying output.condition_number loads
   # silently (no error, no warning), and the struct has no such field
   legacy_cfg = mktemp() do path, io
-    write(io, "output:\n  condition_number: true\n")
+    write(io, "config_version: 1\noutput:\n  condition_number: true\n")
     close(io)
     load_sparlectra_config(path; reload = true)
   end

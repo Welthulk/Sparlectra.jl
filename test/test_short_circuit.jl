@@ -262,10 +262,10 @@ function run_short_circuit_tests()
     @testset "short_circuit.c_factor config coverage" begin
       @test Sparlectra.ShortCircuitConfig().c_factor == 0.0
       ok_yaml = test_scratch_path(".yaml")
-      write(ok_yaml, "short_circuit:\n  c_factor: 1.05\n")
+      write(ok_yaml, "config_version: 1\nshort_circuit:\n  c_factor: 1.05\n")
       @test Sparlectra.load_sparlectra_config(ok_yaml; reload = true).shortcircuit.c_factor == 1.05
       bad_yaml = test_scratch_path(".yaml")
-      write(bad_yaml, "short_circuit:\n  c_factor: 1.4\n")
+      write(bad_yaml, "config_version: 1\nshort_circuit:\n  c_factor: 1.4\n")
       err = try
         Sparlectra.load_sparlectra_config(bad_yaml; reload = true)
         nothing

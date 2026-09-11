@@ -938,6 +938,7 @@ function run_tap_controller_tests()
       write(
         io,
         """
+config_version: 1
 power_flow:
   max_iter: 30
   tol: 1.0e-9
