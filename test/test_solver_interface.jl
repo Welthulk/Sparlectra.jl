@@ -923,19 +923,19 @@ mpc.branch = [
 
       @testset "Config validation" begin
         armijo_bad = test_scratch_path(".yaml")
-        write(armijo_bad, "power_flow:\n  autodamp: true\n  merit:\n    armijo_c1: 0.5\n")
+        write(armijo_bad, "config_version: 1\npower_flow:\n  autodamp: true\n  merit:\n    armijo_c1: 0.5\n")
         @test_throws ArgumentError Sparlectra.load_sparlectra_config(armijo_bad; reload = true)
 
         scale_bad = test_scratch_path(".yaml")
-        write(scale_bad, "power_flow:\n  autodamp: true\n  merit:\n    scale_p: -1.0\n")
+        write(scale_bad, "config_version: 1\npower_flow:\n  autodamp: true\n  merit:\n    scale_p: -1.0\n")
         @test_throws ArgumentError Sparlectra.load_sparlectra_config(scale_bad; reload = true)
 
         enabled_without_autodamp = test_scratch_path(".yaml")
-        write(enabled_without_autodamp, "power_flow:\n  autodamp: false\n  merit:\n    enabled: true\n")
+        write(enabled_without_autodamp, "config_version: 1\npower_flow:\n  autodamp: false\n  merit:\n    enabled: true\n")
         @test_throws ArgumentError Sparlectra.load_sparlectra_config(enabled_without_autodamp; reload = true)
 
         ok_cfg = test_scratch_path(".yaml")
-        write(ok_cfg, "power_flow:\n  autodamp: true\n  merit:\n    enabled: true\n")
+        write(ok_cfg, "config_version: 1\npower_flow:\n  autodamp: true\n  merit:\n    enabled: true\n")
         loaded = Sparlectra.load_sparlectra_config(ok_cfg; reload = true)
         @test loaded.powerflow.merit.enabled == true
       end
@@ -1043,34 +1043,34 @@ mpc.branch = [
     @testset "Trust-region step control" begin
       @testset "Config validation" begin
         min_ge_initial = test_scratch_path(".yaml")
-        write(min_ge_initial, "power_flow:\n  trust_region:\n    initial_radius: 1.0\n    min_radius: 1.0\n")
+        write(min_ge_initial, "config_version: 1\npower_flow:\n  trust_region:\n    initial_radius: 1.0\n    min_radius: 1.0\n")
         @test_throws ArgumentError Sparlectra.load_sparlectra_config(min_ge_initial; reload = true)
 
         bad_shrink = test_scratch_path(".yaml")
-        write(bad_shrink, "power_flow:\n  trust_region:\n    shrink_factor: 1.5\n")
+        write(bad_shrink, "config_version: 1\npower_flow:\n  trust_region:\n    shrink_factor: 1.5\n")
         @test_throws ArgumentError Sparlectra.load_sparlectra_config(bad_shrink; reload = true)
 
         bad_expand = test_scratch_path(".yaml")
-        write(bad_expand, "power_flow:\n  trust_region:\n    expand_factor: 0.5\n")
+        write(bad_expand, "config_version: 1\npower_flow:\n  trust_region:\n    expand_factor: 0.5\n")
         @test_throws ArgumentError Sparlectra.load_sparlectra_config(bad_expand; reload = true)
 
         mutually_exclusive = test_scratch_path(".yaml")
-        write(mutually_exclusive, "power_flow:\n  autodamp: true\n  trust_region:\n    enabled: true\n")
+        write(mutually_exclusive, "config_version: 1\npower_flow:\n  autodamp: true\n  trust_region:\n    enabled: true\n")
         @test_throws ArgumentError Sparlectra.load_sparlectra_config(mutually_exclusive; reload = true)
 
         ok_cfg = test_scratch_path(".yaml")
-        write(ok_cfg, "power_flow:\n  autodamp: false\n  trust_region:\n    enabled: true\n    initial_radius: 2.0\n")
+        write(ok_cfg, "config_version: 1\npower_flow:\n  autodamp: false\n  trust_region:\n    enabled: true\n    initial_radius: 2.0\n")
         loaded = Sparlectra.load_sparlectra_config(ok_cfg; reload = true)
         @test loaded.powerflow.trust_region.enabled == true
         @test loaded.powerflow.trust_region.initial_radius == 2.0
         @test loaded.powerflow.trust_region.step_mode === :scaled
 
         bad_step_mode = test_scratch_path(".yaml")
-        write(bad_step_mode, "power_flow:\n  trust_region:\n    step_mode: bogus\n")
+        write(bad_step_mode, "config_version: 1\npower_flow:\n  trust_region:\n    step_mode: bogus\n")
         @test_throws ArgumentError Sparlectra.load_sparlectra_config(bad_step_mode; reload = true)
 
         dogleg_cfg = test_scratch_path(".yaml")
-        write(dogleg_cfg, "power_flow:\n  autodamp: false\n  trust_region:\n    enabled: true\n    step_mode: dogleg\n")
+        write(dogleg_cfg, "config_version: 1\npower_flow:\n  autodamp: false\n  trust_region:\n    enabled: true\n    step_mode: dogleg\n")
         loaded_dogleg = Sparlectra.load_sparlectra_config(dogleg_cfg; reload = true)
         @test loaded_dogleg.powerflow.trust_region.step_mode === :dogleg
       end

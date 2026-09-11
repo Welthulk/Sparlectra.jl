@@ -77,7 +77,9 @@ function run_demo_case_tests()
         end
 
         # 2) state estimation on the measurements the file itself carries
-        se = runse!(net, Vector{Sparlectra.Measurement}(net.measurements), Sparlectra.StateEstimationConfig())
+        # the topology precheck advises on two of the shipped cases by design;
+        # captured, anything else that warns fails
+        se = run_with_expected_warnings(() -> runse!(net, Vector{Sparlectra.Measurement}(net.measurements), Sparlectra.StateEstimationConfig()), (r"topology precheck reported",))
         @test se.converged
         @test se.dof == fixture["state_estimation"]["dof"]
         @test isapprox(se.objectiveJ, fixture["state_estimation"]["objective"]; atol = 1e-4)
