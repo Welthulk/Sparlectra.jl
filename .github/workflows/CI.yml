@@ -25,7 +25,7 @@ jobs:
         arch:
           - x64
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v5
       - uses: julia-actions/setup-julia@v3
         with:
           version: ${{ matrix.version }}
@@ -46,7 +46,7 @@ jobs:
       # The key hashes the test sources: when tests start using additional
       # cases, a new cache is saved, seeded from the previous one via the
       # restore-keys prefix match.
-      - uses: actions/cache/restore@v6
+      - uses: actions/cache/restore@v5
         id: matpower-cases
         with:
           path: data/mpower
@@ -63,7 +63,7 @@ jobs:
       - uses: julia-actions/julia-runtest@v1
         env:
           SPARLECTRA_TEST_PROFILE: fast
-      - uses: actions/cache/save@v6
+      - uses: actions/cache/save@v5
         if: always() && steps.matpower-cases.outputs.cache-hit != 'true'
         with:
           path: data/mpower
