@@ -1094,7 +1094,7 @@ function render_case_page(;
   info_menu = _webui_powerflow_info_menu(; output_root, config_file = config_default, case_directory = effective_case_directory, operation_log)
   import_form = """
 <form id=\"case-import-form\" method=\"post\" action=\"/powerflow/import-cases\" enctype=\"multipart/form-data\" class=\"panel form-grid case-import-form\">
-<label class=\"span-2\">$(_webui_field_label("casefiles", "Import case files"))$(_webui_file_input("casefiles"; accept = ".m,.M,.dat,.DAT,.zip,.ZIP,.json", multiple = true))</label>
+<label class=\"span-2\">$(_webui_field_label("casefiles", "Import case files"))$(_webui_file_input("casefiles"; accept = ".m,.M,.dat,.DAT,.zip,.ZIP,.json,.yaml", multiple = true))</label>
 <div class=\"actions span-2\"><button class=\"secondary-button\" type=\"submit\">Import case files</button></div>
 </form>
 """
@@ -1107,11 +1107,14 @@ function render_case_page(;
 <label class="span-2">$(_webui_field_label("casefile", "Case file"))$(case_input)<button type="submit" id="resolve-case-button" formaction="/powerflow/resolve-case" formmethod="post" formnovalidate hidden>Resolve case</button><small class="field-hint">Cases from <code>$(_webui_escape(effective_case_directory))</code> — pick one from the list, or type a case name/path and press Enter to download it into the list.<br>MATPOWER: a case name such as <code>case118.m</code>. CGMES: <code>cgmes:</code> plus one of $(join(("<code>" * a * "</code>" for a in sort(collect(keys(CGMESImporter.CGMES_TESTSET_ALIASES)))), ", ")) — fetches the ENTSO-E test configuration including its boundary set.</small></label>
 $(dat_hint_html)
 <div class=\"actions case-export-actions\">$(_webui_help_link("webui.scf_export", "Case export")) <button type=\"submit\" class=\"secondary-button\" formaction=\"/powerflow/export-scf\" formmethod=\"post\" formnovalidate title=\"Write the selected case as a Sparlectra Case Format file (.scf.json) into the case directory. One self-describing file: its data section is a valid power-grid-model input dataset, the namespaced sparlectra block carries slack roles, the tap-changer cascade, names and source ids, the measurements found next to the case, and the saved case options.\">Export as SCF case file</button><button type=\"submit\" class=\"secondary-button\" formaction=\"/powerflow/export-scf\" formmethod=\"post\" formnovalidate name=\"scf_strict_pgm\" value=\"true\" title=\"Write the PLAIN power-grid-model dataset (.pgm.json): only the data section, no namespaced sparlectra block. For handing the case to a PGM-only consumer - names, slack roles, tap nameplates, measurements and configuration are not in that file, and a slack generator is rewritten as a PGM source.\">Export as plain PGM</button><a class=\"button secondary-button case-download-link\" href=\"/powerflow/case/download?case=$(_webui_urlencode(selected_casefile))\" title=\"Download the selected case file from the case directory. After an export, pick the .scf.json or .pgm.json in the selector to download it.\">Download selected case</a></div>
+<div class=\"actions case-save-as-actions\" title=\"Save the current case, its settings and any bound measurement set under a new name - a copy, nothing switched live.\"><label for=\"save_as_name\">Save case as</label> <input type=\"text\" id=\"save_as_name\" name=\"save_as_name\" placeholder=\"new case name\" pattern=\"[^/\\\\]+\"> <label class=\"inline-check\"><input type=\"checkbox\" name=\"save_as_overwrite\" value=\"true\"> overwrite</label> <label class=\"inline-check\" title=\"Solve the case once and write the solved voltages into the copy as its start state.\"><input type=\"checkbox\" name=\"save_as_start_state\" value=\"true\"> start from the solved state</label> <button type=\"submit\" class=\"secondary-button\" formaction=\"/powerflow/case/save-as\" formmethod=\"post\" formnovalidate title=\"Write &lt;name&gt;.scf.json, &lt;name&gt;.config.yaml (this case's saved settings plus any unsaved change on this page), and a copy of any bound measurement set, then select the new case.\">Save case as</button></div>
 </form>
 """
   options_form = """
-<form id=\"case-options-form\" method=\"post\" action=\"/powerflow/case/options/save\" class=\"panel form-grid case-options-form\">
+<form id=\"case-options-form\" method=\"post\" action=\"/powerflow/settings/save\" class=\"panel form-grid case-options-form\">
 <input type=\"hidden\" name=\"casefile\" value=\"$(_webui_escape(effective_case_value))\">
+<input type=\"hidden\" name=\"settings_target\" value=\"this_case\">
+<input type=\"hidden\" name=\"return_to\" value=\"case\">
 <p class=\"lede span-2\">Import options for this case. Saving writes them into the case configuration file next to the case; every run of this case uses them through the configuration precedence.</p>
 <details$(dtf_details_attrs)>
 <summary>Input format</summary>
@@ -2265,23 +2268,27 @@ function _webui_contingency_table_section(result::AbstractDict)::String
   od = String(get(result, "output_dir", ""))
   csv_path = isempty(od) ? "" : joinpath(od, "contingency_n1.csv")
   isfile(csv_path) || return ""
-  lines = readlines(csv_path)
-  length(lines) >= 2 || return ""
-  has_screening = endswith(first(lines), ";screened;screening_estimate")
+  # The writer's delimiter/decimal/thousands separators follow
+  # output.csv_format (issue #376) instead of a hardcoded semicolon;
+  # _webui_compare_csv_table already sniffs and quote-splits all three
+  # formats correctly (used for the detailed-CSV comparison pages), so this
+  # table reuses it instead of a second, weaker hand-rolled parser.
+  table = _webui_compare_csv_table(csv_path)
+  table === nothing && return ""
+  has_screening = !isempty(table.rows) && haskey(first(table.rows), "screened")
   esc = _webui_escape
+  parsenum(s) = _webui_compare_number(s, table.decimal, table.thousands)
   rows = NamedTuple[]
-  for l in lines[2:end]
-    f = split(l, ';')
-    length(f) >= 14 || continue
-    sev = tryparse(Float64, f[9])
+  for row in table.rows
+    sev = parsenum(get(row, "severity", ""))
     push!(rows, (
-      name = String(f[1]), weight = String(f[2]), converged = String(f[3]) == "true",
-      iterations = String(f[4]), start_used = String(f[5]),
-      min_vm = String(f[6]), max_vm = String(f[7]), max_loading = String(f[8]),
+      name = get(row, "name", ""), weight = get(row, "weight", ""), converged = get(row, "converged", "") == "true",
+      iterations = get(row, "iterations", ""), start_used = get(row, "start_used", ""),
+      min_vm = get(row, "min_vm_pu", ""), max_vm = get(row, "max_vm_pu", ""), max_loading = get(row, "max_branch_loading_pct", ""),
       severity = sev === nothing ? NaN : sev,
-      island_count = String(f[12]), shed = String(f[13]), error = String(f[14]),
-      screened = has_screening && length(f) >= 16 && String(f[15]) == "true",
-      estimate = has_screening && length(f) >= 16 ? String(f[16]) : "",
+      island_count = get(row, "island_count", ""), shed = get(row, "shed_load_mw", ""), error = get(row, "error", ""),
+      screened = has_screening && get(row, "screened", "") == "true",
+      estimate = has_screening ? get(row, "screening_estimate", "") : "",
     ))
   end
   isempty(rows) && return ""
@@ -2289,7 +2296,7 @@ function _webui_contingency_table_section(result::AbstractDict)::String
   sort!(rows; by = r -> (isnan(r.severity) ? -Inf : -r.severity))
   shown = first(rows, _WEBUI_CONTINGENCY_TABLE_MAX_ROWS)
   fmtnum(s) = begin
-    v = tryparse(Float64, s)
+    v = parsenum(s)
     v === nothing ? esc(s) : (isnan(v) ? "-" : string(round(v; digits = 4)))
   end
   ncols = 11 + (has_screening ? 1 : 0)
@@ -3297,7 +3304,15 @@ function render_se_form(; cases::Vector{String} = String[], measurements::Vector
     "<label title=\"Estimate transformer tap positions: releases the tap of every in-service transformer with a ratio tap changer as an extra state, then fixes it to the nearest mechanical step and reruns without the tap state. The result page shows the electrical and fixed steps plus J before/after the fixation. Guarded: machine (generator step-up) transformers are skipped, and a tap the measurement set cannot observe (e.g. a radial transformer without a far-side voltage) is frozen at its current position and reported as frozen instead of absorbing errors.\">$(_webui_field_label("se_tap_estimation", "estimate taps"))<input type=\"checkbox\" name=\"se_tap_estimation\" value=\"true\"$(gchk("se_tap_estimation"))></label> ",
     "<label title=\"Residual-correlation (K matrix) report columns\">$(_webui_field_label("se_report_correlation", "report_correlation"))<input type=\"checkbox\" name=\"se_report_correlation\" value=\"true\"$(gchk("se_report_correlation"))></label>",
     "</fieldset>",
-    "<button type=\"submit\">Run state estimation</button>",
+    "<button type=\"submit\">Run state estimation</button> ",
+    # issue #377: flatstart/robust_mode/k_eliminate/k_suppress/max_eliminations/
+    # report_correlation carry a real config_key (options.jl), so submitting
+    # THIS SAME form to /powerflow/settings/save writes them into the case
+    # sidecar exactly like handle_settings_save already does for the
+    # power-flow keys - no separate save form, no state duplicated.
+    "<input type=\"hidden\" name=\"settings_target\" value=\"this_case\">",
+    "<input type=\"hidden\" name=\"return_to\" value=\"runs\">",
+    "<button type=\"submit\" class=\"secondary-button\" formaction=\"/powerflow/settings/save\" formmethod=\"post\" formnovalidate title=\"Save the estimator options above (and the measurement-set choice) into this case's configuration file, so the next run of this case uses them without touching the form again.\">Save settings for this case</button>",
     "<p class=\"field-help\">Flow: observability first (traffic light), then the WLS solve, then the bad-data diagnostics and the se_view summary; artifacts land in the run history (kind se).</p>",
     "</form>",
   )
@@ -3307,6 +3322,10 @@ function render_se_form(; cases::Vector{String} = String[], measurements::Vector
   generator_tab = isempty(demo_form) ? "" : "<details class=\"se-tab se-generator\"><summary>Measurement generator</summary>$(demo_form)</details>"
   info_tab = isempty(info_html) ? "" : "<details class=\"se-tab se-set-info\" open><summary>Measurement set details</summary>$(info_html)</details>"
   upload_tab = "<details class=\"se-tab se-upload\"><summary>Upload measurement file</summary>$(upload_form)</details>"
+  # issue #378: "Save case as" is one form on the Case page (name, overwrite,
+  # start-from-solved-state, plus the case's export path); duplicating that
+  # form here would fork two copies of the same logic. This page links to
+  # it instead, preselecting the case this SE section is already showing.
   return "<section class=\"panel se-section\" id=\"state-estimation\"><h2>State estimation</h2>$(banner)$(msg_html)$(run_form)$(generator_tab)$(info_tab)$(upload_tab)</section>"
 end
 

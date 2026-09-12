@@ -126,19 +126,28 @@ const WEBUI_OPTION_SPECS = (
   # 25000-bus run kept estimating with k_suppress 6.0 while the
   # configuration said 4.0 (task_se_bad_data_v0100). A test walks this list
   # against StateEstimationConfig.
-  WebUIOptionSpec(nothing, "se_flatstart", Bool, :checkbox, true, (), :basic, :case, true),
+  # issue #377: these six carry a REAL config_key, so webui_form_state's
+  # generic config resolution (_webui_config_field_values /
+  # _webui_case_config_field_values) seeds them from configuration.yaml and
+  # the case sidecar instead of only ever showing the literal default below;
+  # _webui_se_form_state merges that resolution into gen_values as its base
+  # layer. The rest (se_tol, se_max_iter, se_robust_k1/k2,
+  # se_suppression_sigma, se_update_shunts, se_tap_estimation) stay
+  # config_key = nothing: issue #377 does not ask for them, and widening the
+  # case-scope surface beyond what was asked is its own review.
+  WebUIOptionSpec("state_estimation.flatstart", "se_flatstart", Bool, :checkbox, true, (), :basic, :case, true),
   WebUIOptionSpec(nothing, "se_tol", Float64, :number, 1.0e-6, (), :basic, :case, true),
   WebUIOptionSpec(nothing, "se_max_iter", Int, :number, 50, (), :basic, :case, true),
-  WebUIOptionSpec(nothing, "se_robust_mode", String, :select, "off", ("off", "staged", "replacement"), :basic, :case, true),
-  WebUIOptionSpec(nothing, "se_k_eliminate", Float64, :number, 3.0, (), :basic, :case, true),
+  WebUIOptionSpec("state_estimation.robust_mode", "se_robust_mode", String, :select, "off", ("off", "staged", "replacement"), :basic, :case, true),
+  WebUIOptionSpec("state_estimation.k_eliminate", "se_k_eliminate", Float64, :number, 3.0, (), :basic, :case, true),
   WebUIOptionSpec(nothing, "se_robust_k1", Float64, :number, 3.0, (), :basic, :case, true),
   WebUIOptionSpec(nothing, "se_robust_k2", Float64, :number, 6.0, (), :basic, :case, true),
-  WebUIOptionSpec(nothing, "se_k_suppress", Float64, :number, 4.0, (), :basic, :case, true),
+  WebUIOptionSpec("state_estimation.k_suppress", "se_k_suppress", Float64, :number, 4.0, (), :basic, :case, true),
   WebUIOptionSpec(nothing, "se_suppression_sigma", Float64, :number, 2000.0, (), :basic, :case, true),
-  WebUIOptionSpec(nothing, "se_max_eliminations", Int, :number, 3, (), :basic, :case, true),
+  WebUIOptionSpec("state_estimation.max_eliminations", "se_max_eliminations", Int, :number, 3, (), :basic, :case, true),
   WebUIOptionSpec(nothing, "se_update_shunts", Bool, :checkbox, false, (), :basic, :case, true),
   WebUIOptionSpec(nothing, "se_tap_estimation", Bool, :checkbox, false, (), :basic, :case, true),
-  WebUIOptionSpec(nothing, "se_report_correlation", Bool, :checkbox, false, (), :basic, :case, true),
+  WebUIOptionSpec("state_estimation.report_residual_correlation", "se_report_correlation", Bool, :checkbox, false, (), :basic, :case, true),
   # default ON: a noise-free set puts J near 0 instead of near dof, which
   # reads like a broken statistic (the low-band note explains it, but the
   # recommended demo profile is noisy)

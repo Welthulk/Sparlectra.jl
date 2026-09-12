@@ -620,21 +620,49 @@ function printContingencyResults(io::IO, results::Vector{ContingencyResult}; max
 end
 
 """
-    writeContingencyResultsCSV(path::AbstractString, results::Vector{ContingencyResult})
+    writeContingencyResultsCSV(path::AbstractString, results::Vector{ContingencyResult}; format = "technical")
 
-Write the contingency results as a semicolon-separated CSV (one row per
-case, always in input order): name, weight, converged, iterations, the
-start-value ladder stage that converged, voltage envelope, worst loading,
-severity, the overloaded branches (each `name@loading%`, the per-branch delta to
-base lives in the structured `overloads` field), voltage-violation list, island
-count, shed load in MW, and the error text. Returns `path`.
+Write the contingency results as a CSV (one row per case, always in input
+order): name, weight, converged, iterations, the start-value ladder stage
+that converged, voltage envelope, worst loading, severity, the overloaded
+branches (each `name@loading%`, the per-branch delta to base lives in the
+structured `overloads` field), voltage-violation list, island count, shed
+load in MW, and the error text. `format` (`technical`/`excel_de`/`excel_us`,
+see `_resolve_detailed_csv_format`) sets the delimiter and number formatting
+like every other CSV artifact a run writes (issue #376); the previous
+hardcoded semicolon delimiter is now what `excel_de` selects, so an existing
+`detailed_result_csv_format = "excel_de"` run keeps this file's exact prior
+shape. Returns `path`.
 """
-function writeContingencyResultsCSV(path::AbstractString, results::Vector{ContingencyResult})
+function writeContingencyResultsCSV(path::AbstractString, results::Vector{ContingencyResult}; format = "technical")
+  resolved_format = _resolve_detailed_csv_format(format)
+  delimiter = resolved_format.delimiter
   open(path, "w") do io
-    println(io, "name;weight;converged;iterations;start_used;min_vm_pu;max_vm_pu;max_branch_loading_pct;severity;overloads;voltage_violations;island_count;shed_load_mw;error")
+    println(io, join(("name", "weight", "converged", "iterations", "start_used", "min_vm_pu", "max_vm_pu", "max_branch_loading_pct", "severity", "overloads", "voltage_violations", "island_count", "shed_load_mw", "error"), delimiter))
     for r in results
       overloads = join(["$(o.name)@$(round(o.loading_pct; digits = 1))" for o in r.overloads], ",")
-      println(io, join([r.name, r.weight, r.converged, r.iterations, r.start_used, r.min_vm_pu, r.max_vm_pu, r.max_branch_loading_pct, r.severity, overloads, join(r.voltage_violations, ","), r.island_count, r.shed_load_mw, r.error === nothing ? "" : r.error], ";"))
+      println(
+        io,
+        join(
+          [
+            _csv_field(r.name, delimiter, resolved_format),
+            _format_csv_number(r.weight, resolved_format),
+            r.converged,
+            r.iterations,
+            _csv_field(String(r.start_used), delimiter, resolved_format),
+            _format_csv_number(r.min_vm_pu, resolved_format),
+            _format_csv_number(r.max_vm_pu, resolved_format),
+            _format_csv_number(r.max_branch_loading_pct, resolved_format),
+            _format_csv_number(r.severity, resolved_format),
+            _csv_field(overloads, delimiter, resolved_format),
+            _csv_field(join(r.voltage_violations, ","), delimiter, resolved_format),
+            r.island_count,
+            _format_csv_number(r.shed_load_mw, resolved_format),
+            _csv_field(r.error === nothing ? "" : r.error, delimiter, resolved_format),
+          ],
+          delimiter,
+        ),
+      )
     end
   end
   return path

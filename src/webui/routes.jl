@@ -183,9 +183,10 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
       show_case_settings_notice = _powerflow_show_case_settings_notice(get(query, "config_file", runtime === nothing ? "" : runtime.config_file)),
     ))
   elseif verb == "POST" && path == "/powerflow/settings/save"
+    # the one save route for every page that edits a case-scope field (Case
+    # page, Settings page, State Estimation section); `return_to` in the
+    # form picks the redirect target, see handle_settings_save's docstring
     return handle_settings_save(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root)
-  elseif verb == "POST" && path == "/powerflow/case/options/save"
-    return handle_case_options_save(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root)
   elseif verb == "POST" && path == "/powerflow/run"
     try
       result = handle_powerflow_run(form; default_output_root = output_root, case_directory = runtime === nothing ? nothing : runtime.case_directory, runner = runtime === nothing ? start_powerflow_run : runtime.runner, operation_log = log_root)
@@ -219,6 +220,8 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
     return handle_powerflow_case_settings_reset(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root)
   elseif verb == "POST" && path == "/powerflow/export-scf"
     return handle_powerflow_export_scf(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root)
+  elseif verb == "POST" && path == "/powerflow/case/save-as"
+    return handle_powerflow_case_save_as(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root)
   elseif verb == "POST" && path == "/powerflow/delete-case"
     return handle_powerflow_case_delete(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root)
   elseif verb == "GET" && path == "/powerflow/contingency-weights"

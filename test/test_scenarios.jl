@@ -292,7 +292,10 @@ function run_scenario_patch_tests()
       # the screening CSV appends exactly the two D8 columns
       csv = read(Sparlectra.writeContingencyResultsCSV(joinpath(d, "flag.csv"), flagged), String)
       header = first(split(csv, '\n'))
-      @test endswith(header, ";screened;screening_estimate")
+      # default format is "technical" (comma delimiter) since issue #376;
+      # see "printer and CSV writer" in test_contingency.jl for the excel_de
+      # (semicolon) coverage of the same writer.
+      @test endswith(header, ",screened,screening_estimate")
       # :only never runs a full solve where an estimate exists; islanding
       # cases still carry real solves (start_used != :screen)
       only_res = Sparlectra.runContingencies!(net, cases14; screening_mode = :only, screening_margin_pct = 10.0)
@@ -324,10 +327,13 @@ function run_scenario_engine_extended_tests()
     # THE step-3 gate: the engine's N-1 result CSV on case118 (all
     # branches, all generators) is byte identical to the CSV the
     # pre-engine per-case-deepcopy implementation produced at 7438b6e
-    # (test/fixtures/contingency_case118_n1_7438b6e.csv, generated once
-    # from a worktree of that commit). The net is built with the pinned
-    # packaged-default import options the fixture generation used.
-    fixture = abspath(joinpath(@__DIR__, "fixtures", "contingency_case118_n1_7438b6e.csv"))
+    # (regenerated at e93eafc, test/fixtures/contingency_case118_n1_e93eafc.csv,
+    # for issue #376: the writer's default format changed from a hardcoded
+    # semicolon+dot-decimal mix to the run-wide "technical" format, comma
+    # delimiter and dot decimal with no thousands grouping - a values-only
+    # regenerate, not a computation change). The net is built with the
+    # pinned packaged-default import options the fixture generation used.
+    fixture = abspath(joinpath(@__DIR__, "fixtures", "contingency_case118_n1_e93eafc.csv"))
     case_path = large_case_path("case118.m")
     if case_path === nothing
       println("      scenario engine: case118 CSV gate SKIPPED (case118.m not in the large-case directory)")
@@ -391,14 +397,17 @@ function run_scenario_engine_extended_tests()
 
   @testset "scenario engine sp_case60 CSV byte fixture" begin
     # load_fixture_net: the engine's N-1 result CSV on the shipped operated
-    # grid is byte identical to the tracked fixture generated at bf0b076
-    # (the place-name demo cases). Unlike the case118 gate above (an
+    # grid is byte identical to the tracked fixture, generated at bf0b076
+    # (the place-name demo cases) and regenerated at e93eafc for issue #376
+    # (the writer's default format changed from a hardcoded semicolon+dot mix
+    # to the run-wide "technical" format; a values-only regenerate, see the
+    # case118 gate's comment above). Unlike the case118 gate above (an
     # INDEPENDENT oracle from the pre-engine implementation, which stays
     # cache-gated), this fixture guards regressions of the engine's values
     # and CSV format on every install without a download; sp_case60 keeps
     # the tracked file small (10k, the 188 variant carried 27-bus violation
     # lists per row).
-    fixture = abspath(joinpath(@__DIR__, "fixtures", "contingency_sp_case60_n1_bf0b076.csv"))
+    fixture = abspath(joinpath(@__DIR__, "fixtures", "contingency_sp_case60_n1_e93eafc.csv"))
     @test isfile(fixture)
     net = Sparlectra.importSCF(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case60.scf.json")))
     cases = vcat(Sparlectra.generateN1Branches(net), Sparlectra.generateN1Generators(net))
@@ -435,7 +444,8 @@ function run_scenario_engine_extended_tests()
       @test d1["metadata"]["contingency_cases_source"] == "scenario_file_block"
       @test haskey(d1["metadata"], "contingency_screened")
       csv1 = readlines(joinpath(dir, "run_fb", "contingency_n1.csv"))
-      @test endswith(first(csv1), ";screened;screening_estimate")
+      # default format is "technical" (comma delimiter) since issue #376
+      @test endswith(first(csv1), ",screened,screening_estimate")
       @test length(csv1) == 3
       # external scenario JSON, screening explicitly off: classic CSV columns
       scen_file = joinpath(dir, "scenarios.json")
@@ -446,7 +456,7 @@ function run_scenario_engine_extended_tests()
       @test d2["metadata"]["contingency_screening_mode"] == "off"
       @test d2["metadata"]["contingency_cases_source"] == "scenario_external_file"
       csv2 = readlines(joinpath(dir, "run_ext", "contingency_n1.csv"))
-      @test !endswith(first(csv2), ";screened;screening_estimate")
+      @test !endswith(first(csv2), ",screened,screening_estimate")
       # an n1 source works on any format and records itself
       res3 = Sparlectra._run_contingency_service(case_file, cfgpath, joinpath(dir, "run_n1"), "step5_n1", "branch"; scenario_source = "n1_generators", screening_mode = "off")
       d3 = Sparlectra.to_dict(res3)

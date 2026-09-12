@@ -213,7 +213,15 @@ function run_contingency_tests()
       @test writeContingencyResultsCSV(csv, results) == csv
       lines = readlines(csv)
       @test length(lines) == length(results) + 1
-      @test startswith(lines[1], "name;weight;converged;iterations;start_used")
+      # Since issue #376 the writer follows the same run-wide CSV format as
+      # every other artifact; the default is now "technical" (comma
+      # delimiter), matching output.csv_format's default. "excel_de"
+      # reproduces the historical hardcoded semicolon delimiter.
+      @test startswith(lines[1], "name,weight,converged,iterations,start_used")
+      csv_de = joinpath(mktempdir(), "n1_de.csv")
+      @test writeContingencyResultsCSV(csv_de, results; format = "excel_de") == csv_de
+      lines_de = readlines(csv_de)
+      @test startswith(lines_de[1], "name;weight;converged;iterations;start_used")
     end
 
     @testset "case weights (#331 Phase 2)" begin

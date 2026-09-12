@@ -122,8 +122,12 @@ end
 # .csv covers measurement sets (SE phase 5): the role is decided by a content
 # sniff on the version comment, not the extension (see _webui_is_measurement_csv).
 # .json is a Sparlectra Case Format case (#342); the import path validates the
-# content before it is stored, so a foreign .json is rejected by name
-_webui_supported_upload_case_extension(name::AbstractString)::Bool = lowercase(splitext(basename(String(name)))[2]) in (".m", ".dat", ".zip", ".csv", ".json")
+# content before it is stored, so a foreign .json is rejected by name.
+# .yaml is the case configuration sidecar (issue #378 follow-up): a case
+# exported with "Save case as"/"Export as SCF" travels as three files
+# (case, sidecar, measurements); re-uploading all three together must bring
+# the sidecar along, or the settings the export carried are silently lost.
+_webui_supported_upload_case_extension(name::AbstractString)::Bool = lowercase(splitext(basename(String(name)))[2]) in (".m", ".dat", ".zip", ".csv", ".json", ".yaml")
 
 """
     _webui_scf_upload_reason(bytes) -> Union{Nothing,String}
@@ -140,6 +144,36 @@ function _webui_scf_upload_reason(bytes::Vector{UInt8})::Union{Nothing,String}
     return nothing
   catch err
     return first(split(sprint(showerror, err), '\n'))
+  end
+end
+
+"""
+    _webui_case_config_upload_reason(bytes) -> Union{Nothing,String}
+
+Why an uploaded `.yaml` is not a usable case configuration sidecar, or
+`nothing` when it is one: it must parse as YAML and declare `scope: case`.
+The `case:` header is deliberately NOT required to name a file already
+present - a case, its sidecar, and its measurement sets are uploaded
+together in one multi-file selection, and upload order within that
+selection is not guaranteed; `load_case_config` still enforces the
+`case_config_mismatch` check the moment a run actually reads the file,
+which is the point where "does this sidecar belong to that case" actually
+matters. Parses on a temporary copy, exactly like the `.json` case-file
+check, so a foreign YAML never lands in the case directory under a
+`.config.yaml`-shaped name.
+"""
+function _webui_case_config_upload_reason(bytes::Vector{UInt8})::Union{Nothing,String}
+  tmp = tempname()
+  try
+    write(tmp, bytes)
+    raw = load_yaml_dict(tmp)
+    scope = lowercase(strip(string(get(raw, "scope", ""))))
+    scope == "case" || return "not a case configuration file (scope: case is missing or wrong)"
+    return nothing
+  catch err
+    return first(split(sprint(showerror, err), '\n'))
+  finally
+    isfile(tmp) && rm(tmp; force = true)
   end
 end
 

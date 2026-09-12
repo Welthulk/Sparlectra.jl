@@ -31,13 +31,18 @@ runs). One row per bus with the start voltages, the P residual, the Q residual
 per-bus SV coverage on CGMES imports (`has_sv`, `true` for other formats), and
 transformer-terminal/shunt counts for attribution grouping. When the same bus
 was captured more than once (e.g. a rescue re-solve), the last capture wins.
-Returns the artifact path, or `nothing` when no rows were captured.
+Returns the artifact path, or `nothing` when no rows were captured. `format`
+(`technical`/`excel_de`/`excel_us`, see `_resolve_detailed_csv_format`) sets
+the delimiter and number formatting for this artifact, matching every other
+CSV the run writes (issue #376).
 """
-function _write_start_residuals_artifact(output_dir::AbstractString, profile)::Union{Nothing,String}
+function _write_start_residuals_artifact(output_dir::AbstractString, profile; format = "technical")::Union{Nothing,String}
   profile isa AbstractDict || return nothing
   rows = get(profile, :initial_residual_rows, nothing)
   rows isa AbstractVector && !isempty(rows) || return nothing
   no_sv = get(profile, :cgmes_no_sv_buses, nothing)
+  resolved_format = _resolve_detailed_csv_format(format)
+  delimiter = resolved_format.delimiter
   # keep insertion order, last capture per bus wins
   by_bus = Dict{Int,Int}()
   order = Int[]
@@ -48,11 +53,29 @@ function _write_start_residuals_artifact(output_dir::AbstractString, profile)::U
   end
   path = joinpath(output_dir, "self_check_residuals.csv")
   open(path, "w") do io
-    println(io, "bus_id,bus_name,vn_kV,bus_type,vm_pu_start,va_deg_start,p_residual,q_residual,has_sv,n_transformer_terminals,n_shunts")
+    println(io, join(("bus_id", "bus_name", "vn_kV", "bus_type", "vm_pu_start", "va_deg_start", "p_residual", "q_residual", "has_sv", "n_transformer_terminals", "n_shunts"), delimiter))
     for id in sort!(order)
       row = rows[by_bus[id]]
       has_sv = no_sv === nothing ? true : !(row.bus_name in no_sv)
-      println(io, join((row.bus_id, _csv_field(String(row.bus_name), ','), row.vn_kV, row.bus_type, row.vm_pu_start, row.va_deg_start, row.p_residual, row.q_residual, has_sv, row.n_transformer_terminals, row.n_shunts), ','))
+      println(
+        io,
+        join(
+          (
+            row.bus_id,
+            _csv_field(String(row.bus_name), delimiter, resolved_format),
+            _format_csv_number(Float64(row.vn_kV), resolved_format),
+            row.bus_type,
+            _format_csv_number(Float64(row.vm_pu_start), resolved_format),
+            _format_csv_number(Float64(row.va_deg_start), resolved_format),
+            _format_csv_number(Float64(row.p_residual), resolved_format),
+            _format_csv_number(Float64(row.q_residual), resolved_format),
+            has_sv,
+            row.n_transformer_terminals,
+            row.n_shunts,
+          ),
+          delimiter,
+        ),
+      )
     end
   end
   return path

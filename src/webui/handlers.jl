@@ -179,6 +179,12 @@ function handle_powerflow_case_import(form::AbstractDict; output_root::AbstractS
         push!(rejected, name => "not a Sparlectra case file ($(reason))")
         continue
       end
+    elseif lowercase(splitext(name)[2]) == ".yaml"
+      reason = _webui_case_config_upload_reason(upload.data)
+      if reason !== nothing
+        push!(rejected, name => "not a case configuration file ($(reason))")
+        continue
+      end
     end
     destination = normpath(joinpath(directory, name))
     root = string(normpath(directory), Base.Filesystem.path_separator)
@@ -203,6 +209,8 @@ function handle_powerflow_case_import(form::AbstractDict; output_root::AbstractS
         # measurement sets (SE phase 5) are detected by the version comment,
         # not the extension; a .csv without it is retained but never offered
         _webui_is_measurement_csv(destination) ? "measurement_set" : "unknown"
+      elseif ext == ".yaml"
+        "case_config"
       else
         "matpower_case"
       end
@@ -406,6 +414,152 @@ function handle_powerflow_export_scf(form::AbstractDict; output_root::AbstractSt
   end
   record_webui_operation!(operation_log, "scf_export_completed"; route = "/powerflow/export-scf", method = "POST", user_action = true, casefile = requested, scf_file = out_name)
   return done("Exported $(out_name) ($(round(filesize(out_path) / 1024; digits = 1)) kB) into the case directory." * (strict ? " Strict PGM: names, roles, tap nameplates, measurements and configuration are NOT in this file." : ""), out_name)
+end
+
+"""
+POST /powerflow/case/save-as (issue #378): save the CURRENT case, together
+with its settings and any bound measurement set(s), under a new name into
+the case directory - a copy, nothing switched live. Reuses the same import
+path as [`handle_powerflow_export_scf`](@ref) (MATPOWER/DTF/CGMES sources
+are saved as SCF the same way the plain export does), so it writes:
+
+- `<name>.scf.json` via [`exportSCF`](@ref), `meta.case_name = <name>` and
+  `meta.source_reference` noting the source case;
+- `<name>.config.yaml`: the SOURCE case's own saved case-scope settings
+  ([`load_case_config`](@ref)) merged with this submission's unsaved form
+  changes (the same override set [`powerflow_webui_request`](@ref) builds
+  for a run) - not a copy of the source sidecar file, and not
+  `write_case_config` alone, either of which would either keep or drop the
+  wrong half of "effective settings". Installation-scope keys never enter
+  this file (`scf_is_case_config_key`), same as every other case-scope save;
+- one `<name>.measurements.csv` per measurement set currently bound to the
+  source case (a text copy with its `# case:` header line rewritten); a
+  second or further bound set is copied as
+  `<name>_<original stem>.measurements.csv` so the names never collide.
+
+Refuses an existing `<name>.scf.json` unless `save_as_overwrite` is a truthy
+form value (`true`/`on`/`1`). `save_as_name` is validated like the case
+import filter: a bare stem, no path separators.
+
+`save_as_start_state` (default off) solves the case once, with the same
+effective settings, and writes the solved voltages as the SCF's
+`sparlectra.start_state` (`exportSCF(...; include_start_state=true)`).
+There is no per-session "last PowerFlow result" to reuse for this - every
+POST re-imports the case from disk - so this re-solves rather than reaching
+into run history; a non-converged solve is written as-is; a solver error
+fails the whole save (surfaced like any other error here) rather than
+falling back to an unsolved state silently.
+"""
+function handle_powerflow_case_save_as(form::AbstractDict; output_root::AbstractString = "results/powerflow_service", application_root::AbstractString = _webui_application_root(), case_directory::Union{Nothing,AbstractString} = nothing, operation_log::AbstractString = output_root)::SparlectraWebUIResponse
+  directory = _webui_case_directory(; case_directory, application_root, output_root)
+  requested = strip(String(something(_webui_form_value(form, "casefile", ""), "")))
+  route = "/powerflow/case/save-as"
+  back(msg) = _webui_redirect("/powerflow/case?casefile=$(_webui_urlencode(requested))&import_message=$(_webui_urlencode(msg))")
+  isempty(requested) && return back("Select a case before saving it under a new name.")
+  (basename(requested) == requested && !occursin(r"[\\/]", requested)) || return back("Invalid case name.")
+  case_path = normpath(joinpath(directory, requested))
+  isfile(case_path) || return back("Case file not found in the case directory: $(requested)")
+
+  new_name = strip(String(something(_webui_form_value(form, "save_as_name", ""), "")))
+  overwrite = String(_webui_form_value(form, "save_as_overwrite", "false")) in ("true", "on", "1")
+  start_from_solved = String(_webui_form_value(form, "save_as_start_state", "false")) in ("true", "on", "1")
+  isempty(new_name) && return back("Enter a name to save the case as.")
+  # same stem-only validation as the import filter (issue #378): the name
+  # is checked as if it already carried the extension it is about to get,
+  # reusing the one existing filename sanitizer instead of a second rule set.
+  _, reason = _webui_sanitize_upload_filename(string(new_name, ".scf.json"))
+  isempty(reason) || return back("Invalid name for the saved case: $(reason).")
+
+  out_scf = joinpath(directory, string(new_name, ".scf.json"))
+  isfile(out_scf) && !overwrite && return back("A case named '$(new_name)' already exists. Tick \"overwrite\" to replace it.")
+
+  copied_measurements = String[]
+  try
+    request = powerflow_webui_request(form; default_output_root = output_root)
+    overrides = Dict{String,Any}(String(k) => v for (k, v) in get(request, "config_overrides", Dict{String,Any}()))
+    config_file = String(get(request, "config_file", DEFAULT_SPARLECTRA_CONFIG_PATH))
+    config, _ = _load_api_config(config_file, validate_gui_config_overrides(overrides))
+    net = _import_sparlectra_net(case_path, nothing, config)
+    sidecar = string(first(splitext(case_path)), ".measurements.csv")
+    provenance = Dict{String,Any}()
+    if isfile(sidecar)
+      readMeasurementsCSV!(net; file = sidecar)
+      merge!(provenance, _webui_measurement_set_provenance(sidecar))
+    end
+    # run_sparlectra prints the full console result table by default; a
+    # save-as request is not an interactive run and must not spam the
+    # server's stdout the way the async job path already avoids.
+    start_from_solved && redirect_stdout(() -> run_sparlectra(; net = net, config = config), devnull)
+    intended = String["power_flow"]
+    isempty(net.measurements) || push!(intended, "state_estimation")
+    exportSCF(
+      net;
+      file = out_scf,
+      case_name = new_name,
+      source_format = String(_detect_case_format(case_path)),
+      source_reference = "copied from $(requested)",
+      intended_calculations = intended,
+      measurement_provenance = provenance,
+      include_start_state = start_from_solved,
+    )
+    keep = Dict{String,Any}(k => v for (k, v) in overrides if scf_is_case_config_key(k))
+    existing_config = try
+      load_case_config(case_path)
+    catch err
+      record_webui_operation!(operation_log, "case_save_as_replaced_unreadable"; route, method = "POST", user_action = true, casefile = requested, save_as_name = new_name, message = sprint(showerror, err))
+      Dict{String,Any}()
+    end
+    merged_config = merge(existing_config, keep)
+    form_fields = Dict{String,Any}()
+    for (field, value) in _webui_case_form_defaults(case_path, nothing)
+      (haskey(_WEBUI_OPTION_BY_FIELD, String(field)) || String(field) == "case_format") && (form_fields[String(field)] = value)
+    end
+    write_case_config(out_scf, merged_config; form = form_fields)
+
+    # bound measurement set(s): a plain text copy per set, header rewritten
+    # to the new case name (same binding convention _webui_se_form_state
+    # uses: the in-file `# case:` comment decides, the <case>.measurements.csv
+    # stem only fills in for older files that carry no such comment).
+    directory_measurements = _webui_measurement_options_in_directory(directory)
+    source_stem = first(splitext(requested))
+    meas_case = Dict{String,String}()
+    for name in directory_measurements
+      bound = _webui_measurement_set_case(joinpath(directory, name))
+      if isempty(bound) && endswith(name, ".measurements.csv") && String(name[1:(end-length(".measurements.csv"))]) == source_stem
+        bound = requested
+      end
+      isempty(bound) || (meas_case[name] = bound)
+    end
+    bound_sets = [name for name in directory_measurements if get(meas_case, name, "") == requested]
+    new_case_header = "# case: $(string(new_name, ".scf.json"))"
+    for (i, name) in enumerate(bound_sets)
+      target_name = i == 1 ? string(new_name, ".measurements.csv") : string(new_name, "_", first(splitext(name)), ".measurements.csv")
+      lines = readlines(joinpath(directory, name))
+      rewritten = false
+      for j in eachindex(lines)
+        if !startswith(lines[j], "#")
+          break
+        elseif !rewritten && match(r"^#\s*case:\s*(.+)$", lines[j]) !== nothing
+          lines[j] = new_case_header
+          rewritten = true
+        end
+      end
+      rewritten || pushfirst!(lines, new_case_header)
+      open(joinpath(directory, target_name), "w") do io
+        for l in lines
+          println(io, l)
+        end
+      end
+      push!(copied_measurements, target_name)
+    end
+  catch err
+    record_webui_operation!(operation_log, "case_save_as_failed"; route, method = "POST", user_action = true, casefile = requested, save_as_name = new_name, message = sprint(showerror, err))
+    return back("Save case as '$(new_name)' failed: $(sprint(showerror, err))")
+  end
+  record_webui_operation!(operation_log, "case_save_as_completed"; route, method = "POST", user_action = true, casefile = requested, save_as_name = new_name, scf_file = basename(out_scf), measurement_files = join(copied_measurements, ","))
+  out_name = basename(out_scf)
+  msg = "Saved as $(out_name)" * (isempty(copied_measurements) ? "" : " with $(length(copied_measurements)) measurement set(s)") * ". Settings outside case scope (installation configuration) are not written here."
+  return _webui_redirect("/powerflow/case?casefile=$(_webui_urlencode(out_name))&import_message=$(_webui_urlencode(msg))")
 end
 
 """
@@ -973,69 +1127,28 @@ function _webui_merge_case_config_write(source::AbstractString, keep_updates::Ab
 end
 
 """
-Save the Case page's import options (input format, CGMES import options,
-MATPOWER import conventions) into the case configuration file next to the
-case (stage 4A). Config-key fields become case-scope configuration entries,
-`case_format` goes into the form block; runs pick both up through the
-configuration precedence instead of the run POST.
-"""
-function handle_case_options_save(form::AbstractDict; output_root::AbstractString = "results/powerflow_service", application_root::AbstractString = _webui_application_root(), case_directory::Union{Nothing,AbstractString} = nothing, operation_log::AbstractString = output_root)::SparlectraWebUIResponse
-  directory = _webui_case_directory(; case_directory, application_root, output_root)
-  case = strip(String(something(_webui_form_value(form, "casefile", ""), "")))
-  route = "/powerflow/case/options/save"
-  back = casefile -> "/powerflow/case" * (isempty(casefile) ? "" : "?casefile=" * _webui_urlencode(casefile))
-  redirect_message = (casefile, message) -> _webui_redirect(string(back(casefile), isempty(casefile) ? "?" : "&", "import_message=", _webui_urlencode(message)))
-  isempty(case) && return redirect_message("", "Select a case before saving case options.")
-  source = isabspath(case) ? normpath(case) : _webui_resolve_case_profile_source(case; case_directory = directory)
-  if isempty(source) || !(isfile(source) || isdir(source))
-    record_webui_operation!(operation_log, "case_options_save_failed"; route, method = "POST", user_action = true, casefile = case, status = "rejected", message = "case not found")
-    return redirect_message(case, "Case '$(case)' was not found in the case directory; resolve it first.")
-  end
-  keep = Dict{String,Any}()
-  dropped = String[]
-  try
-    for (config_key, field, type) in _WEBUI_FORM_CONFIG_FIELDS
-      raw = _webui_form_value(form, field, nothing)
-      raw === nothing && continue
-      # same case-scope split as the result-page save: machine-scope keys
-      # (output, benchmark, runtime, webui, export) never enter the case file
-      if scf_is_case_config_key(String(config_key))
-        keep[String(config_key)] = _webui_parse_form_value(raw, type, field)
-      else
-        push!(dropped, String(config_key))
-      end
-    end
-    _webui_apply_qlimits_off!(keep)
-  catch err
-    record_webui_operation!(operation_log, "case_options_save_failed"; route, method = "POST", user_action = true, casefile = case, status = "rejected", message = sprint(showerror, err))
-    return redirect_message(case, "Could not save case options: $(sprint(showerror, err))")
-  end
-  form_updates = Dict{String,Any}()
-  fmt = lowercase(strip(String(something(_webui_form_value(form, "case_format", ""), ""))))
-  # scf and pgm name the same reader; both are accepted so the choice
-  # made in the form survives the save (see _normalize_case_format)
-  fmt in ("auto", "matpower", "dtf_for001", "cgmes", "scf", "pgm") && (form_updates["case_format"] = fmt)
-  written = try
-    _webui_merge_case_config_write(source, keep, form_updates; on_unreadable = err -> record_webui_operation!(operation_log, "case_options_save_replaced_unreadable"; route, method = "POST", user_action = true, casefile = case, status = "replaced", message = sprint(showerror, err)))
-  catch err
-    record_webui_operation!(operation_log, "case_options_save_failed"; route, method = "POST", user_action = true, casefile = case, status = "rejected", message = sprint(showerror, err))
-    return redirect_message(case, "Could not write the case configuration file: $(sprint(showerror, err))")
-  end
-  record_webui_operation!(operation_log, "case_options_saved"; route, method = "POST", user_action = true, casefile = case, status = "succeeded", profile_path = written.path, saved_keys = length(written.config), form_fields = length(written.form), machine_scope_dropped = join(sort!(dropped), ","))
-  return redirect_message(case, "Saved case options to $(basename(written.path)).")
-end
+Save case-scope configuration fields into the case configuration file next
+to the selected case (target `this_case`), or merge them into the general
+configuration file (target `general`, one `.settings-save.bak` backup
+beside it). One handler and one route for every page that edits a
+case-scope field - the Case page's import options (input format, CGMES
+import options, MATPOWER import conventions), the Settings page's
+solver/output/expert options, and the State Estimation section's estimator
+options (issue #377) all post here with `settings_target` and `return_to`
+set to name their own field set is irrelevant to this handler and their own
+redirect destination; `_WEBUI_FORM_CONFIG_FIELDS` already carries every
+config-key-backed field regardless of which page renders it, so adding a
+new page's fields never means adding a new save handler. Config-key fields
+become case-scope configuration entries (machine-scope keys are named and
+kept out); `case_format` and the per-case request-option fields
+(performance_timing, detailed CSV, export_cgmes, SE generator options) go
+into the form block. Runs pick everything up through `resolve_config`.
 
-"""
-Save the Settings page's options (stage 4A block 3). Target `this_case`
-writes case-scope configuration keys into the selected case's
-configuration file (machine-scope keys are named and kept out, exactly
-like the result-page save) and the request-option fields
-(performance_timing, detailed CSV, export_cgmes) into its form block.
-Target `general` merges ALL configuration keys into the general YAML
-(one `.settings-save.bak` backup beside it); the per-case form-block
-fields have no general home and are named as kept out there. Runs pick
-everything up through `resolve_config`; the run POST carries none of
-these fields any more.
+Before this merge (issue #377 follow-up), the Case page had its own
+`handle_case_options_save` doing the identical merge under a different
+name and route - a third near-copy for the State Estimation page's options
+would have been the third place the same write could silently drift from
+the other two.
 """
 function handle_settings_save(form::AbstractDict; output_root::AbstractString = "results/powerflow_service", application_root::AbstractString = _webui_application_root(), case_directory::Union{Nothing,AbstractString} = nothing, operation_log::AbstractString = output_root)::SparlectraWebUIResponse
   directory = _webui_case_directory(; case_directory, application_root, output_root)
@@ -1044,7 +1157,26 @@ function handle_settings_save(form::AbstractDict; output_root::AbstractString = 
   isempty(config_file) && (config_file = DEFAULT_SPARLECTRA_CONFIG_PATH)
   target = strip(String(something(_webui_form_value(form, "settings_target", "this_case"), "this_case")))
   route = "/powerflow/settings/save"
-  back = msg -> _webui_redirect(string("/powerflow/settings", isempty(case) ? "?" : string("?casefile=", _webui_urlencode(case), "&"), "save_message=", _webui_urlencode(msg)))
+  # One save action, one route, called from wherever a case-scope field is
+  # actually edited (Case page, Settings page, State Estimation section):
+  # `return_to` only decides which page the redirect lands back on and
+  # which query key that page reads for its notice; the save logic below is
+  # otherwise identical for all three (this used to be a second handler,
+  # `handle_case_options_save` for the Case page, duplicating everything
+  # except the redirect and the `case_format` field - two places doing the
+  # same write invited exactly the drift a third one (the SE page, issue
+  # #377) would have added a THIRD copy of).
+  return_to = strip(String(something(_webui_form_value(form, "return_to", "settings"), "settings")))
+  back = if return_to == "case"
+    msg -> _webui_redirect(string("/powerflow/case", isempty(case) ? "?" : string("?casefile=", _webui_urlencode(case), "&"), "import_message=", _webui_urlencode(msg)))
+  elseif return_to == "runs"
+    # the State Estimation section's own "Save settings" button (issue
+    # #377): back to the Runs page, its SE section reads `message` (not
+    # `save_message`/`import_message`, see _webui_se_form_state).
+    msg -> _webui_redirect(string("/powerflow", isempty(case) ? "?" : string("?casefile=", _webui_urlencode(case), "&"), "message=", _webui_urlencode(msg)))
+  else
+    msg -> _webui_redirect(string("/powerflow/settings", isempty(case) ? "?" : string("?casefile=", _webui_urlencode(case), "&"), "save_message=", _webui_urlencode(msg)))
+  end
   # collect the POSTed option fields once: config keys typed via their
   # specs, request options separately
   config_updates = Dict{String,Any}()
@@ -1067,8 +1199,15 @@ function handle_settings_save(form::AbstractDict; output_root::AbstractString = 
     raw === nothing && continue
     form_updates[field] = _webui_parse_form_value(raw, spec.value_type, field)
   end
+  # case_format names the input format rather than configuring the run, so
+  # (like the Web UI's other non-spec form field) it has no WebUIOptionSpec
+  # and is not looped over above; the Case page is the only submitter today.
+  case_format_raw = lowercase(strip(String(something(_webui_form_value(form, "case_format", ""), ""))))
+  # scf and pgm name the same reader; both are accepted so the choice made
+  # in the form survives the save (see _normalize_case_format)
+  case_format_raw in ("auto", "matpower", "dtf_for001", "cgmes", "scf", "pgm") && (form_updates["case_format"] = case_format_raw)
   if target == "this_case"
-    isempty(case) && return back("Select a case first (Case page), or save to the configuration file.")
+    isempty(case) && return back(return_to == "case" ? "Select a case before saving case options." : "Select a case first (Case page), or save to the configuration file.")
     source = isabspath(case) ? normpath(case) : _webui_resolve_case_profile_source(case; case_directory = directory)
     (isempty(source) || !(isfile(source) || isdir(source))) && return back("Case '$(case)' was not found in the case directory; resolve it first.")
     keep = Dict{String,Any}()
@@ -1082,9 +1221,10 @@ function handle_settings_save(form::AbstractDict; output_root::AbstractString = 
       record_webui_operation!(operation_log, "settings_save_failed"; route, method = "POST", user_action = true, casefile = case, target, status = "rejected", message = sprint(showerror, err))
       return back("Could not write the case configuration file: $(sprint(showerror, err))")
     end
-    record_webui_operation!(operation_log, "settings_saved"; route, method = "POST", user_action = true, casefile = case, target, status = "succeeded", profile_path = written.path, saved_keys = length(written.config), form_fields = length(written.form), machine_scope_dropped = join(sort!(dropped), ","))
+    record_webui_operation!(operation_log, "settings_saved"; route, method = "POST", user_action = true, casefile = case, target, return_to, status = "succeeded", profile_path = written.path, saved_keys = length(written.config), form_fields = length(written.form), machine_scope_dropped = join(sort!(dropped), ","))
     note = isempty(dropped) ? "" : " Machine-scope keys kept out (save to the configuration file instead): $(join(sort!(dropped), ", "))."
-    return back("Saved settings for this case to $(basename(written.path)).$(note)")
+    verb = return_to == "case" ? "Saved case options" : "Saved settings for this case"
+    return back("$(verb) to $(basename(written.path)).$(note)")
   end
   target == "general" || return back("Unknown settings target '$(target)'.")
   isfile(config_file) || return back("Configuration file not found: $(config_file).")
@@ -1752,10 +1892,27 @@ function _webui_se_form_state(query::AbstractDict; output_root::AbstractString, 
   set_rows = isempty(selected_meas) ? NamedTuple[] : _webui_measurement_set_rows(joinpath(directory, selected_meas))
   # sticky generator inputs: the generate redirect carries the submitted
   # values back as g_* query keys so the form does not snap to defaults.
-  # Below the stickies, the case sidecar restores what was last saved for
-  # this case (generator options persist on generate, SE run options on
-  # "save settings"); precedence: sticky > sidecar > default.
+  # Below the stickies, the case sidecar's form block restores what was last
+  # saved for this case (generator options persist on generate, SE run
+  # options on "save settings"); below THAT, the fields with a real
+  # config_key (issue #377: flatstart, robust_mode, k_eliminate, k_suppress,
+  # max_eliminations, report_residual_correlation) show the effective
+  # CONFIGURATION value - case sidecar config keys, else configuration.yaml,
+  # else the struct default - the same resolution `webui_form_state` gives
+  # the main run form, via the same two helpers. Without this base layer an
+  # untouched field always showed a literal ("off", 3.0, 3) instead of what
+  # the file actually says, and posting it then silently outranked the file
+  # (task_se_bad_data_v0100, and the same bug again for the sidecar path).
+  # Precedence: sticky > case form block > resolved configuration > default.
   gen_values = Dict{String,String}()
+  if !isempty(selected)
+    for (k, v) in _webui_config_field_values(config_file)
+      gen_values[String(k)] = _webui_form_string(v)
+    end
+    for (k, v) in _webui_case_config_field_values(selected, directory)
+      gen_values[String(k)] = _webui_form_string(v)
+    end
+  end
   se_profile = Dict{String,Any}()
   if !isempty(selected)
     loaded = _webui_load_case_settings(output_root, joinpath(directory, selected); case_directory = directory)

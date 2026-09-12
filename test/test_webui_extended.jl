@@ -978,11 +978,11 @@ form:
         @test occursin("href=\"https://matpower.org/citing/\"", selection_html)
         @test !occursin("Zimmerman", selection_html)
         @test occursin("<form id=\"case-select-form\"", selection_html)
-        @test occursin("<form id=\"case-options-form\" method=\"post\" action=\"/powerflow/case/options/save\"", selection_html)
+        @test occursin("<form id=\"case-options-form\" method=\"post\" action=\"/powerflow/settings/save\"", selection_html)
         @test occursin("<form id=\"case-import-form\" method=\"post\" action=\"/powerflow/import-cases\" enctype=\"multipart/form-data\"", selection_html)
         # .json is a Sparlectra Case Format case (#342); the import validates
         # the content before storing, so a foreign .json is refused by name
-        @test occursin("type=\"file\" name=\"casefiles\" accept=\".m,.M,.dat,.DAT,.zip,.ZIP,.json\" multiple", selection_html)
+        @test occursin("type=\"file\" name=\"casefiles\" accept=\".m,.M,.dat,.DAT,.zip,.ZIP,.json,.yaml\" multiple", selection_html)
         @test occursin("Import case files", selection_html)
         @test occursin("<input type=\"hidden\" name=\"config_file\" value=\"$(secondary_config)\">", selection_html)
         @test occursin("<code>$(secondary_config)</code>", selection_html)
@@ -3081,7 +3081,8 @@ result = get_powerflow_result(run_id)
         @test run_result["metadata"]["contingency_screening_mode"] == "flag"
         csv_text = read(joinpath(root, run_result["run_id"], "contingency_n1.csv"), String)
         @test occursin("step6 triple", csv_text)
-        @test endswith(first(split(csv_text, '\n')), ";screened;screening_estimate")
+        # default format is "technical" (comma delimiter) since issue #376
+        @test endswith(first(split(csv_text, '\n')), ",screened,screening_estimate")
 
         # the result page renders the N-1 table (maintainer correction: the
         # screened marker must be visible in the browser, not only in the

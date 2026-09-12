@@ -951,9 +951,13 @@ function run_webui_fast_tests()
       @test rst["status"] == "succeeded"
       @test rst["metadata"]["se_robust_mode"] == "staged"
       # the request builder records the SE options as sidecar-persistable
-      # settings, so the browser flow's "save settings" keeps them
+      # settings, so the browser flow's "save settings" keeps them.
+      # se_robust_mode carries a real config_key since issue #377 (case
+      # scope, like power_flow.solver), so it now travels as the dotted
+      # config override "state_estimation.robust_mode", not as the bare
+      # form field; se_robust_k2 has no config key and is unaffected.
       reqrec = Sparlectra._webui_request_settings_for_profile(Sparlectra.powerflow_webui_request(Dict{String,Any}("se_mode" => "true", "casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "measurement_file" => mfile, "se_robust_mode" => "staged", "se_robust_k2" => "6.0"); default_output_root = root))
-      @test reqrec["se_robust_mode"] == "staged"
+      @test reqrec["state_estimation.robust_mode"] == "staged"
       @test reqrec["se_robust_k2"] == 6.0
       rleg = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true, "measurement_file" => mfile, "se_robust" => true))
       @test rleg["metadata"]["se_robust_mode"] == "staged"
@@ -1092,9 +1096,15 @@ function run_webui_fast_tests()
       lines3 = readlines(joinpath(root, r3["run_id"], "contingency_n1.csv"))
       lines4 = readlines(joinpath(root, r4["run_id"], "contingency_n1.csv"))
       @test length(lines3) == length(lines4)
+      # writeContingencyResultsCSV's default delimiter is "technical" (comma)
+      # since issue #376, not the old hardcoded semicolon; a hardcoded ";"
+      # here found no delimiter at all and silently degraded every row to a
+      # single-field exact-string comparison, hiding the intended per-field
+      # isapprox tolerance below.
+      csv_delim = occursin(';', first(lines3)) ? ';' : ','
       for (l3, l4) in zip(lines3, lines4)
-        f3 = split(l3, ";")
-        f4 = split(l4, ";")
+        f3 = split(l3, csv_delim)
+        f4 = split(l4, csv_delim)
         @test length(f3) == length(f4)
         for (a, b) in zip(f3, f4)
           na = tryparse(Float64, a)
@@ -1130,6 +1140,84 @@ function run_webui_fast_tests()
       # a field the case does not set comes from the configuration
       v_cfg_only = Sparlectra.webui_form_state(selected_config_file = cfg)
       @test v_cfg_only["power_flow_max_iter"] == 99
+    end
+
+    @testset "state estimation form settings are case scope (issue #377)" begin
+      dir = mktempdir()
+      casedir = joinpath(dir, "cases")
+      mkpath(casedir)
+      root = joinpath(dir, "out")
+      mkpath(root)
+      cp(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json")), joinpath(casedir, "sp_case14.scf.json"))
+      cp(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.measurements.csv")), joinpath(casedir, "sp_case14.measurements.csv"))
+      cp(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case60.scf.json")), joinpath(casedir, "sp_case60.scf.json"))
+      rt = (; case_directory = casedir, config_file = Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, operation_log = Sparlectra.webui_operation_log_path(root), startup_config_error = nothing, runner = Sparlectra.start_powerflow_run)
+
+      # test: configuration.yaml with k_eliminate 3.5 and max_eliminations 0,
+      # page opened, fields show the file's values without user input, and a
+      # run without form input (case sidecar with max_eliminations: 0) reports
+      # se_eliminations = 0 - the issue's own regression: it eliminated a row
+      # although the file said 0.
+      config_path = joinpath(dir, "config.yaml")
+      cp(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, config_path)
+      open(config_path, "a") do io
+        println(io, "state_estimation:")
+        println(io, "  k_eliminate: 3.5")
+        println(io, "  max_eliminations: 0")
+      end
+      rt_yaml = (; case_directory = casedir, config_file = config_path, operation_log = Sparlectra.webui_operation_log_path(root), startup_config_error = nothing, runner = Sparlectra.start_powerflow_run)
+      page = String(copy(Sparlectra.route_sparlectra_webui("GET", "/powerflow?casefile=sp_case14.scf.json"; output_root = root, runtime = rt_yaml).body))
+      @test occursin("id=\"se-k-eliminate\" value=\"3.5\"", page)
+      @test occursin("name=\"se_max_eliminations\" value=\"0\"", page)
+      run_yaml = Sparlectra.start_powerflow_run(Dict("casefile" => "sp_case14.scf.json", "config_file" => config_path, "output_root" => root, "se_mode" => true); case_directory = casedir)
+      @test run_yaml["status"] == "succeeded"
+      @test run_yaml["metadata"]["se_eliminations"] == 0
+      @test run_yaml["metadata"]["se_k_eliminate"] == 3.5
+
+      # submitting the SAME run form unchanged (as the browser would with the
+      # page correctly pre-filled above) must not silently outrank the file
+      submit_form = Dict{String,Any}(
+        "casefile" => "sp_case14.scf.json", "config_file" => config_path, "se_mode" => "true",
+        "measurement_file" => "sp_case14.measurements.csv", "se_flatstart" => "true", "se_tol" => "1e-6",
+        "se_max_iter" => "50", "se_robust_mode" => "off", "se_k_eliminate" => "3.5", "se_robust_k1" => "3.0",
+        "se_robust_k2" => "6.0", "se_k_suppress" => "4.0", "se_suppression_sigma" => "2000", "se_max_eliminations" => "0",
+      )
+      resp = Sparlectra.route_sparlectra_webui("POST", "/powerflow/run", submit_form; output_root = root, runtime = rt_yaml)
+      run_id = basename(only(h.second for h in resp.headers if h.first == "Location"))
+      wait(Sparlectra._POWERFLOW_WEBUI_JOBS[run_id]["task"])
+      submitted_result = get_powerflow_result(run_id)
+      @test submitted_result["metadata"]["se_eliminations"] == 0
+      @test submitted_result["metadata"]["se_k_eliminate"] == 3.5
+
+      # test: form value changed and Save settings pressed -> value appears
+      # in the case sidecar; next run without form input uses it
+      save_form = copy(submit_form)
+      save_form["se_k_eliminate"] = "5.0"
+      save_form["settings_target"] = "this_case"
+      save_resp = Sparlectra.route_sparlectra_webui("POST", "/powerflow/settings/save", save_form; output_root = root, runtime = rt)
+      @test save_resp.status == 303
+      sidecar = read(joinpath(casedir, "sp_case14.config.yaml"), String)
+      @test occursin("k_eliminate: 5.0", sidecar)
+      run_after_save = Sparlectra.start_powerflow_run(Dict("casefile" => "sp_case14.scf.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true); case_directory = casedir)
+      @test run_after_save["metadata"]["se_k_eliminate"] == 5.0
+
+      # test: switching cases restores each case's own values - sp_case60 has
+      # no sidecar, so it must show the STRUCT default (3.0), not case14's 5.0
+      page14_after = String(copy(Sparlectra.route_sparlectra_webui("GET", "/powerflow?casefile=sp_case14.scf.json"; output_root = root, runtime = rt).body))
+      @test occursin("id=\"se-k-eliminate\" value=\"5.0\"", page14_after)
+      page60 = String(copy(Sparlectra.route_sparlectra_webui("GET", "/powerflow?casefile=sp_case60.scf.json"; output_root = root, runtime = rt).body))
+      @test occursin("id=\"se-k-eliminate\" value=\"3.0\"", page60)
+
+      # regression (already true, kept per the issue): power_flow.solver in
+      # the case sidecar reaches the run without touching Settings. The
+      # shipped sp_case* demos all carry active Q(U)/P(U) controllers,
+      # which apslf refuses outright (a real, unrelated constraint), so the
+      # check is that the sidecar's solver choice reaches the run at all
+      # (visible in effective_config.yaml / the failure naming apslf by
+      # name), not that apslf converges on one of these networks.
+      write(joinpath(casedir, "sp_case14.config.yaml"), "config_version: 1\nscope: case\ncase: sp_case14.scf.json\npower_flow:\n  solver: apslf\n")
+      run_solver = Sparlectra.start_powerflow_run(Dict("casefile" => "sp_case14.scf.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root); case_directory = casedir)
+      @test occursin("power_flow.solver=apslf", string(get(run_solver, "message", "")))
     end
 
     @testset "browser opening falls back to the system default" begin
@@ -1477,8 +1565,8 @@ function run_webui_fast_tests()
 
       # the two whitelists that persist the choice (save, read back) both have
       # to know the new values, or the selection is silently dropped to auto
-      Sparlectra.route_sparlectra_webui("POST", "/powerflow/case/options/save",
-        Dict{String,Any}("casefile" => "fmt_probe.m", "case_format" => "pgm"); output_root = root, runtime = rt)
+      Sparlectra.route_sparlectra_webui("POST", "/powerflow/settings/save",
+        Dict{String,Any}("casefile" => "fmt_probe.m", "case_format" => "pgm", "return_to" => "case"); output_root = root, runtime = rt)
       @test Sparlectra._webui_case_form_defaults("fmt_probe.m", cases)["case_format"] == "pgm"
     end
 
@@ -1532,8 +1620,8 @@ function run_webui_fast_tests()
       @test general_cfg.powerflow.qlimits.ignore_q_limits
       @test general_cfg.powerflow.qlimits.enforcement_mode === :active_set
       # the case-options save follows the same rule
-      opts_form = Dict{String,Any}("casefile" => "sp_case14.scf.json", "power_flow_qlimits_enforcement_mode" => "off")
-      Sparlectra.route_sparlectra_webui("POST", "/powerflow/case/options/save", opts_form; output_root = root, runtime = rt)
+      opts_form = Dict{String,Any}("casefile" => "sp_case14.scf.json", "power_flow_qlimits_enforcement_mode" => "off", "return_to" => "case")
+      Sparlectra.route_sparlectra_webui("POST", "/powerflow/settings/save", opts_form; output_root = root, runtime = rt)
       @test !haskey(Sparlectra.load_case_config(joinpath(cache, "sp_case14.scf.json")), "power_flow.qlimits.enforcement_mode")
       # a file written by 0.11.1 with the word inside runs as "disabled"
       stale = joinpath(root, "stale.yaml")

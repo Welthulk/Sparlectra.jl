@@ -108,7 +108,7 @@ function test_configuration_yaml_key_coverage()
       "runtime.case", "runtime.cases", "runtime.print_thread_config", "runtime.julia_threads", "runtime.blas_threads", "runtime.casefile", "runtime.case_name", "runtime.case_source", "runtime.configured_default_casefile",
       "runtime.parallel.enabled", "runtime.parallel.max_tasks", "runtime.parallel.min_work_items",
       "diagnostics.log_effective_config",
-      "output.console_summary", "output.console_live", "output.console_auto_profile", "output.console_diagnostics", "output.console_q_limit_events", "output.console_max_rows", "output.logfile_results", "output.result_table_max_rows", "output.result_table_large_case_threshold_buses", "output.result_table_large_case_mode", "output.detailed_result_csv_write_mode", "output.detailed_result_csv_exporter", "output.detailed_result_csv_direct_threshold_buses", "output.detailed_result_csv_buffer_initial_bytes", "output.detailed_result_csv_buffer_max_bytes", "output.detailed_result_csv_streaming_threshold_rows", "output.logfile_diagnostics", "output.logfile_performance", "output.logfile_warnings", "output.startup_latency_hint",
+      "output.console_summary", "output.console_live", "output.console_auto_profile", "output.console_diagnostics", "output.console_q_limit_events", "output.console_max_rows", "output.logfile_results", "output.result_table_max_rows", "output.result_table_large_case_threshold_buses", "output.result_table_large_case_mode", "output.detailed_result_csv_write_mode", "output.detailed_result_csv_exporter", "output.detailed_result_csv_direct_threshold_buses", "output.detailed_result_csv_buffer_initial_bytes", "output.detailed_result_csv_buffer_max_bytes", "output.detailed_result_csv_streaming_threshold_rows", "output.csv_format", "output.logfile_diagnostics", "output.logfile_performance", "output.logfile_warnings", "output.startup_latency_hint",
       "benchmark.enabled", "benchmark.methods", "benchmark.seconds", "benchmark.samples", "benchmark.show_once", "benchmark.show_once_output", "benchmark.show_once_max_nodes",
       "contingency.rescue_ladder", "contingency.screening.mode", "contingency.screening.margin_pct",
       "control.enabled", "control.max_outer_iterations", "control.trace", "control.log_iterations", "control.stop_on_pf_failure", "control.controllers",
@@ -995,6 +995,8 @@ function test_configuration_webui_keys_both_directions()
       "power_flow.method" => "the form offers the solver choice as power_flow.solver; method has one supported value",
       "short_circuit.sweep_method" => "short-circuit performance switch, YAML and API only",
       "power_flow.tol_MW" => "set through the tolerance VALUE field plus its unit selector (pu or MW), so one number cannot claim two units",
+      "state_estimation.robust" => "issue #377: case scope like the other estimator options, but no dedicated UI control (the form exposes robust_mode instead); set via configuration.yaml or the case sidecar",
+      "state_estimation.topology_precheck" => "issue #377: case scope, no dedicated UI control; set via configuration.yaml or the case sidecar",
     )
     for key in sort(collect(Sparlectra.GUI_EDITABLE_CONFIG_KEYS))
       key in have && continue

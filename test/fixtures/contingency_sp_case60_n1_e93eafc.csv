@@ -1,0 +1,85 @@
+name,weight,converged,iterations,start_used,min_vm_pu,max_vm_pu,max_branch_loading_pct,severity,overloads,voltage_violations,island_count,shed_load_mw,error
+B_ACL_220_1_2#1,1,true,4,warm,0.921871975379174,1.03,48.6753523271544,0,,,1,0,
+B_ACL_220_1_2#2,1,true,4,warm,0.921871975379174,1.03,48.6753523271544,0,,,1,0,
+B_ACL_220_2_3#3,1,true,4,warm,0.922563692109804,1.03,48.6702934039485,0,,,1,0,
+B_ACL_220_2_3#4,1,true,4,warm,0.922563692109804,1.03,48.6702934039485,0,,,1,0,
+B_ACL_220_3_4#5,1,true,4,warm,0.922563692109644,1.03,48.6702934039502,0,,,1,0,
+B_ACL_220_3_4#6,1,true,4,warm,0.922563692109644,1.03,48.6702934039502,0,,,1,0,
+B_ACL_220_4_5#7,1,true,4,warm,0.921657952789045,1.03,48.6745352789493,0,,,1,0,
+B_ACL_220_4_5#8,1,true,4,warm,0.921657952789045,1.03,48.6745352789493,0,,,1,0,
+B_ACL_220_5_6#9,1,true,4,warm,0.92253747457479,1.03,48.6680342037772,0,,,1,0,
+B_ACL_220_5_6#10,1,true,4,warm,0.92253747457479,1.03,48.6680342037772,0,,,1,0,
+B_ACL_220_6_1#11,1,true,4,warm,0.922504811681375,1.03,48.6727818342176,0,,,1,0,
+B_ACL_220_6_1#12,1,true,4,warm,0.922504811681375,1.03,48.6727818342176,0,,,1,0,
+B_ACL_110_8_9,1,true,4,warm,0.922300519504156,1.03574604572947,48.6481149735797,0,,,1,0,
+B_ACL_110_9_10,1,true,4,warm,0.923268690504033,1.03449109625046,48.6517876109994,0,,,1,0,
+B_ACL_110_10_11,1,true,4,warm,0.92323775911855,1.03243568424126,48.6578347995262,0,,,1,0,
+B_ACL_110_11_12,1,true,4,warm,0.917625161315019,1.03,48.6854800456714,0,,,1,0,
+B_ACL_110_12_13,1,true,4,warm,0.921803811508738,1.03,48.6705151080006,0,,,1,0,
+B_ACL_110_13_14,1,true,5,warm,0.917597313877856,1.03,54.9132432347477,0,,,1,0,
+B_ACL_110_14_15,1,true,5,warm,0.907511543253569,1.03,48.6888439994224,0,,,1,0,
+B_ACL_110_15_16,1,true,4,warm,0.925346677406668,1.03023192360201,48.6643629033287,0,,,1,0,
+B_ACL_110_16_7,1,true,4,warm,0.913705965764104,1.03,48.6690744935546,0,,,1,0,
+B_ACL_110_8_17,1,true,4,warm,0.920083697135803,1.03,48.6661251699335,0,,,1,0,
+B_ACL_110_17_12,1,true,4,warm,0.923059275644901,1.03143502524896,48.6607932793208,0,,,1,0,
+B_ACL_110_10_18,1,true,4,warm,0.922508695070459,1.03,48.6759898102508,0,,,1,0,
+B_ACL_110_17_19,1,true,5,warm,0.910288299189072,1.0328326456941,48.6566638004245,0,,,1,0,
+B_ACL_110_19_20,1,true,3,warm,0.923406057301731,1.03,48.6696159008218,0,,,1,0,
+B_ACL_110_16_20,1,true,5,warm,0.912585475513369,1.03,48.6796816489343,0,,,1,0,
+B_ACL_110_7_8,1,true,4,warm,0.922631268821441,1.03,48.6710443417686,0,,,1,0,
+B_ACL_110_21_8,1,true,4,warm,0.922631268821441,1.03,48.6710443417686,0,,,1,0,
+B_ACL_110_12_20,1,true,5,warm,0.907767805608277,1.03,52.925271791967,0,,,1,0,
+B_ACL_110_22_23,1,true,5,warm,0.901876585491417,1.03,48.6751923760503,0,,,1,0,
+B_ACL_110_23_24,1,true,5,warm,0.901876585491416,1.03,48.6751923760485,0,,,1,0,
+B_ACL_110_24_25,1,true,6,warm,0.793612516879353,1.03,51.704791557661,0,,"Neuberg_110,Oberfeld_110,Ostdorf_110,Waldhof_110,Steineck_110,Lindkamp_110,Falkloh_110,Bornried_110,Waldhof_20,Holtbrok_20,Rossau_20,Sandbach_20,Altfeld_20,Neudorf_20,Obertal_20,Ostsee_20,Westhof_20,Nordeck_20,Waldkamp_20,Steinheim_20",1,0,
+B_ACL_110_25_26,1,true,5,warm,0.823350435199322,1.03,48.6848551431851,0,,"Nordsee_110,Waldhof_110,Steineck_110,Lindkamp_110,Falkloh_110,Bornried_110,Waldhof_20,Holtbrok_20,Rossau_20,Sandbach_20,Altfeld_20,Neudorf_20,Obertal_20,Ostsee_20,Westhof_20,Nordeck_20,Waldkamp_20,Steinheim_20",1,0,
+B_ACL_110_26_27,1,true,5,warm,0.823350435184831,1.03,48.6848551431876,0,,"Waldhof_110,Steineck_110,Lindkamp_110,Falkloh_110,Bornried_110,Waldhof_20,Holtbrok_20,Rossau_20,Sandbach_20,Altfeld_20,Neudorf_20,Obertal_20,Ostsee_20,Westhof_20,Nordeck_20,Waldkamp_20,Steinheim_20",1,0,
+B_ACL_110_27_28,1,true,4,warm,0.921165342323856,1.03,48.6704326307373,0,,,1,0,
+B_ACL_110_28_29,1,true,5,warm,0.90723106688415,1.03,48.6711277731441,0,,,1,0,
+B_ACL_110_29_22,1,true,5,warm,0.907231066884667,1.03,48.6711277731445,0,,,1,0,
+B_ACL_110_25_30,1,false,0,none,NaN,NaN,NaN,NaN,,,2,12,"islanded: load-only, 12.0 MW load disconnected"
+B_ACL_110_30_31,1,true,1,warm,0.922951982697907,1.03,48.6686917216065,0,,,1,0,
+B_ACL_110_27_32,1,false,0,none,NaN,NaN,NaN,NaN,,,2,10,"islanded: load-only, 10.0 MW load disconnected"
+B_ACL_110_32_33,1,true,1,warm,0.922951982697907,1.03,48.6686917216065,0,,,1,0,
+B_ACL_110_22_27,1,true,5,warm,0.903070456341191,1.03,48.6719117048841,0,,,1,0,
+B_ACL_110_20_22,1,true,10,warm,0.907397425406152,1.0346704466519,62.1227357607427,0,,,2,0,
+B_ACL_20_34_35,1,false,0,none,NaN,NaN,NaN,NaN,,,2,27,"islanded without reference: 27.0 MW load, 16.0 MW generation stranded (no voltage-controlled source)"
+B_ACL_20_35_36,1,false,0,none,NaN,NaN,NaN,NaN,,,2,18,"islanded without reference: 18.0 MW load, 12.0 MW generation stranded (no voltage-controlled source)"
+B_ACL_20_36_37,1,false,0,none,NaN,NaN,NaN,NaN,,,2,15,"islanded without reference: 15.0 MW load, 8.0 MW generation stranded (no voltage-controlled source)"
+B_ACL_20_37_38,1,false,0,none,NaN,NaN,NaN,NaN,,,2,9,"islanded without reference: 9.0 MW load, 4.0 MW generation stranded (no voltage-controlled source)"
+B_ACL_20_38_39,1,false,0,none,NaN,NaN,NaN,NaN,,,2,6,"islanded without reference: 6.0 MW load, 4.0 MW generation stranded (no voltage-controlled source)"
+B_ACL_20_39_40,1,false,0,none,NaN,NaN,NaN,NaN,,,2,3,"islanded without reference: 3.0 MW load, 4.0 MW generation stranded (no voltage-controlled source)"
+B_ACL_20_40_41,1,true,4,warm,0.923475533724779,1.03658959244614,44.4333978925505,0,,,1,0,
+B_ACL_20_35_42,1,false,0,none,NaN,NaN,NaN,NaN,,,2,6,"islanded without reference: 6.0 MW load, 4.0 MW generation stranded (no voltage-controlled source)"
+B_ACL_20_42_43,1,false,0,none,NaN,NaN,NaN,NaN,,,2,3,"islanded without reference: 3.0 MW load, 4.0 MW generation stranded (no voltage-controlled source)"
+B_ACL_20_43_44,1,true,4,warm,0.923444269594292,1.03606500725187,44.4346128505764,0,,,1,0,
+B_ACL_20_37_45,1,false,0,none,NaN,NaN,NaN,NaN,,,2,6,"islanded without reference: 6.0 MW load, 4.0 MW generation stranded (no voltage-controlled source)"
+B_ACL_20_45_46,1,false,0,none,NaN,NaN,NaN,NaN,,,2,6,"islanded without reference: 6.0 MW load, 4.0 MW generation stranded (no voltage-controlled source)"
+B_ACL_20_46_47,1,false,0,none,NaN,NaN,NaN,NaN,,,2,3,"islanded without reference: 3.0 MW load, 4.0 MW generation stranded (no voltage-controlled source)"
+B_ACL_20_47_48,1,true,4,warm,0.923468948807671,1.03647909324716,44.4336537312697,0,,,1,0,
+B_ACL_20_49_50,1,false,0,none,NaN,NaN,NaN,NaN,,,2,15,"islanded without reference: 15.0 MW load, 6.0 MW generation stranded (no voltage-controlled source)"
+B_ACL_20_50_51,1,false,0,none,NaN,NaN,NaN,NaN,,,2,10,"islanded without reference: 10.0 MW load, 3.0 MW generation stranded (no voltage-controlled source)"
+B_ACL_20_51_52,1,false,0,none,NaN,NaN,NaN,NaN,,,2,10,"islanded without reference: 10.0 MW load, 3.0 MW generation stranded (no voltage-controlled source)"
+B_ACL_20_52_53,1,false,0,none,NaN,NaN,NaN,NaN,,,2,2.5,"islanded without reference: 2.5 MW load, 3.0 MW generation stranded (no voltage-controlled source)"
+B_ACL_20_53_54,1,true,4,warm,0.946854683882315,1.03,48.6651152952198,0,,,1,0,
+B_ACL_20_50_55,1,false,0,none,NaN,NaN,NaN,NaN,,,2,2.5,"islanded without reference: 2.5 MW load, 3.0 MW generation stranded (no voltage-controlled source)"
+B_ACL_20_55_56,1,false,0,none,NaN,NaN,NaN,NaN,,,2,2.5,"islanded without reference: 2.5 MW load, 3.0 MW generation stranded (no voltage-controlled source)"
+B_ACL_20_56_57,1,true,4,warm,0.905537747854187,1.03,52.9113784961246,0,,,1,0,
+B_ACL_20_52_58,1,false,0,none,NaN,NaN,NaN,NaN,,,2,5,"islanded: load-only, 5.0 MW load disconnected"
+B_ACL_20_58_59,1,false,0,none,NaN,NaN,NaN,NaN,,,2,2.5,"islanded: load-only, 2.5 MW load disconnected"
+B_ACL_20_59_60,1,true,4,warm,0.952543414384034,1.03000035935493,48.6650515450546,0,,,1,0,
+B_2WT_220_2_7,1,true,5,warm,0.909715556094479,1.03,55.2422534525656,0,,,1,0,
+B_2WT_220_5_14,1,true,6,warm,0.901805449099944,1.03,56.1271913835264,0,,,1,0,
+B_2WT_220_6_18,1,true,5,warm,0.922508695048655,1.03,48.6759898129226,0,,,1,0,
+B_2WT_110_9_34,1,false,0,none,NaN,NaN,NaN,NaN,,,2,27,"islanded without reference: 27.0 MW load, 16.0 MW generation stranded (no voltage-controlled source)"
+B_2WT_110_27_49,1,false,0,none,NaN,NaN,NaN,NaN,,,2,15,"islanded without reference: 15.0 MW load, 6.0 MW generation stranded (no voltage-controlled source)"
+Gen_220#1,1,false,0,none,NaN,NaN,NaN,NaN,,,1,0,"initialVrect: no slack bus registered — the network needs one voltage reference (referencePriority, an ExternalNetworkInjection, or a generator marked as slack). Enable power_flow.auto_slack to let the solver pick the strongest candidate itself."
+Gen_220#2,1,true,5,warm,0.921242158387297,1.03,48.6783959933984,0,,,1,0,
+Gen_110#3,1,true,5,warm,0.897676137900237,1.03,48.8270372248459,0,,Steinheim_20,1,0,
+Gen_110#4,1,false,30,none,NaN,NaN,NaN,NaN,,,1,0,power flow did not converge (status 1)
+Gen_20#28,1,true,4,warm,0.922327623563973,1.03,65.1917011490099,0,,,1,0,
+Gen_20#29,1,true,4,warm,0.922252372491626,1.03,66.0803124723148,0,,,1,0,
+Gen_20#30,1,true,4,warm,0.922338335180507,1.03,65.0653518033325,0,,,1,0,
+Gen_20#31,1,true,4,warm,0.922263510523547,1.03,65.9486839667667,0,,,1,0,
+Gen_20#32,1,true,4,warm,0.897288062607553,1.03,53.5448014749796,0,,Steinheim_20,1,0,
+Gen_20#33,1,true,4,warm,0.905537747894658,1.03,52.9113784915243,0,,,1,0,

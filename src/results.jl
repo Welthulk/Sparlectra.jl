@@ -293,6 +293,11 @@ function _effective_bus_power_components(net::Net, bus_idx::Int)
   q_gen = 0.0
   p_load = 0.0
   q_load = 0.0
+  # a Q(U)-controlled machine's LIVE evaluated value is authoritative (its
+  # own _qƩGen write-back is a separate, known gap - issue #374's own
+  # "related" note); every other generator prefers the solved _qƩGen/_pƩGen
+  # over the per-prosumer nameplate the loop above sums by default.
+  bus_has_qu_gen = false
 
   for ps in net.prosumpsVec
     getPosumerBusIndex(ps) == bus_idx || continue
@@ -307,6 +312,7 @@ function _effective_bus_power_components(net::Net, bus_idx::Int)
     if has_qu_controller(ps)
       q_pu, _ = evaluate_controller(ps.quController, vm_safe)
       q_mvar = q_pu * base
+      isGenerator(ps) && (bus_has_qu_gen = true)
     end
 
     if isGenerator(ps)
@@ -318,6 +324,19 @@ function _effective_bus_power_components(net::Net, bus_idx::Int)
     end
   end
 
+  # issue #374 (part 1 of 2): Qg for PV/Slack must show the SOLVED
+  # injection, not the case file's nameplate. `_qƩGen`/`_pƩGen` are the
+  # solver's own write-back (rectangular_finalization.jl); previously PV
+  # only took it when the nameplate summed to exactly zero, so a normal,
+  # non-zero nameplate silently won. PQ (a bus clamped from PV under
+  # Q-limit enforcement) is deliberately NOT handled here: this function is
+  # `_qv_effective_qgen`'s own `q_spec` source, which exists precisely to
+  # be compared AGAINST `node._qƩGen` as an independent candidate (see its
+  # docstring); folding `_qƩGen` in here too collapsed that comparison and
+  # broke the Q-V check itself. The PQ-side fix for issue #374 lives in the
+  # report/table builders instead (buildACPFlowReport, the console printer,
+  # _bus_power_component_cache), which call `_qv_effective_qgen` directly
+  # for a clamped bus - the exact resolution the Q-V check already trusts.
   if node._nodeType == Sparlectra.Slack
     if !isnothing(node._pƩGen)
       p_gen = node._pƩGen
@@ -326,10 +345,10 @@ function _effective_bus_power_components(net::Net, bus_idx::Int)
       q_gen = node._qƩGen
     end
   elseif node._nodeType == Sparlectra.PV
-    if abs(q_gen) <= 1e-9 && !isnothing(node._qƩGen)
+    if !bus_has_qu_gen && !isnothing(node._qƩGen)
       q_gen = node._qƩGen
     end
-    if abs(p_gen) <= 1e-9 && !isnothing(node._pƩGen)
+    if !isnothing(node._pƩGen)
       p_gen = node._pƩGen
     end
   end
@@ -349,6 +368,9 @@ Base.Tuple(components::BusPowerComponents) = (components.p_gen, components.q_gen
 function _bus_power_component_cache(net::Net)::Dict{Int,BusPowerComponents}
   base = net.baseMVA
   totals = Dict{Int,NTuple{4,Float64}}()
+  # see _effective_bus_power_components (issue #374): a Q(U)-controlled
+  # generator's live evaluated value must not be overwritten by _qƩGen.
+  qu_gen_buses = Set{Int}()
   for ps in net.prosumpsVec
     bus_idx = getPosumerBusIndex(ps)
     node = net.nodeVec[bus_idx]
@@ -363,20 +385,34 @@ function _bus_power_component_cache(net::Net)::Dict{Int,BusPowerComponents}
     if has_qu_controller(ps)
       q_pu, _ = evaluate_controller(ps.quController, vm_safe)
       q_mvar = q_pu * base
+      isGenerator(ps) && push!(qu_gen_buses, bus_idx)
     end
     old = get(totals, bus_idx, (0.0, 0.0, 0.0, 0.0))
     totals[bus_idx] = isGenerator(ps) ? (old[1] + p_mw, old[2] + q_mvar, old[3], old[4]) : (old[1], old[2], old[3] + p_mw, old[4] + q_mvar)
   end
 
+  # issue #374 (part 2): a bus clamped from PV to PQ under Q-limit
+  # enforcement gets the same resolution the Q-V characteristic check
+  # already trusts (`_qv_effective_qgen`, limits.jl) instead of either
+  # nothing or a stale per-prosumer nameplate sum - computed only for the
+  # (typically few) clamped buses, and the limit lookup happens once here,
+  # not per bus.
+  qmin_pu, qmax_pu = isempty(net.qLimitEvents) ? (Float64[], Float64[]) : getQLimits_pu(net)
+
   cache = Dict{Int,BusPowerComponents}()
   for node in net.nodeVec
     p_gen, q_gen, p_load, q_load = get(totals, node.busIdx, (0.0, 0.0, 0.0, 0.0))
+    has_qu_gen = node.busIdx in qu_gen_buses
     if node._nodeType == Sparlectra.Slack
       !isnothing(node._pƩGen) && (p_gen = node._pƩGen)
       !isnothing(node._qƩGen) && (q_gen = node._qƩGen)
     elseif node._nodeType == Sparlectra.PV
-      abs(q_gen) <= 1e-9 && !isnothing(node._qƩGen) && (q_gen = node._qƩGen)
-      abs(p_gen) <= 1e-9 && !isnothing(node._pƩGen) && (p_gen = node._pƩGen)
+      !has_qu_gen && !isnothing(node._qƩGen) && (q_gen = node._qƩGen)
+      !isnothing(node._pƩGen) && (p_gen = node._pƩGen)
+    elseif node._nodeType == Sparlectra.PQ && !has_qu_gen && haskey(net.qLimitEvents, node.busIdx)
+      side = net.qLimitEvents[node.busIdx]
+      limit_pu = side === :max ? (node.busIdx <= length(qmax_pu) ? qmax_pu[node.busIdx] : Inf) : (node.busIdx <= length(qmin_pu) ? qmin_pu[node.busIdx] : -Inf)
+      isfinite(limit_pu) && (q_gen = _qv_effective_qgen(net, node.busIdx, limit_pu * net.baseMVA))
     end
     cache[node.busIdx] = BusPowerComponents(p_gen, q_gen, p_load, q_load)
   end
@@ -990,6 +1026,12 @@ function printACPFlowResults(
   # instead of the meaningless start value; the substitution needs exactly
   # one open branch end at the bus to be unambiguous, and an energized bus
   # (fed from elsewhere) always keeps its real solved voltage.
+  # issue #374: a bus clamped from PV to PQ under Q-limit enforcement shows
+  # the same Qg the Q-V characteristic check below already reports
+  # (`_qv_effective_qgen`, limits.jl), computed once here rather than per
+  # row inside the loop.
+  qv_qmin_pu, qv_qmax_pu = isempty(net.qLimitEvents) ? (Float64[], Float64[]) : getQLimits_pu(net)
+
   open_end_buses = Set{Int}()
   open_end_v = Dict{Int,Vector{Tuple{Float64,Float64}}}()
   for br in net.branchVec
@@ -1026,6 +1068,11 @@ function printACPFlowResults(
       break
     end
     p_gen, q_gen, p_load, q_load = _effective_bus_power_components(net, n.busIdx)
+    if n._nodeType == Sparlectra.PQ && haskey(net.qLimitEvents, n.busIdx)
+      side = net.qLimitEvents[n.busIdx]
+      limit_pu = side === :max ? (n.busIdx <= length(qv_qmax_pu) ? qv_qmax_pu[n.busIdx] : Inf) : (n.busIdx <= length(qv_qmin_pu) ? qv_qmin_pu[n.busIdx] : -Inf)
+      isfinite(limit_pu) && (q_gen = _qv_effective_qgen(net, n.busIdx, limit_pu * net.baseMVA))
+    end
     if abs(p_gen) > 1e-6
       pGS = @sprintf("%10.3f", p_gen)
       tpGS += p_gen

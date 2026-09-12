@@ -1,3 +1,19 @@
+# Version 0.12.2 - 2026-09-12
+
+One CSV format for a whole run, a new per-bus power table, and saving a case
+under a new name from the browser.
+
+## Highlights
+
+- **One CSV format for every artifact a run writes.** `output.csv_format` (`technical`, `excel_de`, or `excel_us`) used to reach only `bus_voltages_complex.csv` and `branch_flows.csv`; a run with `excel_de` selected still wrote `q_limit_events.csv`, the state-estimation diagnostic exports, and the contingency/scenario result tables with a dot decimal, so Excel opened half the run's files wrong. All of them now follow the same setting. The API's `detailed_result_csv_format` request field is a deprecated per-request override of the config key.
+- **`bus_powers.csv`.** One row per bus next to `bus_voltages_complex.csv`: solved generation, load, and shunt power, the bus type before and after Q-limit enforcement, the binding reactive limit and band, the controller summary (Q(U)/P(U)/RVC/STATCOM/SVC/MSC/OLTC target), and the non-physical Q-V characteristic flag - the same data the console result table and the Q-V check already compute, so all three agree on one run. See [PowerFlow Service](powerflow_service.md).
+- **Web UI: Save case as.** A new action on the Case page saves the current case, its effective settings (including unsaved form changes), and any bound measurement set under a new name into the case directory - a copy, nothing switched live. Before this, building a set of case variants meant exporting, renaming files by hand, and fixing up the `case:` binding in the sidecar and the measurement file yourself, a step where a broken binding stayed silent. Re-importing such a set now brings its `.config.yaml` sidecar along, too. See [SCF: Save case as](scf.md#save-case-as-issue-378).
+- **State estimation options are case scope.** `flatstart`, `robust_mode`, `k_eliminate`, `k_suppress`, and `max_eliminations` on the State Estimation page now behave like `power_flow.solver`: the form shows the case's effective configuration instead of a fixed default, and a "Save settings for this case" button on the page persists them into the case sidecar. A value in `configuration.yaml` used to be silently overridden by the page's own defaults on every run. Case-scope saving (Case page, Settings page, and this new button) now goes through one save action instead of three near-identical ones.
+
+## Fixes
+
+- **Result table: solved reactive power, not nameplate.** The `Qg` column of `printACPFlowResults` and the Web UI result page (and `q_gen_MVar` in `buildACPFlowReport`, which also feeds the detailed CSV export and `bus_powers.csv`) showed the case file's nameplate value for a PV bus that stayed PV, and nothing useful for a bus clamped from PV to PQ under Q-limit enforcement - even though the Q-V characteristic check on the same page already had the correct number. All three now agree.
+
 # Version 0.12.1 - 2026-09-11
 
 - **Tests.** Warnings the suite provokes on purpose (version-less and legacy configuration files, the in-file config block, a coarse tolerance, a skipped feeder, the topology advisory, a strict export) are captured and checked instead of printed; a green run shows no warnings.
