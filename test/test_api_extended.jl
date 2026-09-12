@@ -610,8 +610,17 @@ power_flow:
       @test classic.success && full.success
       @test !isfile(joinpath(classic_dir, "bus_voltages_complex.csv"))
       @test !isfile(joinpath(classic_dir, "branch_flows.csv"))
-      ignored_csv_format = run_sparlectra_api(casefile = casefile, config_file = template, output_dir = joinpath(tmpdir, "ignored_csv_format"), config_overrides = Dict("benchmark.enabled" => false), detailed_result_csv = false, detailed_result_csv_format = "unknown")
-      @test ignored_csv_format.success
+      # Since issue #376 (one CSV format for every artifact a run writes) the
+      # run-wide format is resolved once, up front, and feeds artifacts that
+      # are written regardless of `detailed_result_csv`
+      # (q_limit.log/matpower_dcline.csv/hvdc_links.csv, q_limit_events.csv
+      # etc. under run_diagnostics). An invalid format is therefore rejected
+      # whenever the run has a network, not only when `detailed_result_csv`
+      # is enabled - it is no longer possible to pass an invalid value and
+      # have it silently ignored.
+      invalid_csv_format_disabled = run_sparlectra_api(casefile = casefile, config_file = template, output_dir = joinpath(tmpdir, "invalid_csv_format_disabled"), config_overrides = Dict("benchmark.enabled" => false), detailed_result_csv = false, detailed_result_csv_format = "unknown")
+      @test !invalid_csv_format_disabled.success
+      @test invalid_csv_format_disabled.reason == "invalid_detailed_result_csv_format"
       invalid_csv_format = run_sparlectra_api(casefile = casefile, config_file = template, output_dir = joinpath(tmpdir, "invalid_csv_format"), config_overrides = Dict("benchmark.enabled" => false), detailed_result_csv = true, detailed_result_csv_format = "unknown")
       @test !invalid_csv_format.success
       @test invalid_csv_format.reason == "invalid_detailed_result_csv_format"

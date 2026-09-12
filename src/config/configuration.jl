@@ -776,6 +776,15 @@ Base.@kwdef struct OutputConfig
   detailed_result_csv_buffer_initial_bytes::Int = 8 * 1024 * 1024
   detailed_result_csv_buffer_max_bytes::Int = 64 * 1024 * 1024
   detailed_result_csv_streaming_threshold_rows::Int = 100_000
+  # Single format for every CSV artifact a run writes (bus_voltages_complex,
+  # branch_flows, bus_powers, q_limit_*, SE exports, contingency/scenario
+  # tables, short-circuit, island diagnostics). Previously the format only
+  # reached the two detailed-result CSVs via the request-only
+  # `detailed_result_csv_format`/`detailed_result_csv_semicolon` parameters;
+  # those are still accepted as a per-request override (deprecated alias,
+  # issue #376) and, when given, win over this config value for the whole
+  # run so existing API/Web UI callers keep working unchanged.
+  csv_format::Symbol = :technical
   logfile_diagnostics::Symbol = :compact
   logfile_performance::Symbol = :compact
   logfile_warnings::Symbol = :table
@@ -894,6 +903,7 @@ const OUTPUT_LOGFILE_RESULTS_VALUES = (:off, :compact, :classic, :full)
 const OUTPUT_RESULT_TABLE_LARGE_CASE_MODE_VALUES = (:summary, :classic, :full)
 const OUTPUT_DETAILED_RESULT_CSV_WRITE_MODE_VALUES = (:auto, :buffered, :streaming)
 const OUTPUT_DETAILED_RESULT_CSV_EXPORTER_VALUES = (:auto, :report, :direct)
+const OUTPUT_CSV_FORMAT_VALUES = (:technical, :excel_de, :excel_us)
 const OUTPUT_LOGFILE_DIAGNOSTICS_VALUES = (:off, :compact, :full)
 const OUTPUT_LOGFILE_PERFORMANCE_VALUES = (:off, :compact, :full)
 const OUTPUT_LOGFILE_WARNINGS_VALUES = (:off, :summary, :table, :full)
@@ -1706,6 +1716,14 @@ function OutputConfig(raw::AbstractDict)
     logfile_performance = _validate_allowed_symbol("output.logfile_performance", _as_symbol_cfg(_raw_get(merged, "logfile_performance", :compact)), OUTPUT_LOGFILE_PERFORMANCE_VALUES),
     logfile_warnings = _validate_allowed_symbol("output.logfile_warnings", _as_symbol_cfg(_raw_get(merged, "logfile_warnings", :table)), OUTPUT_LOGFILE_WARNINGS_VALUES),
     startup_latency_hint = _as_bool_cfg(_raw_get(merged, "startup_latency_hint", true)),
+    # `detailed_result_csv_format` under `output.` is the pre-#376 key name;
+    # accepted here as a deprecated alias so an existing config file keeps
+    # working. `csv_format` wins if both are set.
+    csv_format = _validate_allowed_symbol(
+      "output.csv_format",
+      _as_symbol_cfg(_raw_get(merged, "csv_format", _raw_get(merged, "detailed_result_csv_format", :technical))),
+      OUTPUT_CSV_FORMAT_VALUES,
+    ),
   )
 end
 

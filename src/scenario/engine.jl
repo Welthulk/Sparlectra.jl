@@ -694,22 +694,51 @@ end
 Base.propertynames(::ScenarioResult) = (fieldnames(ContingencyResult)..., :result, :screened, :screening_estimate)
 
 """
-    writeContingencyResultsCSV(path, results::Vector{ScenarioResult})
+    writeContingencyResultsCSV(path, results::Vector{ScenarioResult}; format = "technical")
 
 The [`ContingencyResult`](@ref) CSV with the two screening columns appended
 (D8): `screened` and the compact estimate
 `max_loading_pct|vmin_pu|vmax_pu` (empty when no estimate was computed).
 With screening `:off` the engine returns plain `ContingencyResult` rows and
-the classic writer keeps the historical byte-identical format.
+the classic writer runs with the same `format`, so the two stay in the same
+shape for one run. `format` (`technical`/`excel_de`/`excel_us`) sets the
+delimiter and number formatting like every other CSV artifact a run writes
+(issue #376); `excel_de` reproduces the previous hardcoded semicolon
+delimiter.
 """
-function writeContingencyResultsCSV(path::AbstractString, results::Vector{ScenarioResult})
+function writeContingencyResultsCSV(path::AbstractString, results::Vector{ScenarioResult}; format = "technical")
+  resolved_format = _resolve_detailed_csv_format(format)
+  delimiter = resolved_format.delimiter
   open(path, "w") do io
-    println(io, "name;weight;converged;iterations;start_used;min_vm_pu;max_vm_pu;max_branch_loading_pct;severity;overloads;voltage_violations;island_count;shed_load_mw;error;screened;screening_estimate")
+    println(io, join(("name", "weight", "converged", "iterations", "start_used", "min_vm_pu", "max_vm_pu", "max_branch_loading_pct", "severity", "overloads", "voltage_violations", "island_count", "shed_load_mw", "error", "screened", "screening_estimate"), delimiter))
     for sr in results
       r = sr.result
       overloads = join(["$(o.name)@$(round(o.loading_pct; digits = 1))" for o in r.overloads], ",")
-      est = sr.screening_estimate === nothing ? "" : string(sr.screening_estimate.max_loading_pct, "|", sr.screening_estimate.vmin_pu, "|", sr.screening_estimate.vmax_pu)
-      println(io, join([r.name, r.weight, r.converged, r.iterations, r.start_used, r.min_vm_pu, r.max_vm_pu, r.max_branch_loading_pct, r.severity, overloads, join(r.voltage_violations, ","), r.island_count, r.shed_load_mw, r.error === nothing ? "" : r.error, sr.screened, est], ";"))
+      est = sr.screening_estimate === nothing ? "" : string(_format_csv_number(sr.screening_estimate.max_loading_pct, resolved_format), "|", _format_csv_number(sr.screening_estimate.vmin_pu, resolved_format), "|", _format_csv_number(sr.screening_estimate.vmax_pu, resolved_format))
+      println(
+        io,
+        join(
+          [
+            _csv_field(r.name, delimiter, resolved_format),
+            _format_csv_number(r.weight, resolved_format),
+            r.converged,
+            r.iterations,
+            _csv_field(String(r.start_used), delimiter, resolved_format),
+            _format_csv_number(r.min_vm_pu, resolved_format),
+            _format_csv_number(r.max_vm_pu, resolved_format),
+            _format_csv_number(r.max_branch_loading_pct, resolved_format),
+            _format_csv_number(r.severity, resolved_format),
+            _csv_field(overloads, delimiter, resolved_format),
+            _csv_field(join(r.voltage_violations, ","), delimiter, resolved_format),
+            r.island_count,
+            _format_csv_number(r.shed_load_mw, resolved_format),
+            _csv_field(r.error === nothing ? "" : r.error, delimiter, resolved_format),
+            sr.screened,
+            _csv_field(est, delimiter, resolved_format),
+          ],
+          delimiter,
+        ),
+      )
     end
   end
   return path

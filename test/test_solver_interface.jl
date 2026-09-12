@@ -1639,7 +1639,40 @@ mpc.branch = [
         fb2 = Sparlectra.geNetBusIdx(net = fnet, busName = "B2")
         @test get(fnet.qLimitEvents, fb2, nothing) === :max
         @test isapprox(Sparlectra._qv_effective_qgen(fnet, fb2, 10.0), 10.0; atol = 1e-6)
+
+        # issue #374: the RESULT TABLE (not only the Q-V check) must show
+        # the same clamped Qg for the PQ* bus, under every enforcement
+        # mode; buildACPFlowReport feeds the console table, the API's
+        # detailed CSV, and bus_powers.csv, so this one row covers all three.
+        report = buildACPFlowReport(fnet)
+        b2_row = only(r for r in report.nodes if r.bus == fb2)
+        @test isapprox(b2_row.q_gen_MVar, 10.0; atol = 1e-6)
       end
+
+      # issue #374 (part 2): a PV bus that stays PV (never clamped) must
+      # also show its SOLVED Qg, not the nameplate q the case declared -
+      # the pre-fix code only took the solved _qƩGen when the nameplate
+      # summed to exactly zero, so a normal non-zero nameplate silently won.
+      pvnet = Net(name = "pv_stays_pv", baseMVA = 100.0)
+      addBus!(net = pvnet, busName = "B1", vn_kV = 110.0)
+      addBus!(net = pvnet, busName = "B2", vn_kV = 110.0)
+      addBus!(net = pvnet, busName = "B3", vn_kV = 110.0)
+      addProsumer!(net = pvnet, busName = "B1", type = "EXTERNALNETWORKINJECTION", referencePri = "B1", vm_pu = 1.02, va_deg = 0.0)
+      addPIModelACLine!(net = pvnet, fromBus = "B1", toBus = "B2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+      addPIModelACLine!(net = pvnet, fromBus = "B2", toBus = "B3", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+      # nameplate q = 5.0 (deliberately non-zero and far from the solved
+      # value), a wide-open Q band so the machine never clamps
+      addProsumer!(net = pvnet, busName = "B2", type = "SYNCHRONOUSMACHINE", p = 10.0, q = 5.0, vm_pu = 1.0, qMin = -100.0, qMax = 100.0)
+      addProsumer!(net = pvnet, busName = "B3", type = "ENERGYCONSUMER", p = 40.0, q = 15.0)
+      @test validate!(net = pvnet)[1]
+      _, pverg = runpf!(pvnet, 40, 1e-8, 0)
+      @test pverg == 0
+      pb2 = Sparlectra.geNetBusIdx(net = pvnet, busName = "B2")
+      @test get(pvnet.qLimitEvents, pb2, nothing) === nothing
+      pv_report = buildACPFlowReport(pvnet)
+      pv_b2_row = only(r for r in pv_report.nodes if r.bus == pb2)
+      @test !isapprox(pv_b2_row.q_gen_MVar, 5.0; atol = 1e-3)
+      @test isapprox(pv_b2_row.q_gen_MVar, pvnet.nodeVec[pb2]._qƩGen; atol = 1e-9)
     end
 
     @testset "AC rescue ladder and DC fallback" begin

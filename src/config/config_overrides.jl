@@ -107,10 +107,24 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "output.detailed_result_csv_buffer_initial_bytes",
   "output.detailed_result_csv_buffer_max_bytes",
   "output.detailed_result_csv_streaming_threshold_rows",
+  "output.csv_format",
   "benchmark.enabled",
   "benchmark.samples",
   "benchmark.seconds",
   "runtime.parallel.enabled",
+  # issue #377: the estimator options behave like power_flow.solver - case
+  # scope, so Save settings can pin them per case and a case sidecar value
+  # actually reaches the run instead of being outranked by a form literal.
+  # Installation-wide SE knobs (takahashi_min_states, rank_tol_factor, the
+  # topology-precheck thresholds) stay out on purpose.
+  "state_estimation.flatstart",
+  "state_estimation.robust_mode",
+  "state_estimation.robust",
+  "state_estimation.k_eliminate",
+  "state_estimation.k_suppress",
+  "state_estimation.max_eliminations",
+  "state_estimation.topology_precheck",
+  "state_estimation.report_residual_correlation",
 ])
 
 function _flatten_config_keys!(keys_out::Set{String}, raw::AbstractDict, prefix::String = "")
@@ -128,7 +142,7 @@ function _validate_override_type(key::String, value, expected::Type)
 end
 
 function _validate_gui_override_value(key::String, value)
-  if key in ("power_flow.autodamp", "power_flow.qlimits.enabled", "power_flow.start_current_iteration.enabled", "power_flow.start_current_iteration.accept_only_if_improved", "power_flow.start_current_iteration.only_for_large_cases", "power_flow.merit.enabled", "power_flow.merit.fallback_max_mismatch", "power_flow.trust_region.enabled", "power_flow.apslf.use_pade", "power_flow.apslf.nr_polish", "power_flow.apslf_start.enabled", "power_flow.islands.enabled", "power_flow.islands.diagnostic_continue_after_failure", "power_flow.rescue", "power_flow.dc.fallback", "cgmes_import.require_boundary", "cgmes_import.infer_base_voltages", "benchmark.enabled", "matpower_import.apply_bus_names", "matpower_import.apply_branch_names", "matpower_import.apply_branch_kind", "matpower_import.import_for001_contingencies", "model.net_cache_enabled", "matpower_export.write_solution", "output.console_live", "output.console_summary", "output.startup_latency_hint")
+  if key in ("power_flow.autodamp", "power_flow.qlimits.enabled", "power_flow.start_current_iteration.enabled", "power_flow.start_current_iteration.accept_only_if_improved", "power_flow.start_current_iteration.only_for_large_cases", "power_flow.merit.enabled", "power_flow.merit.fallback_max_mismatch", "power_flow.trust_region.enabled", "power_flow.apslf.use_pade", "power_flow.apslf.nr_polish", "power_flow.apslf_start.enabled", "power_flow.islands.enabled", "power_flow.islands.diagnostic_continue_after_failure", "power_flow.rescue", "power_flow.dc.fallback", "cgmes_import.require_boundary", "cgmes_import.infer_base_voltages", "benchmark.enabled", "matpower_import.apply_bus_names", "matpower_import.apply_branch_names", "matpower_import.apply_branch_kind", "matpower_import.import_for001_contingencies", "model.net_cache_enabled", "matpower_export.write_solution", "output.console_live", "output.console_summary", "output.startup_latency_hint", "state_estimation.flatstart", "state_estimation.robust", "state_estimation.topology_precheck", "state_estimation.report_residual_correlation")
     _validate_override_type(key, value, Bool)
   elseif key in ("power_flow.max_iter", "power_flow.start_current_iteration.max_iter", "power_flow.apslf.order", "power_flow.apslf_start.order", "benchmark.samples", "output.detailed_result_csv_direct_threshold_buses", "output.detailed_result_csv_buffer_initial_bytes", "output.detailed_result_csv_buffer_max_bytes", "output.detailed_result_csv_streaming_threshold_rows", "output.console_max_rows", "output.result_table_max_rows", "output.result_table_large_case_threshold_buses")
     _validate_override_type(key, value, Int)
@@ -139,6 +153,12 @@ function _validate_gui_override_value(key::String, value)
     else
       value > 0 || throw(ArgumentError("Override $(key) must be positive; got $(value)."))
     end
+  elseif key == "state_estimation.max_eliminations"
+    _validate_override_type(key, value, Int)
+    value >= 0 || throw(ArgumentError("Override $(key) must be non-negative; got $(value)."))
+  elseif key in ("state_estimation.k_eliminate", "state_estimation.k_suppress")
+    _validate_override_type(key, value, Float64)
+    isfinite(value) && value > 0 || throw(ArgumentError("Override $(key) must be finite and positive; got $(value)."))
   elseif key in ("power_flow.tol", "power_flow.tol_MW", "power_flow.autodamp_min", "power_flow.start_current_iteration.tol", "power_flow.start_current_iteration.damping", "power_flow.start_current_iteration.min_improvement_factor", "power_flow.start_current_iteration.vm_min_pu", "power_flow.start_current_iteration.vm_max_pu", "power_flow.start_current_iteration.max_angle_step_deg", "power_flow.merit.armijo_c1", "power_flow.trust_region.initial_radius", "power_flow.trust_region.eta_accept", "benchmark.seconds", "matpower_import.shift_sign")
     _validate_override_type(key, value, Float64)
     if key == "matpower_import.shift_sign"
@@ -188,6 +208,8 @@ function _validate_gui_override_value(key::String, value)
     _validate_allowed_symbol(key, _as_symbol_cfg(value), MATPOWER_PV_VOLTAGE_SOURCE_VALUES)
   elseif key == "matpower_import.compare_voltage_reference"
     _validate_allowed_symbol(key, _as_symbol_cfg(value), MATPOWER_COMPARE_VOLTAGE_REFERENCE_VALUES)
+  elseif key == "state_estimation.robust_mode"
+    _validate_allowed_symbol(key, _as_symbol_cfg(value), STATE_ESTIMATION_ROBUST_MODE_VALUES)
   elseif key == "matpower_import.matpower_dcline_mode"
     _validate_allowed_symbol(key, _as_symbol_cfg(value), MATPOWER_DCLINE_MODE_VALUES)
   elseif key == "cgmes_import.hvdc_mode"
@@ -216,6 +238,8 @@ function _validate_gui_override_value(key::String, value)
     _validate_allowed_symbol(key, _as_symbol_cfg(value), OUTPUT_DETAILED_RESULT_CSV_WRITE_MODE_VALUES)
   elseif key == "output.detailed_result_csv_exporter"
     _validate_allowed_symbol(key, _as_symbol_cfg(value), OUTPUT_DETAILED_RESULT_CSV_EXPORTER_VALUES)
+  elseif key == "output.csv_format"
+    _validate_allowed_symbol(key, _as_symbol_cfg(value), OUTPUT_CSV_FORMAT_VALUES)
   end
   return nothing
 end

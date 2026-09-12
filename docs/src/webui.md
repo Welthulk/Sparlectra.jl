@@ -938,6 +938,13 @@ Limits are 100 MiB per file and 250 MiB per request; oversized files are reporte
 
 The normal case selector continues to use the existing Web UI filtering rules. Imported MATPOWER `.m` files and runnable DTF `.DAT` files appear after refresh. FOR002 reference `.DAT` files may be copied for validation workflows but remain hidden from the normal runnable-case selector and belong in the optional FOR002 reference field.
 
+### Save case as
+
+**Save case as**, next to the export buttons, saves the current case, its
+settings and any bound measurement set under a new name in one step (issue
+#378) - see [SCF: Save case as](scf.md#save-case-as-issue-378) for the exact
+files it writes and the overwrite/start-state options.
+
 ### Fetching ENTSO-E CGMES test configurations
 
 Typing `cgmes:<alias>` into the **Or type case file path** field downloads the

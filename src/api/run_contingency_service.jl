@@ -285,7 +285,7 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
   end
   n_screened = eltype(results) === ScenarioResult ? count(r -> r.screened, results) : 0
   report = buildContingencyReport(results)
-  csv = writeContingencyResultsCSV(joinpath(output_dir, "contingency_n1.csv"), results)
+  csv = writeContingencyResultsCSV(joinpath(output_dir, "contingency_n1.csv"), results; format = String(config.output.csv_format))
 
   # a slack-unit outage surfaces as "no slack bus registered"; name it so the
   # result page does not read it as a tool failure (see the docstring)

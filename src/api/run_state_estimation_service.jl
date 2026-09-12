@@ -613,10 +613,10 @@ function _run_state_estimation_service(
   max_iter::Union{Nothing,Int} = nothing,
   tol::Union{Nothing,Float64} = nothing,
   flatstart::Union{Nothing,Bool} = nothing,
-  robust::Bool = false,
+  robust::Union{Nothing,Bool} = nothing,
   max_eliminations::Union{Nothing,Int} = nothing,
   update_shunts::Bool = false,
-  report_correlation::Bool = false,
+  report_correlation::Union{Nothing,Bool} = nothing,
   tap_estimation::Bool = false,
   k_eliminate::Union{Nothing,Float64} = nothing,
   robust_mode::Union{Nothing,Symbol} = nothing,
@@ -671,6 +671,7 @@ function _run_state_estimation_service(
   max_iter = something(max_iter, se_cfg.max_iter)
   tol = something(tol, se_cfg.tol)
   flatstart = something(flatstart, se_cfg.flatstart)
+  robust = something(robust, se_cfg.robust)
   k_eliminate = something(k_eliminate, se_cfg.k_eliminate)
   robust_mode = something(robust_mode, se_cfg.robust_mode)
   robust_k1 = something(robust_k1, se_cfg.robust_k1)
@@ -678,6 +679,7 @@ function _run_state_estimation_service(
   k_suppress = something(k_suppress, se_cfg.k_suppress)
   suppression_sigma = something(suppression_sigma, se_cfg.suppression_sigma)
   max_eliminations = something(max_eliminations, se_cfg.max_eliminations)
+  report_correlation = something(report_correlation, se_cfg.report_residual_correlation)
 
   # bad-data threshold surface (GUI-exposed): validated HERE, after the
   # values are resolved, with a user-readable failure instead of a deep
@@ -976,11 +978,15 @@ function _run_state_estimation_service(
   open(joinpath(output_dir, "se_view.md"), "w") do io
     print_se_view(io, view; format = :markdown)
   end
+  # One format for every diagnostic CSV this SE run writes (issue #376),
+  # same config key the PowerFlow API uses for its own artifacts.
+  se_csv_format = _resolve_detailed_csv_format(String(config.output.csv_format))
+  se_csv_delim = se_csv_format.delimiter
   if res.shuntEstimates !== nothing
     open(joinpath(output_dir, "shunt_estimates.csv"), "w") do io
-      println(io, "bus,bus_name,B_model_pu,B_est_pu,delta_pu,frozen")
+      println(io, join(("bus", "bus_name", "B_model_pu", "B_est_pu", "delta_pu", "frozen"), se_csv_delim))
       for r in res.shuntEstimates
-        println(io, r.busIdx, ",", r.busName, ",", r.B_model, ",", r.B_est, ",", r.delta, ",", r.frozen)
+        println(io, join((r.busIdx, _csv_field(String(r.busName), se_csv_delim, se_csv_format), _format_csv_number(Float64(r.B_model), se_csv_format), _format_csv_number(Float64(r.B_est), se_csv_format), _format_csv_number(Float64(r.delta), se_csv_format), r.frozen), se_csv_delim))
       end
     end
   end
@@ -1026,9 +1032,10 @@ function _run_state_estimation_service(
   if !isempty(suspicious) || !isempty(diag.eliminations) || !isempty(suppressedIds)
     nby = _bus_name_by_idx(net)
     open(joinpath(output_dir, "se_bad_data.csv"), "w") do io
-      println(io, "measurement_index,id,type,bus,from_bus,to_bus,normalized_residual,wii,localizable,eliminated,suppressed,downweighted")
+      println(io, join(("measurement_index", "id", "type", "bus", "from_bus", "to_bus", "normalized_residual", "wii", "localizable", "eliminated", "suppressed", "downweighted"), se_csv_delim))
       elim = Set(t.id for t in diag.eliminations)
       listed = Set{String}()
+      cf(s) = _csv_field(string(s), se_csv_delim, se_csv_format)
       for row in suspicious
         bus = ""
         fb = ""
@@ -1043,12 +1050,24 @@ function _run_state_estimation_service(
           end
         end
         push!(listed, String(row.id))
-        println(io, row.measurement_index, ",", row.id, ",", row.typ, ",", bus, ",", fb, ",", tb, ",", round(row.normalized_residual; digits = 3), ",", isnan(row.wii) ? "" : round(row.wii; digits = 3), ",", row.localizable, ",", row.id in elim, ",", String(row.id) in suppressedIds, ",", String(row.id) in downweightedIds)
+        println(
+          io,
+          join(
+            (row.measurement_index, cf(row.id), cf(row.typ), cf(bus), cf(fb), cf(tb), _format_csv_number(Float64(row.normalized_residual), se_csv_format), isnan(row.wii) ? "" : _format_csv_number(Float64(row.wii), se_csv_format), row.localizable, row.id in elim, String(row.id) in suppressedIds, String(row.id) in downweightedIds),
+            se_csv_delim,
+          ),
+        )
       end
       for t in diag.eliminations
         t.id in listed && continue
         push!(listed, String(t.id))
-        println(io, t.measurement_index, ",", t.id, ",", t.typ, ",,,,", round(t.normalized_residual_before; digits = 3), ",,true,true,", String(t.id) in suppressedIds, ",", String(t.id) in downweightedIds)
+        println(
+          io,
+          join(
+            (t.measurement_index, cf(t.id), cf(t.typ), "", "", "", _format_csv_number(Float64(t.normalized_residual_before), se_csv_format), "", true, true, String(t.id) in suppressedIds, String(t.id) in downweightedIds),
+            se_csv_delim,
+          ),
+        )
       end
       # suppressed rows below the elimination threshold (possible when
       # k_suppress < k_eliminate) still belong in the extract
@@ -1072,7 +1091,7 @@ function _run_state_estimation_service(
             tb = get(nby, Int(br.toBus), string(Int(br.toBus)))
           end
         end
-        println(io, mi, ",", rid, ",", ty, ",", bus, ",", fb, ",", tb, ",", round(r.t; digits = 3), ",,,false,true,false")
+        println(io, join((mi, cf(rid), cf(ty), cf(bus), cf(fb), cf(tb), _format_csv_number(Float64(r.t), se_csv_format), "", "", false, true, false), se_csv_delim))
       end
     end
   end
@@ -1105,8 +1124,9 @@ function _run_state_estimation_service(
     end
     open(joinpath(output_dir, "se_deltas.csv"), "w") do io
       println(io, "# sparlectra-se-deltas v1")
-      println(io, "kind,id,type,bus,from_bus,to_bus,measured,truth,estimated,delta_meas_truth,delta_est_truth,delta_est_meas,sigma,t_est,eliminated")
-      fmt(v) = repr(round(v; sigdigits = 8))
+      println(io, join(("kind", "id", "type", "bus", "from_bus", "to_bus", "measured", "truth", "estimated", "delta_meas_truth", "delta_est_truth", "delta_est_meas", "sigma", "t_est", "eliminated"), se_csv_delim))
+      fmt(v) = _format_csv_number(round(v; sigdigits = 8), se_csv_format)
+      cfD(s) = _csv_field(string(s), se_csv_delim, se_csv_format)
       for m in net.measurements
         haskey(truthById, m.id) || continue
         tv = truthById[m.id]
@@ -1120,14 +1140,20 @@ function _run_state_estimation_service(
         end
         rres = get(residById, m.id, nothing)
         estv = rres === nothing ? nothing : m.value - rres
-        println(io, "meas,", m.id, ",", m.typ, ",", busD, ",", fbD, ",", tbD, ",", repr(m.value), ",", repr(tv), ",", estv === nothing ? "" : fmt(estv), ",", fmt(m.value - tv), ",", estv === nothing ? "" : fmt(estv - tv), ",", estv === nothing ? "" : fmt(estv - m.value), ",", repr(m.sigma), ",", rres === nothing ? "" : fmt(abs(rres) / m.sigma), ",", m.id in elimD)
+        println(
+          io,
+          join(
+            ("meas", cfD(m.id), cfD(m.typ), cfD(busD), cfD(fbD), cfD(tbD), fmt(m.value), fmt(tv), estv === nothing ? "" : fmt(estv), fmt(m.value - tv), estv === nothing ? "" : fmt(estv - tv), estv === nothing ? "" : fmt(estv - m.value), fmt(m.sigma), rres === nothing ? "" : fmt(abs(rres) / m.sigma), m.id in elimD),
+            se_csv_delim,
+          ),
+        )
       end
       devByBranch = Dict{Int,Float64}(d.branch => d.steps for d in set_tap_devs)
       for t in something(res.tapEstimates, NamedTuple[])
         dev = get(devByBranch, t.branch, 0.0)
         # a tap is never measured: `measured` and the deltas against it stay
         # empty rather than repeating the truth and pretending a zero residual
-        println(io, "tap,", t.name, ",", t.mode, ",,,,,", dev, ",", t.fixed_step_1, ",,", fmt(Float64(t.fixed_step_1) - dev), ",,,,false")
+        println(io, join(("tap", cfD(t.name), cfD(t.mode), "", "", "", "", fmt(dev), t.fixed_step_1, "", fmt(Float64(t.fixed_step_1) - dev), "", "", "", false), se_csv_delim))
       end
       deltas_written = true
     end
@@ -1135,12 +1161,19 @@ function _run_state_estimation_service(
 
   if res.tapEstimates !== nothing || !isempty(tap_calc_rows)
     open(joinpath(output_dir, "se_tap_estimates.csv"), "w") do io
-      println(io, "branch,name,mrid,mode,alpha_deg,electrical_step,fixed_step,electrical_shift_step,fixed_shift_step,r1_est,r2_est,out_of_range,fixed,frozen_reason,source")
+      println(io, join(("branch", "name", "mrid", "mode", "alpha_deg", "electrical_step", "fixed_step", "electrical_shift_step", "fixed_shift_step", "r1_est", "r2_est", "out_of_range", "fixed", "frozen_reason", "source"), se_csv_delim))
+      cfT(s) = _csv_field(string(s), se_csv_delim, se_csv_format)
       for t in something(res.tapEstimates, NamedTuple[])
-        println(io, t.branch, ",", t.name, ",", t.mrid, ",", t.mode, ",", t.alpha_deg, ",", round(t.electrical_step_1; digits = 4), ",", t.fixed_step_1, ",", round(t.electrical_step_2; digits = 4), ",", t.fixed_step_2, ",", t.r1_est, ",", t.r2_est, ",", t.out_of_range, ",", t.fixed, ",", t.frozen_reason == :none ? "" : t.frozen_reason, ",estimated")
+        println(
+          io,
+          join(
+            (t.branch, cfT(t.name), cfT(t.mrid), cfT(t.mode), _format_csv_number(Float64(t.alpha_deg), se_csv_format), _format_csv_number(round(t.electrical_step_1; digits = 4), se_csv_format), t.fixed_step_1, _format_csv_number(round(t.electrical_step_2; digits = 4), se_csv_format), t.fixed_step_2, t.r1_est, t.r2_est, t.out_of_range, t.fixed, t.frozen_reason == :none ? "" : t.frozen_reason, "estimated"),
+            se_csv_delim,
+          ),
+        )
       end
       for c in tap_calc_rows
-        println(io, c["branch"], ",", c["name"], ",", c["mrid"], ",ratio,0.0,", c["electrical_step"], ",", c["fixed_step"], ",0.0,0,,,false,false,,calculated")
+        println(io, join((c["branch"], cfT(c["name"]), cfT(c["mrid"]), "ratio", _format_csv_number(0.0, se_csv_format), c["electrical_step"], c["fixed_step"], _format_csv_number(0.0, se_csv_format), 0, "", "", false, false, "", "calculated"), se_csv_delim))
       end
     end
   end
@@ -1338,10 +1371,18 @@ function _run_pf_from_se_service(case_path::AbstractString, config_file::Abstrac
       dva = mod(dva + 180.0, 360.0) - 180.0
       push!(devrows, (bus = i, name = get(name_by_idx, i, string(i)), mrid = _bus_mrid(net, i; name_by_idx = name_by_idx), vm_se = st.vm[i], vm_pf = vm_pf, dvm = vm_pf - st.vm[i], va_se = st.va[i], va_pf = va_pf, dva = dva))
     end
+    devi_format = _resolve_detailed_csv_format(String(config.output.csv_format))
+    devi_delim = devi_format.delimiter
     open(joinpath(output_dir, "se_pf_deviation.csv"), "w") do io
-      println(io, "bus,name,mrid,vm_se_pu,vm_pf_pu,dvm_pu,va_se_deg,va_pf_deg,dva_deg")
+      println(io, join(("bus", "name", "mrid", "vm_se_pu", "vm_pf_pu", "dvm_pu", "va_se_deg", "va_pf_deg", "dva_deg"), devi_delim))
       for rw in devrows
-        println(io, rw.bus, ",", rw.name, ",", rw.mrid, ",", rw.vm_se, ",", rw.vm_pf, ",", rw.dvm, ",", rw.va_se, ",", rw.va_pf, ",", rw.dva)
+        println(
+          io,
+          join(
+            (rw.bus, _csv_field(String(rw.name), devi_delim, devi_format), _csv_field(String(rw.mrid), devi_delim, devi_format), _format_csv_number(Float64(rw.vm_se), devi_format), _format_csv_number(Float64(rw.vm_pf), devi_format), _format_csv_number(Float64(rw.dvm), devi_format), _format_csv_number(Float64(rw.va_se), devi_format), _format_csv_number(Float64(rw.va_pf), devi_format), _format_csv_number(Float64(rw.dva), devi_format)),
+            devi_delim,
+          ),
+        )
       end
     end
   end

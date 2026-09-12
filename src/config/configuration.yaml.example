@@ -596,6 +596,14 @@ output:
   detailed_result_csv_buffer_initial_bytes: 8388608
   detailed_result_csv_buffer_max_bytes: 67108864
   detailed_result_csv_streaming_threshold_rows: 100000
+  # Format applied to every CSV artifact a run writes (bus_voltages_complex,
+  # branch_flows, bus_powers, q_limit_*, SE exports, contingency/scenario
+  # tables, short-circuit, island diagnostics). technical = comma delimiter,
+  # dot decimal; excel_de = semicolon delimiter, comma decimal, dot
+  # thousands separator (opens correctly in a German-locale Excel);
+  # excel_us = comma delimiter, dot decimal, comma thousands separator.
+  # Allowed values: technical, excel_de, excel_us
+  csv_format: technical
   # Allowed values: off, compact, full
   logfile_diagnostics: compact
   # Allowed values: off, compact, full

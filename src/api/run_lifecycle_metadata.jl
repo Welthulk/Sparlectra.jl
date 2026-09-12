@@ -94,7 +94,7 @@ function _island_wise_lifecycle_metadata(rect_status)::Dict{String,Any}
   )
 end
 
-function _build_success_lifecycle_metadata(raw_result::SparlectraRunResult, config::SparlectraConfig; numerical_success::Bool, final_outcome::Dict{String,Any}, csv_export_status::AbstractString, csv_export_skip_reason, csv_export_error, csv_artifacts::Vector{String}, detailed_result_csv::Bool, config_overrides, config_override_source::AbstractString, casefile, config_file, performance_timing, run_diagnostics::Bool, detailed_result_csv_format, qlimit_metadata::AbstractDict, csv_timing_metadata::AbstractDict)::Dict{String,Any}
+function _build_success_lifecycle_metadata(raw_result::SparlectraRunResult, config::SparlectraConfig; numerical_success::Bool, final_outcome::Dict{String,Any}, csv_export_status::AbstractString, csv_export_skip_reason, csv_export_error, csv_artifacts::Vector{String}, detailed_result_csv::Bool, config_overrides, config_override_source::AbstractString, casefile, config_file, performance_timing, run_diagnostics::Bool, csv_format_name::AbstractString, qlimit_metadata::AbstractDict, csv_timing_metadata::AbstractDict)::Dict{String,Any}
   rect_status = raw_result.net === nothing ? nothing : rectangular_pf_status(raw_result.net)
   current_iteration_metadata = _current_iteration_lifecycle_metadata(rect_status)
   merit_linesearch_metadata = _merit_linesearch_lifecycle_metadata(rect_status)
@@ -139,7 +139,7 @@ function _build_success_lifecycle_metadata(raw_result::SparlectraRunResult, conf
       "performance_timing" => String(performance_timing),
       "run_diagnostics" => run_diagnostics,
       "detailed_result_csv" => detailed_result_csv,
-      "detailed_result_csv_format" => detailed_result_csv_format === nothing ? "technical" : String(detailed_result_csv_format),
+      "detailed_result_csv_format" => csv_format_name,
     )),
   ), qlimit_metadata, current_iteration_metadata, merit_linesearch_metadata, wrong_branch_metadata, trust_region_metadata, island_wise_metadata)
   # Partial CSV exports are still successful API runs, but the Web UI needs the

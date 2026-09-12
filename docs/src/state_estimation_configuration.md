@@ -1,5 +1,15 @@
 # State-Estimation Configuration
 
+Since issue #377, `flatstart`, `robust_mode`, `robust`, `k_eliminate`,
+`k_suppress`, `max_eliminations`, `topology_precheck`, and
+`report_residual_correlation` are case-scope keys, like `power_flow.solver`:
+they can be saved into a case's configuration file (Web UI: the "Save
+settings for this case" button on the State Estimation page, or the
+Settings page), and the State Estimation page's form fields show the
+effective value (case sidecar, else this file, else the default below)
+instead of a fixed literal. The remaining estimator keys stay
+installation-wide, set here or via the API only.
+
 | YAML path | Type | Default | Allowed values | Meaning | Use when | Avoid when | Performance impact | Interactions |
 |---|---:|---:|---|---|---|---|---|---|
 | `state_estimation.enabled` | Bool | `true` | `true`, `false` | Enables SE stage. | Measurement-driven workflows. | No measurement model/data. | Extra nonlinear solve pass. | `update_net`, PF start source. |

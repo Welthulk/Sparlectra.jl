@@ -292,6 +292,7 @@ function _csv_field(value, delimiter::Char, format = _resolve_detailed_csv_forma
 end
 
 include("run_csv_exports.jl")
+include("run_bus_powers_export.jl")
 
 function _csv_solution_quality(raw_result::SparlectraRunResult)::String
   return raw_result.final_converged && raw_result.solution_available ? "converged" : "not_converged_last_iterate"
@@ -1113,8 +1114,22 @@ function _run_sparlectra_api(;
   _check_powerflow_cancelled!(cancellation_token)
   emit_phase("writing_artifacts")
   operation_callback("powerflow_lifecycle_status"; run_id = run_id, solver_status = "completed", artifact_status = "running", run_status = "finalizing", last_phase = "writing_artifacts")
+  # One format for every CSV artifact this run writes (issue #376). The
+  # request-level detailed_result_csv_format/detailed_result_csv_semicolon
+  # keywords are a deprecated per-request override of config.output.csv_format,
+  # kept so existing API/Web UI callers keep their exact prior behavior; when
+  # neither is given, the run-wide config value applies to all artifacts, not
+  # just the two detailed-result CSVs as before.
+  csv_format_name = detailed_result_csv_format !== nothing ? String(detailed_result_csv_format) :
+                    detailed_result_csv_semicolon ? "excel_de" :
+                    String(config.output.csv_format)
+  csv_format = try
+    _resolve_detailed_csv_format(csv_format_name)
+  catch err
+    return _api_failure("invalid_detailed_result_csv_format", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
+  end
   run_diagnostics && _write_powerflow_diagnostics(joinpath(output_path, "diagnose.log"), raw_result; mode = config.output.logfile_diagnostics)
-  run_diagnostics && _write_start_residuals_artifact(output_path, api_performance_profile)
+  run_diagnostics && _write_start_residuals_artifact(output_path, api_performance_profile; format = csv_format.name)
   # which controllers the solved network carried: the result page names them,
   # because a Q(U) machine read from a case file is otherwise visible only in
   # the Control column of the result print (task qu_scf, 2026-09-11)
@@ -1124,9 +1139,9 @@ function _run_sparlectra_api(;
   end
   q_limit_artifacts = raw_result.net !== nothing ? [_write_q_limit_log_artifact(output_path, raw_result, qlimit_metadata)] : String[]
   if (run_diagnostics || detailed_result_csv) && raw_result.net !== nothing
-    append!(q_limit_artifacts, _write_q_limit_detail_artifacts(output_path, raw_result.net; format = "technical"))
+    append!(q_limit_artifacts, _write_q_limit_detail_artifacts(output_path, raw_result.net; format = csv_format.name))
   end
-  matpower_dcline_artifact = raw_result.net === nothing ? nothing : _write_matpower_dcline_artifact(output_path, raw_result.net; format = "technical")
+  matpower_dcline_artifact = raw_result.net === nothing ? nothing : _write_matpower_dcline_artifact(output_path, raw_result.net; format = csv_format.name)
   if matpower_dcline_artifact !== nothing
     operation_callback("matpower_dcline_pf_injections_imported"; run_id = run_id, active_dcline_count = length(raw_result.net.matpowerDclineMetadata), artifact = matpower_dcline_artifact)
     open(logfile, "a") do io
@@ -1134,7 +1149,7 @@ function _run_sparlectra_api(;
       println(io, "MATPOWER DC-line artifact: ", matpower_dcline_artifact)
     end
   end
-  hvdc_links_artifact = raw_result.net === nothing ? nothing : _write_hvdc_links_artifact(output_path, raw_result.net; format = "technical")
+  hvdc_links_artifact = raw_result.net === nothing ? nothing : _write_hvdc_links_artifact(output_path, raw_result.net; format = csv_format.name)
   if hvdc_links_artifact !== nothing
     operation_callback("hvdc_links_reported"; run_id = run_id, hvdc_link_count = length(raw_result.net.hvdcLinks), artifact = hvdc_links_artifact)
     open(logfile, "a") do io
@@ -1145,16 +1160,7 @@ function _run_sparlectra_api(;
   csv_export_error = nothing
   csv_export_status = detailed_result_csv ? "pending" : "disabled"
   csv_export_skip_reason = nothing
-  csv_format = nothing
   csv_timing_metadata = Dict{Symbol,Any}(:progress_callback => ((event; fields...) -> operation_callback(event; run_id = run_id, fields...)))
-  if detailed_result_csv
-    csv_format_name = detailed_result_csv_format === nothing ? (detailed_result_csv_semicolon ? "excel_de" : "technical") : String(detailed_result_csv_format)
-    csv_format = try
-      _resolve_detailed_csv_format(csv_format_name)
-    catch err
-      return _api_failure("invalid_detailed_result_csv_format", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
-    end
-  end
   if !detailed_result_csv
     csv_export_skip_reason = "csv_disabled"
   elseif raw_result.net === nothing
@@ -1168,6 +1174,7 @@ function _run_sparlectra_api(;
       # happen; the helper preserves filenames, schemas, progress events, and
       # partial-export behavior expected by the Web UI.
       csv_artifacts = _write_detailed_result_csv(output_path, raw_result; format = csv_format.name, config, abort_checker = () -> _check_powerflow_cancelled!(cancellation_token), timing_metadata = csv_timing_metadata)
+      push!(csv_artifacts, _write_bus_powers_artifact(output_path, raw_result.net; format = csv_format.name))
       csv_export_status = haskey(csv_timing_metadata, :partial_error) ? "partial" : (raw_result.final_converged && raw_result.solution_available ? "exported" : "exported_diagnostic")
     catch err
       csv_export_error = sprint(showerror, err)
@@ -1343,7 +1350,7 @@ function _run_sparlectra_api(;
     config_file,
     performance_timing,
     run_diagnostics,
-    detailed_result_csv_format,
+    csv_format_name = csv_format.name,
     qlimit_metadata,
     csv_timing_metadata,
   )

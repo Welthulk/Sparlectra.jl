@@ -81,9 +81,16 @@ function _select_namedtuple_csv_write_mode(rows::AbstractVector, columns; config
   return :buffered
 end
 
-function _write_namedtuple_csv(path::AbstractString, rows::AbstractVector, columns; delimiter::Char = ',', format = nothing, config = nothing, estimated_rows::Integer = length(rows))
+function _write_namedtuple_csv(path::AbstractString, rows::AbstractVector, columns; delimiter::Union{Nothing,Char} = nothing, format = nothing, config = nothing, estimated_rows::Integer = length(rows))
+  # `delimiter` only needs to be given when it must override the format's own
+  # delimiter (or when there is no format at all); every current call site
+  # that passes a resolved `format` name relies on this default, so it must
+  # never silently disagree with that format's delimiter (issue #376: this
+  # threw for every caller that did not also repeat `delimiter` explicitly
+  # once formats other than "technical" started reaching them).
+  resolved_format = format === nothing ? (name = "custom", delimiter = delimiter === nothing ? ',' : delimiter, decimal_separator = '.', thousands_separator = "") : _resolve_detailed_csv_format(format)
+  delimiter = delimiter === nothing ? resolved_format.delimiter : delimiter
   delimiter in (',', ';') || throw(ArgumentError("CSV delimiter must be ',' or ';'."))
-  resolved_format = format === nothing ? (name = "custom", delimiter = delimiter, decimal_separator = '.', thousands_separator = "") : _resolve_detailed_csv_format(format)
   resolved_format.delimiter == delimiter || throw(ArgumentError("CSV delimiter does not match detailed CSV format $(resolved_format.name)."))
   options = _csv_write_options(config)
   mode = _select_namedtuple_csv_write_mode(rows, columns; config, estimated_rows)

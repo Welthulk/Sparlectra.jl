@@ -441,6 +441,7 @@ solver tuning:
 | `output.result_table_max_rows` | `200` | Row cap for the classical result tables. |
 | `output.result_table_large_case_threshold_buses` | `1000` | Bus count from which a case counts as large for result rendering. |
 | `output.result_table_large_case_mode` | `summary` | What large cases print instead of full tables (`summary`, `classic`, `full`). |
+| `output.csv_format` | `technical` | Delimiter/decimal-separator format applied to every CSV artifact a run writes: `bus_voltages_complex.csv`, `branch_flows.csv`, `bus_powers.csv`, `q_limit_*.csv`, SE diagnostic exports, and contingency/scenario result tables. Allowed values: `technical` (comma delimiter, dot decimal), `excel_de` (semicolon delimiter, comma decimal, dot thousands separator), `excel_us` (comma delimiter, dot decimal, comma thousands separator). The API's `detailed_result_csv_format`/`detailed_result_csv_semicolon` request keywords are a deprecated per-request override of this key. |
 | `webui.operation_log_retention_days` | Int | `10` | >= 0 | How far the operation log reaches back. Every Web UI start drops older entries from every operation log it knows; `0` keeps only the current session. Lower it when the log page grows unwieldy: its size comes from the number of entries, not from their age. The environment variable `SPARLECTRA_WEBUI_OPERATION_LOG_RETENTION_DAYS` still wins, for headless runs that read no configuration file. |
 
 ## Migration notes

@@ -31,6 +31,41 @@ picks up a `<case>.measurements.csv` sitting next to it, and stores the
 form's own configuration overrides in the case configuration file next to
 the export, so the case ships with the settings it was meant to run with.
 
+### Save case as (issue #378)
+
+**Save case as**, next to it on the Case page (and reachable from the State
+Estimation section as a link back to the Case page), saves the current case
+under a new name instead of exporting in place: one network with several
+variants, one file per variant, nothing switched live. It writes three files
+into the case directory:
+
+- `<name>.scf.json` via [`exportSCF`](@ref) - `meta.case_name = <name>`,
+  `meta.source_reference` notes the source case. A MATPOWER or DTF source is
+  saved as SCF the same way the plain export does; the original source file
+  is never touched.
+- `<name>.config.yaml`: the source case's own saved case-scope settings
+  merged with any unsaved change made on the page before saving (a changed
+  solver, Q-limit mode, etc.) - the source case's sidecar file itself is
+  never modified.
+- `<name>.measurements.csv` for each measurement set currently bound to the
+  source case, a copy with its `# case:` header rewritten to the new name; a
+  second bound set is copied as `<name>_<original stem>.measurements.csv`.
+
+An existing `<name>.scf.json` is refused unless "overwrite" is ticked. The
+optional "start from the solved state" checkbox solves the case once with
+the effective settings and writes the solved voltages as the copy's
+`sparlectra.start_state`. Installation-scope settings (`output.*`,
+`benchmark.*`, `runtime.*`, ...) are never written into the case
+configuration file; the page states this.
+
+Re-importing a case saved this way (the **Import case files** picker on the
+Case page) brings the `.config.yaml` sidecar along with the `.scf.json` and
+its measurement set(s) when all three are selected together: `.yaml` is
+accepted like the other case file types, validated as a case-scope
+configuration file (`scope: case`) before it is stored, and rejected
+otherwise - a general-scope or foreign YAML never lands in the case
+directory under a case-sidecar name.
+
 ## Reading a case file
 
 ```julia
