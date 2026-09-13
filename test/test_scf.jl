@@ -1273,6 +1273,35 @@ mpc.branch = [
       @test isfile(joinpath(d, "run_sc", "short_circuit_min.csv"))
       sclog = read(joinpath(d, "run_sc", "run.log"), String)
       @test occursin("from the case file", sclog)
+      # issue #376 follow-up: the short-circuit CSVs follow output.csv_format
+      # like every other CSV artifact of a run. Default (technical): comma
+      # delimiter, dot decimal. excel_de (machine-scope key, so it comes from
+      # the general configuration file): semicolon delimiter, decimal comma.
+      sc_default_lines = readlines(joinpath(d, "run_sc", "short_circuit_max.csv"))
+      @test sc_default_lines[1] == "bus,vn_kV,island,status,c,zk_ohm,rx_ratio,ik_kA,sk_MVA,kappa,ip_kA,flagged,reasons"
+      @test !occursin(';', sc_default_lines[2])
+      cfg_de = joinpath(d, "config_excel_de.yaml")
+      cp(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, cfg_de)
+      open(cfg_de, "a") do io
+        println(io, "output:")
+        println(io, "  csv_format: excel_de")
+      end
+      res_sc_de = redirect_stdout(devnull) do
+        Sparlectra._run_short_circuit_service(fsc, cfg_de, joinpath(d, "run_sc_de"), "scf_sc_de")
+      end
+      @test Sparlectra.to_dict(res_sc_de)["status"] == "succeeded"
+      for name in ("short_circuit_max.csv", "short_circuit_min.csv")
+        sc_de_lines = readlines(joinpath(d, "run_sc_de", name))
+        @test sc_de_lines[1] == "bus;vn_kV;island;status;c;zk_ohm;rx_ratio;ik_kA;sk_MVA;kappa;ip_kA;flagged;reasons"
+        @test length(sc_de_lines) == length(sc_default_lines)
+        # the c column (fifth field, 1.1 for max / 0.95 for min at HV) always
+        # carries a fraction, unlike vn_kV, which a whole kV value would
+        # print without any separator: dot decimal by default, decimal comma
+        # under excel_de
+        @test occursin('.', split(sc_default_lines[2], ',')[5])
+        @test !occursin('.', split(sc_de_lines[2], ';')[5])
+        @test occursin(',', split(sc_de_lines[2], ';')[5])
+      end
       # an unknown node id in the sweep fails on the run, not with an empty table
       root = Sparlectra.scf_json_parse(read(fsc, String))
       root["sparlectra"]["short_circuit"]["buses"] = Any[999999]

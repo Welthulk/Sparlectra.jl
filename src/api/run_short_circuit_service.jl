@@ -19,12 +19,40 @@
 #          API result conventions. No power-flow solve is involved.
 
 # One CSV per case; schema mirrors the ShortCircuitResult rows (the
-# short-circuit artifact contract). `reasons` is a "; "-joined list inside one CSV field.
-function _write_short_circuit_csv(path::AbstractString, result::ShortCircuitResult)::String
+# short-circuit artifact contract). `reasons` is a "; "-joined list inside
+# one CSV field. `format` (technical/excel_de/excel_us, see
+# `_resolve_detailed_csv_format`) sets delimiter and number formatting like
+# every other CSV artifact of the run (issue #376 follow-up: with excel_de
+# the power-flow files used ; and a decimal comma while this one still
+# used , and a dot - one run, two formats).
+function _write_short_circuit_csv(path::AbstractString, result::ShortCircuitResult; format = "technical")::String
+  resolved_format = _resolve_detailed_csv_format(format)
+  delimiter = resolved_format.delimiter
+  num(v) = _format_csv_number(Float64(v), resolved_format)
   open(path, "w") do io
-    println(io, "bus,vn_kV,island,status,c,zk_ohm,rx_ratio,ik_kA,sk_MVA,kappa,ip_kA,flagged,reasons")
+    println(io, join(("bus", "vn_kV", "island", "status", "c", "zk_ohm", "rx_ratio", "ik_kA", "sk_MVA", "kappa", "ip_kA", "flagged", "reasons"), delimiter))
     for row in result.rows
-      println(io, join((_csv_field(String(row.bus), ','), row.vn_kV, row.island, row.status, row.c, row.zk_ohm, row.rx_ratio, row.ik_kA, row.sk_MVA, row.kappa, row.ip_kA, row.contains_defaulted_data, _csv_field(join(row.reasons, "; "), ',')), ','))
+      println(
+        io,
+        join(
+          (
+            _csv_field(String(row.bus), delimiter, resolved_format),
+            num(row.vn_kV),
+            row.island,
+            row.status,
+            num(row.c),
+            num(row.zk_ohm),
+            num(row.rx_ratio),
+            num(row.ik_kA),
+            num(row.sk_MVA),
+            num(row.kappa),
+            num(row.ip_kA),
+            row.contains_defaulted_data,
+            _csv_field(join(row.reasons, "; "), delimiter, resolved_format),
+          ),
+          delimiter,
+        ),
+      )
     end
   end
   return path
@@ -109,8 +137,8 @@ function _run_short_circuit_scf(case_path::AbstractString, config::SparlectraCon
     return _api_failure("short_circuit_data_missing", "The case file carries $(n_sources) source(s), but no bus could be evaluated - see the table in run.log.", run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
   end
 
-  max_csv = _write_short_circuit_csv(joinpath(output_dir, "short_circuit_max.csv"), sc_max)
-  min_csv = _write_short_circuit_csv(joinpath(output_dir, "short_circuit_min.csv"), sc_min)
+  max_csv = _write_short_circuit_csv(joinpath(output_dir, "short_circuit_max.csv"), sc_max; format = String(config.output.csv_format))
+  min_csv = _write_short_circuit_csv(joinpath(output_dir, "short_circuit_min.csv"), sc_min; format = String(config.output.csv_format))
   flagged = count(row.contains_defaulted_data for row in headline.rows)
   worst = _sc_worst_row(headline)
 
@@ -253,8 +281,8 @@ function _run_short_circuit_service(case_path::AbstractString, config_file::Abst
     return _api_failure("short_circuit_data_missing", "The delivery imported, but no usable short-circuit source (machine x''_d or feeder Ik) was found — see the coverage report in run.log.", run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
   end
 
-  max_csv = _write_short_circuit_csv(joinpath(output_dir, "short_circuit_max.csv"), sc_max)
-  min_csv = _write_short_circuit_csv(joinpath(output_dir, "short_circuit_min.csv"), sc_min)
+  max_csv = _write_short_circuit_csv(joinpath(output_dir, "short_circuit_max.csv"), sc_max; format = String(config.output.csv_format))
+  min_csv = _write_short_circuit_csv(joinpath(output_dir, "short_circuit_min.csv"), sc_min; format = String(config.output.csv_format))
 
   flagged = count(row.contains_defaulted_data for row in sc_max.rows)
   worst = _sc_worst_row(sc_max)
