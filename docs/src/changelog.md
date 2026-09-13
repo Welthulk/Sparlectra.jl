@@ -1,3 +1,7 @@
+# Version 0.12.3 - 2026-09-13
+
+- **Fix.** The short-circuit result CSVs now follow `output.csv_format` like every other CSV artifact of a run.
+
 # Version 0.12.2 - 2026-09-12
 
 One CSV format for a whole run, a new per-bus power table, and saving a case
