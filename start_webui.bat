@@ -39,7 +39,14 @@ if not exist "%DIR%Manifest.toml" (
 
 REM Multi-core by default: the threaded surfaces need Julia THREADS, fixed at
 REM process start. "auto" uses all cores; an explicit user setting wins.
+REM Note: "auto" follows the process affinity mask, not the raw core count.
+REM On machines with E-cores or a preset affinity you may get fewer threads
+REM than expected - set an explicit number to compare.
 if not defined JULIA_NUM_THREADS set "JULIA_NUM_THREADS=auto"
+
+REM Parallel garbage collection. Default is a quarter of the compute threads,
+REM which is often the real bottleneck on allocation-heavy runs.
+if not defined JULIA_NUM_GC_THREADS set "JULIA_NUM_GC_THREADS=4"
 
 REM No startup file. The Web UI is a server process, not a REPL, and a personal
 REM startup.jl usually loads Revise: measured on the Sparlectra sysimage,
@@ -50,9 +57,18 @@ REM and the relaunched child both read the file. Set SPARLECTRA_STARTUP_FILE=yes
 REM to get the old behavior back.
 if not defined SPARLECTRA_STARTUP_FILE set "SPARLECTRA_STARTUP_FILE=no"
 
+REM Process priority. HIGH is the highest class that is safe for a normal
+REM desktop; REALTIME needs admin rights and can starve the OS. The child
+REM process that start_webui.jl relaunches through the sysimage inherits this.
+REM Set SPARLECTRA_PRIORITY=NORMAL (or ABOVENORMAL, BELOWNORMAL) to override.
+if not defined SPARLECTRA_PRIORITY set "SPARLECTRA_PRIORITY=HIGH"
+
 rem start_webui.jl checks for a usable sysimage, offers to build one when it
 rem is missing or outdated, and relaunches itself through the image. The same
 rem code runs on Linux, macOS and Windows. Arguments are passed on:
 rem --rebuild-sysimage forces a fresh build, --no-sysimage skips it.
-julia --startup-file=%SPARLECTRA_STARTUP_FILE% --project="%DIR%." "%DIR%start_webui.jl" %*
+rem The empty "" is the window title start expects - without it start would
+rem swallow the next quoted argument. /B keeps it in this console, /WAIT keeps
+rem the pause below meaningful.
+start "" /%SPARLECTRA_PRIORITY% /B /WAIT julia --startup-file=%SPARLECTRA_STARTUP_FILE% --project="%DIR%." "%DIR%start_webui.jl" %*
 pause
