@@ -77,18 +77,36 @@ function test_topology_stage1()::Bool
     @test res.topologyFindings !== nothing
     @test any(f -> f.kind == :open_element_with_flow, res.topologyFindings)
 
-    # 2) closed branch reading dead while its neighbourhood is loaded
+    # 2) closed branch reading dead while the model expects a clear flow
+    # (issue #372): branch 1 (H1-H2) carries about 13 MW in the solved
+    # state the net holds after _topo_measurements
     net = _topo_net()
     meas = _topo_measurements(net)
-    dead = [m.branchIdx == 2 && m.typ in (Sparlectra.PflowMeas, Sparlectra.QflowMeas, Sparlectra.ImagMeas) ? _meas_with(m; value = 0.001) : m for m in meas]
+    isdeadrow(m) = m.typ in (Sparlectra.PflowMeas, Sparlectra.QflowMeas, Sparlectra.ImagMeas)
+    dead = [m.branchIdx == 1 && isdeadrow(m) ? _meas_with(m; value = 0.001) : m for m in meas]
     pre = validate_topology(net, dead)
-    @test any(f -> f.kind == :closed_element_without_flow && occursin("branch 2", f.location), pre.findings)
+    @test any(f -> f.kind == :closed_element_without_flow && occursin("branch 1", f.location), pre.findings)
     @test all(f -> f.severity in (:warning,), [f for f in pre.findings if f.kind == :closed_element_without_flow])
 
-    # false-positive guard: when the WHOLE neighbourhood reads dead the
-    # branch is legitimately unloaded, no finding
-    alldead = [m.typ in (Sparlectra.PflowMeas, Sparlectra.QflowMeas, Sparlectra.ImagMeas) ? _meas_with(m; value = 0.0001) : m for m in meas]
-    pre = validate_topology(net, alldead)
+    # false-positive guard: branch 2 (L1-L2) closes a lightly loaded mesh,
+    # about 2 MW / 1 MVar expected, below 3 sigma on the power rows; a
+    # dead reading agrees with the expectation and is no finding, whatever
+    # the neighbourhood carries. The current rows are dropped: at 20 kV
+    # the same 2 MVA are 62 A against a 10 A sigma, a real expectation.
+    light = [m.branchIdx == 2 && isdeadrow(m) ? (m.typ == Sparlectra.ImagMeas ? _meas_with(m; active = false) : _meas_with(m; value = 0.001)) : m for m in meas]
+    pre = validate_topology(net, light)
+    @test !any(f -> f.kind == :closed_element_without_flow, pre.findings)
+    # no expectation, no verdict: a flat start state expects no flow
+    # anywhere, so even an all-dead set fires nothing
+    flat = _topo_net()
+    alldead = [isdeadrow(m) ? _meas_with(m; value = 0.0001) : m for m in meas]
+    pre = validate_topology(flat, alldead)
+    @test !any(f -> f.kind == :closed_element_without_flow, pre.findings)
+    # the shipped sp_case14 measurement set against the shipped case: the
+    # weakly loaded mesh line Moorau-Wehrden used to fire (issue #372)
+    net14 = importSCF(joinpath(pkgdir(Sparlectra), "data", "scf", "sp_case14.scf.json"))
+    readMeasurementsCSV!(net14; file = joinpath(pkgdir(Sparlectra), "data", "scf", "sp_case14.measurements.csv"))
+    pre = validate_topology(net14)
     @test !any(f -> f.kind == :closed_element_without_flow, pre.findings)
 
     # 3) closed link with disagreeing voltage measurements on both sides
