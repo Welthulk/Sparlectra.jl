@@ -67,9 +67,11 @@ Checks (thresholds as sigma multiples, keywords mirror the
   link carries an active flow/current measurement with `|value| > k * sigma`.
 - `:closed_element_without_flow` (`k_dead`, default 3.0): a CLOSED branch
   whose present flow/current measurements are all below `k * sigma` at
-  both ends, while at least one terminal station carries other measured
-  flows above the threshold (lower severity; a legitimately unloaded
-  branch with equally quiet neighbours never fires).
+  both ends, while the model expects a flow above `k * sigma` on it. The
+  expectation comes from the net's present voltage state (case start
+  values, the last power flow, or the last SE state); a lightly loaded
+  branch that is expected near zero never fires, and a flat start state
+  (no expectation) gives no verdict.
 - `:closed_link_voltage_mismatch` (`k_v`, default 4.0): a closed link with
   voltage-magnitude measurements on both sides disagreeing by more than
   `k * sqrt(sigma_a^2 + sigma_b^2)`.
@@ -157,28 +159,27 @@ function validate_topology(net::Net, measurements::Vector{Measurement} = Measure
     end
   end
 
-  # station -> does it carry any measured flow above the dead threshold?
-  # Counted rather than flagged, split by the branch the row belongs to, so
-  # check 2 can ask "live through an element OTHER than k" by subtraction
-  # instead of rescanning every row per branch.
-  station_live = Dict{Int,Bool}()
-  live_by_station = Dict{Int,Int}()
-  live_by_station_branch = Dict{Tuple{Int,Int},Int}()
-  for m in active
-    isflow(m) || continue
-    abs(m.value) > k_dead * m.sigma || continue
-    st = reps[endbus(m)]
-    station_live[st] = true
-    live_by_station[st] = get(live_by_station, st, 0) + 1
-    key = (st, Int(m.branchIdx))
-    live_by_station_branch[key] = get(live_by_station_branch, key, 0) + 1
+  # 2) closed branch whose measurements all read dead while the MODEL
+  # expects a clear flow on it (issue #372). The expectation is the flow
+  # the net's present voltage state puts on the branch (case start values,
+  # the last power flow, or the last SE state), evaluated with the same
+  # branchFlow_pu / current formulas the measurement generator and the
+  # estimator use. A lightly loaded mesh line reads near zero AND is
+  # expected near zero: no contradiction, no finding. The former
+  # "terminal station carries load" guard was a weak substitute for this
+  # expectation and is gone. A flat start state (every bus 1.0 pu / 0 deg)
+  # expects no flow anywhere, so the rule stays silent on it: no
+  # expectation means no verdict, never a guess. Needs at least one
+  # measurement per end; an unmeasured end also means no verdict.
+  V_state = buildVoltageVector(net)
+  expected_value(m, br) = begin
+    if m.typ == ImagMeas
+      abs(_end_current_A(net, br, m.direction, V_state))
+    else
+      s = m.direction == :to ? branchFlow_pu(br, br.toBus, br.fromBus, 2, V_state) : branchFlow_pu(br, br.fromBus, br.toBus, 1, V_state)
+      m.typ == PflowMeas ? real(s) * net.baseMVA : imag(s) * net.baseMVA
+    end
   end
-  # live flow rows at station `st` that do NOT belong to branch `k`
-  live_elsewhere(st, k) = get(live_by_station, st, 0) - get(live_by_station_branch, (st, k), 0) > 0
-
-  # 2) closed branch whose measurements all read dead while a terminal
-  # station is otherwise live (needs at least one measurement per end;
-  # an unmeasured end means no verdict, never a guess)
   for (k, br) in enumerate(net.branchVec)
     _branch_terminal_state(br) == :closed || continue
     rows = get(flows_by_branch, k, Measurement[])
@@ -189,11 +190,22 @@ function validate_topology(net::Net, measurements::Vector{Measurement} = Measure
     has_to = any(endbus(m) == tb for m in rows)
     (has_from && has_to) || continue
     all(abs(m.value) <= k_dead * m.sigma for m in rows) || continue
-    # a terminal station must be live through OTHER elements, else the
-    # whole neighbourhood is legitimately unloaded (false-positive guard)
-    live_neighbour = live_elsewhere(reps[fb], k) || live_elsewhere(reps[tb], k)
-    live_neighbour || continue
-    push!(findings, (stage = :precheck, kind = :closed_element_without_flow, location = string("branch ", k, " (", busname(fb), "-", busname(tb), ", closed)"), evidence = string(length(rows), " flow/current row(s) all below ", k_dead, " sigma while a terminal station carries load"), severity = :warning))
+    # the strongest expectation among the dead rows, in sigma units; the
+    # rule fires only when the model clearly expects a flow that the
+    # measurements do not show
+    best_ratio = 0.0
+    best_row = rows[1]
+    best_expected = 0.0
+    for m in rows
+      e = expected_value(m, br)
+      ratio = abs(e) / max(m.sigma, eps())
+      ratio > best_ratio || continue
+      best_ratio = ratio
+      best_row = m
+      best_expected = e
+    end
+    best_ratio > k_dead || continue
+    push!(findings, (stage = :precheck, kind = :closed_element_without_flow, location = string("branch ", k, " (", busname(fb), "-", busname(tb), ", closed)"), evidence = string(length(rows), " flow/current row(s) all below ", k_dead, " sigma while the model state expects ", best_row.id, " = ", round(best_expected; sigdigits = 4), " (", round(best_ratio; digits = 1), " sigma)"), severity = :warning))
   end
 
   # 3) closed link with voltage-magnitude measurements disagreeing across it

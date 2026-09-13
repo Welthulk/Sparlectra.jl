@@ -1,3 +1,7 @@
+# Version 0.12.4 - 2026-09-13
+
+- **Fix.** The topology precheck reports `closed_element_without_flow` only when the model state expects a clear flow on the branch (issue #372).
+
 # Version 0.12.3 - 2026-09-13
 
 - **Fix.** The short-circuit result CSVs now follow `output.csv_format` like every other CSV artifact of a run.

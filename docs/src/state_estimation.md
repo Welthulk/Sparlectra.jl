@@ -872,7 +872,7 @@ measured flow over an open element IS the topology error.
 and linear before any estimation (automatic at the start of `runse!` with
 `state_estimation.topology_precheck = true`, the default): a measured flow
 over an OPEN element (`:open_element_with_flow`), a CLOSED branch reading
-dead at both measured ends while its neighbourhood carries load
+dead at both measured ends while the model state expects a clear flow on it
 (`:closed_element_without_flow`, low severity), voltage measurements
 disagreeing across a closed link (`:closed_link_voltage_mismatch`), and
 the node balance at COMPLETELY measured nodes (`:kcl_violation`; shunt
