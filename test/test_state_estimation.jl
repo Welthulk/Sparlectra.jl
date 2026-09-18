@@ -40,7 +40,9 @@ function test_state_estimation_wls_first_version()::Bool
     @test !isempty(meas)
     @test all(m -> m.active, meas)
 
-    result = runse!(net, meas; maxIte = 12, tol = 1e-8, flatstart = true, jacEps = 1e-6, updateNet = true)
+    result = with_state_estimation_config(max_iter = 12, tol = 1e-8, flatstart = true, jac_eps = 1e-6, update_net = true) do
+      runse!(net, meas)
+    end
 
     @test result.converged == true
     @test result.iterations > 0
@@ -76,7 +78,9 @@ function test_state_estimation_observability_metrics()::Bool
     std = measurementStdDevs(vm = 1e-5, pinj = 1e-4, qinj = 1e-4, pflow = 1e-4, qflow = 1e-4)
     meas = generateMeasurementsFromPF(net; includeVm = true, includePinj = true, includeQinj = true, includePflow = true, includeQflow = true, noise = false, stddev = std, rng = MersenneTwister(42))
 
-    gobs = evaluate_global_observability(net, meas; flatstart = true, jacEps = 1e-6)
+    gobs = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
+      evaluate_global_observability(net, meas)
+    end
     @test gobs.n_states == 2 * length(net.nodeVec) - 1
     @test gobs.n_measurements == count(m -> m.active, meas)
 
@@ -84,7 +88,9 @@ function test_state_estimation_observability_metrics()::Bool
     # (same evaluation, plus described rows and state-column labels)
     empty!(net.measurements)
     append!(net.measurements, meas)
-    mj = measurement_jacobian(net; flatstart = true, jacEps = 1e-6)
+    mj = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
+      measurement_jacobian(net)
+    end
     @test size(mj.H) == (gobs.n_measurements, gobs.n_states)
     @test length(mj.rows) == gobs.n_measurements
     @test length(mj.cols) == gobs.n_states
@@ -106,7 +112,9 @@ function test_state_estimation_observability_metrics()::Bool
 
     nbus = length(net.nodeVec)
     local_cols = [1, nbus + 1]
-    lobs = evaluate_local_observability(net, meas, local_cols; flatstart = true, jacEps = 1e-6)
+    lobs = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
+      evaluate_local_observability(net, meas, local_cols)
+    end
     @test lobs.n_states == length(local_cols)
     @test lobs.n_measurements >= lobs.n_states
     @test !isempty(lobs.rows)
@@ -131,7 +139,9 @@ function test_state_estimation_observability_metrics()::Bool
       end
     end
 
-    gobs_reduced = evaluate_global_observability(net, meas_reduced; flatstart = true, jacEps = 1e-6)
+    gobs_reduced = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
+      evaluate_global_observability(net, meas_reduced)
+    end
     @test gobs_reduced.n_measurements < gobs.n_measurements
     @test gobs_reduced.structural_matching <= gobs.structural_matching
     @test gobs_reduced.numerical_rank <= gobs.numerical_rank
@@ -154,11 +164,13 @@ function test_state_estimation_observability_metrics()::Bool
       )
     end
 
-    gobs_sparse = evaluate_global_observability(net, meas_sparse; flatstart = true, jacEps = 1e-6)
+    gobs_sparse = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
+      evaluate_global_observability(net, meas_sparse)
+    end
     @test gobs_sparse.quality == :not_observable
     @test gobs_sparse.numerical_observable == false
 
-    @test_throws ErrorException evaluate_local_observability(net, meas_sparse, local_cols; flatstart = true, jacEps = 1e-6)
+    @test_throws ErrorException with_state_estimation_config(() -> evaluate_local_observability(net, meas_sparse, local_cols); flatstart = true, jac_eps = 1e-6)
   end
 
   # The rank test runs on a column-normalized Jacobian. Without it the
@@ -189,7 +201,9 @@ function test_state_estimation_observability_metrics()::Bool
       keep = Measurement[m for m in full if rand(rng) < 0.55]
       isempty(keep) && continue
       obs = try
-        evaluate_global_observability(net14, keep; flatstart = true, jacEps = 1e-6)
+        with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
+          evaluate_global_observability(net14, keep)
+        end
       catch
         continue
       end
@@ -209,17 +223,23 @@ function test_state_estimation_observability_metrics()::Bool
     msH = generateMeasurementsFromPF(netH; includeVm = true, includePinj = true, includeQinj = true, includePflow = true, includeQflow = true, noise = false)
     empty!(netH.measurements)
     append!(netH.measurements, msH)
-    obsH = evaluate_global_observability(netH, msH; flatstart = true, jacEps = 1e-6)
+    obsH = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
+      evaluate_global_observability(netH, msH)
+    end
     @test obsH.numerical_observable
     @test obsH.numerical_rank == obsH.n_states
     # scaling every measurement value by a constant must not change the
     # verdict: the rank question is about direction, not magnitude
     scaled = [Measurement(typ = m.typ, value = m.value, sigma = m.sigma * 1000, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = m.id) for m in msH]
-    obsS = evaluate_global_observability(netH, scaled; flatstart = true, jacEps = 1e-6)
+    obsS = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
+      evaluate_global_observability(netH, scaled)
+    end
     @test obsS.numerical_rank == obsH.numerical_rank
     # the convenience form forwards rankTolFactor (it silently ignored the
     # keyword before, so the configured value never reached the rank test)
-    obsK = evaluate_global_observability(netH; flatstart = true, jacEps = 1e-6, rankTolFactor = 0.1)
+    obsK = with_state_estimation_config(flatstart = true, jac_eps = 1e-6, rank_tol_factor = 0.1) do
+      evaluate_global_observability(netH)
+    end
     @test obsK.numerical_observable
   end
 
@@ -275,12 +295,16 @@ function test_state_estimation_matrix_observability_helpers()::Bool
     end
 
     fill_tree!(net7, tree)
-    intact = evaluate_global_observability(net7; flatstart = true, jacEps = 1e-6)
+    intact = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
+      evaluate_global_observability(net7)
+    end
     @test intact.numerical_observable
     @test intact.unobservable_state_columns == Int[]
 
     fill_tree!(net7, tree[1:5])
-    broken = evaluate_global_observability(net7; flatstart = true, jacEps = 1e-6)
+    broken = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
+      evaluate_global_observability(net7)
+    end
     @test !broken.numerical_observable
     @test broken.unobservable_state_columns == [6, 13]
   end
@@ -403,7 +427,9 @@ function test_state_estimation_passive_bus_zero_injection_helpers()::Bool
     empty!(net.measurements)
     append!(net.measurements, base_meas)
 
-    base_obs = evaluate_global_observability(net; flatstart = true, jacEps = 1e-6)
+    base_obs = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
+      evaluate_global_observability(net)
+    end
     @test base_obs.quality == :critical
     @test base_obs.redundancy == 0
     @test !isempty(base_obs.numerical_critical_measurement_indices)
@@ -413,7 +439,9 @@ function test_state_estimation_passive_bus_zero_injection_helpers()::Bool
     @test all(m -> m.busIdx == 2, added)
     @test sort([m.typ for m in added]) == sort([Sparlectra.PinjMeas, Sparlectra.QinjMeas])
 
-    zi_obs = evaluate_global_observability(net; flatstart = true, jacEps = 1e-6)
+    zi_obs = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
+      evaluate_global_observability(net)
+    end
     @test zi_obs.quality == :good
     @test zi_obs.redundancy == 2
     @test isempty(zi_obs.numerical_critical_measurement_indices)
@@ -422,7 +450,9 @@ function test_state_estimation_passive_bus_zero_injection_helpers()::Bool
     # 5 iterations measured; budget 20 leaves margin without accepting a
     # chaotic wander (see the fixture comment on the loading level). The
     # solution stays exact (J = 0, noise-free measurement set).
-    result = runse!(deepcopy(net); maxIte = 20, tol = 1e-8, flatstart = true, jacEps = 1e-6, updateNet = false)
+    result = with_state_estimation_config(max_iter = 20, tol = 1e-8, flatstart = true, jac_eps = 1e-6, update_net = false) do
+      runse!(deepcopy(net))
+    end
     @test result.converged == true
     @test result.objectiveJ < 1e-6
     @test result.residualNorm < 1e-6
@@ -460,7 +490,9 @@ function test_state_estimation_bad_data_diagnostics()::Bool
       id = bad_meas.id,
     )
 
-    report = validate_measurements(net, meas; maxIte = 12, tol = 1e-8, flatstart = true, jacEps = 1e-6, normalizedThreshold = 3.0)
+    report = with_state_estimation_config(max_iter = 12, tol = 1e-8, flatstart = true, jac_eps = 1e-6, k_eliminate = 3.0) do
+      validate_measurements(net, meas)
+    end
     @test report.converged == true
     @test report.objective.dof == report.result.dof
     @test report.global_consistency == false
@@ -488,7 +520,9 @@ function test_state_estimation_bad_data_diagnostics()::Bool
     @test occursin("| Idx | ID | Type |", txt_md)
     @test occursin("|", txt_md)
 
-    diag = runse_diagnostics(net, meas; deactivate_and_rerun = true, maxIte = 12, tol = 1e-8, flatstart = true, jacEps = 1e-6, normalizedThreshold = 3.0)
+    diag = with_state_estimation_config(max_eliminations = 1, max_iter = 12, tol = 1e-8, flatstart = true, jac_eps = 1e-6, k_eliminate = 3.0) do
+      runse_diagnostics(net, meas)
+    end
     @test !isnothing(diag.rerun)
     @test diag.rerun.deactivated_measurement_index == idx
     @test diag.rerun.diagnostics.objective.value < diag.diagnostics.objective.value
@@ -530,7 +564,9 @@ function test_state_estimation_pmu_va_measurements()::Bool
     @test length(vaRows) == nbus
     @test all(m -> startswith(m.id, "Va_bus_"), vaRows)
 
-    result = runse!(net, meas; maxIte = 20, tol = 1e-8, flatstart = true, updateNet = false)
+    result = with_state_estimation_config(max_iter = 20, tol = 1e-8, flatstart = true, update_net = false) do
+      runse!(net, meas)
+    end
     @test result.converged
     @test result.vaRefOffsetDeg !== nothing
     @test isapprox(result.vaRefOffsetDeg, 5.0; atol = 1e-6)
@@ -550,7 +586,9 @@ function test_state_estimation_pmu_va_measurements()::Bool
 
     # :off mode: no offset state, slack-referenced PMU angles estimate cleanly.
     meas0 = generateMeasurementsFromPF(net; includeVa = true, vaRefOffsetDeg = 0.0, noise = false, stddev = std)
-    res0 = runse!(net, meas0; maxIte = 20, tol = 1e-8, updateNet = false, pmuRefOffset = :off)
+    res0 = with_state_estimation_config(max_iter = 20, tol = 1e-8, update_net = false, pmu_ref_offset = :off) do
+      runse!(net, meas0)
+    end
     @test res0.converged
     @test res0.vaRefOffsetDeg === nothing
     @test res0.dof == length(meas0) - (2 * nbus - 1)
@@ -560,12 +598,16 @@ function test_state_estimation_pmu_va_measurements()::Bool
 
     # :off mode with a foreign PMU time base leaves the offset unmodeled and
     # inflates the objective by orders of magnitude.
-    resBiased = runse!(net, meas; maxIte = 20, tol = 1e-8, updateNet = false, pmuRefOffset = :off)
+    resBiased = with_state_estimation_config(max_iter = 20, tol = 1e-8, update_net = false, pmu_ref_offset = :off) do
+      runse!(net, meas)
+    end
     @test resBiased.objectiveJ > 1e6 * max(result.objectiveJ, eps())
 
     # Without any Va measurement, no offset state appears even in :auto mode.
     measNoVa = generateMeasurementsFromPF(net; includeVa = false, noise = false, stddev = std)
-    resNoVa = runse!(net, measNoVa; maxIte = 20, tol = 1e-8, updateNet = false)
+    resNoVa = with_state_estimation_config(max_iter = 20, tol = 1e-8, update_net = false) do
+      runse!(net, measNoVa)
+    end
     @test resNoVa.vaRefOffsetDeg === nothing
 
     # Va measurements restricted to selected buses.
@@ -635,15 +677,19 @@ function test_state_estimation_imag_measurements()::Bool
     end
 
     # SE with currents converges to the same state as without
-    resWith = runse!(net, meas; maxIte = 20, tol = 1e-8, updateNet = false)
+    resWith = with_state_estimation_config(max_iter = 20, tol = 1e-8, update_net = false) do
+      runse!(net, meas)
+    end
     @test resWith.converged
 
     # 2) value gate: a current below 3 sigma never enters the active set
     weak = copy(meas)
     addImagMeasurement!(weak; net = net, value = 1.0, sigma = 10.0, fromBus = "ASTADT", toBus = "STATION1", id = "Imag_weak")
-    gated = Test.@test_logs (:info, r"Imag_weak excluded") match_mode = :any runse!(net, weak; maxIte = 20, tol = 1e-8, updateNet = false)
+    gated = Test.@test_logs (:info, r"Imag_weak excluded") match_mode = :any with_state_estimation_config(() -> runse!(net, weak); max_iter = 20, tol = 1e-8, update_net = false)
     @test gated.converged
-    report = validate_measurements(net, weak; maxIte = 20, tol = 1e-8)
+    report = with_state_estimation_config(max_iter = 20, tol = 1e-8) do
+      validate_measurements(net, weak)
+    end
     @test length(report.measurement_ranking) == length(meas)   # weak row filtered out
     @test all(row.id != "Imag_weak" for row in report.measurement_ranking)
 
@@ -702,7 +748,9 @@ function test_state_estimation_sequential_elimination()::Bool
       meas = _fresh_meas(net; withImag = withImag)
       badIdx = findfirst(m -> m.typ == Sparlectra.PflowMeas, meas)
       badId = _inject!(meas, badIdx, 10.0)
-      diag = runse_diagnostics(net, meas; max_eliminations = 3, maxIte = 20, tol = 1e-8)
+      diag = with_state_estimation_config(max_eliminations = 3, max_iter = 20, tol = 1e-8) do
+        runse_diagnostics(net, meas)
+      end
       @test !isempty(diag.eliminations)
       @test diag.eliminations[1].id == badId
       row = only(r for r in diag.diagnostics.measurement_ranking if r.measurement_index == badIdx)
@@ -718,7 +766,9 @@ function test_state_estimation_sequential_elimination()::Bool
     idxB = findfirst(m -> m.typ == Sparlectra.VmMeas && m.busIdx == 1, meas)
     idA = _inject!(meas, idxA, 10.0)
     idB = _inject!(meas, idxB, 10.0)
-    diag = runse_diagnostics(net, meas; max_eliminations = 3, maxIte = 20, tol = 1e-8)
+    diag = with_state_estimation_config(max_eliminations = 3, max_iter = 20, tol = 1e-8) do
+      runse_diagnostics(net, meas)
+    end
     @test diag.stop_reason == :consistent
     @test length(diag.eliminations) == 2
     @test Set(t.id for t in diag.eliminations) == Set([idA, idB])
@@ -726,8 +776,10 @@ function test_state_estimation_sequential_elimination()::Bool
     # trace rows carry the objective drop
     @test all(t.objective_after < t.objective_before for t in diag.eliminations)
 
-    # backward compatibility: deactivate_and_rerun = true does exactly one pass
-    diag1 = runse_diagnostics(net, meas; deactivate_and_rerun = true, maxIte = 20, tol = 1e-8)
+    # state_estimation.max_eliminations = 1 does exactly one pass
+    diag1 = with_state_estimation_config(max_eliminations = 1, max_iter = 20, tol = 1e-8) do
+      runse_diagnostics(net, meas)
+    end
     @test length(diag1.eliminations) == 1
     @test diag1.rerun !== nothing
     @test diag1.rerun.deactivated_measurement_index == diag1.eliminations[1].measurement_index
@@ -741,7 +793,9 @@ function test_state_estimation_sequential_elimination()::Bool
     @test occursin("consistent", txt)
 
     # optional K-matrix report: MaxK column and warning flag fields
-    reportK = validate_measurements(net, meas; maxIte = 20, tol = 1e-8, reportResidualCorrelation = true)
+    reportK = with_state_estimation_config(max_iter = 20, tol = 1e-8, report_residual_correlation = true) do
+      validate_measurements(net, meas)
+    end
     @test reportK.correlation_enabled
     @test all(!isnan(row.max_abs_correlation) for row in reportK.measurement_ranking)
     ioK = IOBuffer()
@@ -759,7 +813,9 @@ function test_state_estimation_sequential_elimination()::Bool
     @test any(m -> startswith(m.id, "ZI"), tmeas)
     tbad = findfirst(m -> m.typ == Sparlectra.PflowMeas, tmeas)
     _inject!(tmeas, tbad, 10.0)
-    tdiag = runse_diagnostics(tnet, tmeas; max_eliminations = 3, maxIte = 30, tol = 1e-8)
+    tdiag = with_state_estimation_config(max_eliminations = 3, max_iter = 30, tol = 1e-8) do
+      runse_diagnostics(tnet, tmeas)
+    end
     @test all(!startswith(t.id, "ZI") for t in tdiag.eliminations)
   end
 
@@ -806,7 +862,9 @@ function test_state_estimation_shunt_estimation()::Bool
     sh.y_pu_shunt = complex(real(sh.y_pu_shunt), 1.2 * btrue)   # perturbed model
     y_before = sh.y_pu_shunt                                    # snapshot before the run
     setShuntEstimation!(net; busName = "LoadB")
-    res = runse!(net, meas; maxIte = 30, tol = 1e-10, updateNet = false)
+    res = with_state_estimation_config(max_iter = 30, tol = 1e-10, update_net = false) do
+      runse!(net, meas)
+    end
     @test res.converged
     @test res.shuntEstimates !== nothing
     row = only(res.shuntEstimates)
@@ -820,7 +878,9 @@ function test_state_estimation_shunt_estimation()::Bool
     @test sh.y_pu_shunt == y_before
     @test imag(sh.y_pu_shunt) == 1.2 * btrue
     # write-back only behind updateShunts
-    runse!(net, meas; maxIte = 30, tol = 1e-10, updateNet = false, updateShunts = true)
+    with_state_estimation_config(max_iter = 30, tol = 1e-10, update_net = false, update_shunts = true) do
+      runse!(net, meas)
+    end
     @test abs(imag(sh.y_pu_shunt) - btrue) / abs(btrue) < 1e-3
     @test isapprox(sh.B_shunt, imag(sh.y_pu_shunt); rtol = 1e-12)
     dev_with_vm = abs(row.B_est - btrue)
@@ -830,7 +890,7 @@ function test_state_estimation_shunt_estimation()::Bool
     runpf!(net2, 40, 1e-10, 0; method = :rectangular)
     meas2 = generateMeasurementsFromPF(net2; includeShuntQ = false, noise = false, stddev = _se_shunt_std())
     setShuntEstimation!(net2; busName = "LoadB")
-    res2 = Test.@test_logs (:warn, r"no active direct shunt measurement") match_mode = :any runse!(net2, meas2; maxIte = 30, tol = 1e-10, updateNet = false)
+    res2 = Test.@test_logs (:warn, r"no active direct shunt measurement") match_mode = :any with_state_estimation_config(() -> runse!(net2, meas2); max_iter = 30, tol = 1e-10, update_net = false)
     @test res2.converged
     frow = only(res2.shuntEstimates)
     @test frow.frozen
@@ -838,7 +898,9 @@ function test_state_estimation_shunt_estimation()::Bool
     # identical estimate to a run without the release
     net2b = create_se_shunt_net()
     runpf!(net2b, 40, 1e-10, 0; method = :rectangular)
-    res2b = runse!(net2b, meas2; maxIte = 30, tol = 1e-10, updateNet = false)
+    res2b = with_state_estimation_config(max_iter = 30, tol = 1e-10, update_net = false) do
+      runse!(net2b, meas2)
+    end
     @test maximum(abs.(res2.voltages .- res2b.voltages)) <= 1e-12
 
     # --- 3) voltage sensitivity: no Vm measurement at the shunt bus degrades B
@@ -867,7 +929,9 @@ function test_state_estimation_shunt_estimation()::Bool
         btruev = imag(shv.y_pu_shunt)
         shv.y_pu_shunt = complex(real(shv.y_pu_shunt), 1.2 * btruev)
         setShuntEstimation!(netv; busName = "LoadB")
-        resv = runse!(netv, mv; maxIte = 60, tol = 1e-8, updateNet = false)
+        resv = with_state_estimation_config(max_iter = 60, tol = 1e-8, update_net = false) do
+          runse!(netv, mv)
+        end
         @test resv.converged
         acc += abs(only(resv.shuntEstimates).B_est - btruev)
       end
@@ -899,7 +963,9 @@ function test_state_estimation_shunt_estimation()::Bool
     meas5 = generateMeasurementsFromPF(net5; includeShuntQ = true, noise = false, stddev = _se_shunt_std())
     setShuntEstimation!(net5; busName = "LoadB")
     err5 = try
-      runse!(net5, meas5; maxIte = 30, tol = 1e-10, updateNet = false)
+      with_state_estimation_config(max_iter = 30, tol = 1e-10, update_net = false) do
+        runse!(net5, meas5)
+      end
       nothing
     catch e
       e
@@ -977,7 +1043,9 @@ function test_state_estimation_shunt_back_calculation()::Bool
     didx = findfirst(m -> startswith(m.id, "SHDERIV"), nete.measurements)
     dm = nete.measurements[didx]
     nete.measurements[didx] = Measurement(typ = dm.typ, value = dm.value + 20.0 * dm.sigma, sigma = dm.sigma, active = dm.active, busIdx = dm.busIdx, branchIdx = dm.branchIdx, direction = dm.direction, id = dm.id)
-    diag = runse_diagnostics(nete; max_eliminations = 3, maxIte = 30, tol = 1e-8)
+    diag = with_state_estimation_config(max_eliminations = 3, max_iter = 30, tol = 1e-8) do
+      runse_diagnostics(nete)
+    end
     @test all(!startswith(t.id, "SHDERIV") for t in diag.eliminations)
   end
 
@@ -1023,7 +1091,9 @@ function test_state_estimation_link_contraction()::Bool
     calcNetLosses!(net)
     vref = [n._vm_pu for n in net.nodeVec]
     meas = generateMeasurementsFromPF(net; noise = false, stddev = _lstd())
-    res = runse!(net, meas; maxIte = 30, tol = 1e-10, updateNet = true)
+    res = with_state_estimation_config(max_iter = 30, tol = 1e-10, update_net = true) do
+      runse!(net, meas)
+    end
     @test res.converged
     b1 = geNetBusIdx(net = net, busName = "B1")
     b1a = geNetBusIdx(net = net, busName = "B1a")
@@ -1032,7 +1102,9 @@ function test_state_estimation_link_contraction()::Bool
     @test abs(net.nodeVec[b1]._vm_pu - vref[b1]) < 1e-6
 
     # the aggregated cluster injection is reported, not the swallowed members
-    report = validate_measurements(net, meas; maxIte = 30, tol = 1e-8)
+    report = with_state_estimation_config(max_iter = 30, tol = 1e-8) do
+      validate_measurements(net, meas)
+    end
     aggRows = [r for r in report.measurement_ranking if startswith(r.id, "LINKAGG")]
     @test length(aggRows) == 2   # Pinj and Qinj aggregate of the B1/B1a cluster
     @test all(r.measurement_index == 0 for r in aggRows)
@@ -1049,9 +1121,11 @@ function test_state_estimation_link_contraction()::Bool
     # partial cluster: only one member measured -> excluded with warning,
     # WLS identical to a run without that measurement
     measPartial = [m for m in meas if !(m.typ == Sparlectra.PinjMeas && m.busIdx == b1a)]
-    resPartial = Test.@test_logs (:warn, r"not every cluster member is measured") match_mode = :any runse!(net, measPartial; maxIte = 30, tol = 1e-10, updateNet = false)
+    resPartial = Test.@test_logs (:warn, r"not every cluster member is measured") match_mode = :any with_state_estimation_config(() -> runse!(net, measPartial); max_iter = 30, tol = 1e-10, update_net = false)
     measNone = [m for m in meas if !(m.typ == Sparlectra.PinjMeas && m.busIdx in (b1, b1a))]
-    resNone = runse!(net, measNone; maxIte = 30, tol = 1e-10, updateNet = false)
+    resNone = with_state_estimation_config(max_iter = 30, tol = 1e-10, update_net = false) do
+      runse!(net, measNone)
+    end
     @test resPartial.converged && resNone.converged
     @test maximum(abs.(resPartial.voltages .- resNone.voltages)) <= 1e-12
     @test resPartial.objectiveJ == resNone.objectiveJ
@@ -1060,10 +1134,14 @@ function test_state_estimation_link_contraction()::Bool
     # (fresh reference run: the updateNet write-back above changed the flat
     # start's slack seed by the estimation residual, so `res` is not bitwise
     # comparable any more)
-    resRef = runse!(net, meas; maxIte = 30, tol = 1e-10, updateNet = false)
+    resRef = with_state_estimation_config(max_iter = 30, tol = 1e-10, update_net = false) do
+      runse!(net, meas)
+    end
     measLink = copy(meas)
     addPflowMeasurement!(measLink; net = net, value = 99.0, sigma = 0.01, linkNr = 1)
-    resLink = runse!(net, measLink; maxIte = 30, tol = 1e-10, updateNet = false)
+    resLink = with_state_estimation_config(max_iter = 30, tol = 1e-10, update_net = false) do
+      runse!(net, measLink)
+    end
     @test resLink.objectiveJ == resRef.objectiveJ
     @test maximum(abs.(resLink.voltages .- resRef.voltages)) <= 1e-12
 
@@ -1083,7 +1161,9 @@ function test_state_estimation_link_contraction()::Bool
     runpf!(netS, 40, 1e-10, 0; method = :rectangular)
     measS = generateMeasurementsFromPF(netS; includeShuntQ = true, noise = false, stddev = _lstd())
     setShuntEstimation!(netS; busName = "B1a")
-    resS = runse!(netS, measS; maxIte = 30, tol = 1e-10, updateNet = false)
+    resS = with_state_estimation_config(max_iter = 30, tol = 1e-10, update_net = false) do
+      runse!(netS, measS)
+    end
     @test resS.converged
     rowS = only(resS.shuntEstimates)
     @test rowS.busIdx == min(geNetBusIdx(net = netS, busName = "B1"), geNetBusIdx(net = netS, busName = "B1a"))
@@ -1096,7 +1176,9 @@ function test_state_estimation_link_contraction()::Bool
     setShuntEstimation!(netS2; busName = "B1")
     setShuntEstimation!(netS2; busName = "B1a")
     errS2 = try
-      runse!(netS2, measS2; maxIte = 30, tol = 1e-10, updateNet = false)
+      with_state_estimation_config(max_iter = 30, tol = 1e-10, update_net = false) do
+        runse!(netS2, measS2)
+      end
       nothing
     catch e
       e
@@ -1244,10 +1326,16 @@ function test_state_estimation_robust_r()::Bool
     bm = meas[badIdx]
     meas[badIdx] = Measurement(typ = bm.typ, value = bm.value + 10.0 * bm.sigma, sigma = bm.sigma, active = bm.active, busIdx = bm.busIdx, branchIdx = bm.branchIdx, direction = bm.direction, id = bm.id)
 
-    resPlain = runse!(net, meas; maxIte = 40, tol = 1e-10, updateNet = false, robust = false)
-    resRobust = runse!(net, meas; maxIte = 40, tol = 1e-10, updateNet = false, robust = true)
+    resPlain = with_state_estimation_config(max_iter = 40, tol = 1e-10, update_net = false, robust = false) do
+      runse!(net, meas)
+    end
+    resRobust = with_state_estimation_config(max_iter = 40, tol = 1e-10, update_net = false, robust = true) do
+      runse!(net, meas)
+    end
     # noise-only reference: the same measurement set without the gross error
-    resClean0 = runse!(net, _meas(); maxIte = 40, tol = 1e-10, updateNet = false, robust = false)
+    resClean0 = with_state_estimation_config(max_iter = 40, tol = 1e-10, update_net = false, robust = false) do
+      runse!(net, _meas())
+    end
     @test resPlain.converged && resRobust.converged && resClean0.converged
     devPlain = maximum(abs.(resPlain.voltages .- Vref))
     devRobust = maximum(abs.(resRobust.voltages .- Vref))
@@ -1267,14 +1355,18 @@ function test_state_estimation_robust_r()::Bool
 
     # --- recovery: a consistent set has large flat-start residuals but every
     # measurement returns to stage 0 by the final iteration
-    resClean = runse!(net, _meas(); maxIte = 40, tol = 1e-10, updateNet = false, robust = true)
+    resClean = with_state_estimation_config(max_iter = 40, tol = 1e-10, update_net = false, robust = true) do
+      runse!(net, _meas())
+    end
     @test resClean.converged
     @test isempty(resClean.robustRows)
 
     # --- statistics separation (the gate): with robust active, the
     # normalized residual of the faulted measurement still exceeds the
     # threshold (original sigmas) and the ranking names it first
-    report = validate_measurements(net, meas; maxIte = 40, tol = 1e-8, robust = true)
+    report = with_state_estimation_config(max_iter = 40, tol = 1e-8, robust = true) do
+      validate_measurements(net, meas)
+    end
     @test report.robust_rows !== nothing && !isempty(report.robust_rows)
     top = first(report.measurement_ranking)
     @test top.measurement_index == badIdx
@@ -1299,7 +1391,9 @@ function test_state_estimation_robust_r()::Bool
     # --- robust_mode selection (0.10.0): staged with default knees is
     # BITWISE the legacy Bool robust = true; an explicit robust_mode wins
     # over the Bool
-    resStaged = runse!(net, meas; maxIte = 40, tol = 1e-10, updateNet = false, robustMode = :staged, robustK1 = 3.0, robustK2 = 6.0)
+    resStaged = with_state_estimation_config(max_iter = 40, tol = 1e-10, update_net = false, robust_mode = :staged, robust_k1 = 3.0, robust_k2 = 6.0) do
+      runse!(net, meas)
+    end
     @test resStaged.voltages == resRobust.voltages
     @test resStaged.objectiveJ == resRobust.objectiveJ
     @test Sparlectra._se_effective_robust_mode(Sparlectra.StateEstimationConfig(robust = true)) === :staged
@@ -1310,9 +1404,13 @@ function test_state_estimation_robust_r()::Bool
     # sigma), pulls the estimate back toward the truth, and keeps all
     # statistics on the original sigmas. An unreachable threshold leaves
     # the solve bitwise plain.
-    resReplHi = runse!(net, meas; maxIte = 40, tol = 1e-10, updateNet = false, robustMode = :replacement, kSuppress = 1.0e9)
+    resReplHi = with_state_estimation_config(max_iter = 40, tol = 1e-10, update_net = false, robust_mode = :replacement, k_suppress = 1.0e9) do
+      runse!(net, meas)
+    end
     @test resReplHi.voltages == resPlain.voltages
-    resRepl = runse!(net, meas; maxIte = 40, tol = 1e-10, updateNet = false, robustMode = :replacement, kSuppress = 6.0, suppressionSigma = 2000.0)
+    resRepl = with_state_estimation_config(max_iter = 40, tol = 1e-10, update_net = false, robust_mode = :replacement, k_suppress = 6.0, suppression_sigma = 2000.0) do
+      runse!(net, meas)
+    end
     @test resRepl.converged
     @test resRepl.robustRows !== nothing && length(resRepl.robustRows) == 1
     rrep = only(resRepl.robustRows)
@@ -1331,9 +1429,13 @@ function test_state_estimation_robust_r()::Bool
 
     # --- k_eliminate exposure: a lowered threshold marks more rows
     # suspicious, a raised one clears the corrupted row from candidacy
-    repLoose = validate_measurements(net, meas; maxIte = 40, tol = 1e-8, normalizedThreshold = 50.0)
+    repLoose = with_state_estimation_config(max_iter = 40, tol = 1e-8, k_eliminate = 50.0) do
+      validate_measurements(net, meas)
+    end
     @test !any(r -> r.suspicious, repLoose.measurement_ranking)
-    repTight = validate_measurements(net, meas; maxIte = 40, tol = 1e-8, normalizedThreshold = 1.0)
+    repTight = with_state_estimation_config(max_iter = 40, tol = 1e-8, k_eliminate = 1.0) do
+      validate_measurements(net, meas)
+    end
     @test count(r -> r.suspicious, repTight.measurement_ranking) >= count(r -> r.suspicious, report.measurement_ranking)
   end
 
@@ -1369,7 +1471,9 @@ function test_state_estimation_wilson_hilferty()::Bool
     runpf!(net, 40, 1e-10, 0; method = :rectangular)
     std = measurementStdDevs(vm = 0.002, pinj = 0.5, qinj = 0.5, pflow = 0.5, qflow = 0.5)
     measClean = generateMeasurementsFromPF(net; noise = false, stddev = std)
-    repLow = validate_measurements(net, measClean; maxIte = 30, tol = 1e-8)
+    repLow = with_state_estimation_config(max_iter = 30, tol = 1e-8) do
+      validate_measurements(net, measClean)
+    end
     @test repLow.converged
     @test !repLow.global_consistency
     @test repLow.objective.reason == :low
@@ -1382,7 +1486,9 @@ function test_state_estimation_wilson_hilferty()::Bool
     bi = findfirst(m -> m.typ == Sparlectra.VmMeas, measBad)
     bmm = measBad[bi]
     measBad[bi] = Measurement(typ = bmm.typ, value = bmm.value + 10.0 * bmm.sigma, sigma = bmm.sigma, active = bmm.active, busIdx = bmm.busIdx, branchIdx = bmm.branchIdx, direction = bmm.direction, id = bmm.id)
-    repHigh = validate_measurements(net, measBad; maxIte = 30, tol = 1e-8)
+    repHigh = with_state_estimation_config(max_iter = 30, tol = 1e-8) do
+      validate_measurements(net, measBad)
+    end
     @test !repHigh.global_consistency
     @test repHigh.objective.reason == :high
 
@@ -1411,7 +1517,9 @@ function test_state_estimation_diagnostics_unification()::Bool
     meas[badIdx] = Measurement(typ = bm.typ, value = bm.value + 10.0 * bm.sigma, sigma = bm.sigma, active = bm.active, busIdx = bm.busIdx, branchIdx = bm.branchIdx, direction = bm.direction, id = bm.id)
     setShuntEstimation!(net; busName = "LoadB")
 
-    report = validate_measurements(net, meas; maxIte = 40, tol = 1e-8)
+    report = with_state_estimation_config(max_iter = 40, tol = 1e-8) do
+      validate_measurements(net, meas)
+    end
     @test report.converged
     # nu counts the B state: m - (2 nbus - 1) - 1
     nbus = length(net.nodeVec)
@@ -1424,7 +1532,7 @@ function test_state_estimation_diagnostics_unification()::Bool
     # frozen case: no direct measurement, diagnostics behave exactly like the
     # estimator (frozen with warning, no B state in nu)
     measNoQ = [mm for mm in meas if mm.typ != Sparlectra.ShuntQMeas]
-    repFrozen = Test.@test_logs (:warn, r"no active direct shunt measurement") match_mode = :any validate_measurements(net, measNoQ; maxIte = 40, tol = 1e-8)
+    repFrozen = Test.@test_logs (:warn, r"no active direct shunt measurement") match_mode = :any with_state_estimation_config(() -> validate_measurements(net, measNoQ); max_iter = 40, tol = 1e-8)
     @test only(r for r in repFrozen.result.shuntEstimates).frozen
     mF = length(repFrozen.measurement_ranking)
     @test repFrozen.objective.dof == mF - (2 * nbus - 1)
@@ -1687,7 +1795,9 @@ function test_state_estimation_se_chain()::Bool
     @test ergFlat == 0
     std = measurementStdDevs(vm = 1e-4, pinj = 1e-3, qinj = 1e-3, pflow = 1e-3, qflow = 1e-3, shuntq = 1e-3)
     meas = generateMeasurementsFromPF(net; includeShuntQ = true, noise = false, stddev = std)
-    res = runse!(net, meas; maxIte = 30, tol = 1e-10, updateNet = true)
+    res = with_state_estimation_config(max_iter = 30, tol = 1e-10, update_net = true) do
+      runse!(net, meas)
+    end
     @test res.converged
 
     # :se_state: strictly fewer iterations than the flat start on this case
@@ -1698,7 +1808,7 @@ function test_state_estimation_se_chain()::Bool
 
     # :se_snapshot: immediate convergence, tiny slack pickup, persistent
     # model loads bitwise untouched
-    runse!(net, meas; maxIte = 30, tol = 1e-10, updateNet = true)   # re-register after the PF overwrote V
+    with_state_estimation_config(() -> runse!(net, meas); max_iter = 30, tol = 1e-10, update_net = true)   # re-register after the PF overwrote V
     loadsBefore = [(n._pƩLoad, n._qƩLoad) for n in net.nodeVec]
     r2 = runpf_from_se!(net, 40, 1e-10, 0; mode = :se_snapshot, method = :rectangular)
     @test r2.converged
@@ -1709,7 +1819,9 @@ function test_state_estimation_se_chain()::Bool
 
     # SE state CSV persistence: a fresh net restores and chains
     f = joinpath(mktempdir(), "se_state.csv")
-    runse!(net, meas; maxIte = 30, tol = 1e-10, updateNet = true)
+    with_state_estimation_config(max_iter = 30, tol = 1e-10, update_net = true) do
+      runse!(net, meas)
+    end
     writeSEStateCSV(net; file = f)
     net2 = create_se_shunt_net()
     readSEStateCSV!(net2; file = f)
@@ -1738,7 +1850,9 @@ function test_state_estimation_se_chain()::Bool
     runpf!(net4, 40, 1e-10, 0; method = :rectangular)
     meas4 = generateMeasurementsFromPF(net4; noise = false, stddev = std)
     addProsumer!(net = net4, busName = "LoadA", type = "ENERGYCONSUMER", p = 7.0, q = 0.0)   # post-measurement drift
-    runse!(net4, meas4; maxIte = 30, tol = 1e-10, updateNet = true)
+    with_state_estimation_config(max_iter = 30, tol = 1e-10, update_net = true) do
+      runse!(net4, meas4)
+    end
     nPros4 = length(net4.prosumpsVec)
     rSt = runpf_from_se!(net4, 40, 1e-10, 0; mode = :se_state, method = :rectangular)
     vmSt = [n._vm_pu for n in net4.nodeVec]
@@ -1762,7 +1876,9 @@ function test_state_estimation_takahashi_diagnostics()::Bool
   # helper: H, r, w at the solved SE state (optionally with shunt B states,
   # the same construction validate_measurements uses)
   function _diag_inputs(net, meas; robust::Bool = false)
-    res = runse!(net, meas; maxIte = 40, tol = 1e-10, updateNet = false, robust = robust)
+    res = with_state_estimation_config(max_iter = 40, tol = 1e-10, update_net = false, robust = robust) do
+      runse!(net, meas)
+    end
     @assert res.converged
     prep = Sparlectra._se_prepare(net, meas)
     snet = prep.snet
@@ -1869,7 +1985,9 @@ function test_state_estimation_takahashi_diagnostics()::Bool
     @test !okd && isempty(dg) && occursin("unsymmetric", infod)
 
     # 5) K request pins the dense path, results unchanged
-    repK = validate_measurements(net3, meas3; maxIte = 40, tol = 1e-8, reportResidualCorrelation = true)
+    repK = with_state_estimation_config(max_iter = 40, tol = 1e-8, report_residual_correlation = true) do
+      validate_measurements(net3, meas3)
+    end
     @test repK.omega_path == :dense
     @test all(!isnan(row.max_abs_correlation) for row in repK.measurement_ranking)
     # state variances are reported on both paths
@@ -2000,7 +2118,9 @@ function test_state_estimation_islands()::Bool
     vm_true = [n._vm_pu for n in net.nodeVec]
     meas = generateMeasurementsFromPF(net; noise = false)
 
-    res = runse!(net, meas; maxIte = 30, tol = 1e-10, updateNet = false)
+    res = with_state_estimation_config(max_iter = 30, tol = 1e-10, update_net = false) do
+      runse!(net, meas)
+    end
     @test res.converged
     @test res.islands !== nothing
     @test length(res.islands) == 2
@@ -2015,7 +2135,9 @@ function test_state_estimation_islands()::Bool
 
     # the printed diagnostics carry the per-island band test (no island can
     # hide inside the summed chi-square)
-    rep = validate_measurements(net, meas; maxIte = 30, tol = 1e-8)
+    rep = with_state_estimation_config(max_iter = 30, tol = 1e-8) do
+      validate_measurements(net, meas)
+    end
     @test rep.islands !== nothing && count(i -> i.measured, rep.islands) == 2
     io = IOBuffer()
     print_se_diagnostics(io, rep; topN = 3)
@@ -2026,7 +2148,9 @@ function test_state_estimation_islands()::Bool
     # unmeasured island: estimated where measured, skipped elsewhere
     bIdxs = Set([net.busDict["B1"], net.busDict["B2"]])
     measA = Measurement[m for m in meas if (m.busIdx !== nothing && !(m.busIdx in bIdxs)) || (m.branchIdx !== nothing && !(Int(net.branchVec[m.branchIdx].fromBus) in bIdxs))]
-    resA = runse!(net, measA; maxIte = 30, tol = 1e-10, updateNet = false)
+    resA = with_state_estimation_config(max_iter = 30, tol = 1e-10, update_net = false) do
+      runse!(net, measA)
+    end
     @test resA.converged
     @test count(i -> i.estimated, resA.islands) == 1
     skipped = only([i for i in resA.islands if !i.estimated])
@@ -2040,7 +2164,9 @@ function test_state_estimation_islands()::Bool
     meas2 = generateMeasurementsFromPF(net2; noise = false)
     # model drifts after the measurements were taken: +8 MW load at A3
     addProsumer!(net = net2, busName = "A3", type = "ENERGYCONSUMER", p = 8.0, q = 0.0)
-    runse!(net2, meas2; maxIte = 30, tol = 1e-10, updateNet = true)
+    with_state_estimation_config(max_iter = 30, tol = 1e-10, update_net = true) do
+      runse!(net2, meas2)
+    end
     nPros = length(net2.prosumpsVec)
     rState = runpf_from_se!(net2, 40, 1e-10, 0; mode = :se_state, islands_enabled = true)
     vmState = [n._vm_pu for n in net2.nodeVec]
@@ -2087,7 +2213,9 @@ function test_state_estimation_ia_measurements()::Bool
     meas = generateMeasurementsFromPF(net; includeImag = true, includeIa = true, includeVa = true, vaRefOffsetDeg = 3.0, noise = false)
     nIa = count(m -> m.typ == Sparlectra.IaMeas, meas)
     @test nIa == 2 * length(net.branchVec)
-    res = runse!(net, meas; maxIte = 25, tol = 1e-9, updateNet = false)
+    res = with_state_estimation_config(max_iter = 25, tol = 1e-9, update_net = false) do
+      runse!(net, meas)
+    end
     @test res.converged
     @test res.vaRefOffsetDeg !== nothing && isapprox(res.vaRefOffsetDeg, 3.0; atol = 1e-6)
     @test res.objectiveJ < 1e-12
@@ -2101,7 +2229,9 @@ function test_state_estimation_ia_measurements()::Bool
 
     # 2) IaMeas ALONE also activates the offset state (with the warning)
     measIaOnly = Test.@test_logs (:warn, r"includeIa without includeImag") match_mode = :any generateMeasurementsFromPF(net; includeImag = false, includeIa = true, includeVa = false, vaRefOffsetDeg = 2.0, noise = false)
-    resIa = runse!(net, [m for m in meas if m.typ != Sparlectra.IaMeas && m.typ != Sparlectra.VaMeas] ∪ [m for m in measIaOnly if m.typ == Sparlectra.IaMeas]; maxIte = 25, tol = 1e-9, updateNet = false)
+    resIa = with_state_estimation_config(max_iter = 25, tol = 1e-9, update_net = false) do
+      runse!(net, [m for m in meas if m.typ != Sparlectra.IaMeas && m.typ != Sparlectra.VaMeas] ∪ [m for m in measIaOnly if m.typ == Sparlectra.IaMeas])
+    end
     @test resIa.converged
     @test resIa.vaRefOffsetDeg !== nothing && isapprox(resIa.vaRefOffsetDeg, 2.0; atol = 1e-5)
 
@@ -2110,7 +2240,7 @@ function test_state_estimation_ia_measurements()::Bool
     weak = copy(meas)
     addImagMeasurement!(weak; net = net, value = 1.0, sigma = 10.0, branchNr = 2, direction = :from, id = "Imag_weak")
     addIaMeasurement!(weak; net = net, value = 10.0, sigma = 0.05, branchNr = 2, direction = :from, id = "Ia_weak")
-    resW = Test.@test_logs (:info, r"Ia_weak excluded") match_mode = :any runse!(net, weak; maxIte = 25, tol = 1e-9, updateNet = false)
+    resW = Test.@test_logs (:info, r"Ia_weak excluded") match_mode = :any with_state_estimation_config(() -> runse!(net, weak); max_iter = 25, tol = 1e-9, update_net = false)
     @test resW.converged
     @test resW.dof == res.dof   # both extra rows gated away again
 
@@ -2143,7 +2273,9 @@ function test_state_estimation_ia_measurements()::Bool
     empty!(net.measurements)
 
     # 7) gating notes surface in the diagnostics report and printout
-    rep = validate_measurements(net, weak; maxIte = 25, tol = 1e-8)
+    rep = with_state_estimation_config(max_iter = 25, tol = 1e-8) do
+      validate_measurements(net, weak)
+    end
     @test any(gn -> gn.reason == :ia_below_current_floor && gn.id == "Ia_weak", rep.gating_notes)
     io = IOBuffer()
     print_se_diagnostics(io, rep; topN = 3)
@@ -2268,7 +2400,9 @@ function test_state_estimation_tap_roundtrip()::Bool
     meas = truthmeas(2 * step, 0.0, 0.0)
     net = _tap_gate_net()
     setTapEstimation!(net; trafo = 3, mode = :ratio)
-    res = runse!(net, meas; maxIte = 40, tol = 1e-10)
+    res = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+      runse!(net, meas)
+    end
     @test res.converged
     @test res.iterations < 40
     @test res.tapEstimates !== nothing && length(res.tapEstimates) == 1
@@ -2288,7 +2422,9 @@ function test_state_estimation_tap_roundtrip()::Bool
     meas = truthmeas(0.0, _tap_r2_for_shift(2 * pstep, 90.0), 90.0)
     net = _tap_gate_net()
     setTapEstimation!(net; trafo = 3, mode = :pst, alpha_deg = 90.0)
-    res = runse!(net, meas; maxIte = 40, tol = 1e-10)
+    res = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+      runse!(net, meas)
+    end
     @test res.converged && res.iterations < 40
     te = res.tapEstimates[1]
     @test te.mode == :pst && te.fixed_step_1 == 0
@@ -2302,7 +2438,9 @@ function test_state_estimation_tap_roundtrip()::Bool
     meas = truthmeas(2 * step, _tap_r2_for_shift(-pstep, 30.0), 30.0)
     net = _tap_gate_net()
     setTapEstimation!(net; trafo = 3, mode = :both, alpha_deg = 30.0)
-    res = runse!(net, meas; maxIte = 40, tol = 1e-10)
+    res = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+      runse!(net, meas)
+    end
     @test res.converged && res.iterations < 40
     te = res.tapEstimates[1]
     @test te.mode == :both
@@ -2319,7 +2457,9 @@ function test_state_estimation_tap_roundtrip()::Bool
     meas = truthmeas(2.4 * step, 0.0, 0.0)
     net = _tap_gate_net()
     setTapEstimation!(net; trafo = 3, mode = :ratio)
-    res = runse!(net, meas; maxIte = 40, tol = 1e-10)
+    res = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+      runse!(net, meas)
+    end
     @test res.converged
     te = res.tapEstimates[1]
     @test abs(te.electrical_step_1 - 2.4) < 0.05
@@ -2347,7 +2487,9 @@ function test_state_estimation_tap_roundtrip()::Bool
     meas = generateMeasurementsFromPF(tnet; includeImag = true, noise = true, stddev = tightσ, rng = Random.MersenneTwister(7))
     net = _tap_gate_net()
     setTapEstimation!(net; trafo = 3, mode = :ratio)
-    res = runse!(net, meas; maxIte = 40, tol = 1e-10)
+    res = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+      runse!(net, meas)
+    end
     @test res.converged
     tf = res.tapFixation
     @test tf.fixed
@@ -2399,7 +2541,9 @@ function test_state_estimation_tap_guards()::Bool
     meas = generateMeasurementsFromPF(tnet; includeImag = true, noise = false)
     net = _radial_net()
     setTapEstimation!(net; trafo = 5, mode = :ratio)
-    res = runse!(net, meas; maxIte = 40, tol = 1e-10)
+    res = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+      runse!(net, meas)
+    end
     @test res.converged
     te = res.tapEstimates[1]
     @test te.frozen_reason == :none
@@ -2413,13 +2557,17 @@ function test_state_estimation_tap_guards()::Bool
     measNoVm = [m for m in meas if !(m.typ == Sparlectra.VmMeas && m.busIdx == idxL3)]
     net = _radial_net()
     setTapEstimation!(net; trafo = 5, mode = :ratio)
-    resF = runse!(net, measNoVm; maxIte = 40, tol = 1e-10)
+    resF = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+      runse!(net, measNoVm)
+    end
     @test resF.converged
     @test resF.tapEstimates !== nothing && length(resF.tapEstimates) == 1
     @test resF.tapEstimates[1].frozen_reason == :radial_no_voltage_pin
     @test resF.tapEstimates[1].fixed == false
     @test resF.tapFixation === nothing   # no tap state entered the solve
-    ref = runse!(_radial_net(), measNoVm; maxIte = 40, tol = 1e-10)
+    ref = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+      runse!(_radial_net(), measNoVm)
+    end
     @test resF.objectiveJ == ref.objectiveJ
     @test resF.dof == ref.dof
     @test resF.voltages == ref.voltages
@@ -2494,7 +2642,9 @@ function test_state_estimation_tap_islands()::Bool
     net = _two_island_tap_net()
     setTapEstimation!(net; trafo = 3, mode = :ratio)
     setTapEstimation!(net; trafo = 7, mode = :ratio)
-    res = runse!(net, meas; maxIte = 40, tol = 1e-10, updateNet = false)
+    res = with_state_estimation_config(max_iter = 40, tol = 1e-10, update_net = false) do
+      runse!(net, meas)
+    end
     @test res.converged
     @test res.islands !== nothing && length(res.islands) == 2
     @test res.tapEstimates !== nothing && length(res.tapEstimates) == 2
@@ -2513,7 +2663,9 @@ function test_state_estimation_tap_islands()::Bool
     # island a's voltages bitwise (island b's model discrepancy stays in b)
     netA = _two_island_tap_net()
     setTapEstimation!(netA; trafo = 3, mode = :ratio)
-    resA = runse!(netA, meas; maxIte = 40, tol = 1e-10, updateNet = false)
+    resA = with_state_estimation_config(max_iter = 40, tol = 1e-10, update_net = false) do
+      runse!(netA, meas)
+    end
     @test resA.converged
     @test length(resA.tapEstimates) == 1
     @test resA.tapEstimates[1].fixed_step_1 == 2
@@ -2554,15 +2706,19 @@ function test_state_estimation_tap_completion()::Bool
     net = _tap_gate_net()
     setTapEstimation!(net; trafo = 3, mode = :ratio)
     ratio0 = net.branchVec[3].tap_ratio
-    res = runse!(net, meas; maxIte = 40, tol = 1e-10)
+    res = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+      runse!(net, meas)
+    end
     @test res.converged && res.tapEstimates[1].fixed_step_1 == 2
     @test net.branchVec[3].tap_ratio === ratio0            # bitwise protection
-    res = runse!(net, meas; maxIte = 40, tol = 1e-10, updateTaps = true)
+    res = with_state_estimation_config(max_iter = 40, tol = 1e-10, update_taps = true) do
+      runse!(net, meas)
+    end
     @test res.converged
     expect = net.branchVec[3].ratio / (1.0 + 2 * step)
     @test isapprox(net.branchVec[3].tap_ratio, expect; atol = 1e-14)
     net.branchVec[3].tap_est_mode = :none                  # no release: the written-back model
-    res2 = runse!(net, meas; maxIte = 40, tol = 1e-10)     # explains the set by itself
+    res2 = with_state_estimation_config(() -> runse!(net, meas); max_iter = 40, tol = 1e-10)     # explains the set by itself
     @test res2.converged
     @test res2.objectiveJ < 1e-10
 
@@ -2592,7 +2748,9 @@ function test_state_estimation_tap_completion()::Bool
         withPMU && addCurrentPhasorMeasurement!(n; i_A = abs(IendB), ia_deg = rad2deg(angle(IendB)), branchNr = 3, direction = :from, sigmaI = 0.5, sigmaIa = 0.02)
         setTapEstimation!(n; trafo = 3, mode = :both, alpha_deg = 90.0)
         append!(n.measurements, m)
-        r = runse!(n; maxIte = 40, tol = 1e-10)
+        r = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+          runse!(n)
+        end
         @test r.converged
         push!(out, r.tapEstimates[1].electrical_step_2)
       end
@@ -2610,10 +2768,14 @@ function test_state_estimation_tap_completion()::Bool
     net = _tap_gate_net()
     setTapEstimation!(net; trafo = 3, mode = :ratio)
     append!(net.measurements, meas)
-    diag = runse_diagnostics(net; max_eliminations = 2, maxIte = 40, tol = 1e-10)
+    diag = with_state_estimation_config(max_eliminations = 2, max_iter = 40, tol = 1e-10) do
+      runse_diagnostics(net)
+    end
     @test !isempty(diag.eliminations)
     @test occursin("Qflow", diag.eliminations[1].id)
-    res = runse!(net; maxIte = 40, tol = 1e-10, robust = true)
+    res = with_state_estimation_config(max_iter = 40, tol = 1e-10, robust = true) do
+      runse!(net)
+    end
     @test res.converged
     @test abs(res.tapEstimates[1].electrical_step_1 - 2.0) < 0.5
 
@@ -2648,7 +2810,9 @@ function test_state_estimation_tap_completion()::Bool
     @test_throws ErrorException calcMachineTrafoTapFromSE(gnet; trafo = 5)
     setTapEstimation!(gnet; trafo = 5, enabled = false)
     @test_throws ErrorException calcMachineTrafoTapFromSE(gnet; trafo = 5)
-    rse = runse!(gnet; maxIte = 40, tol = 1e-10, updateNet = true)
+    rse = with_state_estimation_config(max_iter = 40, tol = 1e-10, update_net = true) do
+      runse!(gnet)
+    end
     @test rse.converged
     bt = calcMachineTrafoTapFromSE(gnet; trafo = 5, v_machine_pu = vg, q_mvar = q_scada)
     @test bt.fixed_step == 2
@@ -2686,6 +2850,60 @@ const SE_EXPECTED_WARNINGS = (
 )
 
 _se_run_quiet(testfn) = run_with_expected_warnings(testfn, SE_EXPECTED_WARNINGS)
+
+# #381: the estimator reads its settings from the registry; a deviating run
+# installs them for its duration and the registry is the same afterwards
+function test_state_estimation_config_argument()::Bool
+  @testset "SE settings from the registry, scoped overrides (#381)" begin
+    scf_dir = joinpath(dirname(@__DIR__), "data", "scf")
+    load5() = begin
+      net = importSCF(joinpath(scf_dir, "sp_case5.scf.json"))
+      readMeasurementsCSV!(net; file = joinpath(scf_dir, "sp_case5.measurements.csv"))
+      net
+    end
+    before = state_estimation_config()
+    # two runs in one session with different settings: one iteration cannot
+    # converge, the full budget does; nothing is passed to runse! itself
+    r1 = with_state_estimation_config(() -> runse!(load5()); max_iter = 1, tol = 1e-10)
+    r2 = with_state_estimation_config(() -> runse!(load5()); max_iter = 40, tol = 1e-10)
+    @test !r1.converged
+    @test r2.converged
+    @test r1.iterations < r2.iterations
+    # the registry is the same object afterwards, also after an error inside
+    @test state_estimation_config() === before
+    @test_throws ErrorException with_state_estimation_config(() -> error("boom"); max_iter = 1)
+    @test state_estimation_config() === before
+    @test_throws ArgumentError with_state_estimation_config(() -> nothing; no_such_setting = 1)
+    # a case sidecar with state_estimation.* reaches the run through the
+    # resolved configuration installed for the run, the way the service
+    # does it; no set_sparlectra_config! involved
+    dir = mktempdir()
+    for f in ("sp_case5.scf.json", "sp_case5.measurements.csv", "sp_case5.measurements.baddata.csv")
+      cp(joinpath(scf_dir, f), joinpath(dir, f))
+    end
+    # (case-scope keys only, issue #377: the elimination budget and threshold)
+    write(joinpath(dir, "sp_case5.config.yaml"), "config_version: 1\nscope: case\ncase: sp_case5.scf.json\nstate_estimation:\n  max_eliminations: 0\n  k_eliminate: 100.0\n")
+    resolved = Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, joinpath(dir, "sp_case5.scf.json")).config
+    @test resolved.state_estimation.max_eliminations == 0
+    @test resolved.state_estimation.k_eliminate == 100.0
+    net = importSCF(joinpath(dir, "sp_case5.scf.json"))
+    readMeasurementsCSV!(net; file = joinpath(dir, "sp_case5.measurements.baddata.csv"))
+    dside = with_sparlectra_config(() -> runse_diagnostics(net), resolved)
+    @test isempty(dside.eliminations)
+    @test state_estimation_config() === before
+    # without a wrapper the run behaves as before (registry defaults)
+    r0 = runse!(load5())
+    rg = with_sparlectra_config(() -> runse!(load5()), Sparlectra.ACTIVE_SPARLECTRA_CONFIG[])
+    @test r0.converged == rg.converged && r0.iterations == rg.iterations
+    @test isapprox(r0.objectiveJ, rg.objectiveJ; rtol = 1e-12)
+    # the diagnostics and the precheck read the same registry
+    d = with_state_estimation_config(() -> runse_diagnostics(load5()); k_eliminate = 100.0, max_eliminations = 1)
+    @test d.stop_reason !== nothing
+    pre = with_state_estimation_config(() -> validate_topology(load5()); topology_dead_flow_k = 3.0)
+    @test pre.n_checked_branches > 0
+  end
+  return true
+end
 
 function run_state_estimation_tests()
   # Aggregates all state-estimation unit tests to keep coverage explicit and ordered.
@@ -2898,6 +3116,7 @@ end
       ("Takahashi diagnostics", test_state_estimation_takahashi_diagnostics),
       ("DTF case through the SE service", test_state_estimation_dtf_service),
       ("Tap fallback on non-convergence", test_state_estimation_tap_fallback),
+      ("Run configuration as an argument (#381)", test_state_estimation_config_argument),
     ]
 
     for (name, testfn) in tests

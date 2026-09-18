@@ -1,0 +1,95 @@
+{
+  "version": "1.0",
+  "type": "input",
+  "is_batch": false,
+  "attributes": {},
+  "data": {
+    "node": [
+      {
+        "id": 1,
+        "u_rated": 110000.0
+      },
+      {
+        "id": 2,
+        "u_rated": 110000.0
+      },
+      {
+        "id": 3,
+        "u_rated": 110000.0
+      }
+    ],
+    "line": [
+      {
+        "id": 4,
+        "from_node": 1,
+        "to_node": 2,
+        "from_status": 1,
+        "to_status": 1,
+        "r1": 1.21,
+        "x1": 9.68,
+        "c1": 0.0,
+        "tan1": 0.0,
+        "r0": 1.21,
+        "x0": 9.68,
+        "c0": 0.0,
+        "tan0": 0.0,
+        "i_n": 1000.0
+      },
+      {
+        "id": 5,
+        "from_node": 2,
+        "to_node": 3,
+        "from_status": 1,
+        "to_status": 1,
+        "r1": 1.21,
+        "x1": 9.68,
+        "c1": 0.0,
+        "tan1": 0.0,
+        "r0": 1.21,
+        "x0": 9.68,
+        "c0": 0.0,
+        "tan0": 0.0,
+        "i_n": 1000.0
+      }
+    ],
+    "source": [
+      {
+        "id": 6,
+        "node": 1,
+        "status": 1,
+        "u_ref": 1.02,
+        "u_ref_angle": 0.0
+      }
+    ],
+    "sym_load": [
+      {
+        "id": 7,
+        "node": 3,
+        "status": 1,
+        "type": 0,
+        "p_specified": 80000000.0,
+        "q_specified": 25000000.0
+      }
+    ],
+    "sym_gen": [
+      {
+        "id": 8,
+        "node": 2,
+        "status": 1,
+        "type": 0,
+        "p_specified": 10000000.0,
+        "q_specified": 0.0
+      }
+    ],
+    "voltage_regulator": [
+      {
+        "id": 9,
+        "status": 1,
+        "regulated_object": 8,
+        "u_ref": 1.0,
+        "q_min": -10000000.0,
+        "q_max": 10000000.0
+      }
+    ]
+  }
+}

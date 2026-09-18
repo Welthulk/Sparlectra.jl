@@ -1,0 +1,1098 @@
+{
+  "version": "1.0",
+  "type": "input",
+  "is_batch": false,
+  "attributes": {},
+  "data": {
+    "generic_branch": [
+      {
+        "b1": 0.0,
+        "from_node": 9,
+        "from_status": 1,
+        "g1": 0.0,
+        "id": 32,
+        "k": 0.978,
+        "r1": 0.0,
+        "theta": 0.0,
+        "to_node": 12,
+        "to_status": 1,
+        "x1": 0.0020912
+      },
+      {
+        "b1": 0.0,
+        "from_node": 9,
+        "from_status": 1,
+        "g1": 0.0,
+        "id": 33,
+        "k": 0.969,
+        "r1": 0.0,
+        "theta": 0.0,
+        "to_node": 14,
+        "to_status": 1,
+        "x1": 0.0055618
+      },
+      {
+        "b1": 0.0,
+        "from_node": 10,
+        "from_status": 1,
+        "g1": 0.0,
+        "id": 34,
+        "k": 0.932,
+        "r1": 0.0,
+        "theta": 0.0,
+        "to_node": 11,
+        "to_status": 1,
+        "x1": 0.0025202000000000002
+      }
+    ],
+    "line": [
+      {
+        "c1": 0.0,
+        "from_node": 2,
+        "from_status": 1,
+        "id": 15,
+        "r1": 0.0008205,
+        "tan1": 0.0,
+        "to_node": 3,
+        "to_status": 1,
+        "x1": 0.0019207
+      },
+      {
+        "c1": 0.0,
+        "from_node": 4,
+        "from_status": 1,
+        "id": 16,
+        "r1": 0.0022092,
+        "tan1": 0.0,
+        "to_node": 5,
+        "to_status": 1,
+        "x1": 0.0019988000000000002
+      },
+      {
+        "c1": 0.0,
+        "from_node": 5,
+        "from_status": 1,
+        "id": 17,
+        "r1": 0.0017093,
+        "tan1": 0.0,
+        "to_node": 6,
+        "to_status": 1,
+        "x1": 0.0034802
+      },
+      {
+        "c1": 0.016806761990504147,
+        "from_node": 1,
+        "from_status": 1,
+        "id": 18,
+        "r1": 0.00019380000000000002,
+        "tan1": 0.0,
+        "to_node": 7,
+        "to_status": 1,
+        "x1": 0.0005917
+      },
+      {
+        "c1": 0.0156608464002425,
+        "from_node": 1,
+        "from_status": 1,
+        "id": 19,
+        "r1": 0.0005403000000000001,
+        "tan1": 0.0,
+        "to_node": 10,
+        "to_status": 1,
+        "x1": 0.0022304
+      },
+      {
+        "c1": 0.01394197301485003,
+        "from_node": 7,
+        "from_status": 1,
+        "id": 20,
+        "r1": 0.0004699,
+        "tan1": 0.0,
+        "to_node": 8,
+        "to_status": 1,
+        "x1": 0.0019797
+      },
+      {
+        "c1": 0.010822536130248884,
+        "from_node": 7,
+        "from_status": 1,
+        "id": 21,
+        "r1": 0.0005811000000000001,
+        "tan1": 0.0,
+        "to_node": 9,
+        "to_status": 1,
+        "x1": 0.0017632000000000001
+      },
+      {
+        "c1": 0.011013522061959156,
+        "from_node": 7,
+        "from_status": 1,
+        "id": 22,
+        "r1": 0.0005695,
+        "tan1": 0.0,
+        "to_node": 10,
+        "to_status": 1,
+        "x1": 0.0017388000000000002
+      },
+      {
+        "c1": 0.004074366543152521,
+        "from_node": 8,
+        "from_status": 1,
+        "id": 23,
+        "r1": 0.0006701,
+        "tan1": 0.0,
+        "to_node": 9,
+        "to_status": 1,
+        "x1": 0.0017102999999999999
+      },
+      {
+        "c1": 0.0,
+        "from_node": 9,
+        "from_status": 1,
+        "id": 24,
+        "r1": 0.00013350000000000002,
+        "tan1": 0.0,
+        "to_node": 10,
+        "to_status": 1,
+        "x1": 0.00042110000000000004
+      },
+      {
+        "c1": 0.0,
+        "from_node": 11,
+        "from_status": 1,
+        "id": 25,
+        "r1": 0.0009498,
+        "tan1": 0.0,
+        "to_node": 3,
+        "to_status": 1,
+        "x1": 0.001989
+      },
+      {
+        "c1": 0.0,
+        "from_node": 11,
+        "from_status": 1,
+        "id": 26,
+        "r1": 0.0012291000000000001,
+        "tan1": 0.0,
+        "to_node": 4,
+        "to_status": 1,
+        "x1": 0.0025581
+      },
+      {
+        "c1": 0.0,
+        "from_node": 11,
+        "from_status": 1,
+        "id": 27,
+        "r1": 0.0006615,
+        "tan1": 0.0,
+        "to_node": 5,
+        "to_status": 1,
+        "x1": 0.0013027
+      },
+      {
+        "c1": 0.0,
+        "from_node": 12,
+        "from_status": 1,
+        "id": 28,
+        "r1": 0.0,
+        "tan1": 0.0,
+        "to_node": 13,
+        "to_status": 1,
+        "x1": 0.0017615
+      },
+      {
+        "c1": 0.0,
+        "from_node": 12,
+        "from_status": 1,
+        "id": 29,
+        "r1": 0.0,
+        "tan1": 0.0,
+        "to_node": 14,
+        "to_status": 1,
+        "x1": 0.0011001
+      },
+      {
+        "c1": 0.0,
+        "from_node": 14,
+        "from_status": 1,
+        "id": 30,
+        "r1": 0.0003181,
+        "tan1": 0.0,
+        "to_node": 2,
+        "to_status": 1,
+        "x1": 0.000845
+      },
+      {
+        "c1": 0.0,
+        "from_node": 14,
+        "from_status": 1,
+        "id": 31,
+        "r1": 0.0012711,
+        "tan1": 0.0,
+        "to_node": 6,
+        "to_status": 1,
+        "x1": 0.0027038
+      }
+    ],
+    "node": [
+      {
+        "id": 1,
+        "u_rated": 1000.0
+      },
+      {
+        "id": 2,
+        "u_rated": 1000.0
+      },
+      {
+        "id": 3,
+        "u_rated": 1000.0
+      },
+      {
+        "id": 4,
+        "u_rated": 1000.0
+      },
+      {
+        "id": 5,
+        "u_rated": 1000.0
+      },
+      {
+        "id": 6,
+        "u_rated": 1000.0
+      },
+      {
+        "id": 7,
+        "u_rated": 1000.0
+      },
+      {
+        "id": 8,
+        "u_rated": 1000.0
+      },
+      {
+        "id": 9,
+        "u_rated": 1000.0
+      },
+      {
+        "id": 10,
+        "u_rated": 1000.0
+      },
+      {
+        "id": 11,
+        "u_rated": 1000.0
+      },
+      {
+        "id": 12,
+        "u_rated": 1000.0
+      },
+      {
+        "id": 13,
+        "u_rated": 1000.0
+      },
+      {
+        "id": 14,
+        "u_rated": 1000.0
+      }
+    ],
+    "shunt": [
+      {
+        "b1": 19.0,
+        "g1": 0.0,
+        "id": 51,
+        "node": 14,
+        "status": 1
+      }
+    ],
+    "sym_gen": [
+      {
+        "id": 46,
+        "node": 1,
+        "p_specified": 3.0606e8,
+        "q_specified": -1.69e7,
+        "status": 1,
+        "type": 0
+      },
+      {
+        "id": 47,
+        "node": 7,
+        "p_specified": 4.0e7,
+        "q_specified": 4.24e7,
+        "status": 1,
+        "type": 0
+      },
+      {
+        "id": 48,
+        "node": 8,
+        "p_specified": 0.0,
+        "q_specified": 2.34e7,
+        "status": 1,
+        "type": 0
+      },
+      {
+        "id": 49,
+        "node": 11,
+        "p_specified": 0.0,
+        "q_specified": 1.22e7,
+        "status": 1,
+        "type": 0
+      },
+      {
+        "id": 50,
+        "node": 13,
+        "p_specified": 0.0,
+        "q_specified": 1.74e7,
+        "status": 1,
+        "type": 0
+      }
+    ],
+    "sym_load": [
+      {
+        "id": 35,
+        "node": 7,
+        "p_specified": 2.7125e7,
+        "q_specified": 1.5875e7,
+        "status": 1,
+        "type": 0
+      },
+      {
+        "id": 36,
+        "node": 8,
+        "p_specified": 1.1775e8,
+        "q_specified": 2.375e7,
+        "status": 1,
+        "type": 0
+      },
+      {
+        "id": 37,
+        "node": 9,
+        "p_specified": 5.975e7,
+        "q_specified": -4.875e6,
+        "status": 1,
+        "type": 0
+      },
+      {
+        "id": 38,
+        "node": 10,
+        "p_specified": 9.5e6,
+        "q_specified": 2.0e6,
+        "status": 1,
+        "type": 0
+      },
+      {
+        "id": 39,
+        "node": 11,
+        "p_specified": 1.4e7,
+        "q_specified": 9.375e6,
+        "status": 1,
+        "type": 0
+      },
+      {
+        "id": 40,
+        "node": 14,
+        "p_specified": 3.6875e7,
+        "q_specified": 2.075e7,
+        "status": 1,
+        "type": 0
+      },
+      {
+        "id": 41,
+        "node": 2,
+        "p_specified": 1.125e7,
+        "q_specified": 7.25e6,
+        "status": 1,
+        "type": 0
+      },
+      {
+        "id": 42,
+        "node": 3,
+        "p_specified": 4.375e6,
+        "q_specified": 2.25e6,
+        "status": 1,
+        "type": 0
+      },
+      {
+        "id": 43,
+        "node": 4,
+        "p_specified": 7.625e6,
+        "q_specified": 2.0e6,
+        "status": 1,
+        "type": 0
+      },
+      {
+        "id": 44,
+        "node": 5,
+        "p_specified": 1.6875e7,
+        "q_specified": 7.25e6,
+        "status": 1,
+        "type": 0
+      },
+      {
+        "id": 45,
+        "node": 6,
+        "p_specified": 1.8625e7,
+        "q_specified": 6.25e6,
+        "status": 1,
+        "type": 0
+      }
+    ],
+    "voltage_regulator": [
+      {
+        "id": 52,
+        "q_max": 5.0e7,
+        "q_min": 0.0,
+        "regulated_object": 46,
+        "status": 1,
+        "u_ref": 1.06
+      },
+      {
+        "id": 53,
+        "q_max": 5.0e7,
+        "q_min": -4.0e7,
+        "regulated_object": 47,
+        "status": 1,
+        "u_ref": 1.045
+      },
+      {
+        "id": 54,
+        "q_max": 4.0e7,
+        "q_min": 0.0,
+        "regulated_object": 48,
+        "status": 1,
+        "u_ref": 1.01
+      },
+      {
+        "id": 55,
+        "q_max": 2.4e7,
+        "q_min": -6.0e6,
+        "regulated_object": 49,
+        "status": 1,
+        "u_ref": 1.07
+      }
+    ]
+  },
+  "sparlectra": {
+    "components": {
+      "tap_changer": [
+        {
+          "angle_base_deg": 0.0,
+          "branch": 32,
+          "control": {
+            "mode": "fixed"
+          },
+          "controllers": [
+            {
+              "alpha_deg": 0.0,
+              "index": 1,
+              "pos": 0,
+              "pos_max": 14,
+              "pos_min": -18,
+              "step": 0.00625
+            },
+            {
+              "alpha_deg": 0.0,
+              "index": 2,
+              "pos": 0,
+              "pos_max": 24,
+              "pos_min": -24,
+              "step_deg": 1.25
+            }
+          ],
+          "id": 56,
+          "ratio_base": 0.978,
+          "side": "from"
+        },
+        {
+          "angle_base_deg": 0.0,
+          "branch": 33,
+          "control": {
+            "mode": "fixed"
+          },
+          "controllers": [
+            {
+              "alpha_deg": 0.0,
+              "index": 1,
+              "pos": 0,
+              "pos_max": 12,
+              "pos_min": -19,
+              "step": 0.00625
+            },
+            {
+              "alpha_deg": 0.0,
+              "index": 2,
+              "pos": 0,
+              "pos_max": 24,
+              "pos_min": -24,
+              "step_deg": 1.25
+            }
+          ],
+          "id": 57,
+          "ratio_base": 0.969,
+          "side": "from"
+        },
+        {
+          "angle_base_deg": 0.0,
+          "branch": 34,
+          "control": {
+            "mode": "fixed"
+          },
+          "controllers": [
+            {
+              "alpha_deg": 0.0,
+              "index": 1,
+              "pos": 0,
+              "pos_max": 6,
+              "pos_min": -24,
+              "step": 0.00625
+            },
+            {
+              "alpha_deg": 0.0,
+              "index": 2,
+              "pos": 0,
+              "pos_max": 24,
+              "pos_min": -24,
+              "step_deg": 1.25
+            }
+          ],
+          "id": 58,
+          "ratio_base": 0.932,
+          "side": "from"
+        }
+      ]
+    },
+    "extra": {
+      "1": {
+        "area": 1,
+        "bus_index": 1,
+        "component_name": "Bus_1_1",
+        "external_id": "#Bus_1_1#",
+        "name": "1",
+        "node_type": "PV",
+        "source_index": 1,
+        "vmax_pu": 1.06,
+        "vmin_pu": 0.94,
+        "zone": 1
+      },
+      "10": {
+        "area": 1,
+        "bus_index": 5,
+        "component_name": "Bus_5_1",
+        "external_id": "#Bus_5_1#",
+        "name": "5",
+        "node_type": "PQ",
+        "source_index": 5,
+        "vmax_pu": 1.06,
+        "vmin_pu": 0.94,
+        "zone": 1
+      },
+      "11": {
+        "area": 1,
+        "bus_index": 6,
+        "component_name": "Bus_6_1",
+        "external_id": "#Bus_6_1#",
+        "name": "6",
+        "node_type": "PV",
+        "source_index": 6,
+        "vmax_pu": 1.06,
+        "vmin_pu": 0.94,
+        "zone": 1
+      },
+      "12": {
+        "area": 1,
+        "bus_index": 7,
+        "component_name": "Bus_7_1",
+        "external_id": "#Bus_7_1#",
+        "name": "7",
+        "node_type": "PQ",
+        "source_index": 7,
+        "vmax_pu": 1.06,
+        "vmin_pu": 0.94,
+        "zone": 1
+      },
+      "13": {
+        "area": 1,
+        "bus_index": 8,
+        "component_name": "Bus_8_1",
+        "external_id": "#Bus_8_1#",
+        "name": "8",
+        "node_type": "Slack",
+        "source_index": 8,
+        "vmax_pu": 1.06,
+        "vmin_pu": 0.94,
+        "zone": 1
+      },
+      "14": {
+        "area": 1,
+        "bus_index": 9,
+        "component_name": "Bus_9_1",
+        "external_id": "#Bus_9_1#",
+        "name": "9",
+        "node_type": "PQ",
+        "source_index": 9,
+        "vmax_pu": 1.06,
+        "vmin_pu": 0.94,
+        "zone": 1
+      },
+      "15": {
+        "branch_index": 18,
+        "external_id": "#B_ACL_1_10_11#18",
+        "meta": {
+          "sn_mva": "inf"
+        },
+        "name": "B_ACL_1_10_11"
+      },
+      "16": {
+        "branch_index": 19,
+        "external_id": "#B_ACL_1_12_13#19",
+        "meta": {
+          "sn_mva": "inf"
+        },
+        "name": "B_ACL_1_12_13"
+      },
+      "17": {
+        "branch_index": 20,
+        "external_id": "#B_ACL_1_13_14#20",
+        "meta": {
+          "sn_mva": "inf"
+        },
+        "name": "B_ACL_1_13_14"
+      },
+      "18": {
+        "branch_index": 1,
+        "external_id": "#B_ACL_1_1_2#1",
+        "meta": {
+          "sn_mva": "inf"
+        },
+        "name": "B_ACL_1_1_2"
+      },
+      "19": {
+        "branch_index": 2,
+        "external_id": "#B_ACL_1_1_5#2",
+        "meta": {
+          "sn_mva": "inf"
+        },
+        "name": "B_ACL_1_1_5"
+      },
+      "2": {
+        "area": 1,
+        "bus_index": 10,
+        "component_name": "Bus_10_1",
+        "external_id": "#Bus_10_1#",
+        "name": "10",
+        "node_type": "PQ",
+        "source_index": 10,
+        "vmax_pu": 1.06,
+        "vmin_pu": 0.94,
+        "zone": 1
+      },
+      "20": {
+        "branch_index": 3,
+        "external_id": "#B_ACL_1_2_3#3",
+        "meta": {
+          "sn_mva": "inf"
+        },
+        "name": "B_ACL_1_2_3"
+      },
+      "21": {
+        "branch_index": 4,
+        "external_id": "#B_ACL_1_2_4#4",
+        "meta": {
+          "sn_mva": "inf"
+        },
+        "name": "B_ACL_1_2_4"
+      },
+      "22": {
+        "branch_index": 5,
+        "external_id": "#B_ACL_1_2_5#5",
+        "meta": {
+          "sn_mva": "inf"
+        },
+        "name": "B_ACL_1_2_5"
+      },
+      "23": {
+        "branch_index": 6,
+        "external_id": "#B_ACL_1_3_4#6",
+        "meta": {
+          "sn_mva": "inf"
+        },
+        "name": "B_ACL_1_3_4"
+      },
+      "24": {
+        "branch_index": 7,
+        "external_id": "#B_ACL_1_4_5#7",
+        "meta": {
+          "sn_mva": "inf"
+        },
+        "name": "B_ACL_1_4_5"
+      },
+      "25": {
+        "branch_index": 11,
+        "external_id": "#B_ACL_1_6_11#11",
+        "meta": {
+          "sn_mva": "inf"
+        },
+        "name": "B_ACL_1_6_11"
+      },
+      "26": {
+        "branch_index": 12,
+        "external_id": "#B_ACL_1_6_12#12",
+        "meta": {
+          "sn_mva": "inf"
+        },
+        "name": "B_ACL_1_6_12"
+      },
+      "27": {
+        "branch_index": 13,
+        "external_id": "#B_ACL_1_6_13#13",
+        "meta": {
+          "sn_mva": "inf"
+        },
+        "name": "B_ACL_1_6_13"
+      },
+      "28": {
+        "branch_index": 14,
+        "external_id": "#B_ACL_1_7_8#14",
+        "meta": {
+          "sn_mva": "inf"
+        },
+        "name": "B_ACL_1_7_8"
+      },
+      "29": {
+        "branch_index": 15,
+        "external_id": "#B_ACL_1_7_9#15",
+        "meta": {
+          "sn_mva": "inf"
+        },
+        "name": "B_ACL_1_7_9"
+      },
+      "3": {
+        "area": 1,
+        "bus_index": 11,
+        "component_name": "Bus_11_1",
+        "external_id": "#Bus_11_1#",
+        "name": "11",
+        "node_type": "PQ",
+        "source_index": 11,
+        "vmax_pu": 1.06,
+        "vmin_pu": 0.94,
+        "zone": 1
+      },
+      "30": {
+        "branch_index": 16,
+        "external_id": "#B_ACL_1_9_10#16",
+        "meta": {
+          "sn_mva": "inf"
+        },
+        "name": "B_ACL_1_9_10"
+      },
+      "31": {
+        "branch_index": 17,
+        "external_id": "#B_ACL_1_9_14#17",
+        "meta": {
+          "sn_mva": "inf"
+        },
+        "name": "B_ACL_1_9_14"
+      },
+      "32": {
+        "branch_index": 8,
+        "external_id": "#B_2WT_1_4_7#8",
+        "meta": {
+          "neutral_ratio": 0.978,
+          "sn_mva": "inf"
+        },
+        "name": "B_2WT_1_4_7"
+      },
+      "33": {
+        "branch_index": 9,
+        "external_id": "#B_2WT_1_4_9#9",
+        "meta": {
+          "neutral_ratio": 0.969,
+          "sn_mva": "inf"
+        },
+        "name": "B_2WT_1_4_9"
+      },
+      "34": {
+        "branch_index": 10,
+        "external_id": "#B_2WT_1_5_6#10",
+        "meta": {
+          "neutral_ratio": 0.932,
+          "sn_mva": "inf"
+        },
+        "name": "B_2WT_1_5_6"
+      },
+      "35": {
+        "element_index": 1,
+        "external_id": "#Ld_1.0\\_2\\_#1",
+        "max_p_mw": 100.0,
+        "max_q_mvar": 100.0,
+        "min_p_mw": -100.0,
+        "min_q_mvar": -100.0,
+        "name": "Ld_1.0",
+        "prosumption_class": "Consumption",
+        "prosumption_type": "Load"
+      },
+      "36": {
+        "element_index": 2,
+        "external_id": "#Ld_1.0\\_3\\_#2",
+        "max_p_mw": 100.0,
+        "max_q_mvar": 100.0,
+        "min_p_mw": -100.0,
+        "min_q_mvar": -100.0,
+        "name": "Ld_1.0",
+        "prosumption_class": "Consumption",
+        "prosumption_type": "Load"
+      },
+      "37": {
+        "element_index": 3,
+        "external_id": "#Ld_1.0\\_4\\_#3",
+        "max_p_mw": 100.0,
+        "max_q_mvar": 48.75,
+        "min_p_mw": -100.0,
+        "min_q_mvar": -48.75,
+        "name": "Ld_1.0",
+        "prosumption_class": "Consumption",
+        "prosumption_type": "Load"
+      },
+      "38": {
+        "element_index": 4,
+        "external_id": "#Ld_1.0\\_5\\_#4",
+        "max_p_mw": 95.0,
+        "max_q_mvar": 20.0,
+        "min_p_mw": -95.0,
+        "min_q_mvar": -20.0,
+        "name": "Ld_1.0",
+        "prosumption_class": "Consumption",
+        "prosumption_type": "Load"
+      },
+      "39": {
+        "element_index": 5,
+        "external_id": "#Ld_1.0\\_6\\_#5",
+        "max_p_mw": 100.0,
+        "max_q_mvar": 93.75,
+        "min_p_mw": -100.0,
+        "min_q_mvar": -93.75,
+        "name": "Ld_1.0",
+        "prosumption_class": "Consumption",
+        "prosumption_type": "Load"
+      },
+      "4": {
+        "area": 1,
+        "bus_index": 12,
+        "component_name": "Bus_12_1",
+        "external_id": "#Bus_12_1#",
+        "name": "12",
+        "node_type": "PQ",
+        "source_index": 12,
+        "vmax_pu": 1.06,
+        "vmin_pu": 0.94,
+        "zone": 1
+      },
+      "40": {
+        "element_index": 6,
+        "external_id": "#Ld_1.0\\_9\\_#6",
+        "max_p_mw": 100.0,
+        "max_q_mvar": 100.0,
+        "min_p_mw": -100.0,
+        "min_q_mvar": -100.0,
+        "name": "Ld_1.0",
+        "prosumption_class": "Consumption",
+        "prosumption_type": "Load"
+      },
+      "41": {
+        "element_index": 7,
+        "external_id": "#Ld_1.0\\_10\\_#7",
+        "max_p_mw": 100.0,
+        "max_q_mvar": 72.5,
+        "min_p_mw": -100.0,
+        "min_q_mvar": -72.5,
+        "name": "Ld_1.0",
+        "prosumption_class": "Consumption",
+        "prosumption_type": "Load"
+      },
+      "42": {
+        "element_index": 8,
+        "external_id": "#Ld_1.0\\_11\\_#8",
+        "max_p_mw": 43.75,
+        "max_q_mvar": 22.5,
+        "min_p_mw": -43.75,
+        "min_q_mvar": -22.5,
+        "name": "Ld_1.0",
+        "prosumption_class": "Consumption",
+        "prosumption_type": "Load"
+      },
+      "43": {
+        "element_index": 9,
+        "external_id": "#Ld_1.0\\_12\\_#9",
+        "max_p_mw": 76.25,
+        "max_q_mvar": 20.0,
+        "min_p_mw": -76.25,
+        "min_q_mvar": -20.0,
+        "name": "Ld_1.0",
+        "prosumption_class": "Consumption",
+        "prosumption_type": "Load"
+      },
+      "44": {
+        "element_index": 10,
+        "external_id": "#Ld_1.0\\_13\\_#10",
+        "max_p_mw": 100.0,
+        "max_q_mvar": 72.5,
+        "min_p_mw": -100.0,
+        "min_q_mvar": -72.5,
+        "name": "Ld_1.0",
+        "prosumption_class": "Consumption",
+        "prosumption_type": "Load"
+      },
+      "45": {
+        "element_index": 11,
+        "external_id": "#Ld_1.0\\_14\\_#11",
+        "max_p_mw": 100.0,
+        "max_q_mvar": 62.5,
+        "min_p_mw": -100.0,
+        "min_q_mvar": -62.5,
+        "name": "Ld_1.0",
+        "prosumption_class": "Consumption",
+        "prosumption_type": "Load"
+      },
+      "46": {
+        "element_index": 12,
+        "external_id": "#Gen_1\\_1\\_#12",
+        "max_p_mw": 332.4,
+        "max_q_mvar": 50.0,
+        "min_p_mw": 0.0,
+        "min_q_mvar": 0.0,
+        "name": "Gen_1",
+        "prosumption_class": "Injection",
+        "prosumption_type": "Generator",
+        "regulated": true
+      },
+      "47": {
+        "element_index": 13,
+        "external_id": "#Gen_1\\_2\\_#13",
+        "max_p_mw": 140.0,
+        "max_q_mvar": 50.0,
+        "min_p_mw": 0.0,
+        "min_q_mvar": -40.0,
+        "name": "Gen_1",
+        "prosumption_class": "Injection",
+        "prosumption_type": "Generator",
+        "regulated": true
+      },
+      "48": {
+        "element_index": 14,
+        "external_id": "#Gen_1\\_3\\_#14",
+        "max_p_mw": 100.0,
+        "max_q_mvar": 40.0,
+        "min_p_mw": 0.0,
+        "min_q_mvar": 0.0,
+        "name": "Gen_1",
+        "prosumption_class": "Injection",
+        "prosumption_type": "Generator",
+        "regulated": true
+      },
+      "49": {
+        "element_index": 15,
+        "external_id": "#Gen_1\\_6\\_#15",
+        "max_p_mw": 100.0,
+        "max_q_mvar": 24.0,
+        "min_p_mw": 0.0,
+        "min_q_mvar": -6.0,
+        "name": "Gen_1",
+        "prosumption_class": "Injection",
+        "prosumption_type": "Generator",
+        "regulated": true
+      },
+      "5": {
+        "area": 1,
+        "bus_index": 13,
+        "component_name": "Bus_13_1",
+        "external_id": "#Bus_13_1#",
+        "name": "13",
+        "node_type": "PQ",
+        "source_index": 13,
+        "vmax_pu": 1.06,
+        "vmin_pu": 0.94,
+        "zone": 1
+      },
+      "50": {
+        "element_index": 16,
+        "external_id": "#Gen_1\\_8\\_#16",
+        "max_p_mw": 100.0,
+        "max_q_mvar": 300.0,
+        "min_p_mw": 0.0,
+        "min_q_mvar": -6.0,
+        "name": "Gen_1",
+        "prosumption_class": "Injection",
+        "prosumption_type": "Generator",
+        "reference_pri": true,
+        "regulated": true,
+        "vm_pu": 1.09
+      },
+      "51": {
+        "external_id": "#Sh_9_1.0\\_#1",
+        "name": "Sh_9_1.0",
+        "shunt_index": 1
+      },
+      "6": {
+        "area": 1,
+        "bus_index": 14,
+        "component_name": "Bus_14_1",
+        "external_id": "#Bus_14_1#",
+        "name": "14",
+        "node_type": "PQ",
+        "source_index": 14,
+        "vmax_pu": 1.06,
+        "vmin_pu": 0.94,
+        "zone": 1
+      },
+      "7": {
+        "area": 1,
+        "bus_index": 2,
+        "component_name": "Bus_2_1",
+        "external_id": "#Bus_2_1#",
+        "name": "2",
+        "node_type": "PV",
+        "source_index": 2,
+        "vmax_pu": 1.06,
+        "vmin_pu": 0.94,
+        "zone": 1
+      },
+      "8": {
+        "area": 1,
+        "bus_index": 3,
+        "component_name": "Bus_3_1",
+        "external_id": "#Bus_3_1#",
+        "name": "3",
+        "node_type": "PV",
+        "source_index": 3,
+        "vmax_pu": 1.06,
+        "vmin_pu": 0.94,
+        "zone": 1
+      },
+      "9": {
+        "area": 1,
+        "bus_index": 4,
+        "component_name": "Bus_4_1",
+        "external_id": "#Bus_4_1#",
+        "name": "4",
+        "node_type": "PQ",
+        "source_index": 4,
+        "vmax_pu": 1.06,
+        "vmin_pu": 0.94,
+        "zone": 1
+      }
+    },
+    "format_version": "1.0",
+    "meta": {
+      "case_name": "case14_zeng_p306",
+      "created_by": "Sparlectra 0.11.1",
+      "f_nom": 50.0,
+      "intended_calculations": ["power_flow"],
+      "s_base": 1.0e8,
+      "source_format": "matpower",
+      "source_reference": "case14_zeng_p306.m"
+    },
+    "roles": {
+      "slack": {
+        "mode": "single",
+        "nodes": [13]
+      }
+    }
+  }
+}

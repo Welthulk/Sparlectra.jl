@@ -33,7 +33,9 @@ function _bench_one(nbuses::Int)
   net, _ = build_synthetic_tiled_grid_net(nbuses)
   runpf!(net, 60, 1e-8, 0; method = :rectangular)
   meas = generateMeasurementsFromPF(net; noise = true, rng = MersenneTwister(1))
-  res = runse!(net, meas; maxIte = 40, tol = 1e-8, updateNet = false)
+  res = with_state_estimation_config(max_iter = 40, tol = 1e-8, update_net = false) do
+    runse!(net, meas)
+  end
   res.converged || return nothing
   V = res.voltages
   nb = length(net.nodeVec)

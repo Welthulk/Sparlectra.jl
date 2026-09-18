@@ -28,7 +28,32 @@
 
 function _apslf_solver_from_config(pf_cfg::PowerFlowConfig)
   acfg = pf_cfg.apslf
-  return apslf_solver(order = acfg.order, use_pade = acfg.use_pade, nr_polish = acfg.nr_polish)
+  return apslf_solver(order = acfg.order, use_pade = acfg.use_pade, nr_polish = acfg.nr_polish, convergence_radius = acfg.convergence_radius)
+end
+
+# Status fields carrying the APSLF convergence radius (Padé-pole margin) so
+# the result header, the run metadata and the runs page can show it like
+# the Jacobian condition. `sol` is the PFSolution of solvePf.
+function _apslf_radius_status(sol)::NamedTuple
+  st = sol.meta.stability
+  return (apslf_convergence_radius = st.dmin, apslf_convergence_bus = st.bus, apslf_convergence_level = String(st.level), apslf_convergence_line = _apslf_radius_line(st))
+end
+
+function _apslf_radius_line(st)::String
+  st.enabled || return "not evaluated (power_flow.apslf.convergence_radius: false)"
+  isfinite(st.dmin) || return "not available"
+  return string("dmin = ", round(st.dmin; sigdigits = 3), " (nearest Pade pole to s = 1 at bus ", st.bus, ", level ", st.level, ")")
+end
+
+# Register the machines AnalyticLoadFlow clamped at a reactive limit in the
+# net's Q-limit log, so the result table shows them as PQ* with the binding
+# side and the Q-V check judges them (the rectangular solver logs the same
+# events through active_set_q_limits!).
+function _apslf_record_clamps!(net::Net, sol, iters::Int)
+  for (bus, side) in sol.meta.qlimit_clamps
+    logQLimitHit!(net, iters, bus, side)
+  end
+  return nothing
 end
 
 # Builds a rectangular_pf_status-compatible NamedTuple. Only the fields actually
@@ -106,9 +131,13 @@ function _run_apslf_powerflow!(net::Net, pf_cfg::PowerFlowConfig; verbose::Int =
     updateShuntPowers!(net = net)
   end
 
+  # a fresh Q-limit log per solve, like the rectangular entry
+  resetQLimitLog!(net)
+  snapshotPVQLimits!(net)
   if !multi_island
     iters, status, sol = runpf_external!(wnet, solver; tol = pf_cfg.tol, flatstart = wnet.flatstart, include_limits = include_limits, verbose = verbose)
-    _set_rectangular_pf_status!(net, _apslf_pf_status(status == 0, sol.residual_inf, iters))
+    _apslf_record_clamps!(net, sol, iters)
+    _set_rectangular_pf_status!(net, _apslf_pf_status(status == 0, sol.residual_inf, iters; extra = _apslf_radius_status(sol)))
     has_merges && sync_merges_back!()
     return iters, status
   end
@@ -129,6 +158,8 @@ function _run_apslf_powerflow!(net::Net, pf_cfg::PowerFlowConfig; verbose::Int =
 
   total_iters = 0
   first_failure = nothing
+  # the smallest Padé-pole margin over the islands is the run's radius
+  worst_radius = nothing
   island_statuses = Dict{Int,Any}()
   performance_profile isa AbstractDict && (performance_profile[:ac_island_solver_statuses] = island_statuses)
 
@@ -147,6 +178,12 @@ function _run_apslf_powerflow!(net::Net, pf_cfg::PowerFlowConfig; verbose::Int =
       local sol
       it, status, sol = runpf_external!(inet, solver; tol = pf_cfg.tol, flatstart = inet.flatstart, include_limits = include_limits, verbose = verbose)
       total_iters += it
+      # island nets keep the outer bus numbering in busIdx_net
+      _apslf_record_clamps!(net, sol, it)
+      island_radius = _apslf_radius_status(sol)
+      if worst_radius === nothing || (isfinite(island_radius.apslf_convergence_radius) && (!isfinite(worst_radius.apslf_convergence_radius) || island_radius.apslf_convergence_radius < worst_radius.apslf_convergence_radius))
+        worst_radius = island_radius
+      end
       if status != 0
         failure_status = _apslf_pf_status(false, sol.residual_inf, it; extra = (island_id = row.island_id,))
         island_statuses[Int(row.island_id)] = failure_status
@@ -182,11 +219,11 @@ function _run_apslf_powerflow!(net::Net, pf_cfg::PowerFlowConfig; verbose::Int =
     if hasproperty(status, :final_mismatch) && isfinite(Float64(getproperty(status, :final_mismatch)))
   ]
   aggregate_final_mismatch = isempty(island_final_mismatches) ? NaN : maximum(island_final_mismatches)
-  aggregate_status = _apslf_pf_status(true, aggregate_final_mismatch, total_iters; extra = (
+  aggregate_status = _apslf_pf_status(true, aggregate_final_mismatch, total_iters; extra = merge((
     reason_text = "All AC islands converged independently.",
     island_wise_all_converged = true,
     stage = :island_wise_complete,
-  ))
+  ), worst_radius === nothing ? NamedTuple() : worst_radius))
   _set_rectangular_pf_status!(net, aggregate_status)
   performance_profile isa AbstractDict && (performance_profile[:island_wise_all_converged] = true)
 

@@ -72,7 +72,9 @@ directly as well) and CGMES (MiniGrid, fetched once into the regular case
 cache if missing), plus a CGMES short circuit, an N-1 contingency run, the
 network losses and the result/diagnostics printers, the Web UI start with
 its page renders through the real socket handler, one `run_sparlectra`
-call, and a clean shutdown. No run-history entries are created.
+call, the APSLF solver and the APSLF-seeded rectangular start (the
+Sparlectra side; AnalyticLoadFlow brings its own PrecompileTools workload
+into the image), and a clean shutdown. No run-history entries are created.
 
 It deliberately does NOT run the test suite. Tracing the whole fast profile
 plus the Web UI test group is what the build used to do, and it dominated

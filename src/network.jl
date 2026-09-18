@@ -107,6 +107,7 @@ mutable struct Net
   qLimitLog::Vector{Any}
   cooldown_iters::Int
   q_hyst_pu::Float64
+  reenable_v_hyst_pu::Float64         # voltage margin of the PQ->PV release (#375)
   qmin_pu::Vector{Float64}            # pro Bus Qmin (p.u.)
   qmax_pu::Vector{Float64}            # pro Bus Qmax (p.u.)
   qLimitInitialPVRows::Vector{Any}    # pre-solve PV Q-limit snapshot
@@ -155,7 +156,7 @@ mutable struct Net
   _import_config::Any
 
   #! format: off
-  function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1, cooldown_iters::Int = 0, q_hyst_pu::Float64 = 0.0, flatstart::Bool = false, bus_shunt_model = :admittance)
+  function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1, cooldown_iters::Int = 0, q_hyst_pu::Float64 = 0.0, reenable_v_hyst_pu::Float64 = 1e-4, flatstart::Bool = false, bus_shunt_model = :admittance)
     shunt_model = normalize_bus_shunt_model(bus_shunt_model)
     
     new(name, # name
@@ -182,6 +183,7 @@ mutable struct Net
         Any[],                                 # qLimitLog                     
         cooldown_iters,                        # cooldown_iters
         q_hyst_pu,
+        reenable_v_hyst_pu,                    # reenable_v_hyst_pu
         [],                                    # qmin_pu
         [],                                    # qmax_pu
         Any[],                                 # qLimitInitialPVRows
@@ -207,7 +209,7 @@ mutable struct Net
     println(io, "Nodes: ", length(net.nodeVec), ", Lines: ", length(net.linesAC), ", Transformers: ", length(net.trafos), ", Branches: ", length(net.branchVec), ", Links: ", length(net.linkVec), ", Prosumers: ", length(net.prosumpsVec), ", Shunts: ", length(net.shuntVec))
     println(io, "Slack buses: ", net.slackVec, ", flatstart: ", net.flatstart, ", locked: ", net._locked)
     println(io, "Vmin / Vmax: ", net.vmin_pu, " / ", net.vmax_pu)
-    println(io, "cooldown_iters: ", net.cooldown_iters, ", q_hyst_pu: ", net.q_hyst_pu)
+    println(io, "cooldown_iters: ", net.cooldown_iters, ", q_hyst_pu: ", net.q_hyst_pu, ", reenable_v_hyst_pu: ", net.reenable_v_hyst_pu)
     println(io, "Measurements: ", length(net.measurements))
     println(io, "Tap controllers: ", sum(length, (t.side1.controls for t in net.trafos); init = 0) + sum(length, (t.side2.controls for t in net.trafos); init = 0) + sum((isnothing(t.side3) ? 0 : length(t.side3.controls) for t in net.trafos); init = 0))
     isempty(net.machineControls) || println(io, "Machine controllers: ", length(net.machineControls))
@@ -559,6 +561,7 @@ function _apply_config_net_parameters!(net::Net, pf_cfg)
   Base.Threads.atomic_add!(_NET_PARAM_STAMP_COUNT, 1)
   net.cooldown_iters = pf_cfg.qlimits.cooldown_iters
   net.q_hyst_pu = pf_cfg.qlimits.hysteresis_pu
+  net.reenable_v_hyst_pu = pf_cfg.qlimits.reenable_v_hyst_pu
   net.flatstart = pf_cfg.start_mode.flatstart
   return net
 end

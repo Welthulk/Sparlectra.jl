@@ -464,7 +464,7 @@ A machine terminal is invisible to the estimator (the AVR sets its
 voltage, nothing measures it independently), so taking both the terminal
 voltage AND the terminal injection from the SE would circularly reproduce
 the model tap. The non-circular information is: the estimated NETWORK-side
-voltage (from `runse!(...; updateNet = true)`), the known machine terminal
+voltage (from `runse!` with `state_estimation.update_net = true`), the known machine terminal
 voltage magnitude (the AVR setpoint `vm_pu` of the generator prosumer, or
 `v_machine_pu`), the active-power dispatch (prosumer `p` schedule, or
 `p_mw`), and the machine reactive power. CAREFUL with Q: under AVR voltage
@@ -487,7 +487,7 @@ function calcMachineTrafoTapFromSE(net::Net; trafo, v_machine_pu::Union{Nothing,
   m = _machine_side(net, k)
   m != 0 || error("calcMachineTrafoTapFromSE: branch $(k) is not a machine (generator step-up) transformer")
   st = _se_start_state(net)
-  st === nothing && error("calcMachineTrafoTapFromSE: no state-estimation result is registered for this net; run runse!(...; updateNet = true) first")
+  st === nothing && error("calcMachineTrafoTapFromSE: no state-estimation result is registered for this net; run runse! with state_estimation.update_net = true first")
   f = Int(br.fromBus)
   t = Int(br.toBus)
   netBus = m == f ? t : f

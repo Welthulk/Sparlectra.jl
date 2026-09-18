@@ -85,7 +85,9 @@ function _run_state_estimation_example(io::IO)
   end
 
   # Run first WLS state estimation implementation.
-  se = runse!(net; maxIte = 12, tol = 1e-6, flatstart = false, jacEps = 1e-6, updateNet = true)
+  se = with_state_estimation_config(max_iter = 12, tol = 1e-6, flatstart = false, jac_eps = 1e-6, update_net = true) do
+    runse!(net)
+  end
 
   # Compare estimated voltages against PF reference values.
   Vse = se.voltages

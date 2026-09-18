@@ -34,9 +34,10 @@ function run_apslf_tests()
     @testset "Config validation: power_flow.solver / apslf / apslf_start" begin
       default_cfg = Sparlectra.SparlectraConfig()
       @test default_cfg.powerflow.solver === :rectangular
-      @test default_cfg.powerflow.apslf.order == 40
+      @test default_cfg.powerflow.apslf.order == 24
+      @test default_cfg.powerflow.apslf.convergence_radius === true
       @test default_cfg.powerflow.apslf.use_pade === true
-      @test default_cfg.powerflow.apslf.nr_polish === true
+      @test default_cfg.powerflow.apslf.nr_polish === false
       @test default_cfg.powerflow.apslf_start.enabled === false
       @test default_cfg.powerflow.apslf_start.order == 40
 
@@ -133,9 +134,53 @@ function run_apslf_tests()
       solver = Sparlectra.apslf_solver()
       @test solver isa Sparlectra.ApslfSolver
       @test solver isa Sparlectra.AbstractExternalSolver
-      @test solver.order == 40 && solver.use_pade && solver.nr_polish && solver.mode === :direct
-      tuned = Sparlectra.apslf_solver(order = 24, use_pade = false, nr_polish = false, mode = :outer)
-      @test (tuned.order, tuned.use_pade, tuned.nr_polish, tuned.mode) == (24, false, false, :outer)
+      @test solver.order == 24 && solver.use_pade && !solver.nr_polish && solver.mode === :direct && solver.convergence_radius
+      tuned = Sparlectra.apslf_solver(order = 40, use_pade = false, nr_polish = true, mode = :outer, convergence_radius = false)
+      @test (tuned.order, tuned.use_pade, tuned.nr_polish, tuned.mode, tuned.convergence_radius) == (40, false, true, :outer, false)
+    end
+
+    @testset "residual judged against the final active set (0.13.0)" begin
+      # a PV machine with a band it cannot hold: AnalyticLoadFlow clamps it
+      # at Qmax and reports the bus as PQ. The adapter used to test the
+      # voltage setpoint of that bus anyway and labelled a solved case not
+      # converged (case118: 19 clamped machines, 0.027 pu "mismatch").
+      function _clamp_net()
+        net = Net(name = "apslf_clamp", baseMVA = 100.0)
+        addBus!(net = net, busName = "B1", vn_kV = 110.0)
+        addBus!(net = net, busName = "B2", vn_kV = 110.0)
+        addBus!(net = net, busName = "B3", vn_kV = 110.0)
+        addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "B1")
+        addProsumer!(net = net, busName = "B2", type = "SYNCHRONOUSMACHINE", p = 10.0, q = 0.0, vm_pu = 1.05, qMin = -10.0, qMax = 10.0)
+        addProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER", p = 80.0, q = 25.0)
+        addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+        addPIModelACLine!(net = net, fromBus = "B2", toBus = "B3", r_pu = 0.02, x_pu = 0.12, b_pu = 0.0, status = 1)
+        return net
+      end
+      net = _clamp_net()
+      cfg = SparlectraConfig(powerflow = PowerFlowConfig(solver = :apslf, tol = 1e-8), output = OutputConfig(logfile_results = :off))
+      r = run_sparlectra(net = net, config = cfg)
+      @test r.final_converged
+      @test r.final_mismatch < 1e-8
+      b2 = net.busDict["B2"]
+      @test haskey(net.qLimitEvents, b2)
+      @test net.qLimitEvents[b2] === :max
+      st = Sparlectra.rectangular_pf_status(net)
+      @test hasproperty(st, :apslf_convergence_radius) && isfinite(st.apslf_convergence_radius)
+      @test occursin("dmin", String(st.apslf_convergence_line))
+      # the header prints the radius next to the condition number
+      hdr_path = tempname()
+      open(hdr_path, "w") do io
+        redirect_stdout(io) do
+          printACPFlowResults(net, r.elapsed_s, r.iterations, 1e-8, false, ""; converged = r.final_converged, solver = :apslf)
+        end
+      end
+      @test occursin("APSLF radius   :", read(hdr_path, String))
+      # switched off: the solve stays, the line says so
+      net = _clamp_net()
+      cfg_off = SparlectraConfig(powerflow = PowerFlowConfig(solver = :apslf, tol = 1e-8, apslf = Sparlectra.ApslfConfig(convergence_radius = false)), output = OutputConfig(logfile_results = :off))
+      r = run_sparlectra(net = net, config = cfg_off)
+      @test r.final_converged
+      @test occursin("not evaluated", String(Sparlectra.rectangular_pf_status(net).apslf_convergence_line))
     end
 
       @testset "Adapter mapping (PFModel -> AnalyticLoadFlow spec, PF ordering)" begin

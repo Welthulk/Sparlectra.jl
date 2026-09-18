@@ -58,7 +58,9 @@ function run_runtime_workload()
   try
     append!(net.measurements, generateMeasurementsFromPF(net; noise = false))
     runse!(net)
-    diag = runse_diagnostics(net; max_eliminations = 0)
+    diag = with_state_estimation_config(max_eliminations = 0) do
+      runse_diagnostics(net)
+    end
     print_se_diagnostics(devnull, diag.diagnostics)
   catch err
     @warn "runtime workload: SE trace skipped" exception = err

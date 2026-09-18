@@ -1,0 +1,260 @@
+{
+  "version": "1.0",
+  "type": "input",
+  "is_batch": false,
+  "attributes": {},
+  "data": {
+    "node": [
+      {
+        "id": 1,
+        "u_rated": 110000.0
+      },
+      {
+        "id": 2,
+        "u_rated": 110000.0
+      },
+      {
+        "id": 3,
+        "u_rated": 110000.0
+      }
+    ],
+    "line": [
+      {
+        "id": 4,
+        "from_node": 1,
+        "to_node": 2,
+        "from_status": 1,
+        "to_status": 1,
+        "r1": 1.21,
+        "x1": 9.68,
+        "c1": 0.0,
+        "tan1": 0.0,
+        "r0": 1.21,
+        "x0": 9.68,
+        "c0": 0.0,
+        "tan0": 0.0,
+        "i_n": 1000.0
+      },
+      {
+        "id": 5,
+        "from_node": 2,
+        "to_node": 3,
+        "from_status": 1,
+        "to_status": 1,
+        "r1": 1.21,
+        "x1": 9.68,
+        "c1": 0.0,
+        "tan1": 0.0,
+        "r0": 1.21,
+        "x0": 9.68,
+        "c0": 0.0,
+        "tan0": 0.0,
+        "i_n": 1000.0
+      }
+    ],
+    "source": [
+      {
+        "id": 6,
+        "node": 1,
+        "status": 1,
+        "u_ref": 1.02,
+        "u_ref_angle": 0.0
+      }
+    ],
+    "sym_load": [
+      {
+        "id": 7,
+        "node": 3,
+        "status": 1,
+        "type": 0,
+        "p_specified": 80000000.0,
+        "q_specified": 25000000.0
+      }
+    ],
+    "sym_gen": [
+      {
+        "id": 8,
+        "node": 2,
+        "status": 1,
+        "type": 0,
+        "p_specified": 10000000.0,
+        "q_specified": 0.0
+      }
+    ],
+    "voltage_regulator": [
+      {
+        "id": 9,
+        "status": 1,
+        "regulated_object": 8,
+        "u_ref": 1.0,
+        "q_min": -10000000.0,
+        "q_max": 10000000.0
+      }
+    ]
+  },
+  "sparlectra": {
+    "format_version": "1.0",
+    "meta": {
+      "case_name": "feeder3_hardpv_vsPGM",
+      "created_by": "manual (Sparlectra 0.11.1 schema)",
+      "f_nom": 50.0,
+      "intended_calculations": [
+        "power_flow",
+        "short_circuit",
+        "scenarios",
+        "contingency"
+      ],
+      "s_base": 100000000.0,
+      "source_format": "manual",
+      "source_reference": "workshop_tour.ipynb chapter 5, build_qu(80.0, 25.0)",
+      "notes": "Same data part as feeder3_hardpv_pgm.json; everything below is what the Sparlectra Case Format adds to a plain power-grid-model dataset."
+    },
+    "roles": {
+      "slack": {
+        "mode": "single",
+        "nodes": [
+          1
+        ]
+      }
+    },
+    "extra": {
+      "1": {
+        "name": "B1",
+        "node_type": "Slack",
+        "bus_index": 1,
+        "vmin_pu": 0.9,
+        "vmax_pu": 1.1
+      },
+      "2": {
+        "name": "B2",
+        "node_type": "PV",
+        "bus_index": 2,
+        "vmin_pu": 0.9,
+        "vmax_pu": 1.1
+      },
+      "3": {
+        "name": "B3",
+        "node_type": "PQ",
+        "bus_index": 3,
+        "vmin_pu": 0.9,
+        "vmax_pu": 1.1
+      },
+      "4": {
+        "name": "L_B1_B2"
+      },
+      "5": {
+        "name": "L_B2_B3"
+      },
+      "6": {
+        "name": "Grid_B1",
+        "reference_pri": true
+      },
+      "7": {
+        "name": "Load_B3",
+        "prosumption_class": "Consumption",
+        "prosumption_type": "Load"
+      },
+      "8": {
+        "name": "Gen_B2",
+        "prosumption_class": "Injection",
+        "prosumption_type": "Generator",
+        "min_q_mvar": -10.0,
+        "max_q_mvar": 10.0,
+        "regulated": true
+      },
+      "9": {
+        "name": "VR_Gen_B2"
+      }
+    },
+    "components": {
+      "sc_source": [
+        {
+          "bus": "B1",
+          "node": 1,
+          "kind": "external_network_injection",
+          "name": "Grid_B1",
+          "mrid": "native-eni-B1",
+          "maxInitialSymShCCurrent_A": 10497.277621629559,
+          "minInitialSymShCCurrent_A": 7872.9582162221695,
+          "maxR1ToX1Ratio": 0.1,
+          "minR1ToX1Ratio": 0.1,
+          "maxR0ToX0Ratio": null,
+          "maxZ0ToZ1Ratio": null,
+          "governorSCD": null,
+          "ikSecond": null
+        }
+      ]
+    },
+    "start_state": {
+      "source": "solved_power_flow",
+      "nodes": {
+        "1": {
+          "vm_pu": 1.02,
+          "va_deg": 0.0
+        },
+        "2": {
+          "vm_pu": 0.9945,
+          "va_deg": -3.08
+        },
+        "3": {
+          "vm_pu": 0.9634,
+          "va_deg": -6.76
+        }
+      }
+    },
+    "scenarios": {
+      "mode": "explicit",
+      "scenarios": [
+        {
+          "name": "light_load",
+          "weight": 1.0,
+          "ops": [
+            {
+              "op": "scale",
+              "target": "load",
+              "id": 7,
+              "factor": 0.0625
+            }
+          ]
+        },
+        {
+          "name": "evening_peak",
+          "weight": 1.0,
+          "ops": [
+            {
+              "op": "scale",
+              "target": "load",
+              "id": 7,
+              "factor": 1.1
+            }
+          ]
+        }
+      ]
+    },
+    "contingencies": {
+      "mode": "explicit",
+      "cases": [
+        {
+          "name": "line_B1_B2_out",
+          "outages": [
+            {
+              "component": "line",
+              "id": 4
+            }
+          ]
+        }
+      ]
+    },
+    "short_circuit": {
+      "buses": [
+        "B2",
+        "B3"
+      ]
+    },
+    "config": {
+      "power_flow.qlimits.enabled": true,
+      "power_flow.qlimits.enforcement_mode": "active_set",
+      "power_flow.tol": 1e-08
+    }
+  }
+}

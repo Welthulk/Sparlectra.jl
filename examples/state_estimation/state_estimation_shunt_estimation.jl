@@ -64,12 +64,16 @@ function run_state_estimation_shunt_estimation()
   sh.y_pu_shunt = complex(real(sh.y_pu_shunt), 1.2 * b_true)   # stale model: +20 percent
   setShuntEstimation!(net; busName = "LoadB")
 
-  res = runse!(net, meas; maxIte = 30, tol = 1e-10, updateNet = false)
+  res = with_state_estimation_config(max_iter = 30, tol = 1e-10, update_net = false) do
+    runse!(net, meas)
+  end
   row = only(res.shuntEstimates)
   println("case A (direct ShuntQ measurement, B released as a state):")
   @printf("  B_model = %.4f pu (stale, +20%%)   B_est = %.4f pu   B_true = %.4f pu   frozen = %s\n", row.B_model, row.B_est, b_true, string(row.frozen))
   @printf("  model untouched without updateShunts: imag(y_pu_shunt) = %.4f pu\n", imag(sh.y_pu_shunt))
-  runse!(net, meas; maxIte = 30, tol = 1e-10, updateNet = false, updateShunts = true)
+  with_state_estimation_config(max_iter = 30, tol = 1e-10, update_net = false, update_shunts = true) do
+    runse!(net, meas)
+  end
   @printf("  after updateShunts = true          : imag(y_pu_shunt) = %.4f pu\n\n", imag(sh.y_pu_shunt))
 
   # --- case B: no direct Q measurement, derive it from bay current + Vm ---

@@ -191,6 +191,8 @@ export
   refresh_sparlectra_config_file,        # Check or explicitly refresh a user YAML configuration file.
   refresh_sparlectra_config_text,        # Dry-run refresh for uploaded/browser YAML text.
   set_sparlectra_config!,                 # Replace the active global configuration.
+  with_sparlectra_config,                 # Run f with a configuration installed, restore afterwards.
+  with_state_estimation_config,           # Run f with state-estimation settings replaced.
   active_sparlectra_config,               # Return the currently active configuration.
   powerflow_config,                       # Access the active power-flow settings.
   matpower_import_config,                 # Access MATPOWER import settings.

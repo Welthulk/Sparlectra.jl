@@ -61,15 +61,21 @@ function run_state_estimation_robust()
 
   # 1) plain WLS versus robust: the modification pulls the estimate back to
   # the noise floor while the culprit reaches stage 2
-  resPlain = runse!(net, meas; maxIte = 40, tol = 1e-10, updateNet = false)
-  resRobust = runse!(net, meas; maxIte = 40, tol = 1e-10, updateNet = false, robust = true)
+  resPlain = with_state_estimation_config(max_iter = 40, tol = 1e-10, update_net = false) do
+    runse!(net, meas)
+  end
+  resRobust = with_state_estimation_config(max_iter = 40, tol = 1e-10, update_net = false, robust = true) do
+    runse!(net, meas)
+  end
   @printf("max |V - V_true| : plain WLS = %.5f pu   robust = %.5f pu\n", maximum(abs.(resPlain.voltages .- Vref)), maximum(abs.(resRobust.voltages .- Vref)))
   rr = only(r for r in resRobust.robustRows if r.id == bm.id)
   @printf("robust stage of %s: stage %d, t = %.1f, sigma widened by %.2fx\n\n", rr.id, rr.stage, rr.t, rr.sigma_factor)
 
   # 2) solve/diagnosis separation: the original-sigma ranking still names the
   # culprit first (Wilson-Hilferty verdict :high)
-  report = validate_measurements(net, meas; maxIte = 40, tol = 1e-8, robust = true)
+  report = with_state_estimation_config(max_iter = 40, tol = 1e-8, robust = true) do
+    validate_measurements(net, meas)
+  end
   top = first(report.measurement_ranking)
   @printf("diagnosis (original sigmas): top suspect = %s (|rn| = %.1f), band test reason = %s\n\n", top.id, top.abs_normalized_residual, string(report.objective.reason))
 
@@ -77,7 +83,9 @@ function run_state_estimation_robust()
   # :low (J implausibly small, sigmas overestimated) instead of silently
   # passing like the old symmetric test
   measClean = generateMeasurementsFromPF(net; noise = false, stddev = std)
-  repLow = validate_measurements(net, measClean; maxIte = 30, tol = 1e-8)
+  repLow = with_state_estimation_config(max_iter = 30, tol = 1e-8) do
+    validate_measurements(net, measClean)
+  end
   @printf("noise-free synthetic set: reason = %s (z_wh = %.1f, nu = %d)\n", string(repLow.objective.reason), repLow.objective.z_wh, repLow.objective.dof)
   println("interpretation: ", summarize_se_diagnostics(repLow).reason)
   return nothing

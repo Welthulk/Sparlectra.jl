@@ -3047,8 +3047,50 @@ function test_remove_functions_compact()
   return true
 end
 
+# #375: the PQ->PV release decides on the voltage side. The shipped
+# Zeng/Chiang 14-bus case (loads +25 percent, tight Q bands) ended on a
+# non-physical solution under active_set: three machines at Qmax with the
+# voltage above the setpoint, zero releases, the Q-V check reporting all
+# three. With the voltage rule the run reaches the physical solution the
+# one-at-a-time mode finds (bus 3 clamped at Qmax at 1.0064 pu, bus 1 at
+# Qmin, bus 2 back on PV) and the Q-V check is clean. The feeder
+# with a machine clamped at Qmax and its voltage BELOW the setpoint must
+# stay clamped.
+function test_active_set_voltage_side_release()::Bool
+  @testset "Active set re-enable on the voltage side (#375)" begin
+    scf_dir = joinpath(dirname(@__DIR__), "data", "scf")
+    zeng = joinpath(scf_dir, "case14_zeng_p306_activeSet_A.scf.json")
+    cfg = Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, zeng).config
+    @test cfg.powerflow.qlimits.enforcement_mode === :active_set
+    r = run_sparlectra(casefile = zeng, config = cfg)
+    @test r.final_converged
+    st = Sparlectra.rectangular_pf_status(r.net)
+    @test st.qlimit_reenable_events >= 1
+    # bus 2 (Qmax, voltage above its setpoint) is released; bus 3 stays at
+    # Qmax with the voltage below the setpoint, bus 1 at Qmin
+    @test !haskey(r.net.qLimitEvents, 2)
+    @test get(r.net.qLimitEvents, 3, nothing) === :max && get(r.net.qLimitEvents, 1, nothing) === :min
+    @test isapprox(r.net.nodeVec[3]._vm_pu, 1.0064; atol = 1e-3)
+    @test isempty(Sparlectra.qvCharacteristicViolations(r.net))
+    # clamped at Qmax with the voltage below the setpoint: no release
+    feeder = joinpath(scf_dir, "feeder3_hardpv_A.scf.json")
+    fcfg = Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, feeder).config
+    rf = run_sparlectra(casefile = feeder, config = fcfg)
+    @test rf.final_converged
+    b2 = rf.net.busDict["B2"]
+    @test get(rf.net.qLimitEvents, b2, nothing) === :max
+    @test Sparlectra.rectangular_pf_status(rf.net).qlimit_reenable_events == 0
+    # the margin is a configuration key that reaches the net
+    @test rf.net.reenable_v_hyst_pu == fcfg.powerflow.qlimits.reenable_v_hyst_pu
+  end
+  return true
+end
+
 function run_grid_fast_tests()
   @testset "Grid and power-flow regression tests" begin
+    @testset "Active set voltage-side release" begin
+      @test test_active_set_voltage_side_release() == true
+    end
     @testset "Remove functions" begin
       @test test_remove_functions_compact() == true
     end

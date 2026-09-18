@@ -167,6 +167,14 @@ if controlled cancellation exits the worker.
 - [`resolve_powerflow_artifact`](@ref) resolves only an exact artifact metadata
   name belonging to the selected run.
 
+Every result CSV of a run is written by the one writer `write_result_csv`
+(#386): the short-circuit, contingency and scenario tables, the SE state
+and diagnostic CSVs, the AC island report, the SV comparison and the DTF
+outage metrics all carry the delimiter and separators of `output.csv_format`.
+The measurement CSV (`# sparlectra-measurements v1`) is a data format that
+Sparlectra reads back and keeps its fixed layout; `readSEStateCSV!` accepts
+the SE state CSV in any of the three formats.
+
 Indexed paths are normalized and constrained to `output_root/<run_id>`. The
 result file must be that run directory's `result.json`, and existing paths are
 resolved before recovery to reject symlink or absolute-path escapes. Artifact

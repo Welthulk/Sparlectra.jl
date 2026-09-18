@@ -91,6 +91,7 @@ last usable solution but do not count as final framework convergence.
 - `outer_iterations`
 - `powerflow_solves`
 - `last_pf_iterations`
+- `total_pf_iterations` (sum over all passes; the result header reports the last pass and this total)
 - `last_pf_status`
 - `controllers`
 - `trace`

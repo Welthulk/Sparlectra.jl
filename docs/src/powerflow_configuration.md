@@ -42,9 +42,10 @@ required dependency, so nothing has to be loaded for it; see `apslf_solver`.
 power_flow:
   solver: rectangular   # rectangular | apslf
   apslf:
-    order: 40
+    order: 24
     use_pade: true
-    nr_polish: true
+    nr_polish: false
+    convergence_radius: true
   apslf_start:
     enabled: false
     order: 40
@@ -53,9 +54,10 @@ power_flow:
 | YAML path | Type | Default | Allowed values | Meaning | Use when | Avoid when | Performance impact | Interactions |
 |---|---:|---:|---|---|---|---|---|---|
 | `power_flow.solver` | Symbol/String | `rectangular` | `rectangular`, `apslf` | Selects the executing solver. | `apslf` to use the analytic power-series solver instead of NR. | `apslf` without AnalyticLoadFlow.jl loaded (raises a clear error). | `apslf` skips the NR iteration loop entirely. | Rejects `apslf_start.enabled=true` when set to `apslf`. |
-| `power_flow.apslf.order` | Int | `40` | `>= 1` | Highest power-series coefficient computed. | Higher for stressed/large-angle cases. | Unnecessarily high orders on easy cases (cost). | Higher order increases solve cost. | `use_pade`. |
+| `power_flow.apslf.order` | Int | `24` | `>= 1` | Highest power-series coefficient computed. | Higher for stressed/large-angle cases. | Unnecessarily high orders on easy cases (cost). | Higher order increases solve cost. | `use_pade`. |
 | `power_flow.apslf.use_pade` | Bool | `true` | `true`, `false` | Evaluate the voltage series via Padé `[L/M]` approximants instead of direct Taylor summation. | Default; improves convergence radius. | Direct Taylor comparison studies. | Small evaluation overhead, usually better accuracy per order. | `order`. |
-| `power_flow.apslf.nr_polish` | Bool | `true` | `true`, `false` | Run a Newton-Raphson polishing step on the series result. | Default; tightens the final residual. | Pure series-accuracy studies. | Adds a small number of NR iterations. | Only active when `solver=apslf`. |
+| `power_flow.apslf.nr_polish` | Bool | `false` | `true`, `false` | Run a Newton-Raphson polishing step on the series result. | Debugging the series result against a Newton finish. | Default off: since AnalyticLoadFlow 0.9.15 the series alone is a load-flow solution. | Adds a small number of NR iterations. | Only active when `solver=apslf`. |
+| `power_flow.apslf.convergence_radius` | Bool | `true` | `true`, `false` | Evaluate the APSLF convergence radius: the distance `dmin` of the nearest Padé pole to the evaluation point `s = 1`, with the bus that owns it and a GRN/YEL/RED level (AnalyticLoadFlow `stability_from_Vcoeff`). Reported in the result header (`APSLF radius`), the run metadata (`apslf_convergence_radius`) and on the runs page next to the Jacobian condition. | Default; judges how far the series solution sits from its continuation limit. | Large networks where the evaluation (about the cost of the solve) is not wanted. | Comparable to the solve itself. | Only active when `solver=apslf`. |
 | `power_flow.apslf_start.enabled` | Bool | `false` | `true`, `false` | Use the APSLF solver as a start-value generator ahead of the rectangular NR solve (guarded, like `start_current_iteration`). | Difficult NR starts. | `solver=apslf` (rejected: start generator only makes sense ahead of NR). | Adds one series solve before NR. | `solver`, `apslf_start.order`. |
 | `power_flow.apslf_start.order` | Int | `40` | `>= 1` | Series order used by the start-value generator. | Same considerations as `apslf.order`. | Unnecessarily high orders for a start-only pass. | Higher order increases pre-solve cost. | `apslf_start.enabled`. |
 
@@ -645,6 +647,7 @@ The Web UI mirrors these rules client-side: the *Autodamping & merit-function li
 | `power_flow.qlimits.auto_q_delta_pu` | Float64 | `1e-4` | nonnegative real | Auto activation threshold. | Fine-tuning switch timing. | Extreme values. | Low. | `start_mode=auto` or `iteration_or_auto`. |
 | `power_flow.qlimits.hysteresis_pu` | Float64 | `0.01` | nonnegative real | Hysteresis margin near Q limits. | Reduce switch chattering. | Too large if strict tracking needed. | Can reduce oscillatory iterations. | `cooldown_iters`, guard modes. |
 | `power_flow.qlimits.cooldown_iters` | Int | `1` | nonnegative integer | Cooldown iterations after switching. | Reduce repeated toggling. | Too long cooldown on tight limits. | Affects convergence pace. | Hysteresis and freeze behavior. |
+| `power_flow.qlimits.reenable_v_hyst_pu` | Float64 | `1e-4` | nonnegative real | Voltage margin of the PQ->PV release of a clamped machine: at Qmax released when `Vm > Vset + margin`, at Qmin when `Vm < Vset - margin`. | Default. | Chattering machines (raise the margin). | None. | Release also needs `hysteresis_pu > 0` or `cooldown_iters > 0`, the cooldown and the one-retry guard. |
 | `power_flow.qlimits.trace_buses` | Vector{Int} | `[]` | bus-id vector | Trace selected bus events. | Targeted diagnostics. | Large full-network trace. | Logging overhead if populated. | Output and diagnostics verbosity. |
 | `power_flow.qlimits.lock_pv_to_pq_buses` | Vector{Int} | `[]` | bus-id vector | Force listed buses into PQ-lock behavior. | Known problematic buses. | Blindly on all buses. | Can simplify switching dynamics. | Guard modes. |
 | `power_flow.qlimits.guard.enabled` | Bool | `true` | `true`, `false` | Enable guard subsystem. | Prevent unstable switching. | Pure baseline comparisons. | Small runtime overhead. | Guard fields below. |

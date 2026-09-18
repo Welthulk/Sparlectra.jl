@@ -79,7 +79,7 @@ function run_demo_case_tests()
         # 2) state estimation on the measurements the file itself carries
         # the topology precheck advises on two of the shipped cases by design;
         # captured, anything else that warns fails
-        se = run_with_expected_warnings(() -> runse!(net, Vector{Sparlectra.Measurement}(net.measurements), Sparlectra.StateEstimationConfig()), (r"topology precheck reported",))
+        se = run_with_expected_warnings(() -> runse!(net), (r"topology precheck reported",))
         @test se.converged
         @test se.dof == fixture["state_estimation"]["dof"]
         @test isapprox(se.objectiveJ, fixture["state_estimation"]["objective"]; atol = 1e-4)
@@ -213,6 +213,11 @@ function run_demo_case_tests()
       offered = Sparlectra._webui_bundled_scf_options(app_root)
       @test "sp_case14.scf.json" in offered
       @test "sp_casePST.scf.json" in offered
+      # 0.12.5: the feeder/Q-limit example cases and the plain PGM files are
+      # offered too, each with its case configuration sidecar
+      @test "feeder3_hardpv_A.scf.json" in offered
+      @test "feeder3_hardpv_pgm.json" in offered
+      @test !("README.md" in offered)
       cache = mktempdir()
       ctx = Sparlectra._webui_case_context(; application_root = app_root, case_directory = cache)
       @test "sp_case14.scf.json" in ctx.casefiles
@@ -220,6 +225,9 @@ function run_demo_case_tests()
       @test staged == joinpath(cache, "sp_case14.scf.json")
       @test isfile(staged)
       @test isfile(joinpath(cache, "sp_case14.config.yaml"))
+      staged_pgm = Sparlectra._webui_stage_bundled_case!(app_root, cache, "feeder3_hardpv_pgm.json")
+      @test staged_pgm == joinpath(cache, "feeder3_hardpv_pgm.json")
+      @test isfile(joinpath(cache, "feeder3_hardpv_pgm.config.yaml"))
       @test isfile(joinpath(cache, "sp_case14.measurements.csv"))
       # BOTH measurement variants travel: without the baddata twin the
       # diagnostics demo would die with a file error instead of a message

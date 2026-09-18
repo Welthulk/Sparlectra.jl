@@ -101,7 +101,7 @@ addProsumer!(net = wnet, busName = "B", type = "ENERGYCONSUMER", p = 10.0, q = 3
 addPIModelACLine!(net = wnet, fromBus = "A", toBus = "B", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
 t_pf = @elapsed runpf!(wnet, 10, 1e-8, 0)
 setMeasurementsFromPF!(wnet; includeVm = true, includePinj = true, includeQinj = true, includePflow = true, includeQflow = true, noise = false)
-t_se = @elapsed runse!(wnet; maxIte = 8, tol = 1e-6, flatstart = true, jacEps = 1e-6, updateNet = false)
+t_se = @elapsed with_state_estimation_config(() -> runse!(wnet); max_iter = 8, tol = 1e-6, flatstart = true, jac_eps = 1e-6, update_net = false)
 println("warm: power flow ", round(t_pf; digits = 2), " s, estimator ", round(t_se; digits = 2), " s (first calls compile)")
 @assert t_pf > 0.0 && t_se > 0.0
 
@@ -200,7 +200,9 @@ println(length(net.measurements), " measurements created")
 # below is a formula, not a coincidence. The global check compares $m$
 # against $n$ and probes the numerical rank of $H$.
 
-gobs = evaluate_global_observability(net; flatstart = true, jacEps = 1e-6)
+gobs = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
+  evaluate_global_observability(net)
+end
 println("global observability quality: ", gobs.quality)
 @assert gobs.quality == :good
 println("measurements: ", gobs.n_measurements, ", states: ", gobs.n_states)
@@ -209,19 +211,16 @@ println("measurements: ", gobs.n_measurements, ", states: ", gobs.n_states)
 # ## Run the estimator
 #
 # `runse!` iterates the WLS normal equations from a flat start. With
-# `updateNet = true` the estimated voltages are written back into the
-# network, so the usual result printers show the *estimated* state. The
+# `state_estimation.update_net = true` the estimated voltages are written
+# back into the network, so the usual result printers show the *estimated*
+# state. The estimator takes its settings from the active configuration;
+# `with_state_estimation_config` installs other values for one run. The
 # objective $J$ is the weighted sum of squared residuals; for healthy
 # Gaussian noise it should land near the number of redundant measurements.
 
-se = runse!(
-  net;
-  maxIte = 12,
-  tol = 1e-6,
-  flatstart = true,
-  jacEps = 1e-6,
-  updateNet = true,
-)
+se = with_state_estimation_config(max_iter = 12, tol = 1e-6, flatstart = true, jac_eps = 1e-6, update_net = true) do
+  runse!(net)
+end
 
 println("SE converged: ", se.converged, " in ", se.iterations, " iterations")
 @assert se.converged && se.iterations == 3
@@ -275,7 +274,9 @@ addQinjMeasurement!(net; busName = "B2", value = -10.0, sigma = 1.0)
 addPflowMeasurement!(net; fromBus = "B1", toBus = "B2", value = 22.0, sigma = 0.8, direction = :from)
 addQflowMeasurement!(net; branchNr = 1, value = 7.0, sigma = 0.8, direction = :to)
 
-obs = evaluate_global_observability(net; flatstart = true, jacEps = 1e-6)
+obs = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
+  evaluate_global_observability(net)
+end
 println("sparse manual set quality: ", obs.quality)
 @assert obs.quality == :not_observable
 println("measurements: ", obs.n_measurements, ", states: ", obs.n_states)
@@ -518,7 +519,9 @@ addVmMeasurement!(net; busName = "B1", value = net.nodeVec[net.busDict["B1"]]._v
 # magnitude level, and the three unmeasured branches are exactly where
 # redundancy would come from.
 
-gmin = evaluate_global_observability(net; flatstart = true, jacEps = 1e-6)
+gmin = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
+  evaluate_global_observability(net)
+end
 println("minimal tree set: quality = ", gmin.quality, " (", gmin.n_measurements, " rows, ", gmin.n_states, " states)")
 @assert gmin.quality == :critical && gmin.n_measurements == 13 && gmin.n_states == 13
 println("  structurally observable: ", gmin.structural_observable, ", numerically observable: ", gmin.numerical_observable, " (rank ", gmin.numerical_rank, ")")
@@ -572,7 +575,9 @@ for (f, t) in tree[1:5]   ## tree WITHOUT B6-B7
 end
 addVmMeasurement!(net; busName = "B1", value = net.nodeVec[net.busDict["B1"]]._vm_pu, sigma = 0.002)
 
-gbroken = evaluate_global_observability(net; flatstart = true, jacEps = 1e-6)
+gbroken = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
+  evaluate_global_observability(net)
+end
 println("without B6-B7: quality = ", gbroken.quality, " (rank ", gbroken.numerical_rank, " of ", gbroken.n_states, ")")
 @assert gbroken.quality == :not_observable && gbroken.numerical_rank == 11 && gbroken.n_states == 13
 ## the rigorous per-state answer, straight from the null space: exactly
@@ -581,7 +586,9 @@ println("dark states (unobservable_state_columns): ", gbroken.unobservable_state
 @assert gbroken.unobservable_state_columns == [6, 13]
 
 ## local check on B2 (angle col 1, magnitude col 8): still fully covered
-lb2 = evaluate_local_observability(net, [1, 8]; flatstart = true, jacEps = 1e-6)
+lb2 = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
+  evaluate_local_observability(net, [1, 8])
+end
 println("local B2: numerically observable = ", lb2.numerical_observable)
 @assert lb2.numerical_observable === true
 ## local check on B7 (angle col 6, magnitude col 13): NO measurement even
@@ -590,7 +597,9 @@ println("local B2: numerically observable = ", lb2.numerical_observable)
 ## still dark) is the Example 6 counterexample, which only the global
 ## null-space answer catches
 try
-  evaluate_local_observability(net, [6, 13]; flatstart = true, jacEps = 1e-6)
+  with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
+    evaluate_local_observability(net, [6, 13])
+  end
 catch err
   println("local B7: ", sprint(showerror, err))
   @assert occursin("no active measurement", sprint(showerror, err))
@@ -609,7 +618,9 @@ end
 ## is -20 MW / -6 MVAr (consumption counts negative)
 addPinjMeasurement!(net; busName = "B7", value = -20.0, sigma = 1.0)
 addQinjMeasurement!(net; busName = "B7", value = -6.0, sigma = 1.0)
-grepaired = evaluate_global_observability(net; flatstart = true, jacEps = 1e-6)
+grepaired = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
+  evaluate_global_observability(net)
+end
 println("with P/Q injection at B7: quality = ", grepaired.quality, " (rank ", grepaired.numerical_rank, " of ", grepaired.n_states, ")")
 @assert grepaired.quality == :critical && grepaired.numerical_rank == 13
 
@@ -652,14 +663,18 @@ for (f, t) in tree[1:5]   ## broken tree again: B7 unmetered
 end
 addVmMeasurement!(net_p; busName = "B1", value = net_p.nodeVec[net_p.busDict["B1"]]._vm_pu, sigma = 0.002)
 
-g_no_zib = evaluate_global_observability(net_p; flatstart = true, jacEps = 1e-6)
+g_no_zib = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
+  evaluate_global_observability(net_p)
+end
 println("without ZIB: quality = ", g_no_zib.quality, ", dof = ", g_no_zib.dof, ", dark states = ", g_no_zib.unobservable_state_columns)
 @assert g_no_zib.quality == :not_observable && g_no_zib.dof == -2 && g_no_zib.unobservable_state_columns == [6, 13]
 
 added = addZeroInjectionMeasurements!(net_p; sigma = 1e-6)   ## auto-detects the passive B7
 println(length(added), " zero-injection rows added at the passive bus")
 @assert length(added) == 2
-g_zib = evaluate_global_observability(net_p; flatstart = true, jacEps = 1e-6)
+g_zib = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
+  evaluate_global_observability(net_p)
+end
 println("with ZIB:    quality = ", g_zib.quality, ", dof = ", g_zib.dof)
 @assert g_zib.quality == :critical && g_zib.dof == 0
 
@@ -681,7 +696,9 @@ for zib_sigma in (1e-6, 1e-2)
     push!(netv.measurements, m)
   end
   addZeroInjectionMeasurements!(netv; sigma = zib_sigma)
-  sev = runse!(netv; maxIte = 15, tol = 1e-6, flatstart = true, jacEps = 1e-6, updateNet = false)
+  sev = with_state_estimation_config(max_iter = 15, tol = 1e-6, flatstart = true, jac_eps = 1e-6, update_net = false) do
+    runse!(netv)
+  end
   vm_b7 = abs(sev.voltages[netv.busDict["B7"]])
   println("ZIB sigma = ", zib_sigma, ": converged = ", sev.converged, ", J = ", round(sev.objectiveJ; digits = 6), ", Vm(B7) = ", round(vm_b7; digits = 5), " pu, max/min weight ratio = ", round((0.8 / zib_sigma)^2; digits = 1))
   @assert sev.converged && sev.objectiveJ < 1e-8 && isapprox(vm_b7, 1.00672; atol = 1e-3)
@@ -715,11 +732,15 @@ for bus in ("B4", "B6")
   idx = net.busDict[bus]
   addPmuPhasorMeasurement!(net; busName = bus, vm_pu = net.nodeVec[idx]._vm_pu, va_deg = net.nodeVec[idx]._va_deg + pmu_shift_deg, sigmaVm = 0.002, sigmaVa = 0.02)
 end
-gpmu = evaluate_global_observability(net; flatstart = true, jacEps = 1e-6)
+gpmu = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
+  evaluate_global_observability(net)
+end
 println("with 2 PMUs: quality = ", gpmu.quality, " (", gpmu.n_measurements, " rows, ", gpmu.n_states, " states, offset state included)")
 @assert gpmu.quality == :critical && gpmu.n_measurements == 17 && gpmu.n_states == 14
 
-se_pmu = runse!(net; maxIte = 15, tol = 1e-6, flatstart = true, jacEps = 1e-6, updateNet = false)
+se_pmu = with_state_estimation_config(max_iter = 15, tol = 1e-6, flatstart = true, jac_eps = 1e-6, update_net = false) do
+  runse!(net)
+end
 println("SE converged: ", se_pmu.converged, ", estimated PMU reference offset: ", round(se_pmu.vaRefOffsetDeg; digits = 3), "° (true shift ", pmu_shift_deg, "°)")
 @assert se_pmu.converged && isapprox(se_pmu.vaRefOffsetDeg, pmu_shift_deg; atol = 0.05)
 

@@ -123,6 +123,10 @@ Base.@kwdef struct QLimitConfig
   auto_q_delta_pu::Float64 = 1e-4
   hysteresis_pu::Float64 = 0.01
   cooldown_iters::Int = 1
+  # voltage margin of the PQ->PV release of a clamped machine (#375): at
+  # Qmax the bus is released when Vm > Vset + margin, at Qmin when
+  # Vm < Vset - margin
+  reenable_v_hyst_pu::Float64 = 1e-4
   guard::Bool = false
   guard_min_q_range_pu::Float64 = 1e-4
   guard_zero_range_mode::Symbol = :lock_pq
@@ -278,9 +282,12 @@ Typed configuration for the AnalyticLoadFlow.jl-backed analytic power-series
 solver (`ApslfSolver`), used when `power_flow.solver == :apslf`.
 """
 Base.@kwdef struct ApslfConfig
-  order::Int = 40
+  order::Int = 24
   use_pade::Bool = true
-  nr_polish::Bool = true
+  nr_polish::Bool = false
+  # Padé-pole margin (APSLF convergence radius) evaluated after the solve;
+  # costs about as much as the solve, hence switchable
+  convergence_radius::Bool = true
 end
 
 """
@@ -953,6 +960,68 @@ function set_sparlectra_config!(cfg::SparlectraConfig)
 end
 
 """
+    with_sparlectra_config(f, cfg) -> f()
+
+Run `f()` with `cfg` installed as the active configuration and put the
+previous one back afterwards, also when `f` throws. This is how a run gets
+its own settings (#381): the modules read the registry
+(`state_estimation_config()`, `powerflow_config()`, ...) themselves, the
+caller installs the effective configuration for the duration of the run.
+The service and the Web UI do exactly that with the resolved configuration
+of the case (general file, case sidecar, form values). One Net, one run at
+a time: the registry is process-global.
+"""
+function with_sparlectra_config(f, cfg::SparlectraConfig)
+  previous = ACTIVE_SPARLECTRA_CONFIG[]
+  ACTIVE_SPARLECTRA_CONFIG[] = cfg
+  try
+    return f()
+  finally
+    ACTIVE_SPARLECTRA_CONFIG[] = previous
+  end
+end
+
+# a copy of `base` with the given fields replaced (nothing = keep); every
+# other field keeps its value, so the copy never falls back to a struct
+# default behind the caller's back
+function _se_config_with(base::StateEstimationConfig; kwargs...)
+  vals = Dict{Symbol,Any}(f => getfield(base, f) for f in fieldnames(StateEstimationConfig))
+  for (k, v) in kwargs
+    v === nothing && continue
+    haskey(vals, k) || throw(ArgumentError("unknown state_estimation setting $(k)"))
+    vals[k] = v
+  end
+  return StateEstimationConfig(; vals...)
+end
+
+# a copy of a whole SparlectraConfig with top-level blocks replaced
+function _sparlectra_config_with(cfg::SparlectraConfig; kwargs...)
+  vals = Dict{Symbol,Any}(f => getfield(cfg, f) for f in fieldnames(SparlectraConfig))
+  for (k, v) in kwargs
+    haskey(vals, k) || throw(ArgumentError("unknown configuration block $(k)"))
+    vals[k] = v
+  end
+  return SparlectraConfig(; vals...)
+end
+
+"""
+    with_state_estimation_config(f; kwargs...) -> f()
+
+Run `f()` with the active state-estimation settings replaced by `kwargs`
+(field names of `StateEstimationConfig`: `max_iter`, `tol`, `flatstart`,
+`update_net`, `robust_mode`, `max_eliminations`, ...) and the previous
+configuration restored afterwards. The one-liner for a deviating run:
+
+    se = with_state_estimation_config(max_iter = 12, update_net = false) do
+      runse!(net)
+    end
+"""
+function with_state_estimation_config(f; kwargs...)
+  active = ACTIVE_SPARLECTRA_CONFIG[]
+  return with_sparlectra_config(f, _sparlectra_config_with(active; state_estimation = _se_config_with(active.state_estimation; kwargs...)))
+end
+
+"""
     _resolve_parallel_runtime(enabled, max_tasks, min_work_items) -> (on, cap, min_items)
 
 Resolve per-call parallel overrides against the ACTIVE
@@ -1249,12 +1318,13 @@ function TrustRegionConfig(raw::AbstractDict)
 end
 
 function ApslfConfig(raw::AbstractDict)
-  order = _as_int_cfg(_raw_get(raw, "order", 40))
+  order = _as_int_cfg(_raw_get(raw, "order", 24))
   order >= 1 || throw(ArgumentError("power_flow.apslf.order must be >= 1; got $(order)."))
   return ApslfConfig(
     order = order,
     use_pade = _as_bool_cfg(_raw_get(raw, "use_pade", true)),
-    nr_polish = _as_bool_cfg(_raw_get(raw, "nr_polish", true)),
+    nr_polish = _as_bool_cfg(_raw_get(raw, "nr_polish", false)),
+    convergence_radius = _as_bool_cfg(_raw_get(raw, "convergence_radius", true)),
   )
 end
 
@@ -1289,6 +1359,7 @@ function QLimitConfig(raw::AbstractDict)
     auto_q_delta_pu = _validate_nonnegative("qlimit_auto_q_delta_pu", _as_float_cfg(_raw_get(merged, "auto_q_delta_pu", _raw_get(merged, "qlimit_auto_q_delta_pu", 1e-4)))),
     hysteresis_pu = _validate_nonnegative("power_flow.qlimits.hysteresis_pu", _as_float_cfg(_raw_get(merged, "hysteresis_pu", _raw_get(merged, "q_hyst_pu", 0.01)))),
     cooldown_iters = _as_int_cfg(_raw_get(merged, "cooldown_iters", 1)),
+    reenable_v_hyst_pu = _validate_nonnegative("power_flow.qlimits.reenable_v_hyst_pu", _as_float_cfg(_raw_get(merged, "reenable_v_hyst_pu", 1e-4))),
     guard = _as_bool_cfg(_raw_get(raw, "qlimit_guard", guard_enabled_default)),
     guard_min_q_range_pu = _validate_nonnegative("qlimit_guard_min_q_range_pu", _as_float_cfg(_raw_get(merged, "min_q_range_pu", _raw_get(merged, "guard_min_q_range_pu", _raw_get(merged, "qlimit_guard_min_q_range_pu", 1e-4))))),
     guard_zero_range_mode = _validate_allowed_symbol("power_flow.qlimits.guard.zero_range_mode", _as_symbol_cfg(_raw_get(merged, "zero_range_mode", _raw_get(merged, "guard_zero_range_mode", _raw_get(merged, "qlimit_guard_zero_range_mode", :lock_pq)))), QLIMIT_GUARD_ZERO_RANGE_MODE_VALUES),
@@ -1743,6 +1814,7 @@ function ControlConfig(raw::AbstractDict)
     trace = _as_bool_cfg(_raw_get(merged, "trace", true)),
     log_iterations = _as_bool_cfg(_raw_get(merged, "log_iterations", true)),
     stop_on_pf_failure = _as_bool_cfg(_raw_get(merged, "stop_on_pf_failure", true)),
+    verbose_passes = _as_bool_cfg(_raw_get(merged, "verbose_passes", false)),
     controllers = Any[controllers...],
   )
 end

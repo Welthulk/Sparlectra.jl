@@ -831,8 +831,12 @@ function _run_state_estimation_service(
   # topology precheck: the check RESULT is logged on every run,
   # the clean case included (a silent skip would read as a pass); findings
   # are advisory and never block the estimation
+  # the configuration of THIS run (#381): the resolved configuration of the
+  # case with the caller's overrides folded in, installed for every
+  # estimator call below; the registry is untouched afterwards
+  run_cfg = _sparlectra_config_with(config; state_estimation = _se_config_with(config.state_estimation; max_iter = max_iter, tol = tol, flatstart = flatstart, robust = robust, k_eliminate = k_eliminate, robust_mode = robust_mode, robust_k1 = robust_k1, robust_k2 = robust_k2, k_suppress = k_suppress, suppression_sigma = suppression_sigma, max_eliminations = max_eliminations, report_residual_correlation = report_correlation, update_shunts = update_shunts, update_net = true))
   se_phase("topology_precheck")
-  topo_pre = validate_topology(net)
+  topo_pre = with_sparlectra_config(() -> validate_topology(net), run_cfg)
   # The findings are advisory and a large synthetic network produces many of
   # them (2170 on a 25000-bus case, 2155 of them "closed branch carries no
   # flow"). Printing every one buries the run log and nobody reads it, so the
@@ -901,7 +905,7 @@ function _run_state_estimation_service(
 
   # diagnostics (report) plus the final state-writing run (chain anchor)
   se_phase("estimation_diagnostics")
-  diag = runse_diagnostics(net; max_eliminations = max_eliminations, maxIte = max_iter, tol = tol, flatstart = flatstart, robust = robust, reportResidualCorrelation = report_correlation, normalizedThreshold = k_eliminate, robustMode = robust_mode, robustK1 = robust_k1, robustK2 = robust_k2, kSuppress = k_suppress, suppressionSigma = suppression_sigma)
+  diag = with_sparlectra_config(() -> runse_diagnostics(net), run_cfg)
   # eliminated rows leave the FINAL run: the diagnostics identified them on
   # its own copy, so deactivate them here or the headline J would keep
   # carrying rows the workflow already removed (seen: an injected 10-sigma
@@ -916,7 +920,7 @@ function _run_state_estimation_service(
   # whether or not it converged, so the retry needs the state as it was
   # BEFORE the first attempt, not the diverged iterate it gave up on
   v_before_taps = _any_tap_released(net) ? [(nd._vm_pu, nd._va_deg) for nd in net.nodeVec] : nothing
-  res = runse!(net; maxIte = max_iter, tol = tol, flatstart = flatstart, updateNet = true, updateShunts = update_shunts, robust = robust, robustMode = robust_mode, robustK1 = robust_k1, robustK2 = robust_k2, kSuppress = k_suppress, suppressionSigma = suppression_sigma)
+  res = with_sparlectra_config(() -> runse!(net), run_cfg)
 
   # Released taps are extra states, and a measurement set that carries the
   # voltages fine can still be too thin to pin them: the estimate then does
@@ -946,7 +950,7 @@ function _run_state_estimation_service(
       println(io, "state estimation did not converge with ", frozen, " released transformer tap(s); repeating WITHOUT tap estimation (the taps keep their model position). A set that cannot pin its taps needs more measurements around those transformers, not more iterations.")
     end
     @info "state estimation: tap estimation switched off after a non-converged run" released = frozen
-    res = runse!(net; maxIte = max_iter, tol = tol, flatstart = flatstart, updateNet = true, updateShunts = update_shunts, robust = robust, robustMode = robust_mode, robustK1 = robust_k1, robustK2 = robust_k2, kSuppress = k_suppress, suppressionSigma = suppression_sigma)
+    res = with_sparlectra_config(() -> runse!(net), run_cfg)
     tap_fallback_used = res.converged
     base_metadata["se_tap_estimation_fallback"] = tap_fallback_used
   end
@@ -1178,7 +1182,7 @@ function _run_state_estimation_service(
     end
   end
   se_phase("writing_artifacts")
-  writeSEStateCSV(net; file = joinpath(output_dir, "se_state.csv"))
+  writeSEStateCSV(net; file = joinpath(output_dir, "se_state.csv"), format = String(config.output.csv_format))
 
   # band verdict from the POST-elimination report: it must describe the
   # same state as the headline J (the pre-elimination report still tells

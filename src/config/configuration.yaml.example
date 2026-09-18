@@ -41,11 +41,16 @@ power_flow:
   # Options for solver: apslf.
   apslf:
     # Highest power-series coefficient to compute.
-    order: 40
+    order: 24
     # Evaluate the voltage series via Pade [L/M] approximants instead of direct Taylor summation.
     use_pade: true
-    # Run a Newton-Raphson polishing step on the series result.
-    nr_polish: true
+    # Run a Newton-Raphson polishing step on the series result (debugging
+    # aid; the series alone is a load-flow solution).
+    nr_polish: false
+    # Evaluate the APSLF convergence radius (distance of the nearest Pade
+    # pole to s = 1) and report it like the Jacobian condition. Costs about
+    # as much as the solve itself.
+    convergence_radius: true
   # Use the APSLF solver as a start-value generator ahead of the rectangular
   # Newton-Raphson solve. Incompatible with solver: apslf (start generator is
   # only meaningful ahead of NR). No use_pade/nr_polish here: polishing is left
@@ -277,6 +282,10 @@ power_flow:
     auto_q_delta_pu: 1.0e-4
     hysteresis_pu: 0.01
     cooldown_iters: 1
+    # Voltage margin (pu) of the PQ->PV release: a machine clamped at Qmax
+    # is released when its voltage sits above the setpoint by more than
+    # this, one clamped at Qmin when it sits below.
+    reenable_v_hyst_pu: 1.0e-4
     # Optional bus-id filters for focused diagnostics/policies.
     trace_buses: []
     lock_pv_to_pq_buses: []
@@ -603,6 +612,8 @@ output:
   # thousands separator (opens correctly in a German-locale Excel);
   # excel_us = comma delimiter, dot decimal, comma thousands separator.
   # Allowed values: technical, excel_de, excel_us
+  # Delimiter and decimal separator of EVERY CSV file a run writes (technical,
+  # excel_de, excel_us); the one central CSV setting, whatever writes the file.
   csv_format: technical
   # Allowed values: off, compact, full
   logfile_diagnostics: compact
@@ -664,10 +675,15 @@ control:
   max_outer_iterations: 20
   # Collect machine-readable control trace rows in ControlRunResult.trace.
   trace: true
-  # Reserved for future or implementation-dependent per-iteration control logging.
+  # One console line per control pass (converged, mismatch, active-set
+  # changes) when output.console_diagnostics is full.
   log_iterations: true
   # Stop outer-loop orchestration if the inner power flow fails.
   stop_on_pf_failure: true
+  # Repeat the full inner-solver diagnostic blocks on every control pass.
+  # Off: the first pass prints them once, later passes get the one-line
+  # summary (for debugging the control loop itself).
+  verbose_passes: false
   # Declarative outer-loop controllers (issue #305): one named mapping per
   # controller (block style; the minimal YAML reader has no "- item"
   # sequences). The name becomes the controller name where the type

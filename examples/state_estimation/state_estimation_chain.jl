@@ -61,19 +61,25 @@ function run_state_estimation_chain()
   @printf("measurement CSV v1: wrote %d rows, read %d back (atomic, line-precise errors on bad files)\n\n", w.count, r.total)
 
   # 2) the estimation registers the chain start state
-  res = runse!(net; maxIte = 30, tol = 1e-10, updateNet = true)
+  res = with_state_estimation_config(max_iter = 30, tol = 1e-10, update_net = true) do
+    runse!(net)
+  end
   @printf("SE: converged in %d iteration(s), J = %.3e (dof %d)\n\n", res.iterations, res.objectiveJ, res.dof)
 
   # 3) PF from the estimate, both modes
   r1 = runpf_from_se!(net, 40, 1e-10, 0; mode = :se_state, method = :rectangular)
   @printf("se_state    : %d iteration(s) (flat start needed %d); model injections stay authoritative\n", r1.iterations, iteFlat)
-  runse!(net; maxIte = 30, tol = 1e-10, updateNet = true)
+  with_state_estimation_config(max_iter = 30, tol = 1e-10, update_net = true) do
+    runse!(net)
+  end
   r2 = runpf_from_se!(net, 40, 1e-10, 0; mode = :se_snapshot, method = :rectangular)
   @printf("se_snapshot : %d iteration(s), slack pickup %.2e MW; persistent loads untouched\n\n", r2.iterations, abs(r2.slack_pickup_mw))
 
   # 4) the persistence half the Web UI chain uses (se_state.csv artifact)
   sfile = joinpath(dir, "se_state.csv")
-  runse!(net; maxIte = 30, tol = 1e-10, updateNet = true)
+  with_state_estimation_config(max_iter = 30, tol = 1e-10, update_net = true) do
+    runse!(net)
+  end
   writeSEStateCSV(net; file = sfile)
   net2 = _create_demo_net()
   readSEStateCSV!(net2; file = sfile)

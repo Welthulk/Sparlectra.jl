@@ -109,7 +109,11 @@ function _build_success_lifecycle_metadata(raw_result::SparlectraRunResult, conf
   # execution paths have no thunk and get nothing; no standalone
   # reconstruction is attempted for the overview.
   jacobian_kappa = raw_result.net === nothing ? nothing : _jacobian_condest(raw_result.net; warn_on_failure = false, context = "run metadata", require_thunk = true)
+  apslf_radius_line = rect_status !== nothing && hasproperty(rect_status, :apslf_convergence_line) ? String(rect_status.apslf_convergence_line) : nothing
+  apslf_radius = rect_status !== nothing && hasproperty(rect_status, :apslf_convergence_radius) ? rect_status.apslf_convergence_radius : nothing
   metadata = merge(Dict{String,Any}(
+    "apslf_convergence_radius" => apslf_radius,
+    "apslf_convergence_line" => apslf_radius_line,
     "jacobian_condition_estimate" => jacobian_kappa,
     "jacobian_condition_verdict" => jacobian_kappa === nothing ? nothing : _condition_verdict(jacobian_kappa),
     "jacobian_condition_line" => jacobian_kappa === nothing ? nothing : _condition_report_line(jacobian_kappa; tol = config.powerflow.tol),

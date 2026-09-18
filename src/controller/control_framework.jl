@@ -41,8 +41,15 @@ Base.@kwdef struct ControlConfig
   enabled::Bool = true
   max_outer_iterations::Int = 20
   trace::Bool = true
+  # one console line per control pass (issue #387); only with the
+  # inner-solver diagnostics switched on (output.console_diagnostics: full)
   log_iterations::Bool = true
   stop_on_pf_failure::Bool = true
+  # repeat the full inner-solver diagnostic blocks on EVERY control pass.
+  # Off by default: the first pass prints them once, later passes get the
+  # one-line summary above, because the blocks repeat with identical
+  # content whenever nothing changes (issue #387)
+  verbose_passes::Bool = false
   controllers::Vector{Any} = Any[]
 end
 
@@ -56,6 +63,9 @@ Base.@kwdef struct ControlRunResult
   outer_iterations::Int = 0
   powerflow_solves::Int = 0
   last_pf_iterations::Int = 0
+  # inner iterations summed over all passes (the result header reports the
+  # last pass as "Iterations"; this is the whole run, issue #387)
+  total_pf_iterations::Int = 0
   last_pf_status::Symbol = :not_run
   controllers::Vector{NamedTuple} = NamedTuple[]
   trace::Vector{NamedTuple} = NamedTuple[]
@@ -178,13 +188,21 @@ function run_control!(net::Any; controllers::Vector{<:AbstractOuterController} =
     return _run_control_baseline_pf!(net, pf_config, verbose, performance_profile, :disabled)
   end
   pf_config_resolved = _resolve_control_pf_config(pf_config)
-  pf_runner = () -> runpf!(net; config = pf_config_resolved, verbose = verbose, performance_profile = performance_profile)
+  # The inner solver treats every call as a standalone solve and prints its
+  # full diagnostic set when verbose. In a control loop that set repeated
+  # once per pass with identical content (issue #387): the first pass keeps
+  # the full output, later passes run quiet and get one summary line each
+  # (control.log_iterations), unless control.verbose_passes asks for the
+  # whole set on every pass.
+  pf_runner = (pass_verbose) -> runpf!(net; config = pf_config_resolved, verbose = pass_verbose, performance_profile = performance_profile)
+  repeat_verbose = control_config.verbose_passes ? verbose : 0
   context = (pf_config = pf_config_resolved, control_config = control_config, verbose = verbose, performance_profile = performance_profile, outer_iteration = 0)
   states = AbstractControlState[control_initialize!(ctrl, net, context) for ctrl in controllers]
-  ite, erg = pf_runner()
+  ite, erg = pf_runner(verbose)
   solves = 1
+  total_ite = ite
   if erg != 0
-    result = ControlRunResult(status = :pf_failed, converged = false, powerflow_solves = solves, last_pf_iterations = ite, last_pf_status = :failed)
+    result = ControlRunResult(status = :pf_failed, converged = false, powerflow_solves = solves, last_pf_iterations = ite, last_pf_status = :failed, total_pf_iterations = total_ite)
     net.control_result = result
     return result
   end
@@ -228,10 +246,12 @@ function run_control!(net::Any; controllers::Vector{<:AbstractOuterController} =
       status = :blocked
       break
     end
-    ite, erg = pf_runner()
+    ite, erg = pf_runner(repeat_verbose)
     solves += 1
+    total_ite += ite
+    verbose > 0 && control_config.log_iterations && _print_control_pass_line(net, it, max_outer, ite, erg)
     if erg != 0
-      result = ControlRunResult(status = :pf_failed, converged = false, outer_iterations = it, powerflow_solves = solves, last_pf_iterations = ite, last_pf_status = :failed, trace = trace)
+      result = ControlRunResult(status = :pf_failed, converged = false, outer_iterations = it, powerflow_solves = solves, last_pf_iterations = ite, last_pf_status = :failed, trace = trace, total_pf_iterations = total_ite)
       net.control_result = result
       return result
     end
@@ -242,7 +262,25 @@ function run_control!(net::Any; controllers::Vector{<:AbstractOuterController} =
   for (i, ctrl) in enumerate(controllers)
     append!(rows, control_report_rows(ctrl, net, states[i], context))
   end
-  result = ControlRunResult(status = status, converged = status == :converged, outer_iterations = outer_iterations, powerflow_solves = solves, last_pf_iterations = ite, last_pf_status = :ok, controllers = rows, trace = trace, elements = controllableElements(net))
+  result = ControlRunResult(status = status, converged = status == :converged, outer_iterations = outer_iterations, powerflow_solves = solves, last_pf_iterations = ite, last_pf_status = :ok, controllers = rows, trace = trace, elements = controllableElements(net), total_pf_iterations = total_ite)
   net.control_result = result
   return result
+end
+
+## One line per control pass after the first (issue #387): convergence,
+## mismatch and the Q-limit counters of that pass, so a change in the
+## active set is visible without the full per-pass diagnostic blocks.
+## The counters come from the stored rectangular status; the DC and APSLF
+## solvers refuse controllers, so a missing status only means the solve
+## did not get that far.
+function _print_control_pass_line(net, it::Int, max_outer::Int, ite::Int, erg::Int)
+  st = rectangular_pf_status(net)
+  if st === nothing
+    println(stdout, "control pass ", it, "/", max_outer, ": ", erg == 0 ? "converged" : "NOT converged", " in ", ite, " iteration(s)")
+    return nothing
+  end
+  changes = st.pv_pq_switching_events + st.qlimit_active_set_changes + st.qlimit_reenable_events
+  change_text = changes == 0 ? "no active-set change" : string(st.pv_pq_switching_events, " PV->PQ event(s), ", st.qlimit_active_set_changes, " active-set change(s), ", st.qlimit_reenable_events, " re-enable event(s)")
+  @printf(stdout, "control pass %d/%d: %s in %d iteration(s), mismatch %.3e, %s\n", it, max_outer, st.final_converged ? "converged" : "NOT converged", ite, st.final_mismatch, change_text)
+  return nothing
 end

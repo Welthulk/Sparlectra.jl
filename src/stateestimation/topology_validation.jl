@@ -81,7 +81,13 @@ Checks (thresholds as sigma multiples, keywords mirror the
   `k * sqrt(sum sigma^2)`, for P and Q separately. Partially measured
   nodes and nodes inside closed-link clusters are skipped, never guessed.
 """
-function validate_topology(net::Net, measurements::Vector{Measurement} = Measurement[m for m in net.measurements]; k_open::Float64 = state_estimation_config().topology_open_flow_k, k_dead::Float64 = state_estimation_config().topology_dead_flow_k, k_v::Float64 = state_estimation_config().topology_voltage_k, k_kcl::Float64 = state_estimation_config().topology_kcl_k)
+function validate_topology(net::Net, measurements::Vector{Measurement} = Measurement[m for m in net.measurements])
+  # thresholds from the registry (state_estimation.topology_*, #381)
+  base = state_estimation_config()
+  k_open = base.topology_open_flow_k
+  k_dead = base.topology_dead_flow_k
+  k_v = base.topology_voltage_k
+  k_kcl = base.topology_kcl_k
   findings = NamedTuple[]
   active = [m for m in measurements if m.active]
   nby = _bus_name_by_idx(net)
@@ -275,7 +281,7 @@ end
 ## the stage-1 status-contradiction findings plus the switchable elements
 ## of stage-2 suspected stations (stage-2 stations first, open design
 ## decision 3). Elements are (kind = :branch | :link, idx).
-function _topology_auto_candidates(net::Net, measurements::Vector{Measurement}; max_candidates::Int = 5, maxIte::Int = state_estimation_config().max_iter, tol::Float64 = state_estimation_config().tol)
+function _topology_auto_candidates(net::Net, measurements::Vector{Measurement}; max_candidates::Int = 5)
   out = NamedTuple{(:kind, :idx),Tuple{Symbol,Int}}[]
   seen = Set{Tuple{Symbol,Int}}()
   addc(kind, idx) = begin
@@ -287,7 +293,7 @@ function _topology_auto_candidates(net::Net, measurements::Vector{Measurement}; 
   # stage-2 stations first: run the diagnostics fingerprint (with the
   # caller's solver settings, the tight defaults would under-iterate) and
   # collect every switchable element touching a suspected station
-  diag = runse_diagnostics(net, measurements; maxIte = maxIte, tol = tol)
+  diag = runse_diagnostics(net, measurements)
   reps, _ = _topology_station_map(net)
   for f in something(diag.topology_findings, NamedTuple[])
     f.kind == :topology_error_suspected_at_station || continue
@@ -329,12 +335,15 @@ accepted. A hypothesis is `:hypothesis_supported` only when the toggled
 run lands inside the Wilson-Hilferty band while the original run failed it
 `:high`; several supported hypotheses are flagged `ambiguous`.
 """
-function test_topology_hypotheses(net::Net, measurements::Vector{Measurement} = Measurement[m for m in net.measurements]; candidates = :auto, max_candidates::Int = 5, maxIte::Int = state_estimation_config().max_iter, tol::Float64 = state_estimation_config().tol)
-  cands = candidates === :auto ? _topology_auto_candidates(net, measurements; max_candidates = max_candidates, maxIte = maxIte, tol = tol) : [(kind = Symbol(c.kind), idx = Int(c.idx)) for c in candidates]
+function test_topology_hypotheses(net::Net, measurements::Vector{Measurement} = Measurement[m for m in net.measurements]; candidates = :auto, max_candidates::Int = 5)
+  # working-copy estimates: the run's settings without write-back and
+  # without the precheck (the hypotheses ARE the topology question)
+  hyp_cfg = _se_config_with(state_estimation_config(); update_net = false, topology_precheck = false)
+  cands = candidates === :auto ? _topology_auto_candidates(net, measurements; max_candidates = max_candidates) : [(kind = Symbol(c.kind), idx = Int(c.idx)) for c in candidates]
   length(cands) > max_candidates && (cands = cands[1:max_candidates])
   # baseline on an untouched working copy (the caller's net stays pristine)
   base_net = deepcopy(net)
-  base = runse!(base_net, measurements; maxIte = maxIte, tol = tol, updateNet = false, topologyPrecheck = false)
+  base = _runse_configured!(base_net, measurements, hyp_cfg)
   base_verdict = _band_test_verdict(base.objectiveJ, base.dof)
   nby = _bus_name_by_idx(net)
   busname(b) = get(nby, Int(b), string(Int(b)))
@@ -359,7 +368,7 @@ function test_topology_hypotheses(net::Net, measurements::Vector{Measurement} = 
     end
     hypothesis = current == :closed ? "actually open" : "actually closed"
     res = try
-      runse!(work, measurements; maxIte = maxIte, tol = tol, updateNet = false, topologyPrecheck = false)
+      _runse_configured!(work, measurements, hyp_cfg)
     catch err
       push!(rows, (element = label, kind = c.kind, idx = c.idx, current_status = current, hypothesis = hypothesis, j_before = base.objectiveJ, j_after = NaN, z_before = base_verdict.z_wh, z_after = NaN, verdict = :inconclusive, note = sprint(showerror, err), elapsed_s = (time_ns() - t0) / 1e9))
       continue

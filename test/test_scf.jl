@@ -1302,6 +1302,49 @@ mpc.branch = [
         @test !occursin('.', split(sc_de_lines[2], ';')[5])
         @test occursin(',', split(sc_de_lines[2], ';')[5])
       end
+      # issue #386: one writer for every result CSV. The SE state CSV follows
+      # the format too and reads back in every format; the AC island report
+      # and the generic writer as well.
+      cfg_obj_de = Sparlectra.load_sparlectra_config(cfg_de; reload = true)
+      @test Sparlectra.result_csv_format() == "technical"
+      @test with_sparlectra_config(Sparlectra.result_csv_format, cfg_obj_de) == "excel_de"
+      gen_path = joinpath(d, "generic.csv")
+      Sparlectra.write_result_csv(gen_path, ("name", "value", "flag"), (("a;b", 1234.5, true), ("c", 2, false)); format = "excel_de")
+      gen_lines = readlines(gen_path)
+      @test gen_lines[1] == "name;value;flag"
+      @test gen_lines[2] == "\"a;b\";1.234,5;true"
+      Sparlectra.write_result_csv(gen_path, ("name", "value"), (("x", 0.5),))
+      @test readlines(gen_path) == ["name,value", "x,0.5"]
+      # SE state round trip under excel_de (decimal comma, semicolon)
+      scf_dir = joinpath(dirname(@__DIR__), "data", "scf")
+      se_net = Sparlectra.importSCF(joinpath(scf_dir, "sp_case5.scf.json"))
+      Sparlectra.readMeasurementsCSV!(se_net; file = joinpath(scf_dir, "sp_case5.measurements.csv"))
+      se_res = run_with_expected_warnings(() -> runse!(se_net), (r"topology precheck reported",))
+      @test se_res.converged
+      se_path = joinpath(d, "se_state_de.csv")
+      with_sparlectra_config(() -> writeSEStateCSV(se_net; file = se_path), cfg_obj_de)
+      se_lines = readlines(se_path)
+      @test se_lines[1] == "# sparlectra-se-state v1"
+      @test se_lines[2] == "bus;vm_pu;va_deg;pinj_MW;qinj_MVar"
+      @test occursin(',', split(se_lines[3], ';')[2])
+      se_back = Sparlectra.importSCF(joinpath(scf_dir, "sp_case5.scf.json"))
+      readSEStateCSV!(se_back; file = se_path)
+      @test all(isapprox(se_back.nodeVec[i]._vm_pu, se_net.nodeVec[i]._vm_pu; atol = 1e-12) for i in eachindex(se_net.nodeVec))
+      @test all(isapprox(se_back.nodeVec[i]._va_deg, se_net.nodeVec[i]._va_deg; atol = 1e-10) for i in eachindex(se_net.nodeVec))
+      # AC island report in the run's format
+      isl_path = joinpath(d, "ac_islands_de.csv")
+      with_sparlectra_config(() -> Sparlectra.write_ac_island_report(isl_path, Sparlectra.detect_ac_islands(se_net)), cfg_obj_de)
+      @test occursin(';', readlines(isl_path)[1])
+      # every CSV artifact of one power-flow run carries the declared delimiter
+      pf_de = start_powerflow_run(Dict{String,Any}("casefile" => fsc, "config_file" => cfg_de, "output_root" => joinpath(d, "pf_de_root")))
+      @test pf_de["status"] == "succeeded"
+      pf_csvs = filter(f -> endswith(f, ".csv"), readdir(pf_de["output_dir"]))
+      @test !isempty(pf_csvs)
+      for f in pf_csvs
+        data_lines = filter(l -> !startswith(l, "#"), readlines(joinpath(pf_de["output_dir"], f)))
+        first_line = isempty(data_lines) ? "" : data_lines[1]
+        @test occursin(';', first_line)
+      end
       # an unknown node id in the sweep fails on the run, not with an empty table
       root = Sparlectra.scf_json_parse(read(fsc, String))
       root["sparlectra"]["short_circuit"]["buses"] = Any[999999]

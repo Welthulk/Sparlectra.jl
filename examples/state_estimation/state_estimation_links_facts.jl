@@ -58,7 +58,9 @@ function run_state_estimation_links_facts()
   std = measurementStdDevs(vm = 1e-3, pinj = 0.1, qinj = 0.1, pflow = 0.1, qflow = 0.1)
   meas = generateMeasurementsFromPF(net; noise = false, stddev = std)
   append!(net.measurements, meas)
-  res = runse!(net; maxIte = 30, tol = 1e-10, updateNet = true)
+  res = with_state_estimation_config(max_iter = 30, tol = 1e-10, update_net = true) do
+    runse!(net)
+  end
   b1 = geNetBusIdx(net = net, busName = "B1")
   b1a = geNetBusIdx(net = net, busName = "B1a")
   println("SE on the contracted net:")

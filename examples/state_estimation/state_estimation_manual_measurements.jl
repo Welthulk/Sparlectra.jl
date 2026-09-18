@@ -101,13 +101,17 @@ function main()
   ite_pf = build_manual_measurements(net)
   reset_to_flatstart!(net)
 
-  gobs = evaluate_global_observability(net; flatstart = false, jacEps = 1e-6)
+  gobs = with_state_estimation_config(flatstart = false, jac_eps = 1e-6) do
+    evaluate_global_observability(net)
+  end
   println("Manual measurement example")
   println("==========================")
   @printf("PF iterations used for synthetic data: %d\n", ite_pf)
   @printf("Measurements: %d, states: %d, quality: %s\n", gobs.n_measurements, gobs.n_states, string(gobs.quality))
 
-  se = runse!(net; maxIte = 12, tol = 1e-6, flatstart = false, jacEps = 1e-6, updateNet = true)
+  se = with_state_estimation_config(max_iter = 12, tol = 1e-6, flatstart = false, jac_eps = 1e-6, update_net = true) do
+    runse!(net)
+  end
   @printf("SE converged: %s in %d iterations\n", string(se.converged), se.iterations)
   @printf("Objective J: %.6e\n", se.objectiveJ)
   @printf("Residual norm: %.6e\n", se.residualNorm)

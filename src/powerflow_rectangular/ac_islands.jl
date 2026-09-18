@@ -261,10 +261,10 @@ function detect_ac_islands(net::Net)
   return (rows = rows, bus_to_island = bus_to_island, terminal_by_bus = terminal_by_bus)
 end
 
-function write_ac_island_report(path::AbstractString, report)
+function write_ac_island_report(path::AbstractString, report; format = result_csv_format())
   rows = report.rows
   cols = (:island_id, :n_bus, :n_branch, :n_pq, :n_pv, :n_ref, :n_generator, :n_load, :dc_terminal_count, :dc_terminal_buses, :total_load_p_mw, :total_gen_p_mw, :total_dcline_p_mw, :total_load_q_mvar, :total_gen_q_mvar, :total_dcline_q_mvar, :imbalance_p_mw, :has_ref, :chosen_ref_bus, :status, :note)
-  _write_namedtuple_csv(path, rows, cols; format = "technical")
+  _write_namedtuple_csv(path, rows, cols; format = format)
   return path
 end
 

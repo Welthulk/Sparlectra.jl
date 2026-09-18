@@ -893,6 +893,12 @@ function printACPFlowResults(
 
   @printf(io, "Date           :%20s\n", current_date)
   @printf(io, "Iterations     :%10d\n", ite)
+  # with an outer control loop the count above is the LAST pass only; say
+  # so and give the whole run next to it (issue #387)
+  cres = net.control_result
+  if cres !== nothing && cres.powerflow_solves > 1
+    @printf(io, "Control passes :%10d (Iterations above = last pass; %d inner iterations in total)\n", cres.powerflow_solves, cres.total_pf_iterations)
+  end
   @printf(io, "Flatstart      :%10s\n", net.flatstart ? "Yes" : "No")
   @printf(io, "Tolerance      : %.1e\n", tol)
   @printf(io, "Solver         :%15s\n", string(solver))
@@ -912,6 +918,11 @@ function printACPFlowResults(
   # _jacobian_condest, condition_number.jl).
   kappa = _jacobian_condest(net; context = "result output")
   kappa === nothing || @printf(io, "Jacobian cond. : %s\n", _condition_report_line(kappa; tol = tol))
+  # APSLF runs: the Padé-pole margin next to the condition number
+  rect_status_hdr = rectangular_pf_status(net)
+  if rect_status_hdr !== nothing && hasproperty(rect_status_hdr, :apslf_convergence_line)
+    @printf(io, "APSLF radius   : %s\n", String(rect_status_hdr.apslf_convergence_line))
+  end
 
   @printf(io, "BaseMVA        :%10d\n", net.baseMVA)
   # sources appear in the count only when present, keeping the common

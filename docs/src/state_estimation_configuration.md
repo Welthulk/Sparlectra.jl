@@ -10,6 +10,14 @@ effective value (case sidecar, else this file, else the default below)
 instead of a fixed literal. The remaining estimator keys stay
 installation-wide, set here or via the API only.
 
+The estimator reads every setting from the active configuration (#381):
+`runse!(net)`, `runse_diagnostics`, `validate_measurements` and
+`validate_topology` take no settings. A run with other values installs
+them for its duration, `with_state_estimation_config(max_iter = 12) do
+runse!(net) end`, and the previous configuration is back afterwards. The
+service and the Web UI install the effective configuration of the case
+(general file, sidecar, form values) the same way.
+
 | YAML path | Type | Default | Allowed values | Meaning | Use when | Avoid when | Performance impact | Interactions |
 |---|---:|---:|---|---|---|---|---|---|
 | `state_estimation.enabled` | Bool | `true` | `true`, `false` | Enables SE stage. | Measurement-driven workflows. | No measurement model/data. | Extra nonlinear solve pass. | `update_net`, PF start source. |

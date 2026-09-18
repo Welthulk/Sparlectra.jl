@@ -108,14 +108,8 @@ end
 function _write_island_mismatch_history_artifact(output_dir::AbstractString, island_id::Integer, row_status)::String
   artifact = joinpath(output_dir, "ac_island_$(island_id)_mismatch_history.csv")
   history = _status_property(row_status, :mismatch_history, Float64[])
-  open(artifact, "w") do io
-    println(io, "iteration,max_mismatch")
-    if history isa AbstractVector
-      for (idx, value) in pairs(history)
-        println(io, idx, ",", value)
-      end
-    end
-  end
+  rows = history isa AbstractVector ? ((idx, value) for (idx, value) in pairs(history)) : ()
+  write_result_csv(artifact, ("iteration", "max_mismatch"), rows)
   return artifact
 end
 
@@ -183,8 +177,11 @@ function _write_ac_island_diagnostics!(net::Net, cfg::PowerFlowConfig, performan
   statuses_present = statuses isa AbstractDict && !isempty(statuses)
   artifacts = String[]
   summary_path = joinpath(output_dir, "ac_island_solver_summary.csv")
+  # the run's CSV format (issue #386), one writer for every result CSV
+  isl_fmt = _resolve_detailed_csv_format(result_csv_format())
+  isl_delim = isl_fmt.delimiter
   open(summary_path, "w") do io
-    println(io, "island_id,n_bus,n_branch,ref_bus,chosen_ref_bus,n_pq,n_pv,n_ref,ref_promoted,initial_mismatch,first_mismatch,last_mismatch,best_mismatch,min_voltage_magnitude,max_voltage_magnitude,max_angle_step,first_nonfinite_iteration,last_finite_mismatch,worst_bus,worst_equation,iterations,final_mismatch,mismatch_status,final_status,failure_reason,stage,exception_type,exception_message,stacktrace_top,start_projection,autodamp,autodamp_min,max_iter,tol,angle_mode,voltage_mode,qlimits_enabled,qlimit_enforcement_mode,q_limit_processing_status,pv_pq_switching_events,qlimit_active_set_changes,qlimit_reenable_events,guarded_narrow_q_pv_buses,final_pv_voltage_residual,wrong_branch_detection,start_current_iteration_enabled,workspace_reuse,workspace_preallocate,wrong_branch_status,wrong_branch_reason")
+    println(io, join(("island_id", "n_bus", "n_branch", "ref_bus", "chosen_ref_bus", "n_pq", "n_pv", "n_ref", "ref_promoted", "initial_mismatch", "first_mismatch", "last_mismatch", "best_mismatch", "min_voltage_magnitude", "max_voltage_magnitude", "max_angle_step", "first_nonfinite_iteration", "last_finite_mismatch", "worst_bus", "worst_equation", "iterations", "final_mismatch", "mismatch_status", "final_status", "failure_reason", "stage", "exception_type", "exception_message", "stacktrace_top", "start_projection", "autodamp", "autodamp_min", "max_iter", "tol", "angle_mode", "voltage_mode", "qlimits_enabled", "qlimit_enforcement_mode", "q_limit_processing_status", "pv_pq_switching_events", "qlimit_active_set_changes", "qlimit_reenable_events", "guarded_narrow_q_pv_buses", "final_pv_voltage_residual", "wrong_branch_detection", "start_current_iteration_enabled", "workspace_reuse", "workspace_preallocate", "wrong_branch_status", "wrong_branch_reason"), isl_delim))
     for row in pre
       # Never let an island that was not individually attempted inherit the
       # combined status (bug: 158 single-bus islands each reported the failed
@@ -299,7 +296,7 @@ function _write_ac_island_diagnostics!(net::Net, cfg::PowerFlowConfig, performan
           println(log, "solver_settings: ", row.settings)
         end
       end
-      println(io, join((row.island_id, row.n_bus, row.n_branch, row.ref_bus, row.ref_bus, row.n_pq, row.n_pv, row.n_ref, row.ref_promoted, initial_mismatch, "unavailable", final_mismatch_display, best_mismatch, "unavailable", "unavailable", "unavailable", first_nonfinite_iteration, last_finite_mismatch, "unavailable", "unavailable", row_iterations, final_mismatch_display, mismatch_status, final_status, reason, stage, _csv_field(exception_type, ','), _csv_field(exception_message, ','), _csv_field(stacktrace_top, ','), row.settings.start_projection, row.settings.autodamp, row.settings.autodamp_min, row.settings.max_iter, row.settings.tol, row.settings.angle_mode, row.settings.voltage_mode, row.settings.qlimits_enabled, row.settings.qlimit_enforcement_mode, q_limit_processing_status, pv_pq_switching_events, qlimit_active_set_changes, qlimit_reenable_events, guarded_narrow_q_pv_buses, final_pv_voltage_residual, row.settings.wrong_branch_detection, row.settings.start_current_iteration_enabled, row.settings.rectangular_workspace_reuse, row.settings.rectangular_preallocate_workspace, wrong_branch_status, wrong_branch_reason), ','))
+      println(io, join((_csv_field(v, isl_delim, isl_fmt) for v in (row.island_id, row.n_bus, row.n_branch, row.ref_bus, row.ref_bus, row.n_pq, row.n_pv, row.n_ref, row.ref_promoted, initial_mismatch, "unavailable", final_mismatch_display, best_mismatch, "unavailable", "unavailable", "unavailable", first_nonfinite_iteration, last_finite_mismatch, "unavailable", "unavailable", row_iterations, final_mismatch_display, mismatch_status, final_status, reason, stage, _csv_field(exception_type, ','), _csv_field(exception_message, ','), _csv_field(stacktrace_top, ','), row.settings.start_projection, row.settings.autodamp, row.settings.autodamp_min, row.settings.max_iter, row.settings.tol, row.settings.angle_mode, row.settings.voltage_mode, row.settings.qlimits_enabled, row.settings.qlimit_enforcement_mode, q_limit_processing_status, pv_pq_switching_events, qlimit_active_set_changes, qlimit_reenable_events, guarded_narrow_q_pv_buses, final_pv_voltage_residual, row.settings.wrong_branch_detection, row.settings.start_current_iteration_enabled, row.settings.rectangular_workspace_reuse, row.settings.rectangular_preallocate_workspace, wrong_branch_status, wrong_branch_reason)), isl_delim))
     end
   end
   artifacts_summary = (summary_path, artifacts...)
