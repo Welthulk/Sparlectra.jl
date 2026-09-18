@@ -684,8 +684,9 @@ therefore also offers **off**, which switches the handling off, and it shows
 `off` whenever the handling is off, so the form cannot state a mode the run
 will not use.
 
-The **Export detailed result CSV files** checkbox is off by default because
-large networks can produce large files. When enabled for a successful run, it
+The **Write bus/branch CSV files** checkbox (next to the CSV format, which
+applies to every CSV file of the run) exists because large networks produce
+large files; the API default is off. When enabled for a successful run, it
 writes Excel-friendly UTF-8 artifacts:
 
 - `bus_voltages_complex.csv` contains one row per bus, including `vm_pu`,

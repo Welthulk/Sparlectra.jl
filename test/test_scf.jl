@@ -156,6 +156,28 @@ end
 
 function run_scf_tests()
   @testset "scf case format (writer)" begin
+    @testset "legacy key names in the in-file config block (0.13.0)" begin
+      # a 0.10.x export carried model keys under their old prefixes in the
+      # deprecated sparlectra.config block; the run refused them as "not
+      # case scope" although they only have a new name (Web UI run
+      # 58b55f73, case14.scf.json exported by 0.10.0)
+      d = mktempdir()
+      src = joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json")
+      root = Sparlectra.scf_json_parse(read(src, String))
+      root["sparlectra"]["config"] = Dict{String,Any}("matpower_import.auto_profile" => "recommend", "transformer.tap_changer_model" => "ideal", "matpower_import.bus_shunt_model" => "admittance", "power_flow.tol" => 1.0e-7)
+      legacy = joinpath(d, "sp_case14.scf.json")
+      write(legacy, Sparlectra.scf_json_string(root))
+      resolved = run_with_expected_warnings(() -> Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, legacy), (r"legacy configuration key name", r"is deprecated"))
+      @test resolved.merged_overrides["model.auto_profile"] == "recommend"
+      @test resolved.merged_overrides["model.tap_changer_model"] == "ideal"
+      @test resolved.merged_overrides["power_flow.tol"] == 1.0e-7
+      @test !haskey(resolved.merged_overrides, "matpower_import.auto_profile")
+      @test resolved.config.powerflow.tol == 1.0e-7
+      # a key that is not case scope under ANY name is still refused
+      root["sparlectra"]["config"] = Dict{String,Any}("benchmark.enabled" => true)
+      write(legacy, Sparlectra.scf_json_string(root))
+      @test_throws Sparlectra.ConfigResolveError Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, legacy)
+    end
     @testset "units declaration (task_scf_units step 1)" begin
       # absent means si: every existing file reads unchanged
       plain = Sparlectra.importSCF(joinpath(dirname(@__DIR__), "data", "scf", "sp_case5.scf.json"))
@@ -1345,6 +1367,21 @@ mpc.branch = [
         first_line = isempty(data_lines) ? "" : data_lines[1]
         @test occursin(';', first_line)
       end
+      # the Web UI form field (request detailed_result_csv_format) with a
+      # technical configuration file: the request value is folded into the
+      # run's configuration, so EVERY CSV of the run carries the semicolon,
+      # not only the two detailed exports (Web UI run d66fa4cd)
+      pf_req = start_powerflow_run(Dict{String,Any}("casefile" => fsc, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(d, "pf_req_root"), "detailed_result_csv" => true, "detailed_result_csv_format" => "excel_de"))
+      @test pf_req["status"] == "succeeded"
+      req_csvs = filter(f -> endswith(f, ".csv"), readdir(pf_req["output_dir"]))
+      @test "bus_powers.csv" in req_csvs
+      for f in req_csvs
+        data_lines = filter(l -> !startswith(l, "#"), readlines(joinpath(pf_req["output_dir"], f)))
+        @test occursin(';', isempty(data_lines) ? "" : data_lines[1])
+      end
+      @test occursin("csv_format: excel_de", read(joinpath(pf_req["output_dir"], "effective_config.yaml"), String))
+      # the registry is the template again after the run
+      @test Sparlectra.result_csv_format() == "technical"
       # an unknown node id in the sweep fails on the run, not with an empty table
       root = Sparlectra.scf_json_parse(read(fsc, String))
       root["sparlectra"]["short_circuit"]["buses"] = Any[999999]

@@ -994,6 +994,16 @@ function _se_config_with(base::StateEstimationConfig; kwargs...)
   return StateEstimationConfig(; vals...)
 end
 
+# a copy of any keyword-constructible configuration struct with fields replaced
+function _struct_with(cfg::T; kwargs...) where {T}
+  vals = Dict{Symbol,Any}(f => getfield(cfg, f) for f in fieldnames(T))
+  for (k, v) in kwargs
+    haskey(vals, k) || throw(ArgumentError("unknown $(T) field $(k)"))
+    vals[k] = v
+  end
+  return T(; vals...)
+end
+
 # a copy of a whole SparlectraConfig with top-level blocks replaced
 function _sparlectra_config_with(cfg::SparlectraConfig; kwargs...)
   vals = Dict{Symbol,Any}(f => getfield(cfg, f) for f in fieldnames(SparlectraConfig))
@@ -2019,6 +2029,29 @@ Rewrite a version-`version` configuration dictionary to the current layout
 by applying every alias step in order. A value is moved only when the new
 key is not set (an explicitly set new key wins over a stale old one).
 """
+# The flat (dotted-key) twin for the deprecated `sparlectra.config` block of
+# an SCF case file, which is version-less and therefore never went through
+# the versioned alias pass: every alias step applies, one warning names the
+# old keys, an existing new key wins over its alias. Without this a case
+# exported by 0.10.x with `matpower_import.auto_profile` in the block was
+# refused as "not case scope" although the key merely has a new name.
+function _apply_flat_config_aliases!(out::AbstractDict, context::AbstractString)
+  applied = Pair{String,String}[]
+  for step in sort!(collect(keys(_CONFIG_ALIASES)))
+    for (old_key, new_key) in _CONFIG_ALIASES[step]
+      haskey(out, old_key) || continue
+      value = pop!(out, old_key)
+      haskey(out, new_key) || (out[new_key] = value)
+      push!(applied, old_key => new_key)
+    end
+  end
+  if !isempty(applied)
+    mapping = join((string(o, " -> ", n) for (o, n) in applied), ", ")
+    @warn "$(context) uses $(length(applied)) legacy configuration key name(s), applied through the documented aliases: $(mapping). Re-export the case once to update the file." maxlog = 1 _id = Symbol("flat_alias_", join(first.(applied), ","))
+  end
+  return out
+end
+
 function _apply_config_aliases!(raw::AbstractDict, version::Int, context::AbstractString)
   # Collected, not warned one by one. A file carrying nine version-0 names
   # produced nine boxed warnings at EVERY start, which is what a user reports

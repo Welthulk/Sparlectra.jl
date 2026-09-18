@@ -685,6 +685,21 @@ function _run_sparlectra_api(;
     return _api_failure(_config_resolve_reason(err), sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
   end
   config = resolved.config
+  # The request-level CSV format (Web UI form field, deprecated API
+  # keyword) is folded into the run's configuration HERE, before the run
+  # installs it: every writer reads output.csv_format from the registry,
+  # and a run with excel_de in the form used to get the two detailed
+  # exports in excel_de and every other CSV in the file's technical format.
+  request_csv_format = detailed_result_csv_format !== nothing ? String(detailed_result_csv_format) : (detailed_result_csv_semicolon ? "excel_de" : nothing)
+  if request_csv_format !== nothing && request_csv_format != String(config.output.csv_format)
+    request_csv_symbol = try
+      Symbol(_resolve_detailed_csv_format(request_csv_format).name)
+    catch err
+      return _api_failure("invalid_detailed_result_csv_format", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
+    end
+    config = _sparlectra_config_with(config; output = _struct_with(config.output; csv_format = request_csv_symbol))
+    _dotted_config_set!(resolved.effective_raw, "output.csv_format", request_csv_format)
+  end
   # The resolved configuration IS the configuration of this run (#381,
   # #386): it is installed in the registry until the run returns, so every
   # module that fetches its settings itself (the result-CSV writers with
