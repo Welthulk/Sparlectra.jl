@@ -27,6 +27,17 @@ Sparlectra therefore provides more than one Q-limit enforcement mode.
 - `classic_simultaneous` is a classical reference mode. It first solves the base power flow with Q-limit switching disabled. If the base solution converges, all detected Q-limit violations are clamped and converted in one outer-loop pass.
 - `classic_one_at_a_time` follows the same classical principle, but handles only the largest violation per outer-loop pass. This can make the switching sequence easier to inspect.
 
+The active-set mode also releases a clamped machine back to PV, and it
+decides that on the voltage side: a machine at Qmax whose voltage sits
+above its setpoint (by more than `power_flow.qlimits.reenable_v_hyst_pu`,
+default `1e-4` pu) needs less than Qmax to hold the setpoint and goes back
+to PV; the mirror image applies at Qmin. Up to 0.12.5 the release tested
+whether the reactive injection lay strictly inside the band, which is
+never true for a clamped bus at a converged point, so the solver kept
+non-physical solutions that the Q-V check then reported. Cooldown and the
+one-retry guard still apply, so a machine flipping between the clamp and
+the voltage constraint is held after its first retry.
+
 There is one outcome worth recognizing by name. A run can converge
 numerically and still fail to hold every reactive limit: the solver then
 reports the status `converged_limits_failed` with the reason

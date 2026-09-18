@@ -513,14 +513,28 @@ end
         allow_reenable::Bool,
         q_hyst_pu::Float64,
         cooldown_iters::Int,
+        get_vm_pu=nothing,
+        get_vset_pu=nothing,
+        v_hyst_pu::Float64=1e-4,
         verbose::Int=0,
         io::IO=stdout,
     ) -> (changed::Bool, reenabled::Bool)
 
 Core PV/Q-limit active-set logic shared by solvers.
 
+The PQ->PV release of a clamped bus is decided on the VOLTAGE side (#375,
+the "back off" rule of Sundaresh and Rao): a bus clamped at Qmax is
+released when `Vm > Vset + v_hyst_pu`, one clamped at Qmin when
+`Vm < Vset - v_hyst_pu`. The reactive injection of a clamped bus converges
+to the limit itself, so the former test "Q strictly inside the band"
+could never be true at a converged point and non-physical solutions were
+kept. The Q test remains the fallback for a bus without a stored side or
+without the voltage callbacks. Cooldown and the one-retry guard apply to
+both forms.
+
 Callbacks:
 - get_qreq_pu(bus) -> Float64
+- get_vm_pu(bus) -> Float64, get_vset_pu(bus) -> Float64 (voltage-side release)
 - is_pv(bus) -> Bool
 - make_pq!(bus, q_clamp_pu::Float64, side::Symbol)  # side = :min/:max
 - make_pv!(bus)
@@ -541,6 +555,9 @@ function active_set_q_limits!(
   allow_reenable::Bool,
   q_hyst_pu::Float64,
   cooldown_iters::Int,
+  get_vm_pu = nothing,
+  get_vset_pu = nothing,
+  v_hyst_pu::Float64 = 1e-4,
   lock_pv_to_pq_buses::AbstractVector{Int} = Int[],
   on_violation! = nothing,
   verbose::Int = 0,
@@ -693,7 +710,18 @@ function active_set_q_limits!(
       qreq = get_qreq_pu(bus)
       lo, hi = q_limit_band(qmin_pu, qmax_pu, bus, q_hyst_pu)
 
-      ready = (qreq > lo) && (qreq < hi)
+      side = net.qLimitEvents[bus]
+      voltage_rule = get_vm_pu !== nothing && get_vset_pu !== nothing && side in (:min, :max)
+      if voltage_rule
+        # at Qmax the machine would need LESS than Qmax to hold its
+        # setpoint when the voltage sits above it (dQ/dV < 0), so it can
+        # go back to PV; mirror image at Qmin
+        vm = get_vm_pu(bus)
+        vset = get_vset_pu(bus)
+        ready = side == :max ? (vm > vset + v_hyst_pu) : (vm < vset - v_hyst_pu)
+      else
+        ready = (qreq > lo) && (qreq < hi)
+      end
 
       if ready && (cooldown_iters > 0)
         last_it = lastQLimitIter(net, bus)
@@ -706,7 +734,13 @@ function active_set_q_limits!(
         make_pv!(bus)
         delete!(net.qLimitEvents, bus)   # clear event after re-enable
         reenabled = true
-        (verbose > 0) && @printf(io, "PQ->PV Bus %d: Q=%.6f pu (%.6f MVAr) within (%.6f, %.6f) pu ((%.6f, %.6f) MVAr)\n", bus, qreq, qreq * net.baseMVA, lo, hi, lo * net.baseMVA, hi * net.baseMVA)
+        if verbose > 0
+          if voltage_rule
+            @printf(io, "PQ->PV Bus %d: clamped at %s, Vm=%.5f pu %s Vset=%.5f pu (margin %.1e), released\n", bus, String(side), get_vm_pu(bus), side == :max ? "above" : "below", get_vset_pu(bus), v_hyst_pu)
+          else
+            @printf(io, "PQ->PV Bus %d: Q=%.6f pu (%.6f MVAr) within (%.6f, %.6f) pu ((%.6f, %.6f) MVAr)\n", bus, qreq, qreq * net.baseMVA, lo, hi, lo * net.baseMVA, hi * net.baseMVA)
+          end
+        end
       end
     end
   end

@@ -88,7 +88,7 @@ shares the network model and the importers with the power flow.
 
 | Feature | Status | Notes |
 |---|:---:|---|
-| Nonlinear WLS estimator (`runse!`) | ✅ | Iterative WLS on the shared `Net` model; `updateNet = true` writes the estimated state back. |
+| Nonlinear WLS estimator (`runse!`) | ✅ | Iterative WLS on the shared `Net` model; `state_estimation.update_net = true` writes the estimated state back. |
 | SCADA-style measurements | ✅ | `Vm`, `Pinj`, `Qinj`, `Pflow`, `Qflow` types with helper builders. |
 | Branch current magnitudes (`ImagMeas`) | ✅ | Ampere-valued currents as auxiliary measurements (`addImagMeasurement!`), branch ends or shunt bays (bus-referenced variant): excluded from observability by design, gated by iteration (`state_estimation.imag_activation_iteration`) and a 3 sigma value floor, they raise the bad-data localizability (`wii`) of the power measurements. See [State Estimation](state_estimation.md). |
 | Shunt susceptance estimation (`setShuntEstimation!`) | ✅ | Case A: a released shunt's B becomes an estimator state (initialized from the model, analytic injection replacement, freeze guards for unmeasured or unobservable columns), reported in `SEResult.shuntEstimates` with opt-in write-back (`updateShunts`). Case B: `deriveShuntPseudoMeasurements!` derives protected `SHDERIV` ShuntQ pseudo-measurements from bay current plus measured voltage with propagated sigma. Voltage-dependent injection-mode shunts are rejected. See [State Estimation](state_estimation.md). |

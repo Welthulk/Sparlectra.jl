@@ -82,7 +82,9 @@ function main()
 
   # One-time observability check on a noise-free measurement set.
   setMeasurementsFromPF!(net; includeVm = true, includePinj = true, includeQinj = true, includePflow = true, includeQflow = true, noise = false, stddev = noise_std)
-  gobs = evaluate_global_observability(net; flatstart = true, jacEps = 1e-6)
+  gobs = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
+    evaluate_global_observability(net)
+  end
   println("Global observability: quality=$(gobs.quality), measurements=$(gobs.n_measurements), states=$(gobs.n_states)")
 
   vm_rmse = Float64[]
@@ -101,7 +103,9 @@ function main()
       noise = true, stddev = noise_std, rng = MersenneTwister(SEED_BASE + k),
     )
 
-    se = runse!(net; maxIte = SE_MAX_ITER, tol = SE_TOL, flatstart = true, jacEps = 1e-6, updateNet = true)
+    se = with_state_estimation_config(max_iter = SE_MAX_ITER, tol = SE_TOL, flatstart = true, jac_eps = 1e-6, update_net = true) do
+      runse!(net)
+    end
     if !se.converged
       n_failed += 1
       continue

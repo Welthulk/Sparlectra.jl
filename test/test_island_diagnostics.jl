@@ -152,7 +152,7 @@ function run_island_diagnostics_tests()
         # Solved island keeps its true record (regression guard).
         @test row1[col["island_id"]] == "1"
         @test row1[col["iterations"]] == "80"
-        @test row1[col["final_mismatch"]] == "240324.3267233851"
+        @test row1[col["final_mismatch"]] == "240324.326723385"   # 15 significant digits, the result-CSV writer (#386)
         @test row1[col["final_status"]] == "not_converged"
         @test row1[col["failure_reason"]] == "nr_mismatch_not_converged_active_set_unstable"
         @test row1[col["stage"]] == "newton_iteration"
@@ -179,7 +179,7 @@ function run_island_diagnostics_tests()
         @test !isfile(joinpath(dir, "ac_island_2_solver.log"))
         @test !isfile(joinpath(dir, "ac_island_2_mismatch_history.csv"))
         history = read(joinpath(dir, "ac_island_1_mismatch_history.csv"), String)
-        @test occursin("1,2220.614510584437", history)
+        @test occursin("1,2220.61451058444", history)
 
         # Bug C: q_limit_processing_status must not alias failure_reason.
         @test row1[col["qlimits_enabled"]] == "true"

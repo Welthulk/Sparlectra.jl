@@ -25,36 +25,10 @@
 # every other CSV artifact of the run (issue #376 follow-up: with excel_de
 # the power-flow files used ; and a decimal comma while this one still
 # used , and a dot - one run, two formats).
-function _write_short_circuit_csv(path::AbstractString, result::ShortCircuitResult; format = "technical")::String
-  resolved_format = _resolve_detailed_csv_format(format)
-  delimiter = resolved_format.delimiter
-  num(v) = _format_csv_number(Float64(v), resolved_format)
-  open(path, "w") do io
-    println(io, join(("bus", "vn_kV", "island", "status", "c", "zk_ohm", "rx_ratio", "ik_kA", "sk_MVA", "kappa", "ip_kA", "flagged", "reasons"), delimiter))
-    for row in result.rows
-      println(
-        io,
-        join(
-          (
-            _csv_field(String(row.bus), delimiter, resolved_format),
-            num(row.vn_kV),
-            row.island,
-            row.status,
-            num(row.c),
-            num(row.zk_ohm),
-            num(row.rx_ratio),
-            num(row.ik_kA),
-            num(row.sk_MVA),
-            num(row.kappa),
-            num(row.ip_kA),
-            row.contains_defaulted_data,
-            _csv_field(join(row.reasons, "; "), delimiter, resolved_format),
-          ),
-          delimiter,
-        ),
-      )
-    end
-  end
+function _write_short_circuit_csv(path::AbstractString, result::ShortCircuitResult; format = result_csv_format())::String
+  header = ("bus", "vn_kV", "island", "status", "c", "zk_ohm", "rx_ratio", "ik_kA", "sk_MVA", "kappa", "ip_kA", "flagged", "reasons")
+  rows = ((String(row.bus), Float64(row.vn_kV), row.island, row.status, Float64(row.c), Float64(row.zk_ohm), Float64(row.rx_ratio), Float64(row.ik_kA), Float64(row.sk_MVA), Float64(row.kappa), Float64(row.ip_kA), row.contains_defaulted_data, join(row.reasons, "; ")) for row in result.rows)
+  write_result_csv(path, header, rows; format = format)
   return path
 end
 

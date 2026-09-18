@@ -166,9 +166,12 @@ function run_auto_powerflow_tests()
       # recorded in the report (merit left on while autodamp is switched
       # off)
       case = abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json"))
-      # forced non-convergence (user-set max_iter survives every stage) runs
-      # the ladder to its cap with honest skip reasons
-      cfg = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true, overrides = Dict{String,Any}("power_flow" => Dict{String,Any}("mode" => "auto", "max_iter" => 1, "flatstart" => true)))
+      # forced non-convergence (user-set max_iter and tol survive every
+      # stage) runs the ladder to its cap with honest skip reasons. Since
+      # AnalyticLoadFlow 0.9.15 the APSLF seed of stage L6 is good enough
+      # for a one-iteration Newton finish, so max_iter alone no longer
+      # forces the failure; the unreachable tolerance does.
+      cfg = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true, overrides = Dict{String,Any}("power_flow" => Dict{String,Any}("mode" => "auto", "max_iter" => 1, "flatstart" => true, "tol" => 1e-15)))
       r = run_sparlectra(casefile = case, config = cfg)
       @test !r.final_converged
       rec = Sparlectra.auto_pf_record(r.net)
@@ -181,8 +184,8 @@ function run_auto_powerflow_tests()
       @test any(c -> occursin("merit", c) || occursin("trust_region", c) || occursin("autodamp", c), l1.changed)
       l5 = rec.attempts[findfirst(a -> a.stage === :L5_qlimit_mode, rec.attempts)]
       @test isempty(l5.solver) && l5.qlimit_evidence.skipped == "skipped_no_qlimit_evidence"
-      # tolerance is untouched by every stage
-      @test cfg.powerflow.tol == Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true).powerflow.tol
+      # tolerance is untouched by every stage (the user value survives)
+      @test cfg.powerflow.tol == 1e-15
       # precedence: the user's explicit key survives and the conflict is logged
       cfg2 = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true, overrides = Dict{String,Any}("power_flow" => Dict{String,Any}("mode" => "auto", "autodamp" => false)))
       r2 = run_sparlectra(casefile = case, config = cfg2)
@@ -212,20 +215,21 @@ function run_auto_powerflow_tests()
     @testset "DC fallback: honest labeling, off by default" begin
       # the service path cannot override power_flow.flatstart (not a GUI
       # key), so forcing real flat-start non-convergence at max_iter=1
-      # needs a start_state-free copy of the shipped case
+      # (plus an unreachable tol, see above) needs a start_state-free copy
+      # of the shipped case
       case = joinpath(mktempdir(), "sp_case14_flat.scf.json")
       raw = Sparlectra.scf_json_parse(read(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json")), String))
       delete!(raw["sparlectra"], "start_state")
       write(case, Sparlectra.scf_json_string(raw))
       root = mktempdir()
       # enabled: the ladder ends in the labeled DC approximation
-      rdc = start_powerflow_run(Dict{String,Any}("casefile" => case, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "config_overrides" => Dict{String,Any}("power_flow.mode" => "auto", "power_flow.max_iter" => 1, "power_flow.dc.fallback" => true)))
+      rdc = start_powerflow_run(Dict{String,Any}("casefile" => case, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "config_overrides" => Dict{String,Any}("power_flow.mode" => "auto", "power_flow.max_iter" => 1, "power_flow.tol" => 1e-15, "power_flow.dc.fallback" => true)))
       @test rdc["status"] != "succeeded"
       @test rdc["converged"] === false
       @test rdc["metadata"]["dc_fallback_solution"] === true
       @test occursin("DC fallback", rdc["message"])
       # default: clean failure without a DC result
-      rnf = start_powerflow_run(Dict{String,Any}("casefile" => case, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "config_overrides" => Dict{String,Any}("power_flow.mode" => "auto", "power_flow.max_iter" => 1)))
+      rnf = start_powerflow_run(Dict{String,Any}("casefile" => case, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "config_overrides" => Dict{String,Any}("power_flow.mode" => "auto", "power_flow.max_iter" => 1, "power_flow.tol" => 1e-15)))
       @test rnf["metadata"]["dc_fallback_solution"] === false
       @test occursin("skipped_dc_fallback_disabled", read(joinpath(rnf["output_dir"], "auto_mode_decision.log"), String))
     end

@@ -78,7 +78,9 @@ function run_state_estimation_imag_bad_data()
     meas = _fresh(withImag)
     bad_idx = findfirst(m -> m.typ == Sparlectra.PflowMeas, meas)
     bad_id = _inject_gross_error!(meas, bad_idx, 10.0)
-    diag = runse_diagnostics(net, meas; max_eliminations = 3, maxIte = 20, tol = 1e-8)
+    diag = with_state_estimation_config(max_eliminations = 3, max_iter = 20, tol = 1e-8) do
+      runse_diagnostics(net, meas)
+    end
     row = only(r for r in diag.diagnostics.measurement_ranking if r.measurement_index == bad_idx)
     @printf("%-18s wii(%s) = %.3f  localizable = %-5s  eliminated first: %s  stop: %s\n",
       withImag ? "with currents:" : "without currents:", bad_id, row.wii, string(row.localizable),
@@ -94,7 +96,9 @@ function run_state_estimation_imag_bad_data()
   # estimation (derivative of |I| is discontinuous near zero current)
   meas = _fresh(true)
   addImagMeasurement!(meas; net = net, value = 1.0, sigma = 10.0, fromBus = "Slack", toBus = "LoadA", id = "Imag_low_current")
-  res = runse!(net, meas; maxIte = 20, tol = 1e-8, updateNet = false)
+  res = with_state_estimation_config(max_iter = 20, tol = 1e-8, update_net = false) do
+    runse!(net, meas)
+  end
   println("value gate    : added Imag_low_current with value 1 A < 3 sigma = 30 A;")
   println("                the estimator logs its exclusion and converged = ", res.converged)
   return nothing

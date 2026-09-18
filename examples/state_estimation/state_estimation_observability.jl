@@ -403,8 +403,12 @@ function run_state_estimation_observability_example(io::IO)
 
   function log_step(step::Int, removed_branch::Union{Nothing,Int}, removed_measurements::Vector{String}, all_deactivated_measurements::Vector{String})
     # Recompute both global and local observability after every deactivation step.
-    global_obs = evaluate_global_observability(net; flatstart = true, jacEps = 1e-6)
-    local_obs = evaluate_local_observability(net, local_cols; flatstart = true, jacEps = 1e-6)
+    global_obs = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
+      evaluate_global_observability(net)
+    end
+    local_obs = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
+      evaluate_local_observability(net, local_cols)
+    end
 
     active_total = count(m -> m.active, meas)
     active_branch = length(_active_branch_ids(meas))
@@ -452,7 +456,9 @@ function run_state_estimation_observability_example(io::IO)
 
     # Reset state before WLS so each step is evaluated from a comparable start.
     _reset_non_slack!(net)
-    se = runse!(net; maxIte = 12, tol = 1e-6, flatstart = false, jacEps = 1e-6, updateNet = false)
+    se = with_state_estimation_config(max_iter = 12, tol = 1e-6, flatstart = false, jac_eps = 1e-6, update_net = false) do
+      runse!(net)
+    end
     @printf(io, "  WLS J=r'Wr: %.6e, dof=%d, J within 3σ-band: %s\n\n", se.objectiveJ, se.dof, string(se.jWithin3Sigma))
 
     return global_obs, local_obs

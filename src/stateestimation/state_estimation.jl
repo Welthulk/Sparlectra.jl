@@ -574,10 +574,10 @@ whose `Omega_ii` sits at the numerical floor is not localizable and gets
 `rn = 0`, so it can never be suppressed on the strength of a large raw
 residual.
 """
-function _suppression_normalized_residuals(H, r::Vector{Float64}, w::Vector{Float64})
+function _suppression_normalized_residuals(H, r::Vector{Float64}, w::Vector{Float64}; minStates::Int = state_estimation_config().takahashi_min_states)
   H === nothing && return nothing
   return try
-    d = _residual_diagnostics(H, r, w)
+    d = _residual_diagnostics(H, r, w; minStates = minStates)
     (rn = d.rn, wii = d.wii)
   catch err
     @warn "SE suppression: no residual covariance available, no row is suppressed this round" exception = err
@@ -1618,13 +1618,20 @@ The verdict is a two-stage check (SE phase 4):
    `state_estimation.rank_tol_factor * jacEps * sigma_max` (factor default
    10.0). An explicitly passed `tol` wins.
 """
-function evaluate_global_observability(net::Net, measurements::Vector{Measurement}; flatstart::Bool = true, jacEps::Float64 = 1e-6, tol = nothing, pmuRefOffset::Symbol = state_estimation_config().pmu_ref_offset, rankTolFactor::Float64 = state_estimation_config().rank_tol_factor)
+function evaluate_global_observability(net::Net, measurements::Vector{Measurement}; tol = nothing)
+  # settings from the registry (#381); `tol` is the numerical rank
+  # tolerance of the SVD, not a configuration key
+  base = state_estimation_config()
+  flatstart = base.flatstart
+  jacEps = base.jac_eps
+  pmuRefOffset = base.pmu_ref_offset
+  rankTolFactor = base.rank_tol_factor
   # island-wise nets: judge every measured island on its own subnet with its
   # own reference (the estimator solves them the same way) and aggregate;
   # unmeasured islands are excluded from the estimation and reported
   part = _se_island_partition(net, measurements)
   if length(part.rows) > 1
-    return _evaluate_global_observability_islands(net, measurements, part; flatstart = flatstart, jacEps = jacEps, tol = tol, pmuRefOffset = pmuRefOffset, rankTolFactor = rankTolFactor)
+    return _evaluate_global_observability_islands(net, measurements, part; tol = tol)
   end
 
   # SE phase 3: observability is judged on the contracted net (links fused),
@@ -1748,8 +1755,8 @@ function _evaluate_global_observability_islands(net::Net, measurements::Vector{M
   )
 end
 
-function evaluate_global_observability(net::Net; flatstart::Bool = true, jacEps::Float64 = 1e-6, tol = nothing, pmuRefOffset::Symbol = state_estimation_config().pmu_ref_offset, rankTolFactor::Float64 = state_estimation_config().rank_tol_factor)
-  return evaluate_global_observability(net, Measurement[m for m in net.measurements]; flatstart = flatstart, jacEps = jacEps, tol = tol, pmuRefOffset = pmuRefOffset, rankTolFactor = rankTolFactor)
+function evaluate_global_observability(net::Net; tol = nothing)
+  return evaluate_global_observability(net, Measurement[m for m in net.measurements]; tol = tol)
 end
 
 """
@@ -1776,7 +1783,11 @@ Errors when no active measurement exists. Intended for measurement-matrix
 reports and placement studies; see the state-estimation suite summary and
 the workshop's observability deep dive.
 """
-function measurement_jacobian(net::Net; flatstart::Bool = true, jacEps::Float64 = 1e-6, pmuRefOffset::Symbol = state_estimation_config().pmu_ref_offset)
+function measurement_jacobian(net::Net)
+  base = state_estimation_config()
+  flatstart = base.flatstart
+  jacEps = base.jac_eps
+  pmuRefOffset = base.pmu_ref_offset
   # SE phase 3: the labeled H describes the contracted net (links fused)
   prep = _se_prepare(net, Measurement[m for m in net.measurements])
   net = prep.snet
@@ -1850,7 +1861,12 @@ observability), and with `tol = nothing` the rank tolerance is FD-aware
 deliberately global-only: a column selection inside ONE island is perfectly
 observable even when the net contains further measured islands.
 """
-function evaluate_local_observability(net::Net, measurements::Vector{Measurement}, stateCols::Vector{Int}; flatstart::Bool = true, jacEps::Float64 = 1e-6, tol = nothing, pmuRefOffset::Symbol = state_estimation_config().pmu_ref_offset, rankTolFactor::Float64 = state_estimation_config().rank_tol_factor)
+function evaluate_local_observability(net::Net, measurements::Vector{Measurement}, stateCols::Vector{Int}; tol = nothing)
+  base = state_estimation_config()
+  flatstart = base.flatstart
+  jacEps = base.jac_eps
+  pmuRefOffset = base.pmu_ref_offset
+  rankTolFactor = base.rank_tol_factor
   isempty(stateCols) && error("evaluate_local_observability: stateCols must not be empty")
 
   # SE phase 3: judged on the contracted net, like the global check
@@ -1902,14 +1918,16 @@ function evaluate_local_observability(net::Net, measurements::Vector{Measurement
   return merge(base, (rows = localRows, stateCols = copy(stateCols)))
 end
 
-function evaluate_local_observability(net::Net, stateCols::Vector{Int}; flatstart::Bool = true, jacEps::Float64 = 1e-6, tol = nothing, pmuRefOffset::Symbol = state_estimation_config().pmu_ref_offset)
-  return evaluate_local_observability(net, Measurement[m for m in net.measurements], stateCols; flatstart = flatstart, jacEps = jacEps, tol = tol, pmuRefOffset = pmuRefOffset)
+function evaluate_local_observability(net::Net, stateCols::Vector{Int}; tol = nothing)
+  return evaluate_local_observability(net, Measurement[m for m in net.measurements], stateCols; tol = tol)
 end
 
 """
-    runse!(net, measurements; kwargs...) -> SEResult
+    runse!(net, measurements) -> SEResult
 
 Run a first classical nonlinear weighted least-squares state estimator.
+All settings come from the active configuration (`state_estimation_config()`);
+a deviating run installs its settings with `with_state_estimation_config`.
 
 State representation:
 - bus voltage angles for all non-slack buses (radians)
@@ -2256,20 +2274,25 @@ function _runse_islands!(net::Net, measurements::Vector{Measurement}, cfg::State
 end
 
 """
-    runse!(net; kwargs...) -> StateEstimationResult
+    runse!(net) -> StateEstimationResult
 
 Run the weighted-least-squares state estimation on the network's
 measurements, island-wise, and write the estimated state back when
-`updateNet` is set. The keyword form reads its defaults from the active
-configuration.
+`state_estimation.update_net` is set. The estimator reads every setting
+from the active configuration (#381); nothing is passed per call. A run
+with other settings wraps the call:
+
+    with_state_estimation_config(max_iter = 12, update_net = false) do
+      runse!(net)
+    end
 """
-function runse!(net::Net, measurements::Vector{Measurement}, cfg::StateEstimationConfig)
+function _runse_configured!(net::Net, measurements::Vector{Measurement}, cfg::StateEstimationConfig)
   # stage-1 topology precheck (advisory): run BEFORE the partition,
   # warn per finding, attach the findings to the result. The estimation
   # itself always proceeds; a finding is information, not a gate.
   topo = nothing
   if cfg.topology_precheck
-    pre = validate_topology(net, measurements; k_open = cfg.topology_open_flow_k, k_dead = cfg.topology_dead_flow_k, k_v = cfg.topology_voltage_k, k_kcl = cfg.topology_kcl_k)
+    pre = validate_topology(net, measurements)
     if !isempty(pre.findings)
       topo = pre.findings
       # one line per RUN, not per finding: a weak measurement set produces a
@@ -2289,7 +2312,11 @@ end
 ## keeps the single-island shape (summed chi-square objective, rankings
 ## remapped into the caller's measurement indexing plus an `island` tag) and
 ## adds an `islands` vector with the per-island reports.
-function _validate_measurements_islands(net::Net, measurements::Vector{Measurement}, part, vkw)
+# leverage threshold of the suspicion ranking (formerly the keyword
+# wiiThreshold = 0.3 of validate_measurements)
+const _SE_WII_THRESHOLD = 0.3
+
+function _validate_measurements_islands(net::Net, measurements::Vector{Measurement}, part)
   islandReports = NamedTuple[]
   ranking = NamedTuple[]
   residuals = Float64[]
@@ -2316,7 +2343,7 @@ function _validate_measurements_islands(net::Net, measurements::Vector{Measureme
       push!(islandReports, (island = iid, n_bus = row.n_bus, measured = false, report = nothing))
       continue
     end
-    r = validate_measurements(sub.inet, meas_i; vkw...)
+    r = validate_measurements(sub.inet, meas_i)
     measured += 1
     conv &= r.converged
     Jsum += r.objective.value
@@ -2353,7 +2380,7 @@ function _validate_measurements_islands(net::Net, measurements::Vector{Measureme
     residuals = residuals,
     normalized_residuals = rn,
     residual_sensitivities = wii,
-    correlation_enabled = vkw.reportResidualCorrelation,
+    correlation_enabled = state_estimation_config().report_residual_correlation,
     robust_rows = anyRobust ? robustRows : nothing,
     omega_path = length(unique(omegaPaths)) == 1 ? first(omegaPaths) : :mixed,
     state_variances = stateVars,
@@ -2864,7 +2891,7 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
       hr = _predict_measurements(activeMeas, net, Vr, Ybus; vaOffsetRad = _va_offset_from_state(x, withVaOffset), shuntB = shuntMap === nothing ? nothing : _shunt_b_override(x, shuntMap), tapOverlay = _tap_ov(x))
       rr = z - hr
       _wrap_angle_residuals!(rr, activeMeas)
-      supDiag = _suppression_normalized_residuals(lastJacobian, rr, w)
+      supDiag = _suppression_normalized_residuals(lastJacobian, rr, w; minStates = cfg.takahashi_min_states)
       # No usable Omega (no Jacobian kept, or the diagnostics refused this
       # size): suppress NOTHING rather than fall back to the raw ratio the
       # task removed. A missed suppression is a weaker estimate; a wrong one
@@ -3158,57 +3185,19 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
   return SEResult(Vest, converged, iteDone, norm(r), r, jval, ν, _j_within_3sigma_band(jval, ν), withVaOffset ? rad2deg(vaOffsetRad) : nothing, shuntEstimates, robustRows, nothing, tapEstimates, tapFixation, nothing, activeObjective)
 end
 
-function runse!(
-  net::Net,
-  measurements::Vector{Measurement};
-  maxIte::Int = state_estimation_config().max_iter,
-  tol::Float64 = state_estimation_config().tol,
-  flatstart::Bool = state_estimation_config().flatstart,
-  jacEps::Float64 = state_estimation_config().jac_eps,
-  updateNet::Bool = state_estimation_config().update_net,
-  pmuRefOffset::Symbol = state_estimation_config().pmu_ref_offset,
-  imagActivationIteration::Int = state_estimation_config().imag_activation_iteration,
-  updateShunts::Bool = state_estimation_config().update_shunts,
-  updateTaps::Bool = state_estimation_config().update_taps,
-  topologyPrecheck::Bool = state_estimation_config().topology_precheck,
-  robust::Bool = state_estimation_config().robust,
-  robustStartIteration::Int = state_estimation_config().robust_start_iteration,
-  robustMode::Symbol = state_estimation_config().robust_mode,
-  robustK1::Float64 = state_estimation_config().robust_k1,
-  robustK2::Float64 = state_estimation_config().robust_k2,
-  kSuppress::Float64 = state_estimation_config().k_suppress,
-  suppressionSigma::Float64 = state_estimation_config().suppression_sigma,
-)
-  cfg = StateEstimationConfig(max_iter = maxIte, tol = tol, flatstart = flatstart, jac_eps = jacEps, update_net = updateNet, pmu_ref_offset = pmuRefOffset, imag_activation_iteration = imagActivationIteration, update_shunts = updateShunts, update_taps = updateTaps, topology_precheck = topologyPrecheck, robust = robust, robust_start_iteration = robustStartIteration, robust_mode = robustMode, robust_k1 = robustK1, robust_k2 = robustK2, k_suppress = kSuppress, suppression_sigma = suppressionSigma)
-  return runse!(net, measurements, cfg)
+# The public entry points take NO settings (#381): the estimator fetches
+# its configuration from the registry itself. A run with other settings
+# installs them for its duration with with_state_estimation_config or
+# with_sparlectra_config; the service does that with the resolved
+# configuration of the case.
+function runse!(net::Net, measurements::Vector{Measurement})
+  return _runse_configured!(net, measurements, state_estimation_config())
 end
 
-function runse!(
-  net::Net;
-  maxIte::Int = state_estimation_config().max_iter,
-  tol::Float64 = state_estimation_config().tol,
-  flatstart::Bool = state_estimation_config().flatstart,
-  jacEps::Float64 = state_estimation_config().jac_eps,
-  updateNet::Bool = state_estimation_config().update_net,
-  pmuRefOffset::Symbol = state_estimation_config().pmu_ref_offset,
-  imagActivationIteration::Int = state_estimation_config().imag_activation_iteration,
-  updateShunts::Bool = state_estimation_config().update_shunts,
-  updateTaps::Bool = state_estimation_config().update_taps,
-  topologyPrecheck::Bool = state_estimation_config().topology_precheck,
-  robust::Bool = state_estimation_config().robust,
-  robustStartIteration::Int = state_estimation_config().robust_start_iteration,
-  robustMode::Symbol = state_estimation_config().robust_mode,
-  robustK1::Float64 = state_estimation_config().robust_k1,
-  robustK2::Float64 = state_estimation_config().robust_k2,
-  kSuppress::Float64 = state_estimation_config().k_suppress,
-  suppressionSigma::Float64 = state_estimation_config().suppression_sigma,
-)
-  cfg = StateEstimationConfig(max_iter = maxIte, tol = tol, flatstart = flatstart, jac_eps = jacEps, update_net = updateNet, pmu_ref_offset = pmuRefOffset, imag_activation_iteration = imagActivationIteration, update_shunts = updateShunts, update_taps = updateTaps, topology_precheck = topologyPrecheck, robust = robust, robust_start_iteration = robustStartIteration, robust_mode = robustMode, robust_k1 = robustK1, robust_k2 = robustK2, k_suppress = kSuppress, suppression_sigma = suppressionSigma)
-  return runse!(net, Measurement[m for m in net.measurements], cfg)
-end
+runse!(net::Net) = runse!(net, Measurement[m for m in net.measurements])
 
 """
-    validate_measurements(net, measurements; kwargs...) -> NamedTuple
+    validate_measurements(net, measurements) -> NamedTuple
 
 Run state-estimation diagnostics on currently active measurements and return a
 machine-readable report with:
@@ -3234,32 +3223,31 @@ measurement vector, with one sentinel: `0` marks a `LINKAGG` cluster
 aggregate (SE phase 3) that has no single source row. Check `>= 1` before
 indexing the measurement vector with it.
 """
-function validate_measurements(
-  net::Net,
-  measurements::Vector{Measurement};
-  maxIte::Int = 12,
-  tol::Float64 = 1e-6,
-  flatstart::Bool = true,
-  jacEps::Float64 = 1e-6,
-  normalizedThreshold::Float64 = state_estimation_config().k_eliminate,
-  pmuRefOffset::Symbol = state_estimation_config().pmu_ref_offset,
-  wiiThreshold::Float64 = 0.3,
-  reportResidualCorrelation::Bool = state_estimation_config().report_residual_correlation,
-  robust::Bool = state_estimation_config().robust,
-  robustStartIteration::Int = state_estimation_config().robust_start_iteration,
-  robustMode::Symbol = state_estimation_config().robust_mode,
-  robustK1::Float64 = state_estimation_config().robust_k1,
-  robustK2::Float64 = state_estimation_config().robust_k2,
-  kSuppress::Float64 = state_estimation_config().k_suppress,
-  suppressionSigma::Float64 = state_estimation_config().suppression_sigma,
-)
+function validate_measurements(net::Net, measurements::Vector{Measurement})
+  # every setting from the registry (#381); the residual-correlation report
+  # and the bad-data thresholds included
+  base = state_estimation_config()
+  maxIte = base.max_iter
+  tol = base.tol
+  flatstart = base.flatstart
+  jacEps = base.jac_eps
+  normalizedThreshold = base.k_eliminate
+  pmuRefOffset = base.pmu_ref_offset
+  wiiThreshold = _SE_WII_THRESHOLD
+  reportResidualCorrelation = base.report_residual_correlation
+  robust = base.robust
+  robustStartIteration = base.robust_start_iteration
+  robustMode = base.robust_mode
+  robustK1 = base.robust_k1
+  robustK2 = base.robust_k2
+  kSuppress = base.k_suppress
+  suppressionSigma = base.suppression_sigma
   # island-wise nets: run the full diagnostics per measured island and merge
   # (measurement_index stays the position in the CALLER's vector, so the
   # sequential elimination in runse_diagnostics works unchanged)
   part = _se_island_partition(net, measurements)
   if length(part.rows) > 1
-    vkw = (maxIte = maxIte, tol = tol, flatstart = flatstart, jacEps = jacEps, normalizedThreshold = normalizedThreshold, pmuRefOffset = pmuRefOffset, wiiThreshold = wiiThreshold, reportResidualCorrelation = reportResidualCorrelation, robust = robust, robustStartIteration = robustStartIteration, robustMode = robustMode, robustK1 = robustK1, robustK2 = robustK2, kSuppress = kSuppress, suppressionSigma = suppressionSigma)
-    return _validate_measurements_islands(net, measurements, part, vkw)
+    return _validate_measurements_islands(net, measurements, part)
   end
 
   # SE phase 3: the diagnostics run on the same contracted net and remapped
@@ -3295,12 +3283,12 @@ function validate_measurements(
   netLocal = deepcopy(net)
   # topologyPrecheck off: the diagnostics re-run this solve per elimination
   # step, and the caller (or the service) runs the precheck exactly once
-  result = runse!(netLocal, activeMeas; maxIte = maxIte, tol = tol, flatstart = flatstart, jacEps = jacEps, updateNet = false, pmuRefOffset = pmuRefOffset, robust = robust, robustStartIteration = robustStartIteration, robustMode = robustMode, robustK1 = robustK1, robustK2 = robustK2, kSuppress = kSuppress, suppressionSigma = suppressionSigma, topologyPrecheck = false)
+  result = _runse_configured!(netLocal, activeMeas, _se_config_with(base; update_net = false, topology_precheck = false))
 
   # dynamic part of the IaMeas gate: rows below the predicted-current
   # threshold at the ESTIMATED state leave the diagnostic set too
   if any(m -> m.typ == IaMeas, activeMeas)
-    cfg0 = state_estimation_config()
+    cfg0 = base
     keep2 = Int[]
     for k in eachindex(activeMeas)
       m = activeMeas[k]
@@ -3407,7 +3395,7 @@ function validate_measurements(
   # K needs the full Omega, so a correlation request pins the dense path;
   # otherwise the Takahashi selected inverse takes over above the size
   # threshold (with an automatic dense fallback on any guard failure)
-  rd = _residual_diagnostics(H, r, w; need_full_omega = reportResidualCorrelation)
+  rd = _residual_diagnostics(H, r, w; need_full_omega = reportResidualCorrelation, minStates = base.takahashi_min_states)
   kmax = reportResidualCorrelation && rd.omega !== nothing ? _residual_correlation_max(rd.omega) : nothing
   ranking = _build_measurement_suspicion_report(activeMeas, activeIdx, r, rd.rn; normalizedThreshold = normalizedThreshold, wii = rd.wii, wiiThreshold = wiiThreshold, kmax = kmax)
 
@@ -3433,9 +3421,7 @@ function validate_measurements(
   )
 end
 
-function validate_measurements(net::Net; kwargs...)
-  return validate_measurements(net, Measurement[m for m in net.measurements]; kwargs...)
-end
+validate_measurements(net::Net) = validate_measurements(net, Measurement[m for m in net.measurements])
 
 ## Internal helper: measurements protected from bad-data elimination.
 ## Zero-injection pseudo-measurements (id prefix "ZI") encode network
@@ -3449,7 +3435,7 @@ end
 end
 
 """
-    runse_diagnostics(net, measurements; max_eliminations=3, kwargs...) -> NamedTuple
+    runse_diagnostics(net, measurements) -> NamedTuple
 
 Extended diagnostics workflow around `validate_measurements` with sequential
 bad-data elimination (identification stage 1):
@@ -3487,34 +3473,16 @@ Unlike the old single pass, the loop only eliminates while the band test
 fails; a suspicious measurement in an already consistent set is reported but
 not removed.
 """
-function runse_diagnostics(
-  net::Net,
-  measurements::Vector{Measurement};
-  deactivate_and_rerun::Bool = false,
-  max_eliminations::Union{Nothing,Int} = nothing,
-  maxIte::Int = 12,
-  tol::Float64 = 1e-6,
-  flatstart::Bool = true,
-  jacEps::Float64 = 1e-6,
-  normalizedThreshold::Float64 = state_estimation_config().k_eliminate,
-  pmuRefOffset::Symbol = state_estimation_config().pmu_ref_offset,
-  wiiThreshold::Float64 = 0.3,
-  reportResidualCorrelation::Bool = state_estimation_config().report_residual_correlation,
-  robust::Bool = state_estimation_config().robust,
-  robustStartIteration::Int = state_estimation_config().robust_start_iteration,
-  robustMode::Symbol = state_estimation_config().robust_mode,
-  robustK1::Float64 = state_estimation_config().robust_k1,
-  robustK2::Float64 = state_estimation_config().robust_k2,
-  kSuppress::Float64 = state_estimation_config().k_suppress,
-  suppressionSigma::Float64 = state_estimation_config().suppression_sigma,
-)
-  # alias handling: an explicit max_eliminations wins; deactivate_and_rerun
-  # = true alone maps to exactly one elimination (the pre-0.10 behavior)
-  effMax = something(max_eliminations, deactivate_and_rerun ? 1 : 3)
-  effMax >= 0 || error("runse_diagnostics: max_eliminations must be >= 0")
+function runse_diagnostics(net::Net, measurements::Vector{Measurement})
+  # every setting from the registry (#381): the elimination budget
+  # (state_estimation.max_eliminations) included
+  se_cfg = state_estimation_config()
+  normalizedThreshold = se_cfg.k_eliminate
+  wiiThreshold = _SE_WII_THRESHOLD
+  effMax = se_cfg.max_eliminations
+  effMax >= 0 || error("runse_diagnostics: state_estimation.max_eliminations must be >= 0")
 
-  vkw = (maxIte = maxIte, tol = tol, flatstart = flatstart, jacEps = jacEps, normalizedThreshold = normalizedThreshold, pmuRefOffset = pmuRefOffset, wiiThreshold = wiiThreshold, reportResidualCorrelation = reportResidualCorrelation, robust = robust, robustStartIteration = robustStartIteration, robustMode = robustMode, robustK1 = robustK1, robustK2 = robustK2, kSuppress = kSuppress, suppressionSigma = suppressionSigma)
-  base = validate_measurements(net, measurements; vkw...)
+  base = validate_measurements(net, measurements)
 
   meas2 = copy(measurements)
   current = base
@@ -3563,7 +3531,7 @@ function runse_diagnostics(
     idx = target.measurement_index
     objBefore = current.objective.value
     meas2[idx] = _set_measurement_active(meas2[idx], false)
-    current = validate_measurements(net, meas2; vkw...)
+    current = validate_measurements(net, meas2)
     push!(trace, (elimination = length(trace) + 1, measurement_index = idx, id = target.id, typ = target.typ,
                   normalized_residual_before = target.normalized_residual, wii = target.wii,
                   skipped_unlocalizable = skipped_unlocalizable,
@@ -3636,9 +3604,7 @@ function runse_diagnostics(
   return (diagnostics = base, rerun = firstElimination, eliminations = trace, stop_reason = stopReason, final_diagnostics = current, topology_findings = topoFindings)
 end
 
-function runse_diagnostics(net::Net; kwargs...)
-  return runse_diagnostics(net, Measurement[m for m in net.measurements]; kwargs...)
-end
+runse_diagnostics(net::Net) = runse_diagnostics(net, Measurement[m for m in net.measurements])
 
 @inline function _base_diag_report(diag)
   return hasproperty(diag, :diagnostics) ? diag.diagnostics : diag
@@ -4035,27 +4001,27 @@ const _SE_STATE_CSV_VERSION = "sparlectra-se-state v1"
     writeSEStateCSV(net; file) -> NamedTuple
 
 Write the last SE start state of `net` (registered by
-`runse!(...; updateNet = true)` or `readSEStateCSV!`) as a CSV artifact:
+`runse!` with `state_estimation.update_net = true` or `readSEStateCSV!`) as a CSV artifact:
 
     # sparlectra-se-state v1
     bus,vm_pu,va_deg,pinj_MW,qinj_MVar
+
+(delimiter and decimal separator follow `output.csv_format`, `format`
+keyword; the reader accepts every format)
 
 One row per bus (bus by name). This is the persistence half of the SE -> PF
 chain: a later power-flow run (possibly in another process) restores the
 state with `readSEStateCSV!` and starts via `runpf_from_se!`. Errors when no
 SE state is registered for `net`.
 """
-function writeSEStateCSV(net::Net; file::AbstractString)
+function writeSEStateCSV(net::Net; file::AbstractString, format = result_csv_format())
   st = _se_start_state(net)
-  st === nothing && error("writeSEStateCSV: no state-estimation result registered for this net; run runse!(...; updateNet = true) first")
+  st === nothing && error("writeSEStateCSV: no state-estimation result registered for this net; run runse! with state_estimation.update_net = true first")
   name_by_idx = _bus_name_by_idx(net)
-  open(file, "w") do io
-    println(io, "# ", _SE_STATE_CSV_VERSION)
-    println(io, "bus,vm_pu,va_deg,pinj_MW,qinj_MVar")
-    for i in eachindex(net.nodeVec)
-      println(io, get(name_by_idx, i, string(i)), ",", repr(st.vm[i]), ",", repr(st.va[i]), ",", repr(st.pinj[i]), ",", repr(st.qinj[i]))
-    end
-  end
+  # a result artifact (issue #386): output.csv_format like every other CSV of
+  # the run; readSEStateCSV! accepts both delimiters
+  rows = ((get(name_by_idx, i, string(i)), st.vm[i], st.va[i], st.pinj[i], st.qinj[i]) for i in eachindex(net.nodeVec))
+  write_result_csv(file, ("bus", "vm_pu", "va_deg", "pinj_MW", "qinj_MVar"), rows; format = format, comments = [_SE_STATE_CSV_VERSION])
   return (count = length(net.nodeVec),)
 end
 
@@ -4077,18 +4043,21 @@ function readSEStateCSV!(net::Net; file::AbstractString)
   va = fill(NaN, n)
   pinj = zeros(Float64, n)
   qinj = zeros(Float64, n)
+  # the file follows output.csv_format of the run that wrote it: the header
+  # line says which delimiter (and thereby which decimal separator) it uses
+  delimiter = length(lines) >= 2 ? result_csv_delimiter(lines[2]) : ','
   for (ln, raw) in enumerate(lines)
     ln <= 2 && continue   # version + header
     line = strip(raw)
     isempty(line) && continue
-    fields = split(line, ",")
+    fields = split(line, delimiter)
     length(fields) == 5 || error("$(file):$(ln): expected 5 fields, got $(length(fields))")
     busIdx = try
       geNetBusIdx(net = net, busName = String(strip(fields[1])))
     catch
       error("$(file):$(ln): unknown bus '$(strip(fields[1]))'")
     end
-    vals = map(f -> tryparse(Float64, strip(f)), fields[2:5])
+    vals = map(f -> _parse_result_csv_number(f, delimiter), fields[2:5])
     any(v -> v === nothing, vals) && error("$(file):$(ln): non-numeric value")
     vm[busIdx], va[busIdx], pinj[busIdx], qinj[busIdx] = vals
   end
@@ -4105,7 +4074,7 @@ end
     runpf_from_se!(net, maxIte, tolerance=1e-8, verbose=0; mode=:se_state, kwargs...) -> NamedTuple
 
 Run a power flow that starts from the last state-estimation result of `net`
-(the SE-to-PF chain). Requires a preceding `runse!(...; updateNet =
+(the SE-to-PF chain). Requires a preceding `runse!` (`state_estimation.update_net =
 true)` on this net or a state restored via `readSEStateCSV!`; a clear error
 otherwise.
 
@@ -4130,7 +4099,7 @@ injection minus the estimated injection at the slack bus.
 function runpf_from_se!(net::Net, maxIte::Int, tolerance::Float64 = 1e-8, verbose::Int = 0; mode::Symbol = :se_state, kwargs...)
   mode in (:se_state, :se_snapshot) || error("runpf_from_se!: mode must be :se_state or :se_snapshot, got :$(mode)")
   st = _se_start_state(net)
-  st === nothing && error("runpf_from_se!: no preceding state-estimation result for this net; run runse!(...; updateNet = true) or readSEStateCSV! first")
+  st === nothing && error("runpf_from_se!: no preceding state-estimation result for this net; run runse! with state_estimation.update_net = true or readSEStateCSV! first")
   st.converged || error("runpf_from_se!: the registered state-estimation result did not converge; refusing to start a power flow from it")
 
   # start voltages := estimated state (re-applied defensively; a PF or other

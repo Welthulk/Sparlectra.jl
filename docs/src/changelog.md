@@ -1,3 +1,22 @@
+# Version 0.13.0 - 2026-09-18
+
+## Highlights
+- Changed: APSLF now defaults to `order 24` and `nr_polish false`. The residual is judged against the final active set, so a run with clamped machines (shown as `PQ*`) counts as converged.
+- Added: the APSLF convergence radius (`power_flow.apslf.convergence_radius`) is shown in the result header, in the run metadata and on the runs page.
+- Changed: a clamped machine is released back to PV once its voltage recovers (`power_flow.qlimits.reenable_v_hyst_pu`). Non-physical solutions are left rather than reported (#375).
+- Added: the APSLF solver options are now visible on the Settings page of the Web UI.
+- Changed: the control loop prints solver diagnostics once per run and one line per further pass. `control.verbose_passes` enables the full output for every pass. With the option off, the wrong-branch block is no longer printed. The header names the passes (#387).
+- Added: example cases under `data/scf` and `data/PGM`, selectable in the case chooser.
+- Changed: the sysimage workload now traces the APSLF paths.
+- Changed: one result-CSV writer (`write_result_csv`) for every run type; the SE state CSV, the AC island report, the SV comparison and the DTF outage tables follow `output.csv_format` too (#386).
+- Changed: `runse!`, `runse_diagnostics`, `validate_measurements` and `validate_topology` take no settings any more; everything comes from the active configuration, `with_state_estimation_config` installs other values for one run (#381, breaking).
+
+## Fixes
+- Fixed: APSLF runs with machines at their reactive limits were labelled not converged.
+- Fixed: the active set never released a clamped bus back to PV (#375).
+- Fixed: solver diagnostics were repeated on every control pass (#387).
+- Fixed: the APSLF solver options were invisible on the Settings page.
+
 # Version 0.12.4 - 2026-09-13
 
 - **Fix.** The topology precheck reports `closed_element_without_flow` only when the model state expects a clear flow on the branch (issue #372).

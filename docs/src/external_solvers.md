@@ -151,7 +151,7 @@ of Sparlectra since 0.10.0, so the solver is always there:
 ```julia
 using Sparlectra                 # AnalyticLoadFlow comes with it
 
-solver = apslf_solver(order = 40, use_pade = true, nr_polish = true)
+solver = apslf_solver(order = 24, use_pade = true, nr_polish = false)
 ```
 
 Up to 0.10.0 it was a weak dependency behind a package extension: a session
@@ -165,7 +165,16 @@ power-flow mode are always available instead of being skipped.
   instead of direct Taylor summation (generally improves the convergence
   radius).
 - `nr_polish::Bool` — run a Newton-Raphson polishing step on the series
-  result to tighten the final mismatch.
+  result to tighten the final mismatch (off by default since 0.13.0).
+- `convergence_radius::Bool` — evaluate the Padé-pole margin
+  (`stability_from_Vcoeff`) and report it as the APSLF convergence radius
+  next to the Jacobian condition (on by default; about the cost of the
+  solve).
+
+The residual of an APSLF solution is judged against the bus types the
+solver ended with: a machine clamped at a reactive limit is a PQ bus at
+that limit, is logged like a rectangular Q-limit event (result table
+`PQ*`, Q-V check) and no longer counts its voltage setpoint as a mismatch.
 - `mode::Symbol` — `:direct` (native PV handling) or `:outer` (PQ-only series
   plus an outer secant loop for PV enforcement).
 

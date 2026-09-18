@@ -359,6 +359,7 @@ control:
   trace: true
   log_iterations: true
   stop_on_pf_failure: true
+  verbose_passes: false
   controllers: {}
 ```
 
@@ -367,8 +368,9 @@ control:
 | `enabled` | Bool | `true` | Enables the generic outer-loop control framework. |
 | `max_outer_iterations` | Int | `20` | Global outer-loop cap. Does not control inner NR iterations. |
 | `trace` | Bool | `true` | Collect machine-readable control trace rows. |
-| `log_iterations` | Bool | `true` | Enables optional per-iteration control logging hooks. |
+| `log_iterations` | Bool | `true` | One console line per control pass (converged, mismatch, active-set changes) when `output.console_diagnostics` is `full`. |
 | `stop_on_pf_failure` | Bool | `true` | Stops control orchestration when inner PF fails. |
+| `verbose_passes` | Bool | `false` | Repeat the full inner-solver diagnostic blocks on every control pass. Off: the first pass prints them once, later passes get the one-line summary. |
 | `controllers` | Mapping | `{}` | Declarative controller instantiation (issue #305): one named mapping per controller, applied to the net before the outer loop. See [Control Framework](control_framework.md) for the schema. |
 
 ### Declarative controllers (`control.controllers`)
@@ -426,8 +428,9 @@ The section's plain switches:
 | `control.enabled` | `true` | Run the outer control loop (`run_control!`) around the inner solver when controllers exist. |
 | `control.max_outer_iterations` | `20` | Outer-loop budget shared by all active controllers. |
 | `control.trace` | `true` | Collect machine-readable rows in `ControlRunResult.trace`. |
-| `control.log_iterations` | `true` | Reserved for per-iteration control logging. |
+| `control.log_iterations` | `true` | One console line per control pass with the diagnostics switched on. |
 | `control.stop_on_pf_failure` | `true` | Abort the orchestration when the inner power flow fails. |
+| `control.verbose_passes` | `false` | Full inner-solver diagnostic blocks on every pass instead of once per run. |
 
 ## Bookkeeping and console keys
 
@@ -441,7 +444,7 @@ solver tuning:
 | `output.result_table_max_rows` | `200` | Row cap for the classical result tables. |
 | `output.result_table_large_case_threshold_buses` | `1000` | Bus count from which a case counts as large for result rendering. |
 | `output.result_table_large_case_mode` | `summary` | What large cases print instead of full tables (`summary`, `classic`, `full`). |
-| `output.csv_format` | `technical` | Delimiter/decimal-separator format applied to every CSV artifact a run writes: `bus_voltages_complex.csv`, `branch_flows.csv`, `bus_powers.csv`, `q_limit_*.csv`, SE diagnostic exports, and contingency/scenario result tables. Allowed values: `technical` (comma delimiter, dot decimal), `excel_de` (semicolon delimiter, comma decimal, dot thousands separator), `excel_us` (comma delimiter, dot decimal, comma thousands separator). The API's `detailed_result_csv_format`/`detailed_result_csv_semicolon` request keywords are a deprecated per-request override of this key. |
+| `output.csv_format` | `technical` | Delimiter/decimal-separator format of EVERY CSV file a run writes, whatever writes it (`write_result_csv`, issue #386): `bus_voltages_complex.csv`, `branch_flows.csv`, `bus_powers.csv`, `q_limit_*.csv`, the short-circuit, contingency and scenario tables, the SE diagnostic exports and `se_state.csv`, `ac_islands.csv`, the SV comparison and the DTF outage metrics. Only the measurement CSV that Sparlectra reads back keeps its fixed layout. Allowed values: `technical` (comma delimiter, dot decimal), `excel_de` (semicolon delimiter, comma decimal, dot thousands separator), `excel_us` (comma delimiter, dot decimal, comma thousands separator). The API's `detailed_result_csv_format`/`detailed_result_csv_semicolon` request keywords are a deprecated per-request override of this key. |
 | `webui.operation_log_retention_days` | Int | `10` | >= 0 | How far the operation log reaches back. Every Web UI start drops older entries from every operation log it knows; `0` keeps only the current session. Lower it when the log page grows unwieldy: its size comes from the number of entries, not from their age. The environment variable `SPARLECTRA_WEBUI_OPERATION_LOG_RETENTION_DAYS` still wins, for headless runs that read no configuration file. |
 
 ## Migration notes

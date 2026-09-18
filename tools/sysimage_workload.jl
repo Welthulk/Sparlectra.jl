@@ -231,7 +231,9 @@ function _trace_reports(server)
     printACPFlowResults(pnet, 0.0, ite, 1e-8)
   end
   append!(pnet.measurements, generateMeasurementsFromPF(pnet; noise = false))
-  diag = runse_diagnostics(pnet; max_eliminations = 0)
+  diag = with_state_estimation_config(max_eliminations = 0) do
+    runse_diagnostics(pnet)
+  end
   print_se_diagnostics(devnull, diag.diagnostics)
   return nothing
 end
@@ -251,7 +253,7 @@ function _trace_scf(server)
   # the SCF case carries its own measurement set, which is the path a user
   # takes when running SE straight from a case file
   if !isempty(snet.measurements)
-    runse!(snet, Vector{Sparlectra.Measurement}(snet.measurements), Sparlectra.StateEstimationConfig(max_iter = 8))
+    with_state_estimation_config(() -> runse!(snet); max_iter = 8)
   end
   exportSCF(snet; file = joinpath(server.runtime.case_directory, "workload_roundtrip.scf.json"))
   _workload_service_run(Dict{String,Any}("casefile" => scf_case); label = "SCF power flow")
@@ -353,6 +355,22 @@ function _trace_api()
   return nothing
 end
 
+# APSLF paths (AnalyticLoadFlow 0.9.15 ships its own PrecompileTools
+# workload, which the image picks up because the package is on the image's
+# package list; this step adds the Sparlectra side of it): the pure APSLF
+# solver and the APSLF-seeded rectangular start, both on the MATPOWER
+# warmup case. Same logfile switch as _trace_api.
+function _trace_apslf()
+  case = _workload_matpower_case()
+  cfg_solver = SparlectraConfig(powerflow = PowerFlowConfig(solver = :apslf), output = OutputConfig(logfile_results = :off))
+  result = run_sparlectra(casefile = case, config = cfg_solver)
+  result.final_converged || @warn "sysimage workload: APSLF solver run did not converge" outcome = result.outcome
+  cfg_seed = SparlectraConfig(powerflow = PowerFlowConfig(apslf_start = Sparlectra.ApslfStartConfig(enabled = true)), output = OutputConfig(logfile_results = :off))
+  result = run_sparlectra(casefile = case, config = cfg_seed)
+  result.final_converged || @warn "sysimage workload: APSLF-seeded run did not converge" outcome = result.outcome
+  return nothing
+end
+
 function run_workload()
   server = nothing
   port = 0
@@ -376,6 +394,7 @@ function run_workload()
   if server === nothing
     @warn "sysimage workload: no free port in $(_WORKLOAD_PORTS); the Web UI paths are not traced (the build continues, the first page view pays the compilation)"
     _traced("programmatic API", _trace_api)
+    _traced("APSLF solver and start", _trace_apslf)
     return nothing
   end
   try
@@ -391,6 +410,7 @@ function run_workload()
     _traced("CGMES import", () -> _trace_cgmes(server, sc_zip))
     _traced("short circuit", () -> _trace_short_circuit(server, sc_zip))
     _traced("programmatic API", _trace_api)
+    _traced("APSLF solver and start", _trace_apslf)
   finally
     close(server)
   end

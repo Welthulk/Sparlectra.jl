@@ -21,9 +21,18 @@ lives here as `configuration.yaml.example`.
   normalization.
 - New configuration keys need: struct field, parser wiring, validation,
   documentation in `docs/src/configuration.md`, and (if GUI-editable) an entry
-  in `GUI_EDITABLE_CONFIG_KEYS` (`src/api/config_overrides.jl`).
+  in `GUI_EDITABLE_CONFIG_KEYS` (`src/config/config_overrides.jl`).
 - Loaded templates are never mutated by runs; run paths copy with
   `_copy_sparlectra_with_powerflow` and friends (`src/acpflow/import_context.jl`).
+- The registry is THE source of settings (#381): a module fetches its
+  configuration itself through the accessors (`state_estimation_config()`,
+  `powerflow_config()`, ...), nothing is passed per call. A run with other
+  settings installs them for its duration with `with_sparlectra_config(f,
+  cfg)` or `with_state_estimation_config(f; max_iter = ...)`, which put the
+  previous configuration back afterwards (also on error). The service and
+  the Web UI resolve the effective configuration of the case (general
+  file, sidecar, form values) and install it that way; the registry is
+  unchanged after the run.
 
 ## Reference
 

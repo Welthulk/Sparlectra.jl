@@ -152,7 +152,7 @@ println("HVDC control   : ", round(t_hvdc; digits = 2), " s")
 
 ## state-estimation path: synthetic measurements plus one WLS run
 setMeasurementsFromPF!(wnet; includeVm = true, includePinj = true, includeQinj = true, includePflow = true, includeQflow = true, noise = false)
-t_se = @elapsed runse!(wnet; maxIte = 8, tol = 1e-6, flatstart = true, jacEps = 1e-6, updateNet = false)
+t_se = @elapsed with_state_estimation_config(() -> runse!(wnet); max_iter = 8, tol = 1e-6, flatstart = true, jac_eps = 1e-6, update_net = false)
 println("state estimator: ", round(t_se; digits = 2), " s")
 
 ## chapter-5 path: one single-case contingency batch on the warm-up net
@@ -604,10 +604,14 @@ setMeasurementsFromPF!(
   rng = MersenneTwister(42),
 )
 
-gobs = evaluate_global_observability(net_se; flatstart = true, jacEps = 1e-6)
+gobs = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
+  evaluate_global_observability(net_se)
+end
 println("observability: ", gobs.quality, " (", gobs.n_measurements, " measurements, ", gobs.n_states, " states)")
 
-se = runse!(net_se; maxIte = 12, tol = 1e-6, flatstart = true, jacEps = 1e-6, updateNet = true)
+se = with_state_estimation_config(max_iter = 12, tol = 1e-6, flatstart = true, jac_eps = 1e-6, update_net = true) do
+  runse!(net_se)
+end
 println("SE converged: ", se.converged, " in ", se.iterations, " iterations")
 println("objective J:  ", round(se.objectiveJ; digits = 2), " (dof ", se.dof, ", within 3σ: ", se.jWithin3Sigma, ")")
 for (name, idx) in sort(collect(net_se.busDict); by = last)

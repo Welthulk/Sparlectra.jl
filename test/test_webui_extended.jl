@@ -1753,6 +1753,7 @@ for (current_iteration_topic, required_fragments) in current_iteration_help
         "power_flow_apslf_order" => "power_flow.apslf.order",
         "power_flow_apslf_use_pade" => "power_flow.apslf.use_pade",
         "power_flow_apslf_nr_polish" => "power_flow.apslf.nr_polish",
+        "power_flow_apslf_convergence_radius" => "power_flow.apslf.convergence_radius",
         "power_flow_apslf_start_enabled" => "power_flow.apslf_start.enabled",
         "power_flow_apslf_start_order" => "power_flow.apslf_start.order",
         "power_flow_wrong_branch_detection" => "power_flow.wrong_branch_detection",
@@ -1980,6 +1981,14 @@ for (current_iteration_topic, required_fragments) in current_iteration_help
       @test occursin("caseFormat.addEventListener('change', function () {", case_page_html)
       @test occursin("updateImportConventionApplicability();", case_page_html)
       @test occursin("<details id=\"apslf-start-options\" class=\"span-2 apslf-start-options\" data-apslf-start-options data-ac-only-field>", settings_page_html)
+      # 0.12.5: the APSLF solver options (order, Pade, NR polish) render
+      # without the HTML hidden attribute; the script only grays them out
+      # for the other solvers and never lifted a hidden flag, so the
+      # fieldset was invisible whatever solver was selected
+      @test occursin("<fieldset id=\"apslf-solver-options\" class=\"span-2 apslf-solver-options\" data-apslf-solver-options>", settings_page_html)
+      @test !occursin("data-apslf-solver-options hidden", settings_page_html)
+      @test occursin("name=\"power_flow_apslf_order\" type=\"number\"", settings_page_html)
+      @test occursin("name=\"power_flow_apslf_nr_polish\" type=\"checkbox\"", settings_page_html)
       # "Use APSLF start values" and "Use DC start values" are two mutually exclusive
       # start-value sources for the rectangular NR solve, checking one unchecks the
       # other client-side (the underlying configuration also rejects both at once).

@@ -56,7 +56,7 @@ function demo_case_tour(; case_name::String = "sp_case14")
 
   # 4) state estimation on the measurements the file itself carries
   se_net = Sparlectra.import_case(path, Sparlectra.SparlectraConfig(Dict())).net
-  se = runse!(se_net, Vector{Sparlectra.Measurement}(se_net.measurements), Sparlectra.StateEstimationConfig())
+  se = runse!(se_net)
   @printf("state estimation: converged=%s J=%.2f dof=%d (J/dof %.2f)\n", se.converged, se.objectiveJ, se.dof, se.objectiveJ / se.dof)
 
   # 5) short circuit at the case's study buses, from the file's own feeder

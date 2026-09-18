@@ -41,6 +41,7 @@ function _handle_rectangular_qlimit_iteration!(
   allow_reenable,
   q_hyst_pu,
   cooldown_iters,
+  reenable_v_hyst_pu,
   lock_pv_to_pq_buses,
   qlimit_start_mode,
   qlimit_start_iter,
@@ -166,6 +167,10 @@ function _handle_rectangular_qlimit_iteration!(
         allow_reenable = qlimit_mode == :switch_to_pq ? allow_reenable : false,
         q_hyst_pu = q_hyst_pu,
         cooldown_iters = cooldown_iters,
+        # voltage-side release (#375): the current iterate and the setpoint
+        get_vm_pu = bus -> abs(V[bus]),
+        get_vset_pu = bus -> Vset[bus],
+        v_hyst_pu = reenable_v_hyst_pu,
         lock_pv_to_pq_buses = lock_pv_to_pq_buses,
         on_violation! = qlimit_mode == :adjust_vset ? ((bus, qreq, side, qclamp) -> _try_adjust_vset_on_q_limit!(net, bus, side, it, controllers, base_vset, Vset, adjust_counter, qlimit_max_outer, verbose)) : nothing,
         verbose = verbose,

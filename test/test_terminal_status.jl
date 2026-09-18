@@ -269,8 +269,7 @@ function run_terminal_status_tests()
       @test !ismissing(row.open_end_vm_pu) && row.open_end_vm_pu > 1.0
       # SE guard: a flow measurement on the partial branch is rejected
       meas = [Sparlectra.Measurement(typ = Sparlectra.PflowMeas, value = 0.0, sigma = 0.01, branchIdx = 1, direction = :from, id = "bad")]
-      cfg = StateEstimationConfig(max_iter = 10, tol = 1e-6)
-      @test_throws ErrorException runse!(net, meas, cfg)
+      @test_throws ErrorException with_state_estimation_config(() -> runse!(net, meas); max_iter = 10, tol = 1e-6)
     end
   end
   return true

@@ -667,6 +667,71 @@ function run_tap_controller_tests()
     end
   end
 
+  @testset "Control loop console output once per run (#387)" begin
+    # the inner solver printed its full diagnostic set on every control
+    # pass; now the first pass prints it, later passes get one line each,
+    # the wrong-branch block stays silent with the detection off, and the
+    # result header names the passes next to the last-pass iteration count
+    function _controlled_net()
+      net, tbr = _build_net()
+      addPowerTransformerControl!(net; trafo = string(tbr.branchIdx), mode = :voltage, target_bus = "Load", target_vm_pu = 0.98, control_ratio = true, control_phase = false, is_discrete = true, deadband_vm_pu = 5e-3, max_outer_iters = 8)
+      return net
+    end
+    function _run_captured(net, control::ControlConfig; wrong_branch::Symbol = :warn)
+      pf_cfg = PowerFlowConfig(max_iter = 30, tol = 1e-9, wrong_branch_detection = wrong_branch)
+      # redirect_stdout needs a real stream, not an IOBuffer
+      out_path = tempname()
+      logger = Test.TestLogger()
+      res = open(out_path, "w") do io
+        redirect_stdout(io) do
+          Base.with_logger(logger) do
+            run_control!(net; pf_config = pf_cfg, control_config = control, verbose = 1)
+          end
+        end
+      end
+      return res, read(out_path, String), logger.logs
+    end
+    net = _controlled_net()
+    res, out, logs = _run_captured(net, ControlConfig())
+    # the loop may end at the tap limit; what matters here is that it ran
+    # several passes with the power flow solving each time
+    @test res.last_pf_status === :ok
+    @test res.powerflow_solves > 1
+    @test res.total_pf_iterations >= res.last_pf_iterations
+    @test count("Q-Limit Active-Set Summary", out) == 1
+    @test count("rectangular convergence:", out) == 1
+    @test count("Wrong-branch check:", out) == 1
+    @test count("control pass ", out) == res.powerflow_solves - 1
+    @test occursin("no active-set change", out)
+    @test count(l -> occursin("start projection selected", string(l.message)), logs) <= 1
+    # detection off: no wrong-branch block at all, not even on the first pass
+    net = _controlled_net()
+    res, out, logs = _run_captured(net, ControlConfig(); wrong_branch = :off)
+    @test res.last_pf_status === :ok
+    @test !occursin("Wrong-branch check:", out)
+    # the full per-pass output stays available for debugging the loop
+    net = _controlled_net()
+    res, out, logs = _run_captured(net, ControlConfig(verbose_passes = true))
+    @test count("Q-Limit Active-Set Summary", out) == res.powerflow_solves
+    # log_iterations off: quiet passes without the summary line
+    net = _controlled_net()
+    res, out, logs = _run_captured(net, ControlConfig(log_iterations = false))
+    @test !occursin("control pass ", out)
+    # result header: passes and the total next to the last-pass count
+    net = _controlled_net()
+    result = run_sparlectra(net = net, config = _runner_cfg())
+    hdr_path = tempname()
+    open(hdr_path, "w") do io
+      redirect_stdout(io) do
+        printACPFlowResults(net, result.elapsed_s, result.iterations, 1e-9, false, ""; converged = result.final_converged)
+      end
+    end
+    hdr_text = read(hdr_path, String)
+    @test occursin("Control passes :", hdr_text)
+    @test occursin("last pass", hdr_text)
+    @test occursin(string(net.control_result.total_pf_iterations, " inner iterations in total"), hdr_text)
+  end
+
   @testset "Branch active power controller (phase)" begin
     # A radial path gives a phase shifter no lever on P (the load dictates
     # the flow); the parallel line provides the loop the controller needs —

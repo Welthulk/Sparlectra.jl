@@ -69,7 +69,9 @@ function run_state_estimation_tap_estimation()
   # telemetry row is healthy.
   meas = _measurements_with_true_tap(2.0)
   net = _create_tap_net()
-  res0 = runse!(net, meas; maxIte = 40, tol = 1e-10, updateNet = false)
+  res0 = with_state_estimation_config(max_iter = 40, tol = 1e-10, update_net = false) do
+    runse!(net, meas)
+  end
   @printf("without release : J = %10.3f (dof %d)  <- model discrepancy, NOT bad data\n", res0.objectiveJ, res0.dof)
 
   # 2) the fix: release the tap, estimate, and let the mandatory fixation
@@ -77,7 +79,9 @@ function run_state_estimation_tap_estimation()
   # exactly: J after the fixation is numerically zero again.
   net = _create_tap_net()
   setTapEstimation!(net; trafo = 3, mode = :ratio)
-  res = runse!(net, meas; maxIte = 40, tol = 1e-10, updateNet = false)
+  res = with_state_estimation_config(max_iter = 40, tol = 1e-10, update_net = false) do
+    runse!(net, meas)
+  end
   t = res.tapEstimates[1]
   tf = res.tapFixation
   @printf("with release    : electrical step %.3f -> fixed step %d\n", t.electrical_step_1, t.fixed_step_1)
@@ -90,7 +94,9 @@ function run_state_estimation_tap_estimation()
   meas15 = _measurements_with_true_tap(1.5)
   net = _create_tap_net()
   setTapEstimation!(net; trafo = 3, mode = :ratio)
-  res15 = runse!(net, meas15; maxIte = 40, tol = 1e-10, updateNet = false)
+  res15 = with_state_estimation_config(max_iter = 40, tol = 1e-10, update_net = false) do
+    runse!(net, meas15)
+  end
   t15 = res15.tapEstimates[1]
   tf15 = res15.tapFixation
   @printf("off-grid truth  : electrical step %.3f -> fixed step %d, J %.3e -> %.3f\n", t15.electrical_step_1, t15.fixed_step_1, tf15.j_before, tf15.j_after)
@@ -100,9 +106,13 @@ function run_state_estimation_tap_estimation()
   net = _create_tap_net()
   setTapEstimation!(net; trafo = 3, mode = :ratio)
   before = net.branchVec[3].tap_ratio
-  runse!(net, meas; maxIte = 40, tol = 1e-10)
+  with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+    runse!(net, meas)
+  end
   println("write-back      : without updateTaps the model tap stays bitwise untouched: ", net.branchVec[3].tap_ratio === before)
-  runse!(net, meas; maxIte = 40, tol = 1e-10, updateTaps = true)
+  with_state_estimation_config(max_iter = 40, tol = 1e-10, update_taps = true) do
+    runse!(net, meas)
+  end
   @printf("                  with updateTaps = true the fixed position lands in the model: tap_ratio = %.6f\n", net.branchVec[3].tap_ratio)
 
   # 5) machine (GSU) transformers are the OTHER way around: never released
@@ -124,7 +134,9 @@ function run_state_estimation_tap_estimation()
   y = Sparlectra.calcAdmittance(brg, brg.comp.cVN, gnet.baseMVA)
   q_scada = imag(V[5] * conj(y[3] * V[2] + y[4] * V[5]) * gnet.baseMVA)   # the plant's Q telemetry
   append!(gnet.measurements, generateMeasurementsFromPF(gnet; includeImag = true, noise = false))
-  runse!(gnet; maxIte = 40, tol = 1e-10, updateNet = true)
+  with_state_estimation_config(max_iter = 40, tol = 1e-10, update_net = true) do
+    runse!(gnet)
+  end
   bt = calcMachineTrafoTapFromSE(gnet; trafo = 5, v_machine_pu = 1.02, q_mvar = q_scada)
   @printf("machine trafo   : back-calculated electrical step %.3f -> fixed step %d (Q residual %.3f MVar)\n", bt.electrical_step, bt.fixed_step, bt.q_residual_mvar)
   return nothing

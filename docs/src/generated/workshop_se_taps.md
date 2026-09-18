@@ -176,7 +176,9 @@ for (i, b) in enumerate(names)
   addPinjMeasurement!(minimal; net = truth, busName = b, value = -load_p + 0.9, sigma = 1.0)
 end
 
-res_min = runse!(build_net(), minimal; maxIte = 40, tol = 1e-10)
+res_min = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+  runse!(build_net(), minimal)
+end
 @printf("exactly determined: m = %d, states = %d, dof = %d, J = %.6f\n",
         length(minimal), 2 * length(truth.nodeVec) - 1, res_min.dof, res_min.objectiveJ)
 ````
@@ -195,7 +197,9 @@ for (i, b) in enumerate(names)
   load_q = truth.nodeVec[i]._qƩLoad === nothing ? 0.0 : truth.nodeVec[i]._qƩLoad
   addQinjMeasurement!(redundant; net = truth, busName = b, value = -load_q + 0.7, sigma = 1.0)
 end
-res_red = runse!(build_net(), redundant; maxIte = 40, tol = 1e-10)
+res_red = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+  runse!(build_net(), redundant)
+end
 @printf("redundant:          m = %d, dof = %d, J = %.3f, J/dof = %.3f\n",
         length(redundant), res_red.dof, res_red.objectiveJ, res_red.objectiveJ / res_red.dof)
 ````
@@ -219,7 +223,9 @@ growing = deepcopy(core)
 for step in 0:6
   step > 0 && push!(growing, extra[step])
   net = build_net()
-  res = runse!(net, deepcopy(growing); maxIte = 40, tol = 1e-10)
+  res = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+    runse!(net, deepcopy(growing))
+  end
   err = maximum(abs.([getNodeVm(n) for n in net.nodeVec] .- vm_true))
   @printf("m = %2d  dof = %2d  J = %7.3f  J/dof = %6.3f  max_err = %.2e  added: %s\n",
           length(growing), res.dof, res.objectiveJ, res.dof > 0 ? res.objectiveJ / res.dof : NaN, err,
@@ -244,7 +250,9 @@ First, what that costs if the tap is NOT released:
 
 ````@example workshop_se_taps
 truth_oltc, meas_oltc = truth_measurements(ratio_step = 4.0)
-res_blind = runse!(build_net(), deepcopy(meas_oltc); maxIte = 40, tol = 1e-10)
+res_blind = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+  runse!(build_net(), deepcopy(meas_oltc))
+end
 @printf("tap not released: J = %.1f, dof = %d, inside band: %s\n",
         res_blind.objectiveJ, res_blind.dof, res_blind.jWithin3Sigma)
 ````
@@ -260,7 +268,9 @@ Mode `:ratio` releases the ratio changer only:
 ````@example workshop_se_taps
 model_oltc = build_net()
 release = setTapEstimation!(model_oltc; trafo = 3, mode = :ratio)
-res_oltc = runse!(model_oltc, deepcopy(meas_oltc); maxIte = 40, tol = 1e-10)
+res_oltc = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+  runse!(model_oltc, deepcopy(meas_oltc))
+end
 est = res_oltc.tapEstimates[1]
 @printf("released: J = %.2f, dof = %d | electrical step = %+.3f -> fixed to %+d (truth %+d), out of range: %s\n",
         res_oltc.objectiveJ, res_oltc.dof, est.electrical_step_1, est.fixed_step_1, 4, est.out_of_range)
@@ -294,7 +304,9 @@ cannot rotate that angle.
 truth_pst, meas_pst = truth_measurements(phase_step = 3.0, seed = 11)
 model_pst = build_net()
 setTapEstimation!(model_pst; trafo = 3, mode = :pst, alpha_deg = 90.0)
-res_pst = runse!(model_pst, deepcopy(meas_pst); maxIte = 40, tol = 1e-10)
+res_pst = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+  runse!(model_pst, deepcopy(meas_pst))
+end
 est_pst = res_pst.tapEstimates[1]
 @printf("PST: J = %.2f | electrical step = %+.3f -> fixed to %+d (truth %+d)\n",
         res_pst.objectiveJ, est_pst.electrical_step_2, est_pst.fixed_step_2, 3)
@@ -315,7 +327,9 @@ to separate:
 truth_both, meas_both = truth_measurements(ratio_step = -2.0, phase_step = 2.0, seed = 13)
 model_both = build_net()
 setTapEstimation!(model_both; trafo = 3, mode = :both, alpha_deg = 90.0)
-res_both = runse!(model_both, deepcopy(meas_both); maxIte = 40, tol = 1e-10)
+res_both = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+  runse!(model_both, deepcopy(meas_both))
+end
 est_both = res_both.tapEstimates[1]
 @printf("cascade: J = %.2f | ratio %+.3f -> %+d (truth %+d), phase %+.3f -> %+d (truth %+d)\n",
         res_both.objectiveJ, est_both.electrical_step_1, est_both.fixed_step_1, -2,
@@ -354,7 +368,9 @@ filter!(m -> m.id != "Vm_bus_5", meas_bridge)   ## L3 is bus 5: no voltage behin
 
 model_bridge = build_net()
 setTapEstimation!(model_bridge; trafo = 5, mode = :ratio)
-res_bridge = runse!(model_bridge, meas_bridge; maxIte = 40, tol = 1e-10)
+res_bridge = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+  runse!(model_bridge, meas_bridge)
+end
 est_bridge = res_bridge.tapEstimates[1]
 @printf("radial T3: J = %.2f | electrical step = %+.3f -> fixed to %+d (truth %+d)\n",
         res_bridge.objectiveJ, est_bridge.electrical_step_1, est_bridge.fixed_step_1, 3)
@@ -387,8 +403,8 @@ First, what they add to a complete set:
 
 ````@example workshop_se_taps
 _, with_currents = truth_measurements(seed = 3, includeImag = true)
-net_plain = build_net(); res_plain = runse!(net_plain, deepcopy(full_set); maxIte = 40, tol = 1e-10)
-net_curr = build_net(); res_curr = runse!(net_curr, deepcopy(with_currents); maxIte = 40, tol = 1e-10)
+net_plain = build_net(); res_plain = with_state_estimation_config(() -> runse!(net_plain, deepcopy(full_set)); max_iter = 40, tol = 1e-10)
+net_curr = build_net(); res_curr = with_state_estimation_config(() -> runse!(net_curr, deepcopy(with_currents)); max_iter = 40, tol = 1e-10)
 dvm = maximum(abs.([getNodeVm(n) for n in net_plain.nodeVec] .- [getNodeVm(n) for n in net_curr.nodeVec]))
 @printf("complete set:  m = %d -> %d, J/dof = %.3f -> %.3f, state moves by %.1e pu\n",
         length(full_set), length(with_currents), res_plain.objectiveJ / res_plain.dof,
@@ -405,14 +421,22 @@ current magnitudes on the same bay:
 ````@example workshop_se_taps
 sparse_set = filter(m -> !occursin("branch_2", m.id), deepcopy(full_set))
 net_sparse = build_net(); append!(net_sparse.measurements, deepcopy(sparse_set))
-obs_sparse = evaluate_global_observability(net_sparse; flatstart = true, jacEps = 1e-6)
-res_sparse = runse!(net_sparse; maxIte = 40, tol = 1e-10)
+obs_sparse = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
+  evaluate_global_observability(net_sparse)
+end
+res_sparse = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+  runse!(net_sparse)
+end
 err_sparse = maximum(abs.([getNodeVm(n) for n in net_sparse.nodeVec] .- vm_true))
 
 sparse_curr = filter(m -> !occursin("branch_2", m.id) || startswith(m.id, "Imag"), deepcopy(with_currents))
 net_sc = build_net(); append!(net_sc.measurements, deepcopy(sparse_curr))
-obs_sc = evaluate_global_observability(net_sc; flatstart = true, jacEps = 1e-6)
-res_sc = runse!(net_sc; maxIte = 40, tol = 1e-10)
+obs_sc = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
+  evaluate_global_observability(net_sc)
+end
+res_sc = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+  runse!(net_sc)
+end
 err_sc = maximum(abs.([getNodeVm(n) for n in net_sc.nodeVec] .- vm_true))
 
 @printf("no flows on the tie:      m = %d, observability = %s, dof = %d, max_err = %.2e\n",
@@ -448,7 +472,9 @@ The set below carries PMU angles at H2 and L1, deliberately shifted by
 _, pmu_set = truth_measurements(
   seed = 21, includeVa = true, vaBusIdxs = [2, 3], vaRefOffsetDeg = 4.0,
 )
-res_pmu = runse!(build_net(), pmu_set; maxIte = 40, tol = 1e-10)
+res_pmu = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+  runse!(build_net(), pmu_set)
+end
 @printf("PMU set: m = %d, J = %.2f, dof = %d, estimated reference offset = %+.3f deg (injected %+.1f)\n",
         length(pmu_set), res_pmu.objectiveJ, res_pmu.dof,
         res_pmu.vaRefOffsetDeg === nothing ? NaN : res_pmu.vaRefOffsetDeg, 4.0)
@@ -489,7 +515,9 @@ pre = validate_topology(model_topo, meas_topo)
 for f in pre.findings
   println(f.kind, " at ", f.location, " (", f.severity, "): ", f.evidence)
 end
-res_topo = runse!(model_topo, meas_topo; maxIte = 40, tol = 1e-10)
+res_topo = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+  runse!(model_topo, meas_topo)
+end
 @printf("wrong status:  J = %.1f, dof = %d, inside band: %s\n", res_topo.objectiveJ, res_topo.dof, res_topo.jWithin3Sigma)
 
 model_fixed = build_net()
@@ -498,7 +526,9 @@ for br in (model_fixed.branchVec[2],)
   br.from_status = 0
   br.to_status = 0
 end
-res_fixed = runse!(model_fixed, deepcopy(meas_topo); maxIte = 40, tol = 1e-10)
+res_fixed = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+  runse!(model_fixed, deepcopy(meas_topo))
+end
 @printf("status corrected: J = %.1f, dof = %d, inside band: %s\n", res_fixed.objectiveJ, res_fixed.dof, res_fixed.jWithin3Sigma)
 ````
 
@@ -543,7 +573,9 @@ for b in (1, 2)
   model_iso.branchVec[b].to_status = 0
 end
 validate!(net = model_iso)
-res_iso = runse!(model_iso, meas_iso; maxIte = 40, tol = 1e-10)
+res_iso = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+  runse!(model_iso, meas_iso)
+end
 @printf("total: J = %.2f, dof = %d, islands = %d\n", res_iso.objectiveJ, res_iso.dof, length(res_iso.islands))
 for isl in res_iso.islands
   @printf("  island %d: %d buses, converged = %s, J = %.2f, dof = %d, band = %s\n",
@@ -568,7 +600,9 @@ bad_set[k] = Measurement(
   typ = bad_set[k].typ, value = bad_set[k].value + 25.0, sigma = bad_set[k].sigma,
   branchIdx = bad_set[k].branchIdx, direction = bad_set[k].direction, id = bad_set[k].id,
 )
-res_bad = runse!(build_net(), deepcopy(bad_set); maxIte = 40, tol = 1e-10)
+res_bad = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+  runse!(build_net(), deepcopy(bad_set))
+end
 @printf("plain WLS:    J = %.1f, dof = %d, inside band: %s\n", res_bad.objectiveJ, res_bad.dof, res_bad.jWithin3Sigma)
 ````
 
@@ -577,8 +611,9 @@ a large sigma during the solve, the way an EMS suppression list does. The
 statistics stay on the ORIGINAL sigma, so the alarm does not go away:
 
 ````@example workshop_se_taps
-se_cfg = StateEstimationConfig(robust_mode = :replacement, k_suppress = 4.0, suppression_sigma = 2000.0)
-res_repl = runse!(build_net(), deepcopy(bad_set), se_cfg)
+res_repl = with_state_estimation_config(robust_mode = :replacement, k_suppress = 4.0, suppression_sigma = 2000.0) do
+  runse!(build_net(), deepcopy(bad_set))
+end
 act = res_repl.activeObjective
 @printf("replacement:  J = %.1f (honest), J_active = %.2f over dof = %d, suppressed rows = %d\n",
         res_repl.objectiveJ, act.j, act.dof, act.suppressed)

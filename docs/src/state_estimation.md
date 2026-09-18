@@ -309,7 +309,7 @@ SE is designed to run on the same `Net` data model used for power flow:
 3. Optional for synthetic studies: run `runpf!` + `generateMeasurementsFromPF`
 4. Check observability (global/local)
 5. Run estimator (`runse!`)
-6. Optionally write estimates back into the network (`updateNet = true`)
+6. Optionally write estimates back into the network (`state_estimation.update_net = true`)
 
 Conceptually, SE is the measurement-driven counterpart of power flow:
 
@@ -321,15 +321,15 @@ Conceptually, SE is the measurement-driven counterpart of power flow:
 Sparlectra exposes a public diagnostics workflow for bad-data and statistical
 consistency checks:
 
-* `validate_measurements(net, measurements; normalizedThreshold=3.0, wiiThreshold=0.3, ...)`
+* `validate_measurements(net, measurements)` (thresholds from `state_estimation.k_eliminate` and friends)
   runs SE once and returns:
   * objective statistics (`value`, `dof`, `zscore`, `within_3sigma`)
   * largest normalized residual
   * full measurement ranking by `|normalized_residual|`, each row carrying
     the residual sensitivity `wii` and a `localizable` flag (see below)
-  * suspicious measurement list based on `normalizedThreshold`
+  * suspicious measurement list based on `state_estimation.k_eliminate`
   * optional residual-correlation columns (see below)
-* `runse_diagnostics(net, measurements; max_eliminations=3, ...)` extends
+* `runse_diagnostics(net, measurements)` (budget `state_estimation.max_eliminations`, default 3) extends
   this with **sequential bad-data elimination**: while the χ²-like 3σ band
   test fails and a suspicious measurement exists, the top suspect is
   deactivated and the diagnostics rerun, up to `max_eliminations` times.
@@ -339,8 +339,8 @@ consistency checks:
   `:max_eliminations`, or `:not_converged`.
   Zero-injection pseudo-measurements (id prefix `ZI`) and near-exact
   measurements (`sigma <= 1e-6`) are never eliminated; they encode network
-  structure, not telemetry. The old keyword `deactivate_and_rerun = true`
-  remains as an alias for `max_eliminations = 1`.
+  structure, not telemetry. The elimination budget is
+  `state_estimation.max_eliminations`.
 * `summarize_se_diagnostics(diag)` creates a compact interpretation summary
   (`global_consistency`, `reason`, suspicious count).
 * `print_se_diagnostics(diag; io=stdout, topN=10, format=:plain|:markdown)`
@@ -423,8 +423,7 @@ Both limits work on the NORMALIZED residual
 are exposed in the Web UI's estimator options. Only the staged knees
 `robust_k1`/`robust_k2` stay on the raw ratio `|r|/\sigma` (see below).
 
-**Elimination limit.** `state_estimation.k_eliminate` (keyword
-`normalizedThreshold`, default 3.0) bounds the candidacy of the sequential
+**Elimination limit.** `state_estimation.k_eliminate` (default 3.0) bounds the candidacy of the sequential
 elimination: a row is suspicious from `rn >= k_eliminate` on. It works
 together with the elimination budget (`max_eliminations`) and only while
 the band test reports `:high`.
@@ -690,7 +689,7 @@ nodal balance rows keep weight 1, each link measurement adds a row with
 weight `1/sigma^2`, and without measurements the result equals
 `calcLinkFlowsKCL!` exactly. The returned rows carry `source = :kcl` or
 `:measured_ls` plus the measurement residual per link. Run it after
-`runse!(...; updateNet = true)`, which fills the branch flows and shunt
+`with_state_estimation_config(() -> runse!(...); update_net = true)`, which fills the branch flows and shunt
 powers the allocation consumes.
 
 ## Island-wise estimation
@@ -949,7 +948,7 @@ offers for download together with the file.
 
 **PF from the estimate.** `runpf_from_se!(net, maxIte, tol, verbose; mode)`
 starts a power flow from the last SE result (requires
-`runse!(...; updateNet = true)` or a state restored via `readSEStateCSV!`):
+`with_state_estimation_config(() -> runse!(...); update_net = true)` or a state restored via `readSEStateCSV!`):
 
 * `mode = :se_state` (config `profile_source = state_estimation`): start
   from the estimated voltages; the model injections stay authoritative, the
@@ -1103,10 +1102,14 @@ setMeasurementsFromPF!(
     rng = MersenneTwister(42),
 )
 
-gobs = evaluate_global_observability(net; flatstart = true, jacEps = 1e-6)
+gobs = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
+  evaluate_global_observability(net)
+end
 println("Global observability quality: ", gobs.quality)
 
-se = runse!(net; maxIte = 12, tol = 1e-6, flatstart = true, jacEps = 1e-6, updateNet = true)
+se = with_state_estimation_config(max_iter = 12, tol = 1e-6, flatstart = true, jac_eps = 1e-6, update_net = true) do
+  runse!(net)
+end
 println("Converged: ", se.converged, ", iterations: ", se.iterations)
 ```
 
@@ -1136,10 +1139,14 @@ append!(net.measurements, Measurement[
     Measurement(typ = PflowMeas, value = 23.5, sigma = 0.8, branchIdx = 1, direction = :from, id = "PF_12_REDUNDANT"),
 ])
 
-obs = evaluate_global_observability(net; flatstart = true, jacEps = 1e-6)
+obs = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
+  evaluate_global_observability(net)
+end
 println("Observable quality: ", obs.quality)
 
-se = runse!(net; maxIte = 12, tol = 1e-6, flatstart = true, jacEps = 1e-6, updateNet = true)
+se = with_state_estimation_config(max_iter = 12, tol = 1e-6, flatstart = true, jac_eps = 1e-6, update_net = true) do
+  runse!(net)
+end
 println("Converged: ", se.converged)
 ```
 
@@ -1167,7 +1174,9 @@ addQinjMeasurement!(net; busName = "B2", value = -8.0, sigma = 1.0)
 addPflowMeasurement!(net; fromBus = "B1", toBus = "B2", value = 24.0, sigma = 0.8, direction = :from)
 addQflowMeasurement!(net; branchNr = 1, value = 6.5, sigma = 0.8, direction = :to)
 
-obs = evaluate_global_observability(net; flatstart = true, jacEps = 1e-6)
+obs = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
+  evaluate_global_observability(net)
+end
 println("Observable quality: ", obs.quality)
 ```
 

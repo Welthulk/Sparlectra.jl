@@ -1,0 +1,54 @@
+config_version: 1
+scope: case
+case: case14_zeng_p306_simulatious_B.scf.json
+form:
+  detailed_result_csv: true
+  detailed_result_csv_format: excel_de
+  export_cgmes: false
+  performance_timing: compact
+  power_flow_tol_unit: pu
+power_flow:
+  apslf_start:
+    enabled: false
+    order: 40
+  autodamp: false
+  dc:
+    fallback: false
+  distributed_slack:
+    enabled: false
+    p_mode: pg_weighted
+  external_grid:
+    enabled: false
+    rx: 0.1
+    sk_MVA: 2000.0
+    source: auto
+  linear_solver: umfpack_reuse
+  max_iter: 80
+  merit:
+    enabled: false
+    fallback_max_mismatch: false
+  mode: manual
+  qlimits:
+    enabled: true
+    enforcement_mode: classic_simultaneous
+  rescue: true
+  solver: rectangular
+  start_current_iteration:
+    accept_only_if_improved: true
+    damping: 0.5
+    enabled: false
+    max_angle_step_deg: 30.0
+    max_iter: 10
+    min_improvement_factor: 0.98
+    only_for_large_cases: false
+    tol: 0.001
+    vm_max_pu: 1.5
+    vm_min_pu: 0.5
+  start_mode:
+    angle_mode: classic
+    dc_seed_unconditional: false
+    voltage_mode: classic
+  tol: 1.0e-6
+  trust_region:
+    enabled: false
+  wrong_branch_detection: "off"

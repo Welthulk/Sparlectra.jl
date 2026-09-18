@@ -74,7 +74,9 @@ function write_measurement_matrix_report(output_dir::AbstractString)
   setMeasurementsFromPF!(net; includeVm = true, includePinj = true, includeQinj = true, includePflow = true, includeQflow = true, noise = false)
 
   mj = measurement_jacobian(net)
-  gobs = evaluate_global_observability(net; flatstart = true, jacEps = 1e-6)
+  gobs = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
+    evaluate_global_observability(net)
+  end
   # H is sparse since task_se_sparse; the workshop-size matrix is tiny, so
   # the exact dense singular values stay affordable here
   sv = svdvals(Matrix(mj.H))

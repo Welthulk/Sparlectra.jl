@@ -61,7 +61,9 @@ function run_state_estimation_topology_validation()
   # stage 2: the fingerprint. Elimination exhausts, the band stays high,
   # and the surviving suspects cluster at the transformer's stations:
   # a wrong service state, not bad telemetry.
-  diag = runse_diagnostics(net, meas; max_eliminations = 2, maxIte = 100, tol = 1e-8)
+  diag = with_state_estimation_config(max_eliminations = 2, max_iter = 100, tol = 1e-8) do
+    runse_diagnostics(net, meas)
+  end
   println("stage 2: stop = ", diag.stop_reason, ", band = ", diag.final_diagnostics.objective.reason)
   for f in something(diag.topology_findings, NamedTuple[])
     println("         suspected at station ", f.location, " (", f.evidence, ")")
@@ -70,7 +72,9 @@ function run_state_estimation_topology_validation()
   # stage 3: the hypothesis test. Each candidate's status is toggled on a
   # WORKING COPY and the estimation re-run; the true hypothesis lands in
   # the band with J near zero and ranks first. Nothing is switched.
-  rep = test_topology_hypotheses(net, meas; maxIte = 100, tol = 1e-8)
+  rep = with_state_estimation_config(max_iter = 100, tol = 1e-8) do
+    test_topology_hypotheses(net, meas)
+  end
   println("stage 3: ", rep.n_candidates, " candidate(s), ambiguous = ", rep.ambiguous)
   for r in rep.recommendations
     @printf("         %-24s %-16s J %10.3f -> %10.3f  %s\n", r.element, r.hypothesis, r.j_before, r.j_after, r.verdict)

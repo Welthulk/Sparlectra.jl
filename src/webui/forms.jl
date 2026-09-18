@@ -55,22 +55,28 @@ end
 """
     _webui_bundled_scf_options(application_root) -> Vector{String}
 
-The shipped SCF cases under `data/scf` (`sp_*` only: the demo cases and
-the PST format fixture, task_demo_cases_v0100). They are offered in the
-case chooser regardless of the cache directory and staged into the cache
-on first use ([`_webui_stage_bundled_case!`](@ref)).
+The shipped cases under `data/scf` (every `.scf.json`: the `sp_*` demo
+cases, the PST format fixture, and since 0.12.5 the feeder and Q-limit
+example cases) plus the plain power-grid-model files under `data/PGM`
+(`.json`). They are offered in the case chooser regardless of the cache
+directory and staged into the cache on first use
+([`_webui_stage_bundled_case!`](@ref)).
 """
 function _webui_bundled_scf_options(application_root::AbstractString)::Vector{String}
-  dir = joinpath(application_root, "data", "scf")
-  isdir(dir) || return String[]
-  return sort!([name for name in readdir(dir) if startswith(name, "sp_") && endswith(lowercase(name), ".scf.json")]; by = lowercase)
+  names = String[]
+  scf_dir = joinpath(application_root, "data", "scf")
+  isdir(scf_dir) && append!(names, [name for name in readdir(scf_dir) if endswith(lowercase(name), ".scf.json")])
+  pgm_dir = joinpath(application_root, "data", "PGM")
+  isdir(pgm_dir) && append!(names, [name for name in readdir(pgm_dir) if endswith(lowercase(name), ".json")])
+  return sort!(names; by = lowercase)
 end
 
 """
     _webui_stage_bundled_case!(application_root, case_directory, requested) -> Union{Nothing,String}
 
 Resolve a bare requested case NAME against the package's bundled sources
-(`data/mpower`, then `data/scf`) and stage it into `case_directory`.
+(`data/mpower`, then `data/scf`, then `data/PGM`) and stage it into
+`case_directory`.
 Returns the staged (or already cached) absolute path, or `nothing` when no
 bundled source carries the name. An SCF demo case is staged WITH its
 sidecars (`<stem>.config.yaml` pins the machine-neutral resolution, the
@@ -81,7 +87,7 @@ overwritten, so user-saved settings survive. With no writable
 function _webui_stage_bundled_case!(application_root::AbstractString, case_directory::Union{Nothing,AbstractString}, requested::AbstractString)::Union{Nothing,String}
   name = String(requested)
   (isabspath(name) || occursin('/', name) || occursin('\\', name)) && return nothing
-  for source_dir in (joinpath(application_root, "data", "mpower"), joinpath(application_root, "data", "scf"))
+  for source_dir in (joinpath(application_root, "data", "mpower"), joinpath(application_root, "data", "scf"), joinpath(application_root, "data", "PGM"))
     bundled = joinpath(source_dir, name)
     isfile(bundled) || continue
     case_directory === nothing && return bundled

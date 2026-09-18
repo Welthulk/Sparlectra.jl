@@ -93,8 +93,12 @@ function _run_scenario(label::String, base_net::Net, measurements::Vector{Measur
   empty!(net.measurements)
   append!(net.measurements, measurements)
 
-  obs = evaluate_global_observability(net; flatstart = false, jacEps = 1e-6)
-  se = runse!(net; maxIte = 12, tol = 1e-8, flatstart = false, jacEps = 1e-6, updateNet = false)
+  obs = with_state_estimation_config(flatstart = false, jac_eps = 1e-6) do
+    evaluate_global_observability(net)
+  end
+  se = with_state_estimation_config(max_iter = 12, tol = 1e-8, flatstart = false, jac_eps = 1e-6, update_net = false) do
+    runse!(net)
+  end
 
   println(label)
   println(repeat("=", length(label)))

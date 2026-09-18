@@ -565,7 +565,7 @@ function _webui_case_context(;
     end
   end
   casefiles = case_directory === nothing ? _webui_casefile_options(application_root) : _webui_casefile_options_in_directory(case_directory)
-  # the shipped SCF demo cases (data/scf) are always offered; on first use
+  # the shipped cases (data/scf, data/PGM) are always offered; on first use
   # the run path stages them into the cache with their sidecars
   casefiles = sort!(unique!(vcat(casefiles, _webui_bundled_scf_options(application_root))); by = lowercase)
   bundled_case_directory = joinpath(application_root, "data", "mpower")
@@ -1171,10 +1171,11 @@ function _webui_settings_sections_html(; profile_values, config_default, profile
 <p class=\"field-help\">The REF bus keeps the angle reference; the island's P imbalance is absorbed by participating generators via one λ<sub>P</sub> per island. <code>imported</code> reads participation factors from the case data (MATPOWER <code>APF</code>, CGMES <code>normalPF</code>). Explicit weights are YAML-only (<code>power_flow.distributed_slack.weights</code>).</p>
 </fieldset>
 <label>$(_webui_field_label("performance_timing", "Performance timing"))$(_webui_select("performance_timing", _webui_option_allowed_values("performance_timing"), _webui_selected(profile_values, "performance_timing", _webui_option_default("performance_timing"))))</label>
+<label class=\"detailed-csv-format\">$(_webui_field_label("detailed_result_csv_format", "CSV format (every CSV file of a run)"))$(_webui_select("detailed_result_csv_format", _webui_option_allowed_values("detailed_result_csv_format"), _webui_selected(profile_values, "detailed_result_csv_format", _webui_option_default("detailed_result_csv_format"))))</label>
+<p class=\"field-help\">Delimiter and decimal separator of every CSV file the run writes (result tables, short circuit, state estimation, AC islands, contingencies); <code>excel_de</code> for a German Excel, <code>excel_us</code> for an English one, <code>technical</code> for comma and dot.</p>
 <details class=\"span-2 detailed-csv-options\">
 <summary>Detailed result CSV export</summary>
 <label class=\"check\"><input name=\"detailed_result_csv\" type=\"hidden\" value=\"false\"><input name=\"detailed_result_csv\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "detailed_result_csv", _webui_option_default("detailed_result_csv")))>$(_webui_field_label("detailed_result_csv", "Export detailed result CSV files"))</label>
-<label class=\"detailed-csv-format\">$(_webui_field_label("detailed_result_csv_format", "CSV format"))$(_webui_select("detailed_result_csv_format", _webui_option_allowed_values("detailed_result_csv_format"), _webui_selected(profile_values, "detailed_result_csv_format", _webui_option_default("detailed_result_csv_format"))))</label>
 </details>
 <label class=\"check span-2\"><input name=\"export_cgmes\" type=\"hidden\" value=\"false\"><input name=\"export_cgmes\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "export_cgmes", _webui_option_default("export_cgmes")))>$(_webui_field_label("export_cgmes", "Export case as CGMES delivery (EQ+TP+SSH+SV, ZIP)"))</label>
 <details class=\"span-2 expert-section\">
@@ -1219,11 +1220,13 @@ $(config_maintenance)
 <label class="check"><input type="radio" name="power_flow_solver" value="apslf" data-solver-radio$(_webui_form_string(_webui_selected(profile_values, "power_flow_solver", _webui_option_default("power_flow_solver"))) == "apslf" ? " checked" : "")>APSLF (AnalyticLoadFlow)</label>
 <label class="check"><input type="radio" name="power_flow_solver" value="dc" data-solver-radio$(_webui_form_string(_webui_selected(profile_values, "power_flow_solver", _webui_option_default("power_flow_solver"))) == "dc" ? " checked" : "")>DC (linear screening model, replaces Newton-Raphson entirely)</label>
 </details>
-<fieldset id="apslf-solver-options" class="span-2 apslf-solver-options" data-apslf-solver-options hidden>
+<fieldset id="apslf-solver-options" class="span-2 apslf-solver-options" data-apslf-solver-options>
 <legend>APSLF solver options</legend>
 <label class=\"field-indent\">$(_webui_field_label("power_flow_apslf_order", "Highest coefficient (order)"))<input name=\"power_flow_apslf_order\" type=\"number\" min=\"1\" value=\"$(_webui_input_value(profile_values, "power_flow_apslf_order", _webui_option_default("power_flow_apslf_order")))\"></label>
 <label class=\"check field-indent\"><input name=\"power_flow_apslf_use_pade\" type=\"hidden\" value=\"false\"><input name=\"power_flow_apslf_use_pade\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_apslf_use_pade", _webui_option_default("power_flow_apslf_use_pade")))>$(_webui_field_label("power_flow_apslf_use_pade", "Padé evaluation"))</label>
 <label class=\"check field-indent\"><input name=\"power_flow_apslf_nr_polish\" type=\"hidden\" value=\"false\"><input name=\"power_flow_apslf_nr_polish\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_apslf_nr_polish", _webui_option_default("power_flow_apslf_nr_polish")))>$(_webui_field_label("power_flow_apslf_nr_polish", "NR polish"))</label>
+<label class=\"check field-indent\"><input name=\"power_flow_apslf_convergence_radius\" type=\"hidden\" value=\"false\"><input name=\"power_flow_apslf_convergence_radius\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_apslf_convergence_radius", _webui_option_default("power_flow_apslf_convergence_radius")))>$(_webui_field_label("power_flow_apslf_convergence_radius", "Convergence radius"))</label>
+<p class=\"field-help field-indent\">The convergence radius is the distance of the nearest Padé pole to the evaluation point; it is reported next to the Jacobian condition and costs about as much as the solve.</p>
 </fieldset>
 <details id="apslf-start-options" class="span-2 apslf-start-options" data-apslf-start-options data-ac-only-field>
 <summary>Newton-Raphson start values</summary>
@@ -1691,6 +1694,7 @@ const _WEBUI_RESULT_FIELDS = (
   "iterations",
   "final_mismatch",
   "Jacobian condition",
+  "APSLF convergence radius",
   "reason",
   "message",
   "input_format",
@@ -1740,6 +1744,10 @@ function _webui_result_value(result::AbstractDict, field::AbstractString)
     return get(metadata, "q_limit_classic_outer_loop_passes", "n/a")
   elseif field == "Runtime casefile"
     return get(result, "runtime_casefile", get(get(result, "metadata", Dict{String,Any}()), "runtime_casefile", "n/a"))
+  elseif field == "APSLF convergence radius"
+    metadata = get(result, "metadata", Dict{String,Any}())
+    line = get(metadata, "apslf_convergence_line", nothing)
+    return line isa AbstractString && !isempty(line) ? line : "n/a"
   elseif field == "Jacobian condition"
     # single source of formatting: the metadata carries the identical line
     # the classic result log prints; estimate plus verdict is the fallback

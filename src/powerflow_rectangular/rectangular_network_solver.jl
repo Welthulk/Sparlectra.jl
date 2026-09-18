@@ -671,6 +671,9 @@ function runpf_rectangular!(
 
   cooldown_iters = opt_cooldown_iters !== nothing ? opt_cooldown_iters : (hasfield(typeof(net), :cooldown_iters) ? net.cooldown_iters : 0)
   q_hyst_pu      = opt_q_hyst_pu !== nothing ? opt_q_hyst_pu : (hasfield(typeof(net), :q_hyst_pu) ? net.q_hyst_pu : 0.0)
+  # voltage margin of the PQ->PV release (#375), stamped on the net from
+  # power_flow.qlimits.reenable_v_hyst_pu like the two settings above
+  reenable_v_hyst_pu = hasfield(typeof(net), :reenable_v_hyst_pu) ? net.reenable_v_hyst_pu : 1e-4
   allow_reenable = (cooldown_iters > 0) || (q_hyst_pu > 0.0)
   qlimit_mode in (:switch_to_pq, :adjust_vset) || error("Unsupported qlimit_mode=$(qlimit_mode). Supported: :switch_to_pq, :adjust_vset.")
   qlimit_max_outer > 0 || error("qlimit_max_outer must be > 0 (got $(qlimit_max_outer)).")
@@ -826,6 +829,7 @@ function runpf_rectangular!(
         allow_reenable,
         q_hyst_pu,
         cooldown_iters,
+        reenable_v_hyst_pu,
         lock_pv_to_pq_buses,
         qlimit_start_mode,
         qlimit_start_iter,
@@ -1088,6 +1092,10 @@ function runpf_rectangular!(
   end
   if verbose > 0
     qlimits_enabled && _print_qlimit_active_set_summary(stdout, status)
+  end
+  # a switched-off detection prints nothing (issue #387): the block used to
+  # appear with NOT_CHECKED and NaN metrics on every solve
+  if verbose > 0 && wrong_branch_detection !== :off
     println(stdout, "Wrong-branch check:")
     @printf(stdout, "  status           = %s\n", uppercase(String(status.branch_quality_status)))
     @printf(stdout, "  detection_mode   = %s\n", String(status.wrong_branch_detection))

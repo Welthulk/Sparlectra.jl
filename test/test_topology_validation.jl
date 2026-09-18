@@ -73,7 +73,9 @@ function test_topology_stage1()::Bool
     pre = validate_topology(net, meas)
     @test any(f -> f.kind == :open_element_with_flow && occursin("branch 2", f.location), pre.findings)
     # the estimation still runs (advisory) and carries the findings
-    res = runse!(net, meas; maxIte = 40, tol = 1e-8)
+    res = with_state_estimation_config(max_iter = 40, tol = 1e-8) do
+      runse!(net, meas)
+    end
     @test res.topologyFindings !== nothing
     @test any(f -> f.kind == :open_element_with_flow, res.topologyFindings)
 
@@ -154,7 +156,9 @@ function test_topology_stage2_fingerprint()::Bool
     setBranchStatus!(tnet.branchVec[4], false)
     meas = _topo_measurements(tnet)
     net = _topo_net()   # model: branch 4 closed
-    diag = runse_diagnostics(net, meas; max_eliminations = 2, maxIte = 100, tol = 1e-8)
+    diag = with_state_estimation_config(max_eliminations = 2, max_iter = 100, tol = 1e-8) do
+      runse_diagnostics(net, meas)
+    end
     @test diag.stop_reason == :max_eliminations
     @test diag.topology_findings !== nothing
     findings = something(diag.topology_findings, NamedTuple[])
@@ -176,7 +180,9 @@ function test_topology_stage2_fingerprint()::Bool
     meas = _topo_measurements(net)
     gi = findfirst(m -> m.typ == Sparlectra.PflowMeas, meas)
     meas[gi] = _meas_with(meas[gi]; value = meas[gi].value + 10.0 * meas[gi].sigma)
-    diag = runse_diagnostics(net, meas; max_eliminations = 3, maxIte = 40, tol = 1e-8)
+    diag = with_state_estimation_config(max_eliminations = 3, max_iter = 40, tol = 1e-8) do
+      runse_diagnostics(net, meas)
+    end
     @test diag.stop_reason != :max_eliminations
     @test diag.topology_findings === nothing
   end
@@ -196,7 +202,9 @@ function test_topology_stage3_hypotheses()::Bool
     link0 = [l.status for l in net.linkVec]
     vm0 = [nd._vm_pu for nd in net.nodeVec]
 
-    rep = test_topology_hypotheses(net, meas; max_candidates = 8, maxIte = 100, tol = 1e-8)
+    rep = with_state_estimation_config(max_iter = 100, tol = 1e-8) do
+      test_topology_hypotheses(net, meas; max_candidates = 8)
+    end
     @test rep.base_verdict == :high
     @test rep.n_candidates >= 1
     top = first(rep.recommendations)
@@ -238,7 +246,9 @@ function test_topology_stage3_hypotheses()::Bool
     meas2 = generateMeasurementsFromPF(tn2; includeImag = true, noise = false)
     net2 = _two_island()
     stat2 = [(br.status, br.from_status, br.to_status) for br in net2.branchVec]
-    rep2 = test_topology_hypotheses(net2, meas2; candidates = [(kind = :branch, idx = 8)], maxIte = 100, tol = 1e-8)
+    rep2 = with_state_estimation_config(max_iter = 100, tol = 1e-8) do
+      test_topology_hypotheses(net2, meas2; candidates = [(kind = :branch, idx = 8)])
+    end
     @test rep2.n_candidates == 1
     @test first(rep2.recommendations).verdict == :hypothesis_supported
     @test [(br.status, br.from_status, br.to_status) for br in net2.branchVec] == stat2
@@ -297,7 +307,9 @@ function test_topology_singular_normal_equations()::Bool
     net = _par_net()
     setTapEstimation!(net; trafo = 3, mode = :ratio)
     setTapEstimation!(net; trafo = 4, mode = :ratio)
-    res = runse!(net, meas; maxIte = 40, tol = 1e-8)
+    res = with_state_estimation_config(max_iter = 40, tol = 1e-8) do
+      runse!(net, meas)
+    end
     @test res.converged
     @test res.tapEstimates !== nothing && length(res.tapEstimates) == 2
     # per-branch flow rows follow the LIVE tap (branchFlow_pu fix), so the
@@ -316,7 +328,9 @@ function test_topology_singular_normal_equations()::Bool
     net = _par_net()
     setTapEstimation!(net; trafo = 3, mode = :ratio)
     setTapEstimation!(net; trafo = 4, mode = :ratio)
-    resR = runse!(net, meas; maxIte = 50, tol = 1e-8, robust = true)
+    resR = with_state_estimation_config(max_iter = 50, tol = 1e-8, robust = true) do
+      runse!(net, meas)
+    end
     @test resR.converged
     @test resR.iterations < 50
   end

@@ -19,7 +19,7 @@
 # 2) Run PF and generate synthetic measurements
 # 3) Inject one artificial bad measurement
 # 4) Run validate_measurements(...) and inspect ranking
-# 5) Run runse_diagnostics(...; deactivate_and_rerun=true)
+# 5) Run with_state_estimation_config(() -> runse_diagnostics(...); max_eliminations = 1)
 
 # Date: 2026-03-24
 # file: examples/state_estimation/usage_state_estimation_diagnostics.jl
@@ -66,7 +66,9 @@ function run_usage_state_estimation_diagnostics()
   m = meas[idx]
   meas[idx] = Measurement(typ = m.typ, value = m.value + 0.2, sigma = m.sigma, active = m.active, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = m.id)
 
-  report = validate_measurements(net, meas; maxIte = 12, tol = 1e-6, flatstart = true, jacEps = 1e-6, normalizedThreshold = 3.0)
+  report = with_state_estimation_config(max_iter = 12, tol = 1e-6, flatstart = true, jac_eps = 1e-6, k_eliminate = 3.0) do
+    validate_measurements(net, meas)
+  end
   @printf("PF iterations: %d\n", ite_pf)
 
   print_se_diagnostics(report; topN = 8)
@@ -74,7 +76,9 @@ function run_usage_state_estimation_diagnostics()
   #println("\n--- Same report as Markdown ---")
   #print_se_diagnostics(report; topN = 8, format = :markdown)
 
-  diag = runse_diagnostics(net, meas; deactivate_and_rerun = true, maxIte = 12, tol = 1e-6, flatstart = true, jacEps = 1e-6, normalizedThreshold = 3.0)
+  diag = with_state_estimation_config(max_eliminations = 1, max_iter = 12, tol = 1e-6, flatstart = true, jac_eps = 1e-6, k_eliminate = 3.0) do
+    runse_diagnostics(net, meas)
+  end
 
   println("\n--- Diagnostics with deactivate-and-rerun ---")
   print_se_diagnostics(diag; topN = 8)

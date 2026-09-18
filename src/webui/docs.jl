@@ -66,6 +66,7 @@ const WEBUI_HELP_TOPICS = Dict(
   "power_flow.apslf.order" => (label = "APSLF highest coefficient (order)", page = "powerflow_configuration", heading = "Solver selection (rectangular vs. APSLF)", selector = "`power_flow.apslf.order`"),
   "power_flow.apslf.use_pade" => (label = "APSLF Padé evaluation", page = "powerflow_configuration", heading = "Solver selection (rectangular vs. APSLF)", selector = "`power_flow.apslf.use_pade`"),
   "power_flow.apslf.nr_polish" => (label = "APSLF NR polish", page = "powerflow_configuration", heading = "Solver selection (rectangular vs. APSLF)", selector = "`power_flow.apslf.nr_polish`"),
+  "power_flow.apslf.convergence_radius" => (label = "APSLF convergence radius", page = "powerflow_configuration", heading = "Solver selection (rectangular vs. APSLF)", selector = "`power_flow.apslf.convergence_radius`"),
   "power_flow.apslf_start.enabled" => (label = "Use APSLF start values", page = "powerflow_configuration", heading = "Solver selection (rectangular vs. APSLF)", selector = "`power_flow.apslf_start.enabled`"),
   "power_flow.apslf_start.order" => (label = "APSLF start highest coefficient (order)", page = "powerflow_configuration", heading = "Solver selection (rectangular vs. APSLF)", selector = "`power_flow.apslf_start.order`"),
   "power_flow.wrong_branch_detection" => (label = "Wrong-branch detection", page = "configuration", heading = "Wrong-branch detection semantics (rectangular PF)", selector = ""),
@@ -119,7 +120,7 @@ const WEBUI_HELP_TOPICS = Dict(
   "benchmark.seconds" => (label = "Benchmark max. time budget [s]", page = "performance_profiling", heading = "Benchmark configuration", selector = "`benchmark.seconds`"),
   "webui.performance_timing" => (label = "Performance timing", page = "webui", heading = "Run artifacts and output modes", selector = ""),
   "webui.detailed_result_csv" => (label = "Detailed result CSV export", page = "webui", heading = "Run artifacts and output modes", selector = ""),
-  "webui.detailed_result_csv_format" => (label = "Detailed CSV format", page = "webui", heading = "Run artifacts and output modes", selector = ""),
+  "webui.detailed_result_csv_format" => (label = "CSV format (every CSV file of a run)", page = "webui", heading = "Run artifacts and output modes", selector = ""),
   "webui.export_cgmes" => (label = "CGMES export artifact", page = "cgmes_export", heading = "Export from the Web UI", selector = ""),
 )
 
@@ -176,6 +177,7 @@ const WEBUI_FORM_HELP_TOPICS = Dict(
   "power_flow_apslf_order" => "power_flow.apslf.order",
   "power_flow_apslf_use_pade" => "power_flow.apslf.use_pade",
   "power_flow_apslf_nr_polish" => "power_flow.apslf.nr_polish",
+  "power_flow_apslf_convergence_radius" => "power_flow.apslf.convergence_radius",
   "power_flow_apslf_start_enabled" => "power_flow.apslf_start.enabled",
   "power_flow_apslf_start_order" => "power_flow.apslf_start.order",
   "power_flow_wrong_branch_detection" => "power_flow.wrong_branch_detection",

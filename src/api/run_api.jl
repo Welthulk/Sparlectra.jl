@@ -292,6 +292,7 @@ function _csv_field(value, delimiter::Char, format = _resolve_detailed_csv_forma
 end
 
 include("run_csv_exports.jl")
+include("result_csv.jl")
 include("run_bus_powers_export.jl")
 
 function _csv_solution_quality(raw_result::SparlectraRunResult)::String
@@ -535,10 +536,7 @@ function _run_dtf_outages(case_path::AbstractString, case, config, output_path::
       end
       push!(artifacts, basename(md))
       csv = joinpath(output_path, "dtf_outage_$(outage.index)_metrics.csv")
-      open(csv, "w") do io
-        println(io, "outage_label,matched_branch_index,branch_kind,from_bus,to_bus,converged,iterations,final_mismatch")
-        println(io, join((_csv_field(label, ','), branch_index, outage.kind, _csv_field(outage.from, ','), _csv_field(outage.to, ','), raw.final_converged, raw.iterations, raw.final_mismatch), ','))
-      end
+      write_result_csv(csv, ("outage_label", "matched_branch_index", "branch_kind", "from_bus", "to_bus", "converged", "iterations", "final_mismatch"), ((label, branch_index, outage.kind, outage.from, outage.to, raw.final_converged, raw.iterations, raw.final_mismatch),); format = String(config.output.csv_format))
       push!(artifacts, basename(csv))
     end
     if write_matpower_exports
@@ -687,6 +685,15 @@ function _run_sparlectra_api(;
     return _api_failure(_config_resolve_reason(err), sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
   end
   config = resolved.config
+  # The resolved configuration IS the configuration of this run (#381,
+  # #386): it is installed in the registry until the run returns, so every
+  # module that fetches its settings itself (the result-CSV writers with
+  # output.csv_format among them) sees the case's effective values and not
+  # the process template. The try spans the rest of the function; the
+  # previous configuration comes back on every return path.
+  previous_active_config = ACTIVE_SPARLECTRA_CONFIG[]
+  ACTIVE_SPARLECTRA_CONFIG[] = config
+  try
   effective_raw = resolved.effective_raw
   nested_overrides = resolved.nested_overrides
   config_sources = _config_source_report(config_path, nested_overrides, effective_raw; override_source = config_override_source, explicit_overrides = config_overrides, case_config = resolved.case_config, scf_config = resolved.scf_config)
@@ -907,20 +914,11 @@ function _run_sparlectra_api(;
     sv_compare_status = sv_compare === nothing ? "unavailable" : (raw_result.final_converged ? "converged" : String(Symbol(raw_result.outcome)))
     if sv_compare !== nothing
       try
-        open(joinpath(output_path, "sv_compare.csv"), "w") do io
-          println(io, "bus,vm_pu,sv_vm_pu,dvm,va_deg,sv_va_deg,dva,dva_aligned")
-          for r in sv_compare.rows
-            println(io, join((_csv_field(String(r.bus), ','), r.vm_pu, r.sv_vm_pu, r.dvm, r.va_deg, r.sv_va_deg, r.dva, r.dva_aligned), ','))
-          end
-        end
+        sv_format = String(config.output.csv_format)
+        write_result_csv(joinpath(output_path, "sv_compare.csv"), ("bus", "vm_pu", "sv_vm_pu", "dvm", "va_deg", "sv_va_deg", "dva", "dva_aligned"), ((String(r.bus), r.vm_pu, r.sv_vm_pu, r.dvm, r.va_deg, r.sv_va_deg, r.dva, r.dva_aligned) for r in sv_compare.rows); format = sv_format)
         # The flow rows come for free with compareWithSV (computed in the same
         # call), so ship them as a second artifact.
-        open(joinpath(output_path, "sv_compare_flows.csv"), "w") do io
-          println(io, "kind,name,bus,sv_p_mw,sv_q_mvar,p_mw,q_mvar,dp_mw,dq_mvar")
-          for r in sv_compare.flows.rows
-            println(io, join((r.kind, _csv_field(String(r.name), ','), _csv_field(String(r.bus), ','), r.sv_p, r.sv_q, r.p, r.q, r.dp, r.dq), ','))
-          end
-        end
+        write_result_csv(joinpath(output_path, "sv_compare_flows.csv"), ("kind", "name", "bus", "sv_p_mw", "sv_q_mvar", "p_mw", "q_mvar", "dp_mw", "dq_mvar"), ((r.kind, String(r.name), String(r.bus), r.sv_p, r.sv_q, r.p, r.q, r.dp, r.dq) for r in sv_compare.flows.rows); format = sv_format)
       catch err
         @warn "could not write SV comparison artifacts" exception = err
       end
@@ -1404,4 +1402,7 @@ function _run_sparlectra_api(;
     raw_result = raw_result,
   )
   return _finalize_api_result(result)
+  finally
+    ACTIVE_SPARLECTRA_CONFIG[] = previous_active_config
+  end
 end

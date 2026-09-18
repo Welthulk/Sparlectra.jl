@@ -78,8 +78,12 @@ function _add_pmu_measurements!(meas, net, rng; refShiftDeg::Float64)
 end
 
 function _report_scenario(io, name, net, meas, Vref; pmuRefOffset::Symbol = :auto)
-  gobs = evaluate_global_observability(net, meas; pmuRefOffset = pmuRefOffset)
-  se = runse!(net, meas; maxIte = 30, tol = 1e-10, flatstart = true, updateNet = false, pmuRefOffset = pmuRefOffset)
+  gobs = with_state_estimation_config(pmu_ref_offset = pmuRefOffset) do
+    evaluate_global_observability(net, meas)
+  end
+  se = with_state_estimation_config(max_iter = 30, tol = 1e-10, flatstart = true, update_net = false, pmu_ref_offset = pmuRefOffset) do
+    runse!(net, meas)
+  end
   rmse = _angle_rmse_deg(Vref, se.voltages)
   offset = se.vaRefOffsetDeg
   @printf(io, "%-34s %5d %8d %11s %12.5f %14.4e %12s\n", name, length(meas), gobs.n_states, string(gobs.quality), rmse, se.objectiveJ, offset === nothing ? "-" : @sprintf("%.4f", offset))
@@ -137,7 +141,9 @@ function _run_pmu_angle_example(io::IO)
 
   # Bad-data view of scenario D: the unmodeled offset shows up as a block of
   # suspicious PMU angle residuals.
-  diagD = validate_measurements(net, measC; pmuRefOffset = :off)
+  diagD = with_state_estimation_config(pmu_ref_offset = :off) do
+    validate_measurements(net, measC)
+  end
   println(io, "Diagnostics of scenario D (unmodeled reference shift):")
   print_se_diagnostics(diagD; io = io, topN = 6)
 

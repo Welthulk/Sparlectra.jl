@@ -262,7 +262,9 @@ end
 # pseudo-measurements, derived shunt rows) are protected from elimination.
 # The trace records every step; the stop reason says why the loop ended.
 
-diag = runse_diagnostics(net; max_eliminations = 3)
+diag = with_state_estimation_config(max_eliminations = 3) do
+  runse_diagnostics(net)
+end
 println("eliminations: ", length(diag.eliminations), ", stop reason: ", diag.stop_reason)
 for e in diag.eliminations
   println("  step ", e.elimination, ": removed ", e.id, " (|r_N| before = ", round(abs(e.normalized_residual_before); digits = 1), ")")
@@ -299,8 +301,12 @@ println("after elimination: J/dof = ", round(fin.objective.value / fin.objective
 
 meas_bad = Measurement[m for m in net.measurements]   ## still contains the +25 MW error
 
-res_plain = runse!(net, meas_bad; maxIte = 20, tol = 1e-8, updateNet = false)
-res_robust = runse!(net, meas_bad; maxIte = 20, tol = 1e-8, updateNet = false, robust = true)
+res_plain = with_state_estimation_config(max_iter = 20, tol = 1e-8, update_net = false) do
+  runse!(net, meas_bad)
+end
+res_robust = with_state_estimation_config(max_iter = 20, tol = 1e-8, update_net = false, robust = true) do
+  runse!(net, meas_bad)
+end
 
 err_plain = maximum(abs.(abs.(res_plain.voltages) .- vm_true))
 err_robust = maximum(abs.(abs.(res_robust.voltages) .- vm_true))
@@ -340,7 +346,9 @@ i12_A = 1000.0 * sqrt(p12^2 + q12^2) / (sqrt(3.0) * 110.0 * vm1)
 addImagMeasurement!(net; fromBus = "B1", toBus = "B2", direction = :from, value = i12_A, sigma = 5.0)
 println("bay current B1->B2: ", round(i12_A; digits = 1), " A added as ImagMeas")
 
-gobs = evaluate_global_observability(net; flatstart = true, jacEps = 1e-6)
+gobs = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
+  evaluate_global_observability(net)
+end
 println("observability rows: ", gobs.n_measurements, " of ", length(net.measurements), " active measurements (ImagMeas excluded)")
 rep_i = validate_measurements(net)
 println("diagnostics rows:   ", length(rep_i.measurement_ranking), " (ImagMeas included, dof = ", rep_i.objective.dof, ")")
@@ -390,11 +398,15 @@ b_true = imag(sh.y_pu_shunt)
 sh.y_pu_shunt = complex(real(sh.y_pu_shunt), 1.2 * b_true)
 setShuntEstimation!(net_sh; busName = "S3")
 
-res_sh = runse!(net_sh, meas_sh; maxIte = 30, tol = 1e-10, updateNet = false)
+res_sh = with_state_estimation_config(max_iter = 30, tol = 1e-10, update_net = false) do
+  runse!(net_sh, meas_sh)
+end
 row = only(res_sh.shuntEstimates)
 println("B_model = ", round(row.B_model; digits = 4), " pu (stale)   B_est = ", round(row.B_est; digits = 4), " pu   B_true = ", round(b_true; digits = 4), " pu")
 println("model after the run (untouched): ", round(imag(sh.y_pu_shunt); digits = 4), " pu")
-runse!(net_sh, meas_sh; maxIte = 30, tol = 1e-10, updateNet = false, updateShunts = true)
+with_state_estimation_config(max_iter = 30, tol = 1e-10, update_net = false, update_shunts = true) do
+  runse!(net_sh, meas_sh)
+end
 println("after updateShunts = true:       ", round(imag(sh.y_pu_shunt); digits = 4), " pu")
 
 # Reading aid (Example 6): the estimate lands on the true susceptance

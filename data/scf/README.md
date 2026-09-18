@@ -10,7 +10,7 @@ construction; the construction uses fixed seeds and reproduces the shipped
 files bit for bit.
 
 Since 2026-09-04 the cases carry invented PLACE names as reference names
-(maintainer scheme): busbars are `<Ort>_<kV>` (`Ostheim_110`,
+(naming scheme): busbars are `<Ort>_<kV>` (`Ostheim_110`,
 `Moorau_20`; a second busbar section gets a `b` suffix), lines are
 named by their endpoints (`Ostheim_Neuwiese_1`/`_2` for a double circuit;
 sp_case60's deliberate same-name pair carries the bare corridor name on
@@ -33,7 +33,7 @@ five run kinds (power flow, N-1, scenarios, state estimation, short
 circuit) against those fixtures, so the cases are regression fixtures,
 not decoration. A fresh install can run every run kind on them without
 downloading anything; new tests should use them instead of downloaded
-cases (maintainer rule 2026-09-03).
+cases (project rule 2026-09-03).
 
 ## sp_case5 (5 buses, the hand-checkable entry)
 
@@ -89,7 +89,7 @@ together stay around 0.72 MB, inside the 0.9 MB budget. Reference:
 
 ## sp_casePST.scf.json (format fixture, not a demo case)
 
-Renamed from warmup_casePST.scf.json on 2026-09-03 (same bytes, maintainer request). The **permanent version 1 fixture** of the Sparlectra Case Format
+Renamed from warmup_casePST.scf.json on 2026-09-03 (same bytes). The **permanent version 1 fixture** of the Sparlectra Case Format
 (issue #342). Every future reader must keep loading this file unchanged;
 it is the regression guard against accidental breaking changes to the
 FORMAT (the `sp_case*` fixtures above guard BEHAVIOR instead). It is
@@ -112,5 +112,38 @@ bus) with a voltage-dependent Q(U) characteristic: three points in per unit
 in the `Control` column, with `Qg` following the curve (2.86 MVAr at 0.994 pu).
 Power flow only (no measurement rows); rectangular solver, 4 iterations. The
 apslf and dc solvers refuse it by name, as they refuse every network with
-voltage-dependent control. Built from `sp_case14` by a maintainer script that
+voltage-dependent control. Built from `sp_case14` by a script that
 adds the machine and exports the file; rerunning it reproduces the file.
+
+## Feeder and Q-limit example cases (added 2026-09-18)
+
+Small cases built for demonstrations. Each ships as the case plus its
+case configuration sidecar (`<stem>.config.yaml`, the settings the Web
+UI saved for it: rectangular solver, `tol 1e-6`, `max_iter 80`,
+Q-limits on, no auto mode). They carry no measurements and no tracked
+fixture; they are operating examples, not regression fixtures.
+
+- `case14_zeng_p306_activeSet_A`, `case14_zeng_p306_simulatious_B`,
+  `case14_zeng_p306_one_at_a_time_C`: one and the same 14-bus network
+  (a MATPOWER-style case with the Q-limit situation of Zeng and Chiang,
+  p. 306, five machines with tight Q bands) under the three Q-limit
+  enforcement strategies. The three case files are byte-identical; only
+  the sidecar differs (`power_flow.qlimits.enforcement_mode`:
+  `active_set`, `classic_simultaneous`, `classic_one_at_a_time`). The
+  strategy decides which PV buses end as PQ*, so the three runs reach
+  different solutions of the same data.
+- `feeder3_hardpv_A`: the three-bus 110 kV feeder of the workshop tour
+  (chapter 5, `build_qu(80.0, 25.0)`), machine at B2 as a PV bus with a
+  +-10 MVAr band that it cannot hold: B2 ends as PQ* at the upper limit
+  (0.994 pu), B3 at 0.963 pu.
+- `feeder3_remote_C`: the same feeder with the B2 machine as a PQ machine
+  under remote voltage control; converges in 3 iterations with the
+  machine pinned at 10 MVAr and B3 at 0.963 pu (`RVC` in the result).
+- `feeder3_qu_B`: the same feeder and load with a Q(U) machine at B2
+  (five points from 104.5 kV/+30 MVAr to 115.5 kV/-20 MVAr, polynomial,
+  saturation +-50 MVAr); the characteristic travels in the file.
+- `feeder3_hardpv_vsPGM`: the data part of `data/PGM/feeder3_hardpv_pgm.json`
+  plus everything the Sparlectra Case Format adds (roles, names, start
+  state, scenarios, contingencies, short-circuit study buses, config).
+  Its sidecar enables the external-grid feeder (`power_flow.external_grid`),
+  like the PGM sidecar, so both files run the same study.

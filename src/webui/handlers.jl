@@ -2077,7 +2077,9 @@ function handle_se_topology_hypotheses(form::AbstractDict; output_root::Abstract
     se_case = String(get(result, "casefile", ""))
     net = _se_import_case_net(se_case, config; requested_format = _webui_case_format_hint(se_case))
     readMeasurementsCSV!(net; file = mf, replace = true)
-    test_topology_hypotheses(net; max_candidates = 5, maxIte = 100, tol = 1e-8)
+    with_state_estimation_config(max_iter = 100, tol = 1e-8) do
+      test_topology_hypotheses(net; max_candidates = 5)
+    end
   catch err
     return back("topology hypothesis test failed: $(sprint(showerror, err))")
   end

@@ -26,20 +26,29 @@
 Adapter that runs a `PFModel` through AnalyticLoadFlow.jl's `solve_pf_apslf`.
 
 Fields:
-- `order::Int = 40`: highest power-series coefficient to compute.
+- `order::Int = 24`: highest power-series coefficient to compute.
 - `use_pade::Bool = true`: evaluate the voltage series via Padé `[L/M]` approximants
   instead of direct Taylor summation.
-- `nr_polish::Bool = true`: run a Newton-Raphson polishing step on the series result.
+- `nr_polish::Bool = false`: run a Newton-Raphson polishing step on the series result.
+  Off since 0.13.0 (AnalyticLoadFlow 0.9.15): the series alone is a load-flow
+  solution, the polish is a debugging aid.
 - `mode::Symbol = :direct`: `:direct` (native PV handling) or `:outer` (PQ-only series
   plus an outer secant loop for PV enforcement); forwarded to `solve_pf_apslf`.
+- `convergence_radius::Bool = true`: evaluate AnalyticLoadFlow's Padé-pole
+  margin (`stability_from_Vcoeff`: the distance `dmin` of the nearest Padé
+  pole to the evaluation point `s = 1`, with the bus that owns it and the
+  GRN/YEL/RED level). Reported as the APSLF convergence radius next to the
+  Jacobian condition; costs about as much as the solve itself, so it can be
+  switched off for large networks.
 
 [`apslf_solver`](@ref) is the keyword constructor for it.
 """
 Base.@kwdef struct ApslfSolver <: AbstractExternalSolver
-  order::Int = 40
+  order::Int = 24
   use_pade::Bool = true
-  nr_polish::Bool = true
+  nr_polish::Bool = false
   mode::Symbol = :direct
+  convergence_radius::Bool = true
 end
 
 """
@@ -102,8 +111,33 @@ function solvePf(solver::ApslfSolver, model::PFModel; kwargs...)
     return_coeffs = true,
   )
 
-  st = AnalyticLoadFlow.stability_from_Vcoeff(res.Vcoeff; slack = model.slack_idx, order = solver.order)
-  stability = (dmin = st.dmin, pole = st.pole, bus = st.bus, level = AnalyticLoadFlow.st_level(st.dmin))
+  # Padé-pole margin (the APSLF convergence radius), optional because its
+  # cost is comparable to the solve; the bus index is reported in the net's
+  # numbering, never in PF ordering
+  stability = if solver.convergence_radius
+    st = AnalyticLoadFlow.stability_from_Vcoeff(res.Vcoeff; slack = model.slack_idx, order = solver.order)
+    (dmin = st.dmin, pole = st.pole, bus = st.bus >= 1 ? Int(model.busIdx_net[st.bus]) : 0, level = AnalyticLoadFlow.st_level(st.dmin), enabled = true)
+  else
+    (dmin = NaN, pole = NaN + NaN * im, bus = 0, level = "off", enabled = false)
+  end
+
+  # The residual is judged against the bus types AnalyticLoadFlow ended
+  # with, not the ones it started from: a PV bus that hit a reactive limit
+  # is a PQ bus at that limit in the solution, and its voltage equation no
+  # longer holds by design. Judging it against Vset reported 0.027 pu on
+  # case118 (19 clamped machines) for a solve that met every equation of
+  # the final active set to 1e-13, and the run was labelled not converged.
+  bt_final = Symbol[_apslf_bus_type(s) for s in res.bustype]
+  S_final = ComplexF64[complex(real(model.Sspec[i]), res.Q[i]) for i in eachindex(model.Sspec)]
+  F = mismatch_rectangular(model.Ybus, res.V, S_final, bt_final, model.Vset, model.slack_idx)
+  residual_final = maximum(abs.(F))
+  # clamped machines, in net bus numbering, with the limit side that binds
+  clamps = Tuple{Int,Symbol}[]
+  for i in eachindex(bt_final)
+    (model.busType[i] === :PV && bt_final[i] === :PQ) || continue
+    side = abs(res.Q[i] - spec.Qmax[i]) <= abs(res.Q[i] - spec.Qmin[i]) ? :max : :min
+    push!(clamps, (Int(model.busIdx_net[i]), side))
+  end
 
   meta = (
     solver = :apslf,
@@ -118,14 +152,24 @@ function solvePf(solver::ApslfSolver, model::PFModel; kwargs...)
     nr_polish_reject_reason = res.nr_polish_reject_reason,
     outer_iters = res.outer_iters,
     bustype_final = res.bustype,
+    qlimit_clamps = clamps,
   )
 
   return PFSolution(
     V = res.V,
     converged = res.converged,
     iters = res.outer_iters,
-    residual_inf = mismatchInf(model, res.V),
+    residual_inf = residual_final,
     meta = meta,
   )
+end
+
+# AnalyticLoadFlow reports bus types in lower case (:slack/:pv/:pq); the
+# PFModel uses :Slack/:PV/:PQ
+function _apslf_bus_type(s::Symbol)::Symbol
+  t = lowercase(String(s))
+  t == "pv" && return :PV
+  t == "pq" && return :PQ
+  return :Slack
 end
 
