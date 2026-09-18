@@ -1173,10 +1173,7 @@ function _webui_settings_sections_html(; profile_values, config_default, profile
 <label>$(_webui_field_label("performance_timing", "Performance timing"))$(_webui_select("performance_timing", _webui_option_allowed_values("performance_timing"), _webui_selected(profile_values, "performance_timing", _webui_option_default("performance_timing"))))</label>
 <label class=\"detailed-csv-format\">$(_webui_field_label("detailed_result_csv_format", "CSV format (every CSV file of a run)"))$(_webui_select("detailed_result_csv_format", _webui_option_allowed_values("detailed_result_csv_format"), _webui_selected(profile_values, "detailed_result_csv_format", _webui_option_default("detailed_result_csv_format"))))</label>
 <p class=\"field-help\">Delimiter and decimal separator of every CSV file the run writes (result tables, short circuit, state estimation, AC islands, contingencies); <code>excel_de</code> for a German Excel, <code>excel_us</code> for an English one, <code>technical</code> for comma and dot.</p>
-<details class=\"span-2 detailed-csv-options\">
-<summary>Detailed result CSV export</summary>
-<label class=\"check\"><input name=\"detailed_result_csv\" type=\"hidden\" value=\"false\"><input name=\"detailed_result_csv\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "detailed_result_csv", _webui_option_default("detailed_result_csv")))>$(_webui_field_label("detailed_result_csv", "Export detailed result CSV files"))</label>
-</details>
+<label class=\"check span-2 detailed-csv-options\"><input name=\"detailed_result_csv\" type=\"hidden\" value=\"false\"><input name=\"detailed_result_csv\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "detailed_result_csv", _webui_option_default("detailed_result_csv")))>$(_webui_field_label("detailed_result_csv", "Write bus/branch CSV files (bus_voltages_complex, branch_flows, bus_powers)"))</label>
 <label class=\"check span-2\"><input name=\"export_cgmes\" type=\"hidden\" value=\"false\"><input name=\"export_cgmes\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "export_cgmes", _webui_option_default("export_cgmes")))>$(_webui_field_label("export_cgmes", "Export case as CGMES delivery (EQ+TP+SSH+SV, ZIP)"))</label>
 <details class=\"span-2 expert-section\">
 <summary>Advanced options</summary>

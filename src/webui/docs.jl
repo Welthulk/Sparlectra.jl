@@ -119,7 +119,7 @@ const WEBUI_HELP_TOPICS = Dict(
   "benchmark.samples" => (label = "Benchmark samples (max. repeated measurements)", page = "performance_profiling", heading = "Benchmark configuration", selector = "`benchmark.samples`"),
   "benchmark.seconds" => (label = "Benchmark max. time budget [s]", page = "performance_profiling", heading = "Benchmark configuration", selector = "`benchmark.seconds`"),
   "webui.performance_timing" => (label = "Performance timing", page = "webui", heading = "Run artifacts and output modes", selector = ""),
-  "webui.detailed_result_csv" => (label = "Detailed result CSV export", page = "webui", heading = "Run artifacts and output modes", selector = ""),
+  "webui.detailed_result_csv" => (label = "Bus/branch CSV files", page = "webui", heading = "Run artifacts and output modes", selector = ""),
   "webui.detailed_result_csv_format" => (label = "CSV format (every CSV file of a run)", page = "webui", heading = "Run artifacts and output modes", selector = ""),
   "webui.export_cgmes" => (label = "CGMES export artifact", page = "cgmes_export", heading = "Export from the Web UI", selector = ""),
 )

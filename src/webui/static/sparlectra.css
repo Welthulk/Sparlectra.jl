@@ -431,22 +431,6 @@ button,
   font-weight: 700;
 }
 
-.detailed-csv-options {
-  margin-top: -.25rem;
-  padding: .85rem 1rem 1rem;
-  border: 1px solid #dbe3ef;
-  border-radius: 10px;
-}
-
-.detailed-csv-options legend {
-  padding: 0 .35rem;
-  font-weight: 700;
-}
-
-.detailed-csv-options .check {
-  padding: 0;
-}
-
 .apslf-solver-options,
 .apslf-start-options {
   margin-top: -.25rem;
@@ -531,8 +515,7 @@ button,
    of a fieldset <legend>. */
 .step-control-options summary,
 .solver-mode-options summary,
-.apslf-start-options summary,
-.detailed-csv-options summary {
+.apslf-start-options summary {
   cursor: pointer;
   font-weight: 700;
 }

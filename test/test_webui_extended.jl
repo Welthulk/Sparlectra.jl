@@ -2005,7 +2005,9 @@ for (current_iteration_topic, required_fragments) in current_iteration_help
       @test occursin("const dcSeedActive = dcSeedToggle !== null && dcSeedToggle.checked", settings_page_html)
       @test occursin("container.hasAttribute('data-dc-seed-inactive-field')", settings_page_html)
       @test occursin("name=\"detailed_result_csv\" type=\"checkbox\" value=\"true\" checked", settings_page_html)
-      @test occursin("class=\"span-2 detailed-csv-options\"", settings_page_html)
+      # 0.14.0: a plain checkbox next to the CSV format, no details box
+      @test occursin("class=\"check span-2 detailed-csv-options\"", settings_page_html)
+      @test !occursin("<summary>Detailed result CSV export</summary>", settings_page_html)
       @test occursin("name=\"detailed_result_csv_format\"", settings_page_html)
       @test occursin("<option value=\"technical\">", settings_page_html)
       @test occursin("<option value=\"excel_de\">", settings_page_html)

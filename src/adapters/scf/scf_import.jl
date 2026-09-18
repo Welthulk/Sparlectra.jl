@@ -1364,6 +1364,9 @@ function scf_case_config(file::AbstractString)::Dict{String,Any}
   isempty(spar) || _scf_require_current_revision(spar)
   cfg = _scf_get(spar, "config", Dict{String,Any}())
   out = Dict{String,Any}(String(k) => v for (k, v) in cfg)
+  # legacy key names first (0.10.x exports carried the model keys under
+  # their old prefixes), then the scope check on the current names
+  _apply_flat_config_aliases!(out, string("sparlectra.config in ", basename(String(file))))
   # A key outside the case scope is refused, not ignored: a file that states a
   # setting which quietly does not apply is exactly the silent acceptance this
   # format exists to prevent. Older files that carried the whole form need one

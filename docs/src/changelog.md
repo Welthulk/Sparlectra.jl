@@ -1,3 +1,10 @@
+# Version 0.14.0 - 2026-09-18
+
+## Fixes
+- Fixed: a case file whose deprecated `sparlectra.config` block carries legacy key names (`matpower_import.auto_profile`, `transformer.tap_changer_model`, ...) was refused as "not case scope"; the names map to their aliases.
+- Fixed: the CSV format chosen on the run form applied only to the two detailed exports; it now applies to every CSV file of the run.
+- Web UI: the bus/branch CSV switch is a plain checkbox next to the CSV format.
+
 # Version 0.13.0 - 2026-09-18
 
 ## Highlights
