@@ -1096,6 +1096,17 @@ function handle_scenarios_delete(form::AbstractDict; output_root::AbstractString
   return _webui_scenarios_redirect(case, string("Scenario '", name, "' deleted from ", case, "."))
 end
 
+# The APSLF start-value generator only makes sense ahead of the rectangular
+# solve, and the run form grays the generator toggle out under the apslf
+# solver; a disabled control is dropped from the POST, so an earlier
+# `apslf_start.enabled = true` survived the save and the next run failed
+# (run f63b75c5). The solver choice wins: saving solver = apslf switches the
+# generator off in the same save.
+function _webui_resolve_solver_start_conflict!(updates::AbstractDict)
+  get(updates, "power_flow.solver", nothing) == "apslf" && (updates["power_flow.apslf_start.enabled"] = false)
+  return updates
+end
+
 """
     _webui_merge_case_config_write(source, keep_updates, form_updates; on_unreadable) -> NamedTuple
 
@@ -1215,6 +1226,17 @@ function handle_settings_save(form::AbstractDict; output_root::AbstractString = 
     for (key, value) in config_updates
       scf_is_case_config_key(key) ? (keep[key] = value) : push!(dropped, key)
     end
+    _webui_resolve_solver_start_conflict!(keep)
+    # the merged case configuration must build NOW: an incompatible pair
+    # saved today failed the next run instead (run f63b75c5, apslf_start
+    # kept from an earlier save under a newly chosen apslf solver)
+    candidate = merge(try load_case_config(source) catch; Dict{String,Any}() end, keep)
+    try
+      _load_api_config(config_file, validate_gui_config_overrides(candidate); case_scope_from_defaults = true)
+    catch err
+      record_webui_operation!(operation_log, "settings_save_failed"; route, method = "POST", user_action = true, casefile = case, target, status = "rejected", message = sprint(showerror, err))
+      return back("Could not save settings for this case: $(sprint(showerror, err))")
+    end
     written = try
       _webui_merge_case_config_write(source, keep, form_updates; on_unreadable = err -> record_webui_operation!(operation_log, "settings_save_replaced_unreadable"; route, method = "POST", user_action = true, casefile = case, status = "replaced", message = sprint(showerror, err)))
     catch err
@@ -1228,6 +1250,7 @@ function handle_settings_save(form::AbstractDict; output_root::AbstractString = 
   end
   target == "general" || return back("Unknown settings target '$(target)'.")
   isfile(config_file) || return back("Configuration file not found: $(config_file).")
+  _webui_resolve_solver_start_conflict!(config_updates)
   nested = try
     validate_gui_config_overrides(config_updates)
   catch err
