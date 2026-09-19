@@ -249,6 +249,14 @@ function _prepare_build_env(pkgm::Module)::Bool
   # invalidates precompiled methods inside the image, and the first run then
   # silently recompiles them (measured 36 s instead of 1 s on case118).
   Base.invokelatest(pkgm.instantiate)
+  # The shared build environment keeps ITS OWN Manifest, and instantiate
+  # leaves resolved dependency versions alone: an image built on 2026-09-19
+  # carried AnalyticLoadFlow 0.9.14 while the checkout had tested against
+  # 0.9.15, and two Web UI runs failed with the old solver's behavior. The
+  # dependencies therefore follow the newest compatible versions here, and
+  # the status list in the build log says which versions the image holds.
+  Base.invokelatest(pkgm.update)
+  Base.invokelatest(pkgm.status)
   return true
 end
 

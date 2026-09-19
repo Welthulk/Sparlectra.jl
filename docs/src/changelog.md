@@ -1,3 +1,9 @@
+# Version 0.14.1 - 2026-09-19
+
+## Fixes
+- Fixed: saving the APSLF solver kept an earlier "APSLF start values" toggle in the case file and the next run failed; the solver choice wins, and an incompatible pair is refused when saving.
+- Fixed: the sysimage build kept old dependency versions in its build environment (AnalyticLoadFlow 0.9.14 in an image built against 0.9.15); the build updates them and logs the versions.
+
 # Version 0.14.0 - 2026-09-18
 
 ## Fixes

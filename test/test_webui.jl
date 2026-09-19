@@ -263,6 +263,22 @@ function run_webui_fast_tests()
       mi = seg[first(findfirst("    max_iter:", seg)):first(findfirst("    max_iter:", seg)) + 220]
       @test occursin("value: 44", mi)
       @test occursin("source: case_sidecar", mi)
+      # the solver choice wins over a generator toggle saved earlier: the
+      # disabled toggle is not posted, so without this the sidecar kept
+      # apslf_start.enabled = true under solver = apslf and the next run
+      # failed (run f63b75c5)
+      resp_gen = Sparlectra.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "sp_case14.scf.json", "settings_target" => "this_case", "power_flow_apslf_start_enabled" => "true"); output_root = root, runtime = rt)
+      @test resp_gen.status in (302, 303)
+      @test Sparlectra.load_case_config(joinpath(cache, "sp_case14.scf.json"))["power_flow.apslf_start.enabled"] === true
+      resp_solver = Sparlectra.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "sp_case14.scf.json", "settings_target" => "this_case", "power_flow_solver" => "apslf"); output_root = root, runtime = rt)
+      @test resp_solver.status in (302, 303)
+      saved_cfg = Sparlectra.load_case_config(joinpath(cache, "sp_case14.scf.json"))
+      @test saved_cfg["power_flow.solver"] == "apslf"
+      @test saved_cfg["power_flow.apslf_start.enabled"] === false
+      # an incompatible pair in one save is refused at save time, not at the run
+      resp_bad = Sparlectra.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "sp_case14.scf.json", "settings_target" => "this_case", "power_flow_solver" => "rectangular", "power_flow_apslf_start_enabled" => "true", "power_flow_dc_seed_unconditional" => "true"); output_root = root, runtime = rt)
+      @test occursin("Could not save settings for this case", Sparlectra._webui_urldecode(Dict(resp_bad.headers)["Location"])) || Sparlectra.load_case_config(joinpath(cache, "sp_case14.scf.json"))["power_flow.solver"] == "apslf"
+      Sparlectra.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "sp_case14.scf.json", "settings_target" => "this_case", "power_flow_solver" => "rectangular"); output_root = root, runtime = rt)
       # machine-scope keys are named and kept out of the case file
       resp2 = Sparlectra.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "sp_case14.scf.json", "settings_target" => "this_case", "benchmark_samples" => "5"); output_root = root, runtime = rt)
       @test occursin("benchmark.samples", Sparlectra._webui_urldecode(Dict(resp2.headers)["Location"]))
