@@ -441,6 +441,17 @@ anchor; its POST action routes are unchanged. The SE section always uses
 the shared case selection from the Case page; it has no case selector of
 its own anymore.
 
+The measurement generator's fields are the generator options of
+[State Estimation](state_estimation.md#Measurement-generator-v2): sigmas
+per measurement class, noise, gross errors (count and size), tap
+deviations, the truth source, one or both flow ends per branch, passive
+nodes as zero-injection constraints, and **critical measurements**: the
+number of rows the generator makes critical (a row whose residual is
+structurally zero, so a gross error on it stays invisible) by removing
+their redundant partners, never past observability. `0` leaves the set as
+generated; the removed and the critical rows are named in the set's
+comment lines and the estimation run log lists them again.
+
 Stage 4B generates the Case page's format-bound option sections from the
 adapters themselves: the field set of each section derives from the
 adapter's option struct (`options_type`) and the option specs, so the
@@ -710,7 +721,12 @@ The CSV files reuse the structured `ACPFlowReport` node and branch rows and,
 like the log artifacts, are viewable and downloadable through the normal
 artifact list.
 
-The indented **CSV format** selector is subordinate to the opt-in export:
+The **CSV format** selector next to it is the configuration key
+`output.csv_format`, a machine-scope setting: **Save settings** writes it to
+the configuration file, a save for one case leaves it out, and the value
+chosen on the run form applies to that run like every other override. Every
+run type, including a state estimation started from its own form, reads the
+same configured value:
 
 - `technical` (default) uses a comma delimiter, decimal point, and no
   thousands grouping.

@@ -110,10 +110,9 @@ if controlled cancellation exits the worker.
   is missing. Browser form values never control this directory, missing
   path-like inputs are not downloaded, and URLs are rejected.
   Optional `performance_timing` (`off`, `compact`, or `full`),
-  `run_diagnostics`, `detailed_result_csv`, and
-  `detailed_result_csv_format` request fields are forwarded to the API artifact
-  writer. They produce `performance.log`, `diagnose.log`, and the detailed CSV
-  artifacts, respectively.
+  `run_diagnostics`, and `detailed_result_csv` request fields are forwarded
+  to the API artifact writer. They produce `performance.log`, `diagnose.log`,
+  and the detailed CSV artifacts, respectively.
   `detailed_result_csv` defaults to `false`; when enabled after a successful
   solve it writes `bus_voltages_complex.csv` and `branch_flows.csv` from
   `buildACPFlowReport(raw_result.net)`, plus `bus_powers.csv` (one row per
@@ -125,17 +124,20 @@ if controlled cancellation exits the worker.
   The bus file includes polar and numeric rectangular voltage columns for
   Excel, while the branch file includes active/reactive flows at both ends
   and losses.
-  `detailed_result_csv_format` accepts `technical` (default comma delimiter,
+  The CSV format is the configuration key `output.csv_format` (see
+  [Configuration](configuration.md)): `technical` (default comma delimiter,
   decimal point, no grouping), `excel_de` (semicolon delimiter, decimal comma,
   thousands dot), or `excel_us` (comma delimiter, decimal point, thousands
-  comma). Excel-oriented formats avoid numeric exponent notation where
+  comma). A request sets it like any other key through
+  `config_overrides["output.csv_format"]`. The older request fields
+  `detailed_result_csv_format` and `detailed_result_csv_semicolon=true`
+  (the latter meaning `excel_de`) are still accepted and become that
+  override before the run is dispatched; an explicit override wins over
+  them. Excel-oriented formats avoid numeric exponent notation where
   practical; textual identifiers that resemble scientific notation can still
   trigger Excel's global auto-conversion warning when opened directly. Numeric
-  fields containing US thousands commas are quoted. The legacy
-  `detailed_result_csv_semicolon=true` request remains accepted and maps to
-  `excel_de` when no explicit format is supplied. Since issue #376 this
-  format is not limited to the two detailed-result CSVs: it is the same
-  value as `output.csv_format` (see [Configuration](configuration.md)) and
+  fields containing US thousands commas are quoted. The format is not
+  limited to the two detailed-result CSVs: it
   applies to every CSV artifact the run writes, including `q_limit_events.csv`,
   `q_limit_initial_limits.csv`, `bus_powers.csv`, the state-estimation
   diagnostic exports, and the contingency/scenario result tables; the request

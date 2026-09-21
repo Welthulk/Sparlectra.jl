@@ -32,6 +32,7 @@ solver logic.
 | `run_contingency_service.jl` | Service N-1 contingency run | `_run_contingency_service` |
 | `run_short_circuit_service.jl` | Service short-circuit run (CGMES and SCF) | `_run_short_circuit_service` |
 | `run_state_estimation_service.jl` | Service state-estimation run | `_run_state_estimation_service` |
+| `se_measurement_generator.jl` | Web UI measurement generator (options struct, targeted critical thinning) | `MeasurementGeneratorOptions`, `_se_generate_measurement_set` |
 | `run_import_analysis_service.jl` | CGMES delivery analysis without a solve | `_run_import_analysis_service` |
 | `serialization.jl` | Dependency-free to_dict/to_json/to_yaml transport | `to_dict`, `to_json`, `to_yaml` |
 | `service_json.jl` | Minimal JSON parser and service failure helpers | `_parse_service_json!` family |

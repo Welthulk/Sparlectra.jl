@@ -93,7 +93,7 @@ function _scf_contingency_cases_from_file(case_path::AbstractString, study::Abst
   return out
 end
 
-function _run_contingency_service(case_path::AbstractString, config_file::AbstractString, output_dir::AbstractString, run_id::String, kind::AbstractString; csv_format::Union{Nothing,AbstractString} = nothing, weights_path::Union{Nothing,AbstractString} = nothing, se_state_file::Union{Nothing,AbstractString} = nothing, se_run_id::Union{Nothing,AbstractString} = nothing, se_start_mode::AbstractString = "se_state", scenario_source::Union{Nothing,AbstractString} = nothing, scenario_file::Union{Nothing,AbstractString} = nothing, screening_mode::Union{Nothing,AbstractString} = nothing, screening_margin_pct::Union{Nothing,Real} = nothing)::SparlectraApiResult
+function _run_contingency_service(case_path::AbstractString, config_file::AbstractString, output_dir::AbstractString, run_id::String, kind::AbstractString; config_overrides::AbstractDict = Dict{String,Any}(), weights_path::Union{Nothing,AbstractString} = nothing, se_state_file::Union{Nothing,AbstractString} = nothing, se_run_id::Union{Nothing,AbstractString} = nothing, se_start_mode::AbstractString = "se_state", scenario_source::Union{Nothing,AbstractString} = nothing, scenario_file::Union{Nothing,AbstractString} = nothing, screening_mode::Union{Nothing,AbstractString} = nothing, screening_margin_pct::Union{Nothing,Real} = nothing)::SparlectraApiResult
   mkpath(output_dir)
   logfile = joinpath(output_dir, "run.log")
   result_file = joinpath(output_dir, "result.json")
@@ -122,7 +122,7 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
   # configuration file, the case file's deprecated block, general file,
   # defaults.
   config = try
-    _config_with_request_csv_format(resolve_config(config_file, case_path).config, csv_format)
+    resolve_config(config_file, case_path, config_overrides).config
   catch err
     return _api_failure(_config_resolve_reason(err), sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
   end

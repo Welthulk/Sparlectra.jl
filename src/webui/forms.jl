@@ -1210,15 +1210,6 @@ function powerflow_webui_request(form::AbstractDict; default_output_root::Abstra
     raw === nothing && (raw = get(stored_form, field, spec.default))
     request_options[field] = _webui_parse_form_value(raw, spec.value_type, field)
   end
-  # ONE central CSV setting (issue #386): the format the run form names is
-  # the run's output.csv_format, carried like every other configuration
-  # override, so every run type and every writer reads the same value from
-  # the run's configuration. It stays a request field as well for the
-  # older per-request API keyword.
-  csv_named = _webui_form_value(form, "detailed_result_csv_format", nothing) !== nothing || haskey(stored_form, "detailed_result_csv_format")
-  if apply_runtime_overrides && csv_named && haskey(request_options, "detailed_result_csv_format")
-    overrides["output.csv_format"] = String(request_options["detailed_result_csv_format"])
-  end
   case_format = strip(String(something(_webui_form_value(form, "case_format", nothing), "")))
   if isempty(case_format)
     stored_format = strip(String(something(get(stored_form, "case_format", nothing), "")))
@@ -1270,7 +1261,6 @@ function powerflow_webui_request(form::AbstractDict; default_output_root::Abstra
     "screening_mode" => (v = strip(String(something(_webui_form_value(form, "screening_mode", ""), ""))); isempty(v) ? nothing : v),
     "screening_margin_pct" => (v = strip(String(something(_webui_form_value(form, "screening_margin_pct", ""), ""))); isempty(v) ? nothing : _webui_parse_form_value(v, Float64, "screening_margin_pct")),
     "detailed_result_csv" => request_options["detailed_result_csv"],
-    "detailed_result_csv_format" => request_options["detailed_result_csv_format"],
     "export_cgmes" => request_options["export_cgmes"],
     # state estimation (SE phase 5): its own run kind plus the SE-started
     # chain reference; all read as plain request keys like contingency_kind

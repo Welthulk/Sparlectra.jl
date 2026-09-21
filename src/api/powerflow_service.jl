@@ -171,13 +171,42 @@ function _se_optional_symbol(request::AbstractDict, key::AbstractString)::Union{
   return Symbol(text)
 end
 
-# the run form's CSV format reaches every run type (issue #386, Web UI run
-# 31811bdd: a state-estimation run kept the comma although the form said
-# excel_de); nothing when the request does not name one
-function _service_request_csv_format(request::AbstractDict)
-  v = _service_request_value(request, "detailed_result_csv_format", nothing)
-  v isa AbstractString && !isempty(strip(v)) || return nothing
-  return String(strip(v))
+"""
+    _service_fold_csv_format!(config_overrides, request) -> Dict{String,Any}
+
+The request-level CSV keys of older callers (`detailed_result_csv_format`,
+`detailed_result_csv_semicolon`) folded into the one configuration key
+`output.csv_format` (issue #386): every service below reads the format from
+the run's configuration only, so a run type without the form field (state
+estimation) cannot fall back to a request default. An explicit
+`config_overrides` entry wins over the request keys. Throws `ArgumentError`
+on an unknown format name.
+"""
+function _service_fold_csv_format!(config_overrides::AbstractDict, request::AbstractDict)
+  haskey(config_overrides, "output.csv_format") && return config_overrides
+  named = _service_request_value(request, "detailed_result_csv_format", nothing)
+  if named isa AbstractString && !isempty(strip(named))
+    config_overrides["output.csv_format"] = _resolve_detailed_csv_format(String(strip(named))).name
+  elseif _service_request_value(request, "detailed_result_csv_semicolon", false) === true
+    config_overrides["output.csv_format"] = "excel_de"
+  end
+  return config_overrides
+end
+
+# the CSV format a run will use, for the operation log before the run: the
+# override when the request states one, else the configuration file's value
+function _service_effective_csv_format(config_overrides::AbstractDict, config_file::AbstractString)
+  name = get(config_overrides, "output.csv_format", nothing)
+  if name === nothing
+    name = try
+      _dotted_config_value(load_yaml_dict(String(config_file)), "output.csv_format")
+    catch err
+      # an unreadable configuration file fails the run itself with its own
+      # reason; the log line before it falls back to the default format
+      nothing
+    end
+  end
+  return _resolve_detailed_csv_format(name === nothing ? "technical" : String(name))
 end
 
 """
@@ -325,13 +354,15 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
   detailed_result_csv_semicolon = _service_request_value(request, "detailed_result_csv_semicolon", false)
   detailed_result_csv_semicolon isa Bool || return _service_failure("invalid_request", "detailed_result_csv_semicolon must be boolean.")
   detailed_result_csv_format = _service_request_value(request, "detailed_result_csv_format", nothing)
-  if detailed_result_csv && detailed_result_csv_format !== nothing
-    detailed_result_csv_format isa AbstractString || return _service_failure("invalid_request", "detailed_result_csv_format must be a string.")
-    try
-      _resolve_detailed_csv_format(detailed_result_csv_format)
-    catch err
-      return _service_failure("invalid_request", sprint(showerror, err))
-    end
+  (detailed_result_csv_format === nothing || detailed_result_csv_format isa AbstractString) || return _service_failure("invalid_request", "detailed_result_csv_format must be a string.")
+  # one CSV setting for every run type: the request keys become the
+  # configuration override before any run kind is dispatched
+  config_overrides isa AbstractDict || return _service_failure("invalid_request", "config_overrides must be a mapping.")
+  config_overrides = Dict{String,Any}(String(k) => v for (k, v) in config_overrides)
+  try
+    _service_fold_csv_format!(config_overrides, request)
+  catch err
+    return _service_failure("invalid_request", sprint(showerror, err))
   end
   phases[:request_parse] = _api_elapsed_seconds(request_start)
 
@@ -393,7 +424,7 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
   # conventions (see _run_short_circuit_service). No PF solve is involved.
   if short_circuit_mode
     sc_result = try
-      _run_short_circuit_service(casefile, config_file, output_dir, run_id; csv_format = _service_request_csv_format(request))
+      _run_short_circuit_service(casefile, config_file, output_dir, run_id; config_overrides = config_overrides)
     catch err
       err isa PowerFlowAborted && rethrow()
       return _service_failure("execution_error", sprint(showerror, err, catch_backtrace()); run_id = run_id)
@@ -434,7 +465,7 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
       ct_se_state = art.path
     end
     ct_result = try
-      _run_contingency_service(casefile, config_file, output_dir, run_id, contingency_kind; csv_format = _service_request_csv_format(request), weights_path = ct_weights_path, se_state_file = ct_se_state, se_run_id = se_start_run_id === nothing ? nothing : String(se_start_run_id), se_start_mode = String(se_start_mode), scenario_source = contingency_scenario_source, scenario_file = contingency_scenario_file, screening_mode = contingency_screening_mode, screening_margin_pct = contingency_screening_margin)
+      _run_contingency_service(casefile, config_file, output_dir, run_id, contingency_kind; config_overrides = config_overrides, weights_path = ct_weights_path, se_state_file = ct_se_state, se_run_id = se_start_run_id === nothing ? nothing : String(se_start_run_id), se_start_mode = String(se_start_mode), scenario_source = contingency_scenario_source, scenario_file = contingency_scenario_file, screening_mode = contingency_screening_mode, screening_margin_pct = contingency_screening_margin)
     catch err
       err isa PowerFlowAborted && rethrow()
       return _service_failure("execution_error", sprint(showerror, err, catch_backtrace()); run_id = run_id)
@@ -471,7 +502,7 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
         # takes the value from the effective configuration. A literal here
         # would silently outrank the configured default (that is how a run
         # kept using k_suppress 6.0 while the configuration said 4.0).
-        csv_format = _service_request_csv_format(request),
+        config_overrides = config_overrides,
         max_iter = _se_optional_int(request, "se_max_iter"),
         tol = _se_optional_float(request, "se_tol"),
         flatstart = _se_optional_bool(request, "se_flatstart"),
@@ -555,8 +586,6 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
       performance_timing = performance_timing,
       run_diagnostics = run_diagnostics,
       detailed_result_csv = detailed_result_csv,
-      detailed_result_csv_format = detailed_result_csv_format,
-      detailed_result_csv_semicolon = detailed_result_csv_semicolon,
       export_cgmes = export_cgmes,
       phase_timings = phases,
       run_id = run_id,

@@ -183,7 +183,7 @@ Failure behavior — explicit reasons instead of empty tables:
 - `short_circuit_data_missing`: the delivery imported but carries no usable
   short-circuit source (every bus would report `:no_source`).
 """
-function _run_short_circuit_service(case_path::AbstractString, config_file::AbstractString, output_dir::AbstractString, run_id::String; csv_format::Union{Nothing,AbstractString} = nothing)::SparlectraApiResult
+function _run_short_circuit_service(case_path::AbstractString, config_file::AbstractString, output_dir::AbstractString, run_id::String; config_overrides::AbstractDict = Dict{String,Any}())::SparlectraApiResult
   mkpath(output_dir)
   logfile = joinpath(output_dir, "run.log")
   result_file = joinpath(output_dir, "result.json")
@@ -194,7 +194,7 @@ function _run_short_circuit_service(case_path::AbstractString, config_file::Abst
   # configuration file, the case file's deprecated block, general file,
   # defaults.
   config = try
-    _config_with_request_csv_format(resolve_config(config_file, case_path).config, csv_format)
+    resolve_config(config_file, case_path, config_overrides).config
   catch err
     return _api_failure(_config_resolve_reason(err), sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
   end

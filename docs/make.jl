@@ -215,6 +215,7 @@ makedocs(
       "Taps, Phasors and Topology" => "generated/workshop_se_taps.md",
       "TCSC Flow Steering" => "generated/workshop_series_compensation.md",
       "Scenarios and Screening" => "generated/workshop_scenarios.md",
+      "APSLF in Sparlectra" => "generated/workshop_apslf.md",
     ],
     "Reference" => [
       # one page per source directory; surviving pages keep their position

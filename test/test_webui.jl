@@ -1013,7 +1013,7 @@ function run_webui_fast_tests()
       # the injected Delta-u step while the machine trafo stays calculated
       pstcase = joinpath(dirname(@__DIR__), "data", "mpower", "warmup_casePST.m")
       pstout = joinpath(root, "warmup_casePST.measurements.csv")
-      gpst = Sparlectra._se_generate_measurement_set(pstcase, pstout; noise = true, gross_k = 0.0, tap_steps = 2.0, include_i = false, sigma_u_pct = 0.5, sigma_i_pct = 1.0, sigma_p_pct = 1.0, sigma_q_pct = 1.0, sigma_ia_deg = 0.0)
+      gpst = Sparlectra._se_generate_measurement_set(pstcase, pstout, Sparlectra.MeasurementGeneratorOptions(; noise = true, gross_k = 0.0, tap_steps = 2.0, include_i = false, sigma_u_pct = 0.5, sigma_i_pct = 1.0, sigma_p_pct = 1.0, sigma_q_pct = 1.0, sigma_ia_deg = 0.0))
       @test occursin("Delta-u step", gpst.tap_note)
       @test occursin("PST branch 8", gpst.tap_note)
 
@@ -1026,7 +1026,7 @@ function run_webui_fast_tests()
       go1 = joinpath(root, "gen_multi_a.csv")
       go2 = joinpath(root, "gen_multi_b.csv")
       go3 = joinpath(root, "gen_multi_c.csv")
-      genmulti(out, seed) = Sparlectra._se_generate_measurement_set(d14, out; noise = false, gross_k = 10.0, gross_count = 3, tap_steps = 2.0, tap_count = 2, include_i = false, sigma_u_pct = 0.5, sigma_i_pct = 1.0, sigma_p_pct = 1.0, sigma_q_pct = 1.0, sigma_ia_deg = 0.0, seed = seed)
+      genmulti(out, seed) = Sparlectra._se_generate_measurement_set(d14, out, Sparlectra.MeasurementGeneratorOptions(; noise = false, gross_k = 10.0, gross_count = 3, tap_steps = 2.0, tap_count = 2, include_i = false, sigma_u_pct = 0.5, sigma_i_pct = 1.0, sigma_p_pct = 1.0, sigma_q_pct = 1.0, sigma_ia_deg = 0.0, seed = seed))
       gm1 = genmulti(go1, 42)
       @test occursin("on 3 row(s):", gm1.gross_note)
       @test length(collect(eachmatch(r"on transformer branch", gm1.tap_note))) == 2
@@ -1040,22 +1040,22 @@ function run_webui_fast_tests()
       # ONLY the PST and say so, or the set carries a deviation the mass
       # release skips by design (seen: J ~ 318 instead of ~ dof)
       gopst = joinpath(root, "gen_multi_pst.csv")
-      gmp = Sparlectra._se_generate_measurement_set(pstcase, gopst; noise = false, gross_k = 0.0, tap_steps = 3.0, tap_count = 2, include_i = false, sigma_u_pct = 0.5, sigma_i_pct = 1.0, sigma_p_pct = 1.0, sigma_q_pct = 1.0, sigma_ia_deg = 0.0, seed = 42)
+      gmp = Sparlectra._se_generate_measurement_set(pstcase, gopst, Sparlectra.MeasurementGeneratorOptions(; noise = false, gross_k = 0.0, tap_steps = 3.0, tap_count = 2, include_i = false, sigma_u_pct = 0.5, sigma_i_pct = 1.0, sigma_p_pct = 1.0, sigma_q_pct = 1.0, sigma_ia_deg = 0.0, seed = 42))
       @test occursin("PST branch 8", gmp.tap_note)
       @test !occursin("branch 7", gmp.tap_note)
       @test occursin("limited to 1 eligible transformer(s), max 2 requested", gmp.tap_note)
       pstlines = readlines(gopst)
       @test any(l -> startswith(l, "# 7,") && endswith(l, ",0.0"), pstlines)
       @test any(l -> startswith(l, "# 8,") && endswith(l, ",3.0"), pstlines)
-      @test_throws ArgumentError Sparlectra._se_generate_measurement_set(d14, go3; noise = false, gross_k = 10.0, gross_count = 0, tap_steps = 0.0, include_i = false, sigma_u_pct = 0.5, sigma_i_pct = 1.0, sigma_p_pct = 1.0, sigma_q_pct = 1.0, sigma_ia_deg = 0.0)
-      @test_throws ArgumentError Sparlectra._se_generate_measurement_set(d14, go3; noise = false, gross_k = 0.0, tap_steps = 1.0, tap_count = 0, include_i = false, sigma_u_pct = 0.5, sigma_i_pct = 1.0, sigma_p_pct = 1.0, sigma_q_pct = 1.0, sigma_ia_deg = 0.0)
+      @test_throws ArgumentError Sparlectra.MeasurementGeneratorOptions(; noise = false, gross_k = 10.0, gross_count = 0, tap_steps = 0.0, include_i = false, sigma_u_pct = 0.5, sigma_i_pct = 1.0, sigma_p_pct = 1.0, sigma_q_pct = 1.0, sigma_ia_deg = 0.0)
+      @test_throws ArgumentError Sparlectra.MeasurementGeneratorOptions(; noise = false, gross_k = 0.0, tap_steps = 1.0, tap_count = 0, include_i = false, sigma_u_pct = 0.5, sigma_i_pct = 1.0, sigma_p_pct = 1.0, sigma_q_pct = 1.0, sigma_ia_deg = 0.0)
 
       # J_active: replacement suppression removes corrupted rows from the
       # STATE; the reported pair (honest J with original sigmas, J_active
       # over the trusted rows) makes that visible, and the band verdict
       # stays on the honest J (eliminations off so the rows STAY suppressed)
       gja = joinpath(root, "gen_jactive.csv")
-      Sparlectra._se_generate_measurement_set(case_path, gja; noise = false, gross_k = 12.0, gross_count = 2, tap_steps = 0.0, include_i = false, sigma_u_pct = 0.5, sigma_i_pct = 1.0, sigma_p_pct = 1.0, sigma_q_pct = 1.0, sigma_ia_deg = 0.0, seed = 42)
+      Sparlectra._se_generate_measurement_set(case_path, gja, Sparlectra.MeasurementGeneratorOptions(; noise = false, gross_k = 12.0, gross_count = 2, tap_steps = 0.0, include_i = false, sigma_u_pct = 0.5, sigma_i_pct = 1.0, sigma_p_pct = 1.0, sigma_q_pct = 1.0, sigma_ia_deg = 0.0, seed = 42))
       rja = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true, "measurement_file" => gja, "se_robust_mode" => "replacement", "se_max_eliminations" => 0))
       @test rja["status"] == "succeeded"
       @test rja["metadata"]["se_suppressed_rows"] >= 1
@@ -1068,7 +1068,7 @@ function run_webui_fast_tests()
       # and J returns to ~dof (regression for the run where an eliminated
       # 10-sigma row still pushed the headline to J = 149 at dof 42)
       gjb = joinpath(root, "gen_jelim.csv")
-      Sparlectra._se_generate_measurement_set(case_path, gjb; noise = true, gross_k = 10.0, gross_count = 1, tap_steps = 0.0, include_i = false, sigma_u_pct = 0.5, sigma_i_pct = 1.0, sigma_p_pct = 1.0, sigma_q_pct = 1.0, sigma_ia_deg = 0.0, seed = 42)
+      Sparlectra._se_generate_measurement_set(case_path, gjb, Sparlectra.MeasurementGeneratorOptions(; noise = true, gross_k = 10.0, gross_count = 1, tap_steps = 0.0, include_i = false, sigma_u_pct = 0.5, sigma_i_pct = 1.0, sigma_p_pct = 1.0, sigma_q_pct = 1.0, sigma_ia_deg = 0.0, seed = 42))
       rje = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true, "measurement_file" => gjb, "se_robust_mode" => "replacement", "se_k_suppress" => 4.0))
       @test rje["status"] == "succeeded"
       @test rje["metadata"]["se_eliminations"] == 1

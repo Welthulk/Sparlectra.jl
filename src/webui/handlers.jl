@@ -2258,7 +2258,10 @@ function handle_se_generate_measurements(form::AbstractDict; output_root::Abstra
   active_job === nothing || return redirectq("a run is active; wait for it to finish before generating measurements")
   _webui_case_claim!(casefile, "generating measurements") || return redirectq("case $(basename(casefile)) is busy; wait for it to finish")
   gen = try
-    _se_generate_measurement_set(case_path, out_path; noise = noise, gross_k = gross_k, gross_count = gross_count, tap_steps = tap_steps, tap_count = tap_count, include_i = include_i, sigma_u_pct = sigma_u_pct, sigma_i_pct = sigma_i_pct, sigma_p_pct = sigma_p_pct, sigma_q_pct = sigma_q_pct, sigma_ia_deg = sigma_ia_deg, truth_source = truth_source, run_id = truth_run_id, run_root = output_root, flow_ends = flow_ends, passive_sigma = passive_sigma, passive_as_zi = passive_as_zi, seed = gen_seed, critical_count = gen_critical)
+    # the options constructor validates the combination (the form checks
+    # above cover the single fields); its ArgumentError text is the message
+    opts = MeasurementGeneratorOptions(; noise = noise, gross_k = gross_k, gross_count = gross_count, tap_steps = tap_steps, tap_count = tap_count, include_i = include_i, sigma_u_pct = sigma_u_pct, sigma_i_pct = sigma_i_pct, sigma_p_pct = sigma_p_pct, sigma_q_pct = sigma_q_pct, sigma_ia_deg = sigma_ia_deg, truth_source = truth_source, run_id = truth_run_id, run_root = String(output_root), flow_ends = flow_ends, passive_sigma = passive_sigma, passive_as_zi = passive_as_zi, seed = gen_seed, critical_count = gen_critical)
+    _se_generate_measurement_set(case_path, out_path, opts)
   catch err
     _webui_case_release!(casefile)
     err isa ArgumentError && return redirectq(err.msg)
