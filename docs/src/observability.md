@@ -89,22 +89,58 @@ critical measurement is invisible to the diagnostics and lands fully
 in the state. The diagnostics report classifies critical versus
 redundant measurements for exactly this reason.
 
-The classification reads the diagonal of the residual covariance
-(`state_estimation.criticality_method = omega`, the default since
-0.14.2): with unit weights `Omega = I - H (H'H)^-1 H'` is the projector
-onto the residual space, `Omega_ii = 0` exactly for a critical row, and
-one factorization of `H'H` plus one selected-inverse pass (Takahashi
-above `takahashi_min_states` states, dense below) answers the question
-for every row at once. There is no size budget; the check runs on every
-set the estimator itself can factorize. The threshold is dimensionless
-(`wii = Omega_ii * w_i`, the share of a row's own error that reaches its
+### How the critical measurements are found
+
+Up to 0.14.1 the check did literally what the definition says: for every
+measurement row it struck the row and decided the rank of the remaining
+Jacobian again (a dense SVD up to 2000 states, a sparse QR above). With
+m measurements that is m rank decisions, which is why the 188-bus demo
+case spent seconds here and why, above a budget of rows times states,
+the check was skipped altogether. Large networks then got no criticality
+flag at all, and the quality label reflected observability and
+redundancy only.
+
+Since 0.14.2 one computation answers the question for all rows at once.
+The residual sensitivity matrix `Omega = R - H G^-1 H'` (with the gain
+matrix `G = H' W H`) says how much of a measurement error becomes visible
+in that measurement's own residual. For a critical measurement `Omega_ii`
+is exactly zero: the estimator adapts to the row completely, its residual
+is always zero, an error there stays invisible. That is the statement of
+the rank test, reached from the other side, and it only needs the
+diagonal of `H G^-1 H'`, never the full inverse. The Takahashi selected
+inverse delivers exactly that diagonal from the factorization of `G`,
+the same machinery the short-circuit sweep and the diagnostics report
+already use (Takahashi above `takahashi_min_states` states, the dense
+path below). Weights do not move the zeros, only the scale in between,
+so the observability check runs it with unit weights and no sigma has to
+be known.
+
+What it brings: one factorization instead of m rank tests, so the
+classification costs a fraction of what it did; no size budget, every
+set the estimator itself can factorize gets its flag; graded information
+at no extra cost, because `Omega_ii = 0` means critical while the
+normalized `wii` below the 0.3 guideline means nearly critical, where the
+rank test could only answer yes or no; and one code path instead of two,
+since the diagnostics report and the classification now compute the same
+quantity.
+
+The open point the change had to settle is the tolerance. The rank test
+is binary, `Omega_ii` is a floating-point number, and a structurally
+critical row can come back at `1e-12` from fill-in and rounding instead
+of at zero. The threshold is therefore dimensionless on
+`wii = Omega_ii * w_i` (the share of a row's own error that reaches its
 residual): a row is critical at `wii` below the FD-aware rank tolerance
-made relative to `sigma_max` and squared, floored at `1e-8`. The result
-carries `criticality_wii` per active row, so the nearly critical rows
-(`wii < 0.3`) come at no extra cost; the state-estimation run log lists
-both. `criticality_method = rank` keeps the former per-row rank tests as
-a cross-check (one decomposition per row, budgeted at 300000 rows times
-states, `criticality_skipped = true` above). The rank decision for the
+made relative to `sigma_max` and squared, floored at `1e-8`, far above
+the rounding of the selected inverse and far below any real redundancy.
+The former per-row rank tests stay available as
+`state_estimation.criticality_method = rank` (budgeted at 300000 rows
+times states, `criticality_skipped = true` above) as the cross-check,
+and the test suite runs both methods against each other on a boundary
+case (a demo set with one flow measurement removed).
+
+The result carries `criticality_wii` per active row and
+`criticality_method`; the state-estimation run log lists the critical
+rows and the nearly critical ones. The rank decision for the
 observability verdict itself is unchanged: up to 2000 states the exact
 dense SVD, above that a sparse QR factorization with the identical
 FD-aware tolerance.
