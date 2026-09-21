@@ -590,8 +590,8 @@ which the pre-check does not enter:
 |---|---|---|---|---|
 | sp_case60 (60 buses) | 326 × 117 | 0.8 s | dense path (below the 200-state Takahashi threshold) | every diagnostic available |
 | sp_case188 (188 buses) | 562 × 373 | 0.1 s | Takahashi, 0.2 s | every diagnostic available |
-| case1354pegase | 4062 × 2707 | 0.1 s | Takahashi, 0.1 s | criticality classification skipped (`criticality_skipped = true`, warning names the m·n budget) |
-| case13659pegase | 40977 × 27317 | 2.0 s | Takahashi, 1.9 s | as above; K-matrix report refused by name above 20000 rows |
+| case1354pegase | 4062 × 2707 | 0.1 s | Takahashi, 0.1 s | every diagnostic available; criticality from `diag(Omega)` (since 0.14.2, no size budget) |
+| case13659pegase | 40977 × 27317 | 2.0 s | Takahashi, 1.9 s | criticality from `diag(Omega)`; K-matrix report refused by name above 20000 rows |
 
 Read these times WARM. The first row pays the compilation for the ones
 after it, which is why the 60-bus case looks eight times slower than the

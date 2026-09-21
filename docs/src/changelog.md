@@ -1,3 +1,8 @@
+# Version 0.14.2 - 2026-09-21
+
+- Critical measurements from the diagonal of the residual covariance (one selected-inverse pass, no size budget); `state_estimation.criticality_method` keeps the per-row rank tests as `rank` (#394).
+- The state-estimation run log lists the critical and the nearly critical rows.
+
 # Version 0.14.1 - 2026-09-19
 
 ## Fixes

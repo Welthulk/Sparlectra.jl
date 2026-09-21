@@ -125,7 +125,7 @@ function test_configuration_yaml_key_coverage()
       "state_estimation.robust_k1", "state_estimation.robust_k2", "state_estimation.k_suppress",
       "state_estimation.suppression_sigma", "state_estimation.max_eliminations",
       "state_estimation.rank_tol_factor",
-      "state_estimation.takahashi_min_states", "state_estimation.topology_precheck",
+      "state_estimation.takahashi_min_states", "state_estimation.criticality_method", "state_estimation.topology_precheck",
       "state_estimation.topology_open_flow_k", "state_estimation.topology_dead_flow_k",
       "state_estimation.topology_voltage_k", "state_estimation.topology_kcl_k",
       "state_estimation.topology_cluster_min",

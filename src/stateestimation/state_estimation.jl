@@ -1399,7 +1399,40 @@ function _column_normalized(H::AbstractMatrix{<:Real})
   return Hs
 end
 
-function _evaluate_observability_from_jacobian(H::AbstractMatrix{<:Real}, activeOriginalIdx::Vector{Int}; tol = nothing)
+## Critical rows from the diagonal of the residual covariance (issue #394).
+## With unit weights Omega = I - H (H'H)^-1 H' is the projector onto the
+## residual space, and Omega_ii = 0 exactly when row i is critical (its
+## information exists nowhere else, so the estimate reproduces it and its
+## residual is structurally zero); weights do not change WHERE the zeros
+## are, only the scale in between, so the classification needs no sigmas.
+## One factorization of G = H'H and one selected-inverse pass (Takahashi
+## above `takahashi_min_states` states, dense pinv below) answer the
+## question for every row at once, where the rank test paid one
+## decomposition PER row. `wii` is the dimensionless share of a row's own
+## error that reaches its residual (0 critical, 1 fully redundant), so the
+## threshold is dimensionless too: `tol_wii` (the FD-aware rank tolerance
+## squared and made relative to sigma_max, floored at 1e-8, far above the
+## rounding of the selected inverse and far below any real redundancy).
+## Returns (critical rows, wii per row, method actually used).
+function _criticality_from_omega(H::AbstractMatrix{<:Real}, tol_wii::Float64)
+  m, n = size(H)
+  d = _residual_diagnostics(H, zeros(Float64, m), ones(Float64, m); need_full_omega = false)
+  crit = Int[i for i = 1:m if d.wii[i] <= tol_wii]
+  return crit, d.wii, d.omega_path
+end
+
+## the dimensionless criticality threshold matching the rank tolerance
+## `tol` (an absolute singular-value bound): a row whose removal leaves a
+## singular value at tol has leverage of order (tol / sigma_max)^2
+function _criticality_wii_tolerance(H::AbstractMatrix{<:Real}, tol)::Float64
+  floor_wii = 1.0e-8
+  tol === nothing && return floor_wii
+  smax = _sigma_max(H)
+  (isfinite(smax) && smax > 0.0) || return floor_wii
+  return max(floor_wii, (Float64(tol) / smax)^2)
+end
+
+function _evaluate_observability_from_jacobian(H::AbstractMatrix{<:Real}, activeOriginalIdx::Vector{Int}; tol = nothing, criticality_method::Symbol = :omega)
   m, n = size(H)
   ν = m - n
   ρ = n > 0 ? m / n : Inf
@@ -1411,24 +1444,63 @@ function _evaluate_observability_from_jacobian(H::AbstractMatrix{<:Real}, active
   numObs = nrank == ncols
   strObs = mm == ncols
 
-  # single-row criticality is one rank test per row, so its cost is
-  # m times a full decomposition. Step-0 baseline: m*n = 210k (sp_case188,
-  # 562 rows) took 7.6 s and 2.9 GB; m*n = 11M (case1354) did not
-  # terminate in reasonable time. The m*n budget below keeps the check
-  # within roughly a minute; above it the classification is SKIPPED and
-  # says so (criticality_skipped), instead of allocating for hours, and
-  # quality then reflects observability and redundancy only
-  # (task_se_sparse step 3).
+  criticality_method in (:omega, :rank) || error("observability: criticality_method must be :omega or :rank (got $(criticality_method))")
   criticalNum = Int[]
   criticalStr = Int[]
-  criticalitySkipped = m * n > _SE_ROW_CRITICALITY_MAX_MN
-  if m > 0 && !criticalitySkipped
-    for i = 1:m
-      _numerical_row_redundant(H, i; tol = tol) || push!(criticalNum, activeOriginalIdx[i])
-      _structural_row_redundant(H, i) || push!(criticalStr, activeOriginalIdx[i])
+  criticalitySkipped = false
+  structuralSkipped = false
+  wii = Float64[]
+  method_used = criticality_method
+  # The structural test (one bipartite matching per row) keeps the m*n
+  # budget: it is the smaller cost but still per row, and under :omega the
+  # numerical set already carries every structurally critical row (a
+  # structurally critical row is numerically critical as well).
+  structural_affordable = m * n <= _SE_ROW_CRITICALITY_MAX_MN
+  if m > 0 && criticality_method == :omega
+    # issue #394: one factorization for all rows, no budget; a system the
+    # estimator itself cannot factorize falls back to the budgeted rank
+    # tests with one warning
+    tol_wii = _criticality_wii_tolerance(H, tol)
+    crit_rows = try
+      c, wii_all, _ = _criticality_from_omega(H, tol_wii)
+      wii = wii_all
+      c
+    catch err
+      @warn "observability: criticality via diag(Omega) unavailable ($(sprint(showerror, err))); falling back to the per-row rank tests"
+      method_used = :rank
+      nothing
     end
-  elseif criticalitySkipped
-    @warn "observability: single-row criticality skipped (m=$(m) times n=$(n) exceeds the $(_SE_ROW_CRITICALITY_MAX_MN) budget); the per-row rank tests do not pay for themselves at this size"
+    if crit_rows !== nothing
+      criticalNum = Int[activeOriginalIdx[i] for i in crit_rows]
+      if structural_affordable
+        for i = 1:m
+          _structural_row_redundant(H, i) || push!(criticalStr, activeOriginalIdx[i])
+        end
+      else
+        structuralSkipped = true
+      end
+    end
+  end
+  if m > 0 && method_used == :rank
+    # single-row criticality is one rank test per row, so its cost is
+    # m times a full decomposition. Step-0 baseline: m*n = 210k (sp_case188,
+    # 562 rows) took 7.6 s and 2.9 GB; m*n = 11M (case1354) did not
+    # terminate in reasonable time. The m*n budget below keeps the check
+    # within roughly a minute; above it the classification is SKIPPED and
+    # says so (criticality_skipped), instead of allocating for hours, and
+    # quality then reflects observability and redundancy only
+    # (task_se_sparse step 3). Since issue #394 this is the cross-check
+    # path (criticality_method = :rank), no longer the default.
+    criticalitySkipped = !structural_affordable
+    if !criticalitySkipped
+      for i = 1:m
+        _numerical_row_redundant(H, i; tol = tol) || push!(criticalNum, activeOriginalIdx[i])
+        _structural_row_redundant(H, i) || push!(criticalStr, activeOriginalIdx[i])
+      end
+    else
+      structuralSkipped = true
+      @warn "observability: single-row criticality skipped (m=$(m) times n=$(n) exceeds the $(_SE_ROW_CRITICALITY_MAX_MN) budget); the per-row rank tests do not pay for themselves at this size"
+    end
   end
 
   hasCritical = !isempty(criticalNum) || !isempty(criticalStr)
@@ -1473,6 +1545,10 @@ function _evaluate_observability_from_jacobian(H::AbstractMatrix{<:Real}, active
     numerical_critical_measurement_indices = criticalNum,
     structural_critical_measurement_indices = criticalStr,
     criticality_skipped = criticalitySkipped,
+    structural_criticality_skipped = structuralSkipped,
+    criticality_method = method_used,
+    criticality_wii = wii,
+    active_measurement_indices = activeOriginalIdx,
     unobservable_state_columns = dark,
     quality = _redundancy_quality(numObs && strObs, ν, hasCritical),
   )
@@ -1521,7 +1597,7 @@ function structural_row_redundant(H::AbstractMatrix{<:Real}, i::Int)
 end
 
 """
-    evaluate_observability_matrix(H; tol=nothing) -> NamedTuple
+    evaluate_observability_matrix(H; tol=nothing, criticality_method=state_estimation_config().criticality_method) -> NamedTuple
 
 Evaluate global observability and single-row criticality directly on a matrix
 `H` (without building a network model).
@@ -1534,10 +1610,10 @@ islands). Empty for observable systems; computed only on the
 not-observable path (a dense null-space probe, fine at workshop and
 distribution-network sizes).
 """
-function evaluate_observability_matrix(H::AbstractMatrix{<:Real}; tol = nothing)
+function evaluate_observability_matrix(H::AbstractMatrix{<:Real}; tol = nothing, criticality_method::Symbol = state_estimation_config().criticality_method)
   m, _ = size(H)
   idx = collect(1:m)
-  return _evaluate_observability_from_jacobian(H, idx; tol = tol)
+  return _evaluate_observability_from_jacobian(H, idx; tol = tol, criticality_method = criticality_method)
 end
 
 """
@@ -1626,6 +1702,7 @@ function evaluate_global_observability(net::Net, measurements::Vector{Measuremen
   jacEps = base.jac_eps
   pmuRefOffset = base.pmu_ref_offset
   rankTolFactor = base.rank_tol_factor
+  base_cfg_criticality_method = base.criticality_method
   # island-wise nets: judge every measured island on its own subnet with its
   # own reference (the estimator solves them the same way) and aggregate;
   # unmeasured islands are excluded from the estimation and reported
@@ -1660,7 +1737,7 @@ function evaluate_global_observability(net::Net, measurements::Vector{Measuremen
   if effTol === nothing && !isempty(Hs)
     effTol = rankTolFactor * jacEps * _sigma_max(Hs)
   end
-  base = _evaluate_observability_from_jacobian(Hs, activeIdx; tol = effTol)
+  base = _evaluate_observability_from_jacobian(Hs, activeIdx; tol = effTol, criticality_method = base_cfg_criticality_method)
   cond_notes = Symbol[]
 
   # stage 1: structural island check on the contracted net. More than one
@@ -1867,6 +1944,7 @@ function evaluate_local_observability(net::Net, measurements::Vector{Measurement
   jacEps = base.jac_eps
   pmuRefOffset = base.pmu_ref_offset
   rankTolFactor = base.rank_tol_factor
+  base_cfg_criticality_method = base.criticality_method
   isempty(stateCols) && error("evaluate_local_observability: stateCols must not be empty")
 
   # SE phase 3: judged on the contracted net, like the global check
@@ -1913,7 +1991,7 @@ function evaluate_local_observability(net::Net, measurements::Vector{Measurement
   if effTol === nothing && !isempty(Hlocal)
     effTol = rankTolFactor * jacEps * _sigma_max(Hlocal)
   end
-  base = _evaluate_observability_from_jacobian(Hlocal, localOriginalIdx; tol = effTol)
+  base = _evaluate_observability_from_jacobian(Hlocal, localOriginalIdx; tol = effTol, criticality_method = base_cfg_criticality_method)
 
   return merge(base, (rows = localRows, stateCols = copy(stateCols)))
 end

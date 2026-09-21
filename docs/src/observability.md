@@ -89,14 +89,25 @@ critical measurement is invisible to the diagnostics and lands fully
 in the state. The diagnostics report classifies critical versus
 redundant measurements for exactly this reason.
 
-The classification is one rank test per measurement row, which stops
-paying for itself on large systems: above a measured budget (rows
-times states beyond 300000; the 188-bus demo case already spends
-seconds here) the check is skipped with a warning, the result carries
-`criticality_skipped = true`, and the quality label then reflects
-observability and redundancy only. The rank decision itself scales:
-up to 2000 states it is the exact dense SVD it always was, above that
-a sparse QR factorization with the identical FD-aware tolerance.
+The classification reads the diagonal of the residual covariance
+(`state_estimation.criticality_method = omega`, the default since
+0.14.2): with unit weights `Omega = I - H (H'H)^-1 H'` is the projector
+onto the residual space, `Omega_ii = 0` exactly for a critical row, and
+one factorization of `H'H` plus one selected-inverse pass (Takahashi
+above `takahashi_min_states` states, dense below) answers the question
+for every row at once. There is no size budget; the check runs on every
+set the estimator itself can factorize. The threshold is dimensionless
+(`wii = Omega_ii * w_i`, the share of a row's own error that reaches its
+residual): a row is critical at `wii` below the FD-aware rank tolerance
+made relative to `sigma_max` and squared, floored at `1e-8`. The result
+carries `criticality_wii` per active row, so the nearly critical rows
+(`wii < 0.3`) come at no extra cost; the state-estimation run log lists
+both. `criticality_method = rank` keeps the former per-row rank tests as
+a cross-check (one decomposition per row, budgeted at 300000 rows times
+states, `criticality_skipped = true` above). The rank decision for the
+observability verdict itself is unchanged: up to 2000 states the exact
+dense SVD, above that a sparse QR factorization with the identical
+FD-aware tolerance.
 
 ## `w_ii`, the localizability indicator
 

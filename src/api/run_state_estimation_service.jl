@@ -596,6 +596,35 @@ Failure reasons: `se_unsupported_format`, `import_error`,
 ## headline mapping for the state-estimation timing file
 const _SE_PERF_HEADLINE = (:case_loading_network_solver => "importing_case", :solver => "state_estimation", :postprocessing => "postprocessing_result", :artifact_writing => "writing_artifacts")
 
+# One block per run about the critical measurements (issue #394): which
+# method decided, how many rows are critical (their residual is
+# structurally zero, so no residual test can ever flag an error there),
+# the rows by id, and under :omega the nearly critical rows (wii below the
+# 0.3 localizability guideline) as the graded information the rank test
+# never had. Long lists are cut; the counts stay complete.
+function _se_log_criticality(io::IO, net::Net, obs)
+  method = hasproperty(obs, :criticality_method) ? String(obs.criticality_method) : "rank"
+  if obs.criticality_skipped
+    println(io, "critical measurements: classification skipped (method ", method, ", per-row budget exceeded)")
+    return nothing
+  end
+  ids(idx) = [1 <= i <= length(net.measurements) ? String(net.measurements[i].id) : string("#", i) for i in idx]
+  num = collect(obs.numerical_critical_measurement_indices)
+  str = collect(obs.structural_critical_measurement_indices)
+  println(io, "critical measurements (", method, "): ", length(num), " numerical, ", length(str), " structural", hasproperty(obs, :structural_criticality_skipped) && obs.structural_criticality_skipped ? " (structural test skipped above the per-row budget)" : "")
+  isempty(num) || println(io, "  critical rows: ", join(first(ids(num), 20), ", "), length(num) > 20 ? string(", ... ", length(num) - 20, " more") : "")
+  if hasproperty(obs, :criticality_wii) && !isempty(obs.criticality_wii) && hasproperty(obs, :active_measurement_indices)
+    wii = obs.criticality_wii
+    act = collect(obs.active_measurement_indices)
+    near = [(act[k], wii[k]) for k in eachindex(wii) if 1 <= k <= length(act) && wii[k] > 1e-8 && wii[k] < 0.3]
+    if !isempty(near)
+      sort!(near; by = x -> x[2])
+      println(io, "  nearly critical rows (wii below 0.3): ", length(near), ": ", join((string(first(ids([i])), " (", round(w; digits = 3), ")") for (i, w) in first(near, 10)), ", "), length(near) > 10 ? ", ..." : "")
+    end
+  end
+  return nothing
+end
+
 function _run_state_estimation_service(
   case_path::AbstractString,
   config_file::AbstractString,
@@ -760,6 +789,15 @@ function _run_state_estimation_service(
   end
   base_metadata["se_observability_quality"] = String(obs.quality)
   base_metadata["se_structural_islands"] = :structural_islands in obs.notes
+  # critical measurements (issue #394): the classification method, the
+  # counts and the rows themselves reach the metadata and the run log
+  crit_num = collect(obs.numerical_critical_measurement_indices)
+  crit_str = collect(obs.structural_critical_measurement_indices)
+  crit_method = hasproperty(obs, :criticality_method) ? String(obs.criticality_method) : "rank"
+  base_metadata["se_criticality_method"] = crit_method
+  base_metadata["se_critical_measurements"] = length(crit_num)
+  base_metadata["se_structural_critical_measurements"] = length(crit_str)
+  base_metadata["se_criticality_skipped"] = obs.criticality_skipped
   if hasproperty(obs, :islands)
     base_metadata["se_islands_total"] = length(obs.islands)
     base_metadata["se_islands_measured"] = obs.n_measured_islands
@@ -1192,6 +1230,7 @@ function _run_state_estimation_service(
     println(io, "State estimation on ", basename(case_path))
     println(io, "measurements: ", summary.total, " rows from ", from_case_file ? "the case file" : basename(String(measurement_file)))
     println(io, "observability: ", obs.quality, :structural_islands in obs.notes ? " (structural islands)" : "")
+    _se_log_criticality(io, net, obs)
     println(io, "converged in ", res.iterations, " iteration(s); J = ", round(res.objectiveJ; digits = 6), ", dof = ", res.dof, ", band reason = ", verdict.reason, res.activeObjective === nothing ? "" : string("; J_active = ", round(res.activeObjective.j; digits = 6), " (dof ", res.activeObjective.dof, ", without ", res.activeObjective.suppressed, " suppressed row(s); band verdict stays on J)"))
     if diag.topology_findings !== nothing
       # the stage-2 classification REPLACES the eliminations-exhausted

@@ -2073,15 +2073,38 @@ function test_state_estimation_takahashi_diagnostics()::Bool
       @test length(col.groups) < size(H1, 2) / 5
     end
 
-    # 7) the per-row criticality budget: a wide sparse pattern above the
-    # m*n budget skips the classification and says so, both in the log
-    # and in the machine-readable result field
+    # 7) criticality (issue #394): the default reads diag(Omega) from one
+    # selected-inverse pass and knows no budget; a 600 x 600 identity has
+    # every row critical (each state seen by exactly one row). The former
+    # per-row rank tests stay as criticality_method = :rank, budgeted and
+    # skipped above the budget with the warning, as before.
     Hwide = SparseArrays.sparse(1.0 * LinearAlgebra.I, 600, 600)
-    big = Test.@test_logs (:warn, r"single-row criticality skipped") match_mode = :any Sparlectra.evaluate_observability_matrix(Hwide)
-    @test big.criticality_skipped
-    @test isempty(big.numerical_critical_measurement_indices)
-    small = Sparlectra.evaluate_observability_matrix(SparseArrays.sparse(1.0 * LinearAlgebra.I, 3, 3))
+    big = Sparlectra.evaluate_observability_matrix(Hwide)
+    @test big.criticality_method === :omega
+    @test !big.criticality_skipped
+    @test length(big.numerical_critical_measurement_indices) == 600
+    @test all(<=(1e-8), big.criticality_wii)
+    big_rank = Test.@test_logs (:warn, r"single-row criticality skipped") match_mode = :any Sparlectra.evaluate_observability_matrix(Hwide; criticality_method = :rank)
+    @test big_rank.criticality_skipped
+    @test isempty(big_rank.numerical_critical_measurement_indices)
+    small = Sparlectra.evaluate_observability_matrix(SparseArrays.sparse(1.0 * LinearAlgebra.I, 3, 3); criticality_method = :rank)
     @test !small.criticality_skipped
+    # both methods agree on a real set at the boundary: sp_case5 with one
+    # flow row removed, the rows the rank tests call critical are exactly
+    # the rows with Omega_ii at zero, and the redundant rows carry wii > 0
+    net5 = importSCF(joinpath(dirname(@__DIR__), "data", "scf", "sp_case5.scf.json"))
+    readMeasurementsCSV!(net5; file = joinpath(dirname(@__DIR__), "data", "scf", "sp_case5.measurements.csv"))
+    kflow = findfirst(m -> m.typ == Sparlectra.PflowMeas, net5.measurements)
+    deleteat!(net5.measurements, kflow)
+    obs_omega = with_state_estimation_config(() -> evaluate_global_observability(net5); criticality_method = :omega)
+    obs_rank = with_state_estimation_config(() -> evaluate_global_observability(net5); criticality_method = :rank)
+    @test obs_omega.criticality_method === :omega && obs_rank.criticality_method === :rank
+    @test sort(obs_omega.numerical_critical_measurement_indices) == sort(obs_rank.numerical_critical_measurement_indices)
+    @test sort(obs_omega.structural_critical_measurement_indices) == sort(obs_rank.structural_critical_measurement_indices)
+    @test obs_omega.quality == obs_rank.quality
+    @test length(obs_omega.criticality_wii) == length(obs_omega.active_measurement_indices)
+    redundant = [k for k in eachindex(obs_omega.active_measurement_indices) if !(obs_omega.active_measurement_indices[k] in obs_omega.numerical_critical_measurement_indices)]
+    @test all(k -> obs_omega.criticality_wii[k] > 1e-8, redundant)
   end
 
   return true
