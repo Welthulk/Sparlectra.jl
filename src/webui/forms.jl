@@ -801,7 +801,10 @@ function _webui_case_form_defaults(casefile::AbstractString, case_directory)::Di
   end
   isfile(cfg_path) || return values
   block = try
-    get(load_yaml_dict(cfg_path), "form", nothing)
+    raw = load_yaml_dict(cfg_path)
+    declared = strip(string(get(raw, "case", "")))
+    # a shared-stem file of the other case carries the other case's form
+    (isempty(declared) || declared == basename(path)) ? get(raw, "form", nothing) : nothing
   catch
     nothing
   end
@@ -1206,6 +1209,15 @@ function powerflow_webui_request(form::AbstractDict; default_output_root::Abstra
     # then spec default
     raw === nothing && (raw = get(stored_form, field, spec.default))
     request_options[field] = _webui_parse_form_value(raw, spec.value_type, field)
+  end
+  # ONE central CSV setting (issue #386): the format the run form names is
+  # the run's output.csv_format, carried like every other configuration
+  # override, so every run type and every writer reads the same value from
+  # the run's configuration. It stays a request field as well for the
+  # older per-request API keyword.
+  csv_named = _webui_form_value(form, "detailed_result_csv_format", nothing) !== nothing || haskey(stored_form, "detailed_result_csv_format")
+  if apply_runtime_overrides && csv_named && haskey(request_options, "detailed_result_csv_format")
+    overrides["output.csv_format"] = String(request_options["detailed_result_csv_format"])
   end
   case_format = strip(String(something(_webui_form_value(form, "case_format", nothing), "")))
   if isempty(case_format)

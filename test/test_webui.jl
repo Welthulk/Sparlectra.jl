@@ -277,7 +277,8 @@ function run_webui_fast_tests()
       @test saved_cfg["power_flow.apslf_start.enabled"] === false
       # an incompatible pair in one save is refused at save time, not at the run
       resp_bad = Sparlectra.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "sp_case14.scf.json", "settings_target" => "this_case", "power_flow_solver" => "rectangular", "power_flow_apslf_start_enabled" => "true", "power_flow_dc_seed_unconditional" => "true"); output_root = root, runtime = rt)
-      @test occursin("Could not save settings for this case", Sparlectra._webui_urldecode(Dict(resp_bad.headers)["Location"])) || Sparlectra.load_case_config(joinpath(cache, "sp_case14.scf.json"))["power_flow.solver"] == "apslf"
+      @test occursin("Could not save settings for this case", Sparlectra._webui_urldecode(Dict(resp_bad.headers)["Location"]))
+      @test Sparlectra.load_case_config(joinpath(cache, "sp_case14.scf.json"))["power_flow.solver"] == "apslf"
       Sparlectra.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "sp_case14.scf.json", "settings_target" => "this_case", "power_flow_solver" => "rectangular"); output_root = root, runtime = rt)
       # machine-scope keys are named and kept out of the case file
       resp2 = Sparlectra.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "sp_case14.scf.json", "settings_target" => "this_case", "benchmark_samples" => "5"); output_root = root, runtime = rt)
@@ -919,10 +920,31 @@ function run_webui_fast_tests()
       @test occursin("# seed: 42", one1)
       # generating persists the generator options in the form block of the
       # case configuration file so a case reload restores them
-      @test occursin("gen_flow_ends: one_balance_aware", read(joinpath(cases, "warmup_casePST.config.yaml"), String))
+      @test occursin("gen_flow_ends: one_balance_aware", read(joinpath(cases, "warmup_casePST.m.config.yaml"), String))
       @test occursin("# flow_ends: one_balance_aware", one1)
       @test occursin("# flow_end,", one1)
       @test occursin("# truth_value,Vm_", one1)
+      # critical measurements on request: the set is thinned until two rows
+      # are critical, stays observable, and names the rows in its comments
+      Sparlectra.route_sparlectra_webui("POST", "/stateestimation/generate-measurements", Dict{String,Any}("casefile" => "warmup_casePST.m", "gen_critical_count" => "2"); output_root = root, runtime = rt)
+      crit_text = read(mfile, String)
+      @test occursin("# critical_target: 2 reached: ", crit_text)
+      @test occursin("# critical_rows: ", crit_text)
+      crit_net = Sparlectra.import_case(joinpath(cases, "warmup_casePST.m"), Sparlectra.load_sparlectra_config()).net
+      Sparlectra.readMeasurementsCSV!(crit_net; file = mfile)
+      crit_obs = evaluate_global_observability(crit_net)
+      @test crit_obs.quality != :not_observable
+      @test length(crit_obs.numerical_critical_measurement_indices) >= 2
+      @test occursin("gen_critical_count: 2", read(joinpath(cases, "warmup_casePST.m.config.yaml"), String))
+      # a case a synchronous action still holds refuses a second action and
+      # a run, with a message instead of a half-written file
+      @test Sparlectra._webui_case_claim!("warmup_casePST.m", "generating measurements")
+      busy_resp = Sparlectra.route_sparlectra_webui("POST", "/stateestimation/generate-measurements", Dict{String,Any}("casefile" => "warmup_casePST.m"); output_root = root, runtime = rt)
+      @test occursin("is busy", Sparlectra._webui_urldecode(Dict(busy_resp.headers)["Location"]))
+      busy_run = Sparlectra.start_webui_powerflow_run(Dict{String,Any}("casefile" => "warmup_casePST.m", "output_root" => root, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH); case_directory = cases)
+      @test busy_run["status"] == "failed" && occursin("busy", String(busy_run["message"]))
+      Sparlectra._webui_case_release!("warmup_casePST.m")
+      @test Sparlectra._webui_case_busy("warmup_casePST.m") === nothing
       # the full default set measures injections at every bus, so every
       # branch keeps its from end and no to-direction flow rows remain
       @test all(l -> !(startswith(l, "PflowMeas") && length(split(l, ",")) >= 7 && split(l, ",")[7] == "to"), split(one1, "\n"))

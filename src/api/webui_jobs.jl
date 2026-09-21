@@ -360,6 +360,9 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
   # UI by design (see _POWERFLOW_WEBUI_BLOCKING_STATES)
   active = _webui_active_job(; states = _POWERFLOW_WEBUI_BLOCKING_STATES)
   active === nothing || return _service_failure("active_run", "A run is already active. Abort it or wait for it to finish."; run_id = active["run_id"], run_mode = _webui_request_run_mode(request))
+  # a synchronous action (measurement generation) still holds the case
+  busy_case = _webui_case_busy(String(_service_request_value(request, "casefile", "")))
+  busy_case === nothing || return _service_failure("case_busy", "The case is busy ($(busy_case)); wait for it to finish."; run_mode = _webui_request_run_mode(request))
   output_root = _service_request_value(request, "output_root")
   output_root isa AbstractString && !isempty(strip(output_root)) || return _service_failure("invalid_request", "PowerFlow service request requires a nonempty output_root.")
   run_id = string(uuid4())

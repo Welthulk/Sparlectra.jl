@@ -22,6 +22,23 @@
 #          not use this writer.
 
 """
+    _config_with_request_csv_format(config, csv_format) -> SparlectraConfig
+
+The run's configuration with the request-level CSV format (the Web UI run
+form field, the deprecated API keyword) folded into `output.csv_format`:
+every run type (power flow, state estimation, contingency, short circuit)
+then writes all of its CSV files in the format the form named, instead of
+the two detailed exports only. `nothing` keeps the configuration's value.
+Throws `ArgumentError` on an unknown format name.
+"""
+function _config_with_request_csv_format(config::SparlectraConfig, csv_format)
+  csv_format === nothing && return config
+  name = Symbol(_resolve_detailed_csv_format(String(csv_format)).name)
+  name == config.output.csv_format && return config
+  return _sparlectra_config_with(config; output = _struct_with(config.output; csv_format = name))
+end
+
+"""
     result_csv_format() -> String
 
 The CSV format name of result artifacts, `output.csv_format` of the active

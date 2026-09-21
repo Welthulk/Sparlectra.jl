@@ -1353,11 +1353,8 @@ mpc.branch = [
       readSEStateCSV!(se_back; file = se_path)
       @test all(isapprox(se_back.nodeVec[i]._vm_pu, se_net.nodeVec[i]._vm_pu; atol = 1e-12) for i in eachindex(se_net.nodeVec))
       @test all(isapprox(se_back.nodeVec[i]._va_deg, se_net.nodeVec[i]._va_deg; atol = 1e-10) for i in eachindex(se_net.nodeVec))
-      # AC island report in the run's format
-      isl_path = joinpath(d, "ac_islands_de.csv")
-      with_sparlectra_config(() -> Sparlectra.write_ac_island_report(isl_path, Sparlectra.detect_ac_islands(se_net)), cfg_obj_de)
-      @test occursin(';', readlines(isl_path)[1])
-      # every CSV artifact of one power-flow run carries the declared delimiter
+      # every CSV artifact of one power-flow run carries the declared
+      # delimiter (the AC island report and the mismatch history included)
       pf_de = start_powerflow_run(Dict{String,Any}("casefile" => fsc, "config_file" => cfg_de, "output_root" => joinpath(d, "pf_de_root")))
       @test pf_de["status"] == "succeeded"
       pf_csvs = filter(f -> endswith(f, ".csv"), readdir(pf_de["output_dir"]))
@@ -1382,6 +1379,18 @@ mpc.branch = [
       @test occursin("csv_format: excel_de", read(joinpath(pf_req["output_dir"], "effective_config.yaml"), String))
       # the registry is the template again after the run
       @test Sparlectra.result_csv_format() == "technical"
+      # the same request field reaches the state-estimation service (Web UI
+      # run 31811bdd kept the comma in every SE artifact)
+      se_dir = joinpath(d, "se_req")
+      se_res = redirect_stdout(devnull) do
+        Sparlectra._run_state_estimation_service(joinpath(scf_dir, "sp_case5.scf.json"), Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, se_dir, "scf_se_req", joinpath(scf_dir, "sp_case5.measurements.csv"); csv_format = "excel_de")
+      end
+      @test Sparlectra.to_dict(se_res)["status"] == "succeeded"
+      for f in ("se_bad_data.csv", "se_state.csv", "se_deltas.csv")
+        isfile(joinpath(se_dir, f)) || continue
+        se_lines = filter(l -> !startswith(l, "#"), readlines(joinpath(se_dir, f)))
+        @test occursin(';', isempty(se_lines) ? "" : se_lines[1])
+      end
       # an unknown node id in the sweep fails on the run, not with an empty table
       root = Sparlectra.scf_json_parse(read(fsc, String))
       root["sparlectra"]["short_circuit"]["buses"] = Any[999999]
@@ -1478,6 +1487,7 @@ mpc.branch = [
       # next to the export (the writer emits no config block any more);
       # measurements found next to the case are exported with the file
       @test !occursin("\"config\"", txt)
+      # the export is an SCF case, so its file is <stem>.config.yaml
       export_cc = read(joinpath(cases, "warmup_casePST.config.yaml"), String)
       @test occursin("scope: case", export_cc)
       @test occursin("mode: auto", export_cc)

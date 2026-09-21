@@ -19,6 +19,16 @@ PowerFlow service. The Web UI contains presentation, form parsing, and route
 handling only; numerical execution continues through `start_powerflow_run` and
 `run_sparlectra_api`.
 
+### Long actions on a case
+
+Generating a measurement set or adding noise runs inside the request and
+can take a while on a large case (the generator with `critical
+measurements` re-reads the criticality after every removed row). The case
+is marked busy for that time: a second generator action on it, and a run
+of it, are refused with a message instead of reading a file that is still
+being written, and the buttons show their spinner while the request runs.
+A queued or running run blocks the generator the same way.
+
 ## Feedback and error popups
 
 One-off feedback (a rejected submission's validation error, the case-import
