@@ -19,14 +19,16 @@ Profile selection precedence is:
 Per-group seconds in a profile run are dominated by Julia compilation, and
 which group pays it depends on run order: the first group that touches a
 code path compiles it for everyone after. Measured on the maintainer
-machine (same process, second run warm):
+machine (same process, second run warm; rows marked "single-file run"
+were measured by running that test file alone with the helpers included,
+not inside the profile, so they compare only with each other):
 
 | group | cold | warm |
 |---|---|---|
 | `scf` | 138.0 s | 0.6 s |
 | `programmatic_api_extended` | 138.4 s | 0.3 s |
-| `state_estimation` | 38.1 s | 0.2 s |
-| `observability` | 7.8 s | 0.2 s |
+| `state_estimation` | 68.6 s (single-file run) | 0.2 s |
+| `observability` | 7.8 s (single-file run, after `state_estimation`) | 0.2 s |
 | `auto_powerflow` | 71.6 s | 3.2 s |
 
 Judge a "group got slower" observation against warm times or the sum over
