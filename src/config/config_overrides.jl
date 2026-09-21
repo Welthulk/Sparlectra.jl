@@ -290,17 +290,38 @@ end
 """
     case_config_path(case_path) -> String
 
-The case configuration file that belongs to one case: `<stem>.config.yaml`
-next to the case file. For the canonical `.scf.json` double extension the
-stem strips both parts, so `case57.scf.json` binds `case57.config.yaml`.
+The case configuration file that belongs to one case, next to the case
+file. The canonical `.scf.json` case binds `<stem>.config.yaml`
+(`case57.scf.json` binds `case57.config.yaml`). Every other input format
+binds `<file name>.config.yaml` (`case118.m` binds `case118.m.config.yaml`),
+so a MATPOWER case and its SCF export in one directory keep two files; a
+file with the older `<stem>.config.yaml` name is still read for such a case
+when its header names the case (Web UI run a3aa700b: `case118.config.yaml`
+written for `case118.m` was loaded for `case118.scf.json` and refused).
 """
 function case_config_path(case_path::AbstractString)::String
   dir = dirname(abspath(String(case_path)))
-  stem, ext = splitext(basename(String(case_path)))
+  name = basename(String(case_path))
+  stem, ext = splitext(name)
   if lowercase(ext) == ".json" && endswith(lowercase(stem), ".scf")
-    stem = stem[1:end-4]
+    return joinpath(dir, string(stem[1:end-4], ".config.yaml"))
   end
-  return joinpath(dir, string(stem, ".config.yaml"))
+  exact = joinpath(dir, string(name, ".config.yaml"))
+  isfile(exact) && return exact
+  legacy = joinpath(dir, string(stem, ".config.yaml"))
+  isfile(legacy) && _case_config_declares(legacy, name) && return legacy
+  return exact
+end
+
+# does the case configuration file at `path` declare `case_name` in its
+# header? false for an unreadable file (the caller then reports its own way)
+function _case_config_declares(path::AbstractString, case_name::AbstractString)::Bool
+  raw = try
+    load_yaml_dict(path)
+  catch
+    return false
+  end
+  return strip(string(get(raw, "case", ""))) == case_name
 end
 
 """
@@ -314,6 +335,15 @@ hard error `case_config_mismatch`, so a copied config cannot silently steer
 the wrong case. Keys outside the case scope are refused with the same
 wording as the in-file `sparlectra.config` check.
 """
+# `case118.m` and `case118.scf.json` share the stem `case118`
+function _case_config_shared_stem(a::AbstractString, b::AbstractString)::Bool
+  stem(n) = begin
+    s, e = splitext(String(n))
+    (lowercase(e) == ".json" && endswith(lowercase(s), ".scf")) ? s[1:end-4] : s
+  end
+  return stem(a) == stem(b)
+end
+
 function load_case_config(case_path::AbstractString)::Dict{String,Any}
   path = case_config_path(case_path)
   isfile(path) || return Dict{String,Any}()
@@ -324,6 +354,12 @@ function load_case_config(case_path::AbstractString)::Dict{String,Any}
   scope == "case" || throw(ArgumentError("Case configuration $(path) must declare scope: case (found $(repr(scope)))."))
   declared_case = strip(string(get(raw, "case", "")))
   expected_case = basename(String(case_path))
+  # a shared stem (case118.m next to case118.scf.json): the file belongs to
+  # the OTHER case and simply does not apply here; a different stem is the
+  # copied-config error below
+  if declared_case != expected_case && _case_config_shared_stem(declared_case, expected_case) && isfile(joinpath(dirname(abspath(String(case_path))), declared_case))
+    return Dict{String,Any}()
+  end
   declared_case == expected_case || throw(ArgumentError("case_config_mismatch: $(path) declares case $(repr(declared_case)) but is loaded for $(repr(expected_case)). The case header must name the case file it configures."))
   for header_key in ("config_version", "scope", "case")
     delete!(raw, header_key)
@@ -348,6 +384,19 @@ an existing file instead of leaving a stale one. Returns the file path.
 """
 function write_case_config(case_file::AbstractString, config::AbstractDict; form::AbstractDict = Dict{String,Any}())::String
   path = case_config_path(case_file)
+  # an older `<stem>.config.yaml` of the OTHER case with this stem moves to
+  # its own unambiguous name before this case's file takes the stem
+  if isfile(path)
+    raw_other = try
+      load_yaml_dict(path)
+    catch
+      nothing
+    end
+    other = raw_other === nothing ? "" : strip(string(get(raw_other, "case", "")))
+    if !isempty(other) && other != basename(String(case_file)) && isfile(joinpath(dirname(abspath(String(case_file))), other))
+      mv(path, joinpath(dirname(abspath(String(case_file))), string(other, ".config.yaml")); force = true)
+    end
+  end
   keep = Dict{String,Any}(String(k) => v for (k, v) in config if scf_is_case_config_key(String(k)))
   dropped = sort!(String[String(k) for k in keys(config) if !scf_is_case_config_key(String(k))])
   isempty(dropped) || @warn "write_case_config: $(length(dropped)) configuration key(s) are not case scope and were not written (they belong in the configuration file)" keys = dropped

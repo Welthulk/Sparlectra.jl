@@ -962,9 +962,12 @@ v1 header) are still read, with pair-based resolution that rejects
 parallels (same rule as `addPflowMeasurement!`). `headerComments` lines are
 written as `#` comments after the version line (free-form metadata, e.g.
 the transformer tap positions a generated set is based on); the reader
-skips them.
+skips them. `footerComments` lines are written as `#` comments AFTER the
+data rows (bulky per-row blocks such as the generator's truth values),
+so the file opens with its data; the reader skips comment lines wherever
+they stand.
 """
-function writeMeasurementsCSV(net::Net; file::AbstractString, headerComments::Vector{String} = String[], busReference::Symbol = :name)
+function writeMeasurementsCSV(net::Net; file::AbstractString, headerComments::Vector{String} = String[], footerComments::Vector{String} = String[], busReference::Symbol = :name)
   busReference in (:name, :mrid) || error("writeMeasurementsCSV: busReference must be :name or :mrid")
   name_by_idx = _bus_name_by_idx(net)
   # :mrid (CGMES only): reference buses by their preserved ENTSO-E UUID;
@@ -1004,6 +1007,9 @@ function writeMeasurementsCSV(net::Net; file::AbstractString, headerComments::Ve
       dir = m.direction == :none ? "" : String(m.direction)
       println(io, string(m.typ), ",", bus, ",", fromB, ",", toB, ",", branchNr, ",", linkNr, ",", dir, ",", repr(m.value), ",", repr(m.sigma), ",", m.active ? "true" : "false", ",", m.id)
       n += 1
+    end
+    for c in footerComments
+      println(io, "# ", c)
     end
   end
   return (count = n,)

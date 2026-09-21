@@ -31,7 +31,7 @@ Configuration precedence (low → high):
 Unknown keys are rejected during validation. Removed keys are also rejected with migration hints (for example `matpower_import.benchmark` → `benchmark.enabled`).
 
 Exception whenever a case ships its own configuration file
-(`<stem>.config.yaml`, any input format): case-scope keys then skip
+(`<stem>.config.yaml` for an SCF case, `<file name>.config.yaml` such as `case118.m.config.yaml` for every other format, so a MATPOWER case and its SCF export keep separate files): case-scope keys then skip
 level 2 and resolve from the case levels straight to the packaged
 defaults, so the same case-plus-config pair computes the same numbers on
 every installation; only machine-scope keys (`output.*`, `benchmark.*`,

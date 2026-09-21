@@ -1,3 +1,18 @@
+# Version 0.15.0 - 2026-09-21
+
+## Highlights
+- Critical measurements from the diagonal of the residual covariance (one selected-inverse pass, no size budget); `state_estimation.criticality_method` keeps the per-row rank tests as `rank` (#394).
+- The state-estimation run log lists the critical and the nearly critical rows.
+- Measurement generator: `critical measurements` thins a set until that many rows are critical, at the run's own rank tolerance; the set names the rows. Passive nodes are zero-injection constraints by default.
+- The case configuration of a non-SCF case is `<file name>.config.yaml` (`case118.m.config.yaml`); the older `<stem>.config.yaml` is still read.
+
+## Fixes
+- The CSV format of the run form is the run's `output.csv_format` for every run type (state estimation, N-1, short circuit included).
+- Generated measurement sets: truth values and flow-end notes behind the data rows; parallel circuits get unique ids.
+- A released tap without any measurement aborted the estimation instead of being frozen.
+- A MATPOWER case and its SCF export with one stem shared one configuration file, and the run refused it.
+- Web UI: a case held by a running generator refuses a second action and a run with a message; the state-estimation button shows its spinner.
+
 # Version 0.14.1 - 2026-09-19
 
 ## Fixes

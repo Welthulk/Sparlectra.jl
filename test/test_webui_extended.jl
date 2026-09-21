@@ -455,7 +455,7 @@ function run_webui_extended_tests()
       @test !occursin("/powerflow?casefile=$(Sparlectra._webui_urlencode(profile_path))", save_html)
       # the case configuration file: D8 header, nested case-scope sections,
       # request-only fields in the form block, machine scope dropped
-      @test basename(profile_path) == "case145.config.yaml"
+      @test basename(profile_path) == "case145.m.config.yaml"
       profile_text = read(profile_path, String)
       @test occursin("scope: case", profile_text)
       @test occursin("case: case145.m", profile_text)
@@ -515,7 +515,7 @@ function run_webui_extended_tests()
 
       loaded_form = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow/settings?casefile=$(Sparlectra._webui_urlencode(joinpath(root, "case145.m")))"; output_root = root).body)
       @test occursin("Case-specific settings loaded from", loaded_form)
-      @test occursin("case145.config.yaml", loaded_form)
+      @test occursin("case145.m.config.yaml", loaded_form)
       _webui_assert_value(loaded_form, "power_flow_tol", "1.0e-7")
       _webui_assert_checked(loaded_form, "power_flow_autodamp", true)
       # machine scope no longer travels with the case: the trigger checkbox
@@ -611,11 +611,12 @@ settings:
 """)
       case118_form = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow/settings?casefile=$(Sparlectra._webui_urlencode(case118))"; output_root = root).body)
       @test occursin("Case-specific settings loaded from", case118_form)
-      @test occursin("case118.config.yaml", case118_form)
+      @test occursin("case118.m.config.yaml", case118_form)
       # converted exactly once: the sidecar is gone, the case configuration
-      # file exists and carries the D8 header binding it to its case
+      # file exists (a MATPOWER case binds <file name>.config.yaml, 0.15.0)
+      # and carries the D8 header binding it to its case
       @test !isfile(legacy_sidecar)
-      converted = read(joinpath(root, "case118.config.yaml"), String)
+      converted = read(joinpath(root, "case118.m.config.yaml"), String)
       @test occursin("scope: case", converted)
       @test occursin("case: case118.m", converted)
       _webui_assert_checked(case118_form, "power_flow_autodamp", false)
@@ -1591,6 +1592,9 @@ for (current_iteration_topic, required_fragments) in current_iteration_help
       # not send a value (that is how the optional tolerance in MW works).
       stated = Set(key for (key, field, _) in Sparlectra._WEBUI_FORM_CONFIG_FIELDS
                    if !isempty(strip(String(get(form, field, "")))))
+      # the run form's CSV format is the run's central output.csv_format
+      # for every run type (0.14.2), carried as an override like any key
+      isempty(strip(String(get(form, "detailed_result_csv_format", "")))) || push!(stated, "output.csv_format")
       @test Set(keys(overrides)) == stated
       @test !haskey(overrides, "power_flow.tol_MW")
       @test overrides["power_flow.tol"] == 1.0e-8

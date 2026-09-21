@@ -470,6 +470,10 @@ Base.@kwdef struct StateEstimationConfig
   max_eliminations::Int = 3
   rank_tol_factor::Float64 = 10.0
   takahashi_min_states::Int = 200
+  # critical-measurement classification (issue #394): :omega reads the
+  # diagonal of the residual covariance from one selected-inverse pass,
+  # :rank runs the former per-row rank tests (budgeted) as a cross-check
+  criticality_method::Symbol = :omega
   # IaMeas activity gate fallback: threshold is 3 * sigma of the paired
   # ImagMeas at the same end, or 3 * this floor (ampere) when no magnitude
   # measurement is paired (a current angle is meaningless near zero current)
@@ -1588,6 +1592,7 @@ function StateEstimationConfig(raw::AbstractDict)
     max_eliminations = Int(_validate_nonnegative("state_estimation.max_eliminations", _as_int_cfg(_raw_get(merged, "max_eliminations", 3)))),
     rank_tol_factor = Float64(_validate_positive("state_estimation.rank_tol_factor", _as_float_cfg(_raw_get(merged, "rank_tol_factor", 10.0)))),
     takahashi_min_states = Int(_validate_positive("state_estimation.takahashi_min_states", _as_int_cfg(_raw_get(merged, "takahashi_min_states", 200)))),
+    criticality_method = _validate_allowed_symbol("state_estimation.criticality_method", _as_symbol_cfg(_raw_get(merged, "criticality_method", :omega)), [:omega, :rank]),
     ia_current_floor_A = Float64(_validate_positive("state_estimation.ia_current_floor_A", _as_float_cfg(_raw_get(merged, "ia_current_floor_A", 10.0)))),
     topology_precheck = _as_bool_cfg(_raw_get(merged, "topology_precheck", true)),
     topology_open_flow_k = Float64(_validate_positive("state_estimation.topology_open_flow_k", _as_float_cfg(_raw_get(merged, "topology_open_flow_k", 4.0)))),

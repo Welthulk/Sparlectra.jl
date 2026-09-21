@@ -590,8 +590,8 @@ which the pre-check does not enter:
 |---|---|---|---|---|
 | sp_case60 (60 buses) | 326 × 117 | 0.8 s | dense path (below the 200-state Takahashi threshold) | every diagnostic available |
 | sp_case188 (188 buses) | 562 × 373 | 0.1 s | Takahashi, 0.2 s | every diagnostic available |
-| case1354pegase | 4062 × 2707 | 0.1 s | Takahashi, 0.1 s | criticality classification skipped (`criticality_skipped = true`, warning names the m·n budget) |
-| case13659pegase | 40977 × 27317 | 2.0 s | Takahashi, 1.9 s | as above; K-matrix report refused by name above 20000 rows |
+| case1354pegase | 4062 × 2707 | 0.1 s | Takahashi, 0.1 s | every diagnostic available; criticality from `diag(Omega)` (since 0.15.0, no size budget) |
+| case13659pegase | 40977 × 27317 | 2.0 s | Takahashi, 1.9 s | criticality from `diag(Omega)`; K-matrix report refused by name above 20000 rows |
 
 Read these times WARM. The first row pays the compilation for the ones
 after it, which is why the 60-bus case looks eight times slower than the
@@ -1053,16 +1053,29 @@ qualify. The choice is deterministic and documented per branch in the
 set's `# flow_end,...` comments.
 
 **Passive nodes.** Buses without generation, load, and shunt
-(`findPassiveBuses`) get explicit zero balance rows `Pinj/Qinj = 0` at the
-configured sigma (default 0.05 MW/MVar). Small sigmas at many passive
-nodes stiffen the flat start; for hard balances enable the checkbox
-instead, which writes protected zero-injection constraints
+(`findPassiveBuses`) are hard balances, and the generator writes them as
+protected zero-injection constraints by default (checkbox on since
+0.15.0); switched off, they become explicit zero balance rows
+`Pinj/Qinj = 0` at the configured sigma (default 0.05 MW/MVar), which the
+estimator weighs against everything else. The constraint form writes
 (`addZeroInjectionMeasurements!`, prefix `ZI`, excluded from elimination and robust modification, at the configured sigma but never tighter than `ZERO_INJECTION_SIGMA` = 0.001 MW) and no duplicate injection rows. The 1 kW floor is measured, not chosen: at
 1e-6 such a row weighs a million times a normal power measurement, and the
 squaring in `G = H' W H` then pushes the normal equations past double
 precision. On the 25000-bus set that showed as an estimate that did not
 converge at all, `J/dof = 3e17` and zero-injection residuals of 182 GW, the
 exact opposite of what the tight sigma was meant to enforce.
+
+**Critical measurements on request.** The field `critical measurements`
+(0 = off) thins the generated set until that many rows are critical:
+every step reads the criticality from `diag(Omega)` (see
+[Observability](observability.md)), removes the redundant telemetry row
+with the smallest `wii` (the one whose partner is closest to critical),
+and keeps the set observable; zero-injection and passive balance rows
+are never removed. The set comments name the target, the rows that ended
+critical and the rows removed, so a demo of the bad-data diagnostics
+knows in advance where a gross error would stay invisible. When fewer
+rows can be made critical without losing observability, the message says
+how many were reached.
 
 **Delta file.** Generated sets carry the noise-free truth value of every
 row as `# truth_value,...` comments. An SE run on such a set writes

@@ -2141,6 +2141,39 @@ vector for the elimination/robust workflow); `tap_error_steps` shifts up to
 `tap_error_count` seed-randomly drawn estimable transformers by that many
 whole mechanical steps for the generation state.
 """
+# A synchronous long action (measurement generation, adding noise) marks
+# its case busy for its duration: a second such action on the same case,
+# or a run of it, is refused with a message instead of reading a file that
+# is still being written (maintainer, 2026-09-21: generating on case118
+# took a minute and the UI kept accepting clicks). Process-global like the
+# run registry; one Web UI per process.
+const _WEBUI_BUSY_CASES = Dict{String,String}()
+const _WEBUI_BUSY_LOCK = ReentrantLock()
+
+function _webui_case_busy(casefile::AbstractString)
+  key = basename(String(casefile))
+  return lock(_WEBUI_BUSY_LOCK) do
+    get(_WEBUI_BUSY_CASES, key, nothing)
+  end
+end
+
+function _webui_case_claim!(casefile::AbstractString, what::AbstractString)::Bool
+  key = basename(String(casefile))
+  return lock(_WEBUI_BUSY_LOCK) do
+    haskey(_WEBUI_BUSY_CASES, key) && return false
+    _WEBUI_BUSY_CASES[key] = String(what)
+    return true
+  end
+end
+
+function _webui_case_release!(casefile::AbstractString)
+  key = basename(String(casefile))
+  lock(_WEBUI_BUSY_LOCK) do
+    delete!(_WEBUI_BUSY_CASES, key)
+  end
+  return nothing
+end
+
 function handle_se_generate_measurements(form::AbstractDict; output_root::AbstractString, application_root::AbstractString = _webui_application_root(), case_directory = nothing, operation_log::AbstractString = output_root)
   directory = _webui_case_directory(; case_directory = case_directory, application_root = application_root, output_root = output_root)
   casefile = String(_webui_form_value(form, "casefile", ""))
@@ -2203,32 +2236,45 @@ function handle_se_generate_measurements(form::AbstractDict; output_root::Abstra
   flow_ends = Symbol(flow_ends_raw)
   passive_sigma = something(tryparse(Float64, String(_webui_form_value(form, "gen_passive_sigma", "0.05"))), NaN)
   (isfinite(passive_sigma) && passive_sigma > 0.0) || return redirectq("passive-node balance sigma must be positive (MW/MVar)")
-  passive_as_zi = _webui_parse_bool(String(_webui_form_value(form, "gen_passive_as_zi", "false")))
+  # default ON (maintainer 2026-09-21): a passive node is a hard balance, and
+  # the protected constraint is the only constraint the set has
+  passive_as_zi = _webui_parse_bool(String(_webui_form_value(form, "gen_passive_as_zi", "true")))
   # reproducibility seed: the same seed regenerates the identical set, a
   # different one draws a fresh noise realization
   gen_seed = something(tryparse(Int, String(_webui_form_value(form, "gen_seed", "42"))), -1)
   gen_seed >= 0 || return redirectq("seed must be a non-negative integer")
+  # requested number of critical measurements (0 = off): the generator thins
+  # the set until that many rows are critical, never past observability
+  gen_critical = something(tryparse(Int, String(_webui_form_value(form, "gen_critical_count", "0"))), -1)
+  gen_critical >= 0 || return redirectq("critical measurements must be zero or a positive integer")
   out_name = string(splitext(basename(casefile))[1], ".measurements.csv")
   out_path = joinpath(directory, out_name)
   # the actual import/solve/generation lives in the SE service layer
   # (_se_generate_measurement_set): the Web UI layer never calls a solver
   # directly, the same architecture rule the run handlers follow
+  busy = _webui_case_busy(casefile)
+  busy === nothing || return redirectq("case $(basename(casefile)) is busy ($(busy)); wait for it to finish")
+  active_job = _webui_active_job(; states = _POWERFLOW_WEBUI_BLOCKING_STATES)
+  active_job === nothing || return redirectq("a run is active; wait for it to finish before generating measurements")
+  _webui_case_claim!(casefile, "generating measurements") || return redirectq("case $(basename(casefile)) is busy; wait for it to finish")
   gen = try
-    _se_generate_measurement_set(case_path, out_path; noise = noise, gross_k = gross_k, gross_count = gross_count, tap_steps = tap_steps, tap_count = tap_count, include_i = include_i, sigma_u_pct = sigma_u_pct, sigma_i_pct = sigma_i_pct, sigma_p_pct = sigma_p_pct, sigma_q_pct = sigma_q_pct, sigma_ia_deg = sigma_ia_deg, truth_source = truth_source, run_id = truth_run_id, run_root = output_root, flow_ends = flow_ends, passive_sigma = passive_sigma, passive_as_zi = passive_as_zi, seed = gen_seed)
+    _se_generate_measurement_set(case_path, out_path; noise = noise, gross_k = gross_k, gross_count = gross_count, tap_steps = tap_steps, tap_count = tap_count, include_i = include_i, sigma_u_pct = sigma_u_pct, sigma_i_pct = sigma_i_pct, sigma_p_pct = sigma_p_pct, sigma_q_pct = sigma_q_pct, sigma_ia_deg = sigma_ia_deg, truth_source = truth_source, run_id = truth_run_id, run_root = output_root, flow_ends = flow_ends, passive_sigma = passive_sigma, passive_as_zi = passive_as_zi, seed = gen_seed, critical_count = gen_critical)
   catch err
+    _webui_case_release!(casefile)
     err isa ArgumentError && return redirectq(err.msg)
     return redirectq("generation failed: $(sprint(showerror, err))")
   end
+  _webui_case_release!(casefile)
   record_webui_operation!(operation_log, "se_measurements_generated"; route = "/stateestimation/generate-measurements", method = "POST", user_action = true, casefile = casefile, measurement_file = out_name)
   # persist the generator options in the case sidecar so a case reload
   # restores them (the run-based save path never sees this form)
   try
-    _webui_merge_case_settings!(output_root, case_path, Dict{String,Any}("noise" => noise, "gross_error_k" => gross_k, "gross_error_count" => gross_count, "tap_error_steps" => tap_steps, "tap_error_count" => tap_count, "sigma_u_pct" => sigma_u_pct, "include_currents" => include_i, "sigma_i_pct" => sigma_i_pct, "sigma_ia_deg" => sigma_ia_deg, "sigma_p_pct" => sigma_p_pct, "sigma_q_pct" => sigma_q_pct, "gen_truth_source" => truth_source_raw, "gen_flow_ends" => flow_ends_raw, "gen_passive_sigma" => passive_sigma, "gen_passive_as_zi" => passive_as_zi, "gen_seed" => gen_seed); case_directory = directory)
+    _webui_merge_case_settings!(output_root, case_path, Dict{String,Any}("noise" => noise, "gross_error_k" => gross_k, "gross_error_count" => gross_count, "tap_error_steps" => tap_steps, "tap_error_count" => tap_count, "sigma_u_pct" => sigma_u_pct, "include_currents" => include_i, "sigma_i_pct" => sigma_i_pct, "sigma_ia_deg" => sigma_ia_deg, "sigma_p_pct" => sigma_p_pct, "sigma_q_pct" => sigma_q_pct, "gen_truth_source" => truth_source_raw, "gen_flow_ends" => flow_ends_raw, "gen_passive_sigma" => passive_sigma, "gen_passive_as_zi" => passive_as_zi, "gen_seed" => gen_seed, "gen_critical_count" => gen_critical); case_directory = directory)
   catch err
     record_webui_operation!(operation_log, "case_settings_save_failed"; route = "/stateestimation/generate-measurements", method = "POST", user_action = true, message = sprint(showerror, err))
   end
   sigma_note = ", sigma U=$(sigma_u_pct)% P=$(sigma_p_pct)% Q=$(sigma_q_pct)%$(include_i ? " I=$(sigma_i_pct)%" : "") of reading"
-  return redirectq("generated $(out_name) ($(gen.rows) rows, $(gen.noisy ? "noisy" : "noise-free")$(sigma_note)$(gen.truth_note)$(gen.flow_note)$(gen.passive_note)$(gen.gross_note)$(gen.tap_note)$(gen.island_note))")
+  return redirectq("generated $(out_name) ($(gen.rows) rows, $(gen.noisy ? "noisy" : "noise-free")$(sigma_note)$(gen.truth_note)$(gen.flow_note)$(gen.passive_note)$(gen.critical_note)$(gen.gross_note)$(gen.tap_note)$(gen.island_note))")
 end
 
 """

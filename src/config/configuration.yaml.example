@@ -367,6 +367,10 @@ state_estimation:
   # State count from which the residual diagnostics use the sparse Takahashi
   # selected inverse instead of the dense pinv.
   takahashi_min_states: 200
+  # How critical measurements are found: omega reads the diagonal of the
+  # residual covariance from one selected-inverse pass (no size budget),
+  # rank runs one rank test per row (the former method, budgeted).
+  criticality_method: omega
   # Advisory topology pre-checks at the start of every estimation, and their
   # sigma multiples. Findings warn; nothing is ever switched automatically.
   topology_precheck: true

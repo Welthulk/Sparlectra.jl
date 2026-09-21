@@ -5,7 +5,7 @@ installation can read directly, while carrying everything Sparlectra needs
 beyond the PGM model: slack strategy, the tap-changer cascade, component
 names and source ids, and state-estimation measurements. The case's own
 settings travel in a case configuration file next to it
-(`<stem>.config.yaml`).
+(`<stem>.config.yaml` for an SCF case, `<file name>.config.yaml` for every other format).
 
 A `.scf.json` file is a **first-class case format**: it appears in the Web
 UI case selector, runs through the framework and the service like a

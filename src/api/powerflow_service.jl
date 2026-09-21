@@ -171,6 +171,15 @@ function _se_optional_symbol(request::AbstractDict, key::AbstractString)::Union{
   return Symbol(text)
 end
 
+# the run form's CSV format reaches every run type (issue #386, Web UI run
+# 31811bdd: a state-estimation run kept the comma although the form said
+# excel_de); nothing when the request does not name one
+function _service_request_csv_format(request::AbstractDict)
+  v = _service_request_value(request, "detailed_result_csv_format", nothing)
+  v isa AbstractString && !isempty(strip(v)) || return nothing
+  return String(strip(v))
+end
+
 """
     start_powerflow_run(request::AbstractDict; case_directory=nothing) -> Dict{String,Any}
 
@@ -384,7 +393,7 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
   # conventions (see _run_short_circuit_service). No PF solve is involved.
   if short_circuit_mode
     sc_result = try
-      _run_short_circuit_service(casefile, config_file, output_dir, run_id)
+      _run_short_circuit_service(casefile, config_file, output_dir, run_id; csv_format = _service_request_csv_format(request))
     catch err
       err isa PowerFlowAborted && rethrow()
       return _service_failure("execution_error", sprint(showerror, err, catch_backtrace()); run_id = run_id)
@@ -425,7 +434,7 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
       ct_se_state = art.path
     end
     ct_result = try
-      _run_contingency_service(casefile, config_file, output_dir, run_id, contingency_kind; weights_path = ct_weights_path, se_state_file = ct_se_state, se_run_id = se_start_run_id === nothing ? nothing : String(se_start_run_id), se_start_mode = String(se_start_mode), scenario_source = contingency_scenario_source, scenario_file = contingency_scenario_file, screening_mode = contingency_screening_mode, screening_margin_pct = contingency_screening_margin)
+      _run_contingency_service(casefile, config_file, output_dir, run_id, contingency_kind; csv_format = _service_request_csv_format(request), weights_path = ct_weights_path, se_state_file = ct_se_state, se_run_id = se_start_run_id === nothing ? nothing : String(se_start_run_id), se_start_mode = String(se_start_mode), scenario_source = contingency_scenario_source, scenario_file = contingency_scenario_file, screening_mode = contingency_screening_mode, screening_margin_pct = contingency_screening_margin)
     catch err
       err isa PowerFlowAborted && rethrow()
       return _service_failure("execution_error", sprint(showerror, err, catch_backtrace()); run_id = run_id)
@@ -462,6 +471,7 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
         # takes the value from the effective configuration. A literal here
         # would silently outrank the configured default (that is how a run
         # kept using k_suppress 6.0 while the configuration said 4.0).
+        csv_format = _service_request_csv_format(request),
         max_iter = _se_optional_int(request, "se_max_iter"),
         tol = _se_optional_float(request, "se_tol"),
         flatstart = _se_optional_bool(request, "se_flatstart"),

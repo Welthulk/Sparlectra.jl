@@ -125,7 +125,7 @@ function test_configuration_yaml_key_coverage()
       "state_estimation.robust_k1", "state_estimation.robust_k2", "state_estimation.k_suppress",
       "state_estimation.suppression_sigma", "state_estimation.max_eliminations",
       "state_estimation.rank_tol_factor",
-      "state_estimation.takahashi_min_states", "state_estimation.topology_precheck",
+      "state_estimation.takahashi_min_states", "state_estimation.criticality_method", "state_estimation.topology_precheck",
       "state_estimation.topology_open_flow_k", "state_estimation.topology_dead_flow_k",
       "state_estimation.topology_voltage_k", "state_estimation.topology_kcl_k",
       "state_estimation.topology_cluster_min",
@@ -227,7 +227,10 @@ function test_configuration_version_scope_and_case_precedence()
     case_m = joinpath(dir, "case57.m")
     write(case_m, "% fixture\n")
     cc = Sparlectra.case_config_path(case_m)
-    @test basename(cc) == "case57.config.yaml"
+    # a MATPOWER case binds <file name>.config.yaml (0.15.0): it never shares
+    # a file with the SCF export of the same stem
+    @test basename(cc) == "case57.m.config.yaml"
+    scf_cc = joinpath(dir, "case57.config.yaml")
     write(cc, "config_version: 1\nscope: case\ncase: other.m\npower_flow:\n  max_iter: 43\n")
     err_mismatch = try
       Sparlectra.load_case_config(case_m)
@@ -249,6 +252,22 @@ function test_configuration_version_scope_and_case_precedence()
     @test occursin("not case scope", sprint(showerror, err_scope))
     # the canonical .scf.json double extension binds <stem>.config.yaml
     @test basename(Sparlectra.case_config_path(joinpath(dir, "case57.scf.json"))) == "case57.config.yaml"
+    # shared stem (Web UI run a3aa700b): an older case57.config.yaml written
+    # for case57.m is still read for the .m case, does not apply to the SCF
+    # case with the same stem, and moves to its own name when the SCF case
+    # writes its file
+    shared_dir = mktempdir()
+    write(joinpath(shared_dir, "case57.m"), "% fixture\n")
+    write(joinpath(shared_dir, "case57.scf.json"), "{}")
+    legacy = joinpath(shared_dir, "case57.config.yaml")
+    write(legacy, "config_version: 1\nscope: case\ncase: case57.m\npower_flow:\n  max_iter: 45\n")
+    @test Sparlectra.case_config_path(joinpath(shared_dir, "case57.m")) == legacy
+    @test Sparlectra.load_case_config(joinpath(shared_dir, "case57.m"))["power_flow.max_iter"] == 45
+    @test isempty(Sparlectra.load_case_config(joinpath(shared_dir, "case57.scf.json")))
+    Sparlectra.write_case_config(joinpath(shared_dir, "case57.scf.json"), Dict{String,Any}("power_flow.max_iter" => 46))
+    @test isfile(joinpath(shared_dir, "case57.m.config.yaml"))
+    @test Sparlectra.load_case_config(joinpath(shared_dir, "case57.m"))["power_flow.max_iter"] == 45
+    @test Sparlectra.load_case_config(joinpath(shared_dir, "case57.scf.json"))["power_flow.max_iter"] == 46
 
     # precedence, one key on each level (D5), highest first: override,
     # case configuration file, deprecated in-file block, general file
@@ -260,12 +279,12 @@ function test_configuration_version_scope_and_case_precedence()
       "\"sparlectra\": {\"format_version\": \"", Sparlectra.SCF_FORMAT_VERSION, "\", \"config\": {\"power_flow.max_iter\": 42}}}",
     )
     write(scf_case, scf_root)
-    write(cc, "config_version: 1\nscope: case\ncase: case57.scf.json\npower_flow:\n  max_iter: 43\n")
+    write(scf_cc, "config_version: 1\nscope: case\ncase: case57.scf.json\npower_flow:\n  max_iter: 43\n")
     with_override = Sparlectra.resolve_config(general, scf_case, Dict{String,Any}("power_flow.max_iter" => 44))
     @test with_override.config.powerflow.max_iter == 44
     with_case_file = Sparlectra.resolve_config(general, scf_case)
     @test with_case_file.config.powerflow.max_iter == 43
-    rm(cc)
+    rm(scf_cc)
     with_block = Sparlectra.resolve_config(general, scf_case)
     @test with_block.config.powerflow.max_iter == 42
     # issue #1 point 1 (decided: defaults, format independent per stage-2
@@ -282,7 +301,7 @@ function test_configuration_version_scope_and_case_precedence()
     @test Sparlectra.resolve_config(general, scf_case).config.powerflow.max_iter == 41
     # with a case config file that sets ANOTHER key, the missing key falls
     # to the packaged default; the machine-scope key still applies
-    write(cc, "config_version: 1\nscope: case\ncase: case57.scf.json\npower_flow:\n  tol: 1.0e-6\n")
+    write(scf_cc, "config_version: 1\nscope: case\ncase: case57.scf.json\npower_flow:\n  tol: 1.0e-6\n")
     two_stage = Sparlectra.resolve_config(general, scf_case)
     @test two_stage.config.powerflow.max_iter == tmpl_max_iter
     @test two_stage.config.powerflow.tol == 1.0e-6
@@ -295,10 +314,10 @@ function test_configuration_version_scope_and_case_precedence()
     @test Sparlectra.resolve_config(general, plain).config.powerflow.max_iter == tmpl_max_iter
     rm(plain_cc)
     # a case level or an explicit override still beats the default
-    write(cc, "config_version: 1\nscope: case\ncase: case57.scf.json\npower_flow:\n  max_iter: 43\n")
+    write(scf_cc, "config_version: 1\nscope: case\ncase: case57.scf.json\npower_flow:\n  max_iter: 43\n")
     @test Sparlectra.resolve_config(general, scf_case).config.powerflow.max_iter == 43
     @test Sparlectra.resolve_config(general, scf_case, Dict{String,Any}("power_flow.max_iter" => 44)).config.powerflow.max_iter == 44
-    rm(cc)
+    rm(scf_cc)
     plain = joinpath(dir, "plain57.m")
     write(plain, "% fixture\n")
     with_general = Sparlectra.resolve_config(general, plain)

@@ -206,10 +206,12 @@ function _se_generate_measurement_set(
   run_root::Union{Nothing,AbstractString} = nothing,
   flow_ends::Symbol = :both,
   passive_sigma::Float64 = 0.05,
-  passive_as_zi::Bool = false,
+  passive_as_zi::Bool = true,
   seed::Int = 42,
+  critical_count::Int = 0,
 )
   truth_source in (:fresh_solve, :from_run) || throw(ArgumentError("truth source must be fresh_solve or from_run"))
+  critical_count >= 0 || throw(ArgumentError("critical measurement count must be zero or positive"))
   flow_ends in (:both, :one_balance_aware) || throw(ArgumentError("flow measurements per branch must be both or one_balance_aware"))
   passive_sigma > 0.0 || throw(ArgumentError("passive-node balance sigma must be positive"))
   gross_count >= 1 || throw(ArgumentError("bad data count must be at least 1"))
@@ -333,14 +335,29 @@ function _se_generate_measurement_set(
   # stable default scheme)
   idnby = _bus_name_by_idx(net)
   short(t) = replace(string(t), "Meas" => "")
+  # parallel circuits share a component name (case118 has several such
+  # pairs); an id built from the name alone collided, so the second
+  # circuit's rows carried the first circuit's id, and the truth-value
+  # lookup by id mixed both up. A branch whose name is not unique gets
+  # its branch index appended.
+  branch_name_count = Dict{String,Int}()
+  for br in net.branchVec
+    nm = getCompName(br.comp)
+    branch_name_count[nm] = get(branch_name_count, nm, 0) + 1
+  end
+  branch_label(k::Int) = begin
+    nm = getCompName(net.branchVec[k].comp)
+    get(branch_name_count, nm, 1) > 1 ? string(nm, "#", k) : nm
+  end
+  row_id(m) = if m.busIdx !== nothing
+    string(short(m.typ), "_", get(idnby, m.busIdx, string(m.busIdx)))
+  elseif m.branchIdx !== nothing
+    string(short(m.typ), "_", branch_label(Int(m.branchIdx)), "_", m.direction)
+  else
+    m.id
+  end
   for (gi2, m) in enumerate(meas)
-    newid = if m.busIdx !== nothing
-      string(short(m.typ), "_", get(idnby, m.busIdx, string(m.busIdx)))
-    elseif m.branchIdx !== nothing
-      string(short(m.typ), "_", getCompName(net.branchVec[m.branchIdx].comp), "_", m.direction)
-    else
-      m.id
-    end
+    newid = row_id(m)
     meas[gi2] = Measurement(typ = m.typ, value = m.value, sigma = m.sigma, active = m.active, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = newid, linkIdx = m.linkIdx)
   end
   # flow measurements per branch: :both keeps the full from/to pairs;
@@ -400,6 +417,87 @@ function _se_generate_measurement_set(
     end
   end
 
+  # critical measurements on request (demo of issue #394): the set is
+  # thinned until at least `critical_count` rows are critical, and the
+  # thinning never makes the set unobservable. Every step re-reads the
+  # criticality from diag(Omega) (cheap since #394) and removes the
+  # redundant telemetry row with the SMALLEST wii, the one whose partner
+  # is already closest to critical, so few removals reach the target;
+  # ties break by id, so the result is deterministic. Protected ZI rows
+  # and passive balance rows stay. Rows that end critical are named in
+  # the set comments, so the demo knows where a gross error would hide.
+  critical_note = ""
+  critical_comments = String[]
+  if critical_count > 0
+    passiveSetC = Set(passiveBuses)
+    removed_ids = String[]
+    critical_ids = String[]
+    # ONE Jacobian for the whole thinning: removing rows does not change
+    # the rows that stay, so every step evaluates a row subset of the same
+    # matrix (a rebuild per step cost minutes on case118). The observability
+    # rows follow the active-measurement order the Jacobian builder uses.
+    empty!(net.measurements)
+    append!(net.measurements, meas)
+    jac = measurement_jacobian(net)
+    empty!(net.measurements)
+    # the same rank decision the estimation run makes: column-normalized
+    # Jacobian and the FD-aware tolerance (rank_tol_factor * jac_eps *
+    # sigma_max); the matrix default tolerance called sets observable that
+    # the run then refused (Web UI run e358b49e)
+    H_all = _column_normalized(jac.H)
+    se_tol_cfg = state_estimation_config()
+    thin_tol = isempty(H_all) ? nothing : se_tol_cfg.rank_tol_factor * se_tol_cfg.jac_eps * _sigma_max(H_all)
+    row_meas = Int[r.index for r in jac.rows]   # Jacobian row -> index into meas
+    keep = collect(1:length(row_meas))
+    removable(k) = begin
+      mi = row_meas[k]
+      1 <= mi <= length(meas) || return false
+      m = meas[mi]
+      startswith(m.id, "ZI") && return false
+      (m.busIdx !== nothing && m.busIdx in passiveSetC && m.typ in (PinjMeas, QinjMeas)) && return false
+      return true
+    end
+    steps = 0
+    while steps <= length(row_meas)
+      steps += 1
+      obs_c = evaluate_observability_matrix(H_all[keep, :]; tol = thin_tol)
+      obs_c.quality == :not_observable && break
+      crit_local = Set{Int}(obs_c.numerical_critical_measurement_indices)
+      # Jacobian rows with index 0 are link-cluster aggregates without a
+      # source row: never named, never removed, never counted
+      crit_real = [k for k in sort!(collect(crit_local)) if 1 <= k <= length(keep) && 1 <= row_meas[keep[k]] <= length(meas)]
+      critical_ids = String[meas[row_meas[keep[k]]].id for k in crit_real]
+      length(crit_real) >= critical_count && break
+      isempty(obs_c.criticality_wii) && break
+      cands = [(obs_c.criticality_wii[k], meas[row_meas[keep[k]]].id, k) for k in eachindex(keep) if !(k in crit_local) && removable(keep[k])]
+      isempty(cands) && break
+      sort!(cands; by = c -> (c[1], c[2]))
+      # a trial per removal: the omega threshold and the rank tolerance are
+      # two different tests, and only the rank test decides observability
+      removed = false
+      for c in cands
+        trial = [keep[k] for k in eachindex(keep) if k != c[3]]
+        if evaluate_observability_matrix(H_all[trial, :]; tol = thin_tol).quality != :not_observable
+          push!(removed_ids, c[2])
+          keep = trial
+          removed = true
+          break
+        end
+      end
+      removed || break
+    end
+    removed_set = Set(removed_ids)
+    meas = [m for m in meas if !(m.id in removed_set)]
+    if length(critical_ids) >= critical_count
+      critical_note = ", $(length(critical_ids)) critical row(s) after removing $(length(removed_ids)) row(s)"
+    else
+      critical_note = ", critical measurements: only $(length(critical_ids)) reachable (requested $(critical_count)), $(length(removed_ids)) row(s) removed"
+    end
+    push!(critical_comments, string("critical_target: ", critical_count, " reached: ", length(critical_ids)))
+    isempty(critical_ids) || push!(critical_comments, string("critical_rows: ", join(critical_ids, " ")))
+    isempty(removed_ids) || push!(critical_comments, string("critical_removed: ", join(removed_ids, " ")))
+  end
+
   gross_note = ""
   if gross_k > 0.0
     # bad data on gross_count SEED-randomly drawn telemetry rows (the user
@@ -445,6 +543,7 @@ function _se_generate_measurement_set(
   noise_comment = noise ? "noise: gaussian (sigma U $(sigma_u_pct)%, P $(sigma_p_pct)%, Q $(sigma_q_pct)% of reading)" : "noise: none (ideal values, J is 0 by construction)"
   gencomments = String["generator: v2", "seed: $(seed)", noise_comment, truth_comment, "flow_ends: $(flow_ends)"]
   isempty(passive_comment) || push!(gencomments, passive_comment)
+  append!(gencomments, critical_comments)
   tailcomments = copy(flow_comments)
   # noise-free truth values per row (the value BEFORE noise and gross
   # error): the SE run reads these comments back and writes the
@@ -453,14 +552,7 @@ function _se_generate_measurement_set(
   truthById = Dict{String,Float64}()
   tmeas = generateMeasurementsFromPF(net; noise = false, stddev = stddev, relativeSigma = true, includeImag = include_i, includeIa = sigma_ia_deg > 0.0)
   for tm in tmeas
-    newid = if tm.busIdx !== nothing
-      string(short(tm.typ), "_", get(idnby, tm.busIdx, string(tm.busIdx)))
-    elseif tm.branchIdx !== nothing
-      string(short(tm.typ), "_", getCompName(net.branchVec[tm.branchIdx].comp), "_", tm.direction)
-    else
-      tm.id
-    end
-    truthById[newid] = tm.value
+    truthById[row_id(tm)] = tm.value
   end
   passiveTruthSet = passive_as_zi ? Set{Int}() : Set(passiveBuses)
   for m in meas
@@ -502,9 +594,12 @@ function _se_generate_measurement_set(
   # keep the in-file case binding (and the generator provenance) even when
   # the case has no transformers at all
   ntr == 0 && (tapcomments = vcat(String["case: $(basename(case_path))"], gencomments, String["case has no transformer branches (no tap steps to estimate)"]))
-  append!(tapcomments, tailcomments)
-  writeMeasurementsCSV(net; file = out_path, headerComments = tapcomments, busReference = _se_case_format(case_path) === :cgmes ? :mrid : :name)
-  return (rows = length(net.measurements), noisy = noise, tap_note = tap_note, gross_note = gross_note, island_note = island_note, truth_note = truth_note, flow_note = flow_note, passive_note = passive_note)
+  # the bulky per-branch and per-row blocks (flow_end choices, truth values)
+  # go BEHIND the data rows: the file opens with the summary, the taps table
+  # and the measurements themselves, and a preview stays readable; the
+  # readers skip comment lines wherever they stand
+  writeMeasurementsCSV(net; file = out_path, headerComments = tapcomments, footerComments = tailcomments, busReference = _se_case_format(case_path) === :cgmes ? :mrid : :name)
+  return (rows = length(net.measurements), noisy = noise, tap_note = tap_note, gross_note = gross_note, island_note = island_note, truth_note = truth_note, flow_note = flow_note, passive_note = passive_note, critical_note = critical_note)
 end
 
 ## True when at least one transformer of `net` has its tap released as an
@@ -596,6 +691,35 @@ Failure reasons: `se_unsupported_format`, `import_error`,
 ## headline mapping for the state-estimation timing file
 const _SE_PERF_HEADLINE = (:case_loading_network_solver => "importing_case", :solver => "state_estimation", :postprocessing => "postprocessing_result", :artifact_writing => "writing_artifacts")
 
+# One block per run about the critical measurements (issue #394): which
+# method decided, how many rows are critical (their residual is
+# structurally zero, so no residual test can ever flag an error there),
+# the rows by id, and under :omega the nearly critical rows (wii below the
+# 0.3 localizability guideline) as the graded information the rank test
+# never had. Long lists are cut; the counts stay complete.
+function _se_log_criticality(io::IO, net::Net, obs)
+  method = hasproperty(obs, :criticality_method) ? String(obs.criticality_method) : "rank"
+  if obs.criticality_skipped
+    println(io, "critical measurements: classification skipped (method ", method, ", per-row budget exceeded)")
+    return nothing
+  end
+  ids(idx) = [1 <= i <= length(net.measurements) ? String(net.measurements[i].id) : string("#", i) for i in idx]
+  num = collect(obs.numerical_critical_measurement_indices)
+  str = collect(obs.structural_critical_measurement_indices)
+  println(io, "critical measurements (", method, "): ", length(num), " numerical, ", length(str), " structural", hasproperty(obs, :structural_criticality_skipped) && obs.structural_criticality_skipped ? " (structural test skipped above the per-row budget)" : "")
+  isempty(num) || println(io, "  critical rows: ", join(first(ids(num), 20), ", "), length(num) > 20 ? string(", ... ", length(num) - 20, " more") : "")
+  if hasproperty(obs, :criticality_wii) && !isempty(obs.criticality_wii) && hasproperty(obs, :active_measurement_indices)
+    wii = obs.criticality_wii
+    act = collect(obs.active_measurement_indices)
+    near = [(act[k], wii[k]) for k in eachindex(wii) if 1 <= k <= length(act) && wii[k] > 1e-8 && wii[k] < 0.3]
+    if !isempty(near)
+      sort!(near; by = x -> x[2])
+      println(io, "  nearly critical rows (wii below 0.3): ", length(near), ": ", join((string(first(ids([i])), " (", round(w; digits = 3), ")") for (i, w) in first(near, 10)), ", "), length(near) > 10 ? ", ..." : "")
+    end
+  end
+  return nothing
+end
+
 function _run_state_estimation_service(
   case_path::AbstractString,
   config_file::AbstractString,
@@ -624,6 +748,8 @@ function _run_state_estimation_service(
   robust_k2::Union{Nothing,Float64} = nothing,
   k_suppress::Union{Nothing,Float64} = nothing,
   suppression_sigma::Union{Nothing,Float64} = nothing,
+  # request-level CSV format (Web UI run form): folded into output.csv_format
+  csv_format::Union{Nothing,AbstractString} = nothing,
   case_format::Symbol = :auto,
   phase_callback = phase -> nothing,
 )::SparlectraApiResult
@@ -660,7 +786,7 @@ function _run_state_estimation_service(
   # file, defaults
   se_phase("preparing_configuration")
   config = try
-    resolve_config(config_file, case_path).config
+    _config_with_request_csv_format(resolve_config(config_file, case_path).config, csv_format)
   catch err
     return _api_failure(_config_resolve_reason(err), sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
   end
@@ -760,6 +886,15 @@ function _run_state_estimation_service(
   end
   base_metadata["se_observability_quality"] = String(obs.quality)
   base_metadata["se_structural_islands"] = :structural_islands in obs.notes
+  # critical measurements (issue #394): the classification method, the
+  # counts and the rows themselves reach the metadata and the run log
+  crit_num = collect(obs.numerical_critical_measurement_indices)
+  crit_str = collect(obs.structural_critical_measurement_indices)
+  crit_method = hasproperty(obs, :criticality_method) ? String(obs.criticality_method) : "rank"
+  base_metadata["se_criticality_method"] = crit_method
+  base_metadata["se_critical_measurements"] = length(crit_num)
+  base_metadata["se_structural_critical_measurements"] = length(crit_str)
+  base_metadata["se_criticality_skipped"] = obs.criticality_skipped
   if hasproperty(obs, :islands)
     base_metadata["se_islands_total"] = length(obs.islands)
     base_metadata["se_islands_measured"] = obs.n_measured_islands
@@ -1192,6 +1327,7 @@ function _run_state_estimation_service(
     println(io, "State estimation on ", basename(case_path))
     println(io, "measurements: ", summary.total, " rows from ", from_case_file ? "the case file" : basename(String(measurement_file)))
     println(io, "observability: ", obs.quality, :structural_islands in obs.notes ? " (structural islands)" : "")
+    _se_log_criticality(io, net, obs)
     println(io, "converged in ", res.iterations, " iteration(s); J = ", round(res.objectiveJ; digits = 6), ", dof = ", res.dof, ", band reason = ", verdict.reason, res.activeObjective === nothing ? "" : string("; J_active = ", round(res.activeObjective.j; digits = 6), " (dof ", res.activeObjective.dof, ", without ", res.activeObjective.suppressed, " suppressed row(s); band verdict stays on J)"))
     if diag.topology_findings !== nothing
       # the stage-2 classification REPLACES the eliminations-exhausted
