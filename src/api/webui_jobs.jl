@@ -422,10 +422,9 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
       _webui_phase_event!(job, "resolving_case", event_callback)
       event_callback("powerflow_started"; run_id, requested_case = job["casefile"], status = "running")
       detailed_result_csv = _service_request_value(request, "detailed_result_csv", false)
-      detailed_result_csv_semicolon = _service_request_value(request, "detailed_result_csv_semicolon", false)
-      detailed_result_csv_format = _service_request_value(request, "detailed_result_csv_format", nothing)
-      if detailed_result_csv
-        csv_format = _resolve_detailed_csv_format(detailed_result_csv_format === nothing ? (detailed_result_csv_semicolon ? "excel_de" : "technical") : detailed_result_csv_format)
+      if detailed_result_csv === true
+        job_overrides = _service_request_value(request, "config_overrides", Dict{String,Any}())
+        csv_format = _service_effective_csv_format(job_overrides isa AbstractDict ? job_overrides : Dict{String,Any}(), String(_service_request_value(request, "config_file", "")))
         event_callback("detailed_result_csv_export_enabled"; run_id, csv_format = csv_format.name, delimiter = string(csv_format.delimiter), decimal_separator = csv_format.decimal_separator, thousands_separator = csv_format.thousands_separator, status = "enabled")
       end
       worker_request = Dict{String,Any}(String(key) => value for (key, value) in request)

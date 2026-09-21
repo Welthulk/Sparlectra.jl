@@ -1295,14 +1295,6 @@ function _webui_settings_script()::String
   return """
 <script>
 document.addEventListener('DOMContentLoaded', function () {
-  const csvFormat = document.querySelector('select[name="detailed_result_csv_format"]');
-  if (csvFormat !== null && csvFormat.value === 'excel_us') {
-    const languages = navigator.languages && navigator.languages.length > 0 ? navigator.languages : [navigator.language || ''];
-    const defaultFormat = languages.some(function (language) {
-      return String(language).toLowerCase().startsWith('de');
-    }) ? 'excel_de' : 'excel_us';
-    csvFormat.value = defaultFormat;
-  }
   const solverRadios = document.querySelectorAll('input[data-solver-radio]');
   const apslfSolverOptions = document.querySelector('[data-apslf-solver-options]');
   const apslfStartOptions = document.querySelector('[data-apslf-start-options]');

@@ -1068,10 +1068,16 @@ exact opposite of what the tight sigma was meant to enforce.
 **Critical measurements on request.** The field `critical measurements`
 (0 = off) thins the generated set until that many rows are critical:
 every step reads the criticality from `diag(Omega)` (see
-[Observability](observability.md)), removes the redundant telemetry row
-with the smallest `wii` (the one whose partner is closest to critical),
-and keeps the set observable; zero-injection and passive balance rows
-are never removed. The set comments name the target, the rows that ended
+[Observability](observability.md)) and removes one row by a targeted
+partner search on the residual covariance: the telemetry row that needs
+the fewest partner removals to become critical is the anchor, and its
+strongest partner, the row with the largest normalized covariance
+`|Omega_ij| / sqrt(Omega_ii Omega_jj)` (1 for a mutually redundant pair,
+so one removal makes the anchor critical), is the row removed. The set
+stays observable: a removal that fails the rank test is undone and that
+row is never tried again; zero-injection and passive balance rows are
+never removed. Above the dense-path size caps the step removes the
+redundant row with the smallest `wii` instead. The set comments name the target, the rows that ended
 critical and the rows removed, so a demo of the bad-data diagnostics
 knows in advance where a gross error would stay invisible. When fewer
 rows can be made critical without losing observability, the message says

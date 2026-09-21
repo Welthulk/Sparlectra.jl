@@ -48,6 +48,7 @@ function include_fast_tests()
   include("testgrid.jl")
   include("test_piline_g.jl")
   include("test_state_estimation.jl")
+  include("test_observability.jl")
   include("test_topology_validation.jl")
   include("test_voltage_dependent_control.jl")
   include("test_transformer_phase_shift.jl")
@@ -125,6 +126,7 @@ function run_fast_profile_tests()
     ("matpower_metadata", () -> run_entry(:run_matpower_metadata_tests)),
     ("programmatic_api", () -> run_entry(:run_api_fast_tests)),
     ("state_estimation", () -> run_entry(:run_state_estimation_tests)),
+    ("observability", () -> run_entry(:run_observability_tests)),
     ("topology_validation", () -> run_entry(:run_topology_validation_tests)),
     ("auto_powerflow", () -> run_entry(:run_auto_powerflow_tests)),
     ("scf", () -> run_entry(:run_scf_tests)),

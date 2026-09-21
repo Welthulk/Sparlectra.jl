@@ -1529,7 +1529,7 @@ function _runpf_with_config!(net::Net, config::PowerFlowConfig; verbose::Int = 0
   if config.rescue
     for (name, variant) in _rescue_config_variants(config)
       _restore_start_voltages!(net, snap)
-      println("rescue: AC solve did not converge — retrying with strategy '", name, "'.")
+      println("rescue: AC solve did not converge, retrying with strategy '", name, "'.")
       rite, rerg = try
         _runpf_config_once!(net, variant; runtime...)
       catch err

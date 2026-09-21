@@ -1379,13 +1379,13 @@ mpc.branch = [
       @test occursin("csv_format: excel_de", read(joinpath(pf_req["output_dir"], "effective_config.yaml"), String))
       # the registry is the template again after the run
       @test Sparlectra.result_csv_format() == "technical"
-      # the same request field reaches the state-estimation service (Web UI
-      # run 31811bdd kept the comma in every SE artifact)
-      se_dir = joinpath(d, "se_req")
-      se_res = redirect_stdout(devnull) do
-        Sparlectra._run_state_estimation_service(joinpath(scf_dir, "sp_case5.scf.json"), Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, se_dir, "scf_se_req", joinpath(scf_dir, "sp_case5.measurements.csv"); csv_format = "excel_de")
-      end
-      @test Sparlectra.to_dict(se_res)["status"] == "succeeded"
+      # the same (older) request field reaches the state-estimation service
+      # through the one override output.csv_format (Web UI run 31811bdd kept
+      # the comma in every SE artifact); the services themselves take no
+      # request-level format since 0.16.0
+      se_req = start_powerflow_run(Dict{String,Any}("casefile" => joinpath(scf_dir, "sp_case5.scf.json"), "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(d, "se_req_root"), "se_mode" => true, "measurement_file" => joinpath(scf_dir, "sp_case5.measurements.csv"), "detailed_result_csv_format" => "excel_de"))
+      @test se_req["status"] == "succeeded"
+      se_dir = se_req["output_dir"]
       for f in ("se_bad_data.csv", "se_state.csv", "se_deltas.csv")
         isfile(joinpath(se_dir, f)) || continue
         se_lines = filter(l -> !startswith(l, "#"), readlines(joinpath(se_dir, f)))
@@ -1577,6 +1577,24 @@ mpc.branch = [
       # ... and the run with it goes through
       se_run = Sparlectra.start_powerflow_run(Dict("casefile" => "warmup_casePST.pgm.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(root, "runs_se_gen"), "se_mode" => true, "measurement_file" => "warmup_casePST.pgm.measurements.csv"); case_directory = cases)
       @test se_run["status"] == "succeeded"
+      # the ONE CSV setting (0.15.1, Web UI run c1c31569: se_bad_data.csv kept
+      # the comma): a state-estimation request WITHOUT any CSV field under a
+      # configuration file that says excel_de writes every CSV of the run
+      # with the semicolon; nothing in the request may fall back to a
+      # request default
+      cfg_de = joinpath(root, "configuration_excel_de.yaml")
+      write(cfg_de, replace(read(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, String), r"^(\s*csv_format:)\s*\S+"m => s"\1 excel_de"))
+      @test occursin("csv_format: excel_de", read(cfg_de, String))
+      se_de = Sparlectra.start_powerflow_run(Dict("casefile" => "warmup_casePST.pgm.json", "config_file" => cfg_de, "output_root" => joinpath(root, "runs_se_de"), "se_mode" => true, "measurement_file" => "warmup_casePST.pgm.measurements.csv"); case_directory = cases)
+      @test se_de["status"] == "succeeded"
+      # measurements.csv is the measurement set itself (measurement CSV v1,
+      # an input format with its own fixed header), not a result artifact
+      se_de_csvs = filter(f -> endswith(f, ".csv") && f != "measurements.csv", readdir(se_de["output_dir"]))
+      @test "se_state.csv" in se_de_csvs
+      for f in se_de_csvs
+        data_lines = filter(l -> !startswith(l, "#"), readlines(joinpath(se_de["output_dir"], f)))
+        @test occursin(';', isempty(data_lines) ? "" : data_lines[1])
+      end
       # exporting a case FILE again must not grow format suffixes
       @test_logs (:warn, r"strict_pgm = true") match_mode = :any Sparlectra.route_sparlectra_webui("POST", "/powerflow/export-scf", Dict{String,Any}("casefile" => "warmup_casePST.scf.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "scf_strict_pgm" => "true"); output_root = root, runtime = rt)
       @test !isfile(joinpath(cases, "warmup_casePST.scf.pgm.json"))

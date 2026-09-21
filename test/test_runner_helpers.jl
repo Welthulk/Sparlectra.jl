@@ -267,3 +267,43 @@ let counter = Ref(0)
     return joinpath(TEST_SCRATCH_ROOT, string("scratch_", counter[], extension))
   end
 end
+
+# Shared by test_state_estimation.jl, test_observability.jl and
+# test_topology_validation.jl (each file runs alone with this helper file
+# and testgrid.jl): the 4-bus link net of the SE link-contraction tests.
+function create_se_link_net(; link_status::Int = 1, shunt_buses::Vector{String} = String[])::Net
+  # S feeds B1; B1a hangs on B1 only through a bus link and carries the line
+  # to B2, so a closed link transports real power (contraction pattern)
+  net = Net(name = "se_link", baseMVA = 100.0)
+  for b in ("S", "B1", "B1a", "B2")
+    addBus!(net = net, busName = b, vn_kV = 110.0)
+  end
+  addACLine!(net = net, fromBus = "S", toBus = "B1", length = 10.0, r = 0.02, x = 0.2, c_nf_per_km = 0.0, tanδ = 0.0)
+  addACLine!(net = net, fromBus = "B1a", toBus = "B2", length = 8.0, r = 0.02, x = 0.2, c_nf_per_km = 0.0, tanδ = 0.0)
+  addProsumer!(net = net, busName = "S", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "S")
+  addProsumer!(net = net, busName = "B1", type = "ENERGYCONSUMER", p = 10.0, q = 3.0)
+  addProsumer!(net = net, busName = "B1a", type = "ENERGYCONSUMER", p = 5.0, q = 2.0)
+  addProsumer!(net = net, busName = "B2", type = "ENERGYCONSUMER", p = 20.0, q = 6.0)
+  for b in shunt_buses
+    addShunt!(net = net, busName = b, pShunt = 0.0, qShunt = 12.0)
+  end
+  addLink!(net = net, fromBus = "B1", toBus = "B1a", status = link_status)
+  ok, msg = validate!(net = net)
+  ok || error("se_link net invalid: $msg")
+  return net
+end
+
+# The topology precheck, the collapsed-branch exclusions and a frozen tap are
+# the tested behavior in several of these sets, so they warn by design. They
+# are captured rather than printed, and anything else that warns fails.
+const SE_EXPECTED_WARNINGS = (
+  r"topology precheck reported",
+  r"measurement\(s\) excluded",
+  r"released tap on transformer",
+  # the tap fallback test forces a non-convergence on purpose: that is the
+  # situation it exists for, and both lines are the honest report of it
+  r"tap estimation did not converge",
+  r"tap estimation switched off after a non-converged run",
+)
+
+_se_run_quiet(testfn) = run_with_expected_warnings(testfn, SE_EXPECTED_WARNINGS)

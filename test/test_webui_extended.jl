@@ -462,7 +462,8 @@ function run_webui_extended_tests()
       @test occursin("tol: 1.0e-7", profile_text)
       @test occursin("autodamp: true", profile_text)
       @test occursin("enforcement_mode: active_set", profile_text)
-      @test occursin("detailed_result_csv_format: excel_de", profile_text)
+      @test !occursin("detailed_result_csv_format", profile_text)   # machine scope since 0.15.1
+      @test !occursin("csv_format", profile_text)
       @test !occursin("benchmark", profile_text)   # machine scope stays out
       @test !occursin("logfile_results", profile_text)
       @test !occursin("effective_config", profile_text)
@@ -472,7 +473,7 @@ function run_webui_extended_tests()
       @test !haskey(case_cfg, "benchmark.enabled")
       @test case_cfg["matpower_import.apply_bus_names"] == false
       form_defaults = Sparlectra._webui_case_form_defaults(joinpath(root, "case145.m"), root)
-      @test form_defaults["detailed_result_csv_format"] == "excel_de"
+      @test !haskey(form_defaults, "detailed_result_csv_format")
       @test form_defaults["performance_timing"] == "compact"
       @test form_defaults["gen_seed"] == 7
 
@@ -523,7 +524,9 @@ function run_webui_extended_tests()
       loaded_run = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow?casefile=$(Sparlectra._webui_urlencode(joinpath(root, "case145.m")))"; output_root = root).body)
       _webui_assert_checked(loaded_run, "benchmark_enabled", true)
       _webui_assert_selected(loaded_form, "power_flow_qlimits_enforcement_mode", "active_set")
-      _webui_assert_selected(loaded_form, "detailed_result_csv_format", "excel_de")
+      # the CSV format is machine scope: the configuration file's value
+      # shows, whatever the run form said before the save
+      _webui_assert_selected(loaded_form, "detailed_result_csv_format", "technical")
 
       notice_off_root = mktempdir()
       notice_off_config = joinpath(notice_off_root, "configuration.yaml")
@@ -634,7 +637,7 @@ settings:
       _webui_assert_selected(case118_form, "power_flow_start_voltage_mode", "classic")
       _webui_assert_selected(case118_form, "power_flow_wrong_branch_detection", "off")
       _webui_assert_selected(case118_form, "performance_timing", "compact")
-      _webui_assert_selected(case118_form, "detailed_result_csv_format", "excel_de")
+      _webui_assert_selected(case118_form, "detailed_result_csv_format", "technical")
       # stage 4A: the MATPOWER import conventions render on the Case page;
       # the saved profile must prefill THAT form
       case118_case_page = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow/case?casefile=$(Sparlectra._webui_urlencode(case118))"; output_root = root).body)
@@ -659,7 +662,7 @@ settings:
       @test occursin("target.searchParams.set('config_file', configInput.value)", dropdown_case)
       dropdown_loaded_form = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow/settings?casefile=$(Sparlectra._webui_urlencode(case118))&config_file=$(Sparlectra._webui_urlencode("configuration.yaml"))"; output_root = root).body)
       _webui_assert_value(dropdown_loaded_form, "power_flow_max_iter", "80")
-      _webui_assert_selected(dropdown_loaded_form, "detailed_result_csv_format", "excel_de")
+      _webui_assert_selected(dropdown_loaded_form, "detailed_result_csv_format", "technical")
 
       case14 = joinpath(root, "case14.m")
       write(case14, "% case fixture\n")
@@ -731,7 +734,7 @@ form:
       _webui_assert_checked(unsupported_form, "power_flow_autodamp", false)
       _webui_assert_value(unsupported_form, "power_flow_tol", "9.0e-7")
       _webui_assert_selected(unsupported_form, "power_flow_start_angle_mode", "dc")
-      _webui_assert_selected(unsupported_form, "detailed_result_csv_format", "excel_us")
+      _webui_assert_selected(unsupported_form, "detailed_result_csv_format", "technical")
       @test occursin("case_settings_field_ignored", read(Sparlectra.webui_operation_log_path(root), String))
 
       fresh_root = mktempdir()
@@ -790,7 +793,8 @@ form:
       @test fresh_cc["power_flow.max_iter"] == 37
       fresh_form = Sparlectra._webui_case_form_defaults(fresh_case_path, joinpath(fresh_root, "resolved"))
       @test fresh_form["detailed_result_csv"] === true
-      @test fresh_form["detailed_result_csv_format"] == "excel_us"
+      @test !haskey(fresh_form, "detailed_result_csv_format")
+      @test !haskey(fresh_cc, "output.csv_format")
       @test !haskey(fresh_form, "effective_config")
       fresh_reloaded_form = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow/settings?casefile=$(Sparlectra._webui_urlencode(joinpath(fresh_root, "resolved", "case145.m")))"; output_root = fresh_root).body)
       _webui_assert_value(fresh_reloaded_form, "power_flow_tol", "2.5e-7")
@@ -1535,7 +1539,9 @@ for (current_iteration_topic, required_fragments) in current_iteration_help
       @test request["config_file"] == config_file
       @test request["output_root"] == output_root
       @test request["detailed_result_csv"] === true
-      @test request["detailed_result_csv_format"] == "excel_de"
+      # 0.15.1: the CSV format is a configuration override only, no request field
+      @test !haskey(request, "detailed_result_csv_format")
+      @test request["config_overrides"]["output.csv_format"] == "excel_de"
       @test request["config_overrides"]["power_flow.qlimits.enabled"] === true
       @test request["config_overrides"]["power_flow.qlimits.enforcement_mode"] == "classic_simultaneous"
       @test request["config_overrides"]["power_flow.start_current_iteration.enabled"] === true
@@ -1572,7 +1578,7 @@ for (current_iteration_topic, required_fragments) in current_iteration_help
       csv_disabled_form["detailed_result_csv"] = "false"
       @test Sparlectra.powerflow_webui_request(csv_disabled_form; default_output_root = output_root)["detailed_result_csv"] === false
       delete!(csv_disabled_form, "detailed_result_csv_format")
-      @test Sparlectra.powerflow_webui_request(csv_disabled_form; default_output_root = output_root)["detailed_result_csv_format"] == "excel_us"
+      @test !haskey(Sparlectra.powerflow_webui_request(csv_disabled_form; default_output_root = output_root)["config_overrides"], "output.csv_format")
       @test Sparlectra.powerflow_webui_request(form; default_output_root = output_root)["diagnose_mode"] === false
       diagnose_form = copy(form)
       diagnose_form["diagnose_mode"] = "true"
@@ -2013,11 +2019,12 @@ for (current_iteration_topic, required_fragments) in current_iteration_help
       @test occursin("class=\"check span-2 detailed-csv-options\"", settings_page_html)
       @test !occursin("<summary>Detailed result CSV export</summary>", settings_page_html)
       @test occursin("name=\"detailed_result_csv_format\"", settings_page_html)
-      @test occursin("<option value=\"technical\">", settings_page_html)
+      # 0.15.1: the configured value is selected (technical in this
+      # configuration file); no browser-language switch overrides it
+      @test occursin("<option value=\"technical\" selected>", settings_page_html)
       @test occursin("<option value=\"excel_de\">", settings_page_html)
-      @test occursin("<option value=\"excel_us\" selected>", settings_page_html)
-      @test occursin("navigator.languages", settings_page_html)
-      @test occursin("startsWith('de')", settings_page_html)
+      @test occursin("<option value=\"excel_us\">", settings_page_html)
+      @test !occursin("navigator.languages", settings_page_html)
       @test !occursin("Use Excel CSV format with semicolon delimiter", settings_page_html)
 
       logo_response = Sparlectra.route_sparlectra_webui("GET", "/assets/logo.png")

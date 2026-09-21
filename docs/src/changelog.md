@@ -1,3 +1,21 @@
+# Version 0.16.0 - 2026-09-22
+
+## Highlights
+- Configuration overrides of a request now reach state-estimation, N-1 and short-circuit runs; before, those run types read the configuration file only.
+- Workshop notebook "APSLF in Sparlectra": series solver on a Sparlectra model, series order, convergence radius as a loadability margin, Q-limits, hybrid start.
+
+## Breaking
+- The CSV format is a machine-scope setting, `output.csv_format`. The request field is removed; the run form posts the format as a configuration override.
+
+## Changes
+- Measurement generator moved to `src/api/se_measurement_generator.jl`; parameters are passed as `MeasurementGeneratorOptions` instead of a keyword list.
+- Critical thinning removes the strongest redundancy partner of the cheapest anchor row instead of sweeping the set. Above 2000 states or 4000 rows it falls back to removing the smallest-wii row.
+- Observability tests in `test/test_observability.jl` with one shared fixture.
+
+## Fixes
+- A state-estimation run can no longer fall back to a request default for the CSV format (run c1c31569 wrote commas with a semicolon setting).
+- The state-estimation run log and `se_diagnostics.md` name the critical rows, or say "none"; the wii list is marked as "nearly critical, not critical".
+
 # Version 0.15.0 - 2026-09-21
 
 ## Highlights

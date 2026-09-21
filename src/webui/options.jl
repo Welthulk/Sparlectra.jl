@@ -171,7 +171,11 @@ const WEBUI_OPTION_SPECS = (
   WebUIOptionSpec(nothing, "gen_critical_count", Int, :number, 0, (), :basic, :case, true),
   WebUIOptionSpec(nothing, "performance_timing", String, :select, "compact", _WEBUI_PERFORMANCE_TIMING_VALUES, :basic, :case, true),
   WebUIOptionSpec(nothing, "detailed_result_csv", Bool, :checkbox, true, (), :basic, :case, true),
-  WebUIOptionSpec(nothing, "detailed_result_csv_format", String, :select, "excel_us", ("technical", "excel_de", "excel_us"), :basic, :case, true),
+  # the ONE CSV setting (issue #386): a machine-scope configuration key like
+  # the other output keys, saved to the configuration file, posted as a run
+  # override like every other configuration field; a run type that does not
+  # render the field (state estimation) reads the same configured value
+  WebUIOptionSpec("output.csv_format", "detailed_result_csv_format", String, :select, "technical", ("technical", "excel_de", "excel_us"), :basic, :session, false),
   WebUIOptionSpec(nothing, "export_cgmes", Bool, :checkbox, false, (), :basic, :case, true),
 )
 

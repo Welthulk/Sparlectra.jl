@@ -145,463 +145,6 @@ function _se_apply_pf_voltage_csv!(net::Net, file::AbstractString)
   return nothing
 end
 
-"""
-    _seeded_permutation(rng, v) -> Vector
-
-A random permutation of `v` that depends only on the RNG's Float64 stream.
-`Random.shuffle` changed its algorithm in Julia 1.13: the same
-`MersenneTwister` seed then drew other rows than on 1.12, so a generated
-set with "bad data on 1 row" hit a different measurement per Julia version
-(found 2026-09-11 when the extended profile went red on 1.13 only). The
-Float64 stream of the Mersenne Twister is the same on both, so ordering
-by one uniform draw per element keeps "the seed decides which rows" true
-across Julia versions.
-"""
-_seeded_permutation(rng::Random.AbstractRNG, v::AbstractVector) = v[sortperm(rand(rng, length(v)))]
-
-"""
-    _se_generate_measurement_set(case_path, out_path; kwargs...) -> NamedTuple
-
-Service backend of the Web UI measurement generator (the Web UI layer never
-calls a solver directly): import the case through the shared SE import
-paths, optionally shift up to `tap_count` seed-randomly selected
-in-service transformers by `tap_steps` MECHANICAL steps each on their own
-grids (whole steps only, a tap changer has no half positions; the Web UI
-enforces this before the call; the seed decides WHICH transformers,
-non-machine declared changers are drawn first), obtain the truth state
-(`truth_source = :fresh_solve` solves the
-configured power flow at reference tightness; `:from_run` adopts the
-solved voltages of run `run_id` under `run_root` without re-solving and
-is mutually exclusive with a tap deviation), optionally keep only one
-balance-aware flow end per branch (`flow_ends`), rewrite passive-node
-balances at `passive_sigma` or as protected zero-injection constraints
-(`passive_as_zi`), generate a measurement CSV v1 with percent-of-reading
-sigmas, optional seeded noise, optional currents/current angles, optional
-gross errors (`gross_k` sigma on `gross_count` seed-randomly selected
-telemetry rows; protected zero-injection rows are never corrupted, and
-the seed decides WHICH rows), readable name-based ids, the structured tap
-comment table, and the
-in-file case binding. Returns `(rows, noisy, tap_note, gross_note,
-island_note, truth_note, flow_note, passive_note)` for the caller's
-confirmation message. Throws
-`ArgumentError` with a user-readable text when the case has no in-service
-transformer for a requested deviation or the power flow does not converge.
-"""
-function _se_generate_measurement_set(
-  case_path::AbstractString,
-  out_path::AbstractString;
-  noise::Bool,
-  gross_k::Float64,
-  gross_count::Int = 1,
-  tap_steps::Float64,
-  tap_count::Int = 1,
-  include_i::Bool,
-  sigma_u_pct::Float64,
-  sigma_i_pct::Float64,
-  sigma_p_pct::Float64,
-  sigma_q_pct::Float64,
-  sigma_ia_deg::Float64,
-  truth_source::Symbol = :fresh_solve,
-  run_id::AbstractString = "",
-  run_root::Union{Nothing,AbstractString} = nothing,
-  flow_ends::Symbol = :both,
-  passive_sigma::Float64 = 0.05,
-  passive_as_zi::Bool = true,
-  seed::Int = 42,
-  critical_count::Int = 0,
-)
-  truth_source in (:fresh_solve, :from_run) || throw(ArgumentError("truth source must be fresh_solve or from_run"))
-  critical_count >= 0 || throw(ArgumentError("critical measurement count must be zero or positive"))
-  flow_ends in (:both, :one_balance_aware) || throw(ArgumentError("flow measurements per branch must be both or one_balance_aware"))
-  passive_sigma > 0.0 || throw(ArgumentError("passive-node balance sigma must be positive"))
-  gross_count >= 1 || throw(ArgumentError("bad data count must be at least 1"))
-  tap_count >= 1 || throw(ArgumentError("tap deviation transformer count must be at least 1"))
-  if truth_source === :from_run
-    # a run state is a finished snapshot: the generator never re-solves it,
-    # so a tap deviation (which needs a fresh solve of the shifted model)
-    # is rejected here even if the GUI lock was bypassed
-    tap_steps == 0.0 || throw(ArgumentError("tap deviation requires truth state 'fresh solve'; a run state is a finished snapshot and is not re-solved"))
-    isempty(strip(run_id)) && throw(ArgumentError("truth state 'from run' needs a run id"))
-    run_root isa AbstractString || throw(ArgumentError("truth state 'from run': no run directory root available"))
-  end
-  # the generator honors the case's own settings the same way a run does
-  config = resolve_config(DEFAULT_SPARLECTRA_CONFIG_PATH, case_path).config
-  imported = _se_import_case(case_path, config)
-  net = imported.net
-  config = imported.config
-  # A generated set REPLACES; it is never an addition. A Sparlectra Case
-  # Format case brings its own measurements along, and without this the
-  # generator wrote them out again next to the fresh ones (59 carried + 75
-  # generated = 134 rows in a file that should have had 75).
-  empty!(net.measurements)
-  tap_note = ""
-  tap_branches = Int[]
-  if tap_steps != 0.0
-    # never PREFER a machine (generator step-up) transformer: the tap mass
-    # release skips those by design, so a deviation there could never be
-    # resolved by "estimate taps" (seen on a case where the FIRST trafo was
-    # the GSU behind the slack: 320 MVar of unexplainable imbalance).
-    # Selection: up to tap_count transformers, drawn SEED-randomly (the
-    # user sets how many at most, the seed decides which) with the class
-    # priority preserved: non-machine declared changers (ratio tap, or
-    # nameplate phase tap of a PST) fill first, then declared changers on
-    # machine trafos, then any transformer at all (the run warns there)
-    pool1 = [k for k in eachindex(net.branchVec) if (br = net.branchVec[k]; br.ratio != 0.0 && (br.has_ratio_tap || _declared_phase_tap(br)) && _branch_terminal_state(br) == :closed && !_is_machine_transformer(net, k))]
-    pool2 = [k for k in eachindex(net.branchVec) if (br = net.branchVec[k]; br.ratio != 0.0 && (br.has_ratio_tap || _declared_phase_tap(br)) && _branch_terminal_state(br) == :closed && !(k in pool1))]
-    pool3 = [k for k in eachindex(net.branchVec) if (br = net.branchVec[k]; br.ratio != 0.0 && _branch_terminal_state(br) == :closed && !(k in pool1) && !(k in pool2))]
-    isempty(pool1) && isempty(pool2) && isempty(pool3) && throw(ArgumentError("tap deviation requested but the case has no in-service transformer"))
-    # a dedicated RNG stream keeps the transformer draw independent of the
-    # noise draw: the same seed always hits the same transformers, even
-    # when noise or sigma settings change between regenerations.
-    # Draw from ONE class only, the best non-empty one: mixing estimable
-    # and machine transformers would poison the set, because a machine
-    # (generator step-up) deviation is skipped by the mass release BY
-    # DESIGN and leaves an unexplainable model error (seen: J ~ 318
-    # instead of ~ dof when max 2 spilled onto the GSU of a 2-trafo case).
-    # tap_count is therefore capped at the chosen class; machine or
-    # arbitrary transformers serve only cases with nothing estimable at
-    # all, and the estimator run warns there.
-    rng_tap = Random.MersenneTwister(seed * 4093 + 11)
-    pool = !isempty(pool1) ? pool1 : (!isempty(pool2) ? pool2 : pool3)
-    picks = _seeded_permutation(rng_tap, pool)
-    tap_branches = sort!(picks[1:min(tap_count, length(picks))])
-    tap_limit_note = length(tap_branches) < tap_count ? " (limited to $(length(tap_branches)) eligible transformer(s), max $(tap_count) requested)" : ""
-    nby = _bus_name_by_idx(net)
-    notes = String[]
-    for ti in tap_branches
-      br = net.branchVec[ti]
-      if br.has_ratio_tap || !_declared_phase_tap(br)
-        base_tap = br.tap_ratio == 0.0 ? br.ratio : br.tap_ratio
-        # cascade convention (reciprocal from side): n steps on the fraction
-        # grid mean tap_ratio = base / (1 + n * tap_step), so an integer n is
-        # exactly a mechanical position of the estimator's fixation grid
-        dev_step = br.tap_step > 0.0 ? br.tap_step : 0.00625
-        br.tap_ratio = base_tap / (1.0 + tap_steps * dev_step)
-        pct_note = " (~$(round((1.0 / (1.0 + tap_steps * dev_step) - 1.0) * 100.0; digits = 2))% ratio)"
-        push!(notes, "tap deviation $(tap_steps) steps$(pct_note) on transformer branch $(ti) ($(get(nby, Int(br.fromBus), string(Int(br.fromBus))))-$(get(nby, Int(br.toBus), string(Int(br.toBus)))))")
-      else
-        # pure phase shifter (PST): the deviation lives on the changer's OWN
-        # mechanical grid. Delta-u PST: n additional-voltage steps through
-        # the cascade (the shift angle follows via atan, it is NOT the
-        # grid); degree-grid PST: additive degrees.
-        if br.phase_du_step > 0.0
-          ψ = deg2rad(br.tap_est_alpha_deg)
-          tbase = (br.ratio == 0.0 ? 1.0 : br.ratio) * cis(deg2rad(br.angle))
-          tlive = (br.tap_ratio == 0.0 ? abs(tbase) : br.tap_ratio) * cis(deg2rad(br.phase_shift_deg))
-          r2live = real((tbase / tlive - 1.0) * cis(-ψ))
-          tnew = tbase / (1.0 + (r2live + tap_steps * br.phase_du_step) * cis(ψ))
-          br.tap_ratio = abs(tnew)
-          br.phase_shift_deg = rad2deg(angle(tnew))
-          push!(notes, "phase deviation $(tap_steps) Delta-u step(s) ($(br.phase_du_step) pu each, psi $(br.tap_est_alpha_deg) deg) on PST branch $(ti) ($(get(nby, Int(br.fromBus), string(Int(br.fromBus))))-$(get(nby, Int(br.toBus), string(Int(br.toBus)))))")
-        else
-          br.phase_shift_deg += tap_steps * br.phase_step_deg
-          push!(notes, "phase deviation $(tap_steps) step(s) ($(br.phase_step_deg) deg each) on PST branch $(ti) ($(get(nby, Int(br.fromBus), string(Int(br.fromBus))))-$(get(nby, Int(br.toBus), string(Int(br.toBus)))))")
-        end
-      end
-    end
-    tap_note = string(", ", join(notes, "; "), tap_limit_note)
-  end
-  truth_comment = ""
-  truth_note = ""
-  if truth_source === :fresh_solve
-    # config-driven solve: picks up island-wise solving (multi-island CGMES
-    # deliveries) and the other configured solver options. The tolerance is
-    # tightened to 1e-8: the measurement values ARE the reference truth, and
-    # a loosely converged state costs the SE-started chain PF its warm start.
-    pf_cfg = _copy_powerflow_with(config.powerflow; tol = min(config.powerflow.tol, 1e-8), max_iter = max(config.powerflow.max_iter, 40))
-    ite, erg = runpf!(net; config = pf_cfg)
-    erg == 0 || throw(ArgumentError("power flow on $(basename(case_path)) did not converge; no measurements generated"))
-    truth_comment = "truth: fresh solve, $(ite) iteration(s), tol $(pf_cfg.tol), island-wise"
-    truth_note = ", pre-solve $(ite) iteration(s) at tol $(pf_cfg.tol)"
-  else
-    info = _se_truth_from_run!(net, String(run_root), String(strip(run_id)), case_path)
-    truth_comment = "truth: run $(strip(run_id)) ($(info.kind), $(info.timestamp), $(info.source_file)); state adopted, not re-solved"
-    truth_note = ", truth from $(info.kind) run $(strip(run_id))"
-  end
-  # measurements cover every island: the estimator solves island-wise
-  # (per-island reference), so the whole delivery is estimable. Count on
-  # the ELECTRICAL view (closed links connect): the raw net is not
-  # link-contracted here, and the branch-only solver view would report a
-  # busbar section joined by a closed coupler as its own ref-less island
-  n_islands = length(electricalIslandComponents(net))
-  island_note = n_islands > 1 ? ", $(n_islands) islands" : ""
-  # seeded noise keeps the demo set reproducible across regenerations;
-  # relativeSigma: the fractions below are percent-of-reading / 100.
-  stddev = measurementStdDevs(vm = sigma_u_pct / 100.0, pinj = sigma_p_pct / 100.0, qinj = sigma_q_pct / 100.0, pflow = sigma_p_pct / 100.0, qflow = sigma_q_pct / 100.0, imag = sigma_i_pct / 100.0, ia = sigma_ia_deg > 0.0 ? sigma_ia_deg : 0.05)
-  meas = generateMeasurementsFromPF(net; noise = noise, stddev = stddev, relativeSigma = true, includeImag = include_i, includeIa = sigma_ia_deg > 0.0, rng = Random.MersenneTwister(seed))
-  # readable ids: the defaults carry internal indices ("Vm_bus_1"), which
-  # diverge from the bus/branch names on CGMES nets and read like a bug
-  # next to mRID location columns (WebUI sets only, the API keeps its
-  # stable default scheme)
-  idnby = _bus_name_by_idx(net)
-  short(t) = replace(string(t), "Meas" => "")
-  # parallel circuits share a component name (case118 has several such
-  # pairs); an id built from the name alone collided, so the second
-  # circuit's rows carried the first circuit's id, and the truth-value
-  # lookup by id mixed both up. A branch whose name is not unique gets
-  # its branch index appended.
-  branch_name_count = Dict{String,Int}()
-  for br in net.branchVec
-    nm = getCompName(br.comp)
-    branch_name_count[nm] = get(branch_name_count, nm, 0) + 1
-  end
-  branch_label(k::Int) = begin
-    nm = getCompName(net.branchVec[k].comp)
-    get(branch_name_count, nm, 1) > 1 ? string(nm, "#", k) : nm
-  end
-  row_id(m) = if m.busIdx !== nothing
-    string(short(m.typ), "_", get(idnby, m.busIdx, string(m.busIdx)))
-  elseif m.branchIdx !== nothing
-    string(short(m.typ), "_", branch_label(Int(m.branchIdx)), "_", m.direction)
-  else
-    m.id
-  end
-  for (gi2, m) in enumerate(meas)
-    newid = row_id(m)
-    meas[gi2] = Measurement(typ = m.typ, value = m.value, sigma = m.sigma, active = m.active, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = newid, linkIdx = m.linkIdx)
-  end
-  # flow measurements per branch: :both keeps the full from/to pairs;
-  # :one_balance_aware keeps exactly one flow-measurement group per branch.
-  # The end choice is deterministic: prefer the end whose bus carries a
-  # TELEMETRY injection measurement (ZI pseudo-rows do not count); when
-  # both or neither do, the from end wins. Choices land in the set comments.
-  flow_note = ""
-  flow_comments = String[]
-  if flow_ends === :one_balance_aware
-    injBuses = Set{Int}(m.busIdx for m in meas if m.active && m.typ in (PinjMeas, QinjMeas) && m.busIdx !== nothing && !startswith(m.id, "ZI"))
-    flowBranches = sort!(unique(Int[m.branchIdx for m in meas if m.branchIdx !== nothing && m.typ in (PflowMeas, QflowMeas, ImagMeas, IaMeas)]))
-    chosenByBranch = Dict{Int,Symbol}()
-    for k in flowBranches
-      br = net.branchVec[k]
-      fromInj = Int(br.fromBus) in injBuses
-      toInj = Int(br.toBus) in injBuses
-      chosen = fromInj == toInj ? :from : (fromInj ? :from : :to)
-      chosenByBranch[k] = chosen
-      reason = fromInj == toInj ? (fromInj ? "both ends have injection telemetry" : "no end has injection telemetry") : "injection telemetry at the $(chosen) bus"
-      push!(flow_comments, string("flow_end,", k, ",", getCompName(br.comp), ",", chosen, ",", reason))
-    end
-    meas = [m for m in meas if !(m.branchIdx !== nothing && m.typ in (PflowMeas, QflowMeas, ImagMeas, IaMeas) && m.direction !== chosenByBranch[m.branchIdx])]
-    flow_note = ", one flow end per branch (balance-aware)"
-  end
-
-  # passive nodes: buses without generation, load, and shunt either get
-  # their Pinj/Qinj balance rows at the CONFIGURED sigma with an exact
-  # zero value, or (checkbox) protected zero-injection constraints via
-  # addZeroInjectionMeasurements! and NO normal injection rows on top.
-  passive_note = ""
-  passive_comment = ""
-  passiveBuses = findPassiveBuses(net)
-  if !isempty(passiveBuses)
-    nby_p = _bus_name_by_idx(net)
-    pnames = join((get(nby_p, b, string(b)) for b in passiveBuses), " ")
-    passiveSet = Set(passiveBuses)
-    if passive_as_zi
-      meas = [m for m in meas if !(m.busIdx !== nothing && m.busIdx in passiveSet && m.typ in (PinjMeas, QinjMeas))]
-      # passive_sigma is the user-facing knob for BOTH passive modes: as a
-      # balance row it is the reading's sigma, as a zero-injection row it is
-      # how hard the constraint binds. It is in MW, so 0.001 means 1 kW.
-      # Without this the constraint mode ignored the setting and used the
-      # built-in floor, and there was no way to loosen it from the Web UI.
-      zi_sigma = max(passive_sigma, ZERO_INJECTION_SIGMA)
-      addZeroInjectionMeasurements!(meas; net = net, busIdxs = passiveBuses, sigma = zi_sigma)
-      passive_note = ", $(length(passiveBuses)) passive node(s) as protected zero-injection constraints at sigma $(zi_sigma) MW"
-      passive_comment = "passive: zero-injection constraints (ZI, sigma $(zi_sigma) MW, elimination-protected) at $(pnames)"
-    else
-      for (mi, m) in enumerate(meas)
-        (m.busIdx !== nothing && m.busIdx in passiveSet && m.typ in (PinjMeas, QinjMeas)) || continue
-        z = 0.0 + (noise ? randn(Random.MersenneTwister(seed * 1009 + 7 * m.busIdx + (m.typ == PinjMeas ? 0 : 1))) * passive_sigma : 0.0)
-        meas[mi] = Measurement(typ = m.typ, value = z, sigma = passive_sigma, active = m.active, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = m.id, linkIdx = m.linkIdx)
-      end
-      passive_note = ", $(length(passiveBuses)) passive node(s) at balance sigma $(passive_sigma)"
-      passive_comment = "passive: balance rows Pinj/Qinj = 0 with sigma $(passive_sigma) at $(pnames)"
-    end
-  end
-
-  # critical measurements on request (demo of issue #394): the set is
-  # thinned until at least `critical_count` rows are critical, and the
-  # thinning never makes the set unobservable. Every step re-reads the
-  # criticality from diag(Omega) (cheap since #394) and removes the
-  # redundant telemetry row with the SMALLEST wii, the one whose partner
-  # is already closest to critical, so few removals reach the target;
-  # ties break by id, so the result is deterministic. Protected ZI rows
-  # and passive balance rows stay. Rows that end critical are named in
-  # the set comments, so the demo knows where a gross error would hide.
-  critical_note = ""
-  critical_comments = String[]
-  if critical_count > 0
-    passiveSetC = Set(passiveBuses)
-    removed_ids = String[]
-    critical_ids = String[]
-    # ONE Jacobian for the whole thinning: removing rows does not change
-    # the rows that stay, so every step evaluates a row subset of the same
-    # matrix (a rebuild per step cost minutes on case118). The observability
-    # rows follow the active-measurement order the Jacobian builder uses.
-    empty!(net.measurements)
-    append!(net.measurements, meas)
-    jac = measurement_jacobian(net)
-    empty!(net.measurements)
-    # the same rank decision the estimation run makes: column-normalized
-    # Jacobian and the FD-aware tolerance (rank_tol_factor * jac_eps *
-    # sigma_max); the matrix default tolerance called sets observable that
-    # the run then refused (Web UI run e358b49e)
-    H_all = _column_normalized(jac.H)
-    se_tol_cfg = state_estimation_config()
-    thin_tol = isempty(H_all) ? nothing : se_tol_cfg.rank_tol_factor * se_tol_cfg.jac_eps * _sigma_max(H_all)
-    row_meas = Int[r.index for r in jac.rows]   # Jacobian row -> index into meas
-    keep = collect(1:length(row_meas))
-    removable(k) = begin
-      mi = row_meas[k]
-      1 <= mi <= length(meas) || return false
-      m = meas[mi]
-      startswith(m.id, "ZI") && return false
-      (m.busIdx !== nothing && m.busIdx in passiveSetC && m.typ in (PinjMeas, QinjMeas)) && return false
-      return true
-    end
-    steps = 0
-    while steps <= length(row_meas)
-      steps += 1
-      obs_c = evaluate_observability_matrix(H_all[keep, :]; tol = thin_tol)
-      obs_c.quality == :not_observable && break
-      crit_local = Set{Int}(obs_c.numerical_critical_measurement_indices)
-      # Jacobian rows with index 0 are link-cluster aggregates without a
-      # source row: never named, never removed, never counted
-      crit_real = [k for k in sort!(collect(crit_local)) if 1 <= k <= length(keep) && 1 <= row_meas[keep[k]] <= length(meas)]
-      critical_ids = String[meas[row_meas[keep[k]]].id for k in crit_real]
-      length(crit_real) >= critical_count && break
-      isempty(obs_c.criticality_wii) && break
-      cands = [(obs_c.criticality_wii[k], meas[row_meas[keep[k]]].id, k) for k in eachindex(keep) if !(k in crit_local) && removable(keep[k])]
-      isempty(cands) && break
-      sort!(cands; by = c -> (c[1], c[2]))
-      # a trial per removal: the omega threshold and the rank tolerance are
-      # two different tests, and only the rank test decides observability
-      removed = false
-      for c in cands
-        trial = [keep[k] for k in eachindex(keep) if k != c[3]]
-        if evaluate_observability_matrix(H_all[trial, :]; tol = thin_tol).quality != :not_observable
-          push!(removed_ids, c[2])
-          keep = trial
-          removed = true
-          break
-        end
-      end
-      removed || break
-    end
-    removed_set = Set(removed_ids)
-    meas = [m for m in meas if !(m.id in removed_set)]
-    if length(critical_ids) >= critical_count
-      critical_note = ", $(length(critical_ids)) critical row(s) after removing $(length(removed_ids)) row(s)"
-    else
-      critical_note = ", critical measurements: only $(length(critical_ids)) reachable (requested $(critical_count)), $(length(removed_ids)) row(s) removed"
-    end
-    push!(critical_comments, string("critical_target: ", critical_count, " reached: ", length(critical_ids)))
-    isempty(critical_ids) || push!(critical_comments, string("critical_rows: ", join(critical_ids, " ")))
-    isempty(removed_ids) || push!(critical_comments, string("critical_removed: ", join(removed_ids, " ")))
-  end
-
-  gross_note = ""
-  if gross_k > 0.0
-    # bad data on gross_count SEED-randomly drawn telemetry rows (the user
-    # sets how many, the seed decides which); protected zero-injection
-    # constraints are never corrupted (they are elimination-protected by
-    # design, a gross error there could not be worked off). A dedicated RNG
-    # stream keeps the row draw independent of the noise draw.
-    eligible = [i for (i, m) in enumerate(meas) if m.active && !startswith(m.id, "ZI")]
-    if !isempty(eligible)
-      rng_gross = Random.MersenneTwister(seed * 7919 + 13)
-      picks = _seeded_permutation(rng_gross, eligible)[1:min(gross_count, length(eligible))]
-      sort!(picks)
-      gross_ids = String[]
-      for gi in picks
-        m0 = meas[gi]
-        meas[gi] = Measurement(typ = m0.typ, value = m0.value + gross_k * m0.sigma, sigma = m0.sigma, active = m0.active, busIdx = m0.busIdx, branchIdx = m0.branchIdx, direction = m0.direction, id = m0.id, linkIdx = m0.linkIdx)
-        push!(gross_ids, m0.id)
-      end
-      gross_note = ", bad data +$(gross_k) sigma on $(length(gross_ids)) row(s): $(join(gross_ids, " "))"
-    end
-  end
-  append!(net.measurements, meas)
-  # record the tap positions the set was generated from as a structured
-  # table (the estimator later has to explain any deviation between these
-  # and the model): electrical_step = continuous position of the generation
-  # state, fixed_step = nearest mechanical step, transferred_step = the
-  # mechanical position an RTU would report (equal to fixed_step here)
-  nby2 = _bus_name_by_idx(net)
-  bn2(b) = get(nby2, Int(b), string(Int(b)))
-  trmrids = _transformer_mrids(net)
-  # the case binding lives IN the file (first comment after the version
-  # line): renaming or re-uploading the set keeps the association, and the
-  # SE service refuses a set bound to a different case up front
-  # summary lines stay at the top; the bulky per-branch and per-row
-  # blocks (flow_end choices, truth values) go BEHIND the taps table so
-  # the comment-limited readers (set info, tap-deviation parse) always
-  # reach the table on large cases
-  # The noise state belongs IN the set. A noise-free set is an IDEAL one:
-  # its J is 0 by construction, which looks like a perfect estimate and is
-  # nothing of the sort. Recording it here is what lets the case file, the
-  # state-estimation page and the run say so instead of leaving the reader
-  # to guess from a suspiciously small J.
-  noise_comment = noise ? "noise: gaussian (sigma U $(sigma_u_pct)%, P $(sigma_p_pct)%, Q $(sigma_q_pct)% of reading)" : "noise: none (ideal values, J is 0 by construction)"
-  gencomments = String["generator: v2", "seed: $(seed)", noise_comment, truth_comment, "flow_ends: $(flow_ends)"]
-  isempty(passive_comment) || push!(gencomments, passive_comment)
-  append!(gencomments, critical_comments)
-  tailcomments = copy(flow_comments)
-  # noise-free truth values per row (the value BEFORE noise and gross
-  # error): the SE run reads these comments back and writes the
-  # measured/truth/estimated delta file se_deltas.csv. Passive and ZI
-  # balance rows have truth 0 by construction.
-  truthById = Dict{String,Float64}()
-  tmeas = generateMeasurementsFromPF(net; noise = false, stddev = stddev, relativeSigma = true, includeImag = include_i, includeIa = sigma_ia_deg > 0.0)
-  for tm in tmeas
-    truthById[row_id(tm)] = tm.value
-  end
-  passiveTruthSet = passive_as_zi ? Set{Int}() : Set(passiveBuses)
-  for m in meas
-    v = startswith(m.id, "ZI") ? 0.0 : get(truthById, m.id, nothing)
-    (m.busIdx !== nothing && m.busIdx in passiveTruthSet && m.typ in (PinjMeas, QinjMeas)) && (v = 0.0)
-    v === nothing && continue
-    push!(tailcomments, string("truth_value,", m.id, ",", repr(v)))
-  end
-  tapcomments = vcat(String["case: $(basename(case_path))"], gencomments, String["sparlectra-taps v1", "branch,mrid,name,from_bus,to_bus,neutral_ratio,step,electrical_step,fixed_step,transferred_step,generation_deviation_steps"])
-  ntr = 0
-  for (k, br) in enumerate(net.branchVec)
-    br.ratio != 0.0 || continue
-    ntr += 1
-    # electrical step on the trafo's own mechanical grid, the same grid the
-    # estimator's fixation uses, so an injected integer deviation reads
-    # back exactly: ratio taps on the FRACTION grid (r = base/current - 1
-    # over tap_step), declared PSTs on the PHASE grid (degrees off the
-    # neutral shift over phase_step_deg; the step column then carries
-    # phase_step_deg)
-    if br.has_ratio_tap || !_declared_phase_tap(br)
-      cur = br.tap_ratio == 0.0 ? br.ratio : br.tap_ratio
-      el = br.tap_step > 0.0 ? round((br.ratio / cur - 1.0) / br.tap_step; digits = 3) : NaN
-      stepcol = br.tap_step
-    elseif br.phase_du_step > 0.0
-      # Delta-u PST: position in additional-voltage steps (the shift angle
-      # is a consequence, not the grid)
-      ψt = deg2rad(br.tap_est_alpha_deg)
-      tbaset = (br.ratio == 0.0 ? 1.0 : br.ratio) * cis(deg2rad(br.angle))
-      tlivet = (br.tap_ratio == 0.0 ? abs(tbaset) : br.tap_ratio) * cis(deg2rad(br.phase_shift_deg))
-      el = round(real((tbaset / tlivet - 1.0) * cis(-ψt)) / br.phase_du_step; digits = 3)
-      stepcol = br.phase_du_step
-    else
-      el = round((br.phase_shift_deg - br.angle) / br.phase_step_deg; digits = 3)
-      stepcol = br.phase_step_deg
-    end
-    fx = isnan(el) ? "" : string(Int(round(el, RoundNearestTiesAway)))
-    push!(tapcomments, string(k, ",", get(trmrids, k, ""), ",", getCompName(br.comp), ",", bn2(br.fromBus), ",", bn2(br.toBus), ",", br.ratio, ",", stepcol, ",", isnan(el) ? "" : el, ",", fx, ",", fx, ",", k in tap_branches ? tap_steps : 0.0))
-  end
-  # keep the in-file case binding (and the generator provenance) even when
-  # the case has no transformers at all
-  ntr == 0 && (tapcomments = vcat(String["case: $(basename(case_path))"], gencomments, String["case has no transformer branches (no tap steps to estimate)"]))
-  # the bulky per-branch and per-row blocks (flow_end choices, truth values)
-  # go BEHIND the data rows: the file opens with the summary, the taps table
-  # and the measurements themselves, and a preview stays readable; the
-  # readers skip comment lines wherever they stand
-  writeMeasurementsCSV(net; file = out_path, headerComments = tapcomments, footerComments = tailcomments, busReference = _se_case_format(case_path) === :cgmes ? :mrid : :name)
-  return (rows = length(net.measurements), noisy = noise, tap_note = tap_note, gross_note = gross_note, island_note = island_note, truth_note = truth_note, flow_note = flow_note, passive_note = passive_note, critical_note = critical_note)
-end
-
 ## True when at least one transformer of `net` has its tap released as an
 ## estimation state.
 ## The one statement the tap fallback makes, shared by all three surfaces
@@ -697,25 +240,43 @@ const _SE_PERF_HEADLINE = (:case_loading_network_solver => "importing_case", :so
 # the rows by id, and under :omega the nearly critical rows (wii below the
 # 0.3 localizability guideline) as the graded information the rank test
 # never had. Long lists are cut; the counts stay complete.
-function _se_log_criticality(io::IO, net::Net, obs)
+"""
+    _se_criticality_lines(net, obs) -> Vector{String}
+
+The criticality report of a state-estimation run as plain lines: the count
+per method, the critical rows BY NAME (or "none", so a reader never has to
+infer criticality from a wii column), and the nearly critical rows with
+their wii. Written to the run log and to `se_diagnostics.md`.
+"""
+function _se_criticality_lines(net::Net, obs)::Vector{String}
   method = hasproperty(obs, :criticality_method) ? String(obs.criticality_method) : "rank"
+  lines = String[]
   if obs.criticality_skipped
-    println(io, "critical measurements: classification skipped (method ", method, ", per-row budget exceeded)")
-    return nothing
+    push!(lines, string("critical measurements: classification skipped (method ", method, ", per-row budget exceeded)"))
+    return lines
   end
   ids(idx) = [1 <= i <= length(net.measurements) ? String(net.measurements[i].id) : string("#", i) for i in idx]
   num = collect(obs.numerical_critical_measurement_indices)
   str = collect(obs.structural_critical_measurement_indices)
-  println(io, "critical measurements (", method, "): ", length(num), " numerical, ", length(str), " structural", hasproperty(obs, :structural_criticality_skipped) && obs.structural_criticality_skipped ? " (structural test skipped above the per-row budget)" : "")
-  isempty(num) || println(io, "  critical rows: ", join(first(ids(num), 20), ", "), length(num) > 20 ? string(", ... ", length(num) - 20, " more") : "")
+  push!(lines, string("critical measurements (", method, "): ", length(num), " numerical, ", length(str), " structural", hasproperty(obs, :structural_criticality_skipped) && obs.structural_criticality_skipped ? " (structural test skipped above the per-row budget)" : ""))
+  # the names are the statement; a count alone sends the reader to the wii
+  # column, which cannot tell critical from merely weak
+  push!(lines, isempty(num) ? "  critical rows: none (a gross error on any row is detectable)" : string("  critical rows: ", join(first(ids(num), 20), ", "), length(num) > 20 ? string(", ... ", length(num) - 20, " more") : "", " (a gross error there stays invisible)"))
   if hasproperty(obs, :criticality_wii) && !isempty(obs.criticality_wii) && hasproperty(obs, :active_measurement_indices)
     wii = obs.criticality_wii
     act = collect(obs.active_measurement_indices)
     near = [(act[k], wii[k]) for k in eachindex(wii) if 1 <= k <= length(act) && wii[k] > 1e-8 && wii[k] < 0.3]
     if !isempty(near)
       sort!(near; by = x -> x[2])
-      println(io, "  nearly critical rows (wii below 0.3): ", length(near), ": ", join((string(first(ids([i])), " (", round(w; digits = 3), ")") for (i, w) in first(near, 10)), ", "), length(near) > 10 ? ", ..." : "")
+      push!(lines, string("  nearly critical rows (wii below 0.3, not critical): ", length(near), ": ", join((string(first(ids([i])), " (", round(w; digits = 3), ")") for (i, w) in first(near, 10)), ", "), length(near) > 10 ? ", ..." : ""))
     end
+  end
+  return lines
+end
+
+function _se_log_criticality(io::IO, net::Net, obs)
+  for line in _se_criticality_lines(net, obs)
+    println(io, line)
   end
   return nothing
 end
@@ -748,10 +309,13 @@ function _run_state_estimation_service(
   robust_k2::Union{Nothing,Float64} = nothing,
   k_suppress::Union{Nothing,Float64} = nothing,
   suppression_sigma::Union{Nothing,Float64} = nothing,
-  # request-level CSV format (Web UI run form): folded into output.csv_format
-  csv_format::Union{Nothing,AbstractString} = nothing,
   case_format::Symbol = :auto,
   phase_callback = phase -> nothing,
+  # the request's configuration overrides (Web UI run form, API caller):
+  # the same top precedence level the power-flow path gives them; without
+  # this an SE run read the configuration file only and every per-run
+  # setting of the form was lost on the way (the CSV format among them)
+  config_overrides::AbstractDict = Dict{String,Any}(),
 )::SparlectraApiResult
   mkpath(output_dir)
   logfile = joinpath(output_dir, "run.log")
@@ -786,7 +350,7 @@ function _run_state_estimation_service(
   # file, defaults
   se_phase("preparing_configuration")
   config = try
-    _config_with_request_csv_format(resolve_config(config_file, case_path).config, csv_format)
+    resolve_config(config_file, case_path, config_overrides).config
   catch err
     return _api_failure(_config_resolve_reason(err), sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
   end
@@ -1101,6 +665,12 @@ function _run_state_estimation_service(
     # model values, so the J of this run measures THEM
     tap_fallback_used && println(io, "\n> **Tap estimation fallback.** ", _SE_TAP_FALLBACK_NOTE, "\n")
     print_se_diagnostics(io, diag; topN = 15, format = :markdown)
+    # the critical rows by name (maintainer rule 2026-09-21: a detected
+    # critical measurement is stated, never left to be read off the wii)
+    println(io, "\n## Critical measurements\n")
+    for line in _se_criticality_lines(net, obs)
+      println(io, "- ", strip(line))
+    end
     # topology findings of both stages append to the diagnostics report
     if !isempty(topo_pre.findings) || diag.topology_findings !== nothing
       println(io, "\n## Topology findings (advisory)\n")

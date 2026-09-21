@@ -3,7 +3,6 @@ scope: case
 case: case14_zeng_p306_activeSet_A.scf.json
 form:
   detailed_result_csv: true
-  detailed_result_csv_format: excel_de
   export_cgmes: false
   performance_timing: compact
   power_flow_tol_unit: pu

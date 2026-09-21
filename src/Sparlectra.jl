@@ -820,6 +820,9 @@ include("api/run_import_analysis_service.jl")
 # batch API above and the shared config-driven import + API result helpers.
 include("api/run_contingency_service.jl")
 include("api/run_state_estimation_service.jl")
+# measurement generator of the Web UI demo action (options struct plus the
+# targeted critical thinning); needs the SE service import helpers above
+include("api/se_measurement_generator.jl")
 
 # --- webui: the local browser UI plus the sysimage build tooling -----------
 include("webui/webui.jl")

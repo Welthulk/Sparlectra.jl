@@ -365,7 +365,10 @@ function load_case_config(case_path::AbstractString)::Dict{String,Any}
     delete!(raw, header_key)
   end
   # the Web UI persists its per-case form defaults under `form`; those are
-  # request fields, not configuration keys, and are read separately
+  # request fields, not configuration keys, and are read separately (a
+  # `detailed_result_csv_format` there is from before 0.15.1, when the CSV
+  # format was a per-case form field; it is the machine-scope key
+  # output.csv_format now and the form block entry is ignored)
   delete!(raw, "form")
   out = _flatten_config_values!(Dict{String,Any}(), raw)
   bad = sort!(String[k for k in keys(out) if !scf_is_case_config_key(k)])

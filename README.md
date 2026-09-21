@@ -34,6 +34,7 @@ No installation required, the workshop notebooks run on Google Colab:
 | **FACTS flow control**: TCSC to UPFC | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_series_compensation.ipynb) |
 | **Scenarios and N-1 screening** | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_scenarios.ipynb) |
 | **State estimation**: measurement sets, observability, WLS, bad data | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_state_estimation.ipynb) |
+| **APSLF**: analytic power-series solver on a Sparlectra model, convergence radius as a loadability margin, hybrid start | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_apslf.ipynb) |
 
 The notebooks are generated from [docs/lit/](docs/lit/) and are also part of the [documentation](https://welthulk.github.io/Sparlectra.jl/generated/workshop_tour/).
 

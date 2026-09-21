@@ -286,5 +286,24 @@ function run_apslf_tests()
         @test all(v -> isfinite(real(v)) && isfinite(imag(v)), V_bad)
       end
   end
+  @testset "APSLF workshop runs with its assertions" begin
+    # the Literate workshop is executable Julia with an @assert next to every
+    # printed number; running it here keeps the notebook from drifting.
+    # Gated on the local case118 (the workshop's Colab path downloads
+    # instead, a test never does).
+    if large_case_path("case118.m") === nothing
+      println("      APSLF workshop: SKIPPED (case118.m not in the large-case directory)")
+    else
+      workshop = abspath(joinpath(dirname(@__DIR__), "docs", "lit", "workshop_apslf.jl"))
+      @test isfile(workshop)
+      mod = Module(:WorkshopApslfRun)
+      redirect_stdout(devnull) do
+        Base.include(mod, workshop)
+      end
+      @test true
+      println("      APSLF workshop: RAN")
+    end
+  end
+
   return true
 end
