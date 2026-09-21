@@ -1,3 +1,8 @@
+# Version 0.16.1 - 2026-09-21
+
+## Changes
+- Docs only: the test timing table marks the two observability rows as single-file measurements; the 0.16.0 changelog carries its merge date.
+
 # Version 0.16.0 - 2026-09-21
 
 ## Highlights
