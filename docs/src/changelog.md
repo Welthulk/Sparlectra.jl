@@ -1,4 +1,4 @@
-# Version 0.16.0 - 2026-09-22
+# Version 0.16.0 - 2026-09-21
 
 ## Highlights
 - Configuration overrides of a request now reach state-estimation, N-1 and short-circuit runs; before, those run types read the configuration file only.
