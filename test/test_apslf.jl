@@ -330,6 +330,31 @@ function run_apslf_tests()
             C = zeros(ComplexF64, n, 3)
             LinearAlgebra.ldiv!(@view(C[:, 2]), F, b)
             println("      probe 2 ldiv! into a column view residual: ", LinearAlgebra.norm(A * C[:, 2] - b) / LinearAlgebra.norm(b), ", other columns untouched: ", all(iszero, C[:, 1]) && all(iszero, C[:, 3]))
+            # the Padé evaluation solves a small dense complex system with LAPACK
+            # (the one BLAS/LAPACK call of the series path); the geometric series
+            # of exp(0.7 + 0.3im) must evaluate to that value, and a pure-Julia
+            # elimination of the same kind of system must agree with the library solve
+            z8 = 0.7 + 0.3im
+            c = ComplexF64[z8^n / factorial(big(n)) for n in 0:24]
+            println("      probe 8 Pade [12/12] of the exp series (expected ", exp(z8), "): ", AnalyticLoadFlow.pade_eval(c, 12, 12))
+            Ad = ComplexF64[c[abs(i - j) + 1] * (1 + 0.1im * (i + j)) for i in 1:12, j in 1:12] + 2I
+            bd = ComplexF64[c[i] for i in 1:12]
+            x_lib = Ad \ bd
+            x_ref = let A2 = copy(Ad), b2 = copy(bd), n = 12
+                for k in 1:n, i in (k + 1):n
+                    f = A2[i, k] / A2[k, k]
+                    for j in k:n; A2[i, j] -= f * A2[k, j]; end
+                    b2[i] -= f * b2[k]
+                end
+                x = zeros(ComplexF64, n)
+                for i in n:-1:1
+                    acc = b2[i]
+                    for j in (i + 1):n; acc -= A2[i, j] * x[j]; end
+                    x[i] = acc / A2[i, i]
+                end
+                x
+            end
+            println("      probe 8 dense complex 12x12 solve, LAPACK against pure Julia elimination: max diff ", maximum(abs.(x_lib .- x_ref)))
             # AnalyticLoadFlow's own 9-bus case (three PV buses) through the two
             # solver modes Sparlectra can select; the :direct mode is the default
             case9 = AnalyticLoadFlow.demo_case_9bus()
@@ -367,9 +392,23 @@ function run_apslf_tests()
             ref = ring3()
             runpf!(ref, 30, 1e-10, 0)
             vm_ref = getfield.(ref.nodeVec, :_vm_pu)
+            # the adapter path in its three layers, each printed with the
+            # numbers a run on another machine can be compared against: the
+            # model as runpf_external! builds it (no Q-limits), AnalyticLoadFlow
+            # on exactly that spec, solvePf on it, then the full runpf_external!
+            model_4 = Sparlectra.buildPfModel(ring3(); include_limits=false)
+            spec_4 = Sparlectra._apslf_spec_from_model(model_4)
+            println("      probe 4 model: busType ", model_4.busType, ", slack ", model_4.slack_idx, ", Sspec ", model_4.Sspec, ", Vset ", model_4.Vset, ", Qmin ", spec_4.Qmin, ", Qmax ", spec_4.Qmax)
+            println("      probe 4 model: Ybus ", Matrix(model_4.Ybus))
+            println("      probe 4 Newton |V| in PF order: ", vm_ref[model_4.busIdx_net])
+            res_4 = AnalyticLoadFlow.solve_pf_apslf(spec_4; mode=:direct, order=24, use_pade=true, nr_polish=false, return_coeffs=true)
+            println("      probe 4 AnalyticLoadFlow on that spec: converged = ", res_4.converged, ", reason ", get(res_4, :reason, :none), ", outer_iters ", res_4.outer_iters, ", |V| ", abs.(res_4.V), ", Q ", res_4.Q, ", bustype ", res_4.bustype, ", ALF mismatch ", AnalyticLoadFlow.max_mismatch_on_specY(spec_4, res_4.V))
+            sol_4 = Sparlectra.solvePf(apslf_solver(order=24, use_pade=true, nr_polish=false, mode=:direct), model_4; tol=1e-8)
+            println("      probe 4 solvePf on that model: converged = ", sol_4.converged, ", residual_inf ", sol_4.residual_inf, ", |V| ", abs.(sol_4.V), ", bustype_final ", sol_4.meta.bustype_final)
             for mode in (:direct, :outer)
                 probe_net = ring3()
                 _, st, sol = runpf_external!(probe_net, apslf_solver(order=24, use_pade=true, nr_polish=false, mode=mode); tol=1e-8)
+                println("      probe 4 runpf_external! mode ", mode, ": residual_inf ", sol.residual_inf, ", |V| ", abs.(sol.V), ", net |V| ", getfield.(probe_net.nodeVec, :_vm_pu), ", ALF mismatch of that V ", AnalyticLoadFlow.max_mismatch_on_specY(spec_4, sol.V))
                 println("      probe 4 Sparlectra ring3 through the adapter, mode ", mode, ": status ", st, ", converged = ", sol.converged, ", max |dVm| vs NR ", maximum(abs.(getfield.(probe_net.nodeVec, :_vm_pu) .- vm_ref)))
             end
         end
