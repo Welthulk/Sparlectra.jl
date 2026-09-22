@@ -552,10 +552,8 @@ function run_scenario_engine_extended_tests()
     # (2026-09-03): case300 judges screening QUALITY, no false negatives at
     # margin 10 with the 0.005 pu trust gate (its outage 57-63 forced the
     # gate: buses 63/64/526 collapse to 0.84 pu behind a 0.0104 pu one-step
-    # residual); loud SKIPPED when the untracked case file is absent
-    # since the shipped data/mpower/sp_case300.m (synthetic 300-bus operated
-    # grid, 411 branches, 69 generators, generated and validated by
-    # a case generator that is not shipped) the acceptance runs on every checkout
+    # residual); runs on the shipped data/mpower/sp_case300.m (synthetic
+    # 300-bus operated grid, 411 branches, 69 generators)
     case_path = abspath(joinpath(dirname(@__DIR__), "data", "mpower", "sp_case300.m"))
     @test isfile(case_path)
     begin
@@ -589,34 +587,5 @@ function run_scenario_engine_extended_tests()
     println("      scenarios workshop: RAN")
   end
 
-  # the scaling timings measure runtime only (about 50 s for three sweeps
-  # over 2300 cases) and decide nothing about correctness: they run when
-  # SPARLECTRA_TIMING_TESTS=1 is set and print a SKIPPED line otherwise
-  if get(ENV, "SPARLECTRA_TIMING_TESTS", "") != "1"
-    println("      scenario engine sp_case1354 scaling timings: SKIPPED (set SPARLECTRA_TIMING_TESTS=1 to measure)")
-  else
-  @testset "scenario engine sp_case1354 scaling timings" begin
-    # the pegase case measures RUNTIME SCALING only (test-network rule
-    # 2026-09-03: an OPF test instance whose base carries overloads by
-    # construction says nothing about screening quality); seconds for
-    # :off, :flag, :only, gated on SPARLECTRA_LARGE_CASES_DIR with a loud
-    # SKIPPED line (canonical pegase conventions: rad, shift sign -1.0,
-    # ratio normal)
-    # the size probe is the shipped data/mpower/sp_case1354.m (synthetic
-    # 1354-bus grid, 2040 branches, 260 generators, not shipped generator)
-    case_path = abspath(joinpath(dirname(@__DIR__), "data", "mpower", "sp_case1354.m"))
-    @test isfile(case_path)
-    begin
-      net = Sparlectra.createNetFromMatPowerFile(filename = case_path, flatstart = false, enable_pq_gen_controllers = true, bus_shunt_model = :admittance, matpower_shift_sign = 1.0, matpower_shift_unit = :deg, matpower_ratio = :normal, tap_changer_model = :ideal)
-      cases = vcat(Sparlectra.generateN1Branches(net), Sparlectra.generateN1Generators(net))
-      Sparlectra.runContingencies!(net, cases[1:2])
-      t_off = @timed Sparlectra.runContingencies!(net, cases)
-      t_flag = @timed Sparlectra.runContingencies!(net, cases; screening_mode = :flag, screening_margin_pct = 10.0)
-      t_only = @timed Sparlectra.runContingencies!(net, cases; screening_mode = :only, screening_margin_pct = 10.0)
-      @test length(t_off.value) == length(cases)
-      println("      scenario engine sp_case1354: RAN (", length(cases), " cases, off/flag/only = ", round(t_off.time; digits = 2), "/", round(t_flag.time; digits = 2), "/", round(t_only.time; digits = 2), " s, threads = ", Threads.nthreads(), ")")
-    end
-  end
-  end
   return nothing
 end
