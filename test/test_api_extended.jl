@@ -834,22 +834,14 @@ power_flow:
         # fixed-reference check. With the forced settings on the override
         # level the contract holds again: exactly one iteration from the
         # imported state, and the residual OF that state is the answer.
-        # The historical case14 anchor value (0.0422, recorded 2026-07-30)
-        # still runs below when the case is cached locally.
+        # The historical case14 anchor (0.0422, recorded 2026-07-30) ran here
+        # from the local cache only; since 0.16.2 the shipped sp_case14 anchor
+        # is the one fixed reference, so no test gates on a download.
         sp14 = abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json"))
         sp14_check = run_fixed_reference_self_check(casefile = sp14, output_dir = joinpath(tmpdir, "self_check_sp14"))
         @test sp14_check.raw_result !== nothing
         @test sp14_check.raw_result.iterations == 1
         @test isapprox(sp14_check.raw_result.final_mismatch, 0.09082632227760662; rtol = 1e-6)
-        case14 = large_case_path("case14.m")
-        if case14 === nothing
-          println("      self-check case14 anchor: SKIPPED (case14.m not in the large-case directory)")
-        else
-          case14_check = run_fixed_reference_self_check(casefile = case14, output_dir = joinpath(tmpdir, "self_check_case14"))
-          @test case14_check.raw_result !== nothing
-          @test isapprox(case14_check.raw_result.final_mismatch, 0.04218283919133408; rtol = 1e-8)
-          @test case14_check.raw_result.iterations == 1
-        end
 
         # Neither a case configuration file nor a caller override may move
         # the fixed reference. Both were possible until 2026-09-07: the file

@@ -268,12 +268,18 @@ function write_ac_island_report(path::AbstractString, report; format = result_cs
   return path
 end
 
+# The block is assembled first and written with ONE print: parallel N-1
+# workers call this per case, and line-wise printing interleaved their
+# blocks line by line in the log (seen on sp_case188).
 function _print_ac_island_summary(report)
-  println("AC island detection:")
-  println("  islands: ", length(report.rows))
+  io = IOBuffer()
+  println(io, "AC island detection:")
+  println(io, "  islands: ", length(report.rows))
   for row in report.rows
-    println("  island ", row.island_id, ": buses=", row.n_bus, ", branches=", row.n_branch, ", ref=", row.chosen_ref_bus == 0 ? "none" : row.chosen_ref_bus, ", status=", row.status)
+    println(io, "  island ", row.island_id, ": buses=", row.n_bus, ", branches=", row.n_branch, ", ref=", row.chosen_ref_bus == 0 ? "none" : row.chosen_ref_bus, ", status=", row.status)
   end
+  print(String(take!(io)))
+  return nothing
 end
 
 # Fail fast and for ALL bad islands at once: an island without any angle

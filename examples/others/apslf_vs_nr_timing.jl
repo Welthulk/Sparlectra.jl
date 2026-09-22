@@ -101,16 +101,16 @@ end
 
 # ---- SVG: time over bus count, log-log, converged runs only -----------------
 function write_svg(path, rows)
-    series = Dict{String,Vector{Tuple{Float64,Float64}}}()
+    series = Dict{String,Vector{Tuple{Float64,Float64,Bool,String}}}()
     for r in rows
         r.outcome == "converged" || continue
         key = r.solver == "NR" ? "NR" : "APSLF $(r.order)"
-        push!(get!(series, key, Tuple{Float64,Float64}[]), (Float64(r.buses), r.ms))
+        push!(get!(series, key, Tuple{Float64,Float64,Bool,String}[]), (Float64(r.buses), r.ms, startswith(r.case, "tiled_"), r.case))
     end
     isempty(series) && return
     pts = vcat(values(series)...)
-    xmin, xmax = extrema(first.(pts))
-    ymin, ymax = extrema(last.(pts))
+    xmin, xmax = extrema(getindex.(pts, 1))
+    ymin, ymax = extrema(getindex.(pts, 2))
     lx(v) = log10(v)
     W, H, L, B = 720.0, 420.0, 70.0, 50.0
     sx(v) = L + (lx(v) - lx(xmin)) / max(lx(xmax) - lx(xmin), 1e-9) * (W - L - 20)
@@ -137,16 +137,30 @@ function write_svg(path, rows)
         println(io, "<line x1=\"$(L)\" y1=\"30\" x2=\"$(L)\" y2=\"$(H-B)\" stroke=\"#333\"/>")
         println(io, "<text x=\"$(W/2)\" y=\"$(H-8)\" text-anchor=\"middle\">buses</text>")
         println(io, "<text x=\"14\" y=\"$(H/2)\" text-anchor=\"middle\" transform=\"rotate(-90 14 $(H/2))\">ms</text>")
+        # the LINE runs over the tiled grids only (one network family, so
+        # the slope means something); the sp_ cases are separate labelled
+        # markers, because mixing both families in one line by bus count
+        # put sp_case1354 between tiled_1000 and tiled_2000 and drew a kink
+        # that is a structure difference, not a scaling effect
         for (k, name) in enumerate(sort(collect(keys(series))))
-            p = sort(series[name]; by=first)
             c = colors[mod1(k, length(colors))]
-            d = join(("$(i == 1 ? "M" : "L")$(round(sx(x); digits=1)),$(round(sy(y); digits=1))" for (i, (x, y)) in enumerate(p)), " ")
-            println(io, "<path d=\"$(d)\" fill=\"none\" stroke=\"$(c)\" stroke-width=\"2\"/>")
-            for (x, y) in p
+            p = sort(series[name]; by=first)
+            grid = [(x, y) for (x, y, tiled, _) in p if tiled]
+            other = [(x, y, lbl) for (x, y, tiled, lbl) in p if !tiled]
+            if length(grid) >= 2
+                d = join(("$(i == 1 ? "M" : "L")$(round(sx(x); digits=1)),$(round(sy(y); digits=1))" for (i, (x, y)) in enumerate(grid)), " ")
+                println(io, "<path d=\"$(d)\" fill=\"none\" stroke=\"$(c)\" stroke-width=\"2\"/>")
+            end
+            for (x, y) in grid
                 println(io, "<circle cx=\"$(round(sx(x); digits=1))\" cy=\"$(round(sy(y); digits=1))\" r=\"3\" fill=\"$(c)\"/>")
             end
+            for (x, y, lbl) in other
+                cx, cy = round(sx(x); digits=1), round(sy(y); digits=1)
+                println(io, "<rect x=\"$(cx-3.5)\" y=\"$(cy-3.5)\" width=\"7\" height=\"7\" fill=\"white\" stroke=\"$(c)\" stroke-width=\"1.5\"/>")
+                println(io, "<text x=\"$(cx+6)\" y=\"$(cy-5)\" font-size=\"10\" fill=\"$(c)\">$(lbl)</text>")
+            end
             println(io, "<rect x=\"$(L+10)\" y=\"$(36+16*k)\" width=\"12\" height=\"12\" fill=\"$(c)\"/>")
-            println(io, "<text x=\"$(L+28)\" y=\"$(46+16*k)\">$(name)</text>")
+            println(io, "<text x=\"$(L+28)\" y=\"$(46+16*k)\">$(name) (line: tiled grids, squares: sp_ cases)</text>")
         end
         println(io, "</svg>")
     end
