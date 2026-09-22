@@ -87,18 +87,6 @@ function solve_sparse_system(A::SparseMatrixCSC, b; context::Symbol = :powerflow
   end
 end
 
-"""
-    solve_linear(A, b; allow_pinv=true, svd_max_n=DEFAULT_DENSE_FALLBACK_MAX_N)
-
-Solve `A*x = b`. Sparse matrices are handled by `solve_sparse_system` and are
-never converted to dense storage. Dense callers may still use the small-system
-SVD fallback when explicitly allowed; `svd_max_n` bounds the system size the
-SVD fallback accepts. Callers for whom rank deficiency is an EXPECTED state
-rather than a hard fault (the WLS normal equations of the state estimation,
-where released extra states can turn out collectively dependent) raise the
-bound so a singular system degrades to a least-squares step instead of an
-exception; the power-flow callers keep the small default on purpose.
-"""
 ## Human-readable physical equivalent of a per-unit power tolerance
 ## (task_tol_watts): tol * baseMVA, shown in W, kW or MW so the number is
 ## readable. The tolerance is compared against the LARGEST SINGLE bus
@@ -114,6 +102,18 @@ function format_tolerance_physical(tol::Float64, base_mva::Float64)::String
   return string(tol, " pu, equals ", shown, " ", unit, " at ", round(base_mva; sigdigits = 6), " MVA base")
 end
 
+"""
+    solve_linear(A, b; allow_pinv=true, svd_max_n=DEFAULT_DENSE_FALLBACK_MAX_N)
+
+Solve `A*x = b`. Sparse matrices are handled by `solve_sparse_system` and are
+never converted to dense storage. Dense callers may still use the small-system
+SVD fallback when explicitly allowed; `svd_max_n` bounds the system size the
+SVD fallback accepts. Callers for whom rank deficiency is an EXPECTED state
+rather than a hard fault (the WLS normal equations of the state estimation,
+where released extra states can turn out collectively dependent) raise the
+bound so a singular system degrades to a least-squares step instead of an
+exception; the power-flow callers keep the small default on purpose.
+"""
 function solve_linear(A, b; allow_pinv::Bool = true, svd_max_n::Int = DEFAULT_DENSE_FALLBACK_MAX_N)
   if A isa SparseMatrixCSC
     return solve_sparse_system(A, b; context = :powerflow)

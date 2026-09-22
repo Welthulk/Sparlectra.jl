@@ -118,11 +118,6 @@ end
 ## pre-0.10 call site (robust = true) keeps its exact behavior.
 @inline _se_effective_robust_mode(cfg::StateEstimationConfig)::Symbol = (cfg.robust_mode === :off && cfg.robust) ? :staged : cfg.robust_mode
 
-"""
-    numeric_rank(A; tol=nothing) -> Int
-
-Compute numerical matrix rank using singular values.
-"""
 ## Sparse/dense crossover, measured: the dense SVD/pinv machinery is
 ## sub-second up to roughly n = 2000 states and cubic beyond, so 2000 is
 ## where the dense conveniences stop paying for themselves; the sparse
@@ -154,6 +149,11 @@ const _SE_FULL_OMEGA_MAX_M = 20_000
 ## rn 58 and had that healthy row eliminated (task_se_bad_data_v0100).
 const _SE_SUPPRESSION_MIN_WII = 0.3
 
+"""
+    numeric_rank(A; tol=nothing) -> Int
+
+Compute numerical matrix rank using singular values.
+"""
 function numeric_rank(A::AbstractMatrix{<:Real}; tol = nothing)
   s = svdvals(Matrix(A))
   isempty(s) && return 0
@@ -2004,24 +2004,6 @@ function evaluate_local_observability(net::Net, stateCols::Vector{Int}; tol = no
   return evaluate_local_observability(net, Measurement[m for m in net.measurements], stateCols; tol = tol)
 end
 
-"""
-    runse!(net, measurements) -> SEResult
-
-Run a first classical nonlinear weighted least-squares state estimator.
-All settings come from the active configuration (`state_estimation_config()`);
-a deviating run installs its settings with `with_state_estimation_config`.
-
-State representation:
-- bus voltage angles for all non-slack buses (radians)
-- bus voltage magnitudes for all buses (p.u.)
-- optional PMU reference-angle offset α (radians), appended automatically
-  when active `VaMeas` measurements exist and `pmu_ref_offset = :auto`
-
-PMU angle measurements (`VaMeas`, degrees) are modeled as
-`z = θ_i + α + e`: the network angles stay slack-referenced, α maps them
-into the common PMU time base. With `pmu_ref_offset = :off` the offset
-state is omitted and PMU angles are assumed to be slack-referenced already.
-"""
 # ---------------------------------------------------------------------------
 # Island-wise state estimation (per-island reference)
 # ---------------------------------------------------------------------------
@@ -3272,6 +3254,24 @@ end
 # installs them for its duration with with_state_estimation_config or
 # with_sparlectra_config; the service does that with the resolved
 # configuration of the case.
+"""
+    runse!(net, measurements) -> SEResult
+
+Run a first classical nonlinear weighted least-squares state estimator.
+All settings come from the active configuration (`state_estimation_config()`);
+a deviating run installs its settings with `with_state_estimation_config`.
+
+State representation:
+- bus voltage angles for all non-slack buses (radians)
+- bus voltage magnitudes for all buses (p.u.)
+- optional PMU reference-angle offset α (radians), appended automatically
+  when active `VaMeas` measurements exist and `pmu_ref_offset = :auto`
+
+PMU angle measurements (`VaMeas`, degrees) are modeled as
+`z = θ_i + α + e`: the network angles stay slack-referenced, α maps them
+into the common PMU time base. With `pmu_ref_offset = :off` the offset
+state is omitted and PMU angles are assumed to be slack-referenced already.
+"""
 function runse!(net::Net, measurements::Vector{Measurement})
   return _runse_configured!(net, measurements, state_estimation_config())
 end

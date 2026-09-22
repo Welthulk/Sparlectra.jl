@@ -18,6 +18,10 @@
 #          stage 3a (D10): the raw source start values come from the typed
 #          case's start_state, not from a MATPOWER container.
 
+# task_import_direct: the projection core is import-path neutral. The raw
+# start voltages arrive index-aligned with net.nodeVec (nothing = no raw
+# value for that node); each import path builds that vector from ITS
+# source of truth, the SCF start_state or the parsed MATPOWER bus rows.
 """
     _apply_start_modes!(net, case, start_cfg; performance_profile) -> Nothing
 
@@ -29,10 +33,6 @@ the source system's setpoint choice at conversion time, so the historical
 distinction between the raw generator setpoint and the imported setpoint
 collapses onto the value the machines actually regulate to.
 """
-# task_import_direct: the projection core is import-path neutral. The raw
-# start voltages arrive index-aligned with net.nodeVec (nothing = no raw
-# value for that node); each import path builds that vector from ITS
-# source of truth, the SCF start_state or the parsed MATPOWER bus rows.
 function _apply_start_modes!(net::Net, case::SCFCase, start_cfg::StartModeConfig; performance_profile = nothing)
   spar = case.sparlectra
   start_nodes = spar === nothing ? Dict{Int,SCFStartNode}() : spar.start_state.nodes
