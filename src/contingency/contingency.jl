@@ -46,15 +46,15 @@ One contingency to evaluate: the outage of a single network element.
   `generateN1Branches` screening filters.
 """
 struct ContingencyCase
-  name::String
-  kind::Symbol
-  element::String
-  weight::Float64
-  function ContingencyCase(name::String, kind::Symbol, element::String, weight::Real = 1.0)
-    kind in (:branch, :gen) || throw(ArgumentError("ContingencyCase: kind must be :branch or :gen, got :$(kind)."))
-    (isfinite(weight) && weight >= 0.0) || throw(ArgumentError("ContingencyCase: weight must be a finite value >= 0, got $(weight)."))
-    return new(name, kind, element, Float64(weight))
-  end
+    name::String
+    kind::Symbol
+    element::String
+    weight::Float64
+    function ContingencyCase(name::String, kind::Symbol, element::String, weight::Real=1.0)
+        kind in (:branch, :gen) || throw(ArgumentError("ContingencyCase: kind must be :branch or :gen, got :$(kind)."))
+        (isfinite(weight) && weight >= 0.0) || throw(ArgumentError("ContingencyCase: weight must be a finite value >= 0, got $(weight)."))
+        return new(name, kind, element, Float64(weight))
+    end
 end
 
 ContingencyCase(element::String) = ContingencyCase(element, :branch, element)
@@ -79,12 +79,12 @@ numbers directly instead of parsing a string.
 - `sn_MVA::Float64`: the branch rating the loading is measured against.
 """
 struct OverloadRecord
-  name::String
-  loading_pct::Float64
-  loading_base_pct::Float64
-  delta_pct::Float64
-  s_MVA::Float64
-  sn_MVA::Float64
+    name::String
+    loading_pct::Float64
+    loading_base_pct::Float64
+    delta_pct::Float64
+    s_MVA::Float64
+    sn_MVA::Float64
 end
 
 """
@@ -124,20 +124,20 @@ Outcome of one [`ContingencyCase`](@ref) evaluated by
   the exception message). Failures are REPORTED, never thrown.
 """
 struct ContingencyResult
-  name::String
-  weight::Float64
-  converged::Bool
-  iterations::Int
-  start_used::Symbol
-  max_vm_pu::Float64
-  min_vm_pu::Float64
-  max_branch_loading_pct::Float64
-  severity::Float64
-  overloads::Vector{OverloadRecord}
-  voltage_violations::Vector{String}
-  island_count::Int
-  shed_load_mw::Float64
-  error::Union{Nothing,String}
+    name::String
+    weight::Float64
+    converged::Bool
+    iterations::Int
+    start_used::Symbol
+    max_vm_pu::Float64
+    min_vm_pu::Float64
+    max_branch_loading_pct::Float64
+    severity::Float64
+    overloads::Vector{OverloadRecord}
+    voltage_violations::Vector{String}
+    island_count::Int
+    shed_load_mw::Float64
+    error::Union{Nothing,String}
 end
 
 """
@@ -163,41 +163,41 @@ grid (all default to "no filter"):
 - `name_pattern`: keep a branch only if its component name matches this
   `Regex` or contains this substring.
 """
-function generateN1Branches(net::Net; include_transformers::Bool = true,
-                            min_vn_kV::Real = 0.0, min_sn_MVA::Real = 0.0,
-                            name_pattern::Union{Nothing,AbstractString,Regex} = nothing)::Vector{ContingencyCase}
-  name_count = Dict{String,Int}()
-  for br in net.branchVec
-    name = getCompName(br.comp)
-    name_count[name] = get(name_count, name, 0) + 1
-  end
-  cases = ContingencyCase[]
-  for br in net.branchVec
-    br.status == 1 || continue
-    _branch_terminal_state(br) === :closed || continue
-    is_transformer = br.comp.cTyp === Trafo || br.ratio != 0.0
-    include_transformers || !is_transformer || continue
-    # voltage-level screen: the higher endpoint voltage is the level the branch
-    # belongs to (keeps EHV/HV transformers when screening for the top grid)
-    if min_vn_kV > 0.0
-      vn = max(getNodeVn(net.nodeVec[Int(br.fromBus)]), getNodeVn(net.nodeVec[Int(br.toBus)]))
-      vn >= min_vn_kV || continue
+function generateN1Branches(net::Net; include_transformers::Bool=true,
+    min_vn_kV::Real=0.0, min_sn_MVA::Real=0.0,
+    name_pattern::Union{Nothing,AbstractString,Regex}=nothing)::Vector{ContingencyCase}
+    name_count = Dict{String,Int}()
+    for br in net.branchVec
+        name = getCompName(br.comp)
+        name_count[name] = get(name_count, name, 0) + 1
     end
-    # rating screen: only branches with a usable rating; an unrated branch
-    # cannot satisfy a positive threshold, so it is dropped
-    if min_sn_MVA > 0.0
-      rating = br.sn_MVA
-      (rating !== nothing && isfinite(rating) && rating >= min_sn_MVA) || continue
+    cases = ContingencyCase[]
+    for br in net.branchVec
+        br.status == 1 || continue
+        _branch_terminal_state(br) === :closed || continue
+        is_transformer = br.comp.cTyp === Trafo || br.ratio != 0.0
+        include_transformers || !is_transformer || continue
+        # voltage-level screen: the higher endpoint voltage is the level the branch
+        # belongs to (keeps EHV/HV transformers when screening for the top grid)
+        if min_vn_kV > 0.0
+            vn = max(getNodeVn(net.nodeVec[Int(br.fromBus)]), getNodeVn(net.nodeVec[Int(br.toBus)]))
+            vn >= min_vn_kV || continue
+        end
+        # rating screen: only branches with a usable rating; an unrated branch
+        # cannot satisfy a positive threshold, so it is dropped
+        if min_sn_MVA > 0.0
+            rating = br.sn_MVA
+            (rating !== nothing && isfinite(rating) && rating >= min_sn_MVA) || continue
+        end
+        name = getCompName(br.comp)
+        (name_pattern === nothing || occursin(name_pattern, name)) || continue
+        # parallel circuits share a component name; disambiguate by branch index
+        # so every circuit gets its OWN outage case (a bare name would always
+        # resolve to the first circuit and evaluate the same outage twice)
+        element = name_count[name] > 1 ? string(name, "#", br.branchIdx) : name
+        push!(cases, ContingencyCase(element, :branch, element))
     end
-    name = getCompName(br.comp)
-    (name_pattern === nothing || occursin(name_pattern, name)) || continue
-    # parallel circuits share a component name; disambiguate by branch index
-    # so every circuit gets its OWN outage case (a bare name would always
-    # resolve to the first circuit and evaluate the same outage twice)
-    element = name_count[name] > 1 ? string(name, "#", br.branchIdx) : name
-    push!(cases, ContingencyCase(element, :branch, element))
-  end
-  return cases
+    return cases
 end
 
 """
@@ -222,60 +222,60 @@ Optional screening filters (default to "no filter"):
 Generator component names are not unique (several units can share one name or
 bus); duplicates are disambiguated as `"<name>#<prosumerIndex>"`.
 """
-function generateN1Generators(net::Net; min_pg_MW::Real = 0.0,
-                              name_pattern::Union{Nothing,AbstractString,Regex} = nothing)::Vector{ContingencyCase}
-  name_count = Dict{String,Int}()
-  for ps in net.prosumpsVec
-    isGenerator(ps) || continue
-    name = getCompName(ps.comp)
-    name_count[name] = get(name_count, name, 0) + 1
-  end
-  cases = ContingencyCase[]
-  for (pidx, ps) in enumerate(net.prosumpsVec)
-    isGenerator(ps) || continue
-    if min_pg_MW > 0.0
-      abs(something(ps.pVal, 0.0)) >= min_pg_MW || continue
+function generateN1Generators(net::Net; min_pg_MW::Real=0.0,
+    name_pattern::Union{Nothing,AbstractString,Regex}=nothing)::Vector{ContingencyCase}
+    name_count = Dict{String,Int}()
+    for ps in net.prosumpsVec
+        isGenerator(ps) || continue
+        name = getCompName(ps.comp)
+        name_count[name] = get(name_count, name, 0) + 1
     end
-    name = getCompName(ps.comp)
-    (name_pattern === nothing || occursin(name_pattern, name)) || continue
-    # generator names are not unique (unlike branch names); disambiguate by the
-    # prosumer index so every unit resolves to its OWN outage
-    element = name_count[name] > 1 ? string(name, "#", pidx) : name
-    push!(cases, ContingencyCase(element, :gen, element))
-  end
-  return cases
+    cases = ContingencyCase[]
+    for (pidx, ps) in enumerate(net.prosumpsVec)
+        isGenerator(ps) || continue
+        if min_pg_MW > 0.0
+            abs(something(ps.pVal, 0.0)) >= min_pg_MW || continue
+        end
+        name = getCompName(ps.comp)
+        (name_pattern === nothing || occursin(name_pattern, name)) || continue
+        # generator names are not unique (unlike branch names); disambiguate by the
+        # prosumer index so every unit resolves to its OWN outage
+        element = name_count[name] > 1 ? string(name, "#", pidx) : name
+        push!(cases, ContingencyCase(element, :gen, element))
+    end
+    return cases
 end
 
 # resolve a case element against branchVec: either a plain component name
 # (first match) or the disambiguated "<name>#<branchIdx>" form, where the
 # index must carry the expected name (guards against stale case lists)
 function _resolve_contingency_branch(cnet::Net, element::String)::Union{Nothing,Int}
-  hash_pos = findlast('#', element)
-  if hash_pos !== nothing
-    idx = tryparse(Int, element[(hash_pos+1):end])
-    name = element[1:(hash_pos-1)]
-    if idx !== nothing && 1 <= idx <= length(cnet.branchVec) && getCompName(cnet.branchVec[idx].comp) == name
-      return idx
+    hash_pos = findlast('#', element)
+    if hash_pos !== nothing
+        idx = tryparse(Int, element[(hash_pos+1):end])
+        name = element[1:(hash_pos-1)]
+        if idx !== nothing && 1 <= idx <= length(cnet.branchVec) && getCompName(cnet.branchVec[idx].comp) == name
+            return idx
+        end
+        return nothing
     end
-    return nothing
-  end
-  return findfirst(b -> getCompName(b.comp) == element, cnet.branchVec)
+    return findfirst(b -> getCompName(b.comp) == element, cnet.branchVec)
 end
 
 # resolve a generator case element against prosumpsVec: a plain component name
 # (first generator match) or the disambiguated "<name>#<prosumerIndex>" form,
 # where the index must be a generator carrying the expected name
 function _resolve_contingency_generator(cnet::Net, element::String)::Union{Nothing,Int}
-  hash_pos = findlast('#', element)
-  if hash_pos !== nothing
-    idx = tryparse(Int, element[(hash_pos+1):end])
-    name = element[1:(hash_pos-1)]
-    if idx !== nothing && 1 <= idx <= length(cnet.prosumpsVec) && isGenerator(cnet.prosumpsVec[idx]) && getCompName(cnet.prosumpsVec[idx].comp) == name
-      return idx
+    hash_pos = findlast('#', element)
+    if hash_pos !== nothing
+        idx = tryparse(Int, element[(hash_pos+1):end])
+        name = element[1:(hash_pos-1)]
+        if idx !== nothing && 1 <= idx <= length(cnet.prosumpsVec) && isGenerator(cnet.prosumpsVec[idx]) && getCompName(cnet.prosumpsVec[idx].comp) == name
+            return idx
+        end
+        return nothing
     end
-    return nothing
-  end
-  return findfirst(ps -> isGenerator(ps) && getCompName(ps.comp) == element, cnet.prosumpsVec)
+    return findfirst(ps -> isGenerator(ps) && getCompName(ps.comp) == element, cnet.prosumpsVec)
 end
 
 # take one generator out of service on a case-local net: delete just that
@@ -298,19 +298,19 @@ end
 # future multi-element case (e.g. a gen-plus-branch combination) must re-resolve
 # by name after each removal rather than reuse a pre-computed index.
 function _remove_contingency_generator!(cnet::Net, pidx::Int)
-  busIdx = getPosumerBusIndex(cnet.prosumpsVec[pidx])
-  deleteat!(cnet.prosumpsVec, pidx)
-  node = cnet.nodeVec[busIdx]
-  node._pƩGen = 0.0
-  node._qƩGen = 0.0
-  for ps in cnet.prosumpsVec
-    (isGenerator(ps) && getPosumerBusIndex(ps) == busIdx) || continue
-    node._pƩGen += something(ps.pVal, 0.0)
-    node._qƩGen += something(ps.qVal, 0.0)
-  end
-  refreshBusTypesFromProsumers!(cnet)
-  _buildQLimits!(cnet)
-  return nothing
+    busIdx = getPosumerBusIndex(cnet.prosumpsVec[pidx])
+    deleteat!(cnet.prosumpsVec, pidx)
+    node = cnet.nodeVec[busIdx]
+    node._pƩGen = 0.0
+    node._qƩGen = 0.0
+    for ps in cnet.prosumpsVec
+        (isGenerator(ps) && getPosumerBusIndex(ps) == busIdx) || continue
+        node._pƩGen += something(ps.pVal, 0.0)
+        node._qƩGen += something(ps.qVal, 0.0)
+    end
+    refreshBusTypesFromProsumers!(cnet)
+    _buildQLimits!(cnet)
+    return nothing
 end
 
 """
@@ -334,8 +334,8 @@ attach per-branch outage rates read with [`readContingencyWeightsCSV`](@ref)
 before calling [`runContingencies!`](@ref); [`ContingencyCase`](@ref) is
 immutable, so this builds new cases rather than mutating in place.
 """
-function applyContingencyWeights(cases::AbstractVector{ContingencyCase}, weights::AbstractDict; default::Real = 1.0)::Vector{ContingencyCase}
-  return ContingencyCase[ContingencyCase(c.name, c.kind, c.element, Float64(get(weights, c.name, default))) for c in cases]
+function applyContingencyWeights(cases::AbstractVector{ContingencyCase}, weights::AbstractDict; default::Real=1.0)::Vector{ContingencyCase}
+    return ContingencyCase[ContingencyCase(c.name, c.kind, c.element, Float64(get(weights, c.name, default))) for c in cases]
 end
 
 """
@@ -349,82 +349,86 @@ blank lines and lines beginning with `#` are ignored. Feed the result to
 or a negative / non-finite weight.
 """
 function readContingencyWeightsCSV(path::AbstractString)::Dict{String,Float64}
-  weights = Dict{String,Float64}()
-  for (lineno, raw) in enumerate(eachline(path))
-    line = strip(raw)
-    (isempty(line) || startswith(line, '#')) && continue
-    delim = occursin(';', line) ? ';' : ','
-    fields = split(line, delim)
-    length(fields) >= 2 || throw(ArgumentError("readContingencyWeightsCSV: line $(lineno) needs a name and a weight column, got: $(raw)"))
-    name = strip(fields[1])
-    wtext = strip(fields[2])
-    # skip a header row: a non-numeric second field on the first data line
-    w = tryparse(Float64, wtext)
-    if w === nothing
-      lineno == 1 && continue          # header like "name;weight"
-      throw(ArgumentError("readContingencyWeightsCSV: line $(lineno) has a non-numeric weight \"$(wtext)\"."))
+    weights = Dict{String,Float64}()
+    # readlines, not eachline(path): eachline keeps the file open until the
+    # iterator is collected, so a throw on a malformed row left the handle open
+    # and the caller's rm(tmp) failed with EBUSY on Windows (the Web UI weights
+    # upload test); readlines closes the file before the first row is judged
+    for (lineno, raw) in enumerate(readlines(path))
+        line = strip(raw)
+        (isempty(line) || startswith(line, '#')) && continue
+        delim = occursin(';', line) ? ';' : ','
+        fields = split(line, delim)
+        length(fields) >= 2 || throw(ArgumentError("readContingencyWeightsCSV: line $(lineno) needs a name and a weight column, got: $(raw)"))
+        name = strip(fields[1])
+        wtext = strip(fields[2])
+        # skip a header row: a non-numeric second field on the first data line
+        w = tryparse(Float64, wtext)
+        if w === nothing
+            lineno == 1 && continue          # header like "name;weight"
+            throw(ArgumentError("readContingencyWeightsCSV: line $(lineno) has a non-numeric weight \"$(wtext)\"."))
+        end
+        (isfinite(w) && w >= 0.0) || throw(ArgumentError("readContingencyWeightsCSV: line $(lineno) weight must be finite and >= 0, got $(w)."))
+        weights[String(name)] = w
     end
-    (isfinite(w) && w >= 0.0) || throw(ArgumentError("readContingencyWeightsCSV: line $(lineno) weight must be finite and >= 0, got $(w)."))
-    weights[String(name)] = w
-  end
-  return weights
+    return weights
 end
 
 # evaluate the solved contingency net against the limit band; pure reader
 function _contingency_metrics(cnet::Net, vm_min_pu::Float64, vm_max_pu::Float64, base_loadings::Dict{String,Float64})
-  iso = Set(cnet.isoNodes)
-  bus_names = Dict{Int,String}(idx => name for (name, idx) in cnet.busDict)
-  vmin = Inf
-  vmax = -Inf
-  violations = String[]
-  for node in cnet.nodeVec
-    node.busIdx in iso && continue
-    vm = something(node._vm_pu, NaN)
-    isfinite(vm) || continue
-    vmin = min(vmin, vm)
-    vmax = max(vmax, vm)
-    if vm < vm_min_pu || vm > vm_max_pu
-      push!(violations, get(bus_names, node.busIdx, getCompName(node.comp)))
+    iso = Set(cnet.isoNodes)
+    bus_names = Dict{Int,String}(idx => name for (name, idx) in cnet.busDict)
+    vmin = Inf
+    vmax = -Inf
+    violations = String[]
+    for node in cnet.nodeVec
+        node.busIdx in iso && continue
+        vm = something(node._vm_pu, NaN)
+        isfinite(vm) || continue
+        vmin = min(vmin, vm)
+        vmax = max(vmax, vm)
+        if vm < vm_min_pu || vm > vm_max_pu
+            push!(violations, get(bus_names, node.busIdx, getCompName(node.comp)))
+        end
     end
-  end
-  max_loading = NaN
-  overloads = OverloadRecord[]
-  for br in cnet.branchVec
-    br.status == 1 || continue
-    rating = br.sn_MVA
-    (rating === nothing || !isfinite(rating) || rating <= 0.0) && continue
-    s_from = br.fBranchFlow === nothing ? 0.0 : hypot(something(br.fBranchFlow.pFlow, 0.0), something(br.fBranchFlow.qFlow, 0.0))
-    s_to = br.tBranchFlow === nothing ? 0.0 : hypot(something(br.tBranchFlow.pFlow, 0.0), something(br.tBranchFlow.qFlow, 0.0))
-    s_mva = max(s_from, s_to)
-    loading = 100.0 * s_mva / rating
-    (isnan(max_loading) || loading > max_loading) && (max_loading = loading)
-    if loading > 100.0
-      name = getCompName(br.comp)
-      # base loading is looked up by name; parallel circuits share a name, so
-      # their base value is an approximation (their base loadings are close)
-      base = get(base_loadings, name, NaN)
-      push!(overloads, OverloadRecord(name, loading, base, loading - base, s_mva, rating))
+    max_loading = NaN
+    overloads = OverloadRecord[]
+    for br in cnet.branchVec
+        br.status == 1 || continue
+        rating = br.sn_MVA
+        (rating === nothing || !isfinite(rating) || rating <= 0.0) && continue
+        s_from = br.fBranchFlow === nothing ? 0.0 : hypot(something(br.fBranchFlow.pFlow, 0.0), something(br.fBranchFlow.qFlow, 0.0))
+        s_to = br.tBranchFlow === nothing ? 0.0 : hypot(something(br.tBranchFlow.pFlow, 0.0), something(br.tBranchFlow.qFlow, 0.0))
+        s_mva = max(s_from, s_to)
+        loading = 100.0 * s_mva / rating
+        (isnan(max_loading) || loading > max_loading) && (max_loading = loading)
+        if loading > 100.0
+            name = getCompName(br.comp)
+            # base loading is looked up by name; parallel circuits share a name, so
+            # their base value is an approximation (their base loadings are close)
+            base = get(base_loadings, name, NaN)
+            push!(overloads, OverloadRecord(name, loading, base, loading - base, s_mva, rating))
+        end
     end
-  end
-  # worst-loaded branch first, so the result list and the report read top-down
-  sort!(overloads; by = o -> -o.loading_pct)
-  return (; vmin = isfinite(vmin) ? vmin : NaN, vmax = isfinite(vmax) ? vmax : NaN, violations, max_loading, overloads)
+    # worst-loaded branch first, so the result list and the report read top-down
+    sort!(overloads; by=o -> -o.loading_pct)
+    return (; vmin=isfinite(vmin) ? vmin : NaN, vmax=isfinite(vmax) ? vmax : NaN, violations, max_loading, overloads)
 end
 
 # base-case loading per rated branch (component name -> loading_pct), computed
 # ONCE on the solved template so every contingency can report the delta to the
 # pre-outage state. Empty when the base did not converge (deltas are then NaN).
 function _base_branch_loadings(net::Net)::Dict{String,Float64}
-  loadings = Dict{String,Float64}()
-  for br in net.branchVec
-    br.status == 1 || continue
-    rating = br.sn_MVA
-    (rating === nothing || !isfinite(rating) || rating <= 0.0) && continue
-    s_from = br.fBranchFlow === nothing ? 0.0 : hypot(something(br.fBranchFlow.pFlow, 0.0), something(br.fBranchFlow.qFlow, 0.0))
-    s_to = br.tBranchFlow === nothing ? 0.0 : hypot(something(br.tBranchFlow.pFlow, 0.0), something(br.tBranchFlow.qFlow, 0.0))
-    loadings[getCompName(br.comp)] = 100.0 * max(s_from, s_to) / rating
-  end
-  return loadings
+    loadings = Dict{String,Float64}()
+    for br in net.branchVec
+        br.status == 1 || continue
+        rating = br.sn_MVA
+        (rating === nothing || !isfinite(rating) || rating <= 0.0) && continue
+        s_from = br.fBranchFlow === nothing ? 0.0 : hypot(something(br.fBranchFlow.pFlow, 0.0), something(br.fBranchFlow.qFlow, 0.0))
+        s_to = br.tBranchFlow === nothing ? 0.0 : hypot(something(br.tBranchFlow.pFlow, 0.0), something(br.tBranchFlow.qFlow, 0.0))
+        loadings[getCompName(br.comp)] = 100.0 * max(s_from, s_to) / rating
+    end
+    return loadings
 end
 
 # The per-case start-value ladder (#331 Phase 1). Each stage is ONE bounded
@@ -440,13 +444,13 @@ subset of `(:warm, :apslf, :dc, :flat)`. Throws an `ArgumentError` naming
 `context` otherwise. Shared by the `contingency.rescue_ladder` config section
 and the `runContingencies!` keyword so both reject the same inputs.
 """
-function _validate_contingency_ladder(ladder::AbstractVector{Symbol}; context::AbstractString = "contingency.rescue_ladder")::Vector{Symbol}
-  isempty(ladder) && throw(ArgumentError("$(context) must be a non-empty ordered subset of $(collect(CONTINGENCY_RESCUE_LADDER_VALUES)); got an empty list."))
-  for s in ladder
-    s in CONTINGENCY_RESCUE_LADDER_VALUES || throw(ArgumentError("$(context): unknown stage :$(s); allowed stages are $(collect(CONTINGENCY_RESCUE_LADDER_VALUES))."))
-  end
-  allunique(ladder) || throw(ArgumentError("$(context) must not contain duplicate stages; got $(ladder)."))
-  return Symbol[ladder...]
+function _validate_contingency_ladder(ladder::AbstractVector{Symbol}; context::AbstractString="contingency.rescue_ladder")::Vector{Symbol}
+    isempty(ladder) && throw(ArgumentError("$(context) must be a non-empty ordered subset of $(collect(CONTINGENCY_RESCUE_LADDER_VALUES)); got an empty list."))
+    for s in ladder
+        s in CONTINGENCY_RESCUE_LADDER_VALUES || throw(ArgumentError("$(context): unknown stage :$(s); allowed stages are $(collect(CONTINGENCY_RESCUE_LADDER_VALUES))."))
+    end
+    allunique(ladder) || throw(ArgumentError("$(context) must not contain duplicate stages; got $(ladder)."))
+    return Symbol[ladder...]
 end
 
 # Build the result row for an outage that strands one or more islands without a
@@ -459,17 +463,17 @@ end
 # over the reference-less island(s) (`refless` are the detect_ac_islands rows
 # with chosen_ref_bus == 0).
 function _islanded_contingency_result(name::AbstractString, weight::Float64, island_count::Int, refless::AbstractVector)
-  # fallback: the solver reported islanding the pre-merge snapshot did not see
-  # (no refless rows to size), so report the cause generically rather than 0 MW
-  isempty(refless) && return ContingencyResult(name, weight, false, 0, :none, NaN, NaN, NaN, NaN, OverloadRecord[], String[], island_count, 0.0, "islanded without reference")
-  shed_mw = sum(r.total_load_p_mw for r in refless)
-  stranded_gen_mw = sum(r.total_gen_p_mw for r in refless)
-  msg = if stranded_gen_mw > 1e-6
-    "islanded without reference: $(round(shed_mw; digits = 1)) MW load, $(round(stranded_gen_mw; digits = 1)) MW generation stranded (no voltage-controlled source)"
-  else
-    "islanded: load-only, $(round(shed_mw; digits = 1)) MW load disconnected"
-  end
-  return ContingencyResult(name, weight, false, 0, :none, NaN, NaN, NaN, NaN, OverloadRecord[], String[], island_count, shed_mw, msg)
+    # fallback: the solver reported islanding the pre-merge snapshot did not see
+    # (no refless rows to size), so report the cause generically rather than 0 MW
+    isempty(refless) && return ContingencyResult(name, weight, false, 0, :none, NaN, NaN, NaN, NaN, OverloadRecord[], String[], island_count, 0.0, "islanded without reference")
+    shed_mw = sum(r.total_load_p_mw for r in refless)
+    stranded_gen_mw = sum(r.total_gen_p_mw for r in refless)
+    msg = if stranded_gen_mw > 1e-6
+        "islanded without reference: $(round(shed_mw; digits = 1)) MW load, $(round(stranded_gen_mw; digits = 1)) MW generation stranded (no voltage-controlled source)"
+    else
+        "islanded: load-only, $(round(shed_mw; digits = 1)) MW load disconnected"
+    end
+    return ContingencyResult(name, weight, false, 0, :none, NaN, NaN, NaN, NaN, OverloadRecord[], String[], island_count, shed_mw, msg)
 end
 
 """
@@ -526,39 +530,39 @@ configuration (default `:flag`) drives the service path, not this
 programmatic default.
 """
 function runContingencies!(
-  net::Net,
-  cases::Vector{ContingencyCase};
-  vm_min_pu::Float64 = 0.9,
-  vm_max_pu::Float64 = 1.1,
-  maxIte::Int = 30,
-  tol::Float64 = 1e-8,
-  rescue_ladder::Vector{Symbol} = [:warm],
-  retry_flat_start::Union{Nothing,Bool} = nothing,
-  screening_mode::Symbol = :off,
-  screening_margin_pct::Float64 = 10.0,
-  parallel_enabled::Union{Nothing,Bool} = nothing,
-  parallel_max_tasks::Union{Nothing,Int} = nothing,
-  parallel_min_work_items::Union{Nothing,Int} = nothing,
-  kwargs...,
+    net::Net,
+    cases::Vector{ContingencyCase};
+    vm_min_pu::Float64=0.9,
+    vm_max_pu::Float64=1.1,
+    maxIte::Int=30,
+    tol::Float64=1e-8,
+    rescue_ladder::Vector{Symbol}=[:warm],
+    retry_flat_start::Union{Nothing,Bool}=nothing,
+    screening_mode::Symbol=:off,
+    screening_margin_pct::Float64=10.0,
+    parallel_enabled::Union{Nothing,Bool}=nothing,
+    parallel_max_tasks::Union{Nothing,Int}=nothing,
+    parallel_min_work_items::Union{Nothing,Int}=nothing,
+    kwargs...,
 )
-  vm_min_pu < vm_max_pu || throw(ArgumentError("runContingencies!: vm_min_pu must be below vm_max_pu."))
-  isempty(cases) && return screening_mode === :off ? ContingencyResult[] : ScenarioResult[]
+    vm_min_pu < vm_max_pu || throw(ArgumentError("runContingencies!: vm_min_pu must be below vm_max_pu."))
+    isempty(cases) && return screening_mode === :off ? ContingencyResult[] : ScenarioResult[]
 
-  # resolve the per-case start-value ladder (#331 Phase 1)
-  ladder = _validate_contingency_ladder(rescue_ladder; context = "runContingencies!: rescue_ladder")
-  # retry_flat_start is DEPRECATED: it is now an alias for appending :flat to
-  # the ladder. Kept one minor cycle; remove after 0.9.x.
-  if retry_flat_start !== nothing
-    @warn "runContingencies!: the keyword retry_flat_start is deprecated; pass rescue_ladder instead (retry_flat_start = true is now an alias for appending :flat to the ladder)."
-    retry_flat_start && !(:flat in ladder) && push!(ladder, :flat)
-  end
-  # scenario task step 3: the batch runs on the scenario engine (base solve,
-  # template hygiene, base loadings, chunked workers all live there); the
-  # case118 CSV fixture pins these results byte for byte to the pre-engine
-  # per-case-deepcopy implementation
-  engine = ScenarioEngine(net; vm_min_pu = vm_min_pu, vm_max_pu = vm_max_pu, maxIte = maxIte, tol = tol, ladder = ladder, pf_kwargs = kwargs, screening_mode = screening_mode, screening_margin_pct = screening_margin_pct)
-  items = _engine_items_from_cases(engine.template, cases)
-  return _run_engine_batch(engine, items; parallel_enabled = parallel_enabled, parallel_max_tasks = parallel_max_tasks, parallel_min_work_items = parallel_min_work_items)
+    # resolve the per-case start-value ladder (#331 Phase 1)
+    ladder = _validate_contingency_ladder(rescue_ladder; context="runContingencies!: rescue_ladder")
+    # retry_flat_start is DEPRECATED: it is now an alias for appending :flat to
+    # the ladder. Kept one minor cycle; remove after 0.9.x.
+    if retry_flat_start !== nothing
+        @warn "runContingencies!: the keyword retry_flat_start is deprecated; pass rescue_ladder instead (retry_flat_start = true is now an alias for appending :flat to the ladder)."
+        retry_flat_start && !(:flat in ladder) && push!(ladder, :flat)
+    end
+    # scenario task step 3: the batch runs on the scenario engine (base solve,
+    # template hygiene, base loadings, chunked workers all live there); the
+    # case118 CSV fixture pins these results byte for byte to the pre-engine
+    # per-case-deepcopy implementation
+    engine = ScenarioEngine(net; vm_min_pu=vm_min_pu, vm_max_pu=vm_max_pu, maxIte=maxIte, tol=tol, ladder=ladder, pf_kwargs=kwargs, screening_mode=screening_mode, screening_margin_pct=screening_margin_pct)
+    items = _engine_items_from_cases(engine.template, cases)
+    return _run_engine_batch(engine, items; parallel_enabled=parallel_enabled, parallel_max_tasks=parallel_max_tasks, parallel_min_work_items=parallel_min_work_items)
 end
 
 """
@@ -576,47 +580,47 @@ first and the converged cases follow by descending `severity`
 first page of a long list. Pass `sort_by = :none` to keep the input order (the
 order `writeContingencyResultsCSV` always uses).
 """
-printContingencyResults(results::Vector{ContingencyResult}; max_rows::Int = 50, sort_by::Symbol = :severity) = printContingencyResults(stdout, results; max_rows = max_rows, sort_by = sort_by)
+printContingencyResults(results::Vector{ContingencyResult}; max_rows::Int=50, sort_by::Symbol=:severity) = printContingencyResults(stdout, results; max_rows=max_rows, sort_by=sort_by)
 
-function printContingencyResults(io::IO, results::Vector{ContingencyResult}; max_rows::Int = 50, sort_by::Symbol = :severity)
-  ordered = if sort_by === :severity
-    # failed cases (NaN severity) first, then converged by severity descending
-    sort(results; by = r -> (isnan(r.severity) ? -Inf : -r.severity))
-  elseif sort_by === :none
-    results
-  else
-    throw(ArgumentError("printContingencyResults: sort_by must be :severity or :none, got :$(sort_by)."))
-  end
-  println(io, "N-1 contingency results (", length(results), " case(s), ", count(r -> r.converged, results), " converged)")
-  println(io, "-"^151)
-  @printf(io, "%-28s %-9s %5s %-6s %9s %9s %12s %8s %8s %7s %8s %7s %8s  %s\n", "case", "converged", "iter", "start", "Vmin[pu]", "Vmax[pu]", "loading[%]", "overld", "V-viol", "islands", "shed[MW]", "weight", "severity", "error")
-  println(io, "-"^151)
-  shown = 0
-  for r in ordered
-    shown >= max_rows && break
-    shown += 1
-    @printf(
-      io,
-      "%-28s %-9s %5d %-6s %9s %9s %12s %8d %8d %7d %8s %7s %8s  %s\n",
-      _fitColumn(r.name, 28),
-      r.converged ? "yes" : "NO",
-      r.iterations,
-      String(r.start_used),
-      isnan(r.min_vm_pu) ? "-" : @sprintf("%.4f", r.min_vm_pu),
-      isnan(r.max_vm_pu) ? "-" : @sprintf("%.4f", r.max_vm_pu),
-      isnan(r.max_branch_loading_pct) ? "-" : @sprintf("%.1f", r.max_branch_loading_pct),
-      length(r.overloads),
-      length(r.voltage_violations),
-      r.island_count,
-      r.shed_load_mw > 0.0 ? @sprintf("%.1f", r.shed_load_mw) : "-",
-      @sprintf("%.2f", r.weight),
-      isnan(r.severity) ? "-" : @sprintf("%.2f", r.severity),
-      r.error === nothing ? "" : r.error,
-    )
-  end
-  shown < length(ordered) && println(io, "... ", length(ordered) - shown, " more row(s) not shown (max_rows = ", max_rows, ")")
-  println(io, "-"^151)
-  return nothing
+function printContingencyResults(io::IO, results::Vector{ContingencyResult}; max_rows::Int=50, sort_by::Symbol=:severity)
+    ordered = if sort_by === :severity
+        # failed cases (NaN severity) first, then converged by severity descending
+        sort(results; by=r -> (isnan(r.severity) ? -Inf : -r.severity))
+    elseif sort_by === :none
+        results
+    else
+        throw(ArgumentError("printContingencyResults: sort_by must be :severity or :none, got :$(sort_by)."))
+    end
+    println(io, "N-1 contingency results (", length(results), " case(s), ", count(r -> r.converged, results), " converged)")
+    println(io, "-"^151)
+    @printf(io, "%-28s %-9s %5s %-6s %9s %9s %12s %8s %8s %7s %8s %7s %8s  %s\n", "case", "converged", "iter", "start", "Vmin[pu]", "Vmax[pu]", "loading[%]", "overld", "V-viol", "islands", "shed[MW]", "weight", "severity", "error")
+    println(io, "-"^151)
+    shown = 0
+    for r in ordered
+        shown >= max_rows && break
+        shown += 1
+        @printf(
+            io,
+            "%-28s %-9s %5d %-6s %9s %9s %12s %8d %8d %7d %8s %7s %8s  %s\n",
+            _fitColumn(r.name, 28),
+            r.converged ? "yes" : "NO",
+            r.iterations,
+            String(r.start_used),
+            isnan(r.min_vm_pu) ? "-" : @sprintf("%.4f", r.min_vm_pu),
+            isnan(r.max_vm_pu) ? "-" : @sprintf("%.4f", r.max_vm_pu),
+            isnan(r.max_branch_loading_pct) ? "-" : @sprintf("%.1f", r.max_branch_loading_pct),
+            length(r.overloads),
+            length(r.voltage_violations),
+            r.island_count,
+            r.shed_load_mw > 0.0 ? @sprintf("%.1f", r.shed_load_mw) : "-",
+            @sprintf("%.2f", r.weight),
+            isnan(r.severity) ? "-" : @sprintf("%.2f", r.severity),
+            r.error === nothing ? "" : r.error,
+        )
+    end
+    shown < length(ordered) && println(io, "... ", length(ordered) - shown, " more row(s) not shown (max_rows = ", max_rows, ")")
+    println(io, "-"^151)
+    return nothing
 end
 
 """
@@ -634,31 +638,31 @@ hardcoded semicolon delimiter is now what `excel_de` selects, so an existing
 `detailed_result_csv_format = "excel_de"` run keeps this file's exact prior
 shape. Returns `path`.
 """
-function writeContingencyResultsCSV(path::AbstractString, results::Vector{ContingencyResult}; format = result_csv_format())
-  header = ("name", "weight", "converged", "iterations", "start_used", "min_vm_pu", "max_vm_pu", "max_branch_loading_pct", "severity", "overloads", "voltage_violations", "island_count", "shed_load_mw", "error")
-  rows = (
-    begin
-      overloads = join(["$(o.name)@$(round(o.loading_pct; digits = 1))" for o in r.overloads], ",")
-      (
-        r.name,
-        r.weight,
-        r.converged,
-        r.iterations,
-        String(r.start_used),
-        r.min_vm_pu,
-        r.max_vm_pu,
-        r.max_branch_loading_pct,
-        r.severity,
-        overloads,
-        join(r.voltage_violations, ","),
-        r.island_count,
-        r.shed_load_mw,
-        r.error === nothing ? "" : r.error,
-      )
-    end for r in results
-  )
-  write_result_csv(path, header, rows; format = format)
-  return path
+function writeContingencyResultsCSV(path::AbstractString, results::Vector{ContingencyResult}; format=result_csv_format())
+    header = ("name", "weight", "converged", "iterations", "start_used", "min_vm_pu", "max_vm_pu", "max_branch_loading_pct", "severity", "overloads", "voltage_violations", "island_count", "shed_load_mw", "error")
+    rows = (
+        begin
+            overloads = join(["$(o.name)@$(round(o.loading_pct; digits = 1))" for o in r.overloads], ",")
+            (
+                r.name,
+                r.weight,
+                r.converged,
+                r.iterations,
+                String(r.start_used),
+                r.min_vm_pu,
+                r.max_vm_pu,
+                r.max_branch_loading_pct,
+                r.severity,
+                overloads,
+                join(r.voltage_violations, ","),
+                r.island_count,
+                r.shed_load_mw,
+                r.error === nothing ? "" : r.error,
+            )
+        end for r in results
+    )
+    write_result_csv(path, header, rows; format=format)
+    return path
 end
 
 """
@@ -671,21 +675,21 @@ the branches overloaded by the most contingencies. Print it with
 [`printContingencyReport`](@ref).
 """
 struct ContingencyReport
-  n_cases::Int
-  n_converged::Int
-  n_islanded::Int
-  n_nonconverged::Int
-  n_with_overload::Int
-  n_with_voltage_violation::Int
-  total_shed_load_mw::Float64
-  worst_shed_case::String
-  worst_shed_mw::Float64
-  worst_loading_case::String
-  worst_loading_branch::String
-  worst_loading_pct::Float64
-  worst_severity_case::String
-  worst_severity::Float64
-  top_overloaded::Vector{Pair{String,Int}}
+    n_cases::Int
+    n_converged::Int
+    n_islanded::Int
+    n_nonconverged::Int
+    n_with_overload::Int
+    n_with_voltage_violation::Int
+    total_shed_load_mw::Float64
+    worst_shed_case::String
+    worst_shed_mw::Float64
+    worst_loading_case::String
+    worst_loading_branch::String
+    worst_loading_pct::Float64
+    worst_severity_case::String
+    worst_severity::Float64
+    top_overloaded::Vector{Pair{String,Int}}
 end
 
 # an islanded-without-reference outcome (branch or generator) carries "island"
@@ -699,54 +703,54 @@ Summarize a [`runContingencies!`](@ref) batch: count cases by outcome, the total
 and worst load shed, the worst single branch loading across all cases, and the
 `top` branches overloaded by the most contingencies (ties broken by name).
 """
-function buildContingencyReport(results::AbstractVector{ContingencyResult}; top::Int = 10)::ContingencyReport
-  n_converged = count(r -> r.converged, results)
-  n_islanded = count(_is_islanded_result, results)
-  n_nonconverged = count(r -> !r.converged && !_is_islanded_result(r), results)
-  n_with_overload = count(r -> !isempty(r.overloads), results)
-  n_with_voltage_violation = count(r -> !isempty(r.voltage_violations), results)
-  total_shed = sum(r -> r.shed_load_mw, results; init = 0.0)
+function buildContingencyReport(results::AbstractVector{ContingencyResult}; top::Int=10)::ContingencyReport
+    n_converged = count(r -> r.converged, results)
+    n_islanded = count(_is_islanded_result, results)
+    n_nonconverged = count(r -> !r.converged && !_is_islanded_result(r), results)
+    n_with_overload = count(r -> !isempty(r.overloads), results)
+    n_with_voltage_violation = count(r -> !isempty(r.voltage_violations), results)
+    total_shed = sum(r -> r.shed_load_mw, results; init=0.0)
 
-  worst_shed_case = ""
-  worst_shed_mw = 0.0
-  for r in results
-    if r.shed_load_mw > worst_shed_mw
-      worst_shed_mw = r.shed_load_mw
-      worst_shed_case = r.name
+    worst_shed_case = ""
+    worst_shed_mw = 0.0
+    for r in results
+        if r.shed_load_mw > worst_shed_mw
+            worst_shed_mw = r.shed_load_mw
+            worst_shed_case = r.name
+        end
     end
-  end
 
-  worst_loading_case = ""
-  worst_loading_branch = ""
-  worst_loading_pct = NaN
-  for r in results, o in r.overloads
-    if isnan(worst_loading_pct) || o.loading_pct > worst_loading_pct
-      worst_loading_pct = o.loading_pct
-      worst_loading_branch = o.name
-      worst_loading_case = r.name
+    worst_loading_case = ""
+    worst_loading_branch = ""
+    worst_loading_pct = NaN
+    for r in results, o in r.overloads
+        if isnan(worst_loading_pct) || o.loading_pct > worst_loading_pct
+            worst_loading_pct = o.loading_pct
+            worst_loading_branch = o.name
+            worst_loading_case = r.name
+        end
     end
-  end
 
-  # worst weighted severity among the converged cases (failed cases have NaN
-  # severity; they are counted above, not ranked here)
-  worst_severity_case = ""
-  worst_severity = 0.0
-  for r in results
-    if !isnan(r.severity) && r.severity > worst_severity
-      worst_severity = r.severity
-      worst_severity_case = r.name
+    # worst weighted severity among the converged cases (failed cases have NaN
+    # severity; they are counted above, not ranked here)
+    worst_severity_case = ""
+    worst_severity = 0.0
+    for r in results
+        if !isnan(r.severity) && r.severity > worst_severity
+            worst_severity = r.severity
+            worst_severity_case = r.name
+        end
     end
-  end
 
-  # how many distinct contingencies overload each branch
-  counts = Dict{String,Int}()
-  for r in results, o in r.overloads
-    counts[o.name] = get(counts, o.name, 0) + 1
-  end
-  ranked = sort!(collect(counts); by = p -> (-p.second, p.first))
-  top_overloaded = ranked[1:min(top, length(ranked))]
+    # how many distinct contingencies overload each branch
+    counts = Dict{String,Int}()
+    for r in results, o in r.overloads
+        counts[o.name] = get(counts, o.name, 0) + 1
+    end
+    ranked = sort!(collect(counts); by=p -> (-p.second, p.first))
+    top_overloaded = ranked[1:min(top, length(ranked))]
 
-  return ContingencyReport(length(results), n_converged, n_islanded, n_nonconverged, n_with_overload, n_with_voltage_violation, total_shed, worst_shed_case, worst_shed_mw, worst_loading_case, worst_loading_branch, worst_loading_pct, worst_severity_case, worst_severity, top_overloaded)
+    return ContingencyReport(length(results), n_converged, n_islanded, n_nonconverged, n_with_overload, n_with_voltage_violation, total_shed, worst_shed_case, worst_shed_mw, worst_loading_case, worst_loading_branch, worst_loading_pct, worst_severity_case, worst_severity, top_overloaded)
 end
 
 printContingencyReport(report::ContingencyReport) = printContingencyReport(stdout, report)
@@ -758,29 +762,29 @@ Print the aggregate [`ContingencyReport`](@ref) as a compact summary block:
 outcome counts, load shed, worst loading, and the most-overloaded branches.
 """
 function printContingencyReport(io::IO, report::ContingencyReport)
-  println(io, "N-1 contingency report (", report.n_cases, " case(s))")
-  println(io, "-"^60)
-  @printf(io, "  converged              : %d\n", report.n_converged)
-  @printf(io, "  islanded (load shed)   : %d\n", report.n_islanded)
-  @printf(io, "  non-converged          : %d\n", report.n_nonconverged)
-  @printf(io, "  with overload          : %d\n", report.n_with_overload)
-  @printf(io, "  with voltage violation : %d\n", report.n_with_voltage_violation)
-  @printf(io, "  total load shed        : %.1f MW\n", report.total_shed_load_mw)
-  if report.worst_shed_mw > 0.0
-    @printf(io, "  worst load shed        : %.1f MW  (%s)\n", report.worst_shed_mw, report.worst_shed_case)
-  end
-  if !isnan(report.worst_loading_pct)
-    @printf(io, "  worst branch loading   : %.1f%%  (%s in %s)\n", report.worst_loading_pct, report.worst_loading_branch, report.worst_loading_case)
-  end
-  if report.worst_severity > 0.0
-    @printf(io, "  worst severity         : %.2f  (%s)\n", report.worst_severity, report.worst_severity_case)
-  end
-  if !isempty(report.top_overloaded)
-    println(io, "  most-overloaded branches:")
-    for (name, cnt) in report.top_overloaded
-      @printf(io, "    %-28s %d contingenc%s\n", _fitColumn(name, 28), cnt, cnt == 1 ? "y" : "ies")
+    println(io, "N-1 contingency report (", report.n_cases, " case(s))")
+    println(io, "-"^60)
+    @printf(io, "  converged              : %d\n", report.n_converged)
+    @printf(io, "  islanded (load shed)   : %d\n", report.n_islanded)
+    @printf(io, "  non-converged          : %d\n", report.n_nonconverged)
+    @printf(io, "  with overload          : %d\n", report.n_with_overload)
+    @printf(io, "  with voltage violation : %d\n", report.n_with_voltage_violation)
+    @printf(io, "  total load shed        : %.1f MW\n", report.total_shed_load_mw)
+    if report.worst_shed_mw > 0.0
+        @printf(io, "  worst load shed        : %.1f MW  (%s)\n", report.worst_shed_mw, report.worst_shed_case)
     end
-  end
-  println(io, "-"^60)
-  return nothing
+    if !isnan(report.worst_loading_pct)
+        @printf(io, "  worst branch loading   : %.1f%%  (%s in %s)\n", report.worst_loading_pct, report.worst_loading_branch, report.worst_loading_case)
+    end
+    if report.worst_severity > 0.0
+        @printf(io, "  worst severity         : %.2f  (%s)\n", report.worst_severity, report.worst_severity_case)
+    end
+    if !isempty(report.top_overloaded)
+        println(io, "  most-overloaded branches:")
+        for (name, cnt) in report.top_overloaded
+            @printf(io, "    %-28s %d contingenc%s\n", _fitColumn(name, 28), cnt, cnt == 1 ? "y" : "ies")
+        end
+    end
+    println(io, "-"^60)
+    return nothing
 end

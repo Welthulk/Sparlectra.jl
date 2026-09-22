@@ -23,7 +23,27 @@ using Printf
 using LinearAlgebra
 using SparseArrays
 
-global_logger(ConsoleLogger(stderr, Logging.Warn))
+# Warnings the package raises ON PURPOSE while a test exercises the behaviour
+# behind them (a deprecated configuration value, a version-less YAML file,
+# non-case keys handed to write_case_config, an advisory topology precheck)
+# are part of what is tested, not of the report. They are dropped here unless
+# SPARLECTRA_TEST_SHOW_WARNINGS=1. Errors, and anything logged from outside a
+# Sparlectra module, still reach stderr. A testset that asserts a warning
+# installs its own logger through @test_logs and is not affected.
+struct QuietPackageWarnings <: Logging.AbstractLogger
+    inner::Logging.AbstractLogger
+end
+_logged_from_sparlectra(m) = m isa Module && string(Base.moduleroot(m)) == "Sparlectra"
+Logging.min_enabled_level(l::QuietPackageWarnings) = Logging.min_enabled_level(l.inner)
+Logging.catch_exceptions(l::QuietPackageWarnings) = Logging.catch_exceptions(l.inner)
+function Logging.shouldlog(l::QuietPackageWarnings, level, _module, group, id)
+    level == Logging.Warn && _logged_from_sparlectra(_module) && return false
+    return Logging.shouldlog(l.inner, level, _module, group, id)
+end
+Logging.handle_message(l::QuietPackageWarnings, args...; kwargs...) = Logging.handle_message(l.inner, args...; kwargs...)
+
+const SHOW_PACKAGE_WARNINGS = get(ENV, "SPARLECTRA_TEST_SHOW_WARNINGS", "0") == "1"
+global_logger(SHOW_PACKAGE_WARNINGS ? ConsoleLogger(stderr, Logging.Warn) : QuietPackageWarnings(ConsoleLogger(stderr, Logging.Warn)))
 
 include("test_runner_helpers.jl")
 
@@ -36,170 +56,170 @@ const TEST_PROFILE = selected_test_profile()
 # risk-based resort the fast profile carries the numerics and model groups;
 # the Web UI groups live in the extended profile, and the full sysimage
 # workload traces the webui group separately.
-const SKIP_GROUPS = Set{String}(String(strip(g)) for g in split(get(ENV, "SPARLECTRA_TEST_SKIP_GROUPS", ""), ','; keepempty = false))
+const SKIP_GROUPS = Set{String}(String(strip(g)) for g in split(get(ENV, "SPARLECTRA_TEST_SKIP_GROUPS", ""), ','; keepempty=false))
 
 function print_test_progress_header(profile::Symbol)
-  println("Test framework: ", profile)
+    println("Test framework: ", profile)
 end
 
 function print_group_progress(i::Int, total::Int, name::AbstractString) end
 
 function include_fast_tests()
-  include("testgrid.jl")
-  include("test_piline_g.jl")
-  include("test_state_estimation.jl")
-  include("test_observability.jl")
-  include("test_topology_validation.jl")
-  include("test_voltage_dependent_control.jl")
-  include("test_transformer_phase_shift.jl")
-  include("test_tap_controller.jl")
-  include("test_series_reactance_control.jl")
-  include("test_upfc_control.jl")
-  include("test_hvdc_pair_control.jl")
-  include("test_terminal_status.jl")
-  include("test_tap_changer_model.jl")
-  include("test_phase_tap_changer_model.jl")
-  include("test_phase_tap_table.jl")  
-  include("test_configuration_coverage.jl")
-  include("test_matpower_metadata.jl")
-  include("test_api.jl")
-  include("test_auto_powerflow.jl")
-  include("test_scf.jl")
-  include("test_dc_powerflow.jl")
-  include("test_distributed_slack.jl")
-  include("test_island_diagnostics.jl")
-  include("test_short_circuit.jl")
-  include("test_external_grid.jl")
-  include("test_parallel_foundation.jl")
-  include("test_contingency.jl")
-  include("test_scenarios.jl")
-  include("test_demo_cases.jl")
-  include("test_solver_interface.jl")
-  include("test_factorized_linear_solver.jl")
-  include("test_pv_voltage_residuals.jl")
-  include("test_3wt_phase_taps.jl")
+    include("testgrid.jl")
+    include("test_piline_g.jl")
+    include("test_state_estimation.jl")
+    include("test_observability.jl")
+    include("test_topology_validation.jl")
+    include("test_voltage_dependent_control.jl")
+    include("test_transformer_phase_shift.jl")
+    include("test_tap_controller.jl")
+    include("test_series_reactance_control.jl")
+    include("test_upfc_control.jl")
+    include("test_hvdc_pair_control.jl")
+    include("test_terminal_status.jl")
+    include("test_tap_changer_model.jl")
+    include("test_phase_tap_changer_model.jl")
+    include("test_phase_tap_table.jl")
+    include("test_configuration_coverage.jl")
+    include("test_matpower_metadata.jl")
+    include("test_api.jl")
+    include("test_auto_powerflow.jl")
+    include("test_scf.jl")
+    include("test_dc_powerflow.jl")
+    include("test_distributed_slack.jl")
+    include("test_island_diagnostics.jl")
+    include("test_short_circuit.jl")
+    include("test_external_grid.jl")
+    include("test_parallel_foundation.jl")
+    include("test_contingency.jl")
+    include("test_scenarios.jl")
+    include("test_demo_cases.jl")
+    include("test_solver_interface.jl")
+    include("test_factorized_linear_solver.jl")
+    include("test_pv_voltage_residuals.jl")
+    include("test_3wt_phase_taps.jl")
 end
 
 function include_extended_tests()
-  # testgrid.jl defines run_grid_extended_tests (and shared helpers); in the
-  # :all profile it is already loaded by include_fast_tests, so only include
-  # it when the :extended profile runs standalone.
-  isdefined(@__MODULE__, :run_grid_extended_tests) || include("testgrid.jl")
-  isdefined(@__MODULE__, :run_contingency_tests) || include("test_contingency.jl")
-  isdefined(@__MODULE__, :run_scenario_patch_tests) || include("test_scenarios.jl")
-  include("test_api_extended.jl")
-  include("test_webui.jl")
-  include("test_webui_extended.jl")
-  include("test_matpower_example.jl")
-  include("test_example_suites.jl")
-  include("test_net_cache.jl")
-  include("test_synthetic_grids.jl")
-  include("test_configuration_docs.jl")
-  include("test_repository_hygiene.jl")
-  include("test_apslf.jl")
-  include("test_cgmes_importer.jl")
-  include("test_cgmes_export.jl")
-  include("extended/test_dtf_importer.jl")
-  include("extended/test_dtf_for002_validation_example.jl")
-  include("extended/test_dtf_for002_outage_validation_example.jl")
-  include("extended/test_dtf_matpower_export_validation_example.jl")
-  include("extended/test_dtf_api_webui_integration.jl")
-  # Experimental large-case comparison tooling is excluded from normal profiles.
+    # testgrid.jl defines run_grid_extended_tests (and shared helpers); in the
+    # :all profile it is already loaded by include_fast_tests, so only include
+    # it when the :extended profile runs standalone.
+    isdefined(@__MODULE__, :run_grid_extended_tests) || include("testgrid.jl")
+    isdefined(@__MODULE__, :run_contingency_tests) || include("test_contingency.jl")
+    isdefined(@__MODULE__, :run_scenario_patch_tests) || include("test_scenarios.jl")
+    include("test_api_extended.jl")
+    include("test_webui.jl")
+    include("test_webui_extended.jl")
+    include("test_matpower_example.jl")
+    include("test_example_suites.jl")
+    include("test_net_cache.jl")
+    include("test_synthetic_grids.jl")
+    include("test_configuration_docs.jl")
+    include("test_repository_hygiene.jl")
+    include("test_apslf.jl")
+    include("test_cgmes_importer.jl")
+    include("test_cgmes_export.jl")
+    include("extended/test_dtf_importer.jl")
+    include("extended/test_dtf_for002_validation_example.jl")
+    include("extended/test_dtf_for002_outage_validation_example.jl")
+    include("extended/test_dtf_matpower_export_validation_example.jl")
+    include("extended/test_dtf_api_webui_integration.jl")
+    # Experimental large-case comparison tooling is excluded from normal profiles.
 end
 
 function run_fast_profile_tests()
-  function run_entry(name::Symbol)
-    runner = Base.invokelatest(getfield, @__MODULE__, name)
-    return Base.invokelatest(runner)
-  end
-  groups = [
-    ("core_model", () -> begin
-      run_entry(:run_grid_fast_tests)
-      run_entry(:run_piline_g_tests)
-    end),
-    ("terminal_status", () -> run_entry(:run_terminal_status_tests)),
-    ("powerflow_rectangular", () -> run_entry(:run_solver_interface_tests)),
-    ("factorized_linear_solver", () -> run_entry(:run_factorized_linear_solver_tests)),
-    ("pv_voltage_residuals", () -> run_entry(:run_pv_voltage_residual_tests)),
-    ("3wt_phase_taps", () -> run_entry(:run_3wt_phase_taps_tests)),
-    ("configuration", () -> run_entry(:run_configuration_coverage_tests)),
-    ("matpower_metadata", () -> run_entry(:run_matpower_metadata_tests)),
-    ("programmatic_api", () -> run_entry(:run_api_fast_tests)),
-    ("state_estimation", () -> run_entry(:run_state_estimation_tests)),
-    ("observability", () -> run_entry(:run_observability_tests)),
-    ("topology_validation", () -> run_entry(:run_topology_validation_tests)),
-    ("auto_powerflow", () -> run_entry(:run_auto_powerflow_tests)),
-    ("scf", () -> run_entry(:run_scf_tests)),
-    ("dc_powerflow", () -> run_entry(:run_dc_powerflow_tests)),
-    ("distributed_slack", () -> run_entry(:run_distributed_slack_tests)),
-    ("island_diagnostics", () -> run_entry(:run_island_diagnostics_tests)),
-    ("short_circuit", () -> run_entry(:run_short_circuit_tests)),
-    ("external_grid", () -> run_entry(:run_external_grid_tests)),
-    ("parallel_foundation", () -> run_entry(:run_parallel_foundation_tests)),
-    ("contingency", () -> run_entry(:run_contingency_tests)),
-    ("scenarios", () -> run_entry(:run_scenario_patch_tests)),
-    ("demo_cases", () -> run_entry(:run_demo_case_tests)),
-    ("controls", () -> begin
-      run_entry(:run_voltage_dependent_control_tests)
-      run_entry(:run_transformer_phase_shift_tests)
-      run_entry(:run_tap_controller_tests)
-      run_entry(:run_series_reactance_control_tests)
-      run_entry(:run_upfc_control_tests)
-      run_entry(:run_hvdc_pair_control_tests)
-      run_entry(:run_tap_changer_model_tests)
-      run_entry(:run_phase_tap_changer_model_tests)
-      run_entry(:run_phase_tap_table_tests)
-    end),
-  ]
-  skipped = [name for (name, _) in groups if name in SKIP_GROUPS]
-  isempty(skipped) || println("Skipped group(s) via SPARLECTRA_TEST_SKIP_GROUPS: ", join(skipped, ", "))
-  groups = [(name, runner) for (name, runner) in groups if !(name in SKIP_GROUPS)]
-  @testset "Sparlectra.jl fast profile" begin
-    total = length(groups)
-    for (i, (name, runner)) in enumerate(groups)
-      run_profile_group(i, total, name, runner)
+    function run_entry(name::Symbol)
+        runner = Base.invokelatest(getfield, @__MODULE__, name)
+        return Base.invokelatest(runner)
     end
-  end
+    groups = [
+        ("core_model", () -> begin
+            run_entry(:run_grid_fast_tests)
+            run_entry(:run_piline_g_tests)
+        end),
+        ("terminal_status", () -> run_entry(:run_terminal_status_tests)),
+        ("powerflow_rectangular", () -> run_entry(:run_solver_interface_tests)),
+        ("factorized_linear_solver", () -> run_entry(:run_factorized_linear_solver_tests)),
+        ("pv_voltage_residuals", () -> run_entry(:run_pv_voltage_residual_tests)),
+        ("3wt_phase_taps", () -> run_entry(:run_3wt_phase_taps_tests)),
+        ("configuration", () -> run_entry(:run_configuration_coverage_tests)),
+        ("matpower_metadata", () -> run_entry(:run_matpower_metadata_tests)),
+        ("programmatic_api", () -> run_entry(:run_api_fast_tests)),
+        ("state_estimation", () -> run_entry(:run_state_estimation_tests)),
+        ("observability", () -> run_entry(:run_observability_tests)),
+        ("topology_validation", () -> run_entry(:run_topology_validation_tests)),
+        ("auto_powerflow", () -> run_entry(:run_auto_powerflow_tests)),
+        ("scf", () -> run_entry(:run_scf_tests)),
+        ("dc_powerflow", () -> run_entry(:run_dc_powerflow_tests)),
+        ("distributed_slack", () -> run_entry(:run_distributed_slack_tests)),
+        ("island_diagnostics", () -> run_entry(:run_island_diagnostics_tests)),
+        ("short_circuit", () -> run_entry(:run_short_circuit_tests)),
+        ("external_grid", () -> run_entry(:run_external_grid_tests)),
+        ("parallel_foundation", () -> run_entry(:run_parallel_foundation_tests)),
+        ("contingency", () -> run_entry(:run_contingency_tests)),
+        ("scenarios", () -> run_entry(:run_scenario_patch_tests)),
+        ("demo_cases", () -> run_entry(:run_demo_case_tests)),
+        ("controls", () -> begin
+            run_entry(:run_voltage_dependent_control_tests)
+            run_entry(:run_transformer_phase_shift_tests)
+            run_entry(:run_tap_controller_tests)
+            run_entry(:run_series_reactance_control_tests)
+            run_entry(:run_upfc_control_tests)
+            run_entry(:run_hvdc_pair_control_tests)
+            run_entry(:run_tap_changer_model_tests)
+            run_entry(:run_phase_tap_changer_model_tests)
+            run_entry(:run_phase_tap_table_tests)
+        end),
+    ]
+    skipped = [name for (name, _) in groups if name in SKIP_GROUPS]
+    isempty(skipped) || println("Skipped group(s) via SPARLECTRA_TEST_SKIP_GROUPS: ", join(skipped, ", "))
+    groups = [(name, runner) for (name, runner) in groups if !(name in SKIP_GROUPS)]
+    @testset "Sparlectra.jl fast profile" begin
+        total = length(groups)
+        for (i, (name, runner)) in enumerate(groups)
+            run_profile_group(i, total, name, runner)
+        end
+    end
 end
 
 function run_extended_profile_tests()
-  function run_entry(name::Symbol)
-    runner = Base.invokelatest(getfield, @__MODULE__, name)
-    return Base.invokelatest(runner)
-  end
-  groups = [
-    ("core_model_extended", () -> run_entry(:run_grid_extended_tests)),
-    ("contingency_extended", () -> run_entry(:run_contingency_extended_tests)),
-    ("scenario_engine", () -> run_entry(:run_scenario_engine_extended_tests)),
-    ("programmatic_api_extended", () -> run_entry(:run_api_extended_tests)),
-    ("webui", () -> run_entry(:run_webui_fast_tests)),
-    ("webui_extended", () -> run_entry(:run_webui_extended_tests)),
-    ("matpower_examples", () -> run_entry(:run_matpower_example_tests)),
-    ("example_infra", () -> run_entry(:run_example_suite_infra_tests)),
-    ("net_cache", () -> run_entry(:run_net_cache_tests)),
-    ("synthetic_grids", () -> run_entry(:run_synthetic_grid_tests)),
-    ("configuration_docs", () -> run_entry(:run_configuration_docs_tests)),
-    ("repository_hygiene", () -> run_entry(:run_repository_hygiene_tests)),
-    ("apslf", () -> run_entry(:run_apslf_tests)),
-    ("cgmes_importer", () -> run_entry(:run_cgmes_importer_tests)),
-    ("cgmes_export", () -> run_entry(:run_cgmes_export_tests)),
-    ("dtf_extended", () -> begin
-      run_entry(:run_dtf_importer_tests)
-      run_entry(:run_dtf_for002_validation_example_tests)
-      run_entry(:run_dtf_for002_outage_validation_example_tests)
-      run_entry(:run_dtf_matpower_export_validation_example_tests)
-      run_entry(:run_dtf_api_webui_integration_tests)
-    end),
-  ]
-  skipped = [name for (name, _) in groups if name in SKIP_GROUPS]
-  isempty(skipped) || println("Skipped group(s) via SPARLECTRA_TEST_SKIP_GROUPS: ", join(skipped, ", "))
-  groups = [(name, runner) for (name, runner) in groups if !(name in SKIP_GROUPS)]
-  @testset "Sparlectra.jl extended profile" begin
-    total = length(groups)
-    for (i, (name, runner)) in enumerate(groups)
-      run_profile_group(i, total, name, runner)
+    function run_entry(name::Symbol)
+        runner = Base.invokelatest(getfield, @__MODULE__, name)
+        return Base.invokelatest(runner)
     end
-  end
+    groups = [
+        ("core_model_extended", () -> run_entry(:run_grid_extended_tests)),
+        ("contingency_extended", () -> run_entry(:run_contingency_extended_tests)),
+        ("scenario_engine", () -> run_entry(:run_scenario_engine_extended_tests)),
+        ("programmatic_api_extended", () -> run_entry(:run_api_extended_tests)),
+        ("webui", () -> run_entry(:run_webui_fast_tests)),
+        ("webui_extended", () -> run_entry(:run_webui_extended_tests)),
+        ("matpower_examples", () -> run_entry(:run_matpower_example_tests)),
+        ("example_infra", () -> run_entry(:run_example_suite_infra_tests)),
+        ("net_cache", () -> run_entry(:run_net_cache_tests)),
+        ("synthetic_grids", () -> run_entry(:run_synthetic_grid_tests)),
+        ("configuration_docs", () -> run_entry(:run_configuration_docs_tests)),
+        ("repository_hygiene", () -> run_entry(:run_repository_hygiene_tests)),
+        ("apslf", () -> run_entry(:run_apslf_tests)),
+        ("cgmes_importer", () -> run_entry(:run_cgmes_importer_tests)),
+        ("cgmes_export", () -> run_entry(:run_cgmes_export_tests)),
+        ("dtf_extended", () -> begin
+            run_entry(:run_dtf_importer_tests)
+            run_entry(:run_dtf_for002_validation_example_tests)
+            run_entry(:run_dtf_for002_outage_validation_example_tests)
+            run_entry(:run_dtf_matpower_export_validation_example_tests)
+            run_entry(:run_dtf_api_webui_integration_tests)
+        end),
+    ]
+    skipped = [name for (name, _) in groups if name in SKIP_GROUPS]
+    isempty(skipped) || println("Skipped group(s) via SPARLECTRA_TEST_SKIP_GROUPS: ", join(skipped, ", "))
+    groups = [(name, runner) for (name, runner) in groups if !(name in SKIP_GROUPS)]
+    @testset "Sparlectra.jl extended profile" begin
+        total = length(groups)
+        for (i, (name, runner)) in enumerate(groups)
+            run_profile_group(i, total, name, runner)
+        end
+    end
 end
 
 """
@@ -214,30 +234,30 @@ nowhere. Measuring it is the difference between "the tests are slow" and
 "loading the tests is slow", which is not the same lever.
 """
 function timed_include(label::AbstractString, f::Function)
-  timed = @timed f()
-  @printf("include %s: %.3f s (%.3f s compile, %.3f s recompile), %.1f MiB allocated\n",
-          label, timed.time, timed.compile_time, timed.recompile_time, timed.bytes / 1024.0^2)
-  return timed.value
+    timed = @timed f()
+    @printf("include %s: %.3f s (%.3f s compile, %.3f s recompile), %.1f MiB allocated\n",
+        label, timed.time, timed.compile_time, timed.recompile_time, timed.bytes / 1024.0^2)
+    return timed.value
 end
 
 function main()
-  if TEST_PROFILE === :fast
-    print_test_progress_header(:fast)
-    timed_include("fast", include_fast_tests)
-    run_fast_profile_tests()
-  elseif TEST_PROFILE === :extended
-    print_test_progress_header(:extended)
-    timed_include("extended", include_extended_tests)
-    run_extended_profile_tests()
-  elseif TEST_PROFILE === :all
-    print_test_progress_header(:all)
-    timed_include("fast", include_fast_tests)
-    timed_include("extended", include_extended_tests)
-    run_fast_profile_tests()
-    run_extended_profile_tests()
-  else
-    error("Unknown test profile=$(TEST_PROFILE). Allowed: fast, extended, all. Selection precedence: CLI arg, SPARLECTRA_TEST_PROFILE, default fast.")
-  end
+    if TEST_PROFILE === :fast
+        print_test_progress_header(:fast)
+        timed_include("fast", include_fast_tests)
+        run_fast_profile_tests()
+    elseif TEST_PROFILE === :extended
+        print_test_progress_header(:extended)
+        timed_include("extended", include_extended_tests)
+        run_extended_profile_tests()
+    elseif TEST_PROFILE === :all
+        print_test_progress_header(:all)
+        timed_include("fast", include_fast_tests)
+        timed_include("extended", include_extended_tests)
+        run_fast_profile_tests()
+        run_extended_profile_tests()
+    else
+        error("Unknown test profile=$(TEST_PROFILE). Allowed: fast, extended, all. Selection precedence: CLI arg, SPARLECTRA_TEST_PROFILE, default fast.")
+    end
 end
 
 Base.invokelatest(main)

@@ -25,22 +25,24 @@ a copy of the case file and read it again.
 > fresh session (package download and precompilation). Colab's Julia
 > version may change over time; this notebook targets Julia >= 1.12.
 
-## Load case118 and turn it into an SCF case
+## Load the 118-bus case and turn it into an SCF case
 
-case118 is the IEEE 118-bus system. We fetch the MATPOWER file (the
-repository's local copy when present, a download otherwise), build the
-network once through the MATPOWER adapter, and export it as an SCF file
-into a scratch directory, because THIS workshop edits the case file.
+The study network is `sp_case118`, shipped with the package under
+`data/mpower`: a synthetic case with the cardinalities of the IEEE
+118-bus system (118 buses, 186 branches, 54 generators, three areas, a
+345 kV backbone over a 138 kV grid) and its own topology and names. We
+build the network once through the MATPOWER adapter and export it as an
+SCF file into a scratch directory, because THIS workshop edits the case
+file.
 
 ````@example workshop_scenarios
 using Sparlectra
 
 workdir = mktempdir()
-local_case = joinpath(dirname(dirname(pathof(Sparlectra))), "data", "mpower", "case118.m")
-case_m = isfile(local_case) ? local_case : Sparlectra.FetchMatpowerCase.ensure_casefile("case118.m"; outdir = workdir, to_jl = false)
-net = createNetFromMatPowerFile(filename = case_m, flatstart = false, enable_pq_gen_controllers = true, bus_shunt_model = :admittance, matpower_shift_sign = 1.0, matpower_shift_unit = :deg, matpower_ratio = :normal, tap_changer_model = :ideal)
-scf_path = joinpath(workdir, "case118_workshop.scf.json")
-exportSCF(net; file = scf_path, case_name = "case118_workshop", source_reference = "case118.m")
+case_m = joinpath(dirname(dirname(pathof(Sparlectra))), "data", "mpower", "sp_case118.m")
+net = createNetFromMatPowerFile(filename=case_m, flatstart=false, enable_pq_gen_controllers=true, bus_shunt_model=:admittance, matpower_shift_sign=1.0, matpower_shift_unit=:deg, matpower_ratio=:normal, tap_changer_model=:ideal)
+scf_path = joinpath(workdir, "sp_case118_workshop.scf.json")
+exportSCF(net; file=scf_path, case_name="sp_case118_workshop", source_reference="sp_case118.m")
 scfcase = Sparlectra.read_scf_json(scf_path)
 index = ScenarioIndex(scfcase)
 println("buses: ", length(net.nodeVec), ", branches: ", length(net.branchVec))
@@ -55,8 +57,8 @@ patch per in-service branch or generator, expanded through the same
 generators `runContingencies!` uses.
 
 ````@example workshop_scenarios
-n1 = expand_scenarios(ScenarioSet(mode = :n1_all), net, index)
-n1_branches = expand_scenarios(ScenarioSet(mode = :n1_branches), net, index)
+n1 = expand_scenarios(ScenarioSet(mode=:n1_all), net, index)
+n1_branches = expand_scenarios(ScenarioSet(mode=:n1_branches), net, index)
 println("N-1 all: ", length(n1), " scenarios (", length(n1_branches), " branch outages, ", length(n1) - length(n1_branches), " generator outages)")
 @assert length(n1) == 240
 @assert length(n1_branches) == 186
@@ -73,18 +75,18 @@ them to the reference names.
 branch_ids = [r.id for r in scfcase.data.line]
 gen_id = first(id for (id, k) in index.kind_by_id if k === :generator)
 load_ids = [id for (id, k) in index.kind_by_id if k === :load]
-handmade = ScenarioSet(scenarios = [
-  Scenario(name = "double outage", weight = 2.0, ops = [
-    PatchOp(op = :status, target = :branch, id = branch_ids[1], value = 0.0),
-    PatchOp(op = :status, target = :branch, id = branch_ids[2], value = 0.0),
-  ]),
-  Scenario(name = "load up 20 percent", ops = [PatchOp(op = :scale, target = :load, id = load_ids[1], factor = 1.2)]),
-  Scenario(name = "gen setpoint 25 MW", ops = [PatchOp(op = :set, target = :generator, id = gen_id, field = :p, value = 25.0)]),
+handmade = ScenarioSet(scenarios=[
+    Scenario(name="double outage", weight=2.0, ops=[
+        PatchOp(op=:status, target=:branch, id=branch_ids[1], value=0.0),
+        PatchOp(op=:status, target=:branch, id=branch_ids[2], value=0.0),
+    ]),
+    Scenario(name="load up 20 percent", ops=[PatchOp(op=:scale, target=:load, id=load_ids[1], factor=1.2)]),
+    Scenario(name="gen setpoint 25 MW", ops=[PatchOp(op=:set, target=:generator, id=gen_id, field=:p, value=25.0)]),
 ])
 validate_scenarios(handmade, index)
-results = runScenarios!(net, handmade; index = index)
+results = runScenarios!(net, handmade; index=index)
 for r in results
-  println(r.name, ": converged = ", r.converged, ", vmin = ", round(r.min_vm_pu; digits = 4), " pu, iterations = ", r.iterations)
+    println(r.name, ": converged = ", r.converged, ", vmin = ", round(r.min_vm_pu; digits=4), " pu, iterations = ", r.iterations)
 end
 @assert length(results) == 3
 @assert all(r.converged for r in results)
@@ -107,12 +109,12 @@ and the honest check before using `:flag` on your own network is exactly
 the pair of numbers printed here.
 
 ````@example workshop_scenarios
-full_set = ScenarioSet(mode = :n1_all)
-t_off = @elapsed off_results = runScenarios!(net, full_set; index = index)
-t_flag = @elapsed flag_results = runScenarios!(net, full_set; index = index, screening_mode = :flag)
+full_set = ScenarioSet(mode=:n1_all)
+t_off = @elapsed off_results = runScenarios!(net, full_set; index=index)
+t_flag = @elapsed flag_results = runScenarios!(net, full_set; index=index, screening_mode=:flag)
 n_screened = count(r -> r.screened, flag_results)
-println("off: ", length(off_results), " full solves in ", round(t_off; digits = 2), " s")
-println("flag: ", n_screened, " of ", length(flag_results), " screened (", round(100 * n_screened / length(flag_results); digits = 1), " %) in ", round(t_flag; digits = 2), " s")
+println("off: ", length(off_results), " full solves in ", round(t_off; digits=2), " s")
+println("flag: ", n_screened, " of ", length(flag_results), " screened (", round(100 * n_screened / length(flag_results); digits=1), " %) in ", round(t_flag; digits=2), " s")
 @assert off_results isa Vector{Sparlectra.ContingencyResult}
 @assert flag_results isa Vector{ScenarioResult}
 @assert length(off_results) == 240
@@ -135,13 +137,13 @@ flagged row carries the FULL run plus the estimate that flagged it.
 ````@example workshop_scenarios
 screened_row = first(r for r in flag_results if r.screened)
 full_row = only(r for r in off_results if r.name == screened_row.name)
-println("screened ", screened_row.name, ": estimated vmin ", round(screened_row.min_vm_pu; digits = 4), " pu against full-run vmin ", round(full_row.min_vm_pu; digits = 4), " pu")
+println("screened ", screened_row.name, ": estimated vmin ", round(screened_row.min_vm_pu; digits=4), " pu against full-run vmin ", round(full_row.min_vm_pu; digits=4), " pu")
 @assert screened_row.start_used === :screen
 @assert screened_row.screening_estimate !== nothing
 @assert abs(screened_row.min_vm_pu - full_row.min_vm_pu) < 0.02
 
 flagged_row = first(r for r in flag_results if !r.screened && r.screening_estimate !== nothing)
-println("flagged ", flagged_row.name, ": full solve ran (start = ", flagged_row.start_used, "), estimate said vmin ", round(flagged_row.screening_estimate.vmin_pu; digits = 4), " pu")
+println("flagged ", flagged_row.name, ": full solve ran (start = ", flagged_row.start_used, "), estimate said vmin ", round(flagged_row.screening_estimate.vmin_pu; digits=4), " pu")
 @assert flagged_row.start_used !== :screen
 @assert flagged_row.converged || flagged_row.error !== nothing
 ````

@@ -13,74 +13,110 @@
 # limitations under the License.
 
 # file: src/build/precompile.jl
-# purpose: PrecompileTools workload covering the RUN PATH so first
-#          interactive runs skip most JIT compilation (issue #288). Since
-#          adapter stage 3 the run path is import_case -> convert_case ->
-#          build_net, so the workload warms exactly that for every
-#          adapter with a tracked small case, plus the rectangular solve,
-#          loss postprocessing and the standalone DC power flow.
+# purpose: PrecompileTools workload covering the RUN PATHS so first
+#          interactive runs skip most JIT compilation (issue #288). Four
+#          paths are warmed: the file-based import (MATPOWER, SCF, PGM)
+#          with the rectangular solve and loss postprocessing; the
+#          programmatic path of the workshop notebooks (builder API,
+#          run_sparlectra with the rectangular and the APSLF solver, the
+#          status query, the APSLF start ahead of NR); state estimation on
+#          the tracked SCF fixture, which carries a measurement set; and
+#          the standalone DC power flow.
 
-# Warmed per adapter:
+# Warmed:
 # - MATPOWER: data/mpower/warmup_casePST.m (tracked), through import_case,
 #   then the config-form rectangular solve and the loss postprocessing.
-#   The DC power flow runs on the DTF net below: the PST warmup case
-#   splits into two islands under the DC island analysis (island 2 has no
-#   reference) and would abort precompilation.
-# - SCF: data/scf/sp_casePST.scf.json (tracked), through import_case.
+# - SCF: data/scf/sp_casePST.scf.json (tracked), through import_case, and
+#   again through importSCF for the state estimation (the fixture ships
+#   59 measurements, so runse! runs on the file alone).
 # - PGM: data/scf/pgm_interop.json (tracked), same pipeline as SCF.
-# - DTF: a tiny in-memory DTFCase (the synthetic shape the DTF tests use)
-#   through convert_case and build_net; the format has no tracked file
-#   fixture.
-# - CGMES: NOT warmed; the mapping has no tracked fixture. Its build side
-#   is the shared build_net path warmed above; the mapping itself stays
-#   cold by design and is named here so nobody mistakes it for covered.
+# - Programmatic: the 7-bus ring of the APSLF workshop, built with the
+#   addBus!/addPIModelACLine!/addProsumer! API and solved through
+#   run_sparlectra(net = ..., config = ...) with both solvers and the
+#   hybrid start. The APSLF calls also pull the AnalyticLoadFlow methods
+#   instantiated with Sparlectra's concrete types into this package image;
+#   ALF's own workload only covers its demo types. The ring is known to
+#   solve under both solvers (a 3-bus ring did not converge under APSLF).
+#   The same ring feeds rundcpf!: the PST warmup case splits into two
+#   islands under the DC island analysis (island 2 has no reference) and
+#   would abort precompilation.
+# - NOT warmed: DTF and CGMES. Neither has a tracked file fixture; their
+#   build side is the shared build_net path warmed above, the mappings
+#   themselves stay cold by design and are named here so nobody mistakes
+#   them for covered.
 #
 # isfile guards keep precompilation robust if the data directory is
 # stripped; stdout is silenced because the import context prints run
-# banners.
+# banners, the logger because the SE topology precheck warns on the
+# fixture.
 
 using PrecompileTools: @setup_workload, @compile_workload
 
 @setup_workload begin
-  _pc_mpower = normpath(joinpath(@__DIR__, "..", "..", "data", "mpower", "warmup_casePST.m"))
-  _pc_scf = normpath(joinpath(@__DIR__, "..", "..", "data", "scf", "sp_casePST.scf.json"))
-  _pc_pgm = normpath(joinpath(@__DIR__, "..", "..", "data", "scf", "pgm_interop.json"))
-  @compile_workload begin
-    Logging.with_logger(Logging.NullLogger()) do
-      redirect_stdout(devnull) do
-        _pc_cfg = load_sparlectra_config(DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true)
-        if isfile(_pc_mpower)
-          _pc_imported = import_case(_pc_mpower, _pc_cfg)
-          runpf!(_pc_imported.net; config = _pc_imported.config)
-          calcNetLosses!(_pc_imported.net)
+    _pc_mpower = normpath(joinpath(@__DIR__, "..", "..", "data", "mpower", "warmup_casePST.m"))
+    _pc_scf = normpath(joinpath(@__DIR__, "..", "..", "data", "scf", "sp_casePST.scf.json"))
+    _pc_pgm = normpath(joinpath(@__DIR__, "..", "..", "data", "scf", "pgm_interop.json"))
+    @compile_workload begin
+        Logging.with_logger(Logging.NullLogger()) do
+            redirect_stdout(devnull) do
+                # --- file-based import + rectangular solve ------------------------
+                _pc_cfg = load_sparlectra_config(DEFAULT_SPARLECTRA_CONFIG_PATH; reload=true)
+                if isfile(_pc_mpower)
+                    _pc_imported = import_case(_pc_mpower, _pc_cfg)
+                    runpf!(_pc_imported.net; config=_pc_imported.config)
+                    calcNetLosses!(_pc_imported.net)
+                end
+                isfile(_pc_scf) && import_case(_pc_scf, _pc_cfg)
+                isfile(_pc_pgm) && import_case(_pc_pgm, _pc_cfg)
+
+                # --- state estimation on the tracked SCF fixture ------------------
+                if isfile(_pc_scf)
+                    _pc_se_net = importSCF(_pc_scf)
+                    runse!(_pc_se_net)
+                end
+
+                # --- programmatic net (workshop ring7) + run_sparlectra -----------
+                _pc_net = Net(name="precompile_ring7", baseMVA=100.0)
+                addBus!(net=_pc_net, busName="B1", vn_kV=110.0, vm_pu=1.02, va_deg=0.0)
+                for _pc_i in 2:7
+                    addBus!(net=_pc_net, busName="B$(_pc_i)", vn_kV=110.0, vm_pu=1.0, va_deg=0.0)
+                end
+                addPIModelACLine!(net=_pc_net, fromBus="B1", toBus="B2", r_pu=0.010, x_pu=0.080, b_pu=0.0, status=1)
+                addPIModelACLine!(net=_pc_net, fromBus="B2", toBus="B3", r_pu=0.011, x_pu=0.085, b_pu=0.0, status=1)
+                addPIModelACLine!(net=_pc_net, fromBus="B3", toBus="B4", r_pu=0.012, x_pu=0.090, b_pu=0.0, status=1)
+                addPIModelACLine!(net=_pc_net, fromBus="B4", toBus="B5", r_pu=0.010, x_pu=0.080, b_pu=0.0, status=1)
+                addPIModelACLine!(net=_pc_net, fromBus="B5", toBus="B6", r_pu=0.011, x_pu=0.085, b_pu=0.0, status=1)
+                addPIModelACLine!(net=_pc_net, fromBus="B6", toBus="B7", r_pu=0.012, x_pu=0.090, b_pu=0.0, status=1)
+                addPIModelACLine!(net=_pc_net, fromBus="B7", toBus="B1", r_pu=0.010, x_pu=0.080, b_pu=0.0, status=1)
+                addPIModelACLine!(net=_pc_net, fromBus="B2", toBus="B5", r_pu=0.009, x_pu=0.070, b_pu=0.0, status=1)
+                addPIModelACLine!(net=_pc_net, fromBus="B3", toBus="B6", r_pu=0.009, x_pu=0.070, b_pu=0.0, status=1)
+                addProsumer!(net=_pc_net, busName="B1", type="EXTERNALNETWORKINJECTION", referencePri="B1", vm_pu=1.02, va_deg=0.0)
+                addProsumer!(net=_pc_net, busName="B3", type="GENERATOR", p=60.0, q=10.0)
+                addProsumer!(net=_pc_net, busName="B2", type="LOAD", p=35.0, q=10.0)
+                addProsumer!(net=_pc_net, busName="B4", type="LOAD", p=45.0, q=15.0)
+                addProsumer!(net=_pc_net, busName="B5", type="LOAD", p=25.0, q=8.0)
+                addProsumer!(net=_pc_net, busName="B6", type="LOAD", p=30.0, q=10.0)
+                addProsumer!(net=_pc_net, busName="B7", type="LOAD", p=20.0, q=6.0)
+                validate!(net=_pc_net)
+
+                _pc_quiet = OutputConfig(logfile_results=:off, console_summary=false, startup_latency_hint=false)
+                _pc_cfg_nr = SparlectraConfig(powerflow=PowerFlowConfig(solver=:rectangular, rescue=false), output=_pc_quiet)
+                _pc_cfg_ap = SparlectraConfig(powerflow=PowerFlowConfig(solver=:apslf), output=_pc_quiet)
+                _pc_cfg_hyb = SparlectraConfig(powerflow=PowerFlowConfig(solver=:rectangular, apslf_start=ApslfStartConfig(enabled=true)), output=_pc_quiet)
+
+                _pc_r_nr = run_sparlectra(net=deepcopy(_pc_net), config=_pc_cfg_nr)
+                _pc_r_ap = run_sparlectra(net=deepcopy(_pc_net), config=_pc_cfg_ap)
+                run_sparlectra(net=deepcopy(_pc_net), config=_pc_cfg_hyb)
+                rectangular_pf_status(_pc_r_nr.net)
+                _pc_st = rectangular_pf_status(_pc_r_ap.net)
+                _pc_st.apslf_convergence_line
+                _pc_r_ap.final_converged
+                _pc_r_ap.final_mismatch
+                [n._vm_pu for n in _pc_r_ap.net.nodeVec]
+
+                # --- standalone DC power flow -------------------------------------
+                rundcpf!(deepcopy(_pc_net))
+            end
         end
-        isfile(_pc_scf) && import_case(_pc_scf, _pc_cfg)
-        isfile(_pc_pgm) && import_case(_pc_pgm, _pc_cfg)
-        _pc_dtf = DTFImporter.DTFCase(
-          "precompile",
-          100.0,
-          DTFImporter.DTFParams("", Float64[]),
-          ["precompile"],
-          [110.0],
-          DTFImporter.DTFSize("", 2, 1, 0, 0, "SLACK"),
-          [DTFImporter.DTFBranch("", 1, 'T', 1, "A", "PV", "SLACK", 1.21, 6.05, 4.0e-5, -1.0e-5, nothing)],
-          DTFImporter.DTFCompensation[],
-          DTFImporter.DTFTransformerControl[],
-          [
-            DTFImporter.DTFBus("", 1, 1, 1, "PV", 110.0, 0.0, 0.0, 0.0, 10.0, 2.0, -5.0, 5.0),
-            DTFImporter.DTFBus("", 2, 2, 1, "SLACK", 110.0, 0.0, 0.0, 0.0, 20.0, 3.0, -10.0, 10.0),
-          ],
-          DTFImporter.DTFOutage[],
-          DTFImporter.DTFTrailingRecord[],
-        )
-        # task_import_direct: the run path is the DIRECT importer, so that
-        # is what gets warm; the converter stays a product of its own and
-        # is warmed separately (the explicit SCF export path)
-        _pc_dtf_net = DTFImporter.build_net(_pc_dtf; bus_shunt_model = _pc_cfg.model.bus_shunt_model, tap_changer_model = _pc_cfg.model.tap_changer_model)
-        _apply_config_net_parameters!(_pc_dtf_net, _pc_cfg)
-        convert_case(DTFAdapter(), _pc_dtf, dtf_adapter_options(_pc_cfg))
-        rundcpf!(_pc_dtf_net)
-      end
     end
-  end
 end

@@ -49,31 +49,31 @@ place in it; Sparlectra rejects such a network for the APSLF solver
 instead of silently ignoring the controllers (Part 3 shows that).
 
 ````@example workshop_apslf
-function build_ring7(name::String; lambda::Float64 = 1.0)
-  net = Net(name = name, baseMVA = 100.0)
-  addBus!(net = net, busName = "B1", vn_kV = 110.0, vm_pu = 1.02, va_deg = 0.0)
-  for i in 2:7
-    addBus!(net = net, busName = "B$(i)", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
-  end
-  addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.010, x_pu = 0.080, b_pu = 0.0, status = 1)
-  addPIModelACLine!(net = net, fromBus = "B2", toBus = "B3", r_pu = 0.011, x_pu = 0.085, b_pu = 0.0, status = 1)
-  addPIModelACLine!(net = net, fromBus = "B3", toBus = "B4", r_pu = 0.012, x_pu = 0.090, b_pu = 0.0, status = 1)
-  addPIModelACLine!(net = net, fromBus = "B4", toBus = "B5", r_pu = 0.010, x_pu = 0.080, b_pu = 0.0, status = 1)
-  addPIModelACLine!(net = net, fromBus = "B5", toBus = "B6", r_pu = 0.011, x_pu = 0.085, b_pu = 0.0, status = 1)
-  addPIModelACLine!(net = net, fromBus = "B6", toBus = "B7", r_pu = 0.012, x_pu = 0.090, b_pu = 0.0, status = 1)
-  addPIModelACLine!(net = net, fromBus = "B7", toBus = "B1", r_pu = 0.010, x_pu = 0.080, b_pu = 0.0, status = 1)
-  addPIModelACLine!(net = net, fromBus = "B2", toBus = "B5", r_pu = 0.009, x_pu = 0.070, b_pu = 0.0, status = 1)
-  addPIModelACLine!(net = net, fromBus = "B3", toBus = "B6", r_pu = 0.009, x_pu = 0.070, b_pu = 0.0, status = 1)
-  addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", referencePri = "B1", vm_pu = 1.02, va_deg = 0.0)
-  addProsumer!(net = net, busName = "B3", type = "GENERATOR", p = 60.0, q = 10.0)
-  addProsumer!(net = net, busName = "B2", type = "LOAD", p = lambda * 35.0, q = lambda * 10.0)
-  addProsumer!(net = net, busName = "B4", type = "LOAD", p = lambda * 45.0, q = lambda * 15.0)
-  addProsumer!(net = net, busName = "B5", type = "LOAD", p = lambda * 25.0, q = lambda * 8.0)
-  addProsumer!(net = net, busName = "B6", type = "LOAD", p = lambda * 30.0, q = lambda * 10.0)
-  addProsumer!(net = net, busName = "B7", type = "LOAD", p = lambda * 20.0, q = lambda * 6.0)
-  ok, msg = validate!(net = net)
-  ok || error("Network validation failed: $msg")
-  return net
+function build_ring7(name::String; lambda::Float64=1.0)
+    net = Net(name=name, baseMVA=100.0)
+    addBus!(net=net, busName="B1", vn_kV=110.0, vm_pu=1.02, va_deg=0.0)
+    for i in 2:7
+        addBus!(net=net, busName="B$(i)", vn_kV=110.0, vm_pu=1.0, va_deg=0.0)
+    end
+    addPIModelACLine!(net=net, fromBus="B1", toBus="B2", r_pu=0.010, x_pu=0.080, b_pu=0.0, status=1)
+    addPIModelACLine!(net=net, fromBus="B2", toBus="B3", r_pu=0.011, x_pu=0.085, b_pu=0.0, status=1)
+    addPIModelACLine!(net=net, fromBus="B3", toBus="B4", r_pu=0.012, x_pu=0.090, b_pu=0.0, status=1)
+    addPIModelACLine!(net=net, fromBus="B4", toBus="B5", r_pu=0.010, x_pu=0.080, b_pu=0.0, status=1)
+    addPIModelACLine!(net=net, fromBus="B5", toBus="B6", r_pu=0.011, x_pu=0.085, b_pu=0.0, status=1)
+    addPIModelACLine!(net=net, fromBus="B6", toBus="B7", r_pu=0.012, x_pu=0.090, b_pu=0.0, status=1)
+    addPIModelACLine!(net=net, fromBus="B7", toBus="B1", r_pu=0.010, x_pu=0.080, b_pu=0.0, status=1)
+    addPIModelACLine!(net=net, fromBus="B2", toBus="B5", r_pu=0.009, x_pu=0.070, b_pu=0.0, status=1)
+    addPIModelACLine!(net=net, fromBus="B3", toBus="B6", r_pu=0.009, x_pu=0.070, b_pu=0.0, status=1)
+    addProsumer!(net=net, busName="B1", type="EXTERNALNETWORKINJECTION", referencePri="B1", vm_pu=1.02, va_deg=0.0)
+    addProsumer!(net=net, busName="B3", type="GENERATOR", p=60.0, q=10.0)
+    addProsumer!(net=net, busName="B2", type="LOAD", p=lambda * 35.0, q=lambda * 10.0)
+    addProsumer!(net=net, busName="B4", type="LOAD", p=lambda * 45.0, q=lambda * 15.0)
+    addProsumer!(net=net, busName="B5", type="LOAD", p=lambda * 25.0, q=lambda * 8.0)
+    addProsumer!(net=net, busName="B6", type="LOAD", p=lambda * 30.0, q=lambda * 10.0)
+    addProsumer!(net=net, busName="B7", type="LOAD", p=lambda * 20.0, q=lambda * 6.0)
+    ok, msg = validate!(net=net)
+    ok || error("Network validation failed: $msg")
+    return net
 end
 ````
 
@@ -83,12 +83,12 @@ loop, output. The console summary is switched off here because the
 chapter prints its own comparisons.
 
 ````@example workshop_apslf
-quiet = OutputConfig(logfile_results = :off, console_summary = false, startup_latency_hint = false)
-cfg_nr = SparlectraConfig(powerflow = PowerFlowConfig(solver = :rectangular, rescue = false), output = quiet)
-cfg_apslf = SparlectraConfig(powerflow = PowerFlowConfig(solver = :apslf), output = quiet)
+quiet = OutputConfig(logfile_results=:off, console_summary=false, startup_latency_hint=false)
+cfg_nr = SparlectraConfig(powerflow=PowerFlowConfig(solver=:rectangular, rescue=false), output=quiet)
+cfg_apslf = SparlectraConfig(powerflow=PowerFlowConfig(solver=:apslf), output=quiet)
 
-res_nr = run_sparlectra(net = build_ring7("ring7 NR"), config = cfg_nr)
-res_ap = run_sparlectra(net = build_ring7("ring7 APSLF"), config = cfg_apslf)
+res_nr = run_sparlectra(net=build_ring7("ring7 NR"), config=cfg_nr)
+res_ap = run_sparlectra(net=build_ring7("ring7 APSLF"), config=cfg_apslf)
 (res_nr.outcome, res_ap.outcome)
 ````
 
@@ -136,13 +136,13 @@ nothing else. The mismatch after the solve shows where the plateau is:
 ````@example workshop_apslf
 order_table = Tuple{Int,Float64,Bool}[]
 for order in (4, 6, 8, 12, 16, 24, 40)
-  cfg = SparlectraConfig(powerflow = PowerFlowConfig(solver = :apslf, apslf = Sparlectra.ApslfConfig(order = order)), output = quiet)
-  r = run_sparlectra(net = build_ring7("ring7 order $(order)"), config = cfg)
-  push!(order_table, (order, r.final_mismatch, r.final_converged))
+    cfg = SparlectraConfig(powerflow=PowerFlowConfig(solver=:apslf, apslf=Sparlectra.ApslfConfig(order=order)), output=quiet)
+    r = run_sparlectra(net=build_ring7("ring7 order $(order)"), config=cfg)
+    push!(order_table, (order, r.final_mismatch, r.final_converged))
 end
 println(" order   max mismatch [pu]   converged")
 for (order, mismatch, ok) in order_table
-  @printf("  %3d    %.3e          %s\n", order, mismatch, ok)
+    @printf("  %3d    %.3e          %s\n", order, mismatch, ok)
 end
 ````
 
@@ -162,19 +162,19 @@ through `dmin`, because the nearest Padé pole moves towards $s = 1$ as
 the solution branch approaches the fold.
 
 ````@example workshop_apslf
-scaled_ring7(lambda::Float64) = build_ring7(@sprintf("ring7 λ=%.2f", lambda); lambda = lambda)
+scaled_ring7(lambda::Float64) = build_ring7(@sprintf("ring7 λ=%.2f", lambda); lambda=lambda)
 
 margin_table = NamedTuple[]
 for lambda in (1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0)
-  r_ap = run_sparlectra(net = scaled_ring7(lambda), config = cfg_apslf)
-  r_nr = run_sparlectra(net = scaled_ring7(lambda), config = cfg_nr)
-  st = Sparlectra.rectangular_pf_status(r_ap.net)
-  vmin = r_ap.final_converged ? minimum(bus_vm(r_ap.net)) : NaN
-  push!(margin_table, (lambda = lambda, dmin = st.apslf_convergence_radius, level = st.apslf_convergence_level, apslf = r_ap.final_converged, nr = r_nr.final_converged, vmin = vmin))
+    r_ap = run_sparlectra(net=scaled_ring7(lambda), config=cfg_apslf)
+    r_nr = run_sparlectra(net=scaled_ring7(lambda), config=cfg_nr)
+    st = Sparlectra.rectangular_pf_status(r_ap.net)
+    vmin = r_ap.final_converged ? minimum(bus_vm(r_ap.net)) : NaN
+    push!(margin_table, (lambda=lambda, dmin=st.apslf_convergence_radius, level=st.apslf_convergence_level, apslf=r_ap.final_converged, nr=r_nr.final_converged, vmin=vmin))
 end
 println("   λ      dmin    level   APSLF   NR     min Vm")
 for row in margin_table
-  @printf("  %.1f   %7.3f   %-5s   %-5s   %-5s  %.3f\n", row.lambda, row.dmin, row.level, row.apslf, row.nr, row.vmin)
+    @printf("  %.1f   %7.3f   %-5s   %-5s   %-5s  %.3f\n", row.lambda, row.dmin, row.level, row.apslf, row.nr, row.vmin)
 end
 ````
 
@@ -193,20 +193,28 @@ a non-converged run is the signal to raise the order before anything
 else is changed:
 
 ````@example workshop_apslf
-lambda_yel = margin_table[end - 1].lambda
-cfg_order40 = SparlectraConfig(powerflow = PowerFlowConfig(solver = :apslf, apslf = Sparlectra.ApslfConfig(order = 40)), output = quiet)
-r_yel = run_sparlectra(net = scaled_ring7(lambda_yel), config = cfg_order40)
+lambda_yel = margin_table[end-1].lambda
+cfg_order40 = SparlectraConfig(powerflow=PowerFlowConfig(solver=:apslf, apslf=Sparlectra.ApslfConfig(order=40)), output=quiet)
+r_yel = run_sparlectra(net=scaled_ring7(lambda_yel), config=cfg_order40)
 @printf("λ = %.1f with order 40: %s, mismatch %.1e, %s\n", lambda_yel, r_yel.outcome, r_yel.final_mismatch, Sparlectra.rectangular_pf_status(r_yel.net).apslf_convergence_line)
 ````
 
-The radius evaluation costs about as much as the solve itself; on a
-large network it can be switched off with
-`power_flow.apslf.convergence_radius: false`, and the status line then
-says so instead of showing a number:
+The radius evaluation costs about as much as the solve itself: for
+every non-slack bus it forms the Padé denominator and finds its roots,
+one small eigenvalue problem per bus. On a large network it can be
+switched off with `power_flow.apslf.convergence_radius: false`, and
+the status line then says so instead of showing a number.
+
+Two reading rules for `dmin`. It is a heuristic continuation margin,
+not a stability certificate: Padé approximants can produce spurious
+poles, so a `dmin` you want to rely on should be checked against a
+second order (Part 1's table shows how cheap that is). And a
+non-converged run at `YEL` is a truncation signal, not a loadability
+verdict; raise the order first, as shown above.
 
 ````@example workshop_apslf
-cfg_noradius = SparlectraConfig(powerflow = PowerFlowConfig(solver = :apslf, apslf = Sparlectra.ApslfConfig(convergence_radius = false)), output = quiet)
-r_noradius = run_sparlectra(net = build_ring7("ring7 no radius"), config = cfg_noradius)
+cfg_noradius = SparlectraConfig(powerflow=PowerFlowConfig(solver=:apslf, apslf=Sparlectra.ApslfConfig(convergence_radius=false)), output=quiet)
+r_noradius = run_sparlectra(net=build_ring7("ring7 no radius"), config=cfg_noradius)
 println(Sparlectra.rectangular_pf_status(r_noradius.net).apslf_convergence_line)
 ````
 
@@ -218,26 +226,25 @@ limit inside its active-set loop; APSLF does the same in its own outer
 passes (the `iterations` count of Part 1). Sparlectra registers the
 clamps the solver reports in the net's Q-limit log, so the result table
 and the Q-V check judge an APSLF run exactly like a Newton run. The
-IEEE 118-bus case shipped with the package has several machines at
-their limits (downloaded on first use when it is not in the local
-case directory):
+shipped `sp_case118` (a synthetic case with the cardinalities of the
+IEEE 118-bus system: 118 buses, 186 branches, 54 generators, of which
+a good third are synchronous condensers with tight reactive bands) has
+several machines at their limits in the base case:
 
 ````@example workshop_apslf
-workdir = mktempdir()
-local_dirs = (joinpath(dirname(dirname(pathof(Sparlectra))), "data", "mpower"), get(ENV, "SPARLECTRA_LARGE_CASES_DIR", ""))
-local_case = findfirst(isfile, joinpath.(local_dirs, "case118.m"))
-case118 = local_case === nothing ? Sparlectra.FetchMatpowerCase.ensure_casefile("case118.m"; outdir = workdir, to_jl = false) : joinpath(local_dirs[local_case], "case118.m")
-r118_nr = run_sparlectra(casefile = basename(case118), path = dirname(case118), config = cfg_nr)
-r118_ap = run_sparlectra(casefile = basename(case118), path = dirname(case118), config = cfg_apslf)
+case118 = joinpath(dirname(dirname(pathof(Sparlectra))), "data", "mpower", "sp_case118.m")
+r118_nr = run_sparlectra(casefile=basename(case118), path=dirname(case118), config=cfg_nr)
+r118_ap = run_sparlectra(casefile=basename(case118), path=dirname(case118), config=cfg_apslf)
 clamped(net) = sort!(collect(keys(net.qLimitEvents)))
 println("NR    : ", r118_nr.outcome, ", ", length(clamped(r118_nr.net)), " machine(s) at a Q-limit, ", r118_nr.iterations, " iterations")
 println("APSLF : ", r118_ap.outcome, ", ", length(clamped(r118_ap.net)), " machine(s) at a Q-limit, ", r118_ap.iterations, " pass(es)")
 println("APSLF : ", Sparlectra.rectangular_pf_status(r118_ap.net).apslf_convergence_line)
 ````
 
-The two clamp sets are not identical, and neither are the voltages:
-which machines end at a limit depends on the path taken, and case118
-has more than one valid limit configuration (the Q-limit strategy
+The two clamp sets need not be identical, and neither the voltages:
+which machines end at a limit depends on the path taken, and a case
+with many machines near their limits can have more than one valid
+limit configuration (the Q-limit strategy
 question of the [control chapter](https://welthulk.github.io/Sparlectra.jl/generated/workshop_tour_control/); the rectangular
 solver's active-set loop and the series solver's outer passes are two
 such paths). This is the one place where "same equations, same answer"
@@ -261,9 +268,9 @@ Newton run from the flat start visibly:
 
 ````@example workshop_apslf
 lambda_hard = 3.5
-cfg_hybrid = SparlectraConfig(powerflow = PowerFlowConfig(solver = :rectangular, apslf_start = Sparlectra.ApslfStartConfig(enabled = true)), output = quiet)
-r_flat = run_sparlectra(net = scaled_ring7(lambda_hard), config = cfg_nr)
-r_hyb = run_sparlectra(net = scaled_ring7(lambda_hard), config = cfg_hybrid)
+cfg_hybrid = SparlectraConfig(powerflow=PowerFlowConfig(solver=:rectangular, apslf_start=Sparlectra.ApslfStartConfig(enabled=true)), output=quiet)
+r_flat = run_sparlectra(net=scaled_ring7(lambda_hard), config=cfg_nr)
+r_hyb = run_sparlectra(net=scaled_ring7(lambda_hard), config=cfg_hybrid)
 println("flat start  : ", r_flat.outcome, ", ", r_flat.iterations, " Newton iterations")
 println("APSLF start : ", r_hyb.outcome, ", ", r_hyb.iterations, " Newton iterations")
 ````
@@ -285,10 +292,10 @@ solver on a model whose controllers would stay silent. The shipped
 ````@example workshop_apslf
 sp_case14 = importSCF(joinpath(dirname(dirname(pathof(Sparlectra))), "data", "scf", "sp_case14.scf.json"))
 rejected = try
-  run_sparlectra(net = sp_case14, config = cfg_apslf)
-  ""
+    run_sparlectra(net=sp_case14, config=cfg_apslf)
+    ""
 catch err
-  sprint(showerror, err)
+    sprint(showerror, err)
 end
 println(first(rejected, 160))
 ````

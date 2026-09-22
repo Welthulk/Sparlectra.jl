@@ -1,3 +1,20 @@
+# Version 0.16.2 - 2026-09-22
+
+## Highlights
+- Four synthetic MATPOWER cases ship under `data/mpower` (`sp_case9`, `sp_case118`, `sp_case300`, `sp_case1354`, generated and validated by `tools/gen_sp_case118.py` and `tools/gen_sp_cases.py`); the workshops and the tests that used to gate on downloaded cases run on every checkout.
+
+## Changes
+- Precompile workload covers the workshop path (builder API, `run_sparlectra` with the rectangular and the APSLF solver, hybrid start) and state estimation on the tracked SCF fixture; first call of `run_sparlectra` after `using Sparlectra` drops from about 11 s to 0.5 s. DTF is no longer warmed.
+- Test runner drops the warnings the package logs on purpose during a run; `SPARLECTRA_TEST_SHOW_WARNINGS=1` shows them again.
+- Contingency CSV fixtures are compared field by field with a 1e-9 tolerance on numbers instead of byte identity.
+- APSLF workshop: reading rules for `dmin` (heuristic margin, non-converged `YEL` is a truncation signal).
+- `.gitattributes` pins LF for JSON, CSV and Markdown.
+
+## Fixes
+- Fixed: the contingency weights upload failed with EBUSY on Windows when a malformed row was rejected (`readContingencyWeightsCSV` kept the file open).
+- Fixed: the repository hygiene check reported every source file as unlisted on a CRLF checkout.
+- Fixed: three launcher tests read a binding in the world it was defined in (Julia 1.12 warning, future error).
+
 # Version 0.16.1 - 2026-09-21
 
 ## Changes
