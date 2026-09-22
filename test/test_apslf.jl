@@ -32,9 +32,8 @@ using SparseArrays
 import AnalyticLoadFlow
 
 function run_apslf_tests()
-    # the helpers of the regression set and the platform probe live at
-    # function scope so the probe can also fire from the standalone
-    # sp_case5 run below: whichever solve fails first prints it
+    # the helpers of the no-polish set and the platform probe live at
+    # function scope
     quiet = OutputConfig(logfile_results=:off, console_summary=false, startup_latency_hint=false)
     cfg_nr = SparlectraConfig(powerflow=PowerFlowConfig(solver=:rectangular, rescue=false), output=quiet)
     cfg_ap = SparlectraConfig(powerflow=PowerFlowConfig(solver=:apslf), output=quiet)
@@ -265,8 +264,8 @@ function run_apslf_tests()
                 @test solver isa Sparlectra.ApslfSolver
                 @test solver isa Sparlectra.AbstractExternalSolver
                 @test solver.order == 24 && solver.use_pade && !solver.nr_polish && solver.mode === :direct && solver.convergence_radius
-                tuned = Sparlectra.apslf_solver(order=40, use_pade=false, nr_polish=true, mode=:outer, convergence_radius=false)
-                @test (tuned.order, tuned.use_pade, tuned.nr_polish, tuned.mode, tuned.convergence_radius) == (40, false, true, :outer, false)
+                tuned = Sparlectra.apslf_solver(order=40, use_pade=false, nr_polish=false, mode=:outer, convergence_radius=false)
+                @test (tuned.order, tuned.use_pade, tuned.nr_polish, tuned.mode, tuned.convergence_radius) == (40, false, false, :outer, false)
             end
 
             @testset "residual judged against the final active set (0.13.0)" begin
@@ -333,45 +332,12 @@ function run_apslf_tests()
                 @test spec_q.Qmin == model_q.qmin_pu
                 @test spec_q.Qmax == model_q.qmax_pu
 
-                solver = Sparlectra.ApslfSolver(order=20, use_pade=true, nr_polish=true)
+                solver = Sparlectra.ApslfSolver(order=20, use_pade=true)
                 sol = solvePf(solver, model)
                 @test sol isa PFSolution
                 @test length(sol.V) == n
                 @test sol.meta.solver === :apslf
                 @test sol.meta.mode isa Symbol
-            end
-
-            @testset "Standalone APSLF run on sp_case5 (convergence + NR agreement)" begin
-                # load_fixture_net: the agreement property is case-agnostic, so it
-                # runs on the shipped controller-free sp_case5 (the framework run
-                # below would reject a net with declared controllers); both nets
-                # start from the file's identical start state
-                scf5 = abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case5.scf.json"))
-                net_nr = Sparlectra.importSCF(scf5)
-                iters_nr, status_nr = runpf!(net_nr, 30, 1e-8, 0)
-                @test status_nr == 0
-
-                net_apslf = Sparlectra.importSCF(scf5)
-                solver = apslf_solver(order=40, use_pade=true, nr_polish=true)
-                iters_apslf, status_apslf, sol = runpf_external!(net_apslf, solver; tol=1e-8)
-                @test status_apslf == 0
-                status_apslf == 0 || _apslf_platform_probe()
-                @test sol.converged
-
-                max_dVm = maximum(abs.(getfield.(net_apslf.nodeVec, :_vm_pu) .- getfield.(net_nr.nodeVec, :_vm_pu)))
-                max_dVa = maximum(abs.(getfield.(net_apslf.nodeVec, :_va_deg) .- getfield.(net_nr.nodeVec, :_va_deg)))
-                @test max_dVm < 1e-6
-                @test max_dVa < 1e-4
-
-                # Framework wiring: routing through the framework run path yields the
-                # same solver identity and result contract as the direct external-
-                # solver call above.
-                cfg = Sparlectra.SparlectraConfig(powerflow=Sparlectra.PowerFlowConfig(solver=:apslf), output=OutputConfig(logfile_results=:off))
-                net_framework = Sparlectra.importSCF(scf5)
-                result = run_sparlectra(net=net_framework, config=cfg)
-                @test result.final_converged
-                result.final_converged || _apslf_platform_probe()
-                @test result.diagnostics.solver === :apslf
             end
 
             @testset "APSLF start-value generator guard and nr_polish=false in start mode" begin
@@ -418,24 +384,31 @@ function run_apslf_tests()
                 @test all(v -> isfinite(real(v)) && isfinite(imag(v)), V_bad)
             end
         end
-        @testset "APSLF agrees with NR on PV cases without polish (regression)" begin
-            # Windows / Julia 1.13.0 finding: the series solve did not
-            # converge on any case with PV buses while pure-PQ grids solved; the
-            # direct call with nr_polish = true hid it because Newton polished the
-            # series result away. These two cases are the fixed regression set:
-            # NR converges, APSLF (no polish, default order) agrees to 1e-6 pu,
-            # the radius level is GRN. Never gate or relax; see the changelog of
-            # 0.16.2 for the platform note.
+        @testset "APSLF agrees with NR without polish (ring3, sp_case5)" begin
+            # The series alone is the solution; a Newton polish would hide a
+            # wrong series result (seen on Windows / Julia 1.13.0, where the
+            # series did not converge on cases with PV buses). Every APSLF test
+            # runs without polish for that reason. Two shipped cases, the direct
+            # adapter call and the framework run, each against NR to 1e-6 pu.
+            # Never gate or relax.
             for (label, build) in (("ring3", ring3), ("sp_case5", () -> Sparlectra.importSCF(scf5)))
                 r_nr = run_sparlectra(net=build(), config=cfg_nr)
-                r_ap = run_sparlectra(net=build(), config=cfg_ap)
                 @test r_nr.final_converged
-                @test r_ap.final_converged
-                r_ap.final_converged || _apslf_platform_probe()
-                @test r_ap.diagnostics.solver === :apslf
                 vm_nr = getfield.(r_nr.net.nodeVec, :_vm_pu)
-                vm_ap = getfield.(r_ap.net.nodeVec, :_vm_pu)
                 va_nr = getfield.(r_nr.net.nodeVec, :_va_deg)
+
+                net_direct = build()
+                _, status_direct, sol_direct = runpf_external!(net_direct, apslf_solver(); tol=1e-8)
+                @test status_direct == 0
+                @test sol_direct.converged
+                @test maximum(abs.(getfield.(net_direct.nodeVec, :_vm_pu) .- vm_nr)) < 1e-6
+                @test maximum(abs.(getfield.(net_direct.nodeVec, :_va_deg) .- va_nr)) < 1e-4
+
+                r_ap = run_sparlectra(net=build(), config=cfg_ap)
+                @test r_ap.final_converged
+                (status_direct == 0 && r_ap.final_converged) || _apslf_platform_probe()
+                @test r_ap.diagnostics.solver === :apslf
+                vm_ap = getfield.(r_ap.net.nodeVec, :_vm_pu)
                 va_ap = getfield.(r_ap.net.nodeVec, :_va_deg)
                 @test maximum(abs.(vm_nr .- vm_ap)) < 1e-6
                 @test maximum(abs.(va_nr .- va_ap)) < 1e-4
