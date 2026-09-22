@@ -2125,22 +2125,6 @@ function handle_se_topology_hypotheses(form::AbstractDict; output_root::Abstract
   return back(string("topology hypothesis test finished: ", rep.n_candidates, " candidate(s), ", sup, " supported", rep.ambiguous ? " (ambiguous, ranked by J)" : "", "; table below"))
 end
 
-"""
-    handle_se_generate_measurements(form; output_root, application_root, case_directory, operation_log) -> SparlectraWebUIResponse
-
-POST /stateestimation/generate-measurements: demo action. Solves the selected
-case (MATPOWER or CGMES, same import paths as the SE run) once and writes a
-measurement CSV v1 (`<case>.measurements.csv`) into the case cache, then
-redirects back to the SE page with the file offered. Options: per-quantity
-sigmas in percent of the measured value (voltage-level independent,
-`relativeSigma` generation with the `measurementSigmaFloors` floors);
-`noise = true` adds seeded Gaussian noise at those sigmas;
-`gross_error_k > 0` additionally corrupts `gross_error_count` seed-randomly
-drawn telemetry rows by k times their sigma (a reproducible bad-data test
-vector for the elimination/robust workflow); `tap_error_steps` shifts up to
-`tap_error_count` seed-randomly drawn estimable transformers by that many
-whole mechanical steps for the generation state.
-"""
 # A synchronous long action (measurement generation, adding noise) marks
 # its case busy for its duration: a second such action on the same case,
 # or a run of it, is refused with a message instead of reading a file that
@@ -2174,6 +2158,22 @@ function _webui_case_release!(casefile::AbstractString)
   return nothing
 end
 
+"""
+    handle_se_generate_measurements(form; output_root, application_root, case_directory, operation_log) -> SparlectraWebUIResponse
+
+POST /stateestimation/generate-measurements: demo action. Solves the selected
+case (MATPOWER or CGMES, same import paths as the SE run) once and writes a
+measurement CSV v1 (`<case>.measurements.csv`) into the case cache, then
+redirects back to the SE page with the file offered. Options: per-quantity
+sigmas in percent of the measured value (voltage-level independent,
+`relativeSigma` generation with the `measurementSigmaFloors` floors);
+`noise = true` adds seeded Gaussian noise at those sigmas;
+`gross_error_k > 0` additionally corrupts `gross_error_count` seed-randomly
+drawn telemetry rows by k times their sigma (a reproducible bad-data test
+vector for the elimination/robust workflow); `tap_error_steps` shifts up to
+`tap_error_count` seed-randomly drawn estimable transformers by that many
+whole mechanical steps for the generation state.
+"""
 function handle_se_generate_measurements(form::AbstractDict; output_root::AbstractString, application_root::AbstractString = _webui_application_root(), case_directory = nothing, operation_log::AbstractString = output_root)
   directory = _webui_case_directory(; case_directory = case_directory, application_root = application_root, output_root = output_root)
   casefile = String(_webui_form_value(form, "casefile", ""))

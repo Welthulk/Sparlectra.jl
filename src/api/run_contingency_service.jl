@@ -23,6 +23,34 @@
 #          dir, no cache workflow of its own). rescue_ladder is read from the
 #          config; the outage kind is a run parameter, not a config key.
 
+# Resolve the case file's contingency definition into runner cases. Component
+# ids are resolved through `extra[<id>].name`, which is why that name is
+# mandatory wherever anything refers to an object. The runner takes ONE
+# element per case, so a multi-outage (common-mode or N-2) entry is rejected
+# by name instead of being silently reduced to its first element.
+function _scf_contingency_cases_from_file(case_path::AbstractString, study::AbstractDict, net::Net)::Vector{ContingencyCase}
+  names = scf_extra_names(case_path)
+  name_of(id) = get(names, Int(id)) do
+    throw(ArgumentError("SCF contingencies: component $(id) has no name in `extra`; the case list cannot be resolved."))
+  end
+  # The element kind follows from what the name resolves to in the network,
+  # not from a second field in the file: a name that matches neither a branch
+  # nor a generator is a broken case list and says so here.
+  branch_names = Set(getCompName(br.comp) for br in net.branchVec)
+  gen_cases = Dict(c.element => c for c in generateN1Generators(net))
+  out = ContingencyCase[]
+  for case in get(study, "cases", [])
+    outages = get(case, "outages", [])
+    length(outages) == 1 || throw(ArgumentError("SCF contingencies: case $(get(case, "name", "?")) lists $(length(outages)) outages; the N-1 runner takes one element per case (common-mode and N-2 studies are not supported yet)."))
+    element = name_of(_scf_int(only(outages)["component"], "a contingency outage component"))
+    kind = element in branch_names ? :branch : haskey(gen_cases, element) ? :gen : throw(ArgumentError("SCF contingencies: $(repr(element)) is neither an in-service branch nor a generator of this network."))
+    name = String(get(case, "name", element))
+    weight = haskey(case, "weight") ? Float64(case["weight"]) : 1.0
+    push!(out, ContingencyCase(name, kind, element, weight))
+  end
+  return out
+end
+
 """
     _run_contingency_service(case_path, config_file, output_dir, run_id, kind; weights_path = nothing) -> SparlectraApiResult
 
@@ -64,35 +92,6 @@ Failure behavior: `contingency_unsupported_format` (not MATPOWER or CGMES),
 `screening_mode`, missing `scenario_file`), plus the shared import/config
 failures.
 """
-
-# Resolve the case file's contingency definition into runner cases. Component
-# ids are resolved through `extra[<id>].name`, which is why that name is
-# mandatory wherever anything refers to an object. The runner takes ONE
-# element per case, so a multi-outage (common-mode or N-2) entry is rejected
-# by name instead of being silently reduced to its first element.
-function _scf_contingency_cases_from_file(case_path::AbstractString, study::AbstractDict, net::Net)::Vector{ContingencyCase}
-  names = scf_extra_names(case_path)
-  name_of(id) = get(names, Int(id)) do
-    throw(ArgumentError("SCF contingencies: component $(id) has no name in `extra`; the case list cannot be resolved."))
-  end
-  # The element kind follows from what the name resolves to in the network,
-  # not from a second field in the file: a name that matches neither a branch
-  # nor a generator is a broken case list and says so here.
-  branch_names = Set(getCompName(br.comp) for br in net.branchVec)
-  gen_cases = Dict(c.element => c for c in generateN1Generators(net))
-  out = ContingencyCase[]
-  for case in get(study, "cases", [])
-    outages = get(case, "outages", [])
-    length(outages) == 1 || throw(ArgumentError("SCF contingencies: case $(get(case, "name", "?")) lists $(length(outages)) outages; the N-1 runner takes one element per case (common-mode and N-2 studies are not supported yet)."))
-    element = name_of(_scf_int(only(outages)["component"], "a contingency outage component"))
-    kind = element in branch_names ? :branch : haskey(gen_cases, element) ? :gen : throw(ArgumentError("SCF contingencies: $(repr(element)) is neither an in-service branch nor a generator of this network."))
-    name = String(get(case, "name", element))
-    weight = haskey(case, "weight") ? Float64(case["weight"]) : 1.0
-    push!(out, ContingencyCase(name, kind, element, weight))
-  end
-  return out
-end
-
 function _run_contingency_service(case_path::AbstractString, config_file::AbstractString, output_dir::AbstractString, run_id::String, kind::AbstractString; config_overrides::AbstractDict = Dict{String,Any}(), weights_path::Union{Nothing,AbstractString} = nothing, se_state_file::Union{Nothing,AbstractString} = nothing, se_run_id::Union{Nothing,AbstractString} = nothing, se_start_mode::AbstractString = "se_state", scenario_source::Union{Nothing,AbstractString} = nothing, scenario_file::Union{Nothing,AbstractString} = nothing, screening_mode::Union{Nothing,AbstractString} = nothing, screening_margin_pct::Union{Nothing,Real} = nothing)::SparlectraApiResult
   mkpath(output_dir)
   logfile = joinpath(output_dir, "run.log")

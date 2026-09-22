@@ -206,31 +206,6 @@ function _se_service_import(case_path, config, run_id, config_file, output_dir, 
   return imported, format, nothing
 end
 
-"""
-    _run_state_estimation_service(case_path, config_file, output_dir, run_id, measurement_file; kwargs...) -> SparlectraApiResult
-
-Service backend of the Web UI "Run state estimation" action (SE phase 5).
-Builds the net through the shared import paths, reads `measurement_file`
-(measurement CSV v1, atomic), evaluates global observability (structural
-islands plus FD-aware rank, phase 4), runs the bad-data diagnostics
-(`runse_diagnostics`, sequential elimination on the configured budget) and
-the final `runse!(updateNet = true)`, and writes the SE artifacts:
-`measurements.csv` (copy), `se_diagnostics.md`, `se_view.md`,
-`shunt_estimates.csv` (when shunts were released), and `se_state.csv` (the
-chain anchor a later SE-started power flow consumes via `readSEStateCSV!`).
-
-Options: `max_iter`, `tol`, `flatstart`, `robust`, `max_eliminations`,
-`update_shunts`, `report_correlation` mirror the estimator keywords.
-`tap_estimation = true` releases the tap of every in-service transformer
-that carries a ratio tap changer (`setTapEstimation!` mode `:ratio`) before
-the solve; the estimator then fixes each tap to its nearest mechanical step
-and reports J before versus after the fixation (`se_tap_estimates.csv`).
-
-Failure reasons: `se_unsupported_format`, `import_error`,
-`invalid_measurements` (missing/unreadable/rejected file),
-`se_not_observable` (observability quality `:not_observable`),
-`se_not_converged`, plus the shared config failure.
-"""
 ## headline mapping for the state-estimation timing file
 const _SE_PERF_HEADLINE = (:case_loading_network_solver => "importing_case", :solver => "state_estimation", :postprocessing => "postprocessing_result", :artifact_writing => "writing_artifacts")
 
@@ -281,6 +256,31 @@ function _se_log_criticality(io::IO, net::Net, obs)
   return nothing
 end
 
+"""
+    _run_state_estimation_service(case_path, config_file, output_dir, run_id, measurement_file; kwargs...) -> SparlectraApiResult
+
+Service backend of the Web UI "Run state estimation" action (SE phase 5).
+Builds the net through the shared import paths, reads `measurement_file`
+(measurement CSV v1, atomic), evaluates global observability (structural
+islands plus FD-aware rank, phase 4), runs the bad-data diagnostics
+(`runse_diagnostics`, sequential elimination on the configured budget) and
+the final `runse!(updateNet = true)`, and writes the SE artifacts:
+`measurements.csv` (copy), `se_diagnostics.md`, `se_view.md`,
+`shunt_estimates.csv` (when shunts were released), and `se_state.csv` (the
+chain anchor a later SE-started power flow consumes via `readSEStateCSV!`).
+
+Options: `max_iter`, `tol`, `flatstart`, `robust`, `max_eliminations`,
+`update_shunts`, `report_correlation` mirror the estimator keywords.
+`tap_estimation = true` releases the tap of every in-service transformer
+that carries a ratio tap changer (`setTapEstimation!` mode `:ratio`) before
+the solve; the estimator then fixes each tap to its nearest mechanical step
+and reports J before versus after the fixation (`se_tap_estimates.csv`).
+
+Failure reasons: `se_unsupported_format`, `import_error`,
+`invalid_measurements` (missing/unreadable/rejected file),
+`se_not_observable` (observability quality `:not_observable`),
+`se_not_converged`, plus the shared config failure.
+"""
 function _run_state_estimation_service(
   case_path::AbstractString,
   config_file::AbstractString,

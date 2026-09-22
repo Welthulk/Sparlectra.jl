@@ -324,6 +324,15 @@ function _case_config_declares(path::AbstractString, case_name::AbstractString):
   return strip(string(get(raw, "case", ""))) == case_name
 end
 
+# `case118.m` and `case118.scf.json` share the stem `case118`
+function _case_config_shared_stem(a::AbstractString, b::AbstractString)::Bool
+  stem(n) = begin
+    s, e = splitext(String(n))
+    (lowercase(e) == ".json" && endswith(lowercase(s), ".scf")) ? s[1:end-4] : s
+  end
+  return stem(a) == stem(b)
+end
+
 """
     load_case_config(case_path) -> Dict{String,Any}
 
@@ -335,15 +344,6 @@ hard error `case_config_mismatch`, so a copied config cannot silently steer
 the wrong case. Keys outside the case scope are refused with the same
 wording as the in-file `sparlectra.config` check.
 """
-# `case118.m` and `case118.scf.json` share the stem `case118`
-function _case_config_shared_stem(a::AbstractString, b::AbstractString)::Bool
-  stem(n) = begin
-    s, e = splitext(String(n))
-    (lowercase(e) == ".json" && endswith(lowercase(s), ".scf")) ? s[1:end-4] : s
-  end
-  return stem(a) == stem(b)
-end
-
 function load_case_config(case_path::AbstractString)::Dict{String,Any}
   path = case_config_path(case_path)
   isfile(path) || return Dict{String,Any}()
@@ -533,16 +533,6 @@ const _AUTO_PROFILE_FIELD_KEYS = Dict{Symbol,String}(
   :compare_voltage_reference => "matpower_import.compare_voltage_reference",
 )
 
-"""
-    apply_auto_profile_level(cfg, applied_pairs) -> (config, applied, skipped)
-
-Applies auto-profile recommendations as their own precedence level (D11):
-each pair lands only when the user did not set its key explicitly;
-explicitly set keys are returned in `skipped` so the caller can report
-the yield. The copy helpers resolve at call time (they live with the
-MATPOWER engine), so this stays the single application site without a
-definition-time dependency on the adapters block.
-"""
 # the five level keys with their template defaults, read once from a
 # defaults-only config: a refresh-written YAML carries EVERY key, so
 # "explicitly set" cannot mean mere presence; the level yields when the
@@ -562,6 +552,16 @@ function _auto_profile_template_default(field::Symbol)
   return _AUTO_PROFILE_TEMPLATE_DEFAULTS[field]
 end
 
+"""
+    apply_auto_profile_level(cfg, applied_pairs) -> (config, applied, skipped)
+
+Applies auto-profile recommendations as their own precedence level (D11):
+each pair lands only when the user did not set its key explicitly;
+explicitly set keys are returned in `skipped` so the caller can report
+the yield. The copy helpers resolve at call time (they live with the
+MATPOWER engine), so this stays the single application site without a
+definition-time dependency on the adapters block.
+"""
 function apply_auto_profile_level(cfg::SparlectraConfig, applied_pairs)
   applied = Pair{Symbol,Any}[]
   skipped = Pair{Symbol,Any}[]

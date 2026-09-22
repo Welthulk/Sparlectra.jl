@@ -303,23 +303,6 @@ function removeTrafo!(; net::Net, fromBus::String, toBus::String)::Bool
 end
 
 """
-    removeShunt!(; net::Net, busName::String)
-
-Removes a shunt at the specified bus from the network.
-
-# Arguments
-- `net::Net`: The network from which to remove the shunt.
-- `busName::String`: The name of the bus where the shunt is connected.
-
-# Returns
-- `Bool`: True if the shunt was successfully removed, false otherwise.
-
-# Example
-```julia
-removeShunt!(net = network, busName = "Bus1")
-"""
-
-"""
     removeShunt!(; net, busName) -> Bool
 
 Remove the shunt at the bus; returns whether one was removed.
@@ -357,23 +340,6 @@ function removeShunt!(; net::Net, busName::String)::Bool
   end
   return true
 end
-
-"""
-      removeProsumer!(; net::Net, busName::String, type::String)
-
-# Arguments
-- `net::Net`: The network from which to remove the prosumer.
-- `busName::String`: The name of the bus where the prosumer is connected.
-- `type::String`: The type of the prosumer to remove (e.g., "GENERATOR", "ENERGYCONSUMER"). If empty, removes all prosumers at the bus.
-
-# Returns
-- `Bool`: True if the prosumer was successfully removed, false otherwise.
-
-# Example
-```julia
-removeProsumer!(net = network, busName = "Bus1", type = "GENERATOR")
-```
-"""
 
 """
     removeProsumer!(; net, busName, type = "") -> Bool

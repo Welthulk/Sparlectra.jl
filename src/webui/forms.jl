@@ -354,17 +354,6 @@ end
 
 _webui_is_runnable_dat_role(role::Symbol)::Bool = role in (:dtf_network_case, :dtf_network_case_with_outages)
 
-"""
-    _webui_is_user_selectable_case(name) -> Bool
-
-Return whether `name` should be shown in the normal Web UI case selector.
-The bundled precompile workloads are `warmup_*.jl` files and stay out of the
-selector; a MATPOWER `.m` case may carry the `warmup_` prefix and stays
-selectable. Generated Julia cache
-artifacts are also hidden from the selector; users can still enter an
-explicit path in the manual case field when they intentionally want to run
-such a file.
-"""
 # Memoization for the per-file content checks of the case selector: the ZIP
 # boundary-set detection and the DAT role classification read file content,
 # and the form re-scans the whole case directory on every render (measured
@@ -418,6 +407,17 @@ end
 
 _webui_is_case_json_cached(path::AbstractString)::Bool = _webui_file_scan_memo(_webui_is_case_json, path)
 
+"""
+    _webui_is_user_selectable_case(name) -> Bool
+
+Return whether `name` should be shown in the normal Web UI case selector.
+The bundled precompile workloads are `warmup_*.jl` files and stay out of the
+selector; a MATPOWER `.m` case may carry the `warmup_` prefix and stays
+selectable. Generated Julia cache
+artifacts are also hidden from the selector; users can still enter an
+explicit path in the manual case field when they intentionally want to run
+such a file.
+"""
 function _webui_is_user_selectable_case(name::AbstractString)::Bool
   lowered_name = lowercase(basename(name))
   _, extension = splitext(lowered_name)

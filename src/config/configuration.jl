@@ -2027,13 +2027,6 @@ function _validate_config_scope(raw::AbstractDict, expected::AbstractString, con
   return nothing
 end
 
-"""
-    _apply_config_aliases!(raw, version, context) -> raw
-
-Rewrite a version-`version` configuration dictionary to the current layout
-by applying every alias step in order. A value is moved only when the new
-key is not set (an explicitly set new key wins over a stale old one).
-"""
 # The flat (dotted-key) twin for the deprecated `sparlectra.config` block of
 # an SCF case file, which is version-less and therefore never went through
 # the versioned alias pass: every alias step applies, one warning names the
@@ -2057,6 +2050,13 @@ function _apply_flat_config_aliases!(out::AbstractDict, context::AbstractString)
   return out
 end
 
+"""
+    _apply_config_aliases!(raw, version, context) -> raw
+
+Rewrite a version-`version` configuration dictionary to the current layout
+by applying every alias step in order. A value is moved only when the new
+key is not set (an explicitly set new key wins over a stale old one).
+"""
 function _apply_config_aliases!(raw::AbstractDict, version::Int, context::AbstractString)
   # Collected, not warned one by one. A file carrying nine version-0 names
   # produced nine boxed warnings at EVERY start, which is what a user reports
@@ -2203,15 +2203,6 @@ function _flatten_config_values!(out::Dict{String,Any}, raw::AbstractDict, prefi
   end
   return out
 end
-
-"""
-    load_sparlectra_config([user_path]; reload=false, cli_overrides=Dict(), overrides=Dict())
-
-Load, validate, merge, and cache the central typed `SparlectraConfig`.
-Configuration precedence is `src/config/configuration.yaml.example`, optional
-`examples/configuration.yaml` (or an explicit `user_path`), CLI-style overrides,
-then explicit Julia API overrides. Unknown user keys throw an `ArgumentError`.
-"""
 
 """
     refresh_sparlectra_config_file(path; write=false, backup=true, normalize_deprecated=true, default_path=DEFAULT_SPARLECTRA_CONFIG_PATH)
