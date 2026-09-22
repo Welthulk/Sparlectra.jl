@@ -350,6 +350,18 @@ function run_apslf_tests()
                 # the adapter asks for the coefficients as well (the radius needs them)
                 res_c = AnalyticLoadFlow.solve_pf_apslf(spec; mode=:direct, order=24, use_pade=true, nr_polish=false, return_coeffs=true)
                 println("      probe 6 the same with return_coeffs = true (as the adapter calls it): converged = ", res_c.converged)
+                # is the voltage behind that flag right? ALF's own mismatch of its
+                # result, Sparlectra's mismatch of the same result, and the
+                # distance to the Newton solution of the same model
+                model_p = Sparlectra.buildPfModel(build_spec())
+                net_nr = build_spec()
+                runpf!(net_nr, 30, 1e-10, 0)
+                vm_nr_p = [net_nr.nodeVec[i]._vm_pu for i in model_p.busIdx_net]
+                alf_mis = AnalyticLoadFlow.max_mismatch_on_specY(spec, res_c.V)
+                bt_p = Symbol[Sparlectra._apslf_bus_type(b) for b in res_c.bustype]
+                S_p = ComplexF64[complex(real(model_p.Sspec[i]), res_c.Q[i]) for i in eachindex(model_p.Sspec)]
+                sp_mis = maximum(abs.(Sparlectra.mismatch_rectangular(model_p.Ybus, res_c.V, S_p, bt_p, model_p.Vset, model_p.slack_idx)))
+                println("      probe 7 ", label, ": ALF mismatch of its own V ", alf_mis, ", Sparlectra mismatch of that V ", sp_mis, ", max |V| deviation from Newton ", maximum(abs.(abs.(res_c.V) .- vm_nr_p)), ", ALF Q on bus 1..3 ", res_c.Q[1:min(3, end)], ", Sspec ", model_p.Sspec[1:min(3, end)])
             end
             # the same two modes on Sparlectra's ring3 through the adapter, against NR
             ref = ring3()
