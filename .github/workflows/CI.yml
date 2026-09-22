@@ -19,7 +19,8 @@ jobs:
       fail-fast: false
       matrix:
         version:
-          - '1'
+          - '1.12'   # the Colab runtime (2026.07 ships 1.12.6) and the compat floor
+          - '1'      # latest stable
         os:
           - ubuntu-latest
         arch:
