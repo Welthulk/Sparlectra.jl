@@ -116,6 +116,45 @@ using PrecompileTools: @setup_workload, @compile_workload
 
                 # --- standalone DC power flow -------------------------------------
                 rundcpf!(deepcopy(_pc_net))
+
+                # --- service path (the Web UI's first run) --------------------------
+                # Measured 2026-09-22 on a fresh process with the workload above:
+                # the solver paths answered in well under a second, but the first
+                # start_powerflow_run took 38 s (25 s in run_sparlectra_api: the
+                # artifact writers, effective_config.yaml, result.json, the
+                # metadata; 22 s more in the service layer: run id, run index,
+                # lifecycle). That is exactly the first click on the Runs page,
+                # so both layers are warmed here on the tracked SCF fixture.
+                # The run's entry in the process-wide registry is removed again:
+                # nothing of this run may survive in the package image.
+                if isfile(_pc_scf)
+                    _pc_out = mktempdir()
+                    _pc_api = run_sparlectra_api(casefile=_pc_scf, config_file=DEFAULT_SPARLECTRA_CONFIG_PATH, output_dir=joinpath(_pc_out, "api"))
+                    to_dict(_pc_api)
+                    _pc_srv = start_powerflow_run(Dict{String,Any}("casefile" => _pc_scf, "config_file" => DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(_pc_out, "runs")))
+                    _pc_run_id = String(_pc_srv["run_id"])
+                    get_powerflow_result(_pc_run_id)
+                    list_powerflow_artifacts(_pc_run_id)
+                    # the state-estimation run of the same service (the fixture
+                    # carries its measurement set): 2.7 s cold without this
+                    _pc_se = start_powerflow_run(Dict{String,Any}("casefile" => _pc_scf, "config_file" => DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(_pc_out, "runs"), "se_mode" => true, "measurement_file" => ""))
+                    # NOT warmed: the Web UI pages (maintainer decision
+                    # 2026-09-22: rendering them here cost another 20 s of
+                    # precompile time; the Runs page stays cold on its first
+                    # open, the sysimage covers that for the maintainer)
+                    lock(_POWERFLOW_SERVICE_LOCK) do
+                        delete!(_POWERFLOW_SERVICE_RUNS, _pc_run_id)
+                        delete!(_POWERFLOW_SERVICE_RUNS, String(_pc_se["run_id"]))
+                    end
+                    rm(_pc_out; recursive=true, force=true)
+                end
+
+                # --- tap controller path ------------------------------------------
+                # sp_case14 carries a declared OLTC controller: the control loop
+                # (outer passes, controller write-back) is not on the ring's path
+                # and cost 2.3 s on its first run
+                _pc_scf14 = normpath(joinpath(@__DIR__, "..", "..", "data", "scf", "sp_case14.scf.json"))
+                isfile(_pc_scf14) && run_sparlectra(net=importSCF(_pc_scf14), config=_pc_cfg_nr)
             end
         end
     end

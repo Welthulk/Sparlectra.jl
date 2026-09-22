@@ -251,10 +251,13 @@ function run_repository_hygiene_tests()
             for f in extra
                 include(joinpath(@__DIR__, f))
             end
-            # Base.invokelatest: the include above defines the function in a NEWER
-            # world than this frame, so a direct call raises "the applicable method
-            # may be too new" on Julia 1.12
-            @test Base.invokelatest(run_private_boundary_check, repo) == true
+            # the include above defines the function in a NEWER world than this
+            # frame: both the binding lookup and the call go through
+            # invokelatest (the same pattern as run_entry in runtests.jl), or
+            # Julia 1.12+ warns about the binding access and a future version
+            # errors
+            checker = Base.invokelatest(getfield, @__MODULE__, :run_private_boundary_check)
+            @test Base.invokelatest(checker, repo) == true
         end
         @test true
     end
