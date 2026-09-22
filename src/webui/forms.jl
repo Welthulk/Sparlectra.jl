@@ -453,11 +453,23 @@ function _webui_is_user_selectable_case(name::AbstractString)::Bool
   return true
 end
 
+# `isfile` on a directory entry that is being deleted by another process
+# raises EACCES on Windows (seen with a temporary directory of the test
+# suite under data/mpower); such an entry is simply not a case file.
+function _webui_is_regular_file(path::AbstractString)::Bool
+  try
+    return isfile(path)
+  catch err
+    err isa Base.IOError || rethrow(err)
+    return false
+  end
+end
+
 function _webui_casefile_options_in_directory(directory::AbstractString)::Vector{String}
   isdir(directory) || return String[]
   files = filter(readdir(directory)) do name
     path = joinpath(directory, name)
-    return isfile(path) && _webui_is_user_selectable_case(path)
+    return _webui_is_regular_file(path) && _webui_is_user_selectable_case(path)
   end
   return sort!(files; by = lowercase)
 end

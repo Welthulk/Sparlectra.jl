@@ -17,9 +17,9 @@
 #          (analytic derivations in the comments, computed independently of
 #          the implementation), the safety-flag contract (default + warning
 #          + result flag), asynchronous-machine lower-bound flagging, and
-#          short_circuit.c_factor config coverage. The MicroGrid
-#          plausibility sweep lives in test_cgmes_importer.jl (extended,
-#          cache-gated); this file needs no CGMES fixtures.
+#          short_circuit.c_factor config coverage. This file needs no CGMES
+#          fixtures; the plausibility sweep on a real delivery returns with
+#          self-built CGMES deliveries in test_cgmes_importer.jl.
 
 using Test
 using Sparlectra

@@ -192,9 +192,9 @@ loads them without any download. The legacy names case9, case14, case57
 resolve against the LOCAL data/mpower cache only and exist for the
 testsets that guard externally anchored MATPOWER reference values; their
 callers must gate on `fixture_net_available` and speak their skip. CGMES
-fixtures (MiniGrid, FullGrid) stay per-site on purpose: their imports
-exercise importer options and ARE the test subject, a shared cached net
-would test the cache instead.
+deliveries are not fixtures here on purpose: their imports exercise
+importer options and ARE the test subject, a shared cached net would test
+the cache instead.
 """
 const _FIXTURE_NET_CACHE = Dict{String,Any}()
 

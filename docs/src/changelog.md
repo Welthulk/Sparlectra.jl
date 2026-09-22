@@ -13,6 +13,7 @@
 - `examples/others/apslf_vs_nr_timing.jl` (APSLF against Newton over the shipped cases and tiled grids, table, CSV, SVG) and `examples/others/apslf_pv_diagnostic.jl` (four checks that name the layer on which an APSLF solve with PV buses fails on a machine); the timing table is in the performance page.
 - A ReliCapGrid delivery is packed only when every member file is in the cache, and a ZIP from an older cache layout is refreshed instead of reused.
 - The AC island detection block of a parallel N-1 worker is written with one print instead of line by line.
+- Tests on downloaded CGMES deliveries (ENTSO-E conformity package, ReliCapGrid) are removed; the CGMES suites run on synthetic fixtures, and the coverage returns on self-built deliveries from the exporter.
 
 ## Known issues
 - On Windows with Julia 1.13.0 the APSLF solver did not converge on any network with PV buses (pure-PQ grids solve; Linux with the same Julia and package versions is not affected, nor is the rectangular solver). Julia 1.12 is the supported version for the notebooks (Colab runtime 2026.07 ships 1.12.6). `examples/others/apslf_pv_diagnostic.jl` names the failing layer on a given machine; the ring3 and sp_case5 regression in `test_apslf.jl` guards the fix.

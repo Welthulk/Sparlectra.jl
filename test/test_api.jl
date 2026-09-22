@@ -23,10 +23,13 @@ include("test_api_support.jl")
 
 function run_api_fast_tests()
   @testset "API fast smoke and timing contracts" begin
-    @testset "net parameters stamped exactly once per importer (task_import_direct D12)" begin
-      # D12, corrected by task_import_direct: the stamping happens exactly
+    @testset "net parameters stamped exactly once per importer" begin
+      # the stamping happens exactly
       # once PER IMPORTER, at the place each importer finishes; this test
-      # is the guard against pulling the four call sites back together
+      # is the guard against pulling the four call sites back together.
+      # The CGMES call site is not covered here: its leg ran on a downloaded
+      # delivery and was removed with the other tests on downloaded CGMES
+      # data (self-built deliveries take over in a later round).
       cfg = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true)
       repo = dirname(@__DIR__)
       stamps() = Sparlectra._NET_PARAM_STAMP_COUNT[]
@@ -45,17 +48,6 @@ function run_api_fast_tests()
         assert_one(dtf, "dtf"; requested_format = :dtf_for001)
       else
         println("      import stamp: dtf SKIPPED (data/DTF/FOR001.DAT not present)")
-      end
-      cgmes_dir = joinpath(repo, "data", "CGMES", "cases")
-      cgmes_zip = ""
-      if isdir(cgmes_dir)
-        zips = sort(filter(f -> endswith(f, ".zip"), readdir(cgmes_dir; join = true)); by = filesize)
-        isempty(zips) || (cgmes_zip = first(zips))
-      end
-      if isempty(cgmes_zip)
-        println("      import stamp: cgmes SKIPPED (no cached delivery under data/CGMES/cases)")
-      else
-        assert_one(cgmes_zip, string("cgmes (", basename(cgmes_zip), ")"); requested_format = :cgmes)
       end
     end
 

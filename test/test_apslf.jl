@@ -330,8 +330,22 @@ function run_apslf_tests()
             C = zeros(ComplexF64, n, 3)
             LinearAlgebra.ldiv!(@view(C[:, 2]), F, b)
             println("      probe 2 ldiv! into a column view residual: ", LinearAlgebra.norm(A * C[:, 2] - b) / LinearAlgebra.norm(b), ", other columns untouched: ", all(iszero, C[:, 1]) && all(iszero, C[:, 3]))
-            res9 = AnalyticLoadFlow.solve_demo_case(AnalyticLoadFlow.demo_case_9bus(); order=24, use_pade=true, nr_polish=false, verbose=0)
-            println("      probe 3 AnalyticLoadFlow 9-bus PV case without polish: converged = ", res9.converged)
+            # AnalyticLoadFlow's own 9-bus case (three PV buses) through the two
+            # solver modes Sparlectra can select; the :direct mode is the default
+            case9 = AnalyticLoadFlow.demo_case_9bus()
+            for mode in (:direct, :outer)
+                res9 = AnalyticLoadFlow.solve_pf_apslf(case9; mode=mode, order=24, use_pade=true, nr_polish=false)
+                println("      probe 3 AnalyticLoadFlow 9-bus PV case, mode ", mode, ", no polish: converged = ", res9.converged)
+            end
+            # the same two modes on Sparlectra's ring3 through the adapter, against NR
+            ref = ring3()
+            runpf!(ref, 30, 1e-10, 0)
+            vm_ref = getfield.(ref.nodeVec, :_vm_pu)
+            for mode in (:direct, :outer)
+                probe_net = ring3()
+                _, st, sol = runpf_external!(probe_net, apslf_solver(order=24, use_pade=true, nr_polish=false, mode=mode); tol=1e-8)
+                println("      probe 4 Sparlectra ring3 through the adapter, mode ", mode, ": status ", st, ", converged = ", sol.converged, ", max |dVm| vs NR ", maximum(abs.(getfield.(probe_net.nodeVec, :_vm_pu) .- vm_ref)))
+            end
         end
         # SPARLECTRA_APSLF_PROBE=1 prints the probe on a passing run too
         get(ENV, "SPARLECTRA_APSLF_PROBE", "") == "1" && _apslf_platform_probe()
