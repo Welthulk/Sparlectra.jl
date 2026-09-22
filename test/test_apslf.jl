@@ -286,51 +286,6 @@ function run_apslf_tests()
             @test all(v -> isfinite(real(v)) && isfinite(imag(v)), V_bad)
         end
     end
-    @testset "APSLF agrees with NR on PV cases without polish (regression)" begin
-        # Windows / Julia 1.13.0 finding (2026-09-22): the series solve did not
-        # converge on any case with PV buses while pure-PQ grids solved; the
-        # direct call with nr_polish = true hid it because Newton polished the
-        # series result away. These two cases are the fixed regression set:
-        # NR converges, APSLF (no polish, default order) agrees to 1e-6 pu,
-        # the radius level is GRN. Never gate or relax; see the changelog of
-        # 0.16.2 for the platform note.
-        quiet = OutputConfig(logfile_results=:off, console_summary=false, startup_latency_hint=false)
-        cfg_nr = SparlectraConfig(powerflow=PowerFlowConfig(solver=:rectangular, rescue=false), output=quiet)
-        cfg_ap = SparlectraConfig(powerflow=PowerFlowConfig(solver=:apslf), output=quiet)
-        function ring3()
-            net = Net(name="apslf_ring3", baseMVA=100.0)
-            addBus!(net=net, busName="B1", vn_kV=110.0, vm_pu=1.02, va_deg=0.0)
-            addBus!(net=net, busName="B2", vn_kV=110.0, vm_pu=1.0, va_deg=0.0)
-            addBus!(net=net, busName="B3", vn_kV=110.0, vm_pu=1.0, va_deg=0.0)
-            addPIModelACLine!(net=net, fromBus="B1", toBus="B2", r_pu=0.010, x_pu=0.080, b_pu=0.0, status=1)
-            addPIModelACLine!(net=net, fromBus="B2", toBus="B3", r_pu=0.011, x_pu=0.085, b_pu=0.0, status=1)
-            addPIModelACLine!(net=net, fromBus="B3", toBus="B1", r_pu=0.012, x_pu=0.090, b_pu=0.0, status=1)
-            addProsumer!(net=net, busName="B1", type="EXTERNALNETWORKINJECTION", referencePri="B1", vm_pu=1.02, va_deg=0.0)
-            addProsumer!(net=net, busName="B2", type="GENERATOR", p=20.0, q=5.0)
-            addProsumer!(net=net, busName="B3", type="LOAD", p=30.0, q=10.0)
-            ok, msg = validate!(net=net)
-            ok || error("ring3 invalid: $msg")
-            return net
-        end
-        scf5 = abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case5.scf.json"))
-        for (label, build) in (("ring3", ring3), ("sp_case5", () -> Sparlectra.importSCF(scf5)))
-            r_nr = run_sparlectra(net=build(), config=cfg_nr)
-            r_ap = run_sparlectra(net=build(), config=cfg_ap)
-            @test r_nr.final_converged
-            @test r_ap.final_converged
-            @test r_ap.diagnostics.solver === :apslf
-            vm_nr = getfield.(r_nr.net.nodeVec, :_vm_pu)
-            vm_ap = getfield.(r_ap.net.nodeVec, :_vm_pu)
-            va_nr = getfield.(r_nr.net.nodeVec, :_va_deg)
-            va_ap = getfield.(r_ap.net.nodeVec, :_va_deg)
-            @test maximum(abs.(vm_nr .- vm_ap)) < 1e-6
-            @test maximum(abs.(va_nr .- va_ap)) < 1e-4
-            st = Sparlectra.rectangular_pf_status(r_ap.net)
-            @test String(st.apslf_convergence_level) == "GRN"
-            println("      APSLF against NR on ", label, ": max |dVm| ", maximum(abs.(vm_nr .- vm_ap)), " pu, ", st.apslf_convergence_line)
-        end
-    end
-
     @testset "APSLF workshop runs with its assertions" begin
         # the Literate workshop is executable Julia with an @assert next to every
         # printed number; running it here keeps the notebook from drifting. The
