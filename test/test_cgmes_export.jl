@@ -19,11 +19,9 @@
 #          power-flow-identical self-roundtrip on EQ+TP+SSH+SV (transformers
 #          incl. phase shift and ratio-tap machinery, machines, SVC, loads,
 #          shunts, bus links), SSH/SV content, ZIP packaging and tool
-#          provenance, all on nets built in memory. The MicroGrid roundtrip
-#          (imported mRIDs surviving an export, the 3W star reassembly, the
-#          short-circuit evaluation of a re-imported delivery, the
-#          export_cgmes service run) ran on a downloaded delivery and was
-#          removed; it returns on a self-built delivery from the exporter.
+#          provenance on nets built in memory, and the export-import-export
+#          identity of the checked-in deliveries under test/fixtures/cgmes
+#          (object-wise, with the fields the importer does not carry named).
 
 using Test
 using Sparlectra
@@ -83,6 +81,88 @@ function _compare_solved(n1, n2; atol = 1e-6)
     @test isapprox(n1.nodeVec[i1]._vm_pu, n2.nodeVec[i2]._vm_pu; atol = atol)
     @test isapprox(n1.nodeVec[i1]._va_deg, n2.nodeVec[i2]._va_deg; atol = atol)
   end
+end
+
+# --- profile-file comparison for the export-import-export identity ----------
+#
+# The exporter writes objects in the order of the net it reads, and an
+# imported net orders its buses by the topology walk, so a byte comparison
+# of a re-export against the fixture fails on order alone. The comparison
+# below is object-wise: every top-level RDF object (two-space indented
+# `<cim:Class rdf:ID|about=...>` up to its close tag) is keyed by its mRID,
+# the header lines are compared verbatim, and attribute values are compared
+# numerically where both parse as numbers (the pu <-> physical unit
+# conversions leave 1e-15 relative noise).
+function _cgmes_profile_objects(text::AbstractString)
+  header = String[]
+  objects = Dict{String,Tuple{String,Vector{Pair{String,String}}}}()
+  cls = ""
+  id = ""
+  attrs = Pair{String,String}[]
+  for line in split(text, '\n')
+    m = match(r"^  <(cim:[A-Za-z0-9]+) rdf:(?:ID|about)=\"#?_?([^\"]+)\">$", line)
+    if m !== nothing
+      cls = String(m.captures[1])
+      id = String(m.captures[2])
+      attrs = Pair{String,String}[]
+    elseif !isempty(cls) && line == string("  </", cls, ">")
+      haskey(objects, id) && error("duplicate object id in profile: ", id)
+      objects[id] = (cls, attrs)
+      cls = ""
+    elseif !isempty(cls)
+      a = match(r"^    <([^ >]+)(?: rdf:resource=\"([^\"]*)\"/>|>(.*)</[^>]+>)$", line)
+      a === nothing && error("unparsed attribute line in ", cls, " ", id, ": ", line)
+      push!(attrs, String(a.captures[1]) => String(something(a.captures[2], a.captures[3])))
+    else
+      push!(header, String(line))
+    end
+  end
+  return header, objects
+end
+
+# SvPowerFlow rows are evaluated from the voltage state, so two solves that
+# stop at the same tolerance agree on them only to that tolerance (1e-8
+# MW-level residuals); every other value is model data and compares tight.
+function _cgmes_values_equal(tag::AbstractString, a::AbstractString, b::AbstractString)::Bool
+  a == b && return true
+  fa = tryparse(Float64, a)
+  fb = tryparse(Float64, b)
+  (fa === nothing || fb === nothing) && return false
+  tag in ("cim:SvPowerFlow.p", "cim:SvPowerFlow.q") && return isapprox(fa, fb; atol = 1e-6)
+  return isapprox(fa, fb; rtol = 1e-9, atol = 1e-12)
+end
+
+# Compare one re-exported profile file against its fixture. `drop_classes`
+# names the object classes the fixture carries and the re-export cannot;
+# `drop_attr(cls, id, tag)` names the attributes that legitimately differ.
+# One assertion per file: the mismatch list must be empty, and its first
+# entries (class, mRID, attribute, fixture value, re-export value) land in
+# the failure output. Returns the number of objects compared.
+function _compare_cgmes_profile(fixture_text::AbstractString, reexport_text::AbstractString; drop_classes = (), drop_attr = (cls, id, tag) -> false)::Int
+  hf, of = _cgmes_profile_objects(fixture_text)
+  hr, or = _cgmes_profile_objects(reexport_text)
+  @test hf == hr
+  expected_ids = Set(id for (id, (cls, _)) in of if !(cls in drop_classes))
+  @test Set(keys(or)) == expected_ids
+  mismatches = String[]
+  compared = 0
+  for id in intersect(expected_ids, Set(keys(or)))
+    cf, af = of[id]
+    cr, ar = or[id]
+    cf == cr || push!(mismatches, string(cf, " ", id, ": class ", cr, " in the re-export"))
+    keep_f = [p for p in af if !drop_attr(cf, id, p.first)]
+    keep_r = [p for p in ar if !drop_attr(cr, id, p.first)]
+    if first.(keep_f) != first.(keep_r)
+      push!(mismatches, string(cf, " ", id, ": attributes ", first.(keep_f), " vs ", first.(keep_r)))
+    else
+      for (pf, pr) in zip(keep_f, keep_r)
+        _cgmes_values_equal(pf.first, pf.second, pr.second) || push!(mismatches, string(cf, " ", id, " ", pf.first, ": ", pf.second, " vs ", pr.second))
+      end
+    end
+    compared += 1
+  end
+  @test (length(mismatches), first(mismatches, 8)) == (0, String[])
+  return compared
 end
 
 function run_cgmes_export_tests()
@@ -289,6 +369,68 @@ function run_cgmes_export_tests()
       res = importCGMES(path = files[5], name = "zip_back")
       @test length(res.net.nodeVec) == 3
       @test length(res.net.linesAC) == 3
+    end
+
+    # Export-import-export on the checked-in deliveries (test/fixtures/cgmes,
+    # written by tools/gen_cgmes_fixtures.jl with the same header stamp):
+    # the re-export of an imported delivery reproduces every object of the
+    # fixture with its mRID and every attribute value, except what the
+    # importer does not carry into the net. Named exactly:
+    #   1. RatioTapChanger and TapChangerControl objects (EQ and SSH): the
+    #      importer folds the ratio-tap step into the branch ratio and keeps
+    #      the range only as branch nameplate data, the exporter writes tap
+    #      machinery from the winding record alone, so the re-export has
+    #      none; the effective ratio itself is reproduced (the SV profile
+    #      and the transformer parameters compare equal).
+    #   2. PowerTransformerEnd.ratedU of an end that carried a ratio tap
+    #      changer: the fixture absorbed the step correction into ratedU so
+    #      the live ratio survives the re-import, the re-export writes the
+    #      live ratio without a step.
+    #   3. SynchronousMachine.minQ/maxQ: the importer reads them as the hull
+    #      of both sign readings (sp_case118 has asymmetric pairs) and
+    #      substitutes wide symmetric limits where the fixture has none
+    #      (sp_case14 Gen_110).
+    #   4. IdentifiedObject.name of a LinearShuntCompensator and of its
+    #      Terminal: the importer names shunts by its own bus index.
+    # Everything else (topology, lines, transformers, loads, machines,
+    # regulating controls, breakers, the SSH operating point, the SV
+    # voltages and flows) must compare equal object by object.
+    @testset "export-import-export identity on the checked-in deliveries" begin
+      for case in ("sp_case14", "sp_case118", "sp_casePST")
+        dir = cgmes_fixture_dir(case)
+        res = importCGMES(path = dir, name = case)
+        # the SV of the re-export is the solved state: solve from the SV
+        # start with Q-limits off, as the fixture was solved (a unit that
+        # switched to a limit would legitimately change SSH q and SV)
+        @test runpf!(res.net, 60, 1e-8, 0; method = :rectangular, qlimits_enabled = false)[2] == 0
+        out = mktempdir()
+        notes = String[]
+        files = writeCGMESFiles(res.net; path = out, created = _EXPORT_STAMP, notices = notes)
+        @test isempty(notes)
+        @test [basename(f) for f in files] == [string(case, "_", p, ".xml") for p in ("EQ", "TP", "SSH", "SV")]
+        eq_fixture = read(joinpath(dir, basename(files[1])), String)
+        _, eq_objects = _cgmes_profile_objects(eq_fixture)
+        ref_id(v) = String(last(split(v, "_"; limit = 2)))
+        rtc_ends = Set(ref_id(v) for (_, (cls, attrs)) in eq_objects if cls == "cim:RatioTapChanger" for (tag, v) in attrs if tag == "cim:RatioTapChanger.TransformerEnd")
+        shunt_ids = Set(id for (id, (cls, _)) in eq_objects if cls == "cim:LinearShuntCompensator")
+        shunt_terminals = Set(id for (id, (cls, attrs)) in eq_objects if cls == "cim:Terminal" && any(tag == "cim:Terminal.ConductingEquipment" && ref_id(v) in shunt_ids for (tag, v) in attrs))
+        drop_attr = (cls, id, tag) -> begin
+          (cls == "cim:PowerTransformerEnd" && tag == "cim:PowerTransformerEnd.ratedU" && id in rtc_ends) ||
+            (cls == "cim:SynchronousMachine" && tag in ("cim:SynchronousMachine.minQ", "cim:SynchronousMachine.maxQ")) ||
+            (cls == "cim:LinearShuntCompensator" && tag == "cim:IdentifiedObject.name") ||
+            (cls == "cim:Terminal" && tag == "cim:IdentifiedObject.name" && id in shunt_terminals)
+        end
+        counts = Int[]
+        for f in files
+          compared = _compare_cgmes_profile(read(joinpath(dir, basename(f)), String), read(f, String); drop_classes = ("cim:RatioTapChanger", "cim:TapChangerControl"), drop_attr = drop_attr)
+          push!(counts, compared)
+        end
+        println("      ", case, ": objects compared EQ/TP/SSH/SV = ", join(counts, "/"), ", ratio-tap ends excluded: ", length(rtc_ends))
+        @test all(>(0), counts)
+        @test !isempty(rtc_ends)
+        # the excluded tap machinery is exactly what the fixture carries
+        @test count(o -> o[2][1] == "cim:RatioTapChanger", collect(eq_objects)) == length(rtc_ends)
+      end
     end
 
     @testset "duplicate mRID aborts before writing" begin

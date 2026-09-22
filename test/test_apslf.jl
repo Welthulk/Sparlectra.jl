@@ -337,6 +337,17 @@ function run_apslf_tests()
                 res9 = AnalyticLoadFlow.solve_pf_apslf(case9; mode=mode, order=24, use_pade=true, nr_polish=false)
                 println("      probe 3 AnalyticLoadFlow 9-bus PV case, mode ", mode, ", no polish: converged = ", res9.converged)
             end
+            # AnalyticLoadFlow keeps a sparse Y sparse even below its own
+            # sparse threshold, so a small Sparlectra model runs the sparse
+            # series path while the demo above runs the dense one: the same
+            # spec once as delivered (sparse) and once densified
+            for (label, build_spec) in (("ring3", ring3), ("sp_case118", () -> Sparlectra.createNetFromMatPowerFile(filename=abspath(joinpath(dirname(@__DIR__), "data", "mpower", "sp_case118.m")), flatstart=false, enable_pq_gen_controllers=true, bus_shunt_model=:admittance, matpower_shift_sign=1.0, matpower_shift_unit=:deg, matpower_ratio=:normal, tap_changer_model=:ideal)))
+                spec = Sparlectra._apslf_spec_from_model(Sparlectra.buildPfModel(build_spec()))
+                for (form, Y) in (("sparse", SparseArrays.sparse(spec.Y)), ("dense", Matrix(spec.Y)))
+                    res = AnalyticLoadFlow.solve_pf_apslf(merge(spec, (Y=Y,)); mode=:direct, order=24, use_pade=true, nr_polish=false)
+                    println("      probe 5 AnalyticLoadFlow on the Sparlectra spec of ", label, ", Y ", form, ": converged = ", res.converged)
+                end
+            end
             # the same two modes on Sparlectra's ring3 through the adapter, against NR
             ref = ring3()
             runpf!(ref, 30, 1e-10, 0)

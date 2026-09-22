@@ -26,10 +26,9 @@ function run_api_fast_tests()
     @testset "net parameters stamped exactly once per importer" begin
       # the stamping happens exactly
       # once PER IMPORTER, at the place each importer finishes; this test
-      # is the guard against pulling the four call sites back together.
-      # The CGMES call site is not covered here: its leg ran on a downloaded
-      # delivery and was removed with the other tests on downloaded CGMES
-      # data (self-built deliveries take over in a later round).
+      # is the guard against pulling the four call sites back together
+      # (the CGMES leg runs on the checked-in delivery under
+      # test/fixtures/cgmes).
       cfg = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true)
       repo = dirname(@__DIR__)
       stamps() = Sparlectra._NET_PARAM_STAMP_COUNT[]
@@ -49,6 +48,7 @@ function run_api_fast_tests()
       else
         println("      import stamp: dtf SKIPPED (data/DTF/FOR001.DAT not present)")
       end
+      assert_one(cgmes_fixture_dir("sp_casePST"), "cgmes (sp_casePST fixture)"; requested_format = :cgmes)
     end
 
     # Version-independent on purpose: assert only that the precompile-baked

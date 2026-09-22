@@ -33,3 +33,10 @@ be moved with the environment variable `SPARLECTRA_CGMES_CACHE`.
 The Web UI accepts the same ZIPs and folders as case input (see the CGMES
 import page of the documentation). Both sources carry their own licenses
 and terms; check them before redistributing anything from here.
+
+The CGMES deliveries the test suite runs on are not here but under
+`test/fixtures/cgmes/<case>/`: EQ, TP, SSH and SV profiles that
+`tools/gen_cgmes_fixtures.jl` exports from the shipped cases sp_case14,
+sp_case118 and sp_casePST with a fixed header stamp, so a regeneration is
+byte identical. They are ordinary CGMES 2.4.15 bus-branch deliveries and
+import through `importCGMES` and the Web UI like any other folder or ZIP.

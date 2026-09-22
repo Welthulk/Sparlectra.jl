@@ -236,6 +236,17 @@ function large_case_path(filename::AbstractString)::Union{Nothing,String}
   return isfile(path) ? path : nothing
 end
 
+"""
+    cgmes_fixture_dir(case) -> String
+
+Folder of the checked-in CGMES delivery exported from the shipped case
+`case`: `test/fixtures/cgmes/<case>` with the four profile files EQ, TP, SSH
+and SV, written by `tools/gen_cgmes_fixtures.jl` under a fixed header stamp.
+The CGMES tests import these folders directly and pack a zip at run time
+where the service layer needs a case file; no zip is checked in.
+"""
+cgmes_fixture_dir(case::AbstractString)::String = joinpath(@__DIR__, "fixtures", "cgmes", String(case))
+
 # legacy MATPOWER fixtures come from the shared large-case directory; callers
 # gate on this and print a spoken SKIPPED line instead of downloading
 fixture_net_available(name::AbstractString) = startswith(String(name), "sp_case") || String(name) == "warmup_casePST" || large_case_path(string(name, ".m")) !== nothing
