@@ -578,7 +578,7 @@ Two caveats:
 ### What runs at which size
 
 Measured behavior of the 0.10.0 estimator (Vm plus P/Q injection sets),
-taken on the maintainer machine with the shipped demo cases and the two
+taken on one development machine with the shipped demo cases and the two
 pegase cases; the previous release refused the largest case up front with
 a computed 22 GB dense-Jacobian requirement. Read the numbers as orders of
 magnitude on comparable hardware, not as a benchmark. The

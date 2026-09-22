@@ -26,6 +26,8 @@
 using Sparlectra
 using Test
 using Random
+using LinearAlgebra
+using SparseArrays
 
 import AnalyticLoadFlow
 
@@ -313,11 +315,32 @@ function run_apslf_tests()
             return net
         end
         scf5 = abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case5.scf.json"))
+        # on a failure the layers below the solver are probed and printed, so
+        # a run on another machine names the first broken layer by itself
+        # (complex sparse LU, ldiv! into a column view, AnalyticLoadFlow's own
+        # 9-bus PV case) without a separate diagnostic session
+        function _apslf_platform_probe()
+            println("      APSLF platform probe: Julia ", VERSION, " on ", Sys.KERNEL, " ", Sys.MACHINE, ", BLAS ", BLAS.get_config())
+            rng = Random.MersenneTwister(1)
+            n = 400
+            A = SparseArrays.sprandn(rng, ComplexF64, n, n, 0.02) + LinearAlgebra.I * 10
+            b = randn(rng, ComplexF64, n)
+            F = LinearAlgebra.lu(A)
+            println("      probe 1 complex sparse LU residual: ", LinearAlgebra.norm(A * (F \ b) - b) / LinearAlgebra.norm(b))
+            C = zeros(ComplexF64, n, 3)
+            LinearAlgebra.ldiv!(@view(C[:, 2]), F, b)
+            println("      probe 2 ldiv! into a column view residual: ", LinearAlgebra.norm(A * C[:, 2] - b) / LinearAlgebra.norm(b), ", other columns untouched: ", all(iszero, C[:, 1]) && all(iszero, C[:, 3]))
+            res9 = AnalyticLoadFlow.solve_demo_case(AnalyticLoadFlow.demo_case_9bus(); order=24, use_pade=true, nr_polish=false, verbose=0)
+            println("      probe 3 AnalyticLoadFlow 9-bus PV case without polish: converged = ", res9.converged)
+        end
+        # SPARLECTRA_APSLF_PROBE=1 prints the probe on a passing run too
+        get(ENV, "SPARLECTRA_APSLF_PROBE", "") == "1" && _apslf_platform_probe()
         for (label, build) in (("ring3", ring3), ("sp_case5", () -> Sparlectra.importSCF(scf5)))
             r_nr = run_sparlectra(net=build(), config=cfg_nr)
             r_ap = run_sparlectra(net=build(), config=cfg_ap)
             @test r_nr.final_converged
             @test r_ap.final_converged
+            r_ap.final_converged || _apslf_platform_probe()
             @test r_ap.diagnostics.solver === :apslf
             vm_nr = getfield.(r_nr.net.nodeVec, :_vm_pu)
             vm_ap = getfield.(r_ap.net.nodeVec, :_vm_pu)

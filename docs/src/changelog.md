@@ -1,10 +1,10 @@
 # Version 0.16.2 - 2026-09-22
 
 ## Highlights
-- Four synthetic MATPOWER cases ship under `data/mpower` (`sp_case9`, `sp_case118`, `sp_case300`, `sp_case1354`, generated and validated by a maintainer script that is not part of the package); the workshops and the tests that used to gate on downloaded cases run on every checkout.
+- Four synthetic MATPOWER cases ship under `data/mpower` (`sp_case9`, `sp_case118`, `sp_case300`, `sp_case1354`, generated and validated by a script that is not part of the package); the workshops and the tests that used to gate on downloaded cases run on every checkout.
 
 ## Changes
-- Precompile workload covers the workshop path (builder API, `run_sparlectra` with the rectangular and the APSLF solver, hybrid start), state estimation on the tracked SCF fixture, the OLTC control loop, the service layer (`run_sparlectra_api`, `start_powerflow_run` for a power flow and a state estimation); the first `run_sparlectra` after `using Sparlectra` drops from about 11 s to 0.5 s, the first service run from about 38 s to about 1 s. DTF and the Web UI pages are not warmed.
+- Precompile workload covers the workshop path (builder API, `run_sparlectra` with the rectangular and the APSLF solver, hybrid start), state estimation on the tracked SCF fixture, the OLTC control loop, the service layer (`run_sparlectra_api`, `start_powerflow_run` for a power flow and a state estimation); the first `run_sparlectra` after `using Sparlectra` drops from about 11 s to 0.5 s, the first service run from about 38 s to about 1 s. DTF and the Web UI pages are not warmed. `SPARLECTRA_PRECOMPILE_WORKLOAD=minimal` skips the service-layer part; the workshop notebooks set it in their install cell.
 - Test runner drops the warnings the package logs on purpose during a run; `SPARLECTRA_TEST_SHOW_WARNINGS=1` shows them again.
 - Contingency CSV fixtures are compared field by field with a 1e-9 tolerance on numbers instead of byte identity.
 - APSLF workshop: reading rules for `dmin` (heuristic margin, non-converged `YEL` is a truncation signal).

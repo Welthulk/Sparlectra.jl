@@ -68,7 +68,8 @@ setup_linux.md
 tools/sparlectra_mentions.py
 
 .sparlectra_net_cache/
-data/CGMES/
+data/CGMES/*
+!data/CGMES/README.md
 
 # Julia environments
 Manifest.toml

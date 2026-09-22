@@ -5,9 +5,15 @@ for loading the package and once for the first solves. Sparlectra ships two
 complementary answers:
 
 1. **PrecompileTools workload (always on).** The package precompiles the
-   solver hot path at install time (MATPOWER parse, rectangular
-   Newton-Raphson with UMFPACK, losses, DC power flow; issue #288). This
-   needs no setup and already covers most of the solver latency.
+   solver hot path at install time (MATPOWER, SCF and PGM import,
+   rectangular Newton-Raphson with UMFPACK, APSLF and the hybrid start,
+   state estimation, losses, DC power flow, the service layer behind the
+   Web UI and the tap control loop; issue #288). This needs no setup and
+   already covers most of the solver latency. Setting the environment
+   variable `SPARLECTRA_PRECOMPILE_WORKLOAD=minimal` before the
+   installation skips the service-layer and control-loop part, which a
+   notebook session never calls; the workshop notebooks set it in their
+   install cell.
 2. **PackageCompiler sysimage (this page).** A system image bakes
    Sparlectra and its dependencies into one ahead-of-time compiled shared
    library that Julia loads via `-J`. With it, a Web UI start reaches a
@@ -79,7 +85,7 @@ into the image), and a clean shutdown. No run-history entries are created.
 It deliberately does NOT run the test suite. Tracing the whole fast profile
 plus the Web UI test group is what the build used to do, and it dominated
 the build time by a wide margin without reaching a Web UI path the steps
-above miss. For a maintainer comparison the old behavior is still one
+above miss. For a comparison the old behavior is still one
 variable away:
 
 ```bash

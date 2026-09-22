@@ -117,6 +117,12 @@ using PrecompileTools: @setup_workload, @compile_workload
                 # --- standalone DC power flow -------------------------------------
                 rundcpf!(deepcopy(_pc_net))
 
+                # SPARLECTRA_PRECOMPILE_WORKLOAD=minimal skips the two blocks below:
+                # a notebook session (Colab installs and precompiles from scratch
+                # every time) never calls the service layer or a tap controller,
+                # and those two cost about 40 s of precompile time
+                _pc_full = get(ENV, "SPARLECTRA_PRECOMPILE_WORKLOAD", "default") != "minimal"
+
                 # --- service path (the Web UI's first run) --------------------------
                 # Measured 2026-09-22 on a fresh process with the workload above:
                 # the solver paths answered in well under a second, but the first
@@ -127,7 +133,7 @@ using PrecompileTools: @setup_workload, @compile_workload
                 # so both layers are warmed here on the tracked SCF fixture.
                 # The run's entry in the process-wide registry is removed again:
                 # nothing of this run may survive in the package image.
-                if isfile(_pc_scf)
+                if _pc_full && isfile(_pc_scf)
                     _pc_out = mktempdir()
                     _pc_api = run_sparlectra_api(casefile=_pc_scf, config_file=DEFAULT_SPARLECTRA_CONFIG_PATH, output_dir=joinpath(_pc_out, "api"))
                     to_dict(_pc_api)
@@ -154,7 +160,7 @@ using PrecompileTools: @setup_workload, @compile_workload
                 # (outer passes, controller write-back) is not on the ring's path
                 # and cost 2.3 s on its first run
                 _pc_scf14 = normpath(joinpath(@__DIR__, "..", "..", "data", "scf", "sp_case14.scf.json"))
-                isfile(_pc_scf14) && run_sparlectra(net=importSCF(_pc_scf14), config=_pc_cfg_nr)
+                _pc_full && isfile(_pc_scf14) && run_sparlectra(net=importSCF(_pc_scf14), config=_pc_cfg_nr)
             end
         end
     end
