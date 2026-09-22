@@ -37,7 +37,7 @@ function _run_import_analysis_service(case_path::AbstractString, config_file::Ab
   result_file = joinpath(output_dir, "result.json")
   base_metadata = Dict{String,Any}("run_mode" => "import_analysis")
 
-  # same precedence as every other service run (resolve_config, D5); a case
+  # same precedence as every other service run (resolve_config); a case
   # configuration file next to a delivery steers the analysis import too
   config = try
     resolve_config(config_file, case_path).config

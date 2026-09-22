@@ -138,7 +138,7 @@ function handle_powerflow_case_download(query::AbstractDict; output_root::Abstra
   return SparlectraWebUIResponse(200, Pair{String,String}["Content-Type" => ctype, "Content-Disposition" => "attachment; filename=\"$(basename(path))\""], read(path))
 end
 
-# stage 4A block 4: every SE action lands back on the Runs page's SE
+# every SE action lands back on the Runs page's SE
 # section (GET /stateestimation is only a redirect, so pointing there would
 # just bounce). extra_query carries PRE-ENCODED pairs such as the sticky
 # g_* tail of the measurement generator.
@@ -322,9 +322,8 @@ function handle_powerflow_case_delete(form::AbstractDict; output_root::AbstractS
     else
       try
         # the delete cascade enumerates the companions through the single
-        # definition (stage 4B): config, legacy sidecar, weights, and the
-        # measurement CSVs, so a deleted case leaves no orphan behind (the
-        # measurement sets are new in the cascade; before 4B they stayed)
+        # definition: config, legacy sidecar, weights, and the measurement
+        # CSVs, so a deleted case leaves no orphan behind
         companions = case_companion_files(target)
         rm(target)
         for f in companions
@@ -724,7 +723,7 @@ function handle_contingency_weights_page(query::AbstractDict; output_root::Abstr
   total = length(all_elements)
   shown = isempty(filter_text) ? all_elements : [e for e in all_elements if occursin(lowercase(filter_text), lowercase(e))]
   capped = first(shown, WEBUI_CONTINGENCY_WEIGHTS_MAX_ROWS)
-  # stage 4A block 4: fragment=1 serves the editor body alone for the Runs
+  # fragment=1 serves the editor body alone for the Runs
   # page's lazy-loading weights tab (same renderer as the full page)
   if get(query, "fragment", "") in ("1", "true")
     return _webui_html(_webui_weights_editor_fragment(; case = case, elements = capped, stored = stored, raw_text = raw_text, message = message, filter = filter_text, total_count = total, net_error = net_error))
@@ -836,7 +835,7 @@ function handle_contingency_weights_reset(form::AbstractDict; output_root::Abstr
   return _webui_weights_redirect(requested, "Weight file deleted for '$(requested)'.")
 end
 
-## --- scenario editor (scenario task step 6) ----------------------------------
+## --- scenario editor ---------------------------------------------------------
 
 _webui_scenarios_redirect(case::AbstractString, message::AbstractString) = _webui_redirect(string("/powerflow/scenarios?case=", _webui_urlencode(case), "&scenario_message=", _webui_urlencode(message)))
 
@@ -928,8 +927,8 @@ end
 """
     _webui_scenarios_editor_tab(case, directory) -> String
 
-The scenario editor as an embeddable Runs-page fragment (stage 4A block
-4): scenario list plus an empty new-scenario form for the selected SCF
+The scenario editor as an embeddable Runs-page fragment: scenario
+list plus an empty new-scenario form for the selected SCF
 case. Editing or duplicating an existing scenario navigates to the
 standalone editor page, which shares the same fragment renderer. Returns
 "" when the case is not a readable SCF file; the Runs page then simply
@@ -952,8 +951,8 @@ end
 """
     handle_scenarios_page(query; ...) -> SparlectraWebUIResponse
 
-Render the scenario editor for `query["case"]` (SCF cases only, maintainer
-revision 2026-09-03): the case's scenario list plus the scenario form.
+Render the scenario editor for `query["case"]` (SCF cases only): the
+case's scenario list plus the scenario form.
 `scenario` selects a scenario into the form (`mode=duplicate` copies it
 under a new name); without it the form starts a new scenario.
 """
@@ -1114,7 +1113,7 @@ Merge updates into the case configuration file next to `source` and write
 it: the existing file is the base (`keep_updates` win on conflict), existing
 form-block fields survive a save from a page that does not carry them (the
 PF result save must not wipe the SE generator options; `case_format` is the
-one non-spec form-block field, stage 4A, and survives the same way), and
+one non-spec form-block field and survives the same way), and
 `form_updates` win over stored form values. An unreadable existing file is
 replaced deliberately (the save is the user's explicit request to persist
 the current state); `on_unreadable` is called with the error so the caller
@@ -1526,7 +1525,7 @@ function handle_powerflow_case_settings_save(run_id::AbstractString, form::Abstr
   end
   isfile(case_settings_source) || return _webui_html(render_webui_error(400, "The runtime MATPOWER case file is not available; case settings were not saved."); status = 400)
   # Saved settings live in the case configuration file next to the case
-  # (`<stem>.config.yaml`, D8): the case-scope configuration keys as
+  # (`<stem>.config.yaml`): the case-scope configuration keys as
   # sections, the request-only fields (SE and generator options) in the
   # `form` block. Machine-scope keys (output, benchmark, runtime, webui,
   # export) stay with the machine and are named in the log. No sidecar and
@@ -1822,7 +1821,7 @@ end
     _webui_se_form_state(query; output_root, application_root, case_directory, config_file, selected_fallback) -> NamedTuple
 
 Assembles the state of the state-estimation section embedded on the Runs
-page (stage 4A block 4): case and measurement-set discovery, set info and
+page: case and measurement-set discovery, set info and
 editors, sticky generator values, and truth-run candidates. `query` carries
 the SE-specific keys (`case`, `message`, `g_*`); when `case` is absent, the
 page's shared case selection arrives as `selected_fallback`. Returns the
@@ -1925,7 +1924,7 @@ function _webui_se_form_state(query::AbstractDict; output_root::AbstractString, 
   # the main run form, via the same two helpers. Without this base layer an
   # untouched field always showed a literal ("off", 3.0, 3) instead of what
   # the file actually says, and posting it then silently outranked the file
-  # (task_se_bad_data_v0100, and the same bug again for the sidecar path).
+  # (and the same bug again for the sidecar path).
   # Precedence: sticky > case form block > resolved configuration > default.
   gen_values = Dict{String,String}()
   if !isempty(selected)
@@ -2128,8 +2127,7 @@ end
 # A synchronous long action (measurement generation, adding noise) marks
 # its case busy for its duration: a second such action on the same case,
 # or a run of it, is refused with a message instead of reading a file that
-# is still being written (maintainer, 2026-09-21: generating on case118
-# took a minute and the UI kept accepting clicks). Process-global like the
+# is still being written (generating on case118 took a minute and the UI kept accepting clicks). Process-global like the
 # run registry; one Web UI per process.
 const _WEBUI_BUSY_CASES = Dict{String,String}()
 const _WEBUI_BUSY_LOCK = ReentrantLock()
@@ -2236,7 +2234,7 @@ function handle_se_generate_measurements(form::AbstractDict; output_root::Abstra
   flow_ends = Symbol(flow_ends_raw)
   passive_sigma = something(tryparse(Float64, String(_webui_form_value(form, "gen_passive_sigma", "0.05"))), NaN)
   (isfinite(passive_sigma) && passive_sigma > 0.0) || return redirectq("passive-node balance sigma must be positive (MW/MVar)")
-  # default ON (maintainer 2026-09-21): a passive node is a hard balance, and
+  # default ON: a passive node is a hard balance, and
   # the protected constraint is the only constraint the set has
   passive_as_zi = _webui_parse_bool(String(_webui_form_value(form, "gen_passive_as_zi", "true")))
   # reproducibility seed: the same seed regenerates the identical set, a

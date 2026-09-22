@@ -13,8 +13,7 @@
 # limitations under the License.
 
 # file: src/contingency/contingency.jl
-# purpose: N-1 contingency batch API (Phase 4 of the multi-core work,
-#          issue task_multicore_parallel): branch-outage cases generated
+# purpose: N-1 contingency batch API: branch-outage cases generated
 #          from the net or from imported FOR001 lists, solved on isolated
 #          deep copies (optionally in parallel on Julia threads), evaluated
 #          against voltage and loading limits, reported as a result table
@@ -519,7 +518,7 @@ chunks (gated by `runtime.parallel.*`; the three `parallel_*` keywords
 override the active configuration). Parallel and serial runs produce
 identical results.
 
-`screening_mode` / `screening_margin_pct` (scenario task D5): `:off`
+`screening_mode` / `screening_margin_pct`: `:off`
 (default, bit-identical to the pre-screening behavior) solves every case
 fully and returns `Vector{ContingencyResult}`; `:flag` estimates every
 non-islanding outage first on the base Jacobian factorization and fully
@@ -556,7 +555,7 @@ function runContingencies!(
         @warn "runContingencies!: the keyword retry_flat_start is deprecated; pass rescue_ladder instead (retry_flat_start = true is now an alias for appending :flat to the ladder)."
         retry_flat_start && !(:flat in ladder) && push!(ladder, :flat)
     end
-    # scenario task step 3: the batch runs on the scenario engine (base solve,
+    # the batch runs on the scenario engine (base solve,
     # template hygiene, base loadings, chunked workers all live there); the
     # case118 CSV fixture pins these results byte for byte to the pre-engine
     # per-case-deepcopy implementation

@@ -48,7 +48,7 @@ end
     buildTopology(store) -> CGMESTopology
 
 Derive the bus set and the equipment→bus lookup from the TP profile.
-Deterministic bus naming per decision D-3.
+Deterministic bus naming.
 """
 function buildTopology(store::CGMESStore; infer_base_voltages::Bool = false, messages::Union{Nothing,Vector{String}} = nothing)::CGMESTopology
   bus_name = Dict{String,String}()

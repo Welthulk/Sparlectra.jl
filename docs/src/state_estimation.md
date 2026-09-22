@@ -566,7 +566,7 @@ Two caveats:
   and on any Takahashi guard failure the original dense `pinv` path runs
   instead, with a warning on a fallback, never a wrong number. Both paths
   also report `state_variances = diag(G⁻¹)` (confidence intervals).
-* Since the sparse core (task_se_sparse, 0.10.0) the dense conveniences
+* Since the sparse core (0.10.0) the dense conveniences
   are bounded instead of unbounded: the `pinv` fallback runs only up to
   2000 states, and the K-matrix report is refused by name above 20000
   measurement rows (`Ω` is m×m dense by definition). Beyond those bounds

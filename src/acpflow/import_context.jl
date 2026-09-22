@@ -139,7 +139,7 @@ function _copy_sparlectra_with_projected_matpower_start(cfg::SparlectraConfig)::
 end
 
 # flat dotted difference of two typed configurations over the sections the
-# auto profile may rewrite: the D11 override surface and its log lines
+# auto profile may rewrite: the override surface and its log lines
 function _config_struct_diff!(out::Dict{String,Any}, prefix::String, a, b)
   for f in fieldnames(typeof(a))
     va = getfield(a, f)
@@ -176,8 +176,8 @@ function _import_sparlectra_context(casefile::AbstractString, path::Union{Nothin
   if extension == ".json"
     phase_callback("reading_scf_case")
     # build_net applies the net parameters and the shunt-model default with
-    # the RESOLVED run configuration (D12, corrected by task_import_direct:
-    # exactly once PER IMPORTER; for SCF that once lives inside build_net)
+    # the RESOLVED run configuration (exactly once PER IMPORTER; for SCF
+    # that once lives inside build_net)
     scfcase = _perf_profile_time!(performance_profile, :scf_case_read) do
       read_scf_json(filename)
     end
@@ -187,13 +187,13 @@ function _import_sparlectra_context(casefile::AbstractString, path::Union{Nothin
     return (net = net, config = cfg, projected_start_applied = false, auto_profile_result = nothing, auto_profile_overrides = Dict{String,Any}())
   end
 
-  # task_import_direct (maintainer decision 2026-09-04): the net cache
-  # stored the CONVERTED SCFCase, the very side product the direct import
-  # no longer creates, so the cache fell away with the conversion. The key
+  # The net cache stored the CONVERTED SCFCase, the very side product the
+  # direct import no longer creates, so the cache fell away with the
+  # conversion. The key
   # stays readable and says so out loud instead of silently doing nothing;
-  # the removal follow-up is recorded with issue #292 in the task report.
+  # the removal follow-up is issue #292.
   if model_cfg.net_cache_enabled
-    @warn "model.net_cache_enabled is inert since the direct import (task_import_direct): the import no longer produces the converted case the cache stored." casefile = filename
+    @warn "model.net_cache_enabled is inert since the direct import: the import no longer produces the converted case the cache stored." casefile = filename
   end
 
   phase_callback("reading_matpower_case")
@@ -224,7 +224,7 @@ function _import_sparlectra_context(casefile::AbstractString, path::Union{Nothin
   # output.console_auto_profile like the analysis below: at :full the whole
   # list, otherwise one line naming the case. Printing twelve MATPOWER
   # option lines before every run made the tool read like a MATPOWER
-  # front end (maintainer, 2026-09-05).
+  # front end.
   if cfg.output.console_auto_profile === :full
     println(stdout, "Runtime casefile: ", filename)
     print_matpower_import_runtime_options(stdout, "Original MATPOWER import options", cfg)
@@ -236,7 +236,7 @@ function _import_sparlectra_context(casefile::AbstractString, path::Union{Nothin
     auto_profile_result = _perf_profile_time!(performance_profile, :matpower_auto_profile) do
       run_matpower_import_auto_profile(mpc, cfg)
     end
-    # D11 surface: the profile's decisions as dotted overrides, computed as
+    # the profile's decisions as dotted overrides, computed as
     # the flat difference between the incoming and the rewritten effective
     # configuration; carried on the imported case for the services
     auto_profile_overrides = _config_flat_difference(cfg, auto_profile_result.config)
@@ -264,7 +264,7 @@ function _import_sparlectra_context(casefile::AbstractString, path::Union{Nothin
             " (sign ", cfg.matpower.shift_sign, "), bus shunt=", cfg.model.bus_shunt_model)
   end
   phase_callback("building_sparlectra_net")
-  # task_import_direct: the MATPOWER importer builds its network DIRECTLY;
+  # the MATPOWER importer builds its network DIRECTLY;
   # no intermediate SCFCase, no re-encoding, no loss. Converting into SCF
   # is an explicit action elsewhere (convert_case), never a step in here.
   net = _perf_profile_time!(performance_profile, :network_construction) do
@@ -293,7 +293,7 @@ function _import_sparlectra_context(casefile::AbstractString, path::Union{Nothin
   end
   MatpowerIO.apply_mp_isolated_buses!(net, mpc)
   MatpowerIO.apply_mp_bus_vmva_init!(net, mpc; flatstart = pf_cfg.start_mode.flatstart)
-  # D12, corrected by task_import_direct: the net-parameter stamping happens
+  # the net-parameter stamping happens
   # exactly once PER IMPORTER, and this is the MATPOWER importer's once. Do
   # not pull the four format call sites back together; each importer owns
   # its stamping where it finishes.
@@ -318,7 +318,7 @@ function _import_sparlectra_context(casefile::AbstractString, path::Union{Nothin
       :validation_post_import_consistency => 0.0,
     )
   end
-  # the flat-start decision is the RUN's, not the case's (D10)
+  # the flat-start decision is the RUN's, not the case's
   net.flatstart = pf_cfg.start_mode.flatstart
   phase_callback("applying_import_options")
   projected_start_applied = false

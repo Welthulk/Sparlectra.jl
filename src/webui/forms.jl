@@ -95,7 +95,7 @@ function _webui_stage_bundled_case!(application_root::AbstractString, case_direc
     cached = joinpath(String(case_directory), name)
     if !isfile(cached)
       # the companions travel with the case, enumerated by the single
-      # definition (stage 4B): config pin, measurement CSVs, weights
+      # definition: config pin, measurement CSVs, weights
       for src in vcat([bundled], case_companion_files(bundled))
         dst = joinpath(String(case_directory), basename(src))
         isfile(dst) || cp(src, dst)
@@ -540,7 +540,7 @@ function _webui_form_number_string(value)::String
 end
 
 # name of the RETIRED settings sidecar; still known so a leftover file can
-# be converted once and deleted (D8 of the adapter task)
+# be converted once and deleted
 function _webui_legacy_case_settings_filename(casefile::AbstractString)::String
   stem = splitext(basename(strip(String(casefile))))[1]
   isempty(stem) && throw(ArgumentError("Case-settings profile requires a case filename."))
@@ -553,7 +553,7 @@ function _webui_normalized_case_key(casefile::AbstractString)::String
   return isempty(stem) ? "case" : stem
 end
 
-# Shared selected-case state (stage 4A harmonization): the Case page is THE
+# Shared selected-case state: the Case page is THE
 # place to choose a case, but the choice must reach every page that starts
 # work on that case (the run form's hidden casefile, the SE page's loader)
 # even when the user gets there through the plain nav links, which carry no
@@ -648,8 +648,8 @@ end
 """
     case_companion_files(case_path) -> Vector{String}
 
-The SINGLE definition of which files belong to one case (stage 4B review
-earmark): the case configuration file, the legacy settings sidecar, the
+The SINGLE definition of which files belong to one case: the case
+configuration file, the legacy settings sidecar, the
 per-case N-1 weights list, and the measurement CSVs including the
 baddata and noisy variants (both stem conventions occur in the wild: the
 bundled sets use the short stem, generated sets the splitext stem; the
@@ -832,7 +832,7 @@ function _webui_case_form_defaults(casefile::AbstractString, case_directory)::Di
   end
   # case_format deliberately has no option spec (it names the input rather
   # than configuring the run); the Case page persists it in the form block,
-  # so it is the one non-spec field read back here (stage 4A)
+  # so it is the one non-spec field read back here
   raw_format = get(block, "case_format", nothing)
   if raw_format !== nothing
     fmt = lowercase(strip(String(raw_format)))
@@ -849,7 +849,7 @@ function webui_form_state(; selected_casefile::AbstractString = "", selected_con
   config_values = _webui_config_field_values(config_path)
   merge!(values, config_values)
   # Case levels seed the form in resolution order (deprecated in-file block,
-  # then the case configuration file); no mtime logic anywhere (D5). The
+  # then the case configuration file); no mtime logic anywhere. The
   # controls have to show these values: the form posts a value for EVERY
   # field it renders, and those count as explicit overrides, so an unseeded
   # form would silently outrank the very settings it just loaded (measured:
@@ -897,7 +897,7 @@ Per-case Web UI form defaults from the case configuration file: the `form`
 block (SE and generator options) plus the `_profile_path` marker for the
 settings notice. Converts a leftover legacy settings sidecar
 (`<stem>.sparlectra-webui.yaml`) ONCE into the case configuration file and
-deletes it, with an operation-log line either way (D8 of the adapter task);
+deletes it, with an operation-log line either way;
 when a case configuration file already exists, the stale sidecar is
 discarded instead of clobbering the newer file. The config-backed form
 fields are seeded separately from the configuration levels
@@ -1041,8 +1041,8 @@ end
 # Format hint for the case pages (badge preselection, DTF assistance, SC
 # button gating). The CONTENT-based detection is `_detect_case_format`, the
 # same function `import_case` runs, so the form and the import can never
-# disagree about what a resolvable file is (stage 4A review point: no second
-# detection path). Only values that do not resolve to an existing path (a
+# disagree about what a resolvable file is (no second detection
+# path). Only values that do not resolve to an existing path (a
 # cgmes: alias not fetched yet, a free-typed name) fall back to the thin
 # syntactic pre-stage below, which mirrors the detector's extension rules.
 function _webui_case_format_hint(casefile::AbstractString; case_directory::Union{Nothing,AbstractString} = nothing)::Symbol
@@ -1170,7 +1170,7 @@ function powerflow_webui_request(form::AbstractDict; default_output_root::Abstra
   manual_casefile = strip(String(something(_webui_form_value(form, "casefile_manual", ""), "")))
   casefile = isempty(manual_casefile) ? existing_casefile : manual_casefile
   # any supported case format qualifies here, so the message must not say
-  # MATPOWER; choosing happens on the Case page since stage 4A
+  # MATPOWER; choosing happens on the Case page
   isempty(casefile) && throw(ArgumentError("Select a case first (Case page)."))
   stored_form = _webui_case_form_defaults(casefile, case_directory)
   config_file = strip(String(something(_webui_form_value(form, "config_file", ""), "")))
@@ -1266,7 +1266,7 @@ function powerflow_webui_request(form::AbstractDict; default_output_root::Abstra
     # N-1 outage kind is a RUN parameter (branch / generator), read as a plain
     # request key like dtf_outage_selection, not a config override
     "contingency_kind" => strip(String(something(_webui_form_value(form, "contingency_kind", "branch"), "branch"))),
-    # scenario task step 6: source, screening mode and margin are run
+    # source, screening mode and margin are run
     # parameters; empty form values mean "not set" and keep the service
     # defaults (historical kind list, configured screening)
     "scenario_source" => (v = strip(String(something(_webui_form_value(form, "scenario_source", ""), ""))); isempty(v) ? nothing : v),

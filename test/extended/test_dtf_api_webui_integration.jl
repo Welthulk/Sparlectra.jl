@@ -87,7 +87,7 @@ function run_dtf_api_webui_integration_tests()
       @test outage.metadata["dtf_outage_results"][1]["converged"] == true
       @test any(a -> occursin("dtf_outage_1_metrics.csv", a.name), outage.artifacts)
 
-      # stage 4A: the input-format options render on the Case page; the run
+      # the input-format options render on the Case page; the run
       # page keeps the DTF outage run details
       form_html = Sparlectra.render_case_page(output_root = tmp, case_directory = dirname(dtf), selected_casefile = basename(dtf))
       @test occursin("Input format", form_html)

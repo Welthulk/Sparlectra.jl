@@ -24,8 +24,8 @@ struct WebUIOptionSpec
   default::Any
   allowed_values::Any
   section::Symbol
-  # placement scope (stage 4B): :adapter = format-bound, generated on the
-  # Case page from options_type(adapter); :session = machine scope (D8:
+  # placement scope: :adapter = format-bound, generated on the
+  # Case page from options_type(adapter); :session = machine scope (the
   # output/benchmark/runtime/webui prefixes), never written to a case
   # configuration file; :case = everything a run of one case may carry.
   # Visibility stays in `section` (:basic / :expert).
@@ -37,7 +37,7 @@ const _WEBUI_QLIMIT_ENFORCEMENT_MODE_VALUES = (:active_set, :classic_simultaneou
 
 const _WEBUI_PERFORMANCE_TIMING_VALUES = WEBUI_PERFORMANCE_TIMING_VALUES
 
-# Visibility (stage 4B, criterion decided 2026-09-02): :basic exactly for
+# Visibility: :basic exactly for
 # the config keys that appear in at least one workshop under docs/lit or
 # in configuration.yaml.example without a default; every other config-key
 # spec is :expert. Request-only fields (config_key nothing) keep their own
@@ -49,8 +49,7 @@ const WEBUI_OPTION_SPECS = (
   # own: it decides which key the value becomes, power_flow.tol (pu) or
   # power_flow.tol_MW (megawatt, converted with the case base at run time).
   # One value field with a unit beats two fields side by side, which is how
-  # this started and read like two competing tolerances (maintainer,
-  # 2026-09-06).
+  # this started and read like two competing tolerances.
   WebUIOptionSpec(nothing, "power_flow_tol_unit", String, :select, "pu", ("pu", "MW"), :basic, :case, true),
   WebUIOptionSpec("power_flow.max_iter", "power_flow_max_iter", Int, :number, 80, (), :basic, :case, true),
   WebUIOptionSpec("power_flow.autodamp", "power_flow_autodamp", Bool, :checkbox, true, (), :expert, :case, true),
@@ -125,7 +124,7 @@ const WEBUI_OPTION_SPECS = (
   # are what a form shows before the user touches anything, and a value that
   # differs here silently outranks the configured one. That is exactly how a
   # 25000-bus run kept estimating with k_suppress 6.0 while the
-  # configuration said 4.0 (task_se_bad_data_v0100). A test walks this list
+  # configuration said 4.0. A test walks this list
   # against StateEstimationConfig.
   # issue #377: these six carry a REAL config_key, so webui_form_state's
   # generic config resolution (_webui_config_field_values /
@@ -191,7 +190,7 @@ const _WEBUI_CASE_PROFILE_SELECT_VALUES = Dict{String,Set{String}}(
   spec.field => Set(string.(collect(spec.allowed_values))) for spec in WEBUI_OPTION_SPECS if spec.control == :select
 )
 
-# hygiene assert (stage 4B): the scope column must stay consistent with the
+# hygiene assert: the scope column must stay consistent with the
 # central case-scope predicate. Every :session key is machine scope, and no
 # case-config key may claim :session; a machine-scope key MAY sit in
 # :adapter when its placement is format-bound (matpower_export.*: the

@@ -232,7 +232,7 @@ function run_repository_hygiene_tests()
         if !isempty(detached)
             error(join(["docstrings detached from their definition:"; detached], "\n"))
         end
-        # The maintainer's working repository carries further checks here that a
+        # The private working repository carries further checks here that a
         # published checkout has no subject for, the private-to-public boundary
         # among them. They live in their own files, found by convention rather
         # than by name, so this file never points at something a public reader
@@ -244,7 +244,7 @@ function run_repository_hygiene_tests()
             # the word SKIPPED is load-bearing: the group runner surfaces exactly
             # those lines through its output capture, so the absence reaches the
             # report instead of being swallowed
-            println("      SKIPPED maintainer-only repository checks: none present in this checkout. ",
+            println("      SKIPPED private-repository checks: none present in this checkout. ",
                 "They verify the private-to-public boundary, which has no subject in a published ",
                 "tree, so nothing beyond the checks above was verified here.")
         else

@@ -304,7 +304,7 @@ function run_auto_powerflow_tests()
     end
   end
 
-  @testset "auto profile precedence level (D11)" begin
+  @testset "auto profile precedence level" begin
     base = Sparlectra.SparlectraConfig(Dict{String,Any}())
     pairs = Pair{Symbol,Any}[:ratio => :reciprocal, :shift_unit => :rad]
     # nothing explicitly set: both recommendations apply

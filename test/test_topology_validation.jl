@@ -321,7 +321,7 @@ function test_topology_singular_normal_equations()::Bool
     fixedByBranch = Dict(t.branch => t.fixed_step_1 for t in res.tapEstimates)
     @test fixedByBranch[3] == 2
     @test fixedByBranch[4] == 0
-    # regression (maintainer run 1908605e): robust weighting on parallel
+    # regression (run 1908605e): robust weighting on parallel
     # released taps used to excite the unobservable difference direction
     # into divergence; with the targeted prior plus the weight freeze the
     # robust run converges too

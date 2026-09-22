@@ -415,7 +415,7 @@ sets take precedence on the next page load (the notice says so), while fields
 the YAML does not set keep their saved case values. Editing the configuration
 therefore shows up on a simple page refresh — no Web UI restart needed.
 
-Since the stage-4A page split, run-independent options live on their own
+Since the page split, run-independent options live on their own
 pages: the **Case** page carries the case chooser, upload, export, and
 the per-format import options; the **Settings** page carries the solver,
 start, output, and expert options together with the configuration block

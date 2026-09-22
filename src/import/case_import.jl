@@ -13,8 +13,8 @@
 # limitations under the License.
 
 # file: src/import/case_import.jl
-# purpose: the one import entry point of the run path (stage 0 of the
-#          adapter task): format detection, per-format construction, and the
+# purpose: the one import entry point of the run path: format
+#          detection, per-format construction, and the
 #          ImportedCase record every service consumes. Format dispatch used
 #          to exist five times across the services, and each copy applied a
 #          different subset of the configuration.
@@ -35,9 +35,8 @@ What one case import hands to a service run:
   case, the auto-profile decision), for the artifacts a service writes.
 - `studies`: the study definitions a case file carries (`contingencies`,
   `short_circuit`); empty for every foreign format.
-- `overrides`: reserved for auto-profile recommendations as override level
-  (design decision D11); empty in stage 0, where the MATPOWER context still
-  rewrites the run configuration itself.
+- `overrides`: reserved for auto-profile recommendations as override level;
+  empty while the MATPOWER context still rewrites the run configuration itself.
 """
 struct ImportedCase
   net::Net
@@ -92,11 +91,11 @@ end
 
 Import a CGMES delivery with everything the configuration says about it, in
 one place: the thirteen `cgmes_import` values and the bus shunt model (the
-net-parameter stamping lives with the import dispatch since
-task_import_direct: once per importer). The four service call sites used
+net-parameter stamping lives with the import dispatch:
+once per importer). The four service call sites used
 to unpack the same values by hand, and a new option had to be added in four
-places or it silently kept its default at three of them (private issue #2;
-the review found the accompanying stamp in the wrong function once already).
+places or it silently kept its default at three of them (the accompanying
+stamp was found in the wrong function once already).
 The keyword form of `importCGMES` stays for programmatic use.
 """
 function CGMESImporter.importCGMES(config::SparlectraConfig; path, name::AbstractString, hvdc_mode::Symbol = config.cgmes.hvdc_mode)
@@ -138,7 +137,7 @@ function _import_cgmes(path::AbstractString, cfg::SparlectraConfig; name::Abstra
   boundary_autodetected && phase_callback("cgmes_boundary_autodetected")
   # Only the power-flow run models HVDC per the configured mode; every other
   # run kind keeps the plain injection form, exactly the behavior the
-  # services had before the shared mapping (review point 0 fix-up).
+  # services had before the shared mapping.
   hvdc_mode = run_kind === :powerflow ? cgmes_cfg.hvdc_mode : :injections
   hvdc_mode === cgmes_cfg.hvdc_mode || @info "CGMES hvdc_mode $(hvdc_mode) for run kind $(run_kind) (configured $(cgmes_cfg.hvdc_mode) applies to power-flow runs only)"
   result = importCGMES(cfg; path = length(paths) == 1 ? paths[1] : paths, name = name, hvdc_mode = hvdc_mode)
@@ -190,9 +189,8 @@ function import_case(path::AbstractString, general_config::SparlectraConfig; req
     provenance["auto_profile_result"] = ctx.auto_profile_result
     provenance["projected_start_applied"] = ctx.projected_start_applied
     studies = fmt === :scf ? scf_case_studies(String(path)) : _EMPTY_CASE_STUDIES
-    # D11: the auto profile's decisions ride on the imported case as dotted
-    # overrides (the context still applies them to its effective config;
-    # the full merge as an own precedence level is review-point-3 material)
+    # the auto profile's decisions ride on the imported case as dotted
+    # overrides (the context still applies them to its effective config)
     return ImportedCase(ctx.net, ctx.config, fmt, provenance, studies, ctx.auto_profile_overrides)
   elseif fmt === :cgmes
     phase_callback("reading_cgmes_delivery")
@@ -204,24 +202,24 @@ function import_case(path::AbstractString, general_config::SparlectraConfig; req
     provenance["cgmes_effective_start_values"] = cg.effective_start_values
     provenance["cgmes_start_decision"] = cg.start_decision
     provenance["cgmes_start_overridden"] = cg.start_overridden
-    # task_import_direct: the CGMES importer built this network natively;
+    # the CGMES importer built this network natively;
     # it IS the result. The old capture into an SCFCase plus a second
     # build_net doubled the construction (0.9 to 1.8 s and about 190 MB on
     # RealGrid) for nothing anybody asked: converting to SCF is an explicit
     # action, never a step inside an import.
-    # D12, corrected by task_import_direct: stamped exactly once PER
-    # IMPORTER, and this is the CGMES importer's once (with the run
+    # stamped exactly once PER IMPORTER, and this is the CGMES
+    # importer's once (with the run
     # config, exactly what the discarded second build used to apply).
     _apply_config_net_parameters!(cg.result.net, cg.run_config)
     return ImportedCase(cg.result.net, cg.run_config, fmt, provenance, _EMPTY_CASE_STUDIES, Dict{String,Any}())
   elseif fmt === :dtf_for001
     _reject_dtf_dcline_like_content!(String(path))
     dtf_case = DTFImporter.read_dtf(String(path))
-    # task_import_direct: the DTF importer builds its network directly; the
+    # the DTF importer builds its network directly; the
     # model options come from the same config keys the old conversion read
     net = DTFImporter.build_net(dtf_case; bus_shunt_model = general_config.model.bus_shunt_model, tap_changer_model = general_config.model.tap_changer_model)
-    # D12, corrected by task_import_direct: stamped exactly once PER
-    # IMPORTER, and this is the DTF importer's once
+    # stamped exactly once PER IMPORTER, and this is the DTF
+    # importer's once
     _apply_config_net_parameters!(net, general_config)
     provenance["dtf_case"] = dtf_case
     return ImportedCase(net, general_config, fmt, provenance, _EMPTY_CASE_STUDIES, Dict{String,Any}())

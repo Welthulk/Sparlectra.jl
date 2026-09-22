@@ -257,7 +257,7 @@ end
 ## Scratch paths for the suite. `tempname()` names a file in /tmp that
 ## NOBODY ever removes: a full run left about three thousand stray
 ## `jl_*.yaml` files behind, and the configuration warnings they triggered
-## buried the real test output (maintainer, 2026-09-05). Everything the
+## buried the real test output. Everything the
 ## tests write goes into one directory instead, which Julia deletes when
 ## the process ends.
 const TEST_SCRATCH_ROOT = mktempdir(; cleanup = true)

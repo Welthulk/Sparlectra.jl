@@ -13,8 +13,8 @@
 # limitations under the License.
 
 # file: src/adapters/scf/scf_case.jl
-# purpose: SCFCase, the typed in-memory form of one SCF document (adapter
-#          task stage 2, design decision D1). File reading and writing are
+# purpose: SCFCase, the typed in-memory form of one SCF document.
+#          File reading and writing are
 #          serialization of this struct; build_net constructs the Net from
 #          it. The `data` section is typed component vectors; the
 #          namespaced `sparlectra` block keeps its document sub-objects as
@@ -163,8 +163,7 @@ end
     SCFData
 
 The PGM-compatible `data` section of one SCF document as typed component
-vectors (design decision D1: no stringly-typed row access on the build
-path). A component key is written to the file exactly when its vector is
+vectors (no stringly-typed row access on the build path). A component key is written to the file exactly when its vector is
 non-empty, which is the writer's behavior for every revision so far.
 """
 Base.@kwdef mutable struct SCFData
@@ -289,12 +288,12 @@ Base.@kwdef mutable struct SCFComponents
   # applyConfiguredControllers!; its vocabulary belongs to the control
   # framework, not to the case format
   controllers::Dict{String,Any} = Dict{String,Any}()
-  # MATPOWER dcline records (stage 3a): the full per-row record of an
+  # MATPOWER dcline records: the full per-row record of an
   # active dcline, so the run path restores the dcline metadata and HVDC
   # link registry the direct import kept on the net; free records like
   # sc_source, the vocabulary belongs to the importer
   matpower_dcline::Vector{Dict{String,Any}} = Dict{String,Any}[]
-  # FOR001 contingency definitions a converted DTF case carries (stage 3a)
+  # FOR001 contingency definitions a converted DTF case carries
   for001_contingency::Vector{Dict{String,Any}} = Dict{String,Any}[]
 end
 
@@ -331,7 +330,7 @@ Base.@kwdef mutable struct SCFSparlectra
   short_circuit::Dict{String,Any} = Dict{String,Any}()
   config::Dict{String,Any} = Dict{String,Any}()
   transformer_types::Dict{String,Any} = Dict{String,Any}()
-  # the scenario block (scenario task D3); free document form, typed
+  # the scenario block; free document form, typed
   # accessors live in src/scenario/patch.jl
   scenarios::Dict{String,Any} = Dict{String,Any}()
 end
@@ -339,7 +338,7 @@ end
 """
     SCFCase
 
-One SCF document in memory (design decision D1): the PGM root scalars,
+One SCF document in memory: the PGM root scalars,
 the typed `data` section, and the namespaced `sparlectra` block
 (`nothing` for a strict-PGM file, which carries none). File reading
 ([`read_scf_json`](@ref)) and writing ([`write_scf_json`](@ref)) are

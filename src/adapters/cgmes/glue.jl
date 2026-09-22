@@ -14,7 +14,7 @@
 
 # file: src/adapters/cgmes/glue.jl
 # purpose: adapter-side convenience overloads that dispatch core entry
-#          points on CGMES adapter types (stage 5: the core block must not
+#          points on CGMES adapter types (the core block must not
 #          reference adapter types at definition time, so this glue lives
 #          in the adapters block)
 

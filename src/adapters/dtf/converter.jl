@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # file: src/adapters/dtf/converter.jl
-# purpose: the DTF adapter (adapter task stage 3b): convert_case turns a
+# purpose: the DTF adapter: convert_case turns a
 #          parsed native DTFCase into the typed SCFCase. The conversion
 #          core stays the proven native builder (DTFImporter.build_net),
 #          the built network is captured as its typed case, and the
@@ -28,11 +28,10 @@ struct DTFAdapter <: FormatAdapter end
 """
     DTFAdapterOptions
 
-The adapter-scope options of the DTF conversion (design decision D4):
+The adapter-scope options of the DTF conversion:
 parser strictness and base power, the transformer ratio convention, the
 legacy voltage-level collapse, the model settings consumed while the case
-is interpreted, and the outage selection (a DTF adapter option per review
-point 2 of the adapter task).
+is interpreted, and the outage selection (a DTF adapter option).
 """
 Base.@kwdef struct DTFAdapterOptions
   baseMVA::Float64 = 100.0
@@ -56,7 +55,7 @@ options_type(::DTFAdapter) = DTFAdapterOptions
 """
     import_net(::DTFAdapter, case, opts::DTFAdapterOptions) -> Net
 
-The DTF importer of the adapter contract (task_import_direct): builds
+The DTF importer of the adapter contract: builds
 the network DIRECTLY through `DTFImporter.build_net`; the adapter
 options carry every model knob the build takes.
 """
@@ -67,8 +66,7 @@ import_net(::DTFAdapter, case, opts::DTFAdapterOptions)::Net = DTFImporter.build
 
 The adapter options an effective run configuration implies. The DTF
 conventions themselves (`transformer_ratio_mode`, the legacy collapse)
-have no configuration keys yet (adapter task stage 3b inventory, open in
-issue #1 point 3), so they stay at the importer defaults here.
+have no configuration keys yet, so they stay at the importer defaults here.
 """
 function dtf_adapter_options(cfg::SparlectraConfig)
   return DTFAdapterOptions(tap_changer_model = cfg.model.tap_changer_model, bus_shunt_model = cfg.model.bus_shunt_model)

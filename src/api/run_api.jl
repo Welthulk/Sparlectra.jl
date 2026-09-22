@@ -507,7 +507,7 @@ end
 
 function _run_dtf_outages(case_path::AbstractString, case, config, output_path::AbstractString; mode=:none, selection=String[], write_artifacts::Bool=true, write_matpower_exports::Bool=false, performance_profile=nothing)
   results = Dict{String,Any}[]
-  # task_import_direct: every outage net comes from the IMPORTER, exactly
+  # every outage net comes from the IMPORTER, exactly
   # like the base case; the old conversion detour gave the outage nets a
   # different lineage than the base run for nothing. Still one
   # construction per outage (no re-parse); the scenario engine's
@@ -675,7 +675,7 @@ function _run_sparlectra_api(;
 
   config_start = time_ns()
   # The one configuration precedence of the run path lives in
-  # resolve_config (design decision D5), highest first: explicit API/CLI
+  # resolve_config, highest first: explicit API/CLI
   # overrides, the case configuration file next to the case, the case
   # file's own deprecated `sparlectra.config` block, the YAML file, the
   # template defaults. An omitted key falls through to the next level.

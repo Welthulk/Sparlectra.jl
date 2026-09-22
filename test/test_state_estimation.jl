@@ -2434,7 +2434,7 @@ end
 Tap-estimation fallback: released taps are extra states, and a measurement
 set that estimates the voltages cleanly can still be far too thin to pin
 them. The run then does not settle at all and the user gets nothing,
-although the SAME set works without the taps (maintainer, 2026-09-06,
+although the SAME set works without the taps (seen 2026-09-06 on
 case300 with 98 released taps and a CGMES delivery). A non-convergence WITH
 released taps therefore freezes the taps back to their model position and
 repeats the estimation once, and says so in the log: a silent retry would
@@ -2478,7 +2478,7 @@ function test_state_estimation_tap_fallback()::Bool
       @test !occursin("repeating WITHOUT tap estimation", log_ok)
       @test get(d_ok["metadata"], "se_tap_estimation_fallback", false) == false
     end
-    # task_se_tap_bounds_v0100, the step limit. A released regulator state is
+    # The step limit. A released regulator state is
     # bounded in how far ONE iteration may move it, at a quarter of the
     # changer's declared mechanical travel. Without it the Gauss-Newton step
     # drives r1 toward -1, where the cascade
@@ -2513,7 +2513,7 @@ function test_state_estimation_tap_fallback()::Bool
       end
     end
 
-    # task_se_tap_bounds_v0100: the fallback must be visible on all THREE
+    # the fallback must be visible on all THREE
     # surfaces, because a run whose tap positions are MODEL values looks
     # exactly like a successful tap estimation otherwise, and its J measures
     # those model positions. sp_case60 at a cap of 4 is the shipped fixture
@@ -2551,7 +2551,7 @@ function test_state_estimation_tap_fallback()::Bool
       @test !occursin("<th>Electrical step</th>", table)
 
       # and the run history must not call a state estimation "rectangular"
-      # (maintainer 2026-09-06): the method comes from the run kind
+      # (seen 2026-09-06): the method comes from the run kind
       @test Sparlectra._powerflow_run_index_solver(res) == "wls"
     end
 

@@ -97,7 +97,7 @@ function run_solver_interface_tests()
   # Covers solver-interface integration and option behavior:
   # external model API, Q-limit reporting/autocorrection, PV->PQ locking, and final-limit reporting.
   @testset "Solver interface" begin
-    @testset "tolerance physical equivalent (task_tol_watts)" begin
+    @testset "tolerance physical equivalent" begin
       # the run log, the diagnostics and the docs show tol * baseMVA in a
       # readable unit; the default 1e-8 pu at the 100 MVA base is 1 W
       @test Sparlectra.format_tolerance_physical(1.0e-8, 100.0) == "1.0e-8 pu, equals 1 W at 100.0 MVA base"

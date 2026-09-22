@@ -3005,7 +3005,7 @@ function test_condition_number_estimator()::Bool
 end
 
 # Compact remove-functions coverage (replaces the former legacy/remove
-# group, task_test_suite step 3c): one small net, every public remover once,
+# group): one small net, every public remover once,
 # acceptance and rejection paths with network integrity afterwards. The
 # rejection paths log @error by design; NullLogger keeps the run output
 # clean exactly like the retired testremove.jl did.

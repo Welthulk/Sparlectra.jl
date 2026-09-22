@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # file: test/test_parallel_foundation.jl
-# purpose: thread-safety foundation of the multi-core work (Phase 1):
+# purpose: thread-safety foundation of the parallel execution paths:
 #          runtime.parallel.* configuration and validation, the per-worker
 #          performance-profile child/merge helpers, the DC status Net field,
 #          UMFPACK copy(F) finalizer safety, and the startup summary line.
@@ -246,7 +246,7 @@ function run_parallel_foundation_tests()
       @test spec.default === true
       @test spec.control === :checkbox
       @test spec.section === :expert
-      # stage 4A block 3: the expert options render on the Settings page
+      # the expert options render on the Settings page
       form_html = Sparlectra.render_settings_page()
       @test occursin("name=\"runtime_parallel_enabled\"", form_html)
       overrides = Sparlectra.validate_gui_config_overrides(Dict{String,Any}("runtime.parallel.enabled" => "false"))

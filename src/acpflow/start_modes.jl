@@ -14,11 +14,11 @@
 # file: src/acpflow/start_modes.jl
 # purpose: applies the configured start modes to the imported net ahead of
 #          the rectangular solve: voltage_mode and angle_mode handling,
-#          profile blending, and DC angle starts. Format independent since
-#          stage 3a (D10): the raw source start values come from the typed
+#          profile blending, and DC angle starts. Format independent: the
+#          raw source start values come from the typed
 #          case's start_state, not from a MATPOWER container.
 
-# task_import_direct: the projection core is import-path neutral. The raw
+# The projection core is import-path neutral. The raw
 # start voltages arrive index-aligned with net.nodeVec (nothing = no raw
 # value for that node); each import path builds that vector from ITS
 # source of truth, the SCF start_state or the parsed MATPOWER bus rows.
@@ -26,8 +26,8 @@
     _apply_start_modes!(net, case, start_cfg; performance_profile) -> Nothing
 
 Apply the configured start voltage and angle modes with the RAW source
-start values of `case.sparlectra.start_state` as the reference profile
-(design decision D10). PV and slack classification and the resolved
+start values of `case.sparlectra.start_state` as the reference profile.
+PV and slack classification and the resolved
 voltage setpoints come from the built net itself: the adapter resolved
 the source system's setpoint choice at conversion time, so the historical
 distinction between the raw generator setpoint and the imported setpoint

@@ -151,7 +151,7 @@ function run_distributed_slack_tests()
       Sparlectra._print_distributed_slack_summary_line(buf, net2)
       out = String(take!(buf))
       # 15-character label, colon at column 16: the classical result header
-      # aligns every colon (maintainer requirement, 2026-08-17)
+      # aligns every colon
       @test occursin("Dist. slack    : mode pg_weighted", out)
       active, shares = Sparlectra._distributed_slack_bus_shares(net2)
       @test active

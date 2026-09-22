@@ -13,14 +13,13 @@
 # limitations under the License.
 
 # file: src/scenario/patch.jl
-# purpose: the scenario patch model (scenario task step 1, design decisions
-#          D1/D2): a scenario is an ordered list of patch operations on SCF
+# purpose: the scenario patch model: a scenario is an ordered list of patch operations on SCF
 #          component ids, validated against a ScenarioIndex built from the
 #          typed case. N-1 is the special case "one status patch per branch
 #          or generator" and expands through the existing generators, so
 #          the engine sees one kind of input.
 
-# the closed operation list of D1: op => (allowed targets, allowed fields)
+# the closed operation list: op => (allowed targets, allowed fields)
 const _PATCH_STATUS_TARGETS = (:branch, :transformer, :generator, :load, :shunt, :link)
 const _PATCH_SET_TARGETS = (:generator, :load, :shunt, :transformer, :external_grid)
 const _PATCH_SET_FIELDS = (:p, :q, :vm_pu, :tap_pos, :b_pu, :angle_deg)
@@ -29,7 +28,7 @@ const _PATCH_SCALE_TARGETS = (:load, :generator)
 """
     PatchOp
 
-One patch operation of a scenario (design decision D1): `op` is `:status`,
+One patch operation of a scenario: `op` is `:status`,
 `:set` or `:scale`, `target` names the component class, `id` the SCF
 component id. `:status` carries `value` (0 or 1); `:set` carries `field`
 (one of `p`, `q`, `vm_pu`, `tap_pos`, `b_pu`, `angle_deg`) and `value`;
@@ -48,7 +47,7 @@ end
 """
     Scenario
 
-A named, weighted, ordered list of patch operations (design decision D2).
+A named, weighted, ordered list of patch operations.
 """
 Base.@kwdef struct Scenario
   name::String
@@ -137,7 +136,7 @@ _scenario_error(scenario::AbstractString, opidx::Int, msg::AbstractString) = thr
 """
     validate_scenarios(set, index) -> ScenarioSet
 
-Load-time validation of design decision D1: every operation must name a
+Load-time validation of the patch model: every operation must name a
 known id whose class admits the operation and field; a scenario needs a
 non-empty op list and a unique name. Errors carry the scenario name and
 the op index. Returns `set` unchanged on success.
@@ -286,8 +285,8 @@ end
 """
     scenario_set_from_contingencies(raw, case) -> ScenarioSet
 
-Map a legacy `sparlectra.contingencies` block onto the scenario model
-(design decision D3): `mode` and `exclusions` carry over, and every
+Map a legacy `sparlectra.contingencies` block onto the scenario model:
+`mode` and `exclusions` carry over, and every
 explicit case becomes one scenario with a status patch per outage
 component id.
 """

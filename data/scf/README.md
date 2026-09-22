@@ -33,7 +33,7 @@ five run kinds (power flow, N-1, scenarios, state estimation, short
 circuit) against those fixtures, so the cases are regression fixtures,
 not decoration. A fresh install can run every run kind on them without
 downloading anything; new tests should use them instead of downloaded
-cases (project rule 2026-09-03).
+cases.
 
 ## sp_case5 (5 buses, the hand-checkable entry)
 

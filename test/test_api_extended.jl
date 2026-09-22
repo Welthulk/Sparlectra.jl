@@ -827,7 +827,7 @@ power_flow:
         # sp_case14 replaces the downloaded case14 here. A case configuration
         # file lies next to it, and its mere EXISTENCE used to disable the
         # entire forced set: CASE-scope keys skip the general configuration
-        # file in that situation (resolve_config, D5), so the self-check ran
+        # file in that situation (resolve_config), so the self-check ran
         # as an ordinary solve. That is where the previous expectation here
         # came from, recorded on 2026-09-04 as a "fixed property of the
         # file": 4 iterations to 5.2e-12, which is a converged run, not a
@@ -1268,7 +1268,7 @@ power_flow:
         # one representative per dimension plus one mixed row: active_set is
         # the default path, classic_one_at_a_time exercises the outer-loop
         # artifact prefixing (the second classic mode added a third full
-        # service run without a distinct contract; task_test_suite step 3b)
+        # service run without a distinct contract)
         for mode in ("active_set", "classic_one_at_a_time")
           mode_run = start_powerflow_run(
             Dict(
@@ -1359,8 +1359,8 @@ power_flow:
       @test occursin("Current phase:", aborted["message"])
       @test !aborted["success"]
       @test Sparlectra.abort_webui_powerflow_run(active["run_id"])["abort_status"] == "already_aborting"
-      # an ABORTING run no longer blocks a new submission (maintainer
-      # 2026-09-04: a 25k-bus import sat in a non-interruptible call, the
+      # an ABORTING run no longer blocks a new submission (a 25k-bus
+      # import sat in a non-interruptible call, the
       # job stayed "aborting", and the whole Web UI refused every further
       # start, which is exactly what the abort was meant to escape). The
       # previous expectation here asserted that lock-up as correct; the

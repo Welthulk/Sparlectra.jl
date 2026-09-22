@@ -30,7 +30,7 @@ entry point. Throws on unsupported formats and on import errors. Shared by
 the SE service run and the Web UI measurement generator so both accept
 exactly the same cases, and both run with `ImportedCase.config` (the
 CGMES start-value decision and the auto-profile rewrites reach the SE
-solves exactly like the power-flow service, step 3a of the adapter task).
+solves exactly like the power-flow service).
 """
 function _se_import_case(case_path::AbstractString, config; requested_format::Symbol = :auto)::ImportedCase
   format = _detect_case_format(String(case_path); requested = requested_format)
@@ -176,7 +176,7 @@ end
 ## short (it starts from a converged state), so reporting only that one hid
 ## the expensive half: a CGMES run needed 36 to 40 iterations first and
 ## reported "3", which is how an iteration cap of 30 could look sufficient
-## while it broke that run (maintainer, 2026-09-06).
+## while it broke that run (seen 2026-09-06).
 function _se_reported_iterations(res)::Int
   base = res.iterations
   tf = res.tapFixation
@@ -345,7 +345,7 @@ function _run_state_estimation_service(
   end
   se_total_start = time_ns()
 
-  # the same precedence the power-flow path uses (resolve_config, D5):
+  # the same precedence the power-flow path uses (resolve_config):
   # case configuration file, the case file's deprecated block, general
   # file, defaults
   se_phase("preparing_configuration")
@@ -624,8 +624,8 @@ function _run_state_estimation_service(
   # Released taps are extra states, and a measurement set that carries the
   # voltages fine can still be too thin to pin them: the estimate then does
   # not settle at all and the user gets nothing, although the SAME set
-  # estimates cleanly without the taps (maintainer, 2026-09-06, case300 and
-  # a CGMES delivery). So a non-convergence WITH released taps is not the
+  # estimates cleanly without the taps (seen 2026-09-06 on case300 and a
+  # CGMES delivery). So a non-convergence WITH released taps is not the
   # final answer: the taps are frozen back to their model position and the
   # estimation is repeated once. The log says it happened, because a silent
   # retry would hide that the reported taps are model values, not estimates.
@@ -665,8 +665,7 @@ function _run_state_estimation_service(
     # model values, so the J of this run measures THEM
     tap_fallback_used && println(io, "\n> **Tap estimation fallback.** ", _SE_TAP_FALLBACK_NOTE, "\n")
     print_se_diagnostics(io, diag; topN = 15, format = :markdown)
-    # the critical rows by name (maintainer rule 2026-09-21: a detected
-    # critical measurement is stated, never left to be read off the wii)
+    # the critical rows by name (a detected critical measurement is stated, never left to be read off the wii)
     println(io, "\n## Critical measurements\n")
     for line in _se_criticality_lines(net, obs)
       println(io, "- ", strip(line))
@@ -699,8 +698,8 @@ function _run_state_estimation_service(
       end
     end
   end
-  # machine transformers are CALCULATED, never estimated (maintainer
-  # directive): their tap is no state variable, so after the estimation the
+  # machine transformers are CALCULATED, never estimated: their
+  # tap is no state variable, so after the estimation the
   # position is back-calculated from the AVR setpoint, the dispatch P, and
   # the MEASURED machine Q (the Qinj telemetry at the machine bus when the
   # set carries it). The evaluation marks these rows as "calculated".
@@ -726,7 +725,7 @@ function _run_state_estimation_service(
     end
   end
 
-  # bad data at a glance (maintainer request 2026-08-27): every suspicious
+  # bad data at a glance: every suspicious
   # or eliminated measurement with its network location in one CSV; the
   # diagnostics markdown keeps the full ranking, this is the extract to
   # open first. se_state.csv stays untouched: it is the machine-read chain
@@ -1039,7 +1038,7 @@ function _run_pf_from_se_service(case_path::AbstractString, config_file::Abstrac
 
   se_mode in ("se_state", "se_snapshot") || return _api_failure("invalid_request", "se_start_mode must be \"se_state\" or \"se_snapshot\", got \"$(se_mode)\".", run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
 
-  # the same precedence the power-flow path uses (resolve_config, D5):
+  # the same precedence the power-flow path uses (resolve_config):
   # case configuration file, the case file's deprecated block, general
   # file, defaults
   config = try

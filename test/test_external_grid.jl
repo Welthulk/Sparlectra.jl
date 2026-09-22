@@ -299,7 +299,7 @@ function run_external_grid_tests()
       # Stiff limit: a huge Sk must reproduce the ideal slack. The series
       # impedance scales as baseMVA/Sk, so sk = 1e10 puts the residual
       # voltage drop safely below the 1e-8 pu assertion (measured ~1.6e-8
-      # at the task's original 1e9 — impedance, not tolerance, is the knob).
+      # at the original 1e9; impedance, not tolerance, is the knob).
       stiff = build(internal = true, sk = 1.0e10)
       @test length(stiff.nodeVec) == 3
       @test stiff.slackVec == [3]                       # slack moved to the internal bus

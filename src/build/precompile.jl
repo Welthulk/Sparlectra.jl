@@ -144,10 +144,9 @@ using PrecompileTools: @setup_workload, @compile_workload
                     # the state-estimation run of the same service (the fixture
                     # carries its measurement set): 2.7 s cold without this
                     _pc_se = start_powerflow_run(Dict{String,Any}("casefile" => _pc_scf, "config_file" => DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(_pc_out, "runs"), "se_mode" => true, "measurement_file" => ""))
-                    # NOT warmed: the Web UI pages (maintainer decision
-                    # 2026-09-22: rendering them here cost another 20 s of
-                    # precompile time; the Runs page stays cold on its first
-                    # open, the sysimage covers that for the maintainer)
+                    # NOT warmed: the Web UI pages (rendering them here cost another
+                    # 20 s of precompile time; the Runs page stays cold on its
+                    # first open, the sysimage covers that)
                     lock(_POWERFLOW_SERVICE_LOCK) do
                         delete!(_POWERFLOW_SERVICE_RUNS, _pc_run_id)
                         delete!(_POWERFLOW_SERVICE_RUNS, String(_pc_se["run_id"]))

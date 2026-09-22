@@ -528,7 +528,7 @@ function getEffectiveBusType(; net::Net, busName::String)::NodeType
   return getEffectiveBusType(net, busIdx)
 end
 
-# task_import_direct D12 audit: the stamping happens exactly once per
+# the stamping happens exactly once per
 # importer; this atomic exists for the format test that proves it and
 # costs one integer add per import
 const _NET_PARAM_STAMP_COUNT = Base.Threads.Atomic{Int}(0)
@@ -1408,7 +1408,7 @@ function addExternalGrid!(;
     (isfinite(rx_min) && rx_min >= 0.0) || throw(ArgumentError("addExternalGrid!: rx_min must be finite and >= 0; got $(rx_min)."))
   end
 
-  # Task decision (issue #299): a declared minimum feeder without its own
+  # Issue #299: a declared minimum feeder without its own
   # ratio inherits rx_max instead of `nothing`, so the :min case does not
   # flag "no usable R/X ratio" for data the user deliberately provided.
   eff_rx_min = rx_min !== nothing ? rx_min : (sk_min_MVA !== nothing ? rx_max : nothing)

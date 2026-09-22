@@ -1187,11 +1187,11 @@ function net_to_scf(
   # The writer emits no `sparlectra.config` block any more: a case's
   # settings live in its case configuration file (`<stem>.config.yaml`,
   # write_case_config). The reader still accepts the block as the
-  # deprecated precedence level directly below that file (D7).
+  # deprecated precedence level directly below that file.
   # study definitions: what to compute, not what came out. The result
   # contract is untouched; these blocks only describe the study.
   contingencies === nothing || (spar["contingencies"] = Dict{String,Any}(String(k) => v for (k, v) in contingencies))
-  # the scenario block (scenario task D3): the scenario-aware path writes
+  # the scenario block: the scenario-aware path writes
   # scenarios; the deprecated contingencies keyword keeps its historical
   # emission for existing callers
   scenarios === nothing || (spar["scenarios"] = Dict{String,Any}(String(k) => v for (k, v) in scenarios))
@@ -1329,7 +1329,7 @@ end
 """
     net_to_scfcase(net; kwargs...) -> SCFCase
 
-The typed case of `net` (design decision D1): what [`exportSCF`](@ref)
+The typed case of `net`: what [`exportSCF`](@ref)
 writes, as the in-memory [`SCFCase`](@ref). Takes the same keyword
 arguments as [`exportSCF`](@ref); pure, the network is not modified. The
 document assembly stays the deterministic dict builder (`net_to_scf`),

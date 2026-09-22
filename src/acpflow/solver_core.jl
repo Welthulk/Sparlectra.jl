@@ -87,9 +87,8 @@ function solve_sparse_system(A::SparseMatrixCSC, b; context::Symbol = :powerflow
   end
 end
 
-## Human-readable physical equivalent of a per-unit power tolerance
-## (task_tol_watts): tol * baseMVA, shown in W, kW or MW so the number is
-## readable. The tolerance is compared against the LARGEST SINGLE bus
+## Human-readable physical equivalent of a per-unit power tolerance:
+## tol * baseMVA, shown in W, kW or MW so the number is readable. The tolerance is compared against the LARGEST SINGLE bus
 ## mismatch (infinity norm over [dP; dQ/dV], rectangular_network_solver
 ## max_mis = maximum(abs.(F))), so the equivalent reads per bus, active
 ## and reactive alike; the PV rows' voltage residuals share the same

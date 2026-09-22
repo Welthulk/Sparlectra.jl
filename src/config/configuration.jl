@@ -225,7 +225,7 @@ Configuration of the N-1 contingency batch (issue #331).
   stages and their recipes are documented on [`runContingencies!`](@ref); the
   set is validated (subset, no duplicates) by `_validate_contingency_ladder`.
 - `screening_mode::Symbol`: contingency screening on the base factorization
-  (scenario task D5): `:off` (default) gives every scenario the full solve,
+  `:off` (default) gives every scenario the full solve,
   `:flag` estimates every non-islanding outage with one Woodbury-corrected
   Newton step on the base Jacobian and runs the full solve only for flagged
   scenarios, `:only` reports the estimates without full runs (islanding and
@@ -323,9 +323,9 @@ Base.@kwdef struct PowerFlowConfig
   # over active and reactive residuals alike; PV voltage rows share the
   # same per-unit bound as a voltage quantity). Readable physically as
   # tol * baseMVA: the 1e-8 default equals 1 W at a 100 MVA base
-  # (task_tol_watts; the run log and diagnostics print the equivalent)
+  # (the run log and diagnostics print the equivalent)
   tol::Float64 = 1.0e-8
-  # Physical spelling of the same bound (task_tol_watts part B): when set,
+  # Physical spelling of the same bound: when set,
   # tol_MW WINS over tol and is converted with the network's own base
   # (tol = tol_MW / baseMVA) at the moment the tolerance meets the net,
   # because the base is unknown while the configuration is read. `nothing`
@@ -413,7 +413,7 @@ Base.@kwdef struct StateEstimationConfig
   #
   # The value is 50, the largest of the three, and NOT 30: a CGMES run with
   # released taps needs between 36 and 40 iterations in its first solve and
-  # failed at 30 (maintainer, 2026-09-06, run a023884e). The earlier
+  # failed at 30 (run a023884e, 2026-09-06). The earlier
   # reasoning here, "a run that has not converged by 30 does not converge at
   # 50 either", was measured on sets without released taps and is wrong in
   # general. What the run reports afterwards is the iteration count of the
@@ -433,8 +433,8 @@ Base.@kwdef struct StateEstimationConfig
   update_taps::Bool = false
   robust::Bool = false
   robust_start_iteration::Int = 3
-  # bad-data thresholds (0.10.0, GUI-exposed). Two decisions, and since
-  # task_se_bad_data_v0100 both read the SAME quantity, the normalized
+  # bad-data thresholds (0.10.0, GUI-exposed). Two decisions, and
+  # both read the SAME quantity, the normalized
   # residual rn = r_i/sqrt(Omega_ii):
   #   k_eliminate  from here a row is REMOVED from the estimate
   #   k_suppress   from here a row is DOWN-WEIGHTED (:replacement mode)
@@ -603,8 +603,7 @@ end
     ModelConfig
 
 Typed model-construction configuration, the `model:` block: how any imported
-case becomes a network, independent of its format (design decision D6 of the
-adapter task; the keys lived in `matpower_import` and `transformer` before,
+case becomes a network, independent of its format (the keys lived in `matpower_import` and `transformer` before,
 version-0 files are rewritten through the alias table).
 
 `bus_shunt_model` selects how bus shunts enter the admittance model.
@@ -1229,7 +1228,7 @@ function _canonical_qlimit_enforcement_mode(value::Symbol)::Symbol
   throw(ArgumentError("power_flow.qlimits.enforcement_mode must be one of $(collect(QLIMIT_ENFORCEMENT_MODE_VALUES)); got $(value). Legacy aliases accepted: $(legacy_aliases)."))
 end
 
-## power_flow.tol_MW (task_tol_watts part B): the tolerance in physical
+## power_flow.tol_MW: the tolerance in physical
 ## units. Zero or negative is an error naming the key; an implausibly
 ## large bound is a WARNING, not an error, because "coarse on purpose" is
 ## a legitimate choice and only the user knows the network's size.
@@ -1925,14 +1924,14 @@ const _DEPRECATED_CONFIG_KEYS = Dict(
 Current version of the configuration file format. Files declare theirs with
 the top-level key `config_version`; a file without it reads as version 0 and
 the alias tables below are applied stepwise, so old files keep loading while
-only this file knows old key names (design decision D9 of the adapter task).
+only this file knows old key names.
 """
 const CONFIG_VERSION_CURRENT = 1
 
 # One alias list per version step, old dotted key => new dotted key. Applied
 # in ascending order (0 => 1, later 1 => 2, ...) before unknown-key
 # validation, each application warns once naming both keys. The 0 => 1 moves
-# are the model-block and runtime-case moves of design decision D6.
+# are the model-block and runtime-case moves.
 const _CONFIG_ALIASES = Dict{Int,Vector{Pair{String,String}}}(
   0 => [
     "matpower_import.bus_shunt_model" => "model.bus_shunt_model",

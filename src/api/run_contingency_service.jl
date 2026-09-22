@@ -107,7 +107,7 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
   if !(kind in ("branch", "gen"))
     return _api_failure("invalid_request", "contingency_kind must be \"branch\" or \"gen\", got \"$(kind)\".", run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
   end
-  # scenario task step 5: the request may pick the scenario source; nothing
+  # the request may pick the scenario source; nothing
   # keeps the historical kind/contingencies behavior
   if scenario_source !== nothing && !(scenario_source in ("file_block", "external_file", "n1_all", "n1_branches", "n1_generators"))
     return _api_failure("invalid_request", "scenario_source must be one of file_block, external_file, n1_all, n1_branches, n1_generators; got \"$(scenario_source)\".", run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
@@ -116,7 +116,7 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
     return _api_failure("invalid_request", "scenario_source external_file needs an existing scenario_file (a JSON carrying the scenarios block).", run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
   end
 
-  # The same precedence the power-flow path uses (resolve_config, D5), minus
+  # The same precedence the power-flow path uses (resolve_config), minus
   # request overrides (a study run has no config form of its own): case
   # configuration file, the case file's deprecated block, general file,
   # defaults.
@@ -174,7 +174,7 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
     end
   end
 
-  # scenario task step 5: screening mode from the request, falling back to
+  # screening mode from the request, falling back to
   # the contingency.screening configuration (whose default is :flag); the
   # margin always comes from the configuration
   screen_mode = screening_mode === nothing ? config.contingency.screening_mode : Symbol(lowercase(String(screening_mode)))
@@ -190,7 +190,7 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
   # Scenario source (step 5). file_block and external_file run through the
   # scenario model addressed by SCF component ids, so they need the typed
   # case as their ID INDEX (SCF directly, MATPOWER through the explicit
-  # converter). task_import_direct: the converted case serves as the
+  # converter). The converted case serves as the
   # addressing index ONLY; the electrics that run are the imported net,
   # so no conversion artifact reaches the results. The n1_* sources and
   # the historical kind/contingencies path stay on the generated case

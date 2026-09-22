@@ -146,7 +146,7 @@ const _SE_FULL_OMEGA_MAX_M = 20_000
 ## little information it carries and pushes the error onto the neighbour
 ## that shared its redundancy. Measured on warmup_casePST: suppressing
 ## Qinj_5 (wii 0.05, raw residual 1.4 sigma, rn 5.8) drove its partner to
-## rn 58 and had that healthy row eliminated (task_se_bad_data_v0100).
+## rn 58 and had that healthy row eliminated.
 const _SE_SUPPRESSION_MIN_WII = 0.3
 
 """
@@ -163,7 +163,7 @@ function numeric_rank(A::AbstractMatrix{<:Real}; tol = nothing)
   return count(>(tol), s)
 end
 
-## Sparse rank via SPQR (task_se_sparse): below the dense threshold the
+## Sparse rank via SPQR: below the dense threshold the
 ## exact dense SVD path keeps its historical semantics bit for bit; above
 ## it the rank comes from the sparse QR factorization, whose column-norm
 ## tolerance is fed from the SAME effective tolerance the callers derive
@@ -556,7 +556,7 @@ end
 
 Normalized residuals `rn = r_i / sqrt(Omega_ii)` for one suppression round,
 through the same `_residual_diagnostics` the bad-data elimination uses, so
-both decisions read one scale (task_se_bad_data_v0100).
+both decisions read one scale.
 
 Returns `nothing` when no verdict is possible: no Jacobian was kept, or the
 diagnostics refuse this problem size (they error rather than allocate an
@@ -614,7 +614,7 @@ end
 function _residual_diagnostics(H::AbstractMatrix{<:Real}, r::Vector{Float64}, w::Vector{Float64}; need_full_omega::Bool = false, minStates::Int = state_estimation_config().takahashi_min_states)
   m, n = size(H)
   # the full residual covariance is m×m dense by definition; refuse by
-  # name instead of allocating (task_se_sparse step 3)
+  # name instead of allocating
   need_full_omega && m > _SE_FULL_OMEGA_MAX_M && error("SE diagnostics: the residual-correlation K report needs the full m×m residual covariance and m=$(m) exceeds $(_SE_FULL_OMEGA_MAX_M); disable state_estimation.report_residual_correlation for sets this large")
   takahashi_reason = ""
   if !need_full_omega && n >= minStates
@@ -677,8 +677,8 @@ function _residual_diagnostics_takahashi(H::AbstractMatrix{<:Real}, r::Vector{Fl
   m, n = size(H)
   # forward differences produce EXACT zeros for measurements not depending
   # on a state, so sparse(H) recovers the true structure without a drop
-  # tolerance (verified by test, not assumed); since task_se_sparse H
-  # already arrives as a SparseMatrixCSC and passes through untouched
+  # tolerance (verified by test, not assumed); H already
+  # arrives as a SparseMatrixCSC and passes through untouched
   Hs = H isa SparseMatrixCSC{Float64} ? H : sparse(Matrix{Float64}(H))
   G = Hs' * (Diagonal(w) * Hs)
   F = try
@@ -876,7 +876,7 @@ end
 ##   H[i,k] ≈ (h_i(x + εe_k) - h_i(x)) / ε
 ## where e_k is the k-th unit vector.
 ##
-## Column coloring for the finite-difference assembly (task_se_fd_coloring):
+## Column coloring for the finite-difference assembly:
 ## states that share no measurement row can be perturbed TOGETHER, so the
 ## number of full prediction evaluations drops from the state count to the
 ## color count (a few dozen on network structures). Derived from the
@@ -895,8 +895,8 @@ function _fd_coloring_from_pattern(H::SparseMatrixCSC{Float64})::_FdColoring
   return _fd_coloring_from_rows(rows_per_col, m, n)
 end
 
-## STRUCTURAL coloring input (task_se_fd_coloring, second iteration of the
-## design): the pattern of an assembled H is a POINT property, and on
+## STRUCTURAL coloring input (second iteration of the design): the
+## pattern of an assembled H is a POINT property, and on
 ## case13659pegase micro-derivatives at machine precision appear and
 ## vanish bitwise between iterations, so no point union ever settled and
 ## the coloring never engaged. The structural pattern is the superset of
@@ -1049,12 +1049,12 @@ end
 
 ## Returns:
 ## - H: Jacobian as a SparseMatrixCSC of size (m_measurements × n_states)
-##   (task_se_sparse: the dense m×n allocation was the large-network
+##   (the dense m×n allocation was the large-network
 ##   blocker, tens of gigabytes at 25k buses for a matrix with a handful
 ##   of entries per row)
 ## - h0: base prediction vector h(x), reused by caller to avoid recomputation.
 ##
-## With a `coloring` (task_se_fd_coloring) the assembly evaluates ONE
+## With a `coloring` the assembly evaluates ONE
 ## perturbed prediction per color instead of one per state; the values are
 ## then written in the SAME column-ascending order with the SAME per-entry
 ## formula, so the resulting CSC is bit-identical to the per-column
@@ -1081,8 +1081,8 @@ function _measurement_jacobian_fd(measurements::Vector{Measurement}, net::Net, x
   # Every caller gets the coloring, not just the WLS loop: the diagnostics
   # and the observability entry points build their own Jacobian, and on a
   # 25k-bus network an uncolored assembly is 50000 full prediction sweeps
-  # (found in the maintainer's browser pass, where the estimator itself
-  # was already fast). Derived here when the caller passed none.
+  # (found in a browser pass, where the estimator itself was already
+  # fast). Derived here when the caller passed none.
   if coloring === nothing && n >= _SE_FD_COLORING_MIN_STATES
     coloring = _fd_structural_coloring(measurements, n, slackIdx, nbus, Ybus, withVaOffset, shuntMap, tapMap, net)
   end
@@ -1179,7 +1179,7 @@ function _adjacency_from_sparsity(H::AbstractMatrix{<:Real})
   return adj, n
 end
 
-## Sparse specialization (task_se_sparse): O(nnz) over the stored entries
+## Sparse specialization: O(nnz) over the stored entries
 ## instead of the m*n scan; same result, an explicitly stored zero (which
 ## the FD assembly never produces) is skipped like the dense scan does.
 function _adjacency_from_sparsity(H::SparseMatrixCSC{Float64})
@@ -1488,8 +1488,8 @@ function _evaluate_observability_from_jacobian(H::AbstractMatrix{<:Real}, active
     # terminate in reasonable time. The m*n budget below keeps the check
     # within roughly a minute; above it the classification is SKIPPED and
     # says so (criticality_skipped), instead of allocating for hours, and
-    # quality then reflects observability and redundancy only
-    # (task_se_sparse step 3). Since issue #394 this is the cross-check
+    # quality then reflects observability and redundancy only.
+    # Since issue #394 this is the cross-check
     # path (criticality_method = :rank), no longer the default.
     criticalitySkipped = !structural_affordable
     if !criticalitySkipped
@@ -2606,7 +2606,7 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
       # this call has is "state column out of bounds", which means a wrong
       # column index, and absorbing that would silently freeze every
       # released shunt while the run reported "not observable" (measured
-      # 2026-09-06, task_silent_catch_v0101). Same class as the island map
+      # 2026-09-06). Same class as the island map
       # that stayed empty in compareWithSV.
       obs = evaluate_local_observability_matrix(Htest, [col])
       if obs.numerical_observable
@@ -2773,7 +2773,7 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
     # let the smooth fixed point converge.
     local robustFrozenW = nothing
     local lastStep = Inf
-    # FD column coloring (task_se_fd_coloring): the coloring comes from
+    # FD column coloring: the coloring comes from
     # the STRUCTURAL pattern (topological couplings), not from an
     # assembled H, because point patterns never settled on large systems
     # (micro-derivatives at machine precision appear and vanish bitwise
@@ -2818,7 +2818,7 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
 
       # Normal equations for WLS:
       #   Δx = (H'WH)^{-1} H'W r
-      # with W = diag(w). Sparse throughout (task_se_sparse): H is a
+      # with W = diag(w). Sparse throughout: H is a
       # SparseMatrixCSC, so G = H' * (W * H) stays sparse and the solve
       # below takes the sparse factorization path; the former dense
       # HW-broadcast form would have densified through the adjoint
@@ -2932,7 +2932,7 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
   # Virtual rows (sigma <= 1e-6) are never suppressed; statistics keep the
   # original w.
   #
-  # One scale for both decisions (task_se_bad_data_v0100). Until 0.10.0 this
+  # One scale for both decisions. Until 0.10.0 this
   # used the raw ratio |r_i|/sigma_i while the elimination used
   # rn = r_i/sqrt(Omega_ii). Those differ exactly where it matters: with
   # wii = Omega_ii * w_i, a row at the localizability guideline wii = 0.3 has
@@ -3647,7 +3647,7 @@ function runse_diagnostics(net::Net, measurements::Vector{Measurement})
         push!(get!(byStation, st, NamedTuple[]), row)
       end
     end
-    # stage-1 agreement (open design decision 2): a precheck finding at the
+    # stage-1 agreement: a precheck finding at the
     # same station is extra evidence, noted but not severity-changing
     pre = validate_topology(net, measurements)
     preStations = Set{Int}()

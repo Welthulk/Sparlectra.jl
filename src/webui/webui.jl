@@ -330,7 +330,7 @@ end
 ## Windows and macOS had NO fallback here until 2026-09-07: the function
 ## returned early unless the platform was Linux. A Windows 11 machine with
 ## Edge uninstalled and only Firefox therefore reached "manual_only", and
-## the user had to type 127.0.0.1:8080 by hand (maintainer report). Every
+## the user had to type 127.0.0.1:8080 by hand. Every
 ## desktop platform has a system-wide "open this URL" mechanism; using it
 ## costs the app window but always finds the user's own browser.
 function _webui_generic_open_command(url::String; platform::Symbol = _webui_platform(), executable_lookup = Sys.which)::Union{Tuple{Cmd,Symbol},Nothing}

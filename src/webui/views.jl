@@ -152,7 +152,7 @@ const _WEBUI_BUSY_FORM_SCRIPT = """<script>
 
 # A native <input type="file"> renders its button and its "no file selected"
 # text in the BROWSER's language, so on a German browser an otherwise English
-# page said "Durchsuchen" and "Keine Datei ausgewählt" (maintainer, reported
+# page said "Durchsuchen" and "Keine Datei ausgewählt" (seen
 # 2026-09-09). The native input stays in the form (it is what carries the
 # bytes and the `required` check) but is moved off screen; a label styled as
 # a button opens it, and a span next to it names what was picked. The span is
@@ -622,7 +622,7 @@ function _webui_case_context(;
   return (; profile_values, profile_path, profile_notice, case_file_notice, casefiles, effective_case_directory, for002_candidates, existing_value, manual_value, effective_case_value, format_hint, case_format_value, dat_case_assistance, sc_state, scen_is_scf)
 end
 
-# Shared page scripts (stage 4A): the monolith's inline script is split into
+# Shared page scripts: the former run-page monolith's inline script is split into
 # page-scoped building blocks so the Case, Settings, and Runs pages carry
 # only what their controls need. Each block installs its own
 # DOMContentLoaded listener; they are independent.
@@ -658,7 +658,7 @@ document.addEventListener('DOMContentLoaded', function () {
 # reload-on-selection with loading banner, right-click delete, Enter-resolve
 # of unknown names, and the client-side format assistance (DTF hint, CGMES
 # vs MATPOWER applicability, format auto-set). Moved verbatim from the run
-# monolith in stage 4A with two deliberate changes: the reload target is
+# monolith with two deliberate changes: the reload target is
 # parameterized (the chooser lives on the Case page now) and the resolve
 # submit uses the input's OWN form instead of the run form.
 function _webui_case_chooser_script(; reload_path::AbstractString = "/powerflow/case")::String
@@ -922,7 +922,7 @@ document.addEventListener('DOMContentLoaded', function () {
 </script>"""
 end
 
-# --- stage 4B: adapter option fieldsets generated from options_type -------
+# --- adapter option fieldsets generated from options_type -----------------
 #
 # The SET of rendered fields per adapter comes from the adapter's option
 # struct (options_type) intersected with the :adapter-scope specs, matched
@@ -950,7 +950,7 @@ end
 
 # presentation: label, tooltip, marker attributes, input extras, and (for
 # the two CGMES selects) curated option labels; the strings are the ones
-# the hand-written fieldsets carried before 4B
+# the former hand-written fieldsets carried
 const _WEBUI_ADAPTER_FIELD_PRESENTATION = Dict{String,NamedTuple}(
   "cgmes_start_values" => (label = "CGMES start values", title = "auto uses the delivery's own SvVoltage state when it carries one (real deliveries are built around their operating point) and falls back to the flat start otherwise.", attrs = " data-cgmes-start-values-field", input_attrs = "", option_labels = Dict("auto" => "Automatic (SV state when available, default)", "sv" => "Imported SV state", "flat" => "Flat start")),
   "cgmes_require_boundary" => (label = "Require boundary set", title = "Fail the CGMES import when topology references stay unresolved (boundary set missing). Uncheck to import an incomplete delivery anyway (buses without a resolvable BaseVoltage still abort).", attrs = " data-cgmes-start-values-field", input_attrs = "", option_labels = nothing),
@@ -1022,7 +1022,7 @@ end
 """
     _webui_adapter_options_html(key, profile_values) -> String
 
-The generated option group of one adapter section (stage 4B): the field
+The generated option group of one adapter section: the field
 set is derived from `options_type(adapter)` and the :adapter-scope specs,
 the order and wording come from the presentation table, both pinned by
 load-time asserts. Returns "" for an adapter without form options (DTF,
@@ -1032,7 +1032,7 @@ function _webui_adapter_options_html(key::Symbol, profile_values)::String
   for sec in _WEBUI_ADAPTER_SECTIONS
     sec.key == key || continue
     isempty(sec.order) && return ""
-    # visibility follows the spec section (stage 4B Basic list): :basic
+    # visibility follows the spec section: :basic
     # fields render directly, :expert fields fold into a nested details
     basics = [f for f in sec.order if _webui_option_spec(f).section == :basic]
     experts = [f for f in sec.order if _webui_option_spec(f).section == :expert]
@@ -1048,7 +1048,7 @@ end
 """
     render_case_page(; kwargs...) -> String
 
-The Case page (stage 4A): choose or resolve a case (editable combobox with
+The Case page: choose or resolve a case (editable combobox with
 right-click delete), upload case files, export the selected case (SCF or
 plain PGM) and download it, and edit the per-case IMPORT options (input
 format, CGMES import options, MATPOWER import conventions). Saving the
@@ -1147,8 +1147,8 @@ end
 """
     _webui_settings_sections_html(; kwargs...) -> String
 
-The solver, output, and expert option sections of the Settings page
-(stage 4A block 3): moved VERBATIM from the run monolith. Values prefill
+The solver, output, and expert option sections of the Settings page:
+moved VERBATIM from the former run-page monolith. Values prefill
 from the shared resolution chain (`profile_values`); the page's save
 handler decides where they go (case configuration file or the general
 YAML), the run POST no longer carries them.
@@ -1463,7 +1463,7 @@ end
 """
     render_settings_page(; kwargs...) -> String
 
-The Settings page (stage 4A block 3): solver, start, output, and expert
+The Settings page: solver, start, output, and expert
 options plus the configuration block (config file display, maintenance
 actions, saved case settings, the ignore switch) on ONE page. Values
 prefill from the shared resolution chain; saving writes them to the
@@ -1550,7 +1550,7 @@ function render_powerflow_form(;
   sc_title = sc_state == "ready" ? "Balanced short-circuit currents (IEC 60909-0): Ik'' max/min per bus from the delivery's harvested short-circuit data — no power-flow solve involved." :
     sc_state == "missing-data" ? "This case carries no usable short-circuit source data (no machines, feeder short-circuit currents, or equivalent impedances)." :
     "Short-circuit evaluation needs a CGMES delivery with harvested short-circuit data, or a case file carrying sc_source entries."
-  # scenario task step 6 (maintainer revision 2026-09-03): the scenario
+  # the scenario
   # editor and the file_block source are SCF-only in this version; every
   # other format keeps the n1_* sources and gets the export hint instead
   scen_is_scf = ctx.scen_is_scf
@@ -1560,7 +1560,7 @@ function render_powerflow_form(;
     "<span class=\"field-hint scenario-scf-hint\">Scenarios need an SCF case; export this case as SCF first (Case export above).</span>"
   # the DTF outage details open automatically for a .DAT case, mirroring the
   # Case page's format assistance (the fields inside are RUN parameters and
-  # therefore stayed on this page in stage 4A)
+  # therefore stay on this page)
   dtf_details_attrs = dat_case_assistance ? " class=\"span-2 dtf-internal-section is-dat-selected\" open" : " class=\"span-2 dtf-internal-section\""
   for002_reference_value = submitted_form isa AbstractDict ? strip(_webui_form_string(_webui_form_value(submitted_form, "for002_reference_file", ""))) : ""
   for002_list_options = join(("<option value=\"$(_webui_escape(candidate))\">$(_webui_escape(candidate))</option>" for candidate in for002_candidates), "")
@@ -1645,7 +1645,7 @@ window.addEventListener('pageshow', function () {
 </script>
 $(_WEBUI_FEEDBACK_MODAL_SCRIPT)
 $(_WEBUI_INFO_MENU_SCRIPT)"""
-  # stage 4A block 4: the Runs page carries the run editors and the SE
+  # the Runs page carries the run editors and the SE
   # section below the run form. The scenario editor embeds server-side
   # (its row-wiring script must arrive with the page; fetched scripts stay
   # inert), while the weights editor lazy-loads its shared fragment on
@@ -1902,8 +1902,8 @@ end
 
 The N-1 weights editor itself (upload/download, seeded table, raw CSV),
 without page selector and layout: shared by the standalone
-/powerflow/contingency-weights page and the Runs page's weights tab
-(stage 4A block 4). The tab lazy-loads this fragment through the
+/powerflow/contingency-weights page and the Runs page's weights tab.
+The tab lazy-loads this fragment through the
 standalone route with fragment=1, because seeding the element names
 builds the net, which is too expensive for every Runs-page render; the
 fragment stays script-free so injecting it is safe.
@@ -1926,8 +1926,7 @@ function _webui_weights_editor_fragment(; case::AbstractString, elements::Abstra
   return string(msg_html, upload, table_html, textarea)
 end
 
-# Scenario editor page (scenario task step 6, maintainer revision
-# 2026-09-03): SCF cases only; a list of the case file's scenarios (name,
+# Scenario editor page: SCF cases only; a list of the case file's scenarios (name,
 # weight, op count; edit / duplicate / delete / new) and a scenario form
 # with op rows (op, target, component filtered by class, then the fields
 # the op needs). Validation is server side; errors arrive as `error_text`
@@ -1961,8 +1960,8 @@ end
 
 The scenario editor itself (list plus op form and its row-wiring script),
 without page selector and layout: shared by the standalone
-/powerflow/scenarios page and the Runs page's scenario tab (stage 4A
-block 4). Embedded server-side because the script must arrive with the
+/powerflow/scenarios page and the Runs page's scenario tab.
+Embedded server-side because the script must arrive with the
 initial page (fetched scripts stay inert).
 """
 function _webui_scenarios_editor_fragment(;
@@ -2118,9 +2117,9 @@ function _webui_sv_compare_summary(result::AbstractDict)::Union{Nothing,String}
 end
 
 ## Page title of a finished run: the run KIND, not always "PowerFlow"
-## (maintainer 2026-09-04: a state estimation whose result page says
-## "PowerFlow result" reads as if the wrong calculation had run, and that
-## is exactly how it was reported). The run modes come from the service
+## (a state estimation whose result page says "PowerFlow result" reads
+## as if the wrong calculation had run, and that is exactly how it was
+## reported). The run modes come from the service
 ## metadata written by the run itself.
 function _webui_result_page_title(result::AbstractDict)::String
   metadata = get(result, "metadata", Dict{String,Any}())
@@ -2139,8 +2138,7 @@ end
 ## the history used to fabricate "rectangular" for all of them: a state
 ## estimation solves weighted least squares, a short circuit is a direct
 ## IEC 60909 solve, an import analysis solves nothing. Deriving at display
-## time also repairs index entries written before the fix (maintainer,
-## 2026-09-06).
+## time also repairs index entries written before the fix.
 function _webui_run_method(entry::AbstractDict, stored::AbstractString)
   mode = String(get(entry, "run_mode", ""))
   mode == "se" && return "wls"
@@ -2163,11 +2161,11 @@ function render_powerflow_result(result::AbstractDict)::String
   solver_name = _webui_run_method(meta_for_mode isa AbstractDict ? meta_for_mode : Dict{String,Any}(), stored_solver)
   # The case by name and the phase, up top where a reader looks first. The
   # `casefile`/`resolved_casefile` rows below carried the same path twice and
-  # broke the layout; `final_outcome` said nothing a reader could use
-  # (maintainer 2026-09-09). The path survives in the tooltip.
+  # broke the layout; `final_outcome` said nothing a reader could use.
+  # The path survives in the tooltip.
   # A live job snapshot carries `nothing` for what the run has not produced
   # yet, and `string(nothing)` is the word "nothing": the card said so during
-  # every run and named the case only at the end (maintainer 2026-09-10).
+  # every run and named the case only at the end.
   # First non-empty of the resolved path and the requested one; the requested
   # one is known from the first second.
   text = value -> (value === nothing || value === missing) ? "" : String(strip(string(value)))
@@ -2246,8 +2244,7 @@ function render_powerflow_result(result::AbstractDict)::String
   return _webui_layout(_webui_result_page_title(result), "<section class=\"panel\">$(result_summary)$(runtime_notice)<table class=\"details\">$(rows)</table>$(active_hint)$(links)$(se_chain_section)</section>$(n1_table_section)$(se_tap_section)$(se_topology_section)$(save_section)"; show_back = true, refresh_url)
 end
 
-# N-1 / scenario result table on the run result page (scenario task step 6,
-# maintainer correction 2026-09-03): the browser must show WHICH case was
+# N-1 / scenario result table on the run result page: the browser must show WHICH case was
 # screened, not only a count. Rows come from the run's contingency_n1.csv
 # (14 classic columns, or 16 with the screening pair), ranked like
 # printContingencyResults (failures first, then severity descending); the
@@ -2420,7 +2417,7 @@ flows, bus voltages), so a plain power flow, a diagnose probe and a power flow
 started from a state estimate qualify; a state estimation, short circuit, N-1
 or import analysis has nothing the page would read. Deliberately NOT decided
 by network size: the same case modelled with an external-grid source and with
-a slack is exactly the pair one wants side by side (maintainer 2026-09-09).
+a slack is exactly the pair one wants side by side.
 """
 _webui_comparable_kind(kind::AbstractString)::Bool = lowercase(strip(kind)) in ("", "powerflow", "diagnose", "powerflow_se_start")
 
@@ -2452,8 +2449,7 @@ function render_powerflow_history(runs, output_root::AbstractString; active_run 
     kind_label = isempty(kind) ? "powerflow" : kind
     fields = (_webui_run_timestamp(run), link, status_badge, kind_label, available, _webui_run_method(run, String(get(run, "solver", ""))), get(run, "iterations", ""), get(run, "final_mismatch", ""))
     # The two paths no longer fit the row. The name says which case and
-    # which configuration; the tooltip keeps the path for whoever needs it
-    # (maintainer 2026-09-09).
+    # which configuration; the tooltip keeps the path for whoever needs it.
     path_cell = path -> "<td title=\"$(_webui_escape(string(path)))\">$(_webui_escape(basename(string(path))))</td>"
     cells = "<td>$(_webui_escape(fields[1]))</td><td>$(fields[2])</td><td>$(fields[3])</td>" * join(("<td>$(_webui_escape(field))</td>" for field in fields[4:end]), "") * path_cell(get(run, "casefile", "")) * path_cell(get(run, "config_file", ""))
     "<tr>$(pick)$(cells)<td>$(abort_form)$(delete_form)</td></tr>"
@@ -2787,7 +2783,7 @@ function render_webui_docs_index(pages::AbstractDict)::String
   return _webui_layout("Documentation", content; show_back = true)
 end
 
-## Section index of a documentation page (maintainer 2026-09-04: the
+## Section index of a documentation page (the
 ## reference pages run to a thousand lines and nobody scrolls that). Built
 ## from the level-2 headings, so a reader jumps instead of scrolls; the
 ## anchors are the ones Julia's Markdown renderer emits for headings.
@@ -2911,7 +2907,7 @@ function _webui_se_summary(result::AbstractDict)::Union{Nothing,String}
   # The tap fallback must be impossible to miss: a run whose tap positions
   # are MODEL values looks exactly like a successful tap estimation
   # otherwise, and its J measures the model positions. Marked line, not a
-  # footnote (maintainer, task_se_tap_bounds_v0100).
+  # footnote.
   if get(metadata, "se_tap_estimation_fallback", false) == true
     push!(parts, string("WARNING: ", _SE_TAP_FALLBACK_NOTE))
   end
@@ -3193,7 +3189,7 @@ function render_se_form(; cases::Vector{String} = String[], measurements::Vector
   elseif !isempty(selected_measurement)
     info_html = "<section class=\"panel measurement-set-info\">$(bind_html)$(counts_html)<p><a class=\"button\" href=\"/stateestimation/measurements/download?file=$(_webui_urlencode(selected_measurement))\">Download measurement file</a></p>$(table_editor_html)$(editor_html)</section>"
   end
-  # stage 4A block 4: the SE section shares the page's case selection, so
+  # the SE section shares the page's case selection, so
   # the old per-page case selector is gone; what remains of it is the
   # measurement-set re-upload (same import path as the Case page, returning
   # to this section afterwards)
@@ -3314,7 +3310,7 @@ function render_se_form(; cases::Vector{String} = String[], measurements::Vector
     "<p class=\"field-help\">Flow: observability first (traffic light), then the WLS solve, then the bad-data diagnostics and the se_view summary; artifacts land in the run history (kind se).</p>",
     "</form>",
   )
-  # stage 4A block 4: this renders the SE SECTION of the Runs page, not a
+  # this renders the SE SECTION of the Runs page, not a
   # page of its own anymore (GET /stateestimation is a real redirect). The
   # run form stays visible; generator, set info and upload fold into tabs.
   generator_tab = isempty(demo_form) ? "" : "<details class=\"se-tab se-generator\"><summary>Measurement generator</summary>$(demo_form)</details>"

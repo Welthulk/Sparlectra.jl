@@ -6,7 +6,7 @@ combined patch scenario, violates voltage limits, overloads other
 branches, or splits the network. Case lists come from the N-1 generators
 (`generateN1Branches`, `generateN1Generators`), from imported FOR001
 metadata, or from a case file's scenarios block (`runScenarios!`). It is
-the third parallel execution surface of the multi-core work (after island
+the third parallel execution surface (after island
 solving and short-circuit sweeps): the batch fans out over Julia threads,
 one reused working copy per chunk.
 

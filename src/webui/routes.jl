@@ -126,7 +126,7 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
     return handle_webui_doc_page(_webui_urldecode(path[(lastindex("/docs/") + 1):end]))
   elseif verb == "GET" && path in ("/", "/powerflow")
     _webui_log_route!(log_root, "powerflow_form_opened", verb, path; status = "opened")
-    # stage 4A harmonization: without an explicit ?casefile the run page uses
+    # without an explicit ?casefile the run page uses
     # the case remembered by the Case page (plain nav links carry no query)
     selected_casefile = get(query, "casefile", "")
     selected_casefile = isempty(selected_casefile) ? _webui_recall_selected_case(output_root) : _webui_remember_selected_case!(output_root, selected_casefile)
@@ -144,12 +144,12 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
       config_notice = _powerflow_config_notice(runtime === nothing ? "" : runtime.config_file),
       case_profile,
       show_case_settings_notice = _powerflow_show_case_settings_notice(selected_config_file),
-      # stage 4A block 4: the SE section on this page reads its query keys
+      # the SE section on this page reads its query keys
       # (message, sticky g_* generator values) from the page query
       se_query = query,
     ))
   elseif verb == "GET" && path == "/powerflow/case"
-    # stage 4A: case management page (chooser, upload, export, import options)
+    # case management page (chooser, upload, export, import options)
     _webui_log_route!(log_root, "case_page_opened", verb, path; status = "opened")
     # an explicit ?casefile updates the shared selected-case memory; without
     # one the page reopens on the remembered case
@@ -167,7 +167,7 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
       case_profile = case_page_profile,
     ))
   elseif verb == "GET" && path == "/powerflow/settings"
-    # stage 4A block 3: solver/output/expert options page
+    # solver/output/expert options page
     _webui_log_route!(log_root, "settings_page_opened", verb, path; status = "opened")
     settings_casefile = get(query, "casefile", "")
     settings_casefile = isempty(settings_casefile) ? _webui_recall_selected_case(output_root) : _webui_remember_selected_case!(output_root, settings_casefile)
@@ -248,9 +248,9 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
   elseif verb == "GET" && startswith(path, "/stateestimation/measurements/download")
     return handle_se_measurement_download(query; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory)
   elseif verb == "GET" && path == "/stateestimation"
-    # stage 4A block 4: the SE surface lives on the Runs page. This is a
+    # the SE surface lives on the Runs page. This is a
     # REAL redirect, not a rendering alias: two routes rendering the same
-    # surface would recreate exactly the divergence stage 4 removes. The
+    # surface would recreate exactly the divergence the page split removed. The
     # query travels along (case becomes the shared casefile key; message
     # and the sticky g_* generator values pass through), and the anchor
     # lands the browser on the SE section.
@@ -295,7 +295,7 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
       _webui_log_route!(log_root, "case_settings_notice_dismiss_failed", verb, path; status = "rejected", config_file, message = sprint(showerror, err))
       return _webui_html(render_webui_error(400, sprint(showerror, err)); status = 400)
     end
-    # back to the Settings page: since stage 4A block 3 the notice (and its
+    # back to the Settings page: the notice (and its
     # dismiss button) renders there
     redirect_target = isempty(casefile) ? "/powerflow/settings" : "/powerflow/settings?casefile=$(_webui_urlencode(casefile))"
     return _webui_redirect(redirect_target)

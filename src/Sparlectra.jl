@@ -427,27 +427,27 @@ export
   net_to_scf,                             # Build the SCF root object of a Net without writing it (#342).
   importSCF,                              # Read a Sparlectra Case Format file into a Net (#342).
   scf_to_net,                             # Build a Net from a parsed SCF root object (#342).
-  SCFCase,                                # Typed in-memory form of one SCF document (adapter stage 2, D1).
+  SCFCase,                                # Typed in-memory form of one SCF document.
   read_scf_json,                          # Read a case file into its typed SCFCase form.
   write_scf_json,                         # Serialize an SCFCase to its canonical file bytes.
-  build_net,                              # The one network constructor of the run path over an SCFCase (D2/D12).
+  build_net,                              # The one network constructor of the run path over an SCFCase.
   net_to_scfcase,                         # The typed case a Net exports as (same keywords as exportSCF).
-  FormatAdapter,                          # Abstract input-format adapter contract (stage 3, D3).
-  MatpowerAdapter,                        # MATPOWER adapter: convert_case(mpc) -> SCFCase (stage 3a).
+  FormatAdapter,                          # Abstract input-format adapter contract.
+  MatpowerAdapter,                        # MATPOWER adapter: convert_case(mpc) -> SCFCase.
   MatpowerAdapterOptions,                 # Adapter-scope options of the MATPOWER conversion.
   convert_case,                           # Adapter contract: source -> SCFCase.
   matpower_adapter_options,               # MatpowerAdapterOptions from an effective run configuration.
-  DTFAdapter,                             # DTF adapter: convert_case(DTFCase) -> SCFCase (stage 3b).
+  DTFAdapter,                             # DTF adapter: convert_case(DTFCase) -> SCFCase.
   DTFAdapterOptions,                      # Adapter-scope options of the DTF conversion.
   dtf_adapter_options,                    # DTFAdapterOptions from an effective run configuration.
-  CGMESAdapter,                           # CGMES adapter: configured import captured as SCFCase (stage 3c).
+  CGMESAdapter,                           # CGMES adapter: configured import captured as SCFCase.
   CGMESAdapterOptions,                    # Adapter-scope options of the CGMES conversion.
   cgmes_adapter_options,                  # CGMESAdapterOptions from an effective run configuration.
   cgmes_enrich_case!,                     # Attach the mRID registry and per-component mRIDs to a typed case.
-  PGMAdapter,                             # power-grid-model adapter: plain dataset through the shared pipeline (stage 3d).
+  PGMAdapter,                             # power-grid-model adapter: plain dataset through the shared pipeline.
   PGMAdapterOptions,                      # Contract options of the PGM conversion (none).
-  PatchOp,                                # One scenario patch operation on an SCF component id (scenario task D1).
-  Scenario,                               # Named, weighted, ordered patch list (D2).
+  PatchOp,                                # One scenario patch operation on an SCF component id.
+  Scenario,                               # Named, weighted, ordered patch list.
   ScenarioSet,                            # Scenario vector plus N-1 mode and exclusions.
   ScenarioIndex,                          # SCF id to component class and internal index, from the typed case.
   validate_scenarios,                     # Load-time validation with scenario name and op index in every error.
@@ -455,12 +455,12 @@ export
   scf_case_scenarios,                     # The scenario set a typed case carries (scenarios or mapped contingencies).
   scenario_set_dict,                      # Document form of a scenario set.
   scenario_set_from_dict,                 # Read a sparlectra.scenarios block.
-  scenario_set_from_contingencies,        # Map the legacy contingencies block onto the scenario model (D3).
-  UndoLog,                                # Reversible record of one apply! (scenario task D4).
+  scenario_set_from_contingencies,        # Map the legacy contingencies block onto the scenario model.
+  UndoLog,                                # Reversible record of one apply!.
   apply!,                                 # Apply patch operations to a working copy with an undo log.
   restore!,                               # Replay the undo log in reverse; the copy returns to the base bitwise.
-  runScenarios!,                          # Evaluate a scenario set on the engine (D9); N-1 status ops match runContingencies! exactly.
-  ScenarioResult,                         # ContingencyResult surface plus screened flag and screening estimate (D8).
+  runScenarios!,                          # Evaluate a scenario set on the engine; N-1 status ops match runContingencies! exactly.
+  ScenarioResult,                         # ContingencyResult surface plus screened flag and screening estimate.
   scf_case_config,                        # The dotted configuration overrides a case file carries (#342).
   scf_is_case_config_key,                 # Whether a configuration key describes the case or the installation (#342).
   scf_case_studies,                       # The contingency and short-circuit study definitions of a case file (#342).
@@ -678,7 +678,7 @@ export
 
 
 # ---------------------------------------------------------------------------
-# Include order (stage 5): four blocks with a fixed direction of
+# Include order: four blocks with a fixed direction of
 # dependency, core -> adapters -> api -> webui. No file of an earlier
 # block references a later block at DEFINITION time; runtime calls flow
 # forward only through function names resolved at call time. Within each
@@ -691,8 +691,8 @@ include("performance_profile.jl")
 include("config/yamlparams.jl")
 include("controller/control_framework.jl")
 include("config/configuration.jl")
-# configuration resolution (D5 precedence chain) lives with the
-# configuration it resolves (stage 5; moved from src/api)
+# configuration resolution (the precedence chain) lives with the
+# configuration it resolves
 include("config/config_overrides.jl")
 include("component.jl")
 include("lines.jl")

@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # file: test/test_scenarios.jl
-# purpose: scenario task step 1: the patch model, its load-time validation
+# purpose: the patch model, its load-time validation
 #          (rejections carry the scenario name and the op index), the
 #          sparlectra.scenarios file round trip, the legacy contingencies
 #          mapping, and the N-1 expansion equality with the existing
@@ -110,7 +110,7 @@ function run_scenario_patch_tests()
     gen_id = first(r.id for r in case.data.sym_gen)
     load_id = first(r.id for r in case.data.sym_load)
 
-    @testset "validation accepts the D1 surface" begin
+    @testset "validation accepts the patch surface" begin
       good = ScenarioSet(
         scenarios = [
           Scenario(name = "line out", ops = [PatchOp(op = :status, target = :branch, id = branch_id, value = 0.0)]),
@@ -201,7 +201,7 @@ function run_scenario_patch_tests()
 
     @testset "apply and restore: tap patch semantics" begin
       # a tap patch on an UNREGULATED transformer changes the ratio the
-      # solver sees and restores it (maintainer decision 1: first-class)
+      # solver sees and restores it (first-class)
       tapped = findfirst(br -> br.has_ratio_tap, net.branchVec)
       if tapped === nothing
         println("      scenarios: tap-patch semantics SKIPPED (warmup case build carries no ratio tap changer)")
@@ -353,7 +353,7 @@ function run_scenario_patch_tests()
           @test r.start_used !== :screen
         end
       end
-      # the screening CSV appends exactly the two D8 columns
+      # the screening CSV appends exactly the two screening columns
       csv = read(Sparlectra.writeContingencyResultsCSV(joinpath(d, "flag.csv"), flagged), String)
       header = first(split(csv, '\n'))
       # default format is "technical" (comma delimiter) since issue #376;
@@ -431,7 +431,7 @@ function run_scenario_engine_extended_tests()
       fp = count(r -> !r.screened && !(r.name in violating), flagged)
       println("      scenario engine sp_case118 screening: ", length(flagged) - full_runs, " screened, ", full_runs, " full runs (", round(100 * full_runs / length(flagged); digits = 1), " %), ", fp, " false positives, 0 false negatives")
 
-      # step 4b: the same acceptance with DISTRIBUTED SLACK enabled; the
+      # the same acceptance with DISTRIBUTED SLACK enabled; the
       # screening runs on the augmented system (lambda state, renormalized
       # participation on a generator outage) and must not screen away any
       # case the distributed-slack full run reports as violating or failed
@@ -491,7 +491,7 @@ function run_scenario_engine_extended_tests()
   @testset "scenario service sources (step 5)" begin
     # the service request picks the scenario source and screening mode: an
     # SCF case with its own scenarios block runs via file_block, an external
-    # scenario JSON via external_file, and the two D8 columns plus the
+    # scenario JSON via external_file, and the two screening columns plus the
     # screening metadata arrive exactly when screening is active
     cfgpath = Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH
     cfg = Sparlectra.load_sparlectra_config(cfgpath; reload = true)
@@ -555,7 +555,7 @@ function run_scenario_engine_extended_tests()
     # residual); loud SKIPPED when the untracked case file is absent
     # since the shipped data/mpower/sp_case300.m (synthetic 300-bus operated
     # grid, 411 branches, 69 generators, generated and validated by
-    # the maintainer's case generator) the acceptance runs on every checkout
+    # a case generator that is not shipped) the acceptance runs on every checkout
     case_path = abspath(joinpath(dirname(@__DIR__), "data", "mpower", "sp_case300.m"))
     @test isfile(case_path)
     begin
@@ -573,7 +573,7 @@ function run_scenario_engine_extended_tests()
   end
 
   @testset "scenarios workshop runs with its assertions" begin
-    # scenario task step 7: the Literate workshop is executable Julia and
+    # the Literate workshop is executable Julia and
     # carries an @assert next to every printed number; RUNNING it here is
     # what keeps the notebook from drifting silently. The workshop runs on
     # the shipped data/mpower/sp_case118.m, so it needs no download and
@@ -589,6 +589,12 @@ function run_scenario_engine_extended_tests()
     println("      scenarios workshop: RAN")
   end
 
+  # the scaling timings measure runtime only (about 50 s for three sweeps
+  # over 2300 cases) and decide nothing about correctness: they run when
+  # SPARLECTRA_TIMING_TESTS=1 is set and print a SKIPPED line otherwise
+  if get(ENV, "SPARLECTRA_TIMING_TESTS", "") != "1"
+    println("      scenario engine sp_case1354 scaling timings: SKIPPED (set SPARLECTRA_TIMING_TESTS=1 to measure)")
+  else
   @testset "scenario engine sp_case1354 scaling timings" begin
     # the pegase case measures RUNTIME SCALING only (test-network rule
     # 2026-09-03: an OPF test instance whose base carries overloads by
@@ -597,7 +603,7 @@ function run_scenario_engine_extended_tests()
     # SKIPPED line (canonical pegase conventions: rad, shift sign -1.0,
     # ratio normal)
     # the size probe is the shipped data/mpower/sp_case1354.m (synthetic
-    # 1354-bus grid, 2040 branches, 260 generators, maintainer's case generator)
+    # 1354-bus grid, 2040 branches, 260 generators, not shipped generator)
     case_path = abspath(joinpath(dirname(@__DIR__), "data", "mpower", "sp_case1354.m"))
     @test isfile(case_path)
     begin
@@ -610,6 +616,7 @@ function run_scenario_engine_extended_tests()
       @test length(t_off.value) == length(cases)
       println("      scenario engine sp_case1354: RAN (", length(cases), " cases, off/flag/only = ", round(t_off.time; digits = 2), "/", round(t_flag.time; digits = 2), "/", round(t_only.time; digits = 2), " s, threads = ", Threads.nthreads(), ")")
     end
+  end
   end
   return nothing
 end

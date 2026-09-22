@@ -178,7 +178,7 @@ function run_scf_tests()
       write(legacy, Sparlectra.scf_json_string(root))
       @test_throws Sparlectra.ConfigResolveError Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, legacy)
     end
-    @testset "units declaration (task_scf_units step 1)" begin
+    @testset "units declaration" begin
       # absent means si: every existing file reads unchanged
       plain = Sparlectra.importSCF(joinpath(dirname(@__DIR__), "data", "scf", "sp_case5.scf.json"))
       case_plain = Sparlectra.read_scf_json(joinpath(dirname(@__DIR__), "data", "scf", "sp_case5.scf.json"))
@@ -222,7 +222,7 @@ function run_scf_tests()
       @test plain isa Sparlectra.Net
     end
 
-    @testset "own bus names vs external_id (maintainer 2026-09-04)" begin
+    @testset "own bus names vs external_id" begin
       # the shipped demo cases use the split deliberately: extra.name is the
       # invented place name (the reference name), external_id the short
       # technical handle. The import must apply the place name everywhere
@@ -798,8 +798,7 @@ mpc.branch = [
       # "1.1" is the name this same structure carried before the release
       # (1.0 was never published), so a file written in that window must
       # still read: rejecting it would cost users their exported cases over
-      # a renaming they never saw. Reported by the maintainer on his own
-      # sp_case188 copy.
+      # a renaming they never saw. Seen on a locally kept sp_case188 copy.
       pre = deepcopy(stale)
       pre["sparlectra"]["format_version"] = "1.1"
       preF = joinpath(d, "prerelease.scf.json")
@@ -1143,7 +1142,7 @@ mpc.branch = [
       @test d_sub["status"] == "succeeded"
       @test d_sub["metadata"]["contingency_cases"] > 0
       # the case configuration file's settings reached the run (the file is
-      # nested YAML with the D8 header)
+      # nested YAML with the case-scope header)
       cc_text = read(Sparlectra.case_config_path(with_cfg), String)
       @test occursin("scope: case", cc_text)
       @test occursin("mode: auto", cc_text)
@@ -1461,7 +1460,7 @@ mpc.branch = [
 
     @testset "every output option is case-file and GUI editable" begin
       # the case file's config block uses the one existing allowlist, so the
-      # logging surface has to be in it (maintainer request)
+      # logging surface has to be in it
       for key in ("output.console_summary", "output.console_diagnostics", "output.console_q_limit_events", "output.logfile_diagnostics", "output.logfile_performance", "output.logfile_warnings", "output.result_table_max_rows", "output.startup_latency_hint")
         @test key in Sparlectra.GUI_EDITABLE_CONFIG_KEYS
       end
@@ -1498,7 +1497,7 @@ mpc.branch = [
       @test occursin("not%20found", string(bad)) || occursin("not+found", string(bad))
       empty_sel = Sparlectra.route_sparlectra_webui("POST", "/powerflow/export-scf", Dict{String,Any}(); output_root = root, runtime = rt)
       @test occursin("Select%20a%20case", string(empty_sel)) || occursin("Select+a+case", string(empty_sel))
-      # the button is on the Case page (stage 4A) for every case, not only
+      # the button is on the Case page for every case, not only
       # for cases that already carry saved settings
       @test occursin("/powerflow/export-scf", Sparlectra.render_case_page())
       # the plain PGM variant has its own button and writes its own file
@@ -1754,8 +1753,8 @@ mpc.branch = [
       @test occursin("Invalid%20name", loc_invalid) || occursin("Invalid+name", loc_invalid)
       @test !isfile(joinpath(cases, "sub"))
 
-      # the action lives on the Case page only (one page per function,
-      # maintainer feedback 2026-09-12): no shortcut link from the SE
+      # the action lives on the Case page only (one page per function):
+      # no shortcut link from the SE
       # section, no separate route elsewhere
       case_page_html = String(copy(Sparlectra.route_sparlectra_webui("GET", "/powerflow/case"; output_root = root, runtime = rt).body))
       @test occursin("/powerflow/case/save-as", case_page_html)

@@ -86,7 +86,7 @@ function run_dc_powerflow_tests()
 
     @testset "Reference values: sp_case9 (independent DC implementation, off-nominal taps)" begin
       # the shipped data/mpower/sp_case9.m carries the DC reference its
-      # generator (the maintainer's case generator, not shipped) computed with its own DC solver in
+      # generator (a case generator that is not shipped) computed with its own DC solver in
       # MATPOWER conventions (B' from x and tap, Pfinj from the shift): an
       # oracle independent of Sparlectra's implementation, on a case with two
       # transformers on off-nominal taps (0.98 and 1.025), so the former

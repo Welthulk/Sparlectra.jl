@@ -113,7 +113,7 @@ function test_configuration_yaml_key_coverage()
       "contingency.rescue_ladder", "contingency.screening.mode", "contingency.screening.margin_pct",
       "control.enabled", "control.max_outer_iterations", "control.trace", "control.log_iterations", "control.stop_on_pf_failure", "control.verbose_passes", "control.controllers",
       "webui.show_case_settings_notice", "webui.operation_log_retention_days",
-      # task_config_arrival_v0100: these were in the typed configuration and
+      # these were in the typed configuration and
       # documented, but missing from the template, which made them
       # unreachable ("Unknown Sparlectra configuration key") for every user
       # who followed the documentation
@@ -269,7 +269,7 @@ function test_configuration_version_scope_and_case_precedence()
     @test Sparlectra.load_case_config(joinpath(shared_dir, "case57.m"))["power_flow.max_iter"] == 45
     @test Sparlectra.load_case_config(joinpath(shared_dir, "case57.scf.json"))["power_flow.max_iter"] == 46
 
-    # precedence, one key on each level (D5), highest first: override,
+    # precedence, one key on each level, highest first: override,
     # case configuration file, deprecated in-file block, general file
     general = joinpath(dir, "general.yaml")
     write(general, "config_version: 1\nscope: general\npower_flow:\n  max_iter: 41\n")
@@ -618,8 +618,7 @@ function test_configuration_matpower_auto_profile_rules()
     # The full block is what `output.console_auto_profile = :full` asks for.
     # It is no longer the default: a run where every check says "keep" used
     # to print about seventy console lines of MATPOWER option names, which
-    # made a Sparlectra study read like a MATPOWER front end (maintainer,
-    # 2026-09-05).
+    # made a Sparlectra study read like a MATPOWER front end.
     verbose_cfg = Sparlectra.SparlectraConfig(Dict("output" => Dict("console_auto_profile" => "full")))
     io = IOBuffer()
     Sparlectra.write_matpower_import_auto_profile(io, conservative, verbose_cfg; casefile = "synthetic_fragile.m")
@@ -763,11 +762,10 @@ end
 
 function test_configuration_tolerance_in_mw()
   @testset "Tolerance can be stated in MW" begin
-    # power_flow.tol_MW existed since task_tol_watts and was reachable only
+    # power_flow.tol_MW existed and was reachable only
     # by editing a YAML file, and even that failed because the template did
     # not carry the key. The form now states ONE value with a unit: two
-    # fields side by side read like two competing tolerances (maintainer,
-    # 2026-09-06).
+    # fields side by side read like two competing tolerances.
     spec = Sparlectra._webui_option_spec("power_flow_tol_unit")
     @test spec.config_key === nothing
     @test spec.allowed_values == ("pu", "MW")
@@ -799,7 +797,7 @@ function test_configuration_tolerance_in_mw()
 end
 
 function test_configuration_every_key_arrives()
-  @testset "Every configuration key arrives (task_config_arrival_v0100)" begin
+  @testset "Every configuration key arrives" begin
     # Four settings were found in one day that exist, are documented, are
     # shown, and do not act. This closes the class instead of the cases: the
     # key list comes from the typed configuration itself, so a key added
@@ -1039,7 +1037,7 @@ end
 
 function test_configuration_form_defaults()
   @testset "Form defaults do not drift from the code they mirror" begin
-    # Step 5 of task_config_arrival_v0100: no numeric literal in a service or
+    # No numeric literal in a service or
     # API signature may duplicate something the configuration owns. After the
     # SE service moved to configuration-resolved keywords, the remaining
     # literals belong to the measurement GENERATOR and to the server start,
@@ -1339,8 +1337,8 @@ end
 
 # Version-less and legacy fixtures, the in-file config block, a coarse tol_MW
 # and the deprecated dcline mode are the tested behavior here, so they warn
-# by design. Captured, not printed (maintainer 2026-09-11: a printed warning
-# in a green run reads as a problem), and anything else that warns fails the
+# by design. Captured, not printed (a printed warning in a green run
+# reads as a problem), and anything else that warns fails the
 # group; see run_with_expected_warnings.
 const CONFIG_EXPECTED_WARNINGS = (
   r"declares no config_version",

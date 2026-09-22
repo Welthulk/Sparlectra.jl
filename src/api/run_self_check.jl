@@ -21,7 +21,7 @@
 # - as explicit `config_overrides`, the only level above a case configuration
 #   file. As soon as such a file lies next to the case, its mere EXISTENCE
 #   makes every CASE-scope key fall through from the case levels straight to
-#   the packaged defaults (resolve_config, D5), so a configuration FILE no
+#   the packaged defaults (resolve_config), so a configuration FILE no
 #   longer reaches the solver for them. Measured 2026-09-07 with a case
 #   configuration next to case14.m that did not even carry a `power_flow`
 #   block: the self-check ran with max_iter=80 and rescue=true instead of 1

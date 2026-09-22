@@ -481,7 +481,7 @@ function test_observability_takahashi_diagnostics(fx)::Bool
     # state variances are reported on both paths
     @test repK.state_variances !== nothing && all(v -> v >= 0.0 || isnan(v), repK.state_variances)
 
-    # 6) task_se_sparse: the Jacobian arrives sparse, and the LDLt second
+    # 6) the Jacobian arrives sparse, and the LDLt second
     # attempt hands the shared pattern pass a valid symmetric-pivot
     # factorization (this is the route that rescues symmetric G whose
     # UMFPACK auto strategy pivots unsymmetrically; found on
@@ -498,7 +498,7 @@ function test_observability_takahashi_diagnostics(fx)::Bool
     GI_ref = inv(Matrix(Gsym))
     @test all(abs(Sl[j, j] - GI_ref[j, j]) < 1e-8 for j in axes(Gsym, 1))
 
-    # 6b) FD column coloring (task_se_fd_coloring): the colored assembly
+    # 6b) FD column coloring: the colored assembly
     # must be BIT-IDENTICAL to the per-column assembly at the same state
     # (same perturbation, same per-entry formula, same write order); any
     # deviation means the coloring changed the numerics and the feature
@@ -521,7 +521,7 @@ function test_observability_takahashi_diagnostics(fx)::Bool
       @test col !== nothing
       H2, _, used = Sparlectra._measurement_jacobian_fd(meas, snet, x, slackIdx, nbus, Ybus; withVaOffset = wva, coloring = col)
       @test used === true
-      # superset inclusion (colleague check): every numerically occupied
+      # superset inclusion: every numerically occupied
       # position must lie inside the structural pattern, probed at the
       # warm point and at a deterministically shifted one; a position
       # outside means the coupling table is incomplete
@@ -547,7 +547,7 @@ function test_observability_takahashi_diagnostics(fx)::Bool
       @test ncolors < size(H1, 2) / 5
     end
     # size probe: the shipped data/mpower/sp_case1354.m (synthetic 1354-bus
-    # grid, maintainer's case generator) replaces the cache-gated case1354pegase
+    # grid, not shipped generator) replaces the cache-gated case1354pegase
     big1354 = abspath(joinpath(dirname(@__DIR__), "data", "mpower", "sp_case1354.m"))
     @test isfile(big1354)
     begin

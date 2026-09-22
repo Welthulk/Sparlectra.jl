@@ -49,7 +49,7 @@ include("powerflow_rectangular/rectangular_network_solver.jl")
 | File | Responsibility | Key functions |
 |---|---|---|
 | `rectangular_core_equations.jl` | Rectangular mismatch and core equation helpers | `build_complex_jacobian`, `mismatch_rectangular`, `_max_rectangular_pv_voltage_residual` |
-| `rectangular_jacobian_builders.jl` | Analytic rectangular Jacobian assembly (sparse; the dense variant was dead code and left with task_se_sparse_followups) | `build_rectangular_jacobian_pq_pv_sparse`, `build_rectangular_jacobian_pq_pv` |
+| `rectangular_jacobian_builders.jl` | Analytic rectangular Jacobian assembly (sparse; the dense variant was dead code and was removed with the sparse SE core) | `build_rectangular_jacobian_pq_pv_sparse`, `build_rectangular_jacobian_pq_pv` |
 | `rectangular_newton_step.jl` | Newton step update and autodamping/backtracking | `_validate_rectangular_damping`, `_apply_rectangular_delta`, `choose_rectangular_autodamp`, `complex_newton_step_rectangular` |
 | `rectangular_standalone_solver.jl` | Standalone rectangular array-level NR driver | `run_complex_nr_rectangular` |
 | `rectangular_start_projection.jl` | Start sanitization, optional DC-angle seed, and blend projection | `_sanitize_rectangular_start`, `_dc_angle_start_rectangular`, `project_rectangular_start` |

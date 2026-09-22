@@ -346,8 +346,7 @@ function ensure_casefile(casefile::AbstractString; outdir::Union{Nothing,Abstrac
   #
   # A development checkout used to receive the downloads under
   # <repo>/data/mpower. Two things came of that, and the second one is the
-  # reason this changed (maintainer, 2026-09-07: "wenn ich was downloade
-  # moechte ich nicht immer eine Aenderung in git"):
+  # reason this changed (a download must not show up as a change in git):
   #
   #   * downloaded cases landed inside the repository, where they are only
   #     invisible because .gitignore covers data/mpower/*.*;

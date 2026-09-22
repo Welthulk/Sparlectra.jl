@@ -13,8 +13,7 @@
 # limitations under the License.
 
 # file: src/scenario/engine.jl
-# purpose: scenario task step 3 (design decisions D4/D6/D7): the scenario
-#          engine evaluates patch scenarios and N-1 outages on REUSED
+# purpose: the scenario engine: it evaluates patch scenarios and N-1 outages on REUSED
 #          per-chunk working copies instead of one deepcopy per case. The
 #          full run is the existing contingency logic (ladder, metrics)
 #          verbatim; runContingencies! routes through this engine, and the
@@ -60,14 +59,14 @@ end
 """
     ScenarioEngine
 
-The scenario batch engine (design decision D4): the solved base template
+The scenario batch engine: the solved base template
 (never mutated after construction), the base branch loadings every result
 reports its deltas against, the resolved solve parameters, the optional
 [`ScenarioIndex`](@ref) that patch scenarios address components through,
-and, with `screening_mode` other than `:off`, the screening state (D5):
+and, with `screening_mode` other than `:off`, the screening state:
 the base Jacobian factorization plus everything one Woodbury-corrected
 Newton step needs. A distributed-slack batch screens on the AUGMENTED
-system (step 4b): lambda as the extra state, a generator outage zeroes
+system: lambda as the extra state, a generator outage zeroes
 the lost unit's participation factor and renormalizes the rest (a rank-1
 column update the generic correction covers), and a participating unit
 whose estimated output leaves its P band flags the scenario. `screen ===
@@ -217,7 +216,7 @@ function _reset_scenario_worker!(work::Net, template::Net)
   return nothing
 end
 
-# --- screening (design decision D5) -------------------------------------------
+# --- screening ----------------------------------------------------------------
 
 # Everything ONE Woodbury-corrected Newton step needs, captured once from the
 # solved template: the expanded Y-bus (bus index == matrix index, isolated
@@ -237,7 +236,7 @@ struct ScreeningState
   bridges::Set{Int}
   base_island_count::Int
   iso::Set{Int}
-  # distributed slack (step 4b, D5): the base participation state with
+  # distributed slack: the base participation state with
   # lambda = 0 (the solved template dispatch already carries the base
   # correction, so the augmented residual vanishes at zero). Shared
   # read-only; every scenario works on its own copy. `nothing` for
@@ -313,7 +312,7 @@ end
 # injections (the specified-S vector is state dependent), a residual that
 # is not actually converged at the captured state (Q-limit or controller
 # write-back left types and schedule inconsistent), or a singular base
-# Jacobian. A distributed-slack batch (step 4b) builds the AUGMENTED
+# Jacobian. A distributed-slack batch builds the AUGMENTED
 # system: the participation state at lambda = 0 (the solved template
 # dispatch already carries the base correction), one extra state and
 # residual row, same factorization machinery.
@@ -393,7 +392,7 @@ end
 # Per-scenario copy of the shared participation state (lambda_trial is
 # mutated during the residual evaluations, and the shared state is read
 # concurrently by other chunks). For a generator outage the lost unit's
-# factor goes to zero and the surviving factors are renormalized (D5);
+# factor goes to zero and the surviving factors are renormalized;
 # `nothing` when the lost unit was the LAST participant (the augmented
 # system loses its lambda state, dimensions no longer match the base
 # factorization, the full run owns that).
@@ -627,7 +626,7 @@ function _screen_outage(engine::ScenarioEngine, it::_ScenarioOutageItem)
   end
   vmin = isfinite(vmin) ? vmin : NaN
   vmax = isfinite(vmax) ? vmax : NaN
-  # flag rule (D5): near a loading limit, near a voltage band limit
+  # flag rule: near a loading limit, near a voltage band limit
   # (margin_pct of the band width), a screening step that failed to reduce
   # the mismatch, or a post-step residual too large to trust the
   # linearization (the case118 acceptance run showed a 0.047 pu residual
@@ -662,7 +661,7 @@ function _screen_outage(engine::ScenarioEngine, it::_ScenarioOutageItem)
 end
 
 # result row for a scenario that STAYED screened (no full run): the metric
-# columns carry the estimates (D8), start_used reads :screen
+# columns carry the estimates, start_used reads :screen
 function _screened_result(engine::ScenarioEngine, it::_ScenarioOutageItem, scr)::ContingencyResult
   est = scr.estimate
   severity = it.weight * max(0.0, isnan(est.max_loading_pct) ? 0.0 : est.max_loading_pct - 100.0)
@@ -673,8 +672,8 @@ end
 """
     ScenarioResult
 
-Outcome of one scenario under an engine with screening (design decision
-D8): the full [`ContingencyResult`](@ref) surface (all its fields forward)
+Outcome of one scenario under an engine with screening: the
+full [`ContingencyResult`](@ref) surface (all its fields forward)
 plus `screened` (true when the full run was skipped and the metric columns
 carry the screening estimates) and `screening_estimate` (the estimate
 tuple: estimated worst loading, voltage envelope, and the screening-step
@@ -696,8 +695,8 @@ Base.propertynames(::ScenarioResult) = (fieldnames(ContingencyResult)..., :resul
 """
     writeContingencyResultsCSV(path, results::Vector{ScenarioResult}; format = "technical")
 
-The [`ContingencyResult`](@ref) CSV with the two screening columns appended
-(D8): `screened` and the compact estimate
+The [`ContingencyResult`](@ref) CSV with the two screening columns appended:
+`screened` and the compact estimate
 `max_loading_pct|vmin_pu|vmax_pu` (empty when no estimate was computed).
 With screening `:off` the engine returns plain `ContingencyResult` rows and
 the classic writer runs with the same `format`, so the two stay in the same
@@ -860,7 +859,7 @@ end
 
 # --- batch --------------------------------------------------------------------
 
-# One batch item under the active screening mode (D5): an outage item is
+# One batch item under the active screening mode: an outage item is
 # screened first (when a screening state exists); a scenario that stays
 # below every flag threshold keeps its estimate as the result row, a
 # flagged one gets the full run WITH the estimate attached, and anything
@@ -887,7 +886,7 @@ end
 # rule: never create shared-resource copies under threads), and worker
 # state is indexed by CHUNK, never by threadid. With screening :off the
 # batch returns the historical Vector{ContingencyResult}; otherwise every
-# row is a ScenarioResult (D8).
+# row is a ScenarioResult.
 function _run_engine_batch(engine::ScenarioEngine, items::Vector{_ScenarioItem}; parallel_enabled::Union{Nothing,Bool} = nothing, parallel_max_tasks::Union{Nothing,Int} = nothing, parallel_min_work_items::Union{Nothing,Int} = nothing)
   screening_off = engine.screening_mode === :off
   isempty(items) && return screening_off ? ContingencyResult[] : ScenarioResult[]
@@ -955,7 +954,7 @@ end
     runScenarios!(net, set::ScenarioSet; index::ScenarioIndex, kwargs...) -> Vector{ContingencyResult}
     runScenarios!(net, scenarios::Vector{Scenario}; index::ScenarioIndex, kwargs...)
 
-Evaluate a scenario set on `net` (design decision D9): validate against
+Evaluate a scenario set on `net`: validate against
 the index and the net (active tap controllers reject a `tap_pos` patch),
 expand the N-1 modes through the existing generators, and run every
 scenario on the engine. A scenario that is a single status-0 outage
@@ -967,7 +966,7 @@ keyword surface matches `runContingencies!` (`vm_min_pu`, `vm_max_pu`,
 keywords reach the per-scenario power-flow solves. Results are returned
 in scenario order; failures are reported in the result, never thrown.
 
-Screening (design decision D5): with `screening_mode = :flag` every
+Screening: with `screening_mode = :flag` every
 non-islanding single outage is estimated first with one Woodbury-corrected
 Newton step on the base factorization, and only scenarios whose estimate
 comes within `screening_margin_pct` of a limit (or whose screening step
