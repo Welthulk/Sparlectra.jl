@@ -247,6 +247,13 @@ function run_webui_fast_tests()
             cache = joinpath(root, "cases")
             app_root = normpath(joinpath(dirname(@__DIR__)))
             Sparlectra._webui_stage_bundled_case!(app_root, cache, "sp_case14.scf.json")
+            # the shipped CGMES deliveries are bundled as one ZIP per case,
+            # packed into the case cache on first use and importable as is
+            @test "sp_case14_cgmes.zip" in Sparlectra._webui_bundled_scf_options(app_root)
+            demo_zip = Sparlectra._webui_stage_bundled_case!(app_root, cache, "sp_case14_cgmes.zip")
+            @test demo_zip == joinpath(cache, "sp_case14_cgmes.zip") && isfile(demo_zip)
+            @test length(importCGMES(path=demo_zip, name="sp_case14_cgmes").net.nodeVec) == 14
+            @test Sparlectra._webui_stage_bundled_case!(app_root, cache, "no_such_cgmes.zip") === nothing
             rt = (; case_directory=cache, config_file=Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, operation_log=Sparlectra.webui_operation_log_path(root), startup_config_error=nothing, runner=Sparlectra.start_powerflow_run)
             resp = Sparlectra.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "sp_case14.scf.json", "settings_target" => "this_case", "power_flow_max_iter" => "44"); output_root=root, runtime=rt)
             @test resp.status in (302, 303)

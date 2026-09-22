@@ -74,3 +74,14 @@ short-circuit currents at two buses) live in
 `data/scf/README.md`. Tests should prefer these shipped cases over
 downloaded ones; only tests of the download and cache machinery itself
 still fetch cases.
+
+## CGMES deliveries of the demo cases
+
+`data/cgmes_demo/<case>/` holds CGMES 2.4.15 deliveries (EQ, TP, SSH, SV)
+that `tools/gen_cgmes_fixtures.jl` exports from `sp_case14`,
+`sp_case118` and `sp_casePST` with Sparlectra's own exporter; a
+regeneration is byte identical. They carry the CGMES importer coverage of
+the test suite and are offered in the Web UI case selector as
+`<case>_cgmes.zip`. The exporter writes bus-branch deliveries only, so
+node-breaker topology, boundary sets and DifferenceModel are not among
+them.

@@ -240,12 +240,12 @@ end
     cgmes_fixture_dir(case) -> String
 
 Folder of the checked-in CGMES delivery exported from the shipped case
-`case`: `test/fixtures/cgmes/<case>` with the four profile files EQ, TP, SSH
+`case`: `data/cgmes_demo/<case>` with the four profile files EQ, TP, SSH
 and SV, written by `tools/gen_cgmes_fixtures.jl` under a fixed header stamp.
 The CGMES tests import these folders directly and pack a zip at run time
 where the service layer needs a case file; no zip is checked in.
 """
-cgmes_fixture_dir(case::AbstractString)::String = joinpath(@__DIR__, "fixtures", "cgmes", String(case))
+cgmes_fixture_dir(case::AbstractString)::String = joinpath(dirname(@__DIR__), "data", "cgmes_demo", String(case))
 
 # legacy MATPOWER fixtures come from the shared large-case directory; callers
 # gate on this and print a spoken SKIPPED line instead of downloading

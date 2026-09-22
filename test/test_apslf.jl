@@ -347,6 +347,9 @@ function run_apslf_tests()
                     res = AnalyticLoadFlow.solve_pf_apslf(merge(spec, (Y=Y,)); mode=:direct, order=24, use_pade=true, nr_polish=false)
                     println("      probe 5 AnalyticLoadFlow on the Sparlectra spec of ", label, ", Y ", form, ": converged = ", res.converged)
                 end
+                # the adapter asks for the coefficients as well (the radius needs them)
+                res_c = AnalyticLoadFlow.solve_pf_apslf(spec; mode=:direct, order=24, use_pade=true, nr_polish=false, return_coeffs=true)
+                println("      probe 6 the same with return_coeffs = true (as the adapter calls it): converged = ", res_c.converged)
             end
             # the same two modes on Sparlectra's ring3 through the adapter, against NR
             ref = ring3()

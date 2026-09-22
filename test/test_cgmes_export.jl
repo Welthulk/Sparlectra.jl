@@ -20,7 +20,7 @@
 #          incl. phase shift and ratio-tap machinery, machines, SVC, loads,
 #          shunts, bus links), SSH/SV content, ZIP packaging and tool
 #          provenance on nets built in memory, and the export-import-export
-#          identity of the checked-in deliveries under test/fixtures/cgmes
+#          identity of the checked-in deliveries under data/cgmes_demo
 #          (object-wise, with the fields the importer does not carry named).
 
 using Test
@@ -139,6 +139,10 @@ end
 # entries (class, mRID, attribute, fixture value, re-export value) land in
 # the failure output. Returns the number of objects compared.
 function _compare_cgmes_profile(fixture_text::AbstractString, reexport_text::AbstractString; drop_classes = (), drop_attr = (cls, id, tag) -> false)::Int
+  # a checkout with CRLF conversion (Windows before the .gitattributes rule
+  # covered XML) must compare equal to the LF re-export
+  fixture_text = replace(String(fixture_text), "\r\n" => "\n")
+  reexport_text = replace(String(reexport_text), "\r\n" => "\n")
   hf, of = _cgmes_profile_objects(fixture_text)
   hr, or = _cgmes_profile_objects(reexport_text)
   @test hf == hr
@@ -371,7 +375,7 @@ function run_cgmes_export_tests()
       @test length(res.net.linesAC) == 3
     end
 
-    # Export-import-export on the checked-in deliveries (test/fixtures/cgmes,
+    # Export-import-export on the checked-in deliveries (data/cgmes_demo,
     # written by tools/gen_cgmes_fixtures.jl with the same header stamp):
     # the re-export of an imported delivery reproduces every object of the
     # fixture with its mRID and every attribute value, except what the

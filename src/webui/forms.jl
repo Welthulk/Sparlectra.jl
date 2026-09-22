@@ -68,7 +68,43 @@ function _webui_bundled_scf_options(application_root::AbstractString)::Vector{St
   isdir(scf_dir) && append!(names, [name for name in readdir(scf_dir) if endswith(lowercase(name), ".scf.json")])
   pgm_dir = joinpath(application_root, "data", "PGM")
   isdir(pgm_dir) && append!(names, [name for name in readdir(pgm_dir) if endswith(lowercase(name), ".json")])
+  # the CGMES deliveries exported by Sparlectra itself (data/cgmes_demo/<case>,
+  # four profile files each) are offered as one ZIP per case; the ZIP is
+  # packed into the case directory on first use
+  cgmes_dir = joinpath(application_root, "data", "cgmes_demo")
+  isdir(cgmes_dir) && append!(names, [_webui_cgmes_demo_zip_name(name) for name in readdir(cgmes_dir) if isdir(joinpath(cgmes_dir, name))])
   return sort!(names; by = lowercase)
+end
+
+const _WEBUI_CGMES_DEMO_SUFFIX = "_cgmes.zip"
+_webui_cgmes_demo_zip_name(case::AbstractString)::String = string(case, _WEBUI_CGMES_DEMO_SUFFIX)
+
+# the shipped delivery folder behind a bundled CGMES ZIP name, or nothing
+function _webui_cgmes_demo_folder(application_root::AbstractString, name::AbstractString)::Union{Nothing,String}
+  endswith(name, _WEBUI_CGMES_DEMO_SUFFIX) || return nothing
+  case = name[1:(end - length(_WEBUI_CGMES_DEMO_SUFFIX))]
+  isempty(case) && return nothing
+  folder = joinpath(application_root, "data", "cgmes_demo", case)
+  return isdir(folder) ? folder : nothing
+end
+
+# pack the four profile files of a shipped delivery into one ZIP (the form
+# the Web UI case selector and the CGMES importer take); atomic through a
+# temporary file so a half-written ZIP is never picked up
+function _webui_pack_cgmes_demo!(folder::AbstractString, dest::AbstractString)::String
+  files = sort!([f for f in readdir(folder) if endswith(lowercase(f), ".xml")])
+  isempty(files) && error("CGMES demo delivery $(folder) carries no XML profile file")
+  tmp = string(dest, ".tmp")
+  open(tmp, "w") do io
+    CGMESImporter.ZipArchives.ZipWriter(io) do w
+      for f in files
+        CGMESImporter.ZipArchives.zip_newfile(w, f)
+        write(w, read(joinpath(folder, f)))
+      end
+    end
+  end
+  mv(tmp, dest; force = true)
+  return dest
 end
 
 """
@@ -87,6 +123,14 @@ overwritten, so user-saved settings survive. With no writable
 function _webui_stage_bundled_case!(application_root::AbstractString, case_directory::Union{Nothing,AbstractString}, requested::AbstractString)::Union{Nothing,String}
   name = String(requested)
   (isabspath(name) || occursin('/', name) || occursin('\\', name)) && return nothing
+  demo_folder = _webui_cgmes_demo_folder(application_root, name)
+  if demo_folder !== nothing
+    target_dir = case_directory === nothing ? mktempdir() : String(case_directory)
+    mkpath(target_dir)
+    cached = joinpath(target_dir, name)
+    isfile(cached) || _webui_pack_cgmes_demo!(demo_folder, cached)
+    return cached
+  end
   for source_dir in (joinpath(application_root, "data", "mpower"), joinpath(application_root, "data", "scf"), joinpath(application_root, "data", "PGM"))
     bundled = joinpath(source_dir, name)
     isfile(bundled) || continue

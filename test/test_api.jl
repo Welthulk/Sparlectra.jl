@@ -28,7 +28,7 @@ function run_api_fast_tests()
       # once PER IMPORTER, at the place each importer finishes; this test
       # is the guard against pulling the four call sites back together
       # (the CGMES leg runs on the checked-in delivery under
-      # test/fixtures/cgmes).
+      # data/cgmes_demo).
       cfg = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true)
       repo = dirname(@__DIR__)
       stamps() = Sparlectra._NET_PARAM_STAMP_COUNT[]

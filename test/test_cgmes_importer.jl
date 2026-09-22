@@ -17,7 +17,7 @@
 #          reader semantics and profile classification, import-failure
 #          analysis, base-voltage inference, mapping of taps, controllers,
 #          machines and shunts) and on the checked-in deliveries under
-#          test/fixtures/cgmes that tools/gen_cgmes_fixtures.jl exports
+#          data/cgmes_demo that tools/gen_cgmes_fixtures.jl exports
 #          from the shipped cases: folder and zip import, SV and source
 #          reproduction, the Stage-2 OLTC controller, the PST sign, the
 #          Q-limit hull, SCF export, the service runs (API dispatch,
@@ -731,7 +731,7 @@ function run_cgmes_importer_tests()
     # packed as a ZIP is the healthy case, the synthetic EQ with an absent
     # prerequisite the broken one, and a MATPOWER case covers the non-CGMES
     # rejections (the healthy runs on a checked-in delivery are above).
-    # --- self-built deliveries (test/fixtures/cgmes) --------------------------
+    # --- self-built deliveries (data/cgmes_demo) --------------------------
     #
     # The three checked-in deliveries are exports of shipped cases, written
     # by tools/gen_cgmes_fixtures.jl: sp_case14 (OLTC voltage controller),

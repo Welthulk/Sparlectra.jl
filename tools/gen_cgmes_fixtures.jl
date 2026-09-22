@@ -14,7 +14,7 @@
 
 # file: tools/gen_cgmes_fixtures.jl
 # purpose: build the checked-in CGMES test deliveries under
-#          test/fixtures/cgmes/<case>/ from the shipped cases: import the
+#          data/cgmes_demo/<case>/ from the shipped cases: import the
 #          case, solve it with the rectangular solver, export EQ+TP+SSH+SV
 #          with writeCGMESFiles under a FIXED header stamp. The output is
 #          byte-reproducible (deterministic uuid5 ids, pinned `created`), so
@@ -34,7 +34,7 @@ using Printf
 const CGMES_FIXTURE_STAMP = DateTime(2026, 1, 1, 12, 0, 0)
 
 const _DATA_DIR = normpath(joinpath(@__DIR__, "..", "data"))
-const _FIXTURE_ROOT = normpath(joinpath(@__DIR__, "..", "test", "fixtures", "cgmes"))
+const _FIXTURE_ROOT = normpath(joinpath(@__DIR__, "..", "data", "cgmes_demo"))
 
 # The MATPOWER import options of the workshops and of load_fixture_net in
 # the test suite (test/test_runner_helpers.jl); the fixture must be the same

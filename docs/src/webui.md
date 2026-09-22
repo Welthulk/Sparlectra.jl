@@ -470,7 +470,11 @@ are supported by the current Web UI case-resolution logic. The shipped
 demo cases (`sp_case5` to `sp_case188`, see
 [Shipped Demo Cases](demo_cases.md)) are always offered as well; picking
 one stages it into the case cache together with its sidecar files (the
-per-case configuration and the measurement CSVs) on first use. Generated
+per-case configuration and the measurement CSVs) on first use. The three
+CGMES deliveries exported by Sparlectra itself (`data/cgmes_demo`:
+`sp_case14`, `sp_case118`, `sp_casePST`, four profile files each) are
+offered as `<case>_cgmes.zip` and packed into the case cache when picked.
+Generated
 `.jl` cache artifacts are hidden from the selector, and files with the
 reserved `warmup_` prefix are internal-only. FOR002-like `.DAT` files are not primary
 cases; use the optional FOR002 reference field for those validation references.
