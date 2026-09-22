@@ -53,101 +53,30 @@ function run_apslf_tests()
         return net
     end
     scf5 = abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case5.scf.json"))
-    # on a failure the layers below the solver are probed and printed, so
-    # a run on another machine names the first broken layer by itself
-    # (complex sparse LU, ldiv! into a column view, AnalyticLoadFlow's own
-    # 9-bus PV case) without a separate diagnostic session
+    # on a failure the adapter path is printed layer by layer, so a run on
+    # another machine names the first layer whose numbers differ: the model as
+    # runpf_external! builds it, AnalyticLoadFlow on exactly that spec, solvePf
+    # on that model, runpf_external! on the net; each against Newton. stderr on
+    # purpose: the quiet suite runner captures stdout and replays only a few
+    # lines per failure block
     function _apslf_platform_probe()
-        println("      APSLF platform probe: Julia ", VERSION, " on ", Sys.KERNEL, " ", Sys.MACHINE, ", BLAS ", BLAS.get_config())
-        rng = Random.MersenneTwister(1)
-        n = 400
-        A = SparseArrays.sprandn(rng, ComplexF64, n, n, 0.02) + LinearAlgebra.I * 10
-        b = randn(rng, ComplexF64, n)
-        F = LinearAlgebra.lu(A)
-        println("      probe 1 complex sparse LU residual: ", LinearAlgebra.norm(A * (F \ b) - b) / LinearAlgebra.norm(b))
-        C = zeros(ComplexF64, n, 3)
-        LinearAlgebra.ldiv!(@view(C[:, 2]), F, b)
-        println("      probe 2 ldiv! into a column view residual: ", LinearAlgebra.norm(A * C[:, 2] - b) / LinearAlgebra.norm(b), ", other columns untouched: ", all(iszero, C[:, 1]) && all(iszero, C[:, 3]))
-        # the Padé evaluation solves a small dense complex system with LAPACK
-        # (the one BLAS/LAPACK call of the series path); the geometric series
-        # of exp(0.7 + 0.3im) must evaluate to that value, and a pure-Julia
-        # elimination of the same kind of system must agree with the library solve
-        z8 = 0.7 + 0.3im
-        c = ComplexF64[z8^n / factorial(big(n)) for n in 0:24]
-        println("      probe 8 Pade [12/12] of the exp series (expected ", exp(z8), "): ", AnalyticLoadFlow.pade_eval(c, 12, 12))
-        Ad = ComplexF64[c[abs(i - j) + 1] * (1 + 0.1im * (i + j)) for i in 1:12, j in 1:12] + 2I
-        bd = ComplexF64[c[i] for i in 1:12]
-        x_lib = Ad \ bd
-        x_ref = let A2 = copy(Ad), b2 = copy(bd), n = 12
-            for k in 1:n, i in (k + 1):n
-                f = A2[i, k] / A2[k, k]
-                for j in k:n; A2[i, j] -= f * A2[k, j]; end
-                b2[i] -= f * b2[k]
-            end
-            x = zeros(ComplexF64, n)
-            for i in n:-1:1
-                acc = b2[i]
-                for j in (i + 1):n; acc -= A2[i, j] * x[j]; end
-                x[i] = acc / A2[i, i]
-            end
-            x
-        end
-        println("      probe 8 dense complex 12x12 solve, LAPACK against pure Julia elimination: max diff ", maximum(abs.(x_lib .- x_ref)))
-        # AnalyticLoadFlow's own 9-bus case (three PV buses) through the two
-        # solver modes Sparlectra can select; the :direct mode is the default
-        case9 = AnalyticLoadFlow.demo_case_9bus()
-        for mode in (:direct, :outer)
-            res9 = AnalyticLoadFlow.solve_pf_apslf(case9; mode=mode, order=24, use_pade=true, nr_polish=false)
-            println("      probe 3 AnalyticLoadFlow 9-bus PV case, mode ", mode, ", no polish: converged = ", res9.converged)
-        end
-        # AnalyticLoadFlow keeps a sparse Y sparse even below its own
-        # sparse threshold, so a small Sparlectra model runs the sparse
-        # series path while the demo above runs the dense one: the same
-        # spec once as delivered (sparse) and once densified
-        for (label, build_spec) in (("ring3", ring3), ("sp_case118", () -> Sparlectra.createNetFromMatPowerFile(filename=abspath(joinpath(dirname(@__DIR__), "data", "mpower", "sp_case118.m")), flatstart=false, enable_pq_gen_controllers=true, bus_shunt_model=:admittance, matpower_shift_sign=1.0, matpower_shift_unit=:deg, matpower_ratio=:normal, tap_changer_model=:ideal)))
-            spec = Sparlectra._apslf_spec_from_model(Sparlectra.buildPfModel(build_spec()))
-            for (form, Y) in (("sparse", SparseArrays.sparse(spec.Y)), ("dense", Matrix(spec.Y)))
-                res = AnalyticLoadFlow.solve_pf_apslf(merge(spec, (Y=Y,)); mode=:direct, order=24, use_pade=true, nr_polish=false)
-                println("      probe 5 AnalyticLoadFlow on the Sparlectra spec of ", label, ", Y ", form, ": converged = ", res.converged)
-            end
-            # the adapter asks for the coefficients as well (the radius needs them)
-            res_c = AnalyticLoadFlow.solve_pf_apslf(spec; mode=:direct, order=24, use_pade=true, nr_polish=false, return_coeffs=true)
-            println("      probe 6 the same with return_coeffs = true (as the adapter calls it): converged = ", res_c.converged)
-            # is the voltage behind that flag right? ALF's own mismatch of its
-            # result, Sparlectra's mismatch of the same result, and the
-            # distance to the Newton solution of the same model
-            model_p = Sparlectra.buildPfModel(build_spec())
-            net_nr = build_spec()
+        println(stderr, "      APSLF platform probe: Julia ", VERSION, " on ", Sys.KERNEL, " ", Sys.MACHINE, ", BLAS ", BLAS.get_config())
+        for (label, build) in (("ring3", ring3), ("sp_case5", () -> Sparlectra.importSCF(scf5)))
+            net_nr = build()
             runpf!(net_nr, 30, 1e-10, 0)
-            vm_nr_p = [net_nr.nodeVec[i]._vm_pu for i in model_p.busIdx_net]
-            alf_mis = AnalyticLoadFlow.max_mismatch_on_specY(spec, res_c.V)
-            bt_p = Symbol[Sparlectra._apslf_bus_type(b) for b in res_c.bustype]
-            S_p = ComplexF64[complex(real(model_p.Sspec[i]), res_c.Q[i]) for i in eachindex(model_p.Sspec)]
-            sp_mis = maximum(abs.(Sparlectra.mismatch_rectangular(model_p.Ybus, res_c.V, S_p, bt_p, model_p.Vset, model_p.slack_idx)))
-            println("      probe 7 ", label, ": ALF mismatch of its own V ", alf_mis, ", Sparlectra mismatch of that V ", sp_mis, ", max |V| deviation from Newton ", maximum(abs.(abs.(res_c.V) .- vm_nr_p)), ", ALF Q on bus 1..3 ", res_c.Q[1:min(3, end)], ", Sspec ", model_p.Sspec[1:min(3, end)])
-        end
-        # the same two modes on Sparlectra's ring3 through the adapter, against NR
-        ref = ring3()
-        runpf!(ref, 30, 1e-10, 0)
-        vm_ref = getfield.(ref.nodeVec, :_vm_pu)
-        # the adapter path in its three layers, each printed with the
-        # numbers a run on another machine can be compared against: the
-        # model as runpf_external! builds it (no Q-limits), AnalyticLoadFlow
-        # on exactly that spec, solvePf on it, then the full runpf_external!
-        model_4 = Sparlectra.buildPfModel(ring3(); include_limits=false)
-        spec_4 = Sparlectra._apslf_spec_from_model(model_4)
-        println("      probe 4 model: busType ", model_4.busType, ", slack ", model_4.slack_idx, ", Sspec ", model_4.Sspec, ", Vset ", model_4.Vset, ", Qmin ", spec_4.Qmin, ", Qmax ", spec_4.Qmax)
-        println("      probe 4 model: Ybus ", Matrix(model_4.Ybus))
-        println("      probe 4 Newton |V| in PF order: ", vm_ref[model_4.busIdx_net])
-        res_4 = AnalyticLoadFlow.solve_pf_apslf(spec_4; mode=:direct, order=24, use_pade=true, nr_polish=false, return_coeffs=true)
-        println("      probe 4 AnalyticLoadFlow on that spec: converged = ", res_4.converged, ", reason ", get(res_4, :reason, :none), ", outer_iters ", res_4.outer_iters, ", |V| ", abs.(res_4.V), ", Q ", res_4.Q, ", bustype ", res_4.bustype, ", ALF mismatch ", AnalyticLoadFlow.max_mismatch_on_specY(spec_4, res_4.V))
-        sol_4 = Sparlectra.solvePf(apslf_solver(order=24, use_pade=true, nr_polish=false, mode=:direct), model_4; tol=1e-8)
-        println("      probe 4 solvePf on that model: converged = ", sol_4.converged, ", residual_inf ", sol_4.residual_inf, ", |V| ", abs.(sol_4.V), ", bustype_final ", sol_4.meta.bustype_final)
-        for mode in (:direct, :outer)
-            probe_net = ring3()
-            _, st, sol = runpf_external!(probe_net, apslf_solver(order=24, use_pade=true, nr_polish=false, mode=mode); tol=1e-8)
-            println("      probe 4 runpf_external! mode ", mode, ": residual_inf ", sol.residual_inf, ", |V| ", abs.(sol.V), ", net |V| ", getfield.(probe_net.nodeVec, :_vm_pu), ", ALF mismatch of that V ", AnalyticLoadFlow.max_mismatch_on_specY(spec_4, sol.V))
-            println("      probe 4 Sparlectra ring3 through the adapter, mode ", mode, ": status ", st, ", converged = ", sol.converged, ", max |dVm| vs NR ", maximum(abs.(getfield.(probe_net.nodeVec, :_vm_pu) .- vm_ref)))
+            model = Sparlectra.buildPfModel(build(); include_limits=false)
+            spec = Sparlectra._apslf_spec_from_model(model)
+            vm_nr = [net_nr.nodeVec[i]._vm_pu for i in model.busIdx_net]
+            println(stderr, "      probe ", label, " model: busType ", model.busType, ", slack ", model.slack_idx, ", Sspec ", model.Sspec, ", Vset ", model.Vset)
+            println(stderr, "      probe ", label, " model: Ybus ", Matrix(model.Ybus))
+            println(stderr, "      probe ", label, " Newton |V| in PF order: ", vm_nr)
+            res = AnalyticLoadFlow.solve_pf_apslf(spec; mode=:direct, order=24, use_pade=true, nr_polish=false, return_coeffs=true)
+            println(stderr, "      probe ", label, " AnalyticLoadFlow on that spec: converged = ", res.converged, ", reason ", get(res, :reason, :none), ", outer_iters ", res.outer_iters, ", |V| ", abs.(res.V), ", Q ", res.Q, ", bustype ", res.bustype, ", ALF mismatch ", AnalyticLoadFlow.max_mismatch_on_specY(spec, res.V), ", max |dVm| vs NR ", maximum(abs.(abs.(res.V) .- vm_nr)))
+            sol = Sparlectra.solvePf(apslf_solver(), model; tol=1e-8)
+            println(stderr, "      probe ", label, " solvePf on that model: converged = ", sol.converged, ", residual_inf ", sol.residual_inf, ", |V| ", abs.(sol.V), ", max |dVm| vs NR ", maximum(abs.(abs.(sol.V) .- vm_nr)))
+            net_ap = build()
+            _, st, sol2 = runpf_external!(net_ap, apslf_solver(); tol=1e-8)
+            println(stderr, "      probe ", label, " runpf_external!: status ", st, ", converged = ", sol2.converged, ", residual_inf ", sol2.residual_inf, ", net |V| ", getfield.(net_ap.nodeVec, :_vm_pu), ", max |dVm| vs NR ", maximum(abs.(getfield.(net_ap.nodeVec, :_vm_pu) .- getfield.(net_nr.nodeVec, :_vm_pu))))
         end
     end
     # SPARLECTRA_APSLF_PROBE=1 prints the probe on a passing run too
