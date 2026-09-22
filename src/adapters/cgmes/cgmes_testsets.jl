@@ -197,7 +197,7 @@ function fetchReliCapGridSet(alias::AbstractString; outdir::AbstractString)::Str
   key in known || error("unknown ReliCapGrid set '$(alias)'. Available: $(join(sort(collect(known)), ", "))")
   mkpath(outdir)
   dest = joinpath(outdir, "cgmes_" * key * ".zip")
-  _rcgZipComplete(dest, key) && return dest
+  isfile(dest) && return dest
 
   # Collect over all members and de-duplicate: neighbouring areas share the
   # boundary file of their common border, and every model references the same
@@ -227,12 +227,6 @@ function fetchReliCapGridSet(alias::AbstractString; outdir::AbstractString)::Str
         """)
     end
   end
-  # every member must be present BEFORE anything is written: a cache warmed
-  # under an older layout (no commonData in _shared yet) produced a short
-  # ZIP without a word, and the import then failed two testsets later with
-  # "1 unresolved topology references"
-  missing = [name for (name, _, cachedir) in wanted if !isfile(joinpath(cachedir, name))]
-  isempty(missing) || error("ReliCapGrid set '$(key)': member file(s) missing from the cache after download: $(join(missing, ", ")). Delete the cache folder $(joinpath(cgmesTestSetCacheDir(), "relicapgrid", RELICAPGRID_BRANCH)) and fetch again.")
   tmp = dest * ".tmp"
   open(tmp, "w") do io
     ZipArchives.ZipWriter(io) do w
@@ -244,28 +238,6 @@ function fetchReliCapGridSet(alias::AbstractString; outdir::AbstractString)::Str
   end
   mv(tmp, dest; force = true)
   return dest
-end
-
-"""
-    _rcgZipComplete(dest, key) -> Bool
-
-Whether the packed ZIP `dest` of ReliCapGrid set `key` carries every member
-file the current layout expects (grid profiles, boundary files, commonData).
-A ZIP packed under an older layout is refreshed instead of being reused.
-"""
-function _rcgZipComplete(dest::AbstractString, key::AbstractString)::Bool
-  isfile(dest) || return false
-  expected = Set{String}()
-  for member in _rcgMembers(key), entry in _rcgMemberFiles(member)
-    push!(expected, entry[1])
-  end
-  present = try
-    Set{String}(ZipArchives.zip_names(ZipArchives.ZipReader(read(dest))))
-  catch err
-    # an unreadable archive is refreshed like an incomplete one
-    return false
-  end
-  return issubset(expected, present)
 end
 
 """All known test-set aliases across both sources (conformity package and ReliCapGrid)."""

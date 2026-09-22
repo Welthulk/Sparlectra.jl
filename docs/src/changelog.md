@@ -1,7 +1,7 @@
 # Version 0.16.2 - 2026-09-22
 
 ## Highlights
-- Four synthetic MATPOWER cases ship under `data/mpower` (`sp_case9`, `sp_case118`, `sp_case300`, `sp_case1354`, generated and validated by a maintainer script that is not part of the package); the workshops and the tests that used to gate on downloaded cases run on every checkout.
+- Four synthetic MATPOWER cases ship under `data/mpower` (`sp_case9`, `sp_case118`, `sp_case300`, `sp_case1354`, generated and validated by `tools/gen_sp_case118.py` and `tools/gen_sp_cases.py`); the workshops and the tests that used to gate on downloaded cases run on every checkout.
 
 ## Changes
 - Precompile workload covers the workshop path (builder API, `run_sparlectra` with the rectangular and the APSLF solver, hybrid start) and state estimation on the tracked SCF fixture; first call of `run_sparlectra` after `using Sparlectra` drops from about 11 s to 0.5 s. DTF is no longer warmed.
@@ -9,13 +9,6 @@
 - Contingency CSV fixtures are compared field by field with a 1e-9 tolerance on numbers instead of byte identity.
 - APSLF workshop: reading rules for `dmin` (heuristic margin, non-converged `YEL` is a truncation signal).
 - `.gitattributes` pins LF for JSON, CSV and Markdown.
-- The slack unit of the synthetic cases carries its base-case generation as `Pg`, so a distributed-slack batch starts from the same dispatch as a classical one; the sp_case118 N-1 fixture is regenerated with it.
-- `examples/others/apslf_vs_nr_timing.jl` (APSLF against Newton over the shipped cases and tiled grids, table, CSV, SVG) and `examples/others/apslf_pv_diagnostic.jl` (four checks that name the layer on which an APSLF solve with PV buses fails on a machine); the timing table is in the performance page.
-- A ReliCapGrid delivery is packed only when every member file is in the cache, and a ZIP from an older cache layout is refreshed instead of reused.
-- The AC island detection block of a parallel N-1 worker is written with one print instead of line by line.
-
-## Known issues
-- On Windows with Julia 1.13.0 the APSLF solver did not converge on any network with PV buses (pure-PQ grids solve; Linux with the same Julia and package versions is not affected, nor is the rectangular solver). Julia 1.12 is the supported version for the notebooks (Colab runtime 2026.07 ships 1.12.6). `examples/others/apslf_pv_diagnostic.jl` names the failing layer on a given machine; the ring3 and sp_case5 regression in `test_apslf.jl` guards the fix.
 
 ## Fixes
 - Fixed: the contingency weights upload failed with EBUSY on Windows when a malformed row was rejected (`readContingencyWeightsCSV` kept the file open).
