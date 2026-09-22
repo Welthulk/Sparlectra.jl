@@ -42,6 +42,59 @@ $env:JULIA_NUM_THREADS = "8"
 julia --project=. examples/powerflow/matpower_import.jl
 ```
 
+## APSLF against Newton: solve times
+
+`examples/others/apslf_vs_nr_timing.jl` solves the shipped `sp_` cases and
+synthetic tiled grids (500 to 5000 buses, `SPARLECTRA_TIMING_SIZES`) with
+the rectangular Newton solver and with APSLF at orders 24, 40 and 60 (the
+higher orders from 300 buses on, `SPARLECTRA_TIMING_ORDERS`), median of
+three warm runs, convergence-radius evaluation off. It writes the table,
+`apslf_vs_nr_timing.csv` and `apslf_vs_nr_timing.svg` into the working
+directory; the copies below are from Linux, Julia 1.13.0, 16 threads.
+
+What the table says and what it does not: on pure-PQ grids (the tiled
+grids, one slack) the series solve is faster than Newton from 500 buses
+on and its cost grows about linearly with the order; cases with PV buses
+and reactive limits (the `sp_` cases) need the solver's outer passes and
+are Newton's ground; the radius evaluation is off here and costs about
+one more solve when on. Networks with controllers do not run under APSLF
+at all (the hybrid start is the way there, see the APSLF workshop).
+
+![APSLF against Newton, solve time over bus count](assets/apslf_vs_nr_timing.svg)
+
+| case | buses | PV buses | solver | order | outcome | it / passes | time |
+|---|---:|---:|---|---:|---|---:|---:|
+| `sp_case9` | 9 | 3 | NR | - | converged | 5 | 0.3 ms |
+| `sp_case9` | 9 | 3 | APSLF | 24 | converged | 1 | 0.2 ms |
+| `sp_case118` | 118 | 54 | NR | - | converged | 6 | 2.3 ms |
+| `sp_case118` | 118 | 54 | APSLF | 24 | converged | 3 | 4.5 ms |
+| `sp_case300` | 300 | 69 | NR | - | converged | 7 | 7.4 ms |
+| `sp_case300` | 300 | 69 | APSLF | 24 | converged | 4 | 14.9 ms |
+| `sp_case300` | 300 | 69 | APSLF | 40 | converged | 4 | 21.9 ms |
+| `sp_case300` | 300 | 69 | APSLF | 60 | converged | 4 | 35.7 ms |
+| `sp_case1354` | 1354 | 260 | NR | - | converged | 8 | 34.7 ms |
+| `sp_case1354` | 1354 | 260 | APSLF | 24 | converged | 3 | 61.8 ms |
+| `sp_case1354` | 1354 | 260 | APSLF | 40 | converged | 3 | 88.3 ms |
+| `sp_case1354` | 1354 | 260 | APSLF | 60 | converged | 3 | 129.4 ms |
+| `sp_case5` | 5 | 2 | NR | - | converged | 1 | 0.2 ms |
+| `sp_case5` | 5 | 2 | APSLF | 24 | converged | 1 | 0.2 ms |
+| `tiled_500` | 500 | 1 | NR | - | converged | 5 | 7.9 ms |
+| `tiled_500` | 500 | 1 | APSLF | 24 | converged | 1 | 6.1 ms |
+| `tiled_500` | 500 | 1 | APSLF | 40 | converged | 1 | 8.4 ms |
+| `tiled_500` | 500 | 1 | APSLF | 60 | converged | 1 | 14.3 ms |
+| `tiled_1000` | 1000 | 1 | NR | - | converged | 5 | 19.4 ms |
+| `tiled_1000` | 1000 | 1 | APSLF | 24 | converged | 1 | 13.3 ms |
+| `tiled_1000` | 1000 | 1 | APSLF | 40 | converged | 1 | 20.9 ms |
+| `tiled_1000` | 1000 | 1 | APSLF | 60 | converged | 1 | 40.4 ms |
+| `tiled_2000` | 2000 | 1 | NR | - | converged | 5 | 63.8 ms |
+| `tiled_2000` | 2000 | 1 | APSLF | 24 | converged | 1 | 56.9 ms |
+| `tiled_2000` | 2000 | 1 | APSLF | 40 | converged | 1 | 83.3 ms |
+| `tiled_2000` | 2000 | 1 | APSLF | 60 | converged | 1 | 110.9 ms |
+| `tiled_5000` | 5000 | 1 | NR | - | converged | 5 | 221.2 ms |
+| `tiled_5000` | 5000 | 1 | APSLF | 24 | converged | 1 | 162.7 ms |
+| `tiled_5000` | 5000 | 1 | APSLF | 40 | converged | 1 | 189.3 ms |
+| `tiled_5000` | 5000 | 1 | APSLF | 60 | converged | 1 | 252.3 ms |
+
 ## Output configuration
 
 | YAML path | Type | Default | Allowed values | Meaning |
