@@ -78,7 +78,9 @@ barely moves these numbers. The lever for wall-clock time is compilation
 reuse (a sysimage-based runner, or a cached Julia compile directory in CI).
 
 Reference times of the profiles on the development machine (16 cores,
-Julia 1.13, package cache warm, each profile in its own process,
+Julia 1.13, measured warm: the second run, with the compile cache of both
+packages in place, also for the child processes some tests start; the first
+run after a source change does not count. Each profile in its own process,
 2026-09-24, precompile workload off, application smoke test in fast, the
 fresh-checkout start test in its own profile): fast 96 s, pf 101 s,
 se 48 s, config 22 s, webui 120 s, extd 149 s, install about 75 s. A profile that grows by more than ten percent against these
