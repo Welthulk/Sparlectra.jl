@@ -1,6 +1,6 @@
 name = "Sparlectra"
 uuid = "31ce9bba-fd9d-44a1-b005-f5f509afda38"
-version = "0.17.0"
+version = "0.17.1"
 authors = ["Udo Schmitz"]
 description = "load flow calculation using newton-raphson"
 
@@ -25,7 +25,7 @@ UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 ZipArchives = "49080126-0e18-4c2a-b176-c102e4b3760c"
 
 [compat]
-AnalyticLoadFlow = "0.9.15"
+AnalyticLoadFlow = "0.9.16"
 BenchmarkTools = "1.6"
 Dates = "1"
 Downloads = "1"

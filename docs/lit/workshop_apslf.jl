@@ -51,7 +51,7 @@
 # Nothing here needs an extra installation: AnalyticLoadFlow.jl is a
 # dependency of Sparlectra, and `power_flow.solver = apslf` in the
 # configuration switches a run over to it. Sparlectra 0.17 needs
-# AnalyticLoadFlow 0.9.15 or newer and refuses to load with an older one,
+# AnalyticLoadFlow 0.9.16 or newer and refuses to load with an older one,
 # so the version below is the one this workshop was written against:
 
 #nb # > **Colab is slow here.** The install cell below fetches Sparlectra and
@@ -112,7 +112,7 @@ end
 # chapter prints its own comparisons.
 
 println("AnalyticLoadFlow ", pkgversion(Sparlectra.AnalyticLoadFlow))
-@assert pkgversion(Sparlectra.AnalyticLoadFlow) >= v"0.9.15"                #src
+@assert pkgversion(Sparlectra.AnalyticLoadFlow) >= v"0.9.16"                #src
 
 quiet = OutputConfig(logfile_results=:off, console_summary=false, startup_latency_hint=false)
 cfg_nr = SparlectraConfig(powerflow=PowerFlowConfig(solver=:rectangular, rescue=false), output=quiet)

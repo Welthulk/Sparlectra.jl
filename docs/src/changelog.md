@@ -1,3 +1,11 @@
+# Version 0.17.1 - 2026-09-23
+
+Faster install, AnalyticLoadFlow 0.9.16.
+
+- Precompiling with the workload off now compiles nothing extra: the library image is 14 MB in 7 s instead of 84 MB in 45 s, so installs and the Colab workshops start much sooner.
+- AnalyticLoadFlow 0.9.16 is required.
+- The tests set up the application environment on a fresh checkout, and every workshop runs as the `workshops` test profile.
+
 # Version 0.17.0 - 2026-09-24
 
 ## Breaking
