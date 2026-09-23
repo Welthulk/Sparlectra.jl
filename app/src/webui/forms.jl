@@ -177,7 +177,7 @@ end
 # exported with "Save case as"/"Export as SCF" travels as three files
 # (case, sidecar, measurements); re-uploading all three together must bring
 # the sidecar along, or the settings the export carried are silently lost.
-_webui_supported_upload_case_extension(name::AbstractString)::Bool = lowercase(splitext(basename(String(name)))[2]) in (".m", ".dat", ".zip", ".csv", ".json", ".yaml")
+_webui_supported_upload_case_extension(name::AbstractString)::Bool = lowercase(splitext(basename(String(name)))[2]) in (".m", ".dat", ".zip", ".csv", ".json", ".yaml", ".xml")
 
 """
     _webui_scf_upload_reason(bytes) -> Union{Nothing,String}

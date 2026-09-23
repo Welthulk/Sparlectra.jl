@@ -438,8 +438,10 @@ and any manual browser edit wins for the submitted run.
 
 The **Settings** page shows the configuration file's values by default, so the
 controls read as the file sets them. When the selected case has saved
-settings, a line under the heading says so and the link **Show the case
-settings** (`?case_settings=1`) overlays them on the form; **Show the
+settings, or carries settings inside the case file (an SCF configuration
+block), a line under the heading says so, with the number of keys, and the
+link **Show the case settings** (`?case_settings=1`) overlays them on the
+form; **Show the
 configuration values** switches back. A run resolves the case level either
 way; a save with the target "this case" writes what the form shows.
 
@@ -987,7 +989,7 @@ Island diagnostics are run artifacts. Files such as `ac_islands.csv`, `ac_island
 
 ## Importing case files through the Web UI
 
-The PowerFlow page includes a separate **Import case files** control near the case selection area. It uses the browser's native file picker and accepts multiple files in one selection. The picker advertises MATPOWER `.m`/`.M` files, DTF `.dat`/`.DAT` files and CGMES `.zip` deliveries; the server validates the extension again because browser-side filters can be bypassed. A CGMES ZIP may contain the whole delivery, including nested ZIPs — the importer opens them in memory, so no unpacking step is required.
+The PowerFlow page includes a separate **Import case files** control near the case selection area. It uses the browser's native file picker and accepts multiple files in one selection. The picker advertises MATPOWER `.m`/`.M` files, DTF `.dat`/`.DAT` files, CGMES `.zip` deliveries and CGMES profile files (`.xml`); the server validates the extension again because browser-side filters can be bypassed. Several `.xml` files selected together (the EQ, SSH, TP and SV profiles of one delivery, for example the four files of a shipped demo folder under `data/cgmes_demo`) are packed into one `<stem>_cgmes.zip` in the case directory, named after the common file stem; the set must contain the EQ profile. A CGMES ZIP may contain the whole delivery, including nested ZIPs — the importer opens them in memory, so no unpacking step is required.
 
 Importing is a copy-only operation. It does not submit the PowerFlow form, create a run ID, create a result directory, parse uploaded `.m` code, or invoke the solver. After the POST/Redirect/GET refresh, the normal case selector is rebuilt from disk. If at least one imported file is runnable in the normal selector, the first such file may be preselected; the user must still press **Start PowerFlow run** to calculate it.
 

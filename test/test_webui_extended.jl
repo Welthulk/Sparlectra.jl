@@ -989,7 +989,7 @@ form:
         @test occursin("<form id=\"case-import-form\" method=\"post\" action=\"/powerflow/import-cases\" enctype=\"multipart/form-data\"", selection_html)
         # .json is a Sparlectra Case Format case (#342); the import validates
         # the content before storing, so a foreign .json is refused by name
-        @test occursin("type=\"file\" name=\"casefiles\" accept=\".m,.M,.dat,.DAT,.zip,.ZIP,.json,.yaml\" multiple", selection_html)
+        @test occursin("type=\"file\" name=\"casefiles\" accept=\".m,.M,.dat,.DAT,.zip,.ZIP,.json,.yaml,.xml,.XML\" multiple", selection_html)
         @test occursin("Import case files", selection_html)
         @test occursin("<input type=\"hidden\" name=\"config_file\" value=\"$(secondary_config)\">", selection_html)
         @test occursin("<code>$(secondary_config)</code>", selection_html)
@@ -1182,6 +1182,20 @@ form:
         cgmes_page = String(SparlectraApp.route_sparlectra_webui("GET", String(Dict(cgmes_response.headers)["Location"]); output_root, runtime).body)
         @test occursin("missing declared dependencies", cgmes_page)
         @test occursin("absent-boundary", cgmes_page)
+
+        # the profile files of one delivery, selected together in the file
+        # picker (the shipped demo folders are exactly that), become one ZIP
+        demo = joinpath(dirname(@__DIR__), "data", "cgmes_demo", "sp_case14")
+        xml_uploads = [SparlectraApp.WebUICaseUpload(f, read(joinpath(demo, f))) for f in readdir(demo)]
+        xml_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/import-cases", Dict("casefiles" => xml_uploads); output_root, runtime)
+        @test xml_response.status == 303
+        @test isfile(joinpath(case_directory, "sp_case14_cgmes.zip"))
+        @test occursin("sp_case14_cgmes.zip", SparlectraApp._webui_urldecode(String(Dict(xml_response.headers)["Location"])))
+        @test length(importCGMES(path = joinpath(case_directory, "sp_case14_cgmes.zip"), name = "sp_case14_cgmes").net.nodeVec) == 14
+        # without the EQ profile the set is refused, nothing is written
+        no_eq = [u for u in xml_uploads if !occursin("_EQ", u.filename)]
+        no_eq_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/import-cases", Dict("casefiles" => no_eq); output_root, runtime)
+        @test occursin("EQ profile", SparlectraApp._webui_urldecode(String(Dict(no_eq_response.headers)["Location"])))
 
         write(joinpath(case_directory, "duplicate.m"), "old")
         duplicate_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/import-cases", Dict("casefiles" => [upload("duplicate.m", "new")]); output_root, runtime)

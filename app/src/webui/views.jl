@@ -1096,7 +1096,7 @@ function render_case_page(;
   info_menu = _webui_powerflow_info_menu(; output_root, config_file = config_default, case_directory = effective_case_directory, operation_log)
   import_form = """
 <form id=\"case-import-form\" method=\"post\" action=\"/powerflow/import-cases\" enctype=\"multipart/form-data\" class=\"panel form-grid case-import-form\">
-<label class=\"span-2\">$(_webui_field_label("casefiles", "Import case files"))$(_webui_file_input("casefiles"; accept = ".m,.M,.dat,.DAT,.zip,.ZIP,.json,.yaml", multiple = true))</label>
+<label class=\"span-2\">$(_webui_field_label("casefiles", "Import case files"))$(_webui_file_input("casefiles"; accept = ".m,.M,.dat,.DAT,.zip,.ZIP,.json,.yaml,.xml,.XML", multiple = true))</label>
 <div class=\"actions span-2\"><button class=\"secondary-button\" type=\"submit\">Import case files</button></div>
 </form>
 """
@@ -1520,12 +1520,20 @@ function render_settings_page(;
   case_query = isempty(strip(ctx.effective_case_value)) ? "" : "?casefile=" * _webui_urlencode(ctx.effective_case_value)
   # the switch between the two views is a link, so a plain reload keeps the
   # chosen view and the form itself carries no extra field
-  profile_switch = if isempty(stored_profile_path)
+  # a case file can carry its own settings inside (an SCF config block); the
+  # default view says so as well, otherwise a user cannot tell whether the
+  # file's settings are read at all
+  case_file_keys = show_case_profile || isempty(strip(ctx.effective_case_value)) ? String[] : sort!(collect(keys(_webui_case_config_field_values(String(ctx.effective_case_value), case_directory))))
+  case_levels = String[]
+  isempty(stored_profile_path) || push!(case_levels, "saved settings (<code>$(_webui_escape(basename(stored_profile_path)))</code>)")
+  isempty(case_file_keys) || push!(case_levels, "$(length(case_file_keys)) setting(s) inside the case file")
+  profile_switch = if show_case_profile
+    isempty(stored_profile_path) && isempty(get(profile_values, "_case_file_fields", String[])) ? "" :
+      "<p class=\"case-settings-switch\">Showing the settings of this case on top of the configuration file. <a href=\"/powerflow/settings$(case_query)\">Show the configuration values</a></p>"
+  elseif isempty(case_levels)
     ""
-  elseif show_case_profile
-    "<p class=\"case-settings-switch\">Showing the saved settings of this case (<code>$(_webui_escape(basename(stored_profile_path)))</code>) on top of the configuration file. <a href=\"/powerflow/settings$(case_query)\">Show the configuration values</a></p>"
   else
-    "<p class=\"case-settings-switch\">This case has saved settings (<code>$(_webui_escape(basename(stored_profile_path)))</code>); the form shows the configuration file's values. <a href=\"/powerflow/settings$(case_query)&amp;case_settings=1\">Show the case settings</a></p>"
+    "<p class=\"case-settings-switch\">This case has $(join(case_levels, " and ")); a run applies them, the form shows the configuration file's values. <a href=\"/powerflow/settings$(case_query)&amp;case_settings=1\">Show the case settings</a></p>"
   end
   content = """
 $(_webui_feedback_modal_html([error_html, save_html, ctx.profile_notice, ctx.case_file_notice]))<p class=\"lede\">Solver, output, and expert options. Values prefill from the configuration file for <code>$(case_display)</code> (<a href=\"/powerflow/case$(case_query)\">change on the Case page</a>); runs read them through the configuration precedence.</p>
