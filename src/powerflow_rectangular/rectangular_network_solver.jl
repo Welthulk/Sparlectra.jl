@@ -374,7 +374,7 @@ function runpf_rectangular!(
   rectangular_workspace_reuse::Bool = true,
   rectangular_preallocate_workspace::Symbol = :auto,
   rectangular_workspace_min_buses::Int = 1000,
-  linear_solver::Symbol = :umfpack,
+  linear_solver::Symbol = :umfpack_reuse,
   distributed_slack_enabled::Bool = false,
   distributed_slack_p_mode::Symbol = :pg_weighted,
   distributed_slack_respect_p_limits::Bool = true,
@@ -1128,7 +1128,7 @@ Arguments:
 - `method::Symbol`: must be `:rectangular`
 - `autodamp::Bool`: enable residual-based backtracking for rectangular Newton steps
 - `autodamp_min::Float64`: minimum automatic damping factor when `autodamp = true`
-- `linear_solver::Symbol`: sparse linear-algebra backend for the Newton step, `:umfpack` (default) or `:umfpack_reuse` (symbolic-analysis reuse across iterations via `lu!`)
+- `linear_solver::Symbol`: sparse linear-algebra backend for the Newton step, `:umfpack_reuse` (default: symbolic-analysis reuse across iterations via `lu!`) or `:umfpack` (full analysis every iteration, the historical path)
 - `qlimit_start_iter::Int`: first Newton iteration where PV→PQ Q-limit switching may run in `:iteration` mode
 - `qlimit_start_mode::Symbol`: `:iteration`, `:auto`, or `:iteration_or_auto` start criterion for PV→PQ switching
 - `qlimit_auto_q_delta_pu::Float64`: PV reactive-power request change threshold for automatic switching start
@@ -1226,7 +1226,7 @@ function runpf_rectangular!(
   rectangular_workspace_reuse::Bool = true,
   rectangular_preallocate_workspace::Symbol = :auto,
   rectangular_workspace_min_buses::Int = 1000,
-  linear_solver::Symbol = :umfpack,
+  linear_solver::Symbol = :umfpack_reuse,
   performance_profile = nothing,
   distributed_slack_enabled::Bool = false,
   distributed_slack_p_mode::Symbol = :pg_weighted,
@@ -1957,7 +1957,7 @@ function runpf!(
   rectangular_workspace_reuse::Bool = true,
   rectangular_preallocate_workspace::Symbol = :auto,
   rectangular_workspace_min_buses::Int = 1000,
-  linear_solver::Symbol = :umfpack,
+  linear_solver::Symbol = :umfpack_reuse,
   islands_enabled::Bool = false,
   islands_mode::Symbol = :solve_independent,
   islands_reference_policy::Symbol = :matpower_like,

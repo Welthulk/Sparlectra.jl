@@ -10,9 +10,12 @@
 - New examples: `apslf_vs_nr_timing.jl` (timing table, also in the performance page) and `apslf_pv_diagnostic.jl` (locates where an APSLF solve with PV buses fails).
 - APSLF workshop: reading rules for `dmin`.
 - Test runner hides intended warnings; `SPARLECTRA_TEST_SHOW_WARNINGS=1` shows them.
+- Test profiles are split by area: `fast` is the pull-request gate (model and Newton core, about a minute), `pf`, `se`, `config`, `webui` and `extd` cover their own areas, `extended` is the five together and `all` everything; the docs build stays a gate of its own. See [Test Suite](tests.md).
 - Test suite compiles every testset body as its own function, and the API entry, the state-estimation service and the configuration context have one specialization each instead of one per call site; both profiles run about a third faster.
 - Package load: the Web UI option table and two other constant lists are vectors instead of tuples, which removes most of the module's own precompile time.
 - Workshop notebooks warn ahead of the install cell that Colab needs several minutes to precompile.
+- `PiecewiseLinearCharacteristic` is renamed to `VoltageCharacteristic`, since it carries spline and polynomial interpolation as well; the old name stays as an alias for one minor release (#14).
+- `power_flow.linear_solver` defaults to `umfpack_reuse` (symbolic analysis once per solve, numeric refactorization per iteration, see #288); `umfpack` remains selectable.
 - Contingency CSV fixtures are compared with a 1e-9 tolerance instead of byte identity.
 
 ## Fixes

@@ -1240,7 +1240,7 @@ $(config_maintenance)
 <fieldset class=\"solver-backend-options\" data-nr-only-field>
 <legend>Solver backend</legend>
 <label>$(_webui_field_label("power_flow_linear_solver", "Linear solver backend"))$(_webui_select("power_flow_linear_solver", _webui_option_allowed_values("power_flow_linear_solver"), _webui_selected(profile_values, "power_flow_linear_solver", _webui_option_default("power_flow_linear_solver"))))</label>
-<p class=\"field-help\">Sparse linear-algebra backend for the rectangular Newton step only (independent of the <strong>Solver</strong> choice above). <code>umfpack_reuse</code> reuses the symbolic analysis across iterations via <code>lu!</code>; <code>umfpack</code> is the default behavior.</p>
+<p class=\"field-help\">Sparse linear-algebra backend for the rectangular Newton step only (independent of the <strong>Solver</strong> choice above). <code>umfpack_reuse</code> (default) reuses the symbolic analysis across iterations via <code>lu!</code>; <code>umfpack</code> analyzes every iteration anew.</p>
 </fieldset>
 <fieldset class=\"external-grid-options\">
 <legend>External grid source</legend>

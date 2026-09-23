@@ -14,7 +14,7 @@
 # limitations under the License.
 
 # file: tools/run_gates.sh
-# purpose: run the verification gates (fast / extended / docs) with the two
+# purpose: run the verification gates (a test profile or docs) with the two
 #          guards that make the 2026-09-03 mixed-state incident impossible
 #          instead of unlikely: (1) the run refuses to start while src/ or
 #          the project files carry uncommitted changes, because a Julia
@@ -24,7 +24,7 @@
 #          runs, so no second Julia first-start precompiles the same
 #          package concurrently. --allow-dirty skips guard 1 for a
 #          deliberate local check; the lock is never skipped. Plain sh.
-# usage:   sh tools/run_gates.sh fast|extended|docs [--allow-dirty]
+# usage:   sh tools/run_gates.sh fast|pf|se|config|webui|extd|extended|all|docs [--allow-dirty]
 #          (SPARLECTRA_LARGE_CASES_DIR and other env pass through)
 
 gate=$1
@@ -38,9 +38,9 @@ then
 fi
 
 case "$gate" in
-  fast | extended | docs) ;;
+  fast | pf | se | config | webui | extd | extended | all | docs) ;;
   *)
-    echo "usage: sh tools/run_gates.sh fast|extended|docs [--allow-dirty]" >&2
+    echo "usage: sh tools/run_gates.sh fast|pf|se|config|webui|extd|extended|all|docs [--allow-dirty]" >&2
     exit 2
     ;;
 esac
@@ -166,16 +166,12 @@ trap 'rm -rf "$lockdir"' EXIT INT TERM
 # run then has to infer again, and it buys a gate nothing. (On the Sparlectra
 # sysimage the same load costs 1530 instances; see tools/sysimage_launcher.jl.)
 status=0
-if [ "$gate" = "fast" ]
+if [ "$gate" = "docs" ]
 then
-  julia --startup-file=no --project="$repo_root" "$repo_root/test/runtests.jl"
-  status=$?
-elif [ "$gate" = "extended" ]
-then
-  SPARLECTRA_TEST_PROFILE=extended julia --startup-file=no --project="$repo_root" "$repo_root/test/runtests.jl"
+  julia --startup-file=no --project="$repo_root/docs" "$repo_root/docs/make.jl"
   status=$?
 else
-  julia --startup-file=no --project="$repo_root/docs" "$repo_root/docs/make.jl"
+  SPARLECTRA_TEST_PROFILE=$gate julia --startup-file=no --project="$repo_root" "$repo_root/test/runtests.jl"
   status=$?
 fi
 exit $status

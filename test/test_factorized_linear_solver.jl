@@ -42,7 +42,7 @@ function run_factorized_linear_solver_tests()
   @testset "Factorized linear-solver backend (umfpack_reuse)" begin (function ()
     @testset "umfpack_reuse equivalence and counters" begin (function ()
       net_umf = createTest3BusNet()
-      _, erg_umf = runpf!(net_umf, 20, 1e-8, 0; method = :rectangular)
+      _, erg_umf = runpf!(net_umf, 20, 1e-8, 0; method = :rectangular, linear_solver = :umfpack)
       net_reuse = createTest3BusNet()
       _, erg_reuse = runpf!(net_reuse, 20, 1e-8, 0; method = :rectangular, linear_solver = :umfpack_reuse)
       @test erg_umf == 0
@@ -199,8 +199,8 @@ function run_factorized_linear_solver_tests()
     end)() end
 
     @testset "Configuration validation and defaults (klu rejected)" begin (function ()
-      @test Sparlectra.PowerFlowConfig(Dict{String,Any}()).linear_solver === :umfpack
-      @test powerflow_config().linear_solver === :umfpack
+      @test Sparlectra.PowerFlowConfig(Dict{String,Any}()).linear_solver === :umfpack_reuse
+      @test powerflow_config().linear_solver === :umfpack_reuse
       raw_reuse = Dict{String,Any}("power_flow" => Dict{String,Any}("linear_solver" => "umfpack_reuse"))
       @test Sparlectra.PowerFlowConfig(raw_reuse).linear_solver === :umfpack_reuse
       # the removed klu backend and arbitrary values are rejected alike
@@ -218,7 +218,7 @@ function run_factorized_linear_solver_tests()
     @testset "Web UI option spec, rendering, and sidecar round-trip" begin (function ()
       spec = Sparlectra._webui_option_spec("power_flow_linear_solver")
       @test spec.config_key == "power_flow.linear_solver"
-      @test spec.default == "umfpack"
+      @test spec.default == "umfpack_reuse"
       @test spec.control === :select
       @test spec.section === :expert
       @test spec.save_in_case_sidecar
@@ -233,8 +233,8 @@ function run_factorized_linear_solver_tests()
       @test length(expert_parts) == 2
       expert_html = expert_parts[2]
       @test occursin("name=\"power_flow_linear_solver\"", expert_html)
-      @test occursin("<option value=\"umfpack\" selected>", expert_html)
-      @test occursin("<option value=\"umfpack_reuse\"", expert_html)
+      @test occursin("<option value=\"umfpack_reuse\" selected>", expert_html)
+      @test occursin("<option value=\"umfpack\"", expert_html)
       @test !occursin("<option value=\"klu\"", expert_html)
       @test occursin("href=\"/help/power_flow.linear_solver\"", form_html)
       @test Sparlectra.resolve_webui_help_topic("power_flow.linear_solver") !== nothing

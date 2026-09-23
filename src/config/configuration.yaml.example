@@ -37,7 +37,7 @@ power_flow:
   # The reuse backend falls back to the umfpack chain on factorization errors.
   # (A klu backend existed until 0.9.10; removed, measured no benefit on
   # power-flow Jacobians.)
-  linear_solver: umfpack
+  linear_solver: umfpack_reuse
   # Options for solver: apslf.
   apslf:
     # Highest power-series coefficient to compute.

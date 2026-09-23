@@ -98,7 +98,7 @@ const WEBUI_OPTION_SPECS = WebUIOptionSpec[
   WebUIOptionSpec("power_flow.external_grid.source", "power_flow_external_grid_source", String, :select, "auto", EXTERNAL_GRID_SOURCE_VALUES, :expert, :case, true),
   WebUIOptionSpec("power_flow.external_grid.sk_MVA", "power_flow_external_grid_sk_mva", Float64, :number, 2000.0, (), :expert, :case, true),
   WebUIOptionSpec("power_flow.external_grid.rx", "power_flow_external_grid_rx", Float64, :number, 0.1, (), :expert, :case, true),
-  WebUIOptionSpec("power_flow.linear_solver", "power_flow_linear_solver", String, :select, "umfpack", POWERFLOW_LINEAR_SOLVER_VALUES, :expert, :case, true),
+  WebUIOptionSpec("power_flow.linear_solver", "power_flow_linear_solver", String, :select, "umfpack_reuse", POWERFLOW_LINEAR_SOLVER_VALUES, :expert, :case, true),
   WebUIOptionSpec("cgmes_import.start_values", "cgmes_start_values", String, :select, "auto", CGMES_START_VALUES_VALUES, :expert, :adapter, true),
   WebUIOptionSpec("cgmes_import.require_boundary", "cgmes_require_boundary", Bool, :checkbox, true, (), :basic, :adapter, true),
   WebUIOptionSpec("cgmes_import.infer_base_voltages", "cgmes_infer_base_voltages", Bool, :checkbox, false, (), :expert, :adapter, true),

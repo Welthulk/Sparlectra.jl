@@ -111,9 +111,9 @@ function build_rectangular_jacobian_pq_pv_sparse(
   # vm_eps avoids unstable derivatives when |V| is very close to zero.
   # structural_pattern=true stores entries even when their current value is
   # exactly zero, so the sparsity pattern depends only on the Ybus structure
-  # and the bus types — not on the iterate. Factorization-reuse backends
-  # (umfpack_reuse) require this invariance; the default path keeps dropping numeric
-  # zeros to stay bit-for-bit identical to the historical behavior.
+  # and the bus types, not on the iterate. The factorization-reuse backend
+  # (umfpack_reuse, the default) requires this invariance; the plain umfpack
+  # path keeps dropping numeric zeros, the historical behavior.
   # `assembly` (requires structural_pattern) reuses triplet buffers and, once
   # a pattern is recorded, refreshes the retained CSC's nzval in place.
   n = length(V)

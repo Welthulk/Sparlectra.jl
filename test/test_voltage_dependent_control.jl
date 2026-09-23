@@ -27,7 +27,9 @@ function run_voltage_dependent_control_tests()
     # Verifies piecewise-linear characteristic evaluation in normal range,
     # saturation outside the range, controller clipping, and kink derivative behavior.
     @testset "Characteristic evaluation" begin (function ()
-      ch = PiecewiseLinearCharacteristic([(0.95, -0.2), (1.0, 0.0), (1.05, 0.2)])
+      # the former name is an alias for one minor release (#14)
+      @test PiecewiseLinearCharacteristic === VoltageCharacteristic
+      ch = VoltageCharacteristic([(0.95, -0.2), (1.0, 0.0), (1.05, 0.2)])
 
       v_mid, dv_mid = evaluate_characteristic(ch, 0.975)
       @test isapprox(v_mid, -0.1; atol = 1e-12)
@@ -46,7 +48,7 @@ function run_voltage_dependent_control_tests()
       @test isapprox(q_val, 0.05; atol = 1e-12)
       @test q_slope == 0.0
 
-      ch_kink = PiecewiseLinearCharacteristic([(0.95, 0.2), (1.0, 0.0), (1.05, 0.2)])
+      ch_kink = VoltageCharacteristic([(0.95, 0.2), (1.0, 0.0), (1.05, 0.2)])
       v_kink, dv_kink = evaluate_characteristic(ch_kink, 1.0)
       _, dv_left = evaluate_characteristic(ch_kink, 1.0 - 1e-8)
       _, dv_right = evaluate_characteristic(ch_kink, 1.0 + 1e-8)
@@ -129,7 +131,7 @@ function run_voltage_dependent_control_tests()
       addACLine!(net = net, fromBus = "B1", toBus = "B2", length = 20.0, r = 0.05, x = 0.4)
 
       addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
-      qu_curve = PiecewiseLinearCharacteristic([(0.95, 0.4), (1.0, 0.0), (1.05, -0.2)])
+      qu_curve = VoltageCharacteristic([(0.95, 0.4), (1.0, 0.0), (1.05, -0.2)])
       addProsumer!(net = net, busName = "B2", type = "SYNCHRONOUSMACHINE", p = 20.0, q = 0.0, qu_controller = QUController(qu_curve, -0.5, 0.5))
       addProsumer!(net = net, busName = "B2", type = "ENERGYCONSUMER", p = 60.0, q = 20.0)
 
@@ -155,7 +157,7 @@ function run_voltage_dependent_control_tests()
 
       addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
 
-      kink_curve = PiecewiseLinearCharacteristic([(0.95, 0.2), (1.0, 0.0), (1.05, 0.2)])
+      kink_curve = VoltageCharacteristic([(0.95, 0.2), (1.0, 0.0), (1.05, 0.2)])
       addProsumer!(
         net = net,
         busName = "B2",

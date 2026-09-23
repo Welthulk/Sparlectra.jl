@@ -8,11 +8,42 @@ Profile selection precedence is:
 
 ## Test profiles
 
-| Profile | Command | Scope | Intended use |
+Every test group belongs to exactly one of six base profiles; `extended` is
+the union of the five that are not `fast`, and `all` runs everything. The
+documentation build is a gate of its own (`sh tools/run_gates.sh docs`),
+not a profile: a change to Markdown or a docstring needs the docs build and
+nothing else.
+
+| Profile | Command | Scope | When to run |
 |---|---|---|---|
-| `fast` (default) | `julia --project=. test/runtests.jl fast` | Everything that checks numerics, the network model, and the case formats (risk-based split) | Normal development and default CI |
-| `extended` | `julia --project=. test/runtests.jl extended` | Surfaces, artifacts, documentation, fixtures: Web UI, service lifecycle, examples, hygiene, CGMES/DTF fixture suites | Before merge or after broad integration changes |
-| `all` | `julia --project=. test/runtests.jl all` | Fast followed by extended | Complete local or CI verification |
+| `fast` (default) | `julia --project=. test/runtests.jl fast` | Network model, terminal status, the rectangular Newton core and its linear solver, DC power flow, distributed slack, islands, external grid, MATPOWER metadata, the small API smoke | Every pull request and every commit; CI runs this one |
+| `pf` | `julia --project=. test/runtests.jl pf` | Auto mode, short circuit, parallel foundation, contingencies, scenarios, all controllers, the extended grid and contingency sets, the scenario engine, APSLF | After a change to the power-flow path, its controllers or the scenario engine |
+| `se` | `julia --project=. test/runtests.jl se` | State estimation, observability, topology validation | After a change to the estimator or the measurement model |
+| `config` | `julia --project=. test/runtests.jl config` | Configuration surface and validation, configuration documentation coverage, repository hygiene | After a change to a configuration key, a default or the documentation of one |
+| `webui` | `julia --project=. test/runtests.jl webui` | The local browser UI, both files | Before every Web UI pull request; `fast` proves nothing about `src/webui` |
+| `extd` | `julia --project=. test/runtests.jl extd` | Shipped demo cases, SCF, service lifecycle, MATPOWER examples, example infrastructure, net cache, synthetic grids, CGMES import and export, DTF | After a change to a format, an importer, the service layer or the examples |
+| `extended` | `julia --project=. test/runtests.jl extended` | `pf`, `se`, `config`, `webui` and `extd` in that order | Before a merge |
+| `all` | `julia --project=. test/runtests.jl all` | `fast` followed by `extended` | Declaring a branch merge-ready, together with the docs build |
+
+`SPARLECTRA_TEST_PROFILE` selects the profile as well; the command-line
+argument wins. `SPARLECTRA_TEST_SKIP_GROUPS` drops named groups from any
+profile and says so in the output.
+
+Group membership (the table `TEST_PROFILES` in `test/runtests.jl` is the
+source; the runner refuses a group in two profiles or in none):
+
+| Profile | Groups |
+|---|---|
+| `fast` | `core_model`, `terminal_status`, `powerflow_rectangular`, `factorized_linear_solver`, `pv_voltage_residuals`, `3wt_phase_taps`, `dc_powerflow`, `distributed_slack`, `island_diagnostics`, `external_grid`, `matpower_metadata`, `programmatic_api` |
+| `pf` | `auto_powerflow`, `short_circuit`, `parallel_foundation`, `contingency`, `scenarios`, `controls`, `core_model_extended`, `contingency_extended`, `scenario_engine`, `apslf` |
+| `se` | `state_estimation`, `observability`, `topology_validation` |
+| `config` | `configuration`, `configuration_docs`, `repository_hygiene` |
+| `webui` | `webui`, `webui_extended` |
+| `extd` | `demo_cases`, `scf`, `programmatic_api_extended`, `matpower_examples`, `example_infra`, `net_cache`, `synthetic_grids`, `cgmes_importer`, `cgmes_export`, `dtf_extended` |
+
+The two group tables further down describe what each group checks; they
+are ordered by the former two-profile split and the membership above is
+the one that counts.
 
 ## Group timings measure compile distribution, not test cost
 
@@ -35,6 +66,13 @@ Judge a "group got slower" observation against warm times or the sum over
 both profiles, never against a single group's cold seconds; deleting tests
 barely moves these numbers. The lever for wall-clock time is compilation
 reuse (a sysimage-based runner, or a cached Julia compile directory in CI).
+
+Reference times of the profiles on the development machine (16 cores,
+Julia 1.13, package cache warm, each profile in its own process,
+2026-09-23): fast 66 s, pf 100 s, se 46 s, config 22 s, webui 104 s,
+extd 149 s. A profile that grows by more than ten percent against these
+numbers needs a cause before the change is committed; the numbers are
+updated here on purpose, never silently.
 
 Two conventions keep the compile share down and are expected of new tests
 and new service code:
@@ -62,6 +100,8 @@ follows in a separate workflow-only commit (workflow files never mix with
 content commits).
 
 ## Fast versus extended ownership
+
+"Extended" here means the five profiles that are not `fast` (`pf`, `se`, `config`, `webui`, `extd`).
 
 | Area | Fast coverage | Extended coverage |
 |---|---|---|
@@ -168,7 +208,7 @@ build time without covering a Web UI path the curated list misses.
 `SPARLECTRA_SYSIMAGE_TRACE_TESTS=1` restores the old behavior for a
 comparison.
 
-## Fast profile groups
+## Group reference: model, solver, estimator and format groups
 
 | Group | Files | Main checks |
 |---|---|---|
@@ -197,11 +237,11 @@ comparison.
 | `external_grid` | `test/test_external_grid.jl` | External-grid element (issue #299): the external-grid/distributed-slack mutual-exclusion configuration error (both cover the same imbalance; YAML pair rejected, single option loads), the duck-typing contract guard (`NativeShortCircuitData` field-identical to `CGMESShortCircuitData` by name, order, and type — machine-checked, not comment-checked), PF invariance (an `addExternalGrid!` slack with finite `Sk''` reproduces the manual slack path to machine precision — carried SC data changes no power-flow result, incl. the full ENI record contract), SC hand calculation on a single 110 kV bus (`Zq`, `Ik''`, `Sk''`, kappa/i\_p over two R/X values, c cancelling), min-case semantics (`sk_min` used unflagged with the rx\_min→rx\_max default, explicit `rx_min` wins, missing `sk_min` skips the feeder with the engine's `:no_source` flag), parallel-feeder stacking with unique, removal-safe mrids (suffix continues after the highest surviving id, incl. the same-prefix-bus guard), input validation (`ArgumentError` table), the net-copy regression (`sc_sources` survives `deepcopy`, SC on the copy matches), the `convertSlackToExternalGrid!` demotion (self-consistent bus types right after the demotion, conversion note contents, no-slack/non-slack-bus `ArgumentError`s), the connection statement in the classical result print (`Grid connection:` prose line naming slack vs. source incl. `Sk''`/R-X and the internal slack bus; type column `SOURCE` instead of `SLACK` on the internal bus, also in the structured report rows), and the `internal_impedance` variant (slack moves to the tagged auxiliary bus, stiff `Sk''→∞` limit reproduces the ideal solution below 1e-8 pu, realistic `Sk''` droops voltage and shifts angles, the feeder record stays anchored at the physical connection bus, one internal-impedance grid per bus) |
 | `controls` | `test/test_voltage_dependent_control.jl`, `test/test_transformer_phase_shift.jl`, `test/test_tap_controller.jl`, `test/test_series_reactance_control.jl`, `test/test_upfc_control.jl`, `test/test_hvdc_pair_control.jl`, `test/test_tap_changer_model.jl`, `test/test_phase_tap_changer_model.jl`, `test/test_phase_tap_table.jl` | the control-loop console contract (#387: inner-solver diagnostic blocks once per run, one summary line per later pass, no wrong-branch block with the detection off, `control.verbose_passes` for the full per-pass output, the result header naming the passes), Voltage-dependent controls, transformer phase-shift control, tap-controller behavior, YAML controller instantiation (#305: round-trip via the real YAML reader against the programmatic twin, load-time and apply-time validation, idempotent re-apply), machine remote voltage control (`MachineVoltageControl`: API validation, secant convergence onto a remote target, honest `at_limit` on the reactive bounds), the STATCOM current-limit mode (#297 Draft A: registration validation incl. rating exclusivity and the `i_max_ka` conversion, at-limit `Q = V * S_max` tracking with live bounds across operating points, deadband-level in-range equivalence with the constant-Q mode, inert mode fields on constant-Q controllers, `STATCOM (VSC)` element vocabulary) and the SVC-vs-STATCOM limit contrast on one sagging corridor (#297 Draft E acceptance: delivered Q asserted against `V^2 * B` versus `V * S_max` numerically), the FACTS config surface (`s_max_mva` STATCOM and `v_inj_max_pu` SSSC entries instantiate via `applyConfiguredControllers!`, re-apply skips both; regression: the series idempotency check crashed on wrong field names instead of skipping), successful baseline PF preservation when controls are disabled, the `AbstractTapChangerModel`/`convention` field plus `calcRatioTapCorrection`/`calcRatioTapRange` consolidation, the CGMES `PhaseTapChangerModel`/`calcPhaseTapFraction`/`calcPhaseTapAngleRatio`/`calcPhaseTapReactance` formulas plus the DTF importer migration onto them, and the tabular `TapTablePoint`/`kind = :tabular`/`calcPhaseTapTable` override path including the formula-vs-table round-trip regression; the PST X(α) coupling (winding-resolved model lookup, continuous-angle formula evaluation, nearest-row tabular mapping, accepted moves update `x_pu` to the model value at the final angle, devices without reactance data stay static, probe direction consistent with and without tracking incl. angle/reactance restore) and the cross-type warning when a tap controller already regulates a machine controller's target bus; the master/slave transformer group (#322: circulating-Q physics on misaligned parallel units, group stepping with aligned taps and near-equal reactive split under a group-sized deadband, follower exclusivity/self-follow/double-follow/mode validation, the same-target-bus warning, `followers` through the config surface, `(+N followers)` element label; the CGMES side lives in the importer suite: a patched MicroGrid copy with two RatioTapChangers on ONE TapChangerControl imports as one master with one follower); the SVC shunt voltage controller (API validation, in-range secant regulation onto the setpoint with the actuated shunt carrying the same susceptance, honest constant-B `at_limit` on an unreachable target, `clearShuntControllers!`); the MSC/MSR discrete bank mode (#324: registration validation incl. step sign and no-admissible-block range, start-value snapping onto the block grid, whole-block truncated stepping that parks with `status = :parked` before crossing the target without exhausting the outer budget, `at_limit` on the outermost block, `MSC/MSR (switched shunt bank)` element vocabulary with `discrete = true` and step fields on the report row, `step_mvar` through `applyConfiguredControllers!` incl. idempotent re-apply, and continuous-SVC regression) and the generic controllable-element view (`controllableElements` rows for tap, machine, and shunt controllers incl. `ControlRunResult.elements`); the TCSC series-reactance controller (`SeriesReactanceControl`: loop-network target tracking within the deadband, honest `at_limit` clamping on an unreachable target, bit-identical baseline with a disabled controller, element-row vocabulary `:series_x_pu`/`:branch_active_power`, registration validation incl. transformer rejection and the `eps_z` impedance guard, and the no-move deadband case; SSSC injected-voltage mode, #297 Draft F: limit-form exclusivity validation, converged operation inside the live current-dependent window `x_base ± v_inj_max/|I|`, pinned operation with the effective injected voltage at `v_inj_max`, `SSSC (VSC)` element vocabulary with live window bounds, mode fields on the report row, summary printer naming the SSSC limit, and TCSC-mode regression); the UPFC stationary quadrature composite (`addUpfcControl!`, #325: exact equivalence with the manually registered SSSC+STATCOM pair on a two-corridor fixture, both limit characteristics at their clamps, composite-level rejections and the series-side rollback leaving the net untouched, `UPFC series/shunt (VSC pair, ...)` result-row pairing, YAML type `upfc` incl. the double-apply no-op) and the full DC-link-coupled model (`model = :full`, #326: independent line P and Q reached simultaneously with the DC-link residual closed on a meshed sending-bus fixture, the series active injection `P_se` nonzero, `series_phase = :quadrature` reducing to a standalone SSSC with `P_se = 0`, the `UPFC (full, DC-link coupled)` element row, per-model registration validation, the YAML `model: full` round trip with the double-apply no-op, the low-current `z_add` guard keeping the branch finite at its base impedance on a near-dead line, and the negative-resistance branch left by the full model being rejected loudly by a subsequent IEC 60909 short circuit while the base network runs); the HVDC pair controller (`HvdcPairControl`, #297 Draft B: registration validation incl. slack and PV guards, exact pairing invariant on a two-island fixture, reversed transfer, rating clamp with honest `at_limit`, per-side voltage-target secant incl. unreachable-target clamping, bit-identical baseline with a disabled controller, MATPOWER `paired_control` mode with the `pf_injections` consistency anchor, YAML `hvdc_pair` round trip, element-row vocabulary `:hvdc_p_transfer_mw`/`:hvdc_transfer`, the grid-forming `mode = :island_feed` incl. mode-dependent validation, the island-draw mirror, the rating clamp, and the YAML `mode: island_feed` declaration; r0.9.9 additions: the persistent `HvdcLink` records (`net.hvdcLinks` fills for MATPOWER Stage-0/paired and `addHvdcLink!`, controller attach/detach round trip), the `HVDC Link Flows` result surface (table, header count, converter-loss line, `ACPFlowReport.hvdc_links`), and the one-reference-per-synchronous-island rule (multi-reference error naming the buses, setpoint pair as parallel PQ path next to an AC tie, `invalid_topology` for a demoted `island_feed` reference)) |
 
-## Extended profile additions
+## Group reference: surface, service and fixture groups
 
-The `extended` profile is extended-only: it does not run the fast profile first. Use `all` when a single invocation must execute both fast and extended suites.
+The `extended` profile does not run the fast profile first. Use `all` when a single invocation must execute both.
 
-Current extended-only groups are:
+The groups of this second table are:
 
 - `core_model_extended`
 - `contingency_extended`

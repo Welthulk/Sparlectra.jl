@@ -22,6 +22,9 @@
 #          assertions are all RELATIVE to the case, so only the fixture
 #          changed).
 
+# the field-by-field round-trip comparison of the SCF tests, shared here
+isdefined(@__MODULE__, :scf_roundtrip_field_diffs) || include("test_scf_support.jl")
+
 # Fixture comparison for contingency result CSVs. Byte identity holds on the
 # platform that generated a fixture but not across BLAS/UMFPACK builds: on
 # Windows the last one or two significant digits of min_vm_pu and the

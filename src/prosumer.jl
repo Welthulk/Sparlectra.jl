@@ -25,24 +25,29 @@ Supertype of the voltage-dependent prosumer controllers (Q(U), P(U)).
 abstract type AbstractVoltageDependentController end
 
 """
-    PiecewiseLinearCharacteristic(points)
+    VoltageCharacteristic(points; interpolation = :linear)
 
-Piecewise linear characteristic `y = f(u)` represented by ordered `(u, y)` points.
-Outside the point range, values are clamped to the edge points and the derivative is `0.0`.
+Characteristic `y = f(u)` of a Q(U) or P(U) controller, given by ordered
+`(u, y)` points and an interpolation mode: `:linear` (straight segments),
+`:spline` (natural cubic spline) or `:polynomial` (Newton form through the
+points); `make_characteristic` builds one from engineering units. Outside
+the point range, values are clamped to the edge points and the derivative
+is `0.0`. Known as `PiecewiseLinearCharacteristic` before 0.16.2; that name
+stays as an alias for one minor release.
 """
-struct PiecewiseLinearCharacteristic
+struct VoltageCharacteristic
   points::Vector{Tuple{Float64,Float64}}
   interpolation::Symbol
   spline_second_derivatives::Vector{Float64}
   polynomial_nodes::Vector{Float64}
   polynomial_coefficients::Vector{Float64}
 
-  function PiecewiseLinearCharacteristic(points::Vector{Tuple{Float64,Float64}}; interpolation::Symbol = :linear)
-    length(points) >= 2 || error("PiecewiseLinearCharacteristic requires at least 2 points.")
+  function VoltageCharacteristic(points::Vector{Tuple{Float64,Float64}}; interpolation::Symbol = :linear)
+    length(points) >= 2 || error("VoltageCharacteristic requires at least 2 points.")
     u_prev = points[1][1]
     for i in 2:length(points)
       u = points[i][1]
-      u > u_prev || error("PiecewiseLinearCharacteristic points must have strictly increasing voltage values.")
+      u > u_prev || error("VoltageCharacteristic points must have strictly increasing voltage values.")
       u_prev = u
     end
 
@@ -60,10 +65,14 @@ struct PiecewiseLinearCharacteristic
       nodes, coeffs = _newton_polynomial_coefficients(points)
       return new(points, interpolation, Float64[], nodes, coeffs)
     else
-      error("PiecewiseLinearCharacteristic: unsupported interpolation $(interpolation). Use :linear, :spline, or :polynomial.")
+      error("VoltageCharacteristic: unsupported interpolation $(interpolation). Use :linear, :spline, or :polynomial.")
     end
   end
 end
+
+# the name the type carried while it held straight segments only; kept as
+# an alias for one minor release so existing scripts keep running
+const PiecewiseLinearCharacteristic = VoltageCharacteristic
 
 function _natural_spline_second_derivatives(points::Vector{Tuple{Float64,Float64}})
   n = length(points)
@@ -121,13 +130,13 @@ function _evaluate_newton_polynomial(nodes::Vector{Float64}, coeffs::Vector{Floa
 end
 
 struct QUController <: AbstractVoltageDependentController
-  characteristic::PiecewiseLinearCharacteristic
+  characteristic::VoltageCharacteristic
   qmin_pu::Union{Nothing,Float64}
   qmax_pu::Union{Nothing,Float64}
 end
 
 struct PUController <: AbstractVoltageDependentController
-  characteristic::PiecewiseLinearCharacteristic
+  characteristic::VoltageCharacteristic
   pmin_pu::Union{Nothing,Float64}
   pmax_pu::Union{Nothing,Float64}
 end
@@ -163,7 +172,7 @@ end
 
 Convenience constructor for `QUController` that accepts limits either in p.u. or in MVAr.
 """
-function QUController(characteristic::PiecewiseLinearCharacteristic; qmin_pu::Union{Nothing,Float64} = nothing, qmax_pu::Union{Nothing,Float64} = nothing, qmin_MVAr::Union{Nothing,Float64} = nothing, qmax_MVAr::Union{Nothing,Float64} = nothing, sbase_MVA::Union{Nothing,Float64} = nothing)
+function QUController(characteristic::VoltageCharacteristic; qmin_pu::Union{Nothing,Float64} = nothing, qmax_pu::Union{Nothing,Float64} = nothing, qmin_MVAr::Union{Nothing,Float64} = nothing, qmax_MVAr::Union{Nothing,Float64} = nothing, sbase_MVA::Union{Nothing,Float64} = nothing)
   (!isnothing(qmin_pu) && !isnothing(qmin_MVAr)) && error("QUController: specify either qmin_pu or qmin_MVAr, not both.")
   (!isnothing(qmax_pu) && !isnothing(qmax_MVAr)) && error("QUController: specify either qmax_pu or qmax_MVAr, not both.")
   qmin = isnothing(qmin_MVAr) ? qmin_pu : _convert_power_limit_to_pu("QUController", qmin_MVAr, :MVAr, sbase_MVA)
@@ -177,7 +186,7 @@ end
 
 Convenience constructor for `PUController` that accepts limits either in p.u. or in MW.
 """
-function PUController(characteristic::PiecewiseLinearCharacteristic; pmin_pu::Union{Nothing,Float64} = nothing, pmax_pu::Union{Nothing,Float64} = nothing, pmin_MW::Union{Nothing,Float64} = nothing, pmax_MW::Union{Nothing,Float64} = nothing, sbase_MVA::Union{Nothing,Float64} = nothing)
+function PUController(characteristic::VoltageCharacteristic; pmin_pu::Union{Nothing,Float64} = nothing, pmax_pu::Union{Nothing,Float64} = nothing, pmin_MW::Union{Nothing,Float64} = nothing, pmax_MW::Union{Nothing,Float64} = nothing, sbase_MVA::Union{Nothing,Float64} = nothing)
   (!isnothing(pmin_pu) && !isnothing(pmin_MW)) && error("PUController: specify either pmin_pu or pmin_MW, not both.")
   (!isnothing(pmax_pu) && !isnothing(pmax_MW)) && error("PUController: specify either pmax_pu or pmax_MW, not both.")
   pmin = isnothing(pmin_MW) ? pmin_pu : _convert_power_limit_to_pu("PUController", pmin_MW, :MW, sbase_MVA)
@@ -205,7 +214,7 @@ found first during the left-to-right scan, i.e. the slope of the segment on
 the left side of the breakpoint. Outside the point range, the value is clamped
 and the returned slope is `0.0`.
 """
-function evaluate_characteristic(ch::PiecewiseLinearCharacteristic, u_pu::Float64)
+function evaluate_characteristic(ch::VoltageCharacteristic, u_pu::Float64)
   pts = ch.points
   u1 = pts[1][1]
   uN = pts[end][1]
@@ -296,7 +305,7 @@ function make_characteristic(points::Vector{Tuple{Float64,Float64}}; voltage_uni
     end
     push!(converted, (u_pu, y_pu))
   end
-  return PiecewiseLinearCharacteristic(converted; interpolation = interpolation)
+  return VoltageCharacteristic(converted; interpolation = interpolation)
 end
 
 # Data type to describe producers and consumers

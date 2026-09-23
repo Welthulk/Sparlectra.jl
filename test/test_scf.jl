@@ -23,7 +23,7 @@
 using Logging
 
 # the fixture comparison lives with the demo-case tests, so both use one rule
-include("test_scf_support.jl")
+isdefined(@__MODULE__, :scf_roundtrip_field_diffs) || include("test_scf_support.jl")
 
 # warmup_casePST.m is TRACKED and lives in the checkout; anything else has to
 # come from SPARLECTRA_LARGE_CASES_DIR, so a caller passing another name gates
@@ -36,123 +36,8 @@ function _scf_test_net(name::AbstractString = "warmup_casePST.m")
 end
 
 
-# Reflection round-trip comparison. Hand-picked assertions found the lost
-# operating point only after it had already reached a power flow, and then the
-# same thing happened again with the per-bus voltage limits and the network's
-# Q-limit switching parameters. So the test compares EVERY field of every
-# component and of the network itself, and a field may differ only if it is
-# named below with a reason. Adding a field to the model without carrying it
-# therefore fails here, which a positive list can never do.
-const _SCF_RT_ALLOWED = Dict{Symbol,Dict{Symbol,String}}(
-  :net => Dict{Symbol,String}(
-    :name => "the case name is an export argument, not a property of the model",
-    :matpower_branch_metadata => "MATPOWER reporting metadata (rateB/rateC and the source row), not part of the model",
-    :matpowerDclineMetadata => "MATPOWER DC-line bookkeeping; the injections themselves are carried as prosumers",
-    :for001Contingencies => "DTF/FOR001 outage list, carried by the study block instead",
-    :totalLosses => "a run result, not an input",
-    :totalBusPower => "a run result, not an input",
-    :control_result => "a run result",
-    :qLimitLog => "a run log",
-    :qLimitEvents => "a run log",
-    :qLimitInitialPVRows => "built during the run",
-    :_locked => "construction state",
-    :_rectangular_pf_status => "a run result",
-    :_dc_pf_status => "a run result",
-    :_import_config => "the configuration the net was imported with; session state, like the two status fields above, and not part of the model",
-    :busOriginalNameDict => "source-format naming aid; the reference names are compared directly",
-    :busOrigIdxDict => "source-format index aid; the bus order is compared directly",
-    :cgmes_ids => "CGMES mRIDs travel in `external_id` and are compared through the names",
-  ),
-  :branch => Dict{Symbol,String}(
-    :tap_min => "the regulation band snaps to the step grid; documented tolerance of less than one step",
-    :tap_max => "the regulation band snaps to the step grid; documented tolerance of less than one step",
-  ),
-  :node => Dict{Symbol,String}(),
-  :prosumer => Dict{Symbol,String}(),
-  :shunt => Dict{Symbol,String}(),
-)
 
-# a per-unit value may land one ulp away when no exact preimage exists
-_scf_rt_same(a::Real, b::Real) = a == b || (isfinite(a) && isfinite(b) && abs(a - b) <= 1e-12 * max(abs(a), abs(b)))
-_scf_rt_same(a, b) = isequal(a, b)
 
-# Comparison contract, so that nothing is skipped silently: scalars (numbers,
-# bools, symbols, strings, ENUMS such as the node type) compare directly,
-# vectors of reals element-wise with the one-ulp tolerance, dictionaries and
-# sets exactly, and a struct-valued field (the component with its name and
-# type, a controller, a flow record) is entered ONE level and its scalar
-# fields compared. Only vectors of structs stay length-only here, because
-# their elements are compared as components in their own right.
-_scf_rt_scalar(x) = x isa Number || x isa Bool || x isa Symbol || x isa AbstractString || x isa Enum || x === nothing
-
-function _scf_rt_value_diff(f, xa, xb, out::Vector{String}; depth::Int = 0)
-  if xa isa AbstractVector && xb isa AbstractVector && eltype(xa) <: Real && eltype(xb) <: Real
-    if length(xa) != length(xb)
-      push!(out, string(f, ": length ", length(xa), " vs ", length(xb)))
-    else
-      n = count(i -> !_scf_rt_same(xa[i], xb[i]), eachindex(xa))
-      n == 0 || push!(out, string(f, ": ", n, " element(s) differ"))
-    end
-    return
-  end
-  if xa isa AbstractDict || xa isa AbstractSet
-    isequal(xa, xb) || push!(out, string(f, ": containers differ"))
-    return
-  end
-  if xa isa AbstractVector || xb isa AbstractVector
-    length(xa) == length(xb) || push!(out, string(f, ": length ", length(xa), " vs ", length(xb)))
-    return
-  end
-  if _scf_rt_scalar(xa) || _scf_rt_scalar(xb)
-    _scf_rt_same(xa, xb) || push!(out, string(f, ": ", xa, " vs ", xb))
-    return
-  end
-  # struct-valued: one level of scalar fields, deeper nesting stays out
-  if depth == 0 && typeof(xa) === typeof(xb)
-    for g in fieldnames(typeof(xa))
-      _scf_rt_value_diff(string(f, ".", g), getfield(xa, g), getfield(xb, g), out; depth = 1)
-    end
-  elseif typeof(xa) !== typeof(xb)
-    push!(out, string(f, ": ", typeof(xa), " vs ", typeof(xb)))
-  end
-  return
-end
-
-function _scf_rt_field_diffs(a, b, kind::Symbol)
-  allowed = _SCF_RT_ALLOWED[kind]
-  out = String[]
-  for f in fieldnames(typeof(a))
-    haskey(allowed, f) && continue
-    _scf_rt_value_diff(string(f), getfield(a, f), getfield(b, f), out)
-  end
-  return out
-end
-
-"""
-Compare two networks field by field and return one message per differing
-field, naming the component and an example. Empty means the round trip lost
-nothing that is not explicitly allowed to differ.
-"""
-function scf_roundtrip_field_diffs(a, b)
-  msgs = String[]
-  append!(msgs, string("net.", m) for m in _scf_rt_field_diffs(a, b, :net))
-  for (kind, va, vb) in ((:node, a.nodeVec, b.nodeVec), (:branch, a.branchVec, b.branchVec),
-                         (:prosumer, a.prosumpsVec, b.prosumpsVec), (:shunt, a.shuntVec, b.shuntVec))
-    if length(va) != length(vb)
-      push!(msgs, string(kind, ": ", length(va), " vs ", length(vb), " elements"))
-      continue
-    end
-    seen = Dict{String,Int}()
-    for i in eachindex(va)
-      for m in _scf_rt_field_diffs(va[i], vb[i], kind)
-        key = string(kind, ".", first(split(m, ":")))
-        haskey(seen, key) || (seen[key] = 0; push!(msgs, string(key, " (first at ", i, "): ", m)))
-        seen[key] += 1
-      end
-    end
-  end
-  return msgs
-end
 
 function run_scf_tests()
   @testset "scf case format (writer)" begin (function ()

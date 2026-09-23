@@ -120,7 +120,8 @@ export
   # ProSumer
   ProSumer,
   AbstractVoltageDependentController,
-  PiecewiseLinearCharacteristic,
+  VoltageCharacteristic,                 # Q(U)/P(U) characteristic: points plus linear, spline or polynomial interpolation.
+  PiecewiseLinearCharacteristic,         # Former name of VoltageCharacteristic, alias for one minor release.
   QUController,
   PUController,
   VoltageAdjustConfig,

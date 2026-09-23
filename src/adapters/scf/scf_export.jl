@@ -958,13 +958,13 @@ end
 # characteristic and is written as one. The check is EXACT on those two
 # voltages: a constant two-point controller a user set deliberately at other
 # voltages is a characteristic and stays one.
-function _scf_matpower_constant(ch::PiecewiseLinearCharacteristic, setpoint_pu::Float64)::Bool
+function _scf_matpower_constant(ch::VoltageCharacteristic, setpoint_pu::Float64)::Bool
   ch.interpolation === :linear && length(ch.points) == 2 || return false
   (u1, y1), (u2, y2) = ch.points
   return u1 == 0.0 && u2 == 2.0 && y1 == y2 && isapprox(y1, setpoint_pu; rtol = 1.0e-12, atol = 1.0e-15)
 end
 
-function _scf_characteristic_dict(ch::PiecewiseLinearCharacteristic, lo, hi, lo_key::AbstractString, hi_key::AbstractString, s_base::Float64)
+function _scf_characteristic_dict(ch::VoltageCharacteristic, lo, hi, lo_key::AbstractString, hi_key::AbstractString, s_base::Float64)
   d = Dict{String,Any}("points" => [[u, y] for (u, y) in ch.points])
   # the constructor's default is not written, like every other default
   ch.interpolation === :linear || (d["interpolation"] = String(ch.interpolation))

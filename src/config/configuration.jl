@@ -316,7 +316,7 @@ Base.@kwdef struct PowerFlowConfig
   # did not set explicitly (see auto_powerflow.jl and integration.md)
   mode::Symbol = :manual
   solver::Symbol = :rectangular
-  linear_solver::Symbol = :umfpack
+  linear_solver::Symbol = :umfpack_reuse
   apslf::ApslfConfig = ApslfConfig()
   apslf_start::ApslfStartConfig = ApslfStartConfig()
   # convergence bound for the LARGEST SINGLE bus mismatch (infinity norm
@@ -1469,7 +1469,7 @@ function PowerFlowConfig(raw::AbstractDict)
     method = method,
     mode = _validate_allowed_symbol("power_flow.mode", _as_symbol_cfg(_raw_get(merged, "mode", :manual)), POWERFLOW_MODE_VALUES),
     solver = solver,
-    linear_solver = _validate_allowed_symbol("power_flow.linear_solver", _as_symbol_cfg(_raw_get(merged, "linear_solver", :umfpack)), POWERFLOW_LINEAR_SOLVER_VALUES),
+    linear_solver = _validate_allowed_symbol("power_flow.linear_solver", _as_symbol_cfg(_raw_get(merged, "linear_solver", :umfpack_reuse)), POWERFLOW_LINEAR_SOLVER_VALUES),
     apslf = apslf_cfg,
     apslf_start = apslf_start_cfg,
     tol = _validate_positive("powerflow.tol", _as_float_cfg(_raw_get(merged, "tol", 1.0e-8))),
