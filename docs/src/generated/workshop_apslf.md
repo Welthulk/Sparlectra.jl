@@ -33,7 +33,7 @@ and this chapter shows each of them on a network you can inspect:
 Nothing here needs an extra installation: AnalyticLoadFlow.jl is a
 dependency of Sparlectra, and `power_flow.solver = apslf` in the
 configuration switches a run over to it. Sparlectra 0.17 needs
-AnalyticLoadFlow 0.9.15 or newer and refuses to load with an older one,
+AnalyticLoadFlow 0.9.16 or newer and refuses to load with an older one,
 so the version below is the one this workshop was written against:
 
 ````@example workshop_apslf

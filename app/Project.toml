@@ -1,7 +1,7 @@
 name = "SparlectraApp"
 uuid = "2e39659a-4f4c-4326-b34e-e3df865cea74"
 authors = ["Udo Schmitz"]
-version = "0.17.0"
+version = "0.17.1"
 
 [deps]
 AnalyticLoadFlow = "19ecf91d-4042-490c-adc1-7fb0fdb392c0"
@@ -24,7 +24,7 @@ ZipArchives = "49080126-0e18-4c2a-b176-c102e4b3760c"
 Sparlectra = {path = ".."}
 
 [compat]
-AnalyticLoadFlow = "0.9.15"
+AnalyticLoadFlow = "0.9.16"
 Dates = "1"
 LinearAlgebra = "1"
 SparseArrays = "1"

@@ -61,7 +61,7 @@ predates the bump loads the older version without a message, and an older
 version can return a wrong series result flagged as converged.
 `check_apslf_version` closes that gap at load time.
 """
-const APSLF_MIN_VERSION = v"0.9.15"
+const APSLF_MIN_VERSION = v"0.9.16"
 
 """
     check_apslf_version(loaded = pkgversion(AnalyticLoadFlow)) -> VersionNumber
