@@ -52,102 +52,112 @@
 
 using PrecompileTools: @setup_workload, @compile_workload
 
-@setup_workload begin
+# The workload lives in a function on purpose: code placed directly inside
+# @compile_workload is compiled as one top-level thunk BEFORE it runs, so an
+# `if` around it does not stop the compiler, and every call in the guarded
+# branch was inferred and put into the package image even with the workload
+# switched off (84 MB image, 45 s; 14 MB and 7 s without). A function body is
+# compiled only when the function is called.
+function _precompile_workload(full::Bool)
+    _pc_full = full
     _pc_mpower = normpath(joinpath(@__DIR__, "..", "..", "data", "mpower", "warmup_casePST.m"))
     _pc_scf = normpath(joinpath(@__DIR__, "..", "..", "data", "scf", "sp_casePST.scf.json"))
     _pc_pgm = normpath(joinpath(@__DIR__, "..", "..", "data", "scf", "pgm_interop.json"))
+    Logging.with_logger(Logging.NullLogger()) do
+        redirect_stdout(devnull) do
+            # --- file-based import + rectangular solve ------------------------
+            _pc_cfg = load_sparlectra_config(DEFAULT_SPARLECTRA_CONFIG_PATH; reload=true)
+            if isfile(_pc_mpower)
+                _pc_imported = import_case(_pc_mpower, _pc_cfg)
+                runpf!(_pc_imported.net; config=_pc_imported.config)
+                calcNetLosses!(_pc_imported.net)
+            end
+            # the SCF import is the fixture format of the tests and the
+            # shipped cases: one import here saves every session eight
+            # seconds on its first case for a few seconds of precompile
+            isfile(_pc_scf) && import_case(_pc_scf, _pc_cfg)
+            _pc_full && isfile(_pc_pgm) && import_case(_pc_pgm, _pc_cfg)
+
+            # --- state estimation on the tracked SCF fixture ------------------
+            if _pc_full && isfile(_pc_scf)
+                _pc_se_net = importSCF(_pc_scf)
+                runse!(_pc_se_net)
+            end
+
+            # --- programmatic net (workshop ring7) + run_sparlectra -----------
+            _pc_net = Net(name="precompile_ring7", baseMVA=100.0)
+            addBus!(net=_pc_net, busName="B1", vn_kV=110.0, vm_pu=1.02, va_deg=0.0)
+            for _pc_i in 2:7
+                addBus!(net=_pc_net, busName="B$(_pc_i)", vn_kV=110.0, vm_pu=1.0, va_deg=0.0)
+            end
+            addPIModelACLine!(net=_pc_net, fromBus="B1", toBus="B2", r_pu=0.010, x_pu=0.080, b_pu=0.0, status=1)
+            addPIModelACLine!(net=_pc_net, fromBus="B2", toBus="B3", r_pu=0.011, x_pu=0.085, b_pu=0.0, status=1)
+            addPIModelACLine!(net=_pc_net, fromBus="B3", toBus="B4", r_pu=0.012, x_pu=0.090, b_pu=0.0, status=1)
+            addPIModelACLine!(net=_pc_net, fromBus="B4", toBus="B5", r_pu=0.010, x_pu=0.080, b_pu=0.0, status=1)
+            addPIModelACLine!(net=_pc_net, fromBus="B5", toBus="B6", r_pu=0.011, x_pu=0.085, b_pu=0.0, status=1)
+            addPIModelACLine!(net=_pc_net, fromBus="B6", toBus="B7", r_pu=0.012, x_pu=0.090, b_pu=0.0, status=1)
+            addPIModelACLine!(net=_pc_net, fromBus="B7", toBus="B1", r_pu=0.010, x_pu=0.080, b_pu=0.0, status=1)
+            addPIModelACLine!(net=_pc_net, fromBus="B2", toBus="B5", r_pu=0.009, x_pu=0.070, b_pu=0.0, status=1)
+            addPIModelACLine!(net=_pc_net, fromBus="B3", toBus="B6", r_pu=0.009, x_pu=0.070, b_pu=0.0, status=1)
+            addProsumer!(net=_pc_net, busName="B1", type="EXTERNALNETWORKINJECTION", referencePri="B1", vm_pu=1.02, va_deg=0.0)
+            addProsumer!(net=_pc_net, busName="B3", type="GENERATOR", p=60.0, q=10.0)
+            addProsumer!(net=_pc_net, busName="B2", type="LOAD", p=35.0, q=10.0)
+            addProsumer!(net=_pc_net, busName="B4", type="LOAD", p=45.0, q=15.0)
+            addProsumer!(net=_pc_net, busName="B5", type="LOAD", p=25.0, q=8.0)
+            addProsumer!(net=_pc_net, busName="B6", type="LOAD", p=30.0, q=10.0)
+            addProsumer!(net=_pc_net, busName="B7", type="LOAD", p=20.0, q=6.0)
+            validate!(net=_pc_net)
+
+            _pc_quiet = OutputConfig(logfile_results=:off, console_summary=false, startup_latency_hint=false)
+            _pc_cfg_nr = SparlectraConfig(powerflow=PowerFlowConfig(solver=:rectangular, rescue=false), output=_pc_quiet)
+            _pc_cfg_ap = SparlectraConfig(powerflow=PowerFlowConfig(solver=:apslf), output=_pc_quiet)
+            _pc_cfg_hyb = SparlectraConfig(powerflow=PowerFlowConfig(solver=:rectangular, apslf_start=ApslfStartConfig(enabled=true)), output=_pc_quiet)
+
+            _pc_r_nr = run_sparlectra(net=deepcopy(_pc_net), config=_pc_cfg_nr)
+            _pc_st_nr = rectangular_pf_status(_pc_r_nr.net)
+            _pc_r_nr.final_converged
+            _pc_r_nr.final_mismatch
+            [n._vm_pu for n in _pc_r_nr.net.nodeVec]
+            if _pc_full
+                _pc_r_ap = run_sparlectra(net=deepcopy(_pc_net), config=_pc_cfg_ap)
+                run_sparlectra(net=deepcopy(_pc_net), config=_pc_cfg_hyb)
+                _pc_st = rectangular_pf_status(_pc_r_ap.net)
+                _pc_st.apslf_convergence_line
+                _pc_r_ap.final_converged
+                _pc_r_ap.final_mismatch
+
+                # --- standalone DC power flow ---------------------------------
+                rundcpf!(deepcopy(_pc_net))
+            end
+
+            # --- tap controller path ------------------------------------------
+            # sp_case14 carries a declared OLTC controller: the control loop
+            # (outer passes, controller write-back) is not on the ring's path
+            # and cost 2.3 s on its first run
+            _pc_scf14 = normpath(joinpath(@__DIR__, "..", "..", "data", "scf", "sp_case14.scf.json"))
+            _pc_full && isfile(_pc_scf14) && run_sparlectra(net=importSCF(_pc_scf14), config=_pc_cfg_nr)
+        end
+    end
+    return nothing
+end
+
+@setup_workload begin
     # SPARLECTRA_PRECOMPILE_WORKLOAD selects the size of the workload; the
     # default is "off": the module precompiles, no solver path is warmed, and
     # every path compiles on its first call. That keeps the install cheap on
     # a machine where the compile cache is expensive to write (a virus
-    # scanner on the cache directory turns every image write into minutes).
+    # scanner on the cache directory turns every image write into minutes,
+    # a two-core notebook machine pays minutes for the image itself).
     # "core" warms what every session needs: one MATPOWER and one SCF import,
     # the rectangular solve with losses, and run_sparlectra on the workshop
-    # ring. Everything else (PGM import, state estimation, APSLF and the hybrid start, DC power flow, the
-    # service layer, the tap control loop) is "full": it costs most of the
-    # precompile time of the package, and a library session pays it on its
-    # first call of each path instead, which is cheaper than paying for all
-    # of them at every install. The sysimage build sets "full".
+    # ring. Everything else (PGM import, state estimation, APSLF and the
+    # hybrid start, DC power flow, the tap control loop) is "full": it costs
+    # most of the precompile time of the package, and a library session pays
+    # it on its first call of each path instead. The sysimage build sets
+    # "full".
     _pc_mode = get(ENV, "SPARLECTRA_PRECOMPILE_WORKLOAD", "off")
-    _pc_full = _pc_mode == "full"
     _pc_run = _pc_mode in ("core", "full", "default", "minimal")
     @compile_workload begin
-        Logging.with_logger(Logging.NullLogger()) do
-            redirect_stdout(devnull) do
-              if _pc_run
-                # --- file-based import + rectangular solve ------------------------
-                _pc_cfg = load_sparlectra_config(DEFAULT_SPARLECTRA_CONFIG_PATH; reload=true)
-                if isfile(_pc_mpower)
-                    _pc_imported = import_case(_pc_mpower, _pc_cfg)
-                    runpf!(_pc_imported.net; config=_pc_imported.config)
-                    calcNetLosses!(_pc_imported.net)
-                end
-                # the SCF import is the fixture format of the tests and the
-                # shipped cases: one import here saves every session eight
-                # seconds on its first case for a few seconds of precompile
-                isfile(_pc_scf) && import_case(_pc_scf, _pc_cfg)
-                _pc_full && isfile(_pc_pgm) && import_case(_pc_pgm, _pc_cfg)
-
-                # --- state estimation on the tracked SCF fixture ------------------
-                if _pc_full && isfile(_pc_scf)
-                    _pc_se_net = importSCF(_pc_scf)
-                    runse!(_pc_se_net)
-                end
-
-                # --- programmatic net (workshop ring7) + run_sparlectra -----------
-                _pc_net = Net(name="precompile_ring7", baseMVA=100.0)
-                addBus!(net=_pc_net, busName="B1", vn_kV=110.0, vm_pu=1.02, va_deg=0.0)
-                for _pc_i in 2:7
-                    addBus!(net=_pc_net, busName="B$(_pc_i)", vn_kV=110.0, vm_pu=1.0, va_deg=0.0)
-                end
-                addPIModelACLine!(net=_pc_net, fromBus="B1", toBus="B2", r_pu=0.010, x_pu=0.080, b_pu=0.0, status=1)
-                addPIModelACLine!(net=_pc_net, fromBus="B2", toBus="B3", r_pu=0.011, x_pu=0.085, b_pu=0.0, status=1)
-                addPIModelACLine!(net=_pc_net, fromBus="B3", toBus="B4", r_pu=0.012, x_pu=0.090, b_pu=0.0, status=1)
-                addPIModelACLine!(net=_pc_net, fromBus="B4", toBus="B5", r_pu=0.010, x_pu=0.080, b_pu=0.0, status=1)
-                addPIModelACLine!(net=_pc_net, fromBus="B5", toBus="B6", r_pu=0.011, x_pu=0.085, b_pu=0.0, status=1)
-                addPIModelACLine!(net=_pc_net, fromBus="B6", toBus="B7", r_pu=0.012, x_pu=0.090, b_pu=0.0, status=1)
-                addPIModelACLine!(net=_pc_net, fromBus="B7", toBus="B1", r_pu=0.010, x_pu=0.080, b_pu=0.0, status=1)
-                addPIModelACLine!(net=_pc_net, fromBus="B2", toBus="B5", r_pu=0.009, x_pu=0.070, b_pu=0.0, status=1)
-                addPIModelACLine!(net=_pc_net, fromBus="B3", toBus="B6", r_pu=0.009, x_pu=0.070, b_pu=0.0, status=1)
-                addProsumer!(net=_pc_net, busName="B1", type="EXTERNALNETWORKINJECTION", referencePri="B1", vm_pu=1.02, va_deg=0.0)
-                addProsumer!(net=_pc_net, busName="B3", type="GENERATOR", p=60.0, q=10.0)
-                addProsumer!(net=_pc_net, busName="B2", type="LOAD", p=35.0, q=10.0)
-                addProsumer!(net=_pc_net, busName="B4", type="LOAD", p=45.0, q=15.0)
-                addProsumer!(net=_pc_net, busName="B5", type="LOAD", p=25.0, q=8.0)
-                addProsumer!(net=_pc_net, busName="B6", type="LOAD", p=30.0, q=10.0)
-                addProsumer!(net=_pc_net, busName="B7", type="LOAD", p=20.0, q=6.0)
-                validate!(net=_pc_net)
-
-                _pc_quiet = OutputConfig(logfile_results=:off, console_summary=false, startup_latency_hint=false)
-                _pc_cfg_nr = SparlectraConfig(powerflow=PowerFlowConfig(solver=:rectangular, rescue=false), output=_pc_quiet)
-                _pc_cfg_ap = SparlectraConfig(powerflow=PowerFlowConfig(solver=:apslf), output=_pc_quiet)
-                _pc_cfg_hyb = SparlectraConfig(powerflow=PowerFlowConfig(solver=:rectangular, apslf_start=ApslfStartConfig(enabled=true)), output=_pc_quiet)
-
-                _pc_r_nr = run_sparlectra(net=deepcopy(_pc_net), config=_pc_cfg_nr)
-                _pc_st_nr = rectangular_pf_status(_pc_r_nr.net)
-                _pc_r_nr.final_converged
-                _pc_r_nr.final_mismatch
-                [n._vm_pu for n in _pc_r_nr.net.nodeVec]
-                if _pc_full
-                    _pc_r_ap = run_sparlectra(net=deepcopy(_pc_net), config=_pc_cfg_ap)
-                    run_sparlectra(net=deepcopy(_pc_net), config=_pc_cfg_hyb)
-                    _pc_st = rectangular_pf_status(_pc_r_ap.net)
-                    _pc_st.apslf_convergence_line
-                    _pc_r_ap.final_converged
-                    _pc_r_ap.final_mismatch
-
-                    # --- standalone DC power flow ---------------------------------
-                    rundcpf!(deepcopy(_pc_net))
-                end
-
-                # --- tap controller path ------------------------------------------
-                # sp_case14 carries a declared OLTC controller: the control loop
-                # (outer passes, controller write-back) is not on the ring's path
-                # and cost 2.3 s on its first run
-                _pc_scf14 = normpath(joinpath(@__DIR__, "..", "..", "data", "scf", "sp_case14.scf.json"))
-                _pc_full && isfile(_pc_scf14) && run_sparlectra(net=importSCF(_pc_scf14), config=_pc_cfg_nr)
-              end
-            end
-        end
+        _pc_run && _precompile_workload(_pc_mode == "full")
     end
 end

@@ -50,13 +50,18 @@
 #
 # Nothing here needs an extra installation: AnalyticLoadFlow.jl is a
 # dependency of Sparlectra, and `power_flow.solver = apslf` in the
-# configuration switches a run over to it.
+# configuration switches a run over to it. Sparlectra 0.17 needs
+# AnalyticLoadFlow 0.9.15 or newer and refuses to load with an older one,
+# so the version below is the one this workshop was written against:
 
 #nb # > **Colab is slow here.** The install cell below fetches Sparlectra and
-#nb # > precompiles it on Colab's two cores; that takes about ten minutes and
-#nb # > prints nothing while it runs ("Precompiling packages..." is the last
-#nb # > line you see). Wait for the cell to finish before running the next one;
-#nb # > a second click on it starts the whole install again.
+#nb # > its dependencies and precompiles them on Colab's two cores; that takes a
+#nb # > few minutes and prints one line per package as it goes. Sparlectra
+#nb # > itself precompiles in well under a minute; the first cell that
+#nb # > imports a case and solves it then compiles for about a minute more,
+#nb # > every later cell runs at speed. Wait for the install cell to finish
+#nb # > before running the next one; a second click on it starts the whole
+#nb # > install again.
 #nb using Pkg
 #nb Pkg.activate(temp = true)
 #nb Pkg.add(url = "https://github.com/Welthulk/Sparlectra.jl", rev = "main")
@@ -105,6 +110,9 @@ end
 # takes the whole run from one `SparlectraConfig`: solver choice, control
 # loop, output. The console summary is switched off here because the
 # chapter prints its own comparisons.
+
+println("AnalyticLoadFlow ", pkgversion(Sparlectra.AnalyticLoadFlow))
+@assert pkgversion(Sparlectra.AnalyticLoadFlow) >= v"0.9.15"                #src
 
 quiet = OutputConfig(logfile_results=:off, console_summary=false, startup_latency_hint=false)
 cfg_nr = SparlectraConfig(powerflow=PowerFlowConfig(solver=:rectangular, rescue=false), output=quiet)
@@ -296,34 +304,31 @@ println("APSLF start : ", r_hyb.outcome, ", ", r_hyb.iterations, " Newton iterat
 # (`contingency.rescue_ladder`), and what the Web UI offers as
 # "APSLF start" next to the solver choice.
 #
-# ### Where APSLF is not the right tool
+# ### Networks with controllers: the series as the start value
 #
 # The series solves the algebraic power-flow equations and nothing else.
 # Outer-loop controllers (tap changers with a voltage target, Q(U)
 # characteristics, remote voltage control) change the model between
-# solves, and Sparlectra refuses the combination rather than running the
-# solver on a model whose controllers would stay silent. The shipped
-# `sp_case14` carries such a tap controller, so the run below is expected
-# to be refused; the printed line is the refusal, not a defect:
+# solves, so `power_flow.solver = apslf` alone is not offered for such a
+# network: Sparlectra refuses the combination at the start of the run
+# instead of running the solver on a model whose controllers would stay
+# silent. The shipped `sp_case14` carries a tap controller. For it the
+# hybrid start of Part 3 is the way to use the series: the controllers run
+# in the rectangular outer loop, the series only supplies the start value,
+# and the network solves with the tap controller active. The
+# configuration is repeated here so this cell runs on its own:
 
 case14 = joinpath(dirname(dirname(pathof(Sparlectra))), "data", "scf", "sp_case14.scf.json")
-rejected = try
-    run_sparlectra(net=importSCF(case14), config=cfg_apslf)
-    ""
-catch err
-    sprint(showerror, err)
-end
-println("refused as intended: ", first(rejected, 120), " ...")
-@assert !isempty(rejected)                                                  #src
-
-# For such a network the hybrid start of Part 3 is the way to use the
-# series: the controllers run in the rectangular outer loop, the series
-# only supplies the start value. The same network solves that way, tap
-# controller included:
-
+cfg_hybrid = SparlectraConfig(powerflow=PowerFlowConfig(solver=:rectangular, apslf_start=Sparlectra.ApslfStartConfig(enabled=true)), output=quiet)
 r14 = run_sparlectra(net=importSCF(case14), config=cfg_hybrid)
 println("hybrid start on sp_case14: ", r14.outcome, ", ", r14.iterations, " Newton iterations")
 @assert r14.final_converged                                                 #src
+refused = try                                                               #src
+    run_sparlectra(net=importSCF(case14), config=cfg_apslf); ""             #src
+catch err                                                                   #src
+    sprint(showerror, err)                                                  #src
+end                                                                         #src
+@assert occursin("does not support active controllers", refused)            #src
 
 # ## Summary
 #

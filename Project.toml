@@ -47,8 +47,9 @@ julia = "1.12"
 
 [extras]
 BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
+Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 Unicode = "4ec0a83e-493e-50e2-b9ac-8f72acf5a8f5"
 
 [targets]
-test = ["Test", "BenchmarkTools", "Unicode"]
+test = ["Test", "BenchmarkTools", "Unicode", "Pkg"]
