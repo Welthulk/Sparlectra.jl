@@ -20,8 +20,17 @@
 using Sparlectra
 # the application package (service layer, Web UI) lives in app/ with its own
 # environment; it is loaded from there for the groups that test it and for
-# the smoke test of the fast profile
-pushfirst!(LOAD_PATH, normpath(joinpath(@__DIR__, "..", "app")))
+# the smoke test of the fast profile. A fresh checkout (Pkg.test on CI, a
+# registered install) has no app/Manifest.toml yet: the environment is set
+# up here once, otherwise SparlectraApp cannot even find the library.
+const _SPARLECTRA_APP_DIR = normpath(joinpath(@__DIR__, "..", "app"))
+if !isfile(joinpath(_SPARLECTRA_APP_DIR, "Manifest.toml"))
+  import Pkg
+  Pkg.activate(_SPARLECTRA_APP_DIR) do
+    Pkg.instantiate()
+  end
+end
+pushfirst!(LOAD_PATH, _SPARLECTRA_APP_DIR)
 using SparlectraApp
 using Test
 using Logging
@@ -126,6 +135,7 @@ const TEST_GROUPS = TestGroup[
     TestGroup("cgmes_export", ["test_cgmes_export.jl"], [:run_cgmes_export_tests]),
     # --- install: the installation path of a fresh checkout, before a release
     TestGroup("install", ["test_install.jl"], [:run_install_tests]),
+    TestGroup("workshops", ["test_workshops.jl"], [:run_workshop_tests]),
     TestGroup("dtf_extended", ["extended/test_dtf_importer.jl", "extended/test_dtf_for002_validation_example.jl", "extended/test_dtf_for002_outage_validation_example.jl", "extended/test_dtf_matpower_export_validation_example.jl", "extended/test_dtf_api_webui_integration.jl"],
         [:run_dtf_importer_tests, :run_dtf_for002_validation_example_tests, :run_dtf_for002_outage_validation_example_tests, :run_dtf_matpower_export_validation_example_tests, :run_dtf_api_webui_integration_tests]),
 ]
@@ -145,13 +155,14 @@ const TEST_PROFILES = Dict{Symbol,Vector{String}}(
     :webui => ["webui", "webui_extended"],
     :extd => ["demo_cases", "scf", "programmatic_api_extended", "matpower_examples", "example_infra", "net_cache", "synthetic_grids", "cgmes_importer", "cgmes_export", "dtf_extended"],
     :install => ["install"],
+    :workshops => ["workshops"],
 )
 TEST_PROFILES[:extended] = vcat(TEST_PROFILES[:pf], TEST_PROFILES[:se], TEST_PROFILES[:config], TEST_PROFILES[:webui], TEST_PROFILES[:extd])
-TEST_PROFILES[:all] = vcat(TEST_PROFILES[:fast], TEST_PROFILES[:extended], TEST_PROFILES[:install])
+TEST_PROFILES[:all] = vcat(TEST_PROFILES[:fast], TEST_PROFILES[:extended], TEST_PROFILES[:install], TEST_PROFILES[:workshops])
 
-# every group sits in exactly one of the seven base profiles
+# every group sits in exactly one of the eight base profiles
 let seen = String[]
-    for key in (:fast, :pf, :se, :config, :webui, :extd, :install), name in TEST_PROFILES[key]
+    for key in (:fast, :pf, :se, :config, :webui, :extd, :install, :workshops), name in TEST_PROFILES[key]
         name in seen && error("test group $(name) is listed in two profiles")
         any(g -> g.name == name, TEST_GROUPS) || error("profile $(key) names an unknown test group $(name)")
         push!(seen, name)

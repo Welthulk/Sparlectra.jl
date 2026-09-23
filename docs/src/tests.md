@@ -8,9 +8,9 @@ Profile selection precedence is:
 
 ## Test profiles
 
-Every test group belongs to exactly one of seven base profiles; `extended`
-is the union of the five that are neither `fast` nor `install`, and `all`
-runs everything. The
+Every test group belongs to exactly one of eight base profiles; `extended`
+is the union of the five that are neither `fast`, `install` nor
+`workshops`, and `all` runs everything. The
 documentation build is a gate of its own (`sh tools/run_gates.sh docs`),
 not a profile: a change to Markdown or a docstring needs the docs build and
 nothing else.
@@ -24,8 +24,9 @@ nothing else.
 | `webui` | `julia --project=. test/runtests.jl webui` | The local browser UI, both files | Before every Web UI pull request; `fast` proves nothing about `src/webui` |
 | `extd` | `julia --project=. test/runtests.jl extd` | Shipped demo cases, SCF, service lifecycle, MATPOWER examples, example infrastructure, net cache, synthetic grids, CGMES import and export, DTF | After a change to a format, an importer, the service layer or the examples |
 | `install` | `julia --project=. test/runtests.jl install` | The installation path: a copy of the checkout without the application manifest, `start_webui.jl --env-only` twice, the first start sets up and compiles, the second does nothing | Before a release; about a minute of cold compile, so not part of `extended` |
+| `workshops` | `julia --project=. test/runtests.jl workshops` | Every Literate workshop under `docs/lit` top to bottom in a fresh module, with the assert next to each printed number | After a change to a workshop or to an API a workshop uses; before the notebooks are regenerated |
 | `extended` | `julia --project=. test/runtests.jl extended` | `pf`, `se`, `config`, `webui` and `extd` in that order | Before a merge |
-| `all` | `julia --project=. test/runtests.jl all` | `fast`, `extended`, then `install` | Declaring a branch merge-ready, together with the docs build |
+| `all` | `julia --project=. test/runtests.jl all` | `fast`, `extended`, then `install` and `workshops` | Declaring a branch merge-ready, together with the docs build |
 
 The service layer and the Web UI are the `SparlectraApp` package under
 `app/`; the runner puts that directory on the load path and loads the
@@ -50,6 +51,7 @@ source; the runner refuses a group in two profiles or in none):
 | `webui` | `webui`, `webui_extended` |
 | `extd` | `demo_cases`, `scf`, `programmatic_api_extended`, `matpower_examples`, `example_infra`, `net_cache`, `synthetic_grids`, `cgmes_importer`, `cgmes_export`, `dtf_extended` |
 | `install` | `install` |
+| `workshops` | `workshops` |
 
 The two group tables further down describe what each group checks; they
 are ordered by the former two-profile split and the membership above is
@@ -276,6 +278,7 @@ The groups of this second table are:
 
 | Extended addition | File | Main checks |
 |---|---|---|
+| `workshops` | `test/test_workshops.jl` | Every `docs/lit/workshop_*.jl` runs top to bottom in its own module with output and logging silenced; a failing `@assert` in a workshop fails the test. The generated notebooks and pages cannot drift from the library unnoticed. About 50 s. |
 | `install` | `test/test_install.jl` | The installation path of a fresh checkout: a copy without the application manifest, `start_webui.jl --env-only` run twice as child processes offline against the depot; the first start reports the environment setup and the compile, the second reports both environments up to date and the packages compiled. |
 | `webui` | `test/test_webui.jl` | Focused Web UI coverage for form parsing and backend validation, result rendering, active and terminal timing cards, commit-span omission, tolerance-step hook, path traversal rejection, DTF upload role classification, primary-case and FOR002 selector filtering, the CGMES-export run option (form checkbox + help topic, `export_cgmes` request flag incl. hidden-false/absent-field defaults, and the result-page summary row for completed/failed/absent export metadata), the last-edit-wins precedence between the configuration file and saved case settings (a newer YAML wins for its own keys and sets the notice flag, an older one keeps the sidecar values), the SE phase-5 chain (measurement-set upload classification via content sniff, the SE section of the Runs page (`/stateestimation` is a redirect onto its anchor) and demo generator, the service-level SE run with artifacts and history kind `se`, the SE-started PF and N-1 with the SE run id in the metadata and result parity against a manual run), the measurement generator v2 chain (truth state fresh-solve/from-run with bit-exact state adoption and the rejection paths, deterministic balance-aware single flow ends, passive nodes at a configured sigma or as protected ZI constraints, the se_deltas.csv artifact, and the bad-data threshold surface with staged/legacy service parity and invalid-mode rejection; plus the Delta-u PST chain on the tracked warmup case: generator targets the additional-voltage stepper, the mass release estimates it :pst along the nameplate psi, the fixation lands on the injected step, and the machine trafo stays calculated), the buildSysimage one-call dry run, the sysimage launcher decision from tools/sysimage_launcher.jl (image/metadata present, Julia version, Manifest hash, a src file newer than the image, and the no-terminal default) together with a parity check that `Sparlectra.webui_sysimage_problem` returns the identical verdict for every one of those states (the two implementations cannot share code, because the launcher runs before the package is loaded), the sysimage build-progress contract (a build that stopped reporting for more than a minute counts as gone, so a crashed builder cannot lock the refresh button) and the Sysimage page rendering idle, running, and failed including its build-log tail, a parse check of the generated app CLI driven from the checkout tool, and stubbed route checks without a real asynchronous solver run. Real asynchronous PowerFlow job lifecycles, artifact preview/download/ZIP/history/delete matrices, browser-launcher platform matrices, socket/server lifecycle checks, Markdown help/documentation cross-product validation, repeated real MATPOWER runs, and the scenario editor flows (a three-op scenario created through the form on the shipped sp_case60 bundle (staged copy switched to explicit-list mode), saved, reloaded and run with `:flag` showing the row and the screening columns; the result page's N-1 table showing a screened row with its estimate detail after `:flag`, no screened column after `:off`, and a failed case's error text in the row; a `tap_pos` op on a regulated transformer rejected with the controller named and NOT written to the file; a MATPOWER case getting the export hint with no editor, no `file_block` option on the main form, and an SCF case getting both) are extended-only in `webui_extended`. |
 | `contingency_extended` | `test/test_contingency.jl` | N-1 identity slice on the shipped sp_case1354 (first 60 branches): serial vs parallel field equality with `max_tasks=1` and auto, plus the `retry_flat_start` invariance on converged cases |

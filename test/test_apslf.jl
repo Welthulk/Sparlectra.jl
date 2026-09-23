@@ -369,21 +369,6 @@ function run_apslf_tests()
             end
         end)() end
 
-        @testset "APSLF workshop runs with its assertions" begin (function ()
-            # the Literate workshop is executable Julia with an @assert next to every
-            # printed number; running it here keeps the notebook from drifting. The
-            # Q-limit section runs on the shipped data/mpower/sp_case118.m, so the
-            # workshop needs no download and this test is no longer gated.
-            workshop = abspath(joinpath(dirname(@__DIR__), "docs", "lit", "workshop_apslf.jl"))
-            @test isfile(workshop)
-            @test isfile(joinpath(dirname(@__DIR__), "data", "mpower", "sp_case118.m"))
-            mod = Module(:WorkshopApslfRun)
-            redirect_stdout(devnull) do
-                Base.include(mod, workshop)
-            end
-            @test true
-            println("      APSLF workshop: RAN")
-        end)() end
 
         return true
     end
