@@ -45,9 +45,9 @@ from the header, independent of the popup.
 ## Start after package installation
 
 ```julia
-using Sparlectra
+using SparlectraApp   # the Web UI is part of the application package (app/)
 
-server = Sparlectra.start_sparlectra_webui(open_browser = true)
+server = SparlectraApp.start_sparlectra_webui(open_browser = true)
 wait(server.task)
 ```
 

@@ -116,7 +116,7 @@ function _write_app_package(appdir::String; flavor::Symbol, script::String)
           return 1
         end
       end
-      server = Sparlectra.start_sparlectra_webui(open_browser = open_browser, port = port)
+      server = SparlectraApp.start_sparlectra_webui(open_browser = open_browser, port = port)
       wait(server.task)
       return 0
     end
@@ -410,13 +410,14 @@ function _write_app_package(appdir::String; flavor::Symbol, script::String)
   end
   """ : ""
 
-  open(joinpath(appdir, "src", "SparlectraApp.jl"), "w") do io
+  open(joinpath(appdir, "src", "SparlectraExe.jl"), "w") do io
     print(
       io,
       """
-      module SparlectraApp
+      module SparlectraExe
 
       using Sparlectra
+      using SparlectraApp
       $(script_block)
       $(built_block)
       $(helpers)
@@ -426,7 +427,7 @@ function _write_app_package(appdir::String; flavor::Symbol, script::String)
     )
   end
   open(joinpath(appdir, "Project.toml"), "w") do io
-    println(io, "name = \"SparlectraApp\"")
+    println(io, "name = \"SparlectraExe\"")
     println(io, "uuid = \"7c1d43f2-64d1-4f38-9f6a-2a52c0ffee01\"")
     println(io, "version = \"0.1.0\"")
     println(io, "")
@@ -468,6 +469,7 @@ function main()
   # itself declares nothing extra
   Base.invokelatest(pkgm.activate, appdir)
   Base.invokelatest(pkgm.develop; path = _REPO_ROOT)
+  Base.invokelatest(pkgm.develop; path = joinpath(_REPO_ROOT, "app"))
   Base.invokelatest(pkgm.instantiate)
 
   workload = flavor == :runtime ? joinpath(@__DIR__, "app_workload_runtime.jl") : joinpath(@__DIR__, "sysimage_workload.jl")

@@ -18,6 +18,11 @@
 #          includes the test files of its groups, and runs the grouped
 #          testsets with quiet output capture
 using Sparlectra
+# the application package (service layer, Web UI) lives in app/ with its own
+# environment; it is loaded from there for the groups that test it and for
+# the smoke test of the fast profile
+pushfirst!(LOAD_PATH, normpath(joinpath(@__DIR__, "..", "app")))
+using SparlectraApp
 using Test
 using Logging
 using Printf

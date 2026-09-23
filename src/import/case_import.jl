@@ -226,3 +226,48 @@ function import_case(path::AbstractString, general_config::SparlectraConfig; req
   end
   throw(ArgumentError("import_case: unsupported case format $(fmt) for $(path)."))
 end
+
+const DTF_FOR001_UNSUPPORTED_DCLINE_MESSAGE = "DC lines are currently not supported by the native DTF/MATPOWER power-flow path."
+
+# Resolve the delivery parts of one CGMES run: the case itself, any extra
+# parts from cgmes_import.path (typically the boundary set), and — for a bare
+# base case — a boundary delivery sitting next to it in the same directory
+# (ENTSO-E names them "...Boundary..." or "..._BD_..."). Returns the path list
+# plus whether the boundary was autodetected. Shared by the power-flow CGMES
+# branch and the short-circuit service run.
+function _cgmes_delivery_paths(case_path::AbstractString, cgmes_cfg)::Tuple{Vector{String},Bool}
+  extra = filter(!isempty, strip.(split(cgmes_cfg.path, ';')))
+  paths = String[String(case_path)]
+  for p in extra
+    p == case_path || push!(paths, String(p))
+  end
+  length(paths) > 1 && return paths, false
+  neighbours = try
+    readdir(dirname(abspath(case_path)))
+  catch
+    String[]
+  end
+  for n in neighbours
+    occursin(r"(?i)boundary|_bd_|_bd\.", n) || continue
+    cand = joinpath(dirname(abspath(case_path)), n)
+    cand == abspath(case_path) && continue
+    (isdir(cand) || endswith(lowercase(n), ".zip")) || continue
+    push!(paths, cand)
+    return paths, true
+  end
+  return paths, false
+end
+
+function _reject_dtf_dcline_like_content!(case_path::AbstractString)
+  # open(...) do closes the handle even when the ArgumentError below aborts
+  # the scan mid-file; eachline(path) would keep the descriptor open until GC
+  # (blocks file deletion on Windows, EBUSY).
+  open(case_path) do io
+    for (line_no, line) in enumerate(eachline(io))
+      if occursin(r"(?i)\b(HVDC|DCLINE|DC\s*LINE)\b", line)
+        throw(ArgumentError("unsupported_dtf_dc_line at line $(line_no): $(DTF_FOR001_UNSUPPORTED_DCLINE_MESSAGE)"))
+      end
+    end
+  end
+  return nothing
+end

@@ -588,7 +588,7 @@ function run_cgmes_importer_tests()
     # The Web UI docs reader serves an allowlist — the CGMES page and the
     # contextual help for its options must be reachable from the interface.
     @testset "Web UI documentation wiring" begin (function ()
-      page = Sparlectra.resolve_webui_doc_page("cgmes_import")
+      page = SparlectraApp.resolve_webui_doc_page("cgmes_import")
       @test page !== nothing && page.file == "cgmes_import.md"
       @test isfile(joinpath(dirname(@__DIR__), "docs", "src", page.file))
       # The page must carry the option reference the docs reader links to.
@@ -1013,7 +1013,7 @@ function run_cgmes_importer_tests()
       @test occursin("Verdict:", report)
 
       # the button gate sees machines, the run reports what they lack
-      @test Sparlectra._webui_case_has_short_circuit_data(cgmes_fixture_dir("sp_case14"))
+      @test SparlectraApp._webui_case_has_short_circuit_data(cgmes_fixture_dir("sp_case14"))
       sc = run_with_expected_warnings(() -> start_powerflow_run(Dict("casefile" => z, "config_file" => cfg, "output_root" => root, "short_circuit_mode" => true)), ["has no usable x''_d", "has no usable ratedS", "has no usable ratedU"])
       @test sc["success"] === true
       @test sc["reason"] == "short_circuit_flagged_lower_bound"

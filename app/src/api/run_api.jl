@@ -24,7 +24,6 @@ const Q_LIMIT_LOG_ARTIFACT = "q_limit.log"
 const MATPOWER_DCLINE_ARTIFACT = "matpower_dcline.csv"
 const HVDC_LINKS_ARTIFACT = "hvdc_links.csv"
 
-
 mutable struct PowerFlowPhaseTimingRecorder
   timings::Vector{Dict{String,Any}}
   active_index::Union{Nothing,Int}
@@ -149,150 +148,7 @@ include("run_diagnostic_artifacts.jl")
 include("run_self_check.jl")
 include("run_finalization.jl")
 
-function _resolve_detailed_csv_format(value)::NamedTuple
-  name = String(value)
-  name == "technical" && return (name = name, delimiter = ',', decimal_separator = '.', thousands_separator = "")
-  name == "excel_de" && return (name = name, delimiter = ';', decimal_separator = ',', thousands_separator = ".")
-  name == "excel_us" && return (name = name, delimiter = ',', decimal_separator = '.', thousands_separator = ",")
-  throw(ArgumentError("Unsupported detailed_result_csv_format \"$(name)\". Expected technical, excel_de, or excel_us."))
-end
-
-function _group_csv_integer(text::AbstractString, separator::AbstractString)::String
-  isempty(separator) && return String(text)
-
-  sign = startswith(text, "-") ? "-" : ""
-  digits = isempty(sign) ? String(text) : text[2:end]
-
-  # Thousands grouping is only valid for integer digit strings. Leave textual
-  # values such as Bool strings unchanged if they accidentally reach this helper.
-  (isempty(digits) || !all(isdigit, digits)) && return String(text)
-
-  first_group = mod(length(digits), 3)
-  first_group == 0 && (first_group = 3)
-  groups = String[digits[1:first_group]]
-  for start = (first_group+1):3:length(digits)
-    push!(groups, digits[start:(start+2)])
-  end
-  return sign * join(groups, separator)
-end
-
-function _format_csv_number(value::Integer, format)::String
-  return _group_csv_integer(string(value), format.thousands_separator)
-end
-
-function _format_csv_number(value::AbstractFloat, format)::String
-  isnan(value) && return "NaN"
-  isinf(value) && return signbit(value) ? "-Inf" : "Inf"
-  technical = @sprintf("%.15g", value)
-  if format.name != "technical"
-    exponent_marker = findfirst(character -> character in ('e', 'E'), technical)
-    if exponent_marker !== nothing
-      mantissa = technical[begin:prevind(technical, exponent_marker)]
-      exponent = parse(Int, technical[nextind(technical, exponent_marker):end])
-      sign = startswith(mantissa, "-") ? "-" : ""
-      unsigned = isempty(sign) ? mantissa : mantissa[2:end]
-      dot_index = findfirst(==('.'), unsigned)
-      fractional_digits = dot_index === nothing ? 0 : ncodeunits(unsigned) - dot_index
-      digits = replace(unsigned, "." => "")
-      decimal_position = ncodeunits(digits) - fractional_digits + exponent
-      if decimal_position <= 0
-        technical = sign * "0." * repeat("0", -decimal_position) * digits
-      elseif decimal_position >= ncodeunits(digits)
-        technical = sign * digits * repeat("0", decimal_position - ncodeunits(digits))
-      else
-        technical = sign * digits[1:decimal_position] * "." * digits[(decimal_position+1):end]
-      end
-    end
-    dot_index = findfirst(==('.'), technical)
-    if dot_index !== nothing
-      last_nonzero = lastindex(technical)
-      while last_nonzero > dot_index && technical[last_nonzero] == '0'
-        last_nonzero = prevind(technical, last_nonzero)
-      end
-      technical = last_nonzero == dot_index ? technical[begin:prevind(technical, dot_index)] : technical[begin:last_nonzero]
-      isempty(technical) && (technical = "0")
-      technical == "-0" && (technical = "0")
-    end
-  end
-  exponent_marker = format.name == "technical" ? findfirst(character -> character in ('e', 'E'), technical) : nothing
-  mantissa = exponent_marker === nothing ? technical : technical[begin:prevind(technical, exponent_marker)]
-  exponent = exponent_marker === nothing ? "" : technical[exponent_marker:end]
-  dot_index = findfirst(==('.'), mantissa)
-  integer_text = dot_index === nothing ? mantissa : mantissa[begin:prevind(mantissa, dot_index)]
-  integer_part = _group_csv_integer(integer_text, format.thousands_separator)
-  fractional_part = dot_index === nothing ? "" : string(format.decimal_separator, mantissa[nextind(mantissa, dot_index):end])
-  return integer_part * fractional_part * exponent
-end
-
-struct CsvFormatRuntime
-  name::String
-  delimiter::Char
-  decimal_separator::Char
-  thousands_separator::String
-end
-
-CsvFormatRuntime(format) = CsvFormatRuntime(String(format.name), format.delimiter, format.decimal_separator, String(format.thousands_separator))
-
-function _csv_needs_quotes(text::AbstractString, delimiter::Char)::Bool
-  for character in text
-    character in (delimiter, '"', '\r', '\n') && return true
-  end
-  return false
-end
-
-function write_csv_cell!(io::IO, value, delimiter::Char, fmt::CsvFormatRuntime)
-  value === missing && return nothing
-  value === nothing && return nothing
-  text = value isa Bool ? string(value) : value isa Integer ? _format_csv_number(value, fmt) : value isa AbstractFloat ? _format_csv_number(value, fmt) : string(value)
-  if _csv_needs_quotes(text, delimiter)
-    print(io, '"')
-    for character in text
-      character == '"' && print(io, '"')
-      print(io, character)
-    end
-    print(io, '"')
-  else
-    print(io, text)
-  end
-  return nothing
-end
-
-function write_csv_row_direct!(io::IO, delimiter::Char, fmt::CsvFormatRuntime, values...)
-  first = true
-  for value in values
-    first || print(io, delimiter)
-    write_csv_cell!(io, value, delimiter, fmt)
-    first = false
-  end
-  println(io)
-  return nothing
-end
-
-function _format_csv_value(value, format)::String
-  value === missing && return ""
-  value === nothing && return ""
-
-  # Bool is an Integer subtype in Julia. Format it before Integer values so
-  # Excel-oriented thousands grouping cannot turn true/false into t.rue/fa.lse.
-  value isa Bool && return string(value)
-
-  value isa Integer && return _format_csv_number(value, format)
-  value isa AbstractFloat && return _format_csv_number(value, format)
-  return string(value)
-end
-
-function _csv_field(value, delimiter::Char, format = _resolve_detailed_csv_format("technical"))::String
-  value === missing && return ""
-  value === nothing && return ""
-  text = _format_csv_value(value, format)
-  if any(character -> character in (delimiter, '"', '\r', '\n'), text)
-    return "\"" * replace(text, "\"" => "\"\"") * "\""
-  end
-  return text
-end
-
 include("run_csv_exports.jl")
-include("result_csv.jl")
 include("run_bus_powers_export.jl")
 
 function _csv_solution_quality(raw_result::SparlectraRunResult)::String
@@ -339,8 +195,6 @@ function _final_outcome_payload(raw_result::SparlectraRunResult)::Dict{String,An
   )
 end
 
-const DTF_FOR001_UNSUPPORTED_DCLINE_MESSAGE = "DC lines are currently not supported by the native DTF/MATPOWER power-flow path."
-
 function _normalize_case_format(value)::Symbol
   format = value isa Symbol ? value : Symbol(lowercase(strip(String(value))))
   # `pgm` is an accepted spelling of `scf`, not a second reader: a
@@ -351,76 +205,6 @@ function _normalize_case_format(value)::Symbol
   format === :pgm && return :scf
   format in (:auto, :matpower, :dtf_for001, :cgmes, :scf) || throw(ArgumentError("case_format must be auto, matpower, dtf_for001, cgmes, scf, or pgm; got $(repr(value))."))
   return format
-end
-
-"""Cheap CGMES sniff: a folder, or a ZIP holding CGMES RDF/XML payloads."""
-# Resolve the delivery parts of one CGMES run: the case itself, any extra
-# parts from cgmes_import.path (typically the boundary set), and — for a bare
-# base case — a boundary delivery sitting next to it in the same directory
-# (ENTSO-E names them "...Boundary..." or "..._BD_..."). Returns the path list
-# plus whether the boundary was autodetected. Shared by the power-flow CGMES
-# branch and the short-circuit service run.
-function _cgmes_delivery_paths(case_path::AbstractString, cgmes_cfg)::Tuple{Vector{String},Bool}
-  extra = filter(!isempty, strip.(split(cgmes_cfg.path, ';')))
-  paths = String[String(case_path)]
-  for p in extra
-    p == case_path || push!(paths, String(p))
-  end
-  length(paths) > 1 && return paths, false
-  neighbours = try
-    readdir(dirname(abspath(case_path)))
-  catch
-    String[]
-  end
-  for n in neighbours
-    occursin(r"(?i)boundary|_bd_|_bd\.", n) || continue
-    cand = joinpath(dirname(abspath(case_path)), n)
-    cand == abspath(case_path) && continue
-    (isdir(cand) || endswith(lowercase(n), ".zip")) || continue
-    push!(paths, cand)
-    return paths, true
-  end
-  return paths, false
-end
-
-# Feeder data a CASE declares at the net's primary slack bus
-# (ExternalNetworkInjection max current + R/X), converted to the
-# (sk_MVA, rx) pair _apply_external_grid_config! consumes in :auto mode.
-# A CGMES delivery declares it, and so does a case file whose PGM `source`
-# states `sk`/`rx_ratio` - PGM models a source as a voltage source BEHIND
-# that impedance, so the numbers belong to the model, not to the metadata.
-# Returns nothing when the slack bus carries no usable declaration.
-function _declared_slack_feeder(net::Net, shortcircuit)::Union{Nothing,NamedTuple}
-  isempty(net.slackVec) && return nothing
-  bus_names = Dict{Int,String}(idx => n for (n, idx) in net.busDict)
-  slack = get(bus_names, net.slackVec[1], nothing)
-  slack === nothing && return nothing
-  vn = getNodeVn(net.nodeVec[net.slackVec[1]])
-  for f in shortcircuit.external_network_injections
-    f.bus === nothing && continue
-    String(f.bus) == slack || continue
-    ik = f.maxInitialSymShCCurrent_A
-    (ik === nothing || !isfinite(Float64(ik)) || Float64(ik) <= 0.0) && continue
-    sk = sqrt(3.0) * vn * Float64(ik) / 1000.0
-    rx = f.maxR1ToX1Ratio
-    rxv = (rx === nothing || !isfinite(Float64(rx)) || Float64(rx) < 0.0) ? 0.1 : Float64(rx)
-    return (sk_MVA = sk, rx = rxv)
-  end
-  return nothing
-end
-
-function _reject_dtf_dcline_like_content!(case_path::AbstractString)
-  # open(...) do closes the handle even when the ArgumentError below aborts
-  # the scan mid-file; eachline(path) would keep the descriptor open until GC
-  # (blocks file deletion on Windows, EBUSY).
-  open(case_path) do io
-    for (line_no, line) in enumerate(eachline(io))
-      if occursin(r"(?i)\b(HVDC|DCLINE|DC\s*LINE)\b", line)
-        throw(ArgumentError("unsupported_dtf_dc_line at line $(line_no): $(DTF_FOR001_UNSUPPORTED_DCLINE_MESSAGE)"))
-      end
-    end
-  end
-  return nothing
 end
 
 function _dtf_metadata(case, requested::Symbol, detected::Symbol; for002_file=nothing, run_dtf_outages=false, matpower_export_requested=false, matpower_export_file=nothing)
@@ -548,8 +332,6 @@ function _run_dtf_outages(case_path::AbstractString, case, config, output_path::
   end
   return results
 end
-
-
 
 """
     run_sparlectra_api(; casefile, config_file, output_dir, config_overrides=Dict(),

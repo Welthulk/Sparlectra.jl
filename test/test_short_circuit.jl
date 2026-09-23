@@ -251,12 +251,12 @@ function run_short_circuit_tests()
       write(joinpath(with_data, "grid_EQ.xml"), "<rdf:RDF><cim:SynchronousMachine rdf:ID=\"g\"/></rdf:RDF>")
       without_data = mktempdir()
       write(joinpath(without_data, "grid_EQ.xml"), "<rdf:RDF><cim:EnergyConsumer rdf:ID=\"l\"/></rdf:RDF>")
-      @test Sparlectra._webui_case_has_short_circuit_data(with_data) == true
-      @test Sparlectra._webui_case_has_short_circuit_data(without_data) == false
+      @test SparlectraApp._webui_case_has_short_circuit_data(with_data) == true
+      @test SparlectraApp._webui_case_has_short_circuit_data(without_data) == false
       # cached second call returns the same verdict
-      @test Sparlectra._webui_case_has_short_circuit_data(without_data) == false
+      @test SparlectraApp._webui_case_has_short_circuit_data(without_data) == false
       # unresolvable paths must NOT lock the button (service explains instead)
-      @test Sparlectra._webui_case_has_short_circuit_data(joinpath(without_data, "missing.zip")) == true
+      @test SparlectraApp._webui_case_has_short_circuit_data(joinpath(without_data, "missing.zip")) == true
     end)() end
 
     @testset "short_circuit.c_factor config coverage" begin (function ()

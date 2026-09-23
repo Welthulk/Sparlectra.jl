@@ -93,7 +93,7 @@ then
   # data/ is included: the suite READS tracked data files (the shipped demo
   # cases, the v1 format fixture), and moving one under a running gate broke
   # the v1 guard mid-run on 2026-09-03
-  dirty=$(git -C "$repo_root" status --porcelain -- src/ test/ data/ Project.toml docs/make.jl docs/Project.toml)
+  dirty=$(git -C "$repo_root" status --porcelain -- src/ app/ test/ data/ Project.toml docs/make.jl docs/Project.toml)
   if [ -n "$dirty" ]
   then
     echo "run_gates: uncommitted changes under src/ test/ data/ or the project files; a gate on a moving tree tests a state that exists nowhere. Commit first, or pass --allow-dirty for a deliberate local check:" >&2

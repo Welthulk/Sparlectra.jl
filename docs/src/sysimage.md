@@ -5,15 +5,17 @@ for loading the package and once for the first solves. Sparlectra ships two
 complementary answers:
 
 1. **PrecompileTools workload (always on).** The package precompiles the
-   solver hot path at install time (MATPOWER import, rectangular
-   Newton-Raphson with UMFPACK, losses, `run_sparlectra` on a small
-   network; issue #288). This needs no setup. Setting the environment
-   variable `SPARLECTRA_PRECOMPILE_WORKLOAD=full` before the installation
-   warms the other paths as well (SCF and PGM import, state estimation,
-   APSLF and the hybrid start, DC power flow, the service layer behind the
-   Web UI, the tap control loop) at the price of a much longer precompile;
-   the sysimage build uses it, a library session pays each path on its
-   first call instead.
+   solver hot path at install time. By default it warms nothing: the
+   package precompiles its module and every solver path compiles on its
+   first call, which keeps the install short on a machine whose compile
+   cache is slow to write (a virus scanner watching the cache directory
+   is the usual case). `SPARLECTRA_PRECOMPILE_WORKLOAD=core` before the
+   installation warms the MATPOWER and SCF import, the rectangular
+   Newton-Raphson solve with losses and `run_sparlectra` on a small
+   network; `full` warms the other paths as well (PGM import, state
+   estimation, APSLF and the hybrid start, DC power flow, the service
+   layer behind the Web UI, the tap control loop) at the price of a much
+   longer precompile. The sysimage build uses `full`.
 2. **PackageCompiler sysimage (this page).** A system image bakes
    Sparlectra and its dependencies into one ahead-of-time compiled shared
    library that Julia loads via `-J`. With it, a Web UI start reaches a
@@ -48,7 +50,7 @@ SPARLECTRA_NO_SYSIMAGE=1 ./start_webui.sh   # same, for callers that cannot pass
 The simplest way, from any Julia session with Sparlectra installed:
 
 ```julia
-using Sparlectra
+using SparlectraApp   # environment app/
 buildSysimage()
 ```
 
@@ -89,7 +91,7 @@ above miss. For a comparison the old behavior is still one
 variable away:
 
 ```bash
-SPARLECTRA_SYSIMAGE_TRACE_TESTS=1 julia --project=. tools/build_sysimage.jl
+SPARLECTRA_SYSIMAGE_TRACE_TESTS=1 julia --project=app tools/build_sysimage.jl
 ```
 
 A step that fails is a gap in the trace, never a failed build: the affected
@@ -153,9 +155,9 @@ part of the package and not offered in the Web UI; the build script lives
 in the checkout and is run directly:
 
 ```bash
-julia --project=. tools/build_app.jl --flavor=full      # Web UI plus command line
-julia --project=. tools/build_app.jl --flavor=runtime   # library runtime, no GUI
-julia --project=. tools/build_app.jl --script=my_workflow.jl
+julia --project=app tools/build_app.jl --flavor=full      # Web UI plus command line
+julia --project=app tools/build_app.jl --flavor=runtime   # library runtime, no GUI
+julia --project=app tools/build_app.jl --script=my_workflow.jl
 ```
 
 Plan for 20 to 40 minutes and an app folder of 0.5 to 1 GB. There is no

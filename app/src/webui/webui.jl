@@ -74,10 +74,9 @@ function _sparlectra_package_path()::String
 end
 
 function _sparlectra_git_commit_sha()::Union{String,Nothing}
-  package_path = _sparlectra_package_path()
-  isempty(package_path) && return nothing
-  root = abspath(joinpath(dirname(package_path), ".."))
-  return _git_head_commit_sha(root)
+  # the checkout that holds both packages; the application package
+  # directory itself carries no .git
+  return _git_head_commit_sha(SPARLECTRA_ROOT)
 end
 
 """

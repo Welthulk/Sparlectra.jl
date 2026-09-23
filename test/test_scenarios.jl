@@ -509,8 +509,8 @@ function run_scenario_engine_extended_tests()
     case_file = joinpath(dir, "step5_case.scf.json")
     write_scf_json(case, case_file)
     redirect_stdout(devnull) do
-      res = Sparlectra._run_contingency_service(case_file, cfgpath, joinpath(dir, "run_fb"), "step5_fb", "branch"; scenario_source = "file_block", screening_mode = "flag")
-      d1 = Sparlectra.to_dict(res)
+      res = SparlectraApp._run_contingency_service(case_file, cfgpath, joinpath(dir, "run_fb"), "step5_fb", "branch"; scenario_source = "file_block", screening_mode = "flag")
+      d1 = SparlectraApp.to_dict(res)
       @test d1["status"] == "succeeded"
       @test d1["metadata"]["contingency_screening_mode"] == "flag"
       @test d1["metadata"]["contingency_cases_source"] == "scenario_file_block"
@@ -522,30 +522,30 @@ function run_scenario_engine_extended_tests()
       # external scenario JSON, screening explicitly off: classic CSV columns
       scen_file = joinpath(dir, "scenarios.json")
       write(scen_file, Sparlectra.scf_json_string(scenario_set_dict(set)))
-      res2 = Sparlectra._run_contingency_service(case_file, cfgpath, joinpath(dir, "run_ext"), "step5_ext", "branch"; scenario_source = "external_file", scenario_file = scen_file, screening_mode = "off")
-      d2 = Sparlectra.to_dict(res2)
+      res2 = SparlectraApp._run_contingency_service(case_file, cfgpath, joinpath(dir, "run_ext"), "step5_ext", "branch"; scenario_source = "external_file", scenario_file = scen_file, screening_mode = "off")
+      d2 = SparlectraApp.to_dict(res2)
       @test d2["status"] == "succeeded"
       @test d2["metadata"]["contingency_screening_mode"] == "off"
       @test d2["metadata"]["contingency_cases_source"] == "scenario_external_file"
       csv2 = readlines(joinpath(dir, "run_ext", "contingency_n1.csv"))
       @test !endswith(first(csv2), ",screened,screening_estimate")
       # an n1 source works on any format and records itself
-      res3 = Sparlectra._run_contingency_service(case_file, cfgpath, joinpath(dir, "run_n1"), "step5_n1", "branch"; scenario_source = "n1_generators", screening_mode = "off")
-      d3 = Sparlectra.to_dict(res3)
+      res3 = SparlectraApp._run_contingency_service(case_file, cfgpath, joinpath(dir, "run_n1"), "step5_n1", "branch"; scenario_source = "n1_generators", screening_mode = "off")
+      d3 = SparlectraApp.to_dict(res3)
       @test d3["status"] == "succeeded"
       @test d3["metadata"]["contingency_cases_source"] == "n1_generators"
       # rejections carry invalid_request
-      bad = Sparlectra.to_dict(Sparlectra._run_contingency_service(case_file, cfgpath, joinpath(dir, "run_bad"), "step5_bad", "branch"; scenario_source = "bogus"))
+      bad = SparlectraApp.to_dict(SparlectraApp._run_contingency_service(case_file, cfgpath, joinpath(dir, "run_bad"), "step5_bad", "branch"; scenario_source = "bogus"))
       @test bad["reason"] == "invalid_request"
       # a CGMES delivery with an id-addressed scenario source is rejected
       # WITH the way out named (export as SCF once, then reference its ids)
       cgdir = mktempdir()
-      cg = Sparlectra.to_dict(Sparlectra._run_contingency_service(cgdir, cfgpath, joinpath(dir, "run_cg"), "step5_cg", "branch"; scenario_source = "file_block"))
+      cg = SparlectraApp.to_dict(SparlectraApp._run_contingency_service(cgdir, cfgpath, joinpath(dir, "run_cg"), "step5_cg", "branch"; scenario_source = "file_block"))
       @test cg["reason"] == "invalid_request"
       @test occursin("Export the case as SCF once", cg["message"])
       @test occursin("reference its component ids", cg["message"])
       @test occursin("n1_all", cg["message"])
-      bad2 = Sparlectra.to_dict(Sparlectra._run_contingency_service(case_file, cfgpath, joinpath(dir, "run_bad2"), "step5_bad2", "branch"; scenario_source = "external_file"))
+      bad2 = SparlectraApp.to_dict(SparlectraApp._run_contingency_service(case_file, cfgpath, joinpath(dir, "run_bad2"), "step5_bad2", "branch"; scenario_source = "external_file"))
       @test bad2["reason"] == "invalid_request"
     end
   end)() end

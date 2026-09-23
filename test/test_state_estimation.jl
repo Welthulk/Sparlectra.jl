@@ -2346,7 +2346,7 @@ function test_measurement_generator_critical_thinning()::Bool
     base = (noise = false, gross_k = 0.0, tap_steps = 0.0, include_i = false, sigma_u_pct = 0.5, sigma_i_pct = 1.0, sigma_p_pct = 1.0, sigma_q_pct = 1.0, sigma_ia_deg = 0.0, seed = 42)
     mktempdir() do d
       out = joinpath(d, "crit.csv")
-      g = Sparlectra._se_generate_measurement_set(case, out, Sparlectra.MeasurementGeneratorOptions(; base..., critical_count = k))
+      g = SparlectraApp._se_generate_measurement_set(case, out, SparlectraApp.MeasurementGeneratorOptions(; base..., critical_count = k))
       @test occursin("critical row(s) after removing", g.critical_note)
       lines = readlines(out)
       target = findfirst(l -> startswith(l, "# critical_target: $(k) reached: "), lines)
@@ -2370,16 +2370,16 @@ function test_measurement_generator_critical_thinning()::Bool
       @test length(obs.numerical_critical_measurement_indices) >= k
       # the same seed and target regenerate the identical file
       out2 = joinpath(d, "crit2.csv")
-      Sparlectra._se_generate_measurement_set(case, out2, Sparlectra.MeasurementGeneratorOptions(; base..., critical_count = k))
+      SparlectraApp._se_generate_measurement_set(case, out2, SparlectraApp.MeasurementGeneratorOptions(; base..., critical_count = k))
       @test read(out, String) == read(out2, String)
     end
     # option validation happens at construction, with the user-readable texts
-    @test_throws ArgumentError Sparlectra.MeasurementGeneratorOptions(; base..., critical_count = -1)
-    @test_throws ArgumentError Sparlectra.MeasurementGeneratorOptions(; base..., flow_ends = :none)
-    @test_throws ArgumentError Sparlectra.MeasurementGeneratorOptions(; base..., truth_source = :from_run)
-    @test_throws ArgumentError Sparlectra.MeasurementGeneratorOptions(; base..., truth_source = :from_run, run_id = "r1", run_root = "/tmp", tap_steps = 1.0)
-    @test_throws ArgumentError Sparlectra.MeasurementGeneratorOptions(; base..., passive_sigma = 0.0)
-    okopts = Sparlectra.MeasurementGeneratorOptions(; base...)
+    @test_throws ArgumentError SparlectraApp.MeasurementGeneratorOptions(; base..., critical_count = -1)
+    @test_throws ArgumentError SparlectraApp.MeasurementGeneratorOptions(; base..., flow_ends = :none)
+    @test_throws ArgumentError SparlectraApp.MeasurementGeneratorOptions(; base..., truth_source = :from_run)
+    @test_throws ArgumentError SparlectraApp.MeasurementGeneratorOptions(; base..., truth_source = :from_run, run_id = "r1", run_root = "/tmp", tap_steps = 1.0)
+    @test_throws ArgumentError SparlectraApp.MeasurementGeneratorOptions(; base..., passive_sigma = 0.0)
+    okopts = SparlectraApp.MeasurementGeneratorOptions(; base...)
     @test okopts.critical_count == 0 && okopts.flow_ends === :both && okopts.passive_as_zi
   end)() end
   return true
@@ -2409,23 +2409,23 @@ function test_state_estimation_dtf_service()
     writeMeasurementsCSV(net; file = mf)
 
     ok = redirect_stdout(devnull) do
-      Sparlectra._run_state_estimation_service(dtf, cfg, joinpath(d, "run_ok"), "dtf_se", mf; case_format = :dtf_for001)
+      SparlectraApp._run_state_estimation_service(dtf, cfg, joinpath(d, "run_ok"), "dtf_se", mf; case_format = :dtf_for001)
     end
-    d_ok = Sparlectra.to_dict(ok)
+    d_ok = SparlectraApp.to_dict(ok)
     @test d_ok["status"] == "succeeded"
     @test d_ok["metadata"]["run_mode"] == "se"
 
     # without the format the run must fail with the way out NAMED, not with
     # a bare "unknown format" the caller cannot act on
     amb = redirect_stdout(devnull) do
-      Sparlectra._run_state_estimation_service(dtf, cfg, joinpath(d, "run_amb"), "dtf_se_amb", mf)
+      SparlectraApp._run_state_estimation_service(dtf, cfg, joinpath(d, "run_amb"), "dtf_se_amb", mf)
     end
-    d_amb = Sparlectra.to_dict(amb)
+    d_amb = SparlectraApp.to_dict(amb)
     @test d_amb["status"] == "failed"
     @test occursin("dtf_for001", d_amb["message"])
   end
   # the import entry point accepts the format and rejects an unsupported one
-  @test Sparlectra._se_import_case(dtf, Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true); requested_format = :dtf_for001).net isa Sparlectra.Net
+  @test SparlectraApp._se_import_case(dtf, Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true); requested_format = :dtf_for001).net isa Sparlectra.Net
   return true
 end
 
@@ -2450,16 +2450,16 @@ function test_state_estimation_tap_fallback()::Bool
     cfg = Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH
     mktempdir() do d
       set = joinpath(d, "gen.csv")
-      Sparlectra._se_generate_measurement_set(case, set, Sparlectra.MeasurementGeneratorOptions(; noise = true, gross_k = 0.0, tap_steps = 0.0,
+      SparlectraApp._se_generate_measurement_set(case, set, SparlectraApp.MeasurementGeneratorOptions(; noise = true, gross_k = 0.0, tap_steps = 0.0,
         include_i = false, sigma_u_pct = 0.5, sigma_i_pct = 1.0, sigma_p_pct = 1.0, sigma_q_pct = 1.0,
         sigma_ia_deg = 0.0, seed = 42))
       # one iteration is not enough for anything, so the first solve cannot
       # converge; the fallback must still deliver a result and say why
       res = redirect_stdout(devnull) do
-        Sparlectra._run_state_estimation_service(case, cfg, joinpath(d, "run"), "tapfb", set;
+        SparlectraApp._run_state_estimation_service(case, cfg, joinpath(d, "run"), "tapfb", set;
           tap_estimation = true, max_iter = 1)
       end
-      dd = Sparlectra.to_dict(res)
+      dd = SparlectraApp.to_dict(res)
       # with a cap of one the repeat cannot converge either: what is asserted
       # here is that the fallback RAN and is visible, not that it rescues
       log = read(joinpath(d, "run", "run.log"), String)
@@ -2469,10 +2469,10 @@ function test_state_estimation_tap_fallback()::Bool
       # and the honest case: a normal cap converges, and then no fallback
       # line appears at all
       res_ok = redirect_stdout(devnull) do
-        Sparlectra._run_state_estimation_service(case, cfg, joinpath(d, "run_ok"), "tapok", set;
+        SparlectraApp._run_state_estimation_service(case, cfg, joinpath(d, "run_ok"), "tapok", set;
           tap_estimation = true, max_iter = 50)
       end
-      d_ok = Sparlectra.to_dict(res_ok)
+      d_ok = SparlectraApp.to_dict(res_ok)
       @test d_ok["status"] == "succeeded"
       log_ok = read(joinpath(d, "run_ok", "run.log"), String)
       @test !occursin("repeating WITHOUT tap estimation", log_ok)
@@ -2489,7 +2489,7 @@ function test_state_estimation_tap_fallback()::Bool
     # no bound at all (five transformers that had converged stuck to the
     # lower bound and diverged), which is why the limit is on the step.
     begin
-      tnet = Sparlectra._se_import_case_net(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json"),
+      tnet = SparlectraApp._se_import_case_net(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json"),
         Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true))
       # ratio != 0.0 is the check setTapEstimation! itself uses; tap_step is
       # NOT a transformer marker, it carries a constructor default on every
@@ -2524,42 +2524,42 @@ function test_state_estimation_tap_fallback()::Bool
     mktempdir() do d
       shipped = joinpath(dirname(@__DIR__), "data", "scf", "sp_case60.scf.json")
       set = joinpath(d, "gen60.csv")
-      Sparlectra._se_generate_measurement_set(shipped, set, Sparlectra.MeasurementGeneratorOptions(; noise = true, gross_k = 0.0, tap_steps = 0.0,
+      SparlectraApp._se_generate_measurement_set(shipped, set, SparlectraApp.MeasurementGeneratorOptions(; noise = true, gross_k = 0.0, tap_steps = 0.0,
         include_i = false, sigma_u_pct = 0.5, sigma_i_pct = 1.0, sigma_p_pct = 1.0, sigma_q_pct = 1.0,
         sigma_ia_deg = 0.0, seed = 42))
       res = redirect_stdout(devnull) do
-        Sparlectra._run_state_estimation_service(shipped, Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH,
+        SparlectraApp._run_state_estimation_service(shipped, Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH,
           joinpath(d, "fb"), "tapfb60", set; tap_estimation = true, max_iter = 4)
       end
-      dd = Sparlectra.to_dict(res)
+      dd = SparlectraApp.to_dict(res)
       @test dd["status"] == "succeeded"
       @test get(dd["metadata"], "se_tap_estimation_fallback", false) == true
 
       # surface 3: se_diagnostics.md
       diagmd = read(joinpath(d, "fb", "se_diagnostics.md"), String)
-      @test occursin(Sparlectra._SE_TAP_FALLBACK_NOTE, diagmd)
+      @test occursin(SparlectraApp._SE_TAP_FALLBACK_NOTE, diagmd)
 
       # surface 1: the result summary of the Web UI
-      summary = Sparlectra._webui_se_summary(dd)
+      summary = SparlectraApp._webui_se_summary(dd)
       @test summary !== nothing
-      @test occursin(Sparlectra._SE_TAP_FALLBACK_NOTE, summary)
+      @test occursin(SparlectraApp._SE_TAP_FALLBACK_NOTE, summary)
 
       # surface 2: the tap table is REPLACED by the reason, not shown with
       # positions that look estimated
-      table = Sparlectra._webui_se_tap_section(dd)
+      table = SparlectraApp._webui_se_tap_section(dd)
       @test occursin("did NOT converge", table)
       @test !occursin("<th>Electrical step</th>", table)
 
       # and the run history must not call a state estimation "rectangular"
       # (seen 2026-09-06): the method comes from the run kind
-      @test Sparlectra._powerflow_run_index_solver(res) == "wls"
+      @test SparlectraApp._powerflow_run_index_solver(res) == "wls"
     end
 
     # the helpers the fallback is built from
-    net = Sparlectra._se_import_case_net(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json"),
+    net = SparlectraApp._se_import_case_net(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json"),
       Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true))
-    @test Sparlectra._any_tap_released(net) == false
-    @test Sparlectra._freeze_all_tap_estimation!(net) == 0
+    @test SparlectraApp._any_tap_released(net) == false
+    @test SparlectraApp._freeze_all_tap_estimation!(net) == 0
   end
   return true
 end

@@ -50,9 +50,9 @@ Keyword arguments:
 Returns `(sysimage_path, meta_path, built, size_mb)`.
 """
 function buildSysimage(; dry_run::Bool = false, quiet::Bool = false)
-  pkgroot = pkgdir(@__MODULE__)
-  pkgroot === nothing && error("buildSysimage: cannot locate the Sparlectra package directory")
-  script = joinpath(pkgroot, "tools", "build_sysimage.jl")
+  pkgroot = pkgdir(@__MODULE__)   # the application package (app/), the environment the image is built from
+  pkgroot === nothing && error("buildSysimage: cannot locate the SparlectraApp package directory")
+  script = joinpath(dirname(pkgroot), "tools", "build_sysimage.jl")
   isfile(script) || error("buildSysimage: build script not found at $(script)")
   img = webui_sysimage_path()
   meta = webui_sysimage_meta_path()

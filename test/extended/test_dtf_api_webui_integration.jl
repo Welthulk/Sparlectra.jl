@@ -31,7 +31,7 @@ function run_dtf_api_webui_integration_tests()
       end
       direct_output = joinpath(@__DIR__, "..", "..", "examples", "_out", "dtf_api_direct_smoke")
       isdir(direct_output) && rm(direct_output; recursive = true, force = true)
-      result = Sparlectra.run_sparlectra_api(
+      result = SparlectraApp.run_sparlectra_api(
         casefile = dtf,
         output_dir = direct_output,
         case_format = :dtf_for001,
@@ -73,7 +73,7 @@ function run_dtf_api_webui_integration_tests()
       @test any(name -> occursin("dtf_outage_1_metrics.csv", name), artifact_names)
       @test any(name -> endswith(name, ".csv"), artifact_names)
 
-      outage = Sparlectra.run_sparlectra_api(
+      outage = SparlectraApp.run_sparlectra_api(
         casefile = dtf,
         output_dir = joinpath(tmp, "dtf-outage"),
         case_format = :dtf_for001,
@@ -89,17 +89,17 @@ function run_dtf_api_webui_integration_tests()
 
       # the input-format options render on the Case page; the run
       # page keeps the DTF outage run details
-      form_html = Sparlectra.render_case_page(output_root = tmp, case_directory = dirname(dtf), selected_casefile = basename(dtf))
+      form_html = SparlectraApp.render_case_page(output_root = tmp, case_directory = dirname(dtf), selected_casefile = basename(dtf))
       @test occursin("Input format", form_html)
       @test occursin("DTF diagnostics (experimental/internal)", form_html)
       @test occursin("MATPOWER", form_html)
       @test occursin("option value=\"auto\">Auto", form_html)
       @test !occursin("New: full DTF support", form_html)
-      run_form_html = Sparlectra.render_powerflow_form(output_root = tmp, case_directory = dirname(dtf), selected_casefile = basename(dtf))
+      run_form_html = SparlectraApp.render_powerflow_form(output_root = tmp, case_directory = dirname(dtf), selected_casefile = basename(dtf))
       @test occursin("DTF outage run", run_form_html)
       @test occursin("name=\"dtf_outage_selection_mode\"", run_form_html)
 
-      request = Sparlectra.powerflow_webui_request(Dict(
+      request = SparlectraApp.powerflow_webui_request(Dict(
         "casefile" => basename(dtf),
         "casefile_manual" => dtf,
         "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH,
@@ -123,7 +123,7 @@ function run_dtf_api_webui_integration_tests()
 
       dc_case = joinpath(tmp, "FOR001_HVDC.DAT")
       write(dc_case, read(dtf, String) * "\nHVDC unsupported marker\n")
-      dc_result = Sparlectra.run_sparlectra_api(
+      dc_result = SparlectraApp.run_sparlectra_api(
         casefile = dc_case,
         output_dir = joinpath(tmp, "dtf-dc"),
         case_format = :dtf_for001,

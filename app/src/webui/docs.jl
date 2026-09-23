@@ -15,7 +15,9 @@
 # file: src/webui/docs.jl
 # purpose: Web UI in-app documentation: help-topic registry, markdown page
 #          loading and section extraction, and doc-link rewriting
-const _WEBUI_DOCS_ROOT = normpath(joinpath(@__DIR__, "..", "..", "docs", "src"))
+# the documentation pages belong to the library checkout, not to the
+# application package directory
+const _WEBUI_DOCS_ROOT = normpath(joinpath(SPARLECTRA_ROOT, "docs", "src"))
 
 const WEBUI_HELP_TOPICS = Dict(
   # state-estimation page (0.10.0): estimator options come from the config

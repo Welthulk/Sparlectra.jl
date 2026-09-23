@@ -26,7 +26,7 @@ module SysimageLauncher
 using TOML
 using SHA
 
-export handle_sysimage, unresolved_dependencies, compat_lower_bound, outdated_dependencies, repair_environment
+export handle_sysimage, unresolved_dependencies, compat_lower_bound, outdated_dependencies, repair_environment, sysimage_source_roots, sysimage_build_script
 
 const REBUILD_FLAG = "--rebuild-sysimage"
 const NO_IMAGE_FLAG = "--no-sysimage"
@@ -40,6 +40,29 @@ function sysimage_path()::String
   end
   state = get(ENV, "XDG_STATE_HOME", joinpath(homedir(), ".local", "state"))
   return joinpath(state, "sparlectra", "webui", "sysimage", "sparlectra.so")
+end
+
+"""
+    sysimage_source_roots(project_dir) -> Vector{String}
+
+The source trees an image built for `project_dir` depends on: the
+project's own `src`, and, when the project is the application package
+inside a library checkout (`app/` next to the library's `Project.toml`),
+the library's `src` as well. An edit in either tree outdates the image.
+"""
+function sysimage_source_roots(project_dir::AbstractString)::Vector{String}
+  roots = [joinpath(project_dir, "src")]
+  parent = dirname(abspath(project_dir))
+  isfile(joinpath(parent, "Project.toml")) && push!(roots, joinpath(parent, "src"))
+  return roots
+end
+
+# the build script lives in the repository's tools directory: next to the
+# library project, one level above the application project
+function sysimage_build_script(project_dir::AbstractString)::String
+  own = joinpath(project_dir, "tools", "build_sysimage.jl")
+  isfile(own) && return own
+  return joinpath(dirname(abspath(project_dir)), "tools", "build_sysimage.jl")
 end
 
 """
@@ -73,8 +96,8 @@ function sysimage_problem(path::AbstractString, project_dir::AbstractString)::Un
     get(meta, "manifest_sha256", "") == current || return "the sysimage does not match the current Manifest.toml"
   end
   image_time = mtime(path)
-  src = joinpath(project_dir, "src")
-  if isdir(src)
+  for src in sysimage_source_roots(project_dir)
+    isdir(src) || continue
     for (root, _, files) in walkdir(src), f in files
       endswith(f, ".jl") || continue
       mtime(joinpath(root, f)) > image_time && return "the sysimage is older than $(src)"
@@ -118,9 +141,9 @@ function build_sysimage(project_dir::AbstractString)::Bool
   # that intermediate process would load (and possibly precompile) the whole
   # package just to spawn the same script. A checkout without tools/ (an
   # installation from the registry) falls back to the package entry point.
-  script = joinpath(project_dir, "tools", "build_sysimage.jl")
+  script = sysimage_build_script(project_dir)
   cmd = isfile(script) ? `$(exe) --startup-file=no --project=$(project_dir) $(script)` :
-        `$(exe) --startup-file=no --project=$(project_dir) -e "using Sparlectra; buildSysimage()"`
+        `$(exe) --startup-file=no --project=$(project_dir) -e "using SparlectraApp; buildSysimage()"`
   try
     run(cmd)
     return true
@@ -269,6 +292,10 @@ function repair_environment(project_dir::AbstractString, reason::AbstractString;
   @eval using Pkg
   pkgm = Base.invokelatest(getfield, @__MODULE__, :Pkg)
   try
+    # the environment to repair is the one named, not whichever project the
+    # process was started with (the launcher runs from the library checkout
+    # and repairs the application environment app/)
+    Base.invokelatest(pkgm.activate, project_dir; io = devnull)
     isempty(update) || Base.invokelatest(pkgm.update, update)
     Base.invokelatest(pkgm.resolve)
     Base.invokelatest(pkgm.instantiate)
@@ -278,9 +305,9 @@ function repair_environment(project_dir::AbstractString, reason::AbstractString;
     println("Could not prepare the dependencies of this checkout.")
     println("Run this once in the checkout directory and start again:")
     if isempty(update)
-      println("    julia --project=. -e \"using Pkg; Pkg.resolve(); Pkg.instantiate()\"")
+      println("    julia --project=$(project_dir) -e \"using Pkg; Pkg.resolve(); Pkg.instantiate()\"")
     else
-      println("    julia --project=. -e \"using Pkg; Pkg.update([" * join(("\\\"" * u * "\\\"" for u in update), ", ") * "]); Pkg.instantiate()\"")
+      println("    julia --project=$(project_dir) -e \"using Pkg; Pkg.update([" * join(("\\\"" * u * "\\\"" for u in update), ", ") * "]); Pkg.instantiate()\"")
     end
     println()
     println("If that fails too, delete Manifest.toml and repeat. It is not tracked,")

@@ -82,16 +82,18 @@ end
 # points render on reference_api.md (Application entry points section).
 const _REFERENCE_PAGE_EXCLUDED_SRC = Set([
     "src/build/precompile.jl",
-    "src/build/sysimage_builder.jl",
-    "src/webui/docs.jl",
-    "src/webui/forms.jl",
-    "src/webui/handlers.jl",
-    "src/webui/operations.jl",
-    "src/webui/options.jl",
-    "src/webui/routes.jl",
-    "src/webui/sysimage.jl",
-    "src/webui/views.jl",
-    "src/webui/webui.jl",
+    "app/src/precompile.jl",
+    "app/src/SparlectraApp.jl",
+    "app/src/sysimage_builder.jl",
+    "app/src/webui/docs.jl",
+    "app/src/webui/forms.jl",
+    "app/src/webui/handlers.jl",
+    "app/src/webui/operations.jl",
+    "app/src/webui/options.jl",
+    "app/src/webui/routes.jl",
+    "app/src/webui/sysimage.jl",
+    "app/src/webui/views.jl",
+    "app/src/webui/webui.jl",
 ])
 
 # Collect every src/ file named in a reference page Pages list, mapped to the
@@ -106,7 +108,7 @@ function _reference_page_src_entries(repo::AbstractString)::Dict{String,Vector{S
         # "\r"; every Pages entry then went unseen and every tracked file was
         # reported as "on no reference page" (2026-09-22)
         text = replace(read(joinpath(docsdir, name), String), "\r\n" => "\n")
-        for m in eachmatch(r"^\s*\"(src/[^\"]+\.jl)\",$"m, text)
+        for m in eachmatch(r"^\s*\"((?:app/)?src/[^\"]+\.jl)\",$"m, text)
             pages = get!(out, String(m.captures[1]), String[])
             name in pages || push!(pages, name)
         end
@@ -119,7 +121,7 @@ end
 # a moved or deleted file cannot silently keep a dead reference.
 function _reference_page_coverage_violations(repo::AbstractString)::Vector{String}
     entries = _reference_page_src_entries(repo)
-    tracked = filter(f -> endswith(f, ".jl"), split(chomp(read(`git -C $repo ls-files src`, String)), "\n"))
+    tracked = filter(f -> endswith(f, ".jl"), split(chomp(read(`git -C $repo ls-files src app/src`, String)), "\n"))
     violations = String[]
     for rel in tracked
         listed = get(entries, rel, String[])
@@ -224,6 +226,13 @@ function run_repository_hygiene_tests()
         if !isempty(hits)
             error(_bounded_hygiene_failure(hits))
         end
+        # the library must not know the application package: no SparlectraApp
+        # symbol below src/, the dependency points one way only
+        boundary = String[]
+        for f in filter(f -> endswith(f, ".jl"), split(chomp(read(`git -C $repo ls-files src`, String)), "\n"))
+            occursin("SparlectraApp", read(joinpath(repo, f), String)) && push!(boundary, f)
+        end
+        isempty(boundary) || error(join(["library files that name SparlectraApp:"; boundary], "\n"))
         coverage = _reference_page_coverage_violations(repo)
         if !isempty(coverage)
             error(join(["reference page coverage violated:"; coverage], "\n"))

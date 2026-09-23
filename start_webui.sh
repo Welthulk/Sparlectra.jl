@@ -36,6 +36,7 @@ fi
 if [ ! -f "$DIR/Manifest.toml" ]; then
   echo "First start: resolving Julia dependencies (one-time)..."
   julia --project="$DIR" -e "using Pkg; Pkg.instantiate()"
+  julia --project="$DIR/app" -e "using Pkg; Pkg.instantiate()"
 fi
 
 # Multi-core by default: the threaded surfaces (island solves, short-circuit

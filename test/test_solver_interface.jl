@@ -1022,7 +1022,7 @@ mpc.branch = [
         @test occursin("merit_initial: 0.005450000000000001", log1)
         @test occursin("merit_initial: 0.03445", log2)
 
-        artifacts = Sparlectra.collect_sparlectra_api_artifacts(outdir)
+        artifacts = SparlectraApp.collect_sparlectra_api_artifacts(outdir)
         island1_artifact = only(a for a in artifacts if a.name == "ac_island_1_merit_linesearch.log")
         island2_artifact = only(a for a in artifacts if a.name == "ac_island_2_merit_linesearch.log")
         @test island1_artifact.kind === :merit_linesearch

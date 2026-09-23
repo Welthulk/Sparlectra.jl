@@ -32,7 +32,7 @@ Characteristic `y = f(u)` of a Q(U) or P(U) controller, given by ordered
 `:spline` (natural cubic spline) or `:polynomial` (Newton form through the
 points); `make_characteristic` builds one from engineering units. Outside
 the point range, values are clamped to the edge points and the derivative
-is `0.0`. Known as `PiecewiseLinearCharacteristic` before 0.16.2; that name
+is `0.0`. Known as `PiecewiseLinearCharacteristic` before 0.17.0; that name
 stays as an alias for one minor release.
 """
 struct VoltageCharacteristic

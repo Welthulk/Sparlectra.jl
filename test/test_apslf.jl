@@ -145,7 +145,7 @@ function run_apslf_tests()
                     "power_flow_apslf_start_enabled" => "false",
                     "power_flow_apslf_start_order" => "40",
                 )
-                request = Sparlectra.powerflow_webui_request(form)
+                request = SparlectraApp.powerflow_webui_request(form)
                 overrides = request["config_overrides"]
                 @test overrides["power_flow.solver"] == "apslf"
                 @test overrides["power_flow.apslf.order"] === 25
@@ -166,13 +166,13 @@ function run_apslf_tests()
                 # is present with an explicit false, not omitted.
                 disabled_form = copy(form)
                 disabled_form["power_flow_apslf_use_pade"] = "false"
-                @test Sparlectra.powerflow_webui_request(disabled_form)["config_overrides"]["power_flow.apslf.use_pade"] === false
+                @test SparlectraApp.powerflow_webui_request(disabled_form)["config_overrides"]["power_flow.apslf.use_pade"] === false
 
                 # A field genuinely absent from the submitted form (e.g. a stale
                 # client) is skipped rather than defaulted to false.
                 missing_field_form = copy(form)
                 delete!(missing_field_form, "power_flow_apslf_start_enabled")
-                @test !haskey(Sparlectra.powerflow_webui_request(missing_field_form)["config_overrides"], "power_flow.apslf_start.enabled")
+                @test !haskey(SparlectraApp.powerflow_webui_request(missing_field_form)["config_overrides"], "power_flow.apslf_start.enabled")
 
                 # GUI-layer validation rejects the same invalid values as the core config.
                 @test_throws ArgumentError Sparlectra.validate_gui_config_overrides(Dict{String,Any}("power_flow.solver" => "polar"))

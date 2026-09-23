@@ -89,7 +89,7 @@ function run_auto_powerflow_tests()
       # sp_case14 replaces the downloaded case14; 14 buses, machines with
       # Q bands, one synchronous island, all the features this classifier
       # reads)
-      net14 = Sparlectra._se_import_case_net(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json")), cfg)
+      net14 = SparlectraApp._se_import_case_net(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json")), cfg)
       f14 = Sparlectra.collect_auto_pf_features(net14)
       @test f14.n_bus == 14
       @test f14.n_ac_islands == 1
@@ -97,12 +97,12 @@ function run_auto_powerflow_tests()
       @test f14.rx_median > 0.0
       @test 0.0 <= f14.share_r_gt_x <= 1.0
       # class 2: phase-shifter case (tracked PST demo case)
-      netpst = Sparlectra._se_import_case_net(abspath(joinpath(dirname(@__DIR__), "data", "mpower", "warmup_casePST.m")), cfg)
+      netpst = SparlectraApp._se_import_case_net(abspath(joinpath(dirname(@__DIR__), "data", "mpower", "warmup_casePST.m")), cfg)
       fpst = Sparlectra.collect_auto_pf_features(netpst)
       @test fpst.n_phase_shifters >= 1
       # class 3: resistive network (R > X on every branch; test-local mutation
       # AFTER the read-only extraction contract was already exercised above)
-      netres = Sparlectra._se_import_case_net(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json")), cfg)
+      netres = SparlectraApp._se_import_case_net(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json")), cfg)
       for br in netres.branchVec
         br.r_pu = 2.0 * abs(br.x_pu) + 0.01
       end
@@ -110,7 +110,7 @@ function run_auto_powerflow_tests()
       @test fres.share_r_gt_x == 1.0
       @test fres.rx_median > 1.0
       # class 4: multi-island (open enough branches to isolate bus 14)
-      netisl = Sparlectra._se_import_case_net(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json")), cfg)
+      netisl = SparlectraApp._se_import_case_net(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json")), cfg)
       for br in netisl.branchVec
         (Int(br.fromBus) == 14 || Int(br.toBus) == 14) && (br.status = 0)
       end
@@ -286,7 +286,7 @@ function run_auto_powerflow_tests()
 
     @testset "startup latency hint: once, suppressible, flavor-gated" begin (function ()
       cfg = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true)
-      if Sparlectra.webui_runtime_flavor().kind === :native
+      if SparlectraApp.webui_runtime_flavor().kind === :native
         Sparlectra._STARTUP_LATENCY_HINT_SHOWN[] = false
         @test_logs (:info, r"First run in a fresh Julia process") Sparlectra._maybe_print_startup_latency_hint(cfg)
         # second call in the same process stays silent

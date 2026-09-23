@@ -23,6 +23,9 @@ Pages = [
   "src/shunt.jl",
   "src/transformer.jl",
   "src/performance_profile.jl",
+  "src/session.jl",
+  "src/csv_output.jl",
+  "src/result_csv.jl",
 ]
 Public = true
 Private = false
@@ -51,6 +54,9 @@ Pages = [
   "src/shunt.jl",
   "src/transformer.jl",
   "src/performance_profile.jl",
+  "src/session.jl",
+  "src/csv_output.jl",
+  "src/result_csv.jl",
 ]
 Public = false
 Private = true

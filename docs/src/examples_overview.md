@@ -7,6 +7,7 @@ material in `examples/cgmes/`. Run any example directly:
 
 ```bash
 julia --project=. examples/<folder>/<example>.jl
+julia --project=app examples/powerflow/exp_programmatic_api.jl   # examples of the service layer: the app environment
 ```
 
 or run a whole topic through its suite runner (fresh subprocess per example,

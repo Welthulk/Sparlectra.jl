@@ -17,7 +17,7 @@
 # purpose: demonstrates enabling the guarded current-iteration start pre-solve via API configuration overrides and prints its metadata/artifact status
 
 using Sparlectra
-
+using SparlectraApp
 include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
 function main(; casefile::AbstractString = "case5.m", output_dir::AbstractString = joinpath(@__DIR__, "..", "_out", "current_iteration_start"))

@@ -35,6 +35,7 @@ rem A fresh checkout has no Manifest.toml yet - resolve dependencies once.
 if not exist "%DIR%Manifest.toml" (
   echo First start: resolving Julia dependencies ^(one-time^)...
   julia --project="%DIR%." -e "using Pkg; Pkg.instantiate()"
+  julia --project="%DIR%app" -e "using Pkg; Pkg.instantiate()"
 )
 
 REM Multi-core by default: the threaded surfaces need Julia THREADS, fixed at

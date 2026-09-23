@@ -32,16 +32,17 @@ using .SysimageLauncher: handle_sysimage, unresolved_dependencies, outdated_depe
 # broken checkout. A dependency below its compat bound (a manifest that
 # predates a version bump) is repaired here as well: it is the one state that
 # loads without complaint and can compute wrong numbers.
-let project_dir = abspath(@__DIR__), missing_deps = Base.invokelatest(unresolved_dependencies, project_dir)
+let project_dir = abspath(joinpath(@__DIR__, "app")), missing_deps = Base.invokelatest(unresolved_dependencies, project_dir)
   isempty(missing_deps) || Base.invokelatest(repair_environment, project_dir,
     "The package environment is not resolved: " * join(missing_deps, ", ") * ".";
     update = Base.invokelatest(outdated_dependencies, missing_deps))
 end
 
-handle_sysimage(copy(ARGS), @__FILE__, abspath(@__DIR__))
+handle_sysimage(copy(ARGS), @__FILE__, abspath(joinpath(@__DIR__, "app")))
 
 # --- package environment -----------------------------------------------------
-# `using Sparlectra` needs a RESOLVED environment, and Manifest.toml is not
+# `using SparlectraApp` needs a RESOLVED environment (app/, which carries the
+# library by path), and Manifest.toml is not
 # tracked. Two situations lead here, and they need different remedies:
 #
 #   * a fresh checkout has no manifest at all;
@@ -65,19 +66,23 @@ handle_sysimage(copy(ARGS), @__FILE__, abspath(@__DIR__))
 # Second line of defence. The check above reads TOML and therefore sees only
 # what TOML can show; a depot with a missing artifact, a half-written package
 # directory or a compat conflict that only surfaces on load gets here instead.
+# the application package lives in app/ with its own environment; putting
+# that directory on the load path makes `using SparlectraApp` resolve from
+# any starting project without loading Pkg first
+pushfirst!(LOAD_PATH, joinpath(@__DIR__, "app"))
 try
-  @eval using Sparlectra
+  @eval using SparlectraApp
 catch err
-  Base.invokelatest(repair_environment, abspath(@__DIR__),
-    "Loading Sparlectra failed (" * first(sprint(showerror, err), 160) * ").")
-  @eval using Sparlectra
+  Base.invokelatest(repair_environment, abspath(joinpath(@__DIR__, "app")),
+    "Loading SparlectraApp failed (" * first(sprint(showerror, err), 160) * ").")
+  @eval using SparlectraApp
 end
 
 function main()
   # No warm-up: either this process runs on the sysimage, where the code is
   # already compiled, or the user chose to compile on first use and was told
   # so. A hidden warm-up run on top of that only delayed the first page.
-  server = Sparlectra.start_sparlectra_webui(open_browser = true)
+  server = SparlectraApp.start_sparlectra_webui(open_browser = true)
   # nothing = a Sparlectra Web UI already runs on the port; it was opened in
   # the browser instead, so there is no new server task to wait on.
   server === nothing && return nothing

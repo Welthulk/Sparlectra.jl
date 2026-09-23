@@ -25,6 +25,13 @@ nothing else.
 | `extended` | `julia --project=. test/runtests.jl extended` | `pf`, `se`, `config`, `webui` and `extd` in that order | Before a merge |
 | `all` | `julia --project=. test/runtests.jl all` | `fast` followed by `extended` | Declaring a branch merge-ready, together with the docs build |
 
+The service layer and the Web UI are the `SparlectraApp` package under
+`app/`; the runner puts that directory on the load path and loads the
+package for every profile, so `webui`, the service part of `extd` and the
+application smoke test of `fast` (one power flow and one state estimation
+through the service API) run from the library checkout with
+`julia --project=. test/runtests.jl <profile>` as before.
+
 `SPARLECTRA_TEST_PROFILE` selects the profile as well; the command-line
 argument wins. `SPARLECTRA_TEST_SKIP_GROUPS` drops named groups from any
 profile and says so in the output.
@@ -69,8 +76,8 @@ reuse (a sysimage-based runner, or a cached Julia compile directory in CI).
 
 Reference times of the profiles on the development machine (16 cores,
 Julia 1.13, package cache warm, each profile in its own process,
-2026-09-23, slim default precompile workload): fast 76 s, pf 101 s,
-se 48 s, config 22 s, webui 104 s, extd 149 s. A profile that grows by more than ten percent against these
+2026-09-24, precompile workload off, application smoke test in fast):
+fast 85 s, pf 101 s, se 48 s, config 22 s, webui 104 s, extd 149 s. A profile that grows by more than ten percent against these
 numbers needs a cause before the change is committed; the numbers are
 updated here on purpose, never silently.
 

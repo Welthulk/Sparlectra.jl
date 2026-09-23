@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# file: src/api/result_csv.jl
+# file: src/result_csv.jl
 # purpose: the one writer for result CSV artifacts (issue #386): every run
 #          type keeps its own columns and its own function, the delimiter,
 #          decimal separator, thousands separator and quoting come from

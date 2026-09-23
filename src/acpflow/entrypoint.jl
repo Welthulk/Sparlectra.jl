@@ -108,3 +108,29 @@ function _run_sparlectra(; net::Union{Nothing,Net} = nothing, casefile::Union{No
   result = _build_sparlectra_result(run_net, run_cfg, execution, performance_profile)
   return _postprocess_sparlectra_result!(result, run_cfg; emit_output = emit_output)
 end
+
+# Feeder data a CASE declares at the net's primary slack bus
+# (ExternalNetworkInjection max current + R/X), converted to the
+# (sk_MVA, rx) pair _apply_external_grid_config! consumes in :auto mode.
+# A CGMES delivery declares it, and so does a case file whose PGM `source`
+# states `sk`/`rx_ratio` - PGM models a source as a voltage source BEHIND
+# that impedance, so the numbers belong to the model, not to the metadata.
+# Returns nothing when the slack bus carries no usable declaration.
+function _declared_slack_feeder(net::Net, shortcircuit)::Union{Nothing,NamedTuple}
+  isempty(net.slackVec) && return nothing
+  bus_names = Dict{Int,String}(idx => n for (n, idx) in net.busDict)
+  slack = get(bus_names, net.slackVec[1], nothing)
+  slack === nothing && return nothing
+  vn = getNodeVn(net.nodeVec[net.slackVec[1]])
+  for f in shortcircuit.external_network_injections
+    f.bus === nothing && continue
+    String(f.bus) == slack || continue
+    ik = f.maxInitialSymShCCurrent_A
+    (ik === nothing || !isfinite(Float64(ik)) || Float64(ik) <= 0.0) && continue
+    sk = sqrt(3.0) * vn * Float64(ik) / 1000.0
+    rx = f.maxR1ToX1Ratio
+    rxv = (rx === nothing || !isfinite(Float64(rx)) || Float64(rx) < 0.0) ? 0.1 : Float64(rx)
+    return (sk_MVA = sk, rx = rxv)
+  end
+  return nothing
+end

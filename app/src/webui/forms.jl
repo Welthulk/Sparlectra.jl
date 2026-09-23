@@ -16,7 +16,7 @@
 # purpose: Web UI input resolution: application root and case directory
 #          lookup, case/config file selectors, upload classification, and
 #          form value parsing
-const _WEBUI_PACKAGE_ROOT = normpath(joinpath(@__DIR__, "..", ".."))
+const _WEBUI_PACKAGE_ROOT = SPARLECTRA_ROOT   # the library checkout: data, examples and docs live there, not in app/
 
 """
     _webui_application_root([start_dir]) -> String

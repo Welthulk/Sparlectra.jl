@@ -41,7 +41,8 @@ launchers run with), otherwise the manifest of the active environment
 (registered installations ship no Manifest.toml in the package directory).
 """
 function webui_sysimage_manifest_path()::String
-  checkout = joinpath(SPARLECTRA_ROOT, "Manifest.toml")
+  # the application environment is what the image is built from
+  checkout = joinpath(SPARLECTRA_APP_ROOT, "Manifest.toml")
   isfile(checkout) && return checkout
   proj = Base.active_project()
   proj === nothing && return checkout
@@ -163,7 +164,7 @@ old code.
     replaced by one that boots from the image. The two implementations are
     held together by `test/test_webui.jl`, which asserts they agree.
 """
-function webui_sysimage_problem(; image_path::AbstractString = webui_sysimage_path(), project_dir::AbstractString = SPARLECTRA_ROOT)::Union{Nothing,String}
+function webui_sysimage_problem(; image_path::AbstractString = webui_sysimage_path(), project_dir::AbstractString = SPARLECTRA_APP_ROOT)::Union{Nothing,String}
   meta_path = joinpath(dirname(image_path), "sysimage_meta.toml")
   (isfile(image_path) && isfile(meta_path)) || return "no sysimage found"
   meta = try
@@ -179,8 +180,10 @@ function webui_sysimage_problem(; image_path::AbstractString = webui_sysimage_pa
     get(meta, "manifest_sha256", "") == current || return "the sysimage does not match the current Manifest.toml"
   end
   image_time = mtime(image_path)
-  src = joinpath(project_dir, "src")
-  if isdir(src)
+  # the same two trees the launcher watches (tools/sysimage_launcher.jl,
+  # sysimage_source_roots): the application's src and the library's src
+  for src in (joinpath(project_dir, "src"), joinpath(dirname(abspath(project_dir)), "src"))
+    isdir(src) || continue
     for (root, _, files) in walkdir(src), f in files
       endswith(f, ".jl") || continue
       mtime(joinpath(root, f)) > image_time && return "the sysimage is older than $(src)"

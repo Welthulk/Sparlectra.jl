@@ -56,17 +56,6 @@ const _WEBUI_OPERATION_LOG_PHASES = Set((
   "finalizing_aborted",
 ))
 
-struct PowerFlowAborted <: Exception end
-Base.showerror(io::IO, ::PowerFlowAborted) = print(io, "PowerFlow run aborted by user.")
-
-## Task-local abort hook (the abort must stop the running SE or PF). A
-## Julia task cannot be killed from outside, so the
-## solver loops have to ASK. The worker deposits its token in its own task
-## storage, and every iteration of the Newton and the WLS loop calls
-## `sparlectra_abort_requested()`, which is a dictionary lookup and costs
-## nothing next to one factorization. Task storage rather than a global:
-## it is isolated per run by construction, and a solver called directly
-## from the library sees no token and never checks.
 ## What this job computes, for every message the user reads. The request
 ## flags are the same ones the service dispatches on.
 function _webui_run_kind_label(request::AbstractDict)::String
@@ -100,52 +89,6 @@ function _webui_request_run_mode(request::AbstractDict)::Union{Nothing,String}
   # an SE-started power flow is its own kind on the result page
   v = _service_request_value(request, "se_start_run_id", nothing)
   (v isa AbstractString && !isempty(strip(v))) && return "powerflow_se_start"
-  return nothing
-end
-
-const _SPARLECTRA_ABORT_KEY = :sparlectra_abort_token
-
-## The armed token of the run currently executing. It is deliberately NOT
-## task-local: `Threads.@spawn` gives every worker a fresh, empty task-local
-## storage, so a token stored there is invisible inside the parallel island
-## solve, the parallel N-1 batch and the short-circuit sweep - exactly the
-## long runs a user wants to abort. The Web UI executes one run at a time
-## (_POWERFLOW_WEBUI_BLOCKING_STATES), so one process-wide slot is the honest
-## model; the task-local copy is still written so an existing nested arming
-## keeps working.
-const _SPARLECTRA_ABORT_SLOT = Ref{Any}(nothing)
-
-function sparlectra_arm_abort_token!(token)
-  token === nothing && return nothing
-  task_local_storage(_SPARLECTRA_ABORT_KEY, token)
-  _SPARLECTRA_ABORT_SLOT[] = token
-  return nothing
-end
-
-## Clear the process-wide slot when a run finishes, so a later solver call
-## outside any job never sees a stale token.
-function sparlectra_disarm_abort_token!()
-  _SPARLECTRA_ABORT_SLOT[] = nothing
-  return nothing
-end
-
-"""
-    sparlectra_abort_requested() -> Bool
-
-True when the surrounding Web UI job has been asked to abort. Solver loops
-call this once per iteration and stop with `PowerFlowAborted`. Works inside
-spawned tasks as well, which task-local storage does not.
-"""
-function sparlectra_abort_requested()::Bool
-  token = get(task_local_storage(), _SPARLECTRA_ABORT_KEY, nothing)
-  token === nothing && (token = _SPARLECTRA_ABORT_SLOT[])
-  token === nothing && return false
-  return token[]
-end
-
-## Throwing form for the loops.
-function sparlectra_check_abort()
-  sparlectra_abort_requested() && throw(PowerFlowAborted())
   return nothing
 end
 

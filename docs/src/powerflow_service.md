@@ -16,6 +16,7 @@ but it does not start an HTTP server and has no Genie dependency.
 
 ```julia
 using Sparlectra
+using SparlectraApp   # service API: environment app/, or app/ on the load path
 
 request = Dict(
     "casefile" => "data/mpower/case5.m",

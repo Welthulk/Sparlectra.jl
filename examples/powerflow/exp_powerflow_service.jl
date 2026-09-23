@@ -17,7 +17,7 @@
 # purpose: starts a local PowerFlow service run, looks up its serialized result by run ID, and lists its artifacts without an HTTP server
 
 using Sparlectra
-
+using SparlectraApp
 include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
 function main(;

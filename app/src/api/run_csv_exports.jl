@@ -22,82 +22,6 @@
 # Keep schemas, filenames, progress events, and partial-export behavior stable
 # because API clients and the Web UI consume those contracts.
 
-const _DETAILED_CSV_BUFFER_INITIAL_BYTES_DEFAULT = 8 * 1024 * 1024
-const _DETAILED_CSV_BUFFER_MAX_BYTES_DEFAULT = 64 * 1024 * 1024
-const _DETAILED_CSV_STREAMING_THRESHOLD_ROWS_DEFAULT = 100_000
-const _DETAILED_CSV_DIRECT_THRESHOLD_BUSES_DEFAULT = 10_000
-
-function _csv_write_options(config = nothing)::NamedTuple
-  output = config isa SparlectraConfig ? config.output : config isa OutputConfig ? config : nothing
-  mode = output === nothing ? :auto : output.detailed_result_csv_write_mode
-  mode in OUTPUT_DETAILED_RESULT_CSV_WRITE_MODE_VALUES || throw(ArgumentError("Unsupported detailed_result_csv_write_mode \"$(mode)\". Expected auto, buffered, or streaming."))
-  initial_bytes = output === nothing ? _DETAILED_CSV_BUFFER_INITIAL_BYTES_DEFAULT : output.detailed_result_csv_buffer_initial_bytes
-  max_bytes = output === nothing ? _DETAILED_CSV_BUFFER_MAX_BYTES_DEFAULT : output.detailed_result_csv_buffer_max_bytes
-  threshold_rows = output === nothing ? _DETAILED_CSV_STREAMING_THRESHOLD_ROWS_DEFAULT : output.detailed_result_csv_streaming_threshold_rows
-  initial_bytes = initial_bytes < 0 ? _DETAILED_CSV_BUFFER_INITIAL_BYTES_DEFAULT : initial_bytes
-  max_bytes = max_bytes <= 0 ? _DETAILED_CSV_BUFFER_MAX_BYTES_DEFAULT : max_bytes
-  threshold_rows = threshold_rows <= 0 ? _DETAILED_CSV_STREAMING_THRESHOLD_ROWS_DEFAULT : threshold_rows
-  return (mode = mode, initial_bytes = initial_bytes, max_bytes = max_bytes, threshold_rows = threshold_rows)
-end
-
-function _estimated_namedtuple_csv_bytes(rows::AbstractVector, columns)::Int
-  return length(join(String.(columns), ',')) + 1 + length(rows) * max(1, length(columns)) * 24
-end
-
-function _write_namedtuple_csv_row(io::IO, row, columns, delimiter::Char, resolved_format)
-  println(io, join((_csv_field(getproperty(row, column), delimiter, resolved_format) for column in columns), delimiter))
-  return nothing
-end
-
-
-function _write_namedtuple_csv_buffered(path::AbstractString, rows::AbstractVector, columns, delimiter::Char, resolved_format; initial_bytes::Integer = _DETAILED_CSV_BUFFER_INITIAL_BYTES_DEFAULT)
-  buffer = IOBuffer(; sizehint = max(0, Int(initial_bytes)))
-  println(buffer, join(String.(columns), delimiter))
-  for row in rows
-    _write_namedtuple_csv_row(buffer, row, columns, delimiter, resolved_format)
-  end
-  open(path, "w") do io
-    write(io, take!(buffer))
-  end
-  return path
-end
-
-function _write_namedtuple_csv_streaming(path::AbstractString, rows::AbstractVector, columns, delimiter::Char, resolved_format)
-  open(path, "w") do io
-    println(io, join(String.(columns), delimiter))
-    for row in rows
-      _write_namedtuple_csv_row(io, row, columns, delimiter, resolved_format)
-    end
-  end
-  return path
-end
-
-function _select_namedtuple_csv_write_mode(rows::AbstractVector, columns; config = nothing, estimated_rows::Integer = length(rows))::Symbol
-  options = _csv_write_options(config)
-  options.mode === :buffered && return :buffered
-  options.mode === :streaming && return :streaming
-  estimated_rows > options.threshold_rows && return :streaming
-  _estimated_namedtuple_csv_bytes(rows, columns) > options.max_bytes && return :streaming
-  return :buffered
-end
-
-function _write_namedtuple_csv(path::AbstractString, rows::AbstractVector, columns; delimiter::Union{Nothing,Char} = nothing, format = nothing, config = nothing, estimated_rows::Integer = length(rows))
-  # `delimiter` only needs to be given when it must override the format's own
-  # delimiter (or when there is no format at all); every current call site
-  # that passes a resolved `format` name relies on this default, so it must
-  # never silently disagree with that format's delimiter (issue #376: this
-  # threw for every caller that did not also repeat `delimiter` explicitly
-  # once formats other than "technical" started reaching them).
-  resolved_format = format === nothing ? (name = "custom", delimiter = delimiter === nothing ? ',' : delimiter, decimal_separator = '.', thousands_separator = "") : _resolve_detailed_csv_format(format)
-  delimiter = delimiter === nothing ? resolved_format.delimiter : delimiter
-  delimiter in (',', ';') || throw(ArgumentError("CSV delimiter must be ',' or ';'."))
-  resolved_format.delimiter == delimiter || throw(ArgumentError("CSV delimiter does not match detailed CSV format $(resolved_format.name)."))
-  options = _csv_write_options(config)
-  mode = _select_namedtuple_csv_write_mode(rows, columns; config, estimated_rows)
-  mode === :streaming && return _write_namedtuple_csv_streaming(path, rows, columns, delimiter, resolved_format)
-  return _write_namedtuple_csv_buffered(path, rows, columns, delimiter, resolved_format; initial_bytes = min(options.initial_bytes, options.max_bytes))
-end
-
 function _detailed_csv_export_options(config = nothing)::NamedTuple
   output = config isa SparlectraConfig ? config.output : config isa OutputConfig ? config : nothing
   exporter = output === nothing ? :auto : output.detailed_result_csv_exporter
@@ -123,7 +47,6 @@ function _complex_voltage_rows(node_rows::AbstractVector, format)
     end for row in node_rows
   ]
 end
-
 
 const _DETAILED_BUS_CSV_COLUMNS = (:bus, :bus_name, :type, :vm_pu, :va_deg, :vn_kV, :v_re, :v_im, :v_complex, :v_kV, :p_gen_MW, :q_gen_MVar, :p_load_MW, :q_load_MVar, :q_limit_hit, :control, :original_bus_name)
 const _DETAILED_BRANCH_CSV_COLUMNS = (:branch, :branch_index, :from_bus, :to_bus, :status, :p_from_MW, :q_from_MVar, :p_to_MW, :q_to_MVar, :p_loss_MW, :q_loss_MVar, :rated_MVA, :overloaded, :branch_name, :original_branch_name, :from_bus_name, :to_bus_name, :original_from_bus_name, :original_to_bus_name, :branch_kind, :terminal_state, :open_end_vm_pu, :open_end_va_deg)

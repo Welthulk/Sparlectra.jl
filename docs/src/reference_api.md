@@ -1,34 +1,37 @@
+```@meta
+CurrentModule = SparlectraApp
+```
+
 # API and Services Reference
 
 ## Public API
 
 ```@autodocs
-Modules = [Sparlectra]
+Modules = [SparlectraApp]
 Pages = [
-  "src/api/api_types.jl",
-  "src/api/artifact_registry.jl",
-  "src/api/artifacts.jl",
-  "src/api/powerflow_service.jl",
-  "src/api/result_csv.jl",
-  "src/api/run_api.jl",
-  "src/api/run_bus_powers_export.jl",
-  "src/api/run_contingency_service.jl",
-  "src/api/run_csv_exports.jl",
-  "src/api/run_diagnostic_artifacts.jl",
-  "src/api/run_failures.jl",
-  "src/api/run_finalization.jl",
-  "src/api/run_import_analysis_service.jl",
-  "src/api/run_index.jl",
-  "src/api/run_lifecycle_metadata.jl",
-  "src/api/run_matpower_artifacts.jl",
-  "src/api/run_metadata.jl",
-  "src/api/run_self_check.jl",
-  "src/api/run_short_circuit_service.jl",
-  "src/api/run_state_estimation_service.jl",
-  "src/api/se_measurement_generator.jl",
-  "src/api/serialization.jl",
-  "src/api/service_json.jl",
-  "src/api/webui_jobs.jl",
+  "app/src/api/api_types.jl",
+  "app/src/api/artifact_registry.jl",
+  "app/src/api/artifacts.jl",
+  "app/src/api/powerflow_service.jl",
+  "app/src/api/run_api.jl",
+  "app/src/api/run_bus_powers_export.jl",
+  "app/src/api/run_contingency_service.jl",
+  "app/src/api/run_csv_exports.jl",
+  "app/src/api/run_diagnostic_artifacts.jl",
+  "app/src/api/run_failures.jl",
+  "app/src/api/run_finalization.jl",
+  "app/src/api/run_import_analysis_service.jl",
+  "app/src/api/run_index.jl",
+  "app/src/api/run_lifecycle_metadata.jl",
+  "app/src/api/run_matpower_artifacts.jl",
+  "app/src/api/run_metadata.jl",
+  "app/src/api/run_self_check.jl",
+  "app/src/api/run_short_circuit_service.jl",
+  "app/src/api/run_state_estimation_service.jl",
+  "app/src/api/se_measurement_generator.jl",
+  "app/src/api/serialization.jl",
+  "app/src/api/service_json.jl",
+  "app/src/api/webui_jobs.jl",
 ]
 Public = true
 Private = false
@@ -37,46 +40,45 @@ Private = false
 ## Application entry points
 
 The Web UI server and the build tools live outside the reference page set
-(`src/webui/`, `src/build/`); their exported entry points render here.
+(`app/src/webui/`, `app/src/sysimage_builder.jl`); their exported entry points render here.
 
 ```@docs
-start_sparlectra_webui
-default_webui_output_root
-default_webui_config_path
-default_webui_case_cache_dir
-default_webui_operation_log_path
-buildSysimage
+SparlectraApp.start_sparlectra_webui
+SparlectraApp.default_webui_output_root
+SparlectraApp.default_webui_config_path
+SparlectraApp.default_webui_case_cache_dir
+SparlectraApp.default_webui_operation_log_path
+SparlectraApp.buildSysimage
 ```
 
 ## Internals
 
 ```@autodocs
-Modules = [Sparlectra]
+Modules = [SparlectraApp]
 Pages = [
-  "src/api/api_types.jl",
-  "src/api/artifact_registry.jl",
-  "src/api/artifacts.jl",
-  "src/api/powerflow_service.jl",
-  "src/api/result_csv.jl",
-  "src/api/run_api.jl",
-  "src/api/run_bus_powers_export.jl",
-  "src/api/run_contingency_service.jl",
-  "src/api/run_csv_exports.jl",
-  "src/api/run_diagnostic_artifacts.jl",
-  "src/api/run_failures.jl",
-  "src/api/run_finalization.jl",
-  "src/api/run_import_analysis_service.jl",
-  "src/api/run_index.jl",
-  "src/api/run_lifecycle_metadata.jl",
-  "src/api/run_matpower_artifacts.jl",
-  "src/api/run_metadata.jl",
-  "src/api/run_self_check.jl",
-  "src/api/run_short_circuit_service.jl",
-  "src/api/run_state_estimation_service.jl",
-  "src/api/se_measurement_generator.jl",
-  "src/api/serialization.jl",
-  "src/api/service_json.jl",
-  "src/api/webui_jobs.jl",
+  "app/src/api/api_types.jl",
+  "app/src/api/artifact_registry.jl",
+  "app/src/api/artifacts.jl",
+  "app/src/api/powerflow_service.jl",
+  "app/src/api/run_api.jl",
+  "app/src/api/run_bus_powers_export.jl",
+  "app/src/api/run_contingency_service.jl",
+  "app/src/api/run_csv_exports.jl",
+  "app/src/api/run_diagnostic_artifacts.jl",
+  "app/src/api/run_failures.jl",
+  "app/src/api/run_finalization.jl",
+  "app/src/api/run_import_analysis_service.jl",
+  "app/src/api/run_index.jl",
+  "app/src/api/run_lifecycle_metadata.jl",
+  "app/src/api/run_matpower_artifacts.jl",
+  "app/src/api/run_metadata.jl",
+  "app/src/api/run_self_check.jl",
+  "app/src/api/run_short_circuit_service.jl",
+  "app/src/api/run_state_estimation_service.jl",
+  "app/src/api/se_measurement_generator.jl",
+  "app/src/api/serialization.jl",
+  "app/src/api/service_json.jl",
+  "app/src/api/webui_jobs.jl",
 ]
 Public = false
 Private = true

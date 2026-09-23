@@ -237,8 +237,9 @@ function _prepare_build_env(pkgm::Module)::Bool
   project_file = joinpath(_REPO_ROOT, "Project.toml")
   in_checkout = isfile(project_file) && occursin("name = \"Sparlectra\"", read(project_file, String))
   if in_checkout
-    println("developing Sparlectra from ", _REPO_ROOT)
+    println("developing Sparlectra and SparlectraApp from ", _REPO_ROOT)
     Base.invokelatest(pkgm.develop; path = _REPO_ROOT)
+    Base.invokelatest(pkgm.develop; path = joinpath(_REPO_ROOT, "app"))
   else
     println("adding the released Sparlectra package")
     Base.invokelatest(pkgm.add, "Sparlectra")
@@ -284,11 +285,11 @@ Returns normally when the configuration is usable, and throws
 and guessing which of two values was meant is the one thing a migration must
 never do.
 """
-function _refresh_user_config(spar::Module)
-  path = Base.invokelatest(getglobal(spar, :default_webui_config_path))
+function _refresh_user_config(app::Module, lib::Module)
+  path = Base.invokelatest(getglobal(app, :default_webui_config_path))
   isfile(path) || return nothing          # nothing provisioned yet, nothing to migrate
   result = try
-    Base.invokelatest(getglobal(spar, :refresh_sparlectra_config_file), path; write = true, backup = true)
+    Base.invokelatest(getglobal(lib, :refresh_sparlectra_config_file), path; write = true, backup = true)
   catch err
     # expected failure: an unreadable or syntactically broken YAML. The user
     # has to fix that themselves, so it is reported, not swallowed.
@@ -320,13 +321,17 @@ function _run_build()
 
   @eval using PackageCompiler
   @eval using Sparlectra
+  @eval using SparlectraApp
   # same world-age pattern as above: both modules were loaded inside this
   # function invocation
-  spar = Base.invokelatest(getfield, @__MODULE__, :Sparlectra)
+  # the Web UI paths and the meta writer live in the application package,
+  # the CGMES importer in the library
+  spar = Base.invokelatest(getfield, @__MODULE__, :SparlectraApp)
+  lib = Base.invokelatest(getfield, @__MODULE__, :Sparlectra)
   pc = Base.invokelatest(getfield, @__MODULE__, :PackageCompiler)
 
   # before anything expensive: the image is built FOR this configuration
-  _refresh_user_config(spar)
+  _refresh_user_config(spar, lib)
 
   img = Base.invokelatest(getglobal(spar, :webui_sysimage_path))
   meta_path = Base.invokelatest(getglobal(spar, :webui_sysimage_meta_path))
@@ -348,7 +353,7 @@ function _run_build()
   if !isfile(joinpath(case_cache, "cgmes_minigrid.zip"))
     println("fetching the MiniGrid CGMES delivery for the short-circuit workload")
     try
-      cgmes = getglobal(spar, :CGMESImporter)
+      cgmes = getglobal(lib, :CGMESImporter)
       Base.invokelatest(getglobal(cgmes, :fetchCGMESTestSet), "minigrid"; outdir = case_cache)
     catch err
       println("MiniGrid fetch failed (", sprint(showerror, err), "); the short-circuit service path will not be traced")
@@ -357,7 +362,7 @@ function _run_build()
 
   # both are baked in: AnalyticLoadFlow is a required dependency, and a
   # package loaded after the image would invalidate its precompiled methods
-  packages = ["Sparlectra", "AnalyticLoadFlow"]
+  packages = ["Sparlectra", "SparlectraApp", "AnalyticLoadFlow"]
   workload = joinpath(@__DIR__, "sysimage_workload.jl")
   _set_step(2, "tracing the interactive paths")
   println("target: ", img)
@@ -380,11 +385,11 @@ function main()
     # parse-and-plan mode for the test suite: resolve everything that does
     # not touch the package environment or PackageCompiler
     println("[build_sysimage] dry run: no build environment changes, no PackageCompiler call")
-    if Base.find_package("Sparlectra") !== nothing
-      @eval using Sparlectra
+    if Base.find_package("SparlectraApp") !== nothing
+      @eval using SparlectraApp
       # the module binding is newer than this function invocation (Julia
       # 1.12 world age); resolve it dynamically via invokelatest
-      spar = Base.invokelatest(getfield, @__MODULE__, :Sparlectra)
+      spar = Base.invokelatest(getfield, @__MODULE__, :SparlectraApp)
       img = Base.invokelatest(getglobal(spar, :webui_sysimage_path))
       meta = Base.invokelatest(getglobal(spar, :webui_sysimage_meta_path))
       println("[build_sysimage] would build: ", img)

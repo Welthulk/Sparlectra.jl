@@ -1,8 +1,11 @@
-# Version 0.16.2 - 2026-09-22
+# Version 0.17.0 - 2026-09-24
+
+## Breaking
+- The service layer and the Web UI are their own package, `SparlectraApp` under `app/`, which is not registered: `Pkg.add("Sparlectra")` installs the library only (model, formats, power flow, state estimation, controllers, contingencies), and `run_sparlectra_api`, `start_powerflow_run` with the run index and artifacts, `start_sparlectra_webui`, `buildSysimage` and the `to_dict`/`to_json`/`to_yaml` helpers are reached from a checkout or a downloaded release with `using SparlectraApp` (environment `app/`, see the README). The library precompiles in 45 s instead of 71 s on the development machine.
 
 ## Highlights
 - Four synthetic MATPOWER cases ship under `data/mpower` (`sp_case9`, `sp_case118`, `sp_case300`, `sp_case1354`); no downloads needed.
-- Faster install: the default precompile workload is small. `SPARLECTRA_PRECOMPILE_WORKLOAD=full` restores the full warmup.
+- Faster install: the precompile workload is off by default, each solver path compiles on first use. `SPARLECTRA_PRECOMPILE_WORKLOAD=core` warms the import and the rectangular solve, `full` warms everything (the sysimage build does).
 
 ## Changes
 - `power_flow.linear_solver` defaults to `umfpack_reuse` (#288).

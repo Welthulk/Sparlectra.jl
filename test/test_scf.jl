@@ -32,7 +32,7 @@ function _scf_test_net(name::AbstractString = "warmup_casePST.m")
   cfg = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true)
   path = name == "warmup_casePST.m" ? abspath(joinpath(dirname(@__DIR__), "data", "mpower", name)) : large_case_path(name)
   path === nothing && error(string("_scf_test_net: ", name, " is not in the large-case directory; gate on large_case_path before calling"))
-  return Sparlectra._se_import_case_net(path, cfg)
+  return SparlectraApp._se_import_case_net(path, cfg)
 end
 
 
@@ -559,7 +559,7 @@ mpc.branch = [
 2 3 0.01 0.05 0.0 999 999 999 0 0 1 -360 360;
 ];
 """)
-      mnet = Sparlectra._se_import_case_net(joinpath(d, "case_pq.m"), Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true))
+      mnet = SparlectraApp._se_import_case_net(joinpath(d, "case_pq.m"), Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true))
       @test count(has_qu_controller, mnet.prosumpsVec) == 1 && count(has_pu_controller, mnet.prosumpsVec) == 1
       mf = exportSCF(mnet; file = joinpath(d, "pq.scf.json"))
       mextra = values(Sparlectra.scf_json_parse(read(mf, String))["sparlectra"]["extra"])
@@ -591,7 +591,7 @@ mpc.branch = [
         cached = large_case_path(case)
         src = joinpath(d, case)
         cp(cached, src)
-        net = Sparlectra._se_import_case_net(src, cfg)
+        net = SparlectraApp._se_import_case_net(src, cfg)
         a = exportSCF(net; file = joinpath(d, "a_$(case).json"), source_format = "matpower")
         # case57 declares a neutral tap outside its own regulation band; the
         # reader restores the band as stated and says so
@@ -653,7 +653,7 @@ mpc.branch = [
         cached = large_case_path(case)
         src = joinpath(d, case)
         cp(cached, src; force = true)
-        net = Sparlectra._se_import_case_net(src, base_cfg)
+        net = SparlectraApp._se_import_case_net(src, base_cfg)
         withstart = exportSCF(net; file = joinpath(d, "s_$(case).json"), source_format = "matpower", include_start_state = true)
         solved = importSCF(withstart)
         it_a, _ = runpf!(net, 40, 1e-10, 0)
@@ -978,10 +978,10 @@ mpc.branch = [
       ])
       f = exportSCF(net; file = joinpath(d, "cont.scf.json"), contingencies = cont)
       res = redirect_stdout(devnull) do
-        Sparlectra._run_contingency_service(f, cfg, joinpath(d, "run_explicit"), "scf_ct", "branch")
+        SparlectraApp._run_contingency_service(f, cfg, joinpath(d, "run_explicit"), "scf_ct", "branch")
       end
-      md = Sparlectra.to_dict(res)["metadata"]
-      @test Sparlectra.to_dict(res)["status"] == "succeeded"
+      md = SparlectraApp.to_dict(res)["metadata"]
+      @test SparlectraApp.to_dict(res)["status"] == "succeeded"
       @test md["contingency_cases_source"] == "case_file_explicit"
       @test md["contingency_cases"] == 2                       # the file's list, not every branch
       log = read(joinpath(d, "run_explicit", "run.log"), String)
@@ -993,9 +993,9 @@ mpc.branch = [
       excl = Dict{String,Any}("mode" => "all_branches", "exclude" => Any[n1])
       fx = exportSCF(net; file = joinpath(d, "excl.scf.json"), contingencies = excl)
       res_x = redirect_stdout(devnull) do
-        Sparlectra._run_contingency_service(fx, cfg, joinpath(d, "run_excl"), "scf_ctx", "branch")
+        SparlectraApp._run_contingency_service(fx, cfg, joinpath(d, "run_excl"), "scf_ctx", "branch")
       end
-      mdx = Sparlectra.to_dict(res_x)["metadata"]
+      mdx = SparlectraApp.to_dict(res_x)["metadata"]
       @test mdx["contingency_cases_source"] == "case_file_all_branches"
       @test mdx["contingency_cases"] == generated - 1
       @test !occursin(",$(n1),", read(joinpath(d, "run_excl", "contingency_n1.csv"), String))
@@ -1005,9 +1005,9 @@ mpc.branch = [
       multi = Dict{String,Any}("mode" => "explicit", "cases" => Any[Dict{String,Any}("name" => "common mode", "outages" => Any[Dict{String,Any}("component" => b1), Dict{String,Any}("component" => b2)])])
       fm = exportSCF(net; file = joinpath(d, "multi.scf.json"), contingencies = multi)
       res_m = redirect_stdout(devnull) do
-        Sparlectra._run_contingency_service(fm, cfg, joinpath(d, "run_multi"), "scf_ctm", "branch")
+        SparlectraApp._run_contingency_service(fm, cfg, joinpath(d, "run_multi"), "scf_ctm", "branch")
       end
-      dm = Sparlectra.to_dict(res_m)
+      dm = SparlectraApp.to_dict(res_m)
       @test dm["status"] == "failed" && dm["reason"] == "invalid_case_file"
       @test occursin("2 outages", dm["message"])
 
@@ -1021,9 +1021,9 @@ mpc.branch = [
       sub_cfg = split(string(cfg, "|marker"), "|")[1]
       @test sub_cfg isa SubString{String}
       res_sub = redirect_stdout(devnull) do
-        Sparlectra._run_contingency_service(with_cfg, sub_cfg, joinpath(d, "run_subcfg"), "scf_sub", "branch")
+        SparlectraApp._run_contingency_service(with_cfg, sub_cfg, joinpath(d, "run_subcfg"), "scf_sub", "branch")
       end
-      d_sub = Sparlectra.to_dict(res_sub)
+      d_sub = SparlectraApp.to_dict(res_sub)
       @test d_sub["status"] == "succeeded"
       @test d_sub["metadata"]["contingency_cases"] > 0
       # the case configuration file's settings reached the run (the file is
@@ -1032,11 +1032,11 @@ mpc.branch = [
       @test occursin("scope: case", cc_text)
       @test occursin("mode: auto", cc_text)
       res_sub_sc = redirect_stdout(devnull) do
-        Sparlectra._run_short_circuit_service(with_cfg, sub_cfg, joinpath(d, "run_subsc"), "scf_subsc")
+        SparlectraApp._run_short_circuit_service(with_cfg, sub_cfg, joinpath(d, "run_subsc"), "scf_subsc")
       end
       # no sources in a MATPOWER-derived case: the reason must be the DATA,
       # never a type error
-      @test Sparlectra.to_dict(res_sub_sc)["reason"] == "short_circuit_data_missing"
+      @test SparlectraApp.to_dict(res_sub_sc)["reason"] == "short_circuit_data_missing"
 
       # State estimation runs on a case file, and the measurements come WITH
       # the model: no separate CSV has to exist for it (that combination was
@@ -1049,9 +1049,9 @@ mpc.branch = [
       # design; the advisory is captured, anything else that warns fails
       se_quiet(f) = run_with_expected_warnings(() -> redirect_stdout(f, devnull), (r"topology precheck reported",))
       res_se = se_quiet() do
-        Sparlectra._run_state_estimation_service(se_case, cfg, joinpath(d, "run_se"), "scf_se", joinpath(d, "no_such_set.csv"))
+        SparlectraApp._run_state_estimation_service(se_case, cfg, joinpath(d, "run_se"), "scf_se", joinpath(d, "no_such_set.csv"))
       end
-      d_se = Sparlectra.to_dict(res_se)
+      d_se = SparlectraApp.to_dict(res_se)
       @test d_se["status"] == "succeeded"
       @test d_se["metadata"]["se_measurement_rows"] == length(importSCF(se_case).measurements)
       # the run writes its own measurement artifact, so it stays reproducible
@@ -1081,7 +1081,7 @@ mpc.branch = [
         "2,,T1,B1,B2,1.0,0.01,1.5,2,0,2.0",
         string("truth_value,", se_net.measurements[1].id, ",", repr(se_net.measurements[1].value + 0.01)),
       ])
-      prov = Sparlectra._webui_measurement_set_provenance(prov_set)
+      prov = SparlectraApp._webui_measurement_set_provenance(prov_set)
       @test prov["noise"] == true
       @test prov["seed"] == 7
       @test length(prov["tap_deviations"]) == 1
@@ -1096,16 +1096,16 @@ mpc.branch = [
       @test length(back["truth_values"]) == 1
       @test Sparlectra._scf_source_reference(prov_case) == "warmup_casePST.m"
       res_prov = se_quiet() do
-        Sparlectra._run_state_estimation_service(prov_case, cfg, joinpath(d, "run_prov"), "scf_prov", joinpath(d, "no_such_set.csv"))
+        SparlectraApp._run_state_estimation_service(prov_case, cfg, joinpath(d, "run_prov"), "scf_prov", joinpath(d, "no_such_set.csv"))
       end
-      @test Sparlectra.to_dict(res_prov)["status"] == "succeeded"
+      @test SparlectraApp.to_dict(res_prov)["status"] == "succeeded"
       # the deviation reaches the run, and the truth value reaches the deltas
       @test occursin("documents a tap deviation", read(joinpath(d, "run_prov", "run.log"), String))
       @test isfile(joinpath(d, "run_prov", "se_deltas.csv"))
       @test count(l -> startswith(l, "meas,"), readlines(joinpath(d, "run_prov", "se_deltas.csv"))) == 1
       # the headline leads with J/dof: a bare J grows with the row count and
       # reads as an alarm where J/dof says the set is healthy
-      @test occursin("J/dof = ", Sparlectra.to_dict(res_prov)["message"])
+      @test occursin("J/dof = ", SparlectraApp.to_dict(res_prov)["message"])
 
       # A set that measures the same quantity twice is the signature of a
       # corrupted file: it inflates J without any single residual looking
@@ -1126,9 +1126,9 @@ mpc.branch = [
       @test sort([m.id for m in dbl_back.measurements]) == sort([m.id for m in doubled])
       @test sort([m.value for m in dbl_back.measurements]) == sort([m.value for m in doubled])
       res_dbl = se_quiet() do
-        Sparlectra._run_state_estimation_service(dbl_case, cfg, joinpath(d, "run_dbl"), "scf_dbl", joinpath(d, "no_such_set.csv"))
+        SparlectraApp._run_state_estimation_service(dbl_case, cfg, joinpath(d, "run_dbl"), "scf_dbl", joinpath(d, "no_such_set.csv"))
       end
-      d_dbl = Sparlectra.to_dict(res_dbl)
+      d_dbl = SparlectraApp.to_dict(res_dbl)
       @test d_dbl["metadata"]["se_duplicate_rows"] == length(se_net.measurements)
       @test occursin("repeat an already measured quantity", d_dbl["message"])
 
@@ -1136,9 +1136,9 @@ mpc.branch = [
       # failing on a file that was never there
       plain_case = exportSCF(_scf_test_net(); file = joinpath(d, "plain_case.scf.json"))
       res_none = se_quiet() do
-        Sparlectra._run_state_estimation_service(plain_case, cfg, joinpath(d, "run_se_none"), "scf_se_none", joinpath(d, "no_such_set.csv"))
+        SparlectraApp._run_state_estimation_service(plain_case, cfg, joinpath(d, "run_se_none"), "scf_se_none", joinpath(d, "no_such_set.csv"))
       end
-      d_none = Sparlectra.to_dict(res_none)
+      d_none = SparlectraApp.to_dict(res_none)
       @test d_none["reason"] == "invalid_measurements"
       @test occursin("carries no measurements", d_none["message"])
 
@@ -1146,9 +1146,9 @@ mpc.branch = [
       # reporting a zero-current network
       f0 = exportSCF(net; file = joinpath(d, "nosrc.scf.json"), short_circuit = Dict{String,Any}("case" => "max"))
       res0 = redirect_stdout(devnull) do
-        Sparlectra._run_short_circuit_service(f0, cfg, joinpath(d, "run_sc0"), "scf_sc0")
+        SparlectraApp._run_short_circuit_service(f0, cfg, joinpath(d, "run_sc0"), "scf_sc0")
       end
-      @test Sparlectra.to_dict(res0)["reason"] == "short_circuit_data_missing"
+      @test SparlectraApp.to_dict(res0)["reason"] == "short_circuit_data_missing"
 
       # ... and one WITH sources runs the study the file defines
       scnet = Net(name = "scstudy", baseMVA = 100.0)
@@ -1164,9 +1164,9 @@ mpc.branch = [
       # the source data survives the round trip, which is what makes the run possible
       @test length(importSCF(fsc).sc_sources.external_network_injections) == 1
       res_sc = redirect_stdout(devnull) do
-        Sparlectra._run_short_circuit_service(fsc, cfg, joinpath(d, "run_sc"), "scf_sc")
+        SparlectraApp._run_short_circuit_service(fsc, cfg, joinpath(d, "run_sc"), "scf_sc")
       end
-      dsc = Sparlectra.to_dict(res_sc)
+      dsc = SparlectraApp.to_dict(res_sc)
       @test dsc["status"] == "succeeded"
       msc = dsc["metadata"]
       @test msc["input_format_detected"] == "scf"
@@ -1193,9 +1193,9 @@ mpc.branch = [
         println(io, "  csv_format: excel_de")
       end
       res_sc_de = redirect_stdout(devnull) do
-        Sparlectra._run_short_circuit_service(fsc, cfg_de, joinpath(d, "run_sc_de"), "scf_sc_de")
+        SparlectraApp._run_short_circuit_service(fsc, cfg_de, joinpath(d, "run_sc_de"), "scf_sc_de")
       end
-      @test Sparlectra.to_dict(res_sc_de)["status"] == "succeeded"
+      @test SparlectraApp.to_dict(res_sc_de)["status"] == "succeeded"
       for name in ("short_circuit_max.csv", "short_circuit_min.csv")
         sc_de_lines = readlines(joinpath(d, "run_sc_de", name))
         @test sc_de_lines[1] == "bus;vn_kV;island;status;c;zk_ohm;rx_ratio;ik_kA;sk_MVA;kappa;ip_kA;flagged;reasons"
@@ -1280,13 +1280,13 @@ mpc.branch = [
       root["sparlectra"]["short_circuit"]["buses"] = Any[999999]
       write(joinpath(d, "badbus.scf.json"), Sparlectra.scf_json_string(root))
       res_bad = redirect_stdout(devnull) do
-        Sparlectra._run_short_circuit_service(joinpath(d, "badbus.scf.json"), cfg, joinpath(d, "run_scbad"), "scf_scbad")
+        SparlectraApp._run_short_circuit_service(joinpath(d, "badbus.scf.json"), cfg, joinpath(d, "run_scbad"), "scf_scbad")
       end
-      @test Sparlectra.to_dict(res_bad)["status"] == "failed"
+      @test SparlectraApp.to_dict(res_bad)["status"] == "failed"
 
       # the Web UI offers the button for a case file carrying sources
-      @test Sparlectra._webui_case_has_short_circuit_data(fsc)
-      @test !Sparlectra._webui_case_has_short_circuit_data(f0)
+      @test SparlectraApp._webui_case_has_short_circuit_data(fsc)
+      @test !SparlectraApp._webui_case_has_short_circuit_data(f0)
     end)() end
 
     @testset "study definitions are carried and validated" begin (function ()
@@ -1323,8 +1323,8 @@ mpc.branch = [
       # the case format is a first-class case format: detected, selectable,
       # and runnable through the same paths as every other source
       @test Sparlectra._detect_case_format(fixture) === :scf
-      @test Sparlectra._webui_is_user_selectable_case("warmup_casePST.scf.json")
-      @test !Sparlectra._webui_is_user_selectable_case("run_metadata.json")
+      @test SparlectraApp._webui_is_user_selectable_case("warmup_casePST.scf.json")
+      @test !SparlectraApp._webui_is_user_selectable_case("run_metadata.json")
       cfg = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true)
       res = run_sparlectra(casefile = fixture, config = cfg)
       @test res.final_converged
@@ -1361,8 +1361,8 @@ mpc.branch = [
       src = abspath(joinpath(dirname(@__DIR__), "data", "mpower", "warmup_casePST.m"))
       cp(src, joinpath(cases, "warmup_casePST.m"))
       cp(string(first(splitext(src)), ".measurements.csv"), joinpath(cases, "warmup_casePST.measurements.csv"))
-      rt = (; case_directory = cases, config_file = Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, operation_log = Sparlectra.webui_operation_log_path(root), startup_config_error = nothing, runner = Sparlectra.start_powerflow_run)
-      resp = Sparlectra.route_sparlectra_webui("POST", "/powerflow/export-scf", Dict{String,Any}("casefile" => "warmup_casePST.m", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "power_flow_mode" => "auto"); output_root = root, runtime = rt)
+      rt = (; case_directory = cases, config_file = Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, operation_log = SparlectraApp.webui_operation_log_path(root), startup_config_error = nothing, runner = SparlectraApp.start_powerflow_run)
+      resp = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/export-scf", Dict{String,Any}("casefile" => "warmup_casePST.m", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "power_flow_mode" => "auto"); output_root = root, runtime = rt)
       out = joinpath(cases, "warmup_casePST.scf.json")
       @test occursin("Exported", string(resp))
       @test isfile(out)
@@ -1378,17 +1378,17 @@ mpc.branch = [
       @test occursin("sym_voltage_sensor", txt)
       @test occursin("state_estimation", txt)
       # unknown case and empty selection fail loudly, without writing
-      bad = Sparlectra.route_sparlectra_webui("POST", "/powerflow/export-scf", Dict{String,Any}("casefile" => "does_not_exist.m"); output_root = root, runtime = rt)
+      bad = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/export-scf", Dict{String,Any}("casefile" => "does_not_exist.m"); output_root = root, runtime = rt)
       @test occursin("not%20found", string(bad)) || occursin("not+found", string(bad))
-      empty_sel = Sparlectra.route_sparlectra_webui("POST", "/powerflow/export-scf", Dict{String,Any}(); output_root = root, runtime = rt)
+      empty_sel = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/export-scf", Dict{String,Any}(); output_root = root, runtime = rt)
       @test occursin("Select%20a%20case", string(empty_sel)) || occursin("Select+a+case", string(empty_sel))
       # the button is on the Case page for every case, not only
       # for cases that already carry saved settings
-      @test occursin("/powerflow/export-scf", Sparlectra.render_case_page())
+      @test occursin("/powerflow/export-scf", SparlectraApp.render_case_page())
       # the plain PGM variant has its own button and writes its own file
-      @test occursin("scf_strict_pgm", Sparlectra.render_case_page())
+      @test occursin("scf_strict_pgm", SparlectraApp.render_case_page())
       pgm = run_with_expected_warnings((r"strict_pgm = true",)) do
-        Sparlectra.route_sparlectra_webui("POST", "/powerflow/export-scf", Dict{String,Any}("casefile" => "warmup_casePST.m", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "scf_strict_pgm" => "true"); output_root = root, runtime = rt)
+        SparlectraApp.route_sparlectra_webui("POST", "/powerflow/export-scf", Dict{String,Any}("casefile" => "warmup_casePST.m", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "scf_strict_pgm" => "true"); output_root = root, runtime = rt)
       end
       @test isfile(joinpath(cases, "warmup_casePST.pgm.json"))
       @test !haskey(Sparlectra.scf_json_parse(read(joinpath(cases, "warmup_casePST.pgm.json"), String)), "sparlectra")
@@ -1397,18 +1397,18 @@ mpc.branch = [
       # export names it in the redirect, the page offers it, and the route
       # serves it as a download
       @test occursin("&download=warmup_casePST.scf.json", string(resp))
-      page = Sparlectra.route_sparlectra_webui("GET", "/powerflow/case?download=warmup_casePST.scf.json&import_message=Exported"; output_root = root, runtime = rt)
+      page = SparlectraApp.route_sparlectra_webui("GET", "/powerflow/case?download=warmup_casePST.scf.json&import_message=Exported"; output_root = root, runtime = rt)
       page_html = String(copy(page.body))
       @test occursin("/powerflow/case/download?case=warmup_casePST.scf.json", page_html)
       @test occursin("Download selected case", page_html)
-      dl = Sparlectra.route_sparlectra_webui("GET", "/powerflow/case/download?case=warmup_casePST.scf.json"; output_root = root, runtime = rt)
+      dl = SparlectraApp.route_sparlectra_webui("GET", "/powerflow/case/download?case=warmup_casePST.scf.json"; output_root = root, runtime = rt)
       @test dl.status == 200
       @test any(k == "Content-Disposition" && occursin("warmup_casePST.scf.json", v) for (k, v) in dl.headers)
       @test any(k == "Content-Type" && occursin("application/json", v) for (k, v) in dl.headers)
       @test String(copy(dl.body)) == read(joinpath(cases, "warmup_casePST.scf.json"), String)
       # a name that escapes the case directory, or names nothing, is refused
       for bad_name in ("..%2F..%2Fetc%2Fpasswd", "nope.json")
-        refused = Sparlectra.route_sparlectra_webui("GET", "/powerflow/case/download?case=$(bad_name)"; output_root = root, runtime = rt)
+        refused = SparlectraApp.route_sparlectra_webui("GET", "/powerflow/case/download?case=$(bad_name)"; output_root = root, runtime = rt)
         @test refused.status == 303
         @test isempty(refused.body)
       end
@@ -1417,19 +1417,19 @@ mpc.branch = [
       # so it belongs in the selector, and it downloads and runs like any
       # other case (it was written but invisible, which is how it got lost)
       @test isfile(joinpath(cases, "warmup_casePST.pgm.json"))
-      form_html = String(copy(Sparlectra.route_sparlectra_webui("GET", "/powerflow/case"; output_root = root, runtime = rt).body))
+      form_html = String(copy(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/case"; output_root = root, runtime = rt).body))
       @test occursin("warmup_casePST.pgm.json", form_html)
-      @test Sparlectra._webui_is_user_selectable_case("warmup_casePST.pgm.json")
-      pgm_run = Sparlectra.start_powerflow_run(Dict("casefile" => "warmup_casePST.pgm.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(root, "runs_pgm")); case_directory = cases)
+      @test SparlectraApp._webui_is_user_selectable_case("warmup_casePST.pgm.json")
+      pgm_run = SparlectraApp.start_powerflow_run(Dict("casefile" => "warmup_casePST.pgm.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(root, "runs_pgm")); case_directory = cases)
       @test pgm_run["status"] == "succeeded"
       # the run form carries the FULL path back after saving case settings, so
       # the download has to accept one that points into the case directory
       full_path = joinpath(cases, "warmup_casePST.pgm.json")
-      dl_full = Sparlectra.route_sparlectra_webui("GET", "/powerflow/case/download?case=$(Sparlectra._webui_urlencode(full_path))"; output_root = root, runtime = rt)
+      dl_full = SparlectraApp.route_sparlectra_webui("GET", "/powerflow/case/download?case=$(SparlectraApp._webui_urlencode(full_path))"; output_root = root, runtime = rt)
       @test dl_full.status == 200
       @test String(copy(dl_full.body)) == read(full_path, String)
       # ... without opening a path outside it
-      outside = Sparlectra.route_sparlectra_webui("GET", "/powerflow/case/download?case=$(Sparlectra._webui_urlencode("/etc/passwd"))"; output_root = root, runtime = rt)
+      outside = SparlectraApp.route_sparlectra_webui("GET", "/powerflow/case/download?case=$(SparlectraApp._webui_urlencode("/etc/passwd"))"; output_root = root, runtime = rt)
       @test outside.status == 303
       @test isempty(outside.body)
 
@@ -1438,7 +1438,7 @@ mpc.branch = [
       # existed, so a case14 run started with case118's set and failed the
       # binding check on a set the user never picked.
       cp(abspath(joinpath(dirname(@__DIR__), "data", "mpower", "warmup_casePST.measurements.csv")), joinpath(cases, "case118.measurements.csv"); force = true)
-      se_page = String(copy(Sparlectra.route_sparlectra_webui("GET", "/powerflow?casefile=warmup_casePST.pgm.json"; output_root = root, runtime = rt).body))
+      se_page = String(copy(SparlectraApp.route_sparlectra_webui("GET", "/powerflow?casefile=warmup_casePST.pgm.json"; output_root = root, runtime = rt).body))
       @test !occursin("case118.measurements.csv\" selected", se_page)
       @test occursin("pick the set that belongs", se_page)
       # a case file that CARRIES its measurements says so, with the number the
@@ -1446,20 +1446,20 @@ mpc.branch = [
       carrying = _scf_test_net()
       Sparlectra.readMeasurementsCSV!(carrying; file = abspath(joinpath(dirname(@__DIR__), "data", "mpower", "warmup_casePST.measurements.csv")))
       exportSCF(carrying; file = joinpath(cases, "carrying.scf.json"), intended_calculations = String["power_flow", "state_estimation"])
-      carry_page = String(copy(Sparlectra.route_sparlectra_webui("GET", "/powerflow?casefile=carrying.scf.json"; output_root = root, runtime = rt).body))
+      carry_page = String(copy(SparlectraApp.route_sparlectra_webui("GET", "/powerflow?casefile=carrying.scf.json"; output_root = root, runtime = rt).body))
       @test occursin("carries <strong>$(length(carrying.measurements)) measurements</strong>", carry_page)
       @test occursin("(from the case file: $(length(carrying.measurements)) rows)", carry_page)
       @test !occursin("case118.measurements.csv\" selected", carry_page)
       # generating a set for a case file works and binds it to THAT case, so
       # the page preselects it afterwards
-      Sparlectra.route_sparlectra_webui("POST", "/stateestimation/generate-measurements", Dict{String,Any}("casefile" => "warmup_casePST.pgm.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH); output_root = root, runtime = rt)
+      SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/generate-measurements", Dict{String,Any}("casefile" => "warmup_casePST.pgm.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH); output_root = root, runtime = rt)
       generated = joinpath(cases, "warmup_casePST.pgm.measurements.csv")
       @test isfile(generated)
       @test any(line -> line == "# case: warmup_casePST.pgm.json", eachline(generated))
-      after_page = String(copy(Sparlectra.route_sparlectra_webui("GET", "/powerflow?casefile=warmup_casePST.pgm.json"; output_root = root, runtime = rt).body))
+      after_page = String(copy(SparlectraApp.route_sparlectra_webui("GET", "/powerflow?casefile=warmup_casePST.pgm.json"; output_root = root, runtime = rt).body))
       @test occursin("warmup_casePST.pgm.measurements.csv\" selected", after_page)
       # ... and the run with it goes through
-      se_run = Sparlectra.start_powerflow_run(Dict("casefile" => "warmup_casePST.pgm.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(root, "runs_se_gen"), "se_mode" => true, "measurement_file" => "warmup_casePST.pgm.measurements.csv"); case_directory = cases)
+      se_run = SparlectraApp.start_powerflow_run(Dict("casefile" => "warmup_casePST.pgm.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(root, "runs_se_gen"), "se_mode" => true, "measurement_file" => "warmup_casePST.pgm.measurements.csv"); case_directory = cases)
       @test se_run["status"] == "succeeded"
       # the ONE CSV setting (0.15.1, Web UI run c1c31569: se_bad_data.csv kept
       # the comma): a state-estimation request WITHOUT any CSV field under a
@@ -1469,7 +1469,7 @@ mpc.branch = [
       cfg_de = joinpath(root, "configuration_excel_de.yaml")
       write(cfg_de, replace(read(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, String), r"^(\s*csv_format:)\s*\S+"m => s"\1 excel_de"))
       @test occursin("csv_format: excel_de", read(cfg_de, String))
-      se_de = Sparlectra.start_powerflow_run(Dict("casefile" => "warmup_casePST.pgm.json", "config_file" => cfg_de, "output_root" => joinpath(root, "runs_se_de"), "se_mode" => true, "measurement_file" => "warmup_casePST.pgm.measurements.csv"); case_directory = cases)
+      se_de = SparlectraApp.start_powerflow_run(Dict("casefile" => "warmup_casePST.pgm.json", "config_file" => cfg_de, "output_root" => joinpath(root, "runs_se_de"), "se_mode" => true, "measurement_file" => "warmup_casePST.pgm.measurements.csv"); case_directory = cases)
       @test se_de["status"] == "succeeded"
       # measurements.csv is the measurement set itself (measurement CSV v1,
       # an input format with its own fixed header), not a result artifact
@@ -1480,7 +1480,7 @@ mpc.branch = [
         @test occursin(';', isempty(data_lines) ? "" : data_lines[1])
       end
       # exporting a case FILE again must not grow format suffixes
-      @test_logs (:warn, r"strict_pgm = true") match_mode = :any Sparlectra.route_sparlectra_webui("POST", "/powerflow/export-scf", Dict{String,Any}("casefile" => "warmup_casePST.scf.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "scf_strict_pgm" => "true"); output_root = root, runtime = rt)
+      @test_logs (:warn, r"strict_pgm = true") match_mode = :any SparlectraApp.route_sparlectra_webui("POST", "/powerflow/export-scf", Dict{String,Any}("casefile" => "warmup_casePST.scf.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "scf_strict_pgm" => "true"); output_root = root, runtime = rt)
       @test !isfile(joinpath(cases, "warmup_casePST.scf.pgm.json"))
       @test isfile(joinpath(cases, "warmup_casePST.pgm.json"))
 
@@ -1490,10 +1490,10 @@ mpc.branch = [
       carry_gen = _scf_test_net()
       Sparlectra.readMeasurementsCSV!(carry_gen; file = abspath(joinpath(dirname(@__DIR__), "data", "mpower", "warmup_casePST.measurements.csv")))
       exportSCF(carry_gen; file = joinpath(cases, "wins.scf.json"), intended_calculations = String["power_flow", "state_estimation"])
-      before_gen = String(copy(Sparlectra.route_sparlectra_webui("GET", "/powerflow?casefile=wins.scf.json"; output_root = root, runtime = rt).body))
+      before_gen = String(copy(SparlectraApp.route_sparlectra_webui("GET", "/powerflow?casefile=wins.scf.json"; output_root = root, runtime = rt).body))
       @test occursin("(from the case file: $(length(carry_gen.measurements)) rows)", before_gen)
-      Sparlectra.route_sparlectra_webui("POST", "/stateestimation/generate-measurements", Dict{String,Any}("casefile" => "wins.scf.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH); output_root = root, runtime = rt)
-      after_gen = String(copy(Sparlectra.route_sparlectra_webui("GET", "/powerflow?casefile=wins.scf.json"; output_root = root, runtime = rt).body))
+      SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/generate-measurements", Dict{String,Any}("casefile" => "wins.scf.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH); output_root = root, runtime = rt)
+      after_gen = String(copy(SparlectraApp.route_sparlectra_webui("GET", "/powerflow?casefile=wins.scf.json"; output_root = root, runtime = rt).body))
       @test occursin("wins.scf.measurements.csv\" selected", after_gen)
       # ... and the generated set REPLACES the carried rows instead of being
       # appended to them (59 carried + 75 generated = 134 rows in a file that
@@ -1511,40 +1511,40 @@ mpc.branch = [
       setMeasurementsFromPF!(ideal_net; includeVm = true, includePinj = true, includeQinj = true, includePflow = true, includeQflow = true, noise = false)
       ideal_case = exportSCF(ideal_net; file = joinpath(cases, "ideal.scf.json"), measurement_provenance = Dict{String,Any}("noise" => false, "generator" => "v2"))
       @test Sparlectra.scf_json_parse(read(ideal_case, String))["sparlectra"]["measurements"]["provenance"]["noise"] === false
-      ideal_page = String(copy(Sparlectra.route_sparlectra_webui("GET", "/powerflow?casefile=ideal.scf.json"; output_root = root, runtime = rt).body))
+      ideal_page = String(copy(SparlectraApp.route_sparlectra_webui("GET", "/powerflow?casefile=ideal.scf.json"; output_root = root, runtime = rt).body))
       @test occursin("ideal (noise-free)", ideal_page)
       @test occursin("/stateestimation/add-noise", ideal_page)
       # noising needs NO power flow and keeps the sigmas; J moves from 0 to a
       # real value on the very same operating point
-      Sparlectra.route_sparlectra_webui("POST", "/stateestimation/add-noise", Dict{String,Any}("casefile" => "ideal.scf.json", "noise_seed" => "7"); output_root = root, runtime = rt)
+      SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/add-noise", Dict{String,Any}("casefile" => "ideal.scf.json", "noise_seed" => "7"); output_root = root, runtime = rt)
       noisy_set = joinpath(cases, "ideal.scf.noisy.measurements.csv")
       @test isfile(noisy_set)
       @test any(l -> l == "# case: ideal.scf.json", eachline(noisy_set))
-      ideal_run = Sparlectra.start_powerflow_run(Dict("casefile" => "ideal.scf.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(root, "runs_ideal"), "se_mode" => true, "measurement_file" => ""); case_directory = cases)
-      noisy_run = Sparlectra.start_powerflow_run(Dict("casefile" => "ideal.scf.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(root, "runs_noisy"), "se_mode" => true, "measurement_file" => "ideal.scf.noisy.measurements.csv"); case_directory = cases)
+      ideal_run = SparlectraApp.start_powerflow_run(Dict("casefile" => "ideal.scf.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(root, "runs_ideal"), "se_mode" => true, "measurement_file" => ""); case_directory = cases)
+      noisy_run = SparlectraApp.start_powerflow_run(Dict("casefile" => "ideal.scf.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(root, "runs_noisy"), "se_mode" => true, "measurement_file" => "ideal.scf.noisy.measurements.csv"); case_directory = cases)
       @test ideal_run["status"] == "succeeded" && noisy_run["status"] == "succeeded"
       @test occursin("J = 0.0", ideal_run["message"])
       @test !occursin("J = 0.0", noisy_run["message"])
 
       # a case file is selectable AND resolvable by its bare name: the service
       # resolver rejected .json outright, so an exported case could not be run
-      resolved = Sparlectra._resolve_powerflow_casefile("warmup_casePST.scf.json", cases)
+      resolved = SparlectraApp._resolve_powerflow_casefile("warmup_casePST.scf.json", cases)
       @test resolved == abspath(joinpath(cases, "warmup_casePST.scf.json"))
-      @test_throws ArgumentError Sparlectra._resolve_powerflow_casefile("no_such_case.scf.json", cases)
-      run_scf = Sparlectra.start_powerflow_run(Dict("casefile" => "warmup_casePST.scf.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(root, "runs_scf")); case_directory = cases)
+      @test_throws ArgumentError SparlectraApp._resolve_powerflow_casefile("no_such_case.scf.json", cases)
+      run_scf = SparlectraApp.start_powerflow_run(Dict("casefile" => "warmup_casePST.scf.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(root, "runs_scf")); case_directory = cases)
       @test run_scf["status"] == "succeeded"
       @test run_scf["converged"] === true
 
       # uploading a case file: accepted by extension AND validated before it
       # is stored, so a foreign .json never lands in the case directory
-      up = Dict{String,Any}("casefiles" => [Sparlectra.WebUICaseUpload("uploaded.scf.json", Vector{UInt8}(read(joinpath(cases, "warmup_casePST.scf.json"))))])
-      Sparlectra.route_sparlectra_webui("POST", "/powerflow/import-cases", up; output_root = root, runtime = rt)
+      up = Dict{String,Any}("casefiles" => [SparlectraApp.WebUICaseUpload("uploaded.scf.json", Vector{UInt8}(read(joinpath(cases, "warmup_casePST.scf.json"))))])
+      SparlectraApp.route_sparlectra_webui("POST", "/powerflow/import-cases", up; output_root = root, runtime = rt)
       @test isfile(joinpath(cases, "uploaded.scf.json"))
-      foreign = Dict{String,Any}("casefiles" => [Sparlectra.WebUICaseUpload("foreign.json", Vector{UInt8}(codeunits("{\"hello\": 1}")))])
-      resp_foreign = Sparlectra.route_sparlectra_webui("POST", "/powerflow/import-cases", foreign; output_root = root, runtime = rt)
+      foreign = Dict{String,Any}("casefiles" => [SparlectraApp.WebUICaseUpload("foreign.json", Vector{UInt8}(codeunits("{\"hello\": 1}")))])
+      resp_foreign = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/import-cases", foreign; output_root = root, runtime = rt)
       @test !isfile(joinpath(cases, "foreign.json"))
-      @test Sparlectra._webui_scf_upload_reason(Vector{UInt8}(codeunits("{\"hello\": 1}"))) !== nothing
-      @test Sparlectra._webui_scf_upload_reason(Vector{UInt8}(read(joinpath(cases, "warmup_casePST.scf.json")))) === nothing
+      @test SparlectraApp._webui_scf_upload_reason(Vector{UInt8}(codeunits("{\"hello\": 1}"))) !== nothing
+      @test SparlectraApp._webui_scf_upload_reason(Vector{UInt8}(read(joinpath(cases, "warmup_casePST.scf.json")))) === nothing
     end)() end
 
     @testset "Web UI save case as route (issue #378)" begin (function ()
@@ -1553,12 +1553,12 @@ mpc.branch = [
       mkpath(cases)
       cp(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json")), joinpath(cases, "sp_case14.scf.json"))
       cp(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.measurements.csv")), joinpath(cases, "sp_case14.measurements.csv"))
-      rt = (; case_directory = cases, config_file = Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, operation_log = Sparlectra.webui_operation_log_path(root), startup_config_error = nothing, runner = Sparlectra.start_powerflow_run)
+      rt = (; case_directory = cases, config_file = Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, operation_log = SparlectraApp.webui_operation_log_path(root), startup_config_error = nothing, runner = SparlectraApp.start_powerflow_run)
 
       # test 1 (issue text): save with a bound measurement set - three files
       # appear, the measurement file carries the rewritten binding, the new
       # case lists exactly this set
-      resp = Sparlectra.route_sparlectra_webui("POST", "/powerflow/case/save-as", Dict{String,Any}("casefile" => "sp_case14.scf.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "save_as_name" => "sp_case14_WLS_B"); output_root = root, runtime = rt)
+      resp = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/case/save-as", Dict{String,Any}("casefile" => "sp_case14.scf.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "save_as_name" => "sp_case14_WLS_B"); output_root = root, runtime = rt)
       @test resp.status == 303
       loc = only(h.second for h in resp.headers if h.first == "Location")
       @test occursin("casefile=sp_case14_WLS_B.scf.json", loc)
@@ -1568,7 +1568,7 @@ mpc.branch = [
       copy_case = Sparlectra.read_scf_json(joinpath(cases, "sp_case14_WLS_B.scf.json"))
       @test copy_case.sparlectra.meta["case_name"] == "sp_case14_WLS_B"
       @test copy_case.sparlectra.meta["source_reference"] == "copied from sp_case14.scf.json"
-      se_state = Sparlectra._webui_se_form_state(Dict{String,Any}("case" => "sp_case14_WLS_B.scf.json"); output_root = root, case_directory = cases)
+      se_state = SparlectraApp._webui_se_form_state(Dict{String,Any}("case" => "sp_case14_WLS_B.scf.json"); output_root = root, case_directory = cases)
       bound_to_copy = [name for (name, c) in se_state.meas_case if c == "sp_case14_WLS_B.scf.json"]
       @test bound_to_copy == ["sp_case14_WLS_B.measurements.csv"]
 
@@ -1591,24 +1591,24 @@ mpc.branch = [
       ];
       """)
       before_m = read(mfile, String)
-      resp_m = Sparlectra.route_sparlectra_webui("POST", "/powerflow/case/save-as", Dict{String,Any}("casefile" => "case_api.m", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "save_as_name" => "case_api_saved"); output_root = root, runtime = rt)
+      resp_m = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/case/save-as", Dict{String,Any}("casefile" => "case_api.m", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "save_as_name" => "case_api_saved"); output_root = root, runtime = rt)
       @test resp_m.status == 303
       @test read(mfile, String) == before_m
       @test isfile(joinpath(cases, "case_api_saved.scf.json"))
-      original_run = Sparlectra.start_powerflow_run(Dict("casefile" => "case_api.m", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(root, "runs_original")); case_directory = cases)
-      saved_run = Sparlectra.start_powerflow_run(Dict("casefile" => "case_api_saved.scf.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(root, "runs_saved")); case_directory = cases)
+      original_run = SparlectraApp.start_powerflow_run(Dict("casefile" => "case_api.m", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(root, "runs_original")); case_directory = cases)
+      saved_run = SparlectraApp.start_powerflow_run(Dict("casefile" => "case_api_saved.scf.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(root, "runs_saved")); case_directory = cases)
       @test original_run["status"] == "succeeded" && saved_run["status"] == "succeeded"
       @test isapprox(original_run["final_mismatch"], saved_run["final_mismatch"]; atol = 1e-12)
 
       # "start from the solved state" writes a real solved state, silently
-      resolved_state_resp = Sparlectra.route_sparlectra_webui("POST", "/powerflow/case/save-as", Dict{String,Any}("casefile" => "case_api.m", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "save_as_name" => "case_api_start_state", "save_as_start_state" => "true"); output_root = root, runtime = rt)
+      resolved_state_resp = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/case/save-as", Dict{String,Any}("casefile" => "case_api.m", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "save_as_name" => "case_api_start_state", "save_as_start_state" => "true"); output_root = root, runtime = rt)
       @test resolved_state_resp.status == 303
       start_state_case = Sparlectra.read_scf_json(joinpath(cases, "case_api_start_state.scf.json"))
       @test start_state_case.sparlectra.start_state.source == "solved_power_flow"
 
       # test 3: an unsaved (not yet on-disk) solver change lands in the
       # COPY's sidecar; the source case has no sidecar at all and stays that way
-      resp_solver = Sparlectra.route_sparlectra_webui("POST", "/powerflow/case/save-as", Dict{String,Any}("casefile" => "sp_case14.scf.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "save_as_name" => "sp_case14_solver_change", "power_flow_solver" => "apslf"); output_root = root, runtime = rt)
+      resp_solver = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/case/save-as", Dict{String,Any}("casefile" => "sp_case14.scf.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "save_as_name" => "sp_case14_solver_change", "power_flow_solver" => "apslf"); output_root = root, runtime = rt)
       @test resp_solver.status == 303
       solver_cfg = read(joinpath(cases, "sp_case14_solver_change.config.yaml"), String)
       @test occursin("case: sp_case14_solver_change.scf.json", solver_cfg)
@@ -1617,7 +1617,7 @@ mpc.branch = [
       # a pre-existing source sidecar survives untouched, and merges into the copy
       write(joinpath(cases, "sp_case14.config.yaml"), "config_version: 1\nscope: case\ncase: sp_case14.scf.json\npower_flow:\n  tol: 1.0e-8\n")
       before_source_cfg = read(joinpath(cases, "sp_case14.config.yaml"), String)
-      resp_merge = Sparlectra.route_sparlectra_webui("POST", "/powerflow/case/save-as", Dict{String,Any}("casefile" => "sp_case14.scf.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "save_as_name" => "sp_case14_merge_test"); output_root = root, runtime = rt)
+      resp_merge = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/case/save-as", Dict{String,Any}("casefile" => "sp_case14.scf.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "save_as_name" => "sp_case14_merge_test"); output_root = root, runtime = rt)
       @test resp_merge.status == 303
       @test read(joinpath(cases, "sp_case14.config.yaml"), String) == before_source_cfg
       merged_cfg = read(joinpath(cases, "sp_case14_merge_test.config.yaml"), String)
@@ -1626,14 +1626,14 @@ mpc.branch = [
 
       # test 4: refuse an existing name without the overwrite flag, accept with it
       dup_form = Dict{String,Any}("casefile" => "sp_case14.scf.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "save_as_name" => "sp_case14_WLS_B")
-      resp_dup = Sparlectra.route_sparlectra_webui("POST", "/powerflow/case/save-as", dup_form; output_root = root, runtime = rt)
+      resp_dup = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/case/save-as", dup_form; output_root = root, runtime = rt)
       loc_dup = only(h.second for h in resp_dup.headers if h.first == "Location")
       @test occursin("already%20exists", loc_dup) || occursin("already+exists", loc_dup)
-      resp_dup_ow = Sparlectra.route_sparlectra_webui("POST", "/powerflow/case/save-as", merge(dup_form, Dict{String,Any}("save_as_overwrite" => "true")); output_root = root, runtime = rt)
+      resp_dup_ow = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/case/save-as", merge(dup_form, Dict{String,Any}("save_as_overwrite" => "true")); output_root = root, runtime = rt)
       @test resp_dup_ow.status == 303
 
       # an invalid name (path separator) is refused before anything is written
-      resp_invalid = Sparlectra.route_sparlectra_webui("POST", "/powerflow/case/save-as", Dict{String,Any}("casefile" => "sp_case14.scf.json", "save_as_name" => "sub/dir"); output_root = root, runtime = rt)
+      resp_invalid = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/case/save-as", Dict{String,Any}("casefile" => "sp_case14.scf.json", "save_as_name" => "sub/dir"); output_root = root, runtime = rt)
       loc_invalid = only(h.second for h in resp_invalid.headers if h.first == "Location")
       @test occursin("Invalid%20name", loc_invalid) || occursin("Invalid+name", loc_invalid)
       @test !isfile(joinpath(cases, "sub"))
@@ -1641,9 +1641,9 @@ mpc.branch = [
       # the action lives on the Case page only (one page per function):
       # no shortcut link from the SE
       # section, no separate route elsewhere
-      case_page_html = String(copy(Sparlectra.route_sparlectra_webui("GET", "/powerflow/case"; output_root = root, runtime = rt).body))
+      case_page_html = String(copy(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/case"; output_root = root, runtime = rt).body))
       @test occursin("/powerflow/case/save-as", case_page_html)
-      se_page_html = String(copy(Sparlectra.route_sparlectra_webui("GET", "/powerflow?casefile=sp_case14.scf.json"; output_root = root, runtime = rt).body))
+      se_page_html = String(copy(SparlectraApp.route_sparlectra_webui("GET", "/powerflow?casefile=sp_case14.scf.json"; output_root = root, runtime = rt).body))
       @test !occursin("Save case as", se_page_html)
     end)() end
   end)() end

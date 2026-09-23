@@ -36,7 +36,7 @@ function _webui_redirect(location::AbstractString)
   return SparlectraWebUIResponse(303, ""; headers = ["Location" => String(location)])
 end
 
-const _WEBUI_LOGO_PATH = normpath(joinpath(@__DIR__, "..", "..", "docs", "src", "assets", "logo.png"))
+const _WEBUI_LOGO_PATH = normpath(joinpath(SPARLECTRA_ROOT, "docs", "src", "assets", "logo.png"))
 const WEBUI_CASE_IMPORT_MAX_FILE_BYTES = 100 * 1024 * 1024
 const WEBUI_CASE_IMPORT_MAX_REQUEST_BYTES = 250 * 1024 * 1024
 # a contingency weight list is text (one line per element); the 100 MB case cap

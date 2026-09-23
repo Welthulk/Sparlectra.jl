@@ -36,7 +36,7 @@
 #          each step below is visible while it runs.
 
 using Sparlectra
-
+using SparlectraApp
 # measurement guard (RP1 worktree incident 2026-09-03): this script must run
 # against THE repository checkout it lives in, never a stale worktree or
 # another depot copy picked up through a wrong --project
@@ -328,7 +328,7 @@ function _trace_cgmes(server, sc_zip)
   # tap/machine controls and SV start state differ from the MATPOWER path, so
   # its specializations are separate. Measurements are generated from the
   # solved state, the same route the Web UI generator takes.
-  cnet = Sparlectra._se_import_case_net(sc_zip, _workload_config())
+  cnet = SparlectraApp._se_import_case_net(sc_zip, _workload_config())
   runpf!(cnet, 40, 1e-8, 0; method = :rectangular)
   append!(cnet.measurements, generateMeasurementsFromPF(cnet; noise = false))
   cmeas = joinpath(server.runtime.case_directory, "cgmes_minigrid.measurements.csv")
