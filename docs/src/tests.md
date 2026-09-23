@@ -8,8 +8,9 @@ Profile selection precedence is:
 
 ## Test profiles
 
-Every test group belongs to exactly one of six base profiles; `extended` is
-the union of the five that are not `fast`, and `all` runs everything. The
+Every test group belongs to exactly one of seven base profiles; `extended`
+is the union of the five that are neither `fast` nor `install`, and `all`
+runs everything. The
 documentation build is a gate of its own (`sh tools/run_gates.sh docs`),
 not a profile: a change to Markdown or a docstring needs the docs build and
 nothing else.
@@ -22,8 +23,16 @@ nothing else.
 | `config` | `julia --project=. test/runtests.jl config` | Configuration surface and validation, configuration documentation coverage, repository hygiene | After a change to a configuration key, a default or the documentation of one |
 | `webui` | `julia --project=. test/runtests.jl webui` | The local browser UI, both files | Before every Web UI pull request; `fast` proves nothing about `src/webui` |
 | `extd` | `julia --project=. test/runtests.jl extd` | Shipped demo cases, SCF, service lifecycle, MATPOWER examples, example infrastructure, net cache, synthetic grids, CGMES import and export, DTF | After a change to a format, an importer, the service layer or the examples |
+| `install` | `julia --project=. test/runtests.jl install` | The installation path: a copy of the checkout without the application manifest, `start_webui.jl --env-only` twice, the first start sets up and compiles, the second does nothing | Before a release; about a minute of cold compile, so not part of `extended` |
 | `extended` | `julia --project=. test/runtests.jl extended` | `pf`, `se`, `config`, `webui` and `extd` in that order | Before a merge |
-| `all` | `julia --project=. test/runtests.jl all` | `fast` followed by `extended` | Declaring a branch merge-ready, together with the docs build |
+| `all` | `julia --project=. test/runtests.jl all` | `fast`, `extended`, then `install` | Declaring a branch merge-ready, together with the docs build |
+
+The service layer and the Web UI are the `SparlectraApp` package under
+`app/`; the runner puts that directory on the load path and loads the
+package for every profile, so `webui`, the service part of `extd` and the
+application smoke test of `fast` (one power flow and one state estimation
+through the service API) run from the library checkout with
+`julia --project=. test/runtests.jl <profile>` as before.
 
 `SPARLECTRA_TEST_PROFILE` selects the profile as well; the command-line
 argument wins. `SPARLECTRA_TEST_SKIP_GROUPS` drops named groups from any
@@ -40,6 +49,7 @@ source; the runner refuses a group in two profiles or in none):
 | `config` | `configuration`, `configuration_docs`, `repository_hygiene` |
 | `webui` | `webui`, `webui_extended` |
 | `extd` | `demo_cases`, `scf`, `programmatic_api_extended`, `matpower_examples`, `example_infra`, `net_cache`, `synthetic_grids`, `cgmes_importer`, `cgmes_export`, `dtf_extended` |
+| `install` | `install` |
 
 The two group tables further down describe what each group checks; they
 are ordered by the former two-profile split and the membership above is
@@ -68,11 +78,19 @@ barely moves these numbers. The lever for wall-clock time is compilation
 reuse (a sysimage-based runner, or a cached Julia compile directory in CI).
 
 Reference times of the profiles on the development machine (16 cores,
-Julia 1.13, package cache warm, each profile in its own process,
-2026-09-23, slim default precompile workload): fast 76 s, pf 101 s,
-se 48 s, config 22 s, webui 104 s, extd 149 s. A profile that grows by more than ten percent against these
+Julia 1.13, measured warm: the second run, with the compile cache of both
+packages in place, also for the child processes some tests start; the first
+run after a source change does not count. Each profile in its own process,
+2026-09-24, precompile workload off, application smoke test in fast, the
+fresh-checkout start test in its own profile): fast 96 s, pf 101 s,
+se 48 s, config 22 s, webui 120 s, extd 149 s, install about 75 s. A profile that grows by more than ten percent against these
 numbers needs a cause before the change is committed; the numbers are
-updated here on purpose, never silently.
+updated here on purpose, never silently. The webui number was raised from
+104 s on 2026-09-23: the growth is compile time of the test functions added
+since (launcher and stale-image decisions, template follow-up, settings
+views, flat start), the test bodies themselves still run in about five
+seconds. A gate right after a source change can show more, because the
+sysimage dry-run test starts a child process with its own compile cache.
 
 Two conventions keep the compile share down and are expected of new tests
 and new service code:
@@ -107,7 +125,7 @@ content commits).
 |---|---|---|
 | Core/model | Small constructors, transformer checks, bus/prosumer semantics, link behavior, representative rectangular PF/Q-limit regressions, and small sparse fallbacks. Large sparse Ybus and large MATPOWER matrix-body checks are extended-only. | Large sparse Ybus smoke, large MATPOWER matrix-body scanner, synthetic/stress grids, and longer integration examples. |
 | API | Serialization and transport helpers, path and validation safety, one successful small API run, one pre-solver failure, one numerical/island failure, Solver-time and Total-time contracts, critical DC-line default and strict-rejection smokes, and one small independent-island regression. | Exhaustive CSV/export matrices, repeated artifact inventories, island artifact-content matrices, persistent history/delete/reload lifecycle coverage, and repeated presentation/performance-log modes. |
-| Web UI | Form parsing and backend validation, result rendering, active and terminal timing cards, commit-span omission, tolerance-step hook, path traversal rejection, DTF upload role classification, primary-case and FOR002 selector filtering, the buildSysimage one-call dry run, the sysimage launcher decision (all four staleness reasons including a src file newer than the image, and the no-terminal default that builds), the agreement between that launcher verdict and `Sparlectra.webui_sysimage_problem` across every fixture state, the sysimage build-progress reader (running, gone-stale, done, failed) and the Sysimage page in each of those states including its rebuild guard, a parse check of the generated app CLI (run/se/n1 commands, config flags) driven from the checkout tool, and stubbed route checks without a real asynchronous solver run. | Case-profile persistence with asynchronous jobs, real run/result polling, artifact preview/download/ZIP/history/delete lifecycle checks, browser-launcher matrices, socket/server lifecycle, and Markdown/help/documentation cross-products. |
+| Web UI | Form parsing and backend validation, result rendering, active and terminal timing cards, commit-span omission, tolerance-step hook, path traversal rejection, DTF upload role classification, primary-case and FOR002 selector filtering, the buildSysimage one-call dry run, the sysimage launcher decision (all four staleness reasons including a src file newer than the image, and the no-terminal default that does not build), the agreement between that launcher verdict and `Sparlectra.webui_sysimage_problem` across every fixture state, the sysimage build-progress reader (running, gone-stale, done, failed) and the Sysimage page in each of those states including its rebuild guard, a parse check of the generated app CLI (run/se/n1 commands, config flags) driven from the checkout tool, and stubbed route checks without a real asynchronous solver run. | Case-profile persistence with asynchronous jobs, real run/result polling, artifact preview/download/ZIP/history/delete lifecycle checks, browser-launcher matrices, socket/server lifecycle, and Markdown/help/documentation cross-products. |
 | Documentation/hygiene | No repository-wide documentation/help scan in fast; only focused source-level smoke checks tied to edited paths. | Configuration documentation consistency and normalized tracked-path/content repository hygiene scans, plus the reference-page coverage assertion (every src/ Julia file on exactly one reference page or on the exclusion list), a scan that no docstring is separated from its definition by a blank line (Julia then drops it silently, and only the documentation build notices, by failing on an unresolved `@ref`), plus additional check files next to the hygiene test that are included when present and named in the group report. |
 
 `Pkg.test()` uses the same test runner and therefore the default `fast` profile unless `SPARLECTRA_TEST_PROFILE` is set:
@@ -258,6 +276,7 @@ The groups of this second table are:
 
 | Extended addition | File | Main checks |
 |---|---|---|
+| `install` | `test/test_install.jl` | The installation path of a fresh checkout: a copy without the application manifest, `start_webui.jl --env-only` run twice as child processes offline against the depot; the first start reports the environment setup and the compile, the second reports both environments up to date and the packages compiled. |
 | `webui` | `test/test_webui.jl` | Focused Web UI coverage for form parsing and backend validation, result rendering, active and terminal timing cards, commit-span omission, tolerance-step hook, path traversal rejection, DTF upload role classification, primary-case and FOR002 selector filtering, the CGMES-export run option (form checkbox + help topic, `export_cgmes` request flag incl. hidden-false/absent-field defaults, and the result-page summary row for completed/failed/absent export metadata), the last-edit-wins precedence between the configuration file and saved case settings (a newer YAML wins for its own keys and sets the notice flag, an older one keeps the sidecar values), the SE phase-5 chain (measurement-set upload classification via content sniff, the SE section of the Runs page (`/stateestimation` is a redirect onto its anchor) and demo generator, the service-level SE run with artifacts and history kind `se`, the SE-started PF and N-1 with the SE run id in the metadata and result parity against a manual run), the measurement generator v2 chain (truth state fresh-solve/from-run with bit-exact state adoption and the rejection paths, deterministic balance-aware single flow ends, passive nodes at a configured sigma or as protected ZI constraints, the se_deltas.csv artifact, and the bad-data threshold surface with staged/legacy service parity and invalid-mode rejection; plus the Delta-u PST chain on the tracked warmup case: generator targets the additional-voltage stepper, the mass release estimates it :pst along the nameplate psi, the fixation lands on the injected step, and the machine trafo stays calculated), the buildSysimage one-call dry run, the sysimage launcher decision from tools/sysimage_launcher.jl (image/metadata present, Julia version, Manifest hash, a src file newer than the image, and the no-terminal default) together with a parity check that `Sparlectra.webui_sysimage_problem` returns the identical verdict for every one of those states (the two implementations cannot share code, because the launcher runs before the package is loaded), the sysimage build-progress contract (a build that stopped reporting for more than a minute counts as gone, so a crashed builder cannot lock the refresh button) and the Sysimage page rendering idle, running, and failed including its build-log tail, a parse check of the generated app CLI driven from the checkout tool, and stubbed route checks without a real asynchronous solver run. Real asynchronous PowerFlow job lifecycles, artifact preview/download/ZIP/history/delete matrices, browser-launcher platform matrices, socket/server lifecycle checks, Markdown help/documentation cross-product validation, repeated real MATPOWER runs, and the scenario editor flows (a three-op scenario created through the form on the shipped sp_case60 bundle (staged copy switched to explicit-list mode), saved, reloaded and run with `:flag` showing the row and the screening columns; the result page's N-1 table showing a screened row with its estimate detail after `:flag`, no screened column after `:off`, and a failed case's error text in the row; a `tap_pos` op on a regulated transformer rejected with the controller named and NOT written to the file; a MATPOWER case getting the export hint with no editor, no `file_block` option on the main form, and an SCF case getting both) are extended-only in `webui_extended`. |
 | `contingency_extended` | `test/test_contingency.jl` | N-1 identity slice on the shipped sp_case1354 (first 60 branches): serial vs parallel field equality with `max_tasks=1` and auto, plus the `retry_flat_start` invariance on converged cases |
 | `scenario_engine` | `test/test_scenarios.jl` | The engine gate: the N-1 result CSV on the shipped sp_case118 (all branches, all generators, 240 cases through `runContingencies!` on the reused-worker engine) is byte identical to `test/fixtures/contingency_case118_n1_7438b6e.csv`, the CSV the pre-engine per-case-deepcopy implementation produced at commit 7438b6e; the screening acceptance on the same batch: with `screening_mode = :flag` and margin 10 no case the full run reports as violating (or failed) is screened away (false-positive count and full-run share are printed, not gated); the same acceptance with distributed slack enabled (augmented lambda system, renormalized participation on a generator outage, screened share and seconds printed); the sp_case300 acceptance per the test-network rule (operated grid, no false negatives at margin 10 with the 0.005 pu trust gate; loud SKIPPED without the local case file); the sp_case1354 run measures runtime SCALING only and runs with `SPARLECTRA_TIMING_TESTS=1` (a SKIPPED line otherwise) (`:off`/`:flag`/`:only` seconds, gated on `SPARLECTRA_LARGE_CASES_DIR`, no screening-quality claim, see the test-network rule); the scenarios workshop (`docs/lit/workshop_scenarios.jl`) is EXECUTED here in a fresh module on the shipped `data/mpower/sp_case118.m`, so the `@assert` next to every number it prints gates the notebook against silent drift on every checkout; the service sources: an SCF case with its own scenarios block runs via `scenario_source = file_block` (screening metadata plus the two CSV columns), an external scenario JSON via `external_file` with `screening_mode = off` keeping the classic columns, `n1_generators` records itself as the case source, unknown sources or a missing scenario file reject as `invalid_request`, and a CGMES delivery with an id-addressed scenario source is rejected with the way out named (export as SCF once, then reference its component ids) |

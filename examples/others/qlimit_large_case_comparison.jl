@@ -20,12 +20,12 @@
 # This file is not part of the stable Sparlectra API and may change.
 
 using Sparlectra
-
-const default_webui_output_root = Sparlectra.default_webui_output_root
-const default_webui_case_cache_dir = Sparlectra.default_webui_case_cache_dir
+using SparlectraApp
+const default_webui_output_root = SparlectraApp.default_webui_output_root
+const default_webui_case_cache_dir = SparlectraApp.default_webui_case_cache_dir
 const DEFAULT_SPARLECTRA_CONFIG_PATH = Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH
-const run_sparlectra_api = Sparlectra.run_sparlectra_api
-const SparlectraApiResult = Sparlectra.SparlectraApiResult
+const run_sparlectra_api = SparlectraApp.run_sparlectra_api
+const SparlectraApiResult = SparlectraApp.SparlectraApiResult
 
 const QLIMIT_LARGE_CASE_MODES = (:active_set, :classic_simultaneous, :classic_one_at_a_time)
 const QLIMIT_LARGE_CASE_DEFAULTS = ("case13659pegase.m", "case_SyntheticUSA.m")

@@ -1543,16 +1543,16 @@ function _detectHvdcPairs(store::CGMESStore)
   return pairs
 end
 
-"""
-Attach the detected HVDC converter pairs as [`Sparlectra.addHvdcPairControl!`](@ref)
-controllers (`cgmes_import.hvdc_mode = :paired_control`). The from side is
-the converter whose PCC injection exports into the link (negative
-injection); the transfer and the loss come from the two SSH operating
-points, each terminal keeps its SSH reactive value as a fixed setpoint. A
-pair that cannot be attached (converter skipped at import, isolated bus,
-inconsistent snapshot signs, negative loss) degrades to the Stage-0 fixed
-injections with a notice; the import itself never fails here.
-"""
+# Attaching the detected HVDC converter pairs as `addHvdcPairControl!`
+# controllers (`cgmes_import.hvdc_mode = :paired_control`) happens in the
+# mapping step below: the from side is the converter whose PCC injection
+# exports into the link (negative injection); the transfer and the loss come
+# from the two SSH operating points, each terminal keeps its SSH reactive
+# value as a fixed setpoint. A pair that cannot be attached (converter
+# skipped at import, isolated bus, inconsistent snapshot signs, negative
+# loss) degrades to the Stage-0 fixed injections with a notice; the import
+# itself never fails there.
+#
 # persistent link record for the result layer (r0.9.9): one HvdcLink per
 # detected two-converter pair whose terminals were imported; runs in every
 # hvdc_mode. Orientation matches the attach rule (exporting side = from).

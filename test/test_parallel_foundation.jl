@@ -241,13 +241,13 @@ function run_parallel_foundation_tests()
     end)() end
 
     @testset "Web UI option spec for runtime.parallel.enabled" begin (function ()
-      spec = Sparlectra._webui_option_spec("runtime_parallel_enabled")
+      spec = SparlectraApp._webui_option_spec("runtime_parallel_enabled")
       @test spec.config_key == "runtime.parallel.enabled"
       @test spec.default === true
       @test spec.control === :checkbox
       @test spec.section === :expert
       # the expert options render on the Settings page
-      form_html = Sparlectra.render_settings_page()
+      form_html = SparlectraApp.render_settings_page()
       @test occursin("name=\"runtime_parallel_enabled\"", form_html)
       overrides = Sparlectra.validate_gui_config_overrides(Dict{String,Any}("runtime.parallel.enabled" => "false"))
       @test overrides["runtime"]["parallel"]["enabled"] == "false"

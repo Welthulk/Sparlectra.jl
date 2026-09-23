@@ -1,3 +1,18 @@
+# Version 0.17.0 - 2026-09-24
+
+## Breaking
+- Service layer and Web UI moved to the unregistered package `SparlectraApp` (`app/`). `Pkg.add("Sparlectra")` installs the library only.
+- `run_sparlectra_api`, `start_powerflow_run`, `start_sparlectra_webui`, `buildSysimage` and `to_dict`/`to_json`/`to_yaml` require `using SparlectraApp` from a checkout or release (see README). `start_webui.jl` sets up the app on first start.
+
+## Highlights
+- improve Precompile time 
+
+## Fixed
+- Case files from 0.10.0 or earlier with machine-scope keys load again. The keys are dropped and logged.
+- Web UI: **Import case files** accepts CGMES profile files (`.xml`) and packs them into one ZIP.
+- Web UI: the Settings page shows the configuration file values. Case settings via "Show the case settings".
+- Web UI: saving with target "this case" no longer drops machine-scope keys (e.g. CSV format).
+
 # Version 0.16.2 - 2026-09-22
 
 ## Highlights

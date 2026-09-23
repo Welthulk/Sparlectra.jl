@@ -364,6 +364,12 @@ state_estimation:
   max_eliminations: 3
   # FD-aware rank tolerance factor for the observability rank decision.
   rank_tol_factor: 10.0
+  # Where the observability rank comes from: decomposition is the SVD of
+  # the Jacobian (sparse QR above 2000 states), the exact rank; pivots reads
+  # it from the LDLt factorization of the gain matrix H'H that the estimator
+  # already computes, exact for full rank, and hands any deficit to the
+  # decomposition. The report names the method used in rank_method.
+  rank_method: decomposition
   # State count from which the residual diagnostics use the sparse Takahashi
   # selected inverse instead of the dense pinv.
   takahashi_min_states: 200

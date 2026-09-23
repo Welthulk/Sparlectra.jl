@@ -138,6 +138,29 @@ times states, `criticality_skipped = true` above) as the cross-check,
 and the test suite runs both methods against each other on a boundary
 case (a demo set with one flow measurement removed).
 
+The rank itself has two sources, and the report names the one used in
+`rank_method`.
+
+`state_estimation.rank_method = decomposition` (the default) is the SVD of
+the Jacobian below 2000 states and the sparse QR factorization above. It
+gives the exact numerical rank, deficit included, and on every shipped case
+it costs the same as the alternative (sp_case1354, 2707 states: a few
+hundredths of a second either way).
+
+`pivots` reads the rank from the LDLt factorization of the gain matrix
+`H'H`, the factorization the criticality pass needs anyway, as the number
+of pivots above the squared rank tolerance. That count is exact when the
+Jacobian has full rank. On a deficit it is not: the pivots of an LDLt are
+not the eigenvalues of the gain matrix, and on sp_case1354 with eleven
+unmeasured buses the count came out at 2700 against a rank of 2702 from
+the QR; a singular gain matrix cannot be factorized at all. The pivot rule
+therefore hands every deficit to the decomposition and reports
+`rank_method = decomposition` for it, so both settings state the same rank
+on every case, and `pivots` only ever answers the full-rank case on its
+own. Choose it where the decomposition is the measured cost on a very
+large state vector; otherwise the default is the exact answer at no extra
+cost.
+
 The result carries `criticality_wii` per active row and
 `criticality_method`; the state-estimation run log lists the critical
 rows and the nearly critical ones. The rank decision for the

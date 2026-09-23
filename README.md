@@ -42,12 +42,40 @@ The notebooks are generated from [docs/lit/](docs/lit/) and are also part of the
 
 ## Installation
 
-As a Julia package:
+Sparlectra is two packages in one repository: the library `Sparlectra`
+(network model, formats, power flow, state estimation, controllers) and the
+application `SparlectraApp` under `app/` (the service API behind a GUI, the
+local Web UI, the sysimage build), which depends on the library.
+
+The library as a Julia package, from the registry:
 
 ```julia
 using Pkg
 Pkg.add("Sparlectra")
 ```
+
+The application comes with a checkout or a downloaded release and is not
+registered. Its environment `app/` carries the library by path, and the
+start script sets up both on the first start (it resolves, installs and
+compiles, says so, and reports the time; a second start finds everything
+ready):
+
+```sh
+git clone https://github.com/Welthulk/Sparlectra.jl.git Sparlectra
+cd Sparlectra
+julia --project=. start_webui.jl
+```
+
+A script that uses the service API (`run_sparlectra_api`,
+`start_powerflow_run`) runs in the application environment and loads both:
+
+```julia
+# julia --project=app my_script.jl
+using Sparlectra, SparlectraApp
+```
+
+The one-line installers below run the same start script. `start_webui.jl --env-only`
+does the first-start work without starting the server.
 
 ### Web UI: one-line install
 

@@ -17,7 +17,7 @@
 # purpose: demonstrates run_fixed_reference_self_check and the narrative diagnose.log report on a case with a deliberately shifted branch reactance
 
 using Sparlectra
-
+using SparlectraApp
 include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
 # Deliberately mis-scale one branch reactance so the case's own stored VM/VA

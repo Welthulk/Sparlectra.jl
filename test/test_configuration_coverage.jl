@@ -125,7 +125,7 @@ function test_configuration_yaml_key_coverage()
       "state_estimation.robust_k1", "state_estimation.robust_k2", "state_estimation.k_suppress",
       "state_estimation.suppression_sigma", "state_estimation.max_eliminations",
       "state_estimation.rank_tol_factor",
-      "state_estimation.takahashi_min_states", "state_estimation.criticality_method", "state_estimation.topology_precheck",
+      "state_estimation.takahashi_min_states", "state_estimation.criticality_method", "state_estimation.rank_method", "state_estimation.topology_precheck",
       "state_estimation.topology_open_flow_k", "state_estimation.topology_dead_flow_k",
       "state_estimation.topology_voltage_k", "state_estimation.topology_kcl_k",
       "state_estimation.topology_cluster_min",
@@ -766,15 +766,15 @@ function test_configuration_tolerance_in_mw()
     # by editing a YAML file, and even that failed because the template did
     # not carry the key. The form now states ONE value with a unit: two
     # fields side by side read like two competing tolerances.
-    spec = Sparlectra._webui_option_spec("power_flow_tol_unit")
+    spec = SparlectraApp._webui_option_spec("power_flow_tol_unit")
     @test spec.config_key === nothing
     @test spec.allowed_values == ("pu", "MW")
-    html = Sparlectra.render_settings_page(output_root = mktempdir())
+    html = SparlectraApp.render_settings_page(output_root = mktempdir())
     @test occursin("name=\"power_flow_tol_unit\"", html)
     @test !occursin("power_flow_tol_mw", html)
 
     # pu (the default): the value becomes power_flow.tol and nothing else
-    pu_req = Sparlectra.powerflow_webui_request(
+    pu_req = SparlectraApp.powerflow_webui_request(
       Dict{String,Any}("casefile" => "case14.m", "power_flow_tol" => "1e-8", "power_flow_tol_unit" => "pu");
       default_output_root = mktempdir())
     @test pu_req["config_overrides"]["power_flow.tol"] == 1.0e-8
@@ -782,7 +782,7 @@ function test_configuration_tolerance_in_mw()
 
     # MW: the same field becomes power_flow.tol_MW, and the per-unit key is
     # NOT sent, so a run can never carry both bounds
-    mw_req = Sparlectra.powerflow_webui_request(
+    mw_req = SparlectraApp.powerflow_webui_request(
       Dict{String,Any}("casefile" => "case14.m", "power_flow_tol" => "0.001", "power_flow_tol_unit" => "MW");
       default_output_root = mktempdir())
     @test mw_req["config_overrides"]["power_flow.tol_MW"] == 0.001
@@ -885,7 +885,7 @@ function test_configuration_every_key_arrives()
     end
 
     allowed_by_key = Dict{String,Any}()
-    for spec in Sparlectra.WEBUI_OPTION_SPECS
+    for spec in SparlectraApp.WEBUI_OPTION_SPECS
       spec.config_key === nothing && continue
       isempty(spec.allowed_values) && continue
       allowed_by_key[String(spec.config_key)] = spec.allowed_values
@@ -977,7 +977,7 @@ function test_configuration_webui_keys_both_directions()
     # generator machinery, and it was the largest item in the whole group.
     # collect() on a tuple with a concrete eltype knows both length and type,
     # and filter() on the resulting Vector is one specialization.
-    specs = filter(s -> s.config_key !== nothing, collect(Sparlectra.WEBUI_OPTION_SPECS))
+    specs = filter(s -> s.config_key !== nothing, collect(SparlectraApp.WEBUI_OPTION_SPECS))
     have = Set(String(s.config_key) for s in specs)
     @test length(specs) >= 60
 
@@ -1045,18 +1045,18 @@ function test_configuration_form_defaults()
     # form defaults, so the two are pinned against each other here: a change
     # on one side without the other fails this test instead of silently
     # giving a run different numbers than the form promised.
-    @test Sparlectra._webui_option_default("gen_passive_sigma") == 0.05
-    @test Sparlectra._webui_option_default("gen_seed") == 42
+    @test SparlectraApp._webui_option_default("gen_passive_sigma") == 0.05
+    @test SparlectraApp._webui_option_default("gen_seed") == 42
     # and the ones that DO have a configuration key take it from there.
     # max_eliminations joined them after the review of 2026-09-06: a form
     # field whose value no configuration key can set is exactly the
     # asymmetry this task removed, so the elimination budget became
     # state_estimation.max_eliminations instead of a service literal.
     se = Sparlectra.state_estimation_config()
-    @test Sparlectra._webui_option_default("se_max_eliminations") == se.max_eliminations
-    @test Sparlectra._webui_option_default("se_k_suppress") == se.k_suppress
-    @test Sparlectra._webui_option_default("se_k_eliminate") == se.k_eliminate
-    @test Sparlectra._webui_option_default("se_max_iter") == se.max_iter
+    @test SparlectraApp._webui_option_default("se_max_eliminations") == se.max_eliminations
+    @test SparlectraApp._webui_option_default("se_k_suppress") == se.k_suppress
+    @test SparlectraApp._webui_option_default("se_k_eliminate") == se.k_eliminate
+    @test SparlectraApp._webui_option_default("se_max_iter") == se.max_iter
   end)() end
   return nothing
 end
@@ -1254,7 +1254,7 @@ function test_configuration_console_live_capture()
     # production passes (the open run.log IOStream).
     quiet_path, quiet_io = mktemp()
     result = redirect_stdout(devnull) do
-      Sparlectra._capture_run_output(quiet_io) do
+      SparlectraApp._capture_run_output(quiet_io) do
         println("captured line")
         42
       end
@@ -1271,7 +1271,7 @@ function test_configuration_console_live_capture()
     outer = Pipe()
     Base.link_pipe!(outer; reader_supports_async = true, writer_supports_async = true)
     redirect_stdout(outer) do
-      Sparlectra._capture_run_output(archive; live = true) do
+      SparlectraApp._capture_run_output(archive; live = true) do
         println("teed line")
       end
     end
@@ -1286,7 +1286,7 @@ function test_configuration_console_live_capture()
     archive2 = IOBuffer()
     thrown = redirect_stdout(devnull) do
       try
-        Sparlectra._capture_run_output(archive2; live = true) do
+        SparlectraApp._capture_run_output(archive2; live = true) do
           println("before crash")
           error("boom")
         end

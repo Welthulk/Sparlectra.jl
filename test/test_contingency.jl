@@ -425,9 +425,9 @@ function run_contingency_tests()
       for kind in ("branch", "gen")
         od = joinpath(root, "ct_$(kind)")
         res = redirect_stdout(devnull) do
-          Sparlectra._run_contingency_service(service_case, cfg, od, "ct_$(kind)", kind)
+          SparlectraApp._run_contingency_service(service_case, cfg, od, "ct_$(kind)", kind)
         end
-        d = Sparlectra.to_dict(res)
+        d = SparlectraApp.to_dict(res)
         dicts[kind] = d
         @test d["status"] == "succeeded"
         @test isfile(joinpath(od, "contingency_n1.csv"))       # artifacts written to the run dir
@@ -438,21 +438,21 @@ function run_contingency_tests()
         @test md["contingency_cases"] > 0
         # explicit run-status keys so the result view renders like a completed run
         @test md["run_status"] == "completed"
-        @test Sparlectra._webui_contingency_summary(d) !== nothing
+        @test SparlectraApp._webui_contingency_summary(d) !== nothing
       end
       # a generator outage on sp_case14 removes the only slack: reported (not thrown),
       # counted as no_slack, and named in the summary badge so it does not read
       # as a tool failure
       @test dicts["gen"]["metadata"]["contingency_no_slack"] >= 1
-      @test occursin("slack", Sparlectra._webui_contingency_summary(dicts["gen"]))
+      @test occursin("slack", SparlectraApp._webui_contingency_summary(dicts["gen"]))
       # a non-contingency run gets no contingency summary row
-      @test Sparlectra._webui_contingency_summary(Dict("metadata" => Dict("run_mode" => "powerflow"))) === nothing
+      @test SparlectraApp._webui_contingency_summary(Dict("metadata" => Dict("run_mode" => "powerflow"))) === nothing
       # invalid kind is rejected, not thrown
       bad = redirect_stdout(devnull) do
-        Sparlectra._run_contingency_service(service_case, cfg, joinpath(root, "ct_bad"), "ct_bad", "nonsense")
+        SparlectraApp._run_contingency_service(service_case, cfg, joinpath(root, "ct_bad"), "ct_bad", "nonsense")
       end
-      @test Sparlectra.to_dict(bad)["status"] == "failed"
-      @test Sparlectra.to_dict(bad)["reason"] == "invalid_request"
+      @test SparlectraApp.to_dict(bad)["status"] == "failed"
+      @test SparlectraApp.to_dict(bad)["reason"] == "invalid_request"
 
       # per-case weights (#331 Phase 5 follow-up): applied when a weight file is
       # present next to the case, warned (not fatal) on unmatched names, and
@@ -463,20 +463,20 @@ function run_contingency_tests()
       wnames = redirect_stdout(devnull) do
         [c.name for c in generateN1Branches(Sparlectra._import_sparlectra_net(w14, nothing, Sparlectra.load_sparlectra_config(cfg; reload = true)))]
       end
-      wf = Sparlectra._webui_case_weights_path(w14)
+      wf = SparlectraApp._webui_case_weights_path(w14)
       open(wf, "w") do io
         println(io, "name;weight")
         println(io, wnames[1], ";4.0")
         println(io, "NO_SUCH_ELEMENT;2.0")
       end
       wmd = redirect_stdout(devnull) do
-        Sparlectra.to_dict(Sparlectra._run_contingency_service(w14, cfg, joinpath(root, "wt"), "wt", "branch"; weights_path = wf))["metadata"]
+        SparlectraApp.to_dict(SparlectraApp._run_contingency_service(w14, cfg, joinpath(root, "wt"), "wt", "branch"; weights_path = wf))["metadata"]
       end
       @test wmd["contingency_weights_applied"] == true
       @test wmd["contingency_weighted_cases"] == 1
       @test any(occursin("match no", l) for l in readlines(joinpath(root, "wt", "run.log")))
       nmd = redirect_stdout(devnull) do
-        Sparlectra.to_dict(Sparlectra._run_contingency_service(w14, cfg, joinpath(root, "nw"), "nw", "branch"))["metadata"]
+        SparlectraApp.to_dict(SparlectraApp._run_contingency_service(w14, cfg, joinpath(root, "nw"), "nw", "branch"))["metadata"]
       end
       @test nmd["contingency_weights_applied"] == false
     end)() end

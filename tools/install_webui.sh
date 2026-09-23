@@ -181,6 +181,8 @@ fi
 # --- 3. Dependencies ---------------------------------------------------------
 echo "Resolving Julia dependencies..."
 julia --project="$SPARLECTRA_DIR" -e "using Pkg; Pkg.instantiate()"
+# the Web UI and the service layer are the SparlectraApp package under app/
+julia --project="$SPARLECTRA_DIR/app" -e "using Pkg; Pkg.instantiate()"
 
 # --- 4. Sysimage ------------------------------------------------------------
 # The image is NOT built here. start_webui.jl owns that decision on every

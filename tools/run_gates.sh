@@ -24,7 +24,7 @@
 #          runs, so no second Julia first-start precompiles the same
 #          package concurrently. --allow-dirty skips guard 1 for a
 #          deliberate local check; the lock is never skipped. Plain sh.
-# usage:   sh tools/run_gates.sh fast|pf|se|config|webui|extd|extended|all|docs [--allow-dirty]
+# usage:   sh tools/run_gates.sh fast|pf|se|config|webui|extd|install|extended|all|docs [--allow-dirty]
 #          (SPARLECTRA_LARGE_CASES_DIR and other env pass through)
 
 gate=$1
@@ -38,9 +38,9 @@ then
 fi
 
 case "$gate" in
-  fast | pf | se | config | webui | extd | extended | all | docs) ;;
+  fast | pf | se | config | webui | extd | install | extended | all | docs) ;;
   *)
-    echo "usage: sh tools/run_gates.sh fast|pf|se|config|webui|extd|extended|all|docs [--allow-dirty]" >&2
+    echo "usage: sh tools/run_gates.sh fast|pf|se|config|webui|extd|install|extended|all|docs [--allow-dirty]" >&2
     exit 2
     ;;
 esac
@@ -93,7 +93,7 @@ then
   # data/ is included: the suite READS tracked data files (the shipped demo
   # cases, the v1 format fixture), and moving one under a running gate broke
   # the v1 guard mid-run on 2026-09-03
-  dirty=$(git -C "$repo_root" status --porcelain -- src/ test/ data/ Project.toml docs/make.jl docs/Project.toml)
+  dirty=$(git -C "$repo_root" status --porcelain -- src/ app/ test/ data/ Project.toml docs/make.jl docs/Project.toml)
   if [ -n "$dirty" ]
   then
     echo "run_gates: uncommitted changes under src/ test/ data/ or the project files; a gate on a moving tree tests a state that exists nowhere. Commit first, or pass --allow-dirty for a deliberate local check:" >&2

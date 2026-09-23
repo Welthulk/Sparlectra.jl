@@ -588,7 +588,7 @@ function run_cgmes_importer_tests()
     # The Web UI docs reader serves an allowlist — the CGMES page and the
     # contextual help for its options must be reachable from the interface.
     @testset "Web UI documentation wiring" begin (function ()
-      page = Sparlectra.resolve_webui_doc_page("cgmes_import")
+      page = SparlectraApp.resolve_webui_doc_page("cgmes_import")
       @test page !== nothing && page.file == "cgmes_import.md"
       @test isfile(joinpath(dirname(@__DIR__), "docs", "src", page.file))
       # The page must carry the option reference the docs reader links to.
@@ -980,6 +980,16 @@ function run_cgmes_importer_tests()
         @test length(sv_rows) - 1 == 14
       end
 
+      # under auto, power_flow.flatstart asks for the flat start although the
+      # delivery carries SvVoltage (the Settings page offers that one switch)
+      out_a = mktempdir()
+      cfg_a = joinpath(out_a, "c.yaml")
+      write(cfg_a, "config_version: 1\npower_flow:\n  flatstart: true\n")
+      ra = run_sparlectra_api(casefile = z, config_file = cfg_a, output_dir = out_a, case_format = :cgmes)
+      @test ra.status == :succeeded
+      @test ra.metadata["cgmes_start_values"] == "flat"
+      @test occursin("CGMES start values: flat (auto: power_flow.flatstart asks for the flat start)", read(joinpath(out_a, "run.log"), String))
+
       # the report survives a failed solve: it is written right after the
       # import, not after the power flow (one flat-start iteration cannot
       # reach 1e-14)
@@ -1013,7 +1023,7 @@ function run_cgmes_importer_tests()
       @test occursin("Verdict:", report)
 
       # the button gate sees machines, the run reports what they lack
-      @test Sparlectra._webui_case_has_short_circuit_data(cgmes_fixture_dir("sp_case14"))
+      @test SparlectraApp._webui_case_has_short_circuit_data(cgmes_fixture_dir("sp_case14"))
       sc = run_with_expected_warnings(() -> start_powerflow_run(Dict("casefile" => z, "config_file" => cfg, "output_root" => root, "short_circuit_mode" => true)), ["has no usable x''_d", "has no usable ratedS", "has no usable ratedU"])
       @test sc["success"] === true
       @test sc["reason"] == "short_circuit_flagged_lower_bound"

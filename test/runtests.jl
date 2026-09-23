@@ -14,10 +14,15 @@
 
 # file: test/runtests.jl
 # purpose: test suite entry point: selects a profile (fast, pf, se, config,
-#          webui, extd, extended, all) from ARGS/SPARLECTRA_TEST_PROFILE,
+#          webui, extd, install, extended, all) from ARGS/SPARLECTRA_TEST_PROFILE,
 #          includes the test files of its groups, and runs the grouped
 #          testsets with quiet output capture
 using Sparlectra
+# the application package (service layer, Web UI) lives in app/ with its own
+# environment; it is loaded from there for the groups that test it and for
+# the smoke test of the fast profile
+pushfirst!(LOAD_PATH, normpath(joinpath(@__DIR__, "..", "app")))
+using SparlectraApp
 using Test
 using Logging
 using Printf
@@ -119,6 +124,8 @@ const TEST_GROUPS = TestGroup[
     TestGroup("synthetic_grids", ["test_synthetic_grids.jl"], [:run_synthetic_grid_tests]),
     TestGroup("cgmes_importer", ["test_cgmes_importer.jl"], [:run_cgmes_importer_tests]),
     TestGroup("cgmes_export", ["test_cgmes_export.jl"], [:run_cgmes_export_tests]),
+    # --- install: the installation path of a fresh checkout, before a release
+    TestGroup("install", ["test_install.jl"], [:run_install_tests]),
     TestGroup("dtf_extended", ["extended/test_dtf_importer.jl", "extended/test_dtf_for002_validation_example.jl", "extended/test_dtf_for002_outage_validation_example.jl", "extended/test_dtf_matpower_export_validation_example.jl", "extended/test_dtf_api_webui_integration.jl"],
         [:run_dtf_importer_tests, :run_dtf_for002_validation_example_tests, :run_dtf_for002_outage_validation_example_tests, :run_dtf_matpower_export_validation_example_tests, :run_dtf_api_webui_integration_tests]),
 ]
@@ -127,7 +134,8 @@ const TEST_GROUPS = TestGroup[
 # The profiles. `fast` is the pull-request gate and stays short on purpose;
 # a change to the solver or the estimator runs its own profile on top;
 # `extended` is everything that is not fast (the former second profile);
-# `all` is both. The documentation build is a gate of its own
+# `install` is the installation path of a fresh checkout, due before a
+# release; `all` is all of them. The documentation build is a gate of its own
 # (tools/run_gates.sh docs), not a test profile.
 const TEST_PROFILES = Dict{Symbol,Vector{String}}(
     :fast => ["core_model", "terminal_status", "powerflow_rectangular", "factorized_linear_solver", "pv_voltage_residuals", "3wt_phase_taps", "dc_powerflow", "distributed_slack", "island_diagnostics", "external_grid", "matpower_metadata", "programmatic_api"],
@@ -136,13 +144,14 @@ const TEST_PROFILES = Dict{Symbol,Vector{String}}(
     :config => ["configuration", "configuration_docs", "repository_hygiene"],
     :webui => ["webui", "webui_extended"],
     :extd => ["demo_cases", "scf", "programmatic_api_extended", "matpower_examples", "example_infra", "net_cache", "synthetic_grids", "cgmes_importer", "cgmes_export", "dtf_extended"],
+    :install => ["install"],
 )
 TEST_PROFILES[:extended] = vcat(TEST_PROFILES[:pf], TEST_PROFILES[:se], TEST_PROFILES[:config], TEST_PROFILES[:webui], TEST_PROFILES[:extd])
-TEST_PROFILES[:all] = vcat(TEST_PROFILES[:fast], TEST_PROFILES[:extended])
+TEST_PROFILES[:all] = vcat(TEST_PROFILES[:fast], TEST_PROFILES[:extended], TEST_PROFILES[:install])
 
-# every group sits in exactly one of the six base profiles
+# every group sits in exactly one of the seven base profiles
 let seen = String[]
-    for key in (:fast, :pf, :se, :config, :webui, :extd), name in TEST_PROFILES[key]
+    for key in (:fast, :pf, :se, :config, :webui, :extd, :install), name in TEST_PROFILES[key]
         name in seen && error("test group $(name) is listed in two profiles")
         any(g -> g.name == name, TEST_GROUPS) || error("profile $(key) names an unknown test group $(name)")
         push!(seen, name)

@@ -25,59 +25,59 @@
 # no package load. Julia can only take an image at process start (-J), so a
 # process that wants one has to start itself again.
 include(joinpath(@__DIR__, "tools", "sysimage_launcher.jl"))
-using .SysimageLauncher: handle_sysimage, unresolved_dependencies, outdated_dependencies, repair_environment
+using .SysimageLauncher: handle_sysimage, prepare_environments, repair_environment, ENV_ONLY_FLAG
 
-# The environment FIRST, then the sysimage question. A user who is about to be
-# asked whether to spend minutes on a build should not be asked on top of a
-# broken checkout. A dependency below its compat bound (a manifest that
-# predates a version bump) is repaired here as well: it is the one state that
-# loads without complaint and can compute wrong numbers.
-let project_dir = abspath(@__DIR__), missing_deps = Base.invokelatest(unresolved_dependencies, project_dir)
-  isempty(missing_deps) || Base.invokelatest(repair_environment, project_dir,
-    "The package environment is not resolved: " * join(missing_deps, ", ") * ".";
-    update = Base.invokelatest(outdated_dependencies, missing_deps))
+const _SPARLECTRA_LIBRARY_DIR = abspath(@__DIR__)
+const _SPARLECTRA_APP_DIR = abspath(joinpath(@__DIR__, "app"))
+
+# The environments FIRST, then the sysimage question. A fresh checkout (git
+# clone or release download) has no Manifest.toml in either directory; both
+# are resolved, installed and compiled here, and the user is told what is
+# happening and how long it took. A dependency below its compat bound (a
+# manifest that predates a version bump) is repaired the same way: it is the
+# one state that loads without complaint and can compute wrong numbers.
+# `--env-only` stops after this block and the compile below: the first-start
+# work without a server, for a test or for an installer.
+Base.invokelatest(prepare_environments, _SPARLECTRA_LIBRARY_DIR, _SPARLECTRA_APP_DIR)
+const _ENV_ONLY = ENV_ONLY_FLAG in ARGS
+
+_ENV_ONLY || handle_sysimage(filter(!=(ENV_ONLY_FLAG), copy(ARGS)), @__FILE__, _SPARLECTRA_APP_DIR)
+
+# --- the application package ------------------------------------------------
+# It lives in app/ with its own environment; putting that directory on the
+# load path makes `using SparlectraApp` resolve from any starting project
+# without loading Pkg first. Loading compiles what the environment setup
+# above did not (a machine where the compile cache was wiped), so the first
+# start says so and reports the time; a second start finds everything
+# compiled. The repair below is the second line of defence: a depot with a
+# missing artifact or a half-written package directory gets here instead of
+# failing deep inside Base.
+pushfirst!(LOAD_PATH, _SPARLECTRA_APP_DIR)
+let app_id = Base.PkgId(Base.UUID("2e39659a-4f4c-4326-b34e-e3df865cea74"), "SparlectraApp"),
+    lib_id = Base.PkgId(Base.UUID("31ce9bba-fd9d-44a1-b005-f5f509afda38"), "Sparlectra")
+  compiled = Base.isprecompiled(lib_id) && Base.isprecompiled(app_id)
+  compiled || println("First start: compiling the library and the application; this takes a while.")
+  started = time()
+  try
+    @eval using SparlectraApp
+  catch err
+    Base.invokelatest(repair_environment, _SPARLECTRA_APP_DIR,
+      "Loading SparlectraApp failed (" * first(sprint(showerror, err), 160) * ")."; label = "application")
+    @eval using SparlectraApp
+  end
+  compiled ? println("Packages already compiled.") : println("Compiled in ", round(Int, time() - started), " s.")
 end
 
-handle_sysimage(copy(ARGS), @__FILE__, abspath(@__DIR__))
-
-# --- package environment -----------------------------------------------------
-# `using Sparlectra` needs a RESOLVED environment, and Manifest.toml is not
-# tracked. Two situations lead here, and they need different remedies:
-#
-#   * a fresh checkout has no manifest at all;
-#   * an OLD manifest is present and predates a dependency change, so it never
-#     learned about a package the Project.toml now requires.
-#
-# Julia names neither in a way a user can act on. The dependency scan fails
-# deep inside Base with
-#
-#   KeyError: key Base.PkgId(UUID("19ecf91d-..."), "AnalyticLoadFlow") not found
-#
-# and a stacktrace through Base.Precompilation.
-#
-# RESOLVE, then instantiate, and in that order. `instantiate` installs what the
-# manifest lists and cannot add a package the manifest never mentioned: on a
-# stale manifest it fails with "AnalyticLoadFlow is a direct dependency, but
-# does not appear in the manifest ... run Pkg.resolve()". This block used to
-# call instantiate alone, so it turned one unhelpful error into another
-# (reported from a Windows 11 checkout, 2026-09-07). `resolve` rewrites the
-# manifest from Project.toml and covers the missing-manifest case as well.
-# Second line of defence. The check above reads TOML and therefore sees only
-# what TOML can show; a depot with a missing artifact, a half-written package
-# directory or a compat conflict that only surfaces on load gets here instead.
-try
-  @eval using Sparlectra
-catch err
-  Base.invokelatest(repair_environment, abspath(@__DIR__),
-    "Loading Sparlectra failed (" * first(sprint(showerror, err), 160) * ").")
-  @eval using Sparlectra
+if _ENV_ONLY
+  println("Environment check finished.")
+  exit(0)
 end
 
 function main()
   # No warm-up: either this process runs on the sysimage, where the code is
   # already compiled, or the user chose to compile on first use and was told
   # so. A hidden warm-up run on top of that only delayed the first page.
-  server = Sparlectra.start_sparlectra_webui(open_browser = true)
+  server = SparlectraApp.start_sparlectra_webui(open_browser = true)
   # nothing = a Sparlectra Web UI already runs on the port; it was opened in
   # the browser instead, so there is no new server task to wait on.
   server === nothing && return nothing

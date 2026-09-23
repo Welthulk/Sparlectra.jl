@@ -15,7 +15,9 @@
 # file: src/webui/docs.jl
 # purpose: Web UI in-app documentation: help-topic registry, markdown page
 #          loading and section extraction, and doc-link rewriting
-const _WEBUI_DOCS_ROOT = normpath(joinpath(@__DIR__, "..", "..", "docs", "src"))
+# the documentation pages belong to the library checkout, not to the
+# application package directory
+const _WEBUI_DOCS_ROOT = normpath(joinpath(SPARLECTRA_ROOT, "docs", "src"))
 
 const WEBUI_HELP_TOPICS = Dict(
   # state-estimation page (0.10.0): estimator options come from the config
@@ -67,6 +69,7 @@ const WEBUI_HELP_TOPICS = Dict(
   "power_flow.apslf.use_pade" => (label = "APSLF Padé evaluation", page = "powerflow_configuration", heading = "Solver selection (rectangular vs. APSLF)", selector = "`power_flow.apslf.use_pade`"),
   "power_flow.apslf.nr_polish" => (label = "APSLF NR polish", page = "powerflow_configuration", heading = "Solver selection (rectangular vs. APSLF)", selector = "`power_flow.apslf.nr_polish`"),
   "power_flow.apslf.convergence_radius" => (label = "APSLF convergence radius", page = "powerflow_configuration", heading = "Solver selection (rectangular vs. APSLF)", selector = "`power_flow.apslf.convergence_radius`"),
+  "power_flow.flatstart" => (label = "Flat start", page = "powerflow_configuration", heading = "Solver core options", selector = "`power_flow.flatstart`"),
   "power_flow.apslf_start.enabled" => (label = "Use APSLF start values", page = "powerflow_configuration", heading = "Solver selection (rectangular vs. APSLF)", selector = "`power_flow.apslf_start.enabled`"),
   "power_flow.apslf_start.order" => (label = "APSLF start highest coefficient (order)", page = "powerflow_configuration", heading = "Solver selection (rectangular vs. APSLF)", selector = "`power_flow.apslf_start.order`"),
   "power_flow.wrong_branch_detection" => (label = "Wrong-branch detection", page = "configuration", heading = "Wrong-branch detection semantics (rectangular PF)", selector = ""),
@@ -178,6 +181,7 @@ const WEBUI_FORM_HELP_TOPICS = Dict(
   "power_flow_apslf_use_pade" => "power_flow.apslf.use_pade",
   "power_flow_apslf_nr_polish" => "power_flow.apslf.nr_polish",
   "power_flow_apslf_convergence_radius" => "power_flow.apslf.convergence_radius",
+  "power_flow_flatstart" => "power_flow.flatstart",
   "power_flow_apslf_start_enabled" => "power_flow.apslf_start.enabled",
   "power_flow_apslf_start_order" => "power_flow.apslf_start.order",
   "power_flow_wrong_branch_detection" => "power_flow.wrong_branch_detection",
@@ -386,6 +390,15 @@ Default: 30 degrees. Lower it for a more conservative pre-solve. Increase it onl
 This avoids spending time on small cases where normal start values usually work well and where the pre-solve is not needed. The exact large-case threshold follows the existing Sparlectra configuration logic.
 
 Default: disabled. Enable this if you want current iteration available for difficult large MATPOWER cases without changing behavior for small examples.
+""",
+  "power_flow.flatstart" => """
+## Flat start
+
+`power_flow.flatstart` starts the Newton-Raphson solve at 1.0 pu and 0 degrees on every bus and ignores the imported start voltages (MATPOWER `VM`/`VA`, CGMES `SvVoltage`, SCF `start_state`). Off, the imported values seed the solve; a delivery is built around its own operating point, so that is the better start for real networks and the default.
+
+This checkbox is the one start switch: while it is on, a run switches **Use APSLF start values**, **Use DC start values** and the current-iteration pre-solve off and treats both start modes as `classic`, so the start really is flat and no projection or pre-solve moves it; the run log names what was switched off. The greyed controls keep their saved values and come back when the flat start is unchecked.
+
+A CGMES run honours the flat start under **CGMES start values** = `auto`; an explicit `sv` on the Case page still starts from the delivery state.
 """,
   "power_flow.apslf_start.enabled" => """
 ## Use APSLF start values

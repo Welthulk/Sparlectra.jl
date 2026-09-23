@@ -34,6 +34,7 @@ end
 Pkg.instantiate()
 using Documenter
 using Sparlectra
+using SparlectraApp
 using TOML
 
 project_toml = TOML.parsefile(joinpath(@__DIR__, "..", "Project.toml"))
@@ -130,6 +131,7 @@ generate_index_page()
 # warn=false: repeated include("docs/make.jl") in one REPL session re-sets an
 # identical DocTestSetup; the "already set, overwriting" warning is noise.
 DocMeta.setdocmeta!(Sparlectra, :DocTestSetup, :(using Sparlectra); recursive = true, warn = false)
+DocMeta.setdocmeta!(SparlectraApp, :DocTestSetup, :(using Sparlectra, SparlectraApp); recursive = true, warn = false)
 
 makedocs(
   # Discoverability: the sitename doubles as the <title> suffix on every
@@ -138,7 +140,7 @@ makedocs(
   # short disambiguation form is used (task 2.1 fallback).
   sitename = "Sparlectra.jl v$(sparlectra_version), Julia power flow",
   repo = "https://github.com/Welthulk/Sparlectra.jl/blob/{commit}{path}#L{line}",
-  modules = [Sparlectra],
+  modules = [Sparlectra, SparlectraApp],
   clean = true,
   doctest = true,
   # every exported docstring must be rendered somewhere, or the build fails;

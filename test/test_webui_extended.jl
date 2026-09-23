@@ -177,8 +177,8 @@ end
 
 function run_webui_extended_tests()
   @testset "Local PowerFlow Web UI" begin (function ()
-    @test isdefined(Sparlectra, :start_sparlectra_webui)
-    @test isdefined(Sparlectra, :default_webui_output_root)
+    @test isdefined(SparlectraApp, :start_sparlectra_webui)
+    @test isdefined(SparlectraApp, :default_webui_output_root)
     @test_throws ArgumentError start_sparlectra_webui(host = "0.0.0.0")
     let
       busy_listener = listen(ip"127.0.0.1", UInt16(0))
@@ -238,7 +238,7 @@ function run_webui_extended_tests()
       end
     end
     launcher_source = read(joinpath(@__DIR__, "..", "start_webui.jl"), String)
-    @test occursin("Sparlectra.start_sparlectra_webui", launcher_source)
+    @test occursin("SparlectraApp.start_sparlectra_webui", launcher_source)
     @test count("start_sparlectra_webui", launcher_source) == 1
     repository_text = join(read(path, String) for path in (
       joinpath(@__DIR__, "..", "README.md"),
@@ -246,33 +246,33 @@ function run_webui_extended_tests()
       joinpath(@__DIR__, "..", "docs", "src", "examples_overview.md"),
     ))
     @test !occursin("exp_webui_powerflow", repository_text)
-    @test Sparlectra._format_elapsed_duration(0.4) == "00:00:00.400"
-    @test Sparlectra._format_elapsed_duration(3) == "00:00:03.000"
-    @test Sparlectra._format_elapsed_duration(83) == "00:01:23.000"
-    @test Sparlectra._format_elapsed_duration(3725.125) == "01:02:05.125"
-    @test Sparlectra._format_elapsed_duration(nothing) == "—"
+    @test SparlectraApp._format_elapsed_duration(0.4) == "00:00:00.400"
+    @test SparlectraApp._format_elapsed_duration(3) == "00:00:03.000"
+    @test SparlectraApp._format_elapsed_duration(83) == "00:01:23.000"
+    @test SparlectraApp._format_elapsed_duration(3725.125) == "01:02:05.125"
+    @test SparlectraApp._format_elapsed_duration(nothing) == "—"
 
 
     @testset "Configuration refresh controls" begin (function ()
       root = mktempdir()
       config_path = joinpath(root, "configuration.yaml")
       write(config_path, "power_flow:\n  start_mode:\n    voltage_mode: bus_vm_va_blend\n  qlimits:\n    enabled: true\n")
-      runtime = Sparlectra._SparlectraWebUIRuntime(nothing, root, config_path, Sparlectra.webui_operation_log_path(root), nothing, Sparlectra.start_powerflow_run, false, false, time(), 0, nothing, IOBuffer(), ReentrantLock())
+      runtime = SparlectraApp._SparlectraWebUIRuntime(nothing, root, config_path, SparlectraApp.webui_operation_log_path(root), nothing, SparlectraApp.start_powerflow_run, false, false, time(), 0, nothing, IOBuffer(), ReentrantLock())
       before_page_text = read(config_path, String)
       # the maintenance actions render on the Settings
       # page (inside its expert section); the run page keeps the notice
-      page = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow/settings"; output_root = root, runtime).body)
+      page = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/settings"; output_root = root, runtime).body)
       @test occursin("Check configuration", page)
       @test occursin("Refresh configuration", page)
       @test occursin("id=\"configuration-maintenance\"", page)
       @test findfirst("Configuration maintenance", page) > findfirst("Advanced options", page)
-      run_page = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow"; output_root = root, runtime).body)
+      run_page = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow"; output_root = root, runtime).body)
       @test occursin("Configuration notice:", run_page)
       # the notice's link now crosses pages to the Settings anchor
       @test occursin("/powerflow/settings#configuration-maintenance", run_page)
       @test read(config_path, String) == before_page_text
 
-      check = Sparlectra.route_sparlectra_webui("POST", "/powerflow/config/check", Dict("config_file" => config_path); output_root = root, runtime)
+      check = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/config/check", Dict("config_file" => config_path); output_root = root, runtime)
       check_body = String(check.body)
       @test check.status == 200
       @test occursin("power_flow.qlimits.enforcement_mode", check_body)
@@ -280,7 +280,7 @@ function run_webui_extended_tests()
       @test !occursin(".bak-", check_body)
       @test read(config_path, String) == before_page_text
 
-      refresh = Sparlectra.route_sparlectra_webui("POST", "/powerflow/config/refresh", Dict("config_file" => config_path); output_root = root, runtime)
+      refresh = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/config/refresh", Dict("config_file" => config_path); output_root = root, runtime)
       refresh_body = String(refresh.body)
       @test refresh.status == 200
       @test occursin("Configuration refreshed and written", refresh_body)
@@ -292,7 +292,7 @@ function run_webui_extended_tests()
       duplicate_path = joinpath(root, "duplicate.yaml")
       write(duplicate_path, "power_flow:\n  tol: 1.0e-8\n  tol: 1.0e-7\n")
       duplicate_before = read(duplicate_path, String)
-      duplicate = Sparlectra.route_sparlectra_webui("POST", "/powerflow/config/refresh", Dict("config_file" => duplicate_path); output_root = root, runtime)
+      duplicate = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/config/refresh", Dict("config_file" => duplicate_path); output_root = root, runtime)
       @test duplicate.status == 400
       @test occursin("Duplicate YAML key detected", String(duplicate.body))
       @test read(duplicate_path, String) == duplicate_before
@@ -308,14 +308,14 @@ function run_webui_extended_tests()
     @testset "Configuration editor validates before atomic save" begin (function ()
       root = mktempdir()
       config_path = joinpath(root, "configuration.yaml")
-      operation_log = Sparlectra.webui_operation_log_path(root)
+      operation_log = SparlectraApp.webui_operation_log_path(root)
       original_text = "matpower_import:\n  matpower_dcline_mode: reject_active\npower_flow:\n  tol: 1.0e-8\n  autodamp: false\n"
       write(config_path, original_text)
 
-      temp_leftovers() = filter(name -> !(name in ("configuration.yaml", "webui_operations.jsonl")) && !occursin(r"configuration\.yaml\.bak-", name), readdir(root))
+      temp_leftovers() = filter(name -> !(name in ("configuration.yaml", "configuration.yaml.user-keys.txt", "webui_operations.jsonl")) && !occursin(r"configuration\.yaml\.bak-", name), readdir(root))
 
       for mode in ("reject_active", "ignore_inactive", "pf_injections")
-        response = Sparlectra.handle_powerflow_config_editor_save(
+        response = SparlectraApp.handle_powerflow_config_editor_save(
           Dict("config_file" => config_path, "config_text" => "matpower_import:\n  matpower_dcline_mode: $(mode)\n");
           operation_log,
         )
@@ -328,7 +328,7 @@ function run_webui_extended_tests()
       end
 
       nested_text = "power_flow:\n  start_current_iteration:\n    enabled: true\n    damping: 0.8\nmatpower_import:\n  matpower_dcline_mode: pf_injections\n"
-      nested_response = Sparlectra.handle_powerflow_config_editor_save(Dict("config_file" => config_path, "config_text" => nested_text); operation_log)
+      nested_response = SparlectraApp.handle_powerflow_config_editor_save(Dict("config_file" => config_path, "config_text" => nested_text); operation_log)
       @test nested_response.status == 200
       nested_cfg = load_sparlectra_config(config_path; reload = true)
       @test nested_cfg.powerflow.start_current_iteration.enabled === true
@@ -336,7 +336,7 @@ function run_webui_extended_tests()
       @test isempty(temp_leftovers())
 
       unchanged_before_invalid = read(config_path, String)
-      invalid_enum = Sparlectra.handle_powerflow_config_editor_save(
+      invalid_enum = SparlectraApp.handle_powerflow_config_editor_save(
         Dict("config_file" => config_path, "config_text" => "matpower_import:\n  matpower_dcline_mode: ignore\n");
         operation_log,
       )
@@ -350,7 +350,7 @@ function run_webui_extended_tests()
       @test occursin("matpower_dcline_mode: ignore", invalid_enum_body)
       @test isempty(temp_leftovers())
 
-      invalid_enabled = Sparlectra.handle_powerflow_config_editor_save(
+      invalid_enabled = SparlectraApp.handle_powerflow_config_editor_save(
         Dict("config_file" => config_path, "config_text" => "matpower_import:\n  matpower_dcline_mode: enabled\n");
         operation_log,
       )
@@ -361,13 +361,13 @@ function run_webui_extended_tests()
       @test occursin("reject_active, ignore_inactive, pf_injections", invalid_enabled_body)
       @test isempty(temp_leftovers())
 
-      invalid_range = Sparlectra.handle_powerflow_config_editor_save(Dict("config_file" => config_path, "config_text" => "power_flow:\n  tol: -1.0\n"); operation_log)
+      invalid_range = SparlectraApp.handle_powerflow_config_editor_save(Dict("config_file" => config_path, "config_text" => "power_flow:\n  tol: -1.0\n"); operation_log)
       @test invalid_range.status == 400
       @test read(config_path, String) == unchanged_before_invalid
       @test occursin("powerflow.tol must be positive", String(invalid_range.body))
       @test isempty(temp_leftovers())
 
-      invalid_bool = Sparlectra.handle_powerflow_config_editor_save(Dict("config_file" => config_path, "config_text" => "output:\n  console_summary: enabled\n"); operation_log)
+      invalid_bool = SparlectraApp.handle_powerflow_config_editor_save(Dict("config_file" => config_path, "config_text" => "output:\n  console_summary: enabled\n"); operation_log)
       invalid_bool_body = String(invalid_bool.body)
       @test invalid_bool.status == 400
       @test read(config_path, String) == unchanged_before_invalid
@@ -375,7 +375,7 @@ function run_webui_extended_tests()
       @test occursin("Bool", invalid_bool_body)
       @test isempty(temp_leftovers())
 
-      unknown = Sparlectra.handle_powerflow_config_editor_save(Dict("config_file" => config_path, "config_text" => "matpower_import:\n  not_a_real_option: true\n"); operation_log)
+      unknown = SparlectraApp.handle_powerflow_config_editor_save(Dict("config_file" => config_path, "config_text" => "matpower_import:\n  not_a_real_option: true\n"); operation_log)
       @test unknown.status == 400
       @test read(config_path, String) == unchanged_before_invalid
       @test occursin("Unknown Sparlectra configuration key: matpower_import.not_a_real_option", String(unknown.body))
@@ -420,7 +420,7 @@ function run_webui_extended_tests()
           "detailed_result_csv_format" => "excel_de",
         ),
       )
-      successful = Sparlectra._api_result(
+      successful = SparlectraApp._api_result(
         run_id = run_id,
         status = :succeeded,
         success = true,
@@ -435,8 +435,8 @@ function run_webui_extended_tests()
         output_dir = joinpath(root, run_id),
         metadata = metadata,
       )
-      Sparlectra._POWERFLOW_SERVICE_RUNS[run_id] = successful
-      result_html = Sparlectra.render_powerflow_result(Sparlectra.to_dict(successful))
+      SparlectraApp._POWERFLOW_SERVICE_RUNS[run_id] = successful
+      result_html = SparlectraApp.render_powerflow_result(SparlectraApp.to_dict(successful))
       @test occursin("Save settings for this case", result_html)
       @test !occursin("Save these settings anyway", result_html)
 
@@ -446,13 +446,13 @@ function run_webui_extended_tests()
       # run-based save; replacing the file dropped them and the case's
       # measurement set stopped resolving bus names
       write(Sparlectra.case_config_path(joinpath(root, "case145.m")), "config_version: 1\nscope: case\ncase: case145.m\nmatpower_import:\n  apply_bus_names: false\nform:\n  gen_seed: 7\n")
-      save_response = Sparlectra.handle_powerflow_case_settings_save(run_id, Dict{String,String}(); output_root = root, operation_log = root)
+      save_response = SparlectraApp.handle_powerflow_case_settings_save(run_id, Dict{String,String}(); output_root = root, operation_log = root)
       @test save_response.status == 200
       save_html = String(save_response.body)
-      profile_path = Sparlectra._webui_case_settings_path(root, joinpath(root, "case145.m"))
+      profile_path = SparlectraApp._webui_case_settings_path(root, joinpath(root, "case145.m"))
       @test isfile(profile_path)
-      @test occursin("/powerflow?casefile=$(Sparlectra._webui_urlencode(joinpath(root, "case145.m")))", save_html)
-      @test !occursin("/powerflow?casefile=$(Sparlectra._webui_urlencode(profile_path))", save_html)
+      @test occursin("/powerflow?casefile=$(SparlectraApp._webui_urlencode(joinpath(root, "case145.m")))", save_html)
+      @test !occursin("/powerflow?casefile=$(SparlectraApp._webui_urlencode(profile_path))", save_html)
       # the case configuration file: case-scope header, nested case-scope sections,
       # request-only fields in the form block, machine scope dropped
       @test basename(profile_path) == "case145.m.config.yaml"
@@ -472,7 +472,7 @@ function run_webui_extended_tests()
       @test case_cfg["model.auto_profile"] == "recommend"
       @test !haskey(case_cfg, "benchmark.enabled")
       @test case_cfg["matpower_import.apply_bus_names"] == false
-      form_defaults = Sparlectra._webui_case_form_defaults(joinpath(root, "case145.m"), root)
+      form_defaults = SparlectraApp._webui_case_form_defaults(joinpath(root, "case145.m"), root)
       @test !haskey(form_defaults, "detailed_result_csv_format")
       @test form_defaults["performance_timing"] == "compact"
       @test form_defaults["gen_seed"] == 7
@@ -483,19 +483,19 @@ function run_webui_extended_tests()
       scf_case = joinpath(root, "warmup_casePST.scf.json")
       cp(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_casePST.scf.json")), scf_case)
       scf_before = read(scf_case, String)
-      stale_sidecar = Sparlectra._webui_legacy_case_settings_path(root, scf_case)
+      stale_sidecar = SparlectraApp._webui_legacy_case_settings_path(root, scf_case)
       write(stale_sidecar, "profile_kind: webui_case_settings\n")
       scf_run_id = "case-settings-scf-test"
       scf_metadata = deepcopy(metadata)
-      scf_result = Sparlectra._api_result(
+      scf_result = SparlectraApp._api_result(
         run_id = scf_run_id, status = :succeeded, success = true, converged = true,
         solution_available = true, iterations = 3, final_mismatch = 1.0e-9,
         reason = "converged", message = "ok", casefile = scf_case,
         config_file = "configuration.yaml", output_dir = joinpath(root, scf_run_id),
         metadata = scf_metadata,
       )
-      Sparlectra._POWERFLOW_SERVICE_RUNS[scf_run_id] = scf_result
-      scf_save = Sparlectra.handle_powerflow_case_settings_save(scf_run_id, Dict{String,String}(); output_root = root, operation_log = root)
+      SparlectraApp._POWERFLOW_SERVICE_RUNS[scf_run_id] = scf_result
+      scf_save = SparlectraApp.handle_powerflow_case_settings_save(scf_run_id, Dict{String,String}(); output_root = root, operation_log = root)
       @test scf_save.status == 200
       @test occursin("Saved case configuration:", String(scf_save.body))
       @test !isfile(stale_sidecar)                      # would shadow the save
@@ -509,19 +509,21 @@ function run_webui_extended_tests()
       # the file is still a readable revision-1.1 case after the save
       @test length(importSCF(scf_case).nodeVec) == 9
       # reset deletes the case configuration file
-      reset_resp = Sparlectra.handle_powerflow_case_settings_reset(Dict{String,Any}("casefile" => "warmup_casePST.scf.json"); output_root = root, case_directory = root, operation_log = root)
+      reset_resp = SparlectraApp.handle_powerflow_case_settings_reset(Dict{String,Any}("casefile" => "warmup_casePST.scf.json"); output_root = root, case_directory = root, operation_log = root)
       @test reset_resp.status in (302, 303)
       @test occursin("deleted", String(Dict(reset_resp.headers)["Location"]))
       @test !isfile(Sparlectra.case_config_path(scf_case))
 
-      loaded_form = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow/settings?casefile=$(Sparlectra._webui_urlencode(joinpath(root, "case145.m")))"; output_root = root).body)
+      # the Settings page shows the configuration file by default; the saved
+      # case settings are the ?case_settings=1 view
+      loaded_form = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/settings?casefile=$(SparlectraApp._webui_urlencode(joinpath(root, "case145.m")))&case_settings=1"; output_root = root).body)
       @test occursin("Case-specific settings loaded from", loaded_form)
       @test occursin("case145.m.config.yaml", loaded_form)
       _webui_assert_value(loaded_form, "power_flow_tol", "1.0e-7")
       _webui_assert_checked(loaded_form, "power_flow_autodamp", true)
       # machine scope no longer travels with the case: the trigger checkbox
       # (a RUN control since block 3) shows the configuration default again
-      loaded_run = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow?casefile=$(Sparlectra._webui_urlencode(joinpath(root, "case145.m")))"; output_root = root).body)
+      loaded_run = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow?casefile=$(SparlectraApp._webui_urlencode(joinpath(root, "case145.m")))"; output_root = root).body)
       _webui_assert_checked(loaded_run, "benchmark_enabled", true)
       _webui_assert_selected(loaded_form, "power_flow_qlimits_enforcement_mode", "active_set")
       # the CSV format is machine scope: the configuration file's value
@@ -533,19 +535,19 @@ function run_webui_extended_tests()
       write(notice_off_config, "webui:\n  show_case_settings_notice: false\n")
       @test Sparlectra.SparlectraConfig(Sparlectra.load_yaml_dict(notice_off_config)).webui.show_case_settings_notice === false
       @test Sparlectra.SparlectraConfig(Dict()).webui.show_case_settings_notice === true
-      @test Sparlectra._powerflow_show_case_settings_notice(notice_off_config) === false
-      @test Sparlectra._powerflow_show_case_settings_notice("") === true
-      @test Sparlectra._powerflow_show_case_settings_notice(joinpath(notice_off_root, "does_not_exist.yaml")) === true
+      @test SparlectraApp._powerflow_show_case_settings_notice(notice_off_config) === false
+      @test SparlectraApp._powerflow_show_case_settings_notice("") === true
+      @test SparlectraApp._powerflow_show_case_settings_notice(joinpath(notice_off_root, "does_not_exist.yaml")) === true
       notice_off_case = joinpath(notice_off_root, "case145.m")
       write(notice_off_case, "% case fixture\n")
-      write(Sparlectra._webui_case_settings_path(notice_off_root, notice_off_case), """
+      write(SparlectraApp._webui_case_settings_path(notice_off_root, notice_off_case), """
 config_version: 1
 scope: case
 case: case145.m
 power_flow:
   tol: 1.0e-7
 """)
-      notice_off_form = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow/settings?casefile=$(Sparlectra._webui_urlencode(notice_off_case))&config_file=$(Sparlectra._webui_urlencode(notice_off_config))"; output_root = notice_off_root).body)
+      notice_off_form = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/settings?casefile=$(SparlectraApp._webui_urlencode(notice_off_case))&config_file=$(SparlectraApp._webui_urlencode(notice_off_config))"; output_root = notice_off_root).body)
       @test !occursin("Case-specific settings loaded from", notice_off_form)
       @test occursin("power_flow_tol", notice_off_form) # form itself still prefilled from the profile
 
@@ -554,29 +556,29 @@ power_flow:
       write(dismiss_config, "power_flow:\n  tol: 1.0e-6\n")
       dismiss_case = joinpath(dismiss_root, "case14.m")
       write(dismiss_case, "% case fixture\n")
-      write(Sparlectra._webui_case_settings_path(dismiss_root, dismiss_case), """
+      write(SparlectraApp._webui_case_settings_path(dismiss_root, dismiss_case), """
 config_version: 1
 scope: case
 case: case14.m
 power_flow:
   tol: 1.0e-7
 """)
-      before_dismiss_form = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow/settings?casefile=$(Sparlectra._webui_urlencode(dismiss_case))&config_file=$(Sparlectra._webui_urlencode(dismiss_config))"; output_root = dismiss_root).body)
+      before_dismiss_form = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/settings?casefile=$(SparlectraApp._webui_urlencode(dismiss_case))&config_file=$(SparlectraApp._webui_urlencode(dismiss_config))&case_settings=1"; output_root = dismiss_root).body)
       @test occursin("Case-specific settings loaded from", before_dismiss_form)
       @test occursin("action=\"/powerflow/config/dismiss-case-settings-notice\"", before_dismiss_form)
-      @test occursin("name=\"config_file\" value=\"$(Sparlectra._webui_escape(dismiss_config))\"", before_dismiss_form)
+      @test occursin("name=\"config_file\" value=\"$(SparlectraApp._webui_escape(dismiss_config))\"", before_dismiss_form)
       @test occursin("class=\"link-button\"", before_dismiss_form)
-      dismiss_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/config/dismiss-case-settings-notice", Dict{String,String}("config_file" => dismiss_config, "casefile" => dismiss_case); output_root = dismiss_root)
+      dismiss_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/config/dismiss-case-settings-notice", Dict{String,String}("config_file" => dismiss_config, "casefile" => dismiss_case); output_root = dismiss_root)
       @test dismiss_response.status == 303
-      @test Dict(dismiss_response.headers)["Location"] == "/powerflow/settings?casefile=$(Sparlectra._webui_urlencode(dismiss_case))"
+      @test Dict(dismiss_response.headers)["Location"] == "/powerflow/settings?casefile=$(SparlectraApp._webui_urlencode(dismiss_case))"
       dismiss_config_text = read(dismiss_config, String)
       @test occursin("show_case_settings_notice: false", dismiss_config_text)
       @test occursin("tol: 1.0e-6", dismiss_config_text) # unrelated existing settings preserved
-      after_dismiss_form = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow?casefile=$(Sparlectra._webui_urlencode(dismiss_case))&config_file=$(Sparlectra._webui_urlencode(dismiss_config))"; output_root = dismiss_root).body)
+      after_dismiss_form = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow?casefile=$(SparlectraApp._webui_urlencode(dismiss_case))&config_file=$(SparlectraApp._webui_urlencode(dismiss_config))"; output_root = dismiss_root).body)
       @test !occursin("Case-specific settings loaded from", after_dismiss_form)
-      missing_config_dismiss = Sparlectra.route_sparlectra_webui("POST", "/powerflow/config/dismiss-case-settings-notice", Dict{String,String}("config_file" => joinpath(dismiss_root, "does_not_exist.yaml"), "casefile" => dismiss_case); output_root = dismiss_root)
+      missing_config_dismiss = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/config/dismiss-case-settings-notice", Dict{String,String}("config_file" => joinpath(dismiss_root, "does_not_exist.yaml"), "casefile" => dismiss_case); output_root = dismiss_root)
       @test missing_config_dismiss.status == 400
-      empty_config_dismiss = Sparlectra.route_sparlectra_webui("POST", "/powerflow/config/dismiss-case-settings-notice", Dict{String,String}("casefile" => dismiss_case); output_root = dismiss_root)
+      empty_config_dismiss = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/config/dismiss-case-settings-notice", Dict{String,String}("casefile" => dismiss_case); output_root = dismiss_root)
       @test empty_config_dismiss.status == 400
 
       case118 = joinpath(root, "case118.m")
@@ -612,7 +614,7 @@ settings:
   power_flow_tol: 1.0e-8
   power_flow_wrong_branch_detection: off
 """)
-      case118_form = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow/settings?casefile=$(Sparlectra._webui_urlencode(case118))"; output_root = root).body)
+      case118_form = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/settings?casefile=$(SparlectraApp._webui_urlencode(case118))&case_settings=1"; output_root = root).body)
       @test occursin("Case-specific settings loaded from", case118_form)
       @test occursin("case118.m.config.yaml", case118_form)
       # converted exactly once: the sidecar is gone, the case configuration
@@ -627,7 +629,7 @@ settings:
       # machine scope (benchmark.*, output.*) stays with the machine and is
       # dropped by the conversion; request-only fields (detailed_result_csv,
       # performance_timing) persist in the form block
-      case118_run = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow?casefile=$(Sparlectra._webui_urlencode(case118))"; output_root = root).body)
+      case118_run = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow?casefile=$(SparlectraApp._webui_urlencode(case118))"; output_root = root).body)
       _webui_assert_checked(case118_run, "benchmark_enabled", true)
       _webui_assert_checked(case118_form, "detailed_result_csv", false)
       _webui_assert_value(case118_form, "power_flow_tol", "1.0e-8")
@@ -640,7 +642,7 @@ settings:
       _webui_assert_selected(case118_form, "detailed_result_csv_format", "technical")
       # the MATPOWER import conventions render on the Case page; the
       # saved profile must prefill THAT form
-      case118_case_page = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow/case?casefile=$(Sparlectra._webui_urlencode(case118))"; output_root = root).body)
+      case118_case_page = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/case?casefile=$(SparlectraApp._webui_urlencode(case118))"; output_root = root).body)
       _webui_assert_value(case118_case_page, "matpower_import_shift_sign", "1.0")
       _webui_assert_selected(case118_case_page, "matpower_import_auto_profile", "apply")
       _webui_assert_selected(case118_case_page, "matpower_import_ratio", "normal")
@@ -649,28 +651,28 @@ settings:
       _webui_assert_selected(case118_case_page, "matpower_import_pv_voltage_source", "gen_vg")
       _webui_assert_selected(case118_case_page, "matpower_import_compare_voltage_reference", "imported_setpoint")
 
-      dropdown_form = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow"; output_root = root, runtime = (; case_directory = root, config_file = "configuration.yaml", operation_log = Sparlectra.webui_operation_log_path(root), startup_config_error = nothing, runner = Sparlectra.start_powerflow_run)).body)
+      dropdown_form = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow"; output_root = root, runtime = (; case_directory = root, config_file = "configuration.yaml", operation_log = SparlectraApp.webui_operation_log_path(root), startup_config_error = nothing, runner = SparlectraApp.start_powerflow_run)).body)
       # the chooser (star marker, options, reload script) lives on
       # the Case page; the run page keeps the ignore-settings switch
-      dropdown_case = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow/case"; output_root = root, runtime = (; case_directory = root, config_file = "configuration.yaml", operation_log = Sparlectra.webui_operation_log_path(root), startup_config_error = nothing, runner = Sparlectra.start_powerflow_run)).body)
+      dropdown_case = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/case"; output_root = root, runtime = (; case_directory = root, config_file = "configuration.yaml", operation_log = SparlectraApp.webui_operation_log_path(root), startup_config_error = nothing, runner = SparlectraApp.start_powerflow_run)).body)
       @test occursin("case118.m ★", dropdown_case)
       @test occursin("<li role=\"option\" data-case-option=\"case118.m\" title=\"Right-click to delete this case from the case directory\">case118.m ★</li>", dropdown_case)
       @test !occursin("data-case-option=\"case118.m ★\"", dropdown_case)
       @test occursin("data-case-settings-reload=\"true\"", dropdown_case)
-      @test occursin("Ignore Web UI settings and use configuration defaults", String(Sparlectra.route_sparlectra_webui("GET", "/powerflow/settings"; output_root = root).body))
+      @test occursin("Ignore Web UI settings and use configuration defaults", String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/settings"; output_root = root).body))
       @test occursin("target.searchParams.set('casefile', value)", dropdown_case)
       @test occursin("target.searchParams.set('config_file', configInput.value)", dropdown_case)
-      dropdown_loaded_form = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow/settings?casefile=$(Sparlectra._webui_urlencode(case118))&config_file=$(Sparlectra._webui_urlencode("configuration.yaml"))"; output_root = root).body)
+      dropdown_loaded_form = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/settings?casefile=$(SparlectraApp._webui_urlencode(case118))&config_file=$(SparlectraApp._webui_urlencode("configuration.yaml"))"; output_root = root).body)
       _webui_assert_value(dropdown_loaded_form, "power_flow_max_iter", "80")
       _webui_assert_selected(dropdown_loaded_form, "detailed_result_csv_format", "technical")
 
       case14 = joinpath(root, "case14.m")
       write(case14, "% case fixture\n")
-      case14_form = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow/settings?casefile=$(Sparlectra._webui_urlencode(case14))"; output_root = root).body)
+      case14_form = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/settings?casefile=$(SparlectraApp._webui_urlencode(case14))"; output_root = root).body)
       @test !occursin("Case-specific settings loaded from", case14_form)
       _webui_assert_checked(case14_form, "power_flow_autodamp", true)
       _webui_assert_checked(case14_form, "power_flow_qlimits_enabled", true)
-      case14_run = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow?casefile=$(Sparlectra._webui_urlencode(case14))"; output_root = root).body)
+      case14_run = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow?casefile=$(SparlectraApp._webui_urlencode(case14))"; output_root = root).body)
       _webui_assert_checked(case14_run, "benchmark_enabled", true)
       _webui_assert_value(case14_form, "power_flow_tol", "1.0e-5")
       _webui_assert_value(case14_form, "power_flow_max_iter", "80")
@@ -680,26 +682,26 @@ settings:
       @test occursin("value=\"profile_blend\"", start_voltage_select)
       @test !occursin("bus_vm_va_blend", start_voltage_select)
       # the auto-profile selector renders on the Case page
-      case14_case_page = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow/case?casefile=$(Sparlectra._webui_urlencode(case14))"; output_root = root).body)
+      case14_case_page = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/case?casefile=$(SparlectraApp._webui_urlencode(case14))"; output_root = root).body)
       _webui_assert_selected(case14_case_page, "matpower_import_auto_profile", "recommend")
       _webui_assert_selected(case14_form, "output_logfile_results", "full")
 
       request_form = _webui_test_form("case145.m", "configuration.yaml", root)
       request_form["power_flow_tol"] = "2e-6"
-      request = Sparlectra.powerflow_webui_request(request_form; default_output_root = root)
+      request = SparlectraApp.powerflow_webui_request(request_form; default_output_root = root)
       @test request["config_overrides"]["power_flow.tol"] == 2.0e-6
 
       write_solution_form = _webui_test_form("case145.m", "configuration.yaml", root)
       write_solution_form["matpower_export_write_solution"] = "false"
-      write_solution_request = Sparlectra.powerflow_webui_request(write_solution_form; default_output_root = root)
+      write_solution_request = SparlectraApp.powerflow_webui_request(write_solution_form; default_output_root = root)
       @test write_solution_request["config_overrides"]["matpower_export.write_solution"] === false
 
       yaml_first_form = copy(request_form)
       yaml_first_form["ignore_webui_settings"] = "true"
-      yaml_first_request = Sparlectra.powerflow_webui_request(yaml_first_form; default_output_root = root)
+      yaml_first_request = SparlectraApp.powerflow_webui_request(yaml_first_form; default_output_root = root)
       @test isempty(yaml_first_request["config_overrides"])
       @test yaml_first_request["config_override_source"] == "user_yaml"
-      yaml_result_html = Sparlectra.render_powerflow_result(Dict(
+      yaml_result_html = SparlectraApp.render_powerflow_result(Dict(
         "run_id" => "yaml-first",
         "status" => "not_converged",
         "success" => false,
@@ -710,15 +712,15 @@ settings:
 
       invalid_case = joinpath(root, "invalid.m")
       write(invalid_case, "% case fixture\n")
-      write(Sparlectra._webui_case_settings_path(root, invalid_case), "not: [valid\n")
-      invalid_form = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow/settings?casefile=$(Sparlectra._webui_urlencode(invalid_case))"; output_root = root).body)
+      write(SparlectraApp._webui_case_settings_path(root, invalid_case), "not: [valid\n")
+      invalid_form = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/settings?casefile=$(SparlectraApp._webui_urlencode(invalid_case))"; output_root = root).body)
       @test occursin("Settings", invalid_form)
       @test !occursin("Case-specific settings loaded from", invalid_form)
-      @test occursin("case_settings_load_failed", read(Sparlectra.webui_operation_log_path(root), String))
+      @test occursin("case_settings_load_failed", read(SparlectraApp.webui_operation_log_path(root), String))
 
       unsupported_case = joinpath(root, "unsupported_field.m")
       write(unsupported_case, "% case fixture\n")
-      write(Sparlectra._webui_case_settings_path(root, unsupported_case), """
+      write(SparlectraApp._webui_case_settings_path(root, unsupported_case), """
 config_version: 1
 scope: case
 case: unsupported_field.m
@@ -729,13 +731,13 @@ form:
   power_flow_start_angle_mode: [bad]
   detailed_result_csv_format: impossible
 """)
-      unsupported_form = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow/settings?casefile=$(Sparlectra._webui_urlencode(unsupported_case))"; output_root = root).body)
+      unsupported_form = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/settings?casefile=$(SparlectraApp._webui_urlencode(unsupported_case))&case_settings=1"; output_root = root).body)
       @test occursin("Settings", unsupported_form)
       _webui_assert_checked(unsupported_form, "power_flow_autodamp", false)
       _webui_assert_value(unsupported_form, "power_flow_tol", "9.0e-7")
       _webui_assert_selected(unsupported_form, "power_flow_start_angle_mode", "dc")
       _webui_assert_selected(unsupported_form, "detailed_result_csv_format", "technical")
-      @test occursin("case_settings_field_ignored", read(Sparlectra.webui_operation_log_path(root), String))
+      @test occursin("case_settings_field_ignored", read(SparlectraApp.webui_operation_log_path(root), String))
 
       fresh_root = mktempdir()
       mkpath(joinpath(fresh_root, "resolved"))
@@ -746,12 +748,12 @@ form:
       fresh_form["power_flow_qlimits_enforcement_mode"] = "active_set"
       fresh_form["detailed_result_csv"] = "on"
       fresh_form["detailed_result_csv_format"] = "excel_us"
-      fresh_request = Sparlectra.powerflow_webui_request(fresh_form; default_output_root = fresh_root)
+      fresh_request = SparlectraApp.powerflow_webui_request(fresh_form; default_output_root = fresh_root)
       fresh_runner = function(worker_request; case_directory = nothing)
         fresh_run_id = worker_request["run_id"]
         output_dir = joinpath(worker_request["output_root"], fresh_run_id)
         mkpath(output_dir)
-        result = Sparlectra._api_result(
+        result = SparlectraApp._api_result(
           run_id = fresh_run_id,
           status = :succeeded,
           success = true,
@@ -769,21 +771,21 @@ form:
             "runtime_casefile_path" => joinpath(fresh_root, "resolved", "case145.m"),
           ),
         )
-        Sparlectra._POWERFLOW_SERVICE_RUNS[fresh_run_id] = result
-        return Sparlectra.to_dict(result)
+        SparlectraApp._POWERFLOW_SERVICE_RUNS[fresh_run_id] = result
+        return SparlectraApp.to_dict(result)
       end
-      fresh_active = Sparlectra.start_webui_powerflow_run(fresh_request; runner = fresh_runner)
+      fresh_active = SparlectraApp.start_webui_powerflow_run(fresh_request; runner = fresh_runner)
       fresh_run_id = fresh_active["run_id"]
       for _ in 1:100
-        get(Sparlectra.get_webui_powerflow_job(fresh_run_id), "status", "") in Sparlectra._POWERFLOW_WEBUI_ACTIVE_STATES || break
+        get(SparlectraApp.get_webui_powerflow_job(fresh_run_id), "status", "") in SparlectraApp._POWERFLOW_WEBUI_ACTIVE_STATES || break
         sleep(0.05)
       end
-      fresh_completed = Sparlectra.get_webui_powerflow_job(fresh_run_id)
+      fresh_completed = SparlectraApp.get_webui_powerflow_job(fresh_run_id)
       @test get(fresh_completed, "status", "") == "success"
       @test get(get(fresh_completed, "metadata", Dict{String,Any}()), "webui_request_settings", nothing) isa AbstractDict
-      fresh_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/result/$(fresh_run_id)/case-settings/save", Dict{String,String}(); output_root = fresh_root)
+      fresh_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/result/$(fresh_run_id)/case-settings/save", Dict{String,String}(); output_root = fresh_root)
       @test fresh_response.status == 200
-      fresh_profile_path = Sparlectra._webui_case_settings_path(fresh_root, joinpath(fresh_root, "resolved", "case145.m"))
+      fresh_profile_path = SparlectraApp._webui_case_settings_path(fresh_root, joinpath(fresh_root, "resolved", "case145.m"))
       @test isfile(fresh_profile_path)
       fresh_case_path = joinpath(fresh_root, "resolved", "case145.m")
       fresh_cc = Sparlectra.load_case_config(fresh_case_path)
@@ -791,28 +793,28 @@ form:
       @test fresh_cc["power_flow.qlimits.enforcement_mode"] == "active_set"
       @test fresh_cc["power_flow.tol"] == 2.5e-7
       @test fresh_cc["power_flow.max_iter"] == 37
-      fresh_form = Sparlectra._webui_case_form_defaults(fresh_case_path, joinpath(fresh_root, "resolved"))
+      fresh_form = SparlectraApp._webui_case_form_defaults(fresh_case_path, joinpath(fresh_root, "resolved"))
       @test fresh_form["detailed_result_csv"] === true
       @test !haskey(fresh_form, "detailed_result_csv_format")
       @test !haskey(fresh_cc, "output.csv_format")
       @test !haskey(fresh_form, "effective_config")
-      fresh_reloaded_form = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow/settings?casefile=$(Sparlectra._webui_urlencode(joinpath(fresh_root, "resolved", "case145.m")))"; output_root = fresh_root).body)
+      fresh_reloaded_form = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/settings?casefile=$(SparlectraApp._webui_urlencode(joinpath(fresh_root, "resolved", "case145.m")))&case_settings=1"; output_root = fresh_root).body)
       _webui_assert_value(fresh_reloaded_form, "power_flow_tol", "2.5e-7")
       _webui_assert_value(fresh_reloaded_form, "power_flow_max_iter", "37")
       _webui_assert_selected(fresh_reloaded_form, "power_flow_qlimits_enforcement_mode", "active_set")
       _webui_assert_checked(fresh_reloaded_form, "detailed_result_csv", true)
       manual_override_form = _webui_test_form(joinpath(fresh_root, "resolved", "case145.m"), "configuration.yaml", fresh_root)
       manual_override_form["power_flow_tol"] = "3e-6"
-      manual_override_request = Sparlectra.powerflow_webui_request(manual_override_form; default_output_root = fresh_root)
+      manual_override_request = SparlectraApp.powerflow_webui_request(manual_override_form; default_output_root = fresh_root)
       @test manual_override_request["config_overrides"]["power_flow.tol"] == 3.0e-6
       manual_override_nested = Sparlectra.validate_gui_config_overrides(manual_override_request["config_overrides"])
       manual_override_cfg, _ = Sparlectra._load_api_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, manual_override_nested)
       @test manual_override_cfg.powerflow.tol == 3.0e-6
-      delete!(Sparlectra._POWERFLOW_SERVICE_RUNS, fresh_run_id)
-      delete!(Sparlectra._POWERFLOW_WEBUI_JOBS, fresh_run_id)
+      delete!(SparlectraApp._POWERFLOW_SERVICE_RUNS, fresh_run_id)
+      delete!(SparlectraApp._POWERFLOW_WEBUI_JOBS, fresh_run_id)
 
       failed_run_id = "case-settings-failed"
-      failed = Sparlectra._api_result(
+      failed = SparlectraApp._api_result(
         run_id = failed_run_id,
         status = :not_converged,
         success = false,
@@ -827,23 +829,23 @@ form:
         output_dir = joinpath(root, failed_run_id),
         metadata = metadata,
       )
-      Sparlectra._POWERFLOW_SERVICE_RUNS[failed_run_id] = failed
-      failed_html = Sparlectra.render_powerflow_result(Sparlectra.to_dict(failed))
+      SparlectraApp._POWERFLOW_SERVICE_RUNS[failed_run_id] = failed
+      failed_html = SparlectraApp.render_powerflow_result(SparlectraApp.to_dict(failed))
       @test !occursin("Save settings for this case", failed_html)
       @test occursin("Save these settings anyway", failed_html)
-      rejected = Sparlectra.handle_powerflow_case_settings_save(failed_run_id, Dict{String,String}(); output_root = root, operation_log = root)
+      rejected = SparlectraApp.handle_powerflow_case_settings_save(failed_run_id, Dict{String,String}(); output_root = root, operation_log = root)
       @test rejected.status == 400
-      accepted = Sparlectra.handle_powerflow_case_settings_save(failed_run_id, Dict("override_non_success" => "true"); output_root = root, operation_log = root)
+      accepted = SparlectraApp.handle_powerflow_case_settings_save(failed_run_id, Dict("override_non_success" => "true"); output_root = root, operation_log = root)
       @test accepted.status == 200
-      log_text = read(Sparlectra.webui_operation_log_path(root), String)
+      log_text = read(SparlectraApp.webui_operation_log_path(root), String)
       @test occursin("case_settings_saved", log_text)
       @test occursin("case_settings_save_failed", log_text)
-      @test Sparlectra._webui_normalized_case_key("../bad/../../case145.m") == "case145"
+      @test SparlectraApp._webui_normalized_case_key("../bad/../../case145.m") == "case145"
 
       unsupported_run_id = "case-settings-unsupported"
       unsupported_metadata = deepcopy(metadata)
       unsupported_metadata["webui_request_settings"]["power_flow.autodamp"] = Dates.now()
-      Sparlectra._POWERFLOW_WEBUI_JOBS[unsupported_run_id] = Dict{String,Any}(
+      SparlectraApp._POWERFLOW_WEBUI_JOBS[unsupported_run_id] = Dict{String,Any}(
         "run_id" => unsupported_run_id,
         "status" => "success",
         "success" => true,
@@ -858,13 +860,13 @@ form:
         "output_dir" => joinpath(root, unsupported_run_id),
         "metadata" => unsupported_metadata,
       )
-      unsupported_response = Sparlectra.handle_powerflow_case_settings_save(unsupported_run_id, Dict{String,String}(); output_root = root, operation_log = root)
+      unsupported_response = SparlectraApp.handle_powerflow_case_settings_save(unsupported_run_id, Dict{String,String}(); output_root = root, operation_log = root)
       @test unsupported_response.status == 400
       @test occursin("unsupported value type", String(unsupported_response.body))
       traversal_run_id = "case-settings-traversal"
       traversal_metadata = deepcopy(metadata)
       traversal_metadata["runtime_casefile_path"] = "../outside/case145.m"
-      Sparlectra._POWERFLOW_WEBUI_JOBS[traversal_run_id] = Dict{String,Any}(
+      SparlectraApp._POWERFLOW_WEBUI_JOBS[traversal_run_id] = Dict{String,Any}(
         "run_id" => traversal_run_id,
         "status" => "success",
         "success" => true,
@@ -879,16 +881,16 @@ form:
         "output_dir" => joinpath(root, traversal_run_id),
         "metadata" => traversal_metadata,
       )
-      traversal_response = Sparlectra.handle_powerflow_case_settings_save(traversal_run_id, Dict{String,String}(); output_root = root, operation_log = root)
+      traversal_response = SparlectraApp.handle_powerflow_case_settings_save(traversal_run_id, Dict{String,String}(); output_root = root, operation_log = root)
       @test traversal_response.status == 400
-      delete!(Sparlectra._POWERFLOW_SERVICE_RUNS, run_id)
-      delete!(Sparlectra._POWERFLOW_SERVICE_RUNS, failed_run_id)
-      delete!(Sparlectra._POWERFLOW_WEBUI_JOBS, unsupported_run_id)
-      delete!(Sparlectra._POWERFLOW_WEBUI_JOBS, traversal_run_id)
+      delete!(SparlectraApp._POWERFLOW_SERVICE_RUNS, run_id)
+      delete!(SparlectraApp._POWERFLOW_SERVICE_RUNS, failed_run_id)
+      delete!(SparlectraApp._POWERFLOW_WEBUI_JOBS, unsupported_run_id)
+      delete!(SparlectraApp._POWERFLOW_WEBUI_JOBS, traversal_run_id)
     end)() end
 
     # the bundled .jl precompile workloads stay out of the case selector
-    @test !Sparlectra._webui_is_user_selectable_case("warmup_case118.jl")
+    @test !SparlectraApp._webui_is_user_selectable_case("warmup_case118.jl")
 
     @testset "Case and configuration selection" begin (function ()
       mktempdir() do start_dir
@@ -925,39 +927,39 @@ form:
         write(secondary_config, "power_flow: {}\n")
         write(joinpath(config_directory, "README.md"), "ignored\n")
 
-        @test Sparlectra._webui_application_root(start_dir) == application_root
-        @test Sparlectra._webui_is_user_selectable_case("case3.m")
-        @test Sparlectra._webui_supported_upload_case_extension("case3.m")
-        @test Sparlectra._webui_supported_upload_case_extension("case3.M")
-        @test Sparlectra._webui_supported_upload_case_extension("FOR001.dat")
-        @test Sparlectra._webui_supported_upload_case_extension("FOR001.DAT")
-        @test !Sparlectra._webui_supported_upload_case_extension("case3.jl")
-        @test Sparlectra._webui_supported_upload_case_extension("case3.zip")   # CGMES deliveries
-        @test !Sparlectra._webui_supported_upload_case_extension("case3.txt")
-        @test !Sparlectra._webui_supported_upload_case_extension("case3")
-        @test Sparlectra._webui_sanitize_upload_filename("case3.m") == ("case3.m", "")
-        @test last(Sparlectra._webui_sanitize_upload_filename("../case3.m")) == "invalid filename"
-        @test last(Sparlectra._webui_sanitize_upload_filename("")) == "empty filename"
-        @test Sparlectra._webui_is_user_selectable_case("case14.m")
+        @test SparlectraApp._webui_application_root(start_dir) == application_root
+        @test SparlectraApp._webui_is_user_selectable_case("case3.m")
+        @test SparlectraApp._webui_supported_upload_case_extension("case3.m")
+        @test SparlectraApp._webui_supported_upload_case_extension("case3.M")
+        @test SparlectraApp._webui_supported_upload_case_extension("FOR001.dat")
+        @test SparlectraApp._webui_supported_upload_case_extension("FOR001.DAT")
+        @test !SparlectraApp._webui_supported_upload_case_extension("case3.jl")
+        @test SparlectraApp._webui_supported_upload_case_extension("case3.zip")   # CGMES deliveries
+        @test !SparlectraApp._webui_supported_upload_case_extension("case3.txt")
+        @test !SparlectraApp._webui_supported_upload_case_extension("case3")
+        @test SparlectraApp._webui_sanitize_upload_filename("case3.m") == ("case3.m", "")
+        @test last(SparlectraApp._webui_sanitize_upload_filename("../case3.m")) == "invalid filename"
+        @test last(SparlectraApp._webui_sanitize_upload_filename("")) == "empty filename"
+        @test SparlectraApp._webui_is_user_selectable_case("case14.m")
         # warmup_ hides only the .jl workloads; a MATPOWER case carrying the
         # prefix stays selectable (warmup_casePST.m regression)
-        @test Sparlectra._webui_is_user_selectable_case("warmup_case3.m")
-        @test !Sparlectra._webui_is_user_selectable_case("warmup_case3.jl")
-        @test Sparlectra._webui_is_user_selectable_case("warmup_internal.m")
-        @test !Sparlectra._webui_is_user_selectable_case("generated_cache.jl")
-        @test Sparlectra._webui_casefile_options(application_root) == ["case118.m", "case14.m", "FOR001.DAT", "warmup_internal.m"]
-        @test Sparlectra._webui_for002_reference_options_in_directory(case_directory) == ["FOR002.DAT", "FOR002_reference.DAT"]
-        @test Sparlectra._webui_config_file_options(application_root) == [primary_config, secondary_config]
+        @test SparlectraApp._webui_is_user_selectable_case("warmup_case3.m")
+        @test !SparlectraApp._webui_is_user_selectable_case("warmup_case3.jl")
+        @test SparlectraApp._webui_is_user_selectable_case("warmup_internal.m")
+        @test !SparlectraApp._webui_is_user_selectable_case("generated_cache.jl")
+        @test SparlectraApp._webui_casefile_options(application_root) == ["case118.m", "case14.m", "FOR001.DAT", "warmup_internal.m"]
+        @test SparlectraApp._webui_for002_reference_options_in_directory(case_directory) == ["FOR002.DAT", "FOR002_reference.DAT"]
+        @test SparlectraApp._webui_config_file_options(application_root) == [primary_config, secondary_config]
 
         # the chooser, upload form, and import-format options live
         # on the Case page; the run page carries the selected case as a
         # hidden field plus the DTF outage run parameters
-        selection_html = Sparlectra.render_case_page(
+        selection_html = SparlectraApp.render_case_page(
           application_root = application_root,
           selected_casefile = "case14.m",
           selected_config_file = secondary_config,
         )
-        run_selection_html = Sparlectra.render_powerflow_form(
+        run_selection_html = SparlectraApp.render_powerflow_form(
           application_root = application_root,
           selected_casefile = "case14.m",
           selected_config_file = secondary_config,
@@ -987,7 +989,7 @@ form:
         @test occursin("<form id=\"case-import-form\" method=\"post\" action=\"/powerflow/import-cases\" enctype=\"multipart/form-data\"", selection_html)
         # .json is a Sparlectra Case Format case (#342); the import validates
         # the content before storing, so a foreign .json is refused by name
-        @test occursin("type=\"file\" name=\"casefiles\" accept=\".m,.M,.dat,.DAT,.zip,.ZIP,.json,.yaml\" multiple", selection_html)
+        @test occursin("type=\"file\" name=\"casefiles\" accept=\".m,.M,.dat,.DAT,.zip,.ZIP,.json,.yaml,.xml,.XML\" multiple", selection_html)
         @test occursin("Import case files", selection_html)
         @test occursin("<input type=\"hidden\" name=\"config_file\" value=\"$(secondary_config)\">", selection_html)
         @test occursin("<code>$(secondary_config)</code>", selection_html)
@@ -1032,7 +1034,7 @@ form:
         @test occursin("caseInput.form.requestSubmit(resolveButton)", selection_html)
         @test !occursin("|| form === null", selection_html)
 
-        dat_html = Sparlectra.render_case_page(
+        dat_html = SparlectraApp.render_case_page(
           application_root = application_root,
           selected_casefile = "FOR001.DAT",
         )
@@ -1045,14 +1047,14 @@ form:
         @test !occursin("full DTF support", dat_html)
         # the run page opens its DTF outage details for a .DAT case and
         # carries the (empty) FOR002 reference field
-        dat_run_html = Sparlectra.render_powerflow_form(
+        dat_run_html = SparlectraApp.render_powerflow_form(
           application_root = application_root,
           selected_casefile = "FOR001.DAT",
         )
         @test occursin("<details class=\"span-2 dtf-internal-section is-dat-selected\" open>", dat_run_html)
         @test occursin("name=\"for002_reference_file\" value=\"\"", dat_run_html)
 
-        for002_reference_html = Sparlectra.render_powerflow_form(
+        for002_reference_html = SparlectraApp.render_powerflow_form(
           application_root = application_root,
           selected_casefile = "FOR001.DAT",
           submitted_form = Dict("for002_reference_file" => "/manual/FOR002.DAT"),
@@ -1060,7 +1062,7 @@ form:
         @test occursin("name=\"for002_reference_file\" value=\"/manual/FOR002.DAT\"", for002_reference_html)
         @test !occursin("for002_reference_file\" value=\"FOR002.DAT\"", dat_run_html)
 
-        submitted_auto_dat_html = Sparlectra.render_case_page(
+        submitted_auto_dat_html = SparlectraApp.render_case_page(
           application_root = application_root,
           selected_casefile = "FOR001.DAT",
           submitted_form = Dict("case_format" => "auto"),
@@ -1068,7 +1070,7 @@ form:
         @test occursin("<option value=\"auto\" selected>Auto</option>", submitted_auto_dat_html)
         @test occursin("<option value=\"dtf_for001\">DTF diagnostics (experimental/internal)</option>", submitted_auto_dat_html)
 
-        case14_html = Sparlectra.render_case_page(
+        case14_html = SparlectraApp.render_case_page(
           application_root = application_root,
           selected_casefile = "case14.m",
         )
@@ -1076,7 +1078,7 @@ form:
         @test occursin("<option value=\"auto\" selected>Auto</option>", case14_html)
         @test occursin("<option value=\"dtf_for001\">DTF diagnostics (experimental/internal)</option>", case14_html)
 
-        casejl_html = Sparlectra.render_case_page(
+        casejl_html = SparlectraApp.render_case_page(
           application_root = application_root,
           selected_casefile = "case14.jl",
         )
@@ -1086,7 +1088,7 @@ form:
         @test occursin("<option value=\"dtf_for001\">DTF diagnostics (experimental/internal)</option>", casejl_html)
 
         manual_dat = joinpath(case_directory, "manual", "FOR001.DAT")
-        manual_dat_html = Sparlectra.render_case_page(
+        manual_dat_html = SparlectraApp.render_case_page(
           application_root = application_root,
           selected_casefile = manual_dat,
         )
@@ -1095,7 +1097,7 @@ form:
         @test occursin("<details class=\"span-2 dtf-internal-section is-dat-selected\" open>", manual_dat_html)
 
         for manual_matpower in (joinpath(case_directory, "manual", "case14.m"), joinpath(case_directory, "manual", "case14.jl"))
-          manual_matpower_html = Sparlectra.render_case_page(
+          manual_matpower_html = SparlectraApp.render_case_page(
             application_root = application_root,
             selected_casefile = manual_matpower,
           )
@@ -1104,7 +1106,7 @@ form:
           @test occursin("<option value=\"dtf_for001\">DTF diagnostics (experimental/internal)</option>", manual_matpower_html)
         end
 
-        manual_overrides_dropdown_html = Sparlectra.render_case_page(
+        manual_overrides_dropdown_html = SparlectraApp.render_case_page(
           application_root = application_root,
           selected_casefile = "case14.m",
           submitted_form = Dict("casefile" => "case14.m", "casefile_manual" => manual_dat),
@@ -1115,7 +1117,7 @@ form:
         rm(case14)
         rm(case118)
         manual_case = joinpath(case_directory, "manual_case.m")
-        fallback_html = Sparlectra.render_case_page(
+        fallback_html = SparlectraApp.render_case_page(
           application_root = application_root,
           selected_casefile = manual_case,
         )
@@ -1127,28 +1129,28 @@ form:
       mktempdir() do tmpdir
         case_directory = joinpath(tmpdir, "cases")
         output_root = joinpath(tmpdir, "runs")
-        runtime = Sparlectra._SparlectraWebUIRuntime(nothing, case_directory, "configuration.yaml", Sparlectra.webui_operation_log_path(output_root), nothing, Sparlectra.start_powerflow_run, false, false, time(), 0, nothing, IOBuffer(), ReentrantLock())
-        upload(name, text) = Sparlectra.WebUICaseUpload(name, Vector{UInt8}(codeunits(text)))
+        runtime = SparlectraApp._SparlectraWebUIRuntime(nothing, case_directory, "configuration.yaml", SparlectraApp.webui_operation_log_path(output_root), nothing, SparlectraApp.start_powerflow_run, false, false, time(), 0, nothing, IOBuffer(), ReentrantLock())
+        upload(name, text) = SparlectraApp.WebUICaseUpload(name, Vector{UInt8}(codeunits(text)))
 
-        response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/import-cases", Dict("casefiles" => [upload("case_upload.m", "function mpc = case_upload\nend\n")]); output_root, runtime)
+        response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/import-cases", Dict("casefiles" => [upload("case_upload.m", "function mpc = case_upload\nend\n")]); output_root, runtime)
         @test response.status == 303
         @test isfile(joinpath(case_directory, "case_upload.m"))
         @test read(joinpath(case_directory, "case_upload.m"), String) == "function mpc = case_upload\nend\n"
-        refreshed = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow/case"; output_root, runtime).body)
+        refreshed = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/case"; output_root, runtime).body)
         @test occursin("data-case-option=\"case_upload.m\"", refreshed)
 
-        dat_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/import-cases", Dict("casefiles" => [upload("FOR001.DAT", "P\nT\nN\nX\nY\n110\n2 1 0 0 SLACK\nL1A  PV       SLACK   1.0 2.0 0.0 0.0\n11   PV      110 0 0 0 10 2 -5 5\n21   SLACK   110 0 0 0 20 3 -10 10\n")]); output_root, runtime)
+        dat_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/import-cases", Dict("casefiles" => [upload("FOR001.DAT", "P\nT\nN\nX\nY\n110\n2 1 0 0 SLACK\nL1A  PV       SLACK   1.0 2.0 0.0 0.0\n11   PV      110 0 0 0 10 2 -5 5\n21   SLACK   110 0 0 0 20 3 -10 10\n")]); output_root, runtime)
         @test dat_response.status == 303
         @test isfile(joinpath(case_directory, "FOR001.DAT"))
-        @test Sparlectra._webui_casefile_options_in_directory(case_directory) == ["case_upload.m", "FOR001.DAT"]
+        @test SparlectraApp._webui_casefile_options_in_directory(case_directory) == ["case_upload.m", "FOR001.DAT"]
 
         multi = Dict("casefiles" => [upload("case_a.M", "a"), upload("case_b.dat", "b"), upload("bad.txt", "z")])
-        multi_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/import-cases", multi; output_root, runtime)
+        multi_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/import-cases", multi; output_root, runtime)
         @test multi_response.status == 303
         @test isfile(joinpath(case_directory, "case_a.M"))
         @test isfile(joinpath(case_directory, "case_b.dat"))
         @test !isfile(joinpath(case_directory, "bad.txt"))
-        multi_page = String(Sparlectra.route_sparlectra_webui("GET", String(Dict(multi_response.headers)["Location"]); output_root, runtime).body)
+        multi_page = String(SparlectraApp.route_sparlectra_webui("GET", String(Dict(multi_response.headers)["Location"]); output_root, runtime).body)
         @test occursin("rejected 1", multi_page)
         @test occursin("bad.txt", multi_page) && occursin("unsupported extension", multi_page)
 
@@ -1169,7 +1171,7 @@ form:
           ZipArchives.zip_newfile(w, "incomplete_EQ.xml")
           write(w, incomplete_eq)
         end
-        cgmes_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/import-cases", Dict("casefiles" => [Sparlectra.WebUICaseUpload("incomplete_delivery.zip", take!(zipbuf))]); output_root, runtime)
+        cgmes_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/import-cases", Dict("casefiles" => [SparlectraApp.WebUICaseUpload("incomplete_delivery.zip", take!(zipbuf))]); output_root, runtime)
         @test cgmes_response.status == 303
         @test isfile(joinpath(case_directory, "incomplete_delivery.zip"))
         analysis_file = joinpath(case_directory, "incomplete_delivery.import_analysis.txt")
@@ -1177,40 +1179,54 @@ form:
         analysis_text = read(analysis_file, String)
         @test occursin("absent-boundary", analysis_text)
         @test occursin("Verdict:", analysis_text)
-        cgmes_page = String(Sparlectra.route_sparlectra_webui("GET", String(Dict(cgmes_response.headers)["Location"]); output_root, runtime).body)
+        cgmes_page = String(SparlectraApp.route_sparlectra_webui("GET", String(Dict(cgmes_response.headers)["Location"]); output_root, runtime).body)
         @test occursin("missing declared dependencies", cgmes_page)
         @test occursin("absent-boundary", cgmes_page)
 
+        # the profile files of one delivery, selected together in the file
+        # picker (the shipped demo folders are exactly that), become one ZIP
+        demo = joinpath(dirname(@__DIR__), "data", "cgmes_demo", "sp_case14")
+        xml_uploads = [SparlectraApp.WebUICaseUpload(f, read(joinpath(demo, f))) for f in readdir(demo)]
+        xml_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/import-cases", Dict("casefiles" => xml_uploads); output_root, runtime)
+        @test xml_response.status == 303
+        @test isfile(joinpath(case_directory, "sp_case14_cgmes.zip"))
+        @test occursin("sp_case14_cgmes.zip", SparlectraApp._webui_urldecode(String(Dict(xml_response.headers)["Location"])))
+        @test length(importCGMES(path = joinpath(case_directory, "sp_case14_cgmes.zip"), name = "sp_case14_cgmes").net.nodeVec) == 14
+        # without the EQ profile the set is refused, nothing is written
+        no_eq = [u for u in xml_uploads if !occursin("_EQ", u.filename)]
+        no_eq_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/import-cases", Dict("casefiles" => no_eq); output_root, runtime)
+        @test occursin("EQ profile", SparlectraApp._webui_urldecode(String(Dict(no_eq_response.headers)["Location"])))
+
         write(joinpath(case_directory, "duplicate.m"), "old")
-        duplicate_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/import-cases", Dict("casefiles" => [upload("duplicate.m", "new")]); output_root, runtime)
+        duplicate_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/import-cases", Dict("casefiles" => [upload("duplicate.m", "new")]); output_root, runtime)
         @test duplicate_response.status == 303
         @test read(joinpath(case_directory, "duplicate.m"), String) == "old"
 
-        traversal_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/import-cases", Dict("casefiles" => [upload("../escape.m", "bad")]); output_root, runtime)
+        traversal_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/import-cases", Dict("casefiles" => [upload("../escape.m", "bad")]); output_root, runtime)
         @test traversal_response.status == 303
         @test !isfile(joinpath(tmpdir, "escape.m"))
 
-        oversized = Sparlectra.handle_powerflow_case_import(Dict("casefiles" => [upload("huge.m", "12345")]); output_root, case_directory, operation_log = output_root, max_file_bytes = 4)
+        oversized = SparlectraApp.handle_powerflow_case_import(Dict("casefiles" => [upload("huge.m", "12345")]); output_root, case_directory, operation_log = output_root, max_file_bytes = 4)
         @test oversized.status == 303
         @test !isfile(joinpath(case_directory, "huge.m"))
 
-        empty_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/import-cases", Dict("casefiles" => Sparlectra.WebUICaseUpload[]); output_root, runtime)
+        empty_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/import-cases", Dict("casefiles" => SparlectraApp.WebUICaseUpload[]); output_root, runtime)
         @test empty_response.status == 303
 
-        for002_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/import-cases", Dict("casefiles" => [upload("FOR002.DAT", "reference")]); output_root, runtime)
+        for002_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/import-cases", Dict("casefiles" => [upload("FOR002.DAT", "reference")]); output_root, runtime)
         @test for002_response.status == 303
         @test isfile(joinpath(case_directory, "FOR002.DAT"))
         # the case selector (Case page) must not offer the FOR002 reference
         # file as a case; the run page's FOR002 datalist is separate
-        selector_html = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow/case"; output_root, runtime).body)
+        selector_html = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/case"; output_root, runtime).body)
         @test !occursin("data-case-option=\"FOR002.DAT\"", selector_html)
-        run_selector_html = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow"; output_root, runtime).body)
+        run_selector_html = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow"; output_root, runtime).body)
         primary_selector_html = split(run_selector_html, "<datalist id=\"for002-reference-candidates\">")[1]
         @test !occursin("<option value=\"FOR002.DAT\">FOR002.DAT</option>", primary_selector_html)
 
         @test !isdir(joinpath(output_root, "runs"))
-        @test isempty(Sparlectra.list_powerflow_runs(output_root))
-        log_text = read(Sparlectra.webui_operation_log_path(output_root), String)
+        @test isempty(SparlectraApp.list_powerflow_runs(output_root))
+        log_text = read(SparlectraApp.webui_operation_log_path(output_root), String)
         @test occursin("case_import_completed", log_text)
         @test !occursin("powerflow_run_started", log_text)
       end
@@ -1223,39 +1239,39 @@ form:
       mktempdir() do tmpdir
         case_directory = joinpath(tmpdir, "cases")
         output_root = joinpath(tmpdir, "runs")
-        runtime = Sparlectra._SparlectraWebUIRuntime(nothing, case_directory, "configuration.yaml", Sparlectra.webui_operation_log_path(output_root), nothing, Sparlectra.start_powerflow_run, false, false, time(), 0, nothing, IOBuffer(), ReentrantLock())
+        runtime = SparlectraApp._SparlectraWebUIRuntime(nothing, case_directory, "configuration.yaml", SparlectraApp.webui_operation_log_path(output_root), nothing, SparlectraApp.start_powerflow_run, false, false, time(), 0, nothing, IOBuffer(), ReentrantLock())
 
         external_dir = joinpath(tmpdir, "external")
         mkpath(external_dir)
         external_dat = joinpath(external_dir, "FOR001_manual.DAT")
         write(external_dat, "P\nT\nN\nX\nY\n110\n2 1 0 0 SLACK\nL1A  PV       SLACK   1.0 2.0 0.0 0.0\n11   PV      110 0 0 0 10 2 -5 5\n21   SLACK   110 0 0 0 20 3 -10 10\n")
 
-        response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/resolve-case", Dict("casefile_manual" => external_dat); output_root, runtime)
+        response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/resolve-case", Dict("casefile_manual" => external_dat); output_root, runtime)
         @test response.status == 303
         @test Dict(response.headers)["Location"] == "/powerflow/case?casefile=FOR001_manual.DAT&import_message=Resolved%20case%3A%20FOR001_manual.DAT"
         @test isfile(joinpath(case_directory, "FOR001_manual.DAT"))
         @test !isdir(joinpath(output_root, "runs"))
-        @test isempty(Sparlectra.list_powerflow_runs(output_root))
+        @test isempty(SparlectraApp.list_powerflow_runs(output_root))
 
-        refreshed = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow/case"; output_root, runtime).body)
+        refreshed = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/case"; output_root, runtime).body)
         @test occursin("data-case-option=\"FOR001_manual.DAT\"", refreshed)
 
-        duplicate_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/resolve-case", Dict("casefile_manual" => external_dat); output_root, runtime)
+        duplicate_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/resolve-case", Dict("casefile_manual" => external_dat); output_root, runtime)
         @test duplicate_response.status == 303
-        @test occursin("already exists", Sparlectra._webui_urldecode(Dict(duplicate_response.headers)["Location"]))
+        @test occursin("already exists", SparlectraApp._webui_urldecode(Dict(duplicate_response.headers)["Location"]))
 
         bad_ext = joinpath(external_dir, "notes.txt")
         write(bad_ext, "not a case")
-        bad_ext_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/resolve-case", Dict("casefile_manual" => bad_ext); output_root, runtime)
-        @test occursin("unsupported extension", Sparlectra._webui_urldecode(Dict(bad_ext_response.headers)["Location"]))
+        bad_ext_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/resolve-case", Dict("casefile_manual" => bad_ext); output_root, runtime)
+        @test occursin("unsupported extension", SparlectraApp._webui_urldecode(Dict(bad_ext_response.headers)["Location"]))
 
-        missing_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/resolve-case", Dict("casefile_manual" => joinpath(external_dir, "missing.m")); output_root, runtime)
-        @test occursin("case file not found", Sparlectra._webui_urldecode(Dict(missing_response.headers)["Location"]))
+        missing_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/resolve-case", Dict("casefile_manual" => joinpath(external_dir, "missing.m")); output_root, runtime)
+        @test occursin("case file not found", SparlectraApp._webui_urldecode(Dict(missing_response.headers)["Location"]))
 
-        empty_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/resolve-case", Dict("casefile_manual" => ""); output_root, runtime)
-        @test occursin("Enter a case name or path", Sparlectra._webui_urldecode(Dict(empty_response.headers)["Location"]))
+        empty_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/resolve-case", Dict("casefile_manual" => ""); output_root, runtime)
+        @test occursin("Enter a case name or path", SparlectraApp._webui_urldecode(Dict(empty_response.headers)["Location"]))
 
-        log_text = read(Sparlectra.webui_operation_log_path(output_root), String)
+        log_text = read(SparlectraApp.webui_operation_log_path(output_root), String)
         @test occursin("case_resolve_completed", log_text)
         @test occursin("case_resolve_failed", log_text)
         @test !occursin("powerflow_run_started", log_text)
@@ -1268,29 +1284,29 @@ form:
         output_root = joinpath(tmpdir, "runs")
         mkpath(case_directory)
         mkpath(output_root)
-        runtime = (; case_directory, config_file = "configuration.yaml", operation_log = Sparlectra.webui_operation_log_path(output_root), startup_config_error = nothing, runner = Sparlectra.start_powerflow_run)
+        runtime = (; case_directory, config_file = "configuration.yaml", operation_log = SparlectraApp.webui_operation_log_path(output_root), startup_config_error = nothing, runner = SparlectraApp.start_powerflow_run)
         victim = joinpath(case_directory, "delete_me.m")
         write(victim, "function mpc = delete_me\nend\n")
-        sidecar = Sparlectra._webui_case_settings_path(output_root, "delete_me.m"; case_directory)
+        sidecar = SparlectraApp._webui_case_settings_path(output_root, "delete_me.m"; case_directory)
         mkpath(dirname(sidecar))
         write(sidecar, "profile_kind: webui_case_settings\nsettings: {}\n")
 
-        delete_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/delete-case", Dict("casefile" => "delete_me.m"); output_root, runtime)
+        delete_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/delete-case", Dict("casefile" => "delete_me.m"); output_root, runtime)
         @test delete_response.status == 303
-        @test occursin("Deleted case: delete_me.m", Sparlectra._webui_urldecode(Dict(delete_response.headers)["Location"]))
+        @test occursin("Deleted case: delete_me.m", SparlectraApp._webui_urldecode(Dict(delete_response.headers)["Location"]))
         @test !isfile(victim)
         @test !isfile(sidecar)
 
-        traversal_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/delete-case", Dict("casefile" => "../delete_me.m"); output_root, runtime)
-        @test occursin("invalid case name", Sparlectra._webui_urldecode(Dict(traversal_response.headers)["Location"]))
+        traversal_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/delete-case", Dict("casefile" => "../delete_me.m"); output_root, runtime)
+        @test occursin("invalid case name", SparlectraApp._webui_urldecode(Dict(traversal_response.headers)["Location"]))
 
-        missing_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/delete-case", Dict("casefile" => "missing.m"); output_root, runtime)
-        @test occursin("case file not found", Sparlectra._webui_urldecode(Dict(missing_response.headers)["Location"]))
+        missing_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/delete-case", Dict("casefile" => "missing.m"); output_root, runtime)
+        @test occursin("case file not found", SparlectraApp._webui_urldecode(Dict(missing_response.headers)["Location"]))
 
-        empty_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/delete-case", Dict{String,Any}(); output_root, runtime)
-        @test occursin("Select a case to delete", Sparlectra._webui_urldecode(Dict(empty_response.headers)["Location"]))
+        empty_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/delete-case", Dict{String,Any}(); output_root, runtime)
+        @test occursin("Select a case to delete", SparlectraApp._webui_urldecode(Dict(empty_response.headers)["Location"]))
 
-        log_text = read(Sparlectra.webui_operation_log_path(output_root), String)
+        log_text = read(SparlectraApp.webui_operation_log_path(output_root), String)
         @test occursin("case_delete_completed", log_text)
         @test occursin("case_delete_failed", log_text)
         @test !occursin("powerflow_run_started", log_text)
@@ -1300,33 +1316,33 @@ form:
 
     @testset "Markdown-backed contextual help and documentation" begin (function ()
       topic = "power_flow.start_mode.voltage_mode"
-      @test haskey(Sparlectra.WEBUI_HELP_TOPICS, topic)
-      topic_metadata = Sparlectra.resolve_webui_help_topic(topic)
+      @test haskey(SparlectraApp.WEBUI_HELP_TOPICS, topic)
+      topic_metadata = SparlectraApp.resolve_webui_help_topic(topic)
       @test topic_metadata !== nothing
-      doc_metadata = Sparlectra.resolve_webui_doc_page(topic_metadata.page)
+      doc_metadata = SparlectraApp.resolve_webui_doc_page(topic_metadata.page)
       @test doc_metadata !== nothing
       doc_path = joinpath(@__DIR__, "..", "docs", "src", doc_metadata.file)
       @test isfile(doc_path)
 
-      markdown_text = Sparlectra.load_webui_markdown_document(topic_metadata.page)
+      markdown_text = SparlectraApp.load_webui_markdown_document(topic_metadata.page)
       @test markdown_text !== nothing
-      section = Sparlectra.extract_webui_markdown_section(markdown_text, topic_metadata.heading)
+      section = SparlectraApp.extract_webui_markdown_section(markdown_text, topic_metadata.heading)
       @test section !== nothing
       @test occursin(topic_metadata.selector, section)
-      excerpt = Sparlectra.load_webui_help_excerpt(topic)
+      excerpt = SparlectraApp.load_webui_help_excerpt(topic)
       @test excerpt !== nothing
       @test occursin("power_flow.start_mode.voltage_mode", excerpt)
       @test occursin("YAML path", excerpt)
 
       synthetic = "## Target\n\n- item\n\n```julia\nx = 1\n```\n\n### Child\nchild text\n\n## Next\nnot included"
-      extracted = Sparlectra.extract_webui_markdown_section(synthetic, "Target")
+      extracted = SparlectraApp.extract_webui_markdown_section(synthetic, "Target")
       @test occursin("- item", extracted)
       @test occursin("```julia", extracted)
       @test occursin("### Child", extracted)
       @test !occursin("not included", extracted)
 
       link_markdown = "## Local section\n\n[Configuration](powerflow_configuration.md)\n[Start modes](powerflow_configuration.md#start-mode-options)\n[Dot relative](./powerflow_configuration.md)\n[External](https://example.com/reference)\n[Local anchor](#local-section)\n[Unknown](unknown.md)"
-      link_html = Sparlectra.render_webui_markdown(link_markdown; current_page = "webui")
+      link_html = SparlectraApp.render_webui_markdown(link_markdown; current_page = "webui")
       @test occursin("href=\"/docs/powerflow_configuration\"", link_html)
       @test occursin("href=\"/docs/powerflow_configuration#start-mode-options\"", link_html)
       @test count("href=\"/docs/powerflow_configuration\"", link_html) == 2
@@ -1337,23 +1353,23 @@ form:
       @test occursin("aria-disabled=\"true\"", link_html)
 
       for unsafe_target in ("../Project.toml", "../../src/Sparlectra.jl", "/etc/passwd", raw"C:\Users\x\file.txt")
-        unsafe_html = Sparlectra.render_webui_markdown("[unsafe]($(unsafe_target))"; current_page = "webui")
+        unsafe_html = SparlectraApp.render_webui_markdown("[unsafe]($(unsafe_target))"; current_page = "webui")
         @test occursin("aria-disabled=\"true\"", unsafe_html)
         @test !occursin("href=\"$(unsafe_target)\"", unsafe_html)
       end
 
-      @test Set(values(Sparlectra.WEBUI_FORM_HELP_TOPICS)) == Set(keys(Sparlectra.WEBUI_HELP_TOPICS))
-      for (configured_topic, metadata) in Sparlectra.WEBUI_HELP_TOPICS
-        page_metadata = Sparlectra.resolve_webui_doc_page(metadata.page)
+      @test Set(values(SparlectraApp.WEBUI_FORM_HELP_TOPICS)) == Set(keys(SparlectraApp.WEBUI_HELP_TOPICS))
+      for (configured_topic, metadata) in SparlectraApp.WEBUI_HELP_TOPICS
+        page_metadata = SparlectraApp.resolve_webui_doc_page(metadata.page)
         @test page_metadata !== nothing
         help_doc_path = joinpath(@__DIR__, "..", "docs", "src", page_metadata.file)
         @test isfile(help_doc_path)
-        help_markdown = Sparlectra.load_webui_markdown_document(metadata.page)
+        help_markdown = SparlectraApp.load_webui_markdown_document(metadata.page)
         @test help_markdown !== nothing
-        help_section = Sparlectra.extract_webui_markdown_section(help_markdown, metadata.heading)
+        help_section = SparlectraApp.extract_webui_markdown_section(help_markdown, metadata.heading)
         @test help_section !== nothing
         isempty(metadata.selector) || @test occursin(metadata.selector, help_section)
-        @test Sparlectra.load_webui_help_excerpt(configured_topic) !== nothing
+        @test SparlectraApp.load_webui_help_excerpt(configured_topic) !== nothing
       end
 
       current_iteration_help = Dict(
@@ -1363,7 +1379,7 @@ form:
   "power_flow.start_current_iteration.min_improvement_factor" => ("required improvement ratio", "0.98 means", "Default: 0.98", "clearly better starts"),
 )
 for (current_iteration_topic, required_fragments) in current_iteration_help
-        current_iteration_excerpt = Sparlectra.load_webui_help_excerpt(current_iteration_topic)
+        current_iteration_excerpt = SparlectraApp.load_webui_help_excerpt(current_iteration_topic)
         @test current_iteration_excerpt !== nothing
         @test occursin(current_iteration_topic, current_iteration_excerpt)
         @test !startswith(strip(current_iteration_excerpt), "|")
@@ -1372,7 +1388,7 @@ for (current_iteration_topic, required_fragments) in current_iteration_help
         end
       end
 
-      help_response = Sparlectra.route_sparlectra_webui("GET", "/help/$(topic)")
+      help_response = SparlectraApp.route_sparlectra_webui("GET", "/help/$(topic)")
       @test help_response.status == 200
       help_html = String(help_response.body)
       @test occursin("Start voltage mode", help_html)
@@ -1391,37 +1407,37 @@ for (current_iteration_topic, required_fragments) in current_iteration_help
         "power_flow.wrong_branch_detection",
         "benchmark.enabled",
       )
-        representative_help = Sparlectra.route_sparlectra_webui("GET", "/help/$(representative_topic)")
+        representative_help = SparlectraApp.route_sparlectra_webui("GET", "/help/$(representative_topic)")
         @test representative_help.status == 200
         @test occursin("class=\"panel help-page help-panel\"", String(representative_help.body))
       end
 
-      unknown_help = Sparlectra.route_sparlectra_webui("GET", "/help/power_flow.unknown")
+      unknown_help = SparlectraApp.route_sparlectra_webui("GET", "/help/power_flow.unknown")
       @test unknown_help.status == 404
       @test occursin("Unknown help topic", String(unknown_help.body))
 
-      docs_index = Sparlectra.route_sparlectra_webui("GET", "/docs")
+      docs_index = SparlectraApp.route_sparlectra_webui("GET", "/docs")
       @test docs_index.status == 200
       docs_index_html = String(docs_index.body)
-      for page in keys(Sparlectra.WEBUI_DOC_PAGES)
+      for page in keys(SparlectraApp.WEBUI_DOC_PAGES)
         @test occursin("/docs/$(page)", docs_index_html)
       end
 
-      docs_page = Sparlectra.route_sparlectra_webui("GET", "/docs/powerflow_configuration")
+      docs_page = SparlectraApp.route_sparlectra_webui("GET", "/docs/powerflow_configuration")
       @test docs_page.status == 200
       docs_page_html = String(docs_page.body)
       @test occursin("Power-Flow Configuration", docs_page_html)
       @test occursin("class=\"panel docs-page docs-content\"", docs_page_html)
       @test occursin("id=\"start-mode-options\"", docs_page_html)
 
-      qlimit_strategy_page = Sparlectra.route_sparlectra_webui("GET", "/docs/q_limit_switching_strategy")
+      qlimit_strategy_page = SparlectraApp.route_sparlectra_webui("GET", "/docs/q_limit_switching_strategy")
       @test qlimit_strategy_page.status == 200
       qlimit_strategy_html = String(qlimit_strategy_page.body)
       for term in ("active_set", "classic_simultaneous", "classic_one_at_a_time")
         @test occursin(term, qlimit_strategy_html)
       end
 
-      matpower_format_page = Sparlectra.route_sparlectra_webui("GET", "/docs/matpower_format")
+      matpower_format_page = SparlectraApp.route_sparlectra_webui("GET", "/docs/matpower_format")
       @test matpower_format_page.status == 200
       matpower_format_html = String(matpower_format_page.body)
       @test occursin("MATPOWER format", matpower_format_html)
@@ -1429,7 +1445,7 @@ for (current_iteration_topic, required_fragments) in current_iteration_help
       @test occursin("href=\"https://matpower.app/manual/matpower/DataFileFormat.html\" target=\"_blank\" rel=\"noopener noreferrer\"", matpower_format_html)
       @test occursin("href=\"https://matpower.org/documentation/ref-manual/legacy/functions/caseformat.html\" target=\"_blank\" rel=\"noopener noreferrer\"", matpower_format_html)
 
-      for001_format_page = Sparlectra.route_sparlectra_webui("GET", "/docs/dtf_format")
+      for001_format_page = SparlectraApp.route_sparlectra_webui("GET", "/docs/dtf_format")
       @test for001_format_page.status == 200
       for001_format_html = String(for001_format_page.body)
       @test occursin("DTF legacy input format", for001_format_html)
@@ -1437,7 +1453,7 @@ for (current_iteration_topic, required_fragments) in current_iteration_help
       @test occursin("neutral-one", for001_format_html)
       @test occursin("branch-echo records", for001_format_html)
 
-      webui_docs_page = Sparlectra.route_sparlectra_webui("GET", "/docs/webui")
+      webui_docs_page = SparlectraApp.route_sparlectra_webui("GET", "/docs/webui")
       @test webui_docs_page.status == 200
       webui_docs_html = String(webui_docs_page.body)
       @test occursin("href=\"/docs/powerflow_configuration\"", webui_docs_html)
@@ -1446,10 +1462,10 @@ for (current_iteration_topic, required_fragments) in current_iteration_help
       @test !occursin("href=\"/docs/powerflow_configuration\" target=\"_blank\"", webui_docs_html)
 
       for unsafe_page in ("../Project.toml", "../../src/Sparlectra.jl", "/etc/passwd", raw"C:\Users\x\file.txt")
-        unsafe = Sparlectra.handle_webui_doc_page(unsafe_page)
+        unsafe = SparlectraApp.handle_webui_doc_page(unsafe_page)
         @test unsafe.status == 404
         @test occursin("Documentation page not found", String(unsafe.body))
-        unsafe_route = Sparlectra.route_sparlectra_webui("GET", "/docs/" * Sparlectra._webui_urlencode(unsafe_page))
+        unsafe_route = SparlectraApp.route_sparlectra_webui("GET", "/docs/" * SparlectraApp._webui_urlencode(unsafe_page))
         @test unsafe_route.status == 404
       end
     end)() end
@@ -1461,19 +1477,19 @@ for (current_iteration_topic, required_fragments) in current_iteration_help
       output_root = joinpath(tmpdir, "runs")
       form = _webui_test_form(casefile, config_file, output_root)
 
-      request = Sparlectra.powerflow_webui_request(form; default_output_root = output_root)
+      request = SparlectraApp.powerflow_webui_request(form; default_output_root = output_root)
       @test request["casefile"] == casefile
       existing_form = copy(form)
       existing_form["casefile"] = "  case118.jl  "
       existing_form["casefile_manual"] = "  "
-      existing_request = Sparlectra.powerflow_webui_request(existing_form; default_output_root = output_root)
+      existing_request = SparlectraApp.powerflow_webui_request(existing_form; default_output_root = output_root)
       @test existing_request["casefile"] == "case118.jl"
       @test existing_request["case_format"] == "auto"
 
       typed_form = copy(form)
       typed_form["casefile"] = "case9.m"
       typed_form["casefile_manual"] = "  case9241pegase.m  "
-      typed_request = Sparlectra.powerflow_webui_request(typed_form; default_output_root = output_root)
+      typed_request = SparlectraApp.powerflow_webui_request(typed_form; default_output_root = output_root)
       @test typed_request["casefile"] == "case9241pegase.m"
       @test typed_request["case_format"] == "auto"
 
@@ -1481,14 +1497,14 @@ for (current_iteration_topic, required_fragments) in current_iteration_help
       dtf_form["casefile"] = "FOR001.DAT"
       dtf_form["casefile_manual"] = "  "
       dtf_form["case_format"] = "dtf_for001"
-      dtf_request = Sparlectra.powerflow_webui_request(dtf_form; default_output_root = output_root)
+      dtf_request = SparlectraApp.powerflow_webui_request(dtf_form; default_output_root = output_root)
       @test dtf_request["casefile"] == "FOR001.DAT"
       @test dtf_request["case_format"] == "dtf_for001"
       @test dtf_request["for002_reference_file"] === nothing
 
       auto_dtf_form = copy(dtf_form)
       auto_dtf_form["case_format"] = "auto"
-      auto_dtf_request = Sparlectra.powerflow_webui_request(auto_dtf_form; default_output_root = output_root)
+      auto_dtf_request = SparlectraApp.powerflow_webui_request(auto_dtf_form; default_output_root = output_root)
       @test auto_dtf_request["casefile"] == "FOR001.DAT"
       @test auto_dtf_request["case_format"] == "auto"
 
@@ -1496,13 +1512,13 @@ for (current_iteration_topic, required_fragments) in current_iteration_help
       manual_dtf_form = copy(dtf_form)
       manual_dtf_form["casefile"] = "case9.m"
       manual_dtf_form["casefile_manual"] = "  " * manual_dtf * "  "
-      manual_dtf_request = Sparlectra.powerflow_webui_request(manual_dtf_form; default_output_root = output_root)
+      manual_dtf_request = SparlectraApp.powerflow_webui_request(manual_dtf_form; default_output_root = output_root)
       @test manual_dtf_request["casefile"] == manual_dtf
       @test manual_dtf_request["case_format"] == "dtf_for001"
 
       reference_dtf_form = copy(dtf_form)
       reference_dtf_form["for002_reference_file"] = "  /manual/FOR002.DAT  "
-      reference_dtf_request = Sparlectra.powerflow_webui_request(reference_dtf_form; default_output_root = output_root)
+      reference_dtf_request = SparlectraApp.powerflow_webui_request(reference_dtf_form; default_output_root = output_root)
       @test reference_dtf_request["casefile"] == "FOR001.DAT"
       @test reference_dtf_request["for002_reference_file"] == "/manual/FOR002.DAT"
 
@@ -1514,12 +1530,12 @@ for (current_iteration_topic, required_fragments) in current_iteration_help
         "output_root" => output_root,
         "case_format" => "dtf_for001",
       )
-      for002_primary_response = Sparlectra.start_powerflow_run(merge(copy(base_service_request), Dict{String,Any}("casefile" => "FOR002.DAT")); case_directory = tmpdir)
+      for002_primary_response = SparlectraApp.start_powerflow_run(merge(copy(base_service_request), Dict{String,Any}("casefile" => "FOR002.DAT")); case_directory = tmpdir)
       @test !for002_primary_response["success"]
       @test for002_primary_response["reason"] == "invalid_casefile"
       @test occursin("FOR002.DAT is a reference/result file and cannot be used as the primary DTF network input case.", for002_primary_response["message"])
 
-      manual_for002_primary_response = Sparlectra.start_powerflow_run(merge(copy(base_service_request), Dict{String,Any}("casefile" => cache_for002)); case_directory = tmpdir)
+      manual_for002_primary_response = SparlectraApp.start_powerflow_run(merge(copy(base_service_request), Dict{String,Any}("casefile" => cache_for002)); case_directory = tmpdir)
       @test !manual_for002_primary_response["success"]
       @test manual_for002_primary_response["reason"] == "invalid_casefile"
       @test occursin("Use a runnable DTF network case as the case and enter FOR002.DAT as optional FOR002 reference file.", manual_for002_primary_response["message"])
@@ -1527,13 +1543,13 @@ for (current_iteration_topic, required_fragments) in current_iteration_help
       empty_case_form = copy(form)
       empty_case_form["casefile"] = ""
       empty_case_form["casefile_manual"] = ""
-      @test_throws ArgumentError Sparlectra.powerflow_webui_request(empty_case_form; default_output_root = output_root)
-      empty_case_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/run", empty_case_form; output_root = output_root)
+      @test_throws ArgumentError SparlectraApp.powerflow_webui_request(empty_case_form; default_output_root = output_root)
+      empty_case_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/run", empty_case_form; output_root = output_root)
       @test empty_case_response.status == 400
       # format-neutral wording (MATPOWER is only one of the supported
       # formats), pointing at the Case page
       @test occursin("Select a case first (Case page).", String(empty_case_response.body))
-      operation_log_path = Sparlectra.webui_operation_log_path(output_root)
+      operation_log_path = SparlectraApp.webui_operation_log_path(output_root)
       @test isfile(operation_log_path)
       @test occursin("\"event\":\"validation_error\"", read(operation_log_path, String))
       @test request["config_file"] == config_file
@@ -1552,51 +1568,51 @@ for (current_iteration_topic, required_fragments) in current_iteration_help
       @test request["config_overrides"]["power_flow.merit.fallback_max_mismatch"] === true
       merit_disabled_form = copy(form)
       merit_disabled_form["power_flow_merit_enabled"] = "false"
-      @test Sparlectra.powerflow_webui_request(merit_disabled_form; default_output_root = output_root)["config_overrides"]["power_flow.merit.enabled"] === false
+      @test SparlectraApp.powerflow_webui_request(merit_disabled_form; default_output_root = output_root)["config_overrides"]["power_flow.merit.enabled"] === false
       merit_missing_form = copy(form)
       delete!(merit_missing_form, "power_flow_merit_enabled")
-      @test !haskey(Sparlectra.powerflow_webui_request(merit_missing_form; default_output_root = output_root)["config_overrides"], "power_flow.merit.enabled")
+      @test !haskey(SparlectraApp.powerflow_webui_request(merit_missing_form; default_output_root = output_root)["config_overrides"], "power_flow.merit.enabled")
       @test request["config_overrides"]["power_flow.trust_region.enabled"] === false
       @test request["config_overrides"]["power_flow.trust_region.initial_radius"] == 1.0
       @test request["config_overrides"]["power_flow.trust_region.eta_accept"] == 0.1
       trust_region_enabled_form = copy(form)
       trust_region_enabled_form["power_flow_trust_region_enabled"] = "true"
-      @test Sparlectra.powerflow_webui_request(trust_region_enabled_form; default_output_root = output_root)["config_overrides"]["power_flow.trust_region.enabled"] === true
+      @test SparlectraApp.powerflow_webui_request(trust_region_enabled_form; default_output_root = output_root)["config_overrides"]["power_flow.trust_region.enabled"] === true
       trust_region_missing_form = copy(form)
       delete!(trust_region_missing_form, "power_flow_trust_region_enabled")
-      @test !haskey(Sparlectra.powerflow_webui_request(trust_region_missing_form; default_output_root = output_root)["config_overrides"], "power_flow.trust_region.enabled")
+      @test !haskey(SparlectraApp.powerflow_webui_request(trust_region_missing_form; default_output_root = output_root)["config_overrides"], "power_flow.trust_region.enabled")
       qlimits_disabled_form = copy(form)
       qlimits_disabled_form["power_flow_qlimits_enabled"] = "false"
-      @test Sparlectra.powerflow_webui_request(qlimits_disabled_form; default_output_root = output_root)["config_overrides"]["power_flow.qlimits.enabled"] === false
+      @test SparlectraApp.powerflow_webui_request(qlimits_disabled_form; default_output_root = output_root)["config_overrides"]["power_flow.qlimits.enabled"] === false
       missing_field_form = copy(form)
       delete!(missing_field_form, "power_flow_start_current_iteration_enabled")
-      @test !haskey(Sparlectra.powerflow_webui_request(missing_field_form; default_output_root = output_root)["config_overrides"], "power_flow.start_current_iteration.enabled")
+      @test !haskey(SparlectraApp.powerflow_webui_request(missing_field_form; default_output_root = output_root)["config_overrides"], "power_flow.start_current_iteration.enabled")
       ci_disabled_form = copy(form)
       ci_disabled_form["power_flow_start_current_iteration_enabled"] = "false"
-      @test Sparlectra.powerflow_webui_request(ci_disabled_form; default_output_root = output_root)["config_overrides"]["power_flow.start_current_iteration.enabled"] === false
+      @test SparlectraApp.powerflow_webui_request(ci_disabled_form; default_output_root = output_root)["config_overrides"]["power_flow.start_current_iteration.enabled"] === false
       csv_disabled_form = copy(form)
       csv_disabled_form["detailed_result_csv"] = "false"
-      @test Sparlectra.powerflow_webui_request(csv_disabled_form; default_output_root = output_root)["detailed_result_csv"] === false
+      @test SparlectraApp.powerflow_webui_request(csv_disabled_form; default_output_root = output_root)["detailed_result_csv"] === false
       delete!(csv_disabled_form, "detailed_result_csv_format")
-      @test !haskey(Sparlectra.powerflow_webui_request(csv_disabled_form; default_output_root = output_root)["config_overrides"], "output.csv_format")
-      @test Sparlectra.powerflow_webui_request(form; default_output_root = output_root)["diagnose_mode"] === false
+      @test !haskey(SparlectraApp.powerflow_webui_request(csv_disabled_form; default_output_root = output_root)["config_overrides"], "output.csv_format")
+      @test SparlectraApp.powerflow_webui_request(form; default_output_root = output_root)["diagnose_mode"] === false
       diagnose_form = copy(form)
       diagnose_form["diagnose_mode"] = "true"
-      @test Sparlectra.powerflow_webui_request(diagnose_form; default_output_root = output_root)["diagnose_mode"] === true
+      @test SparlectraApp.powerflow_webui_request(diagnose_form; default_output_root = output_root)["diagnose_mode"] === true
       # A normal "Start PowerFlow run" never writes diagnose.log — there is no
       # "Run diagnostics" checkbox; only diagnose_mode forces it server-side.
-      @test Sparlectra.powerflow_webui_request(form; default_output_root = output_root)["run_diagnostics"] === false
+      @test SparlectraApp.powerflow_webui_request(form; default_output_root = output_root)["run_diagnostics"] === false
       run_diagnostics_form = copy(form)
       run_diagnostics_form["run_diagnostics"] = "on"
-      @test Sparlectra.powerflow_webui_request(run_diagnostics_form; default_output_root = output_root)["run_diagnostics"] === false
+      @test SparlectraApp.powerflow_webui_request(run_diagnostics_form; default_output_root = output_root)["run_diagnostics"] === false
       untrusted_form = copy(form)
       untrusted_form["output_root"] = joinpath(tmpdir, "outside")
-      @test Sparlectra.powerflow_webui_request(untrusted_form; default_output_root = output_root)["output_root"] == output_root
+      @test SparlectraApp.powerflow_webui_request(untrusted_form; default_output_root = output_root)["output_root"] == output_root
       overrides = request["config_overrides"]
       # Every GUI-editable field arrives as an override, EXCEPT the ones the
       # form left empty: an empty numeric field means "not stated" and must
       # not send a value (that is how the optional tolerance in MW works).
-      stated = Set(key for (key, field, _) in Sparlectra._WEBUI_FORM_CONFIG_FIELDS
+      stated = Set(key for (key, field, _) in SparlectraApp._WEBUI_FORM_CONFIG_FIELDS
                    if !isempty(strip(String(get(form, field, "")))))
       # the run form's CSV format is the run's central output.csv_format
       # for every run type (0.14.2), carried as an override like any key
@@ -1608,13 +1624,13 @@ for (current_iteration_topic, required_fragments) in current_iteration_help
       @test overrides["power_flow.autodamp"]
       apply_form = copy(form)
       apply_form["matpower_import_auto_profile"] = "apply"
-      apply_request = Sparlectra.powerflow_webui_request(apply_form; default_output_root = output_root)
+      apply_request = SparlectraApp.powerflow_webui_request(apply_form; default_output_root = output_root)
       @test apply_request["config_overrides"]["model.auto_profile"] == "apply"
       @test overrides["benchmark.enabled"] === false
 
       invalid_form = copy(form)
       invalid_form["power_flow_max_iter"] = "invalid"
-      invalid_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/run", invalid_form; output_root = output_root)
+      invalid_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/run", invalid_form; output_root = output_root)
       invalid_html = String(invalid_response.body)
       @test invalid_response.status == 400
       @test occursin("name=\"casefile\"", invalid_html)
@@ -1627,13 +1643,13 @@ for (current_iteration_topic, required_fragments) in current_iteration_help
       @test !occursin("<details class=\"last-errors span-2\">", invalid_html)
       @test occursin("Last errors", invalid_html)
       @test occursin("href=\"/webui/last-errors\"", invalid_html)
-      last_errors_response = Sparlectra.route_sparlectra_webui("GET", "/webui/last-errors"; output_root = output_root)
+      last_errors_response = SparlectraApp.route_sparlectra_webui("GET", "/webui/last-errors"; output_root = output_root)
       last_errors_html = String(last_errors_response.body)
       @test last_errors_response.status == 200
       @test occursin("Last errors", last_errors_html)
       @test occursin("validation_error", read(operation_log_path, String))
       @test occursin("/powerflow/run", last_errors_html)
-      empty_errors_html = Sparlectra.render_webui_last_errors(joinpath(tmpdir, "missing-operation-log.jsonl"))
+      empty_errors_html = SparlectraApp.render_webui_last_errors(joinpath(tmpdir, "missing-operation-log.jsonl"))
       @test occursin("No recent errors.", empty_errors_html)
 
       api_failure_root = joinpath(tmpdir, "api-failure-runs")
@@ -1644,7 +1660,7 @@ for (current_iteration_topic, required_fragments) in current_iteration_help
         api_failure_run_id = worker_request["run_id"]
         api_failure_output_dir = joinpath(worker_request["output_root"], api_failure_run_id)
         mkpath(api_failure_output_dir)
-        result = Sparlectra._api_result(
+        result = SparlectraApp._api_result(
           run_id = api_failure_run_id,
           status = :failed,
           success = false,
@@ -1660,19 +1676,19 @@ for (current_iteration_topic, required_fragments) in current_iteration_help
           result_file = joinpath(api_failure_output_dir, "result.json"),
           metadata = Dict{String,Any}("failure_reason" => "unsupported_matpower_dcline"),
         )
-        Sparlectra._POWERFLOW_SERVICE_RUNS[api_failure_run_id] = result
-        return Sparlectra.to_dict(result)
+        SparlectraApp._POWERFLOW_SERVICE_RUNS[api_failure_run_id] = result
+        return SparlectraApp.to_dict(result)
       end
-      api_failure_response = Sparlectra.handle_powerflow_run(api_failure_form; default_output_root = api_failure_root, runner = api_failure_runner, operation_log = api_failure_root)
+      api_failure_response = SparlectraApp.handle_powerflow_run(api_failure_form; default_output_root = api_failure_root, runner = api_failure_runner, operation_log = api_failure_root)
       api_failure_run_id = api_failure_response["run_id"]
-      wait(Sparlectra._POWERFLOW_WEBUI_JOBS[api_failure_run_id]["task"])
-      api_failure_job = Sparlectra.get_webui_powerflow_job(api_failure_run_id)
+      wait(SparlectraApp._POWERFLOW_WEBUI_JOBS[api_failure_run_id]["task"])
+      api_failure_job = SparlectraApp.get_webui_powerflow_job(api_failure_run_id)
       @test api_failure_job["status"] == "failed"
       @test api_failure_job["run_status"] == "failed"
       @test api_failure_job["reason"] == "unsupported_matpower_dcline"
-      api_failure_result_html = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow/result/$(api_failure_run_id)"; output_root = api_failure_root).body)
+      api_failure_result_html = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/result/$(api_failure_run_id)"; output_root = api_failure_root).body)
       @test occursin(api_failure_message, api_failure_result_html)
-      api_failure_last_errors_html = String(Sparlectra.route_sparlectra_webui("GET", "/webui/last-errors"; output_root = api_failure_root).body)
+      api_failure_last_errors_html = String(SparlectraApp.route_sparlectra_webui("GET", "/webui/last-errors"; output_root = api_failure_root).body)
       @test occursin("Last errors", api_failure_last_errors_html)
       @test occursin("unsupported_matpower_dcline", api_failure_last_errors_html)
       @test occursin("case_with_dcline.m", api_failure_last_errors_html)
@@ -1685,7 +1701,7 @@ for (current_iteration_topic, required_fragments) in current_iteration_help
         api_success_run_id = worker_request["run_id"]
         api_success_output_dir = joinpath(worker_request["output_root"], api_success_run_id)
         mkpath(api_success_output_dir)
-        result = Sparlectra._api_result(
+        result = SparlectraApp._api_result(
           run_id = api_success_run_id,
           status = :succeeded,
           success = true,
@@ -1700,20 +1716,20 @@ for (current_iteration_topic, required_fragments) in current_iteration_help
           output_dir = api_success_output_dir,
           result_file = joinpath(api_success_output_dir, "result.json"),
         )
-        Sparlectra._POWERFLOW_SERVICE_RUNS[api_success_run_id] = result
-        return Sparlectra.to_dict(result)
+        SparlectraApp._POWERFLOW_SERVICE_RUNS[api_success_run_id] = result
+        return SparlectraApp.to_dict(result)
       end
-      api_success_response = Sparlectra.handle_powerflow_run(api_success_form; default_output_root = api_success_root, runner = api_success_runner, operation_log = api_success_root)
+      api_success_response = SparlectraApp.handle_powerflow_run(api_success_form; default_output_root = api_success_root, runner = api_success_runner, operation_log = api_success_root)
       api_success_run_id = api_success_response["run_id"]
-      wait(Sparlectra._POWERFLOW_WEBUI_JOBS[api_success_run_id]["task"])
-      api_success_last_errors_html = String(Sparlectra.route_sparlectra_webui("GET", "/webui/last-errors"; output_root = api_success_root).body)
+      wait(SparlectraApp._POWERFLOW_WEBUI_JOBS[api_success_run_id]["task"])
+      api_success_last_errors_html = String(SparlectraApp.route_sparlectra_webui("GET", "/webui/last-errors"; output_root = api_success_root).body)
       @test occursin("No recent errors.", api_success_last_errors_html)
 
-      form_html = Sparlectra.render_powerflow_form(output_root = output_root)
+      form_html = SparlectraApp.render_powerflow_form(output_root = output_root)
       # the MATPOWER import conventions render on the Case page, the
       # solver/output/expert material on the Settings page
-      case_page_html = Sparlectra.render_case_page(output_root = output_root)
-      settings_page_html = Sparlectra.render_settings_page(output_root = output_root)
+      case_page_html = SparlectraApp.render_case_page(output_root = output_root)
+      settings_page_html = SparlectraApp.render_settings_page(output_root = output_root)
       @test occursin("<option value=\"off\">off</option>", case_page_html)
       @test occursin("<option value=\"recommend\" selected>recommend</option>", case_page_html)
       @test occursin("<option value=\"apply\">apply</option>", case_page_html)
@@ -1723,14 +1739,14 @@ for (current_iteration_topic, required_fragments) in current_iteration_help
       @test !occursin("MATPOWER import conventions", form_html)
       @test findfirst("Input format", case_page_html) < findfirst("MATPOWER import conventions", case_page_html)
       @test findfirst("Advanced options", settings_page_html) < findfirst("Advanced start values", settings_page_html)
-      routed_case_html = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow/case"; output_root = output_root).body)
+      routed_case_html = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/case"; output_root = output_root).body)
       @test occursin("MATPOWER import conventions", routed_case_html)
       @test occursin("name=\"matpower_import_auto_profile\"", routed_case_html)
       @test occursin("name=\"matpower_import_ratio\"", routed_case_html)
       @test occursin("name=\"matpower_import_shift_sign\"", routed_case_html)
       @test occursin("name=\"matpower_import_shift_unit\"", routed_case_html)
       @test occursin("name=\"matpower_export_write_solution\"", routed_case_html)
-      routed_powerflow_html = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow"; output_root = output_root).body)
+      routed_powerflow_html = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow"; output_root = output_root).body)
       @test occursin("Package path:", routed_powerflow_html)
       @test occursin("commit", routed_powerflow_html)
       @test occursin("name=\"power_flow_qlimits_enforcement_mode\"", settings_page_html)
@@ -1739,7 +1755,7 @@ for (current_iteration_topic, required_fragments) in current_iteration_help
       end
       @test !occursin("<option value=\"matpower_simultaneous\"", settings_page_html)
       @test !occursin("<option value=\"matpower_one_at_a_time\"", form_html)
-      @test Sparlectra.resolve_webui_help_topic("power_flow.qlimits.enforcement_mode") !== nothing
+      @test SparlectraApp.resolve_webui_help_topic("power_flow.qlimits.enforcement_mode") !== nothing
       expected_help_topics = Dict(
         "casefile" => "webui.casefile",
         "casefiles" => "webui.import_case_files",
@@ -1764,6 +1780,7 @@ for (current_iteration_topic, required_fragments) in current_iteration_help
         "power_flow_apslf_use_pade" => "power_flow.apslf.use_pade",
         "power_flow_apslf_nr_polish" => "power_flow.apslf.nr_polish",
         "power_flow_apslf_convergence_radius" => "power_flow.apslf.convergence_radius",
+        "power_flow_flatstart" => "power_flow.flatstart",
         "power_flow_apslf_start_enabled" => "power_flow.apslf_start.enabled",
         "power_flow_apslf_start_order" => "power_flow.apslf_start.order",
         "power_flow_wrong_branch_detection" => "power_flow.wrong_branch_detection",
@@ -1821,7 +1838,7 @@ for (current_iteration_topic, required_fragments) in current_iteration_help
         "export_cgmes" => "webui.export_cgmes",
         "scf_export" => "webui.scf_export",
       )
-      @test all(Sparlectra.WEBUI_FORM_HELP_TOPICS[field] == help_topic for (field, help_topic) in expected_help_topics)
+      @test all(SparlectraApp.WEBUI_FORM_HELP_TOPICS[field] == help_topic for (field, help_topic) in expected_help_topics)
       # the option fields split across the Runs page (form_html)
       # and the Case page; every field and its help link must render on ONE
       # of them, and the union of rendered help topics must be EXACTLY the
@@ -1880,7 +1897,7 @@ for (current_iteration_topic, required_fragments) in current_iteration_help
       @test occursin("name=\"performance_timing\"", settings_page_html)
       @test !occursin("name=\"run_diagnostics\"", form_html)
       @test occursin("Advanced start values", settings_page_html)
-      @test occursin("<fieldset class=\"start-current-iteration-options advanced-start-values\" data-nr-only-field>", settings_page_html)
+      @test occursin("<fieldset class=\"start-current-iteration-options advanced-start-values\" data-nr-only-field data-flatstart-inactive-field>", settings_page_html)
       @test occursin("<legend>Advanced start values</legend>", settings_page_html)
       @test occursin("Enable current-iteration pre-solve", settings_page_html)
       @test findfirst("<details class=\"span-2 expert-section\">", settings_page_html) < findfirst("<legend>Advanced start values</legend>", settings_page_html)
@@ -1937,7 +1954,9 @@ for (current_iteration_topic, required_fragments) in current_iteration_help
       # distributed-slack options, and the non-convergence handling block); these must be
       # marked so client-side JS can gray them out when power_flow_solver=apslf or
       # power_flow_solver=dc is selected.
-      @test count("data-nr-only-field", settings_page_html) == 10
+      # 12: the ten NR-only groups plus the APSLF and DC start-value
+      # checkboxes, which the flat start greys as well
+      @test count("data-nr-only-field", settings_page_html) == 12
       @test occursin("<fieldset class=\"distributed-slack-options\" data-nr-only-field>", settings_page_html)
       # The external-grid conversion is a net transformation, not an NR-only
       # solver option — it must stay usable with the APSLF and DC solvers, so
@@ -1946,15 +1965,15 @@ for (current_iteration_topic, required_fragments) in current_iteration_help
       @test occursin("<label data-nr-only-field><span class=\"field-label\">Maximum iterations ", settings_page_html)
       @test occursin("<label data-nr-only-field><span class=\"field-label\">Q-limit enforcement mode ", settings_page_html)
       @test occursin("<label data-nr-only-field><span class=\"field-label\">Wrong-branch detection ", settings_page_html)
-      @test occursin("<label data-nr-only-field data-dc-seed-inactive-field><span class=\"field-label\">Start angle mode ", settings_page_html)
-      @test occursin("<label data-nr-only-field data-dc-seed-inactive-field><span class=\"field-label\">Start voltage mode ", settings_page_html)
-      @test occursin("<fieldset class=\"start-current-iteration-options advanced-start-values\" data-nr-only-field>", settings_page_html)
+      @test occursin("<label data-nr-only-field data-dc-seed-inactive-field data-flatstart-inactive-field><span class=\"field-label\">Start angle mode ", settings_page_html)
+      @test occursin("<label data-nr-only-field data-dc-seed-inactive-field data-flatstart-inactive-field><span class=\"field-label\">Start voltage mode ", settings_page_html)
+      @test occursin("<fieldset class=\"start-current-iteration-options advanced-start-values\" data-nr-only-field data-flatstart-inactive-field>", settings_page_html)
       @test occursin("const nrOnlyFields = document.querySelectorAll('[data-nr-only-field]')", settings_page_html)
       @test occursin("const isApslfMode = function () { return getSolverMode() === 'apslf'; }", settings_page_html)
       @test occursin("const hideNrOnly = apslf || dc", settings_page_html)
       @test occursin("autodampGroup.classList.toggle('disabled', !autodampOn)", settings_page_html)
       @test occursin("trustRegionGroup.classList.toggle('disabled', !trustRegionOn)", settings_page_html)
-      @test occursin("setSolverGroupInactive(container, hideNrOnly || dcSeedMakesInactive)", settings_page_html)
+      @test occursin("setSolverGroupInactive(container, hideNrOnly || dcSeedMakesInactive || flatstartMakesInactive)", settings_page_html)
       # Mutually exclusive/inapplicable fields are grayed out in place (disabled inputs,
       # opacity via the "disabled" CSS class) rather than hidden -- switching solvers no
       # longer makes parts of the form vanish or jump around.
@@ -2027,20 +2046,20 @@ for (current_iteration_topic, required_fragments) in current_iteration_help
       @test !occursin("navigator.languages", settings_page_html)
       @test !occursin("Use Excel CSV format with semicolon delimiter", settings_page_html)
 
-      logo_response = Sparlectra.route_sparlectra_webui("GET", "/assets/logo.png")
+      logo_response = SparlectraApp.route_sparlectra_webui("GET", "/assets/logo.png")
       @test logo_response.status == 200
       @test ("Content-Type" => "image/png") in logo_response.headers
       @test logo_response.body == read(joinpath(@__DIR__, "..", "docs", "src", "assets", "logo.png"))
       for target in ("/assets/tablestyle.css", "/assets/../Project.toml", "/assets/logo.png/extra")
-        @test Sparlectra.route_sparlectra_webui("GET", target).status == 404
+        @test SparlectraApp.route_sparlectra_webui("GET", target).status == 404
       end
       routed_form = copy(form)
 routed_form["output_root"] = joinpath(tmpdir, "outside-runs")
-run_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/run", routed_form; output_root)
+run_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/run", routed_form; output_root)
 @test run_response.status == 303
 result_location = only(header.second for header in run_response.headers if header.first == "Location")
 run_id = basename(result_location)
-wait(Sparlectra._POWERFLOW_WEBUI_JOBS[run_id]["task"])
+wait(SparlectraApp._POWERFLOW_WEBUI_JOBS[run_id]["task"])
 result = get_powerflow_result(run_id)
 @test result["success"]
 @test result["output_dir"] == joinpath(abspath(output_root), run_id)
@@ -2057,7 +2076,7 @@ result = get_powerflow_result(run_id)
       @test !occursin("representative_time:", run_log_text)
       @test !occursin("solver_time:          n/a", run_log_text)
       result_json_text = read(joinpath(result["output_dir"], "result.json"), String)
-      result_json = Sparlectra._parse_service_json(result_json_text)
+      result_json = SparlectraApp._parse_service_json(result_json_text)
       @test result_json["run_id"] == run_id
       @test result_json["schema_version"] == "1.0"
       @test haskey(result_json, "service_phase_timings")
@@ -2091,11 +2110,11 @@ result = get_powerflow_result(run_id)
       manual_import_form["matpower_import_ratio"] = "reciprocal"
       manual_import_form["matpower_import_shift_sign"] = "-1.0"
       manual_import_form["matpower_import_shift_unit"] = "rad"
-      manual_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/run", manual_import_form; output_root)
+      manual_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/run", manual_import_form; output_root)
       @test manual_response.status == 303
       manual_location = only(header.second for header in manual_response.headers if header.first == "Location")
       manual_run_id = basename(manual_location)
-      wait(Sparlectra._POWERFLOW_WEBUI_JOBS[manual_run_id]["task"])
+      wait(SparlectraApp._POWERFLOW_WEBUI_JOBS[manual_run_id]["task"])
       manual_result = get_powerflow_result(manual_run_id)
       @test manual_result["success"]
       manual_effective_cfg = Sparlectra.load_sparlectra_config(joinpath(manual_result["output_dir"], "effective_config.yaml"); reload = true)
@@ -2110,7 +2129,7 @@ result = get_powerflow_result(run_id)
       @test occursin("Import conventions: ratio=reciprocal", manual_run_log)
       @test occursin("shift=rad", manual_run_log)
       @test !isempty(run_id)
-      result_response = Sparlectra.handle_powerflow_result(run_id)
+      result_response = SparlectraApp.handle_powerflow_result(run_id)
       result_html = String(result_response.body)
       @test result_response.status == 200
       for field in ("run_id", "status", "iterations", "final_mismatch")
@@ -2118,9 +2137,9 @@ result = get_powerflow_result(run_id)
       end
       @test occursin(run_id, result_html)
       @test !occursin("action=\"/powerflow/abort/$(run_id)\"", result_html)
-      failed_result_html = Sparlectra.render_powerflow_result(Dict("run_id" => "failed-run", "status" => "failed", "success" => false))
+      failed_result_html = SparlectraApp.render_powerflow_result(Dict("run_id" => "failed-run", "status" => "failed", "success" => false))
       @test !occursin("action=\"/powerflow/abort/failed-run\"", failed_result_html)
-      converged_result_html = Sparlectra.render_powerflow_result(Dict(
+      converged_result_html = SparlectraApp.render_powerflow_result(Dict(
         "run_id" => "converged-run",
         "status" => "success",
         "success" => true,
@@ -2141,7 +2160,7 @@ result = get_powerflow_result(run_id)
       @test occursin("solution_available</th><td>true</td>", converged_result_html)
       @test occursin("iterations</th><td>6</td>", converged_result_html)
       @test occursin("final_mismatch</th><td>6.3e-11</td>", converged_result_html)
-      nonconverged_result_html = Sparlectra.render_powerflow_result(Dict(
+      nonconverged_result_html = SparlectraApp.render_powerflow_result(Dict(
         "run_id" => "nonconverged-run",
         "status" => "not_converged",
         "success" => false,
@@ -2161,18 +2180,18 @@ result = get_powerflow_result(run_id)
       @test occursin("solution_available</th><td>false</td>", nonconverged_result_html)
       @test occursin("iterations</th><td>80</td>", nonconverged_result_html)
       @test occursin("reason</th><td>nr_mismatch_not_converged</td>", nonconverged_result_html)
-      missing_metric_html = Sparlectra.render_powerflow_result(Dict("run_id" => "missing-metrics", "status" => "success", "success" => true))
+      missing_metric_html = SparlectraApp.render_powerflow_result(Dict("run_id" => "missing-metrics", "status" => "success", "success" => true))
       for field in ("converged", "numerical_converged", "solution_available", "iterations", "final_mismatch", "reason")
         @test occursin("$(field)</th><td>n/a</td>", missing_metric_html)
       end
       for active_status in ("queued", "running")
-        active_status_html = Sparlectra.render_powerflow_result(Dict("run_id" => "$(active_status)-run", "status" => active_status))
+        active_status_html = SparlectraApp.render_powerflow_result(Dict("run_id" => "$(active_status)-run", "status" => active_status))
         @test occursin("data-refresh-url=\"/powerflow/result/$(active_status)-run?autorefresh=1\"", active_status_html)
         @test !occursin("http-equiv=\"refresh\"", active_status_html)
         @test occursin("action=\"/powerflow/abort/$(active_status)-run\"", active_status_html)
       end
       for terminal_status in ("success", "failed", "aborted")
-        terminal_status_html = Sparlectra.render_powerflow_result(Dict("run_id" => "$(terminal_status)-run", "status" => terminal_status, "elapsed_seconds" => 83))
+        terminal_status_html = SparlectraApp.render_powerflow_result(Dict("run_id" => "$(terminal_status)-run", "status" => terminal_status, "elapsed_seconds" => 83))
         @test !occursin("data-refresh-url=\"", terminal_status_html)
         @test !occursin("http-equiv=\"refresh\"", terminal_status_html)
         @test occursin("class=\"runtime-card\"", terminal_status_html)
@@ -2184,7 +2203,7 @@ result = get_powerflow_result(run_id)
       artifact_names = Set(artifact["name"] for artifact in artifacts)
       @test Set(("result.json", "run.log", "effective_config.yaml", "run_metadata.yaml", "performance.log", "q_limit.log", "bus_voltages_complex.csv", "branch_flows.csv")) ⊆ artifact_names
       @test !("diagnose.log" in artifact_names) # normal "Start PowerFlow run" never writes diagnose.log
-      artifact_response = Sparlectra.handle_powerflow_artifacts(run_id)
+      artifact_response = SparlectraApp.handle_powerflow_artifacts(run_id)
       artifact_html = String(artifact_response.body)
       for name in ("result.json", "run.log", "effective_config.yaml", "run_metadata.yaml", "performance.log", "q_limit.log", "bus_voltages_complex.csv", "branch_flows.csv")
         @test occursin(name, artifact_html)
@@ -2192,15 +2211,15 @@ result = get_powerflow_result(run_id)
       qlimit_artifact = only(artifact for artifact in artifacts if artifact["name"] == "q_limit.log")
       @test qlimit_artifact["kind"] == "q_limit_log"
       @test qlimit_artifact["mime_type"] == "text/plain"
-      qlimit_download = Sparlectra.handle_powerflow_artifact_download(run_id, "q_limit.log")
+      qlimit_download = SparlectraApp.handle_powerflow_artifact_download(run_id, "q_limit.log")
       @test qlimit_download.status == 200
       @test occursin("Resolved Q-limit options", String(qlimit_download.body))
-      @test Sparlectra.route_sparlectra_webui("GET", "/powerflow/artifact/$(run_id)/q_limit.log"; output_root).status == 200
+      @test SparlectraApp.route_sparlectra_webui("GET", "/powerflow/artifact/$(run_id)/q_limit.log"; output_root).status == 200
       for name in ("bus_voltages_complex.csv", "branch_flows.csv")
         csv_artifact = only(artifact for artifact in artifacts if artifact["name"] == name)
         @test csv_artifact["kind"] == "csv"
         @test csv_artifact["mime_type"] == "text/csv"
-        csv_download = Sparlectra.handle_powerflow_artifact_download(run_id, name)
+        csv_download = SparlectraApp.handle_powerflow_artifact_download(run_id, name)
         @test csv_download.status == 200
         @test ("Content-Type" => "text/csv") in csv_download.headers
         expected_header = name == "bus_voltages_complex.csv" ? "bus;bus_name;type;vm_pu;va_deg" : "branch;branch_index;from_bus;to_bus;status"
@@ -2210,20 +2229,20 @@ result = get_powerflow_result(run_id)
       write(legacy_diagnostic_path, "legacy diagnostics\n")
       legacy_artifacts = list_powerflow_artifacts(run_id)
       @test any(artifact -> artifact["name"] == "diagnose.txt", legacy_artifacts)
-      legacy_download = Sparlectra.handle_powerflow_artifact_download(run_id, "diagnose.txt")
+      legacy_download = SparlectraApp.handle_powerflow_artifact_download(run_id, "diagnose.txt")
       @test legacy_download.status == 200
       @test String(legacy_download.body) == "legacy diagnostics\n"
       large_artifact_path = joinpath(result["output_dir"], "large_preview.log")
       large_artifact_text = repeat("0123456789abcdef", 5000)
       write(large_artifact_path, large_artifact_text)
-      large_preview = Sparlectra.handle_powerflow_artifact(run_id, "large_preview.log")
+      large_preview = SparlectraApp.handle_powerflow_artifact(run_id, "large_preview.log")
       @test large_preview.status == 200
       large_preview_html = String(large_preview.body)
       @test occursin("Preview truncated", large_preview_html)
       @test !occursin(large_artifact_text, large_preview_html)
-      large_download = Sparlectra.handle_powerflow_artifact_download(run_id, "large_preview.log")
+      large_download = SparlectraApp.handle_powerflow_artifact_download(run_id, "large_preview.log")
       @test String(large_download.body) == large_artifact_text
-      result_artifact = Sparlectra.handle_powerflow_artifact(run_id, "result.json")
+      result_artifact = SparlectraApp.handle_powerflow_artifact(run_id, "result.json")
       @test result_artifact.status == 200
       result_artifact_html = String(result_artifact.body)
       @test occursin("Artifact: result.json", result_artifact_html)
@@ -2232,37 +2251,37 @@ result = get_powerflow_result(run_id)
       @test occursin("class=\"button\" href=\"?download=1\"", result_artifact_html)
       @test occursin("class=\"artifact-text\"", result_artifact_html)
 
-      download = Sparlectra.handle_powerflow_artifact_download(run_id, "result.json")
+      download = SparlectraApp.handle_powerflow_artifact_download(run_id, "result.json")
       @test download.status == 200
       @test any(header -> header.first == "Content-Disposition", download.headers)
-      @test Sparlectra.route_sparlectra_webui("GET", "/powerflow/artifact/$(run_id)/result.json"; output_root).status == 200
-      @test Sparlectra.route_sparlectra_webui("GET", "/powerflow/artifact/$(run_id)/result.json?download=1"; output_root).status == 200
-      zip_download = Sparlectra.handle_powerflow_artifacts_zip(run_id)
+      @test SparlectraApp.route_sparlectra_webui("GET", "/powerflow/artifact/$(run_id)/result.json"; output_root).status == 200
+      @test SparlectraApp.route_sparlectra_webui("GET", "/powerflow/artifact/$(run_id)/result.json?download=1"; output_root).status == 200
+      zip_download = SparlectraApp.handle_powerflow_artifacts_zip(run_id)
       @test zip_download.status == 200
       @test ("Content-Type" => "application/zip") in zip_download.headers
       @test zip_download.body[1:4] == UInt8[0x50, 0x4b, 0x03, 0x04]
       @test occursin("result.json", String(zip_download.body))
       @test !occursin("Project.toml", String(zip_download.body))
-      @test Sparlectra.route_sparlectra_webui("GET", "/powerflow/artifact-zip/$(run_id)"; output_root).status == 200
-      @test Sparlectra.handle_powerflow_artifacts_zip("unknown-run").status == 404
+      @test SparlectraApp.route_sparlectra_webui("GET", "/powerflow/artifact-zip/$(run_id)"; output_root).status == 200
+      @test SparlectraApp.handle_powerflow_artifacts_zip("unknown-run").status == 404
       operation_log_text = read(operation_log_path, String)
       @test occursin("\"event\":\"artifact_opened\"", operation_log_text)
       @test occursin("\"event\":\"artifact_downloaded\"", operation_log_text)
 
       for unsafe_name in ("../result.json", "../../Project.toml", "/etc/passwd", raw"C:\Users\x\file.txt")
-        unsafe = Sparlectra.handle_powerflow_artifact(run_id, unsafe_name)
+        unsafe = SparlectraApp.handle_powerflow_artifact(run_id, unsafe_name)
         @test unsafe.status == 400
         @test occursin("Unsafe artifact name rejected", String(unsafe.body))
       end
 
-      lock(Sparlectra._POWERFLOW_SERVICE_LOCK) do
-        empty!(Sparlectra._POWERFLOW_SERVICE_RUNS)
+      lock(SparlectraApp._POWERFLOW_SERVICE_LOCK) do
+        empty!(SparlectraApp._POWERFLOW_SERVICE_RUNS)
       end
-      refreshed = Sparlectra.handle_powerflow_refresh(output_root)
+      refreshed = SparlectraApp.handle_powerflow_refresh(output_root)
       @test run_id in refreshed["loaded_runs"]
-      @test Sparlectra.route_sparlectra_webui("POST", "/powerflow/refresh"; output_root).status == 303
+      @test SparlectraApp.route_sparlectra_webui("POST", "/powerflow/refresh"; output_root).status == 303
       @test occursin("\"event\":\"history_refreshed\"", read(operation_log_path, String))
-      history_response = Sparlectra.handle_powerflow_history(output_root)
+      history_response = SparlectraApp.handle_powerflow_history(output_root)
       @test history_response.status == 200
       history_html = String(history_response.body)
       @test occursin(run_id, history_html)
@@ -2272,16 +2291,16 @@ result = get_powerflow_result(run_id)
       @test occursin("action=\"/powerflow/delete_all\"", history_html)
       @test occursin("action=\"/powerflow/refresh\"", history_html)
       @test occursin(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", history_html)
-      @test Sparlectra.route_sparlectra_webui("GET", "/powerflow/abort/$(run_id)"; output_root).status == 404
-      @test Sparlectra.route_sparlectra_webui("POST", "/powerflow/abort/unknown-run"; output_root).status == 404
-      @test Sparlectra.route_sparlectra_webui("POST", "/powerflow/abort/..%2Foutside"; output_root).status == 404
-      @test Sparlectra.route_sparlectra_webui("GET", "/powerflow/delete/$(run_id)"; output_root).status == 404
-      unsafe_delete = Sparlectra.route_sparlectra_webui("POST", "/powerflow/delete/..%2Foutside"; output_root)
+      @test SparlectraApp.route_sparlectra_webui("GET", "/powerflow/abort/$(run_id)"; output_root).status == 404
+      @test SparlectraApp.route_sparlectra_webui("POST", "/powerflow/abort/unknown-run"; output_root).status == 404
+      @test SparlectraApp.route_sparlectra_webui("POST", "/powerflow/abort/..%2Foutside"; output_root).status == 404
+      @test SparlectraApp.route_sparlectra_webui("GET", "/powerflow/delete/$(run_id)"; output_root).status == 404
+      unsafe_delete = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/delete/..%2Foutside"; output_root)
       @test unsafe_delete.status == 400
       @test occursin("Unsafe PowerFlow run ID rejected", String(unsafe_delete.body))
-      @test Sparlectra.route_sparlectra_webui("GET", "/webui/shutdown"; output_root).status == 404
-      @test Sparlectra.route_sparlectra_webui("POST", "/webui/shutdown"; output_root).status == 503
-      @test Sparlectra.route_sparlectra_webui("POST", "/webui/heartbeat"; output_root).status == 204
+      @test SparlectraApp.route_sparlectra_webui("GET", "/webui/shutdown"; output_root).status == 404
+      @test SparlectraApp.route_sparlectra_webui("POST", "/webui/shutdown"; output_root).status == 503
+      @test SparlectraApp.route_sparlectra_webui("POST", "/webui/heartbeat"; output_root).status == 204
       disposable_id = "disposable-run"
       disposable_dir = joinpath(output_root, disposable_id)
       mkpath(disposable_dir)
@@ -2293,8 +2312,8 @@ result = get_powerflow_result(run_id)
         "output_dir" => disposable_dir,
         "result_file" => disposable_result,
       ))
-      Sparlectra._write_powerflow_run_entries!(output_root, disposable_entries)
-      deleted_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/delete/$(disposable_id)"; output_root)
+      SparlectraApp._write_powerflow_run_entries!(output_root, disposable_entries)
+      deleted_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/delete/$(disposable_id)"; output_root)
       @test deleted_response.status == 303
       @test !ispath(disposable_dir)
       @test all(entry -> get(entry, "run_id", "") != disposable_id, load_powerflow_run_index(output_root)["runs"])
@@ -2313,20 +2332,20 @@ result = get_powerflow_result(run_id)
         "config_file" => config_file,
         "output_root" => output_root,
       )
-      lifecycle_event = (event; fields...) -> Sparlectra.record_webui_operation!(output_root, event; route = "/powerflow/run", method = "POST", user_action = false, fields...)
-      active = Sparlectra.start_webui_powerflow_run(active_request; runner = slow_runner, event_callback = lifecycle_event)
+      lifecycle_event = (event; fields...) -> SparlectraApp.record_webui_operation!(output_root, event; route = "/powerflow/run", method = "POST", user_action = false, fields...)
+      active = SparlectraApp.start_webui_powerflow_run(active_request; runner = slow_runner, event_callback = lifecycle_event)
       take!(entered_webui)
       active_id = active["run_id"]
-      active_result_html = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow/result/$(active_id)"; output_root).body)
-      active_form_html = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow"; output_root).body)
-      active_history_html = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow/history"; output_root).body)
+      active_result_html = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/result/$(active_id)"; output_root).body)
+      active_form_html = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow"; output_root).body)
+      active_history_html = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/history"; output_root).body)
       abort_action = "action=\"/powerflow/abort/$(active_id)\""
       @test occursin("<form method=\"post\" $(abort_action)", active_result_html)
       @test occursin("class=\"runtime-card\"", active_result_html)
       @test occursin("Elapsed time", active_result_html)
       @test occursin("class=\"status-badge status-running\">running</span>", active_result_html)
       @test !occursin("http-equiv=\"refresh\"", active_result_html)
-      @test occursin("data-refresh-url=\"/powerflow/result/$(active_id)?autorefresh=1\" data-refresh-seconds=\"$(Sparlectra.WEBUI_STATUS_AUTO_REFRESH_SECONDS)\"", active_result_html)
+      @test occursin("data-refresh-url=\"/powerflow/result/$(active_id)?autorefresh=1\" data-refresh-seconds=\"$(SparlectraApp.WEBUI_STATUS_AUTO_REFRESH_SECONDS)\"", active_result_html)
       @test occursin("const scheduleAutoRefresh = function ()", active_result_html)
       # Terminal pages must be reached via a REAL reload, never by swapping the
       # fetched <main> in place: scripts inside a DOMParser-imported node are
@@ -2346,13 +2365,13 @@ result = get_powerflow_result(run_id)
       started_position = findlast("\"event\":\"powerflow_started\"", active_log)
       @test started_position < status_position
       auto_refresh_count = count(==('\n'), active_log)
-      auto_refresh_html = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow/result/$(active_id)?autorefresh=1"; output_root).body)
+      auto_refresh_html = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/result/$(active_id)?autorefresh=1"; output_root).body)
       @test occursin("data-refresh-url=\"/powerflow/result/$(active_id)?autorefresh=1\"", auto_refresh_html)
       @test count(==('\n'), read(operation_log_path, String)) == auto_refresh_count
       @test !occursin("\"event\":\"powerflow_aborted\",\"run_id\":\"$(active_id)\"", active_log)
-      aborted_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/abort/$(active_id)"; output_root)
+      aborted_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/abort/$(active_id)"; output_root)
       @test aborted_response.status == 303
-      aborted_html = String(Sparlectra.handle_powerflow_result(active_id).body)
+      aborted_html = String(SparlectraApp.handle_powerflow_result(active_id).body)
       @test occursin("aborting", aborted_html)
       @test occursin("class=\"runtime-card\"", aborted_html)
       @test occursin("data-refresh-url=\"/powerflow/result/$(active_id)?autorefresh=1\"", aborted_html)
@@ -2362,7 +2381,7 @@ result = get_powerflow_result(run_id)
       @test !occursin(abort_action, aborted_html)
       @test occursin("\"event\":\"powerflow_abort_requested\"", read(operation_log_path, String))
       @test occursin("\"current_phase\":\"linear_solve\"", read(operation_log_path, String))
-      repeated_abort = Sparlectra.route_sparlectra_webui("POST", "/powerflow/abort/$(active_id)"; output_root)
+      repeated_abort = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/abort/$(active_id)"; output_root)
       @test repeated_abort.status == 303
       @test occursin("\"event\":\"powerflow_abort_already_requested\"", read(operation_log_path, String))
       @test occursin("\"event\":\"powerflow_phase_started\"", read(operation_log_path, String))
@@ -2370,13 +2389,13 @@ result = get_powerflow_result(run_id)
         line -> occursin("\"event\":\"powerflow_phase_started\"", line) && occursin("\"phase\":\"linear_solve\"", line),
         eachline(operation_log_path),
       )
-      active_delete = Sparlectra.route_sparlectra_webui("POST", "/powerflow/delete/$(active_id)"; output_root)
+      active_delete = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/delete/$(active_id)"; output_root)
       @test active_delete.status == 409
       @test occursin("This run is still active", String(active_delete.body))
       @test occursin("\"event\":\"run_delete_rejected\"", read(operation_log_path, String))
       put!(release_webui, nothing)
-      wait(Sparlectra._POWERFLOW_WEBUI_JOBS[active_id]["task"])
-      terminal_html = String(Sparlectra.handle_powerflow_result(active_id).body)
+      wait(SparlectraApp._POWERFLOW_WEBUI_JOBS[active_id]["task"])
+      terminal_html = String(SparlectraApp.handle_powerflow_result(active_id).body)
       @test occursin("<td>aborted</td>", terminal_html)
       @test occursin("class=\"runtime-card\"", terminal_html)
       @test occursin("Run aborted by user.", terminal_html)
@@ -2385,8 +2404,8 @@ result = get_powerflow_result(run_id)
       @test !occursin("http-equiv=\"refresh\"", terminal_html)
       terminal_log = read(operation_log_path, String)
       @test any(line -> occursin("\"event\":\"powerflow_aborted\"", line) && occursin("\"run_id\":\"$(active_id)\"", line), eachline(IOBuffer(terminal_log)))
-      @test Sparlectra.get_active_webui_powerflow_job() === nothing
-      terminal_delete = Sparlectra.route_sparlectra_webui("POST", "/powerflow/delete/$(active_id)"; output_root)
+      @test SparlectraApp.get_active_webui_powerflow_job() === nothing
+      terminal_delete = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/delete/$(active_id)"; output_root)
       @test terminal_delete.status == 303
 
       hard_reset_job = Dict{String,Any}(
@@ -2400,31 +2419,31 @@ result = get_powerflow_result(run_id)
         "finished_at" => nothing,
         "message" => "Abort requested.",
         "abort_requested" => Threads.Atomic{Bool}(true),
-        "abort_requested_at" => Dates.now(Dates.UTC) - Dates.Second(Sparlectra.WEBUI_ABORT_HARD_RESET_AFTER_SECONDS + 1),
+        "abort_requested_at" => Dates.now(Dates.UTC) - Dates.Second(SparlectraApp.WEBUI_ABORT_HARD_RESET_AFTER_SECONDS + 1),
         "current_phase" => "linear_solve",
         "phase_started_at" => Dates.now(Dates.UTC),
         "last_progress_at" => Dates.now(Dates.UTC),
       )
-      Sparlectra._POWERFLOW_WEBUI_JOBS["hard-reset-test"] = hard_reset_job
-      hard_reset_html = String(Sparlectra.handle_powerflow_result("hard-reset-test").body)
+      SparlectraApp._POWERFLOW_WEBUI_JOBS["hard-reset-test"] = hard_reset_job
+      hard_reset_html = String(SparlectraApp.handle_powerflow_result("hard-reset-test").body)
       @test occursin("Hard reset Web UI", hard_reset_html)
-      hard_reset_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/hard-reset/hard-reset-test"; output_root)
+      hard_reset_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/hard-reset/hard-reset-test"; output_root)
       @test hard_reset_response.status == 200
-      @test Sparlectra.get_webui_powerflow_job("hard-reset-test")["status"] == "aborted_unknown"
+      @test SparlectraApp.get_webui_powerflow_job("hard-reset-test")["status"] == "aborted_unknown"
       @test occursin("\"event\":\"webui_hard_reset_requested\"", read(operation_log_path, String))
-      @test !Sparlectra.get_webui_powerflow_job("hard-reset-test")["success"]
+      @test !SparlectraApp.get_webui_powerflow_job("hard-reset-test")["success"]
 
-      operation_log_page = Sparlectra.route_sparlectra_webui("GET", "/webui/operation-log"; output_root)
+      operation_log_page = SparlectraApp.route_sparlectra_webui("GET", "/webui/operation-log"; output_root)
       @test operation_log_page.status == 200
       @test occursin("Download operation log", String(operation_log_page.body))
-      operation_log_download = Sparlectra.route_sparlectra_webui("GET", "/webui/operation-log/download"; output_root)
+      operation_log_download = SparlectraApp.route_sparlectra_webui("GET", "/webui/operation-log/download"; output_root)
       @test operation_log_download.status == 200
       @test any(header -> header.first == "Content-Disposition", operation_log_download.headers)
       static_count_before = count(==('\n'), read(operation_log_path, String))
-      @test Sparlectra.route_sparlectra_webui("GET", "/static/sparlectra.css"; output_root).status == 200
+      @test SparlectraApp.route_sparlectra_webui("GET", "/static/sparlectra.css"; output_root).status == 200
       @test count(==('\n'), read(operation_log_path, String)) == static_count_before
       compact_root = joinpath(tmpdir, "compact-log")
-      compact_log = Sparlectra.webui_operation_log_path(compact_root)
+      compact_log = SparlectraApp.webui_operation_log_path(compact_root)
       mkpath(compact_root)
       open(compact_log, "w") do io
         println(io)
@@ -2433,16 +2452,16 @@ result = get_powerflow_result(run_id)
           println(io, "{\"event\":\"entry-$(index)\"}")
         end
       end
-      @test Sparlectra._compact_webui_operation_log!(compact_log; max_entries = 10, keep_entries = 3)
+      @test SparlectraApp._compact_webui_operation_log!(compact_log; max_entries = 10, keep_entries = 3)
       compact_lines = readlines(compact_log)
       @test length(compact_lines) == 3
-      @test all(line -> Sparlectra._parse_service_json(line) isa AbstractDict, compact_lines)
+      @test all(line -> SparlectraApp._parse_service_json(line) isa AbstractDict, compact_lines)
       @test occursin("\"event\":\"entry-9\"", compact_lines[1])
       @test occursin("\"event\":\"entry-11\"", compact_lines[3])
-      @test !Sparlectra._compact_webui_operation_log!(compact_log; max_entries = 10, keep_entries = 3)
-      @test !Sparlectra._compact_webui_operation_log!(joinpath(tmpdir, "missing-operation-log.jsonl"); max_entries = 10, keep_entries = 3)
-      compact_viewer = Sparlectra.handle_webui_operation_log(compact_log)
-      compact_download = Sparlectra.handle_webui_operation_log(compact_log; download = true)
+      @test !SparlectraApp._compact_webui_operation_log!(compact_log; max_entries = 10, keep_entries = 3)
+      @test !SparlectraApp._compact_webui_operation_log!(joinpath(tmpdir, "missing-operation-log.jsonl"); max_entries = 10, keep_entries = 3)
+      compact_viewer = SparlectraApp.handle_webui_operation_log(compact_log)
+      compact_download = SparlectraApp.handle_webui_operation_log(compact_log; download = true)
       @test compact_viewer.status == 200
       @test compact_download.status == 200
       @test occursin("entry-11", String(compact_viewer.body))
@@ -2450,18 +2469,18 @@ result = get_powerflow_result(run_id)
       logging_failure_root = joinpath(tmpdir, "logging-is-a-file")
       write(logging_failure_root, "not a directory")
       record_result = @test_logs (:warn, r"Could not record Web UI operation") begin
-        Sparlectra.record_webui_operation!(logging_failure_root, "expected_failure")
+        SparlectraApp.record_webui_operation!(logging_failure_root, "expected_failure")
       end
       @test record_result == false
       route_result = @test_logs (:warn, r"Could not record Web UI operation") begin
-        Sparlectra.route_sparlectra_webui("GET", "/powerflow"; output_root = logging_failure_root)
+        SparlectraApp.route_sparlectra_webui("GET", "/powerflow"; output_root = logging_failure_root)
       end
       @test route_result.status == 200
       empty_delete_root = joinpath(tmpdir, "empty-delete-root")
-      @test Sparlectra.route_sparlectra_webui("POST", "/powerflow/delete_all"; output_root = empty_delete_root).status == 303
-      @test occursin("\"event\":\"all_runs_deleted\"", read(Sparlectra.webui_operation_log_path(empty_delete_root), String))
+      @test SparlectraApp.route_sparlectra_webui("POST", "/powerflow/delete_all"; output_root = empty_delete_root).status == 303
+      @test occursin("\"event\":\"all_runs_deleted\"", read(SparlectraApp.webui_operation_log_path(empty_delete_root), String))
 
-      @test occursin(run_id, String(Sparlectra.handle_powerflow_result(run_id).body))
+      @test occursin(run_id, String(SparlectraApp.handle_powerflow_result(run_id).body))
       shared_pages = (
         form_html,
         result_html,
@@ -2474,13 +2493,13 @@ result = get_powerflow_result(run_id)
         @test occursin("Sparlectra.jl v$(Sparlectra.version())", page_html)
       end
 
-      source = join(read(joinpath(@__DIR__, "..", "src", "webui", file), String) for file in ("docs.jl", "forms.jl", "handlers.jl", "routes.jl", "views.jl", "webui.jl"))
+      source = join(read(joinpath(@__DIR__, "..", "app", "src", "webui", file), String) for file in ("docs.jl", "forms.jl", "handlers.jl", "routes.jl", "views.jl", "webui.jl"))
       forbidden = ["run" * "pf!", "run" * "pf_rectangular!", "run_complex_nr_" * "rectangular"]
       @test all(name -> !occursin(name, source), forbidden)
       @test !occursin("Voltage-magnitude/angle blend strategy.", source)
 
-      lock(Sparlectra._POWERFLOW_SERVICE_LOCK) do
-        empty!(Sparlectra._POWERFLOW_SERVICE_RUNS)
+      lock(SparlectraApp._POWERFLOW_SERVICE_LOCK) do
+        empty!(SparlectraApp._POWERFLOW_SERVICE_RUNS)
       end
       probe = listen(ip"127.0.0.1", UInt16(0))
       port = Int(getsockname(probe)[2])
@@ -2497,7 +2516,7 @@ result = get_powerflow_result(run_id)
       @test occursin("Operation log: ", startup_output)
       @test !istaskdone(server.task)
       @test isdir(output_root)
-      @test server.runtime.case_directory == Sparlectra.default_webui_case_cache_dir(output_root)
+      @test server.runtime.case_directory == SparlectraApp.default_webui_case_cache_dir(output_root)
       @test isdir(server.runtime.case_directory)
       @test isfile(server.runtime.config_file)
       @test isfile(joinpath(server.runtime.case_directory, "warmup_case3.jl"))
@@ -2515,7 +2534,7 @@ result = get_powerflow_result(run_id)
       @test !occursin("browser_window_close", startup_log)
       @test occursin("\"sparlectra_version\":\"$(Sparlectra.version())\"", startup_log)
       @test occursin("\"sparlectra_package_path\":", startup_log)
-      @test occursin(basename(Sparlectra._sparlectra_package_path()), startup_log)
+      @test occursin(basename(SparlectraApp._sparlectra_package_path()), startup_log)
       @test occursin("\"sparlectra_git_commit\":", startup_log)
       for field in ("output_root", "config_file", "case_cache_dir", "operation_log")
         @test occursin("\"$(field)\":", startup_log)
@@ -2610,7 +2629,7 @@ result = get_powerflow_result(run_id)
       interrupt_io = IOBuffer()
       interrupted = start_sparlectra_webui(port = port, output_root = output_root, auto_shutdown_on_browser_close = false, _lifecycle_io = interrupt_io)
       take!(interrupt_io)
-      @test Sparlectra._wait_sparlectra_webui(interrupted; wait_for_task = _ -> throw(InterruptException()))
+      @test SparlectraApp._wait_sparlectra_webui(interrupted; wait_for_task = _ -> throw(InterruptException()))
       @test timedwait(() -> istaskdone(interrupted.task), 2.0) == :ok
       interrupt_output = String(take!(interrupt_io))
       @test occursin("Sparlectra Web UI stopped by Ctrl+C.", interrupt_output)
@@ -2684,10 +2703,10 @@ result = get_powerflow_result(run_id)
       sleep(0.3)
       @test isopen(heartbeat_server.listener)
       _webui_http_request(heartbeat_port, "POST", "/webui/heartbeat")
-      Sparlectra._webui_begin_request!(heartbeat_server.runtime)
+      SparlectraApp._webui_begin_request!(heartbeat_server.runtime)
       sleep(0.3)
       @test isopen(heartbeat_server.listener)
-      Sparlectra._webui_finish_request!(heartbeat_server.runtime)
+      SparlectraApp._webui_finish_request!(heartbeat_server.runtime)
       sleep(0.3)
       @test isopen(heartbeat_server.listener)
       close(heartbeat_server)
@@ -2705,9 +2724,9 @@ result = get_powerflow_result(run_id)
         # (2a) Rendered form contains the DC selection, with AC selected by default.
         # the solver radio group lives on the Settings page
         rendered_form = String(
-          Sparlectra.route_sparlectra_webui(
+          SparlectraApp.route_sparlectra_webui(
             "GET",
-            "/powerflow/settings?casefile=$(Sparlectra._webui_urlencode(dc_casefile))&config_file=$(Sparlectra._webui_urlencode(dc_config_file))";
+            "/powerflow/settings?casefile=$(SparlectraApp._webui_urlencode(dc_casefile))&config_file=$(SparlectraApp._webui_urlencode(dc_config_file))";
             output_root = dc_output_root,
           ).body,
         )
@@ -2735,17 +2754,17 @@ result = get_powerflow_result(run_id)
         dc_form = _webui_test_form(dc_casefile, dc_config_file, dc_output_root)
         dc_form["power_flow_solver"] = "dc"
         dc_form["detailed_result_csv_format"] = "technical"
-        dc_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/run", dc_form; output_root = dc_output_root)
+        dc_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/run", dc_form; output_root = dc_output_root)
         @test dc_response.status == 303
         dc_run_id = basename(only(header.second for header in dc_response.headers if header.first == "Location"))
-        wait(Sparlectra._POWERFLOW_WEBUI_JOBS[dc_run_id]["task"])
+        wait(SparlectraApp._POWERFLOW_WEBUI_JOBS[dc_run_id]["task"])
         dc_result = get_powerflow_result(dc_run_id)
         @test dc_result["success"]
-        dc_result_json = Sparlectra._parse_service_json(read(joinpath(dc_result["output_dir"], "result.json"), String))
+        dc_result_json = SparlectraApp._parse_service_json(read(joinpath(dc_result["output_dir"], "result.json"), String))
         @test dc_result_json["final_outcome"]["solver"] == "dc"
 
         # (2c) Result page marks the DC run distinctly.
-        dc_result_response = Sparlectra.handle_powerflow_result(dc_run_id)
+        dc_result_response = SparlectraApp.handle_powerflow_result(dc_run_id)
         @test dc_result_response.status == 200
         dc_result_html = String(dc_result_response.body)
         @test occursin("DC solution", dc_result_html)
@@ -2757,36 +2776,36 @@ result = get_powerflow_result(run_id)
         @test !isempty(dc_artifacts)
         @test any(artifact -> artifact["name"] == "result.json", dc_artifacts)
         @test any(artifact -> artifact["name"] == "bus_voltages_complex.csv", dc_artifacts)
-        @test Sparlectra.route_sparlectra_webui("GET", "/powerflow/artifact/$(dc_run_id)/result.json?download=1"; output_root = dc_output_root).status == 200
+        @test SparlectraApp.route_sparlectra_webui("GET", "/powerflow/artifact/$(dc_run_id)/result.json?download=1"; output_root = dc_output_root).status == 200
 
         # (2e) Regression: no solver field, and an explicit AC selection, still
         # produce the unchanged AC report (no "dc" solver in final_outcome).
         ac_implicit_form = _webui_test_form(dc_casefile, dc_config_file, dc_output_root)
-        ac_implicit_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/run", ac_implicit_form; output_root = dc_output_root)
+        ac_implicit_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/run", ac_implicit_form; output_root = dc_output_root)
         @test ac_implicit_response.status == 303
         ac_implicit_run_id = basename(only(header.second for header in ac_implicit_response.headers if header.first == "Location"))
-        wait(Sparlectra._POWERFLOW_WEBUI_JOBS[ac_implicit_run_id]["task"])
+        wait(SparlectraApp._POWERFLOW_WEBUI_JOBS[ac_implicit_run_id]["task"])
         ac_implicit_result = get_powerflow_result(ac_implicit_run_id)
         @test ac_implicit_result["success"]
-        ac_implicit_json = Sparlectra._parse_service_json(read(joinpath(ac_implicit_result["output_dir"], "result.json"), String))
+        ac_implicit_json = SparlectraApp._parse_service_json(read(joinpath(ac_implicit_result["output_dir"], "result.json"), String))
         @test ac_implicit_json["final_outcome"]["solver"] == "rectangular"
 
         ac_explicit_form = _webui_test_form(dc_casefile, dc_config_file, dc_output_root)
         ac_explicit_form["power_flow_solver"] = "rectangular"
-        ac_explicit_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/run", ac_explicit_form; output_root = dc_output_root)
+        ac_explicit_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/run", ac_explicit_form; output_root = dc_output_root)
         @test ac_explicit_response.status == 303
         ac_explicit_run_id = basename(only(header.second for header in ac_explicit_response.headers if header.first == "Location"))
-        wait(Sparlectra._POWERFLOW_WEBUI_JOBS[ac_explicit_run_id]["task"])
+        wait(SparlectraApp._POWERFLOW_WEBUI_JOBS[ac_explicit_run_id]["task"])
         ac_explicit_result = get_powerflow_result(ac_explicit_run_id)
         @test ac_explicit_result["success"]
-        ac_explicit_json = Sparlectra._parse_service_json(read(joinpath(ac_explicit_result["output_dir"], "result.json"), String))
+        ac_explicit_json = SparlectraApp._parse_service_json(read(joinpath(ac_explicit_result["output_dir"], "result.json"), String))
         @test ac_explicit_json["final_outcome"]["solver"] == "rectangular"
         @test ac_implicit_json["final_outcome"]["converged"] == ac_explicit_json["final_outcome"]["converged"]
         @test ac_implicit_json["final_outcome"]["iterations"] == ac_explicit_json["final_outcome"]["iterations"]
 
         # History row shows the calculation mode for the DC run, unchanged status columns otherwise.
-        dc_runs = Sparlectra.list_powerflow_runs(dc_output_root)
-        dc_history_html = Sparlectra.render_powerflow_history(dc_runs, dc_output_root)
+        dc_runs = SparlectraApp.list_powerflow_runs(dc_output_root)
+        dc_history_html = SparlectraApp.render_powerflow_history(dc_runs, dc_output_root)
         @test occursin("<th>Solver</th>", dc_history_html)
         @test occursin("<td>dc</td>", dc_history_html)
         @test occursin("<td>rectangular</td>", dc_history_html)
@@ -2819,13 +2838,13 @@ result = get_powerflow_result(run_id)
         # Solver stays AC/rectangular; only the start-value source changes.
         seed_form = _webui_test_form(seed_casefile, seed_config_file, seed_output_root)
         seed_form["power_flow_dc_seed_unconditional"] = "true"
-        seed_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/run", seed_form; output_root = seed_output_root)
+        seed_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/run", seed_form; output_root = seed_output_root)
         @test seed_response.status == 303
         seed_run_id = basename(only(header.second for header in seed_response.headers if header.first == "Location"))
-        wait(Sparlectra._POWERFLOW_WEBUI_JOBS[seed_run_id]["task"])
+        wait(SparlectraApp._POWERFLOW_WEBUI_JOBS[seed_run_id]["task"])
         seed_result = get_powerflow_result(seed_run_id)
         @test seed_result["success"]
-        seed_result_json = Sparlectra._parse_service_json(read(joinpath(seed_result["output_dir"], "result.json"), String))
+        seed_result_json = SparlectraApp._parse_service_json(read(joinpath(seed_result["output_dir"], "result.json"), String))
         @test seed_result_json["final_outcome"]["solver"] == "rectangular"
         @test seed_result_json["final_outcome"]["converged"] == true
       end
@@ -2839,7 +2858,7 @@ result = get_powerflow_result(run_id)
       # so switching mode twice may not lose a setting.
       se_args = (; cases = ["sp_case14.scf.json"], selected_case = "sp_case14.scf.json",
                  measurements = ["sp_case14.measurements.csv"])
-      base = Sparlectra.render_se_form(; se_args...)
+      base = SparlectraApp.render_se_form(; se_args...)
 
       # the two limits are named by what happens at them, in the same unit
       @test occursin("down-weight from rn", base)
@@ -2862,7 +2881,7 @@ result = get_powerflow_result(run_id)
       # each mode renders with its own value selected; the fields themselves
       # stay present in every mode (grayed out, never hidden)
       for mode in ("off", "staged", "replacement")
-        html = Sparlectra.render_se_form(; se_args..., gen_values = Dict{String,String}("se_robust_mode" => mode))
+        html = SparlectraApp.render_se_form(; se_args..., gen_values = Dict{String,String}("se_robust_mode" => mode))
         @test occursin("<option value=\"$(mode)\" selected>", html)
         @test occursin("name=\"se_k_eliminate\"", html)
         @test occursin("name=\"se_robust_k1\"", html)
@@ -2871,11 +2890,11 @@ result = get_powerflow_result(run_id)
       end
 
       # round trip: a saved value of the INACTIVE mode still comes back
-      staged = Sparlectra.render_se_form(; se_args...,
+      staged = SparlectraApp.render_se_form(; se_args...,
         gen_values = Dict{String,String}("se_robust_mode" => "staged", "se_k_suppress" => "7.5", "se_robust_k1" => "2.5"))
       @test occursin("name=\"se_k_suppress\" id=\"se-k-suppress\" value=\"7.5\"", staged)
       @test occursin("name=\"se_robust_k1\" value=\"2.5\"", staged)
-      replacement = Sparlectra.render_se_form(; se_args...,
+      replacement = SparlectraApp.render_se_form(; se_args...,
         gen_values = Dict{String,String}("se_robust_mode" => "replacement", "se_robust_k2" => "9.0"))
       @test occursin("name=\"se_robust_k2\" value=\"9.0\"", replacement)
 
@@ -2918,7 +2937,7 @@ result = get_powerflow_result(run_id)
       # form default == configuration default, for every option that mirrors
       # a configuration field by name (se_<field>)
       mirrored = 0
-      for spec in Sparlectra.WEBUI_OPTION_SPECS
+      for spec in SparlectraApp.WEBUI_OPTION_SPECS
         startswith(spec.field, "se_") || continue
         sym = Symbol(spec.field[4:end])
         hasproperty(se_cfg, sym) || continue
@@ -2944,12 +2963,12 @@ result = get_powerflow_result(run_id)
         case = joinpath(Sparlectra.SPARLECTRA_ROOT, "data", "scf", "sp_case14.scf.json")
         if isfile(case)
           res = redirect_stdout(devnull) do
-            Sparlectra._run_state_estimation_service(case, Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH,
+            SparlectraApp._run_state_estimation_service(case, Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH,
               joinpath(d, "run"), "se_settings_arrive", joinpath(d, "no_set.csv");
               max_iter = 7, tol = 1.0e-4, k_eliminate = 4.25, robust_mode = :replacement,
               k_suppress = 5.5, suppression_sigma = 1234.0)
           end
-          md = Sparlectra.to_dict(res)["metadata"]
+          md = SparlectraApp.to_dict(res)["metadata"]
           @test md["se_max_iter"] == 7
           @test Float64(md["se_tol"]) ≈ 1.0e-4
           @test Float64(md["se_k_eliminate"]) ≈ 4.25
@@ -2970,9 +2989,9 @@ result = get_powerflow_result(run_id)
         # (2a) The rendered form no longer disables submit buttons synchronously
         # before serialization; it preserves the submitter's name/value instead.
         diag_form_html = String(
-          Sparlectra.route_sparlectra_webui(
+          SparlectraApp.route_sparlectra_webui(
             "GET",
-            "/powerflow?casefile=$(Sparlectra._webui_urlencode(diag_casefile))&config_file=$(Sparlectra._webui_urlencode(diag_config_file))";
+            "/powerflow?casefile=$(SparlectraApp._webui_urlencode(diag_casefile))&config_file=$(SparlectraApp._webui_urlencode(diag_config_file))";
             output_root = diag_output_root,
           ).body,
         )
@@ -2992,10 +3011,10 @@ result = get_powerflow_result(run_id)
         # path): a POST body without "diagnose_mode" never writes diagnose.log.
         no_diagnose_form = _webui_test_form(diag_casefile, diag_config_file, diag_output_root)
         haskey(no_diagnose_form, "diagnose_mode") && delete!(no_diagnose_form, "diagnose_mode")
-        no_diagnose_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/run", no_diagnose_form; output_root = diag_output_root)
+        no_diagnose_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/run", no_diagnose_form; output_root = diag_output_root)
         @test no_diagnose_response.status == 303
         no_diagnose_run_id = basename(only(header.second for header in no_diagnose_response.headers if header.first == "Location"))
-        wait(Sparlectra._POWERFLOW_WEBUI_JOBS[no_diagnose_run_id]["task"])
+        wait(SparlectraApp._POWERFLOW_WEBUI_JOBS[no_diagnose_run_id]["task"])
         no_diagnose_result = get_powerflow_result(no_diagnose_run_id)
         @test no_diagnose_result["success"]
         @test !isfile(joinpath(no_diagnose_result["output_dir"], "diagnose.log"))
@@ -3004,10 +3023,10 @@ result = get_powerflow_result(run_id)
         # the "Diagnosis" section from run_diagnostic_artifacts.jl.
         diagnose_form = _webui_test_form(diag_casefile, diag_config_file, diag_output_root)
         diagnose_form["diagnose_mode"] = "true"
-        diagnose_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/run", diagnose_form; output_root = diag_output_root)
+        diagnose_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/run", diagnose_form; output_root = diag_output_root)
         @test diagnose_response.status == 303
         diagnose_run_id = basename(only(header.second for header in diagnose_response.headers if header.first == "Location"))
-        wait(Sparlectra._POWERFLOW_WEBUI_JOBS[diagnose_run_id]["task"])
+        wait(SparlectraApp._POWERFLOW_WEBUI_JOBS[diagnose_run_id]["task"])
         diagnose_result = get_powerflow_result(diagnose_run_id)
         # A diagnose run takes ONE step from the case's own stored VM/VA, so
         # a residual is the normal outcome and `success` (which mirrors
@@ -3031,7 +3050,7 @@ result = get_powerflow_result(run_id)
         @test any(artifact -> artifact["name"] == "diagnose.log", diagnose_artifacts)
 
         # (2d) diagnose.log downloads with status 200 and the same file content.
-        diagnose_download = Sparlectra.route_sparlectra_webui("GET", "/powerflow/artifact/$(diagnose_run_id)/diagnose.log?download=1"; output_root = diag_output_root)
+        diagnose_download = SparlectraApp.route_sparlectra_webui("GET", "/powerflow/artifact/$(diagnose_run_id)/diagnose.log?download=1"; output_root = diag_output_root)
         @test diagnose_download.status == 200
         @test String(diagnose_download.body) == diagnose_log_text
 
@@ -3039,10 +3058,10 @@ result = get_powerflow_result(run_id)
         # matching what the real submit button sends) still never writes diagnose.log.
         normal_form = _webui_test_form(diag_casefile, diag_config_file, diag_output_root)
         haskey(normal_form, "diagnose_mode") && delete!(normal_form, "diagnose_mode")
-        normal_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/run", normal_form; output_root = diag_output_root)
+        normal_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/run", normal_form; output_root = diag_output_root)
         @test normal_response.status == 303
         normal_run_id = basename(only(header.second for header in normal_response.headers if header.first == "Location"))
-        wait(Sparlectra._POWERFLOW_WEBUI_JOBS[normal_run_id]["task"])
+        wait(SparlectraApp._POWERFLOW_WEBUI_JOBS[normal_run_id]["task"])
         normal_result = get_powerflow_result(normal_run_id)
         @test normal_result["success"]
         @test !isfile(joinpath(normal_result["output_dir"], "diagnose.log"))
@@ -3063,7 +3082,7 @@ result = get_powerflow_result(run_id)
         casedir = joinpath(dir, "cases")
         mkpath(casedir)
         config_path = Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH
-        rt = Sparlectra._SparlectraWebUIRuntime(nothing, casedir, config_path, Sparlectra.webui_operation_log_path(root), nothing, Sparlectra.start_powerflow_run, false, false, time(), 0, nothing, IOBuffer(), ReentrantLock())
+        rt = SparlectraApp._SparlectraWebUIRuntime(nothing, casedir, config_path, SparlectraApp.webui_operation_log_path(root), nothing, SparlectraApp.start_powerflow_run, false, false, time(), 0, nothing, IOBuffer(), ReentrantLock())
 
         # the shipped SCF bundle in the case directory (it already carries
         # a scenarios block; the flows add their own scenario next to it)
@@ -3093,11 +3112,11 @@ result = get_powerflow_result(run_id)
           "op_value" => ["0", "25.0", ""],
           "op_factor" => ["", "", "1.2"],
         )
-        Sparlectra.route_sparlectra_webui("POST", "/powerflow/scenarios/save", form; output_root = root, runtime = rt)
-        page = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow/scenarios?case=$(Sparlectra._webui_urlencode(scf_name))"; output_root = root, runtime = rt).body)
+        SparlectraApp.route_sparlectra_webui("POST", "/powerflow/scenarios/save", form; output_root = root, runtime = rt)
+        page = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/scenarios?case=$(SparlectraApp._webui_urlencode(scf_name))"; output_root = root, runtime = rt).body)
         @test occursin("step6 triple", page)
         @test occursin("<td>3</td>", page)
-        run_result = Sparlectra.start_powerflow_run(Dict{String,Any}("casefile" => scf_path, "config_file" => config_path, "output_root" => root, "contingency_mode" => true, "contingency_kind" => "branch", "scenario_source" => "file_block", "screening_mode" => "flag"))
+        run_result = SparlectraApp.start_powerflow_run(Dict{String,Any}("casefile" => scf_path, "config_file" => config_path, "output_root" => root, "contingency_mode" => true, "contingency_kind" => "branch", "scenario_source" => "file_block", "screening_mode" => "flag"))
         @test run_result["status"] == "succeeded"
         @test run_result["metadata"]["contingency_cases_source"] == "scenario_file_block"
         @test run_result["metadata"]["contingency_screening_mode"] == "flag"
@@ -3110,21 +3129,21 @@ result = get_powerflow_result(run_id)
         # CSV). The file_block run carries ONE multi-op scenario, which is
         # correctly never screened (full solve, no estimate line), so the
         # screened-row assertions run on an n1_all :flag batch below.
-        flag_page = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow/result/$(Sparlectra._webui_urlencode(run_result["run_id"]))"; output_root = root, runtime = rt).body)
+        flag_page = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/result/$(SparlectraApp._webui_urlencode(run_result["run_id"]))"; output_root = root, runtime = rt).body)
         @test occursin("N-1 / scenario results", flag_page)
         @test occursin("<th>screened</th>", flag_page)
         @test occursin("step6 triple", flag_page)
-        n1_flag_run = Sparlectra.start_powerflow_run(Dict{String,Any}("casefile" => scf_path, "config_file" => config_path, "output_root" => root, "contingency_mode" => true, "contingency_kind" => "branch", "scenario_source" => "n1_all", "screening_mode" => "flag"))
+        n1_flag_run = SparlectraApp.start_powerflow_run(Dict{String,Any}("casefile" => scf_path, "config_file" => config_path, "output_root" => root, "contingency_mode" => true, "contingency_kind" => "branch", "scenario_source" => "n1_all", "screening_mode" => "flag"))
         @test n1_flag_run["status"] == "succeeded"
         @test n1_flag_run["metadata"]["contingency_screened"] > 0
-        n1_flag_page = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow/result/$(Sparlectra._webui_urlencode(n1_flag_run["run_id"]))"; output_root = root, runtime = rt).body)
+        n1_flag_page = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/result/$(SparlectraApp._webui_urlencode(n1_flag_run["run_id"]))"; output_root = root, runtime = rt).body)
         @test occursin("one-step estimate (no full solve)", n1_flag_page)
         @test occursin("flagged: estimate before the full run", n1_flag_page)
         @test occursin("class=\"n1-screened\">yes<", n1_flag_page)
         # an :off run renders the table WITHOUT the screened column
-        off_run = Sparlectra.start_powerflow_run(Dict{String,Any}("casefile" => scf_path, "config_file" => config_path, "output_root" => root, "contingency_mode" => true, "contingency_kind" => "branch", "scenario_source" => "file_block", "screening_mode" => "off"))
+        off_run = SparlectraApp.start_powerflow_run(Dict{String,Any}("casefile" => scf_path, "config_file" => config_path, "output_root" => root, "contingency_mode" => true, "contingency_kind" => "branch", "scenario_source" => "file_block", "screening_mode" => "off"))
         @test off_run["status"] == "succeeded"
-        off_page = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow/result/$(Sparlectra._webui_urlencode(off_run["run_id"]))"; output_root = root, runtime = rt).body)
+        off_page = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/result/$(SparlectraApp._webui_urlencode(off_run["run_id"]))"; output_root = root, runtime = rt).body)
         @test occursin("N-1 / scenario results", off_page)
         @test !occursin("<th>screened</th>", off_page)
 
@@ -3154,12 +3173,12 @@ result = get_powerflow_result(run_id)
           "file_digest" => "deadbeef",
         )
         before_bytes = read(scf_path, String)
-        stale_body = String(Sparlectra.route_sparlectra_webui("POST", "/powerflow/scenarios/save", stale_form; output_root = root, runtime = rt).body)
+        stale_body = String(SparlectraApp.route_sparlectra_webui("POST", "/powerflow/scenarios/save", stale_form; output_root = root, runtime = rt).body)
         @test occursin("changed since this form was loaded", stale_body)
         @test read(scf_path, String) == before_bytes
         # with the CURRENT digest the same save goes through
         stale_form["file_digest"] = Sparlectra._config_file_hash(scf_path)
-        Sparlectra.route_sparlectra_webui("POST", "/powerflow/scenarios/save", stale_form; output_root = root, runtime = rt)
+        SparlectraApp.route_sparlectra_webui("POST", "/powerflow/scenarios/save", stale_form; output_root = root, runtime = rt)
         @test occursin("stale write", read(scf_path, String))
 
         # flow 2: a tap_pos op on a REGULATED transformer is rejected with
@@ -3195,7 +3214,7 @@ result = get_powerflow_result(run_id)
           "op_value" => ["1"],
           "op_factor" => [""],
         )
-        reject_body = String(Sparlectra.route_sparlectra_webui("POST", "/powerflow/scenarios/save", reject_form; output_root = root, runtime = rt).body)
+        reject_body = String(SparlectraApp.route_sparlectra_webui("POST", "/powerflow/scenarios/save", reject_form; output_root = root, runtime = rt).body)
         @test occursin("regulated by controller", reject_body)
         @test occursin("tap fight", reject_body)
         # the rejected scenario is NOT in the file
@@ -3203,24 +3222,24 @@ result = get_powerflow_result(run_id)
 
         # a failed case shows its error text in the result-table row: the
         # generator N-1 on the regulated net takes out its only slack unit
-        fail_run = Sparlectra.start_powerflow_run(Dict{String,Any}("casefile" => joinpath(casedir, reg_name), "config_file" => config_path, "output_root" => root, "contingency_mode" => true, "contingency_kind" => "gen", "screening_mode" => "off"))
+        fail_run = SparlectraApp.start_powerflow_run(Dict{String,Any}("casefile" => joinpath(casedir, reg_name), "config_file" => config_path, "output_root" => root, "contingency_mode" => true, "contingency_kind" => "gen", "screening_mode" => "off"))
         @test fail_run["status"] == "succeeded"
         fail_csv = read(joinpath(root, fail_run["run_id"], "contingency_n1.csv"), String)
         @test occursin("false", fail_csv)
-        fail_page = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow/result/$(Sparlectra._webui_urlencode(fail_run["run_id"]))"; output_root = root, runtime = rt).body)
+        fail_page = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/result/$(SparlectraApp._webui_urlencode(fail_run["run_id"]))"; output_root = root, runtime = rt).body)
         @test occursin("N-1 / scenario results", fail_page)
         @test occursin("n1-error", fail_page)
 
         # flow 3: a MATPOWER case gets the export hint and no editor, on the
         # scenarios page and on the main form
         write(joinpath(casedir, "step6_plain.m"), "% case fixture\n")
-        plain_page = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow/scenarios?case=step6_plain.m"; output_root = root, runtime = rt).body)
+        plain_page = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/scenarios?case=step6_plain.m"; output_root = root, runtime = rt).body)
         @test occursin("Scenarios need an SCF case", plain_page)
         @test !occursin("scenario-op-rows", plain_page)
-        main_plain = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow?casefile=$(Sparlectra._webui_urlencode("step6_plain.m"))"; output_root = root, runtime = rt).body)
+        main_plain = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow?casefile=$(SparlectraApp._webui_urlencode("step6_plain.m"))"; output_root = root, runtime = rt).body)
         @test occursin("scenario-scf-hint", main_plain)
         @test !occursin("value=\"file_block\"", main_plain)
-        main_scf = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow?casefile=$(Sparlectra._webui_urlencode(scf_name))"; output_root = root, runtime = rt).body)
+        main_scf = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow?casefile=$(SparlectraApp._webui_urlencode(scf_name))"; output_root = root, runtime = rt).body)
         @test occursin("value=\"file_block\"", main_scf)
         @test occursin("scenario-editor-link", main_scf)
       end

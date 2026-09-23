@@ -37,6 +37,7 @@ overrides. The template is never modified.
 
 ```julia
 using Sparlectra
+using SparlectraApp   # service API: environment app/, or app/ on the load path
 
 casefile = ensure_casefile("case5.m")
 result = run_sparlectra_api(

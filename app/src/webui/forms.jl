@@ -16,7 +16,7 @@
 # purpose: Web UI input resolution: application root and case directory
 #          lookup, case/config file selectors, upload classification, and
 #          form value parsing
-const _WEBUI_PACKAGE_ROOT = normpath(joinpath(@__DIR__, "..", ".."))
+const _WEBUI_PACKAGE_ROOT = SPARLECTRA_ROOT   # the library checkout: data, examples and docs live there, not in app/
 
 """
     _webui_application_root([start_dir]) -> String
@@ -177,7 +177,7 @@ end
 # exported with "Save case as"/"Export as SCF" travels as three files
 # (case, sidecar, measurements); re-uploading all three together must bring
 # the sidecar along, or the settings the export carried are silently lost.
-_webui_supported_upload_case_extension(name::AbstractString)::Bool = lowercase(splitext(basename(String(name)))[2]) in (".m", ".dat", ".zip", ".csv", ".json", ".yaml")
+_webui_supported_upload_case_extension(name::AbstractString)::Bool = lowercase(splitext(basename(String(name)))[2]) in (".m", ".dat", ".zip", ".csv", ".json", ".yaml", ".xml")
 
 """
     _webui_scf_upload_reason(bytes) -> Union{Nothing,String}
@@ -819,7 +819,7 @@ function _webui_case_config_field_values(casefile::AbstractString, case_director
   merged = Dict{String,Any}()
   if lowercase(splitext(path)[2]) == ".json" && isfile(path)
     try
-      merge!(merged, scf_case_config(path))
+      merge!(merged, scf_case_config(path; dropped = String[]))
     catch
     end
   end
@@ -836,6 +836,22 @@ function _webui_case_config_field_values(casefile::AbstractString, case_director
     end
   end
   return values
+end
+
+# the machine-scope keys an old case file carries in its in-file block:
+# ignored by the run and named in the notice so nobody expects them to act
+function _webui_case_config_dropped_keys(casefile::AbstractString, case_directory)::Vector{String}
+  name = strip(String(casefile))
+  isempty(name) && return String[]
+  path = isabspath(name) ? name : (case_directory === nothing ? name : joinpath(String(case_directory), name))
+  (lowercase(splitext(path)[2]) == ".json" && isfile(path)) || return String[]
+  dropped = String[]
+  try
+    scf_case_config(path; dropped)
+  catch
+    return String[]   # an unreadable block is reported by the run itself
+  end
+  return dropped
 end
 
 """
@@ -887,7 +903,7 @@ function _webui_case_form_defaults(casefile::AbstractString, case_directory)::Di
   return values
 end
 
-function webui_form_state(; selected_casefile::AbstractString = "", selected_config_file::AbstractString = "", sidecar_profile = nothing, submitted_form = nothing, case_directory = nothing)
+function webui_form_state(; selected_casefile::AbstractString = "", selected_config_file::AbstractString = "", sidecar_profile = nothing, submitted_form = nothing, case_directory = nothing, apply_case_levels::Bool = true)
   config_path = isempty(selected_config_file) ? DEFAULT_SPARLECTRA_CONFIG_PATH : selected_config_file
   values = Dict{String,Any}(spec.field => spec.default for spec in WEBUI_OPTION_SPECS)
   config_values = _webui_config_field_values(config_path)
@@ -899,13 +915,19 @@ function webui_form_state(; selected_casefile::AbstractString = "", selected_con
   # form would silently outrank the very settings it just loaded (measured:
   # a case asking for distributed slack ran without it because the untouched
   # checkbox posted false).
-  case_file_values = _webui_case_config_field_values(selected_casefile, case_directory)
+  # The Settings page shows the configuration file alone unless the case
+  # view is requested (apply_case_levels = false): its values reach a run
+  # through the configuration precedence, not through a posted form, so an
+  # unseeded form cannot outrank the case there.
+  case_file_values = apply_case_levels ? _webui_case_config_field_values(selected_casefile, case_directory) : Dict{String,Any}()
   merge!(values, case_file_values)
   isempty(case_file_values) || (values["_case_file_fields"] = sort!(collect(keys(case_file_values))))
+  dropped_keys = apply_case_levels ? _webui_case_config_dropped_keys(selected_casefile, case_directory) : String[]
+  isempty(dropped_keys) || (values["_case_file_dropped"] = dropped_keys)
   values["casefile"] = selected_casefile
   values["casefile_manual"] = ""
   values["config_file"] = config_path
-  if sidecar_profile isa AbstractDict
+  if sidecar_profile isa AbstractDict && apply_case_levels
     for (field, value) in sidecar_profile
       field == "_profile_path" && continue
       haskey(_WEBUI_OPTION_BY_FIELD, String(field)) || continue

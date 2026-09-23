@@ -216,19 +216,19 @@ function run_factorized_linear_solver_tests()
     end)() end
 
     @testset "Web UI option spec, rendering, and sidecar round-trip" begin (function ()
-      spec = Sparlectra._webui_option_spec("power_flow_linear_solver")
+      spec = SparlectraApp._webui_option_spec("power_flow_linear_solver")
       @test spec.config_key == "power_flow.linear_solver"
       @test spec.default == "umfpack_reuse"
       @test spec.control === :select
       @test spec.section === :expert
       @test spec.save_in_case_sidecar
       @test Tuple(String(v) for v in spec.allowed_values) == ("umfpack", "umfpack_reuse")
-      @test "power_flow_linear_solver" in Sparlectra._WEBUI_CASE_PROFILE_FIELDS
-      @test Sparlectra._webui_normalize_case_profile_form_value("power_flow_linear_solver", "umfpack_reuse") == "umfpack_reuse"
-      @test_throws ArgumentError Sparlectra._webui_normalize_case_profile_form_value("power_flow_linear_solver", "klu")
+      @test "power_flow_linear_solver" in SparlectraApp._WEBUI_CASE_PROFILE_FIELDS
+      @test SparlectraApp._webui_normalize_case_profile_form_value("power_flow_linear_solver", "umfpack_reuse") == "umfpack_reuse"
+      @test_throws ArgumentError SparlectraApp._webui_normalize_case_profile_form_value("power_flow_linear_solver", "klu")
 
       # the expert options render on the Settings page
-      form_html = Sparlectra.render_settings_page()
+      form_html = SparlectraApp.render_settings_page()
       expert_parts = split(form_html, "<summary>Advanced options</summary>")
       @test length(expert_parts) == 2
       expert_html = expert_parts[2]
@@ -237,8 +237,8 @@ function run_factorized_linear_solver_tests()
       @test occursin("<option value=\"umfpack\"", expert_html)
       @test !occursin("<option value=\"klu\"", expert_html)
       @test occursin("href=\"/help/power_flow.linear_solver\"", form_html)
-      @test Sparlectra.resolve_webui_help_topic("power_flow.linear_solver") !== nothing
-      excerpt = Sparlectra.load_webui_help_excerpt("power_flow.linear_solver")
+      @test SparlectraApp.resolve_webui_help_topic("power_flow.linear_solver") !== nothing
+      excerpt = SparlectraApp.load_webui_help_excerpt("power_flow.linear_solver")
       @test excerpt !== nothing
       @test occursin("power_flow.linear_solver", excerpt)
     end)() end

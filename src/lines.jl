@@ -43,9 +43,7 @@ A mutable structure representing an AC line segment in a power system.
 
 # Methods
 - `Base.show(io::IO, acseg::ACLineSegment)`: Prints the `ACLineSegment` instance.
-"""
-# ACLineSegment should be a subtype of AbstractBranch
-"""
+
 An AC line with its physical parameters (ohm, siemens per length or
 absolute) and the PI-model form the solver consumes.
 """

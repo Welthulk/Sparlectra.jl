@@ -38,10 +38,10 @@ Final effective MATPOWER import options:
   matpower_import.shift_sign: -1.0
 """)
   artifacts = [
-    Sparlectra.SparlectraApiArtifact("q_limit.log", :q_limit_log, joinpath(output_dir, "q_limit.log"), "text/plain", true, 12, "Q-limit diagnostic log"),
-    Sparlectra.SparlectraApiArtifact("q_limit_events.csv", :q_limit_events, joinpath(output_dir, "q_limit_events.csv"), "text/csv", true, 12, "Q-limit events"),
-    Sparlectra.SparlectraApiArtifact("effective_config.yaml", :effective_config, effective_config, "text/yaml", true, 12, "Effective config"),
-    Sparlectra.SparlectraApiArtifact("matpower_auto_profile.log", :matpower_auto_profile, auto_profile_log, "text/plain", true, 12, "Auto-profile log"),
+    SparlectraApp.SparlectraApiArtifact("q_limit.log", :q_limit_log, joinpath(output_dir, "q_limit.log"), "text/plain", true, 12, "Q-limit diagnostic log"),
+    SparlectraApp.SparlectraApiArtifact("q_limit_events.csv", :q_limit_events, joinpath(output_dir, "q_limit_events.csv"), "text/csv", true, 12, "Q-limit events"),
+    SparlectraApp.SparlectraApiArtifact("effective_config.yaml", :effective_config, effective_config, "text/yaml", true, 12, "Effective config"),
+    SparlectraApp.SparlectraApiArtifact("matpower_auto_profile.log", :matpower_auto_profile, auto_profile_log, "text/plain", true, 12, "Auto-profile log"),
   ]
   metadata = Dict{String,Any}(
     "run_status" => success ? "completed" : "completed_nonconverged",
@@ -53,7 +53,7 @@ Final effective MATPOWER import options:
     "q_limit_reenable_events" => 1,
     "q_limit_classic_outer_loop_passes" => startswith(mode, "classic_") ? 1 : 0,
   )
-  return Sparlectra.SparlectraApiResult("fake-$(mode)", "1", status, success, converged, true, 7, success ? 1.0e-10 : 0.01, success ? "none" : "nr_mismatch_not_converged", "fake result", "case.m", "config.yaml", output_dir, joinpath(output_dir, "run.log"), joinpath(output_dir, "result.json"), artifacts, Dict{String,Any}[], metadata, nothing)
+  return SparlectraApp.SparlectraApiResult("fake-$(mode)", "1", status, success, converged, true, 7, success ? 1.0e-10 : 0.01, success ? "none" : "nr_mismatch_not_converged", "fake result", "case.m", "config.yaml", output_dir, joinpath(output_dir, "run.log"), joinpath(output_dir, "result.json"), artifacts, Dict{String,Any}[], metadata, nothing)
 end
 
 function run_qlimit_large_case_comparison_tests()
@@ -117,7 +117,7 @@ function run_qlimit_large_case_comparison_tests()
       resolver(case; outdir) = Dict{String,Any}("available" => true, "path" => joinpath(outdir, case), "status" => "cached", "source" => "cache")
       runner(; casefile, config_file, output_dir, config_overrides, kwargs...) = begin
         mkpath(output_dir)
-        return Sparlectra.SparlectraApiResult("fake-invalid", "1", :not_converged, false, false, true, nothing, nothing, "not_converged", "fake result", casefile, config_file, output_dir, joinpath(output_dir, "run.log"), joinpath(output_dir, "result.json"), Sparlectra.SparlectraApiArtifact[], Dict{String,Any}[], Dict{String,Any}(), nothing)
+        return SparlectraApp.SparlectraApiResult("fake-invalid", "1", :not_converged, false, false, true, nothing, nothing, "not_converged", "fake result", casefile, config_file, output_dir, joinpath(output_dir, "run.log"), joinpath(output_dir, "result.json"), SparlectraApp.SparlectraApiArtifact[], Dict{String,Any}[], Dict{String,Any}(), nothing)
       end
       result = compare_qlimit_large_case_modes(
         cases = ["present.m"],

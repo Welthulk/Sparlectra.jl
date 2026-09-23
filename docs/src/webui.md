@@ -45,9 +45,9 @@ from the header, independent of the popup.
 ## Start after package installation
 
 ```julia
-using Sparlectra
+using SparlectraApp   # the Web UI is part of the application package (app/)
 
-server = Sparlectra.start_sparlectra_webui(open_browser = true)
+server = SparlectraApp.start_sparlectra_webui(open_browser = true)
 wait(server.task)
 ```
 
@@ -70,6 +70,19 @@ normal user-selectable case list (the sysimage build workload runs the
 shipped `sp_case5`/`sp_case60` demo cases).
 
 On first startup, the Web UI copies the package configuration template to its user-writable `config/configuration.yaml`. Pass `output_root="my_sparlectra_runs"` or `config_file="my_configuration.yaml"` to override these defaults; an explicit configuration file is never overwritten.
+
+Next to the provisioned `configuration.yaml` the Web UI keeps three kinds of
+files, all its own: `configuration.template.yaml` is the package template
+the file was last aligned with; a later release may change a template
+default, and at start every key whose value still equals that old template
+value follows the new one, while a value you changed stays.
+`configuration.yaml.user-keys.txt` lists the keys the Web UI itself saved
+into the file (settings save, notice dismiss, configuration editor); a
+listed key is never followed, even when its value happens to equal an old
+default. Each change is reported at start with key, old and new value, and
+the previous file is kept as `configuration.yaml.template-follow.bak`
+(settings saves keep `configuration.yaml.settings-save.bak`). Deleting the
+record or the template copy does no harm beyond losing that memory.
 The effective configuration, output root, MATPOWER cache, and operation log are displayed by
 the Web UI; the browser cannot change the output root.
 
@@ -85,9 +98,13 @@ julia --project=. start_webui.jl
 startup and default-path behavior to `start_sparlectra_webui`.
 
 Before anything else it compares the direct dependencies in `Project.toml`
-against `Manifest.toml`, which costs two TOML reads and no package load. When
-one is missing, or when there is no manifest, it resolves and instantiates the
-environment once and says so; otherwise it stays silent. `Manifest.toml` is not
+against `Manifest.toml`, for the library and for the application under
+`app/`, which costs four TOML reads and no package load. When one is
+missing, or when there is no manifest, it resolves, instantiates and
+compiles that environment once, says so and reports the time; a second
+start reports both environments as up to date and compiles nothing.
+`julia --project=. start_webui.jl --env-only` does that first-start work
+and stops before the sysimage question and the server. `Manifest.toml` is not
 tracked, so this covers both a fresh clone and a manifest left over from an
 older Sparlectra that never learned about a dependency added since. The check
 runs BEFORE the [sysimage](sysimage.md) question on purpose: nobody should be
@@ -310,7 +327,8 @@ solver, and radio buttons are never individually disabled (only the checked
 one is submitted), so there is no submission path that can drop the choice.
 
 Choosing `AC (Newton-Raphson, rectangular)` reveals the Newton-Raphson start-
-value block (**Use APSLF start values**, indented order field) together with
+value block (**Flat start**, **Use APSLF start values** with its indented
+order field, **Use DC start values**) together with
 every other AC/NR-only option (tolerance, autodamping/merit/trust-region step
 control, Q-limit handling, maximum iterations, wrong-branch detection, start
 angle/voltage mode, the current-iteration pre-solve block, transformer
@@ -321,6 +339,15 @@ the **Start angle mode** dropdown further down the form (still NR-only)
 controls this and documents the other available start strategies. This DC
 pre-solve is unrelated to, and does not require, choosing the standalone
 `DC` solver option below.
+
+**Flat start** is the one start switch: with it on, every bus starts at
+1.0 pu and 0 degrees and the imported start voltages are ignored. The run
+switches the APSLF and DC start values, the current-iteration pre-solve and
+both start modes off (`classic`) for its duration and names them in
+`run.log`; the page greys those controls, their saved values stay and come
+back when the flat start is unchecked. A CGMES run starts flat too unless
+its start values are set to `sv` on the Case page (`power_flow.flatstart`,
+see [Power flow configuration](powerflow_configuration.md)).
 
 Choosing `APSLF (AnalyticLoadFlow)` reveals an indented **APSLF solver
 options** block (highest coefficient/order, Padé evaluation, NR polish)
@@ -403,11 +430,20 @@ action. It instead labels the action **Save these settings anyway** and records
 that the user explicitly overrode the non-successful-run warning. No profile is
 saved automatically.
 
-When the same MATPOWER case is opened again with a saved profile, the form is
+When the same case is opened again with a saved profile, the run page is
 prefilled with the profile values and displays a small notice. Precedence stays
 conservative: built-in defaults are loaded first, global configuration remains
 unchanged, the case-specific Web UI profile only prefills editable form fields,
 and any manual browser edit wins for the submitted run.
+
+The **Settings** page shows the configuration file's values by default, so the
+controls read as the file sets them. When the selected case has saved
+settings, or carries settings inside the case file (an SCF configuration
+block), a line under the heading says so, with the number of keys, and the
+link **Show the case settings** (`?case_settings=1`) overlays them on the
+form; **Show the
+configuration values** switches back. A run resolves the case level either
+way; a save with the target "this case" writes what the form shows.
 
 Between the configuration file and a saved case profile, the **last edit
 wins**: when the YAML file is newer than the saved profile, the keys the YAML
@@ -953,7 +989,7 @@ Island diagnostics are run artifacts. Files such as `ac_islands.csv`, `ac_island
 
 ## Importing case files through the Web UI
 
-The PowerFlow page includes a separate **Import case files** control near the case selection area. It uses the browser's native file picker and accepts multiple files in one selection. The picker advertises MATPOWER `.m`/`.M` files, DTF `.dat`/`.DAT` files and CGMES `.zip` deliveries; the server validates the extension again because browser-side filters can be bypassed. A CGMES ZIP may contain the whole delivery, including nested ZIPs — the importer opens them in memory, so no unpacking step is required.
+The PowerFlow page includes a separate **Import case files** control near the case selection area. It uses the browser's native file picker and accepts multiple files in one selection. The picker advertises MATPOWER `.m`/`.M` files, DTF `.dat`/`.DAT` files, CGMES `.zip` deliveries and CGMES profile files (`.xml`); the server validates the extension again because browser-side filters can be bypassed. Several `.xml` files selected together (the EQ, SSH, TP and SV profiles of one delivery, for example the four files of a shipped demo folder under `data/cgmes_demo`) are packed into one `<stem>_cgmes.zip` in the case directory, named after the common file stem; the set must contain the EQ profile. A CGMES ZIP may contain the whole delivery, including nested ZIPs — the importer opens them in memory, so no unpacking step is required.
 
 Importing is a copy-only operation. It does not submit the PowerFlow form, create a run ID, create a result directory, parse uploaded `.m` code, or invoke the solver. After the POST/Redirect/GET refresh, the normal case selector is rebuilt from disk. If at least one imported file is runnable in the normal selector, the first such file may be preselected; the user must still press **Start PowerFlow run** to calculate it.
 

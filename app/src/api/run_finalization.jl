@@ -184,6 +184,8 @@ end
 _metadata_kwargs(metadata::AbstractDict) = (; (Symbol(key) => value for (key, value) in metadata)...)
 
 function _write_resolved_q_limit_options(io::IO, metadata::AbstractDict)
+  dropped = get(metadata, "case_file_dropped_keys", String[])
+  isempty(dropped) || println(io, "Case file settings outside the case scope (written by an older Sparlectra, ignored; re-export the case file to clear this note): ", join(dropped, ", "))
   println(io, "Resolved Q-limit options")
   println(io, "------------------------")
   println(io, "Q-limit handling enabled : ", metadata["qlimits_enabled"])

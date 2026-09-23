@@ -23,6 +23,22 @@ include("test_api_support.jl")
 
 function run_api_fast_tests()
   @testset "API fast smoke and timing contracts" begin (function ()
+    @testset "application layer smoke: one power flow and one state estimation" begin (function ()
+      # the service API is the second way to every result; this stays in the
+      # pull-request gate so a change to the library cannot break it unseen
+      scf5 = joinpath(dirname(@__DIR__), "data", "scf", "sp_case5.scf.json")
+      meas5 = joinpath(dirname(@__DIR__), "data", "scf", "sp_case5.measurements.csv")
+      mktempdir() do tmpdir
+        pf = run_sparlectra_api(casefile = scf5, config_file = Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, output_dir = joinpath(tmpdir, "pf"))
+        @test pf.success
+        @test pf.converged
+        @test isfile(pf.result_file)
+        se = start_powerflow_run(Dict{String,Any}("casefile" => scf5, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(tmpdir, "runs"), "se_mode" => true, "measurement_file" => meas5))
+        @test se["status"] == "succeeded"
+        @test se["metadata"]["run_mode"] == "se"
+      end
+    end)() end
+
     @testset "net parameters stamped exactly once per importer" begin (function ()
       # the stamping happens exactly
       # once PER IMPORTER, at the place each importer finishes; this test
@@ -88,17 +104,17 @@ function run_api_fast_tests()
       casefile = _write_api_test_case(joinpath(tmpdir, "case_api.m"))
       template = joinpath(tmpdir, "configuration.yaml")
       write(template, "power_flow:\n  max_iter: 20\noutput:\n  logfile_results: compact\n")
-      successful_transport = Sparlectra._api_result(run_id = "synthetic-success", status = :completed, success = true, reason = "none", message = "ok", casefile = casefile, config_file = template, output_dir = joinpath(tmpdir, "success"), logfile = joinpath(tmpdir, "success", "run.log"), result_file = joinpath(tmpdir, "success", "result.json"), raw_result = (solver_elapsed_s = 0.002,))
-      @test Sparlectra.to_dict(successful_transport)["solver_elapsed_s"] > 0.0
+      successful_transport = SparlectraApp._api_result(run_id = "synthetic-success", status = :completed, success = true, reason = "none", message = "ok", casefile = casefile, config_file = template, output_dir = joinpath(tmpdir, "success"), logfile = joinpath(tmpdir, "success", "run.log"), result_file = joinpath(tmpdir, "success", "result.json"), raw_result = (solver_elapsed_s = 0.002,))
+      @test SparlectraApp.to_dict(successful_transport)["solver_elapsed_s"] > 0.0
 
-      presolver_transport = Sparlectra._api_result(run_id = "synthetic-presolver", status = :failed, success = false, reason = "invalid_case", message = "missing case", casefile = joinpath(tmpdir, "missing.m"), config_file = template, output_dir = joinpath(tmpdir, "missing"), logfile = nothing, result_file = nothing)
-      @test !haskey(Sparlectra.to_dict(presolver_transport), "solver_elapsed_s")
+      presolver_transport = SparlectraApp._api_result(run_id = "synthetic-presolver", status = :failed, success = false, reason = "invalid_case", message = "missing case", casefile = joinpath(tmpdir, "missing.m"), config_file = template, output_dir = joinpath(tmpdir, "missing"), logfile = nothing, result_file = nothing)
+      @test !haskey(SparlectraApp.to_dict(presolver_transport), "solver_elapsed_s")
 
       @test Sparlectra.MatpowerIO.matpower_dcline_diagnostics((; dcline = [1 2 1 10 9 0 0 1 1 0 100]))["matpower_dcline_active_count"] == 1
 
       mkpath(joinpath(tmpdir, "synthetic-failure"))
-      failed_transport = Sparlectra._api_failure("execution_error", "numerical failure"; casefile = casefile, config_file = template, output_dir = joinpath(tmpdir, "synthetic-failure"), logfile = joinpath(tmpdir, "synthetic-failure", "run.log"), result_file = joinpath(tmpdir, "synthetic-failure", "result.json"), metadata = Dict("solver_elapsed_s" => 0.001))
-      @test Sparlectra.to_dict(failed_transport)["solver_elapsed_s"] > 0.0
+      failed_transport = SparlectraApp._api_failure("execution_error", "numerical failure"; casefile = casefile, config_file = template, output_dir = joinpath(tmpdir, "synthetic-failure"), logfile = joinpath(tmpdir, "synthetic-failure", "run.log"), result_file = joinpath(tmpdir, "synthetic-failure", "result.json"), metadata = Dict("solver_elapsed_s" => 0.001))
+      @test SparlectraApp.to_dict(failed_transport)["solver_elapsed_s"] > 0.0
     end
 
     @testset "run index accepts symlinked output roots" begin (function ()
@@ -120,14 +136,14 @@ function run_api_fast_tests()
           symlink(real_root, alias_root)
           real_entry = Dict{String,Any}("run_id" => run_id, "output_dir" => joinpath(real_root, run_id), "result_file" => joinpath(real_root, run_id, "result.json"))
           alias_entry = Dict{String,Any}("run_id" => run_id, "output_dir" => joinpath(alias_root, run_id), "result_file" => joinpath(alias_root, run_id, "result.json"))
-          @test Sparlectra._indexed_run_paths(real_entry, alias_root).valid
-          @test Sparlectra._indexed_run_paths(alias_entry, real_root).valid
+          @test SparlectraApp._indexed_run_paths(real_entry, alias_root).valid
+          @test SparlectraApp._indexed_run_paths(alias_entry, real_root).valid
           # a symlink must still not smuggle a foreign directory into the root
           outside = joinpath(tmpdir, "outside")
           mkpath(outside)
           write(joinpath(outside, "result.json"), "{}")
           foreign_entry = Dict{String,Any}("run_id" => run_id, "output_dir" => outside, "result_file" => joinpath(outside, "result.json"))
-          @test !Sparlectra._indexed_run_paths(foreign_entry, real_root).valid
+          @test !SparlectraApp._indexed_run_paths(foreign_entry, real_root).valid
         end
       end
     end)() end

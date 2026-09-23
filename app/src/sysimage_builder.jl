@@ -50,9 +50,9 @@ Keyword arguments:
 Returns `(sysimage_path, meta_path, built, size_mb)`.
 """
 function buildSysimage(; dry_run::Bool = false, quiet::Bool = false)
-  pkgroot = pkgdir(@__MODULE__)
-  pkgroot === nothing && error("buildSysimage: cannot locate the Sparlectra package directory")
-  script = joinpath(pkgroot, "tools", "build_sysimage.jl")
+  pkgroot = pkgdir(@__MODULE__)   # the application package (app/), the environment the image is built from
+  pkgroot === nothing && error("buildSysimage: cannot locate the SparlectraApp package directory")
+  script = joinpath(dirname(pkgroot), "tools", "build_sysimage.jl")
   isfile(script) || error("buildSysimage: build script not found at $(script)")
   img = webui_sysimage_path()
   meta = webui_sysimage_meta_path()
@@ -76,7 +76,10 @@ function buildSysimage(; dry_run::Bool = false, quiet::Bool = false)
   # tap control): the package's own precompile is slim by default and this
   # is the one build that wants the full workload
   env = copy(ENV)
-  env["SPARLECTRA_PRECOMPILE_WORKLOAD"] = "full"
+  # the dry run only plans; without this guard a child whose compile cache
+  # is stale would compile both packages WITH the full workload just to
+  # print two paths (measured in the webui test profile: 84 s for one test)
+  dry_run || (env["SPARLECTRA_PRECOMPILE_WORKLOAD"] = "full")
   run(pipeline(Cmd(cmd; dir = pkgroot, env = env); stdout = io_out, stderr = io_err))
   built = !dry_run && isfile(img)
   return (sysimage_path = img, meta_path = meta, built = built, size_mb = built ? round(filesize(img) / 1024^2; digits = 1) : 0.0)

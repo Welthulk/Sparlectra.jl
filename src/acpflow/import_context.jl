@@ -121,6 +121,36 @@ function _cgmes_start_values_powerflow(pf_cfg::PowerFlowConfig, start_values::Sy
   return _copy_powerflow_with(pf_cfg; start_mode = start_mode, start_current_iteration = _copy_start_current_iteration_with(pf_cfg.start_current_iteration; enabled = false), apslf_start = ApslfStartConfig(enabled = false, order = pf_cfg.apslf_start.order)), overridden
 end
 
+"""
+    _flatstart_forced_off_config(cfg) -> (SparlectraConfig, overridden::Vector{String})
+
+The flat start is the one start switch a run honours over the other
+start-value machines: with `power_flow.flatstart = true` the APSLF start
+generator, the unconditional DC seed and the current-iteration pre-solve
+are switched off for this run and both start modes go `classic`, so the
+solve really starts at 1.0 pu and 0 degrees. The stored configuration is
+left as it is (the Web UI keeps those values and only greys the controls);
+the returned list names every key that was overridden, for the run log.
+"""
+function _flatstart_forced_off_config(cfg::SparlectraConfig)
+  pf = cfg.powerflow
+  pf.start_mode.flatstart || return cfg, String[]
+  overridden = String[]
+  pf.apslf_start.enabled && push!(overridden, "power_flow.apslf_start.enabled=false")
+  pf.start_mode.dc_seed_unconditional && push!(overridden, "power_flow.start_mode.dc_seed_unconditional=false")
+  pf.start_current_iteration.enabled && push!(overridden, "power_flow.start_current_iteration.enabled=false")
+  pf.start_mode.angle_mode === :classic || push!(overridden, "power_flow.start_mode.angle_mode=classic")
+  pf.start_mode.voltage_mode === :classic || push!(overridden, "power_flow.start_mode.voltage_mode=classic")
+  isempty(overridden) && return cfg, overridden
+  start_mode = _copy_start_mode_with(pf.start_mode; dc_seed_unconditional = false, angle_mode = :classic, voltage_mode = :classic)
+  pf2 = _copy_powerflow_with(pf;
+    start_mode = start_mode,
+    apslf_start = ApslfStartConfig(enabled = false, order = pf.apslf_start.order),
+    start_current_iteration = _copy_start_current_iteration_with(pf.start_current_iteration; enabled = false),
+  )
+  return _copy_sparlectra_with_powerflow(cfg, pf2), overridden
+end
+
 function _resolve_matpower_powerflow_ids_after_import(net::Net, cfg::SparlectraConfig; verbose::Int = 0)::SparlectraConfig
   qlimits = cfg.powerflow.qlimits
   resolved = _resolve_matpower_lock_pv_to_pq_buses(net, qlimits.lock_pv_to_pq_buses; verbose = verbose)
@@ -340,4 +370,45 @@ end
 # a run into a MethodError (it did, on a case file carrying its own config).
 function _import_sparlectra_net(casefile::AbstractString, path::Union{Nothing,AbstractString}, cfg::SparlectraConfig; performance_profile = nothing)::Net
   return _import_sparlectra_context(String(casefile), path === nothing ? nothing : String(path), cfg; performance_profile = performance_profile).net
+end
+
+# angle_mode/voltage_mode matter only on the MATPOWER import path
+# (`_apply_matpower_start_modes!`) and only when flatstart is true; they are
+# kept for backward compatibility of the written config, and with
+# flatstart=false the MATPOWER path reaches the same case VM/VA start through
+# `apply_mp_bus_vmva_init!`. On the CGMES path the SV voltages are already the
+# imported bus state, so bypassing the start machinery is all that is needed.
+function _self_check_forced_overrides()::Dict{String,Any}
+  return Dict{String,Any}(
+    "power_flow" => Dict{String,Any}(
+      "max_iter" => 1,
+      # `flatstart` is the legacy power_flow-level key — the only one the
+      # config schema accepts — and PowerFlowConfig merges it into the
+      # start_mode raw dict (configuration.jl), so this reliably forces
+      # flatstart=false even when the base config sets `flatstart: true`
+      # (observed in a WebUI configuration.yaml, where it silently wiped the
+      # CGMES SV start on every run).
+      "flatstart" => false,
+      "start_mode" => Dict{String,Any}(
+        "angle_mode" => "matpower_va",
+        "voltage_mode" => "all_bus_vm",
+        "start_projection" => false,
+        "dc_seed_unconditional" => false,
+      ),
+      "start_current_iteration" => Dict{String,Any}("enabled" => false),
+      "apslf_start" => Dict{String,Any}("enabled" => false),
+      "qlimits" => Dict{String,Any}("enabled" => false),
+      # The self-check measures the residual at the imported reference state
+      # by design — it is SUPPOSED to look non-converged. The rescue ladder
+      # (on by default) would retry from other start states and leave a
+      # different net behind, so the measured residual would no longer be the
+      # imported model's. Same reasoning as the start-value machines above.
+      "rescue" => false,
+      "dc" => Dict{String,Any}("fallback" => false),
+    ),
+    # CGMES runs additionally honor cgmes_import.start_values (default flat,
+    # which would re-flatten the start): the self-check's whole point is to
+    # evaluate at the imported state, so force sv. Inert for MATPOWER/DTF.
+    "cgmes_import" => Dict{String,Any}("start_values" => "sv"),
+  )
 end

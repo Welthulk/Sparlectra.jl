@@ -26,10 +26,13 @@ module SysimageLauncher
 using TOML
 using SHA
 
-export handle_sysimage, unresolved_dependencies, compat_lower_bound, outdated_dependencies, repair_environment
+export handle_sysimage, unresolved_dependencies, compat_lower_bound, outdated_dependencies, repair_environment, prepare_environments, sysimage_source_roots, sysimage_build_script, external_sysimage, remove_stale_sysimage, ENV_ONLY_FLAG
 
 const REBUILD_FLAG = "--rebuild-sysimage"
 const NO_IMAGE_FLAG = "--no-sysimage"
+# prepare the environments and compile, then leave: what a fresh checkout
+# needs before the first real start, and what a test can run headless
+const ENV_ONLY_FLAG = "--env-only"
 
 "Path of the Web UI sysimage for this platform (mirrors default_webui_output_root)."
 function sysimage_path()::String
@@ -40,6 +43,72 @@ function sysimage_path()::String
   end
   state = get(ENV, "XDG_STATE_HOME", joinpath(homedir(), ".local", "state"))
   return joinpath(state, "sparlectra", "webui", "sysimage", "sparlectra.so")
+end
+
+"""
+    sysimage_source_roots(project_dir) -> Vector{String}
+
+The source trees an image built for `project_dir` depends on: the
+project's own `src`, and, when the project is the application package
+inside a library checkout (`app/` next to the library's `Project.toml`),
+the library's `src` as well. An edit in either tree outdates the image.
+"""
+function sysimage_source_roots(project_dir::AbstractString)::Vector{String}
+  roots = [joinpath(project_dir, "src")]
+  parent = dirname(abspath(project_dir))
+  isfile(joinpath(parent, "Project.toml")) && push!(roots, joinpath(parent, "src"))
+  return roots
+end
+
+# the build script lives in the repository's tools directory: next to the
+# library project, one level above the application project
+function sysimage_build_script(project_dir::AbstractString)::String
+  own = joinpath(project_dir, "tools", "build_sysimage.jl")
+  isfile(own) && return own
+  return joinpath(dirname(abspath(project_dir)), "tools", "build_sysimage.jl")
+end
+
+# the metadata file that belongs to the managed image, next to it
+sysimage_meta_path(image::AbstractString)::String = joinpath(dirname(image), "sysimage_meta.toml")
+
+"""
+    external_sysimage(managed; current = <image of this process>) -> Union{Nothing,String}
+
+The image this process was started on when it is neither the stock Julia
+image nor the managed one: an image given from outside with `-J`. Such an
+image is not checked, not rebuilt and never removed; `nothing` otherwise.
+"""
+function external_sysimage(managed::AbstractString; current::AbstractString = unsafe_string(Base.JLOptions().image_file))::Union{Nothing,String}
+  isempty(current) && return nothing
+  startswith(basename(current), "sys.") && return nothing
+  same = try
+    isfile(current) && isfile(managed) && realpath(current) == realpath(managed)
+  catch
+    false
+  end
+  return same ? nothing : String(current)
+end
+
+"""
+    remove_stale_sysimage(image) -> Symbol
+
+Delete the managed image and its metadata file, nothing else: the two known
+paths, no wildcard. Returns `:removed`, `:absent` when neither exists, or
+`:locked` when the file cannot be deleted (Windows keeps an image open
+while another Julia runs on it); then a message says so, the start goes on
+without an image and the next start tries again.
+"""
+function remove_stale_sysimage(image::AbstractString)::Symbol
+  meta = sysimage_meta_path(image)
+  (isfile(image) || isfile(meta)) || return :absent
+  try
+    isfile(image) && rm(image)
+    isfile(meta) && rm(meta)
+    return :removed
+  catch err
+    println("The outdated sysimage could not be removed (", first(sprint(showerror, err), 120), "); it stays in place and is not used. The next start tries again.")
+    return :locked
+  end
 end
 
 """
@@ -73,8 +142,8 @@ function sysimage_problem(path::AbstractString, project_dir::AbstractString)::Un
     get(meta, "manifest_sha256", "") == current || return "the sysimage does not match the current Manifest.toml"
   end
   image_time = mtime(path)
-  src = joinpath(project_dir, "src")
-  if isdir(src)
+  for src in sysimage_source_roots(project_dir)
+    isdir(src) || continue
     for (root, _, files) in walkdir(src), f in files
       endswith(f, ".jl") || continue
       mtime(joinpath(root, f)) > image_time && return "the sysimage is older than $(src)"
@@ -84,12 +153,14 @@ function sysimage_problem(path::AbstractString, project_dir::AbstractString)::Un
 end
 
 """
-Ask `prompt` and return true unless the user answers no. No answer means
-yes: an unattended start (nobody at the keyboard, or no terminal at all)
-should end up with the image rather than quietly without it.
+Ask `prompt` and return true only when the user answers yes. The build is
+opt-in: Enter, a timeout and a start without a terminal all mean no. A build
+takes minutes, on a machine with a virus scanner on the compile cache far
+longer, and a user who did not ask for it should not wait for it;
+`--rebuild-sysimage` and a plain `y` start one.
 """
 function ask_build(prompt::AbstractString; seconds::Real = 30.0)::Bool
-  isa(stdin, Base.TTY) || return true
+  isa(stdin, Base.TTY) || return false
   print(prompt)
   flush(stdout)
   answer = Ref{String}("")
@@ -106,7 +177,7 @@ function ask_build(prompt::AbstractString; seconds::Real = 30.0)::Bool
     waited += 0.1
   end
   istaskdone(reader) || println()
-  return !(lowercase(strip(answer[])) in ("n", "no", "nein"))
+  return lowercase(strip(answer[])) in ("y", "yes", "j", "ja")
 end
 
 function build_sysimage(project_dir::AbstractString)::Bool
@@ -118,9 +189,9 @@ function build_sysimage(project_dir::AbstractString)::Bool
   # that intermediate process would load (and possibly precompile) the whole
   # package just to spawn the same script. A checkout without tools/ (an
   # installation from the registry) falls back to the package entry point.
-  script = joinpath(project_dir, "tools", "build_sysimage.jl")
+  script = sysimage_build_script(project_dir)
   cmd = isfile(script) ? `$(exe) --startup-file=no --project=$(project_dir) $(script)` :
-        `$(exe) --startup-file=no --project=$(project_dir) -e "using Sparlectra; buildSysimage()"`
+        `$(exe) --startup-file=no --project=$(project_dir) -e "using SparlectraApp; buildSysimage()"`
   try
     run(cmd)
     return true
@@ -263,24 +334,30 @@ explicit requirement and fails with "Unsatisfiable requirements" on such a
 manifest instead of lifting the version; `Pkg.update` of the named packages
 lifts it.
 """
-function repair_environment(project_dir::AbstractString, reason::AbstractString; update::Vector{String} = String[])
+function repair_environment(project_dir::AbstractString, reason::AbstractString; update::Vector{String} = String[], label::AbstractString = "package")
   println(reason)
-  println("Resolving the package environment; this happens once after a checkout or a dependency change.")
+  println("Resolving and compiling the ", label, " environment; this happens once after a checkout or a dependency change and takes a while.")
   @eval using Pkg
   pkgm = Base.invokelatest(getfield, @__MODULE__, :Pkg)
+  started = time()
   try
+    # the environment to repair is the one named, not whichever project the
+    # process was started with (the launcher runs from the library checkout
+    # and repairs the application environment app/)
+    Base.invokelatest(pkgm.activate, project_dir; io = devnull)
     isempty(update) || Base.invokelatest(pkgm.update, update)
     Base.invokelatest(pkgm.resolve)
+    # instantiate installs and precompiles what the manifest lists
     Base.invokelatest(pkgm.instantiate)
-    println("Package environment resolved.")
+    println("The ", label, " environment is ready after ", round(Int, time() - started), " s.")
   catch err
     println()
     println("Could not prepare the dependencies of this checkout.")
     println("Run this once in the checkout directory and start again:")
     if isempty(update)
-      println("    julia --project=. -e \"using Pkg; Pkg.resolve(); Pkg.instantiate()\"")
+      println("    julia --project=$(project_dir) -e \"using Pkg; Pkg.resolve(); Pkg.instantiate()\"")
     else
-      println("    julia --project=. -e \"using Pkg; Pkg.update([" * join(("\\\"" * u * "\\\"" for u in update), ", ") * "]); Pkg.instantiate()\"")
+      println("    julia --project=$(project_dir) -e \"using Pkg; Pkg.update([" * join(("\\\"" * u * "\\\"" for u in update), ", ") * "]); Pkg.instantiate()\"")
     end
     println()
     println("If that fails too, delete Manifest.toml and repeat. It is not tracked,")
@@ -289,6 +366,31 @@ function repair_environment(project_dir::AbstractString, reason::AbstractString;
     rethrow(err)
   end
   return nothing
+end
+
+"""
+    prepare_environments(library_dir, app_dir) -> (library = Bool, application = Bool)
+
+Bring the library environment and the application environment into a
+loadable state, in that order (the application carries the library by
+path), and say what was done. Each flag is true when that environment was
+resolved and compiled here. A second start finds both up to date and does
+nothing beyond the two TOML reads.
+"""
+function prepare_environments(library_dir::AbstractString, app_dir::AbstractString)
+  repaired = Bool[]
+  for (label, dir) in (("library", library_dir), ("application", app_dir))
+    missing_deps = unresolved_dependencies(dir)
+    if isempty(missing_deps)
+      push!(repaired, false)
+      continue
+    end
+    println("First start: setting up the ", label, " environment (", dir, "): ", join(missing_deps, ", "), ".")
+    repair_environment(dir, "This checkout has no ready " * label * " environment yet."; update = outdated_dependencies(missing_deps), label = label)
+    push!(repaired, true)
+  end
+  any(repaired) || println("Environments up to date: library and application.")
+  return (library = repaired[1], application = repaired[2])
 end
 
 """
@@ -302,6 +404,9 @@ function outdated_dependencies(unresolved::AbstractVector{<:AbstractString})::Ve
   return [String(first(split(d, ' '))) for d in unresolved if occursin(" < ", d)]
 end
 
+# `image`, `ask`, `relaunch` and `current_image` are the seams a test uses:
+# a fixture image, a fixed answer, a recorded relaunch instead of a new
+# process, and the image this process runs on.
 """
     handle_sysimage(args, script, project_dir)
 
@@ -312,21 +417,35 @@ build and relaunch through the fresh one. `--rebuild-sysimage` builds even
 when the current image is fine. Returns `nothing` when the caller should
 just continue in this process.
 """
-function handle_sysimage(args::Vector{String}, script::AbstractString, project_dir::AbstractString)
+function handle_sysimage(args::Vector{String}, script::AbstractString, project_dir::AbstractString;
+                         image::AbstractString = sysimage_path(), ask = ask_build, relaunch = relaunch_with_sysimage,
+                         current_image::AbstractString = unsafe_string(Base.JLOptions().image_file))
   get(ENV, "SPARLECTRA_NO_SYSIMAGE", "0") == "1" && return nothing
   NO_IMAGE_FLAG in args && return nothing
   # set by relaunch_with_sysimage: this process IS the relaunched one
   get(ENV, "SPARLECTRA_SYSIMAGE_CHECKED", "0") == "1" && return nothing
 
-  image = sysimage_path()
+  # an image given from outside (-J) is neither judged nor touched
+  external = external_sysimage(image; current = current_image)
+  if external !== nothing
+    println("Running on a sysimage given from outside (", external, "): it is not checked, not rebuilt and not removed.")
+    return nothing
+  end
+
   rebuild = REBUILD_FLAG in args
   passthrough = filter(a -> a != REBUILD_FLAG && a != NO_IMAGE_FLAG, args)
   problem = sysimage_problem(image, project_dir)
 
   if !rebuild && problem === nothing
-    relaunch_with_sysimage(image, script, project_dir, passthrough)
+    relaunch(image, script, project_dir, passthrough)
     return nothing
   end
+
+  # an image that exists but cannot be used (Manifest or a source tree
+  # changed, other Julia, unreadable metadata, metadata missing) is stale;
+  # the Web UI never starts on it, and unless a new one replaces it now, it
+  # goes
+  stale = problem !== nothing && (isfile(image) || isfile(sysimage_meta_path(image)))
 
   if rebuild
     println("Rebuilding the sysimage on request ($(REBUILD_FLAG)).")
@@ -334,7 +453,10 @@ function handle_sysimage(args::Vector{String}, script::AbstractString, project_d
     println("Sysimage: ", problem, ".")
     println("Building one takes a few minutes. Afterwards the Web UI starts in seconds")
     println("and no page has to compile on first use.")
-    if !ask_build("Build the sysimage now? [Y/n] ")
+    if !ask("Build the sysimage now? [y/N] ")
+      if stale && remove_stale_sysimage(image) === :removed
+        println("Sysimage is out of date and was removed. Start with $(basename(script)) $(REBUILD_FLAG) to build a new one.")
+      end
       println("Starting without a sysimage: Julia compiles every code path on first")
       println("use, so the first click on each page takes noticeably longer.")
       println("You can build one later with:  $(basename(script)) $(REBUILD_FLAG)")
@@ -342,13 +464,18 @@ function handle_sysimage(args::Vector{String}, script::AbstractString, project_d
     end
   end
 
+  # the build writes to a staging file and replaces the image only when it
+  # succeeded; a failed build leaves the old image, which is stale and goes
   if build_sysimage(project_dir)
     problem = sysimage_problem(image, project_dir)
     if problem === nothing
-      relaunch_with_sysimage(image, script, project_dir, passthrough)
+      relaunch(image, script, project_dir, passthrough)
       return nothing
     end
     println("The build produced no usable image ($(problem)); starting without it.")
+  end
+  if stale && remove_stale_sysimage(image) === :removed
+    println("The outdated sysimage was removed; start with $(basename(script)) $(REBUILD_FLAG) to build a new one.")
   end
   return nothing
 end

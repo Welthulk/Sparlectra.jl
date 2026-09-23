@@ -209,7 +209,7 @@ function run_demo_case_tests()
     # would silently undo that guarantee).
     @testset "shipped cases load through the Web UI" begin (function ()
       app_root = normpath(joinpath(dirname(@__DIR__)))
-      offered = Sparlectra._webui_bundled_scf_options(app_root)
+      offered = SparlectraApp._webui_bundled_scf_options(app_root)
       @test "sp_case14.scf.json" in offered
       @test "sp_casePST.scf.json" in offered
       # 0.12.5: the feeder/Q-limit example cases and the plain PGM files are
@@ -218,13 +218,13 @@ function run_demo_case_tests()
       @test "feeder3_hardpv_pgm.json" in offered
       @test !("README.md" in offered)
       cache = mktempdir()
-      ctx = Sparlectra._webui_case_context(; application_root = app_root, case_directory = cache)
+      ctx = SparlectraApp._webui_case_context(; application_root = app_root, case_directory = cache)
       @test "sp_case14.scf.json" in ctx.casefiles
-      staged = Sparlectra._webui_stage_bundled_case!(app_root, cache, "sp_case14.scf.json")
+      staged = SparlectraApp._webui_stage_bundled_case!(app_root, cache, "sp_case14.scf.json")
       @test staged == joinpath(cache, "sp_case14.scf.json")
       @test isfile(staged)
       @test isfile(joinpath(cache, "sp_case14.config.yaml"))
-      staged_pgm = Sparlectra._webui_stage_bundled_case!(app_root, cache, "feeder3_hardpv_pgm.json")
+      staged_pgm = SparlectraApp._webui_stage_bundled_case!(app_root, cache, "feeder3_hardpv_pgm.json")
       @test staged_pgm == joinpath(cache, "feeder3_hardpv_pgm.json")
       @test isfile(joinpath(cache, "feeder3_hardpv_pgm.config.yaml"))
       @test isfile(joinpath(cache, "sp_case14.measurements.csv"))
@@ -233,13 +233,13 @@ function run_demo_case_tests()
       @test isfile(joinpath(cache, "sp_case14.measurements.baddata.csv"))
       # a user-modified sidecar in the cache survives a second staging
       write(joinpath(cache, "sp_case14.config.yaml"), "config_version: 1\nscope: case\ncase: sp_case14.scf.json\npower_flow:\n  tol: 1.0e-8\n  max_iter: 44\n")
-      Sparlectra._webui_stage_bundled_case!(app_root, cache, "sp_case14.scf.json")
+      SparlectraApp._webui_stage_bundled_case!(app_root, cache, "sp_case14.scf.json")
       @test occursin("max_iter: 44", read(joinpath(cache, "sp_case14.config.yaml"), String))
       # the staged case runs through the service front door, and the run
       # PROVES the pinning arrived (succeeded only confirms the copy, not
       # the config): the effective-config artifact must name the
       # case configuration file as a resolution source
-      run = Sparlectra.start_powerflow_run(Dict("casefile" => "sp_case14.scf.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(cache, "runs")); case_directory = cache)
+      run = SparlectraApp.start_powerflow_run(Dict("casefile" => "sp_case14.scf.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(cache, "runs")); case_directory = cache)
       @test run["status"] == "succeeded"
       eff_path = joinpath(String(run["output_dir"]), "effective_config.yaml")
       @test isfile(eff_path)
@@ -252,7 +252,7 @@ function run_demo_case_tests()
       @test occursin("source: case_sidecar", tol_seg)
       @test occursin("value: 1.0e-8", tol_seg)
       # an unknown name stages nothing
-      @test Sparlectra._webui_stage_bundled_case!(app_root, cache, "sp_nope.scf.json") === nothing
+      @test SparlectraApp._webui_stage_bundled_case!(app_root, cache, "sp_nope.scf.json") === nothing
     end)() end
 
     # REPLACES the former testset "hostile general config cannot move the

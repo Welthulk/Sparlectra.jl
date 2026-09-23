@@ -7,6 +7,7 @@ the detailed pages instead of repeating them.
 
 ```julia
 using Sparlectra
+using SparlectraApp   # service API: environment app/, or app/ on the load path
 
 result = run_sparlectra_api(
   casefile = "case118.m",
@@ -37,6 +38,7 @@ copy of it:
 
 ```julia
 using Sparlectra
+using SparlectraApp   # service API: environment app/, or app/ on the load path
 cp(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "my_configuration.yaml")
 ```
 
@@ -107,7 +109,7 @@ sysimage cannot be moved between operating systems.
 A relocatable executable with an embedded Julia runtime is not part of the
 package. The build script for it lives in the checkout at
 `tools/build_app.jl` and can be run directly
-(`julia --project=. tools/build_app.jl --flavor=full`).
+(`julia --project=app tools/build_app.jl --flavor=full`).
 
 ## Auto mode
 

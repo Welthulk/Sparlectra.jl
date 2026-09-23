@@ -32,11 +32,8 @@ if ! command -v julia >/dev/null 2>&1; then
   exit 1
 fi
 
-# A fresh checkout has no Manifest.toml yet: resolve dependencies once.
-if [ ! -f "$DIR/Manifest.toml" ]; then
-  echo "First start: resolving Julia dependencies (one-time)..."
-  julia --project="$DIR" -e "using Pkg; Pkg.instantiate()"
-fi
+# A fresh checkout has no Manifest.toml yet: start_webui.jl resolves and
+# compiles both environments (the library and app/) on its own and says so.
 
 # Multi-core by default: the threaded surfaces (island solves, short-circuit
 # sweeps, N-1 batches) need Julia THREADS, which are fixed at process start.

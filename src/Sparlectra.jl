@@ -564,33 +564,8 @@ export
   run_sparlectra_cases,                   # Run configured MATPOWER cases sequentially.
   run_acpflow,                            # Thin AC power-flow alias for run_sparlectra.
   SparlectraRunResult,                    # Stable typed framework-run result.
-  run_sparlectra_api,                     # Stable non-interactive backend contract for GUI/API integrations.
-  run_fixed_reference_self_check,         # Evaluate mismatch at a case's own stored VM/VA, no corrective Newton step.
-  SparlectraApiResult,                    # Structured API run status, numerical metadata, and artifacts.
-  SparlectraApiArtifact,                  # Explicit metadata for generated API artifacts.
   GUI_EDITABLE_CONFIG_KEYS,               # Controlled allowlist for GUI configuration overrides.
   validate_gui_config_overrides,          # Validate and nest dotted GUI configuration overrides.
-  collect_sparlectra_api_artifacts,        # Discover generated files without filename assumptions.
-  POWERFLOW_RUN_INDEX_FILENAME,           # Persistent local PowerFlow run-index filename.
-  start_powerflow_run,                    # Start and persist a local PowerFlow service run.
-  load_powerflow_run_index,               # Load the persistent run index from an output root.
-  list_powerflow_runs,                    # List indexed runs and their disk availability.
-  refresh_powerflow_run_registry!,        # Recover the in-process registry from disk.
-  delete_powerflow_run,                   # Safely delete one registered run beneath an output root.
-  delete_all_powerflow_runs,              # Safely delete all registered runs beneath an output root.
-  get_powerflow_result,                   # Look up serialized run metadata by run ID.
-  list_powerflow_artifacts,               # List run artifacts by run ID.
-  resolve_powerflow_artifact,             # Safely resolve a run artifact by metadata name.
-  default_webui_output_root,              # Return the user-writable default Web UI output directory.
-  default_webui_config_path,              # Return the provisioned Web UI configuration path.
-  default_webui_case_cache_dir,           # Return the user-writable Web UI case cache.
-  default_webui_operation_log_path,       # Return the user-writable Web UI operation-log path.
-  start_sparlectra_webui,                 # Start the loopback-only local PowerFlow Web UI.
-  buildSysimage,                          # One-call sysimage build (10-20 min, see docstring).
-  to_dict,                                # Convert API results and artifacts to dictionaries.
-  to_namedtuple,                          # Convert API results to named tuples.
-  to_json,                                # Serialize API results as JSON.
-  to_yaml,                                # Serialize API results as YAML.
   run_matpower_case,                      # Run a MATPOWER case through the high-level workflow.
 
   # solver_core.jl
@@ -689,9 +664,14 @@ export
 
 # --- core: types, configuration, network model, solvers, SE, SC, N-1 ------
 include("performance_profile.jl")
+# session facts (abort hook, session kind) and the CSV writers: library
+# code depends on both, so they sit ahead of every consumer
+include("session.jl")
 include("config/yamlparams.jl")
 include("controller/control_framework.jl")
 include("config/configuration.jl")
+include("csv_output.jl")
+include("result_csv.jl")
 # configuration resolution (the precedence chain) lives with the
 # configuration it resolves
 include("config/config_overrides.jl")
@@ -806,28 +786,8 @@ include("adapters/matpower/FetchMatpowerCase.jl")
 using .FetchMatpowerCase: ensure_casefile, large_cases_dir
 include("adapters/matpower/matpower_runner.jl")
 
-# --- api: run services and their metadata/artifact plumbing ----------------
-include("api/api_types.jl")
-include("api/serialization.jl")
-include("api/artifacts.jl")
-include("api/run_metadata.jl")
-include("api/run_api.jl")
-include("api/powerflow_service.jl")
-# Web UI/service short-circuit run: needs the ShortCircuitResult
-# type above and the API result helpers included earlier.
-include("api/run_short_circuit_service.jl")
-include("api/run_import_analysis_service.jl")
-# Web UI/service N-1 contingency run (#331 Phase 5): needs the contingency
-# batch API above and the shared config-driven import + API result helpers.
-include("api/run_contingency_service.jl")
-include("api/run_state_estimation_service.jl")
-# measurement generator of the Web UI demo action (options struct plus the
-# targeted critical thinning); needs the SE service import helpers above
-include("api/se_measurement_generator.jl")
-
-# --- webui: the local browser UI plus the sysimage build tooling -----------
-include("webui/webui.jl")
-include("build/sysimage_builder.jl")
+# the service layer, the Web UI and the sysimage build live in the
+# application package under app/; the core knows nothing of them
 include("build/precompile.jl")
 
 # Runs on every load, native session and sysimage alike. The one check here

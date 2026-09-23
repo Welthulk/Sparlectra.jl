@@ -25,6 +25,7 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "power_flow.max_iter",
   "power_flow.autodamp",
   "power_flow.autodamp_min",
+  "power_flow.flatstart",
   "power_flow.qlimits.enabled",
   "power_flow.qlimits.enforcement_mode",
   "power_flow.solver",
@@ -143,7 +144,7 @@ function _validate_override_type(key::String, value, expected::Type)
 end
 
 function _validate_gui_override_value(key::String, value)
-  if key in ("power_flow.autodamp", "power_flow.qlimits.enabled", "power_flow.start_current_iteration.enabled", "power_flow.start_current_iteration.accept_only_if_improved", "power_flow.start_current_iteration.only_for_large_cases", "power_flow.merit.enabled", "power_flow.merit.fallback_max_mismatch", "power_flow.trust_region.enabled", "power_flow.apslf.use_pade", "power_flow.apslf.nr_polish", "power_flow.apslf.convergence_radius", "power_flow.apslf_start.enabled", "power_flow.islands.enabled", "power_flow.islands.diagnostic_continue_after_failure", "power_flow.rescue", "power_flow.dc.fallback", "cgmes_import.require_boundary", "cgmes_import.infer_base_voltages", "benchmark.enabled", "matpower_import.apply_bus_names", "matpower_import.apply_branch_names", "matpower_import.apply_branch_kind", "matpower_import.import_for001_contingencies", "model.net_cache_enabled", "matpower_export.write_solution", "output.console_live", "output.console_summary", "output.startup_latency_hint", "state_estimation.flatstart", "state_estimation.robust", "state_estimation.topology_precheck", "state_estimation.report_residual_correlation")
+  if key in ("power_flow.autodamp", "power_flow.flatstart", "power_flow.qlimits.enabled", "power_flow.start_current_iteration.enabled", "power_flow.start_current_iteration.accept_only_if_improved", "power_flow.start_current_iteration.only_for_large_cases", "power_flow.merit.enabled", "power_flow.merit.fallback_max_mismatch", "power_flow.trust_region.enabled", "power_flow.apslf.use_pade", "power_flow.apslf.nr_polish", "power_flow.apslf.convergence_radius", "power_flow.apslf_start.enabled", "power_flow.islands.enabled", "power_flow.islands.diagnostic_continue_after_failure", "power_flow.rescue", "power_flow.dc.fallback", "cgmes_import.require_boundary", "cgmes_import.infer_base_voltages", "benchmark.enabled", "matpower_import.apply_bus_names", "matpower_import.apply_branch_names", "matpower_import.apply_branch_kind", "matpower_import.import_for001_contingencies", "model.net_cache_enabled", "matpower_export.write_solution", "output.console_live", "output.console_summary", "output.startup_latency_hint", "state_estimation.flatstart", "state_estimation.robust", "state_estimation.topology_precheck", "state_estimation.report_residual_correlation")
     _validate_override_type(key, value, Bool)
   elseif key in ("power_flow.max_iter", "power_flow.start_current_iteration.max_iter", "power_flow.apslf.order", "power_flow.apslf_start.order", "benchmark.samples", "output.detailed_result_csv_direct_threshold_buses", "output.detailed_result_csv_buffer_initial_bytes", "output.detailed_result_csv_buffer_max_bytes", "output.detailed_result_csv_streaming_threshold_rows", "output.console_max_rows", "output.result_table_max_rows", "output.result_table_large_case_threshold_buses")
     _validate_override_type(key, value, Int)
@@ -470,13 +471,17 @@ caller owns the failure mapping.
 """
 function resolve_config(config_file::AbstractString, case_path::AbstractString, overrides::AbstractDict = Dict{String,Any}(); auto_profile_overrides::AbstractDict = Dict{String,Any}())
   scf_level = Dict{String,Any}()
+  scf_dropped = String[]
   is_scf_case = lowercase(splitext(String(case_path))[2]) == ".json" && isfile(case_path)
   if is_scf_case
     scf_level = try
-      scf_case_config(String(case_path))
+      scf_case_config(String(case_path); dropped = scf_dropped)
     catch err
       throw(ConfigResolveError("invalid_case_file", err))
     end
+    # an old case file with machine-scope keys: dropped, and said so in the
+    # run log; a re-export writes the file without them
+    isempty(scf_dropped) || @warn "sparlectra.config inside $(basename(String(case_path))) carries $(length(scf_dropped)) setting(s) outside the case scope, written by an older Sparlectra and ignored: $(join(scf_dropped, ", ")). Re-export the case file to clear this note."
     # maxlog per case file: repeating the same deprecation for every run of
     # the same case says nothing new and buried the rest of the output
     isempty(scf_level) || @warn "sparlectra.config inside $(basename(String(case_path))) is deprecated; move these settings to $(basename(case_config_path(case_path))) next to the case file. The block still applies, directly below that file in precedence." maxlog = 1 _id = Symbol("scf_cfg_", basename(String(case_path)))
@@ -516,7 +521,7 @@ function resolve_config(config_file::AbstractString, case_path::AbstractString, 
       config, effective_raw = _load_api_config(String(config_file), nested; case_scope_from_defaults = isfile(case_config_path(case_path)))
     end
   end
-  return (config = config, effective_raw = effective_raw, merged_overrides = merged, nested_overrides = nested, scf_config = scf_level, case_config = case_level, auto_profile_config = auto_level)
+  return (config = config, effective_raw = effective_raw, merged_overrides = merged, nested_overrides = nested, scf_config = scf_level, case_config = case_level, auto_profile_config = auto_level, scf_dropped_keys = scf_dropped)
 end
 
 # The auto-profile recommendations form their own

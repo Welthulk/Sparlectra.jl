@@ -548,18 +548,13 @@ end
 const _STARTUP_LATENCY_HINT_SHOWN = Ref(false)
 
 # one concise info line on the first run of a fresh native Julia process;
-# sysimage and app sessions never see it (webui_runtime_flavor), and
+# sysimage and app sessions never see it (runtime_session_kind), and
 # output.startup_latency_hint = false silences it entirely
 function _maybe_print_startup_latency_hint(cfg::SparlectraConfig)
   _STARTUP_LATENCY_HINT_SHOWN[] && return nothing
   _STARTUP_LATENCY_HINT_SHOWN[] = true
   cfg.output.startup_latency_hint || return nothing
-  flavor = try
-    webui_runtime_flavor()
-  catch
-    (kind = :native, built = nothing)
-  end
-  flavor.kind === :native || return nothing
+  runtime_session_kind() === :native || return nothing
   @info "First run in a fresh Julia process includes compilation and is slow; later runs are fast. Keep the process running, or build a sysimage (buildSysimage(); usable in any session with julia --sysimage). See the integration guide. Silence with output.startup_latency_hint: false."
   return nothing
 end

@@ -170,7 +170,7 @@ function run_api_extended_tests()
         @test Sparlectra._cached_control_label(control_cache, node.busIdx) == Sparlectra._control_label(control_net, node.busIdx)
       end
       @test Set(Sparlectra._cached_control_label(control_cache, node.busIdx) for node in control_net.nodeVec) == Set(["-", "Q(U)", "P(U)", "Q(U), P(U)"])
-      direct_source = read(joinpath(dirname(@__DIR__), "src", "api", "run_api.jl"), String)
+      direct_source = read(joinpath(dirname(@__DIR__), "app", "src", "api", "run_api.jl"), String)
       # Keep this as a simple source guard: the behavioral cache equivalence
       # checks above cover correctness, while these checks prevent accidental
       # reintroduction of the old per-row control-label path without brittle
@@ -260,7 +260,7 @@ function run_api_extended_tests()
       @test occursin("matpower_dcline_detected", active_run_log)
       @test occursin("matpower_dcline_unsupported", active_run_log)
       @test occursin("powerflow_aborted_unsupported_matpower_dcline", active_run_log)
-      active_result_html = Sparlectra.render_powerflow_result(Dict("run_id" => active_result.run_id, "status" => String(active_result.status), "success" => active_result.success, "reason" => active_result.reason, "message" => active_result.message))
+      active_result_html = SparlectraApp.render_powerflow_result(Dict("run_id" => active_result.run_id, "status" => String(active_result.status), "success" => active_result.success, "reason" => active_result.reason, "message" => active_result.message))
       @test occursin("failed", active_result_html)
       @test occursin("MATPOWER case contains active", active_result_html)
       @test occursin("unsupported_matpower_dcline", active_result_html)
@@ -327,7 +327,7 @@ function run_api_extended_tests()
       @test occursin("tol = ", replace(island_two_text, "=>" => " ="))
       @test occursin("autodamp = true", replace(island_two_text, "=>" => " ="))
       @test occursin("autodamp_min = 0.05", replace(island_two_text, "=>" => " ="))
-      island_result_json = Sparlectra._parse_service_json(read(joinpath(island_result.output_dir, "result.json"), String))
+      island_result_json = SparlectraApp._parse_service_json(read(joinpath(island_result.output_dir, "result.json"), String))
       @test island_result_json["artifact_status"] != "not_started"
       @test island_result_json["solver_status"] != "running"
       @test Set(["result.json", "run.log", "effective_config.yaml", "run_metadata.yaml", "performance.log", "ac_islands.csv", "ac_island_solver_summary.csv", "ac_island_1_solver.log", "ac_island_2_solver.log"]) ⊆ Set(String(artifact["name"]) for artifact in island_result_json["artifacts"])
@@ -344,7 +344,7 @@ function run_api_extended_tests()
       )
       @test island_success.success === true
       @test !occursin("AC island 1 power-flow solve failed", island_success.message)
-      island_success_json = Sparlectra._parse_service_json(read(joinpath(island_success.output_dir, "result.json"), String))
+      island_success_json = SparlectraApp._parse_service_json(read(joinpath(island_success.output_dir, "result.json"), String))
       @test island_success_json["run_status"] == "completed"
       @test island_success_json["final_outcome"]["reason"] == "none"
       @test island_success_json["final_outcome"]["island_wise_all_converged"] === true
@@ -373,10 +373,10 @@ function run_api_extended_tests()
       for line in split(qlimits_disabled_perf_log, '\n')
         @test ncodeunits(line) < 2000
       end
-      @test Sparlectra._compact_performance_profile_value(:some_scalar_key, 42) == "42"
-      @test Sparlectra._compact_performance_profile_value(:phase_callback, identity) === nothing
+      @test SparlectraApp._compact_performance_profile_value(:some_scalar_key, 42) == "42"
+      @test SparlectraApp._compact_performance_profile_value(:phase_callback, identity) === nothing
       huge_value = [(a = i, b = "x"^50) for i in 1:20]
-      compacted = Sparlectra._compact_performance_profile_value(:arbitrary_large_key, huge_value)
+      compacted = SparlectraApp._compact_performance_profile_value(:arbitrary_large_key, huge_value)
       @test compacted isa String
       @test length(compacted) < length(string(huge_value))
 
@@ -488,7 +488,7 @@ power_flow:
       end
       @test all(timing -> get(timing, "elapsed_seconds", 0.0) === nothing || get(timing, "elapsed_seconds", 0.0) >= 0.0, result.service_phase_timings)
       @test occursin("Large case timing summary", run_log)
-      result_json = Sparlectra._parse_service_json(read(joinpath(output_dir, "result.json"), String))
+      result_json = SparlectraApp._parse_service_json(read(joinpath(output_dir, "result.json"), String))
       @test haskey(result_json, "service_phase_timings")
       @test result_json["numerical_converged"] === true
       @test result_json["metadata"]["final_outcome"]["iterations"] == result.iterations
@@ -550,7 +550,7 @@ power_flow:
       mkpath(direct_csv_dir)
       direct_cfg = Sparlectra.OutputConfig(detailed_result_csv_exporter = :direct)
       direct_timing = Dict{Symbol,Any}()
-      direct_artifacts = Sparlectra._write_detailed_result_csv(direct_csv_dir, result.raw_result; format = "excel_de", config = direct_cfg, timing_metadata = direct_timing)
+      direct_artifacts = SparlectraApp._write_detailed_result_csv(direct_csv_dir, result.raw_result; format = "excel_de", config = direct_cfg, timing_metadata = direct_timing)
       @test direct_artifacts == ["bus_voltages_complex.csv", "branch_flows.csv"]
       @test replace(read(joinpath(direct_csv_dir, "bus_voltages_complex.csv"), String), "\r\n" => "\n") == replace(bus_csv, "\r\n" => "\n")
       @test replace(read(joinpath(direct_csv_dir, "branch_flows.csv"), String), "\r\n" => "\n") == replace(branch_csv, "\r\n" => "\n")
@@ -563,12 +563,12 @@ power_flow:
       @test direct_timing[:bus_export_s] >= 0.0
       @test direct_timing[:branch_export_s] >= 0.0
       @test direct_timing[:control_label_cache_s] >= 0.0
-      @test Sparlectra._select_detailed_csv_exporter(result.raw_result.net; config = Sparlectra.OutputConfig(detailed_result_csv_exporter = :auto, detailed_result_csv_direct_threshold_buses = 1)) === :direct
+      @test SparlectraApp._select_detailed_csv_exporter(result.raw_result.net; config = Sparlectra.OutputConfig(detailed_result_csv_exporter = :auto, detailed_result_csv_direct_threshold_buses = 1)) === :direct
       progress_events = String[]
       progress_payloads = Dict{String,Any}[]
       progress_dir = joinpath(tmpdir, "direct_csv_progress")
       mkpath(progress_dir)
-      Sparlectra._write_detailed_result_csv(
+      SparlectraApp._write_detailed_result_csv(
         progress_dir,
         result.raw_result;
         format = "excel_de",
@@ -582,7 +582,7 @@ power_flow:
       abort_checks = Ref(0)
       abort_dir = joinpath(tmpdir, "direct_csv_abort_checks")
       mkpath(abort_dir)
-      Sparlectra._write_detailed_result_csv(abort_dir, result.raw_result; format = "technical", config = direct_cfg, abort_checker = () -> (abort_checks[] += 1))
+      SparlectraApp._write_detailed_result_csv(abort_dir, result.raw_result; format = "technical", config = direct_cfg, abort_checker = () -> (abort_checks[] += 1))
       @test abort_checks[] >= 1
       @test length(power_cache) == length(result.raw_result.net.nodeVec)
 
@@ -641,7 +641,7 @@ power_flow:
       @test !occursin("detailed_result_csv_delimiter:", full_log)
       @test ncodeunits(full_log) > ncodeunits(classic_log)
       full_diagnostic_path = joinpath(full_dir, "diagnose_full.log")
-      Sparlectra._write_powerflow_diagnostics(full_diagnostic_path, full.raw_result; mode = :full)
+      SparlectraApp._write_powerflow_diagnostics(full_diagnostic_path, full.raw_result; mode = :full)
       full_diagnostic_log = read(full_diagnostic_path, String)
       @test occursin("best_blend_mismatch:", full_diagnostic_log)
       @test occursin("nr_initial_mismatch:", full_diagnostic_log)
@@ -657,7 +657,7 @@ power_flow:
       mkpath(qlimit_disabled_dir)
       disabled_metadata = copy(result.metadata)
       disabled_metadata["qlimits_enabled"] = false
-      Sparlectra._write_q_limit_log_artifact(qlimit_disabled_dir, result.raw_result, disabled_metadata)
+      SparlectraApp._write_q_limit_log_artifact(qlimit_disabled_dir, result.raw_result, disabled_metadata)
       qlimit_disabled_log = read(joinpath(qlimit_disabled_dir, "q_limit.log"), String)
       @test occursin("Q-limit handling enabled : false", qlimit_disabled_log)
       @test occursin("Q-limit enforcement      : skipped", qlimit_disabled_log)
@@ -684,7 +684,7 @@ power_flow:
         result.raw_result.performance_profile,
         final_ok_diagnostics,
       )
-      Sparlectra._write_q_limit_log_artifact(final_ok_q_limit_dir, final_ok_result, result.metadata)
+      SparlectraApp._write_q_limit_log_artifact(final_ok_q_limit_dir, final_ok_result, result.metadata)
       final_ok_q_limit_log = read(joinpath(final_ok_q_limit_dir, "q_limit.log"), String)
       @test occursin("Final PV/REF Q-limit validation: OK", final_ok_q_limit_log)
       @test !occursin("Q-limit violations (MVAr):", final_ok_q_limit_log)
@@ -728,7 +728,7 @@ power_flow:
       )
       nonconverged_dir = joinpath(tmpdir, "q_limit_nonconverged")
       mkpath(nonconverged_dir)
-      Sparlectra._write_q_limit_log_artifact(nonconverged_dir, nonconverged_result, result.metadata)
+      SparlectraApp._write_q_limit_log_artifact(nonconverged_dir, nonconverged_result, result.metadata)
       nonconverged_log = read(joinpath(nonconverged_dir, "q_limit.log"), String)
       @test occursin("Last-iteration Q-limit diagnostic (NR did not converge; values are not a valid final solution)", nonconverged_log)
       @test occursin("Final PV/REF Q-limit check: SKIPPED (NR did not converge)", nonconverged_log)
@@ -756,12 +756,12 @@ power_flow:
       )
       nonconverged_csv_dir = joinpath(tmpdir, "nonconverged_csv")
       mkpath(nonconverged_csv_dir)
-      nonconverged_csv = Sparlectra._write_detailed_result_csv(nonconverged_csv_dir, nonconverged_solution; format = "technical", config = direct_cfg)
+      nonconverged_csv = SparlectraApp._write_detailed_result_csv(nonconverged_csv_dir, nonconverged_solution; format = "technical", config = direct_cfg)
       @test nonconverged_csv == ["bus_voltages_complex.csv", "branch_flows.csv"]
       @test isfile(joinpath(nonconverged_csv_dir, "bus_voltages_complex.csv"))
       @test isfile(joinpath(nonconverged_csv_dir, "branch_flows.csv"))
-      @test Sparlectra._csv_solution_quality(nonconverged_solution) == "not_converged_last_iterate"
-      synthetic_nonconverged_api = Sparlectra._api_result(
+      @test SparlectraApp._csv_solution_quality(nonconverged_solution) == "not_converged_last_iterate"
+      synthetic_nonconverged_api = SparlectraApp._api_result(
         status = :not_converged,
         success = false,
         converged = false,
@@ -774,7 +774,7 @@ power_flow:
         metadata = Dict{String,Any}("service_status" => "completed", "numerical_status" => "not_converged", "run_status" => "completed_nonconverged", "detailed_result_csv_status" => "exported_diagnostic", "detailed_result_csv_solution_quality" => "not_converged_last_iterate"),
         raw_result = nonconverged_solution,
       )
-      synthetic_nonconverged_dict = Sparlectra.to_dict(synthetic_nonconverged_api)
+      synthetic_nonconverged_dict = SparlectraApp.to_dict(synthetic_nonconverged_api)
       @test synthetic_nonconverged_dict["status"] == "not_converged"
       @test synthetic_nonconverged_dict["success"] === false
       @test synthetic_nonconverged_dict["service_status"] == "completed"
@@ -783,7 +783,7 @@ power_flow:
       @test !occursin("Final PV/REF Q-limit check: OK", nonconverged_log)
 
       failed_diagnostic = joinpath(tmpdir, "failed_diagnose.txt")
-      Sparlectra._write_powerflow_diagnostics(failed_diagnostic, result.raw_result; diagnostic_fn = (io, _) -> error("diagnostic test failure"))
+      SparlectraApp._write_powerflow_diagnostics(failed_diagnostic, result.raw_result; diagnostic_fn = (io, _) -> error("diagnostic test failure"))
       failed_diagnostic_text = read(failed_diagnostic, String)
       @test occursin("Diagnostic generation failed", failed_diagnostic_text)
       @test occursin("diagnostic test failure", failed_diagnostic_text)
@@ -858,20 +858,21 @@ power_flow:
         @test sidecar_check.raw_result.iterations == 1
         @test sidecar_check.raw_result.iterations == plain_check.raw_result.iterations
         @test isapprox(sidecar_check.raw_result.final_mismatch, plain_check.raw_result.final_mismatch; rtol = 1e-8)
-        forced_overrides = Sparlectra._self_check_effective_overrides(Dict{String,Any}("power_flow.max_iter" => 80, "power_flow.rescue" => true, "power_flow.tol" => 1.0e-4))
+        forced_overrides = SparlectraApp._self_check_effective_overrides(Dict{String,Any}("power_flow.max_iter" => 80, "power_flow.rescue" => true, "power_flow.tol" => 1.0e-4))
         @test forced_overrides["power_flow.max_iter"] == 1
         @test forced_overrides["power_flow.rescue"] === false
         # everything the self-check does not force stays the caller's choice
         @test forced_overrides["power_flow.tol"] == 1.0e-4
-        # the two keys the override allowlist does not admit travel by file
-        @test !haskey(forced_overrides, "power_flow.flatstart")
+        # the flat start is a GUI key and rides the override level; the one key
+        # the override allowlist does not admit travels by file
+        @test forced_overrides["power_flow.flatstart"] === false
         @test !haskey(forced_overrides, "power_flow.start_mode.start_projection")
 
         bad_config_dir = joinpath(tmpdir, "self_check_missing_config")
         @test_throws ArgumentError run_fixed_reference_self_check(casefile = casefile, config_file = joinpath(tmpdir, "does_not_exist.yaml"), output_dir = bad_config_dir)
 
         execution_failure_log = joinpath(tmpdir, "execution_failure_diagnose.log")
-        Sparlectra._write_execution_failure_diagnostics(execution_failure_log, "nr_nonfinite", "AC island 1 power-flow solve failed:\n  iterations=0\n  stage=before_nr")
+        SparlectraApp._write_execution_failure_diagnostics(execution_failure_log, "nr_nonfinite", "AC island 1 power-flow solve failed:\n  iterations=0\n  stage=before_nr")
         execution_failure_text = read(execution_failure_log, String)
         @test occursin("outcome: execution_failure", execution_failure_text)
         @test occursin("reason: nr_nonfinite", execution_failure_text)
@@ -916,7 +917,7 @@ power_flow:
       @test !occursin("Bus │      Qmin", pvlimit_summary_text)
       qlimit_artifact_dir = joinpath(tmpdir, "q_limit_artifacts")
       mkpath(qlimit_artifact_dir)
-      qlimit_artifacts = Sparlectra._write_q_limit_detail_artifacts(qlimit_artifact_dir, control_net)
+      qlimit_artifacts = SparlectraApp._write_q_limit_detail_artifacts(qlimit_artifact_dir, control_net)
       @test "q_limit_events.csv" in qlimit_artifacts
       @test length(collect(eachline(joinpath(qlimit_artifact_dir, "q_limit_events.csv")))) == 6
 
@@ -943,7 +944,7 @@ power_flow:
       @test occursin("\"run_id\":\"$(result.run_id)\"", result_file_text)
       @test occursin("\"schema_version\":\"1.0\"", result_file_text)
       @test occursin("\"artifacts\"", result_file_text)
-      result_file_payload = Sparlectra._parse_service_json(result_file_text)
+      result_file_payload = SparlectraApp._parse_service_json(result_file_text)
       @test Set(String(artifact["name"]) for artifact in result_file_payload["artifacts"]) == Set(artifact.name for artifact in collect_sparlectra_api_artifacts(result.output_dir))
 
       write(joinpath(output_dir, "buses.csv"), "bus,vm\n1,1.0\n")
@@ -1146,19 +1147,19 @@ power_flow:
 
       @testset "Web UI case resolution" begin (function ()
         existing_m = _write_api_test_case_ext(joinpath(tmpdir, "existing_case.m"))
-        resolved_existing_m = Sparlectra._resolve_powerflow_casefile(existing_m, joinpath(tmpdir, "cases"))
+        resolved_existing_m = SparlectraApp._resolve_powerflow_casefile(existing_m, joinpath(tmpdir, "cases"))
         @test lowercase(splitext(resolved_existing_m)[2]) == ".m"
         @test isfile(resolved_existing_m)
 
         existing_jl = joinpath(tmpdir, "existing_case.jl")
         write(existing_jl, "nothing\n")
-        @test Sparlectra._resolve_powerflow_casefile(existing_jl, joinpath(tmpdir, "cases")) == abspath(existing_jl)
+        @test SparlectraApp._resolve_powerflow_casefile(existing_jl, joinpath(tmpdir, "cases")) == abspath(existing_jl)
 
         sibling_m = joinpath(tmpdir, "sibling_case.m")
         sibling_jl = joinpath(tmpdir, "sibling_case.jl")
         write(sibling_m, "not parsed when the Julia case exists\n")
         write(sibling_jl, "nothing\n")
-        @test Sparlectra._resolve_powerflow_casefile(sibling_m, joinpath(tmpdir, "cases")) == abspath(sibling_m)
+        @test SparlectraApp._resolve_powerflow_casefile(sibling_m, joinpath(tmpdir, "cases")) == abspath(sibling_m)
         ensure_calls = NamedTuple[]
         fake_ensure = function (requested; outdir, to_jl)
           push!(ensure_calls, (; requested, outdir, to_jl))
@@ -1169,25 +1170,25 @@ power_flow:
           return endswith(lowercase(requested), ".jl") ? jlfile : mfile
         end
         case_directory = joinpath(tmpdir, "downloaded_cases")
-        resolved_missing = Sparlectra._resolve_powerflow_casefile("case118.m", case_directory; ensure_casefile_fn = fake_ensure)
+        resolved_missing = SparlectraApp._resolve_powerflow_casefile("case118.m", case_directory; ensure_casefile_fn = fake_ensure)
         @test resolved_missing == abspath(joinpath(case_directory, "case118.m"))
         @test only(ensure_calls) == (requested = "case118.m", outdir = abspath(case_directory), to_jl = false)
         empty!(ensure_calls)
         write(joinpath(case_directory, "case14.m"), "downloaded MATPOWER placeholder\n")
         write(joinpath(case_directory, "case14.jl"), "nothing\n")
-        resolved_requested_jl = Sparlectra._resolve_powerflow_casefile("case14.jl", case_directory; ensure_casefile_fn = fake_ensure)
+        resolved_requested_jl = SparlectraApp._resolve_powerflow_casefile("case14.jl", case_directory; ensure_casefile_fn = fake_ensure)
         @test resolved_requested_jl == abspath(joinpath(case_directory, "case14.m"))
         @test isempty(ensure_calls)
 
         only_jl_dir = joinpath(tmpdir, "only_jl_cases")
         mkpath(only_jl_dir)
         write(joinpath(only_jl_dir, "case118.jl"), "nothing\n")
-        err = @test_throws ArgumentError Sparlectra._resolve_powerflow_casefile("case118.jl", only_jl_dir; ensure_casefile_fn = fake_ensure)
+        err = @test_throws ArgumentError SparlectraApp._resolve_powerflow_casefile("case118.jl", only_jl_dir; ensure_casefile_fn = fake_ensure)
         @test occursin("Generated MATPOWER .jl cache files are not user-selectable", sprint(showerror, err.value))
 
         empty!(ensure_calls)
-        @test_throws ArgumentError Sparlectra._resolve_powerflow_casefile(joinpath("missing", "case14.m"), case_directory; ensure_casefile_fn = fake_ensure)
-        @test_throws ArgumentError Sparlectra._resolve_powerflow_casefile("https://example.com/case14.m", case_directory; ensure_casefile_fn = fake_ensure)
+        @test_throws ArgumentError SparlectraApp._resolve_powerflow_casefile(joinpath("missing", "case14.m"), case_directory; ensure_casefile_fn = fake_ensure)
+        @test_throws ArgumentError SparlectraApp._resolve_powerflow_casefile("https://example.com/case14.m", case_directory; ensure_casefile_fn = fake_ensure)
         @test isempty(ensure_calls)
 
         rejected_path = start_powerflow_run(Dict("casefile" => joinpath("missing", "case14.m")); case_directory)
@@ -1312,7 +1313,7 @@ power_flow:
               @test !occursin("current_iteration_reason: disabled", diagnose_log)
             end
           end
-          result_html = Sparlectra.render_powerflow_result(mode_run)
+          result_html = SparlectraApp.render_powerflow_result(mode_run)
           @test occursin("Q-limit enforcement mode", result_html)
           @test occursin(mode, result_html)
           @test occursin("Runtime casefile", result_html)
@@ -1339,26 +1340,26 @@ power_flow:
         put!(entered, nothing)
         token = request["cancellation_token"]
         while !isready(release)
-          Sparlectra._check_powerflow_cancelled!(token)
+          SparlectraApp._check_powerflow_cancelled!(token)
           yield()
         end
         take!(release)
         return start_powerflow_run(request; case_directory)
       end
       async_request = Dict("casefile" => casefile, "config_file" => config_file, "output_root" => joinpath(tmpdir, "async-runs"))
-      active = Sparlectra.start_webui_powerflow_run(async_request; runner = controlled_runner)
+      active = SparlectraApp.start_webui_powerflow_run(async_request; runner = controlled_runner)
       take!(entered)
-      @test Sparlectra.get_webui_powerflow_job(active["run_id"])["status"] == "running"
-      @test Sparlectra.get_active_webui_powerflow_job()["run_id"] == active["run_id"]
-      rejected_concurrent = Sparlectra.start_webui_powerflow_run(async_request; runner = controlled_runner)
+      @test SparlectraApp.get_webui_powerflow_job(active["run_id"])["status"] == "running"
+      @test SparlectraApp.get_active_webui_powerflow_job()["run_id"] == active["run_id"]
+      rejected_concurrent = SparlectraApp.start_webui_powerflow_run(async_request; runner = controlled_runner)
       @test rejected_concurrent["reason"] == "active_run"
-      aborted = Sparlectra.abort_webui_powerflow_run(active["run_id"])
+      aborted = SparlectraApp.abort_webui_powerflow_run(active["run_id"])
       @test aborted["status"] == "aborting"
       @test aborted["abort_status"] == "accepted"
       @test haskey(aborted, "abort_phase")
       @test occursin("Current phase:", aborted["message"])
       @test !aborted["success"]
-      @test Sparlectra.abort_webui_powerflow_run(active["run_id"])["abort_status"] == "already_aborting"
+      @test SparlectraApp.abort_webui_powerflow_run(active["run_id"])["abort_status"] == "already_aborting"
       # an ABORTING run no longer blocks a new submission (a 25k-bus
       # import sat in a non-interruptible call, the
       # job stayed "aborting", and the whole Web UI refused every further
@@ -1366,24 +1367,24 @@ power_flow:
       # previous expectation here asserted that lock-up as correct; the
       # docstring of start_webui_powerflow_run always promised the
       # opposite ("releases the UI immediately").
-      @test Sparlectra._webui_active_job(; states = Sparlectra._POWERFLOW_WEBUI_BLOCKING_STATES) === nothing
-      @test Sparlectra.get_active_webui_powerflow_job()["run_id"] == active["run_id"]   # still reported as active for the UI
-      quick_after_abort = Sparlectra.start_webui_powerflow_run(merge(async_request, Dict("output_root" => joinpath(tmpdir, "after-abort"))); runner = (request; case_directory = nothing) -> start_powerflow_run(request; case_directory))
+      @test SparlectraApp._webui_active_job(; states = SparlectraApp._POWERFLOW_WEBUI_BLOCKING_STATES) === nothing
+      @test SparlectraApp.get_active_webui_powerflow_job()["run_id"] == active["run_id"]   # still reported as active for the UI
+      quick_after_abort = SparlectraApp.start_webui_powerflow_run(merge(async_request, Dict("output_root" => joinpath(tmpdir, "after-abort"))); runner = (request; case_directory = nothing) -> start_powerflow_run(request; case_directory))
       @test quick_after_abort["status"] in ("queued", "running")
-      wait(Sparlectra._POWERFLOW_WEBUI_JOBS[quick_after_abort["run_id"]]["task"])
-      @test Sparlectra.abort_webui_powerflow_run("../unsafe")["reason"] == "unsafe_run_id"
-      wait(Sparlectra._POWERFLOW_WEBUI_JOBS[active["run_id"]]["task"])
+      wait(SparlectraApp._POWERFLOW_WEBUI_JOBS[quick_after_abort["run_id"]]["task"])
+      @test SparlectraApp.abort_webui_powerflow_run("../unsafe")["reason"] == "unsafe_run_id"
+      wait(SparlectraApp._POWERFLOW_WEBUI_JOBS[active["run_id"]]["task"])
       @test get_powerflow_result(active["run_id"])["status"] == "aborted"
       @test !get_powerflow_result(active["run_id"])["success"]
       @test occursin("Run aborted by user.", read(joinpath(aborted["output_dir"], "run.log"), String))
       @test occursin("Phase active at abort:", read(joinpath(aborted["output_dir"], "run.log"), String))
-      @test Sparlectra.abort_webui_powerflow_run(active["run_id"])["abort_status"] == "already_aborted"
-      replacement = Sparlectra.start_webui_powerflow_run(async_request; runner = controlled_runner)
+      @test SparlectraApp.abort_webui_powerflow_run(active["run_id"])["abort_status"] == "already_aborted"
+      replacement = SparlectraApp.start_webui_powerflow_run(async_request; runner = controlled_runner)
       @test replacement["status"] in ("queued", "running")
       put!(release, nothing)
-      wait(Sparlectra._POWERFLOW_WEBUI_JOBS[replacement["run_id"]]["task"])
-      @test Sparlectra.get_webui_powerflow_job(active["run_id"])["status"] == "aborted"
-      @test Sparlectra.get_active_webui_powerflow_job() === nothing
+      wait(SparlectraApp._POWERFLOW_WEBUI_JOBS[replacement["run_id"]]["task"])
+      @test SparlectraApp.get_webui_powerflow_job(active["run_id"])["status"] == "aborted"
+      @test SparlectraApp.get_active_webui_powerflow_job() === nothing
 
       artifact_error_runner = function (request; case_directory = nothing)
         request["phase_callback"]("solving_powerflow")
@@ -1391,8 +1392,8 @@ power_flow:
         request["phase_callback"]("writing_artifacts")
         error("injected artifact failure")
       end
-      artifact_error = Sparlectra.start_webui_powerflow_run(async_request; runner = artifact_error_runner)
-      wait(Sparlectra._POWERFLOW_WEBUI_JOBS[artifact_error["run_id"]]["task"])
+      artifact_error = SparlectraApp.start_webui_powerflow_run(async_request; runner = artifact_error_runner)
+      wait(SparlectraApp._POWERFLOW_WEBUI_JOBS[artifact_error["run_id"]]["task"])
       artifact_error_result = get_powerflow_result(artifact_error["run_id"])
       @test artifact_error_result["status"] == "failed"
       @test artifact_error_result["run_status"] == "failed"
@@ -1409,16 +1410,16 @@ power_flow:
         put!(artifact_abort_entered, nothing)
         token = request["cancellation_token"]
         while !isready(artifact_abort_release)
-          Sparlectra._check_powerflow_cancelled!(token)
+          SparlectraApp._check_powerflow_cancelled!(token)
           yield()
         end
         take!(artifact_abort_release)
         return Dict{String,Any}("status" => "succeeded", "success" => true, "run_id" => request["run_id"], "artifacts" => Any[])
       end
-      artifact_abort = Sparlectra.start_webui_powerflow_run(async_request; runner = artifact_abort_runner)
+      artifact_abort = SparlectraApp.start_webui_powerflow_run(async_request; runner = artifact_abort_runner)
       take!(artifact_abort_entered)
-      @test Sparlectra.abort_webui_powerflow_run(artifact_abort["run_id"])["status"] == "aborting"
-      wait(Sparlectra._POWERFLOW_WEBUI_JOBS[artifact_abort["run_id"]]["task"])
+      @test SparlectraApp.abort_webui_powerflow_run(artifact_abort["run_id"])["status"] == "aborting"
+      wait(SparlectraApp._POWERFLOW_WEBUI_JOBS[artifact_abort["run_id"]]["task"])
       artifact_abort_result = get_powerflow_result(artifact_abort["run_id"])
       @test artifact_abort_result["status"] == "aborted"
       @test artifact_abort_result["run_status"] == "aborted"
@@ -1432,7 +1433,7 @@ power_flow:
         solver_checks[] += 1
         solver_checks[] >= 5 && throw(Sparlectra.PowerFlowAborted())
       end)
-      solver_net = deepcopy(Sparlectra._registered_powerflow_run(started["run_id"]).raw_result.net)
+      solver_net = deepcopy(SparlectraApp._registered_powerflow_run(started["run_id"]).raw_result.net)
       @test_throws Sparlectra.PowerFlowAborted runpf!(solver_net; config = powerflow_config(), performance_profile = solver_profile)
       @test solver_checks[] == 5
 
@@ -1458,8 +1459,8 @@ power_flow:
       @test qlimit_resolved.kind === :q_limit_log
       @test qlimit_resolved.mime_type == "text/plain"
 
-      lock(Sparlectra._POWERFLOW_SERVICE_LOCK) do
-        empty!(Sparlectra._POWERFLOW_SERVICE_RUNS)
+      lock(SparlectraApp._POWERFLOW_SERVICE_LOCK) do
+        empty!(SparlectraApp._POWERFLOW_SERVICE_RUNS)
       end
       @test get_powerflow_result(started["run_id"])["reason"] == "run_not_found"
       refresh = refresh_powerflow_run_registry!(output_root)
@@ -1479,8 +1480,8 @@ power_flow:
       stale_csv_result_file = joinpath(stale_csv_dir, "result.json")
       write(stale_csv_result_file, "{}\n")
       write(joinpath(stale_csv_dir, "bus_voltages_complex.csv"), "bus,vm_pu\n1,1.0\n")
-      stale_csv_result = Sparlectra._api_result(run_id = stale_csv_id, status = :succeeded, success = true, output_dir = stale_csv_dir, result_file = stale_csv_result_file, artifacts = SparlectraApiArtifact[])
-      Sparlectra._register_powerflow_run!(stale_csv_result)
+      stale_csv_result = SparlectraApp._api_result(run_id = stale_csv_id, status = :succeeded, success = true, output_dir = stale_csv_dir, result_file = stale_csv_result_file, artifacts = SparlectraApiArtifact[])
+      SparlectraApp._register_powerflow_run!(stale_csv_result)
       stale_csv_artifacts = list_powerflow_artifacts(stale_csv_id)
       @test "bus_voltages_complex.csv" in Set(artifact["name"] for artifact in stale_csv_artifacts)
       stale_csv_resolved = resolve_powerflow_artifact(stale_csv_id, "bus_voltages_complex.csv")
@@ -1508,7 +1509,7 @@ power_flow:
         "run_status" => "finalizing",
         "last_heartbeat" => "2026-06-18T12:17:07.854Z",
       )
-      Sparlectra._write_webui_job_marker!(stale_job, :running, "webui_job_active", "PowerFlow run is active.")
+      SparlectraApp._write_webui_job_marker!(stale_job, :running, "webui_job_active", "PowerFlow run is active.")
       first_stale_refresh = refresh_powerflow_run_registry!(stale_root)
       @test [result.run_id for result in first_stale_refresh["stale_recovered_runs"]] == [stale_run_id]
       stale_result = get_powerflow_result(stale_run_id)
@@ -1519,7 +1520,7 @@ power_flow:
       @test stale_result["artifact_status"] == "running"
       second_stale_refresh = refresh_powerflow_run_registry!(stale_root)
       @test isempty(second_stale_refresh["stale_recovered_runs"])
-      stale_status_html = Sparlectra.render_powerflow_result(stale_result)
+      stale_status_html = SparlectraApp.render_powerflow_result(stale_result)
       @test occursin("Run state was recovered after Web UI restart.", stale_status_html)
       @test occursin("Last known phase: <code>writing_artifacts</code>", stale_status_html)
       @test occursin("No live solver task is attached anymore.", stale_status_html)
@@ -1550,12 +1551,12 @@ power_flow:
       push!(modified_index["runs"], Dict("run_id" => unsafe_id, "output_dir" => tmpdir, "result_file" => joinpath(tmpdir, "result.json")))
       push!(modified_index["runs"], Dict("run_id" => missing_id, "output_dir" => joinpath(output_root, missing_id), "result_file" => joinpath(output_root, missing_id, "result.json")))
       open(index_path, "w") do io
-        Sparlectra._write_json(io, modified_index)
+        SparlectraApp._write_json(io, modified_index)
         println(io)
       end
 
-      lock(Sparlectra._POWERFLOW_SERVICE_LOCK) do
-        empty!(Sparlectra._POWERFLOW_SERVICE_RUNS)
+      lock(SparlectraApp._POWERFLOW_SERVICE_LOCK) do
+        empty!(SparlectraApp._POWERFLOW_SERVICE_RUNS)
       end
       partial_refresh = refresh_powerflow_run_registry!(output_root)
       @test partial_refresh["status"] == "partial"
@@ -1589,10 +1590,10 @@ power_flow:
         push!(entries, Dict("run_id" => run_id, "status" => "succeeded", "success" => true, "output_dir" => run_dir, "result_file" => result_file))
       end
       push!(entries, Dict("run_id" => "unsafe-index-entry", "output_dir" => outside_dir, "result_file" => joinpath(outside_dir, "result.json")))
-      Sparlectra._write_powerflow_run_entries!(output_root, entries)
+      SparlectraApp._write_powerflow_run_entries!(output_root, entries)
 
-      registered = Sparlectra._api_result(run_id = "run-a", status = :succeeded, success = true, output_dir = joinpath(output_root, "run-a"), result_file = joinpath(output_root, "run-a", "result.json"))
-      Sparlectra._register_powerflow_run!(registered)
+      registered = SparlectraApp._api_result(run_id = "run-a", status = :succeeded, success = true, output_dir = joinpath(output_root, "run-a"), result_file = joinpath(output_root, "run-a", "result.json"))
+      SparlectraApp._register_powerflow_run!(registered)
       deleted = delete_powerflow_run("run-a"; output_root)
       @test deleted["success"]
       @test !ispath(joinpath(output_root, "run-a"))
