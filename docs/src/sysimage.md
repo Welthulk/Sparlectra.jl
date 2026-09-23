@@ -5,15 +5,15 @@ for loading the package and once for the first solves. Sparlectra ships two
 complementary answers:
 
 1. **PrecompileTools workload (always on).** The package precompiles the
-   solver hot path at install time (MATPOWER, SCF and PGM import,
-   rectangular Newton-Raphson with UMFPACK, APSLF and the hybrid start,
-   state estimation, losses, DC power flow, the service layer behind the
-   Web UI and the tap control loop; issue #288). This needs no setup and
-   already covers most of the solver latency. Setting the environment
-   variable `SPARLECTRA_PRECOMPILE_WORKLOAD=minimal` before the
-   installation skips the service-layer and control-loop part, which a
-   notebook session never calls; the workshop notebooks set it in their
-   install cell.
+   solver hot path at install time (MATPOWER import, rectangular
+   Newton-Raphson with UMFPACK, losses, `run_sparlectra` on a small
+   network; issue #288). This needs no setup. Setting the environment
+   variable `SPARLECTRA_PRECOMPILE_WORKLOAD=full` before the installation
+   warms the other paths as well (SCF and PGM import, state estimation,
+   APSLF and the hybrid start, DC power flow, the service layer behind the
+   Web UI, the tap control loop) at the price of a much longer precompile;
+   the sysimage build uses it, a library session pays each path on its
+   first call instead.
 2. **PackageCompiler sysimage (this page).** A system image bakes
    Sparlectra and its dependencies into one ahead-of-time compiled shared
    library that Julia loads via `-J`. With it, a Web UI start reaches a

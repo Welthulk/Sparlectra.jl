@@ -69,8 +69,8 @@ reuse (a sysimage-based runner, or a cached Julia compile directory in CI).
 
 Reference times of the profiles on the development machine (16 cores,
 Julia 1.13, package cache warm, each profile in its own process,
-2026-09-23): fast 66 s, pf 100 s, se 46 s, config 22 s, webui 104 s,
-extd 149 s. A profile that grows by more than ten percent against these
+2026-09-23, slim default precompile workload): fast 76 s, pf 101 s,
+se 48 s, config 22 s, webui 104 s, extd 149 s. A profile that grows by more than ten percent against these
 numbers needs a cause before the change is committed; the numbers are
 updated here on purpose, never silently.
 

@@ -56,6 +56,17 @@ using PrecompileTools: @setup_workload, @compile_workload
     _pc_mpower = normpath(joinpath(@__DIR__, "..", "..", "data", "mpower", "warmup_casePST.m"))
     _pc_scf = normpath(joinpath(@__DIR__, "..", "..", "data", "scf", "sp_casePST.scf.json"))
     _pc_pgm = normpath(joinpath(@__DIR__, "..", "..", "data", "scf", "pgm_interop.json"))
+    # SPARLECTRA_PRECOMPILE_WORKLOAD selects the size of the workload.
+    # "default" (and the older spelling "minimal") warms only what every
+    # session needs: one MATPOWER and one SCF import, the rectangular solve
+    # with losses, and run_sparlectra on the workshop ring. Everything else
+    # (PGM import, state estimation, APSLF and the hybrid start, DC power flow, the
+    # service layer, the tap control loop) is "full": it costs most of the
+    # precompile time of the package, and a library session pays it on its
+    # first call of each path instead, which is cheaper than paying for all
+    # of them at every install. The sysimage build sets "full".
+    _pc_mode = get(ENV, "SPARLECTRA_PRECOMPILE_WORKLOAD", "default")
+    _pc_full = _pc_mode == "full"
     @compile_workload begin
         Logging.with_logger(Logging.NullLogger()) do
             redirect_stdout(devnull) do
@@ -66,11 +77,14 @@ using PrecompileTools: @setup_workload, @compile_workload
                     runpf!(_pc_imported.net; config=_pc_imported.config)
                     calcNetLosses!(_pc_imported.net)
                 end
+                # the SCF import is the fixture format of the tests and the
+                # shipped cases: one import here saves every session eight
+                # seconds on its first case for a few seconds of precompile
                 isfile(_pc_scf) && import_case(_pc_scf, _pc_cfg)
-                isfile(_pc_pgm) && import_case(_pc_pgm, _pc_cfg)
+                _pc_full && isfile(_pc_pgm) && import_case(_pc_pgm, _pc_cfg)
 
                 # --- state estimation on the tracked SCF fixture ------------------
-                if isfile(_pc_scf)
+                if _pc_full && isfile(_pc_scf)
                     _pc_se_net = importSCF(_pc_scf)
                     runse!(_pc_se_net)
                 end
@@ -105,23 +119,21 @@ using PrecompileTools: @setup_workload, @compile_workload
                 _pc_cfg_hyb = SparlectraConfig(powerflow=PowerFlowConfig(solver=:rectangular, apslf_start=ApslfStartConfig(enabled=true)), output=_pc_quiet)
 
                 _pc_r_nr = run_sparlectra(net=deepcopy(_pc_net), config=_pc_cfg_nr)
-                _pc_r_ap = run_sparlectra(net=deepcopy(_pc_net), config=_pc_cfg_ap)
-                run_sparlectra(net=deepcopy(_pc_net), config=_pc_cfg_hyb)
-                rectangular_pf_status(_pc_r_nr.net)
-                _pc_st = rectangular_pf_status(_pc_r_ap.net)
-                _pc_st.apslf_convergence_line
-                _pc_r_ap.final_converged
-                _pc_r_ap.final_mismatch
-                [n._vm_pu for n in _pc_r_ap.net.nodeVec]
+                _pc_st_nr = rectangular_pf_status(_pc_r_nr.net)
+                _pc_r_nr.final_converged
+                _pc_r_nr.final_mismatch
+                [n._vm_pu for n in _pc_r_nr.net.nodeVec]
+                if _pc_full
+                    _pc_r_ap = run_sparlectra(net=deepcopy(_pc_net), config=_pc_cfg_ap)
+                    run_sparlectra(net=deepcopy(_pc_net), config=_pc_cfg_hyb)
+                    _pc_st = rectangular_pf_status(_pc_r_ap.net)
+                    _pc_st.apslf_convergence_line
+                    _pc_r_ap.final_converged
+                    _pc_r_ap.final_mismatch
 
-                # --- standalone DC power flow -------------------------------------
-                rundcpf!(deepcopy(_pc_net))
-
-                # SPARLECTRA_PRECOMPILE_WORKLOAD=minimal skips the two blocks below:
-                # a notebook session (Colab installs and precompiles from scratch
-                # every time) never calls the service layer or a tap controller,
-                # and those two cost about 40 s of precompile time
-                _pc_full = get(ENV, "SPARLECTRA_PRECOMPILE_WORKLOAD", "default") != "minimal"
+                    # --- standalone DC power flow ---------------------------------
+                    rundcpf!(deepcopy(_pc_net))
+                end
 
                 # --- service path (the Web UI's first run) --------------------------
                 # Measured 2026-09-22 on a fresh process with the workload above:

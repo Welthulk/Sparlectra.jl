@@ -1,27 +1,19 @@
 # Version 0.16.2 - 2026-09-22
 
 ## Highlights
-- Four synthetic MATPOWER cases ship under `data/mpower` (`sp_case9`, `sp_case118`, `sp_case300`, `sp_case1354`). Workshops and tests no longer depend on downloaded cases.
-- Precompile workload covers the workshop path, state estimation, OLTC control and the service layer. First `run_sparlectra` after `using Sparlectra`: 0.5 s instead of 11 s; first service run: 1 s instead of 38 s. `SPARLECTRA_PRECOMPILE_WORKLOAD=minimal` skips the service part.
+- Four synthetic MATPOWER cases ship under `data/mpower` (`sp_case9`, `sp_case118`, `sp_case300`, `sp_case1354`); no downloads needed.
+- Faster install: the default precompile workload is small. `SPARLECTRA_PRECOMPILE_WORKLOAD=full` restores the full warmup.
 
 ## Changes
-- CGMES tests run on three deliveries exported by Sparlectra itself (`data/cgmes_demo`, from sp_case14, sp_case118, sp_casePST); tests on ENTSO-E and ReliCapGrid downloads are removed. The Web UI case selector offers the same three deliveries.
-- The slack unit of the synthetic cases carries its base-case `Pg`, so distributed and classical slack start from the same dispatch. The sp_case118 N-1 fixture is regenerated.
-- New examples: `apslf_vs_nr_timing.jl` (timing table, also in the performance page) and `apslf_pv_diagnostic.jl` (locates where an APSLF solve with PV buses fails).
-- APSLF workshop: reading rules for `dmin`.
-- Test runner hides intended warnings; `SPARLECTRA_TEST_SHOW_WARNINGS=1` shows them.
-- Test profiles are split by area: `fast` is the pull-request gate (model and Newton core, about a minute), `pf`, `se`, `config`, `webui` and `extd` cover their own areas, `extended` is the five together and `all` everything; the docs build stays a gate of its own. See [Test Suite](tests.md).
-- Test suite compiles every testset body as its own function, and the API entry, the state-estimation service and the configuration context have one specialization each instead of one per call site; both profiles run about a third faster.
-- Package load: the Web UI option table and two other constant lists are vectors instead of tuples, which removes most of the module's own precompile time.
-- Workshop notebooks warn ahead of the install cell that Colab needs several minutes to precompile.
-- `PiecewiseLinearCharacteristic` is renamed to `VoltageCharacteristic`, since it carries spline and polynomial interpolation as well; the old name stays as an alias for one minor release (#14).
-- `power_flow.linear_solver` defaults to `umfpack_reuse` (symbolic analysis once per solve, numeric refactorization per iteration, see #288); `umfpack` remains selectable.
-- Contingency CSV fixtures are compared with a 1e-9 tolerance instead of byte identity.
+- `power_flow.linear_solver` defaults to `umfpack_reuse` (#288).
+- `PiecewiseLinearCharacteristic` renamed to `VoltageCharacteristic`; the old name stays as alias for one minor release (#14).
+- Three CGMES demo deliveries under `data/cgmes_demo`, also in the Web UI case selector.
+- New examples: `apslf_vs_nr_timing.jl`, `apslf_pv_diagnostic.jl`.
+- Test suite split into profiles and about a third faster, see [Test Suite](tests.md).
 
 ## Fixes
-- APSLF returned wrong voltages as converged when a stale Manifest loaded AnalyticLoadFlow 0.9.14. Sparlectra now requires 0.9.15, refuses to load on an older version and names the Pkg command; the Web UI launcher repairs the environment, the info box shows the loaded version.
-- Contingency weights upload failed with EBUSY on Windows after a rejected row.
-- Repository hygiene check reported every file as unlisted on CRLF checkouts.
+- APSLF returned wrong voltages with AnalyticLoadFlow 0.9.14 from a stale Manifest; 0.9.15 is now required.
+- Contingency weights upload failed with EBUSY on Windows.
 
 # Version 0.16.1 - 2026-09-21
 

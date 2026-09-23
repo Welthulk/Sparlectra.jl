@@ -52,7 +52,6 @@
 #nb # > a second click on it starts the whole install again.
 #nb using Pkg
 #nb Pkg.activate(temp = true)
-#nb ENV["SPARLECTRA_PRECOMPILE_WORKLOAD"] = "minimal"   # notebook: skip the service-layer warm-up, about 40 s less precompile
 #nb Pkg.add(url = "https://github.com/Welthulk/Sparlectra.jl", rev = "main")
 #nb ## For the latest registered release use: Pkg.add("Sparlectra")
 
