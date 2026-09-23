@@ -62,6 +62,22 @@ function run_scf_tests()
       root["sparlectra"]["config"] = Dict{String,Any}("benchmark.enabled" => true)
       write(legacy, Sparlectra.scf_json_string(root))
       @test_throws Sparlectra.ConfigResolveError Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, legacy)
+      # a file written before the scope split (created_by says so) keeps
+      # loading: the machine keys are dropped, named, and never applied
+      root["sparlectra"]["config"] = Dict{String,Any}("benchmark.enabled" => true, "output.console_summary" => false, "power_flow.tol" => 1.0e-7)
+      root["sparlectra"]["meta"]["created_by"] = "Sparlectra 0.10.0"
+      write(legacy, Sparlectra.scf_json_string(root))
+      old = run_with_expected_warnings(() -> Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, legacy), (r"outside the case scope", r"is deprecated"))
+      @test old.scf_dropped_keys == ["benchmark.enabled", "output.console_summary"]
+      @test old.config.powerflow.tol == 1.0e-7
+      @test old.config.benchmark.enabled == Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true).benchmark.enabled
+      dropped = String[]
+      @test !haskey(Sparlectra.scf_case_config(legacy; dropped), "benchmark.enabled")
+      @test dropped == ["benchmark.enabled", "output.console_summary"]
+      # the same keys from a current writer stay a hard error
+      root["sparlectra"]["meta"]["created_by"] = string("Sparlectra ", Sparlectra.version())
+      write(legacy, Sparlectra.scf_json_string(root))
+      @test_throws Sparlectra.ConfigResolveError Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, legacy)
     end)() end
     @testset "units declaration" begin (function ()
       # absent means si: every existing file reads unchanged

@@ -203,31 +203,34 @@ include("api/se_measurement_generator.jl")
 include("webui/webui.jl")
 include("sysimage_builder.jl")
 
-export run_sparlectra_api,  # Stable non-interactive backend contract for GUI/API integrations.
-  run_fixed_reference_self_check,  # Evaluate mismatch at a case's own stored VM/VA, no corrective Newton step.
-  SparlectraApiResult,  # Structured API run status, numerical metadata, and artifacts.
-  SparlectraApiArtifact,  # Explicit metadata for generated API artifacts.
-  collect_sparlectra_api_artifacts,  # Discover generated files without filename assumptions.
-  POWERFLOW_RUN_INDEX_FILENAME,  # Persistent local PowerFlow run-index filename.
-  start_powerflow_run,  # Start and persist a local PowerFlow service run.
-  load_powerflow_run_index,  # Load the persistent run index from an output root.
-  list_powerflow_runs,  # List indexed runs and their disk availability.
-  refresh_powerflow_run_registry!,  # Recover the in-process registry from disk.
-  delete_powerflow_run,  # Safely delete one registered run beneath an output root.
-  delete_all_powerflow_runs,  # Safely delete all registered runs beneath an output root.
-  get_powerflow_result,  # Look up serialized run metadata by run ID.
-  list_powerflow_artifacts,  # List run artifacts by run ID.
-  resolve_powerflow_artifact,  # Safely resolve a run artifact by metadata name.
-  default_webui_output_root,  # Return the user-writable default Web UI output directory.
-  default_webui_config_path,  # Return the provisioned Web UI configuration path.
-  default_webui_case_cache_dir,  # Return the user-writable Web UI case cache.
-  default_webui_operation_log_path,  # Return the user-writable Web UI operation-log path.
-  start_sparlectra_webui,  # Start the loopback-only local PowerFlow Web UI.
-  buildSysimage,  # One-call sysimage build (10-20 min, see docstring).
-  to_dict,  # Convert API results and artifacts to dictionaries.
-  to_namedtuple,  # Convert API results to named tuples.
-  to_json,  # Serialize API results as JSON.
-  to_yaml  # Serialize API results as YAML.
+# one export per line: the list stays readable, and every parser (the
+# editor's included) agrees on where a statement ends
+export run_sparlectra_api  # Stable non-interactive backend contract for GUI/API integrations.
+export run_fixed_reference_self_check  # Evaluate mismatch at a case's own stored VM/VA, no corrective Newton step.
+export SparlectraApiResult  # Structured API run status, numerical metadata, and artifacts.
+export SparlectraApiArtifact  # Explicit metadata for generated API artifacts.
+export collect_sparlectra_api_artifacts  # Discover generated files without filename assumptions.
+export POWERFLOW_RUN_INDEX_FILENAME  # Persistent local PowerFlow run-index filename.
+export start_powerflow_run  # Start and persist a local PowerFlow service run.
+export load_powerflow_run_index  # Load the persistent run index from an output root.
+export list_powerflow_runs  # List indexed runs and their disk availability.
+export refresh_powerflow_run_registry!  # Recover the in-process registry from disk.
+export delete_powerflow_run  # Safely delete one registered run beneath an output root.
+export delete_all_powerflow_runs  # Safely delete all registered runs beneath an output root.
+export get_powerflow_result  # Look up serialized run metadata by run ID.
+export list_powerflow_artifacts  # List run artifacts by run ID.
+export resolve_powerflow_artifact  # Safely resolve a run artifact by metadata name.
+export default_webui_output_root  # Return the user-writable default Web UI output directory.
+export default_webui_config_path  # Return the provisioned Web UI configuration path.
+export default_webui_case_cache_dir  # Return the user-writable Web UI case cache.
+export default_webui_operation_log_path  # Return the user-writable Web UI operation-log path.
+export start_sparlectra_webui  # Start the loopback-only local PowerFlow Web UI.
+export buildSysimage  # One-call sysimage build (10-20 min, see docstring).
+export to_dict  # Convert API results and artifacts to dictionaries.
+export to_namedtuple  # Convert API results to named tuples.
+export to_json  # Serialize API results as JSON.
+export to_yaml  # Serialize API results as YAML.
+
 include("precompile.jl")
 
 end # module SparlectraApp

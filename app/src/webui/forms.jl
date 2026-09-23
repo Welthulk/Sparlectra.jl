@@ -819,7 +819,7 @@ function _webui_case_config_field_values(casefile::AbstractString, case_director
   merged = Dict{String,Any}()
   if lowercase(splitext(path)[2]) == ".json" && isfile(path)
     try
-      merge!(merged, scf_case_config(path))
+      merge!(merged, scf_case_config(path; dropped = String[]))
     catch
     end
   end
@@ -836,6 +836,22 @@ function _webui_case_config_field_values(casefile::AbstractString, case_director
     end
   end
   return values
+end
+
+# the machine-scope keys an old case file carries in its in-file block:
+# ignored by the run and named in the notice so nobody expects them to act
+function _webui_case_config_dropped_keys(casefile::AbstractString, case_directory)::Vector{String}
+  name = strip(String(casefile))
+  isempty(name) && return String[]
+  path = isabspath(name) ? name : (case_directory === nothing ? name : joinpath(String(case_directory), name))
+  (lowercase(splitext(path)[2]) == ".json" && isfile(path)) || return String[]
+  dropped = String[]
+  try
+    scf_case_config(path; dropped)
+  catch
+    return String[]   # an unreadable block is reported by the run itself
+  end
+  return dropped
 end
 
 """
@@ -906,6 +922,8 @@ function webui_form_state(; selected_casefile::AbstractString = "", selected_con
   case_file_values = apply_case_levels ? _webui_case_config_field_values(selected_casefile, case_directory) : Dict{String,Any}()
   merge!(values, case_file_values)
   isempty(case_file_values) || (values["_case_file_fields"] = sort!(collect(keys(case_file_values))))
+  dropped_keys = apply_case_levels ? _webui_case_config_dropped_keys(selected_casefile, case_directory) : String[]
+  isempty(dropped_keys) || (values["_case_file_dropped"] = dropped_keys)
   values["casefile"] = selected_casefile
   values["casefile_manual"] = ""
   values["config_file"] = config_path

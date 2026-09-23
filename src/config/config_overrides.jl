@@ -471,13 +471,17 @@ caller owns the failure mapping.
 """
 function resolve_config(config_file::AbstractString, case_path::AbstractString, overrides::AbstractDict = Dict{String,Any}(); auto_profile_overrides::AbstractDict = Dict{String,Any}())
   scf_level = Dict{String,Any}()
+  scf_dropped = String[]
   is_scf_case = lowercase(splitext(String(case_path))[2]) == ".json" && isfile(case_path)
   if is_scf_case
     scf_level = try
-      scf_case_config(String(case_path))
+      scf_case_config(String(case_path); dropped = scf_dropped)
     catch err
       throw(ConfigResolveError("invalid_case_file", err))
     end
+    # an old case file with machine-scope keys: dropped, and said so in the
+    # run log; a re-export writes the file without them
+    isempty(scf_dropped) || @warn "sparlectra.config inside $(basename(String(case_path))) carries $(length(scf_dropped)) setting(s) outside the case scope, written by an older Sparlectra and ignored: $(join(scf_dropped, ", ")). Re-export the case file to clear this note."
     # maxlog per case file: repeating the same deprecation for every run of
     # the same case says nothing new and buried the rest of the output
     isempty(scf_level) || @warn "sparlectra.config inside $(basename(String(case_path))) is deprecated; move these settings to $(basename(case_config_path(case_path))) next to the case file. The block still applies, directly below that file in precedence." maxlog = 1 _id = Symbol("scf_cfg_", basename(String(case_path)))
@@ -517,7 +521,7 @@ function resolve_config(config_file::AbstractString, case_path::AbstractString, 
       config, effective_raw = _load_api_config(String(config_file), nested; case_scope_from_defaults = isfile(case_config_path(case_path)))
     end
   end
-  return (config = config, effective_raw = effective_raw, merged_overrides = merged, nested_overrides = nested, scf_config = scf_level, case_config = case_level, auto_profile_config = auto_level)
+  return (config = config, effective_raw = effective_raw, merged_overrides = merged, nested_overrides = nested, scf_config = scf_level, case_config = case_level, auto_profile_config = auto_level, scf_dropped_keys = scf_dropped)
 end
 
 # The auto-profile recommendations form their own

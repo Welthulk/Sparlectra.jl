@@ -583,6 +583,9 @@ function _run_sparlectra_api_body(
 
   raw_result = nothing
   qlimit_metadata = _resolved_q_limit_runtime_options(config)
+  # machine-scope keys an old case file carried and the resolution dropped:
+  # named in run.log next to the resolved options
+  qlimit_metadata["case_file_dropped_keys"] = resolved.scf_dropped_keys
   qlimit_metadata["runtime_casefile"] = basename(case_path)
   qlimit_metadata["runtime_casefile_path"] = case_path
   matpower_metadata = _resolved_matpower_import_runtime_options(config)

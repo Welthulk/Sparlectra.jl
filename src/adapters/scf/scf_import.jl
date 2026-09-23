@@ -1349,14 +1349,36 @@ function scf_case_units(case::SCFCase)::Symbol
 end
 
 """
-    scf_case_config(file) -> Dict{String,Any}
+scf_case_config(file) -> Dict{String,Any}
 
 The dotted configuration keys a case file carries in
 `sparlectra.config`, ready to be merged as `config_overrides` (the case
 file sits below API/CLI overrides and above the YAML file in precedence).
 Empty when the file carries no configuration.
 """
-function scf_case_config(file::AbstractString)::Dict{String,Any}
+# Files written by Sparlectra releases before this one carried the whole
+# form in sparlectra.config, machine-scope keys included; a case file is a
+# published format, so those files keep loading: the machine keys are
+# dropped and reported. From this release on the exporter never writes
+# them, and a file that carries them is refused as before.
+const _SCF_MACHINE_KEYS_TOLERATED_BELOW = v"0.11.0"
+
+# the Sparlectra release that wrote the file, from meta.created_by
+# ("Sparlectra 0.10.0"); nothing when the file does not say
+function _scf_writer_version(spar::AbstractDict)::Union{Nothing,VersionNumber}
+  meta = _scf_get(spar, "meta", Dict{String,Any}())
+  meta isa AbstractDict || return nothing
+  created = String(get(meta, "created_by", ""))
+  m = match(r"^Sparlectra\s+(\d+\.\d+\.\d+)", created)
+  m === nothing && return nothing
+  return try
+    VersionNumber(m.captures[1])
+  catch
+    nothing
+  end
+end
+
+function scf_case_config(file::AbstractString; dropped::Union{Nothing,Vector{String}} = nothing)::Dict{String,Any}
   root = scf_json_parse(read(String(file), String))
   spar = _scf_get(root, "sparlectra", Dict{String,Any}())
   # consulted BEFORE the import on the run path, so it must refuse a stale
@@ -1372,6 +1394,15 @@ function scf_case_config(file::AbstractString)::Dict{String,Any}
   # format exists to prevent. Older files that carried the whole form need one
   # re-export.
   bad = sort!(String[k for k in keys(out) if !scf_is_case_config_key(k)])
+  writer = _scf_writer_version(spar)
+  if !isempty(bad) && writer !== nothing && writer < _SCF_MACHINE_KEYS_TOLERATED_BELOW
+    # an old file: the machine keys are dropped, the caller reports them
+    for k in bad
+      delete!(out, k)
+    end
+    dropped === nothing || append!(dropped, bad)
+    return out
+  end
   isempty(bad) || throw(ArgumentError("SCF: config key(s) $(join(bad, ", ")) are not case scope (logging, benchmarking, parallelism, Web UI and export settings belong in the configuration file). Re-export the case with format revision $(SCF_FORMAT_VERSION), or remove them."))
   return out
 end

@@ -552,7 +552,8 @@ function _webui_case_context(;
   # The case file's own settings are visible, not silent: they moved the
   # controls, and the run will therefore use them. Without the note a user
   # sees a solver or tolerance they never chose and cannot tell why.
-  case_file_notice = let fields = get(profile_values, "_case_file_fields", nothing)
+  case_file_notice = let fields = get(profile_values, "_case_file_fields", nothing), dropped = get(profile_values, "_case_file_dropped", String[])
+    dropped_html = isempty(dropped) ? "" : " <span class=\"case-file-dropped\">$(length(dropped)) setting(s) outside the case scope, written by an older Sparlectra, are ignored: <code>$(_webui_escape(join(dropped, ", ")))</code>. Re-export the case file to clear this note.</span>"
     if fields isa AbstractVector && !isempty(fields)
       labels = String[]
       for f in fields
@@ -561,7 +562,9 @@ function _webui_case_context(;
         push!(labels, string(spec.config_key === nothing ? String(f) : String(spec.config_key), " = ", _webui_form_string(get(profile_values, String(f), ""))))
       end
       items = join("<li><code>$(_webui_escape(l))</code></li>" for l in labels)
-      "<div class=\"alert info case-file-settings-notice\" role=\"status\"><strong>This case file brings its own settings.</strong> The form below was prefilled from it, so the run uses what the case ships with:<ul class=\"config-override-list\">$(items)</ul>Edit any control to override it for this run.</div>"
+      "<div class=\"alert info case-file-settings-notice\" role=\"status\"><strong>This case file brings its own settings.</strong> The form below was prefilled from it, so the run uses what the case ships with:<ul class=\"config-override-list\">$(items)</ul>Edit any control to override it for this run.$(dropped_html)</div>"
+    elseif !isempty(dropped)
+      "<div class=\"alert info case-file-settings-notice\" role=\"status\"><strong>This case file brings its own settings.</strong>$(dropped_html)</div>"
     else
       ""
     end
@@ -1523,17 +1526,21 @@ function render_settings_page(;
   # a case file can carry its own settings inside (an SCF config block); the
   # default view says so as well, otherwise a user cannot tell whether the
   # file's settings are read at all
-  case_file_keys = show_case_profile || isempty(strip(ctx.effective_case_value)) ? String[] : sort!(collect(keys(_webui_case_config_field_values(String(ctx.effective_case_value), case_directory))))
+  case_file_keys = show_case_profile || isempty(strip(ctx.effective_case_value)) ? String[] : sort!([k for k in keys(_webui_case_config_field_values(String(ctx.effective_case_value), case_directory)) if !startswith(k, "_")])
   case_levels = String[]
-  isempty(stored_profile_path) || push!(case_levels, "saved settings (<code>$(_webui_escape(basename(stored_profile_path)))</code>)")
-  isempty(case_file_keys) || push!(case_levels, "$(length(case_file_keys)) setting(s) inside the case file")
+  isempty(stored_profile_path) || push!(case_levels, "saved settings (<code>$(_webui_escape(basename(stored_profile_path)))</code>) that a run applies")
+  isempty(case_file_keys) || push!(case_levels, "$(length(case_file_keys)) setting(s) inside the case file that a run applies")
+  # machine-scope keys an old case file carries are ignored; the default
+  # view says so too, the case view lists them
+  dropped_keys = show_case_profile || isempty(strip(ctx.effective_case_value)) ? String[] : _webui_case_config_dropped_keys(String(ctx.effective_case_value), case_directory)
+  isempty(dropped_keys) || push!(case_levels, "$(length(dropped_keys)) setting(s) outside the case scope that are ignored (written by an older Sparlectra; re-export the file to clear this note)")
   profile_switch = if show_case_profile
     isempty(stored_profile_path) && isempty(get(profile_values, "_case_file_fields", String[])) ? "" :
       "<p class=\"case-settings-switch\">Showing the settings of this case on top of the configuration file. <a href=\"/powerflow/settings$(case_query)\">Show the configuration values</a></p>"
   elseif isempty(case_levels)
     ""
   else
-    "<p class=\"case-settings-switch\">This case has $(join(case_levels, " and ")); a run applies them, the form shows the configuration file's values. <a href=\"/powerflow/settings$(case_query)&amp;case_settings=1\">Show the case settings</a></p>"
+    "<p class=\"case-settings-switch\">This case has $(join(case_levels, ", and ")); the form shows the configuration file's values. <a href=\"/powerflow/settings$(case_query)&amp;case_settings=1\">Show the case settings</a></p>"
   end
   content = """
 $(_webui_feedback_modal_html([error_html, save_html, ctx.profile_notice, ctx.case_file_notice]))<p class=\"lede\">Solver, output, and expert options. Values prefill from the configuration file for <code>$(case_display)</code> (<a href=\"/powerflow/case$(case_query)\">change on the Case page</a>); runs read them through the configuration precedence.</p>

@@ -14,6 +14,7 @@
 - Observability rank from the LDLt factorization of the gain matrix (`state_estimation.rank_method = pivots`) instead of a second decomposition; `decomposition` stays the default until the two have agreed for a release (#399).
 
 ## Fixes
+- A case file exported by Sparlectra 0.10.0 or earlier with machine-scope keys in its in-file block (benchmark, output, runtime, webui, matpower_export) loads again: the keys are dropped and named in the run log and the Web UI; a current file carrying them is still refused.
 - Web UI: **Import case files** accepts the profile files of a CGMES delivery (`.xml`, EQ, SSH, TP, SV together) and packs them into one ZIP; the file picker showed the shipped demo folders as empty because it only offered `.zip`.
 - Web UI: the Settings page shows the configuration file's values; the saved settings of the selected case are shown only via the link "Show the case settings".
 - Web UI: a settings save with the target "this case" dropped machine-scope keys such as the CSV format; they now go to the configuration file in the same request, and the page shows them.

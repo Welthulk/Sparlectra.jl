@@ -114,7 +114,11 @@ A case without a config file, a bare `.scf.json` included, keeps the
 full chain with the machine's configuration between case levels and
 defaults (the tracked fixture `warmup_casePST.scf.json` runs that way),
 and so does the deprecated in-file block alone. Machine-scope keys
-always come from the machine's configuration file.
+always come from the machine's configuration file; a current file that
+carries one in its in-file block is refused. A file written by Sparlectra
+0.10.0 or earlier (`meta.created_by`) still loads: its machine-scope keys
+are dropped and named in the run log and the Web UI, and one re-export
+writes the file without them.
 `effective_config.yaml` of each run records what actually took effect.
 
 A case file ships with the settings it was meant to run with. For a run
