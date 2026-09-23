@@ -48,9 +48,10 @@ julia --project=. examples/powerflow/matpower_import.jl
 synthetic tiled grids (500 to 5000 buses, `SPARLECTRA_TIMING_SIZES`) with
 the rectangular Newton solver and with APSLF at orders 24, 40 and 60 (the
 higher orders from 300 buses on, `SPARLECTRA_TIMING_ORDERS`), median of
-three warm runs, convergence-radius evaluation off. It writes the table,
-`apslf_vs_nr_timing.csv` and `apslf_vs_nr_timing.svg` into the working
-directory; the copies below are from Linux, Julia 1.13.0, 16 threads.
+three warm runs, convergence-radius evaluation off. It prints the table and
+writes `apslf_vs_nr_timing.csv` and `apslf_vs_nr_timing.svg` into
+`results/apslf_vs_nr_timing/` (not tracked); the copies below are from
+Linux, Julia 1.13.0, 16 threads.
 
 What the table says and what it does not: on pure-PQ grids (the tiled
 grids, one slack) the series solve is faster than Newton from 500 buses

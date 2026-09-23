@@ -46,6 +46,12 @@ examples/configuration.yaml
 examples/_out/
 examples/configuration.yaml.example
 examples/configuration.yaml.bck
+# the files the Web UI keeps next to a configuration file it manages
+# (template copy, user-key record, backups), wherever that file lives
+configuration.template.yaml
+*.user-keys.txt
+*.settings-save.bak
+*.template-follow.bak
 results
 _out/powerflow_service
 ac_islands.csv

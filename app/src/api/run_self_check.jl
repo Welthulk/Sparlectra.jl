@@ -26,13 +26,12 @@
 #   configuration next to case14.m that did not even carry a `power_flow`
 #   block: the self-check ran with max_iter=80 and rescue=true instead of 1
 #   and false, and still wrote its "start values taken verbatim" line.
-# - as a merged, temporary YAML configuration file, for the two forced keys
-#   that are NOT in `GUI_EDITABLE_CONFIG_KEYS` (`power_flow.flatstart` and
-#   `power_flow.start_mode.start_projection`). Those two are also not case
-#   scope, so no case configuration file can set them and the file still
-#   reaches the solver for them. `_SELF_CHECK_FILE_ONLY_KEYS` names them, and
-#   a forced key that is in neither class raises instead of silently missing
-#   the solver.
+# - as a merged, temporary YAML configuration file, for the forced key that
+#   is NOT in `GUI_EDITABLE_CONFIG_KEYS` (`power_flow.start_mode.start_projection`).
+#   It is not case scope either, so no case configuration file can set it
+#   and the file still reaches the solver for it. `_SELF_CHECK_FILE_ONLY_KEYS`
+#   names it, and a forced key that is in neither class raises instead of
+#   silently missing the solver.
 #
 # Every start-value machine is forced off so the imported bus voltages reach
 # the solver verbatim, whatever the base configuration says:
@@ -46,7 +45,6 @@
 # `GUI_EDITABLE_CONFIG_KEYS`. They are not case scope either, so a case
 # configuration file cannot set them and the merged file below still wins.
 const _SELF_CHECK_FILE_ONLY_KEYS = Set([
-  "power_flow.flatstart",
   "power_flow.start_mode.start_projection",
 ])
 

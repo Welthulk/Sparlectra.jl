@@ -393,11 +393,12 @@ current-magnitude measurements (`ImagMeas`) enter the update step; earlier
 iterations run without them (flat-start protection).
 `report_residual_correlation` enables the residual-correlation (K-matrix)
 columns in the bad-data diagnostics report.
+
+No `sparse` field: sparse matrices are mandatory since 0.9.x, and a field
+that can never be anything but true is not a setting. The old key is still
+refused by name in the parser, so a stored configuration carrying it says
+what happened instead of failing with "unknown key".
 """
-# No `sparse` field: sparse matrices are mandatory since 0.9.x, and a field
-# that can never be anything but true is not a setting. The old key is still
-# REFUSED by name below, so a stored configuration carrying it says what
-# happened instead of failing with "unknown key".
 Base.@kwdef struct StateEstimationConfig
   enabled::Bool = true
   method::Symbol = :wls
@@ -474,6 +475,10 @@ Base.@kwdef struct StateEstimationConfig
   # diagonal of the residual covariance from one selected-inverse pass,
   # :rank runs the former per-row rank tests (budgeted) as a cross-check
   criticality_method::Symbol = :omega
+  # observability rank (issue #399): :decomposition is the SVD or sparse QR
+  # of the Jacobian, :pivots reads the rank from the LDLt of the gain matrix
+  # and falls back to the decomposition on a singular gain matrix
+  rank_method::Symbol = :decomposition
   # IaMeas activity gate fallback: threshold is 3 * sigma of the paired
   # ImagMeas at the same end, or 3 * this floor (ampere) when no magnitude
   # measurement is paired (a current angle is meaningless near zero current)
@@ -741,17 +746,14 @@ Base.@kwdef struct RuntimeConfig
   parallel::ParallelRuntimeConfig = ParallelRuntimeConfig()
 end
 
-"""
-    DiagnosticsConfig
-
-Typed diagnostic-output configuration shared by examples and future modules.
-"""
 # Console/logfile output options are owned by `output.*` alone. The
 # `diagnostics` block used to carry duplicates of six of them; none of those
 # was ever read (every consumer resolves `config.output.*`), so setting them
 # silently did nothing. They are deprecated: the parser warns and ignores
 # them (see `DiagnosticsConfig(raw)`).
 """
+    DiagnosticsConfig
+
 The `diagnostics` configuration section (deprecated keys live on in
 `output`); retained so old files keep loading.
 """
@@ -1597,6 +1599,7 @@ function StateEstimationConfig(raw::AbstractDict)
     rank_tol_factor = Float64(_validate_positive("state_estimation.rank_tol_factor", _as_float_cfg(_raw_get(merged, "rank_tol_factor", 10.0)))),
     takahashi_min_states = Int(_validate_positive("state_estimation.takahashi_min_states", _as_int_cfg(_raw_get(merged, "takahashi_min_states", 200)))),
     criticality_method = _validate_allowed_symbol("state_estimation.criticality_method", _as_symbol_cfg(_raw_get(merged, "criticality_method", :omega)), [:omega, :rank]),
+    rank_method = _validate_allowed_symbol("state_estimation.rank_method", _as_symbol_cfg(_raw_get(merged, "rank_method", :decomposition)), (:decomposition, :pivots)),
     ia_current_floor_A = Float64(_validate_positive("state_estimation.ia_current_floor_A", _as_float_cfg(_raw_get(merged, "ia_current_floor_A", 10.0)))),
     topology_precheck = _as_bool_cfg(_raw_get(merged, "topology_precheck", true)),
     topology_open_flow_k = Float64(_validate_positive("state_estimation.topology_open_flow_k", _as_float_cfg(_raw_get(merged, "topology_open_flow_k", 4.0)))),

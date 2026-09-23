@@ -312,7 +312,7 @@ function run_webui_extended_tests()
       original_text = "matpower_import:\n  matpower_dcline_mode: reject_active\npower_flow:\n  tol: 1.0e-8\n  autodamp: false\n"
       write(config_path, original_text)
 
-      temp_leftovers() = filter(name -> !(name in ("configuration.yaml", "webui_operations.jsonl")) && !occursin(r"configuration\.yaml\.bak-", name), readdir(root))
+      temp_leftovers() = filter(name -> !(name in ("configuration.yaml", "configuration.yaml.user-keys.txt", "webui_operations.jsonl")) && !occursin(r"configuration\.yaml\.bak-", name), readdir(root))
 
       for mode in ("reject_active", "ignore_inactive", "pf_injections")
         response = SparlectraApp.handle_powerflow_config_editor_save(
@@ -514,7 +514,9 @@ function run_webui_extended_tests()
       @test occursin("deleted", String(Dict(reset_resp.headers)["Location"]))
       @test !isfile(Sparlectra.case_config_path(scf_case))
 
-      loaded_form = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/settings?casefile=$(SparlectraApp._webui_urlencode(joinpath(root, "case145.m")))"; output_root = root).body)
+      # the Settings page shows the configuration file by default; the saved
+      # case settings are the ?case_settings=1 view
+      loaded_form = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/settings?casefile=$(SparlectraApp._webui_urlencode(joinpath(root, "case145.m")))&case_settings=1"; output_root = root).body)
       @test occursin("Case-specific settings loaded from", loaded_form)
       @test occursin("case145.m.config.yaml", loaded_form)
       _webui_assert_value(loaded_form, "power_flow_tol", "1.0e-7")
@@ -561,7 +563,7 @@ case: case14.m
 power_flow:
   tol: 1.0e-7
 """)
-      before_dismiss_form = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/settings?casefile=$(SparlectraApp._webui_urlencode(dismiss_case))&config_file=$(SparlectraApp._webui_urlencode(dismiss_config))"; output_root = dismiss_root).body)
+      before_dismiss_form = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/settings?casefile=$(SparlectraApp._webui_urlencode(dismiss_case))&config_file=$(SparlectraApp._webui_urlencode(dismiss_config))&case_settings=1"; output_root = dismiss_root).body)
       @test occursin("Case-specific settings loaded from", before_dismiss_form)
       @test occursin("action=\"/powerflow/config/dismiss-case-settings-notice\"", before_dismiss_form)
       @test occursin("name=\"config_file\" value=\"$(SparlectraApp._webui_escape(dismiss_config))\"", before_dismiss_form)
@@ -612,7 +614,7 @@ settings:
   power_flow_tol: 1.0e-8
   power_flow_wrong_branch_detection: off
 """)
-      case118_form = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/settings?casefile=$(SparlectraApp._webui_urlencode(case118))"; output_root = root).body)
+      case118_form = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/settings?casefile=$(SparlectraApp._webui_urlencode(case118))&case_settings=1"; output_root = root).body)
       @test occursin("Case-specific settings loaded from", case118_form)
       @test occursin("case118.m.config.yaml", case118_form)
       # converted exactly once: the sidecar is gone, the case configuration
@@ -729,7 +731,7 @@ form:
   power_flow_start_angle_mode: [bad]
   detailed_result_csv_format: impossible
 """)
-      unsupported_form = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/settings?casefile=$(SparlectraApp._webui_urlencode(unsupported_case))"; output_root = root).body)
+      unsupported_form = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/settings?casefile=$(SparlectraApp._webui_urlencode(unsupported_case))&case_settings=1"; output_root = root).body)
       @test occursin("Settings", unsupported_form)
       _webui_assert_checked(unsupported_form, "power_flow_autodamp", false)
       _webui_assert_value(unsupported_form, "power_flow_tol", "9.0e-7")
@@ -796,7 +798,7 @@ form:
       @test !haskey(fresh_form, "detailed_result_csv_format")
       @test !haskey(fresh_cc, "output.csv_format")
       @test !haskey(fresh_form, "effective_config")
-      fresh_reloaded_form = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/settings?casefile=$(SparlectraApp._webui_urlencode(joinpath(fresh_root, "resolved", "case145.m")))"; output_root = fresh_root).body)
+      fresh_reloaded_form = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/settings?casefile=$(SparlectraApp._webui_urlencode(joinpath(fresh_root, "resolved", "case145.m")))&case_settings=1"; output_root = fresh_root).body)
       _webui_assert_value(fresh_reloaded_form, "power_flow_tol", "2.5e-7")
       _webui_assert_value(fresh_reloaded_form, "power_flow_max_iter", "37")
       _webui_assert_selected(fresh_reloaded_form, "power_flow_qlimits_enforcement_mode", "active_set")
@@ -1764,6 +1766,7 @@ for (current_iteration_topic, required_fragments) in current_iteration_help
         "power_flow_apslf_use_pade" => "power_flow.apslf.use_pade",
         "power_flow_apslf_nr_polish" => "power_flow.apslf.nr_polish",
         "power_flow_apslf_convergence_radius" => "power_flow.apslf.convergence_radius",
+        "power_flow_flatstart" => "power_flow.flatstart",
         "power_flow_apslf_start_enabled" => "power_flow.apslf_start.enabled",
         "power_flow_apslf_start_order" => "power_flow.apslf_start.order",
         "power_flow_wrong_branch_detection" => "power_flow.wrong_branch_detection",
@@ -1880,7 +1883,7 @@ for (current_iteration_topic, required_fragments) in current_iteration_help
       @test occursin("name=\"performance_timing\"", settings_page_html)
       @test !occursin("name=\"run_diagnostics\"", form_html)
       @test occursin("Advanced start values", settings_page_html)
-      @test occursin("<fieldset class=\"start-current-iteration-options advanced-start-values\" data-nr-only-field>", settings_page_html)
+      @test occursin("<fieldset class=\"start-current-iteration-options advanced-start-values\" data-nr-only-field data-flatstart-inactive-field>", settings_page_html)
       @test occursin("<legend>Advanced start values</legend>", settings_page_html)
       @test occursin("Enable current-iteration pre-solve", settings_page_html)
       @test findfirst("<details class=\"span-2 expert-section\">", settings_page_html) < findfirst("<legend>Advanced start values</legend>", settings_page_html)
@@ -1937,7 +1940,9 @@ for (current_iteration_topic, required_fragments) in current_iteration_help
       # distributed-slack options, and the non-convergence handling block); these must be
       # marked so client-side JS can gray them out when power_flow_solver=apslf or
       # power_flow_solver=dc is selected.
-      @test count("data-nr-only-field", settings_page_html) == 10
+      # 12: the ten NR-only groups plus the APSLF and DC start-value
+      # checkboxes, which the flat start greys as well
+      @test count("data-nr-only-field", settings_page_html) == 12
       @test occursin("<fieldset class=\"distributed-slack-options\" data-nr-only-field>", settings_page_html)
       # The external-grid conversion is a net transformation, not an NR-only
       # solver option — it must stay usable with the APSLF and DC solvers, so
@@ -1946,15 +1951,15 @@ for (current_iteration_topic, required_fragments) in current_iteration_help
       @test occursin("<label data-nr-only-field><span class=\"field-label\">Maximum iterations ", settings_page_html)
       @test occursin("<label data-nr-only-field><span class=\"field-label\">Q-limit enforcement mode ", settings_page_html)
       @test occursin("<label data-nr-only-field><span class=\"field-label\">Wrong-branch detection ", settings_page_html)
-      @test occursin("<label data-nr-only-field data-dc-seed-inactive-field><span class=\"field-label\">Start angle mode ", settings_page_html)
-      @test occursin("<label data-nr-only-field data-dc-seed-inactive-field><span class=\"field-label\">Start voltage mode ", settings_page_html)
-      @test occursin("<fieldset class=\"start-current-iteration-options advanced-start-values\" data-nr-only-field>", settings_page_html)
+      @test occursin("<label data-nr-only-field data-dc-seed-inactive-field data-flatstart-inactive-field><span class=\"field-label\">Start angle mode ", settings_page_html)
+      @test occursin("<label data-nr-only-field data-dc-seed-inactive-field data-flatstart-inactive-field><span class=\"field-label\">Start voltage mode ", settings_page_html)
+      @test occursin("<fieldset class=\"start-current-iteration-options advanced-start-values\" data-nr-only-field data-flatstart-inactive-field>", settings_page_html)
       @test occursin("const nrOnlyFields = document.querySelectorAll('[data-nr-only-field]')", settings_page_html)
       @test occursin("const isApslfMode = function () { return getSolverMode() === 'apslf'; }", settings_page_html)
       @test occursin("const hideNrOnly = apslf || dc", settings_page_html)
       @test occursin("autodampGroup.classList.toggle('disabled', !autodampOn)", settings_page_html)
       @test occursin("trustRegionGroup.classList.toggle('disabled', !trustRegionOn)", settings_page_html)
-      @test occursin("setSolverGroupInactive(container, hideNrOnly || dcSeedMakesInactive)", settings_page_html)
+      @test occursin("setSolverGroupInactive(container, hideNrOnly || dcSeedMakesInactive || flatstartMakesInactive)", settings_page_html)
       # Mutually exclusive/inapplicable fields are grayed out in place (disabled inputs,
       # opacity via the "disabled" CSS class) rather than hidden -- switching solvers no
       # longer makes parts of the form vanish or jump around.

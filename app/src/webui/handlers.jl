@@ -283,9 +283,16 @@ function handle_powerflow_case_resolve(form::AbstractDict; output_root::Abstract
       resolved_path = CGMESImporter.fetchCGMESTestSet(alias; outdir = directory)
       resolved_name = basename(resolved_path)
     else
-      # Bare MATPOWER case name: download into the case cache directory.
-      resolved_path = ensure_casefile(manual_value; outdir = directory)
-      resolved_name = basename(resolved_path)
+      # A bare name: a bundled case first (the shipped SCF and PGM files and
+      # the CGMES demo deliveries, which are packed into the case directory
+      # here), then a MATPOWER case name downloaded into the case directory.
+      staged = _webui_stage_bundled_case!(application_root, directory, manual_value)
+      if staged !== nothing
+        resolved_name = basename(staged)
+      else
+        resolved_path = ensure_casefile(manual_value; outdir = directory)
+        resolved_name = basename(resolved_path)
+      end
     end
   catch err
     error_text = sprint(showerror, err)
@@ -1103,6 +1110,9 @@ end
 # generator off in the same save.
 function _webui_resolve_solver_start_conflict!(updates::AbstractDict)
   get(updates, "power_flow.solver", nothing) == "apslf" && (updates["power_flow.apslf_start.enabled"] = false)
+  # the flat start does not touch the other start settings here: the run
+  # overrides them (_flatstart_forced_off_config), the page greys them, and
+  # they come back as saved when the flat start is unchecked again
   return updates
 end
 
@@ -1136,6 +1146,36 @@ function _webui_merge_case_config_write(source::AbstractString, keep_updates::Ab
   return (; path, config, form = form_fields)
 end
 
+# Write machine-scope keys (dotted form) into the configuration file: the
+# validated nested form merged over the file's own dictionary, with a backup
+# next to it. Returns ok, the message for the page and the backup path.
+# The packaged template is the source of every provisioned configuration and
+# is never written: a save that lands on it (a runtime without a provisioned
+# file) is refused with a message instead of editing the package.
+function _webui_is_packaged_template(config_file::AbstractString)::Bool
+  return normpath(abspath(String(config_file))) == normpath(abspath(DEFAULT_SPARLECTRA_CONFIG_PATH))
+end
+
+function _webui_write_general_settings!(config_file::AbstractString, updates::AbstractDict)
+  isfile(config_file) || return (ok = false, message = "Configuration file not found: $(config_file).", backup = "")
+  _webui_is_packaged_template(config_file) && return (ok = false, message = "The packaged default configuration is read-only; select a configuration file of your own.", backup = "")
+  nested = try
+    validate_gui_config_overrides(updates)
+  catch err
+    return (ok = false, message = "Could not save settings: $(sprint(showerror, err))", backup = "")
+  end
+  backup = string(config_file, ".settings-save.bak")
+  try
+    cp(config_file, backup; force = true)
+    merged = _merge_config_overrides(load_yaml_dict(config_file), nested)
+    _write_yaml_file(config_file, merged)
+    _webui_record_user_keys!(config_file, keys(updates))
+  catch err
+    return (ok = false, message = "Could not write the configuration file: $(sprint(showerror, err))", backup = backup)
+  end
+  return (ok = true, message = "", backup = backup)
+end
+
 """
 Save case-scope configuration fields into the case configuration file next
 to the selected case (target `this_case`), or merge them into the general
@@ -1159,12 +1199,16 @@ Before this merge (issue #377 follow-up), the Case page had its own
 name and route - a third near-copy for the State Estimation page's options
 would have been the third place the same write could silently drift from
 the other two.
+
 """
-function handle_settings_save(form::AbstractDict; output_root::AbstractString = "results/powerflow_service", application_root::AbstractString = _webui_application_root(), case_directory::Union{Nothing,AbstractString} = nothing, operation_log::AbstractString = output_root)::SparlectraWebUIResponse
+function handle_settings_save(form::AbstractDict; output_root::AbstractString = "results/powerflow_service", application_root::AbstractString = _webui_application_root(), case_directory::Union{Nothing,AbstractString} = nothing, operation_log::AbstractString = output_root, default_config_file::AbstractString = "")::SparlectraWebUIResponse
   directory = _webui_case_directory(; case_directory, application_root, output_root)
   case = strip(String(something(_webui_form_value(form, "casefile", ""), "")))
+  # a form without the hidden config_file field saves to the runtime's
+  # provisioned configuration; the packaged template is the last resort and
+  # is refused by the writer
   config_file = strip(String(something(_webui_form_value(form, "config_file", ""), "")))
-  isempty(config_file) && (config_file = DEFAULT_SPARLECTRA_CONFIG_PATH)
+  isempty(config_file) && (config_file = isempty(strip(default_config_file)) ? DEFAULT_SPARLECTRA_CONFIG_PATH : String(default_config_file))
   target = strip(String(something(_webui_form_value(form, "settings_target", "this_case"), "this_case")))
   route = "/powerflow/settings/save"
   # One save action, one route, called from wherever a case-scope field is
@@ -1243,28 +1287,29 @@ function handle_settings_save(form::AbstractDict; output_root::AbstractString = 
       return back("Could not write the case configuration file: $(sprint(showerror, err))")
     end
     record_webui_operation!(operation_log, "settings_saved"; route, method = "POST", user_action = true, casefile = case, target, return_to, status = "succeeded", profile_path = written.path, saved_keys = length(written.config), form_fields = length(written.form), machine_scope_dropped = join(sort!(dropped), ","))
-    note = isempty(dropped) ? "" : " Machine-scope keys kept out (save to the configuration file instead): $(join(sort!(dropped), ", "))."
+    # machine-scope keys on the form (the CSV format among them) are not
+    # case settings, but a save is a save: they go to the configuration file
+    # in the same request, and the message names both files. Before this
+    # they were dropped with a note, and a user who saved with the default
+    # target saw the value jump back on every save.
+    note = ""
+    if !isempty(dropped)
+      machine_updates = Dict{String,Any}(k => config_updates[k] for k in dropped)
+      general = _webui_write_general_settings!(config_file, machine_updates)
+      general.ok || return back("Saved case settings to $(basename(written.path)), but the configuration file was not written: $(general.message)")
+      note = " Machine-scope key(s) saved to $(basename(config_file)): $(join(sort!(dropped), ", "))."
+    end
     verb = return_to == "case" ? "Saved case options" : "Saved settings for this case"
     return back("$(verb) to $(basename(written.path)).$(note)")
   end
   target == "general" || return back("Unknown settings target '$(target)'.")
-  isfile(config_file) || return back("Configuration file not found: $(config_file).")
   _webui_resolve_solver_start_conflict!(config_updates)
-  nested = try
-    validate_gui_config_overrides(config_updates)
-  catch err
-    record_webui_operation!(operation_log, "settings_save_failed"; route, method = "POST", user_action = true, target, status = "rejected", message = sprint(showerror, err))
-    return back("Could not save settings: $(sprint(showerror, err))")
+  general = _webui_write_general_settings!(config_file, config_updates)
+  if !general.ok
+    record_webui_operation!(operation_log, "settings_save_failed"; route, method = "POST", user_action = true, target, status = "rejected", message = general.message)
+    return back(general.message)
   end
-  backup = string(config_file, ".settings-save.bak")
-  try
-    cp(config_file, backup; force = true)
-    merged = _merge_config_overrides(load_yaml_dict(config_file), nested)
-    _write_yaml_file(config_file, merged)
-  catch err
-    record_webui_operation!(operation_log, "settings_save_failed"; route, method = "POST", user_action = true, target, status = "rejected", message = sprint(showerror, err))
-    return back("Could not write the configuration file: $(sprint(showerror, err))")
-  end
+  backup = general.backup
   record_webui_operation!(operation_log, "settings_saved"; route, method = "POST", user_action = true, target, status = "succeeded", config_file, saved_keys = length(config_updates), backup_path = backup)
   note = isempty(form_updates) ? "" : " Per-case options kept out (save with target this case): $(join(sort!(collect(keys(form_updates))), ", "))."
   return back("Saved $(length(config_updates)) key(s) to $(basename(config_file)) (backup: $(basename(backup))).$(note)")
@@ -1400,9 +1445,15 @@ function handle_powerflow_config_editor_save(form::AbstractDict; operation_log::
     write(tmp_path, _yaml_dict_text(parsed))
     _load_and_validate_config(DEFAULT_SPARLECTRA_CONFIG_PATH, tmp_path; cli_overrides = Dict{String,Any}(), overrides = Dict{String,Any}())
     load_sparlectra_config(tmp_path; reload = true)
+    # the keys whose values the editor changed are the user's from now on
+    # (the template follow-up at start leaves them alone)
+    before_flat = isfile(config_file) ? (try _flatten_config_values!(Dict{String,Any}(), load_yaml_dict(config_file), "") catch; Dict{String,Any}() end) : Dict{String,Any}()
+    after_flat = _flatten_config_values!(Dict{String,Any}(), parsed, "")
+    edited_keys = [k for (k, v) in after_flat if get(before_flat, k, nothing) != v]
     backup_path = _config_editor_backup_path(config_file)
     isfile(config_file) && cp(config_file, backup_path; force = false)
     mv(tmp_path, config_file; force = true)
+    _webui_record_user_keys!(config_file, edited_keys)
     tmp_path = nothing
     load_sparlectra_config(config_file; reload = true)
     record_webui_operation!(operation_log, "config_editor_saved"; route = "/powerflow/config/edit", method = "POST", user_action = true, config_file, backup_path)

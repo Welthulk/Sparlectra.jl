@@ -863,8 +863,9 @@ power_flow:
         @test forced_overrides["power_flow.rescue"] === false
         # everything the self-check does not force stays the caller's choice
         @test forced_overrides["power_flow.tol"] == 1.0e-4
-        # the two keys the override allowlist does not admit travel by file
-        @test !haskey(forced_overrides, "power_flow.flatstart")
+        # the flat start is a GUI key and rides the override level; the one key
+        # the override allowlist does not admit travels by file
+        @test forced_overrides["power_flow.flatstart"] === false
         @test !haskey(forced_overrides, "power_flow.start_mode.start_projection")
 
         bad_config_dir = joinpath(tmpdir, "self_check_missing_config")

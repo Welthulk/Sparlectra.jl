@@ -85,6 +85,11 @@ function _powerflow_config_notice(config_file::AbstractString)
   end
 end
 
+# a query switch such as ?case_settings=1 (also true, on, yes)
+function _webui_query_flag(query::AbstractDict, key::AbstractString)::Bool
+  return lowercase(strip(String(get(query, key, "")))) in ("1", "true", "on", "yes")
+end
+
 # Fails open (notice stays visible) on any load error, matching
 # _powerflow_config_notice's fail-safe pattern — a broken/missing config file
 # should not silently suppress an otherwise-informative notice.
@@ -107,8 +112,10 @@ end
 function _powerflow_dismiss_case_settings_notice!(config_file::AbstractString)
   isempty(strip(config_file)) && throw(ArgumentError("No configuration file was provided."))
   isfile(config_file) || throw(ArgumentError("Configuration refresh writes require a server-local file. Use a server-local selected configuration file."))
+  _webui_is_packaged_template(config_file) && throw(ArgumentError("The packaged default configuration is read-only; select a configuration file of your own."))
   merged = _merge_config_overrides(load_yaml_dict(config_file), Dict{String,Any}("webui" => Dict{String,Any}("show_case_settings_notice" => false)))
   _write_yaml_file(config_file, merged)
+  _webui_record_user_keys!(config_file, ("webui.show_case_settings_notice",))
   return config_file
 end
 
@@ -181,12 +188,15 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
       save_message = get(query, "save_message", ""),
       case_profile = settings_profile,
       show_case_settings_notice = _powerflow_show_case_settings_notice(get(query, "config_file", runtime === nothing ? "" : runtime.config_file)),
+      # the saved case settings are displayed only with ?case_settings=1;
+      # the default view shows the configuration file's values
+      show_case_profile = _webui_query_flag(query, "case_settings"),
     ))
   elseif verb == "POST" && path == "/powerflow/settings/save"
     # the one save route for every page that edits a case-scope field (Case
     # page, Settings page, State Estimation section); `return_to` in the
     # form picks the redirect target, see handle_settings_save's docstring
-    return handle_settings_save(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root)
+    return handle_settings_save(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root, default_config_file = runtime === nothing ? "" : String(runtime.config_file))
   elseif verb == "POST" && path == "/powerflow/run"
     try
       result = handle_powerflow_run(form; default_output_root = output_root, case_directory = runtime === nothing ? nothing : runtime.case_directory, runner = runtime === nothing ? start_powerflow_run : runtime.runner, operation_log = log_root)

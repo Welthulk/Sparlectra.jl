@@ -138,6 +138,16 @@ times states, `criticality_skipped = true` above) as the cross-check,
 and the test suite runs both methods against each other on a boundary
 case (a demo set with one flow measurement removed).
 
+The rank itself has two sources. `state_estimation.rank_method =
+decomposition` (default) is the SVD of the Jacobian, sparse QR above 2000
+states; `pivots` reads the rank from the LDLt factorization of the gain
+matrix, the one the criticality pass needs anyway, so one decomposition
+serves both. The pivot bound is the dimensionless analog of the
+singular-value tolerance, and on a singular gain matrix (which CHOLMOD
+refuses to factorize) the deficit size still comes from the decomposition;
+the report names the method used in `rank_method`. The two must agree on
+every observability test; a disagreement is a finding.
+
 The result carries `criticality_wii` per active row and
 `criticality_method`; the state-estimation run log lists the critical
 rows and the nearly critical ones. The rank decision for the

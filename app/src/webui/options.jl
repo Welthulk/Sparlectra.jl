@@ -64,6 +64,7 @@ const WEBUI_OPTION_SPECS = WebUIOptionSpec[
   WebUIOptionSpec("power_flow.apslf.use_pade", "power_flow_apslf_use_pade", Bool, :checkbox, true, (), :expert, :case, true),
   WebUIOptionSpec("power_flow.apslf.nr_polish", "power_flow_apslf_nr_polish", Bool, :checkbox, false, (), :expert, :case, true),
   WebUIOptionSpec("power_flow.apslf.convergence_radius", "power_flow_apslf_convergence_radius", Bool, :checkbox, true, (), :expert, :case, true),
+  WebUIOptionSpec("power_flow.flatstart", "power_flow_flatstart", Bool, :checkbox, false, (), :basic, :case, true),
   WebUIOptionSpec("power_flow.apslf_start.enabled", "power_flow_apslf_start_enabled", Bool, :checkbox, false, (), :expert, :case, true),
   WebUIOptionSpec("power_flow.apslf_start.order", "power_flow_apslf_start_order", Int, :number, 40, (), :expert, :case, true),
   WebUIOptionSpec("power_flow.wrong_branch_detection", "power_flow_wrong_branch_detection", String, :select, "warn", WRONG_BRANCH_DETECTION_VALUES, :expert, :case, true),

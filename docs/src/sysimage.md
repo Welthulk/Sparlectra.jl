@@ -32,10 +32,19 @@ image exists:
 - **usable:** the process starts itself again with `-J <image>` and prints
   one `Sysimage: ...` line.
 - **missing or outdated:** it names the reason and asks
-  `Build the sysimage now? [Y/n]`. **No answer means yes** (30 seconds, or
-  no terminal at all): an unattended start should end up with the image
-  rather than quietly without it. Answering `n` starts without one, with a
-  note that every code path then compiles on first use.
+  `Build the sysimage now? [y/N]`. **No answer means no** (Enter, 30
+  seconds, or no terminal at all): the build takes minutes, on a machine
+  with a virus scanner watching the compile cache far longer, and it only
+  starts on an explicit `y` or with `--rebuild-sysimage`. Without an
+  image every code path compiles on first use, and the start says so.
+  An outdated image (the Manifest or a source tree changed, another
+  Julia, unreadable metadata) is never started: unless a new one is built
+  now, the launcher deletes it together with its metadata file (only the
+  two managed paths) and says `Sysimage is out of date and was removed`;
+  a build that fails removes it as well. On Windows a file another Julia
+  keeps open cannot be deleted; the start then goes on without an image
+  and the next start tries again. An image given from outside with `-J`
+  is neither checked, rebuilt nor removed.
 
 Two flags and one environment variable steer it:
 

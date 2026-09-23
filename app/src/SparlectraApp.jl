@@ -44,6 +44,7 @@ const SPARLECTRA_APP_ROOT = normpath(joinpath(@__DIR__, ".."))
 # imported by name so that the boundary stays visible: a name missing here
 # fails at load time, never at the first click.
 import Sparlectra:
+  _flatten_config_values!,
   EnergyConsumer,
   ExternalNetworkInjection,
   IaMeas,

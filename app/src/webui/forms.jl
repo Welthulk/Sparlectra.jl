@@ -887,7 +887,7 @@ function _webui_case_form_defaults(casefile::AbstractString, case_directory)::Di
   return values
 end
 
-function webui_form_state(; selected_casefile::AbstractString = "", selected_config_file::AbstractString = "", sidecar_profile = nothing, submitted_form = nothing, case_directory = nothing)
+function webui_form_state(; selected_casefile::AbstractString = "", selected_config_file::AbstractString = "", sidecar_profile = nothing, submitted_form = nothing, case_directory = nothing, apply_case_levels::Bool = true)
   config_path = isempty(selected_config_file) ? DEFAULT_SPARLECTRA_CONFIG_PATH : selected_config_file
   values = Dict{String,Any}(spec.field => spec.default for spec in WEBUI_OPTION_SPECS)
   config_values = _webui_config_field_values(config_path)
@@ -899,13 +899,17 @@ function webui_form_state(; selected_casefile::AbstractString = "", selected_con
   # form would silently outrank the very settings it just loaded (measured:
   # a case asking for distributed slack ran without it because the untouched
   # checkbox posted false).
-  case_file_values = _webui_case_config_field_values(selected_casefile, case_directory)
+  # The Settings page shows the configuration file alone unless the case
+  # view is requested (apply_case_levels = false): its values reach a run
+  # through the configuration precedence, not through a posted form, so an
+  # unseeded form cannot outrank the case there.
+  case_file_values = apply_case_levels ? _webui_case_config_field_values(selected_casefile, case_directory) : Dict{String,Any}()
   merge!(values, case_file_values)
   isempty(case_file_values) || (values["_case_file_fields"] = sort!(collect(keys(case_file_values))))
   values["casefile"] = selected_casefile
   values["casefile_manual"] = ""
   values["config_file"] = config_path
-  if sidecar_profile isa AbstractDict
+  if sidecar_profile isa AbstractDict && apply_case_levels
     for (field, value) in sidecar_profile
       field == "_profile_path" && continue
       haskey(_WEBUI_OPTION_BY_FIELD, String(field)) || continue

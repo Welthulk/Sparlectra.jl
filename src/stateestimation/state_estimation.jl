@@ -168,6 +168,46 @@ end
 ## it the rank comes from the sparse QR factorization, whose column-norm
 ## tolerance is fed from the SAME effective tolerance the callers derive
 ## (rank_tol_factor * jacEps * sigma_max, or the SVD default formula).
+"""
+    numeric_rank_pivots(H; tol = nothing) -> Int
+
+Numerical rank of the Jacobian read from the LDLt factorization of the
+gain matrix `G = H' H` (unit weights, no column scaling: a column that
+carries only forward-difference noise must stay below the tolerance, and a
+normalization would lift it to unit norm), instead of a second
+decomposition of `H`: the number of pivots above `tol^2`, since the pivots
+of `H' H` scale like squared singular values and `tol` is the
+singular-value bound of `numeric_rank`. The default `tol` is the same
+formula as there. A factorization CHOLMOD
+refuses (a zero or negative pivot, i.e. a singular `G`) states a rank
+deficit but not its size; the rank then comes from `numeric_rank`, and the
+method is reported as `:decomposition`. Selected with
+`state_estimation.rank_method = pivots`; `decomposition` (SVD below
+$(_SE_DENSE_LINALG_MAX_N) states, sparse QR above) stays the default until
+the pivot rule has agreed with it for one release.
+"""
+function numeric_rank_pivots(H::AbstractMatrix{<:Real}; tol = nothing)::Tuple{Int,Symbol}
+  m, n = size(H)
+  (m == 0 || n == 0) && return 0, :pivots
+  Hs = H isa SparseMatrixCSC{Float64} ? H : sparse(Matrix{Float64}(H))
+  if tol === nothing
+    tol = eps(Float64) * max(m, n) * _sigma_max(Hs)
+  end
+  G = Hs' * Hs
+  F = try
+    ldlt(Symmetric(G); check = false)
+  catch
+    nothing
+  end
+  if F === nothing || !issuccess(F)
+    # singular G: the count of the deficit needs the decomposition
+    return numeric_rank(H; tol = tol), :decomposition
+  end
+  d = Vector{Float64}(diag(sparse(F.LD)))
+  all(isfinite, d) || return numeric_rank(H; tol = tol), :decomposition
+  return count(>(Float64(tol)^2), d), :pivots
+end
+
 function numeric_rank(A::SparseMatrixCSC{Float64}; tol = nothing)
   m, n = size(A)
   (m == 0 || n == 0) && return 0
@@ -1432,12 +1472,20 @@ function _criticality_wii_tolerance(H::AbstractMatrix{<:Real}, tol)::Float64
   return max(floor_wii, (Float64(tol) / smax)^2)
 end
 
-function _evaluate_observability_from_jacobian(H::AbstractMatrix{<:Real}, activeOriginalIdx::Vector{Int}; tol = nothing, criticality_method::Symbol = :omega)
+function _evaluate_observability_from_jacobian(H::AbstractMatrix{<:Real}, activeOriginalIdx::Vector{Int}; tol = nothing, criticality_method::Symbol = :omega, rank_method::Symbol = :decomposition)
   m, n = size(H)
   ν = m - n
   ρ = n > 0 ? m / n : Inf
 
-  nrank = numeric_rank(H; tol = tol)
+  rank_method in (:decomposition, :pivots) || error("observability: rank_method must be :decomposition or :pivots (got $(rank_method))")
+  rank_method_used = rank_method
+  nrank = if rank_method == :pivots
+    r, used = numeric_rank_pivots(H; tol = tol)
+    rank_method_used = used
+    r
+  else
+    numeric_rank(H; tol = tol)
+  end
   adj, ncols = _adjacency_from_sparsity(H)
   mm = _hopcroft_karp(adj, ncols)
 
@@ -1547,6 +1595,7 @@ function _evaluate_observability_from_jacobian(H::AbstractMatrix{<:Real}, active
     criticality_skipped = criticalitySkipped,
     structural_criticality_skipped = structuralSkipped,
     criticality_method = method_used,
+    rank_method = rank_method_used,
     criticality_wii = wii,
     active_measurement_indices = activeOriginalIdx,
     unobservable_state_columns = dark,
@@ -1597,7 +1646,7 @@ function structural_row_redundant(H::AbstractMatrix{<:Real}, i::Int)
 end
 
 """
-    evaluate_observability_matrix(H; tol=nothing, criticality_method=state_estimation_config().criticality_method) -> NamedTuple
+    evaluate_observability_matrix(H; tol=nothing, criticality_method=state_estimation_config().criticality_method, rank_method=state_estimation_config().rank_method) -> NamedTuple
 
 Evaluate global observability and single-row criticality directly on a matrix
 `H` (without building a network model).
@@ -1610,10 +1659,10 @@ islands). Empty for observable systems; computed only on the
 not-observable path (a dense null-space probe, fine at workshop and
 distribution-network sizes).
 """
-function evaluate_observability_matrix(H::AbstractMatrix{<:Real}; tol = nothing, criticality_method::Symbol = state_estimation_config().criticality_method)
+function evaluate_observability_matrix(H::AbstractMatrix{<:Real}; tol = nothing, criticality_method::Symbol = state_estimation_config().criticality_method, rank_method::Symbol = state_estimation_config().rank_method)
   m, _ = size(H)
   idx = collect(1:m)
-  return _evaluate_observability_from_jacobian(H, idx; tol = tol, criticality_method = criticality_method)
+  return _evaluate_observability_from_jacobian(H, idx; tol = tol, criticality_method = criticality_method, rank_method = rank_method)
 end
 
 """
@@ -1741,7 +1790,7 @@ function evaluate_global_observability(net::Net, measurements::Vector{Measuremen
   if effTol === nothing && !isempty(Hs)
     effTol = rankTolFactor * jacEps * _sigma_max(Hs)
   end
-  base = _evaluate_observability_from_jacobian(Hs, activeIdx; tol = effTol, criticality_method = base_cfg_criticality_method)
+  base = _evaluate_observability_from_jacobian(Hs, activeIdx; tol = effTol, criticality_method = base_cfg_criticality_method, rank_method = base.rank_method)
   cond_notes = Symbol[]
 
   # stage 1: structural island check on the contracted net. More than one
@@ -1995,7 +2044,7 @@ function evaluate_local_observability(net::Net, measurements::Vector{Measurement
   if effTol === nothing && !isempty(Hlocal)
     effTol = rankTolFactor * jacEps * _sigma_max(Hlocal)
   end
-  base = _evaluate_observability_from_jacobian(Hlocal, localOriginalIdx; tol = effTol, criticality_method = base_cfg_criticality_method)
+  base = _evaluate_observability_from_jacobian(Hlocal, localOriginalIdx; tol = effTol, criticality_method = base_cfg_criticality_method, rank_method = base.rank_method)
 
   return merge(base, (rows = localRows, stateCols = copy(stateCols)))
 end

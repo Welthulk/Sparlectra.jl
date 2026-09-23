@@ -149,8 +149,11 @@ function _import_cgmes(path::AbstractString, cfg::SparlectraConfig; name::Abstra
   # delivery is built around its own operating point, so starting there is
   # the honest default; a delivery without SV keeps the flat start.
   sv_bus_count = length(result.net.nodeVec) - length(result.no_sv_buses)
+  # power_flow.flatstart is the one start switch the Settings page offers;
+  # under auto it asks for the flat start on a CGMES run as well, an explicit
+  # sv or flat here still wins
   effective_start_values = if cgmes_cfg.start_values === :auto
-    sv_bus_count > 0 ? :sv : :flat
+    sv_bus_count > 0 && !cfg.powerflow.start_mode.flatstart ? :sv : :flat
   else
     cgmes_cfg.start_values
   end
@@ -158,7 +161,7 @@ function _import_cgmes(path::AbstractString, cfg::SparlectraConfig; name::Abstra
   run_config = _copy_sparlectra_with_powerflow(cfg, run_powerflow)
   start_decision = string(
     "CGMES start values: ", effective_start_values,
-    cgmes_cfg.start_values === :auto ? string(" (auto: ", sv_bus_count > 0 ? "delivery carries SvVoltage for $(sv_bus_count) bus(es)" : "no SvVoltage in this delivery", ")") : "",
+    cgmes_cfg.start_values === :auto ? string(" (auto: ", sv_bus_count > 0 ? (cfg.powerflow.start_mode.flatstart ? "power_flow.flatstart asks for the flat start" : "delivery carries SvVoltage for $(sv_bus_count) bus(es)") : "no SvVoltage in this delivery", ")") : "",
     effective_start_values === :sv ? " (imported SvVoltage state; start-value machines forced off: start_projection, dc_seed_unconditional, start_current_iteration, apslf_start)" : " (synthetic flat start)",
     isempty(start_overridden) ? "" : string(", overrides: ", join(start_overridden, ", ")),
   )
@@ -184,6 +187,10 @@ wording of those refusals is part of each service's contract.
 function import_case(path::AbstractString, general_config::SparlectraConfig; requested_format::Symbol = :auto, run_kind::Symbol = :powerflow, name::AbstractString = basename(path), performance_profile = nothing, phase_callback = phase -> nothing)
   fmt = _detect_case_format(String(path); requested = requested_format)
   provenance = Dict{String,Any}("source_path" => String(path))
+  # the flat start overrides the other start machines for this run, for
+  # every format; the caller reports the list in its run log
+  general_config, flatstart_forced = _flatstart_forced_off_config(general_config)
+  provenance["flatstart_forced_off"] = flatstart_forced
   if fmt === :matpower || fmt === :scf
     ctx = _import_sparlectra_context(String(path), nothing, general_config; performance_profile = performance_profile)
     provenance["auto_profile_result"] = ctx.auto_profile_result

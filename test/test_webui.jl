@@ -254,7 +254,12 @@ function run_webui_fast_tests()
             @test demo_zip == joinpath(cache, "sp_case14_cgmes.zip") && isfile(demo_zip)
             @test length(importCGMES(path=demo_zip, name="sp_case14_cgmes").net.nodeVec) == 14
             @test SparlectraApp._webui_stage_bundled_case!(app_root, cache, "no_such_cgmes.zip") === nothing
-            rt = (; case_directory=cache, config_file=Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, operation_log=SparlectraApp.webui_operation_log_path(root), startup_config_error=nothing, runner=SparlectraApp.start_powerflow_run)
+            # the runtime gets its own configuration copy: a save with the
+            # case target writes machine-scope keys to the configuration file,
+            # and the packaged template must never be that file
+            cfg_rt = joinpath(root, "rt.configuration.yaml")
+            cp(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, cfg_rt)
+            rt = (; case_directory=cache, config_file=cfg_rt, operation_log=SparlectraApp.webui_operation_log_path(root), startup_config_error=nothing, runner=SparlectraApp.start_powerflow_run)
             resp = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "sp_case14.scf.json", "settings_target" => "this_case", "power_flow_max_iter" => "44"); output_root=root, runtime=rt)
             @test resp.status in (302, 303)
             @test Sparlectra.load_case_config(joinpath(cache, "sp_case14.scf.json"))["power_flow.max_iter"] == 44
@@ -262,7 +267,7 @@ function run_webui_fast_tests()
             # must carry none either
             req = SparlectraApp.powerflow_webui_request(Dict("casefile" => "sp_case14.scf.json"); case_directory=cache)
             @test isempty(req["config_overrides"])
-            run = SparlectraApp.start_powerflow_run(merge(req, Dict("output_root" => joinpath(root, "runs"), "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH)); case_directory=cache)
+            run = SparlectraApp.start_powerflow_run(merge(req, Dict("output_root" => joinpath(root, "runs"), "config_file" => cfg_rt)); case_directory=cache)
             @test run["status"] == "succeeded"
             eff = read(joinpath(String(run["output_dir"]), "effective_config.yaml"), String)
             seg = eff[first(findfirst("  power_flow:", eff)):end]
@@ -286,6 +291,25 @@ function run_webui_fast_tests()
             @test occursin("Could not save settings for this case", SparlectraApp._webui_urldecode(Dict(resp_bad.headers)["Location"]))
             @test Sparlectra.load_case_config(joinpath(cache, "sp_case14.scf.json"))["power_flow.solver"] == "apslf"
             SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "sp_case14.scf.json", "settings_target" => "this_case", "power_flow_solver" => "rectangular"); output_root=root, runtime=rt)
+            # the flat start is the one start switch: the saved start settings
+            # stay as posted, the run switches them off while the flat start is
+            # on and names them in run.log; unchecking gives them back
+            resp_flat = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "sp_case14.scf.json", "settings_target" => "this_case", "power_flow_flatstart" => "true", "power_flow_apslf_start_enabled" => "true", "power_flow_start_current_iteration_enabled" => "true", "power_flow_start_angle_mode" => "dc", "power_flow_start_voltage_mode" => "profile_blend"); output_root=root, runtime=rt)
+            @test resp_flat.status in (302, 303)
+            flat_cfg = Sparlectra.load_case_config(joinpath(cache, "sp_case14.scf.json"))
+            @test flat_cfg["power_flow.flatstart"] === true
+            @test flat_cfg["power_flow.apslf_start.enabled"] === true
+            @test flat_cfg["power_flow.start_current_iteration.enabled"] === true
+            run_flat = SparlectraApp.start_powerflow_run(Dict("casefile" => "sp_case14.scf.json", "config_file" => cfg_rt, "output_root" => root); case_directory=cache)
+            @test run_flat["status"] == "succeeded"
+            run_log = read(joinpath(String(run_flat["output_dir"]), "run.log"), String)
+            @test occursin("Flat start: start-value machines forced off for this run: power_flow.apslf_start.enabled=false, power_flow.start_current_iteration.enabled=false, power_flow.start_mode.angle_mode=classic, power_flow.start_mode.voltage_mode=classic", run_log)
+            @test occursin(r"Flatstart\s+:\s+Yes", run_log)
+            @test run_flat["metadata"]["current_iteration_enabled"] === false
+            SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "sp_case14.scf.json", "settings_target" => "this_case", "power_flow_flatstart" => "false"); output_root=root, runtime=rt)
+            off_cfg = Sparlectra.load_case_config(joinpath(cache, "sp_case14.scf.json"))
+            @test off_cfg["power_flow.flatstart"] === false
+            @test off_cfg["power_flow.apslf_start.enabled"] === true
             # machine-scope keys are named and kept out of the case file
             resp2 = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "sp_case14.scf.json", "settings_target" => "this_case", "benchmark_samples" => "5"); output_root=root, runtime=rt)
             @test occursin("benchmark.samples", SparlectraApp._webui_urldecode(Dict(resp2.headers)["Location"]))
@@ -297,6 +321,77 @@ function run_webui_fast_tests()
             @test resp3.status in (302, 303)
             @test occursin("autodamp_min: 0.09", read(cfg, String))
             @test isfile(cfg * ".settings-save.bak")
+        end)() end
+
+        @testset "the provisioned configuration follows changed template defaults" begin (function ()
+            # a copy of the template provisioned by an older release still
+            # carries the old default of a key the user never touched; it
+            # follows the new template value, a value the user set stays
+            mktempdir() do dir
+                cfg = joinpath(dir, "configuration.yaml")
+                text = read(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, String)
+                @test occursin("linear_solver: umfpack_reuse", text)
+                # an old copy: the old default of the solver, a user choice for the tolerance
+                write(cfg, replace(replace(text, "linear_solver: umfpack_reuse" => "linear_solver: umfpack"), r"^  tol: [^\n]*"m => "  tol: 1.0e-7"))
+                changed = SparlectraApp._webui_follow_template_defaults!(cfg)
+                # the report names key, old and new value for the start message
+                @test any(c -> c.key == "power_flow.linear_solver" && c.old == "umfpack" && c.new == "umfpack_reuse", changed)
+                @test Sparlectra.load_sparlectra_config(cfg; reload = true).powerflow.linear_solver === :umfpack_reuse
+                @test Sparlectra.load_sparlectra_config(cfg; reload = true).powerflow.tol == 1.0e-7
+                @test isfile(joinpath(dir, "configuration.template.yaml"))
+                @test isfile(string(cfg, ".template-follow.bak"))
+                # aligned: a second pass changes nothing
+                @test isempty(SparlectraApp._webui_follow_template_defaults!(cfg))
+                # with the template copy in place a changed template default follows,
+                # a user value that differs from the old template stays
+                template_copy = joinpath(dir, "configuration.template.yaml")
+                write(template_copy, replace(read(template_copy, String), "linear_solver: umfpack_reuse" => "linear_solver: umfpack"))
+                write(cfg, replace(read(cfg, String), "linear_solver: umfpack_reuse" => "linear_solver: umfpack"))
+                @test [c.key for c in SparlectraApp._webui_follow_template_defaults!(cfg)] == ["power_flow.linear_solver"]
+                write(template_copy, replace(read(template_copy, String), "linear_solver: umfpack_reuse" => "linear_solver: umfpack"))
+                @test isempty(SparlectraApp._webui_follow_template_defaults!(cfg))   # user value equals the new template already
+                @test Sparlectra.load_sparlectra_config(cfg; reload = true).powerflow.tol == 1.0e-7
+                # a key the Web UI saved is the user's even when its value equals
+                # the old template default: it is not followed
+                write(template_copy, replace(read(template_copy, String), "linear_solver: umfpack_reuse" => "linear_solver: umfpack"))
+                write(cfg, replace(read(cfg, String), "linear_solver: umfpack_reuse" => "linear_solver: umfpack"))
+                SparlectraApp._webui_record_user_keys!(cfg, ("power_flow.linear_solver",))
+                @test isempty(SparlectraApp._webui_follow_template_defaults!(cfg))
+                @test Sparlectra.load_sparlectra_config(cfg; reload = true).powerflow.linear_solver === :umfpack
+                # a settings save records its keys, so a saved value survives the next start
+                general = SparlectraApp._webui_write_general_settings!(cfg, Dict{String,Any}("power_flow.max_iter" => 77))
+                @test general.ok
+                @test "power_flow.max_iter" in SparlectraApp._webui_user_keys(cfg)
+            end
+        end)() end
+
+        @testset "the settings page shows the configuration file; the case view is a switch" begin (function ()
+            # Reported from the browser: after a save for one case the Settings
+            # page kept showing that case's values, and a user could not tell
+            # what the configuration file said. The page shows the
+            # configuration file's values; ?case_settings=1 overlays the case.
+            dir = mktempdir()
+            cache = joinpath(dir, "cases")
+            mkpath(cache)
+            root = joinpath(dir, "out")
+            mkpath(root)
+            cp(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json")), joinpath(cache, "sp_case14.scf.json"))
+            cfg = joinpath(root, "configuration.yaml")
+            cp(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, cfg)
+            rt = (; case_directory = cache, config_file = cfg, operation_log = SparlectraApp.webui_operation_log_path(root), startup_config_error = nothing, runner = SparlectraApp.start_powerflow_run)
+            page(q) = String(copy(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/settings?casefile=sp_case14.scf.json" * q; output_root = root, runtime = rt).body))
+            max_iter(html) = (m = match(r"name=\"power_flow_max_iter\"[^>]*value=\"(\d+)\"", html); m === nothing ? "" : String(m.captures[1]))
+            saved = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "sp_case14.scf.json", "config_file" => cfg, "settings_target" => "this_case", "power_flow_max_iter" => "33"); output_root = root, runtime = rt)
+            @test saved.status in (302, 303)
+            @test Sparlectra.load_case_config(joinpath(cache, "sp_case14.scf.json"))["power_flow.max_iter"] == 33
+            default_view = page("")
+            @test max_iter(default_view) == string(Sparlectra.load_sparlectra_config(cfg; reload = true).powerflow.max_iter)
+            @test !occursin("case-settings-notice", default_view)
+            # the reset of the saved settings stays reachable in both views
+            @test occursin("Reset saved settings for this case", default_view)
+            case_view = page("&case_settings=1")
+            @test max_iter(case_view) == "33"
+            @test occursin("case-settings-notice", case_view)
         end)() end
 
         @testset "no nested forms anywhere on the run page" begin (function ()
@@ -1358,10 +1453,51 @@ function run_webui_fast_tests()
                 @test occursin("older than", sl(:sysimage_problem, img, proj))
                 write(meta, "kaputt = [[[")
                 @test sl(:sysimage_problem, img, proj) == "the sysimage metadata is unreadable"
+
+                # the decision itself, through its seams: a fixed answer, a recorded
+                # relaunch, the image this process runs on
+                slk(name, args...; kw...) = Base.invokelatest(Base.invokelatest(getfield, SL, name), args...; kw...)
+                decide(args; ask, current = "") = begin
+                    relaunches = String[]
+                    # stdout can be redirected into a file, not into a buffer
+                    capture = joinpath(tmp, "decision.txt")
+                    open(capture, "w") do out
+                        redirect_stdout(out) do
+                            slk(:handle_sysimage, args, "start_webui.jl", proj; image = img, ask = (_...) -> ask, relaunch = (image, _...) -> push!(relaunches, String(image)), current_image = current)
+                        end
+                    end
+                    (text = read(capture, String), relaunches = relaunches)
+                end
+                # an outdated image and the answer no: image and metadata are gone,
+                # the start goes on without an image
+                write(img, "not a real image")
+                write(meta, string("julia_version = \"", VERSION, "\"\nmanifest_sha256 = \"deadbeef\"\n"))
+                r = decide(String[]; ask = false)
+                @test occursin("Sysimage is out of date and was removed.", r.text)
+                @test occursin("Starting without a sysimage", r.text)
+                @test isempty(r.relaunches)
+                @test !isfile(img) && !isfile(meta)
+                # a current image is left alone and used
+                write(img, "not a real image")
+                write(meta, full_meta)
+                touch(img)
+                r = decide(String[]; ask = false)
+                @test r.relaunches == [img]
+                @test isfile(img) && isfile(meta)
+                # an outdated image while the process runs on an image given from
+                # outside: a warning, nothing removed, nothing built
+                write(meta, string("julia_version = \"", VERSION, "\"\nmanifest_sha256 = \"deadbeef\"\n"))
+                r = decide(String[]; ask = false, current = joinpath(tmp, "someone_elses.so"))
+                @test occursin("given from outside", r.text)
+                @test isempty(r.relaunches)
+                @test isfile(img) && isfile(meta)
+                @test slk(:external_sysimage, img; current = "") === nothing
+                @test slk(:external_sysimage, img; current = joinpath(Sys.BINDIR, "..", "lib", "julia", "sys.so")) === nothing
+                @test slk(:remove_stale_sysimage, joinpath(tmp, "nowhere.so")) === :absent
             end
             # no terminal in the test process, so the question answers itself with
-            # the default: an unattended start ends up WITH an image
-            @test sl(:ask_build, "never shown") == true
+            # no: an unattended start goes without an image, a build is opt-in
+            @test sl(:ask_build, "never shown") == false
             @test slval(:REBUILD_FLAG) == "--rebuild-sysimage"
             @test slval(:NO_IMAGE_FLAG) == "--no-sysimage"
             # platform path contract, still owned by the package for everything

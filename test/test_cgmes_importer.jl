@@ -980,6 +980,16 @@ function run_cgmes_importer_tests()
         @test length(sv_rows) - 1 == 14
       end
 
+      # under auto, power_flow.flatstart asks for the flat start although the
+      # delivery carries SvVoltage (the Settings page offers that one switch)
+      out_a = mktempdir()
+      cfg_a = joinpath(out_a, "c.yaml")
+      write(cfg_a, "config_version: 1\npower_flow:\n  flatstart: true\n")
+      ra = run_sparlectra_api(casefile = z, config_file = cfg_a, output_dir = out_a, case_format = :cgmes)
+      @test ra.status == :succeeded
+      @test ra.metadata["cgmes_start_values"] == "flat"
+      @test occursin("CGMES start values: flat (auto: power_flow.flatstart asks for the flat start)", read(joinpath(out_a, "run.log"), String))
+
       # the report survives a failed solve: it is written right after the
       # import, not after the power flow (one flat-start iteration cannot
       # reach 1e-14)

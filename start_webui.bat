@@ -31,12 +31,8 @@ if errorlevel 1 (
   exit /b 1
 )
 
-rem A fresh checkout has no Manifest.toml yet - resolve dependencies once.
-if not exist "%DIR%Manifest.toml" (
-  echo First start: resolving Julia dependencies ^(one-time^)...
-  julia --project="%DIR%." -e "using Pkg; Pkg.instantiate()"
-  julia --project="%DIR%app" -e "using Pkg; Pkg.instantiate()"
-)
+rem A fresh checkout has no Manifest.toml yet: start_webui.jl resolves and
+rem compiles both environments (the library and app\) on its own and says so.
 
 REM Multi-core by default: the threaded surfaces need Julia THREADS, fixed at
 REM process start. "auto" uses all cores; an explicit user setting wins.

@@ -592,9 +592,7 @@ A mutable structure representing a power transformer in a power system.
 
 # Methods
 - `Base.show(io::IO, x::PowerTransformer)`: Prints the `PowerTransformer` instance.
-"""
-# PowerTransformer should be a subtype of AbstractBranch
-"""
+
 A power transformer with up to three windings, its tap changers and the
 nameplate data the importers deliver.
 """

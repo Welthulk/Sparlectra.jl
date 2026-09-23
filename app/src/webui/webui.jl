@@ -486,6 +486,12 @@ function _webui_request_shutdown!(runtime::_SparlectraWebUIRuntime; reason::Unio
 end
 
 
+# Default values that changed between releases: a provisioned file that
+# still carries the old default never had that key touched by the user and
+# follows the new one. Read only when no template copy exists yet (a file
+# provisioned before the copy was introduced); afterwards the copy decides.
+const _WEBUI_DEFAULT_MIGRATIONS = [("power_flow.linear_solver", "umfpack", "umfpack_reuse")]
+
 """
     start_sparlectra_webui(; host="127.0.0.1", port=8080,
                             output_root=nothing,
@@ -504,6 +510,107 @@ still raises the explicit `ArgumentError`. Browser-process
 lifetime is not used for automatic shutdown by default because common browsers
 may return a short-lived launcher process instead of a reliably owned window.
 """
+
+"""
+    _webui_follow_template_defaults!(configuration) -> Vector{String}
+
+The Web UI's provisioned configuration file started as a copy of the
+package template, and a later release may change a template default. This
+keeps the copy honest: next to the file lies `configuration.template.yaml`,
+the template the copy was last aligned with; every key whose value still
+equals that old template value and whose new template value differs takes
+the new value, every other key is the user's and stays. Two things mark a
+key as the user's: a value that differs from the old template (the user
+changed it), and an entry in `<file>.user-keys.txt`, where every save the
+Web UI makes to this file records its keys (settings save, notice
+dismiss, configuration editor), so a value the user deliberately set to
+the old default is kept as well. A value typed into the file by hand
+outside the Web UI and equal to the old default cannot be told apart and
+follows. Keys the template gained are added. The template copy is then
+replaced by the current template. Without a copy (a file provisioned
+before this existed) only the known default migrations apply, under the
+same user-key rule. Returns one `(key, old, new)` entry per changed key;
+a change writes a backup `<file>.template-follow.bak` first, and the
+caller reports the entries at start.
+"""
+function _webui_follow_template_defaults!(configuration::AbstractString)::Vector{NamedTuple{(:key, :old, :new),Tuple{String,Any,Any}}}
+  template_copy = joinpath(dirname(configuration), "configuration.template.yaml")
+  changed = NamedTuple{(:key, :old, :new),Tuple{String,Any,Any}}[]
+  user = try
+    load_yaml_dict(configuration)
+  catch
+    return changed   # an unreadable file is the configuration check's business, not this one
+  end
+  user_keys = _webui_user_keys(configuration)
+  current = load_yaml_dict(DEFAULT_SPARLECTRA_CONFIG_PATH)
+  user_flat = _flatten_config_values!(Dict{String,Any}(), user, "")
+  new_flat = _flatten_config_values!(Dict{String,Any}(), current, "")
+  if isfile(template_copy)
+    old_flat = try
+      _flatten_config_values!(Dict{String,Any}(), load_yaml_dict(template_copy), "")
+    catch
+      Dict{String,Any}()
+    end
+    for (key, new_value) in new_flat
+      old_value = get(old_flat, key, nothing)
+      old_value === nothing && continue
+      haskey(user_flat, key) || continue
+      key in user_keys && continue
+      (user_flat[key] == old_value && new_value != old_value) || continue
+      _dotted_config_set!(user, key, new_value)
+      push!(changed, (key = key, old = old_value, new = new_value))
+    end
+  else
+    for (key, old_default, new_default) in _WEBUI_DEFAULT_MIGRATIONS
+      key in user_keys && continue
+      get(user_flat, key, nothing) == old_default || continue
+      _dotted_config_set!(user, key, new_default)
+      push!(changed, (key = key, old = old_default, new = new_default))
+    end
+  end
+  for (key, new_value) in new_flat
+    haskey(user_flat, key) && continue
+    _dotted_config_set!(user, key, new_value)
+    push!(changed, (key = key, old = nothing, new = new_value))
+  end
+  if !isempty(changed)
+    cp(configuration, string(configuration, ".template-follow.bak"); force = true)
+    _write_yaml_file(configuration, user)
+    sort!(changed; by = c -> c.key)
+  end
+  isfile(template_copy) && read(template_copy, String) == read(DEFAULT_SPARLECTRA_CONFIG_PATH, String) || cp(DEFAULT_SPARLECTRA_CONFIG_PATH, template_copy; force = true)
+  return changed
+end
+
+"""
+    _webui_user_keys_path(config_file) -> String
+
+The record of the dotted keys the Web UI itself wrote into a configuration
+file: `<file>.user-keys.txt`, one key per line. The template follow-up at
+start never touches a recorded key (see `_webui_follow_template_defaults!`).
+"""
+_webui_user_keys_path(config_file::AbstractString) = string(config_file, ".user-keys.txt")
+
+function _webui_user_keys(config_file::AbstractString)::Set{String}
+  path = _webui_user_keys_path(config_file)
+  isfile(path) || return Set{String}()
+  return Set{String}(strip(l) for l in readlines(path) if !isempty(strip(l)))
+end
+
+"""
+    _webui_record_user_keys!(config_file, keys)
+
+Add dotted keys to the user-key record of `config_file`. Called by every
+Web UI path that writes the file; a recorded key is the user's from then
+on, whatever value it holds.
+"""
+function _webui_record_user_keys!(config_file::AbstractString, keys)
+  merged = union(_webui_user_keys(config_file), Set{String}(String(k) for k in keys))
+  isempty(merged) && return nothing
+  write(_webui_user_keys_path(config_file), join(sort!(collect(merged)), "\n") * "\n")
+  return nothing
+end
+
 function _provision_webui_runtime!(root::AbstractString, config_file::Union{Nothing,AbstractString})
   configuration = config_file === nothing ? default_webui_config_path(root) : abspath(config_file)
   case_directory = default_webui_case_cache_dir(root)
@@ -511,13 +618,16 @@ function _provision_webui_runtime!(root::AbstractString, config_file::Union{Noth
   mkpath.(unique((abspath(root), dirname(configuration), case_directory, dirname(operation_log))))
   config_file === nothing && !isfile(configuration) && cp(DEFAULT_SPARLECTRA_CONFIG_PATH, configuration)
   isfile(configuration) || throw(ArgumentError("Web UI configuration file not found: $(configuration)"))
+  # the provisioned copy follows the template where the user never changed
+  # a value; a user setting stays (see _webui_follow_template_defaults!)
+  template_followed = config_file === nothing ? _webui_follow_template_defaults!(configuration) : NamedTuple{(:key, :old, :new),Tuple{String,Any,Any}}[]
   for warmup_name in ("warmup_case3.jl", "warmup_case14.jl", "warmup_case118.jl")
     source = joinpath(_WEBUI_PACKAGE_ROOT, "data", "webui", warmup_name)
     isfile(source) || continue
     destination = joinpath(case_directory, basename(source))
     isfile(destination) || cp(source, destination)
   end
-  return (config_file = configuration, case_directory, operation_log)
+  return (config_file = configuration, case_directory, operation_log, template_followed)
 end
 
 function _webui_validate_startup_config(configuration::AbstractString)
@@ -656,6 +766,15 @@ function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Inte
   _webui_lifecycle_println(runtime, "Sparlectra Web UI is available at ", url)
   _webui_lifecycle_println(runtime, "Stop: use Stop Web UI in the browser, close(server), or Ctrl+C here.")
   _webui_lifecycle_println(runtime, "Operation log: ", paths.operation_log)
+  # every key the template follow-up changed is named here, the backup alone
+  # tells nobody that something moved
+  if !isempty(paths.template_followed)
+    for c in paths.template_followed
+      _webui_lifecycle_println(runtime, "Configuration follows the template: ", c.key, ": ", c.old === nothing ? "unset" : string(c.old), " -> ", string(c.new))
+    end
+    _webui_lifecycle_println(runtime, "Configuration backup: ", string(paths.config_file, ".template-follow.bak"))
+    record_webui_operation!(paths.operation_log, "configuration_template_followed"; route = "/powerflow", method = "START", status = "changed", user_action = false, config_file = paths.config_file, keys = join((c.key for c in paths.template_followed), ","))
+  end
   @info "Sparlectra Web UI started" url output_root = abspath(root)
   return server
 end

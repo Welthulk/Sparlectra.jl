@@ -539,8 +539,9 @@ function _webui_case_context(;
   case_profile = nothing,
   submitted_form = nothing,
   show_case_settings_notice::Bool = true,
+  apply_case_levels::Bool = true,
 )
-  profile_values = webui_form_state(; selected_casefile, selected_config_file, sidecar_profile = case_profile, submitted_form, case_directory)
+  profile_values = webui_form_state(; selected_casefile, selected_config_file, sidecar_profile = case_profile, submitted_form, case_directory, apply_case_levels)
   profile_path = String(get(profile_values, "_profile_path", ""))
   profile_location = isempty(profile_path) ? "the case configuration file" : "<code>$(_webui_escape(profile_path))</code>"
   profile_notice = if isempty(profile_path) || !show_case_settings_notice
@@ -1228,13 +1229,15 @@ $(config_maintenance)
 </fieldset>
 <details id="apslf-start-options" class="span-2 apslf-start-options" data-apslf-start-options data-ac-only-field>
 <summary>Newton-Raphson start values</summary>
-<label class=\"check\"><input name=\"power_flow_apslf_start_enabled\" type=\"hidden\" value=\"false\"><input name=\"power_flow_apslf_start_enabled\" type=\"checkbox\" value=\"true\" data-apslf-start-toggle$(_webui_checked(profile_values, "power_flow_apslf_start_enabled", _webui_option_default("power_flow_apslf_start_enabled")))>$(_webui_field_label("power_flow_apslf_start_enabled", "Use APSLF start values"))</label>
+<label class=\"check\"><input name=\"power_flow_flatstart\" type=\"hidden\" value=\"false\"><input name=\"power_flow_flatstart\" type=\"checkbox\" value=\"true\" data-flatstart-toggle$(_webui_checked(profile_values, "power_flow_flatstart", _webui_option_default("power_flow_flatstart")))>$(_webui_field_label("power_flow_flatstart", "Flat start"))</label>
+<p class=\"field-help\">Start every bus at 1.0 pu and 0 degrees and ignore the imported start voltages. While this is on, a run switches the APSLF and DC start values, the current-iteration pre-solve and the start angle/voltage modes off; their saved values stay and return when the flat start is unchecked. A CGMES run starts flat as well unless its start values are set to sv on the Case page.</p>
+<label class=\"check\" data-nr-only-field data-flatstart-inactive-field><input name=\"power_flow_apslf_start_enabled\" type=\"hidden\" value=\"false\"><input name=\"power_flow_apslf_start_enabled\" type=\"checkbox\" value=\"true\" data-apslf-start-toggle$(_webui_checked(profile_values, "power_flow_apslf_start_enabled", _webui_option_default("power_flow_apslf_start_enabled")))>$(_webui_field_label("power_flow_apslf_start_enabled", "Use APSLF start values"))</label>
 <label class=\"field-indent\">$(_webui_field_label("power_flow_apslf_start_order", "Highest coefficient (order)"))<input name=\"power_flow_apslf_start_order\" type=\"number\" min=\"1\" data-apslf-start-order value=\"$(_webui_input_value(profile_values, "power_flow_apslf_start_order", _webui_option_default("power_flow_apslf_start_order")))\"></label>
-<label class=\"check\"><input name=\"power_flow_dc_seed_unconditional\" type=\"hidden\" value=\"false\"><input name=\"power_flow_dc_seed_unconditional\" type=\"checkbox\" value=\"true\" data-dc-seed-toggle$(_webui_checked(profile_values, "power_flow_dc_seed_unconditional", _webui_option_default("power_flow_dc_seed_unconditional")))>$(_webui_field_label("power_flow_dc_seed_unconditional", "Use DC start values"))</label>
+<label class=\"check\" data-nr-only-field data-flatstart-inactive-field><input name=\"power_flow_dc_seed_unconditional\" type=\"hidden\" value=\"false\"><input name=\"power_flow_dc_seed_unconditional\" type=\"checkbox\" value=\"true\" data-dc-seed-toggle$(_webui_checked(profile_values, "power_flow_dc_seed_unconditional", _webui_option_default("power_flow_dc_seed_unconditional")))>$(_webui_field_label("power_flow_dc_seed_unconditional", "Use DC start values"))</label>
 </details>
 <label data-nr-only-field>$(_webui_field_label("power_flow_wrong_branch_detection", "Wrong-branch detection"))$(_webui_select("power_flow_wrong_branch_detection", _webui_option_allowed_values("power_flow_wrong_branch_detection"), _webui_selected(profile_values, "power_flow_wrong_branch_detection", _webui_option_default("power_flow_wrong_branch_detection"))))</label>
-<label data-nr-only-field data-dc-seed-inactive-field>$(_webui_field_label("power_flow_start_angle_mode", "Start angle mode"))$(_webui_select("power_flow_start_angle_mode", _webui_option_allowed_values("power_flow_start_angle_mode"), _webui_selected(profile_values, "power_flow_start_angle_mode", _webui_option_default("power_flow_start_angle_mode"))))</label>
-<label data-nr-only-field data-dc-seed-inactive-field>$(_webui_field_label("power_flow_start_voltage_mode", "Start voltage mode"))$(_webui_select("power_flow_start_voltage_mode", _webui_option_allowed_values("power_flow_start_voltage_mode"), _webui_selected(profile_values, "power_flow_start_voltage_mode", _webui_option_default("power_flow_start_voltage_mode"))))</label>
+<label data-nr-only-field data-dc-seed-inactive-field data-flatstart-inactive-field>$(_webui_field_label("power_flow_start_angle_mode", "Start angle mode"))$(_webui_select("power_flow_start_angle_mode", _webui_option_allowed_values("power_flow_start_angle_mode"), _webui_selected(profile_values, "power_flow_start_angle_mode", _webui_option_default("power_flow_start_angle_mode"))))</label>
+<label data-nr-only-field data-dc-seed-inactive-field data-flatstart-inactive-field>$(_webui_field_label("power_flow_start_voltage_mode", "Start voltage mode"))$(_webui_select("power_flow_start_voltage_mode", _webui_option_allowed_values("power_flow_start_voltage_mode"), _webui_selected(profile_values, "power_flow_start_voltage_mode", _webui_option_default("power_flow_start_voltage_mode"))))</label>
 <label>$(_webui_field_label("output_logfile_results", "Logfile output mode"))$(_webui_select("output_logfile_results", _webui_option_allowed_values("output_logfile_results"), _webui_selected(profile_values, "output_logfile_results", _webui_option_default("output_logfile_results"))))</label>
 </fieldset>
 <fieldset class=\"solver-backend-options\" data-nr-only-field>
@@ -1252,7 +1255,7 @@ $(config_maintenance)
 </fieldset>
 $(isempty(profile_path) ? "" : "<fieldset class=\"saved-case-settings\">
 <legend>Saved settings for this case</legend>
-<p class=\"field-help\">This case has stored Web UI settings (<code>$(_webui_escape(basename(profile_path)))</code>). They prefill the form and outrank the configuration file for the keys they contain — including ones you may not expect, such as a stored solver choice. Resetting deletes the stored settings only; the case file itself is kept.</p>
+<p class=\"field-help\">This case has stored Web UI settings (<code>$(_webui_escape(basename(profile_path)))</code>). A run applies them on top of the configuration file for the keys they contain, including ones you may not expect, such as a stored solver choice; the form shows them only on request (link above). Resetting deletes the stored settings only; the case file itself is kept.</p>
 <div class=\"actions\"><button type=\"submit\" class=\"secondary-button\" formaction=\"/powerflow/case-settings/reset\" formmethod=\"post\" formnovalidate>Reset saved settings for this case</button></div>
 </fieldset>")
 <fieldset class=\"startup-options\">
@@ -1266,7 +1269,7 @@ $(isempty(profile_path) ? "" : "<fieldset class=\"saved-case-settings\">
 <label class=\"check span-2\"><input name=\"power_flow_dc_fallback\" type=\"hidden\" value=\"false\"><input name=\"power_flow_dc_fallback\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_dc_fallback", _webui_option_default("power_flow_dc_fallback")))>$(_webui_field_label("power_flow_dc_fallback", "DC fallback: keep a standalone DC result when AC (and rescue) fail"))</label>
 <p class=\"field-help\">The rescue ladder restarts from the original start state and logs the winning strategy. The DC fallback leaves angles and branch P flows (vm = 1 pu); the AC status honestly stays non-converged.</p>
 </fieldset>
-<fieldset class=\"start-current-iteration-options advanced-start-values\" data-nr-only-field>
+<fieldset class=\"start-current-iteration-options advanced-start-values\" data-nr-only-field data-flatstart-inactive-field>
 <legend>Advanced start values</legend>
 <label class=\"check span-2\"><input name=\"power_flow_start_current_iteration_enabled\" type=\"hidden\" value=\"false\"><input name=\"power_flow_start_current_iteration_enabled\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_start_current_iteration_enabled", _webui_option_default("power_flow_start_current_iteration_enabled")))>$(_webui_field_label("power_flow_start_current_iteration_enabled", "Enable current-iteration pre-solve"))</label>
 <label>$(_webui_field_label("power_flow_start_current_iteration_max_iter", "Current-iteration max iterations"))<input name=\"power_flow_start_current_iteration_max_iter\" type=\"number\" min=\"1\" value=\"$(_webui_input_value(profile_values, "power_flow_start_current_iteration_max_iter", _webui_option_default("power_flow_start_current_iteration_max_iter")))\"></label>
@@ -1324,6 +1327,11 @@ document.addEventListener('DOMContentLoaded', function () {
   const apslfStartToggle = document.querySelector('input[data-apslf-start-toggle]');
   const apslfStartOrderInput = document.querySelector('input[data-apslf-start-order]');
   const dcSeedToggle = document.querySelector('input[data-dc-seed-toggle]');
+  const flatstartToggle = document.querySelector('input[data-flatstart-toggle]');
+  const isFlatstartOn = function () { return flatstartToggle !== null && flatstartToggle.checked; };
+  // The flat start greys the other start controls in place; their values
+  // stay as they are (a greyed control is not posted, so a save keeps the
+  // stored value) and the run overrides them while the flat start is on.
   const updateApslfStartOrder = function () {
     if (apslfStartOrderInput !== null) apslfStartOrderInput.disabled = apslfStartToggle !== null && !apslfStartToggle.checked;
   };
@@ -1346,6 +1354,9 @@ document.addEventListener('DOMContentLoaded', function () {
   }
   if (dcSeedToggle !== null) {
     dcSeedToggle.addEventListener('change', function () { updateStartValueSource('dc_seed'); });
+  }
+  if (flatstartToggle !== null) {
+    flatstartToggle.addEventListener('change', function () { updateStepControlOptions('flatstart'); });
   }
   const autodampToggle = document.querySelector('input[data-autodamp-toggle]');
   const trustRegionToggle = document.querySelector('input[data-trust-region-toggle]');
@@ -1385,9 +1396,11 @@ document.addEventListener('DOMContentLoaded', function () {
       trustRegionGroup.classList.toggle('disabled', !trustRegionOn);
     }
     const dcSeedActive = dcSeedToggle !== null && dcSeedToggle.checked;
+    const flatstartActive = isFlatstartOn();
     nrOnlyFields.forEach(function (container) {
       const dcSeedMakesInactive = dcSeedActive && container.hasAttribute('data-dc-seed-inactive-field');
-      setSolverGroupInactive(container, hideNrOnly || dcSeedMakesInactive);
+      const flatstartMakesInactive = flatstartActive && container.hasAttribute('data-flatstart-inactive-field');
+      setSolverGroupInactive(container, hideNrOnly || dcSeedMakesInactive || flatstartMakesInactive);
     });
     updatingStepControl = false;
   };
@@ -1484,10 +1497,18 @@ function render_settings_page(;
   case_profile = nothing,
   submitted_form = nothing,
   show_case_settings_notice::Bool = true,
+  show_case_profile::Bool = false,
 )::String
-  ctx = _webui_case_context(; application_root, case_directory, selected_casefile, selected_config_file, case_profile, submitted_form, show_case_settings_notice)
+  # The form shows the configuration file's values by default. The saved
+  # settings of the selected case (its configuration file and form block) are
+  # overlaid only on request, so a stored solver or tolerance never moves a
+  # control without the user asking to see it. A run still resolves both
+  # through the configuration precedence, independent of what this page
+  # displays; a save with target this case writes what the form shows.
+  stored_profile_path = case_profile isa AbstractDict ? String(get(case_profile, "_profile_path", "")) : ""
+  ctx = _webui_case_context(; application_root, case_directory, selected_casefile, selected_config_file, case_profile, submitted_form, show_case_settings_notice, apply_case_levels = show_case_profile)
   profile_values = ctx.profile_values
-  profile_path = ctx.profile_path
+  profile_path = isempty(ctx.profile_path) ? stored_profile_path : ctx.profile_path
   error_html = _webui_error_alert_html(error_message)
   save_html = isempty(strip(save_message)) ? "" : "<div class=\"alert info settings-save-result\" role=\"status\">$(_webui_escape(save_message))</div>"
   config_default = isempty(selected_config_file) ? DEFAULT_SPARLECTRA_CONFIG_PATH : selected_config_file
@@ -1496,8 +1517,19 @@ function render_settings_page(;
   target_case_attrs = isempty(strip(ctx.effective_case_value)) ? " disabled" : " checked"
   target_general_attrs = isempty(strip(ctx.effective_case_value)) ? " checked" : ""
   sections = _webui_settings_sections_html(; profile_values, config_default, profile_path, selected_casefile = String(ctx.effective_case_value), selected_config_file)
+  case_query = isempty(strip(ctx.effective_case_value)) ? "" : "?casefile=" * _webui_urlencode(ctx.effective_case_value)
+  # the switch between the two views is a link, so a plain reload keeps the
+  # chosen view and the form itself carries no extra field
+  profile_switch = if isempty(stored_profile_path)
+    ""
+  elseif show_case_profile
+    "<p class=\"case-settings-switch\">Showing the saved settings of this case (<code>$(_webui_escape(basename(stored_profile_path)))</code>) on top of the configuration file. <a href=\"/powerflow/settings$(case_query)\">Show the configuration values</a></p>"
+  else
+    "<p class=\"case-settings-switch\">This case has saved settings (<code>$(_webui_escape(basename(stored_profile_path)))</code>); the form shows the configuration file's values. <a href=\"/powerflow/settings$(case_query)&amp;case_settings=1\">Show the case settings</a></p>"
+  end
   content = """
-$(_webui_feedback_modal_html([error_html, save_html, ctx.profile_notice, ctx.case_file_notice]))<p class=\"lede\">Solver, output, and expert options. Values prefill from the effective configuration for <code>$(case_display)</code> (<a href=\"/powerflow/case$(isempty(strip(ctx.effective_case_value)) ? "" : "?casefile=" * _webui_urlencode(ctx.effective_case_value))\">change on the Case page</a>); runs read them through the configuration precedence.</p>
+$(_webui_feedback_modal_html([error_html, save_html, ctx.profile_notice, ctx.case_file_notice]))<p class=\"lede\">Solver, output, and expert options. Values prefill from the configuration file for <code>$(case_display)</code> (<a href=\"/powerflow/case$(case_query)\">change on the Case page</a>); runs read them through the configuration precedence.</p>
+$(profile_switch)
 <form id=\"settings-form\" method=\"post\" action=\"/powerflow/settings/save\" class=\"panel form-grid settings-form-card\">
 <input type=\"hidden\" name=\"casefile\" value=\"$(_webui_escape(ctx.effective_case_value))\">
 <input type=\"hidden\" name=\"config_file\" value=\"$(_webui_escape(config_default))\">
@@ -2664,13 +2696,17 @@ an earlier session.
 function render_powerflow_compare(a::AbstractDict, b::AbstractDict)::String
   id(r) = string(get(r, "run_id", ""))
   cell(r, key, default = "-") = _webui_escape(string(get(r, key, default)))
+  # a path is shown by its file name, the full path sits in the tooltip: a
+  # case in the state directory otherwise fills the whole column
+  path_cell(r, key) = (v = string(get(r, key, "")); isempty(v) ? "-" : "<span title=\"$(_webui_escape(v))\">$(_webui_escape(basename(v)))</span>")
   head = string(
     "<section class=\"panel\"><h2>Two runs side by side</h2><table><thead><tr><th>Property</th>",
     "<th>A: $(cell(a, "run_id"))</th><th>B: $(cell(b, "run_id"))</th></tr></thead><tbody>",
   )
   for (label, key) in (("Case file", "casefile"), ("Status", "status"), ("Converged", "converged"),
     ("Iterations", "iterations"), ("Final mismatch", "final_mismatch"), ("Config file", "config_file"))
-    head *= "<tr><td>$(_webui_escape(label))</td><td>$(cell(a, key))</td><td>$(cell(b, key))</td></tr>"
+    is_path = key in ("casefile", "config_file")
+    head *= "<tr><td>$(_webui_escape(label))</td><td>$(is_path ? path_cell(a, key) : cell(a, key))</td><td>$(is_path ? path_cell(b, key) : cell(b, key))</td></tr>"
   end
   head *= "</tbody></table><p class=\"actions\"><a href=\"/powerflow/result/$(_webui_urlencode(id(a)))\">Open A</a> &middot; <a href=\"/powerflow/result/$(_webui_urlencode(id(b)))\">Open B</a></p></section>"
 

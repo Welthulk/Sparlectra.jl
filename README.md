@@ -55,15 +55,15 @@ Pkg.add("Sparlectra")
 ```
 
 The application comes with a checkout or a downloaded release and is not
-registered. Its environment `app/` carries the library by path, so one
-checkout serves both:
+registered. Its environment `app/` carries the library by path, and the
+start script sets up both on the first start (it resolves, installs and
+compiles, says so, and reports the time; a second start finds everything
+ready):
 
 ```sh
 git clone https://github.com/Welthulk/Sparlectra.jl.git Sparlectra
 cd Sparlectra
-julia --project=. -e 'using Pkg; Pkg.instantiate()'      # the library
-julia --project=app -e 'using Pkg; Pkg.instantiate()'    # the application
-julia --project=. start_webui.jl                         # the Web UI (finds app/ itself)
+julia --project=. start_webui.jl
 ```
 
 A script that uses the service API (`run_sparlectra_api`,
@@ -74,8 +74,8 @@ A script that uses the service API (`run_sparlectra_api`,
 using Sparlectra, SparlectraApp
 ```
 
-The one-line installers below do all of this, and `start_webui.jl` repairs a
-missing or outdated application environment on its own.
+The one-line installers below run the same start script. `start_webui.jl --env-only`
+does the first-start work without starting the server.
 
 ### Web UI: one-line install
 

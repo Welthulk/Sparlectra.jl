@@ -91,15 +91,15 @@ _fmt_clock(seconds::Real) = string(lpad(Int(fld(seconds, 60)), 2, '0'), ":", lpa
 
 _toml_escape(s::AbstractString) = replace(String(s), "\\" => "\\\\", "\"" => "\\\"", "\n" => " ")
 
+# The progress file is rewritten every few seconds; one warning is enough.
+const _PROGRESS_WRITE_WARNED = Ref(false)
+
 """
 Write the progress file the Web UI polls. Failures are ignored on purpose and
 named here: the state directory can be read-only or full, and a build that
 cannot report its progress is still a build worth finishing. The console line
 is unaffected, so nothing becomes invisible.
 """
-# The progress file is rewritten every few seconds; one warning is enough.
-const _PROGRESS_WRITE_WARNED = Ref(false)
-
 function _write_progress()
   try
     mkpath(_SYSIMAGE_DIR)

@@ -92,7 +92,11 @@ println()
 println("threads = ", Threads.nthreads(), ", Julia ", VERSION, ", median of ", REPEATS, " warm runs, APSLF without convergence-radius evaluation")
 
 # ---- CSV ------------------------------------------------------------------
-open("apslf_vs_nr_timing.csv", "w") do io
+# the outputs go to results/ (not tracked); the copies under docs/src/assets
+# are published by hand
+const OUT_DIR = joinpath(dirname(dirname(@__DIR__)), "results", "apslf_vs_nr_timing")
+mkpath(OUT_DIR)
+open(joinpath(OUT_DIR, "apslf_vs_nr_timing.csv"), "w") do io
     println(io, "case,buses,pv_buses,solver,order,outcome,iterations,mismatch,time_ms")
     for r in rows
         println(io, join((r.case, r.buses, r.pv, r.solver, r.order, r.outcome, r.iterations, r.mismatch, round(r.ms; digits=2)), ","))
@@ -165,5 +169,5 @@ function write_svg(path, rows)
         println(io, "</svg>")
     end
 end
-write_svg("apslf_vs_nr_timing.svg", rows)
-println("written apslf_vs_nr_timing.csv and apslf_vs_nr_timing.svg")
+write_svg(joinpath(OUT_DIR, "apslf_vs_nr_timing.svg"), rows)
+println("written apslf_vs_nr_timing.csv and apslf_vs_nr_timing.svg to ", OUT_DIR)
