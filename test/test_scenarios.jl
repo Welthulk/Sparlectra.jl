@@ -102,7 +102,7 @@ function _scenario_case14()
 end
 
 function run_scenario_patch_tests()
-  @testset "scenario patch model" begin
+  @testset "scenario patch model" begin (function ()
     case, net = _scenario_case14()
     index = ScenarioIndex(case)
     branch_id = first(r.id for r in case.data.line)
@@ -110,7 +110,7 @@ function run_scenario_patch_tests()
     gen_id = first(r.id for r in case.data.sym_gen)
     load_id = first(r.id for r in case.data.sym_load)
 
-    @testset "validation accepts the patch surface" begin
+    @testset "validation accepts the patch surface" begin (function ()
       good = ScenarioSet(
         scenarios = [
           Scenario(name = "line out", ops = [PatchOp(op = :status, target = :branch, id = branch_id, value = 0.0)]),
@@ -120,9 +120,9 @@ function run_scenario_patch_tests()
         ],
       )
       @test validate_scenarios(good, index) === good
-    end
+    end)() end
 
-    @testset "rejections name the scenario and the op index" begin
+    @testset "rejections name the scenario and the op index" begin (function ()
       unknown = ScenarioSet(scenarios = [Scenario(name = "ghost", ops = [PatchOp(op = :status, target = :branch, id = 999999, value = 0.0)])])
       err = try
         validate_scenarios(unknown, index)
@@ -158,9 +158,9 @@ function run_scenario_patch_tests()
         sprint(showerror, e)
       end
       @test occursin("is a branch, not a generator", err3)
-    end
+    end)() end
 
-    @testset "file round trip of the scenarios block" begin
+    @testset "file round trip of the scenarios block" begin (function ()
       set = ScenarioSet(
         scenarios = [
           Scenario(name = "double outage", weight = 0.5, ops = [PatchOp(op = :status, target = :branch, id = branch_id, value = 0.0), PatchOp(op = :status, target = :transformer, id = trafo_id, value = 0.0)]),
@@ -186,9 +186,9 @@ function run_scenario_patch_tests()
       @test got.scenarios[2].ops[1].field === :q
       @test validate_scenarios(got, ScenarioIndex(back)) === got
       case.sparlectra.scenarios = Dict{String,Any}()
-    end
+    end)() end
 
-    @testset "legacy contingencies map onto the scenario model" begin
+    @testset "legacy contingencies map onto the scenario model" begin (function ()
       raw = Dict{String,Any}("mode" => "explicit", "cases" => Any[Dict{String,Any}("name" => "old style", "outages" => Any[Dict{String,Any}("component" => branch_id)])])
       mapped = Sparlectra.scenario_set_from_contingencies(raw, case)
       @test length(mapped.scenarios) == 1
@@ -197,9 +197,9 @@ function run_scenario_patch_tests()
       @test mapped.scenarios[1].ops[1].id == branch_id
       @test mapped.scenarios[1].ops[1].target === :branch
       @test validate_scenarios(mapped, index) === mapped
-    end
+    end)() end
 
-    @testset "apply and restore: tap patch semantics" begin
+    @testset "apply and restore: tap patch semantics" begin (function ()
       # a tap patch on an UNREGULATED transformer changes the ratio the
       # solver sees and restores it (first-class)
       tapped = findfirst(br -> br.has_ratio_tap, net.branchVec)
@@ -214,9 +214,9 @@ function run_scenario_patch_tests()
         restore!(net, undo)
         @test Sparlectra.calcBranchRatio(net.branchVec[tapped]) == before_ratio
       end
-    end
+    end)() end
 
-    @testset "tap patch on a REGULATED transformer is rejected, controller named" begin
+    @testset "tap patch on a REGULATED transformer is rejected, controller named" begin (function ()
       tapped = findfirst(br -> br.has_ratio_tap, net.branchVec)
       if tapped === nothing
         println("      scenarios: regulated-tap rejection SKIPPED (warmup case build carries no ratio tap changer)")
@@ -237,9 +237,9 @@ function run_scenario_patch_tests()
         pop!(net.trafos[trafo_k].side1.controls)
         @test validate_scenarios(regulated, index, net) === regulated
       end
-    end
+    end)() end
 
-    @testset "bitwise restore over every N-1 scenario" begin
+    @testset "bitwise restore over every N-1 scenario" begin (function ()
       # THE step-2 acceptance test: for every N-1 branch and generator
       # scenario, apply! then restore! leaves the working copy bitwise
       # equal to the base on every field of every component type, checked
@@ -286,9 +286,9 @@ function run_scenario_patch_tests()
         end
         @test ("warmup_casePST", scf_roundtrip_field_diffs(base, work)) == ("warmup_casePST", String[])
       end
-    end
+    end)() end
 
-    @testset "engine: worker resets bitwise between evaluations" begin
+    @testset "engine: worker resets bitwise between evaluations" begin (function ()
       # step-3 acceptance for the REUSED working copy: after every
       # evaluation (branch outage, generator outage, patch scenario, all
       # WITH solves) the worker equals the engine template bitwise on
@@ -309,9 +309,9 @@ function run_scenario_patch_tests()
         @test r isa Sparlectra.ContingencyResult
         @test (it, scf_roundtrip_field_diffs(engine.template, worker.net)) == (it, String[])
       end
-    end
+    end)() end
 
-    @testset "engine: runScenarios! N-1 equals runContingencies!" begin
+    @testset "engine: runScenarios! N-1 equals runContingencies!" begin (function ()
       cases14 = vcat(Sparlectra.generateN1Branches(net), Sparlectra.generateN1Generators(net))
       via_cases = Sparlectra.runContingencies!(net, cases14)
       via_scenarios = runScenarios!(net, ScenarioSet(mode = :n1_all); index = index)
@@ -325,9 +325,9 @@ function run_scenario_patch_tests()
       @test length(patched) == 1
       @test patched[1].converged
       @test patched[1].error === nothing
-    end
+    end)() end
 
-    @testset "screening surface (step 4)" begin
+    @testset "screening surface (step 4)" begin (function ()
       cases14 = vcat(Sparlectra.generateN1Branches(net), Sparlectra.generateN1Generators(net))
       # :off keeps the historical result type and rows bit-identical
       off = Sparlectra.runContingencies!(net, cases14)
@@ -365,9 +365,9 @@ function run_scenario_patch_tests()
       only_res = Sparlectra.runContingencies!(net, cases14; screening_mode = :only, screening_margin_pct = 10.0)
       @test any(r -> r.screened, only_res)
       @test all(r -> r.screened || r.start_used !== :screen, only_res)
-    end
+    end)() end
 
-    @testset "N-1 expansion equals the existing generators on case14" begin
+    @testset "N-1 expansion equals the existing generators on case14" begin (function ()
       expanded = expand_scenarios(ScenarioSet(mode = :n1_branches), net, index)
       reference = Sparlectra.generateN1Branches(net)
       @test length(expanded) == length(reference)
@@ -381,13 +381,13 @@ function run_scenario_patch_tests()
       @test length(alln1) == length(reference) + length(gref)
       excluded = expand_scenarios(ScenarioSet(mode = :n1_branches, exclusions = [reference[1].element]), net, index)
       @test length(excluded) == length(reference) - 1
-    end
-  end
+    end)() end
+  end)() end
   return nothing
 end
 
 function run_scenario_engine_extended_tests()
-  @testset "scenario engine sp_case118 fixture" begin
+  @testset "scenario engine sp_case118 fixture" begin (function ()
     # THE step-3 gate: the engine's N-1 result CSV on case118 (all
     # branches, all generators) is byte identical to the CSV the
     # pre-engine per-case-deepcopy implementation produced at 7438b6e
@@ -446,8 +446,8 @@ function run_scenario_engine_extended_tests()
       @test ds_screened > 0
       println("      scenario engine sp_case118 distributed-slack screening: ", ds_screened, " of ", length(cases), " screened (", round(100 * ds_screened / length(cases); digits = 1), " %), :flag ", round(t_ds.time; digits = 2), " s, 0 false negatives")
     end
-  end
-  @testset "scenario engine sp_case60 screening acceptance" begin
+  end)() end
+  @testset "scenario engine sp_case60 screening acceptance" begin (function ()
     # load_fixture_net: the shipped operated grid judges screening QUALITY
     # on every install (the case300 anchor below stays cache-gated with its
     # historical trust-gate story): no false negatives at margin 10, with
@@ -465,9 +465,9 @@ function run_scenario_engine_extended_tests()
     @test sort(collect(intersect(ds_violating, Set(r.name for r in ds_flagged if r.screened)))) == String[]
     @test count(r -> r.screened, ds_flagged) > 0
     println("      scenario engine sp_case60: RAN (", length(cases), " cases, ", count(r -> r.screened, flagged), " screened, 0 false negatives, ds ", count(r -> r.screened, ds_flagged), " screened)")
-  end
+  end)() end
 
-  @testset "scenario engine sp_case60 CSV byte fixture" begin
+  @testset "scenario engine sp_case60 CSV byte fixture" begin (function ()
     # load_fixture_net: the engine's N-1 result CSV on the shipped operated
     # grid is byte identical to the tracked fixture, generated at bf0b076
     # (the place-name demo cases) and regenerated at e93eafc for issue #376
@@ -486,9 +486,9 @@ function run_scenario_engine_extended_tests()
     results = Sparlectra.runContingencies!(net, cases)
     out = Sparlectra.writeContingencyResultsCSV(joinpath(mktempdir(), "sp60_n1.csv"), results)
     @test _csv_fixture_matches(out, fixture)
-  end
+  end)() end
 
-  @testset "scenario service sources (step 5)" begin
+  @testset "scenario service sources (step 5)" begin (function ()
     # the service request picks the scenario source and screening mode: an
     # SCF case with its own scenarios block runs via file_block, an external
     # scenario JSON via external_file, and the two screening columns plus the
@@ -545,9 +545,9 @@ function run_scenario_engine_extended_tests()
       bad2 = Sparlectra.to_dict(Sparlectra._run_contingency_service(case_file, cfgpath, joinpath(dir, "run_bad2"), "step5_bad2", "branch"; scenario_source = "external_file"))
       @test bad2["reason"] == "invalid_request"
     end
-  end
+  end)() end
 
-  @testset "scenario engine sp_case300 screening acceptance" begin
+  @testset "scenario engine sp_case300 screening acceptance" begin (function ()
     # the operated-grid acceptance case per the test-network rule
     # (2026-09-03): case300 judges screening QUALITY, no false negatives at
     # margin 10 with the 0.005 pu trust gate (its outage 57-63 forced the
@@ -568,9 +568,9 @@ function run_scenario_engine_extended_tests()
       fp = count(r -> !r.screened && !(r.name in violating), flagged)
       println("      scenario engine sp_case300: RAN (", length(cases), " cases, ", screened, " screened, ", fp, " false positives, 0 false negatives)")
     end
-  end
+  end)() end
 
-  @testset "scenarios workshop runs with its assertions" begin
+  @testset "scenarios workshop runs with its assertions" begin (function ()
     # the Literate workshop is executable Julia and
     # carries an @assert next to every printed number; RUNNING it here is
     # what keeps the notebook from drifting silently. The workshop runs on
@@ -585,7 +585,7 @@ function run_scenario_engine_extended_tests()
     end
     @test true
     println("      scenarios workshop: RAN")
-  end
+  end)() end
 
   return nothing
 end

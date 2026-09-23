@@ -317,6 +317,60 @@ function _run_state_estimation_service(
   # setting of the form was lost on the way (the CSV format among them)
   config_overrides::AbstractDict = Dict{String,Any}(),
 )::SparlectraApiResult
+  # the callback and the overrides arrive in a different type from every call
+  # site; behind `_SeRunOptions` the 700-line body below has one
+  # specialization (the same arrangement as `_run_sparlectra_api`)
+  options = _SeRunOptions(max_iter, tol, flatstart, robust, max_eliminations, report_correlation, k_eliminate, robust_mode, robust_k1,
+    robust_k2, k_suppress, suppression_sigma, phase_callback, config_overrides)
+  return _run_state_estimation_service_body(String(case_path), String(config_file), String(output_dir), run_id, String(measurement_file),
+    update_shunts, tap_estimation, case_format, options)
+end
+
+# the optional solver settings keep their Union types as fields: a positional
+# argument of Union type is specialized per concrete value type (`nothing` or
+# a number, eight variants in one test group), a struct field is not
+struct _SeRunOptions
+  max_iter::Union{Nothing,Int}
+  tol::Union{Nothing,Float64}
+  flatstart::Union{Nothing,Bool}
+  robust::Union{Nothing,Bool}
+  max_eliminations::Union{Nothing,Int}
+  report_correlation::Union{Nothing,Bool}
+  k_eliminate::Union{Nothing,Float64}
+  robust_mode::Union{Nothing,Symbol}
+  robust_k1::Union{Nothing,Float64}
+  robust_k2::Union{Nothing,Float64}
+  k_suppress::Union{Nothing,Float64}
+  suppression_sigma::Union{Nothing,Float64}
+  phase_callback::Any
+  config_overrides::Any
+end
+
+function _run_state_estimation_service_body(
+  case_path::String,
+  config_file::String,
+  output_dir::String,
+  run_id::String,
+  measurement_file::String,
+  update_shunts::Bool,
+  tap_estimation::Bool,
+  case_format::Symbol,
+  options::_SeRunOptions,
+)::SparlectraApiResult
+  max_iter = options.max_iter
+  tol = options.tol
+  flatstart = options.flatstart
+  robust = options.robust
+  max_eliminations = options.max_eliminations
+  report_correlation = options.report_correlation
+  k_eliminate = options.k_eliminate
+  robust_mode = options.robust_mode
+  robust_k1 = options.robust_k1
+  robust_k2 = options.robust_k2
+  k_suppress = options.k_suppress
+  suppression_sigma = options.suppression_sigma
+  phase_callback = options.phase_callback
+  config_overrides = options.config_overrides
   mkpath(output_dir)
   logfile = joinpath(output_dir, "run.log")
   result_file = joinpath(output_dir, "result.json")

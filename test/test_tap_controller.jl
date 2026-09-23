@@ -45,20 +45,20 @@ function run_tap_controller_tests()
     return net, tbr
   end
 
-  @testset "Tap controller API validation" begin
+  @testset "Tap controller API validation" begin (function ()
     net, _ = _build_net()
     @test_throws ErrorException addPowerTransformerControl!(net; trafo = "does_not_exist", mode = :voltage, target_bus = "Load", target_vm_pu = 1.0)
     @test_throws ErrorException addPowerTransformerControl!(net; trafo = "1", mode = :voltage)
     @test_throws ErrorException addPowerTransformerControl!(net; trafo = "1", mode = :voltage, target_bus = "Load", target_vm_pu = 1.0, voltage_error_metric = :invalid)
-  end
+  end)() end
 
-  @testset "One-controller guard works across transformer aliases" begin
+  @testset "One-controller guard works across transformer aliases" begin (function ()
     net, tbr = _build_net()
     addPowerTransformerControl!(net; trafo = string(tbr.branchIdx), mode = :voltage, target_bus = "Load", target_vm_pu = 0.99, control_ratio = true, control_phase = false)
     @test_throws ErrorException addPowerTransformerControl!(net; trafo = tbr.comp.cID, mode = :voltage, target_bus = "Load", target_vm_pu = 0.99, control_ratio = true, control_phase = false)
-  end
+  end)() end
 
-  @testset "Split Schraegregelung: two disjoint controllers on one transformer" begin
+  @testset "Split Schraegregelung: two disjoint controllers on one transformer" begin (function ()
     # Voltage controller on the ratio tap plus active-power controller on the
     # phase tap of the SAME transformer; a parallel line provides the loop the
     # phase tap needs to shift flow.
@@ -106,9 +106,9 @@ function run_tap_controller_tests()
     @test cres !== nothing
     @test length(cres.controllers) == 2
     @test length(unique([row.controller_name for row in cres.controllers])) == 2
-  end
+  end)() end
 
-  @testset "PST reactance coupling X(alpha) (#274)" begin
+  @testset "PST reactance coupling X(alpha) (#274)" begin (function ()
     # PST loop net: trafo Slack→Mid with a parallel line so the phase tap can
     # shift flow; the typed model is attached to the controlled winding
     # closure-local net deliberately NOT named `net`: assigning a name that
@@ -200,9 +200,9 @@ function run_tap_controller_tests()
     dir_static = Sparlectra._phase_probe_direction(net4, tbr4, ctrl4, 30, 1e-8, 0, :rectangular)
     @test dir_model == dir_static
     @test abs(dir_model) == 1.0
-  end
+  end)() end
 
-  @testset "SVC shunt voltage controller + controllable elements (#227)" begin
+  @testset "SVC shunt voltage controller + controllable elements (#227)" begin (function ()
     # NOTE: the closure-local net must NOT be named `net` — an assignment to
     # a name that is also a testset local would write the captured outer
     # variable (Julia closure capture), aliasing every built fixture.
@@ -307,9 +307,9 @@ function run_tap_controller_tests()
     @test trows[1].actuator == :tap_ratio
     @test trows[1].quantity == :bus_voltage
     @test trows[1].discrete === true
-  end
+  end)() end
 
-  @testset "Master/slave transformer group (#322)" begin
+  @testset "Master/slave transformer group (#322)" begin (function ()
     # substation fixture: two identical parallel transformers HV -> LV
     build_substation = function ()
       gnet = Net(name = "tap_group", baseMVA = 100.0)
@@ -387,9 +387,9 @@ function run_tap_controller_tests()
     @test applyConfiguredControllers!(ynet, ycfg) == 1
     yc = only(Sparlectra._tap_controllers(ynet))
     @test yc.followers == [yids[2]]
-  end
+  end)() end
 
-  @testset "MSC/MSR discrete shunt bank (#324)" begin
+  @testset "MSC/MSR discrete shunt bank (#324)" begin (function ()
     build_sag = function ()
       snet = Net(name = "msc_ctrl", baseMVA = 100.0)
       for bus in ("Slack", "Mid", "Load")
@@ -466,9 +466,9 @@ function run_tap_controller_tests()
     yctrl = only(Sparlectra._shunt_controllers(ynet))
     @test yctrl.step_mvar ≈ 10.0
     @test applyConfiguredControllers!(ynet, ycfg) == 0
-  end
+  end)() end
 
-  @testset "STATCOM current-limit mode (#297 Draft A)" begin
+  @testset "STATCOM current-limit mode (#297 Draft A)" begin (function ()
     # weak two-line corridor: the load bus sags visibly, the compensator at
     # Mid works against the sag. NOTE: closure-local nets must not shadow a
     # testset-local `net` (Julia closure capture, see the SVC testset).
@@ -571,9 +571,9 @@ function run_tap_controller_tests()
     @test bctrl.s_max_mva === nothing
     bels = controllableElements(bnet)
     @test bels[1].device == "machine remote voltage control"
-  end
+  end)() end
 
-  @testset "SVC vs STATCOM limit characteristic (#297 Draft E)" begin
+  @testset "SVC vs STATCOM limit characteristic (#297 Draft E)" begin (function ()
     # The Draft E acceptance: on the SAME depressed-voltage case the SVC's
     # delivered Q collapses with V^2 (constant clamped susceptance through
     # the Y-bus) while the STATCOM's falls only linearly with V (constant
@@ -624,16 +624,16 @@ function run_tap_controller_tests()
     @test q_svc < v_svc * rating_mvar                  # quadratic sits BELOW the linear law at V < 1
     @test q_st / rating_mvar ≈ v_st atol = 2e-3        # normalized delivered Q equals V ...
     @test q_svc / rating_mvar ≈ v_svc^2 atol = 2e-3    # ... versus V^2
-  end
+  end)() end
 
-  @testset "Voltage deadband is evaluated in pu Vm space" begin
+  @testset "Voltage deadband is evaluated in pu Vm space" begin (function ()
     @test Sparlectra._voltage_within_deadband(1.2009, 1.200, 1e-3)
     @test !Sparlectra._voltage_within_deadband(1.2025, 1.200, 1e-3)
     @test isapprox(Sparlectra._voltage_control_error(1.201, 1.200, :vm), 1e-3; atol = 1e-12)
     @test isapprox(Sparlectra._voltage_control_error(1.201, 1.200, :vm2), 2.401e-3; atol = 1e-12)
-  end
+  end)() end
 
-  @testset "Voltage tap controller (discrete ratio)" begin
+  @testset "Voltage tap controller (discrete ratio)" begin (function ()
     net, tbr = _build_net()
     result0 = run_sparlectra(net = net, config = _runner_cfg())
     erg0 = result0.numerical_converged ? 0 : 1
@@ -665,9 +665,9 @@ function run_tap_controller_tests()
     else
       @test ctrl.at_limit
     end
-  end
+  end)() end
 
-  @testset "Control loop console output once per run (#387)" begin
+  @testset "Control loop console output once per run (#387)" begin (function ()
     # the inner solver printed its full diagnostic set on every control
     # pass; now the first pass prints it, later passes get one line each,
     # the wrong-branch block stays silent with the detection off, and the
@@ -730,9 +730,9 @@ function run_tap_controller_tests()
     @test occursin("Control passes :", hdr_text)
     @test occursin("last pass", hdr_text)
     @test occursin(string(net.control_result.total_pf_iterations, " inner iterations in total"), hdr_text)
-  end
+  end)() end
 
-  @testset "Branch active power controller (phase)" begin
+  @testset "Branch active power controller (phase)" begin (function ()
     # A radial path gives a phase shifter no lever on P (the load dictates
     # the flow); the parallel line provides the loop the controller needs —
     # the honest probe direction (post-#274 flow refresh) exposes that.
@@ -766,9 +766,9 @@ function run_tap_controller_tests()
     ctrl = only(Sparlectra._tap_controllers(net))
     @test ctrl.converged
     @test abs(get_branch_p_from_to_mw(net, "Slack", "Mid") - p_target) <= 4.0
-  end
+  end)() end
 
-  @testset "Disabled tap controllers are skipped" begin
+  @testset "Disabled tap controllers are skipped" begin (function ()
     net, tbr = _build_net()
     addPowerTransformerControl!(net;
       trafo = string(tbr.branchIdx),
@@ -791,9 +791,9 @@ function run_tap_controller_tests()
     @test result.final_converged
     @test result.outcome === :converged
     @test result.reason === :none
-  end
+  end)() end
 
-  @testset "Disabled control framework preserves successful baseline PF" begin
+  @testset "Disabled control framework preserves successful baseline PF" begin (function ()
     net, tbr = _build_net()
     addPowerTransformerControl!(net;
       trafo = string(tbr.branchIdx),
@@ -813,9 +813,9 @@ function run_tap_controller_tests()
     @test result.final_converged
     @test result.outcome === :converged
     @test result.reason === :none
-  end
+  end)() end
 
-  @testset "Controlled framework result composes converged control status" begin
+  @testset "Controlled framework result composes converged control status" begin (function ()
     net, tbr = _build_net()
     baseline = run_sparlectra(net = net, config = _runner_cfg())
     @test baseline.final_converged
@@ -833,9 +833,9 @@ function run_tap_controller_tests()
     @test result.solution_available
     @test result.final_converged
     @test result.outcome === :converged
-  end
+  end)() end
 
-  @testset "Controlled framework result rejects exhausted outer loop" begin
+  @testset "Controlled framework result rejects exhausted outer loop" begin (function ()
     net, tbr = _build_net()
     addPowerTransformerControl!(net;
       trafo = string(tbr.branchIdx),
@@ -855,9 +855,9 @@ function run_tap_controller_tests()
     @test result.outcome === :control_max_outer_iterations
     @test result.reason === :control_max_outer_iterations
     @test occursin("max_outer_iterations", result.reason_text)
-  end
+  end)() end
 
-  @testset "Direct run_control! returns ControlRunResult" begin
+  @testset "Direct run_control! returns ControlRunResult" begin (function ()
     net, tbr = _build_net()
     addPowerTransformerControl!(net;
       trafo = string(tbr.branchIdx),
@@ -877,9 +877,9 @@ function run_tap_controller_tests()
     @test !isempty(result.controllers)
     @test latest_control_result(net) === result
     @test net.control_result === result
-  end
+  end)() end
 
-  @testset "Direct run_control! resolves default PF config" begin
+  @testset "Direct run_control! resolves default PF config" begin (function ()
     net, tbr = _build_net()
     addPowerTransformerControl!(net;
       trafo = string(tbr.branchIdx),
@@ -900,23 +900,23 @@ function run_tap_controller_tests()
     @test latest_control_result(net) === result
     @test net.control_result === result
     @test tbr.tap_ratio != ratio_before || result.status in (:converged, :blocked, :max_outer_iterations, :pf_failed)
-  end
+  end)() end
 
-  @testset "Net initializes control_result as nothing" begin
+  @testset "Net initializes control_result as nothing" begin (function ()
     net = Net(name = "x", baseMVA = 100.0)
     @test net.control_result === nothing
     @test latest_control_result(net) === nothing
-  end
+  end)() end
 
-  @testset "run_control! stores terminal no-controller result on Net" begin
+  @testset "run_control! stores terminal no-controller result on Net" begin (function ()
     net, _ = _build_net()
     result = run_control!(net; controllers = AbstractOuterController[], pf_config = PowerFlowConfig(max_iter = 2), control_config = ControlConfig(enabled = true), verbose = 0)
     @test result.status == :no_controllers
     @test latest_control_result(net) === result
     @test net.control_result === result
-  end
+  end)() end
 
-  @testset "Disabled control still runs one baseline PF" begin
+  @testset "Disabled control still runs one baseline PF" begin (function ()
     net, tbr = _build_net()
     addPowerTransformerControl!(net;
       trafo = string(tbr.branchIdx),
@@ -940,9 +940,9 @@ function run_tap_controller_tests()
     @test result.last_pf_status == :ok
     @test latest_control_result(net) === result
     @test net.control_result === result
-  end
+  end)() end
 
-  @testset "All disabled controllers still run one baseline PF" begin
+  @testset "All disabled controllers still run one baseline PF" begin (function ()
     net, tbr = _build_net()
     addPowerTransformerControl!(net;
       trafo = string(tbr.branchIdx),
@@ -964,9 +964,9 @@ function run_tap_controller_tests()
     @test result.powerflow_solves == 1
     @test result.last_pf_status == :ok
     @test latest_control_result(net) === result
-  end
+  end)() end
 
-  @testset "run_sparlectra net path honors per-call cfg.control" begin
+  @testset "run_sparlectra net path honors per-call cfg.control" begin (function ()
     net, tbr = _build_net()
     addPowerTransformerControl!(net;
       trafo = string(tbr.branchIdx),
@@ -987,9 +987,9 @@ function run_tap_controller_tests()
     @test result.status == :disabled
     @test result.powerflow_solves == 1
     @test result.converged == true
-  end
+  end)() end
 
-  @testset "YAML controller instantiation (#305)" begin
+  @testset "YAML controller instantiation (#305)" begin (function ()
     # Round trip through the real YAML reader: a declared power_transformer
     # controller must be active and reproduce the programmatic setup.
     net_prog, tbr_prog = _build_net()
@@ -1086,9 +1086,9 @@ control:
     end
     @test err isa ArgumentError
     @test occursin("control.controllers.s1", sprint(showerror, err))
-  end
+  end)() end
 
-  @testset "Outer-loop limits are separated from inner PF max_iter" begin
+  @testset "Outer-loop limits are separated from inner PF max_iter" begin (function ()
     net, tbr = _build_net()
     addPowerTransformerControl!(net;
       trafo = string(tbr.branchIdx),
@@ -1107,9 +1107,9 @@ control:
     @test result.outer_iterations <= 5
     @test result.powerflow_solves >= 1
     @test latest_control_result(net) === result
-  end
+  end)() end
 
-  @testset "Transformer controller trace rows include stable keys" begin
+  @testset "Transformer controller trace rows include stable keys" begin (function ()
     net, tbr = _build_net()
     addPowerTransformerControl!(net;
       trafo = string(tbr.branchIdx),
@@ -1133,17 +1133,17 @@ control:
     @test haskey(row, :tap_ratio)
     @test haskey(row, :phase_shift_deg)
     @test row.controller_type == "PowerTransformerControl"
-  end
+  end)() end
 
 
-  @testset "run_sparlectra net entry point" begin
+  @testset "run_sparlectra net entry point" begin (function ()
     net, _ = _build_net()
     result_a = run_sparlectra(net = net, config = _runner_cfg(max_iter = 20))
     @test result_a.numerical_converged
     @test result_a.iterations >= 1
 
-  end
-  @testset "Tap controller reporting rows and classic section" begin
+  end)() end
+  @testset "Tap controller reporting rows and classic section" begin (function ()
     net, tbr = _build_net()
     addPowerTransformerControl!(net;
       trafo = string(tbr.branchIdx),
@@ -1173,9 +1173,9 @@ control:
     @test occursin("tap position", txt)
     @test occursin("status", txt)
     @test occursin("Power sign convention", txt)
-  end
+  end)() end
 
-  @testset "Branch derives tap limits from PowerTransformerTaps" begin
+  @testset "Branch derives tap limits from PowerTransformerTaps" begin (function ()
     taps = PowerTransformerTaps(Vn_kV = 110.0, step = 0, lowStep = -4, highStep = 6, neutralStep = 1, voltageIncrement_kV = 1.1)
     w1 = PowerTransformerWinding(110.0, 0.0, 0.12, 0.0, 0.0, 1.0, 0.0, 110.0, 100.0, taps, true, nothing)
     w2 = PowerTransformerWinding(20.0, 0.0, 0.0, 0.0, 0.0, nothing, 0.0, 20.0, 100.0, nothing, true, nothing)
@@ -1206,18 +1206,18 @@ control:
     @test isapprox(taps.tapStepPercent, 1.0; atol = 1e-12)
     @test isapprox(taps.neutralU, 110.0; atol = 1e-12)
     @test isapprox(taps.neutralU_ratio, 1.0; atol = 1e-12)
-  end
+  end)() end
 
-  @testset "PowerTransformerTaps neutral voltage derivation" begin
+  @testset "PowerTransformerTaps neutral voltage derivation" begin (function ()
     taps_ratio = PowerTransformerTaps(Vn_kV = 20.0, step = 0, lowStep = -2, highStep = 2, neutralStep = 0, voltageIncrement_kV = 0.4, neutralU_ratio = 1.05)
     @test isapprox(taps_ratio.neutralU, 21.0; atol = 1e-12)
     @test isapprox(taps_ratio.neutralU_ratio, 1.05; atol = 1e-12)
 
     taps_neutral = PowerTransformerTaps(Vn_kV = 20.0, step = 0, lowStep = -2, highStep = 2, neutralStep = 0, voltageIncrement_kV = 0.4, neutralU = 19.5)
     @test isapprox(taps_neutral.neutralU_ratio, 0.975; atol = 1e-12)
-  end
+  end)() end
 
-  @testset "Controller can be attached during transformer creation" begin
+  @testset "Controller can be attached during transformer creation" begin (function ()
     net = Net(name = "tap_ctrl_on_create", baseMVA = 100.0)
     addBus!(net = net, busName = "B1", vn_kV = 110.0)
     addBus!(net = net, busName = "B2", vn_kV = 110.0)
@@ -1233,7 +1233,7 @@ control:
     @test ctrls[1].trafo == string(getNetBranch(net = net, fromBus = "B1", toBus = "B2").branchIdx)
     @test length(net.trafos[1].side1.controls) == 1
     @test net.trafos[1].tapSideNumber == 1
-  end
+  end)() end
 
   # --- machine remote voltage control (#294 point 3) ------------------------
   # Shares this file with the tap controllers because both exercise the same
@@ -1252,7 +1252,7 @@ control:
     return net
   end
 
-  @testset "Machine RVC: API validation" begin
+  @testset "Machine RVC: API validation" begin (function ()
     net = _build_rvc_net()
     @test_throws ErrorException addMachineVoltageControl!(net; bus = "Load", target_bus = "GenBus", target_vm_pu = 1.0)              # no generator at bus
     @test_throws ErrorException addMachineVoltageControl!(net; bus = "GenBus", target_bus = "GenBus", target_vm_pu = 1.0)            # local target
@@ -1270,9 +1270,9 @@ control:
     ctrl = Sparlectra.PowerTransformerControl(trafo = "", mode = :voltage, target_bus = "Load", target_vm_pu = 1.03)
     add2WTrafo!(net = xnet, fromBus = "Load", toBus = "TapSide", sn_mva = 40.0, vk_percent = 12.0, vkr_percent = 0.4, pfe_kw = 20.0, i0_percent = 0.2, controls = [ctrl])
     @test_logs (:warn, r"tap controller already regulates") addMachineVoltageControl!(xnet; bus = "GenBus", target_bus = "Load", target_vm_pu = 1.05)
-  end
+  end)() end
 
-  @testset "Machine RVC: secant loop reaches a remote target" begin
+  @testset "Machine RVC: secant loop reaches a remote target" begin (function ()
     net = _build_rvc_net()
     addMachineVoltageControl!(net; bus = "GenBus", target_bus = "Load", target_vm_pu = 1.05, deadband_vm_pu = 5e-4)
     pf = PowerFlowConfig(max_iter = 30, tol = 1e-9)
@@ -1289,9 +1289,9 @@ control:
     @test length(rows) == 1
     @test rows[1].status == "converged"
     @test rows[1].target_bus == "Load"
-  end
+  end)() end
 
-  @testset "Machine RVC: honest at_limit when the target is unreachable" begin
+  @testset "Machine RVC: honest at_limit when the target is unreachable" begin (function ()
     net = _build_rvc_net(qmin = -2.0, qmax = 2.0)
     addMachineVoltageControl!(net; bus = "GenBus", target_bus = "Load", target_vm_pu = 1.0, deadband_vm_pu = 5e-4)
     pf = PowerFlowConfig(max_iter = 30, tol = 1e-9)
@@ -1304,5 +1304,5 @@ control:
     @test !ctrl.converged
     @test isapprox(ctrl.q_mvar, -2.0; atol = 1e-6)
     @test abs(get_bus_vm_pu(net, "Load") - 1.0) > 5e-4
-  end
+  end)() end
 end

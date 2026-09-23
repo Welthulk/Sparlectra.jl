@@ -62,8 +62,8 @@ function _dc3_net(; shift_deg::Float64 = 0.0)::Net
 end
 
 function run_dc_powerflow_tests()
-  @testset "DC power flow (rundcpf!)" begin
-    @testset "Reference values: 3-bus hand-verified fixture" begin
+  @testset "DC power flow (rundcpf!)" begin (function ()
+    @testset "Reference values: 3-bus hand-verified fixture" begin (function ()
       net = _dc3_net()
       report = rundcpf!(net)
       @test report.metadata.converged
@@ -82,9 +82,9 @@ function run_dc_powerflow_tests()
       @test isapprox(slack_row.p_gen_MW, 40.0; atol = 1e-6)
       # Lossless model: p_to_MW is exactly -p_from_MW for every branch.
       @test all(isapprox(row.p_to_MW, -row.p_from_MW; atol = 1e-12) for row in report.branches)
-    end
+    end)() end
 
-    @testset "Reference values: sp_case9 (independent DC implementation, off-nominal taps)" begin
+    @testset "Reference values: sp_case9 (independent DC implementation, off-nominal taps)" begin (function ()
       # the shipped data/mpower/sp_case9.m carries the DC reference its
       # generator (a case generator that is not shipped) computed with its own DC solver in
       # MATPOWER conventions (B' from x and tap, Pfinj from the shift): an
@@ -112,9 +112,9 @@ function run_dc_powerflow_tests()
       @test seen == length(pf_expected)
       slack_row = only(filter(row -> row.bus == 1, report.nodes))
       @test isapprox(slack_row.p_gen_MW, 75.0; atol = 1e-6)
-    end
+    end)() end
 
-    @testset "Phase-shifter coverage (Pfinj)" begin
+    @testset "Phase-shifter coverage (Pfinj)" begin (function ()
       net = _dc3_net(shift_deg = 5.0)
       report = rundcpf!(net)
       @test report.metadata.converged
@@ -129,9 +129,9 @@ function run_dc_powerflow_tests()
       # it never changes the slack's required injection.
       slack_row = only(filter(row -> row.bus_name == "B1", report.nodes))
       @test isapprox(slack_row.p_gen_MW, 40.0; atol = 1e-6)
-    end
+    end)() end
 
-    @testset "Property: net injection balances to zero (lossless)" begin
+    @testset "Property: net injection balances to zero (lossless)" begin (function ()
       # load_fixture_net: the lossless-balance property is case-agnostic, so
       # it runs on tracked/shipped cases instead of downloaded IEEE cases (a
       # fresh install downloads nothing); warmup_casePST doubles as the
@@ -142,9 +142,9 @@ function run_dc_powerflow_tests()
         total = sum(row.p_gen_MW - row.p_load_MW for row in report.nodes)
         @test (label, isapprox(total, 0.0; atol = 1e-6)) == (label, true)
       end
-    end
+    end)() end
 
-    @testset "closed busbar couplers are contracted (link merge regression)" begin
+    @testset "closed busbar couplers are contracted (link merge regression)" begin (function ()
       # before 2026-09-04 the DC path skipped _merged_pf_net: the two
       # sections of a CLOSED coupler were separate DC nodes, which either
       # split off a false reference-less island (warmup_casePST, its second
@@ -158,9 +158,9 @@ function run_dc_powerflow_tests()
       # warmup_casePST solving AT ALL is the reference-less-island
       # regression; the balance property above already asserts its numbers
       @test rundcpf!(load_fixture_net("warmup_casePST")).metadata.converged
-    end
+    end)() end
 
-    @testset "Island coverage: two independent islands" begin
+    @testset "Island coverage: two independent islands" begin (function ()
       island_net = Net(name = "dc_islands", baseMVA = 100.0)
       for busName in ("A1", "A2", "B1", "B2")
         addBus!(net = island_net, busName = busName, vn_kV = 110.0)
@@ -179,9 +179,9 @@ function run_dc_powerflow_tests()
       # Each island's slack supplies exactly its own island's load (no cross-island coupling).
       @test isapprox(only(v for (k, v) in pf if k[1] in (1, 2) || k[2] in (1, 2)), 10.0; atol = 1e-6)
       @test isapprox(only(v for (k, v) in pf if k[1] in (3, 4) || k[2] in (3, 4)), 8.0; atol = 1e-6)
-    end
+    end)() end
 
-    @testset "Config validation: power_flow.solver=dc / power_flow.dc.*" begin
+    @testset "Config validation: power_flow.solver=dc / power_flow.dc.*" begin (function ()
       default_cfg = Sparlectra.SparlectraConfig()
       @test default_cfg.powerflow.dc.angle_reference_deg == 0.0
       @test default_cfg.powerflow.dc.ignore_out_of_service === true
@@ -191,9 +191,9 @@ function run_dc_powerflow_tests()
       @test cfg_dc.powerflow.dc.angle_reference_deg == 3.5
 
       @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("solver" => "not_a_solver")))
-    end
+    end)() end
 
-    @testset "Controller + DC solver rejection" begin
+    @testset "Controller + DC solver rejection" begin (function ()
       # load_fixture_net: the shipped sp_case14 carries a REAL declared tap
       # controller, so the rejection is tested against the file's own
       # controller instead of one hand-attached to a downloaded case
@@ -202,9 +202,9 @@ function run_dc_powerflow_tests()
 
       cfg = Sparlectra.SparlectraConfig(powerflow = Sparlectra.PowerFlowConfig(solver = :dc), output = OutputConfig(logfile_results = :off))
       @test_throws ArgumentError run_sparlectra(net = net, config = cfg)
-    end
+    end)() end
 
-    @testset "run_sparlectra dispatch: power_flow.solver=:dc" begin
+    @testset "run_sparlectra dispatch: power_flow.solver=:dc" begin (function ()
       cfg = Sparlectra.SparlectraConfig(powerflow = Sparlectra.PowerFlowConfig(solver = :dc), output = OutputConfig(logfile_results = :off))
       result = run_sparlectra(casefile = "sp_case5.scf.json", path = joinpath(dirname(@__DIR__), "data", "scf"), config = cfg)
       @test result.method === :dc
@@ -213,9 +213,9 @@ function run_dc_powerflow_tests()
       # hand-checkable: 32 MW load minus the 12 MW PV machine, lossless DC
       slack_row = result.net.nodeVec[result.net.busDict["Sandau_110"]]
       @test isapprox(slack_row._pƩGen, 20.0; atol = 1e-6)
-    end
+    end)() end
 
-    @testset "angle_reference_deg is an exact uniform shift" begin
+    @testset "angle_reference_deg is an exact uniform shift" begin (function ()
       net0 = _dc3_net()
       report0 = rundcpf!(net0)
       netr = _dc3_net()
@@ -227,9 +227,9 @@ function run_dc_powerflow_tests()
       for (b0, br) in zip(report0.branches, reportr.branches)
         @test isapprox(br.p_from_MW, b0.p_from_MW; atol = 1e-9)
       end
-    end
+    end)() end
 
-    @testset "seed_ac_start: DC-seeded AC Newton-Raphson solve" begin
+    @testset "seed_ac_start: DC-seeded AC Newton-Raphson solve" begin (function ()
       # load_fixture_net: property-style, runs on the shipped case
       net = load_fixture_net("sp_case5")
       report = rundcpf!(net; seed_ac_start = true)
@@ -241,9 +241,9 @@ function run_dc_powerflow_tests()
       @test any(!isapprox(n._vm_pu, 1.0; atol = 1e-9) for n in net.nodeVec)
       @test dc_pf_status(net) !== nothing
       @test dc_pf_status(net).numerical_converged
-    end
+    end)() end
 
-    @testset "Config validation: power_flow.start_mode.dc_seed_unconditional" begin
+    @testset "Config validation: power_flow.start_mode.dc_seed_unconditional" begin (function ()
       default_cfg = Sparlectra.SparlectraConfig()
       @test default_cfg.powerflow.start_mode.dc_seed_unconditional === false
 
@@ -257,9 +257,9 @@ function run_dc_powerflow_tests()
       @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("solver" => "apslf", "start_mode" => Dict("dc_seed_unconditional" => true))))
       # Mutually exclusive with the other rectangular-NR start-value source.
       @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("apslf_start" => Dict("enabled" => true), "start_mode" => Dict("dc_seed_unconditional" => true))))
-    end
+    end)() end
 
-    @testset "dc_seed_unconditional: config-driven DC-seeded AC Newton-Raphson solve" begin
+    @testset "dc_seed_unconditional: config-driven DC-seeded AC Newton-Raphson solve" begin (function ()
       cfg = Sparlectra.SparlectraConfig(powerflow = Sparlectra.PowerFlowConfig(start_mode = Sparlectra.StartModeConfig(dc_seed_unconditional = true)), output = OutputConfig(logfile_results = :off))
       result = run_sparlectra(casefile = "sp_case5.scf.json", path = joinpath(dirname(@__DIR__), "data", "scf"), config = cfg)
       @test result.method === :rectangular
@@ -280,17 +280,17 @@ function run_dc_powerflow_tests()
       result_default = run_sparlectra(casefile = "sp_case5.scf.json", path = joinpath(dirname(@__DIR__), "data", "scf"), config = cfg_default)
       @test result_default.final_converged
       @test result_default.diagnostics.solver === :rectangular
-    end
+    end)() end
 
-    @testset "DC power-flow status registry is separate from the AC one" begin
+    @testset "DC power-flow status registry is separate from the AC one" begin (function ()
       net = _dc3_net()
       rundcpf!(net)
       @test dc_pf_status(net) !== nothing
       @test dc_pf_status(net).solver === :dc
       @test Sparlectra.rectangular_pf_status(net) === nothing
-    end
+    end)() end
 
-    @testset "One specification source for AC and DC (#323)" begin
+    @testset "One specification source for AC and DC (#323)" begin (function ()
       # the DC injections come from the prosumers (buildComplexSVec), the
       # same source the rectangular AC solver reads. Two directions:
       # a node-sum edit moves NEITHER solver, a prosumer edit moves BOTH.
@@ -325,6 +325,6 @@ function run_dc_powerflow_tests()
       _, erg_ac = runpf!(pros_ac, 25, 1e-8, 0)
       @test erg_ac == 0
       @test real(Sparlectra.buildComplexSVec(pros_ac)) == real(S)
-    end
-  end
+    end)() end
+  end)() end
 end

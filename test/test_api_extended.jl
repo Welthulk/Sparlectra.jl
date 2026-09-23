@@ -107,7 +107,7 @@ function _control_label_test_net()
 end
 
 function run_api_extended_tests()
-  @testset "GUI-ready Sparlectra API" begin
+  @testset "GUI-ready Sparlectra API" begin (function ()
     mktempdir() do tmpdir
       csv_writer_path = joinpath(tmpdir, "writer.csv")
       Sparlectra._write_namedtuple_csv(csv_writer_path, [(name = "quoted, \"value\"", empty_missing = Base.missing, empty_nothing = nothing)], (:name, :empty_missing, :empty_nothing))
@@ -788,7 +788,7 @@ power_flow:
       @test occursin("Diagnostic generation failed", failed_diagnostic_text)
       @test occursin("diagnostic test failure", failed_diagnostic_text)
 
-      @testset "Diagnose: fixed-reference self-check, narrative report, branch anomalies" begin
+      @testset "Diagnose: fixed-reference self-check, narrative report, branch anomalies" begin (function ()
         self_check_dir = joinpath(tmpdir, "self_check")
         self_check = run_fixed_reference_self_check(casefile = casefile, config_file = template, output_dir = self_check_dir)
         @test self_check.raw_result.iterations == 1
@@ -878,7 +878,7 @@ power_flow:
         @test occursin("stage=before_nr", execution_failure_text)
         @test occursin("ac_island_<id>_solver.log", execution_failure_text)
         @test occursin("run_fixed_reference_self_check", execution_failure_text)
-      end
+      end)() end
 
       for i = 1:5
         Sparlectra.logQLimitHit!(control_net, i, 2 + (i % 3), i % 2 == 0 ? :max : :min)
@@ -1136,15 +1136,15 @@ power_flow:
       # above; a second full service run for the trust-region spelling of the
       # same contract added runtime without a distinct behavior (step 3b)
     end
-  end
-  @testset "Local PowerFlow service" begin
+  end)() end
+  @testset "Local PowerFlow service" begin (function ()
     mktempdir() do tmpdir
       casefile = _write_api_test_case_ext(joinpath(tmpdir, "case_service.m"))
       config_file = joinpath(tmpdir, "service_config.yaml")
       cp(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, config_file)
       output_root = joinpath(tmpdir, "powerflow_service")
 
-      @testset "Web UI case resolution" begin
+      @testset "Web UI case resolution" begin (function ()
         existing_m = _write_api_test_case_ext(joinpath(tmpdir, "existing_case.m"))
         resolved_existing_m = Sparlectra._resolve_powerflow_casefile(existing_m, joinpath(tmpdir, "cases"))
         @test lowercase(splitext(resolved_existing_m)[2]) == ".m"
@@ -1194,9 +1194,9 @@ power_flow:
         @test rejected_path["reason"] == "invalid_casefile"
         rejected_url = start_powerflow_run(Dict("casefile" => "https://example.com/case14.m"); case_directory)
         @test rejected_url["reason"] == "invalid_casefile"
-      end
+      end)() end
 
-      @testset "Broken generated Julia MATPOWER cache fails cleanly" begin
+      @testset "Broken generated Julia MATPOWER cache fails cleanly" begin (function ()
         broken_dir = joinpath(tmpdir, "broken_cache")
         output_broken = joinpath(tmpdir, "broken_output")
         mkpath(broken_dir)
@@ -1212,7 +1212,7 @@ power_flow:
         @test isfile(joinpath(broken["output_dir"], "performance.log"))
         @test occursin("StackOverflowError", read(joinpath(broken["output_dir"], "run.log"), String))
         @test occursin("StackOverflowError", read(joinpath(broken["output_dir"], "result.json"), String))
-      end
+      end)() end
 
       started = start_powerflow_run(Dict("casefile" => casefile, "config_file" => config_file, "output_root" => output_root, "config_overrides" => Dict("power_flow.tol" => 1.0e-8, "power_flow.max_iter" => 80, "benchmark.enabled" => false)))
 
@@ -1264,7 +1264,7 @@ power_flow:
       @test !occursin("configured_default_casefile", metadata_text)
 
       qlimit_mode_run_ids = String[]
-      @testset "Q-limit mode metadata and result visibility" begin
+      @testset "Q-limit mode metadata and result visibility" begin (function ()
         # one representative per dimension plus one mixed row: active_set is
         # the default path, classic_one_at_a_time exercises the outer-loop
         # artifact prefixing (the second classic mode added a third full
@@ -1322,7 +1322,7 @@ power_flow:
             @test !occursin("Q-limit handling: disabled\nQ-limit diagnostics: skipped", run_log) || occursin("Inner PF active-set Q-limit switching: disabled for classical outer-loop solve", run_log)
           end
         end
-      end
+      end)() end
 
       index_path = joinpath(output_root, POWERFLOW_RUN_INDEX_FILENAME)
       @test isfile(index_path)
@@ -1571,8 +1571,8 @@ power_flow:
       @test !listed_by_id[missing_id]["available"]
       @test listed_by_id[missing_id]["reason"] == "output_dir_not_found"
     end
-  end
-  @testset "PowerFlow run deletion safety" begin
+  end)() end
+  @testset "PowerFlow run deletion safety" begin (function ()
     mktempdir() do tmpdir
       output_root = joinpath(tmpdir, "runs")
       outside_dir = joinpath(tmpdir, "outside")
@@ -1617,6 +1617,6 @@ power_flow:
       @test length(remaining) == 1
       @test remaining[1]["run_id"] == "unsafe-index-entry"
     end
-  end
+  end)() end
   return nothing
 end

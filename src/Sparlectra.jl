@@ -828,5 +828,15 @@ include("api/se_measurement_generator.jl")
 include("webui/webui.jl")
 include("build/sysimage_builder.jl")
 include("build/precompile.jl")
+
+# Runs on every load, native session and sysimage alike. The one check here
+# is the AnalyticLoadFlow version (APSLF_MIN_VERSION in
+# acpflow/apslf_solver.jl): Julia does not test a Manifest against the
+# Project.toml compat, so this is the place that refuses an outdated
+# environment before it computes anything.
+function __init__()
+  check_apslf_version()
+  return nothing
+end
 #! format: on
 end # module Sparlectra

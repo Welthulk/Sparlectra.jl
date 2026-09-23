@@ -56,8 +56,8 @@ function _sc_two_bus_net(; r_pu = 0.05, x_pu = 0.5)
 end
 
 function run_short_circuit_tests()
-  @testset "Short circuit (IEC 60909-0)" begin
-    @testset "feeder reproduces its declared current at the connection point" begin
+  @testset "Short circuit (IEC 60909-0)" begin (function ()
+    @testset "feeder reproduces its declared current at the connection point" begin (function ()
       # Hand derivation: Z_Q = c·Un/(√3·Ik_declared); at the feeder bus the
       # whole short-circuit impedance IS Z_Q, so Ik'' = c·Un/(√3·Z_Q)
       # = Ik_declared exactly — the c factor cancels. This is the IEC
@@ -82,9 +82,9 @@ function run_short_circuit_tests()
       @test isapprox(rmin.rows[1].ik_kA, 8.0; rtol = 1e-9)
       @test rmin.rows[1].c == 1.00   # IEC Table 1, HV c_min
       @test rmax.rows[1].c == 1.10   # IEC Table 1, HV c_max
-    end
+    end)() end
 
-    @testset "line impedance adds per hand-derived series model" begin
+    @testset "line impedance adds per hand-derived series model" begin (function ()
       # Hand derivation on 100 MVA / 110 kV (Z_base = 121 Ω):
       #   Z_Q  = 1.10·110000/(√3·10000) Ω, split X_Q = Z_Q/√(1+0.1²),
       #          R_Q = 0.1·X_Q  (independent arithmetic below)
@@ -111,9 +111,9 @@ function run_short_circuit_tests()
       @test isapprox(rb.rows[1].ik_kA, ik_expected; rtol = 1e-12)
       @test_throws ArgumentError runShortCircuit!(net, sc; buses = ["NOPE"], case = :max)
       @test_throws ArgumentError runShortCircuit!(net, sc; case = :typical)
-    end
+    end)() end
 
-    @testset "synchronous machine per hand-derived x''d conversion" begin
+    @testset "synchronous machine per hand-derived x''d conversion" begin (function ()
       # Hand derivation (10.5 kV machine bus, Sbase 100 MVA):
       #   x''d = 0.15 pu on 50 MVA / 10.5 kV → x_net = 0.15·(100/50)·(10.5/10.5)² = 0.3 pu
       #   R_Gf = 0.07·x  (HV machine < 100 MVA, IEC 60909-0 §6.6.3)
@@ -134,9 +134,9 @@ function run_short_circuit_tests()
       r2 = runShortCircuit!(net, sc; case = :max, c_factor = 1.0)
       @test isapprox(r2.rows[1].ik_kA, ik_expected / 1.10; rtol = 1e-9)
       @test_throws ArgumentError runShortCircuit!(net, sc; c_factor = 1.4)
-    end
+    end)() end
 
-    @testset "safety-flag contract: default + warning + result flag" begin
+    @testset "safety-flag contract: default + warning + result flag" begin (function ()
       # A machine without x''d triggers all three: the documented default
       # (0.2 pu machine base), a log warning, and the per-row flag.
       net = Net(name = "sc_flag", baseMVA = 100.0)
@@ -156,9 +156,9 @@ function run_short_circuit_tests()
       out = sprint(io -> printShortCircuitResult(io, r))
       @test occursin("yes", out)
       @test occursin("default 0.2 pu", out)
-    end
+    end)() end
 
-    @testset "asynchronous machine per hand-derived IEC §6.7 motor impedance" begin
+    @testset "asynchronous machine per hand-derived IEC §6.7 motor impedance" begin (function ()
       # Hand derivation (10 kV motor bus, Sbase 100 MVA):
       #   Z_M = (1/ilr)·U_rM²/S_rM = (1/5)·10²/5 = 4 Ω, R/X = 0.1
       #   → X = 4/√1.01, R = 0.1·X; Ik'' = 1.10·10/(√3·|Z_M|) at the bus.
@@ -208,9 +208,9 @@ function run_short_circuit_tests()
       # be exactly c_max/c_min = 1.10; the motor lifts only the max case
       @test b2max.ik_kA / b2min.ik_kA > 1.2
       @test b2max.contains_defaulted_data == false && b2min.contains_defaulted_data == false
-    end
+    end)() end
 
-    @testset "asynchronous machine: skipped with island-wide lower-bound flag (max only)" begin
+    @testset "asynchronous machine: skipped with island-wide lower-bound flag (max only)" begin (function ()
       net = _sc_two_bus_net()
       addProsumer!(net = net, busName = "B2", type = "ASYNCHRONOUSMACHINE", p = 5.0, q = 2.0)
       # same component-type marker the CGMES importer sets for motors (the
@@ -224,9 +224,9 @@ function run_short_circuit_tests()
       # motors never contribute to (and never flag) the minimum case
       rmin = runShortCircuit!(net, sc; case = :min)
       @test all(!row.contains_defaulted_data for row in rmin.rows)
-    end
+    end)() end
 
-    @testset "island without a source reports :no_source, isolated buses :isolated" begin
+    @testset "island without a source reports :no_source, isolated buses :isolated" begin (function ()
       net = Net(name = "sc_islands", baseMVA = 100.0)
       addBus!(net = net, busName = "A1", vn_kV = 110.0)
       addBus!(net = net, busName = "A2", vn_kV = 110.0)
@@ -241,9 +241,9 @@ function run_short_circuit_tests()
       @test isnan(by_bus["C1"].ik_kA)
       @test by_bus["C1"].contains_defaulted_data == true
       @test any(occursin("no short-circuit source", reason) for reason in by_bus["C1"].reasons)
-    end
+    end)() end
 
-    @testset "WebUI data-check gating helper" begin
+    @testset "WebUI data-check gating helper" begin (function ()
       # Byte scan over the delivery contents (fast fixture: plain XML folder;
       # the real ZIP path goes through the same collectCGMESFiles reader and
       # is exercised by the extended CGMES service test).
@@ -257,9 +257,9 @@ function run_short_circuit_tests()
       @test Sparlectra._webui_case_has_short_circuit_data(without_data) == false
       # unresolvable paths must NOT lock the button (service explains instead)
       @test Sparlectra._webui_case_has_short_circuit_data(joinpath(without_data, "missing.zip")) == true
-    end
+    end)() end
 
-    @testset "short_circuit.c_factor config coverage" begin
+    @testset "short_circuit.c_factor config coverage" begin (function ()
       @test Sparlectra.ShortCircuitConfig().c_factor == 0.0
       ok_yaml = test_scratch_path(".yaml")
       write(ok_yaml, "config_version: 1\nshort_circuit:\n  c_factor: 1.05\n")
@@ -274,9 +274,9 @@ function run_short_circuit_tests()
       end
       @test err isa ArgumentError
       @test occursin("short_circuit.c_factor", sprint(showerror, err))
-    end
+    end)() end
 
-    @testset "parallel all-bus sweep identity (Phase 3)" begin
+    @testset "parallel all-bus sweep identity (Phase 3)" begin (function ()
       # multi-island SC fixture: n feeder-fed rings with declared Sk''
       function build_sweep_net(n, m)
         net = Net(name = "sc_sweep_$(n)x$(m)", baseMVA = 100.0)
@@ -355,6 +355,6 @@ function run_short_circuit_tests()
       p60 = runShortCircuit!(net60; buses = :all, case = :max, parallel_enabled = true, parallel_min_work_items = 2)
       @test isequal(s60.rows, p60.rows)
       println("sc parallel sweep sp_case60: RAN")
-    end
-  end
+    end)() end
+  end)() end
 end

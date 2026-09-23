@@ -42,7 +42,10 @@ const _WEBUI_PERFORMANCE_TIMING_VALUES = WEBUI_PERFORMANCE_TIMING_VALUES
 # in configuration.yaml.example without a default; every other config-key
 # spec is :expert. Request-only fields (config_key nothing) keep their own
 # visibility, the criterion covers the 63 config-backed form options.
-const WEBUI_OPTION_SPECS = (
+# A Vector, not a Tuple: Julia unrolls tuple iteration, and the filtered
+# comprehensions below over a hundred-element tuple cost seconds of
+# inference at every load
+const WEBUI_OPTION_SPECS = WebUIOptionSpec[
   WebUIOptionSpec("power_flow.mode", "power_flow_mode", String, :select, "manual", ("manual", "auto"), :expert, :case, true),
   WebUIOptionSpec("power_flow.tol", "power_flow_tol", Float64, :number, "1e-8", (), :basic, :case, true),
   # The UNIT of the tolerance value above. Not a configuration key of its
@@ -176,12 +179,12 @@ const WEBUI_OPTION_SPECS = (
   # render the field (state estimation) reads the same configured value
   WebUIOptionSpec("output.csv_format", "detailed_result_csv_format", String, :select, "technical", ("technical", "excel_de", "excel_us"), :basic, :session, false),
   WebUIOptionSpec(nothing, "export_cgmes", Bool, :checkbox, false, (), :basic, :case, true),
-)
+]
 
-const _WEBUI_OPTION_BY_FIELD = Dict(spec.field => spec for spec in WEBUI_OPTION_SPECS)
-const _WEBUI_FORM_CONFIG_FIELDS = Tuple((spec.config_key, spec.field, spec.value_type) for spec in WEBUI_OPTION_SPECS if spec.config_key !== nothing)
-const _WEBUI_CASE_PROFILE_EXTRA_FIELDS = Tuple(spec.field for spec in WEBUI_OPTION_SPECS if spec.config_key === nothing && spec.save_in_case_sidecar)
-const _WEBUI_CASE_PROFILE_FIELDS = Tuple(spec.field for spec in WEBUI_OPTION_SPECS if spec.save_in_case_sidecar)
+const _WEBUI_OPTION_BY_FIELD = Dict{String,WebUIOptionSpec}(spec.field => spec for spec in WEBUI_OPTION_SPECS)
+const _WEBUI_FORM_CONFIG_FIELDS = Tuple{String,String,Type}[(spec.config_key, spec.field, spec.value_type) for spec in WEBUI_OPTION_SPECS if spec.config_key !== nothing]
+const _WEBUI_CASE_PROFILE_EXTRA_FIELDS = String[spec.field for spec in WEBUI_OPTION_SPECS if spec.config_key === nothing && spec.save_in_case_sidecar]
+const _WEBUI_CASE_PROFILE_FIELDS = String[spec.field for spec in WEBUI_OPTION_SPECS if spec.save_in_case_sidecar]
 const _WEBUI_CASE_PROFILE_FIELD_TYPES = Dict{String,Type}(
   spec.field => spec.value_type for spec in WEBUI_OPTION_SPECS if spec.save_in_case_sidecar
 )

@@ -69,8 +69,8 @@ function _hvdc_run!(net)
 end
 
 function run_hvdc_pair_control_tests()
-  @testset "HVDC pair controller (#297 Draft B)" begin
-    @testset "registration validation" begin
+  @testset "HVDC pair controller (#297 Draft B)" begin (function ()
+    @testset "registration validation" begin (function ()
       net, f_idx, t_idx = _build_hvdc_two_area_net("hvdc_val")
       @test_throws ErrorException addHvdcPairControl!(net; from_bus = "B2", to_bus = "B2", p_transfer_mw = 10.0)
       @test_throws ErrorException addHvdcPairControl!(net; from_bus = "B2", to_bus = "B4", p_transfer_mw = 10.0, loss_mw = -1.0)
@@ -91,9 +91,9 @@ function run_hvdc_pair_control_tests()
       # registration lifted the Stage-0 equality clamps on both converters
       @test net.prosumpsVec[f_idx].minP === nothing && net.prosumpsVec[f_idx].maxP === nothing
       @test net.prosumpsVec[t_idx].minP === nothing && net.prosumpsVec[t_idx].maxP === nothing
-    end
+    end)() end
 
-    @testset "transfer target and exact pairing invariant" begin
+    @testset "transfer target and exact pairing invariant" begin (function ()
       net, f_idx, t_idx = _build_hvdc_two_area_net("hvdc_transfer")
       addHvdcPairControl!(net; from_bus = "B2", to_bus = "B4", p_transfer_mw = 100.0, loss_mw = 4.0, loss_fraction = 0.05)
       result = _hvdc_run!(net)
@@ -111,18 +111,18 @@ function run_hvdc_pair_control_tests()
       @test only(rows).to_p_mw == 91.0
       # both islands solved with their own references
       @test result.powerflow_solves >= 1
-    end
+    end)() end
 
-    @testset "reversed transfer" begin
+    @testset "reversed transfer" begin (function ()
       net, f_idx, t_idx = _build_hvdc_two_area_net("hvdc_reverse"; seed_from_p = 0.0, seed_to_p = 0.0)
       addHvdcPairControl!(net; from_bus = "B2", to_bus = "B4", p_transfer_mw = -60.0, loss_mw = 2.0)
       result = _hvdc_run!(net)
       @test result.converged == true
       @test net.prosumpsVec[f_idx].pVal == 60.0
       @test net.prosumpsVec[t_idx].pVal == -62.0
-    end
+    end)() end
 
-    @testset "rating clamp is honest at_limit" begin
+    @testset "rating clamp is honest at_limit" begin (function ()
       net, f_idx, t_idx = _build_hvdc_two_area_net("hvdc_rating")
       addHvdcPairControl!(net; from_bus = "B2", to_bus = "B4", p_transfer_mw = 200.0, p_rating_mw = 100.0, loss_mw = 4.0)
       result = _hvdc_run!(net)
@@ -136,9 +136,9 @@ function run_hvdc_pair_control_tests()
       # (same convention as the TCSC at_limit case)
       @test result.converged == true
       @test ctrl.converged == false
-    end
+    end)() end
 
-    @testset "voltage-target side reaches the setpoint" begin
+    @testset "voltage-target side reaches the setpoint" begin (function ()
       net, f_idx, t_idx = _build_hvdc_two_area_net("hvdc_vset")
       addHvdcPairControl!(net; from_bus = "B2", to_bus = "B4", p_transfer_mw = 80.0, loss_mw = 3.0, to_vset_pu = 1.01, to_qmin_mvar = -60.0, to_qmax_mvar = 60.0)
       result = _hvdc_run!(net)
@@ -149,9 +149,9 @@ function run_hvdc_pair_control_tests()
       @test vm !== nothing && abs(vm - 1.01) <= ctrl.deadband_vm_pu
       @test -60.0 <= ctrl.to_q_now <= 60.0
       @test net.prosumpsVec[t_idx].qVal == ctrl.to_q_now
-    end
+    end)() end
 
-    @testset "unreachable voltage target clamps honestly" begin
+    @testset "unreachable voltage target clamps honestly" begin (function ()
       net, _, _ = _build_hvdc_two_area_net("hvdc_vset_limit")
       addHvdcPairControl!(net; from_bus = "B2", to_bus = "B4", p_transfer_mw = 80.0, loss_mw = 3.0, to_vset_pu = 1.2, to_qmin_mvar = -5.0, to_qmax_mvar = 5.0)
       _hvdc_run!(net)
@@ -159,9 +159,9 @@ function run_hvdc_pair_control_tests()
       @test !ctrl.converged
       @test ctrl.at_limit
       @test isapprox(ctrl.to_q_now, 5.0; atol = 1e-9)
-    end
+    end)() end
 
-    @testset "disabled controller keeps the baseline bit-identical" begin
+    @testset "disabled controller keeps the baseline bit-identical" begin (function ()
       net_a, _, _ = _build_hvdc_two_area_net("hvdc_base_a")
       net_b, _, _ = _build_hvdc_two_area_net("hvdc_base_b")
       addHvdcPairControl!(net_b; from_bus = "B2", to_bus = "B4", p_transfer_mw = 999.0, enabled = false)
@@ -175,9 +175,9 @@ function run_hvdc_pair_control_tests()
       vm_a = [something(n._vm_pu, NaN) for n in net_a.nodeVec]
       vm_b = [something(n._vm_pu, NaN) for n in net_b.nodeVec]
       @test vm_a == vm_b
-    end
+    end)() end
 
-    @testset "YAML declaration round trip (#305 schema)" begin
+    @testset "YAML declaration round trip (#305 schema)" begin (function ()
       # declared via control.controllers, run through the real config path,
       # compared against the programmatic twin
       net_prog, f_idx, t_idx = _build_hvdc_two_area_net("hvdc_yaml_prog")
@@ -195,9 +195,9 @@ function run_hvdc_pair_control_tests()
       @test applyConfiguredControllers!(net_yaml, cfg) == 0
       # structural validation catches an unknown key at load time
       @test_throws ArgumentError Sparlectra._validate_controller_entries([Dict{String,Any}("type" => "hvdc_pair", "name" => "x", "from_bus" => "B2", "to_bus" => "B4", "p_transfer_mw" => 1.0, "typo_key" => 1)])
-    end
+    end)() end
 
-    @testset "MATPOWER dcline paired_control mode" begin
+    @testset "MATPOWER dcline paired_control mode" begin (function ()
       # two islands joined by one dcline row (17 columns, so the effective
       # PT is recomputed from LOSS0/LOSS1: 80 - (3 + 0.0125 * 80) = 76)
       case = mktempdir()
@@ -261,9 +261,9 @@ mpc.dcline = [
       @test result2.converged == true
       @test net_paired.prosumpsVec[m.from_prosumer].pVal == -40.0
       @test net_paired.prosumpsVec[m.to_prosumer].pVal == 40.0 - (3.0 + 0.0125 * 40.0)
-    end
+    end)() end
 
-    @testset "island_feed mode (grid-forming to side)" begin
+    @testset "island_feed mode (grid-forming to side)" begin (function ()
       # mode-dependent validation rules
       net_val, _ = _build_hvdc_island_feed_net("hvdc_if_val")
       @test_throws ErrorException addHvdcPairControl!(net_val; from_bus = "A2", to_bus = "C2", mode = :island_feed, p_transfer_mw = 10.0)
@@ -323,9 +323,9 @@ mpc.dcline = [
       @test ctrl_y.mode == :island_feed
       _hvdc_run!(net_y)
       @test isapprox(net_y.prosumpsVec[sy_idx].pVal, net.prosumpsVec[s_idx].pVal; atol = 1e-9)
-    end
+    end)() end
 
-    @testset "meshed AC tie: one reference per synchronous island" begin
+    @testset "meshed AC tie: one reference per synchronous island" begin (function ()
       # two formerly asynchronous areas tied by a new AC branch: both old
       # references survive -> actionable multi-reference error, both APIs
       net, _, _ = _build_hvdc_two_area_net("hvdc_mesh_two_refs")
@@ -394,9 +394,9 @@ mpc.dcline = [
       @test !ctrl4.converged
       # the mirror never fired: the sending injection kept its build value
       @test something(net4.prosumpsVec[s4].pVal, 0.0) == 0.0
-    end
+    end)() end
 
-    @testset "result table alignment across all modes and statuses (Phase 6)" begin
+    @testset "result table alignment across all modes and statuses (Phase 6)" begin (function ()
       # two links, one per mode, and the LONGEST status value forced on the
       # island_feed controller; the regression guard is structural: in both
       # tables every row must carry the same number of column separators
@@ -469,9 +469,9 @@ mpc.dcline = [
       end
       link_row = only(filter(l -> occursin("B2B_B2_B4", l) && occursin("Link", l), split(txt2, "\n")))
       @test occursin("100.000", link_row)
-    end
+    end)() end
 
-    @testset "element rows and summary output" begin
+    @testset "element rows and summary output" begin (function ()
       net, _, _ = _build_hvdc_two_area_net("hvdc_rows")
       addHvdcPairControl!(net; from_bus = "B2", to_bus = "B4", p_transfer_mw = 80.0, loss_mw = 3.0, p_rating_mw = 150.0)
       _hvdc_run!(net)
@@ -527,7 +527,7 @@ mpc.dcline = [
           @test n._qƩGen !== nothing
         end
       end
-    end
-  end
+    end)() end
+  end)() end
   return true
 end

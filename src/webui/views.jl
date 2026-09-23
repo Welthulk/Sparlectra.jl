@@ -407,6 +407,7 @@ function _webui_powerflow_info_menu(; output_root::AbstractString, config_file::
 <h2>Run information</h2>
 <dl>
 <dt>Version</dt><dd><code>Sparlectra.jl v$(_webui_escape(string(version())))</code></dd>
+<dt>AnalyticLoadFlow</dt><dd><code>v$(_webui_escape(string(pkgversion(AnalyticLoadFlow))))</code> <a href=\"https://github.com/Welthulk/AnalyticLoadFlow.jl\" target=\"_blank\" rel=\"noopener noreferrer\">GitHub</a></dd>
 <dt>Julia</dt><dd><code>$(_webui_escape(string(VERSION)))</code></dd>
 <dt>Commit</dt><dd><code>$(_webui_escape(commit_text))</code></dd>
 <dt>Started from</dt><dd><code>$(_webui_escape(flavor_text))</code> <a href=\"/webui/sysimage\">Sysimage</a></dd>
@@ -1673,7 +1674,7 @@ $(_WEBUI_INFO_MENU_SCRIPT)"""
   return _webui_layout("Runs", string(form, scen_tab, weights_tab, se_html); header_info = info_menu)
 end
 
-const _WEBUI_RESULT_FIELDS = (
+const _WEBUI_RESULT_FIELDS = String[
   "run_id",
   "status",
   "success",
@@ -1718,7 +1719,7 @@ const _WEBUI_RESULT_FIELDS = (
   "run_status",
   "last_phase",
   "last_heartbeat",
-)
+]
 
 const _WEBUI_IMPORTANT_RESULT_FIELDS = Set(("converged", "numerical_converged", "solution_available", "iterations", "final_mismatch", "reason"))
 

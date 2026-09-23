@@ -26,7 +26,7 @@ function run_transformer_phase_shift_tests()
     return only(net.branchVec)
   end
 
-  @testset "Transformer tap/phase shift sign convention" begin
+  @testset "Transformer tap/phase shift sign convention" begin (function ()
     y_ser = inv(0.01 + 0.10im)
     y_sh = 0.0 + 0.02im
     t = 1.05 * cis(deg2rad(7.5))
@@ -44,9 +44,9 @@ function run_transformer_phase_shift_tests()
     @test isapprox(Y_ft, expected_ft; atol = 1e-12, rtol = 0.0)
     @test isapprox(Y_tf, expected_tf; atol = 1e-12, rtol = 0.0)
     @test isapprox(Y_tt, expected_tt; atol = 1e-12, rtol = 0.0)
-  end
+  end)() end
 
-  @testset "Empirical phase-shift direction check (2-bus, Δφ=+5°)" begin
+  @testset "Empirical phase-shift direction check (2-bus, Δφ=+5°)" begin (function ()
     # Minimal 2-bus setup for P_ab direction validation.
     # Fixed terminal voltages isolate transformer phase-shift effect.
     V = ComplexF64[1.0 + 0.0im, 1.0 + 0.0im]
@@ -78,9 +78,9 @@ function run_transformer_phase_shift_tests()
 
     @test ctrl_step_when_below_target < 0.0
     @test ctrl_step_when_above_target > 0.0
-  end
+  end)() end
 
-  @testset "Tap-changer impedance-correction factor (central equicircuit.jl model)" begin
+  @testset "Tap-changer impedance-correction factor (central equicircuit.jl model)" begin (function ()
     # :ideal never applies impedance feedback, regardless of tap deviation.
     @test calcTapImpedanceCorrectionFactor(tap_changer_model = :ideal, tap_fraction = 0.5, skew_angle_deg = 30.0) == 1.0
     @test calcTapImpedanceCorrectionFactor(tap_changer_model = :ideal, ratio = 0.9) == 1.0
@@ -114,9 +114,9 @@ function run_transformer_phase_shift_tests()
     @test isapprox(rx.factor, expected_longitudinal; atol = 1e-12)
     @test isapprox(rx.r_pu, 0.01 * expected_longitudinal; atol = 1e-12)
     @test isapprox(rx.x_pu, 0.10 * expected_longitudinal; atol = 1e-12)
-  end
+  end)() end
 
-  @testset "MATPOWER import applies configured tap-changer model" begin
+  @testset "MATPOWER import applies configured tap-changer model" begin (function ()
     function _mpc_with_transformer(; ratio::Float64, angle::Float64)
       return (
         name = "tap_model_probe",
@@ -146,7 +146,7 @@ function run_transformer_phase_shift_tests()
     @test isapprox(branch_ideal.x_pu, 0.10; atol = 1e-12)
     @test isapprox(branch_corrected.r_pu, 0.01 * expected_factor; atol = 1e-12)
     @test isapprox(branch_corrected.x_pu, 0.10 * expected_factor; atol = 1e-12)
-  end
+  end)() end
 
   return nothing
 end

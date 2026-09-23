@@ -26,7 +26,7 @@ function _3wt_phase_taps_fixtures()
 end
 
 function run_3wt_phase_taps_tests()
-  @testset "create3WTWindings! existing docstring example: no phase taps" begin
+  @testset "create3WTWindings! existing docstring example: no phase taps" begin (function ()
     tmp1, tmp2, tmp3, tapSettings = _3wt_phase_taps_fixtures()
     w1, w2, w3 = create3WTWindings!(u_kV = [110.0, 20.0, 10.0], sn_MVA = [100.0, 80.0, 20.0], addEx_Side = [tmp1, tmp2, tmp3], sh_deg = [0.0, 0.0, 0.0], tap_side = 1, tap = tapSettings)
 
@@ -50,9 +50,9 @@ function run_3wt_phase_taps_tests()
     @test isnothing(w1.taps)
     @test isnothing(w2.taps)
     @test isnothing(w3.taps)
-  end
+  end)() end
 
-  @testset "phase_tap_side attaches PhaseTapChangerModel to exactly one winding" begin
+  @testset "phase_tap_side attaches PhaseTapChangerModel to exactly one winding" begin (function ()
     tmp1, tmp2, tmp3, tapSettings = _3wt_phase_taps_fixtures()
     psc = PhaseTapChangerModel(kind = :asymmetrical, step = 0, lowStep = -8, highStep = 8, neutralStep = 0, winding_connection_angle_deg = 60.0)
     w1, w2, w3 = create3WTWindings!(u_kV = [110.0, 20.0, 10.0], sn_MVA = [100.0, 80.0, 20.0], addEx_Side = [tmp1, tmp2, tmp3], sh_deg = [0.0, 0.0, 0.0], tap_side = 1, tap = tapSettings, phase_tap_side = 2, phase_taps = psc)
@@ -68,9 +68,9 @@ function run_3wt_phase_taps_tests()
     @test m.lowStep == -8
     @test m.highStep == 8
     @test m.neutralStep == 0
-  end
+  end)() end
 
-  @testset "ratio tap and phase tap can share the same winding" begin
+  @testset "ratio tap and phase tap can share the same winding" begin (function ()
     tmp1, tmp2, tmp3, tapSettings = _3wt_phase_taps_fixtures()
     psc = PhaseTapChangerModel(kind = :asymmetrical, step = 0, lowStep = -8, highStep = 8, neutralStep = 0, winding_connection_angle_deg = 60.0)
     # tap_side = 0 is the only value for which the pre-existing loop actually preserves `tap`
@@ -82,9 +82,9 @@ function run_3wt_phase_taps_tests()
     @test !isnothing(w1.phase_taps)
     @test isnothing(w2.taps) && isnothing(w2.phase_taps)
     @test isnothing(w3.taps) && isnothing(w3.phase_taps)
-  end
+  end)() end
 
-  @testset "create3WTWindings! phase-tap keyword validation" begin
+  @testset "create3WTWindings! phase-tap keyword validation" begin (function ()
     tmp1, tmp2, tmp3, tapSettings = _3wt_phase_taps_fixtures()
     psc = PhaseTapChangerModel(kind = :asymmetrical, step = 0, lowStep = -8, highStep = 8, neutralStep = 0, winding_connection_angle_deg = 60.0)
 
@@ -96,5 +96,5 @@ function run_3wt_phase_taps_tests()
 
     # phase_tap_side out of range
     @test_throws ArgumentError create3WTWindings!(u_kV = [110.0, 20.0, 10.0], sn_MVA = [100.0, 80.0, 20.0], addEx_Side = [tmp1, tmp2, tmp3], sh_deg = [0.0, 0.0, 0.0], tap_side = 1, tap = tapSettings, phase_tap_side = 4, phase_taps = psc)
-  end
+  end)() end
 end

@@ -60,7 +60,7 @@ function run_apslf_tests()
     # purpose: the quiet suite runner captures stdout and replays only a few
     # lines per failure block
     function _apslf_platform_probe()
-        println(stderr, "      APSLF platform probe: Julia ", VERSION, " on ", Sys.KERNEL, " ", Sys.MACHINE, ", BLAS ", BLAS.get_config())
+        println(stderr, "      APSLF platform probe: Julia ", VERSION, " on ", Sys.KERNEL, " ", Sys.MACHINE, ", AnalyticLoadFlow ", pkgversion(AnalyticLoadFlow), ", BLAS ", BLAS.get_config())
         for (label, build) in (("ring3", ring3), ("sp_case5", () -> Sparlectra.importSCF(scf5)))
             net_nr = build()
             runpf!(net_nr, 30, 1e-10, 0)
@@ -84,8 +84,8 @@ function run_apslf_tests()
     # one outer set, so a standalone call still runs every group after a
     # failing one (a top-level testset throws at its end)
     @testset "APSLF" begin
-        @testset "APSLF (AnalyticLoadFlow.jl) integration" begin
-            @testset "Config validation: power_flow.solver / apslf / apslf_start" begin
+        @testset "APSLF (AnalyticLoadFlow.jl) integration" begin (function ()
+            @testset "Config validation: power_flow.solver / apslf / apslf_start" begin (function ()
                 default_cfg = Sparlectra.SparlectraConfig()
                 @test default_cfg.powerflow.solver === :rectangular
                 @test default_cfg.powerflow.apslf.order == 24
@@ -120,9 +120,9 @@ function run_apslf_tests()
                 run_with_expected_warnings(["declares no config_version"]) do
                     @test_throws ArgumentError Sparlectra.load_sparlectra_config(bad_key_file; reload=true)
                 end
-            end
+            end)() end
 
-            @testset "Controller + APSLF solver rejection" begin
+            @testset "Controller + APSLF solver rejection" begin (function ()
                 # load_fixture_net: the shipped sp_case14 carries a REAL declared tap
                 # controller (no download, no hand-attached controller)
                 net = Sparlectra.importSCF(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json")))
@@ -133,9 +133,9 @@ function run_apslf_tests()
                 # before the solver is even constructed, so this rejects identically
                 # regardless of whether the extension is loaded.
                 @test_throws ArgumentError run_sparlectra(net=net, config=cfg)
-            end
+            end)() end
 
-            @testset "WebUI form parsing for APSLF fields -> effective config" begin
+            @testset "WebUI form parsing for APSLF fields -> effective config" begin (function ()
                 form = Dict{String,Any}(
                     "casefile" => "case14.m",
                     "power_flow_solver" => "apslf",
@@ -183,9 +183,9 @@ function run_apslf_tests()
                 conflict_overrides = Dict{String,Any}("power_flow.solver" => "apslf", "power_flow.apslf_start.enabled" => true)
                 conflict_nested = Sparlectra.validate_gui_config_overrides(conflict_overrides)
                 @test_throws ArgumentError Sparlectra._load_api_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, conflict_nested)
-            end
+            end)() end
 
-            @testset "the solver is always available" begin
+            @testset "the solver is always available" begin (function ()
                 # AnalyticLoadFlow.jl is a required dependency: `using Sparlectra` is
                 # enough, there is no session that has to load anything extra and no
                 # not-installed error path left to take
@@ -195,9 +195,31 @@ function run_apslf_tests()
                 @test solver.order == 24 && solver.use_pade && !solver.nr_polish && solver.mode === :direct && solver.convergence_radius
                 tuned = Sparlectra.apslf_solver(order=40, use_pade=false, nr_polish=false, mode=:outer, convergence_radius=false)
                 @test (tuned.order, tuned.use_pade, tuned.nr_polish, tuned.mode, tuned.convergence_radius) == (40, false, false, :outer, false)
-            end
+            end)() end
 
-            @testset "residual judged against the final active set (0.13.0)" begin
+            @testset "AnalyticLoadFlow version guard" begin (function ()
+                # An environment whose Manifest predates the compat bump loads an
+                # older AnalyticLoadFlow without a message, and 0.9.14 computes
+                # wrong voltages flagged as converged. The guard runs in __init__,
+                # so this process has passed it; the explicit-version calls
+                # exercise both branches.
+                @test pkgversion(AnalyticLoadFlow) >= Sparlectra.APSLF_MIN_VERSION
+                @test Sparlectra.check_apslf_version() == pkgversion(AnalyticLoadFlow)
+                @test Sparlectra.check_apslf_version(Sparlectra.APSLF_MIN_VERSION) == Sparlectra.APSLF_MIN_VERSION
+                err = try
+                    Sparlectra.check_apslf_version(v"0.9.14")
+                    nothing
+                catch e
+                    e
+                end
+                @test err isa ErrorException
+                msg = err === nothing ? "" : sprint(showerror, err)
+                @test occursin("AnalyticLoadFlow 0.9.14 is loaded", msg)
+                @test occursin(string(Sparlectra.APSLF_MIN_VERSION), msg)
+                @test occursin("Pkg.update(\"AnalyticLoadFlow\")", msg)
+            end)() end
+
+            @testset "residual judged against the final active set (0.13.0)" begin (function ()
                 # a PV machine with a band it cannot hold: AnalyticLoadFlow clamps it
                 # at Qmax and reports the bus as PQ. The adapter used to test the
                 # voltage setpoint of that bus anyway and labelled a solved case not
@@ -239,9 +261,9 @@ function run_apslf_tests()
                 r = run_sparlectra(net=net, config=cfg_off)
                 @test r.final_converged
                 @test occursin("not evaluated", String(Sparlectra.rectangular_pf_status(net).apslf_convergence_line))
-            end
+            end)() end
 
-            @testset "Adapter mapping (PFModel -> AnalyticLoadFlow spec, PF ordering)" begin
+            @testset "Adapter mapping (PFModel -> AnalyticLoadFlow spec, PF ordering)" begin (function ()
                 net = createTest3BusNet()
                 model = buildPfModel(net; flatstart=true, include_limits=false)
                 n = length(model.busIdx_net)
@@ -267,9 +289,9 @@ function run_apslf_tests()
                 @test length(sol.V) == n
                 @test sol.meta.solver === :apslf
                 @test sol.meta.mode isa Symbol
-            end
+            end)() end
 
-            @testset "APSLF start-value generator guard and nr_polish=false in start mode" begin
+            @testset "APSLF start-value generator guard and nr_polish=false in start mode" begin (function ()
                 net = Sparlectra.importSCF(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case5.scf.json")))
                 model = buildPfModel(net; flatstart=true, include_limits=false)
 
@@ -311,12 +333,12 @@ function run_apslf_tests()
                 @test summary_bad.apslf_start_reason === :improved
                 @test V_bad != bad
                 @test all(v -> isfinite(real(v)) && isfinite(imag(v)), V_bad)
-            end
-        end
-        @testset "APSLF agrees with NR without polish (ring3, sp_case5)" begin
+            end)() end
+        end)() end
+        @testset "APSLF agrees with NR without polish (ring3, sp_case5)" begin (function ()
             # The series alone is the solution; a Newton polish would hide a
-            # wrong series result (seen on Windows / Julia 1.13.0, where the
-            # series did not converge on cases with PV buses). Every APSLF test
+            # wrong series result (AnalyticLoadFlow 0.9.14 returns one flagged
+            # as converged, 2e-2 pu off on ring3). Every APSLF test
             # runs without polish for that reason. Two shipped cases, the direct
             # adapter call and the framework run, each against NR to 1e-6 pu.
             # Never gate or relax.
@@ -345,9 +367,9 @@ function run_apslf_tests()
                 @test String(st.apslf_convergence_level) == "GRN"
                 println("      APSLF against NR on ", label, ": max |dVm| ", maximum(abs.(vm_nr .- vm_ap)), " pu, ", st.apslf_convergence_line)
             end
-        end
+        end)() end
 
-        @testset "APSLF workshop runs with its assertions" begin
+        @testset "APSLF workshop runs with its assertions" begin (function ()
             # the Literate workshop is executable Julia with an @assert next to every
             # printed number; running it here keeps the notebook from drifting. The
             # Q-limit section runs on the shipped data/mpower/sp_case118.m, so the
@@ -361,7 +383,7 @@ function run_apslf_tests()
             end
             @test true
             println("      APSLF workshop: RAN")
-        end
+        end)() end
 
         return true
     end

@@ -170,8 +170,8 @@ function _compare_cgmes_profile(fixture_text::AbstractString, reexport_text::Abs
 end
 
 function run_cgmes_export_tests()
-  @testset "CGMES export identity" begin
-    @testset "structural keys and parallel lines" begin
+  @testset "CGMES export identity" begin (function ()
+    @testset "structural keys and parallel lines" begin (function ()
       net = _export_test_net()
       dir = mktempdir()
       files = writeCGMESFiles(net; path = dir, created = _EXPORT_STAMP)
@@ -208,26 +208,26 @@ function run_cgmes_export_tests()
       # the SV profile carries one voltage per bus
       sv = read(files[4], String)
       @test count("<cim:SvVoltage rdf:ID", sv) == 3
-    end
+    end)() end
 
-    @testset "minted ids are uuid5 over the key" begin
+    @testset "minted ids are uuid5 over the key" begin (function ()
       net = _export_test_net()
       writeCGMESFiles(net; path = mktempdir(), created = _EXPORT_STAMP)
       ns = Sparlectra.CGMESImporter.CGMES_UUID_NAMESPACE
       @test net.cgmes_ids["TN|A"] == string(UUIDs.uuid5(ns, "TN|A"))
       @test net.cgmes_ids["ACL|A|B|2"] == string(UUIDs.uuid5(ns, "ACL|A|B|2"))
-    end
+    end)() end
 
-    @testset "re-export is byte-identical" begin
+    @testset "re-export is byte-identical" begin (function ()
       net = _export_test_net()
       f1 = writeCGMESFiles(net; path = mktempdir(), created = _EXPORT_STAMP)
       f2 = writeCGMESFiles(net; path = mktempdir(), created = _EXPORT_STAMP)
       for i in eachindex(f1)
         @test read(f1[i]) == read(f2[i])
       end
-    end
+    end)() end
 
-    @testset "independent builds identical, names carry no identity" begin
+    @testset "independent builds identical, names carry no identity" begin (function ()
       n1 = _export_test_net()
       n2 = _export_test_net()
       f1 = writeCGMESFiles(n1; path = mktempdir(), created = _EXPORT_STAMP)
@@ -244,9 +244,9 @@ function run_cgmes_export_tests()
       eq3 = read(f3[1], String)
       @test occursin("rdf:ID=\"_$(n1.cgmes_ids["ACL|A|B|1"])\"", eq3)
       @test occursin(">renamed_line<", eq3)
-    end
+    end)() end
 
-    @testset "self-roundtrip is power-flow-identical" begin
+    @testset "self-roundtrip is power-flow-identical" begin (function ()
       original = _roundtrip_net()
       @test _solve!(original)[2] == 0
       exported = _roundtrip_net()
@@ -285,9 +285,9 @@ function run_cgmes_export_tests()
       @test erg == 0
       @test its <= 2
       _compare_solved(original, net2)
-    end
+    end)() end
 
-    @testset "SSH and SV profiles carry the operating point" begin
+    @testset "SSH and SV profiles carry the operating point" begin (function ()
       net = Net(name = "sshnet", baseMVA = 100.0)
       addBus!(net = net, busName = "A", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
       addBus!(net = net, busName = "B", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
@@ -319,9 +319,9 @@ function run_cgmes_export_tests()
       @test !isempty(cmp.flows.rows)
       @test maximum(abs(r.dp) for r in cmp.flows.rows) < 1e-9
       @test maximum(abs(r.dq) for r in cmp.flows.rows) < 1e-9
-    end
+    end)() end
 
-    @testset "regulated tap group exports one shared TapChangerControl" begin
+    @testset "regulated tap group exports one shared TapChangerControl" begin (function ()
       # #322 export half: master and follower reference the SAME control
       # and both carry controlEnabled, so a reimport regroups them instead
       # of seeing independent (fighting) controllers
@@ -362,9 +362,9 @@ function run_cgmes_export_tests()
       @test length(c.followers) == 1
       @test isapprox(something(c.target_vm_pu, NaN), 1.01; atol = 1e-9)
       @test isapprox(c.deadband_vm_pu, 0.004; atol = 1e-9)
-    end
+    end)() end
 
-    @testset "zip packaging re-imports directly" begin
+    @testset "zip packaging re-imports directly" begin (function ()
       net = _export_test_net()
       addProsumer!(net = net, busName = "A", type = "EXTERNALNETWORKINJECTION", referencePri = "A", vm_pu = 1.0, va_deg = 0.0)
       files = writeCGMESFiles(net; path = mktempdir(), created = _EXPORT_STAMP, zip = true)
@@ -373,7 +373,7 @@ function run_cgmes_export_tests()
       res = importCGMES(path = files[5], name = "zip_back")
       @test length(res.net.nodeVec) == 3
       @test length(res.net.linesAC) == 3
-    end
+    end)() end
 
     # Export-import-export on the checked-in deliveries (data/cgmes_demo,
     # written by tools/gen_cgmes_fixtures.jl with the same header stamp):
@@ -399,7 +399,7 @@ function run_cgmes_export_tests()
     # Everything else (topology, lines, transformers, loads, machines,
     # regulating controls, breakers, the SSH operating point, the SV
     # voltages and flows) must compare equal object by object.
-    @testset "export-import-export identity on the checked-in deliveries" begin
+    @testset "export-import-export identity on the checked-in deliveries" begin (function ()
       for case in ("sp_case14", "sp_case118", "sp_casePST")
         dir = cgmes_fixture_dir(case)
         res = importCGMES(path = dir, name = case)
@@ -435,9 +435,9 @@ function run_cgmes_export_tests()
         # the excluded tap machinery is exactly what the fixture carries
         @test count(o -> o[2][1] == "cim:RatioTapChanger", collect(eq_objects)) == length(rtc_ends)
       end
-    end
+    end)() end
 
-    @testset "duplicate mRID aborts before writing" begin
+    @testset "duplicate mRID aborts before writing" begin (function ()
       net = _export_test_net()
       net.cgmes_ids["TN|A"] = "deadbeef-0000-0000-0000-000000000001"
       net.cgmes_ids["TN|B"] = "deadbeef-0000-0000-0000-000000000001"
@@ -454,6 +454,6 @@ function run_cgmes_export_tests()
       @test occursin("TN|B", msg)
       # the guard fires before any file is opened
       @test isempty(readdir(dir))
-    end
-  end
+    end)() end
+  end)() end
 end

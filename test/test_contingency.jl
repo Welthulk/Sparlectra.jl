@@ -25,11 +25,11 @@ using Test
 _contingency_results_equal(a::ContingencyResult, b::ContingencyResult) = all(isequal(getfield(a, f), getfield(b, f)) for f in fieldnames(ContingencyResult))
 
 function run_contingency_tests()
-  @testset "N-1 contingency batch (Phase 4)" begin
+  @testset "N-1 contingency batch (Phase 4)" begin (function ()
     # load_fixture_net: the service legs run on the shipped SCF case
     service_case = abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json"))
 
-    @testset "case generation" begin
+    @testset "case generation" begin (function ()
       net = load_fixture_net("sp_case14")
       cases = generateN1Branches(net)
       @test length(cases) == length(net.branchVec)
@@ -104,9 +104,9 @@ function run_contingency_tests()
       @test ContingencyCase("x").weight == 1.0
       @test ContingencyCase("x", :branch, "x", 2.5).weight == 2.5
       @test_throws ArgumentError ContingencyCase("x", :branch, "x", -1.0)
-    end
+    end)() end
 
-    @testset "sp_case14 full N-1: serial and parallel identical" begin
+    @testset "sp_case14 full N-1: serial and parallel identical" begin (function ()
       net = load_fixture_net("sp_case14")
       before_branches = length(net.branchVec)
       before_vm = [n._vm_pu for n in net.nodeVec]
@@ -128,9 +128,9 @@ function run_contingency_tests()
       else
         println("contingency parallel batch: fallback-only run (single-threaded test process); the threaded path runs in the --threads=4 battery")
       end
-    end
+    end)() end
 
-    @testset "islanding without reference is reported, not thrown" begin
+    @testset "islanding without reference is reported, not thrown" begin (function ()
       net = Net(name = "n1_island", baseMVA = 100.0)
       for b in ("A", "B", "C", "D")
         addBus!(net = net, busName = b, vn_kV = 110.0)
@@ -178,9 +178,9 @@ function run_contingency_tests()
       promoted = runContingencies!(net_pv, [ContingencyCase(cut_pv)]; parallel_enabled = false)
       @test promoted[1].converged
       @test promoted[1].island_count == 2
-    end
+    end)() end
 
-    @testset "non-convergence and unknown elements are reported" begin
+    @testset "non-convergence and unknown elements are reported" begin (function ()
       net = Net(name = "n1_diverge", baseMVA = 100.0)
       for b in ("A", "B", "C")
         addBus!(net = net, busName = b, vn_kV = 110.0)
@@ -199,9 +199,9 @@ function run_contingency_tests()
       @test results[1].error !== nothing
       @test !results[2].converged
       @test occursin("unknown branch", results[2].error)
-    end
+    end)() end
 
-    @testset "printer and CSV writer" begin
+    @testset "printer and CSV writer" begin (function ()
       net = load_fixture_net("sp_case14")
       cases = generateN1Branches(net)[1:5]
       results = runContingencies!(net, cases; parallel_enabled = false)
@@ -222,9 +222,9 @@ function run_contingency_tests()
       @test writeContingencyResultsCSV(csv_de, results; format = "excel_de") == csv_de
       lines_de = readlines(csv_de)
       @test startswith(lines_de[1], "name;weight;converged;iterations;start_used")
-    end
+    end)() end
 
-    @testset "case weights (#331 Phase 2)" begin
+    @testset "case weights (#331 Phase 2)" begin (function ()
       net = load_fixture_net("sp_case14")
       cases = generateN1Branches(net)[1:5]
 
@@ -276,9 +276,9 @@ function run_contingency_tests()
       @test r0.converged == r1.converged    # same solve outcome, not skipped
       @test r0.iterations == r1.iterations
       @test r0.error == r1.error
-    end
+    end)() end
 
-    @testset "generator outages (#331 Phase 3)" begin
+    @testset "generator outages (#331 Phase 3)" begin (function ()
       net = load_fixture_net("sp_case14")
       gcases = generateN1Generators(net)
       # sp_case14 has 3 generator-type units (external grid plus two
@@ -342,9 +342,9 @@ function run_contingency_tests()
       @test any(m -> occursin("load-only", m), smsgs)
       # PQ generator removed, the PV reference survives: area 2 still solves
       @test any(m -> m == "converged", smsgs)
-    end
+    end)() end
 
-    @testset "overload reporting (#331 Phase 4)" begin
+    @testset "overload reporting (#331 Phase 4)" begin (function ()
       # two parallel rated lines feed a load; removing one overloads the other
       net = Net(name = "n1_overload", baseMVA = 100.0)
       addBus!(net = net, busName = "A", vn_kV = 220.0)
@@ -416,9 +416,9 @@ function run_contingency_tests()
       # :none keeps input order (islanded case first, as given)
       out_input = sprint(io -> printContingencyResults(io, combined; sort_by = :none))
       @test findfirst(sres[1].name, out_input)[1] < findfirst(res[end].name, out_input)[1]
-    end
+    end)() end
 
-    @testset "Web UI contingency service (#331 Phase 5)" begin
+    @testset "Web UI contingency service (#331 Phase 5)" begin (function ()
       cfg = Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH
       root = mktempdir()
       dicts = Dict{String,Any}()
@@ -479,9 +479,9 @@ function run_contingency_tests()
         Sparlectra.to_dict(Sparlectra._run_contingency_service(w14, cfg, joinpath(root, "nw"), "nw", "branch"))["metadata"]
       end
       @test nmd["contingency_weights_applied"] == false
-    end
+    end)() end
 
-    @testset "start-value ladder (#331 Phase 1)" begin
+    @testset "start-value ladder (#331 Phase 1)" begin (function ()
       net = load_fixture_net("sp_case14")
       cases = generateN1Branches(net)
 
@@ -521,9 +521,9 @@ function run_contingency_tests()
       serial = runContingencies!(net, cases; rescue_ladder = [:warm, :dc], parallel_enabled = false)
       par = runContingencies!(net, cases; rescue_ladder = [:warm, :dc], parallel_enabled = true, parallel_max_tasks = 2, parallel_min_work_items = 2)
       @test all(_contingency_results_equal(serial[i], par[i]) for i in eachindex(serial))
-    end
+    end)() end
 
-    @testset "non-converged base case runs the solver rescue ladder (#331)" begin
+    @testset "non-converged base case runs the solver rescue ladder (#331)" begin (function ()
       # a mild net seeded with a deliberately bad start: the plain solve from
       # that seed diverges, but the solver rescue ladder (alternate start)
       # recovers it. runContingencies! must rescue the base rather than fall
@@ -567,8 +567,8 @@ function run_contingency_tests()
       # fallen to the flat template, there would be no rescued warm state)
       @test length(results) == length(ccases)
       @test any(r -> r.converged && r.start_used === :warm, results)
-    end
-  end
+    end)() end
+  end)() end
 end
 
 # Extended profile: a small N-1 identity slice on the real case1354pegase
@@ -576,7 +576,7 @@ end
 # field equality on a branch subset with max_tasks = 1 and auto, plus the
 # retry_flat_start smoke (must not change converged cases).
 function run_contingency_extended_tests()
-  @testset "N-1 identity on sp_case1354 (extended)" begin
+  @testset "N-1 identity on sp_case1354 (extended)" begin (function ()
     # the shipped data/mpower/sp_case1354.m (synthetic 1354-bus grid, 2040
     # branches), so the identity check runs on every checkout
     case_path = abspath(joinpath(dirname(@__DIR__), "data", "mpower", "sp_case1354.m"))
@@ -592,5 +592,5 @@ function run_contingency_extended_tests()
     retried = runContingencies!(net, cases; parallel_enabled = true, parallel_min_work_items = 2, retry_flat_start = true)
     @test all(!serial[i].converged || _contingency_results_equal(serial[i], retried[i]) for i in eachindex(serial))
     println("contingency extended case1354: RAN (", count(r -> r.converged, serial), "/60 converged, threads = ", Threads.nthreads(), ")")
-  end
+  end)() end
 end

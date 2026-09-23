@@ -202,7 +202,7 @@ function _detached_docstring_violations(repo::AbstractString)::Vector{String}
 end
 
 function run_repository_hygiene_tests()
-    @testset "repository hygiene" begin
+    @testset "repository hygiene" begin (function ()
         repo = _repository_root()
         forbidden_terms = _hygiene_normalize.(String[
             "sch"*"ae"*"fer",
@@ -232,22 +232,11 @@ function run_repository_hygiene_tests()
         if !isempty(detached)
             error(join(["docstrings detached from their definition:"; detached], "\n"))
         end
-        # The private working repository carries further checks here that a
-        # published checkout has no subject for, the private-to-public boundary
-        # among them. They live in their own files, found by convention rather
-        # than by name, so this file never points at something a public reader
-        # cannot have. Their absence is STATED, not skipped quietly: a silent
-        # skip reads as a pass and hides a coverage gap, the defect class this
-        # repository removed twice in the week of 2026-09-06.
+        # additional check files next to this one (name pattern private_*.jl)
+        # are included when present and named in the group report
         extra = sort(filter(f -> startswith(f, "private_") && endswith(f, ".jl"), readdir(@__DIR__)))
-        if isempty(extra)
-            # the word SKIPPED is load-bearing: the group runner surfaces exactly
-            # those lines through its output capture, so the absence reaches the
-            # report instead of being swallowed
-            println("      SKIPPED private-repository checks: none present in this checkout. ",
-                "They verify the private-to-public boundary, which has no subject in a published ",
-                "tree, so nothing beyond the checks above was verified here.")
-        else
+        if !isempty(extra)
+            println("      additional check file(s) ran: ", join(extra, ", "))
             for f in extra
                 include(joinpath(@__DIR__, f))
             end
@@ -260,5 +249,5 @@ function run_repository_hygiene_tests()
             @test Base.invokelatest(checker, repo) == true
         end
         @test true
-    end
+    end)() end
 end

@@ -176,7 +176,7 @@ function _webui_http_request(port::Integer, method::AbstractString, target::Abst
 end
 
 function run_webui_extended_tests()
-  @testset "Local PowerFlow Web UI" begin
+  @testset "Local PowerFlow Web UI" begin (function ()
     @test isdefined(Sparlectra, :start_sparlectra_webui)
     @test isdefined(Sparlectra, :default_webui_output_root)
     @test_throws ArgumentError start_sparlectra_webui(host = "0.0.0.0")
@@ -253,7 +253,7 @@ function run_webui_extended_tests()
     @test Sparlectra._format_elapsed_duration(nothing) == "—"
 
 
-    @testset "Configuration refresh controls" begin
+    @testset "Configuration refresh controls" begin (function ()
       root = mktempdir()
       config_path = joinpath(root, "configuration.yaml")
       write(config_path, "power_flow:\n  start_mode:\n    voltage_mode: bus_vm_va_blend\n  qlimits:\n    enabled: true\n")
@@ -303,9 +303,9 @@ function run_webui_extended_tests()
       @test occursin("config_refresh_check_completed", log)
       @test occursin("config_refresh_write_started", log)
       @test occursin("config_refresh_write_completed", log)
-    end
+    end)() end
 
-    @testset "Configuration editor validates before atomic save" begin
+    @testset "Configuration editor validates before atomic save" begin (function ()
       root = mktempdir()
       config_path = joinpath(root, "configuration.yaml")
       operation_log = Sparlectra.webui_operation_log_path(root)
@@ -384,9 +384,9 @@ function run_webui_extended_tests()
       log = read(operation_log, String)
       @test occursin("config_editor_saved", log)
       @test occursin("config_editor_save_failed", log)
-    end
+    end)() end
 
-    @testset "Case-specific settings profiles" begin
+    @testset "Case-specific settings profiles" begin (function ()
       root = mktempdir()
       write(joinpath(root, "case145.m"), "% case fixture\n")
       run_id = "case-settings-test"
@@ -885,12 +885,12 @@ form:
       delete!(Sparlectra._POWERFLOW_SERVICE_RUNS, failed_run_id)
       delete!(Sparlectra._POWERFLOW_WEBUI_JOBS, unsupported_run_id)
       delete!(Sparlectra._POWERFLOW_WEBUI_JOBS, traversal_run_id)
-    end
+    end)() end
 
     # the bundled .jl precompile workloads stay out of the case selector
     @test !Sparlectra._webui_is_user_selectable_case("warmup_case118.jl")
 
-    @testset "Case and configuration selection" begin
+    @testset "Case and configuration selection" begin (function ()
       mktempdir() do start_dir
         application_root = joinpath(start_dir, "Sparlectra")
         case_directory = joinpath(application_root, "data", "mpower")
@@ -1121,9 +1121,9 @@ form:
         )
         @test occursin("<input id=\"casefile\" name=\"casefile\" autocomplete=\"off\" spellcheck=\"false\" role=\"combobox\" aria-expanded=\"false\" aria-controls=\"case-combobox-list\" data-case-settings-reload=\"true\" value=\"$(manual_case)\"", fallback_html)
       end
-    end
+    end)() end
 
-    @testset "Case file import" begin
+    @testset "Case file import" begin (function ()
       mktempdir() do tmpdir
         case_directory = joinpath(tmpdir, "cases")
         output_root = joinpath(tmpdir, "runs")
@@ -1214,12 +1214,12 @@ form:
         @test occursin("case_import_completed", log_text)
         @test !occursin("powerflow_run_started", log_text)
       end
-    end
+    end)() end
 
     # Enter in the manual "type case file path" field must resolve/copy the
     # case into the case directory without starting a PowerFlow run, so it
     # then appears in the "choose existing case" selector.
-    @testset "Manual case path resolve (no PowerFlow run)" begin
+    @testset "Manual case path resolve (no PowerFlow run)" begin (function ()
       mktempdir() do tmpdir
         case_directory = joinpath(tmpdir, "cases")
         output_root = joinpath(tmpdir, "runs")
@@ -1260,9 +1260,9 @@ form:
         @test occursin("case_resolve_failed", log_text)
         @test !occursin("powerflow_run_started", log_text)
       end
-    end
+    end)() end
 
-    @testset "Case delete from the combobox (no PowerFlow run)" begin
+    @testset "Case delete from the combobox (no PowerFlow run)" begin (function ()
       mktempdir() do tmpdir
         case_directory = joinpath(tmpdir, "cases")
         output_root = joinpath(tmpdir, "runs")
@@ -1295,10 +1295,10 @@ form:
         @test occursin("case_delete_failed", log_text)
         @test !occursin("powerflow_run_started", log_text)
       end
-    end
+    end)() end
 
 
-    @testset "Markdown-backed contextual help and documentation" begin
+    @testset "Markdown-backed contextual help and documentation" begin (function ()
       topic = "power_flow.start_mode.voltage_mode"
       @test haskey(Sparlectra.WEBUI_HELP_TOPICS, topic)
       topic_metadata = Sparlectra.resolve_webui_help_topic(topic)
@@ -1452,7 +1452,7 @@ for (current_iteration_topic, required_fragments) in current_iteration_help
         unsafe_route = Sparlectra.route_sparlectra_webui("GET", "/docs/" * Sparlectra._webui_urlencode(unsafe_page))
         @test unsafe_route.status == 404
       end
-    end
+    end)() end
 
     mktempdir() do tmpdir
       casefile = _write_webui_test_case(joinpath(tmpdir, "case_webui.m"))
@@ -2695,7 +2695,7 @@ result = get_powerflow_result(run_id)
       @test !isopen(heartbeat_server.listener)
     end
 
-    @testset "DC power flow mode" begin
+    @testset "DC power flow mode" begin (function ()
       mktempdir() do dc_tmpdir
         dc_casefile = _write_webui_test_case(joinpath(dc_tmpdir, "case_webui_dc.m"))
         dc_config_file = joinpath(dc_tmpdir, "config_template.yaml")
@@ -2807,9 +2807,9 @@ result = get_powerflow_result(run_id)
           @test isapprox(webui_va_deg[row.bus], row.va_deg; atol = 1e-8)
         end
       end
-    end
+    end)() end
 
-    @testset "DC-seeded Newton-Raphson start (dc_seed_unconditional)" begin
+    @testset "DC-seeded Newton-Raphson start (dc_seed_unconditional)" begin (function ()
       mktempdir() do seed_tmpdir
         seed_casefile = _write_webui_test_case(joinpath(seed_tmpdir, "case_webui_dcseed.m"))
         seed_config_file = joinpath(seed_tmpdir, "config_template.yaml")
@@ -2829,9 +2829,9 @@ result = get_powerflow_result(run_id)
         @test seed_result_json["final_outcome"]["solver"] == "rectangular"
         @test seed_result_json["final_outcome"]["converged"] == true
       end
-    end
+    end)() end
 
-    @testset "Bad-data limits: one scale, and the form says which applies" begin
+    @testset "Bad-data limits: one scale, and the form says which applies" begin (function ()
       # five numbers side by side gave no hint which
       # of them the selected mode uses. Two limits are presented instead, and
       # the fields of the other mode gray out. The values must survive that:
@@ -2904,9 +2904,9 @@ result = get_powerflow_result(run_id)
       @test Sparlectra.state_estimation_config().tol == 1.0e-6
       # the tolerance sits AT the finite-difference floor, never below it
       @test Sparlectra.state_estimation_config().tol >= Sparlectra.state_estimation_config().jac_eps
-    end
+    end)() end
 
-    @testset "SE settings: one source, and the value arrives" begin
+    @testset "SE settings: one source, and the value arrives" begin (function ()
       # Twice in two days a setting existed, was displayed, and did not act:
       # rankTolFactor was taken and not forwarded, and literal defaults in
       # the service signature outranked the configuration (a 25000-bus run
@@ -2958,9 +2958,9 @@ result = get_powerflow_result(run_id)
           @test Float64(md["se_suppression_sigma"]) ≈ 1234.0
         end
       end
-    end
+    end)() end
 
-    @testset "Diagnose button submitter preservation" begin
+    @testset "Diagnose button submitter preservation" begin (function ()
       mktempdir() do diag_tmpdir
         diag_casefile = _write_webui_test_case(joinpath(diag_tmpdir, "case_webui_diag.m"))
         diag_config_file = joinpath(diag_tmpdir, "config_template.yaml")
@@ -3047,11 +3047,11 @@ result = get_powerflow_result(run_id)
         @test normal_result["success"]
         @test !isfile(joinpath(normal_result["output_dir"], "diagnose.log"))
       end
-    end
+    end)() end
 
-  end
+  end)() end
 
-  @testset "scenario editor and sources" begin
+  @testset "scenario editor and sources" begin (function ()
     # suite migration (no-download rule): the flows run on the shipped
     # sp_case60 bundle instead of a locally cached case118, so the set
     # ALWAYS runs (the old availability gate silently skipped fresh
@@ -3225,6 +3225,6 @@ result = get_powerflow_result(run_id)
         @test occursin("scenario-editor-link", main_scf)
       end
     end
-  end
+  end)() end
   return nothing
 end

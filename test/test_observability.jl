@@ -59,7 +59,7 @@ end
 function test_observability_metrics(fx)::Bool
   # Validates global/local observability metrics for full, reduced, and sparse
   # measurement sets, including expected not-observable behavior for sparse data.
-  @testset "State estimation observability metrics" begin
+  @testset "State estimation observability metrics" begin (function ()
     net = deepcopy(fx.net3)
     # the fixture solved the PF once; its outcome is asserted here, where the
     # measurements are generated from it
@@ -144,7 +144,7 @@ function test_observability_metrics(fx)::Bool
     @test gobs_sparse.numerical_observable == false
 
     @test_throws ErrorException with_state_estimation_config(() -> evaluate_local_observability(net, meas_sparse, local_cols); flatstart = true, jac_eps = 1e-6)
-  end
+  end)() end
 
   # The rank test runs on a column-normalized Jacobian. Without it the
   # relative tolerance is measured against the largest column scale, and on
@@ -164,7 +164,7 @@ function test_observability_metrics(fx)::Bool
   # full matching with a rank one or two short. The property below is what
   # must hold - a numerical deficit is never reported as observable, no
   # matter what the structure says.
-  @testset "observability: structure never overrules a numerical deficit" begin
+  @testset "observability: structure never overrules a numerical deficit" begin (function ()
     net14 = deepcopy(fx.net14)
     full = generateMeasurementsFromPF(net14; includeVm = true, includePinj = true, includeQinj = true, includePflow = true, includeQflow = true, noise = false)
     rng = MersenneTwister(11)
@@ -187,9 +187,9 @@ function test_observability_metrics(fx)::Bool
     # the draws must actually contain the interesting case, otherwise the
     # test above proves nothing
     @test seen_gap
-  end
+  end)() end
 
-  @testset "observability: rank verdict is scale independent" begin
+  @testset "observability: rank verdict is scale independent" begin (function ()
     netH = deepcopy(fx.net3)
     msH = generateMeasurementsFromPF(netH; includeVm = true, includePinj = true, includeQinj = true, includePflow = true, includeQflow = true, noise = false)
     empty!(netH.measurements)
@@ -212,7 +212,7 @@ function test_observability_metrics(fx)::Bool
       evaluate_global_observability(netH)
     end
     @test obsK.numerical_observable
-  end
+  end)() end
 
   return true
 end
@@ -220,7 +220,7 @@ end
 function test_observability_matrix_helpers()::Bool
   # Unit-checks matrix-only observability helpers (rank/matching/redundancy),
   # including local-column selection and expected error paths.
-  @testset "Unobservable state columns (null-space dark states)" begin
+  @testset "Unobservable state columns (null-space dark states)" begin (function ()
     # the column-restricted local test is necessary but NOT sufficient: one
     # flow between two buses makes the 1x1 submatrix for column 1 full
     # rank, yet only the difference x1 - x2 is determined. The global
@@ -278,9 +278,9 @@ function test_observability_matrix_helpers()::Bool
     end
     @test !broken.numerical_observable
     @test broken.unobservable_state_columns == [6, 13]
-  end
+  end)() end
 
-  @testset "State estimation matrix observability helpers" begin
+  @testset "State estimation matrix observability helpers" begin (function ()
     H = [
       1.0 0.0 0.0
       0.0 1.0 0.0
@@ -308,7 +308,7 @@ function test_observability_matrix_helpers()::Bool
 
     @test_throws ErrorException evaluate_local_observability_matrix(H, Int[])
     @test_throws ErrorException evaluate_local_observability_matrix(H, [10])
-  end
+  end)() end
 
   return true
 end
@@ -321,7 +321,7 @@ function test_observability_fd_rank_tolerance(fx)::Bool
   # :not_observable/:structural_islands here). The FD-aware tolerance is
   # still exercised by the local check below, whose column selection spans
   # the island-internal angle-offset null space.
-  @testset "State estimation FD-aware rank tolerance" begin
+  @testset "State estimation FD-aware rank tolerance" begin (function ()
     _lstd() = measurementStdDevs(vm = 1e-4, pinj = 1e-3, qinj = 1e-3, pflow = 1e-3, qflow = 1e-3)
     netC = deepcopy(fx.net_link)
     meas = generateMeasurementsFromPF(netC; noise = false, stddev = _lstd())
@@ -355,7 +355,7 @@ function test_observability_fd_rank_tolerance(fx)::Bool
     obsL = evaluate_local_observability(netO, [m for m in meas if m.linkIdx === nothing], [2, 3])
     @test !obsL.numerical_observable
     @test obsL.quality == :not_observable
-  end
+  end)() end
 
   return true
 end
@@ -421,7 +421,7 @@ function test_observability_takahashi_diagnostics(fx)::Bool
     @test sortperm(abs.(d.rn); rev = true) == sortperm(abs.(t.rn); rev = true)
   end
 
-  @testset "State estimation Takahashi diagnostics" begin
+  @testset "State estimation Takahashi diagnostics" begin (function ()
     stdn = measurementStdDevs(vm = 0.002, pinj = 0.5, qinj = 0.5, pflow = 0.5, qflow = 0.5, shuntq = 0.5)
 
     # 1) small meshed case
@@ -601,7 +601,7 @@ function test_observability_takahashi_diagnostics(fx)::Bool
     @test length(obs_omega.criticality_wii) == length(obs_omega.active_measurement_indices)
     redundant = [k for k in eachindex(obs_omega.active_measurement_indices) if !(obs_omega.active_measurement_indices[k] in obs_omega.numerical_critical_measurement_indices)]
     @test all(k -> obs_omega.criticality_wii[k] > 1e-8, redundant)
-  end
+  end)() end
 
   return true
 end
@@ -609,15 +609,15 @@ end
 function run_observability_tests()
   # Aggregates the observability test sets; the shared nets are built once
   # and handed to every set that needs them.
-  @testset "Observability" begin
+  @testset "Observability" begin (function ()
     fx = observability_fixture()
     tests =
       [("Observability metrics", () -> test_observability_metrics(fx)), ("Matrix observability helpers", test_observability_matrix_helpers), ("FD-aware rank tolerance", () -> test_observability_fd_rank_tolerance(fx)), ("Takahashi diagnostics", () -> test_observability_takahashi_diagnostics(fx))]
 
     for (name, testfn) in tests
-      @testset "$name" begin
+      @testset "$name" begin (function ()
         @test _se_run_quiet(testfn) == true
-      end
+      end)() end
     end
-  end
+  end)() end
 end

@@ -26,7 +26,7 @@ module SysimageLauncher
 using TOML
 using SHA
 
-export handle_sysimage, unresolved_dependencies, repair_environment
+export handle_sysimage, unresolved_dependencies, compat_lower_bound, outdated_dependencies, repair_environment
 
 const REBUILD_FLAG = "--rebuild-sysimage"
 const NO_IMAGE_FLAG = "--no-sysimage"
@@ -174,8 +174,17 @@ end
     unresolved_dependencies(project_dir) -> Vector{String}
 
 Direct dependencies of `Project.toml` that `Manifest.toml` does not know, or
+whose manifest version lies below the lower bound of the `[compat]` entry
+(reported as `"<name> <manifest version> < <bound>"`), or
 `["<no Manifest.toml>"]` when there is no manifest at all. Empty means the
 environment can be loaded.
+
+The compat case matters because Julia does not check a Manifest against
+the compat: a checkout whose manifest predates a dependency bump loads the
+old version without a message, and an old solver version can compute wrong
+numbers. Only the plain caret form of a compat entry (`"0.9.15"`,
+`"^0.9.15"`, `"~0.9.15"`, `"=0.9.15"`, first entry of a comma list) is read;
+ranges and inequalities need Pkg and are left to the resolve.
 
 Two TOML reads, no package load, a few milliseconds. That cheapness is the
 point: it runs BEFORE the sysimage question, and the order matters. Answering
@@ -190,13 +199,14 @@ function unresolved_dependencies(project_dir::AbstractString)::Vector{String}
   manifest = joinpath(project_dir, "Manifest.toml")
   isfile(project) || return String[]
   isfile(manifest) || return ["<no Manifest.toml>"]
-  deps, known = try
-    d = get(TOML.parsefile(project), "deps", Dict{String,Any}())
+  deps, known, compat, entries = try
+    pt = TOML.parsefile(project)
+    d = get(pt, "deps", Dict{String,Any}())
     m = TOML.parsefile(manifest)
     # manifest_format 2.0 nests everything under [deps]; 1.0 puts the packages
     # at the top level next to the metadata keys
-    n = haskey(m, "deps") ? keys(m["deps"]) : setdiff(keys(m), ("julia_version", "manifest_format", "project_hash", "manifest_version"))
-    (keys(d), n)
+    e = haskey(m, "deps") ? m["deps"] : Dict{String,Any}(k => v for (k, v) in m if !(k in ("julia_version", "manifest_format", "project_hash", "manifest_version")))
+    (keys(d), keys(e), get(pt, "compat", Dict{String,Any}()), e)
   catch err
     # expected failure: a truncated or hand-edited TOML. Saying "unresolved"
     # here is right - the environment cannot be trusted either way - and the
@@ -204,7 +214,40 @@ function unresolved_dependencies(project_dir::AbstractString)::Vector{String}
     println("Could not read the package environment (", first(sprint(showerror, err), 120), "); trying to repair it.")
     return ["<unreadable Project.toml or Manifest.toml>"]
   end
-  return sort!([String(d) for d in deps if !(d in known)])
+  missing = [String(d) for d in deps if !(d in known)]
+  # a known dependency whose manifest version is below the compat bound
+  for d in deps
+    d in known || continue
+    bound = compat_lower_bound(get(compat, d, ""))
+    bound === nothing && continue
+    entry = entries[d]
+    # manifest 2.0 lists one dict per package name; stdlibs carry no version
+    versions = [get(x, "version", "") for x in (entry isa AbstractVector ? entry : [entry]) if x isa AbstractDict]
+    for v in versions
+      isempty(v) && continue
+      parsed = tryparse(VersionNumber, String(v))
+      parsed === nothing && continue
+      parsed < bound && push!(missing, string(d, " ", parsed, " < ", bound))
+    end
+  end
+  return sort!(missing)
+end
+
+"""
+    compat_lower_bound(spec) -> Union{Nothing,VersionNumber}
+
+The lower bound of a `[compat]` entry in its plain caret form (`"0.9.15"`,
+`"^0.9.15"`, `"~0.9.15"`, `"=0.9.15"`; a comma list contributes its first
+entry). Missing components count as zero. Anything else (ranges, `>=`,
+hyphens) returns `nothing`: Pkg's parser is the authority for those and it
+is not loaded here on purpose.
+"""
+function compat_lower_bound(spec::AbstractString)::Union{Nothing,VersionNumber}
+  first_entry = strip(first(split(spec, ','; limit = 2)))
+  isempty(first_entry) && return nothing
+  first_entry = lstrip(first_entry, ('^', '~', '='))
+  occursin(r"^\d+(\.\d+){0,2}$", first_entry) || return nothing
+  return VersionNumber(first_entry)
 end
 
 """
@@ -212,13 +255,21 @@ Bring the environment into a loadable state, printing only when something is
 actually wrong. `resolve` before `instantiate`, in that order: instantiate
 installs what the manifest lists and cannot add a package the manifest never
 mentioned.
+
+`update` names packages whose manifest version lies below the compat bound
+(the `"<name> <version> < <bound>"` entries of `unresolved_dependencies`).
+They are updated FIRST: `resolve` treats every manifest version as an
+explicit requirement and fails with "Unsatisfiable requirements" on such a
+manifest instead of lifting the version; `Pkg.update` of the named packages
+lifts it.
 """
-function repair_environment(project_dir::AbstractString, reason::AbstractString)
+function repair_environment(project_dir::AbstractString, reason::AbstractString; update::Vector{String} = String[])
   println(reason)
   println("Resolving the package environment; this happens once after a checkout or a dependency change.")
   @eval using Pkg
   pkgm = Base.invokelatest(getfield, @__MODULE__, :Pkg)
   try
+    isempty(update) || Base.invokelatest(pkgm.update, update)
     Base.invokelatest(pkgm.resolve)
     Base.invokelatest(pkgm.instantiate)
     println("Package environment resolved.")
@@ -226,7 +277,11 @@ function repair_environment(project_dir::AbstractString, reason::AbstractString)
     println()
     println("Could not prepare the dependencies of this checkout.")
     println("Run this once in the checkout directory and start again:")
-    println("    julia --project=. -e \"using Pkg; Pkg.resolve(); Pkg.instantiate()\"")
+    if isempty(update)
+      println("    julia --project=. -e \"using Pkg; Pkg.resolve(); Pkg.instantiate()\"")
+    else
+      println("    julia --project=. -e \"using Pkg; Pkg.update([" * join(("\\\"" * u * "\\\"" for u in update), ", ") * "]); Pkg.instantiate()\"")
+    end
     println()
     println("If that fails too, delete Manifest.toml and repeat. It is not tracked,")
     println("and a manifest left over from an older Sparlectra is the usual reason.")
@@ -234,6 +289,17 @@ function repair_environment(project_dir::AbstractString, reason::AbstractString)
     rethrow(err)
   end
   return nothing
+end
+
+"""
+    outdated_dependencies(unresolved) -> Vector{String}
+
+The package names among the entries of `unresolved_dependencies` that report
+a manifest version below the compat bound; the argument for `update` of
+`repair_environment`.
+"""
+function outdated_dependencies(unresolved::AbstractVector{<:AbstractString})::Vector{String}
+  return [String(first(split(d, ' '))) for d in unresolved if occursin(" < ", d)]
 end
 
 """

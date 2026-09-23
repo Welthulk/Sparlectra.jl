@@ -22,8 +22,8 @@ using Test
 include("test_api_support.jl")
 
 function run_api_fast_tests()
-  @testset "API fast smoke and timing contracts" begin
-    @testset "net parameters stamped exactly once per importer" begin
+  @testset "API fast smoke and timing contracts" begin (function ()
+    @testset "net parameters stamped exactly once per importer" begin (function ()
       # the stamping happens exactly
       # once PER IMPORTER, at the place each importer finishes; this test
       # is the guard against pulling the four call sites back together
@@ -49,14 +49,14 @@ function run_api_fast_tests()
         println("      import stamp: dtf SKIPPED (data/DTF/FOR001.DAT not present)")
       end
       assert_one(cgmes_fixture_dir("sp_casePST"), "cgmes (sp_casePST fixture)"; requested_format = :cgmes)
-    end
+    end)() end
 
     # Version-independent on purpose: assert only that the precompile-baked
     # version() matches the current Project.toml, so a version bump alone
     # cannot break the test.
     @test Sparlectra.version() == Sparlectra._read_project_version()
 
-    @testset "profiling wrapper records successes and exceptions" begin
+    @testset "profiling wrapper records successes and exceptions" begin (function ()
       profile = Dict{Symbol,Any}(:enabled => true)
       @test Sparlectra._perf_profile_time!(profile, :solver_total) do
         sleep(0.001)
@@ -82,7 +82,7 @@ function run_api_fast_tests()
       nested = nested_profile[:timings][:newton_step_linear_solve].elapsed_s
       @test solver >= nested
       @test nested_profile[:timings][:solver_total].calls == 1
-    end
+    end)() end
 
     mktempdir() do tmpdir
       casefile = _write_api_test_case(joinpath(tmpdir, "case_api.m"))
@@ -101,7 +101,7 @@ function run_api_fast_tests()
       @test Sparlectra.to_dict(failed_transport)["solver_elapsed_s"] > 0.0
     end
 
-    @testset "run index accepts symlinked output roots" begin
+    @testset "run index accepts symlinked output roots" begin (function ()
       # Two environments can reach the same physical output root under
       # different names (a Flatpak XDG_STATE_HOME symlinked onto
       # ~/.local/state). Index entries store the writer's absolute paths,
@@ -130,8 +130,8 @@ function run_api_fast_tests()
           @test !Sparlectra._indexed_run_paths(foreign_entry, real_root).valid
         end
       end
-    end
-  end
+    end)() end
+  end)() end
 end
 
 run_api_tests() = run_api_fast_tests()

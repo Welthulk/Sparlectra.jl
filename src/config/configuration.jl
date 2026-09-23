@@ -973,8 +973,13 @@ caller installs the effective configuration for the duration of the run.
 The service and the Web UI do exactly that with the resolved configuration
 of the case (general file, case sidecar, form values). One Net, one run at
 a time: the registry is process-global.
+
+`f` is not specialized on: every do-block call site brings its own closure
+type, and the closure body was inlined into a fresh specialization of this
+function each time (91 of them in one test group, ten seconds of
+compilation for a three-line body). One dynamic call is cheaper.
 """
-function with_sparlectra_config(f, cfg::SparlectraConfig)
+function with_sparlectra_config(@nospecialize(f), cfg::SparlectraConfig)
   previous = ACTIVE_SPARLECTRA_CONFIG[]
   ACTIVE_SPARLECTRA_CONFIG[] = cfg
   try

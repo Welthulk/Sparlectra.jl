@@ -25,14 +25,17 @@
 # no package load. Julia can only take an image at process start (-J), so a
 # process that wants one has to start itself again.
 include(joinpath(@__DIR__, "tools", "sysimage_launcher.jl"))
-using .SysimageLauncher: handle_sysimage, unresolved_dependencies, repair_environment
+using .SysimageLauncher: handle_sysimage, unresolved_dependencies, outdated_dependencies, repair_environment
 
 # The environment FIRST, then the sysimage question. A user who is about to be
 # asked whether to spend minutes on a build should not be asked on top of a
-# broken checkout.
+# broken checkout. A dependency below its compat bound (a manifest that
+# predates a version bump) is repaired here as well: it is the one state that
+# loads without complaint and can compute wrong numbers.
 let project_dir = abspath(@__DIR__), missing_deps = Base.invokelatest(unresolved_dependencies, project_dir)
   isempty(missing_deps) || Base.invokelatest(repair_environment, project_dir,
-    "The package environment is not resolved: " * join(missing_deps, ", ") * ".")
+    "The package environment is not resolved: " * join(missing_deps, ", ") * ".";
+    update = Base.invokelatest(outdated_dependencies, missing_deps))
 end
 
 handle_sysimage(copy(ARGS), @__FILE__, abspath(@__DIR__))

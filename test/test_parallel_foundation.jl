@@ -24,8 +24,8 @@ using SparseArrays
 using LinearAlgebra
 
 function run_parallel_foundation_tests()
-  @testset "Parallel foundation (Phase 1)" begin
-    @testset "runtime.parallel configuration" begin
+  @testset "Parallel foundation (Phase 1)" begin (function ()
+    @testset "runtime.parallel configuration" begin (function ()
       cfg = Sparlectra.RuntimeConfig(Dict{String,Any}())
       @test cfg.parallel.enabled === true
       @test cfg.parallel.max_tasks == "auto"
@@ -48,9 +48,9 @@ function run_parallel_foundation_tests()
       # the yaml example carries the keys, so user files may set them
       loaded = load_sparlectra_config(; reload = true, overrides = Dict{String,Any}("runtime" => Dict{String,Any}("parallel" => Dict{String,Any}("max_tasks" => "3"))))
       @test parallel_max_tasks(loaded.runtime.parallel) == 3
-    end
+    end)() end
 
-    @testset "performance-profile child and merge" begin
+    @testset "performance-profile child and merge" begin (function ()
       recorder_calls = Ref(0)
       parent = Dict{Symbol,Any}(:enabled => true, :show_allocations => false, :output_dir => "/tmp/x", :phase_callback => _ -> (recorder_calls[] += 1), :cancellation_check => () -> nothing)
 
@@ -100,9 +100,9 @@ function run_parallel_foundation_tests()
       @test Sparlectra._perf_profile_merge!(parent, nothing, "ac_island_9_") === parent
       @test length(parent[:timings]) == length(before[:timings])
       @test Sparlectra._perf_profile_merge!(nothing, child, "x_") === nothing
-    end
+    end)() end
 
-    @testset "deepcopy carries the condest thunk" begin
+    @testset "deepcopy carries the condest thunk" begin (function ()
       # the solver status stores a lazy condition-estimate closure; a copied
       # Net must keep a WORKING thunk (its own memo Ref), not a dead one
       net = createTest3BusNet()
@@ -116,9 +116,9 @@ function run_parallel_foundation_tests()
       @test kappa_copy == kappa_orig
       # second evaluation hits the memo and stays identical
       @test condestJacobian(copied) == kappa_copy
-    end
+    end)() end
 
-    @testset "DC status lives on the Net" begin
+    @testset "DC status lives on the Net" begin (function ()
       @test !isdefined(Sparlectra, :_DC_PF_STATUS)
       net = createTest3BusNet()
       @test Sparlectra.dc_pf_status(net) === nothing
@@ -127,9 +127,9 @@ function run_parallel_foundation_tests()
       @test Sparlectra.dc_pf_status(net) === status
       # AC and DC fields stay separate
       @test Sparlectra.rectangular_pf_status(net) === nothing
-    end
+    end)() end
 
-    @testset "UMFPACK copy(F) is finalizer-safe" begin
+    @testset "UMFPACK copy(F) is finalizer-safe" begin (function ()
       # Phase 0 review item 4: chunk workers hold copies of one factorization;
       # copies must not double-free the shared numeric object when collected.
       A = sprand(200, 200, 0.05) + 10.0 * I
@@ -150,9 +150,9 @@ function run_parallel_foundation_tests()
       GC.gc()
       GC.gc()
       @test keeper \ b == x_ref
-    end
+    end)() end
 
-    @testset "island solve_parallel identity (Phase 2)" begin
+    @testset "island solve_parallel identity (Phase 2)" begin (function ()
       # multi-island fixture: n disconnected 3-bus feeders, distinct loads
       function build_multi_island(n)
         net = Net(name = "mi_$(n)", baseMVA = 100.0)
@@ -229,18 +229,18 @@ function run_parallel_foundation_tests()
         # so exactly the islands up to and including the failure are recorded
         @test length(statuses_bad) == 2
       end
-    end
+    end)() end
 
-    @testset "startup summary line" begin
+    @testset "startup summary line" begin (function ()
       cfg = Sparlectra.RuntimeConfig(Dict{String,Any}())
       status = Sparlectra.runtime_thread_status(cfg)
       @test status.parallel_enabled === true
       @test status.parallel_max_tasks == Threads.nthreads()
       out = sprint(Sparlectra.print_runtime_thread_config, status)
       @test occursin("parallel: enabled=true max_tasks=$(Threads.nthreads())", out)
-    end
+    end)() end
 
-    @testset "Web UI option spec for runtime.parallel.enabled" begin
+    @testset "Web UI option spec for runtime.parallel.enabled" begin (function ()
       spec = Sparlectra._webui_option_spec("runtime_parallel_enabled")
       @test spec.config_key == "runtime.parallel.enabled"
       @test spec.default === true
@@ -251,6 +251,6 @@ function run_parallel_foundation_tests()
       @test occursin("name=\"runtime_parallel_enabled\"", form_html)
       overrides = Sparlectra.validate_gui_config_overrides(Dict{String,Any}("runtime.parallel.enabled" => "false"))
       @test overrides["runtime"]["parallel"]["enabled"] == "false"
-    end
-  end
+    end)() end
+  end)() end
 end

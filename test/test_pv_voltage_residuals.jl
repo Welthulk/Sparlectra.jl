@@ -73,11 +73,11 @@ function _create_phase_shifted_pv_angle_regression_net()
 end
 
 function run_pv_voltage_residual_tests()
-  @testset "PV voltage residual sign conventions" begin
+  @testset "PV voltage residual sign conventions" begin (function ()
     initial_vm = 1.0
     vset = 1.05
 
-    @testset "voltage magnitude replacement preserves an existing angle" begin
+    @testset "voltage magnitude replacement preserves an existing angle" begin (function ()
       V_old = 0.97 * cis(deg2rad(-100.0))
       V_new = Sparlectra._apply_voltage_magnitude_preserving_angle(V_old, 1.03)
 
@@ -88,16 +88,16 @@ function run_pv_voltage_residual_tests()
       # Regression guard: assigning only the real magnitude is the old bug pattern.
       V_wrong = 1.03 + 0.0im
       @test !isapprox(angle(V_wrong), angle(V_old); atol = 1e-12, rtol = 0.0)
-    end
+    end)() end
 
-    @testset "rectangular PV row moves toward setpoint after one Newton step" begin
+    @testset "rectangular PV row moves toward setpoint after one Newton step" begin (function ()
       vm_after, residual = _rectangular_one_step_voltage(initial_vm, vset)
       @test residual < 0.0
       @test abs(vm_after - vset) < abs(initial_vm - vset)
       @test isapprox(vm_after, vset; atol = 1e-5)
-    end
+    end)() end
 
-    @testset "solver paths converge with PV voltage setpoint" begin
+    @testset "solver paths converge with PV voltage setpoint" begin (function ()
       net = _create_pv_voltage_regression_net(vset = vset)
       _, erg = runpf!(net, 40, 1e-9, 0; method = :rectangular)
       @test erg == 0
@@ -108,9 +108,9 @@ function run_pv_voltage_residual_tests()
         unsupported_net = _create_pv_voltage_regression_net(vset = vset)
         @test_throws ArgumentError runpf!(unsupported_net, 40, 1e-9, 0; kwargs...)
       end
-    end
+    end)() end
 
-    @testset "rectangular MATPOWER flat-start seed does not replace imported PV setpoint" begin
+    @testset "rectangular MATPOWER flat-start seed does not replace imported PV setpoint" begin (function ()
       mpc = _synthetic_pv_vg_mismatch_case()
       net = Sparlectra.createNetFromMatPowerCase(mpc = mpc, log = false, flatstart = true, matpower_pv_voltage_source = :gen_vg)
       slack_idx = geNetBusIdx(net = net, busName = "1")
@@ -141,9 +141,9 @@ function run_pv_voltage_residual_tests()
       @test isapprox(net.nodeVec[pv_idx]._vm_pu, pv_row.imported_vset; atol = 1e-7)
       @test abs(pv_row.dvm_vset) <= 1e-7
       @test abs(pv_row.dvm_bus) > 0.015
-    end
+    end)() end
 
-    @testset "phase-shifted PV start preserves angle and avoids wrong branch" begin
+    @testset "phase-shifted PV start preserves angle and avoids wrong branch" begin (function ()
       net = _create_phase_shifted_pv_angle_regression_net()
       slack_idx = geNetBusIdx(net = net, busName = "Slack")
       pv_idx = geNetBusIdx(net = net, busName = "PV")
@@ -181,6 +181,6 @@ function run_pv_voltage_residual_tests()
       @test minimum(abs.(V_result)) > 0.5
       @test isapprox(abs(V_result[pv_idx]), 1.03; atol = 1e-7, rtol = 0.0)
       @test abs(rad2deg(angle(V_result[pv_idx]))) > 1.0
-    end
-  end
+    end)() end
+  end)() end
 end

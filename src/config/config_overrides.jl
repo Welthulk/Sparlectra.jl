@@ -579,7 +579,7 @@ function apply_auto_profile_level(cfg::SparlectraConfig, applied_pairs)
   return (config = _copy_config_with(cfg; matpower = mat2, model = model2), applied = applied, skipped = skipped)
 end
 
-const CONFIG_OVERRIDE_REPORT_KEYS = (
+const CONFIG_OVERRIDE_REPORT_KEYS = String[
   "model.auto_profile",
   "matpower_import.compare_voltage_reference",
   "matpower_import.matpower_dcline_mode",
@@ -604,7 +604,7 @@ const CONFIG_OVERRIDE_REPORT_KEYS = (
   "power_flow.dc.fallback",
   "cgmes_import.require_boundary",
   "cgmes_import.infer_base_voltages",
-)
+]
 
 function _dotted_config_value(raw::AbstractDict, key::AbstractString)
   current = raw

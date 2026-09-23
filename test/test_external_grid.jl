@@ -45,17 +45,17 @@ end
 _eg_state(net) = [(getNodeVm(n), n._va_deg) for n in net.nodeVec]
 
 function run_external_grid_tests()
-  @testset "External grid (issue #299)" begin
-    @testset "duck-typing contract: field-identical to the CGMES container" begin
+  @testset "External grid (issue #299)" begin (function ()
+    @testset "duck-typing contract: field-identical to the CGMES container" begin (function ()
       # The SC engine is duck-typed over the record contract — the two
       # containers must stay field-identical by name, order, and type. This
       # guard enforces machine-checkably what the native_sc_data.jl comment
       # can only ask for.
       @test fieldnames(NativeShortCircuitData) == fieldnames(Sparlectra.CGMESImporter.CGMESShortCircuitData)
       @test fieldtypes(NativeShortCircuitData) == fieldtypes(Sparlectra.CGMESImporter.CGMESShortCircuitData)
-    end
+    end)() end
 
-    @testset "PF invariance: carried SC data changes no power-flow result" begin
+    @testset "PF invariance: carried SC data changes no power-flow result" begin (function ()
       ref = _eg_fixture()
       ite_ref, erg_ref = runpf!(ref, 30, 1e-8, 0)
       @test erg_ref == 0
@@ -95,9 +95,9 @@ function run_external_grid_tests()
       @test eni.maxR1ToX1Ratio == 0.1
       @test eni.minR1ToX1Ratio === nothing
       @test eni.maxR0ToX0Ratio === nothing && eni.governorSCD === nothing
-    end
+    end)() end
 
-    @testset "SC hand calculation (single 110 kV bus, c = 1.1)" begin
+    @testset "SC hand calculation (single 110 kV bus, c = 1.1)" begin (function ()
       # Hand-derived independently of the engine: Zq = c·Un²/Sk,
       # Ik'' = c·Un/(√3·|Zq|) = Sk/(√3·Un) (the c cancels by construction),
       # Sk'' = √3·Un·Ik'', κ = min(1.15·(1.02 + 0.98·e^(−3·R/X)), 2.0),
@@ -119,9 +119,9 @@ function run_external_grid_tests()
         @test row.kappa ≈ kappa_hand rtol = 1e-6
         @test row.ip_kA ≈ kappa_hand * sqrt(2.0) * ik_hand rtol = 1e-6
       end
-    end
+    end)() end
 
-    @testset "min case and R/X flag semantics" begin
+    @testset "min case and R/X flag semantics" begin (function ()
       # With sk_min: the :min case uses it; rx_min defaults to rx_max
       # by design so the deliberately declared minimum is NOT flagged.
       net = Net(name = "sc_min", baseMVA = 100.0)
@@ -142,9 +142,9 @@ function run_external_grid_tests()
       @test only(net2.sc_sources.external_network_injections).minR1ToX1Ratio == 0.35
       resmin2 = runShortCircuit!(net2; case = :min)
       @test only(resmin2.rows).rx_ratio ≈ 0.35 rtol = 1e-6
-    end
+    end)() end
 
-    @testset "min case without sk_min skips the feeder with the engine flag" begin
+    @testset "min case without sk_min skips the feeder with the engine flag" begin (function ()
       net = Net(name = "sc_nomin", baseMVA = 100.0)
       addBus!(net = net, busName = "B1", vn_kV = 110.0)
       addExternalGrid!(net = net, busName = "B1", sk_max_MVA = 3000.0)
@@ -156,9 +156,9 @@ function run_external_grid_tests()
       @test rowmin.status === :no_source
       @test rowmin.contains_defaulted_data == true
       @test any(occursin("minInitialSymShCCurrent", r) for r in rowmin.reasons)
-    end
+    end)() end
 
-    @testset "parallel feeders stack; mrids stay unique" begin
+    @testset "parallel feeders stack; mrids stay unique" begin (function ()
       net = Net(name = "sc_par", baseMVA = 100.0)
       addBus!(net = net, busName = "B1", vn_kV = 110.0)
       addExternalGrid!(net = net, busName = "B1", sk_max_MVA = 1000.0, rx_max = 0.1)
@@ -182,9 +182,9 @@ function run_external_grid_tests()
       addBus!(net = net, busName = "B10", vn_kV = 110.0)
       addExternalGrid!(net = net, busName = "B10", sk_max_MVA = 500.0)
       @test any(e -> e.mrid == "native-eni-B10", net.sc_sources.external_network_injections)
-    end
+    end)() end
 
-    @testset "validation errors" begin
+    @testset "validation errors" begin (function ()
       base = () -> begin
         net = Net(name = "sc_val", baseMVA = 100.0)
         addBus!(net = net, busName = "B1", vn_kV = 110.0)
@@ -197,9 +197,9 @@ function run_external_grid_tests()
       @test_throws ArgumentError addExternalGrid!(net = base(), busName = "B1", sk_max_MVA = 100.0, sk_min_MVA = 200.0)
       @test_throws ArgumentError addExternalGrid!(net = base(), busName = "B1", sk_max_MVA = 100.0, rx_max = -0.1)
       @test_throws ArgumentError addExternalGrid!(net = base(), busName = "B1", sk_max_MVA = 100.0, rx_min = -0.1)
-    end
+    end)() end
 
-    @testset "copy regression: sc_sources survives net copying" begin
+    @testset "copy regression: sc_sources survives net copying" begin (function ()
       net = _eg_fixture()
       addExternalGrid!(net = net, busName = "B2", sk_max_MVA = 2000.0, rx_max = 0.15)
       copy_net = deepcopy(net)
@@ -208,9 +208,9 @@ function run_external_grid_tests()
       row = first(r for r in res.rows if r.bus == "B2")
       @test row.status === :ok
       @test row.ik_kA ≈ first(r for r in runShortCircuit!(net; case = :max).rows if r.bus == "B2").ik_kA
-    end
+    end)() end
 
-    @testset "external grid and distributed slack are mutually exclusive" begin
+    @testset "external grid and distributed slack are mutually exclusive" begin (function ()
       # Both decide who covers the imbalance; combined, the source's import
       # would be forced to its zero participation share. The configuration
       # must reject the pair (same pattern as autodamp vs. trust region).
@@ -224,9 +224,9 @@ function run_external_grid_tests()
         @test cfg.powerflow.external_grid.enabled
         @test !cfg.powerflow.distributed_slack.enabled
       end
-    end
+    end)() end
 
-    @testset "convertSlackToExternalGrid! demotes and stays consistent" begin
+    @testset "convertSlackToExternalGrid! demotes and stays consistent" begin (function ()
       net = _eg_fixture()
       note = convertSlackToExternalGrid!(net = net, sk_max_MVA = 500.0, rx_max = 0.1)
       @test occursin("slack bus B1", note)
@@ -245,9 +245,9 @@ function run_external_grid_tests()
       @test_throws ArgumentError convertSlackToExternalGrid!(net = Net(name = "noslack", baseMVA = 100.0), sk_max_MVA = 100.0)
       net2 = _eg_fixture()
       @test_throws ArgumentError convertSlackToExternalGrid!(net = net2, busName = "B2", sk_max_MVA = 100.0)
-    end
+    end)() end
 
-    @testset "result print states the connection: slack vs. source" begin
+    @testset "result print states the connection: slack vs. source" begin (function ()
       # Plain slack: the header names the slack bus, no source wording.
       plain = _eg_fixture()
       _, erg_p = runpf!(plain, 30, 1e-8, 0)
@@ -278,9 +278,9 @@ function run_external_grid_tests()
       report = buildACPFlowReport(net; ite = 3, converged = true)
       aux_row = only(r for r in report.nodes if r.bus_name == "B1__extgrid_int")
       @test aux_row.type == "SOURCE"
-    end
+    end)() end
 
-    @testset "internal impedance: non-ideal source (stage 2)" begin
+    @testset "internal impedance: non-ideal source (stage 2)" begin (function ()
       build = (; internal, sk) -> begin
         net = Net(name = "extgrid_int", baseMVA = 100.0)
         addBus!(net = net, busName = "B1", vn_kV = 110.0)
@@ -325,7 +325,7 @@ function run_external_grid_tests()
 
       # One internal-impedance external grid per bus.
       @test_throws ArgumentError addExternalGrid!(net = weak, busName = "B1", sk_max_MVA = 100.0, internal_impedance = true)
-    end
-  end
+    end)() end
+  end)() end
   return nothing
 end

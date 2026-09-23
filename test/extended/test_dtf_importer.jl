@@ -70,7 +70,7 @@ function _synthetic_dtf_case_with_tap_control(; longitudinal_range_percent::Floa
 end
 
 function run_dtf_importer_tests()
-  @testset "native DTF importer focused synthetic checks" begin
+  @testset "native DTF importer focused synthetic checks" begin (function ()
     case = _synthetic_dtf_case()
     branch = only(case.branches)
     pu = Sparlectra.DTFImporter._branch_pu(case, branch)
@@ -111,12 +111,12 @@ function run_dtf_importer_tests()
     named_net = Sparlectra.DTFImporter.build_net(_synthetic_dtf_case(path = "/some/dir/FOR001B.DAT"))
     @test named_net.name == "FOR001B.DAT"
     @test net.name == "synthetic"
-  end
+  end)() end
 
   # SCF export of a DTF-sourced net (issue #342): the writer is net-based,
   # not format-based, so a DTF import must reach the case format with its
   # reference names and its tap data intact.
-  @testset "SCF export of a DTF-sourced net" begin
+  @testset "SCF export of a DTF-sourced net" begin (function ()
     dtf_net = Sparlectra.DTFImporter.build_net(_synthetic_dtf_case_with_tap_control(longitudinal_range_percent = 10.0, actual_tap_step = 7, max_tap_step = 10))
     root = Sparlectra.net_to_scf(dtf_net; source_format = "dtf", source_reference = "synthetic")
     @test root["sparlectra"]["meta"]["source_format"] == "dtf"
@@ -130,9 +130,9 @@ function run_dtf_importer_tests()
     a = exportSCF(dtf_net; file = joinpath(d, "a.scf.json"), source_format = "dtf")
     b = exportSCF(dtf_net; file = joinpath(d, "b.scf.json"), source_format = "dtf")
     @test read(a, String) == read(b, String)
-  end
+  end)() end
 
-  @testset "native DTF importer honors configured tap-changer model" begin
+  @testset "native DTF importer honors configured tap-changer model" begin (function ()
     case = _synthetic_dtf_case_with_tap_control(longitudinal_range_percent = 10.0, actual_tap_step = 7, max_tap_step = 10)
 
     net_ideal = Sparlectra.DTFImporter.build_net(case; tap_changer_model = :ideal)
@@ -148,7 +148,7 @@ function run_dtf_importer_tests()
     @test get(net_corrected.matpower_branch_metadata, 1, nothing).tap_changer_model == :impedance_correction
     @test isapprox(get(net_corrected.matpower_branch_metadata, 1, nothing).tap_impedance_correction_factor, expected_factor; atol = 1e-12)
     @test get(net_ideal.matpower_branch_metadata, 1, nothing).tap_impedance_correction_factor == 1.0
-  end
+  end)() end
 
   @testset "native DTF full local fixture" begin
     if !isfile(DTF_FIXTURE)

@@ -18,17 +18,17 @@
 #          inline branch.jl math, and a calcTransformerRatio regression
 
 function run_tap_changer_model_tests()
-  @testset "AbstractTapChangerModel supertype" begin
+  @testset "AbstractTapChangerModel supertype" begin (function ()
     @test PowerTransformerTaps <: AbstractTapChangerModel
-  end
+  end)() end
 
-  @testset "convention field default and validation" begin
+  @testset "convention field default and validation" begin (function ()
     taps = PowerTransformerTaps(Vn_kV = 110.0, step = 0, lowStep = -4, highStep = 6, neutralStep = 1, voltageIncrement_kV = 1.1)
     @test taps.convention == :neutral_relative
     @test_throws ArgumentError PowerTransformerTaps(Vn_kV = 110.0, step = 0, lowStep = -4, highStep = 6, neutralStep = 1, voltageIncrement_kV = 1.1, convention = :bogus)
-  end
+  end)() end
 
-  @testset "calcRatioTapCorrection" begin
+  @testset "calcRatioTapCorrection" begin (function ()
     taps = PowerTransformerTaps(Vn_kV = 110.0, step = 2, lowStep = -4, highStep = 6, neutralStep = 1, voltageIncrement_kV = 1.1)
     @test isapprox(taps.tapStepPercent, 1.0; atol = 1e-12) # (1.1/110.0)*100
 
@@ -42,9 +42,9 @@ function run_tap_changer_model_tests()
 
     # default `step` keyword falls back to taps.step
     @test isapprox(calcRatioTapCorrection(taps), 1.0 + (taps.step - taps.neutralStep) * taps.tapStepPercent / 100.0; atol = 1e-12)
-  end
+  end)() end
 
-  @testset "calcRatioTapRange: ratio band and step, including an inverted range" begin
+  @testset "calcRatioTapRange: ratio band and step, including an inverted range" begin (function ()
     taps = PowerTransformerTaps(Vn_kV = 110.0, step = 0, lowStep = -4, highStep = 6, neutralStep = 1, voltageIncrement_kV = 1.1)
     pu_per_step = taps.tapStepPercent / 100.0
     expected_min = min(1.0 + (taps.lowStep - taps.neutralStep) * pu_per_step, 1.0 + (taps.highStep - taps.neutralStep) * pu_per_step)
@@ -68,9 +68,9 @@ function run_tap_changer_model_tests()
     @test isapprox(result_inv.tap_min, expected_min_inv; atol = 1e-12)
     @test isapprox(result_inv.tap_max, expected_max_inv; atol = 1e-12)
     @test isapprox(result_inv.tap_step, expected_step_inv; atol = 1e-12)
-  end
+  end)() end
 
-  @testset "calcTransformerRatio regression on tapped 2WT" begin
+  @testset "calcTransformerRatio regression on tapped 2WT" begin (function ()
     taps = PowerTransformerTaps(Vn_kV = 110.0, step = 4, lowStep = -4, highStep = 6, neutralStep = 1, voltageIncrement_kV = 1.1)
     w1 = PowerTransformerWinding(110.0, 0.0, 0.12, 0.0, 0.0, 1.0, 0.0, 110.0, 100.0, taps, true, nothing)
     w2 = PowerTransformerWinding(20.0, 0.0, 0.0, 0.0, 0.0, nothing, 0.0, 20.0, 100.0, nothing, true, nothing)
@@ -85,13 +85,13 @@ function run_tap_changer_model_tests()
     expected = base_ratio / corr
 
     @test isapprox(ratio, expected; atol = 1e-12)
-  end
+  end)() end
 
-  @testset "Base.show contains convention and fixed highStep typo" begin
+  @testset "Base.show contains convention and fixed highStep typo" begin (function ()
     taps = PowerTransformerTaps(Vn_kV = 110.0, step = 0, lowStep = -4, highStep = 6, neutralStep = 1, voltageIncrement_kV = 1.1)
     txt = sprint(show, taps)
     @test occursin("convention=", txt)
     @test occursin("highStep=", txt)
     @test !occursin("hightStep=", txt)
-  end
+  end)() end
 end

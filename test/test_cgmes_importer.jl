@@ -374,18 +374,18 @@ function _cgmes_synth_store()::CGMESStore
 end
 
 function run_cgmes_importer_tests()
-  @testset "CGMES importer" begin
+  @testset "CGMES importer" begin (function ()
     store = _cgmes_synth_store()
 
-    @testset "profile classification and version" begin
+    @testset "profile classification and version" begin (function ()
       @test store.version == "2.4.15"
       eqinfo = only(filter(f -> occursin("EQ", f.name), store.files))
       @test eqinfo.header == :FullModel
       @test eqinfo.profiles == Set([:EQ, :EQ_SC])   # per-file profile *set* (A2/D-7)
       @test !eqinfo.skipped
-    end
+    end)() end
 
-    @testset "SV angle alignment reaches the parent island detection" begin
+    @testset "SV angle alignment reaches the parent island detection" begin (function ()
       # Regression 2026-09-06. compareWithSV removes ONE angle offset per
       # island, because an angle is only defined up to a constant per island.
       # That call sits in the submodule CGMESImporter while detect_ac_islands
@@ -406,17 +406,17 @@ function run_cgmes_importer_tests()
       # the island map reports secondary islands as tens of degrees off, so
       # the degraded mode has to announce itself
       @test occursin("island detection failed", src)
-    end
+    end)() end
 
-    @testset "DifferenceModel files are skipped with reason (D-6)" begin
+    @testset "DifferenceModel files are skipped with reason (D-6)" begin (function ()
       diffinfo = only(filter(f -> occursin("DIFF", f.name), store.files))
       @test diffinfo.skipped
       @test diffinfo.header == :DifferenceModel
       @test !isempty(diffinfo.skip_reason)
       @test !haskey(store.objects, "_should_not_appear")
-    end
+    end)() end
 
-    @testset "import failure analysis names supplied models and gaps" begin
+    @testset "import failure analysis names supplied models and gaps" begin (function ()
       # The synthetic store carries a model id per file and known unresolved
       # references (_missing_container, the island's _tn_* members).
       report = importFailureAnalysis(store)
@@ -450,9 +450,9 @@ function run_cgmes_importer_tests()
       write(joinpath(satdir, "sat_SSH.xml"), _CGMES_SYNTH_SSH)
       sat_report = importFailureAnalysis(loadCGMES(satdir))
       @test occursin("Declared dependencies: all satisfied", sat_report)
-    end
+    end)() end
 
-    @testset "infer_base_voltages reconstructs missing nominal voltages" begin
+    @testset "infer_base_voltages reconstructs missing nominal voltages" begin (function ()
       # The RVC delivery with its BaseVoltage catalog stripped — the exact
       # shape of a real delivery whose catalog lives in a missing boundary EQ.
       nobv_dir = mktempdir()
@@ -472,9 +472,9 @@ function run_cgmes_importer_tests()
       @test all(Sparlectra.getNodeVn(b) == 110.0 for b in res.net.nodeVec)
       @test count(m -> occursin("inferred base voltages", m), res.messages) == 1
       @test last(runpf!(res.net, 30, 1e-8, 0)) == 0
-    end
+    end)() end
 
-    @testset "self-loop line maps to a shunt notice, not a branch" begin
+    @testset "self-loop line maps to a shunt notice, not a branch" begin (function ()
       # Both terminals of a line on ONE topological node (busbar link modeled
       # as a line) used to trip the branch constructor's from!=to assertion.
       loop_dir = mktempdir()
@@ -497,9 +497,9 @@ function run_cgmes_importer_tests()
       # only the two real lines become branches
       @test length(loop_res.net.linesAC) == 2
       @test last(runpf!(loop_res.net, 30, 1e-8, 0)) == 0
-    end
+    end)() end
 
-    @testset "rdf:ID creates, literals and inherited attributes" begin
+    @testset "rdf:ID creates, literals and inherited attributes" begin (function ()
       @test countOf(store, :ACLineSegment) == 1
       line = only(objectsOf(store, :ACLineSegment))
       @test str(line, :name) == "L1"                 # IdentifiedObject.name → :name
@@ -508,9 +508,9 @@ function run_cgmes_importer_tests()
       @test num(line, :r0) == 7.5                    # short-circuit attribute read (§7.7)
       @test num(line, :length) == 12.0               # Conductor.length → :length
       @test num(line, :missing_attr, 99.0) == 99.0
-    end
+    end)() end
 
-    @testset "references and enums" begin
+    @testset "references and enums" begin (function ()
       line = only(objectsOf(store, :ACLineSegment))
       bv = ref(store, line, :BaseVoltage)
       @test bv !== nothing && bv.class == :BaseVoltage
@@ -518,9 +518,9 @@ function run_cgmes_importer_tests()
       sm = only(objectsOf(store, :SynchronousMachine))
       @test enumval(sm, :operatingMode) == "SynchronousMachineOperatingMode.generator"
       @test boolval(sm, :earthing) == false
-    end
+    end)() end
 
-    @testset "multi-valued references overflow into refsAll (#294 point 9)" begin
+    @testset "multi-valued references overflow into refsAll (#294 point 9)" begin (function ()
       island = only(objectsOf(store, :TopologicalIsland))
       # legacy shape untouched: refs carries the FIRST value under the short
       # key (plus the dotted-name fallback), never a silent last-wins
@@ -530,21 +530,21 @@ function run_cgmes_importer_tests()
       line = only(objectsOf(store, :ACLineSegment))
       @test Sparlectra.CGMESImporter.refsAll(store, line, :BaseVoltage) == ["_bv110"]
       @test Sparlectra.CGMESImporter.refsAll(store, line, :NoSuchRef) == String[]
-    end
+    end)() end
 
-    @testset "rdf:about overlays EQ object (SSH)" begin
+    @testset "rdf:about overlays EQ object (SSH)" begin (function ()
       sm = only(objectsOf(store, :SynchronousMachine))
       @test num(sm, :p) == -120.0                    # from SSH overlay
       @test num(sm, :ratedS) == 150.0                # EQ value kept
       @test countOf(store, :SynchronousMachine) == 1 # no duplicate object
-    end
+    end)() end
 
-    @testset "unresolved references reported" begin
+    @testset "unresolved references reported" begin (function ()
       unresolved = unresolvedReferences(store)
       @test any(u -> u.target == "_missing_container", unresolved)
-    end
+    end)() end
 
-    @testset "summarizeCGMES on synthetic set" begin
+    @testset "summarizeCGMES on synthetic set" begin (function ()
       dir = mktempdir()
       write(joinpath(dir, "synth_EQ.xml"), _CGMES_SYNTH_EQ)
       s = summarizeCGMES(path = dir)
@@ -552,9 +552,9 @@ function run_cgmes_importer_tests()
       @test s.unresolved_count >= 1
       @test !s.boundary_missing_hint                 # dangling ref is not a topology class
       @test (:ACLineSegment => 1) in s.class_histogram
-    end
+    end)() end
 
-    @testset "ReactiveCapabilityCurve interpolation (#294 point 1)" begin
+    @testset "ReactiveCapabilityCurve interpolation (#294 point 1)" begin (function ()
       # MicroGrid BE-G1 shape: P −100 → ±200, P 0 → ±300, P 100 → ±200 MVAr.
       pts = [(-100.0, -200.0, 200.0), (0.0, -300.0, 300.0), (100.0, -200.0, 200.0)]
       # interior interpolation (the machine's actual operating point)
@@ -573,9 +573,9 @@ function run_cgmes_importer_tests()
       @test Sparlectra.CGMESImporter._curveQHull([(0.0, 0.0, 0.0)], 0.0) === nothing
       # single-point curve with a real range works
       @test Sparlectra.CGMESImporter._curveQHull([(0.0, -50.0, 50.0)], 25.0) == (-50.0, 50.0)
-    end
+    end)() end
 
-    @testset "Result tables stay aligned with long names" begin
+    @testset "Result tables stay aligned with long names" begin (function ()
       # CGMES bus and branch identifiers routinely exceed the column widths;
       # @sprintf pads but never truncates, so without fitting every following
       # column would shift (reported from a MicroGrid Assembled run).
@@ -583,11 +583,11 @@ function run_cgmes_importer_tests()
       @test length(Sparlectra._fitColumn("TN_Border_ST23 -> BE-Busbar_2", 25)) == 25
       @test endswith(Sparlectra._fitColumn("TN_Border_ST23 -> BE-Busbar_2", 25), "…")
       @test Sparlectra._fitColumn("exactly_twenty_five_chars", 25) == "exactly_twenty_five_chars"
-    end
+    end)() end
 
     # The Web UI docs reader serves an allowlist — the CGMES page and the
     # contextual help for its options must be reachable from the interface.
-    @testset "Web UI documentation wiring" begin
+    @testset "Web UI documentation wiring" begin (function ()
       page = Sparlectra.resolve_webui_doc_page("cgmes_import")
       @test page !== nothing && page.file == "cgmes_import.md"
       @test isfile(joinpath(dirname(@__DIR__), "docs", "src", page.file))
@@ -596,14 +596,14 @@ function run_cgmes_importer_tests()
       for key in ("cgmes_import.path", "cgmes_import.base_mva", "cgmes_import.require_boundary", "cgmes_import.tap_control", "cgmes_import.ignore_connected")
         @test occursin(key, text)
       end
-    end
+    end)() end
 
     # A single ReliCapGrid model is one area of a multi-area system, so its
     # border nodes hang free when imported alone. The combined aliases fetch
     # several areas plus their shared boundary files as ONE delivery. Table
     # consistency is checked here without touching the network or the cache;
     # the fetch itself needs GitHub and is not exercised by the tests.
-    @testset "ReliCapGrid combined aliases" begin
+    @testset "ReliCapGrid combined aliases" begin (function ()
       combined = Sparlectra.CGMESImporter.RELICAPGRID_COMBINED
       singles = Sparlectra.CGMESImporter.RELICAPGRID_ALIASES
       @test haskey(combined, "relicapgrid_cgm")
@@ -651,9 +651,9 @@ function run_cgmes_importer_tests()
       @test "minigrid" in all_aliases
       @test "minigrid_nb" in all_aliases
       @test Sparlectra.CGMESImporter.CGMES_TESTSET_ALIASES["microgrid"] == Sparlectra.CGMESImporter.CGMES_TESTSET_ALIASES["microgrid_be"]
-    end
+    end)() end
 
-    @testset "3W-leg tap controller from TapChangerControl (#294 point 4)" begin
+    @testset "3W-leg tap controller from TapChangerControl (#294 point 4)" begin (function ()
       dir = _cgmes_synth3w_dir()
       # without tap_control: no controllers, taps stay at their SSH position
       plain = importCGMES(path = dir, name = "synth3w_plain")
@@ -676,9 +676,9 @@ function run_cgmes_importer_tests()
       # uncontrolled operating point sits at ≈1.0135 pu, outside the band
       @test abs(mv._vm_pu - 1.04) <= 2.6 / 110.0 / 2.0 + 1e-9
       @test mv._vm_pu > 1.025
-    end
+    end)() end
 
-    @testset "Remote-regulating machine (#294 point 3)" begin
+    @testset "Remote-regulating machine (#294 point 3)" begin (function ()
       # default: the remote control stays the Stage-1 held-PV fallback
       plain = importCGMES(path = _cgmes_synth_rvc_dir(), name = "synthrvc_plain")
       @test any(m -> occursin("G_B has a remote voltage RegulatingControl", m) && occursin("held PV at its own bus", m), plain.messages)
@@ -711,9 +711,9 @@ function run_cgmes_importer_tests()
       @test any(m -> occursin("G_B", m) && occursin("remote voltage control not attachable", m) && occursin("already voltage-held", m), held.messages)
       @test isempty(Sparlectra._machine_controllers(held.net))
       @test held.net.nodeVec[held.net.busDict["BUS_B"]]._nodeType == Sparlectra.PV
-    end
+    end)() end
 
-    @testset "NonlinearShuntCompensator mapping (#294 point 7)" begin
+    @testset "NonlinearShuntCompensator mapping (#294 point 7)" begin (function ()
       dir = _cgmes_synth3w_dir()
       res = importCGMES(path = dir, name = "synth3w_nlsh")
       # sections = 2 of 3 points: B = (1.0 + 0.8)e-4 S * 110² = 2.178 MVAr
@@ -725,7 +725,7 @@ function run_cgmes_importer_tests()
       @test length(res.net.shuntVec) == 1
       _, erg = runpf!(res.net, 30, 1e-8, 0)
       @test erg == 0
-    end
+    end)() end
 
     # The service legs on in-memory deliveries: the synthetic 3W delivery
     # packed as a ZIP is the healthy case, the synthetic EQ with an absent
@@ -751,7 +751,7 @@ function run_cgmes_importer_tests()
     ]
     solve_fixture!(net; kwargs...) = runpf!(net, 60, 1e-8, 0; method = :rectangular, qlimits_enabled = false, kwargs...)
 
-    @testset "fixture deliveries import from the folder and from a zip" begin
+    @testset "fixture deliveries import from the folder and from a zip" begin (function ()
       for (case, nbus, nbr, nlink, slack, _) in fixture_cases
         dir = cgmes_fixture_dir(case)
         s = summarizeCGMES(path = dir)
@@ -777,13 +777,13 @@ function run_cgmes_importer_tests()
         @test Set(keys(rz.net.busDict)) == Set(keys(res.net.busDict))
         @test rz.slack_bus == slack
       end
-    end
+    end)() end
 
     # The importer's exit criterion on its own exporter's output: the SV
     # profile and the source net's solution are reproduced to noise. Both
     # start points are checked, the SV state (the solve must not move) and
     # a flat start (the model itself must reach the same state).
-    @testset "fixture SV profile and source solution are reproduced" begin
+    @testset "fixture SV profile and source solution are reproduced" begin (function ()
       for (case, nbus, _, _, _, loader) in fixture_cases
         res = importCGMES(path = cgmes_fixture_dir(case), name = case)
         ite, erg = solve_fixture!(res.net)
@@ -812,14 +812,14 @@ function run_cgmes_importer_tests()
           @test isapprox(src.nodeVec[i]._va_deg, res.net.nodeVec[j]._va_deg; atol = 1e-6)
         end
       end
-    end
+    end)() end
 
     # Stage 2 semantics on the exporter's TapChangerControl: without
     # tap_control the delivery imports as a fixed-tap model, with it the
     # OLTC of sp_case14 comes back as the voltage controller the source case
     # carries (same target bus, target and deadband), and the control loop
     # meets the target within its deadband.
-    @testset "OLTC controller of sp_case14 arrives as a tap controller (Stage 2)" begin
+    @testset "OLTC controller of sp_case14 arrives as a tap controller (Stage 2)" begin (function ()
       dir = cgmes_fixture_dir("sp_case14")
       stage1 = importCGMES(path = dir, name = "s1")
       @test isempty(collect(Sparlectra._tap_controllers(stage1.net)))
@@ -853,12 +853,12 @@ function run_cgmes_importer_tests()
       @test latest_control_result(res.net).status == :converged
       @test c.converged
       @test abs(c.achieved_vm_pu - c.target_vm_pu) <= c.deadband_vm_pu
-    end
+    end)() end
 
     # The PST of sp_casePST travels as a single-step PhaseTapChangerLinear on
     # end 1; its shift comes back with the source sign, and the closed
     # Breaker comes back as the bus link.
-    @testset "PST of sp_casePST keeps its tap-side sign, bus link survives" begin
+    @testset "PST of sp_casePST keeps its tap-side sign, bus link survives" begin (function ()
       res = importCGMES(path = cgmes_fixture_dir("sp_casePST"), name = "pst")
       src = importSCF(joinpath(dirname(@__DIR__), "data", "scf", "sp_casePST.scf.json"))
       shifted(net) = [br for br in net.branchVec if br.phase_shift_deg != 0.0]
@@ -874,7 +874,7 @@ function run_cgmes_importer_tests()
       @test any(m -> occursin("bus link", m) && occursin("Breaker", m), res.messages)
       @test length(res.net.linkVec) == 1
       @test only(res.net.linkVec).status == 1
-    end
+    end)() end
 
     # sp_case118 carries 54 synchronous machines, among them condensers
     # (P = 0, voltage regulated) and asymmetric minQ/maxQ pairs. The
@@ -883,7 +883,7 @@ function run_cgmes_importer_tests()
     # inconsistent about the convention), so an asymmetric pair widens to
     # its symmetric envelope; this pins that contract rather than limit
     # fidelity.
-    @testset "sp_case118 machines: synchronous condensers and the Q-limit hull" begin
+    @testset "sp_case118 machines: synchronous condensers and the Q-limit hull" begin (function ()
       res = importCGMES(path = cgmes_fixture_dir("sp_case118"), name = "c118")
       src = fixture_cases[2][6]()
       by_bus(net) = Dict(Sparlectra._bus_name_by_idx(net)[Sparlectra.getPosumerBusIndex(ps)] => ps for ps in net.prosumpsVec if Sparlectra.isGenerator(ps))
@@ -905,12 +905,12 @@ function run_cgmes_importer_tests()
         @test ig[b].maxQ == max(ps.maxQ, -ps.minQ)
       end
       @test asymmetric > 0
-    end
+    end)() end
 
     # SCF export of a delivery (issue #342): a delivery-sourced net reaches
     # the case format with its source identity intact, the file is
     # deterministic, and the case re-imports to the same solution.
-    @testset "SCF export of a fixture delivery round-trips" begin
+    @testset "SCF export of a fixture delivery round-trips" begin (function ()
       res = importCGMES(path = cgmes_fixture_dir("sp_case14"), name = "scf14")
       @test solve_fixture!(res.net)[2] == 0
       root = Sparlectra.net_to_scf(res.net; source_format = "cgmes", source_reference = "sp_case14 fixture")
@@ -932,13 +932,13 @@ function run_cgmes_importer_tests()
         @test isapprox(res.net.nodeVec[i]._vm_pu, back.nodeVec[j]._vm_pu; atol = 1e-6)
         @test isapprox(res.net.nodeVec[i]._va_deg, back.nodeVec[j]._va_deg; atol = 1e-6)
       end
-    end
+    end)() end
 
     # The framework/API path: a delivery zip as casefile, dispatch by
     # auto-detection, cgmes.log next to run.log, and the SV comparison
     # artifacts of the default start (auto resolves to sv on a delivery
     # that carries SvVoltage).
-    @testset "run_sparlectra_api dispatch on a fixture delivery zip" begin
+    @testset "run_sparlectra_api dispatch on a fixture delivery zip" begin (function ()
       z = _pack_cgmes_fixture_zip("sp_case14")
       out = mktempdir()
       r = run_sparlectra_api(casefile = z, output_dir = out)
@@ -990,7 +990,7 @@ function run_cgmes_importer_tests()
       @test rf.status != :succeeded
       @test isfile(joinpath(out_f, "cgmes.log"))
       @test occursin("# CGMES import report", read(joinpath(out_f, "cgmes.log"), String))
-    end
+    end)() end
 
     # The Web UI "Analyze import" and "Short circuit" buttons on a fixture.
     # The exporter writes SynchronousMachine objects without x''_d, ratedS
@@ -998,7 +998,7 @@ function run_cgmes_importer_tests()
     # short-circuit run finds machines but no usable source data on them:
     # it completes with every row flagged as a lower bound and says so by
     # name, both in the result reason and in the substitution warnings.
-    @testset "import_analysis_mode and short_circuit_mode service runs on a fixture" begin
+    @testset "import_analysis_mode and short_circuit_mode service runs on a fixture" begin (function ()
       root = mktempdir()
       cfg = joinpath(root, "c.yaml")
       write(cfg, "config_version: 1\npower_flow:\n  max_iter: 40\n")
@@ -1031,14 +1031,14 @@ function run_cgmes_importer_tests()
       run_log = read(joinpath(root, rid, "run.log"), String)
       @test occursin("Short-circuit run", run_log)
       @test occursin("SynchronousMachine", run_log)
-    end
+    end)() end
 
     # Fixed-reference self-check on a delivery: the SV voltages reach the
     # solver verbatim (a base config with flatstart: true must not wipe
     # them) and the residual/attribution artifacts are written. The fixture
     # SV is a solution, so the start residual is noise; a flat start would
     # leave MW-sized residuals on the loaded buses.
-    @testset "CGMES fixed-reference self-check (SV start, artifacts)" begin
+    @testset "CGMES fixed-reference self-check (SV start, artifacts)" begin (function ()
       out = mktempdir()
       cfg = joinpath(out, "c.yaml")
       write(cfg, "config_version: 1\npower_flow:\n  flatstart: true\n")
@@ -1058,9 +1058,9 @@ function run_cgmes_importer_tests()
       @test all(split(l, ',')[9] == "true" for l in residuals[2:end])
       @test any(parse(Int, split(l, ',')[10]) > 0 for l in residuals[2:end])
       @test occursin("no-SV buses: 0", read(joinpath(out, "cgmes.log"), String))
-    end
+    end)() end
 
-    @testset "import_analysis_mode service run (synthetic deliveries)" begin
+    @testset "import_analysis_mode service run (synthetic deliveries)" begin (function ()
       root = mktempdir()
       cfgia = joinpath(root, "c.yaml")
       write(cfgia, "config_version: 1\npower_flow:\n  max_iter: 40\n")
@@ -1110,12 +1110,12 @@ function run_cgmes_importer_tests()
       exia = start_powerflow_run(Dict("casefile" => okcase, "config_file" => cfgia, "output_root" => root, "import_analysis_mode" => true, "short_circuit_mode" => true))
       @test exia["success"] === false
       @test occursin("excludes", exia["message"])
-    end
+    end)() end
 
     # The Web UI "Short circuit" button's service path: negative cases must
     # fail with explicit reasons, never with empty tables (the run on a
     # checked-in delivery is above).
-    @testset "short_circuit_mode service run rejects non-CGMES cases and mode mixing" begin
+    @testset "short_circuit_mode service run rejects non-CGMES cases and mode mixing" begin (function ()
       root = mktempdir()
       cfgsc = joinpath(root, "c.yaml")
       write(cfgsc, "config_version: 1\npower_flow:\n  max_iter: 40\n")
@@ -1128,11 +1128,11 @@ function run_cgmes_importer_tests()
       both = start_powerflow_run(Dict("casefile" => mpcase, "config_file" => cfgsc, "output_root" => root, "short_circuit_mode" => true, "diagnose_mode" => true))
       @test both["success"] === false
       @test occursin("mutually exclusive", both["message"])
-    end
+    end)() end
 
     # cgmes_import.start_values is a CGMES-only key: a MATPOWER run ignores
     # it completely (no decision line, no SV artifacts, no metadata keys).
-    @testset "cgmes_import.start_values has no effect on a MATPOWER run" begin
+    @testset "cgmes_import.start_values has no effect on a MATPOWER run" begin (function ()
       mp_out = mktempdir()
       mp_cfg = joinpath(mp_out, "c.yaml")
       write(mp_cfg, "config_version: 1\ncgmes_import:\n  start_values: sv\n")
@@ -1142,12 +1142,12 @@ function run_cgmes_importer_tests()
       @test !haskey(mp.metadata, "cgmes_start_values")
       @test !haskey(mp.metadata, "cgmes_sv_compare_status")
       @test !occursin("CGMES start values", read(joinpath(mp_out, "run.log"), String))
-    end
+    end)() end
 
     # The voltage-setpoint plausibility band is validated before any file is
     # read: an inverted band is an argument error, not a silent no-op.
-    @testset "inverted vset band is rejected" begin
+    @testset "inverted vset band is rejected" begin (function ()
       @test_throws ArgumentError importCGMES(path = _cgmes_synth3w_dir(), name = "vset_bad", vset_min_pu = 1.2, vset_max_pu = 0.8)
-    end
-  end
+    end)() end
+  end)() end
 end

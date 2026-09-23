@@ -20,7 +20,7 @@ using Test
 using Sparlectra
 
 function run_dtf_api_webui_integration_tests()
-  @testset "DTF API and Web UI integration" begin
+  @testset "DTF API and Web UI integration" begin (function ()
     mktempdir() do tmp
       dtf = joinpath(@__DIR__, "..", "..", "data", "DTF", "FOR001.DAT")
       for002 = joinpath(@__DIR__, "..", "..", "data", "DTF", "FOR002.DAT")
@@ -134,5 +134,5 @@ function run_dtf_api_webui_integration_tests()
       @test dc_result.metadata["unsupported_dcline_status"] == "unsupported_dtf_dc_line"
       @test occursin("DC lines are currently not supported by the native DTF/MATPOWER power-flow path.", dc_result.message)
     end
-  end
+  end)() end
 end

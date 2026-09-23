@@ -74,10 +74,10 @@ function _island_diag_read_summary(path::AbstractString)
 end
 
 function run_island_diagnostics_tests()
-  @testset "AC island diagnostics reporting" begin
+  @testset "AC island diagnostics reporting" begin (function ()
     failed_status = _island_diag_failed_status()
 
-    @testset "failure message reports the failing island's own status (bug A)" begin
+    @testset "failure message reports the failing island's own status (bug A)" begin (function ()
       # Combined run status as _rectangular_run_status builds it: it carries
       # no :iterations/:stage/:island_id -- the per-island record must win.
       run_status = (
@@ -130,9 +130,9 @@ function run_island_diagnostics_tests()
       @test occursin("iterations=1", out3.reason_text)
       @test occursin("stage=during_nr", out3.reason_text)
       @test !occursin("stage=before_nr", out3.reason_text)
-    end
+    end)() end
 
-    @testset "unsolved islands do not inherit the failed island's statistics (bug B)" begin
+    @testset "unsolved islands do not inherit the failed island's statistics (bug B)" begin (function ()
       mktempdir() do dir
         net = _island_diag_testnet()
         cfg = Sparlectra.PowerFlowConfig()
@@ -186,9 +186,9 @@ function run_island_diagnostics_tests()
         @test row1[col["q_limit_processing_status"]] == "unavailable"
         @test row2[col["q_limit_processing_status"]] == "not_attempted"
       end
-    end
+    end)() end
 
-    @testset "no-slack failure names the isolation cause" begin
+    @testset "no-slack failure names the isolation cause" begin (function ()
       # A branch-less delivery (e.g. one side of a DC border crossing) leaves
       # every bus isolated; the old error was a bare "no slack bus found".
       # The message must now name the actual cause: nothing is energized.
@@ -233,9 +233,9 @@ function run_island_diagnostics_tests()
       msg = Sparlectra._no_slack_message("unit_test", partial)
       @test occursin("lies on an isolated bus", msg)
       @test occursin("2 of 4 buses isolated", msg)
-    end
+    end)() end
 
-    @testset "auto slack promotes the strongest candidate" begin
+    @testset "auto slack promotes the strongest candidate" begin (function ()
       # Build a solvable two-bus net whose generator is not marked as slack.
       # NOTE: private inner name — an anonymous fixture assigning to a name
       # that also exists in the enclosing testset would rebind that local.
@@ -278,9 +278,9 @@ function run_island_diagnostics_tests()
       auto4 = mkautonet()
       addProsumer!(net = auto4, busName = "G1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "G1")
       @test ensureSlack!(auto4; log = false) === nothing
-    end
+    end)() end
 
-    @testset "single-island run keeps the combined-status fallback" begin
+    @testset "single-island run keeps the combined-status fallback" begin (function ()
       # A connected net solved outside the island-wise path stores no
       # per-island statuses; its one diagnostics row must still be filled
       # from the combined status.
@@ -303,6 +303,6 @@ function run_island_diagnostics_tests()
         @test rows[1][col["stage"]] == "post_solve_validation"
         @test isfile(joinpath(dir, "ac_island_1_solver.log"))
       end
-    end
-  end
+    end)() end
+  end)() end
 end

@@ -287,22 +287,29 @@ Outer-loop controllers (tap changers with a voltage target, Q(U)
 characteristics, remote voltage control) change the model between
 solves, and Sparlectra refuses the combination rather than running the
 solver on a model whose controllers would stay silent. The shipped
-`sp_case14` carries such a tap controller:
+`sp_case14` carries such a tap controller, so the run below is expected
+to be refused; the printed line is the refusal, not a defect:
 
 ````@example workshop_apslf
-sp_case14 = importSCF(joinpath(dirname(dirname(pathof(Sparlectra))), "data", "scf", "sp_case14.scf.json"))
+case14 = joinpath(dirname(dirname(pathof(Sparlectra))), "data", "scf", "sp_case14.scf.json")
 rejected = try
-    run_sparlectra(net=sp_case14, config=cfg_apslf)
+    run_sparlectra(net=importSCF(case14), config=cfg_apslf)
     ""
 catch err
     sprint(showerror, err)
 end
-println(first(rejected, 160))
+println("refused as intended: ", first(rejected, 120), " ...")
 ````
 
 For such a network the hybrid start of Part 3 is the way to use the
 series: the controllers run in the rectangular outer loop, the series
-only supplies the start value.
+only supplies the start value. The same network solves that way, tap
+controller included:
+
+````@example workshop_apslf
+r14 = run_sparlectra(net=importSCF(case14), config=cfg_hybrid)
+println("hybrid start on sp_case14: ", r14.outcome, ", ", r14.iterations, " Newton iterations")
+````
 
 ## Summary
 

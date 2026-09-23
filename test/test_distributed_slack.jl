@@ -98,7 +98,7 @@ function _dslack_two_island_net()
 end
 
 function run_distributed_slack_tests()
-  @testset "Distributed slack (#192)" begin
+  @testset "Distributed slack (#192)" begin (function ()
     # Classical baseline shared by several sub-tests.
     net0 = _dslack_testnet()
     _, erg0 = runpf_rectangular!(net0, 30, 1e-8, 0)
@@ -108,7 +108,7 @@ function run_distributed_slack_tests()
     # Classically the REF bus absorbs the whole imbalance alone.
     @test abs(sum(resid0) - resid0[1]) < 1e-7
 
-    @testset "off-path regression: disabled is bit-identical" begin
+    @testset "off-path regression: disabled is bit-identical" begin (function ()
       net1 = _dslack_testnet()
       _, erg1 = runpf_rectangular!(net1, 30, 1e-8, 0; distributed_slack_enabled = false)
       @test erg1 == 0
@@ -118,9 +118,9 @@ function run_distributed_slack_tests()
       st = Sparlectra.rectangular_pf_status(net1)
       @test st.distributed_slack_active == false
       @test st.distributed_slack_lambda_p_mw == 0.0
-    end
+    end)() end
 
-    @testset "conservation: residual pattern equals alpha*lambda" begin
+    @testset "conservation: residual pattern equals alpha*lambda" begin (function ()
       net2 = _dslack_testnet()
       _, erg2 = runpf_rectangular!(net2, 30, 1e-8, 0; distributed_slack_enabled = true, distributed_slack_p_mode = :pg_weighted)
       @test erg2 == 0
@@ -165,9 +165,9 @@ function run_distributed_slack_tests()
       @test occursin("dSl alpha", rendered)
       @test occursin("Pg eff MW", rendered)
       @test occursin("0.6000", rendered)
-    end
+    end)() end
 
-    @testset "equivalence: all weight on the REF bus reproduces classical" begin
+    @testset "equivalence: all weight on the REF bus reproduces classical" begin (function ()
       net3 = _dslack_testnet()
       _, erg3 = runpf_rectangular!(
         net3, 30, 1e-10, 0;
@@ -182,9 +182,9 @@ function run_distributed_slack_tests()
       st = Sparlectra.rectangular_pf_status(net3)
       # lambda_P is exactly the classical REF-absorbed power.
       @test isapprox(st.distributed_slack_lambda_p_pu, resid0[1]; atol = 1e-7)
-    end
+    end)() end
 
-    @testset "modes: pg_weighted == matching explicit weights" begin
+    @testset "modes: pg_weighted == matching explicit weights" begin (function ()
       net4a = _dslack_testnet()
       _, erg4a = runpf_rectangular!(net4a, 30, 1e-8, 0; distributed_slack_enabled = true, distributed_slack_p_mode = :pg_weighted)
       net4b = _dslack_testnet()
@@ -197,9 +197,9 @@ function run_distributed_slack_tests()
       @test erg4a == 0 && erg4b == 0
       @test isapprox(first(_dslack_vmva(net4a)), first(_dslack_vmva(net4b)); atol = 1e-10)
       @test isapprox(last(_dslack_vmva(net4a)), last(_dslack_vmva(net4b)); atol = 1e-10)
-    end
+    end)() end
 
-    @testset "modes: imported via MATPOWER APF column" begin
+    @testset "modes: imported via MATPOWER APF column" begin (function ()
       dir = mktempdir()
       # APF present, solver disabled: identical to a zero-APF twin (carrying
       # the factor must never change results on its own).
@@ -223,9 +223,9 @@ function run_distributed_slack_tests()
       @test ergi == 0
       resid = _dslack_p_residual(net_imp)
       @test isapprox(resid[2] / resid[3], 3.0; atol = 1e-4)
-    end
+    end)() end
 
-    @testset "fallback: error throws, ref_only matches classical" begin
+    @testset "fallback: error throws, ref_only matches classical" begin (function ()
       # :imported with no factors anywhere -> no valid participant
       net5 = _dslack_testnet()
       @test_throws ArgumentError runpf_rectangular!(
@@ -257,9 +257,9 @@ function run_distributed_slack_tests()
       active, shares = Sparlectra._distributed_slack_bus_shares(net6)
       @test !active
       @test isempty(shares)
-    end
+    end)() end
 
-    @testset "Q-limit interaction: PV→PQ switch keeps participation" begin
+    @testset "Q-limit interaction: PV→PQ switch keeps participation" begin (function ()
       # Tight Q limit forces B2 PV→PQ during the solve; its alpha must stay.
       net7 = _dslack_testnet(qmax_b2 = 2.0)
       _, erg7 = runpf_rectangular!(net7, 40, 1e-8, 0; distributed_slack_enabled = true, distributed_slack_p_mode = :pg_weighted)
@@ -275,9 +275,9 @@ function run_distributed_slack_tests()
       @test isapprox(resid[3], 0.4 * lambda_pu; atol = 1e-7)
       # And the switch really happened: B2 logged a Q-limit hit.
       @test Sparlectra.qlimit_switch_count(net7, 2) >= 1
-    end
+    end)() end
 
-    @testset "config: default placeholder and block-style weights load" begin
+    @testset "config: default placeholder and block-style weights load" begin (function ()
       # Regression: the minimal YAML reader parses the default `weights: {}`
       # placeholder as the literal string "{}"; the config constructor must
       # treat it (and nothing/"") as an empty table instead of throwing —
@@ -304,9 +304,9 @@ power_flow:
       ds = cfg1.powerflow.distributed_slack
       @test ds.enabled && ds.p_mode == :explicit
       @test ds.weights == Dict("B1" => 2.0, "B2" => 1.0)
-    end
+    end)() end
 
-    @testset "two islands get independent lambda_P" begin
+    @testset "two islands get independent lambda_P" begin (function ()
       net8 = _dslack_two_island_net()
       profile = Dict{Symbol,Any}()
       _, erg8 = runpf!(
@@ -333,6 +333,6 @@ power_flow:
       @test agg.distributed_slack_active == true
       @test agg.distributed_slack_participants == 2
       @test isapprox(agg.distributed_slack_lambda_p_mw, sum(st.distributed_slack_lambda_p_mw for st in values(statuses)); atol = 1e-9)
-    end
-  end
+    end)() end
+  end)() end
 end

@@ -32,7 +32,7 @@ function _net_cache_run(case_path, output_dir; extra = Dict{String,Any}())
 end
 
 function run_net_cache_tests()
-  @testset "MATPOWER net cache (inert since the direct import)" begin
+  @testset "MATPOWER net cache (inert since the direct import)" begin (function ()
     # the cache stored the CONVERTED
     # SCFCase, the side product the direct import no longer creates, so
     # the feature fell away with the conversion (issue #292 follow-up).
@@ -61,6 +61,6 @@ function run_net_cache_tests()
       @test isapprox(inert.final_mismatch, reference.final_mismatch; atol = 1e-12)
       @test !isdir(cache_dir)
     end
-  end
+  end)() end
   return nothing
 end

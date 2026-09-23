@@ -3057,7 +3057,7 @@ end
 # with a machine clamped at Qmax and its voltage BELOW the setpoint must
 # stay clamped.
 function test_active_set_voltage_side_release()::Bool
-  @testset "Active set re-enable on the voltage side (#375)" begin
+  @testset "Active set re-enable on the voltage side (#375)" begin (function ()
     scf_dir = joinpath(dirname(@__DIR__), "data", "scf")
     zeng = joinpath(scf_dir, "case14_zeng_p306_activeSet_A.scf.json")
     cfg = Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, zeng).config
@@ -3082,26 +3082,26 @@ function test_active_set_voltage_side_release()::Bool
     @test Sparlectra.rectangular_pf_status(rf.net).qlimit_reenable_events == 0
     # the margin is a configuration key that reaches the net
     @test rf.net.reenable_v_hyst_pu == fcfg.powerflow.qlimits.reenable_v_hyst_pu
-  end
+  end)() end
   return true
 end
 
 function run_grid_fast_tests()
-  @testset "Grid and power-flow regression tests" begin
-    @testset "Active set voltage-side release" begin
+  @testset "Grid and power-flow regression tests" begin (function ()
+    @testset "Active set voltage-side release" begin (function ()
       @test test_active_set_voltage_side_release() == true
-    end
-    @testset "Remove functions" begin
+    end)() end
+    @testset "Remove functions" begin (function ()
       @test test_remove_functions_compact() == true
-    end
-    @testset "Transformer and network validation" begin
+    end)() end
+    @testset "Transformer and network validation" begin (function ()
       @test test_2WTPITrafo() == true
       @test test_3WTPITrafo() == true
       @test testNetwork() == true
       @test testISOBusses() == true
-    end
+    end)() end
 
-    @testset "MATPOWER import/export" begin
+    @testset "MATPOWER import/export" begin (function ()
       @test testImportMatpower() == true
       @test test_matpower_import_defaults_no_reenable() == true
       @test test_matpower_import_uses_bus_type_for_regulation() == true
@@ -3124,9 +3124,9 @@ function run_grid_fast_tests()
       @test test_run_sparlectra_forwards_wrong_branch_config() == true
       @test test_run_sparlectra_normalizes_projected_matpower_starts() == true
       @test test_run_sparlectra_resolves_matpower_lock_bus_ids() == true
-    end
+    end)() end
 
-    @testset "Power flow scenarios" begin
+    @testset "Power flow scenarios" begin (function ()
       @test test_5BusNet(0, 10.0) == true
       @test test_3BusNet(0, 150.0, :rectangular, true) == true
       @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :rectangular) == true
@@ -3158,9 +3158,9 @@ function run_grid_fast_tests()
       @test test_multiple_slack_prosumers_same_bus_supported() == true
       @test test_regulated_generator_bus_targets_include_unregulated_generators() == true
       @test test_addprosumer_auto_regulated_flags() == true
-    end
+    end)() end
 
-    @testset "Link behaviour and reporting" begin
+    @testset "Link behaviour and reporting" begin (function ()
       @test test_link_kcl_simple() == true
       @test test_link_component_type() == true
       @test test_link_rejects_slack_connection() == true
@@ -3178,17 +3178,17 @@ function run_grid_fast_tests()
       @test test_report_uses_user_bus_names_and_pf_node_count() == true
       @test test_wrong_branch_output_visibility() == true
       @test test_summary_result_output_closes_file_handle() == true
-    end
-  end
+    end)() end
+  end)() end
 end
 
 function run_grid_extended_tests()
-  @testset "Grid extended scale and parser coverage" begin
-    @testset "large/stress MATPOWER helpers" begin
+  @testset "Grid extended scale and parser coverage" begin (function ()
+    @testset "large/stress MATPOWER helpers" begin (function ()
       @test test_matpower_build_ybus_large_sparse_smoke() == true
       @test test_matpower_matrix_block_scanner_large_body() == true
-    end
-  end
+    end)() end
+  end)() end
 end
 
 run_grid_tests() = run_grid_fast_tests()

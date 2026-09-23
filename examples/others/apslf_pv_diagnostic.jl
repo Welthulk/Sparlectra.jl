@@ -14,11 +14,7 @@
 #
 # file: examples/others/apslf_pv_diagnostic.jl
 # purpose: platform diagnostic for the APSLF solver on networks with PV
-#          buses. On Windows with Julia 1.13.0 (2026-09-22) the series solve
-#          did not converge on any case with PV buses while pure-PQ grids
-#          solved; on Linux with the same Julia and package versions every
-#          case converged. This script runs the four checks of that
-#          investigation in order and prints one line per check, so a
+#          buses. Four checks run in order and print one line each, so a
 #          report from another machine names the first failing layer:
 #          1. complex sparse LU (SuiteSparse) on a random matrix,
 #          2. ldiv! into a column view (the PV recursion writes that way),

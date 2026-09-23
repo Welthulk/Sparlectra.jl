@@ -9,7 +9,7 @@
 #          synthetic example stays a thin wrapper
 
 function run_synthetic_grid_tests()
-  @testset "YAML subset parser" begin
+  @testset "YAML subset parser" begin (function ()
     @test parse_yaml_scalar("true") === true
     @test parse_yaml_scalar("no") === false
     @test parse_yaml_scalar("null") === nothing
@@ -57,9 +57,9 @@ function run_synthetic_grid_tests()
       close(io)
       @test_throws ErrorException load_yaml_dict(path)
     end
-  end
+  end)() end
 
-  @testset "synthetic tiled grid builder" begin
+  @testset "synthetic tiled grid builder" begin (function ()
     net, meta = build_synthetic_tiled_grid_net(16; aspect_ratio = 1.0, b = 0.01, g = 0.001)
     @test meta.rows >= 2
     @test meta.cols >= 2
@@ -91,9 +91,9 @@ function run_synthetic_grid_tests()
     @test result.net === small_net
     @test result.iterations > 0
     @test small_meta.branch_count == small_meta.rows * (small_meta.cols - 1) + (small_meta.rows - 1) * small_meta.cols + (small_meta.rows - 1) * (small_meta.cols - 1)
-  end
+  end)() end
 
-  @testset "Synthetic PF performance rows use final acceptance" begin
+  @testset "Synthetic PF performance rows use final acceptance" begin (function ()
     meta = (actual_buses = 9,)
     rejected_result = (final_converged = false, numerical_converged = true, solution_available = false, outcome = :wrong_branch_detected, reason = :wrong_branch_detected, iterations = 4, elapsed_s = 0.012)
     rejected_row = Sparlectra._synthetic_pf_perf_row(9, meta, rejected_result)
@@ -109,9 +109,9 @@ function run_synthetic_grid_tests()
     @test accepted_row.numerical_converged
     @test accepted_row.solution_available
     @test accepted_row.outcome === :converged
-  end
+  end)() end
 
-  @testset "Synthetic example is thin wrapper" begin
+  @testset "Synthetic example is thin wrapper" begin (function ()
     source = read(joinpath(@__DIR__, "..", "examples", "powerflow", "exp_synthetic_tiled_grid_pf_perf.jl"), String)
     @test !occursin("DEFAULT_CONFIG = Dict", source)
     @test !occursin("load_yaml_dict", source)
@@ -119,5 +119,5 @@ function run_synthetic_grid_tests()
     @test !occursin("_resolve_config_path", source)
     @test !occursin("_configure_blas!", source)
     @test occursin("run_synthetic_tiled_grid_pf_perf", source)
-  end
+  end)() end
 end

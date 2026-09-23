@@ -155,8 +155,8 @@ function scf_roundtrip_field_diffs(a, b)
 end
 
 function run_scf_tests()
-  @testset "scf case format (writer)" begin
-    @testset "legacy key names in the in-file config block (0.13.0)" begin
+  @testset "scf case format (writer)" begin (function ()
+    @testset "legacy key names in the in-file config block (0.13.0)" begin (function ()
       # a 0.10.x export carried model keys under their old prefixes in the
       # deprecated sparlectra.config block; the run refused them as "not
       # case scope" although they only have a new name (Web UI run
@@ -177,8 +177,8 @@ function run_scf_tests()
       root["sparlectra"]["config"] = Dict{String,Any}("benchmark.enabled" => true)
       write(legacy, Sparlectra.scf_json_string(root))
       @test_throws Sparlectra.ConfigResolveError Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, legacy)
-    end
-    @testset "units declaration" begin
+    end)() end
+    @testset "units declaration" begin (function ()
       # absent means si: every existing file reads unchanged
       plain = Sparlectra.importSCF(joinpath(dirname(@__DIR__), "data", "scf", "sp_case5.scf.json"))
       case_plain = Sparlectra.read_scf_json(joinpath(dirname(@__DIR__), "data", "scf", "sp_case5.scf.json"))
@@ -220,9 +220,9 @@ function run_scf_tests()
       @test occursin("u_rated", sprint(showerror, err2))
       case_plain.data.node[1].u_rated = u_kept
       @test plain isa Sparlectra.Net
-    end
+    end)() end
 
-    @testset "own bus names vs external_id" begin
+    @testset "own bus names vs external_id" begin (function ()
       # the shipped demo cases use the split deliberately: extra.name is the
       # invented place name (the reference name), external_id the short
       # technical handle. The import must apply the place name everywhere
@@ -243,9 +243,9 @@ function run_scf_tests()
       # no component_name rows appear: reference name and component name
       # agree on purpose in the shipped files
       @test all(!haskey(v, "component_name") for v in node_extra)
-    end
+    end)() end
 
-    @testset "deterministic ids and byte-identical repeat export" begin
+    @testset "deterministic ids and byte-identical repeat export" begin (function ()
       net = _scf_test_net()
       d = mktempdir()
       a = exportSCF(net; file = joinpath(d, "a.scf.json"), source_format = "matpower")
@@ -260,9 +260,9 @@ function run_scf_tests()
       txt = read(a, String)
       @test endswith(txt, "\n")
       @test startswith(txt, "{\n  \"version\": \"1.0\",\n  \"type\": \"input\",\n  \"is_batch\": false,")
-    end
+    end)() end
 
-    @testset "PGM subset shape and SI unit conversion" begin
+    @testset "PGM subset shape and SI unit conversion" begin (function ()
       net = _scf_test_net()
       root = Sparlectra.net_to_scf(net; f_nom = 50.0)
       data = root["data"]
@@ -315,9 +315,9 @@ function run_scf_tests()
         @test lo["p_specified"] ≈ (ps.pVal === nothing ? 0.0 : ps.pVal) * 1.0e6
         @test lo["q_specified"] ≈ (ps.qVal === nothing ? 0.0 : ps.qVal) * 1.0e6
       end
-    end
+    end)() end
 
-    @testset "sparlectra block: roles, taps, names" begin
+    @testset "sparlectra block: roles, taps, names" begin (function ()
       net = _scf_test_net()
       root = Sparlectra.net_to_scf(net; intended_calculations = String["power_flow", "state_estimation"])
       sp = root["sparlectra"]
@@ -350,9 +350,9 @@ function run_scf_tests()
       @test haskey(root2["sparlectra"], "start_state")
       @test root2["sparlectra"]["start_state"]["source"] == "solved_power_flow"
       @test !haskey(root2["sparlectra"], "results")
-    end
+    end)() end
 
-    @testset "measurements become PGM sensors" begin
+    @testset "measurements become PGM sensors" begin (function ()
       net = _scf_test_net()
       Sparlectra.readMeasurementsCSV!(net; file = abspath(joinpath(dirname(@__DIR__), "data", "mpower", "warmup_casePST.measurements.csv")))
       root = Sparlectra.net_to_scf(net)
@@ -376,9 +376,9 @@ function run_scf_tests()
       @test v["u_measured"] > 1000.0
       p = first(data["sym_power_sensor"])
       @test p["measured_terminal_type"] in ("node", "branch_from", "branch_to")
-    end
+    end)() end
 
-    @testset "three-winding grouping and reference names" begin
+    @testset "three-winding grouping and reference names" begin (function ()
       # the star equivalent as Sparlectra builds it (and as PGM documents
       # it): three generic_branch legs plus one auxiliary star node
       net = Net(name = "t3w", baseMVA = 100.0)
@@ -419,9 +419,9 @@ function run_scf_tests()
       @test haskey(byname, "AUX3WT_T1")
       @test byname["AUX3WT_T1"]["component_name"] != "AUX3WT_T1"
       @test haskey(byname, "HV") && haskey(byname, "MV") && haskey(byname, "LV")
-    end
+    end)() end
 
-    @testset "FACTS base-impedance guard is a hard error" begin
+    @testset "FACTS base-impedance guard is a hard error" begin (function ()
       net = _scf_test_net()
       d = mktempdir()
       # a compensated operating point must never be written as equipment data
@@ -429,9 +429,9 @@ function run_scf_tests()
       @test_throws ArgumentError exportSCF(net; file = joinpath(d, "bad.scf.json"))
       net.branchVec[1].x_pu = net.branchVec[1].x_base_pu
       @test isfile(exportSCF(net; file = joinpath(d, "good.scf.json")))
-    end
+    end)() end
 
-    @testset "round-trip identity: bytes, power flow, state estimation" begin
+    @testset "round-trip identity: bytes, power flow, state estimation" begin (function ()
       # the format's core promise: build, write, read, write produces the
       # same bytes, and a run on the re-read network reproduces the original
       # numerically, not just approximately
@@ -479,9 +479,9 @@ function run_scf_tests()
       @test s1.dof == s2.dof
       @test s1.iterations == s2.iterations
       @test s1.voltages == s2.voltages
-    end
+    end)() end
 
-    @testset "line shunt conductance without capacitance (g1)" begin
+    @testset "line shunt conductance without capacitance (g1)" begin (function ()
       # tan1 = g/b cannot spell a conductance when b == 0 (a CGMES gch with
       # no bch, say): the writer falls back to the direct g1 field, the
       # reader prefers it, and the strict-PGM writer strips it BY NAME
@@ -505,9 +505,9 @@ function run_scf_tests()
       fstrict = @test_logs (:warn, r"line shunt conductance") match_mode = :any exportSCF(gnet; file = joinpath(dg, "pure_g.pgm.json"), strict_pgm = true)
       srow = only(Sparlectra.scf_json_parse(read(fstrict, String))["data"]["line"])
       @test !haskey(srow, "g1")
-    end
+    end)() end
 
-    @testset "permanent v1 fixture keeps loading" begin
+    @testset "permanent v1 fixture keeps loading" begin (function ()
       # the regression guard from the format specification: this tracked file
       # must stay readable for every future reader version
       fixture = abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_casePST.scf.json"))
@@ -537,9 +537,9 @@ function run_scf_tests()
       verdict = scf_matches_fixture(again, fixture)
       @test verdict.stamp_is_current
       @test verdict.rest_identical
-    end
+    end)() end
 
-    @testset "reader validation: unknown keys and broken references" begin
+    @testset "reader validation: unknown keys and broken references" begin (function ()
       fixture = abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_casePST.scf.json"))
       base = Sparlectra.scf_json_parse(read(fixture, String))
       # unknown keys are hard errors, at the root and inside the namespace
@@ -570,9 +570,9 @@ function run_scf_tests()
       # the case configuration is readable without building the network
       cfgkeys = scf_case_config(fixture)
       @test cfgkeys isa Dict{String,Any}
-    end
+    end)() end
 
-    @testset "controllers round-trip through the declarative schema" begin
+    @testset "controllers round-trip through the declarative schema" begin (function ()
       # FACTS is what PGM cannot express at all; the case format carries the
       # controllers in the control.controllers schema verbatim, and the
       # reader instantiates them through applyConfiguredControllers!
@@ -683,9 +683,9 @@ mpc.branch = [
       mback = importSCF(mf)
       @test count(has_qu_controller, mback.prosumpsVec) == 1
       @test read(exportSCF(mback; file = joinpath(d, "pq2.scf.json")), String) == read(mf, String)
-    end
+    end)() end
 
-    @testset "real MATPOWER cases survive the round trip" begin
+    @testset "real MATPOWER cases survive the round trip" begin (function ()
       # warmup_casePST alone did not exercise numerically named buses, shunts,
       # unlimited branch ratings or a neutral tap outside its own band; every
       # assertion here failed at least once before the round trip was fixed
@@ -829,9 +829,9 @@ mpc.branch = [
       @test Sparlectra.scf_number_or_sentinel("inf", "x") == Inf
       @test_throws ArgumentError Sparlectra.scf_infinity_sentinel(NaN)
       @test_throws ArgumentError Sparlectra.scf_json_string(Dict{String,Any}("data" => Dict{String,Any}("bad" => Inf)))
-    end
+    end)() end
 
-    @testset "power-grid-model interoperability" begin
+    @testset "power-grid-model interoperability" begin (function ()
       # A PGM `source` is the reference by definition: its u_ref is the slack
       # voltage whether or not a hand-written sparlectra block marks the
       # machine `regulated`. Found on the meeting files of 2026-09-11: a
@@ -955,9 +955,9 @@ mpc.branch = [
       it2, _ = runpf!(again, 40, 1e-12, 0)
       @test it2 == it
       @test isapprox(getNodeVm(again.nodeVec[3]), getNodeVm(net.nodeVec[3]); atol = 1e-12)
-    end
+    end)() end
 
-    @testset "strict PGM writer mode" begin
+    @testset "strict PGM writer mode" begin (function ()
       net = _scf_test_net()
       d = mktempdir()
       it0, _ = runpf!(net, 30, 1e-10, 0)
@@ -986,9 +986,9 @@ mpc.branch = [
       qnet = importSCF(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14_qu.scf.json")))
       @test any(has_qu_controller, qnet.prosumpsVec)
       @test_logs (:warn, r"voltage-dependent Q\(U\)/P\(U\) control") match_mode = :any exportSCF(qnet; file = joinpath(d, "strict_qu.json"), strict_pgm = true)
-    end
+    end)() end
 
-    @testset "three-winding transformer from a nameplate" begin
+    @testset "three-winding transformer from a nameplate" begin (function ()
       # the convenience form: one block in CGMES PowerTransformerEnd terms
       # instead of three generic_branch legs plus a star node
       d = mktempdir()
@@ -1041,9 +1041,9 @@ mpc.branch = [
       missing_role = deepcopy(root)
       missing_role["sparlectra"]["transformer_types"]["cgmes_220_110_10"]["ends"][3]["role"] = "hv"
       @test_throws ArgumentError Sparlectra.scf_to_net(missing_role)
-    end
+    end)() end
 
-    @testset "shunt state and PGM fault rows" begin
+    @testset "shunt state and PGM fault rows" begin (function ()
       d = mktempdir()
       # suite migration: the shipped sp_case14 carries a shunt too, so the
       # shunt-state export runs off the bundle without any download
@@ -1076,9 +1076,9 @@ mpc.branch = [
       bad2 = deepcopy(root)
       bad2["data"]["fault"][1]["x_f"] = 0.5
       @test_throws ArgumentError Sparlectra.scf_to_net(bad2)
-    end
+    end)() end
 
-    @testset "studies run from the case file" begin
+    @testset "studies run from the case file" begin (function ()
       # the point of carrying a study is that a run executes it: the case list
       # and the short-circuit study come out of the file, not out of the request
       net = _scf_test_net()
@@ -1402,9 +1402,9 @@ mpc.branch = [
       # the Web UI offers the button for a case file carrying sources
       @test Sparlectra._webui_case_has_short_circuit_data(fsc)
       @test !Sparlectra._webui_case_has_short_circuit_data(f0)
-    end
+    end)() end
 
-    @testset "study definitions are carried and validated" begin
+    @testset "study definitions are carried and validated" begin (function ()
       net = _scf_test_net()
       d = mktempdir()
       cont = Dict{String,Any}("mode" => "explicit", "cases" => Any[Dict{String,Any}("name" => "L34", "outages" => Any[Dict{String,Any}("component" => 11)])])
@@ -1431,9 +1431,9 @@ mpc.branch = [
       empty_outages = deepcopy(root)
       empty_outages["sparlectra"]["contingencies"]["cases"][1]["outages"] = Any[]
       @test_throws ArgumentError Sparlectra.scf_to_net(empty_outages)
-    end
+    end)() end
 
-    @testset "SCF cases run through the framework and the service" begin
+    @testset "SCF cases run through the framework and the service" begin (function ()
       fixture = abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_casePST.scf.json"))
       # the case format is a first-class case format: detected, selectable,
       # and runnable through the same paths as every other source
@@ -1456,9 +1456,9 @@ mpc.branch = [
       @test occursin("max_iter: 44", read(joinpath(r1["output_dir"], "effective_config.yaml"), String))
       r2 = start_powerflow_run(Dict{String,Any}("casefile" => withcfg, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root_dir, "config_overrides" => Dict{String,Any}("power_flow.max_iter" => 55)))
       @test occursin("max_iter: 55", read(joinpath(r2["output_dir"], "effective_config.yaml"), String))
-    end
+    end)() end
 
-    @testset "every output option is case-file and GUI editable" begin
+    @testset "every output option is case-file and GUI editable" begin (function ()
       # the case file's config block uses the one existing allowlist, so the
       # logging surface has to be in it
       for key in ("output.console_summary", "output.console_diagnostics", "output.console_q_limit_events", "output.logfile_diagnostics", "output.logfile_performance", "output.logfile_warnings", "output.result_table_max_rows", "output.startup_latency_hint")
@@ -1467,9 +1467,9 @@ mpc.branch = [
       ok = Sparlectra.validate_gui_config_overrides(Dict{String,Any}("output.logfile_warnings" => "table", "output.console_summary" => false, "output.result_table_max_rows" => 50, "output.startup_latency_hint" => false))
       @test haskey(ok, "output")
       @test_throws ArgumentError Sparlectra.validate_gui_config_overrides(Dict{String,Any}("output.logfile_warnings" => "bogus"))
-    end
+    end)() end
 
-    @testset "Web UI export route" begin
+    @testset "Web UI export route" begin (function ()
       root = mktempdir()
       cases = joinpath(root, "cases")
       mkpath(cases)
@@ -1660,9 +1660,9 @@ mpc.branch = [
       @test !isfile(joinpath(cases, "foreign.json"))
       @test Sparlectra._webui_scf_upload_reason(Vector{UInt8}(codeunits("{\"hello\": 1}"))) !== nothing
       @test Sparlectra._webui_scf_upload_reason(Vector{UInt8}(read(joinpath(cases, "warmup_casePST.scf.json")))) === nothing
-    end
+    end)() end
 
-    @testset "Web UI save case as route (issue #378)" begin
+    @testset "Web UI save case as route (issue #378)" begin (function ()
       root = mktempdir()
       cases = joinpath(root, "cases")
       mkpath(cases)
@@ -1760,7 +1760,7 @@ mpc.branch = [
       @test occursin("/powerflow/case/save-as", case_page_html)
       se_page_html = String(copy(Sparlectra.route_sparlectra_webui("GET", "/powerflow?casefile=sp_case14.scf.json"; output_root = root, runtime = rt).body))
       @test !occursin("Save case as", se_page_html)
-    end
-  end
+    end)() end
+  end)() end
   return nothing
 end
