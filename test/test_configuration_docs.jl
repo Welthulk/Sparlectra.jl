@@ -32,7 +32,7 @@ function _flatten_yaml_paths(dict::AbstractDict, prefix::String = "")
 end
 
 function run_configuration_docs_tests()
-  @testset "Configuration docs coverage" begin
+  @testset "Configuration docs coverage" begin (function ()
     yaml = Sparlectra.load_yaml_dict(joinpath(@__DIR__, "..", "src", "config", "configuration.yaml.example"))
     paths = _flatten_yaml_paths(yaml)
     docs_files = [
@@ -60,5 +60,5 @@ function run_configuration_docs_tests()
 
     @test occursin("matpower_import.benchmark", docs)
     @test occursin("benchmark.enabled", docs)
-  end
+  end)() end
 end

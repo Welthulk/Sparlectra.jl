@@ -34,7 +34,7 @@ Returns `true` if all checks pass.
 """
 function test_external_solver_interface()::Bool
 
-  @testset "External solver interface (PFModel/PFSolution)" begin
+  @testset "External solver interface (PFModel/PFSolution)" begin (function ()
 
     # Existing 3-bus test network from testgrid.jl
     net = createTest3BusNet()
@@ -88,7 +88,7 @@ function test_external_solver_interface()::Bool
       @test isapprox(node._va_deg, rad2deg(angle(model.V0[k])); atol = 1e-10)
     end
 
-  end
+  end)() end
 
   return true
 end
@@ -96,17 +96,17 @@ end
 function run_solver_interface_tests()
   # Covers solver-interface integration and option behavior:
   # external model API, Q-limit reporting/autocorrection, PV->PQ locking, and final-limit reporting.
-  @testset "Solver interface" begin
-    @testset "tolerance physical equivalent (task_tol_watts)" begin
+  @testset "Solver interface" begin (function ()
+    @testset "tolerance physical equivalent" begin (function ()
       # the run log, the diagnostics and the docs show tol * baseMVA in a
       # readable unit; the default 1e-8 pu at the 100 MVA base is 1 W
       @test Sparlectra.format_tolerance_physical(1.0e-8, 100.0) == "1.0e-8 pu, equals 1 W at 100.0 MVA base"
       @test Sparlectra.format_tolerance_physical(1.0e-5, 100.0) == "1.0e-5 pu, equals 1 kW at 100.0 MVA base"
       @test Sparlectra.format_tolerance_physical(0.01, 100.0) == "0.01 pu, equals 1 MW at 100.0 MVA base"
       @test occursin("W at 50.0 MVA base", Sparlectra.format_tolerance_physical(1.0e-8, 50.0))
-    end
+    end)() end
 
-    @testset "power_flow.tol_MW wins over tol at the case base (part B)" begin
+    @testset "power_flow.tol_MW wins over tol at the case base (part B)" begin (function ()
       # absent: nothing changes, the per-unit default stands
       base_cfg = Sparlectra.SparlectraConfig()
       @test base_cfg.powerflow.tol_MW === nothing
@@ -135,10 +135,10 @@ function run_solver_interface_tests()
       @test coarse.powerflow.tol_MW == 5.0
       # the key travels through the override surface like any other
       @test "power_flow.tol_MW" in Sparlectra.GUI_EDITABLE_CONFIG_KEYS
-    end
+    end)() end
 
     @test test_external_solver_interface() == true
-    @testset "Rectangular PF status lives on the Net" begin
+    @testset "Rectangular PF status lives on the Net" begin (function ()
       # Phase 1 thread-safety rework: the former global weak-ref registry is
       # gone; the status is a Net field, so distinct Nets are independent and
       # deepcopy carries the status with the copy.
@@ -157,8 +157,8 @@ function run_solver_interface_tests()
       @test Sparlectra.rectangular_pf_status(copied).status === :test_status
       Sparlectra._set_rectangular_pf_status!(copied, (status = :copy_only,))
       @test Sparlectra.rectangular_pf_status(net) === status
-    end
-    @testset "Wrong-branch helper classification" begin
+    end)() end
+    @testset "Wrong-branch helper classification" begin (function ()
       @test isapprox(Sparlectra._circular_angle_spread_deg([179.0, -179.0]), 2.0; atol = 1e-8)
       @test isapprox(Sparlectra._circular_angle_spread_deg([-170.0, 170.0]), 20.0; atol = 1e-8)
       Vok = ComplexF64[1.0 + 0im, 1.01 + 0.01im, 1.03 - 0.02im]
@@ -232,8 +232,8 @@ function run_solver_interface_tests()
       @test top_dip.status == :warn
       @test top_dip.reason == :low_voltage_magnitude
       @test top_dip.low_vm_count == 1
-    end
-    @testset "Flat-start voltage setpoints" begin
+    end)() end
+    @testset "Flat-start voltage setpoints" begin (function ()
       net = createTest3BusNet()
       net.nodeVec[1]._vm_pu = 0.94
       net.nodeVec[1]._va_deg = -7.0
@@ -298,9 +298,9 @@ function run_solver_interface_tests()
       @test abs.(iso_model.V0) == [1.0, 1.04, 1.06]
       @test all(isapprox.(rad2deg.(angle.(iso_model.V0)), [0.0, 0.0, 5.0]; atol = 1e-12))
       @test iso_model.Vset == [1.0, 1.04, 1.06]
-    end
+    end)() end
     # Checks tabular Q-limit output truncation plus sign-validation/autocorrect behavior.
-    @testset "Q-limit reporting and validation options" begin
+    @testset "Q-limit reporting and validation options" begin (function ()
       net = createTest3BusNet()
       net.nodeVec[1]._nodeType = Sparlectra.PV
       net.nodeVec[2]._nodeType = Sparlectra.PV
@@ -344,10 +344,10 @@ function run_solver_interface_tests()
       @test res.corrected >= 1
       @test net.qmin_pu[2] <= 0.0
       @test net.qmax_pu[2] >= 0.0
-    end
+    end)() end
 
     # Verifies that configured lock_pv_to_pq_buses keeps selected PV buses from switching to PQ.
-    @testset "PV->PQ lock option" begin
+    @testset "PV->PQ lock option" begin (function ()
       net_unlocked = createTest3BusNet()
       setQLimits!(net = net_unlocked, qmin_MVar = -1.0, qmax_MVar = 1.0, busName = "STATION1")
       _, erg_unlocked = runpf!(net_unlocked, 20, 1e-6, 0; method = :rectangular)
@@ -359,9 +359,9 @@ function run_solver_interface_tests()
       _, erg_locked = runpf!(net_locked, 20, 1e-6, 0; method = :rectangular, lock_pv_to_pq_buses = [2])
       @test erg_locked == 1
       @test getNodeType(net_locked.nodeVec[2]) == Sparlectra.PV
-    end
+    end)() end
 
-    @testset "Rectangular Q-limit trace diagnostics" begin
+    @testset "Rectangular Q-limit trace diagnostics" begin (function ()
       net = createTest3BusNet()
       setQLimits!(net = net, qmin_MVar = -1.0, qmax_MVar = 1.0, busName = "STATION1")
       trace_path, trace_io = mktemp()
@@ -498,9 +498,9 @@ function run_solver_interface_tests()
   @test Sparlectra._rectangular_solver_status_symbol(true, false, false, :remaining_pv_q_limit_violations) == :converged_limits_failed
   @test Sparlectra._rectangular_solver_status_symbol(false, false, false, :singular_newton_step) == :singular_jacobian
   @test Sparlectra._rectangular_solver_status_symbol(false, false, false, :nr_mismatch_not_converged) == :not_converged
-end
+end)() end
 
-    @testset "Q-limit guard and active-set status" begin
+    @testset "Q-limit guard and active-set status" begin (function ()
       net = createTest3BusNet()
       bus = geNetBusIdx(net = net, busName = "STATION1")
       qmin_pu = [-Inf, 0.0, -Inf]
@@ -593,9 +593,9 @@ end
         runpf!(opt_in_net; config = PowerFlowConfig(max_iter = 0, qlimits = QLimitConfig(guard = true)))
       end
       @test length(opt_in_net.qLimitLog) == 1
-    end
+    end)() end
 
-    @testset "Rectangular performance profile exposes solver control path" begin
+    @testset "Rectangular performance profile exposes solver control path" begin (function ()
       net = createTest3BusNet()
       profile = Dict{Symbol,Any}(:enabled => true, :show_allocations => false, :show_iteration_table => true)
       _, erg = runpf!(net, 20, 1e-8, 0; method = :rectangular, performance_profile = profile)
@@ -616,9 +616,9 @@ end
         @test haskey(timings, phase)
         @test timings[phase].calls >= 1
       end
-    end
+    end)() end
 
-    @testset "Wrong-branch detection modes are distinct" begin
+    @testset "Wrong-branch detection modes are distinct" begin (function ()
       base_cfg = PowerFlowConfig(max_iter = 40, tol = 1e-8, start_mode = StartModeConfig(flatstart = true), wrong_branch_min_vm_pu = 1.20)
 
       net_warn = createTest3BusNet()
@@ -640,9 +640,9 @@ end
       @test st_rescue.wrong_branch_status == :wrong_branch_rescue_not_implemented
       @test st_rescue.wrong_branch_reason == :rescue_requested_but_not_available
       @test st_rescue.wrong_branch_rescue_attempted === false
-    end
+    end)() end
 
-    @testset "Typed power-flow config entry points" begin
+    @testset "Typed power-flow config entry points" begin (function ()
       @test isdefined(Main, :run_sparlectra)
       @test isdefined(Main, :run_acpflow)
       @test isdefined(Main, :SparlectraRunResult)
@@ -742,9 +742,9 @@ end
       end
       @test occursin("AC Power Flow Results", full_output)
       @test Sparlectra._sparlectra_result_mode(net_with_output, OutputConfig(logfile_results = :compact, result_table_large_case_threshold_buses = 1, result_table_large_case_mode = :summary)) === :summary
-    end
+    end)() end
 
-    @testset "Framework status composition" begin
+    @testset "Framework status composition" begin (function ()
       rejected_outcomes = (:wrong_branch_detected, :angle_spread_exceeded, :branch_angle_exceeded, :wrong_branch_rescue_not_implemented)
       for outcome in rejected_outcomes
         rect_status = (status = outcome, numerical_converged = true, reason = :none)
@@ -798,9 +798,9 @@ end
       @test !failed.final_converged
       @test failed.outcome === :pf_failed
       @test failed.reason === :pf_failed
-    end
+    end)() end
 
-    @testset "Configured MATPOWER batch parsing and deterministic local execution" begin
+    @testset "Configured MATPOWER batch parsing and deterministic local execution" begin (function ()
       cfg_cases = SparlectraConfig(Dict("runtime" => Dict("cases" => [" case_a.m ", "case_b.m"])))
       @test cfg_cases.runtime.cases == ["case_a.m", "case_b.m"]
       @test configured_matpower_cases(cfg_cases) == ["case_a.m", "case_b.m"]
@@ -842,9 +842,9 @@ mpc.branch = [
         @test all(result -> result.numerical_converged, results)
         @test active_sparlectra_config() === active_before
       end
-    end
+    end)() end
 
-    @testset "Framework runner input validation and removed legacy keywords" begin
+    @testset "Framework runner input validation and removed legacy keywords" begin (function ()
       net = createTest3BusNet()
       @test_throws ArgumentError run_sparlectra(net = net, casefile = "case3.m")
       @test_throws ArgumentError run_sparlectra()
@@ -856,19 +856,19 @@ mpc.branch = [
       @test_throws MethodError run_acpflow(net = net, tol = 1e-6)
       @test_throws MethodError run_acpflow(net = net, verbose = 0)
       @test_throws MethodError run_acpflow(casefile = "case14.m", matpower_ratio = :normal)
-    end
+    end)() end
 
-    @testset "Rectangular damping defaults and validation" begin
+    @testset "Rectangular damping defaults and validation" begin (function ()
       @test Sparlectra.active_sparlectra_config().powerflow.autodamp_min == 0.05
 
       @test_throws ErrorException Sparlectra._validate_rectangular_damping(1.0, 0.0)
       @test_throws ErrorException Sparlectra._validate_rectangular_damping(0.2, 0.3)
       @test_throws ErrorException Sparlectra._validate_rectangular_damping(0.0, 0.01)
       @test_throws ErrorException Sparlectra._validate_rectangular_damping(1.01, 0.05)
-    end
+    end)() end
 
-    @testset "Merit-function line search" begin
-      @testset "Merit value and Armijo acceptance (unit)" begin
+    @testset "Merit-function line search" begin (function ()
+      @testset "Merit value and Armijo acceptance (unit)" begin (function ()
         Y = ComplexF64[0.0 - 10.0im 0.0 + 10.0im; 0.0 + 10.0im 0.0 - 10.0im]
         V = ComplexF64[1.0 + 0.0im, 1.0 + 0.0im]
         S = ComplexF64[0.0 + 0.0im, -1.0 - 0.2im]
@@ -919,9 +919,9 @@ mpc.branch = [
           merit_enabled = true, armijo_c1 = 0.4999, fallback_max_mismatch = false, merit_log = strict_log,
         )
         @test strict_log[1].accept_reason in (:armijo, :fallback_conservative)
-      end
+      end)() end
 
-      @testset "Config validation" begin
+      @testset "Config validation" begin (function ()
         armijo_bad = test_scratch_path(".yaml")
         write(armijo_bad, "config_version: 1\npower_flow:\n  autodamp: true\n  merit:\n    armijo_c1: 0.5\n")
         @test_throws ArgumentError Sparlectra.load_sparlectra_config(armijo_bad; reload = true)
@@ -938,9 +938,9 @@ mpc.branch = [
         write(ok_cfg, "config_version: 1\npower_flow:\n  autodamp: true\n  merit:\n    enabled: true\n")
         loaded = Sparlectra.load_sparlectra_config(ok_cfg; reload = true)
         @test loaded.powerflow.merit.enabled == true
-      end
+      end)() end
 
-      @testset "Regression: merit.enabled=false is bit-identical to pre-merit autodamp" begin
+      @testset "Regression: merit.enabled=false is bit-identical to pre-merit autodamp" begin (function ()
         net_classic = createCIGRE()
         it_classic, erg_classic = runpf_rectangular!(net_classic, 30, 1e-8, 0; autodamp = true, merit_enabled = false)
 
@@ -958,9 +958,9 @@ mpc.branch = [
         it3_merit_off, erg3_merit_off = runpf_rectangular!(net_3bus_merit_off, 20, 1e-6, 0; autodamp = true, merit_enabled = false)
         @test it3_classic == it3_merit_off
         @test erg3_classic == erg3_merit_off
-      end
+      end)() end
 
-      @testset "Functional: merit.enabled=true converges and logs an armijo acceptance" begin
+      @testset "Functional: merit.enabled=true converges and logs an armijo acceptance" begin (function ()
         mktempdir() do tmpdir
           perf = Dict{Symbol,Any}(:output_dir => tmpdir)
           net = createCIGRE()
@@ -976,19 +976,19 @@ mpc.branch = [
           @test occursin("accept_reason=armijo", log_text)
           @test occursin("merit_enabled: true", log_text)
         end
-      end
+      end)() end
 
-      @testset "Active-set change skips merit comparison for that iteration" begin
+      @testset "Active-set change skips merit comparison for that iteration" begin (function ()
         net = createTest3BusNet()
         setQLimits!(net = net, qmin_MVar = -1.0, qmax_MVar = 1.0, busName = "STATION1")
         _, erg = runpf!(net, 20, 1e-6, 0; method = :rectangular, autodamp = true, merit_enabled = true)
         @test erg == 0
         st = Sparlectra.rectangular_pf_status(net)
         @test st.merit_active_set_skip_count > 0
-      end
-    end
+      end)() end
+    end)() end
 
-    @testset "Independently solved AC islands do not overwrite each other's diagnostic logs" begin
+    @testset "Independently solved AC islands do not overwrite each other's diagnostic logs" begin (function ()
       # Regression for a real bug: islands share one performance_profile/output_dir,
       # so fixed-name diagnostic artifacts (merit_linesearch.log, trust_region.log,
       # current_iteration_start.log, apslf_start.log) were silently overwritten by
@@ -1038,10 +1038,10 @@ mpc.branch = [
         @test isfile(joinpath(outdir, "merit_linesearch.log"))
         @test !any(startswith(f, "ac_island_") for f in readdir(outdir))
       end
-    end
+    end)() end
 
-    @testset "Trust-region step control" begin
-      @testset "Config validation" begin
+    @testset "Trust-region step control" begin (function ()
+      @testset "Config validation" begin (function ()
         min_ge_initial = test_scratch_path(".yaml")
         write(min_ge_initial, "config_version: 1\npower_flow:\n  trust_region:\n    initial_radius: 1.0\n    min_radius: 1.0\n")
         @test_throws ArgumentError Sparlectra.load_sparlectra_config(min_ge_initial; reload = true)
@@ -1073,9 +1073,9 @@ mpc.branch = [
         write(dogleg_cfg, "config_version: 1\npower_flow:\n  autodamp: false\n  trust_region:\n    enabled: true\n    step_mode: dogleg\n")
         loaded_dogleg = Sparlectra.load_sparlectra_config(dogleg_cfg; reload = true)
         @test loaded_dogleg.powerflow.trust_region.step_mode === :dogleg
-      end
+      end)() end
 
-      @testset "Unit: dogleg gradient, Cauchy point, and path branch selection" begin
+      @testset "Unit: dogleg gradient, Cauchy point, and path branch selection" begin (function ()
         # Simple diagonal J so g = Jᵀ F, Jg, α*, and p_C are hand-checkable.
         J = sparse([2.0 0.0; 0.0 4.0])
         F0 = [1.0, 2.0]
@@ -1112,9 +1112,9 @@ mpc.branch = [
         step3, reason3 = Sparlectra._rectangular_dogleg_step(p_N, pN_norm, p_C, pC_norm, mid_radius)
         @test reason3 === :dogleg_interp
         @test norm(step3) ≈ mid_radius atol = 1e-9
-      end
+      end)() end
 
-      @testset "Unit: dogleg active_set_changed skips the comparison without moving the radius" begin
+      @testset "Unit: dogleg active_set_changed skips the comparison without moving the radius" begin (function ()
         Y = ComplexF64[0.0 - 10.0im 0.0 + 10.0im; 0.0 + 10.0im 0.0 - 10.0im]
         V = ComplexF64[1.0 + 0.0im, 1.0 + 0.0im]
         S = ComplexF64[0.0 + 0.0im, -1.0 - 0.2im]
@@ -1138,9 +1138,9 @@ mpc.branch = [
         @test tr_log[1].accept_reason === :active_set_skip
         @test tr_log[1].accepted == true
         @test radius_ref[] == 1.0  # radius left unchanged by the active-set-skip path
-      end
+      end)() end
 
-      @testset "Unit: choose_rectangular_trust_region_step acceptance and collapse" begin
+      @testset "Unit: choose_rectangular_trust_region_step acceptance and collapse" begin (function ()
         Y = ComplexF64[0.0 - 10.0im 0.0 + 10.0im; 0.0 + 10.0im 0.0 - 10.0im]
         V = ComplexF64[1.0 + 0.0im, 1.0 + 0.0im]
         S = ComplexF64[0.0 + 0.0im, -1.0 - 0.2im]
@@ -1173,9 +1173,9 @@ mpc.branch = [
         )
         @test length(collapse_log) == 1
         @test collapse_log[1].collapsed == true
-      end
+      end)() end
 
-      @testset "Regression: trust_region.enabled=false leaves the default solver path unchanged" begin
+      @testset "Regression: trust_region.enabled=false leaves the default solver path unchanged" begin (function ()
         net_classic = createCIGRE()
         it_classic, erg_classic = runpf_rectangular!(net_classic, 30, 1e-8, 0; autodamp = true)
 
@@ -1186,9 +1186,9 @@ mpc.branch = [
         @test erg_classic == erg_off == 0
         @test [n._vm_pu for n in net_classic.nodeVec] == [n._vm_pu for n in net_off.nodeVec]
         @test [n._va_deg for n in net_classic.nodeVec] == [n._va_deg for n in net_off.nodeVec]
-      end
+      end)() end
 
-      @testset "Functional: trust_region.enabled=true converges and logs accepted steps" begin
+      @testset "Functional: trust_region.enabled=true converges and logs accepted steps" begin (function ()
         mktempdir() do tmpdir
           perf = Dict{Symbol,Any}(:output_dir => tmpdir)
           net = createCIGRE()
@@ -1206,9 +1206,9 @@ mpc.branch = [
           @test occursin("trust_region_enabled: true", log_text)
           @test occursin("accept_reason=scaled", log_text)
         end
-      end
+      end)() end
 
-      @testset "Regression: step_mode=:scaled (explicit) is bit-identical to the implicit default" begin
+      @testset "Regression: step_mode=:scaled (explicit) is bit-identical to the implicit default" begin (function ()
         net_default = createCIGRE()
         it_default, erg_default = runpf_rectangular!(net_default, 30, 1e-8, 0; autodamp = false, trust_region_enabled = true)
 
@@ -1219,9 +1219,9 @@ mpc.branch = [
         @test erg_default == erg_explicit == 0
         @test [n._vm_pu for n in net_default.nodeVec] == [n._vm_pu for n in net_explicit.nodeVec]
         @test [n._va_deg for n in net_default.nodeVec] == [n._va_deg for n in net_explicit.nodeVec]
-      end
+      end)() end
 
-      @testset "Functional: step_mode=:dogleg converges and logs dogleg accept reasons" begin
+      @testset "Functional: step_mode=:dogleg converges and logs dogleg accept reasons" begin (function ()
         mktempdir() do tmpdir
           perf = Dict{Symbol,Any}(:output_dir => tmpdir)
           net = createCIGRE()
@@ -1239,9 +1239,9 @@ mpc.branch = [
           @test occursin(r"accept_reason=dogleg_(newton|interp|cauchy)", log_text)
           @test !occursin("accept_reason=scaled", log_text)
         end
-      end
+      end)() end
 
-      @testset "Radius collapse reports :trust_region_collapsed on an unsolvable case" begin
+      @testset "Radius collapse reports :trust_region_collapsed on an unsolvable case" begin (function ()
         net = Net(name = "tr_collapse_demo", baseMVA = 100.0, flatstart = true)
         addBus!(net = net, busName = "SLACK", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
         addBus!(net = net, busName = "LOAD", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
@@ -1256,9 +1256,9 @@ mpc.branch = [
         st = Sparlectra.rectangular_pf_status(net)
         @test st.reason == :trust_region_collapsed
         @test st.tr_collapsed == true
-      end
+      end)() end
 
-      @testset "Active-set Q-limits switch on the converged iterate (post-convergence round)" begin
+      @testset "Active-set Q-limits switch on the converged iterate (post-convergence round)" begin (function ()
         # Regression: a converged iterate is always "ready" for the Q-limit
         # check. Previously the start gating could outlast convergence (NR
         # faster than qlimit_start_iter, or :auto never settling), the check
@@ -1280,9 +1280,9 @@ mpc.branch = [
         _, erg_ref = runpf!(net_ref, 40, 1e-8, 0; method = :rectangular)
         @test erg_ref == 0
         @test length(net_ref.qLimitLog) == 1
-      end
+      end)() end
 
-      @testset "Classical Q-limit violation accounting excludes fixed generator-type units" begin
+      @testset "Classical Q-limit violation accounting excludes fixed generator-type units" begin (function ()
         # Regression: _matpower_q_limit_violations shared the FULL bus reactive
         # requirement equally among all non-clamped generator-type units. A
         # fixed injection at a PV bus (never-regulating: a Stage-0 HVDC
@@ -1320,9 +1320,9 @@ mpc.branch = [
         @test isempty(net.qLimitLog)
         # the PV bus must still hold its setpoint (nothing degraded it to PQ)
         @test Sparlectra.getNodeType(net.nodeVec[Sparlectra.geNetBusIdx(net = net, busName = "B2")]) == Sparlectra.PV
-      end
+      end)() end
 
-      @testset "Classical Q-limit outer loop does not overwrite each round's diagnostic artifacts" begin
+      @testset "Classical Q-limit outer loop does not overwrite each round's diagnostic artifacts" begin (function ()
         # Regression: the classical outer loop's inner runpf_rectangular! calls all
         # shared performance_profile[:output_dir] with no per-round prefix, so
         # trust_region.log (like merit_linesearch.log/current_iteration_start.log)
@@ -1340,9 +1340,9 @@ mpc.branch = [
           @test !("trust_region.log" in files)
           @test !haskey(perf, :diagnostic_artifact_prefix)
         end
-      end
+      end)() end
 
-      @testset "Dogleg degrades gracefully (more attempts before collapse) but does not rescue an infeasible case" begin
+      @testset "Dogleg degrades gracefully (more attempts before collapse) but does not rescue an infeasible case" begin (function ()
         # tr_collapse_demo (200 MW / 60 Mvar over a weak line) has no nearby AC
         # solution: this is honestly documented as a case dogleg cannot fix (see
         # docs/src/solver.md, "Trust-Region Step Control" / Limits). What dogleg
@@ -1378,10 +1378,10 @@ mpc.branch = [
         # Graceful degradation: dogleg keeps making Cauchy-direction attempts
         # measurably longer than scaled's repeated same-direction rescaling.
         @test it_dogleg > it_scaled
-      end
-    end
+      end)() end
+    end)() end
 
-    @testset "Current-iteration rejection log reports candidate guard details" begin
+    @testset "Current-iteration rejection log reports candidate guard details" begin (function ()
       mktempdir() do tmpdir
         run_guarded_current_iteration_start = getfield(Sparlectra, :_run_guarded_current_iteration_start)
         Ybus = ComplexF64[1 -1; -1 1]
@@ -1436,9 +1436,9 @@ mpc.branch = [
           @test occursin(needle, log_text)
         end
       end
-    end
+    end)() end
 
-    @testset "AC island detection and independent solving" begin
+    @testset "AC island detection and independent solving" begin (function ()
       function two_island_net(; second_ref::Symbol = :slack)
         net = Net(name = "two_island", baseMVA = 100.0)
         for name in ("A1", "A2", "B1", "B2")
@@ -1501,13 +1501,13 @@ mpc.branch = [
       no_ref_report = Sparlectra.detect_ac_islands(no_ref_net)
       @test no_ref_report.rows[2].status == "missing_ref"
       @test_throws ErrorException runpf!(no_ref_net; config = PowerFlowConfig(max_iter = 40, islands_enabled = true))
-    end
+    end)() end
 
     # A network with a single AC island never enters the independent per-island
     # solve branch above, so it must not fall back to reporting the pre-solve
     # placeholder (iterations=0, stage=pre_solve_validation, island_wise_all_converged=false)
     # once it has actually converged.
-    @testset "Single-island run reports real convergence, not pre-solve placeholders" begin
+    @testset "Single-island run reports real convergence, not pre-solve placeholders" begin (function ()
       single_island_net = Net(name = "single_island", baseMVA = 100.0)
       addBus!(net = single_island_net, busName = "A1", vn_kV = 110.0)
       addBus!(net = single_island_net, busName = "A2", vn_kV = 110.0)
@@ -1533,10 +1533,10 @@ mpc.branch = [
         @test !occursin("iterations: 0", island_log)
         @test !occursin("stage: pre_solve_validation", island_log)
       end
-    end
+    end)() end
 
 # Ensures final-limit validation remains robust when q-generation data is partially missing.
-    @testset "Final limit validation tolerates missing qgen" begin
+    @testset "Final limit validation tolerates missing qgen" begin (function ()
       net = createTest3BusNet()
       net.nodeVec[3]._qƩGen = nothing
       io = IOBuffer()
@@ -1559,14 +1559,14 @@ mpc.branch = [
       io = IOBuffer()
       printFinalLimitValidation(net; q_headroom = 0.20, io = io, converged = false)
       @test occursin("Last-iteration Q-limit diagnostic (NR did not converge; values are not a valid final solution)", String(take!(io)))
-    end
+    end)() end
 
     # A solved state can satisfy every limit and still be non-physical: a
     # machine pinned at Qmax whose voltage ends ABOVE its setpoint cannot be
     # an operating point, because a machine at its upper reactive limit has
     # nothing left to raise the voltage with. The counter is what makes the
     # difference between two enforcement modes visible at all.
-    @testset "Q-V characteristic check finds non-physical generator states" begin
+    @testset "Q-V characteristic check finds non-physical generator states" begin (function ()
       # STATION1 carries the machine with vm_pu = 1.027273 and the Q band
       net = createTest3BusNet(qlim_min = -20.0, qlim_max = 20.0)
       bus = Sparlectra.geNetBusIdx(net = net, busName = "STATION1")
@@ -1673,9 +1673,9 @@ mpc.branch = [
       pv_b2_row = only(r for r in pv_report.nodes if r.bus == pb2)
       @test !isapprox(pv_b2_row.q_gen_MVar, 5.0; atol = 1e-3)
       @test isapprox(pv_b2_row.q_gen_MVar, pvnet.nodeVec[pb2]._qƩGen; atol = 1e-9)
-    end
+    end)() end
 
-    @testset "AC rescue ladder and DC fallback" begin
+    @testset "AC rescue ladder and DC fallback" begin (function ()
       # NOTE: private inner name — an anonymous fixture assigning to a name
       # that also exists in the enclosing testset would rebind that local.
       mkrescuenet = function (; p_mw::Float64 = 300.0)
@@ -1745,6 +1745,6 @@ mpc.branch = [
       @test last(runpf!(off, cfg_off; performance_profile = profile_off)) == 1
       @test !haskey(profile_off, :ac_rescue_strategy)
       @test !haskey(profile_off, :dc_fallback_applied)
-    end
-  end
+    end)() end
+  end)() end
 end

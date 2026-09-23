@@ -143,7 +143,7 @@ end
 ## empty) means "not stated", and the estimator resolves it against the
 ## effective configuration. Without this the service layer would have to
 ## name a default of its own, which is how the same run reached different
-## thresholds through different entry points (task_se_bad_data_v0100).
+## thresholds through different entry points.
 function _se_optional_float(request::AbstractDict, key::AbstractString)::Union{Nothing,Float64}
   raw = _service_request_value(request, key, nothing)
   raw === nothing && return nothing
@@ -304,7 +304,7 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
   # outage kind is a RUN parameter (branch vs generator N-1), not a config key
   contingency_kind = _service_request_value(request, "contingency_kind", "branch")
   (contingency_kind isa AbstractString && contingency_kind in ("branch", "gen")) || return _service_failure("invalid_request", "contingency_kind must be \"branch\" or \"gen\".")
-  # scenario task step 5: scenario source, external scenario file, and the
+  # scenario source, external scenario file, and the
   # screening mode are run parameters; absent keys keep the historical
   # behavior (kind/contingencies case list, screening from the configuration)
   contingency_scenario_source = _service_request_value(request, "scenario_source", nothing)

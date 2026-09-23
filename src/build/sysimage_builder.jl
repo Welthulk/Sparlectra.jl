@@ -72,7 +72,12 @@ function buildSysimage(; dry_run::Bool = false, quiet::Bool = false)
   cmd = dry_run ? `$(exe) --startup-file=no --project=$(pkgroot) $(script) --dry-run` : `$(exe) --startup-file=no --project=$(pkgroot) $(script)`
   io_out = quiet ? devnull : stdout
   io_err = quiet ? devnull : stderr
-  run(pipeline(Cmd(cmd; dir = pkgroot); stdout = io_out, stderr = io_err))
+  # the image warms every path (state estimation, APSLF, DC, service layer,
+  # tap control): the package's own precompile is slim by default and this
+  # is the one build that wants the full workload
+  env = copy(ENV)
+  env["SPARLECTRA_PRECOMPILE_WORKLOAD"] = "full"
+  run(pipeline(Cmd(cmd; dir = pkgroot, env = env); stdout = io_out, stderr = io_err))
   built = !dry_run && isfile(img)
   return (sysimage_path = img, meta_path = meta, built = built, size_mb = built ? round(filesize(img) / 1024^2; digits = 1) : 0.0)
 end

@@ -41,8 +41,8 @@ function _topology_station_label(net::Net, rep::Int, members::Dict{Int,Vector{In
   return length(ms) > 1 ? string(base, " (+", length(ms) - 1, " linked)") : base
 end
 
-## severity from how far the evidence exceeds its threshold (open design
-## decision 1): below 2x the k factor :warning, at or above :strong. The
+## severity from how far the evidence exceeds its threshold: below
+## 2x the k factor :warning, at or above :strong. The
 ## dead-branch check never exceeds :warning (legitimately unloaded branches
 ## exist; the check only fires with loaded neighbours, see below).
 _topology_severity(ratio::Float64, k::Float64) = ratio >= 2.0 * k ? :strong : :warning
@@ -279,8 +279,8 @@ end
 
 ## candidate list for stage 3: explicit element references, or :auto from
 ## the stage-1 status-contradiction findings plus the switchable elements
-## of stage-2 suspected stations (stage-2 stations first, open design
-## decision 3). Elements are (kind = :branch | :link, idx).
+## of stage-2 suspected stations (stage-2 stations first).
+## Elements are (kind = :branch | :link, idx).
 function _topology_auto_candidates(net::Net, measurements::Vector{Measurement}; max_candidates::Int = 5)
   out = NamedTuple{(:kind, :idx),Tuple{Symbol,Int}}[]
   seen = Set{Tuple{Symbol,Int}}()

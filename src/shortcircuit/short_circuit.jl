@@ -347,7 +347,7 @@ The function does not modify `net`; the `!` marks it as the acting entry
 point of the module family (`runpf!`, `rundcpf!`). Failure behavior: throws
 `ArgumentError` for an unknown bus name or an invalid `case`.
 
-All-bus sweeps fan out over Julia threads (Phase 3 of the multi-core work):
+All-bus sweeps fan out over Julia threads:
 the fault-bus list is split into `runtime.parallel.max_tasks` chunks, each
 task solving on its own `copy` of the island factorization with reusable
 RHS/solution buffers. Results are row-identical to the serial sweep. The
@@ -559,7 +559,7 @@ end
 
 # the CGMES-result convenience overload lives in the adapters block
 # (src/adapters/cgmes_glue.jl): it dispatches on an adapter type, and the
-# core block must not reference adapter types at definition time (stage 5)
+# core block must not reference adapter types at definition time
 
 # Native-data convenience (issue #299): run on the net's own sc_sources
 # (filled by addExternalGrid!). An entirely empty container already yields

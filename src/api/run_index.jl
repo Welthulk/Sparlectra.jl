@@ -66,8 +66,8 @@ The history used a hard `"rectangular"` default whenever the run outcome
 carried no solver of its own. That claimed the rectangular Newton-Raphson
 power flow for every kind of run: a state estimation solves weighted least
 squares, a short circuit is a direct IEC 60909 solve, and an import
-analysis solves nothing at all. Reported by the maintainer 2026-09-06 on an
-SE run listed as `rectangular`.
+analysis solves nothing at all. Seen 2026-09-06 on an SE run listed as
+`rectangular`.
 
 The names match the configuration keys a user can set
 (`power_flow.method`, `state_estimation.method`), so the column and the

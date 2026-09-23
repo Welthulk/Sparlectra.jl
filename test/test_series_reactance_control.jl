@@ -53,8 +53,8 @@ function run_series_reactance_control_tests()
 
   _solved_state(net) = ([n._vm_pu for n in net.nodeVec], [n._va_deg for n in net.nodeVec])
 
-  @testset "Series reactance controller (#297)" begin
-    @testset "loop network: target reached within deadband" begin
+  @testset "Series reactance controller (#297)" begin (function ()
+    @testset "loop network: target reached within deadband" begin (function ()
       net = _build_loop_net()
       ctrl = addSeriesReactanceControl!(net; fromBus = "A", toBus = "M2", p_target_mw = 35.0, x_min_pu = 0.02, x_max_pu = 0.30)
       result = run_sparlectra(net = net)
@@ -70,9 +70,9 @@ function run_series_reactance_control_tests()
       br = getNetBranch(net = net, fromBus = "A", toBus = "M2")
       @test isapprox(br.x_pu, ctrl.x_pu; atol = 1e-12)
       @test ctrl.achieved_p_mw !== nothing
-    end
+    end)() end
 
-    @testset "out-of-range target: honest at_limit" begin
+    @testset "out-of-range target: honest at_limit" begin (function ()
       net = _build_loop_net()
       ctrl = addSeriesReactanceControl!(net; fromBus = "A", toBus = "M2", p_target_mw = 70.0, x_min_pu = 0.02, x_max_pu = 0.30)
       result = run_sparlectra(net = net)
@@ -83,9 +83,9 @@ function run_series_reactance_control_tests()
       @test !ctrl.converged
       p = get_branch_p_from_to_mw(net, "A", "M2")
       @test p < 70.0
-    end
+    end)() end
 
-    @testset "bit-identical baseline without the controller" begin
+    @testset "bit-identical baseline without the controller" begin (function ()
       net_plain = _build_loop_net()
       _, erg_a = runpf!(net_plain, 30, 1e-10, 0)
       @test erg_a == 0
@@ -100,9 +100,9 @@ function run_series_reactance_control_tests()
       @test vm_a == vm_b
       @test va_a == va_b
       @test ctrl.x_pu == 0.20
-    end
+    end)() end
 
-    @testset "element row vocabulary" begin
+    @testset "element row vocabulary" begin (function ()
       net = _build_loop_net()
       addSeriesReactanceControl!(net; fromBus = "A", toBus = "M2", p_target_mw = 35.0, x_min_pu = 0.02, x_max_pu = 0.30)
       rows = [r for r in controllableElements(net) if r.actuator == :series_x_pu]
@@ -116,9 +116,9 @@ function run_series_reactance_control_tests()
       @test row.actuator_min == 0.02
       @test row.actuator_max == 0.30
       @test row.discrete == false
-    end
+    end)() end
 
-    @testset "registration validation" begin
+    @testset "registration validation" begin (function ()
       net = _build_trafo_net()
       # transformer branch rejected (taps own transformer reactance)
       @test_throws ErrorException addSeriesReactanceControl!(net; fromBus = "A", toBus = "T", p_target_mw = 10.0, x_min_pu = 0.02, x_max_pu = 0.30)
@@ -151,9 +151,9 @@ function run_series_reactance_control_tests()
       net4 = _build_loop_net()
       addSeriesReactanceControl!(net4; fromBus = "A", toBus = "M2", p_target_mw = 35.0, x_min_pu = 0.02, x_max_pu = 0.30)
       @test_throws ErrorException addSeriesReactanceControl!(net4; fromBus = "A", toBus = "M2", p_target_mw = 20.0, x_min_pu = 0.02, x_max_pu = 0.30)
-    end
+    end)() end
 
-    @testset "classic print: count line, branch table, footer summary" begin
+    @testset "classic print: count line, branch table, footer summary" begin (function ()
       net = _build_loop_net()
       addSeriesReactanceControl!(net; fromBus = "A", toBus = "M2", p_target_mw = 35.0, x_min_pu = 0.02, x_max_pu = 0.30)
       result = run_sparlectra(net = net)
@@ -166,9 +166,9 @@ function run_series_reactance_control_tests()
       # the controlled branch row carries type, target, and status in the
       # generic controller columns of the branch table
       @test occursin(r"TCSC\s+\|\s+35\.000\s+\|\s+-\s+\|\s+converged", rendered)
-    end
+    end)() end
 
-    @testset "deadband: met target moves nothing" begin
+    @testset "deadband: met target moves nothing" begin (function ()
       net = _build_loop_net()
       # baseline corridor-2 flow is about 27.0 MW; a target inside the
       # deadband around the baseline must leave the actuator untouched
@@ -182,9 +182,9 @@ function run_series_reactance_control_tests()
       @test ctrl.converged
       @test ctrl.x_pu == 0.20
       @test ctrl.prev_x_pu === nothing
-    end
+    end)() end
 
-    @testset "SSSC injected-voltage limit mode (#297 Draft F)" begin
+    @testset "SSSC injected-voltage limit mode (#297 Draft F)" begin (function ()
       # registration validation: exactly one limit form
       vnet = _build_loop_net()
       @test_throws ErrorException addSeriesReactanceControl!(vnet; fromBus = "A", toBus = "M2", p_target_mw = 30.0, x_min_pu = 0.02, x_max_pu = 0.30, v_inj_max_pu = 0.05) # both forms
@@ -258,6 +258,6 @@ function run_series_reactance_control_tests()
       @test tctrl.converged
       trows = [r for r in controllableElements(tnet) if r.actuator == :series_x_pu]
       @test trows[1].device == "TCSC (series compensation)"
-    end
-  end
+    end)() end
+  end)() end
 end

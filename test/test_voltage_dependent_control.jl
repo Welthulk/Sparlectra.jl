@@ -23,11 +23,13 @@ using Sparlectra
 using Printf
 
 function run_voltage_dependent_control_tests()
-  @testset "Voltage dependent P(U)/Q(U) control" begin
+  @testset "Voltage dependent P(U)/Q(U) control" begin (function ()
     # Verifies piecewise-linear characteristic evaluation in normal range,
     # saturation outside the range, controller clipping, and kink derivative behavior.
-    @testset "Characteristic evaluation" begin
-      ch = PiecewiseLinearCharacteristic([(0.95, -0.2), (1.0, 0.0), (1.05, 0.2)])
+    @testset "Characteristic evaluation" begin (function ()
+      # the former name is an alias for one minor release (#14)
+      @test PiecewiseLinearCharacteristic === VoltageCharacteristic
+      ch = VoltageCharacteristic([(0.95, -0.2), (1.0, 0.0), (1.05, 0.2)])
 
       v_mid, dv_mid = evaluate_characteristic(ch, 0.975)
       @test isapprox(v_mid, -0.1; atol = 1e-12)
@@ -46,7 +48,7 @@ function run_voltage_dependent_control_tests()
       @test isapprox(q_val, 0.05; atol = 1e-12)
       @test q_slope == 0.0
 
-      ch_kink = PiecewiseLinearCharacteristic([(0.95, 0.2), (1.0, 0.0), (1.05, 0.2)])
+      ch_kink = VoltageCharacteristic([(0.95, 0.2), (1.0, 0.0), (1.05, 0.2)])
       v_kink, dv_kink = evaluate_characteristic(ch_kink, 1.0)
       _, dv_left = evaluate_characteristic(ch_kink, 1.0 - 1e-8)
       _, dv_right = evaluate_characteristic(ch_kink, 1.0 + 1e-8)
@@ -54,11 +56,11 @@ function run_voltage_dependent_control_tests()
       @test isapprox(dv_left, -4.0; atol = 1e-6)
       @test isapprox(dv_right, 4.0; atol = 1e-6)
       @test isapprox(dv_kink, dv_left; atol = 1e-12)
-    end
+    end)() end
 
     # Ensures helper constructors convert physical units (kV/MW/MVAr) to per-unit
     # points and limits consistently against the configured base values.
-    @testset "Physical-unit controller inputs (kV, MW, MVAr)" begin
+    @testset "Physical-unit controller inputs (kV, MW, MVAr)" begin (function ()
       ch_qu = make_characteristic([(104.5, 30.0), (110.0, 0.0), (115.5, -20.0)]; voltage_unit = :kV, value_unit = :MVAr, vn_kV = 110.0, sbase_MVA = 100.0)
       ch_pu = make_characteristic([(104.5, 20.0), (110.0, 10.0), (115.5, 0.0)]; voltage_unit = :kV, value_unit = :MW, vn_kV = 110.0, sbase_MVA = 100.0)
 
@@ -72,11 +74,11 @@ function run_voltage_dependent_control_tests()
       @test isapprox(qu.qmax_pu, 0.5; atol = 1e-12)
       @test isapprox(pu.pmin_pu, 0.0; atol = 1e-12)
       @test isapprox(pu.pmax_pu, 0.5; atol = 1e-12)
-    end
+    end)() end
 
     # Checks interpolation selection and fallback behavior:
     # linear (default), spline/polynomial exact point matching, and two-point fallback to linear.
-    @testset "Characteristic interpolation modes" begin
+    @testset "Characteristic interpolation modes" begin (function ()
       ch_many = make_characteristic([(0.90, 0.3), (0.95, 0.1), (1.0, 0.0), (1.05, -0.1), (1.10, -0.2)])
       @test length(ch_many.points) == 5
       val_many, slope_many = evaluate_characteristic(ch_many, 1.025)
@@ -110,11 +112,11 @@ function run_voltage_dependent_control_tests()
       val_two_poly, slope_two_poly = evaluate_characteristic(ch_two_points_poly, 1.0)
       @test isapprox(val_two_poly, 0.0; atol = 1e-12)
       @test isapprox(slope_two_poly, -2.0; atol = 1e-12)
-    end
+    end)() end
 
     # Confirms backward compatibility without controllers and validates
     # that controlled injections are used consistently during Newton-Raphson solving.
-    @testset "No-control compatibility and solver integration" begin
+    @testset "No-control compatibility and solver integration" begin (function ()
       net_plain = createTest3BusNet()
       V_plain = buildVoltageVector(net_plain)
       S_plain = buildComplexSVec(net_plain)
@@ -129,7 +131,7 @@ function run_voltage_dependent_control_tests()
       addACLine!(net = net, fromBus = "B1", toBus = "B2", length = 20.0, r = 0.05, x = 0.4)
 
       addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
-      qu_curve = PiecewiseLinearCharacteristic([(0.95, 0.4), (1.0, 0.0), (1.05, -0.2)])
+      qu_curve = VoltageCharacteristic([(0.95, 0.4), (1.0, 0.0), (1.05, -0.2)])
       addProsumer!(net = net, busName = "B2", type = "SYNCHRONOUSMACHINE", p = 20.0, q = 0.0, qu_controller = QUController(qu_curve, -0.5, 0.5))
       addProsumer!(net = net, busName = "B2", type = "ENERGYCONSUMER", p = 60.0, q = 20.0)
 
@@ -143,11 +145,11 @@ function run_voltage_dependent_control_tests()
       S_eval, _, _ = buildControlledSVec(net, V)
       qnet_expected = q_ctrl_pu * net.baseMVA - 20.0
       @test isapprox(imag(S_eval[2]) * net.baseMVA, qnet_expected; atol = 1e-8)
-    end
+    end)() end
 
     # Validates solver convergence when the operating point sits on a characteristic kink
     # and that the selected derivative matches the left-hand slope convention.
-    @testset "Solver operating point at characteristic kink" begin
+    @testset "Solver operating point at characteristic kink" begin (function ()
       net = Net(name = "kink_operating_point", baseMVA = 100.0)
       addBus!(net = net, busName = "B1", vn_kV = 110.0)
       addBus!(net = net, busName = "B2", vn_kV = 110.0)
@@ -155,7 +157,7 @@ function run_voltage_dependent_control_tests()
 
       addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
 
-      kink_curve = PiecewiseLinearCharacteristic([(0.95, 0.2), (1.0, 0.0), (1.05, 0.2)])
+      kink_curve = VoltageCharacteristic([(0.95, 0.2), (1.0, 0.0), (1.05, 0.2)])
       addProsumer!(
         net = net,
         busName = "B2",
@@ -174,11 +176,11 @@ function run_voltage_dependent_control_tests()
       _, slope_left = evaluate_characteristic(kink_curve, 1.0 - 1e-8)
       @test isapprox(vm, 1.0; atol = 1e-8)
       @test isapprox(slope_at, slope_left; atol = 1e-8)
-    end
+    end)() end
 
     # Verifies that result exports include control annotations/values and that the
     # structured report reflects the same controlled active/reactive injections.
-    @testset "Result printout shows Control column" begin
+    @testset "Result printout shows Control column" begin (function ()
       net = Net(name = "control_print_case", baseMVA = 100.0)
       for b in ("B1", "B2", "B3", "B4")
         addBus!(net = net, busName = b, vn_kV = 110.0)
@@ -227,17 +229,17 @@ function run_voltage_dependent_control_tests()
       @test isapprox(row_ctrl.q_gen_MVar, q_ctrl_mvar; atol = 1e-8)
       @test abs(row_slack.p_gen_MW) > 1e-6
       @test abs(row_slack.q_gen_MVar) > 1e-6
-    end
-  end
+    end)() end
+  end)() end
 
-  @testset "Voltage-dependent example is thin wrapper" begin
+  @testset "Voltage-dependent example is thin wrapper" begin (function ()
     source = read(joinpath(@__DIR__, "..", "examples", "powerflow", "example_voltage_dependent_control_rectangular.jl"), String)
     @test !occursin("DEFAULT_EXAMPLE_CFG = Dict", source)
     @test !occursin("load_voltage_ctrl_yaml", source)
     @test !occursin("_write_default_yaml_example", source)
     @test !occursin("eachline(path)", source)
     @test occursin("run_voltage_dependent_control_demo", source)
-  end
+  end)() end
 
   return true
 end

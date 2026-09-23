@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # file: src/adapters/cgmes/converter.jl
-# purpose: the CGMES adapter (adapter task stage 3c): convert_case runs the
+# purpose: the CGMES adapter: convert_case runs the
 #          proven configured import and captures the mapped network as the
 #          typed SCFCase. The source-system identity travels with the case:
 #          the full structural-key mRID registry in the namespaced meta and
@@ -30,7 +30,7 @@ struct CGMESAdapter <: FormatAdapter end
 """
     CGMESAdapterOptions
 
-The adapter-scope options of the CGMES conversion (design decision D4):
+The adapter-scope options of the CGMES conversion:
 the `cgmes_import` configuration surface plus the run kind the start-value
 decision may depend on.
 """
@@ -55,7 +55,7 @@ options_type(::CGMESAdapter) = CGMESAdapterOptions
 """
     import_net(::CGMESAdapter, path::AbstractString, opts::CGMESAdapterOptions; config = active_sparlectra_config()) -> Net
 
-The CGMES importer of the adapter contract (task_import_direct): the
+The CGMES importer of the adapter contract: the
 delivery builds natively through importCGMES. The method maps the
 adapter options that the importer consumes; the SV start-value
 decision and the run-kind gating live in the config-rich service
@@ -91,7 +91,7 @@ end
 Attach the CGMES source identity of `net` to its typed case: the full
 structural-key mRID registry as `meta["cgmes_ids"]`, and the mRID of every
 component whose extra record already resolved one under the `cgmes` key of
-that record (adapter task stage 3c surface).
+that record.
 """
 function cgmes_enrich_case!(case::SCFCase, net::Net)::SCFCase
   spar = case.sparlectra

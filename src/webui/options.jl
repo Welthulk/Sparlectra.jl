@@ -24,8 +24,8 @@ struct WebUIOptionSpec
   default::Any
   allowed_values::Any
   section::Symbol
-  # placement scope (stage 4B): :adapter = format-bound, generated on the
-  # Case page from options_type(adapter); :session = machine scope (D8:
+  # placement scope: :adapter = format-bound, generated on the
+  # Case page from options_type(adapter); :session = machine scope (the
   # output/benchmark/runtime/webui prefixes), never written to a case
   # configuration file; :case = everything a run of one case may carry.
   # Visibility stays in `section` (:basic / :expert).
@@ -37,20 +37,22 @@ const _WEBUI_QLIMIT_ENFORCEMENT_MODE_VALUES = (:active_set, :classic_simultaneou
 
 const _WEBUI_PERFORMANCE_TIMING_VALUES = WEBUI_PERFORMANCE_TIMING_VALUES
 
-# Visibility (stage 4B, criterion decided 2026-09-02): :basic exactly for
+# Visibility: :basic exactly for
 # the config keys that appear in at least one workshop under docs/lit or
 # in configuration.yaml.example without a default; every other config-key
 # spec is :expert. Request-only fields (config_key nothing) keep their own
 # visibility, the criterion covers the 63 config-backed form options.
-const WEBUI_OPTION_SPECS = (
+# A Vector, not a Tuple: Julia unrolls tuple iteration, and the filtered
+# comprehensions below over a hundred-element tuple cost seconds of
+# inference at every load
+const WEBUI_OPTION_SPECS = WebUIOptionSpec[
   WebUIOptionSpec("power_flow.mode", "power_flow_mode", String, :select, "manual", ("manual", "auto"), :expert, :case, true),
   WebUIOptionSpec("power_flow.tol", "power_flow_tol", Float64, :number, "1e-8", (), :basic, :case, true),
   # The UNIT of the tolerance value above. Not a configuration key of its
   # own: it decides which key the value becomes, power_flow.tol (pu) or
   # power_flow.tol_MW (megawatt, converted with the case base at run time).
   # One value field with a unit beats two fields side by side, which is how
-  # this started and read like two competing tolerances (maintainer,
-  # 2026-09-06).
+  # this started and read like two competing tolerances.
   WebUIOptionSpec(nothing, "power_flow_tol_unit", String, :select, "pu", ("pu", "MW"), :basic, :case, true),
   WebUIOptionSpec("power_flow.max_iter", "power_flow_max_iter", Int, :number, 80, (), :basic, :case, true),
   WebUIOptionSpec("power_flow.autodamp", "power_flow_autodamp", Bool, :checkbox, true, (), :expert, :case, true),
@@ -96,7 +98,7 @@ const WEBUI_OPTION_SPECS = (
   WebUIOptionSpec("power_flow.external_grid.source", "power_flow_external_grid_source", String, :select, "auto", EXTERNAL_GRID_SOURCE_VALUES, :expert, :case, true),
   WebUIOptionSpec("power_flow.external_grid.sk_MVA", "power_flow_external_grid_sk_mva", Float64, :number, 2000.0, (), :expert, :case, true),
   WebUIOptionSpec("power_flow.external_grid.rx", "power_flow_external_grid_rx", Float64, :number, 0.1, (), :expert, :case, true),
-  WebUIOptionSpec("power_flow.linear_solver", "power_flow_linear_solver", String, :select, "umfpack", POWERFLOW_LINEAR_SOLVER_VALUES, :expert, :case, true),
+  WebUIOptionSpec("power_flow.linear_solver", "power_flow_linear_solver", String, :select, "umfpack_reuse", POWERFLOW_LINEAR_SOLVER_VALUES, :expert, :case, true),
   WebUIOptionSpec("cgmes_import.start_values", "cgmes_start_values", String, :select, "auto", CGMES_START_VALUES_VALUES, :expert, :adapter, true),
   WebUIOptionSpec("cgmes_import.require_boundary", "cgmes_require_boundary", Bool, :checkbox, true, (), :basic, :adapter, true),
   WebUIOptionSpec("cgmes_import.infer_base_voltages", "cgmes_infer_base_voltages", Bool, :checkbox, false, (), :expert, :adapter, true),
@@ -125,7 +127,7 @@ const WEBUI_OPTION_SPECS = (
   # are what a form shows before the user touches anything, and a value that
   # differs here silently outranks the configured one. That is exactly how a
   # 25000-bus run kept estimating with k_suppress 6.0 while the
-  # configuration said 4.0 (task_se_bad_data_v0100). A test walks this list
+  # configuration said 4.0. A test walks this list
   # against StateEstimationConfig.
   # issue #377: these six carry a REAL config_key, so webui_form_state's
   # generic config resolution (_webui_config_field_values /
@@ -177,12 +179,12 @@ const WEBUI_OPTION_SPECS = (
   # render the field (state estimation) reads the same configured value
   WebUIOptionSpec("output.csv_format", "detailed_result_csv_format", String, :select, "technical", ("technical", "excel_de", "excel_us"), :basic, :session, false),
   WebUIOptionSpec(nothing, "export_cgmes", Bool, :checkbox, false, (), :basic, :case, true),
-)
+]
 
-const _WEBUI_OPTION_BY_FIELD = Dict(spec.field => spec for spec in WEBUI_OPTION_SPECS)
-const _WEBUI_FORM_CONFIG_FIELDS = Tuple((spec.config_key, spec.field, spec.value_type) for spec in WEBUI_OPTION_SPECS if spec.config_key !== nothing)
-const _WEBUI_CASE_PROFILE_EXTRA_FIELDS = Tuple(spec.field for spec in WEBUI_OPTION_SPECS if spec.config_key === nothing && spec.save_in_case_sidecar)
-const _WEBUI_CASE_PROFILE_FIELDS = Tuple(spec.field for spec in WEBUI_OPTION_SPECS if spec.save_in_case_sidecar)
+const _WEBUI_OPTION_BY_FIELD = Dict{String,WebUIOptionSpec}(spec.field => spec for spec in WEBUI_OPTION_SPECS)
+const _WEBUI_FORM_CONFIG_FIELDS = Tuple{String,String,Type}[(spec.config_key, spec.field, spec.value_type) for spec in WEBUI_OPTION_SPECS if spec.config_key !== nothing]
+const _WEBUI_CASE_PROFILE_EXTRA_FIELDS = String[spec.field for spec in WEBUI_OPTION_SPECS if spec.config_key === nothing && spec.save_in_case_sidecar]
+const _WEBUI_CASE_PROFILE_FIELDS = String[spec.field for spec in WEBUI_OPTION_SPECS if spec.save_in_case_sidecar]
 const _WEBUI_CASE_PROFILE_FIELD_TYPES = Dict{String,Type}(
   spec.field => spec.value_type for spec in WEBUI_OPTION_SPECS if spec.save_in_case_sidecar
 )
@@ -191,7 +193,7 @@ const _WEBUI_CASE_PROFILE_SELECT_VALUES = Dict{String,Set{String}}(
   spec.field => Set(string.(collect(spec.allowed_values))) for spec in WEBUI_OPTION_SPECS if spec.control == :select
 )
 
-# hygiene assert (stage 4B): the scope column must stay consistent with the
+# hygiene assert: the scope column must stay consistent with the
 # central case-scope predicate. Every :session key is machine scope, and no
 # case-config key may claim :session; a machine-scope key MAY sit in
 # :adapter when its placement is format-bound (matpower_export.*: the

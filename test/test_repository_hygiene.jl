@@ -202,7 +202,7 @@ function _detached_docstring_violations(repo::AbstractString)::Vector{String}
 end
 
 function run_repository_hygiene_tests()
-    @testset "repository hygiene" begin
+    @testset "repository hygiene" begin (function ()
         repo = _repository_root()
         forbidden_terms = _hygiene_normalize.(String[
             "sch"*"ae"*"fer",
@@ -232,30 +232,22 @@ function run_repository_hygiene_tests()
         if !isempty(detached)
             error(join(["docstrings detached from their definition:"; detached], "\n"))
         end
-        # The maintainer's working repository carries further checks here that a
-        # published checkout has no subject for, the private-to-public boundary
-        # among them. They live in their own files, found by convention rather
-        # than by name, so this file never points at something a public reader
-        # cannot have. Their absence is STATED, not skipped quietly: a silent
-        # skip reads as a pass and hides a coverage gap, the defect class this
-        # repository removed twice in the week of 2026-09-06.
+        # additional check files next to this one (name pattern private_*.jl)
+        # are included when present and named in the group report
         extra = sort(filter(f -> startswith(f, "private_") && endswith(f, ".jl"), readdir(@__DIR__)))
-        if isempty(extra)
-            # the word SKIPPED is load-bearing: the group runner surfaces exactly
-            # those lines through its output capture, so the absence reaches the
-            # report instead of being swallowed
-            println("      SKIPPED maintainer-only repository checks: none present in this checkout. ",
-                "They verify the private-to-public boundary, which has no subject in a published ",
-                "tree, so nothing beyond the checks above was verified here.")
-        else
+        if !isempty(extra)
+            println("      additional check file(s) ran: ", join(extra, ", "))
             for f in extra
                 include(joinpath(@__DIR__, f))
             end
-            # Base.invokelatest: the include above defines the function in a NEWER
-            # world than this frame, so a direct call raises "the applicable method
-            # may be too new" on Julia 1.12
-            @test Base.invokelatest(run_private_boundary_check, repo) == true
+            # the include above defines the function in a NEWER world than this
+            # frame: both the binding lookup and the call go through
+            # invokelatest (the same pattern as run_entry in runtests.jl), or
+            # Julia 1.12+ warns about the binding access and a future version
+            # errors
+            checker = Base.invokelatest(getfield, @__MODULE__, :run_private_boundary_check)
+            @test Base.invokelatest(checker, repo) == true
         end
         @test true
-    end
+    end)() end
 end

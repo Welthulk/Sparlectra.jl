@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # file: src/adapters/matpower/converter.jl
-# purpose: the MATPOWER adapter (adapter task stage 3a): convert_case turns
+# purpose: the MATPOWER adapter: convert_case turns
 #          a parsed MatpowerCase into the typed SCFCase, so the network is
 #          constructed by build_net like every other format. The conversion
 #          mirrors createNetFromMatPowerCase's interpretation rules field
@@ -26,7 +26,7 @@ struct MatpowerAdapter <: FormatAdapter end
 """
     MatpowerAdapterOptions
 
-The adapter-scope options of the MATPOWER conversion (design decision D4):
+The adapter-scope options of the MATPOWER conversion:
 the import conventions plus the model settings that are consumed WHILE the
 case is interpreted (the tap-changer impedance correction rewrites R/X at
 conversion time). Field names follow the configuration keys.
@@ -61,7 +61,7 @@ options_type(::MatpowerAdapter) = MatpowerAdapterOptions
 """
     import_net(::MatpowerAdapter, mpc, opts::MatpowerAdapterOptions; kwargs...) -> Net
 
-The MATPOWER importer of the adapter contract (task_import_direct):
+The MATPOWER importer of the adapter contract:
 builds the network DIRECTLY from the parsed case;
 `createNetFromMatPowerCase` is its implementation and keeps its exported
 name and signature. The opts cover the adapter scope; run-scope knobs
@@ -210,7 +210,7 @@ function convert_case(::MatpowerAdapter, mpc, opts::MatpowerAdapterOptions)::SCF
     vmax == 1.1 || (e["vmax_pu"] = vmax)
     haskey(bus_original_name_by_orig, orig) && (e["original_name"] = bus_original_name_by_orig[orig])
     extra[string(id)] = e
-    # start values (D10): the case's own operating point, with the PV and
+    # start values: the case's own operating point, with the PV and
     # slack setpoint override the direct import applies via setVmVa!
     vm = Float64(row[VM])
     vm = vm <= 0.0 ? 1.0 : vm

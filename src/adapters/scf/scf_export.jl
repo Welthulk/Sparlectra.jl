@@ -958,13 +958,13 @@ end
 # characteristic and is written as one. The check is EXACT on those two
 # voltages: a constant two-point controller a user set deliberately at other
 # voltages is a characteristic and stays one.
-function _scf_matpower_constant(ch::PiecewiseLinearCharacteristic, setpoint_pu::Float64)::Bool
+function _scf_matpower_constant(ch::VoltageCharacteristic, setpoint_pu::Float64)::Bool
   ch.interpolation === :linear && length(ch.points) == 2 || return false
   (u1, y1), (u2, y2) = ch.points
   return u1 == 0.0 && u2 == 2.0 && y1 == y2 && isapprox(y1, setpoint_pu; rtol = 1.0e-12, atol = 1.0e-15)
 end
 
-function _scf_characteristic_dict(ch::PiecewiseLinearCharacteristic, lo, hi, lo_key::AbstractString, hi_key::AbstractString, s_base::Float64)
+function _scf_characteristic_dict(ch::VoltageCharacteristic, lo, hi, lo_key::AbstractString, hi_key::AbstractString, s_base::Float64)
   d = Dict{String,Any}("points" => [[u, y] for (u, y) in ch.points])
   # the constructor's default is not written, like every other default
   ch.interpolation === :linear || (d["interpolation"] = String(ch.interpolation))
@@ -1187,11 +1187,11 @@ function net_to_scf(
   # The writer emits no `sparlectra.config` block any more: a case's
   # settings live in its case configuration file (`<stem>.config.yaml`,
   # write_case_config). The reader still accepts the block as the
-  # deprecated precedence level directly below that file (D7).
+  # deprecated precedence level directly below that file.
   # study definitions: what to compute, not what came out. The result
   # contract is untouched; these blocks only describe the study.
   contingencies === nothing || (spar["contingencies"] = Dict{String,Any}(String(k) => v for (k, v) in contingencies))
-  # the scenario block (scenario task D3): the scenario-aware path writes
+  # the scenario block: the scenario-aware path writes
   # scenarios; the deprecated contingencies keyword keeps its historical
   # emission for existing callers
   scenarios === nothing || (spar["scenarios"] = Dict{String,Any}(String(k) => v for (k, v) in scenarios))
@@ -1329,7 +1329,7 @@ end
 """
     net_to_scfcase(net; kwargs...) -> SCFCase
 
-The typed case of `net` (design decision D1): what [`exportSCF`](@ref)
+The typed case of `net`: what [`exportSCF`](@ref)
 writes, as the in-memory [`SCFCase`](@ref). Takes the same keyword
 arguments as [`exportSCF`](@ref); pure, the network is not modified. The
 document assembly stays the deterministic dict builder (`net_to_scf`),

@@ -528,6 +528,11 @@ function getEffectiveBusType(; net::Net, busName::String)::NodeType
   return getEffectiveBusType(net, busIdx)
 end
 
+# the stamping happens exactly once per
+# importer; this atomic exists for the format test that proves it and
+# costs one integer add per import
+const _NET_PARAM_STAMP_COUNT = Base.Threads.Atomic{Int}(0)
+
 """
     _apply_config_net_parameters!(net, pf_cfg) -> Net
 
@@ -552,11 +557,6 @@ library use, SE internals) follow the configuration that was in hand at
 import. The two switching parameters have no such override and are read off
 the network on every path.
 """
-# task_import_direct D12 audit: the stamping happens exactly once per
-# importer; this atomic exists for the format test that proves it and
-# costs one integer add per import
-const _NET_PARAM_STAMP_COUNT = Base.Threads.Atomic{Int}(0)
-
 function _apply_config_net_parameters!(net::Net, pf_cfg)
   Base.Threads.atomic_add!(_NET_PARAM_STAMP_COUNT, 1)
   net.cooldown_iters = pf_cfg.qlimits.cooldown_iters
@@ -1408,7 +1408,7 @@ function addExternalGrid!(;
     (isfinite(rx_min) && rx_min >= 0.0) || throw(ArgumentError("addExternalGrid!: rx_min must be finite and >= 0; got $(rx_min)."))
   end
 
-  # Task decision (issue #299): a declared minimum feeder without its own
+  # Issue #299: a declared minimum feeder without its own
   # ratio inherits rx_max instead of `nothing`, so the :min case does not
   # flag "no usable R/X ratio" for data the user deliberately provided.
   eff_rx_min = rx_min !== nothing ? rx_min : (sk_min_MVA !== nothing ? rx_max : nothing)
@@ -1674,20 +1674,6 @@ function setNetBranchStatus!(; net::Net, branchNr::Int, status::Int)
   setBranchStatus!(net.branchVec[branchNr], status == 1)
   markIsolatedBuses!(net = net, log = false)
 end
-
-"""
-    setBusVoltage!(; net::Net, busName::String, vm_pu::Float64, va_deg::Float64)
-Sets the voltage magnitude and angle of a bus in the network.
-# Arguments
-- `net::Net`: The network.
-- `busName::String`: The name of the bus.
-- `vm_pu::Float64`: The voltage magnitude in per unit.
-- `va_deg::Float64`: The voltage angle in degrees.
-# Example 
-```julia
-setBusVoltage!(net = network, busName = "Bus1", vm_pu = 1.02, va_deg = 5.0) 
-```
-"""
 
 """
     setNodeVoltage!(; net, busName, vm_pu, va_deg)
@@ -2059,19 +2045,6 @@ function buildQLimits!(net::Net; reset::Bool = true)
 end
 
 """
-    setQLimits!(; net::Net,
-                 qmin_MVar::Float64,
-                 qmax_MVar::Float64,
-                 busName::Union{Nothing,String}=nothing)
-
-Sets the reactive power (Q) limits of generator prosumers and then rebuilds
-the aggregated bus-level Q-limits (`qmin_pu`, `qmax_pu`).
-
-- Without `busName`: all generators receive the specified `qmin_MVar`/`qmax_MVar`.
-- With `busName`: only generators connected to the specified bus receive the new limits.
-"""
-
-"""
     setQLimits!(; net, qmin_MVar, qmax_MVar, busName = nothing)
 
 Set the reactive band of the regulating machines, at one bus, a list of
@@ -2109,12 +2082,6 @@ function setQLimits!(; net::Net, qmin_MVar::Float64, qmax_MVar::Float64, busName
 
   return nothing
 end
-
-"""
-    setPVBusVset!(net::Net, busName::String; vm_pu::Float64)
-  Sets the voltage magnitude setpoint for a PV bus in the network.
-  Only applicable for buses of type "PV" and for testing purpose.
-"""
 
 """
     setPVBusVset!(; net, busName, vm_pu)

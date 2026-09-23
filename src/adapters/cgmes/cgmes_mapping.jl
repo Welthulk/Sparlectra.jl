@@ -16,7 +16,7 @@
 # purpose: layer 5 of the CGMES importer — map CIM objects onto the
 # Sparlectra Net (Stage 1: bus-branch, lines, 2W/3W transformers with fixed
 # SSH tap positions, shunts, loads, machines, equivalent injections, slack
-# selection D-2). Short-circuit source data is always harvested into
+# selection). Short-circuit source data is always harvested into
 # `CGMESShortCircuitData` — read, not evaluated.
 
 """
@@ -1261,7 +1261,7 @@ function _pvVoltage(net, bus::String, vset::Union{Nothing,Float64})::Float64
   return something(node._vm_pu, 1.0)
 end
 
-# slack candidate bookkeeping for decision D-2
+# slack candidate bookkeeping for the slack selection
 #
 # The tuples are laid out so that plain ascending `sort!` implements the ranking:
 # priority ascending (lower referencePriority = stronger, 0.0 is reserved for the
@@ -2180,7 +2180,7 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
       continue
     end
     bus = _busForTerminal!(net, created, topo, svmap, ctx, ei, 1, t.tn)
-    # decision D-5: regulationStatus + positive target → PV-like boundary
+    # regulationStatus + positive target → PV-like boundary
     vset = nothing
     if something(boolval(ei, :regulationStatus), false)
       target = num(ei, :regulationTarget, 0.0)

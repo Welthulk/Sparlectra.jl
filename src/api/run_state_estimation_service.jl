@@ -30,7 +30,7 @@ entry point. Throws on unsupported formats and on import errors. Shared by
 the SE service run and the Web UI measurement generator so both accept
 exactly the same cases, and both run with `ImportedCase.config` (the
 CGMES start-value decision and the auto-profile rewrites reach the SE
-solves exactly like the power-flow service, step 3a of the adapter task).
+solves exactly like the power-flow service).
 """
 function _se_import_case(case_path::AbstractString, config; requested_format::Symbol = :auto)::ImportedCase
   format = _detect_case_format(String(case_path); requested = requested_format)
@@ -176,7 +176,7 @@ end
 ## short (it starts from a converged state), so reporting only that one hid
 ## the expensive half: a CGMES run needed 36 to 40 iterations first and
 ## reported "3", which is how an iteration cap of 30 could look sufficient
-## while it broke that run (maintainer, 2026-09-06).
+## while it broke that run (seen 2026-09-06).
 function _se_reported_iterations(res)::Int
   base = res.iterations
   tf = res.tapFixation
@@ -206,31 +206,6 @@ function _se_service_import(case_path, config, run_id, config_file, output_dir, 
   return imported, format, nothing
 end
 
-"""
-    _run_state_estimation_service(case_path, config_file, output_dir, run_id, measurement_file; kwargs...) -> SparlectraApiResult
-
-Service backend of the Web UI "Run state estimation" action (SE phase 5).
-Builds the net through the shared import paths, reads `measurement_file`
-(measurement CSV v1, atomic), evaluates global observability (structural
-islands plus FD-aware rank, phase 4), runs the bad-data diagnostics
-(`runse_diagnostics`, sequential elimination on the configured budget) and
-the final `runse!(updateNet = true)`, and writes the SE artifacts:
-`measurements.csv` (copy), `se_diagnostics.md`, `se_view.md`,
-`shunt_estimates.csv` (when shunts were released), and `se_state.csv` (the
-chain anchor a later SE-started power flow consumes via `readSEStateCSV!`).
-
-Options: `max_iter`, `tol`, `flatstart`, `robust`, `max_eliminations`,
-`update_shunts`, `report_correlation` mirror the estimator keywords.
-`tap_estimation = true` releases the tap of every in-service transformer
-that carries a ratio tap changer (`setTapEstimation!` mode `:ratio`) before
-the solve; the estimator then fixes each tap to its nearest mechanical step
-and reports J before versus after the fixation (`se_tap_estimates.csv`).
-
-Failure reasons: `se_unsupported_format`, `import_error`,
-`invalid_measurements` (missing/unreadable/rejected file),
-`se_not_observable` (observability quality `:not_observable`),
-`se_not_converged`, plus the shared config failure.
-"""
 ## headline mapping for the state-estimation timing file
 const _SE_PERF_HEADLINE = (:case_loading_network_solver => "importing_case", :solver => "state_estimation", :postprocessing => "postprocessing_result", :artifact_writing => "writing_artifacts")
 
@@ -281,6 +256,31 @@ function _se_log_criticality(io::IO, net::Net, obs)
   return nothing
 end
 
+"""
+    _run_state_estimation_service(case_path, config_file, output_dir, run_id, measurement_file; kwargs...) -> SparlectraApiResult
+
+Service backend of the Web UI "Run state estimation" action (SE phase 5).
+Builds the net through the shared import paths, reads `measurement_file`
+(measurement CSV v1, atomic), evaluates global observability (structural
+islands plus FD-aware rank, phase 4), runs the bad-data diagnostics
+(`runse_diagnostics`, sequential elimination on the configured budget) and
+the final `runse!(updateNet = true)`, and writes the SE artifacts:
+`measurements.csv` (copy), `se_diagnostics.md`, `se_view.md`,
+`shunt_estimates.csv` (when shunts were released), and `se_state.csv` (the
+chain anchor a later SE-started power flow consumes via `readSEStateCSV!`).
+
+Options: `max_iter`, `tol`, `flatstart`, `robust`, `max_eliminations`,
+`update_shunts`, `report_correlation` mirror the estimator keywords.
+`tap_estimation = true` releases the tap of every in-service transformer
+that carries a ratio tap changer (`setTapEstimation!` mode `:ratio`) before
+the solve; the estimator then fixes each tap to its nearest mechanical step
+and reports J before versus after the fixation (`se_tap_estimates.csv`).
+
+Failure reasons: `se_unsupported_format`, `import_error`,
+`invalid_measurements` (missing/unreadable/rejected file),
+`se_not_observable` (observability quality `:not_observable`),
+`se_not_converged`, plus the shared config failure.
+"""
 function _run_state_estimation_service(
   case_path::AbstractString,
   config_file::AbstractString,
@@ -317,6 +317,60 @@ function _run_state_estimation_service(
   # setting of the form was lost on the way (the CSV format among them)
   config_overrides::AbstractDict = Dict{String,Any}(),
 )::SparlectraApiResult
+  # the callback and the overrides arrive in a different type from every call
+  # site; behind `_SeRunOptions` the 700-line body below has one
+  # specialization (the same arrangement as `_run_sparlectra_api`)
+  options = _SeRunOptions(max_iter, tol, flatstart, robust, max_eliminations, report_correlation, k_eliminate, robust_mode, robust_k1,
+    robust_k2, k_suppress, suppression_sigma, phase_callback, config_overrides)
+  return _run_state_estimation_service_body(String(case_path), String(config_file), String(output_dir), run_id, String(measurement_file),
+    update_shunts, tap_estimation, case_format, options)
+end
+
+# the optional solver settings keep their Union types as fields: a positional
+# argument of Union type is specialized per concrete value type (`nothing` or
+# a number, eight variants in one test group), a struct field is not
+struct _SeRunOptions
+  max_iter::Union{Nothing,Int}
+  tol::Union{Nothing,Float64}
+  flatstart::Union{Nothing,Bool}
+  robust::Union{Nothing,Bool}
+  max_eliminations::Union{Nothing,Int}
+  report_correlation::Union{Nothing,Bool}
+  k_eliminate::Union{Nothing,Float64}
+  robust_mode::Union{Nothing,Symbol}
+  robust_k1::Union{Nothing,Float64}
+  robust_k2::Union{Nothing,Float64}
+  k_suppress::Union{Nothing,Float64}
+  suppression_sigma::Union{Nothing,Float64}
+  phase_callback::Any
+  config_overrides::Any
+end
+
+function _run_state_estimation_service_body(
+  case_path::String,
+  config_file::String,
+  output_dir::String,
+  run_id::String,
+  measurement_file::String,
+  update_shunts::Bool,
+  tap_estimation::Bool,
+  case_format::Symbol,
+  options::_SeRunOptions,
+)::SparlectraApiResult
+  max_iter = options.max_iter
+  tol = options.tol
+  flatstart = options.flatstart
+  robust = options.robust
+  max_eliminations = options.max_eliminations
+  report_correlation = options.report_correlation
+  k_eliminate = options.k_eliminate
+  robust_mode = options.robust_mode
+  robust_k1 = options.robust_k1
+  robust_k2 = options.robust_k2
+  k_suppress = options.k_suppress
+  suppression_sigma = options.suppression_sigma
+  phase_callback = options.phase_callback
+  config_overrides = options.config_overrides
   mkpath(output_dir)
   logfile = joinpath(output_dir, "run.log")
   result_file = joinpath(output_dir, "result.json")
@@ -345,7 +399,7 @@ function _run_state_estimation_service(
   end
   se_total_start = time_ns()
 
-  # the same precedence the power-flow path uses (resolve_config, D5):
+  # the same precedence the power-flow path uses (resolve_config):
   # case configuration file, the case file's deprecated block, general
   # file, defaults
   se_phase("preparing_configuration")
@@ -624,8 +678,8 @@ function _run_state_estimation_service(
   # Released taps are extra states, and a measurement set that carries the
   # voltages fine can still be too thin to pin them: the estimate then does
   # not settle at all and the user gets nothing, although the SAME set
-  # estimates cleanly without the taps (maintainer, 2026-09-06, case300 and
-  # a CGMES delivery). So a non-convergence WITH released taps is not the
+  # estimates cleanly without the taps (seen 2026-09-06 on case300 and a
+  # CGMES delivery). So a non-convergence WITH released taps is not the
   # final answer: the taps are frozen back to their model position and the
   # estimation is repeated once. The log says it happened, because a silent
   # retry would hide that the reported taps are model values, not estimates.
@@ -665,8 +719,7 @@ function _run_state_estimation_service(
     # model values, so the J of this run measures THEM
     tap_fallback_used && println(io, "\n> **Tap estimation fallback.** ", _SE_TAP_FALLBACK_NOTE, "\n")
     print_se_diagnostics(io, diag; topN = 15, format = :markdown)
-    # the critical rows by name (maintainer rule 2026-09-21: a detected
-    # critical measurement is stated, never left to be read off the wii)
+    # the critical rows by name (a detected critical measurement is stated, never left to be read off the wii)
     println(io, "\n## Critical measurements\n")
     for line in _se_criticality_lines(net, obs)
       println(io, "- ", strip(line))
@@ -699,8 +752,8 @@ function _run_state_estimation_service(
       end
     end
   end
-  # machine transformers are CALCULATED, never estimated (maintainer
-  # directive): their tap is no state variable, so after the estimation the
+  # machine transformers are CALCULATED, never estimated: their
+  # tap is no state variable, so after the estimation the
   # position is back-calculated from the AVR setpoint, the dispatch P, and
   # the MEASURED machine Q (the Qinj telemetry at the machine bus when the
   # set carries it). The evaluation marks these rows as "calculated".
@@ -726,7 +779,7 @@ function _run_state_estimation_service(
     end
   end
 
-  # bad data at a glance (maintainer request 2026-08-27): every suspicious
+  # bad data at a glance: every suspicious
   # or eliminated measurement with its network location in one CSV; the
   # diagnostics markdown keeps the full ranking, this is the extract to
   # open first. se_state.csv stays untouched: it is the machine-read chain
@@ -1039,7 +1092,7 @@ function _run_pf_from_se_service(case_path::AbstractString, config_file::Abstrac
 
   se_mode in ("se_state", "se_snapshot") || return _api_failure("invalid_request", "se_start_mode must be \"se_state\" or \"se_snapshot\", got \"$(se_mode)\".", run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
 
-  # the same precedence the power-flow path uses (resolve_config, D5):
+  # the same precedence the power-flow path uses (resolve_config):
   # case configuration file, the case file's deprecated block, general
   # file, defaults
   config = try

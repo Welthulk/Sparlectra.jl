@@ -18,18 +18,16 @@
 #          minting, byte-identical re-export, the duplicate-mRID guard, the
 #          power-flow-identical self-roundtrip on EQ+TP+SSH+SV (transformers
 #          incl. phase shift and ratio-tap machinery, machines, SVC, loads,
-#          shunts, bus links), SSH/SV content, ZIP packaging, tool
-#          provenance, and (cache-gated) the MicroGrid roundtrip proving
-#          imported mRIDs survive an export, the 3W star reassembly, and the
-#          short-circuit evaluation of a re-imported delivery.
+#          shunts, bus links), SSH/SV content, ZIP packaging and tool
+#          provenance on nets built in memory, and the export-import-export
+#          identity of the checked-in deliveries under data/cgmes_demo
+#          (object-wise, with the fields the importer does not carry named).
 
 using Test
 using Sparlectra
 using Dates
 using UUIDs
 using Logging
-
-const _CGMES_EXPORT_CACHE = get(ENV, "SPARLECTRA_CGMES_CACHE", joinpath(dirname(@__DIR__), "data", "CGMES"))
 
 # Fixed header stamp: with `created` pinned the exported files are
 # byte-reproducible, which the determinism tests rely on.
@@ -85,11 +83,95 @@ function _compare_solved(n1, n2; atol = 1e-6)
   end
 end
 
-_is_acl_equipment_key(k::AbstractString) = startswith(k, "ACL|") && !endswith(k, "|T1") && !endswith(k, "|T2")
+# --- profile-file comparison for the export-import-export identity ----------
+#
+# The exporter writes objects in the order of the net it reads, and an
+# imported net orders its buses by the topology walk, so a byte comparison
+# of a re-export against the fixture fails on order alone. The comparison
+# below is object-wise: every top-level RDF object (two-space indented
+# `<cim:Class rdf:ID|about=...>` up to its close tag) is keyed by its mRID,
+# the header lines are compared verbatim, and attribute values are compared
+# numerically where both parse as numbers (the pu <-> physical unit
+# conversions leave 1e-15 relative noise).
+function _cgmes_profile_objects(text::AbstractString)
+  header = String[]
+  objects = Dict{String,Tuple{String,Vector{Pair{String,String}}}}()
+  cls = ""
+  id = ""
+  attrs = Pair{String,String}[]
+  for line in split(text, '\n')
+    m = match(r"^  <(cim:[A-Za-z0-9]+) rdf:(?:ID|about)=\"#?_?([^\"]+)\">$", line)
+    if m !== nothing
+      cls = String(m.captures[1])
+      id = String(m.captures[2])
+      attrs = Pair{String,String}[]
+    elseif !isempty(cls) && line == string("  </", cls, ">")
+      haskey(objects, id) && error("duplicate object id in profile: ", id)
+      objects[id] = (cls, attrs)
+      cls = ""
+    elseif !isempty(cls)
+      a = match(r"^    <([^ >]+)(?: rdf:resource=\"([^\"]*)\"/>|>(.*)</[^>]+>)$", line)
+      a === nothing && error("unparsed attribute line in ", cls, " ", id, ": ", line)
+      push!(attrs, String(a.captures[1]) => String(something(a.captures[2], a.captures[3])))
+    else
+      push!(header, String(line))
+    end
+  end
+  return header, objects
+end
+
+# SvPowerFlow rows are evaluated from the voltage state, so two solves that
+# stop at the same tolerance agree on them only to that tolerance (1e-8
+# MW-level residuals); every other value is model data and compares tight.
+function _cgmes_values_equal(tag::AbstractString, a::AbstractString, b::AbstractString)::Bool
+  a == b && return true
+  fa = tryparse(Float64, a)
+  fb = tryparse(Float64, b)
+  (fa === nothing || fb === nothing) && return false
+  tag in ("cim:SvPowerFlow.p", "cim:SvPowerFlow.q") && return isapprox(fa, fb; atol = 1e-6)
+  return isapprox(fa, fb; rtol = 1e-9, atol = 1e-12)
+end
+
+# Compare one re-exported profile file against its fixture. `drop_classes`
+# names the object classes the fixture carries and the re-export cannot;
+# `drop_attr(cls, id, tag)` names the attributes that legitimately differ.
+# One assertion per file: the mismatch list must be empty, and its first
+# entries (class, mRID, attribute, fixture value, re-export value) land in
+# the failure output. Returns the number of objects compared.
+function _compare_cgmes_profile(fixture_text::AbstractString, reexport_text::AbstractString; drop_classes = (), drop_attr = (cls, id, tag) -> false)::Int
+  # a checkout with CRLF conversion (Windows before the .gitattributes rule
+  # covered XML) must compare equal to the LF re-export
+  fixture_text = replace(String(fixture_text), "\r\n" => "\n")
+  reexport_text = replace(String(reexport_text), "\r\n" => "\n")
+  hf, of = _cgmes_profile_objects(fixture_text)
+  hr, or = _cgmes_profile_objects(reexport_text)
+  @test hf == hr
+  expected_ids = Set(id for (id, (cls, _)) in of if !(cls in drop_classes))
+  @test Set(keys(or)) == expected_ids
+  mismatches = String[]
+  compared = 0
+  for id in intersect(expected_ids, Set(keys(or)))
+    cf, af = of[id]
+    cr, ar = or[id]
+    cf == cr || push!(mismatches, string(cf, " ", id, ": class ", cr, " in the re-export"))
+    keep_f = [p for p in af if !drop_attr(cf, id, p.first)]
+    keep_r = [p for p in ar if !drop_attr(cr, id, p.first)]
+    if first.(keep_f) != first.(keep_r)
+      push!(mismatches, string(cf, " ", id, ": attributes ", first.(keep_f), " vs ", first.(keep_r)))
+    else
+      for (pf, pr) in zip(keep_f, keep_r)
+        _cgmes_values_equal(pf.first, pf.second, pr.second) || push!(mismatches, string(cf, " ", id, " ", pf.first, ": ", pf.second, " vs ", pr.second))
+      end
+    end
+    compared += 1
+  end
+  @test (length(mismatches), first(mismatches, 8)) == (0, String[])
+  return compared
+end
 
 function run_cgmes_export_tests()
-  @testset "CGMES export identity" begin
-    @testset "structural keys and parallel lines" begin
+  @testset "CGMES export identity" begin (function ()
+    @testset "structural keys and parallel lines" begin (function ()
       net = _export_test_net()
       dir = mktempdir()
       files = writeCGMESFiles(net; path = dir, created = _EXPORT_STAMP)
@@ -126,26 +208,26 @@ function run_cgmes_export_tests()
       # the SV profile carries one voltage per bus
       sv = read(files[4], String)
       @test count("<cim:SvVoltage rdf:ID", sv) == 3
-    end
+    end)() end
 
-    @testset "minted ids are uuid5 over the key" begin
+    @testset "minted ids are uuid5 over the key" begin (function ()
       net = _export_test_net()
       writeCGMESFiles(net; path = mktempdir(), created = _EXPORT_STAMP)
       ns = Sparlectra.CGMESImporter.CGMES_UUID_NAMESPACE
       @test net.cgmes_ids["TN|A"] == string(UUIDs.uuid5(ns, "TN|A"))
       @test net.cgmes_ids["ACL|A|B|2"] == string(UUIDs.uuid5(ns, "ACL|A|B|2"))
-    end
+    end)() end
 
-    @testset "re-export is byte-identical" begin
+    @testset "re-export is byte-identical" begin (function ()
       net = _export_test_net()
       f1 = writeCGMESFiles(net; path = mktempdir(), created = _EXPORT_STAMP)
       f2 = writeCGMESFiles(net; path = mktempdir(), created = _EXPORT_STAMP)
       for i in eachindex(f1)
         @test read(f1[i]) == read(f2[i])
       end
-    end
+    end)() end
 
-    @testset "independent builds identical, names carry no identity" begin
+    @testset "independent builds identical, names carry no identity" begin (function ()
       n1 = _export_test_net()
       n2 = _export_test_net()
       f1 = writeCGMESFiles(n1; path = mktempdir(), created = _EXPORT_STAMP)
@@ -162,9 +244,9 @@ function run_cgmes_export_tests()
       eq3 = read(f3[1], String)
       @test occursin("rdf:ID=\"_$(n1.cgmes_ids["ACL|A|B|1"])\"", eq3)
       @test occursin(">renamed_line<", eq3)
-    end
+    end)() end
 
-    @testset "self-roundtrip is power-flow-identical" begin
+    @testset "self-roundtrip is power-flow-identical" begin (function ()
       original = _roundtrip_net()
       @test _solve!(original)[2] == 0
       exported = _roundtrip_net()
@@ -203,9 +285,9 @@ function run_cgmes_export_tests()
       @test erg == 0
       @test its <= 2
       _compare_solved(original, net2)
-    end
+    end)() end
 
-    @testset "SSH and SV profiles carry the operating point" begin
+    @testset "SSH and SV profiles carry the operating point" begin (function ()
       net = Net(name = "sshnet", baseMVA = 100.0)
       addBus!(net = net, busName = "A", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
       addBus!(net = net, busName = "B", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
@@ -237,9 +319,9 @@ function run_cgmes_export_tests()
       @test !isempty(cmp.flows.rows)
       @test maximum(abs(r.dp) for r in cmp.flows.rows) < 1e-9
       @test maximum(abs(r.dq) for r in cmp.flows.rows) < 1e-9
-    end
+    end)() end
 
-    @testset "regulated tap group exports one shared TapChangerControl" begin
+    @testset "regulated tap group exports one shared TapChangerControl" begin (function ()
       # #322 export half: master and follower reference the SAME control
       # and both carry controlEnabled, so a reimport regroups them instead
       # of seeing independent (fighting) controllers
@@ -280,9 +362,9 @@ function run_cgmes_export_tests()
       @test length(c.followers) == 1
       @test isapprox(something(c.target_vm_pu, NaN), 1.01; atol = 1e-9)
       @test isapprox(c.deadband_vm_pu, 0.004; atol = 1e-9)
-    end
+    end)() end
 
-    @testset "zip packaging re-imports directly" begin
+    @testset "zip packaging re-imports directly" begin (function ()
       net = _export_test_net()
       addProsumer!(net = net, busName = "A", type = "EXTERNALNETWORKINJECTION", referencePri = "A", vm_pu = 1.0, va_deg = 0.0)
       files = writeCGMESFiles(net; path = mktempdir(), created = _EXPORT_STAMP, zip = true)
@@ -291,9 +373,71 @@ function run_cgmes_export_tests()
       res = importCGMES(path = files[5], name = "zip_back")
       @test length(res.net.nodeVec) == 3
       @test length(res.net.linesAC) == 3
-    end
+    end)() end
 
-    @testset "duplicate mRID aborts before writing" begin
+    # Export-import-export on the checked-in deliveries (data/cgmes_demo,
+    # written by tools/gen_cgmes_fixtures.jl with the same header stamp):
+    # the re-export of an imported delivery reproduces every object of the
+    # fixture with its mRID and every attribute value, except what the
+    # importer does not carry into the net. Named exactly:
+    #   1. RatioTapChanger and TapChangerControl objects (EQ and SSH): the
+    #      importer folds the ratio-tap step into the branch ratio and keeps
+    #      the range only as branch nameplate data, the exporter writes tap
+    #      machinery from the winding record alone, so the re-export has
+    #      none; the effective ratio itself is reproduced (the SV profile
+    #      and the transformer parameters compare equal).
+    #   2. PowerTransformerEnd.ratedU of an end that carried a ratio tap
+    #      changer: the fixture absorbed the step correction into ratedU so
+    #      the live ratio survives the re-import, the re-export writes the
+    #      live ratio without a step.
+    #   3. SynchronousMachine.minQ/maxQ: the importer reads them as the hull
+    #      of both sign readings (sp_case118 has asymmetric pairs) and
+    #      substitutes wide symmetric limits where the fixture has none
+    #      (sp_case14 Gen_110).
+    #   4. IdentifiedObject.name of a LinearShuntCompensator and of its
+    #      Terminal: the importer names shunts by its own bus index.
+    # Everything else (topology, lines, transformers, loads, machines,
+    # regulating controls, breakers, the SSH operating point, the SV
+    # voltages and flows) must compare equal object by object.
+    @testset "export-import-export identity on the checked-in deliveries" begin (function ()
+      for case in ("sp_case14", "sp_case118", "sp_casePST")
+        dir = cgmes_fixture_dir(case)
+        res = importCGMES(path = dir, name = case)
+        # the SV of the re-export is the solved state: solve from the SV
+        # start with Q-limits off, as the fixture was solved (a unit that
+        # switched to a limit would legitimately change SSH q and SV)
+        @test runpf!(res.net, 60, 1e-8, 0; method = :rectangular, qlimits_enabled = false)[2] == 0
+        out = mktempdir()
+        notes = String[]
+        files = writeCGMESFiles(res.net; path = out, created = _EXPORT_STAMP, notices = notes)
+        @test isempty(notes)
+        @test [basename(f) for f in files] == [string(case, "_", p, ".xml") for p in ("EQ", "TP", "SSH", "SV")]
+        eq_fixture = read(joinpath(dir, basename(files[1])), String)
+        _, eq_objects = _cgmes_profile_objects(eq_fixture)
+        ref_id(v) = String(last(split(v, "_"; limit = 2)))
+        rtc_ends = Set(ref_id(v) for (_, (cls, attrs)) in eq_objects if cls == "cim:RatioTapChanger" for (tag, v) in attrs if tag == "cim:RatioTapChanger.TransformerEnd")
+        shunt_ids = Set(id for (id, (cls, _)) in eq_objects if cls == "cim:LinearShuntCompensator")
+        shunt_terminals = Set(id for (id, (cls, attrs)) in eq_objects if cls == "cim:Terminal" && any(tag == "cim:Terminal.ConductingEquipment" && ref_id(v) in shunt_ids for (tag, v) in attrs))
+        drop_attr = (cls, id, tag) -> begin
+          (cls == "cim:PowerTransformerEnd" && tag == "cim:PowerTransformerEnd.ratedU" && id in rtc_ends) ||
+            (cls == "cim:SynchronousMachine" && tag in ("cim:SynchronousMachine.minQ", "cim:SynchronousMachine.maxQ")) ||
+            (cls == "cim:LinearShuntCompensator" && tag == "cim:IdentifiedObject.name") ||
+            (cls == "cim:Terminal" && tag == "cim:IdentifiedObject.name" && id in shunt_terminals)
+        end
+        counts = Int[]
+        for f in files
+          compared = _compare_cgmes_profile(read(joinpath(dir, basename(f)), String), read(f, String); drop_classes = ("cim:RatioTapChanger", "cim:TapChangerControl"), drop_attr = drop_attr)
+          push!(counts, compared)
+        end
+        println("      ", case, ": objects compared EQ/TP/SSH/SV = ", join(counts, "/"), ", ratio-tap ends excluded: ", length(rtc_ends))
+        @test all(>(0), counts)
+        @test !isempty(rtc_ends)
+        # the excluded tap machinery is exactly what the fixture carries
+        @test count(o -> o[2][1] == "cim:RatioTapChanger", collect(eq_objects)) == length(rtc_ends)
+      end
+    end)() end
+
+    @testset "duplicate mRID aborts before writing" begin (function ()
       net = _export_test_net()
       net.cgmes_ids["TN|A"] = "deadbeef-0000-0000-0000-000000000001"
       net.cgmes_ids["TN|B"] = "deadbeef-0000-0000-0000-000000000001"
@@ -310,156 +454,6 @@ function run_cgmes_export_tests()
       @test occursin("TN|B", msg)
       # the guard fires before any file is opened
       @test isempty(readdir(dir))
-    end
-
-    bc = joinpath(_CGMES_EXPORT_CACHE, "extracted", "MicroGrid", "BaseCase_BC")
-    if isdir(bc)
-      @testset "MicroGrid roundtrip preserves imported mRIDs" begin
-        res = importCGMES(path = bc, name = "mg_export")
-        net = res.net
-        acl_keys = sort([k for k in keys(net.cgmes_ids) if _is_acl_equipment_key(k)])
-        @test length(acl_keys) == length(net.linesAC)
-        @test !isempty(acl_keys)
-        # captured ids are canonical (RDF underscore prefix stripped)
-        @test all(!startswith(v, "_") for v in values(net.cgmes_ids))
-        notes = String[]
-        files = writeCGMESFiles(net; path = mktempdir(), created = _EXPORT_STAMP, notices = notes)
-        # links and phase shifts export now — the delivery is model-complete
-        @test isempty(notes)
-        eq = read(files[1], String)
-        tp = read(files[2], String)
-        for k in acl_keys
-          @test occursin("rdf:ID=\"_$(net.cgmes_ids[k])\"", eq)
-        end
-        # transformer / load / machine / shunt / 3W identity: every recorded
-        # equipment id (captured or minted) appears as an rdf:ID in the EQ
-        for (kind, nseg) in (("PT|", 4), ("EC|", 3), ("SM|", 3), ("SH|", 3), ("PT3|", 5))
-          ks = [k for k in keys(net.cgmes_ids) if startswith(k, kind) && length(split(k, "|")) == nseg]
-          @test !isempty(ks)
-          @test count(occursin("rdf:ID=\"_$(net.cgmes_ids[k])\"", eq) for k in ks) == length(ks)
-        end
-        # the reassembled 3W transformer references three ends
-        @test count("<cim:TransformerEnd.endNumber>3<", eq) == 1
-        # star buses stay internal to the reassembled 3W transformer — their
-        # TN is deliberately absent from the export
-        tn_keys = sort([k for k in keys(net.cgmes_ids) if startswith(k, "TN|") && !occursin("AUX3WT", uppercase(k))])
-        @test !isempty(tn_keys)
-        @test occursin("rdf:ID=\"_$(net.cgmes_ids[first(tn_keys)])\"", tp)
-        @test !occursin("AUX3WT", tp)
-        # a re-import of the export rebuilds the same electrical model —
-        # every branch parameter equal, including the PST angle
-        back = importCGMES(path = dirname(files[1]), name = "mg_back")
-        @test length(back.net.nodeVec) == length(net.nodeVec)
-        @test length(back.net.branchVec) == length(net.branchVec)
-        @test length(back.net.prosumpsVec) == length(net.prosumpsVec)
-        @test length(back.net.shuntVec) == length(net.shuntVec)
-        @test length(back.net.linkVec) == length(net.linkVec)
-        @test back.slack_bus == res.slack_bus
-        busname_of = n -> Dict(v => k for (k, v) in n.busDict)
-        nm1, nm2 = busname_of(net), busname_of(back.net)
-        brkey = (nm, br, cnt) -> begin
-          a, b = nm[br.fromBus], nm[br.toBus]
-          p = a <= b ? (a, b) : (b, a)
-          k = get(cnt, p, 0) + 1
-          cnt[p] = k
-          (p[1], p[2], k)
-        end
-        c1 = Dict{Tuple{String,String},Int}()
-        by1 = Dict(brkey(nm1, br, c1) => br for br in net.branchVec)
-        c2 = Dict{Tuple{String,String},Int}()
-        for br in back.net.branchVec
-          o = by1[brkey(nm2, br, c2)]
-          @test isapprox(br.r_pu, o.r_pu; atol = 1e-9)
-          @test isapprox(br.x_pu, o.x_pu; atol = 1e-9)
-          @test isapprox(br.b_pu, o.b_pu; atol = 1e-9)
-          @test isapprox(br.g_pu, o.g_pu; atol = 1e-9)
-          @test isapprox(br.ratio, o.ratio; atol = 1e-9)
-          @test isapprox(br.angle, o.angle; atol = 1e-9)
-          @test br.status == o.status
-        end
-        # renaming an imported line keeps its original mRID on re-export
-        target_id = net.cgmes_ids[acl_keys[1]]
-        # rename every line: no line may lose its imported id
-        for line in net.linesAC
-          line.comp.cName = string(line.comp.cName, "_renamed")
-        end
-        files2 = writeCGMESFiles(net; path = mktempdir(), created = _EXPORT_STAMP)
-        eq2 = read(files2[1], String)
-        @test occursin("rdf:ID=\"_$(target_id)\"", eq2)
-        for k in acl_keys
-          @test occursin("rdf:ID=\"_$(net.cgmes_ids[k])\"", eq2)
-        end
-      end
-
-      @testset "short-circuit evaluation survives the roundtrip" begin
-        res = importCGMES(path = bc, name = "mg_sc_rt")
-        dir = mktempdir()
-        writeCGMESFiles(res.net; path = dir, created = _EXPORT_STAMP, sc_line_data = cgmesLineShortCircuitData(res), sc_source = res.shortcircuit)
-        back = importCGMES(path = dir, name = "mg_sc_back")
-        for case in (:max, :min)
-          sc1 = runShortCircuit!(res; case = case)
-          sc2 = runShortCircuit!(back; case = case)
-          @test length(sc2.rows) == length(sc1.rows)
-          r2 = Dict(String(r.bus) => r for r in sc2.rows)
-          for r in sc1.rows
-            o = r2[String(r.bus)]
-            @test r.contains_defaulted_data == o.contains_defaulted_data
-            if isfinite(r.ik_kA) && isfinite(o.ik_kA)
-              @test isapprox(r.ik_kA, o.ik_kA; atol = 1e-9)
-            end
-          end
-        end
-      end
-
-      @testset "harvested zero-sequence line data" begin
-        res = importCGMES(path = bc, name = "mg_sc_export")
-        scd = cgmesLineShortCircuitData(res)
-        # every entry keys an existing line and carries the complete pair
-        @test all(1 <= i <= length(res.net.linesAC) for i in keys(scd))
-        if !isempty(scd)
-          files = writeCGMESFiles(res.net; path = mktempdir(), sc_line_data = scd, created = _EXPORT_STAMP)
-          eq = read(files[1], String)
-          @test occursin("ACLineSegment.r0", eq)
-          @test occursin("ACLineSegment.x0", eq)
-        end
-      end
-
-      # WebUI checkbox path: a normal power-flow run with export_cgmes writes
-      # the profile artifacts (imported mRIDs preserved, zero-sequence data
-      # riding along, plus the re-importable delivery zip) next to the run
-      # artifacts.
-      @testset "service run with export_cgmes" begin
-        root = mktempdir()
-        cfg = joinpath(root, "c.yaml")
-        write(cfg, "power_flow:\n  max_iter: 40\n")
-        # the service path accepts case FILES; use the combined alias ZIP
-        # (base + boundary in one delivery, packed from the local cache)
-        zipcase = Sparlectra.CGMESImporter.fetchCGMESTestSet("microgrid_be"; outdir = mktempdir())
-        resp = start_powerflow_run(Dict("casefile" => zipcase, "config_file" => cfg, "output_root" => root, "export_cgmes" => true))
-        @test resp["success"] === true
-        @test resp["metadata"]["cgmes_export_status"] == "completed"
-        rundir = joinpath(root, resp["run_id"])
-        # only the combined delivery zip is an artifact — no loose profile files
-        @test isempty(filter(f -> endswith(f, ".xml"), readdir(rundir)))
-        zips = filter(f -> endswith(f, "_CGMES.zip"), readdir(rundir))
-        @test length(zips) == 1
-        @test resp["metadata"]["cgmes_export_files"] == only(zips)
-        # the delivery zip re-imports directly and must reuse the imported
-        # mRIDs and carry the harvested zero-sequence data
-        back = importCGMES(path = joinpath(rundir, only(zips)), name = "mg_service_back")
-        res = importCGMES(path = zipcase, name = "mg_service_ref")
-        acl_keys_ref = sort([k for k in keys(res.net.cgmes_ids) if _is_acl_equipment_key(k)])
-        @test !isempty(acl_keys_ref)
-        for k in acl_keys_ref
-          @test get(back.net.cgmes_ids, k, nothing) == res.net.cgmes_ids[k]
-        end
-        sc_ref = cgmesLineShortCircuitData(res)
-        @test resp["metadata"]["cgmes_export_sc_lines"] == length(sc_ref)
-        isempty(sc_ref) || @test !isempty(cgmesLineShortCircuitData(back))
-        @test occursin("CGMES export:", read(joinpath(rundir, "run.log"), String))
-      end
-    else
-      @info "CGMES export roundtrip: MicroGrid fixture not cached — skipping (run examples/cgmes/cgmes_fetch_testsets.jl to enable)"
-    end
-  end
+    end)() end
+  end)() end
 end

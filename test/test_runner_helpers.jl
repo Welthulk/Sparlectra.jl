@@ -192,9 +192,9 @@ loads them without any download. The legacy names case9, case14, case57
 resolve against the LOCAL data/mpower cache only and exist for the
 testsets that guard externally anchored MATPOWER reference values; their
 callers must gate on `fixture_net_available` and speak their skip. CGMES
-fixtures (MiniGrid, FullGrid) stay per-site on purpose: their imports
-exercise importer options and ARE the test subject, a shared cached net
-would test the cache instead.
+deliveries are not fixtures here on purpose: their imports exercise
+importer options and ARE the test subject, a shared cached net would test
+the cache instead.
 """
 const _FIXTURE_NET_CACHE = Dict{String,Any}()
 
@@ -236,6 +236,17 @@ function large_case_path(filename::AbstractString)::Union{Nothing,String}
   return isfile(path) ? path : nothing
 end
 
+"""
+    cgmes_fixture_dir(case) -> String
+
+Folder of the checked-in CGMES delivery exported from the shipped case
+`case`: `data/cgmes_demo/<case>` with the four profile files EQ, TP, SSH
+and SV, written by `tools/gen_cgmes_fixtures.jl` under a fixed header stamp.
+The CGMES tests import these folders directly and pack a zip at run time
+where the service layer needs a case file; no zip is checked in.
+"""
+cgmes_fixture_dir(case::AbstractString)::String = joinpath(dirname(@__DIR__), "data", "cgmes_demo", String(case))
+
 # legacy MATPOWER fixtures come from the shared large-case directory; callers
 # gate on this and print a spoken SKIPPED line instead of downloading
 fixture_net_available(name::AbstractString) = startswith(String(name), "sp_case") || String(name) == "warmup_casePST" || large_case_path(string(name, ".m")) !== nothing
@@ -257,7 +268,7 @@ end
 ## Scratch paths for the suite. `tempname()` names a file in /tmp that
 ## NOBODY ever removes: a full run left about three thousand stray
 ## `jl_*.yaml` files behind, and the configuration warnings they triggered
-## buried the real test output (maintainer, 2026-09-05). Everything the
+## buried the real test output. Everything the
 ## tests write goes into one directory instead, which Julia deletes when
 ## the process ends.
 const TEST_SCRATCH_ROOT = mktempdir(; cleanup = true)
@@ -307,3 +318,46 @@ const SE_EXPECTED_WARNINGS = (
 )
 
 _se_run_quiet(testfn) = run_with_expected_warnings(testfn, SE_EXPECTED_WARNINGS)
+
+# Shared three-bus fixture (slack, PV, PQ) used by the solver, controller,
+# estimator and parallel groups across several profiles; lives here so every
+# profile has it without including testgrid.jl.
+function createTest3BusNet(; cooldown = 0, hyst_pu = 0.0, qlim_min = nothing, qlim_max = nothing)::Net
+  # Simple 3-bus network
+  #
+  #  ASTADT        STATION1
+  # <--|---------------|<--- Generator 
+  #    |-------       |
+  #            |      |
+  #            --------|<---- EXTERNALNETWORKINJECTION
+  #                 VERBUND  
+  Sbase_MVA = 100.0
+  netName = "test3bus"
+
+  r = 0.0
+  x = 0.4
+  s = 25.0
+  c_nf_per_km = 9.55
+  tanδ = 0.0
+
+  vm_pu_STATION1 = 1.027273
+  vm_pu_VERBUND = 1.018182
+
+  @debug "Creating $netName test network with qlim_min=$qlim_min, qlim_max=$qlim_max"
+
+  Bus3Net = Net(name = netName, baseMVA = Sbase_MVA, cooldown_iters = cooldown, q_hyst_pu = hyst_pu)
+
+  addBus!(net = Bus3Net, busName = "ASTADT", vn_kV = 110.0)
+  addBus!(net = Bus3Net, busName = "STATION1", vn_kV = 110.0)
+  addBus!(net = Bus3Net, busName = "VERBUND", vn_kV = 110.0)
+
+  addACLine!(net = Bus3Net, fromBus = "ASTADT", toBus = "STATION1", length = s, r = r, x = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
+  addACLine!(net = Bus3Net, fromBus = "ASTADT", toBus = "VERBUND", length = s, r = r, x = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
+  addACLine!(net = Bus3Net, fromBus = "VERBUND", toBus = "STATION1", length = s, r = r, x = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
+
+  addProsumer!(net = Bus3Net, busName = "VERBUND", type = "EXTERNALNETWORKINJECTION", vm_pu = vm_pu_VERBUND, va_deg = 0.0, referencePri = "VERBUND")
+  addProsumer!(net = Bus3Net, busName = "STATION1", type = "SYNCHRONOUSMACHINE", p = 70.0, q = 33.2, vm_pu = vm_pu_STATION1, qMax = qlim_max, qMin = qlim_min)
+  addProsumer!(net = Bus3Net, busName = "ASTADT", type = "ENERGYCONSUMER", p = 100.0, q = 30.0)
+
+  return Bus3Net
+end

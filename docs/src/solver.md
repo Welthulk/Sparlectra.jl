@@ -600,7 +600,7 @@ Configuration keys and result metadata are documented in
 
 The linear solve of the rectangular Newton step (`J · δx = −F`) supports
 two sparse backends, selected via `power_flow.linear_solver` (default
-`umfpack`):
+`umfpack_reuse`):
 
 * **`umfpack`** — the standard sparse direct solve (`J \ F` through
   `solve_sparse_system`), with sparse-QR and small-system SVD fallbacks. Each

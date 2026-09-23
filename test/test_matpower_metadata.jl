@@ -34,7 +34,7 @@ function _metadata_case(; branch_kind = ["L"], dcline = nothing)
 end
 
 function run_matpower_metadata_tests()
-  @testset "Newline-separated matrix rows (RTS-GMLC style)" begin
+  @testset "Newline-separated matrix rows (RTS-GMLC style)" begin (function ()
     # MATLAB accepts bare newlines as matrix row separators; official MATPOWER
     # cases terminate rows with ';' but e.g. RTS-GMLC does not. Splitting on
     # ';' alone silently collapsed such matrices into a single row.
@@ -65,9 +65,9 @@ mpc.branch = [
       net = createNetFromMatPowerFile(filename = path)
       @test length(net.nodeVec) == 2
     end
-  end
+  end)() end
 
-  @testset "Parser tokenizer and comment stripping edge cases" begin
+  @testset "Parser tokenizer and comment stripping edge cases" begin (function ()
     # Guards the allocation-reduced tokenizer/comment paths (issue #292)
     # against the legacy split/join semantics.
     strip_comments = Sparlectra.MatpowerIO._strip_matlab_comments
@@ -121,9 +121,9 @@ mpc.gencost = [
       mpc_sorted = Sparlectra.MatpowerIO.read_case_m(path; legacy_compat = true)
       @test mpc_sorted.bus == mpc.bus
     end
-  end
+  end)() end
 
-  @testset "MATPOWER metadata import" begin
+  @testset "MATPOWER metadata import" begin (function ()
     mktempdir() do dir
       path = joinpath(dir, "case_meta.m")
       write(path, """
@@ -196,7 +196,7 @@ mpc.dcline = [
     @test length(net_kind.linesAC) == 0
     @test length(net_kind.trafos) == 1
 
-    @testset "Sparlectra transformer-loss extension" begin
+    @testset "Sparlectra transformer-loss extension" begin (function ()
       net_loss = Sparlectra.Net(name = "loss_extension", baseMVA = 100.0)
       Sparlectra.addBus!(net = net_loss, busName = "FROM", vn_kV = 110.0, oBusIdx = 1)
       Sparlectra.addBus!(net = net_loss, busName = "TO", vn_kV = 110.0, oBusIdx = 2)
@@ -253,9 +253,9 @@ mpc.dcline = [
         @test only(net_roundtrip2.trafos).side1.g ≈ 0.005
         @test Sparlectra.bus_shunt_totals_pu(net_roundtrip2).total_g_pu ≈ 0.0
       end
-    end
+    end)() end
 
-    @testset "Sparlectra links extension (busbar coupler)" begin
+    @testset "Sparlectra links extension (busbar coupler)" begin (function ()
       mktempdir() do dir
         # Bus 2 carries the load but has no branch: it is fed only through
         # the closed impedance-less link onto busbar bus 3, so the test
@@ -310,9 +310,9 @@ mpc.sparlectra.links = [
         write(bad, replace(read(path, String), "2 3 1;" => "2 3;"))
         @test_throws ArgumentError Sparlectra.MatpowerIO.read_case_m(bad; legacy_compat = false)
       end
-    end
+    end)() end
 
-    @testset "Sparlectra tap-changers extension (nameplate data)" begin
+    @testset "Sparlectra tap-changers extension (nameplate data)" begin (function ()
       mktempdir() do dir
         # branch 2 is a transformer at neutral ratio 1.0; the extension
         # declares a +-2 x 2.5 percent changer standing at step 1 and a
@@ -429,7 +429,7 @@ mpc.sparlectra.tap_changers = [
         write(bado, replace(read(path, String), "1 0.025 -2 2 1 0 0 0 0;" => "1 0.025 -2 2 5 0 0 0 0;"))
         @test_throws ArgumentError Sparlectra.createNetFromMatPowerFile(filename = bado)
       end
-    end
+    end)() end
 
     dcline = [1.0 2.0 1.0 100.0 0.0 4.0 5.0 1.0 1.0 0.0 200.0 -50.0 50.0 -50.0 50.0 2.0 0.01]
     mpc_dcline = Sparlectra.MatpowerIO.legacy_sort_bus(_metadata_case(dcline = dcline))
@@ -496,7 +496,7 @@ mpc.sparlectra.tap_changers = [
     @test isolated_meta.to_voltage_controlled === false
     @test Sparlectra.getNodeType(net_isolated.nodeVec[net_isolated.busDict["2"]]) != Sparlectra.PV
 
-    @testset "MATPOWER export write_solution" begin
+    @testset "MATPOWER export write_solution" begin (function ()
       net_ws = Sparlectra.Net(name = "write_solution_case", baseMVA = 100.0)
       Sparlectra.addBus!(net = net_ws, busName = "SLACK", vn_kV = 110.0, oBusIdx = 1)
       Sparlectra.addBus!(net = net_ws, busName = "LOAD", vn_kV = 110.0, oBusIdx = 2)
@@ -531,9 +531,9 @@ mpc.sparlectra.tap_changers = [
         slack_row = findfirst(==(1.0), mpc_false.bus[:, 1])
         @test mpc_false.bus[slack_row, 8] == net_ws.nodeVec[1]._vm_pu # slack setpoint preserved
       end
-    end
+    end)() end
 
-    @testset "Tap-changer-model marker prevents double correction on reimport" begin
+    @testset "Tap-changer-model marker prevents double correction on reimport" begin (function ()
       tap_bus = [1 3 0.0 0.0 0.0 0.0 1 1.0 0.0 110.0 1 1.1 0.9; 2 1 0.0 0.0 0.0 0.0 1 1.0 0.0 110.0 1 1.1 0.9]
       tap_gen = [1 10.0 0.0 100.0 -100.0 1.0 100.0 1 100.0 0.0 0 0 0 0 0 0 0 0 0 0 0]
       tap_branch = [1 2 0.01 0.05 0.0 100.0 0.0 0.0 0.9 0.0 1 -60.0 60.0]
@@ -560,9 +560,9 @@ mpc.sparlectra.tap_changers = [
         @test net_roundtrip.branchVec[1].x_pu ≈ x_pu_corrected
         @test net_roundtrip.branchVec[1].r_pu ≈ net_native.branchVec[1].r_pu
       end
-    end
+    end)() end
 
-    @testset "Standard MATPOWER case without tap-changer-model marker is unaffected" begin
+    @testset "Standard MATPOWER case without tap-changer-model marker is unaffected" begin (function ()
       no_marker_bus = [1 3 0.0 0.0 0.0 0.0 1 1.0 0.0 110.0 1 1.1 0.9; 2 1 0.0 0.0 0.0 0.0 1 1.0 0.0 110.0 1 1.1 0.9]
       no_marker_gen = [1 10.0 0.0 100.0 -100.0 1.0 100.0 1 100.0 0.0 0 0 0 0 0 0 0 0 0 0 0]
       no_marker_branch = [1 2 0.01 0.05 0.0 100.0 0.0 0.0 0.9 0.0 1 -60.0 60.0]
@@ -573,6 +573,6 @@ mpc.sparlectra.tap_changers = [
       net_corrected = Sparlectra.createNetFromMatPowerCase(mpc = mpc_no_marker, tap_changer_model = :impedance_correction)
       @test net_ideal.branchVec[1].x_pu ≈ 0.05
       @test net_corrected.branchVec[1].x_pu != net_ideal.branchVec[1].x_pu
-    end
-  end
+    end)() end
+  end)() end
 end

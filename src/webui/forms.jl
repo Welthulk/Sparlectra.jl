@@ -68,7 +68,43 @@ function _webui_bundled_scf_options(application_root::AbstractString)::Vector{St
   isdir(scf_dir) && append!(names, [name for name in readdir(scf_dir) if endswith(lowercase(name), ".scf.json")])
   pgm_dir = joinpath(application_root, "data", "PGM")
   isdir(pgm_dir) && append!(names, [name for name in readdir(pgm_dir) if endswith(lowercase(name), ".json")])
+  # the CGMES deliveries exported by Sparlectra itself (data/cgmes_demo/<case>,
+  # four profile files each) are offered as one ZIP per case; the ZIP is
+  # packed into the case directory on first use
+  cgmes_dir = joinpath(application_root, "data", "cgmes_demo")
+  isdir(cgmes_dir) && append!(names, [_webui_cgmes_demo_zip_name(name) for name in readdir(cgmes_dir) if isdir(joinpath(cgmes_dir, name))])
   return sort!(names; by = lowercase)
+end
+
+const _WEBUI_CGMES_DEMO_SUFFIX = "_cgmes.zip"
+_webui_cgmes_demo_zip_name(case::AbstractString)::String = string(case, _WEBUI_CGMES_DEMO_SUFFIX)
+
+# the shipped delivery folder behind a bundled CGMES ZIP name, or nothing
+function _webui_cgmes_demo_folder(application_root::AbstractString, name::AbstractString)::Union{Nothing,String}
+  endswith(name, _WEBUI_CGMES_DEMO_SUFFIX) || return nothing
+  case = name[1:(end - length(_WEBUI_CGMES_DEMO_SUFFIX))]
+  isempty(case) && return nothing
+  folder = joinpath(application_root, "data", "cgmes_demo", case)
+  return isdir(folder) ? folder : nothing
+end
+
+# pack the four profile files of a shipped delivery into one ZIP (the form
+# the Web UI case selector and the CGMES importer take); atomic through a
+# temporary file so a half-written ZIP is never picked up
+function _webui_pack_cgmes_demo!(folder::AbstractString, dest::AbstractString)::String
+  files = sort!([f for f in readdir(folder) if endswith(lowercase(f), ".xml")])
+  isempty(files) && error("CGMES demo delivery $(folder) carries no XML profile file")
+  tmp = string(dest, ".tmp")
+  open(tmp, "w") do io
+    CGMESImporter.ZipArchives.ZipWriter(io) do w
+      for f in files
+        CGMESImporter.ZipArchives.zip_newfile(w, f)
+        write(w, read(joinpath(folder, f)))
+      end
+    end
+  end
+  mv(tmp, dest; force = true)
+  return dest
 end
 
 """
@@ -87,6 +123,14 @@ overwritten, so user-saved settings survive. With no writable
 function _webui_stage_bundled_case!(application_root::AbstractString, case_directory::Union{Nothing,AbstractString}, requested::AbstractString)::Union{Nothing,String}
   name = String(requested)
   (isabspath(name) || occursin('/', name) || occursin('\\', name)) && return nothing
+  demo_folder = _webui_cgmes_demo_folder(application_root, name)
+  if demo_folder !== nothing
+    target_dir = case_directory === nothing ? mktempdir() : String(case_directory)
+    mkpath(target_dir)
+    cached = joinpath(target_dir, name)
+    isfile(cached) || _webui_pack_cgmes_demo!(demo_folder, cached)
+    return cached
+  end
   for source_dir in (joinpath(application_root, "data", "mpower"), joinpath(application_root, "data", "scf"), joinpath(application_root, "data", "PGM"))
     bundled = joinpath(source_dir, name)
     isfile(bundled) || continue
@@ -95,7 +139,7 @@ function _webui_stage_bundled_case!(application_root::AbstractString, case_direc
     cached = joinpath(String(case_directory), name)
     if !isfile(cached)
       # the companions travel with the case, enumerated by the single
-      # definition (stage 4B): config pin, measurement CSVs, weights
+      # definition: config pin, measurement CSVs, weights
       for src in vcat([bundled], case_companion_files(bundled))
         dst = joinpath(String(case_directory), basename(src))
         isfile(dst) || cp(src, dst)
@@ -354,17 +398,6 @@ end
 
 _webui_is_runnable_dat_role(role::Symbol)::Bool = role in (:dtf_network_case, :dtf_network_case_with_outages)
 
-"""
-    _webui_is_user_selectable_case(name) -> Bool
-
-Return whether `name` should be shown in the normal Web UI case selector.
-The bundled precompile workloads are `warmup_*.jl` files and stay out of the
-selector; a MATPOWER `.m` case may carry the `warmup_` prefix and stays
-selectable. Generated Julia cache
-artifacts are also hidden from the selector; users can still enter an
-explicit path in the manual case field when they intentionally want to run
-such a file.
-"""
 # Memoization for the per-file content checks of the case selector: the ZIP
 # boundary-set detection and the DAT role classification read file content,
 # and the form re-scans the whole case directory on every render (measured
@@ -418,6 +451,17 @@ end
 
 _webui_is_case_json_cached(path::AbstractString)::Bool = _webui_file_scan_memo(_webui_is_case_json, path)
 
+"""
+    _webui_is_user_selectable_case(name) -> Bool
+
+Return whether `name` should be shown in the normal Web UI case selector.
+The bundled precompile workloads are `warmup_*.jl` files and stay out of the
+selector; a MATPOWER `.m` case may carry the `warmup_` prefix and stays
+selectable. Generated Julia cache
+artifacts are also hidden from the selector; users can still enter an
+explicit path in the manual case field when they intentionally want to run
+such a file.
+"""
 function _webui_is_user_selectable_case(name::AbstractString)::Bool
   lowered_name = lowercase(basename(name))
   _, extension = splitext(lowered_name)
@@ -453,11 +497,23 @@ function _webui_is_user_selectable_case(name::AbstractString)::Bool
   return true
 end
 
+# `isfile` on a directory entry that is being deleted by another process
+# raises EACCES on Windows (seen with a temporary directory of the test
+# suite under data/mpower); such an entry is simply not a case file.
+function _webui_is_regular_file(path::AbstractString)::Bool
+  try
+    return isfile(path)
+  catch err
+    err isa Base.IOError || rethrow(err)
+    return false
+  end
+end
+
 function _webui_casefile_options_in_directory(directory::AbstractString)::Vector{String}
   isdir(directory) || return String[]
   files = filter(readdir(directory)) do name
     path = joinpath(directory, name)
-    return isfile(path) && _webui_is_user_selectable_case(path)
+    return _webui_is_regular_file(path) && _webui_is_user_selectable_case(path)
   end
   return sort!(files; by = lowercase)
 end
@@ -528,7 +584,7 @@ function _webui_form_number_string(value)::String
 end
 
 # name of the RETIRED settings sidecar; still known so a leftover file can
-# be converted once and deleted (D8 of the adapter task)
+# be converted once and deleted
 function _webui_legacy_case_settings_filename(casefile::AbstractString)::String
   stem = splitext(basename(strip(String(casefile))))[1]
   isempty(stem) && throw(ArgumentError("Case-settings profile requires a case filename."))
@@ -541,7 +597,7 @@ function _webui_normalized_case_key(casefile::AbstractString)::String
   return isempty(stem) ? "case" : stem
 end
 
-# Shared selected-case state (stage 4A harmonization): the Case page is THE
+# Shared selected-case state: the Case page is THE
 # place to choose a case, but the choice must reach every page that starts
 # work on that case (the run form's hidden casefile, the SE page's loader)
 # even when the user gets there through the plain nav links, which carry no
@@ -636,8 +692,8 @@ end
 """
     case_companion_files(case_path) -> Vector{String}
 
-The SINGLE definition of which files belong to one case (stage 4B review
-earmark): the case configuration file, the legacy settings sidecar, the
+The SINGLE definition of which files belong to one case: the case
+configuration file, the legacy settings sidecar, the
 per-case N-1 weights list, and the measurement CSVs including the
 baddata and noisy variants (both stem conventions occur in the wild: the
 bundled sets use the short stem, generated sets the splitext stem; the
@@ -820,7 +876,7 @@ function _webui_case_form_defaults(casefile::AbstractString, case_directory)::Di
   end
   # case_format deliberately has no option spec (it names the input rather
   # than configuring the run); the Case page persists it in the form block,
-  # so it is the one non-spec field read back here (stage 4A)
+  # so it is the one non-spec field read back here
   raw_format = get(block, "case_format", nothing)
   if raw_format !== nothing
     fmt = lowercase(strip(String(raw_format)))
@@ -837,7 +893,7 @@ function webui_form_state(; selected_casefile::AbstractString = "", selected_con
   config_values = _webui_config_field_values(config_path)
   merge!(values, config_values)
   # Case levels seed the form in resolution order (deprecated in-file block,
-  # then the case configuration file); no mtime logic anywhere (D5). The
+  # then the case configuration file); no mtime logic anywhere. The
   # controls have to show these values: the form posts a value for EVERY
   # field it renders, and those count as explicit overrides, so an unseeded
   # form would silently outrank the very settings it just loaded (measured:
@@ -885,7 +941,7 @@ Per-case Web UI form defaults from the case configuration file: the `form`
 block (SE and generator options) plus the `_profile_path` marker for the
 settings notice. Converts a leftover legacy settings sidecar
 (`<stem>.sparlectra-webui.yaml`) ONCE into the case configuration file and
-deletes it, with an operation-log line either way (D8 of the adapter task);
+deletes it, with an operation-log line either way;
 when a case configuration file already exists, the stale sidecar is
 discarded instead of clobbering the newer file. The config-backed form
 fields are seeded separately from the configuration levels
@@ -1029,8 +1085,8 @@ end
 # Format hint for the case pages (badge preselection, DTF assistance, SC
 # button gating). The CONTENT-based detection is `_detect_case_format`, the
 # same function `import_case` runs, so the form and the import can never
-# disagree about what a resolvable file is (stage 4A review point: no second
-# detection path). Only values that do not resolve to an existing path (a
+# disagree about what a resolvable file is (no second detection
+# path). Only values that do not resolve to an existing path (a
 # cgmes: alias not fetched yet, a free-typed name) fall back to the thin
 # syntactic pre-stage below, which mirrors the detector's extension rules.
 function _webui_case_format_hint(casefile::AbstractString; case_directory::Union{Nothing,AbstractString} = nothing)::Symbol
@@ -1158,7 +1214,7 @@ function powerflow_webui_request(form::AbstractDict; default_output_root::Abstra
   manual_casefile = strip(String(something(_webui_form_value(form, "casefile_manual", ""), "")))
   casefile = isempty(manual_casefile) ? existing_casefile : manual_casefile
   # any supported case format qualifies here, so the message must not say
-  # MATPOWER; choosing happens on the Case page since stage 4A
+  # MATPOWER; choosing happens on the Case page
   isempty(casefile) && throw(ArgumentError("Select a case first (Case page)."))
   stored_form = _webui_case_form_defaults(casefile, case_directory)
   config_file = strip(String(something(_webui_form_value(form, "config_file", ""), "")))
@@ -1254,7 +1310,7 @@ function powerflow_webui_request(form::AbstractDict; default_output_root::Abstra
     # N-1 outage kind is a RUN parameter (branch / generator), read as a plain
     # request key like dtf_outage_selection, not a config override
     "contingency_kind" => strip(String(something(_webui_form_value(form, "contingency_kind", "branch"), "branch"))),
-    # scenario task step 6: source, screening mode and margin are run
+    # source, screening mode and margin are run
     # parameters; empty form values mean "not set" and keep the service
     # defaults (historical kind list, configured screening)
     "scenario_source" => (v = strip(String(something(_webui_form_value(form, "scenario_source", ""), ""))); isempty(v) ? nothing : v),

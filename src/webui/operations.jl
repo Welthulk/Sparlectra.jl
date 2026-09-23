@@ -172,17 +172,24 @@ is best effort: file or serialization failures are reported as warnings and
 never escape into request handling.
 """
 function record_webui_operation!(output_root::AbstractString, event::AbstractString; fields...)::Bool
+  # every call site names its own keyword set; the body below is compiled
+  # once for a Dict instead of once per combination
+  return _record_webui_operation!(String(output_root), String(event), Dict{String,Any}(String(key) => value for (key, value) in fields))
+end
+
+function _record_webui_operation!(output_root::String, event::String, fields::Dict{String,Any})::Bool
   try
     path = webui_operation_log_path(output_root)
     entry = Dict{String,Any}(
       "timestamp" => _webui_operation_timestamp(),
       "sparlectra_version" => string(version()),
+      "analyticloadflow_version" => string(pkgversion(AnalyticLoadFlow)),
       "sparlectra_package_path" => _sparlectra_package_path(),
       "sparlectra_git_commit" => _sparlectra_git_commit_sha(),
-      "event" => String(event),
+      "event" => event,
     )
     for (key, value) in fields
-      value === nothing || (entry[String(key)] = value)
+      value === nothing || (entry[key] = value)
     end
     lock(_WEBUI_OPERATION_LOG_LOCK) do
       mkpath(dirname(path))

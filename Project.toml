@@ -25,7 +25,7 @@ UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 ZipArchives = "49080126-0e18-4c2a-b176-c102e4b3760c"
 
 [compat]
-AnalyticLoadFlow = "0.9"
+AnalyticLoadFlow = "0.9.15"
 BenchmarkTools = "1.6"
 Dates = "1"
 Downloads = "1"

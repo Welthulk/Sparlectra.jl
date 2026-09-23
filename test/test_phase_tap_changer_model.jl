@@ -18,7 +18,7 @@
 #          calcPhaseTapReactance, and DTF tap-formula equivalence
 
 function run_phase_tap_changer_model_tests()
-  @testset "PhaseTapChangerModel constructor validation" begin
+  @testset "PhaseTapChangerModel constructor validation" begin (function ()
     @test_throws ArgumentError PhaseTapChangerModel(kind = :bogus, step = 0, lowStep = -5, highStep = 5, neutralStep = 0)
 
     # Stage 4: :tabular is now implemented (previously rejected with a "Stage 4" hint).
@@ -29,9 +29,9 @@ function run_phase_tap_changer_model_tests()
     @test_throws ArgumentError PhaseTapChangerModel(kind = :asymmetrical, step = 0, lowStep = -5, highStep = 5, neutralStep = 0)
     # ψ given: no error
     PhaseTapChangerModel(kind = :asymmetrical, step = 0, lowStep = -5, highStep = 5, neutralStep = 0, winding_connection_angle_deg = 90.0)
-  end
+  end)() end
 
-  @testset "calcPhaseTapAngleRatio :symmetrical" begin
+  @testset "calcPhaseTapAngleRatio :symmetrical" begin (function ()
     m = PhaseTapChangerModel(kind = :symmetrical, step = 0, lowStep = -10, highStep = 10, neutralStep = 0, voltage_step_increment = 0.01)
 
     neutral_result = calcPhaseTapAngleRatio(m; step = 0)
@@ -51,9 +51,9 @@ function run_phase_tap_changer_model_tests()
     m_direct = PhaseTapChangerModel(kind = :symmetrical, step = 0, lowStep = -10, highStep = 10, neutralStep = 0, voltage_step_increment = 0.01, convention = :direct_regulating_vector)
     direct_result = calcPhaseTapAngleRatio(m_direct; step = 5)
     @test isapprox(direct_result.effective_shift_deg, expected_alpha_deg; atol = 1e-12)
-  end
+  end)() end
 
-  @testset "calcPhaseTapAngleRatio :asymmetrical delegates to calcSkewAngleTap" begin
+  @testset "calcPhaseTapAngleRatio :asymmetrical delegates to calcSkewAngleTap" begin (function ()
     u = 0.02
     m_qb = PhaseTapChangerModel(kind = :asymmetrical, step = 4, lowStep = -8, highStep = 8, neutralStep = 0, voltage_step_increment = u, winding_connection_angle_deg = 90.0)
     f_qb = calcPhaseTapFraction(m_qb)
@@ -69,9 +69,9 @@ function run_phase_tap_changer_model_tests()
     result_lon = calcPhaseTapAngleRatio(m_lon)
     @test result_lon.effective_shift_deg == 0.0
     @test result_lon.effective_ratio == direct_lon.effective_ratio
-  end
+  end)() end
 
-  @testset "calcPhaseTapReactance" begin
+  @testset "calcPhaseTapReactance" begin (function ()
     m_sym_no_x = PhaseTapChangerModel(kind = :symmetrical, step = 0, lowStep = -10, highStep = 10, neutralStep = 0, voltage_step_increment = 0.01)
     @test isnothing(calcPhaseTapReactance(m_sym_no_x, 1.0))
 
@@ -90,9 +90,9 @@ function run_phase_tap_changer_model_tests()
     alpha_mid_asym = calcPhaseTapAngleRatio(m_asym_x; step = 5).effective_shift_deg
     expected_mid_asym = 0.15 + (0.3 - 0.15) * (tand(alpha_mid_asym) / tand(alphamax_asym))^2
     @test isapprox(calcPhaseTapReactance(m_asym_x, alpha_mid_asym), expected_mid_asym; atol = 1e-12)
-  end
+  end)() end
 
-  @testset "DTF _dtf_effective_transformer_tap: longitudinal range and added angle" begin
+  @testset "DTF _dtf_effective_transformer_tap: longitudinal range and added angle" begin (function ()
     nominal_voltages_kv = [110.0]
     from_bus = Sparlectra.DTFImporter.DTFBus("", 1, 1, 1, "PV", 110.0, 0.0, 0.0, 0.0, 10.0, 2.0, -5.0, 5.0)
     to_bus = Sparlectra.DTFImporter.DTFBus("", 2, 2, 1, "SLACK", 110.0, 0.0, 0.0, 0.0, 20.0, 3.0, -10.0, 10.0)
@@ -131,13 +131,13 @@ function run_phase_tap_changer_model_tests()
     @test result.shift_deg == tap_result_old.effective_shift_deg
     @test result.effective_complex == tap_result_old.regulating_vector
     @test result.ratio == tap_result_old.effective_ratio # base_ratio == 1.0 for the default :neutral_one transformer_ratio_mode
-  end
+  end)() end
 
-  @testset "PowerTransformerWinding without phase_taps defaults to nothing" begin
+  @testset "PowerTransformerWinding without phase_taps defaults to nothing" begin (function ()
     w_kw = PowerTransformerWinding(Vn_kV = 110.0)
     @test isnothing(w_kw.phase_taps)
 
     w_pos = PowerTransformerWinding(110.0, 0.0, 0.12)
     @test isnothing(w_pos.phase_taps)
-  end
+  end)() end
 end

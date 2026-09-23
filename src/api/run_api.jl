@@ -507,7 +507,7 @@ end
 
 function _run_dtf_outages(case_path::AbstractString, case, config, output_path::AbstractString; mode=:none, selection=String[], write_artifacts::Bool=true, write_matpower_exports::Bool=false, performance_profile=nothing)
   results = Dict{String,Any}[]
-  # task_import_direct: every outage net comes from the IMPORTER, exactly
+  # every outage net comes from the IMPORTER, exactly
   # like the base case; the old conversion detour gave the outage nets a
   # different lineage than the base run for nothing. Still one
   # construction per outage (no re-parse); the scenario engine's
@@ -617,6 +617,32 @@ function run_sparlectra_api(;
   )
 end
 
+"""
+    _ApiRunOptions
+
+The loosely typed run options of `_run_sparlectra_api` in one concrete
+carrier with `Any` fields. The 800-line body below is compiled once per
+distinct signature, and every call site used to bring its own combination
+of types (a `String` or a `Symbol` for the format, `nothing` or a path, a
+different closure type for each callback), so the body was inferred over
+and over: fourteen specializations of about three seconds each in one test
+group. Behind one struct the body has one specialization, and the values
+keep their meaning: the normalizers inside still see the raw value.
+"""
+struct _ApiRunOptions
+  case_format::Any
+  for002_reference_file::Any
+  dtf_outage_selection::Any
+  dtf_outage_selection_mode::Any
+  config_overrides::Any
+  performance_timing::Any
+  detailed_result_csv_format::Any
+  phase_timings::Any
+  cancellation_token::Any
+  phase_callback::Any
+  operation_callback::Any
+end
+
 function _run_sparlectra_api(;
   casefile::AbstractString,
   config_file::AbstractString,
@@ -644,6 +670,43 @@ function _run_sparlectra_api(;
   phase_callback = phase -> nothing,
   operation_callback = (event; fields...) -> nothing,
 )::SparlectraApiResult
+  options = _ApiRunOptions(case_format, for002_reference_file, dtf_outage_selection, dtf_outage_selection_mode, config_overrides,
+    performance_timing, detailed_result_csv_format, phase_timings, cancellation_token, phase_callback, operation_callback)
+  return _run_sparlectra_api_body(String(casefile), String(config_file), String(output_dir), run_dtf_outages, compare_for002_outages,
+    write_outage_artifacts, write_outage_matpower_exports, matpower_export_requested, String(config_override_source), run_diagnostics,
+    detailed_result_csv, detailed_result_csv_semicolon, export_cgmes, run_id, options)
+end
+
+# the body of `_run_sparlectra_api`: concrete positional arguments and the
+# loosely typed options behind `_ApiRunOptions`, so it has one specialization
+function _run_sparlectra_api_body(
+  casefile::String,
+  config_file::String,
+  output_dir::String,
+  run_dtf_outages::Bool,
+  compare_for002_outages::Bool,
+  write_outage_artifacts::Bool,
+  write_outage_matpower_exports::Bool,
+  matpower_export_requested::Bool,
+  config_override_source::String,
+  run_diagnostics::Bool,
+  detailed_result_csv::Bool,
+  detailed_result_csv_semicolon::Bool,
+  export_cgmes::Bool,
+  run_id::String,
+  options::_ApiRunOptions,
+)::SparlectraApiResult
+  case_format = options.case_format
+  for002_reference_file = options.for002_reference_file
+  dtf_outage_selection = options.dtf_outage_selection
+  dtf_outage_selection_mode = options.dtf_outage_selection_mode
+  config_overrides = options.config_overrides
+  performance_timing = options.performance_timing
+  detailed_result_csv_format = options.detailed_result_csv_format
+  phase_timings = options.phase_timings
+  cancellation_token = options.cancellation_token
+  phase_callback = options.phase_callback
+  operation_callback = options.operation_callback
   total_start = time_ns()
   phases = Dict{Symbol,Float64}(Symbol(key) => Float64(value) for (key, value) in phase_timings)
   phase_recorder = PowerFlowPhaseTimingRecorder()
@@ -675,7 +738,7 @@ function _run_sparlectra_api(;
 
   config_start = time_ns()
   # The one configuration precedence of the run path lives in
-  # resolve_config (design decision D5), highest first: explicit API/CLI
+  # resolve_config, highest first: explicit API/CLI
   # overrides, the case configuration file next to the case, the case
   # file's own deprecated `sparlectra.config` block, the YAML file, the
   # template defaults. An omitted key falls through to the next level.

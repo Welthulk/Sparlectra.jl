@@ -52,6 +52,11 @@
 # dependency of Sparlectra, and `power_flow.solver = apslf` in the
 # configuration switches a run over to it.
 
+#nb # > **Colab is slow here.** The install cell below fetches Sparlectra and
+#nb # > precompiles it on Colab's two cores; that takes about ten minutes and
+#nb # > prints nothing while it runs ("Precompiling packages..." is the last
+#nb # > line you see). Wait for the cell to finish before running the next one;
+#nb # > a second click on it starts the whole install again.
 #nb using Pkg
 #nb Pkg.activate(temp = true)
 #nb Pkg.add(url = "https://github.com/Welthulk/Sparlectra.jl", rev = "main")
@@ -298,22 +303,28 @@ println("APSLF start : ", r_hyb.outcome, ", ", r_hyb.iterations, " Newton iterat
 # characteristics, remote voltage control) change the model between
 # solves, and Sparlectra refuses the combination rather than running the
 # solver on a model whose controllers would stay silent. The shipped
-# `sp_case14` carries such a tap controller:
+# `sp_case14` carries such a tap controller, so the run below is expected
+# to be refused; the printed line is the refusal, not a defect:
 
-sp_case14 = importSCF(joinpath(dirname(dirname(pathof(Sparlectra))), "data", "scf", "sp_case14.scf.json"))
+case14 = joinpath(dirname(dirname(pathof(Sparlectra))), "data", "scf", "sp_case14.scf.json")
 rejected = try
-    run_sparlectra(net=sp_case14, config=cfg_apslf)
+    run_sparlectra(net=importSCF(case14), config=cfg_apslf)
     ""
 catch err
     sprint(showerror, err)
 end
-println(first(rejected, 160))
+println("refused as intended: ", first(rejected, 120), " ...")
 @assert !isempty(rejected)                                                  #src
 
 # For such a network the hybrid start of Part 3 is the way to use the
 # series: the controllers run in the rectangular outer loop, the series
-# only supplies the start value.
-#
+# only supplies the start value. The same network solves that way, tap
+# controller included:
+
+r14 = run_sparlectra(net=importSCF(case14), config=cfg_hybrid)
+println("hybrid start on sp_case14: ", r14.outcome, ", ", r14.iterations, " Newton iterations")
+@assert r14.final_converged                                                 #src
+
 # ## Summary
 #
 # - `power_flow.solver: apslf` solves a Sparlectra network by the

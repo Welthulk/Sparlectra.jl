@@ -52,6 +52,37 @@ Base.@kwdef struct ApslfSolver <: AbstractExternalSolver
 end
 
 """
+    APSLF_MIN_VERSION
+
+Lowest AnalyticLoadFlow.jl version the adapter is verified against. The
+Project.toml compat carries the same bound, but Julia does not check a
+Manifest against the compat at load time: an environment whose Manifest
+predates the bump loads the older version without a message, and an older
+version can return a wrong series result flagged as converged.
+`check_apslf_version` closes that gap at load time.
+"""
+const APSLF_MIN_VERSION = v"0.9.15"
+
+"""
+    check_apslf_version(loaded = pkgversion(AnalyticLoadFlow)) -> VersionNumber
+
+Return `loaded` when it satisfies `APSLF_MIN_VERSION`, otherwise
+throw an `ErrorException` that names both versions and the Pkg command that
+fixes the environment. Called from the module `__init__`, so an outdated
+environment fails `using Sparlectra` with the cause in one line instead of
+producing wrong voltages later. Tests call it with an explicit version.
+"""
+function check_apslf_version(loaded::VersionNumber = pkgversion(AnalyticLoadFlow))::VersionNumber
+  loaded >= APSLF_MIN_VERSION && return loaded
+  error(
+    "AnalyticLoadFlow $(loaded) is loaded, Sparlectra $(SparlectraVersion) needs at least $(APSLF_MIN_VERSION). ",
+    "The Manifest.toml of this environment predates the dependency bump. Run in the checkout directory\n",
+    "    julia --project=. -e 'using Pkg; Pkg.update(\"AnalyticLoadFlow\")'\n",
+    "and start Julia again (a sysimage built on the old version has to be rebuilt as well).",
+  )
+end
+
+"""
     _apslf_spec_from_model(model::PFModel) -> NamedTuple
 
 Pure mapping from the canonical `PFModel` fields onto the AnalyticLoadFlow

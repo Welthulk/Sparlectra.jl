@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # file: test/test_demo_cases.jl
-# purpose: the shipped demo cases (data/scf/sp_case*, task_demo_cases_v0100)
+# purpose: the shipped demo cases (data/scf/sp_case*)
 #          are regression fixtures, not decoration: each case is read through
 #          import_case like any other SCF file, all five run kinds are
 #          executed (power flow, N-1, explicit scenarios, state estimation,
@@ -28,7 +28,7 @@ const _DEMO_CASE_NAMES = ("sp_case5", "sp_case14", "sp_case60", "sp_case188")
 # same rule for the provenance stamp as the SCF tests use
 include("test_scf_support.jl")
 # the fixtures are machine-neutral: they were taken against the PACKAGE
-# defaults (colleague review 2026-09-03), so the comparison must never
+# defaults, so the comparison must never
 # resolve through this machine's configuration.yaml
 _DEMO_REF_CONFIG() = Sparlectra.SparlectraConfig(Dict())
 
@@ -41,9 +41,9 @@ function _demo_fixture(name::String)::Dict{String,Any}
 end
 
 function run_demo_case_tests()
-  @testset "Shipped demo cases (regression fixtures)" begin
+  @testset "Shipped demo cases (regression fixtures)" begin (function ()
     for name in _DEMO_CASE_NAMES
-      @testset "$(name)" begin
+      @testset "$(name)" begin (function ()
         scf_path = joinpath(_DEMO_CASE_DIR, "$(name).scf.json")
         fixture = _demo_fixture(name)
         @test isfile(scf_path)
@@ -52,7 +52,6 @@ function run_demo_case_tests()
         # the per-case config file exists and pins the solve tolerance: its
         # presence pins the resolution chain to package defaults, so the
         # 1e-6 pu fixtures never resolve against a machine configuration
-        # (colleague review 2026-09-03)
         cfg_path = Sparlectra.case_config_path(scf_path)
         @test isfile(cfg_path)
         @test occursin("scope: case", read(cfg_path, String))
@@ -127,7 +126,7 @@ function run_demo_case_tests()
           ctrl_ref = fixture["control"]
           # a shipped case's controllers MUST settle; equality with the
           # fixture alone once froze a non-converging SSSC as the
-          # reference (maintainer's first live run found it)
+          # reference (the first live run found it)
           @test ctrl_ref["converged"] === true
           file_params = icase.sparlectra.components.controllers
           @test Dict{String,Any}(String(k) => v for (k, v) in file_params) == ctrl_ref["parameters"]
@@ -151,7 +150,7 @@ function run_demo_case_tests()
         # the bad-data variant exists and differs in exactly the marked way
         @test isfile(joinpath(_DEMO_CASE_DIR, "$(name).measurements.baddata.csv"))
         @test occursin("baddata", read(joinpath(_DEMO_CASE_DIR, "$(name).measurements.baddata.csv"), String))
-      end
+      end)() end
     end
     all_files = filter(f -> startswith(f, "sp_case"), readdir(_DEMO_CASE_DIR))
     @test sum(filesize(joinpath(_DEMO_CASE_DIR, f)) for f in all_files) < 900_000
@@ -175,7 +174,7 @@ function run_demo_case_tests()
     # them at all. A copy stamped with a version that does not exist has to
     # import to the same network and solve to the same result; nothing may
     # read `created_by` except a human looking for provenance.
-    @testset "the provenance stamp does not reach behavior" begin
+    @testset "the provenance stamp does not reach behavior" begin (function ()
       d = mktempdir()
       for name in _DEMO_CASE_NAMES
         original = joinpath(_DEMO_CASE_DIR, "$(name).scf.json")
@@ -201,14 +200,14 @@ function run_demo_case_tests()
         p_alt, q_alt = Sparlectra.getTotalLosses(net = alt)
         @test p_alt == p_ref && q_alt == q_ref
       end
-    end
+    end)() end
 
-    # maintainer request 2026-09-03: the shipped cases load through the Web
+    # the shipped cases load through the Web
     # UI. The chooser offers them without any cache copy, and the run path
     # stages a bundled case into the cache WITH its sidecars (the per-case
     # config carries the machine-neutrality pin, so losing it on the copy
     # would silently undo that guarantee).
-    @testset "shipped cases load through the Web UI" begin
+    @testset "shipped cases load through the Web UI" begin (function ()
       app_root = normpath(joinpath(dirname(@__DIR__)))
       offered = Sparlectra._webui_bundled_scf_options(app_root)
       @test "sp_case14.scf.json" in offered
@@ -237,8 +236,8 @@ function run_demo_case_tests()
       Sparlectra._webui_stage_bundled_case!(app_root, cache, "sp_case14.scf.json")
       @test occursin("max_iter: 44", read(joinpath(cache, "sp_case14.config.yaml"), String))
       # the staged case runs through the service front door, and the run
-      # PROVES the pinning arrived (colleague: succeeded only confirms the
-      # copy, not the config): the effective-config artifact must name the
+      # PROVES the pinning arrived (succeeded only confirms the copy, not
+      # the config): the effective-config artifact must name the
       # case configuration file as a resolution source
       run = Sparlectra.start_powerflow_run(Dict("casefile" => "sp_case14.scf.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(cache, "runs")); case_directory = cache)
       @test run["status"] == "succeeded"
@@ -254,7 +253,7 @@ function run_demo_case_tests()
       @test occursin("value: 1.0e-8", tol_seg)
       # an unknown name stages nothing
       @test Sparlectra._webui_stage_bundled_case!(app_root, cache, "sp_nope.scf.json") === nothing
-    end
+    end)() end
 
     # REPLACES the former testset "hostile general config cannot move the
     # shipped fixtures" (2026-09-03 to 2026-09-08). That test could not fail:
@@ -270,7 +269,7 @@ function run_demo_case_tests()
     #
     # What holds instead, and what this testset guards: the configuration a
     # net was imported with is the one it is solved under.
-    @testset "the imported configuration reaches the solver" begin
+    @testset "the imported configuration reaches the solver" begin (function ()
       scf_path = joinpath(_DEMO_CASE_DIR, "sp_case14.scf.json")
 
       # structural: the net carries what it was built with
@@ -315,6 +314,6 @@ function run_demo_case_tests()
       end
       _, erg_win = runpf!(win_net, loose; verbose = 0)
       @test erg_win == 0
-    end
-  end
+    end)() end
+  end)() end
 end

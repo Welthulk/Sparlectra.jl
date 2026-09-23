@@ -18,7 +18,7 @@
 #          lookup, and bit-identical agreement with the formula path
 
 function run_phase_tap_table_tests()
-  @testset "TapTablePoint / PhaseTapChangerModel :tabular constructor validation" begin
+  @testset "TapTablePoint / PhaseTapChangerModel :tabular constructor validation" begin (function ()
     # empty table
     @test_throws ArgumentError PhaseTapChangerModel(kind = :tabular, step = 0, neutralStep = 0, table = TapTablePoint[])
 
@@ -47,9 +47,9 @@ function run_phase_tap_table_tests()
     # inconsistent explicit lowStep/highStep
     @test_throws ArgumentError PhaseTapChangerModel(kind = :tabular, step = 0, lowStep = -99, neutralStep = 0, table = valid_table)
     @test_throws ArgumentError PhaseTapChangerModel(kind = :tabular, step = 0, highStep = 99, neutralStep = 0, table = valid_table)
-  end
+  end)() end
 
-  @testset "lowStep/highStep auto-derivation from table" begin
+  @testset "lowStep/highStep auto-derivation from table" begin (function ()
     table = [TapTablePoint(step = s, ratio = 1.0, angle_deg = Float64(s)) for s in -4:6]
     m = PhaseTapChangerModel(kind = :tabular, step = 0, neutralStep = 0, table = table)
     @test m.lowStep == -4
@@ -59,9 +59,9 @@ function run_phase_tap_table_tests()
     m2 = PhaseTapChangerModel(kind = :tabular, step = 0, lowStep = -4, highStep = 6, neutralStep = 0, table = table)
     @test m2.lowStep == -4
     @test m2.highStep == 6
-  end
+  end)() end
 
-  @testset "calcPhaseTapTable exact lookup" begin
+  @testset "calcPhaseTapTable exact lookup" begin (function ()
     table = [
       TapTablePoint(step = -1, ratio = 0.99, angle_deg = -2.0, x_pu = 0.11),
       TapTablePoint(step = 0, ratio = 1.0, angle_deg = 0.0), # x_pu omitted -> nothing
@@ -82,9 +82,9 @@ function run_phase_tap_table_tests()
     @test r_default_step.effective_ratio == r0.effective_ratio
 
     @test_throws ArgumentError calcPhaseTapTable(m; step = 99)
-  end
+  end)() end
 
-  @testset "calcPhaseTapAngleRatio :tabular reproduces the formula path bit-identically" begin
+  @testset "calcPhaseTapAngleRatio :tabular reproduces the formula path bit-identically" begin (function ()
     m_formula = PhaseTapChangerModel(kind = :asymmetrical, step = 3, lowStep = -8, highStep = 8, neutralStep = 0, voltage_step_increment = 0.02, winding_connection_angle_deg = 25.0)
     formula_results = Dict(s => calcPhaseTapAngleRatio(m_formula; step = s) for s in m_formula.lowStep:m_formula.highStep)
 
@@ -102,9 +102,9 @@ function run_phase_tap_table_tests()
       # derivation formula itself, not bit-for-bit equality.
       @test isapprox(tabular_result.regulating_vector, formula_result.regulating_vector; atol = 1e-12)
     end
-  end
+  end)() end
 
-  @testset "calcPhaseTapReactance :tabular returns row x_pu, ignores alpha_deg" begin
+  @testset "calcPhaseTapReactance :tabular returns row x_pu, ignores alpha_deg" begin (function ()
     table = [
       TapTablePoint(step = -2, ratio = 1.0, angle_deg = 0.0, x_pu = 0.10),
       TapTablePoint(step = 0, ratio = 1.0, angle_deg = 0.0, x_pu = 0.20),
@@ -118,11 +118,11 @@ function run_phase_tap_table_tests()
 
     m2 = PhaseTapChangerModel(kind = :tabular, step = 2, neutralStep = 0, table = table)
     @test isnothing(calcPhaseTapReactance(m2, 0.0))
-  end
+  end)() end
 
-  @testset "calcPhaseTapFraction :tabular throws" begin
+  @testset "calcPhaseTapFraction :tabular throws" begin (function ()
     table = [TapTablePoint(step = s, ratio = 1.0, angle_deg = Float64(s)) for s in -3:3]
     m = PhaseTapChangerModel(kind = :tabular, step = 0, neutralStep = 0, table = table)
     @test_throws ArgumentError calcPhaseTapFraction(m)
-  end
+  end)() end
 end

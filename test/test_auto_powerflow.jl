@@ -50,8 +50,8 @@ function _autopf_config_step_control_ok(pf)
 end
 
 function run_auto_powerflow_tests()
-  @testset "auto powerflow" begin
-    @testset "escalation ladder keeps the step-control exclusions (issue #5)" begin
+  @testset "auto powerflow" begin (function ()
+    @testset "escalation ladder keeps the step-control exclusions (issue #5)" begin (function ()
       # A hard_case profile starts with autodamp AND merit, a consistent pair.
       # A ladder stage used to switch autodamp off while leaving merit on, and
       # runpf_rectangular! rightly refused with
@@ -81,9 +81,9 @@ function run_auto_powerflow_tests()
         # the tuple form names the offending stage in the failure output
         @test (stage.id, _autopf_config_step_control_ok(pf)) == (stage.id, true)
       end
-    end
+    end)() end
 
-    @testset "feature extraction on the four case classes" begin
+    @testset "feature extraction on the four case classes" begin (function ()
       cfg = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true)
       # class 1: small transmission case (load_fixture_net: the shipped
       # sp_case14 replaces the downloaded case14; 14 buses, machines with
@@ -118,9 +118,9 @@ function run_auto_powerflow_tests()
       @test fisl.n_ac_islands >= 2
       # extraction is read-only on the untouched net: repeated calls agree
       @test Sparlectra.collect_auto_pf_features(net14) == f14
-    end
+    end)() end
 
-    @testset "decision rules (first match wins, exclusion by construction)" begin
+    @testset "decision rules (first match wins, exclusion by construction)" begin (function ()
       small = Sparlectra.select_auto_pf_strategy(_autopf_features((n_bus = 14,)))
       @test small.profile === :small_default
       assisted = Sparlectra.select_auto_pf_strategy(_autopf_features((n_bus = 300, has_start_profile = true, start_profile_plausible = true)))
@@ -155,9 +155,9 @@ function run_auto_powerflow_tests()
       zq = Sparlectra.select_auto_pf_strategy(_autopf_features((n_bus = 14, n_q_zero_range = 2)))
       @test zq.options["power_flow.qlimits.guard_zero_range_mode"] == "lock_pq"
       @test zq.options["power_flow.qlimits.guard_narrow_range_mode"] == "lock_pq"
-    end
+    end)() end
 
-    @testset "escalation ladder, cap, precedence, service artifacts" begin
+    @testset "escalation ladder, cap, precedence, service artifacts" begin (function ()
       # load_fixture_net: the shipped sp_case14 replaces the downloaded
       # case14. Its start_state converges in one iteration, so the forced
       # non-convergence adds the user flatstart override (which the auto
@@ -210,9 +210,9 @@ function run_auto_powerflow_tests()
       rman = start_powerflow_run(Dict{String,Any}("casefile" => case, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root))
       @test rman["metadata"]["auto_mode_enabled"] === false
       @test !haskey(rman["metadata"], "auto_profile")
-    end
+    end)() end
 
-    @testset "DC fallback: honest labeling, off by default" begin
+    @testset "DC fallback: honest labeling, off by default" begin (function ()
       # the service path cannot override power_flow.flatstart (not a GUI
       # key), so forcing real flat-start non-convergence at max_iter=1
       # (plus an unreachable tol, see above) needs a start_state-free copy
@@ -232,9 +232,9 @@ function run_auto_powerflow_tests()
       rnf = start_powerflow_run(Dict{String,Any}("casefile" => case, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "config_overrides" => Dict{String,Any}("power_flow.mode" => "auto", "power_flow.max_iter" => 1, "power_flow.tol" => 1e-15)))
       @test rnf["metadata"]["dc_fallback_solution"] === false
       @test occursin("skipped_dc_fallback_disabled", read(joinpath(rnf["output_dir"], "auto_mode_decision.log"), String))
-    end
+    end)() end
 
-    @testset "stage builders: L4 locks, L5 gate, L6 seed-only" begin
+    @testset "stage builders: L4 locks, L5 gate, L6 seed-only" begin (function ()
       pf = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true).powerflow
       stages = Sparlectra._auto_pf_escalation_stages(pf)
       byid = Dict(s.id => s for s in stages)
@@ -259,9 +259,9 @@ function run_auto_powerflow_tests()
       @test pf6.apslf_start.enabled
       @test pf6.solver === :rectangular
       @test occursin("apslf-seeded", Sparlectra._auto_pf_solver_label(pf6, nothing))
-    end
+    end)() end
 
-    @testset "hint generator: stable ids from synthetic diagnostics" begin
+    @testset "hint generator: stable ids from synthetic diagnostics" begin (function ()
       ev(sc; se = 0, asc = 0) = (switching_events = se, active_set_changes = asc, reenable_events = 0, switch_counts = sc)
       f_no = _autopf_features((n_gen_with_q_limits = 0,))
       ids(h) = Set(x.id for x in h)
@@ -282,9 +282,9 @@ function run_auto_powerflow_tests()
         @test h.id isa Symbol
         @test !isempty(h.text)
       end
-    end
+    end)() end
 
-    @testset "startup latency hint: once, suppressible, flavor-gated" begin
+    @testset "startup latency hint: once, suppressible, flavor-gated" begin (function ()
       cfg = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true)
       if Sparlectra.webui_runtime_flavor().kind === :native
         Sparlectra._STARTUP_LATENCY_HINT_SHOWN[] = false
@@ -301,10 +301,10 @@ function run_auto_powerflow_tests()
         @test_logs Sparlectra._maybe_print_startup_latency_hint(cfg)
       end
       Sparlectra._STARTUP_LATENCY_HINT_SHOWN[] = true
-    end
-  end
+    end)() end
+  end)() end
 
-  @testset "auto profile precedence level (D11)" begin
+  @testset "auto profile precedence level" begin (function ()
     base = Sparlectra.SparlectraConfig(Dict{String,Any}())
     pairs = Pair{Symbol,Any}[:ratio => :reciprocal, :shift_unit => :rad]
     # nothing explicitly set: both recommendations apply
@@ -339,6 +339,6 @@ function run_auto_powerflow_tests()
       @test r2.config.matpower.ratio === :normal
       @test !haskey(r2.auto_profile_config, "matpower_import.ratio")
     end
-  end
+  end)() end
   return nothing
 end

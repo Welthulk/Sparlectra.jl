@@ -422,7 +422,7 @@ function _scf_net_from_case(case::SCFCase)::Net
     if haskey(e, "original_name")
       net.busOriginalNameDict[length(net.nodeVec)] = String(e["original_name"])
     end
-    # own bus names are a first-class channel (maintainer 2026-09-04):
+    # own bus names are a first-class channel:
     # extra.name is the reference name (busName above), external_id the
     # source system's id, component_name the internal name when it differs.
     # Restoring both here keeps a re-export of the imported net byte-stable;
@@ -436,7 +436,7 @@ function _scf_net_from_case(case::SCFCase)::Net
   # --- start state (start values, never results) -------------------------
   # applied RIGHT AFTER the buses, so appliance setpoints laid down below
   # override the raw start voltage of their bus exactly like a direct
-  # format import does (D10: start_state carries the source system's raw
+  # format import does (start_state carries the source system's raw
   # values; the setpoint precedence is the build's, not the file's)
   for (id, v) in spar.start_state.nodes
     bus = get(bus_by_id, id, nothing)
@@ -521,7 +521,7 @@ function _scf_net_from_case(case::SCFCase)::Net
       haskey(meta_e, "neutral_ratio") && (br.ratio = _scf_num(meta_e["neutral_ratio"], "extra.meta.neutral_ratio"))
       haskey(meta_e, "neutral_shift_deg") && (br.angle = _scf_num(meta_e["neutral_shift_deg"], "extra.meta.neutral_shift_deg"))
     end
-    # the MATPOWER branch metadata record of the direct import (stage 3a):
+    # the MATPOWER branch metadata record of the direct import:
     # report and export layers read it; the loss record itself stays with
     # the electrical values (g1/b1 of the row)
     mb = _scf_get(be_all, "matpower_branch", nothing)
@@ -538,12 +538,12 @@ function _scf_net_from_case(case::SCFCase)::Net
     if haskey(be_all, "transformer_loss_g_pu") && !isempty(net.trafos)
       net.trafos[end].side1.g = _scf_num(be_all["transformer_loss_g_pu"], "extra.transformer_loss_g_pu")
     end
-    # DTF branch metadata (stage 3b): the full importer record, tagged
+    # DTF branch metadata: the full importer record, tagged
     # encoding, order preserving; export and report layers read it
     if haskey(be_all, "dtf_branch")
       net.matpower_branch_metadata[length(net.branchVec)] = scf_decode_value(be_all["dtf_branch"])
     end
-    # the typed phase-tap model of a DTF or CGMES winding (stage 3b)
+    # the typed phase-tap model of a DTF or CGMES winding
     if haskey(be_all, "phase_taps") && entry.kind == "generic_branch" && !isempty(net.trafos)
       net.trafos[end].side1.phase_taps = scf_decode_value(be_all["phase_taps"])
     end
@@ -689,7 +689,7 @@ function _scf_net_from_case(case::SCFCase)::Net
         nothing
       end
       # a MATPOWER-converted PQ generator carries its limits as constant
-      # P(U)/Q(U) controllers (stage 3a); the explicit flag keeps every
+      # P(U)/Q(U) controllers; the explicit flag keeps every
       # existing case file's behavior untouched
       pu_ctrl = nothing
       qu_ctrl = nothing
@@ -948,7 +948,7 @@ function _scf_net_from_case(case::SCFCase)::Net
   # --- measurements ------------------------------------------------------
   _scf_read_measurements!(net, case, bus_by_id, branch_index_by_id, u_rated_by_id, names)
 
-  # --- CGMES source identity (stage 3c) -----------------------------------
+  # --- CGMES source identity ----------------------------------------------
   # the structural-key mRID registry travels in the namespaced meta; with
   # it restored, the CGMES exporter and the mRID-addressed measurement
   # resolution work on a case-built net exactly as on the direct import
@@ -959,7 +959,7 @@ function _scf_net_from_case(case::SCFCase)::Net
     end
   end
 
-  # --- isolated nodes (roles.isolated_nodes, stage 3a) --------------------
+  # --- isolated nodes (roles.isolated_nodes) ------------------------------
   # restore the source system's isolated flags exactly like the direct
   # MATPOWER import (type Isolated, zero state, isoNodes registry)
   for id in spar.roles.isolated_nodes
@@ -971,7 +971,7 @@ function _scf_net_from_case(case::SCFCase)::Net
     idx in net.isoNodes || push!(net.isoNodes, idx)
   end
 
-  # --- MATPOWER dcline records (stage 3a) ---------------------------------
+  # --- MATPOWER dcline records --------------------------------------------
   # the injections themselves are ordinary sym_gen rows; this block restores
   # the metadata registry and the HVDC link records the result layer and the
   # dcline toggling read, plus the paired controllers when the case was
@@ -1041,7 +1041,7 @@ function _scf_net_from_case(case::SCFCase)::Net
     end
   end
 
-  # --- FOR001 contingency labels (stage 3a/3b) ----------------------------
+  # --- FOR001 contingency labels ------------------------------------------
   # net.for001Contingencies is a Vector{String}: both the DTF importer and
   # the MATPOWER metadata carry the outage LABELS, so the rows store one
   # label each
@@ -1171,8 +1171,8 @@ end
 """
     build_net(case::SCFCase; config = active_sparlectra_config()) -> Net
 
-The one network constructor of the run path over the typed case (design
-decisions D2 and D12): construct through the existing public
+The one network constructor of the run path over the typed case:
+construct through the existing public
 constructors, then apply the run configuration's net parameters exactly
 once, here. `config` is the EFFECTIVE run configuration (the run path
 passes its resolved `ImportedCase` configuration; interactive use takes
@@ -1323,11 +1323,11 @@ end
 """
     scf_case_units(case::SCFCase) -> Symbol
 
-The declared unit system of the electrical parameters
-(task_scf_units_v0100): `:pu` or `:si`. An ABSENT declaration means
+The declared unit system of the electrical parameters:
+`:pu` or `:si`. An ABSENT declaration means
 `:si`, which is what every file before the declaration meant, so
 existing files read unchanged. Unknown values are a hard error. For
-`:pu` the conversion base must be complete (D2): `meta.s_base` (VA,
+`:pu` the conversion base must be complete: `meta.s_base` (VA,
 positive and finite) and a positive finite `u_rated` on every node;
 per-unit numbers without their base are not interpretable, so a
 missing piece is a hard error naming the field.

@@ -13,16 +13,14 @@
 # limitations under the License.
 
 # file: src/adapters/adapters.jl
-# purpose: the format-adapter contract of the SCF pivot architecture
-#          (adapter task stage 3, design decision D3): one adapter per
-#          input format converts its source into the typed SCFCase, and
+# purpose: the format-adapter contract: one adapter per input format
+#          converts its source into the typed SCFCase, and
 #          build_net is the one network constructor behind all of them.
 
 """
     FormatAdapter
 
-Abstract supertype of the format adapters. The model, corrected by
-task_import_direct (2026-09-04, superseding the D2/D3 pivot design): an
+Abstract supertype of the format adapters. The model: an
 adapter owns BOTH output forms of its format. Its IMPORTER builds the
 network directly and hands it to the solver, with no intermediate
 format, no conversion, no loss; its CONVERTER turns the format into the

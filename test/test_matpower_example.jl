@@ -21,7 +21,7 @@ using LinearAlgebra
 using Test
 
 function run_matpower_example_tests()
-  @testset "Central Sparlectra configuration" begin
+  @testset "Central Sparlectra configuration" begin (function ()
     cfg = Sparlectra.load_sparlectra_config(; reload = true)
     @test cfg.powerflow.method === :rectangular
     @test cfg.matpower.matpower_dcline_mode === :pf_injections
@@ -220,9 +220,9 @@ state_estimation:
     @test cfg_rect.powerflow.rectangular_workspace_reuse === false
     @test cfg_rect.powerflow.rectangular_preallocate_workspace === :on
     @test cfg_rect.powerflow.rectangular_workspace_min_buses == 12345
-  end
+  end)() end
 
-  @testset "MATPOWER example cleanup guard" begin
+  @testset "MATPOWER example cleanup guard" begin (function ()
     source = read(joinpath(@__DIR__, "..", "examples", "powerflow", "matpower_import.jl"), String)
     @test !occursin("load_yaml_dict", source)
     @test !occursin("_normalize_matpower_example_config", source)
@@ -251,9 +251,9 @@ state_estimation:
         ENV["SPARLECTRA_MATPOWER_IMPORT_NO_MAIN"] = old_no_main
       end
     end
-  end
+  end)() end
 
-  @testset "MATPOWER runner operational output" begin
+  @testset "MATPOWER runner operational output" begin (function ()
     test_cfg = test_scratch_path(".yaml")
     write(test_cfg, """
 benchmark:
@@ -285,9 +285,9 @@ matpower_import:
       em = sprint(showerror, err)
       @test occursin("RequestError", et) || occursin("FieldError", et) || occursin("RequestError", em)
     end
-  end
+  end)() end
 
-  @testset "Compact summary uses canonical outcome fields" begin
+  @testset "Compact summary uses canonical outcome fields" begin (function ()
     summary_not_conv = Sparlectra._compact_run_summary((
       method = :rectangular,
       outcome = :not_converged,
@@ -322,9 +322,9 @@ matpower_import:
     @test occursin("numerical_solution=OK", summary_limits)
     @test occursin("solution_available=true", summary_limits)
     @test occursin("limit_validation=FAIL", summary_limits)
-  end
+  end)() end
 
-  @testset "Q-limit non-convergence reason and counters are explicit" begin
+  @testset "Q-limit non-convergence reason and counters are explicit" begin (function ()
     @test Sparlectra._rectangular_rejection_reason_text(:nr_mismatch_not_converged_active_set_unstable) ==
           "NR mismatch did not converge; Q-limit active set changed repeatedly"
     io = IOBuffer()
@@ -342,9 +342,9 @@ matpower_import:
     txt = String(take!(io))
     @test occursin("Q-limit active-set changes", txt)
     @test occursin("Q-limit re-enable events", txt)
-  end
+  end)() end
 
-  @testset "MATPOWER performance profile output coverage" begin
+  @testset "MATPOWER performance profile output coverage" begin (function ()
     profile = Dict{Symbol,Any}(
       :enabled => true,
       :level => :full,
@@ -398,15 +398,15 @@ matpower_import:
     @test occursin("Warmup guidance", txt_compact)
     @test occursin("Rectangular workspace", txt_compact)
     @test occursin("auto_threshold", txt_compact)
-  end
+  end)() end
 
-  @testset "Performance warmup configuration parsing" begin
+  @testset "Performance warmup configuration parsing" begin (function ()
     cfg_default = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true)
     @test cfg_default.performance.representative_warmup_runs == 0
     @test cfg_default.performance.compare_cold_warm == false
-  end
+  end)() end
 
-  @testset "Performance warmup sentinel is rendered in profile output" begin
+  @testset "Performance warmup sentinel is rendered in profile output" begin (function ()
     profile = Dict{Symbol,Any}(
       :timing_mode => :warm_steady_state,
       :representative_warmup_runs => 2,
@@ -420,9 +420,9 @@ matpower_import:
     txt = String(take!(io))
     @test occursin("warm / steady-state", txt)
     @test occursin("Representative warmup runs     : 2", txt)
-  end
+  end)() end
 
-  @testset "Automatic timing mode labels are rendered in profile output" begin
+  @testset "Automatic timing mode labels are rendered in profile output" begin (function ()
     profile_auto_cold = Dict{Symbol,Any}(
       :timing_mode => :auto_cold_session_first,
       :representative_warmup_runs => 0,
@@ -450,9 +450,9 @@ matpower_import:
     txt_warm = String(take!(io_warm))
     @test occursin("auto: warm session-reuse", txt_warm)
     @test !occursin("Timing note", txt_warm)
-  end
+  end)() end
 
-  @testset "Performance warmup override reason is explicit when warmup is zero" begin
+  @testset "Performance warmup override reason is explicit when warmup is zero" begin (function ()
     profile = Dict{Symbol,Any}(
       :timing_mode => :cold_representative,
       :representative_warmup_runs => 0,
@@ -468,9 +468,9 @@ matpower_import:
     @test occursin("Representative warmup runs     : 0", txt)
     @test occursin("Warmup override reason         : benchmark-mode override", txt)
     @test !occursin("Warmup guidance", txt)
-  end
+  end)() end
 
-  @testset "Compact summary includes Q-limit aggregate counters" begin
+  @testset "Compact summary includes Q-limit aggregate counters" begin (function ()
     summary = Sparlectra._compact_run_summary((
       method = :rectangular,
       outcome = :not_converged,
@@ -490,7 +490,7 @@ matpower_import:
     @test occursin("pv2pq_events=0", summary)
     @test occursin("qlimit_active_set_changes=76", summary)
     @test occursin("qlimit_reenable_events=63", summary)
-  end
+  end)() end
 
   @testset "MATPOWER benchmark output routing" begin
     test_cfg = test_scratch_path(".yaml")
@@ -591,7 +591,7 @@ matpower_import:
     @test !occursin("performance_profile = Dict", txt)
   end
 
-  @testset "MATPOWER compact timing summary uses solver_total semantics" begin
+  @testset "MATPOWER compact timing summary uses solver_total semantics" begin (function ()
     summary = Sparlectra._compact_run_summary((
       method = :rectangular,
       outcome = :converged,
@@ -612,9 +612,9 @@ matpower_import:
     @test occursin("solver_time=8.948731 s", summary)
     @test occursin("benchmark_median=18.227 ms", summary)
     @test !occursin("solver_time=14.522494 s", summary)
-  end
+  end)() end
 
-  @testset "Runtime config accepts numeric thread values" begin
+  @testset "Runtime config accepts numeric thread values" begin (function ()
     cfg_file = test_scratch_path(".yaml")
     write(cfg_file, "runtime:
   julia_threads: 4
@@ -623,9 +623,9 @@ matpower_import:
     cfg_runtime = Sparlectra.load_sparlectra_config(cfg_file; reload = true)
     @test cfg_runtime.runtime.julia_threads == "4"
     @test cfg_runtime.runtime.blas_threads == "16"
-  end
+  end)() end
 
-  @testset "Runtime thread status reporting" begin
+  @testset "Runtime thread status reporting" begin (function ()
     cfg_keep = Sparlectra.RuntimeConfig(; print_thread_config = true, julia_threads = "keep", blas_threads = "keep")
     status_keep = Sparlectra.runtime_thread_status(cfg_keep)
     @test status_keep.julia_applied === true
@@ -646,9 +646,9 @@ matpower_import:
     cfg_blas = Sparlectra.RuntimeConfig(; print_thread_config = true, julia_threads = "keep", blas_threads = string(LinearAlgebra.BLAS.get_num_threads()))
     status_blas = Sparlectra.runtime_thread_status(cfg_blas)
     @test status_blas.blas_applied === true
-  end
+  end)() end
 
-  @testset "Compact performance summary output" begin
+  @testset "Compact performance summary output" begin (function ()
     profile = Dict{Symbol,Any}(
       :compact_logging => true,
       :representative_elapsed_s => 10.0,
@@ -668,7 +668,7 @@ matpower_import:
     @test occursin("Coverage status", txt)
     @test !occursin("Phase", txt)
     @test !occursin("Iteration diagnostics", txt)
-  end
+  end)() end
 end
 
 # Executed from test/runtests.jl to avoid duplicate execution and

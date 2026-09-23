@@ -51,7 +51,7 @@ function _include_with_no_main(path::AbstractString)
 end
 
 function run_example_suite_infra_tests()
-  @testset "Example suites" begin
+  @testset "Example suites" begin (function ()
   runner = _sandbox_module()
   Base.include(runner, joinpath(_EXAMPLES_DIR, "others", "example_suite_runner.jl"))
   # the include just defined the runner's methods; everything below runs
@@ -59,7 +59,7 @@ function run_example_suite_infra_tests()
   # (Julia 1.12 world-age rule for just-included code)
   Base.invokelatest() do
 
-  @testset "CLI parsing" begin
+  @testset "CLI parsing" begin (function ()
     specs = [runner.ExampleSpec(name = "alpha", file = "alpha.jl", purpose = "p"), runner.ExampleSpec(name = "beta", file = "beta.jl", purpose = "p", heavy = true)]
     notes = String[]
 
@@ -86,9 +86,9 @@ function run_example_suite_infra_tests()
     @test_throws ArgumentError runner._parse_bool("maybe")
     @test runner._parse_bool("Yes") === true
     @test runner._parse_bool("0") === false
-  end
+  end)() end
 
-  @testset "skip and filter logic" begin
+  @testset "skip and filter logic" begin (function ()
     plain = runner.ExampleSpec(name = "plain", file = "plain.jl", purpose = "p")
     heavy = runner.ExampleSpec(name = "heavy", file = "heavy.jl", purpose = "p", heavy = true)
     optional = runner.ExampleSpec(name = "optional", file = "optional.jl", purpose = "p", optional = true)
@@ -120,9 +120,9 @@ function run_example_suite_infra_tests()
     @test runner._spec_skip_status(optional, opt, only_names, no_skip)[1] == "skipped_by_filter"
     @test runner._spec_skip_status(plain, opt, only_names, Set(["plain"]))[1] == "skipped_by_filter"
     @test_throws ArgumentError runner._split_name_list("unknown_name", specs, "only")
-  end
+  end)() end
 
-  @testset "CSV and Markdown escaping" begin
+  @testset "CSV and Markdown escaping" begin (function ()
     @test runner._csv_cell("plain") == "plain"
     @test runner._csv_cell("a,b") == "\"a,b\""
     @test runner._csv_cell("say \"hi\"") == "\"say \"\"hi\"\"\""
@@ -132,9 +132,9 @@ function run_example_suite_infra_tests()
     @test runner._is_failure_status("timeout")
     @test !runner._is_failure_status("ok")
     @test !runner._is_failure_status("skipped_heavy")
-  end
+  end)() end
 
-  @testset "registry integrity" begin
+  @testset "registry integrity" begin (function ()
     all_names = String[]
     excluded = ("current_iteration_start.jl", "dtf_validation_report.jl", "for002_matpower_metadata_validation.jl", "run_val_dtf_suite.jl")
     for script in _SUITE_SCRIPTS
@@ -150,15 +150,15 @@ function run_example_suite_infra_tests()
       end
     end
     @test allunique(all_names)
-  end
+  end)() end
 
-  @testset "--help smoke test" begin
+  @testset "--help smoke test" begin (function ()
     for script in _SUITE_SCRIPTS
       cmd = `$(Base.julia_cmd()) --startup-file=no --project=$(Base.active_project()) $(joinpath(_EXAMPLES_DIR, script)) --help`
       proc = run(pipeline(Cmd(cmd; ignorestatus = true); stdout = devnull, stderr = devnull))
       @test success(proc)
     end
-  end
+  end)() end
 end
-end
+end)() end
 end

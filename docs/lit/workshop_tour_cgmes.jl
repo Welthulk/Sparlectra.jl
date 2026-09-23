@@ -45,6 +45,11 @@
 #nb # This cell installs Sparlectra from GitHub (branch `main`) into a fresh
 #nb # temporary environment. Run it first, once per session; it takes a few
 #nb # minutes.
+#nb # > **Colab is slow here.** The install cell below fetches Sparlectra and
+#nb # > precompiles it on Colab's two cores; that takes about ten minutes and
+#nb # > prints nothing while it runs ("Precompiling packages..." is the last
+#nb # > line you see). Wait for the cell to finish before running the next one;
+#nb # > a second click on it starts the whole install again.
 #nb using Pkg
 #nb Pkg.activate(temp = true)
 #nb Pkg.add(url = "https://github.com/Welthulk/Sparlectra.jl", rev = "main")

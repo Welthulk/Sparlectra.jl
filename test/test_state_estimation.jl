@@ -27,7 +27,7 @@ using Random
 function test_state_estimation_wls_first_version()::Bool
   # Verifies the baseline WLS state-estimation workflow:
   # PF reference generation, synthetic measurements, convergence, and voltage accuracy.
-  @testset "State estimation WLS first version" begin
+  @testset "State estimation WLS first version" begin (function ()
     net = createTest3BusNet()
 
     ite, erg = runpf!(net, 40, 1e-10, 0; method = :rectangular)
@@ -62,7 +62,7 @@ function test_state_estimation_wls_first_version()::Bool
         @test abs(rad2deg(angle(Vref[i])) - rad2deg(angle(result.voltages[i]))) < 1e-2
       end
     end
-  end
+  end)() end
 
   return true
 end
@@ -70,7 +70,7 @@ end
 function test_state_estimation_measurement_add_helpers()::Bool
   # Verifies measurement insertion helper APIs for Vm/Pinj/Qinj/Pflow/Qflow,
   # field mapping, storage in net.measurements, and invalid-branch error handling.
-  @testset "State estimation measurement add helpers" begin
+  @testset "State estimation measurement add helpers" begin (function ()
     net = createTest3BusNet()
     @test isempty(net.measurements)
 
@@ -95,7 +95,7 @@ function test_state_estimation_measurement_add_helpers()::Bool
     @test net.measurements[end] == qflow
 
     @test_throws ErrorException addPflowMeasurement!(Measurement[]; net = net, fromBus = "ASTADT", toBus = "UNKNOWN", value = 1.0, sigma = 0.1)
-  end
+  end)() end
 
   return true
 end
@@ -127,7 +127,7 @@ end
 function test_state_estimation_passive_bus_zero_injection_helpers()::Bool
   # Checks passive-bus detection and automatic zero-injection measurement addition,
   # and confirms improved observability/SE convergence after augmentation.
-  @testset "State estimation passive bus zero-injection helpers" begin
+  @testset "State estimation passive bus zero-injection helpers" begin (function ()
     net = create_state_estimation_passive_transit_net()
 
     ite, erg = runpf!(net, 40, 1e-10, 0; method = :rectangular)
@@ -181,7 +181,7 @@ function test_state_estimation_passive_bus_zero_injection_helpers()::Bool
     @test result.converged == true
     @test result.objectiveJ < 1e-6
     @test result.residualNorm < 1e-6
-  end
+  end)() end
 
   return true
 end
@@ -189,7 +189,7 @@ end
 function test_state_estimation_bad_data_diagnostics()::Bool
   # Injects a controlled bad measurement and verifies diagnostics:
   # residual ranking, suspect identification, formatted reporting, and rerun improvement.
-  @testset "State estimation bad-data diagnostics" begin
+  @testset "State estimation bad-data diagnostics" begin (function ()
     net = createTest3BusNet()
 
     ite, erg = runpf!(net, 40, 1e-10, 0; method = :rectangular)
@@ -261,7 +261,7 @@ function test_state_estimation_bad_data_diagnostics()::Bool
     print_se_diagnostics(io2_md, diag; topN = 5, format = :markdown)
     txt2_md = String(take!(io2_md))
     @test occursin("### Deactivate-and-rerun", txt2_md)
-  end
+  end)() end
 
   return true
 end
@@ -271,7 +271,7 @@ function test_state_estimation_pmu_va_measurements()::Bool
   # offset α is carried as an additional state, estimated network angles stay
   # slack-referenced, and pmuRefOffset=:off treats PMU angles as
   # slack-referenced without the extra state.
-  @testset "State estimation PMU angle measurements" begin
+  @testset "State estimation PMU angle measurements" begin (function ()
     net = createTest3BusNet()
 
     ite, erg = runpf!(net, 40, 1e-10, 0; method = :rectangular)
@@ -365,7 +365,7 @@ function test_state_estimation_pmu_va_measurements()::Bool
     @test diag.converged
     @test !diag.global_consistency
     @test diag.objective.reason == :low
-  end
+  end)() end
 
   return true
 end
@@ -375,7 +375,7 @@ function test_state_estimation_imag_measurements()::Bool
   # generator/prediction roundtrip against an independent current computation,
   # the 3-sigma value gate, the busIdx-only rejection (phase 2 door), and
   # that observability is invariant under ImagMeas (currents never carry it).
-  @testset "State estimation current-magnitude measurements (ImagMeas)" begin
+  @testset "State estimation current-magnitude measurements (ImagMeas)" begin (function ()
     net = createTest3BusNet()
     ite, erg = runpf!(net, 40, 1e-10, 0; method = :rectangular)
     @test erg == 0
@@ -440,7 +440,7 @@ function test_state_estimation_imag_measurements()::Bool
     @test obsWith.numerical_rank == obsWithout.numerical_rank
     @test obsWith.quality == obsWithout.quality
     @test obsWith.n_measurements == obsWithout.n_measurements
-  end
+  end)() end
 
   return true
 end
@@ -449,7 +449,7 @@ function test_state_estimation_sequential_elimination()::Bool
   # Verifies bad-data localization stage 1: wii exposure, the localization
   # benefit of current measurements, sequential elimination with trace and
   # stop reasons, and the ZIB protection.
-  @testset "State estimation sequential elimination and wii" begin
+  @testset "State estimation sequential elimination and wii" begin (function ()
     std = measurementStdDevs(vm = 0.001, pinj = 0.05, qinj = 0.05, pflow = 0.05, qflow = 0.05, imag = 2.0)
 
     _fresh_meas(net; withImag::Bool) = generateMeasurementsFromPF(net; includeImag = withImag, noise = true, stddev = std, rng = MersenneTwister(7))
@@ -542,7 +542,7 @@ function test_state_estimation_sequential_elimination()::Bool
       runse_diagnostics(tnet, tmeas)
     end
     @test all(!startswith(t.id, "ZI") for t in tdiag.eliminations)
-  end
+  end)() end
 
   return true
 end
@@ -575,7 +575,7 @@ function test_state_estimation_shunt_estimation()::Bool
   # bus-referenced ImagMeas prediction and the injection-mode rejection.
   _se_shunt_std() = measurementStdDevs(vm = 1e-4, pinj = 1e-3, qinj = 1e-3, pflow = 1e-3, qflow = 1e-3, shuntq = 1e-3, imag = 1e-2)
 
-  @testset "State estimation shunt estimation (case A)" begin
+  @testset "State estimation shunt estimation (case A)" begin (function ()
     # --- 1) roundtrip: model B off by 20 percent, direct ShuntQ + Vm recover it
     net = create_se_shunt_net()
     ite, erg = runpf!(net, 40, 1e-10, 0; method = :rectangular)
@@ -697,7 +697,7 @@ function test_state_estimation_shunt_estimation()::Bool
     end
     @test err5 !== nothing
     @test occursin("voltage-dependent injection", sprint(showerror, err5))
-  end
+  end)() end
 
   return true
 end
@@ -706,7 +706,7 @@ function test_state_estimation_shunt_back_calculation()::Bool
   # SE phase 2 case B: deriveShuntPseudoMeasurements! (bay current plus Vm to
   # a SHDERIV ShuntQ pseudo-measurement), sign for reactor and capacitor,
   # the hard Vm prerequisite, and the SHDERIV elimination protection.
-  @testset "State estimation shunt back-calculation (case B)" begin
+  @testset "State estimation shunt back-calculation (case B)" begin (function ()
     for (qShunt, kind) in ((30.0, "reactor"), (-25.0, "capacitor"))
       net = create_se_shunt_net(qShunt = qShunt)
       runpf!(net, 40, 1e-10, 0; method = :rectangular)
@@ -772,7 +772,7 @@ function test_state_estimation_shunt_back_calculation()::Bool
       runse_diagnostics(nete)
     end
     @test all(!startswith(t.id, "SHDERIV") for t in diag.eliminations)
-  end
+  end)() end
 
   return true
 end
@@ -785,7 +785,7 @@ function test_state_estimation_link_contraction()::Bool
   # whole, and link measurements never enter the WLS.
   _lstd() = measurementStdDevs(vm = 1e-4, pinj = 1e-3, qinj = 1e-3, pflow = 1e-3, qflow = 1e-3, shuntq = 1e-3)
 
-  @testset "State estimation link contraction" begin
+  @testset "State estimation link contraction" begin (function ()
     # --- 1) closed link: SE converges on the fused net, members share V
     net = create_se_link_net()
     ite, erg = runpf!(net, 40, 1e-10, 0; method = :rectangular)
@@ -888,7 +888,7 @@ function test_state_estimation_link_contraction()::Bool
     end
     @test errS2 !== nothing
     @test occursin("same (fused) bus", sprint(showerror, errS2))
-  end
+  end)() end
 
   return true
 end
@@ -897,7 +897,7 @@ function test_state_estimation_link_allocation_w2()::Bool
   # W2 allocation. Measurement-free runs equal the KCL
   # allocation bitwise (shared core); a link measurement steers the split of
   # a zero-impedance ring while the component KCL still holds.
-  @testset "State estimation W2 link allocation" begin
+  @testset "State estimation W2 link allocation" begin (function ()
     # ring of three link-joined buses, fed and loaded through real branches
     net = Net(name = "w2_ring", baseMVA = 100.0)
     for b in ("S", "R1", "R2", "R3", "L2", "L3")
@@ -947,7 +947,7 @@ function test_state_estimation_link_allocation_w2()::Bool
     @test isapprox(d[1], d[2]; atol = 1e-8)
     @test isapprox(d[2], d[3]; atol = 1e-8)
     @test abs(d[1]) > 1.0   # the measurement really moved the circulation
-  end
+  end)() end
 
   return true
 end
@@ -957,7 +957,7 @@ function test_state_estimation_se_view()::Bool
   # shunt releases, link clusters, and excluded measurements. The controller
   # row uses a series-reactance controller (the view is type-agnostic via
   # collect_outer_controllers).
-  @testset "State estimation se_view" begin
+  @testset "State estimation se_view" begin (function ()
     net = create_se_link_net(shunt_buses = ["B2"])
     runpf!(net, 40, 1e-10, 0; method = :rectangular)
     meas = generateMeasurementsFromPF(net; includeShuntQ = true, noise = false)
@@ -992,7 +992,7 @@ function test_state_estimation_se_view()::Bool
     io2 = IOBuffer()
     print_se_view(io2, view; format = :markdown)
     @test occursin("## SE view", String(take!(io2)))
-  end
+  end)() end
 
   return true
 end
@@ -1001,7 +1001,7 @@ function test_state_estimation_robust_r()::Bool
   # Two-stage robust R modification. The gate is the
   # solve/diagnosis separation: robust changes the estimate, never the
   # original-sigma statistics.
-  @testset "State estimation robust R modification" begin
+  @testset "State estimation robust R modification" begin (function ()
     # --- stage classification (unit level): t = 2, 4, 8 -> stages 0/1/2
     σ = 0.5
     s0 = Sparlectra._robust_stage(2.0 * σ, σ)
@@ -1140,7 +1140,7 @@ function test_state_estimation_robust_r()::Bool
       validate_measurements(net, meas)
     end
     @test count(r -> r.suspicious, repTight.measurement_ranking) >= count(r -> r.suspicious, report.measurement_ranking)
-  end
+  end)() end
 
   return true
 end
@@ -1148,7 +1148,7 @@ end
 function test_state_estimation_wilson_hilferty()::Bool
   # The Wilson-Hilferty band test decides for all nu,
   # with the two-sided reasons and the redundancy notes.
-  @testset "State estimation Wilson-Hilferty band test" begin
+  @testset "State estimation Wilson-Hilferty band test" begin (function ()
     # nu = 4: asymmetric acceptance interval. J = 15 exceeds the OLD
     # symmetric upper bound (nu + 3 sqrt(2 nu) = 12.49) but passes WH
     # (upper bound = nu (mu + 3 sigma)^3 = 18.02); the lower bound is above 0.
@@ -1201,7 +1201,7 @@ function test_state_estimation_wilson_hilferty()::Bool
     txt = String(take!(io))
     @test occursin("Wilson-Hilferty", txt)
     @test occursin("reason=low", txt)
-  end
+  end)() end
 
   return true
 end
@@ -1209,7 +1209,7 @@ end
 function test_state_estimation_diagnostics_unification()::Bool
   # Diagnostics share the estimator's extended state
   # definition (B states of released shunts, nu included).
-  @testset "State estimation diagnostics unification" begin
+  @testset "State estimation diagnostics unification" begin (function ()
     stdn = measurementStdDevs(vm = 0.002, pinj = 0.5, qinj = 0.5, pflow = 0.5, qflow = 0.5, shuntq = 0.5)
     net = create_se_shunt_net()
     runpf!(net, 40, 1e-10, 0; method = :rectangular)
@@ -1239,7 +1239,7 @@ function test_state_estimation_diagnostics_unification()::Bool
     @test only(r for r in repFrozen.result.shuntEstimates).frozen
     mF = length(repFrozen.measurement_ranking)
     @test repFrozen.objective.dof == mF - (2 * nbus - 1)
-  end
+  end)() end
 
   return true
 end
@@ -1248,7 +1248,7 @@ function test_state_estimation_measurement_csv()::Bool
   # Measurement CSV v1 core. Lossless roundtrip over all
   # types and location groups, atomic import, line-precise errors, version
   # guard.
-  @testset "State estimation measurement CSV v1" begin
+  @testset "State estimation measurement CSV v1" begin (function ()
     net = create_se_link_net(shunt_buses = ["B2"])
     runpf!(net, 40, 1e-10, 0; method = :rectangular)
     m = generateMeasurementsFromPF(net; includeImag = true, includeShuntQ = true, includeVa = true, noise = true, rng = MersenneTwister(3))
@@ -1434,7 +1434,7 @@ function test_state_estimation_measurement_csv()::Bool
     @test length(rnet.measurements) == length(a1)
     @test all(x == y for (x, y) in zip(a1, rnet.measurements))
     empty!(rnet.cgmes_ids)
-  end
+  end)() end
 
   return true
 end
@@ -1444,7 +1444,7 @@ function test_state_estimation_se_chain()::Bool
   # the estimated voltages (model injections authoritative), :se_snapshot
   # additionally takes the nodal balances (0/1 iterations, slack pickup at
   # tolerance, persistent model untouched). Both error without a preceding SE.
-  @testset "State estimation SE-to-PF chain" begin
+  @testset "State estimation SE-to-PF chain" begin (function ()
     net = create_se_shunt_net()
     iteFlat, ergFlat = runpf!(net, 40, 1e-10, 0; method = :rectangular, opt_flatstart = true)
     @test ergFlat == 0
@@ -1519,7 +1519,7 @@ function test_state_estimation_se_chain()::Bool
     @test abs(rSn.slack_pickup_mw) < 1e-6
     @test maximum(abs.(vmSt .- vmSn)) > 1e-5      # the modes are measurably different
     @test length(net4.prosumpsVec) == nPros4      # delta prosumers cleaned up
-  end
+  end)() end
 
   return true
 end
@@ -1531,7 +1531,7 @@ function test_state_estimation_islands()::Bool
   # the snapshot-vs-state chain distinction on a measurement/model
   # discrepancy, which the noise-free phase-5 chain test could not see
   # (there takeover == model and the two modes trivially coincide).
-  @testset "State estimation island-wise" begin
+  @testset "State estimation island-wise" begin (function ()
     function _two_island_net()
       net = Net(name = "se_islands", baseMVA = 100.0)
       for b in ("A1", "A2", "A3", "B1", "B2")
@@ -1621,7 +1621,7 @@ function test_state_estimation_islands()::Bool
     @test maximum(abs.(vmState .- vmSnap)) > 1e-5
     # the temporary delta prosumers are gone again
     @test length(net2.prosumpsVec) == nPros
-  end
+  end)() end
 
   return true
 end
@@ -1630,7 +1630,7 @@ function test_state_estimation_ia_measurements()::Bool
   # PMU current-phasor angles (IaMeas, 0.10.0). Alpha recovery from
   # a full phasor set, the paired and unpaired activity gates, observability
   # invariance, the exact angle-wrap helper, and the phasor pair helper.
-  @testset "State estimation current-angle measurements (IaMeas)" begin
+  @testset "State estimation current-angle measurements (IaMeas)" begin (function ()
     net = Net(name = "ia_test", baseMVA = 100.0)
     for b in ("A", "B", "C")
       addBus!(net = net, busName = b, vn_kV = 110.0)
@@ -1717,7 +1717,7 @@ function test_state_estimation_ia_measurements()::Bool
     io = IOBuffer()
     print_se_diagnostics(io, rep; topN = 3)
     @test occursin("Gated measurements", String(take!(io)))
-  end
+  end)() end
 
   return true
 end
@@ -1745,7 +1745,7 @@ function test_state_estimation_tap_pf_equivalence()::Bool
   # PF-equivalence gate for the tap cascade: at (r1_0, r2_0) the unstamped-Ybus + cascade-overlay predictions
   # reproduce the STAMPED power flow to 1e-12 for all three release
   # variants. This is the correctness anchor of the whole tap overlay.
-  @testset "State estimation tap PF equivalence gate" begin
+  @testset "State estimation tap PF equivalence gate" begin (function ()
     for (mode, alpha, r1, r2) in ((:ratio, 0.0, 0.0125, 0.0), (:pst, 90.0, 0.0, 0.031), (:both, 30.0, 0.02, -0.015))
       net = _tap_gate_net()
       br = net.branchVec[3]
@@ -1798,7 +1798,7 @@ function test_state_estimation_tap_pf_equivalence()::Bool
       @test isapprox(kpinj, kpfl; atol = 1e-8)
       @test isapprox(kqinj, kqfl; atol = 1e-8)
     end
-  end
+  end)() end
 
   return true
 end
@@ -1818,7 +1818,7 @@ function test_state_estimation_tap_roundtrip()::Bool
   # mandatory fixation run must land on the exact mechanical step, and
   # after the fixation the tap is no state any more: J after must be
   # numerically zero and the dof gains the freed state(s) back.
-  @testset "State estimation tap roundtrip and fixation" begin
+  @testset "State estimation tap roundtrip and fixation" begin (function ()
     step = 0.00625
     pstep = 1.25
 
@@ -1933,7 +1933,7 @@ function test_state_estimation_tap_roundtrip()::Bool
     @test Sparlectra._band_test_verdict(tf.j_before, tf.dof_before).reason in (:ok, :low)
     @test Sparlectra._band_test_verdict(tf.j_after, tf.dof_after).reason == :high
     @test tf.offgrid_residual == true
-  end
+  end)() end
 
   return true
 end
@@ -1944,7 +1944,7 @@ function test_state_estimation_tap_guards()::Bool
   # transformers are detected for the mass-release skip; partial freezes
   # re-pack the state columns; a fully frozen release is bitwise identical
   # to no release at all.
-  @testset "State estimation tap release guards" begin
+  @testset "State estimation tap release guards" begin (function ()
     step = 0.00625
 
     function _radial_net()
@@ -2027,7 +2027,7 @@ function test_state_estimation_tap_guards()::Bool
     m2 = Sparlectra._tap_apply_freezes(m1, [true, true], [true, true], net, Ybus)
     @test m2 === nothing
     @test Matrix(Ybus) == Yref
-  end
+  end)() end
 
   return true
 end
@@ -2038,7 +2038,7 @@ function test_state_estimation_tap_islands()::Bool
   # island with different true deviations; the merged result carries one
   # row per island with the island id, the fixation sums add, and the
   # islands stay numerically isolated from each other.
-  @testset "State estimation tap estimation across islands" begin
+  @testset "State estimation tap estimation across islands" begin (function ()
     step = 0.00625
 
     function _two_island_tap_net()
@@ -2107,7 +2107,7 @@ function test_state_estimation_tap_islands()::Bool
     @test length(resA.tapEstimates) == 1
     @test resA.tapEstimates[1].fixed_step_1 == 2
     @test res.voltages[1:4] == resA.voltages[1:4]
-  end
+  end)() end
 
   return true
 end
@@ -2116,7 +2116,7 @@ function test_state_estimation_tap_completion()::Bool
   # Tap-estimation completion tests: tap write-back protection, PMU synergy on the
   # released tap, bad data next to a released trafo, the machine-trafo
   # back-calculation, and the se_view release listing.
-  @testset "State estimation tap completion" begin
+  @testset "State estimation tap completion" begin (function ()
     step = 0.00625
 
     function _truth_meas(r1; noise = false, rng = Random.MersenneTwister(1), grossQ = 0.0, includeIa = false)
@@ -2268,7 +2268,7 @@ function test_state_estimation_tap_completion()::Bool
     out = String(take!(io))
     @test occursin("Tap estimation releases: 1", out)
     @test occursin("mode both, alpha 30.0 deg", out)
-  end
+  end)() end
 
   return true
 end
@@ -2276,7 +2276,7 @@ end
 # #381: the estimator reads its settings from the registry; a deviating run
 # installs them for its duration and the registry is the same afterwards
 function test_state_estimation_config_argument()::Bool
-  @testset "SE settings from the registry, scoped overrides (#381)" begin
+  @testset "SE settings from the registry, scoped overrides (#381)" begin (function ()
     scf_dir = joinpath(dirname(@__DIR__), "data", "scf")
     load5() = begin
       net = importSCF(joinpath(scf_dir, "sp_case5.scf.json"))
@@ -2323,7 +2323,7 @@ function test_state_estimation_config_argument()::Bool
     @test d.stop_reason !== nothing
     pre = with_state_estimation_config(() -> validate_topology(load5()); topology_dead_flow_k = 3.0)
     @test pre.n_checked_branches > 0
-  end
+  end)() end
   return true
 end
 
@@ -2340,7 +2340,7 @@ the removed rows. The invalid option combinations throw at construction
 of the options, before any case is imported.
 """
 function test_measurement_generator_critical_thinning()::Bool
-  @testset "Measurement generator critical thinning" begin
+  @testset "Measurement generator critical thinning" begin (function ()
     case = joinpath(dirname(@__DIR__), "data", "scf", "sp_case60.scf.json")
     k = 3
     base = (noise = false, gross_k = 0.0, tap_steps = 0.0, include_i = false, sigma_u_pct = 0.5, sigma_i_pct = 1.0, sigma_p_pct = 1.0, sigma_q_pct = 1.0, sigma_ia_deg = 0.0, seed = 42)
@@ -2381,7 +2381,7 @@ function test_measurement_generator_critical_thinning()::Bool
     @test_throws ArgumentError Sparlectra.MeasurementGeneratorOptions(; base..., passive_sigma = 0.0)
     okopts = Sparlectra.MeasurementGeneratorOptions(; base...)
     @test okopts.critical_count == 0 && okopts.flow_ends === :both && okopts.passive_as_zi
-  end
+  end)() end
   return true
 end
 
@@ -2434,7 +2434,7 @@ end
 Tap-estimation fallback: released taps are extra states, and a measurement
 set that estimates the voltages cleanly can still be far too thin to pin
 them. The run then does not settle at all and the user gets nothing,
-although the SAME set works without the taps (maintainer, 2026-09-06,
+although the SAME set works without the taps (seen 2026-09-06 on
 case300 with 98 released taps and a CGMES delivery). A non-convergence WITH
 released taps therefore freezes the taps back to their model position and
 repeats the estimation once, and says so in the log: a silent retry would
@@ -2478,7 +2478,7 @@ function test_state_estimation_tap_fallback()::Bool
       @test !occursin("repeating WITHOUT tap estimation", log_ok)
       @test get(d_ok["metadata"], "se_tap_estimation_fallback", false) == false
     end
-    # task_se_tap_bounds_v0100, the step limit. A released regulator state is
+    # The step limit. A released regulator state is
     # bounded in how far ONE iteration may move it, at a quarter of the
     # changer's declared mechanical travel. Without it the Gauss-Newton step
     # drives r1 toward -1, where the cascade
@@ -2513,7 +2513,7 @@ function test_state_estimation_tap_fallback()::Bool
       end
     end
 
-    # task_se_tap_bounds_v0100: the fallback must be visible on all THREE
+    # the fallback must be visible on all THREE
     # surfaces, because a run whose tap positions are MODEL values looks
     # exactly like a successful tap estimation otherwise, and its J measures
     # those model positions. sp_case60 at a cap of 4 is the shipped fixture
@@ -2551,7 +2551,7 @@ function test_state_estimation_tap_fallback()::Bool
       @test !occursin("<th>Electrical step</th>", table)
 
       # and the run history must not call a state estimation "rectangular"
-      # (maintainer 2026-09-06): the method comes from the run kind
+      # (seen 2026-09-06): the method comes from the run kind
       @test Sparlectra._powerflow_run_index_solver(res) == "wls"
     end
 
@@ -2564,7 +2564,7 @@ function test_state_estimation_tap_fallback()::Bool
   return true
 end
 
-  @testset "State estimation" begin
+  @testset "State estimation" begin (function ()
     tests = [
       ("WLS", test_state_estimation_wls_first_version),
       ("Measurement add helpers", test_state_estimation_measurement_add_helpers),
@@ -2597,9 +2597,9 @@ end
     ]
 
     for (name, testfn) in tests
-      @testset "$name" begin
+      @testset "$name" begin (function ()
         @test _se_run_quiet(testfn) == true
-      end
+      end)() end
     end
-  end
+  end)() end
 end

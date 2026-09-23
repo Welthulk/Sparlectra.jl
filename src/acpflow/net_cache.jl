@@ -41,7 +41,7 @@ const NET_CACHE_FORMAT_VERSION = 2
 const _NET_CACHE_MARKER = "sparlectra_net_cache"
 
 function _net_cache_components(filename::AbstractString, cfg::SparlectraConfig)::Vector{Pair{String,String}}
-  # since stage 3a the cached artifact is the CONVERTED case (its SCF
+  # the cached artifact is the CONVERTED case (its SCF
   # JSON), so the conversion conventions are part of the identity: a cache
   # written under one shift convention must miss under another. The key
   # derivation scheme itself is unchanged; the option fingerprint is one
@@ -73,8 +73,8 @@ end
 """
     _net_cache_load(path, components) -> Union{Nothing,SCFCase}
 
-Returns the cached CONVERTED case (stored as its canonical SCF JSON since
-stage 3a) or `nothing`. Beyond the key in the file name, the stored
+Returns the cached CONVERTED case (stored as its canonical SCF JSON) or
+`nothing`. Beyond the key in the file name, the stored
 component list must match exactly, and the JSON goes through the reader's
 parse and conversion, so a stale or truncated artifact silently misses
 instead of producing a wrong case.

@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # file: src/scenario/apply.jl
-# purpose: scenario task step 2 (design decision D4): apply! executes a
+# purpose: apply! executes a
 #          scenario's patch operations on a working copy with an undo log
 #          of every change, restore! replays the log in reverse and
 #          recomputes the derived state, so the copy returns to the base
@@ -226,7 +226,7 @@ The net-aware validation of step 2 on top of the structural one: a
 `tap_pos` patch is rejected at load time when the transformer carries an
 ACTIVE tap controller (the message names it), and accepted only where a
 ratio tap changer exists. Tap-step scenarios on unregulated transformers
-are a first-class case (maintainer decision 1 of the scenario task).
+are a first-class case.
 """
 function validate_scenarios(set::ScenarioSet, index::ScenarioIndex, net::Net)::ScenarioSet
   validate_scenarios(set, index)

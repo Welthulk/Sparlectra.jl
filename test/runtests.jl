@@ -13,9 +13,10 @@
 # limitations under the License.
 
 # file: test/runtests.jl
-# purpose: test suite entry point: selects the fast, extended, or all profile
-#          from ARGS/SPARLECTRA_TEST_PROFILE, includes the per-topic test
-#          files, and runs the grouped testsets with quiet output capture
+# purpose: test suite entry point: selects a profile (fast, pf, se, config,
+#          webui, extd, extended, all) from ARGS/SPARLECTRA_TEST_PROFILE,
+#          includes the test files of its groups, and runs the grouped
+#          testsets with quiet output capture
 using Sparlectra
 using Test
 using Logging
@@ -52,10 +53,7 @@ const TEST_PROFILE = selected_test_profile()
 # Build workloads run this suite as a PackageCompiler precompile trace and
 # can leave out groups that do not belong in the target image via
 # SPARLECTRA_TEST_SKIP_GROUPS. The skip is printed explicitly so it can
-# never be mistaken for a pass. Default: empty, every group runs. Since the
-# risk-based resort the fast profile carries the numerics and model groups;
-# the Web UI groups live in the extended profile, and the full sysimage
-# workload traces the webui group separately.
+# never be mistaken for a pass. Default: empty, every group runs.
 const SKIP_GROUPS = Set{String}(String(strip(g)) for g in split(get(ENV, "SPARLECTRA_TEST_SKIP_GROUPS", ""), ','; keepempty=false))
 
 function print_test_progress_header(profile::Symbol)
@@ -64,160 +62,126 @@ end
 
 function print_group_progress(i::Int, total::Int, name::AbstractString) end
 
-function include_fast_tests()
-    include("testgrid.jl")
-    include("test_piline_g.jl")
-    include("test_state_estimation.jl")
-    include("test_observability.jl")
-    include("test_topology_validation.jl")
-    include("test_voltage_dependent_control.jl")
-    include("test_transformer_phase_shift.jl")
-    include("test_tap_controller.jl")
-    include("test_series_reactance_control.jl")
-    include("test_upfc_control.jl")
-    include("test_hvdc_pair_control.jl")
-    include("test_terminal_status.jl")
-    include("test_tap_changer_model.jl")
-    include("test_phase_tap_changer_model.jl")
-    include("test_phase_tap_table.jl")
-    include("test_configuration_coverage.jl")
-    include("test_matpower_metadata.jl")
-    include("test_api.jl")
-    include("test_auto_powerflow.jl")
-    include("test_scf.jl")
-    include("test_dc_powerflow.jl")
-    include("test_distributed_slack.jl")
-    include("test_island_diagnostics.jl")
-    include("test_short_circuit.jl")
-    include("test_external_grid.jl")
-    include("test_parallel_foundation.jl")
-    include("test_contingency.jl")
-    include("test_scenarios.jl")
-    include("test_demo_cases.jl")
-    include("test_solver_interface.jl")
-    include("test_factorized_linear_solver.jl")
-    include("test_pv_voltage_residuals.jl")
-    include("test_3wt_phase_taps.jl")
+# One row per test group: the files that define its runners (included once,
+# in this order, shared files only once across groups) and the runner
+# functions called in order. The profiles below are lists of group names, so
+# a group belongs to exactly one profile and `all` is the union.
+struct TestGroup
+    name::String
+    files::Vector{String}
+    runners::Vector{Symbol}
 end
 
-function include_extended_tests()
-    # testgrid.jl defines run_grid_extended_tests (and shared helpers); in the
-    # :all profile it is already loaded by include_fast_tests, so only include
-    # it when the :extended profile runs standalone.
-    isdefined(@__MODULE__, :run_grid_extended_tests) || include("testgrid.jl")
-    isdefined(@__MODULE__, :run_contingency_tests) || include("test_contingency.jl")
-    isdefined(@__MODULE__, :run_scenario_patch_tests) || include("test_scenarios.jl")
-    include("test_api_extended.jl")
-    include("test_webui.jl")
-    include("test_webui_extended.jl")
-    include("test_matpower_example.jl")
-    include("test_example_suites.jl")
-    include("test_net_cache.jl")
-    include("test_synthetic_grids.jl")
-    include("test_configuration_docs.jl")
-    include("test_repository_hygiene.jl")
-    include("test_apslf.jl")
-    include("test_cgmes_importer.jl")
-    include("test_cgmes_export.jl")
-    include("extended/test_dtf_importer.jl")
-    include("extended/test_dtf_for002_validation_example.jl")
-    include("extended/test_dtf_for002_outage_validation_example.jl")
-    include("extended/test_dtf_matpower_export_validation_example.jl")
-    include("extended/test_dtf_api_webui_integration.jl")
-    # Experimental large-case comparison tooling is excluded from normal profiles.
+const TEST_GROUPS = TestGroup[
+    # --- fast: the pull-request gate, model and Newton core, seconds not minutes
+    TestGroup("core_model", ["testgrid.jl", "test_piline_g.jl"], [:run_grid_fast_tests, :run_piline_g_tests]),
+    TestGroup("terminal_status", ["test_terminal_status.jl"], [:run_terminal_status_tests]),
+    TestGroup("powerflow_rectangular", ["test_solver_interface.jl"], [:run_solver_interface_tests]),
+    TestGroup("factorized_linear_solver", ["test_factorized_linear_solver.jl"], [:run_factorized_linear_solver_tests]),
+    TestGroup("pv_voltage_residuals", ["test_pv_voltage_residuals.jl"], [:run_pv_voltage_residual_tests]),
+    TestGroup("3wt_phase_taps", ["test_3wt_phase_taps.jl"], [:run_3wt_phase_taps_tests]),
+    TestGroup("dc_powerflow", ["test_dc_powerflow.jl"], [:run_dc_powerflow_tests]),
+    TestGroup("distributed_slack", ["test_distributed_slack.jl"], [:run_distributed_slack_tests]),
+    TestGroup("island_diagnostics", ["test_island_diagnostics.jl"], [:run_island_diagnostics_tests]),
+    TestGroup("external_grid", ["test_external_grid.jl"], [:run_external_grid_tests]),
+    TestGroup("matpower_metadata", ["test_matpower_metadata.jl"], [:run_matpower_metadata_tests]),
+    TestGroup("programmatic_api", ["test_api.jl"], [:run_api_fast_tests]),
+    # --- pf: the rest of the power-flow surface, controllers, contingencies, scenarios
+    TestGroup("auto_powerflow", ["test_auto_powerflow.jl"], [:run_auto_powerflow_tests]),
+    TestGroup("short_circuit", ["test_short_circuit.jl"], [:run_short_circuit_tests]),
+    TestGroup("parallel_foundation", ["test_parallel_foundation.jl"], [:run_parallel_foundation_tests]),
+    TestGroup("contingency", ["test_contingency.jl"], [:run_contingency_tests]),
+    TestGroup("scenarios", ["test_scenarios.jl"], [:run_scenario_patch_tests]),
+    TestGroup("controls", ["test_voltage_dependent_control.jl", "test_transformer_phase_shift.jl", "test_tap_controller.jl", "test_series_reactance_control.jl", "test_upfc_control.jl", "test_hvdc_pair_control.jl", "test_tap_changer_model.jl", "test_phase_tap_changer_model.jl", "test_phase_tap_table.jl"],
+        [:run_voltage_dependent_control_tests, :run_transformer_phase_shift_tests, :run_tap_controller_tests, :run_series_reactance_control_tests, :run_upfc_control_tests, :run_hvdc_pair_control_tests, :run_tap_changer_model_tests, :run_phase_tap_changer_model_tests, :run_phase_tap_table_tests]),
+    TestGroup("core_model_extended", ["testgrid.jl"], [:run_grid_extended_tests]),
+    TestGroup("contingency_extended", ["test_contingency.jl"], [:run_contingency_extended_tests]),
+    TestGroup("scenario_engine", ["test_scenarios.jl"], [:run_scenario_engine_extended_tests]),
+    TestGroup("apslf", ["test_apslf.jl"], [:run_apslf_tests]),
+    # --- se: state estimation, observability, topology
+    TestGroup("state_estimation", ["test_state_estimation.jl"], [:run_state_estimation_tests]),
+    TestGroup("observability", ["test_observability.jl"], [:run_observability_tests]),
+    TestGroup("topology_validation", ["test_topology_validation.jl"], [:run_topology_validation_tests]),
+    # --- config: configuration surface, its documentation, repository hygiene
+    TestGroup("configuration", ["test_configuration_coverage.jl"], [:run_configuration_coverage_tests]),
+    TestGroup("configuration_docs", ["test_configuration_docs.jl"], [:run_configuration_docs_tests]),
+    TestGroup("repository_hygiene", ["test_repository_hygiene.jl"], [:run_repository_hygiene_tests]),
+    # --- webui: the local browser UI
+    TestGroup("webui", ["test_webui.jl"], [:run_webui_fast_tests]),
+    TestGroup("webui_extended", ["test_webui_extended.jl"], [:run_webui_extended_tests]),
+    # --- extd: shipped cases, formats, service layer, examples, fixtures
+    TestGroup("demo_cases", ["test_demo_cases.jl"], [:run_demo_case_tests]),
+    TestGroup("scf", ["test_scf.jl"], [:run_scf_tests]),
+    TestGroup("programmatic_api_extended", ["test_api_extended.jl"], [:run_api_extended_tests]),
+    TestGroup("matpower_examples", ["test_matpower_example.jl"], [:run_matpower_example_tests]),
+    TestGroup("example_infra", ["test_example_suites.jl"], [:run_example_suite_infra_tests]),
+    TestGroup("net_cache", ["test_net_cache.jl"], [:run_net_cache_tests]),
+    TestGroup("synthetic_grids", ["test_synthetic_grids.jl"], [:run_synthetic_grid_tests]),
+    TestGroup("cgmes_importer", ["test_cgmes_importer.jl"], [:run_cgmes_importer_tests]),
+    TestGroup("cgmes_export", ["test_cgmes_export.jl"], [:run_cgmes_export_tests]),
+    TestGroup("dtf_extended", ["extended/test_dtf_importer.jl", "extended/test_dtf_for002_validation_example.jl", "extended/test_dtf_for002_outage_validation_example.jl", "extended/test_dtf_matpower_export_validation_example.jl", "extended/test_dtf_api_webui_integration.jl"],
+        [:run_dtf_importer_tests, :run_dtf_for002_validation_example_tests, :run_dtf_for002_outage_validation_example_tests, :run_dtf_matpower_export_validation_example_tests, :run_dtf_api_webui_integration_tests]),
+]
+# Experimental large-case comparison tooling is excluded from every profile.
+
+# The profiles. `fast` is the pull-request gate and stays short on purpose;
+# a change to the solver or the estimator runs its own profile on top;
+# `extended` is everything that is not fast (the former second profile);
+# `all` is both. The documentation build is a gate of its own
+# (tools/run_gates.sh docs), not a test profile.
+const TEST_PROFILES = Dict{Symbol,Vector{String}}(
+    :fast => ["core_model", "terminal_status", "powerflow_rectangular", "factorized_linear_solver", "pv_voltage_residuals", "3wt_phase_taps", "dc_powerflow", "distributed_slack", "island_diagnostics", "external_grid", "matpower_metadata", "programmatic_api"],
+    :pf => ["auto_powerflow", "short_circuit", "parallel_foundation", "contingency", "scenarios", "controls", "core_model_extended", "contingency_extended", "scenario_engine", "apslf"],
+    :se => ["state_estimation", "observability", "topology_validation"],
+    :config => ["configuration", "configuration_docs", "repository_hygiene"],
+    :webui => ["webui", "webui_extended"],
+    :extd => ["demo_cases", "scf", "programmatic_api_extended", "matpower_examples", "example_infra", "net_cache", "synthetic_grids", "cgmes_importer", "cgmes_export", "dtf_extended"],
+)
+TEST_PROFILES[:extended] = vcat(TEST_PROFILES[:pf], TEST_PROFILES[:se], TEST_PROFILES[:config], TEST_PROFILES[:webui], TEST_PROFILES[:extd])
+TEST_PROFILES[:all] = vcat(TEST_PROFILES[:fast], TEST_PROFILES[:extended])
+
+# every group sits in exactly one of the six base profiles
+let seen = String[]
+    for key in (:fast, :pf, :se, :config, :webui, :extd), name in TEST_PROFILES[key]
+        name in seen && error("test group $(name) is listed in two profiles")
+        any(g -> g.name == name, TEST_GROUPS) || error("profile $(key) names an unknown test group $(name)")
+        push!(seen, name)
+    end
+    missing_groups = [g.name for g in TEST_GROUPS if !(g.name in seen)]
+    isempty(missing_groups) || error("test group(s) in no profile: " * join(missing_groups, ", "))
 end
 
-function run_fast_profile_tests()
+profile_groups(profile::Symbol) = [g for name in TEST_PROFILES[profile] for g in TEST_GROUPS if g.name == name]
+
+"""
+    include_group_files(groups)
+
+Include the test files of `groups` once each, in group order. A file shared
+by two groups (testgrid.jl, test_contingency.jl, test_scenarios.jl) is
+included on its first use only.
+"""
+function include_group_files(groups::Vector{TestGroup})
+    done = Set{String}()
+    for g in groups, f in g.files
+        f in done && continue
+        include(f)
+        push!(done, f)
+    end
+    return nothing
+end
+
+function run_profile_groups(profile::Symbol, groups::Vector{TestGroup})
     function run_entry(name::Symbol)
         runner = Base.invokelatest(getfield, @__MODULE__, name)
         return Base.invokelatest(runner)
     end
-    groups = [
-        ("core_model", () -> begin
-            run_entry(:run_grid_fast_tests)
-            run_entry(:run_piline_g_tests)
-        end),
-        ("terminal_status", () -> run_entry(:run_terminal_status_tests)),
-        ("powerflow_rectangular", () -> run_entry(:run_solver_interface_tests)),
-        ("factorized_linear_solver", () -> run_entry(:run_factorized_linear_solver_tests)),
-        ("pv_voltage_residuals", () -> run_entry(:run_pv_voltage_residual_tests)),
-        ("3wt_phase_taps", () -> run_entry(:run_3wt_phase_taps_tests)),
-        ("configuration", () -> run_entry(:run_configuration_coverage_tests)),
-        ("matpower_metadata", () -> run_entry(:run_matpower_metadata_tests)),
-        ("programmatic_api", () -> run_entry(:run_api_fast_tests)),
-        ("state_estimation", () -> run_entry(:run_state_estimation_tests)),
-        ("observability", () -> run_entry(:run_observability_tests)),
-        ("topology_validation", () -> run_entry(:run_topology_validation_tests)),
-        ("auto_powerflow", () -> run_entry(:run_auto_powerflow_tests)),
-        ("scf", () -> run_entry(:run_scf_tests)),
-        ("dc_powerflow", () -> run_entry(:run_dc_powerflow_tests)),
-        ("distributed_slack", () -> run_entry(:run_distributed_slack_tests)),
-        ("island_diagnostics", () -> run_entry(:run_island_diagnostics_tests)),
-        ("short_circuit", () -> run_entry(:run_short_circuit_tests)),
-        ("external_grid", () -> run_entry(:run_external_grid_tests)),
-        ("parallel_foundation", () -> run_entry(:run_parallel_foundation_tests)),
-        ("contingency", () -> run_entry(:run_contingency_tests)),
-        ("scenarios", () -> run_entry(:run_scenario_patch_tests)),
-        ("demo_cases", () -> run_entry(:run_demo_case_tests)),
-        ("controls", () -> begin
-            run_entry(:run_voltage_dependent_control_tests)
-            run_entry(:run_transformer_phase_shift_tests)
-            run_entry(:run_tap_controller_tests)
-            run_entry(:run_series_reactance_control_tests)
-            run_entry(:run_upfc_control_tests)
-            run_entry(:run_hvdc_pair_control_tests)
-            run_entry(:run_tap_changer_model_tests)
-            run_entry(:run_phase_tap_changer_model_tests)
-            run_entry(:run_phase_tap_table_tests)
-        end),
-    ]
-    skipped = [name for (name, _) in groups if name in SKIP_GROUPS]
+    skipped = [g.name for g in groups if g.name in SKIP_GROUPS]
     isempty(skipped) || println("Skipped group(s) via SPARLECTRA_TEST_SKIP_GROUPS: ", join(skipped, ", "))
-    groups = [(name, runner) for (name, runner) in groups if !(name in SKIP_GROUPS)]
-    @testset "Sparlectra.jl fast profile" begin
-        total = length(groups)
-        for (i, (name, runner)) in enumerate(groups)
-            run_profile_group(i, total, name, runner)
-        end
-    end
-end
-
-function run_extended_profile_tests()
-    function run_entry(name::Symbol)
-        runner = Base.invokelatest(getfield, @__MODULE__, name)
-        return Base.invokelatest(runner)
-    end
-    groups = [
-        ("core_model_extended", () -> run_entry(:run_grid_extended_tests)),
-        ("contingency_extended", () -> run_entry(:run_contingency_extended_tests)),
-        ("scenario_engine", () -> run_entry(:run_scenario_engine_extended_tests)),
-        ("programmatic_api_extended", () -> run_entry(:run_api_extended_tests)),
-        ("webui", () -> run_entry(:run_webui_fast_tests)),
-        ("webui_extended", () -> run_entry(:run_webui_extended_tests)),
-        ("matpower_examples", () -> run_entry(:run_matpower_example_tests)),
-        ("example_infra", () -> run_entry(:run_example_suite_infra_tests)),
-        ("net_cache", () -> run_entry(:run_net_cache_tests)),
-        ("synthetic_grids", () -> run_entry(:run_synthetic_grid_tests)),
-        ("configuration_docs", () -> run_entry(:run_configuration_docs_tests)),
-        ("repository_hygiene", () -> run_entry(:run_repository_hygiene_tests)),
-        ("apslf", () -> run_entry(:run_apslf_tests)),
-        ("cgmes_importer", () -> run_entry(:run_cgmes_importer_tests)),
-        ("cgmes_export", () -> run_entry(:run_cgmes_export_tests)),
-        ("dtf_extended", () -> begin
-            run_entry(:run_dtf_importer_tests)
-            run_entry(:run_dtf_for002_validation_example_tests)
-            run_entry(:run_dtf_for002_outage_validation_example_tests)
-            run_entry(:run_dtf_matpower_export_validation_example_tests)
-            run_entry(:run_dtf_api_webui_integration_tests)
-        end),
-    ]
-    skipped = [name for (name, _) in groups if name in SKIP_GROUPS]
-    isempty(skipped) || println("Skipped group(s) via SPARLECTRA_TEST_SKIP_GROUPS: ", join(skipped, ", "))
-    groups = [(name, runner) for (name, runner) in groups if !(name in SKIP_GROUPS)]
-    @testset "Sparlectra.jl extended profile" begin
-        total = length(groups)
-        for (i, (name, runner)) in enumerate(groups)
-            run_profile_group(i, total, name, runner)
+    selected = [g for g in groups if !(g.name in SKIP_GROUPS)]
+    @testset "Sparlectra.jl $(profile) profile" begin
+        total = length(selected)
+        for (i, g) in enumerate(selected)
+            run_profile_group(i, total, g.name, () -> foreach(run_entry, g.runners))
         end
     end
 end
@@ -225,7 +189,7 @@ end
 """
     timed_include(label, f)
 
-Run one of the `include_*_tests` phases and print what it cost.
+Run the include phase of a profile and print what it cost.
 
 The per-group `PASS` lines account for everything the GROUPS do, and for
 nothing that happens before them: including the test files parses and
@@ -241,23 +205,11 @@ function timed_include(label::AbstractString, f::Function)
 end
 
 function main()
-    if TEST_PROFILE === :fast
-        print_test_progress_header(:fast)
-        timed_include("fast", include_fast_tests)
-        run_fast_profile_tests()
-    elseif TEST_PROFILE === :extended
-        print_test_progress_header(:extended)
-        timed_include("extended", include_extended_tests)
-        run_extended_profile_tests()
-    elseif TEST_PROFILE === :all
-        print_test_progress_header(:all)
-        timed_include("fast", include_fast_tests)
-        timed_include("extended", include_extended_tests)
-        run_fast_profile_tests()
-        run_extended_profile_tests()
-    else
-        error("Unknown test profile=$(TEST_PROFILE). Allowed: fast, extended, all. Selection precedence: CLI arg, SPARLECTRA_TEST_PROFILE, default fast.")
-    end
+    haskey(TEST_PROFILES, TEST_PROFILE) || error("Unknown test profile=$(TEST_PROFILE). Allowed: " * join(string.(sort(collect(keys(TEST_PROFILES)))), ", ") * ". Selection precedence: CLI arg, SPARLECTRA_TEST_PROFILE, default fast.")
+    print_test_progress_header(TEST_PROFILE)
+    groups = profile_groups(TEST_PROFILE)
+    timed_include(string(TEST_PROFILE), () -> include_group_files(groups))
+    run_profile_groups(TEST_PROFILE, groups)
 end
 
 Base.invokelatest(main)

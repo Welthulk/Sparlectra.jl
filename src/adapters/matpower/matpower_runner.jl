@@ -755,13 +755,13 @@ function matpower_import_auto_profile(mpc, cfg::SparlectraConfig; mode::Symbol =
     end
   end
 
-  # D11: the recommendations pass through the precedence-level helper, so
+  # the recommendations pass through the precedence-level helper, so
   # an explicitly set key (user_set_keys) always survives the auto profile;
   # skipped recommendations become visible rows instead of silent rewrites
   leveled = apply_auto_profile_level(cfg, applied_pairs)
   for pair in leveled.skipped
     option = get(_AUTO_PROFILE_FIELD_KEYS, first(pair), String(first(pair)))
-    _push_auto_profile_row!(rows, mode, option, "explicit", last(pair); safe_to_apply = false, reason = "explicitly set by the user; the auto profile yields (D11 precedence level)", evidence = "user_set_keys")
+    _push_auto_profile_row!(rows, mode, option, "explicit", last(pair); safe_to_apply = false, reason = "explicitly set by the user; the auto profile yields (precedence level)", evidence = "user_set_keys")
   end
   return (config = leveled.config, rows = rows, applied = Tuple(leveled.applied))
 end

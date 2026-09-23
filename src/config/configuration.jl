@@ -225,7 +225,7 @@ Configuration of the N-1 contingency batch (issue #331).
   stages and their recipes are documented on [`runContingencies!`](@ref); the
   set is validated (subset, no duplicates) by `_validate_contingency_ladder`.
 - `screening_mode::Symbol`: contingency screening on the base factorization
-  (scenario task D5): `:off` (default) gives every scenario the full solve,
+  `:off` (default) gives every scenario the full solve,
   `:flag` estimates every non-islanding outage with one Woodbury-corrected
   Newton step on the base Jacobian and runs the full solve only for flagged
   scenarios, `:only` reports the estimates without full runs (islanding and
@@ -316,16 +316,16 @@ Base.@kwdef struct PowerFlowConfig
   # did not set explicitly (see auto_powerflow.jl and integration.md)
   mode::Symbol = :manual
   solver::Symbol = :rectangular
-  linear_solver::Symbol = :umfpack
+  linear_solver::Symbol = :umfpack_reuse
   apslf::ApslfConfig = ApslfConfig()
   apslf_start::ApslfStartConfig = ApslfStartConfig()
   # convergence bound for the LARGEST SINGLE bus mismatch (infinity norm
   # over active and reactive residuals alike; PV voltage rows share the
   # same per-unit bound as a voltage quantity). Readable physically as
   # tol * baseMVA: the 1e-8 default equals 1 W at a 100 MVA base
-  # (task_tol_watts; the run log and diagnostics print the equivalent)
+  # (the run log and diagnostics print the equivalent)
   tol::Float64 = 1.0e-8
-  # Physical spelling of the same bound (task_tol_watts part B): when set,
+  # Physical spelling of the same bound: when set,
   # tol_MW WINS over tol and is converted with the network's own base
   # (tol = tol_MW / baseMVA) at the moment the tolerance meets the net,
   # because the base is unknown while the configuration is read. `nothing`
@@ -413,7 +413,7 @@ Base.@kwdef struct StateEstimationConfig
   #
   # The value is 50, the largest of the three, and NOT 30: a CGMES run with
   # released taps needs between 36 and 40 iterations in its first solve and
-  # failed at 30 (maintainer, 2026-09-06, run a023884e). The earlier
+  # failed at 30 (run a023884e, 2026-09-06). The earlier
   # reasoning here, "a run that has not converged by 30 does not converge at
   # 50 either", was measured on sets without released taps and is wrong in
   # general. What the run reports afterwards is the iteration count of the
@@ -433,8 +433,8 @@ Base.@kwdef struct StateEstimationConfig
   update_taps::Bool = false
   robust::Bool = false
   robust_start_iteration::Int = 3
-  # bad-data thresholds (0.10.0, GUI-exposed). Two decisions, and since
-  # task_se_bad_data_v0100 both read the SAME quantity, the normalized
+  # bad-data thresholds (0.10.0, GUI-exposed). Two decisions, and
+  # both read the SAME quantity, the normalized
   # residual rn = r_i/sqrt(Omega_ii):
   #   k_eliminate  from here a row is REMOVED from the estimate
   #   k_suppress   from here a row is DOWN-WEIGHTED (:replacement mode)
@@ -603,8 +603,7 @@ end
     ModelConfig
 
 Typed model-construction configuration, the `model:` block: how any imported
-case becomes a network, independent of its format (design decision D6 of the
-adapter task; the keys lived in `matpower_import` and `transformer` before,
+case becomes a network, independent of its format (the keys lived in `matpower_import` and `transformer` before,
 version-0 files are rewritten through the alias table).
 
 `bus_shunt_model` selects how bus shunts enter the admittance model.
@@ -974,8 +973,13 @@ caller installs the effective configuration for the duration of the run.
 The service and the Web UI do exactly that with the resolved configuration
 of the case (general file, case sidecar, form values). One Net, one run at
 a time: the registry is process-global.
+
+`f` is not specialized on: every do-block call site brings its own closure
+type, and the closure body was inlined into a fresh specialization of this
+function each time (91 of them in one test group, ten seconds of
+compilation for a three-line body). One dynamic call is cheaper.
 """
-function with_sparlectra_config(f, cfg::SparlectraConfig)
+function with_sparlectra_config(@nospecialize(f), cfg::SparlectraConfig)
   previous = ACTIVE_SPARLECTRA_CONFIG[]
   ACTIVE_SPARLECTRA_CONFIG[] = cfg
   try
@@ -1229,7 +1233,7 @@ function _canonical_qlimit_enforcement_mode(value::Symbol)::Symbol
   throw(ArgumentError("power_flow.qlimits.enforcement_mode must be one of $(collect(QLIMIT_ENFORCEMENT_MODE_VALUES)); got $(value). Legacy aliases accepted: $(legacy_aliases)."))
 end
 
-## power_flow.tol_MW (task_tol_watts part B): the tolerance in physical
+## power_flow.tol_MW: the tolerance in physical
 ## units. Zero or negative is an error naming the key; an implausibly
 ## large bound is a WARNING, not an error, because "coarse on purpose" is
 ## a legitimate choice and only the user knows the network's size.
@@ -1465,7 +1469,7 @@ function PowerFlowConfig(raw::AbstractDict)
     method = method,
     mode = _validate_allowed_symbol("power_flow.mode", _as_symbol_cfg(_raw_get(merged, "mode", :manual)), POWERFLOW_MODE_VALUES),
     solver = solver,
-    linear_solver = _validate_allowed_symbol("power_flow.linear_solver", _as_symbol_cfg(_raw_get(merged, "linear_solver", :umfpack)), POWERFLOW_LINEAR_SOLVER_VALUES),
+    linear_solver = _validate_allowed_symbol("power_flow.linear_solver", _as_symbol_cfg(_raw_get(merged, "linear_solver", :umfpack_reuse)), POWERFLOW_LINEAR_SOLVER_VALUES),
     apslf = apslf_cfg,
     apslf_start = apslf_start_cfg,
     tol = _validate_positive("powerflow.tol", _as_float_cfg(_raw_get(merged, "tol", 1.0e-8))),
@@ -1925,14 +1929,14 @@ const _DEPRECATED_CONFIG_KEYS = Dict(
 Current version of the configuration file format. Files declare theirs with
 the top-level key `config_version`; a file without it reads as version 0 and
 the alias tables below are applied stepwise, so old files keep loading while
-only this file knows old key names (design decision D9 of the adapter task).
+only this file knows old key names.
 """
 const CONFIG_VERSION_CURRENT = 1
 
 # One alias list per version step, old dotted key => new dotted key. Applied
 # in ascending order (0 => 1, later 1 => 2, ...) before unknown-key
 # validation, each application warns once naming both keys. The 0 => 1 moves
-# are the model-block and runtime-case moves of design decision D6.
+# are the model-block and runtime-case moves.
 const _CONFIG_ALIASES = Dict{Int,Vector{Pair{String,String}}}(
   0 => [
     "matpower_import.bus_shunt_model" => "model.bus_shunt_model",
@@ -2027,13 +2031,6 @@ function _validate_config_scope(raw::AbstractDict, expected::AbstractString, con
   return nothing
 end
 
-"""
-    _apply_config_aliases!(raw, version, context) -> raw
-
-Rewrite a version-`version` configuration dictionary to the current layout
-by applying every alias step in order. A value is moved only when the new
-key is not set (an explicitly set new key wins over a stale old one).
-"""
 # The flat (dotted-key) twin for the deprecated `sparlectra.config` block of
 # an SCF case file, which is version-less and therefore never went through
 # the versioned alias pass: every alias step applies, one warning names the
@@ -2057,6 +2054,13 @@ function _apply_flat_config_aliases!(out::AbstractDict, context::AbstractString)
   return out
 end
 
+"""
+    _apply_config_aliases!(raw, version, context) -> raw
+
+Rewrite a version-`version` configuration dictionary to the current layout
+by applying every alias step in order. A value is moved only when the new
+key is not set (an explicitly set new key wins over a stale old one).
+"""
 function _apply_config_aliases!(raw::AbstractDict, version::Int, context::AbstractString)
   # Collected, not warned one by one. A file carrying nine version-0 names
   # produced nine boxed warnings at EVERY start, which is what a user reports
@@ -2203,15 +2207,6 @@ function _flatten_config_values!(out::Dict{String,Any}, raw::AbstractDict, prefi
   end
   return out
 end
-
-"""
-    load_sparlectra_config([user_path]; reload=false, cli_overrides=Dict(), overrides=Dict())
-
-Load, validate, merge, and cache the central typed `SparlectraConfig`.
-Configuration precedence is `src/config/configuration.yaml.example`, optional
-`examples/configuration.yaml` (or an explicit `user_path`), CLI-style overrides,
-then explicit Julia API overrides. Unknown user keys throw an `ArgumentError`.
-"""
 
 """
     refresh_sparlectra_config_file(path; write=false, backup=true, normalize_deprecated=true, default_path=DEFAULT_SPARLECTRA_CONFIG_PATH)

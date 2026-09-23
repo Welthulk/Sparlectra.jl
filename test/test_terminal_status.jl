@@ -37,8 +37,8 @@ function _ts_line_net(name::String; to_status::Int = 1, from_status::Int = 1, lo
 end
 
 function run_terminal_status_tests()
-  @testset "per-terminal branch status (r0.9.10)" begin
-    @testset "state helper and setters" begin
+  @testset "per-terminal branch status (r0.9.10)" begin (function ()
+    @testset "state helper and setters" begin (function ()
       net = _ts_line_net("ts_helper")
       br = net.branchVec[1]
       @test Sparlectra._branch_terminal_state(br) == :closed
@@ -56,9 +56,9 @@ function run_terminal_status_tests()
       br.status = 0
       @test Sparlectra._branch_terminal_state(br) == :open
       setBranchStatus!(br, true)
-    end
+    end)() end
 
-    @testset "dangling-node reference anchor: line, open at to" begin
+    @testset "dangling-node reference anchor: line, open at to" begin (function ()
       # reduction under test
       net = _ts_line_net("ts_anchor"; to_status = 0)
       ite, erg = runpf!(net, 30, 1e-12, 0)
@@ -92,9 +92,9 @@ function run_terminal_status_tests()
       @test br.tBranchFlow.pFlow == 0.0 && br.tBranchFlow.qFlow == 0.0
       # loss bookkeeping: branch loss equals the closed-terminal power
       @test isapprox(br.pLosses, br.fBranchFlow.pFlow; atol = 1e-12)
-    end
+    end)() end
 
-    @testset "dangling-node reference anchor: transformer, both sides" begin
+    @testset "dangling-node reference anchor: transformer, both sides" begin (function ()
       for (fs, ts) in ((1, 0), (0, 1))
         net = Net(name = "ts_trafo_$(fs)$(ts)", baseMVA = 100.0)
         addBus!(net = net, busName = "H", vn_kV = 380.0)
@@ -131,9 +131,9 @@ function run_terminal_status_tests()
         @test isapprox(closed_flow.pFlow, ref_flow.pFlow; atol = 1e-10)
         @test isapprox(closed_flow.qFlow, ref_flow.qFlow; atol = 1e-10)
       end
-    end
+    end)() end
 
-    @testset "both flags open equals status 0 bit for bit" begin
+    @testset "both flags open equals status 0 bit for bit" begin (function ()
       net_a = _ts_line_net("ts_bits_a"; load_at_b = true)
       net_b = _ts_line_net("ts_bits_b"; load_at_b = true)
       setBranchStatus!(net_a.branchVec[1], false)
@@ -143,9 +143,9 @@ function run_terminal_status_tests()
       Ya = createYBUS(net = net_a)
       Yb = createYBUS(net = net_b)
       @test Ya == Yb
-    end
+    end)() end
 
-    @testset "terminal toggle between two solves (reuse-backend pattern invalidation)" begin
+    @testset "terminal toggle between two solves (reuse-backend pattern invalidation)" begin (function ()
       # three buses so the net stays solvable with the branch open: A - B
       # (under test) and A - C carrying a load
       net = Net(name = "ts_toggle", baseMVA = 100.0)
@@ -179,17 +179,17 @@ function run_terminal_status_tests()
       _, erg3 = runpf!(net, 30, 1e-10, 0)
       @test erg3 == 0
       @test isapprox(get_bus_vm_pu(net, "B"), vm_b_closed; atol = 1e-9)
-    end
+    end)() end
 
-    @testset "island report: open-side bus is isolated" begin
+    @testset "island report: open-side bus is isolated" begin (function ()
       net = _ts_line_net("ts_iso"; to_status = 0, load_at_b = false)
       @test net.busDict["B"] in net.isoNodes
       report = Sparlectra.detect_ac_islands(net)
       @test length(report.rows) == 1
       @test report.rows[1].n_bus == 1
-    end
+    end)() end
 
-    @testset "MATPOWER export: partial branch as status 0 plus exact Yin shunt" begin
+    @testset "MATPOWER export: partial branch as status 0 plus exact Yin shunt" begin (function ()
       # three buses: A stays energized through A-C after the reimport turns
       # the partial branch fully off (its Yin travels as a bus shunt at A)
       net = Net(name = "ts_mpexport", baseMVA = 100.0)
@@ -222,9 +222,9 @@ function run_terminal_status_tests()
       vms1 = sort([vm_a, vm_c])
       @test isapprox(vms2, vms1; atol = 1e-8)
       @test all(br -> Sparlectra._branch_terminal_state(br) in (:closed, :open), net2.branchVec)
-    end
+    end)() end
 
-    @testset "CGMES roundtrip preserves the terminal flags" begin
+    @testset "CGMES roundtrip preserves the terminal flags" begin (function ()
       # a net with one partially open line and one partially open 2WT plus
       # enough closed topology to stay importable
       net = Net(name = "ts_cgmes", baseMVA = 100.0)
@@ -248,9 +248,9 @@ function run_terminal_status_tests()
       @test count(==(:closed), states) == 1
       @test count(s -> s in (:open_to, :open_from), states) == 2
       @test any(m -> occursin("one open terminal", m), res.messages)
-    end
+    end)() end
 
-    @testset "result surface: table marker, header count, report columns" begin
+    @testset "result surface: table marker, header count, report columns" begin (function ()
       net = _ts_line_net("ts_results"; to_status = 0)
       _, erg = runpf!(net, 30, 1e-10, 0)
       @test erg == 0
@@ -270,7 +270,7 @@ function run_terminal_status_tests()
       # SE guard: a flow measurement on the partial branch is rejected
       meas = [Sparlectra.Measurement(typ = Sparlectra.PflowMeas, value = 0.0, sigma = 0.01, branchIdx = 1, direction = :from, id = "bad")]
       @test_throws ErrorException with_state_estimation_config(() -> runse!(net, meas); max_iter = 10, tol = 1e-6)
-    end
-  end
+    end)() end
+  end)() end
   return true
 end

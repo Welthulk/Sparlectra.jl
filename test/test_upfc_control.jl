@@ -42,8 +42,8 @@ function run_upfc_control_tests()
 
   _solved_state(net) = ([n._vm_pu for n in net.nodeVec], [n._va_deg for n in net.nodeVec])
 
-  @testset "UPFC composite controller (#325)" begin
-    @testset "composite equals the manual SSSC+STATCOM pair" begin
+  @testset "UPFC composite controller (#325)" begin (function ()
+    @testset "composite equals the manual SSSC+STATCOM pair" begin (function ()
       # net A: the two controllers registered by hand, in the same order the
       # composite uses (series first: run_control! executes in registration
       # order, so the order is part of the identity)
@@ -95,9 +95,9 @@ function run_upfc_control_tests()
       manual_rows = controllableElements(net_manual)
       @test only([r for r in manual_rows if r.actuator == :series_x_pu]).device == "SSSC (VSC)"
       @test only([r for r in manual_rows if r.actuator == :machine_q_mvar]).device == "STATCOM (VSC)"
-    end
+    end)() end
 
-    @testset "both converter limits at their clamps" begin
+    @testset "both converter limits at their clamps" begin (function ()
       # shunt side driven into its rating: a small converter cannot lift the
       # sagging load bus to 1.02 pu; delivered Q tracks V * S_max (the
       # STATCOM acceptance, live bound from the solved terminal voltage)
@@ -122,9 +122,9 @@ function run_upfc_control_tests()
       @test v_inj ≈ 0.01 rtol = 5e-2
       p_lim = get_branch_p_from_to_mw(net2, "A", "M2")
       @test p_lim < 35.0 - upfc2.series.deadband_p_mw
-    end
+    end)() end
 
-    @testset "composite-level rejections leave the net untouched" begin
+    @testset "composite-level rejections leave the net untouched" begin (function ()
       # every rejected call must leave zero controllers behind
       # (all-or-nothing rule)
       rejections = [
@@ -151,9 +151,9 @@ function run_upfc_control_tests()
       net = _build_upfc_net()
       @test_throws ErrorException addUpfcControl!(net; fromBus = "A", toBus = "M2", shunt_bus = "M2", target_bus = "M2", target_vm_pu = 0.99, p_target_mw = 35.0, v_inj_max_pu = 0.08, s_max_mva = 40.0)
       @test length(net.machineControls) == 0
-    end
+    end)() end
 
-    @testset "YAML type upfc and double-apply no-op" begin
+    @testset "YAML type upfc and double-apply no-op" begin (function ()
       net_prog = _build_upfc_net()
       addUpfcControl!(net_prog; fromBus = "A", toBus = "M2", shunt_bus = "M2", target_bus = "B", target_vm_pu = 0.99, p_target_mw = 35.0, v_inj_max_pu = 0.08, s_max_mva = 40.0, name = "upfc_main")
       run_control!(net_prog)
@@ -183,7 +183,7 @@ function run_upfc_control_tests()
       # structural validation: unknown key and missing required key
       @test_throws ArgumentError Sparlectra._validate_controller_entries([Dict{String,Any}("type" => "upfc", "name" => "x", "from_bus" => "A", "to_bus" => "M2", "shunt_bus" => "M2", "target_bus" => "B", "target_vm_pu" => 0.99, "p_target_mw" => 35.0, "v_inj_max_pu" => 0.08, "typo_key" => 1)])
       @test_throws ArgumentError Sparlectra._validate_controller_entries([Dict{String,Any}("type" => "upfc", "name" => "x", "from_bus" => "A", "to_bus" => "M2")])
-    end
+    end)() end
 
     # ---- full model (#326): DC-link-coupled UPFC ---------------------------
     # a meshed corridor with the shunt converter at the SENDING bus I and the
@@ -208,7 +208,7 @@ function run_upfc_control_tests()
       return net
     end
 
-    @testset "full UPFC: independent P and Q on one line (#326)" begin
+    @testset "full UPFC: independent P and Q on one line (#326)" begin (function ()
       # the headline capability the #325 quadrature composite cannot deliver:
       # distinct P AND Q targets on the same line reached simultaneously.
       # tight deadbands + a generous outer budget so the assertion is on the
@@ -237,9 +237,9 @@ function run_upfc_control_tests()
         @test u.upfc_group == "UPFC_I_J"
         @test u.series_phase == :free
       end
-    end
+    end)() end
 
-    @testset "full UPFC: quadrature series reduces to the SSSC (#326)" begin
+    @testset "full UPFC: quadrature series reduces to the SSSC (#326)" begin (function ()
       # series_phase = :quadrature constrains V_se perpendicular to I_s, so
       # P_se = 0 exactly and the series converter is a pure reactance change.
       # With the shunt inactive (q_shunt = 0, P_se = 0) the full UPFC in
@@ -264,9 +264,9 @@ function run_upfc_control_tests()
       # agree (the small residual is the two secants' deadband slop)
       @test maximum(abs.(vq .- vs)) <= 5e-3
       @test isapprox(get_branch_p_from_to_mw(nets, "I", "J"), rq.upfc.achieved_p_mw; atol = 0.1)
-    end
+    end)() end
 
-    @testset "full UPFC: result rows and element view (#326)" begin
+    @testset "full UPFC: result rows and element view (#326)" begin (function ()
       net = _build_upfc_mesh()
       r = addUpfcControl!(net; model = :full, fromBus = "I", toBus = "J", shunt_bus = "I",
                           p_target_mw = 38.0, q_target_mvar = 15.0, q_shunt_mvar = 10.0,
@@ -280,9 +280,9 @@ function run_upfc_control_tests()
       @test els[1].quantity == :branch_pq
       # one controller (not a pair): full model is a single multi-actuator device
       @test length(Sparlectra._upfc_full_controllers(net)) == 1
-    end
+    end)() end
 
-    @testset "full UPFC: classical result reports the controller (#326)" begin
+    @testset "full UPFC: classical result reports the controller (#326)" begin (function ()
       # the classical printACPFlowResults must count the UPFC and print its
       # summary block (the FACTS controllers used to be invisible there)
       net = _build_upfc_mesh()
@@ -334,9 +334,9 @@ function run_upfc_control_tests()
       end
       @test occursin("MachV: 1", qtxt)   # the STATCOM shunt side
       @test occursin("TCSC: 1", qtxt)    # the SSSC series side
-    end
+    end)() end
 
-    @testset "full UPFC: low-current guard keeps z_add finite (#326)" begin
+    @testset "full UPFC: low-current guard keeps z_add finite (#326)" begin (function ()
       # z_add = V_se / I_s is ill-conditioned as the line current vanishes; the
       # `_UPFC_MIN_CURRENT_PU` floor must keep every result finite (no NaN/Inf)
       # and leave the branch at its base impedance on a (near) dead line.
@@ -378,9 +378,9 @@ function run_upfc_control_tests()
       @test abs(r.upfc.i_s_pu) < 1e-4                 # below the guard floor
       @test isapprox(brij.r_pu, 0.02; atol = 1e-9)    # base impedance kept
       @test isapprox(brij.x_pu, 0.18; atol = 1e-9)
-    end
+    end)() end
 
-    @testset "full UPFC: SC and export use the physical base impedance (#329)" begin
+    @testset "full UPFC: SC and export use the physical base impedance (#329)" begin (function ()
       # The full model stamps the series converter's active injection onto the
       # LIVE branch impedance (its resistance part can go negative). Short
       # circuit and the interchange exports must read the PHYSICAL BASE impedance
@@ -437,9 +437,9 @@ function run_upfc_control_tests()
       @test isapprox(brij.x_pu, brij.x_base_pu; atol = 1e-12)
       clearUpfcFullControllers!(net)
       @test isempty([c for c in net.machineControls if c isa Sparlectra.UpfcFullControl])
-    end
+    end)() end
 
-    @testset "full UPFC: registration validation (#326)" begin
+    @testset "full UPFC: registration validation (#326)" begin (function ()
       # model = :full needs q_target_mvar and rejects the quadrature-only keys
       net = _build_upfc_mesh()
       @test_throws ErrorException addUpfcControl!(net; model = :full, fromBus = "I", toBus = "J", shunt_bus = "I", p_target_mw = 40.0, v_inj_max_pu = 0.6, s_max_mva = 120.0)  # no q_target_mvar
@@ -456,9 +456,9 @@ function run_upfc_control_tests()
       @test length(net.machineControls) == 0
       # bad model symbol
       @test_throws ErrorException addUpfcControl!(net; model = :bogus, fromBus = "I", toBus = "J", shunt_bus = "I", p_target_mw = 40.0, v_inj_max_pu = 0.6, s_max_mva = 120.0)
-    end
+    end)() end
 
-    @testset "full UPFC: YAML type upfc with model=full (#326)" begin
+    @testset "full UPFC: YAML type upfc with model=full (#326)" begin (function ()
       net_prog = _build_upfc_mesh()
       addUpfcControl!(net_prog; model = :full, fromBus = "I", toBus = "J", shunt_bus = "I",
                       p_target_mw = 38.0, q_target_mvar = 15.0, q_shunt_mvar = 10.0,
@@ -481,6 +481,6 @@ function run_upfc_control_tests()
       # double apply is a no-op
       @test applyConfiguredControllers!(net_yaml, cfg) == 0
       @test length(Sparlectra._upfc_full_controllers(net_yaml)) == 1
-    end
-  end
+    end)() end
+  end)() end
 end

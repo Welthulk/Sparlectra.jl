@@ -533,8 +533,8 @@ function complex_newton_step_rectangular(
   # Analytic sparse Jacobian aligned with rectangular state ordering. The
   # factorization-reuse backends need a value-independent (structural)
   # sparsity pattern so their symbolic analysis stays valid across
-  # iterations; the default path keeps dropping numeric zeros for
-  # bit-for-bit historical behavior.
+  # iterations; the plain umfpack path keeps dropping numeric zeros, the
+  # historical behavior.
   # A PV↔PQ active-set switch changes the structural pattern; the recorded
   # in-place assembly must rebuild (and the linear context re-analyzes).
   linear_ctx !== nothing && active_set_changed && (linear_ctx.assembly.valid = false)
@@ -542,9 +542,9 @@ function complex_newton_step_rectangular(
     build_rectangular_jacobian_pq_pv(Ybus, V, bus_types, Vset, slack_idx; dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm, structural_pattern = linear_ctx !== nothing, assembly = linear_ctx === nothing ? nothing : linear_ctx.assembly, dslack = dslack)
   end
 
-  # Solve J * δx = -F. With a reuse context (UMFPACK lu!) the symbolic
-  # analysis is reused across iterations; without one the default direct
-  # solve path stays untouched.
+  # Solve J * δx = -F. With a reuse context (UMFPACK lu!, the default) the
+  # symbolic analysis is reused across iterations; without one the plain
+  # direct solve path runs.
   δx = _perf_profile_time!(performance_profile, :newton_step_linear_solve) do
     if linear_ctx === nothing
       solve_linear(J, -F0; allow_pinv = true)

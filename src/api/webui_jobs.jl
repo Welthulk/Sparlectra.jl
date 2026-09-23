@@ -19,7 +19,7 @@
 const _POWERFLOW_WEBUI_JOBS = Dict{String,Dict{String,Any}}()
 const _POWERFLOW_WEBUI_ACTIVE_STATES = Set(("queued", "running", "aborting"))
 ## States that BLOCK a new submission. "aborting" is deliberately NOT one
-## of them (maintainer 2026-09-04): cancellation is cooperative, so a run
+## of them: cancellation is cooperative, so a run
 ## stuck in a non-interruptible numerical call (a 25k-bus import, say)
 ## stayed "aborting" indefinitely and locked the whole Web UI, which is
 ## what the abort was supposed to escape. The docstring of
@@ -44,7 +44,7 @@ const _WEBUI_OPERATION_LOG_PHASES = Set((
   "solving_powerflow",
   # state-estimation phases: without them a SE run stopped reporting after
   # preparing_configuration and the status page showed that one phase for the
-  # whole run (maintainer had to abort a 13659-bus run blind, 2026-09-05)
+  # whole run (a 13659-bus run had to be aborted blind, 2026-09-05)
   "importing_case",
   "topology_precheck",
   "state_estimation",
@@ -59,8 +59,8 @@ const _WEBUI_OPERATION_LOG_PHASES = Set((
 struct PowerFlowAborted <: Exception end
 Base.showerror(io::IO, ::PowerFlowAborted) = print(io, "PowerFlow run aborted by user.")
 
-## Task-local abort hook (maintainer 2026-09-04: "the abort must stop the
-## running SE or PF"). A Julia task cannot be killed from outside, so the
+## Task-local abort hook (the abort must stop the running SE or PF). A
+## Julia task cannot be killed from outside, so the
 ## solver loops have to ASK. The worker deposits its token in its own task
 ## storage, and every iteration of the Newton and the WLS loop calls
 ## `sparlectra_abort_requested()`, which is a dictionary lookup and costs
@@ -368,8 +368,8 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
   run_id = string(uuid4())
   webui_request_settings = _webui_request_settings_for_profile(request)
   # the job says WHICH calculation it runs, so every message and the
-  # status page name it (maintainer 2026-09-04: a running state
-  # estimation announced itself as a PowerFlow run)
+  # status page name it (a running state estimation used to announce
+  # itself as a PowerFlow run)
   kind_label = _webui_run_kind_label(request)
   job = Dict{String,Any}(
     "kind_label" => kind_label,

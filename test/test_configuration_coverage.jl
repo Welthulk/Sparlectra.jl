@@ -83,7 +83,7 @@ end
 # level either, which is why it could be cut without untangling anything.
 
 function test_configuration_yaml_key_coverage()
-  @testset "Configuration YAML key coverage" begin
+  @testset "Configuration YAML key coverage" begin (function ()
     leaves = _canonical_yaml_leaf_keys()
 
     mapped_keys = Set([
@@ -113,7 +113,7 @@ function test_configuration_yaml_key_coverage()
       "contingency.rescue_ladder", "contingency.screening.mode", "contingency.screening.margin_pct",
       "control.enabled", "control.max_outer_iterations", "control.trace", "control.log_iterations", "control.stop_on_pf_failure", "control.verbose_passes", "control.controllers",
       "webui.show_case_settings_notice", "webui.operation_log_retention_days",
-      # task_config_arrival_v0100: these were in the typed configuration and
+      # these were in the typed configuration and
       # documented, but missing from the template, which made them
       # unreachable ("Unknown Sparlectra configuration key") for every user
       # who followed the documentation
@@ -169,12 +169,12 @@ function test_configuration_yaml_key_coverage()
     )
     @test all(haskey(expected_consumers, key) for key in keys(expected_consumers))
     @test expected_consumers["extensions.reserved"] === :Reserved
-  end
+  end)() end
   return nothing
 end
 
 function test_configuration_version_scope_and_case_precedence()
-  @testset "configuration version, scope, and case precedence" begin
+  @testset "configuration version, scope, and case precedence" begin (function ()
     dir = mktempdir()
     # a file without config_version reads as version 0, with one warning and
     # the 0 => 1 aliases applied
@@ -269,7 +269,7 @@ function test_configuration_version_scope_and_case_precedence()
     @test Sparlectra.load_case_config(joinpath(shared_dir, "case57.m"))["power_flow.max_iter"] == 45
     @test Sparlectra.load_case_config(joinpath(shared_dir, "case57.scf.json"))["power_flow.max_iter"] == 46
 
-    # precedence, one key on each level (D5), highest first: override,
+    # precedence, one key on each level, highest first: override,
     # case configuration file, deprecated in-file block, general file
     general = joinpath(dir, "general.yaml")
     write(general, "config_version: 1\nscope: general\npower_flow:\n  max_iter: 41\n")
@@ -338,12 +338,12 @@ function test_configuration_version_scope_and_case_precedence()
     @test Sparlectra.load_case_config(plain)["model.auto_profile"] == "off"
     Sparlectra.write_case_config(plain, Dict{String,Any}())
     @test !isfile(written)
-  end
+  end)() end
   return nothing
 end
 
 function test_configuration_yaml_scalar_round_trip()
-  @testset "YAML scalar write/read round trip" begin
+  @testset "YAML scalar write/read round trip" begin (function ()
     # the writer's self-inverse contract: every string written by
     # _yaml_scalar_text must come back from the repository's own reader
     # with identical type and value (the bare enum value "off" once came
@@ -360,12 +360,12 @@ function test_configuration_yaml_scalar_round_trip()
     for v in (true, false, 42, 1.5)
       @test Sparlectra.parse_yaml_scalar(Sparlectra._yaml_scalar_text(v)) === v
     end
-  end
+  end)() end
   return nothing
 end
 
 function test_configuration_runner_output_modes()
-  @testset "Test runner output mode helpers" begin
+  @testset "Test runner output mode helpers" begin (function ()
     @test selected_test_profile(String[], Dict("SPARLECTRA_TEST_PROFILE" => "extended")) === :extended
     @test selected_test_profile(["fast"], Dict("SPARLECTRA_TEST_PROFILE" => "extended")) === :fast
     @test selected_test_profile(["--verbose", "all"], Dict{String,String}()) === :all
@@ -423,12 +423,12 @@ function test_configuration_runner_output_modes()
       seekstart(io)
       @test occursin("Runtime casefile: visible", read(io, String))
     end
-  end
+  end)() end
   return nothing
 end
 
 function test_configuration_sentinel_forwarding()
-  @testset "Configuration forwarding with sentinel values" begin
+  @testset "Configuration forwarding with sentinel values" begin (function ()
     cfgfile = test_scratch_path(".yaml")
     write(cfgfile, """
 power_flow:
@@ -489,12 +489,12 @@ matpower_export:
     @test cfg.output.logfile_performance === :full
     @test cfg.benchmark.enabled === false
     @test cfg.matpower_export.write_solution === false
-  end
+  end)() end
   return nothing
 end
 
 function test_configuration_qlimit_enforcement_keys()
-  @testset "Q-limit enforcement mode user YAML keys" begin
+  @testset "Q-limit enforcement mode user YAML keys" begin (function ()
     for mode in (:active_set, :classic_simultaneous, :classic_one_at_a_time)
       cfgfile = test_scratch_path(".yaml")
       write(cfgfile, """
@@ -532,12 +532,12 @@ power_flow:
     end
     @test err isa ArgumentError
     @test occursin("classic_simultaneous", sprint(showerror, err))
-  end
+  end)() end
   return nothing
 end
 
 function test_configuration_matpower_auto_profile_rules()
-  @testset "MATPOWER auto-profile decision rules" begin
+  @testset "MATPOWER auto-profile decision rules" begin (function ()
     mpc = _auto_profile_shift_case()
     cfg = Sparlectra.SparlectraConfig(Dict(
       "model" => Dict("auto_profile" => "off"),
@@ -618,8 +618,7 @@ function test_configuration_matpower_auto_profile_rules()
     # The full block is what `output.console_auto_profile = :full` asks for.
     # It is no longer the default: a run where every check says "keep" used
     # to print about seventy console lines of MATPOWER option names, which
-    # made a Sparlectra study read like a MATPOWER front end (maintainer,
-    # 2026-09-05).
+    # made a Sparlectra study read like a MATPOWER front end.
     verbose_cfg = Sparlectra.SparlectraConfig(Dict("output" => Dict("console_auto_profile" => "full")))
     io = IOBuffer()
     Sparlectra.write_matpower_import_auto_profile(io, conservative, verbose_cfg; casefile = "synthetic_fragile.m")
@@ -665,12 +664,12 @@ function test_configuration_matpower_auto_profile_rules()
     @test oom_result.config.matpower.shift_unit === :rad
     @test isempty(oom_result.applied)
     @test any(row -> occursin("matpower_auto_profile_scan_skipped", row.reason), oom_result.rows)
-  end
+  end)() end
   return nothing
 end
 
 function test_configuration_value_domain_validation()
-  @testset "Configuration value-domain validation" begin
+  @testset "Configuration value-domain validation" begin (function ()
     tol_bad = test_scratch_path(".yaml")
     write(tol_bad, "power_flow:\n  tol: 0\n")
     @test_throws ArgumentError Sparlectra.load_sparlectra_config(tol_bad; reload = true)
@@ -757,17 +756,16 @@ function test_configuration_value_domain_validation()
     end
     @test pg_err isa ArgumentError
     @test occursin("cgmes_import.placeholder_guards", sprint(showerror, pg_err))
-  end
+  end)() end
   return nothing
 end
 
 function test_configuration_tolerance_in_mw()
-  @testset "Tolerance can be stated in MW" begin
-    # power_flow.tol_MW existed since task_tol_watts and was reachable only
+  @testset "Tolerance can be stated in MW" begin (function ()
+    # power_flow.tol_MW existed and was reachable only
     # by editing a YAML file, and even that failed because the template did
     # not carry the key. The form now states ONE value with a unit: two
-    # fields side by side read like two competing tolerances (maintainer,
-    # 2026-09-06).
+    # fields side by side read like two competing tolerances.
     spec = Sparlectra._webui_option_spec("power_flow_tol_unit")
     @test spec.config_key === nothing
     @test spec.allowed_values == ("pu", "MW")
@@ -794,12 +792,12 @@ function test_configuration_tolerance_in_mw()
     cfg = Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("tol_MW" => 1.0)))
     @test cfg.powerflow.tol_MW == 1.0
     @test Sparlectra.validate_gui_config_overrides(Dict{String,Any}("power_flow.tol_MW" => 0.002))["power_flow"]["tol_MW"] == 0.002
-  end
+  end)() end
   return nothing
 end
 
 function test_configuration_every_key_arrives()
-  @testset "Every configuration key arrives (task_config_arrival_v0100)" begin
+  @testset "Every configuration key arrives" begin (function ()
     # Four settings were found in one day that exist, are documented, are
     # shown, and do not act. This closes the class instead of the cases: the
     # key list comes from the typed configuration itself, so a key added
@@ -962,12 +960,12 @@ function test_configuration_every_key_arrives()
       got = reader(cfg)
       @test (got isa Symbol ? String(got) : got) == differing
     end
-  end
+  end)() end
   return nothing
 end
 
 function test_configuration_webui_keys_both_directions()
-  @testset "Web UI keys are reachable in both directions" begin
+  @testset "Web UI keys are reachable in both directions" begin (function ()
     # tol_MW failed the first direction (a key the UI was allowed to set,
     # with no field to set it in) and stale fields fail the second. Both are
     # asserted, because each direction hides a different defect.
@@ -1033,13 +1031,13 @@ function test_configuration_webui_keys_both_directions()
       @test key in Sparlectra.GUI_EDITABLE_CONFIG_KEYS
       @test !(key in have)
     end
-  end
+  end)() end
   return nothing
 end
 
 function test_configuration_form_defaults()
-  @testset "Form defaults do not drift from the code they mirror" begin
-    # Step 5 of task_config_arrival_v0100: no numeric literal in a service or
+  @testset "Form defaults do not drift from the code they mirror" begin (function ()
+    # No numeric literal in a service or
     # API signature may duplicate something the configuration owns. After the
     # SE service moved to configuration-resolved keywords, the remaining
     # literals belong to the measurement GENERATOR and to the server start,
@@ -1059,12 +1057,12 @@ function test_configuration_form_defaults()
     @test Sparlectra._webui_option_default("se_k_suppress") == se.k_suppress
     @test Sparlectra._webui_option_default("se_k_eliminate") == se.k_eliminate
     @test Sparlectra._webui_option_default("se_max_iter") == se.max_iter
-  end
+  end)() end
   return nothing
 end
 
 function test_configuration_removed_diagnostics_rejected()
-  @testset "Removed diagnostics keys are rejected" begin
+  @testset "Removed diagnostics keys are rejected" begin (function ()
     removed_diag_keys = (
       "matpower_reference",
       "branch_shift_conventions",
@@ -1080,12 +1078,12 @@ function test_configuration_removed_diagnostics_rejected()
       write(cfg_bad, "diagnostics:\n  $(key): true\n")
       @test_throws ArgumentError Sparlectra.load_sparlectra_config(cfg_bad; reload = true)
     end
-  end
+  end)() end
   return nothing
 end
 
 function test_configuration_stored_survives_removed_keys()
-  @testset "Stored configurations survive removed keys" begin
+  @testset "Stored configurations survive removed keys" begin (function ()
     # The startup warm-up is gone (0.10.0), but every stored user and Web UI
     # configuration written before that still carries `webui.warmup`. Without
     # the silent-removal entry each of them would fail to load with "Unknown
@@ -1098,24 +1096,24 @@ function test_configuration_stored_survives_removed_keys()
     # as an override it follows the normal unknown-key path: it is no longer
     # a config key and not GUI-editable either
     @test_throws ArgumentError Sparlectra.validate_gui_config_overrides(Dict{String,Any}("webui.warmup" => true))
-  end
+  end)() end
   return nothing
 end
 
 function test_configuration_qlimit_start_mode_values()
-  @testset "Q-limit start mode public values" begin
+  @testset "Q-limit start mode public values" begin (function ()
     for mode in ("iteration", "auto", "iteration_or_auto")
       cfg = Sparlectra.SparlectraConfig(Dict(
         "power_flow" => Dict("qlimits" => Dict("start_mode" => mode)),
       ))
       @test cfg.powerflow.qlimits.start_mode === Symbol(mode)
     end
-  end
+  end)() end
   return nothing
 end
 
 function test_configuration_network_parameters_reach_paths()
-  @testset "Configuration-derived network parameters reach every construction path" begin
+  @testset "Configuration-derived network parameters reach every construction path" begin (function ()
     # The table from the task, executed. Four paths set these differently once,
     # and a case built through the wrong one ran with hysteresis 0 whatever the
     # configuration said. `bus_shunt_model` is consumed while the shunts are
@@ -1160,12 +1158,12 @@ function test_configuration_network_parameters_reach_paths()
       @test dnet.cooldown_iters == 3
       @test dnet.q_hyst_pu == 0.05
     end
-  end
+  end)() end
   return nothing
 end
 
 function test_configuration_refresh()
-  @testset "Configuration refresh" begin
+  @testset "Configuration refresh" begin (function ()
     stale = test_scratch_path(".yaml")
     write(stale, "power_flow:\n  tol: 1.0e-6\n  start_mode:\n    voltage_mode: bus_vm_va_blend\n  qlimits:\n    enabled: true\n")
     dry = Sparlectra.refresh_sparlectra_config_file(stale)
@@ -1245,12 +1243,12 @@ function test_configuration_refresh()
     @test !dup_result.written
     @test "output.detailed_result_csv_exporter" in dup_result.duplicate_keys
     @test occursin("direct", read(dup, String))
-  end
+  end)() end
   return nothing
 end
 
 function test_configuration_console_live_capture()
-  @testset "console_live capture tees to console and archive identically" begin
+  @testset "console_live capture tees to console and archive identically" begin (function ()
     # live=false: output only in the archive stream. The archive must be a
     # real OS stream here (redirect_stdout rejects IOBuffer) — exactly what
     # production passes (the open run.log IOStream).
@@ -1303,12 +1301,12 @@ function test_configuration_console_live_capture()
     # config surface: default off, parseable on
     @test !Sparlectra.OutputConfig().console_live
     @test Sparlectra.OutputConfig(Dict("output" => Dict("console_live" => true))).console_live
-  end
+  end)() end
   return nothing
 end
 
 function test_configuration_deprecated_diagnostics_warn()
-  @testset "Deprecated diagnostics.* keys load with a warning, not an error" begin
+  @testset "Deprecated diagnostics.* keys load with a warning, not an error" begin (function ()
     # Regression (2026-07-30): stored user/webui configs still carry the old
     # diagnostics.console_* duplicates of output.*; after their removal from
     # the default file the unknown-key validation rejected every such config
@@ -1333,14 +1331,14 @@ function test_configuration_deprecated_diagnostics_warn()
     @test diag_block !== nothing
     @test !occursin("console_diagnostics", diag_block.captures[1])
     @test occursin("log_effective_config", diag_block.captures[1])
-  end
+  end)() end
   return nothing
 end
 
 # Version-less and legacy fixtures, the in-file config block, a coarse tol_MW
 # and the deprecated dcline mode are the tested behavior here, so they warn
-# by design. Captured, not printed (maintainer 2026-09-11: a printed warning
-# in a green run reads as a problem), and anything else that warns fails the
+# by design. Captured, not printed (a printed warning in a green run
+# reads as a problem), and anything else that warns fails the
 # group; see run_with_expected_warnings.
 const CONFIG_EXPECTED_WARNINGS = (
   r"declares no config_version",

@@ -188,7 +188,7 @@ nav {
 }
 
 /* Citation pointer stays at the very bottom of the panel as small print
-   (maintainer 2026-09-04: the note and its link must not stand out). */
+   (the note and its link must not stand out). */
 .topbar-info-panel .matpower-citation-note {
   margin: 1rem 0 0;
   font-size: .78rem;
@@ -314,15 +314,14 @@ button,
 
 /* The "Apply to" fieldset is a full-width block, not a grid cell: without
    this it occupied one of the two columns and the next field (Tolerance)
-   was pulled up beside it, so the input looked like it stuck into the box
-   (maintainer 2026-09-04). */
+   was pulled up beside it, so the input looked like it stuck into the box. */
 .settings-form-card .settings-target {
   grid-column: 1 / -1;
 }
 
 /* The save-target explanations are small print under their option, not
    part of the label: as label text they set the whole line in the bold
-   form-label size and dominated the page (maintainer 2026-09-04). */
+   form-label size and dominated the page. */
 .settings-target-hint {
   display: block;
   margin: -.25rem 0 .55rem 1.75rem;

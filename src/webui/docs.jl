@@ -563,8 +563,8 @@ function rewrite_webui_doc_links(rendered_html::AbstractString; current_page::Un
   end)
 end
 
-## LaTeX math for the local documentation viewer (maintainer 2026-09-04:
-## the formulas showed as raw markup). Julia's Markdown standard library
+## LaTeX math for the local documentation viewer (the
+## formulas showed as raw markup). Julia's Markdown standard library
 ## escapes `$...$` and ```math blocks into literal text, so nothing in the
 ## HTML tells a browser that this is mathematics. The Documenter website
 ## renders it with KaTeX; the local viewer has no such asset and must not
@@ -638,7 +638,7 @@ function _webui_render_math(markdown_text::AbstractString)::String
   return s
 end
 
-## Documenter cross references (maintainer 2026-09-11: the CGMES page
+## Documenter cross references (the CGMES page
 ## showed its "Node-breaker deliveries without a TP profile" heading as a
 ## dead link). `[text](@id name)` labels a heading and `[text](@ref name)`
 ## points at it, possibly from another page; Julia's Markdown renders both

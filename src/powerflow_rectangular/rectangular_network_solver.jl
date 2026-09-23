@@ -374,7 +374,7 @@ function runpf_rectangular!(
   rectangular_workspace_reuse::Bool = true,
   rectangular_preallocate_workspace::Symbol = :auto,
   rectangular_workspace_min_buses::Int = 1000,
-  linear_solver::Symbol = :umfpack,
+  linear_solver::Symbol = :umfpack_reuse,
   distributed_slack_enabled::Bool = false,
   distributed_slack_p_mode::Symbol = :pg_weighted,
   distributed_slack_respect_p_limits::Bool = true,
@@ -1128,7 +1128,7 @@ Arguments:
 - `method::Symbol`: must be `:rectangular`
 - `autodamp::Bool`: enable residual-based backtracking for rectangular Newton steps
 - `autodamp_min::Float64`: minimum automatic damping factor when `autodamp = true`
-- `linear_solver::Symbol`: sparse linear-algebra backend for the Newton step, `:umfpack` (default) or `:umfpack_reuse` (symbolic-analysis reuse across iterations via `lu!`)
+- `linear_solver::Symbol`: sparse linear-algebra backend for the Newton step, `:umfpack_reuse` (default: symbolic-analysis reuse across iterations via `lu!`) or `:umfpack` (full analysis every iteration, the historical path)
 - `qlimit_start_iter::Int`: first Newton iteration where PV→PQ Q-limit switching may run in `:iteration` mode
 - `qlimit_start_mode::Symbol`: `:iteration`, `:auto`, or `:iteration_or_auto` start criterion for PV→PQ switching
 - `qlimit_auto_q_delta_pu::Float64`: PV reactive-power request change threshold for automatic switching start
@@ -1226,7 +1226,7 @@ function runpf_rectangular!(
   rectangular_workspace_reuse::Bool = true,
   rectangular_preallocate_workspace::Symbol = :auto,
   rectangular_workspace_min_buses::Int = 1000,
-  linear_solver::Symbol = :umfpack,
+  linear_solver::Symbol = :umfpack_reuse,
   performance_profile = nothing,
   distributed_slack_enabled::Bool = false,
   distributed_slack_p_mode::Symbol = :pg_weighted,
@@ -1345,7 +1345,7 @@ function _runpf_config_once!(net::Net, config::PowerFlowConfig; verbose::Int = 0
     # like the flat start: an auto-mode attempt that rewrites
     # power_flow.qlimits.hysteresis_pu / cooldown_iters reaches the solver
     # through its config, while the values stamped on the network at import
-    # stay the default for config-less calls (private issue #3)
+    # stay the default for config-less calls
     opt_cooldown_iters = qlim.cooldown_iters,
     opt_q_hyst_pu = qlim.hysteresis_pu,
     damp = damp,
@@ -1490,8 +1490,7 @@ function _rescue_config_variants(config::PowerFlowConfig)
   return variants
 end
 
-## Resolve power_flow.tol_MW against the network base (task_tol_watts part
-## B). Returns the configuration unchanged when the key is not set, so the
+## Resolve power_flow.tol_MW against the network base. Returns the configuration unchanged when the key is not set, so the
 ## default path allocates nothing and behaves exactly as before.
 function _resolve_tolerance_for_net(config::PowerFlowConfig, net::Net; verbose::Int = 0)
   config.tol_MW === nothing && return config
@@ -1505,8 +1504,8 @@ end
 function _runpf_with_config!(net::Net, config::PowerFlowConfig; verbose::Int = 0, damp = 1.0, pv_table_rows::Int = 30, validate_limits_after_pf::Bool = false, q_limit_violation_headroom::Float64 = 0.0, qlimit_lock_reason::Symbol = :manual, performance_profile = nothing, islands_parallel_enabled::Union{Nothing,Bool} = nothing, islands_parallel_max_tasks::Union{Nothing,Int} = nothing, islands_parallel_min_work_items::Union{Nothing,Int} = nothing)
   # power_flow.tol_MW wins over power_flow.tol and is converted HERE, the
   # first place where the configuration meets a network and its base is
-  # known (task_tol_watts part B; a conversion at configuration load time
-  # is impossible, the base belongs to the case)
+  # known (a conversion at configuration load time is
+  # impossible, the base belongs to the case)
   config = _resolve_tolerance_for_net(config, net; verbose = verbose)
   runtime = (; verbose, damp, pv_table_rows, validate_limits_after_pf, q_limit_violation_headroom, qlimit_lock_reason, performance_profile, islands_parallel_enabled, islands_parallel_max_tasks, islands_parallel_min_work_items)
   wants_recovery = config.rescue || config.dc.fallback
@@ -1958,7 +1957,7 @@ function runpf!(
   rectangular_workspace_reuse::Bool = true,
   rectangular_preallocate_workspace::Symbol = :auto,
   rectangular_workspace_min_buses::Int = 1000,
-  linear_solver::Symbol = :umfpack,
+  linear_solver::Symbol = :umfpack_reuse,
   islands_enabled::Bool = false,
   islands_mode::Symbol = :solve_independent,
   islands_reference_policy::Symbol = :matpower_like,

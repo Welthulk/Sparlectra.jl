@@ -21,42 +21,6 @@
 #          derived via Wirtinger identities on the Ybus sparsity pattern for
 #          PQ/PV equation rows with the slack bus eliminated
 
-"""
-    build_rectangular_jacobian_pq_pv_sparse(
-        Ybus::SparseMatrixCSC{ComplexF64},
-        V::Vector{ComplexF64},
-        bus_types::Vector{Symbol},
-        Vset::Vector{Float64},
-        slack_idx::Int;
-    ) -> SparseMatrixCSC{Float64}
-
-Builds the analytic rectangular Jacobian corresponding to `mismatch_rectangular`
-using the sparsity pattern of `Ybus`.
-
-State vector:
-    x = [Vr(non-slack); Vi(non-slack)] ∈ ℝ^(2(n-1))
-
-Residual F(V):
-    - PQ buses: ΔP_i, ΔQ_i
-    - PV buses: ΔP_i, ΔV_i
-    - Slack bus: no equations
-
-Jacobian entries are derived from
-    S_i(V) = V_i * conj( (Ybus * V)_i )
-
-Wirtinger-based identities:
-    ∂S/∂V   = diag(conj(I)) + diag(V) * conj(Ybus)
-    ∂S/∂V*  = diag(V) * conj(Ybus)
-
-Chain rule to rectangular:
-    ∂S/∂Vr = ∂S/∂V + ∂S/∂V*
-    ∂S/∂Vi = j(∂S/∂V - ∂S/∂V*)
-
-With ΔP_i = Re(ΔS_i), ΔQ_i = Im(ΔS_i), ΔV_i = |V_i| - Vset[i].
-
-Returns:
-    J :: SparseMatrixCSC{Float64} with size (2(n-1)) × (2(n-1)).
-"""
 # Emitter receiving each Jacobian entry during triplet assembly (build path).
 struct _JacobianTripletEmitter
   Iidx::Vector{Int}
@@ -95,6 +59,42 @@ end
   return nothing
 end
 
+"""
+    build_rectangular_jacobian_pq_pv_sparse(
+        Ybus::SparseMatrixCSC{ComplexF64},
+        V::Vector{ComplexF64},
+        bus_types::Vector{Symbol},
+        Vset::Vector{Float64},
+        slack_idx::Int;
+    ) -> SparseMatrixCSC{Float64}
+
+Builds the analytic rectangular Jacobian corresponding to `mismatch_rectangular`
+using the sparsity pattern of `Ybus`.
+
+State vector:
+    x = [Vr(non-slack); Vi(non-slack)] ∈ ℝ^(2(n-1))
+
+Residual F(V):
+    - PQ buses: ΔP_i, ΔQ_i
+    - PV buses: ΔP_i, ΔV_i
+    - Slack bus: no equations
+
+Jacobian entries are derived from
+    S_i(V) = V_i * conj( (Ybus * V)_i )
+
+Wirtinger-based identities:
+    ∂S/∂V   = diag(conj(I)) + diag(V) * conj(Ybus)
+    ∂S/∂V*  = diag(V) * conj(Ybus)
+
+Chain rule to rectangular:
+    ∂S/∂Vr = ∂S/∂V + ∂S/∂V*
+    ∂S/∂Vi = j(∂S/∂V - ∂S/∂V*)
+
+With ΔP_i = Re(ΔS_i), ΔQ_i = Im(ΔS_i), ΔV_i = |V_i| - Vset[i].
+
+Returns:
+    J :: SparseMatrixCSC{Float64} with size (2(n-1)) × (2(n-1)).
+"""
 function build_rectangular_jacobian_pq_pv_sparse(
   Ybus::SparseMatrixCSC{ComplexF64},
   V::Vector{ComplexF64},
@@ -111,9 +111,9 @@ function build_rectangular_jacobian_pq_pv_sparse(
   # vm_eps avoids unstable derivatives when |V| is very close to zero.
   # structural_pattern=true stores entries even when their current value is
   # exactly zero, so the sparsity pattern depends only on the Ybus structure
-  # and the bus types — not on the iterate. Factorization-reuse backends
-  # (umfpack_reuse) require this invariance; the default path keeps dropping numeric
-  # zeros to stay bit-for-bit identical to the historical behavior.
+  # and the bus types, not on the iterate. The factorization-reuse backend
+  # (umfpack_reuse, the default) requires this invariance; the plain umfpack
+  # path keeps dropping numeric zeros, the historical behavior.
   # `assembly` (requires structural_pattern) reuses triplet buffers and, once
   # a pattern is recorded, refreshes the retained CSC's nzval in place.
   n = length(V)

@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # file: src/adapters/pgm/converter.jl
-# purpose: the power-grid-model adapter (adapter task stage 3d): a plain
+# purpose: the power-grid-model adapter: a plain
 #          PGM input dataset is the SCF data section without the
 #          namespaced block, so the conversion IS the shared parse,
 #          validate and typing pipeline. The roles are inferred at build
@@ -39,7 +39,7 @@ Base.@kwdef struct PGMAdapterOptions end
 A `.json` file with the PGM dataset markers in its first 4 KiB. An SCF
 case matches too, because the canonical writer sorts the namespaced
 block to the end of the file, beyond any bounded probe: the registry
-resolves that tie by probing SCF FIRST (D3, SCF detection keeps
+resolves that tie by probing SCF FIRST (SCF detection keeps
 precedence), and both formats run the same parse and build pipeline, so
 the tie costs correctness nothing; the format label is refined at parse
 time by the presence of the `sparlectra` key.
@@ -58,7 +58,7 @@ options_type(::PGMAdapter) = PGMAdapterOptions
 """
     import_net(::PGMAdapter, path::AbstractString, opts::PGMAdapterOptions; config = active_sparlectra_config()) -> Net
 
-The PGM importer of the adapter contract (task_import_direct): a plain
+The PGM importer of the adapter contract: a plain
 power-grid-model dataset reads through the shared SCF reader (the SCF
 data section IS a PGM dataset) and builds directly through build_net.
 """

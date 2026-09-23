@@ -56,7 +56,7 @@ end
 _meas_with(m::Measurement; value = m.value, active = m.active) = Measurement(typ = m.typ, value = value, sigma = m.sigma, active = active, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = m.id, linkIdx = m.linkIdx)
 
 function test_topology_stage1()::Bool
-  @testset "Topology stage 1 precheck matrix" begin
+  @testset "Topology stage 1 precheck matrix" begin (function ()
     # clean reference: a consistent set fires NO finding, and the summary
     # says explicitly what was checked (the always-logged line)
     net = _topo_net()
@@ -137,13 +137,13 @@ function test_topology_stage1()::Bool
     part = [m.typ == Sparlectra.PflowMeas && m.branchIdx == 2 && m.direction == :to ? _meas_with(m; active = false) : m for m in kcl]
     pre = validate_topology(net, part)
     @test !any(f -> f.kind == :kcl_violation, pre.findings)
-  end
+  end)() end
 
   return true
 end
 
 function test_topology_stage2_fingerprint()::Bool
-  @testset "Topology stage 2 fingerprint classification" begin
+  @testset "Topology stage 2 fingerprint classification" begin (function ()
     # truth: line L1-L2 is OPEN; the model believes it closed. The
     # measurements come from the true (open) state, so the estimator can
     # neither absorb nor eliminate its way out: elimination exhausts,
@@ -185,13 +185,13 @@ function test_topology_stage2_fingerprint()::Bool
     end
     @test diag.stop_reason != :max_eliminations
     @test diag.topology_findings === nothing
-  end
+  end)() end
 
   return true
 end
 
 function test_topology_stage3_hypotheses()::Bool
-  @testset "Topology stage 3 hypothesis test" begin
+  @testset "Topology stage 3 hypothesis test" begin (function ()
     tnet = _topo_net()
     setBranchStatus!(tnet.branchVec[4], false)
     meas = _topo_measurements(tnet)
@@ -252,13 +252,13 @@ function test_topology_stage3_hypotheses()::Bool
     @test rep2.n_candidates == 1
     @test first(rep2.recommendations).verdict == :hypothesis_supported
     @test [(br.status, br.from_status, br.to_status) for br in net2.branchVec] == stat2
-  end
+  end)() end
 
   return true
 end
 
 function test_topology_singular_normal_equations()::Bool
-  @testset "Singular WLS normal equations regression" begin
+  @testset "Singular WLS normal equations regression" begin (function ()
     # solve_linear contract: with allow_pinv and a raised svd_max_n a
     # singular dense system degrades to a least-squares solution instead of
     # throwing (the service crash on collectively dependent tap columns);
@@ -321,7 +321,7 @@ function test_topology_singular_normal_equations()::Bool
     fixedByBranch = Dict(t.branch => t.fixed_step_1 for t in res.tapEstimates)
     @test fixedByBranch[3] == 2
     @test fixedByBranch[4] == 0
-    # regression (maintainer run 1908605e): robust weighting on parallel
+    # regression (run 1908605e): robust weighting on parallel
     # released taps used to excite the unobservable difference direction
     # into divergence; with the targeted prior plus the weight freeze the
     # robust run converges too
@@ -333,13 +333,13 @@ function test_topology_singular_normal_equations()::Bool
     end
     @test resR.converged
     @test resR.iterations < 50
-  end
+  end)() end
 
   return true
 end
 
 function run_topology_validation_tests()
-  @testset "Topology validation" begin
+  @testset "Topology validation" begin (function ()
     tests = [
       ("Stage 1 precheck matrix", test_topology_stage1),
       ("Stage 2 fingerprint classification", test_topology_stage2_fingerprint),
@@ -347,9 +347,9 @@ function run_topology_validation_tests()
       ("Singular normal equations", test_topology_singular_normal_equations),
     ]
     for (name, testfn) in tests
-      @testset "$name" begin
+      @testset "$name" begin (function ()
         @test _se_run_quiet(testfn) == true
-      end
+      end)() end
     end
-  end
+  end)() end
 end

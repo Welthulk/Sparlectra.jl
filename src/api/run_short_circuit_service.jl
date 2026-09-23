@@ -189,7 +189,7 @@ function _run_short_circuit_service(case_path::AbstractString, config_file::Abst
   result_file = joinpath(output_dir, "result.json")
   base_metadata = Dict{String,Any}("run_mode" => "short_circuit")
 
-  # The same precedence the power-flow path uses (resolve_config, D5), minus
+  # The same precedence the power-flow path uses (resolve_config), minus
   # request overrides (a study run has no config form of its own): case
   # configuration file, the case file's deprecated block, general file,
   # defaults.

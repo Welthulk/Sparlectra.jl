@@ -17,7 +17,7 @@
 #          hit results, fallback on corrupt entries, and key invalidation
 #
 # Tests the opt-in binary net cache (model.net_cache_enabled,
-# issue #292): INERT since task_import_direct (2026-09-04): the direct
+# issue #292): INERT since the direct import (2026-09-04): the direct
 # import no longer produces the converted case the cache stored. The set
 # guards the loud warning and the inert behavior; the old
 # miss/hit/corrupt/key coverage went with the feature, stated here as the
@@ -32,8 +32,8 @@ function _net_cache_run(case_path, output_dir; extra = Dict{String,Any}())
 end
 
 function run_net_cache_tests()
-  @testset "MATPOWER net cache (inert since task_import_direct)" begin
-    # maintainer decision 2026-09-04: the cache stored the CONVERTED
+  @testset "MATPOWER net cache (inert since the direct import)" begin (function ()
+    # the cache stored the CONVERTED
     # SCFCase, the side product the direct import no longer creates, so
     # the feature fell away with the conversion (issue #292 follow-up).
     # This set now guards the two things that remain: the key WARNS out
@@ -61,6 +61,6 @@ function run_net_cache_tests()
       @test isapprox(inert.final_mismatch, reference.final_mismatch; atol = 1e-12)
       @test !isdir(cache_dir)
     end
-  end
+  end)() end
   return nothing
 end

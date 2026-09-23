@@ -25,7 +25,17 @@
 # docs project regardless of how this script is started.
 using Pkg
 Pkg.activate(@__DIR__)
-Pkg.resolve()
+# resolve keeps every manifest version as an explicit requirement, so a docs
+# manifest that predates a compat bump of the package fails as unsatisfiable
+# instead of moving; the fallback updates this untracked docs environment and
+# resolves again
+try
+    Pkg.resolve()
+catch err
+    println("Pkg.resolve failed (", first(sprint(showerror, err), 120), "); updating the docs environment.")
+    Pkg.update()
+    Pkg.resolve()
+end
 Pkg.instantiate()
 
 using Literate

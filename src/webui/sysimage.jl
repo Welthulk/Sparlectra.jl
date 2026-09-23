@@ -257,8 +257,8 @@ This exists for the gap between pressing the refresh button and the build
 process being alive: the page only polls while a build is active, and until
 2026-09-07 "active" required the child's first progress entry. Julia needs
 seconds to boot before it can write one, tens of seconds on a cold Windows,
-and during that window the page sat there looking dead (reported by the
-maintainer, who asked whether there is a status display at all).
+and during that window the page sat there looking dead, as if
+there were no status display at all.
 
 The state written here is `starting`, not `running`, and that distinction is
 load-bearing: the build script refuses to start when it finds a FRESH
