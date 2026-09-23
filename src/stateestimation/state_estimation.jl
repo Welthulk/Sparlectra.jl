@@ -178,13 +178,16 @@ normalization would lift it to unit norm), instead of a second
 decomposition of `H`: the number of pivots above `tol^2`, since the pivots
 of `H' H` scale like squared singular values and `tol` is the
 singular-value bound of `numeric_rank`. The default `tol` is the same
-formula as there. A factorization CHOLMOD
-refuses (a zero or negative pivot, i.e. a singular `G`) states a rank
-deficit but not its size; the rank then comes from `numeric_rank`, and the
-method is reported as `:decomposition`. Selected with
+formula as there. The pivot count is exact for a full-rank Jacobian; on a
+deficit it can undercount (measured on sp_case1354 with eleven unmeasured
+buses: 2700 pivots against a rank of 2702 from the sparse QR, since the
+pivots of an LDLt are not the eigenvalues of `G`), and a factorization
+CHOLMOD refuses (a singular `G`) states no size at all. So any deficit is
+handed to `numeric_rank`, and the method is reported as `:decomposition`;
+`:pivots` is reported only for the full-rank answer. Selected with
 `state_estimation.rank_method = pivots`; `decomposition` (SVD below
-$(_SE_DENSE_LINALG_MAX_N) states, sparse QR above) stays the default until
-the pivot rule has agreed with it for one release.
+$(_SE_DENSE_LINALG_MAX_N) states, sparse QR above) is the default, the
+exact answer at the same cost on every shipped case.
 """
 function numeric_rank_pivots(H::AbstractMatrix{<:Real}; tol = nothing)::Tuple{Int,Symbol}
   m, n = size(H)
@@ -205,7 +208,11 @@ function numeric_rank_pivots(H::AbstractMatrix{<:Real}; tol = nothing)::Tuple{In
   end
   d = Vector{Float64}(diag(sparse(F.LD)))
   all(isfinite, d) || return numeric_rank(H; tol = tol), :decomposition
-  return count(>(Float64(tol)^2), d), :pivots
+  nrank = count(>(Float64(tol)^2), d)
+  # a deficit is confirmed and sized by the decomposition: the pivot count
+  # undercounts there (see the docstring), the full-rank verdict is exact
+  nrank < n && return numeric_rank(H; tol = tol), :decomposition
+  return nrank, :pivots
 end
 
 function numeric_rank(A::SparseMatrixCSC{Float64}; tol = nothing)

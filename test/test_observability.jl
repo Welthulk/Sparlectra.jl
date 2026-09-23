@@ -668,6 +668,16 @@ function run_observability_tests()
     @test obs_b.numerical_rank == obs_a.numerical_rank
     @test obs_b.numerical_observable == obs_a.numerical_observable
     @test obs_b.rank_method === :pivots
+    # a deficit on the large case: eleven buses without any measurement.
+    # The raw pivot count came out two below the QR rank here, so the pivot
+    # rule hands a deficit to the decomposition and says so
+    dark = Set(50:60)
+    filter!(m -> !(hasproperty(m, :busIdx) && m.busIdx in dark), netq.measurements)
+    def_a = with_state_estimation_config(() -> evaluate_global_observability(netq); rank_method = :decomposition)
+    def_b = with_state_estimation_config(() -> evaluate_global_observability(netq); rank_method = :pivots)
+    @test !def_a.numerical_observable
+    @test def_b.numerical_rank == def_a.numerical_rank
+    @test def_b.rank_method === :decomposition
   end)() end
 
   @testset "Observability" begin (function ()

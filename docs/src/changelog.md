@@ -1,24 +1,17 @@
 # Version 0.17.0 - 2026-09-24
 
 ## Breaking
-- The service layer and the Web UI are their own package, `SparlectraApp` under `app/`, which is not registered. `Pkg.add("Sparlectra")` installs the library only (model, formats, power flow, state estimation, controllers, contingencies). `run_sparlectra_api`, `start_powerflow_run` with the run index and artifacts, `start_sparlectra_webui`, `buildSysimage` and the `to_dict`/`to_json`/`to_yaml` helpers are reached from a checkout or a downloaded release with `using SparlectraApp` (environment `app/`, see the README). `start_webui.jl` sets the application up on its first start; a second start finds everything ready.
+- Service layer and Web UI moved to the unregistered package `SparlectraApp` (`app/`). `Pkg.add("Sparlectra")` installs the library only.
+- `run_sparlectra_api`, `start_powerflow_run`, `start_sparlectra_webui`, `buildSysimage` and `to_dict`/`to_json`/`to_yaml` require `using SparlectraApp` from a checkout or release (see README). `start_webui.jl` sets up the app on first start.
 
 ## Highlights
-- The library precompiles in 45 s instead of 71 s on the development machine.
-- The precompile workload is off by default, each solver path compiles on first use. `SPARLECTRA_PRECOMPILE_WORKLOAD=core` warms the import and the rectangular solve, `full` warms everything (the sysimage build does).
+- improve Precompile time 
 
-## Changes
-- Web UI: **Flat start** on the Settings page is the one start switch for Newton-Raphson (`power_flow.flatstart`, now a case setting): while it is on, a run switches the APSLF and DC start values, the current-iteration pre-solve and both start modes off and says so in `run.log`; the saved values stay. A CGMES run honours it under `auto`.
-- Web UI: a provisioned configuration follows changed template defaults at start for keys still on the old default (the linear solver moves from `umfpack` to `umfpack_reuse`); keys saved through the Web UI stay, and the start names every change.
-- The sysimage build is opt-in (`y` or `--rebuild-sysimage`; Enter, timeout and a start without a terminal mean no), and an outdated sysimage is removed instead of kept next to a Web UI that cannot use it.
-- Observability rank from the LDLt factorization of the gain matrix (`state_estimation.rank_method = pivots`) instead of a second decomposition; `decomposition` stays the default until the two have agreed for a release (#399).
-
-## Fixes
-- A case file exported by Sparlectra 0.10.0 or earlier with machine-scope keys in its in-file block (benchmark, output, runtime, webui, matpower_export) loads again: the keys are dropped and named in the run log and the Web UI; a current file carrying them is still refused.
-- Web UI: **Import case files** accepts the profile files of a CGMES delivery (`.xml`, EQ, SSH, TP, SV together) and packs them into one ZIP; the file picker showed the shipped demo folders as empty because it only offered `.zip`.
-- Web UI: the Settings page shows the configuration file's values; the saved settings of the selected case are shown only via the link "Show the case settings".
-- Web UI: a settings save with the target "this case" dropped machine-scope keys such as the CSV format; they now go to the configuration file in the same request, and the page shows them.
-- Web UI: resolving a CGMES demo delivery (`sp_case14_cgmes.zip`) from the case field was refused; the resolve step now stages bundled cases like a run does.
+## Fixed
+- Case files from 0.10.0 or earlier with machine-scope keys load again. The keys are dropped and logged.
+- Web UI: **Import case files** accepts CGMES profile files (`.xml`) and packs them into one ZIP.
+- Web UI: the Settings page shows the configuration file values. Case settings via "Show the case settings".
+- Web UI: saving with target "this case" no longer drops machine-scope keys (e.g. CSV format).
 
 # Version 0.16.2 - 2026-09-22
 
