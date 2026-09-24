@@ -68,34 +68,53 @@ function build_zeng_case()::Net
   return Sparlectra.createNetFromMatPowerCase(mpc = zeng)
 end
 
-# One solve on a fresh copy of the case. Returns what the report compares:
-# the converged flag, the iteration count, the switching and release counts,
-# the clamped buses, the Q-V rows and the bus voltages and generator Q.
-function solve_variant(label::String, mode::Symbol, reenable_v_hyst_pu::Float64; verbose::Int = 0)
+# One solve on a fresh copy of the case. The solver runs with verbose = 1
+# into a capture file; its `PQ->PV Bus n ... released` lines are the record
+# of the releases, its warnings are shown under the run. Returns what the
+# table shows: status, iteration count, the hit log, the released buses, the
+# clamped set, the Q-V rows, and per bus the setpoint, voltage, machine Q
+# and band.
+function solve_variant(label::String, mode::Symbol, reenable_v_hyst_pu::Float64)
   net = build_zeng_case()
   net.q_hyst_pu = Q_HYST_PU
   net.cooldown_iters = COOLDOWN_ITERS
   net.reenable_v_hyst_pu = reenable_v_hyst_pu
-  # the release lines are worth seeing, the rest of the verbose solver
-  # output is not: capture stdout and keep the PQ->PV lines only
   capture = tempname()
   ite, erg = open(capture, "w") do io
-    redirect_stdout(io) do
-      runpf!(net, MAX_ITER, TOL, verbose; qlimit_enforcement_mode = mode)
+    redirect_stdio(stdout = io, stderr = io) do
+      runpf!(net, MAX_ITER, TOL, 1; qlimit_enforcement_mode = mode)
     end
   end
-  release_lines = filter(l -> occursin("PQ->PV", l), readlines(capture))
+  captured = readlines(capture)
   rm(capture; force = true)
+  release_lines = filter(l -> occursin("PQ->PV", l), captured)
+  # the solver's own warnings (a run it does not accept) belong under the
+  # run they concern, not in front of its heading
+  notes = [strip(replace(l, r"^.*Warning: " => "")) for l in captured if occursin("Warning:", l)]
+  released = Int[]
+  for line in release_lines
+    m = match(r"PQ->PV Bus (\d+)", line)
+    m === nothing || push!(released, parse(Int, m.captures[1]))
+  end
   st = Sparlectra.rectangular_pf_status(net)
   qv = Sparlectra.qvCharacteristicViolations(net)
+  qmin_pu, qmax_pu = Sparlectra.getQLimits_pu(net)
   vm = Dict(b => Float64(net.nodeVec[b]._vm_pu) for b in REPORT_BUSES)
+  vset = Dict(b => generator_setpoint(net, b) for b in REPORT_BUSES)
+  band = Dict(b => (qmin_pu[b] * net.baseMVA, qmax_pu[b] * net.baseMVA) for b in REPORT_BUSES)
   qg = machine_q_mvar(net)
   hits = [(iter = e.iter, bus = e.bus, side = e.side) for e in net.qLimitLog]
-  return (label = label, mode = mode, converged = erg == 0, iterations = ite,
-    reason = st.reason, active_set_ok = st.active_set_converged,
-    switches = st.pv_pq_switching_events, releases = st.qlimit_reenable_events,
-    clamped = sort!(collect(keys(net.qLimitEvents))), sides = Dict(net.qLimitEvents),
-    hits = hits, qv = qv, vm = vm, qg = qg, release_lines = release_lines)
+  return (label = label, mode = mode, converged = erg == 0, iterations = ite, reason = st.reason,
+    released = unique(released), clamped = Dict(net.qLimitEvents), hits = hits, qv = qv, notes = notes,
+    vm = vm, vset = vset, band = band, qg = qg)
+end
+
+# the voltage setpoint of the machine at `bus` (NaN when no machine regulates there)
+function generator_setpoint(net::Net, bus::Int)::Float64
+  for ps in net.prosumpsVec
+    isGenerator(ps) && getPosumerBusIndex(ps) == bus && ps.vm_pu !== nothing && return Float64(ps.vm_pu)
+  end
+  return NaN
 end
 
 # The reactive output of the machine at each reported bus, from the solved
@@ -109,24 +128,56 @@ function machine_q_mvar(net::Net)::Dict{Int,Float64}
   return Dict(b => imag(S[b]) * net.baseMVA + Float64(something(net.nodeVec[b]._qƩLoad, 0.0)) for b in REPORT_BUSES)
 end
 
+# end state and history of one bus: what the hit log and the release lines
+# say, in words a reader can check against the table
+function bus_story(r, bus::Int)
+  bus == REFERENCE_BUS && return ("slack", "")
+  side = get(r.clamped, bus, nothing)
+  was_released = bus in r.released
+  state = side === nothing ? (was_released ? "PV, released" : "PV") : string("PQ at Q", side)
+  events = String[]
+  for (k, h) in enumerate(filter(h -> h.bus == bus, r.hits))
+    push!(events, string(k == 1 ? "hit Q" : "hit again Q", h.side, " it ", h.iter))
+    k == 1 && was_released && push!(events, "released back to PV")
+  end
+  return (state, join(events, ", "))
+end
+
+# the Q-V verdict of one bus: a machine at a reactive limit with the voltage
+# on the wrong side of its setpoint is a non-physical state (it could not
+# hold that voltage at that limit); everything else is physical
+function physical_verdict(r, bus::Int)::String
+  for row in r.qv
+    row.bus == bus && row.significant && return string("NO, Vm ", row.side == :max ? "above" : "below", " Vset at Q", row.side)
+  end
+  return "yes"
+end
+
+# the switching path of one bus in words: none, PV->PQ (clamped and kept),
+# PV->PQ->PV (released back), PV->PQ->PV->PQ (released and clamped again)
+function switching_path(r, bus::Int)::String
+  hits = filter(h -> h.bus == bus, r.hits)
+  isempty(hits) && return "none"
+  parts = ["PV"]
+  for (k, _) in enumerate(hits)
+    push!(parts, "PQ")
+    k == 1 && bus in r.released && push!(parts, "PV")
+  end
+  return join(parts, "->")
+end
+
 function report_run(r)
   println(r.label)
   status = r.converged ? "converged" : string("not accepted (", r.reason, ")")
   println("  mode: ", r.mode, ", status: ", status, ", iterations: ", r.iterations)
-  println("  PV->PQ switching events: ", r.switches, ", PQ->PV release events: ", r.releases, " (one event per iteration with a release)")
-  println("  Q-limit hits (iteration, bus, side): ", join((string("(", h.iter, ", ", h.bus, ", ", h.side, ")") for h in r.hits), " "))
-  println("  clamped at the end: ", isempty(r.clamped) ? "none" : join((string(b, " (", r.sides[b], ")") for b in r.clamped), ", "))
-  significant = filter(row -> row.significant, r.qv)
-  if isempty(significant)
-    println("  Q-V check: no non-physical generator state")
-  else
-    println("  Q-V check, machines at a limit with the voltage on the wrong side of the setpoint:")
-    for row in significant
-      @printf("    bus %2d at Q%s: Vm = %.4f against Vset = %.4f, Q = %.2f MVAr\n", row.bus, row.side, row.vm_pu, row.vset_pu, row.q_MVAr)
-    end
+  for note in r.notes
+    println("  solver note: ", note)
   end
-  for line in r.release_lines
-    println("    ", line)
+  println("  bus │   Vset │     Vm │  Qg [MVAr] │  band [MVAr] │ switching      │ end state     │ physical                     │ history")
+  for bus in REPORT_BUSES
+    state, story = bus_story(r, bus)
+    lo, hi = r.band[bus]
+    @printf("  %3d │ %6.4f │ %6.4f │ %10.2f │ [%4.0f, %4.0f] │ %-14s │ %-13s │ %-28s │ %s\n", bus, r.vset[bus], r.vm[bus], r.qg[bus], lo, hi, switching_path(r, bus), state, physical_verdict(r, bus), story)
   end
 end
 
@@ -144,28 +195,18 @@ function main()
   a = solve_variant("Run A: active_set, reenable_v_hyst_pu = 1.0 (release switched off)", :active_set, 1.0)
   report_run(a)
   println()
-  b = solve_variant("Run B: active_set, reenable_v_hyst_pu = 1e-4 (default, voltage rule active)", :active_set, 1e-4; verbose = 1)
+  b = solve_variant("Run B: active_set, reenable_v_hyst_pu = 1e-4 (default, voltage rule active)", :active_set, 1e-4)
   report_run(b)
   println()
   c = solve_variant("Run C: classic_one_at_a_time (control)", :classic_one_at_a_time, 1e-4)
   report_run(c)
   println()
 
-  println("Bus voltages and generator reactive power at the end of each run:")
-  println("  bus │     Vm A │     Vm B │     Vm C │    Qg A [MVAr] │    Qg B [MVAr] │    Qg C [MVAr]")
+  println("Bus voltages and machine reactive power at the end of each run:")
+  println("  bus │   Vset │   Vm A │   Vm B │   Vm C │ Qg A [MVAr] │ Qg B [MVAr] │ Qg C [MVAr] │ physical A │ physical B │ physical C")
+  short(r, bus) = physical_verdict(r, bus) == "yes" ? "yes" : "NO"
   for bus in REPORT_BUSES
-    @printf("  %3d │ %8.4f │ %8.4f │ %8.4f │ %14.2f │ %14.2f │ %14.2f\n", bus, a.vm[bus], b.vm[bus], c.vm[bus], a.qg[bus], b.qg[bus], c.qg[bus])
-  end
-  max_dvm = maximum(abs(b.vm[bus] - c.vm[bus]) for bus in REPORT_BUSES)
-  @printf("max|dVm| between B and C over the reported buses: %.2e pu (for information: two switching\n", max_dvm)
-  println("strategies need not end on the same point, what matters is whether the point is physical)")
-  println()
-  physical(r) = isempty(filter(row -> row.significant, r.qv))
-  println("Physical solution (Q-V check clean): A ", physical(a), ", B ", physical(b), ", C ", physical(c))
-  if b.releases >= 1 && physical(b)
-    println("Run B released clamped machines and ends on a physical solution; run A kept them clamped and does not.")
-  else
-    println("Run B did not end on a physical solution; see the release lines and the clamped set above.")
+    @printf("  %3d │ %6.4f │ %6.4f │ %6.4f │ %6.4f │ %11.2f │ %11.2f │ %11.2f │ %-10s │ %-10s │ %-10s\n", bus, b.vset[bus], a.vm[bus], b.vm[bus], c.vm[bus], a.qg[bus], b.qg[bus], c.qg[bus], short(a, bus), short(b, bus), short(c, bus))
   end
   return nothing
 end
