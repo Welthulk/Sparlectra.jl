@@ -1,4 +1,19 @@
 name: TagBot
+# the permission set TagBot documents: write on contents for the tag and
+# the release, read on everything it lists in the notes
+permissions:
+  actions: read
+  checks: read
+  contents: write
+  deployments: read
+  issues: read
+  discussions: read
+  packages: read
+  pages: read
+  pull-requests: read
+  repository-projects: read
+  security-events: read
+  statuses: read
 on:
   issue_comment:
     types:
