@@ -163,6 +163,10 @@ This path creates no shortcut and starts without the sysimage. The image can be 
 
 Every release ships an SPDX SBOM as a release asset: [Sparlectra.spdx.json](https://github.com/Welthulk/Sparlectra.jl/releases/latest/download/Sparlectra.spdx.json). `julia tools/generate_sbom.jl` builds one locally.
 
+### Verifying your download
+
+`Pkg.add("Sparlectra")` verifies the git tree hash the registry pinned at registration. Every GitHub release also carries `SHA256SUMS` over the SBOM and the one-line installers as of the release tag: check a downloaded file with `sha256sum -c SHA256SUMS` (Linux, macOS) or `Get-FileHash` (Windows). Supported install paths and how to report a security issue: [SECURITY.md](https://github.com/Welthulk/Sparlectra.jl/blob/main/SECURITY.md).
+
 ---
 
 ## Quick start
