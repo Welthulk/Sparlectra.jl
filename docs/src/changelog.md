@@ -1,15 +1,17 @@
+# Version 0.17.3 - 2026-09-25
+
+Verifiable downloads.
+
+- Every release carries `SHA256SUMS` over the SBOM and the one-line installers, and `SECURITY.md` names the supported install paths and how to report a security issue.
+
 # Version 0.17.2 - 2026-09-24
 
-Case format check, Web UI from the REPL.
+Case format check, final Q-limit check, measurement CSV format.
 
-- An explicit case input format is checked against the file content: `scf` on a MATPOWER file now fails with a message that names the file and the way out (auto) instead of `SCF JSON parse error at byte 1`. The Web UI ignores a saved format that contradicts the case, says so on the Case page and in the operation log, and runs with auto.
-- SCF case files with a UTF-8 byte order mark are read.
-- The Sysimage page tells a Web UI started from the REPL how the image on disk is used (start script or `julia -J`), since such a session cannot switch to it.
-- README and Web UI docs: the Web UI from the Julia REPL, the installers' desktop shortcut, the sysimage question and flags.
-- Whether a run ended on a physical point (no machine at a reactive limit with the voltage on the wrong side of its setpoint) is one line in `run.log`, in the run metadata and on the result page. The example `examples/powerflow/example_qlimit_reenable_voltage_rule.jl` shows the voltage-side PQ->PV release of 0.17.1 on the Zeng/Chiang 14-bus case.
-- Every enforcement mode ends with the same final Q-limit check, judged by the size of the overshoot: within the hysteresis is ok, up to `power_flow.qlimits.final_q_accept_pu` (default twice the hysteresis) bounded and accepted with a warning, beyond it not accepted. A released machine inside the hysteresis band no longer fails the active-set run that the classic mode accepted.
-- The check is one line per bus in the text report, `run.log`, the run metadata and on the result page, next to the Q-V verdict.
-- Measurement CSV files follow `output.csv_format` like every other CSV (`excel_de`: semicolon and decimal comma), from the state-estimation run, the generator and the noise tool; the reader tells the format from the header line, so older and foreign files still load.
+- A wrong case input format (for example `scf` on a MATPOWER file) fails with a message that names the file and the way out; the Web UI ignores a saved format that contradicts the case.
+- Every Q-limit enforcement mode ends with the same final check, judged by the size of the overshoot; a machine inside the hysteresis band no longer fails the run.
+- Measurement CSV files follow the CSV format setting like every other CSV.
+- The Sysimage page tells a Web UI started from the REPL how the image is used; README with the REPL start and the installers' desktop shortcut.
 
 # Version 0.17.1 - 2026-09-23
 

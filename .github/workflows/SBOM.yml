@@ -88,6 +88,22 @@ jobs:
           gh release upload "${{ steps.target.outputs.tag }}" "${{ steps.sbomname.outputs.file }}" --clobber
           cp "${{ steps.sbomname.outputs.file }}" Sparlectra.spdx.json
           gh release upload "${{ steps.target.outputs.tag }}" Sparlectra.spdx.json --clobber
+      - name: Publish SHA256 checksums
+        if: steps.target.outputs.skip != 'true' && steps.target.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # SHA256SUMS covers the two SBOM assets and the one-line installers
+        # AS OF THE RELEASE TAG (the one-liners fetch them from main, so a
+        # user can compare what they ran against what the release shipped);
+        # verify with `sha256sum -c SHA256SUMS` next to the downloaded files
+        run: |
+          tag="${{ steps.target.outputs.tag }}"
+          git fetch --quiet origin "refs/tags/$tag:refs/tags/$tag" || true
+          git show "$tag:tools/install_webui.sh" > install_webui.sh
+          git show "$tag:tools/install_webui.bat" > install_webui.bat
+          sha256sum "${{ steps.sbomname.outputs.file }}" Sparlectra.spdx.json install_webui.sh install_webui.bat > SHA256SUMS
+          cat SHA256SUMS
+          gh release upload "$tag" SHA256SUMS --clobber
       - name: Upload as workflow artifact (manual run)
         if: steps.target.outputs.skip != 'true' && steps.target.outputs.tag == ''
         uses: actions/upload-artifact@v6

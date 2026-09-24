@@ -1,4 +1,7 @@
 name: CI
+# the test job only reads the repository; the token gets nothing else
+permissions:
+  contents: read
 on:
   push:
     branches:
