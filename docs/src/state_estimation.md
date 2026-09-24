@@ -917,7 +917,11 @@ an explicit button on the SE result page and writes
 
 Exactly one location group per row (`bus` | `from_bus`+`to_bus`+`branch_nr`
 | `link_nr`), buses by name (matched whitespace-insensitively, CGMES names
-can carry padding), decimal point, UTF-8. Generated sets carry an explicit
+can carry padding), UTF-8. Delimiter and decimal separator follow
+`output.csv_format` of the run or session that writes the file, like every
+other CSV (`excel_de`: semicolon and decimal comma); the numbers keep their
+shortest round-trip form, and the reader tells the format from the header
+line, so a set written under one format reads under any other. Generated sets carry an explicit
 case binding IN the file (a `# case: <name>` comment): the association
 survives renames and re-uploads, the Web UI stars cases with a bound set
 and labels foreign sets, and the SE service refuses a set bound to a

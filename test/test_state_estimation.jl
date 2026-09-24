@@ -1270,6 +1270,27 @@ function test_state_estimation_measurement_csv()::Bool
     @test sum(values(r.counts)) == r.total
     @test haskey(r.counts, Sparlectra.ShuntQMeas) && haskey(r.counts, Sparlectra.ImagMeas)
 
+    # the file follows output.csv_format like every other CSV: under excel_de
+    # the header and the rows carry semicolons and decimal commas, and the
+    # reader restores the same measurement vector bitwise; a technical file
+    # still reads (2026-09-24: a German Excel user found commas in
+    # measurements.csv next to semicolon result tables)
+    fde = joinpath(dir, "meas_de.csv")
+    writeMeasurementsCSV(net; file = fde, format = "excel_de")
+    de_lines = readlines(fde)
+    @test de_lines[1] == "# sparlectra-measurements v1"
+    @test de_lines[2] == "type;bus;from_bus;to_bus;branch_nr;link_nr;direction;value;sigma;active;id"
+    @test any(l -> occursin(r";\d+,\d+;", l), de_lines[3:end])
+    @test !occursin(",", de_lines[2])
+    @test all(l -> length(split(l, ";")) == 11, filter(l -> !startswith(l, "#") && !isempty(l), de_lines[3:end]))
+    rde = readMeasurementsCSV!(net; file = fde, replace = true)
+    @test rde.total == length(orig)
+    @test all(a == b for (a, b) in zip(orig, net.measurements))
+    writeMeasurementsCSV(net; file = f, format = "technical")
+    @test readlines(f)[2] == "type,bus,from_bus,to_bus,branch_nr,link_nr,direction,value,sigma,active,id"
+    readMeasurementsCSV!(net; file = f, replace = true)
+    @test all(a == b for (a, b) in zip(orig, net.measurements))
+
     # replace = false appends, and appending a set onto itself is exactly the
     # corruption the reader warns about: every quantity is then measured twice
     n0 = length(net.measurements)

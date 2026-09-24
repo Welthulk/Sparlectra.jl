@@ -9,6 +9,7 @@ Case format check, Web UI from the REPL.
 - Whether a run ended on a physical point (no machine at a reactive limit with the voltage on the wrong side of its setpoint) is one line in `run.log`, in the run metadata and on the result page. The example `examples/powerflow/example_qlimit_reenable_voltage_rule.jl` shows the voltage-side PQ->PV release of 0.17.1 on the Zeng/Chiang 14-bus case.
 - Every enforcement mode ends with the same final Q-limit check, judged by the size of the overshoot: within the hysteresis is ok, up to `power_flow.qlimits.final_q_accept_pu` (default twice the hysteresis) bounded and accepted with a warning, beyond it not accepted. A released machine inside the hysteresis band no longer fails the active-set run that the classic mode accepted.
 - The check is one line per bus in the text report, `run.log`, the run metadata and on the result page, next to the Q-V verdict.
+- Measurement CSV files follow `output.csv_format` like every other CSV (`excel_de`: semicolon and decimal comma), from the state-estimation run, the generator and the noise tool; the reader tells the format from the header line, so older and foreign files still load.
 
 # Version 0.17.1 - 2026-09-23
 

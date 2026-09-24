@@ -1544,13 +1544,26 @@ end
 ## number in the file plus the columns the editor may change (value, sigma,
 ## active) and the read-only identity (type, location, id). Limited: very
 ## large sets stay in the text editor / download path.
+## the delimiter of a measurement CSV, read off its header line (a file
+## written under excel_de carries semicolons); comma when no header is found
+function _webui_measurement_csv_delimiter(lines)::Char
+  for line in lines
+    s = strip(line)
+    (startswith(s, "type,") || startswith(s, "type;")) && return Sparlectra.result_csv_delimiter(s)
+  end
+  return ','
+end
+
+_webui_measurement_header_line(s::AbstractString)::Bool = startswith(s, "type,") || startswith(s, "type;")
+
 function _webui_measurement_set_rows(path::AbstractString; limit::Int = 400)
   isfile(path) || return NamedTuple[]
   out = NamedTuple[]
+  delimiter = _webui_measurement_csv_delimiter(eachline(path))
   for (ln, line) in enumerate(eachline(path))
     s = strip(line)
-    (isempty(s) || startswith(s, "#") || startswith(s, "type,")) && continue
-    parts = split(s, ","; limit = 11)
+    (isempty(s) || startswith(s, "#") || _webui_measurement_header_line(s)) && continue
+    parts = split(s, delimiter; limit = 11)
     length(parts) >= 11 || continue
     push!(out, (line = ln, typ = String(parts[1]), bus = String(parts[2]), from_bus = String(parts[3]), to_bus = String(parts[4]), branch_nr = String(parts[5]), direction = String(parts[7]), value = String(parts[8]), sigma = String(parts[9]), active = String(parts[10]), id = String(parts[11])))
     length(out) >= limit && break
@@ -1563,11 +1576,12 @@ end
 function _webui_measurement_set_counts(path::AbstractString)::Vector{Tuple{String,Int}}
   isfile(path) || return Tuple{String,Int}[]
   counts = Dict{String,Int}()
+  delimiter = _webui_measurement_csv_delimiter(eachline(path))
   open(path, "r") do io
     for line in eachline(io)
       s = strip(line)
-      (isempty(s) || startswith(s, "#") || startswith(s, "type,")) && continue
-      typ = String(first(split(s, ","; limit = 2)))
+      (isempty(s) || startswith(s, "#") || _webui_measurement_header_line(s)) && continue
+      typ = String(first(split(s, delimiter; limit = 2)))
       counts[typ] = get(counts, typ, 0) + 1
     end
   end

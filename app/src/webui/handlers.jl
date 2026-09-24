@@ -2149,24 +2149,31 @@ function handle_se_measurement_update_values(form::AbstractDict; output_root::Ab
   path = joinpath(directory, name)
   (isfile(path) && _webui_is_measurement_csv(path)) || return redirectq("measurement file not found: $(name)")
   lines = readlines(path)
+  # the file's own delimiter (from its header line) decides how a row is
+  # split and how an edited number is written back: decimal comma in an
+  # excel_de file, decimal point otherwise; the user may type either
+  delimiter = _webui_measurement_csv_delimiter(lines)
+  number(x) = delimiter == ';' ? replace(repr(x), "." => ",") : repr(x)
   changed = 0
   for (ln, line) in enumerate(lines)
     v = _webui_form_value(form, "v_$(ln)", nothing)
     v === nothing && continue
     s = String(_webui_form_value(form, "s_$(ln)", ""))
     a = String(_webui_form_value(form, "a_$(ln)", "true"))
-    parts = split(String(line), ","; limit = 11)
+    parts = split(String(line), delimiter; limit = 11)
     length(parts) >= 11 || return redirectq("row at line $(ln) is not editable")
-    vf = tryparse(Float64, String(v))
-    sf = tryparse(Float64, s)
+    vf = something(tryparse(Float64, String(v)), Sparlectra._parse_result_csv_number(String(v), delimiter), nothing)
+    sf = something(tryparse(Float64, s), Sparlectra._parse_result_csv_number(s, delimiter), nothing)
     vf === nothing && return redirectq("line $(ln): value '$(v)' is not a number; nothing was saved")
     (sf === nothing || sf <= 0.0) && return redirectq("line $(ln): sigma '$(s)' must be a positive number; nothing was saved")
     a in ("true", "false") || return redirectq("line $(ln): active must be true or false; nothing was saved")
-    if String(parts[8]) != String(v) || String(parts[9]) != s || String(parts[10]) != a
-      parts[8] = v
-      parts[9] = s
+    vtext = number(vf)
+    stext = number(sf)
+    if String(parts[8]) != vtext || String(parts[9]) != stext || String(parts[10]) != a
+      parts[8] = vtext
+      parts[9] = stext
       parts[10] = a
-      lines[ln] = join(parts, ",")
+      lines[ln] = join(parts, delimiter)
       changed += 1
     end
   end
@@ -2283,7 +2290,7 @@ vector for the elimination/robust workflow); `tap_error_steps` shifts up to
 `tap_error_count` seed-randomly drawn estimable transformers by that many
 whole mechanical steps for the generation state.
 """
-function handle_se_generate_measurements(form::AbstractDict; output_root::AbstractString, application_root::AbstractString = _webui_application_root(), case_directory = nothing, operation_log::AbstractString = output_root)
+function handle_se_generate_measurements(form::AbstractDict; output_root::AbstractString, application_root::AbstractString = _webui_application_root(), case_directory = nothing, operation_log::AbstractString = output_root, config_file::AbstractString = DEFAULT_SPARLECTRA_CONFIG_PATH)
   directory = _webui_case_directory(; case_directory = case_directory, application_root = application_root, output_root = output_root)
   casefile = String(_webui_form_value(form, "casefile", ""))
   # sticky inputs: every generator value travels back in the redirect as a
@@ -2370,7 +2377,7 @@ function handle_se_generate_measurements(form::AbstractDict; output_root::Abstra
     # the options constructor validates the combination (the form checks
     # above cover the single fields); its ArgumentError text is the message
     opts = MeasurementGeneratorOptions(; noise = noise, gross_k = gross_k, gross_count = gross_count, tap_steps = tap_steps, tap_count = tap_count, include_i = include_i, sigma_u_pct = sigma_u_pct, sigma_i_pct = sigma_i_pct, sigma_p_pct = sigma_p_pct, sigma_q_pct = sigma_q_pct, sigma_ia_deg = sigma_ia_deg, truth_source = truth_source, run_id = truth_run_id, run_root = String(output_root), flow_ends = flow_ends, passive_sigma = passive_sigma, passive_as_zi = passive_as_zi, seed = gen_seed, critical_count = gen_critical)
-    _se_generate_measurement_set(case_path, out_path, opts)
+    _se_generate_measurement_set(case_path, out_path, opts; config_file = config_file)
   catch err
     _webui_case_release!(casefile)
     err isa ArgumentError && return redirectq(err.msg)
@@ -2403,7 +2410,7 @@ the only way to a realistic run was regenerating the whole set from a fresh
 solve - which also replaces the values themselves. Adding noise keeps the
 operating point and only makes the readings imperfect.
 """
-function handle_se_add_noise(form::AbstractDict; output_root::AbstractString = "results/powerflow_service", application_root::AbstractString = _webui_application_root(), case_directory::Union{Nothing,AbstractString} = nothing, operation_log::AbstractString = output_root)::SparlectraWebUIResponse
+function handle_se_add_noise(form::AbstractDict; output_root::AbstractString = "results/powerflow_service", application_root::AbstractString = _webui_application_root(), case_directory::Union{Nothing,AbstractString} = nothing, operation_log::AbstractString = output_root, config_file::AbstractString = DEFAULT_SPARLECTRA_CONFIG_PATH)::SparlectraWebUIResponse
   directory = _webui_case_directory(; case_directory = case_directory, application_root = application_root, output_root = output_root)
   casefile = strip(String(something(_webui_form_value(form, "casefile", ""), "")))
   back(msg) = _webui_se_redirect(casefile, msg)
@@ -2416,7 +2423,9 @@ function handle_se_add_noise(form::AbstractDict; output_root::AbstractString = "
   out_name = string(first(splitext(basename(casefile))), ".noisy.measurements.csv")
   out_path = joinpath(directory, out_name)
   rows = try
-    config = load_sparlectra_config(DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true)
+    # the session's configuration file plus the case's own settings, so the
+    # perturbed set is written in the CSV format the user chose
+    config = resolve_config(config_file, case_path).config
     net = _se_import_case_net(case_path, config; requested_format = _webui_case_format_hint(case_path))
     if !isempty(source)
       empty!(net.measurements)
@@ -2428,7 +2437,7 @@ function handle_se_add_noise(form::AbstractDict; output_root::AbstractString = "
       headerComments = String["case: $(casefile)", "generator: noise-only (existing values perturbed, no power flow)",
                               "seed: $(seed)", "noise: gaussian (each row's own sigma)",
                               "source: $(isempty(source) ? "measurements carried by the case file" : source)"],
-      busReference = _detect_case_format(case_path) === :cgmes ? :mrid : :name)
+      busReference = _detect_case_format(case_path) === :cgmes ? :mrid : :name, format = String(config.output.csv_format))
     length(net.measurements)
   catch err
     record_webui_operation!(operation_log, "se_measurements_noised_failed"; route = "/stateestimation/add-noise", method = "POST", user_action = true, casefile = casefile, message = sprint(showerror, err))

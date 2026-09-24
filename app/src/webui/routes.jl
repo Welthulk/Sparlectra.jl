@@ -272,9 +272,9 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
     se_target = isempty(se_pairs) ? "/powerflow" : string("/powerflow?", join(se_pairs, "&"))
     return _webui_redirect(string(se_target, "#state-estimation"))
   elseif verb == "POST" && path == "/stateestimation/generate-measurements"
-    return handle_se_generate_measurements(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root)
+    return handle_se_generate_measurements(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root, config_file = runtime === nothing ? DEFAULT_SPARLECTRA_CONFIG_PATH : String(runtime.config_file))
   elseif verb == "POST" && path == "/stateestimation/add-noise"
-    return handle_se_add_noise(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root)
+    return handle_se_add_noise(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root, config_file = runtime === nothing ? DEFAULT_SPARLECTRA_CONFIG_PATH : String(runtime.config_file))
   elseif verb == "POST" && path == "/stateestimation/reset-settings"
     return handle_se_reset_settings(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root)
   elseif verb == "POST" && path == "/stateestimation/measurements/save"
