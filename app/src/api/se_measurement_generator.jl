@@ -125,7 +125,7 @@ across Julia versions.
 _seeded_permutation(rng::Random.AbstractRNG, v::AbstractVector) = v[sortperm(rand(rng, length(v)))]
 
 """
-    _se_generate_measurement_set(case_path, out_path, opts::MeasurementGeneratorOptions) -> NamedTuple
+    _se_generate_measurement_set(case_path, out_path, opts::MeasurementGeneratorOptions; config_file) -> NamedTuple
 
 Service backend of the Web UI measurement generator (the Web UI layer never
 calls a solver directly). With the settings in `opts` (see
@@ -155,10 +155,12 @@ requested deviation, the requested run state is missing or bound to
 another case, or the power flow does not converge; the option combination
 itself is already validated by the constructor of `opts`.
 """
-function _se_generate_measurement_set(case_path::AbstractString, out_path::AbstractString, opts::MeasurementGeneratorOptions)
+function _se_generate_measurement_set(case_path::AbstractString, out_path::AbstractString, opts::MeasurementGeneratorOptions; config_file::AbstractString = DEFAULT_SPARLECTRA_CONFIG_PATH)
   (; noise, gross_k, gross_count, tap_steps, tap_count, include_i, sigma_u_pct, sigma_i_pct, sigma_p_pct, sigma_q_pct, sigma_ia_deg, truth_source, run_id, run_root, flow_ends, passive_sigma, passive_as_zi, seed, critical_count) = opts
-  # the generator honors the case's own settings the same way a run does
-  config = resolve_config(DEFAULT_SPARLECTRA_CONFIG_PATH, case_path).config
+  # the generator honors the configuration file of the session and the
+  # case's own settings the same way a run does (the Web UI passes its
+  # provisioned file, so output.csv_format set there reaches the set)
+  config = resolve_config(config_file, case_path).config
   imported = _se_import_case(case_path, config)
   net = imported.net
   config = imported.config
@@ -569,7 +571,7 @@ function _se_generate_measurement_set(case_path::AbstractString, out_path::Abstr
   # go BEHIND the data rows: the file opens with the summary, the taps table
   # and the measurements themselves, and a preview stays readable; the
   # readers skip comment lines wherever they stand
-  writeMeasurementsCSV(net; file = out_path, headerComments = tapcomments, footerComments = tailcomments, busReference = _se_case_format(case_path) === :cgmes ? :mrid : :name)
+  writeMeasurementsCSV(net; file = out_path, headerComments = tapcomments, footerComments = tailcomments, busReference = _se_case_format(case_path) === :cgmes ? :mrid : :name, format = String(config.output.csv_format))
   return (rows = length(net.measurements), noisy = noise, tap_note = tap_note, gross_note = gross_note, island_note = island_note, truth_note = truth_note, flow_note = flow_note, passive_note = passive_note, critical_note = critical_note)
 end
 

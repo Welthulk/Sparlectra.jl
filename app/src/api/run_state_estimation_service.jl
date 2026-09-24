@@ -194,6 +194,26 @@ function _se_reported_iterations(res)::Int
   return max(base, Int(get(tf, :iterations_estimation, 0)), Int(get(tf, :iterations_fixation, 0)))
 end
 
+## the comment lines of a measurement CSV without their `# ` prefix, split
+## into those before the header (case binding, provenance, taps table) and
+## those after the data rows (the generator's truth blocks), so a rewrite of
+## the file keeps what the generator recorded
+function _measurement_csv_comments(path::AbstractString)
+  head = String[]
+  tail = String[]
+  seen_header = false
+  for (ln, raw) in enumerate(eachline(path))
+    ln == 1 && continue   # the version comment, written by the writer itself
+    s = strip(raw)
+    if startswith(s, "#")
+      push!(seen_header ? tail : head, String(strip(lstrip(s, '#'))))
+    elseif startswith(s, "type")
+      seen_header = true
+    end
+  end
+  return head, tail
+end
+
 ## shared import for the SE services (same paths as the other services);
 ## returns the full ImportedCase so the run continues on its effective
 ## config, and logs the CGMES start decision like the power-flow service
@@ -275,7 +295,7 @@ Builds the net through the shared import paths, reads `measurement_file`
 islands plus FD-aware rank, phase 4), runs the bad-data diagnostics
 (`runse_diagnostics`, sequential elimination on the configured budget) and
 the final `runse!(updateNet = true)`, and writes the SE artifacts:
-`measurements.csv` (copy), `se_diagnostics.md`, `se_view.md`,
+`measurements.csv` (the set in the run's CSV format, comments carried over), `se_diagnostics.md`, `se_view.md`,
 `shunt_estimates.csv` (when shunts were released), and `se_state.csv` (the
 chain anchor a later SE-started power flow consumes via `readSEStateCSV!`).
 
@@ -461,7 +481,7 @@ function _run_state_estimation_service_body(
     open(logfile, "a") do io
       println(io, "measurements: ", length(net.measurements), " row(s) taken from the case file itself (no separate measurement set given)")
     end
-    writeMeasurementsCSV(net; file = joinpath(output_dir, "measurements.csv"), busReference = :name)
+    writeMeasurementsCSV(net; file = joinpath(output_dir, "measurements.csv"), busReference = :name, format = String(config.output.csv_format))
     (total = length(net.measurements),)
   else
     if !isfile(measurement_file)
@@ -488,7 +508,13 @@ function _run_state_estimation_service_body(
     catch err
       return _api_failure("invalid_measurements", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
     end
-    cp(measurement_file, joinpath(output_dir, "measurements.csv"); force = true)
+    # The artifact is written in the run's CSV format, not copied (a German
+    # Excel user found commas here next to semicolon result tables,
+    # 2026-09-24); the set's comment lines (case binding, generator
+    # provenance, taps table) are carried over, so the artifact still reads
+    # back as the same measurement set.
+    head_comments, tail_comments = _measurement_csv_comments(measurement_file)
+    writeMeasurementsCSV(net; file = joinpath(output_dir, "measurements.csv"), headerComments = head_comments, footerComments = tail_comments, busReference = format === :cgmes ? :mrid : :name, format = String(config.output.csv_format))
     read_summary
   end
 

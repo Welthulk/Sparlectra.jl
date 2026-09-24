@@ -952,8 +952,12 @@ with `busReference = :mrid`, by their preserved CGMES mRID (ENTSO-E UUID;
 name fallback where none is recorded; MATPOWER/DTF nets have no mRIDs and
 always use bus numbers/names). The reader resolves names, component
 ids/names, and mRIDs. Values use round-trip-exact Float64 formatting
-(decimal point, UTF-8), so `readMeasurementsCSV!` restores a bitwise-equal
-measurement vector. Returns `(count = number of rows written,)`.
+(UTF-8), so `readMeasurementsCSV!` restores a bitwise-equal measurement
+vector. `format` (`technical`, `excel_de`, `excel_us`, default the active
+`output.csv_format`) sets the delimiter and the decimal separator like every
+other CSV a run writes; the numbers keep their shortest round-trip form in
+every format, and the reader tells the format from the header line.
+Returns `(count = number of rows written,)`.
 
 `branch_nr` carries the branch index and disambiguates parallel branches
 between the same bus pair (routine in CGMES nets); the reader verifies it
@@ -967,8 +971,16 @@ data rows (bulky per-row blocks such as the generator's truth values),
 so the file opens with its data; the reader skips comment lines wherever
 they stand.
 """
-function writeMeasurementsCSV(net::Net; file::AbstractString, headerComments::Vector{String} = String[], footerComments::Vector{String} = String[], busReference::Symbol = :name)
+function writeMeasurementsCSV(net::Net; file::AbstractString, headerComments::Vector{String} = String[], footerComments::Vector{String} = String[], busReference::Symbol = :name, format = result_csv_format())
   busReference in (:name, :mrid) || error("writeMeasurementsCSV: busReference must be :name or :mrid")
+  # The file follows output.csv_format like every other CSV a run writes
+  # (2026-09-24: a German Excel user found commas in measurements.csv next to
+  # semicolon result tables). Only the delimiter and the decimal separator
+  # follow the format: numbers keep their shortest round-trip form (no
+  # thousands grouping), so the reader restores them bitwise in every format.
+  resolved = format isa NamedTuple ? format : _resolve_detailed_csv_format(String(format))
+  delim = string(resolved.delimiter)
+  number(v) = resolved.decimal_separator == '.' ? repr(v) : replace(repr(v), "." => string(resolved.decimal_separator))
   name_by_idx = _bus_name_by_idx(net)
   # :mrid (CGMES only): reference buses by their preserved ENTSO-E UUID;
   # falls back to the name where no mRID is recorded. MATPOWER/DTF nets
@@ -987,7 +999,7 @@ function writeMeasurementsCSV(net::Net; file::AbstractString, headerComments::Ve
     for c in headerComments
       println(io, "# ", c)
     end
-    println(io, _MEASUREMENT_CSV_HEADER)
+    println(io, replace(_MEASUREMENT_CSV_HEADER, "," => delim))
     for m in net.measurements
       bus = ""
       fromB = ""
@@ -1005,7 +1017,7 @@ function writeMeasurementsCSV(net::Net; file::AbstractString, headerComments::Ve
         bus = busname(m.busIdx)
       end
       dir = m.direction == :none ? "" : String(m.direction)
-      println(io, string(m.typ), ",", bus, ",", fromB, ",", toB, ",", branchNr, ",", linkNr, ",", dir, ",", repr(m.value), ",", repr(m.sigma), ",", m.active ? "true" : "false", ",", m.id)
+      println(io, join((string(m.typ), bus, fromB, toB, branchNr, linkNr, dir, number(m.value), number(m.sigma), m.active ? "true" : "false", m.id), delim))
       n += 1
     end
     for c in footerComments
@@ -1109,6 +1121,7 @@ function readMeasurementsCSV!(net::Net; file::AbstractString, replace::Bool = tr
   skipped = 0
   headerSeen = false
   hasBranchNr = true
+  delimiter = ','
   for (ln, raw) in enumerate(lines)
     ln == 1 && continue
     line = strip(raw)
@@ -1117,9 +1130,15 @@ function readMeasurementsCSV!(net::Net; file::AbstractString, replace::Bool = tr
       continue
     end
     if !headerSeen
-      if line == _MEASUREMENT_CSV_HEADER
+      # the header line says which delimiter the file uses (and thereby which
+      # decimal separator): a file written under excel_de carries semicolons
+      # and decimal commas, one written under technical or excel_us commas
+      # and decimal points; both read back bitwise
+      delimiter = result_csv_delimiter(line)
+      header = Base.replace(line, ";" => ",")   # the keyword `replace` shadows Base.replace here
+      if header == _MEASUREMENT_CSV_HEADER
         hasBranchNr = true
-      elseif line == _MEASUREMENT_CSV_HEADER_NO_BRANCH_NR
+      elseif header == _MEASUREMENT_CSV_HEADER_NO_BRANCH_NR
         hasBranchNr = false
       else
         error("$(file):$(ln): unexpected header '$(line)' (expected '$(_MEASUREMENT_CSV_HEADER)')")
@@ -1128,8 +1147,8 @@ function readMeasurementsCSV!(net::Net; file::AbstractString, replace::Bool = tr
       continue
     end
     nfields = hasBranchNr ? 11 : 10
-    fields = split(line, ","; limit = nfields)
-    length(fields) == nfields || error("$(file):$(ln): expected $(nfields) comma-separated fields, got $(length(fields))")
+    fields = split(line, delimiter; limit = nfields)
+    length(fields) == nfields || error("$(file):$(ln): expected $(nfields) fields separated by '$(delimiter)', got $(length(fields))")
     branchStr = ""
     if hasBranchNr
       tstr, bus, fromB, toB, branchStr, linkStr, dirStr, valStr, sigStr, actStr, id = map(_csv_field, fields)
@@ -1139,9 +1158,9 @@ function readMeasurementsCSV!(net::Net; file::AbstractString, replace::Bool = tr
 
     typ = _measurement_type_from_name(tstr)
     typ === nothing && error("$(file):$(ln): unknown measurement type '$(tstr)'")
-    value = tryparse(Float64, valStr)
+    value = _parse_result_csv_number(valStr, delimiter)
     value === nothing && error("$(file):$(ln): value '$(valStr)' is not a number")
-    sigma = tryparse(Float64, sigStr)
+    sigma = _parse_result_csv_number(sigStr, delimiter)
     sigma === nothing && error("$(file):$(ln): sigma '$(sigStr)' is not a number")
     active = actStr in ("true", "1") ? true : (actStr in ("false", "0") ? false : nothing)
     active === nothing && error("$(file):$(ln): active '$(actStr)' must be true/false")

@@ -51,6 +51,20 @@ function run_api_fast_tests()
         se = start_powerflow_run(Dict{String,Any}("casefile" => scf5, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(tmpdir, "runs"), "se_mode" => true, "measurement_file" => meas5))
         @test se["status"] == "succeeded"
         @test se["metadata"]["run_mode"] == "se"
+        # the measurements.csv artifact of an SE run follows the run's CSV
+        # format like the other artifacts, and the technical set given as
+        # input reads under that setting as before
+        se_de = start_powerflow_run(Dict{String,Any}("casefile" => scf5, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(tmpdir, "runs"), "se_mode" => true, "measurement_file" => meas5, "config_overrides" => Dict{String,Any}("output.csv_format" => "excel_de")))
+        @test se_de["status"] == "succeeded"
+        meas_de = readlines(joinpath(se_de["output_dir"], "measurements.csv"))
+        @test meas_de[1] == "# sparlectra-measurements v1"
+        header_at = findfirst(l -> startswith(l, "type"), meas_de)
+        @test header_at !== nothing && startswith(meas_de[header_at], "type;bus;")
+        @test any(l -> occursin(r";\d+,\d+;", l), meas_de)
+        # the artifact still reads back as a measurement set
+        probe = importSCF(scf5)
+        empty!(probe.measurements)
+        @test readMeasurementsCSV!(probe; file = joinpath(se_de["output_dir"], "measurements.csv")).total == length(readlines(meas5)) - count(l -> startswith(l, "#") || startswith(l, "type"), readlines(meas5))
       end
     end)() end
 

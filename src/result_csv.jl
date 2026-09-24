@@ -16,10 +16,11 @@
 # purpose: the one writer for result CSV artifacts (issue #386): every run
 #          type keeps its own columns and its own function, the delimiter,
 #          decimal separator, thousands separator and quoting come from
-#          output.csv_format and from nowhere else. Data formats that
-#          Sparlectra reads back with a fixed layout (the measurement CSV
-#          "# sparlectra-measurements v1") are NOT result artifacts and do
-#          not use this writer.
+#          output.csv_format and from nowhere else. The measurement CSV
+#          ("# sparlectra-measurements v1") keeps its own writer and reader
+#          because it is read back with a fixed layout, but since 0.17.2 it
+#          follows output.csv_format as well (delimiter and decimal
+#          separator; the reader tells the format from the header line).
 
 """
     _config_with_request_csv_format(config, csv_format) -> SparlectraConfig
