@@ -7,6 +7,8 @@ Case format check, Web UI from the REPL.
 - The Sysimage page tells a Web UI started from the REPL how the image on disk is used (start script or `julia -J`), since such a session cannot switch to it.
 - README and Web UI docs: the Web UI from the Julia REPL, the installers' desktop shortcut, the sysimage question and flags.
 - Whether a run ended on a physical point (no machine at a reactive limit with the voltage on the wrong side of its setpoint) is one line in `run.log`, in the run metadata and on the result page. The example `examples/powerflow/example_qlimit_reenable_voltage_rule.jl` shows the voltage-side PQ->PV release of 0.17.1 on the Zeng/Chiang 14-bus case.
+- Every enforcement mode ends with the same final Q-limit check, judged by the size of the overshoot: within the hysteresis is ok, up to `power_flow.qlimits.final_q_accept_pu` (default twice the hysteresis) bounded and accepted with a warning, beyond it not accepted. A released machine inside the hysteresis band no longer fails the active-set run that the classic mode accepted.
+- The check is one line per bus in the text report, `run.log`, the run metadata and on the result page, next to the Q-V verdict.
 
 # Version 0.17.1 - 2026-09-23
 

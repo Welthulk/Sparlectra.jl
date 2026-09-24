@@ -193,6 +193,32 @@ or the rectangular variant), the Q-limit logic works at its core as follows:
 
 6. **Repeat** with the updated bus types and Q-values in the next NR iteration.
 
+7. **Final check, the same for every enforcement mode.** After the solve,
+   every PV bus is checked against its reactive limits, and the overshoot
+   `d = Q - Qmax` (or `Qmin - Q`, in pu) is judged by its SIZE, not by the
+   number of buses:
+
+   | class | condition | status | run |
+   |---|---|---|---|
+   | in order | `d <= hysteresis_pu` | `ok` (`within_hysteresis` when `d > tol`) | accepted |
+   | bounded | `hysteresis_pu < d <= final_q_accept_pu` | `bounded_q_limit_violation` | accepted, warning with bus, `d` in pu and MVAr |
+   | violation | `d > final_q_accept_pu` | `remaining_pv_q_limit_violations` | not accepted |
+
+   `power_flow.qlimits.hysteresis_pu` is the switching hysteresis; the
+   switching logic tolerates that much on purpose, so the final check must
+   too (up to 0.17.2 the active set rejected a released machine 0.68 MVAr
+   over Qmax inside a 1 MVAr hysteresis, while the classic modes ran no
+   final check and accepted the same point). `power_flow.qlimits.final_q_accept_pu`
+   (default twice the hysteresis, validated `>= hysteresis_pu`) is the size
+   bound of what is still accepted. With both at zero the check is as
+   strict as before. The count-based guard keys (`guard.accept_bounded_violations`,
+   `guard.max_remaining_violations`) are unchanged and not part of this
+   classification. The check writes one line per bus (side, Q, limit, `d`
+   in pu and MVAr, class) into the Q-limit block of the text report, into
+   `run.log`, the run metadata (`final_q_check_status`, `final_q_check_buses`,
+   `final_q_check_max_dev_pu`) and onto the Web UI result page, next to the
+   Q-V characteristic check, which stays a separate, voltage-side question.
+
 ---
 
 ## Interaction with the Rectangular Solver

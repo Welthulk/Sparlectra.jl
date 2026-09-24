@@ -17,28 +17,28 @@
 # purpose: shows the voltage-side PQ->PV release of the active-set Q-limit
 #          mode on the Zeng/Chiang 14-bus case against the two classic modes:
 #          with the release switched off the run ends on a non-physical
-#          solution (three machines at Qmax with the voltage above the
-#          setpoint), with the rule it lands on the physical solution that
-#          classic one-at-a-time finds; classic simultaneous clamps every
-#          violation at once and ends on the non-physical point as well.
-#          One table per run with the switching path, the end state and the
-#          physical verdict per bus, then the comparison and the solver times.
+#          solution (a machine at Qmax with the voltage above the setpoint),
+#          with the rule it lands on the physical solution that classic
+#          one-at-a-time finds; classic simultaneous clamps every violation
+#          at once and ends on a non-physical point as well. One table per
+#          run with the switching path, the end state, the physical verdict
+#          and the class of the final Q-limit check per bus, then the
+#          comparison and the solver times.
 
 using Sparlectra
 using Printf
 
 include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
-const CASEFILE = "case14.m"
-
 # Zeng, Chiang, Neves, Alberto, IJEPES 147 (2023) 108905, example 1: IEEE 14
-# with every load at 125 percent, the reactive bands of their table I, bus 8
-# as the angle reference and generator 1 dispatched at 306.06 MW. The case
-# is built here from the plain case14.m so the example needs no extra file.
+# with every load at 125 percent, the reactive bands of their table I (G1
+# [0, 50], G2 [-40, 50], G3 [0, 40], G6 [-6, 24] MVAr), bus 8 as the angle
+# reference and generator 1 dispatched at 306.06 MW. The case ships as a
+# Sparlectra case file, so the example needs no download.
+const CASEFILE = joinpath(Sparlectra.SPARLECTRA_ROOT, "data", "scf", "case14_zeng_p306_activeSet_A.scf.json")
 const LOAD_FACTOR = 1.25
 const PG_BUS1_MW = 306.06
 const REFERENCE_BUS = 8
-const Q_BANDS_MVAR = Dict(1 => (0.0, 50.0), 2 => (-40.0, 50.0), 3 => (0.0, 40.0), 6 => (-6.0, 24.0), 8 => (-6.0, 300.0))
 const REPORT_BUSES = (1, 2, 3, 6, 8)
 
 # active-set settings shared by every run; only the voltage margin differs
@@ -47,29 +47,9 @@ const COOLDOWN_ITERS = 1
 const TOL = 1e-8
 const MAX_ITER = 40
 
-function build_zeng_case()::Net
-  mpc = Sparlectra.MatpowerIO.read_case(ensure_casefile(CASEFILE); legacy_compat = true)
-  bus = copy(mpc.bus)
-  gen = copy(mpc.gen)
-  # MATPOWER columns: bus PD/QD are 3/4 and the type is 2 (1 PQ, 2 PV, 3 ref);
-  # gen PG is 2, QMAX/QMIN are 4/5
-  bus[:, 3] .*= LOAD_FACTOR
-  bus[:, 4] .*= LOAD_FACTOR
-  for r in axes(bus, 1)
-    b = Int(bus[r, 1])
-    b == 1 && (bus[r, 2] = 2.0)
-    b == REFERENCE_BUS && (bus[r, 2] = 3.0)
-  end
-  for r in axes(gen, 1)
-    b = Int(gen[r, 1])
-    b == 1 && (gen[r, 2] = PG_BUS1_MW)
-    qmin, qmax = Q_BANDS_MVAR[b]
-    gen[r, 4] = qmax
-    gen[r, 5] = qmin
-  end
-  zeng = Sparlectra.MatpowerIO.MatpowerCase("case14_zeng_p306", mpc.baseMVA, bus, gen, mpc.branch, mpc.gencost, mpc.bus_name, mpc.branch_name, mpc.branch_kind, mpc.for001_contingencies, mpc.dcline, mpc.sparlectra)
-  return Sparlectra.createNetFromMatPowerCase(mpc = zeng)
-end
+# a fresh net per run: the case file is read again, so no run sees the
+# switching state of the one before
+build_zeng_case()::Net = importSCF(CASEFILE)
 
 # One solve on a fresh copy of the case. The solver runs with verbose = 1
 # into a capture file; its `PQ->PV Bus n ... released` lines are the record
@@ -112,9 +92,12 @@ function solve_variant(label::String, mode::Symbol, reenable_v_hyst_pu::Float64)
   band = Dict(b => (qmin_pu[b] * net.baseMVA, qmax_pu[b] * net.baseMVA) for b in REPORT_BUSES)
   qg = machine_q_mvar(net)
   hits = [(iter = e.iter, bus = e.bus, side = e.side) for e in net.qLimitLog]
+  # the final Q-limit check every mode ends with: the class per PV bus
+  # beyond a limit (ok, within_hysteresis, bounded, violation), the status
+  qcheck = Dict(r.bus => String(r.class) for r in st.final_q_check_rows)
   return (label = label, mode = mode, converged = erg == 0, iterations = ite, reason = st.reason, seconds = seconds,
     released = unique(released), clamped = Dict(net.qLimitEvents), hits = hits, qv = qv, notes = notes,
-    vm = vm, vset = vset, band = band, qg = qg)
+    vm = vm, vset = vset, band = band, qg = qg, qcheck = qcheck, qcheck_status = String(st.final_q_check_status))
 end
 
 # the voltage setpoint of the machine at `bus` (NaN when no machine regulates there)
@@ -181,11 +164,12 @@ function report_run(r)
   for note in r.notes
     println("  solver note: ", note)
   end
-  println("  bus │   Vset │     Vm │  Qg [MVAr] │  band [MVAr] │ switching      │ end state     │ physical                     │ history")
+  println("  bus │   Vset │     Vm │  Qg [MVAr] │  band [MVAr] │ switching      │ end state     │ physical                     │ Q-limit check     │ history")
   for bus in REPORT_BUSES
     state, story = bus_story(r, bus)
     lo, hi = r.band[bus]
-    @printf("  %3d │ %6.4f │ %6.4f │ %10.2f │ [%4.0f, %4.0f] │ %-14s │ %-13s │ %-28s │ %s\n", bus, r.vset[bus], r.vm[bus], r.qg[bus], lo, hi, switching_path(r, bus), state, physical_verdict(r, bus), story)
+    qcheck = bus == REFERENCE_BUS ? "-" : haskey(r.clamped, bus) ? "clamped" : get(r.qcheck, bus, "ok")
+    @printf("  %3d │ %6.4f │ %6.4f │ %10.2f │ [%4.0f, %4.0f] │ %-14s │ %-13s │ %-28s │ %-17s │ %s\n", bus, r.vset[bus], r.vm[bus], r.qg[bus], lo, hi, switching_path(r, bus), state, physical_verdict(r, bus), qcheck, story)
   end
 end
 
@@ -226,10 +210,15 @@ function main()
   end
   println()
   println("Runs (solver time is the whole solve including the switching logic, after a warm-up):")
-  println("  run │ mode                  │ status                                          │ iterations │ solver time [s]")
+  # two separate questions per run: were the reactive limits held (the final
+  # Q-limit check, size of the overshoot) and is the end point physical (the
+  # Q-V check, no machine at a limit with the voltage on the wrong side)
+  println("  run │ mode                  │ status                                          │ final Q-limit check │ physical (Q-V check) │ iterations │ solver time [s]")
   for (name, r) in (("A", a), ("B", b), ("C", c), ("D", d))
     status = r.converged ? "converged" : string("not accepted (", r.reason, ")")
-    @printf("  %3s │ %-21s │ %-47s │ %10d │ %15.4f\n", name, r.mode, status, r.iterations, r.seconds)
+    wrong = [row.bus for row in r.qv if row.significant]
+    physical = isempty(wrong) ? "yes" : string("NO (bus ", join(wrong, ", "), ")")
+    @printf("  %3s │ %-21s │ %-47s │ %-19s │ %-20s │ %10d │ %15.4f\n", name, r.mode, status, r.qcheck_status, physical, r.iterations, r.seconds)
   end
   return nothing
 end
