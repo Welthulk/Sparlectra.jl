@@ -54,6 +54,9 @@ jobs:
               repo: context.repo.repo,
               title,
               body,
+              // the label keeps the trigger issue out of TagBot's release
+              // notes (TagBot.yml: changelog_ignore)
+              labels: ['registration'],
             });
             core.notice(`Created registration issue #${issue.data.number}: ${issue.data.html_url}`);
             // Ein brechender Sprung (unter 1.0 der Minor-Sprung, 0.9.19 -> 0.10.0)
