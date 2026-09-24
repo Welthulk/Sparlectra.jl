@@ -15,11 +15,14 @@
 # Date: 2026-09-24
 # file: examples/powerflow/example_qlimit_reenable_voltage_rule.jl
 # purpose: shows the voltage-side PQ->PV release of the active-set Q-limit
-#          mode on the Zeng/Chiang 14-bus case: with the release switched off
-#          the run ends on a non-physical solution (three machines at Qmax
-#          with the voltage above the setpoint, reported by the Q-V check),
-#          with the rule it lands on the physical solution that the classic
-#          one-at-a-time mode finds
+#          mode on the Zeng/Chiang 14-bus case against the two classic modes:
+#          with the release switched off the run ends on a non-physical
+#          solution (three machines at Qmax with the voltage above the
+#          setpoint), with the rule it lands on the physical solution that
+#          classic one-at-a-time finds; classic simultaneous clamps every
+#          violation at once and ends on the non-physical point as well.
+#          One table per run with the switching path, the end state and the
+#          physical verdict per bus, then the comparison and the solver times.
 
 using Sparlectra
 using Printf
@@ -80,9 +83,14 @@ function solve_variant(label::String, mode::Symbol, reenable_v_hyst_pu::Float64)
   net.cooldown_iters = COOLDOWN_ITERS
   net.reenable_v_hyst_pu = reenable_v_hyst_pu
   capture = tempname()
+  seconds = 0.0
   ite, erg = open(capture, "w") do io
     redirect_stdio(stdout = io, stderr = io) do
-      runpf!(net, MAX_ITER, TOL, 1; qlimit_enforcement_mode = mode)
+      # the whole solve including the switching logic; the file capture adds
+      # nothing measurable, the compile time is paid by the warm-up in main
+      result = nothing
+      seconds = @elapsed result = runpf!(net, MAX_ITER, TOL, 1; qlimit_enforcement_mode = mode)
+      result
     end
   end
   captured = readlines(capture)
@@ -104,7 +112,7 @@ function solve_variant(label::String, mode::Symbol, reenable_v_hyst_pu::Float64)
   band = Dict(b => (qmin_pu[b] * net.baseMVA, qmax_pu[b] * net.baseMVA) for b in REPORT_BUSES)
   qg = machine_q_mvar(net)
   hits = [(iter = e.iter, bus = e.bus, side = e.side) for e in net.qLimitLog]
-  return (label = label, mode = mode, converged = erg == 0, iterations = ite, reason = st.reason,
+  return (label = label, mode = mode, converged = erg == 0, iterations = ite, reason = st.reason, seconds = seconds,
     released = unique(released), clamped = Dict(net.qLimitEvents), hits = hits, qv = qv, notes = notes,
     vm = vm, vset = vset, band = band, qg = qg)
 end
@@ -169,7 +177,7 @@ end
 function report_run(r)
   println(r.label)
   status = r.converged ? "converged" : string("not accepted (", r.reason, ")")
-  println("  mode: ", r.mode, ", status: ", status, ", iterations: ", r.iterations)
+  @printf("  mode: %s, status: %s, iterations: %d, solver time: %.4f s\n", r.mode, status, r.iterations, r.seconds)
   for note in r.notes
     println("  solver note: ", note)
   end
@@ -190,23 +198,38 @@ function main()
   println("Settings: enforcement_mode active_set, q_hyst_pu = $(Q_HYST_PU), cooldown_iters = $(COOLDOWN_ITERS), tol = $(TOL).")
   println()
 
+  # one throwaway solve per enforcement mode pays the compile time (the
+  # classic outer loop is its own code path), so the times below are solver time
+  solve_variant("warm-up", :active_set, 1e-4)
+  solve_variant("warm-up", :classic_one_at_a_time, 1e-4)
+  solve_variant("warm-up", :classic_simultaneous, 1e-4)
   # A: the margin is so large that the voltage rule never fires (the state
-  # before 0.17.1); B: the default margin; C: the classic mode as control
+  # before 0.17.1); B: the default margin; C and D: the classic modes as control
   a = solve_variant("Run A: active_set, reenable_v_hyst_pu = 1.0 (release switched off)", :active_set, 1.0)
   report_run(a)
   println()
   b = solve_variant("Run B: active_set, reenable_v_hyst_pu = 1e-4 (default, voltage rule active)", :active_set, 1e-4)
   report_run(b)
   println()
-  c = solve_variant("Run C: classic_one_at_a_time (control)", :classic_one_at_a_time, 1e-4)
+  c = solve_variant("Run C: classic_one_at_a_time (control, the largest violation per outer pass)", :classic_one_at_a_time, 1e-4)
   report_run(c)
+  println()
+  d = solve_variant("Run D: classic_simultaneous (control, all violations at once)", :classic_simultaneous, 1e-4)
+  report_run(d)
   println()
 
   println("Bus voltages and machine reactive power at the end of each run:")
-  println("  bus │   Vset │   Vm A │   Vm B │   Vm C │ Qg A [MVAr] │ Qg B [MVAr] │ Qg C [MVAr] │ physical A │ physical B │ physical C")
+  println("  bus │   Vset │   Vm A │   Vm B │   Vm C │   Vm D │ Qg A [MVAr] │ Qg B [MVAr] │ Qg C [MVAr] │ Qg D [MVAr] │ phys A │ phys B │ phys C │ phys D")
   short(r, bus) = physical_verdict(r, bus) == "yes" ? "yes" : "NO"
   for bus in REPORT_BUSES
-    @printf("  %3d │ %6.4f │ %6.4f │ %6.4f │ %6.4f │ %11.2f │ %11.2f │ %11.2f │ %-10s │ %-10s │ %-10s\n", bus, b.vset[bus], a.vm[bus], b.vm[bus], c.vm[bus], a.qg[bus], b.qg[bus], c.qg[bus], short(a, bus), short(b, bus), short(c, bus))
+    @printf("  %3d │ %6.4f │ %6.4f │ %6.4f │ %6.4f │ %6.4f │ %11.2f │ %11.2f │ %11.2f │ %11.2f │ %-6s │ %-6s │ %-6s │ %-6s\n", bus, b.vset[bus], a.vm[bus], b.vm[bus], c.vm[bus], d.vm[bus], a.qg[bus], b.qg[bus], c.qg[bus], d.qg[bus], short(a, bus), short(b, bus), short(c, bus), short(d, bus))
+  end
+  println()
+  println("Runs (solver time is the whole solve including the switching logic, after a warm-up):")
+  println("  run │ mode                  │ status                                          │ iterations │ solver time [s]")
+  for (name, r) in (("A", a), ("B", b), ("C", c), ("D", d))
+    status = r.converged ? "converged" : string("not accepted (", r.reason, ")")
+    @printf("  %3s │ %-21s │ %-47s │ %10d │ %15.4f\n", name, r.mode, status, r.iterations, r.seconds)
   end
   return nothing
 end
