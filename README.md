@@ -74,6 +74,27 @@ A script that uses the service API (`run_sparlectra_api`,
 using Sparlectra, SparlectraApp
 ```
 
+That line only holds for a Julia started in the checkout with
+`--project=app`. In a plain REPL (prompt `(@v1.13) pkg>`, the default
+environment) neither package is found, and Julia offers to install
+`Sparlectra` from the registry, which is the library alone. Activate the
+application environment from the REPL first:
+
+```julia
+using Pkg
+Pkg.activate("path/to/Sparlectra/app")   # the checkout's app/ directory
+using Sparlectra, SparlectraApp
+```
+
+In a REPL started with the library project (`julia --project=.`, the editor
+default for the checkout) only `SparlectraApp` is missing; put `app/` on the
+load path, as `start_webui.jl` does, or activate `app/` as above:
+
+```julia
+push!(LOAD_PATH, joinpath(pwd(), "app"))   # from the checkout root
+using Sparlectra, SparlectraApp
+```
+
 The one-line installers below run the same start script. `start_webui.jl --env-only`
 does the first-start work without starting the server.
 
