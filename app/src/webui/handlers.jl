@@ -1377,7 +1377,7 @@ end
 
 """Run a PowerFlow request through the Web UI form-to-service boundary."""
 function handle_powerflow_run(form::AbstractDict; default_output_root::AbstractString = "results/powerflow_service", application_root::AbstractString = _webui_application_root(), case_directory::Union{Nothing,AbstractString} = nothing, runner = start_powerflow_run, operation_log::AbstractString = default_output_root)::Dict{String,Any}
-  request = powerflow_webui_request(form; default_output_root = default_output_root, case_directory = case_directory)
+  request = powerflow_webui_request(form; default_output_root = default_output_root, case_directory = case_directory, operation_log = operation_log)
   package_case_directory = joinpath(application_root, "data", "mpower")
   requested_case = String(request["casefile"])
   if !isabspath(requested_case) && !occursin('/', requested_case) && !occursin('\\', requested_case)

@@ -47,10 +47,20 @@ _se_import_case_net(case_path::AbstractString, config; requested_format::Symbol 
 ## reference), and that ambiguity must not abort a run that does not even
 ## depend on the answer, so it resolves to :unknown here.
 function _se_case_format(case_path::AbstractString; requested::Symbol = :auto)::Symbol
+  return first(_se_case_format_with_reason(case_path; requested = requested))
+end
+
+## The detector refuses two things with an ArgumentError: an ambiguous .DAT
+## and an explicit format that does not fit the file content. Both messages
+## name the way out, so they travel with the `:unknown` verdict instead of
+## being replaced by a generic text (until 0.17.2 the state estimation on a
+## MATPOWER case with `case_format = scf` reported the .DAT sentence).
+function _se_case_format_with_reason(case_path::AbstractString; requested::Symbol = :auto)::Tuple{Symbol,String}
   return try
-    _detect_case_format(String(case_path); requested = requested)
-  catch
-    :unknown
+    (_detect_case_format(String(case_path); requested = requested), "")
+  catch err
+    err isa ArgumentError || rethrow()
+    (:unknown, sprint(showerror, err))
   end
 end
 
@@ -188,10 +198,10 @@ end
 ## returns the full ImportedCase so the run continues on its effective
 ## config, and logs the CGMES start decision like the power-flow service
 function _se_service_import(case_path, config, run_id, config_file, output_dir, logfile, result_file, base_metadata; requested_format::Symbol = :auto)
-  format = _se_case_format(case_path; requested = requested_format)
-  # named separately: "unknown" alone would leave the caller guessing, and
-  # the way out (naming the format) is not obvious from the file name
-  format === :unknown && return nothing, format, _api_failure("se_unsupported_format", "The case format could not be determined. A bare .DAT is ambiguous (FOR001 network case vs FOR002 reference file); pass case_format = :dtf_for001 for a DTF network case.", run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
+  format, reason = _se_case_format_with_reason(case_path; requested = requested_format)
+  # named separately: "unknown" alone would leave the caller guessing; the
+  # detector's own message names the way out (the format to pass, or auto)
+  format === :unknown && return nothing, format, _api_failure("se_unsupported_format", string("The case format could not be determined. ", reason), run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
   format in (:matpower, :cgmes, :scf, :dtf_for001) || return nothing, format, _api_failure("se_unsupported_format", "State estimation needs a MATPOWER, CGMES, Sparlectra Case Format or DTF case; got format $(format).", run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
   imported = try
     _se_import_case(case_path, config; requested_format = requested_format)

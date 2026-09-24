@@ -114,7 +114,11 @@ function _cgmes_profile_objects(text::AbstractString)
       a === nothing && error("unparsed attribute line in ", cls, " ", id, ": ", line)
       push!(attrs, String(a.captures[1]) => String(something(a.captures[2], a.captures[3])))
     else
-      push!(header, String(line))
+      # the exporter stamps its own version into the header comment and the
+      # model description; a release bump must not read as a changed export
+      # (the fixtures were written by 0.17.0, the test ran green on 0.17.0
+      # only), so the stamp is neutralized before the verbatim comparison
+      push!(header, replace(String(line), r"Sparlectra\.jl v\d+\.\d+\.\d+" => "Sparlectra.jl v<version>"))
     end
   end
   return header, objects

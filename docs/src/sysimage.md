@@ -135,7 +135,11 @@ panel) shows the same validity verdict and starts the same build in the
 background. Because the finished image is moved into place with `mv`, the
 directory entry is replaced while the old file stays mapped, so a Web UI
 running on the image being replaced keeps working. It also keeps running
-the OLD code: the page says so afterwards and asks for a restart. See
+the OLD code: the page says so afterwards and asks for a restart. A Web UI
+started from the REPL (or with `julia --project=app`) runs without any image
+and cannot switch to one; for such a session the page shows how the image on
+disk is used: the start script, or `julia -J <image> --startup-file=no
+--project=<app>` with the Web UI started from that REPL. See
 [Web UI](webui.md).
 
 When AnalyticLoadFlow (the APSLF solver) is installed, the build detects it

@@ -898,9 +898,41 @@ function _webui_case_form_defaults(casefile::AbstractString, case_directory)::Di
     fmt = lowercase(strip(String(raw_format)))
     # scf and pgm name the same reader; both are accepted so the choice
     # made in the form survives the save (see _normalize_case_format)
-    fmt in ("auto", "matpower", "dtf_for001", "cgmes", "scf", "pgm") && (values["case_format"] = fmt)
+    if fmt in ("auto", "matpower", "dtf_for001", "cgmes", "scf", "pgm")
+      conflict = _webui_case_format_conflict(path, fmt)
+      if conflict === nothing
+        values["case_format"] = fmt
+      else
+        # the stored value contradicts the file it was stored for: it is
+        # not loaded (the run falls back to auto), and the reason travels
+        # under the underscore keys so the Case page and the run log can say
+        # so. The file is left alone; the next save writes what the form
+        # shows.
+        values["_case_format_conflict"] = conflict
+        values["_case_format_stored"] = fmt
+      end
+    end
   end
   return values
+end
+
+# The stored `case_format` judged against the CONTENT of the case it was
+# stored for (the library's `_case_format_conflict`, the same verdict the
+# import gives). Seen 2026-09-24 on Windows: `scf` saved for `sp_case118.m`
+# sent the MATPOWER file into the JSON reader, and the state estimation
+# failed with `invalid integer ""` while the Case page showed nothing wrong.
+function _webui_case_format_conflict(path::AbstractString, fmt::AbstractString)::Union{Nothing,String}
+  # pgm is a spelling of scf, not a second reader (see _normalize_case_format)
+  requested = fmt == "pgm" ? :scf : Symbol(fmt)
+  return try
+    _case_format_conflict(path, requested)
+  catch err
+    # the verdict reads the first bytes of the file; a file that cannot be
+    # read (permissions, a vanished cache entry) gets no verdict here, the
+    # run reports it with its own message
+    err isa SystemError || rethrow()
+    nothing
+  end
 end
 
 function webui_form_state(; selected_casefile::AbstractString = "", selected_config_file::AbstractString = "", sidecar_profile = nothing, submitted_form = nothing, case_directory = nothing, apply_case_levels::Bool = true)
@@ -1075,6 +1107,10 @@ function _webui_merge_case_settings!(output_root::AbstractString, casefile_path:
     return nothing
   end
   form = _webui_case_form_defaults(casefile_path, case_directory)
+  # underscore markers (a stored case_format that contradicts the file) are
+  # bookkeeping for the pages, not settings; a merge drops the contradicting
+  # value from the file along with them
+  filter!(kv -> !startswith(first(kv), "_"), form)
   for (k, v) in updates
     field = String(k)
     field in _WEBUI_CASE_PROFILE_FIELDS || continue
@@ -1231,7 +1267,7 @@ run. A field present in the POST always wins (config-KEY fields need no such
 fallback here: omitted overrides fall through to `resolve_config`, which
 reads the same case configuration file server-side).
 """
-function powerflow_webui_request(form::AbstractDict; default_output_root::AbstractString = "results/powerflow_service", case_directory::Union{Nothing,AbstractString} = nothing)::Dict{String,Any}
+function powerflow_webui_request(form::AbstractDict; default_output_root::AbstractString = "results/powerflow_service", case_directory::Union{Nothing,AbstractString} = nothing, operation_log::AbstractString = default_output_root)::Dict{String,Any}
   existing_casefile = strip(String(something(_webui_form_value(form, "casefile", ""), "")))
   manual_casefile = strip(String(something(_webui_form_value(form, "casefile_manual", ""), "")))
   casefile = isempty(manual_casefile) ? existing_casefile : manual_casefile
@@ -1239,6 +1275,13 @@ function powerflow_webui_request(form::AbstractDict; default_output_root::Abstra
   # MATPOWER; choosing happens on the Case page
   isempty(casefile) && throw(ArgumentError("Select a case first (Case page)."))
   stored_form = _webui_case_form_defaults(casefile, case_directory)
+  # a stored format that contradicts the case file is not applied (see
+  # _webui_case_form_defaults); the operation log says so, because the
+  # user sees a run under `auto` that the case settings do not explain
+  if haskey(stored_form, "_case_format_conflict")
+    record_webui_operation!(operation_log, "case_format_ignored"; route = "/powerflow/run", method = "POST", user_action = false,
+      casefile, stored_format = String(stored_form["_case_format_stored"]), status = "ignored", message = String(stored_form["_case_format_conflict"]))
+  end
   config_file = strip(String(something(_webui_form_value(form, "config_file", ""), "")))
   output_root = String(default_output_root)
   ignore_webui_settings = if _webui_form_value(form, "ignore_webui_settings", nothing) !== nothing

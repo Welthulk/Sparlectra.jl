@@ -66,13 +66,82 @@ function _looks_like_cgmes(case_path::AbstractString)::Bool
   return false
 end
 
+"""
+    _case_file_lead(case_path; nbytes = 4096) -> String
+
+The first non-blank bytes of a case file, at most `nbytes`, with a UTF-8
+byte order mark removed. Empty for a directory, a missing file or an empty
+file. This is what format decisions look at: the extension is only a hint,
+the content is the evidence. The bytes are not required to be valid UTF-8
+(a MATPOWER comment in a Windows code page must not break detection).
+"""
+function _case_file_lead(case_path::AbstractString; nbytes::Int = 4096)::String
+  isfile(case_path) || return ""
+  bytes = open(io -> read(io, nbytes), case_path)
+  if length(bytes) >= 3 && bytes[1] == 0xEF && bytes[2] == 0xBB && bytes[3] == 0xBF
+    bytes = bytes[4:end]
+  end
+  return String(lstrip(String(bytes)))
+end
+
+# a JSON document, hence a Sparlectra or power-grid-model case file, opens
+# with the root object
+_case_file_looks_like_json(lead::AbstractString)::Bool = startswith(lead, "{")
+
+"""
+    _case_format_conflict(case_path, requested) -> Union{Nothing,String}
+
+The reason an explicitly requested case format cannot apply to `case_path`,
+or `nothing` when file and format agree. The verdict comes from the CONTENT,
+not from the extension: a requested `:scf` needs a file that opens with a
+JSON object, a requested `:matpower` one that does not (no MATPOWER reader
+takes JSON). `:cgmes` and `:dtf_for001` are left alone on purpose, they
+cover directories, ZIPs and the ambiguous `.DAT` files whose whole point is
+the explicit choice. A missing file gets no verdict here; the reader names
+it.
+
+Found 2026-09-24: a per-case setting `case_format = scf` saved for
+`sp_case118.m` sent the MATPOWER file into the SCF reader, which reported
+`SCF JSON parse error at byte 1: invalid integer ""` (byte 1 is the `f` of
+`function mpc`), a message that blames a JSON file nobody was reading. The
+message here names the file, what it actually starts with, and the way out.
+"""
+function _case_format_conflict(case_path::AbstractString, requested::Symbol)::Union{Nothing,String}
+  requested in (:scf, :matpower) || return nothing
+  name = repr(basename(case_path))
+  if isdir(case_path)
+    requested === :scf || return nothing
+    return string("The case input format is set to scf (Sparlectra Case Format, a JSON file), but ", name, " is a directory. Set the case input format to auto, or choose a .scf.json file.")
+  end
+  isfile(case_path) || return nothing
+  lead = _case_file_lead(case_path)
+  if requested === :scf && !_case_file_looks_like_json(lead)
+    what = isempty(lead) ? "is empty" : string("starts with ", repr(first(lead, 24)))
+    return string("The case input format is set to scf (Sparlectra Case Format, a JSON file), but ", name, " ", what,
+      " and is not a JSON object. Set the case input format to auto so the file decides, or choose a .scf.json file.")
+  elseif requested === :matpower && _case_file_looks_like_json(lead)
+    return string("The case input format is set to matpower, but ", name, " starts with a JSON object (a Sparlectra case file). ",
+      "Set the case input format to auto so the file decides, or choose a MATPOWER .m file.")
+  end
+  return nothing
+end
+
 function _detect_case_format(case_path::AbstractString; requested::Symbol = :auto)::Symbol
-  requested !== :auto && return requested
+  if requested !== :auto
+    # an explicit format still has to fit the file, or the wrong reader
+    # reports a parse error about a file of the other format
+    conflict = _case_format_conflict(case_path, requested)
+    conflict === nothing || throw(ArgumentError(conflict))
+    return requested
+  end
   _looks_like_cgmes(case_path) && return :cgmes
   ext = lowercase(splitext(case_path)[2])
   # Sparlectra Case Format (#342): self-describing JSON, recognized by its
-  # extension (the canonical name is <case>.scf.json)
+  # extension (the canonical name is <case>.scf.json) ...
   ext == ".json" && return :scf
+  # ... or by its content: a file that opens with a JSON object is a case
+  # file whatever it is called (the extension is only a hint)
+  _case_file_looks_like_json(_case_file_lead(case_path)) && return :scf
   ext in (".m", ".jl") && return :matpower
   text = read(case_path, String)
   # Native FOR001 test data has explicit section cards and a DTF size card.  Do

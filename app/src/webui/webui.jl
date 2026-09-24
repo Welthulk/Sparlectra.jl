@@ -493,25 +493,6 @@ end
 const _WEBUI_DEFAULT_MIGRATIONS = [("power_flow.linear_solver", "umfpack", "umfpack_reuse")]
 
 """
-    start_sparlectra_webui(; host="127.0.0.1", port=8080,
-                            output_root=nothing,
-                            config_file=DEFAULT_SPARLECTRA_CONFIG_PATH,
-                            open_browser=false,
-                            shutdown_on_browser_close=false) -> Union{Nothing,SparlectraWebUIServer}
-
-Start the loopback-only PowerFlow interface and load its persistent run registry
-before accepting requests. The returned handle can be stopped with
-`close(server)` or the browser's **Stop Web UI** button. When the requested
-port is already held by another **Sparlectra** Web UI (probed via its
-`/powerflow` page), no error is raised: the running instance is opened in
-the browser (with `open_browser = true`) and `nothing` is returned — stop
-that instance first to actually restart. A foreign process on the port
-still raises the explicit `ArgumentError`. Browser-process
-lifetime is not used for automatic shutdown by default because common browsers
-may return a short-lived launcher process instead of a reliably owned window.
-"""
-
-"""
     _webui_follow_template_defaults!(configuration) -> Vector{String}
 
 The Web UI's provisioned configuration file started as a copy of the
@@ -640,10 +621,22 @@ function _webui_validate_startup_config(configuration::AbstractString)
 end
 
 """
-    start_sparlectra_webui(; host, port, output_root, config_file, ...) -> SparlectraWebUIServer
+    start_sparlectra_webui(; host="127.0.0.1", port=8080,
+                            output_root=nothing,
+                            config_file=DEFAULT_SPARLECTRA_CONFIG_PATH,
+                            open_browser=false,
+                            shutdown_on_browser_close=false) -> Union{Nothing,SparlectraWebUIServer}
 
-Start the local Web UI server; returns the server handle (stop it with the
-page's own button or by closing the process).
+Start the loopback-only PowerFlow interface and load its persistent run registry
+before accepting requests. The returned handle can be stopped with
+`close(server)` or the browser's **Stop Web UI** button. When the requested
+port is already held by another **Sparlectra** Web UI (probed via its
+`/powerflow` page), no error is raised: the running instance is opened in
+the browser (with `open_browser = true`) and `nothing` is returned: stop
+that instance first to actually restart. A foreign process on the port
+still raises the explicit `ArgumentError`. Browser-process
+lifetime is not used for automatic shutdown by default because common browsers
+may return a short-lived launcher process instead of a reliably owned window.
 """
 function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Integer = 8080, output_root::Union{Nothing,AbstractString} = nothing, config_file::Union{Nothing,AbstractString} = nothing, open_browser::Bool = false, shutdown_on_browser_close::Bool = false, auto_shutdown_on_browser_close::Union{Nothing,Bool} = nothing, browser_heartbeat_timeout_seconds::Real = 15.0, _test_runner = start_powerflow_run, _lifecycle_io::IO = stdout, _browser_opener = _webui_open_browser)::Union{Nothing,SparlectraWebUIServer}
   host_string = String(host)

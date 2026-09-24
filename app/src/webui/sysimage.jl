@@ -377,3 +377,35 @@ function sysimage_restart_pending(; output_root::AbstractString = default_webui_
   # one second of slack: mtime resolution differs per filesystem
   return isfile(img) && mtime(img) > stamp + 1.0
 end
+"""
+    sysimage_use_hint(image; flavor_kind, problem) -> Union{Nothing,NamedTuple}
+
+How a session that runs WITHOUT the image would use the usable one on disk:
+a Web UI started from the REPL (`using SparlectraApp; start_sparlectra_webui()`)
+or with `julia --project=app` is native, and a rebuild from its Sysimage
+page changes nothing for it, because Julia takes an image only at process
+start (`-J`). Only `start_webui.jl` starts itself again on the image. The
+fields name the two ways in: `start_script` (the checkout root with
+`start_webui.jl`, or an empty string on an installation without it) and
+`command` (the command line derived from what `relaunch_with_sysimage` in
+`tools/sysimage_launcher.jl` runs: the image, no startup file, the
+application project, the thread count of this session unless
+`JULIA_NUM_THREADS` decides), plus `repl`, the two REPL lines that start the
+Web UI on it. Quoted paths, so the line holds in sh, cmd.exe and PowerShell.
+`nothing` when the session already runs on an image or the app, or when the
+image on disk is not usable (`problem` says why, the page shows that
+instead).
+"""
+function sysimage_use_hint(image::AbstractString; flavor_kind::Symbol, problem::Union{Nothing,AbstractString})
+  flavor_kind === :native || return nothing
+  problem === nothing || return nothing
+  isfile(image) || return nothing
+  root = normpath(joinpath(SPARLECTRA_APP_ROOT, ".."))
+  start_script = isfile(joinpath(root, "start_webui.jl")) ? root : ""
+  # mirrors relaunch_with_sysimage: the launcher passes its own thread count
+  # unless the environment already carries one
+  threads = haskey(ENV, "JULIA_NUM_THREADS") ? "" : string(" --threads=", Threads.nthreads())
+  command = string("julia -J \"", image, "\" --startup-file=no --project=\"", SPARLECTRA_APP_ROOT, "\"", threads)
+  repl = "using SparlectraApp\nserver = start_sparlectra_webui(open_browser = true)"
+  return (; start_script, command, repl, julia_version = string(VERSION))
+end
