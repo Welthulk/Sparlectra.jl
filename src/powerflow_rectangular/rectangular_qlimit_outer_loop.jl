@@ -179,6 +179,10 @@ function _run_q_limits_matpower_outer_loop!(
   base_pf_converged = false
   qlimit_enforcement_started = false
   final_outcome = :base_pf_not_converged
+  # the final Q-limit check of the converged end state, the same one the
+  # active set runs (classify_final_q_limits); nothing until the loop ends
+  # on a converged state
+  final_q_check = nothing
   # Preserve any prefix an enclosing AC-island solve already set (composing to
   # e.g. "ac_island_2_qlimit_outer_3_") and restore it on every exit path
   # (including the early no-reference-bus-remaining return below), so each
@@ -279,6 +283,8 @@ function _run_q_limits_matpower_outer_loop!(
       violations = _matpower_q_limit_violations(net, qreq_pu, bus_types, fixed_gens; tolerance_pu = max(tol, net.q_hyst_pu))
       if isempty(violations)
         final_outcome = :converged
+        Sbus_pu, _ = _compute_rectangular_final_injections(Ybus, V, net.baseMVA)
+        final_q_check = classify_final_q_limits(net, Sbus_pu, bus_types, qmin_pu, qmax_pu; q_hyst_pu = net.q_hyst_pu, final_q_accept_pu = max(net.final_q_accept_pu, net.q_hyst_pu), tol = tol)
         break
       end
       qlimit_enforcement_started = true
@@ -310,7 +316,12 @@ function _run_q_limits_matpower_outer_loop!(
     end
     st = rectangular_pf_status(net)
     if st !== nothing
-      _set_rectangular_pf_status!(net, (; st..., qlimit_enforcement_mode = mode, base_pf_converged = base_pf_converged, qlimit_enforcement_started = qlimit_enforcement_started, final_outcome = final_outcome, matpower_outer_iterations = maximum([0; getfield.(outer_rows, :outer_iter)]), matpower_outer_loop = outer_rows, qlimit_reenable_events = 0))
+      _set_rectangular_pf_status!(net, (; st..., qlimit_enforcement_mode = mode, base_pf_converged = base_pf_converged, qlimit_enforcement_started = qlimit_enforcement_started, final_outcome = final_outcome, matpower_outer_iterations = maximum([0; getfield.(outer_rows, :outer_iter)]), matpower_outer_loop = outer_rows, qlimit_reenable_events = 0,
+        pv_q_limit_violations = final_q_check === nothing ? 0 : final_q_check.violations,
+        final_q_check_status = final_q_check === nothing ? :not_evaluated : final_q_check.status,
+        final_q_check_rows = final_q_check === nothing ? NamedTuple[] : final_q_check.rows,
+        final_q_check_max_dev_pu = final_q_check === nothing ? 0.0 : final_q_check.max_dev_pu,
+        final_q_check_buses = final_q_check === nothing ? "" : final_q_check.buses))
     end
     return total_iters, final_outcome == :converged ? 0 : 1
   finally

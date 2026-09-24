@@ -24,6 +24,90 @@
 #          status storage plus printing
 
 """
+    _final_q_limit_class(dev_pu; tol, q_hyst_pu, final_q_accept_pu) -> Symbol
+
+The class of one overshoot `dev_pu` (`Q - Qmax` or `Qmin - Q`, in pu) of a
+PV bus after the solve: `:ok` up to the Newton tolerance, `:within_hysteresis`
+up to the switching hysteresis (the switching logic tolerates that much on
+purpose, so the final check has to as well), `:bounded` up to
+`final_q_accept_pu` (accepted, with a warning), `:violation` beyond it (the
+run is not accepted). With both thresholds at zero the check is as strict as
+it was up to 0.17.2.
+"""
+function _final_q_limit_class(dev_pu::Float64; tol::Float64, q_hyst_pu::Float64, final_q_accept_pu::Float64)::Symbol
+  dev_pu <= tol && return :ok
+  dev_pu <= q_hyst_pu && return :within_hysteresis
+  dev_pu <= final_q_accept_pu && return :bounded
+  return :violation
+end
+
+"""
+    classify_final_q_limits(net, Sbus_pu, bus_types, qmin_pu, qmax_pu; q_hyst_pu, final_q_accept_pu, tol) -> NamedTuple
+
+The one final Q-limit check every enforcement mode ends with: which PV buses
+lie over Qmax or under Qmin at the solved state, by how much, and what that
+means for the run. Judged by the SIZE of the overshoot, not by the number of
+buses: `power_flow.qlimits.hysteresis_pu` and
+`power_flow.qlimits.final_q_accept_pu` are the two thresholds, see
+[`_final_q_limit_class`](@ref).
+
+Up to 0.17.2 the active set counted every PV overshoot beyond the Newton
+tolerance as a remaining violation, while the classic modes stopped their
+outer loop at the hysteresis and ran no final check at all: the same
+operating point (a released machine 0.68 MVAr over Qmax inside a 1 MVAr
+hysteresis) was rejected by one mode and accepted by the other.
+
+`Sbus_pu` are the bus injections of the solved state (`V conj(Y V)`), the
+machine output is the injection plus the bus load. Returns
+`(rows, status, violations, bounded, within_hysteresis, max_dev_pu, buses)`:
+one row `(bus, busI, side, q_pu, limit_pu, dev_pu, class)` per PV bus beyond
+a limit by more than `tol`, sorted by the overshoot, `status` the worst class
+as a run status (`:ok`, `:within_hysteresis`, `:bounded_q_limit_violation`,
+`:remaining_pv_q_limit_violations`), `buses` the rows as `busI:class` joined
+by `;` for the run metadata.
+"""
+function classify_final_q_limits(net::Net, Sbus_pu::AbstractVector{ComplexF64}, bus_types::AbstractVector{Symbol}, qmin_pu::AbstractVector, qmax_pu::AbstractVector; q_hyst_pu::Float64, final_q_accept_pu::Float64, tol::Float64)
+  qload_pu = build_qload_pu(net)
+  rows = NamedTuple{(:bus, :busI, :side, :q_pu, :limit_pu, :dev_pu, :class),Tuple{Int,Int,Symbol,Float64,Float64,Float64,Symbol}}[]
+  for bus in eachindex(bus_types)
+    bus_types[bus] == :PV || continue
+    (bus <= length(qmin_pu) && bus <= length(qmax_pu) && bus <= length(Sbus_pu)) || continue
+    q = imag(Sbus_pu[bus]) + (bus <= length(qload_pu) ? qload_pu[bus] : 0.0)
+    side, limit, dev = :none, 0.0, 0.0
+    if isfinite(qmax_pu[bus]) && q > qmax_pu[bus] + tol
+      side, limit, dev = :high, Float64(qmax_pu[bus]), q - qmax_pu[bus]
+    elseif isfinite(qmin_pu[bus]) && q < qmin_pu[bus] - tol
+      side, limit, dev = :low, Float64(qmin_pu[bus]), qmin_pu[bus] - q
+    end
+    side === :none && continue
+    push!(rows, (bus = bus, busI = _qlimit_original_bus_id(net, bus), side = side, q_pu = q, limit_pu = limit, dev_pu = dev,
+      class = _final_q_limit_class(dev; tol = tol, q_hyst_pu = q_hyst_pu, final_q_accept_pu = final_q_accept_pu)))
+  end
+  sort!(rows; by = r -> -r.dev_pu)
+  violations = count(r -> r.class === :violation, rows)
+  bounded = count(r -> r.class === :bounded, rows)
+  within = count(r -> r.class === :within_hysteresis, rows)
+  status = violations > 0 ? :remaining_pv_q_limit_violations : bounded > 0 ? :bounded_q_limit_violation : within > 0 ? :within_hysteresis : :ok
+  max_dev = isempty(rows) ? 0.0 : maximum(r.dev_pu for r in rows)
+  buses = join((string(r.busI, ":", r.class) for r in rows), ";")
+  return (rows = rows, status = status, violations = violations, bounded = bounded, within_hysteresis = within, max_dev_pu = max_dev, buses = buses)
+end
+
+"""
+    final_q_check_line(status, rows, baseMVA) -> String
+
+The final Q-limit check in one line, the same words in the text report,
+`run.log`, the run metadata and on the Web UI result page: the run status and
+one clause per row with bus, side, overshoot in pu and MVAr and class.
+"""
+function final_q_check_line(status::Symbol, rows, baseMVA::Real)::String
+  status === :not_evaluated && return "Final Q-limit check: not evaluated (no converged solution)."
+  isempty(rows) && return "Final Q-limit check: ok (no PV bus beyond its reactive limits)."
+  parts = [@sprintf("bus %d %s by %.4f pu / %.2f MVAr (%s)", r.busI, r.side === :high ? "over Qmax" : "under Qmin", r.dev_pu, r.dev_pu * baseMVA, String(r.class)) for r in rows]
+  return string("Final Q-limit check: ", String(status), ", ", join(parts, "; "), ".")
+end
+
+"""
 Finalize Q-limit diagnostics after the numerical rectangular solve.
 
 # Why
@@ -50,6 +134,7 @@ function _finalize_rectangular_qlimit_summary(
   verbose::Int,
   qlimit_trace_enabled::Bool,
   q_hyst_pu::Float64,
+  final_q_accept_pu::Float64,
   tol::Float64,
   pv_table_rows::Int,
   qlimit_guard_accept_bounded_violations::Bool,
@@ -59,9 +144,13 @@ function _finalize_rectangular_qlimit_summary(
   # Print summary only in verbose/trace mode; stay silent otherwise.
   qlimit_summary_io = (verbose > 0 || qlimit_trace_enabled) ? stdout : devnull
 
-  qlimit_summary = _print_rectangular_qlimit_summary(qlimit_summary_io, net, V, Sbus_pu, bus_types, qmin_pu, qmax_pu, final_Qload_pu; q_hyst_pu = q_hyst_pu, tolerance_pu = tol, max_rows = pv_table_rows, max_console_rows = pv_table_rows)
+  qlimit_summary = _print_rectangular_qlimit_summary(qlimit_summary_io, net, V, Sbus_pu, bus_types, qmin_pu, qmax_pu, final_Qload_pu; q_hyst_pu = q_hyst_pu, tolerance_pu = tol, final_q_accept_pu = final_q_accept_pu, max_rows = pv_table_rows, max_console_rows = pv_table_rows)
 
-  remaining_pv_violations = qlimit_summary.pv_violations
+  # the decision comes from the two-threshold classification (size of the
+  # overshoot); the count-based guard below stays what it was, a policy to
+  # accept a number of real violations
+  final_q_check = classify_final_q_limits(net, Sbus_pu, bus_types, qmin_pu, qmax_pu; q_hyst_pu = q_hyst_pu, final_q_accept_pu = final_q_accept_pu, tol = tol)
+  remaining_pv_violations = final_q_check.violations
   bounded_ok = qlimit_guard_accept_bounded_violations && remaining_pv_violations <= qlimit_guard_max_remaining_violations
 
   converged_ = converged
@@ -69,15 +158,23 @@ function _finalize_rectangular_qlimit_summary(
 
   if remaining_pv_violations > 0 && !bounded_ok
     # Hard rejection: active PV-limit violations remain after the solve.
-    verbose > 0 && @warn "Rectangular NR active-set failed because active PV Q-limit violations remain after the numerical solve." pv_violations = qlimit_summary.pv_violations ref_violations = qlimit_summary.ref_violations
+    verbose > 0 && @warn "Rectangular NR active-set failed because active PV Q-limit violations remain after the numerical solve." pv_violations = remaining_pv_violations ref_violations = qlimit_summary.ref_violations
     converged_ = false
     rejection_reason_ = :remaining_pv_q_limit_violations
   elseif remaining_pv_violations > 0 && bounded_ok
     # Soft acceptance: bounded residual violations accepted by policy.
     rejection_reason_ = :bounded_q_limit_violations_accepted
+  elseif final_q_check.bounded > 0
+    # accepted by size, said out loud: an overshoot beyond the hysteresis
+    # but within final_q_accept_pu is a run the user should look at
+    for r in final_q_check.rows
+      r.class === :bounded || continue
+      @warn "Final Q-limit check: bounded violation accepted" bus = r.busI side = r.side dev_pu = r.dev_pu dev_MVAr = r.dev_pu * net.baseMVA final_q_accept_pu = final_q_accept_pu
+    end
+    rejection_reason_ = :bounded_q_limit_violation
   end
 
-  return (qlimit_summary = qlimit_summary, converged = converged_, rejection_reason = rejection_reason_)
+  return (qlimit_summary = qlimit_summary, final_q_check = final_q_check, converged = converged_, rejection_reason = rejection_reason_)
 end
 
 """
@@ -168,6 +265,7 @@ function _build_rectangular_final_status(
   converged::Bool,
   rejection_reason::Symbol,
   qlimit_summary,
+  final_q_check,
   final_pv_voltage_residual::Float64,
   history,
   qlimit_active_set_changes::Int,
@@ -202,8 +300,14 @@ function _build_rectangular_final_status(
     status = final_status,
     reason = final_reason,
     reason_text = _rectangular_rejection_reason_text(final_reason),
-    pv_q_limit_violations = isnothing(qlimit_summary) ? 0 : qlimit_summary.pv_violations,
+    pv_q_limit_violations = isnothing(final_q_check) ? (isnothing(qlimit_summary) ? 0 : qlimit_summary.pv_violations) : final_q_check.violations,
     ref_q_limit_violations = isnothing(qlimit_summary) ? 0 : qlimit_summary.ref_violations,
+    # the final Q-limit check (classify_final_q_limits): the same fields for
+    # every enforcement mode, :not_evaluated when no converged state exists
+    final_q_check_status = isnothing(final_q_check) ? :not_evaluated : final_q_check.status,
+    final_q_check_rows = isnothing(final_q_check) ? NamedTuple[] : final_q_check.rows,
+    final_q_check_max_dev_pu = isnothing(final_q_check) ? 0.0 : final_q_check.max_dev_pu,
+    final_q_check_buses = isnothing(final_q_check) ? "" : final_q_check.buses,
     final_pv_voltage_residual = final_pv_voltage_residual,
     final_mismatch = isempty(history) ? Inf : history[end],
     initial_mismatch = isempty(history) ? NaN : history[1],

@@ -286,6 +286,12 @@ power_flow:
     # is released when its voltage sits above the setpoint by more than
     # this, one clamped at Qmin when it sits below.
     reenable_v_hyst_pu: 1.0e-4
+    # Size bound (pu) of the final Q-limit check every enforcement mode
+    # ends with: an overshoot up to hysteresis_pu is within the hysteresis
+    # (ok), up to final_q_accept_pu it is bounded (accepted with a warning),
+    # beyond it the run is not accepted. Must be >= hysteresis_pu; the
+    # default is twice the hysteresis.
+    final_q_accept_pu: 0.02
     # Optional bus-id filters for focused diagnostics/policies.
     trace_buses: []
     lock_pv_to_pq_buses: []

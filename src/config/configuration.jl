@@ -127,6 +127,10 @@ Base.@kwdef struct QLimitConfig
   # Qmax the bus is released when Vm > Vset + margin, at Qmin when
   # Vm < Vset - margin
   reenable_v_hyst_pu::Float64 = 1e-4
+  # size bound of the final Q-limit check every enforcement mode ends with:
+  # an overshoot up to hysteresis_pu is within_hysteresis, up to this value
+  # bounded (accepted with a warning), beyond it a remaining violation
+  final_q_accept_pu::Float64 = 0.02
   guard::Bool = false
   guard_min_q_range_pu::Float64 = 1e-4
   guard_zero_range_mode::Symbol = :lock_pq
@@ -1369,6 +1373,11 @@ function QLimitConfig(raw::AbstractDict)
   guard_enabled_default = guard_raw isa AbstractDict ? _as_bool_cfg(_raw_get(guard_raw, "enabled", false)) : _as_bool_cfg(guard_raw)
   guard_cfg = guard_raw isa AbstractDict ? guard_raw : Dict{String,Any}()
   merged = merge(Dict{Any,Any}(raw), Dict{Any,Any}(guard_cfg))
+  hysteresis_value = _validate_nonnegative("power_flow.qlimits.hysteresis_pu", _as_float_cfg(_raw_get(merged, "hysteresis_pu", _raw_get(merged, "q_hyst_pu", 0.01))))
+  # default twice the hysteresis; a bound below the hysteresis would reject
+  # what the switching logic tolerates on purpose
+  final_q_accept_value = _validate_nonnegative("power_flow.qlimits.final_q_accept_pu", _as_float_cfg(_raw_get(merged, "final_q_accept_pu", 2 * hysteresis_value)))
+  final_q_accept_value >= hysteresis_value || throw(ArgumentError("power_flow.qlimits.final_q_accept_pu must be >= hysteresis_pu ($(hysteresis_value)); got $(final_q_accept_value)."))
   return QLimitConfig(
     start_iter = _as_int_cfg(_raw_get(merged, "start_iter", _raw_get(merged, "qlimit_start_iter", 2))),
     start_mode = _validate_allowed_symbol(
@@ -1377,9 +1386,10 @@ function QLimitConfig(raw::AbstractDict)
       QLIMIT_START_MODE_VALUES,
     ),
     auto_q_delta_pu = _validate_nonnegative("qlimit_auto_q_delta_pu", _as_float_cfg(_raw_get(merged, "auto_q_delta_pu", _raw_get(merged, "qlimit_auto_q_delta_pu", 1e-4)))),
-    hysteresis_pu = _validate_nonnegative("power_flow.qlimits.hysteresis_pu", _as_float_cfg(_raw_get(merged, "hysteresis_pu", _raw_get(merged, "q_hyst_pu", 0.01)))),
+    hysteresis_pu = hysteresis_value,
     cooldown_iters = _as_int_cfg(_raw_get(merged, "cooldown_iters", 1)),
     reenable_v_hyst_pu = _validate_nonnegative("power_flow.qlimits.reenable_v_hyst_pu", _as_float_cfg(_raw_get(merged, "reenable_v_hyst_pu", 1e-4))),
+    final_q_accept_pu = final_q_accept_value,
     guard = _as_bool_cfg(_raw_get(raw, "qlimit_guard", guard_enabled_default)),
     guard_min_q_range_pu = _validate_nonnegative("qlimit_guard_min_q_range_pu", _as_float_cfg(_raw_get(merged, "min_q_range_pu", _raw_get(merged, "guard_min_q_range_pu", _raw_get(merged, "qlimit_guard_min_q_range_pu", 1e-4))))),
     guard_zero_range_mode = _validate_allowed_symbol("power_flow.qlimits.guard.zero_range_mode", _as_symbol_cfg(_raw_get(merged, "zero_range_mode", _raw_get(merged, "guard_zero_range_mode", _raw_get(merged, "qlimit_guard_zero_range_mode", :lock_pq)))), QLIMIT_GUARD_ZERO_RANGE_MODE_VALUES),

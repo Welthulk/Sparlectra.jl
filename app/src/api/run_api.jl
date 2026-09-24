@@ -1126,6 +1126,10 @@ function _run_sparlectra_api_body(
     println(io)
     _write_service_phase_summary(io, phase_recorder.timings)
     _write_large_case_timing_summary(io, case_path, phase_recorder.timings, raw_result)
+    # whether the end point is physical, in the narrative as well: the
+    # detail lives in q_limit.log, the verdict must not (2026-09-24)
+    println(io, _qv_characteristic_summary(raw_result.net, raw_result.numerical_converged).line)
+    println(io, _final_q_check_summary(raw_result).line)
     if !isempty(q_limit_artifacts)
       println(io, "PV Q-limit details")
       println(io, "------------------")

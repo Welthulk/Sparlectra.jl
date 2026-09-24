@@ -55,6 +55,7 @@ function _print_rectangular_qlimit_summary(
   Qload_pu::Vector{Float64};
   q_hyst_pu::Float64,
   tolerance_pu::Float64 = 0.0,
+  final_q_accept_pu::Float64 = tolerance_pu,
   max_rows::Int = 30,
   max_console_rows::Union{Nothing,Int} = nothing,
 )
@@ -95,7 +96,9 @@ function _print_rectangular_qlimit_summary(
   end
 
   sort!(rows; by = r -> -abs(r.amount * net.baseMVA))
-  pv_violations = count(r -> r.type == :PV, rows)
+  # every overshoot beyond the tolerance is listed; a PV violation is one
+  # beyond final_q_accept_pu (the size bound of the final check)
+  pv_violations = count(r -> r.type == :PV && r.amount > final_q_accept_pu, rows)
   ref_violations = count(r -> r.type == :Slack, rows)
   # REF/slack buses anchor the angle reference and are not moved through the
   # PV→PQ active-set path; report their Q-limit residuals as diagnostics unless
@@ -674,6 +677,9 @@ function runpf_rectangular!(
   # voltage margin of the PQ->PV release (#375), stamped on the net from
   # power_flow.qlimits.reenable_v_hyst_pu like the two settings above
   reenable_v_hyst_pu = hasfield(typeof(net), :reenable_v_hyst_pu) ? net.reenable_v_hyst_pu : 1e-4
+  # size bound of the final Q-limit check, stamped from
+  # power_flow.qlimits.final_q_accept_pu; never below the hysteresis in use
+  final_q_accept_pu = max(hasfield(typeof(net), :final_q_accept_pu) ? net.final_q_accept_pu : 2 * q_hyst_pu, q_hyst_pu)
   allow_reenable = (cooldown_iters > 0) || (q_hyst_pu > 0.0)
   qlimit_mode in (:switch_to_pq, :adjust_vset) || error("Unsupported qlimit_mode=$(qlimit_mode). Supported: :switch_to_pq, :adjust_vset.")
   qlimit_max_outer > 0 || error("qlimit_max_outer must be > 0 (got $(qlimit_max_outer)).")
@@ -988,6 +994,7 @@ function runpf_rectangular!(
   p, q = _write_rectangular_total_bus_power!(net, Sbus_pu, Sbase, verbose, performance_profile)
 
   qlimit_summary = nothing
+  final_q_check = nothing
   branch_quality = _wrong_branch_not_checked_result()
   wrong_branch_rescue_attempted = false
   wrong_branch_rescue_reason = :disabled
@@ -1005,6 +1012,7 @@ function runpf_rectangular!(
         verbose = verbose,
         qlimit_trace_enabled = qlimit_trace_enabled,
         q_hyst_pu = q_hyst_pu,
+        final_q_accept_pu = final_q_accept_pu,
         tol = tol,
         pv_table_rows = pv_table_rows,
         qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations,
@@ -1012,6 +1020,7 @@ function runpf_rectangular!(
       )
     end
     qlimit_summary = qlimit_status.qlimit_summary
+    final_q_check = qlimit_status.final_q_check
     converged = qlimit_status.converged
     rejection_reason = qlimit_status.rejection_reason
     wrong_branch_status = _finalize_rectangular_wrong_branch_diagnostics(
@@ -1044,7 +1053,7 @@ function runpf_rectangular!(
     switch_counts_ = qlimit_switch_counts(net)
     oscillating_buses_ = count(>=(max(qlimit_guard_max_switches, 1)), values(switch_counts_))
     max_switching_exceeded_ = qlimit_guard_freeze_after_repeated_switching && oscillating_buses_ > 0
-    q_limit_active_set_ok_ = numerical_converged && final_pv_voltage_residual <= tol && (isnothing(qlimit_summary) || qlimit_summary.pv_violations == 0 || (qlimit_guard_accept_bounded_violations && qlimit_summary.pv_violations <= qlimit_guard_max_remaining_violations)) && !max_switching_exceeded_
+    q_limit_active_set_ok_ = numerical_converged && final_pv_voltage_residual <= tol && (isnothing(final_q_check) || final_q_check.violations == 0 || (qlimit_guard_accept_bounded_violations && final_q_check.violations <= qlimit_guard_max_remaining_violations)) && !max_switching_exceeded_
     converged_ = converged
     rejection_reason_ = rejection_reason
     if numerical_converged && max_switching_exceeded_ && !q_limit_active_set_ok_
@@ -1058,6 +1067,7 @@ function runpf_rectangular!(
       converged_,
       rejection_reason_,
       qlimit_summary,
+      final_q_check,
       final_pv_voltage_residual,
       history,
       qlimit_active_set_changes,

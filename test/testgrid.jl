@@ -471,7 +471,7 @@ end
 
 function test_rectangular_final_status_best_mismatch_ignores_nan()::Bool
   status =
-    Sparlectra._build_rectangular_final_status(Net(name = "diagnostic_status", baseMVA = 100.0), false, false, false, :nr_mismatch_not_converged, nothing, 0.0, [239.0, 1609.0, 5.55e290, NaN], 0, 0, 0, Int[], Sparlectra._wrong_branch_not_checked_result(), :warn, false, :disabled, NamedTuple()).status
+    Sparlectra._build_rectangular_final_status(Net(name = "diagnostic_status", baseMVA = 100.0), false, false, false, :nr_mismatch_not_converged, nothing, nothing, 0.0, [239.0, 1609.0, 5.55e290, NaN], 0, 0, 0, Int[], Sparlectra._wrong_branch_not_checked_result(), :warn, false, :disabled, NamedTuple()).status
 
   return status.reason == :nr_nonfinite && status.status == :nr_nonfinite && status.best_mismatch == 239.0
 end
@@ -2529,6 +2529,82 @@ function test_q_limit_matpower_mode_dispatch_no_reenable()::Bool
   return !isnothing(st) && hasproperty(st, :qlimit_enforcement_mode) && st.qlimit_enforcement_mode == :classic_one_at_a_time && hasproperty(st, :qlimit_reenable_events) && st.qlimit_reenable_events == 0 && length(net.qLimitLog) == 1 && net.qLimitLog[1].side == :max
 end
 
+# #375: the PQ->PV release decides on the voltage side once the solver hands
+# the voltages and setpoints in (rectangular_qlimit_iteration.jl does): a bus
+# clamped at Qmax goes back to PV when Vm > Vset + v_hyst_pu, one clamped at
+# Qmin when Vm < Vset - v_hyst_pu. The reactive injection sits ON the clamp
+# in every call below, so the old Q band test would never release; a release
+# proves the voltage rule. Every case starts from a fresh clamp because the
+# one-retry guard keeps a bus clamped after its second hit.
+function test_q_limit_reenable_voltage_rule()::Bool
+  nb = 1
+  qmin_pu = [0.0]
+  qmax_pu = [1.0]
+  pv_orig_mask = trues(nb)
+  # a fresh net with bus 1 clamped at `side` (:max by qreq 1.11 over Qmax 1.0,
+  # :min by qreq -0.05 under Qmin 0.0); returns the net and its bus types
+  function clamped(side::Symbol)
+    net = Net(name = "q_limit_voltage_rule", baseMVA = 100.0)
+    bus_types = [:PV]
+    qreq = side == :max ? 1.11 : -0.05
+    changed, _ = Sparlectra.active_set_q_limits!(
+      net, 1, nb;
+      get_qreq_pu = _ -> qreq,
+      is_pv = bus -> (bus_types[bus] == :PV),
+      make_pq! = (bus, _qclamp, _side) -> (bus_types[bus] = :PQ),
+      make_pv! = bus -> (bus_types[bus] = :PV),
+      qmin_pu = qmin_pu, qmax_pu = qmax_pu, pv_orig_mask = pv_orig_mask,
+      allow_reenable = false, q_hyst_pu = 0.0, cooldown_iters = 0,
+    )
+    ok = changed && bus_types[1] == :PQ && get(net.qLimitEvents, 1, nothing) === side && length(net.qLimitLog) == 1
+    return net, bus_types, ok
+  end
+  # the release call of the next iteration: the injection sits on the clamp,
+  # only the voltages can free the bus
+  function release_step(net, bus_types; vm::Float64, vset::Float64 = 1.0, v_hyst_pu::Float64 = 1e-4, voltages::Bool = true, qreq::Float64 = bus_types[1] == :PQ && get(net.qLimitEvents, 1, :max) === :max ? 1.0 : 0.0)
+    changed, reenabled = Sparlectra.active_set_q_limits!(
+      net, 2, nb;
+      get_qreq_pu = _ -> qreq,
+      is_pv = bus -> (bus_types[bus] == :PV),
+      make_pq! = (bus, _qclamp, _side) -> (bus_types[bus] = :PQ),
+      make_pv! = bus -> (bus_types[bus] = :PV),
+      qmin_pu = qmin_pu, qmax_pu = qmax_pu, pv_orig_mask = pv_orig_mask,
+      allow_reenable = true, q_hyst_pu = 0.0, cooldown_iters = 0,
+      get_vm_pu = voltages ? (_ -> vm) : nothing,
+      get_vset_pu = voltages ? (_ -> vset) : nothing,
+      v_hyst_pu = v_hyst_pu,
+    )
+    return (changed = changed, reenabled = reenabled, pv = bus_types[1] == :PV, events = length(net.qLimitEvents))
+  end
+  released(r) = !r.changed && r.reenabled && r.pv && r.events == 0
+  held(r) = !r.changed && !r.reenabled && !r.pv && r.events == 1
+
+  # 1 and 2: clamped at Qmax, voltage above the setpoint -> released
+  net, bt, ok1 = clamped(:max)
+  ok2 = released(release_step(net, bt; vm = 1.02))
+  # 3: at Qmax with the voltage below the setpoint the clamp is right, no release
+  net, bt, ok3a = clamped(:max)
+  ok3 = ok3a && held(release_step(net, bt; vm = 0.99))
+  # 4: mirror image at Qmin: released below the setpoint, held above it
+  net, bt, ok4a = clamped(:min)
+  ok4 = ok4a && released(release_step(net, bt; vm = 0.98))
+  net, bt, ok4b = clamped(:min)
+  ok4 = ok4 && ok4b && held(release_step(net, bt; vm = 1.02))
+  # 5: the margin: 5e-5 above the setpoint is inside 1e-4, outside 1e-5
+  net, bt, ok5a = clamped(:max)
+  ok5 = ok5a && held(release_step(net, bt; vm = 1.00005, v_hyst_pu = 1e-4))
+  net, bt, ok5b = clamped(:max)
+  ok5 = ok5 && ok5b && released(release_step(net, bt; vm = 1.00005, v_hyst_pu = 1e-5))
+  # 6: without voltages the Q band test decides as before: an injection on
+  # the clamp holds, one inside the band releases
+  net, bt, ok6a = clamped(:max)
+  ok6 = ok6a && held(release_step(net, bt; vm = 1.02, voltages = false, qreq = 1.0))
+  net, bt, ok6b = clamped(:max)
+  ok6 = ok6 && ok6b && released(release_step(net, bt; vm = 0.99, voltages = false, qreq = 0.5))
+
+  return ok1 && ok2 && ok3 && ok4 && ok5 && ok6
+end
+
 function test_q_limit_start_iter_delays_switching()::Bool
   net = createTest3BusNet(cooldown = 0, hyst_pu = 0.0, qlim_min = -15.0, qlim_max = 15.0)
   _, erg = runpf!(net, 3, 1e-12, 0; method = :rectangular, qlimit_start_iter = 10)
@@ -3042,6 +3118,150 @@ function test_active_set_voltage_side_release()::Bool
     @test Sparlectra.rectangular_pf_status(rf.net).qlimit_reenable_events == 0
     # the margin is a configuration key that reaches the net
     @test rf.net.reenable_v_hyst_pu == fcfg.powerflow.qlimits.reenable_v_hyst_pu
+
+    # The key is not GUI-editable, so a run with another margin takes a copy
+    # of the configuration template with the value replaced (the case-level
+    # files of the shipped cases carry no margin, the base file decides).
+    config_with_margin = margin -> begin
+      text = read(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, String)
+      @test occursin(r"reenable_v_hyst_pu:\s*[0-9.e+-]+", text)
+      path = joinpath(mktempdir(), "configuration.yaml")
+      write(path, replace(text, r"reenable_v_hyst_pu:\s*[0-9.e+-]+" => string("reenable_v_hyst_pu: ", margin)))
+      path
+    end
+    # run A, the state before the rule (a margin no voltage can exceed): no
+    # release, and the Q-V check names the machines at Qmax above their setpoint
+    cfg_a = Sparlectra.resolve_config(config_with_margin(1.0), zeng).config
+    @test cfg_a.powerflow.qlimits.reenable_v_hyst_pu == 1.0
+    ra = run_sparlectra(casefile = zeng, config = cfg_a)
+    @test ra.final_converged
+    @test Sparlectra.rectangular_pf_status(ra.net).qlimit_reenable_events == 0
+    @test any(row -> row.significant, Sparlectra.qvCharacteristicViolations(ra.net))
+    # run B (r above) lands on the voltages of the classic one-at-a-time mode
+    cfg_c = Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, zeng, Dict{String,Any}("power_flow.qlimits.enforcement_mode" => "classic_one_at_a_time")).config
+    rc = run_sparlectra(casefile = zeng, config = cfg_c)
+    @test rc.final_converged
+    @test isempty(Sparlectra.qvCharacteristicViolations(rc.net))
+    @test isapprox(rc.net.nodeVec[3]._vm_pu, 1.0064; atol = 1e-3)
+    # The final Q-limit check judges both modes alike: the classic run keeps
+    # bus 6 on PV 0.68 MVAr over Qmax, inside the 1 MVAr hysteresis, and the
+    # check says so instead of failing the run; the active-set run is
+    # accepted with an ok or within_hysteresis verdict (up to 0.17.2 a
+    # released machine inside the band failed it).
+    st_c = Sparlectra.rectangular_pf_status(rc.net)
+    @test st_c.final_q_check_status === :within_hysteresis
+    row6 = only(filter(row -> row.busI == 6, st_c.final_q_check_rows))
+    @test row6.side === :high && row6.class === :within_hysteresis
+    @test isapprox(row6.dev_pu, 0.0068; atol = 5e-4)
+    @test st.final_q_check_status in (:ok, :within_hysteresis)
+    @test st.final_q_check_status !== :remaining_pv_q_limit_violations
+    # No bound on the voltage difference between the two modes on purpose:
+    # switching variants need not end on the same point (measured 2026-09-24:
+    # 1.3e-3 pu apart at bus 6, the machine on its Qmax edge, clamped again by
+    # the active set and kept on PV inside the hysteresis band by the classic
+    # mode). What the test guards is that each mode ends on a PHYSICAL point:
+    # the Q-V check above is clean for both.
+    # regression on the shipped case118: the rule changes neither the clamped
+    # set nor the iteration count, and nothing oscillates
+    c118 = joinpath(dirname(@__DIR__), "data", "mpower", "sp_case118.m")
+    for margin in (1.0, 1e-4)
+      cfg118 = Sparlectra.resolve_config(config_with_margin(margin), c118).config
+      r118 = run_sparlectra(casefile = c118, config = cfg118)
+      @test r118.final_converged
+      @test sort!(collect(keys(r118.net.qLimitEvents))) == [4, 19, 31, 32, 54, 72, 73, 77, 85, 87]
+      @test r118.iterations <= 10
+      @test Sparlectra.rectangular_pf_status(r118.net).oscillating_buses == 0
+      @test Sparlectra.rectangular_pf_status(r118.net).final_q_check_status === :ok
+    end
+    # the feeder machine sits ON its clamp, so the final check has nothing to say
+    @test Sparlectra.rectangular_pf_status(rf.net).final_q_check_status === :ok
+  end)() end
+  return true
+end
+
+# The final Q-limit check every enforcement mode ends with (task
+# final-q-check, 2026-09-24): judged by the SIZE of the overshoot with two
+# thresholds, the switching hysteresis and final_q_accept_pu. Synthetic
+# injections on the 3-bus net, so every class is hit exactly, plus the
+# configuration default and validation and the warning of the bounded class.
+function test_final_q_limit_classification()::Bool
+  @testset "Final Q-limit check: two thresholds" begin (function ()
+    net = createTest3BusNet(cooldown = 1, hyst_pu = 0.01, qlim_min = -15.0, qlim_max = 15.0)
+    pv = geNetBusIdx(net = net, busName = "STATION1")
+    nb = length(net.nodeVec)
+    bus_types = [Sparlectra.getNodeType(node) == Sparlectra.Slack ? :Slack : Sparlectra.getNodeType(node) == Sparlectra.PV ? :PV : :PQ for node in net.nodeVec]
+    @test bus_types[pv] == :PV
+    qmin_pu = fill(-Inf, nb)
+    qmax_pu = fill(Inf, nb)
+    qmin_pu[pv] = -0.15
+    qmax_pu[pv] = 0.15
+    qload = Sparlectra.build_qload_pu(net)
+    # the injection that puts the machine at Qmax + dev (or Qmin - dev)
+    injections(dev; side = :high) = [ComplexF64(0.0, i == pv ? ((side === :high ? qmax_pu[pv] + dev : qmin_pu[pv] - dev) - qload[pv]) : 0.0) for i in 1:nb]
+    classify(dev; hyst = 0.01, accept = 0.02, side = :high) = classify_final_q_limits(net, injections(dev; side), bus_types, qmin_pu, qmax_pu; q_hyst_pu = hyst, final_q_accept_pu = accept, tol = 1e-8)
+    # at the limit within the tolerance: no row, ok
+    @test classify(0.0).status === :ok
+    @test isempty(classify(0.0).rows)
+    # inside the hysteresis: a row, accepted, class within_hysteresis
+    within = classify(0.005)
+    @test within.status === :within_hysteresis
+    @test length(within.rows) == 1 && within.rows[1].class === :within_hysteresis && within.rows[1].side === :high
+    @test isapprox(within.rows[1].dev_pu, 0.005; atol = 1e-12)
+    @test within.max_dev_pu == within.rows[1].dev_pu
+    @test occursin("bus $(within.rows[1].busI) over Qmax by 0.0050 pu / 0.50 MVAr (within_hysteresis)", final_q_check_line(within.status, within.rows, net.baseMVA))
+    # beyond the hysteresis, inside the bound: bounded
+    bounded = classify(0.015)
+    @test bounded.status === :bounded_q_limit_violation
+    @test bounded.bounded == 1 && bounded.violations == 0
+    @test bounded.buses == string(bounded.rows[1].busI, ":bounded")
+    # beyond the bound: a remaining violation, the run is not accepted
+    @test classify(0.03).status === :remaining_pv_q_limit_violations
+    @test classify(0.03).violations == 1
+    # the mirror image under Qmin
+    low = classify(0.015; side = :low)
+    @test low.rows[1].side === :low && low.rows[1].class === :bounded
+    # regression: both thresholds at zero is the strict check of 0.17.2
+    @test classify(0.005; hyst = 0.0, accept = 0.0).status === :remaining_pv_q_limit_violations
+    # a PQ bus is not judged, whatever its injection
+    bus_types_pq = copy(bus_types)
+    bus_types_pq[pv] = :PQ
+    @test classify_final_q_limits(net, injections(0.03), bus_types_pq, qmin_pu, qmax_pu; q_hyst_pu = 0.01, final_q_accept_pu = 0.02, tol = 1e-8).status === :ok
+
+    # the acceptance decision: within and bounded are accepted, bounded with
+    # a warning naming bus and overshoot, a violation rejects the run
+    finalize(dev) = Sparlectra._finalize_rectangular_qlimit_summary(net, ones(ComplexF64, nb), injections(dev), bus_types, qmin_pu, qmax_pu, true, :none;
+      verbose = 0, qlimit_trace_enabled = false, q_hyst_pu = 0.01, final_q_accept_pu = 0.02, tol = 1e-8, pv_table_rows = 30,
+      qlimit_guard_accept_bounded_violations = false, qlimit_guard_max_remaining_violations = 0)
+    @test finalize(0.005).converged
+    @test finalize(0.005).final_q_check.status === :within_hysteresis
+    accepted = @test_logs (:warn, r"bounded violation accepted") finalize(0.015)
+    @test accepted.converged
+    @test accepted.rejection_reason === :bounded_q_limit_violation
+    rejected = finalize(0.03)
+    @test !rejected.converged
+    @test rejected.rejection_reason === :remaining_pv_q_limit_violations
+
+    # the key: default twice the hysteresis, never below it, stamped on the net
+    cfg = Sparlectra.QLimitConfig(Dict{String,Any}("hysteresis_pu" => 0.01))
+    @test cfg.final_q_accept_pu == 0.02
+    @test Sparlectra.QLimitConfig(Dict{String,Any}("hysteresis_pu" => 0.0)).final_q_accept_pu == 0.0
+    @test Sparlectra.QLimitConfig(Dict{String,Any}("hysteresis_pu" => 0.01, "final_q_accept_pu" => 0.05)).final_q_accept_pu == 0.05
+    @test_throws ArgumentError Sparlectra.QLimitConfig(Dict{String,Any}("hysteresis_pu" => 0.01, "final_q_accept_pu" => 0.005))
+    @test "power_flow.qlimits.final_q_accept_pu" in Sparlectra.GUI_EDITABLE_CONFIG_KEYS
+    @test Net(name = "n", baseMVA = 100.0, q_hyst_pu = 0.03).final_q_accept_pu == 0.06
+
+    # the same status for every mode at the same operating point: sp_case14
+    # under the three enforcement modes
+    case = joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json")
+    statuses = Symbol[]
+    for mode in ("active_set", "classic_one_at_a_time", "classic_simultaneous")
+      cfg14 = Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, case, Dict{String,Any}("power_flow.qlimits.enforcement_mode" => mode)).config
+      r14 = run_sparlectra(casefile = case, config = cfg14)
+      @test r14.final_converged
+      push!(statuses, Sparlectra.rectangular_pf_status(r14.net).final_q_check_status)
+    end
+    @test length(unique(statuses)) == 1
+    @test statuses[1] in (:ok, :within_hysteresis)
   end)() end
   return true
 end
@@ -3105,6 +3325,8 @@ function run_grid_fast_tests()
       @test test_q_limit_enforcement_mode_config_values() == true
       @test test_q_limit_matpower_mode_base_failure_does_not_switch() == true
       @test test_q_limit_matpower_mode_dispatch_no_reenable() == true
+      @test test_q_limit_reenable_voltage_rule() == true
+      @test test_final_q_limit_classification() == true
       @test test_q_limit_start_iter_delays_switching() == true
       @test test_q_limit_auto_accepts_switching() == true
       @test test_q_limit_hysteresis_delays_small_pv_to_pq_overshoot() == true

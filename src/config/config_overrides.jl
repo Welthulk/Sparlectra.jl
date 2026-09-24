@@ -28,6 +28,7 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "power_flow.flatstart",
   "power_flow.qlimits.enabled",
   "power_flow.qlimits.enforcement_mode",
+  "power_flow.qlimits.final_q_accept_pu",
   "power_flow.solver",
   "power_flow.linear_solver",
   "power_flow.apslf.order",

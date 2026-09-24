@@ -90,6 +90,7 @@ function _rectangular_rejection_reason_text(reason::Symbol)
   # Used in convergence summaries and solver status reports.
   reason == :none && return "none"
   reason == :remaining_pv_q_limit_violations && return "remaining PV Q-limit violations"
+  reason == :bounded_q_limit_violation && return "bounded Q-limit violation accepted (within final_q_accept_pu)"
   reason == :active_pv_voltage_residual && return "active PV voltage residual exceeds tolerance"
   reason == :singular_newton_step && return "singular Newton step"
   reason == :nr_mismatch_not_converged && return "NR mismatch did not converge"

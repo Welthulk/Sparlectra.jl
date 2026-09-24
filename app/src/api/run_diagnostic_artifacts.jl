@@ -363,6 +363,22 @@ function _write_powerflow_diagnostics(path::AbstractString, result::SparlectraRu
 end
 
 function _write_final_q_limit_validation(io::IO, result::SparlectraRunResult)
+  # the final Q-limit check every enforcement mode ends with: one line, then
+  # one row per PV bus beyond a limit with side, Q, limit, overshoot and class
+  if result.numerical_converged && hasproperty(result.diagnostics, :final_q_check_status)
+    fq = _final_q_check_summary(result)
+    base = result.net === nothing ? 100.0 : result.net.baseMVA
+    println(io, "Final Q-limit check (size of the overshoot against hysteresis_pu and final_q_accept_pu)")
+    println(io, "  ", fq.line)
+    rows = result.diagnostics.final_q_check_rows
+    if !isempty(rows)
+      println(io, "  bus │ side │     Q pu │   Q MVAr │ limit pu │ limit MVAr │   dev pu │ dev MVAr │ class")
+      for r in rows
+        @printf(io, "  %3d │ %-4s │ %8.4f │ %8.2f │ %8.4f │ %10.2f │ %8.4f │ %8.2f │ %s\n", r.busI, r.side === :high ? "high" : "low", r.q_pu, r.q_pu * base, r.limit_pu, r.limit_pu * base, r.dev_pu, r.dev_pu * base, String(r.class))
+      end
+    end
+    println(io)
+  end
   pv_violations = hasproperty(result.diagnostics, :pv_q_limit_violations) ? result.diagnostics.pv_q_limit_violations : 0
   ref_violations = hasproperty(result.diagnostics, :ref_q_limit_violations) ? result.diagnostics.ref_q_limit_violations : 0
   if result.numerical_converged && pv_violations == 0 && ref_violations == 0

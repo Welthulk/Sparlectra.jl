@@ -75,6 +75,7 @@ summary at the end): `run_powerflow_suite.jl`, `run_others_suite.jl`,
 |---|---|---|
 | `example_voltage_dependent_control_rectangular.jl` | P(U)/Q(U) droop behavior in the rectangular solver | powerflow |
 | `example_q_limit_voltage_adjustment.jl` | `qlimit_mode = :adjust_vset` run variants | powerflow |
+| `example_qlimit_reenable_voltage_rule.jl` | voltage-side PQ->PV release of the active-set mode on the Zeng/Chiang 14-bus case, against `classic_one_at_a_time` and `classic_simultaneous`, with the physical verdict per bus | powerflow |
 
 ## CGMES
 

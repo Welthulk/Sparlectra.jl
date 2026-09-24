@@ -33,6 +33,21 @@ function run_api_fast_tests()
         @test pf.success
         @test pf.converged
         @test isfile(pf.result_file)
+        # the Q-V verdict travels with every run: metadata line, count, run.log
+        @test pf.metadata["qv_non_physical_states"] == 0
+        @test pf.metadata["qv_characteristic_line"] == "Q-V characteristic: no non-physical generator states."
+        @test occursin("Q-V characteristic: no non-physical", read(pf.logfile, String))
+        # and names the buses of a non-physical end point: the Zeng/Chiang
+        # case with the voltage-side release switched off (margin 1.0) ends
+        # with three machines at Qmax above their setpoints
+        zeng = joinpath(dirname(@__DIR__), "data", "scf", "case14_zeng_p306_activeSet_A.scf.json")
+        no_release = joinpath(tmpdir, "configuration.yaml")
+        write(no_release, replace(read(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, String), r"reenable_v_hyst_pu:\s*[0-9.e+-]+" => "reenable_v_hyst_pu: 1.0"))
+        nonphys = run_sparlectra_api(casefile = zeng, config_file = no_release, output_dir = joinpath(tmpdir, "nonphys"))
+        @test nonphys.converged
+        @test nonphys.metadata["qv_non_physical_states"] == 3
+        @test nonphys.metadata["qv_non_physical_buses"] == "2;3;6"
+        @test occursin("3 non-physical generator state(s)", read(nonphys.logfile, String))
         se = start_powerflow_run(Dict{String,Any}("casefile" => scf5, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(tmpdir, "runs"), "se_mode" => true, "measurement_file" => meas5))
         @test se["status"] == "succeeded"
         @test se["metadata"]["run_mode"] == "se"

@@ -528,6 +528,8 @@ export
   printPVQLimitsTable,                    # Print PV Q-limit diagnostics.
   printFinalLimitValidation,              # Print final Q-limit validation.
   qvCharacteristicViolations,             # Generators at a Q-limit on the wrong voltage side (non-physical solution).
+  classify_final_q_limits,                # The final Q-limit check every enforcement mode ends with (two thresholds).
+  final_q_check_line,                     # That check in one line (text report, run.log, metadata, result page).
   printQVCharacteristicCheck,             # Print that check; part of the result print and the run report.
   validate_q_limit_signs!,                # Validate Q-limit sign conventions.
   logQLimitHit!,
