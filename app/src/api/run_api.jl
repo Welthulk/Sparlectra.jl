@@ -578,7 +578,10 @@ function _run_sparlectra_api_body(
   detected_case_format = try
     _detect_case_format(case_path; requested = requested_case_format)
   catch err
-    return _api_failure("ambiguous_case_format", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, metadata = Dict("input_format" => String(requested_case_format), "input_format_detected" => "ambiguous"))
+    # two different findings: auto could not decide (an ambiguous .DAT), or
+    # the explicit format does not fit the file content (scf for a .m case)
+    reason, detected = requested_case_format === :auto ? ("ambiguous_case_format", "ambiguous") : ("case_format_mismatch", "mismatch")
+    return _api_failure(reason, sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, metadata = Dict("input_format" => String(requested_case_format), "input_format_detected" => detected))
   end
 
   raw_result = nothing

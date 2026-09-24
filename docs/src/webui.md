@@ -51,6 +51,13 @@ server = SparlectraApp.start_sparlectra_webui(open_browser = true)
 wait(server.task)
 ```
 
+A Web UI started this way runs without the [sysimage](sysimage.md): Julia
+takes an image only at process start, so a session cannot switch to one
+later, not even after a build from the **Sysimage** page. The image is used
+by the start script (`start_webui.jl`, `start_webui.sh`, `start_webui.bat`)
+or by starting Julia on it with `julia -J <image> --project=app` and the two
+lines above; the Sysimage page of such a session shows the exact command line.
+
 The package installation directory does not need to be known. By default,
 results are written beneath `%LOCALAPPDATA%\Sparlectra\WebUI\runs` on Windows,
 `$XDG_STATE_HOME/sparlectra/webui/runs` (or
@@ -116,8 +123,8 @@ For end users the repository root additionally ships platform scripts:
 when Julia is missing) and `tools/install_webui.sh` / `tools/install_webui.bat`
 (install Julia via juliaup when missing, obtain Sparlectra at its latest
 tagged release, offer the update when an existing copy is older than the
-latest release, leave the [sysimage](sysimage.md) build to the Web UI start
-build and a desktop shortcut/launcher for restarting the Web UI, then
+latest release, leave the [sysimage](sysimage.md) build to the Web UI start,
+offer a desktop shortcut or launcher for restarting the Web UI, then
 start it). Unattended installs answer the questions via
 `SPARLECTRA_UPDATE=1/0`, `SPARLECTRA_BUILD_SYSIMAGE=1/0`, and
 `SPARLECTRA_CREATE_SHORTCUT=1/0`. The

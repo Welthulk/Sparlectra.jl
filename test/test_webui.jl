@@ -1751,9 +1751,47 @@ function run_webui_fast_tests()
 
             # the two whitelists that persist the choice (save, read back) both have
             # to know the new values, or the selection is silently dropped to auto
+            write(joinpath(cases, "fmt_probe_json.json"), "{\"version\": \"1.0\", \"type\": \"input\", \"data\": {}}\n")
             SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save",
-                Dict{String,Any}("casefile" => "fmt_probe.m", "case_format" => "pgm", "return_to" => "case"); output_root=root, runtime=rt)
-            @test SparlectraApp._webui_case_form_defaults("fmt_probe.m", cases)["case_format"] == "pgm"
+                Dict{String,Any}("casefile" => "fmt_probe_json.json", "case_format" => "pgm", "return_to" => "case"); output_root=root, runtime=rt)
+            @test SparlectraApp._webui_case_form_defaults("fmt_probe_json.json", cases)["case_format"] == "pgm"
+            SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save",
+                Dict{String,Any}("casefile" => "fmt_probe.m", "case_format" => "matpower", "return_to" => "case"); output_root=root, runtime=rt)
+            @test SparlectraApp._webui_case_form_defaults("fmt_probe.m", cases)["case_format"] == "matpower"
+
+            # Seen on Windows 2026-09-24: `scf` stored for a MATPOWER case sent
+            # the .m file into the JSON reader (`invalid integer ""`), while the
+            # Case page showed nothing wrong. A stored format that contradicts
+            # the file CONTENT is not loaded: the run falls back to auto, the
+            # operation log and the Case page say so, and the next save writes
+            # what the selector shows.
+            Sparlectra.write_case_config(joinpath(cases, "fmt_probe.m"), Dict{String,Any}(); form=Dict{String,Any}("case_format" => "scf"))
+            stored = SparlectraApp._webui_case_form_defaults("fmt_probe.m", cases)
+            @test !haskey(stored, "case_format")
+            @test occursin("fmt_probe.m", stored["_case_format_conflict"])
+            req = SparlectraApp.powerflow_webui_request(Dict("casefile" => "fmt_probe.m"); case_directory=cases, operation_log=root)
+            @test req["case_format"] == "auto"
+            log_lines = readlines(SparlectraApp.webui_operation_log_path(root))
+            ignored = filter(l -> occursin("case_format_ignored", l), log_lines)
+            @test length(ignored) == 1
+            @test occursin("\"stored_format\":\"scf\"", ignored[1]) || occursin("\"stored_format\": \"scf\"", ignored[1])
+            body = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/case?casefile=fmt_probe.m"; output_root=root, runtime=rt).body)
+            @test occursin("case-format-notice", body)
+            @test occursin("does not fit this file", body)
+            # a value that fits the file is loaded and shows no notice
+            Sparlectra.write_case_config(joinpath(cases, "fmt_probe.m"), Dict{String,Any}(); form=Dict{String,Any}("case_format" => "matpower"))
+            @test SparlectraApp._webui_case_form_defaults("fmt_probe.m", cases)["case_format"] == "matpower"
+            body_ok = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/case?casefile=fmt_probe.m"; output_root=root, runtime=rt).body)
+            @test !occursin("case-format-notice", body_ok)
+            # the explicit wrong format posted by a form fails with the
+            # readable message, not with a JSON parse error
+            req_scf = SparlectraApp.powerflow_webui_request(Dict("casefile" => "fmt_probe.m", "case_format" => "scf"); case_directory=cases, operation_log=root)
+            @test req_scf["case_format"] == "scf"
+            failed = SparlectraApp.run_sparlectra_api(casefile = joinpath(cases, "fmt_probe.m"), case_format = :scf, output_dir = joinpath(root, "scf_on_m"))
+            @test failed.status === :failed
+            @test failed.reason == "case_format_mismatch"
+            @test occursin("auto", String(failed.message))
+            @test !occursin("invalid integer", String(failed.message))
         end)() end
 
         # Also reported live: the mode was set and nothing happened, because the
@@ -2015,6 +2053,49 @@ function run_webui_fast_tests()
                 end
                 # and the verdicts are the expected ones, not merely equal
                 @test SparlectraApp.webui_sysimage_problem(image_path=img, project_dir=proj) == "the sysimage metadata is unreadable"
+            end
+        end)() end
+
+        @testset "sysimage page tells a native session how to use the image" begin (function ()
+            # A Web UI started from the REPL runs without the image and cannot
+            # switch to it, not even after a build from its own Sysimage page;
+            # the page has to say how the image on disk is used (2026-09-24).
+            mktempdir() do tmp
+                out = joinpath(tmp, "runs")
+                mkpath(out)
+                img = SparlectraApp.webui_sysimage_path(out)
+                mkpath(dirname(img))
+                # without an image on disk there is no hint; the status says why instead
+                @test SparlectraApp.sysimage_use_hint(img; flavor_kind=:native, problem="no sysimage found") === nothing
+                @test !occursin("sysimage-native-hint", SparlectraApp.render_webui_sysimage_page(output_root=out))
+                # a valid image for THIS checkout: metadata matching the running
+                # Julia and the application manifest, newer than every source file
+                manifest = joinpath(SparlectraApp.SPARLECTRA_APP_ROOT, "Manifest.toml")
+                sha = bytes2hex(open(SHA.sha256, manifest))
+                write(joinpath(dirname(img), "sysimage_meta.toml"), string("julia_version = \"", VERSION, "\"\nmanifest_sha256 = \"", sha, "\"\n"))
+                write(img, "not a real image")
+                @test SparlectraApp.webui_sysimage_problem(image_path=img) === nothing
+                hint = SparlectraApp.sysimage_use_hint(img; flavor_kind=:native, problem=nothing)
+                @test hint !== nothing
+                # the line mirrors what the launcher runs on a relaunch
+                @test occursin("-J \"$(img)\"", hint.command)
+                @test occursin("--startup-file=no", hint.command)
+                @test occursin("--project=\"$(SparlectraApp.SPARLECTRA_APP_ROOT)\"", hint.command)
+                @test occursin("start_sparlectra_webui", hint.repl)
+                @test hint.start_script == normpath(joinpath(SparlectraApp.SPARLECTRA_APP_ROOT, ".."))
+                @test isfile(joinpath(hint.start_script, "start_webui.jl"))
+                # a session on the image or in the standalone app gets no hint
+                @test SparlectraApp.sysimage_use_hint(img; flavor_kind=:sysimage, problem=nothing) === nothing
+                @test SparlectraApp.sysimage_use_hint(img; flavor_kind=:app, problem=nothing) === nothing
+                # the page renders it for a native session (this test process)
+                if SparlectraApp.webui_runtime_flavor().kind === :native
+                    page = SparlectraApp.render_webui_sysimage_page(output_root=out)
+                    @test occursin("sysimage-native-hint", page)
+                    @test occursin(SparlectraApp._webui_escape(img), page)
+                    println("  sysimage native hint: page check ran")
+                else
+                    println("  sysimage native hint: page check skipped (this process runs on an image)")
+                end
             end
         end)() end
 

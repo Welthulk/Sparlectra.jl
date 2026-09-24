@@ -1339,11 +1339,43 @@ mpc.branch = [
       # the case format is a first-class case format: detected, selectable,
       # and runnable through the same paths as every other source
       @test Sparlectra._detect_case_format(fixture) === :scf
+      # An explicit format is judged against the file CONTENT, not the
+      # extension (2026-09-24: `scf` saved for a MATPOWER case sent it into
+      # the JSON reader, which blamed a JSON file nobody was reading). The
+      # message names the file and the way out.
+      mfile = abspath(joinpath(dirname(@__DIR__), "data", "mpower", "sp_case9.m"))
+      fmt_err = try
+        Sparlectra._detect_case_format(mfile; requested = :scf)
+        nothing
+      catch err
+        err
+      end
+      @test fmt_err isa ArgumentError
+      @test occursin("sp_case9.m", sprint(showerror, fmt_err))
+      @test occursin("auto", sprint(showerror, fmt_err))
+      @test_throws ArgumentError Sparlectra._detect_case_format(fixture; requested = :matpower)
+      @test Sparlectra._detect_case_format(mfile; requested = :matpower) === :matpower
+      # cgmes and dtf keep the explicit choice without a content verdict
+      @test Sparlectra._detect_case_format(mfile; requested = :cgmes) === :cgmes
+      oddities = mktempdir()
+      # a JSON case under a foreign name is still recognized by its content
+      renamed = joinpath(oddities, "renamed_case.txt")
+      cp(fixture, renamed)
+      @test Sparlectra._detect_case_format(renamed) === :scf
+      # a UTF-8 byte order mark (Windows editors write one) is skipped by the
+      # reader and by the detection; the case then runs like the plain file
+      withbom = joinpath(oddities, "bom.scf.json")
+      write(withbom, vcat(UInt8[0xEF, 0xBB, 0xBF], read(fixture)))
+      @test Sparlectra.scf_json_parse(read(withbom, String)) == Sparlectra.scf_json_parse(read(fixture, String))
+      @test Sparlectra._detect_case_format(withbom; requested = :scf) === :scf
       @test SparlectraApp._webui_is_user_selectable_case("warmup_casePST.scf.json")
       @test !SparlectraApp._webui_is_user_selectable_case("run_metadata.json")
       cfg = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true)
       res = run_sparlectra(casefile = fixture, config = cfg)
       @test res.final_converged
+      res_bom = run_sparlectra(casefile = withbom, config = cfg)
+      @test res_bom.final_converged
+      @test res_bom.iterations == res.iterations
       root_dir = mktempdir()
       rs = start_powerflow_run(Dict{String,Any}("casefile" => fixture, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root_dir))
       @test rs["status"] == "succeeded"
@@ -1352,6 +1384,8 @@ mpc.branch = [
       net = _scf_test_net()
       d = mktempdir()
       withcfg = exportSCF(net; file = joinpath(d, "cc.scf.json"))
+      # the writer never emits a byte order mark
+      @test first(read(withcfg)) == UInt8('{')
       Sparlectra.write_case_config(withcfg, Dict{String,Any}("power_flow.max_iter" => 44))
       r1 = start_powerflow_run(Dict{String,Any}("casefile" => withcfg, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root_dir))
       @test occursin("max_iter: 44", read(joinpath(r1["output_dir"], "effective_config.yaml"), String))

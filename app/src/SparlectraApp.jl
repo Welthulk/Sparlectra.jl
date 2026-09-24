@@ -124,6 +124,7 @@ import Sparlectra:
   _csv_field,
   _declared_slack_feeder,
   _default0,
+  _case_format_conflict,
   _detect_case_format,
   _detect_yaml_duplicate_keys,
   _dotted_config_set!,

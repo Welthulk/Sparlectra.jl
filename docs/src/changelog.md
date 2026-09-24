@@ -1,3 +1,12 @@
+# Version 0.17.2 - 2026-09-24
+
+Case format check, Web UI from the REPL.
+
+- An explicit case input format is checked against the file content: `scf` on a MATPOWER file now fails with a message that names the file and the way out (auto) instead of `SCF JSON parse error at byte 1`. The Web UI ignores a saved format that contradicts the case, says so on the Case page and in the operation log, and runs with auto.
+- SCF case files with a UTF-8 byte order mark are read.
+- The Sysimage page tells a Web UI started from the REPL how the image on disk is used (start script or `julia -J`), since such a session cannot switch to it.
+- README and Web UI docs: the Web UI from the Julia REPL, the installers' desktop shortcut, the sysimage question and flags.
+
 # Version 0.17.1 - 2026-09-23
 
 Faster install, AnalyticLoadFlow 0.9.16.

@@ -624,7 +624,20 @@ function _webui_case_context(;
   # the scenario gate is a NAMING convention, not format detection: only the
   # canonical <case>.scf.json name carries an editable scenarios block
   scen_is_scf = endswith(lowercase(String(selected_casefile)), ".scf.json")
-  return (; profile_values, profile_path, profile_notice, case_file_notice, casefiles, effective_case_directory, for002_candidates, existing_value, manual_value, effective_case_value, format_hint, case_format_value, dat_case_assistance, sc_state, scen_is_scf)
+  # A saved case_format that contradicts the case file is not applied (see
+  # _webui_case_form_defaults), and the page says so where the format is
+  # chosen; otherwise the user would have to open the case configuration
+  # file to learn why the run reports auto.
+  stored_defaults = isempty(strip(effective_case_value)) ? Dict{String,Any}() : _webui_case_form_defaults(effective_case_value, effective_case_directory)
+  case_format_notice = if haskey(stored_defaults, "_case_format_conflict")
+    string("<div class=\"alert warning case-format-notice\" role=\"status\"><strong>The saved case settings ask for the input format <code>",
+      _webui_escape(String(stored_defaults["_case_format_stored"])), "</code>, which does not fit this file.</strong> ",
+      _webui_escape(String(stored_defaults["_case_format_conflict"])),
+      " Runs of this case use <em>Auto</em> instead; saving the case settings stores what the selector shows.</div>")
+  else
+    ""
+  end
+  return (; profile_values, profile_path, profile_notice, case_file_notice, case_format_notice, casefiles, effective_case_directory, for002_candidates, existing_value, manual_value, effective_case_value, format_hint, case_format_value, dat_case_assistance, sc_state, scen_is_scf)
 end
 
 # Shared page scripts: the former run-page monolith's inline script is split into
@@ -1121,7 +1134,7 @@ $(dat_hint_html)
 <input type=\"hidden\" name=\"settings_target\" value=\"this_case\">
 <input type=\"hidden\" name=\"return_to\" value=\"case\">
 <p class=\"lede span-2\">Import options for this case. Saving writes them into the case configuration file next to the case; every run of this case uses them through the configuration precedence.</p>
-<details$(dtf_details_attrs)>
+$(ctx.case_format_notice)<details$(dtf_details_attrs)>
 <summary>Input format</summary>
 <fieldset>
 <label>$(_webui_field_label("case_format", "Case input format"))<select name="case_format"><option value="auto"$(_webui_form_string(case_format_value) == "auto" ? " selected" : "")>Auto</option><option value="matpower"$(_webui_form_string(case_format_value) == "matpower" ? " selected" : "")>MATPOWER</option><option value="dtf_for001"$(_webui_form_string(case_format_value) == "dtf_for001" ? " selected" : "")>DTF diagnostics (experimental/internal)</option><option value="cgmes"$(_webui_form_string(case_format_value) == "cgmes" ? " selected" : "")>CGMES (ENTSO-E, folder or ZIP)</option><option value="scf"$(_webui_form_string(case_format_value) == "scf" ? " selected" : "")>Sparlectra Case Format (.scf.json)</option><option value="pgm"$(_webui_form_string(case_format_value) == "pgm" ? " selected" : "")>power-grid-model JSON (input.json)</option></select></label>
@@ -3448,6 +3461,24 @@ function render_webui_sysimage_page(; output_root::AbstractString, message::Abst
   restart_notice = sysimage_restart_pending(; output_root) ?
                    "<div class=\"alert alert-info\" role=\"status\">A newer image is on disk. This Web UI still runs on the one it started with, so <strong>stop and start it again</strong> to use the new image.</div>" : ""
 
+  # A native session (REPL start, `julia --project=app`) never picks the
+  # image up by itself, not even after a successful build from this very
+  # page: without the note the build looks like it did nothing (2026-09-24).
+  hint = sysimage_use_hint(image; flavor_kind = flavor.kind, problem)
+  native_notice = if hint === nothing
+    ""
+  else
+    script_html = isempty(hint.start_script) ? "" :
+                  string("Start the Web UI through the start script in <code>", _webui_escape(hint.start_script), "</code> (<code>start_webui.sh</code>, <code>start_webui.bat</code>, or <code>julia --project=. start_webui.jl</code>), which starts itself again on the image. Or s")
+    string(
+      "<div class=\"alert alert-info sysimage-native-hint\" role=\"status\"><strong>This session runs without the image.</strong> ",
+      "A usable image is on disk, but a Web UI started from the REPL or with <code>julia --project=app</code> cannot switch to it: Julia loads an image only when the process starts. ",
+      isempty(script_html) ? "S" : script_html, "tart Julia ", _webui_escape(hint.julia_version), " on the image and the Web UI from that REPL:",
+      "<pre class=\"sysimage-command\">", _webui_escape(hint.command), "\n", _webui_escape("julia> " * replace(hint.repl, "\n" => "\njulia> ")), "</pre>",
+      "</div>",
+    )
+  end
+
   # A progress file that exists but does not parse looks EXACTLY like "no
   # build has ever run here", and that is the kind of plausible wrong answer
   # a page must never give: the reader returns nothing for a partial read
@@ -3503,6 +3534,7 @@ function render_webui_sysimage_page(; output_root::AbstractString, message::Abst
 
   content = string(
     restart_notice,
+    native_notice,
     unreadable_progress,
     message_html,
     "<section class=\"panel sysimage-status\"><h2>Current image</h2>", facts, "</section>",

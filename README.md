@@ -96,11 +96,37 @@ iwr -useb https://raw.githubusercontent.com/Welthulk/Sparlectra.jl/main/tools/in
 > [!IMPORTANT]
 > This downloads and runs a script. If you prefer to read it first: [install_webui.sh](tools/install_webui.sh), [install_webui.bat](tools/install_webui.bat).
 
-Re-running the command updates an existing copy (the old one is kept as `Sparlectra.old`). From a checkout, `./start_webui.sh` or `start_webui.bat` starts the Web UI directly. Environment variables for unattended installs and all other options: [Web UI documentation](https://welthulk.github.io/Sparlectra.jl/webui/).
+The installer asks whether to create a desktop shortcut (Windows: `Sparlectra Web UI.lnk`; Linux: an application-menu entry plus a `.desktop` file on the desktop, GNOME needs a one-time right-click "Allow Launching"; macOS: a desktop symlink). Re-running the command updates an existing copy (the old one is kept as `Sparlectra.old`). Environment variables for unattended installs (`SPARLECTRA_BUILD_SYSIMAGE`, `SPARLECTRA_CREATE_SHORTCUT`, `SPARLECTRA_UPDATE`) and all other options: [Web UI documentation](https://welthulk.github.io/Sparlectra.jl/webui/).
+
+From a checkout, `./start_webui.sh` or `start_webui.bat` starts the Web UI directly. A desktop shortcut on Windows: right-click `start_webui.bat`, then *Send to > Desktop (create shortcut)*.
+
+### Web UI from the Julia REPL
+
+From a checkout or a downloaded release, without the start script:
+
+```julia
+using Pkg
+Pkg.activate("path/to/Sparlectra/app")
+Pkg.instantiate()   # first time only
+using SparlectraApp
+server = start_sparlectra_webui(open_browser = true)
+# stop with close(server) or the "Stop Web UI" button
+```
+
+This path creates no shortcut and starts without the sysimage. The image can be built from the Web UI page **Sysimage**; it is used on the next start through the start script, or by starting Julia on it (`julia -J <image> --project=app`, the Sysimage page shows the exact line). See *Startup time* below.
 
 ### Startup time
 > [!IMPORTANT]
-> Julia compiles on first use, so the first run in a fresh process is slow. The installer offers to build a sysimage once (10 to 20 minutes); afterwards `using Sparlectra` returns at once. How to build and use it in your own scripts: [integration guide](https://welthulk.github.io/Sparlectra.jl/integration/).
+> Julia compiles on first use, so the first run in a fresh process is slow. A sysimage (built once, 10 to 20 minutes) removes that wait.
+>
+> `start_webui.jl` (and the `start_webui.*` scripts) checks for a usable sysimage on every start and asks `Build the sysimage now? [y/N]` when it is missing or outdated. The question only appears in an interactive terminal and times out after 30 s; otherwise the Web UI starts without an image. Explicit control:
+>
+> ```sh
+> julia --project=. start_webui.jl --rebuild-sysimage   # build now, even if the current image is fine
+> julia --project=. start_webui.jl --no-sysimage        # skip image and question for this start
+> ```
+>
+> The installers build the image only with `SPARLECTRA_BUILD_SYSIMAGE=1`. The Web UI page **Sysimage** builds and refreshes it as well. Using the image in your own scripts: [integration guide](https://welthulk.github.io/Sparlectra.jl/integration/).
 
 ### SBOM
 

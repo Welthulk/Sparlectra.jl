@@ -341,10 +341,17 @@ end
     scf_json_parse(text) -> Dict{String,Any}
 
 Parse an SCF case file. Object keys become `String`, integers stay `Int`
-(component ids), numbers with a fraction or exponent become `Float64`.
+(component ids), numbers with a fraction or exponent become `Float64`. A
+leading UTF-8 byte order mark is skipped (Windows editors write one; the
+export never does), everything else outside the JSON grammar is an error.
 """
 function scf_json_parse(text::AbstractString)::Dict{String,Any}
-  c = _ScfJsonCursor(String(text), 1)
+  str = String(text)
+  # the cursor starts BEHIND a byte order mark: U+FEFF is three code units,
+  # and reading it as the first character of a number gave the misleading
+  # `invalid integer ""` at byte 1
+  start = startswith(str, "\ufeff") ? 4 : 1
+  c = _ScfJsonCursor(str, start)
   value = _scf_parse_value!(c)
   _scf_skip_ws!(c)
   c.pos <= ncodeunits(c.text) && _scf_json_error(c, "trailing content after the root object")
