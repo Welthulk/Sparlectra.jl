@@ -175,6 +175,22 @@ or the rectangular variant), the Q-limit logic works at its core as follows:
     In many applications, switching back within the same power flow calculation
     is intentionally **disabled** (`q_hyst_pu = 0.0`, `cooldown_iters = 0`).
 
+   **Voltage-side release (active set, since 0.17.1).** When the solver hands
+   the current voltages and setpoints to the active-set step, the release is
+   decided on the voltage side instead of the Q band: a bus clamped at Qmax is
+   released when `Vm > Vset + reenable_v_hyst_pu`, one clamped at Qmin when
+   `Vm < Vset - reenable_v_hyst_pu` (`power_flow.qlimits.reenable_v_hyst_pu`,
+   default `1e-4` pu). A machine at its upper limit whose voltage sits above
+   its setpoint needs less than Qmax to hold it, so it can go back to PV; the
+   mirror image holds at Qmin. This is the "back off" rule of Sundaresh and
+   Rao (Sadhana 40(4), 2015). The Q band test above is only the fallback for
+   callers that pass no voltages. Cooldown and the one-retry guard still
+   apply. The example
+   `examples/powerflow/example_qlimit_reenable_voltage_rule.jl` shows the
+   difference on the Zeng/Chiang 14-bus case: without the rule the run ends
+   with three machines at Qmax above their setpoints, with it on the physical
+   solution.
+
 6. **Repeat** with the updated bus types and Q-values in the next NR iteration.
 
 ---

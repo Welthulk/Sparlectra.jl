@@ -94,7 +94,31 @@ function _island_wise_lifecycle_metadata(rect_status)::Dict{String,Any}
   )
 end
 
+"""
+    _qv_characteristic_summary(net, converged) -> NamedTuple
+
+The Q-V characteristic verdict of a solved network in one line, the same
+finding the classic result print reports through `printQVCharacteristicCheck`:
+machines that ended at a reactive limit with the voltage on the wrong side of
+their setpoint (non-physical solution). Fields: `states` (rows), `significant`
+(rows beyond the band), `buses` (the significant ones, `;`-joined) and `line`.
+Two switching strategies need not end on the same point; whether the point
+is physical is what a reader has to see, so this line goes into `run.log`,
+the result metadata (`qv_characteristic_line`, `qv_non_physical_states`,
+`qv_non_physical_buses`) and the Web UI result page.
+"""
+function _qv_characteristic_summary(net::Union{Nothing,Net}, converged::Bool; band_pu::Float64 = 1.0e-4)
+  (net === nothing || !converged) && return (states = 0, significant = 0, buses = "", line = "Q-V characteristic: skipped (no converged solution).")
+  rows = qvCharacteristicViolations(net; band_pu = band_pu)
+  isempty(rows) && return (states = 0, significant = 0, buses = "", line = "Q-V characteristic: no non-physical generator states.")
+  strong = [r.bus for r in rows if r.significant]
+  line = string("Q-V characteristic: ", length(rows), " non-physical generator state(s), ", length(strong), " beyond ", band_pu, " pu",
+    isempty(strong) ? "" : string(" (bus ", join(strong, ", "), ": at a reactive limit with the voltage on the wrong side of the setpoint)"), ".")
+  return (states = length(rows), significant = length(strong), buses = join(strong, ";"), line = line)
+end
+
 function _build_success_lifecycle_metadata(raw_result::SparlectraRunResult, config::SparlectraConfig; numerical_success::Bool, final_outcome::Dict{String,Any}, csv_export_status::AbstractString, csv_export_skip_reason, csv_export_error, csv_artifacts::Vector{String}, detailed_result_csv::Bool, config_overrides, config_override_source::AbstractString, casefile, config_file, performance_timing, run_diagnostics::Bool, csv_format_name::AbstractString, qlimit_metadata::AbstractDict, csv_timing_metadata::AbstractDict)::Dict{String,Any}
+  qv = _qv_characteristic_summary(raw_result.net, raw_result.numerical_converged)
   rect_status = raw_result.net === nothing ? nothing : rectangular_pf_status(raw_result.net)
   current_iteration_metadata = _current_iteration_lifecycle_metadata(rect_status)
   merit_linesearch_metadata = _merit_linesearch_lifecycle_metadata(rect_status)
@@ -117,6 +141,9 @@ function _build_success_lifecycle_metadata(raw_result::SparlectraRunResult, conf
     "jacobian_condition_estimate" => jacobian_kappa,
     "jacobian_condition_verdict" => jacobian_kappa === nothing ? nothing : _condition_verdict(jacobian_kappa),
     "jacobian_condition_line" => jacobian_kappa === nothing ? nothing : _condition_report_line(jacobian_kappa; tol = config.powerflow.tol),
+    "qv_characteristic_line" => qv.line,
+    "qv_non_physical_states" => qv.significant,
+    "qv_non_physical_buses" => qv.buses,
     "solver_status" => "completed",
     "service_status" => "completed",
     "numerical_status" => numerical_success ? "converged" : "not_converged",

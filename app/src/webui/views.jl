@@ -1764,6 +1764,7 @@ const _WEBUI_RESULT_FIELDS = String[
   "Q-limit enforcement mode",
   "Q-limit active-set events",
   "Classical Q-limit outer-loop passes",
+  "Q-V characteristic",
   "Runtime casefile",
   "config_file",
   "started_at",
@@ -1792,6 +1793,13 @@ function _webui_result_value(result::AbstractDict, field::AbstractString)
   elseif field == "Classical Q-limit outer-loop passes"
     metadata = get(result, "metadata", Dict{String,Any}())
     return get(metadata, "q_limit_classic_outer_loop_passes", "n/a")
+  elseif field == "Q-V characteristic"
+    # the identical line the classic result print and run.log carry: a
+    # machine at a reactive limit with the voltage on the wrong side of its
+    # setpoint means the point is non-physical, however the modes switched
+    metadata = get(result, "metadata", Dict{String,Any}())
+    line = get(metadata, "qv_characteristic_line", nothing)
+    return line isa AbstractString && !isempty(line) ? line : "n/a"
   elseif field == "Runtime casefile"
     return get(result, "runtime_casefile", get(get(result, "metadata", Dict{String,Any}()), "runtime_casefile", "n/a"))
   elseif field == "APSLF convergence radius"

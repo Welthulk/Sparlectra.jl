@@ -6,6 +6,7 @@ Case format check, Web UI from the REPL.
 - SCF case files with a UTF-8 byte order mark are read.
 - The Sysimage page tells a Web UI started from the REPL how the image on disk is used (start script or `julia -J`), since such a session cannot switch to it.
 - README and Web UI docs: the Web UI from the Julia REPL, the installers' desktop shortcut, the sysimage question and flags.
+- Whether a run ended on a physical point (no machine at a reactive limit with the voltage on the wrong side of its setpoint) is one line in `run.log`, in the run metadata and on the result page. The example `examples/powerflow/example_qlimit_reenable_voltage_rule.jl` shows the voltage-side PQ->PV release of 0.17.1 on the Zeng/Chiang 14-bus case.
 
 # Version 0.17.1 - 2026-09-23
 
@@ -14,6 +15,7 @@ Faster install, AnalyticLoadFlow 0.9.16.
 - Precompiling with the workload off now compiles nothing extra: the library image is 14 MB in 7 s instead of 84 MB in 45 s, so installs and the Colab workshops start much sooner.
 - AnalyticLoadFlow 0.9.16 is required.
 - The tests set up the application environment on a fresh checkout, and every workshop runs as the `workshops` test profile.
+- The active-set Q-limit mode releases a clamped machine back to PV on the voltage side: at Qmax when its voltage sits above the setpoint, at Qmin when below (margin `power_flow.qlimits.reenable_v_hyst_pu`, default `1e-4`). The Q-based test is the fallback only. The example `examples/powerflow/example_qlimit_reenable_voltage_rule.jl` shows the rule on the Zeng/Chiang 14-bus case. Whether a run ended on a physical point (no machine at a reactive limit with the voltage on the wrong side of its setpoint) is now one line in `run.log`, the run metadata (`qv_characteristic_line`) and on the result page, next to the Q-limit counters.
 
 # Version 0.17.0 - 2026-09-24
 
