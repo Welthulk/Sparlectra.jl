@@ -16,3 +16,22 @@ jobs:
       - uses: JuliaRegistries/TagBot@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          # Release notes: the notes of the registration comment plus the
+          # closed functional issues. No pull-request list (the notes say
+          # what changed), and no registration issues: the registration
+          # workflow labels its JuliaRegistrator issue `registration`.
+          changelog_ignore: registration
+          changelog: |
+            ## {{ package }} {{ version }}
+            {% if previous_release %}
+            [Diff since {{ previous_release }}]({{ compare_url }})
+            {% endif %}
+            {% if custom %}
+            {{ custom }}
+            {% endif %}
+            {% if issues %}
+            **Closed issues:**
+            {% for issue in issues %}
+            - {{ issue.title }} (#{{ issue.number }})
+            {% endfor %}
+            {% endif %}
