@@ -518,6 +518,18 @@ function test_state_estimation_sequential_elimination()::Bool
     @test occursin("consistent", txt)
 
     # optional K-matrix report: MaxK column and warning flag fields
+    # The K report is on by default since 0.17.4, so a set beyond the m×m
+    # limit must not fail the diagnostics any more: the columns are skipped
+    # with a warning, omega stays nothing, the ranking keeps its rows. One
+    # nonzero per row makes G diagonal, so the Takahashi path runs cheaply.
+    (function ()
+      mbig = Sparlectra._SE_FULL_OMEGA_MAX_M + 1
+      nbig = 50
+      Hbig = SparseArrays.sparse(1:mbig, mod1.(1:mbig, nbig), 1.0, mbig, nbig)
+      rdbig = @test_logs (:warn, r"K report .* skipped") Sparlectra._residual_diagnostics(Hbig, zeros(Float64, mbig), ones(Float64, mbig); need_full_omega = true, minStates = 1)
+      @test rdbig.omega === nothing
+      @test length(rdbig.wii) == mbig
+    end)()
     reportK = with_state_estimation_config(max_iter = 20, tol = 1e-8, report_residual_correlation = true) do
       validate_measurements(net, meas)
     end
@@ -587,7 +599,8 @@ function test_state_estimation_shunt_estimation()::Bool
     sh.y_pu_shunt = complex(real(sh.y_pu_shunt), 1.2 * btrue)   # perturbed model
     y_before = sh.y_pu_shunt                                    # snapshot before the run
     setShuntEstimation!(net; busName = "LoadB")
-    res = with_state_estimation_config(max_iter = 30, tol = 1e-10, update_net = false) do
+    # update_shunts is on by default since 0.17.4; this run pins the switched-off case
+    res = with_state_estimation_config(max_iter = 30, tol = 1e-10, update_net = false, update_shunts = false) do
       runse!(net, meas)
     end
     @test res.converged
@@ -598,8 +611,8 @@ function test_state_estimation_shunt_estimation()::Bool
     @test isapprox(row.B_model, 1.2 * btrue; rtol = 1e-12)
     @test abs(row.B_est - btrue) / abs(btrue) < 1e-3
     @test isapprox(row.delta, row.B_est - row.B_model; atol = 1e-12)
-    # estimation never silently overwrites the model: the full complex model
-    # admittance is bitwise unchanged after the updateShunts = false run
+    # with the write-back switched off the estimation never touches the model:
+    # the full complex model admittance is bitwise unchanged after the run
     @test sh.y_pu_shunt == y_before
     @test imag(sh.y_pu_shunt) == 1.2 * btrue
     # write-back only behind updateShunts
@@ -1290,6 +1303,20 @@ function test_state_estimation_measurement_csv()::Bool
     @test readlines(f)[2] == "type,bus,from_bus,to_bus,branch_nr,link_nr,direction,value,sigma,active,id"
     readMeasurementsCSV!(net; file = f, replace = true)
     @test all(a == b for (a, b) in zip(orig, net.measurements))
+    # diagnostic columns behind id (the run artifact writes bad_data and
+    # status): written on request, ignored on read, so the annotated file
+    # is still the same measurement set, in either delimiter
+    for fmt in ("technical", "excel_de")
+      fa = joinpath(dir, "annotated_$(fmt).csv")
+      writeMeasurementsCSV(net; file = fa, format = fmt, extraHeader = ["bad_data", "status"], extraCells = (i, m) -> (m.id == "inactive_probe" ? "*" : "", m.typ == Sparlectra.ImagMeas ? "critical measurement" : ""))
+      lines_a = readlines(fa)
+      @test endswith(lines_a[2], fmt == "excel_de" ? ";bad_data;status" : ",bad_data,status")
+      @test any(l -> occursin("inactive_probe", l) && endswith(l, fmt == "excel_de" ? ";*;" : ",*,"), lines_a)
+      @test any(l -> endswith(l, "critical measurement"), lines_a)
+      readMeasurementsCSV!(net; file = fa, replace = true)
+      @test all(a == b for (a, b) in zip(orig, net.measurements))
+    end
+    @test_throws ErrorException writeMeasurementsCSV(net; file = joinpath(dir, "x.csv"), extraHeader = ["bad_data"])
 
     # replace = false appends, and appending a set onto itself is exactly the
     # corruption the reader warns about: every quantity is then measured twice
@@ -1869,6 +1896,8 @@ function test_state_estimation_tap_roundtrip()::Bool
     @test te.mrid == ""                       # not a CGMES case: no mRID
     @test abs(te.electrical_step_1 - 2.0) < 0.05
     @test te.fixed_step_1 == 2 && te.fixed_step_2 == 0
+    # the model started at neutral, so the row says where the tap came from
+    @test abs(te.model_step_1) < 1e-9 && abs(te.model_step_2) < 1e-9
     @test !te.out_of_range
     tf = res.tapFixation
     @test tf !== nothing && tf.fixed

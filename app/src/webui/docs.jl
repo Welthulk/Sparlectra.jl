@@ -13,118 +13,123 @@
 # limitations under the License.
 
 # file: src/webui/docs.jl
-# purpose: Web UI in-app documentation: help-topic registry, markdown page
-#          loading and section extraction, and doc-link rewriting
-# the documentation pages belong to the library checkout, not to the
-# application package directory
-const _WEBUI_DOCS_ROOT = normpath(joinpath(SPARLECTRA_ROOT, "docs", "src"))
+# purpose: Web UI help registry: the hover hint and the documentation link
+#          of every form control. The Web UI carries no documentation of
+#          its own (maintainer decision 2026-09-25): the hint is the
+#          operating text, the `doc` target opens the published
+#          documentation in a new tab. Every `doc` anchor is a Documenter
+#          `@id` label in docs/src, checked by tools/check_webui_doc_links.jl
+#          in the docs gate.
 
+# Registry of help topics. `hint` is plain text, at most 160 characters,
+# English, no backticks; `doc` is "<page>/#<anchor>" relative to the
+# documentation base URL, or "" for a control with nothing technical behind it.
 const WEBUI_HELP_TOPICS = Dict(
   # state-estimation page (0.10.0): estimator options come from the config
   # table (one row per key), workflow topics from state_estimation.md
-  "webui.se_measurement_file" => (label = "Measurement set (CSV v1)", page = "state_estimation", heading = "Measurement files and the SE chain", selector = ""),
-  "webui.se_noise_seed" => (label = "Noise seed", page = "state_estimation", heading = "Case files carry their own measurements", selector = ""),
-  "state_estimation.flatstart" => (label = "SE flat start", page = "state_estimation_configuration", heading = "State-Estimation Configuration", selector = "`state_estimation.flatstart`"),
-  "state_estimation.tol" => (label = "SE convergence tolerance", page = "state_estimation_configuration", heading = "State-Estimation Configuration", selector = "`state_estimation.tol`"),
-  "state_estimation.max_iter" => (label = "SE maximum iterations", page = "state_estimation_configuration", heading = "State-Estimation Configuration", selector = "`state_estimation.max_iter`"),
-  "state_estimation.robust" => (label = "Robust R modification", page = "state_estimation", heading = "Bad-data thresholds and robust modes", selector = ""),
-  "state_estimation.robust_mode" => (label = "Down-weighting (off / staged / replacement)", page = "state_estimation", heading = "Bad-data thresholds and robust modes", selector = ""),
-  "state_estimation.k_eliminate" => (label = "Elimination limit (normalized residual)", page = "state_estimation", heading = "Bad-data thresholds and robust modes", selector = ""),
-  "state_estimation.suppression" => (label = "Down-weight limit and replacement sigma", page = "state_estimation", heading = "Bad-data thresholds and robust modes", selector = ""),
-  "webui.se_generator_truth" => (label = "Generator: truth state", page = "state_estimation", heading = "Measurement generator v2", selector = ""),
-  "webui.se_generator_flow_ends" => (label = "Generator: flows per branch", page = "state_estimation", heading = "Measurement generator v2", selector = ""),
-  "webui.se_generator_passive" => (label = "Generator: passive nodes", page = "state_estimation", heading = "Measurement generator v2", selector = ""),
-  "state_estimation.update_shunts" => (label = "Write estimated shunts back", page = "state_estimation_configuration", heading = "State-Estimation Configuration", selector = "`state_estimation.update_shunts`"),
-  "state_estimation.report_residual_correlation" => (label = "Residual-correlation (K-matrix) report", page = "state_estimation", heading = "Residual correlations (optional K-matrix report)", selector = ""),
-  "webui.se_max_eliminations" => (label = "Sequential elimination budget", page = "state_estimation", heading = "Localizability: the residual sensitivity `wii`", selector = ""),
-  "webui.se_generator_noise" => (label = "Generator: seeded noise", page = "state_estimation", heading = "Measurement files and the SE chain", selector = ""),
-  "webui.se_generator_gross_error" => (label = "Generator: bad data (k·sigma)", page = "state_estimation", heading = "Measurement files and the SE chain", selector = ""),
-  "webui.se_generator_tap_error" => (label = "Generator: tap deviation", page = "state_estimation", heading = "Measurement files and the SE chain", selector = ""),
-  "webui.power_flow_mode" => (label = "Auto mode", page = "powerflow_configuration", heading = "Solver core options", selector = "`power_flow.mode`"),
-  "webui.se_generator_gross_count" => (label = "Generator: bad data rows", page = "state_estimation", heading = "Measurement files and the SE chain", selector = ""),
-  "webui.se_generator_tap_count" => (label = "Generator: tap deviation transformers", page = "state_estimation", heading = "Measurement files and the SE chain", selector = ""),
-  "webui.se_tap_estimation" => (label = "Estimate transformer taps", page = "state_estimation", heading = "Transformer tap estimation", selector = ""),
-  "webui.se_generator_sigmas" => (label = "Generator: measurement sigmas (U, I, P, Q)", page = "state_estimation", heading = "Measurement files and the SE chain", selector = ""),
-  "webui.casefile" => (label = "MATPOWER case file", page = "webui", heading = "PowerFlow input paths", selector = "`webui.casefile`"),
-  "webui.config_file" => (label = "Configuration template file", page = "webui", heading = "PowerFlow input paths", selector = "`webui.config_file`"),
-  "webui.import_case_files" => (label = "Import case files", page = "webui", heading = "Importing case files through the Web UI", selector = ""),
+  "webui.se_measurement_file" => (label = "Measurement set (CSV v1)", hint = "Measurement CSV v1 set the estimation runs on. The set bound to the selected case is preselected; sets from other cases are labeled.", doc = "state_estimation_measurements/#se-measurement-files"),
+  "webui.se_noise_seed" => (label = "Noise seed", hint = "Seed of the noise draw. The same seed reproduces the same noisy set, a different seed draws a fresh realization.", doc = "state_estimation_measurements/#se-case-file-measurements"),
+  "state_estimation.flatstart" => (label = "SE flat start", hint = "Start the estimator from a flat voltage profile instead of the model's current state. Uncheck when a trusted start state exists.", doc = "state_estimation_configuration/#se-config"),
+  "state_estimation.tol" => (label = "SE convergence tolerance", hint = "WLS convergence tolerance on the state step. The default 1e-6 is the noise floor of the finite-difference Jacobian; a tighter value is raised with a log line.", doc = "state_estimation_configuration/#se-config"),
+  "state_estimation.max_iter" => (label = "SE maximum iterations", hint = "Iteration cap of the estimator, the same limit the service and the configuration use. A solve with released transformer taps can need close to 40 iterations.", doc = "state_estimation_configuration/#se-config"),
+  "state_estimation.robust" => (label = "Robust R modification", hint = "Deprecated alias for the down-weighting mode staged, read only while that mode is off. Set the down-weighting mode instead, never both.", doc = "state_estimation/#se-bad-data"),
+  "state_estimation.robust_mode" => (label = "Down-weighting (off / staged / replacement)", hint = "Treatment of a large residual: off is plain WLS, staged down-weights the row gradually between two knees, replacement gives it a fixed large sigma.", doc = "state_estimation/#se-bad-data"),
+  "state_estimation.k_eliminate" => (label = "Elimination limit (normalized residual)", hint = "Normalized residual from which a measurement is removed from the estimate, not just down-weighted. Applies while the band test is high, within the budget.", doc = "state_estimation/#se-bad-data"),
+  "state_estimation.suppression" => (label = "Down-weight limit and replacement sigma", hint = "Replacement mode: from this normalized residual a row is solved with the replacement sigma and loses its influence, but is not removed. Sigma in the row's unit.", doc = "state_estimation/#se-bad-data"),
+  "webui.se_generator_truth" => (label = "Generator: truth state", hint = "Where the truth state comes from: fresh solve solves the case now, from run adopts the solved voltages of a successful run of this case without re-solving.", doc = "state_estimation_measurements/#se-generator-v2"),
+  "webui.se_generator_flow_ends" => (label = "Generator: flows per branch", hint = "Flows per branch: both ends writes P and Q at from and to; one end keeps one flow group per branch, preferring the end whose bus has injection telemetry.", doc = "state_estimation_measurements/#se-generator-v2"),
+  "webui.se_generator_passive" => (label = "Generator: passive nodes", hint = "How a passive node enters the set: on writes a protected zero-injection constraint, off an ordinary zero balance row. The sigma applies to both, floor 1 kW.", doc = "state_estimation_measurements/#se-generator-v2"),
+  "state_estimation.update_shunts" => (label = "Write estimated shunts back", hint = "Write the estimated shunt susceptances back into the model after a converged run. Off keeps the model data authoritative.", doc = "state_estimation_configuration/#se-config"),
+  "state_estimation.report_residual_correlation" => (label = "Residual-correlation (K-matrix) report", hint = "Add residual-correlation columns to the bad-data report: rows correlated above 0.707 form a group where a gross error cannot be told apart. Reporting only.", doc = "state_estimation/#se-k-report"),
+  "webui.se_max_eliminations" => (label = "Sequential elimination budget", hint = "Upper bound of the sequential bad-data elimination: the worst localizable row is removed and the estimation rerun, up to this many times. 0 disables it.", doc = "state_estimation/#se-max-eliminations"),
+  "webui.se_generator_noise" => (label = "Generator: seeded noise", hint = "Add seeded Gaussian noise at the sigmas below. Without noise the measurements match the model exactly and J lands near 0 instead of near dof.", doc = "state_estimation_measurements/#se-generator-noise"),
+  "webui.se_generator_gross_error" => (label = "Generator: bad data (k·sigma)", hint = "Corrupt seed-randomly drawn measurements by k times their sigma. 0 is off; 10 gives clearly detectable bad data for the elimination and robust workflow.", doc = "state_estimation_measurements/#se-generator-gross-error"),
+  "webui.se_generator_tap_error" => (label = "Generator: tap deviation", hint = "Generate from a state whose seed-selected transformers run this many mechanical tap steps off the model position; 0 is off. Needs truth state fresh solve.", doc = "state_estimation_measurements/#se-generator-tap-error"),
+  "webui.power_flow_mode" => (label = "Auto mode", hint = "Pick start-value, step-control and Q-limit strategy from the network, retrying with stronger strategies on non-convergence. Explicit options below always win.", doc = "powerflow_configuration/#pf-solver-core"),
+  "webui.se_generator_gross_count" => (label = "Generator: bad data rows", hint = "How many measurement rows get the gross error; the seed decides which rows. Used only when bad data k is above 0.", doc = "state_estimation_measurements/#se-generator-gross-error"),
+  "webui.se_generator_tap_count" => (label = "Generator: tap deviation transformers", hint = "At most this many transformers get the tap deviation; the seed picks them among transformers the tap estimation can absorb. Unused when the deviation is 0.", doc = "state_estimation_measurements/#se-generator-tap-error"),
+  "webui.se_tap_estimation" => (label = "Estimate transformer taps", hint = "Release every in-service ratio tap changer as an extra estimation state, fix it to the nearest mechanical step and rerun. Machine transformers stay untouched.", doc = "state_estimation_extensions/#se-tap-estimation"),
+  "webui.se_generator_sigmas" => (label = "Generator: measurement sigmas (U, I, P, Q)", hint = "Measurement accuracy per quantity in percent of the measured value, like a transducer class; written into the sigma column of every row and used for the noise.", doc = "state_estimation_measurements/#se-generator-sigmas"),
+  "webui.casefile" => (label = "MATPOWER case file", hint = "Choose a case from the list, or type a bare case name or a local path and press Enter to download or copy it into the case directory.", doc = "webui/#webui-form-options"),
+  "webui.config_file" => (label = "Configuration template file", hint = "Configuration YAML the run starts from. Form values become per-run overrides on top of it; the file itself stays unchanged.", doc = "webui/#webui-form-options"),
+  "webui.import_case_files" => (label = "Import case files", hint = "Copy MATPOWER, DTF, CGMES (ZIP or profile XML files) or SCF/PGM JSON files into the case directory. Nothing is run; an existing file is never overwritten.", doc = "webui/#webui-import-case-files"),
   # the case-export controls: what the two files contain and what a plain PGM
   # export deliberately leaves out
-  "webui.scf_export" => (label = "Case export (SCF / plain PGM)", page = "scf", heading = "Writing a case file", selector = ""),
-  "webui.case_format" => (label = "Case input format", page = "webui", heading = "Starting a PowerFlow run", selector = ""),
-  "webui.for002_reference_file" => (label = "Optional FOR002 reference file", page = "webui", heading = "Starting a PowerFlow run", selector = ""),
-  "webui.dtf_outage_selection" => (label = "Selected DTF outage labels/indices", page = "webui", heading = "Starting a PowerFlow run", selector = ""),
-  "webui.config_maintenance" => (label = "Configuration maintenance", page = "webui", heading = "Configuration check and refresh", selector = ""),
-  "webui.ignore_webui_settings" => (label = "Ignore Web UI settings and use configuration defaults", page = "webui", heading = "Configuration precedence and artifact downloads", selector = ""),
-  "power_flow.tol" => (label = "PowerFlow tolerance", page = "powerflow_configuration", heading = "Solver core options", selector = "`power_flow.tol`"),
-  "power_flow.tol_MW" => (label = "PowerFlow tolerance in MW", page = "powerflow_configuration", heading = "Solver core options", selector = "`power_flow.tol_MW`"),
-  "power_flow.max_iter" => (label = "Maximum iterations", page = "powerflow_configuration", heading = "Solver core options", selector = "`power_flow.max_iter`"),
-  "power_flow.autodamp" => (label = "Autodamping enabled", page = "powerflow_configuration", heading = "Solver core options", selector = "`power_flow.autodamp`"),
-  "power_flow.autodamp_min" => (label = "Autodamping minimum", page = "powerflow_configuration", heading = "Solver core options", selector = "`power_flow.autodamp_min`"),
-  "power_flow.qlimits.enabled" => (label = "Q-limit handling enabled", page = "powerflow_configuration", heading = "Q-limit options and guard", selector = "`power_flow.qlimits.enabled`"),
-  "power_flow.qlimits.enforcement_mode" => (label = "Q-limit enforcement mode", page = "powerflow_configuration", heading = "Q-limit options and guard", selector = "`power_flow.qlimits.enforcement_mode`"),
-  "power_flow.solver" => (label = "Solver", page = "powerflow_configuration", heading = "Solver selection (rectangular vs. APSLF)", selector = "`power_flow.solver`"),
-  "power_flow.linear_solver" => (label = "Linear solver backend", page = "powerflow_configuration", heading = "Solver core options", selector = "`power_flow.linear_solver`"),
-  "power_flow.apslf.order" => (label = "APSLF highest coefficient (order)", page = "powerflow_configuration", heading = "Solver selection (rectangular vs. APSLF)", selector = "`power_flow.apslf.order`"),
-  "power_flow.apslf.use_pade" => (label = "APSLF Padé evaluation", page = "powerflow_configuration", heading = "Solver selection (rectangular vs. APSLF)", selector = "`power_flow.apslf.use_pade`"),
-  "power_flow.apslf.nr_polish" => (label = "APSLF NR polish", page = "powerflow_configuration", heading = "Solver selection (rectangular vs. APSLF)", selector = "`power_flow.apslf.nr_polish`"),
-  "power_flow.apslf.convergence_radius" => (label = "APSLF convergence radius", page = "powerflow_configuration", heading = "Solver selection (rectangular vs. APSLF)", selector = "`power_flow.apslf.convergence_radius`"),
-  "power_flow.flatstart" => (label = "Flat start", page = "powerflow_configuration", heading = "Solver core options", selector = "`power_flow.flatstart`"),
-  "power_flow.apslf_start.enabled" => (label = "Use APSLF start values", page = "powerflow_configuration", heading = "Solver selection (rectangular vs. APSLF)", selector = "`power_flow.apslf_start.enabled`"),
-  "power_flow.apslf_start.order" => (label = "APSLF start highest coefficient (order)", page = "powerflow_configuration", heading = "Solver selection (rectangular vs. APSLF)", selector = "`power_flow.apslf_start.order`"),
-  "power_flow.wrong_branch_detection" => (label = "Wrong-branch detection", page = "configuration", heading = "Wrong-branch detection semantics (rectangular PF)", selector = ""),
-  "power_flow.start_mode.angle_mode" => (label = "Start angle mode", page = "powerflow_configuration", heading = "Start mode options", selector = "`power_flow.start_mode.angle_mode`"),
-  "power_flow.start_mode.voltage_mode" => (label = "Start voltage mode", page = "powerflow_configuration", heading = "Start mode options", selector = "`power_flow.start_mode.voltage_mode`"),
-  "power_flow.start_mode.dc_seed_unconditional" => (label = "DC start values", page = "powerflow_configuration", heading = "Start mode options", selector = "`power_flow.start_mode.dc_seed_unconditional`"),
-  "power_flow.start_current_iteration.enabled" => (label = "Enable current-iteration pre-solve", page = "configuration", heading = "Complete default-key index", selector = ""),
-  "power_flow.start_current_iteration.max_iter" => (label = "Current-iteration max iterations", page = "configuration", heading = "Complete default-key index", selector = ""),
-  "power_flow.start_current_iteration.tol" => (label = "Current-iteration tolerance", page = "configuration", heading = "Complete default-key index", selector = ""),
-  "power_flow.start_current_iteration.damping" => (label = "Current-iteration damping", page = "configuration", heading = "Complete default-key index", selector = ""),
-  "power_flow.start_current_iteration.accept_only_if_improved" => (label = "Accept only if improved", page = "configuration", heading = "Complete default-key index", selector = ""),
-  "power_flow.start_current_iteration.min_improvement_factor" => (label = "Minimum improvement factor", page = "configuration", heading = "Complete default-key index", selector = ""),
-  "power_flow.start_current_iteration.vm_min_pu" => (label = "Minimum voltage guard [pu]", page = "configuration", heading = "Complete default-key index", selector = ""),
-  "power_flow.start_current_iteration.vm_max_pu" => (label = "Maximum voltage guard [pu]", page = "configuration", heading = "Complete default-key index", selector = ""),
-  "power_flow.start_current_iteration.max_angle_step_deg" => (label = "Maximum angle-step guard [deg]", page = "configuration", heading = "Complete default-key index", selector = ""),
-  "power_flow.start_current_iteration.only_for_large_cases" => (label = "Only for large cases", page = "configuration", heading = "Complete default-key index", selector = ""),
-  "power_flow.distributed_slack.enabled" => (label = "Distributed active-power slack enabled", page = "powerflow_configuration", heading = "Distributed active-power slack", selector = "`power_flow.distributed_slack.enabled`"),
-  "power_flow.distributed_slack.p_mode" => (label = "Distributed-slack weight mode", page = "powerflow_configuration", heading = "Distributed active-power slack", selector = "`power_flow.distributed_slack.p_mode`"),
-  "power_flow.external_grid.enabled" => (label = "External grid source enabled", page = "powerflow_configuration", heading = "External grid source", selector = "`power_flow.external_grid.enabled`"),
-  "power_flow.external_grid.source" => (label = "External grid Sk''/R-X source", page = "powerflow_configuration", heading = "External grid source", selector = "`power_flow.external_grid.source`"),
-  "power_flow.external_grid.sk_MVA" => (label = "External grid short-circuit power Sk'' [MVA]", page = "powerflow_configuration", heading = "External grid source", selector = "`power_flow.external_grid.sk_MVA`"),
-  "power_flow.external_grid.rx" => (label = "External grid R/X ratio", page = "powerflow_configuration", heading = "External grid source", selector = "`power_flow.external_grid.rx`"),
-  "power_flow.merit.enabled" => (label = "Enable Armijo merit-function line search", page = "powerflow_configuration", heading = "Merit-function line search options", selector = "`power_flow.merit.enabled`"),
-  "power_flow.merit.armijo_c1" => (label = "Armijo sufficient-decrease constant", page = "powerflow_configuration", heading = "Merit-function line search options", selector = "`power_flow.merit.armijo_c1`"),
-  "power_flow.merit.fallback_max_mismatch" => (label = "Merit fallback behavior", page = "powerflow_configuration", heading = "Merit-function line search options", selector = "`power_flow.merit.fallback_max_mismatch`"),
-  "power_flow.trust_region.enabled" => (label = "Enable trust-region step control", page = "powerflow_configuration", heading = "Trust-region step control options", selector = "`power_flow.trust_region.enabled`"),
-  "power_flow.trust_region.initial_radius" => (label = "Initial trust-region radius", page = "powerflow_configuration", heading = "Trust-region step control options", selector = "`power_flow.trust_region.initial_radius`"),
-  "power_flow.trust_region.eta_accept" => (label = "Trust-region acceptance ratio (eta)", page = "powerflow_configuration", heading = "Trust-region step control options", selector = "`power_flow.trust_region.eta_accept`"),
-  "power_flow.trust_region.step_mode" => (label = "Trust-region step mode", page = "powerflow_configuration", heading = "Trust-region step control options", selector = "`power_flow.trust_region.step_mode`"),
-  "cgmes_import.start_values" => (label = "CGMES start values", page = "cgmes_import", heading = "Configuration (`cgmes_import`)", selector = "`cgmes_import.start_values`"),
-  "cgmes_import.hvdc_mode" => (label = "HVDC converters", page = "cgmes_import", heading = "Configuration (`cgmes_import`)", selector = "`cgmes_import.hvdc_mode`"),
-  "matpower_import.matpower_dcline_mode" => (label = "DC-line mode", page = "matpower_import", heading = "Option reference", selector = "`matpower_import.matpower_dcline_mode`"),
-  "cgmes_import.require_boundary" => (label = "Require boundary set", page = "cgmes_import", heading = "Configuration (`cgmes_import`)", selector = "`cgmes_import.require_boundary`"),
-  "cgmes_import.infer_base_voltages" => (label = "Infer missing base voltages", page = "cgmes_import", heading = "Configuration (`cgmes_import`)", selector = "`cgmes_import.infer_base_voltages`"),
-  "power_flow.rescue" => (label = "Rescue ladder for failed AC solves", page = "powerflow_configuration", heading = "Solver core options", selector = "`power_flow.rescue`"),
-  "runtime.parallel.enabled" => (label = "Parallel execution of independent work items", page = "performance_profiling", heading = "Runtime", selector = "`runtime.parallel.enabled`"),
-  "power_flow.dc.fallback" => (label = "Standalone-DC fallback", page = "powerflow_configuration", heading = "Solver core options", selector = "`power_flow.dc.fallback`"),
-  "model.auto_profile" => (label = "MATPOWER auto-profile", page = "matpower_import", heading = "Option reference", selector = "`model.auto_profile`"),
-  "matpower_import.ratio" => (label = "Transformer ratio convention", page = "matpower_import", heading = "Option reference", selector = "`matpower_import.ratio`"),
-  "matpower_import.apply_bus_names" => (label = "Apply bus names", page = "matpower_import", heading = "Option reference", selector = "`matpower_import.apply_bus_names`"),
-  "matpower_import.shift_sign" => (label = "Phase-shift sign", page = "matpower_import", heading = "Option reference", selector = "`matpower_import.shift_sign`"),
-  "matpower_import.shift_unit" => (label = "Phase-shift unit", page = "matpower_import", heading = "Option reference", selector = "`matpower_import.shift_unit`"),
-  "model.bus_shunt_model" => (label = "Bus-shunt model", page = "matpower_import", heading = "Option reference", selector = "`model.bus_shunt_model`"),
-  "matpower_import.pv_voltage_source" => (label = "PV voltage source", page = "matpower_import", heading = "Option reference", selector = "`matpower_import.pv_voltage_source`"),
-  "matpower_import.compare_voltage_reference" => (label = "Voltage reference comparison", page = "matpower_import", heading = "Option reference", selector = "`matpower_import.compare_voltage_reference`"),
-  "model.tap_changer_model" => (label = "Tap-changer model", page = "matpower_import", heading = "Option reference", selector = "`model.tap_changer_model`"),
-  "matpower_export.write_solution" => (label = "Write solution into MATPOWER export", page = "matpower_import", heading = "Option reference", selector = "`matpower_export.write_solution`"),
-  "output.logfile_results" => (label = "Logfile output mode", page = "performance_profiling", heading = "Output configuration", selector = "`output.logfile_results`"),
-  "benchmark.enabled" => (label = "Enable benchmark measurements", page = "performance_profiling", heading = "Benchmark configuration", selector = "`benchmark.enabled`"),
-  "benchmark.samples" => (label = "Benchmark samples (max. repeated measurements)", page = "performance_profiling", heading = "Benchmark configuration", selector = "`benchmark.samples`"),
-  "benchmark.seconds" => (label = "Benchmark max. time budget [s]", page = "performance_profiling", heading = "Benchmark configuration", selector = "`benchmark.seconds`"),
-  "webui.performance_timing" => (label = "Performance timing", page = "webui", heading = "Run artifacts and output modes", selector = ""),
-  "webui.detailed_result_csv" => (label = "Bus/branch CSV files", page = "webui", heading = "Run artifacts and output modes", selector = ""),
-  "webui.detailed_result_csv_format" => (label = "CSV format (every CSV file of a run)", page = "webui", heading = "Run artifacts and output modes", selector = ""),
-  "webui.export_cgmes" => (label = "CGMES export artifact", page = "cgmes_export", heading = "Export from the Web UI", selector = ""),
+  "webui.scf_export" => (label = "Case export (SCF / plain PGM)", hint = "Write the selected case into the case directory as an SCF file (.scf.json) or as a plain power-grid-model dataset (.pgm.json) without the sparlectra block.", doc = "scf/#scf-writing"),
+  "webui.case_format" => (label = "Case input format", hint = "Auto tells MATPOWER, CGMES, SCF/PGM JSON and DTF apart from the file content. Pick a format only when the file does not say what it is.", doc = "webui/#webui-form-options"),
+  "webui.for002_reference_file" => (label = "Optional FOR002 reference file", hint = "Optional FOR002 file for the legacy reference comparison of a DTF run: absolute path, path in the case cache, or an offered candidate. Not a primary case.", doc = "webui/#webui-form-options"),
+  "webui.dtf_outage_selection" => (label = "Selected DTF outage labels/indices", hint = "One outage label or index of the DTF case, used with the run mode selected. The result page shows a compact outage summary; the rows stay in the artifacts.", doc = "webui/#webui-form-options"),
+  "webui.config_maintenance" => (label = "Configuration maintenance", hint = "Check compares the YAML with the template and previews the refresh without writing; Refresh adds missing keys after a backup; the Editor edits the file.", doc = "webui/#webui-configuration"),
+  "webui.ignore_webui_settings" => (label = "Ignore Web UI settings and use configuration defaults", hint = "Run with the configuration file's values only: the form values and the saved case settings are ignored for this run.", doc = "webui/#webui-configuration"),
+  "power_flow.tol" => (label = "PowerFlow tolerance", hint = "Convergence bound for the largest single bus mismatch, active and reactive alike. 1e-8 pu equals 1 W at a 100 MVA base.", doc = "powerflow_configuration/#pf-solver-core"),
+  "power_flow.tol_MW" => (label = "PowerFlow tolerance in MW", hint = "Unit of the tolerance value. MW states the bound physically, converted with the case base at run time (1 MW at 100 MVA is 1e-2 pu); pu is the classic form.", doc = "powerflow_configuration/#pf-solver-core"),
+  "power_flow.max_iter" => (label = "Maximum iterations", hint = "Iteration cap of the Newton-Raphson solve; a run that reaches it ends as non-converged. Very low values cut off hard cases.", doc = "powerflow_configuration/#pf-solver-core"),
+  "power_flow.autodamp" => (label = "Autodamping enabled", hint = "Adaptive damping of the Newton step. Helps difficult convergence at a small overhead; switch it off only for strict algorithm comparisons.", doc = "powerflow_configuration/#pf-solver-core"),
+  "power_flow.autodamp_min" => (label = "Autodamping minimum", hint = "Minimum damping factor while autodamping is active. Lower values stabilize hard cases but can increase the iteration count.", doc = "powerflow_configuration/#pf-solver-core"),
+  "power_flow.qlimits.enabled" => (label = "Q-limit handling enabled", hint = "Master switch for generator Q-limit enforcement (PV to PQ switching). Off gives an unconstrained power flow; on can add switching iterations.", doc = "powerflow_configuration/#pf-qlimits"),
+  "power_flow.qlimits.enforcement_mode" => (label = "Q-limit enforcement mode", hint = "Selects active-set or classical Q-limit switching; the classical modes may need repeated solves. off disables the handling like the checkbox above.", doc = "powerflow_configuration/#pf-qlimits"),
+  "power_flow.solver" => (label = "Solver", hint = "Selects the executing solver: AC Newton-Raphson, the APSLF power series (needs AnalyticLoadFlow.jl), or a DC linear model without voltages and reactive results.", doc = "powerflow_configuration/#pf-solver-selection"),
+  "power_flow.linear_solver" => (label = "Linear solver backend", hint = "Sparse backend of the Newton step. umfpack_reuse keeps the symbolic analysis across iterations, faster on large cases; umfpack analyzes every iteration anew.", doc = "powerflow_configuration/#pf-solver-core"),
+  "power_flow.apslf.order" => (label = "APSLF highest coefficient (order)", hint = "Highest power-series coefficient computed by the APSLF solver. Higher orders help stressed cases but increase the solve cost.", doc = "powerflow_configuration/#pf-solver-selection"),
+  "power_flow.apslf.use_pade" => (label = "APSLF Padé evaluation", hint = "Evaluate the voltage series via Padé approximants instead of direct Taylor summation. Usually better accuracy per order at a small overhead.", doc = "powerflow_configuration/#pf-solver-selection"),
+  "power_flow.apslf.nr_polish" => (label = "APSLF NR polish", hint = "Run a Newton-Raphson polishing step on the APSLF series result. Default off: the series alone is a load-flow solution.", doc = "powerflow_configuration/#pf-solver-selection"),
+  "power_flow.apslf.convergence_radius" => (label = "APSLF convergence radius", hint = "Evaluate the APSLF convergence radius, the distance of the nearest Padé pole to the evaluation point. Costs about as much as the solve; shown with the result.", doc = "powerflow_configuration/#pf-solver-selection"),
+  "power_flow.flatstart" => (label = "Flat start", hint = "Start every bus at 1.0 pu and 0 degrees and ignore the imported start voltages. While on, the APSLF and DC start values and the pre-solve are switched off.", doc = "webui/#webui-flat-start"),
+  "power_flow.apslf_start.enabled" => (label = "Use APSLF start values", hint = "APSLF solver as a guarded start-value generator ahead of Newton-Raphson: the candidate is kept only if it improves the mismatch. Not with solver APSLF.", doc = "powerflow_configuration/#pf-apslf-start"),
+  "power_flow.apslf_start.order" => (label = "APSLF start highest coefficient (order)", hint = "Highest series coefficient of the APSLF start-value generator; higher orders cost more before the candidate is judged. No effect unless the generator is on.", doc = "powerflow_configuration/#pf-apslf-start"),
+  "power_flow.wrong_branch_detection" => (label = "Wrong-branch detection", hint = "Plausibility check of the converged solution on the highest voltage level: warn reports a suspicious result, fail treats it as non-converged, off skips it.", doc = "configuration/#config-wrong-branch"),
+  "power_flow.start_mode.angle_mode" => (label = "Start angle mode", hint = "Source of the start angles: classic zero angles, a DC pre-pass (default), or the imported angles. Ignored while the flat start is on.", doc = "powerflow_configuration/#pf-start-mode"),
+  "power_flow.start_mode.voltage_mode" => (label = "Start voltage mode", hint = "Source of the start voltage magnitudes: classic flat, generator or bus setpoints, or a blend of the imported profile. Ignored while the flat start is on.", doc = "powerflow_configuration/#pf-start-mode"),
+  "power_flow.start_mode.dc_seed_unconditional" => (label = "DC start values", hint = "Always run a full DC power flow first and seed the Newton-Raphson start angles from it, bypassing the start angle mode and its quality gate.", doc = "powerflow_configuration/#pf-start-mode"),
+  "power_flow.start_current_iteration.enabled" => (label = "Enable current-iteration pre-solve", hint = "Guarded current-iteration pre-solve improving the start profile before Newton-Raphson; the result is kept only if it passes the guards and lowers the mismatch.", doc = "powerflow_configuration/#pf-current-iteration-start"),
+  "power_flow.start_current_iteration.max_iter" => (label = "Current-iteration max iterations", hint = "Maximum number of pre-solve steps before Newton-Raphson starts. Keep it small; raise it only when the mismatch keeps improving but the pre-solve stops early.", doc = "powerflow_configuration/#pf-current-iteration-start"),
+  "power_flow.start_current_iteration.tol" => (label = "Current-iteration tolerance", hint = "Stopping tolerance of the pre-solve, not the final Newton-Raphson tolerance. A loose value is enough; the goal is a better start, not a solved power flow.", doc = "powerflow_configuration/#pf-current-iteration-start"),
+  "power_flow.start_current_iteration.damping" => (label = "Current-iteration damping", hint = "Damping factor of the pre-solve voltage update; 1.0 applies the full update. Lower it if the candidate is rejected by the voltage or angle guards.", doc = "powerflow_configuration/#pf-current-iteration-start"),
+  "power_flow.start_current_iteration.accept_only_if_improved" => (label = "Accept only if improved", hint = "Accept the pre-solve candidate only when it improves the mismatch; otherwise the original start values are restored. Keep it on outside expert experiments.", doc = "powerflow_configuration/#pf-current-iteration-start"),
+  "power_flow.start_current_iteration.min_improvement_factor" => (label = "Minimum improvement factor", hint = "Required improvement ratio of the candidate mismatch; 0.98 means at least about 2 percent better. Smaller values demand a stronger improvement.", doc = "powerflow_configuration/#pf-current-iteration-start"),
+  "power_flow.start_current_iteration.vm_min_pu" => (label = "Minimum voltage guard [pu]", hint = "Lower voltage guard: a candidate with any bus voltage below it is rejected and the original start values are restored.", doc = "powerflow_configuration/#pf-current-iteration-start"),
+  "power_flow.start_current_iteration.vm_max_pu" => (label = "Maximum voltage guard [pu]", hint = "Upper voltage guard: a candidate with any bus voltage above it is rejected and the original start values are restored.", doc = "powerflow_configuration/#pf-current-iteration-start"),
+  "power_flow.start_current_iteration.max_angle_step_deg" => (label = "Maximum angle-step guard [deg]", hint = "Largest allowed angle change of one pre-solve update; a larger jump rejects the candidate. Lower it for a more conservative pre-solve.", doc = "powerflow_configuration/#pf-current-iteration-start"),
+  "power_flow.start_current_iteration.only_for_large_cases" => (label = "Only for large cases", hint = "Run the pre-solve only for cases classified as large. Small cases keep their normal start values.", doc = "powerflow_configuration/#pf-current-iteration-start"),
+  "power_flow.distributed_slack.enabled" => (label = "Distributed active-power slack enabled", hint = "Spread the active-power imbalance over participating generators instead of the single slack bus. Off is bit-identical to the classical single-slack solver.", doc = "powerflow_configuration/#pf-distributed-slack"),
+  "power_flow.distributed_slack.p_mode" => (label = "Distributed-slack weight mode", hint = "Weight source of the participation factors: scheduled Pg, maximum P, remaining headroom, the imported factors, or an explicit weights table from the YAML.", doc = "powerflow_configuration/#pf-distributed-slack"),
+  "power_flow.external_grid.enabled" => (label = "External grid source enabled", hint = "Model the slack as a non-ideal source behind a feeder impedance, so its voltage droops under load. Off keeps the ideal slack; not with the distributed slack.", doc = "powerflow_configuration/#pf-external-grid"),
+  "power_flow.external_grid.source" => (label = "External grid Sk''/R-X source", hint = "Where Sk'' and R/X come from: auto prefers values the case declares on the slack bus, else the numbers below; config always uses the numbers below.", doc = "powerflow_configuration/#pf-external-grid"),
+  "power_flow.external_grid.sk_MVA" => (label = "External grid short-circuit power Sk'' [MVA]", hint = "Initial symmetrical short-circuit power of the feeder in MVA. It sets the series impedance of the external grid source (z = baseMVA/Sk'').", doc = "powerflow_configuration/#pf-external-grid"),
+  "power_flow.external_grid.rx" => (label = "External grid R/X ratio", hint = "R/X ratio of the feeder impedance of the external grid source.", doc = "powerflow_configuration/#pf-external-grid"),
+  "power_flow.merit.enabled" => (label = "Enable Armijo merit-function line search", hint = "Armijo merit-function line search for step acceptance on difficult flat-start cases. Requires autodamping; adds one residual-norm evaluation per trial.", doc = "powerflow_configuration/#pf-merit"),
+  "power_flow.merit.armijo_c1" => (label = "Armijo sufficient-decrease constant", hint = "Sufficient-decrease constant of the Armijo condition. Larger values reject more trial steps and increase the backtracking.", doc = "powerflow_configuration/#pf-merit"),
+  "power_flow.merit.fallback_max_mismatch" => (label = "Merit fallback behavior", hint = "When no trial satisfies the Armijo condition, fall back to the max-mismatch criterion (first improving trial). Off takes the most conservative finite trial.", doc = "powerflow_configuration/#pf-merit"),
+  "power_flow.trust_region.enabled" => (label = "Enable trust-region step control", hint = "Scaled-Newton trust-region step control as an alternative to autodamping; enabling one disables the other. Suited to difficult flat-start cases.", doc = "powerflow_configuration/#pf-trust-region"),
+  "power_flow.trust_region.initial_radius" => (label = "Initial trust-region radius", hint = "Starting trust-region radius in per-unit state-vector norm. Larger values risk more rejected or shrunk first steps on hard cases.", doc = "powerflow_configuration/#pf-trust-region"),
+  "power_flow.trust_region.eta_accept" => (label = "Trust-region acceptance ratio (eta)", hint = "Minimum actual-to-predicted reduction ratio to accept a trial step. Higher values reject more trials and add shrink-and-retry iterations.", doc = "powerflow_configuration/#pf-trust-region"),
+  "power_flow.trust_region.step_mode" => (label = "Trust-region step mode", hint = "Trial-step construction: scaled rescales the full Newton direction to the radius; dogleg blends it with a steepest-descent step when the radius shrinks.", doc = "powerflow_configuration/#pf-trust-region"),
+  "cgmes_import.start_values" => (label = "CGMES start values", hint = "auto starts from the delivery's SvVoltage state when it carries one, else flat; sv always uses the imported state, flat always starts flat.", doc = "cgmes_import/#cgmes-import-config"),
+  "cgmes_import.hvdc_mode" => (label = "HVDC converters", hint = "HVDC converter model: fixed injections reproduce the delivery snapshot; a paired controller couples both converters of a link and makes the transfer steerable.", doc = "cgmes_import/#cgmes-import-config"),
+  "matpower_import.matpower_dcline_mode" => (label = "DC-line mode", hint = "Model of active mpc.dcline rows: pf_injections adds two fixed terminal injections per row; paired_control also couples each pair as a steerable HVDC link.", doc = "matpower/#matpower-options"),
+  "cgmes_import.require_boundary" => (label = "Require boundary set", hint = "Fail the CGMES import when topology references stay unresolved (boundary set missing). Uncheck to import an incomplete delivery anyway.", doc = "cgmes_import/#cgmes-import-config"),
+  "cgmes_import.infer_base_voltages" => (label = "Infer missing base voltages", hint = "Reconstruct missing nominal voltages from SV voltages and transformer ratings when the delivery has no BaseVoltage catalog. Pair with an unchecked boundary set.", doc = "cgmes_import/#cgmes-import-config"),
+  "power_flow.rescue" => (label = "Rescue ladder for failed AC solves", hint = "After a non-converged AC solve, retry from the original start through a fixed ladder: alternate start, autodamp, DC seed, settled Q-limits. First success wins.", doc = "powerflow_configuration/#pf-solver-core"),
+  "runtime.parallel.enabled" => (label = "Parallel execution of independent work items", hint = "Use Julia threads for independent work items: island solves, short-circuit sweeps, contingency batches. Off forces every site onto the serial path.", doc = "performance_profiling/#perf-runtime"),
+  "power_flow.dc.fallback" => (label = "Standalone-DC fallback", hint = "When AC and the rescue ladder fail, keep a standalone DC result: angles and branch P flows at 1 pu, no reactive results. The AC status stays non-converged.", doc = "powerflow_configuration/#pf-solver-core"),
+  "model.auto_profile" => (label = "MATPOWER auto-profile", hint = "MATPOWER pre-run profile: off disables it, recommend logs import-convention recommendations, apply changes only safe conventions with clear evidence.", doc = "matpower/#matpower-options"),
+  "matpower_import.ratio" => (label = "Transformer ratio convention", hint = "Interpretation of the branch ratio column: normal is the standard MATPOWER convention, reciprocal inverts it. Change it only for a known alternate convention.", doc = "matpower/#matpower-options"),
+  "matpower_import.apply_bus_names" => (label = "Apply bus names", hint = "Use the case file's mpc.bus_name entries as bus names in results and logs instead of numeric BUS_I ids. Requires a bus_name block matching the bus count.", doc = "matpower/#matpower-options"),
+  "matpower_import.shift_sign" => (label = "Phase-shift sign", hint = "Sign convention of the phase-shift column, 1 or -1. Flip it only to align with another tool's convention.", doc = "matpower/#matpower-options"),
+  "matpower_import.shift_unit" => (label = "Phase-shift unit", hint = "Unit of the phase-shift column, degrees or radians. A wrong declaration shifts every phase shifter.", doc = "matpower/#matpower-options"),
+  "model.bus_shunt_model" => (label = "Bus-shunt model", hint = "Interpretation of bus shunts: constant admittance (default) or a voltage-dependent injection. Change it only with residual evidence.", doc = "matpower/#matpower-options"),
+  "matpower_import.pv_voltage_source" => (label = "PV voltage source", hint = "Source of the PV voltage setpoint: the generator VG (standard MATPOWER) or the bus VM; auto and strict_check use VG and warn when VG and VM differ.", doc = "matpower/#matpower-options"),
+  "matpower_import.compare_voltage_reference" => (label = "Voltage reference comparison", hint = "Voltage reference used when results are compared with the case data: bus VM, generator VG, the imported setpoint, or hybrid when VM and VG disagree.", doc = "matpower/#matpower-options"),
+  "model.tap_changer_model" => (label = "Tap-changer model", hint = "Tap-changer model applied to all transformers after import: ideal, or impedance correction that scales R and X with the tap position.", doc = "matpower/#matpower-options"),
+  "matpower_export.write_solution" => (label = "Write solution into MATPOWER export", hint = "Write the solved bus VM/VA state and the branch flow columns into the MATPOWER export. Off exports a pure model file with flat voltages.", doc = "matpower/#matpower-options"),
+  "output.logfile_results" => (label = "Logfile output mode", hint = "Detail of the solved result tables in run.log: off, compact, classic (result report plus timing summary) or full (adds the effective configuration).", doc = "performance_profiling/#perf-output"),
+  "benchmark.enabled" => (label = "Enable benchmark measurements", hint = "Measure repeated solves and report their median instead of one timing. Bounded by the sample count and the time budget.", doc = "performance_profiling/#perf-benchmark"),
+  "benchmark.samples" => (label = "Benchmark samples (max. repeated measurements)", hint = "Maximum number of repeated benchmark measurements per method. Collection stops earlier when the time budget is used up first.", doc = "performance_profiling/#perf-benchmark"),
+  "benchmark.seconds" => (label = "Benchmark max. time budget [s]", hint = "Maximum time budget of the benchmark in seconds. Not a solver timeout: a running sample is never interrupted.", doc = "performance_profiling/#perf-benchmark"),
+  "webui.performance_timing" => (label = "Performance timing", hint = "Write performance.log with the phases of one request (parsing, case loading, solve, artifacts); full adds internal profile entries, off writes nothing.", doc = "webui/#webui-output-modes"),
+  "webui.detailed_result_csv" => (label = "Bus/branch CSV files", hint = "Write bus_voltages_complex.csv and branch_flows.csv with per-bus voltages and per-branch flows. Off by default because large networks produce large files.", doc = "webui/#webui-output-modes"),
+  "webui.detailed_result_csv_format" => (label = "CSV format (every CSV file of a run)", hint = "Delimiter and decimal separator of every CSV a run writes: technical (comma, point), excel_de (semicolon, decimal comma) or excel_us. A machine-wide setting.", doc = "webui/#webui-output-modes"),
+  "webui.export_cgmes" => (label = "CGMES export artifact", hint = "Write the case as one re-importable CGMES delivery (EQ, TP, SSH, SV in a ZIP) into the run's artifacts, for every case format and also on non-converged runs.", doc = "cgmes_export/#cgmes-export-webui"),
 )
 
 const WEBUI_FORM_HELP_TOPICS = Dict(
@@ -239,478 +244,56 @@ const WEBUI_FORM_HELP_TOPICS = Dict(
   "export_cgmes" => "webui.export_cgmes",
 )
 
-const WEBUI_HELP_EXCERPT_OVERRIDES = Dict(
-  "webui.se_max_eliminations" => """
-## Sequential elimination budget
-
-Upper bound for the sequential bad-data elimination: while the chi-square band test fails AND a suspicious measurement (normalized residual at or above 3) is localizable (`wii` > 0.3), the worst row is deactivated and the estimation reruns, up to this many times. `0` disables elimination (diagnostics only).
-
-Protected rows are never eliminated: zero-injection pseudo-measurements (`ZI`), derived shunt rows (`SHDERIV`), and `LINKAGG` cluster aggregates encode model knowledge, not telemetry.
-
-The elimination trace (which row, normalized residual before, objective drop) lands in `se_diagnostics.md`.
-
-Configuration key `state_estimation.max_eliminations` (default 3).
-""",
-  "webui.se_generator_noise" => """
-## Generator: seeded noise
-
-Adds Gaussian noise at the per-quantity sigmas to every generated value. The random generator is seeded, so regenerating with the same inputs reproduces the identical file.
-
-Without noise the values are exact solutions of the power flow: the estimation then reports J close to 0 and the Wilson-Hilferty band test flags `:low` (residuals implausibly small against the declared sigmas). That is expected for a noise-free synthetic set, not an error.
-""",
-  "webui.se_generator_gross_error" => """
-## Generator: bad data (k·sigma)
-
-Corrupts ONE measurement, the first active-power flow row, by k times its sigma. `0` = off; `10` is a good value: one clearly detectable bad measurement (for example a stuck transducer).
-
-Use it to exercise the bad-data workflow: the diagnostics should rank exactly this row first (largest normalized residual, localizable), the sequential elimination should remove it, and the robust option should suppress it without removal. The corrupted row is named in the confirmation message.
-""",
-  "webui.se_generator_tap_error" => """
-## Generator: tap deviation
-
-Generates the measurements from a network state whose FIRST in-service transformer runs the given number of MECHANICAL tap steps off the model position (0 = off; WHOLE steps only, a tap changer has no half positions). The deviation lives on the same tap-fraction grid the estimator's fixation uses, so it is exactly recoverable: tap estimation finds the step and the fixation run ends near J = 0. The model file is never modified; only the throwaway generation state is shifted. Machine (generator step-up) transformers are never chosen as the deviation target: the mass release skips them, so a deviation there could not be resolved.
-
-The resulting measurement set is consistent in itself but disagrees with the model around that transformer: the band test reports `:high` with suspicious measurements clustered at the transformer. This is the test vector for bad-data localization and for the tap estimation (the "estimate taps" option of the estimator run resolves exactly this discrepancy). The affected transformer branch is named in the confirmation message.
-""",
-  "webui.se_tap_estimation" => """
-## Estimate transformer taps
-
-Releases the tap of every in-service transformer that carries a ratio tap changer as an additional estimation state (the model tap stays untouched). After the estimation converges, each tap is FIXED to its nearest mechanical step and one more run is solved in which the tap is no state variable any more.
-
-The result page reports, per transformer, the continuous electrical step and the fixed mechanical step, plus J before versus after the fixation: a small J before with a large J after means the true position sits between mechanical steps; both small means the fixed step explains the measurements. The full table lands in `se_tap_estimates.csv`.
-
-Estimating a tap needs redundancy around the transformer (a meshed path or measurements on both sides); a radial transformer with a single flow measurement makes the tap and the downstream voltage indistinguishable.
-
-**Release guards.** Machine (generator step-up) transformers are never mass-released: their terminal voltage is set by the machine's AVR, not observed, so the tap state would absorb it (release such a transformer explicitly via `setTapEstimation!` when you really mean it). A bridge transformer whose cut-off side carries no voltage measurement is frozen at its current position (`radial_no_voltage_pin`), and any remaining tap state the measurement set cannot pin numerically is frozen too (`not_observable`). Frozen taps stay in the result table with their reason instead of vanishing silently; a fully frozen release behaves exactly like no release.
-""",
-  "webui.se_generator_sigmas" => """
-## Generator: measurement sigmas (U, I, P, Q)
-
-Measurement accuracy per quantity in PERCENT OF THE MEASURED VALUE (like a transducer accuracy class), written into the sigma column of every generated row and used for the noise, when enabled:
-
-- **sigma U** (%): all voltage-magnitude rows. `0.5` corresponds to a class 0.5 device.
-- **currents (I)** checkbox plus **sigma I** (%): branch current-magnitude rows at both branch ends, generated only when the checkbox is set. Currents are auxiliary in the estimator: gated at flat start and below 3 sigma, excluded from observability.
-- **sigma P** (%): active-power injections AND branch flows.
-- **sigma Q** (%): reactive-power injections AND branch flows.
-
-Percent of reading keeps one setting meaningful across voltage levels: 1 percent of a 400 MW flow and of a 4 MW flow both get a class-appropriate sigma, where an absolute 2 MW sigma would be tight at 400 kV and absurd at 30 kV. Near-zero readings get a small per-type floor instead of a near-zero sigma (`measurementSigmaFloors`: 1e-4 pu, 0.05 MW/MVar, 0.1 A), modeling the range term of the transducer class, so a dead branch never enters with weight infinity and zero-injection buses do not stiffen the solve.
-
-For a healthy noisy set the estimation should land near J = dof; sigmas that are too pessimistic against the enabled noise push the band test to `:low`, too optimistic ones to `:high`.
-""",
-  "power_flow.start_current_iteration.enabled" => """
-## Enable current-iteration pre-solve
-
-`power_flow.start_current_iteration.enabled` enables a guarded current-injection/current-iteration pre-solve before the Newton-Raphson power-flow solver starts.
-
-This is not a separate power-flow solver and it does not replace Newton-Raphson. It is a start-value preconditioner: Sparlectra first builds the initial voltage profile from Start Voltage Mode and Start Angle Mode, then optionally tries a few current-iteration steps to improve that initial profile.
-
-The improved voltage profile is accepted only if it passes the voltage and angle guards and improves the existing Sparlectra mismatch metric. If it does not improve the start, the original start values are restored and Newton-Raphson starts normally.
-
-Default: disabled. Enable this only for difficult cases where the normal start profile or DC/profile-blend start is not robust enough.
-
-Diagnostic artifact: `current_iteration_start.log`
-""",
-  "power_flow.start_current_iteration.max_iter" => """
-## Current-iteration max iterations
-
-`power_flow.start_current_iteration.max_iter` sets the maximum number of current-iteration pre-solve steps before Newton-Raphson starts.
-
-A higher value gives the pre-solve more chances to reduce the initial mismatch, but it also costs extra time and may move the start profile too far away from the original initialization. The result is still guarded and will be rejected if it becomes implausible or does not improve the mismatch.
-
-Default: 10. Keep this small. Increase it only when diagnostics show that the mismatch keeps improving but the pre-solve stops too early.
-""",
-  "power_flow.start_current_iteration.tol" => """
-## Current-iteration tolerance
-
-`power_flow.start_current_iteration.tol` sets the stopping tolerance for the current-iteration pre-solve.
-
-If the current-iteration mismatch or update criterion falls below this tolerance, the pre-solve can stop before reaching the maximum number of iterations. This tolerance only controls the start-value pre-solve. It is not the final Newton-Raphson power-flow tolerance.
-
-Default: 1.0e-3. Use a relatively loose value; the purpose is to improve the starting point, not to solve the final power flow.
-""",
-  "power_flow.start_current_iteration.damping" => """
-## Current-iteration damping
-
-`power_flow.start_current_iteration.damping` sets the damping factor for the current-iteration voltage update.
-
-A value of 1.0 applies the full current-iteration update. Smaller values blend the update with the previous voltage and make the pre-solve more conservative. This can help avoid large voltage or angle jumps in difficult cases.
-
-Default: 0.5. Lower it if the pre-solve is rejected by voltage or angle guards. Increase it only if the pre-solve is stable but improves too slowly.
-""",
-  "power_flow.start_current_iteration.accept_only_if_improved" => """
-## Accept only if improved
-
-`power_flow.start_current_iteration.accept_only_if_improved` controls whether the current-iteration candidate is accepted only when it improves the existing Sparlectra mismatch metric.
-
-When enabled, the pre-solve is conservative: if the candidate start profile is not better than the original start profile, Sparlectra restores the original start values before Newton-Raphson starts.
-
-Default: enabled. This should normally stay enabled. Disabling it is only useful for expert experiments because it can allow a worse start profile to enter Newton-Raphson.
-""",
-  "power_flow.start_current_iteration.min_improvement_factor" => """
-## Minimum improvement factor
-
-`power_flow.start_current_iteration.min_improvement_factor` sets the required improvement ratio for accepting the current-iteration candidate when **Accept only if improved** is enabled.
-
-For example, 0.98 means the candidate mismatch must be at least about 2% lower than the original mismatch. Smaller values require a stronger improvement; values closer to 1.0 accept smaller improvements.
-
-Default: 0.98. Keep this close to 1.0 for a conservative pre-solve. Lower it only when tiny improvements are not useful and you want to accept only clearly better starts.
-""",
-  "power_flow.start_current_iteration.vm_min_pu" => """
-## Minimum voltage guard
-
-`power_flow.start_current_iteration.vm_min_pu` sets the lower voltage-magnitude guard for accepting a current-iteration candidate.
-
-If any candidate bus voltage falls below this value, the candidate is rejected and the original start values are restored. This prevents the pre-solve from sending Newton-Raphson into an implausible low-voltage start region.
-
-Default: 0.5 pu. Lowering this value makes the guard more permissive; increasing it makes the pre-solve more conservative. Use `current_iteration_start.log` to see candidate voltage minima before changing this value.
-""",
-  "power_flow.start_current_iteration.vm_max_pu" => """
-## Maximum voltage guard
-
-`power_flow.start_current_iteration.vm_max_pu` sets the upper voltage-magnitude guard for accepting a current-iteration candidate.
-
-If any candidate bus voltage exceeds this value, the candidate is rejected and the original start values are restored. This prevents unrealistic over-voltage start profiles from entering Newton-Raphson.
-
-Default: 1.5 pu. Lowering this value makes the guard stricter; increasing it allows larger candidate voltages. Use `current_iteration_start.log` to see candidate voltage maxima before changing this value.
-""",
-  "power_flow.start_current_iteration.max_angle_step_deg" => """
-## Maximum angle-step guard
-
-`power_flow.start_current_iteration.max_angle_step_deg` sets the maximum allowed angle change during the current-iteration pre-solve.
-
-If the candidate introduces an angle jump larger than this limit, the candidate is rejected and the original start values are restored. This guard is intended to prevent unstable or wrong-branch start profiles.
-
-Default: 30 degrees. Lower it for a more conservative pre-solve. Increase it only when diagnostics show that otherwise plausible candidates are rejected solely by the angle-step guard.
-""",
-  "power_flow.start_current_iteration.only_for_large_cases" => """
-## Only for large cases
-
-`power_flow.start_current_iteration.only_for_large_cases` runs the current-iteration pre-solve only for cases that Sparlectra classifies as large enough for this extra start-value preparation.
-
-This avoids spending time on small cases where normal start values usually work well and where the pre-solve is not needed. The exact large-case threshold follows the existing Sparlectra configuration logic.
-
-Default: disabled. Enable this if you want current iteration available for difficult large MATPOWER cases without changing behavior for small examples.
-""",
-  "power_flow.flatstart" => """
-## Flat start
-
-`power_flow.flatstart` starts the Newton-Raphson solve at 1.0 pu and 0 degrees on every bus and ignores the imported start voltages (MATPOWER `VM`/`VA`, CGMES `SvVoltage`, SCF `start_state`). Off, the imported values seed the solve; a delivery is built around its own operating point, so that is the better start for real networks and the default.
-
-This checkbox is the one start switch: while it is on, a run switches **Use APSLF start values**, **Use DC start values** and the current-iteration pre-solve off and treats both start modes as `classic`, so the start really is flat and no projection or pre-solve moves it; the run log names what was switched off. The greyed controls keep their saved values and come back when the flat start is unchecked.
-
-A CGMES run honours the flat start under **CGMES start values** = `auto`; an explicit `sv` on the Case page still starts from the delivery state.
-""",
-  "power_flow.apslf_start.enabled" => """
-## Use APSLF start values
-
-`power_flow.apslf_start.enabled` uses the AnalyticLoadFlow.jl-backed APSLF solver as a guarded start-value generator ahead of the rectangular Newton-Raphson solve, the same insertion point and accept/reject guard style as the current-iteration pre-solve: the candidate is only adopted when it strictly improves the rectangular mismatch, otherwise the original start values are restored.
-
-This mode always runs with **no NR polish** and **no Q-limit enforcement**, and neither is configurable here:
-
-- NR polish is always off internally (`nr_polish=false`) because the downstream rectangular Newton-Raphson solve performs that polishing step itself.
-- Q-limits are always unconstrained during this pre-solve, independent of `power_flow.qlimits.enabled` or any other Q-limit setting. `power_flow.qlimits.*` only governs the rectangular NR solve that follows; the generator's only job is producing a better starting voltage profile, not enforcing reactive limits.
-
-Requires AnalyticLoadFlow.jl to be loaded; mutually exclusive with `power_flow.solver = apslf` (rejected at configuration time — the start-value generator only makes sense ahead of the NR solve).
-
-Default: disabled. Diagnostic artifact: `apslf_start.log`.
-""",
-  "power_flow.apslf_start.order" => """
-## APSLF start highest coefficient (order)
-
-`power_flow.apslf_start.order` sets the highest power-series coefficient used by the APSLF start-value generator (see **Use APSLF start values**). Same considerations as `power_flow.apslf.order`: higher orders can improve the series approximation but cost more before the candidate is even evaluated for acceptance.
-
-This option has no effect unless `power_flow.apslf_start.enabled = true`.
-
-Default: 40.
-""",
-)
-
-const WEBUI_DOC_PAGES = Dict(
-  "configuration" => (title = "Configuration", file = "configuration.md"),
-  "powerflow_configuration" => (title = "Power-Flow Configuration", file = "powerflow_configuration.md"),
-  "powerflow_service" => (title = "Local PowerFlow Service", file = "powerflow_service.md"),
-  "q_limit_switching_strategy" => (title = "Q-limit Switching Strategy", file = "q_limit_switching_strategy.md"),
-  "performance_profiling" => (title = "Performance and Profiling Configuration", file = "performance_profiling.md"),
-  "matpower_format" => (title = "MATPOWER format", file = "matpower_format.md"),
-  "dtf_format" => (title = "DTF legacy input format", file = "dtf_format.md"),
-  "scf" => (title = "Sparlectra Case Format (SCF/PGM JSON)", file = "scf.md"),
-  "matpower_import" => (title = "MATPOWER Import", file = "matpower_import.md"),
-  # Reachable from the docs reader; per-option help topics follow once the
-  # cgmes_import options get their own Web UI form fields (issue #294).
-  "cgmes_import" => (title = "CGMES Import", file = "cgmes_import.md"),
-  "cgmes_export" => (title = "CGMES Export", file = "cgmes_export.md"),
-  "webui" => (title = "Local PowerFlow Web UI", file = "webui.md"),
-  "state_estimation" => (title = "State Estimation", file = "state_estimation.md"),
-  "state_estimation_configuration" => (title = "State-Estimation Configuration", file = "state_estimation_configuration.md"),
-  "feature_matrix" => (title = "Feature Matrix", file = "feature_matrix.md"),
-  "solver" => (title = "Solver", file = "solver.md"),
-)
-
-"""Resolve an allowlisted Web UI help topic to its documentation metadata."""
+"""Resolve an allowlisted Web UI help topic to its label, hint and documentation link."""
 resolve_webui_help_topic(topic::AbstractString) = get(WEBUI_HELP_TOPICS, String(topic), nothing)
 
-"""Resolve an allowlisted documentation page to its title and Markdown file."""
-resolve_webui_doc_page(page::AbstractString) = get(WEBUI_DOC_PAGES, String(page), nothing)
+# The documentation base URL the help icons open. Set from the running
+# server's configuration (`webui.docs_base_url`) on every request; the
+# environment variable wins for headless renders and tests. A link only,
+# nothing is ever fetched.
+const _WEBUI_DOCS_BASE_URL = Ref{String}("https://welthulk.github.io/Sparlectra.jl/")
 
-function _webui_doc_path(page_metadata)::String
-  path = normpath(joinpath(_WEBUI_DOCS_ROOT, page_metadata.file))
-  dirname(path) == _WEBUI_DOCS_ROOT || throw(ArgumentError("Documentation path is outside the allowlisted documentation root."))
-  return path
+function _webui_docs_base_url()::String
+  base = get(ENV, "SPARLECTRA_WEBUI_DOCS_BASE_URL", _WEBUI_DOCS_BASE_URL[])
+  return endswith(base, "/") ? base : base * "/"
 end
 
-"""Load one allowlisted Markdown document used by the local Web UI."""
-function load_webui_markdown_document(page::AbstractString)::Union{String,Nothing}
-  metadata = resolve_webui_doc_page(page)
-  metadata === nothing && return nothing
-  path = _webui_doc_path(metadata)
-  return isfile(path) ? read(path, String) : nothing
-end
-
-function _webui_markdown_heading(line::AbstractString)
-  matched = match(r"^(#{1,6})\s+(.+?)\s*#*\s*$", line)
-  matched === nothing && return nothing
-  return (level = length(matched.captures[1]), text = strip(matched.captures[2]))
-end
-
-"""Extract a Markdown heading and its content through the next peer or parent heading."""
-function extract_webui_markdown_section(markdown_text::AbstractString, heading::AbstractString)::Union{String,Nothing}
-  lines = split(String(markdown_text), '\n'; keepempty = true)
-  start_index = nothing
-  heading_level = 0
-  for index in eachindex(lines)
-    parsed = _webui_markdown_heading(lines[index])
-    if parsed !== nothing && parsed.text == String(heading)
-      start_index = index
-      heading_level = parsed.level
-      break
-    end
+# Refresh the base URL from a runtime's configuration file; a file that
+# cannot be loaded keeps the previous value (the link is not worth failing a
+# page for).
+function _webui_refresh_docs_base_url!(runtime)
+  runtime === nothing && return nothing
+  config_file = String(something(getproperty(runtime, :config_file), ""))
+  isempty(config_file) && return nothing
+  isfile(config_file) || return nothing
+  try
+    _WEBUI_DOCS_BASE_URL[] = load_sparlectra_config(config_file).webui.docs_base_url
+  catch err
+    # a broken configuration file is reported by the pages that load it;
+    # the help link falls back to the packaged default
+    @debug "webui.docs_base_url not read" config_file exception = err
   end
-  start_index === nothing && return nothing
-
-  stop_index = lastindex(lines)
-  for index in (start_index + 1):lastindex(lines)
-    parsed = _webui_markdown_heading(lines[index])
-    if parsed !== nothing && parsed.level <= heading_level
-      stop_index = index - 1
-      break
-    end
-  end
-  return strip(join(lines[start_index:stop_index], "\n"))
+  return nothing
 end
 
-function _webui_extract_markdown_table_row(section::AbstractString, selector::AbstractString)::Union{String,Nothing}
-  lines = split(String(section), '\n'; keepempty = true)
-  row_index = findfirst(line -> startswith(strip(line), "|") && occursin(selector, line), lines)
-  row_index === nothing && return nothing
-  header_indices = findall(line -> startswith(strip(line), "|"), lines[begin:(row_index - 1)])
-  length(header_indices) >= 2 || return strip(lines[row_index])
-  heading_index = findfirst(line -> _webui_markdown_heading(line) !== nothing, lines)
-  excerpt = String[]
-  heading_index !== nothing && push!(excerpt, lines[heading_index], "")
-  append!(excerpt, (lines[header_indices[1]], lines[header_indices[2]], lines[row_index]))
-  return join(excerpt, "\n")
-end
-
-"""Load the Markdown excerpt configured for an allowlisted Web UI help topic."""
-function load_webui_help_excerpt(topic::AbstractString)::Union{String,Nothing}
-  override = get(WEBUI_HELP_EXCERPT_OVERRIDES, String(topic), nothing)
-  override !== nothing && return override
+"""Absolute documentation URL of a help topic, or "" when the topic has no `doc` target."""
+function webui_help_doc_url(topic::AbstractString)::String
   metadata = resolve_webui_help_topic(topic)
-  metadata === nothing && return nothing
-  markdown_text = load_webui_markdown_document(metadata.page)
-  markdown_text === nothing && return nothing
-  section = extract_webui_markdown_section(markdown_text, metadata.heading)
-  section === nothing && return nothing
-  return isempty(metadata.selector) ? section : _webui_extract_markdown_table_row(section, metadata.selector)
+  (metadata === nothing || isempty(metadata.doc)) && return ""
+  return _webui_docs_base_url() * String(metadata.doc)
 end
 
-function _webui_heading_slug(heading_html::AbstractString)::String
-  text = replace(String(heading_html), r"<[^>]+>" => "")
-  # Julia's Markdown writes parentheses and similar characters as numeric
-  # entities (`&#40;`); decoded first, they separate words like any other
-  # punctuation instead of leaving their code points in the slug
-  text = replace(text, r"&#(\d+);" => m -> string(Char(parse(Int, m[3:prevind(m, lastindex(m))]))))
-  text = lowercase(replace(text, "&amp;" => "and", "&quot;" => "", "'" => ""))
-  return strip(replace(text, r"[^a-z0-9]+" => "-"), '-')
-end
+"""
+    webui_help_page_url(topic) -> String
 
-function _webui_rewritten_doc_href(target::AbstractString; current_page::Union{Nothing,String} = nothing)::Union{String,Nothing}
-  href = String(target)
-  startswith(href, "https://") && return href
-  startswith(href, "http://") && return href
-  # heading ids are lowercase here (see rewrite_webui_doc_links), while the
-  # pages link Documenter-style anchors such as `#Configuration-precedence`
-  startswith(href, "#") && return current_page === nothing ? nothing : lowercase(href)
-  (startswith(href, "/") || occursin('\\', href) || occursin(':', href)) && return nothing
-
-  relative = startswith(href, "./") ? href[3:end] : href
-  matched = match(r"^([A-Za-z0-9_-]+)\.md(#[A-Za-z0-9._~:%-]+)?$", relative)
-  matched === nothing && return nothing
-  page = matched.captures[1]
-  metadata = resolve_webui_doc_page(page)
-  metadata === nothing && return nothing
-  metadata.file == "$(page).md" || return nothing
-  fragment = lowercase(something(matched.captures[2], ""))
-  return "/docs/$(page)$(fragment)"
-end
-
-function _webui_doc_link_attributes(href::AbstractString)::String
-  return startswith(href, "https://") || startswith(href, "http://") ? " target=\"_blank\" rel=\"noopener noreferrer\"" : ""
-end
-
-"""Rewrite rendered Markdown links to safe, allowlisted local documentation routes."""
-function rewrite_webui_doc_links(rendered_html::AbstractString; current_page::Union{Nothing,String} = nothing)::String
-  heading_pattern = r"<h([1-6])>(.*?)</h[1-6]>"s
-  html = replace(String(rendered_html), heading_pattern => matched_text -> begin
-    matched = match(heading_pattern, String(matched_text))
-    level = matched.captures[1]
-    contents = matched.captures[2]
-    slug = _webui_heading_slug(contents)
-    isempty(slug) ? String(matched_text) : "<h$(level) id=\"$(slug)\">$(contents)</h$(level)>"
-  end)
-  href_pattern = Regex("href=\"([^\"]+)\"")
-  return replace(html, href_pattern => matched_text -> begin
-    matched = match(href_pattern, String(matched_text))
-    rewritten = _webui_rewritten_doc_href(matched.captures[1]; current_page = current_page)
-    rewritten === nothing ? "aria-disabled=\"true\"" : "href=\"$(rewritten)\"$(_webui_doc_link_attributes(rewritten))"
-  end)
-end
-
-## LaTeX math for the local documentation viewer (the
-## formulas showed as raw markup). Julia's Markdown standard library
-## escapes `$...$` and ```math blocks into literal text, so nothing in the
-## HTML tells a browser that this is mathematics. The Documenter website
-## renders it with KaTeX; the local viewer has no such asset and must not
-## grow a CDN dependency, so the common notation is translated into
-## Unicode BEFORE parsing and handed over as inline code. Anything not in
-## the table survives verbatim, which is still better than a dollar sign.
-const _WEBUI_MATH_SYMBOLS = [
-  # multi-character names first, so \varepsilon is not eaten by \var
-  "\\varepsilon" => "ε", "\\epsilon" => "ε", "\\vartheta" => "ϑ", "\\theta" => "θ",
-  "\\alpha" => "α", "\\beta" => "β", "\\gamma" => "γ", "\\delta" => "δ",
-  "\\zeta" => "ζ", "\\eta" => "η", "\\iota" => "ι", "\\kappa" => "κ",
-  "\\lambda" => "λ", "\\mu" => "μ", "\\nu" => "ν", "\\xi" => "ξ",
-  "\\rho" => "ρ", "\\sigma" => "σ", "\\tau" => "τ", "\\upsilon" => "υ",
-  "\\phi" => "φ", "\\chi" => "χ", "\\psi" => "ψ", "\\omega" => "ω",
-  "\\Gamma" => "Γ", "\\Delta" => "Δ", "\\Theta" => "Θ", "\\Lambda" => "Λ",
-  "\\Xi" => "Ξ", "\\Pi" => "Π", "\\Sigma" => "Σ", "\\Upsilon" => "Υ",
-  "\\Phi" => "Φ", "\\Psi" => "Ψ", "\\Omega" => "Ω", "\\pi" => "π",
-  "\\cdot" => "·", "\\times" => "×", "\\pm" => "±", "\\mp" => "∓",
-  "\\leq" => "≤", "\\le" => "≤", "\\geq" => "≥", "\\ge" => "≥",
-  "\\neq" => "≠", "\\ne" => "≠", "\\approx" => "≈", "\\equiv" => "≡",
-  "\\infty" => "∞", "\\partial" => "∂", "\\nabla" => "∇", "\\sum" => "Σ",
-  "\\prod" => "Π", "\\int" => "∫", "\\in" => "∈", "\\notin" => "∉",
-  "\\subset" => "⊂", "\\subseteq" => "⊆", "\\cup" => "∪", "\\cap" => "∩",
-  "\\rightarrow" => "→", "\\to" => "→", "\\leftarrow" => "←",
-  "\\Rightarrow" => "⇒", "\\Leftrightarrow" => "⇔", "\\mapsto" => "↦",
-  "\\ldots" => "…", "\\dots" => "…", "\\quad" => " ", "\\," => " ",
-  "\\;" => " ", "\\!" => "", "\\left" => "", "\\right" => "",
-]
-
-const _WEBUI_MATH_SUPERSCRIPT = Dict('0' => '⁰', '1' => '¹', '2' => '²', '3' => '³', '4' => '⁴', '5' => '⁵', '6' => '⁶', '7' => '⁷', '8' => '⁸', '9' => '⁹', '+' => '⁺', '-' => '⁻', 'n' => 'ⁿ', 'i' => 'ⁱ', 'T' => 'ᵀ')
-const _WEBUI_MATH_SUBSCRIPT = Dict('0' => '₀', '1' => '₁', '2' => '₂', '3' => '₃', '4' => '₄', '5' => '₅', '6' => '₆', '7' => '₇', '8' => '₈', '9' => '₉', '+' => '₊', '-' => '₋', 'i' => 'ᵢ', 'j' => 'ⱼ', 'k' => 'ₖ', 'n' => 'ₙ', 'm' => 'ₘ', 'a' => 'ₐ', 'x' => 'ₓ')
-
-## One math expression to readable Unicode. Scripts translate only when
-## EVERY character has a Unicode form; otherwise the plain ^/_ notation
-## stays, which reads fine in a monospace span.
-function _webui_math_to_unicode(expr::AbstractString)::String
-  s = String(expr)
-  for (from, to) in _WEBUI_MATH_SYMBOLS
-    s = replace(s, from => to)
-  end
-  # \frac{a}{b} -> (a)/(b), \sqrt{a} -> √(a), \text{a} -> a
-  # one level of nesting is allowed, so \frac{P_{se}}{V} resolves too;
-  # deeper nesting stays as written rather than being mangled
-  s = replace(s, r"\\frac\{((?:[^{}]|\{[^{}]*\})*)\}\{((?:[^{}]|\{[^{}]*\})*)\}" => s"(\1)/(\2)")
-  s = replace(s, r"\\sqrt\{((?:[^{}]|\{[^{}]*\})*)\}" => s"√(\1)")
-  s = replace(s, r"\\(?:text|mathrm|mathit|operatorname)\{([^{}]*)\}" => s"\1")
-  # `replace` hands the matched TEXT to the function, not a RegexMatch, so
-  # the body is cut out here instead of read from a capture group
-  script = (matched, table, braced) -> begin
-    body = braced ? matched[nextind(matched, firstindex(matched), 2):prevind(matched, lastindex(matched))] : matched[nextind(matched, firstindex(matched)):end]
-    all(c -> haskey(table, c), body) ? join(table[c] for c in body) : matched
-  end
-  s = replace(s, r"\^\{[^{}]*\}" => m -> script(m, _WEBUI_MATH_SUPERSCRIPT, true))
-  s = replace(s, r"_\{[^{}]*\}" => m -> script(m, _WEBUI_MATH_SUBSCRIPT, true))
-  s = replace(s, r"\^\w" => m -> script(m, _WEBUI_MATH_SUPERSCRIPT, false))
-  s = replace(s, r"_\w" => m -> script(m, _WEBUI_MATH_SUBSCRIPT, false))
-  # leftover grouping braces disappear only when no unresolved command is
-  # left; otherwise the expression stays readable as written
-  occursin("\\", s) || (s = replace(s, r"[{}]" => ""))
-  return strip(s)
-end
-
-## Replace ```math blocks and $...$ spans in a Markdown source with inline
-## code carrying the Unicode form, so the standard Markdown renderer emits
-## something readable instead of escaped dollars.
-function _webui_render_math(markdown_text::AbstractString)::String
-  s = String(markdown_text)
-  s = replace(s, r"```math\n.*?```"s => m -> string("`", _webui_math_to_unicode(strip(m[8:prevind(m, lastindex(m), 3)])), "`\n"))
-  # inline: no newline inside, and not an escaped dollar
-  s = replace(s, r"(?<!\\)\$[^\$\n]+?(?<!\\)\$" => m -> string("`", _webui_math_to_unicode(m[nextind(m, firstindex(m)):prevind(m, lastindex(m))]), "`"))
-  return s
-end
-
-## Documenter cross references (the CGMES page
-## showed its "Node-breaker deliveries without a TP profile" heading as a
-## dead link). `[text](@id name)` labels a heading and `[text](@ref name)`
-## points at it, possibly from another page; Julia's Markdown renders both
-## as ordinary links whose target the href rewriter then disables. The
-## label is dropped from the heading text, and a reference becomes the
-## page-local `#slug` or `page.md#slug` link the rewriter already handles.
-## References without a known label (docstring refs such as
-## [`addACLine!`](@ref), or ids on pages the viewer does not serve) stay as
-## they are and render disabled, as before.
-const _WEBUI_DOCUMENTER_ID_PATTERN = r"\[([^\]]+)\]\(@id\s+([A-Za-z0-9_.-]+)\)"
-const _WEBUI_DOCUMENTER_REF_PATTERN = r"\[([^\]]+)\]\(@ref\s+([A-Za-z0-9_.-]+)\)"
-
-"""Drop a Documenter `[text](@id name)` label from heading text, keeping the text."""
-_webui_documenter_heading_text(text::AbstractString) = replace(String(text), _WEBUI_DOCUMENTER_ID_PATTERN => s"\1")
-
-"""Anchor slug of a Markdown heading, the same one the rendered heading gets."""
-function _webui_markdown_heading_slug(text::AbstractString)::String
-  plain = _webui_documenter_heading_text(text)
-  # the rendered heading carries the code spans as tags (stripped by the
-  # slug) and the ampersand escaped (turned into "and")
-  return _webui_heading_slug(replace(plain, "`" => "", "&" => "&amp;"))
-end
-
-"""Map every Documenter `@id` label on the served pages to `(page, slug)`."""
-function _webui_documenter_id_index()::Dict{String,Tuple{String,String}}
-  index = Dict{String,Tuple{String,String}}()
-  for (page, metadata) in WEBUI_DOC_PAGES
-    path = _webui_doc_path(metadata)
-    isfile(path) || continue
-    for line in eachline(path)
-      heading = _webui_markdown_heading(line)
-      heading === nothing && continue
-      for matched in eachmatch(_WEBUI_DOCUMENTER_ID_PATTERN, heading.text)
-        index[String(matched.captures[2])] = (page, _webui_markdown_heading_slug(heading.text))
-      end
-    end
-  end
-  return index
-end
-
-"""Resolve Documenter `@id`/`@ref` syntax into links the viewer's href rewriter understands."""
-function _webui_resolve_documenter_refs(markdown_text::AbstractString; current_page::Union{Nothing,String} = nothing)::String
-  s = replace(String(markdown_text), _WEBUI_DOCUMENTER_ID_PATTERN => s"\1")
-  occursin("(@ref ", s) || return s
-  index = _webui_documenter_id_index()
-  return replace(s, _WEBUI_DOCUMENTER_REF_PATTERN => matched_text -> begin
-    matched = match(_WEBUI_DOCUMENTER_REF_PATTERN, String(matched_text))
-    target = get(index, String(matched.captures[2]), nothing)
-    target === nothing && return String(matched_text)
-    page, slug = target
-    href = page == current_page ? "#$(slug)" : "$(page).md#$(slug)"
-    "[$(matched.captures[1])]($(href))"
-  end)
-end
-
-"""Render trusted repository Markdown as HTML using Julia's Markdown standard library."""
-function render_webui_markdown(markdown_text::AbstractString; current_page::Union{Nothing,String} = nothing)::String
-  io = IOBuffer()
-  resolved = _webui_resolve_documenter_refs(String(markdown_text); current_page = current_page)
-  show(io, MIME"text/html"(), Markdown.parse(_webui_render_math(resolved)))
-  return rewrite_webui_doc_links(String(take!(io)); current_page = current_page)
+The in-app help page of a topic (`/help/<topic>`), or "" when the topic has
+no `doc` target. The page shows the hint, the documentation section shipped
+with the application (`WEBUI_HELP_EXCERPTS`) and the link to the same
+section online, so the help does not depend on the published site carrying
+the anchors of the version that is running.
+"""
+function webui_help_page_url(topic::AbstractString)::String
+  metadata = resolve_webui_help_topic(topic)
+  (metadata === nothing || isempty(metadata.doc)) && return ""
+  return "/help/" * _webui_urlencode(String(topic))
 end

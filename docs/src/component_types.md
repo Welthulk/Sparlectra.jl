@@ -1,6 +1,6 @@
 # Component Types
 
-This page documents the main component types used in Sparlectra for power system modeling.
+The main component types for power system modeling in Sparlectra.
 
 ## Network Components
 
@@ -28,15 +28,14 @@ Sparlectra.BranchFlow
 Sparlectra.BranchModel
 ```
 
-Since r0.9.10 a `Branch` carries per-terminal service flags
-`from_status`/`to_status` (1 = closed, 0 = open) next to the aggregate
-`status`. Invariant: `status = 1` iff both terminals are closed;
-`setBranchStatus!` (the user-facing switch) sets all three consistently,
+A `Branch` carries per-terminal service flags `from_status`/`to_status`
+(1 = closed, 0 = open) next to the aggregate `status` (`1` iff both
+terminals are closed). `setBranchStatus!` sets all three consistently,
 `setBranchTerminalStatus!(br; from =, to =)` toggles individual terminals
-and recomputes the aggregate. A branch open at exactly one terminal stays
-in the model as its exact pi reduction at the closed bus and reports the
-open-end voltage (`open_end_vm_pu`/`open_end_va_deg`) as a result, see the
-"One-sided open branches" section of the [branch model](branchmodel.md).
+and recomputes the aggregate. A branch open at one terminal stays in the
+model as its pi reduction at the closed bus and reports the open-end
+voltage (`open_end_vm_pu`/`open_end_va_deg`), see "One-sided open
+branches" in the [branch model](branchmodel.md).
 
 ### Prosumer Components
 

@@ -60,6 +60,10 @@ function run_api_fast_tests()
         @test meas_de[1] == "# sparlectra-measurements v1"
         header_at = findfirst(l -> startswith(l, "type"), meas_de)
         @test header_at !== nothing && startswith(meas_de[header_at], "type;bus;")
+        # the artifact carries the per-row verdict behind id; a clean set has
+        # no flagged row and no critical one on this case
+        @test endswith(meas_de[header_at], ";bad_data;status")
+        @test all(l -> endswith(l, ";;"), filter(l -> !startswith(l, "#") && !startswith(l, "type"), meas_de))
         @test any(l -> occursin(r";\d+,\d+;", l), meas_de)
         # the artifact still reads back as a measurement set
         probe = importSCF(scf5)

@@ -430,8 +430,8 @@ Base.@kwdef struct StateEstimationConfig
   update_net::Bool = true
   pmu_ref_offset::Symbol = :auto
   imag_activation_iteration::Int = 2
-  report_residual_correlation::Bool = false
-  update_shunts::Bool = false
+  report_residual_correlation::Bool = true
+  update_shunts::Bool = true
   # tap write-back: estimation must never silently overwrite model
   # data; the FIXED mechanical positions reach the branch fields only on
   # explicit request and only from a converged, fixed run
@@ -821,6 +821,10 @@ Base.@kwdef struct WebUIConfig
   # variable SPARLECTRA_WEBUI_OPERATION_LOG_RETENTION_DAYS still wins, for
   # headless runs that never read this file.
   operation_log_retention_days::Int = 10
+  # Base URL of the published documentation the help icons open (the Web UI
+  # carries no documentation of its own). Override for a local docs build,
+  # the dev site or a pinned version folder. A link only, never fetched.
+  docs_base_url::String = "https://welthulk.github.io/Sparlectra.jl/"
 end
 
 """
@@ -1375,8 +1379,13 @@ function QLimitConfig(raw::AbstractDict)
   merged = merge(Dict{Any,Any}(raw), Dict{Any,Any}(guard_cfg))
   hysteresis_value = _validate_nonnegative("power_flow.qlimits.hysteresis_pu", _as_float_cfg(_raw_get(merged, "hysteresis_pu", _raw_get(merged, "q_hyst_pu", 0.01))))
   # default twice the hysteresis; a bound below the hysteresis would reject
-  # what the switching logic tolerates on purpose
-  final_q_accept_value = _validate_nonnegative("power_flow.qlimits.final_q_accept_pu", _as_float_cfg(_raw_get(merged, "final_q_accept_pu", 2 * hysteresis_value)))
+  # what the switching logic tolerates on purpose. `auto` (the template
+  # value) keeps the bound tied to the hysteresis: a literal in the packaged
+  # defaults would be inherited by every user file that raises hysteresis_pu
+  # alone and reject that file (found 2026-09-25 by test_matpower_example).
+  final_q_raw = _raw_get(merged, "final_q_accept_pu", "auto")
+  final_q_auto = final_q_raw isa AbstractString && lowercase(strip(final_q_raw)) == "auto"
+  final_q_accept_value = final_q_auto ? 2 * hysteresis_value : _validate_nonnegative("power_flow.qlimits.final_q_accept_pu", _as_float_cfg(final_q_raw))
   final_q_accept_value >= hysteresis_value || throw(ArgumentError("power_flow.qlimits.final_q_accept_pu must be >= hysteresis_pu ($(hysteresis_value)); got $(final_q_accept_value)."))
   return QLimitConfig(
     start_iter = _as_int_cfg(_raw_get(merged, "start_iter", _raw_get(merged, "qlimit_start_iter", 2))),
@@ -1594,8 +1603,8 @@ function StateEstimationConfig(raw::AbstractDict)
     update_net = _as_bool_cfg(_raw_get(merged, "update_net", true)),
     pmu_ref_offset = _validate_allowed_symbol("state_estimation.pmu_ref_offset", _as_symbol_cfg(_raw_get(merged, "pmu_ref_offset", :auto)), STATE_ESTIMATION_PMU_REF_OFFSET_VALUES),
     imag_activation_iteration = Int(_validate_positive("state_estimation.imag_activation_iteration", _as_int_cfg(_raw_get(merged, "imag_activation_iteration", 2)))),
-    report_residual_correlation = _as_bool_cfg(_raw_get(merged, "report_residual_correlation", false)),
-    update_shunts = _as_bool_cfg(_raw_get(merged, "update_shunts", false)),
+    report_residual_correlation = _as_bool_cfg(_raw_get(merged, "report_residual_correlation", true)),
+    update_shunts = _as_bool_cfg(_raw_get(merged, "update_shunts", true)),
     update_taps = _as_bool_cfg(_raw_get(merged, "update_taps", false)),
     robust = se_robust,
     robust_start_iteration = Int(_validate_positive("state_estimation.robust_start_iteration", _as_int_cfg(_raw_get(merged, "robust_start_iteration", 3)))),
@@ -1856,6 +1865,7 @@ function WebUIConfig(raw::AbstractDict)
   return WebUIConfig(
     show_case_settings_notice = _as_bool_cfg(_raw_get(merged, "show_case_settings_notice", true)),
     operation_log_retention_days = Int(_validate_nonnegative("webui.operation_log_retention_days", _as_int_cfg(_raw_get(merged, "operation_log_retention_days", 10)))),
+    docs_base_url = String(_as_string_cfg(_raw_get(merged, "docs_base_url", "https://welthulk.github.io/Sparlectra.jl/"))),
   )
 end
 

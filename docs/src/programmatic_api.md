@@ -1,39 +1,35 @@
 # Programmatic API
 
-This page is the entry point for driving Sparlectra from code. The stable
-programmatic surface consists of a small set of entry points; everything else
-on the [reference pages](reference.md) is internal and may change between
-versions.
+The stable programmatic surface of Sparlectra is a small set of entry
+points; everything else on the [reference pages](reference.md) is internal
+and may change between versions.
 
 ## Stable entry points
 
-- [`run_sparlectra`](@ref): run a configured power flow on a network or case
-  file and return the full run result. This is the core execution framework
-  every service path uses.
-- [`importCGMES`](@ref): import a CGMES delivery. The
-  `importCGMES(config; path, name)` form applies everything the configuration
-  says about the import in one call.
-- [`load_sparlectra_config`](@ref): load a Sparlectra YAML configuration file
-  into a [`SparlectraConfig`](@ref).
-- [`createNetFromMatPowerFile`](@ref): parse a MATPOWER `.m`/`.jl` case file
-  and build the network. The underlying pair
-  [`Sparlectra.MatpowerIO.read_case`](@ref) and [`Sparlectra.createNetFromMatPowerCase`](@ref)
-  separates parsing from construction when the case object is needed.
-- [`run_sparlectra_api`](@ref): the non-interactive service contract described
+- [`run_sparlectra`](@ref): the configured power flow on a network or
+  case file, the core of every service path.
+- [`importCGMES`](@ref): import a CGMES delivery;
+  `importCGMES(config; path, name)` applies the configuration's import
+  settings in one call.
+- [`load_sparlectra_config`](@ref): load a Sparlectra YAML configuration
+  file into a [`SparlectraConfig`](@ref).
+- [`createNetFromMatPowerFile`](@ref): parse a MATPOWER `.m`/`.jl` case
+  file and build the network;
+  [`Sparlectra.MatpowerIO.read_case`](@ref) and
+  [`Sparlectra.createNetFromMatPowerCase`](@ref) separate parsing from
+  construction.
+- [`run_sparlectra_api`](@ref): the non-interactive service contract
   below, for local applications and GUI integrations.
-- [`runContingencies!`](@ref) / [`runScenarios!`](@ref): the N-1 and scenario
-  batch entries. Screening defaults to `:off` everywhere (the byte stable
-  full-solve result); the service and the Web UI follow the configured
-  `contingency.screening.mode`, and `:flag` is a deliberate opt-in after
-  checking share and margins on the target network; see
+- [`runContingencies!`](@ref) / [`runScenarios!`](@ref): the N-1 and
+  scenario batch entries. Screening defaults to `:off`; the service and
+  the Web UI follow
+  `contingency.screening.mode`, and `:flag` is an opt-in; see
   [N-1 Contingency Analysis](contingency.md).
 
 ## Service API: run_sparlectra_api
 
-`run_sparlectra_api` is the stable, non-interactive backend contract intended
-for local applications and future GUI integrations. It accepts a MATPOWER case,
-a configuration template, an output directory, and controlled dotted-key
-overrides. The template is never modified.
+`run_sparlectra_api` takes a MATPOWER case, a configuration template
+(never modified), an output directory and dotted-key overrides.
 
 ```julia
 using Sparlectra
@@ -57,29 +53,27 @@ println(result.status)
 println(result.artifacts)
 ```
 
-The API always uses the existing `run_sparlectra` framework for numerical work.
-It does not duplicate solver logic and does not read from stdin or request
-manual confirmation.
+The API never reads from stdin or asks for confirmation.
 
 ## Result contract
 
 `SparlectraApiResult` separates framework status from transport metadata:
 
-- `run_id` is a globally unique UUID string that remains stable throughout one run.
-- `schema_version` identifies the serialized result contract and is currently `"1.0"`.
-- `status`, `success`, `converged`, and `solution_available` describe run state.
-- `iterations`, `final_mismatch`, `reason`, and `message` describe the outcome.
-- `casefile`, `config_file`, and `output_dir` record effective paths.
-- `logfile`, `result_file`, and `artifacts` expose generated files explicitly.
-- `raw_result` retains the underlying `SparlectraRunResult` for Julia callers.
+- `run_id`: a globally unique UUID string, stable throughout one run.
+- `schema_version`: the serialized result contract, currently `"1.0"`.
+- `status`, `success`, `converged`, `solution_available`: run state.
+- `iterations`, `final_mismatch`, `reason`, `message`: the outcome.
+- `casefile`, `config_file`, `output_dir`: effective paths.
+- `logfile`, `result_file`, `artifacts`: generated files.
+- `raw_result`: the underlying `SparlectraRunResult` for Julia callers.
 
-Input and execution failures return `status == :failed` with a stable reason
-such as `"casefile_not_found"`, `"invalid_configuration"`,
-`"invalid_config_override"`, or `"execution_error"`.
+Input and execution failures return `status == :failed` with a stable
+reason such as `"casefile_not_found"`, `"invalid_configuration"`,
+`"invalid_config_override"` or `"execution_error"`.
 
 ## GUI-editable overrides
 
-Only keys in `GUI_EDITABLE_CONFIG_KEYS` are accepted. The initial allowlist is:
+Only keys in `GUI_EDITABLE_CONFIG_KEYS` are accepted:
 
 - `power_flow.method`
 - `power_flow.tol`
@@ -112,41 +106,31 @@ Only keys in `GUI_EDITABLE_CONFIG_KEYS` are accepted. The initial allowlist is:
 - `benchmark.samples`
 - `benchmark.seconds`
 
-Unknown keys, known but non-editable keys, invalid types, unsupported enum
-values, and invalid ranges are rejected before execution.
+Unknown or non-editable keys, invalid types, unsupported enum values and
+invalid ranges are rejected before execution.
 
 ## Effective configuration and artifacts
 
-Every run with a valid configuration writes
-`output_dir/effective_config.yaml` plus runtime-only request/lifecycle metadata
-in `output_dir/run_metadata.yaml`. Successful and failed calls also write
-`run.log` and `result.json`. Artifact discovery recursively classifies these and
-any generated CSV or report files, so clients never need to guess filenames.
-Each `SparlectraApiArtifact` includes an absolute path, MIME type, existence
-flag, byte size, kind, and description.
+Every run with a valid configuration writes `output_dir/effective_config.yaml`
+and `output_dir/run_metadata.yaml` (request/lifecycle metadata);
+successful and failed calls also write `run.log` and `result.json`.
+Artifact discovery classifies these and any generated CSV or report files;
+each `SparlectraApiArtifact` carries an absolute path, MIME type,
+existence flag, byte size, kind and description.
 
-When the guarded current-iteration start pre-solve is present in rectangular
-solver status, API result metadata exposes the start-preconditioner outcome:
+After a guarded current-iteration start pre-solve the metadata carries
 `current_iteration_enabled`, `current_iteration_attempted`,
 `current_iteration_accepted`, `current_iteration_iterations`,
 `current_iteration_initial_mismatch`, `current_iteration_final_mismatch`,
-`current_iteration_reason`, and `current_iteration_artifact`. The metadata
-describes only the start-value pre-solve; Newton-Raphson remains the power-flow
-solver. The `current_iteration_start.log` artifact is classified as a
-start-value/current-iteration diagnostic artifact, not merely as a generic run
-log.
-
-When `power_flow.merit.enabled = true`, API result metadata additionally
-exposes the merit-function line-search outcome: `merit_enabled`,
-`merit_used_iterations`, `merit_fallback_count`, `merit_active_set_skip_count`,
-`merit_initial`, `merit_final`, and `merit_linesearch_artifact`. The metadata
-describes only the autodamp step-acceptance criterion; it does not change the
-Newton-Raphson iteration itself. The `merit_linesearch.log` artifact is
-classified as a merit-function line-search diagnostic artifact.
+`current_iteration_reason` and `current_iteration_artifact`
+(`current_iteration_start.log`, a start-value diagnostic). With
+`power_flow.merit.enabled = true` it also carries `merit_enabled`,
+`merit_used_iterations`, `merit_fallback_count`,
+`merit_active_set_skip_count`, `merit_initial`, `merit_final` and
+`merit_linesearch_artifact` (`merit_linesearch.log`, a line-search
+diagnostic). Newton-Raphson remains the power-flow solver in both cases.
 
 ## Serialization
-
-Use these dependency-free helpers:
 
 ```julia
 dict_value = to_dict(result)
@@ -155,11 +139,10 @@ json_text = to_json(result)
 yaml_text = to_yaml(result)
 ```
 
-All transport forms include `run_id` and `schema_version`, including the
-`result.json` artifact. Consumers should use `run_id` as the lookup key and
-inspect `schema_version` before decoding fields added by future API revisions.
-The transport forms omit `raw_result` by default because a solved `Net` is not a
-stable JSON/YAML representation. Pass `include_raw_result=true` only for custom
-Julia-side inspection.
+All transport forms, including `result.json`, carry `run_id` (the lookup
+key) and `schema_version` (check it before decoding fields added later).
+`raw_result` is omitted by default (a solved `Net` is not a stable
+JSON/YAML representation); pass `include_raw_result=true` for Julia-side
+inspection.
 
-See `examples/powerflow/exp_programmatic_api.jl` for a runnable example.
+Runnable example: `examples/powerflow/exp_programmatic_api.jl`.

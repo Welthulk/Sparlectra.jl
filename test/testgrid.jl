@@ -3155,6 +3155,14 @@ function test_active_set_voltage_side_release()::Bool
     @test isapprox(row6.dev_pu, 0.0068; atol = 5e-4)
     @test st.final_q_check_status in (:ok, :within_hysteresis)
     @test st.final_q_check_status !== :remaining_pv_q_limit_violations
+    # with Q-limit handling off a converged run has nothing to check: the
+    # status says so instead of claiming there was no converged solution
+    cfg_d = Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, zeng, Dict{String,Any}("power_flow.qlimits.enabled" => false)).config
+    rd = run_sparlectra(casefile = zeng, config = cfg_d)
+    @test rd.final_converged
+    @test Sparlectra.rectangular_pf_status(rd.net).final_q_check_status === :qlimits_disabled
+    @test Sparlectra.final_q_check_line(:qlimits_disabled, NamedTuple[], 100.0) == "Final Q-limit check: not evaluated (Q-limit handling disabled)."
+    @test Sparlectra.final_q_check_line(:not_evaluated, NamedTuple[], 100.0) == "Final Q-limit check: not evaluated (no converged solution)."
     # No bound on the voltage difference between the two modes on purpose:
     # switching variants need not end on the same point (measured 2026-09-24:
     # 1.3e-3 pu apart at bus 6, the machine on its Qmax edge, clamped again by
@@ -3247,6 +3255,9 @@ function test_final_q_limit_classification()::Bool
     @test Sparlectra.QLimitConfig(Dict{String,Any}("hysteresis_pu" => 0.0)).final_q_accept_pu == 0.0
     @test Sparlectra.QLimitConfig(Dict{String,Any}("hysteresis_pu" => 0.01, "final_q_accept_pu" => 0.05)).final_q_accept_pu == 0.05
     @test_throws ArgumentError Sparlectra.QLimitConfig(Dict{String,Any}("hysteresis_pu" => 0.01, "final_q_accept_pu" => 0.005))
+    # auto (the template value) follows the hysteresis, so a user file that
+    # raises hysteresis_pu alone is not rejected by an inherited literal
+    @test Sparlectra.QLimitConfig(Dict{String,Any}("hysteresis_pu" => 0.03, "final_q_accept_pu" => "auto")).final_q_accept_pu == 0.06
     @test "power_flow.qlimits.final_q_accept_pu" in Sparlectra.GUI_EDITABLE_CONFIG_KEYS
     @test Net(name = "n", baseMVA = 100.0, q_hyst_pu = 0.03).final_q_accept_pu == 0.06
 

@@ -1,1039 +1,777 @@
 # Local PowerFlow Web UI
 
-## Cooperative abort and hard reset
+The Web UI is a local browser interface on top of the
+[PowerFlow service](powerflow_service.md). It holds presentation, form
+parsing and route handling only; every calculation runs through
+`start_powerflow_run` and `run_sparlectra_api`. It binds to loopback
+(`127.0.0.1`, `localhost`, `::1`) and has no authentication: a single-user
+tool on the machine that computes; a wider binding would expose the run
+directory and the configuration editor.
 
-Active runs expose their current phase, phase start, last progress, and
-abort-request time. Cancellation is cooperative. If abort is requested during
-`linear_solve`, the current sparse solve must return before the cancellation
-check can run.
+## Start
 
-After 60 seconds in `aborting`, the status page offers **Hard reset Web UI**.
-This does not inject an exception into numerical code: it marks the run
-`aborted_unknown`, records that the result is invalid, and requests a clean
-server shutdown. Restart with `julia --project=. start_webui.jl`.
-Cooperative cancellation logs `powerflow_aborted`; the fallback logs
-`webui_hard_reset_requested` and `webui_shutdown_requested`.
+### One-line install
 
-Sparlectra includes a small, local-first browser interface above the existing
-PowerFlow service. The Web UI contains presentation, form parsing, and route
-handling only; numerical execution continues through `start_powerflow_run` and
-`run_sparlectra_api`.
+Installs Julia if missing (via juliaup), downloads the latest tagged release
+into `Sparlectra/` in the current directory, and starts the Web UI:
 
-### Long actions on a case
-
-Generating a measurement set or adding noise runs inside the request and
-can take a while on a large case (the generator with `critical
-measurements` re-reads the criticality after every removed row). The case
-is marked busy for that time: a second generator action on it, and a run
-of it, are refused with a message instead of reading a file that is still
-being written, and the buttons show their spinner while the request runs.
-A queued or running run blocks the generator the same way.
-
-## Feedback and error popups
-
-One-off feedback (a rejected submission's validation error, the case-import
-result summary, a case-specific-settings-loaded notice) is combined into a
-single dismissible `<dialog>` popup that opens over the PowerFlow form instead
-of being pushed inline into the page flow. It closes via its own close button,
-by clicking the dimmed backdrop, or with the Escape key. Persistent
-in-page notices with an actionable link — for example the configuration
-notice pointing at **the advanced configuration tools** — stay inline instead,
-since a modal would hide the target they link to. A separate, permanent
-history of recent errors remains available on the **Last errors** page linked
-from the header, independent of the popup.
-
-## Start after package installation
-
-```julia
-using SparlectraApp   # the Web UI is part of the application package (app/)
-
-server = SparlectraApp.start_sparlectra_webui(open_browser = true)
-wait(server.task)
+```sh
+curl -fsSL https://raw.githubusercontent.com/Welthulk/Sparlectra.jl/main/tools/install_webui.sh | sh
 ```
 
-A Web UI started this way runs without the [sysimage](sysimage.md): Julia
-takes an image only at process start, so a session cannot switch to one
-later, not even after a build from the **Sysimage** page. The image is used
-by the start script (`start_webui.jl`, `start_webui.sh`, `start_webui.bat`)
-or by starting Julia on it with `julia -J <image> --project=app` and the two
-lines above; the Sysimage page of such a session shows the exact command line.
+```powershell
+iwr -useb https://raw.githubusercontent.com/Welthulk/Sparlectra.jl/main/tools/install_webui.bat -OutFile install_webui.bat; .\install_webui.bat
+```
 
-The package installation directory does not need to be known. By default,
-results are written beneath `%LOCALAPPDATA%\Sparlectra\WebUI\runs` on Windows,
-`$XDG_STATE_HOME/sparlectra/webui/runs` (or
-`~/.local/state/sparlectra/webui/runs`) on Linux, and
-`~/Library/Application Support/Sparlectra/WebUI/runs` on macOS. Directories
-are created automatically. The operation log is in the sibling user Web UI
-`logs` directory, and downloaded/generated MATPOWER cases are cached in the
-sibling user Web UI `data/mpower` directory.
+The same scripts, `tools/install_webui.sh` / `tools/install_webui.bat`, ask
+three questions:
 
-The same directory is used by `ensure_casefile` and by the test suite for
-large cases, so a case downloaded once through the Web UI is available to all
-three. `SPARLECTRA_LARGE_CASES_DIR` overrides the location for all of them.
+- **Update** when an existing copy is older than the latest release; the old
+  copy is kept as `Sparlectra.old`.
+- **Sysimage**: the installer leaves the [sysimage](sysimage.md) build to the
+  Web UI start and builds it only with `SPARLECTRA_BUILD_SYSIMAGE=1`.
+- **Desktop shortcut** for restarting the Web UI: Windows `Sparlectra Web
+  UI.lnk`; Linux an application-menu entry plus a `.desktop` file on the
+  desktop (GNOME needs a one-time right-click "Allow Launching"); macOS a
+  desktop symlink.
 
-On first start, the internal
-`warmup_case*.jl` workloads are copied there; they are not shown in the
-normal user-selectable case list (the sysimage build workload runs the
-shipped `sp_case5`/`sp_case60` demo cases).
+Unattended installs answer them with `SPARLECTRA_UPDATE=1/0`,
+`SPARLECTRA_BUILD_SYSIMAGE=1/0` and `SPARLECTRA_CREATE_SHORTCUT=1/0`.
 
-On first startup, the Web UI copies the package configuration template to its user-writable `config/configuration.yaml`. Pass `output_root="my_sparlectra_runs"` or `config_file="my_configuration.yaml"` to override these defaults; an explicit configuration file is never overwritten.
+### Start script
 
-Next to the provisioned `configuration.yaml` the Web UI keeps three kinds of
-files, all its own: `configuration.template.yaml` is the package template
-the file was last aligned with; a later release may change a template
-default, and at start every key whose value still equals that old template
-value follows the new one, while a value you changed stays.
-`configuration.yaml.user-keys.txt` lists the keys the Web UI itself saved
-into the file (settings save, notice dismiss, configuration editor); a
-listed key is never followed, even when its value happens to equal an old
-default. Each change is reported at start with key, old and new value, and
-the previous file is kept as `configuration.yaml.template-follow.bak`
-(settings saves keep `configuration.yaml.settings-save.bak`). Deleting the
-record or the template copy does no harm beyond losing that memory.
-The effective configuration, output root, MATPOWER cache, and operation log are displayed by
-the Web UI; the browser cannot change the output root.
-
-### Repository developer launcher
-
-From a repository checkout, run:
+From a checkout or an installed copy:
 
 ```sh
 julia --project=. start_webui.jl
 ```
 
-`start_webui.jl` is the single maintained developer launcher and delegates
-startup and default-path behavior to `start_sparlectra_webui`.
+`start_webui.sh` / `start_webui.bat` run the same script (and point at the
+install script when Julia is missing); a Windows desktop shortcut is
+right-click `start_webui.bat`, *Send to > Desktop (create shortcut)*.
+`start_webui.jl` delegates to `start_sparlectra_webui`. It first compares
+the direct dependencies in `Project.toml` with `Manifest.toml`, for the
+library and for `app/` (four TOML reads, no package load); a missing
+dependency or manifest is resolved, instantiated and compiled once, with the
+time reported, and the next start compiles nothing. `Manifest.toml` is not
+tracked, so a fresh clone and an old manifest are both covered.
+`julia --project=. start_webui.jl --env-only` does only that first-start
+work.
 
-Before anything else it compares the direct dependencies in `Project.toml`
-against `Manifest.toml`, for the library and for the application under
-`app/`, which costs four TOML reads and no package load. When one is
-missing, or when there is no manifest, it resolves, instantiates and
-compiles that environment once, says so and reports the time; a second
-start reports both environments as up to date and compiles nothing.
-`julia --project=. start_webui.jl --env-only` does that first-start work
-and stops before the sysimage question and the server. `Manifest.toml` is not
-tracked, so this covers both a fresh clone and a manifest left over from an
-older Sparlectra that never learned about a dependency added since. The check
-runs BEFORE the [sysimage](sysimage.md) question on purpose: nobody should be
-asked whether to spend minutes on a build while the checkout itself cannot be
-loaded.
-
-For end users the repository root additionally ships platform scripts:
-`start_webui.sh` / `start_webui.bat` (start; point at the install script
-when Julia is missing) and `tools/install_webui.sh` / `tools/install_webui.bat`
-(install Julia via juliaup when missing, obtain Sparlectra at its latest
-tagged release, offer the update when an existing copy is older than the
-latest release, leave the [sysimage](sysimage.md) build to the Web UI start,
-offer a desktop shortcut or launcher for restarting the Web UI, then
-start it). Unattended installs answer the questions via
-`SPARLECTRA_UPDATE=1/0`, `SPARLECTRA_BUILD_SYSIMAGE=1/0`, and
-`SPARLECTRA_CREATE_SHORTCUT=1/0`. The
-install scripts also run as a one-liner without any GitHub checkout, see
-the
-[README installation section](https://github.com/Welthulk/Sparlectra.jl#installation).
-
-The call returns a `SparlectraWebUIServer` handle immediately. Stop it with
-`close(server)`, `Ctrl+C`, or the **Stop Web UI** button in the shared page
-header. The button sends `POST /webui/shutdown`, closes the listening socket,
-and allows `wait(server.task)` to return. Pass `open_browser=true` to open the
-Web UI in a standalone app-style window without normal browser tabs or controls:
-
-```julia
-server = start_sparlectra_webui(open_browser = true)
-```
-
-The app-window launcher supports Microsoft Edge, Google Chrome, Chromium, and
-Brave. If none is installed, Sparlectra logs the local URL instead of falling
-back to a regular tab; open `http://127.0.0.1:8080/powerflow` manually if
-needed.
-
-The server accepts loopback hosts only: `127.0.0.1`, `localhost`, or `::1`.
-That is the intended deployment model, a single-user tool on the machine that
-does the computing, not a limitation waiting to be lifted: there is no
-authentication, so any wider binding would expose the run directory and the
-configuration editor to whoever can reach the port.
-
-The shared page header uses the existing Sparlectra documentation logo from
-`docs/src/assets/logo.png`. The Web UI serves that single PNG through its local
-asset route, and no additional branding configuration is required.
-The shared header and footer display the running package version from
-`Sparlectra.version()`, for example `Sparlectra.jl v0.8.4`.
-
-### Startup
-
-`start_sparlectra_webui` serves as soon as the server is bound; there is no
-hidden warm-up run. What the first click costs depends on how the session
-started: on the [sysimage](sysimage.md) the code is already compiled, and
-without it Julia compiles each path on first use, which the start says
-plainly before it happens. Files whose names start with the reserved
-`warmup_` prefix are bundled precompile workloads and stay hidden from the
-case selector.
-
-### Refreshing the sysimage
-
-The **Info** panel on the run pages names the build that is serving them
-(`sysimage, built ...` or `native session`) and links to the **Sysimage**
-page at `/webui/sysimage`. That page states whether the image on disk is
-still valid, and if not, which check failed, and it carries a **Refresh
-sysimage** button.
-
-Use it when the image is marked as needing a rebuild, and equally when a
-page paused to compile while you were working: an image that was correct
-when it was built is still incomplete for any path its workload never
-touched, and a refresh folds whatever compiled at run time into the trace.
-
-The build runs as a separate background process. It survives a browser
-reload and a Web UI shutdown, and only replaces the image file at the very
-end, so the session that started it keeps running throughout.
-
-While it works, the page shows which of the four steps is running, what that
-step is currently doing, and how long the build has been going, and it
-refreshes itself every two seconds. The counter starts with the button, not
-with the build process: Julia needs seconds to boot before it can report
-anything, and a page that sits still for that long reads as broken. When the
-build ends, the page reloads once and shows the result, a size and a duration
-for a successful build, or the reason and the tail of the build log for a
-failed one. There is no notification outside that page: navigate away and you
-have to come back to it to see the outcome. The running process keeps the image it
-booted from, though: after a successful refresh the page says so and asks
-for a restart, which is the point where the new image takes effect. Details
-of the build are in `sysimage_build.log` next to the image; see
+Then it looks for a usable sysimage and offers to build one; the build,
+its flags, the staleness rules and the **Sysimage** page are on
 [Sysimage](sysimage.md).
 
-## Starting a PowerFlow run
+### From the Julia REPL
 
-Web UI submissions start in a background worker task and redirect immediately to
-a run-status page. Near the top, a highlighted clock card shows elapsed time in
-`HH:MM:SS` format beside the current status. The technical details table retains
-the raw `elapsed_seconds` value along with the requested and resolved case paths,
-start time, and a manual refresh link. Queued, running, and
-aborting pages also refresh every two seconds through an HTML refresh directive.
-The marked `autorefresh=1` requests are not recorded as user actions. Terminal
-success, failure, and abort pages stop refreshing automatically. While a job is queued or
-running, it also shows an **Abort run** form that sends
-`POST /powerflow/abort/<run-id>`; JavaScript is not required.
+```julia
+using Pkg
+Pkg.activate("path/to/Sparlectra/app")
+Pkg.instantiate()   # first time only
+using SparlectraApp
 
-The start form and run-history page also show a prominent active-run banner
-with **Open status** and POST-only **Abort** controls. This keeps abort
-discoverable even when the user navigates away from the status page. The
-controls disappear as soon as the run reaches a completed, failed, or aborted
-state.
+server = start_sparlectra_webui(open_browser = true)
+wait(server.task)
+```
 
-Abort is cooperative and never kills a Julia task unsafely. The abort request
-changes the visible state to `aborting` immediately, and the Web UI PowerFlow
-path checks cancellation before and after major service phases and inside each
-rectangular Newton iteration. The rectangular path also checks immediately
-before and after Y-bus construction and start projection, after Q-limit active
-set work, and after each Newton step. A sparse factorization or other
-non-interruptible operation may still finish before the next check, so the
-status page shows the current phase and explains that the phase may need to
-finish before cancellation is observed.
-Repeated requests are idempotent. Once cancellation
-is observed, the terminal state becomes `aborted`, `powerflow_aborted` is
-written to the operation log, the active-run guard is released, and a new
-submission is accepted. Aborted runs retain a normal run directory,
-`result.json`, and `run.log` status marker, but are never reported as success.
+Such a session runs without the sysimage; how to start a REPL session on
+the image is on [Sysimage](sysimage.md).
 
-Large MATPOWER cases can spend substantial time before Newton iterations begin,
-especially while reading `.m` files, evaluating large `.jl` literal cases,
-building the Sparlectra network, assembling Y-bus data, or preparing start
-values. The result page, operation log, `run.log`, `result.json`, and
-`performance.log` (when timing is enabled) now expose service phase timings so
-users can distinguish reader, converter/cache, network-builder, solver, and
-artifact costs. These diagnostics do not guarantee that very large cases finish
-quickly through the local Web UI; they identify where follow-up optimization
-should focus.
-The operation log intentionally records only high-level phase starts; detailed
-Y-bus, Newton-iteration, Q-limit, and linear-solve timings belong to each run's
-`performance.log` and are summarized there instead of being repeated in the Web
-UI support log.
+`start_sparlectra_webui` returns a `SparlectraWebUIServer` handle and serves
+as soon as the socket is bound, with no hidden warm-up run.
+`open_browser = true` opens an app-style window (Microsoft Edge, Google
+Chrome, Chromium or Brave); without one of them the URL
+`http://127.0.0.1:8080/powerflow` is logged. If the port is occupied, stop
+the old Julia process or pass another `port`.
 
-Deletion of a queued, running, or aborting run is rejected with an explanation.
-After the run reaches terminal `aborted` status, normal deletion is available.
+### Directories and files
 
-The start page accepts:
+Results go to `%LOCALAPPDATA%\Sparlectra\WebUI\runs` (Windows),
+`$XDG_STATE_HOME/sparlectra/webui/runs`, default
+`~/.local/state/sparlectra/webui/runs` (Linux) or
+`~/Library/Application Support/Sparlectra/WebUI/runs` (macOS), created
+automatically; the operation log is in the sibling `logs`, downloaded and
+generated cases in the sibling `data/mpower`. That case directory is shared
+with `ensure_casefile` and the test suite; `SPARLECTRA_LARGE_CASES_DIR`
+overrides it for all three. The bundled `warmup_case*.jl` precompile
+workloads are copied there on first start; the reserved `warmup_` prefix
+hides them from the case selector (the sysimage workload runs the shipped
+`sp_case5`/`sp_case60`).
 
-- a typed MATPOWER case name or an existing local case path;
-- a Sparlectra configuration template file;
-- read-only information showing the server's configured output-root directory;
-- PowerFlow tolerance and maximum iterations;
-- autodamping and its minimum factor;
-- Q-limit handling;
-- a single **Solver** radio group with three mutually exclusive, peer options
-  — AC (Newton-Raphson, rectangular), APSLF (AnalyticLoadFlow), and DC (linear
-  screening model) — with conditional, indented sub-options for whichever
-  solver is selected;
-- wrong-branch detection mode;
-- angle and voltage start modes;
-- current-iteration pre-solve fields in the collapsible **Advanced start
-  values** section;
-- merit-function line-search fields in the collapsible **Merit-function line
-  search** section;
-- a visible MATPOWER import conventions section with auto-profile mode
-  (`off`, `recommend`, or `apply`) plus manual transformer-ratio,
-  phase-shift, bus-shunt, PV-voltage-source, and comparison-reference
-  overrides;
-- logfile result mode;
-- single-run performance timing detail;
-- optional post-run diagnostics; and
-- benchmark enablement, samples, and seconds.
+The first start copies the package configuration template to the
+user-writable `config/configuration.yaml`; `output_root = "..."` and
+`config_file = "..."` override the defaults, and an explicit configuration
+file is never overwritten. Next to it the Web UI keeps:
 
-Only keys in `GUI_EDITABLE_CONFIG_KEYS` are submitted. The output root is
-chosen only through `start_sparlectra_webui(; output_root=...)`, is displayed as
-read-only information, and cannot be overridden by a submitted browser field.
-The page does not offer a generic YAML editor and never modifies the selected
-template. The service creates an `effective_config.yaml` artifact for each run.
-The header and `webui_operations.jsonl` include the Sparlectra version, package
-path, and local Git commit when available so users can confirm which checkout
-is serving the browser page.
+- `configuration.template.yaml`, the template the file was last aligned
+  with: a key still at an old template default follows a new default at
+  start (reported with key, old and new value; previous file kept as
+  `configuration.yaml.template-follow.bak`), a changed value stays;
+- `configuration.yaml.user-keys.txt`, the keys the Web UI itself saved
+  (settings save, notice dismiss, configuration editor), which are never
+  followed; deleting it or the template copy only loses that memory;
+- `configuration.yaml.settings-save.bak`, the backup of a settings save.
 
-The current-iteration controls in **Advanced start values** write the same
-`power_flow.start_current_iteration.*` overrides documented in
-[`powerflow_configuration.md`](powerflow_configuration.md#guarded-current-iteration-start-pre-solve).
-They configure a guarded start-value preconditioner that runs after the normal
-start modes and optional start projection, before Newton-Raphson. They do not
-add a new start-voltage/start-angle mode and do not replace the rectangular
-Newton-Raphson solver. When case-specific settings saving is enabled, these
-fields are saved and restored through the same profile mechanism as the other
-Web UI form options.
+The pages show the effective configuration, output root, case cache and
+operation log; the browser cannot change the output root. Header and footer
+show the logo (`docs/src/assets/logo.png`) and `Sparlectra.version()`;
+header and operation log also name the package path and Git commit. The
+**Info** panel names the serving build (`sysimage, built ...` or `native
+session`) and links to the Sysimage page.
 
-The **Merit-function line search** controls write the same
-`power_flow.merit.enabled`/`power_flow.merit.armijo_c1`/`power_flow.merit.fallback_max_mismatch`
-overrides documented in
-[`powerflow_configuration.md`](powerflow_configuration.md#merit-function-line-search-options).
-This is an opt-in Armijo acceptance criterion inside the existing autodamp
-backtracking loop; it requires `power_flow.autodamp = true` and does not
-replace autodamp or the Newton-Raphson solver. The residual-scaling keys
-(`scale_p`/`scale_q`/`scale_v`) are YAML-only and are not exposed as form
-fields. When a diagnostic run directory is available, results include a
-`merit_linesearch.log` text artifact.
+## Importing cases
 
-The **Solver** radio group is a single `power_flow_solver` form field with
-three peer, mutually exclusive values — `rectangular`, `apslf`, `dc` — and
-writes the same `power_flow.solver`/`power_flow.apslf.*`/
-`power_flow.apslf_start.*`/`power_flow.dc.*` overrides documented in
-[`powerflow_configuration.md`](powerflow_configuration.md#solver-selection-rectangular-vs-apslf)
-and
-[`powerflow_configuration.md`](powerflow_configuration.md#solver-selection-dc-power-flow).
-An earlier version of this page presented AC/DC and rectangular/APSLF as two
-separate, layered controls (a "Berechnungsmodell" AC/DC radio group above a
-Solver dropdown that only ever chose between `rectangular` and `apslf`, DC
-being forced onto the dropdown from outside it). That structure made APSLF
-look like a sub-choice of AC even though it is a fully independent solver, a
-`power_flow_calc_mode` field existed only to drive the same underlying
-`power_flow.solver` value the dropdown also wrote (so the two controls could
-show inconsistent state), and it caused a real bug: because the Solver
-dropdown was disabled whenever DC was chosen, and disabled `<select>`
-elements are dropped from a submitted HTML form entirely, choosing DC could
-silently submit no `power_flow.solver` override at all and the run fell back
-to the default `rectangular` solver — reported to the user as an ordinary
-AC/NR convergence failure with no mention of DC anywhere in the diagnostics.
-The current single three-way radio group removes both problems by
-construction: there is exactly one field, exactly one place to pick a
-solver, and radio buttons are never individually disabled (only the checked
-one is submitted), so there is no submission path that can drop the choice.
+The **Case** page carries the case chooser, upload, export and the
+per-format import options.
 
-Choosing `AC (Newton-Raphson, rectangular)` reveals the Newton-Raphson start-
-value block (**Flat start**, **Use APSLF start values** with its indented
-order field, **Use DC start values**) together with
-every other AC/NR-only option (tolerance, autodamping/merit/trust-region step
-control, Q-limit handling, maximum iterations, wrong-branch detection, start
-angle/voltage mode, the current-iteration pre-solve block, transformer
-tap-changer model). By default (`power_flow.start_mode.angle_mode = dc`) the
-Newton-Raphson solver already seeds its own start angles from a fast internal
-DC pre-solve before iterating — it is *not* a separate configuration step;
-the **Start angle mode** dropdown further down the form (still NR-only)
-controls this and documents the other available start strategies. This DC
-pre-solve is unrelated to, and does not require, choosing the standalone
-`DC` solver option below.
+### [Case selector](@id webui-case-selector)
 
-**Flat start** is the one start switch: with it on, every bus starts at
-1.0 pu and 0 degrees and the imported start voltages are ignored. The run
-switches the APSLF and DC start values, the current-iteration pre-solve and
-both start modes off (`classic`) for its duration and names them in
-`run.log`; the page greys those controls, their saved values stay and come
-back when the flat start is unchecked. A CGMES run starts flat too unless
-its start values are set to `sv` on the Case page (`power_flow.flatstart`,
-see [Power flow configuration](powerflow_configuration.md)).
+The selector lists the MATPOWER `.m` files and runnable DTF `.DAT`
+candidates of the case directory, the shipped demo cases `sp_case5` to
+`sp_case188` ([Shipped Demo Cases](demo_cases.md)), staged into the cache
+with their sidecars (per-case configuration, measurement CSVs) on first
+use, and the three CGMES deliveries exported by Sparlectra itself
+(`data/cgmes_demo`: `sp_case14`, `sp_case118`, `sp_casePST`, four profile
+files each) as `<case>_cgmes.zip`. Generated `.jl` cache files and
+`warmup_` files are hidden. FOR002-like `.DAT` files are not primary cases;
+they go into the optional **FOR002 reference** field (absolute path, path
+in the case cache, or an offered candidate), used only for legacy reference
+comparison.
 
-Choosing `APSLF (AnalyticLoadFlow)` reveals an indented **APSLF solver
-options** block (highest coefficient/order, Padé evaluation, NR polish)
-instead. The **Use APSLF start values** checkbox in the Newton-Raphson block
-is unrelated to and mutually exclusive with the APSLF solver selection (the
-underlying configuration rejects setting both at once) — it configures how
-the *rectangular* NR solver seeds itself, not APSLF. As with the Q-limit and
-current-iteration checkboxes, an unchecked APSLF checkbox explicitly submits
-`false` rather than omitting the key. The APSLF solver requires the optional
-AnalyticLoadFlow.jl dependency to be loaded in the server process; if it is
-not installed, the run fails immediately with a clear pre-solve error instead
-of a silent fallback to the rectangular solver.
+**Or type case file path** overrides the selector: a bare name such as
+`case14.m`, `case118.m` or `case9241pegase.m` is downloaded into the case
+directory, an existing absolute or relative `.m`/`.jl` path is used as
+given; path-like missing inputs and URLs are rejected. A generated `.jl` cache file resolves back to its `.m` source
+(the bypass is recorded) and is rejected without one: large `.jl` literal
+cases can fail while Julia loads them, so `.m` stays the canonical source.
 
-Choosing `DC (lineares Screening-Modell, ersetzt Newton-Raphson vollständig)`
-selects the standalone linear DC power-flow model described below, replacing
-Newton-Raphson entirely rather than merely seeding its start values.
-
-Result and status pages reuse the existing summary, timing-card, artifact, and
-history views unchanged; the run status header additionally shows a
-**Solver** entry (`rectangular`, `apslf`, or `dc`) identifying which solver
-actually produced the result.
-
-### Mutually exclusive fields are grayed out, not hidden
-
-Fields that don't apply to the currently selected solver (or, within the
-Newton-Raphson autodamp/trust-region step control, to the currently enabled
-step-control strategy) stay in their place in the form and are disabled with
-reduced opacity instead of disappearing. Earlier versions of this page hid
-inapplicable fields outright (`hidden`), which could make the form feel like
-fields randomly appeared/vanished/reordered when switching solvers. Nothing
-about which keys get submitted changes: a grayed-out field's underlying
-input is still `disabled` and therefore still omitted from the submitted
-form exactly as before — only the *visual* treatment changed.
-
-### DC power flow mode
-
-Selecting `DC` in the **Solver** radio group does not add a new configuration
-key: it is simply the `dc` value of the same `power_flow.solver` field the
-`rectangular`/`apslf` options also write, documented together with
-`power_flow.solver` in
-[`powerflow_configuration.md`](powerflow_configuration.md#solver-selection-dc-power-flow).
-Selecting DC grays out every AC-only option that has no DC meaning: tolerance,
-autodamping/merit/trust-region step control, Q-limit handling, maximum
-iterations, wrong-branch detection, start angle/voltage mode, the
-current-iteration pre-solve block, and the transformer tap-changer model —
-their inputs are `disabled` and therefore not part of the submitted form,
-the same client-side mechanism already used for Newton-Raphson-only fields
-when APSLF is selected.
-
-A DC run reuses the existing asynchronous job, abort, status, history, and
-artifact machinery unchanged; only the request's `power_flow.solver` override
-differs. The result page marks a DC run with a **DC solution** badge next to
-the **Solver** summary entry, and the run history table's **Solver** column
-shows `dc` for these runs, so a DC run's implicit `Vm = 1.0 pu` and lossless
-branch flows are never mistaken for an AC result. `iterations` is reported
-as-is from the DC solve (always `1`, a direct linear solve, not a Newton
-iteration count).
-
-The **Solver** column names the method that actually ran, which is not the
-power-flow solver for every run kind: a state estimation reports `wls`
-(weighted least squares), a short circuit `iec60909` (a direct solve, not a
-Newton iteration), and an import analysis leaves the column empty because it
-solves nothing. A plain power flow, a power flow started from an estimate,
-and every contingency case report the power-flow solver. The value is
-derived from the run kind when a run carries no method of its own, so runs
-recorded before this distinction existed also show the right method.
-
-### Case-specific settings profiles
-
-Case-specific Web UI settings are optional. When a terminal result page shows a
-successful or converged run, the compact **Case settings** section offers
-**Save settings for this case**. This writes only the Web UI form options that
-were used for that completed run, plus traceability metadata, into a sanitized
-YAML profile below the Web UI output root. It does not save the run's full
-`effective_config.yaml`, solver internals, artifact paths, or transient
-convergence diagnostics.
-
-If the run did not converge, the result page does not show the normal save
-action. It instead labels the action **Save these settings anyway** and records
-that the user explicitly overrode the non-successful-run warning. No profile is
-saved automatically.
-
-When the same case is opened again with a saved profile, the run page is
-prefilled with the profile values and displays a small notice. Precedence stays
-conservative: built-in defaults are loaded first, global configuration remains
-unchanged, the case-specific Web UI profile only prefills editable form fields,
-and any manual browser edit wins for the submitted run.
-
-The **Settings** page shows the configuration file's values by default, so the
-controls read as the file sets them. When the selected case has saved
-settings, or carries settings inside the case file (an SCF configuration
-block), a line under the heading says so, with the number of keys, and the
-link **Show the case settings** (`?case_settings=1`) overlays them on the
-form; **Show the
-configuration values** switches back. A run resolves the case level either
-way; a save with the target "this case" writes what the form shows.
-
-Between the configuration file and a saved case profile, the **last edit
-wins**: when the YAML file is newer than the saved profile, the keys the YAML
-sets take precedence on the next page load (the notice says so), while fields
-the YAML does not set keep their saved case values. Editing the configuration
-therefore shows up on a simple page refresh — no Web UI restart needed.
-
-Since the page split, run-independent options live on their own
-pages: the **Case** page carries the case chooser, upload, export, and
-the per-format import options; the **Settings** page carries the solver,
-start, output, and expert options together with the configuration block
-(configuration file display, check/refresh actions, saved case settings,
-and the ignore switch). Settings values reach a run through the
-configuration precedence (`resolve_config`), not through the run form:
-saving with target "this case" writes case-scope keys into the case's
-configuration file, target "configuration file" merges into the general
-YAML (with a `.settings-save.bak` backup). The run page keeps only the
-run parameters (modes, N-1 kind, scenario source, screening, the DTF
-outage run fields, and the benchmark trigger).
-
-With block 4 the run page became the **Runs** page (nav entry "Runs"):
-below the PowerFlow form it carries the state-estimation section
-(estimator options and measurement-set selection posting to the same
-`/powerflow/run` action with `se_mode`, plus the measurement generator,
-set details with inline editors, and the measurement upload as fold-out
-tabs) and the N-1 editors as tabs: the scenario editor embeds directly
-(SCF cases), while the weights editor loads on first open through the
-standalone route (seeding its element names builds the net once). The
-former `/stateestimation` page is a real redirect to the Runs page's SE
-anchor; its POST action routes are unchanged. The SE section always uses
-the shared case selection from the Case page; it has no case selector of
-its own anymore.
-
-The measurement generator's fields are the generator options of
-[State Estimation](state_estimation.md#Measurement-generator-v2): sigmas
-per measurement class, noise, gross errors (count and size), tap
-deviations, the truth source, one or both flow ends per branch, passive
-nodes as zero-injection constraints, and **critical measurements**: the
-number of rows the generator makes critical (a row whose residual is
-structurally zero, so a gross error on it stays invisible) by removing
-their redundant partners, never past observability. `0` leaves the set as
-generated; the removed and the critical rows are named in the set's
-comment lines and the estimation run log lists them again.
-
-Stage 4B generates the Case page's format-bound option sections from the
-adapters themselves: the field set of each section derives from the
-adapter's option struct (`options_type`) and the option specs, so the
-form cannot drift from what a conversion actually accepts. Visibility
-follows the decided Basic criterion (keys that appear in at least one
-workshop, or in the example configuration without a default): the small
-Basic set renders directly on the Settings and Case pages, everything
-else folds into the Advanced sections, and the DTF diagnostics on the
-Runs page sit behind the same Advanced fold. Deleting a case now removes
-ALL of its companion files (configuration, weights, measurement CSVs),
-enumerated by one definition.
-
-The existing-case selector is MATPOWER-oriented by default and lists
-user-selectable `.m` files plus runnable DTF `.DAT` candidates when they
-are supported by the current Web UI case-resolution logic. The shipped
-demo cases (`sp_case5` to `sp_case188`, see
-[Shipped Demo Cases](demo_cases.md)) are always offered as well; picking
-one stages it into the case cache together with its sidecar files (the
-per-case configuration and the measurement CSVs) on first use. The three
-CGMES deliveries exported by Sparlectra itself (`data/cgmes_demo`:
-`sp_case14`, `sp_case118`, `sp_casePST`, four profile files each) are
-offered as `<case>_cgmes.zip` and packed into the case cache when picked.
-Generated
-`.jl` cache artifacts are hidden from the selector, and files with the
-reserved `warmup_` prefix are internal-only. FOR002-like `.DAT` files are not primary
-cases; use the optional FOR002 reference field for those validation references.
-The FOR002 reference field is used only for legacy reference comparison
-diagnostics: enter an absolute path, a path copied from the same case cache
-directory, or select a FOR002.DAT candidate already present in the case cache
-when one is offered. The **Case input format** selector defaults to
-**Auto**, which recognises MATPOWER files, CGMES deliveries (folders and ZIPs)
-and — where the FOR001 markers are unambiguous — native DTF input. Selecting
-**CGMES (ENTSO-E, folder or ZIP)** forces the CGMES importer; the option is
-preselected automatically when the chosen case is a `.zip` or a directory.
+**Case input format** defaults to **Auto**: MATPOWER files, CGMES
+deliveries (folders and ZIPs) and, where the FOR001 markers are
+unambiguous, native DTF input. **CGMES (ENTSO-E, folder or ZIP)** forces
+the CGMES importer and is preselected for a `.zip` or a directory.
 **Sparlectra Case Format (.scf.json)** and **power-grid-model JSON
-(input.json)** name the same reader: the `sparlectra` block of an SCF file is
-optional, so a plain power-grid-model dataset loads as well. *Auto* already
-resolves every `.json` to that reader, so the two entries matter when the file
-extension does not say what the file is.
-The native DTF path is experimental/internal and intended for diagnostics and
-validation, not the primary workflow. For the
-selected-outage-records mode, the **Selected DTF outage labels/indices** field
-accepts one parsed label or outage index at a time; the result page reports
-the compact outage summary while detailed rows stay in artifacts.
-First startup still provisions the small `warmup_case3.jl` case for warmup, but
-it is not user-selectable. A separate manual field accepts a bare case name such
-as `case14.m`, `case118.m`, or `case9241pegase.m`; a nonempty manual value
-overrides the selected cached case. Internal DTF support is intended for
-supported conversion and validation workflows and does not change
-the normal MATPOWER-first workflow.
-
-The landing page includes a compact, collapsible MATPOWER acknowledgement beside
-the case inputs. It distinguishes Sparlectra from MATPOWER, provides links to
-the MATPOWER project, its citation guidance, and the standard 2011 paper DOI,
-and notes that ACTIVSg, PEGASE, RTE, and other case files may request additional
-case-specific citations in their file headers.
-
-A missing bare `.m` case name is resolved in the user Web UI `data/mpower` cache
-through the standard MATPOWER download helper and remains the executed source.
-Web UI/service PowerFlow runs do not automatically replace selected `.m` files
-with generated `.jl` cache files. If a user manually submits a generated `.jl`
-file from the Web UI MATPOWER cache and a matching `.m` source exists, the
-service resolves back to the `.m` file and records that the generated cache was
-bypassed. If the matching `.m` source is missing, the request is rejected with a
-clear validation error. Large generated `.jl` MATPOWER cases can fail while
-Julia and SparseArrays load literal data, before Sparlectra network construction
-or Newton iterations begin, so `.m` remains the canonical Web UI execution
-source.
-
-Existing absolute and relative `.m` or `.jl` paths remain supported. A missing
-input containing a path separator is rejected instead of downloaded, and URL
-input is not accepted. The browser cannot select runtime directories. The
-read-only configuration path is the provisioned user file or the explicit file
-passed at startup.
-
-## Scenarios and N-1 on the run form
-
-The action row of the run form carries the N-1 controls: the outage-kind
-selector (branch/generator), a **scenario source** selector (generated
-N-1 lists, or, for an SCF case that carries one, the case file's own
-scenarios block), a **screening mode** selector (configured / off / flag /
-only) with a **margin** field (empty means the configured
-`contingency.screening.margin_pct`), and the links to the weights editor
-and, for SCF cases, the scenario editor. Screening is off by default and
-is a deliberate opt-in; see [N-1 Contingency Analysis](contingency.md)
-for the reasoning and the calibration. The run summary names the screened
-count and the case-list source, and the result page renders the N-1 /
-scenario results as a table for every case format: name, weight,
-convergence, iterations, start, voltage envelope, worst loading,
-severity, islands, shed load, and (when screening ran) the screened
-marker column. Rows are ranked by severity with failures first and capped
-at 100; the CSV artifact keeps the complete list in input order and is
-linked from the table. A row with a screening estimate carries an
-always-visible detail line: for a screened row the values are the
-one-step estimate itself (no full solve), for a flagged row the estimate
-stands next to the full-run values; a failed case shows its error text in
-the row.
-
-Scenarios are available for SCF cases only in this version. For MATPOWER,
-DTF and CGMES cases the form offers the generated N-1 sources and shows
-one line, "Scenarios need an SCF case; export this case as SCF first",
-next to the export action. The **scenario editor**
-(`/powerflow/scenarios`) lists the open SCF case's scenarios (name,
-weight, op count; edit, duplicate, delete, new) and edits one scenario
-through a form of op rows: op (status/set/scale), target class, a
-component selector populated from the case as `id: name (from-to)` and
-filtered by class, then the fields the op needs (value for status, field
-plus value for set, factor for scale). Validation is server side with the
-scenario rules; errors show next to the form with the scenario name and
-op index, and a tap patch on a regulated transformer is rejected with the
-controller named. "Save into case file" writes the scenarios block into
-the SCF through the existing writer; nothing is kept in the browser. The
-run starts from the run form with the scenario source set to the case
-file's scenarios.
-
-## Run artifacts and output modes
-
-The **Logfile output mode** is forwarded through the form, service request, API
-configuration override, and `run.log` writer. `classic` keeps the standard
-result report plus a compact API timing/status summary. `full` adds a marked
-**Full run details** section with the effective typed configuration, artifact
-choices, and available status diagnostics. The summary records
-`solver_time`, `representative_time`, iterations, final mismatch, and final
-outcome where available. Benchmark median and sample count appear when
-benchmark mode is enabled.
-
-The **Export case as CGMES delivery (EQ+TP+SSH+SV, ZIP)** checkbox writes
-the case as one re-importable CGMES delivery zip into the run's artifact
-directory — for every case format, and also on non-converged runs. See
-[CGMES Export](cgmes_export.md) for what the export covers and how object
-identity is handled.
-
-MATPOWER `.m` imports additionally print "Original/Final effective MATPOWER
-import options" and a "MATPOWER auto-profile recommendations" table, because
-MATPOWER files leave branch-convention details (`shift_sign`, `shift_unit`,
-`ratio`, ...) ambiguous enough to warrant a residual-scan recommendation step.
-DTF/FOR001 `.DAT` imports do not carry this ambiguity and therefore never print
-these sections, at any logfile output mode — a shorter `run.log` for a DTF
-case is expected, not a sign that `classic`/`full` logging is broken for that
-format.
-
-The **Performance timing** control accepts `off`, `compact`, or `full` and
-writes `performance.log` when enabled. It describes phases of one request,
-unlike `benchmark.enabled`, which measures repeated solves and median timing.
-Service runs can include request parsing and case resolution; API phases include
-configuration, case loading/network construction/solve, postprocessing when
-separately available, artifact writing, solver time, and total time. `full`
-also includes available internal profile entries.
-
-A normal **Start PowerFlow run** never writes `diagnose.log` — use the
-**Diagnose** action below for that. When it is written (by Diagnose, or
-programmatically via `run_diagnostics = true`), it is a diagnostic report
-rather than a flat key/value dump on a run that did not converge: a
-"Diagnosis" section names the worst-mismatch bus/equation and classifies the
-mismatch-history trend (monotonic / oscillatory / stagnant / diverging to
-non-finite) and autodamp health, a "Branch anomalies at worst-mismatch bus"
-section scans the branches incident to that bus for zero impedance,
-off-nominal transformer tap ratios, large phase shifts, or a reactance far
-outside the range of the other branches at the same bus, and a
-"Recommendations" section closes with concrete next steps. It also reuses the
-existing Q-limit event, PV-limit, and final limit-validation printers. A
-diagnostic exception is contained and recorded in that file without changing
-a successful PowerFlow result. Older run directories can still contain
-`diagnose.txt`; the artifact viewer continues to list and download that
-legacy filename.
-
-### Diagnose action
-
-The **Diagnose** button next to **Start PowerFlow run** runs the selected
-case through a fixed-reference self-check instead of a normal solve: it
-evaluates the mismatch at the case's own stored operating point — MATPOWER
-`VM`/`VA` columns, or the `SvVoltage` state of a CGMES delivery — with no
-corrective Newton step. Every start-value machine is forced off
-(`flatstart = false`, `start_projection = false`,
-`dc_seed_unconditional = false`, `start_current_iteration.enabled = false`,
-`apslf_start.enabled = false`, plus `max_iter = 1` and
-`qlimits.enabled = false`), so the imported voltages reach the solver verbatim
-and the reported residual reflects the imported network model itself rather
-than the solver's start guess or step control. It runs through the same
-result pipeline as a normal run (same run history, artifact viewer, and
-enriched `diagnose.log`) and writes two additional artifacts:
-`self_check.log` (forced settings, the start-state residual, and for CGMES
-the count of buses without a usable `SvVoltage`, which start at the flat
-`1.0 pu / 0°` fallback and weaken the SV comparison) and
-`self_check_residuals.csv` (full per-bus P/Q residuals at the start state,
-with per-bus SV coverage plus transformer-terminal and shunt counts for
-attribution). The merged self-check configuration is written alongside the
-other artifacts as `diagnose_self_check_config.yaml` for inspection. The
-forced settings outrank both the values the run form submits and a case
-configuration file lying next to the case: a reference that moves with the
-form is not a reference.
-Programmatically, the same behavior is available as
-[`run_fixed_reference_self_check`](@ref).
-
-Because the self-check takes exactly one step, a diagnose run practically
-never converges, and that is its point: the remaining residual is the
-measurement. The run history and the result page therefore label a finished
-diagnose run **diagnosed** on a neutral badge rather than as a failed power
-flow, with the raw status in the badge's tooltip, and the result page states
-in one line why the numbers below it show one iteration and a non-zero
-mismatch. A diagnose run that could not run at all keeps the failure
-vocabulary.
-
-### Short circuit action
-
-The **Short circuit** button next to Diagnose evaluates the balanced
-three-phase short-circuit currents (IEC 60909-0, [`runShortCircuit!`](@ref))
-for every bus of a CGMES delivery — maximum and minimum case in one run,
-**without any power-flow solve**. The button is only selectable when the
-selected case is a CGMES delivery that actually carries short-circuit source
-data (synchronous machines, feeder short-circuit currents, or equivalent
-impedances); the form checks the delivery contents server-side and disables
-the button with an explanatory tooltip otherwise. The run writes
-`short_circuit_max.csv` and `short_circuit_min.csv` (per-bus `Ik''`, `Sk''`,
-`κ`, `i_p`, plus the safety flag and its reasons), a `run.log` narrative
-including the harvested-data coverage report, and a result-page summary row —
-rows with defaulted/skipped data render as a warning badge because a flagged
-`Ik''max` is a lower bound. A delivery without usable sources fails with
-`short_circuit_data_missing` (coverage report in `run.log`) instead of
-producing empty tables; non-CGMES cases fail with
-`short_circuit_requires_cgmes`.
-
-### Import analysis on case upload
-
-**Import case files** checks every uploaded CGMES delivery immediately.
-When the delivery is complete (or a matching boundary is found or supplied
-automatically), the import message says "ready to compute". When it stays
-incomplete, the upload runs the full import analysis: the message names the
-**missing declared `md:Model.DependentOn` dependencies by model id** (the
-boundary set, typically), and the complete report — supplied models,
-dependency matching, unresolved-reference histogram, verdict — is written
-next to the case as `<case>.import_analysis.txt`. The same analysis is
-appended to `cgmes.log` automatically whenever a regular run's CGMES import
-aborts. For API/scripted use the check is also available as a run mode
-(`import_analysis_mode` on `start_powerflow_run`; a non-importable delivery
-finishes as a failed run with reason `import_analysis_not_importable`) and
-programmatically via `analyzeCGMES`.
-
-The **Require boundary set** checkbox (CGMES section, saved in the per-case
-settings) submits `cgmes_import.require_boundary` as a run override:
-unchecked, an incomplete delivery imports anyway where possible — buses
-without a resolvable `BaseVoltage` still abort, with the analysis
-explaining why.
-
-The **Non-convergence handling** block under Advanced options exposes
-`power_flow.rescue` (retry ladder for failed AC solves) and
-`power_flow.dc.fallback` (standalone DC result when AC has no solution) —
-see [Power-Flow Configuration](powerflow_configuration.md).
-
-The **Q-limit handling** block holds both controls that decide the behavior:
-the checkbox for `power_flow.qlimits.enabled` and the enforcement-mode
-selector. They belong together because a mode chosen while the handling is
-switched off has no effect while still reading like a setting. The selector
-therefore also offers **off**, which switches the handling off, and it shows
-`off` whenever the handling is off, so the form cannot state a mode the run
-will not use.
-
-The **Write bus/branch CSV files** checkbox (next to the CSV format, which
-applies to every CSV file of the run) exists because large networks produce
-large files; the API default is off. When enabled for a successful run, it
-writes Excel-friendly UTF-8 artifacts:
-
-- `bus_voltages_complex.csv` contains one row per bus, including `vm_pu`,
-  `va_deg`, numeric rectangular components `v_re` and `v_im`, a readable
-  `v_complex` value, nominal/actual voltage, generation, load, Q-limit, and
-  control columns.
-- `branch_flows.csv` contains physical branch rows with active/reactive power
-  at both ends, losses, rating, status, and overload information.
-
-The CSV files reuse the structured `ACPFlowReport` node and branch rows and,
-like the log artifacts, are viewable and downloadable through the normal
-artifact list.
-
-The **CSV format** selector next to it is the configuration key
-`output.csv_format`, a machine-scope setting: **Save settings** writes it to
-the configuration file, a save for one case leaves it out, and the value
-chosen on the run form applies to that run like every other override. Every
-run type, including a state estimation started from its own form, reads the
-same configured value:
-
-- `technical` (default) uses a comma delimiter, decimal point, and no
-  thousands grouping.
-- `excel_de` uses a semicolon delimiter, decimal comma, and thousands dot.
-- `excel_us` uses a comma delimiter, decimal point, and thousands comma.
-
-US-formatted numbers containing a thousands comma are quoted because comma is
-also the field delimiter. Empty values and fields containing delimiters,
-quotes, carriage returns, or line feeds follow the same CSV quoting rules in
-all formats. The Excel-oriented formats write numeric fields in decimal
-notation instead of exponent notation where practical. The readable `v_complex`
-column follows the selected decimal notation, while `v_re` and `v_im` remain
-separate numeric columns.
-
-Excel may still warn about automatic conversions when opening CSV files
-directly, especially if textual identifiers resemble scientific notation such
-as `1E5`. Use Excel's **Data > From Text/CSV** import flow and select text
-types for exact textual identifiers when that distinction matters. The
-`technical` format remains the clean machine-readable default and does not add
-Excel-specific text hints.
-
-## PowerFlow input paths
-
-| Help topic | Input | Guidance |
-|---|---|---|
-| `webui.casefile` | MATPOWER case file | Choose an available `.m`, `.jl`, or supported runnable internal DTF `.DAT` candidate from the existing-case selector, or type a bare case name or existing local path in the separate manual field. A nonempty manual value takes precedence. Missing bare `.m` names may be downloaded into the server-owned `data/mpower` directory; MATPOWER `.m` remains the default-oriented workflow, while FOR002-like `.DAT` files belong in the optional FOR002 reference field rather than the primary case field. Missing path-like inputs and URLs are rejected. |
-| `webui.config_file` | Configuration template file | Select a YAML configuration or `*.yaml.example` template discovered in `examples`. Form values create allowlisted per-run overrides, while the selected template remains unchanged. |
-| `webui.output_root` | Output root directory | Configure this path when calling `start_sparlectra_webui`; the browser displays it read-only. The service creates its persistent run index and one subdirectory per run beneath this root. |
-
-## Contextual help and documentation
-
-Every editable PowerFlow form option includes a contextual help link. Help pages
-include a **Back** button that uses the browser history to return to the existing
-PowerFlow form, preserving the values entered before opening help. If no local
-history entry is available, the button falls back to `/powerflow`. Help pages
-load the matching section or option row from repository Markdown at request
-time. Solver options use
-[`powerflow_configuration.md`](powerflow_configuration.md), output and benchmark
-options use [`performance_profiling.md`](performance_profiling.md), and path
-fields use the table above. Explanatory option text is not copied into Julia
-views or HTML templates; repository Markdown remains the single source of
-truth.
-
-The **Documentation** navigation link opens `/docs`, which lists selected
-allowlisted pages under `docs/src`. Each `/docs/<page>` request resolves only a
-registered page name, so arbitrary paths and traversal requests are rejected.
-Markdown links to another allowlisted page are rewritten to local `/docs/...`
-routes, including section fragments such as the
-[start-mode options](powerflow_configuration.md#start-mode-options). External
-HTTP and HTTPS links remain external; unknown or unsafe local paths are made
-inert. This is a lightweight reader for local reference material, not a
-replacement for the Documenter.jl site.
-
-## Results and artifacts
-
-Successful and failed runs both have a result page. It shows the run ID, schema
-version, status, convergence and solution flags, iteration count, final
-mismatch, reason/message fields, input paths, and output directory.
-Aborted runs are listed distinctly in history and are never rendered as
-successful. After an abort, the user can return to the form and submit new
-inputs without restarting the server.
-
-Artifact lists come from `list_powerflow_artifacts`. Artifact requests are
-resolved by exact metadata name through `resolve_powerflow_artifact`; browser
-input is never joined directly to a filesystem path. JSON, YAML, logs, CSV,
-HTML, Markdown, and other text artifacts are displayed as escaped text in a
-large, scrollable panel that preserves long lines for horizontal scrolling.
-Help excerpts and full documentation pages also use wider content panels and
-readable line spacing. Other files are
-downloaded, and every artifact page also offers an explicit download response.
-The text-artifact viewer uses 75–85 percent of the viewport height and a wider
-page layout for practical inspection of long logs and configuration files.
-
-Runs that attempt the guarded current-iteration start pre-solve may include
-`current_iteration_start.log`. The artifact is classified as a
-start-value/current-iteration diagnostic artifact and records whether the
-candidate was attempted, accepted, rejected by a guard, or rejected with the
-original start values restored before Newton-Raphson.
-
-## Persistent operation log
-
-The Web UI appends support-oriented JSON Lines events to its user-writable `logs/webui_operations.jsonl`. This file is independent of individual
-run directories and survives Web UI restarts that reuse the same output root.
-It records key page opens, submissions and validation failures, asynchronous
-run lifecycle changes, artifact views/downloads, abort requests, history
-refreshes, deletions, shutdown requests, and enabled diagnostics or timing
-modes. Static CSS and image requests are not user-action events.
-
-Use the shared **Operation Log** navigation link to open the escaped text viewer
-at `/webui/operation-log`, or download the JSONL file from that page for an
-error report. Entries contain concise route, method, status, run/case/artifact,
-message, and timing fields when available. Every event also records
-`sparlectra_version` and a millisecond-precision UTC timestamp using
-`yyyy-mm-ddTHH:MM:SS.sssZ`. They never include artifact
-contents, local file contents, or complete configuration bodies. Logging is
-best effort and cannot fail a normal Web UI request.
-
-Retention is time-based first: **every Web UI start drops entries older than
-`webui.operation_log_retention_days`** (default 10, `0` keeps only the current
-session), and it does so for every operation log it knows, including one a
-service call wrote next to the runs. The environment variable
-`SPARLECTRA_WEBUI_OPERATION_LOG_RETENTION_DAYS` overrides the configuration for
-headless runs that read no file. Size and entry count are safety guards on top,
-applied during an append: above 1 MiB the log is compacted, and more than 5,000
-valid entries are reduced to the newest 1,000, dropping empty or malformed
-lines on the way. The viewer and download read the current file.
-
-The page states its own size (entries and kB) next to the controls and
-carries a **Clear operation log** button: it empties the file in place and
-writes one entry recording the deletion, so the log never becomes silently
-empty and the following entries have a visible starting point.
-
-If the log page feels unwieldy, the number of ENTRIES is what makes it large,
-not their age: a busy day writes well over a thousand. Clearing it is the
-immediate remedy, lowering the retention to two or three days the lasting
-one.
-
-Development reports distinguish external **Verification limitations**, such as
-an unavailable browser executable or an HTTP 403/proxy failure while installing
-documentation dependencies, from genuinely unfinished implementation work.
-
-## Persistent run history and run management
-
-`start_sparlectra_webui` refreshes `powerflow_runs_index.json` beneath the
-configured output root before it begins serving pages, so valid runs from an
-earlier Julia process appear immediately. The **Refresh registry** button
-remains available for a manual reload. Missing, corrupt, or unsafe entries are
-reported or skipped without preventing valid runs from loading.
-
-History is ordered newest first and shows a readable local date/time, run ID,
-status text, status badge, solver summary fields, and actions. Green, yellow,
-red, gray, and blue badges distinguish successful, warning/partial, failed,
-unknown, and running states while retaining visible text for accessibility.
-Older indexes without timestamps use the `result.json` modification time.
-
-### Comparing two runs
-
-Two runs of the same case under different settings are the usual way to look at
-a Q-limit enforcement mode, a solver choice or a start strategy. Tick the
-**Compare** box on two rows and press **Compare selected runs**; the page at
-`/powerflow/compare` puts them next to each other:
-
-- case file, status, converged flag, iterations and final mismatch side by side,
-  with a link to each result page;
-- the configuration keys the two runs actually disagree on, read from the
-  `effective_config.yaml` each run wrote (the `_config_sources` bookkeeping is
-  left out, so one difference is listed once);
-- the buses each run clamped, from `q_limit_events.csv`, and which buses only
-  one of the two clamped;
-- total active and reactive losses, summed from the `branch_flows.csv` each
-  run wrote, with their difference;
-- the largest voltage deviation and the ten buses that differ most, by bus
-  index and name, when both runs wrote `bus_voltages_complex.csv` (both files
-  need the detailed result CSV export).
-
-Everything shown comes from what the runs themselves wrote, so runs from an
-earlier session compare as well as fresh ones. Exactly two runs are required;
-anything else answers with a message rather than a half-filled page.
-
-The **Compare** box is offered only on rows the page could read: finished
-power-flow runs (plain, diagnose, or started from a state estimate) whose
-result is still on disk. A state estimation, short circuit, N-1 or import
-analysis run gets no box, because the comparison reads power-flow artifacts and
-would have nothing to show. Network size is deliberately not a criterion: the
-same case modelled with an external-grid source and with a slack is exactly the
-pair one wants side by side, and the page says so when the two runs share no
-bus.
-
-The **Case file** and **Config file** columns show the file name; the full path
-is in the cell's tooltip.
-
-Each registered run has a **Delete** action, and **Delete all runs** removes all
-safely registered runs for the current configured root. These actions update
-the in-memory registry and persistent index as well as deleting the matching
-run directories. Run IDs are validated, indexed paths must remain beneath the
-configured root, and browser-submitted output roots are ignored; unrelated
-files and directories are never deletion targets.
-
-## Browser and application shutdown
-
-All normal pages send a small local heartbeat after they load. With
-`auto_shutdown_on_browser_close=true`, heartbeat expiry after
-`browser_heartbeat_timeout_seconds` triggers best-effort shutdown after at
-least one heartbeat has been received. A server started with
-`open_browser=false` therefore remains running until a browser actually
-connects, the **Stop Web UI** button is used, `close(server)` is called, or the
-terminal receives `Ctrl+C`.
-
-Browser-close detection is necessarily best effort: browser crashes, forced
-process termination, or operating-system shutdown may prevent a final clean
-lifecycle. `Ctrl+C` remains the fallback. If a port is still occupied, stop the
-old Julia process or start the Web UI with a different `port` value.
-
-## Current limitations
-
-The Web UI is local by design: it binds to loopback, has no authentication and
-no public-server mode, and keeps no database. There is no push channel
-(WebSockets or server-sent events), so a running job reports its phase through
-the page rather than streaming it, and there is no topology view and no
-advanced plotting. The HTTP layer is a compact Julia `Sockets` implementation,
-chosen to avoid a heavy web-framework dependency.
-
-### Configuration check and refresh
-
-The PowerFlow page includes explicit **Check configuration** and **Refresh configuration** actions for user YAML files. They exist because the package configuration template can gain new options over time while existing local files remain in place. A check performs a dry run only: it compares the selected configuration against `src/config/configuration.yaml.example`, reports missing keys, known deprecated aliases, duplicate YAML keys, and shows a refreshed YAML preview without writing.
-
-Refresh is conservative and user-initiated. It preserves existing user values, adds missing keys with current template defaults, and may normalize known deprecated aliases in user files to canonical start-mode settings or legacy `matpower_*` Q-limit mode names. It never rewrites YAML during Web UI startup. When writing a server-local configuration file, Sparlectra first creates a timestamped backup next to the original file. If duplicate YAML keys are detected, refresh refuses to write so the file can be reviewed manually. Browser-uploaded or pasted YAML is not rewritten in place; the refreshed YAML is offered as a download instead.
-
-## Configuration precedence and artifact downloads
-
-PowerFlow API and Web UI runs apply configuration in a deterministic order: built-in defaults from `src/config/configuration.yaml.example`, the selected user YAML file, saved per-case settings from the case configuration file (`<stem>.config.yaml` next to the case) when the Web UI loads them into the run form, enabled Web UI form/runtime values, explicit API `config_overrides`, and intentional post-processing such as `model.auto_profile: apply`. Each run writes the actual `effective_config.yaml`; the file includes `_config_sources` metadata for the diagnostic options most likely to affect MATPOWER DC-line and island-aware solves, including Q-limit handling, start-current iteration, island mode, tolerance, iteration limits, start modes, and MATPOWER DC-line mode.
-
-Web UI runtime controls are applied by default, so checked/enabled options and values entered or selected on the PowerFlow form are intentional runtime overrides. Boolean values are distinct from override participation: an unchecked functional checkbox can intentionally override YAML to `false`. The advanced **Ignore Web UI settings and use configuration defaults** checkbox inverts that behavior for diagnostic runs: when checked, the run ignores the form controls and uses the selected YAML/default configuration values instead. `model.auto_profile: apply` may still adjust supported MATPOWER import conventions after GUI and API values are assembled, and `effective_config.yaml` records those auto-profile applications. Active MATPOWER DC lines are supported by default as fixed terminal injections; they do not add Ybus connections, so AC islands are detected and solved independently by default. This is a power-flow approximation, not a complete HVDC converter or DC-grid model. When the YAML editor saves successfully, the server reloads the saved file so the PowerFlow form reflects the new YAML values on the next page load.
-
-The plain **Configuration Editor** link on the PowerFlow page opens the active YAML in a textarea, validates it with the same lightweight YAML parser and duplicate-key checks used by configuration refresh, writes only after validation succeeds, and creates a timestamped backup next to the edited file. If a case configuration file exists for a selected case, they can still override the global YAML via the prefilled form; the editor warns about that interaction so stale case-specific settings are not mistaken for global configuration changes.
-
-Result pages and artifact lists include **Download all artifacts as ZIP**. The ZIP is named `sparlectra_run_<run_id>_artifacts.zip` and is assembled only from files already exposed as artifacts for that run directory. Missing optional artifacts are skipped, and unsafe names are ignored rather than allowing path traversal.
-
-Island diagnostics are run artifacts. Files such as `ac_islands.csv`, `ac_island_solver_summary.csv`, `ac_island_<id>_solver.log`, `matpower_dcline.csv`, `q_limit.log`, `performance.log`, `run.log`, and `effective_config.yaml` belong in the run output directory or a test-owned temporary directory; they must not be committed from the repository root.
-
-## Importing case files through the Web UI
-
-The PowerFlow page includes a separate **Import case files** control near the case selection area. It uses the browser's native file picker and accepts multiple files in one selection. The picker advertises MATPOWER `.m`/`.M` files, DTF `.dat`/`.DAT` files, CGMES `.zip` deliveries and CGMES profile files (`.xml`); the server validates the extension again because browser-side filters can be bypassed. Several `.xml` files selected together (the EQ, SSH, TP and SV profiles of one delivery, for example the four files of a shipped demo folder under `data/cgmes_demo`) are packed into one `<stem>_cgmes.zip` in the case directory, named after the common file stem; the set must contain the EQ profile. A CGMES ZIP may contain the whole delivery, including nested ZIPs — the importer opens them in memory, so no unpacking step is required.
-
-Importing is a copy-only operation. It does not submit the PowerFlow form, create a run ID, create a result directory, parse uploaded `.m` code, or invoke the solver. After the POST/Redirect/GET refresh, the normal case selector is rebuilt from disk. If at least one imported file is runnable in the normal selector, the first such file may be preselected; the user must still press **Start PowerFlow run** to calculate it.
-
-Pressing Enter in the **Or type case file path** field resolves the typed value the same copy-only way instead of starting a run: a bare MATPOWER case name (for example `case300.m`) is downloaded through [`ensure_casefile`](@ref) into the case directory, an entry of the form `cgmes:<alias>` fetches an ENTSO-E CGMES test configuration (see below), while a full local path to an existing file is copied into the case directory with the same validation as file import (unsupported extensions, oversized files, and name collisions are rejected with an inline message). Either way the resolved file then appears in the **Existing case file** selector; it does not submit the PowerFlow form or invoke the solver.
-
-The picker also accepts a Sparlectra Case Format `.json` file; that one is parsed and validated BEFORE it is stored, so an arbitrary JSON never lands in the case directory.
-
-The exported name drops a format suffix the case already carries, so exporting `case14.scf.json` as plain PGM gives `case14.pgm.json` rather than a growing chain of suffixes. Both export products, `.scf.json` and the plain `.pgm.json`, appear in the case selector afterwards; they are runnable cases, not just files. The way back out is the **Download selected case** link in the export row: it hands over whatever the case selector currently shows, and after an export the page additionally offers the file that was just written by name. Only plain files inside the case directory are served: a bare name resolves against it, an absolute path is accepted when it points into it (the form carries one back after saving case settings), and anything outside, plus a CGMES delivery directory, is refused with a message. Both sides are resolved through their real path first, because the Web UI state directory is reachable through a symlink (a Flatpak app data path pointing at `~/.local/state`) and the two spellings would otherwise not match.
-
-Uploaded files land in the case directory the form shows, which the selector also reads: the user Web UI `data/mpower` directory, in a development checkout as well. A manual full path still overrides the selector.
-
-Limits are 100 MiB per file and 250 MiB per request; oversized files are reported in the import summary. An existing file is never overwritten (the upload is rejected as `already exists` while the other selected files still import). Filenames are treated as untrusted, so anything that would resolve outside the case directory is refused.
-
-The normal case selector continues to use the existing Web UI filtering rules. Imported MATPOWER `.m` files and runnable DTF `.DAT` files appear after refresh. FOR002 reference `.DAT` files may be copied for validation workflows but remain hidden from the normal runnable-case selector and belong in the optional FOR002 reference field.
+(input.json)** name the same reader (the `sparlectra` block is optional);
+Auto already sends every `.json` there, so they matter only when the
+extension does not say what the file is. The native DTF path is
+experimental, for diagnostics and validation; its **Selected DTF outage
+labels/indices** field takes one label or index at a time, and the result
+page shows a compact outage summary while the rows stay in artifacts.
+
+The format-bound option sections derive from the adapters' option structs,
+so the form cannot drift from what a conversion accepts; the Basic set (keys
+used in a workshop, or set in the example configuration without a default)
+renders directly, the rest and the DTF diagnostics on the Runs page fold
+into **Advanced**. Deleting a case removes all its companion files
+(configuration, weights, measurement CSVs).
+
+A collapsible MATPOWER acknowledgement next to the case inputs links to the
+project, its citation guidance and the 2011 paper DOI, and notes that
+ACTIVSg, PEGASE, RTE and other cases ask for additional citations in their
+headers.
+
+### [Import case files](@id webui-import-case-files)
+
+**Import case files** opens the native file picker and accepts several files
+at once: MATPOWER `.m`/`.M`, DTF `.dat`/`.DAT`, CGMES `.zip` deliveries and
+CGMES profile files (`.xml`); the server validates the extension again.
+Several `.xml` files (the EQ, SSH, TP and SV profiles of one delivery, such
+as a `data/cgmes_demo` folder) are packed into one `<stem>_cgmes.zip` named
+after the common stem; the set must contain the EQ profile. A CGMES ZIP may
+hold nested ZIPs; the importer opens them in memory. A Sparlectra Case
+Format `.json` file is parsed and validated before it is stored.
+
+Importing is copy-only: no run, no run directory, no parsing of `.m` code.
+Files land in the case directory the form shows (`data/mpower`, in a
+checkout too), the selector is rebuilt from disk, and the first runnable
+file may be preselected; the run still needs **Start PowerFlow run**.
+Limits: 100 MiB per file, 250 MiB per request. An existing file is never
+overwritten (`already exists`, the other files still import), and names
+that would resolve outside the case directory are refused. Enter in **Or
+type case file path** resolves the value the same copy-only way: a bare
+case name via [`ensure_casefile`](@ref), `cgmes:<alias>` as below, or a full
+local path copied with the same validation; the file then appears in the
+**Existing case file** selector.
+
+Re-importing a saved set brings the `.config.yaml` sidecar along with the
+`.scf.json` and its measurement set(s) when all are selected together;
+the `.yaml` is validated as a case-scope configuration file
+(`scope: case`) before it is stored, and rejected otherwise.
+
+### Export and download
+
+The export row writes the open case as `.scf.json` or plain PGM `.pgm.json`,
+replacing a format suffix the case already carries (`case14.scf.json` as
+PGM gives `case14.pgm.json`); both products appear in the selector as
+runnable cases. **Download selected case** serves what the selector shows,
+after an export also the file just written: only plain files inside the
+case directory (bare name, or an absolute path pointing into it), compared
+by real path because the state directory can sit behind a symlink (Flatpak);
+anything outside, and a CGMES delivery directory, is refused.
 
 ### Save case as
 
-**Save case as**, next to the export buttons, saves the current case, its
-settings and any bound measurement set under a new name in one step (issue
-#378) - see [SCF: Save case as](scf.md#save-case-as-issue-378) for the exact
-files it writes and the overwrite/start-state options.
+**Save case as**, next to the export buttons (also linked from the State
+Estimation section), saves the current case under a new name instead of
+exporting in place: one network with several variants, one file per
+variant. It writes three files into the case directory:
 
-### Fetching ENTSO-E CGMES test configurations
+- `<name>.scf.json` via [`exportSCF`](@ref), with `meta.case_name = <name>`
+  and `meta.source_reference` noting the source case; a MATPOWER or DTF
+  source is saved as SCF, the original file is never touched.
+- `<name>.config.yaml`: the source case's saved case-scope settings merged
+  with any unsaved change made on the page; the source case's sidecar file
+  is never modified.
+- `<name>.measurements.csv` for each measurement set bound to the source
+  case, with its `# case:` header rewritten to the new name; a second bound
+  set is copied as `<name>_<original stem>.measurements.csv`.
 
-Typing `cgmes:<alias>` into the **Or type case file path** field downloads the
-official ENTSO-E test-configuration package once (~22 MB) into the local CGMES
-cache (`data/CGMES`, overridable with `SPARLECTRA_CGMES_CACHE`), extracts it,
-and packs the requested configuration — base case together with its boundary
-set — into a single `cgmes_<alias>.zip` in the case directory. The ZIP then
-behaves like any other imported case.
+An existing `<name>.scf.json` is refused unless "overwrite" is ticked. The
+optional "start from the solved state" checkbox solves the case once with
+the effective settings and writes the solved voltages as the copy's
+`sparlectra.start_state`. Installation-scope settings (`output.*`,
+`benchmark.*`, `runtime.*`, ...) are never written into the case
+configuration file. The file layout is described in
+[Sparlectra Case Format](scf.md).
 
-Available aliases: `microgrid_be`, `microgrid_nl`, `microgrid_assembled`,
-`smallgrid`, `smallgrid_nb`, `fullgrid`, `fullgrid_nb`, `realgrid`. Repeated
-requests reuse the packed ZIP instead of downloading again. If the download
-fails, the error message names the file path where the package can be placed
-manually. The test data is never committed to the repository.
+### CGMES test configurations
 
-## PowerFlow tolerance spinner
+`cgmes:<alias>` in **Or type case file path** downloads the official ENTSO-E
+test-configuration package once (about 22 MB) into the CGMES cache
+(`data/CGMES`, overridable with `SPARLECTRA_CGMES_CACHE`) and packs the
+requested configuration with its boundary set into `cgmes_<alias>.zip` in
+the case directory. Aliases: `microgrid_be`, `microgrid_nl`,
+`microgrid_assembled`, `smallgrid`, `smallgrid_nb`, `fullgrid`,
+`fullgrid_nb`, `realgrid`. Repeated requests reuse the ZIP. If the download
+fails, the message names the path where the package can be placed by hand.
+The test data is never committed.
 
-The PowerFlow tolerance control is a text field that accepts ordinary decimal values and scientific notation (for example `1e-8`). A dedicated exponent spinner — the up/down buttons next to the field, or the Up/Down arrow keys while the field is focused — steps the exponent by one while keeping the mantissa unchanged: stepping down from `1e-5` yields `1e-6`, stepping up from `1e-5` yields `1e-4`. Manual entry and submitted solver tolerance values are unchanged.
+### Import analysis on upload
+
+Every uploaded CGMES delivery is checked at once: a complete one (or one
+whose boundary is found or supplied automatically) reports "ready to
+compute", an incomplete one gets the full import analysis: the message names
+the missing declared `md:Model.DependentOn` dependencies by model id
+(typically the boundary set), and the report (supplied models, dependency
+matching, unresolved-reference histogram, verdict) is written next to the
+case as `<case>.import_analysis.txt`. The same analysis is appended to
+`cgmes.log` whenever a run's CGMES import aborts. Scripted use: the run mode
+`import_analysis_mode` of `start_powerflow_run` (a non-importable delivery
+ends as a failed run with reason `import_analysis_not_importable`) or
+`analyzeCGMES`.
+
+**Require boundary set** (CGMES section, saved per case) submits
+`cgmes_import.require_boundary`; unchecked, an incomplete delivery imports
+where possible, but buses without a resolvable `BaseVoltage` still abort,
+with the analysis explaining why.
+
+### Long actions on a case
+
+Generating a measurement set or adding noise runs inside the request and
+can take a while on a large case (with **critical measurements** the
+generator re-reads the criticality after every removed row). Meanwhile the
+case is busy: a second generator action or a run is refused with a message
+and the buttons show a spinner; a queued or running run blocks the
+generator the same way.
+
+## Starting a run
+
+Run-independent options live on the **Settings** page (solver, start,
+output and expert options, plus the configuration block: file display,
+check and refresh, saved case settings, the ignore switch) and reach a run
+through the configuration precedence (`resolve_config`): saving with target
+"this case" writes case-scope keys into the case's configuration file,
+target "configuration file" merges into the general YAML (backup
+`.settings-save.bak`). The **Runs** page keeps the run parameters (modes,
+N-1 kind, scenario source, screening, DTF outage fields, benchmark trigger),
+the state-estimation section (estimator options and measurement-set
+selection submitted with `se_mode`; measurement generator, set details with
+inline editors and measurement upload as fold-out tabs) and the N-1 editors
+as tabs: the scenario editor embeds directly (SCF cases), the weights
+editor loads on first open (seeding its element names builds the net once).
+The SE section uses the shared case selection.
+
+The measurement generator's fields are the generator options of
+[State Estimation Measurements](state_estimation_measurements.md#Measurement-generator-v2) (sigmas per
+class, noise, gross errors, tap deviations, truth source, flow ends, passive
+nodes as zero-injection constraints, **critical measurements**); the
+removed and critical rows are named in the set's comment lines and the
+estimation run log.
+
+### [Form options](@id webui-form-options)
+
+The settings and run forms offer:
+
+- case name or local path, configuration template file, the read-only
+  output root (set only through `start_sparlectra_webui(; output_root)`);
+- tolerance (decimals or scientific notation such as `1e-8`; the exponent
+  spinner, buttons or Up/Down keys, steps the exponent and keeps the
+  mantissa: `1e-5` down gives `1e-6`, up gives `1e-4`), maximum iterations,
+  autodamping with its minimum factor;
+- **Q-limit handling**: the `power_flow.qlimits.enabled` checkbox and the
+  enforcement-mode selector in one block; the selector also offers **off**
+  and shows it whenever the handling is off;
+- **Solver**: one radio group `power_flow_solver` with the peer values
+  `rectangular` (AC Newton-Raphson), `apslf` (AnalyticLoadFlow) and `dc`
+  (linear screening model), writing `power_flow.solver`, `power_flow.apslf.*`,
+  `power_flow.apslf_start.*` and `power_flow.dc.*`
+  ([solver selection](powerflow_configuration.md#solver-selection-rectangular-vs-apslf),
+  [DC power flow](powerflow_configuration.md#solver-selection-dc-power-flow));
+  radio buttons are never disabled, so the choice is always submitted;
+- wrong-branch detection mode, start angle and voltage modes;
+- **Advanced start values**: the current-iteration pre-solve fields
+  (`power_flow.start_current_iteration.*`,
+  [guarded pre-solve](powerflow_configuration.md#guarded-current-iteration-start-pre-solve)),
+  a preconditioner between start projection and Newton-Raphson, not a new
+  start mode;
+- **Merit-function line search**: `power_flow.merit.enabled`,
+  `power_flow.merit.armijo_c1`, `power_flow.merit.fallback_max_mismatch`
+  ([options](powerflow_configuration.md#merit-function-line-search-options)),
+  requires `power_flow.autodamp = true`; `scale_p`/`scale_q`/`scale_v` are
+  YAML-only; a diagnostic run writes `merit_linesearch.log`;
+- **Non-convergence handling** (Advanced): `power_flow.rescue` (retry
+  ladder) and `power_flow.dc.fallback` (standalone DC result when AC has no
+  solution), see [Power-Flow Configuration](powerflow_configuration.md);
+- MATPOWER import conventions: auto-profile mode (`off`, `recommend`,
+  `apply`) plus transformer ratio, phase shift, bus shunt, PV voltage source
+  and comparison reference;
+- logfile output mode, performance timing, post-run diagnostics, benchmark
+  enablement, samples and seconds.
+
+Only keys in `GUI_EDITABLE_CONFIG_KEYS` are submitted, the selected template
+is never modified, and each run writes `effective_config.yaml`. Every control
+carries a hover text with its operation and effect; a **?** next to a
+control with something technical behind it (solver options, estimator
+diagnostics, Q-limits, formats) opens its help page in a new tab: the hint,
+the matching section of this documentation as shipped with the running
+version (the beginning of a long section), and a link to the section on
+the published site. `webui.docs_base_url` (configuration file) points that
+link at a local docs build or a pinned version. **Back** returns through
+the browser history with the entered values intact (fallback `/powerflow`).
+
+Fields that do not apply to the selected solver or step control
+(autodamp/trust-region) are grayed out in place, not hidden; a grayed field
+is `disabled` and not submitted.
+
+### AC, APSLF and DC
+
+`AC (Newton-Raphson, rectangular)` reveals the start-value block (**Flat
+start**, **Use APSLF start values** with its order field, **Use DC start
+values**) and every AC-only option: tolerance, autodamping/merit/trust-region
+step control, Q-limit handling, maximum iterations, wrong-branch detection,
+start angle/voltage mode, the current-iteration pre-solve and the
+transformer tap-changer model. By default
+(`power_flow.start_mode.angle_mode = dc`) Newton-Raphson seeds its start
+angles from an internal DC pre-solve, controlled by **Start angle mode**;
+that pre-solve is unrelated to the standalone `DC` solver.
+
+`APSLF (AnalyticLoadFlow)` reveals the **APSLF solver options** (highest
+coefficient/order, Padé evaluation, NR polish). **Use APSLF start values**
+in the Newton-Raphson block seeds the rectangular solver instead and is
+mutually exclusive with the APSLF solver (the configuration rejects both).
+An unchecked checkbox (APSLF, Q-limit, current-iteration) submits `false`
+rather than omitting the key. The APSLF solver
+needs the optional AnalyticLoadFlow.jl package in the server process;
+without it the run fails with a pre-solve error instead of falling back to
+the rectangular solver.
+
+`DC` replaces Newton-Raphson with the linear model
+([DC power flow](powerflow_configuration.md#solver-selection-dc-power-flow)),
+the `dc` value of `power_flow.solver`, and grays out every AC-only option
+above. A DC run uses the same job, abort, status, history and artifact
+machinery; the result page marks it with a **DC solution** badge next to
+**Solver** and the history column shows `dc`, so the implicit
+`Vm = 1.0 pu` and lossless flows are never taken for an AC result;
+`iterations` is `1` (a direct solve).
+
+The **Solver** column names the method that ran: the power-flow solver for
+a plain power flow, one started from an estimate and every contingency
+case; `wls` for a state estimation; `iec60909` for a short circuit; empty
+for an import analysis (derived from the run kind when a run carries no
+method).
+
+#### [Flat start](@id webui-flat-start)
+
+`power_flow.flatstart` starts the Newton-Raphson solve at 1.0 pu and 0
+degrees on every bus and ignores the imported start voltages (MATPOWER
+`VM`/`VA`, CGMES `SvVoltage`, SCF `start_state`). Off, the imported values
+seed the solve; a delivery is built around its own operating point, so that
+is the better start for real networks and the default.
+
+This checkbox is the one start switch: while it is on, a run switches
+**Use APSLF start values**, **Use DC start values**, the current-iteration
+pre-solve and the start projection off and treats both start modes as
+`classic`, so the start really is flat and no projection or pre-solve moves
+it; the run log names what was switched off. The greyed controls keep their
+saved values and come back when the flat start is unchecked.
+
+A CGMES run honours the flat start under **CGMES start values** = `auto`;
+an explicit `sv` on the Case page still starts from the delivery state
+([Power flow configuration](powerflow_configuration.md#pf-solver-core)).
+
+### Case-specific settings
+
+A successful result page offers **Save settings for this case**: only the
+form options of that run plus traceability metadata go into a sanitized
+YAML profile below the output root (not `effective_config.yaml`, solver
+internals, artifact paths or convergence diagnostics). A non-converged run
+shows **Save these settings anyway** and records that override; nothing is
+saved automatically. Reopening the case prefills the form from the profile
+with a notice: defaults first, the global configuration untouched, only
+editable fields prefilled, and a manual edit wins for the submitted run.
+
+With a case selected, every page (Case, Runs, Settings) shows the values a
+run of that case will use: case settings over the configuration file over
+the defaults. Without a case, the configuration file. **Show the
+configuration file's values** (`?config_view=1`) switches the Settings page
+to the file alone, **Show the case settings** back. A save with target
+"this case" writes what the form shows; a save to the configuration file
+says how many of the saved keys the selected case overrides. Between configuration file and saved profile the last edit wins: a
+newer YAML file takes precedence for the keys it sets on the next page load
+(the notice says so), other fields keep their saved values; a page refresh
+is enough.
+
+With a Sparlectra Case Format file selected, the form is seeded from the
+case file: it posts a value for every option it shows (explicit
+overrides, the highest precedence level), so selecting a case file moves
+its controls to the file's values, and the page says which settings came
+from the case. A saved settings profile for the case still wins over the
+file, and any control the user edits wins over both.
+
+### Scenarios and N-1
+
+The action row of the run form carries the N-1 controls: outage kind
+(branch/generator), **scenario source** (generated N-1 lists, or the
+scenarios block of an SCF case), **screening mode** (configured / off /
+flag / only) with a **margin** field (empty means the configured
+`contingency.screening.margin_pct`), and links to the weights editor and,
+for SCF cases, the scenario editor. Screening is off by default
+([N-1 Contingency Analysis](contingency.md)). The run
+summary names the screened count and the case-list source; the result page
+tabulates the cases for every format (name, weight, convergence,
+iterations, start, voltage envelope, worst loading, severity, islands, shed
+load, screened marker), ranked by severity with failures first and capped
+at 100, the linked CSV keeping the complete list in input order. A screened
+row shows its one-step estimate (no full solve), a flagged row the estimate
+next to the full-run values, a failed case its error text.
+
+**Weights.** The "edit N-1 weights" link next to the outage-kind selector
+opens a per-case weights editor. Weights live next to the case as
+`<case-stem>.contingency-weights.csv`, the two-column format
+`readContingencyWeightsCSV` parses; the file is hidden from the case list
+and deleted with the case. The editor seeds a table with the case's element
+names and offers a raw-CSV text area and a file upload; an upload replaces
+the existing file after validation, a malformed CSV is rejected with the
+line number. Rows left at `1.0` are omitted on save. A run picks the
+weights up whenever the file exists; names that match no element are
+reported in `run.log`, never fatal. A weight file applies to case-list runs
+(the outage-kind selector and the `n1_*` scenario sources); a scenario run
+from a case file's block or an external scenario JSON uses the per-scenario
+`weight` of the block and ignores the weight file. A weight only reorders
+the severity ranking and never skips a case
+([N-1 Contingency Analysis](contingency.md)).
+
+Scenarios need an SCF case; for other formats the form offers the generated
+N-1 sources and says "Scenarios need an SCF case; export this case as SCF
+first" next to the export action. The **scenario editor** lists the open
+case's scenarios (name, weight, op count; edit, duplicate, delete, new) and
+edits one as op rows: op (status/set/scale), target class, a component
+selector filled from the case as `id: name (from-to)` and filtered by
+class, then the fields the op needs (value for status, field plus value for
+set, factor for scale). Validation is server side with the scenario rules;
+errors name the scenario and op index, and a tap patch on a regulated
+transformer is rejected with the controller named. **Save into case file**
+writes the scenarios block through the SCF writer; nothing stays in the
+browser.
+
+### Diagnose
+
+**Diagnose** next to **Start PowerFlow run** evaluates the mismatch at the
+case's own stored operating point (MATPOWER `VM`/`VA`, or the `SvVoltage`
+state of a CGMES delivery) without a corrective Newton step. Every
+start-value machine is forced off (`flatstart = false`,
+`start_projection = false`, `dc_seed_unconditional = false`,
+`start_current_iteration.enabled = false`, `apslf_start.enabled = false`,
+plus `max_iter = 1` and `qlimits.enabled = false`), so the reported residual
+reflects the imported model, not the start guess or the step control. The
+forced settings outrank the form and a case configuration file next to the
+case. The run uses the normal pipeline (history, artifact viewer, the
+`diagnose.log` report) and adds `self_check.log` (forced settings, start
+residual and, for CGMES, the count of buses without a usable `SvVoltage`,
+which start at the flat `1.0 pu / 0°` fallback), `self_check_residuals.csv`
+(per-bus P/Q residuals with SV coverage, transformer-terminal and shunt
+counts) and `diagnose_self_check_config.yaml`. Programmatically:
+[`run_fixed_reference_self_check`](@ref).
+
+One step practically never converges; the residual is the measurement, so
+history and result page label the run **diagnosed** on a neutral badge (raw
+status in the tooltip) with a one-line explanation of the single iteration
+and non-zero mismatch. A diagnose run that could not run at all keeps the
+failure vocabulary.
+
+### Short circuit
+
+**Short circuit** next to Diagnose evaluates the balanced three-phase
+currents (IEC 60909-0, [`runShortCircuit!`](@ref)) for every bus of a CGMES
+delivery, maximum and minimum case in one run, without a power-flow solve.
+The button is enabled only when the delivery carries short-circuit source
+data (synchronous machines, feeder short-circuit currents or equivalent
+impedances); the server checks the contents and otherwise disables it with a
+tooltip. The run writes `short_circuit_max.csv` and `short_circuit_min.csv`
+(per-bus `Ik''`, `Sk''`, `κ`, `i_p`, safety flag and reasons), a `run.log`
+with the harvested-data coverage report and a summary row; rows with
+defaulted or skipped data get a warning badge because a flagged `Ik''max`
+is a lower bound. A delivery without usable sources fails with
+`short_circuit_data_missing` (coverage report in `run.log`), a non-CGMES
+case with `short_circuit_requires_cgmes`.
+
+### State estimation
+
+The state-estimation section of the Runs page (`/powerflow#state-estimation`;
+`/stateestimation` redirects there) uses the shared case selection, selects a
+measurement set and runs observability (traffic light, structural-island
+note), the WLS solve and the diagnostics of
+[State Estimation](state_estimation.md). Uploaded `.csv` files are offered
+when the content sniff finds the v1 version comment. Preselection: only a set
+bound to the selected case is preselected (cases with a bound set are
+starred, foreign sets are labeled); a case file with its own measurements
+offers those first and says how many it carries, otherwise the page asks for
+a set. A set bound to the case an SCF file was exported from stays usable,
+because the file records its source.
+
+The set tab offers download, re-upload and an inline editor (small files,
+saved atomically, first line must stay the version comment) and renders the
+`sparlectra-taps v1` tap table of a generated file, offered for download with
+the file. The page names the state of a carried set (ideal or measured);
+**Add noise to this set** perturbs each value with the sigma its own row
+declares. **Reset saved settings** under the generator deletes the per-case
+settings sidecar. **Estimate taps** (on by default) releases every
+in-service transformer with a ratio tap changer except machine transformers;
+the result page shows the per-transformer table (model step, fixed step and
+the change between them; frozen taps carry their reason in the status
+column) and the fixation J drop. The form warns when
+`k_suppress < k_eliminate`, because suppressed rows then rarely reach the
+elimination.
+
+Artifacts (`measurements.csv`, `se_diagnostics.md`, `se_view.md`,
+`se_state.csv`, `shunt_estimates.csv`, `se_tap_estimates.csv`,
+`se_bad_data.csv`, `se_deltas.csv`) land in the run history with kind `se`.
+The result page offers **Run power flow from this estimate** and the
+topology hypothesis test behind a button (writes `topology_hypotheses.md`).
+The summary shows `J`, the expected value (`E[J] = dof` for healthy noise)
+and the Wilson-Hilferty 3-sigma band verdict (with the `:high`/`:low`
+reason), always for the state after the elimination: eliminated rows are
+out of `J` and `dof`, suppressed rows stay in the honest `J` and surface as
+`J_active`.
+
+## Running jobs
+
+A submission starts a background worker and redirects to the status page:
+elapsed time as `HH:MM:SS` beside the status, and a details table with
+`elapsed_seconds`, requested and resolved case paths, start time and a
+manual refresh link. Queued, running and aborting
+pages refresh every two seconds (these `autorefresh=1` requests are not
+logged as user actions); terminal pages stop refreshing. The start page and
+the run history show a banner with **Open status** and **Abort** while a
+job is queued or running. A queued, running or aborting run cannot be
+deleted; a terminal one can.
+
+For large cases, the result page, `run.log`, `result.json` and
+`performance.log` show time per phase (reader, network builder, solver,
+artifacts).
+
+### Abort
+
+A queued or running job can be aborted from its status page or from the
+banner on the start page. Abort is cooperative: an operation that cannot be
+interrupted, such as a sparse factorization, finishes first; the status page
+shows the current phase. An aborted run keeps its run directory and is never
+reported as success.
+
+If a run stays in `aborting` for more than 60 s, the status page offers
+**Hard reset Web UI**. It marks the run invalid and stops the server.
+Restart with `julia --project=. start_webui.jl`.
+
+### Feedback
+
+Formulas on the documentation pages are rendered by a bundled copy of
+KaTeX (served from the package, no network needed).
+
+One-off messages (validation errors, import summary) open as a dismissible
+popup. Recent errors stay listed on the **Last errors** page.
+
+## Results and artifacts
+
+Every finished run gets a result page: run ID, schema version, status,
+convergence and solution flags, iterations, final mismatch, reason and
+message, input paths, output directory and a **Solver** entry. Artifacts come from
+`list_powerflow_artifacts` and are resolved by exact name through
+`resolve_powerflow_artifact`, never by joining browser input to a path.
+A CSV artifact opens as a table (delimiter taken from the header line), a
+Markdown report (`se_diagnostics.md`, `se_view.md`, DTF summaries) rendered;
+**Raw text** on the page shows the file as written. Other text artifacts
+(JSON, YAML, logs, HTML) open as escaped text in a scrollable panel that
+keeps long lines; other files download, and every artifact page offers a
+download. **Download all artifacts as ZIP** packs
+the exposed artifacts into `sparlectra_run_<run_id>_artifacts.zip`, skipping
+missing optional artifacts and unsafe names.
+
+### [Output modes](@id webui-output-modes)
+
+- **Logfile output mode**: `classic` writes the result report plus a
+  compact timing and status summary (`solver_time`, `representative_time`,
+  iterations, final mismatch, outcome; benchmark median and sample count when
+  benchmarking is on); `full` adds **Full run details** with the effective
+  typed configuration, artifact choices and status diagnostics. MATPOWER
+  `.m` runs also print the "Original/Final effective MATPOWER import
+  options" and "MATPOWER auto-profile recommendations" tables, because `.m`
+  files leave `shift_sign`, `shift_unit` and `ratio` ambiguous; DTF `.DAT`
+  runs never print them, so their shorter `run.log` is expected.
+- **Performance timing** (`off`, `compact`, `full`) writes
+  `performance.log` with the phases of one request (request parsing, case
+  resolution, configuration, case loading and network construction, solve,
+  postprocessing, artifact writing, solver and total time; `full` adds
+  internal profile entries), unlike `benchmark.enabled`, which measures
+  repeated solves and their median.
+- **Export case as CGMES delivery (EQ+TP+SSH+SV, ZIP)** writes the case as
+  one re-importable delivery into the run's artifacts, for every case format
+  and also on non-converged runs; see [CGMES Export](cgmes_export.md).
+- **Write bus/branch CSV files** (API default off, because large networks
+  produce large files) writes `bus_voltages_complex.csv` (per bus `vm_pu`,
+  `va_deg`, numeric `v_re` and `v_im`, readable `v_complex`, nominal and
+  actual voltage, generation, load, Q-limit and control columns) and
+  `branch_flows.csv` (active and reactive power at both ends, losses,
+  rating, status, overload) from the `ACPFlowReport` rows.
+- **CSV format** is the machine-scope key `output.csv_format` (**Save
+  settings** writes it to the configuration file, a per-case save leaves it
+  out) and applies to every CSV of every run type, state estimation
+  included: `technical` (default: comma delimiter, decimal point, no
+  grouping), `excel_de` (semicolon, decimal comma, thousands dot),
+  `excel_us` (comma, decimal point, thousands comma, grouped numbers
+  quoted). The Excel formats avoid exponent notation where practical;
+  `v_complex` follows the decimal notation, `v_re`/`v_im` stay numeric.
+  Excel may still auto-convert identifiers like `1E5`; use **Data > From
+  Text/CSV** with text types when that matters.
+
+### Diagnostic artifacts
+
+`diagnose.log` is written by **Diagnose** or with `run_diagnostics = true`,
+never by a normal run. On a non-converged run it is a report: "Diagnosis"
+names the worst-mismatch bus and equation and classifies the mismatch trend
+(monotonic, oscillatory, stagnant, diverging to non-finite) and the autodamp
+health; "Branch anomalies at worst-mismatch bus" scans the incident branches
+for zero impedance, off-nominal taps, large phase shifts or an outlying
+reactance; "Recommendations" closes with next steps. It reuses the Q-limit
+event, PV-limit and limit-validation printers, and a diagnostic exception
+stays in the file without changing a successful result. Old run directories
+may still hold `diagnose.txt`, which the viewer lists as well.
+A run that attempts the current-iteration pre-solve may add
+`current_iteration_start.log`: whether the candidate was attempted, accepted,
+rejected by a guard, or rejected with the original start values restored.
+
+### Comparing two runs
+
+Tick **Compare** on two history rows (two runs of the same case under
+different settings: a Q-limit mode, a solver, a start strategy) and press
+**Compare selected runs**; the page shows side by side:
+
+- case file, status, converged flag, iterations and final mismatch, with a
+  link to each result page;
+- the configuration keys the runs disagree on, read from their
+  `effective_config.yaml` (the `_config_sources` bookkeeping is left out);
+- the buses each run clamped, from `q_limit_events.csv`, and which only one
+  of them clamped;
+- total active and reactive losses from `branch_flows.csv`, with the
+  difference;
+- the largest voltage deviation and the ten buses that differ most, when both
+  runs wrote `bus_voltages_complex.csv` (the detailed CSV export).
+
+Everything comes from what the runs wrote, so earlier sessions compare as
+well; exactly two runs are required. The box appears only on finished
+power-flow runs (plain, diagnose, or started from an estimate) whose result
+is still on disk, not on state estimation, short circuit, N-1 or import
+analysis runs. Network size is not a criterion (the same case with an
+external-grid source and with a slack is exactly the pair one wants); the
+page says so when the runs share no bus.
+
+## Run history and operation log
+
+`start_sparlectra_webui` refreshes `powerflow_runs_index.json` under the
+output root before serving, so runs of an earlier process appear at once;
+**Refresh registry** reloads by hand, and missing, corrupt or unsafe entries
+are skipped without hiding the valid ones. History is newest first: local
+date and time, run ID, status text and badge (green successful, yellow
+warning/partial, red failed, gray unknown, blue running, always with visible
+text), solver summary fields and actions; indexes without timestamps use
+the `result.json` modification time. **Case file** and **Config file** show
+the file name, the full path in the tooltip. **Delete** removes one run,
+**Delete all runs** every registered run under the configured root; both
+update registry and index and delete only validated run directories, never
+unrelated files.
+
+The **Operation Log** page shows and downloads `logs/webui_operations.jsonl`,
+a JSON Lines support log independent of the run directories, for error
+reports. It records page opens, submissions and validation failures, run
+lifecycle changes, artifact views and downloads, abort requests, history
+refreshes, deletions, shutdown requests and enabled diagnostics or timing
+modes, not static CSS or image requests. Entries carry route, method,
+status, run, case, artifact, message and timing fields where available,
+`sparlectra_version` and a UTC timestamp `yyyy-mm-ddTHH:MM:SS.sssZ`, never
+file contents or configuration bodies. Logging is best effort and cannot
+fail a request; phase events stay high level, per-iteration timings belong
+to `performance.log`.
+
+Every start drops entries older than `webui.operation_log_retention_days`
+(default 10, `0` keeps only the current session) from every operation log
+it knows, including one a service call wrote next to the runs;
+`SPARLECTRA_WEBUI_OPERATION_LOG_RETENTION_DAYS` overrides the key for
+headless runs. On append, a log above 1 MiB is compacted and more than
+5,000 valid entries are cut to the newest 1,000, dropping malformed lines.
+The page states its size (entries and kB) and offers **Clear operation
+log**, which empties the file and writes one entry recording that. A large
+log is a matter of entry count, not age; a retention of two or three days
+is the lasting remedy.
+
+## [Configuration](@id webui-configuration)
+
+**Check configuration** and **Refresh configuration** bring a local file up
+to a template that gained options. Check is a dry run against `src/config/configuration.yaml.example`: missing keys,
+known deprecated aliases, duplicate YAML keys and a preview of the refreshed
+YAML, nothing written. Refresh keeps existing values, adds missing keys with
+template defaults and may normalize deprecated aliases (start-mode settings,
+legacy `matpower_*` Q-limit mode names); it never runs at startup, writes a
+timestamped backup first, refuses on duplicate keys, and offers uploaded or
+pasted YAML as a download instead of rewriting it.
+
+The **Configuration Editor** opens the active YAML in a textarea, validates
+it with the same parser and duplicate-key checks, writes only after
+validation with a timestamped backup, and warns when a case configuration
+file still overrides the global YAML through the prefilled form. After a
+save the server reloads the file, so the form shows the new values on the
+next page load.
+
+Form values override the YAML configuration; the order is described in
+[Configuration](configuration.md). Each run writes `effective_config.yaml`.
+**Ignore Web UI settings and use configuration defaults** runs with the YAML
+values only. `model.auto_profile: apply` may still adjust MATPOWER import
+conventions after form and API values are assembled;
+`effective_config.yaml` records that.
+
+**Help** in the header opens this page inside the Web UI, as shipped with
+the running version; **Project Docs** opens the published documentation
+(`webui.docs_base_url`). The help pages behind the **?** icons carry a
+section of this page in full, or the lead paragraph of a library section
+with the link to it.
+
+## Shutdown
+
+The server stops with **Stop Web UI**, `close(server)` or `Ctrl+C`. With
+`auto_shutdown_on_browser_close = true` it also stops when the browser has been
+gone for `browser_heartbeat_timeout_seconds` (best effort).
+
+## Limits
+
+The Web UI is local by design: loopback only, no authentication, no
+public-server mode, no database. There is no push channel (WebSockets or
+server-sent events), so a running job reports its phase through the page;
+there is no topology view and no plotting. The HTTP layer is a compact Julia
+`Sockets` implementation, chosen to avoid a web-framework dependency.

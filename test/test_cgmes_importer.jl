@@ -585,14 +585,15 @@ function run_cgmes_importer_tests()
       @test Sparlectra._fitColumn("exactly_twenty_five_chars", 25) == "exactly_twenty_five_chars"
     end)() end
 
-    # The Web UI docs reader serves an allowlist — the CGMES page and the
-    # contextual help for its options must be reachable from the interface.
+    # The CGMES options reach the documentation through the help registry:
+    # every cgmes_import topic links into cgmes_import.md, and the page
+    # carries the labelled option reference those links land on.
     @testset "Web UI documentation wiring" begin (function ()
-      page = SparlectraApp.resolve_webui_doc_page("cgmes_import")
-      @test page !== nothing && page.file == "cgmes_import.md"
-      @test isfile(joinpath(dirname(@__DIR__), "docs", "src", page.file))
-      # The page must carry the option reference the docs reader links to.
-      text = read(joinpath(dirname(@__DIR__), "docs", "src", page.file), String)
+      cgmes_topics = [t for t in keys(SparlectraApp.WEBUI_HELP_TOPICS) if startswith(t, "cgmes_import.")]
+      @test !isempty(cgmes_topics)
+      @test all(startswith(String(SparlectraApp.WEBUI_HELP_TOPICS[t].doc), "cgmes_import/#") for t in cgmes_topics)
+      text = read(joinpath(dirname(@__DIR__), "docs", "src", "cgmes_import.md"), String)
+      @test occursin("(@id cgmes-import-config)", text)
       for key in ("cgmes_import.path", "cgmes_import.base_mva", "cgmes_import.require_boundary", "cgmes_import.tap_control", "cgmes_import.ignore_connected")
         @test occursin(key, text)
       end

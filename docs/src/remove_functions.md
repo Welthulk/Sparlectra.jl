@@ -4,43 +4,31 @@
 
 ### 1. Bus removal is a validity check first
 
-`removeBus!` is intentionally different from the other helpers. Because the
-`Net` struct is immutable at the top level, the function is mainly used to
-check whether a bus is safe to remove at all.
-
-In practice this means a bus cannot be removed when it is still used as:
-
-- a slack bus,
-- a connection point for branches,
-- a connection point for prosumers, or
-- a connection point for shunts.
+The `Net` struct is immutable at the top level, so `removeBus!` mainly
+checks whether a bus is safe to remove. A bus cannot be removed while it
+is a slack bus or a connection point for branches, prosumers or shunts.
 
 ### 2. Branch-oriented removal changes topology
 
-`removeBranch!`, `removeACLine!`, and `removeTrafo!` modify the active network
-contents. After one of these operations, the network may split into multiple
-parts or leave single buses disconnected from the energized graph.
+`removeBranch!`, `removeACLine!` and `removeTrafo!` modify the active
+network; afterwards it may split into several parts or leave single buses
+disconnected.
 
 ### 3. Isolation handling is part of the workflow
 
-Use:
-
-- `markIsolatedBuses!` to detect and inspect the current topology, and
-- `clearIsolatedBuses!` to remove buses that have become removable.
-
-This is especially helpful after several branch removals or contingency-style
-editing steps.
+`markIsolatedBuses!` detects the current topology, `clearIsolatedBuses!`
+removes buses that have become removable; useful after several branch
+removals or contingency-style edits.
 
 ### 4. Validation closes the loop
 
-After any structural change, run `validate!` before the next solver call. That
-keeps the editing workflow predictable and makes topology problems visible
-before Newton-Raphson or state-estimation routines are executed.
+Run `validate!` after any structural change and before the next solver
+call, so topology problems surface before Newton-Raphson or
+state-estimation routines run.
 
 ## Where to find what
 
-- For a practical editing sequence with code examples, see the
-  [workshop tour](generated/workshop_tour.md).
-- For generated API docs of `removeBus!`, `removeBranch!`, `removeACLine!`,
-  `removeTrafo!`, `removeShunt!`, `removeProsumer!`, and
-  `clearIsolatedBuses!`, see the [Function Reference](reference.md).
+- Editing sequence with code: [workshop tour](generated/workshop_tour.md).
+- API docs of `removeBus!`, `removeBranch!`, `removeACLine!`,
+  `removeTrafo!`, `removeShunt!`, `removeProsumer!` and
+  `clearIsolatedBuses!`: [Function Reference](reference.md).

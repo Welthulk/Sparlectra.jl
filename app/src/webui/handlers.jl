@@ -36,7 +36,9 @@ function _webui_redirect(location::AbstractString)
   return SparlectraWebUIResponse(303, ""; headers = ["Location" => String(location)])
 end
 
-const _WEBUI_LOGO_PATH = normpath(joinpath(SPARLECTRA_ROOT, "docs", "src", "assets", "logo.png"))
+# the logo ships with the application (a copy of docs/src/assets/logo.png):
+# the Web UI reads nothing from the documentation tree at run time
+const _WEBUI_LOGO_PATH = normpath(joinpath(@__DIR__, "static", "logo.png"))
 const WEBUI_CASE_IMPORT_MAX_FILE_BYTES = 100 * 1024 * 1024
 const WEBUI_CASE_IMPORT_MAX_REQUEST_BYTES = 250 * 1024 * 1024
 # a contingency weight list is text (one line per element); the 100 MB case cap
@@ -1372,6 +1374,14 @@ function handle_settings_save(form::AbstractDict; output_root::AbstractString = 
   backup = general.backup
   record_webui_operation!(operation_log, "settings_saved"; route, method = "POST", user_action = true, target, status = "succeeded", config_file, saved_keys = length(config_updates), backup_path = backup)
   note = isempty(form_updates) ? "" : " Per-case options kept out (save with target this case): $(join(sort!(collect(keys(form_updates))), ", "))."
+  # the page shows the case's values by default, so a key the case sets
+  # itself will not show the value just saved; say so instead of leaving
+  # the user to wonder why the control did not move
+  if !isempty(case)
+    case_fields = _webui_case_config_field_values(case, directory)
+    n_over = count(t -> haskey(config_updates, t[1]) && haskey(case_fields, t[2]), _WEBUI_FORM_CONFIG_FIELDS)
+    n_over > 0 && (note *= " This case overrides $(n_over) of these setting(s).")
+  end
   return back("Saved $(length(config_updates)) key(s) to $(basename(config_file)) (backup: $(basename(backup))).$(note)")
 end
 
@@ -1700,6 +1710,16 @@ function handle_powerflow_hard_reset(run_id::AbstractString)::SparlectraWebUIRes
   return _webui_html(render_webui_hard_reset())
 end
 
+"""The Web UI manual page (`/help`)."""
+handle_webui_help_manual()::SparlectraWebUIResponse = _webui_html(render_webui_help_manual())
+
+"""The in-app help page of a registry topic (`/help/<topic>`); an unknown topic is a 404."""
+function handle_webui_help(topic::AbstractString)::SparlectraWebUIResponse
+  metadata = resolve_webui_help_topic(topic)
+  (metadata === nothing || isempty(metadata.doc)) && return _webui_html(render_webui_error(404, "Unknown help topic."); status = 404)
+  return _webui_html(render_webui_help(topic, metadata))
+end
+
 function handle_powerflow_artifacts(run_id::AbstractString)::SparlectraWebUIResponse
   artifacts = list_powerflow_artifacts(run_id)
   status = artifacts isa AbstractDict ? 404 : 200
@@ -1718,7 +1738,14 @@ function _read_webui_artifact_preview(path::AbstractString; max_bytes::Integer =
   end
 end
 
-function handle_powerflow_artifact(run_id::AbstractString, artifact_name::AbstractString)::SparlectraWebUIResponse
+"""
+    handle_powerflow_artifact(run_id, artifact_name; raw = false)
+
+The artifact viewer. Text artifacts open as a page (CSV as a table, Markdown
+rendered, everything else as escaped text; `raw = true` forces the text
+panel), other types are sent as a download. See `render_powerflow_artifact_page`.
+"""
+function handle_powerflow_artifact(run_id::AbstractString, artifact_name::AbstractString; raw::Bool = false)::SparlectraWebUIResponse
   artifact = resolve_powerflow_artifact(run_id, artifact_name)
   if artifact isa AbstractDict
     reason = get(artifact, "reason", "artifact_error")
@@ -1727,9 +1754,7 @@ function handle_powerflow_artifact(run_id::AbstractString, artifact_name::Abstra
   end
   if artifact.mime_type in _WEBUI_TEXT_MIME_TYPES
     preview = _read_webui_artifact_preview(artifact.path)
-    notice = preview.truncated ? "<p class=\"alert warning\">Preview truncated to $(_WEBUI_ARTIFACT_PREVIEW_BYTES) bytes. Use Download for the complete artifact.</p>" : ""
-    page = _webui_layout("Artifact: $(artifact.name)", "<section class=\"artifact-text-page\"><p><a class=\"button\" href=\"?download=1\">Download</a></p>$(notice)<pre class=\"artifact-text\">$(_webui_escape(preview.content))</pre></section>"; show_back = true, main_class = "page artifact-page")
-    return _webui_html(page)
+    return _webui_html(render_powerflow_artifact_page(artifact, preview; raw))
   end
   bytes = read(artifact.path)
   headers = ["Content-Disposition" => "attachment; filename=\"$(replace(basename(artifact.name), '"' => '_'))\""]
@@ -1902,26 +1927,6 @@ function handle_powerflow_delete_all(output_root::AbstractString)::SparlectraWeb
   get(result, "success", false) && return _webui_redirect("/powerflow/history")
   message = "Some runs could not be deleted: " * join((string(get(item, "run_id", "unknown"), " (", get(item, "reason", "delete_failed"), ")") for item in result["failed_runs"]), ", ")
   return _webui_html(render_webui_error(500, message); status = 500)
-end
-
-function handle_webui_help(topic::AbstractString)::SparlectraWebUIResponse
-  metadata = resolve_webui_help_topic(topic)
-  metadata === nothing && return _webui_html(render_webui_error(404, "Unknown help topic."); status = 404)
-  excerpt = load_webui_help_excerpt(topic)
-  excerpt === nothing && return _webui_html(render_webui_error(404, "No help section found for this option."); status = 404)
-  return _webui_html(render_webui_help(metadata, excerpt))
-end
-
-function handle_webui_docs_index()::SparlectraWebUIResponse
-  return _webui_html(render_webui_docs_index(WEBUI_DOC_PAGES))
-end
-
-function handle_webui_doc_page(page::AbstractString)::SparlectraWebUIResponse
-  metadata = resolve_webui_doc_page(page)
-  metadata === nothing && return _webui_html(render_webui_error(404, "Documentation page not found."); status = 404)
-  markdown_text = load_webui_markdown_document(page)
-  markdown_text === nothing && return _webui_html(render_webui_error(404, "Documentation page is unavailable."); status = 404)
-  return _webui_html(render_webui_doc_page(page, metadata, markdown_text))
 end
 
 # ---------------------------------------------------------------------------

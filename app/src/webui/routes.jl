@@ -90,6 +90,20 @@ function _webui_query_flag(query::AbstractDict, key::AbstractString)::Bool
   return lowercase(strip(String(get(query, key, "")))) in ("1", "true", "on", "yes")
 end
 
+# The Settings page shows the saved values of the selected case by default
+# (decision 2026-09-25, reversing the earlier configuration-file default:
+# after a save the page showed the old values next to "Saved settings for
+# this case"). The configuration-file view stays reachable with
+# ?config_view=1 (or case_settings=0); ?case_settings=1 still selects the
+# case view, so bookmarks keep working. Without a case there is nothing to
+# overlay.
+function _webui_settings_show_case_profile(query::AbstractDict, casefile::AbstractString)::Bool
+  isempty(strip(String(casefile))) && return false
+  _webui_query_flag(query, "case_settings") && return true
+  _webui_query_flag(query, "config_view") && return false
+  return !(lowercase(strip(String(get(query, "case_settings", "")))) in ("0", "false", "off", "no"))
+end
+
 # Fails open (notice stays visible) on any load error, matching
 # _powerflow_config_notice's fail-safe pattern — a broken/missing config file
 # should not silently suppress an otherwise-informative notice.
@@ -123,14 +137,11 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
   path, query = _webui_split_target(target)
   verb = uppercase(String(method))
   log_root = runtime === nothing ? output_root : runtime.operation_log
+  # the help icons link into the published documentation; the base URL
+  # follows the server's configuration file (webui.docs_base_url)
+  _webui_refresh_docs_base_url!(runtime)
   if verb == "GET" && path == "/assets/logo.png"
     return handle_webui_logo()
-  elseif verb == "GET" && startswith(path, "/help/")
-    return handle_webui_help(_webui_urldecode(path[(lastindex("/help/") + 1):end]))
-  elseif verb == "GET" && path == "/docs"
-    return handle_webui_docs_index()
-  elseif verb == "GET" && startswith(path, "/docs/")
-    return handle_webui_doc_page(_webui_urldecode(path[(lastindex("/docs/") + 1):end]))
   elseif verb == "GET" && path in ("/", "/powerflow")
     _webui_log_route!(log_root, "powerflow_form_opened", verb, path; status = "opened")
     # without an explicit ?casefile the run page uses
@@ -188,9 +199,7 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
       save_message = get(query, "save_message", ""),
       case_profile = settings_profile,
       show_case_settings_notice = _powerflow_show_case_settings_notice(get(query, "config_file", runtime === nothing ? "" : runtime.config_file)),
-      # the saved case settings are displayed only with ?case_settings=1;
-      # the default view shows the configuration file's values
-      show_case_profile = _webui_query_flag(query, "case_settings"),
+      show_case_profile = _webui_settings_show_case_profile(query, settings_casefile),
     ))
   elseif verb == "POST" && path == "/powerflow/settings/save"
     # the one save route for every page that edits a case-scope field (Case
@@ -355,7 +364,9 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
     length(segments) == 2 || return _webui_html(render_webui_error(400, "Artifact route requires a run ID and artifact name."); status = 400)
     run_id, artifact_name = _webui_urldecode.(segments)
     download = get(query, "download", "") == "1"
-    response = download ? handle_powerflow_artifact_download(run_id, artifact_name) : handle_powerflow_artifact(run_id, artifact_name)
+    # raw=1 shows a CSV or Markdown artifact as text instead of the rendered view
+    raw = get(query, "raw", "") == "1"
+    response = download ? handle_powerflow_artifact_download(run_id, artifact_name) : handle_powerflow_artifact(run_id, artifact_name; raw)
     _webui_log_route!(log_root, download ? "artifact_downloaded" : "artifact_opened", verb, path; status = response.status, run_id, artifact = artifact_name)
     return response
   elseif verb == "GET" && path == "/powerflow/history"
@@ -385,6 +396,10 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
   elseif verb == "GET" && path == "/webui/operation-log"
     _webui_log_route!(log_root, "page_opened", verb, path; status = "opened")
     return handle_webui_operation_log(log_root)
+  elseif verb == "GET" && path == "/help"
+    return handle_webui_help_manual()
+  elseif verb == "GET" && startswith(path, "/help/")
+    return handle_webui_help(_webui_urldecode(path[(lastindex("/help/") + 1):end]))
   elseif verb == "GET" && path == "/webui/last-errors"
     _webui_log_route!(log_root, "last_errors_opened", verb, path; status = "opened")
     return _webui_html(render_webui_last_errors(log_root))

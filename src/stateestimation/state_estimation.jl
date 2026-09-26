@@ -660,9 +660,14 @@ end
 ## intervals) and the chosen `omega_path`.
 function _residual_diagnostics(H::AbstractMatrix{<:Real}, r::Vector{Float64}, w::Vector{Float64}; need_full_omega::Bool = false, minStates::Int = state_estimation_config().takahashi_min_states)
   m, n = size(H)
-  # the full residual covariance is m×m dense by definition; refuse by
-  # name instead of allocating
-  need_full_omega && m > _SE_FULL_OMEGA_MAX_M && error("SE diagnostics: the residual-correlation K report needs the full m×m residual covariance and m=$(m) exceeds $(_SE_FULL_OMEGA_MAX_M); disable state_estimation.report_residual_correlation for sets this large")
+  # the full residual covariance is m×m dense by definition; a set beyond
+  # the limit gets the diagnostics WITHOUT the K columns (the caller sees
+  # omega = nothing), named in a warning instead of failing the run: the
+  # report is on by default since 0.17.4, and a large network must still run
+  if need_full_omega && m > _SE_FULL_OMEGA_MAX_M
+    @warn "SE diagnostics: the residual-correlation K report needs the full m×m residual covariance and m=$(m) exceeds $(_SE_FULL_OMEGA_MAX_M); the report is skipped for this run"
+    need_full_omega = false
+  end
   takahashi_reason = ""
   if !need_full_omega && n >= minStates
     sp, takahashi_reason = _residual_diagnostics_takahashi(H, r, w)
@@ -2510,6 +2515,21 @@ function _validate_measurements_islands(net::Net, measurements::Vector{Measureme
   )
 end
 
+# Model tap position of a released transformer in STEPS of the grid the
+# estimate is fixed on (ratio grid for regulator 1; Delta-u steps or the
+# phase grid for regulator 2, exactly as `_fixate_taps` counts them), so
+# the report can put model, estimate and fixed step side by side.
+function _tap_model_steps(br::Branch)
+  r10, r20 = _tap_r0_split(br, br.tap_est_mode, br.tap_est_alpha_deg)
+  step1 = br.tap_step > 0.0 ? br.tap_step : 0.00625
+  m1 = r10 / step1
+  if br.phase_du_step > 0.0
+    return m1, r20 / br.phase_du_step
+  end
+  step2 = br.phase_step_deg > 0.0 ? br.phase_step_deg : 1.25
+  return m1, calcSkewAngleTap(tap_fraction = r20, skew_angle_deg = br.tap_est_alpha_deg).effective_shift_deg / step2
+end
+
 function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::StateEstimationConfig)
   maxIte = cfg.max_iter
   flatstart = cfg.flatstart
@@ -3253,7 +3273,12 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
       for tr in tapRows
         push!(liveIdxs, tr.branch)
         ob = get(cidToOrig, net.branchVec[tr.branch].comp.cID, tr.branch)
-        push!(rows, (branch = ob, name = tr.name, mrid = get(mrids, ob, ""), mode = tr.mode, alpha_deg = tr.alpha_deg, r1_est = tr.r1_est, r2_est = tr.r2_est, electrical_step_1 = tr.electrical_step_1, fixed_step_1 = tr.fixed_step_1, electrical_step_2 = tr.electrical_step_2, fixed_step_2 = tr.fixed_step_2, out_of_range = tr.out_of_range, fixed = tapFixed, frozen_reason = get(tapFrozen, tr.branch, :none)))
+        # the model position the estimate started from, in steps of the
+        # same grid as the estimate: the result page and the run artifact
+        # show model, estimate and fixed step side by side, so a corrected
+        # tap is visible as such
+        m1, m2 = _tap_model_steps(net.branchVec[tr.branch])
+        push!(rows, (branch = ob, name = tr.name, mrid = get(mrids, ob, ""), mode = tr.mode, alpha_deg = tr.alpha_deg, r1_est = tr.r1_est, r2_est = tr.r2_est, model_step_1 = m1, model_step_2 = m2, electrical_step_1 = tr.electrical_step_1, fixed_step_1 = tr.fixed_step_1, electrical_step_2 = tr.electrical_step_2, fixed_step_2 = tr.fixed_step_2, out_of_range = tr.out_of_range, fixed = tapFixed, frozen_reason = get(tapFrozen, tr.branch, :none)))
       end
     end
     # transformers whose regulators are ALL frozen left the map; report them
@@ -3267,7 +3292,7 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
       s2 = calcSkewAngleTap(tap_fraction = r20, skew_angle_deg = br.tap_est_alpha_deg)
       step2 = br.phase_step_deg > 0.0 ? br.phase_step_deg : 1.25
       ob = get(cidToOrig, br.comp.cID, k)
-      push!(rows, (branch = ob, name = getCompName(br.comp), mrid = get(mrids, ob, ""), mode = br.tap_est_mode, alpha_deg = br.tap_est_alpha_deg, r1_est = r10, r2_est = r20, electrical_step_1 = r10 / step1, fixed_step_1 = Int(round(r10 / step1, RoundNearestTiesAway)), electrical_step_2 = s2.effective_shift_deg / step2, fixed_step_2 = Int(round(s2.effective_shift_deg / step2, RoundNearestTiesAway)), out_of_range = false, fixed = false, frozen_reason = reason))
+      push!(rows, (branch = ob, name = getCompName(br.comp), mrid = get(mrids, ob, ""), mode = br.tap_est_mode, alpha_deg = br.tap_est_alpha_deg, r1_est = r10, r2_est = r20, model_step_1 = r10 / step1, model_step_2 = _tap_model_steps(br)[2], electrical_step_1 = r10 / step1, fixed_step_1 = Int(round(r10 / step1, RoundNearestTiesAway)), electrical_step_2 = s2.effective_shift_deg / step2, fixed_step_2 = Int(round(s2.effective_shift_deg / step2, RoundNearestTiesAway)), out_of_range = false, fixed = false, frozen_reason = reason))
     end
     tapEstimates = rows
     # write-back of the FIXED mechanical positions: only on explicit request

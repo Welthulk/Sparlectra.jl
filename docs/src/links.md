@@ -2,30 +2,19 @@
 
 ## Concept
 
-Links represent **impedance-less topological connections** between buses.
+Links are impedance-less topological connections between buses: busbar
+couplers, sectionalizers, node splitting or merging in CIM imports. They
+enter a network via `addLink!`, from retained CGMES switches, or from the
+MATPOWER extension block `mpc.sparlectra.links` (one `fbus tbus status`
+row per coupler, written back on MATPOWER export; see
+[MATPOWER cases](matpower.md)).
 
-Typical use cases:
-
-* Busbar couplers
-* Sectionalizers
-* Node splitting / merging in CIM imports
-
-Links enter a network in three ways: directly via `addLink!`, from retained
-CGMES switches, or from the MATPOWER extension block `mpc.sparlectra.links`
-(one `fbus tbus status` row per coupler, written back on MATPOWER export;
-see [MATPOWER Case Format](matpower_format.md)).
-
-A link is **not a physical branch**:
-
-* It has **no impedance**
-* It is **not stamped into the Y-bus**
-* It enforces **voltage equality constraints**
-
----
+A link is not a physical branch: no impedance, no Y-bus entry, a voltage
+equality constraint instead.
 
 ## Mathematical interpretation
 
-A closed link between bus *i* and *j* imposes:
+A closed link between bus *i* and *j* imposes
 
 ```math
 [
@@ -33,26 +22,17 @@ V_i = V_j
 ]
 ```
 
-This introduces a **topological constraint**, not an admittance.
-
----
+a topological constraint, not an admittance.
 
 ## Relation to KCL
 
-Since links are not part of the Y-bus, Kirchhoff’s Current Law (KCL) is not enforced via admittance equations at the link.
-
-Instead:
-
-* KCL is enforced **per bus after topology processing**
-* Link flows are reconstructed **after solving** via power balancing
-
----
+Kirchhoff's Current Law is enforced per bus after topology processing,
+not via admittance equations at the link; link flows are reconstructed
+after solving via power balancing.
 
 ## Zero-impedance loops (critical case)
 
-If multiple links form a loop, the system contains a **zero-impedance cycle**.
-
-Example:
+Multiple links forming a loop create a zero-impedance cycle:
 
 ```
 Bus1 ──link── Bus2
@@ -62,32 +42,22 @@ Bus1 ──link── Bus2
 Bus3 ───────────
 ```
 
-This leads to:
-
-* No voltage drop in the loop
-* Underdetermined current distribution
-* Singular system if treated electrically
-
----
+No voltage drop in the loop, an underdetermined current distribution, a
+singular system if treated electrically.
 
 ## Resolution via Pseudoinverse
 
-To compute link flows in such cases, Sparlectra uses a **minimum-norm solution**.
-
-Let:
-
-*  $A$  = incidence matrix of link graph
-*  $f$  = unknown link flows
-*  $b$  = nodal power imbalance
-
-We solve:
+Link flows in such loops are computed as a minimum-norm solution. With
+$A$ the incidence matrix of the link graph, $f$ the unknown link flows and
+$b$ the nodal power imbalance,
 
 ```math
 [
 A f = b
 ]
 ```
-Since the system is rank-deficient:
+
+is rank-deficient, so
 
 ```math
 [
@@ -95,30 +65,10 @@ f = A^{+} b
 ]
 ```
 
-where $A^{+}$ is the **Moore–Penrose pseudoinverse**.
-
----
-
-## Interpretation of the solution
-
-The pseudoinverse yields:
-
-* A **consistent KCL solution**
-* The **minimum 2-norm flow distribution**
-* Physically equivalent to:
-
-  * uniform distribution of flows in symmetric loops
-  * no artificial circulation currents
-
----
-
-## Practical implications
-
-* Link flows in loops are **not unique**
-* Sparlectra returns the **minimum-energy solution**
-* Results are stable and deterministic
-
----
+with $A^{+}$ the Moore-Penrose pseudoinverse: a consistent KCL solution
+with the minimum 2-norm flow distribution, uniform flows in symmetric
+loops, no artificial circulation currents. Link flows in loops are not
+unique; the minimum-energy solution is deterministic.
 
 ## Modeling guidelines
 
@@ -127,15 +77,11 @@ The pseudoinverse yields:
 * Use links only for topology, not impedance modeling
 * Avoid large link-only subgraphs without measurements (SE context)
 
----
-
 ## Example
 
 ```julia
 linkNr = addLink!(net = net, fromBus = "Bus1", toBus = "Bus1a", status = 1)
 ```
-
----
 
 ## Summary
 
@@ -147,4 +93,3 @@ linkNr = addLink!(net = net, fromBus = "Bus1", toBus = "Bus1a", status = 1)
 | Flow uniqueness   | not unique            |
 | Returned solution | minimum-norm          |
 
----

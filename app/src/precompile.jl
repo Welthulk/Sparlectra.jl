@@ -60,6 +60,10 @@ function _precompile_app_workload()
     return nothing
 end
 
+# The workload mode this image was built with, baked in at precompile time
+# like `Sparlectra.PRECOMPILE_WORKLOAD_MODE`; the gate runner reads it.
+const PRECOMPILE_WORKLOAD_MODE = get(ENV, "SPARLECTRA_PRECOMPILE_WORKLOAD", "off")
+
 @setup_workload begin
     _pc_full = get(ENV, "SPARLECTRA_PRECOMPILE_WORKLOAD", "off") == "full"
     @compile_workload begin

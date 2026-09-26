@@ -337,7 +337,7 @@ function _webui_layout(title::AbstractString, content::AbstractString; show_back
   return """<!doctype html>
 <html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
 <title>$(_webui_escape(title)) · Sparlectra</title><link rel=\"stylesheet\" href=\"/static/sparlectra.css\"></head>
-<body><header class=\"site-header\"><a class=\"brand\" href=\"/powerflow\"><img class=\"brand-logo\" src=\"/assets/logo.png\" alt=\"Sparlectra.jl logo\">$(runtime_info)</a><nav><a href=\"/powerflow/case\">Case</a><a href=\"/powerflow/settings\">Settings</a><a href=\"/powerflow\">Runs</a><a href=\"/powerflow/history\">Run history</a><a href=\"/webui/operation-log\">Operation Log</a><a href=\"/docs\">Docs</a><a class=\"project-docs-link\" href=\"https://welthulk.github.io/Sparlectra.jl/\" target=\"_blank\" rel=\"noopener noreferrer\"><svg class=\"github-icon\" viewBox=\"0 0 16 16\" aria-hidden=\"true\"><path fill=\"currentColor\" d=\"M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.64 5.47 7.72.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.51-2.01.38-2.53-.5-2.69-.96-.09-.23-.48-.96-.82-1.15-.28-.15-.68-.53-.01-.54.63-.01 1.08.59 1.23.83.72 1.23 1.87.88 2.33.67.07-.53.28-.88.51-1.08-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.2-.36-1.04.08-2.16 0 0 .67-.22 2.2.84A7.4 7.4 0 0 1 8 3.93c.68 0 1.36.09 2 .27 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.96.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.25.54.74.54 1.5 0 1.08-.01 1.95-.01 2.22 0 .22.15.47.55.39A8.15 8.15 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z\"/></svg><span>Project Docs</span></a>$(header_info)<a href=\"/webui/last-errors\">Last errors</a><form method="post" action="/webui/shutdown" class="exit-form"><button type="submit" class="exit-button">Stop Web UI</button></form></nav></header>
+<body><header class=\"site-header\"><a class=\"brand\" href=\"/powerflow\"><img class=\"brand-logo\" src=\"/assets/logo.png\" alt=\"Sparlectra.jl logo\">$(runtime_info)</a><nav><a href=\"/powerflow/case\">Case</a><a href=\"/powerflow/settings\">Settings</a><a href=\"/powerflow\">Runs</a><a href=\"/powerflow/history\">Run history</a><a href=\"/webui/operation-log\">Operation Log</a><a href=\"/help\">Help</a><a class=\"project-docs-link\" href=\"$(_webui_escape(_webui_docs_base_url()))\" target=\"_blank\" rel=\"noopener noreferrer\"><svg class=\"github-icon\" viewBox=\"0 0 16 16\" aria-hidden=\"true\"><path fill=\"currentColor\" d=\"M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.64 5.47 7.72.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.51-2.01.38-2.53-.5-2.69-.96-.09-.23-.48-.96-.82-1.15-.28-.15-.68-.53-.01-.54.63-.01 1.08.59 1.23.83.72 1.23 1.87.88 2.33.67.07-.53.28-.88.51-1.08-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.2-.36-1.04.08-2.16 0 0 .67-.22 2.2.84A7.4 7.4 0 0 1 8 3.93c.68 0 1.36.09 2 .27 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.96.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.25.54.74.54 1.5 0 1.08-.01 1.95-.01 2.22 0 .22.15.47.55.39A8.15 8.15 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z\"/></svg><span>Project Docs</span></a>$(header_info)<a href=\"/webui/last-errors\">Last errors</a><form method="post" action="/webui/shutdown" class="exit-form"><button type="submit" class="exit-button">Stop Web UI</button></form></nav></header>
 $(latency_banner)<main class="$(main_class)"$(refresh_attrs)>$(back_button)<h1>$(_webui_escape(title))</h1>$(content)</main><footer>$(_webui_escape(version_text)) · Local PowerFlow Web UI · loopback access only</footer>
 <script>
 (function () {
@@ -407,6 +407,7 @@ function _webui_powerflow_info_menu(; output_root::AbstractString, config_file::
 <h2>Run information</h2>
 <dl>
 <dt>Version</dt><dd><code>Sparlectra.jl v$(_webui_escape(string(version())))</code></dd>
+<dt>Application</dt><dd><code>SparlectraApp v$(_webui_escape(string(pkgversion(@__MODULE__))))</code></dd>
 <dt>AnalyticLoadFlow</dt><dd><code>v$(_webui_escape(string(pkgversion(AnalyticLoadFlow))))</code> <a href=\"https://github.com/Welthulk/AnalyticLoadFlow.jl\" target=\"_blank\" rel=\"noopener noreferrer\">GitHub</a></dd>
 <dt>Julia</dt><dd><code>$(_webui_escape(string(VERSION)))</code></dd>
 <dt>Commit</dt><dd><code>$(_webui_escape(commit_text))</code></dd>
@@ -416,18 +417,130 @@ function _webui_powerflow_info_menu(; output_root::AbstractString, config_file::
 <dt>Case cache</dt><dd><code>$(_webui_escape(case_directory))</code></dd>
 <dt>Operation log</dt><dd><code>$(_webui_escape(operation_log))</code></dd>
 </dl>
-<p class=\"matpower-citation-note\">Using MATPOWER cases or data in publications? Please follow the <a href=\"https://matpower.org/citing/\" target=\"_blank\" rel=\"noopener noreferrer\">MATPOWER citation guidance</a>; the full reference is in the <a href=\"/docs\">documentation</a> (MATPOWER import, Citation).</p>
+<p class=\"matpower-citation-note\">Using MATPOWER cases or data in publications? Please follow the <a href=\"https://matpower.org/citing/\" target=\"_blank\" rel=\"noopener noreferrer\">MATPOWER citation guidance</a>; the full reference is in the <a href=\"$(_webui_escape(_webui_docs_base_url()))matpower/#matpower-citation\" target=\"_blank\" rel=\"noopener noreferrer\">documentation</a> (MATPOWER import, Citation).</p>
+<p class=\"matpower-citation-note sparlectra-citation-note\">Using Sparlectra in publications? Please cite <em>Sparlectra.jl: A Power-Flow and State-Estimation Framework in Julia</em> (Udo Schmitz, 2026); the BibTeX entry is in the <a href=\"https://github.com/Welthulk/Sparlectra.jl#citing\" target=\"_blank\" rel=\"noopener noreferrer\">README (Citing)</a>.</p>
 </div>
 </details>"""
 end
 
+# The `?` next to a control opens the in-app help page of its topic in a new
+# tab (the form keeps its values); the help page carries the link into the
+# published documentation. A control without a `doc` target gets no icon.
+# The hover text sits on the label span, so it shows on the label and on
+# the icon alike.
 function _webui_help_link(topic::AbstractString, label::AbstractString)::String
-  return "<a class=\"help-link\" href=\"/help/$(_webui_urlencode(topic))\" aria-label=\"Help for $(_webui_escape(label))\" title=\"Help for $(_webui_escape(label))\">?</a>"
+  url = webui_help_page_url(topic)
+  isempty(url) && return ""
+  return "<a class=\"help-link\" href=\"$(_webui_escape(url))\" target=\"_blank\" rel=\"noopener noreferrer\" aria-label=\"Help for $(_webui_escape(label))\">?</a>"
+end
+
+"""
+    render_webui_help(topic, metadata) -> String
+
+The help page of one topic: label, hover hint, the documentation section
+shipped with the application (rendered Markdown, links into the published
+documentation) and the link to the section online. A topic whose section
+was cut to the excerpt budget says so next to that link.
+"""
+function render_webui_help(topic::AbstractString, metadata)::String
+  doc = String(metadata.doc)
+  excerpt = get(WEBUI_HELP_EXCERPTS, doc, nothing)
+  online = webui_help_doc_url(topic)
+  parts = String["<p class=\"help-hint\">$(_webui_escape(String(metadata.hint)))</p>"]
+  if excerpt !== nothing
+    push!(parts, "<h2>$(_webui_escape(excerpt.title))</h2>")
+    isempty(excerpt.markdown) || push!(parts, _webui_render_markdown(excerpt.markdown))
+    # a library section is not duplicated here: its lead paragraph at most,
+    # the reference (tables, option lists) stays in the documentation
+    excerpt.truncated && push!(parts, "<p class=\"field-help help-more\">$(isempty(excerpt.markdown) ? "The section is a reference; open it in the documentation." : "Lead paragraph only; the section continues in the documentation.")</p>")
+  end
+  links = String[]
+  # a section of the Web UI manual is also in the in-app manual, at its anchor
+  page, anchor = _webui_help_doc_parts(doc)
+  page == "webui" && !isempty(anchor) && push!(links, "<a class=\"button secondary\" href=\"/help#$(_webui_escape(anchor))\">Open in the Web UI help</a>")
+  isempty(online) || push!(links, "<a class=\"button\" href=\"$(_webui_escape(online))\" target=\"_blank\" rel=\"noopener noreferrer\">Open this section in the documentation</a>")
+  isempty(links) || push!(parts, "<p class=\"help-links\">$(join(links, " "))</p>")
+  content = "<section class=\"panel help-page rendered-markdown\">$(join(parts, ""))</section>"
+  return _webui_layout(String(metadata.label), content; show_back = true)
+end
+
+# "page/#anchor" into its two parts ("" for a part that is not there)
+function _webui_help_doc_parts(doc::AbstractString)
+  m = match(r"^([A-Za-z0-9_]+)/#([A-Za-z0-9_.-]+)$", doc)
+  m === nothing && return ("", "")
+  return (String(m.captures[1]), String(m.captures[2]))
+end
+
+# The id a heading gets: the Documenter label when the source heading
+# carried one (so in-page links of the manual and the topic pages agree
+# with the published site), otherwise the text slugified the way
+# Documenter does it (lowercase, runs of anything but letters and digits
+# to one hyphen).
+function _webui_heading_id(text::AbstractString, anchors::AbstractDict)::String
+  haskey(anchors, text) && return anchors[text]
+  slug = lowercase(replace(text, r"[^A-Za-z0-9]+" => "-"))
+  return strip(slug, '-')
+end
+
+"""
+    _webui_markdown_heading_ids(html, anchors) -> (html, headings)
+
+Give every rendered heading an `id` and collect `(level, id, text)` for a
+table of contents. The Markdown standard library renders headings without
+ids; the text is taken with its inline markup stripped.
+"""
+function _webui_markdown_heading_ids(html::AbstractString, anchors::AbstractDict)
+  headings = Tuple{Int,String,String}[]
+  source = String(html)
+  io = IOBuffer()
+  last = 1
+  for m in eachmatch(r"<h([1-6])>(.*?)</h\1>"s, source)
+    print(io, SubString(source, last, prevind(source, m.offset)))
+    level = parse(Int, m.captures[1])
+    inner = String(m.captures[2])
+    text = replace(inner, r"<[^>]+>" => "")
+    text = replace(text, "&#40;" => "(", "&#41;" => ")", "&#61;" => "=", "&#36;" => "\$", "&amp;" => "&", "&lt;" => "<", "&gt;" => ">", "&quot;" => "\"")
+    id = _webui_heading_id(text, anchors)
+    push!(headings, (level, id, text))
+    print(io, "<h$(level) id=\"$(_webui_escape(id))\">$(inner)</h$(level)>")
+    last = m.offset + ncodeunits(m.match)
+  end
+  print(io, SubString(source, last))
+  return (String(take!(io)), headings)
+end
+
+"""
+    render_webui_help_manual() -> String
+
+The Web UI manual page (`/help`): the documentation page of the Web UI as
+shipped with the application (`WEBUI_HELP_MANUAL`, generated from
+`docs/src/webui.md`), with a table of contents over its sections, heading
+ids that match the published site, and the link to the page online. The
+page's own title heading is dropped, the layout carries the title.
+"""
+function render_webui_help_manual()::String
+  html, headings = _webui_markdown_heading_ids(_webui_render_markdown(WEBUI_HELP_MANUAL), WEBUI_HELP_MANUAL_ANCHORS)
+  html = replace(html, r"<h1 id=\"[^\"]*\">.*?</h1>\s*"s => ""; count = 1)
+  toc = join(("<li class=\"toc-level-$(level)\"><a href=\"#$(_webui_escape(id))\">$(_webui_escape(text))</a></li>" for (level, id, text) in headings if level in (2, 3)), "")
+  online = _webui_docs_base_url() * "webui/"
+  content = string(
+    "<section class=\"panel help-page rendered-markdown\">",
+    "<p class=\"help-hint\">How the Web UI is operated: cases, runs, results, configuration. Library topics (solver options, estimation, formats) are in the documentation; the ? next to a control opens its section.</p>",
+    "<details class=\"help-toc\" open><summary>Contents</summary><ul>$(toc)</ul></details>",
+    html,
+    "<p class=\"help-links\"><a class=\"button\" href=\"$(_webui_escape(online))\" target=\"_blank\" rel=\"noopener noreferrer\">Open this page in the documentation</a></p>",
+    "</section>",
+  )
+  return _webui_layout("Web UI help", content; show_back = true)
 end
 
 function _webui_field_label(field::AbstractString, label::AbstractString)::String
   topic = WEBUI_FORM_HELP_TOPICS[String(field)]
-  return "<span class=\"field-label\">$(_webui_escape(label)) $(_webui_help_link(topic, label))</span>"
+  metadata = resolve_webui_help_topic(topic)
+  hint = metadata === nothing ? "" : String(metadata.hint)
+  title = isempty(hint) ? "" : " title=\"$(_webui_escape(hint))\""
+  link = _webui_help_link(topic, label)
+  return "<span class=\"field-label\"$(title)>$(_webui_escape(label))$(isempty(link) ? "" : " " * link)</span>"
 end
 
 function _webui_active_run_banner(active_run)::String
@@ -970,20 +1083,20 @@ end
 # the two CGMES selects) curated option labels; the strings are the ones
 # the former hand-written fieldsets carried
 const _WEBUI_ADAPTER_FIELD_PRESENTATION = Dict{String,NamedTuple}(
-  "cgmes_start_values" => (label = "CGMES start values", title = "auto uses the delivery's own SvVoltage state when it carries one (real deliveries are built around their operating point) and falls back to the flat start otherwise.", attrs = " data-cgmes-start-values-field", input_attrs = "", option_labels = Dict("auto" => "Automatic (SV state when available, default)", "sv" => "Imported SV state", "flat" => "Flat start")),
-  "cgmes_require_boundary" => (label = "Require boundary set", title = "Fail the CGMES import when topology references stay unresolved (boundary set missing). Uncheck to import an incomplete delivery anyway (buses without a resolvable BaseVoltage still abort).", attrs = " data-cgmes-start-values-field", input_attrs = "", option_labels = nothing),
-  "cgmes_infer_base_voltages" => (label = "Infer missing base voltages", title = "Reconstruct missing nominal voltages when the delivery ships without its BaseVoltage catalog: seeded from the SV voltages and transformer rated voltages, propagated across level-preserving equipment. Substitutions are summarized as a warning. Pair with an unchecked Require boundary set.", attrs = " data-cgmes-start-values-field", input_attrs = "", option_labels = nothing),
-  "cgmes_hvdc_mode" => (label = "HVDC converters", title = "How HVDC converters are modeled: fixed Stage-0 injections reproduce the delivery snapshot; a paired controller keeps the two converters of one link coupled (transfer, loss, terminal Q) and makes the transfer steerable.", attrs = " data-cgmes-start-values-field", input_attrs = "", option_labels = Dict("injections" => "Fixed injections (Stage 0, default)", "paired_control" => "Paired controller (steerable link)")),
+  "cgmes_start_values" => (label = "CGMES start values", title = "auto uses the delivery's own SvVoltage state when it carries one and falls back to the flat start otherwise; sv and flat force one of the two.", attrs = " data-cgmes-start-values-field", input_attrs = "", option_labels = Dict("auto" => "Automatic (SV state when available, default)", "sv" => "Imported SV state", "flat" => "Flat start")),
+  "cgmes_require_boundary" => (label = "Require boundary set", title = "Fail the CGMES import when topology references stay unresolved (boundary set missing). Uncheck to import an incomplete delivery anyway.", attrs = " data-cgmes-start-values-field", input_attrs = "", option_labels = nothing),
+  "cgmes_infer_base_voltages" => (label = "Infer missing base voltages", title = "Reconstruct missing nominal voltages from SV voltages and transformer ratings when the delivery has no BaseVoltage catalog. Pair with an unchecked boundary set.", attrs = " data-cgmes-start-values-field", input_attrs = "", option_labels = nothing),
+  "cgmes_hvdc_mode" => (label = "HVDC converters", title = "HVDC converter model: fixed injections reproduce the delivery snapshot; a paired controller couples both converters of a link and makes the transfer steerable.", attrs = " data-cgmes-start-values-field", input_attrs = "", option_labels = Dict("injections" => "Fixed injections (Stage 0, default)", "paired_control" => "Paired controller (steerable link)")),
   "matpower_import_auto_profile" => (label = "MATPOWER auto-profile", title = "", attrs = " data-matpower-import-field", input_attrs = "", option_labels = nothing),
   "matpower_import_ratio" => (label = "Transformer ratio convention", title = "", attrs = " data-matpower-import-field", input_attrs = "", option_labels = nothing),
   "matpower_import_shift_sign" => (label = "Phase-shift sign", title = "", attrs = " data-matpower-import-field", input_attrs = " step=\"2\" min=\"-1\" max=\"1\"", option_labels = nothing),
   "matpower_import_shift_unit" => (label = "Phase-shift unit", title = "", attrs = " data-matpower-import-field", input_attrs = "", option_labels = nothing),
   "matpower_import_bus_shunt_model" => (label = "Bus-shunt model", title = "", attrs = " data-matpower-import-field", input_attrs = "", option_labels = nothing),
-  "matpower_import_dcline_mode" => (label = "DC-line mode", title = "How active mpc.dcline rows are modeled: pf_injections adds two fixed terminal injections per row (MATPOWER toggle_dcline equivalent); paired_control additionally couples each pair as a steerable HVDC link controller.", attrs = " data-matpower-import-field", input_attrs = "", option_labels = nothing),
+  "matpower_import_dcline_mode" => (label = "DC-line mode", title = "Model of active mpc.dcline rows: pf_injections adds two fixed terminal injections per row; paired_control also couples each pair as a steerable HVDC link.", attrs = " data-matpower-import-field", input_attrs = "", option_labels = nothing),
   "matpower_import_pv_voltage_source" => (label = "PV voltage source", title = "", attrs = " data-matpower-import-field", input_attrs = "", option_labels = nothing),
   "matpower_import_compare_voltage_reference" => (label = "Voltage reference comparison", title = "", attrs = " data-matpower-import-field", input_attrs = "", option_labels = nothing),
   "transformer_tap_changer_model" => (label = "Tap-changer model", title = "", attrs = " data-ac-only-field data-matpower-import-field", input_attrs = "", option_labels = nothing),
-  "matpower_import_apply_bus_names" => (label = "Apply bus names", title = "Use the case file's mpc.bus_name entries as bus names in results and logs instead of numeric BUS_I identifiers. Requires a bus_name block matching the bus count.", attrs = " data-matpower-import-field", input_attrs = "", option_labels = nothing),
+  "matpower_import_apply_bus_names" => (label = "Apply bus names", title = "Use the case file's mpc.bus_name entries as bus names in results and logs instead of numeric BUS_I ids. Requires a bus_name block matching the bus count.", attrs = " data-matpower-import-field", input_attrs = "", option_labels = nothing),
   "matpower_export_write_solution" => (label = "Export Solution", title = "", attrs = "", input_attrs = "", option_labels = nothing),
 )
 
@@ -1124,8 +1237,8 @@ function render_case_page(;
 <input type=\"hidden\" name=\"config_file\" value=\"$(_webui_escape(config_default))\">
 <label class="span-2">$(_webui_field_label("casefile", "Case file"))$(case_input)<button type="submit" id="resolve-case-button" formaction="/powerflow/resolve-case" formmethod="post" formnovalidate hidden>Resolve case</button><small class="field-hint">Cases from <code>$(_webui_escape(effective_case_directory))</code> — pick one from the list, or type a case name/path and press Enter to download it into the list.<br>MATPOWER: a case name such as <code>case118.m</code>. CGMES: <code>cgmes:</code> plus one of $(join(("<code>" * a * "</code>" for a in sort(collect(keys(CGMESImporter.CGMES_TESTSET_ALIASES)))), ", ")) — fetches the ENTSO-E test configuration including its boundary set.</small></label>
 $(dat_hint_html)
-<div class=\"actions case-export-actions\">$(_webui_help_link("webui.scf_export", "Case export")) <button type=\"submit\" class=\"secondary-button\" formaction=\"/powerflow/export-scf\" formmethod=\"post\" formnovalidate title=\"Write the selected case as a Sparlectra Case Format file (.scf.json) into the case directory. One self-describing file: its data section is a valid power-grid-model input dataset, the namespaced sparlectra block carries slack roles, the tap-changer cascade, names and source ids, the measurements found next to the case, and the saved case options.\">Export as SCF case file</button><button type=\"submit\" class=\"secondary-button\" formaction=\"/powerflow/export-scf\" formmethod=\"post\" formnovalidate name=\"scf_strict_pgm\" value=\"true\" title=\"Write the PLAIN power-grid-model dataset (.pgm.json): only the data section, no namespaced sparlectra block. For handing the case to a PGM-only consumer - names, slack roles, tap nameplates, measurements and configuration are not in that file, and a slack generator is rewritten as a PGM source.\">Export as plain PGM</button><a class=\"button secondary-button case-download-link\" href=\"/powerflow/case/download?case=$(_webui_urlencode(selected_casefile))\" title=\"Download the selected case file from the case directory. After an export, pick the .scf.json or .pgm.json in the selector to download it.\">Download selected case</a></div>
-<div class=\"actions case-save-as-actions\" title=\"Save the current case, its settings and any bound measurement set under a new name - a copy, nothing switched live.\"><label for=\"save_as_name\">Save case as</label> <input type=\"text\" id=\"save_as_name\" name=\"save_as_name\" placeholder=\"new case name\" pattern=\"[^/\\\\]+\"> <label class=\"inline-check\"><input type=\"checkbox\" name=\"save_as_overwrite\" value=\"true\"> overwrite</label> <label class=\"inline-check\" title=\"Solve the case once and write the solved voltages into the copy as its start state.\"><input type=\"checkbox\" name=\"save_as_start_state\" value=\"true\"> start from the solved state</label> <button type=\"submit\" class=\"secondary-button\" formaction=\"/powerflow/case/save-as\" formmethod=\"post\" formnovalidate title=\"Write &lt;name&gt;.scf.json, &lt;name&gt;.config.yaml (this case's saved settings plus any unsaved change on this page), and a copy of any bound measurement set, then select the new case.\">Save case as</button></div>
+<div class=\"actions case-export-actions\">$(_webui_help_link("webui.scf_export", "Case export")) <button type=\"submit\" class=\"secondary-button\" formaction=\"/powerflow/export-scf\" formmethod=\"post\" formnovalidate title=\"Write the selected case as an SCF file (.scf.json) into the case directory: a PGM dataset plus the sparlectra block (names, taps, measurements, options).\">Export as SCF case file</button><button type=\"submit\" class=\"secondary-button\" formaction=\"/powerflow/export-scf\" formmethod=\"post\" formnovalidate name=\"scf_strict_pgm\" value=\"true\" title=\"Write the plain PGM dataset (.pgm.json) for a PGM-only consumer: no sparlectra block, so names, slack roles, taps, measurements and options are lost.\">Export as plain PGM</button><a class=\"button secondary-button case-download-link\" href=\"/powerflow/case/download?case=$(_webui_urlencode(selected_casefile))\" title=\"Download the selected case file from the case directory. After an export, pick the .scf.json or .pgm.json in the selector to download it.\">Download selected case</a></div>
+<div class=\"actions case-save-as-actions\" title=\"Save the current case, its settings and any bound measurement set under a new name - a copy, nothing switched live.\"><label for=\"save_as_name\">Save case as</label> <input type=\"text\" id=\"save_as_name\" name=\"save_as_name\" placeholder=\"new case name\" pattern=\"[^/\\\\]+\"> <label class=\"inline-check\"><input type=\"checkbox\" name=\"save_as_overwrite\" value=\"true\"> overwrite</label> <label class=\"inline-check\" title=\"Solve the case once and write the solved voltages into the copy as its start state.\"><input type=\"checkbox\" name=\"save_as_start_state\" value=\"true\"> start from the solved state</label> <button type=\"submit\" class=\"secondary-button\" formaction=\"/powerflow/case/save-as\" formmethod=\"post\" formnovalidate title=\"Write &lt;name&gt;.scf.json, &lt;name&gt;.config.yaml (saved settings plus unsaved changes) and any bound measurement set as copies, then select the new case.\">Save case as</button></div>
 </form>
 """
   options_form = """
@@ -1180,7 +1293,7 @@ function _webui_settings_sections_html(; profile_values, config_default, profile
 </fieldset>
 """
   return """
-<label data-ac-only-field title=\"Convergence bound for the largest single bus mismatch (active and reactive alike). Readable in physical units as tol times the case base: 1e-8 pu equals 1 W at a 100 MVA base.\">$(_webui_field_label("power_flow_tol", "Tolerance"))<span class=\"tolerance-field\"><input name=\"power_flow_tol\" type=\"text\" autocomplete=\"off\" spellcheck=\"false\" data-tolerance-input value=\"$(_webui_input_value(profile_values, "power_flow_tol", _webui_option_default("power_flow_tol")))\"><span class=\"tolerance-spin\"><button type=\"button\" class=\"tolerance-spin-up\" data-tolerance-direction=\"up\" aria-label=\"Increase tolerance exponent\">&#9650;</button><button type=\"button\" class=\"tolerance-spin-down\" data-tolerance-direction=\"down\" aria-label=\"Decrease tolerance exponent\">&#9660;</button></span></span></label><label data-ac-only-field class=\"tolerance-unit\" title=\"The unit of the tolerance value. MW states the convergence bound physically: the run converts it with the case's own base (1 MW at a 100 MVA base is 1e-2 pu, 0.001 MW is 1 kW). pu states it per unit, the classical form. The value field to the left holds the number either way.\">$(_webui_field_label("power_flow_tol_unit", "Unit"))<select name=\"power_flow_tol_unit\"><option value=\"pu\"$(_webui_input_value(profile_values, "power_flow_tol_unit", _webui_option_default("power_flow_tol_unit")) == "MW" ? "" : " selected")>pu</option><option value=\"MW\"$(_webui_input_value(profile_values, "power_flow_tol_unit", _webui_option_default("power_flow_tol_unit")) == "MW" ? " selected" : "")>MW</option></select></label>
+<label data-ac-only-field title=\"Convergence bound for the largest single bus mismatch, active and reactive alike. Physically tol times the case base: 1e-8 pu equals 1 W at a 100 MVA base.\">$(_webui_field_label("power_flow_tol", "Tolerance"))<span class=\"tolerance-field\"><input name=\"power_flow_tol\" type=\"text\" autocomplete=\"off\" spellcheck=\"false\" data-tolerance-input value=\"$(_webui_input_value(profile_values, "power_flow_tol", _webui_option_default("power_flow_tol")))\"><span class=\"tolerance-spin\"><button type=\"button\" class=\"tolerance-spin-up\" data-tolerance-direction=\"up\" aria-label=\"Increase tolerance exponent\">&#9650;</button><button type=\"button\" class=\"tolerance-spin-down\" data-tolerance-direction=\"down\" aria-label=\"Decrease tolerance exponent\">&#9660;</button></span></span></label><label data-ac-only-field class=\"tolerance-unit\" title=\"Unit of the tolerance value. MW states the bound physically, converted with the case base at run time (1 MW at 100 MVA is 1e-2 pu); pu is the classic form.\">$(_webui_field_label("power_flow_tol_unit", "Unit"))<select name=\"power_flow_tol_unit\"><option value=\"pu\"$(_webui_input_value(profile_values, "power_flow_tol_unit", _webui_option_default("power_flow_tol_unit")) == "MW" ? "" : " selected")>pu</option><option value=\"MW\"$(_webui_input_value(profile_values, "power_flow_tol_unit", _webui_option_default("power_flow_tol_unit")) == "MW" ? " selected" : "")>MW</option></select></label>
 <label data-nr-only-field>$(_webui_field_label("power_flow_max_iter", "Maximum iterations"))<input name=\"power_flow_max_iter\" type=\"number\" min=\"1\" value=\"$(_webui_input_value(profile_values, "power_flow_max_iter", _webui_option_default("power_flow_max_iter")))\"></label>
 <fieldset class=\"distributed-slack-options\" data-nr-only-field>
 <legend>Distributed slack</legend>
@@ -1198,7 +1311,7 @@ function _webui_settings_sections_html(; profile_values, config_default, profile
 $(config_maintenance)
 <fieldset class=\"step-control-expert\" data-ac-only-field>
 <legend>Step control &amp; solver</legend>
-<label class=\"check\" title=\"Inspect the imported network and pick the start-value, step-control, and Q-limit strategy automatically; on non-convergence a bounded escalation ladder retries with stronger strategies. Options you set explicitly below always win over the automatic choices. Decisions land in the auto_mode_decision.log artifact of the run.\"><input name=\"power_flow_mode\" type=\"hidden\" value=\"manual\"><input name=\"power_flow_mode\" type=\"checkbox\" value=\"auto\"$(_webui_selected(profile_values, "power_flow_mode", "manual") == "auto" ? " checked" : "")>$(_webui_field_label("power_flow_mode", "Auto mode (network-driven strategy)"))</label>
+<label class=\"check\" title=\"Pick start-value, step-control and Q-limit strategy from the network, retrying with stronger strategies on non-convergence. Explicit options below always win.\"><input name=\"power_flow_mode\" type=\"hidden\" value=\"manual\"><input name=\"power_flow_mode\" type=\"checkbox\" value=\"auto\"$(_webui_selected(profile_values, "power_flow_mode", "manual") == "auto" ? " checked" : "")>$(_webui_field_label("power_flow_mode", "Auto mode (network-driven strategy)"))</label>
 <details class=\"span-2 step-control-options\" data-step-control-group=\"autodamp\" data-ac-only-field>
 <summary>Autodamping &amp; merit-function line search</summary>
 <label class=\"check\"><input name=\"power_flow_autodamp\" type=\"hidden\" value=\"false\"><input name=\"power_flow_autodamp\" type=\"checkbox\" value=\"true\" data-autodamp-toggle$(_webui_checked(profile_values, "power_flow_autodamp", _webui_option_default("power_flow_autodamp")))>$(_webui_field_label("power_flow_autodamp", "Autodamping enabled"))</label>
@@ -1515,12 +1628,13 @@ function render_settings_page(;
   show_case_settings_notice::Bool = true,
   show_case_profile::Bool = false,
 )::String
-  # The form shows the configuration file's values by default. The saved
-  # settings of the selected case (its configuration file and form block) are
-  # overlaid only on request, so a stored solver or tolerance never moves a
-  # control without the user asking to see it. A run still resolves both
-  # through the configuration precedence, independent of what this page
-  # displays; a save with target this case writes what the form shows.
+  # With a case selected the form shows what a run of that case will use:
+  # its saved settings (case configuration file and form block) over the
+  # configuration file over the defaults, the same as the Case and Runs
+  # pages. The configuration-file view is a link (show_case_profile =
+  # false), no longer the default: the old default left a user looking at
+  # the file's old values right after "Saved settings for this case". A
+  # save with target this case writes what the form shows.
   stored_profile_path = case_profile isa AbstractDict ? String(get(case_profile, "_profile_path", "")) : ""
   ctx = _webui_case_context(; application_root, case_directory, selected_casefile, selected_config_file, case_profile, submitted_form, show_case_settings_notice, apply_case_levels = show_case_profile)
   profile_values = ctx.profile_values
@@ -1549,14 +1663,14 @@ function render_settings_page(;
   isempty(dropped_keys) || push!(case_levels, "$(length(dropped_keys)) setting(s) outside the case scope that are ignored (written by an older Sparlectra; re-export the file to clear this note)")
   profile_switch = if show_case_profile
     isempty(stored_profile_path) && isempty(get(profile_values, "_case_file_fields", String[])) ? "" :
-      "<p class=\"case-settings-switch\">Showing the settings of this case on top of the configuration file. <a href=\"/powerflow/settings$(case_query)\">Show the configuration values</a></p>"
+      "<p class=\"case-settings-switch\">Showing the saved settings of this case on top of the configuration file (what a run of this case uses). <a href=\"/powerflow/settings$(case_query)&amp;config_view=1\">Show the configuration file's values</a></p>"
   elseif isempty(case_levels)
     ""
   else
     "<p class=\"case-settings-switch\">This case has $(join(case_levels, ", and ")); the form shows the configuration file's values. <a href=\"/powerflow/settings$(case_query)&amp;case_settings=1\">Show the case settings</a></p>"
   end
   content = """
-$(_webui_feedback_modal_html([error_html, save_html, ctx.profile_notice, ctx.case_file_notice]))<p class=\"lede\">Solver, output, and expert options. Values prefill from the configuration file for <code>$(case_display)</code> (<a href=\"/powerflow/case$(case_query)\">change on the Case page</a>); runs read them through the configuration precedence.</p>
+$(_webui_feedback_modal_html([error_html, save_html, ctx.profile_notice, ctx.case_file_notice]))<p class=\"lede\">Solver, output, and expert options. $(show_case_profile ? "Values show what a run of" : "Values show the configuration file for") <code>$(case_display)</code>$(show_case_profile ? " will use (case settings over the configuration file)" : "") (<a href=\"/powerflow/case$(case_query)\">change on the Case page</a>).</p>
 $(profile_switch)
 <form id=\"settings-form\" method=\"post\" action=\"/powerflow/settings/save\" class=\"panel form-grid settings-form-card\">
 <input type=\"hidden\" name=\"casefile\" value=\"$(_webui_escape(ctx.effective_case_value))\">
@@ -1651,7 +1765,7 @@ $(config_control)
 </details>
 </details>
 <label class=\"check span-2 benchmark-trigger\"><input name=\"benchmark_enabled\" type=\"hidden\" value=\"false\"><input name=\"benchmark_enabled\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "benchmark_enabled", _webui_option_default("benchmark_enabled")))>$(_webui_field_label("benchmark_enabled", "Enable benchmark measurements"))</label>
-<div class=\"span-2 actions\"><button class=\"powerflow-submit\" type=\"submit\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Start PowerFlow run</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running PowerFlow…</span></button><button class=\"powerflow-submit diagnose-submit\" type=\"submit\" name=\"diagnose_mode\" value=\"true\" title=\"Run this case in diagnostic mode: evaluates the mismatch at the case's own stored VM/VA (no corrective Newton step) and writes a diagnostic report to diagnose.log.\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Diagnose</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running diagnosis…</span></button><button class=\"powerflow-submit short-circuit-submit\" type=\"submit\" name=\"short_circuit_mode\" value=\"true\" data-short-circuit-button data-sc-state=\"$(sc_state)\"$(sc_disabled_attr) title=\"$(_webui_escape(sc_title))\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Short circuit</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Computing short circuit…</span></button><label class=\"contingency-kind\">N-1 kind <select name=\"contingency_kind\" data-contingency-kind><option value=\"branch\">branch</option><option value=\"gen\">generator</option></select></label><label class=\"scenario-source\" title=\"Where the outage or scenario list comes from: generated N-1 lists, or the SCF case file's own scenarios block.\">Scenarios <select name=\"scenario_source\" data-scenario-source><option value=\"\">generated (N-1 kind)</option><option value=\"n1_all\">N-1 all</option><option value=\"n1_branches\">N-1 branches</option><option value=\"n1_generators\">N-1 generators</option>$(scen_fileblock_option)</select></label><label class=\"screening-mode\" title=\"Contingency screening on the base factorization: off runs every scenario fully (default), flag estimates first and fully solves only flagged scenarios, only reports estimates. Opt in after checking share and margins on your network (see the docs).\">Screening <select name=\"screening_mode\" data-screening-mode><option value=\"\">configured</option><option value=\"off\">off</option><option value=\"flag\">flag</option><option value=\"only\">only</option></select></label><label class=\"screening-margin\" title=\"Flagging margin in percent (empty = configured, default 10): flag when an estimated loading reaches 100 - margin, or an estimated voltage comes within margin percent of the band width to a limit.\">Margin % <input name=\"screening_margin_pct\" type=\"number\" step=\"any\" min=\"0\" class=\"screening-margin-input\" placeholder=\"cfg\"></label>$(scen_editor_html)<a class=\"weights-link\" href=\"/powerflow/contingency-weights?case=$(_webui_urlencode(selected_casefile))\" title=\"Upload or edit the per-case N-1 weight list\">edit N-1 weights</a><button class=\"powerflow-submit contingency-submit\" type=\"submit\" name=\"contingency_mode\" value=\"true\" data-contingency-button title=\"Run an N-1 contingency analysis: take each in-service element (branch or generator, per the selector) out one at a time, check the base case, and report convergence, overloads, voltage violations, load shed, and severity. Writes contingency_n1.csv and a report to run.log.\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Contingency (N-1)</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running N-1...</span></button></div></form>
+<div class=\"span-2 actions\"><button class=\"powerflow-submit\" type=\"submit\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Start PowerFlow run</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running PowerFlow…</span></button><button class=\"powerflow-submit diagnose-submit\" type=\"submit\" name=\"diagnose_mode\" value=\"true\" title=\"Diagnostic mode: evaluate the mismatch at the case's own stored VM/VA without a corrective Newton step and write the report to diagnose.log.\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Diagnose</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running diagnosis…</span></button><button class=\"powerflow-submit short-circuit-submit\" type=\"submit\" name=\"short_circuit_mode\" value=\"true\" data-short-circuit-button data-sc-state=\"$(sc_state)\"$(sc_disabled_attr) title=\"$(_webui_escape(sc_title))\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Short circuit</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Computing short circuit…</span></button><label class=\"contingency-kind\">N-1 kind <select name=\"contingency_kind\" data-contingency-kind><option value=\"branch\">branch</option><option value=\"gen\">generator</option></select></label><label class=\"scenario-source\" title=\"Where the outage or scenario list comes from: generated N-1 lists, or the SCF case file's own scenarios block.\">Scenarios <select name=\"scenario_source\" data-scenario-source><option value=\"\">generated (N-1 kind)</option><option value=\"n1_all\">N-1 all</option><option value=\"n1_branches\">N-1 branches</option><option value=\"n1_generators\">N-1 generators</option>$(scen_fileblock_option)</select></label><label class=\"screening-mode\" title=\"Contingency screening on the base factorization: off (default) runs every scenario fully, flag solves only flagged scenarios fully, only reports estimates.\">Screening <select name=\"screening_mode\" data-screening-mode><option value=\"\">configured</option><option value=\"off\">off</option><option value=\"flag\">flag</option><option value=\"only\">only</option></select></label><label class=\"screening-margin\" title=\"Margin in percent (empty means configured, default 10): flag when an estimated loading reaches 100 minus margin or a voltage comes within margin of a limit.\">Margin % <input name=\"screening_margin_pct\" type=\"number\" step=\"any\" min=\"0\" class=\"screening-margin-input\" placeholder=\"cfg\"></label>$(scen_editor_html)<a class=\"weights-link\" href=\"/powerflow/contingency-weights?case=$(_webui_urlencode(selected_casefile))\" title=\"Upload or edit the per-case N-1 weight list\">edit N-1 weights</a><button class=\"powerflow-submit contingency-submit\" type=\"submit\" name=\"contingency_mode\" value=\"true\" data-contingency-button title=\"N-1 analysis: take each in-service branch or generator out one at a time and report convergence, overloads, voltage violations, load shed and severity.\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Contingency (N-1)</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running N-1...</span></button></div></form>
 <script>
 document.addEventListener('DOMContentLoaded', function () {
   const powerflowForm = document.getElementById('powerflow-run-form');
@@ -2422,6 +2536,110 @@ function render_powerflow_artifacts(run_id::AbstractString, artifacts)::String
   return _webui_layout("Artifacts", table; show_back = true)
 end
 
+# Rows a CSV artifact page shows at most. The byte cap of the preview
+# (`_WEBUI_ARTIFACT_PREVIEW_BYTES`) already bounds the file; this bounds the
+# DOM for files with short rows, where 64 KB is several thousand rows.
+const _WEBUI_ARTIFACT_TABLE_ROWS = 2000
+
+# A cell that is a number in any of the three CSV formats (technical,
+# excel_de, excel_us): digits with the format's separators, optional exponent.
+# Only used to right-align the column, so a false positive costs nothing.
+const _WEBUI_CSV_NUMBER_PATTERN = r"^[-+]?\d[\d.,]*([eE][-+]?\d+)?$"
+
+"""
+    _webui_artifact_csv_html(text; truncated = false) -> String
+
+A CSV artifact as an HTML table. The delimiter comes from the header line the
+same way the compare pages sniff it (`_webui_compare_csv_table`), quoted fields
+are honored, and comment lines (`#`, the measurement CSV v1 header) go above
+the table instead of into it. A truncated preview drops its last line, which
+is cut mid-row. Rows beyond `_WEBUI_ARTIFACT_TABLE_ROWS` are counted, not shown.
+"""
+function _webui_artifact_csv_html(text::AbstractString; truncated::Bool = false)::String
+  comments = String[]
+  data = String[]
+  for line in split(text, '\n')
+    stripped = strip(rstrip(line, '\r'))
+    isempty(stripped) && continue
+    startswith(stripped, '#') ? push!(comments, String(stripped)) : push!(data, String(stripped))
+  end
+  truncated && !isempty(data) && pop!(data)
+  isempty(data) && return "<p class=\"field-help\">The file holds no table rows.</p>"
+  header_line = data[1]
+  delimiter = count(==(';'), header_line) > count(==(','), header_line) ? ';' : ','
+  header = _webui_compare_split_csv(header_line, delimiter)
+  shown = min(length(data) - 1, _WEBUI_ARTIFACT_TABLE_ROWS)
+  body = IOBuffer()
+  for k in 2:(shown + 1)
+    cells = _webui_compare_split_csv(data[k], delimiter)
+    print(body, "<tr>")
+    for cell in cells
+      numeric = occursin(_WEBUI_CSV_NUMBER_PATTERN, cell)
+      print(body, numeric ? "<td class=\"num\">" : "<td>", _webui_escape(cell), "</td>")
+    end
+    # a short row still fills the grid, so the columns never shift
+    for _ in (length(cells) + 1):length(header)
+      print(body, "<td></td>")
+    end
+    print(body, "</tr>")
+  end
+  head = join(("<th>$(_webui_escape(name))</th>" for name in header), "")
+  parts = String[]
+  isempty(comments) || push!(parts, "<pre class=\"artifact-csv-comments\">$(_webui_escape(join(comments, '\n')))</pre>")
+  hidden = length(data) - 1 - shown
+  hidden > 0 && push!(parts, "<p class=\"field-help\">Table shows the first $(shown) of $(length(data) - 1) rows. Use Download or Raw text for the complete file.</p>")
+  push!(parts, "<div class=\"artifact-csv\"><table><thead><tr>$(head)</tr></thead><tbody>$(String(take!(body)))</tbody></table></div>")
+  return join(parts, "")
+end
+
+"""
+    _webui_render_markdown(text) -> String
+
+Markdown rendered with the Markdown standard library, which escapes any HTML
+in the text. Formulas stay as their `\$...\$` source: the reports the service
+writes carry none, and the documentation viewer that bundled a formula
+renderer is gone (0.18.0). The `SPARLECTRADOCS/` placeholder of the generated help
+excerpts becomes the configured documentation base URL, and every absolute
+link opens in a new tab.
+"""
+function _webui_render_markdown(text::AbstractString)::String
+  io = IOBuffer()
+  show(io, MIME"text/html"(), Markdown.parse(String(text)))
+  html = replace(String(take!(io)), "SPARLECTRADOCS/" => _webui_escape(_webui_docs_base_url()))
+  return replace(html, "<a href=\"http" => "<a target=\"_blank\" rel=\"noopener noreferrer\" href=\"http")
+end
+
+"""A Markdown artifact as the rendered article of the viewer page."""
+function _webui_artifact_markdown_html(text::AbstractString)::String
+  return "<article class=\"rendered-markdown\">$(_webui_render_markdown(text))</article>"
+end
+
+"""
+    render_powerflow_artifact_page(artifact, preview; raw = false) -> String
+
+The artifact viewer page. The artifact's MIME type decides the view: a CSV
+opens as a table, a Markdown report as rendered HTML, everything else as
+escaped text in the wide monospace panel. `raw = true` forces the text panel
+for the two rendered kinds, and the page always carries the link to the
+other view, so a table never hides what the file really says. `preview` is
+the `(content, truncated)` tuple of `_read_webui_artifact_preview`.
+"""
+function render_powerflow_artifact_page(artifact, preview; raw::Bool = false)::String
+  renderable = artifact.mime_type in ("text/csv", "text/markdown")
+  notice = preview.truncated ? "<p class=\"alert warning\">Preview truncated to $(_WEBUI_ARTIFACT_PREVIEW_BYTES) bytes. Use Download for the complete artifact.</p>" : ""
+  # the same name relative to /powerflow/artifact/<run>/ is this page without a query
+  name_href = _webui_urlencode(artifact.name)
+  if renderable && !raw
+    body = artifact.mime_type == "text/csv" ? _webui_artifact_csv_html(preview.content; truncated = preview.truncated) : _webui_artifact_markdown_html(preview.content)
+    toggle = "<a class=\"button secondary\" href=\"$(name_href)?raw=1\">Raw text</a>"
+  else
+    body = "<pre class=\"artifact-text\">$(_webui_escape(preview.content))</pre>"
+    toggle = renderable ? "<a class=\"button secondary\" href=\"$(name_href)\">$(artifact.mime_type == "text/csv" ? "Table" : "Rendered")</a>" : ""
+  end
+  page = "<section class=\"artifact-text-page\"><p>$(toggle)<a class=\"button\" href=\"?download=1\">Download</a></p>$(notice)$(body)</section>"
+  return _webui_layout("Artifact: $(artifact.name)", page; show_back = true, main_class = "page artifact-page")
+end
+
 """
     _webui_is_completed_diagnose(run) -> Bool
 
@@ -2849,47 +3067,6 @@ function render_webui_error(status::Integer, message::AbstractString)::String
   return _webui_layout("Request error", "<div class=\"alert error\"><strong>$(_webui_escape(status))</strong> $(_webui_escape(message))</div>"; show_back = true)
 end
 
-function render_webui_help(metadata, excerpt::AbstractString)::String
-  markdown_html = render_webui_markdown(excerpt; current_page = metadata.page)
-  page_url = _webui_urlencode(metadata.page)
-  source_file = WEBUI_DOC_PAGES[metadata.page].file
-  content = "<section class=\"panel help-page help-panel\">$(markdown_html)<p><a href=\"/docs/$(page_url)\">View the full documentation context</a></p><p class=\"source-note\">Source: <code>$(_webui_escape(source_file))</code></p></section>"
-  return _webui_layout(metadata.label, content; show_back = true)
-end
-
-function render_webui_docs_index(pages::AbstractDict)::String
-  links = join(("<li><a href=\"/docs/$(_webui_urlencode(page))\">$(_webui_escape(metadata.title))</a></li>" for (page, metadata) in sort!(collect(pages); by = first)), "")
-  content = "<section class=\"panel docs-page docs-content\"><p>Selected repository documentation pages are rendered directly from their Markdown sources.</p><ul class=\"docs-index\">$(links)</ul></section>"
-  return _webui_layout("Documentation", content; show_back = true)
-end
-
-## Section index of a documentation page (the
-## reference pages run to a thousand lines and nobody scrolls that). Built
-## from the level-2 headings, so a reader jumps instead of scrolls; the
-## anchors are the ones Julia's Markdown renderer emits for headings.
-function _webui_doc_page_toc(markdown_text::AbstractString)::String
-  entries = String[]
-  in_fence = false
-  for line in split(String(markdown_text), '\n')
-    startswith(line, "```") && (in_fence = !in_fence)
-    in_fence && continue
-    startswith(line, "## ") || continue
-    title = strip(line[4:end])
-    isempty(title) && continue
-    # the same slug the rendered heading gets (rewrite_webui_doc_links);
-    # a Documenter `(@id ...)` label is not part of the title
-    anchor = _webui_markdown_heading_slug(title)
-    push!(entries, "<li><a href=\"#$(_webui_escape(anchor))\">$(_webui_escape(_webui_documenter_heading_text(title)))</a></li>")
-  end
-  length(entries) < 4 && return ""
-  return "<details class=\"docs-toc\" open><summary>On this page ($(length(entries)) sections)</summary><ul>$(join(entries, ""))</ul></details>"
-end
-
-function render_webui_doc_page(page::AbstractString, metadata, markdown_text::AbstractString)::String
-  content = "<section class=\"panel docs-page docs-content\">$(_webui_doc_page_toc(markdown_text))$(render_webui_markdown(markdown_text; current_page = page))</section>"
-  return _webui_layout(metadata.title, content; show_back = true)
-end
-
 # ---------------------------------------------------------------------------
 # State estimation page and result pieces (SE phase 5)
 # ---------------------------------------------------------------------------
@@ -3078,7 +3255,9 @@ function _webui_se_tap_section(result::AbstractDict)::String
   (rows isa AbstractVector && !isempty(rows)) || return ""
   anymrid = any(!isempty(String(get(t, "mrid", ""))) for t in rows)
   anypst = any(String(get(t, "mode", "ratio")) != "ratio" for t in rows)
-  head = string("<tr><th>Branch</th><th>Transformer</th>", anymrid ? "<th>mRID</th>" : "", "<th>Mode</th><th>Electrical step</th><th>Fixed step</th>", anypst ? "<th>Shift step (el.)</th><th>Shift step (fixed)</th>" : "", "<th>Status</th></tr>")
+  # model step and change next to the estimate: whether a tap was wrong and
+  # got corrected is the question a reader brings to this table
+  head = string("<tr><th>Branch</th><th>Transformer</th>", anymrid ? "<th>mRID</th>" : "", "<th>Mode</th><th>Model step</th><th>Electrical step</th><th>Fixed step</th><th>Change</th>", anypst ? "<th>Shift step (el.)</th><th>Shift step (fixed)</th>" : "", "<th>Status</th></tr>")
   body = String[]
   for t in rows
     mode = String(get(t, "mode", "ratio"))
@@ -3092,14 +3271,17 @@ function _webui_se_tap_section(result::AbstractDict)::String
     elseif get(t, "out_of_range", false) == true
       "out of range (clamped)"
     elseif get(t, "fixed", false) == true
-      "fixed"
+      # a nonzero change means the model carried a wrong position and the
+      # run corrected it; "confirmed" says the model step was right
+      ch = String(string(get(t, "change", "")))
+      (ch == "" || all(c -> c in ('0', ' ', '/'), ch)) ? "fixed (model step confirmed)" : "fixed (corrected)"
     else
       "not fixed"
     end
     push!(body, string(
       "<tr><td>", get(t, "branch", "?"), "</td><td>", esc(String(get(t, "name", ""))), "</td>",
       anymrid ? string("<td>", esc(String(get(t, "mrid", ""))), "</td>") : "",
-      "<td>", esc(mode), "</td><td>", get(t, "electrical_step", "?"), "</td><td>", get(t, "fixed_step", "?"), "</td>",
+      "<td>", esc(mode), "</td><td>", get(t, "model_step", "-"), "</td><td>", get(t, "electrical_step", "?"), "</td><td>", get(t, "fixed_step", "?"), "</td><td>", get(t, "change", "-"), "</td>",
       anypst ? string("<td>", mode == "ratio" ? "-" : get(t, "electrical_shift_step", "?"), "</td><td>", mode == "ratio" ? "-" : get(t, "fixed_shift_step", "?"), "</td>") : "",
       "<td>", esc(status), "</td></tr>",
     ))
@@ -3284,24 +3466,24 @@ function render_se_form(; cases::Vector{String} = String[], measurements::Vector
   demo_form = isempty(selected_case) ? "" : string(
     "<form method=\"post\" action=\"/stateestimation/generate-measurements\" data-busy=\"Generating, the case is being solved…\">",
     "<input type=\"hidden\" name=\"casefile\" value=\"$(esc(selected_case))\">",
-    "<label class=\"check\" title=\"Add seeded Gaussian noise at the sigmas below. Default ON: without noise the measurements match the model exactly and J lands near 0 instead of near dof, which reads like a broken statistic on first sight.\"><input type=\"checkbox\" name=\"noise\" value=\"true\"$(gchk2("noise", "true"))>$(_webui_field_label("se_generator_noise", "noise"))</label> ",
-    "<label title=\"Corrupt seed-randomly drawn measurements by k times their sigma. 0 = off; 10 is a good value: clearly detectable bad measurements for the elimination/robust workflow. The count field next to it says how many rows, the seed decides which (documented in the generation message); protected zero-injection rows are never corrupted.\">$(_webui_field_label("se_generator_gross_error", "bad data (k·σ)"))<input type=\"number\" name=\"gross_error_k\" value=\"$(gv("gross_error_k", "0"))\" min=\"0\" max=\"100\" step=\"1\"></label> ",
+    "<label class=\"check\" title=\"Add seeded Gaussian noise at the sigmas below. Default on: without noise the measurements match the model exactly and J lands near 0 instead of near dof.\"><input type=\"checkbox\" name=\"noise\" value=\"true\"$(gchk2("noise", "true"))>$(_webui_field_label("se_generator_noise", "noise"))</label> ",
+    "<label title=\"Corrupt seed-randomly drawn measurements by k times their sigma. 0 is off; 10 gives clearly detectable bad data. The count field says how many rows.\">$(_webui_field_label("se_generator_gross_error", "bad data (k·σ)"))<input type=\"number\" name=\"gross_error_k\" value=\"$(gv("gross_error_k", "0"))\" min=\"0\" max=\"100\" step=\"1\"></label> ",
     "<label title=\"How many measurement rows get the gross error (the seed decides which rows). Only used when bad data k is above 0.\">$(_webui_field_label("se_generator_gross_count", "bad data rows"))<input type=\"number\" name=\"gross_error_count\" value=\"$(gv("gross_error_count", "1"))\" min=\"1\" max=\"1000\" step=\"1\"></label> ",
-    "<label title=\"Generate the measurements from a state whose seed-randomly selected in-service transformers run this many MECHANICAL tap steps off the model position (0 = off; whole steps only, a tap changer has no half positions). The deviation lands exactly on each changer's own mechanical grid and is fully recoverable by tap estimation. Creates measurement/model discrepancies around the transformers without touching the model file. Resolve them with the 'estimate taps' option of the estimator run below. Needs truth state 'fresh solve'.\">$(_webui_field_label("se_generator_tap_error", "tap deviation (steps)"))<input type=\"number\" name=\"tap_error_steps\" id=\"gen-tap-steps\" value=\"$(gv("tap_error_steps", "0"))\" min=\"-16\" max=\"16\" step=\"1\"></label> ",
-    "<label title=\"At most how many transformers get the tap deviation; the seed decides which. Drawn only from transformers whose deviation the tap estimation can absorb (non-machine, declared changer), so the count is capped there and the message notes when fewer were eligible; machine transformers are used only when the case has nothing else, and the estimator run warns then. Only used when the tap deviation is not 0.\">$(_webui_field_label("se_generator_tap_count", "tap deviation transformers (max)"))<input type=\"number\" name=\"tap_error_count\" id=\"gen-tap-count\" value=\"$(gv("tap_error_count", "1"))\" min=\"1\" max=\"100\" step=\"1\"></label> ",
-    "<label title=\"Where the truth state comes from. fresh solve: solves the case now (tol <= 1e-8, island-wise) and generates from that state. from run: adopts the solved voltages of a successful run of THIS case from the run history (PF runs need the detailed result CSV artifact, SE runs use se_state.csv); nothing is re-solved, and the tap deviation is locked.\">$(_webui_field_label("se_generator_truth", "truth state"))<select name=\"gen_truth_source\" id=\"gen-truth-source\"><option value=\"fresh_solve\"$(gv("gen_truth_source", "fresh_solve") == "from_run" ? "" : " selected")>fresh solve</option><option value=\"from_run\"$(gv("gen_truth_source", "fresh_solve") == "from_run" ? " selected" : "")>from run</option></select></label> ",
+    "<label title=\"Generate from a state whose seed-selected transformers run this many mechanical tap steps off the model position (0 is off). Needs truth state fresh solve.\">$(_webui_field_label("se_generator_tap_error", "tap deviation (steps)"))<input type=\"number\" name=\"tap_error_steps\" id=\"gen-tap-steps\" value=\"$(gv("tap_error_steps", "0"))\" min=\"-16\" max=\"16\" step=\"1\"></label> ",
+    "<label title=\"At most this many transformers get the tap deviation; the seed picks them among transformers the tap estimation can absorb. Unused when the deviation is 0.\">$(_webui_field_label("se_generator_tap_count", "tap deviation transformers (max)"))<input type=\"number\" name=\"tap_error_count\" id=\"gen-tap-count\" value=\"$(gv("tap_error_count", "1"))\" min=\"1\" max=\"100\" step=\"1\"></label> ",
+    "<label title=\"Where the truth state comes from: fresh solve solves the case now; from run adopts the solved voltages of a successful run of this case, nothing is re-solved.\">$(_webui_field_label("se_generator_truth", "truth state"))<select name=\"gen_truth_source\" id=\"gen-truth-source\"><option value=\"fresh_solve\"$(gv("gen_truth_source", "fresh_solve") == "from_run" ? "" : " selected")>fresh solve</option><option value=\"from_run\"$(gv("gen_truth_source", "fresh_solve") == "from_run" ? " selected" : "")>from run</option></select></label> ",
     "<label title=\"Source run for truth state 'from run': successful power-flow and state-estimation runs of the selected case, newest first\">$(_webui_field_label("se_generator_truth_run", "run"))<select name=\"gen_truth_run_id\" id=\"gen-truth-run\">$(isempty(truth_runs) ? "<option value=\"\">(no successful run of this case)</option>" : join(["<option value=\"$(esc(r.run_id))\"$(r.run_id == String(get(gen_values, "gen_truth_run_id", "")) ? " selected" : "")>$(esc(string(first(r.run_id, 8), "… (", r.kind, ", ", r.timestamp, ")")))</option>" for r in truth_runs], ""))</select></label> ",
-    "<label title=\"Flow measurements per branch. both ends: P/Q (and I) at from AND to. one end (balance-aware): exactly one flow group per branch; the end at a bus WITH injection telemetry is preferred, from wins when both or neither have one. The choice is documented per branch in the set comments.\">$(_webui_field_label("se_generator_flow_ends", "flows per branch"))<select name=\"gen_flow_ends\"><option value=\"both\"$(gv("gen_flow_ends", "both") == "one_balance_aware" ? "" : " selected")>both ends</option><option value=\"one_balance_aware\"$(gv("gen_flow_ends", "both") == "one_balance_aware" ? " selected" : "")>one end (balance-aware)</option></select></label> ",
-    "<label title=\"Balance sigma (MW/MVar) for passive nodes (no generation, no load, no shunt): their Pinj/Qinj rows become explicit zero balances at this sigma. Small sigmas at many passive nodes stiffen the flat start (a small grid took 32 iterations at 0.01 versus 11 at 0.05); The same value binds the zero-injection constraints when that checkbox is on, with a floor of 0.001 MW (1 kW): a constraint tighter than that does not bind the bus, it makes the normal equations unsolvable (a 25000-bus set with 27268 such rows reached an objective of 3.8e15 per degree of freedom at 1e-6).\">$(_webui_field_label("se_generator_passive_sigma", "passive σ (MW/MVar)"))<input type=\"number\" name=\"gen_passive_sigma\" value=\"$(gv("gen_passive_sigma", "0.05"))\" min=\"0.000001\" step=\"any\"></label> ",
-    "<label class=\"check\" title=\"How a passive node (no generation, no load, no shunt) enters the set. OFF: an ordinary balance row Pinj = Qinj = 0 at the sigma on the left, which the estimator weighs against everything else. ON: a protected zero-injection constraint instead (prefix ZI, never eliminated and never down-weighted), written at the sigma on the left but never tighter than 0.001 MW (1 kW). That floor is measured, not cosmetic: at 1e-6 such a row weighs a million times a normal power measurement, and on a 25000-bus set that pushed the normal equations past double precision, so the passive nodes stopped balancing at all (residuals of 182 GW). No duplicate injection rows are written either way.\"><input type=\"hidden\" name=\"gen_passive_as_zi\" value=\"false\"><input type=\"checkbox\" name=\"gen_passive_as_zi\" value=\"true\"$(gchk2("gen_passive_as_zi", "true"))>$(_webui_field_label("se_generator_passive_zi", "passive as zero-injection constraint"))</label> ",
+    "<label title=\"Flows per branch. both ends: P/Q (and I) at from and to. one end: one flow group per branch, preferring the end at a bus with injection telemetry.\">$(_webui_field_label("se_generator_flow_ends", "flows per branch"))<select name=\"gen_flow_ends\"><option value=\"both\"$(gv("gen_flow_ends", "both") == "one_balance_aware" ? "" : " selected")>both ends</option><option value=\"one_balance_aware\"$(gv("gen_flow_ends", "both") == "one_balance_aware" ? " selected" : "")>one end (balance-aware)</option></select></label> ",
+    "<label title=\"Sigma (MW/MVar) of passive nodes: their Pinj/Qinj rows become zero balances at this sigma. It also binds the zero-injection constraints, floored at 1 kW.\">$(_webui_field_label("se_generator_passive_sigma", "passive σ (MW/MVar)"))<input type=\"number\" name=\"gen_passive_sigma\" value=\"$(gv("gen_passive_sigma", "0.05"))\" min=\"0.000001\" step=\"any\"></label> ",
+    "<label class=\"check\" title=\"How a passive node enters the set. Off: an ordinary balance row Pinj = Qinj = 0 at the sigma. On: a protected zero-injection constraint, floored at 1 kW.\"><input type=\"hidden\" name=\"gen_passive_as_zi\" value=\"false\"><input type=\"checkbox\" name=\"gen_passive_as_zi\" value=\"true\"$(gchk2("gen_passive_as_zi", "true"))>$(_webui_field_label("se_generator_passive_zi", "passive as zero-injection constraint"))</label> ",
     "<label title=\"Noise seed: the same seed regenerates the identical set (documented in the set comments), a different seed draws a fresh noise realization\">seed <input type=\"number\" name=\"gen_seed\" value=\"$(gv("gen_seed", "42"))\" min=\"0\" step=\"1\"></label> ",
-    "<label title=\"Critical measurements on request (0 = off): the generator removes redundant rows until this many rows are critical (their residual is structurally zero, a gross error there stays invisible), never past observability; the rows are named in the set comments and the estimation run log.\">critical measurements <input type=\"number\" name=\"gen_critical_count\" value=\"$(gv("gen_critical_count", "0"))\" min=\"0\" step=\"1\"></label> ",
+    "<label title=\"Critical measurements (0 is off): the generator removes redundant rows until this many are critical, never past observability; named in the set comments.\">critical measurements <input type=\"number\" name=\"gen_critical_count\" value=\"$(gv("gen_critical_count", "0"))\" min=\"0\" step=\"1\"></label> ",
     "<fieldset class=\"se-options\"><legend>Measurement sigmas $(_webui_help_link("webui.se_generator_sigmas", "Measurement sigmas"))</legend>",
     "<label title=\"Voltage-magnitude accuracy in percent of the measured value (all Vm rows). 0.5 corresponds to a class 0.5 transducer.\">&sigma; U (%) <input type=\"text\" name=\"sigma_u_pct\" value=\"$(gv("sigma_u_pct", "0.5"))\" size=\"6\"></label> ",
     "<label title=\"Also generate branch current-magnitude rows at both ends (currents are auxiliary: gated in the estimator, excluded from observability)\">currents (I) <input type=\"checkbox\" name=\"include_currents\" value=\"true\"$(gchk("include_currents"))></label> ",
     "<label title=\"Current-magnitude accuracy in percent of the measured value (used when currents are enabled)\">&sigma; I (%) <input type=\"text\" name=\"sigma_i_pct\" value=\"$(gv("sigma_i_pct", "1.0"))\" size=\"6\"></label> ",
-    "<label title=\"PMU current-phasor ANGLE accuracy in degrees (absolute; an angle passes through zero). 0 = no current-angle rows. Angle rows share the PMU reference offset with voltage angles and are gated near zero current.\">&sigma; Ia (°) <input type=\"text\" name=\"sigma_ia_deg\" value=\"$(gv("sigma_ia_deg", "0"))\" size=\"6\"></label> ",
-    "<label title=\"Active-power accuracy in percent of the measured value (injections and branch flows). Percent of reading stays meaningful across voltage levels, unlike an absolute MW sigma.\">&sigma; P (%) <input type=\"text\" name=\"sigma_p_pct\" value=\"$(gv("sigma_p_pct", "1.0"))\" size=\"6\"></label> ",
+    "<label title=\"Current-phasor angle accuracy in degrees; 0 writes no current-angle rows. They share the PMU reference offset with voltage angles, gated near zero current.\">&sigma; Ia (°) <input type=\"text\" name=\"sigma_ia_deg\" value=\"$(gv("sigma_ia_deg", "0"))\" size=\"6\"></label> ",
+    "<label title=\"Active-power accuracy in percent of the measured value (injections and branch flows). Percent of reading stays meaningful across voltage levels.\">&sigma; P (%) <input type=\"text\" name=\"sigma_p_pct\" value=\"$(gv("sigma_p_pct", "1.0"))\" size=\"6\"></label> ",
     "<label title=\"Reactive-power accuracy in percent of the measured value (injections and branch flows)\">&sigma; Q (%) <input type=\"text\" name=\"sigma_q_pct\" value=\"$(gv("sigma_q_pct", "1.0"))\" size=\"6\"></label>",
     "</fieldset>",
     "<button type=\"submit\">Generate synthetic measurements from a solved PF</button>",
@@ -3312,7 +3494,7 @@ function render_se_form(; cases::Vector{String} = String[], measurements::Vector
     # the generator and run forms snap back to the defaults on reload
     "<form method=\"post\" action=\"/stateestimation/reset-settings\">",
     "<input type=\"hidden\" name=\"casefile\" value=\"$(esc(selected_case))\">",
-    "<button type=\"submit\" title=\"Delete the saved settings of this case (generator AND run options; the PowerFlow page shares the same per-case profile). All forms fall back to their defaults on the next load.\">Reset saved settings for this case</button>",
+    "<button type=\"submit\" title=\"Delete the saved settings of this case, generator and run options alike (the PowerFlow page shares them). All forms fall back to defaults on the next load.\">Reset saved settings for this case</button>",
     "</form>",
   )
   # a Sparlectra Case Format case carries its measurements with the model, so
@@ -3332,7 +3514,7 @@ function render_se_form(; cases::Vector{String} = String[], measurements::Vector
     "<input type=\"hidden\" name=\"casefile\" value=\"$(esc(selected_case))\">",
     "<input type=\"hidden\" name=\"measurement_file\" value=\"$(esc(selected_measurement))\">",
     "<label title=\"Seed of the noise draw; the same seed reproduces the same set\">$(_webui_field_label("noise_seed", "noise seed"))<input type=\"number\" name=\"noise_seed\" value=\"42\" min=\"0\"></label> ",
-    "<button type=\"submit\" class=\"secondary-button\" title=\"Perturb the values of the set above with each row's own sigma and store the result as a set bound to this case. No power flow is computed and the operating point stays as it is.\">Add noise to this set</button>",
+    "<button type=\"submit\" class=\"secondary-button\" title=\"Perturb the values of the set above with each row's own sigma and store the result as a set bound to this case. No power flow is computed.\">Add noise to this set</button>",
     "</form>",
     "<p class=\"field-help\">Turns an ideal set into a realistic one without recomputing anything: the values are perturbed, the sigmas stay. The result lands next to the case as <code>&lt;case&gt;.noisy.measurements.csv</code> and is preselected afterwards.</p>",
   ) : ""
@@ -3346,17 +3528,17 @@ function render_se_form(; cases::Vector{String} = String[], measurements::Vector
     "<p class=\"se-recommend\">Pick the measurement set that belongs to the selected case; the matching set (<case>.measurements.csv) is preselected, sets from other cases are labeled. No set yet? Generate one below.</p><label title=\"Measurement CSV v1 file (content-sniffed)\">$(_webui_field_label("measurement_file", "Measurement set"))<select name=\"measurement_file\">$(meas_options)</select></label>",
     "<fieldset class=\"se-options\"><legend>Estimator options</legend>",
     "<label title=\"Start from a flat voltage profile\">$(_webui_field_label("se_flatstart", "flatstart"))<input type=\"checkbox\" name=\"se_flatstart\" value=\"true\"$(gchk2("se_flatstart", true))></label> ",
-    "<label title=\"WLS convergence tolerance on the state step. The default 1e-6 sits AT the noise floor of the finite-difference Jacobian (jac_eps), not below it: a tighter value cannot be reached and the run raises it with a log line. Loosen it for noisy sets, do not tighten it below jac_eps.\">$(_webui_field_label("se_tol", "tol"))<input type=\"text\" name=\"se_tol\" value=\"$(gv("se_tol", "1e-6"))\" size=\"8\"></label> ",
-    "<label title=\"Iteration cap, the same limit the service and the configuration use. A converged run usually needs only a few iterations, but a solve with released transformer taps can need close to 40 before it settles, and the count reported afterwards is the one of the LAST solve, not of the most expensive.\">$(_webui_field_label("se_max_iter", "max_iter"))<input type=\"number\" name=\"se_max_iter\" value=\"$(gv("se_max_iter", "50"))\" min=\"1\" max=\"200\"></label> ",
-    "<label title=\"What happens to a measurement with a large residual. off: nothing, plain WLS (bad data is only ELIMINATED, see the second limit). staged: down-weighted gradually during the solve, between the two knees k1 and k2. replacement: rows past the down-weight limit get a fixed large sigma and thereby lose their influence. Note on staged: its knees keep the classic |r|/sigma scale, so in this mode the form shows TWO scales side by side, the knees on |r|/sigma and the elimination limit on the normalized residual rn; in replacement mode both limits share the rn scale. All statistics stay on the original sigmas. Rule of thumb: down-weighting for online smoothing, elimination for identification.\">$(_webui_field_label("se_robust_mode", "down-weighting"))<select name=\"se_robust_mode\" id=\"se-robust-mode\"><option value=\"off\"$(gv("se_robust_mode", "off") == "off" ? " selected" : "")>off</option><option value=\"staged\"$(gv("se_robust_mode", "off") == "staged" ? " selected" : "")>staged</option><option value=\"replacement\"$(gv("se_robust_mode", "off") == "replacement" ? " selected" : "")>replacement</option></select></label> ",
-    "<label title=\"Second limit: from this NORMALIZED residual rn = r/sqrt(Omega_ii) a measurement is REMOVED from the estimate, not just down-weighted (API keyword normalizedThreshold). Works together with the elimination budget and only while the band test is :high. Same scale as the replacement down-weight limit, so the two are directly comparable.\">$(_webui_field_label("se_k_eliminate", "eliminate from rn"))<input type=\"number\" name=\"se_k_eliminate\" id=\"se-k-eliminate\" value=\"$(gv("se_k_eliminate", "3.0"))\" min=\"0.000001\" step=\"any\"></label> ",
+    "<label title=\"WLS convergence tolerance on the state step. The default 1e-6 is the noise floor of the finite-difference Jacobian; a tighter value is raised with a log line.\">$(_webui_field_label("se_tol", "tol"))<input type=\"text\" name=\"se_tol\" value=\"$(gv("se_tol", "1e-6"))\" size=\"8\"></label> ",
+    "<label title=\"Iteration cap, the same limit the service and the configuration use. A solve with released transformer taps can need close to 40 iterations before it settles.\">$(_webui_field_label("se_max_iter", "max_iter"))<input type=\"number\" name=\"se_max_iter\" value=\"$(gv("se_max_iter", "50"))\" min=\"1\" max=\"200\"></label> ",
+    "<label title=\"Treatment of a large residual. off: plain WLS. staged: down-weighted between the knees k1 and k2. replacement: rows past the limit get a fixed large sigma.\">$(_webui_field_label("se_robust_mode", "down-weighting"))<select name=\"se_robust_mode\" id=\"se-robust-mode\"><option value=\"off\"$(gv("se_robust_mode", "off") == "off" ? " selected" : "")>off</option><option value=\"staged\"$(gv("se_robust_mode", "off") == "staged" ? " selected" : "")>staged</option><option value=\"replacement\"$(gv("se_robust_mode", "off") == "replacement" ? " selected" : "")>replacement</option></select></label> ",
+    "<label title=\"From this normalized residual rn a measurement is removed from the estimate, not just down-weighted. Works with the budget, only while the band test is high.\">$(_webui_field_label("se_k_eliminate", "eliminate from rn"))<input type=\"number\" name=\"se_k_eliminate\" id=\"se-k-eliminate\" value=\"$(gv("se_k_eliminate", "3.0"))\" min=\"0.000001\" step=\"any\"></label> ",
     "<span class=\"se-limit-group\" data-se-limit-group=\"staged\">",
-    "<label title=\"First limit, staged mode: below this the weight stays untouched, above it the down-weighting starts and grows. Measured as |r|/sigma, NOT as the normalized residual of the other two limits: the staged knees deliberately keep their classic definition (3/6 reproduces the textbook weighting).\">$(_webui_field_label("se_robust_k1", "down-weight from |r|/sigma"))<input type=\"number\" name=\"se_robust_k1\" value=\"$(gv("se_robust_k1", "3.0"))\" min=\"0.000001\" step=\"any\"></label> ",
+    "<label title=\"Staged mode: below it the weight stays untouched, above it the down-weighting starts and grows. Measured as |r|/sigma, not as the normalized residual.\">$(_webui_field_label("se_robust_k1", "down-weight from |r|/sigma"))<input type=\"number\" name=\"se_robust_k1\" value=\"$(gv("se_robust_k1", "3.0"))\" min=\"0.000001\" step=\"any\"></label> ",
     "<label title=\"Staged mode: above this knee the row contributes almost nothing to the gradient any more. Same scale as k1 (|r|/sigma).\">$(_webui_field_label("se_robust_k2", "full down-weight at |r|/sigma"))<input type=\"number\" name=\"se_robust_k2\" value=\"$(gv("se_robust_k2", "6.0"))\" min=\"0.000001\" step=\"any\"></label> ",
     "</span>",
     "<span class=\"se-limit-group\" data-se-limit-group=\"replacement\">",
-    "<label title=\"First limit, replacement mode: from this NORMALIZED residual rn = r/sqrt(Omega_ii) a measurement gets the replacement sigma next to it and thereby loses its influence on the estimate; it is NOT removed (that is the elimination limit). Same scale as the elimination limit, so the two are directly comparable.\">$(_webui_field_label("se_k_suppress", "down-weight from rn"))<input type=\"number\" name=\"se_k_suppress\" id=\"se-k-suppress\" value=\"$(gv("se_k_suppress", "4.0"))\" min=\"0.000001\" step=\"any\"></label> ",
-    "<label title=\"NOT a limit: the replacement sigma itself, in the unit of the measurement (MW, Mvar, pu). A down-weighted row is solved with this sigma instead of its own, which is why a large value silences it. Statistics and reports keep the original sigma.\">$(_webui_field_label("se_suppression_sigma", "replacement sigma (MW/Mvar)"))<input type=\"number\" name=\"se_suppression_sigma\" value=\"$(gv("se_suppression_sigma", "2000"))\" min=\"0.000001\" step=\"any\"></label> ",
+    "<label title=\"Replacement mode: from this normalized residual a measurement gets the replacement sigma and loses its influence; removal is the elimination limit's job.\">$(_webui_field_label("se_k_suppress", "down-weight from rn"))<input type=\"number\" name=\"se_k_suppress\" id=\"se-k-suppress\" value=\"$(gv("se_k_suppress", "4.0"))\" min=\"0.000001\" step=\"any\"></label> ",
+    "<label title=\"Not a limit: the replacement sigma, in the measurement's unit. A down-weighted row is solved with this sigma instead of its own; statistics keep the original.\">$(_webui_field_label("se_suppression_sigma", "replacement sigma (MW/Mvar)"))<input type=\"number\" name=\"se_suppression_sigma\" value=\"$(gv("se_suppression_sigma", "2000"))\" min=\"0.000001\" step=\"any\"></label> ",
     "</span>",
     "<label title=\"Sequential bad-data elimination budget\">$(_webui_field_label("se_max_eliminations", "max_eliminations"))<input type=\"number\" name=\"se_max_eliminations\" value=\"$(gv("se_max_eliminations", "3"))\" min=\"0\" max=\"20\"></label> ",
     "<span id=\"se-threshold-warning\" class=\"field-help\" style=\"display:none\">Warning: k_suppress is below k_eliminate, so suppressed rows rarely reach the elimination. The run is allowed, but this is usually unintended.</span>",
@@ -3375,7 +3557,7 @@ function render_se_form(; cases::Vector{String} = String[], measurements::Vector
     "var f=mode&&mode.closest('form');f&&f.addEventListener('submit',function(){groups.forEach(function(g){g.querySelectorAll('input, select').forEach(function(c){c.disabled=false;});});});" *
     "})();</script>",
     "<label title=\"Write estimated shunt susceptances back into the model\">$(_webui_field_label("se_update_shunts", "update_shunts"))<input type=\"checkbox\" name=\"se_update_shunts\" value=\"true\"$(gchk("se_update_shunts"))></label> ",
-    "<label title=\"Estimate transformer tap positions: releases the tap of every in-service transformer with a ratio tap changer as an extra state, then fixes it to the nearest mechanical step and reruns without the tap state. The result page shows the electrical and fixed steps plus J before/after the fixation. Guarded: machine (generator step-up) transformers are skipped, and a tap the measurement set cannot observe (e.g. a radial transformer without a far-side voltage) is frozen at its current position and reported as frozen instead of absorbing errors.\">$(_webui_field_label("se_tap_estimation", "estimate taps"))<input type=\"checkbox\" name=\"se_tap_estimation\" value=\"true\"$(gchk("se_tap_estimation"))></label> ",
+    "<label title=\"Release every in-service ratio tap changer as an extra state, fix it to the nearest mechanical step and rerun. Machine and unobservable taps are skipped.\">$(_webui_field_label("se_tap_estimation", "estimate taps"))<input type=\"checkbox\" name=\"se_tap_estimation\" value=\"true\"$(gchk("se_tap_estimation"))></label> ",
     "<label title=\"Residual-correlation (K matrix) report columns\">$(_webui_field_label("se_report_correlation", "report_correlation"))<input type=\"checkbox\" name=\"se_report_correlation\" value=\"true\"$(gchk("se_report_correlation"))></label>",
     "</fieldset>",
     "<button type=\"submit\">Run state estimation</button> ",
@@ -3386,7 +3568,7 @@ function render_se_form(; cases::Vector{String} = String[], measurements::Vector
     # power-flow keys - no separate save form, no state duplicated.
     "<input type=\"hidden\" name=\"settings_target\" value=\"this_case\">",
     "<input type=\"hidden\" name=\"return_to\" value=\"runs\">",
-    "<button type=\"submit\" class=\"secondary-button\" formaction=\"/powerflow/settings/save\" formmethod=\"post\" formnovalidate title=\"Save the estimator options above (and the measurement-set choice) into this case's configuration file, so the next run of this case uses them without touching the form again.\">Save settings for this case</button>",
+    "<button type=\"submit\" class=\"secondary-button\" formaction=\"/powerflow/settings/save\" formmethod=\"post\" formnovalidate title=\"Save the estimator options above and the measurement-set choice into this case's configuration file; the next run uses them without touching the form.\">Save settings for this case</button>",
     "<p class=\"field-help\">Flow: observability first (traffic light), then the WLS solve, then the bad-data diagnostics and the se_view summary; artifacts land in the run history (kind se).</p>",
     "</form>",
   )

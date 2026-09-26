@@ -16,7 +16,6 @@
 # purpose: local Web UI server (start_sparlectra_webui): TCP request loop,
 #          output-root defaults, browser launch, and lifecycle and
 #          shutdown handling
-using Markdown
 using Sockets
 
 mutable struct _SparlectraWebUIRuntime
@@ -151,6 +150,7 @@ include("sysimage.jl")
 include("options.jl")
 include("forms.jl")
 include("docs.jl")
+include("help_excerpts.jl")  # generated from docs/src by tools/generate_webui_help_excerpts.jl
 include("operations.jl")
 include("views.jl")
 include("handlers.jl")
@@ -490,7 +490,7 @@ end
 # still carries the old default never had that key touched by the user and
 # follows the new one. Read only when no template copy exists yet (a file
 # provisioned before the copy was introduced); afterwards the copy decides.
-const _WEBUI_DEFAULT_MIGRATIONS = [("power_flow.linear_solver", "umfpack", "umfpack_reuse")]
+const _WEBUI_DEFAULT_MIGRATIONS = [("power_flow.linear_solver", "umfpack", "umfpack_reuse"), ("state_estimation.report_residual_correlation", false, true), ("state_estimation.update_shunts", false, true)]
 
 """
     _webui_follow_template_defaults!(configuration) -> Vector{String}

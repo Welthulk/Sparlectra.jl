@@ -1,15 +1,12 @@
 # Generic Control Framework
 
-## Purpose
-
-The inner numerical solver remains `runpf!`. The generic orchestration layer is `run_control!`, which runs controller-driven outer iterations around repeated PF solves.
-
-`run_sparlectra` automatically dispatches through `run_control!` when `collect_outer_controllers(net)` returns at least one controller.
-
-Built-in controllers: `PowerTransformerControl` (tap changers: voltage,
-active power, combined; theory below), `MachineVoltageControl`
-(remote voltage regulation via machine reactive power, theory in
-[Remote Voltage Control](remote_voltage_control.md)),
+`runpf!` is the inner numerical solver; `run_control!` runs
+controller-driven outer iterations around repeated power-flow solves, and
+`run_sparlectra` dispatches through it whenever
+`collect_outer_controllers(net)` returns a controller. Built-in
+controllers: `PowerTransformerControl` (tap changers: voltage, active
+power, combined; theory below), `MachineVoltageControl`
+([Remote Voltage Control](remote_voltage_control.md)),
 `ShuntVoltageControl` (SVC, and MSC/MSR switched banks via `step_mvar`),
 `SeriesReactanceControl` (TCSC, and SSSC via `v_inj_max_pu`), and
 `HvdcPairControl` (back-to-back HVDC pairs).
@@ -35,148 +32,62 @@ run_control!
 ControlRunResult stored on net.control_result
 ```
 
-Preferred public entries:
+Public entries (`run_acpflow` is an alias; both return
+`SparlectraRunResult`):
 
 ```julia
 run_sparlectra(; net = net, ...)
 run_sparlectra(; casefile = "case14.m", path = "...", ...)
 ```
 
-`run_sparlectra` is the preferred public framework entry point for both in-memory
-and file-based workflows. For AC power-flow examples, `run_acpflow` is kept as a
-thin alias with the same minimal configuration-driven signature. Both names
-return `SparlectraRunResult`.
+**Use**
 
 | Layer | Function | Purpose |
 |---|---|---|
 | Framework | `run_sparlectra` (`run_acpflow` alias) | Import/config/control/solve/output orchestration |
 | Solver | `runpf!` | Solve an already built `Net` using `PowerFlowConfig` |
-| Control | `run_control!` | Execute outer-loop controllers |
+| Control | `run_control!` | Execute outer-loop controllers; `run_control!(net; controllers = [...])` runs user-defined ones |
 | Import | `createNetFromMatPowerFile` | Convert a MATPOWER file into a `Net` |
+| Configuration | `control.controllers`, `control.max_outer_iterations` | Declarative controllers, global outer-loop budget ([Configuration](configuration.md)) |
+| Result | `latest_control_result(net)`, `net.control_result`, `controllableElements(net)` | The `ControlRunResult` of the last run and the generic element records |
+| `ControlRunResult` fields | `status`, `converged`, `outer_iterations`, `powerflow_solves`, `last_pf_iterations`, `total_pf_iterations` (sum over all passes; the result header reports the last pass and this total), `last_pf_status`, `controllers`, `trace`, `elements` | Terminal `status`: `:no_controllers`, `:disabled`, `:no_active_controllers`, `:pf_failed`, `:converged`, `:blocked`, `:max_outer_iterations` |
+| Trace rows (transformer control) | `outer_iteration`, `controller_name`, `controller_type`, `transformer_id`, `mode`, `status`, `converged`, `at_limit`, `achieved_vm_pu`, `target_vm_pu`, `achieved_p_mw`, `target_p_mw`, `tap_ratio`, `phase_shift_deg` | One row per controller and outer iteration |
+| Element record (`controllableElements`) | `name`, `element`, `device`, `actuator`, `actuator_min`/`actuator_max`, `quantity`, `target`, `target_value`, `discrete`, `enabled`, live `status`/`converged`/`at_limit` | `ControlRunResult.elements` stores the same records at run end |
+| Framework result | `SparlectraRunResult.numerical_converged` (the last PF solve only), `solution_available` (that solve is usable), `final_converged` (converged PF solve, passed limit validation, `control_status` `:none` or `:converged`) | `:blocked`, `:max_outer_iterations` and other non-success states keep the last usable solution without counting as framework convergence |
+| Legacy boundary | `erg` reflects inner PF success only: `:pf_failed` maps to `erg = 1` | `:blocked` or `:max_outer_iterations` are not PF failures |
 
-## Hook interface
+A user-defined controller subtypes `AbstractOuterController` (with
+`AbstractControlState` and `AbstractControlUpdate`) and implements the
+hook methods of `run_control!` from the
+[Controllers Reference](reference_controller.md); its own outer-loop
+limit combines with the global budget `control.max_outer_iterations`.
 
-- `AbstractOuterController`
-- `AbstractControlState`
-- `AbstractControlUpdate`
-- `control_initialize!`
-- `control_evaluate!`
-- `control_propose_update!`
-- `control_apply_update!`
-- `control_is_converged`
-- `control_is_blocked`
-- `control_status`
-- `control_report_rows`
-- `control_trace_rows`
-- `control_max_outer_iterations`
+## Declarative controllers in configuration
 
-`control_max_outer_iterations` provides controller-specific outer-loop limits. The global outer-loop budget is `control.max_outer_iterations` and is combined with controller limits.
+Controllers can be declared under `control.controllers`: one named mapping
+per controller, `type` selecting the device function, the remaining keys
+mirroring its keyword arguments. The run pipeline applies the declarations
+before the outer loop; `applyConfiguredControllers!` does the same for a
+programmatically built net. Schema, types and validation:
+[Configuration](configuration.md). An element that already carries a
+controller of the declared type is skipped, so repeated runs do not stack
+duplicates; to change it, rebuild the net or adjust it programmatically.
 
-For framework runs, `SparlectraRunResult.numerical_converged` remains strictly
-about the last numerical PF solve and `solution_available` remains true when
-that solve produced a usable solution. `final_converged` is true only when the
-numerical PF solve converged, limit validation did not fail, and
-`control_status` is either `:none` or `:converged`. In particular, `:blocked`,
-`:max_outer_iterations`, and other non-success control terminal states keep the
-last usable solution but do not count as final framework convergence.
-
-`control_max_outer_iterations` is currently treated as an internal extension hook (not exported). External custom controllers can still extend it via `Sparlectra.control_max_outer_iterations(::MyController)`.
-
-## Result model
-
-`ControlRunResult` contains:
-
-- `status`
-- `converged`
-- `outer_iterations`
-- `powerflow_solves`
-- `last_pf_iterations`
-- `total_pf_iterations` (sum over all passes; the result header reports the last pass and this total)
-- `last_pf_status`
-- `controllers`
-- `trace`
-- `elements` — the generic controllable-element records at run end (see below)
-
-Terminal statuses:
-
-- `:no_controllers`
-- `:disabled`
-- `:no_active_controllers`
-- `:pf_failed`
-- `:converged`
-- `:blocked`
-- `:max_outer_iterations`
-
-## Legacy status boundary (`erg`)
-
-At the legacy API boundary, `erg` reflects inner numerical PF success/failure only.
-
-- `:pf_failed` maps to failure (`erg = 1`).
-- Control-loop outcomes such as `:blocked` or `:max_outer_iterations` are not inner numerical PF failures.
-
-Inspect control-loop outcome via `latest_control_result(net)` or `net.control_result`.
-
-## Latest-result access
-
-Use:
-
-```julia
-latest_control_result(net)
-net.control_result
-```
-
-These expose the latest control run associated with the `Net` instance.
-
-## Declarative controllers in configuration (issue #305)
-
-Controllers can be declared under `control.controllers` instead of being
-attached programmatically: one named mapping per controller, `type`
-selecting the device function, the remaining keys mirroring its keyword
-arguments. The run pipeline applies the declarations to the net before the
-outer loop starts; `applyConfiguredControllers!` does the same for
-a programmatically built net. Schema, supported types, and validation
-behavior are documented in the control section of
-[Configuration](configuration.md).
-
-Declarations are idempotent per net: an element that already carries a
-controller of the declared type is skipped, so repeated
-`run_sparlectra(net = ...)` calls do not stack duplicates. To change an
-already-applied controller, rebuild the net or adjust it programmatically.
-
-### Public API decision: no generic `addController!`
-
-A generic `addController!(net, controller)` entry point is deliberately
-**not** exposed. Two reasons:
-
-- Attachment is device-specific: transformer controllers live on the
-  winding (`side.controls`), machine/shunt/series controllers in
-  `net.machineControls`. A generic attach would need per-type knowledge
-  anyway and would bypass the reference resolution, exclusivity checks,
-  and cross-controller warnings that live in the `add*Control!` functions.
-- User-defined `AbstractOuterController` subtypes already have a supported
-  path without touching the net:
-  `run_control!(net; controllers = [my_controller, ...])` accepts any
-  controller list explicitly.
-
-The device-specific `add*Control!` functions therefore remain the only
-public way to attach controllers to a `Net`.
+!!! details "Why there is no generic `addController!`"
+    Attachment is device-specific (transformer controllers live on the
+    winding in `side.controls`, the others in `net.machineControls`), and
+    the `add*Control!` functions carry the reference resolution,
+    exclusivity checks and cross-controller warnings that
+    `addController!(net, controller)` would have to duplicate.
 
 ## Controllable elements (generic view)
 
-Every registered controller describes itself in one shared vocabulary —
-what the element is, which actuator it moves within which limits, and which
-quantity it steers onto which target:
+Every registered controller describes itself in one vocabulary (record
+fields in the Use table above):
 
 ```julia
 controllableElements(net)   # -> Vector{NamedTuple}
 ```
-
-Each record carries `name`, `element`, `device`, `actuator`,
-`actuator_min`/`actuator_max`, `quantity`, `target`, `target_value`,
-`discrete`, `enabled`, and the live `status`/`converged`/`at_limit` flags.
-The same records are stored on `ControlRunResult.elements` at the end of a
-control run. The view is derived on demand from the registered controllers —
-purely reporting, no control behavior attached. Current devices:
 
 | Device | Actuator | Quantity |
 |---|---|---|
@@ -192,63 +103,46 @@ purely reporting, no control behavior attached. Current devices:
 ## SVC: variable-shunt voltage control
 
 `addShuntVoltageControl!(net; bus, target_vm_pu, bs_min_mvar, bs_max_mvar,
-…)` adds an SVC-style controller: its own shunt element whose susceptance
-(MVAr at 1.0 p.u., capacitive positive) the outer loop moves via secant
-iteration to hold the bus voltage. At a limit the susceptance stays clamped
-and the reactive output follows the bus voltage squared through the Y-bus —
-the constant-B region of a real SVC, reported honestly as `at_limit` (a
-Q-limited machine would hold constant Q instead; that difference is the
-point of the device model). The bus must be PQ; a second shunt controller
-on the same bus is rejected, and a transformer tap controller regulating
-the same bus voltage triggers the cross-type warning. `runShortCircuit!`
-and the power flow see the SVC only through its shunt stamp — disabled or
-absent controllers leave results untouched. Setting `step_mvar` switches
-the same controller into the discrete MSC/MSR switched-bank mode; see the
-section "Discrete banks: MSC/MSR" on the
-[FACTS Devices](@ref facts_devices) page.
+...)` adds an SVC-style controller: its own shunt element whose
+susceptance (MVAr at 1.0 p.u., capacitive positive) the outer loop moves
+by secant iteration to hold the bus voltage; at a limit the susceptance
+stays clamped and the reactive output follows $V^2$ (`at_limit`).
+`step_mvar` switches to the discrete MSC/MSR mode; the STATCOM
+alternative is `addMachineVoltageControl!` with `s_max_mva`
+([FACTS Devices](@ref facts_devices)).
 
-The machine controller offers a STATCOM alternative for the same task
-(`addMachineVoltageControl!` with `s_max_mva`): current-based limit,
-linear $V \cdot S_{max}$ collapse instead of the SVC's quadratic
-$V^2 B$ one. The device taxonomy and the limit-characteristic comparison
-live on the [FACTS Devices](@ref facts_devices) page.
+**Notes**
+
+- The bus must be PQ; a second shunt controller on the same bus is
+  rejected, a tap controller regulating the same bus triggers the
+  cross-type warning.
+- `runShortCircuit!` and the power flow see the SVC only through its
+  shunt stamp.
 
 ## TCSC: series-reactance flow control
 
 `addSeriesReactanceControl!(net; fromBus, toBus, p_target_mw, x_min_pu,
 x_max_pu, ...)` adds a TCSC-like controller on a line branch: the outer
-loop moves the branch series reactance `x_pu` within its range via secant
-iteration until the branch carries the active-power target (measured in
-the registered from to to direction). Every accepted step changes one
-branch stamp; the Y-bus is re-stamped before the next solve. At a range
-end the branch behaves as a fixed compensated line, reported honestly as
-`at_limit`. Transformer branches are rejected (taps own transformer
-reactance), and ranges whose series impedance magnitude enters the
-resonance guard `eps_z` are refused at registration. Theory and device
-mapping: [Series Compensation (TCSC)](series_compensation.md).
+loop moves the series reactance `x_pu` within its range by secant
+iteration until the branch carries the active-power target (registered
+from-to direction), re-stamping the Y-bus before each solve; at a range
+end the branch is a fixed compensated line (`at_limit`). Theory:
+[Series Compensation (TCSC)](series_compensation.md). The same controller
+carries the SSSC mode (`v_inj_max_pu` instead of the fixed window);
+`addUpfcControl!` adds a UPFC as `model = :quadrature` (SSSC plus STATCOM
+as one named device) or `model = :full` (one controller steering line P
+and Q independently): [FACTS Devices](@ref facts_devices).
 
-The same controller carries the SSSC mode (`v_inj_max_pu` instead of the
-fixed window): the admissible reactance deviation is bounded by the
-injectable series voltage and shrinks with the branch current. A UPFC is
-available through `addUpfcControl!` in two models: `model = :quadrature`
-registers the SSSC plus STATCOM pair as one named device, and `model = :full`
-is a single multi-actuator controller steering line P and Q independently
-through an arbitrary-phase series injection with the DC-link active balance
-on the shunt (the first controller that owns more than one actuator and an
-internal constraint, solved as a small local system each outer iteration).
-Models, limitations, and YAML examples: the
-[FACTS Devices](@ref facts_devices) page.
+**Notes**
+
+- Transformer branches are rejected (taps own transformer reactance).
+- Ranges whose series impedance magnitude enters the resonance guard
+  `eps_z` are refused.
 
 ## Master/slave groups for parallel transformers
 
-Two transformers in parallel between the same busbars cannot be regulated
-independently: unequal tap positions drive a circulating reactive power
-around the loop (on the doc example, one step apart in opposite
-directions splits the transformer flows into -35 and +53 MVAr at an
-unchanged busbar voltage), and two independent secant loops on one target
-voltage oscillate against each other. Registering a second independent
-voltage controller on an already-regulated target bus therefore triggers
-a warning naming the trap; the supported form is the GROUP (issue #322):
+Two transformers in parallel between the same busbars regulate as a
+group:
 
 ```julia
 addPowerTransformerControl!(net; trafo = "1", followers = ["2"],
@@ -257,100 +151,76 @@ addPowerTransformerControl!(net; trafo = "1", followers = ["2"],
 ```
 
 The master runs the normal discrete voltage loop; every accepted master
-move is mirrored onto the followers STEP-synchronously (whole steps of
-each follower's own `tap_step`, clamped to its range), so units with
-different neutral ratios stay aligned in positions. A follower cannot
-carry its own ratio controller and cannot follow two groups; the
-registration enforces both. Mind the DEADBAND: synchronized steps
-multiply the voltage effect per master step by the group size, so the
-deadband must cover at least half the aggregated step effect, or the
-group cannot settle. Declaratively the group is the `followers` list on a
-`power_transformer` entry.
+move is mirrored onto the followers step-synchronously (whole steps of
+each follower's own `tap_step`, clamped to its range). Declaratively the
+group is the `followers` list on a `power_transformer` entry.
 
-**CGMES.** The standard models exactly this case: several
-`RatioTapChanger`s reference ONE shared `RegulatingControl`
-(`TapChanger.TapChangerControl`), with the per-changer `controlEnabled`
-flag expressing master/follower by tool convention. The importer groups
-by that shared object: the first enabled tap changer of a control becomes
-the master, every further one joins as a follower (message
-`follows the group of ...`) instead of spawning a fighting second
-controller. Tap changers with `controlEnabled = false` stay at their
-fixed position, as before. The exporter writes the matching structure:
-each active voltage tap controller becomes ONE shared `TapChangerControl`
-(mode voltage, terminal of the regulated bus in EQ; `enabled`,
-`targetValue`/`targetDeadband` in kV in SSH), referenced by the master's
-AND every follower's `RatioTapChanger`, all with `controlEnabled = true`
-(a false follower would fall out of the group on reimport). A regulated
-parallel group therefore survives a CGMES roundtrip as one group, and a
-receiving tool never sees fighting independent controllers.
+**Notes**
 
-## Trace rows (transformer control)
+- A second independent voltage controller on an already-regulated target
+  bus triggers a warning; a follower cannot carry its own ratio
+  controller and cannot follow two groups.
+- Synchronized steps multiply the voltage effect per master step by the
+  group size, so the deadband must cover at least half the aggregated
+  step effect.
+- CGMES: `RatioTapChanger`s sharing one `RegulatingControl`
+  (`TapChanger.TapChangerControl`) import as a group, the first enabled
+  one as master, the others as followers (message
+  `follows the group of ...`); `controlEnabled = false` stays fixed. The
+  exporter writes one shared `TapChangerControl` per active voltage tap
+  controller (mode voltage, regulated-bus terminal in EQ; `enabled`,
+  `targetValue`/`targetDeadband` in kV in SSH), referenced by the
+  master's and every follower's `RatioTapChanger` with
+  `controlEnabled = true`, so a group survives a CGMES roundtrip.
 
-Minimal row schema:
-
-- `outer_iteration`
-- `controller_name`
-- `controller_type`
-- `transformer_id`
-- `mode`
-- `status`
-- `converged`
-- `at_limit`
-- `achieved_vm_pu`
-- `target_vm_pu`
-- `achieved_p_mw`
-- `target_p_mw`
-- `tap_ratio`
-- `phase_shift_deg`
+!!! details "Why a group instead of two controllers"
+    Unequal tap positions on parallel units drive a circulating reactive
+    power around the loop (one step apart in opposite directions splits
+    the flows of the example into -35 and +53 MVAr), and two secant
+    loops on one target voltage oscillate against each other.
 
 ## [Transformer regulation theory: OLTC, PST, and combined regulation](@id transformer_regulation_theory)
 
-A regulated transformer inserts an additional voltage into the winding.
-Three cases are distinguished by the phase of that added voltage relative to
-the winding voltage:
+A regulated transformer inserts an additional voltage into the winding; its
+phase relative to the winding voltage distinguishes three cases:
 
-* **In-phase regulation — OLTC** (German *Längsregelung*): the added voltage
-  is parallel to the winding voltage. Only the magnitude of the complex
-  turns ratio changes — this is the ordinary on-load tap changer (OLTC)
-  ratio tap, and its dominant network effect is on voltage magnitudes and
-  reactive-power flow.
-* **Quadrature regulation — PST** (German *Querregelung*): the added voltage
-  is perpendicular (90°). Mostly the angle of the turns ratio changes — this
-  is the phase-shifting transformer (PST) or quadrature booster, and its
-  dominant effect is on active-power flow through meshed paths.
-* **Combined (oblique) regulation** (German *Schrägregelung*; no established
-  English term): the added voltage has an intermediate angle, or — the case
-  modeled here — the unit carries **both** an in-phase and a quadrature tap.
-  The complex turns ratio becomes `n = ρ · e^{jα}` with independently
-  switchable magnitude `ρ` (ratio tap) and angle `α` (phase tap).
+* **In-phase regulation, OLTC** (German *Längsregelung*): the added voltage
+  is parallel to the winding voltage, so only the magnitude of the complex
+  turns ratio changes: the ordinary ratio tap, acting mainly on voltage
+  magnitudes and reactive-power flow.
+* **Quadrature regulation, PST** (German *Querregelung*): the added voltage
+  is perpendicular (90°), so mostly the angle changes: the phase-shifting
+  transformer or quadrature booster, acting mainly on active-power flow.
+* **Combined (oblique) regulation** (German *Schrägregelung*): the added
+  voltage has an intermediate angle, or, as modeled here, the unit carries
+  **both** an in-phase and a quadrature tap: `n = ρ · e^{jα}` with
+  independently switchable magnitude `ρ` (ratio tap) and angle `α` (phase
+  tap).
 
-In Sparlectra's branch model these are the independent branch fields
-`tap_ratio` (with `tap_min/max/step`) and `phase_shift_deg`
-(`phase_min/max/step_deg`); both enter the complex ratio of the transformer
-branch. The idealization is that a ratio step does not move the angle and a
-phase step does not move the magnitude (a real asymmetrical combined
-regulator couples them; the CGMES-style `PhaseTapChangerModel` on the winding is
-staged for that but not yet wired into the branch admittance).
+In the branch model these are the independent fields `tap_ratio` (with
+`tap_min/max/step`) and `phase_shift_deg` (`phase_min/max/step_deg`); both
+enter the complex ratio of the transformer branch. A ratio step does not
+move the angle and a phase step does not move the magnitude (a real
+asymmetrical combined regulator couples them; the CGMES-style
+`PhaseTapChangerModel` on the winding is staged for that but not wired
+into the branch admittance). The [branch model](branchmodel.md) page
+derives the split of a typed phase tap changer's move.
 
 ### Control: why V→ratio and P→phase may be split
 
 In transmission grids the sensitivities decouple well: voltage magnitudes
-respond mainly to the ratio tap (V–Q coupling) and active-power flow to the
-phase angle (P–θ coupling). Real combined-regulation units therefore
-usually run **two separate controllers** — a voltage regulator
-driving the in-phase stage and an active-power regulator driving the
-quadrature stage. Note the practical convention: the "angle controller"
-regulates a *power* setpoint; the phase angle is its actuator, not its
-control target.
+respond mainly to the ratio tap (V-Q coupling), active-power flow to the
+phase angle (P-θ coupling). Real combined-regulation units therefore
+usually run a voltage regulator on the in-phase stage and an active-power
+regulator on the quadrature stage (the "angle controller" regulates a
+*power* setpoint). Sparlectra supports both:
 
-Sparlectra supports both realizations:
-
-1. **One combined controller** — `mode = :voltage_and_branch_active_power`
+1. **One combined controller**: `mode = :voltage_and_branch_active_power`
    with `control_ratio = true` and `control_phase = true` (one status, one
-   report row; see `examples/others/tap_control_demo_grid.jl`).
-2. **Two independent controllers on the same transformer** (split combined
-   regulation) — one `mode = :voltage` controller owning the ratio tap and
-   one `mode = :branch_active_power` controller owning the phase tap:
+   report row; `examples/others/tap_control_demo_grid.jl`).
+2. **Two independent controllers on one transformer** (split combined
+   regulation): a `mode = :voltage` controller owning the ratio tap and a
+   `mode = :branch_active_power` controller owning the phase tap:
 
    ```julia
    addTapController!(net; trafo = "T_SCHRAEG", mode = :voltage,
@@ -362,24 +232,15 @@ Sparlectra supports both realizations:
        control_ratio = false, control_phase = true, deadband_p_mw = 2.0)
    ```
 
-   Each channel keeps its own target, deadband, convergence status, and
-   report/trace rows; the outer loop alternates both until each is inside
-   its deadband. This mirrors the separately parameterized device
-   controllers in the field. Demo:
-   `examples/others/tap_control_schraeg_two_controllers.jl`.
+   Each channel keeps its own target, deadband, status, and report/trace
+   rows. Demo: `examples/others/tap_control_schraeg_two_controllers.jl`.
 
-### Per-actuator exclusivity
+### Per-actuator exclusivity and step sizing
 
-`addPowerTransformerControl!` enforces that each actuator (ratio tap, phase
-tap) of a transformer is driven by **at most one** active controller. Two
-controllers on one transformer are accepted exactly when their actuator
-sets are disjoint; a second claim on an already-driven actuator raises an
-error.
-
-### Discrete-step sizing rule
-
-With discrete taps the deadband must cover at least the effect of half a
-tap step on the controlled quantity (e.g. one 0.5° phase step moving
-≈2.5 MW requires `deadband_p_mw ≥ ~1.5`). A tighter deadband makes the
-controller hunt around the target — alternating steps without ever
-converging — until `max_outer_iterations` stops the loop.
+Each actuator (ratio tap, phase tap) is driven by at most one active
+controller: two controllers on one transformer need disjoint actuator
+sets, and a second claim on a driven actuator raises an error. With
+discrete taps the deadband must cover at least the effect of half a tap
+step on the controlled quantity (one 0.5° phase step moving about 2.5 MW
+requires `deadband_p_mw ≥ ~1.5`); a tighter deadband makes the controller
+hunt around the target until `max_outer_iterations` stops the loop.

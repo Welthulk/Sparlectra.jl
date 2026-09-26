@@ -1,18 +1,12 @@
 # Local PowerFlow Service
 
-Web UI jobs track `current_phase`, `phase_started_at`, `last_progress_at`, and
-`abort_requested_at`. Cancellation boundaries cover case resolution,
-configuration, case loading, Y-bus/start construction, Newton and Q-limit
-iteration boundaries, sparse linear solves, diagnostics, artifact writing, and
-final success persistence. A late abort is checked before success is
-published. If an in-process numerical call cannot return within the Web UI
-timeout, the explicit hard-reset path records an invalid `aborted_unknown`
-result and shuts down the local Web UI instead of unsafely killing a Julia
-task.
-
-The local PowerFlow service is a small, testable boundary above
-[`run_sparlectra_api`](@ref). It is intended for a future local Genie.jl web GUI,
-but it does not start an HTTP server and has no Genie dependency.
+The local PowerFlow service is a synchronous call around
+[`run_sparlectra_api`](@ref), the service layer over `runpf!`: one request
+dictionary in, one run directory with a fixed set of artifacts and a
+serialized result out. It starts no HTTP server; the [Web UI](webui.md) is
+a layer above it. The call surface and result contract of the underlying
+API are on [Programmatic API](programmatic_api.md);
+`examples/powerflow/exp_powerflow_service.jl` is the runnable example.
 
 ```julia
 using Sparlectra
@@ -22,205 +16,90 @@ request = Dict(
     "casefile" => "data/mpower/case5.m",
     "config_file" => "examples/configuration.yaml",
     "output_root" => "results/powerflow_service",
-    "config_overrides" => Dict(
-        "power_flow.tol" => 1e-8,
-    ),
+    "config_overrides" => Dict("power_flow.tol" => 1e-8),
 )
-
 result = start_powerflow_run(request)
 run_id = result["run_id"]
 
-# Later, after restarting Julia:
-refresh_powerflow_run_registry!("results/powerflow_service")
-
+refresh_powerflow_run_registry!("results/powerflow_service")   # after a Julia restart
 runs = list_powerflow_runs("results/powerflow_service")
 stored_result = get_powerflow_result(run_id)
 artifacts = list_powerflow_artifacts(run_id)
 result_json = resolve_powerflow_artifact(run_id, "result.json")
 ```
 
-Each run receives a unique ID before execution and writes to a GUI-friendly,
-deterministic location. Lightweight metadata is also written to the persistent
-index:
+**Use**
 
-```text
-output_root/
-  powerflow_runs_index.json
-  <run_id>/
-    run.log
-    result.json
-    effective_config.yaml
-    run_metadata.yaml
-    ...
-```
+| Call | Does |
+|---|---|
+| [`start_powerflow_run`](@ref) | validates the request, chooses run id and directory, runs the API, registers the result and updates the index. A trusted caller such as the Web UI passes the server-owned case directory through the function keyword; bare `.m` names are resolved with `ensure_casefile` (`to_jl=false`) and stay the executed source, an explicit `.jl` request resolves to its `.m` source and is rejected when that is missing. Browser form values never control the directory, missing path-like inputs are not downloaded, URLs are rejected |
+| [`load_powerflow_run_index`](@ref) | reads the transport-safe `powerflow_runs_index.json`; a missing index is an empty index |
+| [`list_powerflow_runs`](@ref) | the indexed run summaries, with `available` and a structured `reason` when a run directory or `result.json` is unavailable or unsafe |
+| [`refresh_powerflow_run_registry!`](@ref) | rebuilds the in-process registry from the valid `result.json` files after a restart; one missing or corrupt run does not block the others |
+| [`get_powerflow_result`](@ref) | the serialized run metadata by id; `casefile` is the effective local `.m` or `.jl` path passed to the API |
+| [`list_powerflow_artifacts`](@ref) | the artifact metadata discovered in the run directory |
+| [`resolve_powerflow_artifact`](@ref) | exactly one named artifact of the selected run |
 
-The in-process registry provides fast lookup while Julia is running. The
-`powerflow_runs_index.json` file makes completed runs discoverable after a
-process restart. It stores only lightweight run metadata; full run details are
-read from each run's `result.json`. Failed API runs are indexed when they
-produce `result.json`, so their status, log, effective configuration, and
-runtime metadata remain available for diagnosis.
+**Artifacts** of a run under `output_root/<run_id>/` (the index
+`powerflow_runs_index.json` sits in `output_root` itself and holds run
+metadata only, failed runs included once they produced `result.json`):
 
-## Service boundary
+| File | Content |
+|---|---|
+| `result.json` | the machine-readable result with status, metadata and the raw phase sequence |
+| `run.log` | the run's narrative: solver time, iterations, final mismatch, outcome, case file extension and size, phase timings per step, the large-case timing summary, benchmark median and sample count when benchmarking is on. `output.logfile_results=full` adds run parameters, artifact choices and status diagnostics beyond the `classic` report. Console output is captured here; `output.console_live: true` mirrors it live, the file is identical |
+| `effective_config.yaml` | the resolved configuration |
+| `run_metadata.yaml` | request and lifecycle metadata |
+| `performance.log` | with `performance_timing` (`off`, `compact`, `full`): Y-bus, Newton-iteration, Q-limit and linear-solve aggregates; `solver_elapsed_s` is the pure solver time |
+| `diagnose.log` | with `run_diagnostics`: the PowerFlow and Q-limit printers. A diagnostic failure never replaces the primary result; run directories with the legacy `diagnose.txt` stay discoverable |
+| `cgmes.log` | the full CGMES import report; only its `warning:` lines are mirrored into `run.log` |
+| `bus_voltages_complex.csv`, `branch_flows.csv`, `bus_powers.csv` | with `detailed_result_csv` (default `false`), after a successful solve, from `buildACPFlowReport(raw_result.net)`: polar and rectangular voltages per bus (for Excel), flows at both ends and losses per branch, and one row per bus with solved generation, load and shunt power, `bus_type_start` and `bus_type_end`, the binding Q-limit side and band, the `control`/`control_status` summary (Q(U), P(U), RVC, STATCOM, SVC, MSC, OLTC_target) and the `non_physical` Q-V flag, the data of the console result table and `printQVCharacteristicCheck` |
+| `q_limit_events.csv`, `q_limit_initial_limits.csv` | Q-limit switching events and the initial limits |
 
-The Web UI uses `start_webui_powerflow_run` as a small asynchronous lifecycle
-layer around the synchronous service call. It keeps one active local Web UI job,
-tracks queued/running/success/failed/aborted states, and exposes cooperative
-abort requests. Cancellation is checked around case resolution, configuration
-and import work, solving, diagnostics, and artifact writing. Import and service
-work is reported with finer phases such as `reading_matpower_case`,
-`loading_julia_case`, `building_sparlectra_net`, `preparing_start_values`,
-`solver_orchestration`, and artifact-writing phases so large MATPOWER cases no
-longer appear only as a broad loading step. The rectangular
-solver checks before and after Y-bus construction and start projection, at
-every Newton iteration boundary, after Q-limit active-set work, and after each
-Newton step. A currently executing sparse linear solve remains
-non-interruptible, but the following check terminates the run. No unsafe task
-interruption is used.
+**CSV request fields**
 
-The Web UI supplies a small lifecycle callback to this asynchronous boundary so
-`powerflow_started`, `powerflow_phase_started`, completion/failure, and final
-abort events can be appended to the user Web UI
-`logs/webui_operations.jsonl` support log. This does not
-change the PowerFlow result schema or per-run artifact contract. Every event
-includes the running Sparlectra version and a millisecond-precision UTC
-timestamp ending in `Z`. Marked `autorefresh=1` status requests are omitted from
-user-action logging. Above 10,000 valid entries, the JSONL log atomically keeps
-its newest 1,000 valid entries. Operation-log phase events are intentionally
-high-level: repeated Newton iterations, Q-limit processing, Y-bus substeps, and
-linear solves update the active job phase for abort visibility but are kept out
-of the operation log to avoid per-iteration spam. Detailed solver timings remain
-available in `run.log`, `result.json`, and `performance.log`.
+| Field | Values | Effect |
+|---|---|---|
+| `config_overrides["output.csv_format"]` | `technical` (comma, decimal point, no grouping), `excel_de` (semicolon, decimal comma, thousands dot), `excel_us` (comma, decimal point, thousands comma, grouped numbers quoted) | every CSV a run writes goes through the one writer `write_result_csv`: the files above, the short-circuit, contingency and scenario tables, the state-estimation state and diagnostic CSVs, the AC island report, the SV comparison and the DTF outage metrics. Key reference: [Configuration](configuration.md) |
+| `detailed_result_csv_format`, `detailed_result_csv_semicolon=true` (meaning `excel_de`) | deprecated, still accepted | become the `output.csv_format` override; an explicit override wins |
+| `detailed_result_csv_write_mode` | `buffered` (one write from an IOBuffer), `streaming` (rows straight to the file), `auto` (default: streams above the configured row or estimated-byte thresholds) | how the detailed CSVs are written |
+| `detailed_result_csv_exporter` | `auto` | keeps the report-based path for small cases and switches to direct streaming when the bus count reaches `detailed_result_csv_direct_threshold_buses` |
 
-Aborted runs receive a normal run directory, `result.json`, an index entry, and
-a `run.log` status marker. This keeps history recovery and artifact path safety
-identical to completed runs while making it clear that any partial artifacts do
-not represent a successful solve. The worker reaches terminal `aborted` only
-after those records and the `powerflow_aborted` operation event are written;
-its `finally` cleanup prevents queued, running, or aborting state from leaking
-if controlled cancellation exits the worker.
+**Notes**
 
-- [`start_powerflow_run`](@ref) validates the dictionary-like request, chooses
-  the run ID and directory, invokes the programmatic API, registers the result,
-  and updates the persistent index. A trusted caller such as the Web UI can
-  provide the server-owned MATPOWER case directory through the function
-  keyword. Bare `.m` names are resolved with `ensure_casefile` using
-  `to_jl=false` and remain the executed source. Generated MATPOWER `.jl` cache
-  files in that directory are internal artifacts: explicit `.jl` requests resolve
-  to a matching `.m` source when one exists and are rejected when the `.m` source
-  is missing. Browser form values never control this directory, missing
-  path-like inputs are not downloaded, and URLs are rejected.
-  Optional `performance_timing` (`off`, `compact`, or `full`),
-  `run_diagnostics`, and `detailed_result_csv` request fields are forwarded
-  to the API artifact writer. They produce `performance.log`, `diagnose.log`,
-  and the detailed CSV artifacts, respectively.
-  `detailed_result_csv` defaults to `false`; when enabled after a successful
-  solve it writes `bus_voltages_complex.csv` and `branch_flows.csv` from
-  `buildACPFlowReport(raw_result.net)`, plus `bus_powers.csv` (one row per
-  bus: solved generation/load/shunt power, `bus_type_start`/`bus_type_end`,
-  the binding Q-limit side and band, the `control`/`control_status` summary
-  covering Q(U)/P(U)/RVC/STATCOM/SVC/MSC/OLTC_target controllers, and the
-  `non_physical` Q-V characteristic flag - the same data the console result
-  table and `printQVCharacteristicCheck` use, so all three agree on one run).
-  The bus file includes polar and numeric rectangular voltage columns for
-  Excel, while the branch file includes active/reactive flows at both ends
-  and losses.
-  The CSV format is the configuration key `output.csv_format` (see
-  [Configuration](configuration.md)): `technical` (default comma delimiter,
-  decimal point, no grouping), `excel_de` (semicolon delimiter, decimal comma,
-  thousands dot), or `excel_us` (comma delimiter, decimal point, thousands
-  comma). A request sets it like any other key through
-  `config_overrides["output.csv_format"]`. The older request fields
-  `detailed_result_csv_format` and `detailed_result_csv_semicolon=true`
-  (the latter meaning `excel_de`) are still accepted and become that
-  override before the run is dispatched; an explicit override wins over
-  them. Excel-oriented formats avoid numeric exponent notation where
-  practical; textual identifiers that resemble scientific notation can still
-  trigger Excel's global auto-conversion warning when opened directly. Numeric
-  fields containing US thousands commas are quoted. The format is not
-  limited to the two detailed-result CSVs: it
-  applies to every CSV artifact the run writes, including `q_limit_events.csv`,
-  `q_limit_initial_limits.csv`, `bus_powers.csv`, the state-estimation
-  diagnostic exports, and the contingency/scenario result tables; the request
-  keyword is a deprecated per-request override of the config key, forwarded
-  the same way as before. The output configuration
-  `detailed_result_csv_write_mode` controls artifact writing: `buffered` keeps
-  the current one-write IOBuffer path, `streaming` writes rows directly to an
-  open file, and the default `auto` mode streams when the configured row or
-  estimated-byte thresholds indicate a very large output.
-  `detailed_result_csv_exporter` controls row generation: `auto` keeps the
-  report-based path for small cases and switches to direct streaming when the
-  bus count reaches `detailed_result_csv_direct_threshold_buses`. Legacy run directories
-  containing `diagnose.txt` remain discoverable and downloadable.
-  Diagnostic generation reuses existing PowerFlow/Q-limit printers and a
-  diagnostic failure does not replace the primary PowerFlow result.
-- [`load_powerflow_run_index`](@ref) reads the transport-safe index structure. A
-  missing index returns an empty index.
-- [`list_powerflow_runs`](@ref) returns indexed run summaries for a future run
-  history table. Entries include `available` and a structured `reason` when the
-  run directory or `result.json` is unavailable or unsafe.
-- [`refresh_powerflow_run_registry!`](@ref) reloads valid `result.json` files
-  and reconstructs the in-process registry after restart. One missing or corrupt
-  run does not prevent other runs from loading.
-- [`get_powerflow_result`](@ref) returns serialized run metadata by run ID.
-  Its `casefile` field records the effective local `.m` or `.jl` path passed to
-  the programmatic PowerFlow API.
-- [`list_powerflow_artifacts`](@ref) returns metadata discovered inside the
-  registered run directory.
-- [`resolve_powerflow_artifact`](@ref) resolves only an exact artifact metadata
-  name belonging to the selected run.
+- Public failures are dictionaries with `status`, `success`, `reason` and
+  `message`; recovery lists invalid entries in `unavailable_runs` and
+  continues.
+- Indexed paths are normalized and constrained to `output_root/<run_id>`,
+  the result file must be that directory's `result.json`, and paths are
+  resolved before recovery to reject symlink or absolute-path escapes.
+  Artifact resolution rejects traversal components, Windows-style arbitrary
+  paths, missing artifacts and paths outside the run directory.
+- The measurement CSV (`# sparlectra-measurements v1`) is a data format
+  Sparlectra reads back and keeps its fixed layout; `readSEStateCSV!`
+  accepts the SE state CSV in any of the three formats. Excel formats avoid
+  exponent notation where practical; identifiers that look like scientific
+  notation can still trigger Excel's auto-conversion warning.
+- The Web UI wraps the synchronous call in `start_webui_powerflow_run`, one
+  active job at a time with cooperative abort: an aborted run gets a normal
+  run directory, `result.json`, index entry and `run.log` status marker,
+  and partial artifacts are never taken for a solve ([Web UI](webui.md)).
+  The job states, phase names and abort checkpoints are developer
+  material in `DEVELOPER.md` (Web UI job lifecycle).
+- Phases are reported per step in `run.log` (repeated per-iteration phases
+  aggregated into one line with a count) and in `performance.log`; the raw
+  sequence stays in `result.json`. `loading_julia_case`, the evaluation of
+  a generated `.jl` case, can take minutes on a cold run of a very large
+  literal case.
 
-Every result CSV of a run is written by the one writer `write_result_csv`
-(#386): the short-circuit, contingency and scenario tables, the SE state
-and diagnostic CSVs, the AC island report, the SV comparison and the DTF
-outage metrics all carry the delimiter and separators of `output.csv_format`.
-The measurement CSV (`# sparlectra-measurements v1`) is a data format that
-Sparlectra reads back and keeps its fixed layout; `readSEStateCSV!` accepts
-the SE state CSV in any of the three formats.
-
-Indexed paths are normalized and constrained to `output_root/<run_id>`. The
-result file must be that run directory's `result.json`, and existing paths are
-resolved before recovery to reject symlink or absolute-path escapes. Artifact
-resolution separately rejects traversal components, Windows-style arbitrary
-paths, missing artifacts, and paths that resolve outside the run directory.
-
-Public service failures are dictionaries containing `status`, `success`,
-`reason`, and `message`. Recovery reports invalid entries in
-`unavailable_runs` and continues loading valid runs.
-
-Every completed API `run.log` includes solver time where available,
-representative time, iterations, final mismatch, final outcome, case file
-extension and size, service phase timings (repeated per-iteration phases
-aggregated into one line with a count; the raw sequence stays in
-`result.json`), and a compact large-case timing summary. Benchmark median and
-configured samples are included when benchmarking is enabled.
-`output.logfile_results=full` adds run parameters, artifact choices, and the
-available status diagnostics beyond the `classic` report. `run.log` is the
-run's narrative — content that has a dedicated artifact is referenced, not
-repeated: the full CGMES import report lives in `cgmes.log` (only its
-`warning:` lines are mirrored into `run.log`), the resolved configuration in
-`effective_config.yaml`, performance detail in `performance.log`.
-
-By default an API/service run is silent on the console (its output is
-captured into `run.log`). With `output.console_live: true` the captured
-stream is additionally mirrored live to the real console while the run
-executes; the archived `run.log` is identical in both modes.
-
-Interpret the major loading phases as follows:
-
-- `reading_matpower_case`: the service is reading the effective MATPOWER case.
-- `loading_julia_case`: `MatpowerIO.read_case` is evaluating a generated `.jl`
-  case; very large literal Julia cases can take several minutes on cold runs.
-- `building_sparlectra_net`: `createNetFromMatPowerCase` is constructing the
-  Sparlectra network from the parsed MATPOWER data.
-- `solver_orchestration`: the service has entered the power-flow orchestration path; use `solver_elapsed_s` for pure numerical solver time; detailed Y-bus,
-  Newton-iteration, Q-limit, and linear-solve aggregates are in
-  `performance.log`.
-
-This layer intentionally introduces no HTTP routes, Genie.jl server, browser
-GUI, authentication, or database. See `examples/powerflow/exp_powerflow_service.jl` for a
-runnable local example.
-
-## Web UI runtime paths and cancellation
-
-The browser submit route schedules work and redirects to the run status page before case loading, solving, diagnostics, or artifact writing. Active status pages refresh every two seconds until terminal state while retaining the manual refresh link. Active status and history/form banners expose a POST-only Abort control while the job is queued or running. Cancellation is cooperative: the UI changes to `aborting` immediately, repeated requests are logged as already requested, and the worker records terminal `aborted` plus `powerflow_aborted` at the next safe phase or rectangular-iteration check. Terminal abort releases the single-active-job guard and stops automatic refresh. Delete requests for queued, running, or aborting jobs are rejected with a controlled explanation; terminal aborted jobs can be deleted normally. The Web UI provisions configuration, case cache, run output, and operation-log paths beneath the user-writable Web UI application directories; explicit startup paths and explicit local case paths remain supported.
+!!! details "Why it is built this way"
+    Each run receives its id before execution, so its directory is known
+    before anything is written and an abort or crash leaves a run directory
+    that history recovery can still classify. The in-process registry gives
+    fast lookup while Julia runs; the persistent index makes completed runs
+    discoverable after a restart and stays small because it carries
+    metadata only, the details come from each run's `result.json`. Failed
+    runs are indexed for the same reason: their status, log, effective
+    configuration and runtime metadata stay available for diagnosis.
+    `run.log` references content that has its own artifact instead of
+    repeating it, so the narrative stays readable on large cases.

@@ -1,171 +1,87 @@
-# Contributing to Sparlectra.jl (Strict Governance Model + QA Requirements)
+# Contributing to Sparlectra.jl
 
-Thank you for your interest in contributing to **Sparlectra.jl**.
+Sparlectra.jl is primarily a research and educational project with limited
+maintainer capacity. To keep the codebase consistent and maintainable,
+contributions follow the process below.
 
-This project is primarily a **research and educational effort** with limited maintainer capacity.  
-To keep the codebase consistent and maintainable, contributions follow a stricter process.
+## Discuss first
 
----
+Non-trivial changes require prior agreement. Open an Issue or Discussion,
+describe the idea and wait for maintainer feedback before writing code.
+Pull requests without prior agreement are usually not reviewed.
 
-## ⚠️ Mandatory Proposal First Policy
+Trivial fixes (typos, broken links, obvious one-line bugs) can go directly
+to a pull request.
 
-**All non-trivial contributions require prior discussion.**
+## Workflow
 
-Before writing code, you MUST:
+1. Fork the repository.
+2. Create a feature branch.
+3. Implement the agreed change.
+4. Open a pull request that references the Issue or Discussion.
 
-1. Open an Issue or Discussion
-2. Describe your idea clearly
-3. Wait for maintainer feedback and alignment
+For interactive development, `Revise.jl` from your global Julia environment
+avoids restarting Julia after every edit. Do not add `Revise` to the project
+dependencies. Where available, run example entry points via
+`Base.invokelatest(...)` to avoid world-age issues.
 
-➡️ Pull Requests without prior agreement are typically not reviewed.
+## Code
 
----
+Sparlectra prioritizes numerical robustness, deterministic behavior,
+conceptual clarity and minimal complexity. In practice:
 
-## Contribution Scope
+- clear structure and descriptive names
+- minimal dependencies
+- deterministic algorithms
+- mathematical changes documented and justified
+- no performance regressions
+- comments and docstrings in English
 
-Sparlectra prioritizes:
+Run artifacts are never committed from the repository root. Files such as
+`ac_islands.csv`, `ac_island_solver_summary.csv`, `ac_island_<id>_solver.log`,
+`matpower_dcline.csv`, `q_limit.log`, `performance.log`, `run.log` and
+`effective_config.yaml` belong in the run output directory or in a
+test-owned temporary directory.
 
-- numerical robustness  
-- deterministic behavior  
-- conceptual clarity  
-- minimal complexity  
+Documentation headings with a Documenter label (`## [Text](@id page-slug)`)
+are referenced by the Web UI help. Never change or drop an `@id`. After
+editing a referenced section, regenerate the help excerpts and commit them.
+Details: [DEVELOPER.md](DEVELOPER.md#documentation-anchors-are-web-ui-contracts).
 
----
+## Tests
 
-## Development Workflow
+Every functional change includes dedicated unit tests in the repository.
+Tests must be deterministic and cover relevant edge cases. Critical
+numerical paths must be tested explicitly.
 
-1. Fork the repository  
-2. Create a feature branch  
-3. Implement agreed changes  
-4. Open a Pull Request  
+New code should not significantly reduce overall coverage. Coverage reports
+are welcome but optional.
 
-### Optional local hot-reload workflow (Revise.jl, not a project dependency)
+Document how to run the new tests, the expected results and any assumptions
+or limitations in the test file or the documentation, not only in the pull
+request description.
 
-For interactive development (especially in VS Code), you can use `Revise.jl`
-from your global Julia environment so you do **not** need to restart Julia
-after every edit.
+## Benchmarks
 
-Important:
-- Do **not** add `Revise` to Sparlectra's project dependencies.
-- Keep `Revise` only in your personal/global environment.
+Changes to solver behavior, numerical routines or performance-critical code
+require a reproducible before/after benchmark that the maintainer can run:
 
-Typical REPL flow:
+- test case (network size, type)
+- runtime
+- iteration count
+- convergence behavior
 
-```julia
-using Revise
-using Sparlectra
-```
+## Acceptance
 
-Then run example entry points via `Base.invokelatest(...)` where available to
-avoid world-age issues during interactive sessions.
+A pull request may be rejected for missing prior discussion, missing tests,
+missing benchmarks where required, insufficient documentation, or added
+complexity without clear benefit.
 
----
+Reviews are best-effort. Response times vary, and not every pull request
+will be accepted.
 
-## Coding Guidelines
+## Developer reference
 
-- clear and structured code  
-- descriptive naming  
-- minimal dependencies  
-- deterministic algorithms  
-
-All comments and docstrings must be in **English**.
-
----
-
-## Numerical Code Requirements
-
-- preserve numerical stability  
-- avoid performance regressions  
-- document mathematical changes clearly  
-- justify algorithmic decisions  
-
----
-
-## Testing Requirements (Mandatory)
-
-- Every change MUST include **dedicated unit tests**
-- Tests must be **deterministic**
-- Edge cases must be covered where relevant
-- Tests must be part of the repository (not only described in PR)
-
----
-
-## Coverage Requirements
-
-- New code should include **test coverage**
-- Contributions should not significantly reduce overall coverage
-- Critical numerical paths must be explicitly tested
-
-(Optional but recommended)
-- Contributors may include coverage reports (e.g. via CI)
-
----
-
-## Benchmark Requirements (for Solver / Numerical Changes)
-
-For any change affecting:
-
-- solver behavior  
-- numerical routines  
-- performance-critical code  
-
-the contributor MUST provide:
-
-- a **before/after benchmark**
-- description of the test case (network size, type)
-- comparison of:
-  - runtime  
-  - iteration count  
-  - convergence behavior  
-
-Benchmarks must be:
-
-- reproducible  
-- documented  
-- runnable by the maintainer  
-
----
-
-## Test & Validation Documentation
-
-Each contribution must include:
-
-- how to run tests  
-- expected results  
-- assumptions / limitations  
-
-PR-only descriptions are NOT sufficient.
-
----
-
-## Pull Request Acceptance Policy
-
-A PR may be rejected if:
-
-- no prior discussion  
-- missing tests  
-- missing benchmarks (if required)  
-- insufficient documentation  
-- increased complexity without benefit  
-
----
-
-## Maintainer Availability
-
-- Reviews are best-effort  
-- Response times may vary  
-- Not all PRs will be accepted  
-
----
-
-## Summary
-
-- Discuss first  
-- Provide tests  
-- Provide benchmarks (if relevant)  
-- Document clearly  
-- Keep changes minimal  
-
-This ensures long-term maintainability.
-
-Thank you for your understanding.
+Internal architecture notes (documentation anchor contract, Web UI job
+lifecycle, outer-loop controller interface) are in
+[DEVELOPER.md](DEVELOPER.md).

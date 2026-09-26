@@ -8,23 +8,11 @@ workflow tooling follow below.
 Legend:
 
 * ✅ available
-* ◐ partial: the described capability does not work end to end yet, and the
-  note names what is missing
-* ❌ not available: a real gap, and the note names what is offered instead
+* ◐ partial: not yet end to end, the note says what is missing
+* ❌ not available: the note says what is offered instead
 
-A deliberate boundary is not a marker: such a row is available and its note
-starts with `Scope:`. A method's known trade-off is not a marker either; it
-is described in the note like any other property.
-
-A concept that belongs to a different analysis domain does not appear in
-this domain's table at all, not even as a cross: it is not missing there.
-Bus types, PV/PQ switching and tap controllers are power-flow concepts, so
-the state-estimation table does not list them. The estimator computes the
-state its measurements describe, including the operating point a controller
-had already reached; what it offers in that direction (tap estimation as a
-state of its own, and `se_view` for the frozen controller operating point)
-stands in its own rows. A cross therefore always means the same thing: the
-capability would belong here and is missing.
+A row whose note starts with `Scope:` is available with a deliberate boundary.
+Each table lists only concepts of its own domain; a missing row is not a gap.
 
 ## Power flow
 
@@ -51,9 +39,7 @@ capability would belong here and is missing.
 
 ## Short circuit (IEC 60909-0)
 
-Balanced short-circuit analysis stands on its own entry point
-(`runShortCircuit!`) and its own result type; it needs no converged power
-flow.
+Balanced short circuit has its own entry point (`runShortCircuit!`) and result type and needs no converged power flow.
 
 | Feature | Status | Notes |
 |---|:---:|---|
@@ -81,10 +67,7 @@ flow.
 
 ## State estimation (WLS)
 
-State estimation is its own workflow around `runse!`: it reconstructs the
-network state from redundant, noisy measurements and brings its own
-measurement model, observability analysis, and bad-data diagnostics. It
-shares the network model and the importers with the power flow.
+State estimation (`runse!`) reconstructs the network state from redundant, noisy measurements with its own measurement model, observability analysis and bad-data diagnostics, sharing the network model and importers with the power flow.
 
 | Feature | Status | Notes |
 |---|:---:|---|
@@ -109,12 +92,7 @@ shares the network model and the importers with the power flow.
 
 ## Controllers and FACTS (power-flow outer loop)
 
-All controllers run in the generic outer loop above `runpf!`; results are
-available through `ControlRunResult` / `latest_control_result(net)`, the
-machine-readable trace rows on `ControlRunResult.trace`, and the uniform
-`controllableElements` view (element, device, actuator with range, target,
-live status). The device taxonomy and the limit-characteristic comparison
-(constant-Q vs `V·S_max` vs `V²·B`) live on [FACTS Devices](facts.md).
+All controllers run in the outer loop above `runpf!`, with results in `ControlRunResult` / `latest_control_result(net)` (trace rows on `.trace`) and the uniform `controllableElements` view; device taxonomy and the limit-characteristic comparison (constant-Q vs `V·S_max` vs `V²·B`) are on [FACTS Devices](facts.md).
 
 | Feature | Status | Notes |
 |---|:---:|---|

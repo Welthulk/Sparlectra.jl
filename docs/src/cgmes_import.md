@@ -2,16 +2,15 @@
 
 Sparlectra reads ENTSO-E **CGMES 2.4.15** deliveries (Common Grid Model
 Exchange Standard) and builds a bus-branch `Net` that solves with `runpf!`.
-The importer is deliberately lean: it reads the profiles it needs, reports
-everything it skips, and validates the result against the solved state the
-delivery ships with.
+The importer reports everything it skips and validates against the
+delivery's own solved state.
 
 ## Quick start
 
 ```julia
 using Sparlectra
 
-# 1. Diagnose first — works on incomplete or broken deliveries
+# 1. Diagnose first: works on incomplete or broken deliveries
 summary = summarizeCGMES(path = ["grid_EQ_SSH_TP_SV.zip", "boundary.zip"])
 show(stdout, MIME"text/plain"(), summary)
 
@@ -27,9 +26,8 @@ cmp = compareWithSV(result)
 @show cmp.max_dvm cmp.max_dva
 ```
 
-`path` accepts a folder, a single ZIP, or a vector of either — nested ZIPs are
-opened in memory. Profiles are classified from the `md:Model` header, never
-from filenames.
+`path` accepts a folder, a single ZIP, or a vector of either; nested ZIPs
+are opened in memory. Profiles are classified from the `md:Model` header.
 
 ## What is imported
 
@@ -38,373 +36,270 @@ from filenames.
 | `TopologicalNode` (TP) | buses, nominal voltage from `BaseVoltage`; without a TP profile the buses are derived from `ConnectivityNode`s and switch states (see [the topology processor](@ref topology_processor)) |
 | `ACLineSegment`, `SeriesCompensator` | π-model branches; lines spanning two nominal voltages become ratio branches (boundary lines) |
 | `PowerTransformer` (2 and 3 windings) | π-model transformers; 3-winding as star equivalent with an AUX bus |
-| `RatioTapChanger`, phase tap changers | fixed tap positions, or outer-loop controllers with `tap_control = true`; `PhaseTapChangerTabular` resolves its `PhaseTapChangerTable` row (ratio and angle) at the tap position. Tap angles fold with end-referral semantics: an end-2 (to-side) angle enters negated (`θ_eff = θ1 − θ2`), pinned by RealGrid's SV state — the ENTSO-E PSEI `PTE2` conformity toys expect the unflipped angle and deviate by ≈0.3° by design of this choice |
+| `RatioTapChanger`, phase tap changers | fixed tap positions, or outer-loop controllers with `tap_control = true`; `PhaseTapChangerTabular` resolves its `PhaseTapChangerTable` row (ratio and angle) at the tap position. Tap angles fold with end-referral semantics: an end-2 (to-side) angle enters negated (`θ_eff = θ1 − θ2`), matching RealGrid's SV state; the ENTSO-E PSEI `PTE2` conformity toys expect the unflipped angle and deviate by about 0.3° |
 | retained `Switch`/`Breaker`/… | zero-impedance bus links |
-| `LinearShuntCompensator`, `NonlinearShuntCompensator` | shunts; the nonlinear characteristic sums its per-section points up to the active `sections` count (each point read as one switched group — an interpretation choice, CIM would also permit reading a point as the absolute value at that section count) |
+| `LinearShuntCompensator`, `NonlinearShuntCompensator` | shunts; the nonlinear characteristic sums its per-section points up to the active `sections` count (each point read as one switched group; CIM would also permit reading a point as the absolute value at that section count) |
 | `EnergyConsumer`, `ConformLoad`, `NonConformLoad`, `StationSupply` | loads (SSH values) |
 | `SynchronousMachine`, `ExternalNetworkInjection`, `EquivalentInjection` | injections, PV where a local voltage control is active; a machine whose voltage `RegulatingControl` points at a *different* bus is held PV at its own bus by default, or becomes an outer-loop remote voltage controller with `machine_control = true` (see [Remote Voltage Control](remote_voltage_control.md)); machine Q limits from the `ReactiveCapabilityCurve` (evaluated at the scheduled P) where one exists, else the scalar `minQ`/`maxQ` hull; a positive `GeneratingUnit.normalPF` arrives as `ProSumer.participationFactor` for the [distributed slack](powerflow_configuration.md) (`p_mode: imported`), zero/absent maps to unknown |
 | `StaticVarCompensator` | P = 0 reactive injection, Q limits from the Ω ratings |
-| `AsynchronousMachine` | Fixed PQ operating point from the SSH `RotatingMachine.p`/`q` (load convention — a motor consumes with `p > 0`); no voltage regulation, no slack candidacy. The induction machine's voltage/slip dependence is a dynamics topic, not a steady-state one |
+| `AsynchronousMachine` | fixed PQ operating point from the SSH `RotatingMachine.p`/`q` (load convention: a motor consumes with `p > 0`); no voltage regulation, no slack candidacy. The induction machine's voltage/slip dependence is a dynamics topic, not a steady-state one |
 | `SvVoltage`, `SvPowerFlow`, `SvTapStep` | start values and validation reference |
 
-Everything else is counted in the coverage report rather than silently
-dropped. `summarizeCGMES` shows the full class histogram.
+Everything else is counted in the coverage report; `summarizeCGMES` shows
+the full class histogram. Short-circuit source data is harvested on every
+import (read, not evaluated); `shortCircuitCoverage` reports its
+per-attribute completeness, printed in `cgmes.log`. Theory and data
+table: [Short-Circuit Compendium](short_circuit.md).
 
-Short-circuit source data is harvested on every import (read, not evaluated);
-`shortCircuitCoverage` reports its per-attribute completeness, and `cgmes.log`
-prints that view. Theory, data table and the staged evaluation concept:
-[Short-Circuit Compendium](short_circuit.md).
+## Conventions
 
-## Conventions worth knowing
-
-**Sign conventions.** CGMES uses the load convention: a machine with `p < 0`
-injects. The importer inverts machine, external-injection and
-equivalent-injection values; a load with negative `p` is passed through
-unchanged (it genuinely is an injection).
-
-**`Terminal.connected`.** Three cases, following real-snapshot semantics:
-
-- both ends open → branch out of service,
-- **exactly one end open** → the branch carries no longitudinal current, but
-  its half charging admittance stays as a shunt at the closed bus (dropping
-  it entirely would distort the reactive balance),
-- both ends closed → normal branch.
-
-**Boundary sets.** Cross-border deliveries reference topological nodes that
-live in the boundary files. The importer detects this through actually
-unresolved references, not through filenames, and fails with an explicit
-message unless `require_boundary = false`.
-
-**Import analysis.** When such an import aborts, the importer first prints a
-full analysis: the supplied model files (profile, version, model id), every
-`md:Model.DependentOn` prerequisite the file headers declare — matched
-against the supplied models, so a missing boundary set is named by its exact
-model id — an unresolved-reference histogram by class and property, and a
-plain-language verdict. In Web UI runs the report lands in `cgmes.log`, and
-the **Analyze import** button runs the same check before a full import (see
-[Web UI](webui.md)). The report is also available on demand without
-importing: `analyzeCGMES(path = ...)` accepts the same path forms as
-`importCGMES`. Note that a delivery whose `TopologicalNode.BaseVoltage`
-references stay unresolved cannot be repaired with `require_boundary =
-false`: real ENTSO-E deliveries keep their base-voltage catalog in the
-boundary EQ file, so without the matching boundary there is no voltage level
-to build buses from.
-
-**Slack selection.** In order: `referencePriority ≥ 1` (a notice is emitted
-when several units tie), a single `ExternalNetworkInjection`, the largest
-external injection, the largest synchronous machine.
-
-**Sourceless parts.** Components without any generator are de-energized
-deliberately (injections zeroed, buses isolated) with one message each,
-instead of aborting the power flow with "island without reference".
+| Convention | Sparlectra behaviour |
+|---|---|
+| Sign convention | CGMES uses the load convention (a machine with `p < 0` injects). Machine, external-injection and equivalent-injection values are inverted; a load with negative `p` passes through unchanged. |
+| `Terminal.connected`, both ends open | Branch out of service. |
+| `Terminal.connected`, exactly one end open | No longitudinal current; the half charging admittance stays as a shunt at the closed bus (it belongs to the reactive balance). |
+| `Terminal.connected`, both ends closed | Normal branch. |
+| Boundary sets | Cross-border deliveries reference topological nodes that live in the boundary files. Detected through unresolved references, not filenames; the import fails with an explicit message unless `require_boundary = false`. |
+| Import analysis | On abort the importer first prints the supplied model files (profile, version, model id), every `md:Model.DependentOn` prerequisite matched against the supplied models (a missing boundary set is named by its model id), an unresolved-reference histogram by class and property, and a verdict. In Web UI runs it lands in `cgmes.log`; the **Analyze import** button runs the same check before a full import (see [Web UI](webui.md)); `analyzeCGMES(path = ...)` does it on demand. |
+| Unresolved `TopologicalNode.BaseVoltage` | Cannot be repaired with `require_boundary = false`: real ENTSO-E deliveries keep their base-voltage catalog in the boundary EQ file (see `infer_base_voltages` below). |
+| Slack selection | In order: `referencePriority ≥ 1` (a notice on ties), a single `ExternalNetworkInjection`, the largest external injection, the largest synchronous machine. |
+| Sourceless parts | Components without any generator are de-energized (injections zeroed, buses isolated) with one message each, instead of aborting the power flow. |
 
 ## [Node-breaker deliveries without a TP profile](@id topology_processor)
 
-Real EMS and substation-level exports sometimes ship EQ+SSH only: topology
-expressed as `ConnectivityNode`s plus switches, with no sender-side topology
-processor ever run. Since 0.9.16 the importer derives the bus partition
-itself before the bus-branch mapping starts:
+Some EMS and substation-level exports ship EQ+SSH only, topology as
+`ConnectivityNode`s plus switches. The importer then derives the bus
+partition itself.
 
-- **Trigger.** The processor runs only when the delivery contains
-  `ConnectivityNode`s and no non-boundary `TopologicalNode`. A TP-carrying
-  delivery takes the unchanged bus-branch path; nothing about existing
-  imports changes.
+- **Trigger.** Only when the delivery contains `ConnectivityNode`s and no
+  non-boundary `TopologicalNode`; a TP-carrying delivery is unaffected.
 - **Aggregation.** Connectivity nodes merge across closed, non-retained
   switches (`Switch`, `Breaker`, `Disconnector`, `LoadBreakSwitch`,
   `Jumper`, `ProtectedSwitch`). A switch counts as open when SSH
-  `Switch.open` says so (overriding EQ `normalOpen`), and out-of-service
-  switches count as open. Retained switches are never merged; they become
-  the same zero-impedance bus links a TP delivery gets.
+  `Switch.open` says so (overriding EQ `normalOpen`) or when it is out of
+  service. Retained switches are never merged; they become zero-impedance
+  bus links.
 - **Result.** Each connectivity group becomes a synthetic
   `TopologicalNode`, named after a busbar section in the group where one
   exists. Nominal voltage resolves through the container chain
   (`ConnectivityNode` to `VoltageLevel`, hopping over `Bay` containers) to
   the `BaseVoltage`. Boundary connectivity nodes adopt the boundary set's
-  existing TP_BD nodes instead of spawning new ones, so cross-border
-  stitching works exactly as with a shipped TP.
-- **Visibility.** The processor announces itself in the import messages
+  existing TP_BD nodes, so cross-border stitching works as with a shipped
+  TP.
+- **Visibility.** The import messages announce the processor
   (`topology processor: derived N topological node(s) from M connectivity
-  node(s) ...`); its absence from the messages means the shipped TP was
-  used.
+  node(s) ...`); without that message the shipped TP was used. A delivery
+  with neither a TP profile nor connectivity nodes aborts with the import
+  analysis.
 
-A delivery with neither a TP profile nor connectivity nodes carries no
-topology information at all; the import aborts with the import analysis and
-an explicit message instead of failing somewhere downstream.
+On the ENTSO-E conformity sets the derived partition reproduces the
+shipped TP bus for bus (MiniGrid, SmallGrid). Two data findings: FullGrid's
+TP assigns the terminals of one connectivity node (the shared load node of
+`BE-Load_1`/`BE_CL_1`/`BE_NC_1`) to two topological nodes, which no
+processor can derive from the graph, so 10 MW of load sit one bus apart;
+and dead network fragments (all equipment out of service) may be
+partitioned differently than the sender's TP, showing up as extra isolated,
+de-energized buses.
 
-Two honest findings from the ENTSO-E conformity sweep (MiniGrid, SmallGrid,
-FullGrid node-breaker sets, plus the T1/T2 variants):
+## [Configuration (`cgmes_import`)](@id cgmes-import-config)
 
-- The derived partition reproduces the shipped TP bus for bus on MiniGrid
-  and SmallGrid (solved voltages agree to numerical precision, order
-  1e-15). FullGrid's completeness set is the exception, and it is a data
-  finding, not a processor gap: its TP assigns the terminals of ONE
-  connectivity node (the shared load node of `BE-Load_1`/`BE_CL_1`/
-  `BE_NC_1`) to TWO different topological nodes. No processor can derive
-  that split from the connectivity graph; the derived one-CN-one-bus
-  partition is the graph-consistent answer, and 10 MW of load sit one bus
-  apart.
-- Dead network fragments (all equipment out of service, T1 variant) may be
-  partitioned differently than the sender's TP places them; the live part
-  of the network is unaffected. Such fragments show up as extra isolated,
-  de-energized buses.
-
-## Configuration (`cgmes_import`)
+The keys that steer a CGMES import: where the delivery is, the system base, whether unresolved boundary references fail the import, and the per-element handling described below. The Web UI carries the ones a delivery is usually adjusted with.
 
 | Key | Default | Purpose |
 |---|---|---|
 | `cgmes_import.path` | `""` | Delivery location(s); `;`-separated for multi-part deliveries (base case plus boundary set). |
-| `cgmes_import.base_mva` | `100.0` | System base in MVA — CGMES does not define one. |
+| `cgmes_import.base_mva` | `100.0` | System base in MVA (CGMES does not define one). |
 | `cgmes_import.require_boundary` | `true` | Fail when topology references stay unresolved. Allowed values: `true`, `false`. |
 | `cgmes_import.tap_control` | `false` | Start from the SSH tap positions and attach the CGMES-defined outer-loop tap controllers, instead of importing the solved `SvTapStep` positions as fixed taps. Allowed values: `true`, `false`. |
 | `cgmes_import.machine_control` | `false` | Attach outer-loop remote voltage controllers (`MachineVoltageControl`) for machines whose voltage `RegulatingControl` points at a different bus, instead of holding those machines PV at their own bus. Allowed values: `true`, `false`. |
-| `cgmes_import.ignore_connected` | `false` | Diagnostic override treating every terminal as connected — for snapshots whose SSH flags contradict their own SV state. Allowed values: `true`, `false`. |
+| `cgmes_import.ignore_connected` | `false` | Diagnostic override treating every terminal as connected, for snapshots whose SSH flags contradict their own SV state. Allowed values: `true`, `false`. |
 | `cgmes_import.vset_min_pu` | `0.5` | Lower bound of the plausibility band for a voltage `RegulatingControl.targetValue`, in p.u. of the regulated bus's nominal voltage. |
 | `cgmes_import.vset_max_pu` | `1.5` | Upper bound of that band. A target outside `[vset_min_pu, vset_max_pu]` is treated as a placeholder: it is ignored, the unit is held PV at the bus voltage derived from the nominal data, and the substitution is reported as a `warning:`. |
-| `cgmes_import.multi_slack` | `true` | Give every electrical island its own SV-declared angle reference (at most one per island). Required for multi-island deliveries; `false` forces the legacy single-reference behavior. Allowed values: `true`, `false`. |
-| `cgmes_import.placeholder_guards` | `warn_skip` | Behavior of the placeholder guards (implausible shunt admittances, tap corrections outside 0.5 … 2.0). `warn_skip`: keep the filler value out of the solve with a warning. `strict`: abort the import with an error naming the object — for deliveries where dropped data must never go unnoticed. Allowed values: `warn_skip`, `strict`. |
+| `cgmes_import.multi_slack` | `true` | Give every electrical island its own SV-declared angle reference (at most one per island). Required for multi-island deliveries; `false` forces the single-reference behavior. Allowed values: `true`, `false`. |
+| `cgmes_import.placeholder_guards` | `warn_skip` | Behavior of the placeholder guards (implausible shunt admittances, tap corrections outside 0.5 … 2.0). `warn_skip`: keep the filler value out of the solve with a warning. `strict`: abort the import with an error naming the object, for deliveries where dropped data must never go unnoticed. Allowed values: `warn_skip`, `strict`. |
 | `cgmes_import.infer_base_voltages` | `false` | Reconstruct missing nominal voltages when the delivery ships without its `BaseVoltage` catalog (in real ENTSO-E deliveries the catalog lives in the boundary EQ): nodes are seeded from the SV voltages (kV, snapped to the standard level series) and transformer rated voltages, then the levels propagate across level-preserving equipment (anything but a transformer). All substitutions are summarized as one `warning:` message with per-source and per-level counts. Pair with `require_boundary: false`; nodes that stay unresolved still abort with the import analysis. Allowed values: `true`, `false`. |
-| `cgmes_import.hvdc_mode` | `injections` | HVDC converter handling (#297 Draft B). `injections`: Stage-0 fixed PCC injections with the SSH operating point, the industry-standard load-flow treatment; areas joined only through HVDC stay separate islands. `paired_control`: the same injections plus one steerable `HvdcPairControl` per detected converter pair — the DC topology (`ACDCConverterDCTerminal`, `DCNode`, `DCLineSegment`) groups the converters into links, the transfer and loss are derived from the two SSH operating points, and the outer loop keeps the pairing invariant exact. Detection runs in both modes and names every pair in the import messages; a pair that cannot be attached (skipped converter, inconsistent snapshot) degrades to the fixed injections with a notice. Allowed values: `injections`, `paired_control`. |
-| `cgmes_import.start_values` | `auto` | Newton-Raphson start state for CGMES runs. `auto`: use the delivery's `SvVoltage` state when it carries one, else the flat start — a real delivery is built around its own operating point, and starting elsewhere makes it diverge for no good reason (measured on a 6209-bus delivery: flat start 80 iterations without convergence, SV start 4 iterations). `sv`: always start from the imported state. `flat`: always use the synthetic flat start — the solver earns the solution itself, for method studies. With an SV start the competing start-value machines (`start_projection`, `dc_seed_unconditional`, `start_current_iteration`, `apslf_start`) are forced off for the run. On CGMES runs an explicit `sv` or `flat` wins over `power_flow.flatstart`; under `auto` a set `power_flow.flatstart` chooses the flat start although the delivery carries an SV state (the Settings page offers that one switch). MATPOWER and DTF runs ignore this key. The resolved decision (including what `auto` chose and any overridden keys) is logged to `run.log` and `cgmes.log`; the SV comparison (`sv_compare.csv`) runs in every mode. Allowed values: `auto`, `flat`, `sv`. |
+| `cgmes_import.hvdc_mode` | `injections` | HVDC converter handling. `injections`: fixed PCC injections with the SSH operating point, the industry-standard load-flow treatment; areas joined only through HVDC stay separate islands. `paired_control`: the same injections plus one steerable `HvdcPairControl` per detected converter pair; the DC topology (`ACDCConverterDCTerminal`, `DCNode`, `DCLineSegment`) groups the converters into links, the transfer and loss are derived from the two SSH operating points, and the outer loop keeps the pairing invariant exact. Detection runs in both modes and names every pair in the import messages; a pair that cannot be attached (skipped converter, inconsistent snapshot) degrades to the fixed injections with a notice. Allowed values: `injections`, `paired_control`. |
+| `cgmes_import.start_values` | `auto` | Newton-Raphson start state for CGMES runs. `auto`: use the delivery's `SvVoltage` state when it carries one, else the flat start (a real delivery is built around its own operating point, and starting elsewhere makes it diverge for no good reason). `sv`: always start from the imported state. `flat`: always use the synthetic flat start, for method studies. With an SV start the competing start-value machines (`start_projection`, `dc_seed_unconditional`, `start_current_iteration`, `apslf_start`) are forced off for the run. On CGMES runs an explicit `sv` or `flat` wins over `power_flow.flatstart`; under `auto` a set `power_flow.flatstart` chooses the flat start although the delivery carries an SV state (the Settings page offers that one switch). MATPOWER and DTF runs ignore this key. The resolved decision (including what `auto` chose and any overridden keys) is logged to `run.log` and `cgmes.log`; the SV comparison (`sv_compare.csv`) runs in every mode. Allowed values: `auto`, `flat`, `sv`. |
 
 ### Implausible voltage setpoints
 
-Some deliveries carry placeholder regulation targets. ReliCapGrid's Svedala
-model declares `targetValue = 0.001` kV on 17 kV and 20 kV generator busbars —
-about `5e-5` p.u. — for exactly the five units that also carry no `SvVoltage`,
-i.e. machines the exporting tool left out of its solved state. Taken literally
-such a target turns the reference bus of its island into a bus at essentially
-zero volts, and the power flow then converges onto the matching all-zero
-solution: formally correct, physically meaningless.
+A voltage `RegulatingControl.targetValue` outside the
+`vset_min_pu`/`vset_max_pu` band is treated as a placeholder (see the
+table). Real targets in the tested deliveries span 0.92 … 1.15 p.u. Widen
+the band if a delivery legitimately regulates outside it, or set
+`vset_min_pu: 0.0` with a large `vset_max_pu` to accept every value.
 
-The band exists to catch that. Across every ENTSO-E and ReliCapGrid delivery
-tested, the real targets span 0.92 … 1.15 p.u., so the default leaves ample
-margin. It is configurable because the number comes from observed data, not from
-the standard: widen it if a delivery legitimately regulates outside the band, or
-set `vset_min_pu: 0.0` with a large `vset_max_pu` to accept every value.
-
-Note that the ReliCapGrid units in question also carry SSH
-`Equipment.inService = false`, which the importer honors (see below) — they are
-skipped before their setpoint is ever read. The band remains as a guard for
-deliveries that park units without setting `inService`.
+!!! details "Why the band exists"
+    Some deliveries carry placeholder regulation targets: ReliCapGrid's
+    Svedala model declares `targetValue = 0.001` kV (about `5e-5` p.u.)
+    on 17 kV and 20 kV generator busbars. Taken literally, such a target
+    turns the reference bus of its island into a bus at zero volts and
+    the power flow converges onto the all-zero solution. The Svedala
+    units also carry `Equipment.inService = false` and are skipped
+    earlier; the band guards deliveries that park units without setting
+    `inService`.
 
 ### Placeholder guards: shunt admittances and tap corrections
 
-The same philosophy covers two more fields where placeholders otherwise
-destroy the solve. FullGrid — the completeness configuration — systematically
-fills attributes with the `X.99` scheme (tabular PST table row
-`ratio 9.99 / angle 0.99°`, a `NonlinearShuntCompensatorPoint` with
-`b = g = 0.99 S`, which at 225 kV is a 50-GW shunt, switch
-`ratedCurrent 999.99`, …). Two guards catch these:
+Two guards catch filler values; `cgmes_import.placeholder_guards: strict`
+aborts with an error naming the object instead of skipping.
 
 - a shunt whose admittance exceeds **10 × baseMVA** at nominal voltage is
-  skipped with a `warning:` (skipped, not clamped — a placeholder carries no
+  skipped with a `warning:` (not clamped: a placeholder carries no
   information to clamp to);
 - a single tap correction factor outside **0.5 … 2.0** is ignored with a
-  `warning:`; the transformer keeps its nominal ratio. Real tap ranges stay
-  within a few ten percent of neutral (RealGrid tabular rows: 0.9 … 1.1).
+  `warning:`; the transformer keeps its nominal ratio (real tap ranges
+  stay within a few ten percent of neutral).
 
-With the guards in place FullGrid's network solves from a flat start (its
-shipped SV profile remains internally inconsistent — a 14.5° angle jump
-across a 0.3 Ω line — so the SV-based start and the SV comparison stay
-meaningless for this set).
-
-Both guards act globally with warn-and-skip semantics by default. When
-silently dropping data is not acceptable — a productive delivery rather
-than a conformity set — set `cgmes_import.placeholder_guards: strict`: a
-suspected placeholder then aborts the import with an error naming the
-offending object instead of skipping it.
+!!! details "Why the guards exist"
+    Conformity sets such as FullGrid fill attributes with the `X.99`
+    scheme (tabular PST row `ratio 9.99 / angle 0.99°`, a
+    `NonlinearShuntCompensatorPoint` with `b = g = 0.99 S`, a 50-GW shunt
+    at 225 kV, switch `ratedCurrent 999.99`, …). With the guards FullGrid
+    solves from a flat start; its shipped SV profile is internally
+    inconsistent (a 14.5° angle jump across a 0.3 Ω line), so the SV start
+    and comparison are meaningless there.
 
 ### Machine Q limits: the `ReactiveCapabilityCurve` is Q(P), not Q(U)
 
-A `ReactiveCapabilityCurve` is the machine's operating chart: **reactive
-limits as a function of active power** — the `CurveData` x axis is the
-machine's own P in the CGMES machine convention (it may legitimately span
-both signs; MicroGrid BE-G1: −100 … +100 MW), `y1`/`y2` are the Q limits at
-that operating point. It is *not* a voltage dependence.
-
-The importer therefore evaluates the curve **once, at the machine's
-scheduled SSH P** (linear interpolation, clamped to the curve's P domain),
+A `ReactiveCapabilityCurve` gives reactive limits as a function of active
+power: the `CurveData` x axis is the machine's own P in the CGMES machine
+convention (it may span both signs), `y1`/`y2` are the Q limits at that
+operating point. The importer evaluates the curve once, at the machine's
+scheduled SSH P (linear interpolation, clamped to the curve's P domain),
 passes the pair through the same sign-convention hull as the scalar
-`minQ`/`maxQ`, and stores the result as the machine's ordinary Q limits.
-From there the limits feed the rectangular solver's **native Q-limit
-machinery** — the PV→PQ active-set switching with hysteresis, cooldown and
-guard — exactly like scalar limits do. Priority chain: curve where one
-exists → scalar hull → wide symmetric fallback (so a machine like BE-G1,
-whose scalars are the degenerate `0/0` pair precisely because its real
-limits live in the curve, gets its ±210 MVAr at P = −90 MW).
+`minQ`/`maxQ`, and stores the result as ordinary Q limits for the solver's
+native Q-limit machinery (PV to PQ switching with hysteresis, cooldown and
+guard).
 
-Deliberately **not** used for this: the `QUController`/`PUController`
-voltage-dependent control path. Those model droop *injections* — a setpoint
-as a function of the local bus voltage magnitude, re-evaluated every
-iteration with dQ/d|V| terms in the Jacobian (see
-[Voltage Dependent Control](voltage_dependent_control.md)). Folding a Q(P)
-capability *bound* into that machinery would make the limits wander with
-voltage and turn bounds into setpoints — both data-unfaithful. The two
-mechanisms stay orthogonal: a machine may carry a Q(U) characteristic *and*
-curve-derived limits.
+Priority: curve, then scalar hull, then wide symmetric fallback
+(so MicroGrid BE-G1, whose scalars are the degenerate `0/0` pair, gets its
+±210 MVAr at P = −90 MW).
 
-Since P is fixed for a PV/PQ machine in the power flow, the one-time
-evaluation is exact, with one documented simplification: under
-[distributed slack](powerflow_configuration.md) the λ_P correction shifts
-machine P, which strictly moves the curve limits; they currently stay at
-the SSH operating point (negligible at measured corrections — RealGrid:
-λ_P ≈ 5 MW over 368 participants, and zero curves in that delivery).
+!!! details "Why the curve is not a voltage-dependent controller"
+    The `QUController`/`PUController` path models droop injections with
+    dQ/d|V| terms in the Jacobian (see
+    [Voltage Dependent Control](voltage_dependent_control.md)), and a Q(P)
+    bound folded into them would wander with voltage. A machine may carry
+    both a Q(U) characteristic and curve-derived limits. Since P is fixed
+    for a PV/PQ machine, the one-time evaluation is exact, with one
+    simplification: under [distributed slack](powerflow_configuration.md)
+    the λ_P correction shifts machine P, which strictly moves the curve
+    limits; they stay at the SSH operating point.
 
 ### Out-of-service equipment (`Equipment.inService`)
 
-CGMES 3.0 carries the operational status on the equipment itself in the SSH
-profile; 2.4.15 only has `Terminal.connected`. The importer treats
+CGMES 3.0 carries the operational status on the equipment itself in the
+SSH profile; 2.4.15 only has `Terminal.connected`. The importer treats
 `inService = false` as out of service for every mapped class: injections,
-loads and shunts are skipped, branches go out of service, switches count as
-open. This matters — ReliCapGrid parks whole plants and hundreds of switches
-with `connected = true, inService = false` and no SV state; importing them adds
-phantom generation and falsely merges network parts the delivery solved as
-separate islands. Each skip is reported. The `ignore_connected` diagnostic
-override also revives out-of-service equipment, consistent with its "treat
-everything as live" meaning.
+loads and shunts are skipped, branches go out of service, switches count
+as open, each skip reported. ReliCapGrid parks whole plants and hundreds
+of switches this way; importing them would add phantom generation and
+merge separately solved islands. The `ignore_connected` override also
+revives out-of-service equipment.
 
 ### HVDC
 
-The one property of HVDC that matters for a load flow is that it has **no
-angle coupling**: the transfer is a control setpoint, not the result of an
-angle difference. Two areas joined only through HVDC are electrically separate
-islands with their own angle references. The importer therefore never maps the
-DC side (`DCLineSegment`, `DCNode`) and represents each converter station as a
-fixed injection at its AC connection point — the industry-standard treatment
-(MATPOWER's `dcline` does the same with two bounded dummy generators). Two
-delivery patterns are handled:
+The importer never maps the DC side (`DCLineSegment`, `DCNode`); each
+converter station is a fixed injection at its AC connection point, and
+areas joined only through HVDC stay separate islands. Model ladder,
+pairing controller and the reason there is no angle coupling:
+[HVDC Back-to-Back](hvdc_back_to_back.md). Two delivery patterns:
 
-- **Explicit converters** (`VsConverter`, `CsConverter`): mapped as fixed
-  injections with the SSH operating point (p, q). The setpoint difference
-  between the two stations of a link is the DC loss.
-
-!!! note "Converters that regulate the DC voltage"
-    In CIM the active power of a DC-voltage-controlling converter is a
-    RESULT of the DC power balance, not a setpoint, so an SSH snapshot
-    legitimately carries `ACDCConverter.p = 0` at that end while the
-    opposite end carries the schedule. Taken literally that injects the
-    transfer at one end and nothing at the other, and the link swallows its
-    whole throughput. The importer therefore derives the power of an end
-    that declares `targetUdc > 0` from the opposite end, reduced by both
-    converters' `idleLoss`, and says so in the import messages. On the
-    FullGrid test configuration that turns a 150 MW link with a 150 MW loss
-    into 150 MW in and 148 MW out, and halves the largest angle deviation
-    against the SV profile (21.9 to 10.9 degrees).
-
-!!! note "Current-source links that state a current and a voltage"
-    A classic current-source (LCC) link declares no active power at either
-    end: its operating point is a DC CURRENT on the current-controlling
-    converter (`CsConverter.targetIdc`, `pPccControl = dcCurrent`) and a DC
-    VOLTAGE on the other (`ACDCConverter.targetUdc`,
-    `pPccControl = dcVoltage`). The setpoint is present, it is just spread
-    over two attributes on two converters, and their product is the DC
-    power. The importer derives it with the same rule as above, only from a
-    different source attribute; `CsConverter.operatingMode` says which end
-    draws (`rectifier`) and which delivers (`inverter`).
-
-    On FullGrid that is 150 kV times 500 A, so 75 MW, and the SV profile
-    confirms the derivation (`udc` 150.0 and 151.25 kV, `idc` 500 A,
-    `poleLossP` 0.31 MW at both converters). The DC line resistance is
-    deliberately not applied: it would make the two ends differ (75.625 MW
-    drawn against 75.0 MW delivered) and needs the DC-side model this
-    importer does not build. A pair that declares neither a current nor a
-    voltage target is reported as not recoverable rather than given an
-    invented number.
+- **Explicit converters** (`VsConverter`, `CsConverter`): fixed injections
+  with the SSH operating point (p, q); the setpoint difference between the
+  two stations of a link is the DC loss.
+- **Ends without an SSH power**: an end that declares `targetUdc > 0` and
+  carries `ACDCConverter.p = 0` gets its power derived from the opposite
+  end, reduced by both converters' `idleLoss`, with a message. A classic
+  LCC link that declares `CsConverter.targetIdc` (`pPccControl = dcCurrent`)
+  on one end and `ACDCConverter.targetUdc` (`pPccControl = dcVoltage`) on
+  the other gets their product as the DC power, `CsConverter.operatingMode`
+  saying which end draws (`rectifier`) and which delivers (`inverter`); the
+  DC line resistance is not applied. A pair with neither target is reported
+  as not recoverable rather than given an invented number.
 - **DC border crossings in assembled multi-area models**: a boundary node
-  whose equivalent-injection pair does *not* cancel is such a crossing (a
-  cancelling pair is two declarations of the same AC exchange and is
-  discarded; a non-cancelling pair is the two converter injections). The node
-  is split per side — each area keeps its tie line and its equivalent on its
-  own bus — instead of galvanically short-circuiting a coupling that does not
-  exist. The side of a piece of equipment is the file that defined it.
+  whose equivalent-injection pair does not cancel is such a crossing (a
+  cancelling pair declares the same AC exchange twice and is discarded).
+  The node is split per side, each area keeping its tie line and its
+  equivalent on its own bus.
 
 !!! warning "Precondition for the per-side split"
-    Side identity comes from the *defining file* (`CIMObject.source`) — the
-    only criterion available, since both sides reference the same boundary
-    node. This works for deliveries with separate files per area (ReliCapGrid,
-    the conformity assemblies). A CGM merged into a **single file** loses the
-    criterion, and the split silently does not apply: the crossing then stays
-    galvanically joined and the convergence/SV symptoms described above
-    return. This is a known limitation, not a bug.
+    Side identity comes from the defining file (`CIMObject.source`), the
+    only criterion available since both sides reference the same boundary
+    node. This works for deliveries with separate files per area
+    (ReliCapGrid, the conformity assemblies); a CGM merged into a single
+    file loses the criterion, the split silently does not apply, and the
+    crossing stays galvanically joined.
+
+!!! details "Why a zero SSH power at one end is not taken literally"
+    In CIM the active power of a DC-voltage-controlling converter is a
+    result of the DC power balance, not a setpoint, so an SSH snapshot
+    legitimately carries `ACDCConverter.p = 0` at that end; taken
+    literally the link would swallow its whole throughput.
 
 ## Tap control
 
-With `tap_control = true` the importer starts from the SSH tap positions and
-attaches Sparlectra's outer-loop controllers for every tap changer whose
-`controlEnabled` and `TapChangerControl.enabled` flags are set — voltage
-control on ratio tap changers, active-power control on phase shifters. This
-includes tap changers on three-winding transformers: each star-equivalent leg
-is an ordinary PI-model branch (AUX bus → side bus), so the leg carries the
-controller like a two-winding transformer would. The
-run then goes through `run_sparlectra` (control framework) instead of a plain
-`runpf!`.
-
-Two guards apply: a voltage controller whose target bus is held by a generator
-(slack or PV) cannot regulate anything and is disabled with a notice; and the
-CGMES target deadbands are often wide, so a controller may legitimately settle
-one step away from the position the exporting tool recorded.
+With `tap_control = true` the importer starts from the SSH tap positions
+and attaches outer-loop controllers for every tap changer whose
+`controlEnabled` and `TapChangerControl.enabled` flags are set: voltage
+control on ratio tap changers, active-power control on phase shifters,
+also on three-winding transformers (each star-equivalent leg is an
+ordinary PI-model branch). The run then goes through `run_sparlectra`
+instead of a plain `runpf!`. A voltage controller whose target bus is held
+by a generator (slack or PV) is disabled with a notice; CGMES target
+deadbands are often wide, so a controller may settle one step away from
+the recorded position.
 
 ## Machine remote voltage control
 
 With `machine_control = true` a machine whose voltage `RegulatingControl`
-terminal sits at a *foreign* bus is imported as a PQ injection with the SSH
-operating point and gets a [`MachineVoltageControl`](remote_voltage_control.md)
-attached: the outer control loop moves the machine's reactive output within
-its imported Q limits until the remote bus reaches the control target. Without
-the option (the default) such machines keep the Stage-1 behavior — held PV at
-their own bus, with a notice.
-
-A plan falls back to held-PV, each time with a notice in `result.messages`,
-when the target bus is already voltage-held (PV/slack), isolated, not part of
-the built network, or already claimed by another machine controller (one
-controller per target bus; further machines keep their SSH reactive output).
-The target value passes through the same `vset_min_pu`/`vset_max_pu`
-plausibility band as local setpoints, evaluated against the *remote* bus's
+terminal sits at a foreign bus is imported as a PQ injection with the SSH
+operating point and gets a
+[`MachineVoltageControl`](remote_voltage_control.md) that moves its
+reactive output within the imported Q limits until the remote bus reaches
+the target. By default such machines are held PV at their own bus, with a
+notice. A plan also falls back to held-PV, with a notice in
+`result.messages`, when the target bus is already voltage-held
+(PV/slack), isolated, not part of the built network, or claimed by
+another machine controller (one per target bus). The target value passes
+through the `vset_min_pu`/`vset_max_pu` band against the remote bus's
 nominal voltage.
 
 ## Validation against the SV profile
 
-`compareWithSV(result)` compares the solved state with the delivery's own
-State Variables profile:
+`compareWithSV(result)` compares the solved state with the delivery's SV
+profile:
 
-- **Voltages** — per-bus Δvm/Δva against `SvVoltage`, with max and RMS.
-  Angles are only defined up to one constant per island: an IGM cut out of
-  the continental CGM keeps the CGM's global angle reference, while the
-  local solve pins its own slack — a uniform offset of tens of degrees that
-  says nothing about the state. The comparison removes the median offset
-  before judging the angles (`dva_aligned` drives `max_dva`/`rms_dva`) and
-  reports it separately as `va_ref_offset_deg` (cgmes.log, run metadata,
-  Web UI summary row); the raw `dva` column stays in `sv_compare.csv`.
-  Secondary islands with their own reference may keep a residual offset.
-- **Flows** (`.flows`) — per-terminal comparison against `SvPowerFlow` in the
-  CGMES sign convention: branch terminals, shunts at the solved voltage, loads
-  as an SSH↔SV consistency check, and units aggregated per bus. Note that the
-  ENTSO-E conformity data sets only ship injection terminals; branch flows
-  appear in real exchanges.
+- **Voltages**: per-bus Δvm/Δva against `SvVoltage`, with max and RMS.
+  Angles are only defined up to one constant per island (an IGM keeps the
+  CGM's angle reference, the local solve pins its own slack), so the
+  comparison removes the median offset before judging the angles
+  (`dva_aligned` drives `max_dva`/`rms_dva`) and reports it separately as
+  `va_ref_offset_deg` (cgmes.log, run metadata, Web UI summary row); the
+  raw `dva` column stays in `sv_compare.csv`. Secondary islands with their
+  own reference may keep a residual offset.
+- **Flows** (`.flows`): per-terminal comparison against `SvPowerFlow` in
+  the CGMES sign convention (branch terminals, shunts at the solved
+  voltage, loads as an SSH-SV consistency check, units aggregated per
+  bus). The ENTSO-E conformity sets only ship injection terminals.
 
-De-energized and isolated buses are excluded so the metrics describe the
-solved grid.
-
-A full sweep over every cached/fetchable test set (import, solve, SV
-deviation, one table row per case incl. RealGrid and the ReliCapGrid/Svedala
-3.0 family) is part of `examples/run_cgmes_suite.jl`.
+De-energized and isolated buses are excluded. A sweep over every cached or
+fetchable test set is `examples/run_cgmes_suite.jl`.
 
 ## Limitations
 
-- CGMES 3.0 deliveries are read (`dcat:Dataset` headers, per-border boundary
-  files, SSH `Equipment.inService`), validated against the ReliCapGrid/Svedala
-  3.0 sets; conformity coverage beyond those deliveries is still limited.
-- Node-breaker deliveries are imported at bus-branch granularity: with a
-  shipped TP profile directly, without one via
-  [the topology processor](@ref topology_processor). Individual switches do
-  not become model elements (retained ones become bus links); per-switch
-  state analysis beyond the partition is out of scope.
+- CGMES 3.0 deliveries are read (`dcat:Dataset` headers, per-border
+  boundary files, SSH `Equipment.inService`), validated against the
+  ReliCapGrid/Svedala 3.0 sets only.
+- Node-breaker deliveries are imported at bus-branch granularity (shipped
+  TP, or [the topology processor](@ref topology_processor)); individual
+  switches do not become model elements (retained ones become bus links).
 - Per-step `r`/`x`/`g`/`b` corrections of tabular phase-tap tables are not
-  folded into the branch impedance (the table's ratio and angle are); rows
-  with such corrections are flagged in the import messages.
+  folded into the branch impedance (the table's ratio and angle are); such
+  rows are flagged in the import messages.
 - Multi-valued references: `ref()` reads the first occurrence of a repeated
-  property; the full document-order list is available via `refsAll`, and the
-  import emits one notice per affected class/property
-  (`TopologicalIsland.TopologicalNodes` is the typical case). No mapped path
-  consumes a list-valued reference yet.
+  property, `refsAll` the full list; the import emits one notice per
+  affected class/property (`TopologicalIsland.TopologicalNodes` is the
+  typical case). No mapped path consumes a list-valued reference.
 - Difference models (`dm:DifferenceModel`) are skipped with a report line.

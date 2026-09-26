@@ -160,6 +160,28 @@ date > "$lockdir/started"
 echo $$ > "$lockdir/pid"
 trap 'rm -rf "$lockdir"' EXIT INT TERM
 
+# --- gates run on package images with the full precompile workload ---------
+# Measured 2026-09-25 (webui test group, same commit, same machine): 185 s
+# on the default image (workload off, 14 MB), 69 s on the full image
+# (92 MB). The reference times in docs/src/tests.md were taken before the
+# default became "off" (4f317a4c), when the workload was always in the
+# image. An install keeps the cheap default, and CI (julia-runtest without
+# the variable) keeps testing that default image, so a failure that only
+# shows without the workload still has a gate. Here the two images are
+# rebuilt with the full workload when the loaded one was not built with it:
+# the compile cache is keyed by the sources, not by the environment
+# variable, so the mode baked into the image (PRECOMPILE_WORKLOAD_MODE) is
+# what the probe reads; an image without that constant counts as unknown
+# and is rebuilt as well. A rebuilt library image makes the application
+# image stale by itself. The rebuild takes about two minutes for both
+# images and is announced with its duration; the full image stays the
+# newest cache entry, so later sessions load it too until the next source
+# change (a bigger image, nothing else changes).
+export SPARLECTRA_PRECOMPILE_WORKLOAD=full
+image_probe='mode = isdefined(M, :PRECOMPILE_WORKLOAD_MODE) ? M.PRECOMPILE_WORKLOAD_MODE : "unknown"; if mode != "full"; println("run_gates: ", NAME, " image was built with workload ", repr(mode), "; rebuilding it with the full workload (about a minute, later sessions load it too)"); t = @elapsed Base.compilecache(Base.identify_package(NAME)); println("run_gates: ", NAME, " image rebuilt in ", round(Int, t), " s"); end'
+julia --startup-file=no --project="$repo_root" -e "using Sparlectra; const M = Sparlectra; const NAME = \"Sparlectra\"; $image_probe" || exit 1
+julia --startup-file=no --project="$repo_root/app" -e "using SparlectraApp; const M = SparlectraApp; const NAME = \"SparlectraApp\"; $image_probe" || exit 1
+
 # --startup-file=no: a gate is not an interactive session, and a personal
 # startup.jl usually loads Revise. Measured 2026-09-07: loading Revise
 # invalidates 472 method instances of the STOCK Julia system image, which the
@@ -170,6 +192,21 @@ if [ "$gate" = "docs" ]
 then
   julia --startup-file=no --project="$repo_root/docs" "$repo_root/docs/make.jl"
   status=$?
+  # the Web UI help registry links into the documentation by anchor; a
+  # renamed anchor or a dropped section must fail HERE, in the gate a docs
+  # change runs, not in the next extd run
+  if [ "$status" -eq 0 ]
+  then
+    julia --startup-file=no --project="$repo_root/app" "$repo_root/tools/check_webui_doc_links.jl"
+    status=$?
+  fi
+  # the help pages ship the referenced sections as generated source; an
+  # edited section that was not regenerated fails here as well
+  if [ "$status" -eq 0 ]
+  then
+    julia --startup-file=no --project="$repo_root/app" "$repo_root/tools/generate_webui_help_excerpts.jl" --check
+    status=$?
+  fi
 else
   SPARLECTRA_TEST_PROFILE=$gate julia --startup-file=no --project="$repo_root" "$repo_root/test/runtests.jl"
   status=$?

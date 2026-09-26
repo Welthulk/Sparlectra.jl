@@ -34,4 +34,4 @@ benchmark cases.
 ## Reference
 
 Rendered API documentation: `docs/src/reference_adapters.md`. User-facing
-documentation: `docs/src/matpower_format.md` and `docs/src/matpower_import.md`.
+documentation: `docs/src/matpower.md`.

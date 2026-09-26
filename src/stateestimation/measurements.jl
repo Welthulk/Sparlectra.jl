@@ -969,9 +969,19 @@ the transformer tap positions a generated set is based on); the reader
 skips them. `footerComments` lines are written as `#` comments AFTER the
 data rows (bulky per-row blocks such as the generator's truth values),
 so the file opens with its data; the reader skips comment lines wherever
-they stand.
+they stand. `extraHeader`/`extraCells` append diagnostic columns behind
+`id` (the state-estimation run writes `bad_data` and `status`);
+`extraCells(i, m)` returns the cells of the i-th measurement, and the
+reader ignores the extra columns.
 """
-function writeMeasurementsCSV(net::Net; file::AbstractString, headerComments::Vector{String} = String[], footerComments::Vector{String} = String[], busReference::Symbol = :name, format = result_csv_format())
+function writeMeasurementsCSV(net::Net; file::AbstractString, headerComments::Vector{String} = String[], footerComments::Vector{String} = String[], busReference::Symbol = :name, format = result_csv_format(), extraHeader::Vector{String} = String[], extraCells = nothing)
+  # Diagnostic columns behind `id` (the state-estimation run writes
+  # `bad_data` and `status`): `extraHeader` names them, `extraCells(i, m)`
+  # returns their cells for the i-th measurement (the index is what the
+  # diagnostics report, ids may be empty). The reader takes the fixed
+  # columns and ignores whatever follows, so the annotated artifact still
+  # reads back as the same measurement set.
+  (isempty(extraHeader) || extraCells !== nothing) || error("writeMeasurementsCSV: extraHeader needs extraCells")
   busReference in (:name, :mrid) || error("writeMeasurementsCSV: busReference must be :name or :mrid")
   # The file follows output.csv_format like every other CSV a run writes
   # (2026-09-24: a German Excel user found commas in measurements.csv next to
@@ -999,8 +1009,8 @@ function writeMeasurementsCSV(net::Net; file::AbstractString, headerComments::Ve
     for c in headerComments
       println(io, "# ", c)
     end
-    println(io, replace(_MEASUREMENT_CSV_HEADER, "," => delim))
-    for m in net.measurements
+    println(io, join(vcat([replace(_MEASUREMENT_CSV_HEADER, "," => delim)], extraHeader), delim))
+    for (i, m) in enumerate(net.measurements)
       bus = ""
       fromB = ""
       toB = ""
@@ -1017,7 +1027,9 @@ function writeMeasurementsCSV(net::Net; file::AbstractString, headerComments::Ve
         bus = busname(m.busIdx)
       end
       dir = m.direction == :none ? "" : String(m.direction)
-      println(io, join((string(m.typ), bus, fromB, toB, branchNr, linkNr, dir, number(m.value), number(m.sigma), m.active ? "true" : "false", m.id), delim))
+      cells = Any[string(m.typ), bus, fromB, toB, branchNr, linkNr, dir, number(m.value), number(m.sigma), m.active ? "true" : "false", m.id]
+      extraCells === nothing || append!(cells, String.(extraCells(i, m)))
+      println(io, join(cells, delim))
       n += 1
     end
     for c in footerComments
@@ -1122,6 +1134,7 @@ function readMeasurementsCSV!(net::Net; file::AbstractString, replace::Bool = tr
   headerSeen = false
   hasBranchNr = true
   delimiter = ','
+  nextra = 0
   for (ln, raw) in enumerate(lines)
     ln == 1 && continue
     line = strip(raw)
@@ -1136,8 +1149,11 @@ function readMeasurementsCSV!(net::Net; file::AbstractString, replace::Bool = tr
       # and decimal points; both read back bitwise
       delimiter = result_csv_delimiter(line)
       header = Base.replace(line, ";" => ",")   # the keyword `replace` shadows Base.replace here
-      if header == _MEASUREMENT_CSV_HEADER
+      # diagnostic columns behind `id` (a run artifact: bad_data, status)
+      # are counted and skipped; the measurement columns stay the v1 layout
+      if header == _MEASUREMENT_CSV_HEADER || startswith(header, _MEASUREMENT_CSV_HEADER * ",")
         hasBranchNr = true
+        nextra = header == _MEASUREMENT_CSV_HEADER ? 0 : count(==(','), header) - count(==(','), _MEASUREMENT_CSV_HEADER)
       elseif header == _MEASUREMENT_CSV_HEADER_NO_BRANCH_NR
         hasBranchNr = false
       else
@@ -1147,8 +1163,9 @@ function readMeasurementsCSV!(net::Net; file::AbstractString, replace::Bool = tr
       continue
     end
     nfields = hasBranchNr ? 11 : 10
-    fields = split(line, delimiter; limit = nfields)
-    length(fields) == nfields || error("$(file):$(ln): expected $(nfields) fields separated by '$(delimiter)', got $(length(fields))")
+    fields = split(line, delimiter; limit = nfields + nextra)
+    length(fields) == nfields + nextra || error("$(file):$(ln): expected $(nfields + nextra) fields separated by '$(delimiter)', got $(length(fields))")
+    nextra > 0 && (fields = fields[1:nfields])
     branchStr = ""
     if hasBranchNr
       tstr, bus, fromB, toB, branchStr, linkStr, dirStr, valStr, sigStr, actStr, id = map(_csv_field, fields)

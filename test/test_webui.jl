@@ -138,10 +138,10 @@ function run_webui_fast_tests()
             # the export-CGMES checkbox renders on Settings
             form_html = SparlectraApp.render_settings_page(output_root=mktempdir())
             @test occursin("name=\"export_cgmes\"", form_html)
-            @test SparlectraApp.resolve_webui_help_topic("webui.export_cgmes") !== nothing
-            # excerpt loading needs the cgmes_export page in WEBUI_DOC_PAGES and the
-            # "Export from the Web UI" heading in docs/src/cgmes_export.md
-            @test SparlectraApp.load_webui_help_excerpt("webui.export_cgmes") !== nothing
+            # the help registry carries the hover hint and the documentation link
+            export_topic = SparlectraApp.resolve_webui_help_topic("webui.export_cgmes")
+            @test export_topic !== nothing && !isempty(export_topic.hint)
+            @test startswith(SparlectraApp.webui_help_doc_url("webui.export_cgmes"), "https://")
 
             req = SparlectraApp.powerflow_webui_request(Dict("casefile" => "case.m", "export_cgmes" => "true"))
             @test req["export_cgmes"] === true
@@ -303,7 +303,13 @@ function run_webui_fast_tests()
             run_flat = SparlectraApp.start_powerflow_run(Dict("casefile" => "sp_case14.scf.json", "config_file" => cfg_rt, "output_root" => root); case_directory=cache)
             @test run_flat["status"] == "succeeded"
             run_log = read(joinpath(String(run_flat["output_dir"]), "run.log"), String)
-            @test occursin("Flat start: start-value machines forced off for this run: power_flow.apslf_start.enabled=false, power_flow.start_current_iteration.enabled=false, power_flow.start_mode.angle_mode=classic, power_flow.start_mode.voltage_mode=classic", run_log)
+            # the start projection is one of the machines: without the switch a DC
+            # or blended candidate could still win the start (seen on sp_case118)
+            @test !occursin("start projection selected", run_log)
+            forced_cfg, forced_keys = Sparlectra._flatstart_forced_off_config(Sparlectra.load_sparlectra_config(cfg_rt; reload = true, overrides = Dict{String,Any}("power_flow" => Dict{String,Any}("flatstart" => true, "start_mode" => Dict{String,Any}("start_projection" => true)))))
+            @test forced_cfg.powerflow.start_mode.start_projection === false
+            @test "power_flow.start_mode.start_projection=false" in forced_keys
+            @test occursin("Flat start: start-value machines forced off for this run: power_flow.apslf_start.enabled=false, power_flow.start_current_iteration.enabled=false, power_flow.start_mode.start_projection=false, power_flow.start_mode.angle_mode=classic, power_flow.start_mode.voltage_mode=classic", run_log)
             @test occursin(r"Flatstart\s+:\s+Yes", run_log)
             @test run_flat["metadata"]["current_iteration_enabled"] === false
             SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "sp_case14.scf.json", "settings_target" => "this_case", "power_flow_flatstart" => "false"); output_root=root, runtime=rt)
@@ -365,11 +371,14 @@ function run_webui_fast_tests()
             end
         end)() end
 
-        @testset "the settings page shows the configuration file; the case view is a switch" begin (function ()
-            # Reported from the browser: after a save for one case the Settings
-            # page kept showing that case's values, and a user could not tell
-            # what the configuration file said. The page shows the
-            # configuration file's values; ?case_settings=1 overlays the case.
+        @testset "the settings page shows the case's saved values; the configuration file view is a link" begin (function ()
+            # Decision 2026-09-25, reversing the earlier default: with a case
+            # selected every page shows the values a run of this case will use,
+            # so the values just saved are visible right after "Saved settings
+            # for this case" (before, the page showed the configuration file's
+            # old values next to that message). The file view stays reachable
+            # as a link (?config_view=1, also case_settings=0); ?case_settings=1
+            # still selects the case view for old bookmarks.
             dir = mktempdir()
             cache = joinpath(dir, "cases")
             mkpath(cache)
@@ -384,14 +393,40 @@ function run_webui_fast_tests()
             saved = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "sp_case14.scf.json", "config_file" => cfg, "settings_target" => "this_case", "power_flow_max_iter" => "33"); output_root = root, runtime = rt)
             @test saved.status in (302, 303)
             @test Sparlectra.load_case_config(joinpath(cache, "sp_case14.scf.json"))["power_flow.max_iter"] == 33
+            cfg_max = string(Sparlectra.load_sparlectra_config(cfg; reload = true).powerflow.max_iter)
             default_view = page("")
-            @test max_iter(default_view) == string(Sparlectra.load_sparlectra_config(cfg; reload = true).powerflow.max_iter)
-            @test !occursin("case-settings-notice", default_view)
+            @test max_iter(default_view) == "33"
+            @test occursin("case-settings-notice", default_view)
+            @test occursin("config_view=1", default_view)
             # the reset of the saved settings stays reachable in both views
             @test occursin("Reset saved settings for this case", default_view)
-            case_view = page("&case_settings=1")
-            @test max_iter(case_view) == "33"
-            @test occursin("case-settings-notice", case_view)
+            for q in ("&config_view=1", "&case_settings=0")
+                file_view = page(q)
+                @test max_iter(file_view) == cfg_max
+                @test !occursin("case-settings-notice", file_view)
+                @test occursin("case_settings=1", file_view)
+                @test occursin("Reset saved settings for this case", file_view)
+            end
+            @test max_iter(page("&case_settings=1")) == "33"
+            # the save message shows in both views
+            @test occursin("Saved settings probe", page("&save_message=Saved%20settings%20probe"))
+            @test occursin("Saved settings probe", page("&config_view=1&save_message=Saved%20settings%20probe"))
+            # a save to the configuration file: the file view shows the new value,
+            # the default view keeps the case's value and the message says why
+            general = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "sp_case14.scf.json", "config_file" => cfg, "settings_target" => "general", "power_flow_max_iter" => "44"); output_root = root, runtime = rt)
+            @test general.status in (302, 303)
+            @test occursin("This case overrides 1 of these setting(s)", SparlectraApp._webui_urldecode(Dict(general.headers)["Location"]))
+            @test Sparlectra.load_sparlectra_config(cfg; reload = true).powerflow.max_iter == 44
+            @test max_iter(page("")) == "33"
+            @test max_iter(page("&config_view=1")) == "44"
+            # without a case (fresh root, nothing recalled) the page shows the
+            # configuration file and offers no file-view link
+            root2 = joinpath(dir, "out2")
+            mkpath(root2)
+            rt2 = (; case_directory = cache, config_file = cfg, operation_log = SparlectraApp.webui_operation_log_path(root2), startup_config_error = nothing, runner = SparlectraApp.start_powerflow_run)
+            nocase = String(copy(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/settings"; output_root = root2, runtime = rt2).body))
+            @test max_iter(nocase) == "44"
+            @test !occursin("config_view=1", nocase)
         end)() end
 
         @testset "no nested forms anywhere on the run page" begin (function ()
@@ -664,13 +699,14 @@ function run_webui_fast_tests()
             @test occursin("Run state estimation", page2)
             @test !occursin("onsubmit", page2)
 
-            # every SE input parameter carries a PF-style help link, and the
-            # topics resolve (config-table rows, doc headings, and overrides)
+            # every SE input parameter carries a hover hint, and the technical
+            # ones a documentation link
             @test count("help-link", page2) >= 12
             for topic in ("state_estimation.tol", "state_estimation.flatstart", "state_estimation.max_iter", "state_estimation.robust", "state_estimation.update_shunts", "state_estimation.report_residual_correlation", "webui.se_max_eliminations", "webui.se_measurement_file", "webui.se_generator_noise", "webui.se_generator_gross_error", "webui.se_generator_tap_error", "webui.se_generator_sigmas")
-                @test SparlectraApp.handle_webui_help(topic).status == 200
+                se_topic = SparlectraApp.resolve_webui_help_topic(topic)
+                @test se_topic !== nothing && 0 < length(se_topic.hint) <= 160
             end
-            @test occursin("MECHANICAL tap steps", String(SparlectraApp.handle_webui_help("webui.se_generator_tap_error").body))
+            @test occursin("state_estimation_measurements/#se-generator-tap-error", SparlectraApp.webui_help_doc_url("webui.se_generator_tap_error"))
 
             # generator options: noise + gross error produce a valid, different set
             plain = read(mfile, String)
@@ -837,7 +873,7 @@ function run_webui_fast_tests()
             # the tooltip names the guard behavior instead of an experimental flag
             @test occursin("name=\"se_tap_estimation\"", pageInfo)
             @test !occursin("experimental", pageInfo)
-            @test occursin("generator step-up", pageInfo)
+            @test occursin("Machine and unobservable taps are skipped", pageInfo)
             fake["metadata"]["se_tap_count"] = 2
             fake["metadata"]["se_tap_fixed"] = true
             fake["metadata"]["se_tap_j_before"] = 1211.0
@@ -968,8 +1004,19 @@ function run_webui_fast_tests()
             step_cols = [findfirst(==(c), header_cols) for c in ("fixed_step", "fixed_shift_step")]
             @test all(i -> i !== nothing, step_cols)
             @test any(l -> (f=split(l, ","); any(parse(Int, f[i]) != 0 for i in step_cols)), taplines[2:end])
+            # the injected deviation is a CHANGE against the model position:
+            # the tap CSV and the measurement artifact's taps block say so,
+            # the result table marks the row as corrected
+            change_col = findfirst(==("change"), header_cols)
+            @test change_col !== nothing
+            @test any(l -> (f=split(l, ","); f[change_col] != "" && f[change_col] != "0"), taplines[2:end])
+            tapmeas = readlines(joinpath(root, idtap, "measurements.csv"))
+            @test any(l -> startswith(l, "# sparlectra-taps-estimated v1"), tapmeas)
+            @test any(l -> startswith(l, "#") && endswith(l, ",corrected"), tapmeas)
             tapPage = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/result/$(idtap)", Dict{String,String}(); output_root=root, runtime=rt).body)
             @test occursin("Transformer tap estimates", tapPage)
+            @test occursin("fixed (corrected)", tapPage)
+            @test occursin("<th>Model step</th>", tapPage)
             @test occursin("tap estimation: 1 transformer(s)", tapPage)
 
             # A set that DOCUMENTS its tap deviations releases exactly those
@@ -1514,7 +1561,7 @@ function run_webui_fast_tests()
             # page, so the header builds it itself now.
             root = SparlectraApp.default_webui_output_root()
             for path in ("/powerflow", "/powerflow/case", "/powerflow/settings", "/powerflow/history",
-                "/webui/operation-log", "/webui/last-errors", "/docs", "/webui/sysimage")
+                "/webui/operation-log", "/webui/last-errors", "/webui/sysimage")
                 response = SparlectraApp.route_sparlectra_webui("GET", path; output_root=root)
                 body = String(response.body)
                 # the tuple form names the offending page in the failure output
@@ -1525,6 +1572,13 @@ function run_webui_fast_tests()
                 # and the AnalyticLoadFlow it solves with, so an outdated
                 # environment is visible on screen
                 @test occursin("<dt>AnalyticLoadFlow</dt><dd><code>v$(pkgversion(Sparlectra.AnalyticLoadFlow))</code> <a href=\"https://github.com/Welthulk/AnalyticLoadFlow.jl\"", body)
+                # and the application package, which has its own version;
+                # the header bar keeps naming the library
+                @test occursin("<dt>Application</dt><dd><code>SparlectraApp v$(pkgversion(SparlectraApp))</code></dd>", body)
+                @test occursin("Sparlectra.jl v$(Sparlectra.version())", body)
+                # the citation notes sit side by side, MATPOWER's and Sparlectra's
+                @test occursin("matpower-citation-note", body)
+                @test occursin("sparlectra-citation-note", body)
             end
             # error pages carry it as well: they are where a user looks for the
             # output root and the operation log in the first place
@@ -2263,43 +2317,52 @@ function run_webui_fast_tests()
               """
             gen_out = read(`$(Base.julia_cmd()) --startup-file=no -e $(gen_code)`, String)
             @test occursin("GEN_OK", gen_out)
-            # local documentation viewer: LaTeX must not
-            # reach the browser as raw markup, and a thousand-line reference page
-            # needs a section index instead of a scrollbar
-            math_html = SparlectraApp.render_webui_markdown(raw"Text with $\Omega_{ii} = w_i \cdot \sigma^2$ inline.")
-            @test !occursin("\\Omega", math_html)
-            @test !occursin("&#36;", math_html)
-            @test occursin("Ω", math_html)
-            @test occursin("σ", math_html)
-            block_html = SparlectraApp.render_webui_markdown("a\n\n```math\n\\frac{P_{se}}{V}\n```\n")
-            @test !occursin("frac", block_html)
-            @test occursin("/", block_html)
-            long_md = read(joinpath(pkgdir(Sparlectra), "docs", "src", "state_estimation.md"), String)
-            toc = SparlectraApp._webui_doc_page_toc(long_md)
-            @test occursin("On this page", toc)
-            @test length(collect(eachmatch(r"<li>", toc))) > 8
-            # a short page gets no index (it would be noise)
-            @test SparlectraApp._webui_doc_page_toc("# T\n\n## One\n\ntext\n") == ""
-            # Documenter cross references (the CGMES page showed its labelled
-            # heading as a dead link): the `(@id ...)` label
-            # leaves the heading text, `(@ref ...)` becomes the page-local anchor,
-            # a label on another served page its /docs route, an unknown target
-            # stays disabled; the section index uses the rendered heading ids
-            cgmes_md = read(joinpath(pkgdir(Sparlectra), "docs", "src", "cgmes_import.md"), String)
-            cgmes_html = SparlectraApp.render_webui_markdown(cgmes_md; current_page="cgmes_import")
-            @test !occursin("@id", cgmes_html)
-            @test !occursin("@ref topology_processor", cgmes_html)
-            @test occursin("id=\"node-breaker-deliveries-without-a-tp-profile\"", cgmes_html)
-            @test count("href=\"#node-breaker-deliveries-without-a-tp-profile\"", cgmes_html) == 2
-            cgmes_ids = Set(m.captures[1] for m in eachmatch(r"<h[1-6] id=\"([^\"]*)\"", cgmes_html))
-            cgmes_toc = SparlectraApp._webui_doc_page_toc(cgmes_md)
-            @test occursin(">Node-breaker deliveries without a TP profile<", cgmes_toc)
-            @test all(m.captures[1] in cgmes_ids for m in eachmatch(r"href=\"#([^\"]*)\"", cgmes_toc))
-            ref_html = SparlectraApp.render_webui_markdown("[taps](@ref transformer-support) [unknown](@ref no_such_label) [fn](@ref)"; current_page="webui")
-            @test occursin("href=\"/docs/feature_matrix#transformer-support\"", ref_html)
-            @test count("aria-disabled=\"true\"", ref_html) == 2
-            # a Documenter-style capitalized anchor reaches the lowercase heading id
-            @test occursin("href=\"/docs/scf#configuration-precedence\"", SparlectraApp.render_webui_markdown("[p](scf.md#Configuration-precedence)"; current_page="configuration"))
+            # a control renders its hover hint on the label and, with a doc
+            # target, the ? to its in-app help page; that page carries the
+            # section shipped with the application and the link into the
+            # published documentation (base URL from the configuration)
+            withenv("SPARLECTRA_WEBUI_DOCS_BASE_URL" => "https://docs.example/v1/") do
+                lbl = SparlectraApp._webui_field_label("power_flow_tol", "Tolerance")
+                @test occursin("<span class=\"field-label\" title=\"", lbl)
+                @test occursin("class=\"help-link\" href=\"/help/power_flow.tol\"", lbl)
+                @test occursin("target=\"_blank\" rel=\"noopener noreferrer\"", lbl)
+                @test SparlectraApp.webui_help_doc_url("power_flow.tol") == "https://docs.example/v1/powerflow_configuration/#pf-solver-core"
+                help = SparlectraApp.route_sparlectra_webui("GET", "/help/power_flow.tol")
+                @test help.status == 200
+                help_html = String(help.body)
+                @test occursin("class=\"help-hint\"", help_html)
+                @test occursin("<h2>Solver core options</h2>", help_html)
+                @test !occursin("<table>", help_html)
+                # a library section shows its lead paragraph and says the rest is online
+                @test occursin("class=\"field-help help-more\"", help_html)
+                @test occursin("href=\"https://docs.example/v1/powerflow_configuration/#pf-solver-core\"", help_html)
+                # a relative page link of the section points at the same site
+                flat = String(SparlectraApp.route_sparlectra_webui("GET", "/help/power_flow.flatstart").body)
+                @test occursin("<h2>Flat start</h2>", flat)
+                @test occursin("href=\"https://docs.example/v1/powerflow_configuration/#pf-solver-core\"", flat)
+                @test !occursin("SPARLECTRADOCS", flat)
+                @test !occursin("(@ref", flat)
+            end
+            @test SparlectraApp.route_sparlectra_webui("GET", "/help/no.such.topic").status == 404
+            # the Web UI manual ships with the application: the documentation
+            # page rendered with a contents list, labelled headings keep the
+            # ids of the published site, in-page links stay in the page
+            manual = SparlectraApp.route_sparlectra_webui("GET", "/help")
+            @test manual.status == 200
+            manual_html = String(manual.body)
+            @test occursin("class=\"help-toc\"", manual_html)
+            @test occursin("<h3 id=\"webui-form-options\">", manual_html)
+            @test occursin("href=\"#webui-form-options\"", manual_html)
+            @test occursin("<h2 id=\"start\">", manual_html)
+            @test !occursin("SPARLECTRADOCS", manual_html)
+            @test !occursin("(@id", manual_html)
+            @test count("<h1", manual_html) == 1
+            @test occursin("href=\"/help\">Help</a>", manual_html)
+            # a topic of the manual page links to its section in the manual
+            @test occursin("href=\"/help#webui-flat-start\"", String(SparlectraApp.route_sparlectra_webui("GET", "/help/power_flow.flatstart").body))
+            for path in ("/docs", "/docs/webui", "/static/katex/katex.min.js")
+                @test SparlectraApp.route_sparlectra_webui("GET", path).status == 404
+            end
             # the save-target explanations are small print, not label text
             stg = SparlectraApp.render_settings_page(output_root=mktempdir(), selected_casefile="sp_case14.scf.json")
             @test occursin("settings-target-hint", stg)

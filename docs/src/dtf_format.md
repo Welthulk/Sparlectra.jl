@@ -1,128 +1,99 @@
 # DTF legacy input format
 
-Sparlectra includes a native reader for the legacy DTF files used by the legacy validation Testnetz13 examples. The importer is intended to reproduce the legacy network-model semantics used by the matching FOR002 ground-load-flow reports while preserving source fields for audit and diagnostics.
-
-## Overview
-
-A DTF file is a fixed-column power-flow input file. Sparlectra parses it directly with `DTFImporter.read_dtf` and builds a `Net` with `DTFImporter.build_net` or `createNetFromDTFFile`. The native path does not route through MATPOWER and keeps FOR001-specific information such as outage cards, trailing records, transformer control fields, nameplate voltages and branch identity metadata.
+Sparlectra reads the fixed-column DTF files of the legacy Testnetz13
+validation examples natively, without routing through MATPOWER:
+`DTFImporter.read_dtf` parses a file, `DTFImporter.build_net` or
+`createNetFromDTFFile` builds the `Net`. The FOR001-specific information
+(outage cards, trailing records, transformer control fields, nameplate
+voltages, branch identity metadata) stays on typed records, raw lines
+included, for audit. FOR002 text reports are validation references, not
+model input.
 
 ## File structure
 
-The DTF validation files follow this high-level order:
+| Card | Fields | Notes |
+|---|---|---|
+| Parameter/text cards | legacy run parameters, free-text descriptors | Kept for diagnostics only. |
+| Nominal-voltage card | voltage bases referenced by voltage-level indices | Branch R/X/G/B per-unit conversion uses the branch voltage-level index; a 231 kV level is not collapsed to 230 kV. |
+| Size/count card | bus, branch, compensation and transformer-control counts, named slack bus | The counts split the fixed-column sections before optional outage or trailing data is parsed. |
+| Branch cards (`L`, `T`) | lines and transformers | `T` marks a transformer, every other kind is an AC line. Transformer transverse conductance and susceptance become the PI branch fields `g_pu` and `b_pu` (branch shunt arms, not node shunts). |
+| Compensation cards | fixed compensation records of the base network | |
+| Transformer-control cards | winding/nameplate voltages, longitudinal tap range and step, optional Schraegregler skew-angle fields | Matched to the transformer by terminals and parallel identifier. The metadata holds the parsed winding values, ratio convention, neutral base ratio, relative tap fraction, skew angle, effective ratio and effective phase shift. |
+| Bus cards | bus type, voltage-level index, name, start voltage, angle, load, generation | |
+| Outage records | between `AUSFALL` and `ENDE`, after the bus section | Optional, see below. |
+| Trailing branch-echo records | a standalone `A` marker followed by a branch-like `L` or `T` record | Duplicates existing branch information for legacy diagnostics; kept as metadata, neither an additional branch nor an outage. |
 
-1. parameter/card text records,
-2. a voltage-level card,
-3. a size card,
-4. branch cards,
-5. optional compensation cards,
-6. transformer-control cards,
-7. bus cards,
-8. optional outage records and trailing branch-echo records.
+## Outage records
 
-The parser preserves raw lines on typed records so diagnostics can compare the electrical model against the original fixed-column payload.
-
-## Voltage-level card
-
-The voltage-level card lists the nominal voltage levels used by subsequent branch and bus records. Branch impedance and admittance conversion uses the branch voltage-level index as the per-unit reference. Sparlectra does not globally collapse a 231 kV level to 230 kV in the default DTF path.
-
-## Size card
-
-The size card gives the expected counts for buses, branches, compensation records and transformer-control records, plus the legacy slack-bus name. Sparlectra uses these counts to split the fixed-column sections before it parses optional outage or trailing data.
-
-## Branch cards
-
-Branch cards describe lines and transformers. The card kind identifies transformer records with `T`; other branch records are treated as AC lines. The branch voltage-level index controls R/X/G/B per-unit conversion. Transformer transverse conductance and susceptance are represented by the native PI branch fields `g_pu` and `b_pu`; the resulting `G/2` arms are internal branch shunt arms, not separate node shunts.
-
-With `model.tap_changer_model = impedance_correction` (see [Transformer
-tap-changer model](configuration.md#transformer-tap-changer-model)), the
-`tap_fraction`/`skew_angle_deg` values derived from the DTF
-transformer-control cards are additionally folded into the transformer series
-impedance (`Branch.r_pu`/`Branch.x_pu`), scaling R and X with the squared
-magnitude of the regulating vector, `|1 + f·e^(jφ)|²`. These corrected values,
-not the raw DTF-card impedance, are what a subsequent `writeMatpowerCasefile`
-export writes out.
-
-## Transformer-control cards
-
-Transformer-control cards carry the transformer winding/nameplate voltages, longitudinal tap range, tap step, and optional combined-regulation (Schraegregler) skew-angle fields. Sparlectra matches a control card to its transformer by terminals and parallel identifier. The resulting metadata includes the parsed winding values, selected ratio convention, neutral base ratio, relative tap fraction, skew angle, effective ratio and effective phase shift.
-
-## Bus cards
-
-Bus cards define the legacy bus type, voltage-level index, name, start voltage, angle, load and generation quantities. Sparlectra maps the DTF slack, PV and PQ conventions into its internal bus and prosumer model without turning every non-zero generator row into a regulating bus.
-
-## Outage cards and trailing A branch-echo records
-
-Outage sections are parsed as structured outage metadata. In the legacy validation B-E files, post-bus standalone `A` markers followed by branch-like `L` or `T` records are branch-echo records, not additional electrical branches and not outages. Sparlectra preserves them for diagnostics and does not add them to the network topology.
+Every non-empty record between `AUSFALL` and `ENDE` identifies one branch
+outage by branch kind, voltage-level index, parallel identifier, from-bus
+name and to-bus name. Applying one requires an unambiguous match to exactly
+one base-network branch; a missing or ambiguous match produces a diagnostic
+and removes nothing. Branch cards carry no per-end switch field, so a
+partially open branch cannot be expressed: the aggregate branch status is
+used.
 
 ## PV, PQ and slack bus interpretation
 
-The slack bus is taken from the DTF size/slack information and mapped to a Sparlectra slack generator. PV-style buses keep their voltage-regulating role. PQ generator/load buses retain fixed injections and are not promoted to voltage-regulating buses only because non-zero generation appears on the card.
+The slack bus comes from the size card and becomes a Sparlectra slack
+generator; PV-style buses keep their voltage-regulating role; PQ
+generator/load buses keep fixed injections and are not promoted to PV
+because non-zero generation appears on the card.
 
 ## Transformer ratio convention
 
-In DTF compatibility mode, transformer winding values such as 400/231 kV are preserved as nameplate/control metadata. They are not automatically interpreted as a permanent off-nominal transformer tap at neutral position.
+Winding values such as 400/231 kV are nameplate metadata, not a permanent
+off-nominal tap; tap positions and skew angles apply as deviations from
+neutral. `transformer_ratio_mode` selects the neutral base ratio:
 
-At neutral tap position, Sparlectra's DTF importer uses neutral-one behaviour by default, matching the observed FOR002 legacy semantics. Tap positions and combined-regulation (Schraegregler) skew-angle controls are applied as deviations from this neutral position.
+- `:neutral_one` (default, the observed FOR002 legacy semantics): the base
+  ratio at neutral tap is `1.0`.
+- `:winding_over_network`: the winding/nameplate ratio divided by the network
+  nominal-voltage ratio, for example `(400/231) / (400/230)`.
 
-The executable `transformer_ratio_mode` values are:
+The nameplate ratio stays visible in the metadata fields
+`nominal_unregulated_kv`, `nominal_regulated_kv`, `from_bus_vn_kV`,
+`to_bus_vn_kV`, `winding_over_network_base_ratio`, `transformer_ratio_mode`,
+`base_ratio_used`, `tap_fraction`, `skew_angle_deg`, `effective_ratio` and
+`effective_shift_deg`.
 
-- `:neutral_one` — the default DTF compatibility mode. The base ratio at neutral tap is `1.0`; longitudinal and skew-angle controls are applied relative to neutral.
-- `:winding_over_network` — the previous Sparlectra diagnostic/compatibility interpretation. The neutral base ratio is the winding/nameplate ratio divided by the network nominal-voltage ratio, for example `(400/231) / (400/230)`.
+With `model.tap_changer_model = impedance_correction` (see [Transformer
+tap-changer model](configuration.md#transformer-tap-changer-model)) the
+`tap_fraction`/`skew_angle_deg` values are also folded into the transformer
+series impedance (`Branch.r_pu`/`Branch.x_pu`), scaling R and X with
+`|1 + f·e^(jφ)|²`; a subsequent `writeMatpowerCasefile` export writes the
+corrected values, not the raw card impedance.
 
-The nameplate/winding ratio remains visible in metadata such as `nominal_unregulated_kv`, `nominal_regulated_kv`, `from_bus_vn_kV`, `to_bus_vn_kV`, `winding_over_network_base_ratio`, `transformer_ratio_mode`, `base_ratio_used`, `tap_fraction`, `skew_angle_deg`, `effective_ratio` and `effective_shift_deg`.
-
-## Combined-regulation (Schraegregler) skew-angle transformer controls
-
-The DTF 60-degree field in the Schraegregler example is a skew angle of the regulating voltage, not the final transformer phase-shift angle. Sparlectra computes the resulting complex tap from tap range, actual tap position and skew angle. The complex regulating vector is converted to the from-side off-nominal transformer convention by using its reciprocal magnitude and the negative regulating-vector angle.
-
-## Known compatibility notes
-
-The native DTF path is deliberately format-aware. It preserves winding/nameplate data for diagnostics even when neutral-one mode does not apply that value as a neutral off-nominal tap. Branch R/X/G/B conversion remains tied to the DTF branch voltage-level index. FOR002 text reports are treated as legacy validation references, not as additional model input.
-
-## Validation against FOR002
-
-The DTF validation examples compare native DTF solves against FOR002 reports for cases A-E. The report workflow executes both `:neutral_one` and `:winding_over_network` transformer ratio modes so voltage bias, slack injections, losses and branch-flow anchors can be compared as true alternative network builds.
+**Schraegregler skew angle.** The 60-degree field of the Schraegregler
+example is the skew angle of the regulating voltage, not the final phase
+shift: the complex tap follows from tap range, tap position and skew angle,
+converted to the from-side off-nominal convention (reciprocal magnitude,
+negative regulating-vector angle).
 
 ## Transformer shunt conductance and losses
 
-DTF transformer `G` is stored on the Sparlectra transformer branch as `Branch.g_pu`, alongside `Branch.b_pu`, `r_pu`, `x_pu`, tap ratio and phase shift. It is not converted to separate terminal bus shunts. `calcNetLosses!` sums branch-end powers (`S_from + S_to`), so total branch losses include both longitudinal `R` losses and voltage-dependent branch-shunt `G` losses. The separate I²R helper reports only the longitudinal copper/winding component. Sparlectra's proprietary MATPOWER transformer-loss extension preserves `g_pu` for Sparlectra export/reimport round trips; standard MATPOWER readers ignore that extension.
+DTF transformer `G` is stored as `Branch.g_pu` next to `Branch.b_pu`,
+`r_pu`, `x_pu`, tap ratio and phase shift, not as terminal bus shunts.
+`calcNetLosses!` sums branch-end powers (`S_from + S_to`), so total losses
+include the longitudinal `R` and the voltage-dependent `G` losses; the
+separate I²R helper reports the longitudinal component only. The
+MATPOWER transformer-loss extension ([MATPOWER cases](matpower.md))
+preserves `g_pu` across export/reimport round trips; standard MATPOWER
+readers ignore it.
 
-## Fixed-column sections
+## Validation against FOR002
 
-A DTF network input is parsed as one fixed-column model with ordered sections:
-
-1. **Parameter/text cards** preserve legacy run parameters and free-text descriptors for diagnostics.
-2. **Nominal-voltage card** lists voltage bases used by branch and bus voltage-level indices.
-3. **Size/count card** gives bus, branch, compensation, and transformer-control counts plus the named slack/reference bus.
-4. **AC line and transformer branch cards** (`L` and `T`) define the base AC topology.
-5. **Compensation cards** define fixed compensation records associated with the base network.
-6. **Transformer-control cards** define tap, winding/nameplate, and skew-angle control metadata for transformer branches.
-7. **Bus cards** define bus names, types, nominal-voltage indices, voltage starts, and fixed load/generation quantities.
-8. **Outage records** optionally follow the bus section between `AUSFALL` and `ENDE`.
-9. **Trailing branch-echo records** may follow the bus section as standalone legacy diagnostics.
-
-## Embedded DTF outage records
-
-`AUSFALL` starts the embedded outage section and `ENDE` ends it. Every non-empty record inside that section identifies one branch outage. The outage identity is the branch kind, voltage-level index, parallel identifier, from-bus name, and to-bus name. These records are metadata describing branches to remove for contingency runs. They are not additional AC branches and must not be added to the base network topology.
-
-Before applying an outage, Sparlectra requires a strict, unambiguous match to exactly one base-network branch. Missing or ambiguous matches produce a clear diagnostic and do not silently remove a different branch.
-
-## Trailing branch echoes
-
-A post-bus standalone `A` marker followed by a branch-like `L` or `T` record may be a trailing branch echo. These records duplicate existing branch information for legacy diagnostics. They are neither additional electrical branches nor outage instructions.
+The validation examples compare native solves against FOR002 reports for
+cases A-E in both `:neutral_one` and `:winding_over_network` mode.
 
 ## Web UI `.DAT` roles
 
-The Web UI accepts `.DAT` uploads and classifies them by content before offering them to the primary PowerFlow selector:
+The Web UI classifies `.DAT` uploads by content (`FOR002.DAT`-style names
+are hints only) before offering them in the PowerFlow selector:
 
-- `dtf_network_case` is a complete DTF network case with mandatory cards/counts and may be selected as the primary case.
-- `dtf_network_case_with_outages` is also runnable and exposes embedded DTF outage records to the outage controls.
-- `dtf_outage_or_reference` is imported and retained for DTF outage/reference controls but is not runnable as a primary case.
-- `unknown_dat` is retained only when it passes upload safety checks and is not silently offered as a runnable case.
-
-Filename patterns such as `FOR002.DAT` are compatibility hints only; content classification controls primary-case selection.
-
-Note on per-terminal switching (r0.9.10): the DTF branch cards carry no
-per-end switch field, outage records identify whole branches. Partially
-open branches therefore cannot be expressed in DTF; the importer and the
-outage controls keep using the aggregate branch status.
+| Role | Meaning |
+|---|---|
+| `dtf_network_case` | Complete DTF network case with mandatory cards and counts; selectable as the primary case. |
+| `dtf_network_case_with_outages` | Also runnable; exposes the embedded outage records to the outage controls. |
+| `dtf_outage_or_reference` | Kept for the DTF outage/reference controls, not runnable as a primary case. |
+| `unknown_dat` | Kept only when it passes the upload safety checks, never offered as a runnable case. |
