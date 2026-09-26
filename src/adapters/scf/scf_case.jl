@@ -333,6 +333,12 @@ Base.@kwdef mutable struct SCFSparlectra
   # the scenario block; free document form, typed
   # accessors live in src/scenario/patch.jl
   scenarios::Dict{String,Any} = Dict{String,Any}()
+  # per branch id (0.20.0): the four terminal shunt arms in pu of a branch
+  # whose split is not the symmetric half (the data section keeps the PGM
+  # totals), and the typed tap-changer models of a winding with kind and
+  # step; absent blocks mean symmetric and no model
+  branch_shunt_split::Dict{String,Any} = Dict{String,Any}()
+  tap_changer_models::Dict{String,Any} = Dict{String,Any}()
 end
 
 """
@@ -652,6 +658,8 @@ function scfcase_from_root(root::AbstractDict)::SCFCase
       config = _scfcase_dict(_scf_get(spar_raw, "config", nothing)),
       transformer_types = _scfcase_dict(_scf_get(spar_raw, "transformer_types", nothing)),
       scenarios = _scfcase_dict(_scf_get(spar_raw, "scenarios", nothing)),
+      branch_shunt_split = _scfcase_dict(_scf_get(spar_raw, "branch_shunt_split", nothing)),
+      tap_changer_models = _scfcase_dict(_scf_get(spar_raw, "tap_changer_models", nothing)),
     )
   else
     nothing
@@ -798,7 +806,7 @@ function scf_root_dict(case::SCFCase)::Dict{String,Any}
     isempty(components) || (sd["components"] = components)
     start_state = _scfdict_start_state(spar.start_state)
     isempty(start_state) || (sd["start_state"] = start_state)
-    for (key, block) in (("measurements", spar.measurements), ("contingencies", spar.contingencies), ("short_circuit", spar.short_circuit), ("config", spar.config), ("transformer_types", spar.transformer_types), ("scenarios", spar.scenarios))
+    for (key, block) in (("measurements", spar.measurements), ("contingencies", spar.contingencies), ("short_circuit", spar.short_circuit), ("config", spar.config), ("transformer_types", spar.transformer_types), ("scenarios", spar.scenarios), ("branch_shunt_split", spar.branch_shunt_split), ("tap_changer_models", spar.tap_changer_models))
       isempty(block) || (sd[key] = block)
     end
     root["sparlectra"] = sd

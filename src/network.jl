@@ -155,6 +155,9 @@ mutable struct Net
   # differ. Same skip rule as the two status fields above: solver/session
   # state, not model data.
   _import_config::Any
+  # notices of the tap-model resolver (0.20.0): one line per transformer
+  # whose constructed ratio or shift the typed model replaced at build
+  tapModelNotices::Vector{String}
 
   #! format: off
   function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1, cooldown_iters::Int = 0, q_hyst_pu::Float64 = 0.0, reenable_v_hyst_pu::Float64 = 1e-4, final_q_accept_pu::Float64 = 2 * q_hyst_pu, flatstart::Bool = false, bus_shunt_model = :admittance)
@@ -202,7 +205,8 @@ mutable struct Net
         HvdcLink[],                                # hvdcLinks
         nothing,                                   # _rectangular_pf_status
         nothing,                                   # _dc_pf_status
-        nothing)                                   # _import_config
+        nothing,                                   # _import_config
+        String[])                                  # tapModelNotices
   end
   #! format: on
   function Base.show(io::IO, net::Net)
@@ -820,7 +824,7 @@ Parameters:
 - `vn_kV::Union{Nothing,Float64} = nothing`: Nominal voltage of the branch in kV (default is nothing).
 - `values_are_pu = false`: Boolean indicating if the values are in per unit (default is false).
 """
-function addBranch!(; net::Net, from::Int, to::Int, branch::AbstractBranch, status::Integer = 1, ratio = nothing, side = nothing, vn_kV = nothing, values_are_pu::Bool = false, from_status::Union{Nothing,Integer} = nothing, to_status::Union{Nothing,Integer} = nothing)
+function addBranch!(; net::Net, from::Int, to::Int, branch::AbstractBranch, status::Integer = 1, ratio = nothing, side = nothing, vn_kV = nothing, values_are_pu::Bool = false, from_status::Union{Nothing,Integer} = nothing, to_status::Union{Nothing,Integer} = nothing, shunt_split::Union{Nothing,NTuple{4,Float64}} = nothing, tap_changer_model::Symbol = :ideal)
   @assert from != to "From and to bus must be different"
   idBrunch = length(net.branchVec) + 1
   fOrig = nothing
@@ -835,8 +839,20 @@ function addBranch!(; net::Net, from::Int, to::Int, branch::AbstractBranch, stat
   if isnothing(vn_kV)
     vn_kV = getNodeVn(net.nodeVec[from])
   end
-  br = Branch(branchIdx = idBrunch, from = from, to = to, baseMVA = net.baseMVA, branch = branch, id = idBrunch, status = status, ratio = ratio, side = side, vn_kV = vn_kV, fromOid = fOrig, toOid = tOrig, values_are_pu = values_are_pu, from_status = from_status, to_status = to_status)
+  br = Branch(branchIdx = idBrunch, from = from, to = to, baseMVA = net.baseMVA, branch = branch, id = idBrunch, status = status, ratio = ratio, side = side, vn_kV = vn_kV, fromOid = fOrig, toOid = tOrig, values_are_pu = values_are_pu, from_status = from_status, to_status = to_status, shunt_split = shunt_split)
   push!(net.branchVec, br)
+  # a typed tap model on the winding drives the branch (0.20.0): ratio,
+  # shift, impedance correction and the tap grid come from the model at its
+  # step, and the winding stays reachable for the controllers
+  if branch isa PowerTransformer
+    tap_side = side === nothing ? (branch.isBiWinder ? getSideNumber2WT(branch) : 1) : side
+    w = tap_side == 1 ? branch.side1 : (tap_side == 2 ? branch.side2 : branch.side3)
+    if w !== nothing
+      note = resolve_branch_taps!(br, w; tap_changer_model = tap_changer_model)
+      note === nothing || push!(net.tapModelNotices, note)
+    end
+  end
+  return nothing
 end
 
 """
@@ -913,8 +929,7 @@ function updateBranchParameters!(; net::Net, branchNr::Int, branch::BranchModel)
   # the live r_pu/x_pu, leaving this base intact
   br.r_base_pu = branch.r_pu
   br.x_base_pu = branch.x_pu
-  br.b_pu = branch.b_pu
-  br.g_pu = branch.g_pu
+  set_branch_shunt!(br; g_from_pu = branch.g_from_pu, b_from_pu = branch.b_from_pu, g_to_pu = branch.g_to_pu, b_to_pu = branch.b_to_pu)
   br.ratio = branch.ratio
   br.angle = branch.angle
   br.tap_ratio = branch.ratio == 0.0 ? 1.0 : branch.ratio
@@ -977,15 +992,22 @@ Adds a PI model AC line to the network.
 addPIModelACLine!(net = network, fromBus = "Bus1", toBus = "Bus2", r_pu = 0.01, x_pu = 0.1, b_pu = 0.02, status = 1, ratedS = 100.0)
 ```
 """
-function _addPIModelACLine_by_idx!(; net::Net, from::Int, to::Int, r_pu::Float64, x_pu::Float64, b_pu::Float64, g_pu::Union{Nothing,Float64} = nothing, status::Int, ratedS::Union{Nothing,Float64} = nothing, from_status::Union{Nothing,Integer} = nothing, to_status::Union{Nothing,Integer} = nothing)
+function _addPIModelACLine_by_idx!(; net::Net, from::Int, to::Int, r_pu::Float64, x_pu::Float64, b_pu::Float64, g_pu::Union{Nothing,Float64} = nothing, status::Int, ratedS::Union{Nothing,Float64} = nothing, from_status::Union{Nothing,Integer} = nothing, to_status::Union{Nothing,Integer} = nothing, g_from_pu = nothing, b_from_pu = nothing, g_to_pu = nothing, b_to_pu = nothing)
   @assert from != to "From and to bus must be different"
   vn_kV = getNodeVn(net.nodeVec[from])
   vn_2_kV = getNodeVn(net.nodeVec[to])
   @assert vn_kV == vn_2_kV "Voltage level of the from bus $(vn_kV) does not match the to bus $(vn_2_kV)"
+  # an explicit per-terminal split (0.20.0): the totals stored on the line
+  # segment are then the sums of the four values, whatever the caller passed
+  split = _branch_shunt_split_kw("addPIModelACLine! $(from)-$(to)", g_from_pu, b_from_pu, g_to_pu, b_to_pu)
+  if split !== nothing
+    g_pu = split[1] + split[3]
+    b_pu = split[2] + split[4]
+  end
   acseg = ACLineSegment(vn_kv = vn_kV, from = from, to = to, length = 1.0, r = r_pu, x = x_pu, b = b_pu, g = g_pu, ratedS = ratedS, paramsBasedOnLength = false, isPIModel = true)
   push!(net.linesAC, acseg)
 
-  addBranch!(net = net, from = from, to = to, branch = acseg, vn_kV = vn_kV, status = status, values_are_pu = true, from_status = from_status, to_status = to_status)
+  addBranch!(net = net, from = from, to = to, branch = acseg, vn_kV = vn_kV, status = status, values_are_pu = true, from_status = from_status, to_status = to_status, shunt_split = split)
 end
 
 """
@@ -993,10 +1015,10 @@ end
 
 Add an AC line branch from PI-model per-unit parameters.
 """
-function addPIModelACLine!(; net::Net, fromBus::String, toBus::String, r_pu::Float64, x_pu::Float64, b_pu::Float64, g_pu::Union{Nothing,Float64} = nothing, status::Int, ratedS::Union{Nothing,Float64} = nothing, from_status::Union{Nothing,Integer} = nothing, to_status::Union{Nothing,Integer} = nothing)
+function addPIModelACLine!(; net::Net, fromBus::String, toBus::String, r_pu::Float64, x_pu::Float64, b_pu::Float64, g_pu::Union{Nothing,Float64} = nothing, status::Int, ratedS::Union{Nothing,Float64} = nothing, from_status::Union{Nothing,Integer} = nothing, to_status::Union{Nothing,Integer} = nothing, g_from_pu = nothing, b_from_pu = nothing, g_to_pu = nothing, b_to_pu = nothing)
   from = geNetBusIdx(net = net, busName = fromBus)
   to = geNetBusIdx(net = net, busName = toBus)
-  return _addPIModelACLine_by_idx!(net = net, from = from, to = to, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, g_pu = g_pu, status = status, ratedS = ratedS, from_status = from_status, to_status = to_status)
+  return _addPIModelACLine_by_idx!(net = net, from = from, to = to, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, g_pu = g_pu, status = status, ratedS = ratedS, from_status = from_status, to_status = to_status, g_from_pu = g_from_pu, b_from_pu = b_from_pu, g_to_pu = g_to_pu, b_to_pu = b_to_pu)
 end
 
 """
@@ -1034,11 +1056,28 @@ function _addPIModelTrafo_by_idx!(;
   controls::Union{Nothing,Vector{PowerTransformerControl}} = nothing,
   from_status::Union{Nothing,Integer} = nothing,
   to_status::Union{Nothing,Integer} = nothing,
+  g_from_pu = nothing,
+  b_from_pu = nothing,
+  g_to_pu = nothing,
+  b_to_pu = nothing,
+  taps::Union{Nothing,PowerTransformerTaps} = nothing,
+  phase_taps::Union{Nothing,PhaseTapChangerModel} = nothing,
+  tap_changer_model::Symbol = :ideal,
 )
   @assert from != to "From and to bus must be different"
   vn_hv_kV = getNodeVn(net.nodeVec[from])
   vn_lv_kV = getNodeVn(net.nodeVec[to])
-  w1 = PowerTransformerWinding(vn_hv_kV, r_pu, x_pu, b_pu, g_pu, ratio, shift_deg, ratedU, ratedS, nothing, true)
+  # an explicit per-terminal split (0.20.0), typically the whole magnetizing
+  # admittance on the from side; the winding keeps the totals
+  split = _branch_shunt_split_kw("addPIModelTrafo! $(from)-$(to)", g_from_pu, b_from_pu, g_to_pu, b_to_pu)
+  if split !== nothing
+    g_pu = split[1] + split[3]
+    b_pu = split[2] + split[4]
+  end
+  # typed tap models (0.20.0) sit on the from-side winding; `ratio` and
+  # `shift_deg` are then the neutral point the resolver moves from
+  w1 = PowerTransformerWinding(vn_hv_kV, r_pu, x_pu, b_pu, g_pu, ratio, shift_deg, ratedU, ratedS, taps, true)
+  phase_taps === nothing || (w1.phase_taps = phase_taps)
   w2 = PowerTransformerWinding(vn_lv_kV, 0.0, 0.0)
   if !isnothing(controls)
     if side == 1
@@ -1051,7 +1090,7 @@ function _addPIModelTrafo_by_idx!(;
   trafo = PowerTransformer(comp, false, w1, w2, nothing, Sparlectra.PIModel)
   push!(net.trafos, trafo)
 
-  addBranch!(net = net, from = from, to = to, branch = trafo, status = status, ratio = ratio, side = side, vn_kV = vn_hv_kV, values_are_pu = true, from_status = from_status, to_status = to_status)
+  addBranch!(net = net, from = from, to = to, branch = trafo, status = status, ratio = ratio, side = side, vn_kV = vn_hv_kV, values_are_pu = true, from_status = from_status, to_status = to_status, shunt_split = split, tap_changer_model = tap_changer_model)
   if !isnothing(controls)
     br = net.branchVec[end]
     target_controls = side == 1 ? net.trafos[end].side1.controls : net.trafos[end].side2.controls
@@ -1083,10 +1122,18 @@ function addPIModelTrafo!(;
   controls::Union{Nothing,Vector{PowerTransformerControl}} = nothing,
   from_status::Union{Nothing,Integer} = nothing,
   to_status::Union{Nothing,Integer} = nothing,
+  g_pu::Float64 = 0.0,
+  g_from_pu = nothing,
+  b_from_pu = nothing,
+  g_to_pu = nothing,
+  b_to_pu = nothing,
+  taps::Union{Nothing,PowerTransformerTaps} = nothing,
+  phase_taps::Union{Nothing,PhaseTapChangerModel} = nothing,
+  tap_changer_model::Symbol = :ideal,
 )
   from = geNetBusIdx(net = net, busName = fromBus)
   to = geNetBusIdx(net = net, busName = toBus)
-  return _addPIModelTrafo_by_idx!(net = net, from = from, to = to, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, status = status, ratedU = ratedU, ratedS = ratedS, ratio = ratio, shift_deg = shift_deg, isAux = isAux, side = side, controls = controls, from_status = from_status, to_status = to_status)
+  return _addPIModelTrafo_by_idx!(net = net, from = from, to = to, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, g_pu = g_pu, status = status, ratedU = ratedU, ratedS = ratedS, ratio = ratio, shift_deg = shift_deg, isAux = isAux, side = side, controls = controls, from_status = from_status, to_status = to_status, g_from_pu = g_from_pu, b_from_pu = b_from_pu, g_to_pu = g_to_pu, b_to_pu = b_to_pu, taps = taps, phase_taps = phase_taps, tap_changer_model = tap_changer_model)
 end
 
 """

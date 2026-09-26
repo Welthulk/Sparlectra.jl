@@ -57,7 +57,8 @@ table: [Short-Circuit Compendium](short_circuit.md).
 |---|---|
 | Sign convention | CGMES uses the load convention (a machine with `p < 0` injects). Machine, external-injection and equivalent-injection values are inverted; a load with negative `p` passes through unchanged. |
 | `Terminal.connected`, both ends open | Branch out of service. |
-| `Terminal.connected`, exactly one end open | No longitudinal current; the half charging admittance stays as a shunt at the closed bus (it belongs to the reactive balance). |
+| `Terminal.connected`, exactly one end open | No longitudinal current; the charging arm of the closed terminal stays as a shunt at the closed bus (it belongs to the reactive balance). |
+| `PowerTransformerEnd.g`, `.b` | Each end's magnetizing admittance stays on its own terminal of the branch (end 1 referred to the end-2 base as the from arm, end 2 as the to arm; a three-winding end on the leg's bus side). The export writes them back per end, so a round trip keeps the placement. A line's `bch`, `gch` is one value and splits in halves. |
 | `Terminal.connected`, both ends closed | Normal branch. |
 | Boundary sets | Cross-border deliveries reference topological nodes that live in the boundary files. Detected through unresolved references, not filenames; the import fails with an explicit message unless `require_boundary = false`. |
 | Import analysis | On abort the importer first prints the supplied model files (profile, version, model id), every `md:Model.DependentOn` prerequisite matched against the supplied models (a missing boundary set is named by its model id), an unresolved-reference histogram by class and property, and a verdict. In Web UI runs it lands in `cgmes.log`; the **Analyze import** button runs the same check before a full import (see [Web UI](webui.md)); `analyzeCGMES(path = ...)` does it on demand. |

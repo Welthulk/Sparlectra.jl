@@ -1,0 +1,215 @@
+{
+  "format": "powsybl_tables",
+  "format_version": 1,
+  "case": "four_substations",
+  "source": "pypowsybl.network.create_four_substations_node_breaker_network",
+  "source_file": "four_substations.xiidm",
+  "pypowsybl_version": "1.16.1",
+  "iidm_version": "1_17",
+  "all_attributes": true,
+  "written": "2026-09-26T11:41:29Z",
+  "tables": {
+    "substations": {
+      "file": "substations.csv",
+      "rows": 4,
+      "index": [
+        "id"
+      ]
+    },
+    "voltage_levels": {
+      "file": "voltage_levels.csv",
+      "rows": 5,
+      "index": [
+        "id"
+      ]
+    },
+    "buses": {
+      "file": "buses.csv",
+      "rows": 5,
+      "index": [
+        "id"
+      ]
+    },
+    "bus_breaker_view_buses": {
+      "file": "bus_breaker_view_buses.csv",
+      "rows": 29,
+      "index": [
+        "id"
+      ]
+    },
+    "switches": {
+      "file": "switches.csv",
+      "rows": 59,
+      "index": [
+        "id"
+      ]
+    },
+    "busbar_sections": {
+      "file": "busbar_sections.csv",
+      "rows": 6,
+      "index": [
+        "id"
+      ]
+    },
+    "lines": {
+      "file": "lines.csv",
+      "rows": 2,
+      "index": [
+        "id"
+      ]
+    },
+    "2_windings_transformers": {
+      "file": "2_windings_transformers.csv",
+      "rows": 1,
+      "index": [
+        "id"
+      ]
+    },
+    "3_windings_transformers": {
+      "file": "3_windings_transformers.csv",
+      "rows": 0,
+      "index": [
+        "id"
+      ]
+    },
+    "ratio_tap_changers": {
+      "file": "ratio_tap_changers.csv",
+      "rows": 1,
+      "index": [
+        "id"
+      ]
+    },
+    "ratio_tap_changer_steps": {
+      "file": "ratio_tap_changer_steps.csv",
+      "rows": 3,
+      "index": [
+        "id",
+        "position"
+      ]
+    },
+    "phase_tap_changers": {
+      "file": "phase_tap_changers.csv",
+      "rows": 1,
+      "index": [
+        "id"
+      ]
+    },
+    "phase_tap_changer_steps": {
+      "file": "phase_tap_changer_steps.csv",
+      "rows": 33,
+      "index": [
+        "id",
+        "position"
+      ]
+    },
+    "generators": {
+      "file": "generators.csv",
+      "rows": 5,
+      "index": [
+        "id"
+      ]
+    },
+    "reactive_capability_curve_points": {
+      "file": "reactive_capability_curve_points.csv",
+      "rows": 12,
+      "index": [
+        "id",
+        "num"
+      ]
+    },
+    "loads": {
+      "file": "loads.csv",
+      "rows": 6,
+      "index": [
+        "id"
+      ]
+    },
+    "shunt_compensators": {
+      "file": "shunt_compensators.csv",
+      "rows": 1,
+      "index": [
+        "id"
+      ]
+    },
+    "linear_shunt_compensator_sections": {
+      "file": "linear_shunt_compensator_sections.csv",
+      "rows": 1,
+      "index": [
+        "id"
+      ]
+    },
+    "dangling_lines": {
+      "file": "dangling_lines.csv",
+      "rows": 0,
+      "index": [
+        "id"
+      ]
+    },
+    "tie_lines": {
+      "file": "tie_lines.csv",
+      "rows": 0,
+      "index": [
+        "id"
+      ]
+    },
+    "hvdc_lines": {
+      "file": "hvdc_lines.csv",
+      "rows": 2,
+      "index": [
+        "id"
+      ]
+    },
+    "vsc_converter_stations": {
+      "file": "vsc_converter_stations.csv",
+      "rows": 2,
+      "index": [
+        "id"
+      ]
+    },
+    "lcc_converter_stations": {
+      "file": "lcc_converter_stations.csv",
+      "rows": 2,
+      "index": [
+        "id"
+      ]
+    },
+    "static_var_compensators": {
+      "file": "static_var_compensators.csv",
+      "rows": 1,
+      "index": [
+        "id"
+      ]
+    },
+    "operational_limits": {
+      "file": "operational_limits.csv",
+      "rows": 6,
+      "index": [
+        "element_id",
+        "side",
+        "type",
+        "acceptable_duration",
+        "group_name"
+      ]
+    }
+  },
+  "reference": {
+    "file": "reference_buses.csv",
+    "loadflow": "OpenLoadFlow via pypowsybl.loadflow.run_ac, default parameters except slackBusPMaxMismatch=0.0001 and newtonRaphsonConvEpsPerEq=1e-9",
+    "components": [
+      {
+        "num": 0,
+        "synchronous_component_num": 0,
+        "status": "CONVERGED",
+        "iterations": 4,
+        "reference_bus_id": "S3VL1_0"
+      },
+      {
+        "num": 0,
+        "synchronous_component_num": 1,
+        "status": "CONVERGED",
+        "iterations": 4,
+        "reference_bus_id": "S1VL2_0"
+      }
+    ]
+  }
+}

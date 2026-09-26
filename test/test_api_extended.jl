@@ -1629,5 +1629,50 @@ power_flow:
       @test remaining[1]["run_id"] == "unsafe-index-entry"
     end
   end)() end
+
+  @testset "tap-changer model precedence artifact (tap_models.log)" begin (function ()
+    # a transformer with a typed phase model at a non-neutral step: the
+    # resolver replaces the constructed ratio/shift and leaves one line in
+    # net.tapModelNotices; a service run must show that line as an artifact
+    net = Net(name = "pst_notice", baseMVA = 100.0)
+    for b in ("Slack", "Mid", "Load")
+      addBus!(net = net, busName = b, vn_kV = 110.0)
+    end
+    addProsumer!(net = net, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "Slack")
+    addProsumer!(net = net, busName = "Load", type = "ENERGYCONSUMER", p = -60.0, q = -20.0)
+    model = PhaseTapChangerModel(kind = :asymmetrical, step = 3, lowStep = -10, highStep = 10, neutralStep = 0, voltage_step_increment = 0.01, winding_connection_angle_deg = 90.0, convention = :direct_regulating_vector)
+    addPIModelTrafo!(net = net, fromBus = "Slack", toBus = "Mid", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1, phase_taps = model)
+    addPIModelACLine!(net = net, fromBus = "Slack", toBus = "Mid", r_pu = 0.03, x_pu = 0.2, b_pu = 0.0, status = 1)
+    addPIModelACLine!(net = net, fromBus = "Mid", toBus = "Load", r_pu = 0.02, x_pu = 0.12, b_pu = 0.01, status = 1)
+    @test length(net.tapModelNotices) == 1
+    mktempdir() do tmpdir
+      casefile = exportSCF(net; file = joinpath(tmpdir, "pst_notice.scf.json"))
+      output_dir = joinpath(tmpdir, "run")
+      result = run_sparlectra_api(casefile = casefile, output_dir = output_dir, config_overrides = Dict("benchmark.enabled" => false))
+      @test result.success
+      artifact = joinpath(output_dir, "tap_models.log")
+      @test isfile(artifact)
+      text = read(artifact, String)
+      @test occursin("replaced by model at phase step 3", text)
+      @test any(a -> a.name == "tap_models.log" && a.kind === :tap_model_log, result.artifacts)
+      @test occursin("Tap-changer model precedence artifact: tap_models.log (1 transformer(s))", read(joinpath(output_dir, "run.log"), String))
+      # the same network without the model writes no such artifact
+      plain_net = Net(name = "pst_plain", baseMVA = 100.0)
+      for b in ("Slack", "Mid", "Load")
+        addBus!(net = plain_net, busName = b, vn_kV = 110.0)
+      end
+      addProsumer!(net = plain_net, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "Slack")
+      addProsumer!(net = plain_net, busName = "Load", type = "ENERGYCONSUMER", p = -60.0, q = -20.0)
+      addPIModelTrafo!(net = plain_net, fromBus = "Slack", toBus = "Mid", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1)
+      addPIModelACLine!(net = plain_net, fromBus = "Slack", toBus = "Mid", r_pu = 0.03, x_pu = 0.2, b_pu = 0.0, status = 1)
+      addPIModelACLine!(net = plain_net, fromBus = "Mid", toBus = "Load", r_pu = 0.02, x_pu = 0.12, b_pu = 0.01, status = 1)
+      @test isempty(plain_net.tapModelNotices)
+      plain = joinpath(tmpdir, "plain")
+      plain_result = run_sparlectra_api(casefile = exportSCF(plain_net; file = joinpath(tmpdir, "pst_plain.scf.json")), output_dir = plain, config_overrides = Dict("benchmark.enabled" => false))
+      @test plain_result.success
+      @test !isfile(joinpath(plain, "tap_models.log"))
+      @test !any(a -> a.kind === :tap_model_log, plain_result.artifacts)
+    end
+  end)() end
   return nothing
 end

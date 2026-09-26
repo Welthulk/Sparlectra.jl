@@ -854,7 +854,7 @@ document.addEventListener('DOMContentLoaded', function () {
     // can: explicit cgmes: alias input or a .zip delivery (directory paths
     // resolve server-side only)
     const isCgmesCase = new RegExp('^cgmes:', 'i').test(effectiveValue) || new RegExp('\\\\.zip\$', 'i').test(effectiveValue);
-    const isPowsyblCase = new RegExp('\\\\.(powsybl|xiidm|xiidm\\\\.bz2)\$', 'i').test(effectiveValue);
+    const isPowsyblCase = new RegExp('\\\\.(powsybl|xiidm)\$', 'i').test(effectiveValue);
     if (caseFormat !== null) {
       // Auto-set formats must fall BACK to auto when the typed case stops
       // matching — otherwise a CGMES selection sticks after switching to a
@@ -1118,7 +1118,6 @@ const _WEBUI_ADAPTER_FIELD_PRESENTATION = Dict{String,NamedTuple}(
   "powsybl_import_multi_slack" => (label = "One slack per synchronous component", title = "Every synchronous component gets its own slack generator (the regulating unit with the largest max_p). Uncheck to leave the other components without a reference; they are then reported as islands without a reference.", attrs = " data-powsybl-import-field", input_attrs = "", option_labels = nothing),
   "powsybl_import_slack_ids" => (label = "Slack generator ids", title = "Generator ids that become the slack of their component, separated by semicolons; empty lets the largest max_p decide.", attrs = " data-powsybl-import-field", input_attrs = " placeholder=\"GEN1; GEN2\"", option_labels = nothing),
   "powsybl_import_base_mva" => (label = "System base MVA", title = "Per-unit base of the built network; PowSyBl files carry no base, so 100 MVA is the default.", attrs = " data-powsybl-import-field", input_attrs = " min=\"1\" step=\"1\"", option_labels = nothing),
-  "powsybl_import_python_exe" => (label = "Python executable (live IIDM import)", title = "Python with pypowsybl for the live .xiidm import through the PythonCall extension; empty means the PythonCall default. Takes effect only before PythonCall initialises.", attrs = " data-powsybl-import-field", input_attrs = " placeholder=\"/path/to/venv/bin/python\"", option_labels = nothing),
   "matpower_import_auto_profile" => (label = "MATPOWER auto-profile", title = "", attrs = " data-matpower-import-field", input_attrs = "", option_labels = nothing),
   "matpower_import_ratio" => (label = "Transformer ratio convention", title = "", attrs = " data-matpower-import-field", input_attrs = "", option_labels = nothing),
   "matpower_import_shift_sign" => (label = "Phase-shift sign", title = "", attrs = " data-matpower-import-field", input_attrs = " step=\"2\" min=\"-1\" max=\"1\"", option_labels = nothing),
@@ -1140,7 +1139,7 @@ const _WEBUI_ADAPTER_FIELD_PRESENTATION = Dict{String,NamedTuple}(
 # field
 const _WEBUI_ADAPTER_SECTIONS = (
   (adapter = CGMESAdapter(), key = :cgmes, prefix = "cgmes_import.", order = ("cgmes_start_values", "cgmes_require_boundary", "cgmes_infer_base_voltages", "cgmes_hvdc_mode"), extras = ()),
-  (adapter = PowsyblAdapter(), key = :powsybl, prefix = "powsybl_import.", order = ("powsybl_import_hvdc_mode", "powsybl_import_remote_regulation", "powsybl_import_multi_slack", "powsybl_import_slack_ids", "powsybl_import_base_mva", "powsybl_import_python_exe"), extras = ()),
+  (adapter = PowsyblAdapter(), key = :powsybl, prefix = "powsybl_import.", order = ("powsybl_import_hvdc_mode", "powsybl_import_remote_regulation", "powsybl_import_multi_slack", "powsybl_import_slack_ids", "powsybl_import_base_mva"), extras = ()),
   (adapter = MatpowerAdapter(), key = :matpower, prefix = "matpower_import.", order = ("matpower_import_auto_profile", "matpower_import_ratio", "matpower_import_shift_sign", "matpower_import_shift_unit", "matpower_import_bus_shunt_model", "matpower_import_dcline_mode", "matpower_import_pv_voltage_source", "matpower_import_compare_voltage_reference", "transformer_tap_changer_model", "matpower_import_apply_bus_names", "matpower_export_write_solution"), extras = ("matpower_import_auto_profile", "matpower_import_bus_shunt_model", "matpower_import_compare_voltage_reference", "matpower_export_write_solution")),
   (adapter = DTFAdapter(), key = :dtf, prefix = "", order = (), extras = ()),
   (adapter = PGMAdapter(), key = :pgm, prefix = "", order = (), extras = ()),
@@ -1290,7 +1289,7 @@ $(ctx.case_format_notice)<details$(dtf_details_attrs)>
 <p class="field-help">SCF and power-grid-model JSON are read by the same importer; the <code>sparlectra</code> block is optional, so a plain power-grid-model dataset loads as well. <em>Auto</em> already resolves every <code>.json</code> to that reader, so these two entries only matter when the extension does not say it.</p>
 $(_webui_adapter_options_html(:cgmes, profile_values))
 $(_webui_adapter_options_html(:powsybl, profile_values))
-<p class="field-help" data-powsybl-import-field>PowSyBl only: a <code>.powsybl</code> table bundle needs no Python; a <code>.xiidm</code> file is read live through the PythonCall extension when it is loaded, otherwise the run names the bundle script. See the PowSyBl Import help.</p>
+<p class="field-help" data-powsybl-import-field>PowSyBl only: a <code>.xiidm</code> file and a <code>.powsybl</code> table bundle are both read in Julia, no Python is involved. See the PowSyBl Import help.</p>
 <p class="field-help" data-cgmes-start-values-field>CGMES only: <em>Flat start</em> lets the solver earn the solution itself; <em>Imported SV state</em> starts Newton-Raphson from the delivery's own SvVoltage solution (competing start-value machines are forced off). The SV comparison check (<code>sv_compare.csv</code>) runs either way.</p>
 </fieldset>
 </details>

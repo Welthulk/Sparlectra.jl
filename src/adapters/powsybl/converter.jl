@@ -29,8 +29,7 @@ The adapter-scope options of the PowSyBl import, mirroring the
 the slack choice, whether every synchronous component gets its own
 slack, how a remote voltage regulation is mapped (`:hold_local` keeps
 the unit PV at its own bus, `:pq` makes it PQ with `target_q`, `:remote`
-attaches an outer-loop machine voltage control on the regulated bus), and
-the Python executable hint the extension reads.
+attaches an outer-loop machine voltage control on the regulated bus).
 """
 Base.@kwdef struct PowsyblAdapterOptions
   base_mva::Float64 = 100.0
@@ -38,43 +37,15 @@ Base.@kwdef struct PowsyblAdapterOptions
   slack_ids::Vector{String} = String[]
   multi_slack::Bool = true
   remote_regulation::Symbol = :hold_local
-  python_exe::String = ""
 end
 
 include("powsybl_tables.jl")
 include("powsybl_csv.jl")
+include("iidm_reader.jl")
 include("powsybl_report.jl")
 include("powsybl_mapping.jl")
 
 struct PowsyblAdapter <: FormatAdapter end
-
-# The extension on the Python bridge defines methods for these; the core
-# declares the functions so import_net can test hasmethod without naming
-# the extension.
-"""
-    read_powsybl_network(path) -> PowsyblTables
-
-Read an IIDM file live through pypowsybl. Defined by the optional
-extension; without it the function has no method and `import_net` says
-how to produce a table bundle instead.
-"""
-function read_powsybl_network end
-
-"""
-    run_powsybl_reference(path) -> NamedTuple
-
-The OpenLoadFlow reference solution of an IIDM file (`reference_buses`
-table and per-component results). Defined by the optional extension.
-"""
-function run_powsybl_reference end
-
-"""
-    dump_powsybl_bundle(path, outdir) -> String
-
-Write the table bundle of an IIDM file, the way `tools/powsybl_dump.py`
-does. Defined by the optional extension.
-"""
-function dump_powsybl_bundle end
 
 """
     powsybl_adapter_options(cfg::SparlectraConfig) -> PowsyblAdapterOptions
@@ -84,7 +55,7 @@ The adapter options an effective run configuration implies (the
 """
 function powsybl_adapter_options(cfg::SparlectraConfig)::PowsyblAdapterOptions
   pw = cfg.powsybl
-  return PowsyblAdapterOptions(base_mva = pw.base_mva, hvdc_mode = pw.hvdc_mode, slack_ids = copy(pw.slack_ids), multi_slack = pw.multi_slack, remote_regulation = pw.remote_regulation, python_exe = pw.python_exe)
+  return PowsyblAdapterOptions(base_mva = pw.base_mva, hvdc_mode = pw.hvdc_mode, slack_ids = copy(pw.slack_ids), multi_slack = pw.multi_slack, remote_regulation = pw.remote_regulation)
 end
 
 const _POWSYBL_FILE_EXTENSIONS = (".xiidm", ".xml")
@@ -123,15 +94,17 @@ end
 
 options_type(::PowsyblAdapter) = PowsyblAdapterOptions
 
-const POWSYBL_EXTENSION_HINT = "needs the PythonCall extension with pypowsybl installed, or a table bundle. Create the bundle with: python tools/powsybl_dump.py <file> <outdir>"
+"""
+    _powsybl_tables_of(path) -> PowsyblTables
 
-# The tables of a PowSyBl source: the bundle reader for a directory, the
-# extension for a file.
+The tables of a PowSyBl source: a `.powsybl` bundle directory reads
+through `read_powsybl_bundle`, an IIDM file (`.xiidm`, `.xml`) through the
+native reader `read_iidm_tables`, in Julia without Python.
+"""
 function _powsybl_tables_of(path::AbstractString)::PowsyblTables
   _powsybl_is_bundle_dir(path) && return read_powsybl_bundle(String(path))
   isdir(path) && throw(ArgumentError("PowSyBl source $(basename(String(path))) is a directory without the .powsybl suffix or a manifest.json of the bundle format"))
-  hasmethod(read_powsybl_network, Tuple{String}) || throw(ArgumentError("PowSyBl file $(basename(String(path))) $(POWSYBL_EXTENSION_HINT)"))
-  return read_powsybl_network(String(path))
+  return read_iidm_tables(String(path))
 end
 
 """
@@ -151,9 +124,8 @@ end
 
 The PowSyBl importer of the adapter contract: a `.powsybl` bundle
 directory reads through `read_powsybl_bundle`, an IIDM file through the
-extension's `read_powsybl_network`; both build through
-`build_net_from_powsybl`. Without the extension an IIDM file fails with
-the instruction to create a bundle.
+native `read_iidm_tables`; both build through `build_net_from_powsybl`.
+No Python is involved.
 """
 function import_net(::PowsyblAdapter, path::AbstractString, opts::PowsyblAdapterOptions; config::SparlectraConfig = active_sparlectra_config())::Net
   net, _, _ = _import_powsybl(path, opts)

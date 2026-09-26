@@ -2,66 +2,94 @@
 
 IIDM is the native network format of [PowSyBl](https://www.powsybl.org),
 the open-source power system framework of the LF Energy foundation; its
-XML variant XIIDM (`.xiidm`, `.xiidm.bz2`, `.xml`) carries node-breaker
-topology, tap changers, HVDC links and limits. Sparlectra does not parse
-IIDM: pypowsybl loads the file, resolves the topology and the tap
-positions, and hands over plain tables; Sparlectra builds its network
-from those tables and reproduces the OpenLoadFlow solution of the same
-network.
+XML variant XIIDM (`.xiidm`, `.xml`) carries node-breaker topology, tap
+changers, HVDC links and limits. Sparlectra reads the file itself, in
+Julia, without Python: `import_case`, `run_sparlectra` and the Web UI take
+a `.xiidm` file as they take a MATPOWER case, and the import reproduces the
+OpenLoadFlow solution of the same network.
 
-## Two entry points
+```julia
+using Sparlectra
+res = run_sparlectra(casefile = "network.xiidm")
+```
+
+## What the reader resolves
+
+The reader (`read_iidm_tables`) turns the file into the same tables that
+pypowsybl's getters deliver, so one builder serves both sources:
+
+- the bus-breaker and bus views of a node-breaker substation: nodes merge
+  through internal connections and closed switches, a retained switch
+  stays in the bus-breaker view (as a link of the built network), a bus
+  is valid on powsybl's rule (a busbar section with a feeder, or a branch
+  with two feeders), and the buses are named `<voltage level>_<lowest
+  node>` as powsybl names them;
+- the connected and synchronous components, numbered by size;
+- the current step of every ratio and phase tap changer: `rho`, `alpha`
+  and the step corrections of `r`, `x`, `g`, `b`, on two- and
+  three-winding transformers;
+- the reactive limits of a generator or VSC station at its active
+  setpoint, interpolated on a capability curve as powsybl interpolates;
+- the operational limits per side and limits group, permanent and
+  temporary;
+- dangling and tie lines, HVDC lines with their converter stations,
+  static var compensators, linear and non-linear shunts.
+
+Extensions, areas and properties are ignored. Two constructs are refused
+with a message naming them: a compressed file (`.xiidm.bz2`, `.gz`: unpack
+it first) and the tie-line form of IIDM versions before 1.10 (the two
+half lines inline). The bus state written in the file seeds the start
+voltages, unless a tap changer or shunt was solved at another position
+than the one the file carries (`solvedTapPosition`, `solvedSectionCount`);
+the import then starts flat and says so in the report.
+
+### IIDM versions
+
+The reader takes the IIDM XML schema versions 1.0 to 1.17 (the namespace
+`http://www.powsybl.org/schema/iidm/1_<n>`). It is verified against files
+of version 1.17, which is what pypowsybl 1.16 writes; for older files it
+knows the element forms that changed on the way: the linear shunt model
+on the element itself (before 1.3), `danglingLine` with `ucteXnodeCode`
+(before 1.17, `boundaryLine` with `pairingKey` since), tie lines by
+`danglingLineId1`/`2` (1.10 to 1.16) and `boundaryLineId1`/`2` (1.17),
+`currentLimits1`/`2` on the element (before 1.12) next to the limits
+groups, a static var compensator without the `regulating` attribute
+(mode `OFF` then means not regulating), `targetV` on a ratio tap changer
+(before 1.12) next to `regulationValue`. A construct of a newer schema
+that the reader does not know is ignored, never guessed; a construct it
+cannot map is refused with its name. Compressed files are not read.
+
+## Two sources, one builder
 
 | Source | What runs | Needs |
 |---|---|---|
-| A **table bundle**, a directory `<case>.powsybl` with `manifest.json` and one CSV per pypowsybl table | `read_powsybl_bundle`, then `build_net_from_powsybl` | nothing but Sparlectra |
-| An **IIDM file** read live | the PythonCall extension's `read_powsybl_network`, then the same builder | PythonCall and pypowsybl in the session |
+| An **IIDM file** (`.xiidm`, `.xml`) | `read_iidm_tables`, then `build_net_from_powsybl` | nothing but Sparlectra |
+| A **table bundle**, a directory `<case>.powsybl` with `manifest.json` and one CSV per pypowsybl table | `read_powsybl_bundle`, then the same builder | nothing but Sparlectra |
 
-The bundle is the primary path: fixtures, examples, tests and the
-`run_sparlectra` case picker work on bundles. `import_case` and the Web UI
-detect both (a directory whose name ends in `.powsybl` with the bundle
-manifest, a file whose first bytes carry the IIDM namespace); a file
-without the extension loaded fails with the instruction to create a
-bundle.
+`import_case` and the Web UI detect both (a file whose first bytes carry
+the IIDM namespace, a directory whose name ends in `.powsybl` with the
+bundle manifest). The bundle is the reference form: pypowsybl writes it
+with OpenLoadFlow's solution in the state columns and `reference_buses.csv`
+next to it, which is what the test suite compares against. The five test
+fixtures ship as bundles with their `.xiidm` files, and the reader is
+checked against them column by column.
 
-## Creating a bundle
+## Reference bundles (optional)
 
-```sh
-python3 -m venv ~/.venv-powsybl
-~/.venv-powsybl/bin/pip install pypowsybl pandas
-~/.venv-powsybl/bin/python tools/powsybl_dump.py network.xiidm cases/network.powsybl --case network
-~/.venv-powsybl/bin/python tools/powsybl_dump.py builtin:ieee14 cases/ieee14.powsybl
-```
-
-`tools/powsybl_dump.py` writes every table with all attributes, runs
-OpenLoadFlow for the reference solution (default parameters, except a
-slack mismatch bound of 1e-4 MW and a Newton-Raphson tolerance of 1e-9
-per equation so that a 1e-6 pu comparison has a converged reference),
-writes `reference_buses.csv` and the manifest. `builtin:<factory>` names a
-`pypowsybl.network.create_<factory>` example. CSV rules: comma separated,
-strings always quoted, floats in full precision with `NaN` and `Inf` as
-literals, booleans `true`/`false`, a missing integer as `-1`.
-
-## Reading an IIDM file live
-
-With `PythonCall` in the environment the extension loads on its own and
-`import_case`, `run_sparlectra` and the Web UI accept `.xiidm` files.
-Point PythonCall at a Python that has pypowsybl before Julia starts,
-otherwise it installs its own through CondaPkg:
-
-```sh
-export JULIA_CONDAPKG_BACKEND=Null
-export JULIA_PYTHONCALL_EXE=~/.venv-powsybl/bin/python
-julia --project=. -e 'using Pkg; Pkg.add("PythonCall")'
-```
-
-```julia
-using Sparlectra, PythonCall
-tables = Sparlectra.read_powsybl_network("network.xiidm")   # OpenLoadFlow runs, tables with all attributes
-Sparlectra.dump_powsybl_bundle("network.xiidm", "cases/network.powsybl")  # the same bundle the script writes
-```
-
-The live read runs the reference load flow with the tolerances of the
-dump script, so its tables equal a bundle of the same file cell by cell.
+Nothing here is needed to import a network. A table bundle is reference
+material: pypowsybl writes every table with all attributes, runs
+OpenLoadFlow (default parameters, except a slack mismatch bound of 1e-4
+MW and a Newton-Raphson tolerance of 1e-9 per equation so that a 1e-6 pu
+comparison has a converged reference) and writes `reference_buses.csv`
+and the manifest next to the CSV files. That is how the five shipped
+bundles were produced (pypowsybl 1.16.1), and how a comparison of
+Sparlectra against OpenLoadFlow on a network of your own is set up: the
+tables of the bundle carry OpenLoadFlow's solution in their state
+columns, the reader's tables carry the file's state, everything else is
+equal. CSV rules of a bundle: comma separated, strings always quoted,
+floats in full precision with `NaN` and `Inf` as literals, booleans
+`true`/`false`, a missing integer as `-1`; `read_powsybl_bundle` and
+`write_powsybl_bundle` read and write the form.
 
 ## Bus model
 
@@ -77,6 +105,10 @@ meet at `<pairing_key>_xnode`.
 
 ## Example files
 
+Three of the bundles also ship under `data/powsybl` (`ieee14`,
+`four_substations`, `micro_grid_be`), each with its `.xiidm` file, and
+appear in the Web UI case selector.
+
 | case | source | what it covers |
 |---|---|---|
 | `ieee14` | `pypowsybl.network.create_ieee14` | the IEEE 14-bus case: Y-bus identity with MATPOWER `case14` on every entry, including the two branches PowSyBl imports as lines between voltage levels (their one-sided shunts become bus shunts, see Conventions) |
@@ -86,9 +118,11 @@ meet at `<pairing_key>_xnode`.
 | `eurostag_tie_lines` | `create_eurostag_tutorial_example1_with_tie_lines_and_areas` | tie lines built from paired dangling lines |
 
 Each fixture directory under `test/fixtures/powsybl/` holds the bundle,
-the `.xiidm` file pypowsybl wrote (the example input for the live path)
-and `reference_buses.csv`; `tools/gen_powsybl_fixtures.sh` regenerates
-them.
+the `.xiidm` file pypowsybl wrote and `reference_buses.csv`;
+the bundles were written with pypowsybl 1.16.1. The test suite reads
+every `.xiidm` with the native reader and requires its tables to equal
+the bundle's in every column except the state columns, and the power flow
+from the `.xiidm` to land in the same bands as from the bundle.
 
 ## Conventions
 
@@ -100,16 +134,14 @@ Settled against the OpenLoadFlow voltages of the example files:
   `ratio = vn_to / (rho * vn_from)`; the phase shift is `-alpha`. The
   `_at_current_tap` impedances are used, no tap tables reach the network.
 - **Magnetizing admittance.** The whole `g`, `b` of a transformer sits on
-  the bus of side 1, behind the ideal transformer, as OpenLoadFlow places
-  it; three-winding legs alike. Sparlectra's branch model carries one
-  symmetric charging admittance, so this share, the one-sided excess of a
-  line whose `b1` and `b2` differ, and the network-side admittance of a
-  dangling line become **bus shunts** (`Sh_<bus>` entries next to the real
-  shunt compensators). They are not tied to their branch: a branch outage
-  in the contingency engine leaves them on the bus, an SCF or MATPOWER
-  export writes them as bus shunts, and a state estimation that estimates
-  shunts treats them as compensation. An outage study on an imported
-  network should account for that; a branch-bound shunt is planned.
+  side 1, behind the ideal transformer, as OpenLoadFlow places it; three-
+  winding legs alike. The branch carries it as its from-terminal arm
+  (`g_from_pu`, `b_from_pu`), a line keeps `g1`, `b1` and `g2`, `b2` on
+  their own terminals, and a dangling line its admittance on the network
+  terminal; no bus shunt is created for any of them, so the shunt list of
+  an imported network holds the shunt compensators only, an outage takes
+  the admittance away with its branch, and the SCF export keeps the split
+  (see [Branch model](branchmodel.md)).
 - **Lines between voltage levels.** PowSyBl keeps a plain conductor and
   OpenLoadFlow's default line model is exactly that; Sparlectra builds it
   as the ratio branch `vn_to / vn_from` with the impedance on the to-side
@@ -127,9 +159,15 @@ Settled against the OpenLoadFlow voltages of the example files:
   generators with a nonzero target proportionally to `max_p`; the importer
   carries that rule as participation factors, so
   `power_flow.distributed_slack.enabled = true` with `p_mode = imported`
-  reproduces OpenLoadFlow's balance. Without it the slack generator of
-  each component (the regulating unit with the largest `max_p`, or a
-  `slack_ids` override) absorbs the whole mismatch.
+  reproduces OpenLoadFlow's balance; in that mode a unit takes part
+  wherever it sits, also as PQ (a non-regulating generator, or a unit the
+  `remote` regulation mode runs as PQ). Without it the slack generator of
+  each component absorbs the whole mismatch.
+- **Slack choice.** Per synchronous component the regulating unit with
+  the largest `max_p`, a unit whose setpoint applies to its own bus before
+  one that regulates a remote bus (the slack bus keeps its start voltage,
+  so a remotely regulating slack would leave its own bus wherever the
+  file's state put it); `slack_ids` overrides the choice.
 - **Reactive limits.** OpenLoadFlow switches a unit at its limit without
   hysteresis; Sparlectra's `power_flow.qlimits.hysteresis_pu` (default
   0.01) keeps a unit PV inside the band. Set it small to match
@@ -152,7 +190,6 @@ The `powsybl_import` scope (canonical section `powsybl`, alias
 | `powsybl_import.slack_ids` | `[]` | Generator ids that override the slack choice of their synchronous component; a YAML list or one string with `;` between the ids. |
 | `powsybl_import.multi_slack` | `true` | One slack per synchronous component; `false` keeps only the component of the first slack and reports the others. |
 | `powsybl_import.remote_regulation` | `hold_local` | `hold_local`, `pq` (PQ with `target_q`) or `remote` (outer-loop machine voltage control on the regulated bus). |
-| `powsybl_import.python_exe` | `""` | Python executable for the PythonCall extension; empty means the PythonCall default. Read only when an IIDM file is imported live. |
 
 The import report (counts per element type, every skipped element with
 its reason, the slack decision per component, notices) is printed by
@@ -163,5 +200,5 @@ its reason, the slack decision per component, notices) is printed by
 
 Snapshots with missing injections and injection patching, time-series
 batches, tap and voltage controllers from IIDM regulation data (the step
-tables are dumped, not used), IIDM export, an IIDM XML reader in Julia, a
-Web UI directory picker for bundles (a bundle is selected by its path).
+tables are read, not used), IIDM export, compressed IIDM files, a Web UI
+directory picker for bundles (a bundle is selected by its path).

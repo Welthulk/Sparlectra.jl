@@ -246,6 +246,26 @@ function _bus_control_flag_cache(net::Net)::Dict{Int,BusControlFlags}
   return cache
 end
 
+# Short label of the typed tap models on a winding for the result tables:
+# `sym`, `asym90` (with the winding angle), `tab`, `ratio`, joined by `+`
+# when both a ratio and a phase model are present.
+function _tap_model_kind_label(w::PowerTransformerWinding)::String
+  parts = String[]
+  w.taps === nothing || push!(parts, "ratio")
+  if w.phase_taps !== nothing
+    m = w.phase_taps
+    if m.kind === :asymmetrical
+      psi = something(m.winding_connection_angle_deg, 0.0)
+      push!(parts, string("asym", isinteger(psi) ? string(Int(psi)) : string(psi)))
+    elseif m.kind === :symmetrical
+      push!(parts, "sym")
+    else
+      push!(parts, "tab")
+    end
+  end
+  return isempty(parts) ? "-" : join(parts, "+")
+end
+
 @inline function _control_label(flags::BusControlFlags)::String
   parts = String[]
   flags.has_qu && push!(parts, "Q(U)")
@@ -658,6 +678,10 @@ function formatBranchResults(net::Net; max_rows::Union{Nothing,Int} = nothing)
     end
     ctrl = get(ctrl_by_branch, br.branchIdx, nothing)
     ctrl_type = isnothing(ctrl) ? "-" : String(ctrl.control_type)
+    # a transformer driven by a typed tap model names the kind (0.20.0)
+    if br.taps_derived && br.tap_winding !== nothing
+      ctrl_type = string(ctrl_type == "-" ? "model" : ctrl_type, ":", _tap_model_kind_label(br.tap_winding))
+    end
     p_target = isnothing(ctrl) || ismissing(ctrl.p_target_mw) ? "-" : @sprintf("%.3f", ctrl.p_target_mw)
     tap_pos = "-"
     if !isnothing(ctrl)

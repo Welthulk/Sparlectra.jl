@@ -1,3 +1,27 @@
+# Version 0.20.0 - 2026-09-27
+
+Asymmetric branch shunts, autonomous tap-changer models, PowSyBl IIDM files read in Julia.
+
+## Added
+
+- Every branch carries its charging admittance per terminal; importers keep a transformer's magnetizing admittance on its own end instead of a bus shunt. See [Branch model](branchmodel.md).
+- A typed tap-changer model on a winding drives its branch by itself; controllers move its step, the state estimator fixes on its steps.
+- The Sparlectra Case Format persists the shunt split and the typed models (`branch_shunt_split`, `tap_changer_models`). See [SCF](scf.md).
+- PowSyBl IIDM files (`.xiidm`) are read in Julia, no Python and no table bundle; a file state solved at other tap positions is dropped and noted. See [PowSyBl Import](powsybl_import.md).
+
+## Changed
+
+- The MATPOWER export writes the symmetric part of an asymmetric branch shunt on the branch and the excess as a bus shunt a reimport keeps tied to its branch.
+- Distributed slack in mode `imported` lets a unit with a participation factor share the mismatch also at a PQ bus (CGMES `normalPF`, MATPOWER `APF`, the OpenLoadFlow share).
+
+## Removed
+
+- The PythonCall extension (`read_powsybl_network`, `dump_powsybl_bundle`) and the key `powsybl_import.python_exe`; the IIDM reader replaces them.
+
+## Breaking
+
+- `BranchModel` has four terminal-shunt fields more; build it with the keyword constructor, the positional seven-argument form is gone.
+
 # Version 0.19.0 - 2026-09-27
 
 PowSyBl IIDM networks.

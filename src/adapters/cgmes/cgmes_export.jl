@@ -404,7 +404,10 @@ function _collectTrafoRecs(net::Sparlectra.Net, idx2busName::Dict{Int,String}, c
     pt3Key = cgmesKeyPowerTransformer3W(side_buses[1], side_buses[2], side_buses[3], k3)
     ends = NamedTuple[]
     for (e, br) in enumerate(lbrs)
-      r, x, b, g = Sparlectra.fromPU_RXBG(r_pu = br.r_pu, x_pu = br.x_pu, g_pu = br.g_pu, b_pu = br.b_pu, v_kv = vns[e], baseMVA = net.baseMVA)
+      # the physical end sits on the leg's to side, so the end admittance is
+      # the to arm; a star-side arm (none from the CGMES importer) is folded
+      # into the end value as a total
+      r, x, b, g = Sparlectra.fromPU_RXBG(r_pu = br.r_pu, x_pu = br.x_pu, g_pu = br.g_from_pu + br.g_to_pu, b_pu = br.b_from_pu + br.b_to_pu, v_kv = vns[e], baseMVA = net.baseMVA)
       shift = _liveShift(br)
       push!(
         ends,
@@ -446,7 +449,30 @@ function _collectTrafoRecs(net::Sparlectra.Net, idx2busName::Dict{Int,String}, c
     # construction values — a tap-controller run must export its final state
     eff_ratio = _liveRatio(br)
     shift = _liveShift(br)
-    r, x, b, g = Sparlectra.fromPU_RXBG(r_pu = br.r_pu, x_pu = br.x_pu, g_pu = br.g_pu, b_pu = br.b_pu, v_kv = vn2, baseMVA = net.baseMVA)
+    # a typed phase model in the CGMES regulating-vector convention exports
+    # as its own class with its step (0.20.0, D8: :tabular as
+    # PhaseTapChangerTabular, a linear origin is not reconstructed); ratedU1
+    # then carries the NEUTRAL ratio, the importer applies the model on top.
+    # A model in the from-side reciprocal convention (DTF, hand-built) has
+    # no CGMES class with that sign, so it keeps the single-step linear
+    # changer that carries the solved shift exactly.
+    ptc_model = nothing
+    if br.taps_derived && br.tap_winding !== nothing && br.tap_winding.phase_taps !== nothing
+      w = br.tap_winding
+      pm = w.phase_taps
+      if pm.convention === :direct_regulating_vector && (w.shift_degree === nothing || w.shift_degree == 0.0)
+        ptc_model = pm
+        eff_ratio = w.ratio === nothing ? 1.0 : w.ratio
+      end
+    end
+    r, x, _, _ = Sparlectra.fromPU_RXBG(r_pu = br.r_pu, x_pu = br.x_pu, g_pu = br.g_pu, b_pu = br.b_pu, v_kv = vn2, baseMVA = net.baseMVA)
+    # each terminal arm to its own PowerTransformerEnd (0.20.0): the to arm
+    # is end 2 on the to-side base as it is; the from arm sits behind the
+    # ratio on the to-side base and is referred to the end-1 base with
+    # (ratedU2 / ratedU1)^2, the inverse of the importer's referral, so the
+    # round trip keeps each end's magnetizing admittance where it was
+    _, _, b_to, g_to = Sparlectra.fromPU_RXBG(r_pu = 0.0, x_pu = 0.0, g_pu = br.g_to_pu, b_pu = br.b_to_pu, v_kv = vn2, baseMVA = net.baseMVA)
+    _, _, b_from_tobase, g_from_tobase = Sparlectra.fromPU_RXBG(r_pu = 0.0, x_pu = 0.0, g_pu = br.g_from_pu, b_pu = br.b_from_pu, v_kv = vn2, baseMVA = net.baseMVA)
     k = cgmesNextParallelIndex!(pair_counter, busA, busB)
     ptKey = cgmesKeyPowerTransformer(busA, busB, k)
     ratedS = br.sn_MVA !== nothing ? br.sn_MVA : tf.side1.ratedS
@@ -474,7 +500,9 @@ function _collectTrafoRecs(net::Sparlectra.Net, idx2busName::Dict{Int,String}, c
         # phase shift travels as a single-step linear phase tap changer on
         # end 1 (step 1, neutral 0, increment = shift) — the importer's end-1
         # tap application adds it back unnegated
-        ptcId = shift == 0.0 ? nothing : claim(string(ptKey, "|PTC")),
+        ptcId = (shift == 0.0 && ptc_model === nothing) ? nothing : claim(string(ptKey, "|PTC")),
+        ptc_model = ptc_model,
+        ptc_table_id = ptc_model !== nothing && ptc_model.kind === :tabular ? claim(string(ptKey, "|PTCT")) : nothing,
         angle = shift,
         rtc = rtc,
         fromIdx = Int(br.fromBus),
@@ -485,8 +513,10 @@ function _collectTrafoRecs(net::Sparlectra.Net, idx2busName::Dict{Int,String}, c
         ratedU2 = vn2,
         r = r,
         x = x,
-        g = g,
-        b = b,
+        g1 = g_from_tobase * (vn2 / ratedU1)^2,
+        b1 = b_from_tobase * (vn2 / ratedU1)^2,
+        g2 = g_to,
+        b2 = b_to,
         ratedS = ratedS,
         name = name,
         connected = br.status == 1,
@@ -617,6 +647,55 @@ function _writeLinearPtc(io::IO, ptcId::AbstractString, name::AbstractString, en
   println(io, "  </cim:PhaseTapChangerLinear>")
 end
 
+# The CGMES class of a phase tap changer record: the typed model's class
+# through the kind table, the single-step linear changer otherwise.
+function _ptcClassName(model)::String
+  model === nothing && return "PhaseTapChangerLinear"
+  for row in Sparlectra.TAP_CHANGER_KIND_TABLE
+    (row.source === :cgmes && row.kind === model.kind && row.name != "PhaseTapChangerLinear") && return row.name
+  end
+  return "PhaseTapChangerTabular"
+end
+
+# A typed phase tap changer (0.20.0): symmetrical and asymmetrical with
+# their formula parameters (voltageStepIncrement back in percent,
+# windingConnectionAngle), tabular with its table and points; the step
+# position lives in SSH like the linear changer's.
+function _writeTypedPtc(io::IO, ptcId::AbstractString, name::AbstractString, endId::AbstractString, model, tableId)
+  cls = _ptcClassName(model)
+  println(io, "  <cim:$(cls) rdf:ID=\"_$(ptcId)\">")
+  println(io, "    <cim:IdentifiedObject.name>$(xmlEscape(name))_PTC</cim:IdentifiedObject.name>")
+  println(io, "    <cim:PhaseTapChanger.TransformerEnd rdf:resource=\"#_$(endId)\"/>")
+  println(io, "    <cim:TapChanger.lowStep>$(model.lowStep)</cim:TapChanger.lowStep>")
+  println(io, "    <cim:TapChanger.highStep>$(model.highStep)</cim:TapChanger.highStep>")
+  println(io, "    <cim:TapChanger.neutralStep>$(model.neutralStep)</cim:TapChanger.neutralStep>")
+  println(io, "    <cim:TapChanger.normalStep>$(model.step)</cim:TapChanger.normalStep>")
+  if model.kind === :tabular
+    println(io, "    <cim:PhaseTapChangerTabular.PhaseTapChangerTable rdf:resource=\"#_$(tableId)\"/>")
+    println(io, "  </cim:$(cls)>")
+    println(io, "  <cim:PhaseTapChangerTable rdf:ID=\"_$(tableId)\">")
+    println(io, "    <cim:IdentifiedObject.name>$(xmlEscape(name))_PTCT</cim:IdentifiedObject.name>")
+    println(io, "  </cim:PhaseTapChangerTable>")
+    for (k, pt) in enumerate(model.table)
+      println(io, "  <cim:PhaseTapChangerTablePoint rdf:ID=\"_$(tableId)_$(k)\">")
+      println(io, "    <cim:TapChangerTablePoint.step>$(pt.step)</cim:TapChangerTablePoint.step>")
+      println(io, "    <cim:TapChangerTablePoint.ratio>$(fmtVal(pt.ratio))</cim:TapChangerTablePoint.ratio>")
+      println(io, "    <cim:PhaseTapChangerTablePoint.angle>$(fmtVal(pt.angle_deg))</cim:PhaseTapChangerTablePoint.angle>")
+      println(io, "    <cim:PhaseTapChangerTablePoint.PhaseTapChangerTable rdf:resource=\"#_$(tableId)\"/>")
+      println(io, "  </cim:PhaseTapChangerTablePoint>")
+    end
+    return nothing
+  end
+  model.voltage_step_increment === nothing || println(io, "    <cim:PhaseTapChangerNonLinear.voltageStepIncrement>$(fmtVal(100.0 * model.voltage_step_increment))</cim:PhaseTapChangerNonLinear.voltageStepIncrement>")
+  model.x_min === nothing || println(io, "    <cim:PhaseTapChangerNonLinear.xMin>$(fmtVal(model.x_min))</cim:PhaseTapChangerNonLinear.xMin>")
+  model.x_max === nothing || println(io, "    <cim:PhaseTapChangerNonLinear.xMax>$(fmtVal(model.x_max))</cim:PhaseTapChangerNonLinear.xMax>")
+  if model.kind === :asymmetrical
+    println(io, "    <cim:PhaseTapChangerAsymmetrical.windingConnectionAngle>$(fmtVal(something(model.winding_connection_angle_deg, 90.0)))</cim:PhaseTapChangerAsymmetrical.windingConnectionAngle>")
+  end
+  println(io, "  </cim:$(cls)>")
+  return nothing
+end
+
 # Always deliver line parameters in physical units (Ohm/S). PI-model lines
 # carry p.u. values and are converted back.
 function lineParamsOhm(net::Sparlectra.Net, line)
@@ -735,8 +814,8 @@ function writeEQFile(net::Sparlectra.Net, ctx::CGMESContext, path::AbstractStrin
         rec.ratedS === nothing || println(io, "    <cim:PowerTransformerEnd.ratedS>$(fmtVal(rec.ratedS))</cim:PowerTransformerEnd.ratedS>")
         println(io, "    <cim:PowerTransformerEnd.r>$(fmtVal(e == 1 ? 0.0 : rec.r))</cim:PowerTransformerEnd.r>")
         println(io, "    <cim:PowerTransformerEnd.x>$(fmtVal(e == 1 ? 0.0 : rec.x))</cim:PowerTransformerEnd.x>")
-        println(io, "    <cim:PowerTransformerEnd.g>$(fmtVal(e == 1 ? 0.0 : rec.g))</cim:PowerTransformerEnd.g>")
-        println(io, "    <cim:PowerTransformerEnd.b>$(fmtVal(e == 1 ? 0.0 : rec.b))</cim:PowerTransformerEnd.b>")
+        println(io, "    <cim:PowerTransformerEnd.g>$(fmtVal(e == 1 ? rec.g1 : rec.g2))</cim:PowerTransformerEnd.g>")
+        println(io, "    <cim:PowerTransformerEnd.b>$(fmtVal(e == 1 ? rec.b1 : rec.b2))</cim:PowerTransformerEnd.b>")
         println(io, "  </cim:PowerTransformerEnd>")
         println(io, "  <cim:Terminal rdf:ID=\"_$(rec.terminalIds[e])\">")
         println(io, "    <cim:IdentifiedObject.name>$(xmlEscape(rec.name))_T$(e)</cim:IdentifiedObject.name>")
@@ -745,7 +824,11 @@ function writeEQFile(net::Sparlectra.Net, ctx::CGMESContext, path::AbstractStrin
         println(io, "  </cim:Terminal>")
       end
       if rec.ptcId !== nothing
-        _writeLinearPtc(io, rec.ptcId, rec.name, rec.endIds[1], rec.angle)
+        if rec.ptc_model === nothing
+          _writeLinearPtc(io, rec.ptcId, rec.name, rec.endIds[1], rec.angle)
+        else
+          _writeTypedPtc(io, rec.ptcId, rec.name, rec.endIds[1], rec.ptc_model, rec.ptc_table_id)
+        end
       end
       if rec.rtc !== nothing
         rt = rec.rtc
@@ -1116,9 +1199,10 @@ function writeSSHFile(ctx::CGMESContext, path::AbstractString, created::Dates.Da
 
     for rec in ctx.trafoRecs
       if rec.ptcId !== nothing
-        println(io, "  <cim:PhaseTapChangerLinear rdf:about=\"#_$(rec.ptcId)\">")
-        println(io, "    <cim:TapChanger.step>1</cim:TapChanger.step>")
-        println(io, "  </cim:PhaseTapChangerLinear>")
+        cls = _ptcClassName(rec.ptc_model)
+        println(io, "  <cim:$(cls) rdf:about=\"#_$(rec.ptcId)\">")
+        println(io, "    <cim:TapChanger.step>$(rec.ptc_model === nothing ? 1 : rec.ptc_model.step)</cim:TapChanger.step>")
+        println(io, "  </cim:$(cls)>")
       end
       if rec.rtc !== nothing
         member = any(cr -> String(rec.rtc.rtcId) in cr.memberRtcIds, ctx.tapCtrlRecs)
@@ -1242,11 +1326,13 @@ function writeSVFile(net::Sparlectra.Net, ctx::CGMESContext, path::AbstractStrin
     # the same expressions compareWithSV evaluates on the read side
     branch_flows = function (br)
       ys = inv(br.r_pu + im * br.x_pu)
-      ysh2 = (br.g_pu + im * br.b_pu) / 2
+      # per-terminal shunt arms (0.20.0), the from arm behind the tap
+      ysh_from = Sparlectra._branch_y0_from(br)
+      ysh_to = Sparlectra._branch_y0_to(br)
       tr = br.ratio == 0.0 ? 1.0 + 0im : br.tap_ratio * cis(deg2rad(br.phase_shift_deg))
       Vf, Vt = V[br.fromBus], V[br.toBus]
-      Sfrom = Vf * conj(((ys + ysh2) / abs2(tr)) * Vf - (ys / conj(tr)) * Vt) * net.baseMVA
-      Sto = Vt * conj((ys + ysh2) * Vt - (ys / tr) * Vf) * net.baseMVA
+      Sfrom = Vf * conj(((ys + ysh_from) / abs2(tr)) * Vf - (ys / conj(tr)) * Vt) * net.baseMVA
+      Sto = Vt * conj((ys + ysh_to) * Vt - (ys / tr) * Vf) * net.baseMVA
       return Sfrom, Sto
     end
     line_branches = [br for br in net.branchVec if occursin("_ACL_", br.comp.cName)]

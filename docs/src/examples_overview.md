@@ -60,6 +60,7 @@ summary at the end): `run_powerflow_suite.jl`, `run_others_suite.jl`,
 | `exp_facts_limit_modes.jl` | FACTS limit characteristics side by side ([theory](facts.md)): constant-Q box vs STATCOM `V*S_max` vs SVC `V^2*B`, plus SSSC injected-voltage window vs TCSC fixed window | others |
 | `exp_facts_base_impedance.jl` | equipment impedance vs FACTS operating point ([theory](facts.md)): short circuit and MATPOWER export read the physical base after a full-UPFC run | others |
 | `exp_auto_slack_selection.jl` | Automatic slack selection (`power_flow.auto_slack` / `ensureSlack!`) when a case registers no voltage reference | others |
+| `exp_powsybl_iidm_import.jl` | PowSyBl IIDM file read in Julia (`read_iidm_tables`, no Python): the shipped `ieee14.xiidm` and `micro_grid_be.xiidm` imported, solved and compared with the OpenLoadFlow reference next to them ([theory](powsybl_import.md)) | others |
 | `exp_ac_rescue_dc_fallback.jl` | Non-convergence handling: `power_flow.rescue` strategy ladder plus `power_flow.dc.fallback` standalone-DC result | others |
 | `exp_cgmes_import_analysis.jl` | `analyzeCGMES` report naming the missing declared dependency of an incomplete CGMES delivery | others |
 | `exp_cgmes_infer_base_voltages.jl` | `cgmes_import.infer_base_voltages`: reconstruct missing nominal voltages from the SV state and solve | others |

@@ -24,7 +24,7 @@
 # Rev. 1 component subset; anything else in `data` is rejected by name
 const _SCF_KNOWN_DATA_COMPONENTS = ("node", "line", "generic_branch", "link", "source", "sym_load", "sym_gen", "shunt", "voltage_regulator", "sym_voltage_sensor", "sym_power_sensor", "sym_current_sensor", "fault")
 const _SCF_KNOWN_ROOT_KEYS = ("version", "type", "is_batch", "attributes", "data", "sparlectra")
-const _SCF_KNOWN_SPARLECTRA_KEYS = ("format_version", "meta", "roles", "components", "extra", "measurements", "start_state", "contingencies", "short_circuit", "config", "transformer_types", "scenarios")
+const _SCF_KNOWN_SPARLECTRA_KEYS = ("format_version", "meta", "roles", "components", "extra", "measurements", "start_state", "contingencies", "short_circuit", "config", "transformer_types", "branch_shunt_split", "tap_changer_models", "scenarios")
 # what `sparlectra.measurements` may carry besides the rows
 const _SCF_KNOWN_MEASUREMENT_KEYS = ("rows", "provenance")
 const _SCF_KNOWN_COMPONENT_KINDS = ("tap_changer", "transformer3w", "sc_source", "controllers", "shunt_state", "matpower_dcline", "for001_contingency")
@@ -466,6 +466,7 @@ function _scf_net_from_case(case::SCFCase)::Net
     end
   end
   sort!(branch_rows; by = r -> (r.order, r.id))
+  trafo_by_branch_idx = Dict{Int,PowerTransformer}()
   for entry in branch_rows
     row = entry.row
     id = entry.id
@@ -507,7 +508,8 @@ function _scf_net_from_case(case::SCFCase)::Net
         from_status = something(row.from_status, 1),
         to_status = something(row.to_status, 1),
       )
-      row.g1 === nothing || (net.branchVec[end].g_pu = row.g1 * zb)
+      row.g1 === nothing || set_branch_shunt_total!(net.branchVec[end]; g_pu = row.g1 * zb, b_pu = net.branchVec[end].b_pu)
+      trafo_by_branch_idx[length(net.branchVec)] = net.trafos[end]
     end
     branch_index_by_id[id] = length(net.branchVec)
     # nameplate data the PGM dataset cannot express: an UNLIMITED rating (no
@@ -543,9 +545,13 @@ function _scf_net_from_case(case::SCFCase)::Net
     if haskey(be_all, "dtf_branch")
       net.matpower_branch_metadata[length(net.branchVec)] = scf_decode_value(be_all["dtf_branch"])
     end
-    # the typed phase-tap model of a DTF or CGMES winding
+    # the typed phase-tap model under extra: the 0.19 spelling, read for one
+    # release; 0.20.0 writes sparlectra.tap_changer_models instead
     if haskey(be_all, "phase_taps") && entry.kind == "generic_branch" && !isempty(net.trafos)
+      @warn "SCF: extra.phase_taps is deprecated since 0.20.0; the typed model is read, a re-export writes sparlectra.tap_changer_models" branch = id maxlog = 1
       net.trafos[end].side1.phase_taps = scf_decode_value(be_all["phase_taps"])
+      note = resolve_branch_taps!(net.branchVec[end], net.trafos[end].side1)
+      note === nothing || push!(net.tapModelNotices, note)
     end
   end
   for row in sort(data.link; by = r -> r.id)
@@ -613,6 +619,34 @@ function _scf_net_from_case(case::SCFCase)::Net
     # the nameplate reads psi = 0 as "not given" and substitutes the 90 deg
     # symmetric-PST convention; a file that states 0 means 0
     psi_given === nothing || (br.tap_est_alpha_deg = psi_given)
+  end
+
+  # --- asymmetric branch shunt split (0.20.0) ---------------------------
+  # a row overrides the symmetric half of that branch; the totals stay the
+  # sums, which equal the data section's totals up to the writer's rounding
+  for (sid, d) in spar.branch_shunt_split
+    bid = tryparse(Int, String(sid))
+    bid === nothing && throw(ArgumentError("SCF: branch_shunt_split keys are branch ids, got $(repr(sid))."))
+    haskey(branch_index_by_id, bid) || throw(ArgumentError("SCF: branch_shunt_split references unknown branch id $(bid)."))
+    d isa AbstractDict || throw(ArgumentError("SCF: branch_shunt_split entry $(bid) must be an object."))
+    set_branch_shunt!(net.branchVec[branch_index_by_id[bid]]; g_from_pu = _scf_num(_scf_require(d, "g_from_pu", "branch_shunt_split $(bid)"), "g_from_pu"), b_from_pu = _scf_num(_scf_require(d, "b_from_pu", "branch_shunt_split $(bid)"), "b_from_pu"), g_to_pu = _scf_num(_scf_require(d, "g_to_pu", "branch_shunt_split $(bid)"), "g_to_pu"), b_to_pu = _scf_num(_scf_require(d, "b_to_pu", "branch_shunt_split $(bid)"), "b_to_pu"))
+  end
+
+  # --- typed tap-changer models (0.20.0) --------------------------------
+  # restored onto the from-side winding after the nameplate, then the
+  # resolver derives ratio, shift, impedance and grid from the model
+  for (sid, d) in spar.tap_changer_models
+    bid = tryparse(Int, String(sid))
+    bid === nothing && throw(ArgumentError("SCF: tap_changer_models keys are branch ids, got $(repr(sid))."))
+    haskey(branch_index_by_id, bid) || throw(ArgumentError("SCF: tap_changer_models references unknown branch id $(bid)."))
+    bidx = branch_index_by_id[bid]
+    haskey(trafo_by_branch_idx, bidx) || throw(ArgumentError("SCF: tap_changer_models entry $(bid) is not a generic_branch (transformer)."))
+    d isa AbstractDict || throw(ArgumentError("SCF: tap_changer_models entry $(bid) must be an object."))
+    w = trafo_by_branch_idx[bidx].side1
+    _scf_apply_tap_models!(w, d, bid)
+    correction = Symbol(String(_scf_get(d, "tap_changer_model", "ideal")))
+    note = resolve_branch_taps!(net.branchVec[bidx], w; tap_changer_model = correction)
+    note === nothing || push!(net.tapModelNotices, note)
   end
 
   # --- appliances -------------------------------------------------------
@@ -1405,4 +1439,51 @@ function scf_case_config(file::AbstractString; dropped::Union{Nothing,Vector{Str
   end
   isempty(bad) || throw(ArgumentError("SCF: config key(s) $(join(bad, ", ")) are not case scope (logging, benchmarking, parallelism, Web UI and export settings belong in the configuration file). Re-export the case with format revision $(SCF_FORMAT_VERSION), or remove them."))
   return out
+end
+
+# The typed tap-changer models of one sparlectra.tap_changer_models entry
+# onto a winding: `ratio` (a PowerTransformerTaps from its constructor
+# inputs) and `phase` (a PhaseTapChangerModel with kind, steps, the formula
+# parameters and the table for :tabular); a key that is absent stays
+# absent on the winding.
+function _scf_apply_tap_models!(w::PowerTransformerWinding, d::AbstractDict, bid::Int)
+  if haskey(d, "ratio")
+    r = d["ratio"]
+    r isa AbstractDict || throw(ArgumentError("SCF: tap_changer_models $(bid): ratio must be an object."))
+    w.taps = PowerTransformerTaps(
+      Vn_kV = _scf_num(_scf_require(r, "vn_kv", "tap_changer_models $(bid) ratio"), "vn_kv"),
+      step = _scf_int(_scf_require(r, "step", "tap_changer_models $(bid) ratio"), "step"),
+      lowStep = _scf_int(_scf_require(r, "low_step", "tap_changer_models $(bid) ratio"), "low_step"),
+      highStep = _scf_int(_scf_require(r, "high_step", "tap_changer_models $(bid) ratio"), "high_step"),
+      neutralStep = _scf_int(_scf_require(r, "neutral_step", "tap_changer_models $(bid) ratio"), "neutral_step"),
+      voltageIncrement_kV = _scf_num(_scf_require(r, "voltage_increment_kv", "tap_changer_models $(bid) ratio"), "voltage_increment_kv"),
+      neutralU = haskey(r, "neutral_u_kv") ? _scf_num(r["neutral_u_kv"], "neutral_u_kv") : nothing,
+      convention = Symbol(String(_scf_get(r, "convention", "neutral_relative"))),
+    )
+  end
+  if haskey(d, "phase")
+    p = d["phase"]
+    p isa AbstractDict || throw(ArgumentError("SCF: tap_changer_models $(bid): phase must be an object."))
+    kind = Symbol(String(_scf_require(p, "kind", "tap_changer_models $(bid) phase")))
+    optnum(key) = haskey(p, key) && p[key] !== nothing ? _scf_num(p[key], key) : nothing
+    table = nothing
+    if haskey(p, "table") && p["table"] !== nothing
+      table = TapTablePoint[TapTablePoint(step = _scf_int(_scf_require(pt, "step", "table point"), "step"), ratio = _scf_num(_scf_get(pt, "ratio", 1.0), "ratio"), angle_deg = _scf_num(_scf_get(pt, "angle_deg", 0.0), "angle_deg"), x_pu = haskey(pt, "x_pu") && pt["x_pu"] !== nothing ? _scf_num(pt["x_pu"], "x_pu") : nothing) for pt in p["table"]]
+    end
+    w.phase_taps = PhaseTapChangerModel(
+      kind = kind,
+      step = _scf_int(_scf_require(p, "step", "tap_changer_models $(bid) phase"), "step"),
+      lowStep = kind === :tabular ? nothing : _scf_int(_scf_require(p, "low_step", "tap_changer_models $(bid) phase"), "low_step"),
+      highStep = kind === :tabular ? nothing : _scf_int(_scf_require(p, "high_step", "tap_changer_models $(bid) phase"), "high_step"),
+      neutralStep = _scf_int(_scf_require(p, "neutral_step", "tap_changer_models $(bid) phase"), "neutral_step"),
+      voltage_step_increment = optnum("voltage_step_increment"),
+      step_phase_shift_increment = optnum("step_phase_shift_increment"),
+      winding_connection_angle_deg = optnum("winding_connection_angle_deg"),
+      x_min = optnum("x_min"),
+      x_max = optnum("x_max"),
+      convention = Symbol(String(_scf_get(p, "convention", "reciprocal_from_side"))),
+      table = table,
+    )
+  end
+  return w
 end

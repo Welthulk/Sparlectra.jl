@@ -57,8 +57,10 @@ end
 
 The shipped cases under `data/scf` (every `.scf.json`: the `sp_*` demo
 cases, the PST format fixture, and since 0.12.5 the feeder and Q-limit
-example cases) plus the plain power-grid-model files under `data/PGM`
-(`.json`). They are offered in the case chooser regardless of the cache
+example cases), the plain power-grid-model files under `data/PGM`
+(`.json`), the CGMES demo deliveries, and since 0.20.0 the PowSyBl table
+bundles under `data/powsybl` (`<case>.powsybl` directories; an uploaded
+`.xiidm` file reads natively, no Python needed for either). They are offered in the case chooser regardless of the cache
 directory and staged into the cache on first use
 ([`_webui_stage_bundled_case!`](@ref)).
 """
@@ -73,6 +75,10 @@ function _webui_bundled_scf_options(application_root::AbstractString)::Vector{St
   # packed into the case directory on first use
   cgmes_dir = joinpath(application_root, "data", "cgmes_demo")
   isdir(cgmes_dir) && append!(names, [_webui_cgmes_demo_zip_name(name) for name in readdir(cgmes_dir) if isdir(joinpath(cgmes_dir, name))])
+  # the PowSyBl demo bundles: a bundle is a directory with the manifest
+  # marker, staged as a whole
+  powsybl_dir = joinpath(application_root, "data", "powsybl")
+  isdir(powsybl_dir) && append!(names, [name for name in readdir(powsybl_dir) if isdir(joinpath(powsybl_dir, name)) && endswith(lowercase(name), ".powsybl") && isfile(joinpath(powsybl_dir, name, "manifest.json"))])
   return sort!(names; by = lowercase)
 end
 
@@ -131,6 +137,17 @@ function _webui_stage_bundled_case!(application_root::AbstractString, case_direc
     isfile(cached) || _webui_pack_cgmes_demo!(demo_folder, cached)
     return cached
   end
+  # a PowSyBl bundle is a directory: copied as a whole, the case name is
+  # the directory name
+  if endswith(lowercase(name), ".powsybl")
+    bundled = joinpath(application_root, "data", "powsybl", name)
+    isdir(bundled) || return nothing
+    case_directory === nothing && return bundled
+    mkpath(case_directory)
+    cached = joinpath(String(case_directory), name)
+    isdir(cached) || cp(bundled, cached)
+    return cached
+  end
   for source_dir in (joinpath(application_root, "data", "mpower"), joinpath(application_root, "data", "scf"), joinpath(application_root, "data", "PGM"))
     bundled = joinpath(source_dir, name)
     isfile(bundled) || continue
@@ -177,7 +194,7 @@ end
 # exported with "Save case as"/"Export as SCF" travels as three files
 # (case, sidecar, measurements); re-uploading all three together must bring
 # the sidecar along, or the settings the export carried are silently lost.
-_webui_supported_upload_case_extension(name::AbstractString)::Bool = lowercase(splitext(basename(String(name)))[2]) in (".m", ".dat", ".zip", ".csv", ".json", ".yaml", ".xml", ".xiidm", ".bz2")
+_webui_supported_upload_case_extension(name::AbstractString)::Bool = lowercase(splitext(basename(String(name)))[2]) in (".m", ".dat", ".zip", ".csv", ".json", ".yaml", ".xml", ".xiidm")
 
 """
     _webui_scf_upload_reason(bytes) -> Union{Nothing,String}
@@ -467,7 +484,7 @@ function _webui_is_user_selectable_case(name::AbstractString)::Bool
   _, extension = splitext(lowered_name)
   # PowSyBl sources: a table bundle directory or an IIDM file
   endswith(lowered_name, ".powsybl") && return true
-  (endswith(lowered_name, ".xiidm") || endswith(lowered_name, ".xiidm.bz2")) && return true
+  endswith(lowered_name, ".xiidm") && return true
   endswith(lowered_name, ".sparlectra-webui.yaml") && return false
   # per-case configuration files travel next to their case and are not cases
   endswith(lowered_name, ".config.yaml") && return false
@@ -1191,7 +1208,7 @@ function _webui_case_format_hint(casefile::AbstractString; case_directory::Union
   ext = lowercase(splitext(value)[2])
   ext == ".dat" && return :dtf_for001
   # PowSyBl before the CGMES rule: a .powsybl bundle is a directory too
-  (ext in (".powsybl", ".xiidm") || endswith(lowercase(value), ".xiidm.bz2")) && return :powsybl
+  ext in (".powsybl", ".xiidm") && return :powsybl
   (ext in (".zip", ".xml") || (isempty(ext) && isdir(value))) && return :cgmes
   return :auto
 end

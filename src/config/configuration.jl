@@ -852,8 +852,6 @@ tables (see `docs/src/powsybl_import.md`).
   PQ and attaches an outer-loop `MachineVoltageControl` on the regulated
   bus (the same machinery as `cgmes_import.machine_control`; reproduces
   OpenLoadFlow's remote voltage control).
-- `python_exe::String`: path hint for the PythonCall extension; empty means
-  the PythonCall default. Read only when an IIDM file is imported live.
 """
 Base.@kwdef struct PowsyblImportConfig
   base_mva::Float64 = 100.0
@@ -861,7 +859,6 @@ Base.@kwdef struct PowsyblImportConfig
   slack_ids::Vector{String} = String[]
   multi_slack::Bool = true
   remote_regulation::Symbol = :hold_local
-  python_exe::String = ""
 end
 
 """
@@ -1707,7 +1704,6 @@ function PowsyblImportConfig(raw::AbstractDict)
     slack_ids = _powsybl_id_list(_raw_get(merged, "slack_ids", nothing)),
     multi_slack = _as_bool_cfg(_raw_get(merged, "multi_slack", true)),
     remote_regulation = _validate_allowed_symbol("powsybl_import.remote_regulation", _as_symbol_cfg(_raw_get(merged, "remote_regulation", :hold_local)), POWSYBL_REMOTE_REGULATION_VALUES),
-    python_exe = strip(_as_string_cfg(_raw_get(merged, "python_exe", ""))),
   )
 end
 

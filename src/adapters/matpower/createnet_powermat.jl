@@ -178,6 +178,15 @@ function _matpower_sparlectra_links(mpc)::Union{Nothing,Matrix{Float64}}
   return getproperty(sp, :links)
 end
 
+# mpc.sparlectra.branch_shunts matrix (branch bus Gs_MW Bs_MVar) or nothing.
+function _matpower_sparlectra_branch_shunts(mpc)::Union{Nothing,Matrix{Float64}}
+  hasproperty(mpc, :sparlectra) || return nothing
+  sp = getproperty(mpc, :sparlectra)
+  sp === nothing && return nothing
+  hasproperty(sp, :branch_shunts) || return nothing
+  return getproperty(sp, :branch_shunts)
+end
+
 # mpc.sparlectra.tap_changers matrix (9 columns, see MatpowerIO) or nothing.
 function _matpower_sparlectra_tap_changers(mpc)::Union{Nothing,Matrix{Float64}}
   hasproperty(mpc, :sparlectra) || return nothing
@@ -518,12 +527,15 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
     if loss_meta !== nothing
       g_pu = hasproperty(loss_meta, :g_pu) ? Float64(loss_meta.g_pu) : 0.0
       b_loss_pu = hasproperty(loss_meta, :b_pu) ? Float64(loss_meta.b_pu) : 0.0
-      myNet.branchVec[imported_branch_index].g_pu = g_pu
+      # the loss metadata is a symmetric total (MATPOWER model), written
+      # through the one shunt setter so both terminal arms follow
+      loss_branch = myNet.branchVec[imported_branch_index]
+      set_branch_shunt_total!(loss_branch; g_pu = g_pu, b_pu = loss_branch.b_pu)
       if !isempty(myNet.trafos)
         myNet.trafos[end].side1.g = g_pu
       end
-      if b_loss_pu != 0.0 && myNet.branchVec[imported_branch_index].b_pu == 0.0
-        myNet.branchVec[imported_branch_index].b_pu = b_loss_pu
+      if b_loss_pu != 0.0 && loss_branch.b_pu == 0.0
+        set_branch_shunt_total!(loss_branch; g_pu = loss_branch.g_pu, b_pu = b_loss_pu)
       end
       @info "Restored Sparlectra transformer-loss metadata into native branch PI conductance." branch_row = branch_row_index g_pu = g_pu
     end
@@ -765,6 +777,25 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
       psi = size(sp_taps, 2) >= 10 ? Float64(row[10]) : 0.0
       dustep = size(sp_taps, 2) >= 11 ? Float64(row[11]) : 0.0
       applyTapNameplate!(br; tap_step = tstep, tap_min_step = tminS, tap_max_step = tmaxS, tap_current_step = tcur, phase_step_deg = pstep, phase_min_step = pminS, phase_max_step = pmaxS, phase_current_step = pcur, psi_deg = psi, phase_du_step = dustep, context = "mpc.sparlectra.tap_changers branch $(k)")
+    end
+  end
+
+  # Optional mpc.sparlectra.branch_shunts rows (0.20.0): the terminal excess
+  # of an asymmetric branch shunt that the exporter moved into the bus GS/BS;
+  # the bus shunt keeps it as a part of that branch, so an outage study can
+  # take it away with the branch
+  sp_bsh = _matpower_sparlectra_branch_shunts(mpc)
+  if sp_bsh !== nothing
+    for row in eachrow(sp_bsh)
+      k = Int(row[1])
+      1 <= k <= length(myNet.branchVec) || throw(ArgumentError("mpc.sparlectra.branch_shunts references unknown branch $(k)."))
+      bus_orig = Int(row[2])
+      haskey(bus_idx_by_orig, bus_orig) || throw(ArgumentError("mpc.sparlectra.branch_shunts references unknown bus $(bus_orig)."))
+      bus = bus_idx_by_orig[bus_orig]
+      haskey(myNet.shuntDict, bus) || throw(ArgumentError("mpc.sparlectra.branch_shunts names bus $(bus_orig), which carries no shunt in mpc.bus."))
+      sh = myNet.shuntVec[myNet.shuntDict[bus]]
+      part = ComplexF64(Float64(row[3]), Float64(row[4])) / baseMVA
+      sh.branch_parts[k] = get(sh.branch_parts, k, 0.0 + 0.0im) + part
     end
   end
 

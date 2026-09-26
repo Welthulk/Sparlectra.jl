@@ -108,6 +108,54 @@ function run_tap_controller_tests()
     @test length(unique([row.controller_name for row in cres.controllers])) == 2
   end)() end
 
+  # typed model on the winding (0.20.0): the branch shows the model's shift
+  # at its step, the build records the precedence line, and a phase
+  # controller moves the model step (5 instead of 3) so the solved flow
+  # matches a branch built directly at step 5
+  @testset "typed phase model drives the branch and the controller moves its step" begin (function ()
+    build_model_net = function (step::Int)
+      mnet = Net(name = "pst_model_step$(step)", baseMVA = 100.0)
+      for bus in ("Slack", "Mid", "Load")
+        addBus!(net = mnet, busName = bus, vn_kV = 110.0)
+      end
+      addProsumer!(net = mnet, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "Slack")
+      addProsumer!(net = mnet, busName = "Load", type = "ENERGYCONSUMER", p = -70.0, q = -20.0)
+      model = PhaseTapChangerModel(kind = :asymmetrical, step = step, lowStep = -10, highStep = 10, neutralStep = 0, voltage_step_increment = 0.01, winding_connection_angle_deg = 90.0)
+      addPIModelTrafo!(net = mnet, fromBus = "Slack", toBus = "Mid", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1, phase_taps = model)
+      addPIModelACLine!(net = mnet, fromBus = "Slack", toBus = "Mid", r_pu = 0.03, x_pu = 0.2, b_pu = 0.0, status = 1)
+      addPIModelACLine!(net = mnet, fromBus = "Mid", toBus = "Load", r_pu = 0.02, x_pu = 0.12, b_pu = 0.01, status = 1)
+      return mnet, getNetBranch(net = mnet, fromBus = "Slack", toBus = "Mid"), model
+    end
+    net3, br3, m3 = build_model_net(3)
+    expect3 = calcPhaseTapAngleRatio(m3)
+    @test br3.taps_derived
+    @test isapprox(br3.angle, expect3.effective_shift_deg; atol = 1e-12)
+    @test isapprox(br3.ratio, expect3.effective_ratio; atol = 1e-12)
+    @test br3.phase_shift_deg == br3.angle
+    @test any(n -> occursin("replaced by model at phase step 3", n), net3.tapModelNotices)
+    # a winding without a model leaves the branch on its explicit values
+    @test !getNetBranch(net = net3, fromBus = "Mid", toBus = "Load").taps_derived
+    # the flow a direct build at step 5 gives
+    net5, br5, m5 = build_model_net(5)
+    r5 = run_sparlectra(net = net5, config = _runner_cfg())
+    @test r5.numerical_converged
+    p5 = get_branch_p_from_to_mw(net5, "Slack", "Mid")
+    r3 = run_sparlectra(net = net3, config = _runner_cfg())
+    @test r3.numerical_converged
+    p3 = get_branch_p_from_to_mw(net3, "Slack", "Mid")
+    @test abs(p5 - p3) > 0.5
+    # the controller moves the model from step 3 toward the step-5 flow
+    addPowerTransformerControl!(net3; trafo = string(br3.branchIdx), mode = :branch_active_power, target_branch = ("Slack", "Mid"), p_target_mw = p5, control_ratio = false, control_phase = true, deadband_p_mw = 0.25 * abs(p5 - p3))
+    rc = run_sparlectra(net = net3, config = _runner_cfg())
+    @test rc.numerical_converged
+    @test m3.step == 5
+    @test isapprox(br3.angle, calcPhaseTapAngleRatio(m3).effective_shift_deg; atol = 1e-12)
+    @test abs(get_branch_p_from_to_mw(net3, "Slack", "Mid") - p5) <= 1e-6 + 0.25 * abs(p5 - p3)
+    rows = latest_control_result(net3).controllers
+    @test length(rows) == 1
+    @test rows[1].phase_tap_position == 5
+  end)() end
+
   @testset "PST reactance coupling X(alpha) (#274)" begin (function ()
     # PST loop net: trafo Slack→Mid with a parallel line so the phase tap can
     # shift flow; the typed model is attached to the controlled winding

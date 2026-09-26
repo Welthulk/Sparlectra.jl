@@ -32,6 +32,7 @@ function _artifact_kind(path::AbstractString)::Symbol
   endswith(name, "trust_region.log") && return :trust_region
   name == "result.json" && return :result_json
   name == "q_limit.log" && return :q_limit_log
+  name == "tap_models.log" && return :tap_model_log
   name == "q_limit_classic_outer_loop.csv" && return :q_limit_classic_outer_loop
   ext = lowercase(splitext(name)[2])
   ext == ".log" && return :log
@@ -59,6 +60,7 @@ end
 function _artifact_description(kind::Symbol, name::String)::String
   kind === :log && return "Power-flow execution log"
   kind === :q_limit_log && return "Q-limit diagnostic log"
+  kind === :tap_model_log && return "Tap-changer model precedence (transformers whose values come from a typed model)"
   kind === :q_limit_classic_outer_loop && return "Classical Q-limit outer-loop pass details"
   kind === :matpower_auto_profile && return "MATPOWER import auto-profile diagnostic log"
   kind === :matpower_dcline && return "MATPOWER DC-line PF injection mapping"

@@ -383,6 +383,18 @@ Sparlectra writes no OPF columns 18-21 and no `mpc.gencost`. Exported `.m`
 files with transformer losses carry a `SPARLECTRA EXTENSION WARNING` comment
 because plain MATPOWER ignores the `mpc.sparlectra` block.
 
+A branch whose two terminal shunt arms differ (a PowSyBl transformer with
+its magnetizing admittance on side 1, a line with unequal `b1`/`b2`, see
+[Branch model](branchmodel.md)) has no place in MATPOWER's one `BR_B`.
+The rule `asymmetric_shunts = :bus_shunt` (the only value of the keyword)
+writes the symmetric part `2 * min(from, to)` on the branch row and the
+excess of each terminal as a bus shunt at that bus (the from excess seen
+through the tap), named in a `% branch-derived shunt of branch ...`
+comment line and listed in `mpc.sparlectra.branch_shunts` (branch, bus,
+Gs in MW, Bs in MVar). A MATPOWER solver reproduces the same Y-bus; the
+Sparlectra reimport keeps these parts on the bus shunt as parts of their
+branch, so an N-1 outage of the branch takes them away with it.
+
 !!! details "Why it is built this way"
     Transformer no-load conductance has no branch-local field in standard
     MATPOWER, and mapping it onto a terminal bus shunt would change the

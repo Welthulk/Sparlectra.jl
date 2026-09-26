@@ -97,20 +97,14 @@ function convert_case(::DTFAdapter, dtf_case, opts::DTFAdapterOptions)::SCFCase
     id === nothing && continue
     extra[string(id)]["original_name"] = String(name)
   end
-  # the DTF branch metadata record, order preserving; and the typed
-  # phase-tap model of the winding where one is attached
-  trafo_k = 0
+  # the DTF branch metadata record, order preserving; the typed phase-tap
+  # model of a winding travels in sparlectra.tap_changer_models (0.20.0),
+  # written by net_to_scf for every modelled winding
   for i in eachindex(net.branchVec)
     id = get(branch_id_by_idx, i, nothing)
-    is_trafo = _scf_is_transformer(net.branchVec[i])
-    is_trafo && (trafo_k += 1)
     id === nothing && continue
     meta = get(net.matpower_branch_metadata, i, nothing)
     meta === nothing || (extra[string(id)]["dtf_branch"] = scf_encode_value(meta))
-    if is_trafo && trafo_k <= length(net.trafos)
-      pt = net.trafos[trafo_k].side1.phase_taps
-      pt === nothing || (extra[string(id)]["phase_taps"] = scf_encode_value(pt))
-    end
   end
   # outage labels: the run path's N-1 selection reads them from the net
   labels = String[DTFImporter.outage_label(o) for o in dtf_case.outages]

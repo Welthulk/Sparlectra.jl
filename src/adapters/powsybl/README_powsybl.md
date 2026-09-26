@@ -3,12 +3,13 @@
 ## Purpose
 
 PowSyBl's native network format is IIDM (XML variant XIIDM). Sparlectra
-does not parse IIDM: pypowsybl loads the file, resolves the node-breaker
-topology and the tap positions, and hands over plain tables. This adapter
-reads those tables and builds a `Net` from them. Two entry points share
-one builder: a table bundle written by `tools/powsybl_dump.py` (no Python
-at Sparlectra run time), and, when the PythonCall extension is loaded, an
-`.xiidm` file read live.
+reads the file in Julia (`iidm_reader.jl`): it resolves the node-breaker
+topology, the components and the tap positions the way pypowsybl does and
+delivers the same plain tables; this adapter builds a `Net` from them. Two
+sources share one builder: an `.xiidm` file through the reader, and a
+table bundle (the reference form pypowsybl writes, with OpenLoadFlow's
+solution in the state columns) through `read_powsybl_bundle`. No Python
+is involved at any point.
 
 ## Bundle format
 

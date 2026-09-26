@@ -1,0 +1,2 @@
+"id","name","g","b","model_type","max_section_count","section_count","solved_section_count","voltage_regulation_on","target_v","target_deadband","regulating_bus_id","p","q","i","voltage_level_id","bus_id","bus_breaker_bus_id","node","connected","fictitious"
+"B9-SH","",0.0,0.13194444444444445,"LINEAR",1,1,1,false,NaN,NaN,"VL9_0",0.0,-21.184843867026164,965.267226329418,"VL9","VL9_0","B9",-1,true,false

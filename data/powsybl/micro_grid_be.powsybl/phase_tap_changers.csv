@@ -1,0 +1,2 @@
+"id","side","tap","solved_tap_position","low_tap","high_tap","step_count","oltc","regulating","regulation_mode","regulation_value","target_deadband","regulating_bus_id","regulated_side"
+"a708c3bc-465d-4fe7-b6ef-6fa6408a62b0","",10,10,1,25,25,true,true,"ACTIVE_POWER_CONTROL",-65.0,35.0,"8bbd7e74-ae20-4dce-8780-c20f8e18c2e0_0","TWO"

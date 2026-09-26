@@ -1,0 +1,7 @@
+"id","name","v","angle","voltage_level_id","bus_id","bus_breaker_bus_id","node","connected","fictitious"
+"S1VL1_BBS","S1VL1_BBS",224.7641748888413,2.4012685811543935,"S1VL1","S1VL1_0","S1VL1_0",0,true,false
+"S1VL2_BBS1","S1VL2_BBS1",400.0,0.0,"S1VL2","S1VL2_0","S1VL2_0",0,true,false
+"S1VL2_BBS2","S1VL2_BBS2",400.0,0.0,"S1VL2","S1VL2_0","S1VL2_1",1,true,false
+"S2VL1_BBS","S2VL1_BBS",408.8460664639837,0.733972816091764,"S2VL1","S2VL1_0","S2VL1_0",0,true,false
+"S3VL1_BBS","S3VL1_BBS",400.0,0.0,"S3VL1","S3VL1_0","S3VL1_0",0,true,false
+"S4VL1_BBS","S4VL1_BBS",400.0,-1.1259436382656443,"S4VL1","S4VL1_0","S4VL1_0",0,true,false

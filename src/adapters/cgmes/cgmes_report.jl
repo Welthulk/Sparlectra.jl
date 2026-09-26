@@ -225,10 +225,12 @@ function _compareFlowsWithSV(result::CGMESImportResult)
       br = get(branch_of, idx, nothing)
       (br === nothing || br.status == 0) && continue
       ys = inv(br.r_pu + im * br.x_pu)
-      ysh2 = (br.g_pu + im * br.b_pu) / 2
+      # per-terminal shunt arms (0.20.0), the from arm behind the tap
+      ysh_from = Sparlectra._branch_y0_from(br)
+      ysh_to = Sparlectra._branch_y0_to(br)
       tr = br.ratio == 0.0 ? 1.0 + 0im : br.tap_ratio * cis(deg2rad(br.phase_shift_deg))
       Vf, Vt = V[br.fromBus], V[br.toBus]
-      Smodel = side == :from ? Vf * conj(((ys + ysh2) / abs2(tr)) * Vf - (ys / conj(tr)) * Vt) * net.baseMVA : Vt * conj((ys + ysh2) * Vt - (ys / tr) * Vf) * net.baseMVA
+      Smodel = side == :from ? Vf * conj(((ys + ysh_from) / abs2(tr)) * Vf - (ys / conj(tr)) * Vt) * net.baseMVA : Vt * conj((ys + ysh_to) * Vt - (ys / tr) * Vf) * net.baseMVA
       kind = side == :from ? :branch_from : :branch_to
       push!(rows, (kind = kind, name = name, bus = something(bus, "?"), sv_p = p_sv, sv_q = q_sv, p = real(Smodel), q = imag(Smodel), dp = real(Smodel) - p_sv, dq = imag(Smodel) - q_sv))
     elseif eq.class in _LOAD_CLASSES

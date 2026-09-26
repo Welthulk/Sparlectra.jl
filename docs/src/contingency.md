@@ -32,6 +32,11 @@ evaluation on an operated grid.
 - The base `net` is never mutated: `runContingencies!` solves a template
   copy of the base case, and every case is evaluated on a working copy
   that is reset to the template state after each case.
+- A branch outage takes the branch's own charging arms with it (a
+  transformer's magnetizing admittance sits on the branch since 0.20.0,
+  see [Branch model](branchmodel.md)); a bus shunt part that a MATPOWER
+  reimport recorded for the branch (`mpc.sparlectra.branch_shunts`) is
+  removed from the bus shunt for that case as well.
 - Warm start from the base solution: every case starts from the solved
   base operating point. A base case that does not converge is retried
   through the solver rescue ladder (`runpf!` with `rescue = true`) before

@@ -80,7 +80,8 @@ Discover participants and build the per-island alpha vector (#192).
 Candidates are the generator-type prosumers at the island's REF or PV buses.
 Raw weights per mode: `:pg_weighted` scheduled Pg, `:pmax_weighted` maxP,
 `:headroom_weighted` `max(maxP − Pg, 0)`, `:imported`
-`ProSumer.participationFactor` (MATPOWER `APF` / CGMES `normalPF`),
+`ProSumer.participationFactor` (MATPOWER `APF` / CGMES `normalPF`; the one
+mode in which a unit at a PQ bus takes part, when its factor is positive),
 `:explicit` the config table (bus name or bus index as key). Invalid
 candidates (missing data, weight ≤ 0, NaN/Inf) are dropped with a debug log
 and counted. Surviving weights are normalized to `sum(alpha) = 1`, aggregated
@@ -123,10 +124,19 @@ function build_distributed_slack_state(
     isGenerator(ps) || continue
     bus = getPosumerBusIndex(ps)
     (1 <= bus <= n) || continue
-    # Candidates live at REF or PV buses — evaluated on the bus types at
+    # Candidates live at REF or PV buses, evaluated on the bus types at
     # discovery time. Fixed injections at PQ buses (Stage-0 HVDC converters,
     # boundary equivalents) are excluded naturally by the bus-type gate.
-    bus_types[bus] in (:Slack, :PV) || continue
+    # The imported mode is the exception: a unit that arrives with its own
+    # participation factor takes part wherever it sits, because the factor
+    # is a statement about the unit (MATPOWER APF, CGMES normalPF, the
+    # OpenLoadFlow share of a PowSyBl generator), not about the bus type.
+    # A PQ generator of OpenLoadFlow, or a unit the PowSyBl import runs as
+    # PQ with an outer-loop remote voltage control, shares the mismatch
+    # exactly as the source did (micro_grid_be: without this the slack unit
+    # took the whole 0.66 MW and every bus sat 1.7e-6 pu off the reference).
+    imported_share = p_mode === :imported && something(ps.participationFactor, 0.0) > 0.0
+    (bus_types[bus] in (:Slack, :PV) || imported_share) || continue
     w = if p_mode === :pg_weighted
       something(ps.pVal, 0.0)
     elseif p_mode === :pmax_weighted
