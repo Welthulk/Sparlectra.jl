@@ -35,9 +35,15 @@
 #   degrees off at the four_substations PST).
 # - magnetizing admittance: OpenLoadFlow places the whole g, b on pi side 1,
 #   behind the ideal transformer on the side-2 base (1.5e-7 pu on
-#   four_substations; side 2 gave 3.4e-4, a split 1.7e-4).
+#   four_substations; side 2 gave 3.4e-4, a split 1.7e-4). Since 0.20.0 it
+#   is the from arm of the branch (g_from_pu, b_from_pu), no bus shunt.
 # - dangling line: g, b at the network terminal, nothing at the boundary
-#   (3e-11 pu on the eurostag tie lines; split 9e-4, boundary side 1.8e-3).
+#   (3e-11 pu on the eurostag tie lines; split 9e-4, boundary side 1.8e-3);
+#   the from arm of the dangling branch.
+# - lines with unequal g1/g2 or b1/b2 keep each value on its own terminal
+#   arm (ieee14 branches 7-8 and 7-9, which are lines in the IIDM file and
+#   transformers in MATPOWER: the identity with case14 holds through the
+#   arms alone).
 # - lines across nominal voltages: the physical conductor, which is the
 #   ratio branch on the to-side base of pi_branch_pu_between_levels; the
 #   geometric base vn1 * vn2 / S of PowSyBl's importers is not a load-flow
@@ -135,8 +141,9 @@ function _attach_powsybl_machine_controls!(ctx::_PowsyblBuildContext)
       continue
     end
     # OpenLoadFlow holds a remotely regulated bus exactly; the controller's
-    # default deadband of 1e-3 pu would leave that much slack
-    addMachineVoltageControl!(ctx.net; bus = plan.bus, target_bus = plan.target_bus, target_vm_pu = plan.target_vm_pu, qmin_mvar = plan.qmin, qmax_mvar = plan.qmax, deadband_vm_pu = 1.0e-6, prosumer_index = plan.prosumer_index, name = plan.name)
+    # default deadband of 1e-3 pu would leave that much slack; 1e-6 still
+    # left 2e-5 pu at the unit's own bus behind the transformer (micro_grid_be)
+    addMachineVoltageControl!(ctx.net; bus = plan.bus, target_bus = plan.target_bus, target_vm_pu = plan.target_vm_pu, qmin_mvar = plan.qmin, qmax_mvar = plan.qmax, deadband_vm_pu = 1.0e-8, prosumer_index = plan.prosumer_index, name = plan.name)
     _powsybl_notice!(ctx.report, "generator $(plan.name): remote voltage control of bus $(plan.target_bus) at $(round(plan.target_vm_pu; digits = 5)) pu attached (outer loop)")
   end
   return nothing
@@ -177,6 +184,10 @@ function _map_powsybl_buses!(ctx::_PowsyblBuildContext)
     _powsybl_count!(ctx.report, "bus"; built = 1)
   end
   unconnected > 0 && _powsybl_notice!(ctx.report, "$(unconnected) bus(es) belong to no synchronous component (built, unconnected)")
+  # the IIDM reader says when it dropped the file's bus state (solved at
+  # other tap positions); a bundle carries no such note
+  note = get(ctx.tables.manifest, "state_note", "")
+  (note isa AbstractString && !isempty(note)) && _powsybl_notice!(ctx.report, String(note))
   return nothing
 end
 
@@ -260,41 +271,31 @@ function _map_powsybl_lines!(ctx::_PowsyblBuildContext)
     vn2 = ctx.vn[b2]
     st = _powsybl_terminal_status(ln.connected1[i], ln.connected2[i])
     rating = _powsybl_branch_rating(ctx, id, vn1, vn2)
-    # Sparlectra's pi model splits the branch shunt in equal halves; the
-    # symmetric part travels on the branch, the excess of the larger side
-    # becomes a bus shunt on that side, so unequal g1/g2 and b1/b2 are exact
-    g_sym = min(ln.g1[i], ln.g2[i])
-    b_sym = min(ln.b1[i], ln.b2[i])
-    _powsybl_add_pi_line!(ctx, b1, b2, ln.r[i], ln.x[i], 2.0 * g_sym, 2.0 * b_sym, st, rating)
-    _powsybl_bus_shunt!(ctx, b1, ln.g1[i] - g_sym, ln.b1[i] - b_sym)
-    _powsybl_bus_shunt!(ctx, b2, ln.g2[i] - g_sym, ln.b2[i] - b_sym)
+    # each end's g, b stays on its own terminal arm (0.20.0); a missing
+    # value is no admittance
+    _powsybl_add_pi_line!(ctx, b1, b2, ln.r[i], ln.x[i], _powsybl_siemens(ln.g1[i]), _powsybl_siemens(ln.b1[i]), _powsybl_siemens(ln.g2[i]), _powsybl_siemens(ln.b2[i]), st, rating)
     _powsybl_count!(ctx.report, "line"; built = 1)
   end
   return nothing
 end
 
-# A shunt in siemens at a bus, as MW and MVar at the nominal voltage.
-function _powsybl_bus_shunt!(ctx::_PowsyblBuildContext, bus::AbstractString, g::Float64, b::Float64)
-  (g == 0.0 && b == 0.0) && return nothing
-  (isfinite(g) && isfinite(b)) || return nothing
-  vn = ctx.vn[bus]
-  addShuntMatpower!(net = ctx.net, busName = String(bus), Gs = g * vn^2, Bs = b * vn^2)
-  return nothing
-end
+# An admittance value from a table: NaN or infinite means none.
+_powsybl_siemens(x::Float64)::Float64 = isfinite(x) ? x : 0.0
 
-# A pi line in ohm and siemens between two buses. Across different nominal
+# A pi line in ohm and siemens between two buses, with the shunt admittance
+# of each end (g1, b1 at bus b1, g2, b2 at bus b2). Across different nominal
 # voltages PowSyBl keeps a plain conductor (no ideal transformer), and
 # OpenLoadFlow's default line model (linePerUnitMode = IMPEDANCE) is exactly
 # that physical line; on Sparlectra's convention the physical line is the
 # ratio branch of the CGMES path: impedance on the to-side base with the
 # ratio vn_to / vn_from at the from side (I1 = (V1 - V2) / Z in kV and A
-# reproduces term by term).
-function _powsybl_add_pi_line!(ctx::_PowsyblBuildContext, b1::AbstractString, b2::AbstractString, r::Float64, x::Float64, g::Float64, b::Float64, st, rating)
-  pu = pi_branch_pu_between_levels(r = r, x = x, g = g, b = b, vn_from_kV = ctx.vn[b1], vn_to_kV = ctx.vn[b2], baseMVA = ctx.net.baseMVA)
+# reproduces term by term), each end's admittance on its own terminal arm.
+function _powsybl_add_pi_line!(ctx::_PowsyblBuildContext, b1::AbstractString, b2::AbstractString, r::Float64, x::Float64, g1::Float64, b1s::Float64, g2::Float64, b2s::Float64, st, rating)
+  pu = pi_branch_pu_between_levels(r = r, x = x, g_from = g1, b_from = b1s, g_to = g2, b_to = b2s, vn_from_kV = ctx.vn[b1], vn_to_kV = ctx.vn[b2], baseMVA = ctx.net.baseMVA)
   if pu.ratio === nothing
-    addPIModelACLine!(net = ctx.net, fromBus = String(b1), toBus = String(b2), r_pu = pu.r_pu, x_pu = pu.x_pu, b_pu = pu.b_pu, g_pu = pu.g_pu, status = st.status, ratedS = rating, from_status = st.from_status, to_status = st.to_status)
+    addPIModelACLine!(net = ctx.net, fromBus = String(b1), toBus = String(b2), r_pu = pu.r_pu, x_pu = pu.x_pu, b_pu = pu.b_pu, g_pu = pu.g_pu, status = st.status, ratedS = rating, from_status = st.from_status, to_status = st.to_status, g_from_pu = pu.g_from_pu, b_from_pu = pu.b_from_pu, g_to_pu = pu.g_to_pu, b_to_pu = pu.b_to_pu)
   else
-    _addPIModelTrafo_by_idx!(net = ctx.net, from = ctx.idx[b1], to = ctx.idx[b2], r_pu = pu.r_pu, x_pu = pu.x_pu, b_pu = pu.b_pu, g_pu = pu.g_pu, status = st.status, ratedS = rating, ratio = pu.ratio, shift_deg = 0.0, from_status = st.from_status, to_status = st.to_status)
+    _addPIModelTrafo_by_idx!(net = ctx.net, from = ctx.idx[b1], to = ctx.idx[b2], r_pu = pu.r_pu, x_pu = pu.x_pu, b_pu = pu.b_pu, g_pu = pu.g_pu, status = st.status, ratedS = rating, ratio = pu.ratio, shift_deg = 0.0, from_status = st.from_status, to_status = st.to_status, g_from_pu = pu.g_from_pu, b_from_pu = pu.b_from_pu, g_to_pu = pu.g_to_pu, b_to_pu = pu.b_to_pu)
   end
   return nothing
 end
@@ -320,22 +321,19 @@ function _map_powsybl_two_winding_transformers!(ctx::_PowsyblBuildContext)
     end
     vn1 = ctx.vn[b1]
     vn2 = ctx.vn[b2]
-    # the series impedance is given at side 2 (the to side): pu on the
-    # to-side base, the branch carries no shunt of its own
-    g_sh = isfinite(tw.g_at_current_tap[i]) ? tw.g_at_current_tap[i] : 0.0
-    b_sh = isfinite(tw.b_at_current_tap[i]) ? tw.b_at_current_tap[i] : 0.0
-    r_pu, x_pu, b_pu, g_pu = toPU_RXBG(r = tw.r_at_current_tap[i], x = tw.x_at_current_tap[i], g = 0.0, b = 0.0, v_kv = vn2, baseMVA = ctx.net.baseMVA)
+    # the series impedance and the magnetizing admittance are given at side
+    # 2 (the to side): pu on the to-side base. OpenLoadFlow puts the whole
+    # magnetizing admittance on pi side 1, behind the ideal transformer: that
+    # is the from arm of the branch, stamped through ratio^2, the to arm zero
+    g_sh = _powsybl_siemens(tw.g_at_current_tap[i])
+    b_sh = _powsybl_siemens(tw.b_at_current_tap[i])
+    r_pu, x_pu, b_pu, g_pu = toPU_RXBG(r = tw.r_at_current_tap[i], x = tw.x_at_current_tap[i], g = g_sh, b = b_sh, v_kv = vn2, baseMVA = ctx.net.baseMVA)
     ratio = _powsybl_2wt_ratio(tw.rho[i], vn1, vn2)
-    # OpenLoadFlow puts the whole magnetizing admittance on pi side 1, which
-    # sits behind the ideal transformer on the side-2 base: seen from bus 1
-    # that is y / ratio^2 on the side-2 base, (g, b) * vn2^2 / ratio^2 in MW/MVar
-    k = vn2^2 / ratio^2 / vn1^2
-    _powsybl_bus_shunt!(ctx, b1, g_sh * k, b_sh * k)
     shift = -(isfinite(tw.alpha[i]) ? tw.alpha[i] : 0.0)
     st = _powsybl_terminal_status(tw.connected1[i], tw.connected2[i])
     rating = _powsybl_branch_rating(ctx, id, vn1, vn2)
     rated_s = _powsybl_optional(tw.rated_s[i])
-    _addPIModelTrafo_by_idx!(net = ctx.net, from = ctx.idx[b1], to = ctx.idx[b2], r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, g_pu = g_pu, status = st.status, ratedU = tw.rated_u1[i], ratedS = rating === nothing ? rated_s : rating, ratio = ratio, shift_deg = shift, from_status = st.from_status, to_status = st.to_status)
+    _addPIModelTrafo_by_idx!(net = ctx.net, from = ctx.idx[b1], to = ctx.idx[b2], r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, g_pu = g_pu, status = st.status, ratedU = tw.rated_u1[i], ratedS = rating === nothing ? rated_s : rating, ratio = ratio, shift_deg = shift, from_status = st.from_status, to_status = st.to_status, g_from_pu = g_pu, b_from_pu = b_pu, g_to_pu = 0.0, b_to_pu = 0.0)
     _powsybl_count!(ctx.report, "2wt"; built = 1)
   end
   return nothing
@@ -372,19 +370,16 @@ function _map_powsybl_three_winding_transformers!(ctx::_PowsyblBuildContext)
       rho = t3[Symbol("rho$(k)")][i]
       ratio = _powsybl_2wt_ratio(rho, vn_k, vn_star)
       # the leg's magnetizing admittance sits on the bus side of the leg's
-      # pi behind the ideal transformer, like the two-winding case
-      g_sh = t3[Symbol("g$(k)_at_current_tap")][i]
-      b_sh = t3[Symbol("b$(k)_at_current_tap")][i]
-      g_sh = isfinite(g_sh) ? g_sh : 0.0
-      b_sh = isfinite(b_sh) ? b_sh : 0.0
-      r_pu, x_pu, b_pu, g_pu = toPU_RXBG(r = t3[Symbol("r$(k)_at_current_tap")][i], x = t3[Symbol("x$(k)_at_current_tap")][i], g = 0.0, b = 0.0, v_kv = vn_star, baseMVA = ctx.net.baseMVA)
-      kf = vn_star^2 / ratio^2 / vn_k^2
-      _powsybl_bus_shunt!(ctx, l.bus, g_sh * kf, b_sh * kf)
+      # pi behind the ideal transformer, like the two-winding case: the from
+      # arm on the star-side base, the star arm zero
+      g_sh = _powsybl_siemens(t3[Symbol("g$(k)_at_current_tap")][i])
+      b_sh = _powsybl_siemens(t3[Symbol("b$(k)_at_current_tap")][i])
+      r_pu, x_pu, b_pu, g_pu = toPU_RXBG(r = t3[Symbol("r$(k)_at_current_tap")][i], x = t3[Symbol("x$(k)_at_current_tap")][i], g = g_sh, b = b_sh, v_kv = vn_star, baseMVA = ctx.net.baseMVA)
       alpha = t3[Symbol("alpha$(k)")][i]
       shift = -(isfinite(alpha) ? alpha : 0.0)
       # a disconnected leg is open at its own terminal, the network side
       st = _powsybl_terminal_status(l.connected, true)
-      _addPIModelTrafo_by_idx!(net = ctx.net, from = ctx.idx[l.bus], to = ctx.idx[star], r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, g_pu = g_pu, status = st.status, ratedU = t3[Symbol("rated_u$(k)")][i], ratedS = _powsybl_optional(t3[Symbol("rated_s$(k)")][i]), ratio = ratio, shift_deg = shift, from_status = st.from_status, to_status = st.to_status)
+      _addPIModelTrafo_by_idx!(net = ctx.net, from = ctx.idx[l.bus], to = ctx.idx[star], r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, g_pu = g_pu, status = st.status, ratedU = t3[Symbol("rated_u$(k)")][i], ratedS = _powsybl_optional(t3[Symbol("rated_s$(k)")][i]), ratio = ratio, shift_deg = shift, from_status = st.from_status, to_status = st.to_status, g_from_pu = g_pu, b_from_pu = b_pu, g_to_pu = 0.0, b_to_pu = 0.0)
     end
     _powsybl_count!(ctx.report, "3wt"; built = 1)
   end
@@ -402,8 +397,15 @@ end
 
 function _powsybl_choose_slacks(ctx::_PowsyblBuildContext)::Dict{Int,Int}
   g = ctx.tables.generators
-  # candidates per component: regulating, connected, on a built bus
+  # candidates per component: regulating, connected, on a built bus. A unit
+  # whose setpoint applies to its own bus ranks before a unit that regulates
+  # a remote bus: the slack bus keeps the voltage it starts with, so a
+  # remotely regulating slack would leave its own bus wherever the file's
+  # state put it (micro_grid_be: 0.03 pu off OpenLoadFlow from the CGMES
+  # state, which belongs to other tap positions). Within a rank the largest
+  # max_p wins.
   best = Dict{Int,Int}()
+  local_reg = Dict{Int,Bool}()
   order = sortperm(collect(g.id))
   for i in order
     (g.connected[i] && g.voltage_regulator_on[i] && g.target_v[i] > 0.0) || continue
@@ -411,12 +413,15 @@ function _powsybl_choose_slacks(ctx::_PowsyblBuildContext)::Dict{Int,Int}
     haskey(ctx.idx, bus) || continue
     comp = ctx.component[bus]
     comp < 0 && continue
+    regulated = g.regulated_bus_id[i]
+    is_local = isempty(regulated) || regulated == ctx.report.bus_view[bus]
     current = get(best, comp, 0)
-    if current == 0 || g.max_p[i] > g.max_p[current]
+    if current == 0 || (is_local && !local_reg[comp]) || (is_local == local_reg[comp] && g.max_p[i] > g.max_p[current])
       best[comp] = i
+      local_reg[comp] = is_local
     end
   end
-  reasons = Dict{Int,String}(comp => "largest max_p among regulating units" for comp in keys(best))
+  reasons = Dict{Int,String}(comp => (local_reg[comp] ? "largest max_p among locally regulating units" : "largest max_p among regulating units (all regulate a remote bus)") for comp in keys(best))
   for want in ctx.opts.slack_ids
     j = findfirst(==(want), g.id)
     if j === nothing
@@ -594,11 +599,11 @@ end
 # --- 2.7 dangling lines and tie lines --------------------------------------------------
 
 # A dangling line as a branch from its bus to an auxiliary bus; PowSyBl's
-# model keeps the whole shunt admittance at the network terminal.
+# model keeps the whole shunt admittance at the network terminal, which is
+# the from arm of the branch (the boundary arm is zero).
 function _powsybl_add_dangling_branch!(ctx::_PowsyblBuildContext, bus::AbstractString, aux::AbstractString, r::Float64, x::Float64, g::Float64, b::Float64, connected::Bool, rating)
   st = _powsybl_terminal_status(connected, true)
-  _powsybl_add_pi_line!(ctx, bus, aux, r, x, 0.0, 0.0, st, rating)
-  _powsybl_bus_shunt!(ctx, bus, g, b)
+  _powsybl_add_pi_line!(ctx, bus, aux, r, x, _powsybl_siemens(g), _powsybl_siemens(b), 0.0, 0.0, st, rating)
   return nothing
 end
 

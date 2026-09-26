@@ -101,7 +101,7 @@ function test_configuration_yaml_key_coverage()
       "matpower_import.pv_voltage_source", "matpower_import.pv_voltage_mismatch_tol_pu", "matpower_import.compare_voltage_reference", "matpower_import.shift_unit", "matpower_import.shift_sign", "matpower_import.ratio", "matpower_import.enable_pq_gen_controllers", "matpower_import.apply_bus_names", "matpower_import.apply_branch_names", "matpower_import.apply_branch_kind", "matpower_import.import_for001_contingencies", "matpower_import.matpower_dcline_mode",
       "model.bus_shunt_model", "model.tap_changer_model", "model.auto_profile", "model.auto_profile_log", "model.net_cache_enabled", "model.preallocate_network", "model.preallocate_min_buses",
       "cgmes_import.path", "cgmes_import.base_mva", "cgmes_import.require_boundary", "cgmes_import.tap_control", "cgmes_import.machine_control", "cgmes_import.ignore_connected", "cgmes_import.vset_min_pu", "cgmes_import.vset_max_pu", "cgmes_import.multi_slack", "cgmes_import.start_values", "cgmes_import.placeholder_guards", "cgmes_import.infer_base_voltages", "cgmes_import.hvdc_mode",
-      "powsybl_import.base_mva", "powsybl_import.hvdc_mode", "powsybl_import.slack_ids", "powsybl_import.multi_slack", "powsybl_import.remote_regulation", "powsybl_import.python_exe",
+      "powsybl_import.base_mva", "powsybl_import.hvdc_mode", "powsybl_import.slack_ids", "powsybl_import.multi_slack", "powsybl_import.remote_regulation",
       "short_circuit.c_factor", "short_circuit.sweep_method", "short_circuit.takahashi_min_buses",
       "matpower_export.write_solution",
       "performance.enabled", "performance.level", "performance.print_to_console", "performance.write_to_logfile", "performance.show_allocations", "performance.show_iteration_table", "performance.compact_logging", "performance.representative_warmup_runs", "performance.compare_cold_warm", "performance.skip_reference_comparison", "performance.skip_expensive_diagnostics", "performance.skip_branch_neighborhood_report", "performance.max_diagnostic_rows",
@@ -1003,12 +1003,6 @@ function test_configuration_webui_keys_both_directions()
     # Without this rule a key can be declared editable and never surface,
     # which is exactly what happened to power_flow.tol_MW.
     fieldless_reasons = Dict(
-      "powsybl_import.base_mva" => "PowSyBl import scope, YAML, case sidecar and API only; no Web UI control in 0.19.0",
-      "powsybl_import.hvdc_mode" => "PowSyBl import scope, YAML, case sidecar and API only; no Web UI control in 0.19.0",
-      "powsybl_import.slack_ids" => "PowSyBl import scope, YAML, case sidecar and API only; no Web UI control in 0.19.0",
-      "powsybl_import.multi_slack" => "PowSyBl import scope, YAML, case sidecar and API only; no Web UI control in 0.19.0",
-      "powsybl_import.remote_regulation" => "PowSyBl import scope, YAML, case sidecar and API only; no Web UI control in 0.19.0",
-      "powsybl_import.python_exe" => "PowSyBl import scope, YAML, case sidecar and API only; no Web UI control in 0.19.0",
       "matpower_import.apply_branch_kind" => "import detail, set per case in the case configuration file",
       "matpower_import.apply_branch_names" => "import detail, set per case in the case configuration file",
       "matpower_import.import_for001_contingencies" => "DTF import detail, chosen by the FOR002 selection on the Case page",

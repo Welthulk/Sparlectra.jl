@@ -92,7 +92,6 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "powsybl_import.slack_ids",
   "powsybl_import.multi_slack",
   "powsybl_import.remote_regulation",
-  "powsybl_import.python_exe",
   "matpower_export.write_solution",
   "model.tap_changer_model",
   "short_circuit.sweep_method",

@@ -1707,7 +1707,6 @@ form:
         "powsybl_import_multi_slack" => "powsybl_import.multi_slack",
         "powsybl_import_slack_ids" => "powsybl_import.slack_ids",
         "powsybl_import_base_mva" => "powsybl_import.base_mva",
-        "powsybl_import_python_exe" => "powsybl_import.python_exe",
         "power_flow_rescue" => "power_flow.rescue",
         "runtime_parallel_enabled" => "runtime.parallel.enabled",
         "power_flow_dc_fallback" => "power_flow.dc.fallback",

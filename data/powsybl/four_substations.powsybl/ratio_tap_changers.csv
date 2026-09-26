@@ -1,0 +1,2 @@
+"id","side","tap","solved_tap_position","low_tap","high_tap","step_count","oltc","regulating","target_v","target_deadband","regulating_bus_id","regulated_side"
+"TWT","",1,1,0,2,3,true,true,225.0,0.0,"S1VL1_0","ONE"

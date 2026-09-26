@@ -17,13 +17,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 file: docs/lit/workshop_tour_cgmes.jl
-purpose: Literate.jl source of the CGMES tour: what an ENTSO-E delivery
-         is, reading and analyzing it, bus-branch and node-breaker
-         imports (with and without a TP profile, #314), SV validation,
-         and the export round trip. Runs on the official conformity
-         test sets, fetched on demand.
+purpose: Literate.jl source of the foreign-formats tour: the network
+         formats of other tools that Sparlectra reads. CGMES (what an
+         ENTSO-E delivery is, reading and analyzing it, bus-branch and
+         node-breaker imports with and without a TP profile, #314, SV
+         validation, the export round trip), PowSyBl IIDM (the same
+         network as pypowsybl wrote it, compared with OpenLoadFlow) and
+         the legacy DTF deck (FOR001 with its outage records). Runs on
+         the official conformity test sets, fetched on demand, plus the
+         shipped PowSyBl and DTF files.
 
-# The Sparlectra workshop tour: CGMES
+# The Sparlectra workshop tour: foreign formats
 
 [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour_cgmes.ipynb)
 
@@ -31,26 +35,47 @@ purpose: Literate.jl source of the CGMES tour: what an ENTSO-E delivery
 > and curated by the maintainer; it is not a fully machine-generated text.
 
 > **Level: Expert.** You should be comfortable importing and solving
-> networks (basic tour); no prior CGMES knowledge is assumed, building
-> that knowledge is the point of this tour.
+> networks (basic tour); no prior knowledge of the formats is assumed,
+> building that knowledge is the point of this tour.
 
-CGMES (Common Grid Model Exchange Standard) is how European TSOs
-exchange grid models: a DELIVERY of several RDF/XML files, each carrying
-one PROFILE of the same network. This tour works on the official
-ENTSO-E conformity test sets, downloaded on demand (about 22 MB, once):
+Sparlectra has formats of its own: the Sparlectra Case Format (`.scf.json`,
+a power-grid-model dataset with a Sparlectra block), the plain
+power-grid-model JSON inside it, and MATPOWER, the lingua franca of the
+basic tour. Everything else is a FOREIGN format: the exchange format of
+another tool, with that tool's model of a network, its conventions and
+its blind spots. Three of them are read natively, and this tour takes
+each one apart:
 
-1. Anatomy of a delivery: profiles, and what a summary shows
-2. When an import cannot work: the analysis report
-3. Bus-branch import, solve, and validation against the shipped state
-4. Node-breaker: with a TP profile, and without one (the topology processor)
-5. The export round trip
+- **CGMES** (Common Grid Model Exchange Standard), how European TSOs
+  exchange grid models: a DELIVERY of several RDF/XML files, each
+  carrying one PROFILE of the same network. Chapters 1 to 5 work on the
+  official ENTSO-E conformity test sets, downloaded on demand (about
+  22 MB, once).
+- **PowSyBl IIDM** (`.xiidm`), the XML network model of the LF Energy
+  grid framework, with node-breaker substations, tap changers and
+  limits; chapter 6 reads a file that pypowsybl wrote and compares the
+  result with OpenLoadFlow.
+- **DTF**, the fixed-column input deck (FOR001) of a legacy load-flow
+  program, with its own outage records; chapter 7 reads one and applies
+  an outage from the deck.
+
+1. CGMES: anatomy of a delivery, profiles, and what a summary shows
+2. CGMES: when an import cannot work, the analysis report
+3. CGMES: bus-branch import, solve, and validation against the shipped state
+4. CGMES: node-breaker, with a TP profile and without one (the topology processor)
+5. CGMES: the export round trip
+6. PowSyBl IIDM: the same network as pypowsybl delivers it, compared
+   with OpenLoadFlow
+7. DTF: a legacy input deck, its cards, and an outage from its records
 
 ## Warm-up and the test data
 
-The ENTSO-E conformity package bundles reference networks in several
-variants; `ensureCGMESTestConfigurations` downloads and extracts it once
-into a local cache and returns the extraction root. Everything below
-works on those files.
+Three data sources, one per format. The ENTSO-E conformity package
+bundles reference networks in several variants;
+`ensureCGMESTestConfigurations` downloads and extracts it once into a
+local cache and returns the extraction root (chapters 1 to 5). The
+PowSyBl file and the DTF deck ship with Sparlectra under `data/powsybl`
+and `data/DTF` (chapters 6 and 7), nothing to fetch.
 
 ````@example workshop_tour_cgmes
 using Sparlectra
@@ -63,6 +88,29 @@ microgrid_be = joinpath(root, "MicroGrid", "BaseCase_BC", "CGMES_v2.4.15_MicroGr
 microgrid_bd = joinpath(root, "MicroGrid", "BaseCase_BC", "CGMES_v2.4.15_MicroGridTestConfiguration_BD_v2")
 minigrid_nb = joinpath(root, "MiniGrid", "NodeBreaker", "CGMES_v2.4.15_MiniGridTestConfiguration_BaseCase_Complete_v3")
 minigrid_bd = joinpath(root, "MiniGrid", "NodeBreaker", "CGMES_v2.4.15_MiniGridTestConfiguration_Boundary_v3")
+
+# the shipped files of chapters 6 and 7
+powsybl_dir = joinpath(pkgdir(Sparlectra), "data", "powsybl", "micro_grid_be.powsybl")
+dtf_dir = joinpath(pkgdir(Sparlectra), "data", "DTF")
+println("PowSyBl file: ", joinpath(powsybl_dir, "micro_grid_be.xiidm"))
+println("DTF deck:     ", joinpath(dtf_dir, "FOR001.DAT"))
+````
+
+The first power-flow solve of a session compiles the solver (about a
+minute); a two-bus warm-up net takes that hit here, so the timing of the
+MicroGrid solve in Chapter 3 is the solve, not the compiler:
+
+````@example workshop_tour_cgmes
+wnet = Net(name = "warmup", baseMVA = 100.0)
+addBus!(net = wnet, busName = "A", vn_kV = 110.0)
+addBus!(net = wnet, busName = "B", vn_kV = 110.0)
+addProsumer!(net = wnet, busName = "A", type = "EXTERNALNETWORKINJECTION", referencePri = "A", vm_pu = 1.0, va_deg = 0.0)
+addProsumer!(net = wnet, busName = "B", type = "ENERGYCONSUMER", p = 10.0, q = 3.0)
+addPIModelACLine!(net = wnet, fromBus = "A", toBus = "B", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+t_first = @elapsed runpf!(wnet, 10, 1e-8, 0; islands_enabled = true)
+t_second = @elapsed runpf!(wnet, 10, 1e-8, 0; islands_enabled = true)
+calcNetLosses!(wnet)
+println("warm-up solve: first ", round(t_first; digits = 2), " s (compiles), second ", round(t_second * 1000; digits = 2), " ms")
 ````
 
 ## Chapter 1: anatomy of a delivery
@@ -247,8 +295,173 @@ what the original files said; the shipped SV of the export carries the
 CURRENT solved state, so a receiving tool starts from it. Details and
 the identity rules: [CGMES Export](https://welthulk.github.io/Sparlectra.jl/cgmes_export/).
 
+## Chapter 6: PowSyBl IIDM, the same network compared with OpenLoadFlow
+
+**What IIDM is.** PowSyBl, the LF Energy grid framework, imports CGMES
+too and keeps its networks in its own XML model, IIDM (`.xiidm`). Where
+CGMES spreads one network over profiles and RDF references, IIDM is one
+document: substations with voltage levels, each level either a
+bus-breaker topology (named buses) or a node-breaker topology (numbered
+nodes joined by switches and internal connections), and the equipment
+attached to buses or nodes; tap changers with their step tables,
+operational limits, HVDC links and dangling lines sit right on the
+elements. What pypowsybl resolves before it hands out tables (the bus
+views of a node-breaker substation, the current tap step, the reactive
+limits at the setpoint), Sparlectra's reader resolves in Julia, so the
+file needs no Python and no conversion.
+
+**Example 6.1: an IIDM file.** The MicroGrid BE of this tour ships with
+Sparlectra in that form under `data/powsybl`, as pypowsybl wrote it.
+Next to the file lies the solution OpenLoadFlow (PowSyBl's load flow)
+computed for it, `reference_buses.csv`, so the import can be checked
+against an independent solver:
+
+````@example workshop_tour_cgmes
+using DelimitedFiles
+tables = Sparlectra.read_iidm_tables(joinpath(powsybl_dir, "micro_grid_be.xiidm"))
+println("IIDM ", tables.manifest["iidm_version"], ": ", length(tables.buses.id), " buses, ", length(tables.two_windings_transformers.id), " two-winding and ", length(tables.three_windings_transformers.id), " three-winding transformer(s), ", length(tables.dangling_lines.id), " dangling lines")
+````
+
+The generators of the MicroGrid regulate remote buses; OpenLoadFlow holds
+those buses at their targets, and `remote_regulation = :remote` attaches
+the same as outer-loop machine controls. The import report lists what
+was built, the slack decision and every notice:
+
+````@example workshop_tour_cgmes
+pnet, preport = build_net_from_powsybl(tables, PowsyblAdapterOptions(remote_regulation = :remote))
+println(format_powsybl_report(preport))
+````
+
+Reading aid (Example 6.1): the notice about the file's bus state is the
+reader being careful: the file was solved at other tap positions
+(`solvedTapPosition`) than the ones it carries as the current position,
+so that state belongs to another network and the import starts flat.
+
+**Example 6.2: the comparison.** OpenLoadFlow's defaults are: every
+synchronous component solved, the active-power mismatch shared over the
+generators in proportion to `max_p` (the importer carries that as
+participation factors), and reactive limits switched without
+hysteresis. The matching Sparlectra configuration, then the bus voltages
+against the reference file:
+
+````@example workshop_tour_cgmes
+olf_like = SparlectraConfig(
+  powerflow = PowerFlowConfig(max_iter = 60, tol = 1e-9, islands_enabled = true, qlimits = Sparlectra.QLimitConfig(hysteresis_pu = 1e-6), distributed_slack = Sparlectra.DistributedSlackConfig(enabled = true, p_mode = :imported)),
+  output = OutputConfig(logfile_results = :off, startup_latency_hint = false),
+  control = ControlConfig(),
+)
+pres = run_sparlectra(net = pnet, config = olf_like)
+@assert pres.numerical_converged
+ref, hdr = readdlm(joinpath(powsybl_dir, "reference_buses.csv"), ',', String; quotes = true, header = true)
+cols = Dict(Symbol(strip(h)) => k for (k, h) in enumerate(vec(hdr)))
+worst = 0.0
+for i in axes(ref, 1)
+  bus = String(ref[i, cols[:bus_breaker_id]])
+  haskey(pnet.busDict, bus) || continue
+  dv = abs(pnet.nodeVec[pnet.busDict[bus]]._vm_pu - parse(Float64, ref[i, cols[:v_pu]]))
+  global worst = max(worst, dv)
+end
+println("worst |dV| against OpenLoadFlow over ", size(ref, 1), " buses: ", round(worst; sigdigits = 3), " pu")
+@assert worst < 1e-5
+````
+
+Reading aid (Example 6.2): two load-flow programs with different
+conventions (ratio at the from side against `rho` at side 1, the
+magnetizing admittance placement, the slack distribution) agree to
+1e-9 pu once the conventions are mapped, which is what the PowSyBl
+import settled. The same comparison runs for any `.xiidm` of your own
+next to a reference written with pypowsybl; without one, the file alone
+imports just the same. Details: [PowSyBl Import](https://welthulk.github.io/Sparlectra.jl/powsybl_import/).
+
+## Chapter 7: DTF, a legacy input deck with its own outage records
+
+**What DTF is.** A fixed-column text deck of a legacy load-flow program,
+the format of the Testnetz13 validation examples: FOR001 is the input
+(the network plus run parameters), FOR002 the program's printed result
+report. A deck is a sequence of CARDS in a fixed order: parameter and
+text cards, the nominal voltages the voltage-level indices refer to, a
+size card with the bus and branch counts and the NAMED slack bus, the
+branch cards (`L` for a line, `T` for a transformer, with impedances in
+per unit of the level), compensation cards, transformer-control cards
+(winding voltages, the longitudinal tap range and step, an optional
+skew-angle regulator), the bus cards (type, level index, name, start
+voltage, load, generation), and after the buses an optional block of
+OUTAGE records between `AUSFALL` and `ENDE`, one branch outage per line.
+There is no per-terminal switch: a branch is in or out. Sparlectra reads
+the deck into typed records, raw lines included, and builds the network
+from them.
+
+**Example 7.1: reading the deck.** `read_dtf` parses the cards;
+everything the deck says stays on the case object before any network
+exists:
+
+````@example workshop_tour_cgmes
+case = Sparlectra.DTFImporter.read_dtf(joinpath(dtf_dir, "FOR001.DAT"); strict = false)
+println("deck: base ", case.baseMVA, " MVA, ", length(case.buses), " buses, ", length(case.branches), " branches (", count(b -> b.kind == 'T', case.branches), " transformers), ", length(case.transformer_controls), " transformer control(s), ", length(case.outages), " outage record(s)")
+println("nominal voltages (kV): ", join(case.nominal_voltages_kv, ", "), "; slack bus of the size card: ", case.size.slack)
+@assert length(case.buses) > 0 && length(case.branches) > 0
+````
+
+**Example 7.2: the network and its solve.** `build_net` turns the records
+into a `Net` (transformer transverse admittance on the branch, the named
+slack as the reference, PQ buses kept as fixed injections); from there
+it is the ordinary solver:
+
+````@example workshop_tour_cgmes
+dnet = Sparlectra.DTFImporter.build_net(case)
+println("network: ", length(dnet.nodeVec), " buses, ", length(dnet.branchVec), " branches")
+@assert length(dnet.nodeVec) == length(case.buses)
+dite, derg = runpf!(dnet, 50, 1e-8, 0)
+@assert derg == 0
+calcNetLosses!(dnet)
+println("solved in ", dite, " iterations; losses ", round(dnet.totalLosses[end][1]; digits = 3), " MW")
+````
+
+Reading aid (Example 7.2): the FOR002 report that ships next to the deck
+is the legacy program's result for the same deck; the example
+`examples/dtf/dtf_validation_base.jl` parses it and compares bus
+voltages, branch flows and generator reactive power line by line. That
+comparison is how the DTF path was validated, and the place to look when
+a deck of your own disagrees with its old report.
+
+**Example 7.3: an outage from the deck.** The records between `AUSFALL`
+and `ENDE` name branches by kind, level, parallel identifier and the two
+bus names; `find_outage_branch_indices` resolves one to the base
+network's branches (exactly one match is required, a miss or an
+ambiguity is a diagnostic, not a guess), `apply_single_branch_outage!`
+takes the branch out, and the solve repeats:
+
+````@example workshop_tour_cgmes
+if isempty(case.outages)
+  println("this deck carries no outage records")
+else
+  outage = first(case.outages)
+  matches = Sparlectra.DTFImporter.find_outage_branch_indices(case, outage)
+  println("first outage record resolves to branch index(es) ", matches, ": ", Sparlectra.DTFImporter.outage_match_diagnostic(case, outage, matches))
+  if length(matches) == 1
+    onet = Sparlectra.DTFImporter.build_net(case)
+    Sparlectra.DTFImporter.apply_single_branch_outage!(onet, matches[1])
+    markIsolatedBuses!(net = onet, log = false)
+    oite, oerg = runpf!(onet, 50, 1e-8, 0; islands_enabled = true)
+    @assert oerg == 0
+    dv = maximum(abs(onet.nodeVec[i]._vm_pu - dnet.nodeVec[i]._vm_pu) for i in eachindex(dnet.nodeVec))
+    println("with the outage: solved in ", oite, " iterations, largest |Vm| change ", round(dv; sigdigits = 3), " pu")
+  end
+end
+````
+
+Reading aid (Example 7.3): the outage records are part of the deck, so a
+DTF study is reproducible from the file alone; the Web UI and the service
+apply them the same way (`for001Contingencies`). What the deck cannot
+say (a one-sided open branch, a switch) has no record, and the importer
+does not invent one.
+
 ## Where to go next
 
+- [PowSyBl Import](https://welthulk.github.io/Sparlectra.jl/powsybl_import/):
+  what the IIDM reader resolves, the conventions against OpenLoadFlow.
+- [DTF Format](https://welthulk.github.io/Sparlectra.jl/dtf_format/):
+  the cards, the outage records, the validation workflow against FOR002.
 - [CGMES Import](https://welthulk.github.io/Sparlectra.jl/cgmes_import/):
   the mapping reference, config keys, placeholder guards, and the
   topology processor.

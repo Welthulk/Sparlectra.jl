@@ -1,0 +1,4 @@
+"id","name","type","p0","q0","p","q","i","voltage_level_id","bus_id","bus_breaker_bus_id","node","connected","fictitious","CGMES.pFixed","CGMES.originalClass","CGMES.qFixed"
+"cb459405-cc14-4215-a45c-416789205904","BE-Load_1","UNDEFINED",200.0,90.0,200.0,90.0,1096.301293692501,"8bbd7e74-ae20-4dce-8780-c20f8e18c2e0","8bbd7e74-ae20-4dce-8780-c20f8e18c2e0_0","5c74cb26-ce2f-40c6-951d-89091eb781b6",-1,true,false,"0.0","EnergyConsumer","0.0"
+"1c6beed6-1acf-42e7-ba55-0cc9f04bddd8","BE-Load_2","UNDEFINED",200.0,50.0,200.0,50.0,530.4421176611154,"b10b171b-3bc5-4849-bb1f-61ed9ea1ec7c","b10b171b-3bc5-4849-bb1f-61ed9ea1ec7c_0","99b219f3-4593-428b-a4da-124a54630178",-1,true,false,"0.0","EnergyConsumer","0.0"
+"b1480a00-b427-4001-a26c-51954d2bb7e9","L-1230804819","UNDEFINED",1.0,0.0,1.0,0.0,2.566863580446767,"d0486169-2205-40b2-895e-b672ecb9e5fc","d0486169-2205-40b2-895e-b672ecb9e5fc_0","f70f6bad-eb8d-4b8f-8431-4ab93581514e",-1,true,false,"0.0","EnergyConsumer","0.0"

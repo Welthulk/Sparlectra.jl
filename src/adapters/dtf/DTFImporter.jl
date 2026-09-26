@@ -23,7 +23,7 @@ and the outage bookkeeping of that format.
 """
 module DTFImporter
 
-using ..Sparlectra: Net, addBus!, addProsumer!, _addPIModelACLine_by_idx!, _addPIModelTrafo_by_idx!, geNetBusIdx, validate!, normalize_bus_shunt_model, PhaseTapChangerModel, calcPhaseTapAngleRatio, calcPhaseTapFraction, calcTapCorrectedRX, model_config, setBranchStatus!
+using ..Sparlectra: Net, addBus!, addProsumer!, _addPIModelACLine_by_idx!, _addPIModelTrafo_by_idx!, geNetBusIdx, validate!, normalize_bus_shunt_model, PhaseTapChangerModel, calcPhaseTapAngleRatio, calcPhaseTapFraction, calcTapCorrectedRX, model_config, setBranchStatus!, tap_changer_kind
 
 export DTFCase, DTFParams, DTFSize, DTFBranch, DTFBus, DTFCompensation, DTFTransformerControl, DTFOutage, DTFTrailingRecord, read_dtf, build_net,
   dtf_branch_key, find_outage_branch_indices, outage_match_diagnostic, apply_single_branch_outage!, case_summary, outage_label
@@ -385,8 +385,12 @@ function _dtf_effective_transformer_tap(case::DTFCase, branch::DTFBranch, contro
   phase_model = nothing
   if control.longitudinal_range_percent !== nothing && control.max_tap_step !== nothing &&
       control.actual_tap_step !== nothing && control.max_tap_step != 0
+    # the regulator type through the one kind table: the longitudinal
+    # regulator (angle 0) and the quadrature booster (90) are the
+    # asymmetrical model with their nameplate angle, like every Schraegregler
+    dtf_name = skew_angle_deg == 0.0 ? "Laengsregler" : (skew_angle_deg == 90.0 ? "Querregler" : "Schraegregler")
     phase_model = PhaseTapChangerModel(
-      kind = :asymmetrical,
+      kind = tap_changer_kind(:dtf, dtf_name; angle = skew_angle_deg).kind,
       step = control.actual_tap_step,
       lowStep = -control.max_tap_step,
       highStep = control.max_tap_step,
@@ -480,16 +484,21 @@ function build_net(case::DTFCase; bus_shunt_model = :admittance, legacy_voltage_
     if branch.kind == 'T'
       control = _find_control(branch, case.transformer_controls)
       tap = _dtf_effective_transformer_tap(case, branch, control, bus_by_name[branch.from], bus_by_name[branch.to]; nominal_voltages_kv = nominal_voltages_kv, transformer_ratio_mode = ratio_mode)
-      ratio = tap.ratio
-      shift_deg = tap.shift_deg
-      # Central tap-changer impedance model (src/equicircuit.jl): with
-      # :impedance_correction the series impedance is re-referred through the
-      # tapped winding using the parsed regulating vector 1 + f·e^(jφ).
+      # the central tap-changer impedance model (src/equicircuit.jl) at the
+      # parsed regulating vector 1 + f e^(j phi); its factor is metadata, and
+      # without a typed model it is the branch impedance as before
       tap_rx = calcTapCorrectedRX(r_pu = pu.r, x_pu = pu.x, tap_changer_model = tap_model, tap_fraction = tap.tap_fraction, skew_angle_deg = tap.skew_angle_deg)
-      _addPIModelTrafo_by_idx!(net = net, from = from, to = to, r_pu = tap_rx.r_pu, x_pu = tap_rx.x_pu, b_pu = pu.b, g_pu = pu.g, status = 1, ratedU = pu.u_ref_kv, ratedS = ratedS, ratio = ratio, shift_deg = shift_deg)
-      # keep the typed phase-tap model reachable from the winding — pure
-      # attachment of already-computed data, no numeric branch change
-      tap.phase_model === nothing || (net.trafos[end].side1.phase_taps = tap.phase_model)
+      if tap.phase_model === nothing
+        # no typed model (fixed ratio, or a control without a range): the
+        # numbers as before
+        _addPIModelTrafo_by_idx!(net = net, from = from, to = to, r_pu = tap_rx.r_pu, x_pu = tap_rx.x_pu, b_pu = pu.b, g_pu = pu.g, status = 1, ratedU = pu.u_ref_kv, ratedS = ratedS, ratio = tap.ratio, shift_deg = tap.shift_deg)
+      else
+        # the typed model on the winding drives the branch (0.20.0): the
+        # winding carries the neutral point (base ratio, shift 0) and the
+        # resolver derives ratio, shift and the corrected impedance at the
+        # model's step, the same numbers this importer computed itself before
+        _addPIModelTrafo_by_idx!(net = net, from = from, to = to, r_pu = pu.r, x_pu = pu.x, b_pu = pu.b, g_pu = pu.g, status = 1, ratedU = pu.u_ref_kv, ratedS = ratedS, ratio = tap.base_ratio_used, shift_deg = 0.0, phase_taps = tap.phase_model, tap_changer_model = tap_model)
+      end
     else
       _addPIModelACLine_by_idx!(net = net, from = from, to = to, r_pu = pu.r, x_pu = pu.x, b_pu = pu.b, status = 1, ratedS = ratedS)
     end

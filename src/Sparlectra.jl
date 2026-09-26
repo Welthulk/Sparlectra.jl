@@ -30,6 +30,7 @@ using AnalyticLoadFlow
 using BenchmarkTools
 using Dates
 using DelimitedFiles
+import EzXML                      # IIDM reader of the PowSyBl adapter (the CGMES submodule imports it on its own)
 using LinearAlgebra
 using Logging
 using Printf
@@ -511,6 +512,8 @@ export
   calcRatioTapRange,                      # Ratio-terms tap range (tap_min, tap_max, tap_step).
   calcPhaseTapFraction,                   # CGMES phase-tap-changer n-n0 tap fraction.
   calcPhaseTapAngleRatio,                 # CGMES phase-tap-changer effective ratio/shift/regulating vector.
+  tap_changer_kind,                       # Source tap-changer name to Sparlectra kind (one table for every importer and exporter).
+  TAP_CHANGER_KIND_TABLE,
   calcPhaseTapReactance,                  # CGMES phase-tap-changer series-reactance dependence on tap angle.
   calcPhaseTapTable,                      # Tabular phase-tap-changer exact lookup (overrides formulas).
   calcNeutralU,
@@ -690,6 +693,7 @@ include("config/config_overrides.jl")
 include("component.jl")
 include("lines.jl")
 include("transformer.jl")
+include("tap_changer_kinds.jl")
 include("prosumer.jl")
 include("node.jl")
 include("branch.jl")

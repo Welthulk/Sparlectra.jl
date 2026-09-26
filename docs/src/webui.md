@@ -133,7 +133,7 @@ with their sidecars (per-case configuration, measurement CSVs) on first
 use, the three CGMES deliveries exported by Sparlectra itself
 (`data/cgmes_demo`: `sp_case14`, `sp_case118`, `sp_casePST`, four profile
 files each) as `<case>_cgmes.zip`, and PowSyBl table bundles
-(`<case>.powsybl` directories) and IIDM files (`.xiidm`, `.xiidm.bz2`). Generated `.jl` cache files and
+(`<case>.powsybl` directories) and IIDM files (`.xiidm`). Generated `.jl` cache files and
 `warmup_` files are hidden. FOR002-like `.DAT` files are not primary cases;
 they go into the optional **FOR002 reference** field (absolute path, path
 in the case cache, or an offered candidate), used only for legacy reference
@@ -152,9 +152,9 @@ the FOR001 markers are unambiguous, native DTF input. **CGMES (ENTSO-E,
 folder or ZIP)** forces the CGMES importer and is preselected for a `.zip`
 or a directory; **PowSyBl (IIDM file or .powsybl bundle)** is preselected
 for those files and shows the PowSyBl import options (HVDC mode, remote
-regulation, slack choice, base MVA, Python for the live IIDM import; see
-[PowSyBl Import](powsybl_import.md)). A `.xiidm` file runs only with the
-PythonCall extension loaded; otherwise the run names the bundle script.
+regulation, slack choice, base MVA; see
+[PowSyBl Import](powsybl_import.md)). A `.xiidm` file is read in Julia,
+no Python is involved.
 **Sparlectra Case Format (.scf.json)** and **power-grid-model JSON
 (input.json)** name the same reader (the `sparlectra` block is optional);
 Auto already sends every `.json` there, so they matter only when the
@@ -179,9 +179,10 @@ headers.
 
 **Import case files** opens the native file picker and accepts several files
 at once: MATPOWER `.m`/`.M`, DTF `.dat`/`.DAT`, CGMES `.zip` deliveries,
-CGMES profile files (`.xml`) and PowSyBl IIDM files (`.xiidm`,
-`.xiidm.bz2`); the server validates the extension again. A `.powsybl`
-bundle is a directory and is copied into the case directory by hand.
+CGMES profile files (`.xml`) and PowSyBl IIDM files (`.xiidm`); the
+server validates the extension again. An uploaded `.xiidm` file runs as
+it is. A `.powsybl` bundle is a directory and is copied into the case
+directory by hand.
 Several `.xml` files (the EQ, SSH, TP and SV profiles of one delivery, such
 as a `data/cgmes_demo` folder) are packed into one `<stem>_cgmes.zip` named
 after the common stem; the set must contain the EQ profile. A CGMES ZIP may

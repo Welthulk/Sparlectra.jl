@@ -127,9 +127,24 @@ The checkbox works for every case format; CGMES cases carry their
 harvested zero-sequence line attributes along. Service callers use
 `export_cgmes: true` in the `start_powerflow_run` request.
 
+## Tap-changer classes
+
+A transformer whose winding carries a typed phase model in the CGMES
+regulating-vector convention exports the model's class with its step:
+`:symmetrical` as `PhaseTapChangerSymmetrical`, `:asymmetrical` as
+`PhaseTapChangerAsymmetrical` (with `windingConnectionAngle`), `:tabular`
+as `PhaseTapChangerTabular` with its `PhaseTapChangerTable` and points; a
+model that came in as `PhaseTapChangerLinear` goes out as a table (the
+linear origin is not reconstructed). `ratedU1` then carries the neutral
+ratio and the importer applies the model on top, so the round trip keeps
+the model. A branch without a model, or with a model in the from-side
+reciprocal convention (DTF, hand-built), keeps the single-step
+`PhaseTapChangerLinear` that carries the solved shift exactly. Ratio tap
+changers export as `RatioTapChanger` (no table). Each end's magnetizing
+admittance is written on its own `PowerTransformerEnd`.
+
 ## Scope
 
 Not produced: tap and machine controller wiring (tap changers carry range
-and position, not the controller logic), per-step tabular tap tables (the
-solved ratio/shift is exact), and the DC modeling of a source delivery.
-Import: [CGMES Import](cgmes_import.md).
+and position, not the controller logic), ratio tap tables, and the DC
+modeling of a source delivery. Import: [CGMES Import](cgmes_import.md).

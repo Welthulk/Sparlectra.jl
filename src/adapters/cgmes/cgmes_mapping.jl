@@ -176,22 +176,34 @@ function _phaseTapTableModel(store::CGMESStore, ptc::CIMObject, step::Int)
   return (model = model, impedance_note = impedance_note)
 end
 
+# A CGMES PhaseTapChangerLinear as a :tabular model with generated points
+# (0.20.0, no fourth kind): angle (k - neutral) * stepPhaseShiftIncrement,
+# ratio 1 at every step. xMin/xMax are given in ohm on the end base, which
+# this builder does not know, so the points carry no x_pu (the branch keeps
+# its series reactance).
+function _phaseTapLinearModel(ptc::CIMObject, step::Int)
+  neutral = Int(round(num(ptc, :neutralStep, 0.0)))
+  low = Int(round(num(ptc, :lowStep, Float64(min(step, neutral)))))
+  high = Int(round(num(ptc, :highStep, Float64(max(step, neutral)))))
+  low <= neutral <= high || (low = min(low, neutral); high = max(high, neutral))
+  inc = num(ptc, :stepPhaseShiftIncrement, 0.0)
+  rows = Sparlectra.TapTablePoint[Sparlectra.TapTablePoint(step = k, ratio = 1.0, angle_deg = (k - neutral) * inc) for k in low:high]
+  return Sparlectra.PhaseTapChangerModel(kind = :tabular, step = clamp(step, low, high), neutralStep = neutral, convention = :direct_regulating_vector, table = rows)
+end
+
 function _phaseTapRatioShift(store::CGMESStore, ptc::CIMObject, svsteps::Dict{String,Float64})::Tuple{Float64,Float64}
   step = Int(round(_tapStep(ptc, svsteps)))
   neutral = Int(round(num(ptc, :neutralStep, 0.0)))
   low = Int(round(num(ptc, :lowStep, Float64(min(step, neutral)))))
   high = Int(round(num(ptc, :highStep, Float64(max(step, neutral)))))
-  if ptc.class == :PhaseTapChangerLinear
-    shift = (step - neutral) * num(ptc, :stepPhaseShiftIncrement, 0.0)
-    return (1.0, shift)
-  end
-  if ptc.class == :PhaseTapChangerTabular
-    built = _phaseTapTableModel(store, ptc, step)
+  # the class name maps to the kind through the one table (tap_changer_kinds.jl)
+  kind = Sparlectra.tap_changer_kind(:cgmes, String(ptc.class)).kind
+  if kind === :tabular
+    built = ptc.class == :PhaseTapChangerLinear ? (model = _phaseTapLinearModel(ptc, step), impedance_note = false) : _phaseTapTableModel(store, ptc, step)
     built === nothing && return (1.0, 0.0)
     res = Sparlectra.calcPhaseTapAngleRatio(built.model)
     return (res.effective_ratio, res.effective_shift_deg)
   end
-  kind = ptc.class == :PhaseTapChangerSymmetrical ? :symmetrical : :asymmetrical
   vincr = num(ptc, :voltageStepIncrement)
   model = Sparlectra.PhaseTapChangerModel(;
     kind = kind,
@@ -792,11 +804,17 @@ function _mapLines!(net, store, topo, created, svmap, baseMVA, ctx::_MapCtx)
       end
       # branch model convention (calcAdmittance): series/shunt admittance on
       # the TO-side voltage base, complex ratio t at the from side
+      # a CGMES line carries one charging admittance (bch, gch), so the two
+      # terminal arms are its halves: the symmetric pi of every builder
+      g_half = cls == :ACLineSegment ? 0.5 * num(line, :gch, 0.0) : 0.0
+      b_half = cls == :ACLineSegment ? 0.5 * num(line, :bch, 0.0) : 0.0
       pu = Sparlectra.pi_branch_pu_between_levels(
         r = num(line, :r, 0.0),
         x = num(line, :x, 0.0),
-        g = cls == :ACLineSegment ? num(line, :gch, 0.0) : 0.0,
-        b = cls == :ACLineSegment ? num(line, :bch, 0.0) : 0.0,
+        g_from = g_half,
+        b_from = b_half,
+        g_to = g_half,
+        b_to = b_half,
         vn_from_kV = t1.vn_kV,
         vn_to_kV = t2.vn_kV,
         baseMVA = baseMVA,
@@ -872,6 +890,11 @@ function _map2WTrafo!(net, store, topo, created, svmap, svsteps, baseMVA, pt, en
     U1 = U1, U2 = U2,
   )
   r_pu, x_pu, b_pu, g_pu = Sparlectra.toPU_RXBG(r = z.r, x = z.x, g = z.g, b = z.b, v_kv = i2.vn_kV, baseMVA = baseMVA)
+  # each end keeps its magnetizing admittance on its own terminal arm
+  # (0.20.0): end 1 referred to the end-2 base is the from arm, which the
+  # stamp sees behind the ratio, end 2 the to arm
+  _, _, b_from_pu, g_from_pu = Sparlectra.toPU_RXBG(r = 0.0, x = 0.0, g = z.g_from, b = z.b_from, v_kv = i2.vn_kV, baseMVA = baseMVA)
+  _, _, b_to_pu, g_to_pu = Sparlectra.toPU_RXBG(r = 0.0, x = 0.0, g = z.g_to, b = z.b_to, v_kv = i2.vn_kV, baseMVA = baseMVA)
   ratio = (U1 / U2) / (i1.vn_kV / i2.vn_kV)
   shift = 0.0
   ratio, shift = _applyEndTaps(store, svsteps, e1, ratio, shift, true, ctx.messages; strict = ctx.strict_guards)
@@ -889,7 +912,7 @@ function _map2WTrafo!(net, store, topo, created, svmap, svsteps, baseMVA, pt, en
   from = Sparlectra.geNetBusIdx(net = net, busName = b1)
   to = Sparlectra.geNetBusIdx(net = net, busName = b2)
   ratedS = num(e1, :ratedS)
-  Sparlectra._addPIModelTrafo_by_idx!(net = net, from = from, to = to, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, g_pu = g_pu, status = status, ratedU = U1, ratedS = ratedS, ratio = ratio, shift_deg = shift, from_status = ptc1 ? 1 : 0, to_status = ptc2 ? 1 : 0)
+  Sparlectra._addPIModelTrafo_by_idx!(net = net, from = from, to = to, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, g_pu = g_pu, status = status, ratedU = U1, ratedS = ratedS, ratio = ratio, shift_deg = shift, from_status = ptc1 ? 1 : 0, to_status = ptc2 ? 1 : 0, g_from_pu = g_from_pu, b_from_pu = b_from_pu, g_to_pu = g_to_pu, b_to_pu = b_to_pu)
   idx = net.branchVec[end].branchIdx
   tm1 = get(e1.refs, :Terminal, nothing)
   tm2 = get(e2.refs, :Terminal, nothing)
@@ -941,7 +964,9 @@ function _map3WTrafo!(net, store, topo, created, svmap, svsteps, baseMVA, pt, en
     ik = infos[k]
     Uk = something(num(e, :ratedU), ik.vn_kV)
     # each leg runs AUX → side bus; end impedances are already on their own
-    # end base = the leg's TO side, which is what calcAdmittance expects
+    # end base = the leg's TO side, which is what calcAdmittance expects;
+    # the end's magnetizing admittance is the to arm (0.20.0), the star arm
+    # is zero
     r_pu, x_pu, b_pu, g_pu = Sparlectra.toPU_RXBG(r = num(e, :r, 0.0), x = num(e, :x, 0.0), g = num(e, :g, 0.0), b = num(e, :b, 0.0), v_kv = ik.vn_kV, baseMVA = baseMVA)
     ratio = (U1 / Uk) / (vn_aux / ik.vn_kV)
     shift = 0.0
@@ -950,7 +975,7 @@ function _map3WTrafo!(net, store, topo, created, svmap, svsteps, baseMVA, pt, en
     bk = _ensureBus!(net, created, topo, svmap, ik.tn)
     to = Sparlectra.geNetBusIdx(net = net, busName = bk)
     status = (_conn(ctx, ik.connected) && _inService(ctx, pt)) ? 1 : 0
-    Sparlectra._addPIModelTrafo_by_idx!(net = net, from = aux, to = to, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, g_pu = g_pu, status = status, ratedU = Uk, ratedS = num(e, :ratedS), ratio = ratio, shift_deg = shift)
+    Sparlectra._addPIModelTrafo_by_idx!(net = net, from = aux, to = to, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, g_pu = g_pu, status = status, ratedU = Uk, ratedS = num(e, :ratedS), ratio = ratio, shift_deg = shift, g_from_pu = 0.0, b_from_pu = 0.0, g_to_pu = g_pu, b_to_pu = b_pu)
     tm = get(e.refs, :Terminal, nothing)
     tm === nothing || (ctx.branch_side[tm] = (net.branchVec[end].branchIdx, :to))
     # legs also consume the pair counter so a hypothetical 2W transformer on

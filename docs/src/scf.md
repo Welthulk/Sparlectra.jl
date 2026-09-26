@@ -305,6 +305,8 @@ The Sparlectra Y-bus stamps the tap on the **from** side, so
 | `components.sc_source` | IEC 60909 source data (external network injections, machines) that PGM's `source` cannot carry beyond `sk`/`rx_ratio` |
 | `components.shunt_state` | what PGM's `g1`/`b1` cannot say: whether a shunt is in service, whether it is a voltage-dependent injection rather than an admittance, and whether its susceptance is released as a state-estimation state. Only deviating shunts produce a row |
 | `transformer_types` | named transformer nameplates in CGMES `PowerTransformerEnd` vocabulary, referenced by `components.transformer3w` entries |
+| `branch_shunt_split` | per branch id, only for a branch whose two terminal shunt arms differ: `g_from_pu`, `b_from_pu`, `g_to_pu`, `b_to_pu` in pu on the branch base. The `data` section keeps the PGM totals (`c1`, `b1`); on load the row overrides the symmetric half. Absent block: symmetric, so every older file reads as before |
+| `tap_changer_models` | per branch id, the typed tap-changer models of the from-side winding: `ratio` (the `PowerTransformerTaps` inputs: `vn_kv`, `step`, `low_step`, `high_step`, `neutral_step`, `voltage_increment_kv`, `neutral_u_kv`, `convention`), `phase` (`kind` `symmetrical`, `asymmetrical` or `tabular`, the steps, `voltage_step_increment`, `step_phase_shift_increment`, `winding_connection_angle_deg`, `x_min`, `x_max`, `convention`, and `table` rows `step`, `ratio`, `angle_deg`, `x_pu` for `tabular`), and `tap_changer_model` when the impedance correction is on. On load the models are restored onto the winding and the resolver derives ratio, shift and grid from them; `components.tap_changer` rows still describe the grid for readers that know no model. The 0.19 spelling `extra[<id>].phase_taps` is read for one more release |
 | `components.controllers` | FACTS and regulation, in the declarative `control.controllers` schema verbatim: same type names, same keyword names. The reader hands the entries to `applyConfiguredControllers!`, so there is one construction path and no second vocabulary |
 | `contingencies` | legacy N-1 study definition: `mode` (`explicit`, `all_branches`, `all_branches_plus`), the case list with their outages, exclusions. Still read, mapped onto the scenario model at load time; the writer emits `scenarios` only |
 | `scenarios` | the scenario model: `mode` (`explicit`, `n1_branches`, `n1_generators`, `n1_all`), `exclusions`, and the ordered scenario list, each scenario `name`, `weight` and its `ops` (`op` = `status`/`set`/`scale`, `target` component class, `id` the SCF component id, plus `value`, `field`, `factor` as the op needs). The N-1 modes expand through the same generators `runContingencies!` uses, so N-1 is the special case of the model; see [N-1 Contingency Analysis](contingency.md) and the Web UI's scenario editor |
@@ -317,6 +319,25 @@ The study blocks are validated on load (an unknown mode, an out-of-band
 `c_factor` or an empty outage list fails on read, not at the start of a
 long sweep); `scf_case_studies(file)` reads them without building the
 network.
+
+An example of the two blocks for one transformer branch with id 12:
+
+```json
+"branch_shunt_split": {
+  "12": {"g_from_pu": 0.0004, "b_from_pu": -0.012, "g_to_pu": 0.0, "b_to_pu": 0.0}
+},
+"tap_changer_models": {
+  "12": {
+    "phase": {"kind": "asymmetrical", "step": 3, "low_step": -10, "high_step": 10,
+              "neutral_step": 0, "voltage_step_increment": 0.01,
+              "winding_connection_angle_deg": 90.0, "convention": "reciprocal_from_side"}
+  }
+}
+```
+
+The `data` section stays a valid power-grid-model dataset: the split and
+the models live only in the `sparlectra` block, and `exportSCF(strict_pgm
+= true)` names both among what the plain dataset does not carry.
 
 ### Names and source ids
 

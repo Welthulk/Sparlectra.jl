@@ -86,6 +86,25 @@ function _write_hvdc_links_artifact(output_path::AbstractString, net::Net; forma
   return HVDC_LINKS_ARTIFACT
 end
 
+const TAP_MODEL_NOTICES_ARTIFACT = "tap_models.log"
+
+# One line per transformer whose ratio or shift the resolver took from a
+# typed tap-changer model instead of the constructed values (the precedence
+# rule of the branch model, net.tapModelNotices); nothing when no
+# transformer was affected. Written for every import format, because the
+# notices are collected by addBranch! and the importers do not print them.
+function _write_tap_model_notices_artifact(output_path::AbstractString, net::Net)::Union{Nothing,String}
+  isempty(net.tapModelNotices) && return nothing
+  open(joinpath(output_path, TAP_MODEL_NOTICES_ARTIFACT), "w") do io
+    println(io, "# Tap-changer model precedence: transformers whose branch values come from a typed model")
+    println(io, "# (the constructed ratio and shift are the neutral point the model moves from)")
+    for line in net.tapModelNotices
+      println(io, line)
+    end
+  end
+  return TAP_MODEL_NOTICES_ARTIFACT
+end
+
 function _effective_config_with_runtime_case(effective_raw, case_path::AbstractString, config::SparlectraConfig; config_sources = nothing)
   raw = deepcopy(effective_raw)
   runtime = get!(raw, "runtime", Dict{String,Any}())
@@ -1032,6 +1051,13 @@ function _run_sparlectra_api_body(
     operation_callback("hvdc_links_reported"; run_id = run_id, hvdc_link_count = length(raw_result.net.hvdcLinks), artifact = hvdc_links_artifact)
     open(logfile, "a") do io
       println(io, "HVDC link flows artifact: ", hvdc_links_artifact)
+    end
+  end
+  tap_model_artifact = raw_result.net === nothing ? nothing : _write_tap_model_notices_artifact(output_path, raw_result.net)
+  if tap_model_artifact !== nothing
+    operation_callback("tap_model_notices_reported"; run_id = run_id, transformer_count = length(raw_result.net.tapModelNotices), artifact = tap_model_artifact)
+    open(logfile, "a") do io
+      println(io, "Tap-changer model precedence artifact: ", tap_model_artifact, " (", length(raw_result.net.tapModelNotices), " transformer(s))")
     end
   end
   csv_artifacts = String[]

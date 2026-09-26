@@ -588,6 +588,27 @@ of the fixed position, a `TapStateMap` with zero state columns (all
 regulators frozen at the fixed position), and the state vector without the
 tap columns.
 """
+# The shift (relative to the winding's neutral) of the model step nearest
+# to `shift_deg` for a branch whose taps are derived from a typed phase
+# model (0.20.0); `nothing` on the legacy degree grid. The estimator then
+# fixes such a regulator on the model's own, possibly non-uniform, steps.
+function _model_shift_nearest(br::Branch, shift_deg::Float64)::Union{Nothing,Float64}
+  (br.taps_derived && br.tap_winding !== nothing && br.tap_winding.phase_taps !== nothing) || return nothing
+  m = br.tap_winding.phase_taps
+  steps = m.kind === :tabular ? [p.step for p in m.table] : collect(m.lowStep:m.highStep)
+  best = nothing
+  bestd = Inf
+  for st in steps
+    s = calcPhaseTapAngleRatio(m; step = st).effective_shift_deg
+    d = abs(s - shift_deg)
+    if d < bestd
+      best = s
+      bestd = d
+    end
+  end
+  return best
+end
+
 function _fixate_taps(x::Vector{Float64}, map::TapStateMap, net::Net)
   rows = NamedTuple[]
   r1f = Float64[]
@@ -642,7 +663,11 @@ function _fixate_taps(x::Vector{Float64}, map::TapStateMap, net::Net)
       p2fix = clamp(round(p2, RoundNearestTiesAway), ceil(p2min), floor(p2max))
       r2fix = r2   # frozen regulator: exact model position
       if map.r2cols[j] != 0 && map.modes[j] in (:pst, :both)
-        ϕ = -deg2rad(p2fix * step2)
+        fixed_deg = p2fix * step2
+        # a typed model fixes on its own steps, not on the mean degree grid
+        model_deg = _model_shift_nearest(br, fixed_deg)
+        model_deg === nothing || (fixed_deg = model_deg)
+        ϕ = -deg2rad(fixed_deg)
         r2fix = abs(sin(deg2rad(α) - ϕ)) < 1e-12 ? 0.0 : sin(ϕ) / sin(deg2rad(α) - ϕ)
       end
     end

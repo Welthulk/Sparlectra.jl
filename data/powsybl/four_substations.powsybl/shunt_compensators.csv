@@ -1,0 +1,2 @@
+"id","name","g","b","model_type","max_section_count","section_count","solved_section_count","voltage_regulation_on","target_v","target_deadband","regulating_bus_id","p","q","i","voltage_level_id","bus_id","bus_breaker_bus_id","node","connected","fictitious"
+"SHUNT","",0.0,-0.012,"LINEAR",1,1,1,false,NaN,NaN,"S1VL2_0",0.0,1920.0,2771.2812921102036,"S1VL2","S1VL2_0","S1VL2_19",19,true,false

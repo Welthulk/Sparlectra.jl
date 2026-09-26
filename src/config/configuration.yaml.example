@@ -420,9 +420,6 @@ powsybl_import:
   # attaches an outer-loop machine voltage control on the regulated bus
   # (reproduces OpenLoadFlow's remote voltage control).
   remote_regulation: hold_local
-  # Python executable for the PythonCall extension (live .xiidm import);
-  # empty means the PythonCall default.
-  python_exe: ""
 
 # ENTSO-E CGMES import (see docs/src/cgmes_import.md)
 cgmes_import:

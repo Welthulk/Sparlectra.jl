@@ -838,6 +838,9 @@ function evaluate!(engine::ScenarioEngine, worker::ScenarioWorker, it::_Scenario
     br.status = 0
     br.from_status = 0
     br.to_status = 0
+    # a bus shunt part that stems from this branch (MATPOWER reimport of an
+    # asymmetric branch shunt) leaves with it; the worker reset restores it
+    _remove_branch_shunt_parts!(work, it.internal)
   end
   result = _evaluate_outaged_net!(engine, work, it.name, it.weight)
   removed_prosumer === nothing || insert!(work.prosumpsVec, it.internal, removed_prosumer)
@@ -1005,3 +1008,18 @@ function runScenarios!(
 end
 
 runScenarios!(net::Net, scenarios::Vector{Scenario}; kwargs...) = runScenarios!(net, ScenarioSet(scenarios = scenarios); kwargs...)
+
+# Take the branch-derived parts of every bus shunt that stem from branch
+# `bidx` out of the shunt admittance of the working copy (0.20.0): the
+# MATPOWER importer records the terminal excess of an asymmetric branch
+# shunt as a part of the bus shunt, and an outage of the branch removes
+# that admittance with the branch. The parts stay recorded, so the worker
+# reset (a copy of the template) restores the admittance.
+function _remove_branch_shunt_parts!(work::Net, bidx::Int)
+  for sh in work.shuntVec
+    part = get(sh.branch_parts, bidx, nothing)
+    part === nothing && continue
+    sh.y_pu_shunt -= part
+  end
+  return nothing
+end

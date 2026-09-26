@@ -879,6 +879,66 @@ function _scf_transformer3w(net::Net, ids::ScfIdMap)
   return rows
 end
 
+# The branches whose two terminal shunt arms differ (above 1e-12 pu): the
+# four pu values keyed by the branch id (0.20.0). The data section keeps
+# the PGM totals; the block is the split.
+function _scf_branch_shunt_split(net::Net, ids::ScfIdMap)
+  out = Dict{String,Any}()
+  for i in eachindex(net.branchVec)
+    br = net.branchVec[i]
+    id = get(ids.branch, i, nothing)
+    id === nothing && continue
+    (abs(br.g_from_pu - br.g_to_pu) > 1e-12 || abs(br.b_from_pu - br.b_to_pu) > 1e-12) || continue
+    out[string(id)] = Dict{String,Any}("g_from_pu" => br.g_from_pu, "b_from_pu" => br.b_from_pu, "g_to_pu" => br.g_to_pu, "b_to_pu" => br.b_to_pu)
+  end
+  return out
+end
+
+# The typed tap-changer models of a winding as plain JSON objects: `ratio`
+# with the PowerTransformerTaps constructor inputs, `phase` with the
+# PhaseTapChangerModel fields (kind as a string, the table for :tabular),
+# and the impedance-correction option the resolver applied.
+function _scf_tap_model_dict(br::Branch, w::PowerTransformerWinding)
+  d = Dict{String,Any}()
+  if w.taps !== nothing
+    t = w.taps
+    d["ratio"] = Dict{String,Any}("vn_kv" => w.Vn, "step" => t.step, "low_step" => t.lowStep, "high_step" => t.highStep, "neutral_step" => t.neutralStep, "voltage_increment_kv" => t.voltageIncrement_kV, "neutral_u_kv" => t.neutralU, "convention" => String(t.convention))
+  end
+  if w.phase_taps !== nothing
+    m = w.phase_taps
+    p = Dict{String,Any}("kind" => String(m.kind), "step" => m.step, "low_step" => m.lowStep, "high_step" => m.highStep, "neutral_step" => m.neutralStep, "convention" => String(m.convention))
+    m.voltage_step_increment === nothing || (p["voltage_step_increment"] = m.voltage_step_increment)
+    m.step_phase_shift_increment === nothing || (p["step_phase_shift_increment"] = m.step_phase_shift_increment)
+    m.winding_connection_angle_deg === nothing || (p["winding_connection_angle_deg"] = m.winding_connection_angle_deg)
+    m.x_min === nothing || (p["x_min"] = m.x_min)
+    m.x_max === nothing || (p["x_max"] = m.x_max)
+    m.table === nothing || (p["table"] = Any[_scf_table_point_dict(r) for r in m.table])
+    d["phase"] = p
+  end
+  br.tap_correction === :ideal || (d["tap_changer_model"] = String(br.tap_correction))
+  return d
+end
+
+# one TapTablePoint as a JSON object; x_pu only when the row carries one
+function _scf_table_point_dict(r::TapTablePoint)
+  pt = Dict{String,Any}("step" => r.step, "ratio" => r.ratio, "angle_deg" => r.angle_deg)
+  r.x_pu === nothing || (pt["x_pu"] = r.x_pu)
+  return pt
+end
+
+function _scf_tap_changer_models(net::Net, ids::ScfIdMap)
+  out = Dict{String,Any}()
+  for i in eachindex(net.branchVec)
+    br = net.branchVec[i]
+    w = br.tap_winding
+    (w !== nothing && (w.taps !== nothing || w.phase_taps !== nothing)) || continue
+    id = get(ids.branch, i, nothing)
+    id === nothing && continue
+    out[string(id)] = _scf_tap_model_dict(br, w)
+  end
+  return out
+end
+
 function _scf_tap_changers(net::Net, ids::ScfIdMap)
   rows = Vector{Any}()
   for i in eachindex(net.branchVec)
@@ -1175,6 +1235,12 @@ function net_to_scf(
     isempty(faults) || (data["fault"] = faults)
   end
   isempty(components) || (spar["components"] = components)
+  # the two 0.20.0 blocks: the asymmetric shunt split and the typed tap
+  # models, both keyed by branch id, both absent when nothing deviates
+  split_block = _scf_branch_shunt_split(net, ids)
+  isempty(split_block) || (spar["branch_shunt_split"] = split_block)
+  model_block = _scf_tap_changer_models(net, ids)
+  isempty(model_block) || (spar["tap_changer_models"] = model_block)
   if !isempty(meas_rows)
     block = Dict{String,Any}("rows" => meas_rows)
     # where the values came from, and above all WHETHER THEY CARRY NOISE: a
@@ -1224,6 +1290,8 @@ function net_to_scf(
       haskey(comps, "shunt_state") && push!(dropped, "shunt state")
     end
     haskey(spar, "measurements") && push!(dropped, "measurement rows")
+    haskey(spar, "branch_shunt_split") && push!(dropped, "asymmetric branch shunt split")
+    haskey(spar, "tap_changer_models") && push!(dropped, "typed tap-changer models")
     any(ps -> has_qu_controller(ps) || has_pu_controller(ps), net.prosumpsVec) && push!(dropped, "voltage-dependent Q(U)/P(U) control")
     haskey(spar, "start_state") && push!(dropped, "start state")
     (haskey(spar, "contingencies") || haskey(spar, "short_circuit")) && push!(dropped, "study definitions")
