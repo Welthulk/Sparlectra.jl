@@ -1,0 +1,3 @@
+"id","name","boundary_line1_id","dangling_line1_id","boundary_line2_id","dangling_line2_id","pairing_key","ucte_xnode_code","connected1","connected2","fictitious"
+"NHV1_NHV2_1","","NHV1_XNODE1","NHV1_XNODE1","XNODE1_NHV2","XNODE1_NHV2","XNODE1","XNODE1",true,true,false
+"NHV1_NHV2_2","","NHV1_XNODE2","NHV1_XNODE2","XNODE2_NHV2","XNODE2_NHV2","XNODE2","XNODE2",true,true,false

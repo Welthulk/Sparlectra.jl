@@ -54,7 +54,7 @@ metadata only, failed runs included once they produced `result.json`):
 | `diagnose.log` | with `run_diagnostics`: the PowerFlow and Q-limit printers. A diagnostic failure never replaces the primary result; run directories with the legacy `diagnose.txt` stay discoverable |
 | `cgmes.log` | the full CGMES import report; only its `warning:` lines are mirrored into `run.log` |
 | `bus_voltages_complex.csv`, `branch_flows.csv`, `bus_powers.csv` | with `detailed_result_csv` (default `false`), after a successful solve, from `buildACPFlowReport(raw_result.net)`: polar and rectangular voltages per bus (for Excel), flows at both ends and losses per branch, and one row per bus with solved generation, load and shunt power, `bus_type_start` and `bus_type_end`, the binding Q-limit side and band, the `control`/`control_status` summary (Q(U), P(U), RVC, STATCOM, SVC, MSC, OLTC_target) and the `non_physical` Q-V flag, the data of the console result table and `printQVCharacteristicCheck` |
-| `q_limit_events.csv`, `q_limit_initial_limits.csv` | Q-limit switching events and the initial limits |
+| `q_limit_events.csv`, `q_limit_initial_limits.csv` | Q-limit switching events and the initial limits, with `run_diagnostics` or `detailed_result_csv`; a run with more than five switching events writes `q_limit_events.csv` on its own and `q_limit.log` keeps a five-row preview that names the file |
 
 **CSV request fields**
 

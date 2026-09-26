@@ -134,6 +134,9 @@ function _detect_case_format(case_path::AbstractString; requested::Symbol = :aut
     conflict === nothing || throw(ArgumentError(conflict))
     return requested
   end
+  # a PowSyBl bundle directory or IIDM file comes first: the CGMES probe
+  # claims every directory and every .xml
+  detect(PowsyblAdapter, case_path) && return :powsybl
   _looks_like_cgmes(case_path) && return :cgmes
   ext = lowercase(splitext(case_path)[2])
   # Sparlectra Case Format (#342): self-describing JSON, recognized by its
@@ -288,6 +291,15 @@ function import_case(path::AbstractString, general_config::SparlectraConfig; req
     # config, exactly what the discarded second build used to apply).
     _apply_config_net_parameters!(cg.result.net, cg.run_config)
     return ImportedCase(cg.result.net, cg.run_config, fmt, provenance, _EMPTY_CASE_STUDIES, Dict{String,Any}())
+  elseif fmt === :powsybl
+    phase_callback("reading_powsybl_bundle")
+    net, report, tables = _import_powsybl(String(path), powsybl_adapter_options(general_config); name = name)
+    # stamped exactly once PER IMPORTER, and this is the PowSyBl
+    # importer's once
+    _apply_config_net_parameters!(net, general_config)
+    provenance["powsybl_report"] = report
+    provenance["powsybl_manifest"] = tables.manifest
+    return ImportedCase(net, general_config, fmt, provenance, _EMPTY_CASE_STUDIES, Dict{String,Any}())
   elseif fmt === :dtf_for001
     _reject_dtf_dcline_like_content!(String(path))
     dtf_case = DTFImporter.read_dtf(String(path))

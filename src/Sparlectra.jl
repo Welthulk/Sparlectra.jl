@@ -29,6 +29,7 @@ module Sparlectra
 using AnalyticLoadFlow
 using BenchmarkTools
 using Dates
+using DelimitedFiles
 using LinearAlgebra
 using Logging
 using Printf
@@ -447,6 +448,15 @@ export
   cgmes_enrich_case!,                     # Attach the mRID registry and per-component mRIDs to a typed case.
   PGMAdapter,                             # power-grid-model adapter: plain dataset through the shared pipeline.
   PGMAdapterOptions,                      # Contract options of the PGM conversion (none).
+  PowsyblAdapter,                         # PowSyBl adapter: IIDM through pypowsybl tables (bundle or extension).
+  PowsyblAdapterOptions,                  # Adapter-scope options of the PowSyBl import.
+  powsybl_adapter_options,                # PowsyblAdapterOptions from an effective run configuration.
+  PowsyblTables,                          # A PowSyBl table bundle in memory (one NamedTuple of columns per table).
+  read_powsybl_bundle,                    # Read a .powsybl bundle directory.
+  write_powsybl_bundle,                   # Write a .powsybl bundle directory.
+  build_net_from_powsybl,                 # Build a Net from PowSyBl tables, with the import report.
+  PowsyblImportReport,                    # Counts, skipped elements, slack decisions and notices of a PowSyBl import.
+  format_powsybl_report,                  # The console block of a PowSyBl import report.
   PatchOp,                                # One scenario patch operation on an SCF component id.
   Scenario,                               # Named, weighted, ordered patch list.
   ScenarioSet,                            # Scenario vector plus N-1 mode and exclusions.

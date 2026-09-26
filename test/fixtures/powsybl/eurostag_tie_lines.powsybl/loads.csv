@@ -1,0 +1,2 @@
+"id","name","type","p0","q0","p","q","i","voltage_level_id","bus_id","bus_breaker_bus_id","node","connected","fictitious"
+"LOAD","","UNDEFINED",600.0,200.0,600.0,200.0,2474.2633426507587,"VLLOAD","VLLOAD_0","NLOAD",-1,true,false

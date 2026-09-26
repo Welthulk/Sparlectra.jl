@@ -1,0 +1,5 @@
+"id","name","v_mag","v_angle","connected_component","synchronous_component","voltage_level_id","fictitious","fictitious_p0","fictitious_q0"
+"VLGEN_0","",24.5,2.3259655390065954,0,0,"VLGEN",false,0.0,0.0
+"VLHV1_0","",402.14283268934736,0.0,0,0,"VLHV1",false,0.0,0.0
+"VLHV2_0","",389.95266023366736,-3.5063579816276538,0,0,"VLHV2",false,0.0,0.0
+"VLLOAD_0","",147.57862082655902,-9.614485484620165,0,0,"VLLOAD",false,0.0,0.0

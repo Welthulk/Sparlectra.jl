@@ -1,0 +1,7 @@
+"id","name","substation_id","nominal_v","high_voltage_limit","low_voltage_limit","fictitious","topology_kind","CGMES.lowVoltageLimit","CGMES.highVoltageLimit"
+"4ba71b59-ee2f-450b-9f7d-cc2f1cc5e386","10.5","37e14a0f-5e34-4647-a062-8bfd9305fa9d",10.5,11.55,9.45,false,"BUS_BREAKER","9.45","11.55"
+"8bbd7e74-ae20-4dce-8780-c20f8e18c2e0","110.0","37e14a0f-5e34-4647-a062-8bfd9305fa9d",110.0,121.0,99.0,false,"BUS_BREAKER","99.0","121.0"
+"929ba893-c9dc-44d7-b1fd-30834bd3ab85","21.0","37e14a0f-5e34-4647-a062-8bfd9305fa9d",21.0,23.1,18.9,false,"BUS_BREAKER","18.9","23.1"
+"b10b171b-3bc5-4849-bb1f-61ed9ea1ec7c","225.0","37e14a0f-5e34-4647-a062-8bfd9305fa9d",225.0,247.5,202.5,false,"BUS_BREAKER","202.5","247.5"
+"469df5f7-058f-4451-a998-57a48e8a56fe","380.0","37e14a0f-5e34-4647-a062-8bfd9305fa9d",380.0,418.0,342.0,false,"BUS_BREAKER","342.0","418.0"
+"d0486169-2205-40b2-895e-b672ecb9e5fc","220.0","87f7002b-056f-4a6a-a872-1744eea757e3",225.0,247.5,202.5,false,"BUS_BREAKER","202.5","247.5"

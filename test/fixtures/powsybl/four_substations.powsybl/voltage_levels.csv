@@ -1,0 +1,6 @@
+"id","name","substation_id","nominal_v","high_voltage_limit","low_voltage_limit","fictitious","topology_kind"
+"S1VL1","","S1",225.0,240.0,220.0,false,"NODE_BREAKER"
+"S1VL2","","S1",400.0,440.0,390.0,false,"NODE_BREAKER"
+"S2VL1","","S2",400.0,440.0,390.0,false,"NODE_BREAKER"
+"S3VL1","","S3",400.0,440.0,390.0,false,"NODE_BREAKER"
+"S4VL1","","S4",400.0,440.0,390.0,false,"NODE_BREAKER"

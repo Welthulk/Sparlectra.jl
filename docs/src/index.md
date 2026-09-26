@@ -150,7 +150,7 @@ Embedding Sparlectra in your own tooling (scripts, sysimage, API): [integration 
 
 ## Local Web UI
 
-Case management, run history and results in the browser. Cases can be taken from the local cache, uploaded (MATPOWER, DTF, CGMES ZIP) or fetched by name.
+Case management, run history and results in the browser. Cases can be taken from the local cache, uploaded (MATPOWER, DTF, CGMES ZIP, PowSyBl IIDM or table bundle) or fetched by name.
 
 ```@raw html
 <a href="assets/webui_v0.10.0.png"><img src="assets/webui_v0.10.0.png" alt="Sparlectra Web UI: case, settings, run and result" /></a>
@@ -177,7 +177,7 @@ Full documentation: <https://welthulk.github.io/Sparlectra.jl/>
 
 ## Contributing
 
-Bug reports, test networks and import edge cases (CGMES, MATPOWER, DTF) are welcome. Questions: [Discussions](https://github.com/Welthulk/Sparlectra.jl/discussions). Please read [CONTRIBUTING.md](https://github.com/Welthulk/Sparlectra.jl/blob/main/CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](https://github.com/Welthulk/Sparlectra.jl/blob/main/CODE_OF_CONDUCT.md) first.
+Bug reports, test networks and import edge cases (CGMES, MATPOWER, DTF, PowSyBl IIDM) are welcome. Questions: [Discussions](https://github.com/Welthulk/Sparlectra.jl/discussions). Please read [CONTRIBUTING.md](https://github.com/Welthulk/Sparlectra.jl/blob/main/CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](https://github.com/Welthulk/Sparlectra.jl/blob/main/CODE_OF_CONDUCT.md) first.
 
 ## Citing
 

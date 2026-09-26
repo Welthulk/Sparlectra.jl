@@ -104,6 +104,14 @@ const WEBUI_OPTION_SPECS = WebUIOptionSpec[
   WebUIOptionSpec("cgmes_import.require_boundary", "cgmes_require_boundary", Bool, :checkbox, true, (), :basic, :adapter, true),
   WebUIOptionSpec("cgmes_import.infer_base_voltages", "cgmes_infer_base_voltages", Bool, :checkbox, false, (), :expert, :adapter, true),
   WebUIOptionSpec("cgmes_import.hvdc_mode", "cgmes_hvdc_mode", String, :select, "injections", CGMES_HVDC_MODE_VALUES, :basic, :adapter, true),
+  # PowSyBl (IIDM) import: the field names carry the config prefix so the
+  # form map and the help registry read the same way as the CGMES keys
+  WebUIOptionSpec("powsybl_import.hvdc_mode", "powsybl_import_hvdc_mode", String, :select, "fixed_injection", POWSYBL_HVDC_MODE_VALUES, :basic, :adapter, true),
+  WebUIOptionSpec("powsybl_import.remote_regulation", "powsybl_import_remote_regulation", String, :select, "hold_local", POWSYBL_REMOTE_REGULATION_VALUES, :basic, :adapter, true),
+  WebUIOptionSpec("powsybl_import.multi_slack", "powsybl_import_multi_slack", Bool, :checkbox, true, (), :expert, :adapter, true),
+  WebUIOptionSpec("powsybl_import.slack_ids", "powsybl_import_slack_ids", String, :text, "", (), :expert, :adapter, true),
+  WebUIOptionSpec("powsybl_import.base_mva", "powsybl_import_base_mva", Float64, :number, 100.0, (), :expert, :adapter, true),
+  WebUIOptionSpec("powsybl_import.python_exe", "powsybl_import_python_exe", String, :text, "", (), :expert, :adapter, true),
   WebUIOptionSpec("matpower_import.matpower_dcline_mode", "matpower_import_dcline_mode", String, :select, "pf_injections", MATPOWER_DCLINE_MODE_VALUES, :basic, :adapter, true),
   WebUIOptionSpec("model.auto_profile", "matpower_import_auto_profile", String, :select, "off", MATPOWER_AUTO_PROFILE_VALUES, :expert, :adapter, true),
   WebUIOptionSpec("matpower_import.ratio", "matpower_import_ratio", String, :select, "normal", MATPOWER_RATIO_VALUES, :basic, :adapter, true),

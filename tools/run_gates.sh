@@ -24,7 +24,7 @@
 #          runs, so no second Julia first-start precompiles the same
 #          package concurrently. --allow-dirty skips guard 1 for a
 #          deliberate local check; the lock is never skipped. Plain sh.
-# usage:   sh tools/run_gates.sh fast|pf|se|config|webui|extd|install|workshops|extended|all|docs [--allow-dirty]
+# usage:   sh tools/run_gates.sh fast|pf|se|config|webui|extd|adapters|install|workshops|extended|all|docs [--allow-dirty]
 #          (SPARLECTRA_LARGE_CASES_DIR and other env pass through)
 
 gate=$1
@@ -38,9 +38,9 @@ then
 fi
 
 case "$gate" in
-  fast | pf | se | config | webui | extd | install | workshops | extended | all | docs) ;;
+  fast | pf | se | config | webui | extd | adapters | install | workshops | extended | all | docs) ;;
   *)
-    echo "usage: sh tools/run_gates.sh fast|pf|se|config|webui|extd|install|workshops|extended|all|docs [--allow-dirty]" >&2
+    echo "usage: sh tools/run_gates.sh fast|pf|se|config|webui|extd|adapters|install|workshops|extended|all|docs [--allow-dirty]" >&2
     exit 2
     ;;
 esac

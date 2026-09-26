@@ -709,6 +709,8 @@ function _webui_case_context(;
     "dtf_for001"
   elseif format_hint == :cgmes
     "cgmes"
+  elseif format_hint == :powsybl
+    "powsybl"
   else
     # richer preselection (an explicit scf or matpower badge) is 4B
     # material; in 4A the form keeps today's auto default for the rest
@@ -811,12 +813,22 @@ document.addEventListener('DOMContentLoaded', function () {
   // stored values instead of stale Web UI values.
   const updateImportConventionApplicability = function () {
     const isCgmes = caseFormat !== null && caseFormat.value === 'cgmes';
+    const isPowsybl = caseFormat !== null && caseFormat.value === 'powsybl';
+    // the MATPOWER conventions steer neither the CGMES nor the PowSyBl
+    // importer: both read their own conventions from the delivery
+    const isForeign = isCgmes || isPowsybl;
     document.querySelectorAll('[data-matpower-import-field]').forEach(function (el) {
-      el.classList.toggle('disabled', isCgmes);
-      el.querySelectorAll('input, select').forEach(function (control) { control.disabled = isCgmes; });
+      el.classList.toggle('disabled', isForeign);
+      el.querySelectorAll('input, select').forEach(function (control) { control.disabled = isForeign; });
     });
     const importHint = document.querySelector('[data-import-conventions-hint]');
-    if (importHint !== null) importHint.hidden = !isCgmes;
+    if (importHint !== null) importHint.hidden = !isForeign;
+    // the PowSyBl fields gate like the CGMES ones: enabled exactly when the
+    // selected case is PowSyBl, grayed out (kept in place) otherwise
+    document.querySelectorAll('[data-powsybl-import-field]').forEach(function (el) {
+      el.classList.toggle('disabled', !isPowsybl);
+      el.querySelectorAll('select, input[type="checkbox"], input[type="text"], input[type="number"]').forEach(function (control) { control.disabled = !isPowsybl; });
+    });
     // Inverse gating for the CGMES start-values select: it only steers CGMES
     // runs, so it is enabled exactly when the selected case is CGMES and
     // grayed out (kept in place) otherwise.
@@ -842,6 +854,7 @@ document.addEventListener('DOMContentLoaded', function () {
     // can: explicit cgmes: alias input or a .zip delivery (directory paths
     // resolve server-side only)
     const isCgmesCase = new RegExp('^cgmes:', 'i').test(effectiveValue) || new RegExp('\\\\.zip\$', 'i').test(effectiveValue);
+    const isPowsyblCase = new RegExp('\\\\.(powsybl|xiidm|xiidm\\\\.bz2)\$', 'i').test(effectiveValue);
     if (caseFormat !== null) {
       // Auto-set formats must fall BACK to auto when the typed case stops
       // matching — otherwise a CGMES selection sticks after switching to a
@@ -853,6 +866,9 @@ document.addEventListener('DOMContentLoaded', function () {
       } else if (isCgmesCase) {
         caseFormat.value = 'cgmes';
         caseFormat.dataset.autoFormat = 'cgmes';
+      } else if (isPowsyblCase) {
+        caseFormat.value = 'powsybl';
+        caseFormat.dataset.autoFormat = 'powsybl';
       } else if (caseFormat.dataset.autoFormat && caseFormat.value === caseFormat.dataset.autoFormat) {
         caseFormat.value = 'auto';
         delete caseFormat.dataset.autoFormat;
@@ -1063,18 +1079,28 @@ end
 # and load-time asserts pin presentation and derivation to each other: a
 # new struct field with a spec cannot ship without a presentation entry,
 # and a presentation entry cannot outlive its field.
-function _webui_adapter_struct_fields(adapter)::Vector{String}
+# `prefix` is the configuration scope of the adapter ("cgmes_import.",
+# "powsybl_import."): two adapters may share a field name (hvdc_mode lives
+# in both the CGMES and the PowSyBl struct), so a spec under the adapter's
+# own scope wins over the first spec with the same tail.
+function _webui_adapter_struct_fields(adapter; prefix::AbstractString = "")::Vector{String}
   fields = String[]
   for fname in fieldnames(options_type(adapter))
     tail = String(fname)
+    first_match = nothing
+    scoped_match = nothing
     for spec in WEBUI_OPTION_SPECS
       spec.scope == :adapter || continue
       spec.config_key === nothing && continue
-      if String(last(split(spec.config_key, "."))) == tail
-        push!(fields, spec.field)
+      String(last(split(spec.config_key, "."))) == tail || continue
+      first_match === nothing && (first_match = spec.field)
+      if !isempty(prefix) && startswith(spec.config_key, prefix)
+        scoped_match = spec.field
         break
       end
     end
+    chosen = scoped_match === nothing ? first_match : scoped_match
+    chosen === nothing || push!(fields, chosen)
   end
   return fields
 end
@@ -1087,6 +1113,12 @@ const _WEBUI_ADAPTER_FIELD_PRESENTATION = Dict{String,NamedTuple}(
   "cgmes_require_boundary" => (label = "Require boundary set", title = "Fail the CGMES import when topology references stay unresolved (boundary set missing). Uncheck to import an incomplete delivery anyway.", attrs = " data-cgmes-start-values-field", input_attrs = "", option_labels = nothing),
   "cgmes_infer_base_voltages" => (label = "Infer missing base voltages", title = "Reconstruct missing nominal voltages from SV voltages and transformer ratings when the delivery has no BaseVoltage catalog. Pair with an unchecked boundary set.", attrs = " data-cgmes-start-values-field", input_attrs = "", option_labels = nothing),
   "cgmes_hvdc_mode" => (label = "HVDC converters", title = "HVDC converter model: fixed injections reproduce the delivery snapshot; a paired controller couples both converters of a link and makes the transfer steerable.", attrs = " data-cgmes-start-values-field", input_attrs = "", option_labels = Dict("injections" => "Fixed injections (Stage 0, default)", "paired_control" => "Paired controller (steerable link)")),
+  "powsybl_import_hvdc_mode" => (label = "HVDC converters", title = "HVDC converter model of a PowSyBl network: fixed injections reproduce the OpenLoadFlow snapshot (rectifier draw and inverter delivery with the loss factors); a paired controller is not implemented yet and is rejected at import.", attrs = " data-powsybl-import-field", input_attrs = "", option_labels = Dict("fixed_injection" => "Fixed injections (default)", "paired_control" => "Paired controller (not implemented)")),
+  "powsybl_import_remote_regulation" => (label = "Remote voltage regulation", title = "A generator that regulates another bus: hold_local keeps it PV at its own bus with the target voltage, pq makes it a fixed injection, remote attaches an outer-loop machine voltage control on the regulated bus (reproduces OpenLoadFlow).", attrs = " data-powsybl-import-field", input_attrs = "", option_labels = Dict("hold_local" => "Hold the target at the unit's own bus (default)", "pq" => "Fixed P and Q", "remote" => "Outer-loop control of the regulated bus")),
+  "powsybl_import_multi_slack" => (label = "One slack per synchronous component", title = "Every synchronous component gets its own slack generator (the regulating unit with the largest max_p). Uncheck to leave the other components without a reference; they are then reported as islands without a reference.", attrs = " data-powsybl-import-field", input_attrs = "", option_labels = nothing),
+  "powsybl_import_slack_ids" => (label = "Slack generator ids", title = "Generator ids that become the slack of their component, separated by semicolons; empty lets the largest max_p decide.", attrs = " data-powsybl-import-field", input_attrs = " placeholder=\"GEN1; GEN2\"", option_labels = nothing),
+  "powsybl_import_base_mva" => (label = "System base MVA", title = "Per-unit base of the built network; PowSyBl files carry no base, so 100 MVA is the default.", attrs = " data-powsybl-import-field", input_attrs = " min=\"1\" step=\"1\"", option_labels = nothing),
+  "powsybl_import_python_exe" => (label = "Python executable (live IIDM import)", title = "Python with pypowsybl for the live .xiidm import through the PythonCall extension; empty means the PythonCall default. Takes effect only before PythonCall initialises.", attrs = " data-powsybl-import-field", input_attrs = " placeholder=\"/path/to/venv/bin/python\"", option_labels = nothing),
   "matpower_import_auto_profile" => (label = "MATPOWER auto-profile", title = "", attrs = " data-matpower-import-field", input_attrs = "", option_labels = nothing),
   "matpower_import_ratio" => (label = "Transformer ratio convention", title = "", attrs = " data-matpower-import-field", input_attrs = "", option_labels = nothing),
   "matpower_import_shift_sign" => (label = "Phase-shift sign", title = "", attrs = " data-matpower-import-field", input_attrs = " step=\"2\" min=\"-1\" max=\"1\"", option_labels = nothing),
@@ -1107,17 +1139,18 @@ const _WEBUI_ADAPTER_FIELD_PRESENTATION = Dict{String,NamedTuple}(
 # convention; each is an :adapter-scope spec without a same-named struct
 # field
 const _WEBUI_ADAPTER_SECTIONS = (
-  (adapter = CGMESAdapter(), key = :cgmes, order = ("cgmes_start_values", "cgmes_require_boundary", "cgmes_infer_base_voltages", "cgmes_hvdc_mode"), extras = ()),
-  (adapter = MatpowerAdapter(), key = :matpower, order = ("matpower_import_auto_profile", "matpower_import_ratio", "matpower_import_shift_sign", "matpower_import_shift_unit", "matpower_import_bus_shunt_model", "matpower_import_dcline_mode", "matpower_import_pv_voltage_source", "matpower_import_compare_voltage_reference", "transformer_tap_changer_model", "matpower_import_apply_bus_names", "matpower_export_write_solution"), extras = ("matpower_import_auto_profile", "matpower_import_bus_shunt_model", "matpower_import_compare_voltage_reference", "matpower_export_write_solution")),
-  (adapter = DTFAdapter(), key = :dtf, order = (), extras = ()),
-  (adapter = PGMAdapter(), key = :pgm, order = (), extras = ()),
+  (adapter = CGMESAdapter(), key = :cgmes, prefix = "cgmes_import.", order = ("cgmes_start_values", "cgmes_require_boundary", "cgmes_infer_base_voltages", "cgmes_hvdc_mode"), extras = ()),
+  (adapter = PowsyblAdapter(), key = :powsybl, prefix = "powsybl_import.", order = ("powsybl_import_hvdc_mode", "powsybl_import_remote_regulation", "powsybl_import_multi_slack", "powsybl_import_slack_ids", "powsybl_import_base_mva", "powsybl_import_python_exe"), extras = ()),
+  (adapter = MatpowerAdapter(), key = :matpower, prefix = "matpower_import.", order = ("matpower_import_auto_profile", "matpower_import_ratio", "matpower_import_shift_sign", "matpower_import_shift_unit", "matpower_import_bus_shunt_model", "matpower_import_dcline_mode", "matpower_import_pv_voltage_source", "matpower_import_compare_voltage_reference", "transformer_tap_changer_model", "matpower_import_apply_bus_names", "matpower_export_write_solution"), extras = ("matpower_import_auto_profile", "matpower_import_bus_shunt_model", "matpower_import_compare_voltage_reference", "matpower_export_write_solution")),
+  (adapter = DTFAdapter(), key = :dtf, prefix = "", order = (), extras = ()),
+  (adapter = PGMAdapter(), key = :pgm, prefix = "", order = (), extras = ()),
 )
 
 # derivation-vs-presentation asserts: the ordered presentation of a section
 # must equal (struct-derived minus fields claimed earlier) plus extras
 let claimed = Set{String}()
   for sec in _WEBUI_ADAPTER_SECTIONS
-    derived = [f for f in _webui_adapter_struct_fields(sec.adapter) if !(f in claimed)]
+    derived = [f for f in _webui_adapter_struct_fields(sec.adapter; prefix = sec.prefix) if !(f in claimed)]
     expected = union(Set(derived), Set(String.(collect(sec.extras))))
     got = Set(String.(collect(sec.order)))
     @assert got == expected "adapter section $(sec.key): presentation order $(sort(collect(got))) does not match derived+extras $(sort(collect(expected)))"
@@ -1147,7 +1180,10 @@ function _webui_adapter_option_html(field::AbstractString, profile_values)::Stri
     return "<label$(pres.attrs)$(title_attr)>$(label)$(_webui_select(field, spec.allowed_values, selected))</label>"
   end
   value = _webui_input_value(profile_values, field, _webui_option_default(field))
-  return "<label$(pres.attrs)$(title_attr)>$(label)<input name=\"$(field)\" type=\"number\"$(pres.input_attrs) value=\"$(value)\"></label>"
+  # a free text (an id list, a path) submits as it is typed; the String
+  # spec parser strips it, an empty field keeps the configuration default
+  input_type = spec.control == :text ? "text" : "number"
+  return "<label$(pres.attrs)$(title_attr)>$(label)<input name=\"$(field)\" type=\"$(input_type)\"$(pres.input_attrs) value=\"$(_webui_escape(string(value)))\"></label>"
 end
 
 """
@@ -1250,15 +1286,17 @@ $(dat_hint_html)
 $(ctx.case_format_notice)<details$(dtf_details_attrs)>
 <summary>Input format</summary>
 <fieldset>
-<label>$(_webui_field_label("case_format", "Case input format"))<select name="case_format"><option value="auto"$(_webui_form_string(case_format_value) == "auto" ? " selected" : "")>Auto</option><option value="matpower"$(_webui_form_string(case_format_value) == "matpower" ? " selected" : "")>MATPOWER</option><option value="dtf_for001"$(_webui_form_string(case_format_value) == "dtf_for001" ? " selected" : "")>DTF diagnostics (experimental/internal)</option><option value="cgmes"$(_webui_form_string(case_format_value) == "cgmes" ? " selected" : "")>CGMES (ENTSO-E, folder or ZIP)</option><option value="scf"$(_webui_form_string(case_format_value) == "scf" ? " selected" : "")>Sparlectra Case Format (.scf.json)</option><option value="pgm"$(_webui_form_string(case_format_value) == "pgm" ? " selected" : "")>power-grid-model JSON (input.json)</option></select></label>
+<label>$(_webui_field_label("case_format", "Case input format"))<select name="case_format"><option value="auto"$(_webui_form_string(case_format_value) == "auto" ? " selected" : "")>Auto</option><option value="matpower"$(_webui_form_string(case_format_value) == "matpower" ? " selected" : "")>MATPOWER</option><option value="dtf_for001"$(_webui_form_string(case_format_value) == "dtf_for001" ? " selected" : "")>DTF diagnostics (experimental/internal)</option><option value="cgmes"$(_webui_form_string(case_format_value) == "cgmes" ? " selected" : "")>CGMES (ENTSO-E, folder or ZIP)</option><option value="scf"$(_webui_form_string(case_format_value) == "scf" ? " selected" : "")>Sparlectra Case Format (.scf.json)</option><option value="pgm"$(_webui_form_string(case_format_value) == "pgm" ? " selected" : "")>power-grid-model JSON (input.json)</option><option value="powsybl"$(_webui_form_string(case_format_value) == "powsybl" ? " selected" : "")>PowSyBl (IIDM file or .powsybl bundle)</option></select></label>
 <p class="field-help">SCF and power-grid-model JSON are read by the same importer; the <code>sparlectra</code> block is optional, so a plain power-grid-model dataset loads as well. <em>Auto</em> already resolves every <code>.json</code> to that reader, so these two entries only matter when the extension does not say it.</p>
 $(_webui_adapter_options_html(:cgmes, profile_values))
+$(_webui_adapter_options_html(:powsybl, profile_values))
+<p class="field-help" data-powsybl-import-field>PowSyBl only: a <code>.powsybl</code> table bundle needs no Python; a <code>.xiidm</code> file is read live through the PythonCall extension when it is loaded, otherwise the run names the bundle script. See the PowSyBl Import help.</p>
 <p class="field-help" data-cgmes-start-values-field>CGMES only: <em>Flat start</em> lets the solver earn the solution itself; <em>Imported SV state</em> starts Newton-Raphson from the delivery's own SvVoltage solution (competing start-value machines are forced off). The SV comparison check (<code>sv_compare.csv</code>) runs either way.</p>
 </fieldset>
 </details>
 <fieldset class=\"import-section\" data-import-conventions-section>
 <legend>MATPOWER import conventions</legend>
-<p class=\"field-hint span-2\" data-import-conventions-hint hidden>Not applicable to the selected CGMES case: these options steer MATPOWER (and DTF) parsing only. The CGMES importer reads the delivery's own conventions; Export Solution stays available.</p>
+<p class=\"field-hint span-2\" data-import-conventions-hint hidden>Not applicable to the selected CGMES or PowSyBl case: these options steer MATPOWER (and DTF) parsing only. The CGMES and PowSyBl importers read the delivery's own conventions; Export Solution stays available.</p>
 $(_webui_adapter_options_html(:matpower, profile_values))
 </fieldset>
 <div class=\"span-2 actions\"><button class=\"secondary-button\" type=\"submit\">Save case options</button></div>

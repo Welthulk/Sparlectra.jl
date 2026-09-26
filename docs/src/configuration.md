@@ -42,7 +42,7 @@ The case file's own `sparlectra.config` block is deprecated: the writer
 does not emit it, the reader still applies it below the case
 configuration file (between levels 3 and 1 for case-scope keys) with a
 warning naming the case configuration file as the new place. Case-scope
-keys are `matpower_import.*`, `cgmes_import.*`, `power_flow.*`,
+keys are `matpower_import.*`, `cgmes_import.*`, `powsybl_import.*`, `power_flow.*`,
 `state_estimation.*` and `short_circuit.*`; `scf_is_case_config_key(key)`
 answers it for a single key, and a case file that states a key outside
 that scope is refused by name when it is read. `effective_config.yaml`
@@ -93,6 +93,7 @@ own section, and a new module adds its own typed section and YAML subtree.
 | `power_flow` | `PowerFlowConfig` | Rectangular power-flow solver controls, start mode, Q-limits; `power_flow.mode` switches between `manual` and the network-driven `auto` strategy (see [Power-Flow Configuration](powerflow_configuration.md) and the [Integration Guide](integration.md)) | Public / supported |
 | `matpower_import` | `MatpowerImportConfig` | MATPOWER import interpretation options | Public / supported |
 | `cgmes_import` | `CGMESImportConfig` | CGMES delivery path + import options (see [CGMES Import](cgmes_import.md)) | Public / supported |
+| `powsybl_import` | `PowsyblImportConfig` | PowSyBl IIDM import options (see [PowSyBl Import](powsybl_import.md)) | Public / supported |
 | `short_circuit` | `ShortCircuitConfig` | IEC 60909 short-circuit evaluation; `short_circuit.c_factor` overrides the Table-1 voltage factor, `short_circuit.sweep_method` (`auto`/`solves`/`takahashi`) selects the all-bus Thevenin sweep and `short_circuit.takahashi_min_buses` the island size from which the selected inverse is used (see [Short-Circuit Analysis](short_circuit.md)) | Public / supported |
 | `model` | `ModelConfig` | Model construction shared by all importers (bus shunt model, tap-changer model, auto profile, net cache, preallocation) | Public / supported |
 | `state_estimation` | `StateEstimationConfig` | State-estimation runtime controls | Public / supported |

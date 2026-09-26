@@ -828,6 +828,43 @@ Base.@kwdef struct WebUIConfig
 end
 
 """
+    PowsyblImportConfig
+
+Options of the `powsybl_import` configuration block (alias of the
+canonical section `powsybl`): the PowSyBl IIDM import through pypowsybl
+tables (see `docs/src/powsybl_import.md`).
+
+# Fields
+- `base_mva::Float64`: system base in MVA.
+- `hvdc_mode::Symbol`: `:fixed_injection` (converter stations as fixed PCC
+  injections, the rectifier drawing `target_p / (1 - loss_factor / 100)`,
+  the inverter delivering `target_p * (1 - loss_factor / 100)`) or
+  `:paired_control` (not implemented for PowSyBl sources in this release,
+  rejected with the mode named).
+- `slack_ids::Vector{String}`: generator ids that override the slack
+  choice of their synchronous component; a YAML list or one string with
+  `;` between the ids.
+- `multi_slack::Bool`: one slack per synchronous component; `false` keeps
+  only the component of the first slack and reports the others.
+- `remote_regulation::Symbol`: a generator whose regulated bus is not its
+  own: `:hold_local` keeps it PV at its own bus with the target in pu of
+  the regulated bus, `:pq` makes it PQ with `target_q`, `:remote` makes it
+  PQ and attaches an outer-loop `MachineVoltageControl` on the regulated
+  bus (the same machinery as `cgmes_import.machine_control`; reproduces
+  OpenLoadFlow's remote voltage control).
+- `python_exe::String`: path hint for the PythonCall extension; empty means
+  the PythonCall default. Read only when an IIDM file is imported live.
+"""
+Base.@kwdef struct PowsyblImportConfig
+  base_mva::Float64 = 100.0
+  hvdc_mode::Symbol = :fixed_injection
+  slack_ids::Vector{String} = String[]
+  multi_slack::Bool = true
+  remote_regulation::Symbol = :hold_local
+  python_exe::String = ""
+end
+
+"""
     SparlectraConfig
 
 Central typed configuration assembled once at application or example boundaries.
@@ -839,6 +876,7 @@ Base.@kwdef struct SparlectraConfig
   state_estimation::StateEstimationConfig = StateEstimationConfig()
   matpower::MatpowerImportConfig = MatpowerImportConfig()
   cgmes::CGMESImportConfig = CGMESImportConfig()
+  powsybl::PowsyblImportConfig = PowsyblImportConfig()
   shortcircuit::ShortCircuitConfig = ShortCircuitConfig()
   matpower_export::MatpowerExportConfig = MatpowerExportConfig()
   model::ModelConfig = ModelConfig()
@@ -878,6 +916,8 @@ const CGMES_START_VALUES_VALUES = (:auto, :flat, :sv)
 # deliveries where silently dropping data is not acceptable
 const CGMES_PLACEHOLDER_GUARDS_VALUES = (:warn_skip, :strict)
 const CGMES_HVDC_MODE_VALUES = (:injections, :paired_control)
+const POWSYBL_HVDC_MODE_VALUES = (:fixed_injection, :paired_control)
+const POWSYBL_REMOTE_REGULATION_VALUES = (:hold_local, :pq, :remote)
 const TRUST_REGION_STEP_MODE_VALUES = (:scaled, :dogleg)
 const QLIMIT_START_MODE_VALUES = (:iteration, :auto, :iteration_or_auto)
 const QLIMIT_ENFORCEMENT_MODE_VALUES = (:active_set, :classic_simultaneous, :classic_one_at_a_time)
@@ -1422,8 +1462,8 @@ function QLimitConfig(raw::AbstractDict)
 end
 
 function _merged_section(raw::AbstractDict, section_name::AbstractString)
-  aliases = section_name == "powerflow" ? ["power_flow"] : section_name == "matpower" ? ["matpower_import"] : section_name == "cgmes" ? ["cgmes_import"] : String[]
-  canonical = section_name == "power_flow" ? "powerflow" : section_name == "matpower_import" ? "matpower" : section_name == "cgmes_import" ? "cgmes" : section_name
+  aliases = section_name == "powerflow" ? ["power_flow"] : section_name == "matpower" ? ["matpower_import"] : section_name == "cgmes" ? ["cgmes_import"] : section_name == "powsybl" ? ["powsybl_import"] : String[]
+  canonical = section_name == "power_flow" ? "powerflow" : section_name == "matpower_import" ? "matpower" : section_name == "cgmes_import" ? "cgmes" : section_name == "powsybl_import" ? "powsybl" : section_name
   primary = Dict{Any,Any}(_raw_section(raw, canonical))
   for alias in aliases
     merge!(primary, Dict{Any,Any}(_raw_section(raw, alias)))
@@ -1646,6 +1686,28 @@ function CGMESImportConfig(raw::AbstractDict)
     placeholder_guards = _validate_allowed_symbol("cgmes_import.placeholder_guards", _as_symbol_cfg(_raw_get(merged, "placeholder_guards", :warn_skip)), CGMES_PLACEHOLDER_GUARDS_VALUES),
     infer_base_voltages = _as_bool_cfg(_raw_get(merged, "infer_base_voltages", false)),
     hvdc_mode = _validate_allowed_symbol("cgmes_import.hvdc_mode", _as_symbol_cfg(_raw_get(merged, "hvdc_mode", :injections)), CGMES_HVDC_MODE_VALUES),
+  )
+end
+
+# slack_ids arrives as a YAML list or, from a dotted override, as one
+# string with ";" between the ids
+function _powsybl_id_list(x)::Vector{String}
+  x === nothing && return String[]
+  x isa AbstractVector && return String[strip(_as_string_cfg(item)) for item in x if !isempty(strip(_as_string_cfg(item)))]
+  text = strip(_as_string_cfg(x))
+  isempty(text) && return String[]
+  return String[strip(part) for part in split(text, ';') if !isempty(strip(part))]
+end
+
+function PowsyblImportConfig(raw::AbstractDict)
+  merged = _merged_section(raw, "powsybl")
+  return PowsyblImportConfig(
+    base_mva = _validate_positive("powsybl_import.base_mva", _as_float_cfg(_raw_get(merged, "base_mva", 100.0))),
+    hvdc_mode = _validate_allowed_symbol("powsybl_import.hvdc_mode", _as_symbol_cfg(_raw_get(merged, "hvdc_mode", :fixed_injection)), POWSYBL_HVDC_MODE_VALUES),
+    slack_ids = _powsybl_id_list(_raw_get(merged, "slack_ids", nothing)),
+    multi_slack = _as_bool_cfg(_raw_get(merged, "multi_slack", true)),
+    remote_regulation = _validate_allowed_symbol("powsybl_import.remote_regulation", _as_symbol_cfg(_raw_get(merged, "remote_regulation", :hold_local)), POWSYBL_REMOTE_REGULATION_VALUES),
+    python_exe = strip(_as_string_cfg(_raw_get(merged, "python_exe", ""))),
   )
 end
 
@@ -1875,6 +1937,7 @@ function SparlectraConfig(raw::AbstractDict)
     state_estimation = StateEstimationConfig(raw),
     matpower = MatpowerImportConfig(raw),
     cgmes = CGMESImportConfig(raw),
+    powsybl = PowsyblImportConfig(raw),
     shortcircuit = ShortCircuitConfig(raw),
     matpower_export = MatpowerExportConfig(raw),
     model = ModelConfig(raw),

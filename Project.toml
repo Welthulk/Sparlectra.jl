@@ -1,6 +1,6 @@
 name = "Sparlectra"
 uuid = "31ce9bba-fd9d-44a1-b005-f5f509afda38"
-version = "0.18.0"
+version = "0.19.0"
 authors = ["Udo Schmitz"]
 description = "load flow calculation using newton-raphson"
 
@@ -8,6 +8,7 @@ description = "load flow calculation using newton-raphson"
 AnalyticLoadFlow = "19ecf91d-4042-490c-adc1-7fb0fdb392c0"
 BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+DelimitedFiles = "8bb1440f-4735-579b-a4ab-409b98df4dab"
 Downloads = "f43a241f-c20a-4ad4-852c-f6b1247861c6"
 EzXML = "8f5d6c58-4d21-5cfd-889c-e3ad7ee6a615"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
@@ -24,10 +25,17 @@ TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 ZipArchives = "49080126-0e18-4c2a-b176-c102e4b3760c"
 
+[weakdeps]
+PythonCall = "6099a3de-0909-46bc-b1f4-468b9a2dfc0d"
+
+[extensions]
+SparlectraPythonCallExt = "PythonCall"
+
 [compat]
 AnalyticLoadFlow = "0.9.16"
 BenchmarkTools = "1.6"
 Dates = "1"
+DelimitedFiles = "1"
 Downloads = "1"
 EzXML = "1.2.3"
 LinearAlgebra = "1"
@@ -35,6 +43,7 @@ Logging = "1"
 Markdown = "1"
 PrecompileTools = "1"
 Printf = "1"
+PythonCall = "0.9"
 Random = "1"
 SHA = "0.7, 1"
 Serialization = "1"

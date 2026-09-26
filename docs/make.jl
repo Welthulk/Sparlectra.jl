@@ -184,6 +184,7 @@ makedocs(
     "DTF Format" => "dtf_format.md",
     "CGMES Import" => "cgmes_import.md",
     "CGMES Export" => "cgmes_export.md",
+    "PowSyBl Import" => "powsybl_import.md",
     "State-Estimation Configuration" => "state_estimation_configuration.md",
     "Performance and Profiling" => "performance_profiling.md",
     "Parallel Execution" => "parallel_execution.md",

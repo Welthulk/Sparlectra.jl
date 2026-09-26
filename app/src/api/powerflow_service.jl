@@ -74,9 +74,13 @@ function _resolve_powerflow_casefile(
   # the importer unchanged (its container layer resolves them).
   isdir(requested) && return abspath(requested)
   extension = lowercase(splitext(requested)[2])
-  extension in (".m", ".jl", ".dat", ".zip", ".json") || throw(ArgumentError("Unsupported casefile extension: $(requested) (expected .m, .jl, .DAT, .zip, or .json)"))
+  # a PowSyBl IIDM file (.xiidm, .xiidm.bz2, .xml with the IIDM namespace)
+  # goes to the importer unchanged, like a CGMES delivery
+  lowered = lowercase(requested)
+  is_iidm = endswith(lowered, ".xiidm") || endswith(lowered, ".xiidm.bz2") || (extension == ".xml" && isfile(requested) && Sparlectra.detect(Sparlectra.PowsyblAdapter, requested))
+  is_iidm || extension in (".m", ".jl", ".dat", ".zip", ".json") || throw(ArgumentError("Unsupported casefile extension: $(requested) (expected .m, .jl, .DAT, .zip, .json, .xiidm, or a .powsybl bundle directory)"))
   if isfile(requested)
-    if extension in (".zip", ".json")
+    if is_iidm || extension in (".zip", ".json")
       return abspath(requested)
     end
     if extension == ".dat"

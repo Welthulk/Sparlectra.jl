@@ -396,6 +396,34 @@ state_estimation:
   observability:
     enabled: true
 
+# PowSyBl IIDM import (see docs/src/powsybl_import.md)
+powsybl_import:
+  # System base in MVA.
+  base_mva: 100.0
+  # HVDC converter handling. Allowed values: fixed_injection, paired_control
+  # fixed_injection maps both converter stations as fixed PCC injections
+  # (rectifier draws target_p / (1 - loss_factor / 100), inverter delivers
+  # target_p * (1 - loss_factor / 100)); paired_control is not implemented
+  # for PowSyBl sources in this release.
+  hvdc_mode: fixed_injection
+  # Generator ids that override the slack choice of their synchronous
+  # component (default: the regulating unit with the largest max_p). A YAML
+  # list, or one string with ";" between the ids.
+  slack_ids: []
+  # One slack per synchronous component; false keeps only the component of
+  # the first slack and reports the others.
+  multi_slack: true
+  # A generator whose regulated bus is not its own. Allowed values:
+  # hold_local, pq, remote
+  # hold_local keeps it PV at its own bus with the target in pu of the
+  # regulated bus; pq makes it PQ with target_q; remote makes it PQ and
+  # attaches an outer-loop machine voltage control on the regulated bus
+  # (reproduces OpenLoadFlow's remote voltage control).
+  remote_regulation: hold_local
+  # Python executable for the PythonCall extension (live .xiidm import);
+  # empty means the PythonCall default.
+  python_exe: ""
+
 # ENTSO-E CGMES import (see docs/src/cgmes_import.md)
 cgmes_import:
   # Delivery location(s): folder or ZIP; separate multiple parts (base case

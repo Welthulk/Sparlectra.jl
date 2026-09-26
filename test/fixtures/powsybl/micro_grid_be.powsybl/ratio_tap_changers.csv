@@ -1,0 +1,4 @@
+"id","side","tap","solved_tap_position","low_tap","high_tap","step_count","oltc","regulating","target_v","target_deadband","regulating_bus_id","regulated_side"
+"e482b89a-fa84-4ea9-8e70-a83d44790957","",14,14,1,33,33,true,true,10.815,0.5,"4ba71b59-ee2f-450b-9f7d-cc2f1cc5e386_0","TWO"
+"b94318f6-6d24-4f56-96b9-df2531ad6543","",10,10,1,25,25,true,false,0.0,0.5,"8bbd7e74-ae20-4dce-8780-c20f8e18c2e0_0","TWO"
+"84ed55f4-61f5-4d9d-8755-bba7b877a246","TWO",17,17,1,33,33,true,false,0.0,0.5,"b10b171b-3bc5-4849-bb1f-61ed9ea1ec7c_0","TWO"

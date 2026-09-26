@@ -488,6 +488,24 @@ function calc2WTEndsReferredRXGB(; r1::Float64, x1::Float64, g1::Float64, b1::Fl
 end
 
 """
+    pi_branch_pu_between_levels(; r, x, g, b, vn_from_kV, vn_to_kV, baseMVA) -> NamedTuple
+
+The per-unit parameters of a pi branch given in ohm and siemens between
+two buses, on Sparlectra's branch convention: series and shunt admittance
+on the TO-side voltage base, and, when the two buses sit on different
+nominal voltages, the ratio `vn_to / vn_from` at the from side (the same
+physical conductor seen through the two bases, so the 2WT formula with
+equal rated voltages degenerates to that ratio). `ratio` is `nothing` for
+equal nominal voltages. Shared by the CGMES line mapping and the PowSyBl
+builder.
+"""
+function pi_branch_pu_between_levels(; r::Float64, x::Float64, g::Float64, b::Float64, vn_from_kV::Float64, vn_to_kV::Float64, baseMVA::Float64)
+  r_pu, x_pu, b_pu, g_pu = toPU_RXBG(r = r, x = x, g = g, b = b, v_kv = vn_to_kV, baseMVA = baseMVA)
+  ratio = vn_from_kV == vn_to_kV ? nothing : vn_to_kV / vn_from_kV
+  return (r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, g_pu = g_pu, ratio = ratio)
+end
+
+"""
     fromPU_RXBG(r_pu::Float64, x_pu::Float64, g_pu::Union{Nothing,Float64} = nothing, b_pu::Union{Nothing,Float64} = nothing, v_kv::Float64, baseMVA::Float64)::Tuple{Float64,Float64,Float64,Float64}
 
 Converts the resistance, reactance, conductance, and susceptance from per unit to physical units.
