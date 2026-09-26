@@ -920,6 +920,16 @@ power_flow:
       qlimit_artifacts = SparlectraApp._write_q_limit_detail_artifacts(qlimit_artifact_dir, control_net)
       @test "q_limit_events.csv" in qlimit_artifacts
       @test length(collect(eachline(joinpath(qlimit_artifact_dir, "q_limit_events.csv")))) == 6
+      # five events stay in the q_limit.log table; the sixth makes the run
+      # write q_limit_events.csv by itself (events only, no limits table)
+      @test !SparlectraApp._q_limit_events_csv_wanted(control_net)
+      Sparlectra.logQLimitHit!(control_net, 6, 2, :max)
+      @test SparlectraApp._q_limit_events_csv_wanted(control_net)
+      events_only_dir = joinpath(tmpdir, "q_limit_events_only")
+      mkpath(events_only_dir)
+      @test SparlectraApp._write_q_limit_detail_artifacts(events_only_dir, control_net; events_only = true) == ["q_limit_events.csv"]
+      @test length(collect(eachline(joinpath(events_only_dir, "q_limit_events.csv")))) == 7
+      @test !isfile(joinpath(events_only_dir, "q_limit_initial_limits.csv"))
 
       dict_result = to_dict(result)
       named_result = to_namedtuple(result)

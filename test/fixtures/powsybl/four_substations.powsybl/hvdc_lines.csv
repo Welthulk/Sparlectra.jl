@@ -1,0 +1,3 @@
+"id","name","converters_mode","target_p","max_p","nominal_v","r","converter_station1_id","converter_station2_id","connected1","connected2","fictitious"
+"HVDC1","HVDC1","SIDE_1_RECTIFIER_SIDE_2_INVERTER",10.0,300.0,400.0,1.0,"VSC1","VSC2",true,true,false
+"HVDC2","HVDC2","SIDE_1_RECTIFIER_SIDE_2_INVERTER",80.0,300.0,400.0,1.0,"LCC1","LCC2",true,true,false

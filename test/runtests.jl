@@ -14,7 +14,7 @@
 
 # file: test/runtests.jl
 # purpose: test suite entry point: selects a profile (fast, pf, se, config,
-#          webui, extd, install, extended, all) from ARGS/SPARLECTRA_TEST_PROFILE,
+#          webui, extd, adapters, install, extended, all) from ARGS/SPARLECTRA_TEST_PROFILE,
 #          includes the test files of its groups, and runs the grouped
 #          testsets with quiet output capture
 using Sparlectra
@@ -133,8 +133,10 @@ const TEST_GROUPS = TestGroup[
     TestGroup("synthetic_grids", ["test_synthetic_grids.jl"], [:run_synthetic_grid_tests]),
     TestGroup("cgmes_importer", ["test_cgmes_importer.jl"], [:run_cgmes_importer_tests]),
     TestGroup("cgmes_export", ["test_cgmes_export.jl"], [:run_cgmes_export_tests]),
+    TestGroup("powsybl_importer", ["test_powsybl_importer.jl"], [:run_powsybl_importer_tests]),
     # --- install: the installation path of a fresh checkout, before a release
     TestGroup("install", ["test_install.jl"], [:run_install_tests]),
+    TestGroup("powsybl_extension", ["test_powsybl_extension.jl"], [:run_powsybl_extension_tests]),
     TestGroup("workshops", ["test_workshops.jl"], [:run_workshop_tests]),
     TestGroup("dtf_extended", ["extended/test_dtf_importer.jl", "extended/test_dtf_for002_validation_example.jl", "extended/test_dtf_for002_outage_validation_example.jl", "extended/test_dtf_matpower_export_validation_example.jl", "extended/test_dtf_api_webui_integration.jl"],
         [:run_dtf_importer_tests, :run_dtf_for002_validation_example_tests, :run_dtf_for002_outage_validation_example_tests, :run_dtf_matpower_export_validation_example_tests, :run_dtf_api_webui_integration_tests]),
@@ -153,16 +155,18 @@ const TEST_PROFILES = Dict{Symbol,Vector{String}}(
     :se => ["state_estimation", "observability", "topology_validation"],
     :config => ["configuration", "configuration_docs", "repository_hygiene"],
     :webui => ["webui", "webui_extended"],
-    :extd => ["demo_cases", "scf", "programmatic_api_extended", "matpower_examples", "example_infra", "net_cache", "synthetic_grids", "cgmes_importer", "cgmes_export", "dtf_extended"],
-    :install => ["install"],
+    :extd => ["demo_cases", "scf", "programmatic_api_extended", "matpower_examples", "example_infra", "net_cache", "synthetic_grids"],
+    # --- adapters: the format importers with their own fixtures (CGMES, DTF, PowSyBl)
+    :adapters => ["cgmes_importer", "cgmes_export", "dtf_extended", "powsybl_importer"],
+    :install => ["install", "powsybl_extension"],
     :workshops => ["workshops"],
 )
-TEST_PROFILES[:extended] = vcat(TEST_PROFILES[:pf], TEST_PROFILES[:se], TEST_PROFILES[:config], TEST_PROFILES[:webui], TEST_PROFILES[:extd])
+TEST_PROFILES[:extended] = vcat(TEST_PROFILES[:pf], TEST_PROFILES[:se], TEST_PROFILES[:config], TEST_PROFILES[:webui], TEST_PROFILES[:extd], TEST_PROFILES[:adapters])
 TEST_PROFILES[:all] = vcat(TEST_PROFILES[:fast], TEST_PROFILES[:extended], TEST_PROFILES[:install], TEST_PROFILES[:workshops])
 
 # every group sits in exactly one of the eight base profiles
 let seen = String[]
-    for key in (:fast, :pf, :se, :config, :webui, :extd, :install, :workshops), name in TEST_PROFILES[key]
+    for key in (:fast, :pf, :se, :config, :webui, :extd, :adapters, :install, :workshops), name in TEST_PROFILES[key]
         name in seen && error("test group $(name) is listed in two profiles")
         any(g -> g.name == name, TEST_GROUPS) || error("profile $(key) names an unknown test group $(name)")
         push!(seen, name)

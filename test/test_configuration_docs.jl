@@ -40,6 +40,7 @@ function run_configuration_docs_tests()
       joinpath(@__DIR__, "..", "docs", "src", "powerflow_configuration.md"),
       joinpath(@__DIR__, "..", "docs", "src", "matpower.md"),
       joinpath(@__DIR__, "..", "docs", "src", "cgmes_import.md"),
+      joinpath(@__DIR__, "..", "docs", "src", "powsybl_import.md"),
       joinpath(@__DIR__, "..", "docs", "src", "state_estimation_configuration.md"),
       joinpath(@__DIR__, "..", "docs", "src", "performance_profiling.md"),
     ]

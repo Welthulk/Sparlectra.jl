@@ -1,0 +1,4 @@
+"id","name","g","b","model_type","max_section_count","section_count","solved_section_count","voltage_regulation_on","target_v","target_deadband","regulating_bus_id","p","q","i","voltage_level_id","bus_id","bus_breaker_bus_id","node","connected","fictitious"
+"B18-SH","",0.0,10.0,"LINEAR",1,1,1,false,NaN,NaN,"VL4_1",0.0,-10.12547094188162,5809.610125152295,"VL4","VL4_1","B18",-1,true,false
+"B25-SH","",0.0,5.8999999999999995,"LINEAR",1,1,1,false,NaN,NaN,"VL24_1",0.0,-5.7209905146934315,3354.2929725299414,"VL24","VL24_1","B25",-1,true,false
+"B53-SH","",0.0,6.3,"LINEAR",1,1,1,false,NaN,NaN,"VL53_0",0.0,-5.947839348006467,3534.18486087154,"VL53","VL53_0","B53",-1,true,false

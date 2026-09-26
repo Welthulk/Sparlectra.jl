@@ -87,6 +87,12 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "matpower_import.matpower_dcline_mode",
   "model.net_cache_enabled",
   "cgmes_import.hvdc_mode",
+  "powsybl_import.base_mva",
+  "powsybl_import.hvdc_mode",
+  "powsybl_import.slack_ids",
+  "powsybl_import.multi_slack",
+  "powsybl_import.remote_regulation",
+  "powsybl_import.python_exe",
   "matpower_export.write_solution",
   "model.tap_changer_model",
   "short_circuit.sweep_method",
@@ -145,7 +151,7 @@ function _validate_override_type(key::String, value, expected::Type)
 end
 
 function _validate_gui_override_value(key::String, value)
-  if key in ("power_flow.autodamp", "power_flow.flatstart", "power_flow.qlimits.enabled", "power_flow.start_current_iteration.enabled", "power_flow.start_current_iteration.accept_only_if_improved", "power_flow.start_current_iteration.only_for_large_cases", "power_flow.merit.enabled", "power_flow.merit.fallback_max_mismatch", "power_flow.trust_region.enabled", "power_flow.apslf.use_pade", "power_flow.apslf.nr_polish", "power_flow.apslf.convergence_radius", "power_flow.apslf_start.enabled", "power_flow.islands.enabled", "power_flow.islands.diagnostic_continue_after_failure", "power_flow.rescue", "power_flow.dc.fallback", "cgmes_import.require_boundary", "cgmes_import.infer_base_voltages", "benchmark.enabled", "matpower_import.apply_bus_names", "matpower_import.apply_branch_names", "matpower_import.apply_branch_kind", "matpower_import.import_for001_contingencies", "model.net_cache_enabled", "matpower_export.write_solution", "output.console_live", "output.console_summary", "output.startup_latency_hint", "state_estimation.flatstart", "state_estimation.robust", "state_estimation.topology_precheck", "state_estimation.report_residual_correlation")
+  if key in ("power_flow.autodamp", "power_flow.flatstart", "power_flow.qlimits.enabled", "power_flow.start_current_iteration.enabled", "power_flow.start_current_iteration.accept_only_if_improved", "power_flow.start_current_iteration.only_for_large_cases", "power_flow.merit.enabled", "power_flow.merit.fallback_max_mismatch", "power_flow.trust_region.enabled", "power_flow.apslf.use_pade", "power_flow.apslf.nr_polish", "power_flow.apslf.convergence_radius", "power_flow.apslf_start.enabled", "power_flow.islands.enabled", "power_flow.islands.diagnostic_continue_after_failure", "power_flow.rescue", "power_flow.dc.fallback", "cgmes_import.require_boundary", "cgmes_import.infer_base_voltages", "powsybl_import.multi_slack", "benchmark.enabled", "matpower_import.apply_bus_names", "matpower_import.apply_branch_names", "matpower_import.apply_branch_kind", "matpower_import.import_for001_contingencies", "model.net_cache_enabled", "matpower_export.write_solution", "output.console_live", "output.console_summary", "output.startup_latency_hint", "state_estimation.flatstart", "state_estimation.robust", "state_estimation.topology_precheck", "state_estimation.report_residual_correlation")
     _validate_override_type(key, value, Bool)
   elseif key in ("power_flow.max_iter", "power_flow.start_current_iteration.max_iter", "power_flow.apslf.order", "power_flow.apslf_start.order", "benchmark.samples", "output.detailed_result_csv_direct_threshold_buses", "output.detailed_result_csv_buffer_initial_bytes", "output.detailed_result_csv_buffer_max_bytes", "output.detailed_result_csv_streaming_threshold_rows", "output.console_max_rows", "output.result_table_max_rows", "output.result_table_large_case_threshold_buses")
     _validate_override_type(key, value, Int)
@@ -217,6 +223,10 @@ function _validate_gui_override_value(key::String, value)
     _validate_allowed_symbol(key, _as_symbol_cfg(value), MATPOWER_DCLINE_MODE_VALUES)
   elseif key == "cgmes_import.hvdc_mode"
     _validate_allowed_symbol(key, _as_symbol_cfg(value), CGMES_HVDC_MODE_VALUES)
+  elseif key == "powsybl_import.hvdc_mode"
+    _validate_allowed_symbol(key, _as_symbol_cfg(value), POWSYBL_HVDC_MODE_VALUES)
+  elseif key == "powsybl_import.remote_regulation"
+    _validate_allowed_symbol(key, _as_symbol_cfg(value), POWSYBL_REMOTE_REGULATION_VALUES)
   elseif key == "short_circuit.sweep_method"
     _validate_allowed_symbol(key, _as_symbol_cfg(value), SHORT_CIRCUIT_SWEEP_METHOD_VALUES)
   elseif key == "model.tap_changer_model"
@@ -610,6 +620,9 @@ const CONFIG_OVERRIDE_REPORT_KEYS = String[
   "power_flow.dc.fallback",
   "cgmes_import.require_boundary",
   "cgmes_import.infer_base_voltages",
+  "powsybl_import.hvdc_mode",
+  "powsybl_import.multi_slack",
+  "powsybl_import.remote_regulation",
 ]
 
 function _dotted_config_value(raw::AbstractDict, key::AbstractString)

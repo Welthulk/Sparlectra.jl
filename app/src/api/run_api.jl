@@ -21,6 +21,10 @@ using UUIDs: uuid4
 const _SPARLECTRA_API_SCHEMA_VERSION = "1.0"
 const WEBUI_PERFORMANCE_TIMING_VALUES = (:off, :compact, :full)
 const Q_LIMIT_LOG_ARTIFACT = "q_limit.log"
+# A run with more PV/PQ switching events than this writes q_limit_events.csv
+# on its own, without run_diagnostics or detailed_result_csv: a long event
+# list is read as a table, not from the q_limit.log preview (2026-09-26).
+const Q_LIMIT_EVENTS_CSV_THRESHOLD = 5
 const MATPOWER_DCLINE_ARTIFACT = "matpower_dcline.csv"
 const HVDC_LINKS_ARTIFACT = "hvdc_links.csv"
 
@@ -203,7 +207,7 @@ function _normalize_case_format(value)::Symbol
   # (`scf_import.jl:85-97`). Callers who have a PGM file should not have to
   # know that it is read by something called SCF.
   format === :pgm && return :scf
-  format in (:auto, :matpower, :dtf_for001, :cgmes, :scf) || throw(ArgumentError("case_format must be auto, matpower, dtf_for001, cgmes, scf, or pgm; got $(repr(value))."))
+  format in (:auto, :matpower, :dtf_for001, :cgmes, :scf, :powsybl) || throw(ArgumentError("case_format must be auto, matpower, dtf_for001, cgmes, scf, powsybl, or pgm; got $(repr(value))."))
   return format
 end
 
@@ -1012,6 +1016,8 @@ function _run_sparlectra_api_body(
   q_limit_artifacts = raw_result.net !== nothing ? [_write_q_limit_log_artifact(output_path, raw_result, qlimit_metadata)] : String[]
   if (run_diagnostics || detailed_result_csv) && raw_result.net !== nothing
     append!(q_limit_artifacts, _write_q_limit_detail_artifacts(output_path, raw_result.net; format = csv_format.name))
+  elseif raw_result.net !== nothing && _q_limit_events_csv_wanted(raw_result.net)
+    append!(q_limit_artifacts, _write_q_limit_detail_artifacts(output_path, raw_result.net; format = csv_format.name, events_only = true))
   end
   matpower_dcline_artifact = raw_result.net === nothing ? nothing : _write_matpower_dcline_artifact(output_path, raw_result.net; format = csv_format.name)
   if matpower_dcline_artifact !== nothing

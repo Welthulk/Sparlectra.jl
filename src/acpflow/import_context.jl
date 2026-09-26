@@ -19,9 +19,12 @@
 
 function _resolve_sparlectra_casefile(casefile::String, path::Union{Nothing,String})::String
   ext = lowercase(splitext(casefile)[2])
-  # .json is the Sparlectra Case Format (#342), handled by its own reader
-  ext in (".m", ".jl", ".json") || throw(ArgumentError("run_sparlectra: file extension $(ext) is not supported; use .m, .jl, or .json (Sparlectra Case Format)."))
   c = String(strip(casefile))
+  # a PowSyBl source (a .powsybl bundle directory or an IIDM file) is
+  # handed to its adapter as given; the content decides, not the suffix
+  detect(PowsyblAdapter, c) && return abspath(c)
+  # .json is the Sparlectra Case Format (#342), handled by its own reader
+  ext in (".m", ".jl", ".json") || throw(ArgumentError("run_sparlectra: file extension $(ext) is not supported; use .m, .jl, .json (Sparlectra Case Format), a .powsybl bundle directory or an .xiidm file."))
   if path !== nothing
     filename = joinpath(path, c)
     isfile(filename) || error("File $(filename) not found")
@@ -202,6 +205,17 @@ function _import_sparlectra_context(casefile::AbstractString, path::Union{Nothin
   model_cfg = cfg.model
   phase_callback = performance_profile isa AbstractDict ? get(performance_profile, :phase_callback, phase -> nothing) : phase -> nothing
   extension = lowercase(splitext(filename)[2])
+
+  # PowSyBl bundle or IIDM file: the adapter builds the network directly;
+  # the net parameters are stamped here, once, with the run configuration
+  if detect(PowsyblAdapter, filename)
+    phase_callback("reading_powsybl_bundle")
+    net, _, _ = _perf_profile_time!(performance_profile, :powsybl_import) do
+      _import_powsybl(filename, powsybl_adapter_options(cfg); name = basename(filename))
+    end
+    _apply_config_net_parameters!(net, cfg)
+    return (net = net, config = cfg, projected_start_applied = false, auto_profile_result = nothing, auto_profile_overrides = Dict{String,Any}())
+  end
 
   # Sparlectra Case Format (#342): a self-describing case file that carries
   # its own model, so it bypasses the MATPOWER parse chain entirely. The

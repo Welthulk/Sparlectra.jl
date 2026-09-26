@@ -1,3 +1,18 @@
+# Version 0.19.0 - 2026-09-27
+
+PowSyBl IIDM networks.
+
+- PowSyBl import: `.powsybl` table bundles written by `tools/powsybl_dump.py` from an IIDM file or a pypowsybl example, no Python at run time; five example networks ship as bundles with their `.xiidm` files. The import reproduces the OpenLoadFlow solution of every example. See [PowSyBl Import](powsybl_import.md).
+- New configuration scope `powsybl_import` (system base, HVDC mode, slack override, remote regulation mode), with the same options on the Case page of the Web UI.
+- With `PythonCall` and pypowsybl in the session, a `.xiidm` file imports directly (the `SparlectraPythonCallExt` extension); without them the error names the bundle path.
+- Runs with more than five PV/PQ switching events write `q_limit_events.csv` on their own, and `q_limit.log` keeps a five-row preview.
+- New test profile `adapters` for the format importers (CGMES, DTF, PowSyBl).
+- Out of scope: snapshots with missing injections, tap and voltage controllers from IIDM regulation data, IIDM export.
+
+## Fixes
+
+- Web UI forms showed every value at its default as soon as one configuration value could not be rendered; now only that field falls back, the others show the file's values.
+
 # Version 0.18.0 - 2026-09-25
 
 Documentation reworked, state-estimation reports, Web UI defaults.

@@ -1,0 +1,7 @@
+"element_id","side","type","acceptable_duration","group_name","element_type","name","value","fictitious","selected"
+"LINE_S3S4","ONE","CURRENT",-1,"DEFAULT","LINE","permanent_limit",931.0,false,true
+"LINE_S3S4","TWO","CURRENT",-1,"DEFAULT","LINE","permanent_limit",931.0,false,true
+"LINE_S3S4","TWO","CURRENT",2147483647,"DEFAULT","LINE","IST",1640.0,true,true
+"LINE_S3S4","TWO","CURRENT",60,"DEFAULT","LINE","LD71",1.7976931348623157e+308,false,true
+"TWT","ONE","CURRENT",-1,"DEFAULT","TWO_WINDINGS_TRANSFORMER","permanent_limit",1031.0,false,true
+"TWT","TWO","CURRENT",-1,"DEFAULT","TWO_WINDINGS_TRANSFORMER","permanent_limit",1031.0,false,true

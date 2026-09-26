@@ -397,13 +397,20 @@ function _write_final_q_limit_validation(io::IO, result::SparlectraRunResult)
   return printFinalLimitValidation(result.net; io, converged = result.numerical_converged)
 end
 
-function _write_q_limit_detail_artifacts(output_path::AbstractString, net::Net; format = "technical")::Vector{String}
+# The event list of a run becomes q_limit_events.csv by itself once it is
+# longer than Q_LIMIT_EVENTS_CSV_THRESHOLD; shorter lists stay readable in
+# the q_limit.log table and are written only under run_diagnostics or
+# detailed_result_csv.
+_q_limit_events_csv_wanted(net::Net)::Bool = length(net.qLimitLog) > Q_LIMIT_EVENTS_CSV_THRESHOLD
+
+function _write_q_limit_detail_artifacts(output_path::AbstractString, net::Net; format = "technical", events_only::Bool = false)::Vector{String}
   artifacts = String[]
   events = [(iteration = ev.iter, bus = ev.bus, side = String(ev.side)) for ev in net.qLimitLog]
   if !isempty(events)
     _write_namedtuple_csv(joinpath(output_path, "q_limit_events.csv"), events, (:iteration, :bus, :side); format = format)
     push!(artifacts, "q_limit_events.csv")
   end
+  events_only && return artifacts
   rows = NamedTuple[]
   snapshot_rows = isempty(net.qLimitInitialPVRows) ? snapshotPVQLimits!(net) : net.qLimitInitialPVRows
   for row in snapshot_rows
@@ -468,7 +475,13 @@ function _write_q_limit_log_artifact(output_path::AbstractString, result::Sparle
     println(io)
     println(io, "PV->PQ and PQ->PV event details")
     println(io, "-------------------------------")
-    printQLimitLog(result.net; io, max_rows = typemax(Int))
+    if _q_limit_events_csv_wanted(result.net)
+      # the run writes q_limit_events.csv for this many events; the log
+      # keeps a preview and names the file
+      printQLimitLog(result.net; io, max_rows = Q_LIMIT_EVENTS_CSV_THRESHOLD, full_details = "q_limit_events.csv")
+    else
+      printQLimitLog(result.net; io, max_rows = typemax(Int))
+    end
     println(io)
     rect_status = rectangular_pf_status(result.net)
     if rect_status !== nothing && hasproperty(rect_status, :qlimit_enforcement_mode) && rect_status.qlimit_enforcement_mode in (:classic_simultaneous, :classic_one_at_a_time)

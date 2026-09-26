@@ -1,0 +1,5 @@
+"id","name","substation_id","nominal_v","high_voltage_limit","low_voltage_limit","fictitious","topology_kind"
+"VLGEN","","P1",24.0,NaN,NaN,false,"BUS_BREAKER"
+"VLHV1","","P1",380.0,NaN,NaN,false,"BUS_BREAKER"
+"VLHV2","","P2",380.0,NaN,NaN,false,"BUS_BREAKER"
+"VLLOAD","","P2",150.0,NaN,NaN,false,"BUS_BREAKER"

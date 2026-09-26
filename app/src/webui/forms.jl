@@ -177,7 +177,7 @@ end
 # exported with "Save case as"/"Export as SCF" travels as three files
 # (case, sidecar, measurements); re-uploading all three together must bring
 # the sidecar along, or the settings the export carried are silently lost.
-_webui_supported_upload_case_extension(name::AbstractString)::Bool = lowercase(splitext(basename(String(name)))[2]) in (".m", ".dat", ".zip", ".csv", ".json", ".yaml", ".xml")
+_webui_supported_upload_case_extension(name::AbstractString)::Bool = lowercase(splitext(basename(String(name)))[2]) in (".m", ".dat", ".zip", ".csv", ".json", ".yaml", ".xml", ".xiidm", ".bz2")
 
 """
     _webui_scf_upload_reason(bytes) -> Union{Nothing,String}
@@ -465,6 +465,9 @@ such a file.
 function _webui_is_user_selectable_case(name::AbstractString)::Bool
   lowered_name = lowercase(basename(name))
   _, extension = splitext(lowered_name)
+  # PowSyBl sources: a table bundle directory or an IIDM file
+  endswith(lowered_name, ".powsybl") && return true
+  (endswith(lowered_name, ".xiidm") || endswith(lowered_name, ".xiidm.bz2")) && return true
   endswith(lowered_name, ".sparlectra-webui.yaml") && return false
   # per-case configuration files travel next to their case and are not cases
   endswith(lowered_name, ".config.yaml") && return false
@@ -745,6 +748,11 @@ end
 function _webui_normalize_case_profile_form_value(field::AbstractString, value)
   value === nothing && return nothing
   value === missing && return nothing
+  # the PowSyBl slack list is a YAML list in the configuration and one
+  # semicolon-separated text in the form (the reader takes both spellings)
+  if String(field) == "powsybl_import_slack_ids" && value isa AbstractVector
+    return join((strip(string(v)) for v in value), "; ")
+  end
   value isa AbstractVector && throw(ArgumentError("Case-settings field $(field) does not support vector values for form rendering."))
   type = get(_WEBUI_CASE_PROFILE_FIELD_TYPES, String(field), String)
   allowed = get(_WEBUI_CASE_PROFILE_SELECT_VALUES, String(field), nothing)
@@ -791,10 +799,25 @@ function _webui_config_field_values(config_file::AbstractString)::Dict{String,An
     for (config_key, field, _) in _WEBUI_FORM_CONFIG_FIELDS
       value = _dotted_config_value(raw, config_key)
       value === nothing && continue
-      values[field] = _webui_normalize_case_profile_form_value(field, value)
+      normalized = try
+        _webui_normalize_case_profile_form_value(field, value)
+      catch err
+        # a value the form cannot render (an alias the select does not
+        # list, a type the control cannot show) leaves THIS field on its
+        # default and the other fields on the file's values; the form
+        # fallback is silent by design, the run reads the file itself.
+        # Before 2026-09-26 one such value emptied the whole seed.
+        err isa ArgumentError || rethrow()
+        continue
+      end
+      values[field] = normalized
     end
     return values
-  catch
+  catch err
+    # an unreadable or unparseable configuration file leaves the form on
+    # the spec defaults; said aloud, a silent fallback here once hid a
+    # list-valued key behind default values on every page (2026-09-26)
+    @warn "Web UI: configuration file $(path) could not seed the form, showing defaults" exception = (err, catch_backtrace())
     return Dict{String,Any}()
   end
 end
@@ -898,7 +921,7 @@ function _webui_case_form_defaults(casefile::AbstractString, case_directory)::Di
     fmt = lowercase(strip(String(raw_format)))
     # scf and pgm name the same reader; both are accepted so the choice
     # made in the form survives the save (see _normalize_case_format)
-    if fmt in ("auto", "matpower", "dtf_for001", "cgmes", "scf", "pgm")
+    if fmt in ("auto", "matpower", "dtf_for001", "cgmes", "scf", "pgm", "powsybl")
       conflict = _webui_case_format_conflict(path, fmt)
       if conflict === nothing
         values["case_format"] = fmt
@@ -1167,6 +1190,8 @@ function _webui_case_format_hint(casefile::AbstractString; case_directory::Union
   end
   ext = lowercase(splitext(value)[2])
   ext == ".dat" && return :dtf_for001
+  # PowSyBl before the CGMES rule: a .powsybl bundle is a directory too
+  (ext in (".powsybl", ".xiidm") || endswith(lowercase(value), ".xiidm.bz2")) && return :powsybl
   (ext in (".zip", ".xml") || (isempty(ext) && isdir(value))) && return :cgmes
   return :auto
 end
@@ -1340,7 +1365,7 @@ function powerflow_webui_request(form::AbstractDict; default_output_root::Abstra
       # the format hint resolves through _detect_case_format; only the two
       # formats the auto path cannot settle by itself are made explicit
       hint = _webui_case_format_hint(casefile; case_directory)
-      hint in (:dtf_for001, :cgmes) ? String(hint) : "auto"
+      hint in (:dtf_for001, :cgmes, :powsybl) ? String(hint) : "auto"
     end
   end
   for002_reference_file = strip(String(something(_webui_form_value(form, "for002_reference_file", ""), "")))

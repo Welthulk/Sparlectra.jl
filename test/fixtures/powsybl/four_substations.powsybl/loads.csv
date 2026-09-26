@@ -1,0 +1,7 @@
+"id","name","type","p0","q0","p","q","i","voltage_level_id","bus_id","bus_breaker_bus_id","node","connected","fictitious"
+"LD1","","UNDEFINED",80.0,10.0,80.0,10.0,207.0946886245707,"S1VL1","S1VL1_0","S1VL1_2",2,true,false
+"LD2","","UNDEFINED",60.0,5.0,60.0,5.0,86.90272339422587,"S1VL2","S1VL2_0","S1VL2_13",13,true,false
+"LD3","","UNDEFINED",60.0,5.0,60.0,5.0,86.90272339422587,"S1VL2","S1VL2_0","S1VL2_15",15,true,false
+"LD4","","UNDEFINED",40.0,5.0,40.0,5.0,58.18433351570392,"S1VL2","S1VL2_0","S1VL2_17",17,true,false
+"LD5","","UNDEFINED",200.0,5.0,200.0,5.0,288.76533148331134,"S3VL1","S3VL1_0","S3VL1_4",4,true,false
+"LD6","","UNDEFINED",240.0,10.0,240.0,10.0,346.71073437857865,"S4VL1","S4VL1_0","S4VL1_2",2,true,false

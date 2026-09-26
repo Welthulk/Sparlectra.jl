@@ -130,9 +130,10 @@ The selector lists the MATPOWER `.m` files and runnable DTF `.DAT`
 candidates of the case directory, the shipped demo cases `sp_case5` to
 `sp_case188` ([Shipped Demo Cases](demo_cases.md)), staged into the cache
 with their sidecars (per-case configuration, measurement CSVs) on first
-use, and the three CGMES deliveries exported by Sparlectra itself
+use, the three CGMES deliveries exported by Sparlectra itself
 (`data/cgmes_demo`: `sp_case14`, `sp_case118`, `sp_casePST`, four profile
-files each) as `<case>_cgmes.zip`. Generated `.jl` cache files and
+files each) as `<case>_cgmes.zip`, and PowSyBl table bundles
+(`<case>.powsybl` directories) and IIDM files (`.xiidm`, `.xiidm.bz2`). Generated `.jl` cache files and
 `warmup_` files are hidden. FOR002-like `.DAT` files are not primary cases;
 they go into the optional **FOR002 reference** field (absolute path, path
 in the case cache, or an offered candidate), used only for legacy reference
@@ -146,9 +147,14 @@ given; path-like missing inputs and URLs are rejected. A generated `.jl` cache f
 cases can fail while Julia loads them, so `.m` stays the canonical source.
 
 **Case input format** defaults to **Auto**: MATPOWER files, CGMES
-deliveries (folders and ZIPs) and, where the FOR001 markers are
-unambiguous, native DTF input. **CGMES (ENTSO-E, folder or ZIP)** forces
-the CGMES importer and is preselected for a `.zip` or a directory.
+deliveries (folders and ZIPs), PowSyBl bundles and IIDM files, and, where
+the FOR001 markers are unambiguous, native DTF input. **CGMES (ENTSO-E,
+folder or ZIP)** forces the CGMES importer and is preselected for a `.zip`
+or a directory; **PowSyBl (IIDM file or .powsybl bundle)** is preselected
+for those files and shows the PowSyBl import options (HVDC mode, remote
+regulation, slack choice, base MVA, Python for the live IIDM import; see
+[PowSyBl Import](powsybl_import.md)). A `.xiidm` file runs only with the
+PythonCall extension loaded; otherwise the run names the bundle script.
 **Sparlectra Case Format (.scf.json)** and **power-grid-model JSON
 (input.json)** name the same reader (the `sparlectra` block is optional);
 Auto already sends every `.json` there, so they matter only when the
@@ -172,8 +178,10 @@ headers.
 ### [Import case files](@id webui-import-case-files)
 
 **Import case files** opens the native file picker and accepts several files
-at once: MATPOWER `.m`/`.M`, DTF `.dat`/`.DAT`, CGMES `.zip` deliveries and
-CGMES profile files (`.xml`); the server validates the extension again.
+at once: MATPOWER `.m`/`.M`, DTF `.dat`/`.DAT`, CGMES `.zip` deliveries,
+CGMES profile files (`.xml`) and PowSyBl IIDM files (`.xiidm`,
+`.xiidm.bz2`); the server validates the extension again. A `.powsybl`
+bundle is a directory and is copied into the case directory by hand.
 Several `.xml` files (the EQ, SSH, TP and SV profiles of one delivery, such
 as a `data/cgmes_demo` folder) are packed into one `<stem>_cgmes.zip` named
 after the common stem; the set must contain the EQ profile. A CGMES ZIP may

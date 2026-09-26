@@ -1,0 +1,3 @@
+"id","name","power_factor","loss_factor","p","q","i","voltage_level_id","bus_id","bus_breaker_bus_id","node","connected","fictitious","hvdc_line_id"
+"LCC1","LCC1",0.6000000238418579,1.100000023841858,80.0,106.66666004392853,192.45008208259608,"S1VL2","S1VL2_0","S1VL2_21",21,true,false,"HVDC2"
+"LCC2","LCC2",0.6000000238418579,1.100000023841858,-78.21098549554061,104.28130751941819,188.14638222971897,"S3VL1","S3VL1_0","S3VL1_10",10,true,false,"HVDC2"

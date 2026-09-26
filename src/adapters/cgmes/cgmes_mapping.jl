@@ -792,15 +792,17 @@ function _mapLines!(net, store, topo, created, svmap, baseMVA, ctx::_MapCtx)
       end
       # branch model convention (calcAdmittance): series/shunt admittance on
       # the TO-side voltage base, complex ratio t at the from side
-      r_pu, x_pu, b_pu, g_pu = Sparlectra.toPU_RXBG(
+      pu = Sparlectra.pi_branch_pu_between_levels(
         r = num(line, :r, 0.0),
         x = num(line, :x, 0.0),
         g = cls == :ACLineSegment ? num(line, :gch, 0.0) : 0.0,
         b = cls == :ACLineSegment ? num(line, :bch, 0.0) : 0.0,
-        v_kv = t2.vn_kV,
+        vn_from_kV = t1.vn_kV,
+        vn_to_kV = t2.vn_kV,
         baseMVA = baseMVA,
       )
-      if t1.vn_kV == t2.vn_kV
+      r_pu, x_pu, b_pu, g_pu = pu.r_pu, pu.x_pu, pu.b_pu, pu.g_pu
+      if pu.ratio === nothing
         Sparlectra.addPIModelACLine!(net = net, fromBus = b1, toBus = b2, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, g_pu = g_pu, status = status, from_status = c1 ? 1 : 0, to_status = c2 ? 1 : 0)
         _recordBranchTerminals!(ctx, net, topo, line)
         # Identity capture (line + its two terminals) for a later CGMES
@@ -819,7 +821,7 @@ function _mapLines!(net, store, topo, created, svmap, baseMVA, ctx::_MapCtx)
         # bus vs 400 kV boundary node): identical physical conductor, so the
         # 2WT formula with ratedU1 == ratedU2 degenerates to ratio = vn2/vn1
         # on a PI branch (impedance on the to-side base).
-        ratio = t2.vn_kV / t1.vn_kV
+        ratio = pu.ratio
         from = Sparlectra.geNetBusIdx(net = net, busName = b1)
         to = Sparlectra.geNetBusIdx(net = net, busName = b2)
         Sparlectra._addPIModelTrafo_by_idx!(net = net, from = from, to = to, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, g_pu = g_pu, status = status, ratio = ratio, shift_deg = 0.0, from_status = c1 ? 1 : 0, to_status = c2 ? 1 : 0)
