@@ -102,6 +102,9 @@ one clause per row with bus, side, overshoot in pu and MVAr and class.
 """
 function final_q_check_line(status::Symbol, rows, baseMVA::Real)::String
   status === :not_evaluated && return "Final Q-limit check: not evaluated (no converged solution)."
+  # a converged run with power_flow.qlimits.enabled = false has nothing to
+  # check; saying "no converged solution" there was wrong (run.log, 2026-09-25)
+  status === :qlimits_disabled && return "Final Q-limit check: not evaluated (Q-limit handling disabled)."
   isempty(rows) && return "Final Q-limit check: ok (no PV bus beyond its reactive limits)."
   parts = [@sprintf("bus %d %s by %.4f pu / %.2f MVAr (%s)", r.busI, r.side === :high ? "over Qmax" : "under Qmin", r.dev_pu, r.dev_pu * baseMVA, String(r.class)) for r in rows]
   return string("Final Q-limit check: ", String(status), ", ", join(parts, "; "), ".")
@@ -277,6 +280,7 @@ function _build_rectangular_final_status(
   wrong_branch_rescue_attempted::Bool,
   wrong_branch_rescue_reason::Symbol,
   mismatch_diagnostics = NamedTuple(),
+  final_q_check_skip::Symbol = :no_converged_solution,
 )
   final_reason = converged ? :none : rejection_reason
 
@@ -303,8 +307,9 @@ function _build_rectangular_final_status(
     pv_q_limit_violations = isnothing(final_q_check) ? (isnothing(qlimit_summary) ? 0 : qlimit_summary.pv_violations) : final_q_check.violations,
     ref_q_limit_violations = isnothing(qlimit_summary) ? 0 : qlimit_summary.ref_violations,
     # the final Q-limit check (classify_final_q_limits): the same fields for
-    # every enforcement mode, :not_evaluated when no converged state exists
-    final_q_check_status = isnothing(final_q_check) ? :not_evaluated : final_q_check.status,
+    # every enforcement mode, :not_evaluated when no converged state exists,
+    # :qlimits_disabled when the run converged with Q-limit handling off
+    final_q_check_status = isnothing(final_q_check) ? (final_q_check_skip === :qlimits_disabled ? :qlimits_disabled : :not_evaluated) : final_q_check.status,
     final_q_check_rows = isnothing(final_q_check) ? NamedTuple[] : final_q_check.rows,
     final_q_check_max_dev_pu = isnothing(final_q_check) ? 0.0 : final_q_check.max_dev_pu,
     final_q_check_buses = isnothing(final_q_check) ? "" : final_q_check.buses,

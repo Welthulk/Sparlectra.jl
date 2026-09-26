@@ -1,7 +1,7 @@
 name = "SparlectraApp"
 uuid = "2e39659a-4f4c-4326-b34e-e3df865cea74"
 authors = ["Udo Schmitz"]
-version = "0.17.3"
+version = "0.18.0"
 
 [deps]
 AnalyticLoadFlow = "19ecf91d-4042-490c-adc1-7fb0fdb392c0"
@@ -35,7 +35,7 @@ Printf = "1"
 Random = "1"
 SHA = "0.7, 1"
 Sockets = "1"
-Sparlectra = "0.17"
+Sparlectra = "0.18"
 TOML = "1.0.3"
 UUIDs = "1"
 ZipArchives = "2.6.0"

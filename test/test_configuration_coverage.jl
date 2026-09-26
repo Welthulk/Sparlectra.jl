@@ -112,7 +112,7 @@ function test_configuration_yaml_key_coverage()
       "benchmark.enabled", "benchmark.methods", "benchmark.seconds", "benchmark.samples", "benchmark.show_once", "benchmark.show_once_output", "benchmark.show_once_max_nodes",
       "contingency.rescue_ladder", "contingency.screening.mode", "contingency.screening.margin_pct",
       "control.enabled", "control.max_outer_iterations", "control.trace", "control.log_iterations", "control.stop_on_pf_failure", "control.verbose_passes", "control.controllers",
-      "webui.show_case_settings_notice", "webui.operation_log_retention_days",
+      "webui.show_case_settings_notice", "webui.operation_log_retention_days", "webui.docs_base_url",
       # these were in the typed configuration and
       # documented, but missing from the template, which made them
       # unreachable ("Unknown Sparlectra configuration key") for every user
@@ -1006,6 +1006,7 @@ function test_configuration_webui_keys_both_directions()
       "matpower_import.apply_branch_names" => "import detail, set per case in the case configuration file",
       "matpower_import.import_for001_contingencies" => "DTF import detail, chosen by the FOR002 selection on the Case page",
       "model.net_cache_enabled" => "process-level cache switch, not a per-run choice",
+      "power_flow.qlimits.final_q_accept_pu" => "final Q-limit acceptance threshold, twice the hysteresis by default; a solver detail for the configuration editor or the case sidecar, not a per-run form choice",
       "power_flow.islands.diagnostic_continue_after_failure" => "island diagnostics detail, YAML and API only",
       "power_flow.islands.enabled" => "island solving follows the network, not a form choice",
       "power_flow.islands.mode" => "island solving follows the network, not a form choice",

@@ -22,7 +22,11 @@ Power-system analysis in Julia: AC and DC power flow, WLS state estimation, IEC 
 ```
 
 
-Nothing in Sparlectra is a black box. The rectangular Newton-Raphson solver exposes model construction, Jacobian assembly, PV/PQ switching and convergence at runtime; a DC power flow and the analytic APSLF backend (AnalyticLoadFlow.jl) are available alongside it. State estimation reports observability and bad data, short-circuit sweeps and SE diagnostics use the Takahashi selected inverse. Every run is deterministic and configuration-driven, results are machine-readable. This suits grid studies as well as solver development and teaching.
+Nothing in Sparlectra is a black box: model construction, Jacobian assembly,
+PV/PQ switching and convergence are visible at runtime. Besides the rectangular
+Newton-Raphson solver there is a DC power flow and the analytic APSLF backend
+(AnalyticLoadFlow.jl). Runs are deterministic, configuration-driven and
+machine-readable. Suited for grid studies, solver development and teaching.
 
 The full capability list is in the [feature matrix](feature_matrix.md).
 
@@ -53,22 +57,17 @@ The notebooks are generated from [docs/lit/](https://github.com/Welthulk/Sparlec
 ## Installation
 
 Sparlectra is two packages in one repository: the library `Sparlectra`
-(network model, formats, power flow, state estimation, controllers) and the
-application `SparlectraApp` under `app/` (the service API behind a GUI, the
-local Web UI, the sysimage build), which depends on the library.
+(registered) and the application `SparlectraApp` under `app/` (service API,
+Web UI, sysimage build).
 
-The library as a Julia package, from the registry:
+Library:
 
 ```julia
 using Pkg
 Pkg.add("Sparlectra")
 ```
 
-The application comes with a checkout or a downloaded release and is not
-registered. Its environment `app/` carries the library by path, and the
-start script sets up both on the first start (it resolves, installs and
-compiles, says so, and reports the time; a second start finds everything
-ready):
+Application (Web UI), from a checkout:
 
 ```sh
 git clone https://github.com/Welthulk/Sparlectra.jl.git Sparlectra
@@ -76,37 +75,9 @@ cd Sparlectra
 julia --project=. start_webui.jl
 ```
 
-A script that uses the service API (`run_sparlectra_api`,
-`start_powerflow_run`) runs in the application environment and loads both:
-
-```julia
-# julia --project=app my_script.jl
-using Sparlectra, SparlectraApp
-```
-
-That line only holds for a Julia started in the checkout with
-`--project=app`. In a plain REPL (prompt `(@v1.13) pkg>`, the default
-environment) neither package is found, and Julia offers to install
-`Sparlectra` from the registry, which is the library alone. Activate the
-application environment from the REPL first:
-
-```julia
-using Pkg
-Pkg.activate("path/to/Sparlectra/app")   # the checkout's app/ directory
-using Sparlectra, SparlectraApp
-```
-
-In a REPL started with the library project (`julia --project=.`, the editor
-default for the checkout) only `SparlectraApp` is missing; put `app/` on the
-load path, as `start_webui.jl` does, or activate `app/` as above:
-
-```julia
-push!(LOAD_PATH, joinpath(pwd(), "app"))   # from the checkout root
-using Sparlectra, SparlectraApp
-```
-
-The one-line installers below run the same start script. `start_webui.jl --env-only`
-does the first-start work without starting the server.
+The first start installs and compiles and reports the time. Scripts that use
+the service API run with `julia --project=app`. Other REPL setups, sysimage
+use and embedding: [integration guide](integration.md).
 
 ### Web UI: one-line install
 
@@ -127,55 +98,27 @@ iwr -useb https://raw.githubusercontent.com/Welthulk/Sparlectra.jl/main/tools/in
 > [!IMPORTANT]
 > This downloads and runs a script. If you prefer to read it first: [install_webui.sh](https://github.com/Welthulk/Sparlectra.jl/blob/main/tools/install_webui.sh), [install_webui.bat](https://github.com/Welthulk/Sparlectra.jl/blob/main/tools/install_webui.bat).
 
-The installer asks whether to create a desktop shortcut (Windows: `Sparlectra Web UI.lnk`; Linux: an application-menu entry plus a `.desktop` file on the desktop, GNOME needs a one-time right-click "Allow Launching"; macOS: a desktop symlink). Re-running the command updates an existing copy (the old one is kept as `Sparlectra.old`). Environment variables for unattended installs (`SPARLECTRA_BUILD_SYSIMAGE`, `SPARLECTRA_CREATE_SHORTCUT`, `SPARLECTRA_UPDATE`) and all other options: [Web UI documentation](https://welthulk.github.io/Sparlectra.jl/webui/).
+The installer offers a desktop shortcut; re-running it updates the copy.
+Options and unattended installs: [Web UI](webui.md).
+From a checkout, `./start_webui.sh` or `start_webui.bat` starts the Web UI directly.
 
-From a checkout, `./start_webui.sh` or `start_webui.bat` starts the Web UI directly. A desktop shortcut on Windows: right-click `start_webui.bat`, then *Send to > Desktop (create shortcut)*.
+Julia compiles on first use; a [sysimage](sysimage.md) removes that wait.
 
-### Web UI from the Julia REPL
+### SBOM and download verification
 
-From a checkout or a downloaded release, without the start script:
-
-```julia
-using Pkg
-Pkg.activate("path/to/Sparlectra/app")
-Pkg.instantiate()   # first time only
-using SparlectraApp
-server = start_sparlectra_webui(open_browser = true)
-# stop with close(server) or the "Stop Web UI" button
-```
-
-This path creates no shortcut and starts without the sysimage. The image can be built from the Web UI page **Sysimage**; it is used on the next start through the start script, or by starting Julia on it (`julia -J <image> --project=app`, the Sysimage page shows the exact line). See *Startup time* below.
-
-### Startup time
-> [!IMPORTANT]
-> Julia compiles on first use, so the first run in a fresh process is slow. A sysimage (built once, 10 to 20 minutes) removes that wait.
->
-> `start_webui.jl` (and the `start_webui.*` scripts) checks for a usable sysimage on every start and asks `Build the sysimage now? [y/N]` when it is missing or outdated. The question only appears in an interactive terminal and times out after 30 s; otherwise the Web UI starts without an image. Explicit control:
->
-> ```sh
-> julia --project=. start_webui.jl --rebuild-sysimage   # build now, even if the current image is fine
-> julia --project=. start_webui.jl --no-sysimage        # skip image and question for this start
-> ```
->
-> The installers build the image only with `SPARLECTRA_BUILD_SYSIMAGE=1`. The Web UI page **Sysimage** builds and refreshes it as well. Using the image in your own scripts: [integration guide](https://welthulk.github.io/Sparlectra.jl/integration/).
-
-### SBOM
-
-Every release ships an SPDX SBOM as a release asset: [Sparlectra.spdx.json](https://github.com/Welthulk/Sparlectra.jl/releases/latest/download/Sparlectra.spdx.json). `julia tools/generate_sbom.jl` builds one locally.
-
-### Verifying your download
-
-`Pkg.add("Sparlectra")` verifies the git tree hash the registry pinned at registration. Every GitHub release also carries `SHA256SUMS` over the SBOM and the one-line installers as of the release tag: check a downloaded file with `sha256sum -c SHA256SUMS` (Linux, macOS) or `Get-FileHash` (Windows). Supported install paths and how to report a security issue: [SECURITY.md](https://github.com/Welthulk/Sparlectra.jl/blob/main/SECURITY.md).
+Every release ships an SPDX SBOM and `SHA256SUMS`; `Pkg.add` verifies the
+registry tree hash. Details and security contact: [SECURITY.md](https://github.com/Welthulk/Sparlectra.jl/blob/main/SECURITY.md).
 
 ---
 
 ## Quick start
 
-`run_sparlectra` runs the whole chain: import, configuration, control loops, solve, report. `ensure_casefile` downloads `case14.m` if it is not present locally.
+`run_sparlectra` runs the whole chain: import, configuration, control loops, solve, report.
 
 ```julia
 using Sparlectra
 
+# ensure_casefile downloads case14.m if it is not present locally
 case_path = ensure_casefile("case14.m")
 
 result = run_sparlectra(
@@ -201,7 +144,7 @@ cmp = compareWithSV(result)
 @show cmp.max_dvm
 ```
 
-Embedding Sparlectra in your own tooling (scripts, sysimage, API): [integration guide](https://welthulk.github.io/Sparlectra.jl/integration/).
+Embedding Sparlectra in your own tooling (scripts, sysimage, API): [integration guide](integration.md).
 
 ---
 
@@ -220,12 +163,13 @@ Case management, run history and results in the browser. Cases can be taken from
 Full documentation: <https://welthulk.github.io/Sparlectra.jl/>
 
 - [Feature matrix](feature_matrix.md)
-- [Integration guide](https://welthulk.github.io/Sparlectra.jl/integration/)
-- [Web UI](https://welthulk.github.io/Sparlectra.jl/webui/)
-- [Import/Export](import.md), [CGMES import](cgmes_import.md), [CGMES export](cgmes_export.md)
-- [Solver guide](solver.md), [External solvers](external_solvers.md)
+- [Integration guide](integration.md)
+- [Web UI](webui.md)
+- [MATPOWER cases](matpower.md)
+- [Solver guide](solver.md)
 - [State estimation](state_estimation.md)
 - [Short circuit](short_circuit.md)
+- [N-1 contingency analysis](contingency.md)
 - [Function reference](reference.md)
 - [Changelog](changelog.md)
 
@@ -253,18 +197,11 @@ Apache License 2.0, see [LICENSE](https://github.com/Welthulk/Sparlectra.jl/blob
 <!-- file: docs/index_footer.md
      purpose: the tail of the generated Home page (docs/src/index.md).
      docs/make.jl assembles that page from README.md and this file, so
-     quick links that belong to the documentation site and not into the
-     README live here. Edit this, never docs/src/index.md.
+     anything that belongs to the documentation site and not into the
+     README lives here. The documentation link list lives in the README
+     (section "Documentation") so that the site shows it once; this file
+     is intentionally empty apart from this comment. Edit this, never
+     docs/src/index.md.
      The fence is load-bearing: a bare HTML comment is not a comment to
      Documenter's parser, it renders as visible page text. -->
 ```
-
-## Documentation quick links
-
-* [Feature Matrix](feature_matrix.md)
-* [Central Configuration](configuration.md)
-* [N-1 Contingency Analysis](contingency.md)
-* [Q-limit Switching Strategy](q_limit_switching_strategy.md)
-* [Synthetic Tiled Grids](synthetic_grids.md)
-* [Branch Model](branchmodel.md)
-* [Examples Overview](examples_overview.md)

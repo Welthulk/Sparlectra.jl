@@ -8,6 +8,7 @@
 - A GitHub release (tag `vX.Y.Z`) for the application under `app/`: the
   source archives, the SBOM (`Sparlectra.spdx.json`) and the one-line
   installers. Every release carries `SHA256SUMS` over these files.
+  `julia tools/generate_sbom.jl` builds the SBOM locally from a checkout.
 - A clone of the `main` branch for development. `main` is protected against
   force pushes.
 

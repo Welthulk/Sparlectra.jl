@@ -25,7 +25,7 @@ using Sparlectra
 using AnalyticLoadFlow
 using Dates
 using Logging
-using Markdown
+using Markdown  # Web UI artifact viewer renders Markdown reports
 using Printf
 using Random
 using SHA

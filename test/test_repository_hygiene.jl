@@ -88,6 +88,7 @@ const _REFERENCE_PAGE_EXCLUDED_SRC = Set([
     "app/src/webui/docs.jl",
     "app/src/webui/forms.jl",
     "app/src/webui/handlers.jl",
+    "app/src/webui/help_excerpts.jl",  # generated from docs/src by tools/generate_webui_help_excerpts.jl
     "app/src/webui/operations.jl",
     "app/src/webui/options.jl",
     "app/src/webui/routes.jl",

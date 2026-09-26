@@ -198,6 +198,25 @@ end
 ## into those before the header (case binding, provenance, taps table) and
 ## those after the data rows (the generator's truth blocks), so a rewrite of
 ## the file keeps what the generator recorded
+## model step against the fixed step of one tap row: the change is what a
+## reader looks for ("was the tap wrong, was it corrected"). Ratio taps count
+## step 1, phase shifters step 2, :both shows both. A model position off the
+## step grid is shown with two decimals instead of being rounded away.
+function _se_tap_model_and_change(t)
+  shown(x) = abs(x - round(x)) < 0.01 ? string(round(Int, x)) : string(round(x; digits = 2))
+  signed(d) = d > 0 ? string("+", d) : string(d)
+  m1 = round(Int, t.model_step_1)
+  m2 = round(Int, t.model_step_2)
+  d1 = t.fixed_step_1 - m1
+  d2 = t.fixed_step_2 - m2
+  if t.mode == :pst
+    return shown(t.model_step_2), signed(d2), d2 != 0
+  elseif t.mode == :both
+    return string(shown(t.model_step_1), " / ", shown(t.model_step_2)), string(signed(d1), " / ", signed(d2)), d1 != 0 || d2 != 0
+  end
+  return shown(t.model_step_1), signed(d1), d1 != 0
+end
+
 function _measurement_csv_comments(path::AbstractString)
   head = String[]
   tail = String[]
@@ -803,7 +822,7 @@ function _run_state_estimation_service_body(
       prow = findfirst(mm -> mm.active && mm.typ == PinjMeas && mm.busIdx == mside, net.measurements)
       try
         bt = calcMachineTrafoTapFromSE(net; trafo = k, p_mw = prow === nothing ? nothing : net.measurements[prow].value, q_mvar = qrow === nothing ? nothing : net.measurements[qrow].value)
-        push!(tap_calc_rows, Dict{String,Any}("branch" => k, "name" => getCompName(net.branchVec[k].comp), "mrid" => get(trm, k, ""), "mode" => "ratio", "electrical_step" => round(bt.electrical_step; digits = 3), "fixed_step" => bt.fixed_step, "electrical_shift_step" => 0.0, "fixed_shift_step" => 0, "out_of_range" => false, "fixed" => false, "frozen_reason" => "none", "source" => "calculated"))
+        push!(tap_calc_rows, Dict{String,Any}("branch" => k, "name" => getCompName(net.branchVec[k].comp), "mrid" => get(trm, k, ""), "mode" => "ratio", "electrical_step" => round(bt.electrical_step; digits = 3), "fixed_step" => bt.fixed_step, "model_step" => "", "change" => "", "electrical_shift_step" => 0.0, "fixed_shift_step" => 0, "out_of_range" => false, "fixed" => false, "frozen_reason" => "none", "source" => "calculated"))
         open(logfile, "a") do io
           println(io, "machine transformer ", getCompName(net.branchVec[k].comp), ": tap CALCULATED (not estimated) from AVR setpoint and machine telemetry: electrical step ", round(bt.electrical_step; digits = 2), " -> step ", bt.fixed_step, " (Q residual ", round(bt.q_residual_mvar; digits = 2), " MVar)")
         end
@@ -959,21 +978,63 @@ function _run_state_estimation_service_body(
 
   if res.tapEstimates !== nothing || !isempty(tap_calc_rows)
     open(joinpath(output_dir, "se_tap_estimates.csv"), "w") do io
-      println(io, join(("branch", "name", "mrid", "mode", "alpha_deg", "electrical_step", "fixed_step", "electrical_shift_step", "fixed_shift_step", "r1_est", "r2_est", "out_of_range", "fixed", "frozen_reason", "source"), se_csv_delim))
+      println(io, join(("branch", "name", "mrid", "mode", "alpha_deg", "electrical_step", "fixed_step", "electrical_shift_step", "fixed_shift_step", "r1_est", "r2_est", "out_of_range", "fixed", "frozen_reason", "source", "model_step", "change"), se_csv_delim))
       cfT(s) = _csv_field(string(s), se_csv_delim, se_csv_format)
       for t in something(res.tapEstimates, NamedTuple[])
         println(
           io,
           join(
-            (t.branch, cfT(t.name), cfT(t.mrid), cfT(t.mode), _format_csv_number(Float64(t.alpha_deg), se_csv_format), _format_csv_number(round(t.electrical_step_1; digits = 4), se_csv_format), t.fixed_step_1, _format_csv_number(round(t.electrical_step_2; digits = 4), se_csv_format), t.fixed_step_2, t.r1_est, t.r2_est, t.out_of_range, t.fixed, t.frozen_reason == :none ? "" : t.frozen_reason, "estimated"),
+            (t.branch, cfT(t.name), cfT(t.mrid), cfT(t.mode), _format_csv_number(Float64(t.alpha_deg), se_csv_format), _format_csv_number(round(t.electrical_step_1; digits = 4), se_csv_format), t.fixed_step_1, _format_csv_number(round(t.electrical_step_2; digits = 4), se_csv_format), t.fixed_step_2, t.r1_est, t.r2_est, t.out_of_range, t.fixed, t.frozen_reason == :none ? "" : t.frozen_reason, "estimated", cfT(_se_tap_model_and_change(t)[1]), cfT(_se_tap_model_and_change(t)[2])),
             se_csv_delim,
           ),
         )
       end
       for c in tap_calc_rows
-        println(io, join((c["branch"], cfT(c["name"]), cfT(c["mrid"]), "ratio", _format_csv_number(0.0, se_csv_format), c["electrical_step"], c["fixed_step"], _format_csv_number(0.0, se_csv_format), 0, "", "", false, false, "", "calculated"), se_csv_delim))
+        println(io, join((c["branch"], cfT(c["name"]), cfT(c["mrid"]), "ratio", _format_csv_number(0.0, se_csv_format), c["electrical_step"], c["fixed_step"], _format_csv_number(0.0, se_csv_format), 0, "", "", false, false, "", "calculated", "", ""), se_csv_delim))
       end
     end
+  end
+  # The measurement artifact gets its verdict per row: a reader opens
+  # measurements.csv and wants to see which rows the diagnostics flagged
+  # (suspicious, eliminated, suppressed or down-weighted: `bad_data` = `*`)
+  # and which rows the set cannot afford to lose (`status` = critical
+  # measurement). Both columns sit BEHIND `id`, the reader ignores them, so
+  # the artifact still reads back as the same set. The tap steps of this
+  # run follow as a comment block, so the file also answers whether a tap
+  # position was wrong and got corrected. The set itself is unchanged: the
+  # eliminations worked on a copy.
+  let art = joinpath(output_dir, "measurements.csv")
+    flagged = Set{String}(String(r.id) for r in suspicious)
+    union!(flagged, (String(t.id) for t in diag.eliminations), suppressedIds, downweightedIds)
+    flagged_idx = Set{Int}(r.measurement_index for r in suspicious)
+    union!(flagged_idx, (t.measurement_index for t in diag.eliminations))
+    crit_idx = Set{Int}(crit_num)
+    union!(crit_idx, crit_str)
+    head_c, tail_c = _measurement_csv_comments(art)
+    if res.tapEstimates !== nothing || !isempty(tap_calc_rows)
+      push!(tail_c, "sparlectra-taps-estimated v1")
+      push!(tail_c, "branch,name,mode,model_step,estimated_step,fixed_step,change,status")
+      for t in something(res.tapEstimates, NamedTuple[])
+        model_s, change_s, changed = _se_tap_model_and_change(t)
+        est_s = t.mode == :pst ? string(round(t.electrical_step_2; digits = 3)) : string(round(t.electrical_step_1; digits = 3))
+        fixed_s = t.mode == :pst ? string(t.fixed_step_2) : t.mode == :both ? string(t.fixed_step_1, " / ", t.fixed_step_2) : string(t.fixed_step_1)
+        status_s = t.frozen_reason != :none ? string("frozen (", replace(String(t.frozen_reason), "_" => " "), ")") : t.out_of_range ? "out of range" : changed ? "corrected" : "confirmed"
+        push!(tail_c, join((t.branch, t.name, String(t.mode), model_s, est_s, fixed_s, change_s, status_s), ","))
+      end
+      for c in tap_calc_rows
+        push!(tail_c, join((c["branch"], c["name"], "ratio", "", c["electrical_step"], c["fixed_step"], "", "calculated (machine transformer)"), ","))
+      end
+    end
+    writeMeasurementsCSV(
+      net;
+      file = art,
+      headerComments = head_c,
+      footerComments = tail_c,
+      busReference = format === :cgmes ? :mrid : :name,
+      format = String(config.output.csv_format),
+      extraHeader = ["bad_data", "status"],
+      extraCells = (i, m) -> ((i in flagged_idx || (!isempty(m.id) && m.id in flagged)) ? "*" : "", i in crit_idx ? "critical measurement" : ""),
+    )
   end
   se_phase("writing_artifacts")
   writeSEStateCSV(net; file = joinpath(output_dir, "se_state.csv"), format = String(config.output.csv_format))
@@ -1068,7 +1129,7 @@ function _run_state_estimation_service_body(
       "se_tap_offgrid_residual" => res.tapFixation === nothing ? false : res.tapFixation.offgrid_residual,
       "se_topology_station_findings" => diag.topology_findings === nothing ? nothing : [Dict{String,Any}("location" => tf.location, "evidence" => tf.evidence, "notes" => [String(n) for n in tf.notes]) for tf in diag.topology_findings],
       # per-trafo rows for the result page table (steps, not raw r values)
-      "se_tap_estimates" => res.tapEstimates === nothing && isempty(tap_calc_rows) ? nothing : vcat([Dict{String,Any}("branch" => t.branch, "name" => t.name, "mrid" => t.mrid, "mode" => String(t.mode), "electrical_step" => round(t.electrical_step_1; digits = 3), "fixed_step" => t.fixed_step_1, "electrical_shift_step" => round(t.electrical_step_2; digits = 3), "fixed_shift_step" => t.fixed_step_2, "out_of_range" => t.out_of_range, "fixed" => t.fixed, "frozen_reason" => String(t.frozen_reason), "source" => "estimated") for t in something(res.tapEstimates, NamedTuple[])], tap_calc_rows),
+      "se_tap_estimates" => res.tapEstimates === nothing && isempty(tap_calc_rows) ? nothing : vcat([Dict{String,Any}("branch" => t.branch, "name" => t.name, "mrid" => t.mrid, "mode" => String(t.mode), "electrical_step" => round(t.electrical_step_1; digits = 3), "fixed_step" => t.fixed_step_1, "electrical_shift_step" => round(t.electrical_step_2; digits = 3), "fixed_shift_step" => t.fixed_step_2, "out_of_range" => t.out_of_range, "fixed" => t.fixed, "frozen_reason" => String(t.frozen_reason), "source" => "estimated", "model_step" => _se_tap_model_and_change(t)[1], "change" => _se_tap_model_and_change(t)[2]) for t in something(res.tapEstimates, NamedTuple[])], tap_calc_rows),
       "artifact_status" => "completed",
       "solver_status" => "completed",
       "service_status" => "completed",

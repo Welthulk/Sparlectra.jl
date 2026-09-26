@@ -1,3 +1,22 @@
+# Version 0.18.0 - 2026-09-25
+
+Documentation reworked, state-estimation reports, Web UI defaults.
+
+- Documentation reworked: a third less prose, usage as tables, reasoning in collapsible blocks, MATPOWER pages merged, state estimation split into three pages.
+- Web UI help: **Help** in the header opens the Web UI manual inside the application, every control carries a hover text, and the `?` opens a help page with the section shipped with the running version and a link to it online. The reader for the other documentation pages is gone; `webui.docs_base_url` points the links at a local or pinned docs build.
+- Web UI artifact viewer: CSV artifacts open as tables and Markdown reports (SE diagnostics, SE view, DTF summaries) render; **Raw text** shows the file as written.
+- SE reports enhanced; Web UI: new defaults, info box.
+
+## Breaking
+
+- State estimation writes the estimated shunt admittances back to the network by default (`state_estimation.update_shunts: true`); set it to `false` to keep the model untouched. The Web UI form follows the same default.
+
+## Fixes
+
+- [#425](https://github.com/Welthulk/Sparlectra.jl/issues/425): a flat start really starts flat, the start projection no longer runs with it.
+- [#426](https://github.com/Welthulk/Sparlectra.jl/issues/426): the Settings page shows the selected case's saved values; the configuration-file view is a link.
+- A configuration that raises `hysteresis_pu` alone is no longer rejected (`final_q_accept_pu: auto`).
+
 # Version 0.17.3 - 2026-09-24
 
 Verifiable downloads.
@@ -141,7 +160,7 @@ under a new name from the browser.
 
 - **One CSV format for every artifact a run writes.** `output.csv_format` (`technical`, `excel_de`, or `excel_us`) used to reach only `bus_voltages_complex.csv` and `branch_flows.csv`; a run with `excel_de` selected still wrote `q_limit_events.csv`, the state-estimation diagnostic exports, and the contingency/scenario result tables with a dot decimal, so Excel opened half the run's files wrong. All of them now follow the same setting. The API's `detailed_result_csv_format` request field is a deprecated per-request override of the config key.
 - **`bus_powers.csv`.** One row per bus next to `bus_voltages_complex.csv`: solved generation, load, and shunt power, the bus type before and after Q-limit enforcement, the binding reactive limit and band, the controller summary (Q(U)/P(U)/RVC/STATCOM/SVC/MSC/OLTC target), and the non-physical Q-V characteristic flag - the same data the console result table and the Q-V check already compute, so all three agree on one run. See [PowerFlow Service](powerflow_service.md).
-- **Web UI: Save case as.** A new action on the Case page saves the current case, its effective settings (including unsaved form changes), and any bound measurement set under a new name into the case directory - a copy, nothing switched live. Before this, building a set of case variants meant exporting, renaming files by hand, and fixing up the `case:` binding in the sidecar and the measurement file yourself, a step where a broken binding stayed silent. Re-importing such a set now brings its `.config.yaml` sidecar along, too. See [SCF: Save case as](scf.md#save-case-as-issue-378).
+- **Web UI: Save case as.** A new action on the Case page saves the current case, its effective settings (including unsaved form changes), and any bound measurement set under a new name into the case directory - a copy, nothing switched live. Before this, building a set of case variants meant exporting, renaming files by hand, and fixing up the `case:` binding in the sidecar and the measurement file yourself, a step where a broken binding stayed silent. Re-importing such a set now brings its `.config.yaml` sidecar along, too. See [SCF: Save case as](scf.md#Save-case-as).
 - **State estimation options are case scope.** `flatstart`, `robust_mode`, `k_eliminate`, `k_suppress`, and `max_eliminations` on the State Estimation page now behave like `power_flow.solver`: the form shows the case's effective configuration instead of a fixed default, and a "Save settings for this case" button on the page persists them into the case sidecar. A value in `configuration.yaml` used to be silently overridden by the page's own defaults on every run. Case-scope saving (Case page, Settings page, and this new button) now goes through one save action instead of three near-identical ones.
 
 ## Fixes

@@ -11,32 +11,32 @@
 | SCADA/state-estimation values | Measured/estimated state | yes | Operations workflows | Measurement noise/outliers |
 | Profile values | Explicit configured profile values | maybe | Reproducible studies | May not match topology changes |
 
-## Solver core options
+## [Solver core options](@id pf-solver-core)
+
+The options every AC run reads: formulation and mode, flat start, tolerance and iteration cap, damping, slack promotion, the rescue ladder and the DC fallback. The Web UI form carries the ones a run is usually tuned with; the rest is YAML only.
 
 | YAML path | Type | Default | Allowed values | Meaning | Use when | Avoid when | Performance impact | Interactions |
 |---|---:|---:|---|---|---|---|---|---|
 | `power_flow.method` | Symbol/String | `rectangular` | `rectangular` | AC solver formulation. | Always (current core). | N/A | Fixed single implementation. | Must match `benchmark.methods`. |
-| `power_flow.mode` | Symbol | `manual` | `manual`, `auto` | `manual` keeps every option exactly as configured. `auto` inspects the imported network (size, AC islands, R/X profile, phase shifters, start profile, generator Q limits) and fills the start-value, step-control, and Q-limit strategy for keys the user did NOT set explicitly; explicit keys (overrides, or file values differing from the template default) always win. On non-convergence a bounded escalation ladder retries (step-control switch, guarded pre-solve, full start projection, Q-limit relax/mode switch, APSLF-seeded NR, optional DC fallback via `power_flow.dc.fallback`); the tolerance is never changed. Decisions, conflicts, attempts, and hints land in the `auto_mode_decision.log` artifact and the result metadata (`auto_profile`, `auto_final_stage`, `auto_final_solver`, `auto_hints`). | Integrations that should just work without reading this page (see [Integration Guide](integration.md)). | Strict reproducibility studies where every option must be pinned. | Feature extraction is one cheap pass; escalations only run on failed solves. | The solver-internal `power_flow.rescue` ladder stays active inside every auto attempt; the escalation stages add the strategies it does not cover. |
+| `power_flow.mode` | Symbol | `manual` | `manual`, `auto` | `manual` keeps every option exactly as configured. `auto` inspects the imported network (size, AC islands, R/X profile, phase shifters, start profile, generator Q limits) and fills the start-value, step-control, and Q-limit strategy for keys the user did not set explicitly; explicit keys (overrides, or file values differing from the template default) always win. On non-convergence a bounded escalation ladder retries (step-control switch, guarded pre-solve, full start projection, Q-limit relax/mode switch, APSLF-seeded NR, optional DC fallback via `power_flow.dc.fallback`); the tolerance is never changed. Decisions, conflicts, attempts, and hints land in the `auto_mode_decision.log` artifact and the result metadata (`auto_profile`, `auto_final_stage`, `auto_final_solver`, `auto_hints`). | Integrations that should just work without reading this page (see [Integration Guide](integration.md)). | Strict reproducibility studies where every option must be pinned. | Feature extraction is one cheap pass; escalations only run on failed solves. | The solver-internal `power_flow.rescue` ladder stays active inside every auto attempt; the escalation stages add the strategies it does not cover. |
 | `power_flow.flatstart` | Bool | `false` | `true`, `false` | Flat start (1.0 pu, 0 degrees); `false` keeps imported start voltages (MATPOWER `VM`/`VA`, CGMES `SvVoltage`, SCF `start_state`). The Settings page offers it as the one start switch: while it is set, a run switches `apslf_start`, `dc_seed_unconditional` and `start_current_iteration` off and treats both start modes as `classic` (the stored values stay, `run.log` names the overrides). On CGMES runs an explicit `cgmes_import.start_values` (`sv` or `flat`) wins over this key; under `auto` a set flat start is honoured, see [CGMES Import](cgmes_import.md). | Synthetic starts, method studies. | With a projected start (`start_mode.voltage_mode` or `angle_mode` not `classic`) the projection wins and the start is not flat. | Low. | Filed under `start_mode` in the configuration structure. |
 | `power_flow.tol` | Float64 | `1.0e-8` | positive real | Convergence bound for the largest single bus mismatch (infinity norm, active and reactive alike; PV rows contribute their voltage residual). Physically `tol * baseMVA`: 1e-8 pu equals 1 W at a 100 MVA base, and the run log and diagnostics print the equivalent. | Accuracy-sensitive studies. | Overly tight on big batches. | Tighter means more iterations. | `max_iter`. |
-| `power_flow.tol_MW` | Float64 or unset | unset | positive real | The same bound in physical units. When set it WINS over `power_flow.tol` and is converted with the case base at run time (`tol = tol_MW / baseMVA`), because the base belongs to the network, not to the configuration. Unset changes nothing. | Stating the accuracy in MW instead of per unit; the run form offers it next to the per-unit tolerance (leave it empty to use per unit). | A value near the network's own power scale accepts an unsolved state; values at or above 1 MW are warned about. | Zero or negative is refused by name. | `tol`. |
+| `power_flow.tol_MW` | Float64 or unset | unset | positive real | The same bound in physical units. When set it wins over `power_flow.tol` and is converted with the case base at run time (`tol = tol_MW / baseMVA`), because the base belongs to the network, not to the configuration. Unset changes nothing. | Stating the accuracy in MW instead of per unit; the run form offers it next to the per-unit tolerance (leave it empty to use per unit). | A value near the network's own power scale accepts an unsolved state; values at or above 1 MW are warned about. | Zero or negative is refused by name. | `tol`. |
 | `power_flow.max_iter` | Int | `80` | positive integer | Iteration cap. | Hard cases. | Very low values. | Upper runtime bound. | `tol`, `qlimits`. |
 | `power_flow.autodamp` | Bool | `true` | `true`, `false` | Adaptive damping. | Difficult convergence. | Strict algorithm comparison. | Small overhead, often fewer failures. | `autodamp_min`. |
 | `power_flow.autodamp_min` | Float64 | `0.05` | positive real | Minimum damping factor. | Stabilizing hard cases. | Near-zero damping on easy grids. | Lower can increase iterations. | Active only with `autodamp=true`. |
-| `power_flow.auto_slack` | Bool | `false` | `true`, `false` | Promote a reference when the case registers no slack: external network injections first, then the largest generator (`ratedS`, then `maxP`, then dispatch). The promotion is logged; without it the run aborts with the no-slack error. | Cases whose data carries no reference (edited or partial models). | Data-quality checks — a silently chosen slack can mask an import problem. | None on cases that already have a slack. | `ensureSlack!` is the underlying API; the CGMES importer applies the same ranking at import time. |
-| `power_flow.rescue` | Bool | `true` | `true`, `false` | After a non-converged AC solve, retry from the original start state with a fixed strategy ladder: `alternate_start` (toggle the flat-start flag), `autodamp` (adaptive damping, skipped when already active), `dc_seed` (flat magnitudes with DC-projected start angles), `settled_qlimits` (Armijo merit line search, low damping floor, and Q-limit switching held back until the reactive requests settle via `qlimits.start_mode = :auto`). The first converging strategy wins; its name is logged and recorded as `:ac_rescue_strategy` in the performance profile. `settled_qlimits` targets large systems whose early PV/PQ switching destabilises the iteration — measured on an 82000-bus case whose Q limits are not even binding at the solution: the shipped early switching produced 8445 flips and diverged after 80 iterations, this strategy converges in ~60 with the limits fully enforced. Note the interaction behind that: `qlimits.start_mode = iteration_or_auto` (the shipped default) is an **or**, so a small `qlimits.start_iter` always wins and the `auto` criterion never gets a chance — on large systems, prefer `auto`. | Batch/suite runs over cases with difficult start states. | Solver comparisons and diagnostics — a rescued run hides *which* start failed. | Only failed runs pay for retries; converging runs are untouched. | Config-driven paths only (`runpf!(net, cfg)`, service, Web UI). Distinct from `wrong_branch_rescue`, which reacts to a *converged but implausible* solution. |
+| `power_flow.auto_slack` | Bool | `false` | `true`, `false` | Promote a reference when the case registers no slack: external network injections first, then the largest generator (`ratedS`, then `maxP`, then dispatch). The promotion is logged; without it the run aborts with the no-slack error. | Cases whose data carries no reference (edited or partial models). | Data-quality checks: a silently chosen slack can mask an import problem. | None on cases that already have a slack. | `ensureSlack!` is the underlying API; the CGMES importer applies the same ranking at import time. |
+| `power_flow.rescue` | Bool | `true` | `true`, `false` | After a non-converged AC solve, retry from the original start state with a fixed strategy ladder: `alternate_start` (toggle the flat-start flag), `autodamp` (adaptive damping, skipped when already active), `dc_seed` (flat magnitudes with DC-projected start angles), `settled_qlimits` (Armijo merit line search, low damping floor, and Q-limit switching held back until the reactive requests settle via `qlimits.start_mode = :auto`). The first converging strategy wins; its name is logged and recorded as `:ac_rescue_strategy` in the performance profile. `settled_qlimits` targets large systems whose early PV/PQ switching destabilises the iteration. Note the interaction behind that: `qlimits.start_mode = iteration_or_auto` (the shipped default) is an **or**, so a small `qlimits.start_iter` always wins and the `auto` criterion never gets a chance; on large systems, prefer `auto`. | Batch/suite runs over cases with difficult start states. | Solver comparisons and diagnostics: a rescued run hides *which* start failed. | Only failed runs pay for retries; converging runs are untouched. | Config-driven paths only (`runpf!(net, cfg)`, service, Web UI). Distinct from `wrong_branch_rescue`, which reacts to a *converged but implausible* solution. |
 | `power_flow.dc.fallback` | Bool | `false` | `true`, `false` | When the AC solve (and the rescue ladder, if enabled) did not converge, run the standalone DC power flow: the net then carries DC angles and branch P flows (vm = 1 pu, no reactive results). The AC status honestly stays non-converged (`erg = 1`); the fallback is logged and recorded as `:dc_fallback_applied` in the performance profile. | Getting *some* flow picture out of a case that AC-diverges. | Any study that needs voltages or reactive power. | One extra linear solve on failed runs. | Uses `power_flow.dc.*` settings; distinct from `power_flow.solver: dc`, which always runs DC only. |
-| `power_flow.linear_solver` | Symbol/String | `umfpack_reuse` | `umfpack`, `umfpack_reuse` | Sparse linear-algebra backend for the Newton step of the rectangular solver. `umfpack_reuse` keeps UMFPACK's factorization but reuses the symbolic analysis of the first iteration via `lu!` (analyze once, refactor per iteration). It re-analyzes automatically on active-set pattern changes and falls back to the `umfpack` chain on any factorization error. | `umfpack_reuse` on large cases where the linear solve dominates runtime. | Expecting a third backend: the former `klu` value was removed in 0.9.10 (measured slower than UMFPACK on power-flow Jacobians) and now fails validation. | `umfpack_reuse` cuts the repeated symbolic-analysis cost of the default path (measured ~0.28s refactor vs. 0.45s full factor on a 164k Jacobian). | Distinct from `power_flow.solver`, which selects the power-flow *method* (rectangular/apslf/dc); `linear_solver` only affects the rectangular Newton step. With the reuse backend the Jacobian is assembled with a structural (value-independent) sparsity pattern so the analysis stays reusable. Diagnostic counters appear in the solver status (`linear_solver_analyze_count`, `..._refactor_count`, `..._fallback_count`). |
+| `power_flow.linear_solver` | Symbol/String | `umfpack_reuse` | `umfpack`, `umfpack_reuse` | Sparse linear-algebra backend for the Newton step of the rectangular solver. `umfpack_reuse` keeps UMFPACK's factorization but reuses the symbolic analysis of the first iteration via `lu!` (analyze once, refactor per iteration). It re-analyzes automatically on active-set pattern changes and falls back to the `umfpack` chain on any factorization error. | `umfpack_reuse` on large cases where the linear solve dominates runtime. | Expecting a third backend: `klu` is not offered and fails validation. | `umfpack_reuse` cuts the repeated symbolic-analysis cost of `umfpack`. | Distinct from `power_flow.solver`, which selects the power-flow *method* (rectangular/apslf/dc); `linear_solver` only affects the rectangular Newton step. With the reuse backend the Jacobian is assembled with a structural (value-independent) sparsity pattern so the analysis stays reusable. Diagnostic counters appear in the solver status (`linear_solver_analyze_count`, `..._refactor_count`, `..._fallback_count`). |
 
-## Solver selection (rectangular vs. APSLF)
+## [Solver selection (rectangular vs. APSLF)](@id pf-solver-selection)
 
-`power_flow.solver` selects which solver actually computes the power-flow
-solution; it is independent of `power_flow.method`, which fixes the AC
-formulation family (currently always `rectangular`). `apslf` routes the run
-through the external-solver bridge (`buildPfModel` → `solvePf(ApslfSolver(...))`
-→ `applyPfSolution!`) to AnalyticLoadFlow.jl's analytic power-series solver
-instead of the internal Newton-Raphson loop. AnalyticLoadFlow.jl is a
-required dependency, so nothing has to be loaded for it; see `apslf_solver`.
+`power_flow.solver` selects the executing solver; `power_flow.method` fixes
+the AC formulation family (always `rectangular`). `apslf` routes the run
+through the external-solver bridge (`buildPfModel`,
+`solvePf(ApslfSolver(...))`, `applyPfSolution!`) to AnalyticLoadFlow.jl's
+analytic power-series solver (a required dependency; see `apslf_solver`).
 
 ```yaml
 power_flow:
@@ -56,33 +56,57 @@ power_flow:
 | `power_flow.solver` | Symbol/String | `rectangular` | `rectangular`, `apslf` | Selects the executing solver. | `apslf` to use the analytic power-series solver instead of NR. | `apslf` without AnalyticLoadFlow.jl loaded (raises a clear error). | `apslf` skips the NR iteration loop entirely. | Rejects `apslf_start.enabled=true` when set to `apslf`. |
 | `power_flow.apslf.order` | Int | `24` | `>= 1` | Highest power-series coefficient computed. | Higher for stressed/large-angle cases. | Unnecessarily high orders on easy cases (cost). | Higher order increases solve cost. | `use_pade`. |
 | `power_flow.apslf.use_pade` | Bool | `true` | `true`, `false` | Evaluate the voltage series via Padé `[L/M]` approximants instead of direct Taylor summation. | Default; improves convergence radius. | Direct Taylor comparison studies. | Small evaluation overhead, usually better accuracy per order. | `order`. |
-| `power_flow.apslf.nr_polish` | Bool | `false` | `true`, `false` | Run a Newton-Raphson polishing step on the series result. | Debugging the series result against a Newton finish. | Default off: since AnalyticLoadFlow 0.9.15 the series alone is a load-flow solution. | Adds a small number of NR iterations. | Only active when `solver=apslf`. |
+| `power_flow.apslf.nr_polish` | Bool | `false` | `true`, `false` | Run a Newton-Raphson polishing step on the series result. | Debugging the series result against a Newton finish. | Default off: the series alone is a load-flow solution. | Adds a small number of NR iterations. | Only active when `solver=apslf`. |
 | `power_flow.apslf.convergence_radius` | Bool | `true` | `true`, `false` | Evaluate the APSLF convergence radius: the distance `dmin` of the nearest Padé pole to the evaluation point `s = 1`, with the bus that owns it and a GRN/YEL/RED level (AnalyticLoadFlow `stability_from_Vcoeff`). Reported in the result header (`APSLF radius`), the run metadata (`apslf_convergence_radius`) and on the runs page next to the Jacobian condition. | Default; judges how far the series solution sits from its continuation limit. | Large networks where the evaluation (about the cost of the solve) is not wanted. | Comparable to the solve itself. | Only active when `solver=apslf`. |
 | `power_flow.apslf_start.enabled` | Bool | `false` | `true`, `false` | Use the APSLF solver as a start-value generator ahead of the rectangular NR solve (guarded, like `start_current_iteration`). | Difficult NR starts. | `solver=apslf` (rejected: start generator only makes sense ahead of NR). | Adds one series solve before NR. | `solver`, `apslf_start.order`. |
 | `power_flow.apslf_start.order` | Int | `40` | `>= 1` | Series order used by the start-value generator. | Same considerations as `apslf.order`. | Unnecessarily high orders for a start-only pass. | Higher order increases pre-solve cost. | `apslf_start.enabled`. |
 
-`power_flow.apslf_start` deliberately has no `use_pade`/`nr_polish` fields:
-polishing is left to the downstream NR solve, so the generator always runs
-with `nr_polish=false` internally. It also always runs unconstrained
-(`Qmin`/`Qmax` are not passed to the series solve), independent of
-`power_flow.qlimits.enabled` or any other Q-limit setting: `power_flow.qlimits.*`
-only governs the rectangular NR solve that follows, not the guarded start-value
-candidate itself. This is a fixed internal behavior, not a separate
-configurable option — the generator's only job is producing a better starting
-voltage profile; Q-limit enforcement is entirely the downstream NR solve's
-responsibility.
+`power_flow.apslf_start` has no `use_pade`/`nr_polish` fields (polishing is
+left to the NR solve, `nr_polish=false`) and always runs unconstrained
+(`Qmin`/`Qmax` are not passed): `power_flow.qlimits.*` governs only the
+rectangular NR solve that follows.
+
+### [APSLF start values](@id pf-apslf-start)
+
+`power_flow.apslf_start.enabled` uses the AnalyticLoadFlow.jl-backed APSLF
+solver as a guarded start-value generator ahead of the rectangular
+Newton-Raphson solve, with the same insertion point and accept/reject guard
+style as the current-iteration pre-solve: the candidate is only adopted
+when it strictly improves the rectangular mismatch, otherwise the original
+start values are restored. Default: disabled. Diagnostic artifact:
+`apslf_start.log`.
+
+This mode always runs with no NR polish and no Q-limit enforcement, and
+neither is configurable here:
+
+- NR polish is always off internally (`nr_polish=false`) because the
+  downstream rectangular Newton-Raphson solve performs that polishing step
+  itself.
+- Q-limits are always unconstrained during this pre-solve, independent of
+  `power_flow.qlimits.enabled` or any other Q-limit setting.
+  `power_flow.qlimits.*` only governs the rectangular NR solve that
+  follows; the generator's only job is producing a better starting voltage
+  profile, not enforcing reactive limits.
+
+Requires AnalyticLoadFlow.jl to be loaded; mutually exclusive with
+`power_flow.solver = apslf` (rejected at configuration time: the
+start-value generator only makes sense ahead of the NR solve).
+
+`power_flow.apslf_start.order` sets the highest power-series coefficient
+used by the start-value generator, with the same considerations as
+`power_flow.apslf.order`: higher orders can improve the series
+approximation but cost more before the candidate is even evaluated for
+acceptance. Default: 40. No effect unless
+`power_flow.apslf_start.enabled = true`.
 
 ## Solver selection (DC power flow)
 
 `power_flow.solver: dc` selects the standalone DC power flow (MATPOWER
-`rundcpf`/`makeBdc`-equivalent) instead of the AC rectangular Newton-Raphson
-solve: a linear screening model built from branch series reactance only
-(`B'`, no `r`, no shunt, no line charging), with transformer
-`phase_shift_deg` represented as a phase-shift injection vector rather than
-inside `B'` itself. `Vm` is implicitly `1.0 pu` at every bus and there are
-no losses — both by definition of the DC model, not solver limitations. It
-can also be called directly, independent of `run_sparlectra`/`power_flow.solver`,
-via [`rundcpf!`](@ref).
+`rundcpf`/`makeBdc`-equivalent): a linear screening model from branch series
+reactance only (`B'`, no `r`, no shunt, no line charging), transformer
+`phase_shift_deg` as a phase-shift injection vector; `Vm` is `1.0 pu`
+everywhere and there are no losses. [`rundcpf!`](@ref) calls it directly,
+independent of `run_sparlectra`/`power_flow.solver`.
 
 ```yaml
 power_flow:
@@ -94,40 +118,34 @@ power_flow:
 
 | YAML path | Type | Default | Allowed values | Meaning | Use when | Avoid when | Performance impact | Interactions |
 |---|---:|---:|---|---|---|---|---|---|
-| `power_flow.solver` | Symbol/String | `rectangular` | `rectangular`, `apslf`, `dc` | Selects the executing solver. | `dc` for a fast linear screening solve or as an AC start-value source. | `dc` when Vm/Q/loss results are required (the model doesn't define them). | `dc` is a single direct linear solve — no iteration. | Rejects active controllers (the outer-loop tap/PST controllers and the Q(U)/P(U) controllers that act inside the Newton step), mirrors `apslf`. |
-| `power_flow.dc.angle_reference_deg` | Float64 | `0.0` | any real | Uniform angle offset added to every bus after the slack-referenced solve; the slack bus itself is fixed at this reference. | Matching an external reference-angle convention. | N/A | None (exact post-hoc shift, not a re-solve). | None — mathematically independent of the rest of the DC solve. |
+| `power_flow.solver` | Symbol/String | `rectangular` | `rectangular`, `apslf`, `dc` | Selects the executing solver. | `dc` for a fast linear screening solve or as an AC start-value source. | `dc` when Vm/Q/loss results are required (the model doesn't define them). | `dc` is a single direct linear solve, no iteration. | Rejects active controllers (the outer-loop tap/PST controllers and the Q(U)/P(U) controllers that act inside the Newton step), mirrors `apslf`. |
+| `power_flow.dc.angle_reference_deg` | Float64 | `0.0` | any real | Uniform angle offset added to every bus after the slack-referenced solve; the slack bus itself is fixed at this reference. | Matching an external reference-angle convention. | N/A | None (exact post-hoc shift, not a re-solve). | None; mathematically independent of the rest of the DC solve. |
 | `power_flow.dc.ignore_out_of_service` | Bool | `true` | `true` | Documents that `status == 0` branches are always excluded from `B'`. | Always (current fixed behavior). | N/A | N/A | Not currently a live toggle. |
 
-`rundcpf!` accepts a `seed_ac_start::Bool=false` keyword (not a YAML option
-— it only makes sense as a one-off programmatic call): when `true`, after a
-successful DC solve it immediately re-seeds and runs the AC rectangular
-Newton-Raphson solve from the just-computed DC angles, restoring Slack/PV
-voltage-magnitude setpoints first (the DC write otherwise flattens every bus
-to `1.0 pu`). `net` then holds the AC-converged solution, not the DC one;
-the returned `DcPowerFlowReport` still reflects the DC step's own result,
-with the AC outcome recorded in `report.metadata.ac_converged`/
-`ac_iterations`/`ac_elapsed_s`.
+**Notes**
 
-DC results are reported through a dedicated `DcPowerFlowReport` (angles and
-lossless branch flows only) and tracked via `dc_pf_status(net)`, a status
-registry kept separate from `rectangular_pf_status` so a DC result is never
-mistaken for an AC one by AC-only reporting code.
-
-**Known limitation**: with `power_flow.solver = :dc` and multiple AC
-islands, the per-island diagnostics CSV (`ac_island_solver_summary.csv`,
-see below) is still written but stays cosmetically empty for DC-solved
-islands — it reads AC-only `rectangular_pf_status` fields that a DC solve
-never populates. This does not affect the DC solve or its `dc_pf_status`
-result, only that one diagnostics artifact.
+- `rundcpf!` accepts a `seed_ac_start::Bool=false` keyword (not a YAML
+  option): when `true`, a successful DC solve re-seeds and runs the AC
+  rectangular solve from the DC angles (Slack/PV magnitude setpoints
+  restored first); `net` then holds the AC solution, the returned
+  `DcPowerFlowReport` still reflects the DC step, the AC outcome sits in
+  `report.metadata.ac_converged`/`ac_iterations`/`ac_elapsed_s`.
+- DC results use a dedicated `DcPowerFlowReport` (angles and lossless
+  branch flows) and `dc_pf_status(net)`, a registry separate from
+  `rectangular_pf_status`, so a DC result is never mistaken for an AC one.
+- With `power_flow.solver = :dc` and multiple AC islands,
+  `ac_island_solver_summary.csv` (see below) stays empty for DC-solved
+  islands: it reads AC-only `rectangular_pf_status` fields. The DC solve
+  and its `dc_pf_status` result are not affected.
 
 ## AC island diagnostics
 
-`power_flow.islands` enables structural AC-island diagnostics for imported or
-constructed networks that contain multiple disconnected AC components. Island
-diagnostics do not model DC lines as AC branches and do not add artificial
-admittance bridges. They report the AC topology that the existing rectangular
-solver sees after import; `matpower_import.matpower_dcline_mode:
-pf_injections` remains a fixed terminal-injection approximation only.
+`power_flow.islands` enables structural AC-island diagnostics for networks
+with several disconnected AC components. No DC line becomes an AC branch
+and no artificial admittance bridge is added; the diagnostics report the
+AC topology the rectangular solver sees after import
+(`matpower_import.matpower_dcline_mode: pf_injections` remains a fixed
+terminal-injection approximation).
 
 ```yaml
 power_flow:
@@ -141,55 +159,34 @@ power_flow:
 | YAML path | Type | Default | Allowed values | Meaning |
 |---|---:|---:|---|---|
 | `power_flow.islands.enabled` | Bool | `true` | `true`, `false` | Write AC island diagnostics before and after the solve. |
-| `power_flow.islands.mode` | Symbol/String | `solve_independent` | `solve_independent`, `solve_parallel` | Island solve mode. `solve_parallel` runs the detected islands concurrently on Julia threads (largest island first), gated by `runtime.parallel.enabled`, `max_tasks`, and `min_work_items`; with one thread, a disabled switch, or too few islands it falls back to the identical serial loop. Results are bitwise identical to `solve_independent`; the fan-out wall clock is recorded as `parallel_wall_time`. One semantic difference: with `diagnostic_continue_after_failure: false` a parallel run cannot skip islands after the first failure (they are already in flight), so every island reports its REAL status and the failure is raised after all islands finish; the serial mode keeps today's immediate stop. |
+| `power_flow.islands.mode` | Symbol/String | `solve_independent` | `solve_independent`, `solve_parallel` | Island solve mode. `solve_parallel` runs the detected islands concurrently on Julia threads (largest island first), gated by `runtime.parallel.enabled`, `max_tasks`, and `min_work_items`; with one thread, a disabled switch, or too few islands it falls back to the identical serial loop. Results are bitwise identical to `solve_independent`; the fan-out wall clock is recorded as `parallel_wall_time`. One semantic difference: with `diagnostic_continue_after_failure: false` a parallel run cannot skip islands after the first failure (they are already in flight), so every island reports its actual status and the failure is raised after all islands finish; the serial mode keeps today's immediate stop. |
 | `power_flow.islands.reference_policy` | Symbol/String | `matpower_like` | `matpower_like` | Select the in-island REF bus when present, otherwise report the first PV/PQ bus that would be promoted for diagnostics. |
 | `power_flow.islands.diagnostic_continue_after_failure` | Bool | `true` | `true`, `false` | Keep diagnostics for all detected islands even when the combined run fails. |
 
-When an island-aware run fails, the API/result message identifies the first
-failing island with its island id, bus and branch counts, selected reference
-bus, PV/PQ/REF counts, iteration count, final mismatch, mismatch status
-(`finite`, `nonfinite`, `NaN`, or `Inf`), failure reason, stage,
-start-projection setting, and the diagnostic artifact path. The iteration
-count, final mismatch, reason, and stage are taken from the failing island's
-own solver record (e.g. `stage=newton_iteration` with the actual NR iteration
-count); the generic `before_nr`/`during_nr` stage heuristic is used only when
-no per-island record exists.
+**Artifacts** (run output directory):
 
-Each run output directory receives:
+| Artifact | Content |
+|---|---|
+| `ac_island_solver_summary.csv` | One row per detected AC island: selected reference bus, PV/PQ/REF counts, propagated solver settings, final status, final mismatch, failure reason. Islands the solver never attempted (de-energized single-bus islands, islands skipped after an earlier failure) appear with `final_status=not_attempted`, `failure_reason=not_attempted`, `stage=not_attempted`, `iterations=0`, zeroed switching statistics and `unavailable` mismatch fields. |
+| `ac_island_<id>_solver.log`, `ac_island_<id>_mismatch_history.csv` | Per-island details with the same topology, setting and solve-status fields, written only for islands the solver actually attempted. |
+| `q_limit_processing_status` column | Q-limit-specific outcome only: `disabled` when Q-limits are off, `not_attempted` for islands never solved, otherwise the solver-recorded outcome (currently `unavailable`, the solver stores no dedicated Q-limit processing status). It never mirrors `failure_reason`; Q-limit activity is in the switching-statistics columns (`pv_pq_switching_events`, `qlimit_active_set_changes`, ...). |
 
-- `ac_island_solver_summary.csv`: one row per detected AC island, including the
-  selected reference bus, PV/PQ/REF counts, propagated solver settings, final
-  status, final mismatch, and failure reason.
-- `ac_island_<id>_solver.log` and `ac_island_<id>_mismatch_history.csv`:
-  compact per-island details with the same topology, setting, and solve-status
-  fields, written only for islands the solver actually attempted.
+**Notes**
 
-Islands the solver never attempted individually — for example de-energized
-single-bus islands that are excluded from the island-wise solve, or islands
-skipped after an earlier failure — appear in the summary CSV with
-`final_status=not_attempted`, `failure_reason=not_attempted`,
-`stage=not_attempted`, `iterations=0`, zeroed switching statistics, and
-`unavailable` mismatch fields. They never repeat another island's solve
-statistics, and they get no per-island `solver.log`/`mismatch_history.csv`
-files (summary-CSV-only representation, keeping runs with many isolated buses
-free of boilerplate artifacts).
+- When an island-aware run fails, the API/result message names the first
+  failing island: id, bus and branch counts, reference bus, PV/PQ/REF
+  counts, iteration count, final mismatch, mismatch status (`finite`,
+  `nonfinite`, `NaN`, or `Inf`), failure reason, stage, start-projection
+  setting, and the artifact path, taken from that island's own solver
+  record; the generic `before_nr`/`during_nr` stage heuristic is used only
+  when no per-island record exists.
+- Island-wise solving is structural support, not a convergence guarantee:
+  if any island or the combined solve fails, the run is reported as failed
+  and the island artifacts are kept.
 
-The `q_limit_processing_status` column reports a Q-limit-specific processing
-outcome only: `disabled` when Q-limits are off, `not_attempted` for islands
-that were never solved, and otherwise the solver-recorded Q-limit outcome —
-currently `unavailable`, since the solver does not yet store a dedicated
-Q-limit processing status. It never mirrors the generic `failure_reason`
-column; Q-limit activity is visible in the dedicated switching-statistics
-columns (`pv_pq_switching_events`, `qlimit_active_set_changes`, ...).
-
-Island-wise solving is structural support, not a convergence guarantee. A large
-island can fail independently while smaller islands are structurally valid. If
-any island or the combined solve fails, Sparlectra still reports the combined
-run as failed and preserves the island artifacts for diagnosis.
-
-For pure SyntheticUSA island diagnostics, start with Q-limit handling disabled
-so the baseline tests island topology, reference selection, start projection,
-and rectangular NR behavior before adding active-set effects:
+For SyntheticUSA island diagnostics, start with Q-limit handling disabled
+so the baseline tests topology, reference selection and start projection
+before active-set effects:
 
 ```yaml
 matpower_import:
@@ -227,20 +224,17 @@ power_flow:
     reuse_import_data: true
 ```
 
-After this pure baseline is understood, enable `power_flow.qlimits.enabled` to
-diagnose active-set behavior. Per-island logs then include Q-limit state such as
-`q_limit_processing_status`, switching-event counts, active-set changes,
-reenable events, guarded narrow-range PV buses, final PV voltage residual, and
-available mismatch metrics.
+Then enable `power_flow.qlimits.enabled`: per-island logs add
+`q_limit_processing_status`, switching events, active-set changes, reenable
+events, guarded narrow-range PV buses, the final PV voltage residual and
+the mismatch metrics.
 
-## Distributed active-power slack
+## [Distributed active-power slack](@id pf-distributed-slack)
 
-`power_flow.distributed_slack` distributes the active-power imbalance of an
+`power_flow.distributed_slack` spreads the active-power imbalance of an
 island (load + losses − scheduled generation) over the participating
-generators instead of loading it entirely onto the reference bus. The theory,
-the augmented Newton system, and the rules for when the option applies are
-documented in the [Solver Guide](solver.md); this section covers the
-configuration surface.
+generators instead of loading it onto the reference bus. Theory, augmented
+Newton system and applicability rules: [Solver Guide](solver.md).
 
 ```yaml
 power_flow:
@@ -256,44 +250,34 @@ power_flow:
 |---|---:|---:|---|---|
 | `power_flow.distributed_slack.enabled` | Bool | `false` | `true`, `false` | Master switch. Disabled runs are bit-identical to the classical single-slack solver; imported participation factors alone never activate the feature. |
 | `power_flow.distributed_slack.p_mode` | Symbol/String | `pg_weighted` | `pg_weighted`, `pmax_weighted`, `headroom_weighted`, `imported`, `explicit` | Weight source for the participation factors: scheduled `Pg`, `maxP`, remaining headroom `max(maxP − Pg, 0)`, the imported factor (MATPOWER gen column 21 `APF`, CGMES `GeneratingUnit.normalPF`), or the explicit `weights` table. |
-| `power_flow.distributed_slack.respect_p_limits` | Bool | `true` | `true`, `false` | Warn per participant whose corrected output `Pg + alpha·lambda_P` leaves `[minP, maxP]` by more than a relative tolerance (0.01 % of the limit, floor 1e-3 MW — epsilon overshoots of participants scheduled exactly at a limit are numerical noise). Stage 1 warns only — it does not clamp and re-solve. |
+| `power_flow.distributed_slack.respect_p_limits` | Bool | `true` | `true`, `false` | Warn per participant whose corrected output `Pg + alpha·lambda_P` leaves `[minP, maxP]` by more than a relative tolerance (0.01 % of the limit, floor 1e-3 MW; epsilon overshoots of participants scheduled exactly at a limit are numerical noise). Warns only; it does not clamp and re-solve. |
 | `power_flow.distributed_slack.fallback` | Symbol/String | `error` | `error`, `ref_only` | Behavior when an island has no valid participant for the chosen mode: abort with an error, or warn and solve that island classically (reference bus absorbs everything). |
 | `power_flow.distributed_slack.weights` | Mapping | `{}` | bus name/index → weight ≥ 0 | Only read with `p_mode: explicit`; must then be non-empty with at least one positive weight. Keys resolve against bus names first, then against bus indices written as strings. |
 
-Candidates are the generator-type prosumers at the island's REF and PV buses.
-Fixed injections at PQ buses — Stage-0 HVDC converter injections, kept
-boundary equivalent injections — are never participants. Invalid candidates
-(missing data, non-finite or non-positive weight) are dropped with a debug log
-and counted in the result metadata; the surviving weights are normalized to
-`sum(alpha) = 1` per island.
+**Notes**
 
-The solved run reports its distributed-slack outcome in the structured status
-next to the wrong-branch metadata (`distributed_slack_active`,
-`distributed_slack_mode`, `distributed_slack_lambda_p_pu`,
-`distributed_slack_lambda_p_mw`, `distributed_slack_participants`,
-`distributed_slack_alpha_sum`, `distributed_slack_dropped`,
-`distributed_slack_p_limit_violations`, and the per-participant table
-`distributed_slack_participation` with bus, alpha share, correction `dP`
-and scheduled output) and, at `verbose > 0`, prints a
-compact summary with the top participants. `printACPFlowResults` shows the
-participation inside the bus table: the columns `dSl alpha` and
-`Pg eff MW` appear on participating buses when the run solved with the
-distributed slack (the `Pg` column keeps showing the schedule), and a
-one-line summary with mode and `lambda_P` sits in the result header. In
-island-wise runs each island
-solves with its own independent `lambda_P`; the per-island values appear in
-the per-island solver statuses.
+- Candidates are the generator-type prosumers at the island's REF and PV
+  buses; fixed injections at PQ buses (Stage-0 HVDC converter injections,
+  kept boundary equivalent injections) never participate. Invalid
+  candidates (missing data, non-finite or non-positive weight) are dropped
+  with a debug log and counted in the result metadata; surviving weights
+  are normalized to `sum(alpha) = 1` per island.
+- In island-wise runs each island solves with its own `lambda_P`, reported
+  in the per-island solver statuses.
 
-## External grid source
+| Surface | Fields |
+|---|---|
+| Structured status (next to the wrong-branch metadata) | `distributed_slack_active`, `distributed_slack_mode`, `distributed_slack_lambda_p_pu`, `distributed_slack_lambda_p_mw`, `distributed_slack_participants`, `distributed_slack_alpha_sum`, `distributed_slack_dropped`, `distributed_slack_p_limit_violations`, and the per-participant table `distributed_slack_participation` with bus, alpha share, correction `dP` and scheduled output; at `verbose > 0` a compact summary with the top participants is printed. |
+| `printACPFlowResults` | Columns `dSl alpha` and `Pg eff MW` on participating buses (the `Pg` column keeps the schedule) and a one-line summary with mode and `lambda_P` in the result header. |
 
-`power_flow.external_grid` computes the marked slack bus as a **non-ideal
-external-grid source** (issue #299): before the solve, the run converts the
-slack via `convertSlackToExternalGrid!` — the reference voltage moves to a
-hidden internal bus `<bus>__extgrid_int` behind the feeder impedance
-`z = Un²/Sk''` split by the R/X ratio, and the former slack bus becomes an
-ordinary solved bus whose voltage droops under load. The theory (both
-formulations of the changed equation system, the stiff limit, the effect on
-the short-circuit calculation) is on
+## [External grid source](@id pf-external-grid)
+
+`power_flow.external_grid` computes the marked slack bus as a non-ideal
+external-grid source: before the solve, `convertSlackToExternalGrid!` moves
+the reference voltage to a hidden internal bus `<bus>__extgrid_int` behind
+the feeder impedance `z = Un²/Sk''` (split by the R/X ratio), and the former
+slack bus becomes an ordinary solved bus whose voltage droops under load.
+Theory (both formulations, the stiff limit, the short-circuit effect):
 [Slack Bus and External Grid Sources](slack_vs_source.md).
 
 ```yaml
@@ -308,34 +292,37 @@ power_flow:
 | YAML path | Type | Default | Allowed values | Meaning |
 |---|---:|---:|---|---|
 | `power_flow.external_grid.enabled` | Bool | `false` | `true`, `false` | Master switch. Off keeps the classical ideal slack. |
-| `power_flow.external_grid.source` | Symbol/String | `auto` | `auto`, `config` | Where `Sk''`/`R/X` come from. `auto` prefers the values the CASE declares on the slack bus (a CGMES `ExternalNetworkInjection`, or a Sparlectra Case Format `source` with `sk`/`rx_ratio`; logged as *declared by the case data*) and falls back to the config numbers — MATPOWER/DTF cases carry no such data. `config` always uses the config numbers. |
+| `power_flow.external_grid.source` | Symbol/String | `auto` | `auto`, `config` | Where `Sk''`/`R/X` come from. `auto` prefers the values the case declares on the slack bus (a CGMES `ExternalNetworkInjection`, or a Sparlectra Case Format `source` with `sk`/`rx_ratio`; logged as *declared by the case data*) and falls back to the config numbers (MATPOWER/DTF cases carry no such data). `config` always uses the config numbers. |
 | `power_flow.external_grid.sk_MVA` | Float | `2000.0` | > 0 | Initial symmetrical short-circuit power of the feeder. The series impedance is `z_pu = baseMVA/sk_MVA` on the per-voltage-level base. |
 | `power_flow.external_grid.rx` | Float | `0.1` | ≥ 0 | R/X ratio of the feeder impedance. |
 
-Only the primary slack bus is converted; with `multi_slack` island
-references every other island keeps its reference. The conversion is
-idempotent per run (a net that already carries an external-grid internal bus
-is left untouched, so rescue retries cannot stack sources) and is logged in
-`run.log`; the classical result print states the chosen connection in its
-`Grid connection:` header line and reports the internal reference bus with
-type `SOURCE`. The corresponding Web UI controls live in the **External
-grid source** fieldset of the advanced run options.
+**Notes**
 
-`power_flow.external_grid.enabled` is **mutually exclusive** with
-`power_flow.distributed_slack.enabled` (configuration error): both decide
-who covers the island's power imbalance — the source imports it through the
-feeder, the distributed slack spreads it over the island's generators.
-Combined, the source's import would be forced to its participation share of
-zero and the source degenerates to a bare angle anchor.
+- Only the primary slack bus is converted; with `multi_slack` every other
+  island keeps its reference. The conversion is logged in `run.log`; rescue
+  retries cannot stack sources.
+- The classical result print names the connection in its `Grid connection:`
+  header line and reports the internal reference bus with type `SOURCE`.
+  Web UI: the **External grid source** fieldset of the advanced run options.
+- `power_flow.external_grid.enabled` is mutually exclusive with
+  `power_flow.distributed_slack.enabled` (configuration error).
 
-## Start mode options
+!!! details "Why source and distributed slack exclude each other"
+    Both decide who covers the island's power imbalance, the source by
+    importing it through the feeder, the distributed slack by spreading it
+    over the island's generators. Combined, the source would be forced to
+    a participation share of zero and degenerate to a bare angle anchor.
+
+## [Start mode options](@id pf-start-mode)
+
+Where the Newton-Raphson iteration starts: the angle and voltage initialisation modes, the profile a start can be taken from, the start projection and the DC and blend attempts that run before the first step. A flat start switches all of them off.
 
 | YAML path | Type | Default | Allowed values | Meaning | Use when | Avoid when | Performance impact | Interactions |
 |---|---:|---:|---|---|---|---|---|---|
 | `power_flow.start_mode.angle_mode` | Symbol/String | `dc` | `classic`, `dc`, `bus_va_blend`, `matpower_va` | Angle initialization source mode. | Transmission-like starts. | If trusted measured/historical state exists. | Can reduce iterations. | `try_dc_start`, `dc_angle_limit_deg`. |
 | `power_flow.start_mode.voltage_mode` | Symbol/String | `profile_blend` | `classic`, `pv_gen_vg`, `pv_bus_vm`, `all_bus_vm`, `profile_blend` | Voltage-magnitude/angle blend strategy. | Imported-reference assisted starts. | Untrusted imported data. | Small startup overhead. | `blend_lambdas`, `reuse_import_data`. |
 | `power_flow.start_mode.profile_source` | Symbol/String | `matpower_reference` | `flat`, `dc`, `bus_metadata`, `historical_profile`, `matpower_reference`, `state_estimation`, `se_snapshot`, `scada_snapshot` | Source for external or model-derived start profiles. `matpower_reference` means imported `BUS.VM`/`BUS.VA` values for regression/benchmarking/import reproduction. | Profile-aware starts. | When source data is unavailable or untrusted. | Minimal parsing overhead. | Keep source explicit for diagnostics and reproducibility. |
-| `power_flow.start_mode.profile_source = state_estimation` | Symbol/String | see above | see above | SE chain start: the power flow starts from the estimated VOLTAGES of a preceding state estimation; the model injections stay authoritative, the measurement/model difference goes into the slack. Programmatic entry `runpf_from_se!(...; mode = :se_state)`. | Model-authoritative PF after an SE. | No preceding SE result (clear error). | Starts near the solution. | `runse!(updateNet = true)`, `readSEStateCSV!`, the Web UI chain action. |
+| `power_flow.start_mode.profile_source = state_estimation` | Symbol/String | see above | see above | SE chain start: the power flow starts from the estimated voltages of a preceding state estimation; the model injections stay authoritative, the measurement/model difference goes into the slack. Programmatic entry `runpf_from_se!(...; mode = :se_state)`. | Model-authoritative PF after an SE. | No preceding SE result (clear error). | Starts near the solution. | `runse!(updateNet = true)`, `readSEStateCSV!`, the Web UI chain action. |
 | `power_flow.start_mode.profile_source = se_snapshot` | Symbol/String | see above | see above | SE chain start with balance takeover: additionally the nodal balances come from the estimation (working net only, the persistent model is never mutated). Converges in 0 or 1 iterations with the slack pickup below tolerance. Programmatic entry `runpf_from_se!(...; mode = :se_snapshot)`. | Snapshot-authoritative PF (reproduce the estimated operating point). | The model injections must stay authoritative (use `state_estimation`). | Immediate convergence. | Result metadata records the slack pickup. |
 | `power_flow.start_mode.start_projection` | Bool | `true` | `true`, `false` | Enables start-projection workflow. | Robustness on hard cases. | Minimal-path microbench runs. | Extra startup pass. | Gates start-projection sub-options. |
 | `power_flow.start_mode.try_dc_start` | Bool | `true` | `true`, `false` | Try DC candidate start. | Large transmission cases. | Highly resistive distribution cases. | Low overhead. | `dc_angle_limit_deg`. |
@@ -350,43 +337,31 @@ zero and the source degenerates to a bare angle anchor.
 
 ### DC-seeded Newton-Raphson start (`dc_seed_unconditional`)
 
-`power_flow.start_mode.dc_seed_unconditional` is a distinct mechanism from
-`angle_mode = dc`/`try_dc_start` above. `angle_mode = dc` (the default) is
-one candidate among several inside the measured/guarded start-projection
-machinery (`project_rectangular_start`): it builds a lightweight internal
-DC-angle estimate, compares it against other candidates, and can fall back
-if it looks bad. `dc_seed_unconditional = true` instead runs the actual
-standalone DC power flow (the same solver used for `power_flow.solver = dc`,
-including per-island handling) before Newton-Raphson starts, and always uses
-its resulting bus angles as the NR start point — mirroring
-[`rundcpf!(net; seed_ac_start=true)`](@ref)'s behavior, but wired into the
-config-driven `run_sparlectra`/Web UI pipeline so Q-limit handling,
-wrong-branch detection, and diagnostics/artifacts all still apply
-afterward to the AC solve, unlike calling `rundcpf!` directly. Voltage
-magnitudes are unaffected either way: the DC model has no voltage-magnitude
-solution (`Vm = 1.0 pu` everywhere by definition), so Slack/PV regulated
-setpoints are preserved and every other bus still gets its magnitude from
-the normal `voltage_mode`/`start_projection` handling. Only applies when
-`power_flow.solver = rectangular`; rejected at configuration time for
-`apslf`/`dc` and when combined with `power_flow.apslf_start.enabled`, since
-those are separate, mutually exclusive start-value sources for the same
-rectangular solve.
+`angle_mode = dc` (the default) is one candidate inside the
+measured/guarded start projection (`project_rectangular_start`), a
+lightweight DC-angle estimate with a fallback if it looks bad.
+`power_flow.start_mode.dc_seed_unconditional = true` instead runs the
+standalone DC power flow (the solver of `power_flow.solver = dc`,
+per-island handling included) before Newton-Raphson and always uses its bus
+angles, like [`rundcpf!(net; seed_ac_start=true)`](@ref) but inside the
+config-driven `run_sparlectra`/Web UI pipeline, so Q-limit handling,
+wrong-branch detection and diagnostics/artifacts still apply to the AC
+solve.
 
-In the Web UI, enabling **Use DC start values** unconditionally runs the full
-standalone DC power flow before the NR solve and adopts its angles as start
-values — without the quality-measurement/fallback logic that
-**Start angle mode** = `dc` uses by default. The **Start angle mode** and
-**Start voltage mode** selects are therefore grayed out while it is active
-(both would have no effect for such a run). The DC power flow never provides
-voltage magnitudes (angles only) — Slack/PV setpoints and the rest of the
-voltage start remain unchanged.
-
+Voltage magnitudes are unaffected (`Vm = 1.0 pu` in the DC model):
+Slack/PV setpoints are preserved, other buses get their magnitude from the
+normal `voltage_mode`/`start_projection` handling. Only
+with `power_flow.solver = rectangular`; rejected for `apslf`/`dc` and
+together with `power_flow.apslf_start.enabled` (mutually exclusive
+start-value sources). Web UI: **Use DC start values**; while active, the
+**Start angle mode** and **Start voltage mode** selects are grayed out.
 
 ## Guarded current-iteration start pre-solve
 
-`power_flow.start_current_iteration` enables an optional guarded current-injection/current-iteration pre-solve for start values. It is a start-value preconditioner, not a new power-flow solver. The final AC power-flow solve remains the rectangular Newton-Raphson path.
-
-The rectangular power-flow start sequence is:
+`power_flow.start_current_iteration` enables an optional guarded
+current-injection/current-iteration pre-solve for start values: a
+start-value preconditioner, not a new solver; the final AC solve remains
+the rectangular Newton-Raphson path.
 
 ```text
 Start Voltage Mode + Start Angle Mode
@@ -396,9 +371,27 @@ Start Voltage Mode + Start Angle Mode
 → optional Q-limit handling / outer loop logic
 ```
 
-Current iteration does not introduce a new `start_voltage_mode`, `start_angle_mode`, `power_flow.start_mode.voltage_mode`, or `power_flow.start_mode.angle_mode` value. It consumes the voltage profile prepared by the existing start-mode and start-projection settings, then attempts a limited PQ-bus current update before Newton-Raphson starts. The candidate is used only when the guarded checks accept it. If a guard rejects the candidate or the mismatch does not improve enough, Sparlectra restores the original start values before entering Newton-Raphson.
+It adds no new `power_flow.start_mode.voltage_mode` or
+`power_flow.start_mode.angle_mode` value: it consumes the voltage profile
+prepared by start mode and start projection, attempts a limited PQ-bus
+current update, and keeps the candidate only when the guards accept it;
+otherwise the original start values are restored.
 
-### Configuration block
+### [Current-iteration start options](@id pf-current-iteration-start)
+
+`power_flow.start_current_iteration.enabled` enables a guarded
+current-injection/current-iteration pre-solve before the Newton-Raphson
+power-flow solver starts. This is not a separate power-flow solver and it
+does not replace Newton-Raphson. It is a start-value preconditioner:
+Sparlectra first builds the initial voltage profile from Start Voltage Mode
+and Start Angle Mode, then optionally tries a few current-iteration steps to
+improve that initial profile. The improved voltage profile is accepted only
+if it passes the voltage and angle guards and improves the existing
+Sparlectra mismatch metric. If it does not improve the start, the original
+start values are restored and Newton-Raphson starts normally. Default:
+disabled. Enable this only for difficult cases where the normal start
+profile or DC/profile-blend start is not robust enough. Diagnostic
+artifact: `current_iteration_start.log`.
 
 ```yaml
 power_flow:
@@ -415,18 +408,18 @@ power_flow:
     only_for_large_cases: false
 ```
 
-| YAML path | Type | Default | Meaning |
-|---|---:|---:|---|
-| `power_flow.start_current_iteration.enabled` | Bool | `false` | Enable the optional guarded current-iteration pre-solve. |
-| `power_flow.start_current_iteration.max_iter` | Int | `10` | Maximum number of current-iteration update steps. |
-| `power_flow.start_current_iteration.tol` | Float64 | `1.0e-3` | Stops the pre-solve early when the rectangular mismatch of the candidate is at or below this tolerance. |
-| `power_flow.start_current_iteration.damping` | Float64 | `0.5` | Damping factor in `(0, 1]` applied to each candidate current update. |
-| `power_flow.start_current_iteration.accept_only_if_improved` | Bool | `true` | Require the best candidate mismatch to improve relative to the original start mismatch. |
-| `power_flow.start_current_iteration.min_improvement_factor` | Float64 | `0.98` | Acceptance threshold multiplier when improvement checking is active; the best mismatch must be at most `initial_mismatch * min_improvement_factor`. |
-| `power_flow.start_current_iteration.vm_min_pu` | Float64 | `0.5` | Lower voltage-magnitude guard for candidate voltages. |
-| `power_flow.start_current_iteration.vm_max_pu` | Float64 | `1.5` | Upper voltage-magnitude guard for candidate voltages. |
-| `power_flow.start_current_iteration.max_angle_step_deg` | Float64 | `30.0` | Maximum allowed candidate angle step in degrees for a single current-iteration update. |
-| `power_flow.start_current_iteration.only_for_large_cases` | Bool | `false` | Attempt the pre-solve only when the bus count reaches the implemented large-case threshold used by the rectangular workspace configuration; smaller cases are skipped with reason `skipped_small_case`. |
+| YAML path | Type | Default | Meaning | When to use |
+|---|---:|---:|---|---|
+| `power_flow.start_current_iteration.enabled` | Bool | `false` | Enable the guarded current-iteration pre-solve. | The pre-solve above; keep it off unless the normal start profile or a DC/profile-blend start is not robust enough. |
+| `power_flow.start_current_iteration.max_iter` | Int | `10` | Maximum number of current-iteration pre-solve steps before Newton-Raphson starts. | A higher value gives the pre-solve more chances to reduce the initial mismatch, but costs time and may move the start profile too far from the original initialization; the result is still guarded. Keep this small, increase it only when diagnostics show that the mismatch keeps improving but the pre-solve stops too early. |
+| `power_flow.start_current_iteration.tol` | Float64 | `1.0e-3` | Stopping tolerance of the pre-solve: below it the pre-solve stops before `max_iter`. | Controls only the start-value pre-solve, not the final Newton-Raphson tolerance. Use a relatively loose value; the purpose is a better starting point, not a solved power flow. |
+| `power_flow.start_current_iteration.damping` | Float64 | `0.5` | Damping factor in `(0, 1]` for the current-iteration voltage update; 1.0 applies the full update. | Smaller values blend the update with the previous voltage and make the pre-solve more conservative, which avoids large voltage or angle jumps. Lower it if the pre-solve is rejected by the voltage or angle guards, raise it only if the pre-solve is stable but improves too slowly. |
+| `power_flow.start_current_iteration.accept_only_if_improved` | Bool | `true` | Accept the candidate only when it improves the existing Sparlectra mismatch metric; otherwise the original start values are restored. | Should normally stay enabled. Disabling it is only useful for expert experiments, because it can let a worse start profile enter Newton-Raphson. |
+| `power_flow.start_current_iteration.min_improvement_factor` | Float64 | `0.98` | Required improvement ratio when `accept_only_if_improved` is on; the best candidate mismatch must be at most this factor times the original mismatch. | 0.98 means the candidate mismatch must be at least about 2 percent lower than the original. Smaller values require a stronger improvement, values closer to 1.0 accept smaller improvements. Keep it close to 1.0 for a conservative pre-solve, lower it only when tiny improvements are not useful and you want to accept only clearly better starts. |
+| `power_flow.start_current_iteration.vm_min_pu` | Float64 | `0.5` | Lower voltage-magnitude guard: a candidate with any bus voltage below it is rejected and the original start values are restored. | Prevents the pre-solve from sending Newton-Raphson into an implausible low-voltage start region. Lowering makes the guard more permissive, raising makes the pre-solve more conservative; `current_iteration_start.log` shows the candidate voltage minima. |
+| `power_flow.start_current_iteration.vm_max_pu` | Float64 | `1.5` | Upper voltage-magnitude guard: a candidate with any bus voltage above it is rejected and the original start values are restored. | Prevents unrealistic over-voltage start profiles from entering Newton-Raphson. Lowering makes the guard stricter, raising allows larger candidate voltages; `current_iteration_start.log` shows the candidate voltage maxima. |
+| `power_flow.start_current_iteration.max_angle_step_deg` | Float64 | `30.0` | Maximum allowed angle change of a single current-iteration update; a larger jump rejects the candidate and restores the original start values. | Guards against unstable or wrong-branch start profiles. Lower it for a more conservative pre-solve, raise it only when diagnostics show that otherwise plausible candidates are rejected solely by this guard. |
+| `power_flow.start_current_iteration.only_for_large_cases` | Bool | `false` | Run the pre-solve only for cases Sparlectra classifies as large enough for this extra start-value preparation (the large-case threshold of the rectangular workspace). | Avoids spending time on small cases where normal start values usually work. Enable it to have the pre-solve available for difficult large MATPOWER cases without changing the behaviour for small examples. |
 
 ### Recommended usage
 
@@ -445,20 +438,24 @@ power_flow:
     accept_only_if_improved: true
 ```
 
-This combination may reduce the initial mismatch for difficult imported cases, but it is experimental and is not guaranteed to rescue a non-converging case. If the candidate violates guards or does not improve the mismatch enough, the pre-solve is rejected and Newton-Raphson starts from the original start values. It does not replace MATPOWER auto-profile selection, DC angle starts, or start projection.
+This may reduce the initial mismatch, but it is experimental and does not
+guarantee a rescue (a rejected candidate leaves Newton-Raphson on the
+original start values) and does not replace MATPOWER auto-profile
+selection, DC angle starts, or start projection.
 
 ### Diagnostics and interpretation
 
-When a run has an output directory in its performance profile, the pre-solve writes `current_iteration_start.log`. The artifact records:
+When a run has an output directory in its performance profile, the
+pre-solve writes `current_iteration_start.log`:
 
-- `current_iteration_enabled`, `current_iteration_attempted`, `current_iteration_accepted`, and `current_iteration_reason`.
-- `initial_mismatch`, `final_mismatch`, and `iterations`.
-- Candidate voltage diagnostics: `candidate_voltage_magnitude_min`, `candidate_voltage_magnitude_max`, `candidate_voltage_low_count`, `candidate_voltage_high_count`, `candidate_voltage_worst_low_bus`, `candidate_voltage_worst_high_bus`, and their corresponding values.
-- Candidate angle diagnostics: `candidate_max_angle_step_deg` and `maximum_angle_step_deg`.
-- Rejection diagnostics: `guard_violations`, `rejection_stage`, `rejected_at_iteration`, and `original_start_values_restored`.
-- Restored voltage ranges after rejection: `restored_voltage_magnitude_min` and `restored_voltage_magnitude_max`.
-
-Important interpretations:
+| Group | Fields |
+|---|---|
+| Outcome | `current_iteration_enabled`, `current_iteration_attempted`, `current_iteration_accepted`, `current_iteration_reason` |
+| Mismatch | `initial_mismatch`, `final_mismatch`, `iterations` |
+| Candidate voltages | `candidate_voltage_magnitude_min`, `candidate_voltage_magnitude_max`, `candidate_voltage_low_count`, `candidate_voltage_high_count`, `candidate_voltage_worst_low_bus`, `candidate_voltage_worst_high_bus`, and their corresponding values |
+| Candidate angles | `candidate_max_angle_step_deg`, `maximum_angle_step_deg` |
+| Rejection | `guard_violations`, `rejection_stage`, `rejected_at_iteration`, `original_start_values_restored` |
+| Restored ranges after rejection | `restored_voltage_magnitude_min`, `restored_voltage_magnitude_max` |
 
 ```text
 current_iteration_accepted: true
@@ -477,23 +474,28 @@ current_iteration_reason: not_improved
   The candidate did not improve the mismatch enough.
 ```
 
-Other implementation reasons include `disabled`, `skipped_small_case`, `max_iter`, `tolerance_reached`, `invalid_voltage`, `singular_current_update`, and `invalid_mismatch`.
+Other reasons: `disabled`, `skipped_small_case`, `max_iter`,
+`tolerance_reached`, `invalid_voltage`, `singular_current_update`, and
+`invalid_mismatch`.
 
-### Q-limit interaction
+**Notes**
 
-For the active-set path, the guarded current-iteration pre-solve is attempted before the Newton-Raphson solve when enabled. For classical MATPOWER-style Q-limit outer-loop modes, it is applied only to the first inner solve; later inner solves in the same outer loop start without repeating current iteration. Current iteration does not directly change Q-limit switching decisions.
+- Active-set path: the pre-solve runs before the Newton-Raphson solve;
+  classical MATPOWER-style Q-limit outer-loop modes apply it only to the
+  first inner solve. It does not change Q-limit switching decisions.
+- It can be rejected by the voltage, angle-step, finite-value,
+  singular-update or mismatch-improvement guards, and does not help cases
+  whose main issue is a model/convention mismatch, a wrong branch, or an
+  invalid MATPOWER import convention.
 
-### Limitations
+## [Merit-function line search options](@id pf-merit)
 
-- Experimental diagnostic start-value helper.
-- Can be rejected by voltage, angle-step, finite-value, singular-update, or mismatch-improvement guards.
-- Can reduce the initial mismatch without guaranteeing Newton-Raphson convergence.
-- May not help cases whose main issue is model/convention mismatch, wrong branch, or an invalid MATPOWER import convention.
-- Does not replace MATPOWER auto-profile, DC start, or start projection.
-
-## Merit-function line search options
-
-`power_flow.merit` enables an optional Armijo sufficient-decrease acceptance criterion inside the existing autodamp backtracking loop of the rectangular Newton-Raphson solver. It is an alternative, opt-in acceptance test — not a replacement for Newton-Raphson and not a replacement for autodamp. Disabled by default (`enabled: false`), which leaves today's max-mismatch autodamp behavior byte-for-byte unchanged. See [Merit-Function Line Search](@ref) in the solver documentation for the theoretical background.
+`power_flow.merit` enables an optional Armijo sufficient-decrease acceptance
+test inside the autodamp backtracking loop of the rectangular
+Newton-Raphson solver, not a replacement for Newton-Raphson or autodamp.
+Disabled by default (`enabled: false`), which leaves the max-mismatch
+autodamp behavior unchanged. Background:
+[Merit-Function Line Search](@ref).
 
 ```yaml
 power_flow:
@@ -527,11 +529,18 @@ power_flow:
     fallback_max_mismatch: true
 ```
 
-Enable `power_flow.merit.enabled` together with `power_flow.autodamp` on cases where the historical ∞-norm autodamp criterion is suspected to accept a step that reduces the worst-bus mismatch while increasing overall residual energy. Leave `scale_p`/`scale_q`/`scale_v` at `1.0` unless P/Q/V residuals are known to differ by orders of magnitude in a particular case.
+Enable `power_flow.merit.enabled` with `power_flow.autodamp` where the
+∞-norm autodamp criterion is suspected to accept a step that reduces the
+worst-bus mismatch while increasing the overall residual energy. Leave
+`scale_p`/`scale_q`/`scale_v` at `1.0` unless P/Q/V residuals differ by
+orders of magnitude.
 
 ### Diagnostics and interpretation
 
-When a run has an output directory in its performance profile and `merit.enabled = true`, the solver writes `merit_linesearch.log` with one line per Newton iteration: `f_before`, `directional_derivative`, `tested_alphas`, `accepted_alpha`, and `accept_reason`. The solver status is extended with `merit_enabled`, `merit_used_iterations`, `merit_fallback_count`, `merit_active_set_skip_count`, `merit_initial`, and `merit_final`.
+| Surface | Fields |
+|---|---|
+| `merit_linesearch.log` (one line per Newton iteration, written when the run has an output directory in its performance profile and `merit.enabled = true`) | `f_before`, `directional_derivative`, `tested_alphas`, `accepted_alpha`, `accept_reason` |
+| Solver status | `merit_enabled`, `merit_used_iterations`, `merit_fallback_count`, `merit_active_set_skip_count`, `merit_initial`, `merit_final` |
 
 `accept_reason` values:
 
@@ -553,17 +562,25 @@ active_set_skip
   and the classic max-mismatch criterion was used instead.
 ```
 
-### Limitations
+**Notes**
 
-- Opt-in line-search criterion, not a general-purpose nonlinear optimizer; it does not replace Newton-Raphson.
-- The merit function `f(x) = 1/2 ‖W F(x)‖²` can have local minima with `F(x) ≠ 0`; satisfying Armijo does not by itself guarantee convergence.
-- Does not influence which of multiple numerical solution branches (e.g. high-voltage vs. low-voltage) the solver converges to.
-- PV/PQ active-set switches make `f` discontinuous in meaning across the switch; the merit comparison is skipped for that iteration (`accept_reason = active_set_skip`).
-- Does not change candidate start-value ranking (`start_mode.measure_candidates`), which remains mismatch-based.
+- The merit function `f(x) = 1/2 ‖W F(x)‖²` can have local minima with
+  `F(x) ≠ 0`; satisfying Armijo does not by itself guarantee convergence.
+- It neither selects the solution branch (high vs. low voltage) nor changes
+  the candidate start-value ranking (`start_mode.measure_candidates`),
+  which stays mismatch-based.
+- PV/PQ active-set switches change the meaning of `f`; the merit comparison
+  is skipped for that iteration (`accept_reason = active_set_skip`).
 
-## Trust-region step control options
+## [Trust-region step control options](@id pf-trust-region)
 
-`power_flow.trust_region` enables an optional scaled-Newton trust-region alternative to `power_flow.autodamp`: it caps the Newton step norm at an adaptive radius and accepts/rejects trials by merit-function decrease rather than by the max-mismatch criterion. Disabled by default (`enabled: false`). **Mutually exclusive with `power_flow.autodamp = true`** — both mechanisms control the Newton step length; enabling both is a configuration error. See [Trust-Region Step Control](@ref) in the solver documentation for the theoretical background.
+`power_flow.trust_region` enables an optional scaled-Newton trust-region
+alternative to `power_flow.autodamp`: it caps the Newton step norm at an
+adaptive radius and accepts or rejects trials by merit-function decrease
+rather than by the max-mismatch criterion. Disabled by default
+(`enabled: false`); mutually exclusive with `power_flow.autodamp = true`
+(both control the step length, enabling both is a configuration error).
+Background: [Trust-Region Step Control](@ref).
 
 ```yaml
 power_flow:
@@ -594,9 +611,17 @@ power_flow:
 
 ### Diagnostics and interpretation
 
-When a run has an output directory in its performance profile and `trust_region.enabled = true`, the solver writes `trust_region.log` with one line per Newton iteration: `radius_before`, `rho`, `tested_radii` (the shrink sequence tried this iteration), `rejected_steps`, `accepted`, `radius_after`, `collapsed`, and `accept_reason`. The solver status is extended with `trust_region_enabled`, `tr_step_count`, `tr_rejected_steps`, `tr_min_radius`, `tr_max_radius` (the observed radius range across the run, not the configured bounds), `tr_final_radius`, `tr_collapsed`, and the dogleg-branch counters `tr_dogleg_newton_count`, `tr_dogleg_interp_count`, `tr_dogleg_cauchy_count`, `tr_active_set_skip_count` (all `0` in `scaled` mode).
+| Surface | Fields |
+|---|---|
+| `trust_region.log` (one line per Newton iteration, written when the run has an output directory in its performance profile and `trust_region.enabled = true`) | `radius_before`, `rho`, `tested_radii` (the shrink sequence tried this iteration), `rejected_steps`, `accepted`, `radius_after`, `collapsed`, `accept_reason` |
+| Solver status | `trust_region_enabled`, `tr_step_count`, `tr_rejected_steps`, `tr_min_radius`, `tr_max_radius` (the observed radius range across the run, not the configured bounds), `tr_final_radius`, `tr_collapsed`, and the dogleg-branch counters `tr_dogleg_newton_count`, `tr_dogleg_interp_count`, `tr_dogleg_cauchy_count`, `tr_active_set_skip_count` (all `0` in `scaled` mode) |
 
-`accept_reason` values: `scaled` (the `scaled` step mode's only reason); `dogleg_newton`/`dogleg_interp`/`dogleg_cauchy` (which point on the dogleg path was accepted, `dogleg` mode only); `active_set_skip` (a PV/PQ switch happened this iteration, `dogleg` mode only — the comparison was skipped and a single `scaled`-style trial was accepted unconditionally); `none` (a collapse entry, no step accepted).
+`accept_reason` values: `scaled` (the only reason of the `scaled` step
+mode); `dogleg_newton`/`dogleg_interp`/`dogleg_cauchy` (the accepted point
+on the dogleg path, `dogleg` mode only); `active_set_skip` (a PV/PQ switch
+this iteration, `dogleg` mode only: the comparison was skipped and one
+`scaled`-style trial accepted unconditionally); `none` (collapse, no step
+accepted).
 
 ```text
 tr_collapsed: false
@@ -615,11 +640,14 @@ tr_rejected_steps > 0
 
 ## Step-control mode combinations (autodamp / merit / trust-region)
 
-`power_flow.autodamp`, `power_flow.merit.enabled`, and `power_flow.trust_region.enabled` jointly select how the Newton step length is chosen. Only some combinations are valid; `PowerFlowConfig` enforces the rules below at load time (`ArgumentError`) regardless of whether the values came from YAML, an API `config_overrides` argument, or the Web UI:
-
-- `power_flow.merit.enabled = true` requires `power_flow.autodamp = true` (merit is an alternative acceptance test *inside* the autodamp backtracking loop, not a standalone step-control mode).
-- `power_flow.trust_region.enabled = true` requires `power_flow.autodamp = false` (trust-region is a separate step-control mode that replaces autodamp's backtracking, not a companion to it).
-- Because of the two rules above, `merit.enabled = true` and `trust_region.enabled = true` can never both hold at once — enabling one always implies the exact opposite value of `autodamp` required by the other.
+`power_flow.autodamp`, `power_flow.merit.enabled`, and
+`power_flow.trust_region.enabled` jointly select the Newton step length.
+`PowerFlowConfig` enforces the rules at load time (`ArgumentError`) for
+YAML, API `config_overrides` and the Web UI alike:
+`power_flow.merit.enabled = true` requires `autodamp = true` (merit is a test
+inside the autodamp loop), `power_flow.trust_region.enabled = true` requires
+`autodamp = false` (trust-region replaces that loop), so merit and
+trust-region can never both hold.
 
 | `autodamp` | `merit.enabled` | `trust_region.enabled` | Valid? | Behavior |
 |---|---|---|---|---|
@@ -632,11 +660,15 @@ tr_rejected_steps > 0
 | `true`  | `true`  | `false` | Valid | Autodamp backtracking with the Armijo merit-function acceptance test. |
 | `true`  | `true`  | `true`  | **Invalid** | `ArgumentError`: both merit and trust-region reject this combination of `autodamp`. |
 
-The Web UI mirrors these rules client-side: the *Autodamping & merit-function line search* box and the *Trust-region step control* box are mutually exclusive — enabling one automatically unchecks and disables the other (and its sub-fields), and the merit toggle itself is disabled/unchecked whenever autodamping is off. This is a convenience only; the authoritative check is the `PowerFlowConfig` validation shown above, which still applies to YAML files and direct API calls.
+The Web UI mirrors these rules: the *Autodamping & merit-function line
+search* box and the *Trust-region step control* box exclude each other, and
+the merit toggle is disabled whenever autodamping is off.
+`power_flow.trust_region.step_mode` (`scaled`/`dogleg`) is orthogonal to
+this matrix and only takes effect where `trust_region.enabled = true`.
 
-`power_flow.trust_region.step_mode` (`scaled`/`dogleg`) is orthogonal to this matrix: it only takes effect on rows where `trust_region.enabled = true`, and does not change which `autodamp`/`merit`/`trust_region.enabled` combinations are valid. In the Web UI it is disabled/hidden together with the rest of the Trust-region box's sub-fields whenever the box itself is disabled or hidden (trust-region off, or the APSLF solver is selected).
+## [Q-limit options and guard](@id pf-qlimits)
 
-## Q-limit options and guard
+How the reactive-power limits of PV machines are enforced: the master switch, the enforcement mode (active set or the classic outer loop), when the enforcement starts, the hysteresis around a limit, the final check that every mode ends with, and the guard that judges narrow ranges and remaining violations.
 
 | YAML path | Type | Default | Allowed values | Meaning | Use when | Avoid when | Performance impact | Interactions |
 |---|---:|---:|---|---|---|---|---|---|
@@ -648,7 +680,7 @@ The Web UI mirrors these rules client-side: the *Autodamping & merit-function li
 | `power_flow.qlimits.hysteresis_pu` | Float64 | `0.01` | nonnegative real | Hysteresis margin near Q limits. | Reduce switch chattering. | Too large if strict tracking needed. | Can reduce oscillatory iterations. | `cooldown_iters`, guard modes. |
 | `power_flow.qlimits.cooldown_iters` | Int | `1` | nonnegative integer | Cooldown iterations after switching. | Reduce repeated toggling. | Too long cooldown on tight limits. | Affects convergence pace. | Hysteresis and freeze behavior. |
 | `power_flow.qlimits.reenable_v_hyst_pu` | Float64 | `1e-4` | nonnegative real | Voltage margin of the PQ->PV release of a clamped machine: at Qmax released when `Vm > Vset + margin`, at Qmin when `Vm < Vset - margin`. | Default. | Chattering machines (raise the margin). | None. | Release also needs `hysteresis_pu > 0` or `cooldown_iters > 0`, the cooldown and the one-retry guard. |
-| `power_flow.qlimits.final_q_accept_pu` | Float64 | `2 * hysteresis_pu` | real `>= hysteresis_pu` | Size bound of the final Q-limit check every enforcement mode ends with: an overshoot up to `hysteresis_pu` is within the hysteresis, up to this value bounded (accepted with a warning), beyond it a remaining violation (run not accepted). | Default. | Strict tracking (set both thresholds to 0). | None. | `hysteresis_pu`; see [Q-limits](powerlimits.md). |
+| `power_flow.qlimits.final_q_accept_pu` | Float64 or `auto` | `auto` (`2 * hysteresis_pu`) | `auto` or real `>= hysteresis_pu` | Size bound of the final Q-limit check every enforcement mode ends with: an overshoot up to `hysteresis_pu` is within the hysteresis, up to this value bounded (accepted with a warning), beyond it a remaining violation (run not accepted). | Default. | Strict tracking (set both thresholds to 0). | None. | `hysteresis_pu`; see [Q-limits](powerlimits.md). |
 | `power_flow.qlimits.trace_buses` | Vector{Int} | `[]` | bus-id vector | Trace selected bus events. | Targeted diagnostics. | Large full-network trace. | Logging overhead if populated. | Output and diagnostics verbosity. |
 | `power_flow.qlimits.lock_pv_to_pq_buses` | Vector{Int} | `[]` | bus-id vector | Force listed buses into PQ-lock behavior. | Known problematic buses. | Blindly on all buses. | Can simplify switching dynamics. | Guard modes. |
 | `power_flow.qlimits.guard.enabled` | Bool | `true` | `true`, `false` | Enable guard subsystem. | Prevent unstable switching. | Pure baseline comparisons. | Small runtime overhead. | Guard fields below. |
@@ -665,15 +697,17 @@ The Web UI mirrors these rules client-side: the *Autodamping & merit-function li
 
 ## Safe configuration refresh
 
-Use `refresh_sparlectra_config_file(path; write=false)` to check an existing user YAML against the current template without modifying it. The refresh helper preserves existing user-provided values, adds missing keys from `src/config/configuration.yaml.example`, reports duplicate keys, and can normalize known deprecated aliases when `normalize_deprecated=true`.
-
-Writing is explicit: pass `write=true` to update the file. By default a timestamped `.bak-YYYYmmdd-HHMMSS` backup is created before writing, and duplicate keys prevent automatic writes. This refresh mechanism is a maintenance tool only; normal configuration loading still accepts supported Q-limit enforcement legacy aliases, and Sparlectra never silently rewrites user YAML during startup.
+`refresh_sparlectra_config_file(path; write=false)` checks a user YAML
+against the current template without modifying it: user values are kept,
+missing keys come from `src/config/configuration.yaml.example`, duplicate
+keys are reported, and `normalize_deprecated=true` rewrites known aliases.
+Writing is explicit (`write=true`) after a timestamped
+`.bak-YYYYmmdd-HHMMSS` backup; duplicate keys prevent automatic writes.
+Sparlectra never silently rewrites user YAML during startup.
 
 ## Validated large cases
 
-Start-profile recommendations measured on well-known public MATPOWER cases.
-"Standard" means the default import conventions and start mode work as-is;
-the named profiles refer to the start-mode/import options documented above.
+"Standard" means the default import conventions and start mode work as-is.
 
 | Case | Size | Converges | Recommended settings |
 |---|---:|:---:|---|
@@ -684,10 +718,10 @@ the named profiles refer to the start-mode/import options documented above.
 | `case2869pegase.m` | 2 869 buses | ✅ (3 it) | PEGASE shift convention (as above) |
 | `case9241pegase.m` | 9 241 buses | ✅ (4 it) | PEGASE shift convention + DC-seeded `profile_blend` start |
 | `case_ACTIVSg10k.m` | 10 000 buses | ✅ | DC-seeded `profile_blend` start (`model.auto_profile = recommend` selects it) |
-| `case13659pegase.m` | 13 659 buses | ✅ (6 it) | start from the case's own reference (`angle_mode = matpower_va`, `voltage_mode = all_bus_vm`) — the usually-robust DC blend start does **not** converge on this case |
+| `case13659pegase.m` | 13 659 buses | ✅ (6 it) | start from the case's own reference (`angle_mode = matpower_va`, `voltage_mode = all_bus_vm`); the usually-robust DC blend start does **not** converge on this case |
 | `case_ACTIVSg25k.m` | 25 000 buses | ✅ (8 it) | DC-seeded blend start + Q-limit guard (many zero/narrow-Q generators) |
 | `case_SyntheticUSA.m` | 82 000 buses, 3 islands | ✅ | DC-seeded `profile_blend` start with autodamping; islands solve independently, `mpc.dcline` rows import as fixed injections. A plain flat start does not converge |
 
-The rule of thumb: `model.auto_profile = recommend` picks the
-right convention and start profile for all of the above except
-`case13659pegase.m`, which needs the stored-reference start.
+`model.auto_profile = recommend` picks the right convention and start
+profile for all of the above except `case13659pegase.m`, which needs the
+stored-reference start.

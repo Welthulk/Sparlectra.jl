@@ -47,7 +47,10 @@ function _artifact_mime_type(path::AbstractString)::String
   ext == ".json" && return "application/json"
   ext == ".csv" && return "text/csv"
   ext in (".yaml", ".yml") && return "application/x-yaml"
-  ext in (".txt", ".md") && return "text/plain"
+  ext == ".txt" && return "text/plain"
+  # the Web UI viewer renders Markdown reports (SE diagnostics, DTF
+  # summaries), so the type has to say what the file is
+  ext == ".md" && return "text/markdown"
   ext in (".html", ".htm") && return "text/html"
   ext == ".pdf" && return "application/pdf"
   return "application/octet-stream"

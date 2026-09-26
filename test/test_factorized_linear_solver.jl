@@ -236,11 +236,9 @@ function run_factorized_linear_solver_tests()
       @test occursin("<option value=\"umfpack_reuse\" selected>", expert_html)
       @test occursin("<option value=\"umfpack\"", expert_html)
       @test !occursin("<option value=\"klu\"", expert_html)
-      @test occursin("href=\"/help/power_flow.linear_solver\"", form_html)
-      @test SparlectraApp.resolve_webui_help_topic("power_flow.linear_solver") !== nothing
-      excerpt = SparlectraApp.load_webui_help_excerpt("power_flow.linear_solver")
-      @test excerpt !== nothing
-      @test occursin("power_flow.linear_solver", excerpt)
+      linear_topic = SparlectraApp.resolve_webui_help_topic("power_flow.linear_solver")
+      @test linear_topic !== nothing && !isempty(linear_topic.hint)
+      @test occursin("href=\"$(SparlectraApp.webui_help_page_url("power_flow.linear_solver"))\"", form_html)
     end)() end
   end)() end
 end

@@ -514,8 +514,8 @@ function run_webui_extended_tests()
       @test occursin("deleted", String(Dict(reset_resp.headers)["Location"]))
       @test !isfile(Sparlectra.case_config_path(scf_case))
 
-      # the Settings page shows the configuration file by default; the saved
-      # case settings are the ?case_settings=1 view
+      # the Settings page shows the saved case settings by default (2026-09-25);
+      # ?case_settings=1 selects that view explicitly and keeps working
       loaded_form = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/settings?casefile=$(SparlectraApp._webui_urlencode(joinpath(root, "case145.m")))&case_settings=1"; output_root = root).body)
       @test occursin("Case-specific settings loaded from", loaded_form)
       @test occursin("case145.m.config.yaml", loaded_form)
@@ -1314,160 +1314,30 @@ form:
     end)() end
 
 
-    @testset "Markdown-backed contextual help and documentation" begin (function ()
-      topic = "power_flow.start_mode.voltage_mode"
-      @test haskey(SparlectraApp.WEBUI_HELP_TOPICS, topic)
-      topic_metadata = SparlectraApp.resolve_webui_help_topic(topic)
-      @test topic_metadata !== nothing
-      doc_metadata = SparlectraApp.resolve_webui_doc_page(topic_metadata.page)
-      @test doc_metadata !== nothing
-      doc_path = joinpath(@__DIR__, "..", "docs", "src", doc_metadata.file)
-      @test isfile(doc_path)
-
-      markdown_text = SparlectraApp.load_webui_markdown_document(topic_metadata.page)
-      @test markdown_text !== nothing
-      section = SparlectraApp.extract_webui_markdown_section(markdown_text, topic_metadata.heading)
-      @test section !== nothing
-      @test occursin(topic_metadata.selector, section)
-      excerpt = SparlectraApp.load_webui_help_excerpt(topic)
-      @test excerpt !== nothing
-      @test occursin("power_flow.start_mode.voltage_mode", excerpt)
-      @test occursin("YAML path", excerpt)
-
-      synthetic = "## Target\n\n- item\n\n```julia\nx = 1\n```\n\n### Child\nchild text\n\n## Next\nnot included"
-      extracted = SparlectraApp.extract_webui_markdown_section(synthetic, "Target")
-      @test occursin("- item", extracted)
-      @test occursin("```julia", extracted)
-      @test occursin("### Child", extracted)
-      @test !occursin("not included", extracted)
-
-      link_markdown = "## Local section\n\n[Configuration](powerflow_configuration.md)\n[Start modes](powerflow_configuration.md#start-mode-options)\n[Dot relative](./powerflow_configuration.md)\n[External](https://example.com/reference)\n[Local anchor](#local-section)\n[Unknown](unknown.md)"
-      link_html = SparlectraApp.render_webui_markdown(link_markdown; current_page = "webui")
-      @test occursin("href=\"/docs/powerflow_configuration\"", link_html)
-      @test occursin("href=\"/docs/powerflow_configuration#start-mode-options\"", link_html)
-      @test count("href=\"/docs/powerflow_configuration\"", link_html) == 2
-      @test occursin("href=\"https://example.com/reference\"", link_html)
-      @test occursin("href=\"#local-section\"", link_html)
-      @test occursin("id=\"local-section\"", link_html)
-      @test !occursin("href=\"unknown.md\"", link_html)
-      @test occursin("aria-disabled=\"true\"", link_html)
-
-      for unsafe_target in ("../Project.toml", "../../src/Sparlectra.jl", "/etc/passwd", raw"C:\Users\x\file.txt")
-        unsafe_html = SparlectraApp.render_webui_markdown("[unsafe]($(unsafe_target))"; current_page = "webui")
-        @test occursin("aria-disabled=\"true\"", unsafe_html)
-        @test !occursin("href=\"$(unsafe_target)\"", unsafe_html)
-      end
-
+    @testset "help registry links into the documentation" begin (function ()
+      # the same check the docs gate runs: every topic has a hint of at most
+      # 160 characters and every doc target is a labelled heading in docs/src
+      include(joinpath(@__DIR__, "..", "tools", "check_webui_doc_links.jl"))
+      # the binding is defined by the include above: reach it through
+      # invokelatest so no world-age warning reaches the test output
+      check_fn = Base.invokelatest(getfield, Main, :check_webui_doc_links)
+      @test isempty(Base.invokelatest(check_fn; io = devnull))
       @test Set(values(SparlectraApp.WEBUI_FORM_HELP_TOPICS)) == Set(keys(SparlectraApp.WEBUI_HELP_TOPICS))
-      for (configured_topic, metadata) in SparlectraApp.WEBUI_HELP_TOPICS
-        page_metadata = SparlectraApp.resolve_webui_doc_page(metadata.page)
-        @test page_metadata !== nothing
-        help_doc_path = joinpath(@__DIR__, "..", "docs", "src", page_metadata.file)
-        @test isfile(help_doc_path)
-        help_markdown = SparlectraApp.load_webui_markdown_document(metadata.page)
-        @test help_markdown !== nothing
-        help_section = SparlectraApp.extract_webui_markdown_section(help_markdown, metadata.heading)
-        @test help_section !== nothing
-        isempty(metadata.selector) || @test occursin(metadata.selector, help_section)
-        @test SparlectraApp.load_webui_help_excerpt(configured_topic) !== nothing
-      end
-
-      current_iteration_help = Dict(
-  # one representative single-topic entry and one mixed entry stand in
-  # for the former ten-key fragment matrix
-  "power_flow.start_current_iteration.enabled" => ("not a separate power-flow solver", "start-value preconditioner", "before the Newton-Raphson power-flow solver starts", "accepted only if it passes the voltage and angle guards", "current_iteration_start.log"),
-  "power_flow.start_current_iteration.min_improvement_factor" => ("required improvement ratio", "0.98 means", "Default: 0.98", "clearly better starts"),
-)
-for (current_iteration_topic, required_fragments) in current_iteration_help
-        current_iteration_excerpt = SparlectraApp.load_webui_help_excerpt(current_iteration_topic)
-        @test current_iteration_excerpt !== nothing
-        @test occursin(current_iteration_topic, current_iteration_excerpt)
-        @test !startswith(strip(current_iteration_excerpt), "|")
-        for fragment in required_fragments
-          @test occursin(fragment, current_iteration_excerpt)
-        end
-      end
-
-      help_response = SparlectraApp.route_sparlectra_webui("GET", "/help/$(topic)")
-      @test help_response.status == 200
-      help_html = String(help_response.body)
-      @test occursin("Start voltage mode", help_html)
-      @test occursin("power_flow.start_mode.voltage_mode", help_html)
-      @test occursin("/docs/powerflow_configuration", help_html)
-      @test occursin("class=\"panel help-page help-panel\"", help_html)
-
-      @test occursin("class=\"button back-button\"", help_html)
-      @test occursin("document.referrer.startsWith(location.origin)", help_html)
-      @test occursin("history.back()", help_html)
-      @test occursin("href=\"/powerflow\"", help_html)
-
-      for representative_topic in (
-        "power_flow.start_mode.voltage_mode",
-        "power_flow.start_mode.angle_mode",
-        "power_flow.wrong_branch_detection",
-        "benchmark.enabled",
-      )
-        representative_help = SparlectraApp.route_sparlectra_webui("GET", "/help/$(representative_topic)")
-        @test representative_help.status == 200
-        @test occursin("class=\"panel help-page help-panel\"", String(representative_help.body))
-      end
-
-      unknown_help = SparlectraApp.route_sparlectra_webui("GET", "/help/power_flow.unknown")
-      @test unknown_help.status == 404
-      @test occursin("Unknown help topic", String(unknown_help.body))
-
-      docs_index = SparlectraApp.route_sparlectra_webui("GET", "/docs")
-      @test docs_index.status == 200
-      docs_index_html = String(docs_index.body)
-      for page in keys(SparlectraApp.WEBUI_DOC_PAGES)
-        @test occursin("/docs/$(page)", docs_index_html)
-      end
-
-      docs_page = SparlectraApp.route_sparlectra_webui("GET", "/docs/powerflow_configuration")
-      @test docs_page.status == 200
-      docs_page_html = String(docs_page.body)
-      @test occursin("Power-Flow Configuration", docs_page_html)
-      @test occursin("class=\"panel docs-page docs-content\"", docs_page_html)
-      @test occursin("id=\"start-mode-options\"", docs_page_html)
-
-      qlimit_strategy_page = SparlectraApp.route_sparlectra_webui("GET", "/docs/q_limit_switching_strategy")
-      @test qlimit_strategy_page.status == 200
-      qlimit_strategy_html = String(qlimit_strategy_page.body)
-      for term in ("active_set", "classic_simultaneous", "classic_one_at_a_time")
-        @test occursin(term, qlimit_strategy_html)
-      end
-
-      matpower_format_page = SparlectraApp.route_sparlectra_webui("GET", "/docs/matpower_format")
-      @test matpower_format_page.status == 200
-      matpower_format_html = String(matpower_format_page.body)
-      @test occursin("MATPOWER format", matpower_format_html)
-      @test occursin("MATPOWER Manual", matpower_format_html)
-      @test occursin("href=\"https://matpower.app/manual/matpower/DataFileFormat.html\" target=\"_blank\" rel=\"noopener noreferrer\"", matpower_format_html)
-      @test occursin("href=\"https://matpower.org/documentation/ref-manual/legacy/functions/caseformat.html\" target=\"_blank\" rel=\"noopener noreferrer\"", matpower_format_html)
-
-      for001_format_page = SparlectraApp.route_sparlectra_webui("GET", "/docs/dtf_format")
-      @test for001_format_page.status == 200
-      for001_format_html = String(for001_format_page.body)
-      @test occursin("DTF legacy input format", for001_format_html)
-      @test occursin("Transformer ratio convention", for001_format_html)
-      @test occursin("neutral-one", for001_format_html)
-      @test occursin("branch-echo records", for001_format_html)
-
-      webui_docs_page = SparlectraApp.route_sparlectra_webui("GET", "/docs/webui")
-      @test webui_docs_page.status == 200
-      webui_docs_html = String(webui_docs_page.body)
-      @test occursin("href=\"/docs/powerflow_configuration\"", webui_docs_html)
-      @test occursin("href=\"/docs/powerflow_configuration#start-mode-options\"", webui_docs_html)
-      @test occursin("href=\"/docs/performance_profiling\"", webui_docs_html)
-      @test !occursin("href=\"/docs/powerflow_configuration\" target=\"_blank\"", webui_docs_html)
-
-      for unsafe_page in ("../Project.toml", "../../src/Sparlectra.jl", "/etc/passwd", raw"C:\Users\x\file.txt")
-        unsafe = SparlectraApp.handle_webui_doc_page(unsafe_page)
-        @test unsafe.status == 404
-        @test occursin("Documentation page not found", String(unsafe.body))
-        unsafe_route = SparlectraApp.route_sparlectra_webui("GET", "/docs/" * SparlectraApp._webui_urlencode(unsafe_page))
-        @test unsafe_route.status == 404
-      end
+      # the sections the help pages show are generated source: every doc
+      # target has one, and the committed file matches the documentation
+      include(joinpath(@__DIR__, "..", "tools", "generate_webui_help_excerpts.jl"))
+      excerpt_check = Base.invokelatest(getfield, Main, :check_webui_help_excerpts)
+      @test isempty(Base.invokelatest(excerpt_check; io = devnull))
+      @test Set(keys(SparlectraApp.WEBUI_HELP_EXCERPTS)) == Set(String(m.doc) for m in values(SparlectraApp.WEBUI_HELP_TOPICS) if !isempty(m.doc))
+      @test all(!isempty(e.markdown) for (k, e) in SparlectraApp.WEBUI_HELP_EXCERPTS if startswith(k, "webui/"))
+      # sections of the Web UI page ship whole, library sections lead-only
+      @test all(!e.truncated for (k, e) in SparlectraApp.WEBUI_HELP_EXCERPTS if startswith(k, "webui/"))
+      @test !isempty(SparlectraApp.WEBUI_HELP_MANUAL)
+      @test haskey(SparlectraApp.WEBUI_HELP_MANUAL_ANCHORS, "Form options")
+      # a header link to the documentation site, no in-app reader
+      home = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow").body)
+      @test occursin("class=\"project-docs-link\" href=\"https://welthulk.github.io/Sparlectra.jl/\"", home)
+      @test !occursin("href=\"/docs\"", home)
     end)() end
 
     mktempdir() do tmpdir
@@ -1849,10 +1719,11 @@ for (current_iteration_topic, required_fragments) in current_iteration_help
         # config_maintenance labels a fieldset <legend> and scf_export the
         # case-export actions row; neither is a named input
         field in ("config_maintenance", "scf_export") ? (@test occursin(field == "scf_export" ? "Export as SCF case file" : "Configuration maintenance", pages_html)) : (@test occursin("name=\"$(field)\"", pages_html))
-        @test occursin("href=\"/help/$(help_topic)\"", pages_html)
+        # the ? of a control opens its in-app help page
+        @test occursin("class=\"help-link\" href=\"$(SparlectraApp.webui_help_page_url(help_topic))\"", pages_html)
       end
-      rendered_topics = Set(String(m.captures[1]) for m in eachmatch(r"href=\"/help/([^\"]+)\"", pages_html))
-      @test rendered_topics == Set(values(expected_help_topics))
+      rendered_help_urls = Set(String(m.captures[1]) for m in eachmatch(r"class=\"help-link\" href=\"([^\"]+)\"", pages_html))
+      @test rendered_help_urls == Set(SparlectraApp.webui_help_page_url(t) for t in values(expected_help_topics))
       @test !occursin("name=\"output_root\"", form_html)
       @test occursin("Output root", form_html)
       @test occursin(output_root, form_html)
@@ -1962,11 +1833,11 @@ for (current_iteration_topic, required_fragments) in current_iteration_help
       # solver option — it must stay usable with the APSLF and DC solvers, so
       # its fieldset is deliberately NOT tagged data-nr-only-field.
       @test occursin("<fieldset class=\"external-grid-options\">", settings_page_html)
-      @test occursin("<label data-nr-only-field><span class=\"field-label\">Maximum iterations ", settings_page_html)
-      @test occursin("<label data-nr-only-field><span class=\"field-label\">Q-limit enforcement mode ", settings_page_html)
-      @test occursin("<label data-nr-only-field><span class=\"field-label\">Wrong-branch detection ", settings_page_html)
-      @test occursin("<label data-nr-only-field data-dc-seed-inactive-field data-flatstart-inactive-field><span class=\"field-label\">Start angle mode ", settings_page_html)
-      @test occursin("<label data-nr-only-field data-dc-seed-inactive-field data-flatstart-inactive-field><span class=\"field-label\">Start voltage mode ", settings_page_html)
+      @test occursin(r"<label data-nr-only-field><span class=\"field-label\" title=\"[^\"]*\">Maximum iterations ", settings_page_html)
+      @test occursin(r"<label data-nr-only-field><span class=\"field-label\" title=\"[^\"]*\">Q-limit enforcement mode ", settings_page_html)
+      @test occursin(r"<label data-nr-only-field><span class=\"field-label\" title=\"[^\"]*\">Wrong-branch detection ", settings_page_html)
+      @test occursin(r"<label data-nr-only-field data-dc-seed-inactive-field data-flatstart-inactive-field><span class=\"field-label\" title=\"[^\"]*\">Start angle mode ", settings_page_html)
+      @test occursin(r"<label data-nr-only-field data-dc-seed-inactive-field data-flatstart-inactive-field><span class=\"field-label\" title=\"[^\"]*\">Start voltage mode ", settings_page_html)
       @test occursin("<fieldset class=\"start-current-iteration-options advanced-start-values\" data-nr-only-field data-flatstart-inactive-field>", settings_page_html)
       @test occursin("const nrOnlyFields = document.querySelectorAll('[data-nr-only-field]')", settings_page_html)
       @test occursin("const isApslfMode = function () { return getSolverMode() === 'apslf'; }", settings_page_html)
@@ -1993,11 +1864,11 @@ for (current_iteration_topic, required_fragments) in current_iteration_help
         # the label carries the physical-equivalent
         # tooltip (1e-8 pu equals 1 W at a 100 MVA base)
         "<label data-ac-only-field title=\"Convergence bound for the largest single bus mismatch",
-        "1e-8 pu equals 1 W at a 100 MVA base.\"><span class=\"field-label\">Tolerance ",
+        "1e-8 pu equals 1 W at a 100 MVA base.\"><span class=\"field-label\" title=\"",
       )
         @test occursin(field, settings_page_html)
       end
-      @test occursin("<label data-ac-only-field data-matpower-import-field><span class=\"field-label\">Tap-changer model ", case_page_html)
+      @test occursin(r"<label data-ac-only-field data-matpower-import-field><span class=\"field-label\" title=\"[^\"]*\">Tap-changer model ", case_page_html)
       # MATPOWER import conventions gray out for CGMES cases: 10 marked labels
       # (all matpower_import_* incl. the dcline mode, apply-bus-names, and
       # the tap-changer model; Export Solution stays active) + the one JS
@@ -2224,7 +2095,45 @@ result = get_powerflow_result(run_id)
         @test ("Content-Type" => "text/csv") in csv_download.headers
         expected_header = name == "bus_voltages_complex.csv" ? "bus;bus_name;type;vm_pu;va_deg" : "branch;branch_index;from_bus;to_bus;status"
         @test startswith(String(csv_download.body), expected_header)
+        # the viewer opens a CSV as a table (semicolon file: the delimiter is sniffed), raw=1 as text
+        csv_page_html = String(SparlectraApp.handle_powerflow_artifact(run_id, name).body)
+        @test occursin("class=\"artifact-csv\"", csv_page_html)
+        @test occursin("<th>$(name == "bus_voltages_complex.csv" ? "vm_pu" : "from_bus")</th>", csv_page_html)
+        @test occursin("<td class=\"num\">", csv_page_html)
+        @test !occursin("class=\"artifact-text\"", csv_page_html)
+        @test occursin("href=\"$(name)?raw=1\"", csv_page_html)
+        csv_raw_html = String(SparlectraApp.handle_powerflow_artifact(run_id, name; raw = true).body)
+        @test occursin("class=\"artifact-text\"", csv_raw_html)
+        @test occursin(expected_header, csv_raw_html)
+        @test !occursin("class=\"artifact-csv\"", csv_raw_html)
+        @test occursin("class=\"artifact-text\"", String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/artifact/$(run_id)/$(name)?raw=1"; output_root).body))
       end
+      # a Markdown report renders (heading, table), HTML inside it is escaped, the mime type names the format
+      markdown_path = joinpath(result["output_dir"], "note.md")
+      write(markdown_path, "# Heading\n\n| bus | vm |\n|---|---|\n| 1 | 1.02 |\n\nText with <script>alert(1)</script>.\n")
+      markdown_artifact = only(artifact for artifact in list_powerflow_artifacts(run_id) if artifact["name"] == "note.md")
+      @test markdown_artifact["mime_type"] == "text/markdown"
+      markdown_html = String(SparlectraApp.handle_powerflow_artifact(run_id, "note.md").body)
+      @test occursin("class=\"rendered-markdown\"", markdown_html)
+      @test occursin("<h1>Heading</h1>", markdown_html)
+      @test occursin("<table>", markdown_html)
+      @test occursin("1.02", markdown_html)
+      @test !occursin("<script>alert", markdown_html)
+      @test occursin("&lt;script&gt;", markdown_html)
+      @test occursin("href=\"note.md?raw=1\"", markdown_html)
+      markdown_raw_html = String(SparlectraApp.handle_powerflow_artifact(run_id, "note.md"; raw = true).body)
+      @test occursin("class=\"artifact-text\"", markdown_raw_html)
+      @test !occursin("<h1>Heading</h1>", markdown_raw_html)
+      # a comment header (measurement CSV v1) sits above the table, a truncated preview drops its cut row
+      comment_csv_path = joinpath(result["output_dir"], "note_rows.csv")
+      write(comment_csv_path, "# version: 1\nbus,value\n1,0.5\n2,\"1,5\"\n")
+      comment_csv_html = String(SparlectraApp.handle_powerflow_artifact(run_id, "note_rows.csv").body)
+      @test occursin("class=\"artifact-csv-comments\"># version: 1</pre>", comment_csv_html)
+      @test occursin("<th>bus</th><th>value</th>", comment_csv_html)
+      @test occursin("<td class=\"num\">1,5</td>", comment_csv_html)
+      truncated_table = SparlectraApp._webui_artifact_csv_html("a,b\n1,2\n3,4\n5,"; truncated = true)
+      @test occursin("<td class=\"num\">3</td>", truncated_table)
+      @test !occursin("<td class=\"num\">5</td>", truncated_table)
       legacy_diagnostic_path = joinpath(result["output_dir"], "diagnose.txt")
       write(legacy_diagnostic_path, "legacy diagnostics\n")
       legacy_artifacts = list_powerflow_artifacts(run_id)

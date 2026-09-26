@@ -289,9 +289,9 @@ power_flow:
     # Size bound (pu) of the final Q-limit check every enforcement mode
     # ends with: an overshoot up to hysteresis_pu is within the hysteresis
     # (ok), up to final_q_accept_pu it is bounded (accepted with a warning),
-    # beyond it the run is not accepted. Must be >= hysteresis_pu; the
-    # default is twice the hysteresis.
-    final_q_accept_pu: 0.02
+    # beyond it the run is not accepted. A number must be >= hysteresis_pu;
+    # auto is twice the hysteresis.
+    final_q_accept_pu: auto
     # Optional bus-id filters for focused diagnostics/policies.
     trace_buses: []
     lock_pv_to_pq_buses: []
@@ -338,14 +338,16 @@ state_estimation:
   imag_activation_iteration: 2
   # Activity floor for PMU current ANGLES without a paired magnitude, in ampere.
   ia_current_floor_A: 10.0
-  # Write estimated shunt susceptances / fixed tap positions back into the
-  # model after a converged run. Off by default: an estimation never
-  # overwrites model data silently.
-  update_shunts: false
+  # Write estimated shunt susceptances (on by default: a released shunt is
+  # released to be corrected, and the power flow from the estimate needs the
+  # corrected value) / fixed tap positions (off: an estimation never
+  # overwrites tap data silently) back into the model after a converged run.
+  update_shunts: true
   update_taps: false
-  # Residual-correlation (K-matrix) columns in the bad-data report. Off by
-  # default: one dense m x m pass, refused above 20000 rows.
-  report_residual_correlation: false
+  # Residual-correlation (K-matrix) columns in the bad-data report: one
+  # dense m x m pass; above 20000 measurement rows the columns are skipped
+  # with a warning and the run goes on.
+  report_residual_correlation: true
   # Bad data. Two limits, both on the NORMALIZED residual
   # rn = r / sqrt(Omega_ii): k_eliminate REMOVES a row from the estimate,
   # k_suppress DOWN-WEIGHTS it. See docs/src/state_estimation.md.
@@ -742,6 +744,11 @@ webui:
   # session. Lower this when the log page grows unwieldy (the size comes from
   # the number of entries, not from their age).
   operation_log_retention_days: 10
+  # Base URL of the published documentation that the help icons (?) next to
+  # the form fields open in a new tab. Point it at a local docs build
+  # (file:///.../docs/build/), the dev site (.../dev/) or a pinned version
+  # folder. The Web UI only links there, it never fetches anything.
+  docs_base_url: https://welthulk.github.io/Sparlectra.jl/
 
 extensions:
   # Reserved for future extension schemas.

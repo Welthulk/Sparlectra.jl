@@ -52,6 +52,20 @@
 
 using PrecompileTools: @setup_workload, @compile_workload
 
+"""
+    PRECOMPILE_WORKLOAD_MODE
+
+The `SPARLECTRA_PRECOMPILE_WORKLOAD` mode the loaded package image was
+built with (`"off"`, `"core"` or `"full"`). Evaluated once at precompile
+time and baked into the image: the compile cache is keyed by the sources,
+not by the environment, so this constant is the only way to tell which
+workload an image carries. `tools/run_gates.sh` reads it to rebuild the
+images with the full workload before a gate (measured 2026-09-25: the
+webui test group takes 185 s on the default image and 69 s on the full
+one).
+"""
+const PRECOMPILE_WORKLOAD_MODE = get(ENV, "SPARLECTRA_PRECOMPILE_WORKLOAD", "off")
+
 # The workload lives in a function on purpose: code placed directly inside
 # @compile_workload is compiled as one top-level thunk BEFORE it runs, so an
 # `if` around it does not stop the compiler, and every call in the guarded

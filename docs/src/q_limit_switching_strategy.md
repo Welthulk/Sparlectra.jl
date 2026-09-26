@@ -1,55 +1,72 @@
 # Q-limits in power flow: why switching strategy matters
 
-In power-flow analysis, reactive-power limits of generators may look like a minor modelling detail at first. In practice, however, they can decide whether a network case converges robustly or enters a switching cascade.
+Reactive-power limits of generators look like a minor modelling detail.
+In practice they decide whether a network case converges robustly or
+enters a switching cascade.
 
-Where the limits *come from* is a separate question from how they are
-enforced: a CGMES `ReactiveCapabilityCurve` — Q limits as a function of
-active power — is evaluated once at the machine's scheduled P during import
-and then enforced through exactly the machinery described here; see
-[CGMES Import](cgmes_import.md) for the evaluation and why the
-voltage-dependent Q(U) path is deliberately not involved.
+A CGMES `ReactiveCapabilityCurve` (Q limits as a function of active
+power) is evaluated once at the machine's scheduled P during import and
+then enforced by the switching strategy, not through the
+voltage-dependent Q(U) path; see [CGMES Import](cgmes_import.md).
 
-A PV bus keeps its voltage magnitude fixed in the classical power-flow formulation. The reactive power required to maintain that voltage is determined by the solution. If the required reactive power exceeds the generator's admissible range, the bus can no longer be treated as an unconstrained voltage-controlled PV bus. It must be converted into a PQ bus with reactive power fixed at the violated limit.
+A PV bus keeps its voltage magnitude fixed; the reactive power needed to
+hold it is determined by the solution. If that reactive power exceeds the
+generator's admissible range, the bus must become a PQ bus with reactive
+power fixed at the violated limit. Two strategies for this delicate
+conversion:
 
-This PV-to-PQ conversion is numerically delicate. Two basic strategies are useful to distinguish.
+- The **active-set strategy** reacts to violations during the nonlinear
+  iteration itself. Flexible, but with many generators of narrow or
+  nearly identical Q ranges, many PV-to-PQ and PQ-to-PV events can occur,
+  and the algorithm is then solving a discrete switching problem on top
+  of the smooth power-flow problem.
+- The **classical strategy** first solves the base power flow without
+  switching. Only after it has converged are violations checked;
+  violating generators are clamped to `Qmin` or `Qmax`, the buses
+  converted to PQ, and the power flow solved again, either for all
+  violating generators at once or step by step for the largest violation.
+  A bus converted to PQ is not converted back within the same enforcement
+  loop.
 
-The **active-set strategy** reacts to Q-limit violations during the nonlinear iteration itself. This can be flexible, but it also carries a risk. If many generators have narrow or nearly identical Q ranges, many PV-to-PQ and PQ-to-PV events can occur. In that situation, the algorithm is no longer only solving a smooth nonlinear power-flow problem. It is also solving a discrete switching problem.
+Large synthetic or aggregated networks expose the difference: many PV
+buses, narrow Q bands and mixed start values make it hard to distinguish
+voltage control from reactive-power limitation, and the switching
+strategy, not the model, may be the decisive factor.
 
-The **classical strategy** is more conservative. First, the base power flow is solved without active Q-limit switching. Only after this base run has converged are reactive-power limit violations checked. Violating generators are clamped to `Qmin` or `Qmax`, the affected buses are converted to PQ, and the power flow is solved again. This can be done simultaneously for all violating generators or step by step for the largest violation. A bus that has been converted from PV to PQ is not automatically converted back to PV within the same enforcement loop.
+| Use | Where |
+|---|---|
+| Config key | `power_flow.qlimits.enforcement_mode`: `active_set` (default), `classic_simultaneous`, `classic_one_at_a_time` |
+| Config key | `power_flow.qlimits.reenable_v_hyst_pu` (default `1e-4` pu): voltage hysteresis for releasing a clamped machine back to PV |
+| Result field | solver status `converged_limits_failed` with reason `remaining_pv_q_limit_violations` |
 
-Large synthetic or aggregated networks can expose the difference clearly. Many PV buses, narrow Q bands, different voltage start values, and generator setpoints may make it difficult for the numerical iteration to distinguish cleanly between voltage control and reactive-power limitation. In such cases, the network model is not necessarily wrong. The switching strategy itself may be the decisive factor.
+- `active_set`: in-iteration switching with guards such as hysteresis,
+  cooldown, narrow-range locking and repeated-switching protection.
+- `classic_simultaneous`: base power flow with switching disabled; if it
+  converges, all detected violations are clamped and converted in one
+  outer-loop pass.
+- `classic_one_at_a_time`: same principle, but only the largest violation
+  per outer-loop pass, which makes the switching sequence easier to
+  inspect.
 
-Sparlectra therefore provides more than one Q-limit enforcement mode.
-
-`power_flow.qlimits.enforcement_mode` selects one of these canonical modes:
-
-- `active_set` is the default dynamic mode. It performs in-iteration Q-limit switching and can use guards such as hysteresis, cooldown, narrow-range locking, and repeated-switching protection.
-- `classic_simultaneous` is a classical reference mode. It first solves the base power flow with Q-limit switching disabled. If the base solution converges, all detected Q-limit violations are clamped and converted in one outer-loop pass.
-- `classic_one_at_a_time` follows the same classical principle, but handles only the largest violation per outer-loop pass. This can make the switching sequence easier to inspect.
-
-The active-set mode also releases a clamped machine back to PV, and it
-decides that on the voltage side: a machine at Qmax whose voltage sits
-above its setpoint (by more than `power_flow.qlimits.reenable_v_hyst_pu`,
-default `1e-4` pu) needs less than Qmax to hold the setpoint and goes back
-to PV; the mirror image applies at Qmin. Up to 0.12.5 the release tested
-whether the reactive injection lay strictly inside the band, which is
-never true for a clamped bus at a converged point, so the solver kept
-non-physical solutions that the Q-V check then reported. Cooldown and the
+The active-set mode also releases a clamped machine back to PV, decided on
+the voltage side: a machine at Qmax whose voltage sits above its setpoint
+by more than the hysteresis needs less than Qmax to hold the setpoint and
+goes back to PV; the mirror image applies at Qmin. Cooldown and the
 one-retry guard still apply, so a machine flipping between the clamp and
 the voltage constraint is held after its first retry.
 
-There is one outcome worth recognizing by name. A run can converge
-numerically and still fail to hold every reactive limit: the solver then
-reports the status `converged_limits_failed` with the reason
-`remaining_pv_q_limit_violations`, and the run counts as unsuccessful even
-though the bus balances are satisfied. This is not a numerical failure and
-not a wrong result being sold as a good one, it is the honest report that
-no admissible active set was reached. Measured example: on `case300` the
-default `active_set` ends this way after 6 iterations, while
-`classic_simultaneous` reaches a limit-respecting solution after 18
-iterations with four more switching events. Seeing that status is the
-signal to try a classical mode on this network.
+A run can converge numerically and still fail to hold every reactive
+limit: the status `converged_limits_failed` says that no admissible active
+set was reached, and the run counts as unsuccessful although the bus
+balances are satisfied. Example: on `case300` the default `active_set`
+ends this way, while `classic_simultaneous` reaches a limit-respecting
+solution with a few more switching events. That status is the signal to
+try a classical mode.
 
-A practical diagnostic workflow is to compare modes. If a case fails in `active_set` because the active set changes repeatedly, but behaves more clearly in a classical mode, the problem may be dominated by discrete switching rather than by the continuous Newton iteration alone. If the base power flow itself does not converge in a classical mode, the issue is upstream of Q-limit enforcement and should be investigated separately.
-
-The key point is that Q-limits are not just post-processing. They change the structure of the power-flow problem. Reliable large-network analysis therefore needs not only a Newton solver, but also a controlled strategy for the discrete switching between PV and PQ.
+Comparing modes is the practical diagnostic: a case that fails in
+`active_set` with a repeatedly changing active set but behaves in a
+classical mode is dominated by discrete switching; a base power flow that
+does not converge in a classical mode has its problem upstream of Q-limit
+enforcement. Q-limits change the structure of the power-flow problem, so
+large-network analysis needs a controlled strategy for the discrete
+switching between PV and PQ.

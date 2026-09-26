@@ -182,6 +182,9 @@ state_estimation:
     cfg_loaded = Sparlectra.load_sparlectra_config(cfg_roundtrip; reload = true)
     @test cfg_loaded.powerflow.qlimits.ignore_q_limits === true
     @test cfg_loaded.powerflow.qlimits.hysteresis_pu == 0.123
+    # the packaged default (auto) follows the raised hysteresis instead of
+    # rejecting the file with an inherited literal below it
+    @test cfg_loaded.powerflow.qlimits.final_q_accept_pu == 2 * 0.123
     @test cfg_loaded.powerflow.qlimits.cooldown_iters == 7
     @test cfg_loaded.matpower.enable_pq_gen_controllers === false
     @test cfg_loaded.matpower.ratio === :reciprocal

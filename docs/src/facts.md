@@ -1,18 +1,13 @@
 # [FACTS Devices](@id facts_devices)
 
-FACTS (Flexible AC Transmission Systems) devices use power electronics to
-control quantities that a classical grid can only influence indirectly:
-bus voltage, branch flow, and the sharing of power between parallel paths.
-In a steady-state power flow a FACTS device reduces to a controllable
-network parameter, a reactive injection, a shunt susceptance, a series
-reactance, or a converter power, driven toward a target by the
-[generic outer control loop](control_framework.md) around `runpf!`.
-
-This page collects the device family, the limit characteristics that
-distinguish the devices from each other, and the modeling decisions behind
-Sparlectra's implementations. Hands-on: chapter 4 of the
-[advanced workshop tour](generated/workshop_tour_advanced.md) and the
-example `examples/others/exp_facts_limit_modes.jl`.
+FACTS devices (Flexible AC Transmission Systems) control bus voltage,
+branch flow, and the sharing of power between parallel paths. In a
+steady-state power flow each device is a controllable network parameter
+(a reactive injection, a shunt susceptance, a series reactance, or a
+converter power) driven toward a target by the
+[outer control loop](control_framework.md) around `runpf!`. Hands-on:
+chapter 4 of the [advanced workshop tour](generated/workshop_tour_advanced.md)
+and `examples/others/exp_facts_limit_modes.jl`.
 
 ## Device family and where each one lives
 
@@ -25,60 +20,51 @@ example `examples/others/exp_facts_limit_modes.jl`.
 | SSSC (VSC series converter) | series | reactance deviation, voltage-bounded | `addSeriesReactanceControl!` with `v_inj_max_pu` | this page, [Series Compensation](series_compensation.md) |
 | PST / Schrägregler (phase-shifting transformer) | phase | tap angle | `addPowerTransformerControl!` (`mode = :branch_active_power`) | [Control Framework](control_framework.md) |
 | HVDC back-to-back (paired VSC/LCC converters) | converter | paired P injections, Q or voltage per terminal | `addHvdcPairControl!` | [HVDC Back-to-Back](hvdc_back_to_back.md) |
-| UPFC (combined shunt + series converter) | combined | series voltage (quadrature composite, or arbitrary-phase full model) + shunt | `addUpfcControl!` (`model = :quadrature` or `:full`, see the notes below) | this page |
+| UPFC (combined shunt + series converter) | combined | series voltage (quadrature composite, or arbitrary-phase full model) + shunt | `addUpfcControl!` (`model = :quadrature` or `:full`) | this page |
 
-All controllers report through the same surfaces: `ControlRunResult`,
+All controllers report through `ControlRunResult`,
 `controllableElements` (element, device, actuator with live range, target,
 `status`/`converged`/`at_limit`), and the per-controller summary printers.
 
 ## The limit characteristic is the device
 
-In range, every shunt compensator does the same thing: it holds a voltage
-target by injecting reactive power. The devices differ at their LIMIT, and
-the limit is precisely where the distinction matters, because a compensator
-reaches it during the depressed-voltage conditions it was installed for.
+In range, every shunt compensator holds a voltage target by injecting
+reactive power. The devices differ at their limit, which is where the
+depressed-voltage conditions they were installed for put them.
 
-**Synchronous machine (constant-Q box).** The classical limit is a fixed
-reactive capability, $Q \in [Q_{min}, Q_{max}]$, independent of the
-terminal voltage. At the limit the machine behaves like a fixed injection;
-this is the `MachineVoltageControl` default (`limit_mode = :constant_q`)
-and the exact outer-loop analogue of PV to PQ switching.
+**Synchronous machine (constant-Q box).** A fixed reactive capability
+$Q \in [Q_{min}, Q_{max}]$, independent of the terminal voltage. At the limit
+the machine is a fixed injection: the `MachineVoltageControl` default
+(`limit_mode = :constant_q`), the outer-loop analogue of PV to PQ switching.
 
-**SVC (constant-B limit).** An SVC regulates a continuous susceptance $B$
-within $[B_{min}, B_{max}]$. At the limit the susceptance clamps and the
-delivered reactive power follows the voltage QUADRATICALLY through the
-Y-bus stamp:
+**SVC (constant-B limit).** A continuous susceptance $B$ within
+$[B_{min}, B_{max}]$. At the limit the susceptance clamps and the delivered
+reactive power follows the voltage quadratically through the Y-bus stamp:
 
 ```math
 Q_{SVC} = V^2 \, B_{lim}
 ```
 
-This is the well-known weakness of the SVC: as the voltage sags, the
-support collapses with $V^2$. At $V = 0.9$ pu a fully switched-in SVC
-delivers only 81 percent of its nominal rating. Sparlectra's
-`ShuntVoltageControl` produces this behavior with no extra modeling: the
-clamped susceptance stays stamped in the Y-bus and the $V^2$ law falls out
-of the power flow itself.
+At $V = 0.9$ pu a fully switched-in SVC delivers 81 percent of its rating.
+`ShuntVoltageControl` needs no extra modeling for this: the clamped
+susceptance stays stamped in the Y-bus.
 
-**STATCOM (constant-current limit).** A STATCOM is a voltage-source
-converter; its bound is the converter CURRENT. The deliverable reactive
-power therefore scales LINEARLY with the terminal voltage:
+**STATCOM (constant-current limit).** A voltage-source converter bounded by
+its converter current, so the deliverable reactive power scales linearly
+with the terminal voltage:
 
 ```math
 Q_{STATCOM} = V \, I_{max} \quad\text{, in Sparlectra: } Q_{lim} = V \cdot S_{max}
 ```
 
-with $S_{max}$ the rating at 1.0 pu. At $V = 0.9$ pu the STATCOM still
-delivers 90 percent of its rating, the decisive advantage over the SVC
-under exactly the sag conditions that matter. `addMachineVoltageControl!`
-with `s_max_mva` (or `i_max_ka`, converted via $\sqrt{3}\,U_n I_{max}$)
-switches the machine controller into this mode: the symmetric bound
-$\pm V \cdot S_{max}$ is re-evaluated from the solved terminal voltage
-before every outer step, so an at-limit STATCOM TRACKS the sagging or
-recovering voltage instead of freezing at a stale bound.
+with $S_{max}$ the rating at 1.0 pu; at $V = 0.9$ pu the STATCOM still
+delivers 90 percent. `addMachineVoltageControl!` with `s_max_mva` (or
+`i_max_ka`, converted via $\sqrt{3}\,U_n I_{max}$) selects this mode. The
+bound $\pm V \cdot S_{max}$ is re-evaluated from the solved terminal
+voltage before every outer step, so an at-limit STATCOM tracks the
+voltage.
 
-Summarized on one axis (delivered reactive power at the capacitive limit,
-relative to the 1.0-pu rating):
+Delivered reactive power at the capacitive limit, relative to the rating:
 
 | Terminal voltage | Machine box | STATCOM ($\propto V$) | SVC ($\propto V^2$) |
 |---:|---:|---:|---:|
@@ -87,46 +73,37 @@ relative to the 1.0-pu rating):
 | 0.90 pu | 100 % | 90 % | 81 % |
 | 0.80 pu | 100 % | 80 % | 64 % |
 
-The machine column is idealized (a real machine derates too, through its
-capability curve); the STATCOM/SVC columns are the model behavior and match
-the device physics to first order.
+The machine column is idealized (a real machine derates through its
+capability curve).
 
 ## Discrete banks: MSC/MSR
 
-Strictly speaking a switched capacitor/reactor bank is not power
-electronics, but it is the working end of most voltage-control schemes and
-shares the shunt physics above, so it lives in the same controller
-(issue #324). With `step_mvar` the susceptance moves in whole switched
-blocks (e.g. four times 10 MVAr):
+A switched bank shares the shunt physics above and lives in the same
+controller. With `step_mvar` the susceptance moves in whole blocks (e.g.
+four times 10 MVAr):
 
-- the secant proposal is TRUNCATED toward the target to whole steps, so
-  the bank approaches the voltage target from one side and never
-  overshoots; this is the anti-hunting guarantee, a bank that never
-  crosses its target cannot oscillate between two adjacent blocks;
-- when no whole block improves the voltage further, the controller PARKS
-  on the reached step (`status = :parked`, deliberately the last step
-  BEFORE crossing: conservative under-compensation instead of a possible
-  overvoltage) and releases itself when another controller moves the
-  operating point far enough that a block helps again;
-- at the outermost admissible block the constant-B limit region applies
-  unchanged, the delivered Q follows $V^2$ with the last block connected.
+- the secant proposal is truncated toward the target to whole steps, so
+  the bank never overshoots and cannot hunt between two adjacent blocks;
+- when no whole block improves the voltage further, the controller parks
+  on the reached step (`status = :parked`, the last step before crossing,
+  so under-compensation rather than overvoltage) and releases itself when
+  another controller moves the operating point enough for a block to help;
+- at the outermost block the constant-B limit applies: delivered Q follows
+  $V^2$ with the last block connected.
 
-The classical coordination case, a switched bank plus an OLTC on one bus,
-remains open follow-up work.
+Coordination of a bank with an OLTC on the same bus is not implemented.
 
 ## Series side: fixed window versus voltage-bounded window
 
-**TCSC (fixed reactance window).** The thyristor-controlled series
-capacitor changes the branch reactance within a hardware-defined window
-$[x_{min}, x_{max}]$, independent of loading. At a window end the branch is
-a fixed compensated line. The resonance region between capacitive and
-inductive operation is excluded by the impedance-magnitude guard `eps_z`
-(see [Series Compensation](series_compensation.md)).
+**TCSC (fixed reactance window).** The branch reactance moves within a
+hardware window $[x_{min}, x_{max}]$, independent of loading; at a window
+end the branch is a fixed compensated line. The impedance-magnitude guard
+`eps_z` excludes the resonance region (see
+[Series Compensation](series_compensation.md)).
 
-**SSSC (injected-voltage window).** The static synchronous series
-compensator injects a voltage in quadrature with the line current. In
-steady state that is equivalent to a reactance DEVIATION from the natural
-line reactance $x_{base}$, bounded by the injectable voltage magnitude:
+**SSSC (injected-voltage window).** The converter injects a voltage in
+quadrature with the line current: in steady state a reactance deviation from
+the natural line reactance $x_{base}$, bounded by the injectable voltage:
 
 ```math
 |V_{inj}| = |I| \cdot |x - x_{base}| \le V_{inj,max}
@@ -134,38 +111,28 @@ line reactance $x_{base}$, bounded by the injectable voltage magnitude:
 |x - x_{base}| \le \frac{V_{inj,max}}{|I|}
 ```
 
-The usable window is therefore CURRENT-dependent and shrinks with loading:
-at high transfer, exactly when a large flow correction would need a large
-reactance swing, the SSSC saturates, while a TCSC keeps its full window.
-Conversely, at light loading the SSSC window is wide. In
-`addSeriesReactanceControl!` the mode is selected with `v_inj_max_pu`; the
-window $x_{base} \pm V_{inj,max}/|I|$ is re-evaluated from the solved
-branch current before every outer step, with a floor on $|I|$ (a
-currentless branch is physically unconstrained) and the same `eps_z`
-resonance guard applied as a clamp.
+The window shrinks with loading: at high transfer the SSSC saturates,
+while a TCSC keeps its full window. In `addSeriesReactanceControl!` the
+mode is selected with `v_inj_max_pu`; the window
+$x_{base} \pm V_{inj,max}/|I|$ is re-evaluated from the solved branch
+current before every outer step, with a floor on $|I|$ (a currentless
+branch is unconstrained) and the `eps_z` guard applied as a clamp.
 
 ## Live bounds in the outer loop
 
-Both converter-based modes (STATCOM, SSSC) share one mechanism, the LIVE
-BOUND: the actuator range is a function of the solved operating point and
-is refreshed at the start of every outer iteration, before the secant step
-is clamped against it. Two consequences:
-
-- **At-limit tracking.** A parked controller whose bound still moves (the
-  voltage keeps sagging, the current keeps rising) is released and keeps
-  adjusting; it reports `at_limit` only once its bound has settled. The
-  delivered quantity therefore follows the physical limit law across outer
-  iterations instead of freezing at the first clamp.
-- **Honest element rows.** `controllableElements` and the report rows show
-  the bounds of the LAST evaluated operating point, so `actuator_min`/
-  `actuator_max` are the currently deliverable range, not the nameplate.
-
-In range, both modes behave like their fixed-limit counterparts: the same
-secant iteration on the same scalar map, converging into the same deadband.
+STATCOM and SSSC share the live bound: the actuator range follows the
+solved operating point and is refreshed at the start of every outer
+iteration, before the secant step is clamped against it. A parked
+controller whose bound still moves is released and keeps adjusting; it
+reports `at_limit` only once its bound has settled. `controllableElements`
+and the report rows show the bounds of the last evaluated operating
+point, so `actuator_min`/`actuator_max` are the currently deliverable
+range, not the nameplate. In range, both modes behave like their
+fixed-limit counterparts.
 
 ## Usage
 
-Programmatic (see the docstrings for the full keyword sets):
+Programmatic (full keyword sets in the docstrings):
 
 ```julia
 # SVC: continuous susceptance, quadratic limit collapse
@@ -214,37 +181,24 @@ control:
 ## UPFC: the stationary quadrature composite
 
 The unified power flow controller combines a STATCOM (shunt side, bus
-voltage) and an SSSC (series side, branch flow) behind one DC link; the
-link couples the two converters through an active-power balance. That makes
-the full device a TWO-actuator controller with one coupling constraint,
-which does not fit the single-actuator secant pattern the outer loop is
-built on: each Sparlectra controller owns one actuator and one target, and
-the loop coordinates controllers only through the shared power flow. That
-was the reason for deferring the UPFC in issue #297 Draft G, and it still
-holds for the full device.
-
-The way in is the QUADRATURE argument (issue #325): restrict the injected
-series voltage to quadrature with the line current. Then the series
-converter exchanges (approximately) no active power with the line, the DC
-link carries about zero, the coupling constraint degenerates, and what
-remains is exactly an SSSC on the branch plus a STATCOM at the bus. Both
-controllers exist, so `addUpfcControl!` registers them together as one
-named device:
+voltage) and an SSSC (series side, branch flow) behind one DC link.
+Restricting the injected series voltage to quadrature with the line
+current makes the series converter exchange (approximately) no active
+power with the line, and what remains is an SSSC on the branch plus a
+STATCOM at the bus. `addUpfcControl!` (YAML type `upfc`) registers the
+pair as one named device:
 
 - one call, one composite name; the series controller steers the branch
-  active power inside the injected-voltage limit `v_inj_max_pu`, the shunt
-  controller holds a remote bus voltage inside the current-based rating
-  `s_max_mva` (or `i_max_ka`);
-- registration is all-or-nothing (a rejected call leaves the net
-  untouched), and the composite behaves exactly like the manually
-  registered pair, to machine precision;
-- the result table keeps one row per actuator with `at_limit` per converter
-  side; both rows carry the device string
+  active power inside `v_inj_max_pu`, the shunt controller holds a remote
+  bus voltage inside `s_max_mva` (or `i_max_ka`);
+- registration is all-or-nothing, and the composite equals the manually
+  registered pair to machine precision;
+- the result table keeps one row per actuator with `at_limit` per
+  converter side; both rows carry the device string
   `UPFC series/shunt (VSC pair, stationary quadrature model)`.
 
-What the composite is NOT: it has no series ACTIVE-power injection. The
-phase-shifter degree of freedom stays unavailable, and independent P and Q
-steering of the line needs the full model below.
+The composite has no series active-power injection; independent P and Q
+steering needs the full model below.
 
 ```yaml
 control:
@@ -262,16 +216,22 @@ control:
       s_max_mva: 25.0
 ```
 
+!!! details "Why the quadrature restriction"
+    The DC link couples the two converters through an active-power
+    balance: a two-actuator controller with one coupling constraint,
+    which the single-actuator secant pattern of the outer loop does not
+    fit. Quadrature injection removes the coupling, so each side runs as
+    the existing single-actuator controller.
+
 ## UPFC: the full DC-link-coupled model
 
-The full model (issue #326, `model = :full`) delivers the phase-shifter
-degree of freedom: a series voltage `V_se` of ARBITRARY phase, so the line
-carries INDEPENDENT active and reactive targets at once. The active part of
-the series injection, `P_se = Re(V_se·conj(I_s))`, flows through the DC link
-and is balanced by the shunt converter (`P_sh = -P_se`). In quadrature the
-in-phase component is zero and the device collapses onto the composite
-above; the picture is the split of the injected voltage relative to the line
-current:
+`model = :full` (YAML `model: full`) adds the phase-shifter degree of
+freedom: a series voltage
+`V_se` of arbitrary phase, so the line carries independent active and
+reactive targets at once. The active part of the series injection,
+`P_se = Re(V_se·conj(I_s))`, flows through the DC link and is balanced by the
+shunt converter (`P_sh = -P_se`); in quadrature it is zero and the device
+collapses onto the composite above:
 
 ```text
         Im (quadrature to I_s: reactance, NO DC power)
@@ -283,57 +243,22 @@ current:
          +--------------->  Re, aligned with the line current I_s
 ```
 
-The series source is realised as an equivalent series impedance
-`z_add = V_se / I_s` added to the branch (`Re(z_add) < 0` when the converter
-injects active power), so the line stays an ordinary branch and no fictitious
-injection is created. With the terminal voltages frozen each outer iteration
-the from-end flow is affine in `V_se`, so the series step is an exact 2x2
-solve; the coupled iteration is globalised with an adaptive damping line
-search.
+The series source is an equivalent series impedance `z_add = V_se / I_s`
+on the branch (`Re(z_add) < 0` when the converter injects active power),
+so the line stays an ordinary branch. With the terminal voltages frozen
+each outer iteration the from-end flow is affine in `V_se`, so the series
+step is an exact 2x2 solve; the coupled iteration uses an adaptive damping
+line search.
 
-- one call, one controller (not a pair): `model = :full` steers the from-end
-  line flow to `p_target_mw` AND `q_target_mvar`;
-- the shunt converter provides the DC-link balance plus a reactive SETPOINT
-  `q_shunt_mvar`, inside the current-based rating whose reactive headroom is
-  coupled to the active load, `Q_max = sqrt((V·s_max)^2 - P_sh^2)`;
+- one call, one controller: `model = :full` steers the from-end line flow
+  to `p_target_mw` and `q_target_mvar`;
+- the shunt converter provides the DC-link balance plus a reactive setpoint
+  `q_shunt_mvar`, inside the current-based rating with headroom
+  `Q_max = sqrt((V·s_max)^2 - P_sh^2)`;
 - the result row carries `V_se` magnitude and angle, `P_se`, `P_sh`, the
-  shunt Q, and the DC-link residual `|P_se + P_sh|` (a genuine convergence
-  quantity, since the balance holds by construction only at the frozen state);
+  shunt Q, and the DC-link residual `|P_se + P_sh|` (a convergence quantity:
+  the balance holds by construction only at the frozen state);
 - `series_phase = :quadrature` forces `P_se = 0` and reproduces the composite.
-
-Honest limitations of the first cut:
-
-- **Stationary model.** No dynamics or transients; IPFC (a shared DC bus
-  across several lines) is out of scope.
-- **Shunt reactive SETPOINT, not closed-loop voltage.** Coupling a
-  shunt-voltage secant with the line reactive-flow control does not converge
-  in the sequential outer loop (a known behaviour of injection-model UPFCs);
-  closed-loop shunt voltage regulation is a follow-up that needs the AC
-  power-flow sensitivity framework (issue #217) or an augmented in-solver
-  state.
-- **No explicit series current limit.** Only the injected-voltage magnitude
-  `|V_se| <= v_inj_max_pu` is clamped, not the series-converter current
-  `|I_s| <= i_max`; adding it is one more clamp on the same step.
-- **The branch impedance is modified in place** (like the SSSC/TCSC): the
-  equivalent series impedance `z_add` stays on the branch after the control
-  run, and for the full model its resistance part goes NEGATIVE. That is the
-  correct steady-state power-flow construct, not the physical line. Sparlectra
-  keeps the two apart (issue #329): every branch carries its physical base
-  impedance (`r_base_pu`/`x_base_pu`) next to the live value, and
-  `runShortCircuit!` and the CGMES/MATPOWER exports read the BASE. A fault
-  calculation or an interchange export therefore matches the equipment network
-  automatically, with no manual reset, while the power flow keeps solving with
-  the live (compensated) impedance. `restoreBaseImpedances!(net)` returns the
-  live field to the base, and `clearUpfcFullControllers!(net)` does the same
-  while dropping the controller.
-- **Low line current.** `z_add = V_se / I_s` is floored at a minimum current
-  (`|I_s|` guard) so a lightly loaded or dead line stays finite and keeps its
-  base impedance; a UPFC on an essentially currentless line has nothing to
-  steer.
-- **Convergence regime.** The full model converges reliably for feasible,
-  moderate flow targets (the realistic operating envelope of a UPFC). Very
-  aggressive targets near the injectable-voltage limit may not converge in
-  the outer loop; a robust envelope needs the sensitivity/Jacobian work above.
 
 ```yaml
 control:
@@ -352,30 +277,35 @@ control:
       s_max_mva: 120.0
 ```
 
-## Validation
+**Limitations**
 
-- `test/test_tap_controller.jl`: STATCOM registration validation, limit
-  tracking on a depressed-voltage corridor ($Q = V \cdot S_{max}$ across
-  operating points), in-range equivalence with the constant-Q mode, and
-  the SVC-versus-STATCOM contrast on one case ($V^2$ versus $V$ collapse,
-  asserted numerically).
-- `test/test_series_reactance_control.jl`: SSSC registration validation,
-  converged operation inside the live window, pinned operation with the
-  effective injected voltage at $V_{inj,max}$, and TCSC-mode regression.
-- `test/test_upfc_control.jl`: the quadrature composite equals the manually
-  registered SSSC+STATCOM pair to machine precision, both limit
-  characteristics at their clamps, all-or-nothing registration, and the YAML
-  type `upfc` with the double-apply no-op; the full model reaches independent
-  P and Q on one line simultaneously with the DC-link balance closed, reduces
-  to the SSSC when the series phase is forced to quadrature, round-trips
-  through `model: full` in YAML, and (after a full-model control run) has short
-  circuit and the CGMES/MATPOWER exports read the physical base impedance so
-  the compensated net matches the equipment network (#329).
-- `examples/others/exp_facts_limit_modes.jl`: the three limit
-  characteristics side by side on one weak corridor plus the SSSC window
-  on a loop network.
-- `examples/others/exp_facts_base_impedance.jl`: a full UPFC on a meshed
-  corridor, then short circuit and MATPOWER export reading the physical base
-  impedance so the compensated net matches the equipment net (#329).
-- Chapter 4 of the advanced workshop tour walks the same contrasts
-  interactively.
+- **Stationary model.** No dynamics; IPFC (a shared DC bus across several
+  lines) is out of scope.
+- **Shunt reactive setpoint, not closed-loop voltage.** Coupling a
+  shunt-voltage secant with the line reactive-flow control does not
+  converge in the sequential outer loop; closed-loop shunt voltage
+  regulation would need power-flow sensitivities or an augmented in-solver
+  state.
+- **No explicit series current limit.** Only `|V_se| <= v_inj_max_pu` is
+  clamped, not the series-converter current `|I_s| <= i_max`.
+- **The branch impedance is modified in place** (like SSSC/TCSC): `z_add`
+  stays on the branch after the control run, with a negative resistance
+  part for the full model. That is the power-flow construct, not the
+  physical line, so every branch carries its physical base impedance
+  (`r_base_pu`/`x_base_pu`) next to the live value, and `runShortCircuit!`
+  and the CGMES/MATPOWER exports read the base without a manual reset.
+  `restoreBaseImpedances!(net)` returns the live field to the base,
+  `clearUpfcFullControllers!(net)` does the same and drops the controller.
+- **Low line current.** `z_add = V_se / I_s` is floored at a minimum
+  current, so a dead line stays finite and keeps its base impedance.
+- **Convergence regime.** Feasible, moderate flow targets converge
+  reliably; aggressive targets near the injectable-voltage limit may not.
+
+## Examples
+
+`examples/others/exp_facts_limit_modes.jl` shows the three limit
+characteristics on one weak corridor plus the SSSC window on a loop
+network; `examples/others/exp_facts_base_impedance.jl` runs a full UPFC on
+a meshed corridor, then short circuit and MATPOWER export on the base
+impedance. Chapter 4 of the advanced workshop tour walks the same
+contrasts.

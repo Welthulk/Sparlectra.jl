@@ -126,9 +126,11 @@ end
 
 The flat start is the one start switch a run honours over the other
 start-value machines: with `power_flow.flatstart = true` the APSLF start
-generator, the unconditional DC seed and the current-iteration pre-solve
-are switched off for this run and both start modes go `classic`, so the
-solve really starts at 1.0 pu and 0 degrees. The stored configuration is
+generator, the unconditional DC seed, the current-iteration pre-solve and
+the start projection (DC-angle candidate and blend scan) are switched off
+for this run and both start modes go `classic`, so the solve really starts
+at 1.0 pu and 0 degrees. Without the projection switch a DC or blended
+candidate could still win the start on mismatch alone. The stored configuration is
 left as it is (the Web UI keeps those values and only greys the controls);
 the returned list names every key that was overridden, for the run log.
 """
@@ -139,10 +141,11 @@ function _flatstart_forced_off_config(cfg::SparlectraConfig)
   pf.apslf_start.enabled && push!(overridden, "power_flow.apslf_start.enabled=false")
   pf.start_mode.dc_seed_unconditional && push!(overridden, "power_flow.start_mode.dc_seed_unconditional=false")
   pf.start_current_iteration.enabled && push!(overridden, "power_flow.start_current_iteration.enabled=false")
+  pf.start_mode.start_projection && push!(overridden, "power_flow.start_mode.start_projection=false")
   pf.start_mode.angle_mode === :classic || push!(overridden, "power_flow.start_mode.angle_mode=classic")
   pf.start_mode.voltage_mode === :classic || push!(overridden, "power_flow.start_mode.voltage_mode=classic")
   isempty(overridden) && return cfg, overridden
-  start_mode = _copy_start_mode_with(pf.start_mode; dc_seed_unconditional = false, angle_mode = :classic, voltage_mode = :classic)
+  start_mode = _copy_start_mode_with(pf.start_mode; dc_seed_unconditional = false, start_projection = false, angle_mode = :classic, voltage_mode = :classic)
   pf2 = _copy_powerflow_with(pf;
     start_mode = start_mode,
     apslf_start = ApslfStartConfig(enabled = false, order = pf.apslf_start.order),

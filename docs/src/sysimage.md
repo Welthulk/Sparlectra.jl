@@ -1,274 +1,170 @@
 # Sysimage
 
-Starting the Web UI pays Julia's just-in-time compilation cost twice: once
-for loading the package and once for the first solves. Sparlectra ships two
-complementary answers:
+A fresh Julia process compiles Sparlectra and every solver path on first
+use. A PackageCompiler sysimage (Sparlectra and its dependencies as one
+ahead-of-time compiled library, loaded with `-J`) removes that wait:
+`using Sparlectra` returns at once and a Web UI start serves its page in
+seconds. The Web UI start offers to build the image; the
+**Sysimage** page refreshes it from the browser.
 
-1. **PrecompileTools workload (always on).** The package precompiles the
-   solver hot path at install time. By default it warms nothing: the
-   package precompiles its module and every solver path compiles on its
-   first call, which keeps the install short on a machine whose compile
-   cache is slow to write (a virus scanner watching the cache directory
-   is the usual case). `SPARLECTRA_PRECOMPILE_WORKLOAD=core` before the
-   installation warms the MATPOWER and SCF import, the rectangular
-   Newton-Raphson solve with losses and `run_sparlectra` on a small
-   network; `full` warms the other paths as well (PGM import, state
-   estimation, APSLF and the hybrid start, DC power flow, the service
-   layer behind the Web UI, the tap control loop) at the price of a much
-   longer precompile. The sysimage build uses `full`.
-2. **PackageCompiler sysimage (this page).** A system image bakes
-   Sparlectra and its dependencies into one ahead-of-time compiled shared
-   library that Julia loads via `-J`. With it, a Web UI start reaches a
-   served PowerFlow page in a few seconds; the remaining JIT time
-   disappears.
+## Build
 
-## The start offers to build it
+1. Start the Web UI: `start_webui.sh` / `start_webui.bat` run
+   `start_webui.jl`, deciding through `tools/sysimage_launcher.jl`.
+   A usable image restarts the process with `-J <image>` and prints one
+   `Sysimage: ...` line.
+2. A missing or outdated image is named and the start asks
+   `Build the sysimage now? [y/N]`: `y` or `--rebuild-sysimage` builds, no
+   answer (Enter, 30 seconds, no terminal) means no, and every path
+   compiles on first use.
+3. The build first migrates the Web UI configuration to the current key
+   layout (`refresh_sparlectra_config_file`, timestamped backup);
+   duplicate YAML keys, for example, stop it with the reason named: start
+   with `SPARLECTRA_NO_SYSIMAGE=1` until fixed.
+4. A child process installs PackageCompiler into the shared
+   `@sparlectra-sysimage-build` environment, not the package
+   `Project.toml`, includes AnalyticLoadFlow (the APSLF solver) when
+   installed, and needs minutes, a few GB of RAM and half a GB on disk,
+   once per install or update.
+5. The relaunch uses the fresh image; the first PowerFlow form view still
+   scans the case directory once, prewarmed in the background.
 
-`start_webui.sh` / `start_webui.bat` only launch Julia; the decision itself
-lives in `start_webui.jl` (through `tools/sysimage_launcher.jl`), so all
-platforms behave identically. On every start it checks whether a usable
-image exists:
-
-- **usable:** the process starts itself again with `-J <image>` and prints
-  one `Sysimage: ...` line.
-- **missing or outdated:** it names the reason and asks
-  `Build the sysimage now? [y/N]`. **No answer means no** (Enter, 30
-  seconds, or no terminal at all): the build takes minutes, on a machine
-  with a virus scanner watching the compile cache far longer, and it only
-  starts on an explicit `y` or with `--rebuild-sysimage`. Without an
-  image every code path compiles on first use, and the start says so.
-  An outdated image (the Manifest or a source tree changed, another
-  Julia, unreadable metadata) is never started: unless a new one is built
-  now, the launcher deletes it together with its metadata file (only the
-  two managed paths) and says `Sysimage is out of date and was removed`;
-  a build that fails removes it as well. On Windows a file another Julia
-  keeps open cannot be deleted; the start then goes on without an image
-  and the next start tries again. An image given from outside with `-J`
-  is neither checked, rebuilt nor removed.
-
-Two flags and one environment variable steer it:
+| Entry | Build call |
+|---|---|
+| Command line | `buildSysimage()` with `SparlectraApp` loaded (`dry_run = true` reports the target paths only, `target_dir` chooses another output directory), or `julia --project=app tools/build_sysimage.jl` in a checkout (workload `tools/sysimage_workload.jl`) |
+| Web UI | the **Sysimage** page (`/webui/sysimage`, linked from the Info panel) shows the verdict of the start and runs the same build in the background |
+| One-line installers | build the image only with `SPARLECTRA_BUILD_SYSIMAGE=1` |
 
 ```bash
 ./start_webui.sh --rebuild-sysimage   # build a fresh image even if the current one is fine
 ./start_webui.sh --no-sysimage        # this start ignores the image and the question
-SPARLECTRA_NO_SYSIMAGE=1 ./start_webui.sh   # same, for callers that cannot pass arguments
 ```
 
-## Building the image directly
+**What the build prints.** One progress line
+(`[3/4] compiling the system image  04:21`; a line per phase change
+without a terminal; everything with `--verbose`); the full log is
+`sysimage_build.log` next to the image, written as it happens. A failed
+build prints its tail and leaves the previous image untouched.
 
-The simplest way, from any Julia session with Sparlectra installed:
+**Refreshing from the Web UI.** The new image is moved into place, so a
+Web UI running on the old one keeps working, on the old code; the page
+says so and asks for a restart. A REPL session (or `julia --project=app`)
+has no image and cannot switch; the page shows the line to use: the start
+script, or
+`julia -J <image> --startup-file=no --project=<app>` ([Web UI](webui.md)).
 
-```julia
-using SparlectraApp   # environment app/
-buildSysimage()
-```
-
-One call, no arguments. **Plan for it**: the build takes a few minutes,
-needs a few GB of RAM, and the image is roughly half a GB on disk; run it
-once after installing or updating Sparlectra, not before every session. It
-runs the build in a child process (your session keeps its active project) and
-installs PackageCompiler into the shared `@sparlectra-sysimage-build`
-environment on first use. `buildSysimage(dry_run = true)` only reports the
-target paths.
-
-Equivalent alternatives from a checkout:
-
-- **Script:** `julia tools/build_sysimage.jl`. The build runs in the shared
-  environment `@sparlectra-sysimage-build` (PackageCompiler is installed
-  there, never into the package `Project.toml`), executes the workload in
-  `tools/sysimage_workload.jl`, and writes the image below the Web UI user
-  root.
-
-### What the workload traces
-
-The workload runs the important paths ONCE each, and one trace per import
-format so no format compiles on its first click: a power flow and a state
-estimation each for MATPOWER (`warmup_casePST`), SCF (the shipped demo
-case, including its export), DTF (`FOR001.DAT`, reader and net builder
-directly as well) and CGMES (MiniGrid, fetched once into the regular case
-cache if missing), plus a CGMES short circuit, an N-1 contingency run, the
-network losses and the result/diagnostics printers, the Web UI start with
-its page renders through the real socket handler, one `run_sparlectra`
-call, the APSLF solver and the APSLF-seeded rectangular start (the
-Sparlectra side; AnalyticLoadFlow brings its own PrecompileTools workload
-into the image), and a clean shutdown. No run-history entries are created.
-
-It deliberately does NOT run the test suite. Tracing the whole fast profile
-plus the Web UI test group is what the build used to do, and it dominated
-the build time by a wide margin without reaching a Web UI path the steps
-above miss. For a comparison the old behavior is still one
-variable away:
+**Your own scripts.** Any Julia call takes the image with `--sysimage`:
 
 ```bash
-SPARLECTRA_SYSIMAGE_TRACE_TESTS=1 julia --project=app tools/build_sysimage.jl
+# buildSysimage() prints the image path. Rebuild after updating Sparlectra;
+# an image cannot be moved between operating systems.
+julia --sysimage /path/to/sparlectra.so --project=/path/to/project my_script.jl
+julia --sysimage /path/to/sparlectra.so --project=/path/to/project -e 'using Sparlectra; runpf!(importSCF("case.scf.json"))'
+# the first runpf!, runse! or runShortCircuit! runs at full speed: batch script,
+# REPL, notebook kernel or scheduled job
 ```
 
-A step that fails is a gap in the trace, never a failed build: the affected
-path simply compiles on its first use. Every step reports its outcome in
-the build log, successful ones included, because a silent success cannot be
-told apart from a step that never ran.
+## Workload
 
-### What the build prints
+Each important path is traced once per import format, so no format
+compiles on its first click. A failed step is a gap in the trace, not a
+failed build; every step logs its outcome; no run-history entries are
+created.
 
-The console gets one line that rewrites itself:
+| Step | What is traced |
+|---|---|
+| MATPOWER | a power flow and a state estimation on `warmup_casePST`; one `run_sparlectra` call |
+| SCF | power flow and state estimation on the shipped demo case, including its export |
+| DTF | `FOR001.DAT`: power flow and state estimation, reader and net builder directly as well |
+| CGMES | MiniGrid (fetched once into the regular case cache if missing): power flow, state estimation and a short circuit |
+| N-1 | one contingency run |
+| results | the network losses and the result and diagnostics printers |
+| Web UI | the start with its page renders through the real socket handler, then a clean shutdown |
+| APSLF | the solver and the APSLF-seeded rectangular start (AnalyticLoadFlow brings its own PrecompileTools workload) |
+| test suite | not traced by default: it dominates the build time without reaching a Web UI path the steps above miss; `SPARLECTRA_SYSIMAGE_TRACE_TESTS=1` adds it for a comparison |
 
-```text
-  [3/4] compiling the system image  04:21
-```
+## Staleness
 
-Everything else - Pkg resolution, the workload trace, PackageCompiler, the
-linker - goes to `sysimage_build.log` next to the image, and is written as
-it happens rather than at the end, so it can be watched and survives a
-killed build. When the console is not a terminal (output redirected to a
-file, a CI log), the progress line is replaced by one line per phase
-change, about fifteen for a whole build. `--verbose` streams everything to
-the console instead.
+`sysimage_meta.toml` next to the image is the validity contract (Sparlectra
+version, Julia version, OS and architecture, SHA-256 of the checkout
+`Manifest.toml`, build timestamp); `start_webui.jl` checks it before every
+start, the Sysimage page shows the same verdict, nothing is rebuilt
+silently.
 
-A build that fails prints the tail of the log directly, and leaves the
-PREVIOUS image untouched: the new one is compiled to a staging file and
-moved into place only after it is complete.
+| Trigger | What happens |
+|---|---|
+| image or `sysimage_meta.toml` missing | `no sysimage found`; the start asks whether to build |
+| another Julia version | `the sysimage was built for Julia X, this is Y`; the image is never started. Unless a new one is built now, the launcher deletes the image and its metadata file (only these two managed paths) and says `Sysimage is out of date and was removed` |
+| `Manifest.toml` hash differs (package update) | `the sysimage does not match the current Manifest.toml`; deleted as above |
+| a `src/*.jl` file newer than the image (development checkout) | `the sysimage is older than <checkout>/src`; deleted as above. Released installations never hit this, package updates change the manifest; in a checkout it means a rebuild after every edit, or `--no-sysimage` while working |
+| metadata unreadable | treated as outdated |
+| failed build | the failed image is removed; the previous one was never replaced, the build compiles to a staging file and moves it into place only when complete |
+| Windows, image file kept open by another Julia | cannot be deleted; the start goes on without an image and the next start tries again |
+| image given from outside with `-J` | neither checked, rebuilt nor removed |
 
-### Refreshing the image from the Web UI
+## Environment
 
-The Web UI's **Sysimage** page (`/webui/sysimage`, linked from the Info
-panel) shows the same validity verdict and starts the same build in the
-background. Because the finished image is moved into place with `mv`, the
-directory entry is replaced while the old file stays mapped, so a Web UI
-running on the image being replaced keeps working. It also keeps running
-the OLD code: the page says so afterwards and asks for a restart. A Web UI
-started from the REPL (or with `julia --project=app`) runs without any image
-and cannot switch to one; for such a session the page shows how the image on
-disk is used: the start script, or `julia -J <image> --startup-file=no
---project=<app>` with the Web UI started from that REPL. See
-[Web UI](webui.md).
-
-When AnalyticLoadFlow (the APSLF solver) is installed, the build detects it
-and bakes it into the image as well. This is not only about the APSLF paths:
-`start_webui.jl` loads AnalyticLoadFlow at startup, and any package loaded
-*after* the sysimage invalidates precompiled methods inside the image: the
-first run then silently recompiles them (measured: 36 s instead of 1 s for
-the first `case118` service run). With the package inside the image the
-startup load is a no-op for compilation.
-A build takes a few minutes and produces an image of a few hundred MB. The
-time splits roughly evenly between resolving and precompiling the build
-environment, the workload trace, and the image compilation itself; a cold
-build environment adds the one-time PackageCompiler installation.
-With the image the server is up
-after about 2 s; the first PowerFlow form view still pays a one-time scan
-of the case directory (prewarmed in the background, afterwards a few
-milliseconds per view). Without the image the same start took about 45 s.
-A freshly built image is used by the relaunch that follows the build, so it
-takes effect immediately.
-
-## Standalone executable: a tool, not a product feature
-
-Sparlectra runs on an installed Julia. A relocatable executable with an
-embedded Julia runtime (for a machine without Julia) is therefore not
-part of the package and not offered in the Web UI; the build script lives
-in the checkout and is run directly:
-
-```bash
-julia --project=app tools/build_app.jl --flavor=full      # Web UI plus command line
-julia --project=app tools/build_app.jl --flavor=runtime   # library runtime, no GUI
-julia --project=app tools/build_app.jl --script=my_workflow.jl
-```
-
-Plan for 20 to 40 minutes and an app folder of 0.5 to 1 GB. There is no
-cross-compilation: build on the operating system you target, and rebuild
-after updating Sparlectra. The resulting `bin/sparlectra` exposes the
-commands `webui`, `run`, `se`, `n1` and `version`, takes the normal
-library YAML through `--config`/`--set`, and `bin/sparlectra help` prints
-its own overview.
-
-### The launchers read no startup file
-
-`start_webui.sh` / `start_webui.bat` and the relaunch through the image start
-Julia with `--startup-file=no`. The Web UI is a server process, not a REPL, and
-a personal `startup.jl` typically loads `Revise`: loading Revise on top of the
-Sparlectra image INVALIDATES a large part of it, and the invalidated methods
-are then inferred again on first use. Building an image and throwing much of it
-away at startup is worse than not building one. It was paid twice, because the
-launcher and the relaunched child both read the file.
-
-Set `SPARLECTRA_STARTUP_FILE=yes` to get the old behavior back for a session
-where Revise in the server process is actually wanted.
-
-### The configuration is brought up to date
-
-A build first rewrites the Web UI configuration to the current key layout
-(`refresh_sparlectra_config_file`, keeping a timestamped backup) and says so in
-one line. A configuration that cannot be migrated automatically, a file with
-duplicate YAML keys for example, stops the build with the reason named: an
-image built against a configuration the user still has to edit by hand is an
-image they cannot use. Start with `SPARLECTRA_NO_SYSIMAGE=1` until the file is
-fixed, then build again.
+| Variable or flag | Effect |
+|---|---|
+| `SPARLECTRA_PRECOMPILE_WORKLOAD` = `core` or `full` | set before the installation. Unset, the package precompiles only its module. `core` warms MATPOWER and SCF import, the rectangular Newton-Raphson solve with losses and `run_sparlectra` on a small network; `full` also warms PGM import, state estimation, APSLF and the hybrid start, DC power flow, the service layer and the tap control loop, with a much longer precompile. The sysimage build uses `full` |
+| `SPARLECTRA_NO_SYSIMAGE=1` | the launchers skip the image and the question unconditionally (same as `--no-sysimage`, for callers that cannot pass arguments); rules the image out when debugging suspected invalidation or precompilation issues |
+| `SPARLECTRA_BUILD_SYSIMAGE=1` | the one-line installers build the image ([Web UI](webui.md)) |
+| `SPARLECTRA_STARTUP_FILE=yes` | the launchers and the relaunch through the image read `startup.jl` again (default `--startup-file=no`), for a session where Revise in the server process is wanted |
+| `SPARLECTRA_SYSIMAGE_TRACE_TESTS=1` | `tools/build_sysimage.jl` also traces the test suite, for a comparison only |
+| `--rebuild-sysimage` | build a fresh image even if the current one is fine |
+| `--no-sysimage` | this start ignores the image and the question |
+| `--verbose` | `tools/build_sysimage.jl` streams the whole build to the console |
 
 ## Where the image lives
 
-`<user root>/sysimage/sparlectra.<ext>` next to its metadata
-`sysimage_meta.toml`, with the platform extension `so` (Linux), `dylib`
-(macOS), `dll` (Windows). The user root is the same application root that
-already holds runs, logs, configuration, and the MATPOWER cache:
+`<user root>/sysimage/sparlectra.<ext>` (`so` on Linux, `dylib` on macOS,
+`dll` on Windows) next to `sysimage_meta.toml`; the user root also holds
+runs, logs, configuration and the MATPOWER cache:
 
 | Platform | Location |
 |---|---|
 | Linux | `$XDG_STATE_HOME/sparlectra/webui/sysimage/` (default `~/.local/state/...`) |
 | macOS | `~/Library/Application Support/Sparlectra/WebUI/sysimage/` |
 | Windows | `%LOCALAPPDATA%\Sparlectra\WebUI\sysimage\` |
-
-Note that the user root follows the environment: a Flatpak-packaged IDE
-(for example VSCodium) sets its own `XDG_STATE_HOME`, so a build started
-from its integrated terminal lands under
-`~/.var/app/<app-id>/.local/state/...` while a plain terminal uses
-`~/.local/state/...`. Two separate roots mean two separate configurations,
-case caches, run histories, and images, and settings silently drift apart
-between them. The recommended permanent fix is one shared root via a
-symlink (merge any content you want to keep first):
+| Flatpak-packaged IDE (VSCodium, for example) | its own `XDG_STATE_HOME`, so its terminal uses `~/.var/app/<app-id>/.local/state/...` and a plain terminal `~/.local/state/...`: two roots whose configurations, case caches, run histories and images drift apart. Fix: one shared root via the symlink below (merge content you want to keep first; the run registry resolves symlinks, so runs from either environment stay visible in both), or copy `sparlectra.<ext>` plus `sysimage_meta.toml` between the roots, or rebuild where you start from |
 
 ```bash
 mv ~/.var/app/<app-id>/.local/state/sparlectra ~/.var/app/<app-id>/.local/state/sparlectra.backup
 ln -s ~/.local/state/sparlectra ~/.var/app/<app-id>/.local/state/sparlectra
 ```
 
-The run registry resolves symlinks during validation, so runs written from
-either environment stay visible in both. Alternatively copy
-`sparlectra.<ext>` plus `sysimage_meta.toml` between the roots, or rebuild
-from the environment you start from.
+## Standalone executable
 
-## Staleness rules
-
-`sysimage_meta.toml` is the validity contract: Sparlectra version, Julia
-version, OS and architecture, the SHA-256 of the checkout `Manifest.toml`,
-and the build timestamp. `start_webui.jl` checks these before every start,
-and the Web UI's Sysimage page shows the same verdict, naming the one that
-fails:
-
-| Check | Message |
-|---|---|
-| image and metadata present | `no sysimage found` |
-| Julia version matches | `the sysimage was built for Julia X, this is Y` |
-| `Manifest.toml` hash matches | `the sysimage does not match the current Manifest.toml` |
-| no `src/*.jl` newer than the image | `the sysimage is older than <checkout>/src` |
-
-The last row is the one that cost an evening. The metadata pins the
-DEPENDENCIES, so editing the package source leaves it untouched: an image
-built before the edit still looked fresh, and the Web UI silently served
-the old code while the change was "not there". A source file newer than the
-image now disables it, which is slower but never wrong. Released
-installations never hit this (package updates always change the manifest);
-in a development checkout it means a rebuild after every edit, or
-`--no-sysimage` while working.
-
-Package and Julia updates disable the image the same way, until the next
-rebuild. There is no silent automatic rebuild: the start says what is wrong
-and asks.
-
-## Escape hatch
-
-`SPARLECTRA_NO_SYSIMAGE=1` makes the launchers skip the image
-unconditionally. Use it to rule the sysimage out when debugging suspected
-invalidation or precompilation issues:
+A relocatable executable with an embedded Julia runtime (for a machine
+without Julia) is a checkout tool, not part of the package and not offered
+in the Web UI. Plan for 20 to 40 minutes and an app folder of 0.5 to 1 GB;
+no cross-compilation: build on the target operating system, rebuild after
+updating Sparlectra.
 
 ```bash
-SPARLECTRA_NO_SYSIMAGE=1 ./start_webui.sh
+julia --project=app tools/build_app.jl --flavor=full      # Web UI plus command line
+julia --project=app tools/build_app.jl --flavor=runtime   # library runtime, no GUI
+julia --project=app tools/build_app.jl --script=my_workflow.jl
+# bin/sparlectra exposes the commands webui, run, se, n1 and version, takes the
+# library YAML through --config/--set; `bin/sparlectra help` prints its overview
 ```
+
+!!! details "Why it is built this way"
+    **PrecompileTools versus sysimage.** A PrecompileTools workload runs at
+    every install and update, and a virus scanner on the compile cache
+    makes that write slow: the default warms nothing beyond the module,
+    `SPARLECTRA_PRECOMPILE_WORKLOAD` is an opt-in, and the sysimage
+    (dependencies included, loaded once at process start) is built on
+    demand instead. Anything loaded after the image invalidates
+    precompiled methods inside it, recompiled silently on the first run:
+    hence AnalyticLoadFlow is compiled in and loaded by `start_webui.jl`
+    at startup, and the launchers pass `--startup-file=no`, since a
+    personal `startup.jl` usually loads `Revise`, which invalidates a
+    large part of the image in the launcher and again in the relaunched
+    child.
+
+    **Staleness by source time.** The metadata pins the dependencies, not
+    the source, so an image older than a source file would silently serve
+    old code: disabled means slower but never wrong. The image is replaced
+    by `mv` because a running process keeps its mapped file, so a refresh
+    cannot break the session that started it.

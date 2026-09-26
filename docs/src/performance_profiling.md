@@ -1,36 +1,33 @@
 # Performance and Profiling Configuration
 
-## Runtime
+## [Runtime](@id perf-runtime)
+
+Process-level settings read once at startup: the thread report, the Julia and BLAS thread counts, and the parallel work split of the sweeps.
 
 | YAML path | Type | Default | Allowed values | Meaning |
 |---|---:|---:|---|---|
-| `runtime.print_thread_config` | Bool | `true` | `true`, `false` | Print Julia/BLAS thread summary at startup (now including a `parallel: enabled=... max_tasks=...` line). |
+| `runtime.print_thread_config` | Bool | `true` | `true`, `false` | Print Julia/BLAS thread summary at startup, including the `parallel: enabled=... max_tasks=...` line. |
 | `runtime.julia_threads` | String | `keep` | `keep`, `default`, `off`, `auto`, or integer-like string | Julia thread policy for runner setup. Requires process startup (`--threads`) or script re-exec. |
 | `runtime.blas_threads` | String | `keep` | `keep`, `default`, `off`, `auto`, or integer-like string | BLAS thread policy for runner setup and can be applied at runtime. |
 | `runtime.parallel.enabled` | Bool | `true` | `true`, `false` | Master switch for in-process parallel execution of independent work items (island solves, short-circuit sweeps, contingency batches). `false` forces every parallel site onto the serial path (the same functions, not copies). |
 | `runtime.parallel.max_tasks` | String | `auto` | `auto` or positive integer string | Task cap for parallel sites. `auto` resolves to `Threads.nthreads()`; the cap is applied via chunking, so it also bounds `@threads` sites. |
 | `runtime.parallel.min_work_items` | Int | `4` | integer >= 1 | Work lists shorter than this run serially (avoids task overhead on tiny cases). |
 
-With `runtime.parallel.enabled: true` and a single-threaded Julia process
-the parallel sites still run serially; the startup summary prints a
-once-per-process hint to start with `julia --threads=auto`.
+In a single-threaded Julia process the parallel sites run serially even
+with `runtime.parallel.enabled: true`; the startup summary prints a hint
+to start with `julia --threads=auto`.
 
-Timing semantics under parallel execution: the per-phase timings in the
-performance profile (and performance.log) are CPU-time SUMS across all
-islands/workers, exactly as the serial loop accumulated them, so phase
-names and their meaning do not change between serial and parallel runs.
-The elapsed real time of a parallel fan-out is accounted separately under
-`parallel_wall_time`; on a parallel run it is smaller than the sum of the
-per-island phase times, and the ratio is the achieved speedup.
+Per-phase timings in the performance profile (and `performance.log`) are
+CPU-time sums across all islands/workers; the elapsed real time of a
+fan-out is accounted separately under `parallel_wall_time`, and the ratio
+is the achieved speedup.
 
-For `examples/powerflow/matpower_import.jl`, Julia thread priority is:
+Julia thread priority for `examples/powerflow/matpower_import.jl`:
 
 1. CLI override: `--julia-threads=<N|auto|keep>`
 2. Environment override: `SPARLECTRA_JULIA_THREADS`
 3. YAML `runtime.julia_threads`
 4. keep current process setting
-
-Example startup commands:
 
 ```bash
 julia --threads=8 --project=. examples/powerflow/matpower_import.jl
@@ -46,20 +43,17 @@ julia --project=. examples/powerflow/matpower_import.jl
 
 `examples/others/apslf_vs_nr_timing.jl` solves the shipped `sp_` cases and
 synthetic tiled grids (500 to 5000 buses, `SPARLECTRA_TIMING_SIZES`) with
-the rectangular Newton solver and with APSLF at orders 24, 40 and 60 (the
-higher orders from 300 buses on, `SPARLECTRA_TIMING_ORDERS`), median of
-three warm runs, convergence-radius evaluation off. It prints the table and
-writes `apslf_vs_nr_timing.csv` and `apslf_vs_nr_timing.svg` into
-`results/apslf_vs_nr_timing/` (not tracked); the copies below are from
-Linux, Julia 1.13.0, 16 threads.
+the rectangular Newton solver and with APSLF at orders 24, 40 and 60
+(higher orders from 300 buses on, `SPARLECTRA_TIMING_ORDERS`), median of
+three warm runs, convergence-radius evaluation off. It writes
+`apslf_vs_nr_timing.csv` and `apslf_vs_nr_timing.svg` into
+`results/apslf_vs_nr_timing/`; below: Linux, Julia 1.13.0, 16 threads.
 
-What the table says and what it does not: on pure-PQ grids (the tiled
-grids, one slack) the series solve is faster than Newton from 500 buses
-on and its cost grows about linearly with the order; cases with PV buses
-and reactive limits (the `sp_` cases) need the solver's outer passes and
-are Newton's ground; the radius evaluation is off here and costs about
-one more solve when on. Networks with controllers do not run under APSLF
-at all (the hybrid start is the way there, see the APSLF workshop).
+On pure-PQ grids (the tiled grids) the series solve is faster than Newton
+from 500 buses on, with cost about linear in the order; cases with PV
+buses and reactive limits (the `sp_` cases) need outer passes and are
+Newton's ground. Networks with controllers do not run under APSLF (use
+the hybrid start, see the APSLF workshop).
 
 ![APSLF against Newton, solve time over bus count](assets/apslf_vs_nr_timing.svg)
 
@@ -96,7 +90,9 @@ at all (the hybrid start is the way there, see the APSLF workshop).
 | `tiled_5000` | 5000 | 1 | APSLF | 40 | converged | 1 | 189.3 ms |
 | `tiled_5000` | 5000 | 1 | APSLF | 60 | converged | 1 | 252.3 ms |
 
-## Output configuration
+## [Output configuration](@id perf-output)
+
+What a run writes besides its result: the console summary and its diagnostics, the log files, and the detailed CSV export with its writer settings.
 
 | YAML path | Type | Default | Allowed values | Meaning |
 |---|---:|---:|---|---|
@@ -117,17 +113,14 @@ at all (the hybrid start is the way there, see the APSLF workshop).
 | `output.logfile_warnings` | Symbol/String | `table` | `off`, `summary`, `table`, `full` | Warning representation in logfile. |
 
 The `Jacobian cond.` line (estimate plus verdict) is always part of the
-classic result output since 0.9.7; the former `output.condition_number`
-option no longer exists, and a leftover `condition_number` key in an
-existing YAML file is ignored. See [Solver](solver.md).
+classic result output; a leftover `output.condition_number` key in a YAML
+file is ignored. See [Solver](solver.md).
 
-For API and Web UI runs, `classic` writes the standard result output and a
-compact timing/status summary. `full` additionally writes a **Full run details**
-section with effective typed configuration, selected artifact options, and
-available status diagnostics. The summary reports `solver_time`,
-`representative_time`, iterations, final mismatch, and final outcome where
-available; benchmark median and samples appear only when benchmark mode is
-enabled.
+For API and Web UI runs, `classic` writes the result output and a compact
+summary (`solver_time`, `representative_time`, iterations, final
+mismatch, outcome; benchmark median and samples only in benchmark mode).
+`full` adds a **Full run details** section with the effective typed
+configuration, artifact options and status diagnostics.
 
 ## Diagnostics configuration
 
@@ -157,16 +150,14 @@ enabled.
 | `performance.skip_branch_neighborhood_report` | Bool | `true` | `true`, `false` | Skip branch neighborhood report. |
 | `performance.max_diagnostic_rows` | Int | `25` | non-negative integer | Row cap for diagnostics tables. |
 
-## Benchmark configuration
+## [Benchmark configuration](@id perf-benchmark)
 
-The Web UI's `performance_timing=off|compact|full` option is separate from the
-benchmark configuration. It writes `performance.log` for phases of one
-service/API request, such as request parsing, case resolution, configuration,
-case loading/network construction/solve, postprocessing, artifact writing, and
-total time. `full` includes available internal profile entries. In contrast,
-`benchmark.enabled` performs repeated solves and reports representative and
-median timing. Tests assert phase names and artifact presence, not fragile time
-thresholds.
+The Web UI's `performance_timing=off|compact|full` option writes
+`performance.log` with the phases of one service/API request (request
+parsing, case resolution, configuration, case loading/network
+construction/solve, postprocessing, artifact writing, total time; `full`
+adds the internal profile entries). `benchmark.enabled` instead performs
+repeated solves and reports representative and median timing.
 
 | YAML path | Type | Default | Allowed values | Meaning |
 |---|---:|---:|---|---|
@@ -180,8 +171,7 @@ thresholds.
 
 ## Solver workspace and warmup keys
 
-Performance-relevant keys that live outside the `performance.*` section
-proper:
+Performance-relevant keys outside the `performance.*` section:
 
 | Key | Default | Meaning |
 |---|---|---|

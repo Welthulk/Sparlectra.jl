@@ -1079,6 +1079,9 @@ function runpf_rectangular!(
       wrong_branch_rescue_attempted,
       wrong_branch_rescue_reason,
       mismatch_diagnostics,
+      # a converged run without Q-limit handling skipped the final check on
+      # purpose; the status must say so, not "no converged solution"
+      (numerical_converged && !qlimits_enabled) ? :qlimits_disabled : :no_converged_solution,
     )
     status_build_ = _merge_current_iteration_diagnostics(status_build_, performance_profile)
     status_build_ = _merge_merit_linesearch_diagnostics(status_build_, performance_profile, merit_step_diagnostics, merit_enabled)

@@ -1,14 +1,12 @@
 # N-1 Contingency Analysis
 
-The contingency batch API evaluates a list of outages or scenarios on a
-solved base case: which line, transformer or generator outage, or which
-combined patch scenario, violates voltage limits, overloads other
-branches, or splits the network. Case lists come from the N-1 generators
-(`generateN1Branches`, `generateN1Generators`), from imported FOR001
-metadata, or from a case file's scenarios block (`runScenarios!`). It is
-the third parallel execution surface (after island
-solving and short-circuit sweeps): the batch fans out over Julia threads,
-one reused working copy per chunk.
+The contingency batch API evaluates outages or scenarios on a solved base
+case: which line, transformer or generator outage, or which combined patch
+scenario, violates voltage limits, overloads other branches, or splits the
+network. Case lists come from the N-1 generators (`generateN1Branches`,
+`generateN1Generators`), from imported FOR001 metadata, or from a case
+file's scenarios block (`runScenarios!`). The batch fans out over Julia
+threads, one reused working copy per chunk.
 
 ## Quick start
 
@@ -22,268 +20,174 @@ printContingencyResults(results; max_rows = 20)
 writeContingencyResultsCSV("n1.csv", results)
 ```
 
-Start Julia with `julia --threads=auto` to use all cores; with one thread
-the batch runs serially and produces identical results. Screening is off by
-default; `:flag` is a deliberate opt-in whose reasoning the Screening
-section below explains. The runnable showcase is
-`examples/others/exp_contingency_n1.jl` (case1354pegase, all 1991 branches,
-serial vs parallel side by side); note that pegase is a convergence and
-scaling instance whose base case already carries overloads, so the example
-demonstrates throughput, not N-1 evaluation on an operated grid.
+Start Julia with `julia --threads=auto` to use all cores; one thread runs
+serially with identical results. Screening is off by default (see below).
+The runnable showcase is `examples/others/exp_contingency_n1.jl`
+(case1354pegase, all branches, serial and parallel side by side); its base
+case already carries overloads, so it demonstrates throughput, not N-1
+evaluation on an operated grid.
 
 ## Execution model
 
-- The base `net` is never mutated. `runContingencies!` solves a template
-  copy of the base case inside the scenario engine; each chunk of the
-  batch then evaluates its cases on one reused working copy (apply the
-  outage, re-mark isolated buses, solve, measure, reset the worker to the
-  template state bitwise). This replaced the former deepcopy-per-case
-  fan-out in the 0.10.0 cycle; on the case118 batch of 240 cases the
-  change measured 3.20 s / 923 MiB before against 1.98 s / 788 MiB after
-  on one thread, byte-identical results.
-- Warm start: because the template carries the solved base voltages, every
-  contingency solve starts from the base operating point. When the base
-  case itself does not converge, it is retried through the full solver
-  rescue ladder (`runpf!` with `rescue = true`) before the batch falls back
-  to flat starts with one warning (on large imported cases a flat start
-  frequently diverges, so treat that warning as "fix the base case first").
-- Per-case start-value ladder (`contingency.rescue_ladder`, issue #331): an
-  ordered, duplicate-free subset of `(:warm, :apslf, :dc, :flat)`, default
-  `[:warm]`. Each stage is ONE bounded `runpf!` on the case-local net with a
-  distinct start recipe, tried in order until one converges; the stage that
-  won is reported as `start_used`:
-  - `:warm` starts from the base-case (template) voltages;
-  - `:apslf` uses an APSLF start (AnalyticLoadFlow.jl is a required
-    dependency, so the stage is always available);
-  - `:dc` uses flat magnitudes with DC-projected start angles;
-  - `:flat` forces `flatstart = true`.
-  The heavier solver-config variants (`:settled_qlimits`, `:autodamp`) are
-  used only for the base case above, not per case. `retry_flat_start` is a
-  deprecated alias for appending `:flat` to the ladder (kept one minor
-  cycle). Measured on case1354pegase (1991 N-1 branch outages, imported with
-  the canonical PEGASE convention `shift_unit = :rad`, `shift_sign = -1.0`,
-  `ratio = :normal`, and run with `maxIte = 80` and
-  `trust_region_enabled = true`, everything else left at the solver defaults):
-  the ladder converges 1936 of 1991, the warm start carrying almost all of
-  them. Every stage shares that `maxIte`, but note that only `:warm`, `:flat`,
-  and `:dc` forward the extra `runpf!` solver keywords (`trust_region_enabled`
-  and the like); the `:apslf` stage runs through a config-driven solve without
-  them. Of the remaining 55, 53 outages split off a load-only island (no
-  generator or source that could serve as an angle reference), reported as
-  `islanded without reference`: that is the correct topological outcome, a
-  load-shed event of up to about 240 MW, not a solver failure (see the
-  load-only-island note below). Only 2 outages, `B_ACL_380_3145_2918` and
-  `B_2WT_380_3145_7770`, are genuine non-convergences: each stays connected
-  (`island_count = 1`) but hits the iteration limit on every ladder stage, so
-  they are ill-conditioned cases, not start-value problems. The ladder only
-  ever improves convergence; it cannot give a reference to a load-only island,
-  so it is most useful where a warm start is not already dominant.
-- Failures are REPORTED, never thrown: a case that does not converge, that
+- The base `net` is never mutated: `runContingencies!` solves a template
+  copy of the base case, and every case is evaluated on a working copy
+  that is reset to the template state after each case.
+- Warm start from the base solution: every case starts from the solved
+  base operating point. A base case that does not converge is retried
+  through the solver rescue ladder (`runpf!` with `rescue = true`) before
+  the batch falls back to flat starts with one warning; treat that warning
+  as "fix the base case first", a flat start on a large imported case
+  frequently diverges. Per case, `contingency.rescue_ladder` (an ordered,
+  duplicate-free subset of `(:warm, :apslf, :dc, :flat)`, default
+  `[:warm]`) runs one bounded `runpf!` per stage until one converges; the
+  winning stage is reported as `start_used`.
+- Per-chunk working copies: the case list fans out over
+  `runtime.parallel.max_tasks` chunks (gated by `runtime.parallel.enabled`
+  and `min_work_items`; the `parallel_*` keywords override the
+  configuration per call), each chunk on one reused working copy.
+- Results are reproducible bitwise: they come back in input order,
+  identical to the serial run.
+
+| Ladder stage | Start values | Solver keywords |
+|---|---|---|
+| `:warm` | the template (base-case) voltages | forwards the extra `runpf!` keywords (`trust_region_enabled` and the like) |
+| `:apslf` | an APSLF start (AnalyticLoadFlow.jl is a required dependency, so the stage is always available) | a config-driven solve without the extra keywords |
+| `:dc` | flat magnitudes with DC-projected start angles | forwards the extra keywords |
+| `:flat` | `flatstart = true` | forwards the extra keywords; `retry_flat_start` is a deprecated alias for appending `:flat` |
+
+All stages share `maxIte`. The solver-config variants (`:settled_qlimits`,
+`:autodamp`) apply to the base case only, and the ladder only improves
+convergence: it cannot give a reference to a load-only island.
+
+**Notes**
+
+- Failures are reported, never thrown: a case that does not converge, that
   splits off an island without any reference or promotable generator
   (`error = "islanded without reference"`), or whose element cannot be
-  resolved, is returned as a `ContingencyResult` with `converged = false`
-  and an actionable `error` line. An island WITH a Slack bus or a PV generator
-  is promoted to its own reference by the `matpower_like` policy and solves
-  normally; `island_count` reports the post-outage island count either way.
-- Load-only islands are a result, not a defect. An island that carries only
-  loads (or only fixed-injection PQ generation) has no voltage or frequency
-  regulation and therefore no valid angle reference. Declaring an arbitrary PQ
-  bus its slack would give a mathematically valid but physically meaningless
-  solution, so the honest N-1 statement, matching MATPOWER's convention that an
-  island needs a REF or PV bus, names the cause: a load-only outage reports
-  `error = "islanded: load-only, X MW load disconnected"`, while an island that
-  strands generation without a voltage-controlled source reports
-  `"islanded without reference: X MW load, Y MW generation stranded ..."`. On
-  case1354pegase all 53 reference-less outages are the load-only case (no
-  stranded generation), so no start recipe or slack-search could rescue them.
+  resolved comes back as a [`ContingencyResult`](@ref) with
+  `converged = false` and an `error` line. An island with a Slack bus or a
+  PV generator is promoted to its own reference by the `matpower_like`
+  policy and solves normally; `island_count` reports the post-outage
+  island count either way.
+- Load-only islands are a result, not a defect: an island with only loads
+  (or only fixed-injection PQ generation) has no voltage or frequency
+  regulation and no valid angle reference, and an arbitrary PQ slack would
+  be physically meaningless. As in MATPOWER (an island needs a REF or PV
+  bus), such an outage reports
+  `error = "islanded: load-only, X MW load disconnected"`, and an island
+  that strands generation without a voltage-controlled source reports
+  `"islanded without reference: X MW load, Y MW generation stranded ..."`.
 - Parallel circuits: two branches between the same buses can share one
-  component name. `generateN1Branches` disambiguates them as
-  `"<name>#<branchIdx>"` so each circuit gets its own outage case.
-- Parallelism: the case list fans out over `runtime.parallel.max_tasks`
-  chunks of Julia tasks (gated by `runtime.parallel.enabled` and
-  `min_work_items`; the `parallel_*` keywords override the active
-  configuration per call). Results are returned in input order and are
-  identical to the serial run.
+  component name; `generateN1Branches` disambiguates them as
+  `"<name>#<branchIdx>"`.
+- A scenario file or block addresses components by SCF ids; the SCF
+  converter supplies that index while the electrics remain the imported
+  net.
 
 ## Evaluation per case
 
-- Voltage band: buses outside `[vm_min_pu, vm_max_pu]` (defaults 0.9/1.1)
-  are listed in `voltage_violations`; the envelope is reported as
-  `min_vm_pu`/`max_vm_pu` over the non-isolated buses.
-- Branch loading: for every branch with a finite `sn_MVA` rating (MATPOWER
-  `RATE_A`, CGMES `ratedS`), loading is `100 · max(|S_from|, |S_to|) /
-  sn_MVA`; the worst value lands in `max_branch_loading_pct` and branches
-  above 100 percent in `overloads` as [`OverloadRecord`](@ref)s (name, loading,
-  the base-case loading and the `delta_pct` to it, `s_MVA`, `sn_MVA`, worst
-  first). The delta is the readable part: 105 percent after an outage is a
-  different event when the branch sat at 40 percent before than at 98 percent.
-  Base loadings come from the solved base case, computed once and reused for
-  every contingency. Without any rated branch the loading is `NaN`, and no
-  rating model is invented.
-- Severity: each result carries `severity = weight · max(0, max loading - 100)`,
-  `NaN` for a failed case. `printContingencyResults` ranks by it (failures
-  first, then the heaviest weighted overloads), so on a 1991-row list the worst
-  contingency is on the first page instead of lost in input order. This is what
-  gives the per-case `weight` its consumer.
-- Case sources: `generateN1Branches(net; include_transformers = true)`
-  enumerates the in-service branches (transformers recognizable by
-  component type or a nonzero winding ratio), and
-  `generateContingenciesFromFOR001(net)` maps imported MATPOWER FOR001
-  contingency names; unresolvable names become failed result rows instead
-  of disappearing.
-- Screening filters keep the case list to the outages worth simulating on a
-  large grid: `generateN1Branches(net; min_vn_kV, min_sn_MVA, name_pattern)`.
-  `min_vn_kV` keeps a branch when the higher of its two endpoint voltages
-  clears the threshold (so an EHV/HV transformer stays in), `min_sn_MVA`
-  keeps only branches carrying a rating at or above the threshold, and
-  `name_pattern` keeps names matching a `Regex` or containing a substring.
-  All default to "no filter".
-- Case weights: each [`ContingencyCase`](@ref) carries a `weight` (default
-  `1.0`) for a probability- or severity-weighted ranking; it is carried
-  unchanged into the [`ContingencyResult`](@ref) and shown in the table and
-  CSV. Attach outage rates in bulk with `applyContingencyWeights(cases,
-  weights)`, reading the name-to-weight map from a two-column CSV via
-  `readContingencyWeightsCSV`. Two weight sources exist and do not mix: a
-  weight file applies to case-list runs (the historical outage-kind
-  selector and the `n1_*` scenario sources), while a scenario run from a
-  case file's block or an external scenario JSON uses the per-scenario
-  `weight` of the block, and the weight file is not consulted there.
+Every case is checked against the voltage band and the branch ratings of
+the base case; a case weight only reorders the severity ranking and never
+skips a case (filter at generation time instead of using a weight of `0`).
+Grid data carries no outage rates, so weights are user-supplied: branch
+failure rates (per 100 km and year) or an importance rating by voltage
+level.
 
-Since the direct import (2026-09-04), every format's importer builds
-the network the contingencies run on directly; nothing converts on
-import. The one place a typed SCF case still appears for a non-SCF
-case is the scenario-source bridge: a scenario file or block addresses
-components by SCF ids, so the explicit converter provides the ID INDEX
-while the electrics that run remain the imported net.
+| Criterion | Keyword or config key | Result field |
+|---|---|---|
+| Voltage band | `vm_min_pu`, `vm_max_pu` (defaults 0.9/1.1) | `voltage_violations` (buses outside the band); `min_vm_pu`, `max_vm_pu` (envelope over the non-isolated buses) |
+| Branch loading | `sn_MVA` rating of the branch (MATPOWER `RATE_A`, CGMES `ratedS`); loading is `100 · max(\|S_from\|, \|S_to\|) / sn_MVA` | `max_branch_loading_pct` (worst value; `NaN` without any rated branch, no rating model is invented); `overloads`, branches above 100 percent as [`OverloadRecord`](@ref)s (name, loading, base-case loading and the `delta_pct` to it, `s_MVA`, `sn_MVA`, worst first) |
+| Severity | `severity = weight · max(0, max loading - 100)` | `severity` (`NaN` for a failed case; `printContingencyResults` ranks by it, failures first) |
+| Convergence | `maxIte`, `contingency.rescue_ladder` | `converged`, `iterations`, `start_used` |
+| Islands | reference policy `matpower_like` | `island_count`, `shed_load_mw`, `error` |
+| Weight | `weight` on [`ContingencyCase`](@ref) (default `1.0`); `applyContingencyWeights(cases, weights)` attaches outage rates in bulk, `readContingencyWeightsCSV` reads the name-to-weight map from a two-column CSV | `weight`, carried unchanged into the result, the table and the CSV |
+
+| Case source | Call | Selection |
+|---|---|---|
+| in-service branches | `generateN1Branches(net; include_transformers = true)` | transformers recognized by component type or a nonzero winding ratio; filters `min_vn_kV` (kept when the higher endpoint voltage clears the threshold, so an EHV/HV transformer stays in), `min_sn_MVA` (rated at or above), `name_pattern` (a `Regex` or a substring); all default to no filter |
+| generators | `generateN1Generators(net; min_pg_MW, name_pattern)` | one `kind = :gen` case per in-service generator, external-grid feed-in or synchronous machine, filtered by `\|Pg\|` or name |
+| FOR001 metadata | `generateContingenciesFromFOR001(net)` | imported MATPOWER FOR001 contingency names; unresolvable names become failed result rows |
+| scenarios block or JSON | `runScenarios!` | the per-scenario `weight` of the block; a weight file applies to case-list runs only (the outage-kind selector and the `n1_*` scenario sources) |
 
 ## Screening
 
 With `screening_mode = :flag` (keyword on `runContingencies!` and
 `runScenarios!`, or `contingency.screening.mode` for the service and the
-Web UI) every non-islanding single outage is estimated first with one
-Woodbury-corrected Newton step on the factorized base Jacobian, and only
+Web UI) every non-islanding single outage is first estimated with one
+Woodbury-corrected Newton step on the factorized base Jacobian; only
 scenarios whose estimate comes within `screening.margin_pct` (default 10)
-of a limit get the full solve; `:only` reports the estimates without full
-runs. Screened rows carry `start_used = :screen`, `screened = true`, and
-the estimate; the CSV appends the `screened` and `screening_estimate`
-columns. With `:off` (the default everywhere) results and CSV stay the
-historical byte-stable full-solve output.
+of a limit get the full solve. Switch it on only after checking, on your
+own network, the screening share and that the flagged margins carry the
+violations (the reported `screened` count and reason breakdown).
 
-Screening is an opt-in, and the reason is structural, not cosmetic. A
-linearized step cannot see a bus-type switch. In the calibration
-(2026-09-03, case300) the outage of a generator with a zero schedule left
-a one-step residual of 4e-13: the estimate declared the case perfectly
-solved and kept the bus minimum at 0.93 pu, while the full solve dropped
-it to 0.87 pu (a 0.06 pu miss), because the bus had lost reactive
-capability, clamped at the smaller Q limit and fell to PQ. No residual
-gate can see that class. The engine therefore flags it structurally: a
-generator outage at a bus carrying regulating generation (whether the bus
-is currently PV or already Q-clamped to PQ) always gets the full solve,
-as do bridge outages (they island by construction), slack units, and
-scenarios whose one-step residual stays above the 0.005 pu trust gate or
-does not shrink. Patch scenarios and distributed-slack last-participant
-outages are never screened. The finding stands for the method: switch
-`:flag` on only after checking, on your own network, the screening share
-and that the flagged margins carry the violations; the reported
-`screened` count and the reason breakdown in the calibration report are
-exactly that check.
+| Mode | Effect | Result |
+|---|---|---|
+| `:off` (default) | every case gets the full solve | results and CSV are the full-solve output |
+| `:flag` | estimate first, full solve only for flagged cases | screened rows carry `start_used = :screen`, `screened = true` and the estimate; the CSV appends the `screened` and `screening_estimate` columns |
+| `:only` | the estimates without full runs | same columns |
 
-The 2026-09-03 calibration (five networks, 1478 N-1 cases, margin 10, the
-0.005 pu trust gate, the structural flags active) measured zero false
-negatives on every network, with these screening shares:
+**Notes**
 
-| Network | Cases | Screened | Estimable (reasons of the rest) |
-|---|---|---|---|
-| case118 | 240 | 30.4 % | 224 ok; 9 bridge, 6 structural, 1 slack unit |
-| case300 | 480 | 13.3 % | 379 ok; 89 bridge, 11 structural, 1 slack unit |
-| synthetic 12x10 tiled grid | 319 | 98.7 % | 318 ok; 1 slack unit |
-| synthetic 2x60 tiled grid | 239 | 0 % (every case near the band under N-1) | 238 ok; 1 slack unit |
-| RealGrid, 200-case sample | 200 | 0 % (the base state itself violates band and rating) | 139 ok; 59 bridge, 2 structural |
+- Always solved in full: a generator outage at a bus with regulating
+  generation (PV or already Q-clamped), bridge outages, slack units, and
+  scenarios whose one-step residual stays above the 0.005 pu trust gate or
+  does not shrink.
+- Never screened: patch scenarios and distributed-slack last-participant
+  outages.
 
-The point cloud of one-step residual against true estimate error ends at
-0.0104 pu residual for a 0.088 pu error (case300, the case that set the
-gate at 0.005, a factor of two below); the synthetic grids give a much
-narrower cloud (worst errors 0.0008 and 0.0015 pu), which is exactly why
-the gate is taken from the widest grown network, not from an average. The
-zero-share rows are the honest outcome on those networks, not a defect:
-screening cannot help where the base case already sits at its limits.
+!!! details "Why it is built this way"
+    A linearized step cannot see a bus-type switch. On case300 the outage
+    of a generator with a zero schedule left a one-step residual of 4e-13
+    and a bus minimum at 0.93 pu, while the full solve dropped it to
+    0.87 pu: the bus lost its reactive capability and fell to PQ. No
+    residual gate sees that class, so the engine flags it structurally
+    (regulating generation at the outaged bus always gets the full solve).
+
+    The 0.005 pu trust gate comes from the widest grown network in the
+    calibration (case300, five networks and 1478 N-1 cases with margin 10,
+    zero false negatives), not from an average; on a base case that
+    already sits at its limits the screening share is honestly zero.
 
 ## Generator outages
 
-`generateN1Generators(net; min_pg_MW, name_pattern)` builds one
-`kind = :gen` case per in-service generator (any injection: generator,
-external-grid feed-in, or synchronous machine), filtered optionally by output
-`|Pg|` or name. A generator outage removes only that unit's injection, so the
-topology is unchanged and the lost active power must be picked up elsewhere:
+A generator outage removes only the unit's injection; the lost active
+power is picked up elsewhere:
 
-- By default the slack bus absorbs it. Pass `distributed_slack_enabled = true`
-  to share the loss over the surviving participants instead (the keyword flows
-  through to `runpf!`; it needs a surviving reference and does not itself
-  supply one).
-- Removing a bus's last voltage-regulating unit demotes it to PQ. Removing the
-  system's only slack leaves it reference-less and is reported as
-  `no slack bus registered`, which is the N-1 answer that this unit is
-  critical. For meaningful generator N-1 on a real grid, pass
-  `auto_slack = true` so the solver promotes the strongest surviving generator
-  to slack, mirroring real frequency control.
-- When a generator outage strands a SEPARATE island that still carries
-  injection but no reference (its only regulating unit is the one removed), the
-  result names it: `islanded without reference: X MW load, Y MW generation
-  stranded`. This is the same reporting the load-only note above describes, now
-  reached from the generation side.
+- By default the slack bus absorbs it. `distributed_slack_enabled = true`
+  shares the loss over the surviving participants (forwarded to `runpf!`;
+  it needs a surviving reference and does not supply one).
+- Removing a bus's last voltage-regulating unit demotes it to PQ. Removing
+  the only slack is reported as `no slack bus registered`: the N-1 answer
+  that this unit is critical. For generator N-1 on a real grid, pass
+  `auto_slack = true` so the solver promotes the strongest surviving
+  generator to slack, mirroring frequency control.
+- A separate island that keeps injection but loses its only regulating unit
+  reports `islanded without reference: X MW load, Y MW generation stranded`.
 
 ## Reporting
 
-Per-case output is the fixed-width `printContingencyResults` table (severity
-ranked by default, `sort_by = :none` for input order) and the
-`writeContingencyResultsCSV` file (input order, carrying loading, severity, the
-overloads, shed load, and weight). For a batch overview,
-`buildContingencyReport(results)` folds the results into a
-[`ContingencyReport`](@ref): counts by outcome (converged, islanded,
-non-converged, with overload, with voltage violation), the total and worst load
-shed, the single worst branch loading, the worst weighted severity, and the
-branches overloaded by the most contingencies. `printContingencyReport` prints
-it as a compact summary block. The structured fields
-(`overloads::Vector{OverloadRecord}` with base and delta, `shed_load_mw`,
-`severity`) let a consumer rank and total without parsing the message strings.
+| Output | Call | Content |
+|---|---|---|
+| table | `printContingencyResults` | fixed-width, severity ranked by default, `sort_by = :none` for input order |
+| CSV | `writeContingencyResultsCSV` | input order, with loading, severity, overloads, shed load and weight |
+| summary | `buildContingencyReport(results)`, `printContingencyReport` | a [`ContingencyReport`](@ref): counts by outcome (converged, islanded, non-converged, with overload, with voltage violation), total and worst load shed, the worst branch loading, the worst weighted severity, and the branches overloaded by the most contingencies |
+
+The structured fields (`overloads::Vector{OverloadRecord}` with base and
+delta, `shed_load_mw`, `severity`) let a consumer rank and total without
+parsing message strings.
 
 ## Web UI
 
-The "Contingency (N-1)" button on the power-flow run form runs the batch on the
-loaded case, with a selector for branch or generator outages (the "generator"
-option submits the run parameter `contingency_kind = gen`, the same `:gen` kind
-`generateN1Generators` uses). It reuses the same
-service, run directory, and case cache as a normal power-flow run (a mode flag
-on the single run endpoint, not a separate workflow), so the case is resolved
-and built through the shared config-driven import path; `rescue_ladder` is read
-from `contingency.rescue_ladder`. The run writes `contingency_n1.csv` and a
-`run.log` report and shows an outcome summary. A generator outage that removes
-the system's only slack is named as such in the summary; rerun the case with
-`auto_slack = true` if you want the solver to promote a surviving generator
-instead.
-
-### Weights in the Web UI
-
-The "edit N-1 weights" link next to the outage-kind selector opens a per-case
-weights editor. Weights live next to the case as
-`<case-stem>.contingency-weights.csv`, the exact two-column format
-`readContingencyWeightsCSV` parses; the file travels with the case (it is hidden
-from the case list and deleted with the case). The editor seeds a table with the
-case's real element names (so you never type them blind), offers a raw-CSV text
-area, and a file upload. Uploading replaces an existing weight file (a weight
-list is a working document, unlike a case import), and the upload is validated
-before it is stored, so a malformed CSV is rejected with the line number and the
-old file is left untouched. Rows left at exactly `1.0` are omitted when the table
-is saved, so the file stays a diff of the default. A run picks the weights up
-automatically when the file exists, with no extra option: its presence is the
-switch. Names in the file that match no element are reported in the `run.log`
-(a weight list can outlive a case edit), never fatal.
-
-A weight only reorders the severity ranking; it never skips a case (to leave an
-outage out, filter it at generation time, not with a weight of `0`). Grid data
-(MATPOWER, CGMES) carries no outage rates, so these weights are always
-user-supplied: typical sources are branch failure rates (per 100 km and year)
-or an importance rating by voltage level.
+The "Contingency (N-1)" button on the power-flow run form runs the batch
+on the loaded case, with a selector for branch or generator outages (the
+"generator" option submits `contingency_kind = gen`). It reuses the
+service, run directory and case cache of a normal run, takes
+`rescue_ladder` from `contingency.rescue_ladder`, writes
+`contingency_n1.csv` and a `run.log` report, and shows an outcome summary
+that names a generator outage removing the only slack (rerun with
+`auto_slack = true`). Per-case weights are edited next to the outage-kind
+selector and stored beside the case as
+`<case-stem>.contingency-weights.csv`; see [Web UI](webui.md).
 
 ## API
 

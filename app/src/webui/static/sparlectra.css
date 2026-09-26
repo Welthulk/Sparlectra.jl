@@ -243,6 +243,7 @@ main {
 .artifact-text-page > p {
   display: flex;
   justify-content: flex-end;
+  gap: .5rem;
   margin: 0 0 1rem;
 }
 
@@ -333,34 +334,6 @@ button,
 .settings-target-hint code {
   font-size: .78rem;
   overflow-wrap: anywhere;
-}
-
-/* Section index of a long documentation page: dense, two columns, so it
-   costs a few lines instead of a screen. */
-.docs-toc {
-  margin: 0 0 1.25rem;
-  padding: .6rem .9rem;
-  background: #f4f7fb;
-  border: 1px solid #dbe3ef;
-  border-radius: 8px;
-}
-
-.docs-toc summary {
-  cursor: pointer;
-  font-weight: 700;
-  font-size: .85rem;
-}
-
-.docs-toc ul {
-  columns: 2;
-  margin: .5rem 0 0;
-  padding-left: 1.1rem;
-  font-size: .85rem;
-}
-
-.docs-toc li {
-  break-inside: avoid;
-  margin-bottom: .15rem;
 }
 
 .tolerance-field {
@@ -755,16 +728,91 @@ pre {
   font-family: ui-monospace, SFMono-Regular, monospace;
 }
 
+/* run.log and the other text artifacts: the result tables are up to 220
+   characters wide, so the viewer uses the whole window width, a smaller
+   monospace size and never wraps (horizontal scroll instead) */
 .artifact-text {
   display: block;
   width: 100%;
-  min-height: 75vh;
-  max-height: 85vh;
+  min-height: 80vh;
+  max-height: 90vh;
   overflow: auto;
   white-space: pre;
+  font-size: 0.78rem;
+  line-height: 1.3;
   background: #0f1726;
   color: #dce8fa;
-  padding: 1.25rem;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+}
+
+main.artifact-page {
+  max-width: none;
+  width: calc(100vw - 2rem);
+}
+
+/* CSV artifacts open as a table: the header stays put while the rows scroll,
+   numbers align right in a monospace column, wide files scroll sideways
+   inside the panel instead of stretching the page */
+.artifact-csv {
+  width: 100%;
+  max-height: 85vh;
+  overflow: auto;
+  border: 1px solid #e3e8f0;
+  border-radius: 8px;
+}
+
+.artifact-csv table {
+  width: max-content;
+  min-width: 100%;
+  font-size: .85rem;
+}
+
+.artifact-csv th {
+  position: sticky;
+  top: 0;
+  background: #f4f7fb;
+}
+
+.artifact-csv th,
+.artifact-csv td {
+  padding: .35rem .6rem;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
+.artifact-csv td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.artifact-csv-comments {
+  margin: 0 0 .75rem;
+  font-size: .8rem;
+  color: #5b6b82;
+  white-space: pre-wrap;
+}
+
+/* Rendered Markdown (artifact reports, help pages): reading width,
+   tables and code blocks scroll on their own */
+.rendered-markdown {
+  max-width: 1100px;
+  margin: 0 auto;
+  font-size: .97rem;
+  line-height: 1.6;
+}
+
+.rendered-markdown table {
+  display: block;
+  overflow-x: auto;
+  width: max-content;
+  max-width: 100%;
+}
+
+.rendered-markdown pre {
+  overflow-x: auto;
+  background: #f4f7fb;
+  padding: .6rem .9rem;
   border-radius: 8px;
 }
 
@@ -971,38 +1019,81 @@ fieldset.se-options .field-label {
   color: #fff;
 }
 
-.docs-page,
+.source-note {
+  color: #60708a;
+  font-size: .9rem;
+}
+
+/* help page of a control (/help/<topic>): the hover hint as the lead, then
+   the documentation section shipped with the application */
 .help-page {
   max-width: 1100px;
   margin-right: auto;
   margin-left: auto;
 }
 
-.help-panel,
-.docs-content,
-.artifact-text {
-  font-size: .97rem;
-  line-height: 1.6;
+.help-hint {
+  margin: 0 0 1rem;
+  padding: .75rem 1rem;
+  background: #f4f7fb;
+  border-left: 4px solid #1557a5;
+  border-radius: 6px;
+  font-size: 1rem;
 }
 
-.help-panel .markdown,
-.docs-content .markdown {
-  min-height: 12rem;
+.help-links {
+  display: flex;
+  gap: .5rem;
+  flex-wrap: wrap;
+  margin: 1.25rem 0 0;
 }
 
-.help-panel table,
-.docs-content table {
-  display: block;
-  overflow-x: auto;
+/* section index of the Web UI manual: dense, two columns, so it costs a
+   few lines instead of a screen */
+.help-toc {
+  margin: 0 0 1.25rem;
+  padding: .6rem .9rem;
+  background: #f4f7fb;
+  border: 1px solid #dbe3ef;
+  border-radius: 8px;
 }
 
-.source-note {
-  color: #60708a;
-  font-size: .9rem;
+.help-toc summary {
+  cursor: pointer;
+  font-weight: 700;
+  font-size: .85rem;
 }
 
-.docs-index {
-  line-height: 1.8;
+.help-toc ul {
+  columns: 2;
+  margin: .5rem 0 0;
+  padding-left: 1.1rem;
+  font-size: .85rem;
+  list-style: none;
+}
+
+.help-toc li {
+  break-inside: avoid;
+  margin-bottom: .15rem;
+}
+
+.help-toc li.toc-level-3 {
+  padding-left: 1rem;
+}
+
+/* `!!! note` blocks of the documentation, as the Markdown standard library
+   renders them */
+.rendered-markdown .admonition {
+  margin: .8rem 0;
+  padding: .6rem .9rem;
+  border-left: 4px solid #a9c8ef;
+  background: #f4f7fb;
+  border-radius: 6px;
+}
+
+.rendered-markdown .admonition-title {
+  margin: 0 0 .3rem;
+  font-weight: 700;
 }
 
 nav {
@@ -1189,3 +1280,5 @@ nav {
   font-weight: 400;
   overflow-wrap: anywhere;
 }
+
+

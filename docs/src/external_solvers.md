@@ -1,22 +1,16 @@
 # External Solver Interface
 
-Sparlectra provides a **solver-agnostic interface** that allows external power-flow solvers
-(e.g. research prototypes, new implementations, or custom Newton variants)
-to consume a canonical network model and return results in a consistent form.
-
-The goal is **clean separation**:
-
-* Sparlectra builds and owns the network model
-* External solvers operate purely on exported data
-* Results can be compared against Sparlectra’s internal Newton–Raphson solver
-
----
+External power-flow solvers (research prototypes, custom Newton variants)
+consume a canonical network model from Sparlectra and return results in one
+fixed form. Sparlectra builds and owns the network model, the external
+solver works on exported data only, and the results are comparable with
+the internal Newton-Raphson solver.
 
 ## Canonical Data Structures
 
 ### `PFModel`
 
-`PFModel` represents a compressed, solver-independent power-flow model.
+A compressed, solver-independent power-flow model:
 
 ```julia
 PFModel(
@@ -33,21 +27,17 @@ PFModel(
 )
 ```
 
-**Important notes:**
-
-* Only *active buses* are included (isolated buses are removed).
+* Only active buses are included (isolated buses are removed).
 * Bus ordering matches the internal `BusData` ordering used by `createYBUS`.
-* `V0` provides a canonical initial state (flat-start or case-based).
-* Reactive power limits are optional and may be ignored by external solvers.
-
-A model is constructed using:
+* `V0` is the canonical initial state (flat start or case based).
+* Reactive power limits are optional; external solvers may ignore them.
 
 ```julia
 model = buildPfModel(net; flatstart=net.flatstart)
 ```
 
-For difficult starts, the canonical model builder can apply the same start
-projection used by the internal rectangular solver:
+For difficult starts the builder applies the start projection of the
+internal rectangular solver:
 
 ```julia
 model = buildPfModel(net;
@@ -60,14 +50,10 @@ model = buildPfModel(net;
 )
 ```
 
-External solvers receive the projected start in `model.V0`. `runpf_external!`
-forwards the same keyword arguments to `buildPfModel`.
-
----
+External solvers receive the projected start in `model.V0`;
+`runpf_external!` forwards the same keywords to `buildPfModel`.
 
 ### `PFSolution`
-
-External solvers must return a `PFSolution`:
 
 ```julia
 PFSolution(
@@ -79,14 +65,9 @@ PFSolution(
 )
 ```
 
-The voltage vector `V` **must use PF ordering**
-(i.e. the same ordering as `model.busIdx_net`).
-
----
+`V` uses PF ordering, the ordering of `model.busIdx_net`.
 
 ## External Solver Contract
-
-External solvers implement the following interface:
 
 ```julia
 abstract type AbstractExternalSolver end
@@ -94,14 +75,9 @@ abstract type AbstractExternalSolver end
 solvePf(solver::AbstractExternalSolver, model::PFModel; kwargs...) -> PFSolution
 ```
 
-Sparlectra itself does **not** impose any numerical method.
-Only the data contract must be respected.
-
----
+Sparlectra imposes no numerical method, only this data contract.
 
 ## Running an External Solver
-
-For convenience, Sparlectra provides:
 
 ```julia
 runpf_external!(
@@ -115,38 +91,29 @@ runpf_external!(
 )
 ```
 
-This function:
-
-1. Builds a `PFModel` from `net`
-2. Calls the external solver
-3. Evaluates a canonical mismatch norm
-4. Writes the solution back into `net`
-
----
+Builds a `PFModel` from `net`, calls the solver, evaluates a canonical
+mismatch norm and writes the solution back into `net`.
 
 ## Output Control
 
-The external solver interface is **silent by default**.
-
-Optional helpers are provided for inspection and debugging:
+The interface is silent by default. For inspection:
 
 ```julia
 showPfModel(model; verbose=false)
 showPfSolution(solution)
 ```
 
-These functions intentionally do **not** overload `Base.show`
-to avoid global display side effects.
-
----
+Neither overloads `Base.show`, so there are no global display side effects.
 
 ## APSLF (AnalyticLoadFlow.jl)
 
-`ApslfSolver` is a built-in `AbstractExternalSolver` implementation that bridges
-to [AnalyticLoadFlow.jl](https://github.com/Welthulk/AnalyticLoadFlow.jl), an
-analytic power-series (holomorphic-embedding-style) load-flow solver. It lives
-in `src/acpflow/apslf_solver.jl`, and AnalyticLoadFlow.jl is a **required dependency**
-of Sparlectra since 0.10.0, so the solver is always there:
+`ApslfSolver` (`src/acpflow/apslf_solver.jl`) is the built-in
+`AbstractExternalSolver` for
+[AnalyticLoadFlow.jl](https://github.com/Welthulk/AnalyticLoadFlow.jl), an
+analytic power-series (holomorphic-embedding style) load-flow solver.
+AnalyticLoadFlow.jl is a required dependency, so the solver, the `:apslf`
+stages of the contingency rescue ladder and the automatic power-flow mode
+are always available:
 
 ```julia
 using Sparlectra                 # AnalyticLoadFlow comes with it
@@ -154,29 +121,22 @@ using Sparlectra                 # AnalyticLoadFlow comes with it
 solver = apslf_solver(order = 24, use_pade = true, nr_polish = false)
 ```
 
-Up to 0.10.0 it was a weak dependency behind a package extension: a session
-had to `using AnalyticLoadFlow` itself, and the constructor raised a
-"not installed" error otherwise. Nothing has to be loaded any more, and the
-`:apslf` stages of the contingency rescue ladder and the automatic
-power-flow mode are always available instead of being skipped.
-
-- `order::Int` — highest power-series coefficient to compute.
-- `use_pade::Bool` — evaluate the voltage series via Padé `[L/M]` approximants
-  instead of direct Taylor summation (generally improves the convergence
-  radius).
-- `nr_polish::Bool` — run a Newton-Raphson polishing step on the series
-  result to tighten the final mismatch (off by default since 0.13.0).
-- `convergence_radius::Bool` — evaluate the Padé-pole margin
+- `order::Int`: highest power-series coefficient.
+- `use_pade::Bool`: evaluate the voltage series via Padé `[L/M]`
+  approximants instead of direct Taylor summation (usually a larger
+  convergence radius).
+- `nr_polish::Bool`: Newton-Raphson polishing step on the series result
+  (off by default).
+- `convergence_radius::Bool`: evaluate the Padé-pole margin
   (`stability_from_Vcoeff`) and report it as the APSLF convergence radius
-  next to the Jacobian condition (on by default; about the cost of the
-  solve).
+  next to the Jacobian condition (on by default; costs about one solve).
+- `mode::Symbol`: `:direct` (native PV handling) or `:outer` (PQ-only
+  series plus an outer secant loop for PV enforcement).
 
 The residual of an APSLF solution is judged against the bus types the
 solver ended with: a machine clamped at a reactive limit is a PQ bus at
-that limit, is logged like a rectangular Q-limit event (result table
-`PQ*`, Q-V check) and no longer counts its voltage setpoint as a mismatch.
-- `mode::Symbol` — `:direct` (native PV handling) or `:outer` (PQ-only series
-  plus an outer secant loop for PV enforcement).
+that limit, logged like a rectangular Q-limit event (result table `PQ*`,
+Q-V check), and its voltage setpoint does not count as a mismatch.
 
 ### Standalone use via the external-solver bridge
 
@@ -184,71 +144,44 @@ that limit, is logged like a rectangular Q-limit event (result table
 iters, status, sol = runpf_external!(net, apslf_solver(); tol = 1e-8)
 ```
 
-This follows the same `buildPfModel` → `solvePf` → write-back contract as any
-other `AbstractExternalSolver` (see above). The `PFModel → AnalyticLoadFlow`
-spec mapping is: `Ybus → Y`, `busType → bustype`, `real/imag(Sspec) →
-Pspec/Qspec`, `Vset → Vm`, `qmin_pu/qmax_pu → Qmin/Qmax` (unconstrained when
-`model` carries no Q-limits), `slack_idx → slack`. `sol.meta` carries
-solver-specific diagnostics: the series/Padé `order`, an APSLF stability
-indicator (`dmin`/`pole`/`bus`/`level`, from the distance of Padé poles to the
-physical evaluation point `s = 1`), and NR-polish bookkeeping.
+Spec mapping `PFModel → AnalyticLoadFlow`: `Ybus → Y`, `busType → bustype`,
+`real/imag(Sspec) → Pspec/Qspec`, `Vset → Vm`, `qmin_pu/qmax_pu → Qmin/Qmax`
+(unconstrained when `model` carries no Q-limits), `slack_idx → slack`.
+`sol.meta` carries the series/Padé `order`, an APSLF stability indicator
+(`dmin`/`pole`/`bus`/`level`, from the distance of the Padé poles to the
+evaluation point `s = 1`) and NR-polish bookkeeping.
 
 ### Framework integration
 
-`power_flow.solver = apslf` routes the central framework run
-(`run_sparlectra`) through `ApslfSolver` instead of the internal rectangular
-Newton-Raphson solver — including per-island handling for networks with
-multiple AC islands. `power_flow.apslf_start.enabled = true` uses APSLF as a
-**guarded start-value generator** ahead of the rectangular Newton-Raphson
-solve instead (`power_flow.solver` stays `rectangular` in that mode). See
-[Solver selection (rectangular vs. APSLF)](powerflow_configuration.md#solver-selection-rectangular-vs-apslf)
-for the full configuration reference and the [Web UI guide](webui.md) for the
-corresponding form controls.
+`power_flow.solver = apslf` routes `run_sparlectra` through `ApslfSolver`
+instead of the rectangular Newton-Raphson solver, per island for
+multi-island networks. `power_flow.apslf_start.enabled = true` instead uses
+APSLF as a guarded start-value generator ahead of the rectangular solve
+(`power_flow.solver` stays `rectangular`). Configuration reference:
+[Solver selection (rectangular vs. APSLF)](powerflow_configuration.md#solver-selection-rectangular-vs-apslf);
+form controls: [Web UI guide](webui.md).
 
 ### Capability limits
 
-APSLF is a genuinely different solution method from the rectangular
-Newton-Raphson solver, not a drop-in replacement with identical modeling
-depth. Concretely, compared to the internal rectangular path:
+APSLF is a different solution method, not a drop-in replacement of the
+rectangular path:
 
-- **No selectable start voltage.** The series always starts from the
-  canonical analytic germ `V(s=0) = 1∠0`; `model.V0`, `start_mode`, and
-  `start_projection` have no effect on an APSLF solve. This is inherent to
-  the embedding construction, not a missing feature.
-- **No OLTC / tap-changer / phase-shifting-transformer control and no
-  Q(U)/P(U) voltage-dependent control.** Runs with `power_flow.solver =
-  apslf` and any active controller (the outer-loop tap and PST controllers,
-  and the Q(U)/P(U) controllers that act inside the Newton step) are
-  rejected up front with a clear error — there is no silent fallback to a
-  partially-controlled solve.
-- **Q-limits are simple PV→PQ only.** AnalyticLoadFlow.jl performs its own
-  internal PV↔PQ switching against `Qmin`/`Qmax` during the series solve; it
-  does not reproduce the rectangular solver's active-set guard, hysteresis,
-  or classical outer-loop enforcement modes (`power_flow.qlimits.guard`,
-  `enforcement_mode`, hysteresis/cooldown settings do not apply to APSLF
-  runs).
-- **No wrong-branch detection/rescue.** `power_flow.wrong_branch_detection`
-  and the guarded current-iteration start pre-solve are rectangular-solver-
-  specific and are not part of the APSLF path.
+- **No selectable start voltage.** The series starts from the analytic germ
+  `V(s=0) = 1∠0`; `model.V0`, `start_mode` and `start_projection` have no
+  effect. This is inherent to the embedding.
+- **No OLTC, tap-changer or phase-shifting-transformer control and no
+  Q(U)/P(U) control.** `power_flow.solver = apslf` with any active
+  controller is rejected up front with an error; there is no fallback to a
+  partially controlled solve.
+- **Q-limits are simple PV→PQ only.** AnalyticLoadFlow.jl switches PV↔PQ
+  against `Qmin`/`Qmax` inside the series solve; `power_flow.qlimits.guard`,
+  `enforcement_mode`, hysteresis and cooldown settings do not apply.
+- **No wrong-branch detection or rescue.** `power_flow.wrong_branch_detection`
+  and the guarded current-iteration start pre-solve are rectangular only.
 
 ## Example: Exporting a Reference Solution
 
-See:
-
-```
-examples/others/export_solution.jl
-```
-
-This example:
-
-* Runs Sparlectra’s internal Newton–Raphson solver
-* Exports `PFModel` and `PFSolution`
-* Optionally executes an external solver path
-* Compares voltage magnitude and angle deviations
-
-It is intended as a **reference and regression test** for external solvers.
-
----
-
-
-
+`examples/others/export_solution.jl` runs the internal Newton-Raphson
+solver, exports `PFModel` and `PFSolution`, optionally runs an external
+solver and compares voltage magnitudes and angles: a reference and
+regression test for external solvers.

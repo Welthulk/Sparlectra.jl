@@ -149,9 +149,9 @@ const WEBUI_OPTION_SPECS = WebUIOptionSpec[
   WebUIOptionSpec("state_estimation.k_suppress", "se_k_suppress", Float64, :number, 4.0, (), :basic, :case, true),
   WebUIOptionSpec(nothing, "se_suppression_sigma", Float64, :number, 2000.0, (), :basic, :case, true),
   WebUIOptionSpec("state_estimation.max_eliminations", "se_max_eliminations", Int, :number, 3, (), :basic, :case, true),
-  WebUIOptionSpec(nothing, "se_update_shunts", Bool, :checkbox, false, (), :basic, :case, true),
-  WebUIOptionSpec(nothing, "se_tap_estimation", Bool, :checkbox, false, (), :basic, :case, true),
-  WebUIOptionSpec("state_estimation.report_residual_correlation", "se_report_correlation", Bool, :checkbox, false, (), :basic, :case, true),
+  WebUIOptionSpec(nothing, "se_update_shunts", Bool, :checkbox, true, (), :basic, :case, true),
+  WebUIOptionSpec(nothing, "se_tap_estimation", Bool, :checkbox, true, (), :basic, :case, true),
+  WebUIOptionSpec("state_estimation.report_residual_correlation", "se_report_correlation", Bool, :checkbox, true, (), :basic, :case, true),
   # default ON: a noise-free set puts J near 0 instead of near dof, which
   # reads like a broken statistic (the low-band note explains it, but the
   # recommended demo profile is noisy)

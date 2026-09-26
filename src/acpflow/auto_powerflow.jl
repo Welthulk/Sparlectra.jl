@@ -453,7 +453,9 @@ function _auto_pf_escalation_stages(base_pf::PowerFlowConfig)
   ))
   push!(stages, (
     id = :L3_full_projection,
-    gate = (ev, pf) -> (true, ""),
+    # a flat start switched the projection off on purpose (import_context);
+    # the ladder must not switch it back on behind the user's back
+    gate = (ev, pf) -> pf.start_mode.flatstart ? (false, "skipped_flatstart") : (true, ""),
     transform = (pf, ev) -> begin
       sm = _copy_start_mode_with(pf.start_mode; start_projection = true, try_blend_scan = true, try_dc_start = true, measure_candidates = true, accept_unmeasured_dc_start = true, blend_lambdas = [0.15, 0.25, 0.5, 0.75, 0.9])
       (_copy_powerflow_with(pf; start_mode = sm), ["power_flow.start_mode.start_projection = true", "power_flow.start_mode.blend_lambdas widened", "power_flow.start_mode.accept_unmeasured_dc_start = true"])
