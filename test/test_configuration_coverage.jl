@@ -865,7 +865,19 @@ function test_configuration_every_key_arrives()
         println(io, "config_version: 1")
         Sparlectra._write_yaml_dict(io, nest_value(path, value isa Symbol ? String(value) : value))
       end
-      return Sparlectra.load_sparlectra_config(file; reload = true)
+      # the nesting variants below include one that is no key of the file;
+      # the loader warns about an unknown key and drops it (maintainer rule
+      # 2026-09-27, no error), so that warning is captured here and only
+      # anything else is re-emitted for the runner's warning check
+      logger = Test.TestLogger(min_level = Logging.Warn)
+      cfg = Logging.with_logger(logger) do
+        Sparlectra.load_sparlectra_config(file; reload = true)
+      end
+      for record in logger.logs
+        occursin("Unknown Sparlectra configuration key", record.message) && continue
+        @warn record.message
+      end
+      return cfg
     end
     read_key(cfg, path) = begin
       cur = cfg
@@ -1064,7 +1076,10 @@ function test_configuration_form_defaults()
 end
 
 function test_configuration_removed_diagnostics_rejected()
-  @testset "Removed diagnostics keys are rejected" begin (function ()
+  @testset "Removed diagnostics keys warn and are ignored" begin (function ()
+    # a stored file that still carries one of the removed diagnostics
+    # switches loads; the key is warned about by name and dropped
+    # (maintainer rule 2026-09-27: unknown or obsolete keys never fail a run)
     removed_diag_keys = (
       "matpower_reference",
       "branch_shift_conventions",
@@ -1077,8 +1092,10 @@ function test_configuration_removed_diagnostics_rejected()
     )
     for key in removed_diag_keys
       cfg_bad = test_scratch_path(".yaml")
-      write(cfg_bad, "diagnostics:\n  $(key): true\n")
-      @test_throws ArgumentError Sparlectra.load_sparlectra_config(cfg_bad; reload = true)
+      write(cfg_bad, "diagnostics:\n  $(key): true\n  log_effective_config: true\n")
+      cfg = @test_logs (:warn, Regex("Unknown Sparlectra configuration key diagnostics\\.$(key) is ignored")) match_mode = :any Sparlectra.load_sparlectra_config(cfg_bad; reload = true)
+      @test cfg.diagnostics.log_effective_config
+      @test !hasproperty(cfg.diagnostics, Symbol(key))
     end
   end)() end
   return nothing
@@ -1098,6 +1115,14 @@ function test_configuration_stored_survives_removed_keys()
     # as an override it follows the normal unknown-key path: it is no longer
     # a config key and not GUI-editable either
     @test_throws ArgumentError Sparlectra.validate_gui_config_overrides(Dict{String,Any}("webui.warmup" => true))
+    # the PythonCall extension is gone (0.20.0) and with it
+    # powsybl_import.python_exe, which the 0.19.0 Web UI wrote into every
+    # saved configuration and case sidecar; those files keep loading
+    write(cfg_path, "powsybl_import:\n  python_exe: \"\"\n  remote_regulation: remote\n")
+    cfg = Sparlectra.load_sparlectra_config(cfg_path; reload = true)
+    @test cfg.powsybl.remote_regulation == :remote
+    @test !hasproperty(cfg.powsybl, :python_exe)
+    @test_throws ArgumentError Sparlectra.validate_gui_config_overrides(Dict{String,Any}("powsybl_import.python_exe" => ""))
   end)() end
   return nothing
 end
@@ -1319,10 +1344,18 @@ function test_configuration_deprecated_diagnostics_warn()
     cfg = @test_logs (:warn, r"diagnostics\.console_diagnostics is deprecated") (:warn, r"diagnostics\.console_max_rows is deprecated") match_mode = :any Sparlectra.load_sparlectra_config(p; reload = true)
     @test cfg isa Sparlectra.SparlectraConfig
     @test cfg.diagnostics.log_effective_config
-    # genuinely unknown keys still fail loudly
+    # a genuinely unknown key in a stored file is a warning naming the key,
+    # never a failure (maintainer rule 2026-09-27); the file's other values
+    # load, the unknown key is dropped
     bad = test_scratch_path(".yaml")
-    write(bad, "diagnostics:\n  no_such_key: 1\n")
-    @test_throws ArgumentError Sparlectra.load_sparlectra_config(bad; reload = true)
+    write(bad, "diagnostics:\n  no_such_key: 1\n  log_effective_config: true\n")
+    bad_cfg = @test_logs (:warn, r"Unknown Sparlectra configuration key diagnostics\.no_such_key is ignored") match_mode = :any Sparlectra.load_sparlectra_config(bad; reload = true)
+    @test bad_cfg.diagnostics.log_effective_config
+    # a programmatic override with an unknown key is still an error: that is
+    # a call, not a stored file
+    clean = test_scratch_path(".yaml")
+    write(clean, "diagnostics:\n  log_effective_config: true\n")
+    @test_throws ArgumentError Sparlectra.load_sparlectra_config(clean; reload = true, overrides = Dict{String,Any}("diagnostics" => Dict{String,Any}("no_such_key" => 1)))
     # the config-refresh path migrates stored files by dropping the dead keys
     # (scoped to the diagnostics block — output.console_diagnostics is the
     # legitimate owner and stays in the refreshed text)

@@ -13,6 +13,7 @@ Asymmetric branch shunts, autonomous tap-changer models, PowSyBl IIDM files read
 
 - The MATPOWER export writes the symmetric part of an asymmetric branch shunt on the branch and the excess as a bus shunt a reimport keeps tied to its branch.
 - Distributed slack in mode `imported` lets a unit with a participation factor share the mismatch also at a PQ bus (CGMES `normalPF`, MATPOWER `APF`, the OpenLoadFlow share).
+- A configuration file with an unknown or removed key loads with a warning naming the key instead of failing; overrides passed in code stay strict.
 
 ## Removed
 

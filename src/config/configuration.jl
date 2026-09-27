@@ -1996,7 +1996,10 @@ const _FREEFORM_MAPPING_CONFIG_KEYS = ("power_flow.distributed_slack.weights", "
 # unconditionally; webui.warmup, 0.10.0: the startup warm-up is gone,
 # the sysimage does that work now). Without these entries every stored
 # configuration carrying the key would fail to load with "unknown key".
-const _REMOVED_SILENT_CONFIG_KEYS = ("output.condition_number", "webui.warmup")
+# powsybl_import.python_exe, 0.20.0: the PythonCall extension is gone, the
+# IIDM reader needs no Python; the Web UI had written the key into every
+# saved configuration and case sidecar of 0.19.0.
+const _REMOVED_SILENT_CONFIG_KEYS = ("output.condition_number", "webui.warmup", "powsybl_import.python_exe")
 
 const _DEPRECATED_CONFIG_KEYS = Dict(
   "diagnostics.console_summary" => "output.console_summary",
@@ -2197,13 +2200,24 @@ function _migrate_versioned_config_aliases!(raw::AbstractDict, defaults::Abstrac
   return migrated
 end
 
-function _validate_known_config_keys(user::AbstractDict, defaults::AbstractDict; path::String = "")
+# Unknown keys: a configuration FILE (strict = false) is data a user or an
+# earlier release wrote, so a key the loader does not know is warned about
+# and dropped, never a failure (maintainer rule 2026-09-27, after a removed
+# key made every stored Web UI configuration unloadable); programmatic and
+# command-line overrides (strict = true) are calls, and a key nobody reads
+# there is a bug, so they still throw.
+function _validate_known_config_keys(user::AbstractDict, defaults::AbstractDict; path::String = "", strict::Bool = true)
+  drop = Any[]
   for (key, value) in user
     skey = _canonical_config_key(_config_key(key))
     isempty(path) && skey in ("_config_sources", "_config_metadata") && continue
     current_path = isempty(path) ? skey : string(path, ".", skey)
     if current_path == "matpower_import.benchmark"
-      throw(ArgumentError("Removed Sparlectra configuration key: matpower_import.benchmark.\nUse top-level benchmark.enabled instead, e.g.\n\nbenchmark:\n  enabled: true"))
+      hint = "Use top-level benchmark.enabled instead, e.g.\n\nbenchmark:\n  enabled: true"
+      strict && throw(ArgumentError("Removed Sparlectra configuration key: matpower_import.benchmark.\n" * hint))
+      @warn "Removed Sparlectra configuration key matpower_import.benchmark is ignored. $(hint)" maxlog = 1
+      push!(drop, key)
+      continue
     end
     if isempty(path) && skey == "methods"
       for m in _as_symbol_vector_cfg(value)
@@ -2217,12 +2231,21 @@ function _validate_known_config_keys(user::AbstractDict, defaults::AbstractDict;
       continue
     end
     current_path in _REMOVED_SILENT_CONFIG_KEYS && continue
-    haskey(defaults, skey) || throw(ArgumentError("Unknown Sparlectra configuration key: $(current_path)"))
+    if !haskey(defaults, skey)
+      strict && throw(ArgumentError("Unknown Sparlectra configuration key: $(current_path)"))
+      @warn "Unknown Sparlectra configuration key $(current_path) is ignored (not a key of this Sparlectra version; check the spelling or remove it from the file)."
+      push!(drop, key)
+      continue
+    end
     if value isa AbstractDict
       current_path in _FREEFORM_MAPPING_CONFIG_KEYS && continue
       defaults[skey] isa AbstractDict || throw(ArgumentError("Configuration key $(current_path) must be a scalar value."))
-      _validate_known_config_keys(value, defaults[skey]; path = current_path)
+      _validate_known_config_keys(value, defaults[skey]; path = current_path, strict = strict)
     end
+  end
+  # dropped after the loop so the dictionary is not mutated while iterated
+  for key in drop
+    delete!(user, key)
   end
   return nothing
 end
@@ -2230,7 +2253,10 @@ end
 _config_file_hash(path::AbstractString) = isfile(path) ? bytes2hex(sha256(read(path))) : ""
 _config_file_mtime(path::AbstractString) = isfile(path) ? stat(path).mtime : 0.0
 
-function _load_and_validate_config(default_path::AbstractString, user_path::AbstractString; cli_overrides::AbstractDict, overrides::AbstractDict, user_set_out::Union{Nothing,Set{String}} = nothing, case_scope_from_defaults::Bool = false)
+# `strict_keys = true` makes an unknown key of the user file an error too;
+# the Web UI configuration editor uses it to reject a typo while the text
+# is being edited. A stored file at run time loads with `false`.
+function _load_and_validate_config(default_path::AbstractString, user_path::AbstractString; cli_overrides::AbstractDict, overrides::AbstractDict, user_set_out::Union{Nothing,Set{String}} = nothing, case_scope_from_defaults::Bool = false, strict_keys::Bool = false)
   isfile(default_path) || throw(ArgumentError("Default Sparlectra config file not found: $(default_path)"))
   if abspath(user_path) != abspath(USER_SPARLECTRA_CONFIG_PATH) && !isfile(user_path)
     throw(ArgumentError("Sparlectra user config file not found: $(user_path)"))
@@ -2242,7 +2268,7 @@ function _load_and_validate_config(default_path::AbstractString, user_path::Abst
     _validate_config_scope(user, "general", user_path)
     user_version < CONFIG_VERSION_CURRENT && _apply_config_aliases!(user, user_version, user_path)
   end
-  _validate_known_config_keys(user, defaults)
+  _validate_known_config_keys(user, defaults; strict = strict_keys)
   _validate_known_config_keys(cli_overrides, defaults)
   _validate_known_config_keys(overrides, defaults)
   canon_user = Dict{String,Any}(String(_canonical_config_key(_config_key(k))) => v for (k, v) in user)

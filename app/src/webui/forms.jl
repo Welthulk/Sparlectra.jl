@@ -194,6 +194,14 @@ end
 # exported with "Save case as"/"Export as SCF" travels as three files
 # (case, sidecar, measurements); re-uploading all three together must bring
 # the sidecar along, or the settings the export carried are silently lost.
+# The first bytes of an uploaded .json decide whether it is the manifest of
+# a PowSyBl table bundle (format marker "powsybl_tables"); the upload
+# handler names the .xiidm file then instead of failing on the SCF reader.
+function _webui_is_powsybl_manifest(data::AbstractVector{UInt8})::Bool
+  head = String(copy(view(data, 1:min(length(data), 4096))))
+  return occursin("\"format\"", head) && occursin("powsybl_tables", head)
+end
+
 _webui_supported_upload_case_extension(name::AbstractString)::Bool = lowercase(splitext(basename(String(name)))[2]) in (".m", ".dat", ".zip", ".csv", ".json", ".yaml", ".xml", ".xiidm")
 
 """

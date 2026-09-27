@@ -1154,6 +1154,15 @@ form:
         @test occursin("rejected 1", multi_page)
         @test occursin("bad.txt", multi_page) && occursin("unsupported extension", multi_page)
 
+        # the manifest of a PowSyBl table bundle (a directory the file dialog
+        # cannot pick) is rejected with the way out: the .xiidm next to it
+        manifest = Dict("casefiles" => [upload("manifest.json", "{\"format\": \"powsybl_tables\", \"format_version\": 1, \"case\": \"x\", \"source\": \"test\"}")])
+        manifest_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/import-cases", manifest; output_root, runtime)
+        @test manifest_response.status == 303
+        @test !isfile(joinpath(case_directory, "manifest.json"))
+        manifest_page = String(SparlectraApp.route_sparlectra_webui("GET", String(Dict(manifest_response.headers)["Location"]); output_root, runtime).body)
+        @test occursin("upload the .xiidm file that lies next to it", manifest_page)
+
         # An incomplete CGMES delivery triggers the upload-time import
         # analysis: the message names the missing declared dependency and the
         # full report lands next to the case.

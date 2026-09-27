@@ -694,6 +694,20 @@ function run_webui_fast_tests()
             mfile = joinpath(cases, "warmup_casePST.measurements.csv")
             @test isfile(mfile)
             @test SparlectraApp._webui_is_measurement_csv(mfile)
+            # the written set is armed for the next run: the redirect names it
+            # and the page selects it (2026-09-27: a noisy copy next to its
+            # noise-free original was otherwise never the armed one)
+            @test occursin("measurement_file=warmup_casePST.measurements.csv", Dict(gen.headers)["Location"])
+            noised = SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/add-noise", Dict{String,Any}("casefile" => "warmup_casePST.m", "measurement_file" => "warmup_casePST.measurements.csv"); output_root=root, runtime=rt)
+            @test noised.status == 303
+            noisy_location = Dict(noised.headers)["Location"]
+            @test occursin("measurement_file=warmup_casePST.noisy.measurements.csv", noisy_location)
+            @test isfile(joinpath(cases, "warmup_casePST.noisy.measurements.csv"))
+            # a browser never sends the #fragment of a redirect target
+            noisy_page = String(SparlectraApp.route_sparlectra_webui("GET", first(split(noisy_location, '#')), Dict{String,String}(); output_root=root, runtime=rt).body)
+            @test occursin("<option value=\"warmup_casePST.noisy.measurements.csv\" selected>", noisy_page)
+            @test occursin("<option value=\"warmup_casePST.measurements.csv\">", noisy_page)
+            rm(joinpath(cases, "warmup_casePST.noisy.measurements.csv"))
             page2 = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow?casefile=warmup_casePST.m", Dict{String,String}(); output_root=root, runtime=rt).body)
             @test occursin("warmup_casePST.measurements.csv", page2)
             @test occursin("Run state estimation", page2)

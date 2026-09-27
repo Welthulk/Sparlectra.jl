@@ -236,6 +236,12 @@ function handle_powerflow_case_import(form::AbstractDict; output_root::AbstractS
     # a case file is validated BEFORE it is stored: an arbitrary .json must
     # not end up in the case directory just because of its extension
     if lowercase(splitext(name)[2]) == ".json"
+      # the manifest of a PowSyBl table bundle is not a case: the bundle is
+      # a directory the file dialog cannot pick; the .xiidm next to it is
+      if _webui_is_powsybl_manifest(upload.data)
+        push!(rejected, name => "the manifest of a PowSyBl table bundle, not a case file: upload the .xiidm file that lies next to it (it is read directly), or copy the whole <case>.powsybl directory into the case directory")
+        continue
+      end
       reason = _webui_scf_upload_reason(upload.data)
       if reason !== nothing
         push!(rejected, name => "not a Sparlectra case file ($(reason))")
@@ -1513,7 +1519,9 @@ function handle_powerflow_config_editor_save(form::AbstractDict; operation_log::
     mkpath(parent)
     tmp_path = tempname(parent; cleanup = false)
     write(tmp_path, _yaml_dict_text(parsed))
-    _load_and_validate_config(DEFAULT_SPARLECTRA_CONFIG_PATH, tmp_path; cli_overrides = Dict{String,Any}(), overrides = Dict{String,Any}())
+    # strict: a typo in the text being edited is rejected here, before the
+    # file is written; a stored file loads with unknown keys warned and dropped
+    _load_and_validate_config(DEFAULT_SPARLECTRA_CONFIG_PATH, tmp_path; cli_overrides = Dict{String,Any}(), overrides = Dict{String,Any}(), strict_keys = true)
     load_sparlectra_config(tmp_path; reload = true)
     # the keys whose values the editor changed are the user's from now on
     # (the template follow-up at start leaves them alone)
@@ -2004,6 +2012,12 @@ function _webui_se_form_state(query::AbstractDict; output_root::AbstractString, 
   # foreign set.
   convention_set = isempty(selected) ? "" : string(first(splitext(selected)), ".measurements.csv")
   selected_meas = isempty(selected) ? "" : (convention_set in bound_sets ? convention_set : (!isempty(bound_sets) ? first(bound_sets) : ""))
+  # a set the user just wrote (generate, add noise) arrives as an explicit
+  # query key from the redirect and outranks the convention: otherwise the
+  # noisy copy of a set sits next to its noise-free original and the run
+  # form keeps arming the original (J = 0 with 82 dof, 2026-09-27)
+  requested_meas = basename(String(get(query, "measurement_file", "")))
+  (!isempty(requested_meas) && requested_meas in measurements) && (selected_meas = requested_meas)
   set_info = isempty(selected_meas) ? String[] : _webui_measurement_set_comments(joinpath(directory, selected_meas))
   # the case-binding comment renders as its own line, not inside the table
   set_case = isempty(selected_meas) ? "" : get(meas_case, selected_meas, "")
@@ -2398,7 +2412,7 @@ function handle_se_generate_measurements(form::AbstractDict; output_root::Abstra
     record_webui_operation!(operation_log, "case_settings_save_failed"; route = "/stateestimation/generate-measurements", method = "POST", user_action = true, message = sprint(showerror, err))
   end
   sigma_note = ", sigma U=$(sigma_u_pct)% P=$(sigma_p_pct)% Q=$(sigma_q_pct)%$(include_i ? " I=$(sigma_i_pct)%" : "") of reading"
-  return redirectq("generated $(out_name) ($(gen.rows) rows, $(gen.noisy ? "noisy" : "noise-free")$(sigma_note)$(gen.truth_note)$(gen.flow_note)$(gen.passive_note)$(gen.critical_note)$(gen.gross_note)$(gen.tap_note)$(gen.island_note))")
+  return _webui_se_redirect(casefile, "generated $(out_name) ($(gen.rows) rows, $(gen.noisy ? "noisy" : "noise-free")$(sigma_note)$(gen.truth_note)$(gen.flow_note)$(gen.passive_note)$(gen.critical_note)$(gen.gross_note)$(gen.tap_note)$(gen.island_note))"; extra_query = gq * "&measurement_file=" * _webui_urlencode(out_name))
 end
 
 """
@@ -2449,7 +2463,7 @@ function handle_se_add_noise(form::AbstractDict; output_root::AbstractString = "
     return back("Could not add noise: $(first(split(sprint(showerror, err), '\n')))")
   end
   record_webui_operation!(operation_log, "se_measurements_noised"; route = "/stateestimation/add-noise", method = "POST", user_action = true, casefile = casefile, measurement_file = out_name, rows = rows, seed = seed)
-  return back("Wrote $(out_name): $(rows) rows, each perturbed with its own sigma (seed $(seed)). No power flow was computed.")
+  return _webui_se_redirect(casefile, "Wrote $(out_name): $(rows) rows, each perturbed with its own sigma (seed $(seed)). No power flow was computed. The set is selected for the next run."; extra_query = "&measurement_file=" * _webui_urlencode(out_name))
 end
 
 """

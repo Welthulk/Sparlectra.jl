@@ -27,9 +27,12 @@ A later level wins:
 | 5 | programmatic overrides | `cli_overrides`, then `overrides` (the API's `config_overrides`) |
 | 6 | post-processing | such as `model.auto_profile: apply` |
 
-Unknown keys are rejected during validation; removed keys are rejected with
-a migration hint (for example `matpower_import.benchmark` to
-`benchmark.enabled`).
+Unknown or removed keys in a configuration file are warned about (once,
+naming the key) and ignored, so a file written by an earlier release keeps
+loading; a removed key's warning carries the migration hint (for example
+`matpower_import.benchmark` to `benchmark.enabled`). Programmatic and
+command-line overrides are calls, not files: an unknown key there is an
+error.
 
 When a case ships its own configuration file, case-scope keys skip level 2
 and resolve from the case file straight to the packaged defaults, so the
@@ -119,7 +122,7 @@ Prefer the canonical nested keys of the example YAML and the module pages.
 | Public / supported | keys in `src/config/configuration.yaml.example` and typed section constructors |
 | Reserved | schema placeholders such as `extensions.reserved` for forward compatibility |
 | Deprecated compatibility aliases | accepted for migration but not preferred in new YAML (for example `max_ite` and some start-projection alias keys) |
-| Removed | explicitly rejected keys with migration error guidance (for example `matpower_import.benchmark`) |
+| Removed | keys that warn with migration guidance and are ignored (for example `matpower_import.benchmark`) |
 | Internal-only implementation details | not a stable external user API |
 
 ### MATPOWER import metadata and DC-line options
@@ -189,7 +192,10 @@ does not reapply the correction; see
 ## Loader and validation behavior
 
 - User YAML and override keys are validated against the schema tree of
-  `src/config/configuration.yaml.example`; unknown keys throw `ArgumentError`.
+  `src/config/configuration.yaml.example`; an unknown key in the YAML is
+  warned about and dropped, an unknown override key throws `ArgumentError`.
+  The Web UI configuration editor rejects an unknown key while the text is
+  edited, so a typo is caught before the file is saved.
 - Type and domain checks (Symbol allow-lists, positivity) run while
   constructing the typed objects; some legacy aliases are accepted there.
 - `load_sparlectra_config(...)` caches the typed result for unchanged files
