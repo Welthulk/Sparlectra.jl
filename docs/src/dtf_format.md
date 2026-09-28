@@ -7,7 +7,23 @@ validation examples natively, without routing through MATPOWER:
 (outage cards, trailing records, transformer control fields, nameplate
 voltages, branch identity metadata) stays on typed records, raw lines
 included, for audit. FOR002 text reports are validation references, not
-model input.
+model input. A small deck of Sparlectra's own ships as
+`data/dtf_demo/sp_dtf5.DAT` (see [Demo cases](demo_cases.md)).
+
+## Format detection
+
+A DTF deck is recognised by its content, and the reader is the judge: a
+file that `read_dtf` takes as a network (every card the size card counts
+is there, and one bus card is the slack bus) is a deck,
+whatever the file is called. No format has to be named:
+
+```julia
+run_sparlectra(casefile = "data/dtf_demo/sp_dtf5.DAT")
+```
+
+A `.DAT` file the reader does not take (a FOR002 result report, an outage
+list without a network, any other text) is refused with its name and the
+reason. `DTFImporter.is_dtf_deck(path)` answers the question alone.
 
 ## File structure
 
@@ -89,7 +105,8 @@ cases A-E in both `:neutral_one` and `:winding_over_network` mode.
 ## Web UI `.DAT` roles
 
 The Web UI classifies `.DAT` uploads by content (`FOR002.DAT`-style names
-are hints only) before offering them in the PowerFlow selector:
+are hints only) before offering them in the PowerFlow selector; a network
+case is what the format detection above takes as a deck:
 
 | Role | Meaning |
 |---|---|

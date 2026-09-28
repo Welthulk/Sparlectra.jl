@@ -150,6 +150,88 @@ function run_dtf_importer_tests()
     @test get(net_ideal.matpower_branch_metadata, 1, nothing).tap_impedance_correction_factor == 1.0
   end)() end
 
+  # The shipped demo deck: the text path of the importer on a file every
+  # checkout has (the decks of the testsets below are local files). Cards
+  # in fixed columns, a transformer control with its typed model, an outage
+  # record that resolves to one branch.
+  @testset "shipped demo deck sp_dtf5" begin (function ()
+    deck = joinpath(dirname(@__DIR__), "..", "data", "dtf_demo", "sp_dtf5.DAT")
+    case = Sparlectra.DTFImporter.read_dtf(deck)
+    @test (length(case.buses), length(case.branches), length(case.transformer_controls), length(case.outages)) == (5, 6, 1, 2)
+    @test case.size.slack == "NORD"
+    @test case.nominal_voltages_kv == [110.0, 20.0]
+    control = only(case.transformer_controls)
+    @test (control.from, control.to, control.longitudinal_range_percent, control.max_tap_step, control.actual_tap_step) == ("SUED", "STADT", 16.0, 8, 2)
+    net = Sparlectra.DTFImporter.build_net(case)
+    @test only(net.trafos).side1.phase_taps !== nothing
+    ite, erg = runpf!(net, 50, 1e-8, 0)
+    @test erg == 0
+    vm = Dict(name => net.nodeVec[idx]._vm_pu for (name, idx) in net.busDict)
+    @test isapprox(vm["NORD"], 1.02; atol = 1e-9)
+    @test isapprox(vm["SUED"], 1.0050214287; atol = 1e-6)
+    @test isapprox(vm["STADT"], 1.0240776060; atol = 1e-6)
+    for outage in case.outages
+      matches = Sparlectra.DTFImporter.find_outage_branch_indices(case, outage)
+      @test length(matches) == 1
+      out = Sparlectra.DTFImporter.build_net(case)
+      Sparlectra.DTFImporter.apply_single_branch_outage!(out, only(matches))
+      _, out_erg = runpf!(out, 50, 1e-8, 0)
+      @test out_erg == 0
+    end
+    # the front doors read the same deck, and no format has to be named
+    cfg = load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true)
+    imported = Sparlectra.import_case(deck, cfg)
+    @test imported.format === :dtf_for001
+    @test length(imported.net.nodeVec) == 5 && length(imported.net.branchVec) == 6
+    run = redirect_stdout(devnull) do
+      run_sparlectra(casefile = deck)
+    end
+    @test run isa Sparlectra.SparlectraRunResult
+  end)() end
+
+  # A DTF deck is recognised by its content, and the reader is the judge:
+  # what `read_dtf` takes as a network is a deck under any name, everything
+  # else is refused. The texts below are written here; the last rows are
+  # the local reference files, which are in no repository.
+  @testset "format detection by content" begin (function ()
+    deck_text = read(joinpath(dirname(@__DIR__), "..", "data", "dtf_demo", "sp_dtf5.DAT"), String)
+    cards = split(deck_text, '\n')
+    d = mktempdir()
+    file = (name, text) -> (path = joinpath(d, name); write(path, text); path)
+    # the same deck under a name that says nothing
+    @test Sparlectra.DTFImporter.is_dtf_deck(file("network.txt", deck_text))
+    @test Sparlectra._detect_case_format(joinpath(d, "network.txt")) === :dtf_for001
+    refused = [
+      ("plain text", "plain unsupported data\n"),
+      ("numbers", "1 2 3\n4 5 6\n"),
+      ("a result report", "LASTFLUSSERGEBNIS FOR002\nKNOTEN   U/KV   WINKEL     P/MW    Q/MVAR\nNORD    112.200    0.000   48.484   12.100\nWEST    111.132   -1.015  -30.000  -10.000\nOST     112.000   -0.406   35.000    4.300\nSUED    110.552   -1.529  -25.000   -8.000\nSTADT    20.482   -4.381  -18.000   -6.000\nVERLUSTE 0.484 MW\n"),
+      ("an outage list without a network", "AUSFALL\nL1   WEST      OST     \nENDE\n"),
+      # the size card counts a bus more than the deck has
+      ("a deck shorter than its size card says", join(vcat(cards[1:6], ["    6    6    0    1  NORD"], cards[8:end]), '\n')),
+      # no bus card of type 2: the network has no reference
+      ("a deck without a slack bus card", replace(deck_text, "21   NORD" => "01   NORD")),
+    ]
+    for (i, (label, text)) in enumerate(refused)
+      path = file("refused_$(i).DAT", text)
+      @testset "$(label)" begin
+        @test !Sparlectra.DTFImporter.is_dtf_deck(path)
+        @test_throws ArgumentError Sparlectra._detect_case_format(path)
+      end
+    end
+    # a named format is still taken as named
+    @test Sparlectra._detect_case_format(joinpath(d, "refused_1.DAT"); requested = :dtf_for001) === :dtf_for001
+    local_dir = joinpath(dirname(@__DIR__), "..", "data", "DTF")
+    for (name, expected) in [("FOR001.DAT", true), ("FOR001B.DAT", true), ("FOR001C.DAT", true), ("FOR001D.DAT", true), ("FOR001E.DAT", true), ("FOR002.DAT", false)]
+      path = joinpath(local_dir, name)
+      if isfile(path)
+        println("      format detection: ", name, " RAN")
+        @test Sparlectra.DTFImporter.is_dtf_deck(path) == expected
+      else
+        println("      format detection: ", name, " SKIPPED (not present under data/DTF)")
+      end
+    end
+  end)() end
+
   @testset "native DTF full local fixture" begin
     if !isfile(DTF_FIXTURE)
       @info "Skipping full FOR001 fixture validation; external reference network is not tracked. Place a local file at test/fixtures/dtf/FOR001.DAT or data/DTF/FOR001.DAT for manual validation."

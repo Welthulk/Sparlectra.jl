@@ -75,12 +75,23 @@ voltages within the bands of the test suite. A fourth file,
 and short-circuit reactances on its generators, for the short-circuit run.
 See [PowSyBl Import](powsybl_import.md).
 
+## DTF demo deck
+
+`data/dtf_demo/sp_dtf5.DAT` is a self-built five-bus network in the
+fixed-column DTF layout: a ring of 110 kV lines, one 110/20 kV transformer
+with a longitudinal tap control, two outage records. `tools/build_dtf_demo.jl`
+writes it card by card. It runs like every other case
+(`run_sparlectra(casefile = "data/dtf_demo/sp_dtf5.DAT")`, the format is
+recognised by the content) and is the deck of the foreign-formats
+workshop; decks of other origin are external data and do not ship. See
+[DTF legacy input format](dtf_format.md).
+
 ## CGMES deliveries of the demo cases
 
 `data/cgmes_demo/<case>/` holds CGMES 2.4.15 deliveries (EQ, TP, SSH, SV)
 that `tools/gen_cgmes_fixtures.jl` exports from `sp_case14`, `sp_case118`
 and `sp_casePST` with Sparlectra's own exporter; a regeneration is byte
-identical. They appear in the Web UI case selector as `<case>_cgmes.zip`.
+identical apart from the Sparlectra version the file header names. They appear in the Web UI case selector as `<case>_cgmes.zip`.
 The exporter
 writes bus-branch deliveries only: no node-breaker topology, boundary sets
 or DifferenceModel.

@@ -152,7 +152,7 @@ cases can fail while Julia loads them, so `.m` stays the canonical source.
 
 **Case input format** defaults to **Auto**: MATPOWER files, CGMES
 deliveries (folders and ZIPs), PowSyBl IIDM files, and, where
-the FOR001 markers are unambiguous, native DTF input. **CGMES (ENTSO-E,
+the DTF reader takes the file as a network, native DTF input. **CGMES (ENTSO-E,
 folder or ZIP)** forces the CGMES importer and is preselected for a `.zip`
 or a directory; **PowSyBl (IIDM file)** is preselected
 for those files and shows the PowSyBl import options (HVDC mode, remote

@@ -4,8 +4,8 @@
 
 Native importer for legacy DTF (FOR001) network files: parsing the section
 cards, building a `Net`, and outage-list support. Experimental/internal
-format; ambiguous `.DAT` files are only read when the FOR001 markers are
-present and `case_format = :dtf_for001` is requested.
+format. A deck is recognised by its content (`is_dtf_deck`: the reader takes
+the file as a network); `case_format = :dtf_for001` names the format.
 
 ## File responsibilities
 
