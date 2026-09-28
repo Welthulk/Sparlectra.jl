@@ -88,7 +88,7 @@ end
 # bump. AutoMerge labels such a registration BREAKING and refuses to merge it
 # unless the release notes mention "breaking" or "changelog":
 # https://juliaregistries.github.io/RegistryCI.jl/stable/guidelines/
-# 0.10.0 was blocked by exactly this on 2026-09-07 and had to be re-triggered
+# 0.10.0 was blocked by exactly this and had to be re-triggered
 # by hand.
 function isBreakingBump(previous::VersionNumber, next::VersionNumber)::Bool
   next.major > previous.major && return true
@@ -112,7 +112,7 @@ end
 # The notes AutoMerge sees. A breaking registration whose changelog section
 # happens to use neither word gets an explicit section appended; one that
 # already says "breaking" or points at the changelog is left alone, so the
-# maintainer's own wording always wins.
+# wording of the entry always wins.
 function releaseNotesFor(entry, previous::Union{VersionNumber,Nothing})::AbstractString
   notes = entry.body
   isnothing(previous) && return notes
