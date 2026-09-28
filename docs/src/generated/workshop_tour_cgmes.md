@@ -25,7 +25,8 @@ purpose: Literate.jl source of the foreign-formats tour: the network
          network as pypowsybl wrote it, compared with OpenLoadFlow) and
          the legacy DTF deck (FOR001 with its outage records). Runs on
          the official conformity test sets, fetched on demand, plus the
-         shipped PowSyBl and DTF files.
+         shipped PowSyBl file; the DTF chapter runs on a deck of the
+         reader's own under data/DTF and states it where none is there.
 
 # The Sparlectra workshop tour: foreign formats
 
@@ -57,7 +58,8 @@ each one apart:
   result with OpenLoadFlow.
 - **DTF**, the fixed-column input deck (FOR001) of a legacy load-flow
   program, with its own outage records; chapter 7 reads one and applies
-  an outage from the deck.
+  an outage from the deck. Decks are external data and do not ship; the
+  chapter runs on a deck of your own.
 
 1. CGMES: anatomy of a delivery, profiles, and what a summary shows
 2. CGMES: when an import cannot work, the analysis report
@@ -74,8 +76,10 @@ Three data sources, one per format. The ENTSO-E conformity package
 bundles reference networks in several variants;
 `ensureCGMESTestConfigurations` downloads and extracts it once into a
 local cache and returns the extraction root (chapters 1 to 5). The
-PowSyBl file and the DTF deck ship with Sparlectra under `data/powsybl`
-and `data/DTF` (chapters 6 and 7), nothing to fetch.
+PowSyBl file ships with Sparlectra under `data/powsybl` (chapter 6),
+nothing to fetch. A DTF deck does not ship: chapter 7 reads
+`data/DTF/FOR001.DAT` where you have placed one and says so where the
+file is missing.
 
 ````@example workshop_tour_cgmes
 using Sparlectra
@@ -89,13 +93,14 @@ microgrid_bd = joinpath(root, "MicroGrid", "BaseCase_BC", "CGMES_v2.4.15_MicroGr
 minigrid_nb = joinpath(root, "MiniGrid", "NodeBreaker", "CGMES_v2.4.15_MiniGridTestConfiguration_BaseCase_Complete_v3")
 minigrid_bd = joinpath(root, "MiniGrid", "NodeBreaker", "CGMES_v2.4.15_MiniGridTestConfiguration_Boundary_v3")
 
-# the shipped files of chapters 6 and 7
+# the shipped file of chapter 6 and the place of a deck for chapter 7
 powsybl_dir = joinpath(pkgdir(Sparlectra), "data", "powsybl")
 # the solution OpenLoadFlow computed for that file, kept with the tests
 powsybl_reference = joinpath(pkgdir(Sparlectra), "test", "fixtures", "powsybl", "micro_grid_be.powsybl", "reference_buses.csv")
-dtf_dir = joinpath(pkgdir(Sparlectra), "data", "DTF")
+dtf_deck = joinpath(pkgdir(Sparlectra), "data", "DTF", "FOR001.DAT")
+have_deck = isfile(dtf_deck)
 println("PowSyBl file: ", joinpath(powsybl_dir, "micro_grid_be.xiidm"))
-println("DTF deck:     ", joinpath(dtf_dir, "FOR001.DAT"))
+println("DTF deck:     ", have_deck ? dtf_deck : "none at " * dtf_deck * ", chapter 7 shows the calls without results")
 ````
 
 The first power-flow solve of a session compiles the solver (about a
@@ -398,10 +403,11 @@ everything the deck says stays on the case object before any network
 exists:
 
 ````@example workshop_tour_cgmes
-case = Sparlectra.DTFImporter.read_dtf(joinpath(dtf_dir, "FOR001.DAT"); strict = false)
-println("deck: base ", case.baseMVA, " MVA, ", length(case.buses), " buses, ", length(case.branches), " branches (", count(b -> b.kind == 'T', case.branches), " transformers), ", length(case.transformer_controls), " transformer control(s), ", length(case.outages), " outage record(s)")
-println("nominal voltages (kV): ", join(case.nominal_voltages_kv, ", "), "; slack bus of the size card: ", case.size.slack)
-@assert length(case.buses) > 0 && length(case.branches) > 0
+case = have_deck ? Sparlectra.DTFImporter.read_dtf(dtf_deck; strict = false) : nothing
+have_deck || println("no deck at ", dtf_deck)
+have_deck && println("deck: base ", case.baseMVA, " MVA, ", length(case.buses), " buses, ", length(case.branches), " branches (", count(b -> b.kind == 'T', case.branches), " transformers), ", length(case.transformer_controls), " transformer control(s), ", length(case.outages), " outage record(s)")
+have_deck && println("nominal voltages (kV): ", join(case.nominal_voltages_kv, ", "), "; slack bus of the size card: ", case.size.slack)
+@assert !have_deck || (length(case.buses) > 0 && length(case.branches) > 0)
 ````
 
 **Example 7.2: the network and its solve.** `build_net` turns the records
@@ -410,17 +416,21 @@ slack as the reference, PQ buses kept as fixed injections); from there
 it is the ordinary solver:
 
 ````@example workshop_tour_cgmes
-dnet = Sparlectra.DTFImporter.build_net(case)
-println("network: ", length(dnet.nodeVec), " buses, ", length(dnet.branchVec), " branches")
-@assert length(dnet.nodeVec) == length(case.buses)
-dite, derg = runpf!(dnet, 50, 1e-8, 0)
-@assert derg == 0
-calcNetLosses!(dnet)
-println("solved in ", dite, " iterations; losses ", round(dnet.totalLosses[end][1]; digits = 3), " MW")
+if have_deck
+  dnet = Sparlectra.DTFImporter.build_net(case)
+  println("network: ", length(dnet.nodeVec), " buses, ", length(dnet.branchVec), " branches")
+  @assert length(dnet.nodeVec) == length(case.buses)
+  dite, derg = runpf!(dnet, 50, 1e-8, 0)
+  @assert derg == 0
+  calcNetLosses!(dnet)
+  println("solved in ", dite, " iterations; losses ", round(dnet.totalLosses[end][1]; digits = 3), " MW")
+else
+  println("no deck at ", dtf_deck)
+end
 ````
 
-Reading aid (Example 7.2): the FOR002 report that ships next to the deck
-is the legacy program's result for the same deck; the example
+Reading aid (Example 7.2): the FOR002 report that belongs to a deck is
+the legacy program's result for it; the example
 `examples/dtf/dtf_validation_base.jl` parses it and compares bus
 voltages, branch flows and generator reactive power line by line. That
 comparison is how the DTF path was validated, and the place to look when
@@ -434,7 +444,9 @@ ambiguity is a diagnostic, not a guess), `apply_single_branch_outage!`
 takes the branch out, and the solve repeats:
 
 ````@example workshop_tour_cgmes
-if isempty(case.outages)
+if !have_deck
+  println("no deck at ", dtf_deck)
+elseif isempty(case.outages)
   println("this deck carries no outage records")
 else
   outage = first(case.outages)
