@@ -117,7 +117,7 @@ A random permutation of `v` that depends only on the RNG's Float64 stream.
 `Random.shuffle` changed its algorithm in Julia 1.13: the same
 `MersenneTwister` seed then drew other rows than on 1.12, so a generated
 set with "bad data on 1 row" hit a different measurement per Julia version
-(found 2026-09-11 when the extended profile went red on 1.13 only). The
+(found when the extended profile went red on 1.13 only). The
 Float64 stream of the Mersenne Twister is the same on both, so ordering
 by one uniform draw per element keeps "the seed decides which rows" true
 across Julia versions.
@@ -252,6 +252,12 @@ function _se_generate_measurement_set(case_path::AbstractString, out_path::Abstr
     info = _se_truth_from_run!(net, String(run_root), String(strip(run_id)), case_path)
     truth_comment = "truth: run $(strip(run_id)) ($(info.kind), $(info.timestamp), $(info.source_file)); state adopted, not re-solved"
     truth_note = ", truth from $(info.kind) run $(strip(run_id))"
+    if !isempty(info.warning)
+      # the warning travels in the file (a reader of the set sees it) and
+      # in the page message (the user sees it at once)
+      truth_comment = string(truth_comment, "; WARNING: ", info.warning)
+      truth_note = string(truth_note, " (WARNING: ", info.warning, ")")
+    end
   end
   # measurements cover every island: the estimator solves island-wise
   # (per-island reference), so the whole delivery is estimable. Count on
@@ -385,7 +391,7 @@ function _se_generate_measurement_set(case_path::AbstractString, out_path::Abstr
     # the same rank decision the estimation run makes: column-normalized
     # Jacobian and the FD-aware tolerance (rank_tol_factor * jac_eps *
     # sigma_max); the matrix default tolerance called sets observable that
-    # the run then refused (Web UI run e358b49e)
+    # the run then refused (a Web UI run)
     H_all = _column_normalized(jac.H)
     se_tol_cfg = state_estimation_config()
     thin_tol = isempty(H_all) ? nothing : se_tol_cfg.rank_tol_factor * se_tol_cfg.jac_eps * _sigma_max(H_all)

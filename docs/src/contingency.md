@@ -32,6 +32,11 @@ evaluation on an operated grid.
 - The base `net` is never mutated: `runContingencies!` solves a template
   copy of the base case, and every case is evaluated on a working copy
   that is reset to the template state after each case.
+- A branch outage takes the branch's own charging arms with it (a
+  transformer's magnetizing admittance sits on the branch since 0.20.0,
+  see [Branch model](branchmodel.md)); a bus shunt part that a MATPOWER
+  reimport recorded for the branch (`mpc.sparlectra.branch_shunts`) is
+  removed from the bus shunt for that case as well.
 - Warm start from the base solution: every case starts from the solved
   base operating point. A base case that does not converge is retried
   through the solver rescue ladder (`runpf!` with `rescue = true`) before
@@ -77,6 +82,28 @@ convergence: it cannot give a reference to a load-only island.
   `error = "islanded: load-only, X MW load disconnected"`, and an island
   that strands generation without a voltage-controlled source reports
   `"islanded without reference: X MW load, Y MW generation stranded ..."`.
+- Lost reference: `runContingencies!`, `runScenarios!`, the service and
+  the Web UI solve with `auto_slack` (the default). When an outage removes
+  the reference (the slack unit, or
+  the branch that ties it to an island), the strongest remaining unit
+  takes over by the ranking every reference choice uses
+  ([`reference_candidate_rank`](@ref): an external network injection first,
+  then a unit that regulates the voltage of its own bus, then the size);
+  an island without a voltage-controlled unit takes its strongest
+  generating unit. The row names the bus ("reference taken over by bus
+  ..."). Only an island without any generating unit stays without a
+  reference. `auto_slack = false` ends such a case on the missing
+  reference instead.
+- Slack model: the service passes `power_flow.distributed_slack` of the run
+  configuration to every post-outage solve. An outage that takes away the
+  path of the reference unit's output can be without a solution on a
+  single slack and have one when the units share the mismatch (line 1-2 of
+  the IEEE 14-bus case).
+- Cut-off buses: the outage of a radial branch leaves its far bus without
+  a connection. The remaining network solves (`converged = true`), and the
+  result carries `error = "islanded: bus B cut off, X MW load disconnected,
+  ..."` with `shed_load_mw` set to that load; a unit at such a bus is named
+  as out of service. The case counts as islanded in the summary.
 - Parallel circuits: two branches between the same buses can share one
   component name; `generateN1Branches` disambiguates them as
   `"<name>#<branchIdx>"`.

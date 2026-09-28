@@ -1,8 +1,42 @@
+# Version 0.20.0 - 2026-09-27
+
+Asymmetric branch shunts, typed tap-changer models, PowSyBl IIDM files read in Julia.
+
+## Added
+
+- Branch shunt admittance per terminal; transformer magnetizing admittance stays on its own end. See [Branch model](branchmodel.md).
+- Typed tap-changer models drive their branch; controllers and the state estimator move their steps.
+- PowSyBl IIDM files (`.xiidm`) are read in Julia and run in every service. See [PowSyBl Import](powsybl_import.md).
+- SCF stores terminal shunts and tap-changer models. See [SCF](scf.md).
+- The Web UI help has a search.
+
+## Changed
+
+- Distributed slack (`imported`) includes units with a participation factor at PQ buses.
+- Slack selection prefers a unit that regulates its own bus.
+- `runContingencies!` uses `auto_slack` by default; `auto_slack = false` restores the previous behaviour.
+- Unknown or removed keys in a configuration file give a warning instead of an error.
+
+## Fixed
+
+- N-1 reports an outage that cuts off buses as islanding, with the disconnected load.
+- The MATPOWER export option works for every case format.
+- The CGMES export writes short-circuit data and one-sided line shunts.
+
+## Removed
+
+- PythonCall extension and the key `powsybl_import.python_exe`.
+
+## Breaking
+
+- `BranchModel`: the positional seven-argument constructor is gone; use the keyword form.
+- Short circuit refuses a case without any source data (the CGMES demos `sp_case118`, `sp_casePST`). Machines without data count as sources on a default reactance; affected rows are flagged.
+
 # Version 0.19.0 - 2026-09-27
 
 PowSyBl IIDM networks.
 
-- PowSyBl import: `.powsybl` table bundles written by `tools/powsybl_dump.py` from an IIDM file or a pypowsybl example, no Python at run time; five example networks ship as bundles with their `.xiidm` files. The import reproduces the OpenLoadFlow solution of every example. See [PowSyBl Import](powsybl_import.md).
+- PowSyBl import: `.powsybl` table bundles written from an IIDM file or a pypowsybl example, no Python at run time; five example networks ship as bundles with their `.xiidm` files. The import reproduces the OpenLoadFlow solution of every example. See [PowSyBl Import](powsybl_import.md).
 - New configuration scope `powsybl_import` (system base, HVDC mode, slack override, remote regulation mode), with the same options on the Case page of the Web UI.
 - With `PythonCall` and pypowsybl in the session, a `.xiidm` file imports directly (the `SparlectraPythonCallExt` extension); without them the error names the bundle path.
 - Runs with more than five PV/PQ switching events write `q_limit_events.csv` on their own, and `q_limit.log` keeps a five-row preview.
@@ -108,7 +142,7 @@ Faster install, AnalyticLoadFlow 0.9.16.
 - Observability tests in `test/test_observability.jl` with one shared fixture.
 
 ## Fixes
-- A state-estimation run can no longer fall back to a request default for the CSV format (run c1c31569 wrote commas with a semicolon setting).
+- A state-estimation run can no longer fall back to a request default for the CSV format (a run wrote commas with a semicolon setting).
 - The state-estimation run log and `se_diagnostics.md` name the critical rows, or say "none"; the wii list is marked as "nearly critical, not critical".
 
 # Version 0.15.0 - 2026-09-21

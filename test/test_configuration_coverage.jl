@@ -70,7 +70,7 @@ end
 
 # One function per @testset, called by the runner from a list.
 #
-# Measured 2026-09-07 with SnoopCompile on the sysimage: as ONE body these
+# Measured with SnoopCompile on the sysimage: as ONE body these
 # nineteen testsets cost 13.242 s of inference in a single MethodInstance
 # (n=1), 61 percent of the whole group. The state-estimation group, which is
 # already split this way, does three times the inference work (9191 nodes
@@ -101,7 +101,7 @@ function test_configuration_yaml_key_coverage()
       "matpower_import.pv_voltage_source", "matpower_import.pv_voltage_mismatch_tol_pu", "matpower_import.compare_voltage_reference", "matpower_import.shift_unit", "matpower_import.shift_sign", "matpower_import.ratio", "matpower_import.enable_pq_gen_controllers", "matpower_import.apply_bus_names", "matpower_import.apply_branch_names", "matpower_import.apply_branch_kind", "matpower_import.import_for001_contingencies", "matpower_import.matpower_dcline_mode",
       "model.bus_shunt_model", "model.tap_changer_model", "model.auto_profile", "model.auto_profile_log", "model.net_cache_enabled", "model.preallocate_network", "model.preallocate_min_buses",
       "cgmes_import.path", "cgmes_import.base_mva", "cgmes_import.require_boundary", "cgmes_import.tap_control", "cgmes_import.machine_control", "cgmes_import.ignore_connected", "cgmes_import.vset_min_pu", "cgmes_import.vset_max_pu", "cgmes_import.multi_slack", "cgmes_import.start_values", "cgmes_import.placeholder_guards", "cgmes_import.infer_base_voltages", "cgmes_import.hvdc_mode",
-      "powsybl_import.base_mva", "powsybl_import.hvdc_mode", "powsybl_import.slack_ids", "powsybl_import.multi_slack", "powsybl_import.remote_regulation", "powsybl_import.python_exe",
+      "powsybl_import.base_mva", "powsybl_import.hvdc_mode", "powsybl_import.slack_ids", "powsybl_import.multi_slack", "powsybl_import.remote_regulation",
       "short_circuit.c_factor", "short_circuit.sweep_method", "short_circuit.takahashi_min_buses",
       "matpower_export.write_solution",
       "performance.enabled", "performance.level", "performance.print_to_console", "performance.write_to_logfile", "performance.show_allocations", "performance.show_iteration_table", "performance.compact_logging", "performance.representative_warmup_runs", "performance.compare_cold_warm", "performance.skip_reference_comparison", "performance.skip_expensive_diagnostics", "performance.skip_branch_neighborhood_report", "performance.max_diagnostic_rows",
@@ -185,7 +185,7 @@ function test_configuration_version_scope_and_case_precedence()
     @test cfg0.model.bus_shunt_model === :voltage_dependent_injection
     @test cfg0.model.tap_changer_model === :impedance_correction
     @test cfg0.runtime.case == "case57.m"
-    # ONE alias warning per file, not one per key (2026-09-07): a user file
+    # ONE alias warning per file, not one per key: a user file
     # with six legacy names produced six boxed warnings at every start, which
     # is what a Windows start reported as "still all those warnings". The
     # information that matters is WHICH names are still in use, and that fits
@@ -253,7 +253,7 @@ function test_configuration_version_scope_and_case_precedence()
     @test occursin("not case scope", sprint(showerror, err_scope))
     # the canonical .scf.json double extension binds <stem>.config.yaml
     @test basename(Sparlectra.case_config_path(joinpath(dir, "case57.scf.json"))) == "case57.config.yaml"
-    # shared stem (Web UI run a3aa700b): an older case57.config.yaml written
+    # shared stem (a Web UI run): an older case57.config.yaml written
     # for case57.m is still read for the .m case, does not apply to the SCF
     # case with the same stem, and moves to its own name when the SCF case
     # writes its file
@@ -865,7 +865,19 @@ function test_configuration_every_key_arrives()
         println(io, "config_version: 1")
         Sparlectra._write_yaml_dict(io, nest_value(path, value isa Symbol ? String(value) : value))
       end
-      return Sparlectra.load_sparlectra_config(file; reload = true)
+      # the nesting variants below include one that is no key of the file;
+      # the loader warns about an unknown key and drops it (never an
+      # error), so that warning is captured here and only
+      # anything else is re-emitted for the runner's warning check
+      logger = Test.TestLogger(min_level = Logging.Warn)
+      cfg = Logging.with_logger(logger) do
+        Sparlectra.load_sparlectra_config(file; reload = true)
+      end
+      for record in logger.logs
+        occursin("Unknown Sparlectra configuration key", record.message) && continue
+        @warn record.message
+      end
+      return cfg
     end
     read_key(cfg, path) = begin
       cur = cfg
@@ -973,7 +985,7 @@ function test_configuration_webui_keys_both_directions()
     # collect FIRST, filter second. WEBUI_OPTION_SPECS is an NTuple of 97
     # elements: Julia unrolls tuple iteration, and filtering makes the result
     # length unknown, so a comprehension straight off the tuple ends in
-    # Base.grow_to! over a 97-way unrolled generator. Measured 2026-09-07,
+    # Base.grow_to! over a 97-way unrolled generator. Measured,
     # that single line cost 5.61 s of the 5.93 s this group spent inferring
     # generator machinery, and it was the largest item in the whole group.
     # collect() on a tuple with a concrete eltype knows both length and type,
@@ -1003,12 +1015,6 @@ function test_configuration_webui_keys_both_directions()
     # Without this rule a key can be declared editable and never surface,
     # which is exactly what happened to power_flow.tol_MW.
     fieldless_reasons = Dict(
-      "powsybl_import.base_mva" => "PowSyBl import scope, YAML, case sidecar and API only; no Web UI control in 0.19.0",
-      "powsybl_import.hvdc_mode" => "PowSyBl import scope, YAML, case sidecar and API only; no Web UI control in 0.19.0",
-      "powsybl_import.slack_ids" => "PowSyBl import scope, YAML, case sidecar and API only; no Web UI control in 0.19.0",
-      "powsybl_import.multi_slack" => "PowSyBl import scope, YAML, case sidecar and API only; no Web UI control in 0.19.0",
-      "powsybl_import.remote_regulation" => "PowSyBl import scope, YAML, case sidecar and API only; no Web UI control in 0.19.0",
-      "powsybl_import.python_exe" => "PowSyBl import scope, YAML, case sidecar and API only; no Web UI control in 0.19.0",
       "matpower_import.apply_branch_kind" => "import detail, set per case in the case configuration file",
       "matpower_import.apply_branch_names" => "import detail, set per case in the case configuration file",
       "matpower_import.import_for001_contingencies" => "DTF import detail, chosen by the FOR002 selection on the Case page",
@@ -1056,7 +1062,7 @@ function test_configuration_form_defaults()
     @test SparlectraApp._webui_option_default("gen_passive_sigma") == 0.05
     @test SparlectraApp._webui_option_default("gen_seed") == 42
     # and the ones that DO have a configuration key take it from there.
-    # max_eliminations joined them after the review of 2026-09-06: a form
+    # max_eliminations joined them after review: a form
     # field whose value no configuration key can set is exactly the
     # asymmetry this task removed, so the elimination budget became
     # state_estimation.max_eliminations instead of a service literal.
@@ -1070,7 +1076,10 @@ function test_configuration_form_defaults()
 end
 
 function test_configuration_removed_diagnostics_rejected()
-  @testset "Removed diagnostics keys are rejected" begin (function ()
+  @testset "Removed diagnostics keys warn and are ignored" begin (function ()
+    # a stored file that still carries one of the removed diagnostics
+    # switches loads; the key is warned about by name and dropped
+    # (unknown or obsolete keys never fail a run)
     removed_diag_keys = (
       "matpower_reference",
       "branch_shift_conventions",
@@ -1083,8 +1092,10 @@ function test_configuration_removed_diagnostics_rejected()
     )
     for key in removed_diag_keys
       cfg_bad = test_scratch_path(".yaml")
-      write(cfg_bad, "diagnostics:\n  $(key): true\n")
-      @test_throws ArgumentError Sparlectra.load_sparlectra_config(cfg_bad; reload = true)
+      write(cfg_bad, "diagnostics:\n  $(key): true\n  log_effective_config: true\n")
+      cfg = @test_logs (:warn, Regex("Unknown Sparlectra configuration key diagnostics\\.$(key) is ignored")) match_mode = :any Sparlectra.load_sparlectra_config(cfg_bad; reload = true)
+      @test cfg.diagnostics.log_effective_config
+      @test !hasproperty(cfg.diagnostics, Symbol(key))
     end
   end)() end
   return nothing
@@ -1104,6 +1115,14 @@ function test_configuration_stored_survives_removed_keys()
     # as an override it follows the normal unknown-key path: it is no longer
     # a config key and not GUI-editable either
     @test_throws ArgumentError Sparlectra.validate_gui_config_overrides(Dict{String,Any}("webui.warmup" => true))
+    # the PythonCall extension is gone (0.20.0) and with it
+    # powsybl_import.python_exe, which the 0.19.0 Web UI wrote into every
+    # saved configuration and case sidecar; those files keep loading
+    write(cfg_path, "powsybl_import:\n  python_exe: \"\"\n  remote_regulation: remote\n")
+    cfg = Sparlectra.load_sparlectra_config(cfg_path; reload = true)
+    @test cfg.powsybl.remote_regulation == :remote
+    @test !hasproperty(cfg.powsybl, :python_exe)
+    @test_throws ArgumentError Sparlectra.validate_gui_config_overrides(Dict{String,Any}("powsybl_import.python_exe" => ""))
   end)() end
   return nothing
 end
@@ -1203,7 +1222,7 @@ function test_configuration_refresh()
       @test occursin("enforcement_mode: $(canonical)", result.refreshed_text)
     end
 
-    # regression 2026-09-02: refresh on a version-0 file must MOVE the
+    # regression: refresh on a version-0 file must MOVE the
     # aliased model keys with their values, not stamp config_version 1 and
     # leave them behind (that wrote files the loader then rejected as
     # unknown keys)
@@ -1315,7 +1334,7 @@ end
 
 function test_configuration_deprecated_diagnostics_warn()
   @testset "Deprecated diagnostics.* keys load with a warning, not an error" begin (function ()
-    # Regression (2026-07-30): stored user/webui configs still carry the old
+    # Regression: stored user/webui configs still carry the old
     # diagnostics.console_* duplicates of output.*; after their removal from
     # the default file the unknown-key validation rejected every such config
     # ("Unknown Sparlectra configuration key: diagnostics.console_diagnostics")
@@ -1325,10 +1344,18 @@ function test_configuration_deprecated_diagnostics_warn()
     cfg = @test_logs (:warn, r"diagnostics\.console_diagnostics is deprecated") (:warn, r"diagnostics\.console_max_rows is deprecated") match_mode = :any Sparlectra.load_sparlectra_config(p; reload = true)
     @test cfg isa Sparlectra.SparlectraConfig
     @test cfg.diagnostics.log_effective_config
-    # genuinely unknown keys still fail loudly
+    # a genuinely unknown key in a stored file is a warning naming the key,
+    # never a failure; the file's other values
+    # load, the unknown key is dropped
     bad = test_scratch_path(".yaml")
-    write(bad, "diagnostics:\n  no_such_key: 1\n")
-    @test_throws ArgumentError Sparlectra.load_sparlectra_config(bad; reload = true)
+    write(bad, "diagnostics:\n  no_such_key: 1\n  log_effective_config: true\n")
+    bad_cfg = @test_logs (:warn, r"Unknown Sparlectra configuration key diagnostics\.no_such_key is ignored") match_mode = :any Sparlectra.load_sparlectra_config(bad; reload = true)
+    @test bad_cfg.diagnostics.log_effective_config
+    # a programmatic override with an unknown key is still an error: that is
+    # a call, not a stored file
+    clean = test_scratch_path(".yaml")
+    write(clean, "diagnostics:\n  log_effective_config: true\n")
+    @test_throws ArgumentError Sparlectra.load_sparlectra_config(clean; reload = true, overrides = Dict{String,Any}("diagnostics" => Dict{String,Any}("no_such_key" => 1)))
     # the config-refresh path migrates stored files by dropping the dead keys
     # (scoped to the diagnostics block — output.console_diagnostics is the
     # legitimate owner and stays in the refreshed text)

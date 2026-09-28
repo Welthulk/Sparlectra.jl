@@ -119,7 +119,7 @@ function compareWithSV(result::CGMESImportResult)
   # One offset PER ISLAND, not one for the whole delivery. An angle is
   # defined up to a constant per island, so a single global offset fits the
   # main island and shifts every other island instead of aligning it.
-  # Measured on the four-island FullGrid run 22b897e7 (2026-09-06): the
+  # Measured on the four-island FullGrid run: the
   # two-bus island around the promoted reference moved by 3.3 degrees when
   # the per-island offset replaced the global one. The large deltas on that
   # run are NOT explained by this, they sit inside the MAIN island (see the
@@ -134,8 +134,8 @@ function compareWithSV(result::CGMESImportResult)
   # the island detection lives in the parent. An unqualified call compiles
   # and then throws UndefVarError at RUNTIME, and a silent catch turned that
   # into "one global offset" without any sign - the per-island alignment was
-  # dead on arrival for exactly this reason (found 2026-09-06 by reproducing
-  # run 22b897e7 instead of trusting the earlier recalculation).
+  # dead on arrival for exactly this reason (found by reproducing
+  # the run instead of trusting the earlier recalculation).
   island_of = try
     Sparlectra.detect_ac_islands(net).bus_to_island
   catch err
@@ -225,10 +225,12 @@ function _compareFlowsWithSV(result::CGMESImportResult)
       br = get(branch_of, idx, nothing)
       (br === nothing || br.status == 0) && continue
       ys = inv(br.r_pu + im * br.x_pu)
-      ysh2 = (br.g_pu + im * br.b_pu) / 2
+      # per-terminal shunt arms (0.20.0), the from arm behind the tap
+      ysh_from = Sparlectra._branch_y0_from(br)
+      ysh_to = Sparlectra._branch_y0_to(br)
       tr = br.ratio == 0.0 ? 1.0 + 0im : br.tap_ratio * cis(deg2rad(br.phase_shift_deg))
       Vf, Vt = V[br.fromBus], V[br.toBus]
-      Smodel = side == :from ? Vf * conj(((ys + ysh2) / abs2(tr)) * Vf - (ys / conj(tr)) * Vt) * net.baseMVA : Vt * conj((ys + ysh2) * Vt - (ys / tr) * Vf) * net.baseMVA
+      Smodel = side == :from ? Vf * conj(((ys + ysh_from) / abs2(tr)) * Vf - (ys / conj(tr)) * Vt) * net.baseMVA : Vt * conj((ys + ysh_to) * Vt - (ys / tr) * Vf) * net.baseMVA
       kind = side == :from ? :branch_from : :branch_to
       push!(rows, (kind = kind, name = name, bus = something(bus, "?"), sv_p = p_sv, sv_q = q_sv, p = real(Smodel), q = imag(Smodel), dp = real(Smodel) - p_sv, dq = imag(Smodel) - q_sv))
     elseif eq.class in _LOAD_CLASSES

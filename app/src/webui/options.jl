@@ -111,7 +111,6 @@ const WEBUI_OPTION_SPECS = WebUIOptionSpec[
   WebUIOptionSpec("powsybl_import.multi_slack", "powsybl_import_multi_slack", Bool, :checkbox, true, (), :expert, :adapter, true),
   WebUIOptionSpec("powsybl_import.slack_ids", "powsybl_import_slack_ids", String, :text, "", (), :expert, :adapter, true),
   WebUIOptionSpec("powsybl_import.base_mva", "powsybl_import_base_mva", Float64, :number, 100.0, (), :expert, :adapter, true),
-  WebUIOptionSpec("powsybl_import.python_exe", "powsybl_import_python_exe", String, :text, "", (), :expert, :adapter, true),
   WebUIOptionSpec("matpower_import.matpower_dcline_mode", "matpower_import_dcline_mode", String, :select, "pf_injections", MATPOWER_DCLINE_MODE_VALUES, :basic, :adapter, true),
   WebUIOptionSpec("model.auto_profile", "matpower_import_auto_profile", String, :select, "off", MATPOWER_AUTO_PROFILE_VALUES, :expert, :adapter, true),
   WebUIOptionSpec("matpower_import.ratio", "matpower_import_ratio", String, :select, "normal", MATPOWER_RATIO_VALUES, :basic, :adapter, true),

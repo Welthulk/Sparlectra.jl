@@ -41,7 +41,7 @@ No installation required, the workshop notebooks run on Google Colab:
 | **Tour, basic**: first network, model editing, Q-limits, slack types, OLTC and Q(U) control | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour.ipynb) |
 | **Tour, advanced**: remote voltage control, HVDC link, state estimation, FACTS incl. UPFC, N-1, threaded sweeps | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour_advanced.ipynb) |
 | **Transformer control**: parallel units, master/slave groups, CGMES RegulatingControl | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour_control.ipynb) |
-| **CGMES**: anatomy of a delivery, bus-branch and node-breaker import, SV validation, export round trip | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour_cgmes.ipynb) |
+| **Foreign formats**: CGMES (anatomy of a delivery, bus-branch and node-breaker import, SV validation, export round trip), PowSyBl IIDM compared with OpenLoadFlow, a DTF deck with its outage records | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour_cgmes.ipynb) |
 | **Slack types and short circuit**: ideal, external grid, distributed slack, IEC 60909-0 currents | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_slack_short_circuit.ipynb) |
 | **Distributed slack**: participation weights, normalization, fallback | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_distributed_slack.ipynb) |
 | **Transformer taps**: OLTC, PST, X(α) characteristic, 3WT star equivalent | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_transformers.ipynb) |
@@ -150,7 +150,7 @@ Embedding Sparlectra in your own tooling (scripts, sysimage, API): [integration 
 
 ## Local Web UI
 
-Case management, run history and results in the browser. Cases can be taken from the local cache, uploaded (MATPOWER, DTF, CGMES ZIP, PowSyBl IIDM or table bundle) or fetched by name.
+Case management, run history and results in the browser. Cases can be taken from the local cache, uploaded (MATPOWER, DTF, CGMES ZIP, PowSyBl IIDM `.xiidm`) or fetched by name; three PowSyBl networks ship under `data/powsybl`. IIDM files are read in Julia, no Python is needed.
 
 ```@raw html
 <a href="assets/webui_v0.10.0.png"><img src="assets/webui_v0.10.0.png" alt="Sparlectra Web UI: case, settings, run and result" /></a>

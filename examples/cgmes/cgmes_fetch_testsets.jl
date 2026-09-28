@@ -37,7 +37,7 @@ using SHA
 using Printf
 using p7zip_jll
 
-# Primary URL redirects to eepublicdownloads.entsoe.eu (verified 2026-07-27,
+# Primary URL redirects to eepublicdownloads.entsoe.eu (verified,
 # ~22 MB). The legacy docstore.entsoe.eu host no longer resolves.
 const CGMES_TESTSET_URLS = [
   "https://www.entsoe.eu/Documents/CIM_documents/Grid_Model_CIM/TestConfigurations_packageCASv2.0.zip",

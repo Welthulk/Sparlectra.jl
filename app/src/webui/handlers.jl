@@ -1168,7 +1168,7 @@ end
 # solve, and the run form grays the generator toggle out under the apslf
 # solver; a disabled control is dropped from the POST, so an earlier
 # `apslf_start.enabled = true` survived the save and the next run failed
-# (run f63b75c5). The solver choice wins: saving solver = apslf switches the
+# (a Web UI run). The solver choice wins: saving solver = apslf switches the
 # generator off in the same save.
 function _webui_resolve_solver_start_conflict!(updates::AbstractDict)
   get(updates, "power_flow.solver", nothing) == "apslf" && (updates["power_flow.apslf_start.enabled"] = false)
@@ -1289,7 +1289,11 @@ function handle_settings_save(form::AbstractDict; output_root::AbstractString = 
     # the State Estimation section's own "Save settings" button (issue
     # #377): back to the Runs page, its SE section reads `message` (not
     # `save_message`/`import_message`, see _webui_se_form_state).
-    msg -> _webui_redirect(string("/powerflow", isempty(case) ? "?" : string("?casefile=", _webui_urlencode(case), "&"), "message=", _webui_urlencode(msg)))
+    # the chosen measurement set travels along and the page lands on the
+    # section, so a save never looks like a lost choice
+    chosen_meas = strip(String(something(_webui_form_value(form, "measurement_file", ""), "")))
+    meas_query = isempty(chosen_meas) ? "" : string("&measurement_file=", _webui_urlencode(basename(chosen_meas)))
+    msg -> _webui_redirect(string("/powerflow", isempty(case) ? "?" : string("?casefile=", _webui_urlencode(case), "&"), "message=", _webui_urlencode(msg), meas_query, "#state-estimation"))
   else
     msg -> _webui_redirect(string("/powerflow/settings", isempty(case) ? "?" : string("?casefile=", _webui_urlencode(case), "&"), "save_message=", _webui_urlencode(msg)))
   end
@@ -1315,6 +1319,18 @@ function handle_settings_save(form::AbstractDict; output_root::AbstractString = 
     raw === nothing && continue
     form_updates[field] = _webui_parse_form_value(raw, spec.value_type, field)
   end
+  # the two staged knees are one statement: a start above the end describes
+  # no down-weighting curve and the next staged run would refuse it, so the
+  # save refuses it here, where the two fields are still on the screen
+  if haskey(form_updates, "se_robust_k1") && haskey(form_updates, "se_robust_k2")
+    knee_from = form_updates["se_robust_k1"]
+    knee_full = form_updates["se_robust_k2"]
+    if knee_from isa Real && knee_full isa Real && !(knee_from > 0 && knee_full >= knee_from)
+      knee_message = "\"down-weight from |r|/sigma\" ($(knee_from)) must be positive and not above \"full down-weight at |r|/sigma\" ($(knee_full)); nothing was saved."
+      record_webui_operation!(operation_log, "settings_save_failed"; route, method = "POST", user_action = true, casefile = case, target, status = "rejected", message = knee_message)
+      return back("Could not save settings: " * knee_message)
+    end
+  end
   # case_format names the input format rather than configuring the run, so
   # (like the Web UI's other non-spec form field) it has no WebUIOptionSpec
   # and is not looped over above; the Case page is the only submitter today.
@@ -1322,6 +1338,11 @@ function handle_settings_save(form::AbstractDict; output_root::AbstractString = 
   # scf and pgm name the same reader; both are accepted so the choice made
   # in the form survives the save (see _normalize_case_format)
   case_format_raw in ("auto", "matpower", "dtf_for001", "cgmes", "scf", "pgm") && (form_updates["case_format"] = case_format_raw)
+  # the SE section's save carries the measurement-set choice (a file name,
+  # no option spec of its own): kept in the form block so the section arms
+  # that set again on the next load (it was never stored)
+  chosen_set = strip(String(something(_webui_form_value(form, "measurement_file", ""), "")))
+  isempty(chosen_set) || (form_updates["measurement_file"] = basename(chosen_set))
   if target == "this_case"
     isempty(case) && return back(return_to == "case" ? "Select a case before saving case options." : "Select a case first (Case page), or save to the configuration file.")
     source = isabspath(case) ? normpath(case) : _webui_resolve_case_profile_source(case; case_directory = directory)
@@ -1333,7 +1354,7 @@ function handle_settings_save(form::AbstractDict; output_root::AbstractString = 
     end
     _webui_resolve_solver_start_conflict!(keep)
     # the merged case configuration must build NOW: an incompatible pair
-    # saved today failed the next run instead (run f63b75c5, apslf_start
+    # saved today failed the next run instead (a Web UI run: apslf_start
     # kept from an earlier save under a newly chosen apslf solver)
     candidate = merge(try load_case_config(source) catch; Dict{String,Any}() end, keep)
     try
@@ -1513,7 +1534,9 @@ function handle_powerflow_config_editor_save(form::AbstractDict; operation_log::
     mkpath(parent)
     tmp_path = tempname(parent; cleanup = false)
     write(tmp_path, _yaml_dict_text(parsed))
-    _load_and_validate_config(DEFAULT_SPARLECTRA_CONFIG_PATH, tmp_path; cli_overrides = Dict{String,Any}(), overrides = Dict{String,Any}())
+    # strict: a typo in the text being edited is rejected here, before the
+    # file is written; a stored file loads with unknown keys warned and dropped
+    _load_and_validate_config(DEFAULT_SPARLECTRA_CONFIG_PATH, tmp_path; cli_overrides = Dict{String,Any}(), overrides = Dict{String,Any}(), strict_keys = true)
     load_sparlectra_config(tmp_path; reload = true)
     # the keys whose values the editor changed are the user's from now on
     # (the template follow-up at start leaves them alone)
@@ -1710,8 +1733,15 @@ function handle_powerflow_hard_reset(run_id::AbstractString)::SparlectraWebUIRes
   return _webui_html(render_webui_hard_reset())
 end
 
-"""The Web UI manual page (`/help`)."""
-handle_webui_help_manual()::SparlectraWebUIResponse = _webui_html(render_webui_help_manual())
+"""The in-app help pages: the user help (`/help`) and the reference (`/help/reference`)."""
+handle_webui_help_manual(; page::Symbol = :help)::SparlectraWebUIResponse = _webui_html(render_webui_help_manual(; page))
+
+"""
+The help search (`/help/search?q=...`): the page with the hits, or with
+`fragment = true` the hit list alone, which the search while typing puts
+into the page.
+"""
+handle_webui_help_search(query::AbstractString; fragment::Bool = false)::SparlectraWebUIResponse = _webui_html(fragment ? _webui_help_search_results_html(query) : render_webui_help_search(query))
 
 """The in-app help page of a registry topic (`/help/<topic>`); an unknown topic is a 404."""
 function handle_webui_help(topic::AbstractString)::SparlectraWebUIResponse
@@ -2003,7 +2033,34 @@ function _webui_se_form_state(query::AbstractDict; output_root::AbstractString, 
   # bound set exists; without either, the page asks instead of arming a
   # foreign set.
   convention_set = isempty(selected) ? "" : string(first(splitext(selected)), ".measurements.csv")
-  selected_meas = isempty(selected) ? "" : (convention_set in bound_sets ? convention_set : (!isempty(bound_sets) ? first(bound_sets) : ""))
+  # among several bound sets without the convention file the NEWEST wins
+  # (generated sets carry a time stamp since 0.20.0, so the last one
+  # generated is the one the user means), not the alphabetically first
+  newest_bound = isempty(bound_sets) ? "" : bound_sets[argmax([mtime(joinpath(directory, name)) for name in bound_sets])]
+  selected_meas = isempty(selected) ? "" : (convention_set in bound_sets ? convention_set : newest_bound)
+  # a set the user just wrote (generate, add noise) arrives as an explicit
+  # query key from the redirect and outranks the convention: otherwise the
+  # noisy copy of a set sits next to its noise-free original and the run
+  # form keeps arming the original (J = 0 with 82 dof)
+  requested_meas = basename(String(get(query, "measurement_file", "")))
+  # "Save settings for this case" stores the measurement-set choice in the
+  # case profile (form block key `measurement_file`); it was written but
+  # never read back, so the page snapped to its own rule after every save.
+  # The saved choice outranks the convention and the newest
+  # set; the explicit query key of a redirect (a set just written) outranks
+  # the saved choice. Decided HERE, before the set info below is read.
+  saved_meas = ""
+  if !isempty(selected)
+    loaded_early = _webui_load_case_settings(output_root, joinpath(directory, selected); case_directory = directory)
+    loaded_early isa AbstractDict && (saved_meas = basename(String(get(loaded_early, "measurement_file", ""))))
+  end
+  if !isempty(saved_meas) && !(saved_meas in measurements)
+    # the saved choice points at a set that is gone (deleted, renamed):
+    # fall back to the next rule and say so, never arm a missing file
+    message = string(message, isempty(message) ? "" : " ", "The saved measurement set ", saved_meas, " is no longer in the case directory; ", isempty(selected_meas) ? "no set is armed" : string(selected_meas, " is armed instead"), ".")
+  end
+  (!isempty(saved_meas) && saved_meas in measurements) && (selected_meas = saved_meas)
+  (!isempty(requested_meas) && requested_meas in measurements) && (selected_meas = requested_meas)
   set_info = isempty(selected_meas) ? String[] : _webui_measurement_set_comments(joinpath(directory, selected_meas))
   # the case-binding comment renders as its own line, not inside the table
   set_case = isempty(selected_meas) ? "" : get(meas_case, selected_meas, "")
@@ -2368,7 +2425,10 @@ function handle_se_generate_measurements(form::AbstractDict; output_root::Abstra
   # the set until that many rows are critical, never past observability
   gen_critical = something(tryparse(Int, String(_webui_form_value(form, "gen_critical_count", "0"))), -1)
   gen_critical >= 0 || return redirectq("critical measurements must be zero or a positive integer")
-  out_name = string(splitext(basename(casefile))[1], ".measurements.csv")
+  # every generation writes a NEW file, stamped with the wall-clock time,
+  # so a fresh set never overwrites the one a run just used and the noisy
+  # copy of a set keeps standing next to it
+  out_name = _webui_stamped_measurement_name(directory, string(splitext(basename(casefile))[1], ".measurements"))
   out_path = joinpath(directory, out_name)
   # the actual import/solve/generation lives in the SE service layer
   # (_se_generate_measurement_set): the Web UI layer never calls a solver
@@ -2398,7 +2458,7 @@ function handle_se_generate_measurements(form::AbstractDict; output_root::Abstra
     record_webui_operation!(operation_log, "case_settings_save_failed"; route = "/stateestimation/generate-measurements", method = "POST", user_action = true, message = sprint(showerror, err))
   end
   sigma_note = ", sigma U=$(sigma_u_pct)% P=$(sigma_p_pct)% Q=$(sigma_q_pct)%$(include_i ? " I=$(sigma_i_pct)%" : "") of reading"
-  return redirectq("generated $(out_name) ($(gen.rows) rows, $(gen.noisy ? "noisy" : "noise-free")$(sigma_note)$(gen.truth_note)$(gen.flow_note)$(gen.passive_note)$(gen.critical_note)$(gen.gross_note)$(gen.tap_note)$(gen.island_note))")
+  return _webui_se_redirect(casefile, "generated $(out_name) ($(gen.rows) rows, $(gen.noisy ? "noisy" : "noise-free")$(sigma_note)$(gen.truth_note)$(gen.flow_note)$(gen.passive_note)$(gen.critical_note)$(gen.gross_note)$(gen.tap_note)$(gen.island_note))"; extra_query = gq * "&measurement_file=" * _webui_urlencode(out_name))
 end
 
 """
@@ -2425,7 +2485,7 @@ function handle_se_add_noise(form::AbstractDict; output_root::AbstractString = "
   isfile(case_path) || return back("Case file not found: $(casefile)")
   source = strip(String(something(_webui_form_value(form, "measurement_file", ""), "")))
   seed = something(tryparse(Int, strip(String(something(_webui_form_value(form, "noise_seed", ""), "")))), 42)
-  out_name = string(first(splitext(basename(casefile))), ".noisy.measurements.csv")
+  out_name = _webui_stamped_measurement_name(directory, string(first(splitext(basename(casefile))), ".noisy"))
   out_path = joinpath(directory, out_name)
   rows = try
     # the session's configuration file plus the case's own settings, so the
@@ -2449,7 +2509,38 @@ function handle_se_add_noise(form::AbstractDict; output_root::AbstractString = "
     return back("Could not add noise: $(first(split(sprint(showerror, err), '\n')))")
   end
   record_webui_operation!(operation_log, "se_measurements_noised"; route = "/stateestimation/add-noise", method = "POST", user_action = true, casefile = casefile, measurement_file = out_name, rows = rows, seed = seed)
-  return back("Wrote $(out_name): $(rows) rows, each perturbed with its own sigma (seed $(seed)). No power flow was computed.")
+  return _webui_se_redirect(casefile, "Wrote $(out_name): $(rows) rows, each perturbed with its own sigma (seed $(seed)). No power flow was computed. The set is selected for the next run."; extra_query = "&measurement_file=" * _webui_urlencode(out_name))
+end
+
+"""
+    handle_se_measurement_delete(form; output_root, application_root, case_directory, operation_log) -> response
+
+POST /stateestimation/measurements/delete: removes one measurement set
+of the case directory (a plain file name of a `.csv` whose first line is
+the measurement marker; no path components, nothing outside the
+directory, never a case file). Redirects back to the SE section of the
+selected case with the outcome as the message.
+"""
+function handle_se_measurement_delete(form::AbstractDict; output_root::AbstractString = "results/powerflow_service", application_root::AbstractString = _webui_application_root(), case_directory = nothing, operation_log::AbstractString = output_root)
+  directory = _webui_case_directory(; case_directory = case_directory, application_root = application_root, output_root = output_root)
+  casefile = String(_webui_form_value(form, "casefile", ""))
+  back(msg) = _webui_se_redirect(casefile, msg)
+  requested = strip(String(something(_webui_form_value(form, "measurement_file", ""), "")))
+  isempty(requested) && return back("Select a measurement set to delete.")
+  name = basename(requested)
+  (name == requested && !occursin(r"[\\/]", requested) && lowercase(splitext(name)[2]) == ".csv") || return back("Invalid measurement file name.")
+  path = normpath(joinpath(directory, name))
+  dirname(path) == normpath(directory) || return back("Invalid measurement file name.")
+  isfile(path) || return back("Measurement file not found: $(name)")
+  _webui_is_measurement_csv(path) || return back("$(name) is not a measurement set; only measurement sets can be deleted here.")
+  try
+    rm(path)
+  catch err
+    record_webui_operation!(operation_log, "se_measurements_delete_failed"; route = "/stateestimation/measurements/delete", method = "POST", user_action = true, casefile = casefile, measurement_file = name, message = sprint(showerror, err))
+    return back("Could not delete $(name): $(first(split(sprint(showerror, err), '\n')))")
+  end
+  record_webui_operation!(operation_log, "se_measurements_deleted"; route = "/stateestimation/measurements/delete", method = "POST", user_action = true, casefile = casefile, measurement_file = name)
+  return back("Deleted $(name).")
 end
 
 """

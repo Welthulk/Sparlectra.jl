@@ -277,7 +277,7 @@ function run_webui_fast_tests()
             # the solver choice wins over a generator toggle saved earlier: the
             # disabled toggle is not posted, so without this the sidecar kept
             # apslf_start.enabled = true under solver = apslf and the next run
-            # failed (run f63b75c5)
+            # failed (a Web UI run)
             resp_gen = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "sp_case14.scf.json", "settings_target" => "this_case", "power_flow_apslf_start_enabled" => "true"); output_root=root, runtime=rt)
             @test resp_gen.status in (302, 303)
             @test Sparlectra.load_case_config(joinpath(cache, "sp_case14.scf.json"))["power_flow.apslf_start.enabled"] === true
@@ -290,6 +290,13 @@ function run_webui_fast_tests()
             resp_bad = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "sp_case14.scf.json", "settings_target" => "this_case", "power_flow_solver" => "rectangular", "power_flow_apslf_start_enabled" => "true", "power_flow_dc_seed_unconditional" => "true"); output_root=root, runtime=rt)
             @test occursin("Could not save settings for this case", SparlectraApp._webui_urldecode(Dict(resp_bad.headers)["Location"]))
             @test Sparlectra.load_case_config(joinpath(cache, "sp_case14.scf.json"))["power_flow.solver"] == "apslf"
+            # the staged knees out of order (start above end) are refused at
+            # save time as well, in the words of the form, and nothing is written
+            resp_knees = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "sp_case14.scf.json", "settings_target" => "this_case", "se_robust_k1" => "10", "se_robust_k2" => "6"); output_root=root, runtime=rt)
+            knees_note = SparlectraApp._webui_urldecode(Dict(resp_knees.headers)["Location"])
+            @test occursin("Could not save settings", knees_note)
+            @test occursin("down-weight from |r|/sigma", knees_note)
+            @test !occursin("se_robust_k1: 10", read(Sparlectra.case_config_path(joinpath(cache, "sp_case14.scf.json")), String))
             SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "sp_case14.scf.json", "settings_target" => "this_case", "power_flow_solver" => "rectangular"); output_root=root, runtime=rt)
             # the flat start is the one start switch: the saved start settings
             # stay as posted, the run switches them off while the flat start is
@@ -372,7 +379,7 @@ function run_webui_fast_tests()
         end)() end
 
         @testset "the settings page shows the case's saved values; the configuration file view is a link" begin (function ()
-            # Decision 2026-09-25, reversing the earlier default: with a case
+            # Reversing the earlier default: with a case
             # selected every page shows the values a run of this case will use,
             # so the values just saved are visible right after "Saved settings
             # for this case" (before, the page showed the configuration file's
@@ -689,13 +696,81 @@ function run_webui_fast_tests()
             @test occursin(">Runs<", main_page)
             @test !occursin(">Network analysis<", main_page)
             @test !occursin(">New run<", main_page)
+            # two writes within one second get distinct names (a counter),
+            # and the stamped form is what the generator and the noise action use
+            stem_dir = mktempdir()
+            @test occursin(r"^x\.measurements\.\d{8}-\d{6}\.csv$", SparlectraApp._webui_stamped_measurement_name(stem_dir, "x.measurements"))
+            touch(joinpath(stem_dir, "x.measurements.20260927-120000.csv"))
+            @test SparlectraApp._webui_stamped_measurement_name(stem_dir, "x.measurements"; stamp = "20260927-120000") == "x.measurements.20260927-120000-2.csv"
+            touch(joinpath(stem_dir, "x.measurements.20260927-120000-2.csv"))
+            @test SparlectraApp._webui_stamped_measurement_name(stem_dir, "x.measurements"; stamp = "20260927-120000") == "x.measurements.20260927-120000-3.csv"
+            # the written set's name comes back in the redirect: every write is a
+            # new, time-stamped file, so the tests take the name
+            # from there instead of assuming it
+            written_set(response) = SparlectraApp._webui_urldecode(String(match(r"measurement_file=([^&#]+)", Dict(response.headers)["Location"]).captures[1]))
+            # a regeneration that the steps below then read: the written file
+            # replaces the previous one of the test (which is removed)
+            regenerate(form) = begin
+                r = SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/generate-measurements", form; output_root=root, runtime=rt)
+                isfile(mfile) && rm(mfile)
+                n = written_set(r)
+                (joinpath(cases, n), n)
+            end
             gen = SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/generate-measurements", Dict{String,Any}("casefile" => "warmup_casePST.m"); output_root=root, runtime=rt)
             @test gen.status == 303
-            mfile = joinpath(cases, "warmup_casePST.measurements.csv")
+            mname = written_set(gen)
+            @test occursin(r"^warmup_casePST\.measurements\.\d{8}-\d{6}(-\d+)?\.csv$", mname)
+            mfile = joinpath(cases, mname)
             @test isfile(mfile)
             @test SparlectraApp._webui_is_measurement_csv(mfile)
+            # the written set is armed for the next run: the redirect names it
+            # and the page selects it (a noisy copy next to its
+            # noise-free original was otherwise never the armed one)
+            noised = SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/add-noise", Dict{String,Any}("casefile" => "warmup_casePST.m", "measurement_file" => mname); output_root=root, runtime=rt)
+            @test noised.status == 303
+            noisy_location = Dict(noised.headers)["Location"]
+            nname = written_set(noised)
+            @test occursin(r"^warmup_casePST\.noisy\.\d{8}-\d{6}(-\d+)?\.csv$", nname)
+            @test isfile(joinpath(cases, nname))
+            # a browser never sends the #fragment of a redirect target
+            noisy_page = String(SparlectraApp.route_sparlectra_webui("GET", first(split(noisy_location, '#')), Dict{String,String}(); output_root=root, runtime=rt).body)
+            @test occursin("<option value=\"$(nname)\" selected>", noisy_page)
+            @test occursin("<option value=\"$(mname)\">", noisy_page)
+            @test occursin("/stateestimation/measurements/delete", noisy_page)
+            # deleting a set: measurement files only, plain names only
+            del_bad = SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/measurements/delete", Dict{String,Any}("casefile" => "warmup_casePST.m", "measurement_file" => "../evil.csv"); output_root=root, runtime=rt)
+            @test occursin("Invalid", SparlectraApp._webui_urldecode(Dict(del_bad.headers)["Location"]))
+            del_case = SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/measurements/delete", Dict{String,Any}("casefile" => "warmup_casePST.m", "measurement_file" => "warmup_casePST.m"); output_root=root, runtime=rt)
+            @test isfile(joinpath(cases, "warmup_casePST.m"))
+            @test occursin("Invalid", SparlectraApp._webui_urldecode(Dict(del_case.headers)["Location"]))
+            del_ok = SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/measurements/delete", Dict{String,Any}("casefile" => "warmup_casePST.m", "measurement_file" => nname); output_root=root, runtime=rt)
+            @test del_ok.status == 303
+            @test occursin("Deleted $(nname)", SparlectraApp._webui_urldecode(Dict(del_ok.headers)["Location"]))
+            @test !isfile(joinpath(cases, nname))
+            # "Save settings for this case" from the SE section keeps the chosen
+            # set: the redirect names it and lands on the section, and the
+            # saved choice outranks a newer bound set on a plain page load
+            # (the choice was written but never read back)
+            saved = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "warmup_casePST.m", "settings_target" => "this_case", "return_to" => "runs", "measurement_file" => mname, "se_flatstart" => "true"); output_root=root, runtime=rt)
+            @test saved.status == 303
+            saved_location = Dict(saved.headers)["Location"]
+            @test occursin("measurement_file=$(SparlectraApp._webui_urlencode(mname))", saved_location)
+            @test endswith(saved_location, "#state-estimation")
+            newer = joinpath(cases, "newer_bound.measurements.csv")
+            cp(mfile, newer)
+            plain_page = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow?casefile=warmup_casePST.m", Dict{String,String}(); output_root=root, runtime=rt).body)
+            @test occursin("<option value=\"$(mname)\" selected>", plain_page)
+            @test occursin("<option value=\"newer_bound.measurements.csv\">", plain_page)
+            rm(newer)
+            # a saved choice whose file is gone falls back to the next rule and
+            # says so; then the choice is set back to the set the steps below use
+            SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "warmup_casePST.m", "settings_target" => "this_case", "return_to" => "runs", "measurement_file" => "gone.measurements.csv"); output_root=root, runtime=rt)
+            gone_page = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow?casefile=warmup_casePST.m", Dict{String,String}(); output_root=root, runtime=rt).body)
+            @test occursin("gone.measurements.csv is no longer in the case directory", gone_page)
+            @test occursin("<option value=\"$(mname)\" selected>", gone_page)
+            SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "warmup_casePST.m", "settings_target" => "this_case", "return_to" => "runs", "measurement_file" => mname); output_root=root, runtime=rt)
             page2 = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow?casefile=warmup_casePST.m", Dict{String,String}(); output_root=root, runtime=rt).body)
-            @test occursin("warmup_casePST.measurements.csv", page2)
+            @test occursin(mname, page2)
             @test occursin("Run state estimation", page2)
             @test !occursin("onsubmit", page2)
 
@@ -713,11 +788,17 @@ function run_webui_fast_tests()
             gen2 = SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/generate-measurements", Dict{String,Any}("casefile" => "warmup_casePST.m", "noise" => "true", "gross_error_k" => "8"); output_root=root, runtime=rt)
             @test gen2.status == 303
             @test occursin("bad%20data", Dict(gen2.headers)["Location"])
-            @test SparlectraApp._webui_is_measurement_csv(mfile)
-            @test read(mfile, String) != plain   # noise + gross error changed values
-            # regenerate the clean set for the runs below
-            SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/generate-measurements", Dict{String,Any}("casefile" => "warmup_casePST.m"); output_root=root, runtime=rt)
-            @test read(mfile, String) == plain   # seeded generator is reproducible
+            gen2_file = joinpath(cases, written_set(gen2))
+            @test gen2_file != mfile   # a new file, the clean set stays
+            @test SparlectraApp._webui_is_measurement_csv(gen2_file)
+            @test read(gen2_file, String) != plain   # noise + gross error changed values
+            @test read(mfile, String) == plain
+            rm(gen2_file)
+            # regenerate the clean set: another new file with the same content
+            gen3 = SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/generate-measurements", Dict{String,Any}("casefile" => "warmup_casePST.m"); output_root=root, runtime=rt)
+            gen3_file = joinpath(cases, written_set(gen3))
+            @test read(gen3_file, String) == plain   # seeded generator is reproducible
+            rm(gen3_file)
 
             # per-quantity sigmas are PERCENT OF THE MEASURED VALUE with the
             # per-type floors (voltage-level independent); the currents checkbox
@@ -725,6 +806,11 @@ function run_webui_fast_tests()
             # per-row sigma law is exactly reproducible.
             gen3 = SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/generate-measurements", Dict{String,Any}("casefile" => "warmup_casePST.m", "sigma_u_pct" => "1.0", "include_currents" => "true", "sigma_i_pct" => "2.0", "sigma_p_pct" => "2.0", "sigma_q_pct" => "1.0"); output_root=root, runtime=rt)
             @test gen3.status == 303
+            # every generation is a new file: the checks below read the one
+            # just written, and it becomes the set of the steps that follow
+            rm(mfile)
+            mname = written_set(gen3)
+            mfile = joinpath(cases, mname)
             netchk = Sparlectra._import_sparlectra_net(case_path, nothing, Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload=true))
             readMeasurementsCSV!(netchk; file=mfile)
             fl = measurementSigmaFloors()
@@ -744,6 +830,9 @@ function run_webui_fast_tests()
             # PMU current-angle rows via the sigma Ia field (absolute degrees)
             genia = SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/generate-measurements", Dict{String,Any}("casefile" => "warmup_casePST.m", "include_currents" => "true", "sigma_ia_deg" => "0.1"); output_root=root, runtime=rt)
             @test genia.status == 303
+            rm(mfile)
+            mname = written_set(genia)
+            mfile = joinpath(cases, mname)
             netia = Sparlectra._import_sparlectra_net(case_path, nothing, Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload=true))
             readMeasurementsCSV!(netia; file=mfile)
             iarows = [m for m in netia.measurements if m.typ == Sparlectra.IaMeas]
@@ -758,6 +847,9 @@ function run_webui_fast_tests()
             # step, and the message names the PST branch
             @test occursin("phase%20deviation", Dict(gentap.headers)["Location"])
             @test occursin("PST%20branch", Dict(gentap.headers)["Location"])
+            rm(mfile)
+            mname = written_set(gentap)
+            mfile = joinpath(cases, mname)
             @test read(mfile, String) != plain2
             @test SparlectraApp._webui_is_measurement_csv(mfile)
             # the file records the tap positions the set was generated from as a
@@ -773,8 +865,8 @@ function run_webui_fast_tests()
             @test occursin("<th>fixed_step</th>", pageInfo)
             @test occursin("Measured values in this set:", pageInfo)   # per-type row counts
             @test occursin("Vm ×", pageInfo)
-            @test occursin("/stateestimation/measurements/download?file=warmup_casePST.measurements.csv", pageInfo)
-            dlr = SparlectraApp.route_sparlectra_webui("GET", "/stateestimation/measurements/download?file=warmup_casePST.measurements.csv", Dict{String,String}("file" => "warmup_casePST.measurements.csv"); output_root=root, runtime=rt)
+            @test occursin("/stateestimation/measurements/download?file=$(SparlectraApp._webui_urlencode(mname))", pageInfo)
+            dlr = SparlectraApp.route_sparlectra_webui("GET", "/stateestimation/measurements/download?file=$(mname)", Dict{String,String}("file" => mname); output_root=root, runtime=rt)
             @test dlr.status == 200
             @test any(k == "Content-Disposition" for (k, _) in dlr.headers)
             dlbad = SparlectraApp.route_sparlectra_webui("GET", "/stateestimation/measurements/download?file=../evil.csv", Dict{String,String}("file" => "../evil.csv"); output_root=root, runtime=rt)
@@ -789,8 +881,12 @@ function run_webui_fast_tests()
             # half steps are no longer settable (a tap changer has no half positions)
             genthalf = SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/generate-measurements", Dict{String,Any}("casefile" => "warmup_casePST.m", "tap_error_steps" => "1.5"); output_root=root, runtime=rt)
             @test occursin("whole%20number", Dict(genthalf.headers)["Location"])
-            # restore the default set for the runs below
-            SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/generate-measurements", Dict{String,Any}("casefile" => "warmup_casePST.m"); output_root=root, runtime=rt)
+            # restore the default set for the runs below (a new file; the
+            # deviated one goes)
+            gen5 = SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/generate-measurements", Dict{String,Any}("casefile" => "warmup_casePST.m"); output_root=root, runtime=rt)
+            rm(mfile)
+            mname = written_set(gen5)
+            mfile = joinpath(cases, mname)
             @test read(mfile, String) == plain
 
             # the SE page without a query FOLLOWS the shared selected-case
@@ -813,7 +909,7 @@ function run_webui_fast_tests()
             pageSticky = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow?casefile=warmup_casePST.m&g_sigma_u_pct=0.7&g_noise=true", Dict{String,String}(); output_root=root, runtime=rt).body)
             @test occursin("name=\"sigma_u_pct\" value=\"0.7\"", pageSticky)
             @test occursin("name=\"noise\" value=\"true\" checked", pageSticky)
-            SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/generate-measurements", Dict{String,Any}("casefile" => "warmup_casePST.m"); output_root=root, runtime=rt)
+            mfile, mname = regenerate(Dict{String,Any}("casefile" => "warmup_casePST.m"))
 
             # structured value editor: every measurement kind is editable in the
             # table; the update handler rewrites only value/sigma/active and a
@@ -825,13 +921,17 @@ function run_webui_fast_tests()
             @test !isempty(rowsTab)
             @test any(r -> r.typ == "VmMeas", rowsTab) && any(r -> r.typ == "PflowMeas", rowsTab) && any(r -> r.typ == "PinjMeas", rowsTab)
             vrow = first(r for r in rowsTab if r.typ == "VmMeas")
-            rup = SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/measurements/update-values", Dict{String,Any}("file" => "warmup_casePST.measurements.csv", "case" => "warmup_casePST.m", "v_$(vrow.line)" => "1.0777", "s_$(vrow.line)" => vrow.sigma, "a_$(vrow.line)" => "true"); output_root=root, runtime=rt)
+            rup = SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/measurements/update-values", Dict{String,Any}("file" => mname, "case" => "warmup_casePST.m", "v_$(vrow.line)" => "1.0777", "s_$(vrow.line)" => vrow.sigma, "a_$(vrow.line)" => "true"); output_root=root, runtime=rt)
             @test occursin("updated%201", Dict(rup.headers)["Location"])
             @test occursin("1.0777", read(mfile, String))
-            rbadv = SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/measurements/update-values", Dict{String,Any}("file" => "warmup_casePST.measurements.csv", "case" => "warmup_casePST.m", "v_$(vrow.line)" => "1.05", "s_$(vrow.line)" => "-1", "a_$(vrow.line)" => "true"); output_root=root, runtime=rt)
+            rbadv = SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/measurements/update-values", Dict{String,Any}("file" => mname, "case" => "warmup_casePST.m", "v_$(vrow.line)" => "1.05", "s_$(vrow.line)" => "-1", "a_$(vrow.line)" => "true"); output_root=root, runtime=rt)
             @test occursin("nothing%20was%20saved", Dict(rbadv.headers)["Location"])
             @test occursin("1.0777", read(mfile, String))   # rejected save left the file alone
-            SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/generate-measurements", Dict{String,Any}("casefile" => "warmup_casePST.m"); output_root=root, runtime=rt)
+            # a fresh clean set for the runs below; the edited one goes
+            gen4 = SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/generate-measurements", Dict{String,Any}("casefile" => "warmup_casePST.m"); output_root=root, runtime=rt)
+            rm(mfile)
+            mname = written_set(gen4)
+            mfile = joinpath(cases, mname)
 
             # the run summary shows the chi-square band verdict with expected value
             fake = Dict("metadata" => Dict{String,Any}("run_mode" => "se", "se_observability_quality" => "good", "se_iterations" => 4, "se_objective" => 12.5, "se_dof" => 14, "se_band_reason" => "ok", "se_j_within_3sigma" => true))
@@ -839,6 +939,11 @@ function run_webui_fast_tests()
             # J/dof leads: a bare J grows with the row count, so the same healthy set
             # reads as an alarm on a larger case (J = 104 at dof 95 is a ratio of 1.1)
             @test occursin("J/dof = 0.89", stxt) && occursin("dof = 14", stxt)
+            # a run whose final solve needed fewer iterations than its maximum
+            # pass shows both, so the count is not read as the reported solve's
+            fake2 = Dict("metadata" => Dict{String,Any}("run_mode" => "se", "se_observability_quality" => "good", "se_iterations" => 20, "se_iterations_last_solve" => 12, "se_objective" => 12.5, "se_dof" => 14, "se_band_reason" => "ok", "se_suspicious_count" => 0, "se_eliminations" => 0))
+            @test occursin("20 iteration(s) (max over the passes; final solve 12)", SparlectraApp._webui_se_summary(fake2))
+            @test !occursin("max over the passes", stxt)
             @test findfirst("J/dof", stxt).start < findfirst("(J = ", stxt).start
             @test occursin("within 3", stxt)
             # a doubled set is named where the J is shown, or the page shows an
@@ -907,7 +1012,10 @@ function run_webui_fast_tests()
             other = joinpath(cases, "case9.measurements.csv")
             cp(mfile, other)
             page3 = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow?casefile=warmup_casePST.m", Dict{String,String}(); output_root=root, runtime=rt).body)
-            @test occursin("value=\"warmup_casePST.measurements.csv\" selected", page3)
+            # both sets are bound to the case; the NEWEST is armed (the copy, by
+            # its modification time), the other one is offered plain
+            @test occursin("value=\"case9.measurements.csv\" selected", page3)
+            @test occursin("value=\"$(mname)\">", page3)
             # block 4 dropped the SE-own case selector (shared selection), and its
             # "*" bound-set marker went with it; the binding stays visible through
             # the Case binding line and the per-set labels asserted here
@@ -938,13 +1046,13 @@ function run_webui_fast_tests()
             @test occursin("/stateestimation/measurements/save", pageEd)
             content0 = read(mfile, String)
             edited = replace(content0, "# case: warmup_casePST.m" => "# case: warmup_casePST.m\n# note: edited inline"; count=1)
-            rsave = SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/measurements/save", Dict{String,Any}("file" => "warmup_casePST.measurements.csv", "case" => "warmup_casePST.m", "content" => edited); output_root=root, runtime=rt)
+            rsave = SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/measurements/save", Dict{String,Any}("file" => mname, "case" => "warmup_casePST.m", "content" => edited); output_root=root, runtime=rt)
             @test rsave.status == 303
             @test occursin("saved", Dict(rsave.headers)["Location"])
             @test occursin("# note: edited inline", read(mfile, String))
             rbad1 = SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/measurements/save", Dict{String,Any}("file" => "../evil.csv", "case" => "warmup_casePST.m", "content" => edited); output_root=root, runtime=rt)
             @test occursin("invalid", Dict(rbad1.headers)["Location"])
-            rbad2 = SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/measurements/save", Dict{String,Any}("file" => "warmup_casePST.measurements.csv", "case" => "warmup_casePST.m", "content" => "a,b\n1,2\n"); output_root=root, runtime=rt)
+            rbad2 = SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/measurements/save", Dict{String,Any}("file" => mname, "case" => "warmup_casePST.m", "content" => "a,b\n1,2\n"); output_root=root, runtime=rt)
             @test occursin("rejected", Dict(rbad2.headers)["Location"])
             @test occursin("# note: edited inline", read(mfile, String))   # rejected save left the file alone
             write(mfile, content0)   # restore the clean set for the runs below
@@ -980,7 +1088,10 @@ function run_webui_fast_tests()
             # tap-estimation SE run: a set generated with a tap deviation
             # disagrees with the model around one transformer; releasing the taps
             # absorbs the discrepancy and the fixation lands on a mechanical step
-            SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/generate-measurements", Dict{String,Any}("casefile" => "warmup_casePST.m", "tap_error_steps" => "3"); output_root=root, runtime=rt)
+            gentap2 = SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/generate-measurements", Dict{String,Any}("casefile" => "warmup_casePST.m", "tap_error_steps" => "3"); output_root=root, runtime=rt)
+            rm(mfile)
+            mname = written_set(gentap2)
+            mfile = joinpath(cases, mname)
             rtap = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true, "measurement_file" => mfile, "se_tap_estimation" => true))
             @test rtap["status"] == "succeeded"
             idtap = rtap["run_id"]
@@ -1033,7 +1144,7 @@ function run_webui_fast_tests()
 
             # bad data lands findable: gross error in the set -> se_bad_data.csv
             # with the measurement, its location, and the eliminated flag
-            SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/generate-measurements", Dict{String,Any}("casefile" => "warmup_casePST.m", "gross_error_k" => "10"); output_root=root, runtime=rt)
+            mfile, mname = regenerate(Dict{String,Any}("casefile" => "warmup_casePST.m", "gross_error_k" => "10"))
             rbd = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true, "measurement_file" => mfile))
             @test rbd["status"] == "succeeded"
             bdcsv = joinpath(root, rbd["run_id"], "se_bad_data.csv")
@@ -1049,7 +1160,7 @@ function run_webui_fast_tests()
             @test occursin("/powerflow/artifact/$(rbd["run_id"])/se_bad_data.csv", bdPage)
 
             # restore the clean default set for anything below
-            SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/generate-measurements", Dict{String,Any}("casefile" => "warmup_casePST.m"); output_root=root, runtime=rt)
+            mfile, mname = regenerate(Dict{String,Any}("casefile" => "warmup_casePST.m"))
 
             # --- measurement generator v2: truth state, flow ends, passive nodes,
             # delta comments, and the bad-data threshold surface of the run form
@@ -1060,9 +1171,9 @@ function run_webui_fast_tests()
 
             # one balance-aware flow end: deterministic (two generates produce the
             # identical file), one flow group per branch, choice documented
-            SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/generate-measurements", Dict{String,Any}("casefile" => "warmup_casePST.m", "gen_flow_ends" => "one_balance_aware"); output_root=root, runtime=rt)
+            mfile, mname = regenerate(Dict{String,Any}("casefile" => "warmup_casePST.m", "gen_flow_ends" => "one_balance_aware"))
             one1 = read(mfile, String)
-            SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/generate-measurements", Dict{String,Any}("casefile" => "warmup_casePST.m", "gen_flow_ends" => "one_balance_aware"); output_root=root, runtime=rt)
+            mfile, mname = regenerate(Dict{String,Any}("casefile" => "warmup_casePST.m", "gen_flow_ends" => "one_balance_aware"))
             one2 = read(mfile, String)
             @test one1 == one2
             @test occursin("# seed: 42", one1)
@@ -1074,7 +1185,7 @@ function run_webui_fast_tests()
             @test occursin("# truth_value,Vm_", one1)
             # critical measurements on request: the set is thinned until two rows
             # are critical, stays observable, and names the rows in its comments
-            SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/generate-measurements", Dict{String,Any}("casefile" => "warmup_casePST.m", "gen_critical_count" => "2"); output_root=root, runtime=rt)
+            mfile, mname = regenerate(Dict{String,Any}("casefile" => "warmup_casePST.m", "gen_critical_count" => "2"))
             crit_text = read(mfile, String)
             @test occursin("# critical_target: 2 reached: ", crit_text)
             @test occursin("# critical_rows: ", crit_text)
@@ -1101,7 +1212,7 @@ function run_webui_fast_tests()
 
             # passive nodes as protected zero-injection constraints: ZI rows
             # written, no duplicate plain injection rows, elimination stays away
-            SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/generate-measurements", Dict{String,Any}("casefile" => "warmup_casePST.m", "gen_passive_as_zi" => "true"); output_root=root, runtime=rt)
+            mfile, mname = regenerate(Dict{String,Any}("casefile" => "warmup_casePST.m", "gen_passive_as_zi" => "true"))
             zi1 = read(mfile, String)
             @test occursin("ZI_PINJ_", zi1)
             zilines = [l for l in split(zi1, "\n") if startswith(l, "PinjMeas") && occursin("ZI_PINJ_bus_", l)]
@@ -1115,7 +1226,7 @@ function run_webui_fast_tests()
 
             # truth state from run: adopts the SE run's state (bit-exact against
             # se_state.csv), documents the source, and the delta file appears
-            SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/generate-measurements", Dict{String,Any}("casefile" => "warmup_casePST.m", "gen_truth_source" => "from_run", "gen_truth_run_id" => id1); output_root=root, runtime=rt)
+            mfile, mname = regenerate(Dict{String,Any}("casefile" => "warmup_casePST.m", "gen_truth_source" => "from_run", "gen_truth_run_id" => id1))
             fr1 = read(mfile, String)
             @test occursin("# truth: run $(id1) (se,", fr1)
             sestate = readlines(joinpath(root, id1, "se_state.csv"))
@@ -1132,10 +1243,20 @@ function run_webui_fast_tests()
             # restore the clean default set and exercise the threshold surface:
             # the staged service path equals the legacy Bool bitwise, the delta
             # artifact exists for generated sets, invalid modes reject
-            SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/generate-measurements", Dict{String,Any}("casefile" => "warmup_casePST.m"); output_root=root, runtime=rt)
+            mfile, mname = regenerate(Dict{String,Any}("casefile" => "warmup_casePST.m"))
             rst = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true, "measurement_file" => mfile, "se_robust_mode" => "staged", "se_robust_k1" => 3.0, "se_robust_k2" => 6.0))
             @test rst["status"] == "succeeded"
             @test rst["metadata"]["se_robust_mode"] == "staged"
+            # knees out of order: the staged run refuses them naming both form
+            # fields; without staged down-weighting the pair is not read, the
+            # run goes through on the configured pair and run.log says so
+            knee_request = Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true, "measurement_file" => mfile, "se_robust_k1" => 10.0, "se_robust_k2" => 6.0)
+            knee_staged = start_powerflow_run(merge(knee_request, Dict{String,Any}("se_robust_mode" => "staged")))
+            @test knee_staged["status"] == "failed"
+            @test occursin("down-weight from |r|/sigma", knee_staged["message"]) && occursin("k1=10.0, k2=6.0", knee_staged["message"])
+            knee_off = start_powerflow_run(merge(knee_request, Dict{String,Any}("se_robust_mode" => "off")))
+            @test knee_off["status"] == "succeeded"
+            @test occursin("are out of order; they are not used with down-weighting off", read(joinpath(knee_off["output_dir"], "run.log"), String))
             # the request builder records the SE options as sidecar-persistable
             # settings, so the browser flow's "save settings" keeps them.
             # se_robust_mode carries a real config_key since issue #377 (case
@@ -1169,7 +1290,7 @@ function run_webui_fast_tests()
             # at most how many transformers, the seed decides WHERE; the same
             # seed reproduces the identical file, a different seed moves the picks.
             # load_fixture_net: the shipped sp_case60 offers several eligible
-            # transformers, so a max of 2 actually draws 2 (derived 2026-09-04)
+            # transformers, so a max of 2 actually draws 2 (derived)
             d14 = joinpath(dirname(@__DIR__), "data", "scf", "sp_case60.scf.json")
             go1 = joinpath(root, "gen_multi_a.csv")
             go2 = joinpath(root, "gen_multi_b.csv")
@@ -1407,7 +1528,7 @@ function run_webui_fast_tests()
         end)() end
 
         @testset "browser opening falls back to the system default" begin (function ()
-            # Reported 2026-09-07 from Windows 11 with Edge uninstalled and only
+            # Reported from Windows 11 with Edge uninstalled and only
             # Firefox present: nothing happened on start, the user had to type
             # 127.0.0.1:8080 by hand. Cause: the app-window attempt knows only the
             # Chromium family (they alone support the chromeless --app= window),
@@ -1554,7 +1675,7 @@ function run_webui_fast_tests()
         end)() end
 
         @testset "the Info menu stays in the header on every page" begin (function ()
-            # Regression (2026-09-07): the Info control was passed to the layout by
+            # Regression: the Info control was passed to the layout by
             # the Case, Settings and Runs renderers only, so it disappeared as soon
             # as the user clicked Operation Log, Run history, Last errors, Docs or a
             # result page. Everything it shows describes the running server, not the
@@ -1598,7 +1719,7 @@ function run_webui_fast_tests()
                 @test occursin("<th>Compare</th>", body)
             end)() end
 
-            # Maintainer 2026-09-09: the box should appear only where the two runs
+            # The box should appear only where the two runs
             # are comparable, and NOT decided by network size, because the same
             # case with an external-grid source and with a slack is a pair one
             # wants side by side. The criterion is the run kind: the page reads
@@ -1660,7 +1781,7 @@ function run_webui_fast_tests()
                 @test !occursin(">nothing<", live_html)
 
                 # a Q(U) machine read from a case file is named on the page, not only
-                # in the Control column of the result print (task qu_scf, 2026-09-11);
+                # in the Control column of the result print;
                 # a run without controllers keeps its summary short
                 @test !occursin("summary-label\">Controllers<", html)
                 with_ctrl = merge(probe, Dict{String,Any}("metadata" => Dict{String,Any}("controllers" => Dict{String,Any}("tap" => 1, "qu" => 1, "pu" => 0))))
@@ -1727,8 +1848,8 @@ function run_webui_fast_tests()
                 # The detailed export writes one of three formats, and A carries the
                 # German one: ';' delimiter, decimal comma. A comma-splitting reader
                 # found no columns there and the page then claimed the two runs had
-                # nothing in common ("The two runs share no bus names", reported
-                # 2026-09-08). The fixtures below are the real header of
+                # nothing in common ("The two runs share no bus names", as
+                # reported). The fixtures below are the real header of
                 # bus_voltages_complex.csv, both formats, so the parser is judged on
                 # what the runs actually write.
                 head_de = "bus;bus_name;type;vm_pu;va_deg;vn_kV;q_limit_hit;original_bus_name"
@@ -1784,7 +1905,7 @@ function run_webui_fast_tests()
             end)() end
         end)() end
 
-        # Reported from a live session 2026-09-08: "Case input format" offered
+        # Reported: "Case input format" offered
         # MATPOWER, DTF and CGMES but neither SCF nor power-grid-model, although
         # the API has accepted `scf` all along and a PGM `input.json` is read by
         # that very importer.
@@ -1813,7 +1934,7 @@ function run_webui_fast_tests()
                 Dict{String,Any}("casefile" => "fmt_probe.m", "case_format" => "matpower", "return_to" => "case"); output_root=root, runtime=rt)
             @test SparlectraApp._webui_case_form_defaults("fmt_probe.m", cases)["case_format"] == "matpower"
 
-            # Seen on Windows 2026-09-24: `scf` stored for a MATPOWER case sent
+            # Seen on Windows: `scf` stored for a MATPOWER case sent
             # the .m file into the JSON reader (`invalid integer ""`), while the
             # Case page showed nothing wrong. A stored format that contradicts
             # the file CONTENT is not loaded: the run falls back to auto, the
@@ -1878,7 +1999,7 @@ function run_webui_fast_tests()
             overrides2 = get(SparlectraApp.powerflow_webui_request(form), "config_overrides", Dict{String,Any}())
             @test overrides2["power_flow.qlimits.enforcement_mode"] == "classic_simultaneous"
 
-            # The same word saved from the settings page (2026-09-11: "Q-Limit
+            # The same word saved from the settings page ("Q-Limit
             # an, aber mode auf off" ended in an ArgumentError on the next run):
             # the case file and the configuration file get `enabled: false` and
             # no mode key, and a file that already carries `off` still loads.
@@ -1938,7 +2059,7 @@ function run_webui_fast_tests()
             # The tooltip carries the raw status only where the label says something
             # else. Putting it on every badge changed the markup of every ordinary
             # run and broke a live-page assertion in the extended profile
-            # (test_webui_extended.jl, 2026-09-08); repeating "running" on hover
+            # (test_webui_extended.jl); repeating "running" on hover
             # tells a reader nothing anyway.
             @test SparlectraApp._webui_status_badge("status-running", "running", "running") ==
                 "<span class=\"status-badge status-running\">running</span>"
@@ -1947,7 +2068,7 @@ function run_webui_fast_tests()
         end)() end
 
         @testset "the environment is checked before the sysimage question" begin (function ()
-            # Regression 2026-09-07 (Windows 11). A checkout carried a Manifest.toml
+            # Regression (Windows 11). A checkout carried a Manifest.toml
             # from before AnalyticLoadFlow became a required dependency. The start
             # asked whether to build a sysimage FIRST, the user declined, and only
             # then did `using Sparlectra` fail with a KeyError deep in
@@ -2027,7 +2148,7 @@ function run_webui_fast_tests()
         end)() end
 
         @testset "the repair resolves before it instantiates" begin (function ()
-            # Regression 2026-09-07 (Windows 11). A checkout carried a Manifest.toml
+            # Regression (Windows 11). A checkout carried a Manifest.toml
             # from before AnalyticLoadFlow became a required dependency. `using
             # Sparlectra` failed with a KeyError deep in Base.Precompilation, the
             # recovery block caught it and ran Pkg.instantiate, and instantiate
@@ -2113,7 +2234,7 @@ function run_webui_fast_tests()
         @testset "sysimage page tells a native session how to use the image" begin (function ()
             # A Web UI started from the REPL runs without the image and cannot
             # switch to it, not even after a build from its own Sysimage page;
-            # the page has to say how the image on disk is used (2026-09-24).
+            # the page has to say how the image on disk is used.
             mktempdir() do tmp
                 out = joinpath(tmp, "runs")
                 mkpath(out)
@@ -2218,7 +2339,7 @@ function run_webui_fast_tests()
                 _progress_file("failed", round(time(); digits=1))
 
                 # The seconds between the button and the build process reporting for
-                # the first time (2026-09-07): the page only polls while a build is
+                # the first time: the page only polls while a build is
                 # active, and "active" used to require the CHILD's first entry. Julia
                 # needs seconds to boot before it can write one, tens of seconds on a
                 # cold Windows, and the page sat there looking dead meanwhile.
@@ -2291,7 +2412,7 @@ function run_webui_fast_tests()
             @test r.built == false
             @test endswith(r.sysimage_path, SparlectraApp.webui_sysimage_ext()) || occursin("sparlectra.", basename(r.sysimage_path))
             @test occursin("sysimage_meta", basename(r.meta_path))
-            # the relocatable executable is a CHECKOUT TOOL since 2026-09-04, not
+            # the relocatable executable is a CHECKOUT TOOL, not
             # a package function: Sparlectra runs on an installed Julia, so
             # buildApp left the module and the Web UI offers the sysimage only
             @test !isdefined(Sparlectra, :buildApp)
@@ -2344,22 +2465,83 @@ function run_webui_fast_tests()
                 @test !occursin("(@ref", flat)
             end
             @test SparlectraApp.route_sparlectra_webui("GET", "/help/no.such.topic").status == 404
-            # the Web UI manual ships with the application: the documentation
-            # page rendered with a contents list, labelled headings keep the
-            # ids of the published site, in-page links stay in the page
+            # the help ships with the application as two pages, the user
+            # help and the reference: rendered with a contents list,
+            # labelled headings keep the ids of the published site, links
+            # between the two pages stay inside the Web UI
             manual = SparlectraApp.route_sparlectra_webui("GET", "/help")
             @test manual.status == 200
             manual_html = String(manual.body)
+            reference = SparlectraApp.route_sparlectra_webui("GET", "/help/reference")
+            @test reference.status == 200
+            reference_html = String(reference.body)
             @test occursin("class=\"help-toc\"", manual_html)
-            @test occursin("<h3 id=\"webui-form-options\">", manual_html)
-            @test occursin("href=\"#webui-form-options\"", manual_html)
+            @test occursin("<h2 id=\"webui-case-formats\">", manual_html)
             @test occursin("<h2 id=\"start\">", manual_html)
-            @test !occursin("SPARLECTRADOCS", manual_html)
-            @test !occursin("(@id", manual_html)
-            @test count("<h1", manual_html) == 1
-            @test occursin("href=\"/help\">Help</a>", manual_html)
-            # a topic of the manual page links to its section in the manual
-            @test occursin("href=\"/help#webui-flat-start\"", String(SparlectraApp.route_sparlectra_webui("GET", "/help/power_flow.flatstart").body))
+            @test occursin("<h3 id=\"webui-form-options\">", reference_html)
+            @test occursin("href=\"#webui-form-options\"", reference_html)
+            @test occursin("href=\"/help/reference#webui_powsybl\"", manual_html)
+            for page_html in (manual_html, reference_html)
+                @test !occursin("SPARLECTRADOCS", page_html)
+                @test !occursin("(@id", page_html)
+                @test !occursin("(@ref", page_html)
+                @test count("<h1", page_html) == 1
+                @test occursin("href=\"/help\">Help</a>", page_html)
+            end
+            # the user help stays short: the limit is 1500 words of text
+            manual_words = length(split(replace(SparlectraApp.WEBUI_HELP_MANUAL, r"```.*?```"s => " ")))
+            @test manual_words <= 1500
+            # a topic links to its section on the page that carries it
+            @test occursin("href=\"/help/reference#webui-flat-start\"", String(SparlectraApp.route_sparlectra_webui("GET", "/help/power_flow.flatstart").body))
+            # every target of the search index exists: a heading of its
+            # page, or the help page of a control
+            page_ids(html) = Set(String(m.captures[1]) for m in eachmatch(r" id=\"([^\"]+)\"", html))
+            manual_ids, reference_ids = page_ids(manual_html), page_ids(reference_html)
+            index_target_exists(url) = startswith(url, "/help/reference#") ? url[17:end] in reference_ids : startswith(url, "/help#") ? url[7:end] in manual_ids : SparlectraApp.route_sparlectra_webui("GET", url).status == 200
+            @test [entry.url for entry in SparlectraApp.WEBUI_HELP_SEARCH_INDEX if !index_target_exists(entry.url)] == String[]
+            @test length(SparlectraApp.WEBUI_HELP_SEARCH_INDEX) > 100
+            # the in-app links of the two pages land on a heading as well,
+            # and so do the help links the form pages carry (the hint of the
+            # PowSyBl options pointed at the page its section had left)
+            form_pages = join(String(SparlectraApp.route_sparlectra_webui("GET", path; output_root = mktempdir()).body) for path in ("/powerflow/case", "/powerflow", "/powerflow/settings"))
+            inapp_links = [String(m.captures[1]) for m in eachmatch(r"href=\"(/help(?:/reference)?#[^\"]+)\"", manual_html * reference_html * form_pages)]
+            @test "/help/reference#webui_powsybl" in inapp_links
+            @test [url for url in inapp_links if !index_target_exists(url)] == String[]
+            # the search: every word must occur, a part of a word is enough,
+            # a hit in a title leads, the words are marked in the snippet,
+            # the query comes back escaped, no hit says so and names the
+            # published documentation
+            search_html(q; fragment = false) = String(SparlectraApp.route_sparlectra_webui("GET", "/help/search?q=" * q * (fragment ? "&fragment=1" : "")).body)
+            help_hits(q) = [(String(m.captures[1]), String(m.captures[2])) for m in eachmatch(r"<li><a href=\"([^\"]+)\">([^<]*)</a> <span class=\"help-search-kind\">", search_html(q))]
+            @test isempty(help_hits(""))
+            @test first(help_hits("xiidm")) == ("/help/reference#webui_powsybl", "PowSyBl IIDM files")
+            @test first(help_hits("short+circuit")) in (("/help/reference#short-circuit", "Short circuit"), ("/help#short-circuit", "Short circuit"))
+            @test ("/help/reference#webui_cgmes_test_configurations", "CGMES test configurations") in help_hits("cgmes:")
+            @test ("/help#webui-case-formats", "Case formats at a glance") in help_hits("cgmes:")
+            @test first(help_hits("slack+generator")) == ("/help/powsybl_import.slack_ids", "Slack generator ids (PowSyBl)")
+            @test ("/help/reference#webui_powsybl", "PowSyBl IIDM files") in help_hits("generatorShortCircuit")
+            @test all(hit -> hit in help_hits("slack"), help_hits("slack+generator"))
+            @test length(help_hits("slack+generator")) < length(help_hits("slack"))
+            @test occursin("<mark>", search_html("xiidm"))
+            @test occursin("<mark>xiidm</mark>", lowercase(search_html("XIIDM")))
+            @test isempty(help_hits("zzzqqq"))
+            withenv("SPARLECTRA_WEBUI_DOCS_BASE_URL" => "https://docs.example/v1/") do
+                @test occursin("No hits for \"zzzqqq\"", search_html("zzzqqq"))
+                @test occursin("href=\"https://docs.example/v1/\"", search_html("zzzqqq"; fragment = true))
+            end
+            @test SparlectraApp.webui_help_search("a") == SparlectraApp.webui_help_search("")
+            for hostile in (search_html("%3Cscript%3Ealert(1)%3C%2Fscript%3E"), search_html("%22%3E%3Cimg+src%3Dx%3E"; fragment = true), search_html("a%26b+%3Cb%3E"))
+                @test !occursin("<script>alert(1)", hostile)
+                @test !occursin("<img src=x>", hostile)
+                @test !occursin("<b>\"", hostile)
+            end
+            @test occursin("&lt;script&gt;alert(1)", search_html("%3Cscript%3Ealert(1)%3C%2Fscript%3E"))
+            # the hit list alone is what the search while typing puts into
+            # the page; the form of the header is on every page
+            @test !occursin("<html", search_html("xiidm"; fragment = true))
+            @test occursin("class=\"header-help-search\" method=\"get\" action=\"/help/search\"", String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/history"; output_root = mktempdir()).body))
+            # a query on the help page itself answers as the search does
+            @test occursin("/help/reference#webui_powsybl", String(SparlectraApp.route_sparlectra_webui("GET", "/help?q=xiidm").body))
             for path in ("/docs", "/docs/webui", "/static/katex/katex.min.js")
                 @test SparlectraApp.route_sparlectra_webui("GET", path).status == 404
             end

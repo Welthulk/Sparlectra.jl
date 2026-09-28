@@ -1241,6 +1241,7 @@
       "41": {
         "element_index": 2,
         "external_id": "#Gen_110\\_4\\_#2",
+        "max_p_mw": 50.0,
         "max_q_mvar": 25.0,
         "min_q_mvar": -25.0,
         "name": "Gen_110",
@@ -1251,6 +1252,7 @@
       "42": {
         "element_index": 3,
         "external_id": "#Gen_110\\_6\\_#3",
+        "max_p_mw": 35.0,
         "max_q_mvar": 15.0,
         "min_q_mvar": -15.0,
         "name": "Gen_110",

@@ -4260,6 +4260,7 @@
       "159": {
         "element_index": 3,
         "external_id": "#Gen_110\\_11\\_#3",
+        "max_p_mw": 65.0,
         "max_q_mvar": 35.0,
         "min_q_mvar": -35.0,
         "name": "Gen_110",
@@ -4276,6 +4277,7 @@
       "160": {
         "element_index": 4,
         "external_id": "#Gen_110\\_25\\_#4",
+        "max_p_mw": 65.0,
         "max_q_mvar": 35.0,
         "min_q_mvar": -35.0,
         "name": "Gen_110",
@@ -4286,6 +4288,7 @@
       "161": {
         "element_index": 28,
         "external_id": "#Gen_20\\_36\\_#28",
+        "max_p_mw": 7.0,
         "name": "Gen_20",
         "prosumption_class": "Injection",
         "prosumption_type": "Generator"
@@ -4293,6 +4296,7 @@
       "162": {
         "element_index": 29,
         "external_id": "#Gen_20\\_40\\_#29",
+        "max_p_mw": 7.0,
         "name": "Gen_20",
         "prosumption_class": "Injection",
         "prosumption_type": "Generator"
@@ -4300,6 +4304,7 @@
       "163": {
         "element_index": 30,
         "external_id": "#Gen_20\\_43\\_#30",
+        "max_p_mw": 7.0,
         "name": "Gen_20",
         "prosumption_class": "Injection",
         "prosumption_type": "Generator"
@@ -4307,6 +4312,7 @@
       "164": {
         "element_index": 31,
         "external_id": "#Gen_20\\_47\\_#31",
+        "max_p_mw": 7.0,
         "name": "Gen_20",
         "prosumption_class": "Injection",
         "prosumption_type": "Generator"
@@ -4314,6 +4320,7 @@
       "165": {
         "element_index": 32,
         "external_id": "#Gen_20\\_53\\_#32",
+        "max_p_mw": 5.0,
         "name": "Gen_20",
         "prosumption_class": "Injection",
         "prosumption_type": "Generator"
@@ -4321,6 +4328,7 @@
       "166": {
         "element_index": 33,
         "external_id": "#Gen_20\\_57\\_#33",
+        "max_p_mw": 5.0,
         "name": "Gen_20",
         "prosumption_class": "Injection",
         "prosumption_type": "Generator"
@@ -4338,6 +4346,7 @@
       "168": {
         "element_index": 2,
         "external_id": "#Gen_220\\_4\\_#2",
+        "max_p_mw": 195.0,
         "max_q_mvar": 100.0,
         "min_q_mvar": -100.0,
         "name": "Gen_220",

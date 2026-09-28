@@ -74,5 +74,61 @@ function run_piline_g_tests()
       addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.01, x_pu = 0.1, b_pu = 0.02, status = 1)
       @test net.branchVec[end].g_pu == 0.0
     end)() end
+
+    # per-terminal charging admittance (0.20.0): the symmetric half is the
+    # default, an explicit split stamps each arm on its own end, the from
+    # arm through |t|^2, and a partial keyword set is refused
+    @testset "asymmetric shunt split on lines and transformers" begin (function ()
+      net = Net(name = "piline_split", baseMVA = 100.0)
+      addBus!(net = net, busName = "B1", vn_kV = 110.0)
+      addBus!(net = net, busName = "B2", vn_kV = 110.0)
+      addBus!(net = net, busName = "B3", vn_kV = 110.0)
+      addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.01, x_pu = 0.1, b_pu = 0.0, status = 1, g_from_pu = 0.004, b_from_pu = 0.03, g_to_pu = 0.0, b_to_pu = 0.01)
+      ln = net.branchVec[end]
+      @test (ln.g_from_pu, ln.b_from_pu, ln.g_to_pu, ln.b_to_pu) == (0.004, 0.03, 0.0, 0.01)
+      # the totals are the sums, whatever total the caller passed
+      @test ln.b_pu == 0.04 && ln.g_pu == 0.004
+      @test !Sparlectra.has_symmetric_shunt(ln)
+      addPIModelTrafo!(net = net, fromBus = "B2", toBus = "B3", r_pu = 0.005, x_pu = 0.05, b_pu = 0.0, status = 1, ratio = 1.05, shift_deg = 0.0, g_from_pu = 0.002, b_from_pu = -0.01, g_to_pu = 0.0, b_to_pu = 0.0)
+      tr = net.branchVec[end]
+      @test tr.b_pu == -0.01 && tr.g_pu == 0.002
+      Y = createYBUS(net = net, sparse = false)
+      yl = 1.0 / (0.01 + 0.1im)
+      yt = 1.0 / (0.005 + 0.05im)
+      @test isapprox(Y[1, 1], yl + (0.004 + 0.03im); atol = 1e-12)
+      @test isapprox(Y[2, 2], yl + 0.01im + (yt + (0.002 - 0.01im)) / 1.05^2; atol = 1e-12)
+      @test isapprox(Y[3, 3], yt; atol = 1e-12)
+      @test isapprox(Y[1, 2], -yl; atol = 1e-12)
+      # the flow helpers use the arm of the end they leave: the reactive
+      # charging at a flat 1 pu profile differs by the arm difference
+      V = fill(1.0 + 0.0im, 3)
+      s12 = Sparlectra._closed_branch_flow_pu(V, 1, 2, ln, 1)
+      s21 = Sparlectra._closed_branch_flow_pu(V, 2, 1, ln, 2)
+      @test isapprox(imag(s12) - imag(s21), -(0.03 - 0.01); atol = 1e-12)
+      @test isapprox(real(s12) - real(s21), 0.004; atol = 1e-12)
+      # the one writer keeps the totals in step
+      Sparlectra.set_branch_shunt!(ln; g_from_pu = 0.0, b_from_pu = 0.02, g_to_pu = 0.0, b_to_pu = 0.02)
+      @test ln.b_pu == 0.04 && Sparlectra.has_symmetric_shunt(ln)
+      Sparlectra.set_branch_shunt_total!(ln; g_pu = 0.002, b_pu = 0.05)
+      @test (ln.g_from_pu, ln.b_from_pu, ln.g_to_pu, ln.b_to_pu) == (0.001, 0.025, 0.001, 0.025)
+      # a partial keyword set names the branch
+      @test_throws ArgumentError addPIModelACLine!(net = net, fromBus = "B1", toBus = "B3", r_pu = 0.01, x_pu = 0.1, b_pu = 0.02, status = 1, b_from_pu = 0.01)
+      @test_throws ArgumentError BranchModel(r_pu = 0.01, x_pu = 0.1, b_pu = 0.02, g_pu = 0.0, ratio = 0.0, angle = 0.0, g_to_pu = 0.0)
+      bm = BranchModel(r_pu = 0.01, x_pu = 0.1, b_pu = 0.02, g_pu = 0.0, ratio = 0.0, angle = 0.0)
+      @test (bm.b_from_pu, bm.b_to_pu) == (0.01, 0.01)
+      # no code path writes a branch total alone: the setters in branch.jl
+      # are the only assignments to b_pu and g_pu of a branch
+      src_root = joinpath(dirname(@__DIR__), "src")
+      offenders = String[]
+      for (root, _, files) in walkdir(src_root), f in files
+        endswith(f, ".jl") || continue
+        path = joinpath(root, f)
+        relpath(path, src_root) == "branch.jl" && continue
+        for (i, line) in enumerate(eachline(path))
+          occursin(r"\.(b_pu|g_pu)\s*=[^=]", line) && push!(offenders, "$(relpath(path, src_root)):$(i)")
+        end
+      end
+      @test isempty(offenders)
+    end)() end
   end)() end
 end

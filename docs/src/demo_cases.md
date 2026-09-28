@@ -60,6 +60,21 @@ at two buses) live in `test/fixtures/demo_cases/` and
 `data/scf/README.md`; tests use these cases, only tests of the download
 and cache machinery fetch cases.
 
+## PowSyBl networks
+
+`data/powsybl/` ships three PowSyBl networks as IIDM files
+(`ieee14.xiidm`, `four_substations.xiidm`, `micro_grid_be.xiidm`: the IEEE
+14-bus case, a node-breaker network with two synchronous components, an
+HVDC link and a PST, and the CGMES MicroGrid BE with a three-winding
+transformer and dangling lines). Sparlectra reads the file directly
+(`run_sparlectra(casefile = "data/powsybl/ieee14.xiidm")`), no Python is
+needed; the Web UI case selector offers the files, and a `.xiidm` file of
+your own is imported the same way. The import reproduces the OpenLoadFlow
+voltages within the bands of the test suite. A fourth file,
+`ieee14_sc.xiidm`, is the IEEE 14-bus network with assumed rated powers
+and short-circuit reactances on its generators, for the short-circuit run.
+See [PowSyBl Import](powsybl_import.md).
+
 ## CGMES deliveries of the demo cases
 
 `data/cgmes_demo/<case>/` holds CGMES 2.4.15 deliveries (EQ, TP, SSH, SV)

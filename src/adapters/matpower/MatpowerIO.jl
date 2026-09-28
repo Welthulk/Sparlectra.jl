@@ -603,7 +603,16 @@ function try_parse_sparlectra_extension(txt::String)
   if tap_changers !== nothing && !(size(tap_changers, 2) in (9, 10, 11))
     throw(ArgumentError("mpc.sparlectra.tap_changers needs 9 columns (branch tap_step tap_min_step tap_max_step tap_current_step phase_step_deg phase_min_step phase_max_step phase_current_step) plus optional columns 10 psi_deg (PST regulating-vector direction, 0 = unspecified -> 90) and 11 phase_du_step (additional-voltage amplitude per step for a Delta-u PST; exclusive with phase_step_deg), got $(size(tap_changers, 2))."))
   end
-  return (format_version = version, warning = warning, transformer_losses = losses, tap_changer_model = tap_changer_model, solution_written = solution_written, links = links, tap_changers = tap_changers)
+  branch_shunts = nothing
+  if occursin("mpc.sparlectra.branch_shunts", txt)
+    branch_shunts = try
+      parse_matrix_block(txt, "mpc.sparlectra.branch_shunts")
+    catch err
+      throw(ArgumentError("mpc.sparlectra.branch_shunts could not be parsed: $(sprint(showerror, err))"))
+    end
+    size(branch_shunts, 2) == 4 || throw(ArgumentError("mpc.sparlectra.branch_shunts needs 4 columns (branch bus Gs_MW Bs_MVar), got $(size(branch_shunts, 2))."))
+  end
+  return (format_version = version, warning = warning, transformer_losses = losses, tap_changer_model = tap_changer_model, solution_written = solution_written, links = links, tap_changers = tap_changers, branch_shunts = branch_shunts)
 end
 
 function for001_contingency_branch_indices(mpc::MatpowerCase)::Vector{Int}

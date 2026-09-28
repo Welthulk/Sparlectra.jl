@@ -499,7 +499,7 @@ function run_scf_tests()
       @test read(exportSCF(back; file = joinpath(d, "ctrl2.scf.json")), String) == read(f, String)
 
       # Voltage-dependent control travels in extra.<machine> as its points,
-      # its interpolation mode and its limits (task qu_scf, 2026-09-11). Before
+      # its interpolation mode and its limits. Before
       # that, exporting a network with a Q(U) machine and reading it back lost
       # the control silently. sp_case14 is the base because warmup_casePST
       # carries active links, which the solver refuses next to voltage-
@@ -735,7 +735,7 @@ mpc.branch = [
     @testset "power-grid-model interoperability" begin (function ()
       # A PGM `source` is the reference by definition: its u_ref is the slack
       # voltage whether or not a hand-written sparlectra block marks the
-      # machine `regulated`. Found on the meeting files of 2026-09-11: a
+      # machine `regulated`. Found on a delivered file: a
       # hand-written feeder with u_ref 1.02 and an extra entry without the
       # flag solved with the slack at 1.0 pu, every other bus 0.02 pu low,
       # while the plain PGM twin of the same network solved at 1.02.
@@ -1267,7 +1267,7 @@ mpc.branch = [
       # the Web UI form field (request detailed_result_csv_format) with a
       # technical configuration file: the request value is folded into the
       # run's configuration, so EVERY CSV of the run carries the semicolon,
-      # not only the two detailed exports (Web UI run d66fa4cd)
+      # not only the two detailed exports (a Web UI run)
       pf_req = start_powerflow_run(Dict{String,Any}("casefile" => fsc, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(d, "pf_req_root"), "detailed_result_csv" => true, "detailed_result_csv_format" => "excel_de"))
       @test pf_req["status"] == "succeeded"
       req_csvs = filter(f -> endswith(f, ".csv"), readdir(pf_req["output_dir"]))
@@ -1280,7 +1280,7 @@ mpc.branch = [
       # the registry is the template again after the run
       @test Sparlectra.result_csv_format() == "technical"
       # the same (older) request field reaches the state-estimation service
-      # through the one override output.csv_format (Web UI run 31811bdd kept
+      # through the one override output.csv_format (a Web UI run kept
       # the comma in every SE artifact); the services themselves take no
       # request-level format since 0.16.0
       se_req = start_powerflow_run(Dict{String,Any}("casefile" => joinpath(scf_dir, "sp_case5.scf.json"), "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(d, "se_req_root"), "se_mode" => true, "measurement_file" => joinpath(scf_dir, "sp_case5.measurements.csv"), "detailed_result_csv_format" => "excel_de"))
@@ -1303,6 +1303,23 @@ mpc.branch = [
       # the Web UI offers the button for a case file carrying sources
       @test SparlectraApp._webui_case_has_short_circuit_data(fsc)
       @test !SparlectraApp._webui_case_has_short_circuit_data(f0)
+
+      # a shipped case whose machines carry no source data: the feeder has
+      # data, the machine counts on the default, so the run is a warning
+      # that counts; the substituted defaults stand in run.log and none of
+      # them reaches the console (an empty list fails on any warning)
+      res_mixed = run_with_expected_warnings(String[]) do
+        redirect_stdout(devnull) do
+          SparlectraApp._run_short_circuit_service(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case5.scf.json")), cfg, joinpath(d, "run_sc_mixed"), "scf_sc_mixed")
+        end
+      end
+      dmixed = SparlectraApp.to_dict(res_mixed)
+      @test (dmixed["status"], dmixed["reason"]) == ("warning", "short_circuit_partial_defaults")
+      @test (dmixed["metadata"]["sc_sources"], dmixed["metadata"]["sc_sources_with_data"]) == (2, 1)
+      mixed_log = read(joinpath(d, "run_sc_mixed", "run.log"), String)
+      @test occursin("Substituted defaults:", mixed_log)
+      # the machine states its maximum active power, the default stands on it
+      @test occursin("default 0.2 pu on its maximum active power 20.0 MW", mixed_log)
     end)() end
 
     @testset "study definitions are carried and validated" begin (function ()
@@ -1340,7 +1357,7 @@ mpc.branch = [
       # and runnable through the same paths as every other source
       @test Sparlectra._detect_case_format(fixture) === :scf
       # An explicit format is judged against the file CONTENT, not the
-      # extension (2026-09-24: `scf` saved for a MATPOWER case sent it into
+      # extension (`scf` saved for a MATPOWER case sent it into
       # the JSON reader, which blamed a JSON file nobody was reading). The
       # message names the file and the way out.
       mfile = abspath(joinpath(dirname(@__DIR__), "data", "mpower", "sp_case9.m"))
@@ -1502,16 +1519,21 @@ mpc.branch = [
       @test !occursin("case118.measurements.csv\" selected", carry_page)
       # generating a set for a case file works and binds it to THAT case, so
       # the page preselects it afterwards
-      SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/generate-measurements", Dict{String,Any}("casefile" => "warmup_casePST.pgm.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH); output_root = root, runtime = rt)
-      generated = joinpath(cases, "warmup_casePST.pgm.measurements.csv")
+      # every generation writes a NEW, time-stamped file; its name travels in
+      # the redirect (measurement_file=...), which is how the page arms it
+      written_set(response) = SparlectraApp._webui_urldecode(String(match(r"measurement_file=([^&#]+)", Dict(response.headers)["Location"]).captures[1]))
+      gen_resp = SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/generate-measurements", Dict{String,Any}("casefile" => "warmup_casePST.pgm.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH); output_root = root, runtime = rt)
+      gen_name = written_set(gen_resp)
+      @test startswith(gen_name, "warmup_casePST.pgm.measurements.")
+      generated = joinpath(cases, gen_name)
       @test isfile(generated)
       @test any(line -> line == "# case: warmup_casePST.pgm.json", eachline(generated))
       after_page = String(copy(SparlectraApp.route_sparlectra_webui("GET", "/powerflow?casefile=warmup_casePST.pgm.json"; output_root = root, runtime = rt).body))
-      @test occursin("warmup_casePST.pgm.measurements.csv\" selected", after_page)
+      @test occursin("$(gen_name)\" selected", after_page)
       # ... and the run with it goes through
-      se_run = SparlectraApp.start_powerflow_run(Dict("casefile" => "warmup_casePST.pgm.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(root, "runs_se_gen"), "se_mode" => true, "measurement_file" => "warmup_casePST.pgm.measurements.csv"); case_directory = cases)
+      se_run = SparlectraApp.start_powerflow_run(Dict("casefile" => "warmup_casePST.pgm.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(root, "runs_se_gen"), "se_mode" => true, "measurement_file" => gen_name); case_directory = cases)
       @test se_run["status"] == "succeeded"
-      # the ONE CSV setting (0.15.1, Web UI run c1c31569: se_bad_data.csv kept
+      # the ONE CSV setting (0.15.1, a Web UI run: se_bad_data.csv kept
       # the comma): a state-estimation request WITHOUT any CSV field under a
       # configuration file that says excel_de writes every CSV of the run
       # with the semicolon; nothing in the request may fall back to a
@@ -1519,7 +1541,7 @@ mpc.branch = [
       cfg_de = joinpath(root, "configuration_excel_de.yaml")
       write(cfg_de, replace(read(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, String), r"^(\s*csv_format:)\s*\S+"m => s"\1 excel_de"))
       @test occursin("csv_format: excel_de", read(cfg_de, String))
-      se_de = SparlectraApp.start_powerflow_run(Dict("casefile" => "warmup_casePST.pgm.json", "config_file" => cfg_de, "output_root" => joinpath(root, "runs_se_de"), "se_mode" => true, "measurement_file" => "warmup_casePST.pgm.measurements.csv"); case_directory = cases)
+      se_de = SparlectraApp.start_powerflow_run(Dict("casefile" => "warmup_casePST.pgm.json", "config_file" => cfg_de, "output_root" => joinpath(root, "runs_se_de"), "se_mode" => true, "measurement_file" => gen_name); case_directory = cases)
       @test se_de["status"] == "succeeded"
       # measurements.csv is the measurement set itself (measurement CSV v1,
       # an input format with its own fixed header), not a result artifact
@@ -1542,19 +1564,20 @@ mpc.branch = [
       exportSCF(carry_gen; file = joinpath(cases, "wins.scf.json"), intended_calculations = String["power_flow", "state_estimation"])
       before_gen = String(copy(SparlectraApp.route_sparlectra_webui("GET", "/powerflow?casefile=wins.scf.json"; output_root = root, runtime = rt).body))
       @test occursin("(from the case file: $(length(carry_gen.measurements)) rows)", before_gen)
-      SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/generate-measurements", Dict{String,Any}("casefile" => "wins.scf.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH); output_root = root, runtime = rt)
+      wins_name = written_set(SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/generate-measurements", Dict{String,Any}("casefile" => "wins.scf.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH); output_root = root, runtime = rt))
+      @test startswith(wins_name, "wins.scf.measurements.")
       after_gen = String(copy(SparlectraApp.route_sparlectra_webui("GET", "/powerflow?casefile=wins.scf.json"; output_root = root, runtime = rt).body))
-      @test occursin("wins.scf.measurements.csv\" selected", after_gen)
+      @test occursin("$(wins_name)\" selected", after_gen)
       # ... and the generated set REPLACES the carried rows instead of being
       # appended to them (59 carried + 75 generated = 134 rows in a file that
       # should have had 75)
       probe = importSCF(joinpath(cases, "wins.scf.json"))
       empty!(probe.measurements)
-      Sparlectra.readMeasurementsCSV!(probe; file = joinpath(cases, "wins.scf.measurements.csv"))
+      Sparlectra.readMeasurementsCSV!(probe; file = joinpath(cases, wins_name))
       @test length(probe.measurements) < length(carry_gen.measurements) + 10
       # the set records WHETHER it carries noise, and the case file keeps that
       # statement: a noise-free set has J = 0 by construction
-      @test any(l -> startswith(l, "# noise:"), eachline(joinpath(cases, "wins.scf.measurements.csv")))
+      @test any(l -> startswith(l, "# noise:"), eachline(joinpath(cases, wins_name)))
       ideal_net = _scf_test_net()
       runpf!(ideal_net, 30, 1e-10, 0)
       calcNetLosses!(ideal_net)
@@ -1566,12 +1589,13 @@ mpc.branch = [
       @test occursin("/stateestimation/add-noise", ideal_page)
       # noising needs NO power flow and keeps the sigmas; J moves from 0 to a
       # real value on the very same operating point
-      SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/add-noise", Dict{String,Any}("casefile" => "ideal.scf.json", "noise_seed" => "7"); output_root = root, runtime = rt)
-      noisy_set = joinpath(cases, "ideal.scf.noisy.measurements.csv")
+      noisy_name = written_set(SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/add-noise", Dict{String,Any}("casefile" => "ideal.scf.json", "noise_seed" => "7"); output_root = root, runtime = rt))
+      @test startswith(noisy_name, "ideal.scf.noisy.")
+      noisy_set = joinpath(cases, noisy_name)
       @test isfile(noisy_set)
       @test any(l -> l == "# case: ideal.scf.json", eachline(noisy_set))
       ideal_run = SparlectraApp.start_powerflow_run(Dict("casefile" => "ideal.scf.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(root, "runs_ideal"), "se_mode" => true, "measurement_file" => ""); case_directory = cases)
-      noisy_run = SparlectraApp.start_powerflow_run(Dict("casefile" => "ideal.scf.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(root, "runs_noisy"), "se_mode" => true, "measurement_file" => "ideal.scf.noisy.measurements.csv"); case_directory = cases)
+      noisy_run = SparlectraApp.start_powerflow_run(Dict("casefile" => "ideal.scf.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(root, "runs_noisy"), "se_mode" => true, "measurement_file" => noisy_name); case_directory = cases)
       @test ideal_run["status"] == "succeeded" && noisy_run["status"] == "succeeded"
       @test occursin("J = 0.0", ideal_run["message"])
       @test !occursin("J = 0.0", noisy_run["message"])

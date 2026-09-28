@@ -205,19 +205,79 @@ function _phase_tap_reactance_at(net::Net, ctrl::PowerTransformerControl, angle_
   return calcPhaseTapReactance(model, angle_deg)
 end
 
+# The typed model of a derived branch for one actuator (`:ratio` or
+# `:phase`), `nothing` when the branch works on the legacy grid.
+function _derived_tap_model(br::Branch, which::Symbol)
+  (br.taps_derived && br.tap_winding !== nothing) || return nothing
+  return which === :ratio ? br.tap_winding.taps : br.tap_winding.phase_taps
+end
+
+# Controllers move STEPS on a modelled transformer (0.20.0): the model step
+# of a derived branch that brings the resolved ratio (:ratio) or shift
+# (:phase) closest to `target`, among the current step and its two
+# neighbours; moves the step, re-resolves the branch fields through the
+# resolver and reports whether it moved.
+function _move_model_step!(br::Branch, which::Symbol, target::Float64)::Bool
+  m = _derived_tap_model(br, which)
+  m === nothing && return false
+  w = br.tap_winding
+  value_at = function (step::Int)
+    res = which === :ratio ? resolve_winding_taps(w; tap_changer_model = br.tap_correction, ratio_step = step) : resolve_winding_taps(w; tap_changer_model = br.tap_correction, phase_step = step)
+    return which === :ratio ? res.ratio : res.shift_deg
+  end
+  best = m.step
+  bestd = abs(value_at(m.step) - target)
+  for cand in (m.step - 1, m.step + 1)
+    (cand < m.lowStep || cand > m.highStep) && continue
+    d = abs(value_at(cand) - target)
+    if d < bestd - 1e-12
+      best = cand
+      bestd = d
+    end
+  end
+  best == m.step && return false
+  m.step = best
+  resolve_branch_taps!(br, w; tap_changer_model = br.tap_correction)
+  return true
+end
+
+# Move the model step of a derived branch by a signed number of steps,
+# clamped to the model range; returns whether the step changed.
+function _shift_model_steps!(br::Branch, which::Symbol, nsteps::Int)::Bool
+  m = _derived_tap_model(br, which)
+  m === nothing && return false
+  target = clamp(m.step + nsteps, m.lowStep, m.highStep)
+  target == m.step && return false
+  m.step = target
+  resolve_branch_taps!(br, br.tap_winding; tap_changer_model = br.tap_correction)
+  return true
+end
+
 function control_apply_update!(ctrl::PowerTransformerControl, net::Net, ::AbstractControlState, update::NamedTuple, context)::Bool
   br = _find_trafo_branch(net, ctrl.trafo)
   moved = false
   if update.new_ratio != update.old_ratio
-    br.tap_ratio = update.new_ratio
-    br.ratio = update.new_ratio
-    moved = true
+    if _derived_tap_model(br, :ratio) !== nothing
+      moved = _move_model_step!(br, :ratio, update.new_ratio) || moved
+    else
+      br.tap_ratio = update.new_ratio
+      br.ratio = update.new_ratio
+      moved = true
+    end
     # master/slave group (#322): mirror the master's move onto every
     # follower STEP-synchronously (whole steps of the follower's own
     # tap_step, so units with different neutral ratios stay aligned in
     # positions, not in absolute ratios), clamped to the follower's range.
     for fname in ctrl.followers
       fbr = _find_trafo_branch(net, fname)
+      fmodel = _derived_tap_model(fbr, :ratio)
+      if fmodel !== nothing
+        # a modelled follower moves the same number of steps in the
+        # direction of the master's ratio change on its own step sign
+        nsteps = br.tap_step > 0.0 ? round(Int, (update.new_ratio - update.old_ratio) / br.tap_step) : Int(sign(update.new_ratio - update.old_ratio))
+        _shift_model_steps!(fbr, :ratio, nsteps * Int(sign(fmodel.tapStepPercent == 0.0 ? 1.0 : fmodel.tapStepPercent)))
+        continue
+      end
       if br.tap_step > 0.0 && fbr.tap_step > 0.0
         nsteps = round((update.new_ratio - update.old_ratio) / br.tap_step)
         fnew = clamp(fbr.tap_ratio + nsteps * fbr.tap_step, fbr.tap_min, fbr.tap_max)
@@ -229,13 +289,18 @@ function control_apply_update!(ctrl::PowerTransformerControl, net::Net, ::Abstra
     end
   end
   if update.new_phase != update.old_phase
-    br.phase_shift_deg = update.new_phase
-    br.angle = update.new_phase
-    # tap-dependent reactance X(α): the next outer-loop solve re-stamps the
-    # Y-bus from br.x_pu, so assigning here is all the coupling needed
-    x_new = _phase_tap_reactance_at(net, ctrl, update.new_phase)
-    x_new === nothing || (br.x_pu = x_new)
-    moved = true
+    if _derived_tap_model(br, :phase) !== nothing
+      # the resolver applies the model's X(alpha) with the step
+      moved = _move_model_step!(br, :phase, update.new_phase) || moved
+    else
+      br.phase_shift_deg = update.new_phase
+      br.angle = update.new_phase
+      # tap-dependent reactance X(α): the next outer-loop solve re-stamps the
+      # Y-bus from br.x_pu, so assigning here is all the coupling needed
+      x_new = _phase_tap_reactance_at(net, ctrl, update.new_phase)
+      x_new === nothing || (br.x_pu = x_new)
+      moved = true
+    end
   end
   ctrl.at_limit = isapprox(br.tap_ratio, br.tap_min; atol = 1e-12) || isapprox(br.tap_ratio, br.tap_max; atol = 1e-12)
   ctrl.at_limit = ctrl.at_limit || isapprox(br.phase_shift_deg, br.phase_min_deg; atol = 1e-12) || isapprox(br.phase_shift_deg, br.phase_max_deg; atol = 1e-12)
@@ -358,8 +423,8 @@ function buildTapControllerReportRows(net::Net)::Vector{NamedTuple}
         achieved_p_mw = achieved_p,
         tap_ratio = br.tap_ratio,
         phase_shift_deg = br.phase_shift_deg,
-        ratio_tap_position = ctrl.is_discrete && br.has_ratio_tap ? _tap_position(br.tap_ratio, 1.0, br.tap_step) : missing,
-        phase_tap_position = ctrl.is_discrete && br.has_phase_tap ? _tap_position(br.phase_shift_deg, 0.0, br.phase_step_deg) : missing,
+        ratio_tap_position = ctrl.is_discrete && br.has_ratio_tap ? (_derived_tap_model(br, :ratio) !== nothing ? _derived_tap_model(br, :ratio).step : _tap_position(br.tap_ratio, 1.0, br.tap_step)) : missing,
+        phase_tap_position = ctrl.is_discrete && br.has_phase_tap ? (_derived_tap_model(br, :phase) !== nothing ? _derived_tap_model(br, :phase).step : _tap_position(br.phase_shift_deg, 0.0, br.phase_step_deg)) : missing,
         ratio_tap_min = br.has_ratio_tap ? br.tap_min : missing,
         ratio_tap_max = br.has_ratio_tap ? br.tap_max : missing,
         ratio_tap_step = br.has_ratio_tap ? br.tap_step : missing,
@@ -370,6 +435,7 @@ function buildTapControllerReportRows(net::Net)::Vector{NamedTuple}
         converged = ctrl.converged,
         at_limit = ctrl.at_limit,
         status = _controller_status_label(ctrl),
+        tap_model_kind = br.taps_derived && br.tap_winding !== nothing ? _tap_model_kind_label(br.tap_winding) : "-",
         power_direction = isnothing(target_branch) ? missing : string(target_branch[1], " -> ", target_branch[2]),
       ),
     )
@@ -580,12 +646,20 @@ function _phase_probe_direction(
   calcNetLosses!(net)
   p0 = get_branch_p_from_to_mw(net, ctrl.target_branch[1], ctrl.target_branch[2])
   oldx = br.x_pu
-  br.phase_shift_deg = clamp(oldphi + step, br.phase_min_deg, br.phase_max_deg)
-  br.angle = br.phase_shift_deg
-  # perturb the reactance consistently with the apply step (X(α) coupling);
-  # without a typed model the probe keeps today's static-x behaviour
-  x_probe = _phase_tap_reactance_at(net, ctrl, br.phase_shift_deg)
-  x_probe === nothing || (br.x_pu = x_probe)
+  derived = _derived_tap_model(br, :phase) !== nothing
+  if derived
+    # a modelled transformer is probed one model step up; the answer is
+    # expressed per degree of shift so the proposal in degrees keeps its sign
+    _shift_model_steps!(br, :phase, 1) || return 0.0
+  else
+    br.phase_shift_deg = clamp(oldphi + step, br.phase_min_deg, br.phase_max_deg)
+    br.angle = br.phase_shift_deg
+    # perturb the reactance consistently with the apply step (X(α) coupling);
+    # without a typed model the probe keeps today's static-x behaviour
+    x_probe = _phase_tap_reactance_at(net, ctrl, br.phase_shift_deg)
+    x_probe === nothing || (br.x_pu = x_probe)
+  end
+  dphi = br.phase_shift_deg - oldphi
   _, erg2 = runpf!(
     net,
     max_ite,
@@ -613,10 +687,14 @@ function _phase_probe_direction(
   )
   erg2 == 0 && calcNetLosses!(net)
   p1 = erg2 == 0 ? get_branch_p_from_to_mw(net, ctrl.target_branch[1], ctrl.target_branch[2]) : p0
-  br.phase_shift_deg = oldphi
-  br.angle = oldphi
-  br.x_pu = oldx
-  return sign(p1 - p0)
+  if derived
+    _shift_model_steps!(br, :phase, -1)
+  else
+    br.phase_shift_deg = oldphi
+    br.angle = oldphi
+    br.x_pu = oldx
+  end
+  return sign(p1 - p0) * (dphi == 0.0 ? 1.0 : sign(dphi))
 end
 
 """
@@ -682,12 +760,20 @@ function _ratio_probe_direction(
   )
   erg != 0 && return -1.0
   vm0 = get_bus_vm_pu(net, ctrl.target_bus)
-  newratio = clamp(oldratio + step, br.tap_min, br.tap_max)
-  if isapprox(newratio, oldratio; atol = 1e-12)
-    return 0.0
+  derived = _derived_tap_model(br, :ratio) !== nothing
+  if derived
+    # a modelled transformer is probed one model step up, the answer per
+    # unit of ratio change
+    _shift_model_steps!(br, :ratio, 1) || return 0.0
+  else
+    newratio = clamp(oldratio + step, br.tap_min, br.tap_max)
+    if isapprox(newratio, oldratio; atol = 1e-12)
+      return 0.0
+    end
+    br.tap_ratio = newratio
+    br.ratio = newratio
   end
-  br.tap_ratio = newratio
-  br.ratio = newratio
+  dratio = br.tap_ratio - oldratio
   _, erg2 = runpf!(
     net,
     max_ite,
@@ -714,9 +800,13 @@ function _ratio_probe_direction(
     qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
   )
   vm1 = erg2 == 0 ? get_bus_vm_pu(net, ctrl.target_bus) : vm0
-  br.tap_ratio = oldratio
-  br.ratio = oldratio
-  return sign(vm1 - vm0)
+  if derived
+    _shift_model_steps!(br, :ratio, -1)
+  else
+    br.tap_ratio = oldratio
+    br.ratio = oldratio
+  end
+  return sign(vm1 - vm0) * (dratio == 0.0 ? 1.0 : sign(dratio))
 end
 
 """

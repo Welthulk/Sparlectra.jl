@@ -73,9 +73,14 @@ A structure representing a branch model in a power system.
 - `ratio::Float64`: The transformer off nominal turns ratio.
 - `angle::Float64`: The transformer off nominal phase shift angle.
 - `sn_MVA::Union{Nothing,Float64}`: The nominal power of the branch = rateA.
+- `g_from_pu`, `b_from_pu`, `g_to_pu`, `b_to_pu::Float64`: the charging
+  admittance per terminal; the totals are always their sums, the
+  symmetric half split is the default.
 
 # Constructors
-- `BranchModel(; r_pu::Float64, x_pu::Float64, b_pu::Float64, g_pu::Float64, ratio::Float64, angle::Float64, sn_MVA::Union{Nothing,Float64} = nothing)`: Creates a new `BranchModel` instance.
+- `BranchModel(; r_pu, x_pu, b_pu, g_pu, ratio, angle, sn_MVA = nothing, g_from_pu = nothing, b_from_pu = nothing, g_to_pu = nothing, b_to_pu = nothing)`:
+  the four terminal values are given together or not at all; without them
+  the totals are split in halves.
 
 # Example
 ```julia
@@ -90,6 +95,37 @@ struct BranchModel
   ratio::Float64
   angle::Float64
   sn_MVA::Union{Nothing,Float64}
+  # per-terminal charging admittance (0.20.0); the totals above are their sums
+  g_from_pu::Float64
+  b_from_pu::Float64
+  g_to_pu::Float64
+  b_to_pu::Float64
+end
+
+function BranchModel(; r_pu::Float64, x_pu::Float64, b_pu::Float64, g_pu::Float64, ratio::Float64, angle::Float64, sn_MVA::Union{Nothing,Float64} = nothing, g_from_pu = nothing, b_from_pu = nothing, g_to_pu = nothing, b_to_pu = nothing)
+  split = _branch_shunt_split_kw("BranchModel", g_from_pu, b_from_pu, g_to_pu, b_to_pu)
+  gf, bf, gt, bt = _split_branch_shunt(g_pu, b_pu, split)
+  return BranchModel(r_pu, x_pu, bf + bt, gf + gt, ratio, angle, sn_MVA, gf, bf, gt, bt)
+end
+
+# The four terminal values of a branch shunt from the totals and an optional
+# explicit split; `nothing` is the symmetric half at each end (the MATPOWER
+# model and every builder that passes totals only).
+function _split_branch_shunt(g_pu, b_pu, split::Union{Nothing,NTuple{4,Float64}})::NTuple{4,Float64}
+  split === nothing || return split
+  g = Float64(something(g_pu, 0.0))
+  b = Float64(something(b_pu, 0.0))
+  return (0.5 * g, 0.5 * b, 0.5 * g, 0.5 * b)
+end
+
+# Keyword validation shared by every branch builder: all four terminal
+# values or none. A partial set is a caller error naming the branch, so a
+# forgotten to-side value cannot silently become a symmetric half.
+function _branch_shunt_split_kw(name::AbstractString, g_from_pu, b_from_pu, g_to_pu, b_to_pu)::Union{Nothing,NTuple{4,Float64}}
+  given = (g_from_pu !== nothing, b_from_pu !== nothing, g_to_pu !== nothing, b_to_pu !== nothing)
+  all(given) && return (Float64(g_from_pu), Float64(b_from_pu), Float64(g_to_pu), Float64(b_to_pu))
+  any(given) && throw(ArgumentError("$(name): g_from_pu, b_from_pu, g_to_pu and b_to_pu must be given together (all four) or not at all"))
+  return nothing
 end
 
 """
@@ -103,8 +139,9 @@ A mutable structure representing a branch in a power system.
 - `toBus::Integer`: The index of the bus where the branch ends.
 - `r_pu::Float64`: The per unit resistance of the branch.
 - `x_pu::Float64`: The per unit reactance of the branch.
-- `b_pu::Float64`: The per unit total line charging susceptance of the branch.
-- `g_pu::Float64`: The per unit total line charging conductance of the branch.
+- `b_pu::Float64`: The per unit total line charging susceptance of the branch (sum of the two terminal values).
+- `g_pu::Float64`: The per unit total line charging conductance of the branch (sum of the two terminal values).
+- `g_from_pu`, `b_from_pu`, `g_to_pu`, `b_to_pu::Float64`: the charging admittance per terminal; the from arm sits behind the ideal transformer. Change them through `set_branch_shunt!`, never one total alone.
 - `ratio::Float64`: The transformer off nominal turns ratio.
 - `angle::Float64`: The transformer off nominal phase shift angle.
 - `status::Integer`: The status of the branch. 1 = in service, 0 = out of service.
@@ -135,8 +172,17 @@ mutable struct Branch <: AbstractBranch
   # the operating point; the power flow keeps reading the live r_pu/x_pu.
   r_base_pu::Float64
   x_base_pu::Float64
-  b_pu::Float64                          # total line charging susceptance
-  g_pu::Float64                          # total line charging conductance
+  b_pu::Float64                          # total line charging susceptance (b_from_pu + b_to_pu)
+  g_pu::Float64                          # total line charging conductance (g_from_pu + g_to_pu)
+  # per-terminal charging admittance (0.20.0): the from arm sits behind the
+  # ideal transformer and is stamped through |t|^2, the to arm on the to
+  # bus. The symmetric half split is the default and the MATPOWER case;
+  # PowSyBl and CGMES place a transformer's magnetizing admittance on one
+  # end. set_branch_shunt! is the one writer that keeps the totals in step.
+  g_from_pu::Float64
+  b_from_pu::Float64
+  g_to_pu::Float64
+  b_to_pu::Float64
   ratio::Float64                         # nominal turns ratio
   angle::Float64                         # nominal phase shift angle in degrees
   status::Integer                        # 1 = in service, 0 = out of service
@@ -180,6 +226,15 @@ mutable struct Branch <: AbstractBranch
   phase_du_step::Float64
   phase_du_min_step::Float64
   phase_du_max_step::Float64
+  # typed tap model (0.20.0): `taps_derived` is true when ratio, angle,
+  # impedance correction and the tap grid were derived from the models of
+  # `tap_winding` by resolve_branch_taps!, so a controller moves the model
+  # step and the resolver rewrites the fields; false keeps the legacy
+  # degree/ratio grid. `tap_correction` is the model.tap_changer_model
+  # option the resolver applies to r_pu/x_pu from the equipment base.
+  taps_derived::Bool
+  tap_winding::Union{Nothing,PowerTransformerWinding}
+  tap_correction::Symbol
 
   function Branch(;
     branchIdx::Int,
@@ -198,6 +253,7 @@ mutable struct Branch <: AbstractBranch
     values_are_pu::Bool=false,
     from_status::Union{Nothing,Integer} = nothing,
     to_status::Union{Nothing,Integer} = nothing,
+    shunt_split::Union{Nothing,NTuple{4,Float64}} = nothing,
   )
     # terminal flags default to the aggregate; the stored aggregate is then
     # recomputed so that status = 1 iff both terminals are closed
@@ -221,7 +277,10 @@ mutable struct Branch <: AbstractBranch
       else 
         r_pu, x_pu, b_pu, g_pu = getLineRXBG_pu(branch, vn_kV, baseMVA)        
       end    
-      new(c, branchIdx, from, to, r_pu, x_pu, r_pu, x_pu, b_pu, g_pu, 0.0, 0.0, status, branch.ratedS, nothing, nothing, nothing, nothing, 1.0, 0.0, false, false, 0.9, 1.1, 0.00625, -30.0, 30.0, 1.25, fs, ts, nothing, nothing, :none, 0.0, 0.0, 0.0, 0.0)
+      # (g_from, b_from, g_to, b_to): explicit split or the symmetric half;
+      # the stored totals are the sums either way
+      gf, bf, gt, bt = _split_branch_shunt(g_pu, b_pu, shunt_split)
+      new(c, branchIdx, from, to, r_pu, x_pu, r_pu, x_pu, bf + bt, gf + gt, gf, bf, gt, bt, 0.0, 0.0, status, branch.ratedS, nothing, nothing, nothing, nothing, 1.0, 0.0, false, false, 0.9, 1.1, 0.00625, -30.0, 30.0, 1.25, fs, ts, nothing, nothing, :none, 0.0, 0.0, 0.0, 0.0, false, nothing, :ideal)
     elseif isa(branch, PowerTransformer) # Transformer     
       if (isnothing(side) && branch.isBiWinder)
         side = getSideNumber2WT(branch)
@@ -257,7 +316,8 @@ mutable struct Branch <: AbstractBranch
         tap_min, tap_max, tap_step = calcRatioTapRange(w.taps)
       end
 
-      new(c, branchIdx, from, to, r_pu, x_pu, r_pu, x_pu, b_pu, g_pu, ratio, angle, status, sn_MVA, nothing, nothing, nothing, nothing, ratio, angle, true, true, tap_min, tap_max, tap_step, -30.0, 30.0, 1.25, fs, ts, nothing, nothing, :none, 0.0, 0.0, 0.0, 0.0)
+      gf, bf, gt, bt = _split_branch_shunt(g_pu, b_pu, shunt_split)
+      new(c, branchIdx, from, to, r_pu, x_pu, r_pu, x_pu, bf + bt, gf + gt, gf, bf, gt, bt, ratio, angle, status, sn_MVA, nothing, nothing, nothing, nothing, ratio, angle, true, true, tap_min, tap_max, tap_step, -30.0, 30.0, 1.25, fs, ts, nothing, nothing, :none, 0.0, 0.0, 0.0, 0.0, false, nothing, :ideal)
     elseif isa(branch, BranchModel) # PI-Model
       @assert !isnothing(vn_kV) "vn_kV must be set for PI-Model"
 
@@ -270,7 +330,9 @@ mutable struct Branch <: AbstractBranch
       is_tap = branch.ratio != 0.0
       initial_ratio = is_tap ? branch.ratio : 1.0
       initial_angle = is_tap ? branch.angle : 0.0
-      new(c, branchIdx, from, to, branch.r_pu, branch.x_pu, branch.r_pu, branch.x_pu, branch.b_pu, branch.g_pu, branch.ratio, branch.angle, status, branch.sn_MVA, nothing, nothing, nothing, nothing, initial_ratio, initial_angle, is_tap, is_tap, 0.9, 1.1, 0.00625, -30.0, 30.0, 1.25, fs, ts, nothing, nothing, :none, 0.0)
+      # the model carries its own split; an explicit keyword overrides it
+      gf, bf, gt, bt = shunt_split === nothing ? (branch.g_from_pu, branch.b_from_pu, branch.g_to_pu, branch.b_to_pu) : shunt_split
+      new(c, branchIdx, from, to, branch.r_pu, branch.x_pu, branch.r_pu, branch.x_pu, bf + bt, gf + gt, gf, bf, gt, bt, branch.ratio, branch.angle, status, branch.sn_MVA, nothing, nothing, nothing, nothing, initial_ratio, initial_angle, is_tap, is_tap, 0.9, 1.1, 0.00625, -30.0, 30.0, 1.25, fs, ts, nothing, nothing, :none, 0.0, 0.0, 0.0, 0.0, false, nothing, :ideal)
     else
       error("Branch type not supported")
     end
@@ -287,6 +349,10 @@ mutable struct Branch <: AbstractBranch
     print(io, "x_pu: ", b.x_pu, ", ")
     print(io, "b_pu: ", b.b_pu, ", ")
     print(io, "g_pu: ", b.g_pu, ", ")
+    if !has_symmetric_shunt(b)
+      print(io, "shunt from/to: (", b.g_from_pu, " + ", b.b_from_pu, "im) / (", b.g_to_pu, " + ", b.b_to_pu, "im), ")
+    end
+    b.taps_derived && print(io, "taps: derived from model, ")
     print(io, "ratio: ", b.ratio, ", ")
     print(io, "angle: ", b.angle, ", ")
     print(io, "status: ", b.status, ", ")
@@ -324,15 +390,20 @@ including ratio and phase shift.
 function calcAdmittance(branch::Branch, u_rated::Float64, s_rated::Float64)::Tuple{ComplexF64,ComplexF64,ComplexF64,ComplexF64}
   # Series Admittance ys
   ys = calcBranchYser(branch)
-  # Shunt Admittance ysh
-  ysh = calcBranchYshunt(branch)
+  # the two shunt arms (0.20.0): the from arm sits BEHIND the ideal
+  # transformer and is seen through |t|^2 like the series admittance, the
+  # to arm sits on the to bus. With the symmetric split both arms equal
+  # 0.5 * (g + jb) and the four entries are the classic MATPOWER stamp:
+  #   Y_ff = (ys + y0_from) / |t|^2     Y_ft = -ys / conj(t)
+  #   Y_tf = -ys / t                    Y_tt =  ys + y0_to
+  y0_from = _branch_y0_from(branch)
+  y0_to = _branch_y0_to(branch)
   # calc complex ratio
   t = calcBranchRatio(branch)
-  # Calculate Y_from_from, Y_from_to, Y_to_from, Y_to_to
-  Y_11 = (ys + 0.5 * ysh) / abs2(t)
+  Y_11 = (ys + y0_from) / abs2(t)
   Y_12 = -1.0 * ys / conj(t)
   Y_21 = -1.0 * ys / t
-  Y_22 = ys + 0.5 * ysh
+  Y_22 = ys + y0_to
   return (Y_11, Y_12, Y_21, Y_22)
 end
 
@@ -556,6 +627,43 @@ The total shunt admittance of the branch in per unit.
 function calcBranchYshunt(branch::Branch)::ComplexF64
   return (branch.g_pu + branch.b_pu * im)
 end
+
+# The shunt arm at one terminal of a branch, as a complex admittance in pu.
+_branch_y0_from(branch::Branch)::ComplexF64 = branch.g_from_pu + im * branch.b_from_pu
+_branch_y0_to(branch::Branch)::ComplexF64 = branch.g_to_pu + im * branch.b_to_pu
+
+"""
+    has_symmetric_shunt(branch::Branch; atol = 1e-12) -> Bool
+
+Whether the two terminal shunt arms of `branch` are equal, the symmetric
+pi model that MATPOWER writes as one `BR_B`.
+"""
+has_symmetric_shunt(branch::Branch; atol::Float64 = 1e-12)::Bool = isapprox(branch.g_from_pu, branch.g_to_pu; atol = atol) && isapprox(branch.b_from_pu, branch.b_to_pu; atol = atol)
+
+"""
+    set_branch_shunt!(branch::Branch; g_from_pu, b_from_pu, g_to_pu, b_to_pu) -> Branch
+
+Set the charging admittance of both terminals of `branch` in pu and keep
+the totals `g_pu`, `b_pu` equal to their sums. This is the ONE writer of
+these fields after construction; no code writes a total alone.
+"""
+function set_branch_shunt!(branch::Branch; g_from_pu::Real, b_from_pu::Real, g_to_pu::Real, b_to_pu::Real)::Branch
+  branch.g_from_pu = Float64(g_from_pu)
+  branch.b_from_pu = Float64(b_from_pu)
+  branch.g_to_pu = Float64(g_to_pu)
+  branch.b_to_pu = Float64(b_to_pu)
+  branch.g_pu = branch.g_from_pu + branch.g_to_pu
+  branch.b_pu = branch.b_from_pu + branch.b_to_pu
+  return branch
+end
+
+"""
+    set_branch_shunt_total!(branch::Branch; g_pu, b_pu) -> Branch
+
+Set the total charging admittance of `branch` with the symmetric split,
+half at each terminal (the MATPOWER form).
+"""
+set_branch_shunt_total!(branch::Branch; g_pu::Real, b_pu::Real)::Branch = set_branch_shunt!(branch; g_from_pu = 0.5 * g_pu, b_from_pu = 0.5 * b_pu, g_to_pu = 0.5 * g_pu, b_to_pu = 0.5 * b_pu)
 
 """
     calcBranchRatio(branch) -> ComplexF64

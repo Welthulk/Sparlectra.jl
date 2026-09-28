@@ -116,11 +116,15 @@ Outcome of one [`ContingencyCase`](@ref) evaluated by
   `[vm_min_pu, vm_max_pu]` band.
 - `island_count::Int`: AC islands of the post-outage topology (0 when the
   net could not be evaluated).
-- `shed_load_mw::Float64`: load disconnected by islanding (the total load in
-  reference-less islands); `0.0` when the case solves or does not island.
-- `error::Union{Nothing,String}`: `nothing` on success; otherwise the
-  failure in one line ("islanded without reference", the solver status, or
-  the exception message). Failures are REPORTED, never thrown.
+- `shed_load_mw::Float64`: load disconnected by islanding: the total load in
+  reference-less islands of a failed case, the load at the buses the
+  outage cut off in a case whose remaining network solved; `0.0` when the
+  outage disconnects nothing.
+- `error::Union{Nothing,String}`: `nothing` on a clean success. A failure
+  is named in one line ("islanded without reference", the solver status, or
+  the exception message). A case that solved but cut off buses (the outage
+  of a radial branch) carries the note "islanded: bus ... cut off, ..." and
+  `converged = true`. Failures are REPORTED, never thrown.
 """
 struct ContingencyResult
     name::String
@@ -507,7 +511,11 @@ per case, only for the base case (below).
 
 When the base case does not converge, it is retried through the solver rescue
 ladder (`runpf!` with `rescue = true`) before falling back to a flat template
-with a warning. Remaining `kwargs...` are forwarded to the `:warm`/`:flat`/`:dc`
+with a warning. `auto_slack` (default `true`) hands the reference to the
+strongest remaining unit when an outage removes it, for the whole network
+and for an island that lost it ([`reference_candidate_rank`](@ref)); the
+row then names the bus. With `auto_slack = false` such a case ends on the
+missing reference. Remaining `kwargs...` are forwarded to the `:warm`/`:flat`/`:dc`
 contingency solves (the `:apslf` config path does not forward them).
 
 `retry_flat_start` is DEPRECATED (kept one minor cycle): `retry_flat_start =
@@ -542,6 +550,7 @@ function runContingencies!(
     parallel_enabled::Union{Nothing,Bool}=nothing,
     parallel_max_tasks::Union{Nothing,Int}=nothing,
     parallel_min_work_items::Union{Nothing,Int}=nothing,
+    auto_slack::Bool=true,
     kwargs...,
 )
     vm_min_pu < vm_max_pu || throw(ArgumentError("runContingencies!: vm_min_pu must be below vm_max_pu."))
@@ -559,7 +568,7 @@ function runContingencies!(
     # template hygiene, base loadings, chunked workers all live there); the
     # case118 CSV fixture pins these results byte for byte to the pre-engine
     # per-case-deepcopy implementation
-    engine = ScenarioEngine(net; vm_min_pu=vm_min_pu, vm_max_pu=vm_max_pu, maxIte=maxIte, tol=tol, ladder=ladder, pf_kwargs=kwargs, screening_mode=screening_mode, screening_margin_pct=screening_margin_pct)
+    engine = ScenarioEngine(net; vm_min_pu=vm_min_pu, vm_max_pu=vm_max_pu, maxIte=maxIte, tol=tol, ladder=ladder, pf_kwargs=(; auto_slack=auto_slack, kwargs...), screening_mode=screening_mode, screening_margin_pct=screening_margin_pct)
     items = _engine_items_from_cases(engine.template, cases)
     return _run_engine_batch(engine, items; parallel_enabled=parallel_enabled, parallel_max_tasks=parallel_max_tasks, parallel_min_work_items=parallel_min_work_items)
 end

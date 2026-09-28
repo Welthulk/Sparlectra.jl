@@ -440,7 +440,7 @@ function run_webui_extended_tests()
       @test occursin("Save settings for this case", result_html)
       @test !occursin("Save these settings anyway", result_html)
 
-      # regression 2026-09-02: a case-scope key WITHOUT a form control
+      # regression: a case-scope key WITHOUT a form control
       # (here the converted sidecar's apply_bus_names) and stored form
       # fields of other pages (the SE generator seed) must SURVIVE the
       # run-based save; replacing the file dropped them and the case's
@@ -514,7 +514,7 @@ function run_webui_extended_tests()
       @test occursin("deleted", String(Dict(reset_resp.headers)["Location"]))
       @test !isfile(Sparlectra.case_config_path(scf_case))
 
-      # the Settings page shows the saved case settings by default (2026-09-25);
+      # the Settings page shows the saved case settings by default;
       # ?case_settings=1 selects that view explicitly and keeps working
       loaded_form = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/settings?casefile=$(SparlectraApp._webui_urlencode(joinpath(root, "case145.m")))&case_settings=1"; output_root = root).body)
       @test occursin("Case-specific settings loaded from", loaded_form)
@@ -989,7 +989,7 @@ form:
         @test occursin("<form id=\"case-import-form\" method=\"post\" action=\"/powerflow/import-cases\" enctype=\"multipart/form-data\"", selection_html)
         # .json is a Sparlectra Case Format case (#342); the import validates
         # the content before storing, so a foreign .json is refused by name
-        @test occursin("type=\"file\" name=\"casefiles\" accept=\".m,.M,.dat,.DAT,.zip,.ZIP,.json,.yaml,.xml,.XML\" multiple", selection_html)
+        @test occursin("type=\"file\" name=\"casefiles\" accept=\".m,.M,.dat,.DAT,.zip,.ZIP,.json,.yaml,.xml,.XML,.xiidm,.XIIDM\" multiple", selection_html)
         @test occursin("Import case files", selection_html)
         @test occursin("<input type=\"hidden\" name=\"config_file\" value=\"$(secondary_config)\">", selection_html)
         @test occursin("<code>$(secondary_config)</code>", selection_html)
@@ -1153,6 +1153,151 @@ form:
         multi_page = String(SparlectraApp.route_sparlectra_webui("GET", String(Dict(multi_response.headers)["Location"]); output_root, runtime).body)
         @test occursin("rejected 1", multi_page)
         @test occursin("bad.txt", multi_page) && occursin("unsupported extension", multi_page)
+
+        # a stray manifest.json (the index of a table bundle) is no case
+        # file and is refused like any other JSON that is none
+        manifest = Dict("casefiles" => [upload("manifest.json", "{\"format\": \"powsybl_tables\", \"format_version\": 1, \"case\": \"x\", \"source\": \"test\"}")])
+        manifest_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/import-cases", manifest; output_root, runtime)
+        @test manifest_response.status == 303
+        @test !isfile(joinpath(case_directory, "manifest.json"))
+        # the .xiidm file itself is a case file: the upload stores it, the case runs by its bare name (it used to be
+        # looked up as a MATPOWER case to download, and the run service had
+        # no branch for the format), and a measurement set generated for it
+        # estimates; a name that is not there is a plain not-found
+        iidm_source = joinpath(Sparlectra.SPARLECTRA_ROOT, "data", "powsybl", "ieee14.xiidm")
+        iidm_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/import-cases", Dict("casefiles" => [SparlectraApp.WebUICaseUpload("ieee14.xiidm", read(iidm_source))]); output_root, runtime)
+        @test iidm_response.status == 303
+        @test isfile(joinpath(case_directory, "ieee14.xiidm"))
+        @test occursin("data-case-option=\"ieee14.xiidm\"", String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/case"; output_root, runtime).body))
+        iidm_run = redirect_stdout(devnull) do
+          SparlectraApp.start_powerflow_run(Dict{String,Any}("casefile" => "ieee14.xiidm", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(tmpdir, "runs_iidm")); case_directory = case_directory)
+        end
+        @test iidm_run["status"] == "succeeded"
+        @test iidm_run["converged"] === true
+        # the import report is an artifact of the run (the importer prints
+        # nothing, so a run from the Web UI never showed the slack choice)
+        iidm_report = joinpath(iidm_run["output_dir"], "powsybl_import.log")
+        @test isfile(iidm_report)
+        @test occursin(r"slack component \d+: B1-G", read(iidm_report, String))
+        @test occursin("PowSyBl import report: powsybl_import.log", read(joinpath(iidm_run["output_dir"], "run.log"), String))
+        bundle_run = redirect_stdout(devnull) do
+          SparlectraApp.start_powerflow_run(Dict{String,Any}("casefile" => joinpath(Sparlectra.SPARLECTRA_ROOT, "test", "fixtures", "powsybl", "ieee14.powsybl"), "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(tmpdir, "runs_bundle")); case_directory = case_directory)
+        end
+        @test bundle_run["status"] == "succeeded"
+        missing_run = SparlectraApp.start_powerflow_run(Dict{String,Any}("casefile" => "not_there.xiidm", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(tmpdir, "runs_missing")); case_directory = case_directory)
+        @test missing_run["status"] == "failed"
+        @test occursin("Case file not found: not_there.xiidm", missing_run["message"])
+        # (the runtime of this test set names a configuration file that does
+        # not exist; the generator needs a real one)
+        iidm_runtime = SparlectraApp._SparlectraWebUIRuntime(nothing, case_directory, Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, SparlectraApp.webui_operation_log_path(output_root), nothing, SparlectraApp.start_powerflow_run, false, false, time(), 0, nothing, IOBuffer(), ReentrantLock())
+        # every other run kind goes through on the same uploaded file: the
+        # N-1 sweep, the short circuit (the generators are the sources; this
+        # file carries no short-circuit data, so every row is flagged and
+        # the message says why) and Diagnose (its verdict on the file's
+        # start state, as for any other format)
+        # (a runtime with a configuration file that exists, for the page and the routes)
+        export_runtime = SparlectraApp._SparlectraWebUIRuntime(nothing, case_directory, Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, SparlectraApp.webui_operation_log_path(output_root), nothing, SparlectraApp.start_powerflow_run, false, false, time(), 0, nothing, IOBuffer(), ReentrantLock())
+        iidm_kind(tag, extra) = redirect_stdout(devnull) do
+          SparlectraApp.start_powerflow_run(merge(Dict{String,Any}("casefile" => "ieee14.xiidm", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(tmpdir, "runs_iidm_" * tag)), extra); case_directory = case_directory)
+        end
+        iidm_n1 = iidm_kind("n1", Dict{String,Any}("contingency_mode" => true))
+        @test iidm_n1["status"] == "succeeded"
+        # the outage of line 1-2 takes away the path of the reference unit's
+        # output: on a single slack it has no solution with the reactive
+        # limits (OpenLoadFlow ends the same way in that setting), with the
+        # distributed slack of the run configuration it has one (lowest
+        # voltage 0.9256 pu; OpenLoadFlow 0.9243), and the service passes
+        # that configuration to every post-outage solve
+        @test iidm_n1["metadata"]["contingency_converged"] == 19
+        iidm_n1_shared = iidm_kind("n1_shared", Dict{String,Any}("contingency_mode" => true, "config_overrides" => Dict{String,Any}("power_flow.distributed_slack.enabled" => true, "power_flow.distributed_slack.p_mode" => "imported")))
+        @test iidm_n1_shared["status"] == "succeeded"
+        @test iidm_n1_shared["metadata"]["contingency_converged"] == 20
+        # generator outages: the loss of the reference unit hands the
+        # reference to the strongest unit that is left, named in the row
+        iidm_n1_units = iidm_kind("n1_units", Dict{String,Any}("contingency_mode" => true, "contingency_kind" => "gen", "config_overrides" => Dict{String,Any}("power_flow.distributed_slack.enabled" => true, "power_flow.distributed_slack.p_mode" => "imported")))
+        @test iidm_n1_units["status"] == "succeeded"
+        @test occursin("reference taken over by bus", read(joinpath(iidm_n1_units["output_dir"], "contingency_n1.csv"), String))
+        @test !occursin("no slack bus", read(joinpath(iidm_n1_units["output_dir"], "contingency_n1.csv"), String))
+        # short circuit, three states of the data. The shipped file carries
+        # neither short-circuit data nor a rated power on any generator:
+        # nothing of a source impedance would come from the file, the run
+        # refuses. With rated powers the table is complete on the default
+        # reactance and the run ends with a WARNING that leads the message.
+        # With the extension on every generator it is a plain success.
+        iidm_sc = iidm_kind("sc", Dict{String,Any}("short_circuit_mode" => true))
+        @test iidm_sc["status"] == "failed"
+        @test iidm_sc["reason"] == "short_circuit_data_missing"
+        @test occursin("generatorShortCircuit", iidm_sc["message"]) && occursin("ratedS", iidm_sc["message"])
+        iidm_text = read(iidm_source, String)
+        iidm_ids = [String(m.captures[1]) for m in eachmatch(r"<iidm:generator id=\"([^\"]+)\"", iidm_text)]
+        rated_text = replace(iidm_text, r"<iidm:generator id=" => "<iidm:generator ratedS=\"100.0\" id=")
+        write(joinpath(case_directory, "ieee14_rated.xiidm"), rated_text)
+        sc_extension = join("    <iidm:extension id=\"$(id)\">\n        <gsc:generatorShortCircuit xmlns:gsc=\"http://www.powsybl.org/schema/iidm/ext/generator_short_circuit/1_0\" directSubtransX=\"20.0\"/>\n    </iidm:extension>\n" for id in iidm_ids)
+        write(joinpath(case_directory, "ieee14_sc.xiidm"), replace(rated_text, "</iidm:network>" => sc_extension * "</iidm:network>"))
+        sc_run(case, tag) = redirect_stdout(devnull) do
+          SparlectraApp.start_powerflow_run(Dict{String,Any}("casefile" => case, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(tmpdir, "runs_sc_" * tag), "short_circuit_mode" => true); case_directory = case_directory)
+        end
+        sc_defaults = sc_run("ieee14_rated.xiidm", "defaults")
+        @test sc_defaults["status"] == "warning"
+        @test sc_defaults["success"] === true
+        @test sc_defaults["reason"] == "short_circuit_defaults_only"
+        @test startswith(sc_defaults["message"], "Short circuit completed on defaults: none of the 5 source(s) carries short-circuit data")
+        @test sc_defaults["metadata"]["sc_sources"] == 5 && sc_defaults["metadata"]["sc_sources_with_data"] == 0 && sc_defaults["metadata"]["sc_defaults_only"] === true
+        @test startswith(read(joinpath(sc_defaults["output_dir"], "run.log"), String), "WARNING: none of the 5 generator(s) carries short-circuit data")
+        @test isfile(joinpath(sc_defaults["output_dir"], "short_circuit_max.csv")) && isfile(joinpath(sc_defaults["output_dir"], "short_circuit_min.csv"))
+        @test SparlectraApp.webui_status_class(sc_defaults) == "status-warning"
+        @test occursin("no short-circuit data in the case", SparlectraApp._webui_short_circuit_summary(sc_defaults))
+        sc_data = sc_run("ieee14_sc.xiidm", "data")
+        @test sc_data["status"] == "succeeded"
+        @test sc_data["metadata"]["sc_sources_with_data"] == 5 && sc_data["metadata"]["sc_flagged_rows"] == 0
+        @test sc_data["message"] == "Short circuit completed."
+        # the shipped demo file with short-circuit data runs the same way
+        sc_shipped = sc_run(joinpath(Sparlectra.SPARLECTRA_ROOT, "data", "powsybl", "ieee14_sc.xiidm"), "shipped")
+        @test sc_shipped["status"] == "succeeded"
+        @test sc_shipped["metadata"]["sc_sources_with_data"] == 5 && sc_shipped["metadata"]["sc_flagged_rows"] == 0
+        # the Short circuit button knows the three states before a run: not
+        # offered with its reason for the file without data and rating,
+        # offered for the two others
+        button_state(case) = match(r"data-sc-state=\"([a-z-]+)\"", String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow?casefile=$(case)"; output_root, runtime = export_runtime).body)).captures[1]
+        @test button_state("ieee14.xiidm") == "missing-data"
+        @test button_state("ieee14_rated.xiidm") == "ready"
+        @test button_state("ieee14_sc.xiidm") == "ready"
+        # the three exports: the SCF file through its route, the MATPOWER
+        # and CGMES artifacts with a run; every export runs again through the
+        # service and lands on the voltages of the source run
+        scf_export = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/export-scf", Dict{String,Any}("casefile" => "ieee14.xiidm", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH); output_root, runtime = export_runtime)
+        @test occursin("Exported ieee14.scf.json", SparlectraApp._webui_urldecode(Dict(scf_export.headers)["Location"]))
+        @test isfile(joinpath(case_directory, "ieee14.scf.json"))
+        iidm_exports = iidm_kind("exports", Dict{String,Any}("matpower_export_requested" => true, "export_cgmes" => true, "detailed_result_csv" => true))
+        @test iidm_exports["status"] == "succeeded"
+        @test iidm_exports["metadata"]["matpower_export_status"] == "completed"
+        @test iidm_exports["metadata"]["cgmes_export_status"] == "completed"
+        cp(joinpath(iidm_exports["output_dir"], "matpower_export.m"), joinpath(case_directory, "ieee14_export.m"))
+        cp(joinpath(iidm_exports["output_dir"], String(iidm_exports["metadata"]["cgmes_export_files"])), joinpath(case_directory, "ieee14_export_cgmes.zip"))
+        magnitudes(result) = begin
+          rows = readlines(joinpath(result["output_dir"], "bus_voltages_complex.csv"))
+          column = findfirst(==("vm_pu"), split(rows[1], ","))
+          sort!([parse(Float64, split(row, ",")[column]) for row in rows[2:end]])
+        end
+        source_vm = magnitudes(iidm_exports)
+        for exported in ("ieee14_export.m", "ieee14_export_cgmes.zip", "ieee14.scf.json")
+          back = redirect_stdout(devnull) do
+            SparlectraApp.start_powerflow_run(Dict{String,Any}("casefile" => exported, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(tmpdir, "runs_back_" * exported), "detailed_result_csv" => true); case_directory = case_directory)
+          end
+          @test back["status"] == "succeeded"
+          back_vm = magnitudes(back)
+          @test length(back_vm) == length(source_vm)
+          @test maximum(abs.(back_vm .- source_vm)) < 1e-5
+        end
+        iidm_diag = iidm_kind("diag", Dict{String,Any}("diagnose_mode" => true))
+        @test isfile(joinpath(iidm_diag["output_dir"], "diagnose.log"))
+        @test iidm_diag["metadata"]["run_mode"] == "diagnose"
+        iidm_gen = SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/generate-measurements", Dict{String,Any}("casefile" => "ieee14.xiidm", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH); output_root, runtime = iidm_runtime)
+        iidm_set = SparlectraApp._webui_urldecode(String(match(r"measurement_file=([^&#]+)", Dict(iidm_gen.headers)["Location"]).captures[1]))
+        iidm_se = redirect_stdout(devnull) do
+          SparlectraApp.start_powerflow_run(Dict{String,Any}("casefile" => "ieee14.xiidm", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(tmpdir, "runs_iidm_se"), "se_mode" => true, "measurement_file" => iidm_set); case_directory = case_directory)
+        end
+        @test iidm_se["status"] == "succeeded"
 
         # An incomplete CGMES delivery triggers the upload-time import
         # analysis: the message names the missing declared dependency and the
@@ -1333,7 +1478,8 @@ form:
       # sections of the Web UI page ship whole, library sections lead-only
       @test all(!e.truncated for (k, e) in SparlectraApp.WEBUI_HELP_EXCERPTS if startswith(k, "webui/"))
       @test !isempty(SparlectraApp.WEBUI_HELP_MANUAL)
-      @test haskey(SparlectraApp.WEBUI_HELP_MANUAL_ANCHORS, "Form options")
+      @test haskey(SparlectraApp.WEBUI_HELP_MANUAL_ANCHORS, "Case formats at a glance")
+      @test haskey(SparlectraApp.WEBUI_HELP_REFERENCE_ANCHORS, "Form options")
       # a header link to the documentation site, no in-app reader
       home = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow").body)
       @test occursin("class=\"project-docs-link\" href=\"https://welthulk.github.io/Sparlectra.jl/\"", home)
@@ -1707,7 +1853,6 @@ form:
         "powsybl_import_multi_slack" => "powsybl_import.multi_slack",
         "powsybl_import_slack_ids" => "powsybl_import.slack_ids",
         "powsybl_import_base_mva" => "powsybl_import.base_mva",
-        "powsybl_import_python_exe" => "powsybl_import.python_exe",
         "power_flow_rescue" => "power_flow.rescue",
         "runtime_parallel_enabled" => "runtime.parallel.enabled",
         "power_flow_dc_fallback" => "power_flow.dc.fallback",
@@ -2000,7 +2145,7 @@ result = get_powerflow_result(run_id)
       @test manual_effective_cfg.matpower.shift_sign == -1.0
       @test manual_effective_cfg.matpower.shift_unit === :rad
       manual_run_log = read(joinpath(manual_result["output_dir"], "run.log"), String)
-      # compact console (the default since 2026-09-05): the conventions that
+      # compact console (the default): the conventions that
       # move results are named on one line, the full list stays in
       # effective_config.yaml, which the assertions above read
       @test occursin("Import conventions: ratio=reciprocal", manual_run_log)
@@ -2831,7 +2976,7 @@ result = get_powerflow_result(run_id)
       # 50, not 30: a CGMES run with released taps needs 36 to 40 iterations
       # in its FIRST solve and failed at 30, while the count it reports
       # afterwards is the one of the last solve (3) and hides that
-      # (run a023884e, 2026-09-06)
+      # (a Web UI run)
       @test occursin("name=\"se_max_iter\" value=\"50\"", base)
       @test occursin("name=\"se_tol\" value=\"1e-6\"", base)
       @test Sparlectra.state_estimation_config().max_iter == 50
@@ -2947,7 +3092,7 @@ result = get_powerflow_result(run_id)
         # a residual is the normal outcome and `success` (which mirrors
         # convergence) is false: the service completed, the numerics did not
         # converge, and that residual IS the diagnosis. This asserted
-        # `success` until 2026-09-07, when the forced settings still lost to
+        # `success` before this fix, when the forced settings still lost to
         # the case configuration file and the run was secretly an ordinary
         # solve.
         @test diagnose_result["success"] === false
@@ -3004,7 +3149,7 @@ result = get_powerflow_result(run_id)
         scf_name = "sp_case60.scf.json"
         scf_path = joinpath(casedir, scf_name)
         cp(joinpath(dirname(@__DIR__), "data", "scf", scf_name), scf_path)
-        # the shipped block is mode explicit since 2026-09-04 (the named
+        # the shipped block is mode explicit (the named
         # scenarios are what an editor shows); no staging rewrite needed
         scfcase = Sparlectra.read_scf_json(scf_path)
         idx = Sparlectra.ScenarioIndex(scfcase)

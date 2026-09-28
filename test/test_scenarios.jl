@@ -552,7 +552,7 @@ function run_scenario_engine_extended_tests()
 
   @testset "scenario engine sp_case300 screening acceptance" begin (function ()
     # the operated-grid acceptance case per the test-network rule
-    # (2026-09-03): case300 judges screening QUALITY, no false negatives at
+    # (the test-network rule): case300 judges screening QUALITY, no false negatives at
     # margin 10 with the 0.005 pu trust gate (its outage 57-63 forced the
     # gate: buses 63/64/526 collapse to 0.84 pu behind a 0.0104 pu one-step
     # residual); runs on the shipped data/mpower/sp_case300.m (synthetic

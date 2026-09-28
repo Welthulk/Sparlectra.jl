@@ -44,7 +44,7 @@ const _WEBUI_OPERATION_LOG_PHASES = Set((
   "solving_powerflow",
   # state-estimation phases: without them a SE run stopped reporting after
   # preparing_configuration and the status page showed that one phase for the
-  # whole run (a 13659-bus run had to be aborted blind, 2026-09-05)
+  # whole run (a 13659-bus run had to be aborted blind)
   "importing_case",
   "topology_precheck",
   "state_estimation",

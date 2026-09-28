@@ -21,7 +21,7 @@
 # (_merged_pf_net) the AC/APSLF paths use: without it the DC graph treats
 # the two sections of one closed busbar coupler as separate nodes, which
 # either splits off a false reference-less island (warmup_casePST) or
-# silently solves the sections at different angles (found 2026-09-04:
+# silently solves the sections at different angles (found:
 # 13.6 deg across the closed sp_case188 coupler).
 
 # file: src/powerflow_dc/dc_network_solver.jl

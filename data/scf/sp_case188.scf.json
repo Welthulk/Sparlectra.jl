@@ -10436,6 +10436,7 @@
       "479": {
         "element_index": 4,
         "external_id": "#Gen_110\\_14\\_#4",
+        "max_p_mw": 65.0,
         "max_q_mvar": 35.0,
         "min_q_mvar": -35.0,
         "name": "Gen_110",
@@ -10452,6 +10453,7 @@
       "480": {
         "element_index": 26,
         "external_id": "#Gen_110\\_59\\_#26",
+        "max_p_mw": 65.0,
         "max_q_mvar": 35.0,
         "min_q_mvar": -35.0,
         "name": "Gen_110",
@@ -10462,6 +10464,7 @@
       "481": {
         "element_index": 48,
         "external_id": "#Gen_110\\_104\\_#48",
+        "max_p_mw": 65.0,
         "max_q_mvar": 35.0,
         "min_q_mvar": -35.0,
         "name": "Gen_110",
@@ -10472,6 +10475,7 @@
       "482": {
         "element_index": 70,
         "external_id": "#Gen_110\\_149\\_#70",
+        "max_p_mw": 65.0,
         "max_q_mvar": 35.0,
         "min_q_mvar": -35.0,
         "name": "Gen_110",
@@ -10489,6 +10493,7 @@
       "484": {
         "element_index": 23,
         "external_id": "#Gen_20\\_30\\_#23",
+        "max_p_mw": 7.0,
         "name": "Gen_20",
         "prosumption_class": "Injection",
         "prosumption_type": "Generator"
@@ -10496,6 +10501,7 @@
       "485": {
         "element_index": 24,
         "external_id": "#Gen_20\\_36\\_#24",
+        "max_p_mw": 7.0,
         "name": "Gen_20",
         "prosumption_class": "Injection",
         "prosumption_type": "Generator"
@@ -10503,6 +10509,7 @@
       "486": {
         "element_index": 25,
         "external_id": "#Gen_20\\_42\\_#25",
+        "max_p_mw": 7.0,
         "name": "Gen_20",
         "prosumption_class": "Injection",
         "prosumption_type": "Generator"
@@ -10510,6 +10517,7 @@
       "487": {
         "element_index": 45,
         "external_id": "#Gen_20\\_75\\_#45",
+        "max_p_mw": 7.0,
         "name": "Gen_20",
         "prosumption_class": "Injection",
         "prosumption_type": "Generator"
@@ -10517,6 +10525,7 @@
       "488": {
         "element_index": 46,
         "external_id": "#Gen_20\\_81\\_#46",
+        "max_p_mw": 7.0,
         "name": "Gen_20",
         "prosumption_class": "Injection",
         "prosumption_type": "Generator"
@@ -10524,6 +10533,7 @@
       "489": {
         "element_index": 47,
         "external_id": "#Gen_20\\_87\\_#47",
+        "max_p_mw": 7.0,
         "name": "Gen_20",
         "prosumption_class": "Injection",
         "prosumption_type": "Generator"
@@ -10537,6 +10547,7 @@
       "490": {
         "element_index": 67,
         "external_id": "#Gen_20\\_120\\_#67",
+        "max_p_mw": 7.0,
         "name": "Gen_20",
         "prosumption_class": "Injection",
         "prosumption_type": "Generator"
@@ -10544,6 +10555,7 @@
       "491": {
         "element_index": 68,
         "external_id": "#Gen_20\\_126\\_#68",
+        "max_p_mw": 7.0,
         "name": "Gen_20",
         "prosumption_class": "Injection",
         "prosumption_type": "Generator"
@@ -10551,6 +10563,7 @@
       "492": {
         "element_index": 69,
         "external_id": "#Gen_20\\_132\\_#69",
+        "max_p_mw": 7.0,
         "name": "Gen_20",
         "prosumption_class": "Injection",
         "prosumption_type": "Generator"
@@ -10558,6 +10571,7 @@
       "493": {
         "element_index": 89,
         "external_id": "#Gen_20\\_165\\_#89",
+        "max_p_mw": 7.0,
         "name": "Gen_20",
         "prosumption_class": "Injection",
         "prosumption_type": "Generator"
@@ -10565,6 +10579,7 @@
       "494": {
         "element_index": 90,
         "external_id": "#Gen_20\\_171\\_#90",
+        "max_p_mw": 7.0,
         "name": "Gen_20",
         "prosumption_class": "Injection",
         "prosumption_type": "Generator"
@@ -10572,6 +10587,7 @@
       "495": {
         "element_index": 91,
         "external_id": "#Gen_20\\_177\\_#91",
+        "max_p_mw": 7.0,
         "name": "Gen_20",
         "prosumption_class": "Injection",
         "prosumption_type": "Generator"
@@ -10589,6 +10605,7 @@
       "497": {
         "element_index": 2,
         "external_id": "#Gen_380\\_4\\_#2",
+        "max_p_mw": 260.0,
         "max_q_mvar": 120.0,
         "min_q_mvar": -120.0,
         "name": "Gen_380",
@@ -10599,6 +10616,7 @@
       "498": {
         "element_index": 3,
         "external_id": "#Gen_380\\_7\\_#3",
+        "max_p_mw": 210.0,
         "max_q_mvar": 100.0,
         "min_q_mvar": -100.0,
         "name": "Gen_380",
@@ -10628,6 +10646,7 @@
       "500": {
         "element_index": 94,
         "external_id": "#Gen_380\\_6\\_#94",
+        "max_p_mw": 100.0,
         "name": "Gen_380",
         "prosumption_class": "Injection",
         "prosumption_type": "Generator"

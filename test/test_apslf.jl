@@ -112,14 +112,17 @@ function run_apslf_tests()
                 @test cfg_hybrid.powerflow.apslf_start.order == 12
                 @test cfg_hybrid.powerflow.solver === :rectangular
 
-                # Unknown keys under the new sections are rejected like any other section.
+                # An unknown key under the new sections is warned about and
+                # dropped like any other file key; the file still loads (a
+                # stored file must keep loading across releases, so an unknown
+                # or removed key is noise, never a failure).
                 bad_key_file = test_scratch_path(".yaml")
                 write(bad_key_file, "power_flow:\n  apslf:\n    bogus_key: 1\n")
                 # the file carries no config_version on purpose; that once-per-session
-                # warning is expected here and must not reach the test output
-                run_with_expected_warnings(["declares no config_version"]) do
-                    @test_throws ArgumentError Sparlectra.load_sparlectra_config(bad_key_file; reload=true)
-                end
+                # warning may appear as well and must not reach the test output
+                cfg_bad = @test_logs (:warn, r"Unknown Sparlectra configuration key power_flow\.apslf\.bogus_key is ignored") match_mode = :any Sparlectra.load_sparlectra_config(bad_key_file; reload=true)
+                @test cfg_bad isa Sparlectra.SparlectraConfig
+                @test cfg_bad.powerflow.apslf.order == Sparlectra.SparlectraConfig().powerflow.apslf.order
             end)() end
 
             @testset "Controller + APSLF solver rejection" begin (function ()

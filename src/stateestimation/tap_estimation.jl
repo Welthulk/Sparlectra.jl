@@ -176,7 +176,7 @@ reciprocal `1/(1+r1)` onto `[1/tap_max - 1, 1/tap_min - 1]`.
 Why a step limit and NOT a hard band on the state: without any bound the
 Gauss-Newton step drives `r1` toward -1, where the cascade
 `t = t_base/((1+r1)(1+r2 e^{jalpha}))` is singular and the stamped
-admittance blows up (measured 2026-09-06: one weakly determined 50 kV
+admittance blows up (measured: one weakly determined 50 kV
 transformer ran to -329 electrical steps on a band of about -14 to +18 and
 took the whole estimation down). But clamping the STATE into the band was
 measured to be worse than no bound at all: five transformers that had
@@ -574,6 +574,27 @@ function calcMachineTrafoTapFromSE(net::Net; trafo, v_machine_pu::Union{Nothing,
   return (branch = k, name = getCompName(br.comp), machine_bus = m, network_bus = netBus, r_est = r, electrical_step = p, fixed_step = Int(pfix), q_residual_mvar = qres(r) * net.baseMVA, v_machine_pu = vset, converged_se = st.converged)
 end
 
+# The shift (relative to the winding's neutral) of the model step nearest
+# to `shift_deg` for a branch whose taps are derived from a typed phase
+# model (0.20.0); `nothing` on the legacy degree grid. The estimator then
+# fixes such a regulator on the model's own, possibly non-uniform, steps.
+function _model_shift_nearest(br::Branch, shift_deg::Float64)::Union{Nothing,Float64}
+  (br.taps_derived && br.tap_winding !== nothing && br.tap_winding.phase_taps !== nothing) || return nothing
+  m = br.tap_winding.phase_taps
+  steps = m.kind === :tabular ? [p.step for p in m.table] : collect(m.lowStep:m.highStep)
+  best = nothing
+  bestd = Inf
+  for st in steps
+    s = calcPhaseTapAngleRatio(m; step = st).effective_shift_deg
+    d = abs(s - shift_deg)
+    if d < bestd
+      best = s
+      bestd = d
+    end
+  end
+  return best
+end
+
 """
     _fixate_taps(x, map, net) -> (rows, fixedMap, xFixed)
 
@@ -642,7 +663,11 @@ function _fixate_taps(x::Vector{Float64}, map::TapStateMap, net::Net)
       p2fix = clamp(round(p2, RoundNearestTiesAway), ceil(p2min), floor(p2max))
       r2fix = r2   # frozen regulator: exact model position
       if map.r2cols[j] != 0 && map.modes[j] in (:pst, :both)
-        ϕ = -deg2rad(p2fix * step2)
+        fixed_deg = p2fix * step2
+        # a typed model fixes on its own steps, not on the mean degree grid
+        model_deg = _model_shift_nearest(br, fixed_deg)
+        model_deg === nothing || (fixed_deg = model_deg)
+        ϕ = -deg2rad(fixed_deg)
         r2fix = abs(sin(deg2rad(α) - ϕ)) < 1e-12 ? 0.0 : sin(ϕ) / sin(deg2rad(α) - ϕ)
       end
     end

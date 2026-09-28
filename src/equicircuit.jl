@@ -412,6 +412,116 @@ function calcPhaseTapReactance(m::PhaseTapChangerModel, alpha_deg::Real)::Union{
 end
 
 """
+    resolve_winding_taps(w::PowerTransformerWinding; tap_changer_model = :ideal, ratio_step = nothing, phase_step = nothing) -> Union{Nothing,NamedTuple}
+
+The branch quantities the typed tap models of a winding give at a step,
+without touching anything: `ratio`, `shift_deg`, the tap grid
+(`tap_min`, `tap_max`, `tap_step`, `phase_min_deg`, `phase_max_deg`,
+`phase_step_deg`), the impedance correction factor `rx_factor` of
+`model.tap_changer_model` (`calcTapCorrectedRX` at the model's tap
+fraction and winding angle, 1.0 for `:ideal`), and `x_alpha`, the
+tap-dependent reactance of a model that carries `x_min`/`x_max` or a
+table (`nothing` otherwise). The winding's `ratio` (default 1) and
+`shift_degree` (default 0) are the neutral point: the ratio-tap
+correction and the phase model's effective ratio multiply it, the phase
+model's shift adds to it. `ratio_step` and `phase_step` evaluate another
+step than the models' current one (a controller asking where a step
+would take the branch). Returns `nothing` for a winding without models.
+"""
+function resolve_winding_taps(w::PowerTransformerWinding; tap_changer_model::Symbol = :ideal, ratio_step::Union{Nothing,Int} = nothing, phase_step::Union{Nothing,Int} = nothing)
+  (w.taps === nothing && w.phase_taps === nothing) && return nothing
+  base_ratio = w.ratio === nothing ? 1.0 : w.ratio
+  base_shift = w.shift_degree === nothing ? 0.0 : w.shift_degree
+  ratio = base_ratio
+  shift = base_shift
+  tap_min, tap_max, tap_step = 0.9, 1.1, 0.00625
+  if w.taps !== nothing
+    st = ratio_step === nothing ? w.taps.step : ratio_step
+    ratio *= calcRatioTapCorrection(w.taps; step = st)
+    rng = calcRatioTapRange(w.taps)
+    tap_min = base_ratio * rng.tap_min
+    tap_max = base_ratio * rng.tap_max
+    tap_step = rng.tap_step
+  end
+  phase_min, phase_max, phase_step_deg = -30.0, 30.0, 1.25
+  rx_factor = 1.0
+  x_alpha = nothing
+  if w.phase_taps !== nothing
+    m = w.phase_taps
+    st = phase_step === nothing ? m.step : phase_step
+    res = calcPhaseTapAngleRatio(m; step = st)
+    ratio *= res.effective_ratio
+    shift += res.effective_shift_deg
+    lo = calcPhaseTapAngleRatio(m; step = m.lowStep).effective_shift_deg
+    hi = calcPhaseTapAngleRatio(m; step = m.highStep).effective_shift_deg
+    phase_min = base_shift + min(lo, hi)
+    phase_max = base_shift + max(lo, hi)
+    # the degree grid of the legacy controller path is the mean shift per
+    # step; the formula kinds are not uniform, which is why a controller on a
+    # modelled transformer moves steps, not degrees
+    nsteps = max(m.highStep - m.lowStep, 1)
+    phase_step_deg = abs(hi - lo) / nsteps
+    phase_step_deg > 0.0 || (phase_step_deg = 1.25)
+    # the tap-impedance correction of model.tap_changer_model (DTF) uses the
+    # regulating vector 1 + f e^(j psi) of the asymmetrical kind; a
+    # symmetrical changer keeps |1 + f e^(j alpha)| = 1 and a table carries
+    # its reactance itself
+    if m.kind === :asymmetrical
+      f = calcPhaseTapFraction(m; step = st)
+      psi = m.winding_connection_angle_deg === nothing ? 0.0 : m.winding_connection_angle_deg
+      rx_factor = calcTapCorrectedRX(r_pu = 1.0, x_pu = 1.0, tap_changer_model = tap_changer_model, tap_fraction = f, skew_angle_deg = psi).factor
+    end
+    x_alpha = calcPhaseTapReactance(m, res.effective_shift_deg)
+  end
+  return (ratio = ratio, shift_deg = shift, tap_min = tap_min, tap_max = tap_max, tap_step = tap_step, phase_min_deg = phase_min, phase_max_deg = phase_max, phase_step_deg = phase_step_deg, rx_factor = rx_factor, x_alpha = x_alpha)
+end
+
+"""
+    resolve_branch_taps!(br::Branch, w::PowerTransformerWinding; tap_changer_model = :ideal) -> Union{Nothing,String}
+
+Write the quantities of [`resolve_winding_taps`](@ref) onto the branch:
+`ratio`, `angle`, the live `tap_ratio`/`phase_shift_deg`, the tap grid,
+and `r_pu`/`x_pu` from the equipment base `r_base_pu`/`x_base_pu` through
+the correction factor (or the model's own `X(alpha)`); marks the branch
+`taps_derived` and keeps the winding on it. Called at build for every
+transformer branch and by the tap controllers after they move a model
+step; a winding without models leaves the branch untouched with
+`taps_derived = false`. Returns the precedence line (one sentence naming
+branch, old and new values and the step) when the branch held other
+values than the model gives, `nothing` when they were equal within 1e-9.
+"""
+function resolve_branch_taps!(br::Branch, w::PowerTransformerWinding; tap_changer_model::Symbol = :ideal)::Union{Nothing,String}
+  res = resolve_winding_taps(w; tap_changer_model = tap_changer_model)
+  if res === nothing
+    br.taps_derived = false
+    return nothing
+  end
+  old_ratio = br.ratio
+  old_angle = br.angle
+  br.ratio = res.ratio
+  br.angle = res.shift_deg
+  br.tap_ratio = res.ratio
+  br.phase_shift_deg = res.shift_deg
+  br.tap_min = res.tap_min
+  br.tap_max = res.tap_max
+  br.tap_step = res.tap_step
+  br.phase_min_deg = res.phase_min_deg
+  br.phase_max_deg = res.phase_max_deg
+  br.phase_step_deg = res.phase_step_deg
+  # the live impedance follows the model from the equipment base (#329)
+  br.r_pu = br.r_base_pu * res.rx_factor
+  br.x_pu = res.x_alpha === nothing ? br.x_base_pu * res.rx_factor : res.x_alpha
+  br.tap_winding = w
+  br.tap_correction = tap_changer_model
+  br.taps_derived = true
+  (abs(old_ratio - res.ratio) > 1e-9 || abs(old_angle - res.shift_deg) > 1e-9) || return nothing
+  steps = String[]
+  w.taps === nothing || push!(steps, "ratio step $(w.taps.step)")
+  w.phase_taps === nothing || push!(steps, "phase step $(w.phase_taps.step)")
+  return "transformer branch $(br.branchIdx) ($(br.comp.cName)): ratio $(round(old_ratio; digits = 6)) / shift $(round(old_angle; digits = 4)) replaced by model at $(join(steps, ", ")): $(round(res.ratio; digits = 6)) / $(round(res.shift_deg; digits = 4))"
+end
+
+"""
     calcNeutralU(neutralU_ratio::Float64, vn_hv::Float64, tap_min::Integer, tap_max::Integer, tap_step_percent::Float64)::Float64
 
 Calculates the neutral voltage of a transformer based on the given parameters.
@@ -471,38 +581,48 @@ function toPU_RXBG(; r::T, x::T, g::Union{Nothing,T} = nothing, b::Union{Nothing
 end
 
 """
-    calc2WTEndsReferredRXGB(; r1, x1, g1, b1, r2, x2, g2, b2, U1, U2) -> (r, x, g, b)
+    calc2WTEndsReferredRXGB(; r1, x1, g1, b1, r2, x2, g2, b2, U1, U2) -> (r, x, g, b, g_from, b_from, g_to, b_to)
 
 Refer the impedance/admittance contributions of both `PowerTransformerEnd`s
-of a CGMES two-winding transformer to the **end-2** voltage base and sum
-them. Each end's `r`,`x` [Ω] and `g`,`b` [S] are given on that end's own
-`ratedU` base (`U1`, `U2` [kV]); real exports often put everything on one
-end, but this referral must not rely on it. Impedances scale with
-`(U2/U1)²`, admittances with the inverse. The end-2 (to-side) base matches
-the branch-model convention of `calcAdmittance` (series/shunt admittance on
-the to side, complex ratio at the from side).
+of a CGMES two-winding transformer to the **end-2** voltage base. Each
+end's `r`,`x` [Ω] and `g`,`b` [S] are given on that end's own `ratedU`
+base (`U1`, `U2` [kV]); real exports often put everything on one end, but
+this referral must not rely on it. Impedances scale with `(U2/U1)²`,
+admittances with the inverse. The series values are summed (`r`, `x`); the
+shunt admittance is returned per end on the end-2 base (`g_from`, `b_from`
+for end 1, `g_to`, `b_to` for end 2, both in siemens) next to the totals
+`g`, `b`, so the branch keeps each end's magnetizing admittance on its own
+terminal. The end-2 (to-side) base matches the branch-model convention of
+`calcAdmittance` (series/shunt admittance on the to side, complex ratio at
+the from side, the from arm behind it).
 """
 function calc2WTEndsReferredRXGB(; r1::Float64, x1::Float64, g1::Float64, b1::Float64, r2::Float64, x2::Float64, g2::Float64, b2::Float64, U1::Float64, U2::Float64)
   k = (U2 / U1)^2
-  return (r = r2 + r1 * k, x = x2 + x1 * k, g = g2 + g1 / k, b = b2 + b1 / k)
+  g_from = g1 / k
+  b_from = b1 / k
+  return (r = r2 + r1 * k, x = x2 + x1 * k, g = g2 + g_from, b = b2 + b_from, g_from = g_from, b_from = b_from, g_to = g2, b_to = b2)
 end
 
 """
-    pi_branch_pu_between_levels(; r, x, g, b, vn_from_kV, vn_to_kV, baseMVA) -> NamedTuple
+    pi_branch_pu_between_levels(; r, x, g_from, b_from, g_to, b_to, vn_from_kV, vn_to_kV, baseMVA) -> NamedTuple
 
 The per-unit parameters of a pi branch given in ohm and siemens between
-two buses, on Sparlectra's branch convention: series and shunt admittance
-on the TO-side voltage base, and, when the two buses sit on different
-nominal voltages, the ratio `vn_to / vn_from` at the from side (the same
-physical conductor seen through the two bases, so the 2WT formula with
-equal rated voltages degenerates to that ratio). `ratio` is `nothing` for
-equal nominal voltages. Shared by the CGMES line mapping and the PowSyBl
-builder.
+two buses, on Sparlectra's branch convention: series admittance and both
+shunt arms on the TO-side voltage base, and, when the two buses sit on
+different nominal voltages, the ratio `vn_to / vn_from` at the from side
+(the same physical conductor seen through the two bases, so the 2WT
+formula with equal rated voltages degenerates to that ratio). The from
+arm is stamped behind that ratio, which is exactly a shunt of `g_from`,
+`b_from` siemens at the from bus on its own voltage: converting both
+arms with the to-side base is therefore right for both ends. `ratio` is
+`nothing` for equal nominal voltages; `b_pu`, `g_pu` are the totals.
+Shared by the CGMES line mapping and the PowSyBl builder.
 """
-function pi_branch_pu_between_levels(; r::Float64, x::Float64, g::Float64, b::Float64, vn_from_kV::Float64, vn_to_kV::Float64, baseMVA::Float64)
-  r_pu, x_pu, b_pu, g_pu = toPU_RXBG(r = r, x = x, g = g, b = b, v_kv = vn_to_kV, baseMVA = baseMVA)
+function pi_branch_pu_between_levels(; r::Float64, x::Float64, g_from::Float64, b_from::Float64, g_to::Float64, b_to::Float64, vn_from_kV::Float64, vn_to_kV::Float64, baseMVA::Float64)
+  r_pu, x_pu, b_from_pu, g_from_pu = toPU_RXBG(r = r, x = x, g = g_from, b = b_from, v_kv = vn_to_kV, baseMVA = baseMVA)
+  _, _, b_to_pu, g_to_pu = toPU_RXBG(r = 0.0, x = 0.0, g = g_to, b = b_to, v_kv = vn_to_kV, baseMVA = baseMVA)
   ratio = vn_from_kV == vn_to_kV ? nothing : vn_to_kV / vn_from_kV
-  return (r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, g_pu = g_pu, ratio = ratio)
+  return (r_pu = r_pu, x_pu = x_pu, b_pu = b_from_pu + b_to_pu, g_pu = g_from_pu + g_to_pu, g_from_pu = g_from_pu, b_from_pu = b_from_pu, g_to_pu = g_to_pu, b_to_pu = b_to_pu, ratio = ratio)
 end
 
 """
@@ -587,7 +707,9 @@ Calculate branch flow in per unit for a given branch and voltage vector.
   end
 
   Yik = inv(branch.r_pu + im * branch.x_pu)
-  Y0ik = 0.5 * (branch.g_pu + im * branch.b_pu)
+  # the shunt arm of the measured end (0.20.0): tapSide 1 means the flow
+  # leaves the from end, whose arm sits behind the tap, tapSide 2 the to end
+  Y0ik = tapSide == 1 ? _branch_y0_from(branch) : _branch_y0_to(branch)
   return abs(ui)^2 * conj(Y0ik + Yik) - ui * conj(uj) * conj(Yik)
 end
 

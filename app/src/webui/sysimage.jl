@@ -257,8 +257,8 @@ end
 Write a minimal progress entry from the Web UI side.
 
 This exists for the gap between pressing the refresh button and the build
-process being alive: the page only polls while a build is active, and until
-2026-09-07 "active" required the child's first progress entry. Julia needs
+process being alive: the page only polls while a build is active, and at first
+"active" required the child's first progress entry. Julia needs
 seconds to boot before it can write one, tens of seconds on a cold Windows,
 and during that window the page sat there looking dead, as if
 there were no status display at all.

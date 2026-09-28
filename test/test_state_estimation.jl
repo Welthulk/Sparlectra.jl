@@ -23,6 +23,7 @@ using Test
 using Logging
 using Sparlectra
 using Random
+import ZipArchives
 
 function test_state_estimation_wls_first_version()::Bool
   # Verifies the baseline WLS state-estimation workflow:
@@ -1286,7 +1287,7 @@ function test_state_estimation_measurement_csv()::Bool
     # the file follows output.csv_format like every other CSV: under excel_de
     # the header and the rows carry semicolons and decimal commas, and the
     # reader restores the same measurement vector bitwise; a technical file
-    # still reads (2026-09-24: a German Excel user found commas in
+    # still reads (a German Excel user found commas in
     # measurements.csv next to semicolon result tables)
     fde = joinpath(dir, "meas_de.csv")
     writeMeasurementsCSV(net; file = fde, format = "excel_de")
@@ -2443,7 +2444,7 @@ State estimation on a DTF network case: the format has to travel with the
 request. A bare `.DAT` is ambiguous (FOR001 network vs FOR002 reference), so
 the detector refuses to guess; the SE service used to detect the format
 itself and therefore rejected every DTF case with "Ambiguous .DAT input"
-before it ever looked at the measurements (found 2026-09-05 while tracing
+before it ever looked at the measurements (found while tracing
 the sysimage workload). It now takes `case_format` like the power-flow
 service does, and DTF is an accepted SE format.
 """
@@ -2480,11 +2481,137 @@ function test_state_estimation_dtf_service()
 end
 
 
+
+# Both MiniGrid regression sets below run through one service call: the case
+# zip is rebuilt from the ENTSO-E conformity cache (bus-branch base case v3
+# with its boundary, packed as `cgmes_minigrid.zip`, the name the sets are
+# bound to; never downloaded here), the set goes through the SE service with
+# tap estimation, and the expected warnings of these sets (zero-injection
+# rows at the two isolated buses of the base case) are captured. Everything
+# else is re-emitted for the runner's warning check. `f` receives the
+# result dict, run.log and se_diagnostics.md; without the cache the run is
+# reported as SKIPPED and `f` is not called.
+function _minigrid_fallback_run(f::Function, set::AbstractString, name::AbstractString)
+  root = joinpath(Sparlectra.CGMESImporter.cgmesTestSetCacheDir(), "extracted", "MiniGrid", "BusBranch")
+  base = joinpath(root, "CGMES_v2.4.15_MiniGridTestConfiguration_BaseCase_v3")
+  boundary = joinpath(root, "CGMES_v2.4.15_MiniGridTestConfiguration_Boundary_v3")
+  if !(isdir(base) && isdir(boundary))
+    println("      SE tap fallback diagnostics (MiniGrid, $(basename(set))): SKIPPED (conformity package not in the local cache)")
+    return
+  end
+  println("      SE tap fallback diagnostics (MiniGrid, $(basename(set))): RAN")
+  mktempdir() do d
+    z = joinpath(d, "cgmes_minigrid.zip")
+    ZipArchives.ZipWriter(z) do w
+      for file in vcat(sort(readdir(base; join = true)), sort(readdir(boundary; join = true)))
+        ZipArchives.zip_newfile(w, basename(file))
+        write(w, read(file))
+      end
+    end
+    out = joinpath(d, "run")
+    logger = Test.TestLogger(min_level = Logging.Warn)
+    res = Logging.with_logger(logger) do
+      redirect_stdout(devnull) do
+        SparlectraApp._run_state_estimation_service(z, Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, out, name, set; tap_estimation = true, max_iter = 50)
+      end
+    end
+    for record in logger.logs
+      occursin("excluded (its bus is isolated)", record.message) && continue
+      @warn record.message
+    end
+    f(SparlectraApp.to_dict(res), read(joinpath(out, "run.log"), String), read(joinpath(out, "se_diagnostics.md"), String))
+  end
+  return
+end
+
+# The reported block of se_diagnostics.md describes the frozen-tap run the
+# status line reports: same run id, case, set, iterations, J and dof as
+# run.log and the metadata.
+function _assert_minigrid_fallback_report(dd, log::AbstractString, diag::AbstractString, name::AbstractString, set::AbstractString)
+  @test dd["status"] == "succeeded"
+  @test get(dd["metadata"], "se_tap_estimation_fallback", false) == true
+  @test occursin("repeating WITHOUT tap estimation", log)
+  jm = match(r"converged in (\d+) iteration\(s\); J = ([0-9.eE+-]+), dof = (\d+)", log)
+  @test jm !== nothing
+  jm === nothing && return
+  @test occursin("Tap estimation fallback", diag)
+  @test occursin("## Reported result", diag)
+  @test occursin("**Converged:** true in $(jm.captures[1]) iteration(s)", diag)
+  @test occursin("**Objective J:** $(jm.captures[2]) (dof=$(jm.captures[3])), every tap frozen at its model position", diag)
+  @test occursin("- **Run:** $(name)", diag)
+  @test occursin("- **Case:** cgmes_minigrid.zip", diag)
+  @test occursin("- **Measurement set:** $(basename(set))", diag)
+  @test occursin("- **J/dof:** $(round(parse(Float64, jm.captures[2]) / parse(Int, jm.captures[3]); digits = 2))", diag)
+  @test occursin("## Diagnostics pass (every row active, before any elimination)", diag)
+  # the diagnostics pass printed below the block describes the same frozen-tap run
+  @test !occursin("**Converged:** false", diag)
+  @test isapprox(dd["metadata"]["se_objective"], parse(Float64, jm.captures[2]); atol = 1e-6)   # run.log rounds to six digits
+  @test dd["metadata"]["se_dof"] == parse(Int, jm.captures[3])
+  return
+end
+
+"""
+The diagnostics artifact describes the run the status line reports. On the
+CGMES MiniGrid with the fixture set `cgmes_minigrid_tap_fallback` (noisy,
+with zero-injection constraints; its truth is an adopted SE state of an
+earlier run, not a fresh solve, which is why the KCL precheck flags its
+passive buses: regression data, not a plausible measurement campaign) the
+released-tap attempt does not converge and the frozen-tap repeat does. The
+artifact used to describe the failed attempt (J = 2.0e9 at dof 70 against
+J = 2859 at dof 78 on the page); now the diagnostics repeat on the frozen
+taps and the artifact opens with the reported numbers. This set confirms
+all three of its eliminations and stops at `max_eliminations`. Needs the
+conformity package in the local cache: RAN or SKIPPED is printed.
+"""
+function test_state_estimation_tap_fallback_diagnostics_consistent()::Bool
+  @testset "Tap fallback: diagnostics artifact matches the reported run (MiniGrid)" begin
+    # a set built from a run outside the band carries the generator's warning
+    @test occursin("outside the band", SparlectraApp._se_truth_run_warning(Dict{String,Any}("se_band_reason" => "high")))
+    @test occursin("frozen at their model positions", SparlectraApp._se_truth_run_warning(Dict{String,Any}("se_band_reason" => "ok", "se_tap_estimation_fallback" => true)))
+    @test SparlectraApp._se_truth_run_warning(Dict{String,Any}("se_band_reason" => "ok", "numerical_status" => "converged")) == ""
+    set = joinpath(@__DIR__, "fixtures", "measurements", "cgmes_minigrid_tap_fallback.measurements.csv")
+    _minigrid_fallback_run(set, "minigrid_fb") do dd, log, diag
+      _assert_minigrid_fallback_report(dd, log, diag, "minigrid_fb", set)
+      @test occursin("- **Eliminated rows:** 3 ", diag)
+      @test occursin("(stop: max_eliminations)", diag)
+      @test !occursin("Reverted:", diag)
+      @test !occursin("Not eliminated", diag)
+    end
+  end
+  return true
+end
+
+"""
+An elimination counts only when its control solve converges. The fixture
+set `cgmes_minigrid_elimination_reverted` (same case, same truth source as
+the set above, a later generation) ends its third elimination in a
+non-converged control solve: that removal is reverted (the row is active
+again), the artifact names it as "Reverted" in the pass and as "Not
+eliminated" in the reported block, the sequence stops with
+`not_converged`, and only the two confirmed eliminations leave the
+reported run. Needs the conformity package in the local cache: RAN or
+SKIPPED is printed.
+"""
+function test_state_estimation_elimination_reverted()::Bool
+  @testset "Tap fallback: an unconfirmed elimination is reverted (MiniGrid)" begin
+    set = joinpath(@__DIR__, "fixtures", "measurements", "cgmes_minigrid_elimination_reverted.measurements.csv")
+    _minigrid_fallback_run(set, "minigrid_rev") do dd, log, diag
+      _assert_minigrid_fallback_report(dd, log, diag, "minigrid_rev", set)
+      @test occursin("- **Eliminated rows:** 2 ", diag)
+      @test occursin("- **Not eliminated:** `", diag)
+      @test occursin("(stop: not_converged)", diag)
+      @test occursin("Reverted:", diag)
+    end
+  end
+  return true
+end
+
+
 """
 Tap-estimation fallback: released taps are extra states, and a measurement
 set that estimates the voltages cleanly can still be far too thin to pin
 them. The run then does not settle at all and the user gets nothing,
-although the SAME set works without the taps (seen 2026-09-06 on
+although the SAME set works without the taps (seen on
 case300 with 98 released taps and a CGMES delivery). A non-convergence WITH
 released taps therefore freezes the taps back to their model position and
 repeats the estimation once, and says so in the log: a silent retry would
@@ -2527,12 +2654,21 @@ function test_state_estimation_tap_fallback()::Bool
       log_ok = read(joinpath(d, "run_ok", "run.log"), String)
       @test !occursin("repeating WITHOUT tap estimation", log_ok)
       @test get(d_ok["metadata"], "se_tap_estimation_fallback", false) == false
+      # the diagnostics artifact states the reported numbers first, the
+      # same J and dof run.log carries (the diagnostics pass's own J can
+      # differ when it eliminated rows)
+      diag_ok = read(joinpath(d, "run_ok", "se_diagnostics.md"), String)
+      @test occursin("## Reported result", diag_ok)
+      jm = match(r"converged in \d+ iteration\(s\); J = ([0-9.eE+-]+), dof = (\d+)", log_ok)
+      @test jm !== nothing
+      @test occursin("**Objective J:** $(jm.captures[1]) (dof=$(jm.captures[2]))", diag_ok)
+      @test occursin("**Converged:** true in", diag_ok)
     end
     # The step limit. A released regulator state is
     # bounded in how far ONE iteration may move it, at a quarter of the
     # changer's declared mechanical travel. Without it the Gauss-Newton step
     # drives r1 toward -1, where the cascade
-    # t = t_base/((1+r1)(1+r2 e^{j alpha})) is singular: measured 2026-09-06
+    # t = t_base/((1+r1)(1+r2 e^{j alpha})) is singular: measured
     # on a CGMES delivery, one weakly determined transformer ran to -329
     # electrical steps on a band of about -14 to +18 and took the estimation
     # down. Bounding the STATE into that band was measured to be worse than
@@ -2569,7 +2705,7 @@ function test_state_estimation_tap_fallback()::Bool
     # those model positions. sp_case60 at a cap of 4 is the shipped fixture
     # that produces a SUCCEEDING run with the fallback used: the tap solve
     # needs more iterations than the plain one, so the first attempt fails
-    # and the repeat converges (measured 2026-09-06; the same holds for
+    # and the repeat converges (measured; the same holds for
     # sp_case188, while sp_case14 already converges with the taps).
     mktempdir() do d
       shipped = joinpath(dirname(@__DIR__), "data", "scf", "sp_case60.scf.json")
@@ -2601,7 +2737,7 @@ function test_state_estimation_tap_fallback()::Bool
       @test !occursin("<th>Electrical step</th>", table)
 
       # and the run history must not call a state estimation "rectangular"
-      # (seen 2026-09-06): the method comes from the run kind
+      # (as seen): the method comes from the run kind
       @test SparlectraApp._powerflow_run_index_solver(res) == "wls"
     end
 
@@ -2642,6 +2778,8 @@ end
       ("Tap completion (write-back, PMU, machine trafo)", test_state_estimation_tap_completion),
       ("DTF case through the SE service", test_state_estimation_dtf_service),
       ("Tap fallback on non-convergence", test_state_estimation_tap_fallback),
+      ("Tap fallback: diagnostics artifact matches the reported run (MiniGrid)", test_state_estimation_tap_fallback_diagnostics_consistent),
+      ("Tap fallback: an unconfirmed elimination is reverted (MiniGrid)", test_state_estimation_elimination_reverted),
       ("Measurement generator critical thinning", test_measurement_generator_critical_thinning),
       ("Run configuration as an argument (#381)", test_state_estimation_config_argument),
     ]

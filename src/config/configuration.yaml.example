@@ -61,7 +61,7 @@ power_flow:
   # Legacy start switch (true = synthetic flat start). Keep aligned with start_mode below.
   # Default false: imported start voltages (MATPOWER VM/VA, CGMES SvVoltage) reach the
   # solver — a flat start silently discarded the CGMES SV state (RealGrid divergence,
-  # 2026-07-30) while MATPOWER runs only masked it via the projected start modes.
+  # case) while MATPOWER runs only masked it via the projected start modes.
   flatstart: false
   # Positive solver tolerance and iteration cap.
   tol: 1.0e-5
@@ -420,9 +420,6 @@ powsybl_import:
   # attaches an outer-loop machine voltage control on the regulated bus
   # (reproduces OpenLoadFlow's remote voltage control).
   remote_regulation: hold_local
-  # Python executable for the PythonCall extension (live .xiidm import);
-  # empty means the PythonCall default.
-  python_exe: ""
 
 # ENTSO-E CGMES import (see docs/src/cgmes_import.md)
 cgmes_import:
@@ -697,7 +694,7 @@ contingency:
   # estimate comes close to a limit get the full solve.
   screening:
     # off  = every scenario gets the full solve (DEFAULT; the calibration
-    #        2026-09-03 showed outage classes a residual step cannot see,
+    #        showed outage classes a residual step cannot see,
     #        so screening is an opt-in, not a default)
     # flag = estimate first, full solve only for flagged scenarios; opt in
     #        after checking the screening share and margins on your network

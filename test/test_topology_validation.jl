@@ -166,7 +166,7 @@ function test_topology_stage2_fingerprint()::Bool
     # The open transformer's terminals H2 and L2 are among the suspected
     # stations. NOT "the first finding names them": the fingerprint ranks
     # stations by suspect count, largest residual and label (a total order
-    # since 2026-09-11), and under that ranking the neighbouring station H1,
+    # by construction), and under that ranking the neighbouring station H1,
     # which shares the strongest residual with H2 and carries more suspects,
     # comes first. The old `first(...)` assertion passed on Julia 1.12 only
     # through Dict iteration order and failed on 1.13.
@@ -321,7 +321,7 @@ function test_topology_singular_normal_equations()::Bool
     fixedByBranch = Dict(t.branch => t.fixed_step_1 for t in res.tapEstimates)
     @test fixedByBranch[3] == 2
     @test fixedByBranch[4] == 0
-    # regression (run 1908605e): robust weighting on parallel
+    # regression: robust weighting on parallel
     # released taps used to excite the unobservable difference direction
     # into divergence; with the targeted prior plus the weight freeze the
     # robust run converges too

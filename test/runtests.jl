@@ -136,7 +136,6 @@ const TEST_GROUPS = TestGroup[
     TestGroup("powsybl_importer", ["test_powsybl_importer.jl"], [:run_powsybl_importer_tests]),
     # --- install: the installation path of a fresh checkout, before a release
     TestGroup("install", ["test_install.jl"], [:run_install_tests]),
-    TestGroup("powsybl_extension", ["test_powsybl_extension.jl"], [:run_powsybl_extension_tests]),
     TestGroup("workshops", ["test_workshops.jl"], [:run_workshop_tests]),
     TestGroup("dtf_extended", ["extended/test_dtf_importer.jl", "extended/test_dtf_for002_validation_example.jl", "extended/test_dtf_for002_outage_validation_example.jl", "extended/test_dtf_matpower_export_validation_example.jl", "extended/test_dtf_api_webui_integration.jl"],
         [:run_dtf_importer_tests, :run_dtf_for002_validation_example_tests, :run_dtf_for002_outage_validation_example_tests, :run_dtf_matpower_export_validation_example_tests, :run_dtf_api_webui_integration_tests]),
@@ -158,7 +157,7 @@ const TEST_PROFILES = Dict{Symbol,Vector{String}}(
     :extd => ["demo_cases", "scf", "programmatic_api_extended", "matpower_examples", "example_infra", "net_cache", "synthetic_grids"],
     # --- adapters: the format importers with their own fixtures (CGMES, DTF, PowSyBl)
     :adapters => ["cgmes_importer", "cgmes_export", "dtf_extended", "powsybl_importer"],
-    :install => ["install", "powsybl_extension"],
+    :install => ["install"],
     :workshops => ["workshops"],
 )
 TEST_PROFILES[:extended] = vcat(TEST_PROFILES[:pf], TEST_PROFILES[:se], TEST_PROFILES[:config], TEST_PROFILES[:webui], TEST_PROFILES[:extd], TEST_PROFILES[:adapters])

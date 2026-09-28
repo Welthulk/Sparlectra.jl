@@ -71,11 +71,13 @@ in the `run.log` (a weight list can outlive a case edit), never fatal; a file
 that cannot be read leaves the run unweighted rather than failing it. The
 metadata reports `contingency_weights_applied` and `contingency_weighted_cases`.
 
-A generator outage that removes the system's only slack is reported as a
-non-converged case ("no slack bus registered"); that is the expected N-1 finding
-that the unit is critical, named explicitly in the run.log and the run message
-so it does not read as a tool failure. Rerun with `auto_slack = true` (a solver
-keyword) to have the solver promote a surviving generator instead.
+An outage that removes the reference (the slack unit itself, or the branch
+that ties it to an island) does not end the case: the run solves with
+`auto_slack`, the strongest remaining unit takes over (an island without a
+voltage-controlled unit takes its strongest generating unit), and the row
+names the bus ("reference taken over by bus ..."). Only an island without
+any generating unit stays without a reference and is reported as islanded
+with the load it loses.
 
 Scenario task step 5: the request may carry `scenario_source` (`file_block`
 runs the case file's own `scenarios`/`contingencies` block through the
@@ -86,7 +88,8 @@ scenario model, `external_file` a scenario JSON named by `scenario_file`,
 active the CSV gains the `screened`/`screening_estimate` columns and the
 metadata reports `contingency_screening_mode` and `contingency_screened`.
 
-Failure behavior: `contingency_unsupported_format` (not MATPOWER or CGMES),
+Failure behavior: `contingency_unsupported_format` (not MATPOWER, CGMES,
+PowSyBl or Sparlectra Case Format),
 `contingency_no_cases` (no in-service element of the requested kind),
 `invalid_request` (bad `kind`, unknown `scenario_source` or
 `screening_mode`, missing `scenario_file`), plus the shared import/config
@@ -131,13 +134,13 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
   # importCGMES. runContingencies! solves the base case itself, so an unsolved
   # net is all we hand it.
   format = _detect_case_format(case_path)
-  format in (:matpower, :scf, :cgmes) || return _api_failure("contingency_unsupported_format", "N-1 contingency needs a MATPOWER, CGMES, or Sparlectra Case Format case; got format $(format).", run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
+  format in (:matpower, :scf, :cgmes, :powsybl) || return _api_failure("contingency_unsupported_format", "N-1 contingency needs a MATPOWER, CGMES, PowSyBl or Sparlectra Case Format case; got format $(format).", run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
   # id-addressed scenario sources need the typed case; a CGMES delivery
   # carries no referencable component ids, and the rejection NAMES the way
   # out (checked by a test on the message text). Fails fast, before the
   # import.
   if scenario_source in ("file_block", "external_file") && !(format in (:scf, :matpower))
-    return _api_failure("invalid_request", "scenario_source $(scenario_source) resolves component ids against the typed case, which a CGMES delivery does not carry. Export the case as SCF once (the Web UI's \"Export as SCF case file\" button or exportSCF), then run the scenario source against that .scf.json and reference its component ids. The n1_all/n1_branches/n1_generators scenario sources work on the CGMES case directly.", run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
+    return _api_failure("invalid_request", "scenario_source $(scenario_source) resolves component ids against the typed case, which a CGMES delivery or a PowSyBl case does not carry. Export the case as SCF once (the Web UI's \"Export as SCF case file\" button or exportSCF), then run the scenario source against that .scf.json and reference its component ids. The n1_all/n1_branches/n1_generators scenario sources work on the CGMES case directly.", run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
   end
   imported = try
     import_case(case_path, config; run_kind = :contingency)
@@ -279,8 +282,18 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
     end
   end
 
+  # the slack model of the run configuration applies to every post-outage
+  # solve: with power_flow.distributed_slack on, the units share the
+  # mismatch of an outage as they share it in the base case (the outage of
+  # the line that carries the reference unit's output has no solution on a
+  # single slack in the IEEE 14-bus case, and one with the shared slack)
+  dslack = config.powerflow.distributed_slack
+  dslack_kwargs = dslack.enabled ? (; distributed_slack_enabled = true, distributed_slack_p_mode = dslack.p_mode, distributed_slack_fallback = dslack.fallback) : (;)
   if results === nothing
-    results = runContingencies!(net, cases; rescue_ladder = config.contingency.rescue_ladder, screening_mode = screen_mode, screening_margin_pct = screen_margin)
+    # an outage that removes the reference, or splits off an island without
+    # one, does not end the case: the strongest remaining unit takes over
+    # and the result names it (auto_slack, the default of runContingencies!)
+    results = runContingencies!(net, cases; rescue_ladder = config.contingency.rescue_ladder, screening_mode = screen_mode, screening_margin_pct = screen_margin, dslack_kwargs...)
   end
   n_screened = eltype(results) === ScenarioResult ? count(r -> r.screened, results) : 0
   report = buildContingencyReport(results)
@@ -289,6 +302,8 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
   # a slack-unit outage surfaces as "no slack bus registered"; name it so the
   # result page does not read it as a tool failure (see the docstring)
   n_no_slack = count(r -> r.error !== nothing && occursin("no slack bus", r.error), results)
+  # cases that solved on a reference another unit took over
+  n_reference_taken = count(r -> r.error !== nothing && occursin("reference taken over", r.error), results)
 
   open(logfile, "a") do io
     println(io, "N-1 contingency (", kind == "gen" ? "generator" : "branch", " outages) on ", basename(case_path))
@@ -301,6 +316,8 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
     end
     se_run_id !== nothing && println(io, "base case: SE-started (", se_start_mode, ") from SE run ", se_run_id)
     println(io, "rescue ladder: ", config.contingency.rescue_ladder)
+    println(io, "reference: an outage that removes it hands it to the strongest remaining unit (auto_slack)")
+    println(io, "slack: ", dslack.enabled ? "distributed (power_flow.distributed_slack, p_mode $(dslack.p_mode))" : "single reference bus per island (power_flow.distributed_slack is off)")
     if screen_mode === :off
       println(io, "screening: off (every scenario fully solved)")
     else
@@ -320,7 +337,7 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
     printContingencyReport(io, report)
     if n_no_slack > 0
       println(io)
-      println(io, n_no_slack, " outage(s) removed the system's only voltage reference and are reported as \"no slack bus registered\". That is the expected N-1 finding that the unit is critical, not a tool error; rerun with auto_slack = true to let the solver promote a surviving generator.")
+      println(io, n_no_slack, " outage(s) removed the system's only voltage reference and no generating unit was left to take over (\"no slack bus registered\").")
     end
     println(io, "Artifacts: ", basename(csv))
   end
@@ -334,6 +351,7 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
       "contingency_islanded" => report.n_islanded,
       "contingency_nonconverged" => report.n_nonconverged,
       "contingency_no_slack" => n_no_slack,
+      "contingency_reference_taken_over" => n_reference_taken,
       "contingency_total_shed_mw" => report.total_shed_load_mw,
       "contingency_worst_loading_pct" => report.worst_loading_pct,
       "contingency_worst_severity" => report.worst_severity,
@@ -359,6 +377,7 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
     n_screened > 0 ? ", $(n_screened) screened" : "",
     weights_applied ? ", $(weighted_cases) weighted" : "",
     n_no_slack > 0 ? ", $(n_no_slack) removed the only slack (see run.log)" : "",
+    n_reference_taken > 0 ? ", $(n_reference_taken) solved on a reference another unit took over" : "",
     ".",
   )
   result = _api_result(

@@ -46,7 +46,7 @@ fi
 # startup.jl usually loads Revise: measured on the Sparlectra sysimage, loading
 # Revise INVALIDATES 1530 precompiled method instances of that image, which are
 # then inferred again on first use. That is the "still slow with the image"
-# report from 2026-09-07, and it was paid twice, because the launcher and the
+# report, and it was paid twice, because the launcher and the
 # relaunched child both read the file. Set SPARLECTRA_STARTUP_FILE=yes to get
 # the old behavior back.
 : "${SPARLECTRA_STARTUP_FILE:=no}"

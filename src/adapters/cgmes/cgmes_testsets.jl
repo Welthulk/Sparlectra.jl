@@ -20,7 +20,7 @@
 # single ZIP that any CGMES entry point (importCGMES, the API, the Web UI
 # upload flow) accepts.
 
-# Primary URL redirects to eepublicdownloads.entsoe.eu (verified 2026-07-27);
+# Primary URL redirects to eepublicdownloads.entsoe.eu (verified);
 # the legacy docstore.entsoe.eu host no longer resolves.
 const CGMES_TESTSET_URLS = [
   "https://www.entsoe.eu/Documents/CIM_documents/Grid_Model_CIM/TestConfigurations_packageCASv2.0.zip",

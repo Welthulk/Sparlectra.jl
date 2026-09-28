@@ -87,7 +87,7 @@ function collect_auto_pf_features(net::Net; min_q_range_pu::Float64 = 1e-4)
   nbranch = length(net.branchVec)
   # islands on the electrical view (closed links connect); read-only
   # No try/catch: electricalIslandComponents handles a fresh, unsolved net
-  # on its own (measured 2026-09-06). A catch could only absorb a
+  # on its own (measured). A catch could only absorb a
   # programming error and would then feed "one island" into the feature
   # vector, which is how compareWithSV's island alignment stayed dead.
   n_islands = length(electricalIslandComponents(net))
@@ -408,7 +408,7 @@ end
 # left on the net. Never throws; missing fields read as zero evidence.
 function _auto_pf_qlimit_evidence(net::Net)
   # both calls below return their "nothing to report" value for an unsolved
-  # net (nothing / empty Dict, measured 2026-09-06), so neither needs a
+  # net (nothing / empty Dict, measured), so neither needs a
   # catch; one here would only hide a programming error inside the evidence
   # the auto mode decides on
   status = rectangular_pf_status(net)

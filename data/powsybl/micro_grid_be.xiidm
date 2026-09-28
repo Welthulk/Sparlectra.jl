@@ -1,0 +1,717 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<iidm:network xmlns:iidm="http://www.powsybl.org/schema/iidm/1_17" xmlns:cblbn="http://www.powsybl.org/schema/iidm/ext/cgmes_boundary_line_boundary_node/1_0" xmlns:crc="http://www.powsybl.org/schema/iidm/ext/coordinated_reactive_control/1_0" xmlns:apc="http://www.powsybl.org/schema/iidm/ext/active_power_control/1_2" xmlns:ctc="http://www.powsybl.org/schema/iidm/ext/cgmes_tap_changers/1_0" xmlns:cmm="http://www.powsybl.org/schema/iidm/ext/cgmes_metadata_models/1_0" xmlns:bv="http://www.powsybl.org/schema/iidm/ext/base_voltage_mapping/1_0" xmlns:cc="http://www.powsybl.org/schema/iidm/ext/cim_characteristics/1_0" id="urn:uuid:d400c631-75a0-4c30-8aed-832b0d282e73" caseDate="2014-06-01T10:30:00.000Z" forecastDistance="0" sourceFormat="CGMES" minimumValidationLevel="STEADY_STATE_HYPOTHESIS">
+    <iidm:substation id="37e14a0f-5e34-4647-a062-8bfd9305fa9d" name="PP_Brussels" country="BE" geographicalTags="ELIA-Brussels">
+        <iidm:property name="CGMES.regionName" value="BE"/>
+        <iidm:property name="CGMES.subRegionId" value="c1d5bfc88f8011e08e4d00247eb1f55e"/>
+        <iidm:property name="CGMES.regionId" value="c1d5bfc68f8011e08e4d00247eb1f55e"/>
+        <iidm:voltageLevel id="4ba71b59-ee2f-450b-9f7d-cc2f1cc5e386" name="10.5" nominalV="10.5" lowVoltageLimit="9.45" highVoltageLimit="11.55" topologyKind="BUS_BREAKER">
+            <iidm:property name="CGMES.lowVoltageLimit" value="9.45"/>
+            <iidm:property name="CGMES.highVoltageLimit" value="11.55"/>
+            <iidm:busBreakerTopology>
+                <iidm:bus id="a81d08ed-f51d-4538-8d1e-fb2d0dbd128e" name="BE-Busbar_4" v="10.820805" angle="-7.05718">
+                    <iidm:property name="CGMES.busbarSectionTerminals" value="65b8c937-9b25-4b9e-addf-602dbc1337f9"/>
+                </iidm:bus>
+            </iidm:busBreakerTopology>
+            <iidm:generator id="3a3b27be-b18b-4385-b557-6735d733baf0" name="BE-G1" energySource="OTHER" minP="50.0" maxP="200.0" ratedS="300.0" voltageRegulatorOn="true" targetP="90.0" targetV="115.5" targetQ="100.256" bus="a81d08ed-f51d-4538-8d1e-fb2d0dbd128e" connectableBus="a81d08ed-f51d-4538-8d1e-fb2d0dbd128e" p="-90.0" q="51.115627">
+                <iidm:alias type="CGMES.Terminal1">beffa353-7d10-421d-9c08-036b744b1cee</iidm:alias>
+                <iidm:property name="CGMES.synchronousMachineType" value="generator"/>
+                <iidm:property name="CGMES.mode" value="http://iec.ch/tc57/2013/cim-schema-cim16#regulatingcontrolmodekind.voltage"/>
+                <iidm:property name="CGMES.originalClass" value="SynchronousMachine"/>
+                <iidm:property name="CGMES.GeneratingUnit" value="18993b11-2966-4bce-bab9-d86103f83b53"/>
+                <iidm:property name="CGMES.initialP" value="90.000000"/>
+                <iidm:property name="CGMES.RegulatingControl" value="6ba406ce-78cf-4485-9b01-a34e584f1a8d"/>
+                <iidm:regulatingTerminal id="a708c3bc-465d-4fe7-b6ef-6fa6408a62b0" side="TWO"/>
+                <iidm:reactiveCapabilityCurve>
+                    <iidm:point p="-100.0" minQ="-200.0" maxQ="200.0"/>
+                    <iidm:point p="0.0" minQ="-300.0" maxQ="300.0"/>
+                    <iidm:point p="100.0" minQ="-200.0" maxQ="200.0"/>
+                </iidm:reactiveCapabilityCurve>
+            </iidm:generator>
+        </iidm:voltageLevel>
+        <iidm:voltageLevel id="8bbd7e74-ae20-4dce-8780-c20f8e18c2e0" name="110.0" nominalV="110.0" lowVoltageLimit="99.0" highVoltageLimit="121.0" topologyKind="BUS_BREAKER">
+            <iidm:property name="CGMES.lowVoltageLimit" value="99.0"/>
+            <iidm:property name="CGMES.highVoltageLimit" value="121.0"/>
+            <iidm:busBreakerTopology>
+                <iidm:bus id="5c74cb26-ce2f-40c6-951d-89091eb781b6" name="BE-Busbar_6" v="115.5" angle="-9.39133">
+                    <iidm:property name="CGMES.busbarSectionTerminals" value="a1b46f53-86f1-497e-bf57-c3b6268bcd6c"/>
+                </iidm:bus>
+            </iidm:busBreakerTopology>
+            <iidm:load id="cb459405-cc14-4215-a45c-416789205904" name="BE-Load_1" loadType="UNDEFINED" p0="200.0" q0="90.0" bus="5c74cb26-ce2f-40c6-951d-89091eb781b6" connectableBus="5c74cb26-ce2f-40c6-951d-89091eb781b6" p="200.0" q="90.0">
+                <iidm:alias type="CGMES.Terminal1">cbdf1842-74ed-4fce-a5d4-0296c82cbc92</iidm:alias>
+                <iidm:property name="CGMES.pFixed" value="0.0"/>
+                <iidm:property name="CGMES.originalClass" value="EnergyConsumer"/>
+                <iidm:property name="CGMES.qFixed" value="0.0"/>
+            </iidm:load>
+            <iidm:shuntCompensator id="d771118f-36e9-4115-a128-cc3d9ce3e3da" name="BE_S1" sectionCount="1" solvedSectionCount="1" voltageRegulatorOn="false" targetV="110.0" targetDeadband="0.5" bus="5c74cb26-ce2f-40c6-951d-89091eb781b6" connectableBus="5c74cb26-ce2f-40c6-951d-89091eb781b6" p="0.0" q="-330.75">
+                <iidm:alias type="CGMES.Terminal1">d5e2e58e-ccf6-47d9-b3bb-3088eb7a9b6c</iidm:alias>
+                <iidm:property name="CGMES.RegulatingControl" value="4d50f86d-0d12-4ca3-9430-56bb05f9eee6"/>
+                <iidm:property name="CGMES.normalSections" value="1"/>
+                <iidm:shuntLinearModel bPerSection="0.024793" gPerSection="0.0" maximumSectionCount="1"/>
+            </iidm:shuntCompensator>
+        </iidm:voltageLevel>
+        <iidm:voltageLevel id="929ba893-c9dc-44d7-b1fd-30834bd3ab85" name="21.0" nominalV="21.0" lowVoltageLimit="18.9" highVoltageLimit="23.1" topologyKind="BUS_BREAKER">
+            <iidm:property name="CGMES.lowVoltageLimit" value="18.9"/>
+            <iidm:property name="CGMES.highVoltageLimit" value="23.1"/>
+            <iidm:busBreakerTopology>
+                <iidm:bus id="f96d552a-618d-4d0c-a39a-2dea3c411dee" name="BE-Busbar_5" v="21.987" angle="-6.6508"/>
+            </iidm:busBreakerTopology>
+            <iidm:generator id="550ebe0d-f2b2-48c1-991f-cebea43a21aa" name="BE-G2" energySource="OTHER" minP="50.0" maxP="200.0" ratedS="300.0" voltageRegulatorOn="true" targetP="118.0" targetV="21.987" targetQ="18.720301" bus="f96d552a-618d-4d0c-a39a-2dea3c411dee" connectableBus="f96d552a-618d-4d0c-a39a-2dea3c411dee" p="-118.0" q="-92.612077">
+                <iidm:alias type="CGMES.Terminal1">4bb5407b-b4a5-416c-80ad-1a778ada2b9b</iidm:alias>
+                <iidm:property name="CGMES.synchronousMachineType" value="generator"/>
+                <iidm:property name="CGMES.mode" value="http://iec.ch/tc57/2013/cim-schema-cim16#regulatingcontrolmodekind.voltage"/>
+                <iidm:property name="CGMES.originalClass" value="SynchronousMachine"/>
+                <iidm:property name="CGMES.GeneratingUnit" value="5b7a4d43-09ec-4033-882d-64a76d557631"/>
+                <iidm:property name="CGMES.initialP" value="118.000000"/>
+                <iidm:property name="CGMES.RegulatingControl" value="84bf5be8-eb59-4555-b131-fce4d2d7775d"/>
+                <iidm:minMaxReactiveLimits minQ="-200.0" maxQ="200.0"/>
+            </iidm:generator>
+        </iidm:voltageLevel>
+        <iidm:voltageLevel id="b10b171b-3bc5-4849-bb1f-61ed9ea1ec7c" name="225.0" nominalV="225.0" lowVoltageLimit="202.5" highVoltageLimit="247.5" topologyKind="BUS_BREAKER">
+            <iidm:property name="CGMES.lowVoltageLimit" value="202.5"/>
+            <iidm:property name="CGMES.highVoltageLimit" value="247.5"/>
+            <iidm:busBreakerTopology>
+                <iidm:bus id="99b219f3-4593-428b-a4da-124a54630178" name="BE_TR_BUS4" v="224.315268" angle="-8.77012">
+                    <iidm:property name="CGMES.busbarSectionTerminals" value="62fc0a4e-00aa-4bf7-b1a0-3a5b2c0b5492,8f1c492f-a7cc-4160-9a14-54f1743e4850,302fe23a-f64d-41bd-8a81-78130433916d"/>
+                </iidm:bus>
+            </iidm:busBreakerTopology>
+            <iidm:load id="1c6beed6-1acf-42e7-ba55-0cc9f04bddd8" name="BE-Load_2" loadType="UNDEFINED" p0="200.0" q0="50.0" bus="99b219f3-4593-428b-a4da-124a54630178" connectableBus="99b219f3-4593-428b-a4da-124a54630178" p="200.0" q="50.0">
+                <iidm:alias type="CGMES.Terminal1">a036b765-1669-4f64-acd3-1e8fbd513312</iidm:alias>
+                <iidm:property name="CGMES.pFixed" value="0.0"/>
+                <iidm:property name="CGMES.originalClass" value="EnergyConsumer"/>
+                <iidm:property name="CGMES.qFixed" value="0.0"/>
+            </iidm:load>
+        </iidm:voltageLevel>
+        <iidm:voltageLevel id="469df5f7-058f-4451-a998-57a48e8a56fe" name="380.0" nominalV="380.0" lowVoltageLimit="342.0" highVoltageLimit="418.0" topologyKind="BUS_BREAKER">
+            <iidm:property name="CGMES.lowVoltageLimit" value="342.0"/>
+            <iidm:property name="CGMES.highVoltageLimit" value="418.0"/>
+            <iidm:busBreakerTopology>
+                <iidm:bus id="e44141af-f1dc-44d3-bfa4-b674e5c953d7" name="BE_TR_BUS2" v="412.989001" angle="-6.78071">
+                    <iidm:property name="CGMES.busbarSectionTerminals" value="fa9e0f4d-8a2f-45e1-9e36-3611600d1c94"/>
+                </iidm:bus>
+            </iidm:busBreakerTopology>
+            <iidm:shuntCompensator id="002b0a40-3957-46db-b84a-30420083558f" name="BE_S2" sectionCount="1" solvedSectionCount="1" voltageRegulatorOn="false" targetV="380.0" targetDeadband="0.5" bus="e44141af-f1dc-44d3-bfa4-b674e5c953d7" connectableBus="e44141af-f1dc-44d3-bfa4-b674e5c953d7" p="1.181163" q="-59.058142">
+                <iidm:alias type="CGMES.Terminal1">22af3121-1a66-4546-bd80-4371f417c644</iidm:alias>
+                <iidm:property name="CGMES.RegulatingControl" value="67971e8d-518a-408f-9e59-c7601da9a989"/>
+                <iidm:property name="CGMES.normalSections" value="1"/>
+                <iidm:shuntLinearModel bPerSection="3.46E-4" gPerSection="7.0E-6" maximumSectionCount="1"/>
+            </iidm:shuntCompensator>
+            <iidm:boundaryLine id="78736387-5f60-4832-b3fe-d50daf81b0a6" name="BE-Line_3" p0="-46.816625" q0="79.193778" r="1.05" x="12.0" g="6.0E-5" b="1.49854E-4" bus="e44141af-f1dc-44d3-bfa4-b674e5c953d7" connectableBus="e44141af-f1dc-44d3-bfa4-b674e5c953d7" pairingKey="TN_Border_AL11" p="-36.59014367310441" q="54.18604305492963" selectedOperationalLimitsGroupIds="99941f7a-11bb-4a7b-928b-ef8145db7799">
+                <iidm:alias type="CGMES.Terminal1">231a4cf8-5069-4d53-96e4-e839f073f1ea</iidm:alias>
+                <iidm:alias type="CGMES.Terminal_Boundary">f3b56334-4638-49d3-a6a0-3f417422b8f5</iidm:alias>
+                <iidm:property name="CGMES.Terminal" value="231a4cf8-5069-4d53-96e4-e839f073f1ea"/>
+                <iidm:property name="lineEnergyIdentificationCodeEIC" value="10T-ES-PT-10004U"/>
+                <iidm:property name="CGMES.Terminal_Boundary" value="f3b56334-4638-49d3-a6a0-3f417422b8f5"/>
+                <iidm:property name="CGMES.TopologicalNode_Boundary" value="d4affe50316740bdbbf4ae9c7cbf3cfd"/>
+                <iidm:property name="CGMES.EquivalentInjectionTerminal" value="53072f42-f77b-47e2-bd9a-e097c910b173"/>
+                <iidm:property name="CGMES.originalClass" value="ACLineSegment"/>
+                <iidm:property name="v" value="410.79228542077124"/>
+                <iidm:property name="CGMES.EquivalentInjection" value="24413233-26c3-4f7e-9f72-4461796938be"/>
+                <iidm:property name="angle" value="-6.5628934078599075"/>
+                <iidm:operationalLimitsGroup id="99941f7a-11bb-4a7b-928b-ef8145db7799">
+                    <iidm:property name="CGMES.normalValue_CurrentLimit_patl" value="1371.0"/>
+                    <iidm:property name="CGMES.normalValue_CurrentLimit_tatl_20" value="1443.0"/>
+                    <iidm:property name="CGMES.OperationalLimitSetName" value="Limits at Port 1"/>
+                    <iidm:property name="CGMES.OperationalLimitSetRdfID" value="99941f7a-11bb-4a7b-928b-ef8145db7799"/>
+                    <iidm:property name="CGMES.OperationalLimit_CurrentLimit_tatl_20" value="e207f382-e138-4a26-a40d-6c01dda96879"/>
+                    <iidm:property name="CGMES.OperationalLimit_CurrentLimit_tatl_10" value="ca002966-c9a3-4a17-a12d-1cd32c9d9a7e"/>
+                    <iidm:property name="CGMES.OperationalLimit_CurrentLimit_patl" value="1b18dc2e-d876-4213-b9c2-ddfde01caa5a"/>
+                    <iidm:property name="CGMES.normalValue_CurrentLimit_tatl_10" value="1515.0"/>
+                    <iidm:currentLimits permanentLimit="1371.0">
+                        <iidm:temporaryLimit name="CL-0" acceptableDuration="20" value="1443.0"/>
+                        <iidm:temporaryLimit name="CL-1" acceptableDuration="10" value="1515.0"/>
+                    </iidm:currentLimits>
+                </iidm:operationalLimitsGroup>
+            </iidm:boundaryLine>
+            <iidm:boundaryLine id="b18cd1aa-7808-49b9-a7cf-605eaf07b006" name="BE-Line_5" p0="-90.037005" q0="148.603743" r="0.42" x="6.3" g="4.2E-5" b="6.59734E-5" bus="e44141af-f1dc-44d3-bfa4-b674e5c953d7" connectableBus="e44141af-f1dc-44d3-bfa4-b674e5c953d7" pairingKey="TN_Border_GY11" p="-82.84043982883327" q="138.45122572658977" selectedOperationalLimitsGroupIds="4af71c73-fd57-45d2-aa83-f1b52fcc3bee">
+                <iidm:alias type="CGMES.Terminal1">051d49ba-4360-4372-86bf-50eb8cf29778</iidm:alias>
+                <iidm:alias type="CGMES.Terminal_Boundary">02a244ca-8bcb-4e25-8613-e948b8ba1f22</iidm:alias>
+                <iidm:property name="CGMES.Terminal" value="051d49ba-4360-4372-86bf-50eb8cf29778"/>
+                <iidm:property name="lineEnergyIdentificationCodeEIC" value="10T-AT-HU-00002U"/>
+                <iidm:property name="CGMES.Terminal_Boundary" value="02a244ca-8bcb-4e25-8613-e948b8ba1f22"/>
+                <iidm:property name="CGMES.TopologicalNode_Boundary" value="f03d65b2a51049ffa533e433721145c1"/>
+                <iidm:property name="CGMES.EquivalentInjectionTerminal" value="b9539c41-d114-4280-8a54-8ecec398091e"/>
+                <iidm:property name="CGMES.originalClass" value="ACLineSegment"/>
+                <iidm:property name="v" value="410.79922947750623"/>
+                <iidm:property name="CGMES.EquivalentInjection" value="6f014d4c-c1b0-4eed-8d6d-bae3bc87afcf"/>
+                <iidm:property name="angle" value="-6.568066330700518"/>
+                <iidm:operationalLimitsGroup id="4af71c73-fd57-45d2-aa83-f1b52fcc3bee">
+                    <iidm:property name="CGMES.normalValue_CurrentLimit_patl" value="1804.0"/>
+                    <iidm:property name="CGMES.normalValue_CurrentLimit_tatl_20" value="1876.0"/>
+                    <iidm:property name="CGMES.OperationalLimitSetName" value="Limits at Port 1"/>
+                    <iidm:property name="CGMES.OperationalLimitSetRdfID" value="4af71c73-fd57-45d2-aa83-f1b52fcc3bee"/>
+                    <iidm:property name="CGMES.OperationalLimit_CurrentLimit_tatl_20" value="bea68f9e-5348-40dd-ac14-75c41a6a38bd"/>
+                    <iidm:property name="CGMES.OperationalLimit_CurrentLimit_tatl_10" value="3b3fdb5e-dafe-41bb-acfb-eb21be018863"/>
+                    <iidm:property name="CGMES.OperationalLimit_CurrentLimit_patl" value="fc9a338c-df48-4c21-91ea-c9286542d388"/>
+                    <iidm:property name="CGMES.normalValue_CurrentLimit_tatl_10" value="1948.0"/>
+                    <iidm:currentLimits permanentLimit="1804.0">
+                        <iidm:temporaryLimit name="CL-0" acceptableDuration="20" value="1876.0"/>
+                        <iidm:temporaryLimit name="CL-1" acceptableDuration="10" value="1948.0"/>
+                    </iidm:currentLimits>
+                </iidm:operationalLimitsGroup>
+            </iidm:boundaryLine>
+            <iidm:boundaryLine id="ed0c5d75-4a54-43c8-b782-b20d7431630b" name="BE-Line_4" p0="-43.687227" q0="84.876604" r="0.24" x="2.0" g="4.0E-5" b="2.51956E-5" bus="e44141af-f1dc-44d3-bfa4-b674e5c953d7" connectableBus="e44141af-f1dc-44d3-bfa4-b674e5c953d7" pairingKey="TN_Border_MA11" p="-36.85912997641488" q="80.68264169911181" selectedOperationalLimitsGroupIds="67fa7320-7477-47e9-89ff-e3a407644aef">
+                <iidm:alias type="CGMES.Terminal_Boundary">f9f29835-8a31-4310-9780-b1ad26f3cbb0</iidm:alias>
+                <iidm:alias type="CGMES.Terminal1">c14d2036-72ec-4df3-b1b7-75d8afd9a1fe</iidm:alias>
+                <iidm:property name="CGMES.Terminal" value="c14d2036-72ec-4df3-b1b7-75d8afd9a1fe"/>
+                <iidm:property name="lineEnergyIdentificationCodeEIC" value="10T-AT-SI-00001T"/>
+                <iidm:property name="CGMES.Terminal_Boundary" value="f9f29835-8a31-4310-9780-b1ad26f3cbb0"/>
+                <iidm:property name="CGMES.TopologicalNode_Boundary" value="9d25a1f9e5d14d47b6dcde99c4380b40"/>
+                <iidm:property name="CGMES.EquivalentInjectionTerminal" value="c41978db-794b-4bae-953e-60fc519e87dd"/>
+                <iidm:property name="CGMES.originalClass" value="ACLineSegment"/>
+                <iidm:property name="v" value="412.6029098371554"/>
+                <iidm:property name="CGMES.EquivalentInjection" value="14b352cb-5574-40c5-bf83-0ed3574554a3"/>
+                <iidm:property name="angle" value="-6.744481665758925"/>
+                <iidm:operationalLimitsGroup id="67fa7320-7477-47e9-89ff-e3a407644aef">
+                    <iidm:property name="CGMES.normalValue_CurrentLimit_patl" value="1226.0"/>
+                    <iidm:property name="CGMES.normalValue_CurrentLimit_tatl_20" value="1299.0"/>
+                    <iidm:property name="CGMES.OperationalLimitSetName" value="Limits at Port 1"/>
+                    <iidm:property name="CGMES.OperationalLimitSetRdfID" value="67fa7320-7477-47e9-89ff-e3a407644aef"/>
+                    <iidm:property name="CGMES.OperationalLimit_CurrentLimit_tatl_20" value="d5a5feb2-8345-487c-a1bc-af3829329391"/>
+                    <iidm:property name="CGMES.OperationalLimit_CurrentLimit_tatl_10" value="e6c72199-8db4-4674-bdd8-d6808afb115e"/>
+                    <iidm:property name="CGMES.OperationalLimit_CurrentLimit_patl" value="4574ae6a-6ee5-4d9d-9cf3-0bdcc944b208"/>
+                    <iidm:property name="CGMES.normalValue_CurrentLimit_tatl_10" value="1371.0"/>
+                    <iidm:currentLimits permanentLimit="1226.0">
+                        <iidm:temporaryLimit name="CL-0" acceptableDuration="20" value="1299.0"/>
+                        <iidm:temporaryLimit name="CL-1" acceptableDuration="10" value="1371.0"/>
+                    </iidm:currentLimits>
+                </iidm:operationalLimitsGroup>
+            </iidm:boundaryLine>
+        </iidm:voltageLevel>
+        <iidm:twoWindingsTransformer id="e482b89a-fa84-4ea9-8e70-a83d44790957" name="BE-TR2_3" r="9.481464576284766E-4" x="0.052911509061024486" g="0.0019138280377471303" b="-0.00917006295066167" ratedU1="110.34375" ratedU2="10.5" ratedS="250.0" voltageLevelId1="8bbd7e74-ae20-4dce-8780-c20f8e18c2e0" bus1="5c74cb26-ce2f-40c6-951d-89091eb781b6" connectableBus1="5c74cb26-ce2f-40c6-951d-89091eb781b6" voltageLevelId2="4ba71b59-ee2f-450b-9f7d-cc2f1cc5e386" bus2="a81d08ed-f51d-4538-8d1e-fb2d0dbd128e" connectableBus2="a81d08ed-f51d-4538-8d1e-fb2d0dbd128e" selectedOperationalLimitsGroupIds1="e40d809b-2f3f-4866-817d-7acec0fde34f" selectedOperationalLimitsGroupIds2="40b75fae-2597-40df-98d2-8a0d83c238fd">
+            <iidm:alias type="CGMES.TransformerEnd2">35651e25-a77a-46a1-92f4-443d6acce90e</iidm:alias>
+            <iidm:alias type="CGMES.RatioTapChanger2">83cc66dd-8d93-4a2c-8103-f1f5a9cf7e2e</iidm:alias>
+            <iidm:alias type="CGMES.TransformerEnd1">f58281c5-862a-465e-97ec-d809be6e24ab</iidm:alias>
+            <iidm:alias type="CGMES.Terminal1">ca7974cf-b25e-4898-9221-7154233e5eb2</iidm:alias>
+            <iidm:alias type="CGMES.Terminal2">1182d878-2eaa-4eec-91be-ce7b2b1e7f9a</iidm:alias>
+            <iidm:ratioTapChanger regulating="true" lowTapPosition="1" tapPosition="14" solvedTapPosition="18" targetDeadband="0.5" loadTapChangingCapabilities="true" regulationMode="VOLTAGE" regulationValue="10.815">
+                <iidm:terminalRef id="e482b89a-fa84-4ea9-8e70-a83d44790957" side="TWO"/>
+                <iidm:step r="-23.961600000000004" x="-23.961600000000004" g="31.512498947900024" b="31.512498947900024" rho="0.872"/>
+                <iidm:step r="-22.560000000000002" x="-22.560000000000002" g="29.132231404958688" b="29.132231404958688" rho="0.8799999999999999"/>
+                <iidm:step r="-21.145599999999998" x="-21.145599999999998" g="26.816005194383564" b="26.816005194383564" rho="0.888"/>
+                <iidm:step r="-19.718399999999992" x="-19.718399999999992" g="24.56154336734693" b="24.56154336734693" rho="0.896"/>
+                <iidm:step r="-18.278399999999994" x="-18.278399999999994" g="22.366669277155605" b="22.366669277155605" rho="0.904"/>
+                <iidm:step r="-16.825599999999994" x="-16.825599999999994" g="20.22930132348415" b="20.22930132348415" rho="0.9120000000000001"/>
+                <iidm:step r="-15.359999999999996" x="-15.359999999999996" g="18.14744801512287" b="18.14744801512287" rho="0.92"/>
+                <iidm:step r="-13.881600000000017" x="-13.881600000000017" g="16.119203329369824" b="16.119203329369824" rho="0.9279999999999999"/>
+                <iidm:step r="-12.390400000000012" x="-12.390400000000012" g="14.142742347870563" b="14.142742347870563" rho="0.936"/>
+                <iidm:step r="-10.886400000000007" x="-10.886400000000007" g="12.216317150244183" b="12.216317150244183" rho="0.944"/>
+                <iidm:step r="-9.36960000000001" x="-9.36960000000001" g="10.338252948238136" b="10.338252948238136" rho="0.952"/>
+                <iidm:step r="-7.8400000000000025" x="-7.8400000000000025" g="8.506944444444443" b="8.506944444444443" rho="0.96"/>
+                <iidm:step r="-6.297600000000003" x="-6.297600000000003" g="6.720852400792299" b="6.720852400792299" rho="0.9679999999999999"/>
+                <iidm:step r="-4.742400000000002" x="-4.742400000000002" g="4.978500403117447" b="4.978500403117447" rho="0.9760000000000001"/>
+                <iidm:step r="-3.1743999999999994" x="-3.1743999999999994" g="3.278471809108341" b="3.278471809108341" rho="0.9839999999999999"/>
+                <iidm:step r="-1.5936000000000061" x="-1.5936000000000061" g="1.6194068678460072" b="1.6194068678460072" rho="0.992"/>
+                <iidm:step rho="1.0"/>
+                <iidm:step r="1.6064000000000078" x="1.6064000000000078" g="-1.5810027714789676" b="-1.5810027714789676" rho="1.008"/>
+                <iidm:step r="3.2256000000000062" x="3.2256000000000062" g="-3.1248062496124995" b="-3.1248062496124995" rho="1.016"/>
+                <iidm:step r="4.857599999999995" x="4.857599999999995" g="-4.632568359375" b="-4.632568359375" rho="1.024"/>
+                <iidm:step r="6.502399999999997" x="6.502399999999997" g="-6.105402319572139" b="-6.105402319572139" rho="1.032"/>
+                <iidm:step r="8.16000000000001" x="8.16000000000001" g="-7.544378698224863" b="-7.544378698224863" rho="1.04"/>
+                <iidm:step r="9.830400000000017" x="9.830400000000017" g="-8.950527358545557" b="-8.950527358545557" rho="1.048"/>
+                <iidm:step r="11.513600000000013" x="11.513600000000013" g="-10.324839302112043" b="-10.324839302112043" rho="1.056"/>
+                <iidm:step r="13.209600000000021" x="13.209600000000021" g="-11.66826841539942" b="-11.66826841539942" rho="1.064"/>
+                <iidm:step r="14.91840000000002" x="14.91840000000002" g="-12.981733125417705" b="-12.981733125417705" rho="1.072"/>
+                <iidm:step r="16.64000000000001" x="16.64000000000001" g="-14.266117969821678" b="-14.266117969821678" rho="1.08"/>
+                <iidm:step r="18.374400000000012" x="18.374400000000012" g="-15.5222750865052" b="-15.5222750865052" rho="1.088"/>
+                <iidm:step r="20.12160000000003" x="20.12160000000003" g="-16.751025627364292" b="-16.751025627364292" rho="1.096"/>
+                <iidm:step r="21.881600000000013" x="21.881600000000013" g="-17.953161100609126" b="-17.953161100609126" rho="1.104"/>
+                <iidm:step r="23.65440000000003" x="23.65440000000003" g="-19.129444645722295" b="-19.129444645722295" rho="1.112"/>
+                <iidm:step r="25.44000000000002" x="25.44000000000002" g="-20.280612244897966" b="-20.280612244897966" rho="1.12"/>
+                <iidm:step r="27.23840000000002" x="27.23840000000002" g="-21.407373874553603" b="-21.407373874553603" rho="1.1280000000000001"/>
+            </iidm:ratioTapChanger>
+            <iidm:operationalLimitsGroup1 id="e40d809b-2f3f-4866-817d-7acec0fde34f">
+                <iidm:property name="CGMES.normalValue_CurrentLimit_patl" value="1308.1"/>
+                <iidm:property name="CGMES.normalValue_CurrentLimit_tatl_20" value="1408.1"/>
+                <iidm:property name="CGMES.OperationalLimitSetName" value="Limits at Port 1"/>
+                <iidm:property name="CGMES.OperationalLimitSetRdfID" value="e40d809b-2f3f-4866-817d-7acec0fde34f"/>
+                <iidm:property name="CGMES.OperationalLimit_CurrentLimit_tatl_20" value="a5d3cd27-798c-4910-9729-6fc745346601"/>
+                <iidm:property name="CGMES.OperationalLimit_CurrentLimit_tatl_10" value="7059bdb7-fa2d-4061-aea7-a88760835e2f"/>
+                <iidm:property name="CGMES.OperationalLimit_CurrentLimit_patl" value="3503e388-5b7c-4e29-ae10-1f45a2c0c96b"/>
+                <iidm:property name="CGMES.normalValue_CurrentLimit_tatl_10" value="1508.1"/>
+                <iidm:currentLimits permanentLimit="1308.1">
+                    <iidm:temporaryLimit name="CL-0" acceptableDuration="20" value="1408.1"/>
+                    <iidm:temporaryLimit name="CL-1" acceptableDuration="10" value="1508.1"/>
+                </iidm:currentLimits>
+            </iidm:operationalLimitsGroup1>
+            <iidm:operationalLimitsGroup2 id="40b75fae-2597-40df-98d2-8a0d83c238fd">
+                <iidm:property name="CGMES.normalValue_CurrentLimit_patl" value="13746.4"/>
+                <iidm:property name="CGMES.normalValue_CurrentLimit_tatl_20" value="14746.4"/>
+                <iidm:property name="CGMES.OperationalLimitSetName" value="Limits at Port 2"/>
+                <iidm:property name="CGMES.OperationalLimitSetRdfID" value="40b75fae-2597-40df-98d2-8a0d83c238fd"/>
+                <iidm:property name="CGMES.OperationalLimit_CurrentLimit_tatl_20" value="3674d58e-946d-4901-8084-eb21afe1565a"/>
+                <iidm:property name="CGMES.OperationalLimit_CurrentLimit_tatl_10" value="a1cfb7e6-ed0d-4369-b555-007826ba82fb"/>
+                <iidm:property name="CGMES.OperationalLimit_CurrentLimit_patl" value="05b69cbf-0e24-4c98-bd81-9450c751be6f"/>
+                <iidm:property name="CGMES.normalValue_CurrentLimit_tatl_10" value="15746.4"/>
+                <iidm:currentLimits permanentLimit="13746.4">
+                    <iidm:temporaryLimit name="CL-0" acceptableDuration="20" value="14746.4"/>
+                    <iidm:temporaryLimit name="CL-1" acceptableDuration="10" value="15746.4"/>
+                </iidm:currentLimits>
+            </iidm:operationalLimitsGroup2>
+        </iidm:twoWindingsTransformer>
+        <iidm:twoWindingsTransformer id="a708c3bc-465d-4fe7-b6ef-6fa6408a62b0" name="BE-TR2_1" r="0.20476920750000005" x="1.097992115" ratedU1="400.0" ratedU2="110.0" ratedS="650.0" voltageLevelId1="469df5f7-058f-4451-a998-57a48e8a56fe" bus1="e44141af-f1dc-44d3-bfa4-b674e5c953d7" connectableBus1="e44141af-f1dc-44d3-bfa4-b674e5c953d7" voltageLevelId2="8bbd7e74-ae20-4dce-8780-c20f8e18c2e0" bus2="5c74cb26-ce2f-40c6-951d-89091eb781b6" connectableBus2="5c74cb26-ce2f-40c6-951d-89091eb781b6" selectedOperationalLimitsGroupIds1="0b7c4239-3c1b-438e-994d-f2a402ba743c" selectedOperationalLimitsGroupIds2="3b5aa2ae-a3fb-4ea6-9941-f7ccd2c6d925">
+            <iidm:alias type="CGMES.PhaseTapChanger1">6ebbef67-3061-4236-a6fd-6ccc4595f6c3</iidm:alias>
+            <iidm:alias type="CGMES.Terminal1">c3774d3f-f48c-4954-a0cf-b4572eb714fd</iidm:alias>
+            <iidm:alias type="CGMES.Terminal2">2cd21c77-b8b1-4896-95fb-240f45b9ac89</iidm:alias>
+            <iidm:alias type="CGMES.TransformerEnd1">49ca3fd4-1b54-4c5b-83fd-4dbd0f9fec9d</iidm:alias>
+            <iidm:alias type="CGMES.TransformerEnd2">1912224a-9e98-41aa-84cf-00875bce7264</iidm:alias>
+            <iidm:property name="CGMES.terminalSign" value="1"/>
+            <iidm:phaseTapChanger regulating="true" lowTapPosition="1" tapPosition="10" solvedTapPosition="16" targetDeadband="35.0" loadTapChangingCapabilities="true" regulationMode="ACTIVE_POWER_CONTROL" regulationValue="-65.0">
+                <iidm:terminalRef id="a708c3bc-465d-4fe7-b6ef-6fa6408a62b0" side="TWO"/>
+                <iidm:step rho="0.9889363528682975" alpha="8.530765609948135"/>
+                <iidm:step rho="0.9906788398452958" alpha="7.829076510059608"/>
+                <iidm:step rho="0.9922778767136677" alpha="7.125016348901798"/>
+                <iidm:step rho="0.9937313161588018" alpha="6.418786730238786"/>
+                <iidm:step rho="0.9950371902099893" alpha="5.710593137499643"/>
+                <iidm:step rho="0.996193717496113" alpha="5.000644597558434"/>
+                <iidm:step rho="0.9971993098884564" alpha="4.289153328819019"/>
+                <iidm:step rho="0.9980525784828885" alpha="3.576334374997351"/>
+                <iidm:step rho="0.9987523388778446" alpha="2.862405226111748"/>
+                <iidm:step rho="0.9992976157091807" alpha="2.1475854282985036"/>
+                <iidm:step rho="0.9996876464081226" alpha="1.4320961841646465"/>
+                <iidm:step rho="0.9999218841540815" alpha="0.7161599454704085"/>
+                <iidm:step rho="1.0" alpha="-0.0"/>
+                <iidm:step rho="0.9999218841540815" alpha="-0.7161599454704085"/>
+                <iidm:step rho="0.9996876464081226" alpha="-1.4320961841646465"/>
+                <iidm:step rho="0.9992976157091807" alpha="-2.1475854282985036"/>
+                <iidm:step rho="0.9987523388778446" alpha="-2.862405226111748"/>
+                <iidm:step rho="0.9980525784828885" alpha="-3.576334374997351"/>
+                <iidm:step rho="0.9971993098884564" alpha="-4.289153328819019"/>
+                <iidm:step rho="0.996193717496113" alpha="-5.000644597558434"/>
+                <iidm:step rho="0.9950371902099893" alpha="-5.710593137499643"/>
+                <iidm:step rho="0.9937313161588018" alpha="-6.418786730238786"/>
+                <iidm:step rho="0.9922778767136677" alpha="-7.125016348901798"/>
+                <iidm:step rho="0.9906788398452958" alpha="-7.829076510059608"/>
+                <iidm:step rho="0.9889363528682975" alpha="-8.530765609948135"/>
+            </iidm:phaseTapChanger>
+            <iidm:operationalLimitsGroup1 id="0b7c4239-3c1b-438e-994d-f2a402ba743c">
+                <iidm:property name="CGMES.normalValue_CurrentLimit_patl" value="938.2"/>
+                <iidm:property name="CGMES.normalValue_CurrentLimit_tatl_20" value="958.2"/>
+                <iidm:property name="CGMES.OperationalLimitSetName" value="Limits at Port 1"/>
+                <iidm:property name="CGMES.OperationalLimitSetRdfID" value="0b7c4239-3c1b-438e-994d-f2a402ba743c"/>
+                <iidm:property name="CGMES.OperationalLimit_CurrentLimit_tatl_20" value="aaa63bb1-fa34-41a3-bd92-0637bfce549c"/>
+                <iidm:property name="CGMES.OperationalLimit_CurrentLimit_tatl_10" value="acbd4688-6393-4b43-a9f4-27d8c3f8c309"/>
+                <iidm:property name="CGMES.OperationalLimit_CurrentLimit_patl" value="1c8440dc-e65d-4337-9d3e-7558062228da"/>
+                <iidm:property name="CGMES.normalValue_CurrentLimit_tatl_10" value="998.2"/>
+                <iidm:currentLimits permanentLimit="938.2">
+                    <iidm:temporaryLimit name="CL-0" acceptableDuration="20" value="958.2"/>
+                    <iidm:temporaryLimit name="CL-1" acceptableDuration="10" value="998.2"/>
+                </iidm:currentLimits>
+            </iidm:operationalLimitsGroup1>
+            <iidm:operationalLimitsGroup2 id="3b5aa2ae-a3fb-4ea6-9941-f7ccd2c6d925">
+                <iidm:property name="CGMES.normalValue_CurrentLimit_patl" value="3411.6"/>
+                <iidm:property name="CGMES.normalValue_CurrentLimit_tatl_20" value="3611.6"/>
+                <iidm:property name="CGMES.OperationalLimitSetName" value="Limits at Port 2"/>
+                <iidm:property name="CGMES.OperationalLimitSetRdfID" value="3b5aa2ae-a3fb-4ea6-9941-f7ccd2c6d925"/>
+                <iidm:property name="CGMES.OperationalLimit_CurrentLimit_tatl_20" value="da1cb116-0730-4a00-b795-8ab0b52ad89f"/>
+                <iidm:property name="CGMES.OperationalLimit_CurrentLimit_tatl_10" value="4af98ccd-29f1-4039-86cd-c23fc2deb3bc"/>
+                <iidm:property name="CGMES.OperationalLimit_CurrentLimit_patl" value="6f70e245-e075-4ed9-9f86-f137b7e33313"/>
+                <iidm:property name="CGMES.normalValue_CurrentLimit_tatl_10" value="3811.6"/>
+                <iidm:currentLimits permanentLimit="3411.6">
+                    <iidm:temporaryLimit name="CL-0" acceptableDuration="20" value="3611.6"/>
+                    <iidm:temporaryLimit name="CL-1" acceptableDuration="10" value="3811.6"/>
+                </iidm:currentLimits>
+            </iidm:operationalLimitsGroup2>
+        </iidm:twoWindingsTransformer>
+        <iidm:twoWindingsTransformer id="b94318f6-6d24-4f56-96b9-df2531ad6543" name="BE-TR2_2" r="0.2057" x="2.78472075" ratedU1="220.0" ratedU2="110.0" ratedS="650.0" voltageLevelId1="b10b171b-3bc5-4849-bb1f-61ed9ea1ec7c" bus1="99b219f3-4593-428b-a4da-124a54630178" connectableBus1="99b219f3-4593-428b-a4da-124a54630178" voltageLevelId2="8bbd7e74-ae20-4dce-8780-c20f8e18c2e0" bus2="5c74cb26-ce2f-40c6-951d-89091eb781b6" connectableBus2="5c74cb26-ce2f-40c6-951d-89091eb781b6" selectedOperationalLimitsGroupIds1="88aa13e4-d3fe-4c47-9e47-39f8bb805e73" selectedOperationalLimitsGroupIds2="d6f4f557-12b9-4b53-9e99-2d2ed8cd11dd">
+            <iidm:alias type="CGMES.TransformerEnd1">81a18364-0397-48d3-b850-22a0e34b410f</iidm:alias>
+            <iidm:alias type="CGMES.Terminal1">4c19ace6-c825-4c5b-87d9-031e6e6a3379</iidm:alias>
+            <iidm:alias type="CGMES.Terminal2">ab7ece75-d726-48c8-a924-b0a9325e6d51</iidm:alias>
+            <iidm:alias type="CGMES.TransformerEnd2">664a19e1-1dc2-48d5-b265-c0630981e61c</iidm:alias>
+            <iidm:alias type="CGMES.RatioTapChanger1">955d9cd0-4a10-4031-b008-60c0dc340a07</iidm:alias>
+            <iidm:ratioTapChanger regulating="false" lowTapPosition="1" tapPosition="10" solvedTapPosition="10" targetDeadband="0.5" loadTapChangingCapabilities="true" regulationMode="VOLTAGE" regulationValue="0.0">
+                <iidm:terminalRef id="b94318f6-6d24-4f56-96b9-df2531ad6543" side="TWO"/>
+                <iidm:step rho="1.1764705882352942"/>
+                <iidm:step rho="1.1594202898550725"/>
+                <iidm:step rho="1.1428571428571428"/>
+                <iidm:step rho="1.1267605633802817"/>
+                <iidm:step rho="1.1111111111111112"/>
+                <iidm:step rho="1.095890410958904"/>
+                <iidm:step rho="1.081081081081081"/>
+                <iidm:step rho="1.0666666666666667"/>
+                <iidm:step rho="1.0526315789473684"/>
+                <iidm:step rho="1.0389610389610389"/>
+                <iidm:step rho="1.0256410256410258"/>
+                <iidm:step rho="1.0126582278481011"/>
+                <iidm:step rho="1.0"/>
+                <iidm:step rho="0.9876543209876544"/>
+                <iidm:step rho="0.9756097560975611"/>
+                <iidm:step rho="0.9638554216867469"/>
+                <iidm:step rho="0.9523809523809523"/>
+                <iidm:step rho="0.9411764705882353"/>
+                <iidm:step rho="0.9302325581395349"/>
+                <iidm:step rho="0.9195402298850576"/>
+                <iidm:step rho="0.9090909090909091"/>
+                <iidm:step rho="0.898876404494382"/>
+                <iidm:step rho="0.8888888888888888"/>
+                <iidm:step rho="0.8791208791208791"/>
+                <iidm:step rho="0.8695652173913044"/>
+            </iidm:ratioTapChanger>
+            <iidm:operationalLimitsGroup1 id="88aa13e4-d3fe-4c47-9e47-39f8bb805e73">
+                <iidm:property name="CGMES.normalValue_CurrentLimit_patl" value="1705.8"/>
+                <iidm:property name="CGMES.normalValue_CurrentLimit_tatl_20" value="1805.8"/>
+                <iidm:property name="CGMES.OperationalLimitSetName" value="Limits at Port 1"/>
+                <iidm:property name="CGMES.OperationalLimitSetRdfID" value="88aa13e4-d3fe-4c47-9e47-39f8bb805e73"/>
+                <iidm:property name="CGMES.OperationalLimit_CurrentLimit_tatl_20" value="0d6f26df-9f86-4df0-b00c-bfb23870257f"/>
+                <iidm:property name="CGMES.OperationalLimit_CurrentLimit_tatl_10" value="5b77485f-20a3-4a19-8d15-e4038c81663f"/>
+                <iidm:property name="CGMES.OperationalLimit_CurrentLimit_patl" value="661b3900-dc24-4af5-8720-3e675b48b747"/>
+                <iidm:property name="CGMES.normalValue_CurrentLimit_tatl_10" value="1905.8"/>
+                <iidm:currentLimits permanentLimit="1705.8">
+                    <iidm:temporaryLimit name="CL-0" acceptableDuration="20" value="1805.8"/>
+                    <iidm:temporaryLimit name="CL-1" acceptableDuration="10" value="1905.8"/>
+                </iidm:currentLimits>
+            </iidm:operationalLimitsGroup1>
+            <iidm:operationalLimitsGroup2 id="d6f4f557-12b9-4b53-9e99-2d2ed8cd11dd">
+                <iidm:property name="CGMES.normalValue_CurrentLimit_patl" value="3411.6"/>
+                <iidm:property name="CGMES.normalValue_CurrentLimit_tatl_20" value="3611.6"/>
+                <iidm:property name="CGMES.OperationalLimitSetName" value="Limits at Port 2"/>
+                <iidm:property name="CGMES.OperationalLimitSetRdfID" value="d6f4f557-12b9-4b53-9e99-2d2ed8cd11dd"/>
+                <iidm:property name="CGMES.OperationalLimit_CurrentLimit_tatl_20" value="7939fc42-08ef-4ce7-9912-97552a4db39a"/>
+                <iidm:property name="CGMES.OperationalLimit_CurrentLimit_tatl_10" value="84d4dbeb-ef3b-43a1-9a7e-ce5713013498"/>
+                <iidm:property name="CGMES.OperationalLimit_CurrentLimit_patl" value="2e27135c-53b6-4bd0-a4c1-5312fdbf0704"/>
+                <iidm:property name="CGMES.normalValue_CurrentLimit_tatl_10" value="3811.6"/>
+                <iidm:currentLimits permanentLimit="3411.6">
+                    <iidm:temporaryLimit name="CL-0" acceptableDuration="20" value="3611.6"/>
+                    <iidm:temporaryLimit name="CL-1" acceptableDuration="10" value="3811.6"/>
+                </iidm:currentLimits>
+            </iidm:operationalLimitsGroup2>
+        </iidm:twoWindingsTransformer>
+        <iidm:threeWindingsTransformer id="84ed55f4-61f5-4d9d-8755-bba7b877a246" name="BE-TR3_1" r1="0.898462" x1="17.204128" b1="2.4375E-6" ratedU1="400.0" ratedS1="650.0" r2="1.070770247933884" x2="19.6664" ratedU2="220.0" ratedS2="650.0" r3="4.837006802721088" x3="21.760725623582765" ratedU3="21.0" ratedS3="650.0" ratedU0="400.0" voltageLevelId1="469df5f7-058f-4451-a998-57a48e8a56fe" bus1="e44141af-f1dc-44d3-bfa4-b674e5c953d7" connectableBus1="e44141af-f1dc-44d3-bfa4-b674e5c953d7" voltageLevelId2="b10b171b-3bc5-4849-bb1f-61ed9ea1ec7c" bus2="99b219f3-4593-428b-a4da-124a54630178" connectableBus2="99b219f3-4593-428b-a4da-124a54630178" voltageLevelId3="929ba893-c9dc-44d7-b1fd-30834bd3ab85" bus3="f96d552a-618d-4d0c-a39a-2dea3c411dee" connectableBus3="f96d552a-618d-4d0c-a39a-2dea3c411dee" selectedOperationalLimitsGroupIds1="b655ab41-8bc0-4bd3-a28c-cf9048e32b4a" selectedOperationalLimitsGroupIds2="a2f11542-aeb8-4d7c-9594-25ac63e148bb" selectedOperationalLimitsGroupIds3="f4fb6a66-b9f6-4c71-bdd2-7e97938d1fe1">
+            <iidm:alias type="CGMES.TransformerEnd2">e1f661c0-971d-4ce5-ad39-0ec427f288ab</iidm:alias>
+            <iidm:alias type="CGMES.TransformerEnd1">5f68a129-d5d8-4b71-9743-9ca2572ba26b</iidm:alias>
+            <iidm:alias type="CGMES.Terminal3">ca0f7e2e-3442-4ada-a704-91f319c0ebe3</iidm:alias>
+            <iidm:alias type="CGMES.TransformerEnd3">2e21d1ef-2287-434c-a767-1ca807cf2478</iidm:alias>
+            <iidm:alias type="CGMES.RatioTapChanger2">fe25f43a-7341-446e-a71a-8ab7119ba806</iidm:alias>
+            <iidm:alias type="CGMES.Terminal1">76e9ca77-f805-40ea-8120-5a6d58416d34</iidm:alias>
+            <iidm:alias type="CGMES.Terminal2">53fd6693-57e6-482e-8fbe-dcf3531a7ce0</iidm:alias>
+            <iidm:property name="v" value="412.66200701692287"/>
+            <iidm:property name="angle" value="-7.353686938578365"/>
+            <iidm:ratioTapChanger2 regulating="false" lowTapPosition="1" tapPosition="17" solvedTapPosition="17" targetDeadband="0.5" loadTapChangingCapabilities="true" regulationMode="VOLTAGE" regulationValue="0.0">
+                <iidm:terminalRef id="84ed55f4-61f5-4d9d-8755-bba7b877a246" side="TWO"/>
+                <iidm:step rho="1.1111111111111112"/>
+                <iidm:step rho="1.103448275862069"/>
+                <iidm:step rho="1.095890410958904"/>
+                <iidm:step rho="1.08843537414966"/>
+                <iidm:step rho="1.081081081081081"/>
+                <iidm:step rho="1.0738255033557047"/>
+                <iidm:step rho="1.0666666666666667"/>
+                <iidm:step rho="1.0596026490066226"/>
+                <iidm:step rho="1.0526315789473684"/>
+                <iidm:step rho="1.0457516339869282"/>
+                <iidm:step rho="1.0389610389610389"/>
+                <iidm:step rho="1.032258064516129"/>
+                <iidm:step rho="1.0256410256410258"/>
+                <iidm:step rho="1.019108280254777"/>
+                <iidm:step rho="1.0126582278481011"/>
+                <iidm:step rho="1.0062893081761006"/>
+                <iidm:step rho="1.0"/>
+                <iidm:step rho="0.9937888198757763"/>
+                <iidm:step rho="0.9876543209876544"/>
+                <iidm:step rho="0.9815950920245399"/>
+                <iidm:step rho="0.9756097560975611"/>
+                <iidm:step rho="0.9696969696969697"/>
+                <iidm:step rho="0.9638554216867469"/>
+                <iidm:step rho="0.9580838323353293"/>
+                <iidm:step rho="0.9523809523809523"/>
+                <iidm:step rho="0.9467455621301776"/>
+                <iidm:step rho="0.9411764705882353"/>
+                <iidm:step rho="0.935672514619883"/>
+                <iidm:step rho="0.9302325581395349"/>
+                <iidm:step rho="0.9248554913294798"/>
+                <iidm:step rho="0.9195402298850576"/>
+                <iidm:step rho="0.9142857142857143"/>
+                <iidm:step rho="0.9090909090909091"/>
+            </iidm:ratioTapChanger2>
+            <iidm:operationalLimitsGroup1 id="b655ab41-8bc0-4bd3-a28c-cf9048e32b4a">
+                <iidm:property name="CGMES.normalValue_CurrentLimit_patl" value="938.2"/>
+                <iidm:property name="CGMES.normalValue_CurrentLimit_tatl_20" value="968.2"/>
+                <iidm:property name="CGMES.OperationalLimitSetName" value="Limits at Port 1"/>
+                <iidm:property name="CGMES.OperationalLimitSetRdfID" value="b655ab41-8bc0-4bd3-a28c-cf9048e32b4a"/>
+                <iidm:property name="CGMES.OperationalLimit_CurrentLimit_tatl_20" value="ddcb76e0-13ea-413f-9a8f-553d78782f76"/>
+                <iidm:property name="CGMES.OperationalLimit_CurrentLimit_tatl_10" value="3e9ed732-dd10-4f10-bc9d-d399e1e75a78"/>
+                <iidm:property name="CGMES.OperationalLimit_CurrentLimit_patl" value="e8889178-5295-439f-916c-e28eff9141be"/>
+                <iidm:property name="CGMES.normalValue_CurrentLimit_tatl_10" value="998.2"/>
+                <iidm:currentLimits permanentLimit="938.2">
+                    <iidm:temporaryLimit name="CL-0" acceptableDuration="20" value="968.2"/>
+                    <iidm:temporaryLimit name="CL-1" acceptableDuration="10" value="998.2"/>
+                </iidm:currentLimits>
+            </iidm:operationalLimitsGroup1>
+            <iidm:operationalLimitsGroup2 id="a2f11542-aeb8-4d7c-9594-25ac63e148bb">
+                <iidm:property name="CGMES.normalValue_CurrentLimit_patl" value="1705.8"/>
+                <iidm:property name="CGMES.normalValue_CurrentLimit_tatl_20" value="1805.8"/>
+                <iidm:property name="CGMES.OperationalLimitSetName" value="Limits at Port 2"/>
+                <iidm:property name="CGMES.OperationalLimitSetRdfID" value="a2f11542-aeb8-4d7c-9594-25ac63e148bb"/>
+                <iidm:property name="CGMES.OperationalLimit_CurrentLimit_tatl_20" value="52d7ccc6-b4a1-48eb-9cfa-f5870b8b7fce"/>
+                <iidm:property name="CGMES.OperationalLimit_CurrentLimit_tatl_10" value="11763596-6f4b-4cd5-a4a0-be649f368e86"/>
+                <iidm:property name="CGMES.OperationalLimit_CurrentLimit_patl" value="7fe9c4b1-7ca5-40f1-9eb4-a51caaa33f7c"/>
+                <iidm:property name="CGMES.normalValue_CurrentLimit_tatl_10" value="1905.8"/>
+                <iidm:currentLimits permanentLimit="1705.8">
+                    <iidm:temporaryLimit name="CL-0" acceptableDuration="20" value="1805.8"/>
+                    <iidm:temporaryLimit name="CL-1" acceptableDuration="10" value="1905.8"/>
+                </iidm:currentLimits>
+            </iidm:operationalLimitsGroup2>
+            <iidm:operationalLimitsGroup3 id="f4fb6a66-b9f6-4c71-bdd2-7e97938d1fe1">
+                <iidm:property name="CGMES.normalValue_CurrentLimit_patl" value="17870.4"/>
+                <iidm:property name="CGMES.normalValue_CurrentLimit_tatl_20" value="18870.4"/>
+                <iidm:property name="CGMES.OperationalLimitSetName" value="Limits at Port 3"/>
+                <iidm:property name="CGMES.OperationalLimitSetRdfID" value="f4fb6a66-b9f6-4c71-bdd2-7e97938d1fe1"/>
+                <iidm:property name="CGMES.OperationalLimit_CurrentLimit_tatl_20" value="50448009-0fad-4656-bce4-438fe76e18cf"/>
+                <iidm:property name="CGMES.OperationalLimit_CurrentLimit_tatl_10" value="df2d3155-4436-4542-8d3b-64241c7433be"/>
+                <iidm:property name="CGMES.OperationalLimit_CurrentLimit_patl" value="8117eb14-2b1e-4a66-8dfa-54d2fe69c186"/>
+                <iidm:property name="CGMES.normalValue_CurrentLimit_tatl_10" value="19870.4"/>
+                <iidm:currentLimits permanentLimit="17870.4">
+                    <iidm:temporaryLimit name="CL-0" acceptableDuration="20" value="18870.4"/>
+                    <iidm:temporaryLimit name="CL-1" acceptableDuration="10" value="19870.4"/>
+                </iidm:currentLimits>
+            </iidm:operationalLimitsGroup3>
+        </iidm:threeWindingsTransformer>
+    </iidm:substation>
+    <iidm:substation id="87f7002b-056f-4a6a-a872-1744eea757e3" name="Anvers" country="BE" geographicalTags="ELIA-Anvers">
+        <iidm:property name="CGMES.regionName" value="BE"/>
+        <iidm:property name="CGMES.subRegionId" value="c1d5c0378f8011e08e4d00247eb1f55e"/>
+        <iidm:property name="CGMES.regionId" value="c1d5bfc68f8011e08e4d00247eb1f55e"/>
+        <iidm:voltageLevel id="d0486169-2205-40b2-895e-b672ecb9e5fc" name="220.0" nominalV="225.0" lowVoltageLimit="202.5" highVoltageLimit="247.5" topologyKind="BUS_BREAKER">
+            <iidm:property name="CGMES.lowVoltageLimit" value="202.5"/>
+            <iidm:property name="CGMES.highVoltageLimit" value="247.5"/>
+            <iidm:busBreakerTopology>
+                <iidm:bus id="f70f6bad-eb8d-4b8f-8431-4ab93581514e" name="BE-Busbar_2" v="224.871595" angle="-7.6249">
+                    <iidm:property name="CGMES.busbarSectionTerminals" value="800ada75-8c8c-4568-aec5-20f799e45f3c,3c6d83a3-b5f9-41a2-a3d9-cf15d903ed0a,ad794c0e-b9ec-420b-ada1-97680e3dde05"/>
+                </iidm:bus>
+            </iidm:busBreakerTopology>
+            <iidm:load id="b1480a00-b427-4001-a26c-51954d2bb7e9" name="L-1230804819" loadType="UNDEFINED" p0="1.0" q0="0.0" bus="f70f6bad-eb8d-4b8f-8431-4ab93581514e" connectableBus="f70f6bad-eb8d-4b8f-8431-4ab93581514e" p="1.0" q="0.0">
+                <iidm:alias type="CGMES.Terminal1">b9376bea-c75d-49f3-94ca-6a71fa0086a5</iidm:alias>
+                <iidm:property name="CGMES.pFixed" value="0.0"/>
+                <iidm:property name="CGMES.originalClass" value="EnergyConsumer"/>
+                <iidm:property name="CGMES.qFixed" value="0.0"/>
+            </iidm:load>
+            <iidm:boundaryLine id="17086487-56ba-4979-b8de-064025a6b4da" name="BE-Line_1" p0="-27.365225" q0="0.425626" r="2.2" x="68.2" g="3.08E-5" b="8.2938E-5" bus="f70f6bad-eb8d-4b8f-8431-4ab93581514e" connectableBus="f70f6bad-eb8d-4b8f-8431-4ab93581514e" pairingKey="TN_Border_ST23" p="-25.772723643188726" q="-2.8284677293062597" selectedOperationalLimitsGroupIds="a5b37323-8f73-449a-8931-f73193d95587">
+                <iidm:alias type="CGMES.Terminal1">70d962fb-a492-4c36-8cad-b5c584df53bd</iidm:alias>
+                <iidm:alias type="CGMES.Terminal_Boundary">1ef0715a-d5a9-477b-b6e7-b635529ac140</iidm:alias>
+                <iidm:property name="CGMES.Terminal" value="70d962fb-a492-4c36-8cad-b5c584df53bd"/>
+                <iidm:property name="lineEnergyIdentificationCodeEIC" value="10T-AT-DE-00016Z"/>
+                <iidm:property name="CGMES.Terminal_Boundary" value="1ef0715a-d5a9-477b-b6e7-b635529ac140"/>
+                <iidm:property name="CGMES.TopologicalNode_Boundary" value="8d7bad8bcc634e0796e362390d9040b6"/>
+                <iidm:property name="CGMES.EquivalentInjectionTerminal" value="d238885e-d9b6-4edc-8567-6a68c605ed67"/>
+                <iidm:property name="CGMES.originalClass" value="ACLineSegment"/>
+                <iidm:property name="v" value="224.85686055564685"/>
+                <iidm:property name="CGMES.EquivalentInjection" value="87ea56f3-962a-427a-85d6-13b1f9295174"/>
+                <iidm:property name="angle" value="-5.508577312691308"/>
+                <iidm:operationalLimitsGroup id="a5b37323-8f73-449a-8931-f73193d95587">
+                    <iidm:property name="CGMES.normalValue_CurrentLimit_patl" value="1443.0"/>
+                    <iidm:property name="CGMES.normalValue_CurrentLimit_tatl_20" value="1574.0"/>
+                    <iidm:property name="CGMES.normalValue_CurrentLimit_tatl_30" value="1500.0"/>
+                    <iidm:property name="CGMES.OperationalLimitSetName" value="Limits at Port 2"/>
+                    <iidm:property name="CGMES.OperationalLimitSetRdfID" value="a5b37323-8f73-449a-8931-f73193d95587"/>
+                    <iidm:property name="CGMES.OperationalLimit_CurrentLimit_tatl_30" value="58c959fd-3675-4ad4-a221-9647b57073dd"/>
+                    <iidm:property name="CGMES.OperationalLimit_CurrentLimit_tatl_20" value="ad0fa884-ec20-4908-9986-48ab09ac55cd"/>
+                    <iidm:property name="CGMES.OperationalLimit_CurrentLimit_tatl_10" value="19627231-9a8b-45e1-815c-b280a66a59ca"/>
+                    <iidm:property name="CGMES.normalValue_CurrentLimit_tatl_25" value="1550.0"/>
+                    <iidm:property name="CGMES.OperationalLimit_CurrentLimit_patl" value="8b68c876-8c3c-486f-a478-04c5f7c879af"/>
+                    <iidm:property name="CGMES.normalValue_CurrentLimit_tatl_10" value="1705.0"/>
+                    <iidm:property name="CGMES.OperationalLimit_CurrentLimit_tatl_25" value="b1714414-0394-42b6-b441-a664069554a2"/>
+                    <iidm:currentLimits permanentLimit="1443.0">
+                        <iidm:temporaryLimit name="CL-4" acceptableDuration="30" value="1500.0"/>
+                        <iidm:temporaryLimit name="CL-3" acceptableDuration="25" value="1550.0"/>
+                        <iidm:temporaryLimit name="CL-0" acceptableDuration="20" value="1574.0"/>
+                        <iidm:temporaryLimit name="CL-1" acceptableDuration="10" value="1705.0"/>
+                    </iidm:currentLimits>
+                </iidm:operationalLimitsGroup>
+            </iidm:boundaryLine>
+            <iidm:boundaryLine id="a16b4a6c-70b1-4abf-9a9d-bd0fa47f9fe4" name="BE-Line_7" p0="-26.805006" q0="1.489867" r="4.6" x="69.0" g="5.75E-5" b="2.1677E-5" bus="f70f6bad-eb8d-4b8f-8431-4ab93581514e" connectableBus="f70f6bad-eb8d-4b8f-8431-4ab93581514e" pairingKey="TN_Border_ST24" p="-23.837678435181466" q="1.2706014141613977" selectedOperationalLimitsGroupIds="00672e1a-599a-44f3-aeaa-5a3c99c29ba1">
+                <iidm:alias type="CGMES.Terminal1">5b2c65b0-68ce-4530-85b7-385346a3b5e1</iidm:alias>
+                <iidm:alias type="CGMES.Terminal_Boundary">57ae9251-c022-4c67-a8eb-611ad54c963c</iidm:alias>
+                <iidm:property name="CGMES.Terminal" value="5b2c65b0-68ce-4530-85b7-385346a3b5e1"/>
+                <iidm:property name="lineEnergyIdentificationCodeEIC" value="10T-AT-DE-00017X"/>
+                <iidm:property name="CGMES.Terminal_Boundary" value="57ae9251-c022-4c67-a8eb-611ad54c963c"/>
+                <iidm:property name="CGMES.TopologicalNode_Boundary" value="1fa19c281c8f4e1eaad9e1cab70f923e"/>
+                <iidm:property name="CGMES.EquivalentInjectionTerminal" value="4a7363a4-0b21-4f65-8bba-33e3a8f6bac3"/>
+                <iidm:property name="CGMES.originalClass" value="ACLineSegment"/>
+                <iidm:property name="v" value="224.81112625148813"/>
+                <iidm:property name="CGMES.EquivalentInjection" value="f7f61a91-eca2-4492-8bd7-9ec2b28fc837"/>
+                <iidm:property name="angle" value="-5.520447327315214"/>
+                <iidm:operationalLimitsGroup id="00672e1a-599a-44f3-aeaa-5a3c99c29ba1">
+                    <iidm:property name="CGMES.normalValue_CurrentLimit_patl" value="1180.0"/>
+                    <iidm:property name="CGMES.normalValue_CurrentLimit_tatl_20" value="1312.0"/>
+                    <iidm:property name="CGMES.OperationalLimitSetName" value="Limits at Port 2"/>
+                    <iidm:property name="CGMES.OperationalLimitSetRdfID" value="00672e1a-599a-44f3-aeaa-5a3c99c29ba1"/>
+                    <iidm:property name="CGMES.OperationalLimit_CurrentLimit_tatl_20" value="fa8eb432-3107-4562-95fa-7f35d75101b0"/>
+                    <iidm:property name="CGMES.OperationalLimit_CurrentLimit_tatl_10" value="367fe7fa-1b11-4090-af9a-0abc050fda58"/>
+                    <iidm:property name="CGMES.OperationalLimit_CurrentLimit_patl" value="d055ace9-3bd3-49d8-a0ae-99f4e21efe76"/>
+                    <iidm:property name="CGMES.normalValue_CurrentLimit_tatl_10" value="1443.0"/>
+                    <iidm:currentLimits permanentLimit="1180.0">
+                        <iidm:temporaryLimit name="CL-0" acceptableDuration="20" value="1312.0"/>
+                        <iidm:temporaryLimit name="CL-1" acceptableDuration="10" value="1443.0"/>
+                    </iidm:currentLimits>
+                </iidm:operationalLimitsGroup>
+            </iidm:boundaryLine>
+        </iidm:voltageLevel>
+    </iidm:substation>
+    <iidm:line id="b58bf21a-096a-4dae-9a01-3f03b60c24c7" name="BE-Line_2" r="1.935" x="34.2" g1="3.375E-5" b1="2.120575E-5" g2="3.375E-5" b2="2.120575E-5" voltageLevelId1="b10b171b-3bc5-4849-bb1f-61ed9ea1ec7c" bus1="99b219f3-4593-428b-a4da-124a54630178" connectableBus1="99b219f3-4593-428b-a4da-124a54630178" voltageLevelId2="d0486169-2205-40b2-895e-b672ecb9e5fc" bus2="f70f6bad-eb8d-4b8f-8431-4ab93581514e" connectableBus2="f70f6bad-eb8d-4b8f-8431-4ab93581514e" selectedOperationalLimitsGroupIds1="ecc2f619-5716-4af0-9d76-0631a3832e4f" selectedOperationalLimitsGroupIds2="7168dee1-15a7-4444-839f-feef071e956d">
+        <iidm:alias type="CGMES.Terminal1">699545b9-82b9-4331-bc80-538d73b4ba56</iidm:alias>
+        <iidm:alias type="CGMES.Terminal2">77f04391-aa23-49b6-b3e9-6089130bb5d5</iidm:alias>
+        <iidm:property name="CGMES.originalClass" value="ACLineSegment"/>
+        <iidm:operationalLimitsGroup1 id="ecc2f619-5716-4af0-9d76-0631a3832e4f">
+            <iidm:property name="CGMES.normalValue_CurrentLimit_patl" value="1443.0"/>
+            <iidm:property name="CGMES.normalValue_CurrentLimit_tatl_20" value="1574.0"/>
+            <iidm:property name="CGMES.OperationalLimitSetName" value="Limits at Port 1"/>
+            <iidm:property name="CGMES.OperationalLimitSetRdfID" value="ecc2f619-5716-4af0-9d76-0631a3832e4f"/>
+            <iidm:property name="CGMES.OperationalLimit_CurrentLimit_tatl_20" value="1594f66e-86bd-45da-aa04-3c2bd8e07d76"/>
+            <iidm:property name="CGMES.OperationalLimit_CurrentLimit_tatl_10" value="6f35cf24-2d5e-4b9a-ac65-943610878a4b"/>
+            <iidm:property name="CGMES.OperationalLimit_CurrentLimit_patl" value="bc51e778-64a2-4176-8d7b-8bdbe0b089cb"/>
+            <iidm:property name="CGMES.normalValue_CurrentLimit_tatl_10" value="1705.0"/>
+            <iidm:currentLimits permanentLimit="1443.0">
+                <iidm:temporaryLimit name="CL-0" acceptableDuration="20" value="1574.0"/>
+                <iidm:temporaryLimit name="CL-1" acceptableDuration="10" value="1705.0"/>
+            </iidm:currentLimits>
+        </iidm:operationalLimitsGroup1>
+        <iidm:operationalLimitsGroup2 id="7168dee1-15a7-4444-839f-feef071e956d">
+            <iidm:property name="CGMES.normalValue_CurrentLimit_patl" value="1443.0"/>
+            <iidm:property name="CGMES.normalValue_CurrentLimit_tatl_20" value="1574.0"/>
+            <iidm:property name="CGMES.OperationalLimitSetName" value="Limits at Port 2"/>
+            <iidm:property name="CGMES.OperationalLimitSetRdfID" value="7168dee1-15a7-4444-839f-feef071e956d"/>
+            <iidm:property name="CGMES.OperationalLimit_CurrentLimit_tatl_20" value="43d42f99-7c35-4907-a6ea-372b41eb8f77"/>
+            <iidm:property name="CGMES.OperationalLimit_CurrentLimit_tatl_10" value="3ab4897f-cf5e-418b-8e1c-94f9cde91501"/>
+            <iidm:property name="CGMES.OperationalLimit_CurrentLimit_patl" value="31f7b62d-4707-4067-b1d5-44976db91f00"/>
+            <iidm:property name="CGMES.normalValue_CurrentLimit_tatl_10" value="1705.0"/>
+            <iidm:currentLimits permanentLimit="1443.0">
+                <iidm:temporaryLimit name="CL-0" acceptableDuration="20" value="1574.0"/>
+                <iidm:temporaryLimit name="CL-1" acceptableDuration="10" value="1705.0"/>
+            </iidm:currentLimits>
+        </iidm:operationalLimitsGroup2>
+    </iidm:line>
+    <iidm:line id="ffbabc27-1ccd-4fdc-b037-e341706c8d29" name="BE-Line_6" r="5.203" x="71.0" g1="6.0E-5" b1="1.000595E-5" g2="6.0E-5" b2="1.000595E-5" voltageLevelId1="b10b171b-3bc5-4849-bb1f-61ed9ea1ec7c" bus1="99b219f3-4593-428b-a4da-124a54630178" connectableBus1="99b219f3-4593-428b-a4da-124a54630178" voltageLevelId2="d0486169-2205-40b2-895e-b672ecb9e5fc" bus2="f70f6bad-eb8d-4b8f-8431-4ab93581514e" connectableBus2="f70f6bad-eb8d-4b8f-8431-4ab93581514e" selectedOperationalLimitsGroupIds1="cb5b5011-9f6c-4af2-93f9-26ae7e30c8db" selectedOperationalLimitsGroupIds2="30cbcb48-f02e-4791-83ab-486d7688874c">
+        <iidm:alias type="CGMES.Terminal1">05a17350-55f5-4a00-9a50-8c0048a25495</iidm:alias>
+        <iidm:alias type="CGMES.Terminal2">a4d42d33-ae54-4fe9-ad59-f30da0dfb809</iidm:alias>
+        <iidm:property name="CGMES.originalClass" value="ACLineSegment"/>
+        <iidm:operationalLimitsGroup1 id="cb5b5011-9f6c-4af2-93f9-26ae7e30c8db">
+            <iidm:property name="CGMES.normalValue_CurrentLimit_patl" value="1180.0"/>
+            <iidm:property name="CGMES.normalValue_CurrentLimit_tatl_20" value="1312.0"/>
+            <iidm:property name="CGMES.OperationalLimitSetName" value="Limits at Port 1"/>
+            <iidm:property name="CGMES.OperationalLimitSetRdfID" value="cb5b5011-9f6c-4af2-93f9-26ae7e30c8db"/>
+            <iidm:property name="CGMES.OperationalLimit_CurrentLimit_tatl_20" value="0f8bff64-4cfe-4c94-9471-da94b2efcc4f"/>
+            <iidm:property name="CGMES.OperationalLimit_CurrentLimit_tatl_10" value="61870312-e0be-4dd7-8941-22c108b61c30"/>
+            <iidm:property name="CGMES.OperationalLimit_CurrentLimit_patl" value="f9f95a0f-f165-4717-b44a-384e7d6af5a1"/>
+            <iidm:property name="CGMES.normalValue_CurrentLimit_tatl_10" value="1443.0"/>
+            <iidm:currentLimits permanentLimit="1180.0">
+                <iidm:temporaryLimit name="CL-0" acceptableDuration="20" value="1312.0"/>
+                <iidm:temporaryLimit name="CL-1" acceptableDuration="10" value="1443.0"/>
+            </iidm:currentLimits>
+        </iidm:operationalLimitsGroup1>
+        <iidm:operationalLimitsGroup2 id="30cbcb48-f02e-4791-83ab-486d7688874c">
+            <iidm:property name="CGMES.normalValue_CurrentLimit_patl" value="1180.0"/>
+            <iidm:property name="CGMES.normalValue_CurrentLimit_tatl_20" value="1312.0"/>
+            <iidm:property name="CGMES.OperationalLimitSetName" value="Limits at Port 2"/>
+            <iidm:property name="CGMES.OperationalLimitSetRdfID" value="30cbcb48-f02e-4791-83ab-486d7688874c"/>
+            <iidm:property name="CGMES.OperationalLimit_CurrentLimit_tatl_20" value="a634eecf-b900-4808-8b74-d91e36c383a0"/>
+            <iidm:property name="CGMES.OperationalLimit_CurrentLimit_tatl_10" value="5a4a910c-f57f-456b-b9ca-670ab3676adb"/>
+            <iidm:property name="CGMES.OperationalLimit_CurrentLimit_patl" value="fdae97f0-ee12-4d0e-9bba-e994b2ca78fb"/>
+            <iidm:property name="CGMES.normalValue_CurrentLimit_tatl_10" value="1443.0"/>
+            <iidm:currentLimits permanentLimit="1180.0">
+                <iidm:temporaryLimit name="CL-0" acceptableDuration="20" value="1312.0"/>
+                <iidm:temporaryLimit name="CL-1" acceptableDuration="10" value="1443.0"/>
+            </iidm:currentLimits>
+        </iidm:operationalLimitsGroup2>
+    </iidm:line>
+    <iidm:extension id="ed0c5d75-4a54-43c8-b782-b20d7431630b">
+        <cblbn:cgmesBoundaryLineBoundaryNode isHvdc="false" lineEnergyIdentificationCodeEic="10T-AT-SI-00001T"/>
+    </iidm:extension>
+    <iidm:extension id="3a3b27be-b18b-4385-b557-6735d733baf0">
+        <crc:coordinatedReactiveControl qPercent="50.0"/>
+        <apc:activePowerControl participate="true" participationFactor="0.0"/>
+    </iidm:extension>
+    <iidm:extension id="84ed55f4-61f5-4d9d-8755-bba7b877a246">
+        <ctc:cgmesTapChangers>
+            <ctc:tapChanger id="fe25f43a-7341-446e-a71a-8ab7119ba806" step="17" controlId="38f972bc-b7fd-4e75-8c24-379a86fbb506"/>
+        </ctc:cgmesTapChangers>
+    </iidm:extension>
+    <iidm:extension id="urn:uuid:d400c631-75a0-4c30-8aed-832b0d282e73">
+        <cmm:cgmesMetadataModels>
+            <cmm:model subset="EQUIPMENT" modelingAuthoritySet="http://elia.be/CGMES/2.4.15" id="urn:uuid:d400c631-75a0-4c30-8aed-832b0d282e73" version="2" description="CGMES Conformity Assessment: 'MicroGridTestConfiguration....BC (MAS BE) Test Configuration. The model is owned by ENTSO-E and is provided by ENTSO-E “as it is”. To the fullest extent permitted by law, ENTSO-E shall not be liable for any damages of any kind arising out of the use of the model (including any of its subsequent modifications). ENTSO-E neither warrants, nor represents that the use of the model will not infringe the rights of third parties. Any use of the model shall  include a reference to ENTSO-E. ENTSO-E web site is the only official source of information related to the model.">
+                <cmm:profile>http://entsoe.eu/CIM/EquipmentCore/3/1</cmm:profile>
+                <cmm:profile>http://entsoe.eu/CIM/EquipmentShortCircuit/3/1</cmm:profile>
+                <cmm:dependentOnModel>urn:uuid:2399cbd0-9a39-11e0-aa80-0800200c9a66</cmm:dependentOnModel>
+            </cmm:model>
+            <cmm:model subset="TOPOLOGY" modelingAuthoritySet="http://elia.be/CGMES/2.4.15" id="urn:uuid:f2f43818-09c8-4252-9611-7af80c398d20" version="2" description="CGMES Conformity Assessment: 'MicroGridTestConfiguration....BC (MAS BE) Test Configuration. The model is owned by ENTSO-E and is provided by ENTSO-E “as it is”. To the fullest extent permitted by law, ENTSO-E shall not be liable for any damages of any kind arising out of the use of the model (including any of its subsequent modifications). ENTSO-E neither warrants, nor represents that the use of the model will not infringe the rights of third parties. Any use of the model shall  include a reference to ENTSO-E. ENTSO-E web site is the only official source of information related to the model.">
+                <cmm:profile>http://entsoe.eu/CIM/Topology/4/1</cmm:profile>
+                <cmm:dependentOnModel>urn:uuid:2399cbd0-9a39-11e0-aa80-0800200c9a66</cmm:dependentOnModel>
+                <cmm:dependentOnModel>urn:uuid:2399cbd1-9a39-11e0-aa80-0800200c9a66</cmm:dependentOnModel>
+                <cmm:dependentOnModel>urn:uuid:d400c631-75a0-4c30-8aed-832b0d282e73</cmm:dependentOnModel>
+            </cmm:model>
+            <cmm:model subset="STATE_VARIABLES" modelingAuthoritySet="http://elia.be/CGMES/2.4.15" id="urn:uuid:c2960b34-0a04-4cd1-9c4d-f3112d85ec6c" version="2" description="CGMES Conformity Assessment: 'MicroGridTestConfiguration....BC (MAS BE) Test Configuration. The model is owned by ENTSO-E and is provided by ENTSO-E “as it is”. To the fullest extent permitted by law, ENTSO-E shall not be liable for any damages of any kind arising out of the use of the model (including any of its subsequent modifications). ENTSO-E neither warrants, nor represents that the use of the model will not infringe the rights of third parties. Any use of the model shall  include a reference to ENTSO-E. ENTSO-E web site is the only official source of information related to the model.">
+                <cmm:profile>http://entsoe.eu/CIM/StateVariables/4/1</cmm:profile>
+                <cmm:dependentOnModel>urn:uuid:2399cbd1-9a39-11e0-aa80-0800200c9a66</cmm:dependentOnModel>
+                <cmm:dependentOnModel>urn:uuid:d400c631-75a0-4c30-8aed-832b0d282e73</cmm:dependentOnModel>
+                <cmm:dependentOnModel>urn:uuid:f2f43818-09c8-4252-9611-7af80c398d20</cmm:dependentOnModel>
+            </cmm:model>
+            <cmm:model subset="STEADY_STATE_HYPOTHESIS" modelingAuthoritySet="http://elia.be/CGMES/2.4.15" id="urn:uuid:52b712d1-f3b0-4a59-9191-79f2fb1e4c4e" version="2" description="CGMES Conformity Assessment: 'MicroGridTestConfiguration....BC (MAS BE) Test Configuration. The model is owned by ENTSO-E and is provided by ENTSO-E “as it is”. To the fullest extent permitted by law, ENTSO-E shall not be liable for any damages of any kind arising out of the use of the model (including any of its subsequent modifications). ENTSO-E neither warrants, nor represents that the use of the model will not infringe the rights of third parties. Any use of the model shall  include a reference to ENTSO-E. ENTSO-E web site is the only official source of information related to the model.">
+                <cmm:profile>http://entsoe.eu/CIM/SteadyStateHypothesis/1/1</cmm:profile>
+                <cmm:dependentOnModel>urn:uuid:d400c631-75a0-4c30-8aed-832b0d282e73</cmm:dependentOnModel>
+            </cmm:model>
+            <cmm:model subset="DYNAMIC" modelingAuthoritySet="http://elia.be/CGMES/2.4.15" id="urn:uuid:239caf0a-38bf-468b-a4d8-15f619886c58" version="2" description="CGMES Conformity Assessment: 'MicroGridTestConfiguration....BC (MAS BE) Test Configuration. The model is owned by ENTSO-E and is provided by ENTSO-E “as it is”. To the fullest extent permitted by law, ENTSO-E shall not be liable for any damages of any kind arising out of the use of the model (including any of its subsequent modifications). ENTSO-E neither warrants, nor represents that the use of the model will not infringe the rights of third parties. Any use of the model shall  include a reference to ENTSO-E. ENTSO-E web site is the only official source of information related to the model.">
+                <cmm:profile>http://entsoe.eu/CIM/Dynamics/3/1</cmm:profile>
+                <cmm:dependentOnModel>urn:uuid:2399cbd0-9a39-11e0-aa80-0800200c9a66</cmm:dependentOnModel>
+                <cmm:dependentOnModel>urn:uuid:d400c631-75a0-4c30-8aed-832b0d282e73</cmm:dependentOnModel>
+            </cmm:model>
+            <cmm:model subset="DIAGRAM_LAYOUT" modelingAuthoritySet="http://elia.be/CGMES/2.4.15" id="urn:uuid:0eb1540d-5ca3-40ab-9bf7-c91ec4c5d7c3" version="2" description="CGMES Conformity Assessment: 'MicroGridTestConfiguration....BC (MAS BE) Test Configuration. The model is owned by ENTSO-E and is provided by ENTSO-E “as it is”. To the fullest extent permitted by law, ENTSO-E shall not be liable for any damages of any kind arising out of the use of the model (including any of its subsequent modifications). ENTSO-E neither warrants, nor represents that the use of the model will not infringe the rights of third parties. Any use of the model shall  include a reference to ENTSO-E. ENTSO-E web site is the only official source of information related to the model.">
+                <cmm:profile>http://entsoe.eu/CIM/DiagramLayout/3/1</cmm:profile>
+                <cmm:dependentOnModel>urn:uuid:2399cbd1-9a39-11e0-aa80-0800200c9a66</cmm:dependentOnModel>
+                <cmm:dependentOnModel>urn:uuid:239caf0a-38bf-468b-a4d8-15f619886c58</cmm:dependentOnModel>
+                <cmm:dependentOnModel>urn:uuid:d400c631-75a0-4c30-8aed-832b0d282e73</cmm:dependentOnModel>
+                <cmm:dependentOnModel>urn:uuid:f2f43818-09c8-4252-9611-7af80c398d20</cmm:dependentOnModel>
+            </cmm:model>
+            <cmm:model subset="GEOGRAPHICAL_LOCATION" modelingAuthoritySet="http://elia.be/CGMES/2.4.15" id="urn:uuid:9e383122-10cf-4da3-9785-f404b3541588" version="2" description="CGMES Conformity Assessment: 'MicroGridTestConfiguration....BC (MAS BE) Test Configuration. The model is owned by ENTSO-E and is provided by ENTSO-E “as it is”. To the fullest extent permitted by law, ENTSO-E shall not be liable for any damages of any kind arising out of the use of the model (including any of its subsequent modifications). ENTSO-E neither warrants, nor represents that the use of the model will not infringe the rights of third parties. Any use of the model shall  include a reference to ENTSO-E. ENTSO-E web site is the only official source of information related to the model.">
+                <cmm:profile>http://entsoe.eu/CIM/GeographicalLocation/2/1</cmm:profile>
+                <cmm:dependentOnModel>urn:uuid:2399cbd0-9a39-11e0-aa80-0800200c9a66</cmm:dependentOnModel>
+                <cmm:dependentOnModel>urn:uuid:d400c631-75a0-4c30-8aed-832b0d282e73</cmm:dependentOnModel>
+            </cmm:model>
+            <cmm:model subset="EQUIPMENT_BOUNDARY" modelingAuthoritySet="http://entsoe.eu/Boundary/CGMES/2.4.15" id="urn:uuid:2399cbd0-9a39-11e0-aa80-0800200c9a66" version="1" description="CGMES Conformity Assessment: 'MicroGridTestConfiguration (Boundary MAS)...' Test Configuration. The model is owned by ENTSO-E and is provided by ENTSO-E “as it is”. To the fullest extent permitted by law, ENTSO-E shall not be liable for any damages of any kind arising out of the use of the model (including any of its subsequent modifications). ENTSO-E neither warrants, nor represents that the use of the model will not infringe the rights of third parties. Any use of the model shall  include a reference to ENTSO-E. ENTSO-E web site is the only official source of information related to the model.">
+                <cmm:profile>http://entsoe.eu/CIM/EquipmentBoundary/3/1</cmm:profile>
+                <cmm:profile>http://entsoe.eu/CIM/EquipmentBoundaryOperation/3/1</cmm:profile>
+            </cmm:model>
+            <cmm:model subset="TOPOLOGY_BOUNDARY" modelingAuthoritySet="http://entsoe.eu/Boundary/CGMES/2.4.15" id="urn:uuid:2399cbd1-9a39-11e0-aa80-0800200c9a66" version="1" description="CGMES Conformity Assessment: 'MicroGridTestConfiguration (Boundary MAS)...' Test Configuration. The model is owned by ENTSO-E and is provided by ENTSO-E “as it is”. To the fullest extent permitted by law, ENTSO-E shall not be liable for any damages of any kind arising out of the use of the model (including any of its subsequent modifications). ENTSO-E neither warrants, nor represents that the use of the model will not infringe the rights of third parties. Any use of the model shall  include a reference to ENTSO-E. ENTSO-E web site is the only official source of information related to the model.">
+                <cmm:profile>http://entsoe.eu/CIM/TopologyBoundary/3/1</cmm:profile>
+                <cmm:dependentOnModel>urn:uuid:2399cbd0-9a39-11e0-aa80-0800200c9a66</cmm:dependentOnModel>
+            </cmm:model>
+        </cmm:cgmesMetadataModels>
+        <bv:baseVoltageMapping>
+            <bv:baseVoltage nominalVoltage="10.5" source="IGM" id="862a4658-6b03-4550-9de2-b5c413912b75"/>
+            <bv:baseVoltage nominalVoltage="21.0" source="IGM" id="1cefd53a-79bd-4ad4-aa9a-5a4ad0191ce2"/>
+            <bv:baseVoltage nominalVoltage="110.0" source="IGM" id="00b17311-075f-48f6-a79b-597f42af4694"/>
+            <bv:baseVoltage nominalVoltage="220.0" source="BOUNDARY" id="7891a026ba2c42098556665efd13ba94"/>
+            <bv:baseVoltage nominalVoltage="225.0" source="BOUNDARY" id="63893f24-5b4e-407c-9a1e-4ff71121f33c"/>
+            <bv:baseVoltage nominalVoltage="380.0" source="BOUNDARY" id="35cf638d-9a9d-4ae5-ae90-2f01ef898cb6"/>
+            <bv:baseVoltage nominalVoltage="400.0" source="BOUNDARY" id="65dd04e792584b3b912374e35dec032e"/>
+        </bv:baseVoltageMapping>
+        <cc:cimCharacteristics topologyKind="BUS_BRANCH" cimVersion="16"/>
+    </iidm:extension>
+    <iidm:extension id="b18cd1aa-7808-49b9-a7cf-605eaf07b006">
+        <cblbn:cgmesBoundaryLineBoundaryNode isHvdc="false" lineEnergyIdentificationCodeEic="10T-AT-HU-00002U"/>
+    </iidm:extension>
+    <iidm:extension id="a708c3bc-465d-4fe7-b6ef-6fa6408a62b0">
+        <ctc:cgmesTapChangers>
+            <ctc:tapChanger id="6ebbef67-3061-4236-a6fd-6ccc4595f6c3" type="PhaseTapChangerAsymmetrical" step="10" controlId="5fc492ab-fe33-423b-84f1-a47f87552427"/>
+        </ctc:cgmesTapChangers>
+    </iidm:extension>
+    <iidm:extension id="b94318f6-6d24-4f56-96b9-df2531ad6543">
+        <ctc:cgmesTapChangers>
+            <ctc:tapChanger id="955d9cd0-4a10-4031-b008-60c0dc340a07" step="10" controlId="ee42c6c2-39e7-43c2-9bdd-d397c5dc980b"/>
+        </ctc:cgmesTapChangers>
+    </iidm:extension>
+    <iidm:extension id="78736387-5f60-4832-b3fe-d50daf81b0a6">
+        <cblbn:cgmesBoundaryLineBoundaryNode isHvdc="false" lineEnergyIdentificationCodeEic="10T-ES-PT-10004U"/>
+    </iidm:extension>
+    <iidm:extension id="e482b89a-fa84-4ea9-8e70-a83d44790957">
+        <ctc:cgmesTapChangers>
+            <ctc:tapChanger id="83cc66dd-8d93-4a2c-8103-f1f5a9cf7e2e" step="14" controlId="97110e84-7da6-479c-846c-696fdaa83d56"/>
+        </ctc:cgmesTapChangers>
+    </iidm:extension>
+    <iidm:extension id="a16b4a6c-70b1-4abf-9a9d-bd0fa47f9fe4">
+        <cblbn:cgmesBoundaryLineBoundaryNode isHvdc="false" lineEnergyIdentificationCodeEic="10T-AT-DE-00017X"/>
+    </iidm:extension>
+    <iidm:extension id="17086487-56ba-4979-b8de-064025a6b4da">
+        <cblbn:cgmesBoundaryLineBoundaryNode isHvdc="false" lineEnergyIdentificationCodeEic="10T-AT-DE-00016Z"/>
+    </iidm:extension>
+    <iidm:extension id="550ebe0d-f2b2-48c1-991f-cebea43a21aa">
+        <crc:coordinatedReactiveControl qPercent="100.0"/>
+        <apc:activePowerControl participate="true" participationFactor="0.0"/>
+    </iidm:extension>
+</iidm:network>

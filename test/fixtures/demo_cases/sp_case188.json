@@ -60,7 +60,7 @@
     "powerflow_solves": 8
   },
   "n1": {
-    "converged": 173,
+    "converged": 209,
     "overloads": 0,
     "total": 217
   },
@@ -842,12 +842,12 @@
   },
   "short_circuit": {
     "Lindmoor_380": {
-      "ik_kA": 37.98357,
-      "sk_MVA": 25000.0
+      "ik_kA": 39.301806,
+      "sk_MVA": 25867.635207
     },
     "Waldheim_110": {
-      "ik_kA": 1.296436,
-      "sk_MVA": 247.004148
+      "ik_kA": 2.226349,
+      "sk_MVA": 424.176429
     }
   },
   "state_estimation": {

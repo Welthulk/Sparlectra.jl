@@ -92,7 +92,6 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "powsybl_import.slack_ids",
   "powsybl_import.multi_slack",
   "powsybl_import.remote_regulation",
-  "powsybl_import.python_exe",
   "matpower_export.write_solution",
   "model.tap_changer_model",
   "short_circuit.sweep_method",
@@ -308,7 +307,7 @@ file. The canonical `.scf.json` case binds `<stem>.config.yaml`
 binds `<file name>.config.yaml` (`case118.m` binds `case118.m.config.yaml`),
 so a MATPOWER case and its SCF export in one directory keep two files; a
 file with the older `<stem>.config.yaml` name is still read for such a case
-when its header names the case (Web UI run a3aa700b: `case118.config.yaml`
+when its header names the case (a Web UI run: `case118.config.yaml`
 written for `case118.m` was loaded for `case118.scf.json` and refused).
 """
 function case_config_path(case_path::AbstractString)::String
@@ -655,7 +654,7 @@ function _config_source_report(config_file::String, nested_overrides::Dict{Strin
   # label a value's true origin: before this, a case-sidecar value was
   # reported under the caller's override label and the case_sidecar source
   # named in the precedence line could never appear (found by the demo-case
-  # pinning test, 2026-09-03). Callers that pass no levels keep the old
+  # pinning test). Callers that pass no levels keep the old
   # merged behavior.
   explicit_flat = Dict{String,Any}(String(k) => v for (k, v) in explicit_overrides)
   for key in CONFIG_OVERRIDE_REPORT_KEYS

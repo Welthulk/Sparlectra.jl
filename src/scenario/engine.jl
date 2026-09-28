@@ -89,6 +89,10 @@ struct ScenarioEngine
   screening_mode::Symbol
   screening_margin_pct::Float64
   screen::Any
+  # the buses the base case solves on as references (slack buses and the
+  # bus an island without a slack was given): a case names a reference as
+  # taken over only when it is none of these
+  base_reference_buses::Set{Int}
 end
 
 """
@@ -109,7 +113,7 @@ function ScenarioEngine(net::Net; vm_min_pu::Float64 = 0.9, vm_max_pu::Float64 =
     _, base_erg = runpf!(template, maxIte, tol, 0; islands_enabled = true, pf_kwargs...)
     base_erg == 0
   catch err
-    (err isa InterruptException || err isa PowerFlowAborted) && rethrow(err)
+    _rethrow_unless_solver_failure(err)
     false
   end
   if !base_converged
@@ -121,7 +125,7 @@ function ScenarioEngine(net::Net; vm_min_pu::Float64 = 0.9, vm_max_pu::Float64 =
       _, r_erg = runpf!(rescued, PowerFlowConfig(rescue = true, islands_enabled = true, max_iter = maxIte, tol = tol))
       r_erg == 0
     catch err
-      (err isa InterruptException || err isa PowerFlowAborted) && rethrow(err)
+      _rethrow_unless_solver_failure(err)
       false
     end
     if base_converged
@@ -145,7 +149,11 @@ function ScenarioEngine(net::Net; vm_min_pu::Float64 = 0.9, vm_max_pu::Float64 =
     base_loadings = _base_branch_loadings(template)
   end
   screen = screening_mode === :off ? nothing : _build_screening_state(template, base_converged, tol, pf_kwargs)
-  return ScenarioEngine(template, base_converged, base_loadings, index, vm_min_pu, vm_max_pu, maxIte, tol, ladder, pf_kwargs, screening_mode, screening_margin_pct, screen)
+  base_refs = Set{Int}(Int(ps.comp.cFrom_bus) for ps in template.prosumpsVec if isSlack(ps))
+  for row in detect_ac_islands(template; promote_generators = get(Dict(pairs(pf_kwargs)), :auto_slack, false) == true).rows
+    row.chosen_ref_bus > 0 && push!(base_refs, Int(row.chosen_ref_bus))
+  end
+  return ScenarioEngine(template, base_converged, base_loadings, index, vm_min_pu, vm_max_pu, maxIte, tol, ladder, pf_kwargs, screening_mode, screening_margin_pct, screen, base_refs)
 end
 
 # --- worker reset -------------------------------------------------------------
@@ -358,7 +366,7 @@ function _build_screening_state(template::Net, base_converged::Bool, tol::Float6
     ds = try
       build_distributed_slack_state(template, bus_types; p_mode = get(kw, :distributed_slack_p_mode, :pg_weighted), fallback = get(kw, :distributed_slack_fallback, :error), weights = get(kw, :distributed_slack_weights, Dict{String,Float64}()), respect_p_limits = get(kw, :distributed_slack_respect_p_limits, true), island_label = template.name)
     catch err
-      (err isa InterruptException || err isa PowerFlowAborted) && rethrow(err)
+      _rethrow_unless_solver_failure(err)
       return nothing
     end
     ds === nothing && return nothing
@@ -368,7 +376,8 @@ function _build_screening_state(template::Net, base_converged::Bool, tol::Float6
   end
   F0 = try
     mismatch_rectangular(Ybus, V0, S0, bus_types, Vset, slack_idx; dslack = ds)
-  catch
+  catch err
+    _rethrow_unless_solver_failure(err)
     return nothing
   end
   # the captured state must BE the solved state; a large residual means the
@@ -378,12 +387,15 @@ function _build_screening_state(template::Net, base_converged::Bool, tol::Float6
   iso_set = Set(template.isoNodes)
   J0 = try
     _screen_freeze_isolated!(build_rectangular_jacobian_pq_pv(Ybus, V0, bus_types, Vset, slack_idx; dslack = ds), non_slack, iso_set)
-  catch
+  catch err
+    _rethrow_unless_solver_failure(err)
     return nothing
   end
+  # a singular base Jacobian is the expected failure here: no screening
   lu0 = try
     lu(J0)
-  catch
+  catch err
+    _rethrow_unless_solver_failure(err)
     return nothing
   end
   return ScreeningState(Ybus, V0, S0, bus_types, Vset, slack_idx, non_slack, J0, lu0, _scenario_bridge_branches(template), length(detect_ac_islands(template).rows), iso_set, ds)
@@ -472,7 +484,7 @@ function _screen_woodbury_solve(lu0, J0::SparseMatrixCSC{Float64,Int}, J1::Spars
       corr = Z * (M \ (W * x0))
     end
   catch err
-    (err isa InterruptException || err isa PowerFlowAborted) && rethrow(err)
+    _rethrow_unless_solver_failure(err)
     return nothing
   end
   return x0 - corr
@@ -569,7 +581,7 @@ function _screen_outage(engine::ScenarioEngine, it::_ScenarioOutageItem)
   J1 = try
     _screen_freeze_isolated!(build_rectangular_jacobian_pq_pv(Yb, sc.V0, types1, sc.Vset, sc.slack_idx; dslack = ds1), sc.non_slack, sc.iso)
   catch err
-    (err isa InterruptException || err isa PowerFlowAborted) && rethrow(err)
+    _rethrow_unless_solver_failure(err)
     return _screen_unscreenable(:numeric)
   end
   rhs = Vector{Float64}(undef, length(F1))
@@ -751,6 +763,61 @@ buildContingencyReport(results::AbstractVector{ScenarioResult}; top::Int = 10) =
 
 # --- evaluation ---------------------------------------------------------------
 
+# What a catch of this file may turn into an outcome is a failure of the
+# SOLVE: the island validation, a singular matrix, a participation set that
+# cannot be built, a diverged iteration. An interrupt and an abort go on as
+# they are, and so does a defect of the calling code (a keyword the solver
+# does not know, a missing binding, a wrong type or field): reported as
+# "not converged", "islanded" or "screening unavailable" it would look like
+# a finding about the network. An unknown keyword did read as "islanded
+# without reference", because the error text lists the solver's keywords.
+function _rethrow_unless_solver_failure(err)
+  (err isa InterruptException || err isa PowerFlowAborted) && rethrow(err)
+  (err isa MethodError || err isa UndefKeywordError || err isa UndefVarError || err isa TypeError || err isa FieldError) && rethrow(err)
+  return nothing
+end
+
+# The note and the disconnected load of the buses an outage cut off
+# (`nothing` and 0.0 when it cut off none). The text keeps the leading
+# "islanded" token the result filters look for; the scheduled values of
+# the prosumers at those buses are summed, a generating unit counts with
+# its scheduled active power (0 MW for a synchronous condenser).
+function _cut_off_bus_note(net::Net, cut_off::Vector{Int})
+  isempty(cut_off) && return (nothing, 0.0)
+  names = Dict{Int,String}(idx => bus for (bus, idx) in net.busDict)
+  buses = Set(cut_off)
+  load_mw = 0.0
+  gen_mw = 0.0
+  units = 0
+  for ps in net.prosumpsVec
+    Int(ps.comp.cFrom_bus) in buses || continue
+    p = something(ps.pVal, 0.0)
+    if isGenerator(ps)
+      units += 1
+      gen_mw += p
+    else
+      load_mw += p
+    end
+  end
+  listed = join((get(names, i, string(i)) for i in first(cut_off, 5)), ", ")
+  length(cut_off) > 5 && (listed *= ", ...")
+  parts = String["$(round(load_mw; digits = 1)) MW load disconnected"]
+  units > 0 && push!(parts, "$(units) generating unit(s) with $(round(gen_mw; digits = 1)) MW out of service")
+  note = "islanded: $(length(cut_off) == 1 ? "bus" : "buses") $(listed) cut off, $(join(parts, ", ")); the remaining network solved"
+  return (note, load_mw)
+end
+
+# The note of a case that solved on a reference the outage made necessary.
+# It follows the note of cut-off buses where both apply. The wording keeps
+# clear of the token the islanding filter looks for: a taken-over
+# reference alone is a solved case, not a loss of load.
+function _reference_note(net::Net, buses::Vector{Int}, cut_off_note)
+  isempty(buses) && return cut_off_note
+  names = Dict{Int,String}(idx => bus for (bus, idx) in net.busDict)
+  text = "reference taken over by $(length(buses) == 1 ? "bus" : "buses") $(join((get(names, b, string(b)) for b in buses), ", ")) (the outage removed the reference)"
+  return cut_off_note === nothing ? text : string(cut_off_note, "; ", text)
+end
+
 # The post-outage evaluation, verbatim from the pre-engine
 # _run_one_contingency: island marking and precheck, the per-case
 # start-value ladder over a warm-start snapshot, metrics on success. The
@@ -758,8 +825,17 @@ buildContingencyReport(results::AbstractVector{ScenarioResult}; top::Int = 10) =
 # the isolated bus voltages, and the warm start of every ladder stage must
 # include those zeroes (bitwise with the old per-case deepcopy path).
 function _evaluate_outaged_net!(engine::ScenarioEngine, work::Net, name::String, weight::Float64)
+  # buses the outage itself cuts off: isolated after the marking, not before.
+  # A single bus without a connection is no island for the detector below
+  # (it drops isolated buses), so without this the outage of a radial
+  # branch would read as a clean case although its load is gone or its
+  # unit is out of service.
+  isolated_before = Set{Int}(i for i in eachindex(work.nodeVec) if isIsolated(work.nodeVec[i]))
   markIsolatedBuses!(net = work, log = false)
-  island_report = detect_ac_islands(work)
+  cut_off = Int[i for i in eachindex(work.nodeVec) if isIsolated(work.nodeVec[i]) && !(i in isolated_before)]
+  cut_off_note, cut_off_load_mw = _cut_off_bus_note(work, cut_off)
+  auto_slack = get(Dict(pairs(engine.pf_kwargs)), :auto_slack, false) == true
+  island_report = detect_ac_islands(work; promote_generators = auto_slack)
   island_count = length(island_report.rows)
   # rows for reference-less islands, kept so an islanding failure is
   # reported specifically (load-only vs. stranded generation). The solver
@@ -790,18 +866,32 @@ function _evaluate_outaged_net!(engine::ScenarioEngine, work::Net, name::String,
         # APSLF start via the config-driven solve (rescue OFF: one bounded
         # attempt); pf_kwargs are not forwarded on this path
         work.flatstart = false
-        it_stage, erg = runpf!(work, PowerFlowConfig(rescue = false, islands_enabled = true, max_iter = engine.maxIte, tol = engine.tol, apslf_start = ApslfStartConfig(enabled = true, order = 40)))
+        it_stage, erg = runpf!(work, PowerFlowConfig(rescue = false, islands_enabled = true, max_iter = engine.maxIte, tol = engine.tol, auto_slack = auto_slack, apslf_start = ApslfStartConfig(enabled = true, order = 40)))
       end
       total_it += it_stage
       if erg == 0
         calcNetLosses!(work)
         m = _contingency_metrics(work, engine.vm_min_pu, engine.vm_max_pu, engine.base_loadings)
         severity = weight * max(0.0, isnan(m.max_loading) ? 0.0 : m.max_loading - 100.0)
-        return ContingencyResult(name, weight, true, total_it, stage, m.vmax, m.vmin, m.max_loading, severity, m.overloads, m.violations, island_count, 0.0, nothing)
+        # the remaining network solved; what the outage cut off is part of
+        # the result (the load it disconnected, the note naming the buses)
+        # a reference the outage removed and another unit took over: the
+        # unit auto_slack promoted on the whole network, or the bus an
+        # island was given; named next to what the outage cut off
+        # read AFTER the solve: the unit auto_slack promoted is a slack of
+        # the working copy by now, and an island without one is given its
+        # bus by the same detection the solve used
+        taken = Set{Int}(Int(ps.comp.cFrom_bus) for ps in work.prosumpsVec if isSlack(ps))
+        for row in detect_ac_islands(work; promote_generators = auto_slack).rows
+          (row.n_ref == 0 && row.chosen_ref_bus > 0) && push!(taken, Int(row.chosen_ref_bus))
+        end
+        setdiff!(taken, engine.base_reference_buses, cut_off, isolated_before)
+        note = _reference_note(work, sort!(collect(taken)), cut_off_note)
+        return ContingencyResult(name, weight, true, total_it, stage, m.vmax, m.vmin, m.max_loading, severity, m.overloads, m.violations, island_count, cut_off_load_mw, note)
       end
       last_error = "power flow did not converge (status $(erg))"
     catch err
-      (err isa InterruptException || err isa PowerFlowAborted) && rethrow(err)
+      _rethrow_unless_solver_failure(err)
       total_it += it_stage
       msg = sprint(showerror, err)
       # an outage that splits off a reference-less island surfaces as the
@@ -838,6 +928,9 @@ function evaluate!(engine::ScenarioEngine, worker::ScenarioWorker, it::_Scenario
     br.status = 0
     br.from_status = 0
     br.to_status = 0
+    # a bus shunt part that stems from this branch (MATPOWER reimport of an
+    # asymmetric branch shunt) leaves with it; the worker reset restores it
+    _remove_branch_shunt_parts!(work, it.internal)
   end
   result = _evaluate_outaged_net!(engine, work, it.name, it.weight)
   removed_prosumer === nothing || insert!(work.prosumpsVec, it.internal, removed_prosumer)
@@ -993,15 +1086,31 @@ function runScenarios!(
   parallel_enabled::Union{Nothing,Bool} = nothing,
   parallel_max_tasks::Union{Nothing,Int} = nothing,
   parallel_min_work_items::Union{Nothing,Int} = nothing,
+  auto_slack::Bool = true,
   kwargs...,
 )
   validate_scenarios(set, index, net)
   scenarios = expand_scenarios(set, net, index)
   isempty(scenarios) && return screening_mode === :off ? ContingencyResult[] : ScenarioResult[]
   ladder = _validate_contingency_ladder(rescue_ladder; context = "runScenarios!: rescue_ladder")
-  engine = ScenarioEngine(net; vm_min_pu = vm_min_pu, vm_max_pu = vm_max_pu, maxIte = maxIte, tol = tol, ladder = ladder, index = index, pf_kwargs = kwargs, screening_mode = screening_mode, screening_margin_pct = screening_margin_pct)
+  engine = ScenarioEngine(net; vm_min_pu = vm_min_pu, vm_max_pu = vm_max_pu, maxIte = maxIte, tol = tol, ladder = ladder, index = index, pf_kwargs = (; auto_slack = auto_slack, kwargs...), screening_mode = screening_mode, screening_margin_pct = screening_margin_pct)
   items = _ScenarioItem[_engine_item_from_scenario(s, index) for s in scenarios]
   return _run_engine_batch(engine, items; parallel_enabled = parallel_enabled, parallel_max_tasks = parallel_max_tasks, parallel_min_work_items = parallel_min_work_items)
 end
 
 runScenarios!(net::Net, scenarios::Vector{Scenario}; kwargs...) = runScenarios!(net, ScenarioSet(scenarios = scenarios); kwargs...)
+
+# Take the branch-derived parts of every bus shunt that stem from branch
+# `bidx` out of the shunt admittance of the working copy (0.20.0): the
+# MATPOWER importer records the terminal excess of an asymmetric branch
+# shunt as a part of the bus shunt, and an outage of the branch removes
+# that admittance with the branch. The parts stay recorded, so the worker
+# reset (a copy of the template) restores the admittance.
+function _remove_branch_shunt_parts!(work::Net, bidx::Int)
+  for sh in work.shuntVec
+    part = get(sh.branch_parts, bidx, nothing)
+    part === nothing && continue
+    sh.y_pu_shunt -= part
+  end
+  return nothing
+end

@@ -984,7 +984,7 @@ function writeMeasurementsCSV(net::Net; file::AbstractString, headerComments::Ve
   (isempty(extraHeader) || extraCells !== nothing) || error("writeMeasurementsCSV: extraHeader needs extraCells")
   busReference in (:name, :mrid) || error("writeMeasurementsCSV: busReference must be :name or :mrid")
   # The file follows output.csv_format like every other CSV a run writes
-  # (2026-09-24: a German Excel user found commas in measurements.csv next to
+  # (a German Excel user found commas in measurements.csv next to
   # semicolon result tables). Only the delimiter and the decimal separator
   # follow the format: numbers keep their shortest round-trip form (no
   # thousands grouping), so the reader restores them bitwise in every format.

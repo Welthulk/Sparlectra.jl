@@ -293,16 +293,22 @@ function run_contingency_tests()
       @test length(generateN1Generators(net; name_pattern = r"NoSuchGen")) == 0
 
       # a generator outage removes only that unit; the slack picks up the loss.
-      # Removing sp_case14's single slack leaves the net reference-less (reported,
-      # not thrown); auto_slack promotes the strongest survivor so all solve.
-      res = runContingencies!(net, gcases; parallel_enabled = false)
+      # Removing sp_case14's single slack leaves the net reference-less. With
+      # auto_slack = false that ends the case (reported, not thrown); by
+      # default the strongest survivor takes over and all three solve.
+      res = runContingencies!(net, gcases; parallel_enabled = false, auto_slack = false)
       @test count(r -> r.converged, res) == 2
       @test any(r -> !r.converged && occursin("no slack bus", r.error), res)
-      res_auto = runContingencies!(net, gcases; parallel_enabled = false, auto_slack = true)
+      res_auto = redirect_stdout(devnull) do
+        runContingencies!(net, gcases; parallel_enabled = false)
+      end
       @test count(r -> r.converged, res_auto) == 3
+      @test any(r -> r.error !== nothing && occursin("reference taken over by bus", r.error), res_auto)
 
       # distributed slack flows through as a keyword; the batch still solves
-      res_ds = runContingencies!(net, gcases; parallel_enabled = false, auto_slack = true, distributed_slack_enabled = true)
+      res_ds = redirect_stdout(devnull) do
+        runContingencies!(net, gcases; parallel_enabled = false, distributed_slack_enabled = true)
+      end
       @test count(r -> r.converged, res_ds) == 3
 
       # serial vs parallel identity holds for generator cases too
@@ -315,7 +321,7 @@ function run_contingency_tests()
       @test !unk[1].converged
       @test occursin("unknown generator", unk[1].error)
 
-      # stranded-generation fixture (reviewer request, non-pegase): two separate
+      # stranded-generation fixture (non-pegase): two separate
       # areas, area 2 = bus C (a regulating PV generator AND a fixed-injection PQ
       # generator) feeding load at D. Both areas carry a reference in the base
       # case. A generator outage that removes C's PV generator leaves area 2 with
@@ -334,7 +340,7 @@ function run_contingency_tests()
       addPIModelACLine!(net = sg, fromBus = "C", toBus = "D", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
       ok_sg, _ = validate!(net = sg)
       @test ok_sg
-      sres = runContingencies!(sg, generateN1Generators(sg); parallel_enabled = false)
+      sres = runContingencies!(sg, generateN1Generators(sg); parallel_enabled = false, auto_slack = false)
       smsgs = [r.error === nothing ? "converged" : r.error for r in sres]
       # PV generator removed, PQ generator survives: injection but no reference
       @test any(m -> occursin("generation stranded", m), smsgs)
@@ -342,6 +348,63 @@ function run_contingency_tests()
       @test any(m -> occursin("load-only", m), smsgs)
       # PQ generator removed, the PV reference survives: area 2 still solves
       @test any(m -> m == "converged", smsgs)
+      # by default the reference is handed on: the area that lost its
+      # voltage-controlled unit solves on the unit that is left, and only
+      # the area without any unit stays islanded with its load
+      sauto = redirect_stdout(devnull) do
+        runContingencies!(sg, generateN1Generators(sg); parallel_enabled = false)
+      end
+      @test count(r -> r.converged, sauto) == 2
+      @test only(r for r in sauto if !r.converged).error == "islanded: load-only, 5.0 MW load disconnected"
+    end)() end
+
+    @testset "an outage that cuts off a bus is reported as islanding" begin (function ()
+      # A (reference) feeds B, and B feeds the radial buses C (a load) and G
+      # (a unit). The outage of B-C leaves C without a connection: the
+      # remaining network solves, and the result names the bus and the load
+      # it lost instead of reading as a clean case. The outage of B-G takes
+      # the unit out of service the same way.
+      net = Net(name = "n1_cut_off", baseMVA = 100.0)
+      for b in ("A", "B", "C", "G")
+        addBus!(net = net, busName = b, vn_kV = 110.0)
+      end
+      addProsumer!(net = net, busName = "A", type = "EXTERNALNETWORKINJECTION", referencePri = "A", vm_pu = 1.0, va_deg = 0.0)
+      addProsumer!(net = net, busName = "B", type = "ENERGYCONSUMER", p = 20.0, q = 5.0)
+      addProsumer!(net = net, busName = "C", type = "ENERGYCONSUMER", p = 7.0, q = 2.0)
+      addProsumer!(net = net, busName = "G", type = "GENERATOR", p = 4.0, q = 1.0)
+      addPIModelACLine!(net = net, fromBus = "A", toBus = "B", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+      addPIModelACLine!(net = net, fromBus = "A", toBus = "B", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+      addPIModelACLine!(net = net, fromBus = "B", toBus = "C", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+      addPIModelACLine!(net = net, fromBus = "B", toBus = "G", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+      ok, _ = validate!(net = net)
+      @test ok
+      res = runContingencies!(net, generateN1Branches(net); parallel_enabled = false)
+      @test length(res) == 4
+      @test all(r -> r.converged, res)
+      load_cut = only(r for r in res if r.shed_load_mw > 0.0)
+      @test load_cut.shed_load_mw == 7.0
+      @test startswith(load_cut.error, "islanded: bus C cut off, 7.0 MW load disconnected")
+      unit_cut = only(r for r in res if r.error !== nothing && occursin("bus G cut off", r.error))
+      @test occursin("1 generating unit(s) with 4.0 MW out of service", unit_cut.error)
+      @test unit_cut.shed_load_mw == 0.0
+      # the two parallel feeders cut off nothing
+      @test count(r -> r.error === nothing, res) == 2
+      report = buildContingencyReport(res)
+      @test report.n_islanded == 2
+      @test report.total_shed_load_mw == 7.0
+      # the outage of the feeding unit removes the only reference: with
+      # the unit at G takes over and the row names its bus; with
+      # auto_slack = false the case ends on the missing reference
+      units = generateN1Generators(net)
+      handed = redirect_stdout(devnull) do
+        runContingencies!(net, units; parallel_enabled = false)
+      end
+      taken = [r for r in handed if r.error !== nothing && occursin("reference taken over by bus G", r.error)]
+      @test length(taken) == 1
+      @test taken[1].converged
+      @test !occursin("island", taken[1].error)
+      plain = runContingencies!(net, units; parallel_enabled = false, auto_slack = false)
+      @test any(r -> !r.converged && occursin("no slack bus", r.error), plain)
     end)() end
 
     @testset "overload reporting (#331 Phase 4)" begin (function ()
@@ -440,11 +503,14 @@ function run_contingency_tests()
         @test md["run_status"] == "completed"
         @test SparlectraApp._webui_contingency_summary(d) !== nothing
       end
-      # a generator outage on sp_case14 removes the only slack: reported (not thrown),
-      # counted as no_slack, and named in the summary badge so it does not read
-      # as a tool failure
-      @test dicts["gen"]["metadata"]["contingency_no_slack"] >= 1
-      @test occursin("slack", SparlectraApp._webui_contingency_summary(dicts["gen"]))
+      # a generator outage on sp_case14 removes the only slack: the strongest
+      # remaining unit takes over, the case solves, the row names the bus and
+      # the summary counts it
+      @test dicts["gen"]["metadata"]["contingency_no_slack"] == 0
+      @test dicts["gen"]["metadata"]["contingency_reference_taken_over"] >= 1
+      @test dicts["gen"]["metadata"]["contingency_converged"] == dicts["gen"]["metadata"]["contingency_cases"]
+      @test occursin("on a reference another unit took over", SparlectraApp._webui_contingency_summary(dicts["gen"]))
+      @test occursin("reference taken over by bus", read(joinpath(dicts["gen"]["output_dir"], "contingency_n1.csv"), String))
       # a non-contingency run gets no contingency summary row
       @test SparlectraApp._webui_contingency_summary(Dict("metadata" => Dict("run_mode" => "powerflow"))) === nothing
       # invalid kind is rejected, not thrown

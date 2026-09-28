@@ -51,7 +51,7 @@
     "powerflow_solves": 11
   },
   "n1": {
-    "converged": 51,
+    "converged": 70,
     "overloads": 0,
     "total": 74
   },
@@ -321,12 +321,12 @@
   },
   "short_circuit": {
     "Altau_220": {
-      "ik_kA": 20.994555,
-      "sk_MVA": 8000.0
+      "ik_kA": 22.178666,
+      "sk_MVA": 8451.206803
     },
     "Neuberg_110": {
-      "ik_kA": 0.757756,
-      "sk_MVA": 144.371841
+      "ik_kA": 1.717160,
+      "sk_MVA": 327.162931
     }
   },
   "state_estimation": {

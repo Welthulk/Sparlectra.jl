@@ -145,7 +145,7 @@ function run_dc_powerflow_tests()
     end)() end
 
     @testset "closed busbar couplers are contracted (link merge regression)" begin (function ()
-      # before 2026-09-04 the DC path skipped _merged_pf_net: the two
+      # earlier the DC path skipped _merged_pf_net: the two
       # sections of a CLOSED coupler were separate DC nodes, which either
       # split off a false reference-less island (warmup_casePST, its second
       # section hangs on the link alone) or silently solved the sections

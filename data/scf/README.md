@@ -9,7 +9,7 @@ chosen when the case was constructed or derived from a solved run of that
 construction; the construction uses fixed seeds and reproduces the shipped
 files bit for bit.
 
-Since 2026-09-04 the cases carry invented PLACE names as reference names
+The cases carry invented PLACE names as reference names
 (naming scheme): busbars are `<Ort>_<kV>` (`Ostheim_110`,
 `Moorau_20`; a second busbar section gets a `b` suffix), lines are
 named by their endpoints (`Ostheim_Neuwiese_1`/`_2` for a double circuit;
@@ -70,8 +70,10 @@ spans the two busbar sections of station Neubach (`Neubach_110` and
 hangs on a single bridge branch with its own 40 MW unit (the
 bridge-outage island solves via PV promotion). Base state keeps reserve
 (no branch above 80 percent, worst converged N-1 loading 72 percent):
-the intended screening fixture. 74 N-1 cases, 51 converge, all 23
-failures are structural islands. Reference: 11.1 MW losses, SE J 158.8
+the intended screening fixture. 74 N-1 cases, 70 converge (in 20 of
+them an island that lost its reference solves on its strongest unit, and
+the row names the bus), the 4 others cut off load without a unit. With
+`auto_slack = false` 51 converge. Reference: 11.1 MW losses, SE J 158.8
 at dof 209.
 
 ## sp_case188 (188 buses, the benchmark)
@@ -81,15 +83,16 @@ The full family at benchmark size: a 380 kV double ring (double busbar
 coupler), a steerable HVDC pair bridging Birkloh-Holtau (handles
 V2-V6) at a 60 MW setpoint, four parametric 110/20 kV zones, a STATCOM
 (remote target), an SSSC, a PST, and a series-compensated corridor.
-Import plus power flow in about 20 ms. 217 N-1 cases, 173 converge, all
-44 failures are structural islands. Ships an injection-based measurement
+Import plus power flow in about 20 ms. 217 N-1 cases, 209 converge (36 of
+them on a reference that an island took over), the 8 others cut off load
+without a unit; with `auto_slack = false` 173 converge. Ships an injection-based measurement
 set (no flow rows, dof 189) to hold the size budget; all four bundles
 together stay around 0.72 MB, inside the 0.9 MB budget. Reference:
 23.8 MW losses, SE J 201.8.
 
 ## sp_casePST.scf.json (format fixture, not a demo case)
 
-Renamed from warmup_casePST.scf.json on 2026-09-03 (same bytes). The **permanent version 1 fixture** of the Sparlectra Case Format
+Renamed from warmup_casePST.scf.json (same bytes). The **permanent version 1 fixture** of the Sparlectra Case Format
 (issue #342). Every future reader must keep loading this file unchanged;
 it is the regression guard against accidental breaking changes to the
 FORMAT (the `sp_case*` fixtures above guard BEHAVIOR instead). It is
@@ -115,7 +118,7 @@ apslf and dc solvers refuse it by name, as they refuse every network with
 voltage-dependent control. Built from `sp_case14` by a script that
 adds the machine and exports the file; rerunning it reproduces the file.
 
-## Feeder and Q-limit example cases (added 2026-09-18)
+## Feeder and Q-limit example cases
 
 Small cases built for demonstrations. Each ships as the case plus its
 case configuration sidecar (`<stem>.config.yaml`, the settings the Web

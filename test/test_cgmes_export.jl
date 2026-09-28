@@ -441,6 +441,47 @@ function run_cgmes_export_tests()
       end
     end)() end
 
+    # The charging values, the terminal states and the terminal flows of a
+    # line come from its branch. The pairing went by the branch name and
+    # fell back without a word when a name did not carry the marker: every
+    # line terminal written as connected, no line flow in SV. Now the
+    # pairing goes by bus pair and order, and a line without a branch stops
+    # the export.
+    @testset "a line keeps its branch whatever its name, a line without one aborts" begin (function ()
+      net = _export_test_net()
+      net.branchVec[2].from_status = 0
+      plain = mktempdir()
+      writeCGMESFiles(net; path = plain, created = _EXPORT_STAMP)
+      renamed = deepcopy(net)
+      renamed.branchVec[1].comp.cName = "Corridor_north"
+      again = mktempdir()
+      writeCGMESFiles(renamed; path = again, created = _EXPORT_STAMP)
+      for profile in ("TP", "SV")
+        a = read(joinpath(plain, "exportnet_$(profile).xml"), String)
+        b = read(joinpath(again, "exportnet_$(profile).xml"), String)
+        @test a == b
+      end
+      tp = read(joinpath(again, "exportnet_TP.xml"), String)
+      @test count("<cim:ACDCTerminal.connected>false", tp) == 1
+      sv = read(joinpath(again, "exportnet_SV.xml"), String)
+      # two terminal flows per line (the net carries nothing else that
+      # writes one); the name rule wrote none at all for the renamed net
+      @test count("<cim:SvPowerFlow ", sv) == 2 * length(renamed.linesAC)
+
+      broken = _export_test_net()
+      push!(broken.linesAC, broken.linesAC[1])
+      dir = mktempdir()
+      err = try
+        writeCGMESFiles(broken; path = dir, created = _EXPORT_STAMP)
+        nothing
+      catch e
+        e
+      end
+      @test err isa ErrorException
+      @test occursin("has no branch in the network", sprint(showerror, err))
+      @test isempty(readdir(dir))
+    end)() end
+
     @testset "duplicate mRID aborts before writing" begin (function ()
       net = _export_test_net()
       net.cgmes_ids["TN|A"] = "deadbeef-0000-0000-0000-000000000001"

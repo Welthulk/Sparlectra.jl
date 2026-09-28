@@ -23,7 +23,7 @@ const WEBUI_PERFORMANCE_TIMING_VALUES = (:off, :compact, :full)
 const Q_LIMIT_LOG_ARTIFACT = "q_limit.log"
 # A run with more PV/PQ switching events than this writes q_limit_events.csv
 # on its own, without run_diagnostics or detailed_result_csv: a long event
-# list is read as a table, not from the q_limit.log preview (2026-09-26).
+# list is read as a table, not from the q_limit.log preview.
 const Q_LIMIT_EVENTS_CSV_THRESHOLD = 5
 const MATPOWER_DCLINE_ARTIFACT = "matpower_dcline.csv"
 const HVDC_LINKS_ARTIFACT = "hvdc_links.csv"
@@ -84,6 +84,26 @@ function _write_hvdc_links_artifact(output_path::AbstractString, net::Net; forma
   columns = (:nr, :name, :from_bus_name, :to_bus_name, :mode, :p_from_MW, :p_to_MW, :loss_MW, :q_from_MVar, :q_to_MVar, :p_rating_MW, :status, :ctrl_status)
   _write_namedtuple_csv(joinpath(output_path, HVDC_LINKS_ARTIFACT), rows, columns; format = format)
   return HVDC_LINKS_ARTIFACT
+end
+
+const POWSYBL_IMPORT_ARTIFACT = "powsybl_import.log"
+const TAP_MODEL_NOTICES_ARTIFACT = "tap_models.log"
+
+# One line per transformer whose ratio or shift the resolver took from a
+# typed tap-changer model instead of the constructed values (the precedence
+# rule of the branch model, net.tapModelNotices); nothing when no
+# transformer was affected. Written for every import format, because the
+# notices are collected by addBranch! and the importers do not print them.
+function _write_tap_model_notices_artifact(output_path::AbstractString, net::Net)::Union{Nothing,String}
+  isempty(net.tapModelNotices) && return nothing
+  open(joinpath(output_path, TAP_MODEL_NOTICES_ARTIFACT), "w") do io
+    println(io, "# Tap-changer model precedence: transformers whose branch values come from a typed model")
+    println(io, "# (the constructed ratio and shift are the neutral point the model moves from)")
+    for line in net.tapModelNotices
+      println(io, line)
+    end
+  end
+  return TAP_MODEL_NOTICES_ARTIFACT
 end
 
 function _effective_config_with_runtime_case(effective_raw, case_path::AbstractString, config::SparlectraConfig; config_sources = nothing)
@@ -589,6 +609,9 @@ function _run_sparlectra_api_body(
   end
 
   raw_result = nothing
+  # the import report of a PowSyBl case as text ("" for every other format);
+  # a String, so the long body below sees one concrete type
+  powsybl_import_report = ""
   qlimit_metadata = _resolved_q_limit_runtime_options(config)
   # machine-scope keys an old case file carried and the resolution dropped:
   # named in run.log next to the resolved options
@@ -914,14 +937,14 @@ function _run_sparlectra_api_body(
     dtf_metadata["compare_for002_outages"] = compare_for002_outages
     operation_callback("dtf_for001_import_summary"; run_id = run_id, _metadata_kwargs(dtf_metadata)...)
     # Rejoin the normal artifact/finalization path with a native Net result.
-  elseif !(detected_case_format in (:matpower, :scf))
+  elseif !(detected_case_format in (:matpower, :scf, :powsybl))
     return _api_failure("invalid_case_format", "Unsupported detected case format: $(detected_case_format)"; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
   end
   # This branch opens the whole execution block below; a Sparlectra Case
   # Format file runs the same way (its own reader replaces the MATPOWER
   # parse inside the framework import), so both formats enter here.
-  if detected_case_format in (:matpower, :scf)
-    emit_phase(detected_case_format === :scf ? "reading_scf_case" : "reading_matpower_case")
+  if detected_case_format in (:matpower, :scf, :powsybl)
+    emit_phase(detected_case_format === :scf ? "reading_scf_case" : detected_case_format === :powsybl ? "reading_powsybl_case" : "reading_matpower_case")
   try
     open(logfile, "a") do io
       _write_resolved_q_limit_options(io, qlimit_metadata)
@@ -934,6 +957,7 @@ function _run_sparlectra_api_body(
           # auto-profile records the artifact writer reads below.
           imported = import_case(case_path, config; performance_profile = api_performance_profile)
           _write_flatstart_forced_off(io, imported.provenance)
+          haskey(imported.provenance, "powsybl_report") && (powsybl_import_report = Sparlectra.format_powsybl_report(imported.provenance["powsybl_report"]))
           raw_result = run_sparlectra(net = imported.net, config = imported.config, performance_profile = api_performance_profile)
         end
       end
@@ -1008,7 +1032,7 @@ function _run_sparlectra_api_body(
   run_diagnostics && _write_start_residuals_artifact(output_path, api_performance_profile; format = csv_format.name)
   # which controllers the solved network carried: the result page names them,
   # because a Q(U) machine read from a case file is otherwise visible only in
-  # the Control column of the result print (task qu_scf, 2026-09-11)
+  # the Control column of the result print
   if raw_result.net !== nothing
     tap_n, qu_n, pu_n = _controller_counts(raw_result.net)
     qlimit_metadata["controllers"] = Dict{String,Any}("tap" => tap_n, "qu" => qu_n, "pu" => pu_n)
@@ -1032,6 +1056,26 @@ function _run_sparlectra_api_body(
     operation_callback("hvdc_links_reported"; run_id = run_id, hvdc_link_count = length(raw_result.net.hvdcLinks), artifact = hvdc_links_artifact)
     open(logfile, "a") do io
       println(io, "HVDC link flows artifact: ", hvdc_links_artifact)
+    end
+  end
+  tap_model_artifact = raw_result.net === nothing ? nothing : _write_tap_model_notices_artifact(output_path, raw_result.net)
+  if tap_model_artifact !== nothing
+    operation_callback("tap_model_notices_reported"; run_id = run_id, transformer_count = length(raw_result.net.tapModelNotices), artifact = tap_model_artifact)
+    open(logfile, "a") do io
+      println(io, "Tap-changer model precedence artifact: ", tap_model_artifact, " (", length(raw_result.net.tapModelNotices), " transformer(s))")
+    end
+  end
+  # what the PowSyBl import built and what it left out: counts per element
+  # type, every skipped element with its reason, the slack of each
+  # synchronous component, and the notices (a file state that was dropped
+  # because it was solved at other tap positions). The importer hands the
+  # report over and prints nothing, so without this artifact a run from the
+  # Web UI would never show it.
+  if !isempty(powsybl_import_report)
+    write(joinpath(output_path, POWSYBL_IMPORT_ARTIFACT), powsybl_import_report)
+    operation_callback("powsybl_import_reported"; run_id = run_id, artifact = POWSYBL_IMPORT_ARTIFACT)
+    open(logfile, "a") do io
+      println(io, "PowSyBl import report: ", POWSYBL_IMPORT_ARTIFACT)
     end
   end
   csv_artifacts = String[]
@@ -1078,6 +1122,7 @@ function _run_sparlectra_api_body(
   # it works for non-converged runs too; a failure is recorded as metadata and
   # a run.log line, never as a run failure — the power-flow result stays the
   # primary purpose of the run.
+  # (the optional MATPOWER export below records its keys in the same dict)
   cgmes_export_metadata = Dict{String,Any}()
   if export_cgmes
     if raw_result.net === nothing
@@ -1117,6 +1162,37 @@ function _run_sparlectra_api_body(
       end
     end
   end
+  # Optional MATPOWER export artifact for every format that has no export
+  # of its own in its branch (the DTF branch writes its file above): the
+  # network of the run as a MATPOWER case. Like the CGMES export it reads
+  # the network only, and a failure is recorded, never a run failure.
+  if matpower_export_requested && detected_case_format !== :dtf_for001
+    if raw_result.net === nothing
+      cgmes_export_metadata["matpower_export_status"] = "skipped"
+      open(logfile, "a") do io
+        println(io, "MATPOWER export skipped: no network available")
+      end
+    else
+      emit_phase("writing_matpower_export")
+      matpower_artifact = joinpath(output_path, "matpower_export.m")
+      try
+        writeMatpowerCasefile(raw_result.net, matpower_artifact; write_solution = config.matpower_export.write_solution)
+        cgmes_export_metadata["matpower_export_status"] = "completed"
+        cgmes_export_metadata["matpower_export_requested"] = true
+        cgmes_export_metadata["matpower_export_file"] = basename(matpower_artifact)
+        open(logfile, "a") do io
+          println(io, "MATPOWER export: ", basename(matpower_artifact))
+        end
+      catch err
+        matpower_export_error = sprint(showerror, err)
+        cgmes_export_metadata["matpower_export_status"] = "failed"
+        cgmes_export_metadata["matpower_export_error"] = matpower_export_error
+        open(logfile, "a") do io
+          println(io, "MATPOWER export failed: ", matpower_export_error)
+        end
+      end
+    end
+  end
   _check_powerflow_cancelled!(cancellation_token)
   emit_phase("finalizing_success")
   _finalize_service_timings!(phase_recorder, total_start; status = "completed")
@@ -1133,7 +1209,7 @@ function _run_sparlectra_api_body(
     _write_service_phase_summary(io, phase_recorder.timings)
     _write_large_case_timing_summary(io, case_path, phase_recorder.timings, raw_result)
     # whether the end point is physical, in the narrative as well: the
-    # detail lives in q_limit.log, the verdict must not (2026-09-24)
+    # detail lives in q_limit.log, the verdict must not
     println(io, _qv_characteristic_summary(raw_result.net, raw_result.numerical_converged).line)
     println(io, _final_q_check_summary(raw_result).line)
     if !isempty(q_limit_artifacts)

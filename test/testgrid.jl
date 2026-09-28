@@ -210,7 +210,7 @@ end
 # The MATPOWER export target. It used to be <pwd>/data/mpower/cigre.m, so
 # running the suite from the checkout WROTE a case file into the repository,
 # where the presence of files decides which availability-gated legs run. Test
-# output belongs in the scratch directory (2026-09-07).
+# output belongs in the scratch directory.
 function getTestFilePathName()
   return test_scratch_path("_cigre.m")
 end
@@ -3164,7 +3164,7 @@ function test_active_set_voltage_side_release()::Bool
     @test Sparlectra.final_q_check_line(:qlimits_disabled, NamedTuple[], 100.0) == "Final Q-limit check: not evaluated (Q-limit handling disabled)."
     @test Sparlectra.final_q_check_line(:not_evaluated, NamedTuple[], 100.0) == "Final Q-limit check: not evaluated (no converged solution)."
     # No bound on the voltage difference between the two modes on purpose:
-    # switching variants need not end on the same point (measured 2026-09-24:
+    # switching variants need not end on the same point (measured:
     # 1.3e-3 pu apart at bus 6, the machine on its Qmax edge, clamped again by
     # the active set and kept on PV inside the hysteresis band by the classic
     # mode). What the test guards is that each mode ends on a PHYSICAL point:
@@ -3188,7 +3188,7 @@ function test_active_set_voltage_side_release()::Bool
 end
 
 # The final Q-limit check every enforcement mode ends with (task
-# final-q-check, 2026-09-24): judged by the SIZE of the overshoot with two
+# final-q-check): judged by the SIZE of the overshoot with two
 # thresholds, the switching hysteresis and final_q_accept_pu. Synthetic
 # injections on the 3-bus net, so every class is hit exactly, plus the
 # configuration default and validation and the warning of the bounded class.

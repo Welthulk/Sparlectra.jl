@@ -46,7 +46,12 @@ function _sparlectra_transformer_loss_rows(net::Net)
   for (i, br) in enumerate(net.branchVec)
     meta = get(net.matpower_branch_metadata, i, nothing)
     kind = _matpower_branch_kind(net, i, br)
-    g_pu = meta !== nothing && hasproperty(meta, :g_pu) ? Float64(meta.g_pu) : Float64(br.g_pu)
+    # the loss row carries what the BRANCH ROW carries: the symmetric part
+    # of an asymmetric split (the excess travels as a bus shunt), so the
+    # reimport does not restore a total on top of the bus part
+    g_row = has_symmetric_shunt(br) ? Float64(br.g_pu) : 2.0 * _matpower_symmetric_arm(br.g_from_pu, br.g_to_pu)
+    b_row = has_symmetric_shunt(br) ? Float64(br.b_pu) : 2.0 * _matpower_symmetric_arm(br.b_from_pu, br.b_to_pu)
+    g_pu = meta !== nothing && hasproperty(meta, :g_pu) ? Float64(meta.g_pu) : g_row
     (kind == "T" && g_pu != 0.0) || continue
     b_raw = meta !== nothing && hasproperty(meta, :b_s) ? Float64(meta.b_s) : NaN
     r_raw = meta !== nothing && hasproperty(meta, :r_ohm) ? Float64(meta.r_ohm) : NaN
@@ -67,9 +72,9 @@ function _sparlectra_transformer_loss_rows(net::Net)
       r_pu = Float64(br.r_pu),
       x_pu = Float64(br.x_pu),
       g_pu = g_pu,
-      b_pu = Float64(br.b_pu),
+      b_pu = b_row,
       active_no_load_g_pu = g_pu,
-      reactive_shunt_b_pu = Float64(br.b_pu),
+      reactive_shunt_b_pu = b_row,
       allocation = "native_branch_pi",
       tap_ratio = Float64(br.ratio),
       phase_shift_deg = Float64(br.angle),
@@ -79,13 +84,51 @@ function _sparlectra_transformer_loss_rows(net::Net)
   return rows
 end
 
-function _matpower_bus_shunts(net::Net)
+# The branch-derived bus shunts of an export (0.20.0): MATPOWER has one
+# symmetric BR_B per branch, so a branch whose two terminal arms differ
+# writes the symmetric part 2 * min(from, to) on the branch row and the
+# excess of each terminal as a bus shunt at that bus: the from excess seen
+# through |t|^2 (the arm sits behind the tap), the to excess as it is.
+# Rows (branch index, bus index, g_MW, b_MVar); the extension block and a
+# comment line in the file name them so a reader can tell them from
+# compensators, and the importer keeps them as branch parts of the bus
+# shunt for an outage study.
+# The symmetric part of two terminal arms: the arm closer to zero (kept
+# with its sign, so an inductive magnetizing arm against a zero arm gives
+# zero on the branch and the whole arm as the excess).
+_matpower_symmetric_arm(a::Float64, b::Float64)::Float64 = abs(a) <= abs(b) ? a : b
+
+function _matpower_branch_shunt_rows(net::Net)::Vector{NTuple{4,Float64}}
+  rows = NTuple{4,Float64}[]
+  for (k, br) in enumerate(net.branchVec)
+    br.status == 1 || continue
+    has_symmetric_shunt(br) && continue
+    gsym = _matpower_symmetric_arm(br.g_from_pu, br.g_to_pu)
+    bsym = _matpower_symmetric_arm(br.b_from_pu, br.b_to_pu)
+    t2 = abs2(calcBranchRatio(br))
+    gf = (br.g_from_pu - gsym) / t2
+    bf = (br.b_from_pu - bsym) / t2
+    gt = br.g_to_pu - gsym
+    bt = br.b_to_pu - bsym
+    (gf != 0.0 || bf != 0.0) && push!(rows, (Float64(k), Float64(br.fromBus), gf * net.baseMVA, bf * net.baseMVA))
+    (gt != 0.0 || bt != 0.0) && push!(rows, (Float64(k), Float64(br.toBus), gt * net.baseMVA, bt * net.baseMVA))
+  end
+  return rows
+end
+
+function _matpower_bus_shunts(net::Net; branch_shunt_rows = _matpower_branch_shunt_rows(net))
   gs = Dict(n.busIdx => 0.0 for n in net.nodeVec)
   bs = Dict(n.busIdx => 0.0 for n in net.nodeVec)
   for sh in net.shuntVec
     sh.status == 1 || continue
     gs[sh.busIdx] = get(gs, sh.busIdx, 0.0) + real(sh.y_pu_shunt) * net.baseMVA
     bs[sh.busIdx] = get(bs, sh.busIdx, 0.0) + imag(sh.y_pu_shunt) * net.baseMVA
+  end
+  # the terminal excess of asymmetric branch shunts (0.20.0)
+  for r in branch_shunt_rows
+    bus = Int(r[2])
+    gs[bus] = get(gs, bus, 0.0) + r[3]
+    bs[bus] = get(bs, bus, 0.0) + r[4]
   end
   # MATPOWER has no one-sided open branch state (r0.9.10). A partially open
   # branch exports as BR_STATUS = 0 plus its exact Schur input admittance
@@ -103,9 +146,13 @@ function _matpower_bus_shunts(net::Net)
   return gs, bs
 end
 
-function writeBusData(net::Net, file; write_solution::Bool = true)
+function writeBusData(net::Net, file; write_solution::Bool = true, branch_shunt_rows = _matpower_branch_shunt_rows(net))
+  for r in branch_shunt_rows
+    br = net.branchVec[Int(r[1])]
+    write(file, "% branch-derived shunt of branch $(Int(r[1])) ($(br.comp.cName)) at bus $(Int(r[2])): Gs=$(r[3]) MW, Bs=$(r[4]) MVar (asymmetric branch shunt, see mpc.sparlectra.branch_shunts)\n")
+  end
   NodeVec = net.nodeVec
-  shunt_gs, shunt_bs = _matpower_bus_shunts(net)
+  shunt_gs, shunt_bs = _matpower_bus_shunts(net; branch_shunt_rows = branch_shunt_rows)
   write(file, "%% bus data\n")
   write(file, "mpc.bus = [\n")
   write(file, "%bus\ttype\tPd\tQd\tGs\tBs\tarea\tVm\tVa\tbaseKV\tzone\tVmax\tVmin\n")
@@ -288,8 +335,10 @@ function writeBranchData(net::Net, file; write_solution::Bool = true)
     # operating point a control run stamped onto the live r_pu/x_pu
     r = br.r_base_pu
     x = br.x_base_pu
-    b = br.b_pu
-    g = br.g_pu
+    # an asymmetric split writes its symmetric part here, the terminal
+    # excess travels as a bus shunt (see _matpower_branch_shunt_rows)
+    b = has_symmetric_shunt(br) ? br.b_pu : 2.0 * _matpower_symmetric_arm(br.b_from_pu, br.b_to_pu)
+    g = has_symmetric_shunt(br) ? br.g_pu : 2.0 * _matpower_symmetric_arm(br.g_from_pu, br.g_to_pu)
     if abs(g) > 1e-6
       @info "Branch shunt conductance g is not directly represented by standard MATPOWER branch rows; export preserves Sparlectra branch g_pu in proprietary metadata for round trips" g
     end
@@ -391,8 +440,8 @@ end
 # emitted once whenever any extension content is present (transformer-loss
 # metadata, the tap-changer-model roundtrip marker, or the solution-written
 # marker); each sub-field is otherwise independently optional.
-function writeSparlectraExtensionBlock(file; loss_rows, tap_changer_model_marker::Union{Nothing,Symbol}, solution_written::Bool, link_rows = Tuple{Int,Int,Int}[], tap_changer_rows = NTuple{11,Float64}[])
-  isempty(loss_rows) && tap_changer_model_marker === nothing && !solution_written && isempty(link_rows) && isempty(tap_changer_rows) && return nothing
+function writeSparlectraExtensionBlock(file; loss_rows, tap_changer_model_marker::Union{Nothing,Symbol}, solution_written::Bool, link_rows = Tuple{Int,Int,Int}[], tap_changer_rows = NTuple{11,Float64}[], branch_shunt_rows = NTuple{4,Float64}[])
+  isempty(loss_rows) && tap_changer_model_marker === nothing && !solution_written && isempty(link_rows) && isempty(tap_changer_rows) && isempty(branch_shunt_rows) && return nothing
   write(file, "mpc.sparlectra = struct();\n")
   write(file, "mpc.sparlectra.format_version = 1;\n")
   !isempty(loss_rows) && writeSparlectraTransformerLossMetadata(file, loss_rows)
@@ -402,6 +451,14 @@ function writeSparlectraExtensionBlock(file; loss_rows, tap_changer_model_marker
     write(file, "mpc.sparlectra.links = [\n")
     for (f, t, s) in link_rows
       write(file, "\t", string(f), "\t", string(t), "\t", string(s), ";\n")
+    end
+    write(file, "];\n")
+  end
+  if !isempty(branch_shunt_rows)
+    write(file, "%% branch-derived bus shunts (branch bus Gs_MW Bs_MVar): the terminal excess of an asymmetric branch shunt, contained in the bus GS/BS above; an outage of the branch takes it away\n")
+    write(file, "mpc.sparlectra.branch_shunts = [\n")
+    for r in branch_shunt_rows
+      write(file, "\t", string(Int(r[1])), "\t", string(Int(r[2])), "\t", string(r[3]), "\t", string(r[4]), ";\n")
     end
     write(file, "];\n")
   end
@@ -473,7 +530,7 @@ function _sparlectra_link_rows(net::Net)::Vector{Tuple{Int,Int,Int}}
   return rows
 end
 
-function writeSparlectraMetadata(net::Net, file; solution_written::Bool = false)
+function writeSparlectraMetadata(net::Net, file; solution_written::Bool = false, branch_shunt_rows = _matpower_branch_shunt_rows(net))
   write(file, "%% optional Sparlectra metadata (ignored by standard MATPOWER solvers)\n")
   write(file, "mpc.bus_name = {\n")
   for n in net.nodeVec
@@ -500,7 +557,7 @@ function writeSparlectraMetadata(net::Net, file; solution_written::Bool = false)
     end
     write(file, "};\n")
   end
-  writeSparlectraExtensionBlock(file; loss_rows = _sparlectra_transformer_loss_rows(net), tap_changer_model_marker = _matpower_export_tap_changer_model_marker(net), solution_written = solution_written, link_rows = _sparlectra_link_rows(net), tap_changer_rows = _sparlectra_tap_changer_rows(net))
+  writeSparlectraExtensionBlock(file; loss_rows = _sparlectra_transformer_loss_rows(net), tap_changer_model_marker = _matpower_export_tap_changer_model_marker(net), solution_written = solution_written, link_rows = _sparlectra_link_rows(net), tap_changer_rows = _sparlectra_tap_changer_rows(net), branch_shunt_rows = branch_shunt_rows)
 end
 
 """
@@ -511,6 +568,10 @@ Write Matpower case files.
 # Arguments
 - `net::Net`: Network object.
 - `pathfilename::String`: Path and filename to write the Matpower case file.
+- `asymmetric_shunts::Symbol`: the rule for a branch whose two terminal
+  shunt arms differ; `:bus_shunt` (the only value) writes the symmetric
+  part on the branch row and the terminal excess as a bus shunt, named in
+  a comment line and in `mpc.sparlectra.branch_shunts`.
 - `write_solution::Union{Nothing,Bool}`: Whether to write the solved AC
   power-flow state back into the export: `mpc.bus` `VM`/`VA` reflect the
   solved node state, and `mpc.branch` gains the MATPOWER result columns 14–17
@@ -530,11 +591,15 @@ net = Net(...)
 writeMatpowerCasefile(net, "casefile.m")
 ```
 """
-function writeMatpowerCasefile(net::Net, pathfilename::String; write_solution::Union{Nothing,Bool} = nothing)
+function writeMatpowerCasefile(net::Net, pathfilename::String; write_solution::Union{Nothing,Bool} = nothing, asymmetric_shunts::Symbol = :bus_shunt)
   # an interchange file must carry the physical equipment impedance, never a
   # full-UPFC compensated operating point (negative series resistance); refuse
   # loudly, symmetric with the short-circuit and CGMES-export guards
   assertPhysicalBranchImpedances(net, "MATPOWER export")
+  # the one rule of 0.20.0 for a branch whose terminal arms differ; the
+  # keyword exists so a later :drop or :error can join without a new call
+  asymmetric_shunts === :bus_shunt || throw(ArgumentError("writeMatpowerCasefile: asymmetric_shunts must be :bus_shunt (the only rule in this release), got $(repr(asymmetric_shunts))"))
+  branch_shunt_rows = _matpower_branch_shunt_rows(net)
   base, ext = splitext(pathfilename)
 
   case = basename(base)
@@ -555,12 +620,12 @@ function writeMatpowerCasefile(net::Net, pathfilename::String; write_solution::U
 
   file = open(pathfilename, "w")
   writeHeader(net.baseMVA, file, case; has_transformer_loss_metadata = !isempty(transformer_loss_rows))
-  hasPVBus, slackIdx, vgSlack = writeBusData(net, file; write_solution = requested_write_solution)
+  hasPVBus, slackIdx, vgSlack = writeBusData(net, file; write_solution = requested_write_solution, branch_shunt_rows = branch_shunt_rows)
 
   writeGeneratorData(net.baseMVA, NodeDict, net.prosumpsVec, file, hasPVBus, slackIdx, vgSlack)
 
   writeBranchData(net, file; write_solution = write_result_columns)
-  writeSparlectraMetadata(net, file; solution_written = write_result_columns)
+  writeSparlectraMetadata(net, file; solution_written = write_result_columns, branch_shunt_rows = branch_shunt_rows)
   #writeCostData(file)
   close(file)
 end # writeMatpowerCasefile

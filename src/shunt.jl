@@ -73,6 +73,11 @@ mutable struct Shunt
   # Default false keeps every existing call site and workflow unchanged; set
   # via setShuntEstimation!.
   estimate::Bool
+  # branch-derived parts of this bus shunt (0.20.0): branch index to the pu
+  # admittance a MATPOWER export moved here from an asymmetric branch shunt
+  # (mpc.sparlectra.branch_shunts); an outage of that branch takes the part
+  # out of y_pu_shunt for the working copy. Empty for a compensator.
+  branch_parts::Dict{Int,ComplexF64}
 
   function Shunt(; fromBus::Int, id::Int, base_MVA::Float64, vn_kV_shunt::Float64,
                  p_shunt::Union{Nothing,Float64}=nothing,
@@ -124,7 +129,7 @@ mutable struct Shunt
     p0 = 0.0
     q0 = 0.0
 
-    return new(comp, vn_kV_shunt, base_MVA, busIdx, p0, q0, G, B, y_pu_shunt, model, status, false)
+    return new(comp, vn_kV_shunt, base_MVA, busIdx, p0, q0, G, B, y_pu_shunt, model, status, false, Dict{Int,ComplexF64}())
  end
 
  function Base.show(io::IO, shunt::Shunt)

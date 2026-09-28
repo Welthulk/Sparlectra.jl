@@ -129,10 +129,12 @@ sweeps (`runtime.parallel.*`) compose with the pass.
 | Config key | `short_circuit.c_factor` (or the `c_factor` keyword): scalar expert override of the voltage factor for verification runs; `short_circuit.sweep_method` (`:auto`, `:takahashi`, `:solves`), `short_circuit.takahashi_min_buses` (default 50) |
 | Result field | per fault bus `Ik''` (kA), `Sk''` (MVA), `κ`, `i_p`, `status` (`:no_source` with `NaN` currents), `contains_defaulted_data` plus a reason list |
 | Artifact | `short_circuit_max.csv`, `short_circuit_min.csv`; coverage view in `cgmes.log` |
-| Web UI | PowerFlow form, **Short circuit** button: both cases, no power-flow solve; offered for CGMES deliveries with short-circuit source data ([Web UI](webui.md)) |
+| Web UI | PowerFlow form, **Short circuit** button: both cases, no power-flow solve; offered for CGMES deliveries with short-circuit source data, Sparlectra Case Format cases with source entries and PowSyBl cases ([Web UI](webui.md)) |
 
 **The data.** Every CGMES import harvests the short-circuit source data
-into `CGMESImportResult.shortcircuit` (read, never altered, CGMES units):
+into `CGMESImportResult.shortcircuit` and stores it on the network
+(`net.sc_sources`) as well, so an export or a run of the network alone has
+it (read, never altered, CGMES units):
 
 | Class | Harvested attributes | Role in the calculation |
 |---|---|---|
@@ -178,12 +180,31 @@ Voltage factors follow IEC 60909-0 Table 1 by voltage level (`c_max`
 **Safety flags.** Every substituted default and every skipped contribution
 is flagged on the affected result rows (`contains_defaulted_data` plus a
 reason list). Substitutions: a machine without `x''_d` gets 0.2 pu on
-machine base; a feeder without an R/X ratio gets R = 0.1·X; a motor
+the size of the machine (its rated power, else its maximum active power,
+else the network base, which carries a reason of its own; a maximum of
+9999 MW and above is a placeholder and no size); a feeder without an R/X ratio gets R = 0.1·X; a motor
 without a locked-rotor R/X ratio gets the §6.7.2 guidance value
 (0.10/0.15 for MV motors, 0.42 for LV). A motor or feeder whose impedance
 cannot be formed is skipped and its island flagged: the maximum current is
 then a lower bound, the non-conservative direction. Buses in islands
 without any source report `status = :no_source` with `NaN` currents.
+Every format counts a machine without data as a source on the default, so
+a run is `succeeded` only when every source carries its data (next section).
+
+### [Source data and run status](@id short_circuit_source_data)
+
+One rule holds for the source data of every format:
+
+| Source data of the case | Run |
+|---|---|
+| every source carries its quantity | status `succeeded` |
+| some sources carry it | status `warning` (`short_circuit_partial_defaults`): the message counts the sources with data, the others enter with default reactances and the rows they feed are flagged with the reason |
+| no source carries it, the machines have a rated power | status `warning` (`short_circuit_defaults_only`): a complete table on default reactances, the statement leads the message and `run.log` |
+| no source carries anything an impedance can come from | refused with `short_circuit_data_missing` |
+
+The quantity is `x''_d` of a synchronous machine, the short-circuit current
+of a feeder, the reactance of an equivalent injection, the locked-rotor
+ratio of a motor.
 
 **Limitations.** The transformer impedance correction `K_T` (IEC 60909-0
 §6.3.3) and the generator correction `K_G` (§6.6.3) are not applied (the

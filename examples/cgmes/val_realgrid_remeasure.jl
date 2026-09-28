@@ -13,8 +13,8 @@
 # limitations under the License.
 
 # file: examples/cgmes/val_realgrid_remeasure.jl
-# purpose: RealGrid-Neumessung nach den vier Hebeln, die der Forensik vom
-# 2026-07-27 fehlten: P2 Tabular-PST (SV-Start-Mismatch 197 → 5 pu), #192
+# purpose: RealGrid-Neumessung nach den vier Hebeln, die der frueheren Forensik
+# fehlten: P2 Tabular-PST (SV-Start-Mismatch 197 → 5 pu), #192
 # distributed slack (Referenz wurde mit Slack-Verteilung gelöst), Q-Limit-
 # Fixes (Referenz wurde MIT Limits gelöst), P3 machine_control (die 10 in der
 # RealGrid-Doku genannten RegulatingControls haben Off-Nominal-TARGETS; per
