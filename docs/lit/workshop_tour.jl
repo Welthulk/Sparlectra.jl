@@ -300,7 +300,7 @@ end
 net_edit = build_ring7("tour_edit")
 ## stiffen the B1-B2 line (per-branch parameter update)
 brVec = getNetBranchNumberVec(net = net_edit, fromBus = "B1", toBus = "B2")
-updateBranchParameters!(net = net_edit, branchNr = brVec[1], branch = BranchModel(0.005, 0.040, 0.0, 0.0, 0.0, 0.0, 100.0))
+updateBranchParameters!(net = net_edit, branchNr = brVec[1], branch = BranchModel(r_pu = 0.005, x_pu = 0.040, b_pu = 0.0, g_pu = 0.0, ratio = 0.0, angle = 0.0, sn_MVA = 100.0))
 ## add 5 MW / 1 MVAr of load at B4. Loads and generators are PROSUMER
 ## objects and the AC solver reads its injections from them, so growing a
 ## load means adding (or editing) a prosumer. The node-sum helpers

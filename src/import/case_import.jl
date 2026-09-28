@@ -100,7 +100,7 @@ cover directories, ZIPs and the ambiguous `.DAT` files whose whole point is
 the explicit choice. A missing file gets no verdict here; the reader names
 it.
 
-Found 2026-09-24: a per-case setting `case_format = scf` saved for
+Found in practice: a per-case setting `case_format = scf` saved for
 `sp_case118.m` sent the MATPOWER file into the SCF reader, which reported
 `SCF JSON parse error at byte 1: invalid integer ""` (byte 1 is the `f` of
 `function mpc`), a message that blames a JSON file nobody was reading. The

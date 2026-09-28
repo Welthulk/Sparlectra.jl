@@ -57,9 +57,11 @@ end
 
 The shipped cases under `data/scf` (every `.scf.json`: the `sp_*` demo
 cases, the PST format fixture, and since 0.12.5 the feeder and Q-limit
-example cases) plus the plain power-grid-model files under `data/PGM`
-(`.json`). They are offered in the case chooser regardless of the cache
-directory and staged into the cache on first use
+example cases), the plain power-grid-model files under `data/PGM`
+(`.json`), the CGMES demo deliveries, and since 0.20.0 the PowSyBl IIDM
+files under `data/powsybl` (`.xiidm`). They are offered in the case
+chooser regardless of the cache directory and staged into the cache on
+first use
 ([`_webui_stage_bundled_case!`](@ref)).
 """
 function _webui_bundled_scf_options(application_root::AbstractString)::Vector{String}
@@ -73,6 +75,9 @@ function _webui_bundled_scf_options(application_root::AbstractString)::Vector{St
   # packed into the case directory on first use
   cgmes_dir = joinpath(application_root, "data", "cgmes_demo")
   isdir(cgmes_dir) && append!(names, [_webui_cgmes_demo_zip_name(name) for name in readdir(cgmes_dir) if isdir(joinpath(cgmes_dir, name))])
+  # the PowSyBl demo networks, one IIDM file each
+  powsybl_dir = joinpath(application_root, "data", "powsybl")
+  isdir(powsybl_dir) && append!(names, [name for name in readdir(powsybl_dir) if isfile(joinpath(powsybl_dir, name)) && endswith(lowercase(name), ".xiidm")])
   return sort!(names; by = lowercase)
 end
 
@@ -111,8 +116,8 @@ end
     _webui_stage_bundled_case!(application_root, case_directory, requested) -> Union{Nothing,String}
 
 Resolve a bare requested case NAME against the package's bundled sources
-(`data/mpower`, then `data/scf`, then `data/PGM`) and stage it into
-`case_directory`.
+(`data/mpower`, then `data/scf`, then `data/PGM`, then `data/powsybl`) and
+stage it into `case_directory`.
 Returns the staged (or already cached) absolute path, or `nothing` when no
 bundled source carries the name. An SCF demo case is staged WITH its
 sidecars (`<stem>.config.yaml` pins the machine-neutral resolution, the
@@ -131,7 +136,7 @@ function _webui_stage_bundled_case!(application_root::AbstractString, case_direc
     isfile(cached) || _webui_pack_cgmes_demo!(demo_folder, cached)
     return cached
   end
-  for source_dir in (joinpath(application_root, "data", "mpower"), joinpath(application_root, "data", "scf"), joinpath(application_root, "data", "PGM"))
+  for source_dir in (joinpath(application_root, "data", "mpower"), joinpath(application_root, "data", "scf"), joinpath(application_root, "data", "PGM"), joinpath(application_root, "data", "powsybl"))
     bundled = joinpath(source_dir, name)
     isfile(bundled) || continue
     case_directory === nothing && return bundled
@@ -177,7 +182,7 @@ end
 # exported with "Save case as"/"Export as SCF" travels as three files
 # (case, sidecar, measurements); re-uploading all three together must bring
 # the sidecar along, or the settings the export carried are silently lost.
-_webui_supported_upload_case_extension(name::AbstractString)::Bool = lowercase(splitext(basename(String(name)))[2]) in (".m", ".dat", ".zip", ".csv", ".json", ".yaml", ".xml", ".xiidm", ".bz2")
+_webui_supported_upload_case_extension(name::AbstractString)::Bool = lowercase(splitext(basename(String(name)))[2]) in (".m", ".dat", ".zip", ".csv", ".json", ".yaml", ".xml", ".xiidm")
 
 """
     _webui_scf_upload_reason(bytes) -> Union{Nothing,String}
@@ -465,9 +470,8 @@ such a file.
 function _webui_is_user_selectable_case(name::AbstractString)::Bool
   lowered_name = lowercase(basename(name))
   _, extension = splitext(lowered_name)
-  # PowSyBl sources: a table bundle directory or an IIDM file
-  endswith(lowered_name, ".powsybl") && return true
-  (endswith(lowered_name, ".xiidm") || endswith(lowered_name, ".xiidm.bz2")) && return true
+  # PowSyBl: the IIDM file
+  endswith(lowered_name, ".xiidm") && return true
   endswith(lowered_name, ".sparlectra-webui.yaml") && return false
   # per-case configuration files travel next to their case and are not cases
   endswith(lowered_name, ".config.yaml") && return false
@@ -806,7 +810,7 @@ function _webui_config_field_values(config_file::AbstractString)::Dict{String,An
         # list, a type the control cannot show) leaves THIS field on its
         # default and the other fields on the file's values; the form
         # fallback is silent by design, the run reads the file itself.
-        # Before 2026-09-26 one such value emptied the whole seed.
+        # Earlier one such value emptied the whole seed.
         err isa ArgumentError || rethrow()
         continue
       end
@@ -816,7 +820,7 @@ function _webui_config_field_values(config_file::AbstractString)::Dict{String,An
   catch err
     # an unreadable or unparseable configuration file leaves the form on
     # the spec defaults; said aloud, a silent fallback here once hid a
-    # list-valued key behind default values on every page (2026-09-26)
+    # list-valued key behind default values on every page
     @warn "Web UI: configuration file $(path) could not seed the form, showing defaults" exception = (err, catch_backtrace())
     return Dict{String,Any}()
   end
@@ -941,7 +945,7 @@ end
 
 # The stored `case_format` judged against the CONTENT of the case it was
 # stored for (the library's `_case_format_conflict`, the same verdict the
-# import gives). Seen 2026-09-24 on Windows: `scf` saved for `sp_case118.m`
+# import gives). Seen on Windows: `scf` saved for `sp_case118.m`
 # sent the MATPOWER file into the JSON reader, and the state estimation
 # failed with `invalid integer ""` while the Case page showed nothing wrong.
 function _webui_case_format_conflict(path::AbstractString, fmt::AbstractString)::Union{Nothing,String}
@@ -1091,6 +1095,14 @@ function _webui_load_case_settings(output_root::AbstractString, casefile::Abstra
   if block isa AbstractDict
     for (k, v) in block
       field = String(k)
+      # the measurement-set choice of the SE section has no option spec (it
+      # is a file name, not an option); it is kept as a plain name so the
+      # section arms that set again
+      if field == "measurement_file"
+        name = basename(strip(String(v)))
+        isempty(name) || (profile[field] = name)
+        continue
+      end
       if !haskey(_WEBUI_OPTION_BY_FIELD, field)
         _webui_log_case_settings_load(output_root, "case_settings_field_ignored"; casefile, profile_path = path, status = "ignored", field, message = "unknown field")
         continue
@@ -1191,7 +1203,7 @@ function _webui_case_format_hint(casefile::AbstractString; case_directory::Union
   ext = lowercase(splitext(value)[2])
   ext == ".dat" && return :dtf_for001
   # PowSyBl before the CGMES rule: a .powsybl bundle is a directory too
-  (ext in (".powsybl", ".xiidm") || endswith(lowercase(value), ".xiidm.bz2")) && return :powsybl
+  ext in (".powsybl", ".xiidm") && return :powsybl
   (ext in (".zip", ".xml") || (isempty(ext) && isdir(value))) && return :cgmes
   return :auto
 end
@@ -1224,9 +1236,22 @@ function _webui_case_has_short_circuit_data(casefile::AbstractString)::Bool
       # BUTTON; the service run still reports the real reason.
       if lowercase(splitext(path)[2]) == ".json"
         occursin("\"sc_source\"", read(path, String))
+      elseif endswith(lowercase(path), ".xiidm")
+        # the sources are the generators: the short-circuit extension, or
+        # at least a rated power the default reactance can stand on
+        text = read(path, String)
+        occursin("generatorShortCircuit", text) || occursin(r"<(?:[A-Za-z0-9]+:)?generator\b[^>]*\bratedS=\"", text)
+      elseif endswith(lowercase(path), ".powsybl")
+        generators = Sparlectra.read_powsybl_bundle(path).generators
+        usable = name -> haskey(generators, name) && any(x -> isfinite(x) && x > 0.0, generators[name])
+        usable(:direct_subtrans_x) || usable(:rated_s)
       else
       files = CGMESImporter.collectCGMESFiles(path)
-      any(occursin("SynchronousMachine", f.content) || occursin("maxInitialSymShCCurrent", f.content) || occursin("EquivalentInjection.x", f.content) for f in files)
+      # the quantities an impedance comes from, the rule of the run: a
+      # machine with its reactance or at least its rated power, a feeder
+      # with its short-circuit current, an equivalent with its reactance,
+      # a motor with its locked-rotor ratio
+      any(occursin("SynchronousMachine.satDirectSubtransX", f.content) || occursin("RotatingMachine.ratedS", f.content) || occursin("maxInitialSymShCCurrent", f.content) || occursin("EquivalentInjection.x", f.content) || occursin("AsynchronousMachine.iaIrRatio", f.content) for f in files)
       end
     catch
       true
@@ -1262,12 +1287,12 @@ _webui_parse_form_value(value, ::Type{String}, field::String) = strip(String(som
 "off" in the enforcement-mode control means "no Q-limit handling". The
 control pair (checkbox + mode) reads as one setting, and a mode picked
 while the handling is off does nothing while looking like it does
-(reported from a live session 2026-09-08). The word is not a mode the
+(as reported). The word is not a mode the
 configuration knows, so every path that turns form fields into
 configuration keys (the run request, the settings page, the case options)
 replaces it here by `enabled = false` and drops the mode key; a saved
 "off" reached the loader as an `ArgumentError` on the next run
-(reported 2026-09-11).
+(as reported).
 """
 function _webui_apply_qlimits_off!(updates::AbstractDict)
   mode_key = "power_flow.qlimits.enforcement_mode"
@@ -1433,6 +1458,19 @@ end
 
 ## measurement CSV v1 content sniff (SE phase 5): the role is decided by the
 ## version comment, never by the extension alone
+# The name of a measurement set the generator or the noise action writes:
+# `<stem>.<yyyymmdd-HHMMSS>.csv`, with a counter when two writes fall into
+# the same second, so every write is a new file next to the earlier ones.
+function _webui_stamped_measurement_name(directory::AbstractString, stem::AbstractString; stamp::AbstractString = Dates.format(Dates.now(), "yyyymmdd-HHMMSS"))::String
+  name = string(stem, ".", stamp, ".csv")
+  k = 1
+  while isfile(joinpath(directory, name))
+    k += 1
+    name = string(stem, ".", stamp, "-", k, ".csv")
+  end
+  return name
+end
+
 function _webui_is_measurement_csv(path::AbstractString)::Bool
   isfile(path) || return false
   line = try

@@ -108,12 +108,12 @@
   },
   "short_circuit": {
     "Moorau_20": {
-      "ik_kA": 4.980238,
-      "sk_MVA": 172.520502
+      "ik_kA": 6.249621,
+      "sk_MVA": 216.493237
     },
     "Ostheim_110": {
-      "ik_kA": 15.745916,
-      "sk_MVA": 3000.0
+      "ik_kA": 16.678223,
+      "sk_MVA": 3177.628206
     }
   },
   "state_estimation": {

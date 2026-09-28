@@ -15,7 +15,7 @@
 
 # file: tools/run_gates.sh
 # purpose: run the verification gates (a test profile or docs) with the two
-#          guards that make the 2026-09-03 mixed-state incident impossible
+#          guards that make the mixed-state incident impossible
 #          instead of unlikely: (1) the run refuses to start while src/ or
 #          the project files carry uncommitted changes, because a Julia
 #          process precompiling WHILE sources keep changing tests a state
@@ -45,7 +45,7 @@ case "$gate" in
     ;;
 esac
 
-# --- chain guard (maintainer 2026-09-04) -------------------------------------
+# --- chain guard ----------------------------------------------------------
 # The gate call must be its OWN command; the known failure mode is the
 # commit chained into the background gate start, which leaves the gate
 # testing a tree that is still being edited. Enforced
@@ -92,7 +92,7 @@ if [ "$allow_dirty" != "--allow-dirty" ]
 then
   # data/ is included: the suite READS tracked data files (the shipped demo
   # cases, the v1 format fixture), and moving one under a running gate broke
-  # the v1 guard mid-run on 2026-09-03
+  # the v1 guard mid-run
   dirty=$(git -C "$repo_root" status --porcelain -- src/ app/ test/ data/ Project.toml docs/make.jl docs/Project.toml)
   if [ -n "$dirty" ]
   then
@@ -120,7 +120,7 @@ lockdir="$git_common/sparlectra_gate.lock"
 # The suite gates several legs on case files being present, and that directory
 # used to double as the download cache. Whoever had once downloaded a case ran
 # more assertions than a fresh worktree or CI, and nothing said so: 7180 here
-# against 7121 there (measured 2026-09-07). Downloads go to the user cache now
+# against 7121 there (measured). Downloads go to the user cache now
 # and the large cases reach the suite only through SPARLECTRA_LARGE_CASES_DIR,
 # so anything else in that directory is a leftover that can only skew the run.
 # An ERROR, not a warning: a warning is how the drift got in.
@@ -161,7 +161,7 @@ echo $$ > "$lockdir/pid"
 trap 'rm -rf "$lockdir"' EXIT INT TERM
 
 # --- gates run on package images with the full precompile workload ---------
-# Measured 2026-09-25 (webui test group, same commit, same machine): 185 s
+# Measured (webui test group, same commit, same machine): 185 s
 # on the default image (workload off, 14 MB), 69 s on the full image
 # (92 MB). The reference times in docs/src/tests.md were taken before the
 # default became "off" (4f317a4c), when the workload was always in the
@@ -183,7 +183,7 @@ julia --startup-file=no --project="$repo_root" -e "using Sparlectra; const M = S
 julia --startup-file=no --project="$repo_root/app" -e "using SparlectraApp; const M = SparlectraApp; const NAME = \"SparlectraApp\"; $image_probe" || exit 1
 
 # --startup-file=no: a gate is not an interactive session, and a personal
-# startup.jl usually loads Revise. Measured 2026-09-07: loading Revise
+# startup.jl usually loads Revise. Measured: loading Revise
 # invalidates 472 method instances of the STOCK Julia system image, which the
 # run then has to infer again, and it buys a gate nothing. (On the Sparlectra
 # sysimage the same load costs 1530 instances; see tools/sysimage_launcher.jl.)

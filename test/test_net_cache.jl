@@ -17,7 +17,7 @@
 #          hit results, fallback on corrupt entries, and key invalidation
 #
 # Tests the opt-in binary net cache (model.net_cache_enabled,
-# issue #292): INERT since the direct import (2026-09-04): the direct
+# issue #292): INERT since the direct import: the direct
 # import no longer produces the converted case the cache stored. The set
 # guards the loud warning and the inert behavior; the old
 # miss/hit/corrupt/key coverage went with the feature, stated here as the

@@ -404,6 +404,7 @@
       "14": {
         "element_index": 2,
         "external_id": "#Gen_110\\_3\\_#2",
+        "max_p_mw": 20.0,
         "max_q_mvar": 20.0,
         "min_q_mvar": -20.0,
         "name": "Gen_110",

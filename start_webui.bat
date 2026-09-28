@@ -42,7 +42,7 @@ REM No startup file. The Web UI is a server process, not a REPL, and a personal
 REM startup.jl usually loads Revise: measured on the Sparlectra sysimage,
 REM loading Revise INVALIDATES 1530 precompiled method instances of that image,
 REM which are then inferred again on first use. That is the "still slow with the
-REM image" report from 2026-09-07, and it was paid twice, because the launcher
+REM image" report, and it was paid twice, because the launcher
 REM and the relaunched child both read the file. Set SPARLECTRA_STARTUP_FILE=yes
 REM to get the old behavior back.
 if not defined SPARLECTRA_STARTUP_FILE set "SPARLECTRA_STARTUP_FILE=no"

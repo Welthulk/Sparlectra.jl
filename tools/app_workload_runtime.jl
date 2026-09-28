@@ -23,7 +23,7 @@
 
 using Sparlectra
 
-# measurement guard (RP1 worktree incident 2026-09-03): this script must run
+# measurement guard (worktree incident): this script must run
 # against THE repository checkout it lives in, never a stale worktree or
 # another depot copy picked up through a wrong --project
 let expected = normpath(joinpath(@__DIR__, "..", "src")), actual = normpath(String(pathof(Sparlectra)))

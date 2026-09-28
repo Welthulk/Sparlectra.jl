@@ -2018,7 +2018,9 @@ function runpf!(
   end
 
   has_vdep_control = has_voltage_dependent_control(wnet)
-  island_report = detect_ac_islands(wnet)
+  # auto_slack reaches into the islands: one that lost its reference and
+  # has no voltage-controlled unit takes its strongest generating unit
+  island_report = detect_ac_islands(wnet; promote_generators = auto_slack)
   # one angle reference per synchronous island, enforced on BOTH paths
   # (single- and multi-island): a second reference would otherwise surface
   # later as the generic unsupported-bus-type abort in the mismatch assembly

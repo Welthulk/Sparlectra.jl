@@ -1621,7 +1621,7 @@ mpc.branch = [
       # classical outer loop applies its clamp in the solver's specification
       # without writing it back to the node: on the Zeng case the check saw
       # 54.17 MVAr at a 50 MVAr limit and reported nothing while the print
-      # showed 50.000 (2026-09-11). Under every enforcement mode a clamped
+      # showed 50.000. Under every enforcement mode a clamped
       # machine's Q as the check sees it is its limit.
       for mode in (:active_set, :classic_simultaneous, :classic_one_at_a_time)
         fnet = Net(name = "feeder_$(mode)", baseMVA = 100.0)

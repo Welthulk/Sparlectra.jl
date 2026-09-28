@@ -17,7 +17,7 @@
 # purpose: benchmark of the SE diagnostics Omega paths (dense pinv versus the
 #          Takahashi selected inverse) over a synthetic-grid size sweep. Run
 #          manually (not part of the example suite; minutes at the largest
-#          size). Calibration record 2026-08-26 on the reference machine:
+#          size). Calibration record on the reference machine:
 #          crossover at about 130 to 150 states -> takahashi_min_states
 #          default 200 (conservative, small systems never regress); speedups
 #          1.2x at 199 states, 2.0x at 449, 3.2x at 799, 4.6x at 1799

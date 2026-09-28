@@ -107,7 +107,7 @@ function _reference_page_src_entries(repo::AbstractString)::Dict{String,Vector{S
         # CRLF-normalized: on a Windows checkout with autocrlf the page ends its
         # lines with "\r\n", and `$` in multiline mode does not match before the
         # "\r"; every Pages entry then went unseen and every tracked file was
-        # reported as "on no reference page" (2026-09-22)
+        # reported as "on no reference page"
         text = replace(read(joinpath(docsdir, name), String), "\r\n" => "\n")
         for m in eachmatch(r"^\s*\"((?:app/)?src/[^\"]+\.jl)\",$"m, text)
             pages = get!(out, String(m.captures[1]), String[])
@@ -148,7 +148,7 @@ end
 # line in between and Julia keeps the string as a standalone expression: the
 # binding stays undocumented, without an error and without a warning. Nothing
 # in a test run sees it; only the documentation build does, and only when a
-# page happens to link the binding with @ref. On 2026-09-07 exactly that took
+# page happens to link the binding with @ref. Exactly that took
 # the docs build down (`ensure_casefile`, linked from three pages), and the
 # same blank line had quietly eaten the docstrings of `addBranch!`,
 # `addZeroInjectionMeasurements!` and the keyword method of
@@ -195,6 +195,14 @@ function _detached_docstring_violations(repo::AbstractString)::Vector{String}
                 j += 1
             end
             j > length(lines) && continue
+            # a comment right below the docstring: the parser skips it and
+            # hands the text to whatever definition follows the comment,
+            # which is how a helper put between a docstring and its function
+            # takes the documentation of that function
+            if j == i + 1 && startswith(lstrip(lines[j]), "#")
+                push!(violations, "$(rel):$(i): a comment follows the docstring; the text goes to the definition after the comment, put the docstring directly above what it documents")
+                continue
+            end
             j == i + 1 && continue  # no blank line: correctly attached
             if occursin(_DEFINITION_LINE, lines[j]) || occursin(r"^\s*[A-Za-z_]\w*[!?]?\s*\(.*\)\s*=", lines[j])
                 push!(violations, "$(rel):$(i): blank line between the docstring and the definition on line $(j) detaches it")
@@ -238,6 +246,14 @@ function run_repository_hygiene_tests()
         if !isempty(coverage)
             error(join(["reference page coverage violated:"; coverage], "\n"))
         end
+        # every file the Web UI serves from its static directory is tracked:
+        # an asset that exists only on the machine it was created on (an
+        # ignore rule such as *.png catches it without a word) is served
+        # here and answers 404 on every other checkout
+        static_rel = "app/src/webui/static"
+        static_tracked = split(chomp(read(`git -C $repo ls-files $static_rel`, String)), "\n")
+        static_missing = String[string(static_rel, "/", name) for name in readdir(joinpath(repo, static_rel)) if !(string(static_rel, "/", name) in static_tracked)]
+        isempty(static_missing) || error(join(["Web UI static files that are not tracked (check .gitignore):"; static_missing], "\n"))
         detached = _detached_docstring_violations(repo)
         if !isempty(detached)
             error(join(["docstrings detached from their definition:"; detached], "\n"))

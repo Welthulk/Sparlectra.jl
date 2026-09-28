@@ -196,7 +196,7 @@ Classify a captured output line. `nothing` means "log only"; a string is the
 detail to show next to the phase. Only lines that state PROGRESS qualify:
 the workload's own step markers and the few PackageCompiler lines that mark a
 transition. Everything else stays in the log, which is the point of the
-exercise (maintainer, 2026-09-07: "wenig bis keine Ausgaben in der cmd").
+exercise.
 """
 function _progress_detail(line::AbstractString)
   startswith(line, PROGRESS_MARKER) && return strip(line[(length(PROGRESS_MARKER)+1):end])
@@ -251,7 +251,7 @@ function _prepare_build_env(pkgm::Module)::Bool
   # silently recompiles them (measured 36 s instead of 1 s on case118).
   Base.invokelatest(pkgm.instantiate)
   # The shared build environment keeps ITS OWN Manifest, and instantiate
-  # leaves resolved dependency versions alone: an image built on 2026-09-19
+  # leaves resolved dependency versions alone: an image built earlier
   # carried AnalyticLoadFlow 0.9.14 while the checkout had tested against
   # 0.9.15, and two Web UI runs failed with the old solver's behavior. The
   # dependencies therefore follow the newest compatible versions here, and
@@ -274,8 +274,8 @@ end
 """
 Bring the user's Web UI configuration up to the current key layout, in place.
 
-At most ONE console line, and only when something actually changed (maintainer,
-2026-09-07). A version-0 file otherwise produces an alias notice at every
+At most ONE console line, and only when something actually changed.
+A version-0 file otherwise produces an alias notice at every
 single start, and telling the user to run a function by hand is work the build
 can simply do: it already writes to that directory and it already takes
 minutes. A timestamped backup is kept.

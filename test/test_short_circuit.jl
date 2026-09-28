@@ -156,6 +156,36 @@ function run_short_circuit_tests()
       out = sprint(io -> printShortCircuitResult(io, r))
       @test occursin("yes", out)
       @test occursin("default 0.2 pu", out)
+
+      # The size the default refers to: rated power, else the maximum
+      # active power (from the record, else from the unit of the network at
+      # the bus), else the network base with a reason of its own. A stated
+      # reactance without a rating stays on the network base: the maximum
+      # is no base for a value the file gives.
+      ik_on = (x_machine, size) -> begin
+        x = x_machine * (100.0 / size)
+        1.10 * 10.5 / (sqrt(3.0) * abs((size >= 100.0 ? 0.05 : 0.07) * x + im * x) * (10.5^2 / 100.0))
+      end
+      with_unit = Net(name = "sc_size", baseMVA = 100.0)
+      addBus!(net = with_unit, busName = "M1", vn_kV = 10.5)
+      addProsumer!(net = with_unit, busName = "M1", type = "SYNCHRONOUSMACHINE", p = 20.0, q = 0.0, pMax = 40.0)
+      sized = record -> merge(_sc_machine(bus = "M1", ratedU = 10.5), record)
+      for (label, network, record, size, reason) in [
+        ("maximum in the record", net, sized((pmax_MW = 25.0,)), 25.0, "default 0.2 pu on its maximum active power 25.0 MW"),
+        ("maximum of the unit at the bus", with_unit, sized(NamedTuple()), 40.0, "default 0.2 pu on its maximum active power 40.0 MW"),
+        ("rated power before the maximum", with_unit, sized((ratedS_MVA = 50.0,)), 50.0, "default 0.2 pu (machine base)"),
+        ("no size at all", net, sized(NamedTuple()), 100.0, "rests on defaults alone (0.2 pu on the network base 100.0 MVA)"),
+        # 9999 MW is how a case file says that no limit is stated
+        ("placeholder maximum", net, sized((pmax_MW = 9999.0,)), 100.0, "nor a usable maximum active power"),
+      ]
+        result = run_with_expected_warnings(() -> runShortCircuit!(network, _sc_data(machines = [record]); case = :max), ["SynchronousMachine G1"])
+        @testset "$(label)" begin
+          @test isapprox(result.rows[1].ik_kA, ik_on(0.2, size); rtol = 1e-9)
+          @test any(why -> occursin(reason, why), result.rows[1].reasons)
+        end
+      end
+      stated = run_with_expected_warnings(() -> runShortCircuit!(with_unit, _sc_data(machines = [sized((satDirectSubtransX_pu = 0.3,))]); case = :max), ["has no usable ratedS"])
+      @test isapprox(stated.rows[1].ik_kA, ik_on(0.3, 100.0); rtol = 1e-9)
     end)() end
 
     @testset "asynchronous machine per hand-derived IEC §6.7 motor impedance" begin (function ()
@@ -247,12 +277,17 @@ function run_short_circuit_tests()
       # Byte scan over the delivery contents (fast fixture: plain XML folder;
       # the real ZIP path goes through the same collectCGMESFiles reader and
       # is exercised by the extended CGMES service test).
+      # The gate follows the rule of the run: a machine counts with its
+      # reactance or at least its rated power, not by its mere presence.
       with_data = mktempdir()
-      write(joinpath(with_data, "grid_EQ.xml"), "<rdf:RDF><cim:SynchronousMachine rdf:ID=\"g\"/></rdf:RDF>")
+      write(joinpath(with_data, "grid_EQ.xml"), "<rdf:RDF><cim:SynchronousMachine rdf:ID=\"g\"><cim:RotatingMachine.ratedS>100</cim:RotatingMachine.ratedS></cim:SynchronousMachine></rdf:RDF>")
       without_data = mktempdir()
       write(joinpath(without_data, "grid_EQ.xml"), "<rdf:RDF><cim:EnergyConsumer rdf:ID=\"l\"/></rdf:RDF>")
+      bare_machine = mktempdir()
+      write(joinpath(bare_machine, "grid_EQ.xml"), "<rdf:RDF><cim:SynchronousMachine rdf:ID=\"g\"/></rdf:RDF>")
       @test SparlectraApp._webui_case_has_short_circuit_data(with_data) == true
       @test SparlectraApp._webui_case_has_short_circuit_data(without_data) == false
+      @test SparlectraApp._webui_case_has_short_circuit_data(bare_machine) == false
       # cached second call returns the same verdict
       @test SparlectraApp._webui_case_has_short_circuit_data(without_data) == false
       # unresolvable paths must NOT lock the button (service explains instead)

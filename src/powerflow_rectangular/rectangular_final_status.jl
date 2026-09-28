@@ -103,7 +103,7 @@ one clause per row with bus, side, overshoot in pu and MVAr and class.
 function final_q_check_line(status::Symbol, rows, baseMVA::Real)::String
   status === :not_evaluated && return "Final Q-limit check: not evaluated (no converged solution)."
   # a converged run with power_flow.qlimits.enabled = false has nothing to
-  # check; saying "no converged solution" there was wrong (run.log, 2026-09-25)
+  # check; saying "no converged solution" there was wrong (run.log)
   status === :qlimits_disabled && return "Final Q-limit check: not evaluated (Q-limit handling disabled)."
   isempty(rows) && return "Final Q-limit check: ok (no PV bus beyond its reactive limits)."
   parts = [@sprintf("bus %d %s by %.4f pu / %.2f MVAr (%s)", r.busI, r.side === :high ? "over Qmax" : "under Qmin", r.dev_pu, r.dev_pu * baseMVA, String(r.class)) for r in rows]

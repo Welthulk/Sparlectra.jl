@@ -224,7 +224,7 @@ function relaunch_with_sysimage(image::AbstractString, script::AbstractString, p
   # Revise: measured, loading Revise invalidates 1530 precompiled method
   # instances of this image, which then have to be inferred again on first
   # use. Building an image and then throwing a third of it away on startup is
-  # the "still slow with the sysimage" report of 2026-09-07.
+  # the "still slow with the sysimage" report.
   startup = get(ENV, "SPARLECTRA_STARTUP_FILE", "no")
   cmd = `$(exe) -J$(image) --startup-file=$(startup) --project=$(project_dir) $(thread_flag) $(script) $(args)`
   println("Sysimage: ", image)
@@ -260,7 +260,7 @@ ranges and inequalities need Pkg and are left to the resolve.
 Two TOML reads, no package load, a few milliseconds. That cheapness is the
 point: it runs BEFORE the sysimage question, and the order matters. Answering
 "no" to that question and then walking into an unloadable environment is what
-happened on a Windows 11 checkout (2026-09-07); answering "yes" would have been
+happened on a Windows 11 checkout; answering "yes" would have been
 worse, because the build works in the SEPARATE @sparlectra-sysimage-build
 environment and would have spent eleven minutes before the checkout's own
 manifest turned out to be the problem.

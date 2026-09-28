@@ -397,7 +397,7 @@ alone, the classical outer loop applies the clamp in the specification (what
 one of them alone therefore misses every machine the OTHER mode clamped: on
 the Zeng case the node said 54.17 MVAr at a 50 MVAr limit under the classical
 loop and the check reported nothing, and the specification said 42.4 under the
-active set (measured 2026-09-11). With a `limit_mvar` given, the candidate
+active set (measured). With a `limit_mvar` given, the candidate
 closer to that limit is the one the solver enforced; a re-enabled machine
 sits on neither, and stays invisible to the check as it should. A
 Q(U)-controlled machine has its own source, the characteristic.

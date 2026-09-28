@@ -386,7 +386,7 @@ function run_cgmes_importer_tests()
     end)() end
 
     @testset "SV angle alignment reaches the parent island detection" begin (function ()
-      # Regression 2026-09-06. compareWithSV removes ONE angle offset per
+      # Regression: compareWithSV removes ONE angle offset per
       # island, because an angle is only defined up to a constant per island.
       # That call sits in the submodule CGMESImporter while detect_ac_islands
       # lives in the parent, so it must be qualified: an unqualified name
@@ -1003,12 +1003,14 @@ function run_cgmes_importer_tests()
       @test occursin("# CGMES import report", read(joinpath(out_f, "cgmes.log"), String))
     end)() end
 
-    # The Web UI "Analyze import" and "Short circuit" buttons on a fixture.
-    # The exporter writes SynchronousMachine objects without x''_d, ratedS
-    # or ratedU (its sc_source keyword takes a CGMES harvest only), so the
-    # short-circuit run finds machines but no usable source data on them:
-    # it completes with every row flagged as a lower bound and says so by
-    # name, both in the result reason and in the substitution warnings.
+    # The Web UI "Analyze import" and "Short circuit" buttons on the
+    # fixtures, which carry what their source cases carry. sp_case14 comes
+    # from a case file with the feeder of its external grid: the delivery
+    # has the feeder's short-circuit currents, the two machines have no
+    # data and are flagged. sp_casePST comes from a case without any source
+    # data: nothing an impedance could come from, the button is not offered
+    # and the run refuses. With a rated power on its machines the table is
+    # complete on the default reactance and the run ends with a warning.
     @testset "import_analysis_mode and short_circuit_mode service runs on a fixture" begin (function ()
       root = mktempdir()
       cfg = joinpath(root, "c.yaml")
@@ -1023,12 +1025,50 @@ function run_cgmes_importer_tests()
       @test occursin("Supplied models:", report)
       @test occursin("Verdict:", report)
 
-      # the button gate sees machines, the run reports what they lack
+      @test !SparlectraApp._webui_case_has_short_circuit_data(cgmes_fixture_dir("sp_casePST"))
+      refused = start_powerflow_run(Dict("casefile" => _pack_cgmes_fixture_zip("sp_casePST"), "config_file" => cfg, "output_root" => root, "short_circuit_mode" => true))
+      @test refused["status"] == "failed"
+      @test refused["reason"] == "short_circuit_data_missing"
+      @test occursin("rated power", refused["message"])
+      rated_dir = mktempdir()
+      for f in readdir(cgmes_fixture_dir("sp_casePST"); join = true)
+        text = read(f, String)
+        occursin("_EQ", basename(f)) && (text = replace(text, "  </cim:SynchronousMachine>" => "    <cim:RotatingMachine.ratedS>100</cim:RotatingMachine.ratedS>\n  </cim:SynchronousMachine>"))
+        write(joinpath(rated_dir, basename(f)), text)
+      end
+      @test SparlectraApp._webui_case_has_short_circuit_data(rated_dir)
+      rated_zip = joinpath(mktempdir(), "sp_casePST_rated_CGMES.zip")
+      ZipArchives.ZipWriter(rated_zip) do w
+        for f in sort(readdir(rated_dir; join = true))
+          ZipArchives.zip_newfile(w, basename(f))
+          write(w, read(f))
+        end
+      end
+      # the engine's warnings about substituted defaults belong to the
+      # result: the service writes them into run.log, none reaches the
+      # console (an empty list of expected warnings fails on any)
+      on_defaults = run_with_expected_warnings(() -> start_powerflow_run(Dict("casefile" => rated_zip, "config_file" => cfg, "output_root" => root, "short_circuit_mode" => true)), String[])
+      on_defaults_log = read(joinpath(on_defaults["output_dir"], "run.log"), String)
+      @test occursin("Substituted defaults:", on_defaults_log)
+      @test occursin("has no usable x''_d", on_defaults_log)
+      @test on_defaults["success"] === true
+      @test on_defaults["status"] == "warning"
+      @test on_defaults["reason"] == "short_circuit_defaults_only"
+      @test startswith(on_defaults["message"], "Short circuit completed on defaults: none of the")
+      # sp_case14: the feeder of the source case is in the delivery
       @test SparlectraApp._webui_case_has_short_circuit_data(cgmes_fixture_dir("sp_case14"))
-      sc = run_with_expected_warnings(() -> start_powerflow_run(Dict("casefile" => z, "config_file" => cfg, "output_root" => root, "short_circuit_mode" => true)), ["has no usable x''_d", "has no usable ratedS", "has no usable ratedU"])
+      @test occursin("ExternalNetworkInjection.maxInitialSymShCCurrent", read(joinpath(cgmes_fixture_dir("sp_case14"), "sp_case14_EQ.xml"), String))
+      sc = run_with_expected_warnings(() -> start_powerflow_run(Dict("casefile" => z, "config_file" => cfg, "output_root" => root, "short_circuit_mode" => true)), String[])
+      sc_log = read(joinpath(sc["output_dir"], "run.log"), String)
+      # the delivery states no size for its machines: the default stands on
+      # the network base, which is one reason of its own
+      @test all(text -> occursin(text, sc_log), ("Substituted defaults:", "has neither x''_d nor ratedS", "rests on defaults alone (0.2 pu on the network base"))
       @test sc["success"] === true
-      @test sc["reason"] == "short_circuit_flagged_lower_bound"
-      @test occursin("lower bound", sc["message"])
+      # one source with data, two without: a warning that says so
+      @test sc["status"] == "warning"
+      @test sc["reason"] == "short_circuit_partial_defaults"
+      @test startswith(sc["message"], "Short circuit completed with defaults: 1 of 3 source(s) carry short-circuit data")
+      @test sc["metadata"]["sc_sources"] == 3 && sc["metadata"]["sc_sources_with_data"] == 1
       @test sc["metadata"]["run_mode"] == "short_circuit"
       @test sc["metadata"]["sc_case_rows"] == 14
       @test sc["metadata"]["sc_flagged_rows"] == 14

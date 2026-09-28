@@ -1081,6 +1081,107 @@ fieldset.se-options .field-label {
   padding-left: 1rem;
 }
 
+/* search of the help page: the field above the section index, the hits as
+   a list with the place of each hit and a line of its text */
+.help-search {
+  display: flex;
+  gap: .5rem;
+  align-items: end;
+  flex-wrap: wrap;
+  margin: 0 0 1rem;
+}
+
+.help-search label {
+  flex: 1 1 18rem;
+  font-weight: 700;
+  font-size: .85rem;
+}
+
+.help-search input[type="search"] {
+  width: 100%;
+}
+
+.help-search-summary {
+  margin: 0 0 .5rem;
+  font-size: .9rem;
+}
+
+.help-search-results {
+  margin: 0 0 1.25rem;
+  padding-left: 1.1rem;
+}
+
+.help-search-results li {
+  margin-bottom: .6rem;
+}
+
+.help-search-kind {
+  color: #5b6b80;
+  font-size: .8rem;
+}
+
+.help-search-snippet {
+  color: #33404f;
+  font-size: .85rem;
+}
+
+.help-search-snippet mark,
+.header-help-search-results mark {
+  background: #ffe9a8;
+  color: inherit;
+  padding: 0 .1rem;
+  border-radius: 2px;
+}
+
+/* search field of the header: narrow, the hits drop down below it */
+.header-help-search {
+  position: relative;
+  display: inline-block;
+  margin: 0;
+}
+
+.header-help-search input[type="search"] {
+  width: 11rem;
+  padding: .2rem .45rem;
+  font-size: .85rem;
+}
+
+.header-help-search-results {
+  position: absolute;
+  right: 0;
+  top: calc(100% + .3rem);
+  z-index: 30;
+  width: min(34rem, 90vw);
+  max-height: 70vh;
+  overflow: auto;
+  padding: .6rem .9rem;
+  background: #ffffff;
+  color: #1c2530;
+  border: 1px solid #c8d3e2;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(20, 40, 70, .18);
+  text-align: left;
+}
+
+.header-help-search-results ul {
+  margin: 0;
+  padding-left: 1.1rem;
+}
+
+/* the panel sits inside the header, whose links are white: the hits need
+   the link colour of the page, or the headings vanish on the white panel */
+.header-help-search-results a {
+  color: #1557a5;
+  font-weight: 700;
+  text-decoration: underline;
+  white-space: normal;
+}
+
+.header-help-search-results a:hover,
+.header-help-search-results a:focus {
+  color: #0d3c78;
+}
+
 /* `!!! note` blocks of the documentation, as the Markdown standard library
    renders them */
 .rendered-markdown .admonition {
@@ -1248,7 +1349,7 @@ nav {
 /* File pickers: the native control speaks the browser's language
    ("Durchsuchen", "Keine Datei ausgewählt" on a German browser) while the
    page is English. The input stays in the form but off screen; the label
-   is the visible button and the span names the selection (2026-09-09). */
+   is the visible button and the span names the selection. */
 .file-field {
   display: inline-flex;
   align-items: center;

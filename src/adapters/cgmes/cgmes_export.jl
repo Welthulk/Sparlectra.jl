@@ -101,9 +101,25 @@ _optBool(io::IO, tag::AbstractString, v::Union{Nothing,Bool}) = v === nothing ? 
 # harvested short-circuit source records by canonical mRID, per class — the
 # writer matches them against the exported unit ids (which ARE the canonical
 # source mRIDs for captured units)
-function _scSourceByMrid(sc::Union{Nothing,CGMESShortCircuitData})
+function _scSourceByMrid(sc::Union{Nothing,CGMESShortCircuitData,Sparlectra.NativeShortCircuitData})
   bymrid = kind -> sc === nothing ? Dict{String,NamedTuple}() : Dict{String,NamedTuple}(cgmesCanonicalMrid(r.mrid) => r for r in getfield(sc, kind))
-  return (machines = bymrid(:synchronous_machines), enis = bymrid(:external_network_injections), asms = bymrid(:asynchronous_machines))
+  records = kind -> sc === nothing ? NamedTuple[] : getfield(sc, kind)
+  return (machines = bymrid(:synchronous_machines), enis = bymrid(:external_network_injections), asms = bymrid(:asynchronous_machines), machine_records = records(:synchronous_machines), eni_records = records(:external_network_injections), asm_records = records(:asynchronous_machines))
+end
+
+# The short-circuit record of an exported unit. A record harvested from a
+# delivery carries the unit's mRID. A record of another source (the feeder
+# of a case file, the generators of a PowSyBl import) has an id of its own:
+# it belongs to the unit of its bus that carries its name, or to the unit
+# of its class on that bus when the bus has one record of the class.
+function _scRecordOf(bymrid::Dict{String,NamedTuple}, records, rec, bus::AbstractString)
+  hit = get(bymrid, rec.id, nothing)
+  hit === nothing || return hit
+  on_bus = [r for r in records if r.bus !== nothing && String(r.bus) == bus]
+  isempty(on_bus) && return nothing
+  named = [r for r in on_bus if r.name !== nothing && String(r.name) == rec.name]
+  length(named) == 1 && return named[1]
+  return length(on_bus) == 1 ? on_bus[1] : nothing
 end
 
 function writeXmlHeader(io::IO, created::Dates.DateTime)
@@ -148,6 +164,8 @@ struct CGMESContext
   lineTerminalIds::Vector{NTuple{2,String}} # per line (Terminal1, Terminal2)
   lineIds::Vector{String}                 # mRID ACLineSegment per net.linesAC index
   lineContainerIds::Vector{String}        # mRID cim:Line container per line
+  lineBranchIdx::Vector{Int}              # per line: index of its branch in net.branchVec
+  lineSymmetricArm::Vector{Union{Nothing,ComplexF64}} # per line: the terminal arm (pu) written on the segment when the two arms differ, nothing for a symmetric line
   trafoRecs::Vector{NamedTuple}           # one record per exported 2W transformer branch
   trafo3Recs::Vector{NamedTuple}          # one record per reassembled 3W transformer (star group)
   starAuxBuses::Set{Int}                  # star buses consumed by trafo3Recs — no TN/SvVoltage
@@ -209,9 +227,32 @@ function buildContext(net::Sparlectra.Net)
   end
 
   notices = String[]
+  # an ACLineSegment carries ONE charging value (bch, gch), which reads
+  # back in two halves. A line whose two terminal arms differ (the
+  # network-side admittance of a dangling line) therefore writes the
+  # symmetric part on the segment and the excess of each terminal as a
+  # LinearShuntCompensator at that bus, the rule of the MATPOWER export:
+  # the Y-bus of the delivery is the one of the network. What the delivery
+  # cannot say is that the compensator belongs to the line (an outage of
+  # the line leaves it in place), and the export names every such line.
+  lineSymmetricArm = Union{Nothing,ComplexF64}[nothing for _ in net.linesAC]
+  lineExcess = NamedTuple[]
+  lineBranchIdx = _cgmesLineBranchIdx(net, idx2busName)
+  for (i, k) in enumerate(lineBranchIdx)
+    br = net.branchVec[k]
+    (abs(br.g_from_pu - br.g_to_pu) > 1e-12 || abs(br.b_from_pu - br.b_to_pu) > 1e-12) || continue
+    gsym = _cgmesSymmetricArm(br.g_from_pu, br.g_to_pu)
+    bsym = _cgmesSymmetricArm(br.b_from_pu, br.b_to_pu)
+    lineSymmetricArm[i] = complex(gsym, bsym)
+    for (busIdx, y) in ((Int(br.fromBus), complex(br.g_from_pu - gsym, br.b_from_pu - bsym)), (Int(br.toBus), complex(br.g_to_pu - gsym, br.b_to_pu - bsym)))
+      iszero(y) && continue
+      push!(lineExcess, (busIdx = busIdx, y_pu = y, name = string(br.comp.cName, "_shunt"), in_service = br.status == 1))
+      push!(notices, "line $(br.comp.cName): the terminal shunt arms differ; the symmetric part is exported on the line and the excess as a LinearShuntCompensator at bus $(_exportBusName(idx2busName, busIdx)), which an outage of the line leaves in place")
+    end
+  end
   trafoRecs, trafo3Recs, starAuxBuses = _collectTrafoRecs(net, idx2busName, claim, notices)
   prosumerRecs = _collectProsumerRecs(net, idx2busName, claim, notices)
-  shuntRecs = _collectShuntRecs(net, idx2busName, claim)
+  shuntRecs = _collectShuntRecs(net, idx2busName, claim, lineExcess)
   linkRecs = _collectLinkRecs(net, idx2busName, claim)
   tapCtrlRecs = _collectTapControlRecs(net, trafoRecs, claim, notices)
 
@@ -225,7 +266,7 @@ function buildContext(net::Sparlectra.Net)
 
   _assertUniqueIds(claimed)
 
-  return CGMESContext(net.name, idx2busName, baseVoltageIds, voltageLevelIds, substationId, regionId, subRegionId, topoNodeIds, lineTerminalIds, lineIds, lineContainerIds, trafoRecs, trafo3Recs, starAuxBuses, prosumerRecs, shuntRecs, linkRecs, tapCtrlRecs, notices, eqModelId, tpModelId, sshModelId, svModelId)
+  return CGMESContext(net.name, idx2busName, baseVoltageIds, voltageLevelIds, substationId, regionId, subRegionId, topoNodeIds, lineTerminalIds, lineIds, lineContainerIds, lineBranchIdx, lineSymmetricArm, trafoRecs, trafo3Recs, starAuxBuses, prosumerRecs, shuntRecs, linkRecs, tapCtrlRecs, notices, eqModelId, tpModelId, sshModelId, svModelId)
 end
 
 # Regulated tap groups (#322, export half): one shared TapChangerControl
@@ -404,7 +445,10 @@ function _collectTrafoRecs(net::Sparlectra.Net, idx2busName::Dict{Int,String}, c
     pt3Key = cgmesKeyPowerTransformer3W(side_buses[1], side_buses[2], side_buses[3], k3)
     ends = NamedTuple[]
     for (e, br) in enumerate(lbrs)
-      r, x, b, g = Sparlectra.fromPU_RXBG(r_pu = br.r_pu, x_pu = br.x_pu, g_pu = br.g_pu, b_pu = br.b_pu, v_kv = vns[e], baseMVA = net.baseMVA)
+      # the physical end sits on the leg's to side, so the end admittance is
+      # the to arm; a star-side arm (none from the CGMES importer) is folded
+      # into the end value as a total
+      r, x, b, g = Sparlectra.fromPU_RXBG(r_pu = br.r_pu, x_pu = br.x_pu, g_pu = br.g_from_pu + br.g_to_pu, b_pu = br.b_from_pu + br.b_to_pu, v_kv = vns[e], baseMVA = net.baseMVA)
       shift = _liveShift(br)
       push!(
         ends,
@@ -446,7 +490,30 @@ function _collectTrafoRecs(net::Sparlectra.Net, idx2busName::Dict{Int,String}, c
     # construction values — a tap-controller run must export its final state
     eff_ratio = _liveRatio(br)
     shift = _liveShift(br)
-    r, x, b, g = Sparlectra.fromPU_RXBG(r_pu = br.r_pu, x_pu = br.x_pu, g_pu = br.g_pu, b_pu = br.b_pu, v_kv = vn2, baseMVA = net.baseMVA)
+    # a typed phase model in the CGMES regulating-vector convention exports
+    # as its own class with its step (0.20.0, D8: :tabular as
+    # PhaseTapChangerTabular, a linear origin is not reconstructed); ratedU1
+    # then carries the NEUTRAL ratio, the importer applies the model on top.
+    # A model in the from-side reciprocal convention (DTF, hand-built) has
+    # no CGMES class with that sign, so it keeps the single-step linear
+    # changer that carries the solved shift exactly.
+    ptc_model = nothing
+    if br.taps_derived && br.tap_winding !== nothing && br.tap_winding.phase_taps !== nothing
+      w = br.tap_winding
+      pm = w.phase_taps
+      if pm.convention === :direct_regulating_vector && (w.shift_degree === nothing || w.shift_degree == 0.0)
+        ptc_model = pm
+        eff_ratio = w.ratio === nothing ? 1.0 : w.ratio
+      end
+    end
+    r, x, _, _ = Sparlectra.fromPU_RXBG(r_pu = br.r_pu, x_pu = br.x_pu, g_pu = br.g_pu, b_pu = br.b_pu, v_kv = vn2, baseMVA = net.baseMVA)
+    # each terminal arm to its own PowerTransformerEnd (0.20.0): the to arm
+    # is end 2 on the to-side base as it is; the from arm sits behind the
+    # ratio on the to-side base and is referred to the end-1 base with
+    # (ratedU2 / ratedU1)^2, the inverse of the importer's referral, so the
+    # round trip keeps each end's magnetizing admittance where it was
+    _, _, b_to, g_to = Sparlectra.fromPU_RXBG(r_pu = 0.0, x_pu = 0.0, g_pu = br.g_to_pu, b_pu = br.b_to_pu, v_kv = vn2, baseMVA = net.baseMVA)
+    _, _, b_from_tobase, g_from_tobase = Sparlectra.fromPU_RXBG(r_pu = 0.0, x_pu = 0.0, g_pu = br.g_from_pu, b_pu = br.b_from_pu, v_kv = vn2, baseMVA = net.baseMVA)
     k = cgmesNextParallelIndex!(pair_counter, busA, busB)
     ptKey = cgmesKeyPowerTransformer(busA, busB, k)
     ratedS = br.sn_MVA !== nothing ? br.sn_MVA : tf.side1.ratedS
@@ -474,7 +541,9 @@ function _collectTrafoRecs(net::Sparlectra.Net, idx2busName::Dict{Int,String}, c
         # phase shift travels as a single-step linear phase tap changer on
         # end 1 (step 1, neutral 0, increment = shift) — the importer's end-1
         # tap application adds it back unnegated
-        ptcId = shift == 0.0 ? nothing : claim(string(ptKey, "|PTC")),
+        ptcId = (shift == 0.0 && ptc_model === nothing) ? nothing : claim(string(ptKey, "|PTC")),
+        ptc_model = ptc_model,
+        ptc_table_id = ptc_model !== nothing && ptc_model.kind === :tabular ? claim(string(ptKey, "|PTCT")) : nothing,
         angle = shift,
         rtc = rtc,
         fromIdx = Int(br.fromBus),
@@ -485,8 +554,10 @@ function _collectTrafoRecs(net::Sparlectra.Net, idx2busName::Dict{Int,String}, c
         ratedU2 = vn2,
         r = r,
         x = x,
-        g = g,
-        b = b,
+        g1 = g_from_tobase * (vn2 / ratedU1)^2,
+        b1 = b_from_tobase * (vn2 / ratedU1)^2,
+        g2 = g_to,
+        b2 = b_to,
         ratedS = ratedS,
         name = name,
         connected = br.status == 1,
@@ -513,10 +584,23 @@ function _collectProsumerRecs(net::Sparlectra.Net, idx2busName::Dict{Int,String}
   recs = NamedTuple[]
   slackset = Set{Int}(net.slackVec)
   counter = Dict{Tuple{String,String},Int}()
+  # A feeder record of the network (the external grid of a case file: its
+  # short-circuit power at the reference bus) has no class of its own among
+  # the units when the reference unit is typed as a generator. CGMES has
+  # the class for it: the reference unit of such a bus is written as the
+  # ExternalNetworkInjection the record describes, so the delivery carries
+  # the short-circuit data the source case carries.
+  feeder_buses = Set{String}(String(f.bus) for f in net.sc_sources.external_network_injections if f.bus !== nothing)
+  eni_buses = Set{Int}(Int(ps.comp.cFrom_bus) for ps in net.prosumpsVec if ps.comp.cTyp == Sparlectra.ExternalNetworkInjection)
+  feeder_written = Set{Int}()
   for ps in net.prosumpsVec
     kind = _prosumerExportKind(ps.comp.cTyp)
     busIdx = Int(ps.comp.cFrom_bus)
     bus = _exportBusName(idx2busName, busIdx)
+    if kind === :sm && busIdx in slackset && bus in feeder_buses && !(busIdx in eni_buses) && !(busIdx in feeder_written) && Sparlectra.isSlack(ps)
+      kind = :eni
+      push!(feeder_written, busIdx)
+    end
     if kind === nothing
       push!(notices, "$(ps.comp.cTyp) $(ps.comp.cName) at $(bus) not exported")
       continue
@@ -558,9 +642,20 @@ function _collectProsumerRecs(net::Sparlectra.Net, idx2busName::Dict{Int,String}
   return recs
 end
 
-function _collectShuntRecs(net::Sparlectra.Net, idx2busName::Dict{Int,String}, claim)
+function _collectShuntRecs(net::Sparlectra.Net, idx2busName::Dict{Int,String}, claim, lineExcess::Vector{NamedTuple} = NamedTuple[])
   recs = NamedTuple[]
   counter = Dict{Tuple{String,String},Int}()
+  # the terminal excess of lines with unequal arms, after the shunts of the
+  # network so that their keys keep the numbers they had
+  function excess!()
+    for ex in lineExcess
+      bus = _exportBusName(idx2busName, ex.busIdx)
+      key = cgmesKeyBusEquipment("SH", bus, cgmesNextBusEquipmentIndex!(counter, "SH", bus))
+      vn = net.nodeVec[ex.busIdx].comp.cVN
+      push!(recs, (id = claim(key), terminalId = claim(cgmesKeyTerminal(key, 1)), busIdx = ex.busIdx, vn = vn, name = ex.name, gPerSection = vn > 0.0 ? real(ex.y_pu) * net.baseMVA / vn^2 : 0.0, bPerSection = vn > 0.0 ? imag(ex.y_pu) * net.baseMVA / vn^2 : 0.0, sections = ex.in_service ? 1 : 0))
+    end
+    return recs
+  end
   for sh in net.shuntVec
     busIdx = Int(sh.busIdx)
     bus = _exportBusName(idx2busName, busIdx)
@@ -585,8 +680,33 @@ function _collectShuntRecs(net::Sparlectra.Net, idx2busName::Dict{Int,String}, c
       ),
     )
   end
-  return recs
+  return excess!()
 end
+
+# The branch of every line of net.linesAC, as an index into net.branchVec.
+# A line and its branch are added together, so both vectors keep the same
+# relative order: the branch of line i is the next branch after the one of
+# line i-1 that joins the same two buses and is not a transformer winding.
+# The name of a line plays no part (a renamed line keeps its branch). The
+# charging values, the terminal states and the terminal flows of a line
+# all come from its branch, so a line without one cannot be exported: the
+# export stops before any file is opened instead of writing a guess.
+function _cgmesLineBranchIdx(net::Sparlectra.Net, idx2busName::Dict{Int,String})::Vector{Int}
+  idx = Int[]
+  last = 0
+  for (i, line) in enumerate(net.linesAC)
+    from, to = Int(line.comp.cFrom_bus), Int(line.comp.cTo_bus)
+    k = findnext(br -> Int(br.fromBus) == from && Int(br.toBus) == to && !occursin("_2WT_", br.comp.cName), net.branchVec, last + 1)
+    k === nothing && error("CGMES export: line $(i) ($(line.comp.cName), $(_exportBusName(idx2busName, from)) to $(_exportBusName(idx2busName, to))) has no branch in the network after branch $(last); lines and branches do not line up, export aborted, no files written")
+    push!(idx, k)
+    last = k
+  end
+  return idx
+end
+
+# The symmetric part of two terminal arms: the arm closer to zero, with its
+# sign (the rule of the MATPOWER export).
+_cgmesSymmetricArm(a::Float64, b::Float64)::Float64 = abs(a) <= abs(b) ? a : b
 
 # Hard guard: two different structural keys must never share one mRID —
 # writing such a file would produce invalid RDF (duplicate rdf:ID). Aborts
@@ -617,6 +737,55 @@ function _writeLinearPtc(io::IO, ptcId::AbstractString, name::AbstractString, en
   println(io, "  </cim:PhaseTapChangerLinear>")
 end
 
+# The CGMES class of a phase tap changer record: the typed model's class
+# through the kind table, the single-step linear changer otherwise.
+function _ptcClassName(model)::String
+  model === nothing && return "PhaseTapChangerLinear"
+  for row in Sparlectra.TAP_CHANGER_KIND_TABLE
+    (row.source === :cgmes && row.kind === model.kind && row.name != "PhaseTapChangerLinear") && return row.name
+  end
+  return "PhaseTapChangerTabular"
+end
+
+# A typed phase tap changer (0.20.0): symmetrical and asymmetrical with
+# their formula parameters (voltageStepIncrement back in percent,
+# windingConnectionAngle), tabular with its table and points; the step
+# position lives in SSH like the linear changer's.
+function _writeTypedPtc(io::IO, ptcId::AbstractString, name::AbstractString, endId::AbstractString, model, tableId)
+  cls = _ptcClassName(model)
+  println(io, "  <cim:$(cls) rdf:ID=\"_$(ptcId)\">")
+  println(io, "    <cim:IdentifiedObject.name>$(xmlEscape(name))_PTC</cim:IdentifiedObject.name>")
+  println(io, "    <cim:PhaseTapChanger.TransformerEnd rdf:resource=\"#_$(endId)\"/>")
+  println(io, "    <cim:TapChanger.lowStep>$(model.lowStep)</cim:TapChanger.lowStep>")
+  println(io, "    <cim:TapChanger.highStep>$(model.highStep)</cim:TapChanger.highStep>")
+  println(io, "    <cim:TapChanger.neutralStep>$(model.neutralStep)</cim:TapChanger.neutralStep>")
+  println(io, "    <cim:TapChanger.normalStep>$(model.step)</cim:TapChanger.normalStep>")
+  if model.kind === :tabular
+    println(io, "    <cim:PhaseTapChangerTabular.PhaseTapChangerTable rdf:resource=\"#_$(tableId)\"/>")
+    println(io, "  </cim:$(cls)>")
+    println(io, "  <cim:PhaseTapChangerTable rdf:ID=\"_$(tableId)\">")
+    println(io, "    <cim:IdentifiedObject.name>$(xmlEscape(name))_PTCT</cim:IdentifiedObject.name>")
+    println(io, "  </cim:PhaseTapChangerTable>")
+    for (k, pt) in enumerate(model.table)
+      println(io, "  <cim:PhaseTapChangerTablePoint rdf:ID=\"_$(tableId)_$(k)\">")
+      println(io, "    <cim:TapChangerTablePoint.step>$(pt.step)</cim:TapChangerTablePoint.step>")
+      println(io, "    <cim:TapChangerTablePoint.ratio>$(fmtVal(pt.ratio))</cim:TapChangerTablePoint.ratio>")
+      println(io, "    <cim:PhaseTapChangerTablePoint.angle>$(fmtVal(pt.angle_deg))</cim:PhaseTapChangerTablePoint.angle>")
+      println(io, "    <cim:PhaseTapChangerTablePoint.PhaseTapChangerTable rdf:resource=\"#_$(tableId)\"/>")
+      println(io, "  </cim:PhaseTapChangerTablePoint>")
+    end
+    return nothing
+  end
+  model.voltage_step_increment === nothing || println(io, "    <cim:PhaseTapChangerNonLinear.voltageStepIncrement>$(fmtVal(100.0 * model.voltage_step_increment))</cim:PhaseTapChangerNonLinear.voltageStepIncrement>")
+  model.x_min === nothing || println(io, "    <cim:PhaseTapChangerNonLinear.xMin>$(fmtVal(model.x_min))</cim:PhaseTapChangerNonLinear.xMin>")
+  model.x_max === nothing || println(io, "    <cim:PhaseTapChangerNonLinear.xMax>$(fmtVal(model.x_max))</cim:PhaseTapChangerNonLinear.xMax>")
+  if model.kind === :asymmetrical
+    println(io, "    <cim:PhaseTapChangerAsymmetrical.windingConnectionAngle>$(fmtVal(something(model.winding_connection_angle_deg, 90.0)))</cim:PhaseTapChangerAsymmetrical.windingConnectionAngle>")
+  end
+  println(io, "  </cim:$(cls)>")
+  return nothing
+end
+
 # Always deliver line parameters in physical units (Ohm/S). PI-model lines
 # carry p.u. values and are converted back.
 function lineParamsOhm(net::Sparlectra.Net, line)
@@ -636,7 +805,7 @@ end
 # EQ profile
 # ---------------------------------------------------------------------------
 
-function writeEQFile(net::Sparlectra.Net, ctx::CGMESContext, path::AbstractString, created::Dates.DateTime; sc_line_data::Dict{Int,CGMESLineShortCircuit} = Dict{Int,CGMESLineShortCircuit}(), sc_source::Union{Nothing,CGMESShortCircuitData} = nothing)
+function writeEQFile(net::Sparlectra.Net, ctx::CGMESContext, path::AbstractString, created::Dates.DateTime; sc_line_data::Dict{Int,CGMESLineShortCircuit} = Dict{Int,CGMESLineShortCircuit}(), sc_source::Union{Nothing,CGMESShortCircuitData,Sparlectra.NativeShortCircuitData} = nothing)
   sc_units = _scSourceByMrid(sc_source)
   open(path, "w") do io
     writeXmlHeader(io, created)
@@ -676,6 +845,13 @@ function writeEQFile(net::Sparlectra.Net, ctx::CGMESContext, path::AbstractStrin
       lname = line.comp.cName
       vn = line.comp.cVN
       r, x, b, g = lineParamsOhm(net, line)
+      # unequal terminal arms: the segment carries twice the symmetric arm,
+      # the excess is a compensator of its own (buildContext)
+      arm = ctx.lineSymmetricArm[i]
+      if arm !== nothing
+        g = vn > 0.0 ? 2.0 * real(arm) * net.baseMVA / vn^2 : 0.0
+        b = vn > 0.0 ? 2.0 * imag(arm) * net.baseMVA / vn^2 : 0.0
+      end
 
       println(io, "  <cim:Line rdf:ID=\"_$(ctx.lineContainerIds[i])\">")
       println(io, "    <cim:IdentifiedObject.name>$(xmlEscape(lname))_Line</cim:IdentifiedObject.name>")
@@ -735,8 +911,8 @@ function writeEQFile(net::Sparlectra.Net, ctx::CGMESContext, path::AbstractStrin
         rec.ratedS === nothing || println(io, "    <cim:PowerTransformerEnd.ratedS>$(fmtVal(rec.ratedS))</cim:PowerTransformerEnd.ratedS>")
         println(io, "    <cim:PowerTransformerEnd.r>$(fmtVal(e == 1 ? 0.0 : rec.r))</cim:PowerTransformerEnd.r>")
         println(io, "    <cim:PowerTransformerEnd.x>$(fmtVal(e == 1 ? 0.0 : rec.x))</cim:PowerTransformerEnd.x>")
-        println(io, "    <cim:PowerTransformerEnd.g>$(fmtVal(e == 1 ? 0.0 : rec.g))</cim:PowerTransformerEnd.g>")
-        println(io, "    <cim:PowerTransformerEnd.b>$(fmtVal(e == 1 ? 0.0 : rec.b))</cim:PowerTransformerEnd.b>")
+        println(io, "    <cim:PowerTransformerEnd.g>$(fmtVal(e == 1 ? rec.g1 : rec.g2))</cim:PowerTransformerEnd.g>")
+        println(io, "    <cim:PowerTransformerEnd.b>$(fmtVal(e == 1 ? rec.b1 : rec.b2))</cim:PowerTransformerEnd.b>")
         println(io, "  </cim:PowerTransformerEnd>")
         println(io, "  <cim:Terminal rdf:ID=\"_$(rec.terminalIds[e])\">")
         println(io, "    <cim:IdentifiedObject.name>$(xmlEscape(rec.name))_T$(e)</cim:IdentifiedObject.name>")
@@ -745,7 +921,11 @@ function writeEQFile(net::Sparlectra.Net, ctx::CGMESContext, path::AbstractStrin
         println(io, "  </cim:Terminal>")
       end
       if rec.ptcId !== nothing
-        _writeLinearPtc(io, rec.ptcId, rec.name, rec.endIds[1], rec.angle)
+        if rec.ptc_model === nothing
+          _writeLinearPtc(io, rec.ptcId, rec.name, rec.endIds[1], rec.angle)
+        else
+          _writeTypedPtc(io, rec.ptcId, rec.name, rec.endIds[1], rec.ptc_model, rec.ptc_table_id)
+        end
       end
       if rec.rtc !== nothing
         rt = rec.rtc
@@ -835,7 +1015,7 @@ function writeEQFile(net::Sparlectra.Net, ctx::CGMESContext, path::AbstractStrin
         rec.rcId === nothing || println(io, "    <cim:RegulatingCondEq.RegulatingControl rdf:resource=\"#_$(rec.rcId)\"/>")
         # harvested short-circuit source attributes ride along by mRID so a
         # re-imported delivery keeps its Ik'' evaluation inputs
-        sm_sc = get(sc_units.machines, rec.id, nothing)
+        sm_sc = _scRecordOf(sc_units.machines, sc_units.machine_records, rec, _exportBusName(ctx.idx2busName, rec.busIdx))
         if sm_sc !== nothing
           # the prosumer model does not retain ratedS/ratedU — without them
           # the machine impedance x''d·U²/S is unusable on re-import
@@ -865,7 +1045,7 @@ function writeEQFile(net::Sparlectra.Net, ctx::CGMESContext, path::AbstractStrin
         rec.minQ === nothing || println(io, "    <cim:ExternalNetworkInjection.minQ>$(fmtVal(rec.minQ))</cim:ExternalNetworkInjection.minQ>")
         rec.maxQ === nothing || println(io, "    <cim:ExternalNetworkInjection.maxQ>$(fmtVal(rec.maxQ))</cim:ExternalNetworkInjection.maxQ>")
         rec.rcId === nothing || println(io, "    <cim:RegulatingCondEq.RegulatingControl rdf:resource=\"#_$(rec.rcId)\"/>")
-        eni_sc = get(sc_units.enis, rec.id, nothing)
+        eni_sc = _scRecordOf(sc_units.enis, sc_units.eni_records, rec, _exportBusName(ctx.idx2busName, rec.busIdx))
         if eni_sc !== nothing
           _optNum(io, "ExternalNetworkInjection.maxInitialSymShCCurrent", eni_sc.maxInitialSymShCCurrent_A)
           _optNum(io, "ExternalNetworkInjection.minInitialSymShCCurrent", eni_sc.minInitialSymShCCurrent_A)
@@ -881,7 +1061,7 @@ function writeEQFile(net::Sparlectra.Net, ctx::CGMESContext, path::AbstractStrin
         println(io, "  <cim:AsynchronousMachine rdf:ID=\"_$(rec.id)\">")
         println(io, "    <cim:IdentifiedObject.name>$(xmlEscape(rec.name))</cim:IdentifiedObject.name>")
         vnKnown && println(io, "    <cim:ConductingEquipment.BaseVoltage rdf:resource=\"#_$(ctx.baseVoltageIds[rec.vn])\"/>")
-        asm_sc = get(sc_units.asms, rec.id, nothing)
+        asm_sc = _scRecordOf(sc_units.asms, sc_units.asm_records, rec, _exportBusName(ctx.idx2busName, rec.busIdx))
         if asm_sc !== nothing
           _optNum(io, "AsynchronousMachine.iaIrRatio", asm_sc.iaIrRatio)
           _optNum(io, "AsynchronousMachine.rxLockedRotorRatio", asm_sc.rxLockedRotorRatio)
@@ -990,8 +1170,6 @@ function writeTPFile(net::Sparlectra.Net, ctx::CGMESContext, path::AbstractStrin
       st = Sparlectra._branch_terminal_state(br)
       return seq == 1 ? (st == :closed || st == :open_to) : (st == :closed || st == :open_from)
     end
-    line_branches_tp = [br for br in net.branchVec if occursin("_ACL_", br.comp.cName)]
-    lines_aligned = length(line_branches_tp) == length(net.linesAC)
     for (i, line) in enumerate(net.linesAC)
       fromIdx = line.comp.cFrom_bus
       toIdx = line.comp.cTo_bus
@@ -1002,7 +1180,7 @@ function writeTPFile(net::Sparlectra.Net, ctx::CGMESContext, path::AbstractStrin
           @warn "CGMES-TP: line $(line.comp.cName) terminal $(seq) has no valid bus index — skipped"
           continue
         end
-        connected = lines_aligned ? terminal_connected(line_branches_tp[i], seq) : true
+        connected = terminal_connected(net.branchVec[ctx.lineBranchIdx[i]], seq)
         println(io, "  <cim:Terminal rdf:about=\"#_$(termId)\">")
         println(io, "    <cim:Terminal.TopologicalNode rdf:resource=\"#_$(ctx.topoNodeIds[busIdx])\"/>")
         println(io, "    <cim:ACDCTerminal.connected>$(connected)</cim:ACDCTerminal.connected>")
@@ -1116,9 +1294,10 @@ function writeSSHFile(ctx::CGMESContext, path::AbstractString, created::Dates.Da
 
     for rec in ctx.trafoRecs
       if rec.ptcId !== nothing
-        println(io, "  <cim:PhaseTapChangerLinear rdf:about=\"#_$(rec.ptcId)\">")
-        println(io, "    <cim:TapChanger.step>1</cim:TapChanger.step>")
-        println(io, "  </cim:PhaseTapChangerLinear>")
+        cls = _ptcClassName(rec.ptc_model)
+        println(io, "  <cim:$(cls) rdf:about=\"#_$(rec.ptcId)\">")
+        println(io, "    <cim:TapChanger.step>$(rec.ptc_model === nothing ? 1 : rec.ptc_model.step)</cim:TapChanger.step>")
+        println(io, "  </cim:$(cls)>")
       end
       if rec.rtc !== nothing
         member = any(cr -> String(rec.rtc.rtcId) in cr.memberRtcIds, ctx.tapCtrlRecs)
@@ -1240,23 +1419,25 @@ function writeSVFile(net::Sparlectra.Net, ctx::CGMESContext, path::AbstractStrin
 
     # branch-terminal flows from the branch model at the current voltages —
     # the same expressions compareWithSV evaluates on the read side
-    branch_flows = function (br)
+    # `arm` is the terminal arm the delivery carries on a line with unequal
+    # arms (the excess flows through its compensator, not the line terminal)
+    branch_flows = function (br, arm = nothing)
       ys = inv(br.r_pu + im * br.x_pu)
-      ysh2 = (br.g_pu + im * br.b_pu) / 2
+      # per-terminal shunt arms (0.20.0), the from arm behind the tap
+      ysh_from = arm === nothing ? Sparlectra._branch_y0_from(br) : arm
+      ysh_to = arm === nothing ? Sparlectra._branch_y0_to(br) : arm
       tr = br.ratio == 0.0 ? 1.0 + 0im : br.tap_ratio * cis(deg2rad(br.phase_shift_deg))
       Vf, Vt = V[br.fromBus], V[br.toBus]
-      Sfrom = Vf * conj(((ys + ysh2) / abs2(tr)) * Vf - (ys / conj(tr)) * Vt) * net.baseMVA
-      Sto = Vt * conj((ys + ysh2) * Vt - (ys / tr) * Vf) * net.baseMVA
+      Sfrom = Vf * conj(((ys + ysh_from) / abs2(tr)) * Vf - (ys / conj(tr)) * Vt) * net.baseMVA
+      Sto = Vt * conj((ys + ysh_to) * Vt - (ys / tr) * Vf) * net.baseMVA
       return Sfrom, Sto
     end
-    line_branches = [br for br in net.branchVec if occursin("_ACL_", br.comp.cName)]
-    if length(line_branches) == length(net.linesAC)
-      for (i, br) in enumerate(line_branches)
-        (br.status == 0 || br.fromBus in iso || br.toBus in iso) && continue
-        Sfrom, Sto = branch_flows(br)
-        _writeSvPowerFlow(io, ctx.lineTerminalIds[i][1], real(Sfrom), imag(Sfrom))
-        _writeSvPowerFlow(io, ctx.lineTerminalIds[i][2], real(Sto), imag(Sto))
-      end
+    for (i, k) in enumerate(ctx.lineBranchIdx)
+      br = net.branchVec[k]
+      (br.status == 0 || br.fromBus in iso || br.toBus in iso) && continue
+      Sfrom, Sto = branch_flows(br, ctx.lineSymmetricArm[i])
+      _writeSvPowerFlow(io, ctx.lineTerminalIds[i][1], real(Sfrom), imag(Sfrom))
+      _writeSvPowerFlow(io, ctx.lineTerminalIds[i][2], real(Sto), imag(Sto))
     end
     for rec in ctx.trafoRecs
       br = net.branchVec[rec.branchIdx]
@@ -1332,7 +1513,7 @@ end
 """
     writeCGMESFiles(net; path::AbstractString = pwd(),
                     sc_line_data::Dict{Int,CGMESLineShortCircuit} = Dict(),
-                    sc_source::Union{Nothing,CGMESShortCircuitData} = nothing,
+                    sc_source::Union{Nothing,CGMESShortCircuitData,Sparlectra.NativeShortCircuitData} = nothing,
                     created::Dates.DateTime = Dates.now(),
                     notices::Union{Nothing,Vector{String}} = nothing,
                     zip::Bool = false)
@@ -1371,7 +1552,7 @@ Every file carries the tool provenance — a `Generated by Sparlectra.jl
 v<version> on <stamp>` header comment and a matching `md:Model.description`
 — where the stamp is the `created` timestamp.
 """
-function writeCGMESFiles(net::Sparlectra.Net; path::AbstractString = pwd(), sc_line_data::Dict{Int,CGMESLineShortCircuit} = Dict{Int,CGMESLineShortCircuit}(), sc_source::Union{Nothing,CGMESShortCircuitData} = nothing, created::Dates.DateTime = Dates.now(), notices::Union{Nothing,Vector{String}} = nothing, zip::Bool = false)
+function writeCGMESFiles(net::Sparlectra.Net; path::AbstractString = pwd(), sc_line_data::Dict{Int,CGMESLineShortCircuit} = Dict{Int,CGMESLineShortCircuit}(), sc_source::Union{Nothing,CGMESShortCircuitData,Sparlectra.NativeShortCircuitData} = nothing, created::Dates.DateTime = Dates.now(), notices::Union{Nothing,Vector{String}} = nothing, zip::Bool = false)
   # an interchange file must carry the physical equipment impedance, never a
   # full-UPFC compensated operating point (negative series resistance); refuse
   # loudly, symmetric with the short-circuit guard
@@ -1390,7 +1571,10 @@ function writeCGMESFiles(net::Sparlectra.Net; path::AbstractString = pwd(), sc_l
   sshPath = joinpath(path, string(net.name, "_SSH.xml"))
   svPath = joinpath(path, string(net.name, "_SV.xml"))
 
-  writeEQFile(net, ctx, eqPath, created; sc_line_data = sc_line_data, sc_source = sc_source)
+  # without a harvest handed in, the records the network itself carries
+  # (a case file's feeder, the generators of a PowSyBl import, the harvest
+  # a CGMES import stored) are the source
+  writeEQFile(net, ctx, eqPath, created; sc_line_data = sc_line_data, sc_source = sc_source === nothing ? net.sc_sources : sc_source)
   writeTPFile(net, ctx, tpPath, created)
   writeSSHFile(ctx, sshPath, created)
   writeSVFile(net, ctx, svPath, created)

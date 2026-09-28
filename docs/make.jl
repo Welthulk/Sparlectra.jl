@@ -49,8 +49,8 @@ The Home page used to embed the README through an `@eval` block calling
 `Markdown.parse`. That is Julia's BASE Markdown parser, and it has no notion
 of inline HTML: the logo, which the README places as
 `<a href="..."><img align="left" ...></a>` so the intro text wraps around it,
-came out on the built site as its own literal source text (reported
-2026-09-07). Generating a real Markdown page instead hands the content to
+came out on the built site as its own literal source text (as
+reported). Generating a real Markdown page instead hands the content to
 Documenter's own parser, which passes raw HTML through, so the page renders
 the way the README does on GitHub.
 
@@ -177,6 +177,7 @@ makedocs(
     "Programmatic API" => "programmatic_api.md",
     "Local PowerFlow Service" => "powerflow_service.md",
     "Local PowerFlow Web UI" => "webui.md",
+    "Web UI Reference" => "webui_reference.md",
     "Sysimage" => "sysimage.md",
     "Power-Flow Configuration" => "powerflow_configuration.md",
     "Q-limit Switching Strategy" => "q_limit_switching_strategy.md",
@@ -219,7 +220,7 @@ makedocs(
       "Workshop Tour (basic)" => "generated/workshop_tour.md",
       "Workshop Tour (advanced)" => "generated/workshop_tour_advanced.md",
       "Workshop Tour (part 3: coordinated control)" => "generated/workshop_tour_control.md",
-      "Workshop Tour (CGMES)" => "generated/workshop_tour_cgmes.md",
+      "Workshop Tour (foreign formats: CGMES, PowSyBl IIDM, DTF)" => "generated/workshop_tour_cgmes.md",
       "Slack Types and Short Circuit" => "generated/workshop_slack_short_circuit.md",
       "Distributed Slack" => "generated/workshop_distributed_slack.md",
       "Transformer Taps" => "generated/workshop_transformers.md",

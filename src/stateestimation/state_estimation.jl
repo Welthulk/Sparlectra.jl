@@ -1710,7 +1710,7 @@ function evaluate_local_observability_matrix(H::AbstractMatrix{<:Real}, stateCol
   # observable, rank 0), never an error. The tap and shunt release guards
   # of the estimator rely on it: a thinned set can leave a released tap
   # without any measurement, and the guard then freezes the tap instead of
-  # aborting the run (Web UI run 93b08476).
+  # aborting the run (a Web UI run).
   local_idx = [rows[k] for k in eachindex(rows)]
   base = _evaluate_observability_from_jacobian(H[rows, stateCols], local_idx; tol = tol)
   return merge(base, (rows = rows, stateCols = copy(stateCols)))
@@ -2681,8 +2681,8 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
       # numerical_observable = false, it does not raise. The ONLY exception
       # this call has is "state column out of bounds", which means a wrong
       # column index, and absorbing that would silently freeze every
-      # released shunt while the run reported "not observable" (measured
-      # 2026-09-06). Same class as the island map
+      # released shunt while the run reported "not observable" (as
+      # measured). Same class as the island map
       # that stayed empty in compareWithSV.
       obs = evaluate_local_observability_matrix(Htest, [col])
       if obs.numerical_observable
@@ -2821,7 +2821,7 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
   # Released regulator states are bounded by the changer's DECLARED
   # mechanical band. Without it the Gauss-Newton step can drive r1 toward
   # -1, where the cascade t = t_base/((1+r1)(1+r2 e^{j alpha})) is singular:
-  # measured 2026-09-06 on a CGMES delivery, one weakly determined
+  # measured on a CGMES delivery, one weakly determined
   # transformer ran to -329 electrical steps on a band of about -14 to +18
   # and took the whole estimation with it. The clamp is not a tuning knob,
   # a position outside the band does not exist on the mechanical grid.
@@ -2965,7 +2965,7 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
       end
       Δx = solve_linear(G, g; allow_pinv = true, svd_max_n = 20_000)
       # Released regulator states get a STEP LIMIT, not a hard band.
-      # Measured 2026-09-06 on a CGMES delivery with 11 transformers off by
+      # Measured on a CGMES delivery with 11 transformers off by
       # 4 mechanical steps: clamping the state into its declared band (both
       # per component and as an active-set projection) rescued the one
       # runaway transformer but made five that had converged stick to the
@@ -3652,6 +3652,7 @@ function runse_diagnostics(net::Net, measurements::Vector{Measurement})
   trace = NamedTuple[]
   firstElimination = nothing
   stopReason = :consistent
+  revertedAttempt = nothing
 
   while true
     if !current.converged
@@ -3693,8 +3694,23 @@ function runse_diagnostics(net::Net, measurements::Vector{Measurement})
     target = first(candidates)
     idx = target.measurement_index
     objBefore = current.objective.value
+    previous = current
     meas2[idx] = _set_measurement_active(meas2[idx], false)
     current = validate_measurements(net, meas2)
+    if !current.converged
+      # An elimination is confirmed by its control solve. When that solve
+      # does not converge, the removal is only claimed, not shown (seen
+      # on the MiniGrid: J 870 to 758897 after the third
+      # elimination): the row goes back to active, the diagnostics stand at
+      # the state before the attempt, the attempt is reported by name, and
+      # the loop stops with not_converged.
+      meas2[idx] = _set_measurement_active(meas2[idx], true)
+      revertedAttempt = (elimination = length(trace) + 1, measurement_index = idx, id = target.id, typ = target.typ,
+                         normalized_residual_before = target.normalized_residual, wii = target.wii, objective_before = objBefore)
+      current = previous
+      stopReason = :not_converged
+      break
+    end
     push!(trace, (elimination = length(trace) + 1, measurement_index = idx, id = target.id, typ = target.typ,
                   normalized_residual_before = target.normalized_residual, wii = target.wii,
                   skipped_unlocalizable = skipped_unlocalizable,
@@ -3748,7 +3764,7 @@ function runse_diagnostics(net::Net, measurements::Vector{Measurement})
     # version: most suspects, then the largest normalized residual among
     # them, then the label. Sorting by count alone left ties in Dict
     # iteration order, which changed between Julia 1.12 and 1.13 and moved a
-    # different station to the front (found on the CI run of 2026-09-11).
+    # different station to the front (found on a CI run).
     station_rank(x) = (-length(last(x)), -maximum(r.abs_normalized_residual for r in last(x)), _topology_station_label(net, first(x), mems))
     for (st, suspects) in sort(collect(byStation); by = station_rank)
       length(suspects) >= clusterMin || continue
@@ -3764,7 +3780,7 @@ function runse_diagnostics(net::Net, measurements::Vector{Measurement})
     isempty(rows) || (topoFindings = rows)
   end
 
-  return (diagnostics = base, rerun = firstElimination, eliminations = trace, stop_reason = stopReason, final_diagnostics = current, topology_findings = topoFindings)
+  return (diagnostics = base, rerun = firstElimination, eliminations = trace, reverted = revertedAttempt, stop_reason = stopReason, final_diagnostics = current, topology_findings = topoFindings)
 end
 
 runse_diagnostics(net::Net) = runse_diagnostics(net, Measurement[m for m in net.measurements])
@@ -3863,6 +3879,9 @@ function print_se_diagnostics(diag; io = stdout, topN::Int = 10, format::Symbol 
     println(io, "### Measurement ranking (largest |normalized residual|)")
     if hasWii
       if showK
+        # ids sit in code spans in every Markdown table: a Markdown renderer
+        # (the Web UI artifact viewer) otherwise reads the underscores of
+        # `ZI_QINJ_bus_15` as emphasis and shows `ZIQINJbus_15`
         println(io, "| Idx | ID | Type | Residual | Norm.Res | wii | Loc | MaxK | Flag |")
         println(io, "|---:|:---|:---|---:|---:|---:|:---:|---:|:---:|")
       else
@@ -3880,12 +3899,12 @@ function print_se_diagnostics(diag; io = stdout, topN::Int = 10, format::Symbol 
         loc = row.localizable ? "yes" : "no"
         if showK
           kwarn = row.correlation_warning ? " (!)" : ""
-          @printf(io, "| %d | %s | %s | %.5f | %.5f | %.3f | %s | %.3f%s | %s |\n", row.measurement_index, row.id, string(row.typ), row.residual, row.normalized_residual, row.wii, loc, row.max_abs_correlation, kwarn, flag)
+          @printf(io, "| %d | %s | %s | %.5f | %.5f | %.3f | %s | %.3f%s | %s |\n", row.measurement_index, string("`", row.id, "`"), string(row.typ), row.residual, row.normalized_residual, row.wii, loc, row.max_abs_correlation, kwarn, flag)
         else
-          @printf(io, "| %d | %s | %s | %.5f | %.5f | %.3f | %s | %s |\n", row.measurement_index, row.id, string(row.typ), row.residual, row.normalized_residual, row.wii, loc, flag)
+          @printf(io, "| %d | %s | %s | %.5f | %.5f | %.3f | %s | %s |\n", row.measurement_index, string("`", row.id, "`"), string(row.typ), row.residual, row.normalized_residual, row.wii, loc, flag)
         end
       else
-        @printf(io, "| %d | %s | %s | %.5f | %.5f | %s |\n", row.measurement_index, row.id, string(row.typ), row.residual, row.normalized_residual, flag)
+        @printf(io, "| %d | %s | %s | %.5f | %.5f | %s |\n", row.measurement_index, string("`", row.id, "`"), string(row.typ), row.residual, row.normalized_residual, flag)
       end
     end
   else
@@ -3957,7 +3976,7 @@ function print_se_diagnostics(diag; io = stdout, topN::Int = 10, format::Symbol 
       println(io, "| Idx | ID | Stage | t | sigma factor |")
       println(io, "|---:|:---|---:|---:|---:|")
       for rr in base.robust_rows
-        @printf(io, "| %d | %s | %d | %.2f | %.3f |\n", rr.measurement_index, rr.id, rr.stage, rr.t, rr.sigma_factor)
+        @printf(io, "| %d | %s | %d | %.2f | %.3f |\n", rr.measurement_index, string("`", rr.id, "`"), rr.stage, rr.t, rr.sigma_factor)
       end
     else
       println(io, "\nRobust R modification (final iteration, solve weights only)")
@@ -3978,7 +3997,7 @@ function print_se_diagnostics(diag; io = stdout, topN::Int = 10, format::Symbol 
       println(io, "| # | Idx | ID | Type | Norm.Res before | J before | J after |")
       println(io, "|---:|---:|:---|:---|---:|---:|---:|")
       for t in diag.eliminations
-        @printf(io, "| %d | %d | %s | %s | %.5f | %.6f | %.6f |\n", t.elimination, t.measurement_index, t.id, string(t.typ), t.normalized_residual_before, t.objective_before, t.objective_after)
+        @printf(io, "| %d | %d | %s | %s | %.5f | %.6f | %.6f |\n", t.elimination, t.measurement_index, string("`", t.id, "`"), string(t.typ), t.normalized_residual_before, t.objective_before, t.objective_after)
       end
     else
       println(io, "\nSequential elimination (stop: $(diag.stop_reason))")
@@ -3992,6 +4011,14 @@ function print_se_diagnostics(diag; io = stdout, topN::Int = 10, format::Symbol 
   elseif hasproperty(diag, :stop_reason)
     println(io, format == :markdown ? "\n### Sequential elimination\n- none performed (stop: $(diag.stop_reason))" : "\nSequential elimination: none performed (stop: $(diag.stop_reason))")
   end
+  if hasproperty(diag, :reverted) && diag.reverted !== nothing
+    r = diag.reverted
+    if format == :markdown
+      println(io, "\n- **Reverted:** elimination $(r.elimination) of `$(r.id)` ($(r.typ), normalized residual $(round(r.normalized_residual_before; digits = 5))) was not confirmed: the control solve without it did not converge, so the row stays active and the elimination stopped (not_converged).")
+    else
+      println(io, "\nReverted: elimination $(r.elimination) of $(r.id) ($(r.typ), rn $(round(r.normalized_residual_before; digits = 5))) was not confirmed: the control solve without it did not converge; the row stays active (stop: not_converged)")
+    end
+  end
 
   if hasproperty(diag, :rerun) && !isnothing(diag.rerun)
     rerun = diag.rerun
@@ -3999,7 +4026,7 @@ function print_se_diagnostics(diag; io = stdout, topN::Int = 10, format::Symbol 
     if format == :markdown
       println(io)
       println(io, "### Deactivate-and-rerun")
-      println(io, "- **Deactivated measurement:** idx=$(rerun.deactivated_measurement_index), id=$(rerun.deactivated_measurement_id)")
+      println(io, "- **Deactivated measurement:** idx=$(rerun.deactivated_measurement_index), id=`$(rerun.deactivated_measurement_id)`")
       @printf(io, "- **Objective before:** %.6f\n", base.objective.value)
       @printf(io, "- **Objective after:** %.6f\n", rerun.diagnostics.objective.value)
       @printf(io, "- **Objective after stats:** dof=%d, z=%.3f, within_3sigma=%s\n", rerun_summary.objective.dof, rerun_summary.objective.zscore, string(rerun_summary.objective.within_3sigma))

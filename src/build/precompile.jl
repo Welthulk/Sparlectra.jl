@@ -60,7 +60,7 @@ built with (`"off"`, `"core"` or `"full"`). Evaluated once at precompile
 time and baked into the image: the compile cache is keyed by the sources,
 not by the environment, so this constant is the only way to tell which
 workload an image carries. `tools/run_gates.sh` reads it to rebuild the
-images with the full workload before a gate (measured 2026-09-25: the
+images with the full workload before a gate (measured: the
 webui test group takes 185 s on the default image and 69 s on the full
 one).
 """

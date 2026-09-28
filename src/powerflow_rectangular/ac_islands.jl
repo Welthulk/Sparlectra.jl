@@ -182,7 +182,7 @@ Build the per-island report the solver, the diagnostics writer and the CSV
 artifact all share. Purely descriptive -- it decides nothing, it only records
 what each island contains and which reference it *would* get.
 """
-function detect_ac_islands(net::Net)
+function detect_ac_islands(net::Net; promote_generators::Bool = false)
   # Bus types are derived from prosumers, and the caller may have edited the
   # net (merges, de-energization) since they were last computed. Refresh first,
   # otherwise refs/pvs below are read from stale types.
@@ -232,6 +232,26 @@ function detect_ac_islands(net::Net)
     chosen = !isempty(refs) ? minimum(refs) : (!isempty(pvs) ? minimum(pvs) : 0)
     status = !isempty(refs) ? "has_ref" : (!isempty(pvs) ? "promote_pv_ref" : "missing_ref")
     note = !isempty(refs) ? "" : (!isempty(pvs) ? "matpower_like will promote PV bus $(chosen) as island angle reference" : "no REF/Slack or PV bus available")
+    # The island lost its reference and carries no voltage-controlled unit,
+    # but it carries generation: with promote_generators (the auto_slack of
+    # the solve) its strongest unit takes over, by the one ranking of
+    # reference_candidate_rank. A static var compensator carries no active
+    # power and is never a candidate.
+    if chosen == 0 && promote_generators
+      best_key = (-1, -1, -Inf)
+      for ps in generators
+        ps.comp.cTyp == StaticVarCompensator && continue
+        key = _reference_rank(ps)
+        if key > best_key
+          best_key = key
+          chosen = Int(ps.comp.cFrom_bus)
+        end
+      end
+      if chosen != 0
+        status = "promote_generator_ref"
+        note = "auto_slack will promote the strongest generating unit at bus $(chosen) as island reference"
+      end
+    end
     push!(rows, (
       island_id = island_id,
       buses = buses,
@@ -410,10 +430,27 @@ function _prepare_island_net(net::Net, row)
     # Bus typing is re-derived from prosumers downstream, so the node type
     # alone would not survive: mark the regulating generator at that bus as the
     # reference too. First match wins -- one reference per bus is enough.
+    marked = false
     for ps in inet.prosumpsVec
       if Int(ps.comp.cFrom_bus) == chosen && isGenerator(ps) && isRegulating(ps)
         ps.referencePri = chosen
+        marked = true
         break
+      end
+    end
+    # a promoted unit without voltage control (status promote_generator_ref):
+    # the strongest generating unit at the bus becomes the reference, and
+    # the bus holds its start voltage, 1.0 pu where it has none
+    if !marked
+      best = nothing
+      for ps in inet.prosumpsVec
+        (Int(ps.comp.cFrom_bus) == chosen && isGenerator(ps) && ps.comp.cTyp != StaticVarCompensator) || continue
+        (best === nothing || _reference_rank(ps) > _reference_rank(best)) && (best = ps)
+      end
+      if best !== nothing
+        best.referencePri = chosen
+        node = inet.nodeVec[chosen]
+        (node._vm_pu === nothing || node._vm_pu <= 0.0) && setVmVa!(node = node, vm_pu = (best.vm_pu !== nothing && best.vm_pu > 0.0) ? Float64(best.vm_pu) : 1.0, va_deg = 0.0)
       end
     end
   end

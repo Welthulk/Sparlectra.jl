@@ -56,7 +56,9 @@ function _closed_branch_flow_pu(V::Vector{ComplexF64}, from::Int, to::Int, br::B
     uj /= tap
   end
   Yik = inv(br.r_pu + im * br.x_pu)
-  Y0ik = 0.5 * (br.g_pu + im * br.b_pu)
+  # the shunt arm of the end the flow leaves (0.20.0): tapSide 1 is the from
+  # end (arm behind the tap), tapSide 2 the to end
+  Y0ik = tapSide == 1 ? _branch_y0_from(br) : _branch_y0_to(br)
   return abs(ui)^2 * conj(Y0ik + Yik) - ui * conj(uj) * conj(Yik)
 end
 

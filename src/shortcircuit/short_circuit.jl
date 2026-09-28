@@ -72,6 +72,44 @@ end
 # below that (HV machines), 0.15·x''d for LV machines.
 _sc_generator_resistance(x_pu::Float64, ratedS_MVA::Float64, ratedU_kV::Float64)::Float64 = (ratedU_kV > 1.0 ? (ratedS_MVA >= 100.0 ? 0.05 : 0.07) : 0.15) * x_pu
 
+_sc_usable(x) = x !== nothing && isfinite(Float64(x)) && Float64(x) > 0.0
+
+# A maximum active power of 9999 MW and above is the way case files say
+# "no limit stated" (IIDM and MATPOWER cases carry it on every unit); no
+# machine is that large. Taken as a size it puts 0.2 pu on 9999 MVA and
+# the fault current of a 14-bus case at 2667 kA (measured on ieee14).
+const SC_PMAX_PLACEHOLDER_MW = 9999.0
+_sc_usable_pmax(x) = _sc_usable(x) && Float64(x) < SC_PMAX_PLACEHOLDER_MW
+
+"""
+    sc_machine_size(net, machine) -> (value, source)
+
+The size a default reactance of a synchronous machine refers to, in MVA:
+the rated power of the source record (`source = :rated_s`), else the
+maximum active power of the unit (`:pmax`), else `nothing` (`:none`, the
+caller falls back to the network base and flags it). The maximum active
+power comes from the record (`pmax_MW`) where the adapter carries it, and
+otherwise from the generating unit of the network at the machine's bus:
+the unit of the same name, or the only unit with a maximum at that bus. A maximum of
+`SC_PMAX_PLACEHOLDER_MW` and above is a placeholder and no size.
+Several unnamed units at one bus give no answer rather than a guessed one.
+"""
+function sc_machine_size(net::Net, m)
+  rated = hasproperty(m, :ratedS_MVA) ? m.ratedS_MVA : nothing
+  _sc_usable(rated) && return (value = Float64(rated), source = :rated_s)
+  pmax = hasproperty(m, :pmax_MW) ? m.pmax_MW : nothing
+  _sc_usable_pmax(pmax) && return (value = Float64(pmax), source = :pmax)
+  (hasproperty(m, :bus) && m.bus !== nothing) || return (value = nothing, source = :none)
+  busidx = get(net.busDict, String(m.bus), nothing)
+  busidx === nothing && return (value = nothing, source = :none)
+  units = [ps for ps in net.prosumpsVec if Int(ps.comp.cFrom_bus) == busidx && (ps.comp.cTyp == Generator || ps.comp.cTyp == SynchronousMachine) && _sc_usable_pmax(ps.maxP)]
+  name = (hasproperty(m, :name) && m.name !== nothing) ? String(m.name) : ""
+  named = [ps for ps in units if !isempty(name) && String(ps.comp.cName) == name]
+  length(named) == 1 && return (value = Float64(named[1].maxP), source = :pmax)
+  length(units) == 1 && return (value = Float64(units[1].maxP), source = :pmax)
+  return (value = nothing, source = :none)
+end
+
 # The Takahashi/Erisman-Tinney recursion moved to the shared module
 # src/takahashi.jl (the SE diagnostics reuse the identical backward pass
 # for the selected inverse). This alias keeps every short-circuit call
@@ -108,15 +146,32 @@ function _sc_source_admittances(net::Net, sc, case::Symbol, c_override::Float64,
     vn = getNodeVn(net.nodeVec[busidx])
     name = something(m.name, m.mrid)
     xdpp = m.satDirectSubtransX_pu
-    if xdpp === nothing || !isfinite(Float64(xdpp)) || Float64(xdpp) <= 0.0
+    no_reactance = xdpp === nothing || !isfinite(Float64(xdpp)) || Float64(xdpp) <= 0.0
+    no_rating = m.ratedS_MVA === nothing || !isfinite(Float64(m.ratedS_MVA)) || Float64(m.ratedS_MVA) <= 0.0
+    srated = m.ratedS_MVA
+    if no_reactance
+      # The default is a per-unit value on the size of the machine, so the
+      # size decides the current: rated power, else the maximum active
+      # power of the unit, else the network base. The last step says
+      # nothing about the machine and carries its own reason.
       xdpp = 0.2
-      why = "short-circuit: SynchronousMachine $(name) has no usable x''_d — default 0.2 pu (machine base) substituted"
+      size = sc_machine_size(net, m)
+      srated = something(size.value, sbase)
+      why = if size.source === :rated_s
+        "short-circuit: SynchronousMachine $(name) has no usable x''_d — default 0.2 pu (machine base) substituted"
+      elseif size.source === :pmax
+        "short-circuit: SynchronousMachine $(name) has no usable x''_d and no ratedS: default 0.2 pu on its maximum active power $(srated) MW substituted"
+      else
+        "short-circuit: SynchronousMachine $(name) has neither x''_d nor ratedS nor a usable maximum active power: its contribution rests on defaults alone (0.2 pu on the network base $(sbase) MVA)"
+      end
       note(why)
       flag_bus(busidx, why)
       flag_island(busidx, why)
-    end
-    srated = m.ratedS_MVA
-    if srated === nothing || !isfinite(Float64(srated)) || Float64(srated) <= 0.0
+    elseif no_rating
+      # a stated reactance is a per-unit value on a base the record does not
+      # name; the maximum active power is no substitute here, because an
+      # adapter that converts from ohm (IIDM) has formed the value on the
+      # network base already
       srated = sbase
       why = "short-circuit: SynchronousMachine $(name) has no usable ratedS — network base $(sbase) MVA substituted"
       note(why)

@@ -467,7 +467,7 @@ power_flow:
       @test occursin("Q-limit detail artifact  : q_limit.log", run_log)
       @test occursin("full details        : q_limit.log", run_log)
       @test !occursin("full details     : q_limit_initial_limits.csv", run_log)
-      # the console (and with it run.log) is COMPACT since 2026-09-05: it
+      # the console (and with it run.log) is COMPACT: it
       # names the case and summarizes the convention checks instead of
       # printing three MATPOWER option blocks per run. The detailed record
       # lives in the matpower_auto_profile.log artifact, checked below.
@@ -630,7 +630,7 @@ power_flow:
       @test occursin("Full run details", full_log)
       # run.log is the narrative: the resolved configuration is not dumped
       # into it anymore — its one home is the effective_config.yaml artifact,
-      # referenced by a pointer line (logging cleanup, 2026-07-30)
+      # referenced by a pointer line (logging cleanup)
       @test !occursin("Effective Sparlectra Configuration", full_log)
       @test occursin("effective configuration: effective_config.yaml", full_log)
       @test isfile(joinpath(full_dir, "effective_config.yaml"))
@@ -829,12 +829,12 @@ power_flow:
         # entire forced set: CASE-scope keys skip the general configuration
         # file in that situation (resolve_config), so the self-check ran
         # as an ordinary solve. That is where the previous expectation here
-        # came from, recorded on 2026-09-04 as a "fixed property of the
+        # came from, recorded as a "fixed property of the
         # file": 4 iterations to 5.2e-12, which is a converged run, not a
         # fixed-reference check. With the forced settings on the override
         # level the contract holds again: exactly one iteration from the
         # imported state, and the residual OF that state is the answer.
-        # The historical case14 anchor (0.0422, recorded 2026-07-30) ran here
+        # The historical case14 anchor (0.0422) ran here
         # from the local cache only; since 0.16.2 the shipped sp_case14 anchor
         # is the one fixed reference, so no test gates on a download.
         sp14 = abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json"))
@@ -844,7 +844,7 @@ power_flow:
         @test isapprox(sp14_check.raw_result.final_mismatch, 0.09082632227760662; rtol = 1e-6)
 
         # Neither a case configuration file nor a caller override may move
-        # the fixed reference. Both were possible until 2026-09-07: the file
+        # the fixed reference. Both were possible before this fix: the file
         # because case-scope keys fall through to the packaged defaults as
         # soon as one exists, the override because the forced settings only
         # travelled in a configuration FILE, which sits below the override
@@ -973,12 +973,29 @@ power_flow:
       @test any(artifact -> artifact.kind === :effective_config, missing.artifacts)
       @test any(artifact -> artifact.kind === :run_metadata, missing.artifacts)
 
-      invalid_config = joinpath(tmpdir, "invalid.yaml")
-      write(invalid_config, "power_flow:\n  typo_tol: 1.0e-8\n")
-      invalid = run_sparlectra_api(casefile = casefile, config_file = invalid_config, output_dir = joinpath(tmpdir, "invalid"))
-      @test !invalid.success
-      @test invalid.reason == "invalid_configuration"
-      @test invalid.message !== nothing
+      # the MATPOWER export option writes its artifact for every case
+      # format (it was wired for DTF cases only and ignored otherwise)
+      exported = run_sparlectra_api(casefile = casefile, config_file = template, output_dir = joinpath(tmpdir, "matpower_export"), matpower_export_requested = true)
+      @test exported.success
+      @test isfile(joinpath(tmpdir, "matpower_export", "matpower_export.m"))
+      @test exported.metadata["matpower_export_status"] == "completed"
+      @test exported.metadata["matpower_export_file"] == "matpower_export.m"
+      plain_run = run_sparlectra_api(casefile = casefile, config_file = template, output_dir = joinpath(tmpdir, "no_matpower_export"))
+      @test !isfile(joinpath(tmpdir, "no_matpower_export", "matpower_export.m"))
+      @test !haskey(plain_run.metadata, "matpower_export_status")
+
+      # an unknown key in a configuration FILE is warned about and dropped;
+      # the run goes through (a stored file must keep loading across
+      # releases), while the same key as a programmatic override below
+      # stays an error
+      unknown_config = joinpath(tmpdir, "unknown_key.yaml")
+      write(unknown_config, "power_flow:\n  typo_tol: 1.0e-8\n")
+      unknown_logger = Test.TestLogger(min_level = Logging.Warn)
+      unknown = Logging.with_logger(unknown_logger) do
+        run_sparlectra_api(casefile = casefile, config_file = unknown_config, output_dir = joinpath(tmpdir, "unknown_key"))
+      end
+      @test unknown.success
+      @test any(record -> occursin("power_flow.typo_tol is ignored", record.message), unknown_logger.logs)
 
       invalid_override = run_sparlectra_api(casefile = casefile, config_file = template, output_dir = joinpath(tmpdir, "invalid_override"), config_overrides = Dict("power_flow.typo_tol" => 1.0e-8))
       @test !invalid_override.success
@@ -1248,7 +1265,7 @@ power_flow:
       @test self_check_yaml["power_flow"]["start_mode"]["start_projection"] === false
       @test self_check_yaml["power_flow"]["qlimits"]["enabled"] === false
       # The file above SAYS max_iter=1; only the run proves it. The Web UI
-      # form submits power_flow.max_iter with every run, and until 2026-09-07
+      # form submits power_flow.max_iter with every run, and before this fix
       # that form value won, because the forced settings travelled in a
       # configuration file and overrides sit above it.
       diagnose_forced = start_powerflow_run(Dict("casefile" => casefile, "config_file" => config_file, "output_root" => output_root, "diagnose_mode" => true, "config_overrides" => Dict("benchmark.enabled" => false, "power_flow.max_iter" => 80, "power_flow.rescue" => true)))
@@ -1627,6 +1644,51 @@ power_flow:
       remaining = load_powerflow_run_index(output_root)["runs"]
       @test length(remaining) == 1
       @test remaining[1]["run_id"] == "unsafe-index-entry"
+    end
+  end)() end
+
+  @testset "tap-changer model precedence artifact (tap_models.log)" begin (function ()
+    # a transformer with a typed phase model at a non-neutral step: the
+    # resolver replaces the constructed ratio/shift and leaves one line in
+    # net.tapModelNotices; a service run must show that line as an artifact
+    net = Net(name = "pst_notice", baseMVA = 100.0)
+    for b in ("Slack", "Mid", "Load")
+      addBus!(net = net, busName = b, vn_kV = 110.0)
+    end
+    addProsumer!(net = net, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "Slack")
+    addProsumer!(net = net, busName = "Load", type = "ENERGYCONSUMER", p = -60.0, q = -20.0)
+    model = PhaseTapChangerModel(kind = :asymmetrical, step = 3, lowStep = -10, highStep = 10, neutralStep = 0, voltage_step_increment = 0.01, winding_connection_angle_deg = 90.0, convention = :direct_regulating_vector)
+    addPIModelTrafo!(net = net, fromBus = "Slack", toBus = "Mid", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1, phase_taps = model)
+    addPIModelACLine!(net = net, fromBus = "Slack", toBus = "Mid", r_pu = 0.03, x_pu = 0.2, b_pu = 0.0, status = 1)
+    addPIModelACLine!(net = net, fromBus = "Mid", toBus = "Load", r_pu = 0.02, x_pu = 0.12, b_pu = 0.01, status = 1)
+    @test length(net.tapModelNotices) == 1
+    mktempdir() do tmpdir
+      casefile = exportSCF(net; file = joinpath(tmpdir, "pst_notice.scf.json"))
+      output_dir = joinpath(tmpdir, "run")
+      result = run_sparlectra_api(casefile = casefile, output_dir = output_dir, config_overrides = Dict("benchmark.enabled" => false))
+      @test result.success
+      artifact = joinpath(output_dir, "tap_models.log")
+      @test isfile(artifact)
+      text = read(artifact, String)
+      @test occursin("replaced by model at phase step 3", text)
+      @test any(a -> a.name == "tap_models.log" && a.kind === :tap_model_log, result.artifacts)
+      @test occursin("Tap-changer model precedence artifact: tap_models.log (1 transformer(s))", read(joinpath(output_dir, "run.log"), String))
+      # the same network without the model writes no such artifact
+      plain_net = Net(name = "pst_plain", baseMVA = 100.0)
+      for b in ("Slack", "Mid", "Load")
+        addBus!(net = plain_net, busName = b, vn_kV = 110.0)
+      end
+      addProsumer!(net = plain_net, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "Slack")
+      addProsumer!(net = plain_net, busName = "Load", type = "ENERGYCONSUMER", p = -60.0, q = -20.0)
+      addPIModelTrafo!(net = plain_net, fromBus = "Slack", toBus = "Mid", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1)
+      addPIModelACLine!(net = plain_net, fromBus = "Slack", toBus = "Mid", r_pu = 0.03, x_pu = 0.2, b_pu = 0.0, status = 1)
+      addPIModelACLine!(net = plain_net, fromBus = "Mid", toBus = "Load", r_pu = 0.02, x_pu = 0.12, b_pu = 0.01, status = 1)
+      @test isempty(plain_net.tapModelNotices)
+      plain = joinpath(tmpdir, "plain")
+      plain_result = run_sparlectra_api(casefile = exportSCF(plain_net; file = joinpath(tmpdir, "pst_plain.scf.json")), output_dir = plain, config_overrides = Dict("benchmark.enabled" => false))
+      @test plain_result.success
+      @test !isfile(joinpath(plain, "tap_models.log"))
+      @test !any(a -> a.kind === :tap_model_log, plain_result.artifacts)
     end
   end)() end
   return nothing

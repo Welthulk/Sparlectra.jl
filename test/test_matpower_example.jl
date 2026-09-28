@@ -19,6 +19,7 @@
 using Sparlectra
 using LinearAlgebra
 using Test
+using Logging
 
 function run_matpower_example_tests()
   @testset "Central Sparlectra configuration" begin (function ()
@@ -47,25 +48,35 @@ function run_matpower_example_tests()
     write(bad_method_cfg, "power_flow:\n  method: polar\n")
     @test_throws ArgumentError Sparlectra.load_sparlectra_config(bad_method_cfg; reload = true)
 
+    # an unknown key in a configuration FILE (a stale or misspelled entry)
+    # is warned about and dropped, the file loads with the default for it;
+    # an invalid VALUE of a known key (method: polar above) stays an error
     bad_sparse_cfg = test_scratch_path(".yaml")
     write(bad_sparse_cfg, "power_flow:\n  sparse: true\n")
-    @test_throws ArgumentError Sparlectra.load_sparlectra_config(bad_sparse_cfg; reload = true)
+    sparse_cfg = @test_logs (:warn, r"Unknown Sparlectra configuration key power_flow\.sparse is ignored") match_mode = :any Sparlectra.load_sparlectra_config(bad_sparse_cfg; reload = true)
+    @test sparse_cfg isa Sparlectra.SparlectraConfig
 
     bad_unknown_cfg = test_scratch_path(".yaml")
     write(bad_unknown_cfg, "power_flow:\n  typo_tol: 1.0e-4\n")
-    @test_throws ArgumentError Sparlectra.load_sparlectra_config(bad_unknown_cfg; reload = true)
+    unknown_cfg = @test_logs (:warn, r"Unknown Sparlectra configuration key power_flow\.typo_tol is ignored") match_mode = :any Sparlectra.load_sparlectra_config(bad_unknown_cfg; reload = true)
+    @test unknown_cfg isa Sparlectra.SparlectraConfig
 
+    # a removed key with a replacement names the replacement in its warning
+    # (once per process, so the text is checked on whatever was captured)
     removed_key_cfg = test_scratch_path(".yaml")
     write(removed_key_cfg, "matpower_import:\n  benchmark: true\n")
-    err_removed = try
+    removed_logger = Test.TestLogger(min_level = Logging.Warn)
+    removed_cfg = Logging.with_logger(removed_logger) do
       Sparlectra.load_sparlectra_config(removed_key_cfg; reload = true)
-      nothing
-    catch err
-      err
     end
-    @test err_removed isa ArgumentError
-    @test occursin("matpower_import.benchmark", sprint(showerror, err_removed))
-    @test occursin("benchmark.enabled", sprint(showerror, err_removed))
+    @test removed_cfg isa Sparlectra.SparlectraConfig
+    @test removed_cfg.benchmark.enabled == Sparlectra.SparlectraConfig().benchmark.enabled
+    for record in removed_logger.logs
+      # the once-per-session config_version notice of a version-less file is not the subject here
+      occursin("declares no config_version", record.message) && continue
+      @test occursin("matpower_import.benchmark", record.message)
+      @test occursin("benchmark.enabled", record.message)
+    end
 
     bench_cfg = test_scratch_path(".yaml")
     write(bench_cfg, "benchmark:\n  enabled: false\n  methods: [rectangular]\n  seconds: 0.1\n  samples: 2\n  show_once: true\n")

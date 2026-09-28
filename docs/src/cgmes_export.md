@@ -116,6 +116,10 @@ export with an error naming both keys before any file is written.
 
 ## [Export from the Web UI](@id cgmes-export-webui)
 
+The run option **Write MATPOWER export artifact** works the same way for
+every case format: the network of the run is written as `matpower_export.m`
+next to the other artifacts (a DTF case writes `dtf_native_matpower_export.m`).
+
 The run form's **Export case as CGMES delivery** checkbox writes one
 artifact, the combined `<case>_CGMES.zip` with all four profiles, right
 after the network is built; runs that do not converge export too (the SV
@@ -127,9 +131,46 @@ The checkbox works for every case format; CGMES cases carry their
 harvested zero-sequence line attributes along. Service callers use
 `export_cgmes: true` in the `start_powerflow_run` request.
 
+## Tap-changer classes
+
+A transformer whose winding carries a typed phase model in the CGMES
+regulating-vector convention exports the model's class with its step:
+`:symmetrical` as `PhaseTapChangerSymmetrical`, `:asymmetrical` as
+`PhaseTapChangerAsymmetrical` (with `windingConnectionAngle`), `:tabular`
+as `PhaseTapChangerTabular` with its `PhaseTapChangerTable` and points; a
+model that came in as `PhaseTapChangerLinear` goes out as a table (the
+linear origin is not reconstructed). `ratedU1` then carries the neutral
+ratio and the importer applies the model on top, so the round trip keeps
+the model. A branch without a model, or with a model in the from-side
+reciprocal convention (DTF, hand-built), keeps the single-step
+`PhaseTapChangerLinear` that carries the solved shift exactly. Ratio tap
+changers export as `RatioTapChanger` (no table). Each end's magnetizing
+admittance is written on its own `PowerTransformerEnd`.
+
+## Short-circuit data
+
+The export writes the short-circuit data the network carries: the harvest
+of a CGMES import, the generators of a PowSyBl import with their
+reactances and ratings, the feeder of a case file. A record belongs to the
+unit with its mRID, else to the unit of its bus that carries its name, else
+to the unit of its class on a bus that has one record of the class. The
+feeder of an external grid has no unit of its own class where the
+reference unit is typed as a generator: the reference unit of such a bus
+is written as the `ExternalNetworkInjection` the record describes. A
+network without source data gives a delivery without it, and the
+short-circuit run on that delivery is refused
+([Short-Circuit Analysis](@ref short_circuit_source_data)).
+
 ## Scope
 
 Not produced: tap and machine controller wiring (tap changers carry range
-and position, not the controller logic), per-step tabular tap tables (the
-solved ratio/shift is exact), and the DC modeling of a source delivery.
+and position, not the controller logic), ratio tap tables, and the DC
+modeling of a source delivery. An `ACLineSegment` carries one charging
+value, which reads back in two halves. A line whose two terminal shunt arms
+differ (the network-side admittance of a PowSyBl dangling line) is exported
+with the symmetric part on the segment and the excess of each terminal as a
+`LinearShuntCompensator` at that bus, as the MATPOWER export does it: the
+delivery solves to the voltages of the network. The delivery cannot say
+that the compensator belongs to the line, so an outage of the line leaves
+it in place; the export names every such line in its notices.
 Import: [CGMES Import](cgmes_import.md).

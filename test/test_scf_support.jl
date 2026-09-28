@@ -167,6 +167,13 @@ nothing that is not explicitly allowed to differ.
 function scf_roundtrip_field_diffs(a, b)
   msgs = String[]
   append!(msgs, string("net.", m) for m in _scf_rt_field_diffs(a, b, :net))
+  # The case-format import counts every machine as a short-circuit source
+  # and adds a record WITHOUT data for a unit the file names none for
+  # (marked `declared = false`, never written by the export). Those records
+  # are derived on import, not carried by the file, so a network that has
+  # them only on the imported side lost nothing in the round trip.
+  declared(net) = count(m -> !(hasproperty(m, :declared) && m.declared === false), net.sc_sources.synchronous_machines)
+  declared(a) == declared(b) && filter!(m -> !startswith(m, "net.sc_sources.synchronous_machines"), msgs)
   for (kind, va, vb) in ((:node, a.nodeVec, b.nodeVec), (:branch, a.branchVec, b.branchVec),
                          (:prosumer, a.prosumpsVec, b.prosumpsVec), (:shunt, a.shuntVec, b.shuntVec))
     if length(va) != length(vb)

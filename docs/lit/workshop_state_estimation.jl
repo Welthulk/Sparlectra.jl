@@ -85,7 +85,7 @@
 # ## Load the packages
 #
 # Every printed number sits next to an @assert (the scenarios-workshop     #src
-# pattern, task_se_visibility): the notebook cannot drift silently.        #src
+# pattern): the notebook cannot drift silently.        #src
 # `Random` (standard library) provides the seeded generator that makes the
 # synthetic measurement noise reproducible; `LinearAlgebra` (standard
 # library) contributes `nullspace` for the observability deep dive.

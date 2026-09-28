@@ -14,7 +14,8 @@
 #
 # file: tools/generate_webui_help_excerpts.jl
 # purpose: generate app/src/webui/help_excerpts.jl, the documentation
-#          sections the Web UI help pages (/help/<topic>) show, from the
+#          sections the Web UI help pages (/help/<topic>) show, the two
+#          help pages (/help, /help/reference) and the search index, from the
 #          `doc` targets of the help registry (WEBUI_HELP_TOPICS in
 #          app/src/webui/docs.jl). The Web UI reads nothing from docs/src at
 #          run time (0.18.0 hard cut): the sections are extracted HERE, at
@@ -63,9 +64,50 @@ const _EXCERPT_HEADER = """
 
 """
 
-# The documentation page that IS the Web UI manual: its sections ship whole
-# and the page as a whole is the in-app manual (/help).
+# The documentation pages that ARE the Web UI help: their sections ship
+# whole and each page as a whole is an in-app page, the user help at /help
+# and the reference at /help/reference.
 const WEBUI_MANUAL_PAGE = "webui"
+const WEBUI_REFERENCE_PAGE = "webui_reference"
+const WEBUI_HELP_PAGE_ROUTES = Dict(WEBUI_MANUAL_PAGE => "/help", WEBUI_REFERENCE_PAGE => "/help/reference")
+
+# The labels (`(@id label)`) of the headings of the help pages, label to
+# page, so that a reference to one of them stays inside the Web UI. Filled
+# by generate_webui_help_excerpts before anything is extracted.
+const _EXCERPT_HELP_LABELS = Dict{String,String}()
+
+function _excerpt_collect_help_labels!(docs_src::AbstractString)
+  empty!(_EXCERPT_HELP_LABELS)
+  for page in (WEBUI_MANUAL_PAGE, WEBUI_REFERENCE_PAGE)
+    path = joinpath(docs_src, page * ".md")
+    isfile(path) || continue
+    for m in eachmatch(r"^#{1,6} \[[^\]]*\]\(@id ([A-Za-z0-9_.-]+)\)"m, read(path, String))
+      _EXCERPT_HELP_LABELS[String(m.captures[1])] = page
+    end
+  end
+  return _EXCERPT_HELP_LABELS
+end
+
+# The id a heading has on an in-app page: its label, else the text as a
+# lowercase slug (a link written for the published site carries the slug
+# with capitals).
+_excerpt_fragment(fragment::AbstractString)::String = haskey(_EXCERPT_HELP_LABELS, fragment) ? String(fragment) : lowercase(String(fragment))
+
+const _EXCERPT_HELP_REF = r"\[([^\]]+)\]\(@ref ([A-Za-z0-9_.-]+)\)"
+const _EXCERPT_HELP_PAGE_LINK = r"\]\((webui_reference|webui)\.md(#[A-Za-z0-9_.-]+)?\)"
+
+function _excerpt_help_ref(hit::AbstractString)::String
+  m = match(_EXCERPT_HELP_REF, hit)
+  page = get(_EXCERPT_HELP_LABELS, String(m.captures[2]), nothing)
+  page === nothing && return String(hit)
+  return string("[", m.captures[1], "](", WEBUI_HELP_PAGE_ROUTES[page], "#", m.captures[2], ")")
+end
+
+function _excerpt_help_page_link(hit::AbstractString)::String
+  m = match(_EXCERPT_HELP_PAGE_LINK, hit)
+  fragment = m.captures[2] === nothing ? "" : "#" * _excerpt_fragment(SubString(m.captures[2], 2))
+  return string("](", WEBUI_HELP_PAGE_ROUTES[String(m.captures[1])], fragment, ")")
+end
 
 # Documenter syntax the Markdown standard library does not know:
 # `[text](@ref)` and `[text](@ref name)` keep their text, `[text](@id name)`
@@ -73,7 +115,11 @@ const WEBUI_MANUAL_PAGE = "webui"
 # published documentation; `SPARLECTRADOCS/` is replaced by the configured base URL
 # when the help page renders.
 function _excerpt_rewrite_links(text::AbstractString, page::AbstractString; same_page_online::Bool = true)::String
-  out = replace(String(text), r"\[([^\]]+)\]\(@ref\)" => s"\1")
+  # a reference to a labelled heading of a help page and a link to a help
+  # page stay inside the Web UI (/help, /help/reference)
+  out = replace(String(text), _EXCERPT_HELP_REF => _excerpt_help_ref)
+  out = replace(out, _EXCERPT_HELP_PAGE_LINK => _excerpt_help_page_link)
+  out = replace(out, r"\[([^\]]+)\]\(@ref\)" => s"\1")
   out = replace(out, r"\[([^\]]+)\]\(@ref [^)]*\)" => s"\1")
   out = replace(out, r"\]\(([A-Za-z0-9_]+)\.md(#[A-Za-z0-9_.-]+)?\)" => s"](SPARLECTRADOCS/\1/\2)")
   # a fragment of the same page: online from an excerpt, in-page in the manual
@@ -97,7 +143,7 @@ stripped of their labels with the label recorded in `anchors` (heading text
 to slug) so the renderer can give the heading the same id the published
 site uses and in-page links keep working.
 """
-function extract_webui_help_manual(markdown::AbstractString)
+function extract_webui_help_manual(markdown::AbstractString; page::AbstractString = WEBUI_MANUAL_PAGE)
   anchors = Pair{String,String}[]
   lines = String[]
   in_code = false
@@ -112,7 +158,7 @@ function extract_webui_help_manual(markdown::AbstractString)
     isempty(label) || push!(anchors, text => label)
     push!(lines, string(m.captures[1], " ", text))
   end
-  return (markdown = _excerpt_rewrite_links(join(lines, '\n'), WEBUI_MANUAL_PAGE; same_page_online = false), anchors = anchors)
+  return (markdown = _excerpt_rewrite_links(join(lines, '\n'), page; same_page_online = false), anchors = anchors)
 end
 
 # What a topic page shows of its section. A section of the Web UI manual
@@ -191,7 +237,7 @@ function extract_webui_help_section(markdown::AbstractString, anchor::AbstractSt
   blocks = _excerpt_blocks(body)
   # a library section: its lead paragraph when it has one, nothing when it
   # opens with a table or a list (the hint and the link carry the page then)
-  kept = page == WEBUI_MANUAL_PAGE ? blocks : (!isempty(blocks) && _excerpt_is_prose(blocks[1]) ? blocks[1:1] : String[])
+  kept = haskey(WEBUI_HELP_PAGE_ROUTES, page) ? blocks : (!isempty(blocks) && _excerpt_is_prose(blocks[1]) ? blocks[1:1] : String[])
   return (title = String(title), markdown = _excerpt_rewrite_links(join(kept, "\n\n"), page), truncated = length(kept) < length(blocks))
 end
 
@@ -203,7 +249,9 @@ section. Targets are the unique `doc` values of the help registry, sorted.
 """
 function generate_webui_help_excerpts(; docs_src::AbstractString = _EXCERPT_DOCS_SRC)
   failures = String[]
+  _excerpt_collect_help_labels!(docs_src)
   targets = sort!(unique!([String(meta.doc) for meta in values(SparlectraApp.WEBUI_HELP_TOPICS) if !isempty(meta.doc)]))
+  excerpts = Dict{String,String}()
   io = IOBuffer()
   print(io, _EXCERPT_HEADER)
   println(io, "const WEBUI_HELP_EXCERPTS = Dict{String,NamedTuple{(:title, :markdown, :truncated),Tuple{String,String,Bool}}}(")
@@ -224,24 +272,70 @@ function generate_webui_help_excerpts(; docs_src::AbstractString = _EXCERPT_DOCS
       push!(failures, "$(target): no heading with (@id $(anchor)) in $(page).md")
       continue
     end
+    excerpts[target] = section.markdown
     println(io, "  ", repr(target), " => (title = ", repr(section.title), ", markdown = ", repr(section.markdown), ", truncated = ", section.truncated, "),")
   end
   println(io, ")")
-  manual_path = joinpath(docs_src, WEBUI_MANUAL_PAGE * ".md")
-  if isfile(manual_path)
-    manual = extract_webui_help_manual(read(manual_path, String))
+  index = NamedTuple{(:title, :url, :kind, :text),Tuple{String,String,String,String}}[]
+  for (page, constant, what, kind) in ((WEBUI_MANUAL_PAGE, "WEBUI_HELP_MANUAL", "user help", "help"), (WEBUI_REFERENCE_PAGE, "WEBUI_HELP_REFERENCE", "reference", "reference"))
+    path = joinpath(docs_src, page * ".md")
+    if !isfile(path)
+      push!(failures, "$(page).md (the Web UI $(what)) does not exist")
+      continue
+    end
+    manual = extract_webui_help_manual(read(path, String); page = page)
     println(io)
-    println(io, "# The Web UI manual (docs/src/", WEBUI_MANUAL_PAGE, ".md) and the ids of its labelled headings.")
-    println(io, "const WEBUI_HELP_MANUAL = ", repr(manual.markdown))
-    println(io, "const WEBUI_HELP_MANUAL_ANCHORS = Dict{String,String}(")
+    println(io, "# The Web UI ", what, " (docs/src/", page, ".md) and the ids of its labelled headings.")
+    println(io, "const ", constant, " = ", repr(manual.markdown))
+    println(io, "const ", constant, "_ANCHORS = Dict{String,String}(")
     for (text, label) in manual.anchors
       println(io, "  ", repr(text), " => ", repr(label), ",")
     end
     println(io, ")")
-  else
-    push!(failures, "$(WEBUI_MANUAL_PAGE).md (the Web UI manual) does not exist")
+    append!(index, _excerpt_index_sections(manual.markdown, Dict{String,String}(manual.anchors), WEBUI_HELP_PAGE_ROUTES[page], kind))
   end
+  # the help topics of the controls: label and hint, and the section the
+  # topic page shows
+  for topic in sort!(collect(keys(SparlectraApp.WEBUI_HELP_TOPICS)))
+    meta = SparlectraApp.WEBUI_HELP_TOPICS[topic]
+    isempty(String(meta.doc)) && continue
+    text = strip(string(meta.hint, " ", SparlectraApp._webui_help_plain_text(get(excerpts, String(meta.doc), ""))))
+    push!(index, (title = String(meta.label), url = "/help/" * String(topic), kind = "control", text = String(text)))
+  end
+  println(io)
+  println(io, "# The search index of the help: one entry per section of the two help")
+  println(io, "# pages and per help topic of a control, the text without markup.")
+  println(io, "const WEBUI_HELP_SEARCH_INDEX = NamedTuple{(:title, :url, :kind, :text),Tuple{String,String,String,String}}[")
+  for entry in index
+    println(io, "  (title = ", repr(entry.title), ", url = ", repr(entry.url), ", kind = ", repr(entry.kind), ", text = ", repr(entry.text), "),")
+  end
+  println(io, "]")
   return (source = String(take!(io)), failures = failures)
+end
+
+# The sections of a help page for the search index: one entry per heading
+# of level 2 to 4, the text up to the next heading, tables included.
+function _excerpt_index_sections(markdown::AbstractString, anchors::AbstractDict, route::AbstractString, kind::AbstractString)
+  entries = NamedTuple{(:title, :url, :kind, :text),Tuple{String,String,String,String}}[]
+  title = ""
+  body = String[]
+  in_code = false
+  flush! = () -> begin
+    isempty(title) || push!(entries, (title = title, url = string(route, "#", SparlectraApp._webui_heading_id(title, anchors)), kind = String(kind), text = SparlectraApp._webui_help_plain_text(join(body, '\n'))))
+    empty!(body)
+  end
+  for line in split(String(markdown), '\n')
+    startswith(line, "```") && (in_code = !in_code)
+    m = in_code ? nothing : match(r"^(#{2,4}) (.*)$", line)
+    if m === nothing
+      push!(body, String(line))
+    else
+      flush!()
+      title = String(strip(m.captures[2]))
+    end
+  end
+  flush!()
+  return entries
 end
 
 """

@@ -326,7 +326,7 @@ end
 ## only knows the Chromium family (Edge, Chrome, Chromium, Brave) because
 ## only those support the chromeless `--app=` window.
 ##
-## Windows and macOS had NO fallback here until 2026-09-07: the function
+## Windows and macOS had NO fallback here at first: the function
 ## returned early unless the platform was Linux. A Windows 11 machine with
 ## Edge uninstalled and only Firefox therefore reached "manual_only", and
 ## the user had to type 127.0.0.1:8080 by hand. Every

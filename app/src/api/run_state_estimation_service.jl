@@ -35,7 +35,7 @@ solves exactly like the power-flow service).
 function _se_import_case(case_path::AbstractString, config; requested_format::Symbol = :auto)::ImportedCase
   format = _detect_case_format(String(case_path); requested = requested_format)
   # format policy stays here (the wording is this service's contract)
-  format in (:scf, :matpower, :cgmes, :dtf_for001) || throw(ArgumentError("State estimation needs a MATPOWER, CGMES, Sparlectra Case Format or DTF case; got format $(format)."))
+  format in (:scf, :matpower, :cgmes, :dtf_for001, :powsybl) || throw(ArgumentError("State estimation needs a MATPOWER, CGMES, Sparlectra Case Format, DTF or PowSyBl case; got format $(format)."))
   return import_case(String(case_path), config; requested_format = requested_format, run_kind = :state_estimation)
 end
 
@@ -78,6 +78,43 @@ _declared_phase_tap(br)::Bool = br.has_phase_tap && (br.phase_step_deg > 0.0 || 
 ## bus_voltages_complex.csv, which exists only when the run wrote detail
 ## CSVs. A missing artifact rejects up front with the hint to repeat the run
 ## with the detail CSV enabled; there is deliberately no silent re-solve.
+"""
+    _se_truth_run_warning(metadata) -> String
+
+The warning a measurement set inherits from the run it takes its truth
+state from: empty for a clean run, otherwise one sentence naming why the
+state is no solution of the model (state estimation outside the band,
+taps frozen at model positions, a non-converged run). Flows derived from
+such a state violate the node balances, and the set then contradicts the
+model before any estimation (a set built from a fallback
+run with J = 2859 produced KCL findings at every passive bus).
+"""
+function _se_truth_run_warning(metadata::AbstractDict)::String
+  reasons = String[]
+  band = String(get(metadata, "se_band_reason", ""))
+  (isempty(band) || band == "ok") || push!(reasons, "its J was outside the band ($(band))")
+  get(metadata, "se_tap_estimation_fallback", false) == true && push!(reasons, "its taps were frozen at their model positions")
+  status = String(get(metadata, "numerical_status", ""))
+  (isempty(status) || status == "converged") || push!(reasons, "it did not converge ($(status))")
+  isempty(reasons) && return ""
+  return string("the source run is no solution of the model: ", join(reasons, ", "), "; flows derived from its state violate the node balances, prefer truth state 'fresh solve'")
+end
+
+function _se_run_metadata(outdir::AbstractString)::Dict{String,Any}
+  f = joinpath(outdir, "result.json")
+  isfile(f) || return Dict{String,Any}()
+  parsed = try
+    scf_json_parse(read(f, String))
+  catch err
+    # an unreadable result file is no reason to refuse the state; the
+    # warning is simply not available and the log says why
+    @warn "measurement generator: result.json of the truth run could not be read, no source-run warning" file = f exception = err
+    return Dict{String,Any}()
+  end
+  md = parsed isa AbstractDict ? get(parsed, "metadata", Dict{String,Any}()) : Dict{String,Any}()
+  return md isa AbstractDict ? Dict{String,Any}(String(k) => v for (k, v) in md) : Dict{String,Any}()
+end
+
 function _se_truth_from_run!(net::Net, run_root::AbstractString, run_id::AbstractString, case_path::AbstractString)
   index = load_powerflow_run_index(run_root)
   entry = nothing
@@ -100,12 +137,12 @@ function _se_truth_from_run!(net::Net, run_root::AbstractString, run_id::Abstrac
     f = joinpath(outdir, "se_state.csv")
     isfile(f) || throw(ArgumentError("run $(run_id) has no se_state.csv artifact; repeat the state estimation"))
     readSEStateCSV!(net; file = f)
-    return (kind = "se", timestamp = ts, source_file = "se_state.csv")
+    return (kind = "se", timestamp = ts, source_file = "se_state.csv", warning = _se_truth_run_warning(_se_run_metadata(outdir)))
   end
   f = joinpath(outdir, "bus_voltages_complex.csv")
   isfile(f) || throw(ArgumentError("run $(run_id) has no bus_voltages_complex.csv artifact; repeat the run with the detailed result CSV enabled"))
   _se_apply_pf_voltage_csv!(net, f)
-  return (kind = "pf", timestamp = ts, source_file = "bus_voltages_complex.csv")
+  return (kind = "pf", timestamp = ts, source_file = "bus_voltages_complex.csv", warning = _se_truth_run_warning(_se_run_metadata(outdir)))
 end
 
 ## tolerant reader for the PF detail CSV bus_voltages_complex.csv: the file
@@ -186,7 +223,7 @@ end
 ## short (it starts from a converged state), so reporting only that one hid
 ## the expensive half: a CGMES run needed 36 to 40 iterations first and
 ## reported "3", which is how an iteration cap of 30 could look sufficient
-## while it broke that run (seen 2026-09-06).
+## while it broke that run.
 function _se_reported_iterations(res)::Int
   base = res.iterations
   tf = res.tapFixation
@@ -241,7 +278,7 @@ function _se_service_import(case_path, config, run_id, config_file, output_dir, 
   # named separately: "unknown" alone would leave the caller guessing; the
   # detector's own message names the way out (the format to pass, or auto)
   format === :unknown && return nothing, format, _api_failure("se_unsupported_format", string("The case format could not be determined. ", reason), run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
-  format in (:matpower, :cgmes, :scf, :dtf_for001) || return nothing, format, _api_failure("se_unsupported_format", "State estimation needs a MATPOWER, CGMES, Sparlectra Case Format or DTF case; got format $(format).", run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
+  format in (:matpower, :cgmes, :scf, :dtf_for001, :powsybl) || return nothing, format, _api_failure("se_unsupported_format", "State estimation needs a MATPOWER, CGMES, Sparlectra Case Format, DTF or PowSyBl case; got format $(format).", run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
   imported = try
     _se_import_case(case_path, config; requested_format = requested_format)
   catch err
@@ -480,7 +517,21 @@ function _run_state_estimation_service_body(
   # a configuration file reached the solver unchecked.
   robust_mode in (:off, :staged, :replacement) || return _api_failure("invalid_request", "se_robust_mode must be off, staged, or replacement (got $(robust_mode)).", run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
   k_eliminate > 0.0 || return _api_failure("invalid_request", "se_k_eliminate must be positive.", run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
-  (robust_k1 > 0.0 && robust_k2 >= robust_k1) || return _api_failure("invalid_request", "se_robust_k1 must be positive and se_robust_k2 >= se_robust_k1 (got k1=$(robust_k1), k2=$(robust_k2)).", run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
+  # The two knees belong to the staged mode only: down-weighting starts at
+  # k1 and is complete at k2, so k1 above k2 describes no curve. In every
+  # other mode the pair is not read; a stored pair that is out of order
+  # there must not stop the run, it is replaced by the configured pair and
+  # the log says so.
+  knees_ok = robust_k1 > 0.0 && robust_k2 >= robust_k1
+  if robust_mode === :staged
+    knees_ok || return _api_failure("invalid_request", "Staged down-weighting needs its start (\"down-weight from |r|/sigma\", se_robust_k1) positive and not above its end (\"full down-weight at |r|/sigma\", se_robust_k2): got k1=$(robust_k1), k2=$(robust_k2). Lower the first value or raise the second.", run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
+  elseif !knees_ok
+    open(logfile, "a") do io
+      println(io, "note: se_robust_k1=", robust_k1, " and se_robust_k2=", robust_k2, " are out of order; they are not used with down-weighting ", robust_mode, " and were replaced by the configured pair (", se_cfg.robust_k1, ", ", se_cfg.robust_k2, ")")
+    end
+    robust_k1 = se_cfg.robust_k1
+    robust_k2 = se_cfg.robust_k2
+  end
   max_eliminations >= 0 || return _api_failure("invalid_request", "se_max_eliminations must be >= 0 (got $(max_eliminations)).", run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
   (k_suppress > 0.0 && suppression_sigma > 0.0) || return _api_failure("invalid_request", "se_k_suppress and se_suppression_sigma must be positive.", run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
 
@@ -528,8 +579,8 @@ function _run_state_estimation_service_body(
       return _api_failure("invalid_measurements", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
     end
     # The artifact is written in the run's CSV format, not copied (a German
-    # Excel user found commas here next to semicolon result tables,
-    # 2026-09-24); the set's comment lines (case binding, generator
+    # Excel user found commas here next to semicolon result tables);
+    # the set's comment lines (case binding, generator
     # provenance, taps table) are carried over, so the artifact still reads
     # back as the same measurement set.
     head_comments, tail_comments = _measurement_csv_comments(measurement_file)
@@ -733,7 +784,7 @@ function _run_state_estimation_service_body(
   # Released taps are extra states, and a measurement set that carries the
   # voltages fine can still be too thin to pin them: the estimate then does
   # not settle at all and the user gets nothing, although the SAME set
-  # estimates cleanly without the taps (seen 2026-09-06 on case300 and a
+  # estimates cleanly without the taps (seen on case300 and a
   # CGMES delivery). So a non-convergence WITH released taps is not the
   # final answer: the taps are frozen back to their model position and the
   # estimation is repeated once. The log says it happened, because a silent
@@ -743,7 +794,7 @@ function _run_state_estimation_service_body(
     frozen = _freeze_all_tap_estimation!(net)
     # The failed run wrote its state into the net (updateNet = true is not
     # gated on convergence), so without this the retry starts from the
-    # DIVERGED iterate. Measured on the svedala set 2026-09-06: the failed
+    # DIVERGED iterate. Measured on the svedala set: the failed
     # tap run left bus angles spread over -178 to +167 degrees where the
     # power flow had -26 to +40. With state_estimation.flatstart = true the
     # retry ignores the start state and the damage stays invisible, which is
@@ -761,6 +812,28 @@ function _run_state_estimation_service_body(
     res = with_sparlectra_config(() -> runse!(net), run_cfg)
     tap_fallback_used = res.converged
     base_metadata["se_tap_estimation_fallback"] = tap_fallback_used
+    if tap_fallback_used
+      # The diagnostics above described the RELEASED-tap attempt (its J of
+      # the diverged iterate, its dof with the tap states), while the
+      # headline reports the frozen-tap run: se_diagnostics.md then
+      # contradicted the status line (J = 2e9 at dof 70 against J = 2859 at
+      # dof 78). The report has to describe the run it comes
+      # with, so the diagnostics repeat on the frozen taps; rows they
+      # eliminate leave the reported run the same way as in the first pass.
+      diag = with_sparlectra_config(() -> runse_diagnostics(net), run_cfg)
+      if !isempty(diag.eliminations)
+        for e in diag.eliminations
+          (1 <= e.measurement_index <= length(net.measurements)) || continue
+          net.measurements[e.measurement_index] = _set_measurement_active(net.measurements[e.measurement_index], false)
+        end
+        if v_before_taps !== nothing
+          for (i, nd) in enumerate(net.nodeVec)
+            nd._vm_pu, nd._va_deg = v_before_taps[i]
+          end
+        end
+        res = with_sparlectra_config(() -> runse!(net), run_cfg)
+      end
+    end
   end
   if !res.converged
     _write_service_performance_log!(output_dir, phase_recorder, se_total_start; headline = _SE_PERF_HEADLINE, status = "failed", label = "state-estimation")
@@ -772,7 +845,31 @@ function _run_state_estimation_service_body(
   open(joinpath(output_dir, "se_diagnostics.md"), "w") do io
     # same statement the result page carries: the tap positions below are
     # model values, so the J of this run measures THEM
-    tap_fallback_used && println(io, "\n> **Tap estimation fallback.** ", _SE_TAP_FALLBACK_NOTE, "\n")
+    tap_fallback_used && println(io, "\n> **Tap estimation fallback.** ", _SE_TAP_FALLBACK_NOTE, " The diagnostics below describe that frozen-tap run, the same one the status line reports.\n")
+    # The numbers the status line and run.log report come from the FINAL
+    # run (res); the diagnostics pass below ran on every active row before
+    # any elimination, so its own J counts rows the reported run no longer
+    # carries (seen on the MicroGrid: J 3555 at dof 65 in the
+    # pass, J 74 at dof 64 reported, one row eliminated in between). The
+    # report states the reported numbers first, so it never contradicts the
+    # page it belongs to.
+    println(io, "\n## Reported result\n")
+    # the run, the case and the set this report belongs to, so the file
+    # reads on its own (run id, case and set in
+    # the report; J/dof next to J, the page's leading number)
+    println(io, "- **Run:** ", run_id)
+    println(io, "- **Case:** ", basename(case_path))
+    println(io, "- **Measurement set:** ", from_case_file ? "carried by the case file" : basename(measurement_file))
+    reported_it = _se_reported_iterations(res)
+    println(io, "- **Converged:** ", res.converged, " in ", reported_it, " iteration(s)", reported_it != res.iterations ? " (max over the passes; final solve $(res.iterations))" : "")
+    println(io, "- **J/dof:** ", round(res.objectiveJ / max(res.dof, 1); digits = 2))
+    println(io, "- **Objective J:** ", round(res.objectiveJ; digits = 6), " (dof=", res.dof, ")", tap_fallback_used ? ", every tap frozen at its model position" : "")
+    n_elim = length(diag.eliminations)
+    n_elim > 0 && println(io, "- **Eliminated rows:** ", n_elim, " (identified by the diagnostics pass below; inactive in the reported run, still counted in the pass's own J)")
+    (hasproperty(diag, :reverted) && diag.reverted !== nothing) && println(io, "- **Not eliminated:** `", diag.reverted.id, "` (the control solve without it did not converge; the row stays active, see the pass below)")
+    println(io, "\nThese are the numbers of the status line and of `run.log`.\n")
+    println(io, "## Diagnostics pass (every row active, before any elimination)\n")
+    println(io, "The pass below ran on all rows and identified the eliminated ones; its J is therefore not the reported J. It is where a bad row shows.\n")
     print_se_diagnostics(io, diag; topN = 15, format = :markdown)
     # the critical rows by name (a detected critical measurement is stated, never left to be read off the wii)
     println(io, "\n## Critical measurements\n")

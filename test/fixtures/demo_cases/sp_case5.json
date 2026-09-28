@@ -47,12 +47,12 @@
   },
   "short_circuit": {
     "Lindhof_110": {
-      "ik_kA": 1.380413,
-      "sk_MVA": 263.004048
+      "ik_kA": 1.533970,
+      "sk_MVA": 292.260630
     },
     "Sandau_110": {
-      "ik_kA": 10.497278,
-      "sk_MVA": 2000.0
+      "ik_kA": 10.951551,
+      "sk_MVA": 2086.550743
     }
   },
   "state_estimation": {

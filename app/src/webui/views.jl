@@ -152,8 +152,8 @@ const _WEBUI_BUSY_FORM_SCRIPT = """<script>
 
 # A native <input type="file"> renders its button and its "no file selected"
 # text in the BROWSER's language, so on a German browser an otherwise English
-# page said "Durchsuchen" and "Keine Datei ausgewählt" (seen
-# 2026-09-09). The native input stays in the form (it is what carries the
+# page said "Durchsuchen" and "Keine Datei ausgewählt" (as
+# seen). The native input stays in the form (it is what carries the
 # bytes and the `required` check) but is moved off screen; a label styled as
 # a button opens it, and a span next to it names what was picked. The span is
 # kept current by the script below, wired into the layout, so any page can
@@ -328,7 +328,7 @@ function _webui_layout(title::AbstractString, content::AbstractString; show_back
   # The Info control belongs to the HEADER, not to three particular pages.
   # It used to be passed in by the Case, Settings and Runs renderers only, so
   # it vanished the moment the user clicked Operation Log, Run history, Last
-  # errors, Docs or a result page (reported 2026-09-07). Everything it shows
+  # errors, Docs or a result page (as reported). Everything it shows
   # is a property of the running server, not of the page, so a page that
   # knows better still overrides `header_info` and every other page now gets
   # the same menu built from the defaults those pages would resolve to.
@@ -337,7 +337,7 @@ function _webui_layout(title::AbstractString, content::AbstractString; show_back
   return """<!doctype html>
 <html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
 <title>$(_webui_escape(title)) · Sparlectra</title><link rel=\"stylesheet\" href=\"/static/sparlectra.css\"></head>
-<body><header class=\"site-header\"><a class=\"brand\" href=\"/powerflow\"><img class=\"brand-logo\" src=\"/assets/logo.png\" alt=\"Sparlectra.jl logo\">$(runtime_info)</a><nav><a href=\"/powerflow/case\">Case</a><a href=\"/powerflow/settings\">Settings</a><a href=\"/powerflow\">Runs</a><a href=\"/powerflow/history\">Run history</a><a href=\"/webui/operation-log\">Operation Log</a><a href=\"/help\">Help</a><a class=\"project-docs-link\" href=\"$(_webui_escape(_webui_docs_base_url()))\" target=\"_blank\" rel=\"noopener noreferrer\"><svg class=\"github-icon\" viewBox=\"0 0 16 16\" aria-hidden=\"true\"><path fill=\"currentColor\" d=\"M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.64 5.47 7.72.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.51-2.01.38-2.53-.5-2.69-.96-.09-.23-.48-.96-.82-1.15-.28-.15-.68-.53-.01-.54.63-.01 1.08.59 1.23.83.72 1.23 1.87.88 2.33.67.07-.53.28-.88.51-1.08-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.2-.36-1.04.08-2.16 0 0 .67-.22 2.2.84A7.4 7.4 0 0 1 8 3.93c.68 0 1.36.09 2 .27 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.96.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.25.54.74.54 1.5 0 1.08-.01 1.95-.01 2.22 0 .22.15.47.55.39A8.15 8.15 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z\"/></svg><span>Project Docs</span></a>$(header_info)<a href=\"/webui/last-errors\">Last errors</a><form method="post" action="/webui/shutdown" class="exit-form"><button type="submit" class="exit-button">Stop Web UI</button></form></nav></header>
+<body><header class=\"site-header\"><a class=\"brand\" href=\"/powerflow\"><img class=\"brand-logo\" src=\"/assets/logo.png\" alt=\"Sparlectra.jl logo\">$(runtime_info)</a><nav><a href=\"/powerflow/case\">Case</a><a href=\"/powerflow/settings\">Settings</a><a href=\"/powerflow\">Runs</a><a href=\"/powerflow/history\">Run history</a><a href=\"/webui/operation-log\">Operation Log</a><a href=\"/help\">Help</a>$(_webui_help_search_form(""; header = true))<a class=\"project-docs-link\" href=\"$(_webui_escape(_webui_docs_base_url()))\" target=\"_blank\" rel=\"noopener noreferrer\"><svg class=\"github-icon\" viewBox=\"0 0 16 16\" aria-hidden=\"true\"><path fill=\"currentColor\" d=\"M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.64 5.47 7.72.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.51-2.01.38-2.53-.5-2.69-.96-.09-.23-.48-.96-.82-1.15-.28-.15-.68-.53-.01-.54.63-.01 1.08.59 1.23.83.72 1.23 1.87.88 2.33.67.07-.53.28-.88.51-1.08-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.2-.36-1.04.08-2.16 0 0 .67-.22 2.2.84A7.4 7.4 0 0 1 8 3.93c.68 0 1.36.09 2 .27 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.96.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.25.54.74.54 1.5 0 1.08-.01 1.95-.01 2.22 0 .22.15.47.55.39A8.15 8.15 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z\"/></svg><span>Project Docs</span></a>$(header_info)<a href=\"/webui/last-errors\">Last errors</a><form method="post" action="/webui/shutdown" class="exit-form"><button type="submit" class="exit-button">Stop Web UI</button></form></nav></header>
 $(latency_banner)<main class="$(main_class)"$(refresh_attrs)>$(back_button)<h1>$(_webui_escape(title))</h1>$(content)</main><footer>$(_webui_escape(version_text)) · Local PowerFlow Web UI · loopback access only</footer>
 <script>
 (function () {
@@ -379,7 +379,7 @@ $(latency_banner)<main class="$(main_class)"$(refresh_attrs)>$(back_button)<h1>$
   };
   scheduleAutoRefresh();
 })();
-</script>$(_WEBUI_BUSY_FORM_SCRIPT)$(_WEBUI_FILE_FIELD_SCRIPT)</body></html>"""
+</script>$(_WEBUI_BUSY_FORM_SCRIPT)$(_WEBUI_FILE_FIELD_SCRIPT)$(_WEBUI_HELP_SEARCH_SCRIPT)</body></html>"""
 end
 
 function _webui_powerflow_info_menu(; output_root::AbstractString, config_file::AbstractString, case_directory::AbstractString, operation_log::AbstractString)::String
@@ -458,6 +458,7 @@ function render_webui_help(topic::AbstractString, metadata)::String
   # a section of the Web UI manual is also in the in-app manual, at its anchor
   page, anchor = _webui_help_doc_parts(doc)
   page == "webui" && !isempty(anchor) && push!(links, "<a class=\"button secondary\" href=\"/help#$(_webui_escape(anchor))\">Open in the Web UI help</a>")
+  page == "webui_reference" && !isempty(anchor) && push!(links, "<a class=\"button secondary\" href=\"/help/reference#$(_webui_escape(anchor))\">Open in the Web UI reference</a>")
   isempty(online) || push!(links, "<a class=\"button\" href=\"$(_webui_escape(online))\" target=\"_blank\" rel=\"noopener noreferrer\">Open this section in the documentation</a>")
   isempty(links) || push!(parts, "<p class=\"help-links\">$(join(links, " "))</p>")
   content = "<section class=\"panel help-page rendered-markdown\">$(join(parts, ""))</section>"
@@ -510,29 +511,251 @@ function _webui_markdown_heading_ids(html::AbstractString, anchors::AbstractDict
 end
 
 """
-    render_webui_help_manual() -> String
+    render_webui_help_manual(; page = :help) -> String
 
-The Web UI manual page (`/help`): the documentation page of the Web UI as
-shipped with the application (`WEBUI_HELP_MANUAL`, generated from
-`docs/src/webui.md`), with a table of contents over its sections, heading
-ids that match the published site, and the link to the page online. The
-page's own title heading is dropped, the layout carries the title.
+An in-app help page: the user help (`/help`, `page = :help`, generated
+from `docs/src/webui.md`) or the reference (`/help/reference`,
+`page = :reference`, from `docs/src/webui_reference.md`), as shipped with
+the application, with the search field, a table of contents over its
+sections, heading ids that match the published site, and the link to the
+page online. The page's own title heading is dropped, the layout carries
+the title.
 """
-function render_webui_help_manual()::String
-  html, headings = _webui_markdown_heading_ids(_webui_render_markdown(WEBUI_HELP_MANUAL), WEBUI_HELP_MANUAL_ANCHORS)
+function render_webui_help_manual(; page::Symbol = :help)::String
+  reference = page === :reference
+  markdown = reference ? WEBUI_HELP_REFERENCE : WEBUI_HELP_MANUAL
+  anchors = reference ? WEBUI_HELP_REFERENCE_ANCHORS : WEBUI_HELP_MANUAL_ANCHORS
+  html, headings = _webui_markdown_heading_ids(_webui_render_markdown(markdown), anchors)
   html = replace(html, r"<h1 id=\"[^\"]*\">.*?</h1>\s*"s => ""; count = 1)
   toc = join(("<li class=\"toc-level-$(level)\"><a href=\"#$(_webui_escape(id))\">$(_webui_escape(text))</a></li>" for (level, id, text) in headings if level in (2, 3)), "")
-  online = _webui_docs_base_url() * "webui/"
+  online = _webui_docs_base_url() * (reference ? "webui_reference/" : "webui/")
+  lead = reference ? "Operation and details: installation, directories, every form option, the run kinds, artifacts, history, configuration. The short way through the Web UI is the <a href=\"/help\">help</a>." :
+         "How the Web UI is used: cases, runs, results, settings. Details are in the <a href=\"/help/reference\">reference</a>; the ? next to a control opens the help of that control."
   content = string(
     "<section class=\"panel help-page rendered-markdown\">",
-    "<p class=\"help-hint\">How the Web UI is operated: cases, runs, results, configuration. Library topics (solver options, estimation, formats) are in the documentation; the ? next to a control opens its section.</p>",
+    "<p class=\"help-hint\">", lead, "</p>",
+    _webui_help_search_form(""),
+    "<div class=\"help-search-live\" data-help-search-results hidden></div>",
     "<details class=\"help-toc\" open><summary>Contents</summary><ul>$(toc)</ul></details>",
     html,
     "<p class=\"help-links\"><a class=\"button\" href=\"$(_webui_escape(online))\" target=\"_blank\" rel=\"noopener noreferrer\">Open this page in the documentation</a></p>",
     "</section>",
   )
-  return _webui_layout("Web UI help", content; show_back = true)
+  return _webui_layout(reference ? "Web UI reference" : "Web UI help", content; show_back = true)
 end
+
+# --- help search --------------------------------------------------------------
+# The search runs over the index that ships with the application
+# (WEBUI_HELP_SEARCH_INDEX, written by tools/generate_webui_help_excerpts.jl
+# from the two help pages and the help topics of the controls). The server
+# answers a query with the hit list; the script of the layout asks the same
+# route while the user types, so there is one search and it needs neither
+# a network nor a library.
+
+# Markdown of a section as plain text for matching and for the snippet.
+function _webui_help_plain_text(markdown::AbstractString)::String
+  text = replace(String(markdown), r"```.*?```"s => " ")
+  text = replace(text, r"\[([^\]]*)\]\([^)]*\)" => s"\1")
+  text = replace(text, r"^\s*\|?[-:| ]+\|?\s*$"m => " ")
+  text = replace(text, r"[`*|#>]" => " ")
+  return String(strip(replace(text, r"\s+" => " ")))
+end
+
+# The words of a query: lowercase, at most eight, each at least two
+# characters (a single letter matches every section).
+_webui_help_query_terms(query::AbstractString)::Vector{String} = first(unique!([String(t) for t in split(lowercase(strip(String(query)))) if length(t) >= 2]), 8)
+
+# Character ranges of `text` that one of the terms covers, merged and in
+# order. The comparison runs on a lowercase copy character by character, so
+# the ranges are positions of the text itself.
+function _webui_help_term_ranges(chars::Vector{Char}, terms::Vector{String})::Vector{UnitRange{Int}}
+  lowered = lowercase.(chars)
+  ranges = UnitRange{Int}[]
+  for term in terms
+    needle = collect(term)
+    n = length(needle)
+    for i in 1:(length(lowered) - n + 1)
+      view(lowered, i:(i + n - 1)) == needle && push!(ranges, i:(i + n - 1))
+    end
+  end
+  sort!(ranges; by = first)
+  merged = UnitRange{Int}[]
+  for r in ranges
+    if !isempty(merged) && first(r) <= last(merged[end]) + 1
+      merged[end] = first(merged[end]):max(last(merged[end]), last(r))
+    else
+      push!(merged, r)
+    end
+  end
+  return merged
+end
+
+# About 200 characters around the first term that occurs, as HTML: the text
+# escaped, every occurrence of a term inside <mark>.
+function _webui_help_snippet_html(text::AbstractString, terms::Vector{String})::String
+  chars = collect(String(text))
+  isempty(chars) && return ""
+  ranges = _webui_help_term_ranges(chars, terms)
+  at = isempty(ranges) ? 1 : first(ranges[1])
+  lo = max(1, at - 80)
+  hi = min(length(chars), at + 120)
+  io = IOBuffer()
+  lo > 1 && print(io, "... ")
+  pos = lo
+  for r in ranges
+    (last(r) < lo || first(r) > hi) && continue
+    a, b = max(first(r), lo), min(last(r), hi)
+    a > pos && print(io, _webui_escape(String(chars[pos:(a - 1)])))
+    print(io, "<mark>", _webui_escape(String(chars[a:b])), "</mark>")
+    pos = b + 1
+  end
+  pos <= hi && print(io, _webui_escape(String(chars[pos:hi])))
+  hi < length(chars) && print(io, " ...")
+  return String(take!(io))
+end
+
+"""
+    webui_help_search(query) -> Vector{NamedTuple}
+
+Search the shipped help for `query`: every word must occur in the title or
+the text of an entry of the index (a part of a word is enough, case does
+not matter). Returns `title`, `url`, `kind` (`"help"`, `"reference"` or
+`"control"`) and `snippet` (HTML), the entries whose title carries a word
+first, then by the number of occurrences. A query without a word of two
+characters returns nothing.
+"""
+function webui_help_search(query::AbstractString)
+  terms = _webui_help_query_terms(query)
+  hits = NamedTuple{(:title, :url, :kind, :snippet, :rank),Tuple{String,String,String,String,Int}}[]
+  isempty(terms) && return hits
+  for entry in WEBUI_HELP_SEARCH_INDEX
+    title = lowercase(entry.title)
+    text = lowercase(entry.text)
+    all(t -> occursin(t, title) || occursin(t, text), terms) || continue
+    in_title = count(t -> occursin(t, title), terms)
+    occurrences = sum(length(findall(t, text)) for t in terms)
+    push!(hits, (title = entry.title, url = entry.url, kind = entry.kind, snippet = _webui_help_snippet_html(entry.text, terms), rank = 1000 * in_title + min(occurrences, 999)))
+  end
+  sort!(hits; by = h -> -h.rank, alg = MergeSort)
+  return hits
+end
+
+const _WEBUI_HELP_KIND_LABELS = Dict("help" => "help", "reference" => "reference", "control" => "help of a control")
+
+# The search field: a form that works without a script (the server answers
+# at /help/search); the script of the layout adds the search while typing.
+function _webui_help_search_form(query::AbstractString; header::Bool = false)::String
+  shown = _webui_escape(strip(String(query)))
+  header && return "<form class=\"header-help-search\" method=\"get\" action=\"/help/search\" role=\"search\"><input type=\"search\" name=\"q\" value=\"\" placeholder=\"Search help ( / )\" aria-label=\"Search the help\" autocomplete=\"off\" data-help-search-input><div class=\"header-help-search-results\" data-help-search-results hidden></div></form>"
+  return "<form class=\"help-search\" method=\"get\" action=\"/help/search\" role=\"search\"><label>Search the help <input type=\"search\" name=\"q\" value=\"$(shown)\" placeholder=\"for example xiidm, slack, short circuit\" autocomplete=\"off\" data-help-search-input data-help-search-target=\"page\"></label> <button type=\"submit\">Search</button></form>"
+end
+
+# The hits of a query as HTML: the summary line and the list, or the
+# statement that nothing was found with the way to the published
+# documentation.
+function _webui_help_search_results_html(query::AbstractString)::String
+  shown = strip(String(query))
+  isempty(_webui_help_query_terms(shown)) && return "<p class=\"help-search-summary\">Enter a word of at least two characters.</p>"
+  hits = webui_help_search(shown)
+  if isempty(hits)
+    return "<p class=\"help-search-summary\">No hits for \"$(_webui_escape(shown))\". The search covers the help, the reference and the help of the controls, and every word must occur. The <a href=\"$(_webui_escape(_webui_docs_base_url()))\" target=\"_blank\" rel=\"noopener noreferrer\">published documentation</a> has a search of its own.</p>"
+  end
+  items = join(("<li><a href=\"$(_webui_escape(h.url))\">$(_webui_escape(h.title))</a> <span class=\"help-search-kind\">$(get(_WEBUI_HELP_KIND_LABELS, h.kind, h.kind))</span><br><span class=\"help-search-snippet\">$(h.snippet)</span></li>" for h in hits), "")
+  return string("<p class=\"help-search-summary\">$(length(hits)) hit(s) for \"$(_webui_escape(shown))\"</p><ul class=\"help-search-results\">", items, "</ul>")
+end
+
+"""
+    render_webui_help_search(query) -> String
+
+The page of the help search (`/help/search?q=...`): the search field with
+the query and the hits.
+"""
+function render_webui_help_search(query::AbstractString)::String
+  content = string(
+    "<section class=\"panel help-page rendered-markdown\">",
+    _webui_help_search_form(query),
+    "<div class=\"help-search-live\" data-help-search-results>", _webui_help_search_results_html(query), "</div>",
+    "<p class=\"help-links\"><a class=\"button secondary\" href=\"/help\">Help</a> <a class=\"button secondary\" href=\"/help/reference\">Reference</a></p>",
+    "</section>",
+  )
+  return _webui_layout("Search the help", content; show_back = true)
+end
+
+# The search while typing and the two keys: "/" puts the cursor into the
+# search field (the one of the page when it has one, else the one of the
+# header), Enter opens the first hit. The script asks the server for the
+# hit list of the text in the field; without it the form does the same
+# with a page load.
+const _WEBUI_HELP_SEARCH_SCRIPT = """<script>
+(function () {
+  const inputs = document.querySelectorAll('[data-help-search-input]');
+  if (inputs.length === 0) return;
+  const panelOf = function (input) {
+    if (input.getAttribute('data-help-search-target') === 'page') {
+      return document.querySelector('.help-search-live[data-help-search-results]');
+    }
+    return input.form.querySelector('[data-help-search-results]');
+  };
+  inputs.forEach(function (input) {
+    const panel = panelOf(input);
+    if (panel === null) return;
+    let timer = null;
+    let latest = 0;
+    const ask = function () {
+      const query = input.value.trim();
+      if (query.length < 2) {
+        if (input.getAttribute('data-help-search-target') !== 'page' || panel.hasAttribute('data-help-search-cleared')) {
+          panel.hidden = true;
+          panel.innerHTML = '';
+        }
+        return;
+      }
+      const ticket = ++latest;
+      fetch('/help/search?fragment=1&q=' + encodeURIComponent(query)).then(function (response) {
+        return response.text();
+      }).then(function (html) {
+        if (ticket !== latest) return;
+        panel.innerHTML = html;
+        panel.hidden = false;
+        panel.setAttribute('data-help-search-cleared', '1');
+      }).catch(function () {});
+    };
+    input.addEventListener('input', function () {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(ask, 150);
+    });
+    input.form.addEventListener('submit', function (event) {
+      const first = panel.querySelector('.help-search-results a');
+      if (first !== null && !panel.hidden) {
+        event.preventDefault();
+        window.location.href = first.getAttribute('href');
+      }
+    });
+    input.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape') {
+        panel.hidden = true;
+      }
+    });
+    // a hit of the header list that lies on the page that is open is a
+    // jump within the page: the list closes, or it would cover the target
+    if (input.getAttribute('data-help-search-target') !== 'page') {
+      panel.addEventListener('click', function (event) {
+        if (event.target.closest('a') !== null) panel.hidden = true;
+      });
+    }
+  });
+  document.addEventListener('keydown', function (event) {
+    if (event.key !== '/' || event.ctrlKey || event.metaKey || event.altKey) return;
+    const el = document.activeElement;
+    const tag = el === null ? '' : el.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (el !== null && el.isContentEditable)) return;
+    const target = document.querySelector('[data-help-search-input][data-help-search-target="page"]') || inputs[0];
+    event.preventDefault();
+    target.focus();
+    target.select();
+  });
+})();
+</script>"""
 
 function _webui_field_label(field::AbstractString, label::AbstractString)::String
   topic = WEBUI_FORM_HELP_TOPICS[String(field)]
@@ -725,6 +948,11 @@ function _webui_case_context(;
   sc_is_cgmes = case_format_value == "cgmes" || format_hint == :cgmes
   # a case file (#342) carries its own IEC 60909 sources, so it qualifies too
   sc_is_cgmes = sc_is_cgmes || endswith(lowercase(strip(effective_case_value)), ".json")
+  # a PowSyBl case qualifies as well: its connected generators are the
+  # sources, with the file's short-circuit extension where it carries one
+  # and with flagged defaults where it does not
+  sc_is_powsybl = case_format_value == "powsybl" || format_hint == :powsybl
+  sc_is_cgmes = sc_is_cgmes || sc_is_powsybl
   sc_has_data = if !sc_is_cgmes
     false
   else
@@ -844,7 +1072,8 @@ document.addEventListener('DOMContentLoaded', function () {
     const scButton = document.querySelector('[data-short-circuit-button]');
     if (scButton !== null) {
       const scDataMissing = scButton.getAttribute('data-sc-state') === 'missing-data';
-      scButton.disabled = !isCgmes || scDataMissing;
+      // a PowSyBl case qualifies as well: its generators are the sources
+      scButton.disabled = !(isCgmes || isPowsybl) || scDataMissing;
     }
   };
   const updateDatCaseAssistance = function () {
@@ -854,7 +1083,7 @@ document.addEventListener('DOMContentLoaded', function () {
     // can: explicit cgmes: alias input or a .zip delivery (directory paths
     // resolve server-side only)
     const isCgmesCase = new RegExp('^cgmes:', 'i').test(effectiveValue) || new RegExp('\\\\.zip\$', 'i').test(effectiveValue);
-    const isPowsyblCase = new RegExp('\\\\.(powsybl|xiidm|xiidm\\\\.bz2)\$', 'i').test(effectiveValue);
+    const isPowsyblCase = new RegExp('\\\\.(powsybl|xiidm)\$', 'i').test(effectiveValue);
     if (caseFormat !== null) {
       // Auto-set formats must fall BACK to auto when the typed case stops
       // matching — otherwise a CGMES selection sticks after switching to a
@@ -1118,7 +1347,6 @@ const _WEBUI_ADAPTER_FIELD_PRESENTATION = Dict{String,NamedTuple}(
   "powsybl_import_multi_slack" => (label = "One slack per synchronous component", title = "Every synchronous component gets its own slack generator (the regulating unit with the largest max_p). Uncheck to leave the other components without a reference; they are then reported as islands without a reference.", attrs = " data-powsybl-import-field", input_attrs = "", option_labels = nothing),
   "powsybl_import_slack_ids" => (label = "Slack generator ids", title = "Generator ids that become the slack of their component, separated by semicolons; empty lets the largest max_p decide.", attrs = " data-powsybl-import-field", input_attrs = " placeholder=\"GEN1; GEN2\"", option_labels = nothing),
   "powsybl_import_base_mva" => (label = "System base MVA", title = "Per-unit base of the built network; PowSyBl files carry no base, so 100 MVA is the default.", attrs = " data-powsybl-import-field", input_attrs = " min=\"1\" step=\"1\"", option_labels = nothing),
-  "powsybl_import_python_exe" => (label = "Python executable (live IIDM import)", title = "Python with pypowsybl for the live .xiidm import through the PythonCall extension; empty means the PythonCall default. Takes effect only before PythonCall initialises.", attrs = " data-powsybl-import-field", input_attrs = " placeholder=\"/path/to/venv/bin/python\"", option_labels = nothing),
   "matpower_import_auto_profile" => (label = "MATPOWER auto-profile", title = "", attrs = " data-matpower-import-field", input_attrs = "", option_labels = nothing),
   "matpower_import_ratio" => (label = "Transformer ratio convention", title = "", attrs = " data-matpower-import-field", input_attrs = "", option_labels = nothing),
   "matpower_import_shift_sign" => (label = "Phase-shift sign", title = "", attrs = " data-matpower-import-field", input_attrs = " step=\"2\" min=\"-1\" max=\"1\"", option_labels = nothing),
@@ -1140,7 +1368,7 @@ const _WEBUI_ADAPTER_FIELD_PRESENTATION = Dict{String,NamedTuple}(
 # field
 const _WEBUI_ADAPTER_SECTIONS = (
   (adapter = CGMESAdapter(), key = :cgmes, prefix = "cgmes_import.", order = ("cgmes_start_values", "cgmes_require_boundary", "cgmes_infer_base_voltages", "cgmes_hvdc_mode"), extras = ()),
-  (adapter = PowsyblAdapter(), key = :powsybl, prefix = "powsybl_import.", order = ("powsybl_import_hvdc_mode", "powsybl_import_remote_regulation", "powsybl_import_multi_slack", "powsybl_import_slack_ids", "powsybl_import_base_mva", "powsybl_import_python_exe"), extras = ()),
+  (adapter = PowsyblAdapter(), key = :powsybl, prefix = "powsybl_import.", order = ("powsybl_import_hvdc_mode", "powsybl_import_remote_regulation", "powsybl_import_multi_slack", "powsybl_import_slack_ids", "powsybl_import_base_mva"), extras = ()),
   (adapter = MatpowerAdapter(), key = :matpower, prefix = "matpower_import.", order = ("matpower_import_auto_profile", "matpower_import_ratio", "matpower_import_shift_sign", "matpower_import_shift_unit", "matpower_import_bus_shunt_model", "matpower_import_dcline_mode", "matpower_import_pv_voltage_source", "matpower_import_compare_voltage_reference", "transformer_tap_changer_model", "matpower_import_apply_bus_names", "matpower_export_write_solution"), extras = ("matpower_import_auto_profile", "matpower_import_bus_shunt_model", "matpower_import_compare_voltage_reference", "matpower_export_write_solution")),
   (adapter = DTFAdapter(), key = :dtf, prefix = "", order = (), extras = ()),
   (adapter = PGMAdapter(), key = :pgm, prefix = "", order = (), extras = ()),
@@ -1261,7 +1489,7 @@ function render_case_page(;
   info_menu = _webui_powerflow_info_menu(; output_root, config_file = config_default, case_directory = effective_case_directory, operation_log)
   import_form = """
 <form id=\"case-import-form\" method=\"post\" action=\"/powerflow/import-cases\" enctype=\"multipart/form-data\" class=\"panel form-grid case-import-form\">
-<label class=\"span-2\">$(_webui_field_label("casefiles", "Import case files"))$(_webui_file_input("casefiles"; accept = ".m,.M,.dat,.DAT,.zip,.ZIP,.json,.yaml,.xml,.XML", multiple = true))</label>
+<label class=\"span-2\">$(_webui_field_label("casefiles", "Import case files"))$(_webui_file_input("casefiles"; accept = ".m,.M,.dat,.DAT,.zip,.ZIP,.json,.yaml,.xml,.XML,.xiidm,.XIIDM", multiple = true))</label>
 <div class=\"actions span-2\"><button class=\"secondary-button\" type=\"submit\">Import case files</button></div>
 </form>
 """
@@ -1286,11 +1514,11 @@ $(dat_hint_html)
 $(ctx.case_format_notice)<details$(dtf_details_attrs)>
 <summary>Input format</summary>
 <fieldset>
-<label>$(_webui_field_label("case_format", "Case input format"))<select name="case_format"><option value="auto"$(_webui_form_string(case_format_value) == "auto" ? " selected" : "")>Auto</option><option value="matpower"$(_webui_form_string(case_format_value) == "matpower" ? " selected" : "")>MATPOWER</option><option value="dtf_for001"$(_webui_form_string(case_format_value) == "dtf_for001" ? " selected" : "")>DTF diagnostics (experimental/internal)</option><option value="cgmes"$(_webui_form_string(case_format_value) == "cgmes" ? " selected" : "")>CGMES (ENTSO-E, folder or ZIP)</option><option value="scf"$(_webui_form_string(case_format_value) == "scf" ? " selected" : "")>Sparlectra Case Format (.scf.json)</option><option value="pgm"$(_webui_form_string(case_format_value) == "pgm" ? " selected" : "")>power-grid-model JSON (input.json)</option><option value="powsybl"$(_webui_form_string(case_format_value) == "powsybl" ? " selected" : "")>PowSyBl (IIDM file or .powsybl bundle)</option></select></label>
+<label>$(_webui_field_label("case_format", "Case input format"))<select name="case_format"><option value="auto"$(_webui_form_string(case_format_value) == "auto" ? " selected" : "")>Auto</option><option value="matpower"$(_webui_form_string(case_format_value) == "matpower" ? " selected" : "")>MATPOWER</option><option value="dtf_for001"$(_webui_form_string(case_format_value) == "dtf_for001" ? " selected" : "")>DTF diagnostics (experimental/internal)</option><option value="cgmes"$(_webui_form_string(case_format_value) == "cgmes" ? " selected" : "")>CGMES (ENTSO-E, folder or ZIP)</option><option value="scf"$(_webui_form_string(case_format_value) == "scf" ? " selected" : "")>Sparlectra Case Format (.scf.json)</option><option value="pgm"$(_webui_form_string(case_format_value) == "pgm" ? " selected" : "")>power-grid-model JSON (input.json)</option><option value="powsybl"$(_webui_form_string(case_format_value) == "powsybl" ? " selected" : "")>PowSyBl (IIDM file)</option></select></label>
 <p class="field-help">SCF and power-grid-model JSON are read by the same importer; the <code>sparlectra</code> block is optional, so a plain power-grid-model dataset loads as well. <em>Auto</em> already resolves every <code>.json</code> to that reader, so these two entries only matter when the extension does not say it.</p>
 $(_webui_adapter_options_html(:cgmes, profile_values))
 $(_webui_adapter_options_html(:powsybl, profile_values))
-<p class="field-help" data-powsybl-import-field>PowSyBl only: a <code>.powsybl</code> table bundle needs no Python; a <code>.xiidm</code> file is read live through the PythonCall extension when it is loaded, otherwise the run names the bundle script. See the PowSyBl Import help.</p>
+<p class="field-help" data-powsybl-import-field>PowSyBl only: a <code>.xiidm</code> file is read as it is. <a href="/help/reference#webui_powsybl" target="_blank" rel="noopener noreferrer">Help on PowSyBl IIDM files</a>.</p>
 <p class="field-help" data-cgmes-start-values-field>CGMES only: <em>Flat start</em> lets the solver earn the solution itself; <em>Imported SV state</em> starts Newton-Raphson from the delivery's own SvVoltage solution (competing start-value machines are forced off). The SV comparison check (<code>sv_compare.csv</code>) runs either way.</p>
 </fieldset>
 </details>
@@ -1761,8 +1989,8 @@ function render_powerflow_form(;
   sc_state = ctx.sc_state
   sc_disabled_attr = sc_state == "ready" ? "" : " disabled"
   sc_title = sc_state == "ready" ? "Balanced short-circuit currents (IEC 60909-0): Ik'' max/min per bus from the delivery's harvested short-circuit data — no power-flow solve involved." :
-    sc_state == "missing-data" ? "This case carries no usable short-circuit source data (no machines, feeder short-circuit currents, or equivalent impedances)." :
-    "Short-circuit evaluation needs a CGMES delivery with harvested short-circuit data, or a case file carrying sc_source entries."
+    sc_state == "missing-data" ? "This case carries no usable short-circuit source data (no machines, feeder short-circuit currents, or equivalent impedances; in a PowSyBl case no generator with the short-circuit extension or a rated power)." :
+    "Short-circuit evaluation needs a CGMES delivery with harvested short-circuit data, a PowSyBl case, or a case file carrying sc_source entries."
   # the scenario
   # editor and the file_block source are SCF-only in this version; every
   # other format keeps the n1_* sources and gets the export hint instead
@@ -1874,7 +2102,7 @@ $(_WEBUI_INFO_MENU_SCRIPT)"""
   weights_tab = isempty(runs_case) ? "" : string(
     "<details class=\"editor-tab weights-editor-tab\" id=\"n1-weights\" data-weights-fragment=\"/powerflow/contingency-weights?case=$(_webui_urlencode(runs_case))&fragment=1\">",
     "<summary>Edit N-1 weights</summary><div class=\"weights-fragment-slot\"><p>Loading the weights editor…</p></div></details>",
-    "<script>document.addEventListener('DOMContentLoaded',function(){var d=document.getElementById('n1-weights');if(d===null)return;var loaded=false;d.addEventListener('toggle',function(){if(!d.open||loaded)return;loaded=true;fetch(d.getAttribute('data-weights-fragment')).then(function(r){return r.text();}).then(function(h){d.querySelector('.weights-fragment-slot').innerHTML=h;}).catch(function(){d.querySelector('.weights-fragment-slot').innerHTML='<p class=\"notice\">Could not load the weights editor; use the edit N-1 weights link above.</p>';});});});</script>",
+    "<script>document.addEventListener('submit',function(e){var f=e.target;if(f&&f.getAttribute&&f.getAttribute('data-confirm')&&!window.confirm(f.getAttribute('data-confirm')))e.preventDefault();});document.addEventListener('DOMContentLoaded',function(){var d=document.getElementById('n1-weights');if(d===null)return;var loaded=false;d.addEventListener('toggle',function(){if(!d.open||loaded)return;loaded=true;fetch(d.getAttribute('data-weights-fragment')).then(function(r){return r.text();}).then(function(h){d.querySelector('.weights-fragment-slot').innerHTML=h;}).catch(function(){d.querySelector('.weights-fragment-slot').innerHTML='<p class=\"notice\">Could not load the weights editor; use the edit N-1 weights link above.</p>';});});});</script>",
   )
   se_state = _webui_se_form_state(se_query; output_root, application_root, case_directory, config_file = selected_config_file, selected_fallback = effective_case_value)
   se_html = render_se_form(; se_state...)
@@ -2070,6 +2298,8 @@ function _webui_short_circuit_summary(result::AbstractDict)::Union{Nothing,Strin
   rows = get(metadata, "sc_case_rows", 0)
   text = string("worst Ik''max ", fmt(ik), " kA @ ", worst_bus, " (", rows, " buses)")
   badge = flagged isa Real && flagged > 0 ? " <span class=\"status-badge status-warning\">$(flagged) flagged — lower bound</span>" : ""
+  # a table without any short-circuit data of the file says so first
+  get(metadata, "sc_defaults_only", false) === true && (badge = " <span class=\"status-badge status-warning\">no short-circuit data in the case: default x''d on every source</span>" * badge)
   return "<code>" * _webui_escape(text) * "</code>" * badge
 end
 
@@ -2103,9 +2333,11 @@ function _webui_contingency_summary(result::AbstractDict)::Union{Nothing,String}
   text = string(kind, " N-1: ", conv, "/", n, " converged, ", isl, " islanded (", fmt(shed), " MW shed), worst loading ", fmt(worst), "%", weight_note, screen_note, source_note)
   badge = ""
   if nonconv isa Real && nonconv > 0
-    label = no_slack isa Real && no_slack > 0 ? "$(nonconv) non-converged incl. $(no_slack) that removed the only slack (auto_slack resolves it)" : "$(nonconv) non-converged"
+    label = no_slack isa Real && no_slack > 0 ? "$(nonconv) non-converged incl. $(no_slack) that removed the only slack with no unit left to take over" : "$(nonconv) non-converged"
     badge = " <span class=\"status-badge status-warning\">$(label)</span>"
   end
+  taken = get(metadata, "contingency_reference_taken_over", 0)
+  taken isa Real && taken > 0 && (text = string(text, ", ", taken, " on a reference another unit took over"))
   return "<code>" * _webui_escape(text) * "</code>" * badge
 end
 
@@ -2685,7 +2917,7 @@ A Diagnose run that did its job. The self-check takes exactly ONE step from the
 case's own stored voltages (`max_iter = 1`, no rescue), so a remaining residual
 is its RESULT, not its failure: that residual is the diagnosis. Reported as a
 failed power flow it is unusable, because every diagnosis then looks like a
-crash (reported from a live session 2026-09-08).
+crash (as reported).
 
 A diagnose run that could not run at all keeps the failure vocabulary; only the
 "completed, did not converge" combination is a finished probe.
@@ -2908,7 +3140,7 @@ number format with it (`run_api.jl`: `technical` = `,` and `.`; `excel_de` =
 `;`, `,` decimals, `.` grouping; `excel_us` = `,`, `.` decimals, `,` grouping),
 so one rule reads all three. Getting this wrong is not loud: a comma-splitting
 reader on a semicolon file finds no columns at all and the page then claims the
-two runs have nothing in common (reported 2026-09-08).
+two runs have nothing in common (as reported).
 """
 function _webui_compare_csv_table(path::AbstractString)
   isfile(path) || return nothing
@@ -3180,7 +3412,13 @@ function _webui_se_summary(result::AbstractDict)::Union{Nothing,String}
   se_j = Float64(get(metadata, "se_objective", NaN))
   se_dof = get(metadata, "se_dof", "?")
   jratio = se_dof isa Number && se_dof > 0 ? string(round(se_j / se_dof; digits = 2)) : "n/a"
-  push!(parts, "$(get(metadata, "se_iterations", "?")) iteration(s), J/dof = $(jratio) (J = $(round(se_j; digits = 3)), dof = $(se_dof)), $(bandtxt)")
+  # the iteration count is the maximum over the passes of the run (a tap
+  # estimation solves twice); when the final solve needed fewer, both are
+  # shown so the number is not read as the iterations of the reported solve
+  se_it = get(metadata, "se_iterations", "?")
+  se_it_last = get(metadata, "se_iterations_last_solve", nothing)
+  it_txt = (se_it_last isa Number && se_it isa Number && se_it_last != se_it) ? "$(se_it) iteration(s) (max over the passes; final solve $(se_it_last))" : "$(se_it) iteration(s)"
+  push!(parts, "$(it_txt), J/dof = $(jratio) (J = $(round(se_j; digits = 3)), dof = $(se_dof)), $(bandtxt)")
   # a set that measures the same quantity twice inflates J on its own; without
   # this note the page shows an alarming J and no cause
   se_dup = get(metadata, "se_duplicate_rows", 0)
@@ -3381,6 +3619,19 @@ function _webui_se_chain_section(result::AbstractDict)::String
   )
 end
 
+# The delete button of the selected measurement set: an inline form (a
+# deletion is a POST, never a link) with a confirmation, next to the
+# download link. Sets are files the user can regenerate at any time.
+function _webui_measurement_delete_form_html(selected_case::AbstractString, selected_measurement::AbstractString)::String
+  esc = _webui_escape
+  return string(
+    "<form method=\"post\" action=\"/stateestimation/measurements/delete\" class=\"inline-form\" data-confirm=\"Delete ", esc(selected_measurement), "?\">",
+    "<input type=\"hidden\" name=\"casefile\" value=\"", esc(selected_case), "\">",
+    "<input type=\"hidden\" name=\"measurement_file\" value=\"", esc(selected_measurement), "\">",
+    "<button type=\"submit\" class=\"danger-button\">Delete measurement file</button></form>",
+  )
+end
+
 """
     render_se_form(; cases, measurements, selected_case, selected_measurement, config_file, message, active_run) -> String
 
@@ -3469,7 +3720,7 @@ function render_se_form(; cases::Vector{String} = String[], measurements::Vector
     )
   end
   if !isempty(set_info)
-    dl = isempty(selected_measurement) ? "" : "<p><a class=\"button\" href=\"/stateestimation/measurements/download?file=$(_webui_urlencode(selected_measurement))\">Download measurement file</a></p>"
+    dl = isempty(selected_measurement) ? "" : string("<p><a class=\"button\" href=\"/stateestimation/measurements/download?file=$(_webui_urlencode(selected_measurement))\">Download measurement file</a> ", _webui_measurement_delete_form_html(selected_case, selected_measurement), "</p>")
     # generator v2 provenance summary (truth source, flow ends, passive
     # handling), rendered compactly above the taps table
     prov_html = isempty(set_provenance) ? "" : string("<ul class=\"set-provenance\">", join(("<li><code>$(esc(l))</code></li>" for l in set_provenance), ""), "</ul>")
@@ -3487,7 +3738,7 @@ function render_se_form(; cases::Vector{String} = String[], measurements::Vector
       info_html = string("<section class=\"panel measurement-set-info\"><h2>Measurement set info</h2>", bind_html, counts_html, "<ul>", join(("<li><code>$(esc(l))</code></li>" for l in set_info), ""), "</ul>$(dl)$(table_editor_html)$(editor_html)</section>")
     end
   elseif !isempty(selected_measurement)
-    info_html = "<section class=\"panel measurement-set-info\">$(bind_html)$(counts_html)<p><a class=\"button\" href=\"/stateestimation/measurements/download?file=$(_webui_urlencode(selected_measurement))\">Download measurement file</a></p>$(table_editor_html)$(editor_html)</section>"
+    info_html = "<section class=\"panel measurement-set-info\">$(bind_html)$(counts_html)<p><a class=\"button\" href=\"/stateestimation/measurements/download?file=$(_webui_urlencode(selected_measurement))\">Download measurement file</a> $(_webui_measurement_delete_form_html(selected_case, selected_measurement))</p>$(table_editor_html)$(editor_html)</section>"
   end
   # the SE section shares the page's case selection, so
   # the old per-page case selector is gone; what remains of it is the
@@ -3698,7 +3949,7 @@ function render_webui_sysimage_page(; output_root::AbstractString, message::Abst
 
   # A native session (REPL start, `julia --project=app`) never picks the
   # image up by itself, not even after a successful build from this very
-  # page: without the note the build looks like it did nothing (2026-09-24).
+  # page: without the note the build looks like it did nothing.
   hint = sysimage_use_hint(image; flavor_kind = flavor.kind, problem)
   native_notice = if hint === nothing
     ""

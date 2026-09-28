@@ -186,7 +186,7 @@ with pinned packaged-default import options (so the fixture never depends
 on whatever configuration a previous testset installed) and every call
 returns a deepcopy, so testsets can mutate their copy freely.
 
-Since load_fixture_net (2026-09-04) the first-choice names are the SHIPPED
+Since load_fixture_net the first-choice names are the SHIPPED
 demo cases sp_case5, sp_case14, sp_case60, sp_case188: a fresh install
 loads them without any download. The legacy names case9, case14, case57
 resolve against the LOCAL data/mpower cache only and exist for the

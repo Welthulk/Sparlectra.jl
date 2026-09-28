@@ -26,7 +26,7 @@ function _precompile_app_workload()
     Logging.with_logger(Logging.NullLogger()) do
         redirect_stdout(devnull) do
             # --- service path (the Web UI's first run) --------------------------
-            # Measured 2026-09-22 on a fresh process with the workload above:
+            # Measured on a fresh process with the workload above:
             # the solver paths answered in well under a second, but the first
             # start_powerflow_run took 38 s (25 s in run_sparlectra_api: the
             # artifact writers, effective_config.yaml, result.json, the

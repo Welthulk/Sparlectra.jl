@@ -91,7 +91,7 @@ function _webui_query_flag(query::AbstractDict, key::AbstractString)::Bool
 end
 
 # The Settings page shows the saved values of the selected case by default
-# (decision 2026-09-25, reversing the earlier configuration-file default:
+# (reversing the earlier configuration-file default:
 # after a save the page showed the old values next to "Saved settings for
 # this case"). The configuration-file view stays reachable with
 # ?config_view=1 (or case_settings=0); ?case_settings=1 still selects the
@@ -288,6 +288,8 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
     return handle_se_reset_settings(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root)
   elseif verb == "POST" && path == "/stateestimation/measurements/save"
     return handle_se_measurement_save(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root)
+  elseif verb == "POST" && path == "/stateestimation/measurements/delete"
+    return handle_se_measurement_delete(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root)
   elseif verb == "POST" && path == "/stateestimation/measurements/update-values"
     return handle_se_measurement_update_values(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root)
   elseif verb == "POST" && path == "/stateestimation/topology-hypotheses"
@@ -397,7 +399,14 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
     _webui_log_route!(log_root, "page_opened", verb, path; status = "opened")
     return handle_webui_operation_log(log_root)
   elseif verb == "GET" && path == "/help"
+    # a query on the help page itself is the search (the form of a page
+    # that was open before the search had its own route)
+    haskey(query, "q") && return handle_webui_help_search(String(query["q"]))
     return handle_webui_help_manual()
+  elseif verb == "GET" && path == "/help/reference"
+    return handle_webui_help_manual(; page = :reference)
+  elseif verb == "GET" && path == "/help/search"
+    return handle_webui_help_search(String(get(query, "q", "")); fragment = get(query, "fragment", "") == "1")
   elseif verb == "GET" && startswith(path, "/help/")
     return handle_webui_help(_webui_urldecode(path[(lastindex("/help/") + 1):end]))
   elseif verb == "GET" && path == "/webui/last-errors"

@@ -83,10 +83,16 @@ function run_demo_case_tests()
         @test se.dof == fixture["state_estimation"]["dof"]
         @test isapprox(se.objectiveJ, fixture["state_estimation"]["objective"]; atol = 1e-4)
 
-        # 3) short circuit at the fixture's buses (feeder data from the file)
+        # 3) short circuit at the fixture's buses: the feeder with the data
+        # of the file, the machines (the file names no data for them) with
+        # the engine's default, which is why every row is flagged and the
+        # engine warns once per machine
         sc_buses = sort(collect(keys(fixture["short_circuit"])))
-        sc = runShortCircuit!(net, net.sc_sources; buses = sc_buses, case = :max)
+        sc = run_with_expected_warnings(() -> runShortCircuit!(net, net.sc_sources; buses = sc_buses, case = :max), ("has no usable x''_d", "has no usable ratedS", "has neither x''_d nor ratedS"))
         @test length(sc.rows) == length(sc_buses)
+        @test length(net.sc_sources.external_network_injections) == 1
+        @test all(m -> m.satDirectSubtransX_pu === nothing, net.sc_sources.synchronous_machines)
+        @test all(row -> row.contains_defaulted_data, sc.rows)
         for row in sc.rows
           ref = fixture["short_circuit"][String(row.bus)]
           @test isapprox(row.ik_kA, ref["ik_kA"]; atol = 1e-5)
@@ -139,7 +145,7 @@ function run_demo_case_tests()
 
         # size budget: no single bundle runs away; the BINDING cap is the
         # task's total (all cases together well under a megabyte, checked
-        # after the loop). 420k since the place names (2026-09-04): the
+        # after the loop). 420k since the place names: the
         # benchmark bundle measured 412k, up 3.2 percent from 399k, because
         # measurements and extra carry reference NAMES (Birkloh_110, not
         # C9); the names are already compact (max 9 chars a place). The
@@ -159,14 +165,14 @@ function run_demo_case_tests()
     # for one here: importing a shipped case and exporting it again does NOT
     # reproduce the file. `scenarios`, the `short_circuit` block with its PGM
     # `fault` row, the `extra` names and the measurement provenance are EXPORT
-    # ARGUMENTS, not network state (measured 2026-09-08: sp_case5 comes back as
+    # ARGUMENTS, not network state (measured: sp_case5 comes back as
     # 15354 characters against the shipped 16643). Handing those blocks back to
     # the exporter from the file under test would compare it against its own
     # input. These files are built by a generator that passes those arguments
     # and is their provenance record, not by a re-export; the property such a
     # comparison would be reaching for is checked directly below instead.
     #
-    # Colleague review 2026-09-08, after the 0.10.0 -> 0.11.0 bump turned a
+    # Review note: after the 0.10.0 -> 0.11.0 bump turned a
     # fixture comparison red: a test that goes red on every version bump
     # trains the reflex to regenerate the file, and the next time the diff
     # may be more than the stamp line, with the regeneration hiding it. The
@@ -256,14 +262,14 @@ function run_demo_case_tests()
     end)() end
 
     # REPLACES the former testset "hostile general config cannot move the
-    # shipped fixtures" (2026-09-03 to 2026-09-08). That test could not fail:
+    # shipped fixtures" . That test could not fail:
     # it handed a hostile configuration to `import_case` and then called
     # `runpf!(net; verbose = 0)`, and that call form solved under the GLOBAL
     # configuration, so the hostile values never reached the solver. Its
     # premise was wrong twice over: `import_case` does not merge the case
     # sidecar at all (that happens in `resolve_config`, on the service path),
     # and a sidecar that pins only `power_flow.tol` cannot neutralize a
-    # hostile `distributed_slack` anyway. Measured on 2026-09-08: with the
+    # hostile `distributed_slack` anyway. Measured: with the
     # hostile configuration actually applied, sp_case14 throws
     # "distributed slack: no valid participant ... p_mode=pmax_weighted".
     #

@@ -15,7 +15,7 @@
 # file: src/webui/docs.jl
 # purpose: Web UI help registry: the hover hint and the documentation link
 #          of every form control. The Web UI carries no documentation of
-#          its own (maintainer decision 2026-09-25): the hint is the
+#          its own (by design): the hint is the
 #          operating text, the `doc` target opens the published
 #          documentation in a new tab. Every `doc` anchor is a Documenter
 #          `@id` label in docs/src, checked by tools/check_webui_doc_links.jl
@@ -50,17 +50,17 @@ const WEBUI_HELP_TOPICS = Dict(
   "webui.se_generator_tap_count" => (label = "Generator: tap deviation transformers", hint = "At most this many transformers get the tap deviation; the seed picks them among transformers the tap estimation can absorb. Unused when the deviation is 0.", doc = "state_estimation_measurements/#se-generator-tap-error"),
   "webui.se_tap_estimation" => (label = "Estimate transformer taps", hint = "Release every in-service ratio tap changer as an extra estimation state, fix it to the nearest mechanical step and rerun. Machine transformers stay untouched.", doc = "state_estimation_extensions/#se-tap-estimation"),
   "webui.se_generator_sigmas" => (label = "Generator: measurement sigmas (U, I, P, Q)", hint = "Measurement accuracy per quantity in percent of the measured value, like a transducer class; written into the sigma column of every row and used for the noise.", doc = "state_estimation_measurements/#se-generator-sigmas"),
-  "webui.casefile" => (label = "MATPOWER case file", hint = "Choose a case from the list, or type a bare case name or a local path and press Enter to download or copy it into the case directory.", doc = "webui/#webui-form-options"),
-  "webui.config_file" => (label = "Configuration template file", hint = "Configuration YAML the run starts from. Form values become per-run overrides on top of it; the file itself stays unchanged.", doc = "webui/#webui-form-options"),
-  "webui.import_case_files" => (label = "Import case files", hint = "Copy MATPOWER, DTF, CGMES (ZIP or profile XML), SCF/PGM JSON or PowSyBl IIDM files into the case directory. Nothing is run; no existing file is overwritten.", doc = "webui/#webui-import-case-files"),
+  "webui.casefile" => (label = "MATPOWER case file", hint = "Choose a case from the list, or type a bare case name or a local path and press Enter to download or copy it into the case directory.", doc = "webui_reference/#webui-form-options"),
+  "webui.config_file" => (label = "Configuration template file", hint = "Configuration YAML the run starts from. Form values become per-run overrides on top of it; the file itself stays unchanged.", doc = "webui_reference/#webui-form-options"),
+  "webui.import_case_files" => (label = "Import case files", hint = "Copy MATPOWER, DTF, CGMES (ZIP or profile XML), SCF/PGM JSON or PowSyBl IIDM files into the case directory. Nothing is run; no existing file is overwritten.", doc = "webui_reference/#webui-import-case-files"),
   # the case-export controls: what the two files contain and what a plain PGM
   # export deliberately leaves out
   "webui.scf_export" => (label = "Case export (SCF / plain PGM)", hint = "Write the selected case into the case directory as an SCF file (.scf.json) or as a plain power-grid-model dataset (.pgm.json) without the sparlectra block.", doc = "scf/#scf-writing"),
-  "webui.case_format" => (label = "Case input format", hint = "Auto tells MATPOWER, CGMES, SCF/PGM JSON, PowSyBl and DTF apart from the file content. Pick a format only when the file does not say what it is.", doc = "webui/#webui-form-options"),
-  "webui.for002_reference_file" => (label = "Optional FOR002 reference file", hint = "Optional FOR002 file for the legacy reference comparison of a DTF run: absolute path, path in the case cache, or an offered candidate. Not a primary case.", doc = "webui/#webui-form-options"),
-  "webui.dtf_outage_selection" => (label = "Selected DTF outage labels/indices", hint = "One outage label or index of the DTF case, used with the run mode selected. The result page shows a compact outage summary; the rows stay in the artifacts.", doc = "webui/#webui-form-options"),
-  "webui.config_maintenance" => (label = "Configuration maintenance", hint = "Check compares the YAML with the template and previews the refresh without writing; Refresh adds missing keys after a backup; the Editor edits the file.", doc = "webui/#webui-configuration"),
-  "webui.ignore_webui_settings" => (label = "Ignore Web UI settings and use configuration defaults", hint = "Run with the configuration file's values only: the form values and the saved case settings are ignored for this run.", doc = "webui/#webui-configuration"),
+  "webui.case_format" => (label = "Case input format", hint = "Auto tells MATPOWER, CGMES, SCF/PGM JSON, PowSyBl and DTF apart from the file content. Pick a format only when the file does not say what it is.", doc = "webui_reference/#webui-form-options"),
+  "webui.for002_reference_file" => (label = "Optional FOR002 reference file", hint = "Optional FOR002 file for the legacy reference comparison of a DTF run: absolute path, path in the case cache, or an offered candidate. Not a primary case.", doc = "webui_reference/#webui-form-options"),
+  "webui.dtf_outage_selection" => (label = "Selected DTF outage labels/indices", hint = "One outage label or index of the DTF case, used with the run mode selected. The result page shows a compact outage summary; the rows stay in the artifacts.", doc = "webui_reference/#webui-form-options"),
+  "webui.config_maintenance" => (label = "Configuration maintenance", hint = "Check compares the YAML with the template and previews the refresh without writing; Refresh adds missing keys after a backup; the Editor edits the file.", doc = "webui_reference/#webui-configuration"),
+  "webui.ignore_webui_settings" => (label = "Ignore Web UI settings and use configuration defaults", hint = "Run with the configuration file's values only: the form values and the saved case settings are ignored for this run.", doc = "webui_reference/#webui-configuration"),
   "power_flow.tol" => (label = "PowerFlow tolerance", hint = "Convergence bound for the largest single bus mismatch, active and reactive alike. 1e-8 pu equals 1 W at a 100 MVA base.", doc = "powerflow_configuration/#pf-solver-core"),
   "power_flow.tol_MW" => (label = "PowerFlow tolerance in MW", hint = "Unit of the tolerance value. MW states the bound physically, converted with the case base at run time (1 MW at 100 MVA is 1e-2 pu); pu is the classic form.", doc = "powerflow_configuration/#pf-solver-core"),
   "power_flow.max_iter" => (label = "Maximum iterations", hint = "Iteration cap of the Newton-Raphson solve; a run that reaches it ends as non-converged. Very low values cut off hard cases.", doc = "powerflow_configuration/#pf-solver-core"),
@@ -74,7 +74,7 @@ const WEBUI_HELP_TOPICS = Dict(
   "power_flow.apslf.use_pade" => (label = "APSLF Padé evaluation", hint = "Evaluate the voltage series via Padé approximants instead of direct Taylor summation. Usually better accuracy per order at a small overhead.", doc = "powerflow_configuration/#pf-solver-selection"),
   "power_flow.apslf.nr_polish" => (label = "APSLF NR polish", hint = "Run a Newton-Raphson polishing step on the APSLF series result. Default off: the series alone is a load-flow solution.", doc = "powerflow_configuration/#pf-solver-selection"),
   "power_flow.apslf.convergence_radius" => (label = "APSLF convergence radius", hint = "Evaluate the APSLF convergence radius, the distance of the nearest Padé pole to the evaluation point. Costs about as much as the solve; shown with the result.", doc = "powerflow_configuration/#pf-solver-selection"),
-  "power_flow.flatstart" => (label = "Flat start", hint = "Start every bus at 1.0 pu and 0 degrees and ignore the imported start voltages. While on, the APSLF and DC start values and the pre-solve are switched off.", doc = "webui/#webui-flat-start"),
+  "power_flow.flatstart" => (label = "Flat start", hint = "Start every bus at 1.0 pu and 0 degrees and ignore the imported start voltages. While on, the APSLF and DC start values and the pre-solve are switched off.", doc = "webui_reference/#webui-flat-start"),
   "power_flow.apslf_start.enabled" => (label = "Use APSLF start values", hint = "APSLF solver as a guarded start-value generator ahead of Newton-Raphson: the candidate is kept only if it improves the mismatch. Not with solver APSLF.", doc = "powerflow_configuration/#pf-apslf-start"),
   "power_flow.apslf_start.order" => (label = "APSLF start highest coefficient (order)", hint = "Highest series coefficient of the APSLF start-value generator; higher orders cost more before the candidate is judged. No effect unless the generator is on.", doc = "powerflow_configuration/#pf-apslf-start"),
   "power_flow.wrong_branch_detection" => (label = "Wrong-branch detection", hint = "Plausibility check of the converged solution on the highest voltage level: warn reports a suspicious result, fail treats it as non-converged, off skips it.", doc = "configuration/#config-wrong-branch"),
@@ -114,7 +114,6 @@ const WEBUI_HELP_TOPICS = Dict(
   "powsybl_import.multi_slack" => (label = "One slack per synchronous component", hint = "Every synchronous component gets its own slack generator, the regulating unit with the largest max_p; unchecked, only the first component has a reference.", doc = "powsybl_import/#powsybl-import-config"),
   "powsybl_import.slack_ids" => (label = "Slack generator ids (PowSyBl)", hint = "Generator ids that become the slack of their component, separated by semicolons; empty lets the largest max_p decide.", doc = "powsybl_import/#powsybl-import-config"),
   "powsybl_import.base_mva" => (label = "System base MVA (PowSyBl)", hint = "Per-unit base of the built network; PowSyBl files carry no base, 100 MVA is the default.", doc = "powsybl_import/#powsybl-import-config"),
-  "powsybl_import.python_exe" => (label = "Python executable (live IIDM import)", hint = "Python with pypowsybl for the live .xiidm import through the PythonCall extension; empty means the PythonCall default. Read before PythonCall initialises.", doc = "powsybl_import/#powsybl-import-config"),
   "power_flow.rescue" => (label = "Rescue ladder for failed AC solves", hint = "After a non-converged AC solve, retry from the original start through a fixed ladder: alternate start, autodamp, DC seed, settled Q-limits. First success wins.", doc = "powerflow_configuration/#pf-solver-core"),
   "runtime.parallel.enabled" => (label = "Parallel execution of independent work items", hint = "Use Julia threads for independent work items: island solves, short-circuit sweeps, contingency batches. Off forces every site onto the serial path.", doc = "performance_profiling/#perf-runtime"),
   "power_flow.dc.fallback" => (label = "Standalone-DC fallback", hint = "When AC and the rescue ladder fail, keep a standalone DC result: angles and branch P flows at 1 pu, no reactive results. The AC status stays non-converged.", doc = "powerflow_configuration/#pf-solver-core"),
@@ -132,9 +131,9 @@ const WEBUI_HELP_TOPICS = Dict(
   "benchmark.enabled" => (label = "Enable benchmark measurements", hint = "Measure repeated solves and report their median instead of one timing. Bounded by the sample count and the time budget.", doc = "performance_profiling/#perf-benchmark"),
   "benchmark.samples" => (label = "Benchmark samples (max. repeated measurements)", hint = "Maximum number of repeated benchmark measurements per method. Collection stops earlier when the time budget is used up first.", doc = "performance_profiling/#perf-benchmark"),
   "benchmark.seconds" => (label = "Benchmark max. time budget [s]", hint = "Maximum time budget of the benchmark in seconds. Not a solver timeout: a running sample is never interrupted.", doc = "performance_profiling/#perf-benchmark"),
-  "webui.performance_timing" => (label = "Performance timing", hint = "Write performance.log with the phases of one request (parsing, case loading, solve, artifacts); full adds internal profile entries, off writes nothing.", doc = "webui/#webui-output-modes"),
-  "webui.detailed_result_csv" => (label = "Bus/branch CSV files", hint = "Write bus_voltages_complex.csv and branch_flows.csv with per-bus voltages and per-branch flows. Off by default because large networks produce large files.", doc = "webui/#webui-output-modes"),
-  "webui.detailed_result_csv_format" => (label = "CSV format (every CSV file of a run)", hint = "Delimiter and decimal separator of every CSV a run writes: technical (comma, point), excel_de (semicolon, decimal comma) or excel_us. A machine-wide setting.", doc = "webui/#webui-output-modes"),
+  "webui.performance_timing" => (label = "Performance timing", hint = "Write performance.log with the phases of one request (parsing, case loading, solve, artifacts); full adds internal profile entries, off writes nothing.", doc = "webui_reference/#webui-output-modes"),
+  "webui.detailed_result_csv" => (label = "Bus/branch CSV files", hint = "Write bus_voltages_complex.csv and branch_flows.csv with per-bus voltages and per-branch flows. Off by default because large networks produce large files.", doc = "webui_reference/#webui-output-modes"),
+  "webui.detailed_result_csv_format" => (label = "CSV format (every CSV file of a run)", hint = "Delimiter and decimal separator of every CSV a run writes: technical (comma, point), excel_de (semicolon, decimal comma) or excel_us. A machine-wide setting.", doc = "webui_reference/#webui-output-modes"),
   "webui.export_cgmes" => (label = "CGMES export artifact", hint = "Write the case as one re-importable CGMES delivery (EQ, TP, SSH, SV in a ZIP) into the run's artifacts, for every case format and also on non-converged runs.", doc = "cgmes_export/#cgmes-export-webui"),
 )
 
@@ -232,7 +231,6 @@ const WEBUI_FORM_HELP_TOPICS = Dict(
   "powsybl_import_multi_slack" => "powsybl_import.multi_slack",
   "powsybl_import_slack_ids" => "powsybl_import.slack_ids",
   "powsybl_import_base_mva" => "powsybl_import.base_mva",
-  "powsybl_import_python_exe" => "powsybl_import.python_exe",
   "power_flow_rescue" => "power_flow.rescue",
   "runtime_parallel_enabled" => "runtime.parallel.enabled",
   "power_flow_dc_fallback" => "power_flow.dc.fallback",

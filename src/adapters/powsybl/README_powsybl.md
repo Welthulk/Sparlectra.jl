@@ -3,24 +3,22 @@
 ## Purpose
 
 PowSyBl's native network format is IIDM (XML variant XIIDM). Sparlectra
-does not parse IIDM: pypowsybl loads the file, resolves the node-breaker
-topology and the tap positions, and hands over plain tables. This adapter
-reads those tables and builds a `Net` from them. Two entry points share
-one builder: a table bundle written by `tools/powsybl_dump.py` (no Python
-at Sparlectra run time), and, when the PythonCall extension is loaded, an
-`.xiidm` file read live.
+reads the file in Julia (`iidm_reader.jl`): it resolves the node-breaker
+topology, the components and the tap positions the way pypowsybl does and
+delivers the same plain tables; this adapter builds a `Net` from them. The
+source is the `.xiidm` file. No Python is involved at any point.
 
-## Bundle format
+## Reference bundles (test suite only)
 
-A bundle is a directory whose name ends in `.powsybl`, holding
-`manifest.json` and one CSV per pypowsybl table (the getter name without
-`get_`, plus `tie_lines`). The manifest names the case, the source file,
-the pypowsybl and IIDM versions, every table with its file, row count and
-index columns, and the OpenLoadFlow reference solution. The CSV rules and
-the manifest fields are documented on the docs page
-`docs/src/powsybl_import.md`; the reader is `read_powsybl_bundle`, the
-writer `write_powsybl_bundle`, the column types come from
-`POWSYBL_SCHEMA` and never from the data.
+The fixtures under `test/fixtures/powsybl` hold, next to each `.xiidm`
+file, a table bundle: a directory whose name ends in `.powsybl`, with
+`manifest.json` and one CSV per table (the getter name without `get_`,
+plus `tie_lines`), the state columns carrying the OpenLoadFlow solution,
+and `reference_buses.csv`. They are frozen references: the reader is
+checked against them column by column, the power flow against their
+voltages. `read_powsybl_bundle` and `write_powsybl_bundle` read and write
+the form; the column types come from `POWSYBL_SCHEMA` and never from the
+data.
 
 ## Bus model
 
@@ -36,11 +34,12 @@ the voltage level, the substation id is kept as bus metadata.
 Tap changers are a fixed operating point: two-winding transformers use
 the `_at_current_tap` impedances with `rho` and `alpha`, three-winding
 legs the same columns per leg. No controllers and no tap tables reach the
-`Net`; the step tables stay in the bundle for a later task.
+`Net`; the step tables stay in the tables for a later task.
 
-The slack of a synchronous component is the regulating, connected
-generator with the largest `max_p`, ties broken by id, unless
-`powsybl_import.slack_ids` names one. Distributed slack remains a power
+The slack of a synchronous component follows `reference_candidate_rank`:
+a connected unit that regulates its own bus before one that regulates a
+remote bus, then the largest (rated power where the file states one, else
+`max_p`), unless `powsybl_import.slack_ids` names one. Distributed slack remains a power
 flow option.
 
 Units follow pypowsybl (ohm, siemens, kV, degrees, MW, MVar, A) and are

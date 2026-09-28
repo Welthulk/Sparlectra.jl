@@ -6,7 +6,7 @@
 Utility script to scan all Julia source files in the `src` directory
 and identify function parameters that are declared but never used in the function body.
 
-This is a code-quality diagnostic tool that helps maintainers find dead parameters
+This is a code-quality diagnostic tool that helps developers find dead parameters
 that may indicate incomplete refactoring, API changes, or unintended overloads.
 
 Unused parameters starting with underscore (`_`) are excluded by design, as they

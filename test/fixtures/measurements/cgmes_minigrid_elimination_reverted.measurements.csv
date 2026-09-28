@@ -1,0 +1,238 @@
+# sparlectra-measurements v1
+# case: cgmes_minigrid.zip
+# generator: v2
+# seed: 42
+# noise: gaussian (sigma U 0.4%, P 1.1%, Q 1.1% of reading)
+# truth: run (id removed) (se, se_state.csv); state adopted, not re-solved
+# flow_ends: both
+# passive: zero-injection constraints (ZI, sigma 0.05 MW, elimination-protected) at 5 4 3 2 1 XQ1_EQIN XQ2_EQIN AUX3WT_T4 H AUX3WT_T3 8
+# critical_target: 1 reached: 1
+# critical_rows: Pflow_B_ACL_10_3_4_from
+# critical_removed: Pflow_B_ACL_10_3_4_to Pinj_7 Pinj_6 Vm_7
+# sparlectra-taps v1
+# branch,mrid,name,from_bus,to_bus,neutral_ratio,step,electrical_step,fixed_step,transferred_step,generation_deviation_steps
+# 10,ceb5d06a-a7ff-4102-a620-7f3ea5fb4a51,B_2WT_110_1_3,5,6,0.9956709956709957,0.00625,0.0,0,0,0.0
+# 11,6c89588b-3df5-4120-88e5-26164afb43e9,B_2WT_110_1_3,5,6,0.9956709956709957,0.00625,0.0,0,0,0.0
+# 12,f1e72854-ec35-46e9-b614-27db354e8dbb,B_2WT_110_5_10,3,HG2,1.038961038961039,0.00625,0.0,0,0,0.0
+# 13,813365c3-5be7-4ef0-a0a7-abd1ae6dc174,B_2WT_110_2_11,4,HG1,1.0454545454545454,0.00625,0.0,0,0,0.0
+# 14,,B_2WT_380_12_7,AUX3WT_T4,1,1.0,0.00625,0.0,0,0,0.0
+# 15,,B_2WT_380_12_6,AUX3WT_T4,2,0.9649122807017544,0.00625,0.0,0,0,0.0
+# 16,,B_2WT_380_12_13,AUX3WT_T4,H,1.0526315789473686,0.00625,0.0,0,0,0.0
+# 17,,B_2WT_380_14_7,AUX3WT_T3,1,1.0,0.00625,0.0,0,0,0.0
+# 18,,B_2WT_380_14_6,AUX3WT_T3,2,0.9649122807017544,0.00625,0.0,0,0,0.0
+# 19,,B_2WT_380_14_15,AUX3WT_T3,8,1.0526315789473686,0.00625,0.0,0,0,0.0
+type;bus;from_bus;to_bus;branch_nr;link_nr;direction;value;sigma;active;id
+VmMeas;37edd845-456f-4c3e-98d5-19af0c1cef1e;;;;;;1,0469876564584981;0,004167773898548479;true;Vm_5
+VmMeas;c0adab49-d445-4609-a1a3-ebe4ef297cc8;;;;;;1,0441874519558232;0,004171911206560601;true;Vm_4
+VmMeas;764e0b8a-f2af-4092-b6aa-b4a19e55db98;;;;;;1,0455643974236548;0,00416531401402516;true;Vm_6
+QinjMeas;764e0b8a-f2af-4092-b6aa-b4a19e55db98;;;;;;2,418458206964759;0,05;true;Qinj_6
+QinjMeas;cd84fa40-ef63-422d-8ee0-d0a0f806719e;;;;;;-4,7593001901233976;0,0518652662194618;true;Qinj_7
+VmMeas;c8726716-e182-4373-b83e-8f60070078cb;;;;;;1,044219358316317;0,004169546239919481;true;Vm_3
+VmMeas;b3d3b4ad-02af-4490-8748-70f6c9a23734;;;;;;1,0408620501156822;0,00416769600525068;true;Vm_2
+VmMeas;adee76cd-b2b9-48ac-8fd4-0d205a435f59;;;;;;1,0111555618614092;0,004021915412579799;true;Vm_1
+VmMeas;c7eda3d2-e92d-4935-8166-5e045d3de045;;;;;;1,0108133349159905;0,00401487059942948;true;Vm_HG2
+PinjMeas;c7eda3d2-e92d-4935-8166-5e045d3de045;;;;;;1,215920316275039;0,05;true;Pinj_HG2
+QinjMeas;c7eda3d2-e92d-4935-8166-5e045d3de045;;;;;;0,2924434358704311;0,05;true;Qinj_HG2
+VmMeas;7f5515b2-ca6b-45af-93ee-f196686f0c66;;;;;;0,9962683029170204;0,0040013667487370395;true;Vm_HG1
+PinjMeas;7f5515b2-ca6b-45af-93ee-f196686f0c66;;;;;;5,279552943130928;0,05846941609525307;true;Pinj_HG1
+QinjMeas;7f5515b2-ca6b-45af-93ee-f196686f0c66;;;;;;2,490120110502503;0,05;true;Qinj_HG1
+VmMeas;AUX3WT_T4;;;;;;1,0027269539302515;0,00402146901865172;true;Vm_AUX3WT_T4
+VmMeas;03163ede-7eec-457f-8641-365982227d7c;;;;;;0,9550311610879272;0,003821965001387516;true;Vm_H
+VmMeas;AUX3WT_T3;;;;;;1,0059980267481825;0,00402144478485944;true;Vm_AUX3WT_T3
+VmMeas;87c0d153-e308-4b2b-92a4-4fad53ab1ff9;;;;;;0,9522920545882642;0,0038139472390809363;true;Vm_8
+PflowMeas;;37edd845-456f-4c3e-98d5-19af0c1cef1e;c0adab49-d445-4609-a1a3-ebe4ef297cc8;1;;from;-2,9689293413234106;0,05;true;Pflow_B_ACL_110_1_2_from
+PflowMeas;;37edd845-456f-4c3e-98d5-19af0c1cef1e;c0adab49-d445-4609-a1a3-ebe4ef297cc8;1;;to;2,903168860739556;0,05;true;Pflow_B_ACL_110_1_2_to
+QflowMeas;;37edd845-456f-4c3e-98d5-19af0c1cef1e;c0adab49-d445-4609-a1a3-ebe4ef297cc8;1;;from;-1,2804937840260835;0,05;true;Qflow_B_ACL_110_1_2_from
+QflowMeas;;37edd845-456f-4c3e-98d5-19af0c1cef1e;c0adab49-d445-4609-a1a3-ebe4ef297cc8;1;;to;1,3410644926010713;0,05;true;Qflow_B_ACL_110_1_2_to
+PflowMeas;;764e0b8a-f2af-4092-b6aa-b4a19e55db98;cd84fa40-ef63-422d-8ee0-d0a0f806719e;2;;from;9,37309706882665;0,10156468811424722;true;Pflow_B_ACL_10_3_4_from
+QflowMeas;;764e0b8a-f2af-4092-b6aa-b4a19e55db98;cd84fa40-ef63-422d-8ee0-d0a0f806719e;2;;from;4,783032254976257;0,05281007461638803;true;Qflow_B_ACL_10_3_4_from
+QflowMeas;;764e0b8a-f2af-4092-b6aa-b4a19e55db98;cd84fa40-ef63-422d-8ee0-d0a0f806719e;2;;to;-4,639492532412605;0,05186526621946453;true;Qflow_B_ACL_10_3_4_to
+PflowMeas;;37edd845-456f-4c3e-98d5-19af0c1cef1e;c8726716-e182-4373-b83e-8f60070078cb;3;;from;-2,001254794831826;0,05;true;Pflow_B_ACL_110_1_5_from
+PflowMeas;;37edd845-456f-4c3e-98d5-19af0c1cef1e;c8726716-e182-4373-b83e-8f60070078cb;3;;to;2,1119305778865476;0,05;true;Pflow_B_ACL_110_1_5_to
+QflowMeas;;37edd845-456f-4c3e-98d5-19af0c1cef1e;c8726716-e182-4373-b83e-8f60070078cb;3;;from;-0,9703309979691305;0,05;true;Qflow_B_ACL_110_1_5_from
+QflowMeas;;37edd845-456f-4c3e-98d5-19af0c1cef1e;c8726716-e182-4373-b83e-8f60070078cb;3;;to;1,0622606828912575;0,05;true;Qflow_B_ACL_110_1_5_to
+PflowMeas;;b3d3b4ad-02af-4490-8748-70f6c9a23734;c8726716-e182-4373-b83e-8f60070078cb;4;;from;-1,0409161313145803;0,05;true;Pflow_B_ACL_110_6_5_from
+PflowMeas;;b3d3b4ad-02af-4490-8748-70f6c9a23734;c8726716-e182-4373-b83e-8f60070078cb;4;;to;1,1254835760292623;0,05;true;Pflow_B_ACL_110_6_5_to
+QflowMeas;;b3d3b4ad-02af-4490-8748-70f6c9a23734;c8726716-e182-4373-b83e-8f60070078cb;4;;from;-0,3960372529928397;0,05;true;Qflow_B_ACL_110_6_5_from
+QflowMeas;;b3d3b4ad-02af-4490-8748-70f6c9a23734;c8726716-e182-4373-b83e-8f60070078cb;4;;to;0,6186616434008183;0,05;true;Qflow_B_ACL_110_6_5_to
+PflowMeas;;c8726716-e182-4373-b83e-8f60070078cb;c0adab49-d445-4609-a1a3-ebe4ef297cc8;5;;from;-2,326133212700026;0,05;true;Pflow_B_ACL_110_5_2_from
+PflowMeas;;c8726716-e182-4373-b83e-8f60070078cb;c0adab49-d445-4609-a1a3-ebe4ef297cc8;5;;to;2,3799966300867372;0,05;true;Pflow_B_ACL_110_5_2_to
+QflowMeas;;c8726716-e182-4373-b83e-8f60070078cb;c0adab49-d445-4609-a1a3-ebe4ef297cc8;5;;from;-1,257769683829913;0,05;true;Qflow_B_ACL_110_5_2_from
+QflowMeas;;c8726716-e182-4373-b83e-8f60070078cb;c0adab49-d445-4609-a1a3-ebe4ef297cc8;5;;to;1,214418012283858;0,05;true;Qflow_B_ACL_110_5_2_to
+PflowMeas;;b3d3b4ad-02af-4490-8748-70f6c9a23734;37edd845-456f-4c3e-98d5-19af0c1cef1e;6;;from;-0,17782813983656717;0,05;true;Pflow_B_ACL_110_6_1#6_from
+PflowMeas;;b3d3b4ad-02af-4490-8748-70f6c9a23734;37edd845-456f-4c3e-98d5-19af0c1cef1e;6;;to;0,29849005846519217;0,05;true;Pflow_B_ACL_110_6_1#6_to
+QflowMeas;;b3d3b4ad-02af-4490-8748-70f6c9a23734;37edd845-456f-4c3e-98d5-19af0c1cef1e;6;;from;-0,030969438813914174;0,05;true;Qflow_B_ACL_110_6_1#6_from
+QflowMeas;;b3d3b4ad-02af-4490-8748-70f6c9a23734;37edd845-456f-4c3e-98d5-19af0c1cef1e;6;;to;0,15048803730691945;0,05;true;Qflow_B_ACL_110_6_1#6_to
+PflowMeas;;b3d3b4ad-02af-4490-8748-70f6c9a23734;37edd845-456f-4c3e-98d5-19af0c1cef1e;7;;from;-0,2398663390805796;0,05;true;Pflow_B_ACL_110_6_1#7_from
+PflowMeas;;b3d3b4ad-02af-4490-8748-70f6c9a23734;37edd845-456f-4c3e-98d5-19af0c1cef1e;7;;to;0,2026432338626177;0,05;true;Pflow_B_ACL_110_6_1#7_to
+QflowMeas;;b3d3b4ad-02af-4490-8748-70f6c9a23734;37edd845-456f-4c3e-98d5-19af0c1cef1e;7;;from;-0,20807413435091698;0,05;true;Qflow_B_ACL_110_6_1#7_from
+QflowMeas;;b3d3b4ad-02af-4490-8748-70f6c9a23734;37edd845-456f-4c3e-98d5-19af0c1cef1e;7;;to;0,05355858697883087;0,05;true;Qflow_B_ACL_110_6_1#7_to
+PflowMeas;;37edd845-456f-4c3e-98d5-19af0c1cef1e;764e0b8a-f2af-4092-b6aa-b4a19e55db98;10;;from;2,15152525648875;0,05;true;Pflow_B_2WT_110_1_3#10_from
+PflowMeas;;37edd845-456f-4c3e-98d5-19af0c1cef1e;764e0b8a-f2af-4092-b6aa-b4a19e55db98;10;;to;-2,108635412621175;0,05;true;Pflow_B_2WT_110_1_3#10_to
+QflowMeas;;37edd845-456f-4c3e-98d5-19af0c1cef1e;764e0b8a-f2af-4092-b6aa-b4a19e55db98;10;;from;1,3094918226911216;0,05;true;Qflow_B_2WT_110_1_3#10_from
+QflowMeas;;37edd845-456f-4c3e-98d5-19af0c1cef1e;764e0b8a-f2af-4092-b6aa-b4a19e55db98;10;;to;-1,145318406132037;0,05;true;Qflow_B_2WT_110_1_3#10_to
+PflowMeas;;37edd845-456f-4c3e-98d5-19af0c1cef1e;764e0b8a-f2af-4092-b6aa-b4a19e55db98;11;;from;2,21221999131691;0,05;true;Pflow_B_2WT_110_1_3#11_from
+PflowMeas;;37edd845-456f-4c3e-98d5-19af0c1cef1e;764e0b8a-f2af-4092-b6aa-b4a19e55db98;11;;to;-2,102822881875566;0,05;true;Pflow_B_2WT_110_1_3#11_to
+QflowMeas;;37edd845-456f-4c3e-98d5-19af0c1cef1e;764e0b8a-f2af-4092-b6aa-b4a19e55db98;11;;from;1,2130308859398924;0,05;true;Qflow_B_2WT_110_1_3#11_from
+QflowMeas;;37edd845-456f-4c3e-98d5-19af0c1cef1e;764e0b8a-f2af-4092-b6aa-b4a19e55db98;11;;to;-1,1954235717430421;0,05;true;Qflow_B_2WT_110_1_3#11_to
+PflowMeas;;c8726716-e182-4373-b83e-8f60070078cb;c7eda3d2-e92d-4935-8166-5e045d3de045;12;;from;-1,173164447018019;0,05;true;Pflow_B_2WT_110_5_10_from
+PflowMeas;;c8726716-e182-4373-b83e-8f60070078cb;c7eda3d2-e92d-4935-8166-5e045d3de045;12;;to;1,1919870893979045;0,05;true;Pflow_B_2WT_110_5_10_to
+QflowMeas;;c8726716-e182-4373-b83e-8f60070078cb;c7eda3d2-e92d-4935-8166-5e045d3de045;12;;from;-0,3028875407011411;0,05;true;Qflow_B_2WT_110_5_10_from
+QflowMeas;;c8726716-e182-4373-b83e-8f60070078cb;c7eda3d2-e92d-4935-8166-5e045d3de045;12;;to;0,25022398880272617;0,05;true;Qflow_B_2WT_110_5_10_to
+PflowMeas;;c0adab49-d445-4609-a1a3-ebe4ef297cc8;7f5515b2-ca6b-45af-93ee-f196686f0c66;13;;from;-5,353782906670761;0,05845696718783887;true;Pflow_B_2WT_110_2_11_from
+PflowMeas;;c0adab49-d445-4609-a1a3-ebe4ef297cc8;7f5515b2-ca6b-45af-93ee-f196686f0c66;13;;to;5,34981776236021;0,05846941609525302;true;Pflow_B_2WT_110_2_11_to
+QflowMeas;;c0adab49-d445-4609-a1a3-ebe4ef297cc8;7f5515b2-ca6b-45af-93ee-f196686f0c66;13;;from;-2,2989334560194847;0,05;true;Qflow_B_2WT_110_2_11_from
+QflowMeas;;c0adab49-d445-4609-a1a3-ebe4ef297cc8;7f5515b2-ca6b-45af-93ee-f196686f0c66;13;;to;2,4245730409882658;0,05;true;Qflow_B_2WT_110_2_11_to
+PflowMeas;;AUX3WT_T4;adee76cd-b2b9-48ac-8fd4-0d205a435f59;14;;from;-0,17835369998135683;0,05;true;Pflow_B_2WT_380_12_7_from
+PflowMeas;;AUX3WT_T4;adee76cd-b2b9-48ac-8fd4-0d205a435f59;14;;to;0,17390074398558153;0,05;true;Pflow_B_2WT_380_12_7_to
+QflowMeas;;AUX3WT_T4;adee76cd-b2b9-48ac-8fd4-0d205a435f59;14;;from;-0,25427941005238697;0,05;true;Qflow_B_2WT_380_12_7_from
+QflowMeas;;AUX3WT_T4;adee76cd-b2b9-48ac-8fd4-0d205a435f59;14;;to;0,11860345430193128;0,05;true;Qflow_B_2WT_380_12_7_to
+PflowMeas;;AUX3WT_T4;b3d3b4ad-02af-4490-8748-70f6c9a23734;15;;from;0,5034603606320502;0,05;true;Pflow_B_2WT_380_12_6_from
+PflowMeas;;AUX3WT_T4;b3d3b4ad-02af-4490-8748-70f6c9a23734;15;;to;-0,5484636577890489;0,05;true;Pflow_B_2WT_380_12_6_to
+QflowMeas;;AUX3WT_T4;b3d3b4ad-02af-4490-8748-70f6c9a23734;15;;from;0,3546533320681169;0,05;true;Qflow_B_2WT_380_12_6_from
+QflowMeas;;AUX3WT_T4;b3d3b4ad-02af-4490-8748-70f6c9a23734;15;;to;-0,4191394254145725;0,05;true;Qflow_B_2WT_380_12_6_to
+PflowMeas;;AUX3WT_T4;03163ede-7eec-457f-8641-365982227d7c;16;;from;-0,5274746475109263;0,05;true;Pflow_B_2WT_380_12_13_from
+PflowMeas;;AUX3WT_T4;03163ede-7eec-457f-8641-365982227d7c;16;;to;0,6170547024161397;0,05;true;Pflow_B_2WT_380_12_13_to
+QflowMeas;;AUX3WT_T4;03163ede-7eec-457f-8641-365982227d7c;16;;from;-0,27458776090095754;0,05;true;Qflow_B_2WT_380_12_13_from
+QflowMeas;;AUX3WT_T4;03163ede-7eec-457f-8641-365982227d7c;16;;to;0,28815428757781897;0,05;true;Qflow_B_2WT_380_12_13_to
+PflowMeas;;AUX3WT_T3;adee76cd-b2b9-48ac-8fd4-0d205a435f59;17;;from;-0,1552020634551729;0,05;true;Pflow_B_2WT_380_14_7_from
+PflowMeas;;AUX3WT_T3;adee76cd-b2b9-48ac-8fd4-0d205a435f59;17;;to;0,12815488070620326;0,05;true;Pflow_B_2WT_380_14_7_to
+QflowMeas;;AUX3WT_T3;adee76cd-b2b9-48ac-8fd4-0d205a435f59;17;;from;-0,16161779031075627;0,05;true;Qflow_B_2WT_380_14_7_from
+QflowMeas;;AUX3WT_T3;adee76cd-b2b9-48ac-8fd4-0d205a435f59;17;;to;0,1721910648907635;0,05;true;Qflow_B_2WT_380_14_7_to
+PflowMeas;;AUX3WT_T3;b3d3b4ad-02af-4490-8748-70f6c9a23734;18;;from;-1,0045220213731447;0,05;true;Pflow_B_2WT_380_14_6_from
+PflowMeas;;AUX3WT_T3;b3d3b4ad-02af-4490-8748-70f6c9a23734;18;;to;1,1226738372617153;0,05;true;Pflow_B_2WT_380_14_6_to
+QflowMeas;;AUX3WT_T3;b3d3b4ad-02af-4490-8748-70f6c9a23734;18;;from;-0,671551356471614;0,05;true;Qflow_B_2WT_380_14_6_from
+QflowMeas;;AUX3WT_T3;b3d3b4ad-02af-4490-8748-70f6c9a23734;18;;to;0,6526757670147214;0,05;true;Qflow_B_2WT_380_14_6_to
+PflowMeas;;AUX3WT_T3;87c0d153-e308-4b2b-92a4-4fad53ab1ff9;19;;from;0,5089646568754924;0,05;true;Pflow_B_2WT_380_14_15_from
+PflowMeas;;AUX3WT_T3;87c0d153-e308-4b2b-92a4-4fad53ab1ff9;19;;to;-0,5003146346040369;0,05;true;Pflow_B_2WT_380_14_15_to
+QflowMeas;;AUX3WT_T3;87c0d153-e308-4b2b-92a4-4fad53ab1ff9;19;;from;1,1002034916494658;0,05;true;Qflow_B_2WT_380_14_15_from
+QflowMeas;;AUX3WT_T3;87c0d153-e308-4b2b-92a4-4fad53ab1ff9;19;;to;-1,1779316871882635;0,05;true;Qflow_B_2WT_380_14_15_to
+PinjMeas;37edd845-456f-4c3e-98d5-19af0c1cef1e;;;;;;0,0;0,05;true;ZI_PINJ_bus_1
+QinjMeas;37edd845-456f-4c3e-98d5-19af0c1cef1e;;;;;;0,0;0,05;true;ZI_QINJ_bus_1
+PinjMeas;c0adab49-d445-4609-a1a3-ebe4ef297cc8;;;;;;0,0;0,05;true;ZI_PINJ_bus_2
+QinjMeas;c0adab49-d445-4609-a1a3-ebe4ef297cc8;;;;;;0,0;0,05;true;ZI_QINJ_bus_2
+PinjMeas;c8726716-e182-4373-b83e-8f60070078cb;;;;;;0,0;0,05;true;ZI_PINJ_bus_5
+QinjMeas;c8726716-e182-4373-b83e-8f60070078cb;;;;;;0,0;0,05;true;ZI_QINJ_bus_5
+PinjMeas;b3d3b4ad-02af-4490-8748-70f6c9a23734;;;;;;0,0;0,05;true;ZI_PINJ_bus_6
+QinjMeas;b3d3b4ad-02af-4490-8748-70f6c9a23734;;;;;;0,0;0,05;true;ZI_QINJ_bus_6
+PinjMeas;adee76cd-b2b9-48ac-8fd4-0d205a435f59;;;;;;0,0;0,05;true;ZI_PINJ_bus_7
+QinjMeas;adee76cd-b2b9-48ac-8fd4-0d205a435f59;;;;;;0,0;0,05;true;ZI_QINJ_bus_7
+PinjMeas;8372a156-7579-4ea5-1111-24caf0d24603;;;;;;0,0;0,05;true;ZI_PINJ_bus_8
+QinjMeas;8372a156-7579-4ea5-1111-24caf0d24603;;;;;;0,0;0,05;true;ZI_QINJ_bus_8
+PinjMeas;8372a156-7579-4ea5-2222-24caf0d24603;;;;;;0,0;0,05;true;ZI_PINJ_bus_9
+QinjMeas;8372a156-7579-4ea5-2222-24caf0d24603;;;;;;0,0;0,05;true;ZI_QINJ_bus_9
+PinjMeas;AUX3WT_T4;;;;;;0,0;0,05;true;ZI_PINJ_bus_12
+QinjMeas;AUX3WT_T4;;;;;;0,0;0,05;true;ZI_QINJ_bus_12
+PinjMeas;03163ede-7eec-457f-8641-365982227d7c;;;;;;0,0;0,05;true;ZI_PINJ_bus_13
+QinjMeas;03163ede-7eec-457f-8641-365982227d7c;;;;;;0,0;0,05;true;ZI_QINJ_bus_13
+PinjMeas;AUX3WT_T3;;;;;;0,0;0,05;true;ZI_PINJ_bus_14
+QinjMeas;AUX3WT_T3;;;;;;0,0;0,05;true;ZI_QINJ_bus_14
+PinjMeas;87c0d153-e308-4b2b-92a4-4fad53ab1ff9;;;;;;0,0;0,05;true;ZI_PINJ_bus_15
+QinjMeas;87c0d153-e308-4b2b-92a4-4fad53ab1ff9;;;;;;0,0;0,05;true;ZI_QINJ_bus_15
+# truth_value,Vm_5,1.0419434746371197
+# truth_value,Vm_4,1.04297780164015
+# truth_value,Vm_6,1.04132850350629
+# truth_value,Qinj_6,2.446977568827817
+# truth_value,Qinj_7,-4.715024201769254
+# truth_value,Vm_3,1.04238655997987
+# truth_value,Vm_2,1.04192400131267
+# truth_value,Vm_1,1.00547885314495
+# truth_value,Vm_HG2,1.00371764985737
+# truth_value,Pinj_HG2,1.146834078933927
+# truth_value,Qinj_HG2,0.27238225161194424
+# truth_value,Vm_HG1,1.0003416871842599
+# truth_value,Pinj_HG1,5.315401463204824
+# truth_value,Qinj_HG1,2.3919194287919354
+# truth_value,Vm_AUX3WT_T4,1.00536725466293
+# truth_value,Vm_H,0.955491250346879
+# truth_value,Vm_AUX3WT_T3,1.00536119621486
+# truth_value,Vm_8,0.953486809770234
+# truth_value,Pflow_B_ACL_110_1_2_from,-2.9366227168287296
+# truth_value,Pflow_B_ACL_110_1_2_to,2.9380496442399817
+# truth_value,Qflow_B_ACL_110_1_2_from,-1.3378711123475995
+# truth_value,Qflow_B_ACL_110_1_2_to,1.3424610621868283
+# truth_value,Pflow_B_ACL_10_3_4_from,9.233153464931565
+# truth_value,Qflow_B_ACL_10_3_4_from,4.800915874217093
+# truth_value,Qflow_B_ACL_10_3_4_to,-4.715024201769502
+# truth_value,Pflow_B_ACL_110_1_5_from,-2.013933465664053
+# truth_value,Pflow_B_ACL_110_1_5_to,2.014294580611775
+# truth_value,Qflow_B_ACL_110_1_5_from,-0.94098258423152
+# truth_value,Qflow_B_ACL_110_1_5_to,0.9424420904778685
+# truth_value,Pflow_B_ACL_110_6_5_from,-1.0541464263577716
+# truth_value,Pflow_B_ACL_110_6_5_to,1.0543821512405849
+# truth_value,Qflow_B_ACL_110_6_5_from,-0.42303579247846557
+# truth_value,Qflow_B_ACL_110_6_5_to,0.4238018983473424
+# truth_value,Pflow_B_ACL_110_5_2_from,-2.3370388410409504
+# truth_value,Pflow_B_ACL_110_5_2_to,2.3376671307163477
+# truth_value,Qflow_B_ACL_110_5_2_from,-1.1924533513379743
+# truth_value,Qflow_B_ACL_110_5_2_to,1.1944952927830599
+# truth_value,Pflow_B_ACL_110_6_1#6_from,-0.17421406079662916
+# truth_value,Pflow_B_ACL_110_6_1#6_to,0.17421568583273483
+# truth_value,Qflow_B_ACL_110_6_1#6_from,-0.07229429890642791
+# truth_value,Qflow_B_ACL_110_6_1#6_to,0.07229958027323846
+# truth_value,Pflow_B_ACL_110_6_1#7_from,-0.17421406079662916
+# truth_value,Pflow_B_ACL_110_6_1#7_to,0.17421568583273483
+# truth_value,Qflow_B_ACL_110_6_1#7_from,-0.07229429890642791
+# truth_value,Qflow_B_ACL_110_6_1#7_to,0.07229958027323846
+# truth_value,Pflow_B_2WT_110_1_3#10_from,2.1840253577624176
+# truth_value,Pflow_B_2WT_110_1_3#10_to,-2.1830326982842556
+# truth_value,Qflow_B_2WT_110_1_3#10_from,1.2007722947799504
+# truth_value,Qflow_B_2WT_110_1_3#10_to,-1.1769691526947401
+# truth_value,Pflow_B_2WT_110_1_3#11_from,2.1840253577624176
+# truth_value,Pflow_B_2WT_110_1_3#11_to,-2.1830326982842556
+# truth_value,Qflow_B_2WT_110_1_3#11_from,1.2007722947799504
+# truth_value,Qflow_B_2WT_110_1_3#11_to,-1.1769691526947401
+# truth_value,Pflow_B_2WT_110_5_10_from,-1.146758053452096
+# truth_value,Pflow_B_2WT_110_5_10_to,1.1468340789339337
+# truth_value,Qflow_B_2WT_110_5_10_from,-0.2705592245774824
+# truth_value,Qflow_B_2WT_110_5_10_to,0.2723822516122354
+# truth_value,Pflow_B_2WT_110_2_11_from,-5.314269744348987
+# truth_value,Pflow_B_2WT_110_2_11_to,5.315401463204819
+# truth_value,Qflow_B_2WT_110_2_11_from,-2.355722132570648
+# truth_value,Qflow_B_2WT_110_2_11_to,2.391919428791489
+# truth_value,Pflow_B_2WT_380_12_7_from,-0.11932561546208337
+# truth_value,Pflow_B_2WT_380_12_7_to,0.1193257883738863
+# truth_value,Qflow_B_2WT_380_12_7_from,-0.16801146825287105
+# truth_value,Qflow_B_2WT_380_12_7_to,0.16803940164358266
+# truth_value,Pflow_B_2WT_380_12_6_from,0.49402197810195503
+# truth_value,Pflow_B_2WT_380_12_6_to,-0.49402041554458265
+# truth_value,Qflow_B_2WT_380_12_6_from,0.37380280820542566
+# truth_value,Qflow_B_2WT_380_12_6_to,-0.3738028409635774
+# truth_value,Pflow_B_2WT_380_12_13_from,-0.5360638069891122
+# truth_value,Pflow_B_2WT_380_12_13_to,0.5360747604238297
+# truth_value,Qflow_B_2WT_380_12_13_from,-0.25667820237220695
+# truth_value,Qflow_B_2WT_380_12_13_to,0.257220230610411
+# truth_value,Pflow_B_2WT_380_14_7_from,-0.11285449922295299
+# truth_value,Pflow_B_2WT_380_14_7_to,0.11285467895249535
+# truth_value,Qflow_B_2WT_380_14_7_from,-0.1772122873219928
+# truth_value,Qflow_B_2WT_380_14_7_to,0.17724132209835375
+# truth_value,Pflow_B_2WT_380_14_6_from,-1.0074027352402481
+# truth_value,Pflow_B_2WT_380_14_6_to,1.0074085831092816
+# truth_value,Qflow_B_2WT_380_14_6_from,-0.6490796323532777
+# truth_value,Qflow_B_2WT_380_14_6_to,0.6490795097569446
+# truth_value,Pflow_B_2WT_380_14_15_from,0.4824091090388727
+# truth_value,Pflow_B_2WT_380_14_15_to,-0.4823652889321295
+# truth_value,Qflow_B_2WT_380_14_15_from,1.0864907978829663
+# truth_value,Qflow_B_2WT_380_14_15_to,-1.0843223699196436
+# truth_value,ZI_PINJ_bus_1,0.0
+# truth_value,ZI_QINJ_bus_1,0.0
+# truth_value,ZI_PINJ_bus_2,0.0
+# truth_value,ZI_QINJ_bus_2,0.0
+# truth_value,ZI_PINJ_bus_5,0.0
+# truth_value,ZI_QINJ_bus_5,0.0
+# truth_value,ZI_PINJ_bus_6,0.0
+# truth_value,ZI_QINJ_bus_6,0.0
+# truth_value,ZI_PINJ_bus_7,0.0
+# truth_value,ZI_QINJ_bus_7,0.0
+# truth_value,ZI_PINJ_bus_8,0.0
+# truth_value,ZI_QINJ_bus_8,0.0
+# truth_value,ZI_PINJ_bus_9,0.0
+# truth_value,ZI_QINJ_bus_9,0.0
+# truth_value,ZI_PINJ_bus_12,0.0
+# truth_value,ZI_QINJ_bus_12,0.0
+# truth_value,ZI_PINJ_bus_13,0.0
+# truth_value,ZI_QINJ_bus_13,0.0
+# truth_value,ZI_PINJ_bus_14,0.0
+# truth_value,ZI_QINJ_bus_14,0.0
+# truth_value,ZI_PINJ_bus_15,0.0
+# truth_value,ZI_QINJ_bus_15,0.0

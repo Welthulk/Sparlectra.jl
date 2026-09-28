@@ -78,7 +78,10 @@ function _resolve_powerflow_casefile(
   # goes to the importer unchanged, like a CGMES delivery
   lowered = lowercase(requested)
   is_iidm = endswith(lowered, ".xiidm") || endswith(lowered, ".xiidm.bz2") || (extension == ".xml" && isfile(requested) && Sparlectra.detect(Sparlectra.PowsyblAdapter, requested))
-  is_iidm || extension in (".m", ".jl", ".dat", ".zip", ".json") || throw(ArgumentError("Unsupported casefile extension: $(requested) (expected .m, .jl, .DAT, .zip, .json, .xiidm, or a .powsybl bundle directory)"))
+  # a .powsybl table bundle is a directory; by its bare name it lies in the
+  # case directory (a full path was returned by the isdir check above)
+  is_bundle_name = extension == ".powsybl"
+  is_iidm || is_bundle_name || extension in (".m", ".jl", ".dat", ".zip", ".json") || throw(ArgumentError("Unsupported casefile extension: $(requested) (expected .m, .jl, .DAT, .zip, .json, .xiidm, or a .powsybl bundle directory)"))
   if isfile(requested)
     if is_iidm || extension in (".zip", ".json")
       return abspath(requested)
@@ -94,6 +97,14 @@ function _resolve_powerflow_casefile(
 
   trusted_directory = abspath(case_directory)
   mkpath(trusted_directory)
+  # an uploaded IIDM file or a copied table bundle is a local case: there is
+  # nothing to fetch for it, so a miss is a plain not-found and never a
+  # MATPOWER download attempt under that name
+  if is_bundle_name || endswith(lowered, ".xiidm")
+    local_iidm = joinpath(trusted_directory, requested)
+    (is_bundle_name ? isdir(local_iidm) : isfile(local_iidm)) && return abspath(local_iidm)
+    throw(ArgumentError("Case file not found: $(requested)"))
+  end
   if extension == ".jl"
     # A cache-local .jl request may only bypass to its matching .m source; a
     # standalone generated cache file is rejected so users see the source case.

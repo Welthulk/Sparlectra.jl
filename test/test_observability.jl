@@ -154,7 +154,7 @@ function test_observability_metrics(fx)::Bool
   # lifts zero-injection rows (sigma 1e-6) six orders of magnitude above the
   # rest, which made the same case worse (deficit 12308). Column
   # normalization alone leaves it at 0.
-  # A reviewer's objection, and it was justified: the interesting failure is
+  # An objection from review, and it was justified: the interesting failure is
   # not a set without any flow information (there the matching fails
   # obviously), it is one where the Hopcroft-Karp matching covers every
   # state column while information is still missing, so two angles are only
@@ -580,7 +580,7 @@ function test_observability_takahashi_diagnostics(fx)::Bool
     @test !small.criticality_skipped
     # a state column no row touches is a not-observable verdict, not an
     # error (the estimator's tap and shunt release guards rely on it; a
-    # thinned set left a released tap without rows, Web UI run 93b08476)
+    # thinned set left a released tap without rows, a Web UI run)
     Hgap = SparseArrays.sparse([1, 2], [1, 2], [1.0, 1.0], 2, 3)
     gap = Sparlectra.evaluate_local_observability_matrix(Hgap, [3])
     @test !gap.numerical_observable

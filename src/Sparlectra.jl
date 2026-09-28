@@ -30,6 +30,7 @@ using AnalyticLoadFlow
 using BenchmarkTools
 using Dates
 using DelimitedFiles
+import EzXML                      # IIDM reader of the PowSyBl adapter (the CGMES submodule imports it on its own)
 using LinearAlgebra
 using Logging
 using Printf
@@ -339,6 +340,7 @@ export
   getShunt!,
   markIsolatedBuses!,
   ensureSlack!,                           # Auto-promote a reference when no slack is registered.
+  reference_candidate_rank,               # The one ranking of reference candidates (import, auto_slack, islands).
   setTotalBusPower!,
   setPVBusVset!,                          # Set PV voltage target.
   setQLimits!,                            # Set generator reactive-power limits.
@@ -448,7 +450,7 @@ export
   cgmes_enrich_case!,                     # Attach the mRID registry and per-component mRIDs to a typed case.
   PGMAdapter,                             # power-grid-model adapter: plain dataset through the shared pipeline.
   PGMAdapterOptions,                      # Contract options of the PGM conversion (none).
-  PowsyblAdapter,                         # PowSyBl adapter: IIDM through pypowsybl tables (bundle or extension).
+  PowsyblAdapter,                         # PowSyBl adapter: IIDM files (.xiidm) read in Julia.
   PowsyblAdapterOptions,                  # Adapter-scope options of the PowSyBl import.
   powsybl_adapter_options,                # PowsyblAdapterOptions from an effective run configuration.
   PowsyblTables,                          # A PowSyBl table bundle in memory (one NamedTuple of columns per table).
@@ -511,6 +513,8 @@ export
   calcRatioTapRange,                      # Ratio-terms tap range (tap_min, tap_max, tap_step).
   calcPhaseTapFraction,                   # CGMES phase-tap-changer n-n0 tap fraction.
   calcPhaseTapAngleRatio,                 # CGMES phase-tap-changer effective ratio/shift/regulating vector.
+  tap_changer_kind,                       # Source tap-changer name to Sparlectra kind (one table for every importer and exporter).
+  TAP_CHANGER_KIND_TABLE,
   calcPhaseTapReactance,                  # CGMES phase-tap-changer series-reactance dependence on tap angle.
   calcPhaseTapTable,                      # Tabular phase-tap-changer exact lookup (overrides formulas).
   calcNeutralU,
@@ -690,6 +694,7 @@ include("config/config_overrides.jl")
 include("component.jl")
 include("lines.jl")
 include("transformer.jl")
+include("tap_changer_kinds.jl")
 include("prosumer.jl")
 include("node.jl")
 include("branch.jl")

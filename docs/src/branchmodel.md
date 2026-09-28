@@ -13,17 +13,17 @@ transformers. The branch admittance matrix $Y_{br}$ is:
 
 ```math
 Y_{br} = \begin{bmatrix}
-    \frac{1}{\tau^2} \left( y_{ser} + \frac{y_{shunt}}{2} \right) &
+    \frac{1}{\tau^2} \left( y_{ser} + y_{0,from} \right) &
     -y_{ser} \frac{1}{\tau e^{-j\phi}} \\
     -y_{ser} \frac{1}{\tau e^{j\phi}} &
-    y_{ser} + \frac{y_{shunt}}{2}
+    y_{ser} + y_{0,to}
 \end{bmatrix}
 ```
 
-with `y_ser` the series admittance, `y_shunt` the total branch shunt
-admittance, `R` and `X` the resistance and reactance, `G` and `B` the
-conductance and susceptance, and $N$ the complex transformation factor
-(1 for power lines):
+with `y_ser` the series admittance, $y_{0,from}$ and $y_{0,to}$ the shunt
+arm at each terminal, `R` and `X` the resistance and reactance, `G` and
+`B` the conductance and susceptance, and $N$ the complex transformation
+factor (1 for power lines):
 
 ```math
 N = \tau e^{j\phi}
@@ -34,8 +34,17 @@ y_{ser} = \frac{1}{R + jX}
 ```
 
 ```math
-y_{shunt} = G + jB
+y_{0,from} = G_{from} + jB_{from}, \qquad y_{0,to} = G_{to} + jB_{to}, \qquad
+y_{shunt} = y_{0,from} + y_{0,to} = G + jB
 ```
+
+The branch stores the two arms (`g_from_pu`, `b_from_pu`, `g_to_pu`,
+`b_to_pu`) and the totals `g_pu`, `b_pu` as their sums. MATPOWER and the
+symmetric pi are the case $y_{0,from} = y_{0,to} = (G + jB)/2$, which is
+what every builder produces when it is given totals only; the from arm sits
+behind the ideal transformer, so a transformer whose magnetizing admittance
+belongs to one side keeps it there (see
+[Where the magnetizing admittance sits](@ref magnetizing_placement)).
 
 The magnitude $\tau$ is the off-nominal tap ratio, the angle $\phi$ the
 phase shift. A pure ratio tap changer moves $\tau$, a pure phase shifter
@@ -49,7 +58,7 @@ transformer or PST has a finite series impedance and is a normal branch stamp.
                     y_ser
       x--┓┏---------###----------x
          ||   |             |
-         ||   # y_shunt     # y_shunt
+         ||   # y_0,from    # y_0,to
          ||   |             |
       x--┛┗----------------------x
          N = tau * exp(j * phi)
@@ -57,17 +66,21 @@ transformer or PST has a finite series impedance and is a normal branch stamp.
 
 ### Sign and conjugation convention
 
-With series admittance $y$, total shunt $y_{sh}$, and from-side tap $t = \tau
-e^{j\phi}$, the stamped entries are:
+With series admittance $y$, the shunt arms $y_{0,from}$ and $y_{0,to}$, and
+from-side tap $t = \tau e^{j\phi}$, the stamped entries (`calcAdmittance`)
+are:
 
 ```math
 \begin{aligned}
-Y_{ff} &= \frac{y + 0.5\,y_{sh}}{\lvert t \rvert^2} \\
+Y_{ff} &= \frac{y + y_{0,from}}{\lvert t \rvert^2} \\
 Y_{ft} &= -\frac{y}{\overline{t}} \\
 Y_{tf} &= -\frac{y}{t} \\
-Y_{tt} &= y + 0.5\,y_{sh}
+Y_{tt} &= y + y_{0,to}
 \end{aligned}
 ```
+
+With the symmetric split both arms are $0.5\,y_{sh}$ and the entries are
+the classic MATPOWER stamp.
 
 The tap is applied on the from side. Reversing a PST with $\tau = 1$ is
 electrically a sign flip of $\phi$; with an off-nominal ratio, reversing the
@@ -85,11 +98,14 @@ Y_{ii} = \sum_{k \in \mathcal{N}(i)} y_{ik} + y_i^{sh}
 
 with $y_{ik}$ the series admittance of branch $i-k$ and $y_i^{sh}$ the
 explicit shunt admittance at bus $i$. For a π-model branch $i-k$ the local
-diagonal stamp is:
+diagonal stamp is the series admittance plus the shunt arm of the terminal
+at bus $i$:
 
 ```math
-Y_{ii} \mathrel{+}= y_{ik} + \frac{y_{ik}^{sh}}{2}
+Y_{ii} \mathrel{+}= y_{ik} + y_{0,i}
 ```
+
+with $y_{0,i} = y_{ik}^{sh}/2$ for the symmetric split.
 
 and the off-diagonal relation is:
 
@@ -110,8 +126,24 @@ the real part is usually non-negative, the imaginary part reflects the
 balance of inductive series effects and capacitive or inductive shunts.
 
 The branch builders (`addACLine!`, `addPIModelACLine!`, `addPIModelTrafo!`)
-stamp series admittance plus half shunt on each side; explicit shunts are
-added as nodal shunt terms when `bus_shunt_model = "admittance"`.
+stamp series admittance plus half shunt on each side unless the four
+terminal values `g_from_pu`, `b_from_pu`, `g_to_pu`, `b_to_pu` are given
+(all four or none); explicit shunts are added as nodal shunt terms when
+`bus_shunt_model = "admittance"`.
+
+### [Where the magnetizing admittance sits](@id magnetizing_placement)
+
+A transformer's magnetizing branch ($G$, $B$ of the no-load test) is a
+one-sided quantity. PowSyBl and OpenLoadFlow put it wholly on side 1,
+behind the ideal transformer (`twtSplitShuntAdmittance = false`), and the
+PowSyBl importer keeps it there as the from arm with the to arm zero. A
+CGMES `PowerTransformerEnd` carries `g`, `b` per end; the importer refers
+end 1 to the to-side base and keeps each end's admittance on its own
+terminal. Both were bus shunts before 0.20.0, which an outage study or an
+export could not tell from a compensator. MATPOWER has no place for the
+split: its reader produces the symmetric half, its writer puts the
+symmetric part on the branch and the excess on a bus shunt named after the
+branch (see [MATPOWER](matpower.md)).
 
 ### Bus-shunt modeling modes
 
@@ -148,17 +180,20 @@ individual terminals. The terminal state is one of `:closed`, `:open_from`,
 
 ### The pi reduction
 
-Take the pi model with series admittance $Y_s = 1/(r + jx)$ and shunt arms
-$Y_0 = (g + jb)/2$ at each end, terminal `to` open, `from` closed, no load
-at the open end. Seen from the closed bus the branch collapses exactly to
-the input admittance
+Take the pi model with series admittance $Y_s = 1/(r + jx)$ and the shunt
+arms $Y_{0,from}$ at the closed and $Y_{0,to}$ at the open terminal (both
+$(g + jb)/2$ for the symmetric split), terminal `to` open, `from` closed,
+no load at the open end. Seen from the closed bus the branch collapses
+exactly to the input admittance
 
 ```math
-Y_{in} = Y_0 + \frac{Y_s Y_0}{Y_s + Y_0}
+Y_{in} = Y_{0,from} + \frac{Y_s Y_{0,to}}{Y_s + Y_{0,to}}
 ```
 
-Because $|Y_s| \gg |Y_0|$ for any realistic line, $Y_{in} \approx 2 Y_0 =
-g + jb$: the one-sided open line draws its **full** charging, not half of it.
+Because $|Y_s| \gg |Y_{0,to}|$ for any realistic line, $Y_{in} \approx
+Y_{0,from} + Y_{0,to} = g + jb$: the one-sided open line draws its **full**
+charging, not half of it, and a transformer whose magnetizing arm sits on
+the closed side draws exactly that arm.
 
 The implementation uses the equivalent Schur-complement form on the two-port
 from `calcAdmittance`, which already carries the complex ratio: with the `to`
@@ -352,9 +387,37 @@ addPIModelTrafo!(
   fromBus = "B1", toBus = "B2",
   r_pu = 0.01, x_pu = 0.08, b_pu = 0.0,
   ratio = 1.0, shift_deg = 0.0, status = 1,
+  phase_taps = pst_asym,           # the model drives the branch from here on
 )
-# the equivalent-circuit helpers resolve model + step -> ratio/shift for the branch
 ```
+
+### The resolver
+
+A winding that carries a typed model (`taps`, `phase_taps`) drives its
+branch by itself. `resolve_branch_taps!` (`equicircuit.jl`) runs when the
+transformer branch is built and whenever a tap controller moves a step:
+it takes `ratio` and `shift_deg` of the winding as the neutral point,
+multiplies the ratio-tap correction and the phase model's effective ratio
+onto it, adds the phase model's shift, derives the tap grid of the branch
+(`tap_min`, `tap_max`, `tap_step` from the ratio model's range,
+`phase_min_deg`, `phase_max_deg` and the mean degree per step from the
+phase model's range), applies `model.tap_changer_model` to `r_pu`/`x_pu`
+from the equipment base, and takes the model's own `X(alpha)` when it
+carries `x_min`/`x_max` or a table. The branch is then `taps_derived`.
+
+Precedence: with a model present the branch always shows the model's
+values; when the values the branch was built with differ from them by
+more than 1e-9, one line per transformer in `net.tapModelNotices` says
+what was replaced and at which step; a service run (Web UI, `run_powerflow_api`)
+writes those lines to the artifact `tap_models.log` and names it in the
+operation log. Without a model nothing changes: the explicit
+`ratio`/`shift_deg` and the legacy degree grid stay as they were.
+
+Controllers move the step, never `ratio`/`shift` directly, on a modelled
+transformer (the probe and the update pick the neighbouring step that
+comes closest to the proposal); the legacy degree and ratio grid remains
+for branches without a model. The state estimator's tap fixation rounds a
+derived phase regulator to the model's nearest step.
 
 ### Behaviour (`equicircuit.jl`)
 

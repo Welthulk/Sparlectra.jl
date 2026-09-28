@@ -22,12 +22,12 @@
 #          then a clean shutdown. Never run this file directly;
 #          PackageCompiler executes it in a child process during the build.
 #
-#          Scope, decided 2026-09-07: the important paths ONCE, nothing else.
+#          Scope: the important paths ONCE, nothing else.
 #          This file used to run the whole fast test profile plus the Web UI
 #          test group as its trace, which dominated the build time by a wide
 #          margin (the image itself compiles in about three minutes) without
 #          reaching a single Web UI path the steps below miss. The test trace
-#          is still available for a maintainer comparison via
+#          is still available for a comparison via
 #          SPARLECTRA_SYSIMAGE_TRACE_TESTS=1.
 #
 #          Output: everything printed here is captured by the parent build
@@ -37,7 +37,7 @@
 
 using Sparlectra
 using SparlectraApp
-# measurement guard (RP1 worktree incident 2026-09-03): this script must run
+# measurement guard (worktree incident): this script must run
 # against THE repository checkout it lives in, never a stale worktree or
 # another depot copy picked up through a wrong --project
 let expected = normpath(joinpath(@__DIR__, "..", "src")), actual = normpath(String(pathof(Sparlectra)))
@@ -75,7 +75,7 @@ open) took the whole build down with a stacktrace.
 
 Every step prints its outcome, successful ones included. A silent success is
 indistinguishable from a trace that never ran, and exactly that cost an hour
-of hunting a "missing" DTF trace that had in fact executed (2026-09-05).
+of hunting a "missing" DTF trace that had in fact executed.
 """
 function _traced(label::AbstractString, f::Function)
   _step(label)
@@ -94,7 +94,7 @@ function _traced(label::AbstractString, f::Function)
   return ok
 end
 
-# nonstandard ports so a Web UI the maintainer has open on 8080 does not
+# nonstandard ports so a Web UI already open on 8080 does not
 # make the build silently skip the server paths; the first free candidate
 # wins (a REPL session may hold an earlier workload port)
 const _WORKLOAD_PORTS = 8091:8097
@@ -108,7 +108,7 @@ function _workload_service_run(request::Dict{String,Any}; label::String)
   # a file inside it is still open, and a service run leaves log and artifact
   # handles behind. The do-block form raises on cleanup, and that exception
   # used to escape the whole workload and abort the build with a stacktrace
-  # (Windows only, maintainer 2026-09-07). A leftover temp directory costs
+  # (Windows only). A leftover temp directory costs
   # nothing; a failed build costs the user the sysimage.
   outdir = mktempdir(; cleanup = false)
   try
@@ -240,9 +240,8 @@ end
 
 # Every IMPORT FORMAT gets a power flow and a state estimation, not only
 # MATPOWER: the importers and the estimator specialize per format, so a format
-# missing from this trace pays its JIT on the user's first click (maintainer
-# 2026-09-05: "vor dem Sysimage muessen matpower, cgmes und dtf PF + SE +
-# sp_cases gemacht werden"). Each step fails softly - a missing fixture costs
+# missing from this trace pays its JIT on the user's first click.
+# Each step fails softly - a missing fixture costs
 # the trace, never the build.
 
 function _trace_scf(server)
@@ -419,7 +418,7 @@ end
 
 Base.invokelatest(run_workload)
 
-# Opt-in comparison trace for the maintainer: the fast test profile plus the
+# Opt-in comparison trace: the fast test profile plus the
 # Web UI test group. This used to run on every build and dominated its
 # runtime; it stays available because it is the only way to check whether the
 # curated steps above still cover what the suite reaches. A test failure must

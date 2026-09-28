@@ -244,3 +244,10 @@ discrete taps the deadband must cover at least the effect of half a tap
 step on the controlled quantity (one 0.5° phase step moving about 2.5 MW
 requires `deadband_p_mw ≥ ~1.5`); a tighter deadband makes the controller
 hunt around the target until `max_outer_iterations` stops the loop.
+
+On a transformer whose winding carries a typed tap model (`taps`,
+`phase_taps`, see [Branch model](branchmodel.md)), the controller moves
+the model's step and the resolver rewrites ratio, shift and the tap
+dependent reactance; the step sizes above then are the model's own,
+which for a symmetrical or asymmetrical phase shifter are not uniform in
+degrees. The controller report rows show the model step as the position.

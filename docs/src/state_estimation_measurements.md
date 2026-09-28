@@ -54,16 +54,31 @@ whole file.
 measurements with their network locations, plus per row whether the robust
 solve suppressed it (replacement) or down-weighted it (staged); suppressed
 rows below the elimination threshold are listed too.
+Rows the diagnostics pass eliminates are inactive in the reported run (the
+J of the status line and of `run.log` is the J without them); the pass
+itself, printed in `se_diagnostics.md` under "Diagnostics pass", counts
+them. An elimination counts only when the control solve without the row
+converges; otherwise the row goes back to active, the attempt is named
+("Reverted") and the sequence stops with `not_converged`. The artifact
+opens with the run id, the case, the measurement set and the reported
+numbers (converged, iterations as the maximum over the passes with the
+final solve's count when it differs, J/dof, J and dof). After a tap-estimation
+fallback the diagnostics run again on the frozen taps, and their
+eliminations apply to the reported run the same way.
 
 **Web UI.** The set tab of the state-estimation section offers download,
 re-upload and an inline editor and renders the tap comment table; see
-[Web UI](webui.md#State-estimation).
+[Web UI](webui_reference.md#State-estimation).
 
 ## Measurement generator
 
-The demo generator solves the case once (island-wise) and writes
-`<case>.measurements.csv`; a generated set replaces the one a case file
-carries.
+The demo generator solves the case once (island-wise) and writes a new
+set `<case>.measurements.<yyyymmdd-HHMMSS>.csv` next to the case (never
+over an earlier one; "add noise" writes `<case>.noisy.<stamp>.csv` the
+same way); the set just written is armed for the next run, later the
+newest set bound to the case. A set that is no longer needed is deleted
+on the page ("Delete measurement file"). A generated set takes precedence
+over the one a case file carries.
 
 **Use**
 
@@ -188,6 +203,7 @@ critical measurements are configurable in the Web UI form.
 **Notes**
 
 - `from run` rejects a missing artifact, a foreign case or an unknown run id
+- `from run` warns, in the confirmation and in the file's `# truth:` line, when the source run is no solution of the model (state estimation outside the band, taps frozen at model positions, not converged): flows derived from such a state violate the node balances and the set contradicts the model before any estimation
   up front; the tap-deviation option is locked with `from run` (a run state
   is a finished snapshot) and the service enforces the lock.
 - Critical-measurement thinning never removes zero-injection and passive
@@ -231,7 +247,7 @@ requires a CSV.
 |---|---|
 | Provenance | a set records whether it carries noise; a case file keeps that in `sparlectra.measurements.provenance`, together with the per-row truth values and the tap deviations the generator applied |
 | Add noise | [`addMeasurementNoise!`](@ref) perturbs each value with the sigma its own row declares, without recomputing anything |
-| Web UI | the page names the state of the carried set (ideal or measured) and offers "Add noise to this set"; a case file with its own measurements is offered first, see [Web UI](webui.md#State-estimation) |
+| Web UI | the page names the state of the carried set (ideal or measured) and offers "Add noise to this set"; a case file with its own measurements is offered first, see [Web UI](webui_reference.md#State-estimation) |
 
 **Notes**
 

@@ -124,6 +124,9 @@ const POWSYBL_SCHEMA = Dict{String,Vector{PowsyblColumn}}(
     _pc(:rated_s, Float64; required = false), _pc(:reactive_limits_kind, String), _pc(:target_v, Float64), _pc(:equivalent_local_target_v, Float64; required = false), _pc(:target_q, Float64),
     _pc(:voltage_regulator_on, Bool), _pc(:regulated_element_id, String; required = false), _pc(:regulated_bus_id, String), _pc(:regulated_bus_breaker_bus_id, String),
     _POWSYBL_RESULT_PQI..., _POWSYBL_BUS_ATTACHMENT..., _POWSYBL_FICTITIOUS..., _pc(:condenser, Bool; required = false),
+    # the generatorShortCircuit extension (reactances in ohm at the
+    # generator's voltage level); NaN where a generator carries none
+    _pc(:direct_subtrans_x, Float64; required = false), _pc(:direct_trans_x, Float64; required = false), _pc(:step_up_transformer_x, Float64; required = false),
   ],
   "reactive_capability_curve_points" => [_pc(:id, String; index = true), _pc(:num, Int; index = true), _pc(:p, Float64; required = false), _pc(:min_q, Float64; required = false), _pc(:max_q, Float64; required = false)],
   "loads" => [_pc(:id, String; index = true), _pc(:name, String; required = false), _pc(:type, String), _pc(:p0, Float64), _pc(:q0, Float64), _POWSYBL_RESULT_PQI..., _POWSYBL_BUS_ATTACHMENT..., _POWSYBL_FICTITIOUS...],

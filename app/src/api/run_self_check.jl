@@ -22,7 +22,7 @@
 #   file. As soon as such a file lies next to the case, its mere EXISTENCE
 #   makes every CASE-scope key fall through from the case levels straight to
 #   the packaged defaults (resolve_config), so a configuration FILE no
-#   longer reaches the solver for them. Measured 2026-09-07 with a case
+#   longer reaches the solver for them. Measured with a case
 #   configuration next to case14.m that did not even carry a `power_flow`
 #   block: the self-check ran with max_iter=80 and rescue=true instead of 1
 #   and false, and still wrote its "start values taken verbatim" line.
