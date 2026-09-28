@@ -38,7 +38,7 @@ jobs:
       # (cache-compiled: true, matrix folded into the key), so Sparlectra's
       # precompile pkgimage from julia-buildpkg is reused across runs; do
       # not add a second compiled-cache step. A CI sysimage is deliberately
-      # NOT built: measured 2026-09-02, building costs ~700 s while the
+      # NOT built: measured, building costs ~700 s while the
       # fast profile saves ~140 s, and any src push invalidates the image,
       # so it only pays off for runs that touch no src file.
       - uses: julia-actions/cache@v3
