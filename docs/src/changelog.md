@@ -1,4 +1,4 @@
-# Version 0.20.0 - 2026-09-27
+# Version 0.20.0 - 2026-09-29
 
 Asymmetric branch shunts, typed tap-changer models, PowSyBl IIDM files read in Julia.
 
