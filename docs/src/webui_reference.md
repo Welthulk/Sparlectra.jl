@@ -373,7 +373,22 @@ The settings and run forms offer:
   autodamping with its minimum factor;
 - **Q-limit handling**: the `power_flow.qlimits.enabled` checkbox and the
   enforcement-mode selector in one block; the selector also offers **off**
-  and shows it whenever the handling is off;
+  and shows it whenever the handling is off. Below them, **PV/PQ
+  switching** shows the first switching iteration (`start_iter`), the
+  maximum switches per bus (`guard.max_switches`), freezing after repeated
+  switching and the narrow-range guard switch (`guard.enabled`); **Advanced**
+  holds the rest of `power_flow.qlimits`: start rule and auto threshold,
+  hysteresis, cooldown, release voltage margin, the traced buses (bus
+  numbers of the case file) and the buses locked to PQ (case bus numbers
+  for a MATPOWER file, otherwise internal positions), the violation rule and threshold, bounded violations, and
+  the narrow- and zero-range rules with their log line
+  ([Q-limit options and guard](powerflow_configuration.md#pf-qlimits)).
+  Per-unit values take scientific notation like the tolerance, bus lists
+  comma-separated numbers. Everything is grayed while the handling is off;
+  the classic modes gray what they do not read (they use only the
+  hysteresis); the guard switch grays the range rules, because the switch
+  cap, freezing and the violation rule act without it. All of it saves to
+  the configuration file and per case like every other run option;
 - **Solver**: one radio group `power_flow_solver` with the peer values
   `rectangular` (AC Newton-Raphson), `apslf` (AnalyticLoadFlow) and `dc`
   (linear screening model), writing `power_flow.solver`, `power_flow.apslf.*`,

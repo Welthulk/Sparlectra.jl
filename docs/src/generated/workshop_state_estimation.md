@@ -42,37 +42,35 @@ diagonals are the cross-ties B2-B5 and B3-B6):
 > fresh session (package download and precompilation). Colab's Julia
 > version may change over time; this notebook targets Julia ≥ 1.12.
 
-## Load the packages
+## Warm-up
 
-`Random` (standard library) provides the seeded generator that makes the
-synthetic measurement noise reproducible; `LinearAlgebra` (standard
-library) contributes `nullspace` for the observability deep dive.
+Julia compiles each function on first use. This cell loads the packages
+the chapters share. `Random` (standard library) provides the seeded
+generator that makes the synthetic measurement noise reproducible;
+`LinearAlgebra` (standard library) contributes `nullspace` for the
+observability deep dive. The notebook needs no helper functions; the
+chapters share the study network of Example 1 and build on each other's
+measurement sets, and a code cell that uses a name from another cell
+says so in a comment. Its last line, `warmup()`, runs every path the
+chapters exercise once on tiny throwaway networks (the power-flow solver
+that produces the reference state, the WLS estimator, the observability
+checks (global, local, on a matrix), the hand-placed and zero-injection
+measurements, the measurement Jacobian and the PMU phasors), so the real
+study runs at full speed; its code is in
+`docs/lit/warmup/workshop_state_estimation.jl` of the package. How long
+the warm-up takes depends on the machine: a Colab session is several
+times slower than a desktop; every later cell then runs without compile
+pauses.
 
 ````@example workshop_state_estimation
 using Sparlectra
 using Random
 using LinearAlgebra
-````
 
-## Warm-up
-
-Julia compiles each function on first use. This cell warms the two paths
-the notebook exercises, the power-flow solver (which produces the
-reference state) and the WLS estimator, on a tiny throwaway network, so
-the real study runs at full speed.
-
-````@example workshop_state_estimation
-wnet = Net(name = "warmup", baseMVA = 100.0)
-addBus!(net = wnet, busName = "A", vn_kV = 110.0)
-addBus!(net = wnet, busName = "B", vn_kV = 110.0)
-addProsumer!(net = wnet, busName = "A", type = "EXTERNALNETWORKINJECTION", referencePri = "A", vm_pu = 1.0, va_deg = 0.0)
-addProsumer!(net = wnet, busName = "B", type = "ENERGYCONSUMER", p = 10.0, q = 3.0)
-addPIModelACLine!(net = wnet, fromBus = "A", toBus = "B", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
-t_pf = @elapsed runpf!(wnet, 10, 1e-8, 0)
-setMeasurementsFromPF!(wnet; includeVm = true, includePinj = true, includeQinj = true, includePflow = true, includeQflow = true, noise = false)
-t_se = @elapsed with_state_estimation_config(() -> runse!(wnet); max_iter = 8, tol = 1e-6, flatstart = true, jac_eps = 1e-6, update_net = false)
-println("warm: power flow ", round(t_pf; digits = 2), " s, estimator ", round(t_se; digits = 2), " s (first calls compile)")
-@assert t_pf > 0.0 && t_se > 0.0
+# compile every path the chapters use once; the warm-up code is in
+# docs/lit/warmup/workshop_state_estimation.jl of the installed package
+include(pkgdir(Sparlectra, "docs", "lit", "warmup", "workshop_state_estimation.jl"))
+warmup()
 ````
 
 ## Build the study network
@@ -123,6 +121,8 @@ system state: the measurements are derived from it, and the estimator
 never sees it directly.
 
 ````@example workshop_state_estimation
+# uses: net (Example 1)
+@isdefined(net) || error("Run Example 1 first: it sets up net.")
 ite_pf, status_pf = runpf!(net, 40, 1e-10, 0)
 status_pf == 0 || error("Power flow did not converge")
 println("reference power flow converged in $ite_pf iterations")
@@ -139,6 +139,8 @@ the standard trick for exercising an estimator: the truth is known, so
 the residuals are meaningful.
 
 ````@example workshop_state_estimation
+# uses: net (Example 1, Solve the reference power flow)
+@isdefined(net) || error("Run Example 1, the section \"Solve the reference power flow\" first: they set up net.")
 std = measurementStdDevs(vm = 1e-3, pinj = 1.0, qinj = 1.0, pflow = 0.7, qflow = 0.7)
 setMeasurementsFromPF!(
   net;
@@ -177,6 +179,8 @@ below is a formula, not a coincidence. The global check compares $m$
 against $n$ and probes the numerical rank of $H$.
 
 ````@example workshop_state_estimation
+# uses: net (Example 1, Solve the reference power flow, Derive a noisy measurement set)
+@isdefined(net) || error("Run Example 1, the section \"Solve the reference power flow\", the section \"Derive a noisy measurement set\" first: they set up net.")
 gobs = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
   evaluate_global_observability(net)
 end
@@ -197,6 +201,8 @@ objective $J$ is the weighted sum of squared residuals; for healthy
 Gaussian noise it should land near the number of redundant measurements.
 
 ````@example workshop_state_estimation
+# uses: net (Example 1, Solve the reference power flow, Derive a noisy measurement set)
+@isdefined(net) || error("Run Example 1, the section \"Solve the reference power flow\", the section \"Derive a noisy measurement set\" first: they set up net.")
 se = with_state_estimation_config(max_iter = 12, tol = 1e-6, flatstart = true, jac_eps = 1e-6, update_net = true) do
   runse!(net)
 end
@@ -224,6 +230,9 @@ a wrong model; far BELOW signals overfitted (too pessimistic) sigmas.
 The ratio is the one number worth glancing at after every run:
 
 ````@example workshop_state_estimation
+# uses: net (Example 1, Solve the reference power flow, Derive a noisy measurement set, Run the estimator); se (Run the estimator)
+@isdefined(net) || error("Run Example 1, the section \"Solve the reference power flow\", the section \"Derive a noisy measurement set\", the section \"Run the estimator\" first: they set up net.")
+@isdefined(se) || error("Run the section \"Run the estimator\" first: it sets up se.")
 println("J / dof = ", round(se.objectiveJ / se.dof; digits = 3), "  (healthy noise: approximately 1)")
 @assert 0.5 < se.objectiveJ / se.dof < 2.0
 
@@ -249,6 +258,8 @@ building the network. A deliberately sparse set like this one is a good
 way to explore *when observability breaks down*:
 
 ````@example workshop_state_estimation
+# uses: net (Example 1, Solve the reference power flow, Derive a noisy measurement set, Run the estimator)
+@isdefined(net) || error("Run Example 1, the section \"Solve the reference power flow\", the section \"Derive a noisy measurement set\", the section \"Run the estimator\" first: they set up net.")
 empty!(net.measurements)
 
 addVmMeasurement!(net; busName = "B1", value = 1.02, sigma = 0.002)
@@ -477,6 +488,8 @@ Q row, plus the one anchor; $m = n$ means observability with ZERO
 redundancy, every equation is needed:
 
 ````@example workshop_state_estimation
+# uses: net (Example 1, Solve the reference power flow, Derive a noisy measurement set, Run the estimator, Example 2)
+@isdefined(net) || error("Run Example 1, the section \"Solve the reference power flow\", the section \"Derive a noisy measurement set\", the section \"Run the estimator\", Example 2 first: they set up net.")
 empty!(net.measurements)
 # re-solve the reference so the branch flows are available as true values
 ite_ref, status_ref = runpf!(net, 40, 1e-10, 0)
@@ -514,6 +527,8 @@ magnitude level, and the three unmeasured branches are exactly where
 redundancy would come from.
 
 ````@example workshop_state_estimation
+# uses: net (Example 1, Solve the reference power flow, Derive a noisy measurement set, Run the estimator, Example 2, Example 7)
+@isdefined(net) || error("Run Example 1, the section \"Solve the reference power flow\", the section \"Derive a noisy measurement set\", the section \"Run the estimator\", Example 2, Example 7 first: they set up net.")
 gmin = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
   evaluate_global_observability(net)
 end
@@ -549,6 +564,8 @@ placement report (the state-estimation example suite writes exactly such
 a matrix-plus-stability page on every run):
 
 ````@example workshop_state_estimation
+# uses: net (Example 1, Solve the reference power flow, Derive a noisy measurement set, Run the estimator, Example 2, Example 7)
+@isdefined(net) || error("Run Example 1, the section \"Solve the reference power flow\", the section \"Derive a noisy measurement set\", the section \"Run the estimator\", Example 2, Example 7 first: they set up net.")
 mj = measurement_jacobian(net)
 println("H is ", size(mj.H, 1), " x ", size(mj.H, 2), "; columns: ", join(mj.cols[1:4], ", "), ", ...")
 @assert size(mj.H) == (13, 13)
@@ -567,6 +584,9 @@ restricts $H$ to selected state columns; for B7 those are angle column 6
 and magnitude column 13:
 
 ````@example workshop_state_estimation
+# uses: net (Example 1, Solve the reference power flow, Derive a noisy measurement set, Run the estimator, Example 2, Example 7); tree (Example 7)
+@isdefined(net) || error("Run Example 1, the section \"Solve the reference power flow\", the section \"Derive a noisy measurement set\", the section \"Run the estimator\", Example 2, Example 7 first: they set up net.")
+@isdefined(tree) || error("Run Example 7 first: it sets up tree.")
 empty!(net.measurements)
 for (f, t) in tree[1:5]   ## tree WITHOUT B6-B7
   addPflowMeasurement!(net; fromBus = f, toBus = t, value = get_branch_p_from_to_mw(net, f, t), sigma = 0.8, direction = :from)
@@ -615,6 +635,8 @@ injected power is the sum over its incident branches; its Jacobian row
 touches all their states. P and Q injection at B7 restore rank 13:
 
 ````@example workshop_state_estimation
+# uses: net (Example 1, Solve the reference power flow, Derive a noisy measurement set, Run the estimator, Example 2, Example 7, Example 8)
+@isdefined(net) || error("Run Example 1, the section \"Solve the reference power flow\", the section \"Derive a noisy measurement set\", the section \"Run the estimator\", Example 2, Example 7, Example 8 first: they set up net.")
 # B7 carries exactly its 20 MW / 6 MVAr load, so the true net injection
 # is -20 MW / -6 MVAr (consumption counts negative)
 addPinjMeasurement!(net; busName = "B7", value = -20.0, sigma = 1.0)
@@ -654,6 +676,9 @@ the broken-tree set of Example 8, and watch the FREE zero-injection
 knowledge repair observability:
 
 ````@example workshop_state_estimation
+# uses: net (Example 1, Solve the reference power flow, Derive a noisy measurement set, Run the estimator, Example 2, Example 7, Example 8, Example 9); tree (Example 7)
+@isdefined(net) || error("Run Example 1, the section \"Solve the reference power flow\", the section \"Derive a noisy measurement set\", the section \"Run the estimator\", Example 2, Example 7, Example 8, Example 9 first: they set up net.")
+@isdefined(tree) || error("Run Example 7 first: it sets up tree.")
 net_p = deepcopy(net)
 removeProsumer!(net = net_p, busName = "B7", type = "LOAD")
 empty!(net_p.measurements)
@@ -693,6 +718,8 @@ The same set as Example 10, estimated twice: once with
 the near-constraint sigma and once with a soft one:
 
 ````@example workshop_state_estimation
+# uses: net_p (Example 10)
+@isdefined(net_p) || error("Run Example 10 first: it sets up net_p.")
 for zib_sigma in (1e-6, 1e-2)
   netv = deepcopy(net_p)
   empty!(netv.measurements)
@@ -734,6 +761,8 @@ base is shifted by exactly 2 degrees, added on top of the repaired
 measurement set from Example 9:
 
 ````@example workshop_state_estimation
+# uses: net (Example 1, Solve the reference power flow, Derive a noisy measurement set, Run the estimator, Example 2, Example 7, Example 8, Example 9)
+@isdefined(net) || error("Run Example 1, the section \"Solve the reference power flow\", the section \"Derive a noisy measurement set\", the section \"Run the estimator\", Example 2, Example 7, Example 8, Example 9 first: they set up net.")
 pmu_shift_deg = 2.0
 for bus in ("B4", "B6")
   idx = net.busDict[bus]

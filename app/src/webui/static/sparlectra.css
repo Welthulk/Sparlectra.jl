@@ -510,6 +510,17 @@ button,
   opacity: .55;
 }
 
+/* Q-limit block: a field the current mode or switch does not read grays
+   out in place, its value stays. */
+.qlimit-options label.disabled {
+  opacity: .55;
+}
+
+.qlimit-advanced summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
 .field-indent {
   margin-left: 1.5rem;
 }

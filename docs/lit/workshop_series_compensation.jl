@@ -72,27 +72,63 @@
 #nb ## the old version is still active — restart the runtime, then rerun
 #nb ## this cell.
 
-# ## Warm-up
+# ## Warm-up and shared helpers
 #
 # Julia compiles each function on first use. This cell loads the package
-# and warms the two paths this notebook exercises, the power-flow solver
-# and the outer control loop with a series-reactance controller, on a tiny
-# throwaway corridor, so the real study runs at full speed.
+# and defines what the examples share (the network builders of all
+# examples), so any example can run on its own after it; a code cell that
+# uses a name from another cell says so in a comment. Its last line,
+# `warmup()`, runs every path the notebook exercises once (the power-flow
+# solver, the outer control loop with a series-reactance controller, the
+# result tables, both UPFC models), so nothing stalls mid-study; its code
+# is in `docs/lit/warmup/workshop_series_compensation.jl` of the package.
+# How long the warm-up takes depends on the machine: a Colab session is
+# several times slower than a desktop; every later cell then runs without
+# compile pauses.
 
 using Sparlectra
 
-wnet = Net(name = "warmup", baseMVA = 100.0)
-for b in ("A", "M", "B")
-  addBus!(net = wnet, busName = b, vn_kV = 110.0)
+## the network builders of the examples, defined here so that any example
+## runs on its own after this cell:
+##   build_loop()        two parallel corridors A to B (Examples 1 to 4)
+##   build_upfc_mesh()   small mesh with a parallel S->L path (Example 5)
+function build_loop()
+  net = Net(name = "tcsc_workshop", baseMVA = 100.0)
+  for b in ("A", "M1", "M2", "B")
+    addBus!(net = net, busName = b, vn_kV = 110.0)
+  end
+  addProsumer!(net = net, busName = "A", type = "EXTERNALNETWORKINJECTION", referencePri = "A", vm_pu = 1.0, va_deg = 0.0)
+  addProsumer!(net = net, busName = "B", type = "ENERGYCONSUMER", p = 80.0, q = 20.0)
+  addPIModelACLine!(net = net, fromBus = "A", toBus = "M1", r_pu = 0.01, x_pu = 0.10, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "M1", toBus = "B", r_pu = 0.01, x_pu = 0.10, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "A", toBus = "M2", r_pu = 0.02, x_pu = 0.20, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "M2", toBus = "B", r_pu = 0.02, x_pu = 0.20, b_pu = 0.0, status = 1)
+  ok, msg = validate!(net = net)
+  ok || error("Network validation failed: $msg")
+  return net
 end
-addProsumer!(net = wnet, busName = "A", type = "EXTERNALNETWORKINJECTION", referencePri = "A", vm_pu = 1.0, va_deg = 0.0)
-addProsumer!(net = wnet, busName = "B", type = "ENERGYCONSUMER", p = 10.0, q = 3.0)
-addPIModelACLine!(net = wnet, fromBus = "A", toBus = "M", r_pu = 0.01, x_pu = 0.10, b_pu = 0.0, status = 1)
-addPIModelACLine!(net = wnet, fromBus = "M", toBus = "B", r_pu = 0.01, x_pu = 0.10, b_pu = 0.0, status = 1)
-addPIModelACLine!(net = wnet, fromBus = "A", toBus = "B", r_pu = 0.02, x_pu = 0.20, b_pu = 0.0, status = 1)
-addSeriesReactanceControl!(wnet; fromBus = "A", toBus = "M", p_target_mw = 6.0, x_min_pu = 0.05, x_max_pu = 0.2)
-t_ctrl = @elapsed run_control!(wnet; controllers = collect_outer_controllers(wnet), pf_config = PowerFlowConfig(method = :rectangular, max_iter = 15, tol = 1e-8), control_config = ControlConfig(max_outer_iterations = 4, trace = false))
-println("warm: power flow plus series-reactance control ", round(t_ctrl; digits = 2), " s (first calls compile)")
+
+function build_upfc_mesh()
+  m = Net(name = "upfc_mesh", baseMVA = 100.0)
+  for b in ("S", "I", "J", "L")
+    addBus!(net = m, busName = b, vn_kV = 110.0)
+  end
+  addProsumer!(net = m, busName = "S", type = "EXTERNALNETWORKINJECTION", referencePri = "S", vm_pu = 1.0, va_deg = 0.0)
+  addProsumer!(net = m, busName = "I", type = "GENERATOR", p = 0.0, q = 0.0)   # shunt converter
+  addProsumer!(net = m, busName = "L", type = "ENERGYCONSUMER", p = 90.0, q = 30.0)
+  addPIModelACLine!(net = m, fromBus = "S", toBus = "I", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = m, fromBus = "I", toBus = "J", r_pu = 0.02, x_pu = 0.18, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = m, fromBus = "J", toBus = "L", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = m, fromBus = "S", toBus = "L", r_pu = 0.02, x_pu = 0.16, b_pu = 0.0, status = 1)
+  ok, msg = validate!(net = m)
+  ok || error("mesh net invalid: $msg")
+  return m
+end
+
+## compile every path the chapters use once; the warm-up code is in
+## docs/lit/warmup/workshop_series_compensation.jl of the installed package
+include(pkgdir(Sparlectra, "docs", "lit", "warmup", "workshop_series_compensation.jl"))
+warmup()
 
 # ## Why a series reactance steers flow
 #
@@ -139,23 +175,10 @@ println("warm: power flow plus series-reactance control ", round(t_ctrl; digits 
 #  (slack) |            |
 #          +---- M2 ----+      corridor 2: x = 0.20 per line
 # ```
+#
+# `build_loop` (this network) is defined in the warm-up cell at the top.
 
-function build_loop()
-  net = Net(name = "tcsc_workshop", baseMVA = 100.0)
-  for b in ("A", "M1", "M2", "B")
-    addBus!(net = net, busName = b, vn_kV = 110.0)
-  end
-  addProsumer!(net = net, busName = "A", type = "EXTERNALNETWORKINJECTION", referencePri = "A", vm_pu = 1.0, va_deg = 0.0)
-  addProsumer!(net = net, busName = "B", type = "ENERGYCONSUMER", p = 80.0, q = 20.0)
-  addPIModelACLine!(net = net, fromBus = "A", toBus = "M1", r_pu = 0.01, x_pu = 0.10, b_pu = 0.0, status = 1)
-  addPIModelACLine!(net = net, fromBus = "M1", toBus = "B", r_pu = 0.01, x_pu = 0.10, b_pu = 0.0, status = 1)
-  addPIModelACLine!(net = net, fromBus = "A", toBus = "M2", r_pu = 0.02, x_pu = 0.20, b_pu = 0.0, status = 1)
-  addPIModelACLine!(net = net, fromBus = "M2", toBus = "B", r_pu = 0.02, x_pu = 0.20, b_pu = 0.0, status = 1)
-  ok, msg = validate!(net = net)
-  ok || error("Network validation failed: $msg")
-  return net
-end
-
+## uses: build_loop (warm-up cell)
 net = build_loop()
 run_sparlectra(net = net)
 println("natural split: corridor 1 (A->M1) = ", round(get_branch_p_from_to_mw(net, "A", "M1"); digits = 2), " MW")
@@ -176,6 +199,8 @@ println("               corridor 2 (A->M2) = ", round(get_branch_p_from_to_mw(ne
 # the sign of $dP/dX$ depends on the network), and stops inside the
 # 0.5 MW default deadband.
 
+## uses: net (Example 1)
+@isdefined(net) || error("Run Example 1 first: it sets up net.")
 ctrl = addSeriesReactanceControl!(net; fromBus = "A", toBus = "M2", p_target_mw = 35.0, x_min_pu = 0.02, x_max_pu = 0.30)
 run_sparlectra(net = net)
 println("steered:  corridor 2 (A->M2) = ", round(get_branch_p_from_to_mw(net, "A", "M2"); digits = 2), " MW (target 35)")
@@ -185,6 +210,8 @@ println("          x_pu moved 0.20 -> ", round(ctrl.x_pu; digits = 4), ", status
 # controllable-element view carry the shared vocabulary (actuator, range,
 # quantity, target) that all outer controllers report:
 
+## uses: net (Example 1, Example 2)
+@isdefined(net) || error("Run Example 1, Example 2 first: they set up net.")
 cr = latest_control_result(net)
 println("outer loop: status = ", cr.status, ", outer iterations = ", cr.outer_iterations, ", pf solves = ", cr.powerflow_solves)
 for row in cr.controllers
@@ -198,6 +225,9 @@ end
 # line counts the TCSC, and the controlled A->M2 line carries the Ctrl = TCSC
 # marker with its P target and status (the moved reactance is in the Series
 # Reactance Control Summary of the Control footer).
+
+## uses: net (Example 1, Example 2)
+@isdefined(net) || error("Run Example 1, Example 2 first: they set up net.")
 calcNetLosses!(net)
 printACPFlowResults(net, 0.0, 1, 1e-8)
 
@@ -210,6 +240,7 @@ printACPFlowResults(net, 0.0, 1, 1e-8)
 # as a fixed compensated line, and the controller reports `at_limit`
 # instead of pretending convergence. The power flow itself stays valid.
 
+## uses: build_loop (warm-up cell)
 net2 = build_loop()
 ctrl2 = addSeriesReactanceControl!(net2; fromBus = "A", toBus = "M2", p_target_mw = 70.0, x_min_pu = 0.02, x_max_pu = 0.30)
 run_sparlectra(net = net2)
@@ -219,6 +250,9 @@ println("         x_pu = ", round(ctrl2.x_pu; digits = 4), " (clamped), at_limit
 # In the classical result the honest limit is visible in the branch row: the
 # A->M2 line's Ctrl status reads "at_limit_not_converged" instead of pretending
 # convergence.
+
+## uses: net2 (Example 3)
+@isdefined(net2) || error("Run Example 3 first: it sets up net2.")
 calcNetLosses!(net2)
 printACPFlowResults(net2, 0.0, 1, 1e-8)
 
@@ -248,6 +282,7 @@ printACPFlowResults(net2, 0.0, 1, 1e-8)
 # :quadrature`) registers that pair as one device, on the loop of Example 1
 # (diagram above) with a machine added at `M2` for the shunt converter:
 
+## uses: build_loop (warm-up cell)
 netu = build_loop()
 addProsumer!(net = netu, busName = "M2", type = "GENERATOR", p = 0.0, q = 0.0)
 upfc = addUpfcControl!(netu; fromBus = "A", toBus = "M2", shunt_bus = "M2",
@@ -262,6 +297,9 @@ end
 # The classical result tables show the composite as its two sub-controllers:
 # the series side under the TCSC/SSSC summary, the shunt side under the
 # machine (STATCOM) summary, both counted on the "Controllers" line.
+
+## uses: netu (Example 4)
+@isdefined(netu) || error("Run Example 4 first: it sets up netu.")
 calcNetLosses!(netu)
 printACPFlowResults(netu, 0.0, 1, 1e-8)
 
@@ -282,24 +320,10 @@ printACPFlowResults(netu, 0.0, 1, 1e-8)
 #                  |                            S ------------- L
 #            shunt converter at I               (parallel path)
 # ```
+#
+# `build_upfc_mesh` (this mesh) is defined in the warm-up cell at the top.
 
-function build_upfc_mesh()
-  m = Net(name = "upfc_mesh", baseMVA = 100.0)
-  for b in ("S", "I", "J", "L")
-    addBus!(net = m, busName = b, vn_kV = 110.0)
-  end
-  addProsumer!(net = m, busName = "S", type = "EXTERNALNETWORKINJECTION", referencePri = "S", vm_pu = 1.0, va_deg = 0.0)
-  addProsumer!(net = m, busName = "I", type = "GENERATOR", p = 0.0, q = 0.0)   # shunt converter
-  addProsumer!(net = m, busName = "L", type = "ENERGYCONSUMER", p = 90.0, q = 30.0)
-  addPIModelACLine!(net = m, fromBus = "S", toBus = "I", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
-  addPIModelACLine!(net = m, fromBus = "I", toBus = "J", r_pu = 0.02, x_pu = 0.18, b_pu = 0.0, status = 1)
-  addPIModelACLine!(net = m, fromBus = "J", toBus = "L", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
-  addPIModelACLine!(net = m, fromBus = "S", toBus = "L", r_pu = 0.02, x_pu = 0.16, b_pu = 0.0, status = 1)
-  ok, msg = validate!(net = m)
-  ok || error("mesh net invalid: $msg")
-  return m
-end
-
+## uses: build_upfc_mesh (warm-up cell)
 netf = build_upfc_mesh()
 full = addUpfcControl!(netf; model = :full, fromBus = "I", toBus = "J", shunt_bus = "I",
                        p_target_mw = 40.0, q_target_mvar = 10.0, q_shunt_mvar = 0.0,
@@ -315,11 +339,16 @@ println("  DC-link balance P_se + P_sh = ", round(f.p_se_mw + f.p_sh_mw; digits 
 # The classical result tables carry the whole picture: the "Controllers" line
 # now counts the UPFC, and the "UPFC Control Summary" block reports the line
 # P/Q targets vs achieved, the series voltage, and the DC-link residual.
+
+## uses: netf (Example 5)
+@isdefined(netf) || error("Run Example 5 first: it sets up netf.")
 calcNetLosses!(netf)
 printACPFlowResults(netf, 0.0, 1, 1e-8)
 
 # Forcing the series phase back to quadrature collapses P_se to zero, back to
 # the Example 4 behaviour:
+
+## uses: build_upfc_mesh (warm-up cell)
 netfq = build_upfc_mesh()
 fq = addUpfcControl!(netfq; model = :full, series_phase = :quadrature, fromBus = "I", toBus = "J",
                      shunt_bus = "I", p_target_mw = 40.0, q_target_mvar = 0.0, q_shunt_mvar = 0.0,

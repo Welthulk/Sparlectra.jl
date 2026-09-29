@@ -54,13 +54,19 @@ After the warm-up the chapters climb two tiers:
 
 ## Warm-up and shared helpers
 
-Julia compiles each function on first use. This one cell warms EVERY
-path the chapters exercise, so nothing stalls mid-tour: the
-Newton-Raphson solver, the HVDC pair controller (chapter 2), the WLS
-state estimator (chapter 3), the contingency batch (chapter 5), and the
-IEC 60909 short circuit (chapter 6 sweeps it under threads). The
-`using` clauses and the small helpers of the whole tour live here too,
-collected up top so they cannot be missed.
+Julia compiles each function on first use. This cell defines what the
+chapters share (the `using` clauses, the `solve!` and `bus_va_deg`
+helpers and the network builders of all chapters), so any chapter can
+run on its own after it; a code cell that uses a name from another cell
+says so in a comment. Its last line, `warmup()`, runs every path the
+chapters exercise once (the Newton-Raphson solver and the result tables,
+remote voltage control, the HVDC pair controller in all its variants,
+the WLS state estimator, the FACTS controllers, the contingency batch
+with its report, and the IEC 60909 short circuit, serial and under
+threads), so nothing stalls mid-tour; its code is in
+`docs/lit/warmup/workshop_tour_advanced.jl` of the package. How long the
+warm-up takes depends on the machine: a Colab session is several times
+slower than a desktop; every later cell then runs without compile pauses.
 
 ````@example workshop_tour_advanced
 using Sparlectra
@@ -79,8 +85,21 @@ end
 # peek into the solved state (chapter 2 reads bus angles with it)
 bus_va_deg(net, bus) = net.nodeVec[net.busDict[bus]]._va_deg
 
-# the 7-bus double ring of the basic tour's Example 1.1, packed as a
-# helper: two chapters here reuse it (Examples 3.1 and 5.1)
+# the network builders of the chapters, defined here so that any chapter
+# runs on its own after this cell:
+#   build_ring7(name)          7-bus ring of the basic tour's Example 1.1
+#                              (Examples 3.1 and 5.1)
+#   build_rvc(qmin, qmax)      corridor with a remote-controlling machine
+#                              (Examples 1.1, 1.2)
+#   build_b2b(name)            two islands joined by an HVDC pair (Examples 2.1, 2.2)
+#   build_b2b_source(name)     grid-forming converter as island C's reference
+#                              (Examples 2.3, 2.4, 2.6)
+#   build_b2b_droop(name)      grid-forming converter as a SOURCE with droop
+#                              (Example 2.7)
+#   build_meshed(name)         the two areas with an AC tie (Examples 2.8, 2.9)
+#   build_sag_corridor(name)   weak corridor for shunt FACTS (Examples 4.1, 4.2, 4.4)
+#   build_facts_loop(name)     two-corridor loop for series FACTS (Examples 4.3, 4.5)
+#   build_facts_mesh(name)     meshed corridor for the full UPFC (Example 4.6)
 function build_ring7(name::String)
   net = Net(name = name, baseMVA = 100.0)
   addBus!(net = net, busName = "B1", vn_kV = 110.0, vm_pu = 1.02, va_deg = 0.0)
@@ -108,46 +127,152 @@ function build_ring7(name::String)
   return net
 end
 
-# tiny warm-up net: a grid connection WITH declared short-circuit data
-wnet = Net(name = "warmup", baseMVA = 100.0)
-addBus!(net = wnet, busName = "A", vn_kV = 110.0)
-addBus!(net = wnet, busName = "B", vn_kV = 110.0)
-addExternalGrid!(net = wnet, busName = "A", vm_pu = 1.0, sk_max_MVA = 2000.0, sk_min_MVA = 1500.0, rx_max = 0.1, internal_impedance = false)
-addProsumer!(net = wnet, busName = "B", type = "ENERGYCONSUMER", p = 10.0, q = 3.0)
-addPIModelACLine!(net = wnet, fromBus = "A", toBus = "B", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
-
-t_first = @elapsed runpf!(wnet, 10, 1e-8, 0)
-t_second = @elapsed runpf!(wnet, 10, 1e-8, 0)
-println("power flow     : first solve ", round(t_first; digits = 2), " s (compiles), second ", round(t_second * 1000; digits = 2), " ms")
-
-t_sc = @elapsed runShortCircuit!(wnet; case = :max)
-println("short circuit  : ", round(t_sc; digits = 2), " s")
-
-# HVDC pair path: two 2-bus islands coupled by a controller
-whv = Net(name = "warmup_hvdc", baseMVA = 100.0)
-for b in ("W1", "W2", "W3", "W4")
-  addBus!(net = whv, busName = b, vn_kV = 110.0)
+function build_rvc(qmin_mvar::Float64, qmax_mvar::Float64)
+  net = Net(name = "tour_rvc", baseMVA = 100.0)
+  addBus!(net = net, busName = "Slack", vn_kV = 110.0)
+  addBus!(net = net, busName = "GenBus", vn_kV = 110.0)
+  addBus!(net = net, busName = "Load", vn_kV = 110.0)
+  addProsumer!(net = net, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "Slack")
+  addProsumer!(net = net, busName = "GenBus", type = "SYNCHRONOUSMACHINE", p = 30.0, q = 0.0, qMin = qmin_mvar, qMax = qmax_mvar)
+  addProsumer!(net = net, busName = "Load", type = "ENERGYCONSUMER", p = -70.0, q = -20.0)
+  addPIModelACLine!(net = net, fromBus = "Slack", toBus = "GenBus", r_pu = 0.02, x_pu = 0.12, b_pu = 0.01, status = 1)
+  addPIModelACLine!(net = net, fromBus = "GenBus", toBus = "Load", r_pu = 0.02, x_pu = 0.12, b_pu = 0.01, status = 1)
+  return net
 end
-addProsumer!(net = whv, busName = "W1", type = "EXTERNALNETWORKINJECTION", referencePri = "W1", vm_pu = 1.0, va_deg = 0.0)
-addProsumer!(net = whv, busName = "W3", type = "EXTERNALNETWORKINJECTION", referencePri = "W3", vm_pu = 1.0, va_deg = 0.0)
-addProsumer!(net = whv, busName = "W2", type = "ENERGYCONSUMER", p = 5.0, q = 1.0)
-addProsumer!(net = whv, busName = "W4", type = "ENERGYCONSUMER", p = 5.0, q = 1.0)
-addPIModelACLine!(net = whv, fromBus = "W1", toBus = "W2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
-addPIModelACLine!(net = whv, fromBus = "W3", toBus = "W4", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
-addProsumer!(net = whv, busName = "W2", type = "GENERATOR", p = -5.0, q = 0.0)
-addProsumer!(net = whv, busName = "W4", type = "GENERATOR", p = 5.0, q = 0.0)
-addHvdcPairControl!(whv; from_bus = "W2", to_bus = "W4", p_transfer_mw = 5.0)
-t_hvdc = @elapsed run_control!(whv; controllers = collect_outer_controllers(whv), pf_config = PowerFlowConfig(method = :rectangular, max_iter = 15, tol = 1e-8), control_config = ControlConfig(max_outer_iterations = 4, trace = false))
-println("HVDC control   : ", round(t_hvdc; digits = 2), " s")
 
-# state-estimation path: synthetic measurements plus one WLS run
-setMeasurementsFromPF!(wnet; includeVm = true, includePinj = true, includeQinj = true, includePflow = true, includeQflow = true, noise = false)
-t_se = @elapsed with_state_estimation_config(() -> runse!(wnet); max_iter = 8, tol = 1e-6, flatstart = true, jac_eps = 1e-6, update_net = false)
-println("state estimator: ", round(t_se; digits = 2), " s")
 
-# chapter-5 path: one single-case contingency batch on the warm-up net
-t_n1 = @elapsed runContingencies!(wnet, generateN1Branches(wnet))
-println("contingency    : ", round(t_n1; digits = 2), " s, everything warm")
+function build_b2b(name::String)
+  net = Net(name = name, baseMVA = 100.0)
+  for b in ("A1", "A2", "C1", "C2")
+    addBus!(net = net, busName = b, vn_kV = 380.0)
+  end
+  addPIModelACLine!(net = net, fromBus = "A1", toBus = "A2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "C1", toBus = "C2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+  addProsumer!(net = net, busName = "A1", type = "EXTERNALNETWORKINJECTION", referencePri = "A1", vm_pu = 1.0, va_deg = 0.0)
+  addProsumer!(net = net, busName = "C1", type = "EXTERNALNETWORKINJECTION", referencePri = "C1", vm_pu = 1.0, va_deg = 0.0)
+  addProsumer!(net = net, busName = "A2", type = "ENERGYCONSUMER", p = 40.0, q = 10.0)
+  addProsumer!(net = net, busName = "C2", type = "ENERGYCONSUMER", p = 50.0, q = 12.0)
+  addProsumer!(net = net, busName = "A2", type = "GENERATOR", p = -80.0, q = 0.0)  ## converter, exports
+  addProsumer!(net = net, busName = "C2", type = "GENERATOR", p = 76.0, q = 0.0)   ## converter, receives 80 - 4
+  return net
+end
+
+
+function build_b2b_source(name::String; sending_mw::Float64 = 0.0)
+  net = Net(name = name, baseMVA = 100.0)
+  for b in ("A1", "A2", "C1", "C2")
+    addBus!(net = net, busName = b, vn_kV = 380.0)
+  end
+  addPIModelACLine!(net = net, fromBus = "A1", toBus = "A2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "C2", toBus = "C1", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+  addProsumer!(net = net, busName = "A1", type = "EXTERNALNETWORKINJECTION", referencePri = "A1", vm_pu = 1.0, va_deg = 0.0)
+  addProsumer!(net = net, busName = "A2", type = "ENERGYCONSUMER", p = 40.0, q = 10.0)
+  # island C: no classical slack. The receiving converter is the
+  # grid-forming source, holding 1.0 pu / 0 deg at its PCC bus C2.
+  addProsumer!(net = net, busName = "C2", type = "EXTERNALNETWORKINJECTION", referencePri = "C2", vm_pu = 1.0, va_deg = 0.0)
+  addProsumer!(net = net, busName = "C1", type = "ENERGYCONSUMER", p = 50.0, q = 12.0)
+  # sending-side converter; mirrored below once the island balance is known
+  addProsumer!(net = net, busName = "A2", type = "GENERATOR", p = sending_mw, q = 0.0)
+  return net
+end
+
+
+function build_b2b_droop(name::String; sending_mw::Float64 = 0.0, sk_mva::Float64 = 800.0)
+  net = Net(name = name, baseMVA = 100.0)
+  for b in ("A1", "A2", "C1", "C2")
+    addBus!(net = net, busName = b, vn_kV = 380.0)
+  end
+  addPIModelACLine!(net = net, fromBus = "A1", toBus = "A2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "C2", toBus = "C1", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+  addProsumer!(net = net, busName = "A1", type = "EXTERNALNETWORKINJECTION", referencePri = "A1", vm_pu = 1.0, va_deg = 0.0)
+  addProsumer!(net = net, busName = "A2", type = "ENERGYCONSUMER", p = 40.0, q = 10.0)
+  addProsumer!(net = net, busName = "C1", type = "ENERGYCONSUMER", p = 50.0, q = 12.0)
+  # the grid-forming converter as a non-ideal source: reference voltage
+  # behind Z_Q, declared by its short-circuit power like a real feeder
+  addExternalGrid!(net = net, busName = "C2", vm_pu = 1.0, sk_max_MVA = sk_mva, sk_min_MVA = sk_mva, rx_max = 0.1, internal_impedance = true)
+  addProsumer!(net = net, busName = "A2", type = "GENERATOR", p = sending_mw, q = 0.0)
+  return net
+end
+
+
+function build_meshed(name::String; c1_model::Symbol)
+  net = Net(name = name, baseMVA = 100.0)
+  for b in ("A1", "A2", "C1", "C2")
+    addBus!(net = net, busName = b, vn_kV = 380.0)
+  end
+  addPIModelACLine!(net = net, fromBus = "A1", toBus = "A2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "C1", toBus = "C2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "A1", toBus = "C1", r_pu = 0.02, x_pu = 0.16, b_pu = 0.0, status = 1)
+  addProsumer!(net = net, busName = "A1", type = "EXTERNALNETWORKINJECTION", referencePri = "A1", vm_pu = 1.0, va_deg = 0.0)
+  if c1_model === :reference
+    # scene 1: island C keeps its old reference although the tie closed
+    addProsumer!(net = net, busName = "C1", type = "EXTERNALNETWORKINJECTION", referencePri = "C1", vm_pu = 1.0, va_deg = 0.0)
+  else
+    # scenes 2+: demoted to a voltage-regulated generator (PV)
+    addProsumer!(net = net, busName = "C1", type = "GENERATOR", p = 20.0, q = 0.0, vm_pu = 1.0, isRegulated = true)
+  end
+  addProsumer!(net = net, busName = "A2", type = "ENERGYCONSUMER", p = 40.0, q = 10.0)
+  addProsumer!(net = net, busName = "C2", type = "ENERGYCONSUMER", p = 50.0, q = 12.0)
+  addProsumer!(net = net, busName = "A2", type = "GENERATOR", p = -80.0, q = 0.0)  ## converter, exports
+  addProsumer!(net = net, busName = "C2", type = "GENERATOR", p = 76.0, q = 0.0)   ## converter, receives
+  return net
+end
+
+
+function build_sag_corridor(name::String; with_machine::Bool)
+  cnet = Net(name = name, baseMVA = 100.0)
+  for bus in ("Slack", "Mid", "Load")
+    addBus!(net = cnet, busName = bus, vn_kV = 110.0)
+  end
+  addProsumer!(net = cnet, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "Slack")
+  addProsumer!(net = cnet, busName = "Load", type = "LOAD", p = 60.0, q = 25.0)
+  with_machine && addProsumer!(net = cnet, busName = "Mid", type = "GENERATOR", p = 0.0, q = 0.0)
+  addPIModelACLine!(net = cnet, fromBus = "Slack", toBus = "Mid", r_pu = 0.02, x_pu = 0.20, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = cnet, fromBus = "Mid", toBus = "Load", r_pu = 0.02, x_pu = 0.20, b_pu = 0.0, status = 1)
+  ok, msg = validate!(net = cnet)
+  ok || error("corridor net invalid: $msg")
+  return cnet
+end
+
+
+function build_facts_loop(name::String)
+  lnet = Net(name = name, baseMVA = 100.0)
+  for bus in ("A", "M1", "M2", "B")
+    addBus!(net = lnet, busName = bus, vn_kV = 110.0)
+  end
+  addProsumer!(net = lnet, busName = "A", type = "EXTERNALNETWORKINJECTION", referencePri = "A", vm_pu = 1.0, va_deg = 0.0)
+  addProsumer!(net = lnet, busName = "B", type = "ENERGYCONSUMER", p = 80.0, q = 20.0)
+  addPIModelACLine!(net = lnet, fromBus = "A", toBus = "M1", r_pu = 0.01, x_pu = 0.10, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = lnet, fromBus = "M1", toBus = "B", r_pu = 0.01, x_pu = 0.10, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = lnet, fromBus = "A", toBus = "M2", r_pu = 0.02, x_pu = 0.20, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = lnet, fromBus = "M2", toBus = "B", r_pu = 0.02, x_pu = 0.20, b_pu = 0.0, status = 1)
+  ok, msg = validate!(net = lnet)
+  ok || error("loop net invalid: $msg")
+  return lnet
+end
+
+
+function build_facts_mesh(name::String)
+  m = Net(name = name, baseMVA = 100.0)
+  for b in ("S", "I", "J", "L")
+    addBus!(net = m, busName = b, vn_kV = 110.0)
+  end
+  addProsumer!(net = m, busName = "S", type = "EXTERNALNETWORKINJECTION", referencePri = "S", vm_pu = 1.0, va_deg = 0.0)
+  addProsumer!(net = m, busName = "I", type = "GENERATOR", p = 0.0, q = 0.0)   # shunt converter
+  addProsumer!(net = m, busName = "L", type = "ENERGYCONSUMER", p = 90.0, q = 30.0)
+  addPIModelACLine!(net = m, fromBus = "S", toBus = "I", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = m, fromBus = "I", toBus = "J", r_pu = 0.02, x_pu = 0.18, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = m, fromBus = "J", toBus = "L", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = m, fromBus = "S", toBus = "L", r_pu = 0.02, x_pu = 0.16, b_pu = 0.0, status = 1)
+  ok, msg = validate!(net = m)
+  ok || error("mesh net invalid: $msg")
+  return m
+end
+
+# compile every path the chapters use once; the warm-up code is in
+# docs/lit/warmup/workshop_tour_advanced.jl of the installed package
+include(pkgdir(Sparlectra, "docs", "lit", "warmup", "workshop_tour_advanced.jl"))
+warmup()
 ````
 
 ## Part I: Expert
@@ -172,20 +297,10 @@ then with the controller attached (Q range ±50 MVAr):
              Q range varied   target 1.05 pu
 ```
 
-````@example workshop_tour_advanced
-function build_rvc(qmin_mvar::Float64, qmax_mvar::Float64)
-  net = Net(name = "tour_rvc", baseMVA = 100.0)
-  addBus!(net = net, busName = "Slack", vn_kV = 110.0)
-  addBus!(net = net, busName = "GenBus", vn_kV = 110.0)
-  addBus!(net = net, busName = "Load", vn_kV = 110.0)
-  addProsumer!(net = net, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "Slack")
-  addProsumer!(net = net, busName = "GenBus", type = "SYNCHRONOUSMACHINE", p = 30.0, q = 0.0, qMin = qmin_mvar, qMax = qmax_mvar)
-  addProsumer!(net = net, busName = "Load", type = "ENERGYCONSUMER", p = -70.0, q = -20.0)
-  addPIModelACLine!(net = net, fromBus = "Slack", toBus = "GenBus", r_pu = 0.02, x_pu = 0.12, b_pu = 0.01, status = 1)
-  addPIModelACLine!(net = net, fromBus = "GenBus", toBus = "Load", r_pu = 0.02, x_pu = 0.12, b_pu = 0.01, status = 1)
-  return net
-end
+`build_rvc` is defined in the warm-up cell at the top.
 
+````@example workshop_tour_advanced
+# uses: build_rvc (warm-up cell)
 pf = PowerFlowConfig(max_iter = 30, tol = 1e-9)
 
 net_rvc = build_rvc(-50.0, 50.0)
@@ -205,6 +320,8 @@ of reach. The controller parks at its limit and says so instead of
 pretending convergence.
 
 ````@example workshop_tour_advanced
+# uses: build_rvc (warm-up cell); pf (Example 1.1)
+@isdefined(pf) || error("Run Example 1.1 first: it sets up pf.")
 net_rvc2 = build_rvc(-2.0, 2.0)
 runpf!(net_rvc2; config = pf, verbose = 0)
 addMachineVoltageControl!(net_rvc2; bus = "GenBus", target_bus = "Load", target_vm_pu = 1.05, deadband_vm_pu = 5e-4)
@@ -235,23 +352,10 @@ reference buses appear as `SLACK` rows in the bus table:
            (from side)             (to side)
 ```
 
-````@example workshop_tour_advanced
-function build_b2b(name::String)
-  net = Net(name = name, baseMVA = 100.0)
-  for b in ("A1", "A2", "C1", "C2")
-    addBus!(net = net, busName = b, vn_kV = 380.0)
-  end
-  addPIModelACLine!(net = net, fromBus = "A1", toBus = "A2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
-  addPIModelACLine!(net = net, fromBus = "C1", toBus = "C2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
-  addProsumer!(net = net, busName = "A1", type = "EXTERNALNETWORKINJECTION", referencePri = "A1", vm_pu = 1.0, va_deg = 0.0)
-  addProsumer!(net = net, busName = "C1", type = "EXTERNALNETWORKINJECTION", referencePri = "C1", vm_pu = 1.0, va_deg = 0.0)
-  addProsumer!(net = net, busName = "A2", type = "ENERGYCONSUMER", p = 40.0, q = 10.0)
-  addProsumer!(net = net, busName = "C2", type = "ENERGYCONSUMER", p = 50.0, q = 12.0)
-  addProsumer!(net = net, busName = "A2", type = "GENERATOR", p = -80.0, q = 0.0)  ## converter, exports
-  addProsumer!(net = net, busName = "C2", type = "GENERATOR", p = 76.0, q = 0.0)   ## converter, receives 80 - 4
-  return net
-end
+`build_b2b` is defined in the warm-up cell at the top.
 
+````@example workshop_tour_advanced
+# uses: build_b2b, solve! (warm-up cell)
 net6 = build_b2b("tour_b2b")
 # register the hand-built link so the result tables report it (importers
 # and addHvdcPairControl! do this automatically)
@@ -269,6 +373,8 @@ $P_\text{to} = P_\text{transfer} - P_\text{loss}$ exactly and lets you
 retarget the transfer.
 
 ````@example workshop_tour_advanced
+# uses: etime, net6 (Example 2.1)
+(@isdefined(etime) && @isdefined(net6)) || error("Run Example 2.1 first: it sets up etime, net6.")
 addHvdcPairControl!(net6; from_bus = "A2", to_bus = "C2", p_transfer_mw = 120.0, loss_mw = 4.0, p_rating_mw = 150.0)
 result6 = run_control!(net6; controllers = collect_outer_controllers(net6), pf_config = PowerFlowConfig(method = :rectangular, max_iter = 25, tol = 1e-8), control_config = ControlConfig(max_outer_iterations = 8, trace = false))
 calcNetLosses!(net6)
@@ -303,7 +409,8 @@ with a C-side angle carries no information, because each is measured
 against a different zero.
 
 ````@example workshop_tour_advanced
-# bus_va_deg comes from the warm-up cell (shared helpers up top)
+# uses: bus_va_deg (warm-up cell); net6 (Example 2.1, Example 2.2)
+@isdefined(net6) || error("Run Example 2.1, Example 2.2 first: they set up net6.")
 for (bus, role) in (("A1", "reference of island A"), ("A2", "converter, exports 120 MW"), ("C1", "reference of island C"), ("C2", "converter, receives 116 MW"))
   println(rpad(bus, 4), rpad(role, 27), ": Vm = ", round(get_bus_vm_pu(net6, bus); digits = 4), " pu, Va = ", round(bus_va_deg(net6, bus); digits = 3), " deg")
 end
@@ -357,25 +464,10 @@ variant of Example 2.1):
            converter             (= island C reference)
 ```
 
-````@example workshop_tour_advanced
-function build_b2b_source(name::String; sending_mw::Float64 = 0.0)
-  net = Net(name = name, baseMVA = 100.0)
-  for b in ("A1", "A2", "C1", "C2")
-    addBus!(net = net, busName = b, vn_kV = 380.0)
-  end
-  addPIModelACLine!(net = net, fromBus = "A1", toBus = "A2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
-  addPIModelACLine!(net = net, fromBus = "C2", toBus = "C1", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
-  addProsumer!(net = net, busName = "A1", type = "EXTERNALNETWORKINJECTION", referencePri = "A1", vm_pu = 1.0, va_deg = 0.0)
-  addProsumer!(net = net, busName = "A2", type = "ENERGYCONSUMER", p = 40.0, q = 10.0)
-  # island C: no classical slack. The receiving converter is the
-  # grid-forming source, holding 1.0 pu / 0 deg at its PCC bus C2.
-  addProsumer!(net = net, busName = "C2", type = "EXTERNALNETWORKINJECTION", referencePri = "C2", vm_pu = 1.0, va_deg = 0.0)
-  addProsumer!(net = net, busName = "C1", type = "ENERGYCONSUMER", p = 50.0, q = 12.0)
-  # sending-side converter; mirrored below once the island balance is known
-  addProsumer!(net = net, busName = "A2", type = "GENERATOR", p = sending_mw, q = 0.0)
-  return net
-end
+`build_b2b_source` is defined in the warm-up cell at the top.
 
+````@example workshop_tour_advanced
+# uses: build_b2b_source, bus_va_deg, solve! (warm-up cell)
 net7 = build_b2b_source("tour_b2b_source")
 solve!(net7; islands_enabled = true)
 p_island_c = get_branch_p_from_to_mw(net7, "C2", "C1")
@@ -393,6 +485,8 @@ PCC: 1.0 pu and 0 degrees at C2, while the load bus C1 hangs below it.
 sending side must now *mirror* the island draw plus the converter loss:
 
 ````@example workshop_tour_advanced
+# uses: build_b2b_source, solve! (warm-up cell); p_island_c (Example 2.3)
+@isdefined(p_island_c) || error("Run Example 2.3 first: it sets up p_island_c.")
 net8 = build_b2b_source("tour_b2b_mirrored"; sending_mw = -(p_island_c + 4.0))
 addHvdcLink!(net8; from_bus = "A2", to_bus = "C2")  ## Stage-0 record for the result tables
 etime8, ite8 = solve!(net8; islands_enabled = true)
@@ -411,6 +505,8 @@ converter is rejected, because its injection is the island balance, not
 a setpoint:
 
 ````@example workshop_tour_advanced
+# uses: net8 (Example 2.4)
+@isdefined(net8) || error("Run Example 2.4 first: it sets up net8.")
 try
   addHvdcPairControl!(net8; from_bus = "A2", to_bus = "C2", p_transfer_mw = 50.0)
 catch err
@@ -426,6 +522,8 @@ exceeds `p_rating_mw`. No transfer setpoint is given, the island
 decides:
 
 ````@example workshop_tour_advanced
+# uses: build_b2b_source (warm-up cell); etime (Example 2.1)
+@isdefined(etime) || error("Run Example 2.1 first: it sets up etime.")
 net9 = build_b2b_source("tour_b2b_grid_forming")
 addHvdcPairControl!(net9; from_bus = "A2", to_bus = "C2", mode = :island_feed, loss_mw = 4.0, p_rating_mw = 150.0)
 result9 = run_control!(net9; controllers = collect_outer_controllers(net9), pf_config = PowerFlowConfig(method = :rectangular, max_iter = 25, tol = 1e-8), control_config = ControlConfig(max_outer_iterations = 8, trace = false))
@@ -469,24 +567,11 @@ the converter that way (same corridor as Example 2.3, the receiving
 converter now an external-grid feeder) finally makes the bus table say
 `SOURCE`, and the header counts `Slack: 1 Source: 1`:
 
-````@example workshop_tour_advanced
-function build_b2b_droop(name::String; sending_mw::Float64 = 0.0, sk_mva::Float64 = 800.0)
-  net = Net(name = name, baseMVA = 100.0)
-  for b in ("A1", "A2", "C1", "C2")
-    addBus!(net = net, busName = b, vn_kV = 380.0)
-  end
-  addPIModelACLine!(net = net, fromBus = "A1", toBus = "A2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
-  addPIModelACLine!(net = net, fromBus = "C2", toBus = "C1", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
-  addProsumer!(net = net, busName = "A1", type = "EXTERNALNETWORKINJECTION", referencePri = "A1", vm_pu = 1.0, va_deg = 0.0)
-  addProsumer!(net = net, busName = "A2", type = "ENERGYCONSUMER", p = 40.0, q = 10.0)
-  addProsumer!(net = net, busName = "C1", type = "ENERGYCONSUMER", p = 50.0, q = 12.0)
-  # the grid-forming converter as a non-ideal source: reference voltage
-  # behind Z_Q, declared by its short-circuit power like a real feeder
-  addExternalGrid!(net = net, busName = "C2", vm_pu = 1.0, sk_max_MVA = sk_mva, sk_min_MVA = sk_mva, rx_max = 0.1, internal_impedance = true)
-  addProsumer!(net = net, busName = "A2", type = "GENERATOR", p = sending_mw, q = 0.0)
-  return net
-end
+`build_b2b_droop` is defined in the warm-up cell at the top.
 
+````@example workshop_tour_advanced
+# uses: build_b2b_droop, solve! (warm-up cell); p_island_c (Example 2.3)
+@isdefined(p_island_c) || error("Run Example 2.3 first: it sets up p_island_c.")
 net10 = build_b2b_droop("tour_b2b_droop"; sending_mw = -(p_island_c + 4.0))
 etime10, ite10 = solve!(net10; islands_enabled = true)
 printACPFlowResults(net10, etime10, ite10, 1e-8)
@@ -516,36 +601,14 @@ transfers power, the tie transfers the angle.
   +------------------- AC tie ---------------------+
 ```
 
-````@example workshop_tour_advanced
-function build_meshed(name::String; c1_model::Symbol)
-  net = Net(name = name, baseMVA = 100.0)
-  for b in ("A1", "A2", "C1", "C2")
-    addBus!(net = net, busName = b, vn_kV = 380.0)
-  end
-  addPIModelACLine!(net = net, fromBus = "A1", toBus = "A2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
-  addPIModelACLine!(net = net, fromBus = "C1", toBus = "C2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
-  addPIModelACLine!(net = net, fromBus = "A1", toBus = "C1", r_pu = 0.02, x_pu = 0.16, b_pu = 0.0, status = 1)
-  addProsumer!(net = net, busName = "A1", type = "EXTERNALNETWORKINJECTION", referencePri = "A1", vm_pu = 1.0, va_deg = 0.0)
-  if c1_model === :reference
-    # scene 1: island C keeps its old reference although the tie closed
-    addProsumer!(net = net, busName = "C1", type = "EXTERNALNETWORKINJECTION", referencePri = "C1", vm_pu = 1.0, va_deg = 0.0)
-  else
-    # scenes 2+: demoted to a voltage-regulated generator (PV)
-    addProsumer!(net = net, busName = "C1", type = "GENERATOR", p = 20.0, q = 0.0, vm_pu = 1.0, isRegulated = true)
-  end
-  addProsumer!(net = net, busName = "A2", type = "ENERGYCONSUMER", p = 40.0, q = 10.0)
-  addProsumer!(net = net, busName = "C2", type = "ENERGYCONSUMER", p = 50.0, q = 12.0)
-  addProsumer!(net = net, busName = "A2", type = "GENERATOR", p = -80.0, q = 0.0)  ## converter, exports
-  addProsumer!(net = net, busName = "C2", type = "GENERATOR", p = 76.0, q = 0.0)   ## converter, receives
-  return net
-end
-````
+`build_meshed` is defined in the warm-up cell at the top.
 
 **Example 2.8: two references in one island.** Keeping BOTH old
 references fails fast, with the buses named. The solver never demotes a
 reference on its own; you decide which one survives:
 
 ````@example workshop_tour_advanced
+# uses: build_meshed, solve! (warm-up cell)
 netm = build_meshed("tour_meshed_two_refs"; c1_model = :reference)
 try
   solve!(netm; islands_enabled = true)
@@ -561,6 +624,8 @@ generator and the meshed net solves (same topology, diagram above); the
 pair keeps its setpoint and the tie carries the balance:
 
 ````@example workshop_tour_advanced
+# uses: build_meshed (warm-up cell); etime (Example 2.1)
+@isdefined(etime) || error("Run Example 2.1 first: it sets up etime.")
 netm2 = build_meshed("tour_meshed"; c1_model = :pv)
 addHvdcPairControl!(netm2; from_bus = "A2", to_bus = "C2", p_transfer_mw = 120.0, loss_mw = 4.0, p_rating_mw = 150.0)
 resultm = run_control!(netm2; controllers = collect_outer_controllers(netm2), pf_config = PowerFlowConfig(method = :rectangular, max_iter = 25, tol = 1e-8), control_config = ControlConfig(max_outer_iterations = 8, trace = false))
@@ -578,6 +643,8 @@ under-delivers relative to what area C draws. Retarget the pair and
 watch the exchange move between link and tie:
 
 ````@example workshop_tour_advanced
+# uses: netm2 (Example 2.9)
+@isdefined(netm2) || error("Run Example 2.9 first: it sets up netm2.")
 ctrlm = only(collect_outer_controllers(netm2))
 for target in (120.0, 40.0)
   ctrlm.p_transfer_mw = target
@@ -607,6 +674,7 @@ the WLS estimator reconstruct the state. The full narrative is the
 [state-estimation notebook](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_state_estimation.ipynb).
 
 ````@example workshop_tour_advanced
+# uses: build_ring7 (warm-up cell)
 net_se = build_ring7("tour_se")
 ite_pf, status_pf = runpf!(net_se, 40, 1e-10, 0)
 status_pf == 0 || error("Power flow did not converge")
@@ -673,22 +741,11 @@ devices the SAME 10-MVAr rating at 1.0 pu:
              under test
 ```
 
+`build_sag_corridor` is defined in the warm-up cell at the top.
+
 ````@example workshop_tour_advanced
+# uses: build_sag_corridor (warm-up cell)
 facts_rating = 10.0
-function build_sag_corridor(name::String; with_machine::Bool)
-  cnet = Net(name = name, baseMVA = 100.0)
-  for bus in ("Slack", "Mid", "Load")
-    addBus!(net = cnet, busName = bus, vn_kV = 110.0)
-  end
-  addProsumer!(net = cnet, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "Slack")
-  addProsumer!(net = cnet, busName = "Load", type = "LOAD", p = 60.0, q = 25.0)
-  with_machine && addProsumer!(net = cnet, busName = "Mid", type = "GENERATOR", p = 0.0, q = 0.0)
-  addPIModelACLine!(net = cnet, fromBus = "Slack", toBus = "Mid", r_pu = 0.02, x_pu = 0.20, b_pu = 0.0, status = 1)
-  addPIModelACLine!(net = cnet, fromBus = "Mid", toBus = "Load", r_pu = 0.02, x_pu = 0.20, b_pu = 0.0, status = 1)
-  ok, msg = validate!(net = cnet)
-  ok || error("corridor net invalid: $msg")
-  return cnet
-end
 
 # classical machine: constant reactive box, the outer loop parks at_limit
 box_net = build_sag_corridor("tour_facts_box"; with_machine = true)
@@ -732,6 +789,7 @@ step, deliberately the last one BEFORE crossing the target
 (under-compensation instead of a possible overvoltage):
 
 ````@example workshop_tour_advanced
+# uses: build_sag_corridor (warm-up cell)
 # the same corridor and target once with a continuous SVC, once as a bank
 cont_net = build_sag_corridor("tour_facts_cont"; with_machine = false)
 addShuntVoltageControl!(cont_net; bus = "Mid", target_vm_pu = 0.95, bs_min_mvar = -40.0, bs_max_mvar = 40.0)
@@ -768,23 +826,10 @@ same 35-MW target, once per device:
    +------ M2 --------+     series device in the A-M2 leg
 ```
 
-````@example workshop_tour_advanced
-function build_facts_loop(name::String)
-  lnet = Net(name = name, baseMVA = 100.0)
-  for bus in ("A", "M1", "M2", "B")
-    addBus!(net = lnet, busName = bus, vn_kV = 110.0)
-  end
-  addProsumer!(net = lnet, busName = "A", type = "EXTERNALNETWORKINJECTION", referencePri = "A", vm_pu = 1.0, va_deg = 0.0)
-  addProsumer!(net = lnet, busName = "B", type = "ENERGYCONSUMER", p = 80.0, q = 20.0)
-  addPIModelACLine!(net = lnet, fromBus = "A", toBus = "M1", r_pu = 0.01, x_pu = 0.10, b_pu = 0.0, status = 1)
-  addPIModelACLine!(net = lnet, fromBus = "M1", toBus = "B", r_pu = 0.01, x_pu = 0.10, b_pu = 0.0, status = 1)
-  addPIModelACLine!(net = lnet, fromBus = "A", toBus = "M2", r_pu = 0.02, x_pu = 0.20, b_pu = 0.0, status = 1)
-  addPIModelACLine!(net = lnet, fromBus = "M2", toBus = "B", r_pu = 0.02, x_pu = 0.20, b_pu = 0.0, status = 1)
-  ok, msg = validate!(net = lnet)
-  ok || error("loop net invalid: $msg")
-  return lnet
-end
+`build_facts_loop` is defined in the warm-up cell at the top.
 
+````@example workshop_tour_advanced
+# uses: build_facts_loop (warm-up cell)
 tcsc_net = build_facts_loop("tour_facts_tcsc")
 tcsc_ctrl = addSeriesReactanceControl!(tcsc_net; fromBus = "A", toBus = "M2", p_target_mw = 35.0, x_min_pu = 0.02, x_max_pu = 0.30)
 run_control!(tcsc_net)
@@ -815,6 +860,7 @@ $\pm V \cdot S_{max}$ of the last solved operating point, not the
 nameplate), target, and status:
 
 ````@example workshop_tour_advanced
+# uses: build_sag_corridor (warm-up cell)
 ok_net = build_sag_corridor("tour_facts_inrange"; with_machine = true)
 addMachineVoltageControl!(ok_net; bus = "Mid", target_bus = "Load", target_vm_pu = 0.95, s_max_mva = 200.0)
 run_control!(ok_net)
@@ -834,6 +880,7 @@ on the loop of Example 4.3 (diagram there), with the shunt converter's
 machine added at M2:
 
 ````@example workshop_tour_advanced
+# uses: build_facts_loop (warm-up cell)
 upfc_net = build_facts_loop("tour_facts_upfc")
 addProsumer!(net = upfc_net, busName = "M2", type = "GENERATOR", p = 0.0, q = 0.0)
 upfc = addUpfcControl!(upfc_net; fromBus = "A", toBus = "M2", shunt_bus = "M2", target_bus = "B", target_vm_pu = 0.99, p_target_mw = 35.0, v_inj_max_pu = 0.08, s_max_mva = 40.0)
@@ -869,24 +916,10 @@ a small meshed corridor (the parallel `S->L` path lets the flow be steered):
            shunt converter at I               (parallel path)
 ```
 
-````@example workshop_tour_advanced
-function build_facts_mesh(name::String)
-  m = Net(name = name, baseMVA = 100.0)
-  for b in ("S", "I", "J", "L")
-    addBus!(net = m, busName = b, vn_kV = 110.0)
-  end
-  addProsumer!(net = m, busName = "S", type = "EXTERNALNETWORKINJECTION", referencePri = "S", vm_pu = 1.0, va_deg = 0.0)
-  addProsumer!(net = m, busName = "I", type = "GENERATOR", p = 0.0, q = 0.0)   # shunt converter
-  addProsumer!(net = m, busName = "L", type = "ENERGYCONSUMER", p = 90.0, q = 30.0)
-  addPIModelACLine!(net = m, fromBus = "S", toBus = "I", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
-  addPIModelACLine!(net = m, fromBus = "I", toBus = "J", r_pu = 0.02, x_pu = 0.18, b_pu = 0.0, status = 1)
-  addPIModelACLine!(net = m, fromBus = "J", toBus = "L", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
-  addPIModelACLine!(net = m, fromBus = "S", toBus = "L", r_pu = 0.02, x_pu = 0.16, b_pu = 0.0, status = 1)
-  ok, msg = validate!(net = m)
-  ok || error("mesh net invalid: $msg")
-  return m
-end
+`build_facts_mesh` is defined in the warm-up cell at the top.
 
+````@example workshop_tour_advanced
+# uses: build_facts_mesh (warm-up cell)
 full_net = build_facts_mesh("tour_facts_upfc_full")
 full = addUpfcControl!(full_net; model = :full, fromBus = "I", toBus = "J", shunt_bus = "I",
                        p_target_mw = 40.0, q_target_mvar = 10.0, q_shunt_mvar = 0.0,
@@ -904,6 +937,8 @@ the classical result tables report the UPFC too: the "Controllers" line
 counts it and the "UPFC Control Summary" block shows its state
 
 ````@example workshop_tour_advanced
+# uses: full_net (Example 4.6)
+@isdefined(full_net) || error("Run Example 4.6 first: it sets up full_net.")
 calcNetLosses!(full_net)
 printACPFlowResults(full_net, 0.0, 1, 1e-8)
 ````
@@ -912,6 +947,7 @@ Forcing the series phase back to quadrature collapses onto Example 4.5's
 behaviour: the in-phase component vanishes, P_se drops to zero.
 
 ````@example workshop_tour_advanced
+# uses: build_facts_mesh (warm-up cell)
 quad_net = build_facts_mesh("tour_facts_upfc_quad")
 quad = addUpfcControl!(quad_net; model = :full, series_phase = :quadrature, fromBus = "I", toBus = "J",
                        shunt_bus = "I", p_target_mw = 40.0, q_target_mvar = 0.0, q_shunt_mvar = 0.0,
@@ -966,6 +1002,7 @@ inside the batch marks buses without any in-service branch as isolated
 and solves the rest, so a one-bus stub converges cleanly.)
 
 ````@example workshop_tour_advanced
+# uses: build_ring7 (warm-up cell)
 net_n1 = build_ring7("tour_n1")
 addBus!(net = net_n1, busName = "B8", vn_kV = 110.0)
 addBus!(net = net_n1, busName = "B9", vn_kV = 110.0)
@@ -998,6 +1035,8 @@ rank the converged cases by their voltage sag and export everything as
 CSV for a report or a spreadsheet:
 
 ````@example workshop_tour_advanced
+# uses: results (Example 5.1)
+@isdefined(results) || error("Run Example 5.1 first: it sets up results.")
 ranked = sort([r for r in results if r.converged]; by = r -> r.min_vm_pu)
 println("worst three outages by post-outage Vmin:")
 for r in ranked[1:3]

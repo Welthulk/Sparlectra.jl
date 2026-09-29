@@ -593,6 +593,18 @@ end)() end
         runpf!(opt_in_net; config = PowerFlowConfig(max_iter = 0, qlimits = QLimitConfig(guard = true)))
       end
       @test length(opt_in_net.qLimitLog) == 1
+
+      # a run stopped by the switching cap names the key, its value and the
+      # buses that reached it (the guard's lock counts as the bus's first
+      # switch, so a cap of 1 stops the run)
+      capped_net = zero_range_pv_net()
+      redirect_stdout(devnull) do
+        runpf!(capped_net; config = PowerFlowConfig(qlimits = QLimitConfig(guard = true, guard_max_switches = 1)))
+      end
+      capped = Sparlectra.rectangular_pf_status(capped_net)
+      @test capped.reason === :max_switching_exceeded
+      @test occursin("power_flow.qlimits.guard.max_switches = 1", capped.reason_text)
+      @test occursin("STATION1 (1x)", capped.reason_text)
     end)() end
 
     @testset "Rectangular performance profile exposes solver control path" begin (function ()

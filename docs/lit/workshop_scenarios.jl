@@ -68,7 +68,20 @@
 #nb ## To test another branch, set rev to its name, e.g. rev = "dev/r0.10.0".
 #nb ## For the latest registered release use: Pkg.add("Sparlectra")
 
-# ## Load the 118-bus case and turn it into an SCF case
+# ## Warm-up and the study case
+#
+# Julia compiles each function on first use. This cell loads the package
+# and sets up what the chapters share (the study network `net`, its SCF
+# file `scf_path`, the typed case `scfcase` and its `index`), so any chapter
+# can run on its own after it; a code cell that uses a name from another
+# cell says so in a comment. Its last line, `warmup()`, runs every path the
+# chapters exercise once on the small shipped `sp_case9` (the MATPOWER
+# import, the SCF export and read, the N-1 expansion, hand-written
+# scenarios, `runScenarios!` with and without screening, and writing the
+# scenarios block back), so nothing stalls mid-workshop; its code is in
+# `docs/lit/warmup/workshop_scenarios.jl` of the package. How long the
+# warm-up takes depends on the machine: a Colab session is several times
+# slower than a desktop; every later cell then runs without compile pauses.
 #
 # The study network is `sp_case118`, shipped with the package under
 # `data/mpower`: a synthetic case with the cardinalities of the IEEE
@@ -80,6 +93,7 @@
 
 using Sparlectra
 
+## the study case all chapters share
 workdir = mktempdir()
 case_m = joinpath(dirname(dirname(pathof(Sparlectra))), "data", "mpower", "sp_case118.m")
 net = createNetFromMatPowerFile(filename=case_m, flatstart=false, enable_pq_gen_controllers=true, bus_shunt_model=:admittance, matpower_shift_sign=1.0, matpower_shift_unit=:deg, matpower_ratio=:normal, tap_changer_model=:ideal)
@@ -91,12 +105,18 @@ println("buses: ", length(net.nodeVec), ", branches: ", length(net.branchVec))
 @assert length(net.nodeVec) == 118
 @assert length(net.branchVec) == 186
 
+## compile every path the chapters use once; the warm-up code is in
+## docs/lit/warmup/workshop_scenarios.jl of the installed package
+include(pkgdir(Sparlectra, "docs", "lit", "warmup", "workshop_scenarios.jl"))
+warmup()
+
 # ## The N-1 expansion
 #
 # The N-1 modes are the special case of the scenario model: one status
 # patch per in-service branch or generator, expanded through the same
 # generators `runContingencies!` uses.
 
+## uses: index, net (warm-up cell)
 n1 = expand_scenarios(ScenarioSet(mode=:n1_all), net, index)
 n1_branches = expand_scenarios(ScenarioSet(mode=:n1_branches), net, index)
 println("N-1 all: ", length(n1), " scenarios (", length(n1_branches), " branch outages, ", length(n1) - length(n1_branches), " generator outages)")
@@ -110,6 +130,7 @@ println("N-1 all: ", length(n1), " scenarios (", length(n1_branches), " branch o
 # component ids. The ids come from the typed case; the `extra` block maps
 # them to the reference names.
 
+## uses: index, net, scfcase (warm-up cell)
 branch_ids = [r.id for r in scfcase.data.line]
 gen_id = first(id for (id, k) in index.kind_by_id if k === :generator)
 load_ids = [id for (id, k) in index.kind_by_id if k === :load]
@@ -145,6 +166,8 @@ end
 # and the honest check before using `:flag` on your own network is exactly
 # the pair of numbers printed here.
 
+## uses: index (warm-up cell); net (warm-up cell, Three scenarios by hand)
+@isdefined(net) || error("Run the section \"Three scenarios by hand\" first: it sets up net.")
 full_set = ScenarioSet(mode=:n1_all)
 t_off = @elapsed off_results = runScenarios!(net, full_set; index=index)
 t_flag = @elapsed flag_results = runScenarios!(net, full_set; index=index, screening_mode=:flag)
@@ -156,7 +179,7 @@ println("flag: ", n_screened, " of ", length(flag_results), " screened (", round
 @assert length(off_results) == 240
 @assert length(flag_results) == 240
 @assert n_screened > 0
-# no violating case may ever be screened away (the acceptance criterion)
+## no violating case may ever be screened away (the acceptance criterion)
 violating = Set(r.name for r in off_results if !isempty(r.overloads) || !isempty(r.voltage_violations) || !r.converged)
 @assert isempty(intersect(violating, Set(r.name for r in flag_results if r.screened)))
 
@@ -165,6 +188,8 @@ violating = Set(r.name for r in off_results if !isempty(r.overloads) || !isempty
 # A screened row carries `start_used = :screen` and the estimate; a
 # flagged row carries the FULL run plus the estimate that flagged it.
 
+## uses: flag_results, off_results (Screening: off against flag)
+(@isdefined(flag_results) && @isdefined(off_results)) || error("Run the section \"Screening: off against flag\" first: it sets up flag_results, off_results.")
 screened_row = first(r for r in flag_results if r.screened)
 full_row = only(r for r in off_results if r.name == screened_row.name)
 println("screened ", screened_row.name, ": estimated vmin ", round(screened_row.min_vm_pu; digits=4), " pu against full-run vmin ", round(full_row.min_vm_pu; digits=4), " pu")
@@ -183,6 +208,8 @@ println("flagged ", flagged_row.name, ": full solve ran (start = ", flagged_row.
 # the Web UI, the service (`scenario_source = file_block`) and the CLI all
 # read it from there.
 
+## uses: scf_path, scfcase (warm-up cell); handmade (Three scenarios by hand)
+@isdefined(handmade) || error("Run the section \"Three scenarios by hand\" first: it sets up handmade.")
 scfcase.sparlectra.scenarios = scenario_set_dict(handmade)
 Sparlectra.write_scf_json(scfcase, scf_path)
 back = scf_case_scenarios(Sparlectra.read_scf_json(scf_path))

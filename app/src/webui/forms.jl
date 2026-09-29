@@ -756,8 +756,14 @@ function _webui_normalize_case_profile_form_value(field::AbstractString, value)
   if String(field) == "powsybl_import_slack_ids" && value isa AbstractVector
     return join((strip(string(v)) for v in value), "; ")
   end
-  value isa AbstractVector && throw(ArgumentError("Case-settings field $(field) does not support vector values for form rendering."))
   type = get(_WEBUI_CASE_PROFILE_FIELD_TYPES, String(field), String)
+  # a bus list shows as comma-separated text; a stored text is checked the
+  # way a posted one is
+  if type === Vector{Int}
+    buses = value isa AbstractVector ? _webui_parse_form_value(join(string.(value), ","), Vector{Int}, String(field)) : _webui_parse_form_value(value, Vector{Int}, String(field))
+    return join(string.(buses), ", ")
+  end
+  value isa AbstractVector && throw(ArgumentError("Case-settings field $(field) does not support vector values for form rendering."))
   allowed = get(_WEBUI_CASE_PROFILE_SELECT_VALUES, String(field), nothing)
   if allowed !== nothing && value isa Bool
     !value && "off" in allowed && return "off"
@@ -1283,6 +1289,21 @@ function _webui_parse_form_value(value, type::Type{<:Number}, field::String)
 end
 
 _webui_parse_form_value(value, ::Type{String}, field::String) = strip(String(something(value, "")))
+
+# a bus list (power_flow.qlimits.trace_buses, lock_pv_to_pq_buses): comma- or
+# space-separated integers >= 1, empty for none; anything else is refused
+# with the field name, the way a bad number is
+function _webui_parse_form_value(value, ::Type{Vector{Int}}, field::String)
+  text = value === nothing ? "" : strip(string(value))
+  isempty(text) && return Int[]
+  buses = Int[]
+  for item in split(text, r"[,\s;]+"; keepempty = false)
+    bus = tryparse(Int, item)
+    (bus === nothing || bus < 1) && throw(ArgumentError("Web UI field $(field) needs bus numbers (integers >= 1, comma-separated); got $(repr(String(item)))."))
+    push!(buses, bus)
+  end
+  return buses
+end
 
 """
     _webui_apply_qlimits_off!(updates) -> updates

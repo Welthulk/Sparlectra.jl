@@ -68,18 +68,31 @@
 #nb Pkg.add(url = "https://github.com/Welthulk/Sparlectra.jl", rev = "main")
 #nb ## The notebook installs the development version from GitHub.
 #nb ## For the latest registered release use: Pkg.add("Sparlectra")
+
+# ## Warm-up and shared helpers
+#
+# Julia compiles each function on first use. This cell loads the
+# packages and defines what the parts share (the network builder, the
+# small helpers and the two run configurations), so any part can run on
+# its own after it; a code cell that uses a name from another cell says so
+# in a comment. Its last line, `warmup()`, runs every path the parts
+# exercise once with the output discarded (both solvers, the series order
+# and radius options, the hybrid start, the case import), so nothing
+# stalls mid-workshop; its code is in `docs/lit/warmup/workshop_apslf.jl`
+# of the package. How long the warm-up takes depends on the machine: a
+# Colab session is several times slower than a desktop; every later cell
+# then runs without compile pauses.
+
 using Sparlectra
 using Printf
 
-# ## Part 1: the same network, two solvers
-#
-# The study network is the 7-bus ring of the basic tour (B1 carries the
-# grid connection, B3 a generator, the diagonals are the cross-ties B2-B5
-# and B3-B6). It has no controllers, which matters: APSLF runs the whole
-# solve inside the series, so the outer control loop (taps, Q(U)) has no
-# place in it; Sparlectra rejects such a network for the APSLF solver
-# instead of silently ignoring the controllers (Part 3 shows that).
-
+## the helpers of the parts, defined here so that any part runs on its
+## own after this cell:
+##   build_ring7(name; lambda)   the 7-bus ring, loads scaled by lambda (all parts)
+##   bus_vm, bus_va              bus voltage vectors of a solved net (Parts 1, 2)
+##   scaled_ring7(lambda)        the ring with every load scaled (Parts 2, 3)
+##   clamped(net)                machines at a Q-limit (Part 2)
+##   quiet, cfg_nr, cfg_apslf    output and the two solver configurations (all parts)
 function build_ring7(name::String; lambda::Float64=1.0)
     net = Net(name=name, baseMVA=100.0)
     addBus!(net=net, busName="B1", vn_kV=110.0, vm_pu=1.02, va_deg=0.0)
@@ -107,17 +120,44 @@ function build_ring7(name::String; lambda::Float64=1.0)
     return net
 end
 
-# Two configurations, identical except for the solver. `run_sparlectra`
-# takes the whole run from one `SparlectraConfig`: solver choice, control
-# loop, output. The console summary is switched off here because the
-# chapter prints its own comparisons.
+bus_vm(net) = [n._vm_pu for n in net.nodeVec]
+bus_va(net) = [n._va_deg for n in net.nodeVec]
 
-println("AnalyticLoadFlow ", pkgversion(Sparlectra.AnalyticLoadFlow))
-@assert pkgversion(Sparlectra.AnalyticLoadFlow) >= v"0.9.16"                #src
+scaled_ring7(lambda::Float64) = build_ring7(@sprintf("ring7 λ=%.2f", lambda); lambda=lambda)
 
+clamped(net) = sort!(collect(keys(net.qLimitEvents)))
+
+## two configurations, identical except for the solver (Part 1 explains them)
 quiet = OutputConfig(logfile_results=:off, console_summary=false, startup_latency_hint=false)
 cfg_nr = SparlectraConfig(powerflow=PowerFlowConfig(solver=:rectangular, rescue=false), output=quiet)
 cfg_apslf = SparlectraConfig(powerflow=PowerFlowConfig(solver=:apslf), output=quiet)
+
+## compile every path the chapters use once; the warm-up code is in
+## docs/lit/warmup/workshop_apslf.jl of the installed package
+include(pkgdir(Sparlectra, "docs", "lit", "warmup", "workshop_apslf.jl"))
+warmup()
+
+# ## Part 1: the same network, two solvers
+#
+# The study network is the 7-bus ring of the basic tour (B1 carries the
+# grid connection, B3 a generator, the diagonals are the cross-ties B2-B5
+# and B3-B6). It has no controllers, which matters: APSLF runs the whole
+# solve inside the series, so the outer control loop (taps, Q(U)) has no
+# place in it; Sparlectra rejects such a network for the APSLF solver
+# instead of silently ignoring the controllers (Part 3 shows that).
+#
+# `build_ring7` is defined in the warm-up cell at the top.
+#
+# Two configurations, identical except for the solver, are defined in the
+# warm-up cell as well: `cfg_nr` selects the rectangular Newton solver,
+# `cfg_apslf` the series, and both share the output settings `quiet`.
+# `run_sparlectra` takes the whole run from one `SparlectraConfig`:
+# solver choice, control loop, output. The console summary is switched
+# off because the chapter prints its own comparisons.
+
+## uses: build_ring7, cfg_apslf, cfg_nr (warm-up cell)
+println("AnalyticLoadFlow ", pkgversion(Sparlectra.AnalyticLoadFlow))
+@assert pkgversion(Sparlectra.AnalyticLoadFlow) >= v"0.9.16"                #src
 
 res_nr = run_sparlectra(net=build_ring7("ring7 NR"), config=cfg_nr)
 res_ap = run_sparlectra(net=build_ring7("ring7 APSLF"), config=cfg_apslf)
@@ -128,8 +168,8 @@ res_ap = run_sparlectra(net=build_ring7("ring7 APSLF"), config=cfg_apslf)
 # tolerance, which is the first thing to check whenever a second solver
 # enters a workflow:
 
-bus_vm(net) = [n._vm_pu for n in net.nodeVec]
-bus_va(net) = [n._va_deg for n in net.nodeVec]
+## uses: bus_va, bus_vm (warm-up cell); res_ap, res_nr (Part 1: the same network, two solvers)
+(@isdefined(res_ap) && @isdefined(res_nr)) || error("Run the section \"Part 1: the same network, two solvers\" first: it sets up res_ap, res_nr.")
 max_dvm = maximum(abs.(bus_vm(res_nr.net) .- bus_vm(res_ap.net)))
 max_dva = maximum(abs.(bus_va(res_nr.net) .- bus_va(res_ap.net)))
 @printf("max |ΔVm| = %.2e pu, max |ΔVa| = %.2e deg\n", max_dvm, max_dva)
@@ -141,6 +181,8 @@ max_dva = maximum(abs.(bus_va(res_nr.net) .- bus_va(res_ap.net)))
 # machine, see Part 2), because the series itself has no iterations. The
 # APSLF run additionally reports its convergence radius:
 
+## uses: res_ap, res_nr (Part 1: the same network, two solvers)
+(@isdefined(res_ap) && @isdefined(res_nr)) || error("Run the section \"Part 1: the same network, two solvers\" first: it sets up res_ap, res_nr.")
 apslf_status = Sparlectra.rectangular_pf_status(res_ap.net)
 println("NR    : ", res_nr.iterations, " iterations, mismatch ", res_nr.final_mismatch)
 println("APSLF : ", res_ap.iterations, " pass(es),   mismatch ", res_ap.final_mismatch)
@@ -161,6 +203,7 @@ println("APSLF : ", apslf_status.apslf_convergence_line)
 # Padé approximant has not settled; more than needed costs time and
 # nothing else. The mismatch after the solve shows where the plateau is:
 
+## uses: build_ring7, quiet (warm-up cell)
 order_table = Tuple{Int,Float64,Bool}[]
 for order in (4, 6, 8, 12, 16, 24, 40)
     cfg = SparlectraConfig(powerflow=PowerFlowConfig(solver=:apslf, apslf=Sparlectra.ApslfConfig(order=order)), output=quiet)
@@ -188,9 +231,11 @@ end
 # reports that limit only by failing; APSLF reports it in advance
 # through `dmin`, because the nearest Padé pole moves towards $s = 1$ as
 # the solution branch approaches the fold.
+#
+# `scaled_ring7(lambda)`, the ring with every load scaled by $\lambda$, is
+# defined in the warm-up cell at the top.
 
-scaled_ring7(lambda::Float64) = build_ring7(@sprintf("ring7 λ=%.2f", lambda); lambda=lambda)
-
+## uses: bus_vm, cfg_apslf, cfg_nr, scaled_ring7 (warm-up cell)
 margin_table = NamedTuple[]
 for lambda in (1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0)
     r_ap = run_sparlectra(net=scaled_ring7(lambda), config=cfg_apslf)
@@ -221,6 +266,8 @@ end
 # a non-converged run is the signal to raise the order before anything
 # else is changed:
 
+## uses: quiet, scaled_ring7 (warm-up cell); margin_table (Part 2: the convergence radius as a loadability margin)
+@isdefined(margin_table) || error("Run the section \"Part 2: the convergence radius as a loadability margin\" first: it sets up margin_table.")
 lambda_yel = margin_table[end-1].lambda
 cfg_order40 = SparlectraConfig(powerflow=PowerFlowConfig(solver=:apslf, apslf=Sparlectra.ApslfConfig(order=40)), output=quiet)
 r_yel = run_sparlectra(net=scaled_ring7(lambda_yel), config=cfg_order40)
@@ -240,6 +287,7 @@ r_yel = run_sparlectra(net=scaled_ring7(lambda_yel), config=cfg_order40)
 # non-converged run at `YEL` is a truncation signal, not a loadability
 # verdict; raise the order first, as shown above.
 
+## uses: build_ring7, quiet (warm-up cell)
 cfg_noradius = SparlectraConfig(powerflow=PowerFlowConfig(solver=:apslf, apslf=Sparlectra.ApslfConfig(convergence_radius=false)), output=quiet)
 r_noradius = run_sparlectra(net=build_ring7("ring7 no radius"), config=cfg_noradius)
 println(Sparlectra.rectangular_pf_status(r_noradius.net).apslf_convergence_line)
@@ -256,12 +304,13 @@ println(Sparlectra.rectangular_pf_status(r_noradius.net).apslf_convergence_line)
 # shipped `sp_case118` (a synthetic case with the cardinalities of the
 # IEEE 118-bus system: 118 buses, 186 branches, 54 generators, of which
 # a good third are synchronous condensers with tight reactive bands) has
-# several machines at their limits in the base case:
+# several machines at their limits in the base case (`clamped(net)`, the
+# sorted list of machines at a Q-limit, is defined in the warm-up cell):
 
+## uses: cfg_apslf, cfg_nr, clamped (warm-up cell)
 case118 = joinpath(dirname(dirname(pathof(Sparlectra))), "data", "mpower", "sp_case118.m")
 r118_nr = run_sparlectra(casefile=basename(case118), path=dirname(case118), config=cfg_nr)
 r118_ap = run_sparlectra(casefile=basename(case118), path=dirname(case118), config=cfg_apslf)
-clamped(net) = sort!(collect(keys(net.qLimitEvents)))
 println("NR    : ", r118_nr.outcome, ", ", length(clamped(r118_nr.net)), " machine(s) at a Q-limit, ", r118_nr.iterations, " iterations")
 println("APSLF : ", r118_ap.outcome, ", ", length(clamped(r118_ap.net)), " machine(s) at a Q-limit, ", r118_ap.iterations, " pass(es)")
 println("APSLF : ", Sparlectra.rectangular_pf_status(r118_ap.net).apslf_convergence_line)
@@ -278,6 +327,8 @@ println("APSLF : ", Sparlectra.rectangular_pf_status(r118_ap.net).apslf_converge
 # does not hold, and the run log's Q-limit block is where to look when
 # two solvers disagree on a case with many machines at their limits:
 
+## uses: bus_vm, clamped (warm-up cell); r118_ap, r118_nr (Reactive limits under APSLF)
+(@isdefined(r118_ap) && @isdefined(r118_nr)) || error("Run the section \"Reactive limits under APSLF\" first: it sets up r118_ap, r118_nr.")
 common = intersect(clamped(r118_nr.net), clamped(r118_ap.net))
 println(length(common), " machine(s) clamped by both solvers, ", length(symdiff(clamped(r118_nr.net), clamped(r118_ap.net))), " differ")
 @printf("max |ΔVm| over all buses: %.2e pu\n", maximum(abs.(bus_vm(r118_nr.net) .- bus_vm(r118_ap.net))))
@@ -291,6 +342,7 @@ println(length(common), " machine(s) clamped by both solvers, ", length(symdiff(
 # value generator. On the stressed ring from Part 2 that shortens the
 # Newton run from the flat start visibly:
 
+## uses: cfg_nr, quiet, scaled_ring7 (warm-up cell)
 lambda_hard = 3.5
 cfg_hybrid = SparlectraConfig(powerflow=PowerFlowConfig(solver=:rectangular, apslf_start=Sparlectra.ApslfStartConfig(enabled=true)), output=quiet)
 r_flat = run_sparlectra(net=scaled_ring7(lambda_hard), config=cfg_nr)
@@ -319,6 +371,7 @@ println("APSLF start : ", r_hyb.outcome, ", ", r_hyb.iterations, " Newton iterat
 # and the network solves with the tap controller active. The
 # configuration is repeated here so this cell runs on its own:
 
+## uses: quiet (warm-up cell)
 case14 = joinpath(dirname(dirname(pathof(Sparlectra))), "data", "scf", "sp_case14.scf.json")
 cfg_hybrid = SparlectraConfig(powerflow=PowerFlowConfig(solver=:rectangular, apslf_start=Sparlectra.ApslfStartConfig(enabled=true)), output=quiet)
 r14 = run_sparlectra(net=importSCF(case14), config=cfg_hybrid)

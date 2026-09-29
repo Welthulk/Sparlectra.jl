@@ -73,6 +73,82 @@ function _webui_qlimit_mode_selection(profile_values)
   return _webui_selected(profile_values, "power_flow_qlimits_enforcement_mode", _webui_option_default("power_flow_qlimits_enforcement_mode"))
 end
 
+# --- Q-limit block (task 0.20.2) ------------------------------------------
+# Grey-out markers read by the form script: data-qlimit-field (every field of
+# the block; off while the handling is off), data-qlimit-active-set-field
+# (no effect in the classic modes, whose inner solves run without Q limits
+# and read only the hysteresis), data-qlimit-guard-field (only what
+# guard.enabled switches: the narrow- and zero-range rules and their log;
+# the switch cap, freezing and the violation rule act without it). A greyed
+# control is not posted, so the hidden false of a checkbox carries the same
+# marker: otherwise a save would overwrite a stored true with false.
+function _webui_qlimit_markers(; active_set::Bool = true, guard::Bool = false)::String
+  return string(" data-qlimit-field", active_set ? " data-qlimit-active-set-field" : "", guard ? " data-qlimit-guard-field" : "")
+end
+
+function _webui_qlimit_checkbox(profile_values, field::String, label::String, markers::String; extra::String = "")::String
+  return "<label class=\"check\"><input name=\"$(field)\" type=\"hidden\" value=\"false\"$(markers)><input name=\"$(field)\" type=\"checkbox\" value=\"true\"$(markers)$(extra)$(_webui_checked(profile_values, field, _webui_option_default(field)))>$(_webui_field_label(field, label))</label>"
+end
+
+function _webui_qlimit_int(profile_values, field::String, label::String, markers::String; min::Int = 0)::String
+  return "<label>$(_webui_field_label(field, label))<input name=\"$(field)\" type=\"number\" min=\"$(min)\" step=\"1\"$(markers) value=\"$(_webui_input_value(profile_values, field, _webui_option_default(field)))\"></label>"
+end
+
+# a per-unit float the way the tolerance is entered: text in scientific
+# notation, the arrows step the exponent
+function _webui_qlimit_sci(profile_values, field::String, label::String, markers::String)::String
+  return "<label>$(_webui_field_label(field, label))<span class=\"tolerance-field\"><input name=\"$(field)\" type=\"text\" inputmode=\"decimal\" autocomplete=\"off\" spellcheck=\"false\" data-tolerance-input$(markers) value=\"$(_webui_input_value(profile_values, field, _webui_option_default(field)))\"><span class=\"tolerance-spin\"><button type=\"button\" class=\"tolerance-spin-up\" data-tolerance-direction=\"up\" aria-label=\"Increase exponent\">&#9650;</button><button type=\"button\" class=\"tolerance-spin-down\" data-tolerance-direction=\"down\" aria-label=\"Decrease exponent\">&#9660;</button></span></span></label>"
+end
+
+function _webui_qlimit_select(profile_values, field::String, label::String, markers::String)::String
+  return "<label>$(_webui_field_label(field, label))$(_webui_select(field, _webui_option_allowed_values(field), _webui_selected(profile_values, field, _webui_option_default(field)), strip(markers)))</label>"
+end
+
+function _webui_qlimit_buses(profile_values, field::String, label::String, markers::String, placeholder::String)::String
+  return "<label>$(_webui_field_label(field, label))<input name=\"$(field)\" type=\"text\" autocomplete=\"off\" spellcheck=\"false\" placeholder=\"$(placeholder)\"$(markers) value=\"$(_webui_input_value(profile_values, field, _webui_option_default(field)))\"></label>"
+end
+
+"""
+    _webui_qlimit_block_html(profile_values) -> String
+
+The Q-limit block of the power-flow form below the master switch and the
+mode: the four settings a PV/PQ switching study turns first (first
+switching iteration, guard, switch cap, freezing) directly, everything else
+of `power_flow.qlimits` under Advanced. Values come from `profile_values`
+(configuration file and case settings), defaults from the option specs.
+"""
+function _webui_qlimit_block_html(profile_values)::String
+  as = _webui_qlimit_markers()
+  both = _webui_qlimit_markers(active_set = false)
+  gr = _webui_qlimit_markers(guard = true)
+  guard_help = _webui_help_link("power_flow.qlimits.guard.enabled", "Q-limit guard")
+  return string(
+    "<fieldset class=\"span-2 qlimit-options\"><legend>PV/PQ switching", isempty(guard_help) ? "" : " " * guard_help, "</legend>",
+    _webui_qlimit_int(profile_values, "power_flow_qlimits_start_iter", "First switching iteration", as),
+    _webui_qlimit_int(profile_values, "power_flow_qlimits_guard_max_switches", "Maximum switches per bus", as; min = 1),
+    _webui_qlimit_checkbox(profile_values, "power_flow_qlimits_guard_freeze_after_repeated_switching", "Freeze after repeated switching", as),
+    _webui_qlimit_checkbox(profile_values, "power_flow_qlimits_guard_enabled", "Narrow-range guard enabled", as; extra = " data-qlimit-guard-toggle"),
+    "<p class=\"field-help span-2\">The classic modes switch between complete solves and use only the hysteresis; the fields they do not read are greyed. The guard switch covers the narrow- and zero-range rules; the switch cap, freezing and the violation rule act without it.</p>",
+    "<details class=\"span-2 qlimit-advanced\"><summary>Advanced</summary>",
+    _webui_qlimit_select(profile_values, "power_flow_qlimits_start_mode", "Switching start rule", as),
+    _webui_qlimit_sci(profile_values, "power_flow_qlimits_auto_q_delta_pu", "Auto start threshold (pu)", as),
+    _webui_qlimit_sci(profile_values, "power_flow_qlimits_hysteresis_pu", "Q hysteresis (pu)", both),
+    _webui_qlimit_int(profile_values, "power_flow_qlimits_cooldown_iters", "Cooldown iterations", as),
+    _webui_qlimit_sci(profile_values, "power_flow_qlimits_reenable_v_hyst_pu", "Release voltage margin (pu)", as),
+    _webui_qlimit_buses(profile_values, "power_flow_qlimits_trace_buses", "Traced buses (case bus numbers)", as, "e.g. 101, 205"),
+    _webui_qlimit_buses(profile_values, "power_flow_qlimits_lock_pv_to_pq_buses", "Buses locked to PQ", as, "e.g. 2, 5"),
+    _webui_qlimit_select(profile_values, "power_flow_qlimits_guard_violation_mode", "Violation rule", as),
+    _webui_qlimit_sci(profile_values, "power_flow_qlimits_guard_violation_threshold_pu", "Violation threshold (pu)", as),
+    _webui_qlimit_checkbox(profile_values, "power_flow_qlimits_guard_accept_bounded_violations", "Accept bounded violations", as),
+    _webui_qlimit_int(profile_values, "power_flow_qlimits_guard_max_remaining_violations", "Accepted remaining violations", as),
+    _webui_qlimit_sci(profile_values, "power_flow_qlimits_guard_min_q_range_pu", "Narrow Q range (pu)", gr),
+    _webui_qlimit_select(profile_values, "power_flow_qlimits_guard_narrow_range_mode", "Narrow-range rule", gr),
+    _webui_qlimit_select(profile_values, "power_flow_qlimits_guard_zero_range_mode", "Zero-range rule", gr),
+    _webui_qlimit_checkbox(profile_values, "power_flow_qlimits_guard_log", "Guard log line", gr),
+    "</details></fieldset>",
+  )
+end
+
 function _webui_select(name, values, selected, extra_attrs::AbstractString = "")
   options = join((_webui_option(value, replace(_webui_form_string(value), '_' => ' '), selected) for value in values), "")
   attrs = isempty(extra_attrs) ? "" : " $(extra_attrs)"
@@ -1603,9 +1679,10 @@ $(config_maintenance)
 </details>
 <details class=\"span-2 step-control-options\" data-ac-only-field>
 <summary>Q-limit handling</summary>
-<label class=\"check\"><input name=\"power_flow_qlimits_enabled\" type=\"hidden\" value=\"false\"><input name=\"power_flow_qlimits_enabled\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_qlimits_enabled", _webui_option_default("power_flow_qlimits_enabled")))>$(_webui_field_label("power_flow_qlimits_enabled", "Q-limit handling enabled"))</label>
-<label data-nr-only-field>$(_webui_field_label("power_flow_qlimits_enforcement_mode", "Q-limit enforcement mode"))$(_webui_select("power_flow_qlimits_enforcement_mode", vcat(["off"], collect(_webui_option_allowed_values("power_flow_qlimits_enforcement_mode"))), _webui_qlimit_mode_selection(profile_values)))</label>
+<label class=\"check\"><input name=\"power_flow_qlimits_enabled\" type=\"hidden\" value=\"false\"><input name=\"power_flow_qlimits_enabled\" type=\"checkbox\" value=\"true\" data-qlimit-toggle$(_webui_checked(profile_values, "power_flow_qlimits_enabled", _webui_option_default("power_flow_qlimits_enabled")))>$(_webui_field_label("power_flow_qlimits_enabled", "Q-limit handling enabled"))</label>
+<label data-nr-only-field>$(_webui_field_label("power_flow_qlimits_enforcement_mode", "Q-limit enforcement mode"))$(_webui_select("power_flow_qlimits_enforcement_mode", vcat(["off"], collect(_webui_option_allowed_values("power_flow_qlimits_enforcement_mode"))), _webui_qlimit_mode_selection(profile_values), "data-qlimit-mode"))</label>
 <p class=\"field-help span-2\">\"off\" switches Q-limit handling off; it is the same thing as clearing the box above, offered here because a mode picked while the handling is off does nothing and looks like it does.</p>
+$(_webui_qlimit_block_html(profile_values))
 </details>
 <details class="span-2 solver-mode-options" open>
 <summary>$(_webui_field_label("power_flow_solver", "Solver"))</summary>
@@ -1815,7 +1892,6 @@ document.addEventListener('DOMContentLoaded', function () {
     updateSolverMode();
     solverRadios.forEach(function (radio) { radio.addEventListener('change', updateSolverMode); });
   }
-  const toleranceInput = document.querySelector('input[name="power_flow_tol"][data-tolerance-input]');
   const parseToleranceParts = function (valueText) {
     const trimmed = String(valueText).trim();
     if (trimmed === '') return null;
@@ -1836,29 +1912,65 @@ document.addEventListener('DOMContentLoaded', function () {
     const rounded = Number(mantissa.toPrecision(12));
     return String(rounded) + 'e' + String(exponent);
   };
-  const stepTolerance = function (direction) {
-    if (toleranceInput === null) return;
-    const parts = parseToleranceParts(toleranceInput.value) || {mantissa: 1, exponent: -8};
-    toleranceInput.value = formatToleranceParts(parts.mantissa, parts.exponent + direction);
-    toleranceInput.dispatchEvent(new Event('change', {bubbles: true}));
+  // every field entered in scientific notation (the tolerance, the per-unit
+  // values of the Q-limit block): the arrows and the arrow keys step the
+  // exponent of THEIR field
+  const stepSciInput = function (input, direction) {
+    if (input.disabled) return;
+    const parts = parseToleranceParts(input.value) || {mantissa: 1, exponent: input.name === 'power_flow_tol' ? -8 : -4};
+    input.value = formatToleranceParts(parts.mantissa, parts.exponent + direction);
+    input.dispatchEvent(new Event('change', {bubbles: true}));
   };
-  if (toleranceInput !== null) {
-    toleranceInput.addEventListener('keydown', function (event) {
+  document.querySelectorAll('.tolerance-field').forEach(function (box) {
+    const input = box.querySelector('input[data-tolerance-input]');
+    if (input === null) return;
+    input.addEventListener('keydown', function (event) {
       if (event.key === 'ArrowUp') {
         event.preventDefault();
-        stepTolerance(1);
+        stepSciInput(input, 1);
       } else if (event.key === 'ArrowDown') {
         event.preventDefault();
-        stepTolerance(-1);
+        stepSciInput(input, -1);
       }
     });
-    document.querySelectorAll('.tolerance-spin button[data-tolerance-direction]').forEach(function (button) {
+    box.querySelectorAll('.tolerance-spin button[data-tolerance-direction]').forEach(function (button) {
       button.addEventListener('click', function () {
-        stepTolerance(button.dataset.toleranceDirection === 'up' ? 1 : -1);
-        toleranceInput.focus();
+        stepSciInput(input, button.dataset.toleranceDirection === 'up' ? 1 : -1);
+        input.focus();
       });
     });
-  }
+  });
+  // Q-limit block: everything off while the handling is off (checkbox or
+  // mode "off"); in the classic modes the fields they do not read; the
+  // range rules while the narrow-range guard is off. Greyed in place, the
+  // values stay and return when the switch does
+  const qlimitToggle = document.querySelector('input[data-qlimit-toggle]');
+  const qlimitMode = document.querySelector('select[data-qlimit-mode]');
+  const qlimitGuardToggle = document.querySelector('input[type="checkbox"][data-qlimit-guard-toggle]');
+  const updateQlimitFields = function () {
+    const mode = qlimitMode === null ? 'active_set' : qlimitMode.value;
+    const on = (qlimitToggle === null || qlimitToggle.checked) && mode !== 'off';
+    const classic = mode === 'classic_simultaneous' || mode === 'classic_one_at_a_time';
+    const guardOn = qlimitGuardToggle === null || qlimitGuardToggle.checked;
+    const dc = typeof isDcMode === 'function' && isDcMode();
+    document.querySelectorAll('[data-qlimit-field]').forEach(function (field) {
+      let inactive = !on || dc;
+      if (!inactive && classic && field.hasAttribute('data-qlimit-active-set-field')) inactive = true;
+      if (!inactive && !guardOn && field.hasAttribute('data-qlimit-guard-field')) inactive = true;
+      field.disabled = inactive;
+      const label = field.closest('label');
+      if (label !== null) label.classList.toggle('disabled', inactive);
+      const box = field.closest('.tolerance-field');
+      if (box !== null) box.querySelectorAll('button').forEach(function (button) { button.disabled = inactive; });
+    });
+  };
+  if (qlimitToggle !== null) qlimitToggle.addEventListener('change', updateQlimitFields);
+  if (qlimitMode !== null) qlimitMode.addEventListener('change', updateQlimitFields);
+  if (qlimitGuardToggle !== null) qlimitGuardToggle.addEventListener('change', updateQlimitFields);
+  // the solver switch re-enables the whole AC block when it leaves DC; the
+  // Q-limit rules apply again right after it
+  document.querySelectorAll('input[data-solver-radio]').forEach(function (radio) { radio.addEventListener('change', updateQlimitFields); });
+  updateQlimitFields();
 });
 </script>"""
 end
@@ -3019,6 +3131,25 @@ function render_powerflow_history(runs, output_root::AbstractString; active_run 
   return _webui_layout("Run history", content; show_back = true)
 end
 
+# A path value (the case file, the configuration file of a run) is shown
+# by its file name; the full path stays in the hover text. Two full paths
+# of the case directory side by side filled the table with the same
+# prefix and hid the part that differs.
+function _webui_compare_value_cell(value::AbstractString, other::AbstractString = "")::String
+  path_of(v) = (t = strip(String(v), ['"', '\'']); (isabspath(t) || occursin(r"^[A-Za-z]:[\\/]", t)) ? replace(t, '\\' => '/') : nothing)
+  text = path_of(value)
+  text === nothing && return _webui_escape(value)
+  name = basename(text)
+  isempty(name) && return _webui_escape(value)
+  # the same file name in two different places: the parent directory
+  # tells them apart, the full path stays in the hover text
+  other_text = path_of(other)
+  if other_text !== nothing && other_text != text && basename(other_text) == name
+    name = string(basename(dirname(text)), "/", name)
+  end
+  return "<span title=\"$(_webui_escape(strip(String(value), ['"', '\''])))\">$(_webui_escape(name))</span>"
+end
+
 """
     _webui_compare_config_diff(a_dir, b_dir) -> Vector{Tuple{String,String,String}}
 
@@ -3238,11 +3369,13 @@ function render_powerflow_compare(a::AbstractDict, b::AbstractDict)::String
   dir_a = String(get(a, "output_dir", ""))
   dir_b = String(get(b, "output_dir", ""))
 
-  diff = _webui_compare_config_diff(dir_a, dir_b)
+  # the case of each run stands in the table above; its path and name as
+  # configuration rows only repeated it (and filled the page with the path)
+  diff = filter(row -> !(row[1] in ("runtime.casefile", "runtime.case_name")), _webui_compare_config_diff(dir_a, dir_b))
   cfg_section = if isempty(diff)
     "<section class=\"panel\"><h2>Configuration</h2><p>Both runs used the same effective configuration.</p></section>"
   else
-    rows = join(("<tr><td><code>$(_webui_escape(k))</code></td><td>$(_webui_escape(va))</td><td>$(_webui_escape(vb))</td></tr>" for (k, va, vb) in diff), "")
+    rows = join(("<tr><td><code>$(_webui_escape(k))</code></td><td>$(_webui_compare_value_cell(va, vb))</td><td>$(_webui_compare_value_cell(vb, va))</td></tr>" for (k, va, vb) in diff), "")
     "<section class=\"panel\"><h2>Configuration differences ($(length(diff)))</h2><table><thead><tr><th>Key</th><th>A</th><th>B</th></tr></thead><tbody>$(rows)</tbody></table></section>"
   end
 

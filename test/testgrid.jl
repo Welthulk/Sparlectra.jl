@@ -3119,19 +3119,11 @@ function test_active_set_voltage_side_release()::Bool
     # the margin is a configuration key that reaches the net
     @test rf.net.reenable_v_hyst_pu == fcfg.powerflow.qlimits.reenable_v_hyst_pu
 
-    # The key is not GUI-editable, so a run with another margin takes a copy
-    # of the configuration template with the value replaced (the case-level
-    # files of the shipped cases carry no margin, the base file decides).
-    config_with_margin = margin -> begin
-      text = read(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, String)
-      @test occursin(r"reenable_v_hyst_pu:\s*[0-9.e+-]+", text)
-      path = joinpath(mktempdir(), "configuration.yaml")
-      write(path, replace(text, r"reenable_v_hyst_pu:\s*[0-9.e+-]+" => string("reenable_v_hyst_pu: ", margin)))
-      path
-    end
-    # run A, the state before the rule (a margin no voltage can exceed): no
-    # release, and the Q-V check names the machines at Qmax above their setpoint
-    cfg_a = Sparlectra.resolve_config(config_with_margin(1.0), zeng).config
+    # The margin is GUI-editable since 0.20.2 and therefore a case-scope key:
+    # the Zeng case carries a case configuration file, so a general file's
+    # value no longer reaches it (the case is self-contained); another
+    # margin comes as an explicit override, like any other form option.
+    cfg_a = Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, zeng, Dict{String,Any}("power_flow.qlimits.reenable_v_hyst_pu" => 1.0)).config
     @test cfg_a.powerflow.qlimits.reenable_v_hyst_pu == 1.0
     ra = run_sparlectra(casefile = zeng, config = cfg_a)
     @test ra.final_converged
@@ -3173,7 +3165,7 @@ function test_active_set_voltage_side_release()::Bool
     # set nor the iteration count, and nothing oscillates
     c118 = joinpath(dirname(@__DIR__), "data", "mpower", "sp_case118.m")
     for margin in (1.0, 1e-4)
-      cfg118 = Sparlectra.resolve_config(config_with_margin(margin), c118).config
+      cfg118 = Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, c118, Dict{String,Any}("power_flow.qlimits.reenable_v_hyst_pu" => margin)).config
       r118 = run_sparlectra(casefile = c118, config = cfg118)
       @test r118.final_converged
       @test sort!(collect(keys(r118.net.qLimitEvents))) == [4, 19, 31, 32, 54, 72, 73, 77, 85, 87]

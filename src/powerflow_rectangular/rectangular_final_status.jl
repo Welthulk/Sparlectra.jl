@@ -247,6 +247,19 @@ function _finalize_rectangular_wrong_branch_diagnostics(
   return (branch_quality = branch_quality, converged = converged, rejection_reason = rejection_reason, wrong_branch_rescue_attempted = wrong_branch_rescue_attempted, wrong_branch_rescue_reason = wrong_branch_rescue_reason)
 end
 
+# The message of a run stopped by the switching cap: which setting stopped
+# it, at which value, and the buses that reached it, so the reader can raise
+# the cap or look at those machines (task 0.20.2: a stored max_switches of
+# 2 was invisible in the Web UI, the old text said "max switching exceeded").
+function _max_switching_reason_text(net, switch_counts::AbstractDict, max_switches::Int)::String
+  cap = max(max_switches, 1)
+  hit = sort!([bus for (bus, n) in switch_counts if n >= cap])
+  # the bus names the user gave (busDict keys), not the component names
+  bus_name = Dict{Int,String}(idx => String(name) for (name, idx) in net.busDict)
+  names = String[string(get(bus_name, bus, "bus $(bus)"), " (", switch_counts[bus], "x)") for bus in hit]
+  return string("Q-limit switching stopped: power_flow.qlimits.guard.max_switches = ", max_switches, " was reached by ", length(hit), " bus(es): ", join(names, ", "), ". Raise the value, or set power_flow.qlimits.guard.freeze_after_repeated_switching = false to let these buses keep switching.")
+end
+
 """
 Build the final rectangular solver status payload.
 
@@ -280,7 +293,9 @@ function _build_rectangular_final_status(
   wrong_branch_rescue_attempted::Bool,
   wrong_branch_rescue_reason::Symbol,
   mismatch_diagnostics = NamedTuple(),
-  final_q_check_skip::Symbol = :no_converged_solution,
+  final_q_check_skip::Symbol = :no_converged_solution;
+  switch_counts::AbstractDict = Dict{Int,Int}(),
+  max_switches::Int = 0,
 )
   final_reason = converged ? :none : rejection_reason
 
@@ -303,7 +318,7 @@ function _build_rectangular_final_status(
     final_converged = converged,
     status = final_status,
     reason = final_reason,
-    reason_text = _rectangular_rejection_reason_text(final_reason),
+    reason_text = final_reason === :max_switching_exceeded ? _max_switching_reason_text(net, switch_counts, max_switches) : _rectangular_rejection_reason_text(final_reason),
     pv_q_limit_violations = isnothing(final_q_check) ? (isnothing(qlimit_summary) ? 0 : qlimit_summary.pv_violations) : final_q_check.violations,
     ref_q_limit_violations = isnothing(qlimit_summary) ? 0 : qlimit_summary.ref_violations,
     # the final Q-limit check (classify_final_q_limits): the same fields for

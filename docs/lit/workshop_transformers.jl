@@ -73,10 +73,18 @@
 
 # ## Warm-up and shared helpers
 #
-# Julia compiles each function on first use. This cell loads the package,
-# defines the helpers all chapters share, and warms the two paths the
-# notebook exercises (plain power flow and the outer control loop), so
-# the chapters below run at full speed.
+# Julia compiles each function on first use. This cell loads the package
+# and defines what the chapters share (the `solve!` helper, `bus_vm` and
+# the network builders of all chapters), so any chapter can run on its own
+# after it; a code cell that uses a name from another cell says so in a
+# comment. Its last line, `warmup()`, runs every path the chapters
+# exercise once (power flow, the tap device formulas, the phase-tap
+# control loop with its $X(\alpha)$ characteristic, the 3WT star
+# equivalent), so nothing stalls mid-workshop; its code is in
+# `docs/lit/warmup/workshop_transformers.jl` of the package. How long the
+# warm-up takes depends on the machine: a Colab session is several times
+# slower than a desktop; every later cell then runs without compile
+# pauses.
 
 using Sparlectra
 
@@ -90,21 +98,68 @@ end
 
 bus_vm(net, bus) = round(get_bus_vm_pu(net, bus); digits = 4)
 
-## warm both paths on a throwaway 2-bus net with a transformer
-wnet = Net(name = "warmup", baseMVA = 100.0)
-addBus!(net = wnet, busName = "A", vn_kV = 110.0)
-addBus!(net = wnet, busName = "B", vn_kV = 20.0)
-addProsumer!(net = wnet, busName = "A", type = "EXTERNALNETWORKINJECTION", referencePri = "A", vm_pu = 1.0, va_deg = 0.0)
-addProsumer!(net = wnet, busName = "B", type = "ENERGYCONSUMER", p = 10.0, q = 3.0)
-addPIModelTrafo!(net = wnet, fromBus = "A", toBus = "B", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1)
-t_pf = @elapsed solve!(wnet)
-addPowerTransformerControl!(wnet; trafo = "1", mode = :branch_active_power, target_branch = ("A", "B"), p_target_mw = 10.0, control_ratio = false, control_phase = true, deadband_p_mw = 5.0)
-wnet.branchVec[1].has_phase_tap = true
-wnet.branchVec[1].phase_min_deg = -10.0
-wnet.branchVec[1].phase_max_deg = 10.0
-wnet.branchVec[1].phase_step_deg = 0.5
-t_ctrl = @elapsed run_sparlectra(net = wnet)
-println("warm: power flow ", round(t_pf; digits = 2), " s, control loop ", round(t_ctrl; digits = 2), " s (first calls compile)")
+## the network builders of the chapters, defined here so that any chapter
+## runs on its own after this cell:
+##   feeder(ratio)             380/110 kV feeder behind an OLTC (Example 1)
+##   pst_loop(ratio, shift)    PST in parallel with a line (Example 2)
+##   build_3wt(; oltc_step)    3WT star equivalent, tap on the HV leg (Example 4)
+function feeder(ratio)
+  net = Net(name = "oltc_feeder", baseMVA = 100.0)
+  addBus!(net = net, busName = "S", vn_kV = 380.0)
+  addBus!(net = net, busName = "A", vn_kV = 380.0)
+  addBus!(net = net, busName = "B", vn_kV = 110.0)
+  addProsumer!(net = net, busName = "S", type = "EXTERNALNETWORKINJECTION", referencePri = "S", vm_pu = 1.0, va_deg = 0.0)
+  addProsumer!(net = net, busName = "B", type = "ENERGYCONSUMER", p = 60.0, q = 20.0)
+  addPIModelACLine!(net = net, fromBus = "S", toBus = "A", r_pu = 0.01, x_pu = 0.06, b_pu = 0.0, status = 1)
+  addPIModelTrafo!(net = net, fromBus = "A", toBus = "B", r_pu = 0.01, x_pu = 0.10, b_pu = 0.0, ratio = ratio, shift_deg = 0.0, status = 1)
+  validate!(net = net)
+  solve!(net)
+  return net
+end
+
+function pst_loop(ratio, shift_deg)
+  net = Net(name = "pst_loop", baseMVA = 100.0)
+  for b in ("S", "M", "L")
+    addBus!(net = net, busName = b, vn_kV = 110.0)
+  end
+  addProsumer!(net = net, busName = "S", type = "EXTERNALNETWORKINJECTION", referencePri = "S", vm_pu = 1.0, va_deg = 0.0)
+  addProsumer!(net = net, busName = "L", type = "ENERGYCONSUMER", p = 70.0, q = 20.0)
+  addPIModelTrafo!(net = net, fromBus = "S", toBus = "M", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, ratio = ratio, shift_deg = shift_deg, status = 1)
+  addPIModelACLine!(net = net, fromBus = "S", toBus = "M", r_pu = 0.03, x_pu = 0.20, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "M", toBus = "L", r_pu = 0.02, x_pu = 0.12, b_pu = 0.0, status = 1)
+  validate!(net = net)
+  solve!(net)
+  return net
+end
+
+function build_3wt(; oltc_step::Int)
+  net = Net(name = "3wt_demo", baseMVA = 1000.0)
+  addBus!(net = net, busName = "B1", vn_kV = 380.0)
+  addBus!(net = net, busName = "B2", vn_kV = 380.0)
+  addBus!(net = net, busName = "B3", vn_kV = 110.0)
+  addBus!(net = net, busName = "B4", vn_kV = 20.0)
+  addBus!(net = net, busName = "B5", vn_kV = 110.0)
+  addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
+  addACLine!(net = net, fromBus = "B1", toBus = "B2", length = 1.0, r = 0.01, x = 0.10)
+  ## the star equivalent by hand: AUX bus plus three 2WT legs; the OLTC
+  ## ratio (device formula) is applied to the HV leg only
+  taps = PowerTransformerTaps(Vn_kV = 380.0, step = oltc_step, lowStep = -9, highStep = 9, neutralStep = 0, voltageIncrement_kV = 3.8)
+  addBus!(net = net, busName = "AUX", vn_kV = 380.0, isAux = true)
+  add2WTPIModelTrafo!(net = net, fromBus = "AUX", toBus = "B2", side = 1, r = 0.20, x = 4.00, b = 0.0, status = 1, ratedU = 380.0, ratedS = 1000.0, ratio = calcRatioTapCorrection(taps), shift_deg = 0.0)
+  add2WTPIModelTrafo!(net = net, fromBus = "AUX", toBus = "B3", side = 1, r = 0.30, x = 6.00, b = 0.0, status = 1, ratedU = 380.0, ratedS = 500.0, ratio = 1.0, shift_deg = 0.0)
+  add2WTPIModelTrafo!(net = net, fromBus = "AUX", toBus = "B4", side = 1, r = 0.40, x = 10.00, b = 0.0, status = 1, ratedU = 380.0, ratedS = 200.0, ratio = 1.0, shift_deg = 0.0)
+  addACLine!(net = net, fromBus = "B3", toBus = "B5", length = 1.0, r = 0.01, x = 0.10)
+  addProsumer!(net = net, busName = "B5", type = "ENERGYCONSUMER", p = 80.0, q = 30.0)
+  addShunt!(net = net, busName = "B4", pShunt = 0.0, qShunt = 5.0)
+  validate!(net = net)
+  solve!(net)
+  return net
+end
+
+## compile every path the chapters use once; the warm-up code is in
+## docs/lit/warmup/workshop_transformers.jl of the installed package
+include(pkgdir(Sparlectra, "docs", "lit", "warmup", "workshop_transformers.jl"))
+warmup()
 
 # ## Two taps, two jobs
 #
@@ -139,21 +194,10 @@ println("warm: power flow ", round(t_pf; digits = 2), " s, control loop ", round
 # ```text
 #   S (slack, 380 kV) --- line --- A ==OLTC== B (110 kV, load 60 MW)
 # ```
+#
+# `feeder` is defined in the warm-up cell at the top.
 
-function feeder(ratio)
-  net = Net(name = "oltc_feeder", baseMVA = 100.0)
-  addBus!(net = net, busName = "S", vn_kV = 380.0)
-  addBus!(net = net, busName = "A", vn_kV = 380.0)
-  addBus!(net = net, busName = "B", vn_kV = 110.0)
-  addProsumer!(net = net, busName = "S", type = "EXTERNALNETWORKINJECTION", referencePri = "S", vm_pu = 1.0, va_deg = 0.0)
-  addProsumer!(net = net, busName = "B", type = "ENERGYCONSUMER", p = 60.0, q = 20.0)
-  addPIModelACLine!(net = net, fromBus = "S", toBus = "A", r_pu = 0.01, x_pu = 0.06, b_pu = 0.0, status = 1)
-  addPIModelTrafo!(net = net, fromBus = "A", toBus = "B", r_pu = 0.01, x_pu = 0.10, b_pu = 0.0, ratio = ratio, shift_deg = 0.0, status = 1)
-  validate!(net = net)
-  solve!(net)
-  return net
-end
-
+## uses: bus_vm, feeder (warm-up cell)
 for step in (-5, 0, 5)
   taps = PowerTransformerTaps(Vn_kV = 380.0, step = step, lowStep = -9, highStep = 9, neutralStep = 0, voltageIncrement_kV = 3.8)
   tau = calcRatioTapCorrection(taps)
@@ -182,26 +226,14 @@ end
 #        +------- line ---------+
 # ```
 #
+# `pst_loop` (this network) is defined in the warm-up cell at the top.
+#
 # The asymmetrical PST (the classical Schrägregler) injects its boost
 # voltage at a winding angle, here 60 degrees; each step therefore changes
 # BOTH the angle and, slightly, the ratio. `calcPhaseTapAngleRatio`
 # returns the effective pair for a given step:
 
-function pst_loop(ratio, shift_deg)
-  net = Net(name = "pst_loop", baseMVA = 100.0)
-  for b in ("S", "M", "L")
-    addBus!(net = net, busName = b, vn_kV = 110.0)
-  end
-  addProsumer!(net = net, busName = "S", type = "EXTERNALNETWORKINJECTION", referencePri = "S", vm_pu = 1.0, va_deg = 0.0)
-  addProsumer!(net = net, busName = "L", type = "ENERGYCONSUMER", p = 70.0, q = 20.0)
-  addPIModelTrafo!(net = net, fromBus = "S", toBus = "M", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, ratio = ratio, shift_deg = shift_deg, status = 1)
-  addPIModelACLine!(net = net, fromBus = "S", toBus = "M", r_pu = 0.03, x_pu = 0.20, b_pu = 0.0, status = 1)
-  addPIModelACLine!(net = net, fromBus = "M", toBus = "L", r_pu = 0.02, x_pu = 0.12, b_pu = 0.0, status = 1)
-  validate!(net = net)
-  solve!(net)
-  return net
-end
-
+## uses: pst_loop (warm-up cell)
 pst = step -> PhaseTapChangerModel(kind = :asymmetrical, step = step, lowStep = -8, highStep = 8, neutralStep = 0, voltage_step_increment = 0.0125, winding_connection_angle_deg = 60.0)
 for step in (-6, 0, 6)
   tap = calcPhaseTapAngleRatio(pst(step))
@@ -281,31 +313,10 @@ println("            settled at phi = ", tbr.phase_shift_deg, " deg with x_pu = 
 #   ----  AC line    ==leg==  2WT leg of the star equivalent
 #   B5 carries the 80 MW load, B4 a 5 MVAr shunt
 # ```
+#
+# `build_3wt` is defined in the warm-up cell at the top.
 
-function build_3wt(; oltc_step::Int)
-  net = Net(name = "3wt_demo", baseMVA = 1000.0)
-  addBus!(net = net, busName = "B1", vn_kV = 380.0)
-  addBus!(net = net, busName = "B2", vn_kV = 380.0)
-  addBus!(net = net, busName = "B3", vn_kV = 110.0)
-  addBus!(net = net, busName = "B4", vn_kV = 20.0)
-  addBus!(net = net, busName = "B5", vn_kV = 110.0)
-  addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
-  addACLine!(net = net, fromBus = "B1", toBus = "B2", length = 1.0, r = 0.01, x = 0.10)
-  ## the star equivalent by hand: AUX bus plus three 2WT legs; the OLTC
-  ## ratio (device formula) is applied to the HV leg only
-  taps = PowerTransformerTaps(Vn_kV = 380.0, step = oltc_step, lowStep = -9, highStep = 9, neutralStep = 0, voltageIncrement_kV = 3.8)
-  addBus!(net = net, busName = "AUX", vn_kV = 380.0, isAux = true)
-  add2WTPIModelTrafo!(net = net, fromBus = "AUX", toBus = "B2", side = 1, r = 0.20, x = 4.00, b = 0.0, status = 1, ratedU = 380.0, ratedS = 1000.0, ratio = calcRatioTapCorrection(taps), shift_deg = 0.0)
-  add2WTPIModelTrafo!(net = net, fromBus = "AUX", toBus = "B3", side = 1, r = 0.30, x = 6.00, b = 0.0, status = 1, ratedU = 380.0, ratedS = 500.0, ratio = 1.0, shift_deg = 0.0)
-  add2WTPIModelTrafo!(net = net, fromBus = "AUX", toBus = "B4", side = 1, r = 0.40, x = 10.00, b = 0.0, status = 1, ratedU = 380.0, ratedS = 200.0, ratio = 1.0, shift_deg = 0.0)
-  addACLine!(net = net, fromBus = "B3", toBus = "B5", length = 1.0, r = 0.01, x = 0.10)
-  addProsumer!(net = net, busName = "B5", type = "ENERGYCONSUMER", p = 80.0, q = 30.0)
-  addShunt!(net = net, busName = "B4", pShunt = 0.0, qShunt = 5.0)
-  validate!(net = net)
-  solve!(net)
-  return net
-end
-
+## uses: build_3wt, bus_vm (warm-up cell)
 for step in (0, 5)
   net3wt = build_3wt(oltc_step = step)
   println("OLTC step ", step, " on the HV leg: Vm(B3) = ", bus_vm(net3wt, "B3"), " pu, Vm(B4) = ", bus_vm(net3wt, "B4"), " pu")
