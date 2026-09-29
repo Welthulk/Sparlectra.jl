@@ -49,27 +49,29 @@ data that describes it.
 4. The master/slave group
 5. Where the data comes from: CGMES RegulatingControl
 
-## Warm-up and the substation
+## Warm-up and shared helpers
 
-**Example 1.1: the substation, and a first innocent solve.** The study
-network is the classical two-transformer substation: a strong
-110-kV grid connection, two identical 110/20-kV units in parallel onto
-one 20-kV busbar, and a feeder load behind it. All later examples run
-fresh copies of this network (`build_substation`).
-
-```text
-           HV (110 kV, slack 1.02 pu)
-          /  \
-        T1    T2      two identical units, ratio taps 0.9..1.1,
-          \  /        step 0.0125
-           LV (20 kV busbar)
-           │
-         Feeder (40 MW / 12 MVAr)
-```
+Julia compiles each function on first use. This cell loads the package
+and defines what the examples share (the substation builder, the
+`solve!` helper and the branch ids `trafo_ids` of both units), so any
+example can run on its own after it; a code cell that uses a name from
+another cell says so in a comment. Its last line, `warmup()`, runs every
+path the examples exercise once (power flow, tap controller
+registration, the master/slave group in the outer control loop, the
+element view), so nothing stalls mid-workshop; its code is in
+`docs/lit/warmup/workshop_tour_control.jl` of the package. How long the
+warm-up takes depends on the machine: a Colab session is several times
+slower than a desktop; every later cell then runs without compile
+pauses.
 
 ````@example workshop_tour_control
 using Sparlectra
 
+# the helpers of the examples, defined here so that any example runs on
+# its own after this cell:
+#   build_substation(name)   the two-transformer substation (all examples)
+#   solve!(net)              converged power flow or an error (Examples 1.1, 2.1)
+#   trafo_ids                the branch ids of T1 and T2 (Examples 3.1, 4.1)
 function build_substation(name::String)
   net = Net(name = name, baseMVA = 100.0)
   addBus!(net = net, busName = "HV", vn_kV = 110.0)
@@ -101,10 +103,43 @@ solve!(net) = begin
   ite
 end
 
+# the branch ids of T1 and T2, read from a substation built by the same
+# builder (every copy gives the same ids)
+trafo_ids = [string(br.branchIdx) for br in build_substation("ids").branchVec if br.ratio != 0.0]
+
+# compile every path the chapters use once; the warm-up code is in
+# docs/lit/warmup/workshop_tour_control.jl of the installed package
+include(pkgdir(Sparlectra, "docs", "lit", "warmup", "workshop_tour_control.jl"))
+warmup()
+````
+
+## The substation
+
+**Example 1.1: the substation, and a first innocent solve.** The study
+network is the classical two-transformer substation: a strong
+110-kV grid connection, two identical 110/20-kV units in parallel onto
+one 20-kV busbar, and a feeder load behind it. All later examples run
+fresh copies of this network (`build_substation`, defined in the
+warm-up cell at the top together with `solve!` and `trafo_ids`).
+
+```text
+           HV (110 kV, slack 1.02 pu)
+          /  \
+        T1    T2      two identical units, ratio taps 0.9..1.1,
+          \  /        step 0.0125
+           LV (20 kV busbar)
+           │
+         Feeder (40 MW / 12 MVAr)
+```
+
+````@example workshop_tour_control
+# uses: build_substation, solve!, trafo_ids (warm-up cell)
 net0 = build_substation("substation")
-trafo_ids = [string(br.branchIdx) for br in net0.branchVec if br.ratio != 0.0]
 solve!(net0)
 t0 = [br for br in net0.branchVec if br.ratio != 0.0]
+# the controllers of chapters 3 and 4 address T1 and T2 by the branch ids
+# the warm-up read from its own substation; the same builder gives the same ids
+@assert [string(br.branchIdx) for br in t0] == trafo_ids "trafo_ids of the warm-up do not match this substation"
 println("aligned taps: T1 carries ", round(t0[1].fBranchFlow.pFlow; digits = 2), " MW / ", round(t0[1].fBranchFlow.qFlow; digits = 2), " MVAr, ",
         "T2 carries ", round(t0[2].fBranchFlow.pFlow; digits = 2), " MW / ", round(t0[2].fBranchFlow.qFlow; digits = 2), " MVAr")
 ````
@@ -123,6 +158,8 @@ but the RATIO MISMATCH drives a reactive current around the
 HV-T1-LV-T2-HV loop that does nothing except heat both transformers:
 
 ````@example workshop_tour_control
+# uses: build_substation, solve! (warm-up cell); net0 (Example 1.1)
+@isdefined(net0) || error("Run Example 1.1 first: it sets up net0.")
 net1 = build_substation("misaligned")
 t1 = [br for br in net1.branchVec if br.ratio != 0.0]
 t1[1].tap_ratio = 1.05; t1[1].ratio = 1.05
@@ -151,6 +188,7 @@ at registration when a second independent tap controller targets an
 already-regulated bus:
 
 ````@example workshop_tour_control
+# uses: build_substation, trafo_ids (warm-up cell)
 net2 = build_substation("fighting")
 addPowerTransformerControl!(net2; trafo = trafo_ids[1], mode = :voltage, target_bus = "Feeder", target_vm_pu = 1.0)
 # the second registration triggers the warning naming the trap
@@ -183,6 +221,7 @@ group's deadband must cover at least half of that aggregated step
 effect, or the loop cannot settle between two group steps:
 
 ````@example workshop_tour_control
+# uses: build_substation, trafo_ids (warm-up cell)
 net3 = build_substation("group")
 addPowerTransformerControl!(net3; trafo = trafo_ids[1], followers = [trafo_ids[2]], mode = :voltage, target_bus = "Feeder", target_vm_pu = 1.03, deadband_vm_pu = 5e-3)
 res = run_control!(net3)

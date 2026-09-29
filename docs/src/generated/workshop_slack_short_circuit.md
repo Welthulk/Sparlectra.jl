@@ -50,10 +50,18 @@ verticals B2-B7 and B3-B6); the grid connection under study sits at B1:
 
 ## Warm-up and shared helpers
 
-Julia compiles each function on first use. This cell loads the package,
-collects the solve helper up top, and warms BOTH paths this notebook
-exercises: the power-flow solver and the IEC 60909 short-circuit engine,
-on a tiny throwaway feeder with declared short-circuit power.
+Julia compiles each function on first use. This cell defines what the
+scenarios share (the `using` clause, the `solve!` helper and the network
+builder `build_grid`), so any scenario can run on its own after it; a
+code cell that uses a name from another cell says so in a comment. Its
+last line, `warmup()`, runs every path the notebook exercises once (the
+power-flow solver with ideal slack, external-grid source and distributed
+slack, the result tables, and the IEC 60909 short-circuit engine with
+its printout), so nothing stalls mid-notebook; its code is in
+`docs/lit/warmup/workshop_slack_short_circuit.jl` of the package. How
+long the warm-up takes depends on the machine: a Colab session is
+several times slower than a desktop; every later cell then runs without
+compile pauses.
 
 ````@example workshop_slack_short_circuit
 using Sparlectra
@@ -68,33 +76,10 @@ function solve!(net; kwargs...)
   return etime, ite
 end
 
-wnet = Net(name = "warmup", baseMVA = 100.0)
-addBus!(net = wnet, busName = "A", vn_kV = 110.0)
-addBus!(net = wnet, busName = "B", vn_kV = 110.0)
-addExternalGrid!(net = wnet, busName = "A", vm_pu = 1.0, sk_max_MVA = 2000.0, sk_min_MVA = 1500.0, rx_max = 0.1, internal_impedance = false)
-addProsumer!(net = wnet, busName = "B", type = "ENERGYCONSUMER", p = 10.0, q = 3.0)
-addPIModelACLine!(net = wnet, fromBus = "A", toBus = "B", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
-t_pf = @elapsed solve!(wnet)
-t_sc = @elapsed runShortCircuit!(wnet; case = :max)
-println("warm: power flow ", round(t_pf; digits = 2), " s, short circuit ", round(t_sc; digits = 2), " s (first calls compile)")
-````
-
-## The study network
-
-A meshed 110 kV ring `B1..B8` with two chords, the eight-bus ring drawn
-in the introduction above, two PV generators (60 MW at
-`B3`, 40 MW at `B6`) and 160 MW of load. Scheduled generation deliberately
-undershoots the load, so the grid connection at `B1` has to import a
-visible amount of power: that import is what makes the three slack
-representations distinguishable.
-
-`addExternalGrid!` models the connection as an IEC 60909-0 network feeder:
-it creates the load-flow side (ideal slack by default, non-ideal source
-with `internal_impedance = true`) **and** records the declared
-short-circuit power ($S_{k,\mathrm{max}}'' = 2000$ MVA,
-$S_{k,\mathrm{min}}'' = 1500$ MVA) for the short-circuit engine.
-
-````@example workshop_slack_short_circuit
+# the network builder of all scenarios, defined here so that any
+# scenario runs on its own after this cell:
+#   build_grid(mode)       8-bus ring with the grid connection at B1
+#                          (Examples 1 to 4; :slack or :source)
 function build_grid(mode::Symbol)
   net = Net(name = "workshop_eg8_$(mode)", baseMVA = 100.0)
   for b in ("B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8")
@@ -132,9 +117,29 @@ function build_grid(mode::Symbol)
   ok || error("Network validation failed: $msg")
   return net
 end
+
+# compile every path the scenarios use once; the warm-up code is in
+# docs/lit/warmup/workshop_slack_short_circuit.jl of the installed package
+include(pkgdir(Sparlectra, "docs", "lit", "warmup", "workshop_slack_short_circuit.jl"))
+warmup()
 ````
 
-The `solve!` helper comes from the warm-up cell (shared helpers up top).
+## The study network
+
+A meshed 110 kV ring `B1..B8` with two chords, the eight-bus ring drawn
+in the introduction above, two PV generators (60 MW at
+`B3`, 40 MW at `B6`) and 160 MW of load. Scheduled generation deliberately
+undershoots the load, so the grid connection at `B1` has to import a
+visible amount of power: that import is what makes the three slack
+representations distinguishable.
+
+`addExternalGrid!` models the connection as an IEC 60909-0 network feeder:
+it creates the load-flow side (ideal slack by default, non-ideal source
+with `internal_impedance = true`) **and** records the declared
+short-circuit power ($S_{k,\mathrm{max}}'' = 2000$ MVA,
+$S_{k,\mathrm{min}}'' = 1500$ MVA) for the short-circuit engine.
+
+`build_grid` is defined in the warm-up cell at the top.
 
 ## Scenario 1: ideal slack
 
@@ -143,6 +148,7 @@ becomes the reference (REF) bus and holds exactly 1.02 pu at 0° while
 absorbing whatever active and reactive power the network is missing.
 
 ````@example workshop_slack_short_circuit
+# uses: build_grid, solve! (warm-up cell)
 net_slack = build_grid(:slack)
 etime, ite = solve!(net_slack)
 printACPFlowResults(net_slack, etime, ite, 1e-8)
@@ -162,6 +168,7 @@ declared $R/X = 0.1$). The terminal bus `B1` becomes an ordinary solved
 bus.
 
 ````@example workshop_slack_short_circuit
+# uses: build_grid, solve! (warm-up cell)
 net_source = build_grid(:source)
 etime, ite = solve!(net_source)
 printACPFlowResults(net_source, etime, ite, 1e-8)
@@ -192,6 +199,7 @@ its share `alpha * lambda_P`. The weights come from the scheduled output
 balance, but its active import drops to zero.
 
 ````@example workshop_slack_short_circuit
+# uses: build_grid, solve! (warm-up cell)
 net_dist = build_grid(:slack)
 etime, ite = solve!(net_dist; distributed_slack_enabled = true, distributed_slack_p_mode = :pg_weighted)
 printACPFlowResults(net_dist, etime, ite, 1e-8)
@@ -217,6 +225,10 @@ branch itself dissipates a share. (A negative Q loss means the line
 charging produces more reactive power than the flows consume.)
 
 ````@example workshop_slack_short_circuit
+# uses: net_dist (Example 3); net_slack (Example 1); net_source (Example 2)
+@isdefined(net_dist) || error("Run Example 3 first: it sets up net_dist.")
+@isdefined(net_slack) || error("Run Example 1 first: it sets up net_slack.")
+@isdefined(net_source) || error("Run Example 2 first: it sets up net_source.")
 println(rpad("scenario", 20), lpad("Vm(B1) pu", 11), lpad("P loss MW", 11), lpad("Q loss MVAr", 13), "   balanced by")
 for (label, net, by) in (
   ("ideal slack", net_slack, "slack bus B1"),
@@ -244,6 +256,8 @@ this sweep; near those machines the real fault level would be somewhat
 higher than the feeder-only result below.
 
 ````@example workshop_slack_short_circuit
+# uses: net_slack (Example 1)
+@isdefined(net_slack) || error("Run Example 1 first: it sets up net_slack.")
 sc_max = runShortCircuit!(net_slack; case = :max)
 printShortCircuitResult(sc_max)
 ````
@@ -253,6 +267,8 @@ $S_{k,\mathrm{min}}'' = 1500$ MVA and the lower IEC 60909-0 voltage
 factor $c_\mathrm{min}$:
 
 ````@example workshop_slack_short_circuit
+# uses: net_slack (Example 1, Example 4)
+@isdefined(net_slack) || error("Run Example 1, Example 4 first: they set up net_slack.")
 sc_min = runShortCircuit!(net_slack; case = :min)
 printShortCircuitResult(sc_min)
 ````

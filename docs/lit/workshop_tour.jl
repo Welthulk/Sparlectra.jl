@@ -81,12 +81,17 @@
 
 # ## Warm-up and shared helpers
 #
-# Julia compiles each function on first use. This one cell warms the
-# paths the chapters exercise, so nothing stalls mid-tour: the
-# Newton-Raphson solver and the IEC 60909 short circuit (chapter 3,
-# Example 3.4). The
-# `using` clauses and the small helpers of the whole tour live here too,
-# collected up top so they cannot be missed.
+# Julia compiles each function on first use. This cell defines what the
+# chapters share (the `using` clauses, the `solve!` helper and the network
+# builders of all chapters), so any chapter can run on its own after it;
+# a code cell that uses a name from another cell says so in a comment.
+# Its last line, `warmup()`, runs every path the chapters exercise once
+# (the Newton-Raphson solver, the result tables, model edits and the
+# MATPOWER export, bus links, the IEC 60909 short circuit, the tap control
+# loop and Q(U)), so nothing stalls mid-tour; its code is in
+# `docs/lit/warmup/workshop_tour.jl` of the package. How long the warm-up
+# takes depends on the machine: a Colab session is several times slower
+# than a desktop; every later cell then runs without compile pauses.
 
 using Sparlectra
 using Random
@@ -101,20 +106,123 @@ function solve!(net; kwargs...)
   return etime, ite
 end
 
-## tiny warm-up net: a grid connection WITH declared short-circuit data
-wnet = Net(name = "warmup", baseMVA = 100.0)
-addBus!(net = wnet, busName = "A", vn_kV = 110.0)
-addBus!(net = wnet, busName = "B", vn_kV = 110.0)
-addExternalGrid!(net = wnet, busName = "A", vm_pu = 1.0, sk_max_MVA = 2000.0, sk_min_MVA = 1500.0, rx_max = 0.1, internal_impedance = false)
-addProsumer!(net = wnet, busName = "B", type = "ENERGYCONSUMER", p = 10.0, q = 3.0)
-addPIModelACLine!(net = wnet, fromBus = "A", toBus = "B", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+## the network builders of the chapters, defined here so that any chapter
+## runs on its own after this cell:
+##   build_ring7(name)      7-bus ring (Examples 2.3, 2.4)
+##   build_grid(mode)       8-bus grid with a grid connection (chapter 3)
+##   build_oltc()           feeder behind a tap-changing transformer (chapter 4)
+##   build_qu(p, q)         feeder with a Q(U) machine (chapter 5)
+function build_ring7(name::String)
+  net = Net(name = name, baseMVA = 100.0)
+  addBus!(net = net, busName = "B1", vn_kV = 110.0, vm_pu = 1.02, va_deg = 0.0)
+  for i in 2:7
+    addBus!(net = net, busName = "B$(i)", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
+  end
+  addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.010, x_pu = 0.080, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "B2", toBus = "B3", r_pu = 0.011, x_pu = 0.085, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "B3", toBus = "B4", r_pu = 0.012, x_pu = 0.090, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "B4", toBus = "B5", r_pu = 0.010, x_pu = 0.080, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "B5", toBus = "B6", r_pu = 0.011, x_pu = 0.085, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "B6", toBus = "B7", r_pu = 0.012, x_pu = 0.090, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "B7", toBus = "B1", r_pu = 0.010, x_pu = 0.080, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "B2", toBus = "B5", r_pu = 0.009, x_pu = 0.070, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "B3", toBus = "B6", r_pu = 0.009, x_pu = 0.070, b_pu = 0.0, status = 1)
+  addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", referencePri = "B1", vm_pu = 1.02, va_deg = 0.0)
+  addProsumer!(net = net, busName = "B3", type = "GENERATOR", p = 60.0, q = 10.0)
+  addProsumer!(net = net, busName = "B2", type = "LOAD", p = 35.0, q = 10.0)
+  addProsumer!(net = net, busName = "B4", type = "LOAD", p = 45.0, q = 15.0)
+  addProsumer!(net = net, busName = "B5", type = "LOAD", p = 25.0, q = 8.0)
+  addProsumer!(net = net, busName = "B6", type = "LOAD", p = 30.0, q = 10.0)
+  addProsumer!(net = net, busName = "B7", type = "LOAD", p = 20.0, q = 6.0)
+  ok, msg = validate!(net = net)
+  ok || error("Network validation failed: $msg")
+  return net
+end
 
-t_first = @elapsed runpf!(wnet, 10, 1e-8, 0)
-t_second = @elapsed runpf!(wnet, 10, 1e-8, 0)
-println("power flow     : first solve ", round(t_first; digits = 2), " s (compiles), second ", round(t_second * 1000; digits = 2), " ms")
 
-t_sc = @elapsed runShortCircuit!(wnet; case = :max)
-println("short circuit  : ", round(t_sc; digits = 2), " s, everything warm")
+function build_grid(mode::Symbol)
+  net = Net(name = "tour_eg8_$(mode)", baseMVA = 100.0)
+  for b in ("B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8")
+    addBus!(net = net, busName = b, vn_kV = 110.0)
+  end
+  addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.010, x_pu = 0.060, b_pu = 0.02, status = 1)
+  addPIModelACLine!(net = net, fromBus = "B2", toBus = "B3", r_pu = 0.015, x_pu = 0.080, b_pu = 0.02, status = 1)
+  addPIModelACLine!(net = net, fromBus = "B3", toBus = "B4", r_pu = 0.020, x_pu = 0.090, b_pu = 0.02, status = 1)
+  addPIModelACLine!(net = net, fromBus = "B4", toBus = "B5", r_pu = 0.012, x_pu = 0.070, b_pu = 0.02, status = 1)
+  addPIModelACLine!(net = net, fromBus = "B5", toBus = "B6", r_pu = 0.015, x_pu = 0.075, b_pu = 0.02, status = 1)
+  addPIModelACLine!(net = net, fromBus = "B6", toBus = "B7", r_pu = 0.018, x_pu = 0.085, b_pu = 0.02, status = 1)
+  addPIModelACLine!(net = net, fromBus = "B7", toBus = "B8", r_pu = 0.010, x_pu = 0.055, b_pu = 0.02, status = 1)
+  addPIModelACLine!(net = net, fromBus = "B8", toBus = "B1", r_pu = 0.011, x_pu = 0.065, b_pu = 0.02, status = 1)
+  addPIModelACLine!(net = net, fromBus = "B2", toBus = "B7", r_pu = 0.020, x_pu = 0.100, b_pu = 0.02, status = 1)
+  addPIModelACLine!(net = net, fromBus = "B3", toBus = "B6", r_pu = 0.022, x_pu = 0.110, b_pu = 0.02, status = 1)
+  addProsumer!(net = net, busName = "B3", type = "GENERATOR", p = 60.0, vm_pu = 1.01, qMin = -60.0, qMax = 60.0)
+  addProsumer!(net = net, busName = "B6", type = "GENERATOR", p = 40.0, vm_pu = 1.00, qMin = -40.0, qMax = 40.0)
+  addProsumer!(net = net, busName = "B2", type = "ENERGYCONSUMER", p = 45.0, q = 12.0)
+  addProsumer!(net = net, busName = "B4", type = "ENERGYCONSUMER", p = 50.0, q = 15.0)
+  addProsumer!(net = net, busName = "B7", type = "ENERGYCONSUMER", p = 40.0, q = 10.0)
+  addProsumer!(net = net, busName = "B8", type = "ENERGYCONSUMER", p = 25.0, q = 8.0)
+  addExternalGrid!(net = net, busName = "B1", vm_pu = 1.02, sk_max_MVA = 2000.0, sk_min_MVA = 1500.0, rx_max = 0.1, internal_impedance = (mode === :source))
+  ok, msg = validate!(net = net)
+  ok || error("Network validation failed: $msg")
+  return net
+end
+
+
+function build_oltc()
+  net = Net(name = "tour_oltc", baseMVA = 100.0)
+  addBus!(net = net, busName = "Slack", vn_kV = 110.0)
+  addBus!(net = net, busName = "MV", vn_kV = 110.0)
+  addBus!(net = net, busName = "Load", vn_kV = 110.0)
+  addProsumer!(net = net, busName = "Slack", type = "EXTERNALNETWORKINJECTION", referencePri = "Slack", vm_pu = 1.0, va_deg = 0.0)
+  addProsumer!(net = net, busName = "Load", type = "ENERGYCONSUMER", p = 60.0, q = 20.0)
+  addPIModelTrafo!(net = net, fromBus = "Slack", toBus = "MV", r_pu = 0.004, x_pu = 0.06, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "MV", toBus = "Load", r_pu = 0.02, x_pu = 0.10, b_pu = 0.01, status = 1)
+  ## enable the ratio tap on the transformer branch and give it a name the
+  ## controller can address
+  t = getNetBranch(net = net, fromBus = "Slack", toBus = "MV")
+  t.comp.cName = "T1"
+  t.has_ratio_tap = true
+  t.tap_min = 0.90
+  t.tap_max = 1.10
+  t.tap_step = 0.0125
+  ok, msg = validate!(net = net)
+  ok || error("Network validation failed: $msg")
+  return net
+end
+
+
+function build_qu(p_load::Float64, q_load::Float64)
+  net = Net(name = "tour_qu", baseMVA = 100.0)
+  addBus!(net = net, busName = "B1", vn_kV = 110.0)
+  addBus!(net = net, busName = "B2", vn_kV = 110.0)
+  addBus!(net = net, busName = "B3", vn_kV = 110.0)
+  addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", referencePri = "B1", vm_pu = 1.02, va_deg = 0.0)
+  addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "B2", toBus = "B3", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+  qu = QUController(
+    make_characteristic(
+      [(104.5, 30.0), (107.0, 20.0), (110.0, 0.0), (112.0, -10.0), (115.5, -20.0)];
+      voltage_unit = :kV,
+      value_unit = :MVAr,
+      vn_kV = 110.0,
+      sbase_MVA = 100.0,
+      interpolation = :polynomial,
+    );
+    qmin_MVAr = -50.0,
+    qmax_MVAr = 50.0,
+    sbase_MVA = 100.0,
+  )
+  addProsumer!(net = net, busName = "B2", type = "SYNCHRONOUSMACHINE", p = 10.0, q = 0.0, qu_controller = qu)
+  addProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER", p = p_load, q = q_load)
+  ok, msg = validate!(net = net)
+  ok || error("Network validation failed: $msg")
+  return net
+end
+
+## compile every path the chapters use once; the warm-up code is in
+## docs/lit/warmup/workshop_tour.jl of the installed package
+include(pkgdir(Sparlectra, "docs", "lit", "warmup", "workshop_tour.jl"))
+warmup()
 
 # ## Part I: Newcomer
 #
@@ -151,6 +259,8 @@ end
 # `addPIModelACLine!` connects buses with a line as a pi-equivalent branch
 # in per-unit (`r_pu`, `x_pu`, and `b_pu` for the total charging):
 
+## uses: net1 (Example 1.1)
+@isdefined(net1) || error("Run Example 1.1 first: it sets up net1.")
 addPIModelACLine!(net = net1, fromBus = "B1", toBus = "B2", r_pu = 0.010, x_pu = 0.080, b_pu = 0.0, status = 1)
 addPIModelACLine!(net = net1, fromBus = "B2", toBus = "B3", r_pu = 0.011, x_pu = 0.085, b_pu = 0.0, status = 1)
 addPIModelACLine!(net = net1, fromBus = "B3", toBus = "B4", r_pu = 0.012, x_pu = 0.090, b_pu = 0.0, status = 1)
@@ -166,6 +276,8 @@ addPIModelACLine!(net = net1, fromBus = "B3", toBus = "B6", r_pu = 0.009, x_pu =
 # reference; that is what makes `B1` the slack bus. The generator at `B3`
 # feeds in 60 MW, the remaining buses carry loads (`p` in MW, `q` in MVar):
 
+## uses: net1 (Example 1.1)
+@isdefined(net1) || error("Run Example 1.1 first: it sets up net1.")
 addProsumer!(net = net1, busName = "B1", type = "EXTERNALNETWORKINJECTION", referencePri = "B1", vm_pu = 1.02, va_deg = 0.0)
 addProsumer!(net = net1, busName = "B3", type = "GENERATOR", p = 60.0, q = 10.0)
 addProsumer!(net = net1, busName = "B2", type = "LOAD", p = 35.0, q = 10.0)
@@ -182,6 +294,8 @@ addProsumer!(net = net1, busName = "B7", type = "LOAD", p = 20.0, q = 6.0)
 # losses from the converged voltages, and `printACPFlowResults` prints the
 # classical result tables:
 
+## uses: solve! (warm-up cell); net1 (Example 1.1)
+@isdefined(net1) || error("Run Example 1.1 first: it sets up net1.")
 ok1, msg1 = validate!(net = net1)
 ok1 || error("Network validation failed: $msg1")
 etime, ite = solve!(net1)   ## solve! wraps exactly runpf! + calcNetLosses! (see warm-up)
@@ -199,33 +313,8 @@ printACPFlowResults(net1, etime, ite, 1e-8)
 # The same construction, packed into a function: later examples reuse
 # this network (model editing in Examples 2.3 and 2.4, state estimation
 # in the advanced tour).
-
-function build_ring7(name::String)
-  net = Net(name = name, baseMVA = 100.0)
-  addBus!(net = net, busName = "B1", vn_kV = 110.0, vm_pu = 1.02, va_deg = 0.0)
-  for i in 2:7
-    addBus!(net = net, busName = "B$(i)", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
-  end
-  addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.010, x_pu = 0.080, b_pu = 0.0, status = 1)
-  addPIModelACLine!(net = net, fromBus = "B2", toBus = "B3", r_pu = 0.011, x_pu = 0.085, b_pu = 0.0, status = 1)
-  addPIModelACLine!(net = net, fromBus = "B3", toBus = "B4", r_pu = 0.012, x_pu = 0.090, b_pu = 0.0, status = 1)
-  addPIModelACLine!(net = net, fromBus = "B4", toBus = "B5", r_pu = 0.010, x_pu = 0.080, b_pu = 0.0, status = 1)
-  addPIModelACLine!(net = net, fromBus = "B5", toBus = "B6", r_pu = 0.011, x_pu = 0.085, b_pu = 0.0, status = 1)
-  addPIModelACLine!(net = net, fromBus = "B6", toBus = "B7", r_pu = 0.012, x_pu = 0.090, b_pu = 0.0, status = 1)
-  addPIModelACLine!(net = net, fromBus = "B7", toBus = "B1", r_pu = 0.010, x_pu = 0.080, b_pu = 0.0, status = 1)
-  addPIModelACLine!(net = net, fromBus = "B2", toBus = "B5", r_pu = 0.009, x_pu = 0.070, b_pu = 0.0, status = 1)
-  addPIModelACLine!(net = net, fromBus = "B3", toBus = "B6", r_pu = 0.009, x_pu = 0.070, b_pu = 0.0, status = 1)
-  addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", referencePri = "B1", vm_pu = 1.02, va_deg = 0.0)
-  addProsumer!(net = net, busName = "B3", type = "GENERATOR", p = 60.0, q = 10.0)
-  addProsumer!(net = net, busName = "B2", type = "LOAD", p = 35.0, q = 10.0)
-  addProsumer!(net = net, busName = "B4", type = "LOAD", p = 45.0, q = 15.0)
-  addProsumer!(net = net, busName = "B5", type = "LOAD", p = 25.0, q = 8.0)
-  addProsumer!(net = net, busName = "B6", type = "LOAD", p = 30.0, q = 10.0)
-  addProsumer!(net = net, busName = "B7", type = "LOAD", p = 20.0, q = 6.0)
-  ok, msg = validate!(net = net)
-  ok || error("Network validation failed: $msg")
-  return net
-end
+#
+# `build_ring7` is defined in the warm-up cell at the top.
 
 # ## Part II: Beginner
 #
@@ -249,6 +338,8 @@ end
 # **Example 2.1: the condition number of the healthy ring.** First the
 # solved 7-bus ring of Example 1.1 (diagram there):
 
+## uses: net1 (Example 1.1)
+@isdefined(net1) || error("Run Example 1.1 first: it sets up net1.")
 println("ring network: kappa = ", round(condestJacobian(net1), sigdigits = 3))
 
 # Reading aid (Example 2.1): around 45, excellent. Rule of thumb: below
@@ -266,6 +357,7 @@ println("ring network: kappa = ", round(condestJacobian(net1), sigdigits = 3))
 #              20 MW               from 0.08 to 8e10 per round
 # ```
 
+## uses: solve! (warm-up cell)
 for x_weak in (0.08, 800.0, 8.0e6, 8.0e10)
   net = Net(name = "tour_cond", baseMVA = 100.0)
   addBus!(net = net, busName = "B1", vn_kV = 110.0)
@@ -299,6 +391,7 @@ end
 # (diagram there). The dedicated helpers keep the bookkeeping
 # consistent (branch indices, prosumer injections, isolated buses):
 
+## uses: build_ring7, solve! (warm-up cell)
 net_edit = build_ring7("tour_edit")
 ## stiffen the B1-B2 line (per-branch parameter update)
 brVec = getNetBranchNumberVec(net = net_edit, fromBus = "B1", toBus = "B2")
@@ -336,6 +429,8 @@ println("exported: ", case_out, " (", filesize(case_out), " bytes)")
 # edit report sums that NO solver reads; the solvers build their
 # injections from the prosumer objects. So this "edit" changes nothing:
 
+## uses: solve! (warm-up cell); net_edit (Example 2.3)
+@isdefined(net_edit) || error("Run Example 2.3 first: it sets up net_edit.")
 vm_before = get_bus_vm_pu(net_edit, "B4")
 addBusLoadPower!(net = net_edit, busName = "B4", p = 25.0, q = 5.0)  ## report layer only!
 solve!(net_edit)
@@ -361,6 +456,7 @@ println("after addProsumer!(LOAD, 25 MW): Vm(B4) = ", round(get_bus_vm_pu(net_ed
 #           [-5, 5] MVAr
 # ```
 
+## uses: solve! (warm-up cell)
 net_q = Net(name = "tour_qlimits", baseMVA = 100.0)
 for b in ("Q1", "Q2", "Q3")
   addBus!(net = net_q, busName = b, vn_kV = 110.0)
@@ -407,6 +503,7 @@ distributeBusResults!(net_q)
 #   50 MW           120 MW           the breaker at the B end opens
 # ```
 
+## uses: solve! (warm-up cell)
 ## Example 2.6, state 1 (closed): the long line feeds the 120-MW load
 net_open = Net(name = "tour_open_end", baseMVA = 100.0)
 for b in ("A", "B", "C")
@@ -496,6 +593,7 @@ println("reactive balance shift state 2 -> state 3: ", round(q_slack_off - q_sla
 # pseudoinverse), the unique split with zero artificial circulation, so
 # the result is deterministic and reproducible:
 
+## uses: solve! (warm-up cell)
 net_ring = Net(name = "tour_link_ring", baseMVA = 100.0)
 addBus!(net = net_ring, busName = "S", vn_kV = 110.0)
 for b in ("R1", "R2", "R3")
@@ -551,37 +649,13 @@ end
 #    B8 ------ B7 ------ B6 ------ B5
 #                         G
 # ```
-
-function build_grid(mode::Symbol)
-  net = Net(name = "tour_eg8_$(mode)", baseMVA = 100.0)
-  for b in ("B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8")
-    addBus!(net = net, busName = b, vn_kV = 110.0)
-  end
-  addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.010, x_pu = 0.060, b_pu = 0.02, status = 1)
-  addPIModelACLine!(net = net, fromBus = "B2", toBus = "B3", r_pu = 0.015, x_pu = 0.080, b_pu = 0.02, status = 1)
-  addPIModelACLine!(net = net, fromBus = "B3", toBus = "B4", r_pu = 0.020, x_pu = 0.090, b_pu = 0.02, status = 1)
-  addPIModelACLine!(net = net, fromBus = "B4", toBus = "B5", r_pu = 0.012, x_pu = 0.070, b_pu = 0.02, status = 1)
-  addPIModelACLine!(net = net, fromBus = "B5", toBus = "B6", r_pu = 0.015, x_pu = 0.075, b_pu = 0.02, status = 1)
-  addPIModelACLine!(net = net, fromBus = "B6", toBus = "B7", r_pu = 0.018, x_pu = 0.085, b_pu = 0.02, status = 1)
-  addPIModelACLine!(net = net, fromBus = "B7", toBus = "B8", r_pu = 0.010, x_pu = 0.055, b_pu = 0.02, status = 1)
-  addPIModelACLine!(net = net, fromBus = "B8", toBus = "B1", r_pu = 0.011, x_pu = 0.065, b_pu = 0.02, status = 1)
-  addPIModelACLine!(net = net, fromBus = "B2", toBus = "B7", r_pu = 0.020, x_pu = 0.100, b_pu = 0.02, status = 1)
-  addPIModelACLine!(net = net, fromBus = "B3", toBus = "B6", r_pu = 0.022, x_pu = 0.110, b_pu = 0.02, status = 1)
-  addProsumer!(net = net, busName = "B3", type = "GENERATOR", p = 60.0, vm_pu = 1.01, qMin = -60.0, qMax = 60.0)
-  addProsumer!(net = net, busName = "B6", type = "GENERATOR", p = 40.0, vm_pu = 1.00, qMin = -40.0, qMax = 40.0)
-  addProsumer!(net = net, busName = "B2", type = "ENERGYCONSUMER", p = 45.0, q = 12.0)
-  addProsumer!(net = net, busName = "B4", type = "ENERGYCONSUMER", p = 50.0, q = 15.0)
-  addProsumer!(net = net, busName = "B7", type = "ENERGYCONSUMER", p = 40.0, q = 10.0)
-  addProsumer!(net = net, busName = "B8", type = "ENERGYCONSUMER", p = 25.0, q = 8.0)
-  addExternalGrid!(net = net, busName = "B1", vm_pu = 1.02, sk_max_MVA = 2000.0, sk_min_MVA = 1500.0, rx_max = 0.1, internal_impedance = (mode === :source))
-  ok, msg = validate!(net = net)
-  ok || error("Network validation failed: $msg")
-  return net
-end
+#
+# `build_grid` is defined in the warm-up cell at the top.
 
 # **Example 3.1: the ideal slack.** `B1` is pinned at exactly
 # 1.02 pu / 0° and absorbs the whole imbalance (the `SLACK` row).
 
+## uses: build_grid, solve! (warm-up cell)
 net_slack = build_grid(:slack)
 etime, ite = solve!(net_slack)
 printACPFlowResults(net_slack, etime, ite, 1e-8)
@@ -590,6 +664,7 @@ printACPFlowResults(net_slack, etime, ite, 1e-8)
 # the setpoint moves to the hidden internal bus (last row, type `SOURCE`);
 # the terminal `B1` in the first row droops below 1.02 pu.
 
+## uses: build_grid, solve! (warm-up cell)
 net_source = build_grid(:source)
 etime, ite = solve!(net_source)
 printACPFlowResults(net_source, etime, ite, 1e-8)
@@ -598,6 +673,7 @@ printACPFlowResults(net_source, etime, ite, 1e-8)
 # according to their scheduled output (0.6/0.4); the slack row keeps only
 # the reactive balance.
 
+## uses: build_grid, solve! (warm-up cell)
 net_dist = build_grid(:slack)
 etime, ite = solve!(net_dist; distributed_slack_enabled = true, distributed_slack_p_mode = :pg_weighted)
 printACPFlowResults(net_dist, etime, ite, 1e-8)
@@ -606,6 +682,10 @@ printACPFlowResults(net_dist, etime, ite, 1e-8)
 # losses differ because the flow pattern differs; a negative Q loss means
 # the line charging produces more reactive power than the flows consume.
 
+## uses: net_dist (Example 3.3); net_slack (Example 3.1); net_source (Example 3.2)
+@isdefined(net_dist) || error("Run Example 3.3 first: it sets up net_dist.")
+@isdefined(net_slack) || error("Run Example 3.1 first: it sets up net_slack.")
+@isdefined(net_source) || error("Run Example 3.2 first: it sets up net_source.")
 println(rpad("scenario", 20), lpad("Vm(B1) pu", 11), lpad("P loss MW", 11), lpad("Q loss MVAr", 13), "   balanced by")
 for (label, net, by) in (
   ("ideal slack", net_slack, "slack bus B1"),
@@ -621,6 +701,8 @@ end
 # ideal-slack net of Example 3.1. $I_k''$ is largest at the connection bus
 # and decays with electrical distance.
 
+## uses: net_slack (Example 3.1)
+@isdefined(net_slack) || error("Run Example 3.1 first: it sets up net_slack.")
 printShortCircuitResult(runShortCircuit!(net_slack; case = :max))
 printShortCircuitResult(runShortCircuit!(net_slack; case = :min))
 
@@ -637,29 +719,10 @@ printShortCircuitResult(runShortCircuit!(net_slack; case = :min))
 #    Slack ==T1== MV -------- Load       T1: ratio taps 0.9..1.1,
 #                        60 MW / 20 MVAr     step 0.0125
 # ```
+#
+# `build_oltc` is defined in the warm-up cell at the top.
 
-function build_oltc()
-  net = Net(name = "tour_oltc", baseMVA = 100.0)
-  addBus!(net = net, busName = "Slack", vn_kV = 110.0)
-  addBus!(net = net, busName = "MV", vn_kV = 110.0)
-  addBus!(net = net, busName = "Load", vn_kV = 110.0)
-  addProsumer!(net = net, busName = "Slack", type = "EXTERNALNETWORKINJECTION", referencePri = "Slack", vm_pu = 1.0, va_deg = 0.0)
-  addProsumer!(net = net, busName = "Load", type = "ENERGYCONSUMER", p = 60.0, q = 20.0)
-  addPIModelTrafo!(net = net, fromBus = "Slack", toBus = "MV", r_pu = 0.004, x_pu = 0.06, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1)
-  addPIModelACLine!(net = net, fromBus = "MV", toBus = "Load", r_pu = 0.02, x_pu = 0.10, b_pu = 0.01, status = 1)
-  ## enable the ratio tap on the transformer branch and give it a name the
-  ## controller can address
-  t = getNetBranch(net = net, fromBus = "Slack", toBus = "MV")
-  t.comp.cName = "T1"
-  t.has_ratio_tap = true
-  t.tap_min = 0.90
-  t.tap_max = 1.10
-  t.tap_step = 0.0125
-  ok, msg = validate!(net = net)
-  ok || error("Network validation failed: $msg")
-  return net
-end
-
+## uses: build_oltc (warm-up cell)
 net_oltc = build_oltc()
 run_sparlectra(net = net_oltc)
 println("uncontrolled: Vm(Load) = ", round(get_bus_vm_pu(net_oltc, "Load"); digits = 4), " pu")
@@ -668,6 +731,8 @@ println("uncontrolled: Vm(Load) = ", round(get_bus_vm_pu(net_oltc, "Load"); digi
 # `run_sparlectra` executes the outer control loop automatically when
 # controllers are present.
 
+## uses: net_oltc (Example 4.1)
+@isdefined(net_oltc) || error("Run Example 4.1 first: it sets up net_oltc.")
 addTapController!(
   net_oltc;
   trafo = "T1",
@@ -704,38 +769,13 @@ printTapControllerSummary(stdout, net_oltc)
 #           Q(U) machine   load (light in Example 5.1,
 #           10 MW          heavy in Example 5.2)
 # ```
-
-function build_qu(p_load::Float64, q_load::Float64)
-  net = Net(name = "tour_qu", baseMVA = 100.0)
-  addBus!(net = net, busName = "B1", vn_kV = 110.0)
-  addBus!(net = net, busName = "B2", vn_kV = 110.0)
-  addBus!(net = net, busName = "B3", vn_kV = 110.0)
-  addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", referencePri = "B1", vm_pu = 1.02, va_deg = 0.0)
-  addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
-  addPIModelACLine!(net = net, fromBus = "B2", toBus = "B3", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
-  qu = QUController(
-    make_characteristic(
-      [(104.5, 30.0), (107.0, 20.0), (110.0, 0.0), (112.0, -10.0), (115.5, -20.0)];
-      voltage_unit = :kV,
-      value_unit = :MVAr,
-      vn_kV = 110.0,
-      sbase_MVA = 100.0,
-      interpolation = :polynomial,
-    );
-    qmin_MVAr = -50.0,
-    qmax_MVAr = 50.0,
-    sbase_MVA = 100.0,
-  )
-  addProsumer!(net = net, busName = "B2", type = "SYNCHRONOUSMACHINE", p = 10.0, q = 0.0, qu_controller = qu)
-  addProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER", p = p_load, q = q_load)
-  ok, msg = validate!(net = net)
-  ok || error("Network validation failed: $msg")
-  return net
-end
+#
+# `build_qu` is defined in the warm-up cell at the top.
 
 # **Example 5.1: light load.** The machine bus sits above 110 kV, so the
 # characteristic asks the machine to **absorb** reactive power (negative Q).
 
+## uses: build_qu, solve! (warm-up cell)
 net_qu_light = build_qu(5.0, 1.0)
 etime, ite = solve!(net_qu_light)
 printACPFlowResults(net_qu_light, etime, ite, 1e-8)
@@ -744,6 +784,7 @@ printACPFlowResults(net_qu_light, etime, ite, 1e-8)
 # characteristic turns the machine into a reactive power **injector**
 # (positive Q).
 
+## uses: build_qu, solve! (warm-up cell)
 net_qu_heavy = build_qu(80.0, 25.0)
 etime, ite = solve!(net_qu_heavy)
 printACPFlowResults(net_qu_heavy, etime, ite, 1e-8)

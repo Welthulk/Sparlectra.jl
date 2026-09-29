@@ -681,19 +681,32 @@ How the reactive-power limits of PV machines are enforced: the master switch, th
 | `power_flow.qlimits.cooldown_iters` | Int | `1` | nonnegative integer | Cooldown iterations after switching. | Reduce repeated toggling. | Too long cooldown on tight limits. | Affects convergence pace. | Hysteresis and freeze behavior. |
 | `power_flow.qlimits.reenable_v_hyst_pu` | Float64 | `1e-4` | nonnegative real | Voltage margin of the PQ->PV release of a clamped machine: at Qmax released when `Vm > Vset + margin`, at Qmin when `Vm < Vset - margin`. | Default. | Chattering machines (raise the margin). | None. | Release also needs `hysteresis_pu > 0` or `cooldown_iters > 0`, the cooldown and the one-retry guard. |
 | `power_flow.qlimits.final_q_accept_pu` | Float64 or `auto` | `auto` (`2 * hysteresis_pu`) | `auto` or real `>= hysteresis_pu` | Size bound of the final Q-limit check every enforcement mode ends with: an overshoot up to `hysteresis_pu` is within the hysteresis, up to this value bounded (accepted with a warning), beyond it a remaining violation (run not accepted). | Default. | Strict tracking (set both thresholds to 0). | None. | `hysteresis_pu`; see [Q-limits](powerlimits.md). |
-| `power_flow.qlimits.trace_buses` | Vector{Int} | `[]` | bus-id vector | Trace selected bus events. | Targeted diagnostics. | Large full-network trace. | Logging overhead if populated. | Output and diagnostics verbosity. |
-| `power_flow.qlimits.lock_pv_to_pq_buses` | Vector{Int} | `[]` | bus-id vector | Force listed buses into PQ-lock behavior. | Known problematic buses. | Blindly on all buses. | Can simplify switching dynamics. | Guard modes. |
-| `power_flow.qlimits.guard.enabled` | Bool | `true` | `true`, `false` | Enable guard subsystem. | Prevent unstable switching. | Pure baseline comparisons. | Small runtime overhead. | Guard fields below. |
+| `power_flow.qlimits.trace_buses` | Vector{Int} | `[]` | bus numbers of the case file (an internal position is accepted where no bus carries that number) | Trace the switching events of these buses in detail. | Targeted diagnostics. | Large full-network trace. | Logging overhead if populated. | Output and diagnostics verbosity. |
+| `power_flow.qlimits.lock_pv_to_pq_buses` | Vector{Int} | `[]` | internal bus positions (1 = first bus of the network); the file-based MATPOWER path maps case bus numbers to positions | Run the listed PV buses as PQ from the start. | Known problematic buses. | Blindly on all buses. | Can simplify switching dynamics. | Guard modes. |
+| `power_flow.qlimits.guard.enabled` | Bool | `true` | `true`, `false` | Before the solve, run machines with a narrow or zero Q range as PQ (the range rules below). The switch cap, freezing, the violation rule and the bounded-violation acceptance act without it. | Networks with narrow machine Q ranges. | Pure baseline comparisons. | Small runtime overhead. | `min_q_range_pu`, `narrow_range_mode`, `zero_range_mode`, `log`. |
 | `power_flow.qlimits.guard.min_q_range_pu` | Float64 | `0.02` | nonnegative real | Range threshold for narrow/zero detection. | Robust zero/narrow range handling. | Too high threshold. | Low. | Narrow/zero modes. |
-| `power_flow.qlimits.guard.narrow_range_mode` | Symbol/String | `lock_pq` | `prefer_pq`, `lock_pq` | Action for narrow Q range units. | Convergence protection. | If strict PV control required. | Can reduce oscillations. | Hysteresis/cooldown. |
+| `power_flow.qlimits.guard.narrow_range_mode` | Symbol/String | `lock_pq` | `prefer_pq`, `lock_pq` | Action for a machine whose Q range lies below `min_q_range_pu`: both values currently run it as PQ at the middle of its range from the start of the solve. | Convergence protection. | If strict PV control required. | Can reduce oscillations. | Needs `guard.enabled`. |
 | `power_flow.qlimits.guard.zero_range_mode` | Symbol/String | `lock_pq` | `lock_pq` | Action for zero Q range units. | Deterministic limit handling. | N/A | Low. | Lock lists and violation mode. |
-| `power_flow.qlimits.guard.violation_mode` | Symbol/String | `lock_pq` | `delayed_switch`, `lock_pq` | Action on persistent violations. | Robustness under bad limits. | Aggressive switching studies. | Can add control logic. | Threshold and switch caps. |
-| `power_flow.qlimits.guard.violation_threshold_pu` | Float64 | `1e-4` | nonnegative real | Violation threshold. | Tune sensitivity. | Extreme values. | Low. | `violation_mode`. |
-| `power_flow.qlimits.guard.max_switches` | Int | `3` | nonnegative integer | Max switches before freeze logic. | Stop chattering. | Too low on valid dynamic cases. | Can reduce wasted iterations. | `freeze_after_repeated_switching`. |
+| `power_flow.qlimits.guard.violation_mode` | Symbol/String | `lock_pq` | `delayed_switch`, `lock_pq` | When a violating machine switches to PQ: `lock_pq` once its Q exceeds the limit by `violation_threshold_pu`, `delayed_switch` only once it exceeds the limit by `hysteresis_pu`. | Robustness under bad limits. | Aggressive switching studies. | Can add control logic. | `violation_threshold_pu`, `hysteresis_pu`. |
+| `power_flow.qlimits.guard.violation_threshold_pu` | Float64 | `1e-4` | nonnegative real | Q overshoot from which the `lock_pq` violation rule switches a machine; unused under `delayed_switch`. | Tune sensitivity. | Extreme values. | Low. | `violation_mode`. |
+| `power_flow.qlimits.guard.max_switches` | Int | `3` | integer `>= 1` (0 acts as 1) | Switches of one bus after which it counts as oscillating. With freezing on, a converged run that reaches it ends as `max_switching_exceeded`; the message names this key, its value and the buses. | Stop chattering. | Too low on valid dynamic cases. | Can reduce wasted iterations. | `freeze_after_repeated_switching`. |
 | `power_flow.qlimits.guard.max_remaining_violations` | Int | `0` | nonnegative integer | Allowed violations at guarded exit. | Controlled tolerance policies. | Strict zero-violation policies. | Low. | `accept_bounded_violations`. |
 | `power_flow.qlimits.guard.accept_bounded_violations` | Bool | `false` | `true`, `false` | Permit bounded residual violations. | Practical operations tradeoff. | Strict compliance studies. | May reduce retries. | `max_remaining_violations`. |
 | `power_flow.qlimits.guard.freeze_after_repeated_switching` | Bool | `true` | `true`, `false` | Freeze after repeated switch cycling. | Anti-chatter behavior. | Cases requiring unrestricted switching. | Can stabilize solves. | `max_switches`. |
 | `power_flow.qlimits.guard.log` | Bool | `true` | `true`, `false` | Emit guard logs. | Diagnostics/debugging. | Quiet batch runs. | I/O overhead when enabled. | `output.console_q_limit_events`. |
+
+The defaults above are those of the packaged configuration template, which
+every run with a configuration file (the Web UI, `run_sparlectra` on a case
+file) starts from. A library call without a configuration file
+(`runpf!(net, ...)`, `run_sparlectra(net = ...)` with `SparlectraConfig()`)
+uses the struct defaults instead, which differ for `start_iter` (2),
+`start_mode` (`iteration`), `guard.enabled` (`false`, an opt-in for
+low-level callers), `guard.min_q_range_pu` (`1e-4`),
+`guard.narrow_range_mode` (`prefer_pq`), `guard.violation_mode`
+(`delayed_switch`) and `guard.max_switches` (10).
+
+In the Web UI all of these keys sit in the Q-limit block of the power-flow
+form ([Web UI Reference](webui_reference.md#webui-form-options)).
 
 ## Safe configuration refresh
 

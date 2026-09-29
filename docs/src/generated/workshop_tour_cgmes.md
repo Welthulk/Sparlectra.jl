@@ -77,6 +77,22 @@ local cache and returns the extraction root (chapters 1 to 5). The
 PowSyBl file and the DTF demo deck ship with Sparlectra under
 `data/powsybl` and `data/dtf_demo` (chapters 6 and 7), nothing to fetch.
 
+This cell defines what the chapters share (the `using` clause and all
+data paths: the conformity root with its download, the MicroGrid and
+MiniGrid deliveries, the PowSyBl file with its OpenLoadFlow reference and
+the DTF deck), so any chapter can run on its own after it; a code cell
+that uses a name from another cell says so in a comment. Julia compiles
+each function on first use. The cell's last line, `warmup()`, runs every
+path the chapters exercise once, output discarded (the first power-flow
+solve on a two-bus net, the CGMES summary, analysis, import with and
+without TP, the result tables, the SV comparison and the export, the IIDM
+reader with its OpenLoadFlow-like run, and the DTF deck with an outage),
+so the timing of the MicroGrid solve in Chapter 3 is the solve, not the
+compiler; its code is in `docs/lit/warmup/workshop_tour_cgmes.jl` of the
+package. How long the warm-up takes depends on the machine: a Colab
+session is several times slower than a desktop; every later cell then
+runs without compile pauses.
+
 ````@example workshop_tour_cgmes
 using Sparlectra
 
@@ -95,24 +111,12 @@ powsybl_dir = joinpath(pkgdir(Sparlectra), "data", "powsybl")
 powsybl_reference = joinpath(pkgdir(Sparlectra), "test", "fixtures", "powsybl", "micro_grid_be.powsybl", "reference_buses.csv")
 dtf_deck = joinpath(pkgdir(Sparlectra), "data", "dtf_demo", "sp_dtf5.DAT")
 println("PowSyBl file: ", joinpath(powsybl_dir, "micro_grid_be.xiidm"))
-println("DTF deck:     ", dtf_deck)
-````
+println("DTF deck: ", dtf_deck)
 
-The first power-flow solve of a session compiles the solver (about a
-minute); a two-bus warm-up net takes that hit here, so the timing of the
-MicroGrid solve in Chapter 3 is the solve, not the compiler:
-
-````@example workshop_tour_cgmes
-wnet = Net(name = "warmup", baseMVA = 100.0)
-addBus!(net = wnet, busName = "A", vn_kV = 110.0)
-addBus!(net = wnet, busName = "B", vn_kV = 110.0)
-addProsumer!(net = wnet, busName = "A", type = "EXTERNALNETWORKINJECTION", referencePri = "A", vm_pu = 1.0, va_deg = 0.0)
-addProsumer!(net = wnet, busName = "B", type = "ENERGYCONSUMER", p = 10.0, q = 3.0)
-addPIModelACLine!(net = wnet, fromBus = "A", toBus = "B", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
-t_first = @elapsed runpf!(wnet, 10, 1e-8, 0; islands_enabled = true)
-t_second = @elapsed runpf!(wnet, 10, 1e-8, 0; islands_enabled = true)
-calcNetLosses!(wnet)
-println("warm-up solve: first ", round(t_first; digits = 2), " s (compiles), second ", round(t_second * 1000; digits = 2), " ms")
+# compile every path the chapters use once; the warm-up code is in
+# docs/lit/warmup/workshop_tour_cgmes.jl of the installed package
+include(pkgdir(Sparlectra, "docs", "lit", "warmup", "workshop_tour_cgmes.jl"))
+warmup()
 ````
 
 ## Chapter 1: anatomy of a delivery
@@ -143,6 +147,7 @@ One delivery = one folder (or ZIP) of profile files. The important ones:
 `summarizeCGMES` reads a delivery without importing it:
 
 ````@example workshop_tour_cgmes
+# uses: microgrid_bd, microgrid_be (warm-up cell)
 s = summarizeCGMES(path = [microgrid_be, microgrid_bd])
 print(s)
 ````
@@ -160,6 +165,7 @@ files WITHOUT the boundary set and the import aborts; `analyzeCGMES`
 explains the gap in plain language instead of a bare error:
 
 ````@example workshop_tour_cgmes
+# uses: microgrid_be (warm-up cell)
 a_report = analyzeCGMES(path = microgrid_be)
 print(a_report)
 ````
@@ -178,6 +184,7 @@ service import aborts.
 other workshops do applies from here:
 
 ````@example workshop_tour_cgmes
+# uses: microgrid_bd, microgrid_be (warm-up cell)
 res = importCGMES(path = [microgrid_be, microgrid_bd], name = "microgrid_be")
 net = res.net
 println("imported: ", length(net.nodeVec), " buses, ", length(net.branchVec), " branches, ", length(net.prosumpsVec), " injections")
@@ -190,6 +197,8 @@ The classical result tables, exactly as in the basic tour:
 voltages, `printACPFlowResults` prints bus voltages and branch flows.
 
 ````@example workshop_tour_cgmes
+# uses: etime, ite, net (Example 3.1)
+(@isdefined(etime) && @isdefined(ite) && @isdefined(net)) || error("Run Example 3.1 first: it sets up etime, ite, net.")
 calcNetLosses!(net)
 printACPFlowResults(net, etime, ite, 1e-8)
 ````
@@ -199,6 +208,8 @@ its own reference: `compareWithSV` checks the re-solved voltages and
 flows against what the sender shipped:
 
 ````@example workshop_tour_cgmes
+# uses: res (Example 3.1)
+@isdefined(res) || error("Run Example 3.1 first: it sets up res.")
 cmp = compareWithSV(res)
 println("compared ", cmp.n, " buses against the shipped SV: max |dVm| = ", round(cmp.max_dvm; sigdigits = 3), " pu, max |dVa| = ", round(cmp.max_dva; sigdigits = 3), " deg")
 ````
@@ -227,6 +238,7 @@ As long as the sender ships a TP profile, the importer simply consumes
 the sender's aggregation result:
 
 ````@example workshop_tour_cgmes
+# uses: minigrid_bd, minigrid_nb (warm-up cell)
 res_tp = importCGMES(path = [minigrid_nb, minigrid_bd], name = "minigrid_nb")
 println("with TP: ", length(res_tp.net.nodeVec), " buses, ", length(res_tp.net.branchVec), " branches")
 ````
@@ -242,6 +254,8 @@ We simulate such a delivery by withholding the TP and SV files of
 Example 4.1's set:
 
 ````@example workshop_tour_cgmes
+# uses: minigrid_bd, minigrid_nb (warm-up cell); res_tp (Example 4.1)
+@isdefined(res_tp) || error("Run Example 4.1 first: it sets up res_tp.")
 files_no_tp = [f for f in readdir(minigrid_nb; join = true) if endswith(f, ".xml") && !occursin("_TP", basename(f)) && !occursin("_SV", basename(f))]
 res_notp = importCGMES(path = vcat(files_no_tp, minigrid_bd), name = "minigrid_nb_no_tp")
 println("without TP: ", length(res_notp.net.nodeVec), " buses, ", length(res_notp.net.branchVec), " branches")
@@ -282,6 +296,8 @@ renaming nothing changes nothing. The re-import of the export solves to
 the same power flow:
 
 ````@example workshop_tour_cgmes
+# uses: net (Example 3.1)
+@isdefined(net) || error("Run Example 3.1 first: it sets up net.")
 outdir = mktempdir()
 files = writeCGMESFiles(net; path = outdir)
 println(length(files), " profile files written")
@@ -319,6 +335,7 @@ computed for it, `reference_buses.csv`, so the import can be checked
 against an independent solver:
 
 ````@example workshop_tour_cgmes
+# uses: powsybl_dir (warm-up cell)
 using DelimitedFiles
 tables = Sparlectra.read_iidm_tables(joinpath(powsybl_dir, "micro_grid_be.xiidm"))
 println("IIDM ", tables.manifest["iidm_version"], ": ", length(tables.buses.id), " buses, ", length(tables.two_windings_transformers.id), " two-winding and ", length(tables.three_windings_transformers.id), " three-winding transformer(s), ", length(tables.dangling_lines.id), " dangling lines")
@@ -330,6 +347,8 @@ the same as outer-loop machine controls. The import report lists what
 was built, the slack decision and every notice:
 
 ````@example workshop_tour_cgmes
+# uses: tables (Example 6.1)
+@isdefined(tables) || error("Run Example 6.1 first: it sets up tables.")
 pnet, preport = build_net_from_powsybl(tables, PowsyblAdapterOptions(remote_regulation = :remote))
 println(format_powsybl_report(preport))
 ````
@@ -347,6 +366,8 @@ hysteresis. The matching Sparlectra configuration, then the bus voltages
 against the reference file:
 
 ````@example workshop_tour_cgmes
+# uses: powsybl_reference (warm-up cell); pnet (Example 6.1)
+@isdefined(pnet) || error("Run Example 6.1 first: it sets up pnet.")
 olf_like = SparlectraConfig(
   powerflow = PowerFlowConfig(max_iter = 60, tol = 1e-9, islands_enabled = true, qlimits = Sparlectra.QLimitConfig(hysteresis_pu = 1e-6), distributed_slack = Sparlectra.DistributedSlackConfig(enabled = true, p_mode = :imported)),
   output = OutputConfig(logfile_results = :off, startup_latency_hint = false),
@@ -402,6 +423,7 @@ everything the deck says stays on the case object before any network
 exists:
 
 ````@example workshop_tour_cgmes
+# uses: dtf_deck (warm-up cell)
 case = Sparlectra.DTFImporter.read_dtf(dtf_deck)
 println("deck: base ", case.baseMVA, " MVA, ", length(case.buses), " buses, ", length(case.branches), " branches (", count(b -> b.kind == 'T', case.branches), " transformers), ", length(case.transformer_controls), " transformer control(s), ", length(case.outages), " outage record(s)")
 println("nominal voltages (kV): ", join(case.nominal_voltages_kv, ", "), "; slack bus of the size card: ", case.size.slack)
@@ -414,6 +436,8 @@ slack as the reference, PQ buses kept as fixed injections); from there
 it is the ordinary solver:
 
 ````@example workshop_tour_cgmes
+# uses: case (Example 7.1)
+@isdefined(case) || error("Run Example 7.1 first: it sets up case.")
 dnet = Sparlectra.DTFImporter.build_net(case)
 println("network: ", length(dnet.nodeVec), " buses, ", length(dnet.branchVec), " branches")
 @assert length(dnet.nodeVec) == length(case.buses)
@@ -439,6 +463,9 @@ ambiguity is a diagnostic, not a guess), `apply_single_branch_outage!`
 takes the branch out, and the solve repeats:
 
 ````@example workshop_tour_cgmes
+# uses: case (Example 7.1); dnet (Example 7.2)
+@isdefined(case) || error("Run Example 7.1 first: it sets up case.")
+@isdefined(dnet) || error("Run Example 7.2 first: it sets up dnet.")
 if isempty(case.outages)
   println("this deck carries no outage records")
 else

@@ -582,7 +582,14 @@ function run_scenario_engine_extended_tests()
     workshop = abspath(joinpath(dirname(@__DIR__), "docs", "lit", "workshop_scenarios.jl"))
     @test isfile(workshop)
     @test isfile(joinpath(dirname(@__DIR__), "data", "mpower", "sp_case118.m"))
-    mod = Module(:WorkshopScenariosRun)
+    # a module with `include`, like a notebook's Main: the first cell
+    # includes the workshop's warm-up file (a plain Module() has no include)
+    sym = gensym(:WorkshopScenariosRun)
+    mod = Core.eval(Main, :(baremodule $sym
+      using Base
+      eval(x) = Core.eval($sym, x)
+      include(x) = Base.include($sym, abspath(x))
+    end))
     redirect_stdout(devnull) do
       Base.include(mod, workshop)
     end

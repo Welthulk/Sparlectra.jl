@@ -32,16 +32,20 @@ failure when no valid participant exists.
 
 ## Warm-up and shared helpers
 
-Julia compiles each function on first use. This cell loads the package,
-collects the helpers of the whole notebook, and warms both solver paths
-(classical single slack and distributed slack) on the study case itself,
-so the chapters below run at full speed.
+Julia compiles each function on first use. This cell defines what the
+chapters share (the `using` clause, the study case with its `case_path`,
+and the helpers `load_case`, `print_beyond_schedule` and
+`print_participation`), so any chapter can run on its own after it; a
+code cell that uses a name from another cell says so in a comment. Its
+last line, `warmup()`, runs every solver path the chapters use once
+(classical single slack and every distributed-slack weight mode) on the
+study case itself, so nothing stalls mid-notebook; its code is in
+`docs/lit/warmup/workshop_distributed_slack.jl` of the package. How long
+the warm-up takes depends on the machine: a Colab session is several
+times slower than a desktop; every later cell then runs without compile
+pauses.
 
-````@example workshop_distributed_slack
-using Sparlectra
-````
-
-The study case as a MATPOWER file: a four-bus ring, drawn as a diagram
+The cell writes the study case as a MATPOWER file: a four-bus ring, drawn as a diagram
 in the study-case section below, with a DELIBERATE
 20 MW shortfall (70 MW load, only 50 MW scheduled PV generation), so
 somebody must visibly cover the gap. The 21st generator column is the
@@ -50,6 +54,8 @@ deliberately DIFFERENT from their 30:20 schedule ratio, so the weight
 modes below give visibly different shares.
 
 ````@example workshop_distributed_slack
+using Sparlectra
+
 function write_demo_case(dir)
   path = joinpath(dir, "case4_distributed_slack.m")
   write(path, """
@@ -78,6 +84,13 @@ function write_demo_case(dir)
 end
 case_path = write_demo_case(mktempdir())
 
+# the helpers of the chapters, defined here so that any chapter runs on
+# its own after this cell:
+#   write_demo_case(dir)         writes the study case (case_path below)
+#   load_case()                  fresh import of the study case (every example)
+#   print_beyond_schedule(net)   extra active power per bus (every example)
+#   print_participation(net)     participation table (Examples 2 to 5)
+
 # fresh import for every run (each run mutates the net in place)
 load_case() = createNetFromMatPowerFile(filename = case_path)
 
@@ -102,9 +115,10 @@ function print_participation(net)
   end
 end
 
-t_first = @elapsed runpf!(load_case(), 30, 1e-8, 0)
-t_dslack = @elapsed runpf!(load_case(), 30, 1e-8, 0; distributed_slack_enabled = true)
-println("warm: classical ", round(t_first; digits = 2), " s, distributed ", round(t_dslack; digits = 2), " s (first calls compile)")
+# compile every path the chapters use once; the warm-up code is in
+# docs/lit/warmup/workshop_distributed_slack.jl of the installed package
+include(pkgdir(Sparlectra, "docs", "lit", "warmup", "workshop_distributed_slack.jl"))
+warmup()
 ````
 
 ## The study case
@@ -132,6 +146,7 @@ absorbs everything. The PV buses deliver exactly their schedule, to the
 kilowatt, no matter how large the gap is.
 
 ````@example workshop_distributed_slack
+# uses: load_case, print_beyond_schedule (warm-up cell)
 net = load_case()
 runpf!(net, 30, 1e-8, 0)
 println("classical single slack:")
@@ -155,6 +170,7 @@ $\alpha = 0.6 / 0.4$. Big units take proportionally more, the classical
 "participation by size".
 
 ````@example workshop_distributed_slack
+# uses: load_case, print_beyond_schedule, print_participation (warm-up cell)
 net = load_case()
 runpf!(net, 30, 1e-8, 0; distributed_slack_enabled = true, distributed_slack_p_mode = :pg_weighted)
 println("pg_weighted (raw weights 30 : 20):")
@@ -173,6 +189,7 @@ them as raw weights. Our case declares 0.75 / 0.25, deliberately NOT the
 schedule:
 
 ````@example workshop_distributed_slack
+# uses: load_case, print_beyond_schedule, print_participation (warm-up cell)
 net = load_case()
 runpf!(net, 30, 1e-8, 0; distributed_slack_enabled = true, distributed_slack_p_mode = :imported)
 println("imported (MATPOWER APF 0.75 : 0.25):")
@@ -196,6 +213,7 @@ more reserve than 100 - 30. There is also `:pmax_weighted` (share by
 installed size) for markets that contract by capacity.
 
 ````@example workshop_distributed_slack
+# uses: load_case, print_beyond_schedule, print_participation (warm-up cell)
 net = load_case()
 runpf!(net, 30, 1e-8, 0; distributed_slack_enabled = true, distributed_slack_p_mode = :headroom_weighted)
 println("headroom_weighted (raw weights 250 : 70 : 80):")
@@ -212,6 +230,7 @@ by bus name or bus index. Weights need not sum to one; normalization is
 automatic. Here bus 2 gets everything:
 
 ````@example workshop_distributed_slack
+# uses: load_case, print_beyond_schedule, print_participation (warm-up cell)
 net = load_case()
 runpf!(net, 30, 1e-8, 0; distributed_slack_enabled = true, distributed_slack_p_mode = :explicit, distributed_slack_weights = Dict("2" => 1.0))
 println("explicit (all on bus 2):")
@@ -245,6 +264,7 @@ actionable error; `fallback = :ref_only` warns and solves classically
 instead, so batch runs survive a case with missing declarations:
 
 ````@example workshop_distributed_slack
+# uses: load_case, print_beyond_schedule (warm-up cell)
 no_apf = load_case()
 for ps in no_apf.prosumpsVec        ## strip the imported factors
   ps.participationFactor = nothing

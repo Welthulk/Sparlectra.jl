@@ -334,6 +334,55 @@ function run_webui_fast_tests()
             @test resp3.status in (302, 303)
             @test occursin("autodamp_min: 0.09", read(cfg, String))
             @test isfile(cfg * ".settings-save.bak")
+
+            # the Q-limit block (0.20.2): values saved per case and in the
+            # configuration file come back in the form and reach the run, and
+            # a changed guard value shows on the comparison page
+            eff_entry(dir, key) = begin
+              eff_q = read(joinpath(String(dir), "effective_config.yaml"), String)
+              at = findfirst(string(key, ":"), eff_q)
+              at === nothing ? "" : eff_q[first(at):min(end, first(at) + 400)]
+            end
+            form_value(html, field) = (m = match(Regex("name=\"$(field)\"[^>]*value=\"([^\"]*)\""), html); m === nothing ? nothing : m.captures[1])
+            resp_q = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}(
+                "casefile" => "sp_case14.scf.json", "settings_target" => "this_case",
+                "power_flow_qlimits_guard_max_switches" => "5",
+                "power_flow_qlimits_guard_freeze_after_repeated_switching" => "false",
+                "power_flow_qlimits_start_iter" => "4",
+                "power_flow_qlimits_hysteresis_pu" => "2e-2",
+                "power_flow_qlimits_trace_buses" => "1, 2",
+                "power_flow_qlimits_guard_violation_mode" => "delayed_switch"); output_root=root, runtime=rt)
+            @test resp_q.status in (302, 303)
+            q_cfg = Sparlectra.load_case_config(joinpath(cache, "sp_case14.scf.json"))
+            @test q_cfg["power_flow.qlimits.guard.max_switches"] == 5
+            @test q_cfg["power_flow.qlimits.guard.freeze_after_repeated_switching"] === false
+            @test q_cfg["power_flow.qlimits.start_iter"] == 4
+            @test q_cfg["power_flow.qlimits.hysteresis_pu"] == 0.02
+            @test q_cfg["power_flow.qlimits.trace_buses"] == [1, 2]
+            @test q_cfg["power_flow.qlimits.guard.violation_mode"] == "delayed_switch"
+            q_page = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/settings?casefile=sp_case14.scf.json"; output_root=root, runtime=rt).body)
+            @test form_value(q_page, "power_flow_qlimits_guard_max_switches") == "5"
+            @test form_value(q_page, "power_flow_qlimits_start_iter") == "4"
+            @test form_value(q_page, "power_flow_qlimits_trace_buses") == "1, 2"
+            @test !occursin(r"name=\"power_flow_qlimits_guard_freeze_after_repeated_switching\" type=\"checkbox\"[^>]*checked", q_page)
+            run_q = SparlectraApp.start_powerflow_run(Dict("casefile" => "sp_case14.scf.json", "config_file" => cfg_rt, "output_root" => root); case_directory=cache)
+            @test run_q["status"] == "succeeded"
+            @test occursin("value: 5", eff_entry(run_q["output_dir"], "max_switches"))
+            @test occursin("source: case_sidecar", eff_entry(run_q["output_dir"], "max_switches"))
+            @test occursin("value: false", eff_entry(run_q["output_dir"], "freeze_after_repeated_switching"))
+            # the configuration file: a case without a case configuration file
+            # takes the general value (with one, the case file wins)
+            cp(joinpath(Sparlectra.SPARLECTRA_ROOT, "data", "mpower", "sp_case9.m"), joinpath(cache, "sp_case9.m"))
+            resp_g = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("settings_target" => "general", "config_file" => cfg, "power_flow_qlimits_guard_max_switches" => "7"); output_root=root)
+            @test resp_g.status in (302, 303)
+            @test Sparlectra.load_sparlectra_config(cfg; reload = true).powerflow.qlimits.guard_max_switches == 7
+            rt_g = (; case_directory=cache, config_file=cfg, operation_log=SparlectraApp.webui_operation_log_path(root), startup_config_error=nothing, runner=SparlectraApp.start_powerflow_run)
+            g_page = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/settings?casefile=sp_case9.m"; output_root=root, runtime=rt_g).body)
+            @test form_value(g_page, "power_flow_qlimits_guard_max_switches") == "7"
+            run_g = SparlectraApp.start_powerflow_run(Dict("casefile" => "sp_case9.m", "config_file" => cfg, "output_root" => root); case_directory=cache)
+            @test run_g["status"] == "succeeded"
+            @test occursin("value: 7", eff_entry(run_g["output_dir"], "max_switches"))
+            @test ("power_flow.qlimits.guard.max_switches", "5", "7") in SparlectraApp._webui_compare_config_diff(run_q["output_dir"], run_g["output_dir"])
         end)() end
 
         @testset "the provisioned configuration follows changed template defaults" begin (function ()
@@ -1832,12 +1881,12 @@ function run_webui_fast_tests()
             @testset "the page reads what the runs wrote" begin (function ()
                 dir_a = mktempdir()
                 dir_b = mktempdir()
-                write(joinpath(dir_a, "effective_config.yaml"), "power_flow:\n  tol: 1.0e-8\n  qlimits:\n    enforcement_mode: active_set\n")
-                write(joinpath(dir_b, "effective_config.yaml"), "power_flow:\n  tol: 1.0e-8\n  qlimits:\n    enforcement_mode: classic_simultaneous\n")
+                write(joinpath(dir_a, "effective_config.yaml"), "runtime:\n  case_name: sp_case_a\n  casefile: /state/data/sp_case_a.scf.json\npower_flow:\n  tol: 1.0e-8\n  qlimits:\n    enforcement_mode: active_set\n")
+                write(joinpath(dir_b, "effective_config.yaml"), "runtime:\n  case_name: sp_case_b\n  casefile: /state/data/sp_case_b.scf.json\npower_flow:\n  tol: 1.0e-8\n  qlimits:\n    enforcement_mode: classic_simultaneous\n")
                 diff = SparlectraApp._webui_compare_config_diff(dir_a, dir_b)
                 # the nested key keeps its real path; a "remember the last section"
                 # reader concatenated every section it had ever seen
-                @test diff == [("power_flow.qlimits.enforcement_mode", "active_set", "classic_simultaneous")]
+                @test diff == [("power_flow.qlimits.enforcement_mode", "active_set", "classic_simultaneous"), ("runtime.case_name", "sp_case_a", "sp_case_b"), ("runtime.casefile", "/state/data/sp_case_a.scf.json", "/state/data/sp_case_b.scf.json")]
 
                 write(joinpath(dir_a, "q_limit_events.csv"), "iteration,bus,side\n2,19,min\n2,32,min\n")
                 write(joinpath(dir_b, "q_limit_events.csv"), "iteration,bus,side\n1,19,min\n")
@@ -1888,7 +1937,15 @@ function run_webui_fast_tests()
                 b = Dict{String,Any}("run_id" => "run-b", "output_dir" => dir_b, "casefile" => "case118.m",
                     "status" => "succeeded", "converged" => true, "iterations" => 23, "final_mismatch" => 7.4e-12)
                 html = SparlectraApp.render_powerflow_compare(a, b)
+                # the case of each run stands in the table on top; its path and
+                # name are no configuration difference of their own
                 @test occursin("Configuration differences (1)", html)
+                @test !occursin("/state/data/sp_case_a.scf.json", html)
+                # a path value shows its file name, and the parent directory
+                # as well where both runs name the same file in different places
+                @test SparlectraApp._webui_compare_value_cell("/x/data/case9.m", "/x/data/case14.m") == "<span title=\"/x/data/case9.m\">case9.m</span>"
+                @test SparlectraApp._webui_compare_value_cell("/x/runA/configuration.yaml", "/x/runB/configuration.yaml") == "<span title=\"/x/runA/configuration.yaml\">runA/configuration.yaml</span>"
+                @test SparlectraApp._webui_compare_value_cell("active_set", "classic_simultaneous") == "active_set"
                 @test occursin("power_flow.qlimits.enforcement_mode", html)
                 @test occursin("The runs clamped different buses", html)
                 @test occursin("max |dVm|", html)

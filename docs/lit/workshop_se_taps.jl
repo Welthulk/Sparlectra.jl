@@ -83,31 +83,81 @@
 #nb ## the old version is still active; restart the runtime, then rerun
 #nb ## this cell.
 
-# ## Load the packages
+# ## Warm-up and shared helpers
 #
-# `Random` (standard library) seeds the synthetic measurement noise, and
-# `Printf` formats the comparison tables.
+# Julia compiles each function on first use. This cell loads the packages
+# and defines the two helpers of the notebook, the study-network builder
+# and the truth-and-measurements generator; after this cell and the
+# study-network cell below any example can run on its own. A code cell
+# that uses a name from another cell says so in a comment. `Random`
+# (standard library) seeds the synthetic measurement noise, and `Printf`
+# formats the comparison tables. Its last line, `warmup()`, runs every
+# path the notebook exercises once (the power flow and the estimator on a
+# tiny throwaway network, then, on the study network, the tap estimation
+# in all three modes, current and PMU measurements, the observability
+# check, the topology precheck, island-wise estimation and the robust
+# replacement mode), so the real study runs at full speed; its code is in
+# `docs/lit/warmup/workshop_se_taps.jl` of the package. How long the
+# warm-up takes depends on the machine: a Colab session is several times
+# slower than a desktop; every later cell then runs without compile
+# pauses.
 
 using Sparlectra
 using Random
 using Printf
 
-# ## Warm-up
-#
-# Julia compiles each function on first use. This cell warms the paths the
-# notebook exercises on a tiny throwaway network, so the real study runs at
-# full speed.
+## the helpers of the notebook, defined here so that any example runs on
+## its own after this cell:
+##   build_net(; ratio_step, phase_step)     the study network (every example)
+##   truth_measurements(; ratio_step, ...)   solved truth plus noisy measurements
+##                                           (study network, Examples 3 to 5, 7, 8)
+function build_net(; ratio_step = 0.0, phase_step = 0.0)
+  net = Net(name = "workshop_se_taps", baseMVA = 100.0)
+  for (b, vn) in (("H1", 110.0), ("H2", 110.0), ("L1", 20.0), ("L2", 20.0), ("L3", 20.0))
+    addBus!(net = net, busName = b, vn_kV = vn)
+  end
+  addProsumer!(net = net, busName = "H1", type = "EXTERNALNETWORKINJECTION", referencePri = "H1", vm_pu = 1.02, va_deg = 0.0)
+  addProsumer!(net = net, busName = "L1", type = "ENERGYCONSUMER", p = 25.0, q = 8.0)
+  addProsumer!(net = net, busName = "L2", type = "ENERGYCONSUMER", p = 15.0, q = 5.0)
+  addProsumer!(net = net, busName = "L3", type = "ENERGYCONSUMER", p = 8.0, q = 3.0)
+  addPIModelACLine!(net = net, fromBus = "H1", toBus = "H2", r_pu = 0.010, x_pu = 0.080, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "L1", toBus = "L2", r_pu = 0.020, x_pu = 0.100, b_pu = 0.0, status = 1)
+  addPIModelTrafo!(net = net, fromBus = "H1", toBus = "L1", r_pu = 0.002, x_pu = 0.060, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1)
+  addPIModelTrafo!(net = net, fromBus = "H2", toBus = "L2", r_pu = 0.002, x_pu = 0.060, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1)
+  addPIModelTrafo!(net = net, fromBus = "L2", toBus = "L3", r_pu = 0.004, x_pu = 0.070, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1)
+  ## T1 (branch 3) carries BOTH changers; `*_current_step` is where they stand
+  applyTapNameplate!(
+    net.branchVec[3];
+    tap_step = 0.00625, tap_min_step = -16.0, tap_max_step = 16.0, tap_current_step = ratio_step,
+    phase_step_deg = 1.25, phase_min_step = -20.0, phase_max_step = 20.0, phase_current_step = phase_step,
+    psi_deg = 90.0,
+  )
+  ## T3 (branch 5): the radial transformer, at neutral unless stated otherwise
+  applyTapNameplate!(net.branchVec[5]; tap_step = 0.0125, tap_min_step = -8.0, tap_max_step = 8.0)
+  ok, msg = validate!(net = net)
+  ok || error("Network validation failed: $msg")
+  return net
+end
 
-wnet = Net(name = "warmup", baseMVA = 100.0)
-addBus!(net = wnet, busName = "A", vn_kV = 110.0)
-addBus!(net = wnet, busName = "B", vn_kV = 110.0)
-addProsumer!(net = wnet, busName = "A", type = "EXTERNALNETWORKINJECTION", referencePri = "A", vm_pu = 1.0, va_deg = 0.0)
-addProsumer!(net = wnet, busName = "B", type = "ENERGYCONSUMER", p = 10.0, q = 3.0)
-addPIModelACLine!(net = wnet, fromBus = "A", toBus = "B", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
-t_pf = @elapsed runpf!(wnet, 10, 1e-8, 0)
-setMeasurementsFromPF!(wnet; includeVm = true, includePinj = true, includeQinj = true, includePflow = true, includeQflow = true, noise = false)
-t_se = @elapsed runse!(wnet)
-println("warm: power flow ", round(t_pf; digits = 2), " s, estimator ", round(t_se; digits = 2), " s (first calls compile)")
+
+function truth_measurements(; ratio_step = 0.0, phase_step = 0.0, seed = 7, kwargs...)
+  truth = build_net(; ratio_step = ratio_step, phase_step = phase_step)
+  _, status = runpf!(truth, 40, 1e-10, 0)
+  status == 0 || error("truth power flow did not converge")
+  calcNetLosses!(truth)
+  std = measurementStdDevs(vm = 1e-3, pinj = 1.0, qinj = 1.0, pflow = 0.7, qflow = 0.7)
+  meas = generateMeasurementsFromPF(
+    truth;
+    includeVm = true, includePinj = true, includeQinj = true, includePflow = true, includeQflow = true,
+    noise = true, stddev = std, rng = MersenneTwister(seed), kwargs...,
+  )
+  return truth, meas
+end
+
+## compile every path the examples use once; the warm-up code is in
+## docs/lit/warmup/workshop_se_taps.jl of the installed package
+include(pkgdir(Sparlectra, "docs", "lit", "warmup", "workshop_se_taps.jl"))
+warmup()
 
 # ## The study network
 #
@@ -137,54 +187,17 @@ println("warm: power flow ", round(t_pf; digits = 2), " s, estimator ", round(t_
 # step size, position band, and the position the changer currently stands
 # at. Importers use the same function, so a hand-built network and an
 # imported one behave identically.
-
-function build_net(; ratio_step = 0.0, phase_step = 0.0)
-  net = Net(name = "workshop_se_taps", baseMVA = 100.0)
-  for (b, vn) in (("H1", 110.0), ("H2", 110.0), ("L1", 20.0), ("L2", 20.0), ("L3", 20.0))
-    addBus!(net = net, busName = b, vn_kV = vn)
-  end
-  addProsumer!(net = net, busName = "H1", type = "EXTERNALNETWORKINJECTION", referencePri = "H1", vm_pu = 1.02, va_deg = 0.0)
-  addProsumer!(net = net, busName = "L1", type = "ENERGYCONSUMER", p = 25.0, q = 8.0)
-  addProsumer!(net = net, busName = "L2", type = "ENERGYCONSUMER", p = 15.0, q = 5.0)
-  addProsumer!(net = net, busName = "L3", type = "ENERGYCONSUMER", p = 8.0, q = 3.0)
-  addPIModelACLine!(net = net, fromBus = "H1", toBus = "H2", r_pu = 0.010, x_pu = 0.080, b_pu = 0.0, status = 1)
-  addPIModelACLine!(net = net, fromBus = "L1", toBus = "L2", r_pu = 0.020, x_pu = 0.100, b_pu = 0.0, status = 1)
-  addPIModelTrafo!(net = net, fromBus = "H1", toBus = "L1", r_pu = 0.002, x_pu = 0.060, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1)
-  addPIModelTrafo!(net = net, fromBus = "H2", toBus = "L2", r_pu = 0.002, x_pu = 0.060, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1)
-  addPIModelTrafo!(net = net, fromBus = "L2", toBus = "L3", r_pu = 0.004, x_pu = 0.070, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1)
-  ## T1 (branch 3) carries BOTH changers; `*_current_step` is where they stand
-  applyTapNameplate!(
-    net.branchVec[3];
-    tap_step = 0.00625, tap_min_step = -16.0, tap_max_step = 16.0, tap_current_step = ratio_step,
-    phase_step_deg = 1.25, phase_min_step = -20.0, phase_max_step = 20.0, phase_current_step = phase_step,
-    psi_deg = 90.0,
-  )
-  ## T3 (branch 5): the radial transformer, at neutral unless stated otherwise
-  applyTapNameplate!(net.branchVec[5]; tap_step = 0.0125, tap_min_step = -8.0, tap_max_step = 8.0)
-  ok, msg = validate!(net = net)
-  ok || error("Network validation failed: $msg")
-  return net
-end
-
+#
+# `build_net` is defined in the warm-up cell at the top.
+#
 # The truth is a solved power flow the estimator never sees; the
 # measurement set is derived from it with seeded Gaussian noise of exactly
 # the declared standard deviations. `ratio_step` and `phase_step` put the
 # changers of the TRUE network where the estimator will have to find them.
+#
+# `truth_measurements` is defined in the warm-up cell at the top.
 
-function truth_measurements(; ratio_step = 0.0, phase_step = 0.0, seed = 7, kwargs...)
-  truth = build_net(; ratio_step = ratio_step, phase_step = phase_step)
-  _, status = runpf!(truth, 40, 1e-10, 0)
-  status == 0 || error("truth power flow did not converge")
-  calcNetLosses!(truth)
-  std = measurementStdDevs(vm = 1e-3, pinj = 1.0, qinj = 1.0, pflow = 0.7, qflow = 0.7)
-  meas = generateMeasurementsFromPF(
-    truth;
-    includeVm = true, includePinj = true, includeQinj = true, includePflow = true, includeQflow = true,
-    noise = true, stddev = std, rng = MersenneTwister(seed), kwargs...,
-  )
-  return truth, meas
-end
-
+## uses: truth_measurements (warm-up cell)
 truth, full_set = truth_measurements(seed = 3)
 vm_true = [getNodeVm(n) for n in truth.nodeVec]
 println("study network: ", length(truth.nodeVec), " buses, ", length(truth.branchVec), " branches, ", length(full_set), " measurements")
@@ -200,6 +213,8 @@ println("study network: ", length(truth.nodeVec), " buses, ", length(truth.branc
 # The values below are deliberately biased (every voltage is 4 mV too high,
 # every injection 0.9 MW off). Watch $J$ anyway.
 
+## uses: build_net (warm-up cell); truth (The study network)
+@isdefined(truth) || error("Run the section \"The study network\" first: it sets up truth.")
 names = ["H1", "H2", "L1", "L2", "L3"]
 minimal = Measurement[]
 for (i, b) in enumerate(names)
@@ -224,6 +239,9 @@ end
 #
 # Adding the reactive injections gives the estimator something to compare:
 
+## uses: build_net (warm-up cell); minimal, names (Example 1); truth (The study network, Example 1)
+(@isdefined(minimal) && @isdefined(names)) || error("Run Example 1 first: it sets up minimal, names.")
+@isdefined(truth) || error("Run the section \"The study network\", Example 1 first: they set up truth.")
 redundant = deepcopy(minimal)
 for (i, b) in enumerate(names)
   i == 1 && continue
@@ -248,6 +266,8 @@ end
 # (a number only this notebook can compute, because only here the truth is
 # known).
 
+## uses: build_net (warm-up cell); full_set, vm_true (The study network)
+(@isdefined(full_set) && @isdefined(vm_true)) || error("Run the section \"The study network\" first: it sets up full_set, vm_true.")
 core = filter(m -> startswith(m.id, "Vm_") || startswith(m.id, "Pinj_"), deepcopy(full_set))
 extra = filter(m -> !(startswith(m.id, "Vm_") || startswith(m.id, "Pinj_")), deepcopy(full_set))
 growing = deepcopy(core)
@@ -278,6 +298,7 @@ end
 #
 # First, what that costs if the tap is NOT released:
 
+## uses: build_net, truth_measurements (warm-up cell)
 truth_oltc, meas_oltc = truth_measurements(ratio_step = 4.0)
 res_blind = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
   runse!(build_net(), deepcopy(meas_oltc))
@@ -293,6 +314,8 @@ end
 # `setTapEstimation!` releases the tap position as an additional state.
 # Mode `:ratio` releases the ratio changer only:
 
+## uses: build_net (warm-up cell); meas_oltc (Example 3)
+@isdefined(meas_oltc) || error("Run Example 3 first: it sets up meas_oltc.")
 model_oltc = build_net()
 release = setTapEstimation!(model_oltc; trafo = 3, mode = :ratio)
 res_oltc = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
@@ -326,6 +349,7 @@ est = res_oltc.tapEstimates[1]
 # shifter injects its voltage at 90° to the line voltage, and the machine
 # cannot rotate that angle.
 
+## uses: build_net, truth_measurements (warm-up cell)
 truth_pst, meas_pst = truth_measurements(phase_step = 3.0, seed = 11)
 model_pst = build_net()
 setTapEstimation!(model_pst; trafo = 3, mode = :pst, alpha_deg = 90.0)
@@ -347,6 +371,7 @@ est_pst = res_pst.tapEstimates[1]
 # changer two steps up, an ambiguous-looking combination the estimator has
 # to separate:
 
+## uses: build_net, truth_measurements (warm-up cell)
 truth_both, meas_both = truth_measurements(ratio_step = -2.0, phase_step = 2.0, seed = 13)
 model_both = build_net()
 setTapEstimation!(model_both; trafo = 3, mode = :both, alpha_deg = 90.0)
@@ -375,6 +400,7 @@ est_both = res_both.tapEstimates[1]
 # Here the true T3 stands three steps up, and the voltage measurement at L3
 # is removed from the set (the station has no voltage transducer):
 
+## uses: build_net (warm-up cell)
 truth_bridge = build_net()
 applyTapNameplate!(truth_bridge.branchVec[5]; tap_step = 0.0125, tap_min_step = -8.0, tap_max_step = 8.0, tap_current_step = 3.0)
 runpf!(truth_bridge, 40, 1e-10, 0)
@@ -421,6 +447,8 @@ est_bridge = res_bridge.tapEstimates[1]
 #
 # First, what they add to a complete set:
 
+## uses: build_net, truth_measurements (warm-up cell); full_set (The study network)
+@isdefined(full_set) || error("Run the section \"The study network\" first: it sets up full_set.")
 _, with_currents = truth_measurements(seed = 3, includeImag = true)
 net_plain = build_net(); res_plain = with_state_estimation_config(() -> runse!(net_plain, deepcopy(full_set)); max_iter = 40, tol = 1e-10)
 net_curr = build_net(); res_curr = with_state_estimation_config(() -> runse!(net_curr, deepcopy(with_currents)); max_iter = 40, tol = 1e-10)
@@ -436,6 +464,9 @@ dvm = maximum(abs.([getNodeVm(n) for n in net_plain.nodeVec] .- [getNodeVm(n) fo
 # sparse set has no P/Q on the 20 kV tie; the second set replaces them with
 # current magnitudes on the same bay:
 
+## uses: build_net (warm-up cell); full_set, vm_true (The study network); with_currents (Example 7)
+(@isdefined(full_set) && @isdefined(vm_true)) || error("Run the section \"The study network\" first: it sets up full_set, vm_true.")
+@isdefined(with_currents) || error("Run Example 7 first: it sets up with_currents.")
 sparse_set = filter(m -> !occursin("branch_2", m.id), deepcopy(full_set))
 net_sparse = build_net(); append!(net_sparse.measurements, deepcopy(sparse_set))
 obs_sparse = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
@@ -484,6 +515,7 @@ err_sc = maximum(abs.([getNodeVm(n) for n in net_sc.nodeVec] .- vm_true))
 # The set below carries PMU angles at H2 and L1, deliberately shifted by
 # 4 degrees against the slack reference:
 
+## uses: build_net, truth_measurements (warm-up cell)
 _, pmu_set = truth_measurements(
   seed = 21, includeVa = true, vaBusIdxs = [2, 3], vaRefOffsetDeg = 4.0,
 )
@@ -504,6 +536,7 @@ end
 # The estimator now believes in a line that carries nothing. The bay's
 # transducers report what they see, about zero, on all four rows.
 
+## uses: build_net (warm-up cell)
 truth_topo = build_net()
 for br in (truth_topo.branchVec[2],)                 ## the 20 kV tie is really open
   br.status = 0
@@ -559,6 +592,7 @@ end
 # across them: the estimator partitions the measurement set by AC island
 # and gives each island its own reference.
 
+## uses: build_net (warm-up cell)
 iso = build_net()
 addProsumer!(net = iso, busName = "H2", type = "EXTERNALNETWORKINJECTION", referencePri = "H2", vm_pu = 1.015, va_deg = 0.0)
 for b in (1, 2)                                      ## coupler and tie open
@@ -603,6 +637,8 @@ end
 # The last number of the chapter. One flow measurement is off by 25 MW, far
 # outside anything noise explains.
 
+## uses: build_net (warm-up cell); full_set (The study network)
+@isdefined(full_set) || error("Run the section \"The study network\" first: it sets up full_set.")
 bad_set = deepcopy(full_set)
 k = findfirst(m -> m.id == "Pflow_branch_1_from", bad_set)
 bad_set[k] = Measurement(
@@ -618,6 +654,8 @@ end
 # a large sigma during the solve, the way an EMS suppression list does. The
 # statistics stay on the ORIGINAL sigma, so the alarm does not go away:
 
+## uses: build_net (warm-up cell); bad_set (Example 11)
+@isdefined(bad_set) || error("Run Example 11 first: it sets up bad_set.")
 res_repl = with_state_estimation_config(robust_mode = :replacement, k_suppress = 4.0, suppression_sigma = 2000.0) do
   runse!(build_net(), deepcopy(bad_set))
 end

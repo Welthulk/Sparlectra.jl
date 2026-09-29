@@ -88,30 +88,32 @@
 #nb ## the old version is still active; restart the runtime, then rerun
 #nb ## this cell.
 
-# ## Load the packages
+# ## Warm-up
 #
+# Julia compiles each function on first use. This cell loads the packages.
 # `Random` (standard library) seeds the synthetic measurement noise so
-# every run of this notebook produces the same numbers.
+# every run of this notebook produces the same numbers. The notebook needs
+# no helper functions; every chapter works on the study network of the
+# next section, so after this cell and that one any chapter can run on
+# its own. A code cell that uses a name from another cell says so in a
+# comment. Its last line, `warmup()`, runs every path the notebook
+# exercises once on tiny throwaway networks (the power flow, synthetic
+# measurements, the diagnostics report, the elimination loop, the plain
+# and robust estimator, the observability check with a current
+# measurement, and the shunt parameter estimation), so the real study
+# runs at full speed; its code is in
+# `docs/lit/warmup/workshop_se_diagnostics.jl` of the package. How long
+# the warm-up takes depends on the machine: a Colab session is several
+# times slower than a desktop; every later cell then runs without compile
+# pauses.
 
 using Sparlectra
 using Random
 
-# ## Warm-up
-#
-# Julia compiles each function on first use. This cell warms the paths the
-# notebook exercises (power flow, estimator, diagnostics) on a tiny
-# throwaway network, so the real study runs at full speed.
-
-wnet = Net(name = "warmup", baseMVA = 100.0)
-addBus!(net = wnet, busName = "A", vn_kV = 110.0)
-addBus!(net = wnet, busName = "B", vn_kV = 110.0)
-addProsumer!(net = wnet, busName = "A", type = "EXTERNALNETWORKINJECTION", referencePri = "A", vm_pu = 1.0, va_deg = 0.0)
-addProsumer!(net = wnet, busName = "B", type = "ENERGYCONSUMER", p = 10.0, q = 3.0)
-addPIModelACLine!(net = wnet, fromBus = "A", toBus = "B", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
-t_pf = @elapsed runpf!(wnet, 10, 1e-8, 0)
-setMeasurementsFromPF!(wnet; includeVm = true, includePinj = true, includeQinj = true, includePflow = true, includeQflow = true, noise = false)
-t_dg = @elapsed validate_measurements(wnet)
-println("warm: power flow ", round(t_pf; digits = 2), " s, diagnostics ", round(t_dg; digits = 2), " s (first calls compile)")
+## compile every path the chapters use once; the warm-up code is in
+## docs/lit/warmup/workshop_se_diagnostics.jl of the installed package
+include(pkgdir(Sparlectra, "docs", "lit", "warmup", "workshop_se_diagnostics.jl"))
+warmup()
 
 # ## The study network and a healthy measurement set
 #
@@ -193,6 +195,8 @@ println("reference PF: ", ite_pf, " iterations; ", length(net.measurements), " m
 # noise-free set), and `small_redundancy` flags verdicts on thin evidence
 # ($\nu < 30$).
 
+## uses: net (The study network and a healthy measurement set)
+@isdefined(net) || error("Run the section \"The study network and a healthy measurement set\" first: it sets up net.")
 rep = validate_measurements(net)
 println("converged:          ", rep.converged)
 println("global consistency: ", rep.global_consistency)
@@ -209,6 +213,8 @@ println("suspicious measurements: ", length(rep.suspicious_measurements))
 # diagnostics switch to a sparse Takahashi selected inverse, same numbers,
 # a fraction of the cost.
 
+## uses: rep (Example 1)
+@isdefined(rep) || error("Run Example 1 first: it sets up rep.")
 println("omega_path: ", rep.omega_path)
 
 # ## Localization: normalized residuals and w_ii
@@ -240,6 +246,8 @@ println("omega_path: ", rep.omega_path)
 # LOCALIZABLE; below that, a large $r^N$ may well be collateral damage
 # from an error elsewhere. `validate_measurements` reports both per row.
 
+## uses: net (The study network and a healthy measurement set)
+@isdefined(net) || error("Run the section \"The study network and a healthy measurement set\" first: it sets up net.")
 bad_idx = findfirst(m -> m.typ == Sparlectra.PflowMeas, net.measurements)
 m0 = net.measurements[bad_idx]
 net.measurements[bad_idx] = Measurement(typ = m0.typ, value = m0.value + 25.0, sigma = m0.sigma, busIdx = m0.busIdx, branchIdx = m0.branchIdx, direction = m0.direction, id = m0.id, linkIdx = m0.linkIdx)
@@ -272,6 +280,8 @@ end
 # pseudo-measurements, derived shunt rows) are protected from elimination.
 # The trace records every step; the stop reason says why the loop ended.
 
+## uses: net (The study network and a healthy measurement set)
+@isdefined(net) || error("Run the section \"The study network and a healthy measurement set\" first: it sets up net.")
 diag = with_state_estimation_config(max_eliminations = 3) do
   runse_diagnostics(net)
 end
@@ -309,6 +319,8 @@ println("after elimination: J/dof = ", round(fin.objective.value / fin.objective
 # sigmas, so the diagnostics remain honest. `SEResult.robustRows` lists
 # every row that left stage 0.
 
+## uses: net, vm_true (The study network and a healthy measurement set)
+(@isdefined(net) && @isdefined(vm_true)) || error("Run the section \"The study network and a healthy measurement set\" first: it sets up net, vm_true.")
 meas_bad = Measurement[m for m in net.measurements]   ## still contains the +25 MW error
 
 res_plain = with_state_estimation_config(max_iter = 20, tol = 1e-8, update_net = false) do
@@ -349,6 +361,8 @@ end
 #   EXCLUDED from the observability analysis: the system must be
 #   observable without them; they only sharpen it.
 
+## uses: net (The study network and a healthy measurement set, Example 4)
+@isdefined(net) || error("Run the section \"The study network and a healthy measurement set\", Example 4 first: they set up net.")
 p12 = get_branch_p_from_to_mw(net, "B1", "B2")
 q12 = get_branch_q_from_to_mvar(net, "B1", "B2")
 vm1 = net.nodeVec[net.busDict["B1"]]._vm_pu

@@ -41,9 +41,9 @@ function run_api_fast_tests()
         # case with the voltage-side release switched off (margin 1.0) ends
         # with three machines at Qmax above their setpoints
         zeng = joinpath(dirname(@__DIR__), "data", "scf", "case14_zeng_p306_activeSet_A.scf.json")
-        no_release = joinpath(tmpdir, "configuration.yaml")
-        write(no_release, replace(read(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, String), r"reenable_v_hyst_pu:\s*[0-9.e+-]+" => "reenable_v_hyst_pu: 1.0"))
-        nonphys = run_sparlectra_api(casefile = zeng, config_file = no_release, output_dir = joinpath(tmpdir, "nonphys"))
+        # (a case-scope key since 0.20.2: the Zeng case has a case
+        # configuration file, so the margin comes as an explicit override)
+        nonphys = run_sparlectra_api(casefile = zeng, config_file = Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, output_dir = joinpath(tmpdir, "nonphys"), config_overrides = Dict{String,Any}("power_flow.qlimits.reenable_v_hyst_pu" => 1.0))
         @test nonphys.converged
         @test nonphys.metadata["qv_non_physical_states"] == 3
         @test nonphys.metadata["qv_non_physical_buses"] == "2;3;6"

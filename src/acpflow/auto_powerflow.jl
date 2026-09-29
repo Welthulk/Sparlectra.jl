@@ -516,7 +516,7 @@ Generate the advisory hint list from the recorded diagnostics: each entry
 is `(id = :stable_key, text = "...")`. Purely derived from existing
 diagnostics; hints never mutate configuration or behavior.
 """
-function auto_pf_hints(features::AutoPfFeatures, evidence, attempts::Vector; converged::Bool)
+function auto_pf_hints(features::AutoPfFeatures, evidence, attempts::Vector; converged::Bool, max_switches::Int = 10)
   hints = NamedTuple[]
   if features.n_gen_with_q_limits == 0
     push!(hints, (id = :q_no_limits_defined, text = "No generator Q limits found in the source data. PV buses hold voltage without reactive bounds; results may be optimistic."))
@@ -527,10 +527,12 @@ function auto_pf_hints(features::AutoPfFeatures, evidence, attempts::Vector; con
   if features.n_q_narrow_range > 0
     push!(hints, (id = :q_narrow_range, text = "$(features.n_q_narrow_range) generator(s): Q range below min_q_range_pu, PV control not enforceable. Widen limits or accept PQ behavior."))
   end
-  frozen = [b for (b, c) in evidence.switch_counts if c >= 10]
+  # the cap of the run, not a fixed 10: with max_switches = 3 a bus froze
+  # at 3 and this hint stayed silent
+  frozen = [b for (b, c) in evidence.switch_counts if c >= max(max_switches, 1)]
   if !isempty(frozen)
     sort!(frozen)
-    push!(hints, (id = :q_switching_frozen, text = "Bus(es) $(join(frozen, ", ")): PV/PQ switching froze after repeated switches. Result is valid but bus type is guard-decided; consider lock_pv_to_pq_buses."))
+    push!(hints, (id = :q_switching_frozen, text = "Bus(es) $(join(frozen, ", ")): PV/PQ switching froze after $(max_switches) switches (power_flow.qlimits.guard.max_switches). Result is valid but bus type is guard-decided; consider lock_pv_to_pq_buses."))
   end
   modeflip = findfirst(a -> a.stage === :L5_qlimit_mode && a.converged, attempts)
   if modeflip !== nothing
@@ -711,7 +713,7 @@ function _execute_auto_sparlectra_powerflow!(net::Net, cfg::SparlectraConfig; pe
       execution.erg == 0 && break
     end
   end
-  hints = auto_pf_hints(features, evidence, attempts; converged = execution.erg == 0)
+  hints = auto_pf_hints(features, evidence, attempts; converged = execution.erg == 0, max_switches = pf.qlimits.guard_max_switches)
   final_solver = isempty(attempts) ? "rectangular" : last(filter(a -> !isempty(a.solver), attempts)).solver
   _set_auto_pf_record!(net, (
     features = features,
