@@ -341,7 +341,7 @@ function _write_performance_log(path::AbstractString, mode::Symbol, phases::Abst
     println(io, "Sparlectra single-run phase timing")
     println(io, "==================================")
     println(io, "mode: ", mode)
-    println(io, "This file describes one API/Web UI run; benchmark mode measures repeated solves.")
+    println(io, "This file describes one API/Web UI run (one solve).")
     println(io)
     for phase in (:request_parse, :case_resolution, :api_config_build, :case_loading_network_solver, :solver, :postprocessing, :artifact_writing, :total)
       haskey(phases, phase) || continue

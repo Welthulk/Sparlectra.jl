@@ -534,7 +534,6 @@ button,
   font-weight: 700;
 }
 
-.benchmark-section,
 .advanced-start-values {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -545,7 +544,6 @@ button,
   border-radius: 10px;
 }
 
-.benchmark-section legend,
 .advanced-start-values legend {
   padding: 0 .35rem;
   font-weight: 700;
@@ -927,10 +925,6 @@ dialog.feedback-modal::backdrop {
 
   .span-2 {
     grid-column: auto;
-  }
-
-  .benchmark-section {
-    grid-template-columns: 1fr;
   }
 
   .import-section {

@@ -84,6 +84,18 @@ function check_outputs(mdpath::AbstractString, nbpath::AbstractString)
   install_cell = any(occursin("Pkg.add(\"Sparlectra\")", join(cell.source)) for cell in nb.cells)
   @assert install_cell "Colab install cell missing from $(nbpath)"
   @assert !occursin("Pkg.add", read(mdpath, String)) "install cell leaked into $(mdpath)"
+  # Only the APSLF workshop uses AnalyticLoadFlow. Every other install cell
+  # switches its precompile workload off before Pkg.add, so the install does
+  # not compile a solver path the workshop never calls; the APSLF workshop
+  # keeps a workload.
+  install_source = join(join(cell.source) for cell in nb.cells if occursin("Pkg.add(url", join(cell.source)))
+  alf_off = occursin("ENV[\"ANALYTICLOADFLOW_PRECOMPILE_WORKLOAD\"] = \"off\"", install_source)
+  if first(splitext(basename(nbpath))) == "workshop_apslf"
+    @assert !alf_off "the APSLF workshop must not switch the AnalyticLoadFlow workload off: $(nbpath)"
+  else
+    @assert alf_off "install cell of $(nbpath) does not switch the AnalyticLoadFlow workload off"
+    @assert findfirst("ANALYTICLOADFLOW_PRECOMPILE_WORKLOAD", install_source).start < findfirst("Pkg.add(url", install_source).start "the workload switch of $(nbpath) comes after Pkg.add, too late for the precompile"
+  end
   return nothing
 end
 

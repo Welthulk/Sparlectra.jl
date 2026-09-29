@@ -64,6 +64,10 @@ Base.@kwdef struct ExampleSpec
   requires_package::Union{Nothing,String} = nothing
   requires_config::Bool = false
   timeout_s::Int = 600
+  # the environment the example runs in, relative to the repository root;
+  # `nothing` is the environment of the suite. An example that uses the
+  # application package (service layer, Web UI) runs in "app".
+  project::Union{Nothing,String} = nothing
 end
 
 function _parse_bool(value::AbstractString)
@@ -260,7 +264,8 @@ function _run_spec_subprocess(spec::ExampleSpec, opt, examples_dir::AbstractStri
   file_path = normpath(joinpath(examples_dir, spec.file))
   log_path = joinpath(logs_dir, spec.name * ".log")
   timeout_s = opt["timeout"] > 0 ? opt["timeout"] : spec.timeout_s
-  cmd = `$(Base.julia_cmd()) --startup-file=no --project=$(Base.active_project()) $(file_path) $(spec.args...)`
+  project = spec.project === nothing ? Base.active_project() : normpath(joinpath(examples_dir, "..", spec.project))
+  cmd = `$(Base.julia_cmd()) --startup-file=no --project=$(project) $(file_path) $(spec.args...)`
   # Examples are documented to run from the repository root
   # (`julia --project=. examples/<name>.jl`); several resolve data files and
   # configuration relative to the working directory.

@@ -32,7 +32,7 @@ the chapters climb three tiers:
 4. Transformer tap control (OLTC)
 5. Voltage-dependent reactive power, Q(U)
 
-> **Note:** On Google Colab the install cell takes a few minutes on a
+> **Note:** On Google Colab the install cell takes a minute or two on a
 > fresh session (package download and precompilation). Colab's Julia
 > version may change over time; this notebook targets Julia ≥ 1.12.
 

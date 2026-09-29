@@ -38,7 +38,7 @@ diagonals are the cross-ties B2-B5 and B3-B6):
    B7 ---- B6 ---- B5 ------+
 ```
 
-> **Note:** On Google Colab the install cell takes a few minutes on a
+> **Note:** On Google Colab the install cell takes a minute or two on a
 > fresh session (package download and precompilation). Colab's Julia
 > version may change over time; this notebook targets Julia ≥ 1.12.
 

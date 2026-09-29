@@ -41,6 +41,8 @@ const SUITE_SPECS = ExampleSpec[
   ExampleSpec(name = "auto_slack_selection", file = "others/exp_auto_slack_selection.jl", purpose = "automatic slack selection (power_flow.auto_slack / ensureSlack!) on a case whose data registers no voltage reference"),
   ExampleSpec(name = "powsybl_iidm_import", file = "others/exp_powsybl_iidm_import.jl", purpose = "PowSyBl IIDM file read in Julia without Python: shipped ieee14.xiidm and micro_grid_be.xiidm imported, solved and compared with the OpenLoadFlow reference"),
   ExampleSpec(name = "jacobian_block", file = "others/exp_jacobian_block.jl", purpose = "2x2 block of the rectangular Jacobian between two buses: layout, finite-difference check, zero block of unconnected buses, network diagram with the position of every bus in the Jacobian"),
+  ExampleSpec(name = "tap_influence_zone", file = "others/exp_tap_influence_zone.jl", purpose = "one transformer tap moved by a few steps, power flow before and after, the buses whose voltage changes beyond a threshold"),
+  ExampleSpec(name = "tap_sensitivity", file = "others/exp_tap_sensitivity.jl", purpose = "sensitivity of every bus voltage to a transformer tap from the Jacobian at the solution, checked against a second power flow; reach by rings and voltage levels"),
   ExampleSpec(name = "ac_rescue_dc_fallback", file = "others/exp_ac_rescue_dc_fallback.jl", purpose = "non-convergence handling: power_flow.rescue strategy ladder plus power_flow.dc.fallback standalone-DC result"),
   ExampleSpec(name = "cgmes_import_analysis", file = "others/exp_cgmes_import_analysis.jl", purpose = "analyzeCGMES report naming the missing declared dependency of an incomplete CGMES delivery"),
   ExampleSpec(name = "cgmes_infer_base_voltages", file = "others/exp_cgmes_infer_base_voltages.jl", purpose = "cgmes_import.infer_base_voltages: reconstruct missing nominal voltages from the SV state and solve"),
@@ -48,7 +50,7 @@ const SUITE_SPECS = ExampleSpec[
   ExampleSpec(name = "export_solution", file = "others/export_solution.jl", args = ["case9.m"], purpose = "exports a solver-agnostic PFModel/PFSolution for case9"),
   ExampleSpec(name = "network_analyzer", file = "others/network_analyzer.jl", purpose = "topology analysis of a small network before and after removing a branch"),
   ExampleSpec(name = "using_links", file = "others/using_links.jl", purpose = "busbar coupler modeled as a bus link, demonstrating open/close link behavior"),
-  ExampleSpec(name = "diagnose_self_check", file = "others/exp_diagnose_self_check.jl", purpose = "run_fixed_reference_self_check and the narrative diagnose.log report"),
+  ExampleSpec(name = "diagnose_self_check", file = "others/exp_diagnose_self_check.jl", project = "app", purpose = "run_fixed_reference_self_check and the narrative diagnose.log report"),
   ExampleSpec(name = "cgmes_export_demo", file = joinpath("cgmes", "cgmes_export_demo.jl"), optional = true, purpose = "CGMES 2.4.15 export (writeCGMESFiles) on a small net"),
 ]
 

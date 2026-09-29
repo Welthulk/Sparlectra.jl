@@ -691,7 +691,9 @@ The `benchmark` configuration section: repeated-run measurement of a case
 (`enabled`, `samples`, `seconds`).
 """
 Base.@kwdef struct BenchmarkConfig
-  enabled::Bool = true
+  # off by default: the benchmark mode needs BenchmarkTools, a weak
+  # dependency that an installation of Sparlectra does not bring
+  enabled::Bool = false
   methods::Vector{Symbol} = [:rectangular]
   seconds::Float64 = 2.0
   samples::Int = 50
@@ -2306,6 +2308,26 @@ function _load_and_validate_config(default_path::AbstractString, user_path::Abst
   return raw, isfile(user_path)
 end
 
+# Form fields of Web UI options that were taken out. Older Web UI states can
+# have left them in a stored configuration (a `form:` block, for example);
+# the refresh removes them wherever they stand and names each one. The
+# `benchmark:` section of the configuration is not among them: it stays for
+# run_matpower_case.
+const _RETIRED_WEBUI_FIELDS = Set(["benchmark_enabled", "benchmark_samples", "benchmark_seconds"])
+
+function _remove_retired_webui_fields!(raw::AbstractDict, prefix::String, removed::Vector{String})
+  for key in collect(keys(raw))
+    path = isempty(prefix) ? String(key) : string(prefix, ".", key)
+    if String(key) in _RETIRED_WEBUI_FIELDS
+      delete!(raw, key)
+      push!(removed, path)
+    elseif raw[key] isa AbstractDict
+      _remove_retired_webui_fields!(raw[key], path, removed)
+    end
+  end
+  return removed
+end
+
 # nested config dict -> flat dotted-key => scalar value map (read-only helper
 # for the user-set detection above)
 function _flatten_config_values!(out::Dict{String,Any}, raw::AbstractDict, prefix::String = "")
@@ -2323,6 +2345,10 @@ Compare a user YAML configuration with the current Sparlectra template, add
 missing keys from the template, and optionally normalize documented deprecated
 aliases. Dry-run mode returns the refreshed YAML without writing. Writes are
 explicit and create a timestamped backup unless `backup=false` is requested.
+Form fields of options the Web UI no longer has (`benchmark_enabled`,
+`benchmark_samples`, `benchmark_seconds`, wherever they stand in the file)
+are removed and listed in `removed_keys` and `warnings`; the refresh does
+not stop for them.
 """
 function refresh_sparlectra_config_file(path::AbstractString; write::Bool = false, backup::Bool = true, normalize_deprecated::Bool = true, default_path::AbstractString = DEFAULT_SPARLECTRA_CONFIG_PATH)
   isfile(path) || throw(ArgumentError("Sparlectra config file not found: $(path)"))
@@ -2339,12 +2365,17 @@ function refresh_sparlectra_config_file(path::AbstractString; write::Bool = fals
   # first would stamp config_version 1 and seed the new keys with defaults
   # while the user's values are still parked under the old names
   normalized_keys = normalize_deprecated ? _migrate_versioned_config_aliases!(refreshed, defaults) : String[]
+  removed_keys = String[]
+  _remove_retired_webui_fields!(refreshed, "", removed_keys)
+  for key in removed_keys
+    push!(warnings, "Removed $(key): the Web UI has no benchmark option since 0.20.2 (the benchmark section of the configuration stays for run_matpower_case).")
+  end
   missing_keys = String[]
   _add_missing_config_keys!(refreshed, defaults, missing_keys)
   normalize_deprecated && append!(normalized_keys, _normalize_deprecated_config_aliases!(refreshed))
   refreshed_text = _yaml_dict_text(refreshed)
   original_text = read(path, String)
-  changed = !isempty(missing_keys) || !isempty(normalized_keys) || refreshed_text != original_text
+  changed = !isempty(missing_keys) || !isempty(normalized_keys) || !isempty(removed_keys) || refreshed_text != original_text
   backup_path = nothing
   written = false
   success = true
@@ -2367,6 +2398,7 @@ function refresh_sparlectra_config_file(path::AbstractString; write::Bool = fals
     backup_path,
     missing_keys = sort!(missing_keys),
     normalized_keys = sort!(normalized_keys),
+    removed_keys = sort!(removed_keys),
     duplicate_keys = sort!(duplicate_keys),
     warnings,
     refreshed_text,

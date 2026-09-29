@@ -324,9 +324,9 @@ function run_webui_fast_tests()
             @test off_cfg["power_flow.flatstart"] === false
             @test off_cfg["power_flow.apslf_start.enabled"] === true
             # machine-scope keys are named and kept out of the case file
-            resp2 = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "sp_case14.scf.json", "settings_target" => "this_case", "benchmark_samples" => "5"); output_root=root, runtime=rt)
-            @test occursin("benchmark.samples", SparlectraApp._webui_urldecode(Dict(resp2.headers)["Location"]))
-            @test !haskey(Sparlectra.load_case_config(joinpath(cache, "sp_case14.scf.json")), "benchmark.samples")
+            resp2 = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "sp_case14.scf.json", "settings_target" => "this_case", "output_logfile_results" => "full"); output_root=root, runtime=rt)
+            @test occursin("output.logfile_results", SparlectraApp._webui_urldecode(Dict(resp2.headers)["Location"]))
+            @test !haskey(Sparlectra.load_case_config(joinpath(cache, "sp_case14.scf.json")), "output.logfile_results")
             # the general target merges into the YAML with a backup
             cfg = joinpath(root, "configuration.yaml")
             cp(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, cfg)

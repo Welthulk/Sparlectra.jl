@@ -670,7 +670,10 @@ output:
   startup_latency_hint: true
 
 benchmark:
-  enabled: true
+  # Repeated timing of run_matpower_case. Needs the package BenchmarkTools
+  # loaded next to Sparlectra (`using BenchmarkTools`); without it a run
+  # with enabled: true stops with that hint.
+  enabled: false
   # Allowed values: rectangular
   methods: [rectangular]
   seconds: 2.0

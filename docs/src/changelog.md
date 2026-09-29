@@ -1,3 +1,11 @@
+# Version 0.20.2 - 2026-09-29
+
+- BenchmarkTools is now an optional dependency (package extension). The benchmark mode of `run_matpower_case` requires `using BenchmarkTools`; without it, a clear error is raised. `benchmark.enabled` defaults to `false`.
+- A fresh install no longer pulls BenchmarkTools, JSON, StructUtils and Parsers.
+- Web UI: the benchmark option was removed.
+- Workshop notebooks skip the AnalyticLoadFlow precompile workload, except the APSLF workshop.
+- `examples/others/exp_tap_sensiitivity.jl` renamed to `exp_tap_sensitivity.jl`.
+
 # Version 0.20.1 - 2026-09-29
 
 A DTF demo deck; DTF decks are recognised by their content.

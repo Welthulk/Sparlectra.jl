@@ -21,7 +21,7 @@ contingency screening from `:off` to `:flag` and read what the screened
 share does and does not promise, and finally write the block back into
 a copy of the case file and read it again.
 
-> **Note:** On Google Colab the install cell takes a few minutes on a
+> **Note:** On Google Colab the install cell takes a minute or two on a
 > fresh session (package download and precompilation). Colab's Julia
 > version may change over time; this notebook targets Julia >= 1.12.
 

@@ -346,7 +346,7 @@ through the configuration precedence (`resolve_config`): saving with target
 "this case" writes case-scope keys into the case's configuration file,
 target "configuration file" merges into the general YAML (backup
 `.settings-save.bak`). The **Runs** page keeps the run parameters (modes,
-N-1 kind, scenario source, screening, DTF outage fields, benchmark trigger),
+N-1 kind, scenario source, screening, DTF outage fields),
 the state-estimation section (estimator options and measurement-set
 selection submitted with `se_mode`; measurement generator, set details with
 inline editors and measurement upload as fold-out tabs) and the N-1 editors
@@ -398,8 +398,7 @@ The settings and run forms offer:
 - MATPOWER import conventions: auto-profile mode (`off`, `recommend`,
   `apply`) plus transformer ratio, phase shift, bus shunt, PV voltage source
   and comparison reference;
-- logfile output mode, performance timing, post-run diagnostics, benchmark
-  enablement, samples and seconds.
+- logfile output mode, performance timing and post-run diagnostics.
 
 Only keys in `GUI_EDITABLE_CONFIG_KEYS` are submitted, the selected template
 is never modified, and each run writes `effective_config.yaml`. Every control
@@ -691,8 +690,7 @@ missing optional artifacts and unsafe names.
 
 - **Logfile output mode**: `classic` writes the result report plus a
   compact timing and status summary (`solver_time`, `representative_time`,
-  iterations, final mismatch, outcome; benchmark median and sample count when
-  benchmarking is on); `full` adds **Full run details** with the effective
+  iterations, final mismatch, outcome); `full` adds **Full run details** with the effective
   typed configuration, artifact choices and status diagnostics. MATPOWER
   `.m` runs also print the "Original/Final effective MATPOWER import
   options" and "MATPOWER auto-profile recommendations" tables, because `.m`
@@ -702,8 +700,11 @@ missing optional artifacts and unsafe names.
   `performance.log` with the phases of one request (request parsing, case
   resolution, configuration, case loading and network construction, solve,
   postprocessing, artifact writing, solver and total time; `full` adds
-  internal profile entries), unlike `benchmark.enabled`, which measures
-  repeated solves and their median.
+  internal profile entries). A run from the Web UI solves once; repeated
+  timing is the benchmark mode of `run_matpower_case` in a script
+  ([Performance Profiling](performance_profiling.md#perf-benchmark)). Older
+  saved configurations with the former benchmark fields of the form are
+  cleaned by **Refresh configuration**, which names each removed field.
 - **Export case as CGMES delivery (EQ+TP+SSH+SV, ZIP)** writes the case as
   one re-importable delivery into the run's artifacts, for every case format
   and also on non-converged runs; see [CGMES Export](cgmes_export.md).

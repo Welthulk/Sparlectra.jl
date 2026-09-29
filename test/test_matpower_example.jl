@@ -20,6 +20,11 @@ using Sparlectra
 using LinearAlgebra
 using Test
 using Logging
+# the benchmark mode of the runner lives in the package extension
+# SparlectraBenchmarkToolsExt; loading BenchmarkTools here loads it (under
+# Pkg.test the test target brings the package, otherwise the test runner
+# stacks a small environment with it onto the load path)
+using BenchmarkTools
 
 function run_matpower_example_tests()
   @testset "Central Sparlectra configuration" begin (function ()
@@ -506,7 +511,40 @@ matpower_import:
     @test occursin("qlimit_reenable_events=63", summary)
   end)() end
 
+  # Without BenchmarkTools the benchmark mode stops before the case is read,
+  # with the way to get it, and a run with the mode off needs nothing. A
+  # process of its own, in the library environment alone: in this process
+  # the extension is loaded already.
+  @testset "benchmark mode without BenchmarkTools" begin (function ()
+    cfg_on = test_scratch_path(".yaml")
+    write(cfg_on, "config_version: 1\nscope: general\nbenchmark:\n  enabled: true\n  methods: [rectangular]\n  seconds: 0.05\n  samples: 2\n")
+    script = test_scratch_path(".jl")
+    write(script, """
+    using Sparlectra
+    println("extension loaded: ", Base.get_extension(Sparlectra, :SparlectraBenchmarkToolsExt) !== nothing)
+    try
+      Sparlectra.run_matpower_case(; casefile = "no_such_case_is_read.m", config_file = $(repr(cfg_on)))
+      println("no error")
+    catch err
+      println("error: ", sprint(showerror, err))
+    end
+    """)
+    library = normpath(joinpath(@__DIR__, ".."))
+    # stderr goes into the same text, so a warning of the child process
+    # would show in the assertions instead of in the test log
+    buffer = IOBuffer()
+    run(pipeline(Cmd(`$(Base.julia_cmd()) --startup-file=no --project=$(library) $(script)`; ignorestatus = true); stdout = buffer, stderr = buffer))
+    out = String(take!(buffer))
+    @test !occursin("Warning", out)
+    @test occursin("extension loaded: false", out)
+    @test occursin("benchmark.enabled needs the package BenchmarkTools", out)
+    @test occursin("using BenchmarkTools", out)
+    # the check comes first: the case of the run is never looked for
+    @test !occursin("no_such_case_is_read", out)
+  end)() end
+
   @testset "MATPOWER benchmark output routing" begin
+    @test Base.get_extension(Sparlectra, :SparlectraBenchmarkToolsExt) !== nothing
     test_cfg = test_scratch_path(".yaml")
     write(test_cfg, """
 benchmark:

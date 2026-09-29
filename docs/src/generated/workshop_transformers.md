@@ -21,7 +21,7 @@ tap type move its quantity, close the loop with the outer phase-tap
 controller, and finish with a three-winding transformer carrying a tap
 on one leg.
 
-> **Note:** On Google Colab the install cell takes a few minutes on a
+> **Note:** On Google Colab the install cell takes a minute or two on a
 > fresh session (package download and precompilation). Colab's Julia
 > version may change over time; this notebook targets Julia ≥ 1.12.
 

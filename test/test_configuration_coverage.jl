@@ -1026,6 +1026,11 @@ function test_configuration_webui_keys_both_directions()
       "power_flow.islands.reference_policy" => "island solving follows the network, not a form choice",
       "power_flow.method" => "the form offers the solver choice as power_flow.solver; method has one supported value",
       "short_circuit.sweep_method" => "short-circuit performance switch, YAML and API only",
+      # the benchmark mode belongs to run_matpower_case in a script (with
+      # `using BenchmarkTools`); the Web UI has no benchmark option since 0.20.2
+      "benchmark.enabled" => "benchmark mode of run_matpower_case, scripts only; no Web UI option",
+      "benchmark.samples" => "benchmark mode of run_matpower_case, scripts only; no Web UI option",
+      "benchmark.seconds" => "benchmark mode of run_matpower_case, scripts only; no Web UI option",
       "power_flow.tol_MW" => "set through the tolerance VALUE field plus its unit selector (pu or MW), so one number cannot claim two units",
       "state_estimation.robust" => "issue #377: case scope like the other estimator options, but no dedicated UI control (the form exposes robust_mode instead); set via configuration.yaml or the case sidecar",
       "state_estimation.topology_precheck" => "issue #377: case scope, no dedicated UI control; set via configuration.yaml or the case sidecar",
@@ -1213,6 +1218,20 @@ function test_configuration_refresh()
     @test cfg.powerflow.start_mode.voltage_mode === :profile_blend
     @test cfg.powerflow.start_mode.profile_source === :matpower_reference
     @test cfg.powerflow.qlimits.enforcement_mode === :active_set
+
+    # form fields of the Web UI benchmark option (taken out in 0.20.2) in an
+    # older stored configuration: removed and named, the refresh does not
+    # stop; the benchmark section of the configuration stays
+    retired = test_scratch_path(".yaml")
+    write(retired, "config_version: 1\nscope: general\nbenchmark:\n  samples: 7\nform:\n  benchmark_samples: 10\n  benchmark_seconds: 1.0\n  gen_seed: 3\n")
+    retired_result = Sparlectra.refresh_sparlectra_config_file(retired)
+    @test retired_result.success
+    @test retired_result.changed
+    @test retired_result.removed_keys == ["form.benchmark_samples", "form.benchmark_seconds"]
+    @test count(w -> occursin("the Web UI has no benchmark option", w), retired_result.warnings) == 2
+    @test !occursin("benchmark_samples", retired_result.refreshed_text)
+    @test occursin("gen_seed: 3", retired_result.refreshed_text)
+    @test occursin("samples: 7", retired_result.refreshed_text)
 
     for (legacy, canonical) in (("matpower_simultaneous", "classic_simultaneous"), ("matpower_one_at_a_time", "classic_one_at_a_time"))
       p = test_scratch_path(".yaml")

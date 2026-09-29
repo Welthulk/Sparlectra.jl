@@ -44,7 +44,7 @@ verticals B2-B7 and B3-B6); the grid connection under study sits at B1:
    B8 ---- B7 ---- B6 ---- B5
 ```
 
-> **Note:** On Google Colab the install cell takes a few minutes on a
+> **Note:** On Google Colab the install cell takes a minute or two on a
 > fresh session (package download and precompilation). Colab's Julia
 > version may change over time; this notebook targets Julia ≥ 1.12.
 
