@@ -184,7 +184,11 @@ function _run_guarded_apslf_start(Ybus, Vraw::Vector{ComplexF64}, S::Vector{Comp
       Sspec = S,
       V0 = Vraw,
     )
-    sol = solvePf(solver, model)
+    # The APSLF start is opt-in, but `enabled` is a run-time value, so
+    # inference would compile the whole AnalyticLoadFlow solver into every
+    # first Newton solve (measured: 3.8 s of the 17 s first runpf! on a
+    # two-bus net). The barrier defers that to the first run that asks for it.
+    sol = Base.inferencebarrier(solvePf)(solver, model)::PFSolution
     if length(sol.V) == n && all(v -> isfinite(real(v)) && isfinite(imag(v)), sol.V)
       candidate = sol.V
       trial_mismatch = _max_rectangular_mismatch(Ybus, candidate, S, bus_types, Vset, slack_idx)
