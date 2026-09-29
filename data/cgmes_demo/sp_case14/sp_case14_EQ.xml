@@ -532,9 +532,11 @@
     <cim:SynchronousMachine.minQ>-25.0</cim:SynchronousMachine.minQ>
     <cim:SynchronousMachine.maxQ>25.0</cim:SynchronousMachine.maxQ>
     <cim:RegulatingCondEq.RegulatingControl rdf:resource="#_fba3766f-5aa0-5304-9994-91f7fca9b717"/>
+    <cim:RotatingMachine.ratedU>110.0</cim:RotatingMachine.ratedU>
   </cim:SynchronousMachine>
   <cim:GeneratingUnit rdf:ID="_e60a8d76-9de4-5b4f-b933-59e8634fb1d2">
     <cim:IdentifiedObject.name>Gen_110_GU</cim:IdentifiedObject.name>
+    <cim:GeneratingUnit.maxOperatingP>50.0</cim:GeneratingUnit.maxOperatingP>
   </cim:GeneratingUnit>
   <cim:RegulatingControl rdf:ID="_fba3766f-5aa0-5304-9994-91f7fca9b717">
     <cim:IdentifiedObject.name>Gen_110_RC</cim:IdentifiedObject.name>
@@ -553,9 +555,11 @@
     <cim:SynchronousMachine.minQ>-15.0</cim:SynchronousMachine.minQ>
     <cim:SynchronousMachine.maxQ>15.0</cim:SynchronousMachine.maxQ>
     <cim:RegulatingCondEq.RegulatingControl rdf:resource="#_8490f6c7-ef55-50fb-b40c-136fa2f7e0ae"/>
+    <cim:RotatingMachine.ratedU>110.0</cim:RotatingMachine.ratedU>
   </cim:SynchronousMachine>
   <cim:GeneratingUnit rdf:ID="_67c11e38-3b76-5fe9-847f-f523144ef51b">
     <cim:IdentifiedObject.name>Gen_110_GU</cim:IdentifiedObject.name>
+    <cim:GeneratingUnit.maxOperatingP>35.0</cim:GeneratingUnit.maxOperatingP>
   </cim:GeneratingUnit>
   <cim:RegulatingControl rdf:ID="_8490f6c7-ef55-50fb-b40c-136fa2f7e0ae">
     <cim:IdentifiedObject.name>Gen_110_RC</cim:IdentifiedObject.name>

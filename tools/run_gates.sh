@@ -88,6 +88,34 @@ else
   esac
 fi
 
+# --- docs and workshops run on the COMMIT, not on the working tree ---------
+# Both gates build pages that read files. On the working tree they also see
+# what is in no repository (ignored and untracked files), so a page that
+# reads such a file passes here and fails in a build on a fresh checkout.
+# These two gates therefore run in a work tree of HEAD,
+# which holds the tracked files and nothing else. What is not committed is
+# not part of the run, so every uncommitted change of a tracked file
+# refuses the start (with --allow-dirty it is named and left out).
+on_commit=no
+case "$gate" in
+  docs | workshops) on_commit=yes ;;
+esac
+if [ "$on_commit" = "yes" ]
+then
+  uncommitted=$(git -C "$repo_root" status --porcelain --untracked-files=no)
+  if [ -n "$uncommitted" ]
+  then
+    if [ "$allow_dirty" != "--allow-dirty" ]
+    then
+      echo "run_gates: the $gate gate runs on the commit, and these tracked files carry uncommitted changes that would not be part of the run. Commit first:" >&2
+      echo "$uncommitted" >&2
+      exit 1
+    fi
+    echo "run_gates: --allow-dirty: the $gate gate runs on HEAD; these uncommitted changes are NOT part of the run:"
+    echo "$uncommitted"
+  fi
+fi
+
 if [ "$allow_dirty" != "--allow-dirty" ]
 then
   # data/ is included: the suite READS tracked data files (the shipped demo
@@ -160,6 +188,33 @@ date > "$lockdir/started"
 echo $$ > "$lockdir/pid"
 trap 'rm -rf "$lockdir"' EXIT INT TERM
 
+# the tree the gate runs in: the repository, or a work tree of HEAD. The
+# work tree has a fixed place next to the lock, so its compile cache is
+# found again by the next run. The manifests are environment state of this
+# machine, not content of the commit (they are not tracked), and are copied.
+run_root=$repo_root
+if [ "$on_commit" = "yes" ]
+then
+  run_root="$git_common/sparlectra_gate_worktree"
+  git -C "$repo_root" worktree remove --force "$run_root" >/dev/null 2>&1
+  rm -rf "$run_root"
+  git -C "$repo_root" worktree prune
+  if ! git -C "$repo_root" worktree add --detach "$run_root" HEAD >/dev/null
+  then
+    echo "run_gates: could not create the work tree $run_root" >&2
+    exit 1
+  fi
+  trap 'git -C "$repo_root" worktree remove --force "$run_root" >/dev/null 2>&1; rm -rf "$lockdir"' EXIT INT TERM
+  for manifest in Manifest.toml app/Manifest.toml docs/Manifest.toml
+  do
+    if [ -f "$repo_root/$manifest" ] && [ ! -f "$run_root/$manifest" ]
+    then
+      cp "$repo_root/$manifest" "$run_root/$manifest"
+    fi
+  done
+  echo "run_gates: the $gate gate runs on commit $(git -C "$repo_root" rev-parse --short HEAD) in $run_root (tracked files only)"
+fi
+
 # --- gates run on package images with the full precompile workload ---------
 # Measured (webui test group, same commit, same machine): 185 s
 # on the default image (workload off, 14 MB), 69 s on the full image
@@ -179,8 +234,8 @@ trap 'rm -rf "$lockdir"' EXIT INT TERM
 # change (a bigger image, nothing else changes).
 export SPARLECTRA_PRECOMPILE_WORKLOAD=full
 image_probe='mode = isdefined(M, :PRECOMPILE_WORKLOAD_MODE) ? M.PRECOMPILE_WORKLOAD_MODE : "unknown"; if mode != "full"; println("run_gates: ", NAME, " image was built with workload ", repr(mode), "; rebuilding it with the full workload (about a minute, later sessions load it too)"); t = @elapsed Base.compilecache(Base.identify_package(NAME)); println("run_gates: ", NAME, " image rebuilt in ", round(Int, t), " s"); end'
-julia --startup-file=no --project="$repo_root" -e "using Sparlectra; const M = Sparlectra; const NAME = \"Sparlectra\"; $image_probe" || exit 1
-julia --startup-file=no --project="$repo_root/app" -e "using SparlectraApp; const M = SparlectraApp; const NAME = \"SparlectraApp\"; $image_probe" || exit 1
+julia --startup-file=no --project="$run_root" -e "using Sparlectra; const M = Sparlectra; const NAME = \"Sparlectra\"; $image_probe" || exit 1
+julia --startup-file=no --project="$run_root/app" -e "using SparlectraApp; const M = SparlectraApp; const NAME = \"SparlectraApp\"; $image_probe" || exit 1
 
 # --startup-file=no: a gate is not an interactive session, and a personal
 # startup.jl usually loads Revise. Measured: loading Revise
@@ -190,25 +245,25 @@ julia --startup-file=no --project="$repo_root/app" -e "using SparlectraApp; cons
 status=0
 if [ "$gate" = "docs" ]
 then
-  julia --startup-file=no --project="$repo_root/docs" "$repo_root/docs/make.jl"
+  julia --startup-file=no --project="$run_root/docs" "$run_root/docs/make.jl"
   status=$?
   # the Web UI help registry links into the documentation by anchor; a
   # renamed anchor or a dropped section must fail HERE, in the gate a docs
   # change runs, not in the next extd run
   if [ "$status" -eq 0 ]
   then
-    julia --startup-file=no --project="$repo_root/app" "$repo_root/tools/check_webui_doc_links.jl"
+    julia --startup-file=no --project="$run_root/app" "$run_root/tools/check_webui_doc_links.jl"
     status=$?
   fi
   # the help pages ship the referenced sections as generated source; an
   # edited section that was not regenerated fails here as well
   if [ "$status" -eq 0 ]
   then
-    julia --startup-file=no --project="$repo_root/app" "$repo_root/tools/generate_webui_help_excerpts.jl" --check
+    julia --startup-file=no --project="$run_root/app" "$run_root/tools/generate_webui_help_excerpts.jl" --check
     status=$?
   fi
 else
-  SPARLECTRA_TEST_PROFILE=$gate julia --startup-file=no --project="$repo_root" "$repo_root/test/runtests.jl"
+  SPARLECTRA_TEST_PROFILE=$gate julia --startup-file=no --project="$run_root" "$run_root/test/runtests.jl"
   status=$?
 fi
 exit $status

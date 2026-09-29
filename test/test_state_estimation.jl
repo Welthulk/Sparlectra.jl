@@ -2440,17 +2440,17 @@ function run_state_estimation_tests()
   # Aggregates all state-estimation unit tests to keep coverage explicit and ordered.
 
 """
-State estimation on a DTF network case: the format has to travel with the
-request. A bare `.DAT` is ambiguous (FOR001 network vs FOR002 reference), so
-the detector refuses to guess; the SE service used to detect the format
-itself and therefore rejected every DTF case with "Ambiguous .DAT input"
-before it ever looked at the measurements (found while tracing
-the sysimage workload). It now takes `case_format` like the power-flow
-service does, and DTF is an accepted SE format.
+State estimation on a DTF network case, on the shipped demo deck. The SE
+service takes `case_format` like the power-flow service does, and DTF is
+an accepted SE format. Since the format detection judges a deck by its
+content, the run needs no named format either: the same request without
+`case_format` gives the same result. (Before that a `.DAT` file without a
+named format was refused, and the SE service, which once detected the
+format itself, rejected every DTF case before it looked at the
+measurements.)
 """
 function test_state_estimation_dtf_service()
-  dtf = joinpath(dirname(@__DIR__), "data", "DTF", "FOR001.DAT")
-  isfile(dtf) || return true
+  dtf = joinpath(dirname(@__DIR__), "data", "dtf_demo", "sp_dtf5.DAT")
   cfg = Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH
   net = Sparlectra.DTFImporter.build_net(Sparlectra.DTFImporter.read_dtf(dtf))
   runpf!(net, 40, 1e-8, 0; method = :rectangular)
@@ -2466,14 +2466,25 @@ function test_state_estimation_dtf_service()
     @test d_ok["status"] == "succeeded"
     @test d_ok["metadata"]["run_mode"] == "se"
 
-    # without the format the run must fail with the way out NAMED, not with
-    # a bare "unknown format" the caller cannot act on
-    amb = redirect_stdout(devnull) do
-      SparlectraApp._run_state_estimation_service(dtf, cfg, joinpath(d, "run_amb"), "dtf_se_amb", mf)
+    # without the format the deck is recognised by its content: the same
+    # run, the same objective
+    auto = redirect_stdout(devnull) do
+      SparlectraApp._run_state_estimation_service(dtf, cfg, joinpath(d, "run_auto"), "dtf_se_auto", mf)
     end
-    d_amb = SparlectraApp.to_dict(amb)
-    @test d_amb["status"] == "failed"
-    @test occursin("dtf_for001", d_amb["message"])
+    d_auto = SparlectraApp.to_dict(auto)
+    @test d_auto["status"] == "succeeded"
+    @test d_auto["metadata"]["se_objective"] == d_ok["metadata"]["se_objective"]
+
+    # a .DAT file that is no deck fails with a message that names the file
+    # and the reason
+    report = joinpath(d, "report.DAT")
+    write(report, "plain unsupported data\n")
+    refused = redirect_stdout(devnull) do
+      SparlectraApp._run_state_estimation_service(report, cfg, joinpath(d, "run_refused"), "dtf_se_refused", mf)
+    end
+    d_refused = SparlectraApp.to_dict(refused)
+    @test d_refused["status"] == "failed"
+    @test occursin("report.DAT is not a DTF network deck", d_refused["message"])
   end
   # the import entry point accepts the format and rejects an unsupported one
   @test SparlectraApp._se_import_case(dtf, Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true); requested_format = :dtf_for001).net isa Sparlectra.Net

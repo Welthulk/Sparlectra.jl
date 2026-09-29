@@ -239,12 +239,11 @@ function _webui_classify_dat_content(path::AbstractString)::Symbol
   catch
     return :unknown_dat
   end
-  try
-    case = DTFImporter.read_dtf(path; strict = false)
-    if case.size.NGES > 0 && length(case.buses) == case.size.NGES && length(case.branches) == case.size.LGES
-      return isempty(case.outages) ? :dtf_network_case : :dtf_network_case_with_outages
-    end
-  catch
+  # a network deck is what the DTF reader takes as one, the rule of the
+  # format detection of the library (`is_dtf_deck`); the second read only
+  # looks for the outage records of a file that has passed
+  if DTFImporter.is_dtf_deck(path)
+    return isempty(DTFImporter.read_dtf(path; strict = false).outages) ? :dtf_network_case : :dtf_network_case_with_outages
   end
   has_outages = occursin(r"(?im)^\s*AUSFALL\s*$", text) && occursin(r"(?im)^\s*ENDE\s*$", text)
   if has_outages
@@ -1194,13 +1193,17 @@ function _webui_case_format_hint(casefile::AbstractString; case_directory::Union
   if !isempty(resolved) && (isfile(resolved) || isdir(resolved))
     return try
       _detect_case_format(resolved)
-    catch
-      # ambiguous .DAT: the detector refuses to guess, the form still offers
-      # the DTF option (choosing it is exactly the way out the error names)
-      lowercase(splitext(resolved)[2]) == ".dat" ? :dtf_for001 : :auto
+    catch err
+      # a file the detection refuses by name (a .DAT file that is no
+      # network deck): no format is preselected for it, the content has
+      # decided and the extension does not overrule it
+      err isa ArgumentError || rethrow()
+      :auto
     end
   end
   ext = lowercase(splitext(value)[2])
+  # a name that resolves to no file has no content to judge; the extension
+  # is the only hint there is
   ext == ".dat" && return :dtf_for001
   # PowSyBl before the CGMES rule: a .powsybl bundle is a directory too
   ext in (".powsybl", ".xiidm") && return :powsybl

@@ -1060,9 +1060,9 @@ function run_cgmes_importer_tests()
       @test occursin("ExternalNetworkInjection.maxInitialSymShCCurrent", read(joinpath(cgmes_fixture_dir("sp_case14"), "sp_case14_EQ.xml"), String))
       sc = run_with_expected_warnings(() -> start_powerflow_run(Dict("casefile" => z, "config_file" => cfg, "output_root" => root, "short_circuit_mode" => true)), String[])
       sc_log = read(joinpath(sc["output_dir"], "run.log"), String)
-      # the delivery states no size for its machines: the default stands on
-      # the network base, which is one reason of its own
-      @test all(text -> occursin(text, sc_log), ("Substituted defaults:", "has neither x''_d nor ratedS", "rests on defaults alone (0.2 pu on the network base"))
+      # the delivery carries the maximum active power of its units
+      # (GeneratingUnit.maxOperatingP), the default stands on it
+      @test all(text -> occursin(text, sc_log), ("Substituted defaults:", "default 0.2 pu on its maximum active power 50.0 MW", "default 0.2 pu on its maximum active power 35.0 MW"))
       @test sc["success"] === true
       # one source with data, two without: a warning that says so
       @test sc["status"] == "warning"
@@ -1078,6 +1078,13 @@ function run_cgmes_importer_tests()
       @test max_rows[1] == "bus,vn_kV,island,status,c,zk_ohm,rx_ratio,ik_kA,sk_MVA,kappa,ip_kA,flagged,reasons"
       @test length(max_rows) - 1 == 14
       @test all(occursin("true", split(l, ',')[12]) for l in max_rows[2:end])
+      # the delivery and the case file it was written from give the same
+      # currents: the reference values of the case file hold here as well
+      case_reference = Sparlectra.scf_json_parse(read(joinpath(@__DIR__, "fixtures", "demo_cases", "sp_case14.json"), String))["short_circuit"]
+      for (bus, reference) in case_reference
+        row = split(only(l for l in max_rows[2:end] if startswith(l, bus * ",")), ',')
+        @test isapprox(parse(Float64, row[8]), reference["ik_kA"]; atol = 1e-4)
+      end
       @test isfile(joinpath(root, rid, "short_circuit_min.csv"))
       run_log = read(joinpath(root, rid, "run.log"), String)
       @test occursin("Short-circuit run", run_log)

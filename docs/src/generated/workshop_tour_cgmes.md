@@ -25,8 +25,7 @@ purpose: Literate.jl source of the foreign-formats tour: the network
          network as pypowsybl wrote it, compared with OpenLoadFlow) and
          the legacy DTF deck (FOR001 with its outage records). Runs on
          the official conformity test sets, fetched on demand, plus the
-         shipped PowSyBl file; the DTF chapter runs on a deck of the
-         reader's own under data/DTF and states it where none is there.
+         shipped PowSyBl and DTF files.
 
 # The Sparlectra workshop tour: foreign formats
 
@@ -57,9 +56,8 @@ each one apart:
   limits; chapter 6 reads a file that pypowsybl wrote and compares the
   result with OpenLoadFlow.
 - **DTF**, the fixed-column input deck (FOR001) of a legacy load-flow
-  program, with its own outage records; chapter 7 reads one and applies
-  an outage from the deck. Decks are external data and do not ship; the
-  chapter runs on a deck of your own.
+  program, with its own outage records; chapter 7 reads the shipped demo
+  deck and applies an outage from it.
 
 1. CGMES: anatomy of a delivery, profiles, and what a summary shows
 2. CGMES: when an import cannot work, the analysis report
@@ -76,10 +74,8 @@ Three data sources, one per format. The ENTSO-E conformity package
 bundles reference networks in several variants;
 `ensureCGMESTestConfigurations` downloads and extracts it once into a
 local cache and returns the extraction root (chapters 1 to 5). The
-PowSyBl file ships with Sparlectra under `data/powsybl` (chapter 6),
-nothing to fetch. A DTF deck does not ship: chapter 7 reads
-`data/DTF/FOR001.DAT` where you have placed one and says so where the
-file is missing.
+PowSyBl file and the DTF demo deck ship with Sparlectra under
+`data/powsybl` and `data/dtf_demo` (chapters 6 and 7), nothing to fetch.
 
 ````@example workshop_tour_cgmes
 using Sparlectra
@@ -93,14 +89,13 @@ microgrid_bd = joinpath(root, "MicroGrid", "BaseCase_BC", "CGMES_v2.4.15_MicroGr
 minigrid_nb = joinpath(root, "MiniGrid", "NodeBreaker", "CGMES_v2.4.15_MiniGridTestConfiguration_BaseCase_Complete_v3")
 minigrid_bd = joinpath(root, "MiniGrid", "NodeBreaker", "CGMES_v2.4.15_MiniGridTestConfiguration_Boundary_v3")
 
-# the shipped file of chapter 6 and the place of a deck for chapter 7
+# the shipped files of chapters 6 and 7
 powsybl_dir = joinpath(pkgdir(Sparlectra), "data", "powsybl")
 # the solution OpenLoadFlow computed for that file, kept with the tests
 powsybl_reference = joinpath(pkgdir(Sparlectra), "test", "fixtures", "powsybl", "micro_grid_be.powsybl", "reference_buses.csv")
-dtf_deck = joinpath(pkgdir(Sparlectra), "data", "DTF", "FOR001.DAT")
-have_deck = isfile(dtf_deck)
+dtf_deck = joinpath(pkgdir(Sparlectra), "data", "dtf_demo", "sp_dtf5.DAT")
 println("PowSyBl file: ", joinpath(powsybl_dir, "micro_grid_be.xiidm"))
-println("DTF deck:     ", have_deck ? dtf_deck : "none at " * dtf_deck * ", chapter 7 shows the calls without results")
+println("DTF deck:     ", dtf_deck)
 ````
 
 The first power-flow solve of a session compiles the solver (about a
@@ -382,14 +377,18 @@ imports just the same. Details: [PowSyBl Import](https://welthulk.github.io/Spar
 
 ## Chapter 7: DTF, a legacy input deck with its own outage records
 
-**What DTF is.** A fixed-column text deck of a legacy load-flow program,
-the format of the Testnetz13 validation examples: FOR001 is the input
-(the network plus run parameters), FOR002 the program's printed result
-report. A deck is a sequence of CARDS in a fixed order: parameter and
+**What DTF is.** A fixed-column text deck of a legacy load-flow program:
+FOR001 is the input (the network plus run parameters), FOR002 the
+program's printed result report. The deck of this chapter,
+`data/dtf_demo/sp_dtf5.DAT`, is a self-built five-bus network in that
+layout (a ring of 110 kV lines, one 110/20 kV transformer with a tap
+control, two outage records); decks of other origin are external data
+and do not ship. A deck is a sequence of CARDS in a fixed order: parameter and
 text cards, the nominal voltages the voltage-level indices refer to, a
 size card with the bus and branch counts and the NAMED slack bus, the
 branch cards (`L` for a line, `T` for a transformer, with impedances in
-per unit of the level), compensation cards, transformer-control cards
+ohm and admittances in siemens at the voltage level the card names),
+compensation cards, transformer-control cards
 (winding voltages, the longitudinal tap range and step, an optional
 skew-angle regulator), the bus cards (type, level index, name, start
 voltage, load, generation), and after the buses an optional block of
@@ -403,11 +402,10 @@ everything the deck says stays on the case object before any network
 exists:
 
 ````@example workshop_tour_cgmes
-case = have_deck ? Sparlectra.DTFImporter.read_dtf(dtf_deck; strict = false) : nothing
-have_deck || println("no deck at ", dtf_deck)
-have_deck && println("deck: base ", case.baseMVA, " MVA, ", length(case.buses), " buses, ", length(case.branches), " branches (", count(b -> b.kind == 'T', case.branches), " transformers), ", length(case.transformer_controls), " transformer control(s), ", length(case.outages), " outage record(s)")
-have_deck && println("nominal voltages (kV): ", join(case.nominal_voltages_kv, ", "), "; slack bus of the size card: ", case.size.slack)
-@assert !have_deck || (length(case.buses) > 0 && length(case.branches) > 0)
+case = Sparlectra.DTFImporter.read_dtf(dtf_deck)
+println("deck: base ", case.baseMVA, " MVA, ", length(case.buses), " buses, ", length(case.branches), " branches (", count(b -> b.kind == 'T', case.branches), " transformers), ", length(case.transformer_controls), " transformer control(s), ", length(case.outages), " outage record(s)")
+println("nominal voltages (kV): ", join(case.nominal_voltages_kv, ", "), "; slack bus of the size card: ", case.size.slack)
+@assert (length(case.buses), length(case.branches), length(case.transformer_controls), length(case.outages)) == (5, 6, 1, 2)
 ````
 
 **Example 7.2: the network and its solve.** `build_net` turns the records
@@ -416,25 +414,22 @@ slack as the reference, PQ buses kept as fixed injections); from there
 it is the ordinary solver:
 
 ````@example workshop_tour_cgmes
-if have_deck
-  dnet = Sparlectra.DTFImporter.build_net(case)
-  println("network: ", length(dnet.nodeVec), " buses, ", length(dnet.branchVec), " branches")
-  @assert length(dnet.nodeVec) == length(case.buses)
-  dite, derg = runpf!(dnet, 50, 1e-8, 0)
-  @assert derg == 0
-  calcNetLosses!(dnet)
-  println("solved in ", dite, " iterations; losses ", round(dnet.totalLosses[end][1]; digits = 3), " MW")
-else
-  println("no deck at ", dtf_deck)
-end
+dnet = Sparlectra.DTFImporter.build_net(case)
+println("network: ", length(dnet.nodeVec), " buses, ", length(dnet.branchVec), " branches")
+@assert length(dnet.nodeVec) == length(case.buses)
+dite, derg = runpf!(dnet, 50, 1e-8, 0)
+@assert derg == 0
+calcNetLosses!(dnet)
+println("solved in ", dite, " iterations; losses ", round(dnet.totalLosses[end][1]; digits = 3), " MW")
 ````
 
-Reading aid (Example 7.2): the FOR002 report that belongs to a deck is
-the legacy program's result for it; the example
-`examples/dtf/dtf_validation_base.jl` parses it and compares bus
-voltages, branch flows and generator reactive power line by line. That
-comparison is how the DTF path was validated, and the place to look when
-a deck of your own disagrees with its old report.
+Reading aid (Example 7.2): a deck of the legacy program comes with its
+FOR002 report, the program's result for the same deck; the example
+`examples/dtf/dtf_validation_base.jl` parses such a report and compares
+bus voltages, branch flows and generator reactive power line by line.
+That comparison is how the DTF path was validated, and the place to look
+when a deck of your own disagrees with its old report. The demo deck has
+no such report: it was never run by the legacy program.
 
 **Example 7.3: an outage from the deck.** The records between `AUSFALL`
 and `ENDE` name branches by kind, level, parallel identifier and the two
@@ -444,9 +439,7 @@ ambiguity is a diagnostic, not a guess), `apply_single_branch_outage!`
 takes the branch out, and the solve repeats:
 
 ````@example workshop_tour_cgmes
-if !have_deck
-  println("no deck at ", dtf_deck)
-elseif isempty(case.outages)
+if isempty(case.outages)
   println("this deck carries no outage records")
 else
   outage = first(case.outages)

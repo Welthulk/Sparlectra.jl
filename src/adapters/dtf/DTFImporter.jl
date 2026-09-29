@@ -26,7 +26,7 @@ module DTFImporter
 using ..Sparlectra: Net, addBus!, addProsumer!, _addPIModelACLine_by_idx!, _addPIModelTrafo_by_idx!, geNetBusIdx, validate!, normalize_bus_shunt_model, PhaseTapChangerModel, calcPhaseTapAngleRatio, calcPhaseTapFraction, calcTapCorrectedRX, model_config, setBranchStatus!, tap_changer_kind
 
 export DTFCase, DTFParams, DTFSize, DTFBranch, DTFBus, DTFCompensation, DTFTransformerControl, DTFOutage, DTFTrailingRecord, read_dtf, build_net,
-  dtf_branch_key, find_outage_branch_indices, outage_match_diagnostic, apply_single_branch_outage!, case_summary, outage_label
+  dtf_branch_key, find_outage_branch_indices, outage_match_diagnostic, apply_single_branch_outage!, case_summary, outage_label, is_dtf_deck
 
 const DTF_TRANSFORMER_RATIO_MODES = (:neutral_one, :winding_over_network)
 
@@ -337,6 +337,38 @@ function read_dtf(path; baseMVA::Real = 100.0, strict::Bool = true)::DTFCase
     i += 1
   end
   return DTFCase(String(path), Float64(baseMVA), params, texts, Float64.(nominal), size, branches, comps, controls, buses, outages, trailing)
+end
+
+"""
+    is_dtf_deck(path) -> Bool
+
+Whether the file is a DTF network deck, judged by the reader itself: true
+when `read_dtf` takes the file and what it read is a network (the size
+card counts at least one bus and one branch, every counted card was there,
+and one of the bus cards is the slack bus). There is no
+second description of the format: a file the importer reads is a deck, and
+a file it does not read is none. A result report (FOR002), an outage list
+without a network and any other text fail in the reader.
+"""
+function is_dtf_deck(path::AbstractString)::Bool
+  isfile(path) || return false
+  case = try
+    read_dtf(path; strict = false)
+  catch err
+    # what the reader raises on a file that is no deck: its own errors (too
+    # short, a card with too few fields), a number or a column that does
+    # not parse, a size card that counts more cards than the file has, a
+    # count that is no integer
+    err isa Union{ErrorException,ArgumentError,BoundsError,StringIndexError,InexactError} || rethrow()
+    return false
+  end
+  (case.size.NGES > 0 && case.size.LGES > 0) || return false
+  (length(case.buses) == case.size.NGES && length(case.branches) == case.size.LGES) || return false
+  # the reference of the network is the bus card of type 2; build_net takes
+  # it from there. The slack name of the size card is not asked: the reader
+  # takes its last word, which is not the whole name where a name has a
+  # blank in it.
+  return any(bus -> bus.bus_type == 2, case.buses)
 end
 
 function _dtf_nominal_voltage_levels(case::DTFCase; legacy_voltage_level_collapse_230kv::Bool = false)

@@ -177,6 +177,7 @@ function run_short_circuit_tests()
         ("no size at all", net, sized(NamedTuple()), 100.0, "rests on defaults alone (0.2 pu on the network base 100.0 MVA)"),
         # 9999 MW is how a case file says that no limit is stated
         ("placeholder maximum", net, sized((pmax_MW = 9999.0,)), 100.0, "nor a usable maximum active power"),
+        ("placeholder maximum with one digit more", net, sized((pmax_MW = 99999.0,)), 100.0, "nor a usable maximum active power"),
       ]
         result = run_with_expected_warnings(() -> runShortCircuit!(network, _sc_data(machines = [record]); case = :max), ["SynchronousMachine G1"])
         @testset "$(label)" begin

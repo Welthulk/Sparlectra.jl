@@ -146,15 +146,13 @@ function _detect_case_format(case_path::AbstractString; requested::Symbol = :aut
   # file whatever it is called (the extension is only a hint)
   _case_file_looks_like_json(_case_file_lead(case_path)) && return :scf
   ext in (".m", ".jl") && return :matpower
-  text = read(case_path, String)
-  # Native FOR001 test data has explicit section cards and a DTF size card.  Do
-  # not infer arbitrary .DAT files unless these FOR001 markers are present.
-  has_for001_sections = occursin("##Z", text) && occursin("##L", text) && occursin("##K", text)
-  has_size_card = occursin(r"(?m)^##G\s+\d+\s+\d+", text)
-  if has_for001_sections && has_size_card
-    return :dtf_for001
-  end
-  ext == ".dat" && throw(ArgumentError("Ambiguous .DAT input; set case_format = :dtf_for001 to use the experimental/internal native DTF path."))
+  # A DTF deck is recognised by its content, and the DTF reader is the
+  # judge: what it reads as a network is a deck, whatever the file is
+  # called. A .DAT file it does not read (a result report, an outage list,
+  # any other text) is refused by name instead of being handed to the
+  # MATPOWER parser.
+  DTFImporter.is_dtf_deck(case_path) && return :dtf_for001
+  ext == ".dat" && throw(ArgumentError("$(basename(case_path)) is not a DTF network deck: the DTF reader does not accept its header and counted cards. A result report (FOR002) or an outage list is a reference, not a case."))
   return :matpower
 end
 

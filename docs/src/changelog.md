@@ -1,3 +1,17 @@
+# Version 0.20.1 - 2026-09-29
+
+A DTF demo deck; DTF decks are recognised by their content.
+
+## Added
+
+- A DTF demo deck ships as `data/dtf_demo/sp_dtf5.DAT`; the foreign-formats workshop runs on it.
+
+## Fixed
+
+- A DTF deck is recognised by its content; `run_sparlectra` accepts it without `case_format`.
+- The CGMES demo delivery `sp_case14` states its machine sizes; its short-circuit currents match the case file.
+- Workshop: DTF branch impedances are in ohm and siemens, not per unit.
+
 # Version 0.20.0 - 2026-09-29
 
 Asymmetric branch shunts, typed tap-changer models, PowSyBl IIDM files read in Julia.
