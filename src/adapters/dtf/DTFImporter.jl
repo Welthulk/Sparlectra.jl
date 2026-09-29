@@ -158,6 +158,18 @@ function _nominal_voltages(s::AbstractString)
   return chunks
 end
 
+# The name of the slack bus on the size card: what follows the counts. The
+# card opens with its whole-number fields (four counts, in some decks a
+# fifth number), the name is the rest. A bus name may hold a blank (names
+# are eight columns wide), so the name is that rest and not the last word
+# of the card. A name whose first word is a whole number cannot be told
+# from a count and loses that word.
+function _size_card_slack(line::AbstractString)::String
+  counts = match(r"^\s*(?:[-+]?\d+\s+)+", line)
+  counts === nothing && return ""
+  return String(strip(line[nextind(line, ncodeunits(counts.match)):end]))
+end
+
 function _parse_branch(line::String, index::Int)::DTFBranch
   kind = isempty(line) || line[1] == ' ' ? 'L' : line[1]
   voltage_level_index = line[2] == ' ' ? 1 : parse(Int, string(line[2]))
@@ -281,8 +293,7 @@ function read_dtf(path; baseMVA::Real = 100.0, strict::Bool = true)::DTFCase
   nominal = _nominal_voltages(lines[6])
   size_vals = _numbers(lines[7])
   length(size_vals) >= 4 || error("DTF network size card is incomplete")
-  size_tokens = split(strip(lines[7]))
-  size = DTFSize(lines[7], Int(size_vals[1]), Int(size_vals[2]), Int(size_vals[3]), Int(size_vals[4]), length(size_tokens) >= 5 ? String(size_tokens[end]) : "")
+  size = DTFSize(lines[7], Int(size_vals[1]), Int(size_vals[2]), Int(size_vals[3]), Int(size_vals[4]), _size_card_slack(lines[7]))
   i = 8
   branches = DTFBranch[]
   for idx in 1:size.LGES
@@ -365,9 +376,8 @@ function is_dtf_deck(path::AbstractString)::Bool
   (case.size.NGES > 0 && case.size.LGES > 0) || return false
   (length(case.buses) == case.size.NGES && length(case.branches) == case.size.LGES) || return false
   # the reference of the network is the bus card of type 2; build_net takes
-  # it from there. The slack name of the size card is not asked: the reader
-  # takes its last word, which is not the whole name where a name has a
-  # blank in it.
+  # it from there, and so does this judgement; the slack name of the size
+  # card is a label of the deck.
   return any(bus -> bus.bus_type == 2, case.buses)
 end
 
