@@ -189,6 +189,45 @@ function run_dtf_importer_tests()
     @test run isa Sparlectra.SparlectraRunResult
   end)() end
 
+  # The slack name of the size card is what follows its counts, not its
+  # last word: a bus name may hold a blank, and some decks carry a fifth
+  # number before the name. The deck is the demo deck with its slack bus
+  # renamed; a name read in part names no bus of the deck.
+  @testset "slack name of the size card" begin (function ()
+    deck_text = read(joinpath(dirname(@__DIR__), "..", "data", "dtf_demo", "sp_dtf5.DAT"), String)
+    d = mktempdir()
+    for (label, size_card, name) in [
+      ("four counts, plain name", "    5    6    0    1  NORD", "NORD"),
+      ("four counts, a blank in the name", "    5    6    0    1  NORD A", "NORD A"),
+      ("five numbers, a blank in the name", "    5    6    0    1    0     NORD A", "NORD A"),
+    ]
+      text = replace(deck_text, "    5    6    0    1  NORD" => size_card)
+      name == "NORD" || (text = replace(text, "NORD    " => "NORD A  "))
+      path = joinpath(d, "slack.DAT")
+      write(path, text)
+      case = Sparlectra.DTFImporter.read_dtf(path)
+      @testset "$(label)" begin
+        @test case.size.slack == name
+        @test Sparlectra.DTFImporter.case_summary(case).slack_bus == name
+        @test count(bus -> bus.name == name && bus.bus_type == 2, case.buses) == 1
+        net = Sparlectra.DTFImporter.build_net(case)
+        _, erg = runpf!(net, 50, 1e-8, 0)
+        @test erg == 0
+      end
+    end
+    local_dir = joinpath(dirname(@__DIR__), "..", "data", "DTF")
+    for name in ["FOR001.DAT", "FOR001B.DAT", "FOR001C.DAT", "FOR001D.DAT", "FOR001E.DAT"]
+      path = joinpath(local_dir, name)
+      if isfile(path)
+        println("      slack name: ", name, " RAN")
+        case = Sparlectra.DTFImporter.read_dtf(path)
+        @test count(bus -> bus.name == case.size.slack && bus.bus_type == 2, case.buses) == 1
+      else
+        println("      slack name: ", name, " SKIPPED (not present under data/DTF)")
+      end
+    end
+  end)() end
+
   # A DTF deck is recognised by its content, and the reader is the judge:
   # what `read_dtf` takes as a network is a deck under any name, everything
   # else is refused. The texts below are written here; the last rows are
