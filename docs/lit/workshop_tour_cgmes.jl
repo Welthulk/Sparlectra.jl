@@ -70,7 +70,7 @@
 #nb # minutes.
 #nb # > **Colab is slow here.** The install cell below fetches Sparlectra and
 #nb # > its dependencies and precompiles them on Colab's two cores; that takes a
-#nb # > few minutes and prints one line per package as it goes. Sparlectra
+#nb # > minute or two and prints one line per package as it goes. Sparlectra
 #nb # > itself precompiles in well under a minute; the first cell that
 #nb # > imports a case and solves it then compiles for about a minute more,
 #nb # > every later cell runs at speed. Wait for the install cell to finish
@@ -78,6 +78,8 @@
 #nb # > install again.
 #nb using Pkg
 #nb Pkg.activate(temp = true)
+#nb ## no APSLF in this workshop: skip the precompile workload of AnalyticLoadFlow (set before Pkg.add, the precompile processes inherit ENV)
+#nb ENV["ANALYTICLOADFLOW_PRECOMPILE_WORKLOAD"] = "off"
 #nb Pkg.add(url = "https://github.com/Welthulk/Sparlectra.jl", rev = "main")
 #nb ## For the latest registered release use: Pkg.add("Sparlectra")
 

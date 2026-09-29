@@ -26,7 +26,7 @@ WHERE do the weights $\alpha_i$ come from? You will run the same shortfall
 case under every weight mode, watch the shares change, and see the honest
 failure when no valid participant exists.
 
-> **Note:** On Google Colab the install cell takes a few minutes on a
+> **Note:** On Google Colab the install cell takes a minute or two on a
 > fresh session (package download and precompilation). Colab's Julia
 > version may change over time; this notebook targets Julia ≥ 1.12.
 

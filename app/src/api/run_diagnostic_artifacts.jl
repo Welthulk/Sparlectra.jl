@@ -82,16 +82,11 @@ function _write_start_residuals_artifact(output_dir::AbstractString, profile; fo
 end
 
 function _write_api_timing_summary(io::IO, result::SparlectraRunResult, config::SparlectraConfig, phases::AbstractDict = Dict{Symbol,Float64}())
-  benchmark_median = result.performance_profile isa AbstractDict ? get(result.performance_profile, :benchmark_median_s, nothing) : nothing
   println(io, "Timing")
   println(io, "------")
   result.solver_elapsed_s === nothing || println(io, "Solver time : ", round(result.solver_elapsed_s; digits = 6), " s")
   haskey(phases, :artifact_writing) && println(io, "Output time : ", round(Float64(phases[:artifact_writing]); digits = 6), " s")
   haskey(phases, :total) && println(io, "Total time  : ", round(Float64(phases[:total]); digits = 6), " s")
-  if config.benchmark.enabled
-    println(io, "benchmark_median:     ", benchmark_median === nothing ? "n/a" : "$(round(Float64(benchmark_median); digits = 6)) s")
-    println(io, "benchmark_samples:    ", config.benchmark.samples)
-  end
   println(io, "iterations:           ", result.iterations)
   println(io, "final_mismatch:       ", isfinite(result.final_mismatch) ? result.final_mismatch : (isnan(result.final_mismatch) ? "NaN" : "unavailable"))
   println(io, "final_mismatch_status:", isfinite(result.final_mismatch) ? "finite" : (isnan(result.final_mismatch) ? "nonfinite" : "not_reported_by_solver"))

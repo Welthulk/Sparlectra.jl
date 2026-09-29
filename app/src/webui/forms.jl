@@ -654,7 +654,7 @@ end
 
 Split a run's recorded settings into the dotted configuration keys a case
 file may carry (`keep`) and the keys that belong to the machine (`dropped`:
-output, benchmark, runtime, webui, export scope). Request metadata entries
+output, runtime, webui, export scope). Request metadata entries
 without a dot (casefile, performance_timing, ...) are neither.
 """
 function _webui_case_config_from_settings(settings_raw::AbstractDict)

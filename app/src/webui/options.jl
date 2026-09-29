@@ -26,7 +26,7 @@ struct WebUIOptionSpec
   section::Symbol
   # placement scope: :adapter = format-bound, generated on the
   # Case page from options_type(adapter); :session = machine scope (the
-  # output/benchmark/runtime/webui prefixes), never written to a case
+  # output/runtime/webui prefixes), never written to a case
   # configuration file; :case = everything a run of one case may carry.
   # Visibility stays in `section` (:basic / :expert).
   scope::Symbol
@@ -123,9 +123,6 @@ const WEBUI_OPTION_SPECS = WebUIOptionSpec[
   WebUIOptionSpec("model.tap_changer_model", "transformer_tap_changer_model", String, :select, "ideal", TRANSFORMER_TAP_CHANGER_MODEL_VALUES, :basic, :adapter, true),
   WebUIOptionSpec("matpower_export.write_solution", "matpower_export_write_solution", Bool, :checkbox, true, (), :expert, :adapter, true),
   WebUIOptionSpec("output.logfile_results", "output_logfile_results", String, :select, "compact", OUTPUT_LOGFILE_RESULTS_VALUES, :expert, :session, true),
-  WebUIOptionSpec("benchmark.enabled", "benchmark_enabled", Bool, :checkbox, false, (), :expert, :session, true),
-  WebUIOptionSpec("benchmark.samples", "benchmark_samples", Int, :number, 10, (), :expert, :session, true),
-  WebUIOptionSpec("benchmark.seconds", "benchmark_seconds", Float64, :number, 1.0, (), :expert, :session, true),
   # state-estimation run options and measurement-generator options: request
   # keys (not config overrides), persisted in the form block of the case
   # configuration file so a case reload restores what the user set on the

@@ -31,6 +31,22 @@ if !isfile(joinpath(_SPARLECTRA_APP_DIR, "Manifest.toml"))
   end
 end
 pushfirst!(LOAD_PATH, _SPARLECTRA_APP_DIR)
+# BenchmarkTools is a weak dependency of the library (the extension behind
+# the benchmark mode of run_matpower_case). Pkg.test brings it through the
+# test target; a run as `julia --project=. test/runtests.jl`, the way the
+# gates run, does not, since an [extras] entry is not loadable there. The
+# runner then keeps a small environment with BenchmarkTools alone in the
+# depot, set up once, and stacks it onto the load path.
+if Base.find_package("BenchmarkTools") === nothing
+  _benchmark_env = joinpath(first(DEPOT_PATH), "environments", "sparlectra-test-benchmarktools")
+  if !isfile(joinpath(_benchmark_env, "Manifest.toml"))
+    import Pkg
+    Pkg.activate(_benchmark_env) do
+      Pkg.add("BenchmarkTools"; io = devnull)
+    end
+  end
+  push!(LOAD_PATH, _benchmark_env)
+end
 using SparlectraApp
 using Test
 using Logging

@@ -160,9 +160,6 @@ function _webui_test_form(casefile, config_file, output_root)
     "performance_timing" => "compact",
     "detailed_result_csv" => "on",
     "detailed_result_csv_format" => "excel_de",
-    "benchmark_enabled" => "false",
-    "benchmark_samples" => "10",
-    "benchmark_seconds" => "1.0",
   )
 end
 
@@ -521,10 +518,10 @@ function run_webui_extended_tests()
       @test occursin("case145.m.config.yaml", loaded_form)
       _webui_assert_value(loaded_form, "power_flow_tol", "1.0e-7")
       _webui_assert_checked(loaded_form, "power_flow_autodamp", true)
-      # machine scope no longer travels with the case: the trigger checkbox
-      # (a RUN control since block 3) shows the configuration default again
+      # machine scope no longer travels with the case, and the run form has
+      # no benchmark control any more (taken out in 0.20.2)
       loaded_run = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow?casefile=$(SparlectraApp._webui_urlencode(joinpath(root, "case145.m")))"; output_root = root).body)
-      _webui_assert_checked(loaded_run, "benchmark_enabled", true)
+      @test !occursin("name=\"benchmark_enabled\"", loaded_run)
       _webui_assert_selected(loaded_form, "power_flow_qlimits_enforcement_mode", "active_set")
       # the CSV format is machine scope: the configuration file's value
       # shows, whatever the run form said before the save
@@ -626,11 +623,15 @@ settings:
       @test occursin("case: case118.m", converted)
       _webui_assert_checked(case118_form, "power_flow_autodamp", false)
       _webui_assert_checked(case118_form, "power_flow_qlimits_enabled", false)
-      # machine scope (benchmark.*, output.*) stays with the machine and is
-      # dropped by the conversion; request-only fields (detailed_result_csv,
-      # performance_timing) persist in the form block
+      # machine scope (output.*) stays with the machine and is dropped by the
+      # conversion; request-only fields (detailed_result_csv,
+      # performance_timing) persist in the form block. The benchmark fields
+      # of the legacy file belong to an option the Web UI no longer has: the
+      # conversion drops them without a failure, and the run form has no such
+      # control
+      @test !occursin("benchmark", converted)
       case118_run = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow?casefile=$(SparlectraApp._webui_urlencode(case118))"; output_root = root).body)
-      _webui_assert_checked(case118_run, "benchmark_enabled", true)
+      @test !occursin("name=\"benchmark_enabled\"", case118_run)
       _webui_assert_checked(case118_form, "detailed_result_csv", false)
       _webui_assert_value(case118_form, "power_flow_tol", "1.0e-8")
       _webui_assert_value(case118_form, "power_flow_max_iter", "80")
@@ -673,7 +674,7 @@ settings:
       _webui_assert_checked(case14_form, "power_flow_autodamp", true)
       _webui_assert_checked(case14_form, "power_flow_qlimits_enabled", true)
       case14_run = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow?casefile=$(SparlectraApp._webui_urlencode(case14))"; output_root = root).body)
-      _webui_assert_checked(case14_run, "benchmark_enabled", true)
+      @test !occursin("name=\"benchmark_enabled\"", case14_run)
       _webui_assert_value(case14_form, "power_flow_tol", "1.0e-5")
       _webui_assert_value(case14_form, "power_flow_max_iter", "80")
       _webui_assert_selected(case14_form, "power_flow_start_angle_mode", "dc")
@@ -1642,7 +1643,7 @@ form:
       apply_form["matpower_import_auto_profile"] = "apply"
       apply_request = SparlectraApp.powerflow_webui_request(apply_form; default_output_root = output_root)
       @test apply_request["config_overrides"]["model.auto_profile"] == "apply"
-      @test overrides["benchmark.enabled"] === false
+      @test !haskey(overrides, "benchmark.enabled")   # no benchmark option in the Web UI
 
       invalid_form = copy(form)
       invalid_form["power_flow_max_iter"] = "invalid"
@@ -1837,9 +1838,6 @@ form:
         "transformer_tap_changer_model" => "model.tap_changer_model",
         "matpower_export_write_solution" => "matpower_export.write_solution",
         "output_logfile_results" => "output.logfile_results",
-        "benchmark_enabled" => "benchmark.enabled",
-        "benchmark_samples" => "benchmark.samples",
-        "benchmark_seconds" => "benchmark.seconds",
         "performance_timing" => "webui.performance_timing",
         "detailed_result_csv" => "webui.detailed_result_csv",
         "detailed_result_csv_format" => "webui.detailed_result_csv_format",

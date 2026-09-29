@@ -27,7 +27,6 @@
 module Sparlectra
 
 using AnalyticLoadFlow
-using BenchmarkTools
 using Dates
 using DelimitedFiles
 import EzXML                      # IIDM reader of the PowSyBl adapter (the CGMES submodule imports it on its own)

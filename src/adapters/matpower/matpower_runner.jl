@@ -455,6 +455,25 @@ stdio output.
 run_silent_for_benchmark(f::Function) = run_with_output_capture(() -> Base.invokelatest(f); capture_stdout = true, capture_stderr = true).result
 
 """
+    benchmark_trial_seconds(f; samples, seconds) -> (median_s, min_s)
+
+Repeated timing of `f()` with BenchmarkTools: median and minimum of the
+trial in seconds. The method comes with the package extension
+`SparlectraBenchmarkToolsExt`, which Julia loads once `BenchmarkTools` is
+loaded next to Sparlectra (`using BenchmarkTools`). Sparlectra does not
+depend on BenchmarkTools, so an installation does not compile it and the
+packages it brings.
+"""
+function benchmark_trial_seconds end
+
+# the benchmark mode needs the extension; without it the run stops before
+# any work, with the way to get it, instead of timing some other way
+function _require_benchmark_extension()
+  Base.get_extension(@__MODULE__, :SparlectraBenchmarkToolsExt) === nothing || return nothing
+  throw(ArgumentError("benchmark.enabled needs the package BenchmarkTools: load it next to Sparlectra (`using BenchmarkTools`) and run again, or set benchmark.enabled to false. Sparlectra does not install it; add it with `import Pkg; Pkg.add(\"BenchmarkTools\")` where it is missing."))
+end
+
+"""
     append_captured_output_to_logfile(logfile, captured; section_title="")
 
 Append captured stdout/stderr chunks to the MATPOWER logfile.
@@ -930,6 +949,9 @@ function run_matpower_case(; casefile::AbstractString = "", config_file::Abstrac
     load_sparlectra_config!()
   end
   cfg = active_sparlectra_config()
+  # before the case is fetched or read: a benchmark run without its
+  # extension stops here, with the way to get it
+  cfg.benchmark.enabled && _require_benchmark_extension()
   resolved_case = isempty(strip(casefile)) ? cfg.runtime.case : String(casefile)
   isempty(strip(resolved_case)) && throw(ArgumentError("No MATPOWER case selected. Set runtime.case in the active configuration or pass casefile."))
   local_case = FetchMatpowerCase.ensure_casefile(resolved_case)
@@ -1004,12 +1026,11 @@ function run_matpower_case(; casefile::AbstractString = "", config_file::Abstrac
         append_captured_output_to_logfile(logfile, warm_run.captured; section_title = "Representative solve diagnostics (method=$(method))")
       end
       bench_status_ref = Ref{Any}(nothing)
-      bench = BenchmarkTools.@benchmarkable run_silent_for_benchmark() do
-        Base.invokelatest(_run_sparlectra; casefile = String($local_case), config = $method_cfg, performance_profile = nothing, emit_output = false)
+      case_for_benchmark = String(local_case)
+      payload = () -> run_silent_for_benchmark() do
+        Base.invokelatest(_run_sparlectra; casefile = case_for_benchmark, config = method_cfg, performance_profile = nothing, emit_output = false)
       end
-      trial = Base.invokelatest(BenchmarkTools.run, bench; samples = max(1, cfg.benchmark.samples), seconds = max(0.01, cfg.benchmark.seconds))
-      med = BenchmarkTools.median(trial).time / 1e9
-      mn = BenchmarkTools.minimum(trial).time / 1e9
+      med, mn = Base.invokelatest(benchmark_trial_seconds, payload; samples = max(1, cfg.benchmark.samples), seconds = max(0.01, cfg.benchmark.seconds))
       line = "benchmark method=$(method) representative=$(round(warm;digits=6))s median=$(round(med * 1000.0;digits=6)) ms min=$(round(mn * 1000.0;digits=6)) ms samples=$(cfg.benchmark.samples) seconds=$(cfg.benchmark.seconds)"
       println(line)
       open(logfile, "a") do io

@@ -156,12 +156,19 @@ The Web UI's `performance_timing=off|compact|full` option writes
 `performance.log` with the phases of one service/API request (request
 parsing, case resolution, configuration, case loading/network
 construction/solve, postprocessing, artifact writing, total time; `full`
-adds the internal profile entries). `benchmark.enabled` instead performs
-repeated solves and reports representative and median timing.
+adds the internal profile entries). `benchmark.enabled` instead makes
+`run_matpower_case` perform repeated solves and report representative and
+median timing. The repeated timing comes from the package BenchmarkTools,
+which Sparlectra does not install: load it next to Sparlectra
+(`using BenchmarkTools`, after `Pkg.add("BenchmarkTools")` where it is
+missing). Without it a run with `benchmark.enabled: true` stops before it
+reads the case and names the package. The benchmark mode is a scripting
+feature: a power-flow run through the service or the Web UI solves once,
+and the Web UI has no benchmark option.
 
 | YAML path | Type | Default | Allowed values | Meaning |
 |---|---:|---:|---|---|
-| `benchmark.enabled` | Bool | `true` | `true`, `false` | Enable benchmark mode. |
+| `benchmark.enabled` | Bool | `false` | `true`, `false` | Enable benchmark mode of `run_matpower_case` (needs `using BenchmarkTools`). |
 | `benchmark.methods` | Vector{Symbol/String} | `[rectangular]` | `rectangular` (current PF core) | Methods benchmarked. |
 | `benchmark.seconds` | Float64 | `2.0` | positive real | Benchmark max. time budget. This is not a minimum runtime, solver timeout, or iteration limit; a running sample is not interrupted. |
 | `benchmark.samples` | Int | `50` | positive integer | Max benchmark samples per method. The benchmark may finish earlier when this count is reached before the time budget, or collect fewer samples when the time budget is reached first. |
