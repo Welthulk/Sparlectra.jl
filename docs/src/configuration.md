@@ -301,17 +301,30 @@ correctness.
 | `fail` | suspicious solutions are treated as failed final convergence |
 | `rescue` | reserved mode: a suspicious solution reports `rescue_requested_but_not_available`; no retry loop runs |
 
-The thresholds cover the voltage magnitude range, the global angle spread,
-and active-branch angle differences via
-`power_flow.wrong_branch_max_branch_angle_deg`. All heuristics are evaluated
-only on the network's highest nominal voltage level (branch-angle checks:
-both ends on that level); the reported `min_vm_pu`/`max_vm_pu` and the
-lowest-bus list refer to the checked level.
+The check runs on every numerically converged AC result, with or without
+reactive limits. The thresholds cover the voltage magnitude band, the share
+of a voltage level below that band, the global angle spread, single bus
+angles and active-branch angle differences. The magnitude band and the
+level-share rule are judged on every energised bus whose nominal voltage is
+at or above `power_flow.wrong_branch_min_vn_kV` (100 kV; when no level
+reaches the floor, on the highest level alone); a bus below
+`power_flow.wrong_branch_collapse_vm_pu` (0.5 pu) is a finding on every
+level, floor or not; the angle spread and the
+branch-angle rule stay on the highest level (branch-angle checks: both ends
+on that level). The reported `min_vm_pu`/`max_vm_pu`, the lowest-bus list
+and `wrong_branch_level_kV` with its counts refer to the judged levels. A
+run that takes more than `power_flow.wrong_branch_max_plain_steps` Newton
+steps without a switching event is reported
+(`wrong_branch_plain_steps_exceeded`) without changing the status: a
+well-posed case takes 7 to 14 steps, 60 is a branch signal.
 
-!!! details "Why only the highest voltage level is judged"
+!!! details "Why the angle rules stay on the highest voltage level"
     Sub-transmission levels routinely run at 0.94 to 0.97 pu in healthy
-    snapshots, and judging them against the transmission-level band
-    produces false `SUSPECT` verdicts.
+    snapshots with their own angle spread; the magnitude band (0.70 pu)
+    is far below that and is judged on every transmission level, because
+    a collapse can sit on a lower level while the top level is clean
+    (a 13659-bus case ended with 130 buses of its 150 kV level at 0.33
+    pu under three clean 750 kV buses).
 
 ### Where the result is visible
 
@@ -321,7 +334,7 @@ lowest-bus list refer to the checked level.
 | AC island diagnostics CSV (`ac_island_solver_summary.csv`, one row per island) | trailing `wrong_branch_status`/`wrong_branch_reason` columns next to the `wrong_branch_detection` *setting* column; the per-island `ac_island_<id>_solver.log` lists both fields. |
 | Console/log summary (`printACPFlowResults`) | a `Wrong-branch   : SUSPECT (...)` or `Wrong-branch   : FAIL (...)` line, printed only when the result is neither `ok` nor `not_checked`. |
 | Web UI run result page | a "Wrong-branch check" badge with the run-status styling; omitted when the result is `not_checked`. |
-| `run_sparlectra_api` result metadata | `wrong_branch_status`, `wrong_branch_reason`, `wrong_branch_low_vm_count`, `wrong_branch_high_vm_count`, `wrong_branch_angle_spread_deg`, `wrong_branch_branch_angle_violation_count`. |
+| `run_sparlectra_api` result metadata | `wrong_branch_status`, `wrong_branch_reason`, `wrong_branch_low_vm_count`, `wrong_branch_high_vm_count`, `wrong_branch_level_kV`, `wrong_branch_level_low_vm_count`, `wrong_branch_level_bus_count`, `wrong_branch_max_bus_angle_deg`, `wrong_branch_plain_steps`, `wrong_branch_plain_steps_exceeded`, `wrong_branch_angle_spread_deg`, `wrong_branch_branch_angle_violation_count`. |
 
 | `status` value | Meaning |
 |---|---|
@@ -331,7 +344,7 @@ lowest-bus list refer to the checked level.
 | `wrong_branch_rescue_not_implemented` | the reserved `rescue` mode was requested |
 | `not_checked` | `wrong_branch_detection = off`, or the check never ran (e.g. a non-finite solution) |
 
-`reason` values: `none`, `low_voltage_magnitude`, `high_voltage_magnitude`,
+`reason` values: `none`, `voltage_collapse`, `low_voltage_level_share`, `low_voltage_magnitude`, `high_voltage_magnitude`, `bus_angle_exceeded`,
 `angle_spread_exceeded`, `branch_angle_exceeded`, `nonfinite_voltage`,
 `disabled`, `rescue_requested_but_not_available`.
 
@@ -351,7 +364,13 @@ Tuning keys of the detector (all under `power_flow.`):
 | `power_flow.wrong_branch_min_vm_pu` | `0.70` | Lower edge of the plausibility band; solved magnitudes below it count as suspicious. |
 | `power_flow.wrong_branch_max_vm_pu` | `1.30` | Upper edge of the plausibility band. |
 | `power_flow.wrong_branch_min_low_vm_count` | `1` | How many sub-band buses it takes to raise the finding. |
+| `power_flow.wrong_branch_min_vn_kV` | `100.0` | Nominal-voltage floor of the judged levels (magnitude band and level share). |
+| `power_flow.wrong_branch_low_vm_share` | `0.05` | Share of a level's buses below the band that raises `low_voltage_level_share`. |
+| `power_flow.wrong_branch_collapse_vm_pu` | `0.5` | A bus below this magnitude on ANY level raises `voltage_collapse` (0 switches the rule off). |
 | `power_flow.wrong_branch_max_angle_spread_deg` | `180.0` | Maximum admissible total angle spread of the solution. |
+| `power_flow.wrong_branch_max_branch_angle_deg` | `90.0` | Bound on the angle difference across an active branch of the highest level (phase shift compensated). |
+| `power_flow.wrong_branch_max_bus_angle_deg` | `120.0` | Bound on any judged bus angle relative to the slack (`bus_angle_exceeded`). |
+| `power_flow.wrong_branch_max_plain_steps` | `20` | Newton steps without a switching event above which `wrong_branch_plain_steps_exceeded` is reported. |
 | `power_flow.wrong_branch_rescue` | `false` | Reserved switch for the unimplemented rescue loop; reports instead of retrying. |
 | `power_flow.wrong_branch_rescue_max_attempts` | `2` | Attempt bound for that reserved mode. |
 

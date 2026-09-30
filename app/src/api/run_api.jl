@@ -1343,6 +1343,7 @@ function _run_sparlectra_api_body(
     final_metadata["auto_escalation_stages"] = count(a -> a.stage !== :base && !isempty(a.solver), auto_rec.attempts)
     final_metadata["auto_final_stage"] = String(auto_rec.final_stage)
     final_metadata["auto_final_solver"] = auto_rec.final_solver
+    final_metadata["auto_final_strategy"] = String(get(pairs(auto_rec), :final_strategy, :none))
     final_metadata["auto_hints"] = String[h.text for h in auto_rec.hints]
     final_metadata["auto_hint_ids"] = String[String(h.id) for h in auto_rec.hints]
     final_metadata["dc_fallback_solution"] = begin
@@ -1363,7 +1364,10 @@ function _run_sparlectra_api_body(
     run_id = run_id,
     status = numerical_success ? :succeeded : :not_converged,
     success = numerical_success,
-    converged = raw_result.numerical_converged,
+    # accepted AND numerically converged: a run the solver rejected (wrong
+    # branch, Q-limit rejection) reports false here; the numerical state
+    # stays in metadata["final_outcome"]["numerical_converged"]
+    converged = raw_result.numerical_converged && raw_result.final_converged,
     solution_available = raw_result.solution_available,
     iterations = raw_result.iterations,
     final_mismatch = mismatch,

@@ -68,6 +68,57 @@ function _auto_profile_pv_mismatch_case()
   return Sparlectra.MatpowerIO.MatpowerCase("auto_profile_pv", mpc.baseMVA, bus, gen, mpc.branch, nothing, nothing)
 end
 
+# The shipped nine-bus case with its stored VM/VA columns replaced by a
+# state that is SOLVED under the given reading of the shift column and the
+# ratio: the stored voltages are kept, and the loads of the PQ buses and the
+# Pg of the PV buses are set to the injections those voltages produce with
+# that reading's Ybus (the same construction as `_auto_profile_shift_case`).
+# The exporter cannot write such a file, it always writes the shift in
+# degrees with the standard sign, so the fixture is built here. Branch 2
+# (the 2-7 step-up transformer) gets a shift of 0.05 in the file column:
+# 0.05 rad under the rad readings, 0.05 deg under the deg readings, so the
+# readings are distinguishable.
+function _auto_profile_case9_solved_under(; shift_unit::Symbol, shift_sign::Float64, ratio::Symbol)
+  mpc = Sparlectra.MatpowerIO.read_case(abspath(joinpath(dirname(@__DIR__), "data", "mpower", "sp_case9.m")))
+  base = mpc.baseMVA
+  bus = copy(mpc.bus)
+  gen = copy(mpc.gen)
+  branch = copy(mpc.branch)
+  branch[2, 10] = 0.05
+  for r in axes(bus, 1)
+    bus[r, 8] = 1.0 + 0.02 * sin(r)
+    bus[r, 9] = Int(bus[r, 2]) == 3 ? 0.0 : 4.0 * cos(r)
+  end
+  ybus = Sparlectra.MatpowerIO.build_ybus_matpower(bus, branch, base; matpower_shift_unit = shift_unit, matpower_shift_sign = shift_sign, matpower_ratio = ratio)
+  v = bus[:, 8] .* cis.(bus[:, 9] .* (pi / 180.0))
+  scalc = v .* conj.(ybus * v)
+  for r in axes(bus, 1)
+    btype = Int(bus[r, 2])
+    if btype == 1
+      bus[r, 3] = -real(scalc[r]) * base
+      bus[r, 4] = -imag(scalc[r]) * base
+    elseif btype == 2
+      g = findfirst(row -> Int(gen[row, 1]) == Int(bus[r, 1]), axes(gen, 1))
+      gen[g, 2] = real(scalc[r]) * base + bus[r, 3]
+    end
+  end
+  return Sparlectra.MatpowerIO.MatpowerCase(string("sp_case9_", shift_unit, "_", shift_sign, "_", ratio), base, bus, gen, branch, nothing, nothing)
+end
+
+# The same case with its VM/VA columns perturbed after the construction:
+# the stored state then fits NO reading (the situation of the PEGASE
+# files), and the scan must not pick a convention from it.
+function _auto_profile_case9_perturbed()
+  mpc = _auto_profile_case9_solved_under(shift_unit = :deg, shift_sign = 1.0, ratio = :normal)
+  bus = copy(mpc.bus)
+  for r in axes(bus, 1)
+    Int(bus[r, 2]) == 3 && continue
+    bus[r, 8] += isodd(r) ? 0.05 : -0.05
+    bus[r, 9] += isodd(r) ? 10.0 : -10.0
+  end
+  return Sparlectra.MatpowerIO.MatpowerCase("sp_case9_perturbed", mpc.baseMVA, bus, mpc.gen, mpc.branch, nothing, nothing)
+end
+
 # One function per @testset, called by the runner from a list.
 #
 # Measured with SnoopCompile on the sysimage: as ONE body these
@@ -87,7 +138,7 @@ function test_configuration_yaml_key_coverage()
     leaves = _canonical_yaml_leaf_keys()
 
     mapped_keys = Set([
-      "power_flow.method", "power_flow.mode", "power_flow.solver", "power_flow.linear_solver", "power_flow.apslf.order", "power_flow.apslf.use_pade", "power_flow.apslf.nr_polish", "power_flow.apslf.convergence_radius", "power_flow.apslf_start.enabled", "power_flow.apslf_start.order", "power_flow.flatstart", "power_flow.tol", "power_flow.max_iter", "power_flow.autodamp", "power_flow.autodamp_min", "power_flow.auto_slack", "power_flow.rescue", "power_flow.dc.fallback", "power_flow.wrong_branch_detection", "power_flow.wrong_branch_rescue", "power_flow.wrong_branch_min_vm_pu", "power_flow.wrong_branch_max_vm_pu", "power_flow.wrong_branch_max_angle_spread_deg", "power_flow.wrong_branch_max_branch_angle_deg", "power_flow.wrong_branch_min_low_vm_count", "power_flow.wrong_branch_rescue_max_attempts", "power_flow.rectangular_workspace_reuse", "power_flow.rectangular_preallocate_workspace", "power_flow.rectangular_workspace_min_buses",
+      "power_flow.method", "power_flow.mode", "power_flow.solver", "power_flow.linear_solver", "power_flow.apslf.order", "power_flow.apslf.use_pade", "power_flow.apslf.nr_polish", "power_flow.apslf.convergence_radius", "power_flow.apslf_start.enabled", "power_flow.apslf_start.order", "power_flow.flatstart", "power_flow.tol", "power_flow.max_iter", "power_flow.autodamp", "power_flow.autodamp_min", "power_flow.auto_slack", "power_flow.rescue", "power_flow.dc.fallback", "power_flow.wrong_branch_detection", "power_flow.wrong_branch_rescue", "power_flow.wrong_branch_min_vm_pu", "power_flow.wrong_branch_max_vm_pu", "power_flow.wrong_branch_max_angle_spread_deg", "power_flow.wrong_branch_max_branch_angle_deg", "power_flow.wrong_branch_min_low_vm_count", "power_flow.wrong_branch_min_vn_kV", "power_flow.wrong_branch_low_vm_share", "power_flow.wrong_branch_max_bus_angle_deg", "power_flow.wrong_branch_max_plain_steps", "power_flow.wrong_branch_collapse_vm_pu", "power_flow.wrong_branch_rescue_max_attempts", "power_flow.rectangular_workspace_reuse", "power_flow.rectangular_preallocate_workspace", "power_flow.rectangular_workspace_min_buses",
       "power_flow.islands.enabled", "power_flow.islands.mode", "power_flow.islands.reference_policy", "power_flow.islands.diagnostic_continue_after_failure",
       "power_flow.distributed_slack.enabled", "power_flow.distributed_slack.p_mode", "power_flow.distributed_slack.respect_p_limits", "power_flow.distributed_slack.fallback", "power_flow.distributed_slack.weights",
       "power_flow.external_grid.enabled", "power_flow.external_grid.source", "power_flow.external_grid.sk_MVA", "power_flow.external_grid.rx",
@@ -99,7 +150,7 @@ function test_configuration_yaml_key_coverage()
       "power_flow.qlimits.guard.enabled", "power_flow.qlimits.guard.min_q_range_pu", "power_flow.qlimits.guard.narrow_range_mode", "power_flow.qlimits.guard.zero_range_mode", "power_flow.qlimits.guard.violation_mode", "power_flow.qlimits.guard.violation_threshold_pu", "power_flow.qlimits.guard.max_switches", "power_flow.qlimits.guard.max_remaining_violations", "power_flow.qlimits.guard.accept_bounded_violations", "power_flow.qlimits.guard.freeze_after_repeated_switching", "power_flow.qlimits.guard.log",
       "state_estimation.enabled", "state_estimation.method", "state_estimation.tol", "state_estimation.max_iter", "state_estimation.flatstart", "state_estimation.jac_eps", "state_estimation.update_net", "state_estimation.pmu_ref_offset", "state_estimation.observability.enabled",
       "matpower_import.pv_voltage_source", "matpower_import.pv_voltage_mismatch_tol_pu", "matpower_import.compare_voltage_reference", "matpower_import.shift_unit", "matpower_import.shift_sign", "matpower_import.ratio", "matpower_import.enable_pq_gen_controllers", "matpower_import.apply_bus_names", "matpower_import.apply_branch_names", "matpower_import.apply_branch_kind", "matpower_import.import_for001_contingencies", "matpower_import.matpower_dcline_mode",
-      "model.bus_shunt_model", "model.tap_changer_model", "model.auto_profile", "model.auto_profile_log", "model.net_cache_enabled", "model.preallocate_network", "model.preallocate_min_buses",
+      "model.bus_shunt_model", "model.tap_changer_model", "model.auto_profile", "model.auto_profile_log", "model.auto_profile_max_fit_pu", "model.net_cache_enabled", "model.preallocate_network", "model.preallocate_min_buses",
       "cgmes_import.path", "cgmes_import.base_mva", "cgmes_import.require_boundary", "cgmes_import.tap_control", "cgmes_import.machine_control", "cgmes_import.ignore_connected", "cgmes_import.vset_min_pu", "cgmes_import.vset_max_pu", "cgmes_import.multi_slack", "cgmes_import.start_values", "cgmes_import.placeholder_guards", "cgmes_import.infer_base_voltages", "cgmes_import.hvdc_mode",
       "powsybl_import.base_mva", "powsybl_import.hvdc_mode", "powsybl_import.slack_ids", "powsybl_import.multi_slack", "powsybl_import.remote_regulation",
       "short_circuit.c_factor", "short_circuit.sweep_method", "short_circuit.takahashi_min_buses",
@@ -665,6 +716,91 @@ function test_configuration_matpower_auto_profile_rules()
     @test oom_result.config.matpower.shift_unit === :rad
     @test isempty(oom_result.applied)
     @test any(row -> occursin("matpower_auto_profile_scan_skipped", row.reason), oom_result.rows)
+
+    # A stored state that fits NO reading is no evidence about the file's
+    # convention (the four PEGASE files score
+    # 0.5 to 3.9 pu under their best reading, rad/-1, and the scan picked
+    # that wrong reading). Above model.auto_profile_max_fit_pu the scan
+    # keeps the configured conventions and says why, in both modes.
+    perturbed = _auto_profile_case9_perturbed()
+    perturbed_rows = Sparlectra._matpower_import_auto_profile_convention_scan(perturbed)
+    @test first(perturbed_rows).score > 0.1
+    default_apply_cfg = Sparlectra.SparlectraConfig(Dict("model" => Dict("auto_profile" => "apply")))
+    @test default_apply_cfg.model.auto_profile_max_fit_pu == 0.1
+    for mode in (:recommend, :apply)
+      res = Sparlectra.matpower_import_auto_profile(perturbed, default_apply_cfg; mode = mode)
+      @test res.config.matpower.shift_unit === :deg
+      @test res.config.matpower.shift_sign == 1.0
+      @test res.config.matpower.ratio === :normal
+      @test !any(pair -> first(pair) in (:shift_unit, :shift_sign, :ratio, :bus_shunt_model), res.applied)
+      for option in ("matpower_import.shift_unit", "matpower_import.shift_sign", "matpower_import.ratio")
+        row = only(r for r in res.rows if r.option == option)
+        @test row.action === :keep
+        @test row.recommended == row.current
+        @test startswith(row.reason, "matpower_auto_profile_scan_inconclusive:")
+        @test occursin("not a solved state under any reading", row.reason)
+        @test occursin(string("best score ", round(first(perturbed_rows).score; digits = 4), " pu"), row.reason)
+        @test occursin("model.auto_profile_max_fit_pu = 0.1", row.reason)
+      end
+    end
+    # the compact console line (the default) carries the reason too, the
+    # full table has it on every convention row
+    inconclusive = Sparlectra.matpower_import_auto_profile(perturbed, default_apply_cfg; mode = :apply)
+    io = IOBuffer()
+    Sparlectra.write_matpower_import_auto_profile(io, inconclusive, inconclusive.config; casefile = "sp_case9_perturbed.m")
+    @test occursin("not a solved state under any reading", String(take!(io)))
+
+    # the decision rule on the study's own numbers (case1354pegase: best
+    # rad/-1 at 0.9991 pu, deg/+1 at 13.0 pu): the default threshold keeps
+    # deg/+1 and names the score; a threshold above the best score restores
+    # the ranking and recommends rad/-1, so the threshold is what decides
+    pegase_scan = mpc -> [
+      (shift_unit = :rad, shift_sign = -1.0, ratio = :normal, stats = (; ok = true), score = 0.9991),
+      (shift_unit = :rad, shift_sign = -1.0, ratio = :reciprocal, stats = (; ok = true), score = 4.2),
+      (shift_unit = :rad, shift_sign = 1.0, ratio = :normal, stats = (; ok = true), score = 9.7),
+      (shift_unit = :rad, shift_sign = 1.0, ratio = :reciprocal, stats = (; ok = true), score = 11.0),
+      (shift_unit = :deg, shift_sign = 1.0, ratio = :normal, stats = (; ok = true), score = 13.0),
+      (shift_unit = :deg, shift_sign = -1.0, ratio = :normal, stats = (; ok = true), score = 13.1),
+      (shift_unit = :deg, shift_sign = 1.0, ratio = :reciprocal, stats = (; ok = true), score = 15.0),
+      (shift_unit = :deg, shift_sign = -1.0, ratio = :reciprocal, stats = (; ok = true), score = 15.2),
+    ]
+    pegase_kept = Sparlectra.matpower_import_auto_profile(perturbed, default_apply_cfg; mode = :apply, convention_scan = pegase_scan)
+    @test pegase_kept.config.matpower.shift_unit === :deg
+    @test pegase_kept.config.matpower.shift_sign == 1.0
+    @test !any(pair -> first(pair) in (:shift_unit, :shift_sign, :ratio), pegase_kept.applied)
+    pegase_unit_row = only(r for r in pegase_kept.rows if r.option == "matpower_import.shift_unit")
+    @test pegase_unit_row.action === :keep
+    @test occursin("best score 0.9991 pu above model.auto_profile_max_fit_pu = 0.1", pegase_unit_row.reason)
+    raised_cfg = Sparlectra.SparlectraConfig(Dict("model" => Dict("auto_profile" => "apply", "auto_profile_max_fit_pu" => 2.0)))
+    @test raised_cfg.model.auto_profile_max_fit_pu == 2.0
+    pegase_applied = Sparlectra.matpower_import_auto_profile(perturbed, raised_cfg; mode = :apply, convention_scan = pegase_scan)
+    @test pegase_applied.config.matpower.shift_unit === :rad
+    @test pegase_applied.config.matpower.shift_sign == -1.0
+    @test any(pair -> first(pair) === :shift_unit && last(pair) === :rad, pegase_applied.applied)
+
+    # a stored state that IS solved under rad/-1 scores below the threshold
+    # under that reading and far above it under the default deg/+1, so the
+    # scan still recommends rad/-1 and apply mode still switches to it
+    rad_case = _auto_profile_case9_solved_under(shift_unit = :rad, shift_sign = -1.0, ratio = :normal)
+    rad_rows = Sparlectra._matpower_import_auto_profile_convention_scan(rad_case)
+    @test first(rad_rows).shift_unit === :rad
+    @test first(rad_rows).shift_sign == -1.0
+    @test first(rad_rows).ratio === :normal
+    @test first(rad_rows).score < 1.0e-6
+    rad_rec = Sparlectra.matpower_import_auto_profile(rad_case, default_apply_cfg; mode = :recommend)
+    @test rad_rec.config.matpower.shift_unit === :deg
+    rad_unit_row = only(r for r in rad_rec.rows if r.option == "matpower_import.shift_unit")
+    rad_sign_row = only(r for r in rad_rec.rows if r.option == "matpower_import.shift_sign")
+    @test rad_unit_row.recommended == "rad"
+    @test rad_unit_row.action === :recommend
+    @test rad_sign_row.recommended == "-1.0"
+    @test rad_sign_row.action === :recommend
+    rad_applied = Sparlectra.matpower_import_auto_profile(rad_case, default_apply_cfg; mode = :apply)
+    @test rad_applied.config.matpower.shift_unit === :rad
+    @test rad_applied.config.matpower.shift_sign == -1.0
+    @test rad_applied.config.matpower.ratio === :normal
+    @test any(pair -> first(pair) === :shift_unit && last(pair) === :rad, rad_applied.applied)
+    @test any(pair -> first(pair) === :shift_sign && last(pair) == -1.0, rad_applied.applied)
   end)() end
   return nothing
 end
@@ -678,6 +814,10 @@ function test_configuration_value_domain_validation()
     damping_bad = test_scratch_path(".yaml")
     write(damping_bad, "power_flow:\n  autodamp_min: 0\n")
     @test_throws ArgumentError Sparlectra.load_sparlectra_config(damping_bad; reload = true)
+
+    fit_bad = test_scratch_path(".yaml")
+    write(fit_bad, "model:\n  auto_profile_max_fit_pu: -0.1\n")
+    @test_throws ArgumentError Sparlectra.load_sparlectra_config(fit_bad; reload = true)
 
     angle_limit_bad = test_scratch_path(".yaml")
     write(angle_limit_bad, "power_flow:\n  start_mode:\n    dc_angle_limit_deg: 0\n")

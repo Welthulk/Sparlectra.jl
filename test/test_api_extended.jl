@@ -992,6 +992,17 @@ power_flow:
       @test occursin("function mpc = case_api_calc_", calc_head)
       @test read(casefile) == input_bytes
       @test SparlectraApp._matpower_calc_export_name("/x/case 9-a.m"; date = Dates.Date(2026, 9, 30)) == "case_9_a_calc_20260930.m"
+      # a run the solver rejects (wrong branch, fail mode with an
+      # unreachable branch-angle bound) reports converged = false with
+      # status not_converged; the numerical state stays in the metadata
+      reject_cfg = joinpath(tmpdir, "reject.yaml")
+      write(reject_cfg, "config_version: 1\npower_flow:\n  wrong_branch_detection: fail\n  wrong_branch_max_branch_angle_deg: 0.001\n")
+      rejected = run_sparlectra_api(casefile = casefile, config_file = reject_cfg, output_dir = joinpath(tmpdir, "rejected"))
+      @test rejected.status === :not_converged
+      @test rejected.converged === false
+      @test rejected.metadata["final_outcome"]["numerical_converged"] === true
+      @test rejected.metadata["wrong_branch_status"] == "fail"
+      @test SparlectraApp.to_dict(rejected)["numerical_converged"] === true
       plain_run = run_sparlectra_api(casefile = casefile, config_file = template, output_dir = joinpath(tmpdir, "no_matpower_export"))
       @test !isfile(joinpath(tmpdir, "no_matpower_export", calc_name))
       @test !haskey(plain_run.metadata, "matpower_export_status")

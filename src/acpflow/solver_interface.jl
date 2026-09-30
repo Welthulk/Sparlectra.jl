@@ -246,6 +246,9 @@ function buildPfModel(
     end
   end
 
+  # Same DC model as the rectangular solver's projection (assemble_dc_bbus,
+  # phase-shift injections included), mapped onto the compressed bus order.
+  projection_dc_model = start_projection && start_projection_try_dc_start ? _projection_dc_model(net, busIdx_net) : nothing
   V0 = project_rectangular_start(
     Ybus,
     V0,
@@ -253,6 +256,7 @@ function buildPfModel(
     busType,
     Vset,
     slack_idx;
+    dc_model = projection_dc_model,
     enabled = start_projection,
     try_dc_start = start_projection_try_dc_start,
     try_blend_scan = start_projection_try_blend_scan,

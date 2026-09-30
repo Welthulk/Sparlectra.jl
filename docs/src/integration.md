@@ -132,10 +132,10 @@ generators to check in the source data.
 |---|---|
 | `result.run_id` | unique id, also the run directory name |
 | `result.status` | `:succeeded` or `:not_converged` |
-| `result.converged` | AC convergence; never true for a DC fallback |
+| `result.converged` | the AC solution converged and was accepted (a run the solver rejected, wrong branch or Q-limit rejection, reports `false`; the numerical state is `result.metadata["numerical_converged"]`); never true for a DC fallback |
 | `result.metadata["dc_fallback_solution"]` | true when the net carries a DC approximation after AC failure |
 | `result.metadata["auto_hints"]` | advisory hint texts; `auto_hint_ids` carries stable keys for programmatic matching |
-| `result.metadata["auto_profile"]`, `auto_final_stage`, `auto_final_solver`, `auto_escalation_stages` | what auto mode decided and how far it escalated |
+| `result.metadata["auto_profile"]`, `auto_final_stage`, `auto_final_solver`, `auto_final_strategy`, `auto_escalation_stages` | what auto mode decided, how far it escalated, and which solver-internal rescue strategy converged inside the final stage (`none` when the stage's own solve did) |
 | `result.json` | the machine-readable result in the run directory |
 | `effective_config.yaml` | the exact configuration the run used |
 | `auto_mode_decision.log` | features, profile, reasons, conflicts, attempts, hints |

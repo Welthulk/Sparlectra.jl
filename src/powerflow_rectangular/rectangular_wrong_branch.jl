@@ -82,8 +82,14 @@ some diagnostics are not available (e.g., no branch checks).
   branch_angle_violation_count::Int = 0,
   worst_branch = nothing,
   lowest_buses::Vector{Int} = Int[],
+  level_kV::Float64 = NaN,
+  level_low_vm_count::Int = 0,
+  level_bus_count::Int = 0,
+  max_bus_angle_deg::Float64 = NaN,
+  plain_steps::Int = 0,
+  plain_steps_exceeded::Bool = false,
 )
-  return (; status, reason, min_vm_pu, max_vm_pu, low_vm_count, high_vm_count, angle_spread_deg, max_branch_angle_deg, worst_branch_angle_deg, branch_angle_violation_count, worst_branch, lowest_buses)
+  return (; status, reason, min_vm_pu, max_vm_pu, low_vm_count, high_vm_count, angle_spread_deg, max_branch_angle_deg, worst_branch_angle_deg, branch_angle_violation_count, worst_branch, lowest_buses, level_kV, level_low_vm_count, level_bus_count, max_bus_angle_deg, plain_steps, plain_steps_exceeded)
 end
 
 # Explicit "diagnostics disabled" payload to distinguish from a checked-and-ok state.
@@ -106,16 +112,20 @@ The check is intentionally conservative:
 - suspicious but finite states are returned as `:warn`,
 - final policy (`:warn`, `:fail`, potential rescue path) is decided by caller logic.
 
-When `net` is available, all heuristics (voltage band, angle spread,
-branch-angle) are evaluated only on the network's highest nominal voltage
-level; lower levels carry normal operating spread that would produce false
-SUSPECT verdicts. The reported `min_vm_pu`/`max_vm_pu`/`lowest_buses` refer
-to that level. Without a `net` every bus is in scope.
+When `net` is available, the angle heuristics (angle spread, branch angle)
+are evaluated only on the network's highest nominal voltage level; lower
+levels carry normal operating spread that would produce false SUSPECT
+verdicts. The voltage band (`min_vm_pu`, `max_vm_pu`) is judged on every
+energised bus of every level: a magnitude below 0.70 pu is a wrong branch
+on a 150 kV bus as much as on a 750 kV bus (case13659pegase ended with 130
+buses of its 150 kV level at 0.33 pu while its three 750 kV buses were
+clean). The reported `min_vm_pu`/`max_vm_pu`/`lowest_buses` refer to all
+levels. Without a `net` every bus is in scope for every heuristic.
 
 # Returns
 A normalized diagnostic NamedTuple created by `_wrong_branch_result`.
 """
-function _check_wrong_branch_solution(V::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int; net::Union{Nothing,Net} = nothing, min_vm_pu::Float64, max_vm_pu::Float64, max_angle_spread_deg::Float64, max_branch_angle_deg::Float64 = Inf, min_low_vm_count::Int)
+function _check_wrong_branch_solution(V::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int; net::Union{Nothing,Net} = nothing, min_vm_pu::Float64, max_vm_pu::Float64, max_angle_spread_deg::Float64, max_branch_angle_deg::Float64 = Inf, min_low_vm_count::Int, min_vn_kV::Float64 = 100.0, low_vm_share::Float64 = 0.05, max_bus_angle_deg::Float64 = Inf, max_plain_steps::Int = 0, collapse_vm_pu::Float64 = 0.0, plain_steps::Int = 0)
   # This helper is intentionally conservative: suspicious states are classified
   # as :warn so caller policy (:warn/:fail/:rescue) decides final acceptance.
   n = length(V)
@@ -136,32 +146,71 @@ function _check_wrong_branch_solution(V::Vector{ComplexF64}, bus_types::Vector{S
   # nominal-voltage data every bus stays in scope, preserving the previous
   # behavior for the unit-level callers.
   level_mask = trues(n)
+  # the levels the per-level share rule and the magnitude band judge: every
+  # nominal voltage at or above min_vn_kV; when no level reaches the floor
+  # (a distribution feeder), the highest level alone, as before
+  judged_mask = trues(n)
+  level_of = fill(NaN, n)
   if !isnothing(net) && length(net.nodeVec) == n
     iso = Set(net.isoNodes)
     vn_max = 0.0
     for i in eachindex(net.nodeVec)
       i in iso && continue
       vn = getNodeVn(net.nodeVec[i])
+      level_of[i] = vn
       vn > vn_max && (vn_max = vn)
     end
     if vn_max > 0.0
+      floor_kV = vn_max >= min_vn_kV ? min_vn_kV : vn_max
       for i in eachindex(net.nodeVec)
         level_mask[i] = !(i in iso) && isapprox(getNodeVn(net.nodeVec[i]), vn_max; rtol = 1e-6)
+        judged_mask[i] = !(i in iso) && getNodeVn(net.nodeVec[i]) >= floor_kV * (1 - 1e-6)
       end
     end
   end
   level_indices = findall(level_mask)
   isempty(level_indices) && (level_mask = trues(n); level_indices = collect(1:n))
+  vm_indices = findall(judged_mask)
+  isempty(vm_indices) && (vm_indices = collect(1:n))
 
   vm = abs.(V)
-  low_idx = [i for i in level_indices if vm[i] < min_vm_pu]
-  high_idx = [i for i in level_indices if vm[i] > max_vm_pu]
+  # the collapse threshold judges every energised bus, floor or not: a bus
+  # at 0.02 pu is wrong on a 63 kV level as much as on a 380 kV level
+  all_indices = isnothing(net) || length(net.nodeVec) != n ? collect(1:n) : [i for i in 1:n if !(i in net.isoNodes)]
+  isempty(all_indices) && (all_indices = collect(1:n))
+  collapse_idx = collapse_vm_pu > 0.0 ? [i for i in all_indices if vm[i] < collapse_vm_pu] : Int[]
+  low_idx = [i for i in vm_indices if vm[i] < min_vm_pu]
+  high_idx = [i for i in vm_indices if vm[i] > max_vm_pu]
   va_deg = rad2deg.(angle.(V))
   slack_ang = va_deg[slack_idx]
   # Relative-angle diagnostics are measured against slack as reference; the
   # spread is reference-invariant, so a slack below the top level is fine.
   rel = _wrap_to_180_deg.(va_deg .- slack_ang)
   angle_spread_deg = _circular_angle_spread_deg(rel[level_indices])
+  # (b) any judged bus far off the reference is a branch indicator on its own
+  max_bus_angle_seen_deg = isempty(vm_indices) ? 0.0 : maximum(abs(rel[i]) for i in vm_indices)
+  # (a) per judged level: the share of buses below the band; the level with
+  # the largest share is reported
+  level_kV = NaN
+  level_low = 0
+  level_total = 0
+  level_share = 0.0
+  if !isnothing(net) && length(net.nodeVec) == n
+    levels = unique(round.(level_of[vm_indices]; digits = 6))
+    for lv in levels
+      isfinite(lv) || continue
+      members = [i for i in vm_indices if isapprox(level_of[i], lv; rtol = 1e-6)]
+      isempty(members) && continue
+      low = count(i -> vm[i] < min_vm_pu, members)
+      share = low / length(members)
+      if share > level_share || (level_kV != level_kV)
+        level_kV = lv
+        level_low = low
+        level_total = length(members)
+        level_share = share
+      end
+    end
+  end
 
   branch_angle_violation_count = 0
   max_branch_angle_seen_deg = NaN
@@ -201,18 +250,27 @@ function _check_wrong_branch_solution(V::Vector{ComplexF64}, bus_types::Vector{S
     end
   end
 
-  # Keep the three lowest-voltage buses (within the checked level) for
+  # Keep the three lowest-voltage buses (over every energised level) for
   # compact diagnostics in logs/tables.
-  lowest_order = sort(level_indices; by = i -> vm[i])
+  lowest_order = sort(vm_indices; by = i -> vm[i])
   lowest_buses = [Int(i) for i in lowest_order[1:min(3, length(lowest_order))]]
 
   # :warn => suspicious but usable; :fail => invalid (e.g., non-finite voltages);
   # :not_checked is emitted by callers when diagnostics are disabled.
   status = :ok
   reason = :none
-  if !isempty(low_idx) && length(low_idx) >= min_low_vm_count
+  plain_steps_exceeded = max_plain_steps > 0 && plain_steps > max_plain_steps
+  # the single-bus rule keeps its reason; the level-share rule adds a
+  # finding where the single-bus count is set above the low buses present
+  if !isempty(collapse_idx)
+    status = :warn
+    reason = :voltage_collapse
+  elseif !isempty(low_idx) && length(low_idx) >= min_low_vm_count
     status = :warn
     reason = :low_voltage_magnitude
+  elseif level_total > 0 && level_low > 0 && level_share > low_vm_share
+    status = :warn
+    reason = :low_voltage_level_share
   elseif !isempty(high_idx)
     status = :warn
     reason = :high_voltage_magnitude
@@ -222,14 +280,17 @@ function _check_wrong_branch_solution(V::Vector{ComplexF64}, bus_types::Vector{S
   elseif branch_angle_violation_count > 0
     status = :warn
     reason = :branch_angle_exceeded
+  elseif max_bus_angle_seen_deg > max_bus_angle_deg
+    status = :warn
+    reason = :bus_angle_exceeded
   end
 
   return _wrong_branch_result(
     status = status,
     reason = reason,
-    min_vm_pu = minimum(vm[level_indices]),
-    max_vm_pu = maximum(vm[level_indices]),
-    low_vm_count = length(low_idx),
+    min_vm_pu = minimum(vm[vm_indices]),
+    max_vm_pu = maximum(vm[vm_indices]),
+    low_vm_count = length(low_idx) + count(i -> !(i in vm_indices), collapse_idx),
     high_vm_count = length(high_idx),
     angle_spread_deg = angle_spread_deg,
     max_branch_angle_deg = max_branch_angle_deg,
@@ -237,5 +298,11 @@ function _check_wrong_branch_solution(V::Vector{ComplexF64}, bus_types::Vector{S
     branch_angle_violation_count = branch_angle_violation_count,
     worst_branch = worst_branch,
     lowest_buses = lowest_buses,
+    level_kV = level_kV,
+    level_low_vm_count = level_low,
+    level_bus_count = level_total,
+    max_bus_angle_deg = max_bus_angle_seen_deg,
+    plain_steps = plain_steps,
+    plain_steps_exceeded = plain_steps_exceeded,
   )
 end

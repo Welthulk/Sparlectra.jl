@@ -493,6 +493,68 @@ function test_rectangular_start_projection_improves_dc_seed()::Bool
   return Vproj[1] == Vraw[1] && projected_mismatch < raw_mismatch && Vdc == Vproj && profile[:dc_matrix_size] == (1, 1) && profile[:dc_matrix_nnz] == 1 && profile[:dc_solve_backend] === :sparse_lu_umfpack && profile[:dc_solve_reduced_dimension] == 1
 end
 
+function test_rectangular_start_projection_dc_candidate_matches_rundcpf()::Bool
+  # Regression (grid-bench study 7.1, case6495rte): the projection's DC
+  # candidate solved imag(Ybus) with the bus injections only and missed the
+  # phase-shifter injections. With the net's DC model (assemble_dc_bbus, the
+  # model rundcpf! solves) the candidate angles equal rundcpf!'s; the path
+  # without the injection vector is off by exactly Bred \ Pbusinj.
+  shift_deg = 10.0
+  net = Net(name = "dc3_shift", baseMVA = 100.0)
+  addBus!(net = net, busName = "B1", vn_kV = 110.0)
+  addBus!(net = net, busName = "B2", vn_kV = 110.0)
+  addBus!(net = net, busName = "B3", vn_kV = 110.0)
+  addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.02, x_pu = 0.08, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "B1", toBus = "B3", r_pu = 0.03, x_pu = 0.12, b_pu = 0.0, status = 1)
+  addPIModelTrafo!(net = net, fromBus = "B2", toBus = "B3", r_pu = 0.02, x_pu = 0.10, b_pu = 0.0, status = 1, ratio = 1.0, shift_deg = shift_deg)
+  addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "B1")
+  addProsumer!(net = net, busName = "B2", type = "GENERATOR", p = 25.0, q = 0.0, vm_pu = 1.01)
+  addProsumer!(net = net, busName = "B2", type = "ENERGYCONSUMER", p = 20.0, q = 10.0)
+  addProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER", p = 45.0, q = 15.0)
+  refreshBusTypesFromProsumers!(net)
+
+  bus_types, Vset, slack_idx = Sparlectra.extract_bus_types_and_vset(net)
+  n = length(bus_types)
+  Y = createYBUS(net = net, sparse = true, printYBUS = false)
+  S = buildComplexSVec(net)
+  Vraw = ComplexF64[Vset[k] + 0.0im for k in 1:n]
+  model = Sparlectra._projection_dc_model(net)
+  model isa Sparlectra._ProjectionDcModel || return false
+  any(!iszero, model.Pbusinj) || return false
+
+  Vdc_model = Sparlectra._dc_angle_start_rectangular(Y, Vraw, S, bus_types, Vset, slack_idx; dc_angle_limit_deg = 60.0, dc_model = model)
+  Vdc_ybus = Sparlectra._dc_angle_start_rectangular(Y, Vraw, S, bus_types, Vset, slack_idx; dc_angle_limit_deg = 60.0)
+  no_injection = Sparlectra._ProjectionDcModel(model.Bbus, zeros(Float64, n))
+  Vdc_noinj = Sparlectra._dc_angle_start_rectangular(Y, Vraw, S, bus_types, Vset, slack_idx; dc_angle_limit_deg = 60.0, dc_model = no_injection)
+
+  report = rundcpf!(net)
+  report.metadata.converged || return false
+  theta_dc = deg2rad.([row.va_deg for row in report.nodes])
+  theta_model = angle.(Vdc_model)
+  theta_ybus = angle.(Vdc_ybus)
+  theta_noinj = angle.(Vdc_noinj)
+
+  # The shift term: the reduced Bbus applied to the shift injections.
+  non_slack = Sparlectra.non_slack_indices(n, slack_idx)
+  pos = Sparlectra.build_pos_map(non_slack, n)
+  Bred = Sparlectra.reduce_susceptance_to_nonslack(model.Bbus, non_slack, pos, slack_idx, length(non_slack); value_of = x -> -x)
+  shift_term = Bred \ model.Pbusinj[non_slack]
+
+  # The projection itself with a requested DC angle start hands the model
+  # candidate through and names the model in its summary.
+  profile = Dict{Symbol,Any}(:enabled => true)
+  Vproj = Sparlectra.project_rectangular_start(Y, Vraw, S, bus_types, Vset, slack_idx; enabled = true, try_dc_start = true, try_blend_scan = false, dc_angle_limit_deg = 60.0, requested_angle_mode = :dc, performance_profile = profile, dc_model = model)
+  summary = profile[:start_projection_summary]
+
+  return maximum(abs.(theta_model .- theta_dc)) <= 1e-12 &&
+         maximum(abs.(theta_ybus .- theta_dc)) > 1e-4 &&
+         maximum(abs.((theta_noinj[non_slack] .- theta_model[non_slack]) .- shift_term)) <= 1e-12 &&
+         maximum(abs.(shift_term)) > 1e-4 &&
+         Vproj == Vdc_model &&
+         summary.selected === :dc_start &&
+         summary.dc_model === :dc_bbus
+end
+
 function test_rectangular_start_projection_keeps_raw_without_finite_improvement()::Bool
   Ydense = ComplexF64[0.0 - 10.0im 0.0 + 10.0im; 0.0 + 10.0im 0.0 - 10.0im]
   Y = sparse(Ydense)
@@ -1588,7 +1650,60 @@ mpc.branch = [
     occursin("solution_available=false", summary_fail) &&
     occursin("final_converged=false", summary_fail)
 
-  return warn_ok && fail_ok
+  # the check runs on every numerically converged AC result, Q limits off
+  # included (it sat inside the Q-limit block before 0.20.5, so a flat
+  # start that converged onto a low-voltage branch with Q limits off was
+  # reported as not_checked)
+  cfg_noq = Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("wrong_branch_detection" => "warn", "wrong_branch_max_branch_angle_deg" => 0.001, "qlimits" => Dict("enabled" => false)), "output" => Dict("logfile_results" => "off")))
+  result_noq = redirect_stdout(devnull) do
+    Sparlectra.run_sparlectra(casefile = basename(case_path), path = dirname(case_path), config = cfg_noq)
+  end
+  st_noq = Sparlectra.rectangular_pf_status(result_noq.net)
+  noq_ok = st_noq.wrong_branch_status === :warn && st_noq.wrong_branch_reason === :branch_angle_exceeded && result_noq.final_converged === true
+
+  return warn_ok && fail_ok && noq_ok
+end
+
+# The voltage band of the wrong-branch check judges every energised level,
+# the angle heuristics the highest one: a 110 kV bus at 0.30 pu behind a
+# clean 380 kV level is a wrong branch (case13659pegase's 150 kV collapse
+# under three clean 750 kV buses read as ok before 0.20.5).
+function test_wrong_branch_voltage_band_every_level()::Bool
+  net = Net(name = "wb_levels", baseMVA = 100.0)
+  addBus!(net = net, busName = "HV1", vn_kV = 380.0)
+  addBus!(net = net, busName = "HV2", vn_kV = 380.0)
+  addBus!(net = net, busName = "MV", vn_kV = 110.0)
+  addPIModelACLine!(net = net, fromBus = "HV1", toBus = "HV2", r_pu = 0.01, x_pu = 0.1, b_pu = 0.0, status = 1)
+  addPIModelTrafo!(net = net, fromBus = "HV2", toBus = "MV", r_pu = 0.005, x_pu = 0.05, b_pu = 0.0, status = 1)
+  addProsumer!(net = net, busName = "HV1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "HV1")
+  addProsumer!(net = net, busName = "MV", type = "ENERGYCONSUMER", p = 10.0, q = 3.0)
+  refreshBusTypesFromProsumers!(net)
+  V = ComplexF64[1.0 + 0.0im, 0.99 - 0.01im, 0.30 - 0.05im]
+  bus_types = [:Slack, :PQ, :PQ]
+  Vset = [1.0, 1.0, 1.0]
+  res = Sparlectra._check_wrong_branch_solution(V, bus_types, Vset, 1; net = net, min_vm_pu = 0.70, max_vm_pu = 1.30, max_angle_spread_deg = 180.0, max_branch_angle_deg = 90.0, min_low_vm_count = 1)
+  # the 110 kV level (one bus, below the band) trips the level-share rule
+  # first; the level and its counts are reported
+  share_ok = res.status === :warn && res.reason === :low_voltage_magnitude && res.level_kV == 110.0 && res.level_low_vm_count == 1 && res.level_bus_count == 1 && res.low_vm_count == 1 && res.min_vm_pu < 0.31 && 3 in res.lowest_buses
+  # with the single-bus count above the low buses present the level-share
+  # rule carries the finding (the 110 kV level is fully below the band)
+  res_share = Sparlectra._check_wrong_branch_solution(V, bus_types, Vset, 1; net = net, min_vm_pu = 0.70, max_vm_pu = 1.30, max_angle_spread_deg = 180.0, max_branch_angle_deg = 90.0, min_low_vm_count = 5, low_vm_share = 0.05)
+  share_ok = share_ok && res_share.status === :warn && res_share.reason === :low_voltage_level_share
+  # with the floor above 110 kV the low bus leaves the judged set: clean
+  res_floor = Sparlectra._check_wrong_branch_solution(V, bus_types, Vset, 1; net = net, min_vm_pu = 0.70, max_vm_pu = 1.30, max_angle_spread_deg = 180.0, max_branch_angle_deg = 90.0, min_low_vm_count = 1, min_vn_kV = 220.0)
+  floor_ok = res_floor.status === :ok && res_floor.low_vm_count == 0
+  # below the floor a collapsed bus is still a finding through the collapse
+  # threshold (case2848rte's branch sits on its 63 kV level at 0.02 pu)
+  res_collapse = Sparlectra._check_wrong_branch_solution(V, bus_types, Vset, 1; net = net, min_vm_pu = 0.70, max_vm_pu = 1.30, max_angle_spread_deg = 180.0, max_branch_angle_deg = 90.0, min_low_vm_count = 1, min_vn_kV = 220.0, collapse_vm_pu = 0.5)
+  floor_ok = floor_ok && res_collapse.status === :warn && res_collapse.reason === :voltage_collapse && res_collapse.low_vm_count == 1
+  # a single bus angle beyond the bound is a finding of its own
+  Vang = ComplexF64[1.0 + 0.0im, 0.99 - 0.01im, -0.5 + 0.86im]
+  res_ang = Sparlectra._check_wrong_branch_solution(Vang, bus_types, Vset, 1; net = net, min_vm_pu = 0.70, max_vm_pu = 1.30, max_angle_spread_deg = 180.0, max_branch_angle_deg = 1e9, min_low_vm_count = 1, max_bus_angle_deg = 120.0)
+  ang_ok = res_ang.status === :warn && res_ang.reason === :bus_angle_exceeded && res_ang.max_bus_angle_deg > 119.0
+  # plain steps above the bound are reported without changing the status
+  res_steps = Sparlectra._check_wrong_branch_solution(ComplexF64[1.0 + 0.0im, 0.99 - 0.01im, 0.98 - 0.02im], bus_types, Vset, 1; net = net, min_vm_pu = 0.70, max_vm_pu = 1.30, max_angle_spread_deg = 180.0, max_branch_angle_deg = 90.0, min_low_vm_count = 1, max_plain_steps = 20, plain_steps = 25)
+  steps_ok = res_steps.status === :ok && res_steps.plain_steps == 25 && res_steps.plain_steps_exceeded === true
+  return share_ok && floor_ok && ang_ok && steps_ok
 end
 
 function test_link_kcl_simple()
@@ -3338,6 +3453,7 @@ function run_grid_fast_tests()
       @test test_matpower_matrix_block_scanner_whitespace() == true
       @test test_matpower_file_import_honors_explicit_overrides() == true
       @test test_run_sparlectra_forwards_wrong_branch_config() == true
+      @test test_wrong_branch_voltage_band_every_level() == true
       @test test_run_sparlectra_normalizes_projected_matpower_starts() == true
       @test test_run_sparlectra_resolves_matpower_lock_bus_ids() == true
     end)() end
@@ -3350,6 +3466,7 @@ function run_grid_fast_tests()
       @test test_rectangular_nonfinite_mismatch_diagnostics_use_finite_history() == true
       @test test_rectangular_final_status_best_mismatch_ignores_nan() == true
       @test test_rectangular_start_projection_improves_dc_seed() == true
+      @test test_rectangular_start_projection_dc_candidate_matches_rundcpf() == true
       @test test_rectangular_start_projection_keeps_raw_without_finite_improvement() == true
       @test test_q_limit_adjust_vset_success() == true
       @test test_q_limit_adjust_vset_no_controller_switches() == true

@@ -209,6 +209,12 @@ function _finalize_rectangular_wrong_branch_diagnostics(
   wrong_branch_max_angle_spread_deg::Float64,
   wrong_branch_max_branch_angle_deg::Float64,
   wrong_branch_min_low_vm_count::Int,
+  wrong_branch_min_vn_kV::Float64 = 100.0,
+  wrong_branch_low_vm_share::Float64 = 0.05,
+  wrong_branch_max_bus_angle_deg::Float64 = 120.0,
+  wrong_branch_max_plain_steps::Int = 20,
+  wrong_branch_collapse_vm_pu::Float64 = 0.5,
+  plain_steps::Int = 0,
   net,
 )
   branch_quality = _wrong_branch_not_checked_result()
@@ -226,6 +232,12 @@ function _finalize_rectangular_wrong_branch_diagnostics(
       max_angle_spread_deg = wrong_branch_max_angle_spread_deg,
       max_branch_angle_deg = wrong_branch_max_branch_angle_deg,
       min_low_vm_count = wrong_branch_min_low_vm_count,
+      min_vn_kV = wrong_branch_min_vn_kV,
+      low_vm_share = wrong_branch_low_vm_share,
+      max_bus_angle_deg = wrong_branch_max_bus_angle_deg,
+      max_plain_steps = wrong_branch_max_plain_steps,
+      collapse_vm_pu = wrong_branch_collapse_vm_pu,
+      plain_steps = plain_steps,
       net = net,
     )
 
@@ -348,6 +360,12 @@ function _build_rectangular_final_status(
     wrong_branch_reason = branch_quality.reason,
     wrong_branch_low_vm_count = branch_quality.low_vm_count,
     wrong_branch_high_vm_count = branch_quality.high_vm_count,
+    wrong_branch_level_kV = branch_quality.level_kV,
+    wrong_branch_level_low_vm_count = branch_quality.level_low_vm_count,
+    wrong_branch_level_bus_count = branch_quality.level_bus_count,
+    wrong_branch_max_bus_angle_deg = branch_quality.max_bus_angle_deg,
+    wrong_branch_plain_steps = branch_quality.plain_steps,
+    wrong_branch_plain_steps_exceeded = branch_quality.plain_steps_exceeded,
     wrong_branch_angle_spread_deg = branch_quality.angle_spread_deg,
     wrong_branch_max_branch_angle_deg = branch_quality.max_branch_angle_deg,
     wrong_branch_branch_angle_violation_count = branch_quality.branch_angle_violation_count,
