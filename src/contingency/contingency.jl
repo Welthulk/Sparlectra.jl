@@ -214,8 +214,9 @@ removes ONLY that one unit's injection; the topology is unchanged, so the lost
 active power must be picked up by the slack (or, with
 `distributed_slack_enabled = true` on [`runContingencies!`](@ref), shared over
 the surviving participants). Removing a bus's last voltage-regulating source
-demotes it to PQ, and removing the island's only reference is reported as
-`islanded without reference` with the stranded generation named.
+demotes it to PQ; an island that lost its only reference takes its
+strongest remaining generating unit as reference (always, independent of
+`auto_slack`), and only a load-only island is reported as `islanded`.
 
 Optional screening filters (default to "no filter"):
 - `min_pg_MW`: keep a generator only if `|Pg|` is at least this value (skips

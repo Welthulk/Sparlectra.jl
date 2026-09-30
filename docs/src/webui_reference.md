@@ -411,9 +411,9 @@ The settings and run forms offer:
   requires `power_flow.autodamp = true`; `scale_p`/`scale_q`/`scale_v` are
   YAML-only; a diagnostic run writes `merit_linesearch.log`;
 - **Non-convergence handling** (Advanced): `power_flow.rescue` (retry
-  ladder), `power_flow.auto_slack` (promote a reference when the case, or an
-  island without a voltage-controlled unit, registers none; off aborts such
-  a run) and `power_flow.dc.fallback` (standalone DC result when AC has no
+  ladder), `power_flow.auto_slack` (promote a reference when the case
+  registers none; islands always find their own reference) and
+  `power_flow.dc.fallback` (standalone DC result when AC has no
   solution), see [Power-Flow Configuration](powerflow_configuration.md);
 - MATPOWER import conventions: auto-profile mode (`off`, `recommend`,
   `apply`) plus transformer ratio, phase shift, bus shunt, PV voltage source

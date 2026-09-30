@@ -150,7 +150,8 @@ function ScenarioEngine(net::Net; vm_min_pu::Float64 = 0.9, vm_max_pu::Float64 =
   end
   screen = screening_mode === :off ? nothing : _build_screening_state(template, base_converged, tol, pf_kwargs)
   base_refs = Set{Int}(Int(ps.comp.cFrom_bus) for ps in template.prosumpsVec if isSlack(ps))
-  for row in detect_ac_islands(template; promote_generators = get(Dict(pairs(pf_kwargs)), :auto_slack, false) == true).rows
+  # islands always promote a generating unit (the solver does the same)
+  for row in detect_ac_islands(template; promote_generators = true).rows
     row.chosen_ref_bus > 0 && push!(base_refs, Int(row.chosen_ref_bus))
   end
   return ScenarioEngine(template, base_converged, base_loadings, index, vm_min_pu, vm_max_pu, maxIte, tol, ladder, pf_kwargs, screening_mode, screening_margin_pct, screen, base_refs)
@@ -835,7 +836,9 @@ function _evaluate_outaged_net!(engine::ScenarioEngine, work::Net, name::String,
   cut_off = Int[i for i in eachindex(work.nodeVec) if isIsolated(work.nodeVec[i]) && !(i in isolated_before)]
   cut_off_note, cut_off_load_mw = _cut_off_bus_note(work, cut_off)
   auto_slack = get(Dict(pairs(engine.pf_kwargs)), :auto_slack, false) == true
-  island_report = detect_ac_islands(work; promote_generators = auto_slack)
+  # the same detection the solve runs: an island without a slack or PV bus
+  # takes its strongest generating unit regardless of auto_slack
+  island_report = detect_ac_islands(work; promote_generators = true)
   island_count = length(island_report.rows)
   # rows for reference-less islands, kept so an islanding failure is
   # reported specifically (load-only vs. stranded generation). The solver
@@ -882,7 +885,7 @@ function _evaluate_outaged_net!(engine::ScenarioEngine, work::Net, name::String,
         # the working copy by now, and an island without one is given its
         # bus by the same detection the solve used
         taken = Set{Int}(Int(ps.comp.cFrom_bus) for ps in work.prosumpsVec if isSlack(ps))
-        for row in detect_ac_islands(work; promote_generators = auto_slack).rows
+        for row in detect_ac_islands(work; promote_generators = true).rows
           (row.n_ref == 0 && row.chosen_ref_bus > 0) && push!(taken, Int(row.chosen_ref_bus))
         end
         setdiff!(taken, engine.base_reference_buses, cut_off, isolated_before)

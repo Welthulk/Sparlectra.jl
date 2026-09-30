@@ -75,13 +75,14 @@ convergence: it cannot give a reference to a load-only island.
   policy and solves normally; `island_count` reports the post-outage
   island count either way.
 - Load-only islands are a result, not a defect: an island with only loads
-  (or only fixed-injection PQ generation) has no voltage or frequency
-  regulation and no valid angle reference, and an arbitrary PQ slack would
-  be physically meaningless. As in MATPOWER (an island needs a REF or PV
-  bus), such an outage reports
-  `error = "islanded: load-only, X MW load disconnected"`, and an island
-  that strands generation without a voltage-controlled source reports
-  `"islanded without reference: X MW load, Y MW generation stranded ..."`.
+  has no voltage or frequency regulation and no valid angle reference, and
+  an arbitrary PQ slack would be physically meaningless. Such an outage
+  reports `error = "islanded: load-only, X MW load disconnected"`. An
+  island that keeps a generating unit always finds itself a reference: a
+  PV bus first, otherwise its strongest generating unit (a fixed-injection
+  PQ unit included), independent of `auto_slack`; the row names the bus
+  that took over. Only an island whose generation is static compensation
+  alone reports `"islanded without reference: ... generation stranded"`.
 - Lost reference: `runContingencies!`, `runScenarios!`, the service and
   the Web UI solve with `auto_slack` (the default). When an outage removes
   the reference (the slack unit, or

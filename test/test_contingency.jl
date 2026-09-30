@@ -321,12 +321,14 @@ function run_contingency_tests()
       @test !unk[1].converged
       @test occursin("unknown generator", unk[1].error)
 
-      # stranded-generation fixture (non-pegase): two separate
-      # areas, area 2 = bus C (a regulating PV generator AND a fixed-injection PQ
+      # reference hand-over fixture (non-pegase): two separate areas, area
+      # 2 = bus C (a regulating PV generator AND a fixed-injection PQ
       # generator) feeding load at D. Both areas carry a reference in the base
-      # case. A generator outage that removes C's PV generator leaves area 2 with
-      # injection (the PQ unit) but no voltage reference -> the parked
-      # stranded-generation outcome, reproduced without pegase.
+      # case. A generator outage that removes C's PV generator leaves area 2
+      # with injection (the PQ unit) but no voltage reference: the island
+      # takes that unit as its reference, with or without auto_slack (islands
+      # always find themselves a reference); only the load-only area stays
+      # islanded.
       sg = Net(name = "n1_stranded_gen", baseMVA = 100.0)
       for b in ("A", "A2", "C", "D")
         addBus!(net = sg, busName = b, vn_kV = 110.0)
@@ -340,17 +342,17 @@ function run_contingency_tests()
       addPIModelACLine!(net = sg, fromBus = "C", toBus = "D", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
       ok_sg, _ = validate!(net = sg)
       @test ok_sg
-      sres = runContingencies!(sg, generateN1Generators(sg); parallel_enabled = false, auto_slack = false)
+      sres = redirect_stdout(devnull) do
+        runContingencies!(sg, generateN1Generators(sg); parallel_enabled = false, auto_slack = false)
+      end
       smsgs = [r.error === nothing ? "converged" : r.error for r in sres]
-      # PV generator removed, PQ generator survives: injection but no reference
-      @test any(m -> occursin("generation stranded", m), smsgs)
       # slack generator removed: area 1 becomes a load-only island
       @test any(m -> occursin("load-only", m), smsgs)
-      # PQ generator removed, the PV reference survives: area 2 still solves
-      @test any(m -> m == "converged", smsgs)
-      # by default the reference is handed on: the area that lost its
-      # voltage-controlled unit solves on the unit that is left, and only
-      # the area without any unit stays islanded with its load
+      # PV generator removed, the PQ unit survives and takes the reference;
+      # PQ generator removed, the PV reference survives: both solve
+      @test count(r -> r.converged, sres) == 2
+      @test !any(m -> occursin("generation stranded", m), smsgs)
+      # the default (auto_slack) ends on the same three outcomes
       sauto = redirect_stdout(devnull) do
         runContingencies!(sg, generateN1Generators(sg); parallel_enabled = false)
       end
