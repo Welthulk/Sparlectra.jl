@@ -186,6 +186,26 @@ function run_auto_powerflow_tests()
       @test isempty(l5.solver) && l5.qlimit_evidence.skipped == "skipped_no_qlimit_evidence"
       # tolerance is untouched by every stage (the user value survives)
       @test cfg.powerflow.tol == 1e-15
+      # every attempt names the solver-internal rescue strategy that
+      # converged inside it (:none here: nothing converges at 1e-15)
+      @test all(a -> get(pairs(a), :rescue_strategy, missing) === :none, rec.attempts)
+      # a stale rescue marker in the profile is cleared before every
+      # attempt (no strategy is attributed to a stage that did not use it)
+      stale = Dict{Symbol,Any}(:ac_rescue_strategy => :settled_qlimits)
+      r_stale = redirect_stdout(devnull) do
+        run_sparlectra(casefile = case, config = cfg, performance_profile = stale)
+      end
+      @test all(a -> a.rescue_strategy === :none, Sparlectra.auto_pf_record(r_stale.net).attempts)
+      # the decision log names the rescue strategy that converged inside a
+      # stage (the stage's own settings did not), and the final line too
+      rec_rescue = (; rec..., attempts = [(; rec.attempts[1]..., converged = true, rescue_strategy = :settled_qlimits)], final_strategy = :settled_qlimits, converged = true)
+      mktempdir() do dir
+        log = joinpath(dir, "auto_mode_decision.log")
+        Sparlectra._write_auto_mode_decision_log(log, rec_rescue)
+        text = read(log, String)
+        @test occursin("through the rescue strategy 'settled_qlimits'", text)
+        @test occursin("rescue strategy: settled_qlimits", text)
+      end
       # precedence: the user's explicit key survives and the conflict is logged
       cfg2 = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true, overrides = Dict{String,Any}("power_flow" => Dict{String,Any}("mode" => "auto", "autodamp" => false)))
       r2 = run_sparlectra(casefile = case, config = cfg2)
@@ -198,6 +218,9 @@ function run_auto_powerflow_tests()
       @test rs["metadata"]["auto_mode_enabled"] === true
       @test haskey(rs["metadata"], "auto_profile")
       @test haskey(rs["metadata"], "auto_final_solver")
+      # the converging strategy inside the final stage: none on a run the
+      # stage's own solve finished (0.20.5)
+      @test rs["metadata"]["auto_final_strategy"] == "none"
       logp = joinpath(rs["output_dir"], "auto_mode_decision.log")
       @test isfile(logp)
       logtxt = read(logp, String)

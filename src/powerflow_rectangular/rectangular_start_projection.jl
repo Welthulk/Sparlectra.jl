@@ -56,7 +56,68 @@ function _voltage_magnitude_for_projection(Vraw::Vector{ComplexF64}, bus_types::
   end
 end
 
-function _dc_angle_start_rectangular(Ybus, Vraw::Vector{ComplexF64}, S::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int; dc_angle_limit_deg::Float64 = 60.0)
+"""
+    _ProjectionDcModel(Bbus, Pbusinj)
+
+The DC model the start projection's DC candidate solves when the caller
+owns a `Net`: `Bbus` and `Pbusinj` exactly as [`assemble_dc_bbus`](@ref)
+returns them (series reactance over tap magnitude, phase shift as the
+injection vector), so the candidate is the same DC power flow `rundcpf!`
+solves. Without it the candidate falls back to `imag(Ybus)` and the bus
+injections alone (the unit-level callers without a net), which leaves the
+phase-shifter injections out: on case6495rte that start was wrong by 510
+and 361 pu on two shifted branches and diverged where the `rundcpf!` seed
+converged.
+"""
+struct _ProjectionDcModel
+  Bbus::SparseMatrixCSC{Float64,Int}
+  Pbusinj::Vector{Float64}
+end
+
+"""
+    _projection_dc_model(net::Net) -> Union{Nothing,_ProjectionDcModel}
+    _projection_dc_model(net::Net, bus_idx::Vector{Int}) -> Union{Nothing,_ProjectionDcModel}
+
+Assemble the projection's DC model from `net` through [`assemble_dc_bbus`](@ref),
+the one DC assembly in the code base. Returns `nothing` when an in-service
+branch has `x_pu == 0` (the DC model has no series susceptance for it and
+`assemble_dc_bbus` refuses the net); the projection then keeps the
+`imag(Ybus)` fallback and reports `dc_model = :ybus_susceptance` in its
+summary. The `bus_idx` variant maps the net-indexed model onto a
+compressed bus ordering (`buildPfModel`'s active-bus vector, position `k`
+holds net node `bus_idx[k]`).
+"""
+function _projection_dc_model(net::Net)
+  for br in net.branchVec
+    br.status == 1 && br.x_pu == 0.0 && return nothing
+  end
+  Bbus, Pbusinj, _ = assemble_dc_bbus(net)
+  return _ProjectionDcModel(Bbus, Pbusinj)
+end
+
+function _projection_dc_model(net::Net, bus_idx::Vector{Int})
+  model = _projection_dc_model(net)
+  model === nothing && return nothing
+  return _ProjectionDcModel(model.Bbus[bus_idx, bus_idx], model.Pbusinj[bus_idx])
+end
+
+# Reduced DC matrix of the candidate: the net's Bbus (MATPOWER convention,
+# negative off-diagonals, hence value_of = x -> -x as in solve_dc_powerflow)
+# or, without a model, the imaginary part of the AC admittance matrix.
+function _dc_candidate_matrix(Ybus, dc_model::Union{Nothing,_ProjectionDcModel}, non_slack::Vector{Int}, pos::Vector{Int}, slack_idx::Int, nred::Int)
+  dc_model === nothing && return reduce_susceptance_to_nonslack(Ybus, non_slack, pos, slack_idx, nred; value_of = imag)
+  return reduce_susceptance_to_nonslack(dc_model.Bbus, non_slack, pos, slack_idx, nred; value_of = x -> -x)
+end
+
+# Right-hand side of the candidate: P - Pbusinj on the non-slack buses, the
+# sign rundcpf! applies (solve_dc_powerflow); P alone without a model.
+function _dc_candidate_rhs(S::Vector{ComplexF64}, dc_model::Union{Nothing,_ProjectionDcModel}, non_slack::Vector{Int})
+  P = real.(S[non_slack])
+  dc_model === nothing && return P
+  return P .- dc_model.Pbusinj[non_slack]
+end
+
+function _dc_angle_start_rectangular(Ybus, Vraw::Vector{ComplexF64}, S::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int; dc_angle_limit_deg::Float64 = 60.0, dc_model::Union{Nothing,_ProjectionDcModel} = nothing)
   # DC-angle start builds phase guesses from active-power balance on reduced B.
   # Only non-slack buses are solved; slack is the angular reference.
   n = length(Vraw)
@@ -65,9 +126,9 @@ function _dc_angle_start_rectangular(Ybus, Vraw::Vector{ComplexF64}, S::Vector{C
   nred == 0 && return copy(Vraw)
   pos = build_pos_map(non_slack, n)
 
-  B = reduce_susceptance_to_nonslack(Ybus, non_slack, pos, slack_idx, nred; value_of = imag)
+  B = _dc_candidate_matrix(Ybus, dc_model, non_slack, pos, slack_idx, nred)
 
-  P = real.(S[non_slack])
+  P = _dc_candidate_rhs(S, dc_model, non_slack)
   θred = _solve_dc_angle_system(B, P, nothing, nred)
   # Clamp relative angles to avoid extreme starts that can destabilize first NR steps.
   limit = deg2rad(dc_angle_limit_deg)
@@ -169,7 +230,7 @@ function _solve_dc_angle_system(B, P::Vector{Float64}, performance_profile, nred
   end
 end
 
-function _dc_angle_start_rectangular_profiled(Ybus, Vraw::Vector{ComplexF64}, S::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int; dc_angle_limit_deg::Float64 = 60.0, performance_profile = nothing)
+function _dc_angle_start_rectangular_profiled(Ybus, Vraw::Vector{ComplexF64}, S::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int; dc_angle_limit_deg::Float64 = 60.0, performance_profile = nothing, dc_model::Union{Nothing,_ProjectionDcModel} = nothing)
   n = length(Vraw)
   non_slack = _perf_profile_time!(performance_profile, :start_projection_bus_map) do
     non_slack_indices(n, slack_idx)
@@ -182,10 +243,10 @@ function _dc_angle_start_rectangular_profiled(Ybus, Vraw::Vector{ComplexF64}, S:
 
   # Profiled variant keeps assembly/solve phases separated for timing analysis.
   B = _perf_profile_time!(performance_profile, :start_projection_dc_matrix_assembly) do
-    reduce_susceptance_to_nonslack(Ybus, non_slack, pos, slack_idx, nred; value_of = imag)
+    _dc_candidate_matrix(Ybus, dc_model, non_slack, pos, slack_idx, nred)
   end
 
-  P = real.(S[non_slack])
+  P = _dc_candidate_rhs(S, dc_model, non_slack)
   θred = _perf_profile_time!(performance_profile, :start_projection_dc_linear_solve) do
     _solve_dc_angle_system(B, P, performance_profile, nred)
   end
@@ -326,6 +387,10 @@ as reference in all generated candidates.
 - `dc_angle_limit_deg::Float64=60.0`: Absolute cap for non-slack relative DC angles.
 - `verbose::Int=0`: Logging verbosity.
 - `performance_profile=nothing`: Optional profiling dictionary for timing/diagnostics.
+- `dc_model=nothing`: A [`_ProjectionDcModel`](@ref) (the net's `Bbus` and `Pbusinj`
+  from [`assemble_dc_bbus`](@ref), built by `_projection_dc_model`) so the DC candidate
+  solves the same DC power flow as `rundcpf!`, phase-shifter injections included.
+  Without it the candidate uses `imag(Ybus)` and the bus injections alone.
 
 # Returns
 - `Vector{ComplexF64}`: Selected projected start vector for the rectangular NR solve.
@@ -349,6 +414,7 @@ function project_rectangular_start(
   requested_voltage_mode::Symbol = :classic,
   verbose::Int = 0,
   performance_profile = nothing,
+  dc_model::Union{Nothing,_ProjectionDcModel} = nothing,
 )
   enabled || return Vraw
   # Projection is opt-in and must be numerically bounded by a positive angle cap.
@@ -379,7 +445,7 @@ function project_rectangular_start(
 
   if try_dc_start || dc_angle_required
     Vdc = _perf_profile_time!(performance_profile, :start_projection_dc_start_construction) do
-      _dc_angle_start_rectangular_profiled(Ybus, raw, S, bus_types, Vset, slack_idx; dc_angle_limit_deg = dc_angle_limit_deg, performance_profile = performance_profile)
+      _dc_angle_start_rectangular_profiled(Ybus, raw, S, bus_types, Vset, slack_idx; dc_angle_limit_deg = dc_angle_limit_deg, performance_profile = performance_profile, dc_model = dc_model)
     end
     dc_angle_start_built = true
     dc_angle_start_valid = all(isfinite, real.(Vdc)) && all(isfinite, imag.(Vdc))
@@ -471,6 +537,9 @@ function project_rectangular_start(
     nothing
   end
   dc_quality = _dc_start_quality_diagnostics(Ybus, Vdc, raw_mis, dc_mis, slack_idx, dc_angle_limit_deg)
+  # Which DC model the candidate solved: the net's Bbus with the phase-shift
+  # injections (rundcpf!'s model) or the imag(Ybus) fallback of a net-less call.
+  dc_model_name = dc_model === nothing ? :ybus_susceptance : :dc_bbus
   if performance_profile isa AbstractDict && Bool(get(performance_profile, :enabled, false))
     # Compact selection summary for diagnostics/UI without storing all candidate vectors.
     performance_profile[:start_projection_summary] = (
@@ -488,6 +557,7 @@ function project_rectangular_start(
       selected_start_candidate = best_name,
       selection_reason = selection_reason,
       dc_mismatch = isfinite(dc_mis) ? dc_mis : missing,
+      dc_model = dc_model_name,
       best_blend_mismatch = isfinite(best_blend_mis) ? best_blend_mis : missing,
       projected_mismatch = reported_best_mis,
       fallback_to_raw = fallback_to_raw,
@@ -500,7 +570,7 @@ function project_rectangular_start(
   end
 
   if verbose > 0
-    @info "start projection selected $(best_name)" requested_angle_mode = requested_angle_mode requested_voltage_mode = requested_voltage_mode reason = selection_reason raw_mismatch = (isfinite(raw_mis) ? raw_mis : missing) dc_mismatch = (isfinite(dc_mis) ? dc_mis : missing) projected_mismatch = reported_best_mis dc_angle_start_built = dc_angle_start_built dc_angle_start_valid = dc_angle_start_valid dc_angle_start_applied = dc_angle_start_applied fallback_to_raw = fallback_to_raw fallback_reason = fallback_reason dc_angle_spread_deg = dc_quality.dc_angle_spread_deg dc_max_branch_angle_deg = dc_quality.dc_max_branch_angle_deg dc_mismatch_ratio_vs_raw = dc_quality.dc_mismatch_ratio_vs_raw
+    @info "start projection selected $(best_name)" requested_angle_mode = requested_angle_mode requested_voltage_mode = requested_voltage_mode reason = selection_reason raw_mismatch = (isfinite(raw_mis) ? raw_mis : missing) dc_mismatch = (isfinite(dc_mis) ? dc_mis : missing) dc_model = dc_model_name projected_mismatch = reported_best_mis dc_angle_start_built = dc_angle_start_built dc_angle_start_valid = dc_angle_start_valid dc_angle_start_applied = dc_angle_start_applied fallback_to_raw = fallback_to_raw fallback_reason = fallback_reason dc_angle_spread_deg = dc_quality.dc_angle_spread_deg dc_max_branch_angle_deg = dc_quality.dc_max_branch_angle_deg dc_mismatch_ratio_vs_raw = dc_quality.dc_mismatch_ratio_vs_raw
   end
   return best
 end

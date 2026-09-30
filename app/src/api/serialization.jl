@@ -47,6 +47,14 @@ end
 Convert an API result to a transport-safe dictionary. `raw_result` is omitted
 by default because the solved network is not a stable JSON/YAML transport type.
 """
+# the numerical state of the AC solve from the final outcome (absent or
+# `nothing` on the failure paths before a solve): then the accepted flag
+function _numerical_converged_of(result::SparlectraApiResult)
+  outcome = get(result.metadata, "final_outcome", nothing)
+  outcome isa AbstractDict || return result.converged
+  return get(outcome, "numerical_converged", result.converged)
+end
+
 function to_dict(result::SparlectraApiResult; include_raw_result::Bool = false)::Dict{String,Any}
   data = Dict{String,Any}(
     "run_id" => result.run_id,
@@ -54,7 +62,9 @@ function to_dict(result::SparlectraApiResult; include_raw_result::Bool = false):
     "status" => String(result.status),
     "success" => result.success,
     "converged" => result.converged,
-    "numerical_converged" => result.converged,
+    # the numerical state of the AC solve; `converged` is the accepted
+    # result (false on a rejected run since 0.20.5)
+    "numerical_converged" => _numerical_converged_of(result),
     "solution_available" => result.solution_available,
     "iterations" => result.iterations,
     "final_mismatch" => result.final_mismatch,

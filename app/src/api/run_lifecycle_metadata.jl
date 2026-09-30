@@ -64,6 +64,14 @@ function _wrong_branch_lifecycle_metadata(rect_status)::Dict{String,Any}
     "wrong_branch_reason" => String(get_field(:wrong_branch_reason, :not_checked)),
     "wrong_branch_low_vm_count" => get_field(:wrong_branch_low_vm_count, 0),
     "wrong_branch_high_vm_count" => get_field(:wrong_branch_high_vm_count, 0),
+    # the voltage level with the largest share of buses below the band, and
+    # the plain Newton steps (without a switching event) the run took
+    "wrong_branch_level_kV" => get_field(:wrong_branch_level_kV, NaN),
+    "wrong_branch_level_low_vm_count" => get_field(:wrong_branch_level_low_vm_count, 0),
+    "wrong_branch_level_bus_count" => get_field(:wrong_branch_level_bus_count, 0),
+    "wrong_branch_max_bus_angle_deg" => get_field(:wrong_branch_max_bus_angle_deg, NaN),
+    "wrong_branch_plain_steps" => get_field(:wrong_branch_plain_steps, 0),
+    "wrong_branch_plain_steps_exceeded" => get_field(:wrong_branch_plain_steps_exceeded, false),
     "wrong_branch_angle_spread_deg" => get_field(:wrong_branch_angle_spread_deg, NaN),
     "wrong_branch_branch_angle_violation_count" => get_field(:wrong_branch_branch_angle_violation_count, 0),
   )

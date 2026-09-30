@@ -354,6 +354,23 @@ Base.@kwdef struct PowerFlowConfig
   wrong_branch_max_angle_spread_deg::Float64 = 180.0
   wrong_branch_max_branch_angle_deg::Float64 = 90.0
   wrong_branch_min_low_vm_count::Int = 1
+  # levels judged by the wrong-branch check: nominal voltage at or above
+  # this floor (below it distribution feeders sit at 0.67 to 0.78 pu by
+  # design); when no level reaches the floor, the highest level is judged
+  wrong_branch_min_vn_kV::Float64 = 100.0
+  # a level counts as collapsed when this share of its buses is below
+  # wrong_branch_min_vm_pu (the single-bus rule min_low_vm_count stays)
+  wrong_branch_low_vm_share::Float64 = 0.05
+  # any judged bus angle beyond this bound (relative to the slack) is a
+  # wrong-branch indicator
+  wrong_branch_max_bus_angle_deg::Float64 = 120.0
+  # Newton steps without a Q-limit switching event above this bound are
+  # reported as a warning (a well-posed case takes 7 to 14); status unchanged
+  wrong_branch_max_plain_steps::Int = 20
+  # a bus below this magnitude is a wrong branch on EVERY level, floor or
+  # not (case2848rte's flat-start branch sits on its 63 kV level at 0.02 pu;
+  # the generated distribution feeders stay above 0.67)
+  wrong_branch_collapse_vm_pu::Float64 = 0.5
   wrong_branch_rescue_max_attempts::Int = 2
   rectangular_workspace_reuse::Bool = true
   rectangular_preallocate_workspace::Symbol = :auto
@@ -630,15 +647,21 @@ every importer.
 
 `auto_profile` (`:off`, `:recommend`, `:apply`) drives the read-only import
 analysis with convention recommendations; `auto_profile_log` writes its
-artifact. `net_cache_enabled` gates the binary net cache (active only while
-`auto_profile` is `:off`). `preallocate_network`/`preallocate_min_buses`
-control container preallocation for large cases.
+artifact. `auto_profile_max_fit_pu` (default 0.1) is the largest power
+mismatch (pu, worst bus) at which the stored VM/VA columns still count as a
+solved state: when the best of the eight convention readings scores above
+it, the scan recommends no convention change, because a state that fits no
+reading says nothing about the file's convention. `net_cache_enabled` gates
+the binary net cache (active only while `auto_profile` is `:off`).
+`preallocate_network`/`preallocate_min_buses` control container
+preallocation for large cases.
 """
 Base.@kwdef struct ModelConfig
   bus_shunt_model::Symbol = :admittance
   tap_changer_model::Symbol = :ideal
   auto_profile::Symbol = :off
   auto_profile_log::Bool = true
+  auto_profile_max_fit_pu::Float64 = 0.1
   net_cache_enabled::Bool = false
   preallocate_network::Symbol = :auto
   preallocate_min_buses::Int = 1000
@@ -1499,6 +1522,13 @@ function PowerFlowConfig(raw::AbstractDict)
   wrong_branch_min_vm_pu <= wrong_branch_max_vm_pu || throw(ArgumentError("power_flow.wrong_branch_min_vm_pu must be <= power_flow.wrong_branch_max_vm_pu."))
   wrong_branch_min_low_vm_count = _as_int_cfg(_raw_get(merged, "wrong_branch_min_low_vm_count", 1))
   wrong_branch_min_low_vm_count >= 0 || throw(ArgumentError("power_flow.wrong_branch_min_low_vm_count must be >= 0."))
+  wrong_branch_min_vn_kV = _validate_nonnegative("power_flow.wrong_branch_min_vn_kV", _as_float_cfg(_raw_get(merged, "wrong_branch_min_vn_kV", 100.0)))
+  wrong_branch_low_vm_share = _validate_nonnegative("power_flow.wrong_branch_low_vm_share", _as_float_cfg(_raw_get(merged, "wrong_branch_low_vm_share", 0.05)))
+  wrong_branch_low_vm_share <= 1.0 || throw(ArgumentError("power_flow.wrong_branch_low_vm_share must be <= 1."))
+  wrong_branch_max_bus_angle_deg = _validate_positive("power_flow.wrong_branch_max_bus_angle_deg", _as_float_cfg(_raw_get(merged, "wrong_branch_max_bus_angle_deg", 120.0)))
+  wrong_branch_max_plain_steps = _as_int_cfg(_raw_get(merged, "wrong_branch_max_plain_steps", 20))
+  wrong_branch_max_plain_steps >= 0 || throw(ArgumentError("power_flow.wrong_branch_max_plain_steps must be >= 0."))
+  wrong_branch_collapse_vm_pu = _validate_nonnegative("power_flow.wrong_branch_collapse_vm_pu", _as_float_cfg(_raw_get(merged, "wrong_branch_collapse_vm_pu", 0.5)))
   wrong_branch_rescue_max_attempts = _as_int_cfg(_raw_get(merged, "wrong_branch_rescue_max_attempts", 2))
   wrong_branch_rescue_max_attempts >= 0 || throw(ArgumentError("power_flow.wrong_branch_rescue_max_attempts must be >= 0."))
   autodamp = _as_bool_cfg(_raw_get(merged, "autodamp", false))
@@ -1546,6 +1576,11 @@ function PowerFlowConfig(raw::AbstractDict)
     wrong_branch_max_angle_spread_deg = _validate_nonnegative("power_flow.wrong_branch_max_angle_spread_deg", _as_float_cfg(_raw_get(merged, "wrong_branch_max_angle_spread_deg", 180.0))),
     wrong_branch_max_branch_angle_deg = _validate_nonnegative("power_flow.wrong_branch_max_branch_angle_deg", _as_float_cfg(_raw_get(merged, "wrong_branch_max_branch_angle_deg", 90.0))),
     wrong_branch_min_low_vm_count = wrong_branch_min_low_vm_count,
+    wrong_branch_min_vn_kV = wrong_branch_min_vn_kV,
+    wrong_branch_low_vm_share = wrong_branch_low_vm_share,
+    wrong_branch_max_bus_angle_deg = wrong_branch_max_bus_angle_deg,
+    wrong_branch_max_plain_steps = wrong_branch_max_plain_steps,
+    wrong_branch_collapse_vm_pu = wrong_branch_collapse_vm_pu,
     wrong_branch_rescue_max_attempts = wrong_branch_rescue_max_attempts,
     rectangular_workspace_reuse = _as_bool_cfg(_raw_get(merged, "rectangular_workspace_reuse", true)),
     rectangular_preallocate_workspace = _validate_allowed_symbol("power_flow.rectangular_preallocate_workspace", _as_symbol_cfg(_raw_get(merged, "rectangular_preallocate_workspace", :auto)), RECTANGULAR_PREALLOCATE_WORKSPACE_VALUES),
@@ -1747,6 +1782,7 @@ function ModelConfig(raw::AbstractDict)
     tap_changer_model = _validate_allowed_symbol("model.tap_changer_model", _as_symbol_cfg(_raw_get(merged, "tap_changer_model", :ideal)), TRANSFORMER_TAP_CHANGER_MODEL_VALUES),
     auto_profile = _validate_allowed_symbol("model.auto_profile", _as_auto_profile_symbol_cfg(_raw_get(merged, "auto_profile", :recommend)), MATPOWER_AUTO_PROFILE_VALUES),
     auto_profile_log = _as_bool_cfg(_raw_get(merged, "auto_profile_log", true)),
+    auto_profile_max_fit_pu = _validate_nonnegative("model.auto_profile_max_fit_pu", _as_float_cfg(_raw_get(merged, "auto_profile_max_fit_pu", 0.1))),
     net_cache_enabled = _as_bool_cfg(_raw_get(merged, "net_cache_enabled", false)),
     preallocate_network = _validate_allowed_symbol("model.preallocate_network", _as_symbol_cfg(_raw_get(merged, "preallocate_network", :auto)), [:off, :on, :auto]),
     preallocate_min_buses = _as_int_cfg(_raw_get(merged, "preallocate_min_buses", 1000)),

@@ -622,7 +622,8 @@ function _write_auto_mode_decision_log(path::AbstractString, rec)
       if isempty(a.solver)
         println(io, "  ", a.stage, ": ", haskey(pairs(a.qlimit_evidence), :skipped) ? a.qlimit_evidence.skipped : "skipped")
       else
-        println(io, "  ", a.stage, ": ", a.converged ? "converged" : "not converged", " after ", a.iterations, " iteration(s), ", a.elapsed_s, " s, solver ", a.solver)
+        strategy = get(pairs(a), :rescue_strategy, :none)
+        println(io, "  ", a.stage, ": ", a.converged ? "converged" : "not converged", " after ", a.iterations, " iteration(s), ", a.elapsed_s, " s, solver ", a.solver, strategy === :none ? "" : string(", through the rescue strategy '", strategy, "' (the stage's own settings did not converge)"))
         for c in a.changed
           println(io, "    changed: ", c)
         end
@@ -633,7 +634,8 @@ function _write_auto_mode_decision_log(path::AbstractString, rec)
       end
     end
     println(io)
-    println(io, "final stage: ", rec.final_stage, "; final solver: ", rec.final_solver, "; converged: ", rec.converged)
+    final_rescue = get(pairs(rec), :final_strategy, :none)
+    println(io, "final stage: ", rec.final_stage, "; final solver: ", rec.final_solver, "; converged: ", rec.converged, final_rescue === :none ? "" : string("; rescue strategy: ", final_rescue))
     if !isempty(rec.hints)
       println(io)
       println(io, "hints:")
@@ -665,6 +667,23 @@ function _auto_pf_solver_label(pf::PowerFlowConfig, execution)
   return "rectangular"
 end
 
+# The solver-internal rescue ladder records the strategy that converged in
+# the profile (:ac_rescue_strategy); the decision log names it next to the
+# stage, because a stage that "converged" through settled_qlimits or
+# alternate_start did not converge with its own settings. The key is
+# cleared before every attempt so a stale value cannot be attributed to a
+# later stage.
+function _auto_pf_clear_rescue!(performance_profile)
+  performance_profile isa AbstractDict && delete!(performance_profile, :ac_rescue_strategy)
+  return nothing
+end
+
+function _auto_pf_rescue_strategy(performance_profile)::Symbol
+  performance_profile isa AbstractDict || return :none
+  value = get(performance_profile, :ac_rescue_strategy, :none)
+  return value isa Symbol ? value : Symbol(string(value))
+end
+
 """
     _execute_auto_sparlectra_powerflow!(net, cfg; performance_profile) -> execution
 
@@ -681,9 +700,10 @@ function _execute_auto_sparlectra_powerflow!(net::Net, cfg::SparlectraConfig; pe
   snap = _snapshot_start_voltages(net)
   attempts = NamedTuple[]
   run_cfg = _copy_sparlectra_with_powerflow(cfg, pf)
+  _auto_pf_clear_rescue!(performance_profile)
   execution, base_err = _auto_pf_try_execute!(net, run_cfg; performance_profile = performance_profile)
   evidence = _auto_pf_qlimit_evidence(net)
-  push!(attempts, (stage = :base, changed = base_err === nothing ? applied : vcat(applied, string("solver error: ", first(sprint(showerror, base_err), 160))), solver = _auto_pf_solver_label(pf, execution), iterations = execution.iterations, converged = execution.erg == 0, elapsed_s = round(execution.elapsed_s; digits = 3), qlimit_evidence = evidence))
+  push!(attempts, (stage = :base, changed = base_err === nothing ? applied : vcat(applied, string("solver error: ", first(sprint(showerror, base_err), 160))), solver = _auto_pf_solver_label(pf, execution), iterations = execution.iterations, converged = execution.erg == 0, elapsed_s = round(execution.elapsed_s; digits = 3), qlimit_evidence = evidence, rescue_strategy = _auto_pf_rescue_strategy(performance_profile)))
   final_stage = :base
   if execution.erg != 0
     stages = _auto_pf_escalation_stages(cfg.powerflow)
@@ -692,7 +712,7 @@ function _execute_auto_sparlectra_powerflow!(net::Net, cfg::SparlectraConfig; pe
       n_run >= AUTO_PF_THRESHOLDS.escalation_max_stages && break
       runit, skip_reason = st.gate(evidence, pf)
       if !runit
-        push!(attempts, (stage = st.id, changed = String[], solver = "", iterations = 0, converged = false, elapsed_s = 0.0, qlimit_evidence = (skipped = skip_reason,)))
+        push!(attempts, (stage = st.id, changed = String[], solver = "", iterations = 0, converged = false, elapsed_s = 0.0, qlimit_evidence = (skipped = skip_reason,), rescue_strategy = :none))
         continue
       end
       if st.id === :L7_dc_fallback
@@ -706,15 +726,17 @@ function _execute_auto_sparlectra_powerflow!(net::Net, cfg::SparlectraConfig; pe
       n_run += 1
       _restore_start_voltages!(net, snap)
       run_cfg = _copy_sparlectra_with_powerflow(cfg, pf)
+      _auto_pf_clear_rescue!(performance_profile)
       execution, stage_err = _auto_pf_try_execute!(net, run_cfg; performance_profile = performance_profile)
       evidence = _auto_pf_qlimit_evidence(net)
-      push!(attempts, (stage = st.id, changed = stage_err === nothing ? changed : vcat(changed, string("solver error: ", first(sprint(showerror, stage_err), 160))), solver = _auto_pf_solver_label(pf, execution), iterations = execution.iterations, converged = execution.erg == 0, elapsed_s = round(execution.elapsed_s; digits = 3), qlimit_evidence = evidence))
+      push!(attempts, (stage = st.id, changed = stage_err === nothing ? changed : vcat(changed, string("solver error: ", first(sprint(showerror, stage_err), 160))), solver = _auto_pf_solver_label(pf, execution), iterations = execution.iterations, converged = execution.erg == 0, elapsed_s = round(execution.elapsed_s; digits = 3), qlimit_evidence = evidence, rescue_strategy = _auto_pf_rescue_strategy(performance_profile)))
       final_stage = st.id
       execution.erg == 0 && break
     end
   end
   hints = auto_pf_hints(features, evidence, attempts; converged = execution.erg == 0, max_switches = pf.qlimits.guard_max_switches)
   final_solver = isempty(attempts) ? "rectangular" : last(filter(a -> !isempty(a.solver), attempts)).solver
+  final_rescue = isempty(attempts) ? :none : get(pairs(last(attempts)), :rescue_strategy, :none)
   _set_auto_pf_record!(net, (
     features = features,
     profile = decision.profile,
@@ -724,6 +746,7 @@ function _execute_auto_sparlectra_powerflow!(net::Net, cfg::SparlectraConfig; pe
     attempts = attempts,
     final_stage = final_stage,
     final_solver = final_solver,
+    final_strategy = final_rescue,
     hints = hints,
     converged = execution.erg == 0,
   ))

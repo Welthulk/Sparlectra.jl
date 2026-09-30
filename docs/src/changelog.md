@@ -1,3 +1,12 @@
+# Version 0.20.5 - 2026-09-30
+
+Defects found by the grid-bench convergence study.
+
+- Fix: wrong-branch detection now runs without reactive limits, checks every voltage level, and `converged` follows `status` on a rejected run.
+- Fix: the MATPOWER convention scan no longer recommends a change when the stored voltages fit no reading (`model.auto_profile_max_fit_pu`, default 0.1).
+- Fix: the start projection's DC candidate includes phase-shifter injections, same DC model as `rundcpf!`.
+- Added: `auto_final_strategy` in the auto-mode result metadata and decision log.
+
 # Version 0.20.4 - 2026-09-30
 
 Start projection fix; results export as a new case file; `auto_slack` in the Web UI.

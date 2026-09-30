@@ -114,6 +114,23 @@ power_flow:
   # Maximum allowed absolute angle difference across active branches (degrees).
   wrong_branch_max_branch_angle_deg: 90.0
   wrong_branch_min_low_vm_count: 1
+  # Levels judged by the voltage band and the level-share rule: nominal
+  # voltage at or above this floor (below it distribution feeders sit at
+  # 0.67 to 0.78 pu by design); when no level reaches the floor, the
+  # highest level alone.
+  wrong_branch_min_vn_kV: 100.0
+  # A level counts as collapsed when this share of its buses is below
+  # wrong_branch_min_vm_pu (reason low_voltage_level_share).
+  wrong_branch_low_vm_share: 0.05
+  # Any judged bus angle beyond this bound, relative to the slack, is a
+  # wrong-branch indicator (reason bus_angle_exceeded).
+  wrong_branch_max_bus_angle_deg: 120.0
+  # Newton steps without a Q-limit switching event above this bound are
+  # reported (wrong_branch_plain_steps_exceeded), the status is unchanged.
+  wrong_branch_max_plain_steps: 20
+  # A bus below this magnitude is a wrong branch on every level, floor or
+  # not (reason voltage_collapse); 0 switches the rule off.
+  wrong_branch_collapse_vm_pu: 0.5
   wrong_branch_rescue_max_attempts: 2
 
   # Rectangular workspace handling.
@@ -544,6 +561,13 @@ model:
   # user YAML files are never rewritten.
   auto_profile: recommend
   auto_profile_log: true
+  # Largest power mismatch (pu, worst bus) at which the stored VM/VA columns
+  # still count as a solved state. When the best of the eight convention
+  # readings (shift unit, shift sign, ratio) scores above it, the scan
+  # recommends no convention change and keeps the configured values: a
+  # state that fits no reading says nothing about the file's convention.
+  # Non-negative.
+  auto_profile_max_fit_pu: 0.1
   # Opt-in binary cache of the parsed case file, stored next to the case
   # file in .sparlectra_net_cache/ and keyed by the case file hash and the
   # Sparlectra/Julia versions. The network is always built fresh from the

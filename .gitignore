@@ -98,3 +98,4 @@ apslf_vs_*.svg
 # the copies the performance page shows are tracked
 !docs/src/assets/apslf_vs_nr_timing.csv
 !docs/src/assets/apslf_vs_nr_timing.svg
+__pycache__/

@@ -372,6 +372,11 @@ function runpf_rectangular!(
   wrong_branch_max_angle_spread_deg::Float64 = 180.0,
   wrong_branch_max_branch_angle_deg::Float64 = 90.0,
   wrong_branch_min_low_vm_count::Int = 1,
+  wrong_branch_min_vn_kV::Float64 = 100.0,
+  wrong_branch_low_vm_share::Float64 = 0.05,
+  wrong_branch_max_bus_angle_deg::Float64 = 120.0,
+  wrong_branch_max_plain_steps::Int = 20,
+  wrong_branch_collapse_vm_pu::Float64 = 0.5,
   wrong_branch_rescue_max_attempts::Int = 2,
   performance_profile = nothing,
   rectangular_workspace_reuse::Bool = true,
@@ -453,6 +458,11 @@ function runpf_rectangular!(
       wrong_branch_max_angle_spread_deg = wrong_branch_max_angle_spread_deg,
       wrong_branch_max_branch_angle_deg = wrong_branch_max_branch_angle_deg,
       wrong_branch_min_low_vm_count = wrong_branch_min_low_vm_count,
+      wrong_branch_min_vn_kV = wrong_branch_min_vn_kV,
+      wrong_branch_low_vm_share = wrong_branch_low_vm_share,
+      wrong_branch_max_bus_angle_deg = wrong_branch_max_bus_angle_deg,
+      wrong_branch_max_plain_steps = wrong_branch_max_plain_steps,
+      wrong_branch_collapse_vm_pu = wrong_branch_collapse_vm_pu,
       wrong_branch_rescue_max_attempts = wrong_branch_rescue_max_attempts,
       performance_profile = performance_profile,
       rectangular_workspace_reuse = rectangular_workspace_reuse,
@@ -546,6 +556,22 @@ function runpf_rectangular!(
   end
 
   set_phase("start_projection")
+  # The projection's DC candidate solves the net's own DC model (Bbus plus
+  # the phase-shift injections, assembled once here through assemble_dc_bbus,
+  # the same model rundcpf! solves); without a net it would fall back to
+  # imag(Ybus) and miss every shifter injection. Assembled only when a DC
+  # candidate is going to be built; nothing when a branch has x_pu == 0.
+  wants_dc_candidate = start_projection && (start_projection_try_dc_start || start_projection_requested_angle_mode === :dc)
+  projection_dc_model = if wants_dc_candidate
+    _perf_profile_time!(performance_profile, :start_projection_dc_matrix_assembly) do
+      _projection_dc_model(net)
+    end
+  else
+    nothing
+  end
+  if verbose > 0 && wants_dc_candidate && projection_dc_model === nothing
+    @info "start projection: DC candidate uses imag(Ybus) (an in-service branch has x_pu == 0, no DC model)"
+  end
   V0 = _perf_profile_time!(performance_profile, :start_projection) do
     project_rectangular_start(
       Ybus,
@@ -554,6 +580,7 @@ function runpf_rectangular!(
       bus_types,
       Vset,
       slack_idx;
+      dc_model = projection_dc_model,
       enabled = start_projection,
       try_dc_start = start_projection_try_dc_start,
       try_blend_scan = start_projection_try_blend_scan,
@@ -756,6 +783,9 @@ function runpf_rectangular!(
 
   qlimit_active_set_changes = 0
   qlimit_reenable_events = 0
+  # iterations in which the active set converted or released a bus; the
+  # wrong-branch check counts the plain Newton steps without them
+  qlimit_switch_iterations = 0
   # Main Newton-Raphson loop in rectangular coordinates. One iteration:
   #   injections (if voltage-dependent) -> mismatch -> Q-limit active set ->
   #   Jacobian + linear solve -> step acceptance -> voltage update.
@@ -865,6 +895,7 @@ function runpf_rectangular!(
     converged_this_iter = qlimit_iter.converged_this_iter
     changed && (qlimit_active_set_changes += 1)
     reenabled && (qlimit_reenable_events += 1)
+    (changed || reenabled) && (qlimit_switch_iterations += 1)
     # Converged only counts when the active set stayed put in the same
     # iteration: a small mismatch right after a PV<->PQ switch describes the
     # OLD equation system, not the one now in force.
@@ -1023,6 +1054,13 @@ function runpf_rectangular!(
     final_q_check = qlimit_status.final_q_check
     converged = qlimit_status.converged
     rejection_reason = qlimit_status.rejection_reason
+  end
+  # The wrong-branch check judges every numerically converged AC state,
+  # with or without Q limits: a low-voltage branch satisfies the equations
+  # to the tolerance either way (case1888rte from a flat start: min Vm
+  # 0.06 pu at 1e-8, unreported while the check sat inside the Q-limit
+  # block).
+  if numerical_converged
     wrong_branch_status = _finalize_rectangular_wrong_branch_diagnostics(
       V,
       bus_types,
@@ -1036,6 +1074,12 @@ function runpf_rectangular!(
       wrong_branch_max_angle_spread_deg = wrong_branch_max_angle_spread_deg,
       wrong_branch_max_branch_angle_deg = wrong_branch_max_branch_angle_deg,
       wrong_branch_min_low_vm_count = wrong_branch_min_low_vm_count,
+      wrong_branch_min_vn_kV = wrong_branch_min_vn_kV,
+      wrong_branch_low_vm_share = wrong_branch_low_vm_share,
+      wrong_branch_max_bus_angle_deg = wrong_branch_max_bus_angle_deg,
+      wrong_branch_max_plain_steps = wrong_branch_max_plain_steps,
+      wrong_branch_collapse_vm_pu = wrong_branch_collapse_vm_pu,
+      plain_steps = max(iters - qlimit_switch_iterations, 0),
       net = net,
     )
     branch_quality = wrong_branch_status.branch_quality
@@ -1237,6 +1281,11 @@ function runpf_rectangular!(
   wrong_branch_max_angle_spread_deg::Float64 = 180.0,
   wrong_branch_max_branch_angle_deg::Float64 = 90.0,
   wrong_branch_min_low_vm_count::Int = 1,
+  wrong_branch_min_vn_kV::Float64 = 100.0,
+  wrong_branch_low_vm_share::Float64 = 0.05,
+  wrong_branch_max_bus_angle_deg::Float64 = 120.0,
+  wrong_branch_max_plain_steps::Int = 20,
+  wrong_branch_collapse_vm_pu::Float64 = 0.5,
   wrong_branch_rescue_max_attempts::Int = 2,
   rectangular_workspace_reuse::Bool = true,
   rectangular_preallocate_workspace::Symbol = :auto,
@@ -1327,6 +1376,11 @@ function runpf_rectangular!(
     wrong_branch_max_angle_spread_deg = wrong_branch_max_angle_spread_deg,
     wrong_branch_max_branch_angle_deg = wrong_branch_max_branch_angle_deg,
     wrong_branch_min_low_vm_count = wrong_branch_min_low_vm_count,
+    wrong_branch_min_vn_kV = wrong_branch_min_vn_kV,
+    wrong_branch_low_vm_share = wrong_branch_low_vm_share,
+    wrong_branch_max_bus_angle_deg = wrong_branch_max_bus_angle_deg,
+    wrong_branch_max_plain_steps = wrong_branch_max_plain_steps,
+    wrong_branch_collapse_vm_pu = wrong_branch_collapse_vm_pu,
     wrong_branch_rescue_max_attempts = wrong_branch_rescue_max_attempts,
     rectangular_workspace_reuse = rectangular_workspace_reuse,
     rectangular_preallocate_workspace = rectangular_preallocate_workspace,
@@ -1388,6 +1442,11 @@ function _runpf_config_once!(net::Net, config::PowerFlowConfig; verbose::Int = 0
     wrong_branch_max_angle_spread_deg = config.wrong_branch_max_angle_spread_deg,
     wrong_branch_max_branch_angle_deg = config.wrong_branch_max_branch_angle_deg,
     wrong_branch_min_low_vm_count = config.wrong_branch_min_low_vm_count,
+    wrong_branch_min_vn_kV = config.wrong_branch_min_vn_kV,
+    wrong_branch_low_vm_share = config.wrong_branch_low_vm_share,
+    wrong_branch_max_bus_angle_deg = config.wrong_branch_max_bus_angle_deg,
+    wrong_branch_max_plain_steps = config.wrong_branch_max_plain_steps,
+    wrong_branch_collapse_vm_pu = config.wrong_branch_collapse_vm_pu,
     wrong_branch_rescue_max_attempts = config.wrong_branch_rescue_max_attempts,
     pv_table_rows = pv_table_rows,
     validate_limits_after_pf = validate_limits_after_pf,
@@ -1967,6 +2026,11 @@ function runpf!(
   wrong_branch_max_angle_spread_deg::Float64 = 180.0,
   wrong_branch_max_branch_angle_deg::Float64 = 90.0,
   wrong_branch_min_low_vm_count::Int = 1,
+  wrong_branch_min_vn_kV::Float64 = 100.0,
+  wrong_branch_low_vm_share::Float64 = 0.05,
+  wrong_branch_max_bus_angle_deg::Float64 = 120.0,
+  wrong_branch_max_plain_steps::Int = 20,
+  wrong_branch_collapse_vm_pu::Float64 = 0.5,
   wrong_branch_rescue_max_attempts::Int = 2,
   performance_profile = nothing,
   rectangular_workspace_reuse::Bool = true,
@@ -2100,6 +2164,11 @@ function runpf!(
           wrong_branch_max_angle_spread_deg = wrong_branch_max_angle_spread_deg,
           wrong_branch_max_branch_angle_deg = wrong_branch_max_branch_angle_deg,
           wrong_branch_min_low_vm_count = wrong_branch_min_low_vm_count,
+          wrong_branch_min_vn_kV = wrong_branch_min_vn_kV,
+          wrong_branch_low_vm_share = wrong_branch_low_vm_share,
+          wrong_branch_max_bus_angle_deg = wrong_branch_max_bus_angle_deg,
+          wrong_branch_max_plain_steps = wrong_branch_max_plain_steps,
+          wrong_branch_collapse_vm_pu = wrong_branch_collapse_vm_pu,
           wrong_branch_rescue_max_attempts = 0,
           opt_flatstart = opt_flatstart,
     opt_cooldown_iters = opt_cooldown_iters,
@@ -2392,6 +2461,11 @@ function runpf!(
         wrong_branch_max_angle_spread_deg = wrong_branch_max_angle_spread_deg,
         wrong_branch_max_branch_angle_deg = wrong_branch_max_branch_angle_deg,
         wrong_branch_min_low_vm_count = wrong_branch_min_low_vm_count,
+        wrong_branch_min_vn_kV = wrong_branch_min_vn_kV,
+        wrong_branch_low_vm_share = wrong_branch_low_vm_share,
+        wrong_branch_max_bus_angle_deg = wrong_branch_max_bus_angle_deg,
+        wrong_branch_max_plain_steps = wrong_branch_max_plain_steps,
+        wrong_branch_collapse_vm_pu = wrong_branch_collapse_vm_pu,
         wrong_branch_rescue_max_attempts = wrong_branch_rescue_max_attempts,
         opt_flatstart = opt_flatstart,
     opt_cooldown_iters = opt_cooldown_iters,
@@ -2482,6 +2556,11 @@ function runpf!(
         wrong_branch_max_angle_spread_deg = wrong_branch_max_angle_spread_deg,
         wrong_branch_max_branch_angle_deg = wrong_branch_max_branch_angle_deg,
         wrong_branch_min_low_vm_count = wrong_branch_min_low_vm_count,
+        wrong_branch_min_vn_kV = wrong_branch_min_vn_kV,
+        wrong_branch_low_vm_share = wrong_branch_low_vm_share,
+        wrong_branch_max_bus_angle_deg = wrong_branch_max_bus_angle_deg,
+        wrong_branch_max_plain_steps = wrong_branch_max_plain_steps,
+        wrong_branch_collapse_vm_pu = wrong_branch_collapse_vm_pu,
         wrong_branch_rescue_max_attempts = wrong_branch_rescue_max_attempts,
         opt_flatstart = opt_flatstart,
     opt_cooldown_iters = opt_cooldown_iters,

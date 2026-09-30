@@ -149,6 +149,7 @@ The keys of a MATPOWER run: the case selectors, the import profile that recommen
 | `runtime.cases` | Vector{String} | `[case14.m, case118.m]` | non-empty case names | Ordered batch selector for `run_sparlectra_cases`; a non-empty list takes precedence over `case`. | Deterministic multi-case validation and release checks. | Empty case names or expecting `run_sparlectra` to return a vector. | Sequential parse/solve cost per case. | `runtime.case`, `run_sparlectra_cases`. |
 | `model.auto_profile` | Symbol/String | `recommend` | `off`, `recommend`, `apply` | Run a MATPOWER pre-run profile. `off` disables it, `recommend` logs decisions without changing the active config, and `apply` changes only safe import-convention recommendations with clear evidence. Solver-start and Q-limit recommendations remain logged but skipped unless configured directly. | Development, large-case investigation, reproducible robust imports. | Expecting YAML files to be rewritten; applying ambiguous diagnostics. | Low; scans existing VM/VA residuals before the solve. | Output profile visibility options. |
 | `model.auto_profile_log` | Bool | `true` | `true`, `false` | Print/log auto-profile reasoning and final effective options. | Debug import decisions and reproduce final settings. | Quiet high-volume runs. | Logging overhead only. | `output.console_auto_profile`, logfile settings. |
+| `model.auto_profile_max_fit_pu` | Float64 | `0.1` | non-negative | Largest power mismatch (pu, worst bus) at which the stored `VM`/`VA` columns still count as a solved state. When the best convention reading scores above it, the scan recommends no convention change and keeps the configured `shift_unit`, `shift_sign`, `ratio` and `bus_shunt_model`. | Files whose stored state is a real solution (default). | Raise only for files with a slightly stale but consistent solution; lower to make the scan stricter. | None. | `model.auto_profile`, `matpower_import.shift_unit`, `matpower_import.shift_sign`, `matpower_import.ratio`. |
 | `matpower_import.pv_voltage_source` | Symbol/String | `gen_vg` | `gen_vg`, `bus_vm`, `auto`, `strict_check` | PV voltage setpoint source policy. | Standard MATPOWER semantics. | Nonstandard conversion assumptions. | None. | `compare_voltage_reference`, PF starts. |
 | `matpower_import.pv_voltage_mismatch_tol_pu` | Float64 | `1e-4` | nonnegative real | Tolerance for PV voltage mismatch checks. | Tight validation studies. | Overly strict noisy data. | Low. | `compare_voltage_reference`. |
 | `matpower_import.compare_voltage_reference` | Symbol/String | `imported_setpoint` | `bus_vm`, `gen_vg`, `imported_setpoint`, `hybrid` | Voltage reference used for comparisons. Auto-profile recommends `hybrid` when BUS.VM / GEN.VG mismatches are detected. | MATPOWER comparison workflows. | When historical/SCADA ref should dominate. | Low. | `pv_voltage_source`, diagnostics. |
@@ -207,6 +208,16 @@ Q-range heuristics for robust-start and Q-limit recommendations. For large
 cases the pre-run keeps start projection disabled, uses DC-angle and
 blended-voltage flat-start seeds, recommends a practical validation
 tolerance, and disables expensive diagnostics unless requested.
+
+The convention scan judges the eight readings of the shift column and the
+ratio by the power mismatch of the file's stored `VM`/`VA` columns. That
+ranking is evidence only when the stored columns are a solved state under
+some reading: when the best reading still scores above
+`model.auto_profile_max_fit_pu` (default `0.1` pu at the worst bus), the
+scan recommends no convention change, `apply` changes nothing, and the
+table and the compact console line say so with the best score ("stored
+VM/VA are not a solved state under any reading"). The PEGASE files ship
+such columns (best fit 0.5 to 3.9 pu); a solved state scores below 0.1 pu.
 
 Explicit YAML values stay visible; in `apply` mode a changed option is shown
 as `applied` in the table and in the final effective options block.

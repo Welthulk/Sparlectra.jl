@@ -591,6 +591,11 @@ function _matpower_import_auto_profile_convention_scan(mpc; vmva_stats = Matpowe
   return rows
 end
 
+# Marker prefix of the convention rows when the stored state fits no reading;
+# the compact console writer and the tests look for it (like the
+# `matpower_auto_profile_scan_skipped:` prefix of the OOM path).
+const _AUTO_PROFILE_SCAN_INCONCLUSIVE = "matpower_auto_profile_scan_inconclusive:"
+
 function _matpower_import_auto_profile_scan_skipped_rows(mode::Symbol, mat::MatpowerImportConfig, model::ModelConfig; reason::AbstractString)
   rows = NamedTuple[]
   evidence = "matpower_auto_profile_scan_skipped: $(reason); using configured/default MATPOWER conventions"
@@ -678,8 +683,22 @@ function matpower_import_auto_profile(mpc, cfg::SparlectraConfig; mode::Symbol =
   best = first(convention_rows)
   current_score = current_row.score
   best_score = best.score
-  strong_convention = isfinite(current_score) && isfinite(best_score) && best_score + 1.0e-8 < min(current_score * 0.25, current_score - 1.0e-6)
-  convention_reason = strong_convention ? "residual scan found a clearly better MATPOWER branch convention" : "residual scan is ambiguous or current convention is best"
+  # The scan ranks the readings by how well the STORED VM/VA columns balance
+  # the power equations. That ranking is evidence about the file's convention
+  # only when the columns are a solved state under some reading: the PEGASE
+  # files score 0.5 to 3.9 pu under their best
+  # reading, and a state that fits nothing must not pick a convention. Above
+  # the threshold the configured values stay and the rows say why.
+  max_fit = model.auto_profile_max_fit_pu
+  fit_inconclusive = isfinite(best_score) && best_score > max_fit
+  strong_convention = !fit_inconclusive && isfinite(current_score) && isfinite(best_score) && best_score + 1.0e-8 < min(current_score * 0.25, current_score - 1.0e-6)
+  convention_reason = if fit_inconclusive
+    string(_AUTO_PROFILE_SCAN_INCONCLUSIVE, " stored VM/VA are not a solved state under any reading (best score ", round(best_score; digits = 4), " pu above model.auto_profile_max_fit_pu = ", max_fit, "); convention kept")
+  elseif strong_convention
+    "residual scan found a clearly better MATPOWER branch convention"
+  else
+    "residual scan is ambiguous or current convention is best"
+  end
   convention_evidence = "current=$(round(current_score; digits = 8)) best=$(round(best_score; digits = 8))"
   rec_shift_unit = strong_convention ? best.shift_unit : mat.shift_unit
   rec_shift_sign = strong_convention ? best.shift_sign : mat.shift_sign
@@ -696,7 +715,10 @@ function matpower_import_auto_profile(mpc, cfg::SparlectraConfig; mode::Symbol =
   current_shunt_score = model.bus_shunt_model === :admittance ? shunt_adm_score : shunt_vdi_score
   best_shunt_model = shunt_adm_score <= shunt_vdi_score ? :admittance : :voltage_dependent_injection
   best_shunt_score = min(shunt_adm_score, shunt_vdi_score)
-  strong_shunt = isfinite(current_shunt_score) && isfinite(best_shunt_score) && best_shunt_score + 1.0e-8 < min(current_shunt_score * 0.25, current_shunt_score - 1.0e-6)
+  # same threshold as the convention scan: both shunt readings are judged on
+  # the stored state, so a state that fits neither is no evidence either
+  shunt_inconclusive = isfinite(best_shunt_score) && best_shunt_score > max_fit
+  strong_shunt = !shunt_inconclusive && isfinite(current_shunt_score) && isfinite(best_shunt_score) && best_shunt_score + 1.0e-8 < min(current_shunt_score * 0.25, current_shunt_score - 1.0e-6)
   rec_shunt = strong_shunt ? best_shunt_model : model.bus_shunt_model
   _push_auto_profile_row!(
     rows,
@@ -705,7 +727,8 @@ function matpower_import_auto_profile(mpc, cfg::SparlectraConfig; mode::Symbol =
     model.bus_shunt_model,
     rec_shunt;
     safe_to_apply = strong_shunt,
-    reason = strong_shunt ? "bus-shunt residual scan found a clearly better model" : "bus-shunt residual scan is ambiguous or current model is best",
+    reason = shunt_inconclusive ? string(_AUTO_PROFILE_SCAN_INCONCLUSIVE, " stored VM/VA are not a solved state under either shunt model (best score ", round(best_shunt_score; digits = 4), " pu above model.auto_profile_max_fit_pu = ", max_fit, "); model kept") :
+             strong_shunt ? "bus-shunt residual scan found a clearly better model" : "bus-shunt residual scan is ambiguous or current model is best",
     evidence = "admittance=$(round(shunt_adm_score; digits = 8)) voltage_dependent_injection=$(round(shunt_vdi_score; digits = 8))",
   )
   mode === :apply && strong_shunt && push!(applied_pairs, :bus_shunt_model => rec_shunt)
@@ -923,8 +946,13 @@ function write_matpower_import_auto_profile(io::IO, auto_profile_result, cfg::Sp
   rows = auto_profile_result.rows
   isempty(rows) && return nothing
   changed = [row for row in rows if row.action !== :keep]
+  # a scan that fit nothing keeps every convention row at :keep, so the
+  # compact line would hide the finding; say it once (the row reason repeats
+  # on every convention row, so the first one is enough)
+  inconclusive = findfirst(row -> startswith(row.reason, _AUTO_PROFILE_SCAN_INCONCLUSIVE), rows)
   if isempty(changed)
     println(io, "Import conventions: ", length(rows), " checks, current settings kept.")
+    inconclusive === nothing || println(io, "  ", rows[inconclusive].reason)
     return nothing
   end
   println(io, "Import conventions: ", length(changed), " of ", length(rows), " checks recommend a change.")
@@ -932,6 +960,7 @@ function write_matpower_import_auto_profile(io::IO, auto_profile_result, cfg::Sp
     reason = isempty(row.evidence) ? row.reason : string(row.reason, " (", row.evidence, ")")
     println(io, "  ", row.option, ": ", row.current, " -> ", row.recommended, "  ", reason)
   end
+  inconclusive === nothing || println(io, "  ", rows[inconclusive].reason)
   println(io)
   return nothing
 end
