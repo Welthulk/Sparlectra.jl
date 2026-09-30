@@ -757,6 +757,8 @@ function _webui_normalize_case_profile_form_value(field::AbstractString, value)
     return join((strip(string(v)) for v in value), "; ")
   end
   type = get(_WEBUI_CASE_PROFILE_FIELD_TYPES, String(field), String)
+  # `auto` or a number shows as it is stored
+  type === Union{Float64,String} && return _webui_form_string(_webui_parse_form_value(value, Union{Float64,String}, String(field)))
   # a bus list shows as comma-separated text; a stored text is checked the
   # way a posted one is
   if type === Vector{Int}
@@ -1289,6 +1291,17 @@ function _webui_parse_form_value(value, type::Type{<:Number}, field::String)
 end
 
 _webui_parse_form_value(value, ::Type{String}, field::String) = strip(String(something(value, "")))
+
+# `auto` or a number (power_flow.qlimits.final_q_accept_pu): the word stays
+# a word, a number is stored as a number, anything else is refused with the
+# field name
+function _webui_parse_form_value(value, ::Type{Union{Float64,String}}, field::String)
+  text = value === nothing ? "" : strip(string(value))
+  (isempty(text) || lowercase(text) == "auto") && return "auto"
+  parsed = tryparse(Float64, text)
+  parsed === nothing && throw(ArgumentError("Web UI field $(field) takes auto or a number; got $(repr(String(text)))."))
+  return parsed
+end
 
 # a bus list (power_flow.qlimits.trace_buses, lock_pv_to_pq_buses): comma- or
 # space-separated integers >= 1, empty for none; anything else is refused

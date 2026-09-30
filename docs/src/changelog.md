@@ -1,3 +1,10 @@
+# Version 0.20.3 - 2026-09-30
+
+Hardening; Web UI Q-limit settings for the classic modes.
+
+- Web UI: the Q-limit block shows the hysteresis and the final check bound (`power_flow.qlimits.final_q_accept_pu`) directly; these are the settings the classic modes read, which have no start iteration.
+- Hardening: the final check bound is validated when it comes from the Web UI or the API (`auto` or a non-negative number).
+
 # Version 0.20.2 - 2026-09-29
 
 - BenchmarkTools is now an optional dependency (package extension). The benchmark mode of `run_matpower_case` requires `using BenchmarkTools`; without it, a clear error is raised. `benchmark.enabled` defaults to `false`.
