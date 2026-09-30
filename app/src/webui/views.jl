@@ -112,9 +112,10 @@ end
     _webui_qlimit_block_html(profile_values) -> String
 
 The Q-limit block of the power-flow form below the master switch and the
-mode: the four settings a PV/PQ switching study turns first (first
-switching iteration, guard, switch cap, freezing) directly, everything else
-of `power_flow.qlimits` under Advanced. Values come from `profile_values`
+mode: directly the two settings every mode reads (hysteresis, final check
+bound; the only ones the classic modes use) and the four a PV/PQ switching
+study turns first (first switching iteration, guard, switch cap, freezing),
+everything else of `power_flow.qlimits` under Advanced. Values come from `profile_values`
 (configuration file and case settings), defaults from the option specs.
 """
 function _webui_qlimit_block_html(profile_values)::String
@@ -124,15 +125,16 @@ function _webui_qlimit_block_html(profile_values)::String
   guard_help = _webui_help_link("power_flow.qlimits.guard.enabled", "Q-limit guard")
   return string(
     "<fieldset class=\"span-2 qlimit-options\"><legend>PV/PQ switching", isempty(guard_help) ? "" : " " * guard_help, "</legend>",
+    _webui_qlimit_sci(profile_values, "power_flow_qlimits_hysteresis_pu", "Q hysteresis (pu)", both),
+    _webui_qlimit_buses(profile_values, "power_flow_qlimits_final_q_accept_pu", "Final check bound (pu, or auto)", both, "auto"),
     _webui_qlimit_int(profile_values, "power_flow_qlimits_start_iter", "First switching iteration", as),
     _webui_qlimit_int(profile_values, "power_flow_qlimits_guard_max_switches", "Maximum switches per bus", as; min = 1),
     _webui_qlimit_checkbox(profile_values, "power_flow_qlimits_guard_freeze_after_repeated_switching", "Freeze after repeated switching", as),
     _webui_qlimit_checkbox(profile_values, "power_flow_qlimits_guard_enabled", "Narrow-range guard enabled", as; extra = " data-qlimit-guard-toggle"),
-    "<p class=\"field-help span-2\">The classic modes switch between complete solves and use only the hysteresis; the fields they do not read are greyed. The guard switch covers the narrow- and zero-range rules; the switch cap, freezing and the violation rule act without it.</p>",
+    "<p class=\"field-help span-2\">The classic modes solve the power flow completely and then check the Q limits, again after every clamp (MATPOWER style), so there is no start iteration for them; they read the hysteresis and the final check bound, the fields they do not read are greyed. The guard switch covers the narrow- and zero-range rules; the switch cap, freezing and the violation rule act without it.</p>",
     "<details class=\"span-2 qlimit-advanced\"><summary>Advanced</summary>",
     _webui_qlimit_select(profile_values, "power_flow_qlimits_start_mode", "Switching start rule", as),
     _webui_qlimit_sci(profile_values, "power_flow_qlimits_auto_q_delta_pu", "Auto start threshold (pu)", as),
-    _webui_qlimit_sci(profile_values, "power_flow_qlimits_hysteresis_pu", "Q hysteresis (pu)", both),
     _webui_qlimit_int(profile_values, "power_flow_qlimits_cooldown_iters", "Cooldown iterations", as),
     _webui_qlimit_sci(profile_values, "power_flow_qlimits_reenable_v_hyst_pu", "Release voltage margin (pu)", as),
     _webui_qlimit_buses(profile_values, "power_flow_qlimits_trace_buses", "Traced buses (case bus numbers)", as, "e.g. 101, 205"),

@@ -351,7 +351,8 @@ function run_webui_fast_tests()
                 "power_flow_qlimits_start_iter" => "4",
                 "power_flow_qlimits_hysteresis_pu" => "2e-2",
                 "power_flow_qlimits_trace_buses" => "1, 2",
-                "power_flow_qlimits_guard_violation_mode" => "delayed_switch"); output_root=root, runtime=rt)
+                "power_flow_qlimits_guard_violation_mode" => "delayed_switch",
+                "power_flow_qlimits_final_q_accept_pu" => "0.05"); output_root=root, runtime=rt)
             @test resp_q.status in (302, 303)
             q_cfg = Sparlectra.load_case_config(joinpath(cache, "sp_case14.scf.json"))
             @test q_cfg["power_flow.qlimits.guard.max_switches"] == 5
@@ -360,10 +361,16 @@ function run_webui_fast_tests()
             @test q_cfg["power_flow.qlimits.hysteresis_pu"] == 0.02
             @test q_cfg["power_flow.qlimits.trace_buses"] == [1, 2]
             @test q_cfg["power_flow.qlimits.guard.violation_mode"] == "delayed_switch"
+            # the final check bound, read by every mode (the classic ones too):
+            # a number is stored as a number, the word auto as the word
+            @test q_cfg["power_flow.qlimits.final_q_accept_pu"] == 0.05
+            @test SparlectraApp._webui_parse_form_value("auto", Union{Float64,String}, "f") == "auto"
+            @test_throws ArgumentError SparlectraApp._webui_parse_form_value("wide", Union{Float64,String}, "f")
             q_page = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/settings?casefile=sp_case14.scf.json"; output_root=root, runtime=rt).body)
             @test form_value(q_page, "power_flow_qlimits_guard_max_switches") == "5"
             @test form_value(q_page, "power_flow_qlimits_start_iter") == "4"
             @test form_value(q_page, "power_flow_qlimits_trace_buses") == "1, 2"
+            @test form_value(q_page, "power_flow_qlimits_final_q_accept_pu") == "0.05"
             @test !occursin(r"name=\"power_flow_qlimits_guard_freeze_after_repeated_switching\" type=\"checkbox\"[^>]*checked", q_page)
             run_q = SparlectraApp.start_powerflow_run(Dict("casefile" => "sp_case14.scf.json", "config_file" => cfg_rt, "output_root" => root); case_directory=cache)
             @test run_q["status"] == "succeeded"

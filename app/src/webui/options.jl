@@ -65,6 +65,8 @@ const WEBUI_OPTION_SPECS = WebUIOptionSpec[
   WebUIOptionSpec("power_flow.qlimits.start_iter", "power_flow_qlimits_start_iter", Int, :number, 3, (), :expert, :case, true),
   WebUIOptionSpec("power_flow.qlimits.start_mode", "power_flow_qlimits_start_mode", String, :select, "iteration_or_auto", QLIMIT_START_MODE_VALUES, :expert, :case, true),
   WebUIOptionSpec("power_flow.qlimits.auto_q_delta_pu", "power_flow_qlimits_auto_q_delta_pu", Float64, :number, "1e-4", (), :expert, :case, true),
+  # `auto` or a bound in pu: read by every mode, the classic ones included
+  WebUIOptionSpec("power_flow.qlimits.final_q_accept_pu", "power_flow_qlimits_final_q_accept_pu", Union{Float64,String}, :text, "auto", (), :expert, :case, true),
   WebUIOptionSpec("power_flow.qlimits.hysteresis_pu", "power_flow_qlimits_hysteresis_pu", Float64, :number, "1e-2", (), :expert, :case, true),
   WebUIOptionSpec("power_flow.qlimits.cooldown_iters", "power_flow_qlimits_cooldown_iters", Int, :number, 1, (), :expert, :case, true),
   WebUIOptionSpec("power_flow.qlimits.reenable_v_hyst_pu", "power_flow_qlimits_reenable_v_hyst_pu", Float64, :number, "1e-4", (), :expert, :case, true),

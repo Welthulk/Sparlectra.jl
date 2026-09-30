@@ -196,6 +196,11 @@ function _validate_gui_override_value(key::String, value)
     isfinite(value) && value >= 0 || throw(ArgumentError("Override $(key) must be finite and non-negative; got $(value)."))
   elseif key in ("power_flow.qlimits.trace_buses", "power_flow.qlimits.lock_pv_to_pq_buses")
     value isa AbstractVector && all(b -> b isa Integer && !(b isa Bool) && b >= 1, value) || throw(ArgumentError("Override $(key) must be a list of bus numbers (integers >= 1); got $(repr(value))."))
+  elseif key == "power_flow.qlimits.final_q_accept_pu"
+    # `auto` (twice the hysteresis) or a non-negative bound in pu; the
+    # loader checks it against the hysteresis of the resolved configuration
+    auto = value isa AbstractString && lowercase(strip(value)) == "auto"
+    auto || (value isa Real && !(value isa Bool) && isfinite(value) && value >= 0) || throw(ArgumentError("Override $(key) must be auto or a finite non-negative number; got $(repr(value))."))
   elseif key == "power_flow.qlimits.start_mode"
     _validate_allowed_symbol(key, _as_symbol_cfg(value), QLIMIT_START_MODE_VALUES)
   elseif key == "power_flow.qlimits.guard.narrow_range_mode"

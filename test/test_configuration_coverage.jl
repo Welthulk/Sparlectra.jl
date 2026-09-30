@@ -1019,7 +1019,6 @@ function test_configuration_webui_keys_both_directions()
       "matpower_import.apply_branch_names" => "import detail, set per case in the case configuration file",
       "matpower_import.import_for001_contingencies" => "DTF import detail, chosen by the FOR002 selection on the Case page",
       "model.net_cache_enabled" => "process-level cache switch, not a per-run choice",
-      "power_flow.qlimits.final_q_accept_pu" => "final Q-limit acceptance threshold, twice the hysteresis by default; a solver detail for the configuration editor or the case sidecar, not a per-run form choice",
       "power_flow.islands.diagnostic_continue_after_failure" => "island diagnostics detail, YAML and API only",
       "power_flow.islands.enabled" => "island solving follows the network, not a form choice",
       "power_flow.islands.mode" => "island solving follows the network, not a form choice",

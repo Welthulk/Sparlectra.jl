@@ -1791,6 +1791,7 @@ form:
         "power_flow_autodamp_min" => "power_flow.autodamp_min",
         "power_flow_qlimits_enabled" => "power_flow.qlimits.enabled",
         "power_flow_qlimits_enforcement_mode" => "power_flow.qlimits.enforcement_mode",
+        "power_flow_qlimits_final_q_accept_pu" => "power_flow.qlimits.final_q_accept_pu",
         "power_flow_qlimits_start_iter" => "power_flow.qlimits.start_iter",
         "power_flow_qlimits_start_mode" => "power_flow.qlimits.start_mode",
         "power_flow_qlimits_auto_q_delta_pu" => "power_flow.qlimits.auto_q_delta_pu",
