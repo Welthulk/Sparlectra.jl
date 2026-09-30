@@ -139,6 +139,7 @@ function _webui_test_form(casefile, config_file, output_root)
     "power_flow_external_grid_rx" => "0.1",
     "power_flow_linear_solver" => "umfpack",
     "power_flow_rescue" => "true",
+    "power_flow_auto_slack" => "true",
     "runtime_parallel_enabled" => "true",
     "power_flow_dc_fallback" => "false",
     "cgmes_start_values" => "auto",
@@ -1273,7 +1274,7 @@ form:
         @test iidm_exports["status"] == "succeeded"
         @test iidm_exports["metadata"]["matpower_export_status"] == "completed"
         @test iidm_exports["metadata"]["cgmes_export_status"] == "completed"
-        cp(joinpath(iidm_exports["output_dir"], "matpower_export.m"), joinpath(case_directory, "ieee14_export.m"))
+        cp(joinpath(iidm_exports["output_dir"], String(iidm_exports["metadata"]["matpower_export_file"])), joinpath(case_directory, "ieee14_export.m"))
         cp(joinpath(iidm_exports["output_dir"], String(iidm_exports["metadata"]["cgmes_export_files"])), joinpath(case_directory, "ieee14_export_cgmes.zip"))
         magnitudes(result) = begin
           rows = readlines(joinpath(result["output_dir"], "bus_voltages_complex.csv"))
@@ -1639,6 +1640,8 @@ form:
       @test overrides["power_flow.tol"] == 1.0e-8
       @test overrides["power_flow.max_iter"] == 80
       @test overrides["power_flow.autodamp"]
+      # the advanced auto_slack checkbox reaches the run as an override (0.20.4)
+      @test overrides["power_flow.auto_slack"] === true
       apply_form = copy(form)
       apply_form["matpower_import_auto_profile"] = "apply"
       apply_request = SparlectraApp.powerflow_webui_request(apply_form; default_output_root = output_root)
@@ -1872,6 +1875,7 @@ form:
         "powsybl_import_slack_ids" => "powsybl_import.slack_ids",
         "powsybl_import_base_mva" => "powsybl_import.base_mva",
         "power_flow_rescue" => "power_flow.rescue",
+        "power_flow_auto_slack" => "power_flow.auto_slack",
         "runtime_parallel_enabled" => "runtime.parallel.enabled",
         "power_flow_dc_fallback" => "power_flow.dc.fallback",
         "export_cgmes" => "webui.export_cgmes",

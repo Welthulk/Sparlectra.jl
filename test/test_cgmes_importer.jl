@@ -993,10 +993,12 @@ function run_cgmes_importer_tests()
 
       # the report survives a failed solve: it is written right after the
       # import, not after the power flow (one flat-start iteration cannot
-      # reach 1e-14)
+      # reach 1e-14; rescue off, because the rescue ladder's alternate start
+      # is the delivery's SV, an exact solution that would converge at once
+      # since the projection keeps a seed closer than its DC start, 0.20.4)
       out_f = mktempdir()
       cfg_f = joinpath(out_f, "c.yaml")
-      write(cfg_f, "config_version: 1\npower_flow:\n  max_iter: 1\n  tol: 1.0e-14\ncgmes_import:\n  start_values: flat\n")
+      write(cfg_f, "config_version: 1\npower_flow:\n  max_iter: 1\n  tol: 1.0e-14\n  rescue: false\ncgmes_import:\n  start_values: flat\n")
       rf = run_sparlectra_api(casefile = z, config_file = cfg_f, output_dir = out_f)
       @test rf.status != :succeeded
       @test isfile(joinpath(out_f, "cgmes.log"))

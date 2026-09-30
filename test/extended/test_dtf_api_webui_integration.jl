@@ -68,7 +68,7 @@ function run_dtf_api_webui_integration_tests()
       @test occursin("L1 ALPHA S1 -> BETA1 S1", branch_csv)
       @test "dtf_import_summary.md" in artifact_names
       @test "dtf_import_summary.csv" in artifact_names
-      @test "dtf_native_matpower_export.m" in artifact_names
+      @test any(name -> occursin(r"_calc_\d{8}\.m$", name), artifact_names)
       @test "dtf_for002_base_comparison.md" in artifact_names
       @test any(name -> occursin("dtf_outage_1_metrics.csv", name), artifact_names)
       @test any(name -> endswith(name, ".csv"), artifact_names)

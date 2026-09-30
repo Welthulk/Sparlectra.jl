@@ -117,8 +117,11 @@ export with an error naming both keys before any file is written.
 ## [Export from the Web UI](@id cgmes-export-webui)
 
 The run option **Write MATPOWER export artifact** works the same way for
-every case format: the network of the run is written as `matpower_export.m`
-next to the other artifacts (a DTF case writes `dtf_native_matpower_export.m`).
+every case format: the network of the run is written as a new file
+`<case>_calc_<YYYYMMDD>.m` next to the other artifacts, with a header that
+names the source case, the write time, the Sparlectra version and whether
+the bus and branch columns carry the calculated state. The input file is
+never written.
 
 The run form's **Export case as CGMES delivery** checkbox writes one
 artifact, the combined `<case>_CGMES.zip` with all four profiles, right

@@ -231,6 +231,22 @@ function _normalize_case_format(value)::Symbol
   return format
 end
 
+"""
+    _matpower_calc_export_name(case_path) -> String
+
+File name of the MATPOWER export artifact of a run: `<case stem>_calc_<YYYYMMDD>.m`.
+A new file, never the input file; the date is compact because the stem is
+also the MATLAB function name of the case (`function mpc = case118_calc_20260930`)
+and a hyphen is not allowed there. Characters outside `[A-Za-z0-9_]` in the
+stem are replaced by `_` for the same reason.
+"""
+function _matpower_calc_export_name(case_path::AbstractString; date::Dates.Date = Dates.today())
+  stem = first(splitext(basename(String(case_path))))
+  stem = replace(stem, r"[^A-Za-z0-9_]" => "_")
+  isempty(stem) && (stem = "case")
+  return string(stem, "_calc_", Dates.format(date, "yyyymmdd"), ".m")
+end
+
 function _dtf_metadata(case, requested::Symbol, detected::Symbol; for002_file=nothing, run_dtf_outages=false, matpower_export_requested=false, matpower_export_file=nothing)
   summary = DTFImporter.case_summary(case)
   return Dict{String,Any}(
@@ -908,9 +924,9 @@ function _run_sparlectra_api_body(
     end
     matpower_export_file = nothing
     if matpower_export_requested
-      matpower_export_file = joinpath(output_path, "dtf_native_matpower_export.m")
+      matpower_export_file = joinpath(output_path, _matpower_calc_export_name(case_path))
       try
-        writeMatpowerCasefile(raw_result.net, matpower_export_file; write_solution = config.matpower_export.write_solution)
+        writeMatpowerCasefile(raw_result.net, matpower_export_file; write_solution = config.matpower_export.write_solution, source_case = case_path)
       catch err
         return _api_execution_failure("artifact_write_error", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing, total_start_ns = total_start)
       end
@@ -1164,7 +1180,8 @@ function _run_sparlectra_api_body(
   end
   # Optional MATPOWER export artifact for every format that has no export
   # of its own in its branch (the DTF branch writes its file above): the
-  # network of the run as a MATPOWER case. Like the CGMES export it reads
+  # network of the run as a MATPOWER case, a NEW file named after the case
+  # and the date (never the input file). Like the CGMES export it reads
   # the network only, and a failure is recorded, never a run failure.
   if matpower_export_requested && detected_case_format !== :dtf_for001
     if raw_result.net === nothing
@@ -1174,9 +1191,9 @@ function _run_sparlectra_api_body(
       end
     else
       emit_phase("writing_matpower_export")
-      matpower_artifact = joinpath(output_path, "matpower_export.m")
+      matpower_artifact = joinpath(output_path, _matpower_calc_export_name(case_path))
       try
-        writeMatpowerCasefile(raw_result.net, matpower_artifact; write_solution = config.matpower_export.write_solution)
+        writeMatpowerCasefile(raw_result.net, matpower_artifact; write_solution = config.matpower_export.write_solution, source_case = case_path)
         cgmes_export_metadata["matpower_export_status"] = "completed"
         cgmes_export_metadata["matpower_export_requested"] = true
         cgmes_export_metadata["matpower_export_file"] = basename(matpower_artifact)

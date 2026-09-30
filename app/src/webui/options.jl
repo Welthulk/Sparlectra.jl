@@ -115,6 +115,7 @@ const WEBUI_OPTION_SPECS = WebUIOptionSpec[
   # Startup option: unlike the run options around it, this one takes effect at
   # the NEXT Web UI start, so it is not stored per case.
   WebUIOptionSpec("power_flow.rescue", "power_flow_rescue", Bool, :checkbox, true, (), :expert, :case, true),
+  WebUIOptionSpec("power_flow.auto_slack", "power_flow_auto_slack", Bool, :checkbox, false, (), :expert, :case, true),
   WebUIOptionSpec("runtime.parallel.enabled", "runtime_parallel_enabled", Bool, :checkbox, true, (), :expert, :session, true),
   WebUIOptionSpec("power_flow.dc.fallback", "power_flow_dc_fallback", Bool, :checkbox, false, (), :expert, :case, true),
   WebUIOptionSpec("power_flow.distributed_slack.enabled", "power_flow_distributed_slack_enabled", Bool, :checkbox, false, (), :basic, :case, true),
