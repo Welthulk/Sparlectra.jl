@@ -129,6 +129,75 @@
 #      sensitivity belongs to that operating point, which is also the one
 #      such a controller starts from.
 
+
+# program flow (run_scenario)
+#
+#   The program computes how much all bus voltages change when the tap
+#   (tap_ratio) or the phase shift of one transformer is moved. From this
+#   follows the reach of the transformer: all buses whose |V| changes by at
+#   least a threshold (default 0.001 pu).
+#
+#   1. Import the SCF case and solve the power flow with runpf!.
+#   2. solved_state: contract closed bus links as the solver does
+#      (_merged_pf_net), then build the canonical model (buildPfModel).
+#   3. Check: the mismatch at the solution must be near zero (< 1e-6).
+#      If not, the model does not reproduce the solved state (for example
+#      Q-limit switching) and the case is skipped.
+#   4. Find the transformer between the two buses (find_transformer).
+#   5. tap_sensitivity computes dV/dtau and dV/dphi (magnitude and angle).
+#   6. Move the tap by tap_steps (default 2). The step grid is
+#      tap_ratio = ratio / (1 + n * tap_step), limited to the step band.
+#   7. Prediction = dV/dtau * dtau. Check: solve a second power flow on a
+#      copy with the new tap and compare the real change with the
+#      prediction, bus by bus.
+#   8. Take the reach as a set from the prediction and from the second
+#      power flow, and compare the two sets. The difference is the
+#      second-order term.
+#
+#   The second power flow is only a check. The results (reach, rings,
+#   voltage levels, walls) come from the prediction. For any other tap
+#   move one multiplication with dtau is enough, no new power flow.
+#
+# main functions
+#
+#   tapMismatchDerivative  F_u, analytic (:analytic) or by central
+#                          differences (:differences)
+#   tap_sensitivity        computes both variants of F_u; if they differ by
+#                          more than rtol, the differences are used and the
+#                          example says so; then one solve with J
+#   hop_distances          breadth-first search: distance of every bus from
+#                          the transformer, in branches
+#   ring_rows              reach as rings around the transformer (buses,
+#                          buses in reach, largest change)
+#   level_rows             reach per voltage level
+#   wall_rows              slack and PV buses ("walls") that hold |V| and
+#                          limit the reach
+#   scenario_markdown,
+#   write_report           full report as Markdown
+#
+# output
+#
+#   Console: compact (checks, reach, rings, levels, walls, summary table).
+#            SPARLECTRA_TAP_SENS_VERBOSE=1 adds the details.
+#   File:    examples/_out/tap_sensitivity/tap_sensitivity.md with all
+#            buses, F_u and sensitivities. The bus list is in a <details>
+#            block.
+#   Control: SPARLECTRA_TAP_SENS_SCENARIO=<name> selects one scenario. A
+#            scenario that fails does not stop the others.
+#
+# good to know
+#
+#   - A PV bus has dV/dtau = 0, because its second equation |V|^2 - Vset^2
+#     does not depend on tau. A nonzero value would mean the row layout is
+#     mixed up.
+#   - J^-1 is dense, so in theory every bus of the island has a
+#     sensitivity. Only the threshold makes the reach finite.
+#   - The reach belongs to one operating point. If a PV bus hits its Q
+#     limit and switches to PQ, a wall is removed and the reach grows. The
+#     example reports a type change in the second power flow.
+#   - Outer controllers (tap controllers, STATCOM, SSSC, HVDC, PST) are
+#     not included.
+
 using Sparlectra
 using LinearAlgebra
 using SparseArrays
