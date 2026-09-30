@@ -1464,6 +1464,9 @@ mpc.branch = [
           addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
         elseif second_ref === :pv
           addProsumer!(net = net, busName = "B1", type = "SYNCHRONOUSMACHINE", p = 12.0, q = 0.0, vm_pu = 1.0, isRegulated = true)
+        elseif second_ref === :gen
+          # a unit without voltage control: neither slack nor PV
+          addProsumer!(net = net, busName = "B1", type = "SYNCHRONOUSMACHINE", p = 12.0, q = 1.0, isRegulated = false)
         end
         addProsumer!(net = net, busName = "B2", type = "ENERGYCONSUMER", p = 8.0, q = 2.0)
         refreshBusTypesFromProsumers!(net)
@@ -1509,8 +1512,20 @@ mpc.branch = [
       _, pv_erg = runpf!(pv_ref_net; config = PowerFlowConfig(max_iter = 40, islands_enabled = true))
       @test pv_erg == 0
 
+      # an island always finds itself a reference: a generating unit without
+      # voltage control is promoted whatever auto_slack says (only a
+      # load-only island has no candidate and is rejected)
+      gen_ref_net = two_island_net(second_ref = :gen)
+      gen_report = Sparlectra.detect_ac_islands(gen_ref_net; promote_generators = true)
+      @test gen_report.rows[2].status == "promote_generator_ref"
+      _, gen_erg = redirect_stdout(devnull) do
+        runpf!(gen_ref_net; config = PowerFlowConfig(max_iter = 40, islands_enabled = true, auto_slack = false))
+      end
+      @test gen_erg == 0
+      @test all(node -> isfinite(node._vm_pu) && isfinite(node._va_deg), gen_ref_net.nodeVec)
+
       no_ref_net = two_island_net(second_ref = :none)
-      no_ref_report = Sparlectra.detect_ac_islands(no_ref_net)
+      no_ref_report = Sparlectra.detect_ac_islands(no_ref_net; promote_generators = true)
       @test no_ref_report.rows[2].status == "missing_ref"
       @test_throws ErrorException runpf!(no_ref_net; config = PowerFlowConfig(max_iter = 40, islands_enabled = true))
     end)() end

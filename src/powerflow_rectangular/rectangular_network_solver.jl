@@ -2020,9 +2020,13 @@ function runpf!(
   end
 
   has_vdep_control = has_voltage_dependent_control(wnet)
-  # auto_slack reaches into the islands: one that lost its reference and
-  # has no voltage-controlled unit takes its strongest generating unit
-  island_report = detect_ac_islands(wnet; promote_generators = auto_slack)
+  # An island always finds itself a reference:
+  # one that lost its slack borrows a PV bus, and one without any
+  # voltage-controlled unit takes its strongest generating unit, whatever
+  # auto_slack says. auto_slack keeps governing the whole network without a
+  # registered slack (ensureSlack! above); a load-only island still has no
+  # candidate and is rejected by _validate_island_references!.
+  island_report = detect_ac_islands(wnet; promote_generators = true)
   # one angle reference per synchronous island, enforced on BOTH paths
   # (single- and multi-island): a second reference would otherwise surface
   # later as the generic unsupported-bus-type abort in the mismatch assembly

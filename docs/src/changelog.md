@@ -4,7 +4,7 @@ Start projection fix; results export as a new case file; `auto_slack` in the Web
 
 - Fix: the start projection no longer replaces a start that is already a solved state (the case file's VM/VA columns, a previous run) with the requested DC-angle start; case6495rte from its file now converges in 2 iterations with the packaged configuration instead of diverging.
 - The MATPOWER export artifact of a run is a new file named `<case>_calc_<date>.m` with a header naming the source case, the run date and the version; the input file is never written.
-- Web UI: `power_flow.auto_slack` is an advanced option (promote a reference when the case registers none; islands without a voltage-controlled unit need it).
+- Islands always find themselves a reference: an island that lost its slack takes a PV bus or, without one, its strongest generating unit, independent of `power_flow.auto_slack`; the key stays the switch for a whole case without slack and is now an advanced Web UI option.
 
 # Version 0.20.3 - 2026-09-30
 

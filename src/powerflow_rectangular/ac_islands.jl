@@ -309,7 +309,7 @@ function _validate_island_references!(report)
   bad = [row for row in report.rows if row.chosen_ref_bus == 0]
   isempty(bad) && return
   ids = join(getfield.(bad, :island_id), ", ")
-  error("AC island reference validation failed: island(s) $(ids) have no REF/Slack bus and no PV/voltage-controlled generator available for matpower_like reference selection. Set power_flow.auto_slack: true to promote the strongest generating unit of such an island as its reference.")
+  error("AC island reference validation failed: island(s) $(ids) have no REF/Slack bus and no PV/voltage-controlled generator available for matpower_like reference selection. An island without any generating unit cannot be solved on its own.")
 end
 
 """
