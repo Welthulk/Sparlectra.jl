@@ -395,7 +395,7 @@ as all outages or by label/index; the default is base-case only.
 
 Artifacts use the PowerFlow run artifact mechanism: `dtf_import_summary.md`,
 `dtf_import_summary.csv`, `dtf_for002_base_comparison.md`,
-`dtf_for002_base_metrics.csv`, `dtf_native_matpower_export.m`, and
+`dtf_for002_base_metrics.csv`, the `<case>_calc_<date>.m` export, and
 per-outage files such as `dtf_outage_1_summary.md` and
 `dtf_outage_1_metrics.csv`. DC lines, HVDC links and active MATPOWER
 `mpc.dcline` data are not modeled by this path; they fail with structured

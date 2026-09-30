@@ -301,8 +301,11 @@ The function optionally evaluates multiple start candidates derived from the raw
 Default behavior chooses the best finite measured start candidate. Requested DC
 behavior is different: when `requested_angle_mode == :dc`, a finite and guarded
 DC-angle start is used as the requested baseline, and raw is used only if the
-DC candidate is invalid/non-finite or rejected by a start guard. The slack-bus
-complex voltage is preserved as reference in all generated candidates.
+DC candidate is invalid/non-finite or rejected by a start guard, or if the raw
+seed's measured mismatch is already smaller than the DC start's (a solved
+state from the case file must not be replaced by a colder start; reason
+`:raw_seed_closer_than_dc_start`). The slack-bus complex voltage is preserved
+as reference in all generated candidates.
 
 # Arguments
 - `Ybus`: Bus admittance matrix (dense or sparse).
@@ -384,7 +387,18 @@ function project_rectangular_start(
     dc_mis = measure_candidates ? _perf_profile_time!(performance_profile, :start_projection_mismatch_evaluation) do
       _max_rectangular_mismatch(Ybus, Vdc, S, bus_types, Vset, slack_idx)
     end : NaN
-    if dc_angle_required && dc_angle_start_valid
+    if dc_angle_required && dc_angle_start_valid && measure_candidates && isfinite(raw_mis) && isfinite(dc_mis) && raw_mis < dc_mis
+      # The requested DC angles are a start for cold seeds; a seed that is
+      # already closer to the solution than the DC start (a solved state
+      # from the case file, a previous run) is kept, otherwise the request
+      # would replace a start that converges in two steps with one that may
+      # not converge at all (case6495rte: 0.03 pu against 575 pu).
+      best_name = :raw
+      best_mis = raw_mis
+      fallback_to_raw = true
+      fallback_reason = :raw_seed_closer_than_dc_start
+      selection_reason = fallback_reason
+    elseif dc_angle_required && dc_angle_start_valid
       best = Vdc
       best_name = :dc_start
       best_mis = dc_mis

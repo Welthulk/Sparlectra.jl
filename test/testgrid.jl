@@ -540,6 +540,33 @@ function test_rectangular_start_projection_keeps_raw_without_finite_improvement(
     performance_profile = invalid_dc_profile,
   )
 
+  # Regression: a seed that is already a solved state (mismatch below the
+  # DC start's) is kept although DC angles were requested; the projection
+  # used to replace the file start of case6495rte (0.03 pu) with the DC
+  # start (575 pu), which did not converge.
+  Ssolved = ComplexF64[0.0+0.0im, -1.0-0.2im]
+  Vsolved = copy(Vraw)
+  for _ in 1:20
+    Vsolved[2] = 1.0 + 0.0im + conj(Ssolved[2] / Vsolved[2]) / (0.0 - 10.0im)
+  end
+  solved_seed_profile = Dict{Symbol,Any}(:enabled => true)
+  Vsolved_seed = Sparlectra.project_rectangular_start(
+    Y,
+    Vsolved,
+    Ssolved,
+    bus_types,
+    Vset,
+    1;
+    enabled = true,
+    try_dc_start = true,
+    try_blend_scan = true,
+    measure_candidates = true,
+    requested_angle_mode = :dc,
+    requested_voltage_mode = :profile_blend,
+    performance_profile = solved_seed_profile,
+  )
+  solved_seed_summary = solved_seed_profile[:start_projection_summary]
+
   required_fields = (
     :requested_angle_mode,
     :requested_voltage_mode,
@@ -595,6 +622,12 @@ function test_rectangular_start_projection_keeps_raw_without_finite_improvement(
          requested_summary.fallback_to_raw === false &&
          requested_summary.requested_dc_worse_than_raw === (requested_summary.dc_mismatch > requested_summary.raw_mismatch) &&
          all(field -> hasproperty(requested_summary, field), required_fields) &&
+         Vsolved_seed == Vsolved &&
+         solved_seed_summary.selected === :raw &&
+         solved_seed_summary.reason === :raw_seed_closer_than_dc_start &&
+         solved_seed_summary.fallback_to_raw === true &&
+         solved_seed_summary.dc_angle_start_applied === false &&
+         solved_seed_summary.raw_mismatch < solved_seed_summary.dc_mismatch &&
          Vinvalid_dc == Vraw &&
          invalid_summary.selected === :explicit_fallback_raw &&
          invalid_summary.reason === :invalid_dc_angle_start &&

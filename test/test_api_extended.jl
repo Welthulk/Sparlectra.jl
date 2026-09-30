@@ -975,13 +975,25 @@ power_flow:
 
       # the MATPOWER export option writes its artifact for every case
       # format (it was wired for DTF cases only and ignored otherwise)
+      # the artifact is a NEW file named after the case and the date
+      # (`<stem>_calc_<YYYYMMDD>.m`), with a header that names its source,
+      # never the input file (its bytes are unchanged by the run)
+      input_bytes = read(casefile)
+      calc_name = string("case_api_calc_", Dates.format(Dates.today(), "yyyymmdd"), ".m")
       exported = run_sparlectra_api(casefile = casefile, config_file = template, output_dir = joinpath(tmpdir, "matpower_export"), matpower_export_requested = true)
       @test exported.success
-      @test isfile(joinpath(tmpdir, "matpower_export", "matpower_export.m"))
+      @test isfile(joinpath(tmpdir, "matpower_export", calc_name))
       @test exported.metadata["matpower_export_status"] == "completed"
-      @test exported.metadata["matpower_export_file"] == "matpower_export.m"
+      @test exported.metadata["matpower_export_file"] == calc_name
+      calc_head = join(first(readlines(joinpath(tmpdir, "matpower_export", calc_name)), 6), "\n")
+      @test occursin("% Source case: case_api.m", calc_head)
+      @test occursin("% Sparlectra $(pkgversion(Sparlectra)), written ", calc_head)
+      @test occursin("calculated state of the run", calc_head)
+      @test occursin("function mpc = case_api_calc_", calc_head)
+      @test read(casefile) == input_bytes
+      @test SparlectraApp._matpower_calc_export_name("/x/case 9-a.m"; date = Dates.Date(2026, 9, 30)) == "case_9_a_calc_20260930.m"
       plain_run = run_sparlectra_api(casefile = casefile, config_file = template, output_dir = joinpath(tmpdir, "no_matpower_export"))
-      @test !isfile(joinpath(tmpdir, "no_matpower_export", "matpower_export.m"))
+      @test !isfile(joinpath(tmpdir, "no_matpower_export", calc_name))
       @test !haskey(plain_run.metadata, "matpower_export_status")
 
       # an unknown key in a configuration FILE is warned about and dropped;
