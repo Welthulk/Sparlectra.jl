@@ -734,6 +734,16 @@ function formatBranchResults(net::Net; max_rows::Union{Nothing,Int} = nothing)
   return String(take!(fr_io)), total_losses
 end
 
+# whether the last solve handled Q limits: the rectangular status marks a
+# run with the handling off as final_q_check_status == :qlimits_disabled;
+# without a status (another solver, no solve yet) the lines are printed
+function _results_qlimits_handled(net::Net)::Bool
+  st = rectangular_pf_status(net)
+  st === nothing && return true
+  hasproperty(st, :final_q_check_status) || return true
+  return st.final_q_check_status !== :qlimits_disabled
+end
+
 """
     _print_wrong_branch_summary_line(io, net)
 
@@ -933,8 +943,14 @@ function printACPFlowResults(
     @printf(io, "Status         :%10s\n", "Not Converged")
   end
   @printf(io, "Case           :%15s\n", net.name)
-  @printf(io, "Cooldown iters :%10d\n", net.cooldown_iters)
-  @printf(io, "Q-hysteresis   :%10.4f pu\n", net.q_hyst_pu)
+  # the Q-limit lines (cooldown, hysteresis, locks, events) only when the
+  # solve handled Q limits; a run with the handling off prints no
+  # sub-parameters of it (0.30.1)
+  qlimits_handled = _results_qlimits_handled(net)
+  if qlimits_handled
+    @printf(io, "Cooldown iters :%10d\n", net.cooldown_iters)
+    @printf(io, "Q-hysteresis   :%10.4f pu\n", net.q_hyst_pu)
+  end
   # Always on: prefers the lazy estimate the solver stored for the exact
   # system it factored (post-merge topology, final active set); falls back
   # to a standalone reconstruction for non-NR runs. A failed estimate never
@@ -1007,10 +1023,12 @@ function printACPFlowResults(
   upfc_ctrl_count > 0 && (ctrl_detail *= @sprintf(", UPFC: %d", upfc_ctrl_count))
   @printf(io, "Controllers    :%10d (%s)\n", total_ctrl_count, ctrl_detail)
 
-  num_guarded_locks = length(net.qLimitEvents)
-  num_iterative_events = length(net.qLimitLog)
-  @printf(io, "PV→PQ locks    :%10d\n", num_guarded_locks)
-  @printf(io, "PV→PQ events   :%10d\n", num_iterative_events)
+  if qlimits_handled
+    num_guarded_locks = length(net.qLimitEvents)
+    num_iterative_events = length(net.qLimitLog)
+    @printf(io, "PV→PQ locks    :%10d\n", num_guarded_locks)
+    @printf(io, "PV→PQ events   :%10d\n", num_iterative_events)
+  end
 
   _print_wrong_branch_summary_line(io, net)
   _print_distributed_slack_summary_line(io, net)

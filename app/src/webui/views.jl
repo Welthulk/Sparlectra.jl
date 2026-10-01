@@ -73,6 +73,31 @@ function _webui_qlimit_mode_selection(profile_values)
   return _webui_selected(profile_values, "power_flow_qlimits_enforcement_mode", _webui_option_default("power_flow_qlimits_enforcement_mode"))
 end
 
+"""
+    _webui_experimental_enabled(profile_values) -> Bool
+
+Whether the Experimental block of the settings page renders editable. The
+block is greyed out by default and opens only on an explicit opt-in; it
+renders open when the profile already holds a non-default value for one of
+its fields (today `power_flow.newton_update`), so a saved experimental
+setting is never hidden behind a closed block.
+"""
+function _webui_experimental_enabled(profile_values)::Bool
+  default = _webui_option_default("power_flow_newton_update")
+  selected = _webui_selected(profile_values, "power_flow_newton_update", default)
+  return _webui_form_string(selected) != _webui_form_string(default)
+end
+
+# The Newton-update select of the Experimental block. It carries the
+# `disabled` attribute whenever the block is closed, server-side, so the
+# state is right without JS: a disabled control is dropped from the form
+# entry list, and the configured default applies.
+function _webui_experimental_select(profile_values)
+  select = _webui_select("power_flow_newton_update", _webui_option_allowed_values("power_flow_newton_update"), _webui_selected(profile_values, "power_flow_newton_update", _webui_option_default("power_flow_newton_update")))
+  attrs = _webui_experimental_enabled(profile_values) ? "<select data-experimental-field " : "<select data-experimental-field disabled "
+  return replace(select, "<select " => attrs; count = 1)
+end
+
 # --- Q-limit block (task 0.20.2) ------------------------------------------
 # Grey-out markers read by the form script: data-qlimit-field (every field of
 # the block; off while the handling is off), data-qlimit-active-set-field
@@ -1785,10 +1810,11 @@ $(isempty(profile_path) ? "" : "<fieldset class=\"saved-case-settings\">
 <label>$(_webui_field_label("power_flow_start_current_iteration_max_angle_step_deg", "Maximum angle-step guard [deg]"))<input name=\"power_flow_start_current_iteration_max_angle_step_deg\" type=\"number\" step=\"any\" min=\"0\" value=\"$(_webui_input_value(profile_values, "power_flow_start_current_iteration_max_angle_step_deg", _webui_option_default("power_flow_start_current_iteration_max_angle_step_deg")))\"></label>
 <label class=\"check\"><input name=\"power_flow_start_current_iteration_only_for_large_cases\" type=\"hidden\" value=\"false\"><input name=\"power_flow_start_current_iteration_only_for_large_cases\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_start_current_iteration_only_for_large_cases", _webui_option_default("power_flow_start_current_iteration_only_for_large_cases")))>$(_webui_field_label("power_flow_start_current_iteration_only_for_large_cases", "Only for large cases"))</label>
 </fieldset>
-<fieldset class=\"experimental-options\" data-nr-only-field>
+<fieldset class=\"experimental-options$(_webui_experimental_enabled(profile_values) ? "" : " disabled")\" data-nr-only-field>
 <legend>Experimental</legend>
-<label>$(_webui_field_label("power_flow_newton_update", "Newton update"))$(_webui_select("power_flow_newton_update", _webui_option_allowed_values("power_flow_newton_update"), _webui_selected(profile_values, "power_flow_newton_update", _webui_option_default("power_flow_newton_update"))))</label>
-<p class=\"field-help\">How a Newton step is applied to the bus voltages. <code>polar</code> (the default since 0.30.0) applies it as magnitude and angle, MATPOWER's update, which keeps the magnitudes in range on the large rotations of a flat start; <code>rectangular</code> adds the step to the complex voltage, the update up to 0.20.5, kept here for comparisons.</p>
+<label class=\"check span-2\"><input type=\"checkbox\" data-experimental-toggle$(_webui_experimental_enabled(profile_values) ? " checked" : "")>Enable experimental settings</label>
+<label>$(_webui_field_label("power_flow_newton_update", "Newton update"))$(_webui_experimental_select(profile_values))</label>
+<p class=\"field-help\">How a Newton step is applied to the bus voltages. <code>polar</code> (the default since 0.30.0) applies it as magnitude and angle, MATPOWER's update, which keeps the magnitudes in range on the large rotations of a flat start; <code>rectangular</code> adds the step to the complex voltage, the update up to 0.20.5, kept here for comparisons. While the block is greyed out its control is not submitted, so the configured default applies.</p>
 </fieldset>
 <label class=\"check span-2\"><input name=\"ignore_webui_settings\" type=\"hidden\" value=\"false\"><input name=\"ignore_webui_settings\" type=\"checkbox\" value=\"true\">$(_webui_field_label("ignore_webui_settings", "Ignore Web UI settings and use configuration defaults"))</label>
 </details>
@@ -1870,6 +1896,21 @@ document.addEventListener('DOMContentLoaded', function () {
   const autodampGroup = document.querySelector('[data-step-control-group="autodamp"]');
   const trustRegionGroup = document.querySelector('[data-step-control-group="trust_region"]');
   const nrOnlyFields = document.querySelectorAll('[data-nr-only-field]');
+  // Experimental block: greyed out until the opt-in checkbox is ticked. A
+  // disabled control is not submitted, so the configured default applies
+  // while the block is greyed. The toggle itself has no name and is never
+  // submitted. Runs after the NR-only pass because that pass re-enables
+  // every control of the fieldset when the solver switches back to NR.
+  const experimentalToggle = document.querySelector('input[data-experimental-toggle]');
+  const experimentalFields = document.querySelectorAll('[data-experimental-field]');
+  const experimentalGroup = document.querySelector('.experimental-options');
+  const updateExperimentalOptions = function () {
+    const on = experimentalToggle !== null && experimentalToggle.checked && !experimentalToggle.disabled;
+    experimentalFields.forEach(function (field) { field.disabled = !on; });
+    if (experimentalGroup !== null) {
+      experimentalGroup.classList.toggle('disabled', !on);
+    }
+  };
   let updatingStepControl = false;
   const updateStepControlOptions = function (changedToggle) {
     if (updatingStepControl) return;
@@ -1905,8 +1946,13 @@ document.addEventListener('DOMContentLoaded', function () {
       const flatstartMakesInactive = flatstartActive && container.hasAttribute('data-flatstart-inactive-field');
       setSolverGroupInactive(container, hideNrOnly || dcSeedMakesInactive || flatstartMakesInactive);
     });
+    updateExperimentalOptions();
     updatingStepControl = false;
   };
+  if (experimentalToggle !== null) {
+    updateExperimentalOptions();
+    experimentalToggle.addEventListener('change', updateExperimentalOptions);
+  }
   if (autodampToggle !== null) {
     updateStepControlOptions();
     autodampToggle.addEventListener('change', function () { updateStepControlOptions('autodamp'); });

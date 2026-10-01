@@ -78,6 +78,34 @@ voltage level of the result and names the reason; a low-voltage branch
 satisfies the power-flow equations to the tolerance like the operating
 solution does, so only the voltages tell them apart.
 
+## Where the cases come from
+
+Sparlectra does not ship any of the cases above; the table names them so
+a reader can reproduce the rows. Obtain them from their sources under
+their own license, citation and redistribution terms:
+
+- `case14`, `case118`, `case300`, `case1354pegase`, `case2869pegase`,
+  `case9241pegase`, `case13659pegase`, `case1888rte`, `case2848rte`,
+  `case6495rte`, `case3120sp`, `case4_dist`, `case18`, `case33bw`: MATPOWER
+  case files, `data/<name>.m` in the MATPOWER repository
+  (<https://github.com/MATPOWER/matpower>). Cite MATPOWER as its guidance
+  asks, see [Citation and case-file usage](@ref matpower-citation). The
+  PEGASE and RTE files request additional case-specific citations in
+  their headers (Fliscounakis et al. 2013 and Josz et al. 2016 for the
+  PEGASE cases, Josz et al. 2016 for the RTE snapshots); `case3120sp` is
+  the Polish system model distributed with MATPOWER; the small
+  distribution feeders carry the references of their original papers in
+  their headers.
+- `mvlv1004`, `mvlv10616`, `mvlv29840`: synthetic radial MV/LV
+  distribution grids, generated, not measured. The generator is the port
+  of power-grid-model's `FictionalGridGenerator` published in gridoxide
+  0.0.2 (Apache-2.0); the benchmark-grids repository
+  (<https://github.com/m-mirz/benchmark-grids>, directory `generated/`,
+  script `scripts/generate_distribution.py`, fixed seed, byte-identical
+  on every run) generates them and exports them to MATPOWER format. Their
+  loading is power-grid-model's benchmark loading (voltages 0.67 to 0.89
+  pu), not an operating point.
+
 ## Conventions
 
 The standard MATPOWER reading (shift in degrees, sign +1, ratio as
