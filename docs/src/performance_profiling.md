@@ -152,11 +152,29 @@ configuration, artifact options and status diagnostics.
 
 ## [Power mode for repeated solves](@id power-mode)
 
-`power_flow.power_mode: true` (keyword `power_mode = true` on `runpf!` and
-`runpf_rectangular!`, a checkbox under Advanced options in the Web UI) is
-for the cases where one network is solved many times: a benchmark on a
-persistent model, the scenario engine, N-1 contingency sweeps, Monte
-Carlo, outer control loops. Between solves the network keeps its Ybus
+Power mode is for the cases where one network is solved many times: a
+benchmark on a persistent model, the scenario engine, N-1 contingency
+sweeps, Monte Carlo, outer control loops. It is off by default; a single
+run gains nothing from it.
+
+Switching it on:
+
+- Configuration file: `power_flow.power_mode: true` (every run of the
+  service, the Web UI and `run_sparlectra` reads it).
+- Library call: the keyword `power_mode = true` on `runpf!` or
+  `runpf_rectangular!`, for example
+  `runpf!(net, 30, 1e-8, 0; power_mode = true)`; the cache lives on the
+  network, so every further solve of that `net` reuses it.
+- Web UI: Settings page, open **Advanced options**, fieldset **Solver
+  backend**, tick **Power mode**; the fieldset is shown for the Newton
+  solver only (`power_flow.solver: rectangular`). Save the settings
+  (configuration file or this case) and the N-1 and scenario runs of
+  that case use it.
+- KLU: load the extension with `using KLU` next to `using Sparlectra`
+  (the application package loads it, so the service and the Web UI have
+  it). Without it power mode factorises with UMFPACK and gains less.
+
+Between solves the network keeps its Ybus
 (reused while the fingerprint of the branch admittances, terminals and
 shunts is unchanged), the symbolic analysis of the sparse LU with its
 factorization object and Jacobian buffers (the context re-analyses by
