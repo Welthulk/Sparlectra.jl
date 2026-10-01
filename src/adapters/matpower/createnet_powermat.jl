@@ -252,7 +252,7 @@ PQ generator controllers, and the MATPOWER convention switches
 `bus_shunt_model` selects how bus shunts are modeled, and `profile` collects
 per-stage import timings when given. Throws on inconsistent case data.
 """
-function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false, cooldown::Int = 0, q_hyst_pu::Float64 = 0.0, enable_pq_gen_controllers::Bool = true, bus_shunt_model = :admittance, matpower_shift_sign::Real = 1.0, matpower_shift_unit = :deg, matpower_ratio = :normal, tap_changer_model::Symbol = :ideal, reference_vm_pu::Union{Nothing,Float64} = nothing, reference_va_deg::Union{Nothing,Float64} = nothing, matpower_pv_voltage_source = :gen_vg, matpower_pv_voltage_mismatch_tol_pu::Float64 = 1e-4, preallocate_network::Symbol = :auto, preallocate_min_buses::Int = 1000, apply_bus_names::Bool = false, apply_branch_names::Bool = false, apply_branch_kind::Bool = false, import_for001_contingencies::Bool = true, matpower_dcline_mode::Symbol = :pf_injections, profile::Union{Nothing,AbstractDict}=nothing)::Net
+function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false, cooldown::Int = DEFAULT_QLIMIT_CONFIG.cooldown_iters, q_hyst_pu::Float64 = DEFAULT_QLIMIT_CONFIG.hysteresis_pu, enable_pq_gen_controllers::Bool = true, bus_shunt_model = :admittance, matpower_shift_sign::Real = 1.0, matpower_shift_unit = :deg, matpower_ratio = :normal, tap_changer_model::Symbol = :ideal, reference_vm_pu::Union{Nothing,Float64} = nothing, reference_va_deg::Union{Nothing,Float64} = nothing, matpower_pv_voltage_source = :gen_vg, matpower_pv_voltage_mismatch_tol_pu::Float64 = 1e-4, preallocate_network::Symbol = :auto, preallocate_min_buses::Int = 1000, apply_bus_names::Bool = false, apply_branch_names::Bool = false, apply_branch_kind::Bool = false, import_for001_contingencies::Bool = true, matpower_dcline_mode::Symbol = :pf_injections, profile::Union{Nothing,AbstractDict}=nothing)::Net
   # Small logger helper
   pInfo(msg::String) = (log ? (@info msg) : nothing)
 
@@ -831,8 +831,8 @@ same options as [`createNetFromMatPowerCase`](@ref).
 function createNetFromMatPowerFile(; filename::String,
     log::Bool=false,
     flatstart::Union{Nothing,Bool}=nothing,
-    cooldown::Int = 0,
-    q_hyst_pu::Float64 = 0.0,
+    cooldown::Int = DEFAULT_QLIMIT_CONFIG.cooldown_iters,
+    q_hyst_pu::Float64 = DEFAULT_QLIMIT_CONFIG.hysteresis_pu,
     enable_pq_gen_controllers::Union{Nothing,Bool}=nothing,
     bus_shunt_model = nothing,
     matpower_shift_sign::Union{Nothing,Real} = nothing,

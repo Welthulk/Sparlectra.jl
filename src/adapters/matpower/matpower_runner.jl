@@ -785,7 +785,7 @@ function matpower_import_auto_profile(mpc, cfg::SparlectraConfig; mode::Symbol =
       guard_narrow_range_mode = :lock_pq,
       guard_zero_range_mode = :lock_pq,
       guard_violation_mode = :lock_pq,
-      guard_max_switches = 10,
+      guard_max_switches = DEFAULT_QLIMIT_CONFIG.guard_max_switches,
       guard_max_remaining_violations = 0,
     )
     for (field, rec) in pairs(q_recs)

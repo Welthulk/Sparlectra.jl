@@ -596,6 +596,30 @@ power_flow:
       @test (f, getfield(from_struct, f)) == (f, getfield(tmpl, f))
       @test (f, getfield(from_empty, f)) == (f, getfield(tmpl, f))
     end
+    # 0.30.0 agreement for the ten release keys: template = struct = loader
+    # fallback = the keyword defaults the solver entry points resolve to
+    # (read back from the performance profile of a config-less library run
+    # on the shipped sp_case118) = the effective configuration of a service
+    # run. The keyword defaults read DEFAULT_QLIMIT_CONFIG and
+    # DEFAULT_NEWTON_UPDATE; the net and the MATPOWER importer read the
+    # hysteresis and cooldown from the same constant, so final_q_accept_pu
+    # ("auto" = 2 * hysteresis) agrees too.
+    tmpl_cfg = Sparlectra.SparlectraConfig(Sparlectra.load_yaml_dict(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH))
+    empty_cfg = Sparlectra.SparlectraConfig(Dict{String,Any}("config_version" => 1))
+    expected = (newton_update = :polar, start_iter = 3, start_mode = :iteration_or_auto, guard = true, guard_min_q_range_pu = 0.02,
+      guard_narrow_range_mode = :lock_pq, guard_violation_mode = :lock_pq, guard_max_switches = 3, final_q_accept_pu = 0.02, auto_profile = :off)
+    for cfg in (tmpl_cfg, empty_cfg, Sparlectra.SparlectraConfig())
+      q = cfg.powerflow.qlimits
+      @test (cfg.powerflow.newton_update, q.start_iter, q.start_mode, q.guard, q.guard_min_q_range_pu, q.guard_narrow_range_mode, q.guard_violation_mode, q.guard_max_switches, q.final_q_accept_pu, cfg.model.auto_profile) == values(expected)
+    end
+    @test Sparlectra.DEFAULT_NEWTON_UPDATE === expected.newton_update
+    lib_net = Sparlectra.createNetFromMatPowerFile(filename = joinpath(dirname(@__DIR__), "data", "mpower", "sp_case118.m"))
+    prof = Dict{Symbol,Any}()
+    redirect_stdout(devnull) do
+      runpf!(lib_net, 30, 1e-8, 0; performance_profile = prof)
+    end
+    @test (prof[:newton_update], prof[:qlimit_start_iter], prof[:qlimit_start_mode], prof[:qlimit_guard], prof[:qlimit_guard_min_q_range_pu], prof[:qlimit_guard_narrow_range_mode], prof[:qlimit_guard_violation_mode], prof[:qlimit_guard_max_switches], prof[:final_q_accept_pu]) ==
+          (expected.newton_update, expected.start_iter, expected.start_mode, expected.guard, expected.guard_min_q_range_pu, expected.guard_narrow_range_mode, expected.guard_violation_mode, expected.guard_max_switches, expected.final_q_accept_pu)
   end)() end
   return nothing
 end

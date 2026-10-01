@@ -283,17 +283,22 @@ function test_matpower_import_defaults_no_reenable()::Bool
 
   net = Sparlectra.createNetFromMatPowerCase(mpc = mpc, log = false, flatstart = false)
 
-  if net.cooldown_iters != 0
-    @warn "Expected default cooldown_iters = 0 for MATPOWER import" got = net.cooldown_iters
+  # Since 0.30.0 the importer's cooldown and hysteresis defaults are the
+  # packaged template's values, read from DEFAULT_QLIMIT_CONFIG (cooldown 1,
+  # hysteresis 0.01 pu), so a config-less library run and a template run
+  # agree; up to 0.20.5 this test pinned the importer literals 0 and 0.0.
+  expected = Sparlectra.DEFAULT_QLIMIT_CONFIG
+  if net.cooldown_iters != expected.cooldown_iters
+    @warn "Expected the template default cooldown_iters for MATPOWER import" got = net.cooldown_iters expected = expected.cooldown_iters
     return false
   end
 
-  if !isapprox(net.q_hyst_pu, 0.0; atol = 0.0, rtol = 0.0)
-    @warn "Expected default q_hyst_pu = 0.0 for MATPOWER import" got = net.q_hyst_pu
+  if !isapprox(net.q_hyst_pu, expected.hysteresis_pu; atol = 0.0, rtol = 0.0)
+    @warn "Expected the template default q_hyst_pu for MATPOWER import" got = net.q_hyst_pu expected = expected.hysteresis_pu
     return false
   end
 
-  return true
+  return net.cooldown_iters == 1 && net.q_hyst_pu == 0.01
 end
 
 function test_matpower_flatstart_uses_generator_voltage_setpoints()::Bool

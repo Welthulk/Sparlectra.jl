@@ -775,13 +775,25 @@ function runpf_rectangular!(
     performance_profile[:rectangular_workspace_nbus] = nb
     performance_profile[:rectangular_workspace_nstate] = 2 * max(nb - 1, 0)
     performance_profile[:linear_solver_backend] = linear_solver
+    # the effective update and Q-limit settings of this solve, so a library
+    # caller can read what the keyword defaults resolved to (0.30.0: the
+    # defaults come from DEFAULT_QLIMIT_CONFIG and DEFAULT_NEWTON_UPDATE)
+    performance_profile[:newton_update] = newton_update
+    performance_profile[:qlimit_start_iter] = qlimit_start_iter
+    performance_profile[:qlimit_start_mode] = qlimit_start_mode
+    performance_profile[:qlimit_guard] = qlimit_guard
+    performance_profile[:qlimit_guard_min_q_range_pu] = qlimit_guard_min_q_range_pu
+    performance_profile[:qlimit_guard_narrow_range_mode] = qlimit_guard_narrow_range_mode
+    performance_profile[:qlimit_guard_violation_mode] = qlimit_guard_violation_mode
+    performance_profile[:qlimit_guard_max_switches] = qlimit_guard_max_switches
+    performance_profile[:final_q_accept_pu] = final_q_accept_pu
   end
 
   if verbose > 1
     @info "Starting rectangular complex NR power flow..."
     @info "Initial complex voltages V0:" V0
     @info "Slack bus index:" slack_idx
-    @info "maxiter = $maxiter, tol = $tol ($(format_tolerance_physical(tol, Sbase))), damp = $damp, autodamp = $autodamp, autodamp_min = $autodamp_min, start_projection = $start_projection"
+    @info "maxiter = $maxiter, tol = $tol ($(format_tolerance_physical(tol, Sbase))), damp = $damp, autodamp = $autodamp, autodamp_min = $autodamp_min, newton_update = $newton_update, start_projection = $start_projection"
   end
 
   qlimit_active_set_changes = 0
