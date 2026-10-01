@@ -212,7 +212,9 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
       else
         scenario_set_from_dict(scf_json_parse(read(String(scenario_file), String)))
       end
-      runScenarios!(net, set; index = idx, rescue_ladder = config.contingency.rescue_ladder, screening_mode = screen_mode, screening_margin_pct = screen_margin)
+      # power mode (0.30.1) reaches the scenario engine's worker nets like the N-1 path below
+      runScenarios!(net, set; index = idx, rescue_ladder = config.contingency.rescue_ladder, screening_mode = screen_mode, screening_margin_pct = screen_margin,
+        (config.powerflow.power_mode ? (; power_mode = true) : (;))...)
     catch err
       err isa PowerFlowAborted && rethrow()
       return _api_failure("invalid_case_file", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)

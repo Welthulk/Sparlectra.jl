@@ -55,8 +55,8 @@ stored voltages the corrections are small and both updates behave alike.
 
 `power_flow.newton_update` selects the update: `polar` is the default
 since 0.30.0, `rectangular` (the update up to 0.20.5) remains available
-for comparisons; in the Web UI the select sits in the Experimental block
-at the end of the Advanced options of the power-flow form, greyed out
+for comparisons; in the Web UI the select sits on the Settings page in
+the Experimental block at the end of the Advanced options, greyed out
 until "Enable experimental settings" is ticked (while greyed the
 configured default applies).
 With the polar update the rectangular Jacobian reproduces MATPOWER's
