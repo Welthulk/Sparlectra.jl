@@ -1228,8 +1228,12 @@ function _run_sparlectra_api_body(
     # whether the end point is physical, in the narrative as well: the
     # detail lives in q_limit.log, the verdict must not
     println(io, _qv_characteristic_summary(raw_result.net, raw_result.numerical_converged).line)
-    println(io, _final_q_check_summary(raw_result).line)
-    if !isempty(q_limit_artifacts)
+    # with Q-limit handling off neither the final-check line nor the
+    # artifact block appears (the solver log carries the one "disabled"
+    # line); an option that is off prints no sub-parameters (0.30.1)
+    qlimits_handled = _final_q_check_summary(raw_result).status != "qlimits_disabled"
+    qlimits_handled && println(io, _final_q_check_summary(raw_result).line)
+    if qlimits_handled && !isempty(q_limit_artifacts)
       println(io, "PV Q-limit details")
       println(io, "------------------")
       println(io, "full details        : ", Q_LIMIT_LOG_ARTIFACT)

@@ -132,6 +132,7 @@ function _island_solver_settings(cfg::PowerFlowConfig)
     autodamp = cfg.autodamp,
     autodamp_min = cfg.autodamp_min,
     newton_update = cfg.newton_update,
+    power_mode = cfg.power_mode,
     angle_mode = cfg.start_mode.angle_mode,
     voltage_mode = cfg.start_mode.voltage_mode,
     start_projection = cfg.start_mode.start_projection,

@@ -17,9 +17,14 @@
 #          Newton step: UMFPACK equivalence, factorization reuse,
 #          pattern-drift guards, singular fallback, config and Web UI wiring.
 #          The former klu backend was removed in 0.9.10; the config and Web UI
-#          tests assert that "klu" is rejected.
+#          tests assert that "klu" is rejected. Since 0.30.1 KLU returns as
+#          the sparse LU of power mode through a package extension (loaded
+#          by `using KLU`); the last testset below runs it when KLU is
+#          loadable and says so.
 
 using Sparlectra
+const _KLU_AVAILABLE = Base.find_package("KLU") !== nothing
+_KLU_AVAILABLE && @eval using KLU
 using Test
 using SparseArrays
 using LinearAlgebra
@@ -239,6 +244,37 @@ function run_factorized_linear_solver_tests()
       linear_topic = SparlectraApp.resolve_webui_help_topic("power_flow.linear_solver")
       @test linear_topic !== nothing && !isempty(linear_topic.hint)
       @test occursin("href=\"$(SparlectraApp.webui_help_page_url("power_flow.linear_solver"))\"", form_html)
+    end)() end
+    @testset "power mode: KLU extension" begin (function ()
+      if !_KLU_AVAILABLE
+        println("      power mode KLU extension: SKIPPED (KLU.jl not loadable in this session)")
+        @test Sparlectra.power_mode_linear_solver_backend() === :umfpack_reuse
+        return nothing
+      end
+      println("      power mode KLU extension: RAN")
+      @test Sparlectra.power_mode_linear_solver_backend() === :klu
+      path = joinpath(dirname(@__DIR__), "data", "mpower", "sp_case118.m")
+      ref_net = Sparlectra.createNetFromMatPowerFile(filename = path)
+      it_ref, erg_ref = runpf!(ref_net, 30, 1e-10, 0; qlimits_enabled = false)
+      net = Sparlectra.createNetFromMatPowerFile(filename = path)
+      prof = Dict{Symbol,Any}()
+      it_pm, erg_pm = runpf!(net, 30, 1e-10, 0; qlimits_enabled = false, power_mode = true, performance_profile = prof)
+      @test erg_pm == 0 && erg_ref == 0 && it_pm == it_ref
+      @test prof[:linear_solver_backend] === :klu
+      @test Sparlectra._newton_context_backend(net._power_cache.linear_ctx) === :klu
+      state(n) = [b._vm_pu * cis(deg2rad(b._va_deg)) for b in n.nodeVec]
+      @test maximum(abs.(state(net) .- state(ref_net))) <= 1e-12
+      # warm solve on the same net: KLU refactors on the kept analysis
+      fresh = Sparlectra.createNetFromMatPowerFile(filename = path)
+      for (a, b) in zip(net.nodeVec, fresh.nodeVec)
+        a._vm_pu = b._vm_pu
+        a._va_deg = b._va_deg
+      end
+      it2, erg2 = runpf!(net, 30, 1e-10, 0; qlimits_enabled = false, power_mode = true)
+      @test erg2 == 0 && it2 == it_ref
+      @test maximum(abs.(state(net) .- state(ref_net))) <= 1e-12
+      ctx = net._power_cache.linear_ctx
+      @test ctx.analyze_count == 1 && ctx.refactor_count >= it_ref && ctx.fallback_count == 0
     end)() end
   end)() end
 end

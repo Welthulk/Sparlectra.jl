@@ -81,6 +81,8 @@ UmfpackReuseNewtonContext() = UmfpackReuseNewtonContext(nothing, 0, Int64[], Int
 
 _newton_full_factorization(::UmfpackReuseNewtonContext, J::SparseMatrixCSC{Float64,Int64}) = lu(J)
 _newton_refactorize!(ctx::UmfpackReuseNewtonContext, J::SparseMatrixCSC{Float64,Int64}) = lu!(ctx.fact, J)
+# the backend name a context reports (the KLU extension adds :klu)
+_newton_context_backend(::UmfpackReuseNewtonContext) = :umfpack_reuse
 
 """
     solve_newton_factorized!(ctx, J, rhs; pattern_changed=false) -> x

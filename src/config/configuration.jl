@@ -344,6 +344,11 @@ Base.@kwdef struct PowerFlowConfig
   # MATPOWER's newtonpf iterates with the same Jacobian; :rectangular adds
   # the step (V + dV), the update up to 0.20.5
   newton_update::Symbol = :polar
+  # power mode (0.30.1): a repeated solve on one network keeps the Ybus,
+  # the symbolic analysis of the sparse LU (KLU when the extension is
+  # loaded) and its work arrays between solves and skips the ranked
+  # mismatch diagnostics; off for a single run
+  power_mode::Bool = false
   # Promote the strongest injection to slack when none is registered
   # (ensureSlack!); off by default so data errors stay visible.
   auto_slack::Bool = false
@@ -1584,6 +1589,7 @@ function PowerFlowConfig(raw::AbstractDict)
     autodamp = autodamp,
     autodamp_min = _validate_positive("powerflow.autodamp_min", _as_float_cfg(_raw_get(merged, "autodamp_min", 0.05))),
     newton_update = _validate_allowed_symbol("power_flow.newton_update", _as_symbol_cfg(_raw_get(merged, "newton_update", :polar)), POWERFLOW_NEWTON_UPDATE_VALUES),
+    power_mode = _as_bool_cfg(_raw_get(merged, "power_mode", false)),
     auto_slack = _as_bool_cfg(_raw_get(merged, "auto_slack", false)),
     rescue = _as_bool_cfg(_raw_get(merged, "rescue", false)),
     wrong_branch_detection = _validate_allowed_symbol("power_flow.wrong_branch_detection", _as_symbol_cfg(_raw_get(merged, "wrong_branch_detection", :warn)), WRONG_BRANCH_DETECTION_VALUES),

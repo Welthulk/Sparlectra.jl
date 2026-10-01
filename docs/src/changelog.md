@@ -1,9 +1,10 @@
 # Version 0.30.1 - 2026-10-01
 
-Small fixes, Web UI and run log.
+Small fixes, Web UI and run log; power mode for repeated solves.
 
 - Fix: an option that is off prints no sub-parameters in the run log (Q-limit block, cooldown, hysteresis, PV to PQ counters).
 - Fix: the experimental Newton-update setting of the Web UI is greyed out until enabled; the default applies while greyed.
+- Added: `power_flow.power_mode` for repeated solves on one network (persistent factorisation and workspaces, diagnostics off during the solve); off by default.
 
 # Version 0.30.0 - 2026-10-01
 

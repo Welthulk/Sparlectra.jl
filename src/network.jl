@@ -158,6 +158,11 @@ mutable struct Net
   # notices of the tap-model resolver (0.20.0): one line per transformer
   # whose constructed ratio or shift the typed model replaced at build
   tapModelNotices::Vector{String}
+  # power mode (0.30.1): the state a repeated solve on this network keeps
+  # between solves (Ybus with its fingerprint, the linear-solver context
+  # with the symbolic analysis and the Jacobian buffers, the Newton
+  # workspace); nothing until the first power-mode solve
+  _power_cache::Any
 
   #! format: off
   function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1, cooldown_iters::Int = DEFAULT_QLIMIT_CONFIG.cooldown_iters, q_hyst_pu::Float64 = DEFAULT_QLIMIT_CONFIG.hysteresis_pu, reenable_v_hyst_pu::Float64 = DEFAULT_QLIMIT_CONFIG.reenable_v_hyst_pu, final_q_accept_pu::Float64 = 2 * q_hyst_pu, flatstart::Bool = false, bus_shunt_model = :admittance)
@@ -206,7 +211,8 @@ mutable struct Net
         nothing,                                   # _rectangular_pf_status
         nothing,                                   # _dc_pf_status
         nothing,                                   # _import_config
-        String[])                                  # tapModelNotices
+        String[],                                  # tapModelNotices
+        nothing)                                   # _power_cache
   end
   #! format: on
   function Base.show(io::IO, net::Net)

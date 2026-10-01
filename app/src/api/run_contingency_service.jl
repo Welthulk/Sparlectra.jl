@@ -289,6 +289,9 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
   # single slack in the IEEE 14-bus case, and one with the shared slack)
   dslack = config.powerflow.distributed_slack
   dslack_kwargs = dslack.enabled ? (; distributed_slack_enabled = true, distributed_slack_p_mode = dslack.p_mode, distributed_slack_fallback = dslack.fallback) : (;)
+  # power mode (0.30.1): the worker nets of the engine keep their Ybus,
+  # factorization and work arrays across the outages when the caller set it
+  config.powerflow.power_mode && (dslack_kwargs = (; dslack_kwargs..., power_mode = true))
   if results === nothing
     # an outage that removes the reference, or splits off an island without
     # one, does not end the case: the strongest remaining unit takes over
