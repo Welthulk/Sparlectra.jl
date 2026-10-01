@@ -1,3 +1,9 @@
+# Version 0.30.2 - 2026-10-01
+
+Dishonest Newton for repeated solves.
+
+- Added: `power_flow.jacobian_reuse` (dishonest Newton) reuses the Jacobian factorisation while the mismatch falls fast; off by default, Web UI checkbox under Solver backend.
+
 # Version 0.30.1 - 2026-10-01
 
 Small fixes, Web UI and run log; power mode for repeated solves.

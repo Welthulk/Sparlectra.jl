@@ -457,7 +457,7 @@ end
 # and, for the reuse backend, its analyze/refactor/fallback counters. Merged
 # into the final status (so island statuses carry per-island counters) and
 # written into the performance profile next to the workspace metadata.
-function _merge_linear_solver_diagnostics(status_build, performance_profile, linear_solver::Symbol, linear_ctx)
+function _merge_linear_solver_diagnostics(status_build, performance_profile, linear_solver::Symbol, linear_ctx; jacobian_reuse::Bool = false, jacobian_reuse_steps::Int = 0, jacobian_reuse_refactorisations::Int = 0, jacobian_reuse_discarded::Int = 0)
   # the backend the context actually is (power mode may hold the KLU
   # context of the extension while linear_solver names the configured one)
   linear_solver = linear_ctx === nothing ? linear_solver : _newton_context_backend(linear_ctx)
@@ -469,12 +469,22 @@ function _merge_linear_solver_diagnostics(status_build, performance_profile, lin
     performance_profile[:linear_solver_analyze_count] = analyze_count
     performance_profile[:linear_solver_refactor_count] = refactor_count
     performance_profile[:linear_solver_fallback_count] = fallback_count
+    # dishonest Newton: steps that solved with the previous factorization
+    # and steps that built and factorized a Jacobian
+    performance_profile[:jacobian_reuse] = jacobian_reuse
+    performance_profile[:jacobian_reuse_steps] = jacobian_reuse_steps
+    performance_profile[:jacobian_reuse_refactorisations] = jacobian_reuse_refactorisations
+    performance_profile[:jacobian_reuse_discarded] = jacobian_reuse_discarded
   end
   extras = (
     linear_solver = linear_solver,
     linear_solver_analyze_count = analyze_count,
     linear_solver_refactor_count = refactor_count,
     linear_solver_fallback_count = fallback_count,
+    jacobian_reuse = jacobian_reuse,
+    jacobian_reuse_steps = jacobian_reuse_steps,
+    jacobian_reuse_refactorisations = jacobian_reuse_refactorisations,
+    jacobian_reuse_discarded = jacobian_reuse_discarded,
   )
   return merge(status_build, (status = (; status_build.status..., extras...),))
 end

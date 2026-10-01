@@ -143,6 +143,18 @@ function _final_q_check_summary(raw_result::SparlectraRunResult)
     line = final_q_check_line(status, rows, base))
 end
 
+# dishonest Newton (0.30.2): the counts only when the switch was on
+# (silence rule: an option that is off reports nothing)
+function _jacobian_reuse_lifecycle_metadata(rect_status)::Dict{String,Any}
+  rect_status === nothing && return Dict{String,Any}()
+  (hasproperty(rect_status, :jacobian_reuse) && rect_status.jacobian_reuse) || return Dict{String,Any}()
+  return Dict{String,Any}(
+    "jacobian_reuse_reused_steps" => rect_status.jacobian_reuse_steps,
+    "jacobian_reuse_refactorisations" => rect_status.jacobian_reuse_refactorisations,
+    "jacobian_reuse_discarded" => rect_status.jacobian_reuse_discarded,
+  )
+end
+
 function _build_success_lifecycle_metadata(raw_result::SparlectraRunResult, config::SparlectraConfig; numerical_success::Bool, final_outcome::Dict{String,Any}, csv_export_status::AbstractString, csv_export_skip_reason, csv_export_error, csv_artifacts::Vector{String}, detailed_result_csv::Bool, config_overrides, config_override_source::AbstractString, casefile, config_file, performance_timing, run_diagnostics::Bool, csv_format_name::AbstractString, qlimit_metadata::AbstractDict, csv_timing_metadata::AbstractDict)::Dict{String,Any}
   qv = _qv_characteristic_summary(raw_result.net, raw_result.numerical_converged)
   fq = _final_q_check_summary(raw_result)
@@ -203,7 +215,7 @@ function _build_success_lifecycle_metadata(raw_result::SparlectraRunResult, conf
       "detailed_result_csv" => detailed_result_csv,
       "detailed_result_csv_format" => csv_format_name,
     )),
-  ), qlimit_metadata, current_iteration_metadata, merit_linesearch_metadata, wrong_branch_metadata, trust_region_metadata, island_wise_metadata)
+  ), qlimit_metadata, current_iteration_metadata, merit_linesearch_metadata, wrong_branch_metadata, trust_region_metadata, island_wise_metadata, _jacobian_reuse_lifecycle_metadata(rect_status))
   # Partial CSV exports are still successful API runs, but the Web UI needs the
   # partial file error in the stable lifecycle field used by Last Errors.
   haskey(csv_timing_metadata, :partial_error) && (metadata["detailed_result_csv_error"] = csv_timing_metadata[:partial_error])

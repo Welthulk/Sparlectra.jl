@@ -1773,6 +1773,11 @@ $(_webui_qlimit_block_html(profile_values))
 <p class=\"field-help\">Sparse linear-algebra backend for the rectangular Newton step only (independent of the <strong>Solver</strong> choice above). <code>umfpack_reuse</code> (default) reuses the symbolic analysis across iterations via <code>lu!</code>; <code>umfpack</code> analyzes every iteration anew.</p>
 <label class=\"check span-2\" data-nr-only-field><input name=\"power_flow_power_mode\" type=\"hidden\" value=\"false\"><input name=\"power_flow_power_mode\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_power_mode", _webui_option_default("power_flow_power_mode")))>$(_webui_field_label("power_flow_power_mode", "Power mode: keep Ybus, LU analysis and work arrays for repeated solves (single run: leave it off)"))</label>
 <p class=\"field-help\">Power mode keeps the Ybus, the LU analysis and the work arrays on the network between solves and runs the final diagnostics in a light form; the solution is the same. It pays off on repeated solves (N-1, scenarios); leave it off for a single run. With the KLU extension loaded (the application loads it) power mode factorises with KLU.</p>
+<label class=\"check span-2\" data-nr-only-field><input name=\"power_flow_jacobian_reuse\" type=\"hidden\" value=\"false\"><input name=\"power_flow_jacobian_reuse\" type=\"checkbox\" value=\"true\" data-jacobian-reuse-toggle$(_webui_checked(profile_values, "power_flow_jacobian_reuse", _webui_option_default("power_flow_jacobian_reuse")))>$(_webui_field_label("power_flow_jacobian_reuse", "Dishonest Newton (reuse Jacobian factorisation)"))</label>
+<label data-nr-only-field>$(_webui_field_label("power_flow_jacobian_reuse_min_reduction", "Minimum mismatch reduction per step"))<input name=\"power_flow_jacobian_reuse_min_reduction\" type=\"number\" step=\"any\" min=\"1\" data-jacobian-reuse-field value=\"$(_webui_input_value(profile_values, "power_flow_jacobian_reuse_min_reduction", _webui_option_default("power_flow_jacobian_reuse_min_reduction")))\"></label>
+<label data-nr-only-field>$(_webui_field_label("power_flow_jacobian_reuse_max_steps", "Maximum reused steps in a row"))<input name=\"power_flow_jacobian_reuse_max_steps\" type=\"number\" step=\"1\" min=\"1\" data-jacobian-reuse-field value=\"$(_webui_input_value(profile_values, "power_flow_jacobian_reuse_max_steps", _webui_option_default("power_flow_jacobian_reuse_max_steps")))\"></label>
+<p class=\"field-help span-2\" data-jacobian-reuse-umfpack-hint hidden>Jacobian reuse ignored: linear_solver umfpack keeps no factorisation; use umfpack_reuse or KLU.</p>
+<p class=\"field-help\">Dishonest Newton solves the next step with the previous factorisation while the mismatch falls by the minimum reduction per step; it changes the iteration count, not the solution. It pays off most with power mode on large transmission cases.</p>
 </fieldset>
 <fieldset class=\"external-grid-options\">
 <legend>External grid source</legend>
@@ -1949,11 +1954,33 @@ document.addEventListener('DOMContentLoaded', function () {
       setSolverGroupInactive(container, hideNrOnly || dcSeedMakesInactive || flatstartMakesInactive);
     });
     updateExperimentalOptions();
+    updateJacobianReuseOptions();
     updatingStepControl = false;
   };
   if (experimentalToggle !== null) {
     updateExperimentalOptions();
     experimentalToggle.addEventListener('change', updateExperimentalOptions);
+  }
+  // Dishonest Newton: its two numeric fields are greyed while the checkbox
+  // is off (a disabled field is not submitted, the configured value
+  // applies); the hint shows when the selected linear solver keeps no
+  // factorisation. Independent of power mode.
+  const jacobianReuseToggle = document.querySelector('input[data-jacobian-reuse-toggle]');
+  const jacobianReuseFields = document.querySelectorAll('[data-jacobian-reuse-field]');
+  const jacobianReuseHint = document.querySelector('[data-jacobian-reuse-umfpack-hint]');
+  const linearSolverSelect = document.querySelector('select[name="power_flow_linear_solver"]');
+  const updateJacobianReuseOptions = function () {
+    if (jacobianReuseToggle === null) return;
+    const on = jacobianReuseToggle.checked && !jacobianReuseToggle.disabled;
+    jacobianReuseFields.forEach(function (field) { field.disabled = !on; });
+    if (jacobianReuseHint !== null) {
+      jacobianReuseHint.hidden = !(on && linearSolverSelect !== null && linearSolverSelect.value === 'umfpack');
+    }
+  };
+  if (jacobianReuseToggle !== null) {
+    updateJacobianReuseOptions();
+    jacobianReuseToggle.addEventListener('change', updateJacobianReuseOptions);
+    if (linearSolverSelect !== null) linearSolverSelect.addEventListener('change', updateJacobianReuseOptions);
   }
   if (autodampToggle !== null) {
     updateStepControlOptions();

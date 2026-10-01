@@ -302,6 +302,9 @@ function runpf_rectangular!(
   autodamp_min::Float64 = 0.05,
   newton_update::Symbol = DEFAULT_NEWTON_UPDATE,
   power_mode::Bool = false,
+  jacobian_reuse::Bool = DEFAULT_JACOBIAN_REUSE,
+  jacobian_reuse_min_reduction::Float64 = DEFAULT_JACOBIAN_REUSE_MIN_REDUCTION,
+  jacobian_reuse_max_steps::Int = DEFAULT_JACOBIAN_REUSE_MAX_STEPS,
   merit_enabled::Bool = false,
   merit_armijo_c1::Float64 = 1.0e-4,
   merit_scale_p::Float64 = 1.0,
@@ -414,6 +417,9 @@ function runpf_rectangular!(
       autodamp_min = autodamp_min,
       newton_update = newton_update,
       power_mode = power_mode,
+      jacobian_reuse = jacobian_reuse,
+      jacobian_reuse_min_reduction = jacobian_reuse_min_reduction,
+      jacobian_reuse_max_steps = jacobian_reuse_max_steps,
       merit_enabled = merit_enabled,
       merit_armijo_c1 = merit_armijo_c1,
       merit_scale_p = merit_scale_p,
@@ -803,6 +809,16 @@ function runpf_rectangular!(
       power_cache.context_reuse_count += 1
     end
     linear_ctx = power_cache.linear_ctx
+    # dishonest Newton bookkeeping (0.30.2): maximum mismatch before the
+    # previous Newton step, steps taken, reused steps in total and in a row,
+    # and whether the last step was a reused one
+    jr_enabled = jacobian_reuse && !trust_region_enabled && linear_ctx !== nothing
+    jr_prev_mis = Inf
+    jr_newton_steps = 0
+    jr_reused_steps = 0
+    jr_consecutive = 0
+    jr_last_reused = false
+    jr_discarded_steps = 0
     bus_type_fp = hash(bus_types)
     if power_cache.bus_type_fingerprint != bus_type_fp
       linear_ctx.assembly.valid = false
@@ -811,6 +827,28 @@ function runpf_rectangular!(
   else
     workspace = RectangularIterationWorkspace(nb)
     linear_ctx = newton_linear_solver_context(linear_solver)
+    # dishonest Newton bookkeeping (0.30.2): maximum mismatch before the
+    # previous Newton step, steps taken, reused steps in total and in a row,
+    # and whether the last step was a reused one
+    jr_enabled = jacobian_reuse && !trust_region_enabled && linear_ctx !== nothing
+    jr_prev_mis = Inf
+    jr_newton_steps = 0
+    jr_reused_steps = 0
+    jr_consecutive = 0
+    jr_last_reused = false
+    jr_discarded_steps = 0
+  end
+  # dishonest Newton in the run log: one line when it is on, one line when
+  # it is on but cannot act (no factorization object, or the trust region,
+  # whose dogleg needs the current Jacobian); nothing when it is off
+  if verbose > 0 && jacobian_reuse
+    if trust_region_enabled
+      println("Jacobian reuse ignored: the trust region needs the current Jacobian in every step.")
+    elseif linear_ctx === nothing
+      println("Jacobian reuse ignored: linear_solver $(linear_solver) keeps no factorisation; use umfpack_reuse or KLU.")
+    else
+      @printf("Jacobian reuse: on, min reduction %g, max %d steps\n", jacobian_reuse_min_reduction, jacobian_reuse_max_steps)
+    end
   end
   if performance_profile !== nothing
     performance_profile[:rectangular_workspace_reuse] = rectangular_workspace_reuse
@@ -820,6 +858,8 @@ function runpf_rectangular!(
     performance_profile[:rectangular_workspace_nstate] = 2 * max(nb - 1, 0)
     performance_profile[:linear_solver_backend] = power_mode ? power_mode_linear_solver_backend() : linear_solver
     performance_profile[:power_mode] = power_mode
+    performance_profile[:jacobian_reuse_min_reduction] = jacobian_reuse_min_reduction
+    performance_profile[:jacobian_reuse_max_steps] = jacobian_reuse_max_steps
     # the effective update and Q-limit settings of this solve, so a library
     # caller can read what the keyword defaults resolved to (0.30.0: the
     # defaults come from DEFAULT_QLIMIT_CONFIG and DEFAULT_NEWTON_UPDATE)
@@ -959,7 +999,15 @@ function runpf_rectangular!(
     # Converged only counts when the active set stayed put in the same
     # iteration: a small mismatch right after a PV<->PQ switch describes the
     # OLD equation system, not the one now in force.
-    if converged_this_iter && !(changed || reenabled)
+    # dishonest Newton: an iterate reached by a reused (chord) step is within
+    # the tolerance but not as close to the solution as an honest Newton
+    # step would bring it; one honest step follows before the run counts as
+    # converged, so the final state equals the honest solution within the
+    # tolerance (measured without this step: 7.0e-8 pu on mvlv1004 against
+    # honest Newton at tol 1e-8). Not on the last allowed iteration, which
+    # accepts as before.
+    jr_polish = jr_last_reused && converged_this_iter && !(changed || reenabled) && it < maxiter
+    if converged_this_iter && !(changed || reenabled) && !jr_polish
       converged = true
       rejection_reason = :none
       break
@@ -969,8 +1017,23 @@ function runpf_rectangular!(
     # including the optional globalization strategies (damping, Armijo merit
     # line search, trust region). Two failure modes are not bugs but legitimate
     # non-convergence and are caught below; anything else is rethrown.
+    # dishonest Newton: the previous step cut the maximum mismatch by at
+    # least jacobian_reuse_min_reduction, so this step solves with the
+    # previous factorization. A reused step that did not reduce the mismatch
+    # by the factor fails the same test, so the next step refactorizes; the
+    # reused step itself is kept (its iterate is where the mismatch was
+    # measured, and the honest step from there is the normal Newton path).
+    # Never in the first two steps, never right after an active-set switch,
+    # at most jacobian_reuse_max_steps in a row, never for the honest final
+    # step that follows a converged chord step.
+    jr_reuse_now = jr_enabled && jr_newton_steps >= 2 && !(changed || reenabled) && !jr_polish &&
+                   jr_consecutive < jacobian_reuse_max_steps && isfinite(max_mis) && jr_prev_mis >= jacobian_reuse_min_reduction * max_mis
     try
       set_phase("linear_solve")
+      # the iterate before the step and its lambda: a discarded reused step
+      # restarts from them (the step returns a new vector, V is not mutated)
+      V_before = V
+      lambda_before = dslack === nothing ? 0.0 : dslack.lambda
       V = _perf_profile_time!(performance_profile, :iteration_newton_step) do
         complex_newton_step_rectangular(
           Ybus,
@@ -1007,8 +1070,68 @@ function runpf_rectangular!(
           tr_log = tr_step_diagnostics,
           linear_ctx = linear_ctx,
           dslack = dslack,
+          reuse_factorization = jr_reuse_now,
         )
       end
+      # dishonest Newton, rule 3: a reused step that did not cut the maximum
+      # mismatch by jacobian_reuse_min_reduction is discarded and replaced
+      # by the honest step from the same iterate, so the path continues as
+      # honest Newton would (case2848rte: a kept weak chord step moved the
+      # run onto another low-voltage root). One mismatch evaluation per
+      # reused step pays for the check.
+      if jr_reuse_now
+        _dslack_set_trial!(dslack, 0.0)
+        F_check = mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx; dslack = dslack)
+        if !(maximum(abs, F_check) * jacobian_reuse_min_reduction <= max_mis)
+          jr_discarded_steps += 1
+          jr_reuse_now = false
+          dslack !== nothing && (dslack.lambda = lambda_before)
+          V = _perf_profile_time!(performance_profile, :iteration_newton_step) do
+            complex_newton_step_rectangular(
+              Ybus,
+              V_before,
+              S;
+              slack_idx = slack_idx,
+              damp = damp,
+              autodamp = autodamp,
+              autodamp_min = autodamp_min,
+              newton_update = newton_update,
+              bus_types = bus_types,
+              Vset = Vset,
+              dPinj_dVm = dPinj_dVm,
+              dQinj_dVm = dQinj_dVm,
+              performance_profile = performance_profile,
+              step_diagnostics = step_diagnostics,
+              merit_enabled = merit_enabled,
+              armijo_c1 = merit_armijo_c1,
+              scale_p = merit_scale_p,
+              scale_q = merit_scale_q,
+              scale_v = merit_scale_v,
+              fallback_max_mismatch = merit_fallback_max_mismatch,
+              active_set_changed = (changed || reenabled),
+              merit_log = merit_step_diagnostics,
+              trust_region_enabled = trust_region_enabled,
+              tr_radius_ref = tr_radius_ref,
+              tr_min_radius = trust_region_min_radius,
+              tr_max_radius = trust_region_max_radius,
+              tr_eta_accept = trust_region_eta_accept,
+              tr_shrink_factor = trust_region_shrink_factor,
+              tr_expand_factor = trust_region_expand_factor,
+              tr_expand_threshold = trust_region_expand_threshold,
+              tr_step_mode = trust_region_step_mode,
+              tr_log = tr_step_diagnostics,
+              linear_ctx = linear_ctx,
+              dslack = dslack,
+              reuse_factorization = false,
+            )
+          end
+        end
+      end
+      jr_prev_mis = max_mis
+      jr_newton_steps += 1
+      jr_reuse_now && (jr_reused_steps += 1)
+      jr_consecutive = jr_reuse_now ? jr_consecutive + 1 : 0
+      jr_last_reused = jr_reuse_now
       check_cancel()
     catch step_error
       if _is_rectangular_linear_step_failure(step_error)
@@ -1034,6 +1157,10 @@ function runpf_rectangular!(
       V[slack_idx] = V0[slack_idx]
       _perf_profile_push_iteration!(performance_profile, (iteration = it, max_mismatch = max_mis, qlimit_changed = changed, qlimit_reenabled = reenabled))
     end
+  end
+
+  if verbose > 0 && jr_enabled
+    println("Jacobian reuse: ", jr_reused_steps, " reused steps, ", jr_newton_steps - jr_reused_steps, " refactorisations, ", jr_discarded_steps, " reused steps discarded")
   end
 
   # The loop above can exit (converged break, non-converged break, or normal
@@ -1193,7 +1320,7 @@ function runpf_rectangular!(
     status_build_ = _merge_current_iteration_diagnostics(status_build_, performance_profile)
     status_build_ = _merge_merit_linesearch_diagnostics(status_build_, performance_profile, merit_step_diagnostics, merit_enabled)
     status_build_ = _merge_trust_region_diagnostics(status_build_, performance_profile, tr_step_diagnostics, trust_region_enabled)
-    status_build_ = _merge_linear_solver_diagnostics(status_build_, performance_profile, linear_solver, linear_ctx)
+    status_build_ = _merge_linear_solver_diagnostics(status_build_, performance_profile, linear_solver, linear_ctx; jacobian_reuse = jacobian_reuse, jacobian_reuse_steps = jr_reused_steps, jacobian_reuse_refactorisations = jr_newton_steps - jr_reused_steps, jacobian_reuse_discarded = jr_discarded_steps)
     status_build_ = _merge_distributed_slack_diagnostics(status_build_, performance_profile, net, dslack, Sbase, verbose)
     # Lazy Jacobian condition estimate over the EXACT system this solve
     # factored (post-merge topology, final Q-limit active set, final
@@ -1282,6 +1409,9 @@ function runpf_rectangular!(
   autodamp_min::Float64 = 0.05,
   newton_update::Symbol = DEFAULT_NEWTON_UPDATE,
   power_mode::Bool = false,
+  jacobian_reuse::Bool = DEFAULT_JACOBIAN_REUSE,
+  jacobian_reuse_min_reduction::Float64 = DEFAULT_JACOBIAN_REUSE_MIN_REDUCTION,
+  jacobian_reuse_max_steps::Int = DEFAULT_JACOBIAN_REUSE_MAX_STEPS,
   merit_enabled::Bool = false,
   merit_armijo_c1::Float64 = 1.0e-4,
   merit_scale_p::Float64 = 1.0,
@@ -1380,6 +1510,9 @@ function runpf_rectangular!(
     autodamp_min = autodamp_min,
     newton_update = newton_update,
     power_mode = power_mode,
+    jacobian_reuse = jacobian_reuse,
+    jacobian_reuse_min_reduction = jacobian_reuse_min_reduction,
+    jacobian_reuse_max_steps = jacobian_reuse_max_steps,
     merit_enabled = merit_enabled,
     merit_armijo_c1 = merit_armijo_c1,
     merit_scale_p = merit_scale_p,
@@ -1496,6 +1629,9 @@ function _runpf_config_once!(net::Net, config::PowerFlowConfig; verbose::Int = 0
     autodamp_min = config.autodamp_min,
     newton_update = config.newton_update,
     power_mode = config.power_mode,
+    jacobian_reuse = config.jacobian_reuse,
+    jacobian_reuse_min_reduction = config.jacobian_reuse_min_reduction,
+    jacobian_reuse_max_steps = config.jacobian_reuse_max_steps,
     merit_enabled = config.merit.enabled,
     merit_armijo_c1 = config.merit.armijo_c1,
     merit_scale_p = config.merit.scale_p,
@@ -2033,6 +2169,9 @@ function runpf!(
   autodamp_min::Float64 = 0.05,
   newton_update::Symbol = DEFAULT_NEWTON_UPDATE,
   power_mode::Bool = false,
+  jacobian_reuse::Bool = DEFAULT_JACOBIAN_REUSE,
+  jacobian_reuse_min_reduction::Float64 = DEFAULT_JACOBIAN_REUSE_MIN_REDUCTION,
+  jacobian_reuse_max_steps::Int = DEFAULT_JACOBIAN_REUSE_MAX_STEPS,
   merit_enabled::Bool = false,
   merit_armijo_c1::Float64 = 1.0e-4,
   merit_scale_p::Float64 = 1.0,
@@ -2222,6 +2361,9 @@ function runpf!(
           autodamp_min = autodamp_min,
           newton_update = newton_update,
           power_mode = power_mode,
+          jacobian_reuse = jacobian_reuse,
+          jacobian_reuse_min_reduction = jacobian_reuse_min_reduction,
+          jacobian_reuse_max_steps = jacobian_reuse_max_steps,
           merit_enabled = merit_enabled,
           merit_armijo_c1 = merit_armijo_c1,
           merit_scale_p = merit_scale_p,
@@ -2521,6 +2663,9 @@ function runpf!(
         autodamp_min = autodamp_min,
         newton_update = newton_update,
         power_mode = power_mode,
+        jacobian_reuse = jacobian_reuse,
+        jacobian_reuse_min_reduction = jacobian_reuse_min_reduction,
+        jacobian_reuse_max_steps = jacobian_reuse_max_steps,
         merit_enabled = merit_enabled,
         merit_armijo_c1 = merit_armijo_c1,
         merit_scale_p = merit_scale_p,
@@ -2618,6 +2763,9 @@ function runpf!(
         autodamp_min = autodamp_min,
         newton_update = newton_update,
         power_mode = power_mode,
+        jacobian_reuse = jacobian_reuse,
+        jacobian_reuse_min_reduction = jacobian_reuse_min_reduction,
+        jacobian_reuse_max_steps = jacobian_reuse_max_steps,
         merit_enabled = merit_enabled,
         merit_armijo_c1 = merit_armijo_c1,
         merit_scale_p = merit_scale_p,

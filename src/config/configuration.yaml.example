@@ -90,6 +90,17 @@ power_flow:
   # mismatch diagnostics are skipped during the solve. Same Jacobian, same
   # update, same solution; off for a single run.
   power_mode: false
+  # Dishonest Newton: after a Newton step that cut the maximum mismatch by
+  # at least `jacobian_reuse_min_reduction`, the next step solves with the
+  # previous factorization (no Jacobian refill, no refactorization), at
+  # most `jacobian_reuse_max_steps` steps in a row. A reused step that does
+  # not reduce the mismatch by the factor makes the next step refactorize;
+  # never in the first two steps or after an active-set switch. Changes the
+  # iteration count, not the solution; pays off most with power mode on
+  # large transmission cases.
+  jacobian_reuse: false
+  jacobian_reuse_min_reduction: 10.0
+  jacobian_reuse_max_steps: 3
   # Promote the strongest injection (external network injection preferred,
   # then largest generator) to slack when the case registers none.
   auto_slack: false

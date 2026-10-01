@@ -511,6 +511,52 @@ function test_power_mode_same_solution_and_topology_change()::Bool
   return true
 end
 
+# Dishonest Newton (power_flow.jacobian_reuse, 0.30.2): the next step solves
+# with the previous factorization while the mismatch falls by the minimum
+# reduction. The converged state equals the honest solution within the
+# solver tolerance on a shipped case, with and without power mode, and the
+# reuse actually happens (reused steps > 0, refactorisations counted). With
+# the Q-limit active set on, the PQ set is the same as with honest Newton.
+# On the `umfpack` backend there is no factorization to reuse: no error, no
+# reused step, and the run log says so.
+function test_jacobian_reuse_same_solution()::Bool
+  _state(net) = [n._vm_pu * cis(deg2rad(n._va_deg)) for n in net.nodeVec]
+  path(f) = joinpath(dirname(@__DIR__), "data", "mpower", f)
+  for pm in (false, true)
+    honest = Sparlectra.createNetFromMatPowerFile(filename = path("sp_case1354.m"))
+    _, erg_h = runpf!(honest, 30, 1e-8, 0; qlimits_enabled = false, opt_flatstart = true, power_mode = pm)
+    net = Sparlectra.createNetFromMatPowerFile(filename = path("sp_case1354.m"))
+    prof = Dict{Symbol,Any}()
+    _, erg = runpf!(net, 30, 1e-8, 0; qlimits_enabled = false, opt_flatstart = true, power_mode = pm, jacobian_reuse = true, performance_profile = prof)
+    erg_h == 0 && erg == 0 || return false
+    maximum(abs.(_state(net) .- _state(honest))) <= 1e-8 || return false
+    prof[:jacobian_reuse_steps] > 0 && prof[:jacobian_reuse_refactorisations] >= 2 || return false
+    st = Sparlectra.rectangular_pf_status(net)
+    st.jacobian_reuse && st.jacobian_reuse_steps == prof[:jacobian_reuse_steps] || return false
+  end
+  # active set: same PQ set and the same state as honest Newton
+  honest = Sparlectra.createNetFromMatPowerFile(filename = path("sp_case300.m"))
+  _, erg_h = runpf!(honest, 30, 1e-8, 0; opt_flatstart = true)
+  net = Sparlectra.createNetFromMatPowerFile(filename = path("sp_case300.m"))
+  _, erg = runpf!(net, 30, 1e-8, 0; opt_flatstart = true, jacobian_reuse = true)
+  erg_h == 0 && erg == 0 || return false
+  [Sparlectra.getNodeType(n) for n in net.nodeVec] == [Sparlectra.getNodeType(n) for n in honest.nodeVec] || return false
+  maximum(abs.(_state(net) .- _state(honest))) <= 1e-8 || return false
+  # umfpack keeps no factorization: no reuse, not silent
+  net = Sparlectra.createNetFromMatPowerFile(filename = path("sp_case118.m"))
+  prof = Dict{Symbol,Any}()
+  log = mktemp() do tmp, io
+    redirect_stdout(io) do
+      runpf_rectangular!(net; maxiter = 30, tol = 1e-8, verbose = 1, qlimits_enabled = false, opt_flatstart = true, linear_solver = :umfpack, jacobian_reuse = true, performance_profile = prof)
+    end
+    close(io)
+    read(tmp, String)
+  end
+  occursin("Jacobian reuse ignored: linear_solver umfpack keeps no factorisation", log) || return false
+  prof[:jacobian_reuse_steps] == 0 || return false
+  return true
+end
+
 function test_rectangular_polar_update_reaches_the_same_solution()::Bool
   net_r = load_fixture_net("sp_case60")
   net_p = load_fixture_net("sp_case60")
@@ -3572,6 +3618,7 @@ function run_grid_fast_tests()
       @test test_rectangular_polar_update_rotates_without_inflation() == true
       @test test_rectangular_polar_update_reaches_the_same_solution() == true
       @test test_power_mode_same_solution_and_topology_change() == true
+      @test test_jacobian_reuse_same_solution() == true
       @test test_rectangular_nonfinite_mismatch_diagnostics_use_finite_history() == true
       @test test_rectangular_final_status_best_mismatch_ignores_nan() == true
       @test test_rectangular_start_projection_improves_dc_seed() == true

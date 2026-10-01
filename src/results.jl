@@ -963,6 +963,10 @@ function printACPFlowResults(
   if rect_status_hdr !== nothing && hasproperty(rect_status_hdr, :apslf_convergence_line)
     @printf(io, "APSLF radius   : %s\n", String(rect_status_hdr.apslf_convergence_line))
   end
+  # dishonest Newton (0.30.2): the counts only when the switch was on
+  if rect_status_hdr !== nothing && hasproperty(rect_status_hdr, :jacobian_reuse) && rect_status_hdr.jacobian_reuse
+    @printf(io, "Jacobian reuse : %d reused steps, %d refactorisations, %d discarded\n", rect_status_hdr.jacobian_reuse_steps, rect_status_hdr.jacobian_reuse_refactorisations, rect_status_hdr.jacobian_reuse_discarded)
+  end
 
   @printf(io, "BaseMVA        :%10d\n", net.baseMVA)
   # sources appear in the count only when present, keeping the common

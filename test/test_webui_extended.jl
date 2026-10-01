@@ -1821,6 +1821,9 @@ form:
         "power_flow_linear_solver" => "power_flow.linear_solver",
         "power_flow_newton_update" => "power_flow.newton_update",
         "power_flow_power_mode" => "power_flow.power_mode",
+        "power_flow_jacobian_reuse" => "power_flow.jacobian_reuse",
+        "power_flow_jacobian_reuse_min_reduction" => "power_flow.jacobian_reuse_min_reduction",
+        "power_flow_jacobian_reuse_max_steps" => "power_flow.jacobian_reuse_max_steps",
         "power_flow_apslf_order" => "power_flow.apslf.order",
         "power_flow_apslf_use_pade" => "power_flow.apslf.use_pade",
         "power_flow_apslf_nr_polish" => "power_flow.apslf.nr_polish",
@@ -2006,7 +2009,7 @@ form:
       # 14: the ten NR-only groups, the APSLF and DC start-value
       # checkboxes, which the flat start greys as well, the Experimental
       # block (the Newton update, 0.30.0) and the power-mode checkbox (0.30.1)
-      @test count("data-nr-only-field", settings_page_html) == 14
+      @test count("data-nr-only-field", settings_page_html) == 17   # + the dishonest-Newton checkbox and its two fields (0.30.2)
       @test occursin("<fieldset class=\"distributed-slack-options\" data-nr-only-field>", settings_page_html)
       # Experimental block (0.30.1): greyed out by default, its select
       # disabled server-side (a disabled control is not submitted, the
@@ -2194,6 +2197,44 @@ result = get_powerflow_result(run_id)
       # effective_config.yaml, which the assertions above read
       @test occursin("Import conventions: ratio=reciprocal", manual_run_log)
       @test occursin("shift=rad", manual_run_log)
+      # dishonest Newton (0.30.2): silent when off (the runs above), one
+      # settings line and the counts when on; the form values reach
+      # effective_config.yaml, survive "save case settings" and come back
+      # in the reloaded Settings form
+      @test !occursin("Jacobian reuse", manual_run_log)
+      @test !haskey(manual_result["metadata"], "jacobian_reuse_reused_steps")
+      reuse_form = copy(form)
+      reuse_form["power_flow_jacobian_reuse"] = "true"
+      reuse_form["power_flow_jacobian_reuse_min_reduction"] = "5"
+      reuse_form["power_flow_jacobian_reuse_max_steps"] = "2"
+      # the test form runs linear_solver umfpack, which keeps no factorisation
+      reuse_form["power_flow_linear_solver"] = "umfpack_reuse"
+      reuse_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/run", reuse_form; output_root)
+      reuse_run_id = basename(only(header.second for header in reuse_response.headers if header.first == "Location"))
+      wait(SparlectraApp._POWERFLOW_WEBUI_JOBS[reuse_run_id]["task"])
+      reuse_result = get_powerflow_result(reuse_run_id)
+      @test reuse_result["success"]
+      reuse_cfg = Sparlectra.load_sparlectra_config(joinpath(reuse_result["output_dir"], "effective_config.yaml"); reload = true)
+      @test (reuse_cfg.powerflow.jacobian_reuse, reuse_cfg.powerflow.jacobian_reuse_min_reduction, reuse_cfg.powerflow.jacobian_reuse_max_steps) == (true, 5.0, 2)
+      reuse_run_log = read(joinpath(reuse_result["output_dir"], "run.log"), String)
+      @test occursin("Jacobian reuse: on, min reduction 5, max 2 steps", reuse_run_log)
+      # on umfpack the service says that the switch cannot act
+      umfpack_pf = Sparlectra.SparlectraConfig(Dict{String,Any}("config_version" => 1, "power_flow" => Dict{String,Any}("jacobian_reuse" => true, "linear_solver" => "umfpack"))).powerflow
+      @test SparlectraApp._jacobian_reuse_runlog_line(umfpack_pf) == "Jacobian reuse ignored: linear_solver umfpack keeps no factorisation; use umfpack_reuse or KLU."
+      @test SparlectraApp._jacobian_reuse_runlog_line(Sparlectra.SparlectraConfig().powerflow) === nothing
+      @test occursin(r"Jacobian reuse\s*: \d+ reused steps, \d+ refactorisations", reuse_run_log)
+      @test haskey(reuse_result["metadata"], "jacobian_reuse_reused_steps") && haskey(reuse_result["metadata"], "jacobian_reuse_refactorisations")
+      reuse_save = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/result/$(reuse_run_id)/case-settings/save", Dict{String,String}(); output_root)
+      @test reuse_save.status == 200
+      reuse_casefile = form["casefile_manual"]
+      reuse_cc = Sparlectra.load_case_config(reuse_casefile)
+      @test reuse_cc["power_flow.jacobian_reuse"] == true
+      reuse_reloaded = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/settings?casefile=$(SparlectraApp._webui_urlencode(reuse_casefile))&case_settings=1"; output_root).body)
+      _webui_assert_checked(reuse_reloaded, "power_flow_jacobian_reuse", true)
+      _webui_assert_value(reuse_reloaded, "power_flow_jacobian_reuse_min_reduction", "5.0")
+      _webui_assert_value(reuse_reloaded, "power_flow_jacobian_reuse_max_steps", "2")
+      # the saved case settings must not leak into the runs that follow
+      rm(SparlectraApp._webui_case_settings_path(output_root, reuse_casefile); force = true)
       @test !isempty(run_id)
       result_response = SparlectraApp.handle_powerflow_result(run_id)
       result_html = String(result_response.body)

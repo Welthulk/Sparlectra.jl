@@ -213,6 +213,35 @@ either way, and the ranked diagnostics are what a single run wants to
 read); a loop over one network switches it on. `reset_power_mode!(net)`
 drops the kept state when the memory is wanted back.
 
+### [Dishonest Newton](@id dishonest_newton)
+
+`power_flow.jacobian_reuse: true` (keyword `jacobian_reuse = true`, Web
+UI: the checkbox "Dishonest Newton" under Solver backend, directly below
+power mode) keeps the factorization of the Jacobian for the next Newton
+step while the mismatch falls by at least
+`jacobian_reuse_min_reduction` (default 10) per step, at most
+`jacobian_reuse_max_steps` (default 3) steps in a row; a reused step that
+misses the factor is replaced by the honest step. The rules are on the
+[Solver Guide](@ref dishonest_newton_solver). Off by default; it changes
+the iteration count, not the solution (same tolerance, final state equal
+to honest Newton within it), and works with and without power mode.
+
+Measured warm solve as above (median of 20, single thread, one session,
+the grid-bench adapter's keywords), without and with the switch:
+
+| case | power mode, KLU | with dishonest Newton | power mode, UMFPACK | with dishonest Newton | Newton steps (refactorisations) |
+|---|---|---|---|---|---|
+| case2869pegase | 7.5 ms | 7.0 ms | 30.1 ms | 25.4 ms | 5 (5) to 7 (4) |
+| case9241pegase | 54.4 ms | 50.7 ms | 131.4 ms | 115.5 ms | 6 (6) to 8 (5) |
+| mvlv29840 | 44.1 ms | 45.4 ms | 203.2 ms | 173.5 ms | 5 (5) to 7 (4) |
+
+With KLU a refactorization costs little, and the gain (about 7 percent
+on the two transmission cases) is close to the cost of the extra
+steps; on the radial mvlv29840 the extra steps cost more than the saved
+factorization. With UMFPACK the factorization is most of a step and the
+switch saves 12 to 15 percent. The rule: a loop over one network switches
+power mode on, and on large transmission cases dishonest Newton on top.
+
 ## [Benchmark configuration](@id perf-benchmark)
 
 The Web UI's `performance_timing=off|compact|full` option writes
