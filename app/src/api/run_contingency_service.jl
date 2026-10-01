@@ -23,6 +23,10 @@
 #          dir, no cache workflow of its own). rescue_ladder is read from the
 #          config; the outage kind is a run parameter, not a config key.
 
+# dishonest Newton (0.30.2) for the worker solves of the scenario engine and
+# N-1, only when the configuration switches it on
+_jacobian_reuse_kwargs(pf) = pf.jacobian_reuse ? (; jacobian_reuse = true, jacobian_reuse_min_reduction = pf.jacobian_reuse_min_reduction, jacobian_reuse_max_steps = pf.jacobian_reuse_max_steps) : (;)
+
 # Resolve the case file's contingency definition into runner cases. Component
 # ids are resolved through `extra[<id>].name`, which is why that name is
 # mandatory wherever anything refers to an object. The runner takes ONE
@@ -214,7 +218,7 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
       end
       # power mode (0.30.1) reaches the scenario engine's worker nets like the N-1 path below
       runScenarios!(net, set; index = idx, rescue_ladder = config.contingency.rescue_ladder, screening_mode = screen_mode, screening_margin_pct = screen_margin,
-        (config.powerflow.power_mode ? (; power_mode = true) : (;))...)
+        (config.powerflow.power_mode ? (; power_mode = true) : (;))..., _jacobian_reuse_kwargs(config.powerflow)...)
     catch err
       err isa PowerFlowAborted && rethrow()
       return _api_failure("invalid_case_file", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
@@ -294,6 +298,7 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
   # power mode (0.30.1): the worker nets of the engine keep their Ybus,
   # factorization and work arrays across the outages when the caller set it
   config.powerflow.power_mode && (dslack_kwargs = (; dslack_kwargs..., power_mode = true))
+  dslack_kwargs = (; dslack_kwargs..., _jacobian_reuse_kwargs(config.powerflow)...)
   if results === nothing
     # an outage that removes the reference, or splits off an island without
     # one, does not end the case: the strongest remaining unit takes over

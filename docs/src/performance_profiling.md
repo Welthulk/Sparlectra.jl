@@ -213,6 +213,67 @@ either way, and the ranked diagnostics are what a single run wants to
 read); a loop over one network switches it on. `reset_power_mode!(net)`
 drops the kept state when the memory is wanted back.
 
+### [Dishonest Newton](@id dishonest_newton)
+
+`power_flow.jacobian_reuse: true` (keyword `jacobian_reuse = true`, Web
+UI: the checkbox "Dishonest Newton" under Solver backend, directly below
+power mode) keeps the factorization of the Jacobian for the next Newton
+step while the mismatch falls by at least
+`jacobian_reuse_min_reduction` (default 10) per step, at most
+`jacobian_reuse_max_steps` (default 3) steps in a row; a reused step that
+misses the factor is replaced by the honest step. The rules are on the
+[Solver Guide](@ref dishonest_newton_solver). Off by default; it changes
+the iteration count, not the solution (same tolerance, final state equal
+to honest Newton within it), and works with and without power mode.
+
+Does it pay off? In short:
+
+| use | effect of dishonest Newton |
+|---|---|
+| repeated solves of one large transmission case, power mode with KLU | about 7 percent faster |
+| the same with UMFPACK (no KLU extension) | 12 to 15 percent faster |
+| radial distribution grids | none or slightly slower |
+| N-1 and scenario runs (warm starts, few steps) | slower, up to twice the time |
+| a single run | no point: the factorization is not the bottleneck |
+
+A reused step converges linearly instead of quadratically: on the
+measured cases three reused steps replace two honest ones, so a run takes
+two more steps and one factorization less.
+That pays off only where a factorization costs much more than a step's
+other work: large meshed cases without KLU. With KLU the refactorization
+is cheap, and most of the gain is already in power mode.
+
+Measured warm solve as above (median of 20, single thread, one session,
+the grid-bench adapter's keywords), without and with the switch:
+
+| case | power mode, KLU | with dishonest Newton | power mode, UMFPACK | with dishonest Newton | Newton steps (refactorisations) |
+|---|---|---|---|---|---|
+| case2869pegase | 7.5 ms | 7.0 ms | 30.1 ms | 25.4 ms | 5 (5) to 7 (4) |
+| case9241pegase | 54.4 ms | 50.7 ms | 131.4 ms | 115.5 ms | 6 (6) to 8 (5) |
+| mvlv29840 | 44.1 ms | 45.4 ms | 203.2 ms | 173.5 ms | 5 (5) to 7 (4) |
+
+With KLU a refactorization costs little, and the gain (about 7 percent
+on the two transmission cases) is close to the cost of the extra
+steps; on the radial mvlv29840 the extra steps cost more than the saved
+factorization. With UMFPACK the factorization is most of a step and the
+switch saves 12 to 15 percent. The rule: a loop over one network switches
+power mode on, and on large transmission cases dishonest Newton on top.
+
+Not for N-1 and scenario runs. A warm-started outage solve converges in a
+few fast steps, the switch adds about two steps per outage and saves a
+factorization that KLU makes cheap. Full branch N-1 of case_ACTIVSg2000
+(3206 outages, 16 threads):
+
+| variant | wall time |
+|---|---|
+| serial | 504 s |
+| parallel | 128 s |
+| parallel, power mode | 69 s |
+| parallel, power mode, dishonest Newton | 139 s |
+
+Power mode is the lever for N-1 here; dishonest Newton doubles the time
+(serially it costs 7 percent, 8.0 to 9.8 iterations per outage).
+
 ## [Benchmark configuration](@id perf-benchmark)
 
 The Web UI's `performance_timing=off|compact|full` option writes

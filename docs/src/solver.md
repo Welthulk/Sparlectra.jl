@@ -557,9 +557,11 @@ backends.
   analysis is paid once per active set; usually the fastest choice on
   large cases.
 
-A `klu` backend is not offered: KLU is slower than UMFPACK on power-flow
-Jacobians, and a KLU factorization shared across threads gives silently
-wrong results.
+KLU is not a value of `power_flow.linear_solver`: for a single solve it
+is not faster than `umfpack_reuse`, and a KLU factorization shared across
+threads gives silently wrong results. Power mode uses KLU when the KLU
+package extension is loaded (`using KLU`), one factorization per network
+and never shared; see [Power mode](@ref power-mode).
 
 Behavior of the reuse backend:
 
@@ -578,6 +580,40 @@ Behavior of the reuse backend:
   internals keep their path), lives for one `runpf_rectangular!` invocation
   (one island on the island path), and is never shared across islands or
   threads.
+
+### [Dishonest Newton](@id dishonest_newton_solver)
+
+Dishonest Newton with adaptive refactorisation
+(`power_flow.jacobian_reuse`, off by default) keeps the factorization of
+the Jacobian for the next step while the Newton iteration converges fast:
+after a step that cut the maximum mismatch by at least
+`jacobian_reuse_min_reduction` (default 10), the next step solves the new
+mismatch with the previous LU factors, without refilling or refactorising
+the Jacobian. Otherwise the step refills and refactorises as usual. The
+rules:
+
+1. Never in the first two steps.
+2. Never in a step in which the Q-limit active set converted or released a
+   bus (outer-loop controllers act between solves, each solve starts with
+   honest steps).
+3. A reused step that does not cut the mismatch by the factor is kept, and
+   the next step refactorises.
+4. At most `jacobian_reuse_max_steps` (default 3) reused steps in a row.
+5. Tolerance and convergence test are unchanged; the final state equals
+   the honest Newton solution within the tolerance.
+6. Works with and without power mode, on `umfpack_reuse` and on KLU (power
+   mode), with the polar and the rectangular update, on the rectangular
+   Newton path. With `linear_solver: umfpack` there is no factorization to
+   keep and with the trust region every step needs the current Jacobian;
+   the run log then says that the switch was ignored.
+
+The method changes the iteration count, not the solution: a reused step
+converges linearly instead of quadratically, so a run takes more steps
+but fewer factorizations. It pays off where the factorization is a large
+part of the step and many steps are taken; warm-started N-1 and scenario
+solves get slower with it. See [Dishonest Newton](@ref dishonest_newton)
+on the performance page. With the switch on, the solver status and the run log
+carry the reused steps and the refactorisations.
 
 ## Solver-Specific Interaction with Power Limits
 

@@ -725,6 +725,14 @@ function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Inte
       reason = lock(runtime.lock) do
         runtime.shutdown_reason
       end
+      # running jobs are aborted and awaited before the process can exit
+      # (native factorizations in use by worker threads, see
+      # _webui_abort_active_jobs_and_wait!)
+      stopped_jobs = _webui_abort_active_jobs_and_wait!()
+      if stopped_jobs.active > 0
+        record_webui_operation!(runtime.operation_log, "webui_stop_aborted_runs"; route = "/powerflow", method = "STOP", status = stopped_jobs.still_running == 0 ? "aborted" : "timeout", user_action = false, active_runs = stopped_jobs.active, still_running = stopped_jobs.still_running)
+        _webui_lifecycle_println(runtime, "Sparlectra Web UI: $(stopped_jobs.active) running run(s) aborted before stopping$(stopped_jobs.still_running > 0 ? ", $(stopped_jobs.still_running) still running at the 30 s limit" : "").")
+      end
       record_webui_operation!(runtime.operation_log, "webui_stopped"; route = "/powerflow", method = "STOP", status = "stopped", user_action = false, reason = string(something(reason, :process_exit)))
       _webui_lifecycle_println(runtime, "Sparlectra Web UI stopped$(_webui_shutdown_reason_text(reason)).")
     end

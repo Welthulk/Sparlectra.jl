@@ -240,9 +240,10 @@ Configuration of the N-1 contingency batch (issue #331).
   screening share and the margins once. This config key drives the SERVICE
   path; the programmatic keyword default is `:off` as well.
 - `screening_margin_pct::Float64`: the flagging margin (default `10.0`): a
-  scenario is flagged for the full run when an estimated loading reaches
-  `100 - margin` percent, or an estimated voltage comes within `margin`
-  percent of a band limit.
+  scenario is flagged for the full run when a branch's estimated loading
+  plus the change the outage causes on it (at least 1 point, at most the
+  margin) reaches 100 percent, or an estimated voltage comes within
+  `margin` percent of the band width of a band limit.
 """
 Base.@kwdef struct ContingencyConfig
   rescue_ladder::Vector{Symbol} = [:warm]
@@ -349,6 +350,17 @@ Base.@kwdef struct PowerFlowConfig
   # loaded) and its work arrays between solves and skips the ranked
   # mismatch diagnostics; off for a single run
   power_mode::Bool = false
+  # dishonest Newton (0.30.2, off by default): after a Newton step that cut
+  # the maximum mismatch by at least `jacobian_reuse_min_reduction`, the
+  # next step solves with the factorization of the previous Jacobian
+  # instead of building and refactorizing a new one; at most
+  # `jacobian_reuse_max_steps` reused steps in a row. Never in the first two
+  # steps, never after an active-set switch, never with the trust region
+  # (its dogleg needs the current Jacobian). Same tolerance, same solution;
+  # works with and without power mode on the factorization-reuse backends.
+  jacobian_reuse::Bool = DEFAULT_JACOBIAN_REUSE
+  jacobian_reuse_min_reduction::Float64 = DEFAULT_JACOBIAN_REUSE_MIN_REDUCTION
+  jacobian_reuse_max_steps::Int = DEFAULT_JACOBIAN_REUSE_MAX_STEPS
   # Promote the strongest injection to slack when none is registered
   # (ensureSlack!); off by default so data errors stay visible.
   auto_slack::Bool = false
@@ -404,6 +416,24 @@ const WRONG_BRANCH_DETECTION_VALUES = [:off, :warn, :fail, :rescue]
 const POWERFLOW_SOLVER_VALUES = (:rectangular, :apslf, :dc)
 const POWERFLOW_LINEAR_SOLVER_VALUES = (:umfpack, :umfpack_reuse)
 const POWERFLOW_NEWTON_UPDATE_VALUES = (:rectangular, :polar)
+
+# Jacobian reuse (dishonest Newton) defaults (0.30.2), one source for the
+# struct, the loader and the solver keyword defaults.
+const DEFAULT_JACOBIAN_REUSE = false
+const DEFAULT_JACOBIAN_REUSE_MIN_REDUCTION = 10.0
+const DEFAULT_JACOBIAN_REUSE_MAX_STEPS = 3
+
+# A reduction factor of 1 or less would reuse the factorization after a step
+# that did not converge at all, the case the rule is there to exclude.
+function _validate_jacobian_reuse_min_reduction(x::Float64)::Float64
+  x > 1.0 || throw(ArgumentError("power_flow.jacobian_reuse_min_reduction must be greater than 1, got $(x)"))
+  return x
+end
+
+function _validate_jacobian_reuse_max_steps(x::Int)::Int
+  x >= 1 || throw(ArgumentError("power_flow.jacobian_reuse_max_steps must be at least 1, got $(x)"))
+  return x
+end
 # The one source of the Q-limit and Newton-update defaults for the keyword
 # entry points (runpf!, runpf_rectangular!, run_control!): their keyword
 # defaults read these instead of carrying literals, so a library call
@@ -1590,6 +1620,9 @@ function PowerFlowConfig(raw::AbstractDict)
     autodamp_min = _validate_positive("powerflow.autodamp_min", _as_float_cfg(_raw_get(merged, "autodamp_min", 0.05))),
     newton_update = _validate_allowed_symbol("power_flow.newton_update", _as_symbol_cfg(_raw_get(merged, "newton_update", :polar)), POWERFLOW_NEWTON_UPDATE_VALUES),
     power_mode = _as_bool_cfg(_raw_get(merged, "power_mode", false)),
+    jacobian_reuse = _as_bool_cfg(_raw_get(merged, "jacobian_reuse", DEFAULT_JACOBIAN_REUSE)),
+    jacobian_reuse_min_reduction = _validate_jacobian_reuse_min_reduction(_as_float_cfg(_raw_get(merged, "jacobian_reuse_min_reduction", DEFAULT_JACOBIAN_REUSE_MIN_REDUCTION))),
+    jacobian_reuse_max_steps = _validate_jacobian_reuse_max_steps(_as_int_cfg(_raw_get(merged, "jacobian_reuse_max_steps", DEFAULT_JACOBIAN_REUSE_MAX_STEPS))),
     auto_slack = _as_bool_cfg(_raw_get(merged, "auto_slack", false)),
     rescue = _as_bool_cfg(_raw_get(merged, "rescue", false)),
     wrong_branch_detection = _validate_allowed_symbol("power_flow.wrong_branch_detection", _as_symbol_cfg(_raw_get(merged, "wrong_branch_detection", :warn)), WRONG_BRANCH_DETECTION_VALUES),

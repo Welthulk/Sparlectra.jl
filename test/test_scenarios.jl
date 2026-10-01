@@ -469,7 +469,20 @@ function run_scenario_engine_extended_tests()
     ds_violating = Set(r.name for r in ds_full if !isempty(r.overloads) || !isempty(r.voltage_violations) || !r.converged)
     @test sort(collect(intersect(ds_violating, Set(r.name for r in ds_flagged if r.screened)))) == String[]
     @test count(r -> r.screened, ds_flagged) > 0
-    println("      scenario engine sp_case60: RAN (", length(cases), " cases, ", count(r -> r.screened, flagged), " screened, 0 false negatives, ds ", count(r -> r.screened, ds_flagged), " screened)")
+    # change-based loading flag (0.30.2): a branch the base case already
+    # loads at 95 percent used to flag every outage (the network-wide
+    # maximum stayed above 100 - margin); now only outages that change it
+    # enough are flagged, still without a false negative
+    eng = Sparlectra.ScenarioEngine(net)
+    top = argmax(b -> get(eng.base_loadings, Sparlectra.getCompName(b.comp), -Inf), net.branchVec)
+    top_loading = eng.base_loadings[Sparlectra.getCompName(top.comp)]
+    top.sn_MVA = top.sn_MVA * top_loading / 95.0
+    hot_full = Sparlectra.runContingencies!(net, cases)
+    hot_flagged = Sparlectra.runContingencies!(net, cases; screening_mode = :flag, screening_margin_pct = 10.0)
+    hot_violating = Set(r.name for r in hot_full if !isempty(r.overloads) || !isempty(r.voltage_violations) || !r.converged)
+    @test sort(collect(intersect(hot_violating, Set(r.name for r in hot_flagged if r.screened)))) == String[]
+    @test count(r -> r.screened, hot_flagged) > 0
+    println("      scenario engine sp_case60: RAN (", length(cases), " cases, ", count(r -> r.screened, flagged), " screened, 0 false negatives, ds ", count(r -> r.screened, ds_flagged), " screened, one branch at 95 percent ", count(r -> r.screened, hot_flagged), " screened)")
   end)() end
 
   @testset "scenario engine sp_case60 CSV byte fixture" begin (function ()

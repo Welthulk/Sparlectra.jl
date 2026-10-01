@@ -178,14 +178,28 @@ function _resolved_q_limit_runtime_options(config::SparlectraConfig)::Dict{Strin
     "q_limit_preview_mode" => preview_mode,
     "q_limit_runlog_max_rows" => config.output.console_q_limit_events === :summary || config.output.console_q_limit_events === :off ? 0 : config.output.console_max_rows,
     "q_limit_detail_artifacts" => Q_LIMIT_LOG_ARTIFACT,
+    "jacobian_reuse_line" => _jacobian_reuse_runlog_line(config.powerflow),
   )
 end
+
+# dishonest Newton (0.30.2) in run.log: one settings line when it is on, or
+# the reason it cannot act; nothing when it is off (silence rule of 0.30.1)
+function _jacobian_reuse_runlog_line(pf)
+  pf.jacobian_reuse || return nothing
+  pf.trust_region.enabled && return "Jacobian reuse ignored: the trust region needs the current Jacobian in every step."
+  pf.linear_solver === :umfpack && return "Jacobian reuse ignored: linear_solver umfpack keeps no factorisation; use umfpack_reuse or KLU."
+  return "Jacobian reuse: on, min reduction $(_jacobian_reuse_number(pf.jacobian_reuse_min_reduction)), max $(pf.jacobian_reuse_max_steps) steps"
+end
+
+_jacobian_reuse_number(x::Float64) = isinteger(x) ? string(Int(x)) : string(x)
 
 _metadata_kwargs(metadata::AbstractDict) = (; (Symbol(key) => value for (key, value) in metadata)...)
 
 function _write_resolved_q_limit_options(io::IO, metadata::AbstractDict)
   dropped = get(metadata, "case_file_dropped_keys", String[])
   isempty(dropped) || println(io, "Case file settings outside the case scope (written by an older Sparlectra, ignored; re-export the case file to clear this note): ", join(dropped, ", "))
+  jr_line = get(metadata, "jacobian_reuse_line", nothing)
+  jr_line === nothing || println(io, jr_line)
   println(io, "Resolved Q-limit options")
   println(io, "------------------------")
   println(io, "Q-limit handling enabled : ", metadata["qlimits_enabled"])
