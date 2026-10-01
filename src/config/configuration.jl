@@ -240,9 +240,10 @@ Configuration of the N-1 contingency batch (issue #331).
   screening share and the margins once. This config key drives the SERVICE
   path; the programmatic keyword default is `:off` as well.
 - `screening_margin_pct::Float64`: the flagging margin (default `10.0`): a
-  scenario is flagged for the full run when an estimated loading reaches
-  `100 - margin` percent, or an estimated voltage comes within `margin`
-  percent of a band limit.
+  scenario is flagged for the full run when a branch's estimated loading
+  plus the change the outage causes on it (at least 1 point, at most the
+  margin) reaches 100 percent, or an estimated voltage comes within
+  `margin` percent of the band width of a band limit.
 """
 Base.@kwdef struct ContingencyConfig
   rescue_ladder::Vector{Symbol} = [:warm]

@@ -143,8 +143,13 @@ With `screening_mode = :flag` (keyword on `runContingencies!` and
 `runScenarios!`, or `contingency.screening.mode` for the service and the
 Web UI) every non-islanding single outage is first estimated with one
 Woodbury-corrected Newton step on the factorized base Jacobian; only
-scenarios whose estimate comes within `screening.margin_pct` (default 10)
-of a limit get the full solve. Switch it on only after checking, on your
+scenarios whose estimate comes close to a limit get the full solve. For a
+voltage, close means within `screening.margin_pct` (default 10) percent of
+the band width; for a branch, its estimated loading plus the change the
+outage causes on it (at least 1 point, at most the margin) reaches 100
+percent, because the error of the estimate grows with that change. A
+branch the base case already loads near its limit therefore flags only the
+outages that move it, not every outage of the network. Switch it on only after checking, on your
 own network, the screening share and that the flagged margins carry the
 violations (the reported `screened` count and reason breakdown).
 

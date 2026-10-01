@@ -4,6 +4,7 @@ Dishonest Newton for repeated solves; N-1 screening in the Web UI.
 
 - Added: `power_flow.jacobian_reuse` (dishonest Newton) reuses the Jacobian factorisation while the mismatch falls fast; off by default, Web UI checkbox under Solver backend.
 - Added: N-1 screening (`contingency.screening.mode`) selectable on the Settings page of the Web UI; off by default.
+- Changed: N-1 screening judges a branch by the change the outage causes on it; a base case with one branch near its limit no longer sends every outage to the full solve.
 - Fix: stopping the Web UI during a run aborts the run first; stopping during an N-1 run with power mode could crash the process.
 
 # Version 0.30.1 - 2026-10-01

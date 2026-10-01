@@ -226,6 +226,23 @@ misses the factor is replaced by the honest step. The rules are on the
 the iteration count, not the solution (same tolerance, final state equal
 to honest Newton within it), and works with and without power mode.
 
+Does it pay off? In short:
+
+| use | effect of dishonest Newton |
+|---|---|
+| repeated solves of one large transmission case, power mode with KLU | about 7 percent faster |
+| the same with UMFPACK (no KLU extension) | 12 to 15 percent faster |
+| radial distribution grids | none or slightly slower |
+| N-1 and scenario runs (warm starts, few steps) | slower, up to twice the time |
+| a single run | no point: the factorization is not the bottleneck |
+
+A reused step converges linearly instead of quadratically: on the
+measured cases three reused steps replace two honest ones, so a run takes
+two more steps and one factorization less.
+That pays off only where a factorization costs much more than a step's
+other work: large meshed cases without KLU. With KLU the refactorization
+is cheap, and most of the gain is already in power mode.
+
 Measured warm solve as above (median of 20, single thread, one session,
 the grid-bench adapter's keywords), without and with the switch:
 

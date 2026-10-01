@@ -760,9 +760,10 @@ contingency:
     #        (islanding outages, screening steps that do not reduce the
     #        mismatch)
     mode: off
-    # Flagging margin in percent: flag when an estimated loading reaches
-    # (100 - margin) percent, or an estimated voltage comes within margin
-    # percent of a band limit.
+    # Flagging margin in percent: flag when a branch's estimated loading
+    # plus the change the outage causes on it (at least 1 point, at most
+    # the margin) reaches 100 percent, or an estimated voltage comes within
+    # margin percent of the band width of a band limit.
     margin_pct: 10.0
 
 control:

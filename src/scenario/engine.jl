@@ -148,7 +148,7 @@ function ScenarioEngine(net::Net; vm_min_pu::Float64 = 0.9, vm_max_pu::Float64 =
     calcNetLosses!(template)
     base_loadings = _base_branch_loadings(template)
   end
-  screen = screening_mode === :off ? nothing : _build_screening_state(template, base_converged, tol, pf_kwargs)
+  screen = screening_mode === :off ? nothing : _build_screening_state(template, base_converged, tol, pf_kwargs, base_loadings)
   base_refs = Set{Int}(Int(ps.comp.cFrom_bus) for ps in template.prosumpsVec if isSlack(ps))
   # islands always promote a generating unit (the solver does the same)
   for row in detect_ac_islands(template; promote_generators = true).rows
@@ -251,6 +251,9 @@ struct ScreeningState
   # read-only; every scenario works on its own copy. `nothing` for
   # classical batches.
   ds::Any
+  # base-case loading in percent per branch index (NaN without a rating):
+  # the reference of the change-based loading flag
+  base_loading::Vector{Float64}
 end
 
 # Bridges of the closed-branch graph via iterative Tarjan low-link. Closed
@@ -325,7 +328,7 @@ end
 # system: the participation state at lambda = 0 (the solved template
 # dispatch already carries the base correction), one extra state and
 # residual row, same factorization machinery.
-function _build_screening_state(template::Net, base_converged::Bool, tol::Float64, pf_kwargs)
+function _build_screening_state(template::Net, base_converged::Bool, tol::Float64, pf_kwargs, base_loadings::AbstractDict = Dict{String,Float64}())
   base_converged || return nothing
   has_voltage_dependent_control(template) && return nothing
   n = length(template.nodeVec)
@@ -399,7 +402,8 @@ function _build_screening_state(template::Net, base_converged::Bool, tol::Float6
     _rethrow_unless_solver_failure(err)
     return nothing
   end
-  return ScreeningState(Ybus, V0, S0, bus_types, Vset, slack_idx, non_slack, J0, lu0, _scenario_bridge_branches(template), length(detect_ac_islands(template).rows), iso_set, ds)
+  base_loading = Float64[get(base_loadings, getCompName(br.comp), NaN) for br in template.branchVec]
+  return ScreeningState(Ybus, V0, S0, bus_types, Vset, slack_idx, non_slack, J0, lu0, _scenario_bridge_branches(template), length(detect_ac_islands(template).rows), iso_set, ds, base_loading)
 end
 
 # Per-scenario copy of the shared participation state (lambda_trial is
@@ -601,6 +605,7 @@ function _screen_outage(engine::ScenarioEngine, it::_ScenarioOutageItem)
   # estimated loadings over the rated, fully closed branches (the estimate
   # mirrors _contingency_metrics but reads the trial state, writes nothing)
   max_loading = NaN
+  loading_flag = false
   est_overloads = OverloadRecord[]
   for (bi, br2) in enumerate(template.branchVec)
     bi == outaged_branch && continue
@@ -616,6 +621,18 @@ function _screen_outage(engine::ScenarioEngine, it::_ScenarioOutageItem)
     s_mva = max(s_from, s_to)
     loading = 100.0 * s_mva / rating
     (isnan(max_loading) || loading > max_loading) && (max_loading = loading)
+    # Change-based loading flag: the error of the one-step estimate grows
+    # with the change the outage causes on a branch, the base value is the
+    # converged solution. A branch flags when its estimate plus that change
+    # (at least 1 point, at most the margin) reaches 100 percent. Without a
+    # base value the full margin applies, as before. A branch the base case
+    # already loads near its limit no longer flags every outage of the
+    # network (case_ACTIVSg2000: a transformer at 92.7 percent flagged all
+    # 2756 screenable outages; zero of 3638 missed with the rule, and the
+    # calibration networks case118, case300 and the tiled grids unchanged).
+    base_b = sc.base_loading[bi]
+    unc = isnan(base_b) ? engine.screening_margin_pct : min(engine.screening_margin_pct, max(1.0, abs(loading - base_b)))
+    loading + unc >= 100.0 && (loading_flag = true)
     if loading > 100.0
       cname = getCompName(br2.comp)
       base = get(engine.base_loadings, cname, NaN)
@@ -666,7 +683,7 @@ function _screen_outage(engine::ScenarioEngine, it::_ScenarioOutageItem)
       end
     end
   end
-  flagged |= !isnan(max_loading) && max_loading >= 100.0 - engine.screening_margin_pct
+  flagged |= loading_flag
   flagged |= !isnan(vmin) && vmin <= engine.vm_min_pu + vmargin
   flagged |= !isnan(vmax) && vmax >= engine.vm_max_pu - vmargin
   estimate = (max_loading_pct = max_loading, vmin_pu = vmin, vmax_pu = vmax, mismatch_start = m1, mismatch_after = m2)
