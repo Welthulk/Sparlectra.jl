@@ -610,8 +610,9 @@ rules:
 The method changes the iteration count, not the solution: a reused step
 converges linearly instead of quadratically, so a run takes more steps
 but fewer factorizations. It pays off where the factorization is a large
-part of the step, see [Dishonest Newton](@ref dishonest_newton) on the
-performance page. With the switch on, the solver status and the run log
+part of the step and many steps are taken; warm-started N-1 and scenario
+solves get slower with it. See [Dishonest Newton](@ref dishonest_newton)
+on the performance page. With the switch on, the solver status and the run log
 carry the reused steps and the refactorisations.
 
 ## Solver-Specific Interaction with Power Limits

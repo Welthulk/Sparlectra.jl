@@ -137,7 +137,7 @@ level.
 | FOR001 metadata | `generateContingenciesFromFOR001(net)` | imported MATPOWER FOR001 contingency names; unresolvable names become failed result rows |
 | scenarios block or JSON | `runScenarios!` | the per-scenario `weight` of the block; a weight file applies to case-list runs only (the outage-kind selector and the `n1_*` scenario sources) |
 
-## Screening
+## [Screening](@id contingency_screening)
 
 With `screening_mode = :flag` (keyword on `runContingencies!` and
 `runScenarios!`, or `contingency.screening.mode` for the service and the

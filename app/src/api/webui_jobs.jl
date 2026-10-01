@@ -490,6 +490,38 @@ function get_webui_powerflow_job(run_id::AbstractString)::Dict{String,Any}
   end
 end
 
+# A stopped Web UI must not leave a run computing. The server task ends, the
+# start script returns and the process exits; Julia's exit runs the
+# finalizers of every native factorization, also of the KLU and UMFPACK
+# objects that N-1 worker threads are still factorizing with (observed as
+# a segfault in klu_l_factor on "Stop Web UI" during an N-1 run with power
+# mode, and as heap corruption on exit() during a threaded N-1).
+# Every active job is asked to abort (the solver loops check the token once
+# per iteration, worker threads included) and awaited up to `timeout_s`.
+# Returns the number of jobs that were active and the number still running
+# at the deadline.
+function _webui_abort_active_jobs_and_wait!(; timeout_s::Float64 = 30.0)
+  ids = lock(_POWERFLOW_SERVICE_LOCK) do
+    [String(id) for (id, job) in _POWERFLOW_WEBUI_JOBS if get(job, "status", "") in _POWERFLOW_WEBUI_ACTIVE_STATES]
+  end
+  for id in ids
+    abort_webui_powerflow_run(id)
+  end
+  deadline = time() + timeout_s
+  still_running = 0
+  for id in ids
+    task = lock(_POWERFLOW_SERVICE_LOCK) do
+      get(get(_POWERFLOW_WEBUI_JOBS, id, Dict{String,Any}()), "task", nothing)
+    end
+    task isa Task || continue
+    while !istaskdone(task) && time() < deadline
+      sleep(0.1)
+    end
+    istaskdone(task) || (still_running += 1)
+  end
+  return (active = length(ids), still_running = still_running)
+end
+
 function abort_webui_powerflow_run(run_id::AbstractString)::Dict{String,Any}
   _safe_powerflow_run_id(run_id) || return _service_failure("unsafe_run_id", "Unsafe PowerFlow run ID rejected."; run_id)
   return lock(_POWERFLOW_SERVICE_LOCK) do

@@ -242,6 +242,21 @@ factorization. With UMFPACK the factorization is most of a step and the
 switch saves 12 to 15 percent. The rule: a loop over one network switches
 power mode on, and on large transmission cases dishonest Newton on top.
 
+Not for N-1 and scenario runs. A warm-started outage solve converges in a
+few fast steps, the switch adds about two steps per outage and saves a
+factorization that KLU makes cheap. Full branch N-1 of case_ACTIVSg2000
+(3206 outages, 16 threads):
+
+| variant | wall time |
+|---|---|
+| serial | 504 s |
+| parallel | 128 s |
+| parallel, power mode | 69 s |
+| parallel, power mode, dishonest Newton | 139 s |
+
+Power mode is the lever for N-1 here; dishonest Newton doubles the time
+(serially it costs 7 percent, 8.0 to 9.8 iterations per outage).
+
 ## [Benchmark configuration](@id perf-benchmark)
 
 The Web UI's `performance_timing=off|compact|full` option writes

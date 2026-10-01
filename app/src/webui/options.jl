@@ -119,6 +119,8 @@ const WEBUI_OPTION_SPECS = WebUIOptionSpec[
   WebUIOptionSpec("power_flow.jacobian_reuse", "power_flow_jacobian_reuse", Bool, :checkbox, DEFAULT_JACOBIAN_REUSE, (), :expert, :case, true),
   WebUIOptionSpec("power_flow.jacobian_reuse_min_reduction", "power_flow_jacobian_reuse_min_reduction", Float64, :number, DEFAULT_JACOBIAN_REUSE_MIN_REDUCTION, (), :expert, :case, true),
   WebUIOptionSpec("power_flow.jacobian_reuse_max_steps", "power_flow_jacobian_reuse_max_steps", Int, :number, DEFAULT_JACOBIAN_REUSE_MAX_STEPS, (), :expert, :case, true),
+  WebUIOptionSpec("contingency.screening.mode", "contingency_screening_mode", String, :select, "off", CONTINGENCY_SCREENING_MODE_VALUES, :expert, :case, true),
+  WebUIOptionSpec("contingency.screening.margin_pct", "contingency_screening_margin_pct", Float64, :number, 10.0, (), :expert, :case, true),
   WebUIOptionSpec("power_flow.auto_slack", "power_flow_auto_slack", Bool, :checkbox, false, (), :expert, :case, true),
   WebUIOptionSpec("runtime.parallel.enabled", "runtime_parallel_enabled", Bool, :checkbox, true, (), :expert, :session, true),
   WebUIOptionSpec("power_flow.dc.fallback", "power_flow_dc_fallback", Bool, :checkbox, false, (), :expert, :case, true),

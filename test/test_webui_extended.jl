@@ -1824,6 +1824,8 @@ form:
         "power_flow_jacobian_reuse" => "power_flow.jacobian_reuse",
         "power_flow_jacobian_reuse_min_reduction" => "power_flow.jacobian_reuse_min_reduction",
         "power_flow_jacobian_reuse_max_steps" => "power_flow.jacobian_reuse_max_steps",
+        "contingency_screening_mode" => "contingency.screening.mode",
+        "contingency_screening_margin_pct" => "contingency.screening.margin_pct",
         "power_flow_apslf_order" => "power_flow.apslf.order",
         "power_flow_apslf_use_pade" => "power_flow.apslf.use_pade",
         "power_flow_apslf_nr_polish" => "power_flow.apslf.nr_polish",
@@ -2233,6 +2235,28 @@ result = get_powerflow_result(run_id)
       _webui_assert_checked(reuse_reloaded, "power_flow_jacobian_reuse", true)
       _webui_assert_value(reuse_reloaded, "power_flow_jacobian_reuse_min_reduction", "5.0")
       _webui_assert_value(reuse_reloaded, "power_flow_jacobian_reuse_max_steps", "2")
+      # N-1 screening from the Settings form reaches the effective configuration
+      screen_form = copy(form)
+      screen_form["contingency_screening_mode"] = "flag"
+      screen_form["contingency_screening_margin_pct"] = "15"
+      screen_request = SparlectraApp.powerflow_webui_request(screen_form; default_output_root = output_root)
+      screen_cfg, _ = Sparlectra._load_api_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, Sparlectra.validate_gui_config_overrides(screen_request["config_overrides"]))
+      @test (screen_cfg.contingency.screening_mode, screen_cfg.contingency.screening_margin_pct) == (:flag, 15.0)
+      # stopping the Web UI aborts and awaits a running job before the
+      # process may exit (native factorizations in use by worker threads
+      # crashed the process on stop): a runner that solves until the abort
+      # token is set ends within the wait, the job ends "aborted"
+      stop_runner = function (worker_request; case_directory = nothing)
+        while true
+          Sparlectra.sparlectra_check_abort()
+          sleep(0.05)
+        end
+      end
+      stop_job = SparlectraApp.start_webui_powerflow_run(SparlectraApp.powerflow_webui_request(copy(form); default_output_root = output_root); runner = stop_runner)
+      sleep(0.3)
+      stopped = SparlectraApp._webui_abort_active_jobs_and_wait!(; timeout_s = 10.0)
+      @test stopped.active >= 1 && stopped.still_running == 0
+      @test get(SparlectraApp.get_webui_powerflow_job(stop_job["run_id"]), "status", "") == "aborted"
       # the saved case settings must not leak into the runs that follow
       rm(SparlectraApp._webui_case_settings_path(output_root, reuse_casefile); force = true)
       @test !isempty(run_id)
