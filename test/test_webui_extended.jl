@@ -2007,6 +2007,22 @@ form:
       # block (the Newton update, 0.30.0)
       @test count("data-nr-only-field", settings_page_html) == 13
       @test occursin("<fieldset class=\"distributed-slack-options\" data-nr-only-field>", settings_page_html)
+      # Experimental block (0.30.1): greyed out by default, its select
+      # disabled server-side (a disabled control is not submitted, the
+      # configured default applies); the opt-in checkbox carries no name.
+      # A profile holding a non-default value renders the block open.
+      @test occursin("<fieldset class=\"experimental-options disabled\" data-nr-only-field>", settings_page_html)
+      @test occursin("<input type=\"checkbox\" data-experimental-toggle>Enable experimental settings", settings_page_html)
+      @test occursin(" disabled", _webui_select_block(settings_page_html, "power_flow_newton_update"))
+      @test occursin("data-experimental-field", _webui_select_block(settings_page_html, "power_flow_newton_update"))
+      @test occursin("const experimentalToggle = document.querySelector('input[data-experimental-toggle]')", settings_page_html)
+      @test occursin("experimentalFields.forEach(function (field) { field.disabled = !on; })", settings_page_html)
+      @test occursin("experimentalGroup.classList.toggle('disabled', !on)", settings_page_html)
+      experimental_page_html = SparlectraApp.render_settings_page(output_root = output_root, submitted_form = Dict("power_flow_newton_update" => "rectangular"))
+      @test occursin("<fieldset class=\"experimental-options\" data-nr-only-field>", experimental_page_html)
+      @test occursin("<input type=\"checkbox\" data-experimental-toggle checked>Enable experimental settings", experimental_page_html)
+      @test !occursin(" disabled", _webui_select_block(experimental_page_html, "power_flow_newton_update"))
+      _webui_assert_selected(experimental_page_html, "power_flow_newton_update", "rectangular")
       # The external-grid conversion is a net transformation, not an NR-only
       # solver option — it must stay usable with the APSLF and DC solvers, so
       # its fieldset is deliberately NOT tagged data-nr-only-field.

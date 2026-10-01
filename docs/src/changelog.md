@@ -1,3 +1,10 @@
+# Version 0.30.1 - 2026-10-01
+
+Small fixes, Web UI and run log.
+
+- Fix: an option that is off prints no sub-parameters in the run log (Q-limit block, cooldown, hysteresis, PV to PQ counters).
+- Fix: the experimental Newton-update setting of the Web UI is greyed out until enabled; the default applies while greyed.
+
 # Version 0.30.0 - 2026-10-01
 
 The Newton step is applied in polar form; Q-limit defaults follow the packaged template.

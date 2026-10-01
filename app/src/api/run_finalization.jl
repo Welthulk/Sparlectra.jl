@@ -189,6 +189,11 @@ function _write_resolved_q_limit_options(io::IO, metadata::AbstractDict)
   println(io, "Resolved Q-limit options")
   println(io, "------------------------")
   println(io, "Q-limit handling enabled : ", metadata["qlimits_enabled"])
+  # an option that is off prints no sub-parameters (0.30.1)
+  if !(metadata["qlimits_enabled"] == true || metadata["qlimits_enabled"] == "true")
+    println(io)
+    return nothing
+  end
   println(io, "Q-limit enforcement mode : ", get(metadata, "qlimit_enforcement_mode", "active_set"))
   println(io, "Q-limit guard enabled    : ", metadata["qlimit_guard_enabled"])
   println(io, "Q-limit preview mode     : ", metadata["q_limit_preview_mode"])
