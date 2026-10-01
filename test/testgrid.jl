@@ -434,6 +434,53 @@ function test_rectangular_autodamp_backtracks_oversized_step()::Bool
   return alpha < 1.0 && trial_mismatch < maximum(abs.(F0)) && trial_mismatch < full_step_mismatch && Vtrial[1] == V[1]
 end
 
+# The polar update applies the tangent step dV as magnitude times
+# 1 + Re(dV/V) and angle plus Im(dV/V): a rotation keeps the magnitude,
+# where the linear update V + dV inflates it by sqrt(1 + b^2) (the flat-start
+# divergence on case9241pegase, study section 11). A zero-voltage bus has no
+# polar form and takes the linear step.
+function test_rectangular_polar_update_rotates_without_inflation()::Bool
+  V = ComplexF64[1.0+0.0im, 1.0+0.0im, 0.0+0.0im]
+  # bus 2: pure rotation by 0.5 rad; bus 3 (zero voltage): linear step
+  delta = [0.0, 0.1, 0.5, 0.2]
+  non_slack = [2, 3]
+  Vp = Sparlectra._apply_rectangular_delta(V, delta, 1, non_slack, 1.0; update = :polar)
+  Vr = Sparlectra._apply_rectangular_delta(V, delta, 1, non_slack, 1.0)
+  ok = isapprox(abs(Vp[2]), 1.0; atol = 1e-14) && isapprox(angle(Vp[2]), 0.5; atol = 1e-14)
+  ok &= isapprox(abs(Vr[2]), sqrt(1.25); atol = 1e-14)
+  ok &= Vp[3] == ComplexF64(0.1, 0.2) && Vp[1] == V[1]
+  # a scaling step (dV parallel to V) is the same in both updates
+  Vs = Sparlectra._apply_rectangular_delta(V, [-0.2, 0.0, 0.0, 0.0], 1, non_slack, 1.0; update = :polar)
+  ok &= isapprox(Vs[2], 0.8 + 0.0im; atol = 1e-14)
+  # half a step scales the polar update like the linear one (autodamp alpha)
+  Vh = Sparlectra._apply_rectangular_delta(V, delta, 1, non_slack, 0.5; update = :polar)
+  ok &= isapprox(angle(Vh[2]), 0.25; atol = 1e-14) && isapprox(abs(Vh[2]), 1.0; atol = 1e-14)
+  return ok
+end
+
+# Both updates are Newton on the same equations and reach the same state; the
+# polar update from the flat start of the shipped 60-bus case converges, and
+# the unsupported value is refused.
+function test_rectangular_polar_update_reaches_the_same_solution()::Bool
+  net_r = load_fixture_net("sp_case60")
+  net_p = load_fixture_net("sp_case60")
+  it_r, erg_r = runpf!(net_r, 30, 1e-10, 0; method = :rectangular, opt_flatstart = true, qlimits_enabled = false, newton_update = :rectangular)
+  it_p, erg_p = runpf!(net_p, 30, 1e-10, 0; method = :rectangular, opt_flatstart = true, qlimits_enabled = false, newton_update = :polar)
+  erg_r == 0 && erg_p == 0 || return false
+  it_p <= 30 || return false
+  for (a, b) in zip(net_r.nodeVec, net_p.nodeVec)
+    isapprox(a._vm_pu, b._vm_pu; atol = 1e-7) || return false
+    isapprox(a._va_deg, b._va_deg; atol = 1e-6) || return false
+  end
+  refused = try
+    runpf!(load_fixture_net("sp_case60"), 30, 1e-10, 0; method = :rectangular, newton_update = :cartesian)
+    false
+  catch err
+    err isa ArgumentError && occursin("newton_update", sprint(showerror, err))
+  end
+  return refused
+end
+
 function test_rectangular_nonfinite_mismatch_diagnostics_use_finite_history()::Bool
   Y = ComplexF64[0.0 - 10.0im 0.0 + 10.0im; 0.0 + 10.0im 0.0 - 10.0im]
   S = ComplexF64[0.0+0.0im, -1.0-0.2im]
@@ -2451,8 +2498,17 @@ mpc.branch = [
   effective_cfg = Sparlectra._resolve_matpower_powerflow_ids_after_import(imported_net, cfg)
   copied_cfg_ok = effective_cfg.powerflow.qlimits.lock_pv_to_pq_buses == [2] && cfg.powerflow.qlimits.lock_pv_to_pq_buses == [205]
 
+  # Since 0.30.0 the Q-limit guard is on by default: bus 205 (position 2)
+  # has a 0.02 MVAr band, far below guard.min_q_range_pu (0.02 pu), so both
+  # paths lock it to PQ before the first Newton step (event at iteration 0)
+  # and the run converges. Up to 0.20.5 (guard off) this test asserted PV
+  # with an empty log on the file path and a PQ switch (iteration 3, by the
+  # active set) on the memory path; that file-path run ended with a
+  # remaining Q violation at bus 205, because the manual lock list excludes
+  # a bus from switching instead of running it as PQ from the start as the
+  # docs say (a known open point of the lock list, not changed here).
   file_result = Sparlectra.run_sparlectra(casefile = basename(case_path), path = dirname(case_path), config = cfg)
-  file_path_ok = Sparlectra.getNodeType(file_result.net.nodeVec[2]) == Sparlectra.PV && isempty(file_result.net.qLimitLog)
+  file_path_ok = Sparlectra.getNodeType(file_result.net.nodeVec[2]) == Sparlectra.PQ && any(event -> event.bus == 2 && event.iter == 0, file_result.net.qLimitLog) && file_result.final_converged
 
   memory_result = Sparlectra.run_sparlectra(net = imported_net, config = cfg)
   memory_path_ok = Sparlectra.getNodeType(memory_result.net.nodeVec[2]) == Sparlectra.PQ && any(event -> event.bus == 2, memory_result.net.qLimitLog)
@@ -3463,6 +3519,8 @@ function run_grid_fast_tests()
       @test test_3BusNet(0, 150.0, :rectangular, true) == true
       @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :rectangular) == true
       @test test_rectangular_autodamp_backtracks_oversized_step() == true
+      @test test_rectangular_polar_update_rotates_without_inflation() == true
+      @test test_rectangular_polar_update_reaches_the_same_solution() == true
       @test test_rectangular_nonfinite_mismatch_diagnostics_use_finite_history() == true
       @test test_rectangular_final_status_best_mismatch_ignores_nan() == true
       @test test_rectangular_start_projection_improves_dc_seed() == true

@@ -35,7 +35,7 @@ end
 # Allocation-light mismatch norm helper used in hot Newton/autodamp paths.
 @inline _max_abs_mismatch(F::AbstractVector{<:Real}) = mapreduce(abs, max, F; init = 0.0)
 
-@inline function _apply_rectangular_delta!(Vout::Vector{ComplexF64}, V::Vector{ComplexF64}, δx::Vector{Float64}, slack_idx::Int, non_slack::Vector{Int}, alpha::Float64)
+@inline function _apply_rectangular_delta!(Vout::Vector{ComplexF64}, V::Vector{ComplexF64}, δx::Vector{Float64}, slack_idx::Int, non_slack::Vector{Int}, alpha::Float64; update::Symbol = :rectangular)
   n = length(V)
   # Start from the current iterate so untouched entries (including potential metadata in V)
   # remain bitwise-consistent unless explicitly updated below.
@@ -45,8 +45,30 @@ end
   #   δx[1:(n-1)]     -> ΔVr for non-slack buses
   #   δx[n:(2n-2)]    -> ΔVi for non-slack buses
   # where "idx" enumerates non_slack in solver order.
-  @inbounds for (idx, bus) in enumerate(non_slack)
-    Vout[bus] += ComplexF64(alpha * δx[idx], alpha * δx[(n-1)+idx])
+  if update === :polar
+    # Polar update: the same tangent step dV = ΔVr + jΔVi, applied as the
+    # polar Newton step it corresponds to (dV/V = a + jb: magnitude times
+    # 1 + a, angle plus b). With this update the rectangular Jacobian
+    # reproduces MATPOWER's newtonpf iterates to rounding (study section
+    # 11). The linear update V + dV inflates |V| by sqrt(1 + b^2) on a
+    # rotation, which is what diverged from the flat start on
+    # case9241pegase (rotations of 60 to 70 deg in the first step).
+    # A bus at exactly zero voltage has no polar form; it takes the linear
+    # step (an isolated bus can sit at zero without harm).
+    @inbounds for (idx, bus) in enumerate(non_slack)
+      dV = ComplexF64(alpha * δx[idx], alpha * δx[(n-1)+idx])
+      Vb = V[bus]
+      if Vb == 0.0
+        Vout[bus] = Vb + dV
+      else
+        q = dV / Vb
+        Vout[bus] = Vb * (1.0 + real(q)) * cis(imag(q))
+      end
+    end
+  else
+    @inbounds for (idx, bus) in enumerate(non_slack)
+      Vout[bus] += ComplexF64(alpha * δx[idx], alpha * δx[(n-1)+idx])
+    end
   end
 
   # Preserve slack reference exactly; non-slack updates only.
@@ -54,10 +76,10 @@ end
   return Vout
 end
 
-function _apply_rectangular_delta(V::Vector{ComplexF64}, δx::Vector{Float64}, slack_idx::Int, non_slack::Vector{Int}, alpha::Float64)
+function _apply_rectangular_delta(V::Vector{ComplexF64}, δx::Vector{Float64}, slack_idx::Int, non_slack::Vector{Int}, alpha::Float64; update::Symbol = :rectangular)
   # Convenience wrapper for call sites that need an owned output vector.
   Vnew = similar(V)
-  return _apply_rectangular_delta!(Vnew, V, δx, slack_idx, non_slack, alpha)
+  return _apply_rectangular_delta!(Vnew, V, δx, slack_idx, non_slack, alpha; update = update)
 end
 
 function _max_rectangular_mismatch(Ybus, V::Vector{ComplexF64}, S::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int; dslack::Union{Nothing,DistributedSlackState} = nothing)
@@ -97,14 +119,14 @@ end
 # Classic max-mismatch backtracking search: the exact original `choose_rectangular_autodamp`
 # algorithm, factored out so both the default (merit-disabled) path and the merit path's
 # active-set-skip fallback share one implementation.
-function _classic_rectangular_autodamp_search(Ybus, V::Vector{ComplexF64}, S::Vector{ComplexF64}, δx::Vector{Float64}, non_slack::Vector{Int}, current_mismatch::Float64; slack_idx::Int, damp::Float64, autodamp_min::Float64, bus_types::Vector{Symbol}, Vset::Vector{Float64}, diagnostics, dslack::Union{Nothing,DistributedSlackState} = nothing)
+function _classic_rectangular_autodamp_search(Ybus, V::Vector{ComplexF64}, S::Vector{ComplexF64}, δx::Vector{Float64}, non_slack::Vector{Int}, current_mismatch::Float64; slack_idx::Int, damp::Float64, autodamp_min::Float64, bus_types::Vector{Symbol}, Vset::Vector{Float64}, diagnostics, dslack::Union{Nothing,DistributedSlackState} = nothing, newton_update::Symbol = DEFAULT_NEWTON_UPDATE)
   Vtrial = similar(V)
   best_V = similar(V)
 
   # Initialize fallback with the minimum admissible step so we always return
   # a conservative finite candidate even when no improving step is found.
   best_alpha = autodamp_min
-  _apply_rectangular_delta!(Vtrial, V, δx, slack_idx, non_slack, autodamp_min)
+  _apply_rectangular_delta!(Vtrial, V, δx, slack_idx, non_slack, autodamp_min; update = newton_update)
   _dslack_set_trial!(dslack, autodamp_min)
   best_mismatch = _max_rectangular_mismatch(Ybus, Vtrial, S, bus_types, Vset, slack_idx; dslack = dslack)
   copyto!(best_V, Vtrial)
@@ -112,7 +134,7 @@ function _classic_rectangular_autodamp_search(Ybus, V::Vector{ComplexF64}, S::Ve
   alpha = damp
   # Monotone backtracking (α, α/2, α/4, ...) until we hit the configured floor.
   while alpha >= autodamp_min
-    _apply_rectangular_delta!(Vtrial, V, δx, slack_idx, non_slack, alpha)
+    _apply_rectangular_delta!(Vtrial, V, δx, slack_idx, non_slack, alpha; update = newton_update)
     _dslack_set_trial!(dslack, alpha)
     trial_mismatch = _max_rectangular_mismatch(Ybus, Vtrial, S, bus_types, Vset, slack_idx; dslack = dslack)
 
@@ -181,6 +203,7 @@ function choose_rectangular_autodamp(
   active_set_changed::Bool = false,
   merit_log = nothing,
   dslack::Union{Nothing,DistributedSlackState} = nothing,
+  newton_update::Symbol = DEFAULT_NEWTON_UPDATE,
 )
   _validate_rectangular_damping(damp, autodamp_min)
   non_slack = non_slack_indices(length(V), slack_idx)
@@ -189,13 +212,13 @@ function choose_rectangular_autodamp(
   if !merit_enabled
     # Default path: bit-identical to the pre-merit implementation, no extra
     # allocations or computations.
-    return _classic_rectangular_autodamp_search(Ybus, V, S, δx, non_slack, current_mismatch; slack_idx = slack_idx, damp = damp, autodamp_min = autodamp_min, bus_types = bus_types, Vset = Vset, diagnostics = diagnostics, dslack = dslack)
+    return _classic_rectangular_autodamp_search(Ybus, V, S, δx, non_slack, current_mismatch; slack_idx = slack_idx, damp = damp, autodamp_min = autodamp_min, bus_types = bus_types, Vset = Vset, diagnostics = diagnostics, dslack = dslack, newton_update = newton_update)
   end
 
   if active_set_changed
     # PV/PQ switching changed what the residual entries mean at this bus; a
     # merit comparison across the switch is not well-defined for this iteration.
-    alpha, Vout, mismatch = _classic_rectangular_autodamp_search(Ybus, V, S, δx, non_slack, current_mismatch; slack_idx = slack_idx, damp = damp, autodamp_min = autodamp_min, bus_types = bus_types, Vset = Vset, diagnostics = diagnostics, dslack = dslack)
+    alpha, Vout, mismatch = _classic_rectangular_autodamp_search(Ybus, V, S, δx, non_slack, current_mismatch; slack_idx = slack_idx, damp = damp, autodamp_min = autodamp_min, bus_types = bus_types, Vset = Vset, diagnostics = diagnostics, dslack = dslack, newton_update = newton_update)
     merit_log isa AbstractVector && push!(merit_log, (f_before = NaN, directional_derivative = NaN, f_after = NaN, tested_alphas = Float64[], accepted_alpha = alpha, accept_reason = :active_set_skip))
     return alpha, Vout, mismatch
   end
@@ -209,7 +232,7 @@ function choose_rectangular_autodamp(
   Vtrial = similar(V)
   best_V = similar(V)
   best_alpha = autodamp_min
-  _apply_rectangular_delta!(Vtrial, V, δx, slack_idx, non_slack, autodamp_min)
+  _apply_rectangular_delta!(Vtrial, V, δx, slack_idx, non_slack, autodamp_min; update = newton_update)
   _dslack_set_trial!(dslack, autodamp_min)
   F_base = mismatch_rectangular(Ybus, Vtrial, S, bus_types, Vset, slack_idx; dslack = dslack)
   best_mismatch = _max_abs_mismatch(F_base)
@@ -223,7 +246,7 @@ function choose_rectangular_autodamp(
 
   alpha = damp
   while alpha >= autodamp_min
-    _apply_rectangular_delta!(Vtrial, V, δx, slack_idx, non_slack, alpha)
+    _apply_rectangular_delta!(Vtrial, V, δx, slack_idx, non_slack, alpha; update = newton_update)
     _dslack_set_trial!(dslack, alpha)
     F_trial = mismatch_rectangular(Ybus, Vtrial, S, bus_types, Vset, slack_idx; dslack = dslack)
     trial_mismatch = _max_abs_mismatch(F_trial)
@@ -369,6 +392,7 @@ function choose_rectangular_trust_region_step(
   step_mode::Symbol = :scaled,
   active_set_changed::Bool = false,
   dslack::Union{Nothing,DistributedSlackState} = nothing,
+  newton_update::Symbol = DEFAULT_NEWTON_UPDATE,
 )
   non_slack = non_slack_indices(length(V), slack_idx)
   # W = I: m(x) = 1/2‖F(x)‖², the same function the merit-function line search uses.
@@ -388,7 +412,7 @@ function choose_rectangular_trust_region_step(
       throw(RectangularTrustRegionCollapsed())
     end
     scale = dx_norm > radius ? radius / dx_norm : 1.0
-    _apply_rectangular_delta!(Vtrial, V, δx, slack_idx, non_slack, scale)
+    _apply_rectangular_delta!(Vtrial, V, δx, slack_idx, non_slack, scale; update = newton_update)
     _dslack_set_trial!(dslack, scale)
     _dslack_accept!(dslack)
     diagnostics isa AbstractVector && push!(diagnostics, (radius_before = radius, rho = NaN, tested_radii = [radius], rejected_steps = 0, accepted = true, radius_after = radius, collapsed = false, accept_reason = :active_set_skip))
@@ -414,7 +438,7 @@ function choose_rectangular_trust_region_step(
     if dogleg
       step, accept_reason = _rectangular_dogleg_step(δx, dx_norm, p_C, pC_norm, radius)
       hit_boundary = accept_reason !== :dogleg_newton
-      _apply_rectangular_delta!(Vtrial, V, step, slack_idx, non_slack, 1.0)
+      _apply_rectangular_delta!(Vtrial, V, step, slack_idx, non_slack, 1.0; update = newton_update)
       # dogleg steps are absolute vectors, not α·δx: the lambda component is
       # the step's own last entry
       dslack !== nothing && (dslack.lambda_trial = dslack.lambda + step[end])
@@ -424,7 +448,7 @@ function choose_rectangular_trust_region_step(
       step = scale .* δx
       hit_boundary = dx_norm > radius
       accept_reason = :scaled
-      _apply_rectangular_delta!(Vtrial, V, δx, slack_idx, non_slack, scale)
+      _apply_rectangular_delta!(Vtrial, V, δx, slack_idx, non_slack, scale; update = newton_update)
       _dslack_set_trial!(dslack, scale)
     end
     F_trial = mismatch_rectangular(Ybus, Vtrial, S, bus_types, Vset, slack_idx; dslack = dslack)
@@ -505,6 +529,7 @@ function complex_newton_step_rectangular(
   tr_log = nothing,
   linear_ctx::Union{Nothing,AbstractNewtonSolverContext} = nothing,
   dslack::Union{Nothing,DistributedSlackState} = nothing,
+  newton_update::Symbol = DEFAULT_NEWTON_UPDATE,
 )
   n = length(V)
   # Solver assumes state ordering [Vr(non-slack); Vi(non-slack)] consistently
@@ -567,7 +592,7 @@ function complex_newton_step_rectangular(
         slack_idx = slack_idx, damp = damp, autodamp_min = autodamp_min, bus_types = bus_types, Vset = Vset, diagnostics = step_diagnostics,
         merit_enabled = merit_enabled, armijo_c1 = armijo_c1, scale_p = scale_p, scale_q = scale_q, scale_v = scale_v,
         fallback_max_mismatch = fallback_max_mismatch, active_set_changed = active_set_changed, merit_log = merit_log,
-        dslack = dslack,
+        dslack = dslack, newton_update = newton_update,
       )
     end
     # accept the lambda matching the returned (accepted or fallback) step scale
@@ -589,7 +614,7 @@ function complex_newton_step_rectangular(
         eta_accept = tr_eta_accept, shrink_factor = tr_shrink_factor, expand_factor = tr_expand_factor,
         expand_threshold = tr_expand_threshold, diagnostics = tr_log,
         step_mode = tr_step_mode, active_set_changed = active_set_changed,
-        dslack = dslack,
+        dslack = dslack, newton_update = newton_update,
       )
     end
   end
@@ -600,5 +625,5 @@ function complex_newton_step_rectangular(
   step_diagnostics isa AbstractVector && push!(step_diagnostics, (alpha = damp, trial_mismatch = NaN, accepted_improvement = true))
   _dslack_set_trial!(dslack, damp)
   _dslack_accept!(dslack)
-  return _apply_rectangular_delta!(Vnext, V, δx, slack_idx, non_slack, damp)
+  return _apply_rectangular_delta!(Vnext, V, δx, slack_idx, non_slack, damp; update = newton_update)
 end

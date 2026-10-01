@@ -1501,6 +1501,23 @@ the order and wording come from the presentation table, both pinned by
 load-time asserts. Returns "" for an adapter without form options (DTF,
 PGM).
 """
+# the five fields of the experimental convention block and the standard
+# reading they default to (the reading that passes the power-balance check
+# on every case of the grid-bench study); the block counts as active when
+# any value in the profile differs from it
+const _WEBUI_MATPOWER_CONVENTION_FIELDS = ("matpower_import_auto_profile", "matpower_import_ratio", "matpower_import_shift_sign", "matpower_import_shift_unit", "matpower_import_bus_shunt_model")
+const _WEBUI_MATPOWER_CONVENTIONS_HINT = "The standard MATPOWER reading (degrees, sign +1, ratio as stored, bus shunt as admittance) passes the independent power-balance check on every case of the study; change these only for a file you know to deviate. With the scan off and every value standard, nothing about conventions is logged."
+
+function _webui_matpower_conventions_active(profile_values)::Bool
+  for f in _WEBUI_MATPOWER_CONVENTION_FIELDS
+    spec = _webui_option_spec(f)
+    default = _webui_option_default(f)
+    value = spec.control == :number ? _webui_input_value(profile_values, f, default) : _webui_selected(profile_values, f, default)
+    string(value) == string(default) || return true
+  end
+  return false
+end
+
 function _webui_adapter_options_html(key::Symbol, profile_values)::String
   for sec in _WEBUI_ADAPTER_SECTIONS
     sec.key == key || continue
@@ -1508,10 +1525,21 @@ function _webui_adapter_options_html(key::Symbol, profile_values)::String
     # visibility follows the spec section: :basic
     # fields render directly, :expert fields fold into a nested details
     basics = [f for f in sec.order if _webui_option_spec(f).section == :basic]
-    experts = [f for f in sec.order if _webui_option_spec(f).section == :expert]
+    experts = [f for f in sec.order if _webui_option_spec(f).section == :expert && !(f in _WEBUI_MATPOWER_CONVENTION_FIELDS)]
+    conventions = [f for f in sec.order if f in _WEBUI_MATPOWER_CONVENTION_FIELDS]
     parts = String[_webui_adapter_option_html(f, profile_values) for f in basics]
-    if !isempty(experts)
-      push!(parts, string("<details class=\"span-2 expert-section adapter-expert\"><summary>Advanced</summary>", join((_webui_adapter_option_html(f, profile_values) for f in experts), "\n"), "</details>"))
+    if !isempty(experts) || !isempty(conventions)
+      # the experimental convention block (0.30.0): its fields default to
+      # the standard MATPOWER reading; the Advanced details open by itself
+      # when a case configuration (a sidecar) carries a non-standard value
+      # or the scan, so an active experimental setting is never hidden
+      active = _webui_matpower_conventions_active(profile_values)
+      block = isempty(conventions) ? "" : string(
+        "<fieldset class=\"matpower-conventions-experimental\" title=\"", _webui_escape(_WEBUI_MATPOWER_CONVENTIONS_HINT), "\">",
+        "<legend>MATPOWER conventions (experimental)</legend>",
+        join((_webui_adapter_option_html(f, profile_values) for f in conventions), "\n"), "</fieldset>")
+      push!(parts, string("<details class=\"span-2 expert-section adapter-expert\"", active ? " open" : "", "><summary>Advanced</summary>",
+        join((_webui_adapter_option_html(f, profile_values) for f in experts), "\n"), block, "</details>"))
     end
     return join(parts, "\n")
   end
@@ -1756,6 +1784,11 @@ $(isempty(profile_path) ? "" : "<fieldset class=\"saved-case-settings\">
 <label>$(_webui_field_label("power_flow_start_current_iteration_vm_max_pu", "Maximum voltage guard [pu]"))<input name=\"power_flow_start_current_iteration_vm_max_pu\" type=\"number\" step=\"any\" min=\"0\" value=\"$(_webui_input_value(profile_values, "power_flow_start_current_iteration_vm_max_pu", _webui_option_default("power_flow_start_current_iteration_vm_max_pu")))\"></label>
 <label>$(_webui_field_label("power_flow_start_current_iteration_max_angle_step_deg", "Maximum angle-step guard [deg]"))<input name=\"power_flow_start_current_iteration_max_angle_step_deg\" type=\"number\" step=\"any\" min=\"0\" value=\"$(_webui_input_value(profile_values, "power_flow_start_current_iteration_max_angle_step_deg", _webui_option_default("power_flow_start_current_iteration_max_angle_step_deg")))\"></label>
 <label class=\"check\"><input name=\"power_flow_start_current_iteration_only_for_large_cases\" type=\"hidden\" value=\"false\"><input name=\"power_flow_start_current_iteration_only_for_large_cases\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_start_current_iteration_only_for_large_cases", _webui_option_default("power_flow_start_current_iteration_only_for_large_cases")))>$(_webui_field_label("power_flow_start_current_iteration_only_for_large_cases", "Only for large cases"))</label>
+</fieldset>
+<fieldset class=\"experimental-options\" data-nr-only-field>
+<legend>Experimental</legend>
+<label>$(_webui_field_label("power_flow_newton_update", "Newton update"))$(_webui_select("power_flow_newton_update", _webui_option_allowed_values("power_flow_newton_update"), _webui_selected(profile_values, "power_flow_newton_update", _webui_option_default("power_flow_newton_update"))))</label>
+<p class=\"field-help\">How a Newton step is applied to the bus voltages. <code>polar</code> (the default since 0.30.0) applies it as magnitude and angle, MATPOWER's update, which keeps the magnitudes in range on the large rotations of a flat start; <code>rectangular</code> adds the step to the complex voltage, the update up to 0.20.5, kept here for comparisons.</p>
 </fieldset>
 <label class=\"check span-2\"><input name=\"ignore_webui_settings\" type=\"hidden\" value=\"false\"><input name=\"ignore_webui_settings\" type=\"checkbox\" value=\"true\">$(_webui_field_label("ignore_webui_settings", "Ignore Web UI settings and use configuration defaults"))</label>
 </details>

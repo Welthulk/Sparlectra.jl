@@ -76,6 +76,13 @@ power_flow:
   # Automatic damping for difficult cases.
   autodamp: true
   autodamp_min: 0.05
+  # How a Newton step is applied to the bus voltages: polar (default)
+  # applies it as the polar Newton update (magnitude and angle), the update
+  # MATPOWER's newtonpf uses, which keeps the magnitudes in range on the
+  # large rotations of a flat start (case9241pegase converges from the flat
+  # start only this way); rectangular adds the step to the complex voltage
+  # (the update up to 0.20.5).
+  newton_update: polar
   # Promote the strongest injection (external network injection preferred,
   # then largest generator) to slack when the case registers none.
   auto_slack: false
@@ -556,10 +563,16 @@ model:
   #   through the tapped winding; R and X are scaled with |1 + f*e^(j*phi)|^2.
   tap_changer_model: ideal
   # Allowed values: off, recommend, apply
+  # Experimental convention scan of the stored VM/VA columns, off by default
+  # since 0.30.0: the standard MATPOWER reading (degrees, sign +1, ratio as
+  # stored, bus shunt as admittance) satisfies the power balance of every
+  # case checked; the stored columns of some files are no solved state
+  # under any reading, and a scan of them must not change the reading.
   # recommend prints a pre-run table without changing the active run.
   # apply may change only convention settings with clear residual evidence;
-  # user YAML files are never rewritten.
-  auto_profile: recommend
+  # user YAML files are never rewritten. With the scan off and every
+  # convention at its standard value nothing about conventions is logged.
+  auto_profile: off
   auto_profile_log: true
   # Largest power mismatch (pu, worst bus) at which the stored VM/VA columns
   # still count as a solved state. When the best of the eight convention

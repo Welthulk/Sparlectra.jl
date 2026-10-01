@@ -243,7 +243,7 @@ matpower_import:
   case: case14.m
   # Non-empty cases take precedence for run_sparlectra_cases.
   cases: [case14.m, case118.m]
-  auto_profile: recommend
+  auto_profile: off
   auto_profile_log: true
   pv_voltage_source: gen_vg
 
@@ -283,10 +283,12 @@ limit, convert those buses to PQ, rerun without PQ to PV re-enable). The
 legacy aliases `matpower_simultaneous` and `matpower_one_at_a_time` are
 normalized to the `classic_*` value.
 
-`model.auto_profile` controls the MATPOWER pre-run profile: `off`,
-`recommend` (log a recommendation table, change nothing), `apply` (apply
-only unambiguous import-convention recommendations). The runner logs the
-effective MATPOWER options and never rewrites user YAML files.
+`model.auto_profile` controls the experimental MATPOWER convention scan:
+`off` (default since 0.30.0, nothing about conventions is logged at the
+standard reading), `recommend` (log a recommendation table, change
+nothing), `apply` (apply only unambiguous import-convention
+recommendations). The runner never rewrites user YAML files. See
+[MATPOWER conventions (experimental)](@ref matpower_conventions_experimental).
 
 ## [Wrong-branch detection semantics (rectangular PF)](@id config-wrong-branch)
 

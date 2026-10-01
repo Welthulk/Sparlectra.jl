@@ -147,7 +147,7 @@ The keys of a MATPOWER run: the case selectors, the import profile that recommen
 |---|---:|---:|---|---|---|---|---|---|
 | `runtime.case` | String | `case14.m` | case path/name | Compatible single-case selector and fallback when `cases` is empty. | Single case studies and benchmarks. | Invalid/missing paths. | Parse/solve scales with case size. | `runtime.cases`, runtime/profile. |
 | `runtime.cases` | Vector{String} | `[case14.m, case118.m]` | non-empty case names | Ordered batch selector for `run_sparlectra_cases`; a non-empty list takes precedence over `case`. | Deterministic multi-case validation and release checks. | Empty case names or expecting `run_sparlectra` to return a vector. | Sequential parse/solve cost per case. | `runtime.case`, `run_sparlectra_cases`. |
-| `model.auto_profile` | Symbol/String | `recommend` | `off`, `recommend`, `apply` | Run a MATPOWER pre-run profile. `off` disables it, `recommend` logs decisions without changing the active config, and `apply` changes only safe import-convention recommendations with clear evidence. Solver-start and Q-limit recommendations remain logged but skipped unless configured directly. | Development, large-case investigation, reproducible robust imports. | Expecting YAML files to be rewritten; applying ambiguous diagnostics. | Low; scans existing VM/VA residuals before the solve. | Output profile visibility options. |
+| `model.auto_profile` | Symbol/String | `off` | `off`, `recommend`, `apply` | Experimental convention scan of the stored voltages (see [MATPOWER conventions (experimental)](@ref matpower_conventions_experimental)). `off` disables it, `recommend` logs decisions without changing the active config, and `apply` changes only safe import-convention recommendations with clear evidence. Solver-start and Q-limit recommendations remain logged but skipped unless configured directly. | Development, large-case investigation, reproducible robust imports. | Expecting YAML files to be rewritten; applying ambiguous diagnostics. | Low; scans existing VM/VA residuals before the solve. | Output profile visibility options. |
 | `model.auto_profile_log` | Bool | `true` | `true`, `false` | Print/log auto-profile reasoning and final effective options. | Debug import decisions and reproduce final settings. | Quiet high-volume runs. | Logging overhead only. | `output.console_auto_profile`, logfile settings. |
 | `model.auto_profile_max_fit_pu` | Float64 | `0.1` | non-negative | Largest power mismatch (pu, worst bus) at which the stored `VM`/`VA` columns still count as a solved state. When the best convention reading scores above it, the scan recommends no convention change and keeps the configured `shift_unit`, `shift_sign`, `ratio` and `bus_shunt_model`. | Files whose stored state is a real solution (default). | Raise only for files with a slightly stale but consistent solution; lower to make the scan stricter. | None. | `model.auto_profile`, `matpower_import.shift_unit`, `matpower_import.shift_sign`, `matpower_import.ratio`. |
 | `matpower_import.pv_voltage_source` | Symbol/String | `gen_vg` | `gen_vg`, `bus_vm`, `auto`, `strict_check` | PV voltage setpoint source policy. | Standard MATPOWER semantics. | Nonstandard conversion assumptions. | None. | `compare_voltage_reference`, PF starts. |
@@ -172,7 +172,7 @@ Example configuration for a case-conversion or validation workflow:
 
 ```yaml
 matpower_import:
-  auto_profile: recommend
+  auto_profile: off
   pv_voltage_source: gen_vg
   compare_voltage_reference: imported_setpoint
   ratio: normal
@@ -186,12 +186,33 @@ matpower_import:
   matpower_dcline_mode: pf_injections
 ```
 
+### [MATPOWER conventions (experimental)](@id matpower_conventions_experimental)
+
+The convention overrides (`matpower_import.shift_unit`, `shift_sign`,
+`ratio`, `model.bus_shunt_model`) and the convention scan
+(`model.auto_profile`) are an experimental feature since 0.30.0, off by
+default and silent. The standard MATPOWER reading (shift in degrees, sign
++1, ratio as stored, bus shunt as admittance) satisfies the power balance
+of the file on every case checked; the alternative readings fail wherever
+a file has a phase shift or an off-nominal tap. Change these only for a
+file you know to deviate. With `auto_profile: off` and every convention
+at its standard value, nothing about conventions is written to the run
+log, the solver log, the result metadata or the configuration report, and
+no `matpower_auto_profile.log` artifact is created. With the scan on, or
+with any convention set away from the standard reading, the lines and the
+artifact appear, prefixed `experimental`, and the effective values appear
+in the configuration report. In the Web UI the block sits under Advanced
+on the Case page as "MATPOWER conventions (experimental)"; it opens by
+itself when a case configuration carries a non-standard value. See
+[Start strategies by case](start_strategies.md) for why the stored
+voltage columns of some files must not be used to change the reading.
+
 ### Auto-profile pre-run
 
 The MATPOWER runner evaluates `model.auto_profile` before the main solve: it
 reads the case, computes compact diagnostics and prints a table with option
 path, current value, recommended value, action, reason and evidence. The
-shipped default `auto_profile: recommend` with `auto_profile_log: true` logs
+shipped default is `off`; `recommend` with `auto_profile_log: true` logs
 recommendations without changing the configuration.
 
 | Mode | Effect |

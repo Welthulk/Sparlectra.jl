@@ -28,6 +28,7 @@ The options every AC run reads: formulation and mode, flat start, tolerance and 
 | `power_flow.auto_slack` | Bool | `false` | `true`, `false` | Promote a reference when the case registers no slack: external network injections first, then a unit that regulates the voltage of its own bus, then the largest unit (`ratedS`, then `maxP`, then dispatch); islands are independent of this key: one that lost its reference takes a PV bus or, without one, its strongest generating unit, always. The promotion is logged; without the key a whole network without slack aborts with the no-slack error. | Cases whose data carries no reference (edited or partial models). | Data-quality checks: a silently chosen slack can mask an import problem. | None on cases that already have a slack. | `ensureSlack!` is the underlying API; the CGMES importer applies the same ranking at import time. |
 | `power_flow.rescue` | Bool | `true` | `true`, `false` | After a non-converged AC solve, retry from the original start state with a fixed strategy ladder: `alternate_start` (toggle the flat-start flag), `autodamp` (adaptive damping, skipped when already active), `dc_seed` (flat magnitudes with DC-projected start angles), `settled_qlimits` (Armijo merit line search, low damping floor, and Q-limit switching held back until the reactive requests settle via `qlimits.start_mode = :auto`). The first converging strategy wins; its name is logged and recorded as `:ac_rescue_strategy` in the performance profile. `settled_qlimits` targets large systems whose early PV/PQ switching destabilises the iteration. Note the interaction behind that: `qlimits.start_mode = iteration_or_auto` (the shipped default) is an **or**, so a small `qlimits.start_iter` always wins and the `auto` criterion never gets a chance; on large systems, prefer `auto`. | Batch/suite runs over cases with difficult start states. | Solver comparisons and diagnostics: a rescued run hides *which* start failed. | Only failed runs pay for retries; converging runs are untouched. | Config-driven paths only (`runpf!(net, cfg)`, service, Web UI). Distinct from `wrong_branch_rescue`, which reacts to a *converged but implausible* solution. |
 | `power_flow.dc.fallback` | Bool | `false` | `true`, `false` | When the AC solve (and the rescue ladder, if enabled) did not converge, run the standalone DC power flow: the net then carries DC angles and branch P flows (vm = 1 pu, no reactive results). The AC status honestly stays non-converged (`erg = 1`); the fallback is logged and recorded as `:dc_fallback_applied` in the performance profile. | Getting *some* flow picture out of a case that AC-diverges. | Any study that needs voltages or reactive power. | One extra linear solve on failed runs. | Uses `power_flow.dc.*` settings; distinct from `power_flow.solver: dc`, which always runs DC only. |
+| `power_flow.newton_update` | Symbol/String | `polar` | `polar`, `rectangular` | How a Newton step is applied to the bus voltages: `polar` applies it as magnitude and angle (`V (1 + a) e^{jb}` with `ΔV/V = a + jb`), the update of MATPOWER's `newtonpf`, which keeps the magnitudes in range on the large rotations of a flat start; `rectangular` adds the step to the complex voltage (`V + ΔV`), the update up to 0.20.5. Same Jacobian, same solution, different iterates. See [Newton Update](solver.md#newton_update). | Flat starts on transmission cases with large angles (case9241pegase converges from the flat start only with `polar`), reproducing MATPOWER's iteration. | Comparing against earlier Sparlectra runs step for step. | None measurable. | Every start machine and damping option applies unchanged. |
 | `power_flow.linear_solver` | Symbol/String | `umfpack_reuse` | `umfpack`, `umfpack_reuse` | Sparse linear-algebra backend for the Newton step of the rectangular solver. `umfpack_reuse` keeps UMFPACK's factorization but reuses the symbolic analysis of the first iteration via `lu!` (analyze once, refactor per iteration). It re-analyzes automatically on active-set pattern changes and falls back to the `umfpack` chain on any factorization error. | `umfpack_reuse` on large cases where the linear solve dominates runtime. | Expecting a third backend: `klu` is not offered and fails validation. | `umfpack_reuse` cuts the repeated symbolic-analysis cost of `umfpack`. | Distinct from `power_flow.solver`, which selects the power-flow *method* (rectangular/apslf/dc); `linear_solver` only affects the rectangular Newton step. With the reuse backend the Jacobian is assembled with a structural (value-independent) sparsity pattern so the analysis stays reusable. Diagnostic counters appear in the solver status (`linear_solver_analyze_count`, `..._refactor_count`, `..._fallback_count`). |
 
 ## [Solver selection (rectangular vs. APSLF)](@id pf-solver-selection)
@@ -695,15 +696,17 @@ How the reactive-power limits of PV machines are enforced: the master switch, th
 | `power_flow.qlimits.guard.freeze_after_repeated_switching` | Bool | `true` | `true`, `false` | Freeze after repeated switch cycling. | Anti-chatter behavior. | Cases requiring unrestricted switching. | Can stabilize solves. | `max_switches`. |
 | `power_flow.qlimits.guard.log` | Bool | `true` | `true`, `false` | Emit guard logs. | Diagnostics/debugging. | Quiet batch runs. | I/O overhead when enabled. | `output.console_q_limit_events`. |
 
-The defaults above are those of the packaged configuration template, which
-every run with a configuration file (the Web UI, `run_sparlectra` on a case
-file) starts from. A library call without a configuration file
-(`runpf!(net, ...)`, `run_sparlectra(net = ...)` with `SparlectraConfig()`)
-uses the struct defaults instead, which differ for `start_iter` (2),
-`start_mode` (`iteration`), `guard.enabled` (`false`, an opt-in for
-low-level callers), `guard.min_q_range_pu` (`1e-4`),
-`guard.narrow_range_mode` (`prefer_pq`), `guard.violation_mode`
-(`delayed_switch`) and `guard.max_switches` (10).
+The defaults above are those of the packaged configuration template, and
+since 0.30.0 a library call without a configuration file (`runpf!(net,
+...)`, `run_sparlectra(net = ...)` with `SparlectraConfig()`) uses the
+same values: the configuration struct, the loader fallback for a file
+that omits a key and the keyword defaults of the solver entry points read
+one source. Up to 0.20.5 the struct and keyword defaults differed
+(`start_iter` 2, `start_mode` `iteration`, `guard.enabled` `false`,
+`guard.min_q_range_pu` `1e-4`, `guard.narrow_range_mode` `prefer_pq`,
+`guard.violation_mode` `delayed_switch`, `guard.max_switches` 10); a
+library caller who relied on the guard being off sets
+`qlimits.guard.enabled: false` (or `qlimit_guard = false`) explicitly.
 
 In the Web UI all of these keys sit in the Q-limit block of the power-flow
 form ([Web UI Reference](webui_reference.md#webui-form-options)).

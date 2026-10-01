@@ -198,6 +198,8 @@ makedocs(
     "Network Reports" => "netreports.md",
     "Power Limits" => "powerlimits.md",
     "Solver" => "solver.md",
+    "Newton Update" => "newton_update.md",
+    "Start Strategies by Case" => "start_strategies.md",
     "Slack and External Grid Sources" => "slack_vs_source.md",
     "Synthetic Tiled Grids" => "synthetic_grids.md",
     "Voltage Dependent Control" => "voltage_dependent_control.md",

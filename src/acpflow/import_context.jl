@@ -77,6 +77,15 @@ function _resolve_matpower_lock_pv_to_pq_buses(net::Net, buses::AbstractVector{I
   return resolved
 end
 
+# The standard MATPOWER reading: degrees, sign +1, ratio as stored, bus shunt
+# as admittance. It satisfies the power balance of every case of the
+# grid-bench study; a run at this reading says nothing about conventions
+# (0.30.0), a run away from it marks the experimental feature in its logs.
+function _matpower_conventions_standard(cfg::SparlectraConfig)::Bool
+  mat = cfg.matpower
+  return mat.shift_unit === :deg && mat.shift_sign == 1.0 && mat.ratio === :normal && cfg.model.bus_shunt_model === :admittance
+end
+
 function _copy_qlimits_with(ql::QLimitConfig; kwargs...)::QLimitConfig
   fields = NamedTuple{fieldnames(QLimitConfig)}(getfield.(Ref(ql), fieldnames(QLimitConfig)))
   return QLimitConfig(; fields..., kwargs...)
@@ -309,7 +318,7 @@ function _import_sparlectra_context(casefile::AbstractString, path::Union{Nothin
     # configuration; carried on the imported case for the services
     auto_profile_overrides = _config_flat_difference(cfg, auto_profile_result.config)
     for (k, v) in sort!(collect(auto_profile_overrides); by = first)
-      println(stdout, "auto_profile: ", k, " = ", v)
+      println(stdout, "experimental auto_profile: ", k, " = ", v)
     end
     cfg = auto_profile_result.config
     pf_cfg = cfg.powerflow
@@ -323,12 +332,17 @@ function _import_sparlectra_context(casefile::AbstractString, path::Union{Nothin
       write_matpower_import_auto_profile(stdout, auto_profile_result, cfg; casefile = filename)
     end
   elseif cfg.output.console_auto_profile === :full
-    print_matpower_import_runtime_options(stdout, "Final effective MATPOWER import options", cfg)
-  elseif cfg.output.console_auto_profile !== :off
-    # auto-profile is off, so nothing analyses the conventions: name the
-    # three that actually move results, on ONE line. The full option list
-    # stays behind :full and in the effective_config.yaml artifact.
-    println(stdout, "Import conventions: ratio=", cfg.matpower.ratio, ", shift=", cfg.matpower.shift_unit,
+    # the full option list is an explicit request (console_auto_profile:
+    # full) and is printed whatever the conventions are
+    print_matpower_import_runtime_options(stdout, "experimental: Final effective MATPOWER import options", cfg)
+  elseif cfg.output.console_auto_profile !== :off && !_matpower_conventions_standard(cfg)
+    # the scan is off and a convention was set away from the standard
+    # reading: name the three that move results, on ONE line, marked as
+    # the experimental feature they are. At the standard reading nothing is
+    # written about conventions (0.30.0 rule: the standard reading passes
+    # the power-balance check on every case of the study, so there is
+    # nothing to report); the full set stays in effective_config.yaml.
+    println(stdout, "experimental: Import conventions: ratio=", cfg.matpower.ratio, ", shift=", cfg.matpower.shift_unit,
             " (sign ", cfg.matpower.shift_sign, "), bus shunt=", cfg.model.bus_shunt_model)
   end
   phase_callback("building_sparlectra_net")
