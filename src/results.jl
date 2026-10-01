@@ -734,14 +734,6 @@ function formatBranchResults(net::Net; max_rows::Union{Nothing,Int} = nothing)
   return String(take!(fr_io)), total_losses
 end
 
-"""
-    _print_wrong_branch_summary_line(io, net)
-
-Prints a single console/log line summarizing the wrong-branch detection
-outcome when it is suspect or invalid (`status` is neither `:ok` nor
-`:not_checked`). Clean runs and disabled detection print nothing, keeping
-logs stable for the common case.
-"""
 # whether the last solve handled Q limits: the rectangular status marks a
 # run with the handling off as final_q_check_status == :qlimits_disabled;
 # without a status (another solver, no solve yet) the lines are printed
@@ -752,6 +744,14 @@ function _results_qlimits_handled(net::Net)::Bool
   return st.final_q_check_status !== :qlimits_disabled
 end
 
+"""
+    _print_wrong_branch_summary_line(io, net)
+
+Prints a single console/log line summarizing the wrong-branch detection
+outcome when it is suspect or invalid (`status` is neither `:ok` nor
+`:not_checked`). Clean runs and disabled detection print nothing, keeping
+logs stable for the common case.
+"""
 function _print_wrong_branch_summary_line(io::IO, net::Net)
   rect_status = rectangular_pf_status(net)
   status = _rect_status_get(rect_status, :wrong_branch_status, :not_checked)
