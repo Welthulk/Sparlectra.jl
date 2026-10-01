@@ -1820,6 +1820,7 @@ form:
         "power_flow_solver" => "power_flow.solver",
         "power_flow_linear_solver" => "power_flow.linear_solver",
         "power_flow_newton_update" => "power_flow.newton_update",
+        "power_flow_power_mode" => "power_flow.power_mode",
         "power_flow_apslf_order" => "power_flow.apslf.order",
         "power_flow_apslf_use_pade" => "power_flow.apslf.use_pade",
         "power_flow_apslf_nr_polish" => "power_flow.apslf.nr_polish",
@@ -2002,10 +2003,10 @@ form:
       # distributed-slack options, and the non-convergence handling block); these must be
       # marked so client-side JS can gray them out when power_flow_solver=apslf or
       # power_flow_solver=dc is selected.
-      # 13: the ten NR-only groups, the APSLF and DC start-value
-      # checkboxes, which the flat start greys as well, and the Experimental
-      # block (the Newton update, 0.30.0)
-      @test count("data-nr-only-field", settings_page_html) == 13
+      # 14: the ten NR-only groups, the APSLF and DC start-value
+      # checkboxes, which the flat start greys as well, the Experimental
+      # block (the Newton update, 0.30.0) and the power-mode checkbox (0.30.1)
+      @test count("data-nr-only-field", settings_page_html) == 14
       @test occursin("<fieldset class=\"distributed-slack-options\" data-nr-only-field>", settings_page_html)
       # Experimental block (0.30.1): greyed out by default, its select
       # disabled server-side (a disabled control is not submitted, the

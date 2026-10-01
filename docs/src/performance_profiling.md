@@ -150,6 +150,51 @@ configuration, artifact options and status diagnostics.
 | `performance.skip_branch_neighborhood_report` | Bool | `true` | `true`, `false` | Skip branch neighborhood report. |
 | `performance.max_diagnostic_rows` | Int | `25` | non-negative integer | Row cap for diagnostics tables. |
 
+## [Power mode for repeated solves](@id power-mode)
+
+`power_flow.power_mode: true` (keyword `power_mode = true` on `runpf!` and
+`runpf_rectangular!`, a checkbox under Advanced options in the Web UI) is
+for the cases where one network is solved many times: a benchmark on a
+persistent model, the scenario engine, N-1 contingency sweeps, Monte
+Carlo, outer control loops. Between solves the network keeps its Ybus
+(reused while the fingerprint of the branch admittances, terminals and
+shunts is unchanged), the symbolic analysis of the sparse LU with its
+factorization object and Jacobian buffers (the context re-analyses by
+itself when the Jacobian pattern changes, for example after a bus-type or
+a topology change), and the Newton work arrays; the ranked mismatch
+diagnostics of the final status are skipped (the maxima and the worst
+row stay). Nothing else changes: same Jacobian, same polar update, same
+Q-limit handling, same tolerance, the same solution to 1e-12 pu.
+
+The sparse LU of power mode is KLU when the KLU package extension is
+loaded (`using KLU` next to `using Sparlectra`; the application package
+loads it, so the service and the Web UI have it), UMFPACK with the kept
+analysis otherwise. KLU's numeric refactorization is 6 to 20 times faster
+than UMFPACK's on power-flow Jacobians of 5k to 60k unknowns; on very
+large Jacobians with heavy fill-in (an 82000-bus synthetic case) UMFPACK
+is faster, which is one reason power mode is a switch and not the default.
+
+Measured warm solve (second and later solves on the same imported
+network, median of 20, single thread, flat start, Q limits off, the
+grid-bench adapter's keywords), without and with the switch, KLU loaded:
+
+| case | without | with power mode | factor | allocations per warm solve |
+|---|---|---|---|---|
+| case2869pegase | 47.3 ms | 7.8 ms | 6.0 | 35.7 MB to 5.7 MB |
+| case9241pegase | 267.9 ms | 55.3 ms | 4.9 | 141 MB to 21 MB |
+| mvlv29840 | 477.4 ms | 44.7 ms | 10.7 | 407 MB to 60 MB |
+
+Without the KLU extension the same three items (persistent analysis,
+Ybus, diagnostics) give a factor of 1.2 on case2869pegase. Through the
+service API every call imports the case anew, so only the diagnostics
+and the faster LU apply: the solver phase gains a factor of 1.1 to 1.3
+there and the whole call 3 to 7 percent.
+
+The rule: a single run leaves it off (the first solve pays the analysis
+either way, and the ranked diagnostics are what a single run wants to
+read); a loop over one network switches it on. `reset_power_mode!(net)`
+drops the kept state when the memory is wanted back.
+
 ## [Benchmark configuration](@id perf-benchmark)
 
 The Web UI's `performance_timing=off|compact|full` option writes

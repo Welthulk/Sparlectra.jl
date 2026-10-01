@@ -736,6 +736,7 @@ include("acpflow/solver_core.jl")
 # The factorized backend comes first: it only depends on solve_sparse_system from
 # solver_core.jl (its fallback chain) and is referenced by the Newton step.
 include("powerflow_rectangular/rectangular_factorized_solver.jl")
+include("powerflow_rectangular/rectangular_power_mode.jl")
 include("powerflow_rectangular/rectangular_distributed_slack.jl")
 include("powerflow_rectangular/rectangular_core_equations.jl")
 include("powerflow_rectangular/rectangular_voltage_helpers.jl")

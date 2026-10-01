@@ -301,6 +301,7 @@ function runpf_rectangular!(
   autodamp::Bool = false,
   autodamp_min::Float64 = 0.05,
   newton_update::Symbol = DEFAULT_NEWTON_UPDATE,
+  power_mode::Bool = false,
   merit_enabled::Bool = false,
   merit_armijo_c1::Float64 = 1.0e-4,
   merit_scale_p::Float64 = 1.0,
@@ -412,6 +413,7 @@ function runpf_rectangular!(
       autodamp = autodamp,
       autodamp_min = autodamp_min,
       newton_update = newton_update,
+      power_mode = power_mode,
       merit_enabled = merit_enabled,
       merit_armijo_c1 = merit_armijo_c1,
       merit_scale_p = merit_scale_p,
@@ -492,11 +494,27 @@ function runpf_rectangular!(
   n = length(nodes)
   Sbase = net.baseMVA
   set_phase("building_ybus")
-  Yred = _perf_profile_time!(performance_profile, :ybus_assembly) do
-    createYBUS(net = net, sparse = true, printYBUS = (verbose > 1))
-  end
-  Ybus = _perf_profile_time!(performance_profile, :ybus_expand_isolated) do
-    (size(Yred, 1) == n) ? Yred : _expand_ybus_for_isolated_nodes(Yred, n, net.isoNodes)
+  # power mode (0.30.1): the Ybus of the previous solve is reused when the
+  # fingerprint of its inputs (branch admittances, terminals, shunts,
+  # isolated buses) is unchanged; the assembly is 8 to 21 percent of a
+  # warm solve on the benchmark cases
+  power_cache = power_mode ? _power_cache!(net) : nothing
+  ybus_fp = power_mode ? _ybus_fingerprint(net) : UInt64(0)
+  if power_mode && power_cache.ybus !== nothing && power_cache.ybus_fingerprint == ybus_fp && power_cache.n == n
+    Ybus = power_cache.ybus
+    power_cache.ybus_reuse_count += 1
+  else
+    Yred = _perf_profile_time!(performance_profile, :ybus_assembly) do
+      createYBUS(net = net, sparse = true, printYBUS = (verbose > 1))
+    end
+    Ybus = _perf_profile_time!(performance_profile, :ybus_expand_isolated) do
+      (size(Yred, 1) == n) ? Yred : _expand_ybus_for_isolated_nodes(Yred, n, net.isoNodes)
+    end
+    if power_mode
+      power_cache.ybus = Ybus
+      power_cache.ybus_fingerprint = ybus_fp
+      power_cache.n = n
+    end
   end
   set_phase("solver_initialization")
 
@@ -671,7 +689,6 @@ function runpf_rectangular!(
     println("Classical Q-limit outer loop: enabled")
   elseif verbose > 0
     println("Q-limit handling: disabled")
-    println("Q-limit diagnostics: skipped")
   end
 
   # NOTE (measured, do not "fix" without re-measuring): treating a machine
@@ -764,17 +781,45 @@ function runpf_rectangular!(
     error("Unsupported rectangular_preallocate_workspace=$(rectangular_preallocate_workspace). Supported: :off, :on, :auto.")
   end
 
-  workspace = RectangularIterationWorkspace(nb)
-  # Reuse-context lifetime is exactly this solve (per island on the island
-  # path); nothing is shared across runpf_rectangular! invocations or threads.
-  linear_ctx = newton_linear_solver_context(linear_solver)
+  # power mode keeps the workspace and the linear-solver context (symbolic
+  # analysis, factorization object, Jacobian assembly buffers) on the net
+  # across solves; the context re-analyses by itself when the Jacobian
+  # pattern differs, the assembly replay is invalidated when the bus types
+  # changed since the last solve. Without power mode the context lifetime
+  # is exactly this solve (per island on the island path); nothing is
+  # shared across runpf_rectangular! invocations or threads either way.
+  if power_mode
+    if !(power_cache.workspace isa RectangularIterationWorkspace) || length(power_cache.workspace.qload_pu) != nb
+      power_cache.workspace = RectangularIterationWorkspace(nb)
+    end
+    workspace = power_cache.workspace
+    fill!(workspace.qload_pu, 0.0)
+    fill!(workspace.current_pv_qreq_pu, NaN)
+    fill!(workspace.prev_pv_qreq_pu, NaN)
+    fill!(workspace.lock_mask, false)
+    if power_cache.linear_ctx === nothing
+      power_cache.linear_ctx = _power_mode_new_context()
+    else
+      power_cache.context_reuse_count += 1
+    end
+    linear_ctx = power_cache.linear_ctx
+    bus_type_fp = hash(bus_types)
+    if power_cache.bus_type_fingerprint != bus_type_fp
+      linear_ctx.assembly.valid = false
+      power_cache.bus_type_fingerprint = bus_type_fp
+    end
+  else
+    workspace = RectangularIterationWorkspace(nb)
+    linear_ctx = newton_linear_solver_context(linear_solver)
+  end
   if performance_profile !== nothing
     performance_profile[:rectangular_workspace_reuse] = rectangular_workspace_reuse
     performance_profile[:rectangular_workspace_preallocated] = rectangular_workspace_preallocated
     performance_profile[:rectangular_workspace_reason] = rectangular_workspace_reason
     performance_profile[:rectangular_workspace_nbus] = nb
     performance_profile[:rectangular_workspace_nstate] = 2 * max(nb - 1, 0)
-    performance_profile[:linear_solver_backend] = linear_solver
+    performance_profile[:linear_solver_backend] = power_mode ? power_mode_linear_solver_backend() : linear_solver
+    performance_profile[:power_mode] = power_mode
     # the effective update and Q-limit settings of this solve, so a library
     # caller can read what the keyword defaults resolved to (0.30.0: the
     # defaults come from DEFAULT_QLIMIT_CONFIG and DEFAULT_NEWTON_UPDATE)
@@ -1106,7 +1151,7 @@ function runpf_rectangular!(
   end
 
   mismatch_diagnostics = _perf_profile_time!(performance_profile, :solver_final_mismatch_diagnostics) do
-    _rectangular_mismatch_diagnostics(Ybus, V, S, bus_types, Vset, slack_idx, final_pv_voltage_residual; net, history, step_diagnostics, best_finite_iteration, best_finite_voltage, last_finite_iteration, last_finite_voltage, first_nonfinite_iteration, first_nonfinite_voltage)
+    _rectangular_mismatch_diagnostics(Ybus, V, S, bus_types, Vset, slack_idx, final_pv_voltage_residual; light = power_mode, net, history, step_diagnostics, best_finite_iteration, best_finite_voltage, last_finite_iteration, last_finite_voltage, first_nonfinite_iteration, first_nonfinite_voltage)
   end
 
   switch_counts, oscillating_buses, max_switching_exceeded, q_limit_active_set_ok, converged, rejection_reason, final_reason, final_status, status = _perf_profile_time!(performance_profile, :solver_status_bookkeeping) do
@@ -1170,7 +1215,11 @@ function runpf_rectangular!(
   end
   # a switched-off detection prints nothing (issue #387): the block used to
   # appear with NOT_CHECKED and NaN metrics on every solve
-  if verbose > 0 && wrong_branch_detection !== :off
+  rescue_requested = wrong_branch_rescue || wrong_branch_detection == :rescue
+  if verbose > 0 && wrong_branch_detection !== :off && status.branch_quality_status === :not_checked
+    # not evaluated (no converged solution): one line, no metrics (0.30.1)
+    println(stdout, "Wrong-branch check: not checked (", String(status.branch_quality_reason), ")")
+  elseif verbose > 0 && wrong_branch_detection !== :off
     println(stdout, "Wrong-branch check:")
     @printf(stdout, "  status           = %s\n", uppercase(String(status.branch_quality_status)))
     @printf(stdout, "  detection_mode   = %s\n", String(status.wrong_branch_detection))
@@ -1182,9 +1231,13 @@ function runpf_rectangular!(
     @printf(stdout, "  max_branch_angle = %.6f\n", status.branch_quality_metrics.max_branch_angle_deg)
     @printf(stdout, "  violation_count  = %d\n", status.branch_quality_metrics.branch_angle_violation_count)
     !isnothing(status.branch_quality_metrics.worst_branch) && @printf(stdout, "  worst_branch     = %s\n", string(status.branch_quality_metrics.worst_branch))
-    @printf(stdout, "  rescue_requested = %s\n", string(wrong_branch_rescue || wrong_branch_detection == :rescue))
-    @printf(stdout, "  rescue_attempted = %s\n", string(status.wrong_branch_rescue_attempted))
-    @printf(stdout, "  rescue_reason    = %s\n", String(status.wrong_branch_rescue_reason))
+    # the rescue lines only when a rescue was requested (off prints no
+    # sub-parameters, 0.30.1)
+    if rescue_requested
+      @printf(stdout, "  rescue_requested = %s\n", string(rescue_requested))
+      @printf(stdout, "  rescue_attempted = %s\n", string(status.wrong_branch_rescue_attempted))
+      @printf(stdout, "  rescue_reason    = %s\n", String(status.wrong_branch_rescue_reason))
+    end
   end
 
   return iters, converged ? 0 : 1
@@ -1228,6 +1281,7 @@ function runpf_rectangular!(
   autodamp::Bool = false,
   autodamp_min::Float64 = 0.05,
   newton_update::Symbol = DEFAULT_NEWTON_UPDATE,
+  power_mode::Bool = false,
   merit_enabled::Bool = false,
   merit_armijo_c1::Float64 = 1.0e-4,
   merit_scale_p::Float64 = 1.0,
@@ -1325,6 +1379,7 @@ function runpf_rectangular!(
     autodamp = autodamp,
     autodamp_min = autodamp_min,
     newton_update = newton_update,
+    power_mode = power_mode,
     merit_enabled = merit_enabled,
     merit_armijo_c1 = merit_armijo_c1,
     merit_scale_p = merit_scale_p,
@@ -1440,6 +1495,7 @@ function _runpf_config_once!(net::Net, config::PowerFlowConfig; verbose::Int = 0
     autodamp = config.autodamp,
     autodamp_min = config.autodamp_min,
     newton_update = config.newton_update,
+    power_mode = config.power_mode,
     merit_enabled = config.merit.enabled,
     merit_armijo_c1 = config.merit.armijo_c1,
     merit_scale_p = config.merit.scale_p,
@@ -1976,6 +2032,7 @@ function runpf!(
   autodamp::Bool = false,
   autodamp_min::Float64 = 0.05,
   newton_update::Symbol = DEFAULT_NEWTON_UPDATE,
+  power_mode::Bool = false,
   merit_enabled::Bool = false,
   merit_armijo_c1::Float64 = 1.0e-4,
   merit_scale_p::Float64 = 1.0,
@@ -2164,6 +2221,7 @@ function runpf!(
           autodamp = autodamp,
           autodamp_min = autodamp_min,
           newton_update = newton_update,
+          power_mode = power_mode,
           merit_enabled = merit_enabled,
           merit_armijo_c1 = merit_armijo_c1,
           merit_scale_p = merit_scale_p,
@@ -2462,6 +2520,7 @@ function runpf!(
         autodamp = autodamp,
         autodamp_min = autodamp_min,
         newton_update = newton_update,
+        power_mode = power_mode,
         merit_enabled = merit_enabled,
         merit_armijo_c1 = merit_armijo_c1,
         merit_scale_p = merit_scale_p,
@@ -2558,6 +2617,7 @@ function runpf!(
         autodamp = autodamp,
         autodamp_min = autodamp_min,
         newton_update = newton_update,
+        power_mode = power_mode,
         merit_enabled = merit_enabled,
         merit_armijo_c1 = merit_armijo_c1,
         merit_scale_p = merit_scale_p,

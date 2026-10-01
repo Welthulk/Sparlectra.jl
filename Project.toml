@@ -26,13 +26,16 @@ ZipArchives = "49080126-0e18-4c2a-b176-c102e4b3760c"
 
 [weakdeps]
 BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
+KLU = "ef3ab10e-7fda-4108-b977-705223b18434"
 
 [extensions]
 SparlectraBenchmarkToolsExt = "BenchmarkTools"
+SparlectraKLUExt = "KLU"
 
 [compat]
 AnalyticLoadFlow = "0.9.16"
 BenchmarkTools = "1.6"
+KLU = "0.6"
 Dates = "1"
 DelimitedFiles = "1"
 Downloads = "1"
@@ -54,9 +57,10 @@ julia = "1.12"
 
 [extras]
 BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
+KLU = "ef3ab10e-7fda-4108-b977-705223b18434"
 Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 Unicode = "4ec0a83e-493e-50e2-b9ac-8f72acf5a8f5"
 
 [targets]
-test = ["Test", "BenchmarkTools", "Unicode", "Pkg"]
+test = ["Test", "BenchmarkTools", "KLU", "Unicode", "Pkg"]

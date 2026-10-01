@@ -36,7 +36,9 @@ function run_install_tests()
         mktempdir() do tmp
             root = Sparlectra.SPARLECTRA_ROOT
             copy_dir = joinpath(tmp, "checkout")
-            for item in ("Project.toml", "Manifest.toml", "start_webui.jl", "src", "tools", joinpath("app", "Project.toml"), joinpath("app", "src"))
+            # ext/ holds the package extensions; since 0.30.1 the application
+            # loads KLU, so its extension must be in the checkout
+            for item in ("Project.toml", "Manifest.toml", "start_webui.jl", "src", "ext", "tools", joinpath("app", "Project.toml"), joinpath("app", "src"))
                 src = joinpath(root, item)
                 dst = joinpath(copy_dir, item)
                 mkpath(dirname(dst))

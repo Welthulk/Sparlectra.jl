@@ -293,7 +293,7 @@ function _rectangular_step_statistics(step_diagnostics)
   )
 end
 
-function _rectangular_mismatch_diagnostics(Ybus, V::Vector{ComplexF64}, S::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int, final_pv_voltage_residual::Float64; net = nothing, history = Float64[], step_diagnostics = nothing, top_n::Int = 10, best_finite_iteration::Int = 0, best_finite_voltage = nothing, last_finite_iteration::Int = 0, last_finite_voltage = nothing, first_nonfinite_iteration::Int = 0, first_nonfinite_voltage = nothing)
+function _rectangular_mismatch_diagnostics(Ybus, V::Vector{ComplexF64}, S::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int, final_pv_voltage_residual::Float64; net = nothing, history = Float64[], step_diagnostics = nothing, top_n::Int = 10, best_finite_iteration::Int = 0, best_finite_voltage = nothing, last_finite_iteration::Int = 0, last_finite_voltage = nothing, first_nonfinite_iteration::Int = 0, first_nonfinite_voltage = nothing, light::Bool = false)
   final_F = mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx)
   max_active_power_mismatch = 0.0
   max_reactive_power_mismatch = 0.0
@@ -309,9 +309,27 @@ function _rectangular_mismatch_diagnostics(Ybus, V::Vector{ComplexF64}, S::Vecto
     end
     row += 2
   end
-  mismatch_rows = _rectangular_mismatch_rows(Ybus, V, S, bus_types, Vset, slack_idx; net, top_n)
   step_stats = _rectangular_step_statistics(step_diagnostics)
   finite_history = filter(isfinite, history)
+  if light
+    # power mode (0.30.1): the ranked rows and the per-iteration snapshots
+    # cost 6 to 20 percent of a warm solve (bus-id lookups, three extra
+    # mismatch evaluations); the final status keeps the maxima and the
+    # worst row from the one evaluation above, the lists stay empty
+    worst_row = argmax(abs.(final_F))
+    worst_bus = 0
+    row = 1
+    @inbounds for bus in eachindex(V)
+      bus == slack_idx && continue
+      (row == worst_row || row + 1 == worst_row) && (worst_bus = bus; break)
+      row += 2
+    end
+    worst_equation = isodd(worst_row) ? :P : (worst_bus > 0 && bus_types[worst_bus] == :PQ ? :Q : :V)
+    mismatch_rows = (worst = (bus_id = worst_bus, bus_index = worst_bus, equation = worst_equation, mismatch = final_F[worst_row]), top = NamedTuple[])
+    primary_mismatch_rows = NamedTuple[]
+    top_mismatch_snapshots = NamedTuple[]
+  else
+  mismatch_rows = _rectangular_mismatch_rows(Ybus, V, S, bus_types, Vset, slack_idx; net, top_n)
   primary_mismatch_rows = !isempty(finite_history) && !all(isfinite, final_F) ?
     _rectangular_mismatch_snapshot(:last_finite_iteration, last_finite_iteration, Ybus, last_finite_voltage, S, bus_types, Vset, slack_idx; net, top_n).rows :
     mismatch_rows.top
@@ -320,6 +338,7 @@ function _rectangular_mismatch_diagnostics(Ybus, V::Vector{ComplexF64}, S::Vecto
     _rectangular_mismatch_snapshot(:last_finite_iteration, last_finite_iteration, Ybus, last_finite_voltage, S, bus_types, Vset, slack_idx; net, top_n),
   ]
   first_nonfinite_iteration > 0 && push!(top_mismatch_snapshots, _rectangular_mismatch_snapshot(:first_nonfinite_iteration, first_nonfinite_iteration, Ybus, first_nonfinite_voltage, S, bus_types, Vset, slack_idx; net, top_n))
+  end
   return (
     max_active_power_mismatch = max_active_power_mismatch,
     max_reactive_power_mismatch = max_reactive_power_mismatch,
@@ -439,6 +458,9 @@ end
 # into the final status (so island statuses carry per-island counters) and
 # written into the performance profile next to the workspace metadata.
 function _merge_linear_solver_diagnostics(status_build, performance_profile, linear_solver::Symbol, linear_ctx)
+  # the backend the context actually is (power mode may hold the KLU
+  # context of the extension while linear_solver names the configured one)
+  linear_solver = linear_ctx === nothing ? linear_solver : _newton_context_backend(linear_ctx)
   analyze_count = linear_ctx === nothing ? 0 : linear_ctx.analyze_count
   refactor_count = linear_ctx === nothing ? 0 : linear_ctx.refactor_count
   fallback_count = linear_ctx === nothing ? 0 : linear_ctx.fallback_count

@@ -23,6 +23,9 @@ module SparlectraApp
 
 using Sparlectra
 using AnalyticLoadFlow
+# KLU loads Sparlectra's KLU extension: the sparse LU of power mode (0.30.1)
+# for the service and the Web UI; the library itself stays KLU-free
+using KLU
 using Dates
 using Logging
 using Markdown  # Web UI artifact viewer renders Markdown reports

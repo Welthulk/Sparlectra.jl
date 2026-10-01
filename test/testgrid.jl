@@ -466,6 +466,51 @@ end
 # Both updates are Newton on the same equations and reach the same state; the
 # polar update from the flat start of the shipped 60-bus case converges, and
 # the unsupported value is refused.
+# Power mode (0.30.1): the Ybus, the symbolic analysis and the work arrays
+# stay on the network between solves. The solution with the switch equals
+# the solution without it to 1e-12 pu on three shipped cases (warm solve on
+# the same net, Ybus and context reused), a branch taken out of service
+# after a power-mode solve gives the solution a fresh net gives (the Ybus
+# fingerprint moves, the context re-analyses), and the cache does not
+# survive a deepcopy (native factorization memory is never shared).
+function test_power_mode_same_solution_and_topology_change()::Bool
+  _state(net) = [n._vm_pu * cis(deg2rad(n._va_deg)) for n in net.nodeVec]
+  for f in ("sp_case118.m", "sp_case300.m", "sp_case1354.m")
+    path = joinpath(dirname(@__DIR__), "data", "mpower", f)
+    ref_net = Sparlectra.createNetFromMatPowerFile(filename = path)
+    it_ref, erg_ref = runpf!(ref_net, 30, 1e-10, 0; qlimits_enabled = false)
+    erg_ref == 0 || return false
+    net = Sparlectra.createNetFromMatPowerFile(filename = path)
+    runpf!(net, 30, 1e-10, 0; qlimits_enabled = false, power_mode = true)
+    # the warm solve: restart from the file columns on the same net
+    fresh = Sparlectra.createNetFromMatPowerFile(filename = path)
+    for (a, b) in zip(net.nodeVec, fresh.nodeVec)
+      a._vm_pu = b._vm_pu
+      a._va_deg = b._va_deg
+    end
+    it_pm, erg_pm = runpf!(net, 30, 1e-10, 0; qlimits_enabled = false, power_mode = true)
+    erg_pm == 0 && it_pm == it_ref || return false
+    maximum(abs.(_state(net) .- _state(ref_net))) <= 1e-12 || return false
+    cache = net._power_cache
+    cache isa Sparlectra.PowerModeCache && cache.ybus_reuse_count >= 1 && cache.context_reuse_count >= 1 || return false
+    # a copy starts without the cache
+    copied = deepcopy(net)
+    copied._power_cache isa Sparlectra.PowerModeCache && copied._power_cache.ybus === nothing || return false
+    # topology change: the first in-service non-radial branch out, solve again
+    br = net.branchVec[1]
+    Sparlectra.setBranchStatus!(br, false)
+    Sparlectra.setBranchStatus!(ref_net.branchVec[1], false)
+    it_t, erg_t = runpf!(net, 30, 1e-10, 0; qlimits_enabled = false, power_mode = true)
+    it_r, erg_r = runpf!(ref_net, 30, 1e-10, 0; qlimits_enabled = false)
+    erg_t == erg_r || return false
+    if erg_r == 0
+      maximum(abs.(_state(net) .- _state(ref_net))) <= 1e-10 || return false
+      cache.ybus_reuse_count == 1 || return false   # the fingerprint moved, the Ybus was rebuilt
+    end
+  end
+  return true
+end
+
 function test_rectangular_polar_update_reaches_the_same_solution()::Bool
   net_r = load_fixture_net("sp_case60")
   net_p = load_fixture_net("sp_case60")
@@ -3526,6 +3571,7 @@ function run_grid_fast_tests()
       @test test_rectangular_autodamp_backtracks_oversized_step() == true
       @test test_rectangular_polar_update_rotates_without_inflation() == true
       @test test_rectangular_polar_update_reaches_the_same_solution() == true
+      @test test_power_mode_same_solution_and_topology_change() == true
       @test test_rectangular_nonfinite_mismatch_diagnostics_use_finite_history() == true
       @test test_rectangular_final_status_best_mismatch_ignores_nan() == true
       @test test_rectangular_start_projection_improves_dc_seed() == true

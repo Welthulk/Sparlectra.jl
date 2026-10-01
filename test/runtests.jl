@@ -47,6 +47,18 @@ if Base.find_package("BenchmarkTools") === nothing
   end
   push!(LOAD_PATH, _benchmark_env)
 end
+# KLU the same way (0.30.1): the extension behind power mode's sparse LU;
+# the factorized-solver test loads it and reports whether it ran
+if Base.find_package("KLU") === nothing
+  _klu_env = joinpath(first(DEPOT_PATH), "environments", "sparlectra-test-klu")
+  if !isfile(joinpath(_klu_env, "Manifest.toml"))
+    import Pkg
+    Pkg.activate(_klu_env) do
+      Pkg.add("KLU"; io = devnull)
+    end
+  end
+  push!(LOAD_PATH, _klu_env)
+end
 using SparlectraApp
 using Test
 using Logging

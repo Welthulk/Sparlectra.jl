@@ -83,6 +83,13 @@ power_flow:
   # start only this way); rectangular adds the step to the complex voltage
   # (the update up to 0.20.5).
   newton_update: polar
+  # Power mode for repeated solves on one network (scenario engine, N-1,
+  # benchmarks on a persistent model): the Ybus, the symbolic analysis of
+  # the sparse LU (KLU when `using KLU` is loaded next to Sparlectra) and
+  # the work arrays stay with the network between solves, the ranked
+  # mismatch diagnostics are skipped during the solve. Same Jacobian, same
+  # update, same solution; off for a single run.
+  power_mode: false
   # Promote the strongest injection (external network injection preferred,
   # then largest generator) to slack when the case registers none.
   auto_slack: false

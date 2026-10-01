@@ -302,9 +302,13 @@ function _import_sparlectra_context(casefile::AbstractString, path::Union{Nothin
   # list, otherwise one line naming the case. Printing twelve MATPOWER
   # option lines before every run made the tool read like a MATPOWER
   # front end.
-  if cfg.output.console_auto_profile === :full
+  # 0.30.1: with the scan off and every convention at its standard value the
+  # option dump stays silent whatever console_auto_profile says (an option
+  # that is off prints no sub-parameters)
+  conventions_in_play = cfg.model.auto_profile !== :off || !_matpower_conventions_standard(cfg)
+  if cfg.output.console_auto_profile === :full && conventions_in_play
     println(stdout, "Runtime casefile: ", filename)
-    print_matpower_import_runtime_options(stdout, "Original MATPOWER import options", cfg)
+    print_matpower_import_runtime_options(stdout, "experimental: Original MATPOWER import options", cfg)
   else
     println(stdout, "Case: ", filename)
   end
@@ -331,9 +335,7 @@ function _import_sparlectra_context(casefile::AbstractString, path::Union{Nothin
     if model_cfg.auto_profile_log
       write_matpower_import_auto_profile(stdout, auto_profile_result, cfg; casefile = filename)
     end
-  elseif cfg.output.console_auto_profile === :full
-    # the full option list is an explicit request (console_auto_profile:
-    # full) and is printed whatever the conventions are
+  elseif cfg.output.console_auto_profile === :full && conventions_in_play
     print_matpower_import_runtime_options(stdout, "experimental: Final effective MATPOWER import options", cfg)
   elseif cfg.output.console_auto_profile !== :off && !_matpower_conventions_standard(cfg)
     # the scan is off and a convention was set away from the standard
