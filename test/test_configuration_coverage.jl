@@ -138,7 +138,7 @@ function test_configuration_yaml_key_coverage()
     leaves = _canonical_yaml_leaf_keys()
 
     mapped_keys = Set([
-      "power_flow.method", "power_flow.mode", "power_flow.solver", "power_flow.linear_solver", "power_flow.apslf.order", "power_flow.apslf.use_pade", "power_flow.apslf.nr_polish", "power_flow.apslf.convergence_radius", "power_flow.apslf_start.enabled", "power_flow.apslf_start.order", "power_flow.flatstart", "power_flow.tol", "power_flow.max_iter", "power_flow.autodamp", "power_flow.autodamp_min", "power_flow.auto_slack", "power_flow.rescue", "power_flow.dc.fallback", "power_flow.wrong_branch_detection", "power_flow.wrong_branch_rescue", "power_flow.wrong_branch_min_vm_pu", "power_flow.wrong_branch_max_vm_pu", "power_flow.wrong_branch_max_angle_spread_deg", "power_flow.wrong_branch_max_branch_angle_deg", "power_flow.wrong_branch_min_low_vm_count", "power_flow.wrong_branch_min_vn_kV", "power_flow.wrong_branch_low_vm_share", "power_flow.wrong_branch_max_bus_angle_deg", "power_flow.wrong_branch_max_plain_steps", "power_flow.wrong_branch_collapse_vm_pu", "power_flow.wrong_branch_rescue_max_attempts", "power_flow.rectangular_workspace_reuse", "power_flow.rectangular_preallocate_workspace", "power_flow.rectangular_workspace_min_buses",
+      "power_flow.method", "power_flow.mode", "power_flow.solver", "power_flow.linear_solver", "power_flow.newton_update", "power_flow.apslf.order", "power_flow.apslf.use_pade", "power_flow.apslf.nr_polish", "power_flow.apslf.convergence_radius", "power_flow.apslf_start.enabled", "power_flow.apslf_start.order", "power_flow.flatstart", "power_flow.tol", "power_flow.max_iter", "power_flow.autodamp", "power_flow.autodamp_min", "power_flow.auto_slack", "power_flow.rescue", "power_flow.dc.fallback", "power_flow.wrong_branch_detection", "power_flow.wrong_branch_rescue", "power_flow.wrong_branch_min_vm_pu", "power_flow.wrong_branch_max_vm_pu", "power_flow.wrong_branch_max_angle_spread_deg", "power_flow.wrong_branch_max_branch_angle_deg", "power_flow.wrong_branch_min_low_vm_count", "power_flow.wrong_branch_min_vn_kV", "power_flow.wrong_branch_low_vm_share", "power_flow.wrong_branch_max_bus_angle_deg", "power_flow.wrong_branch_max_plain_steps", "power_flow.wrong_branch_collapse_vm_pu", "power_flow.wrong_branch_rescue_max_attempts", "power_flow.rectangular_workspace_reuse", "power_flow.rectangular_preallocate_workspace", "power_flow.rectangular_workspace_min_buses",
       "power_flow.islands.enabled", "power_flow.islands.mode", "power_flow.islands.reference_policy", "power_flow.islands.diagnostic_continue_after_failure",
       "power_flow.distributed_slack.enabled", "power_flow.distributed_slack.p_mode", "power_flow.distributed_slack.respect_p_limits", "power_flow.distributed_slack.fallback", "power_flow.distributed_slack.weights",
       "power_flow.external_grid.enabled", "power_flow.external_grid.source", "power_flow.external_grid.sk_MVA", "power_flow.external_grid.rx",
@@ -197,6 +197,7 @@ function test_configuration_yaml_key_coverage()
       "power_flow.max_iter" => :PowerFlowConfig,
       "power_flow.autodamp" => :PowerFlowConfig,
       "power_flow.autodamp_min" => :PowerFlowConfig,
+      "power_flow.newton_update" => :PowerFlowConfig,
       "power_flow.wrong_branch_detection" => :PowerFlowConfig,
       "power_flow.start_mode.angle_mode" => :StartModeConfig,
       "power_flow.start_mode.voltage_mode" => :StartModeConfig,
@@ -584,6 +585,41 @@ power_flow:
     end
     @test err isa ArgumentError
     @test occursin("classic_simultaneous", sprint(showerror, err))
+    # one default per key: the packaged template, the struct (a library run
+    # without a configuration file) and the loader fallback (a user file
+    # that omits the key) agree field by field; guard.max_switches was 3 in
+    # the template and 10 in the struct up to 0.20.2
+    tmpl = Sparlectra.SparlectraConfig(Sparlectra.load_yaml_dict(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH)).powerflow.qlimits
+    from_struct = Sparlectra.QLimitConfig()
+    from_empty = Sparlectra.QLimitConfig(Dict{String,Any}())
+    for f in fieldnames(Sparlectra.QLimitConfig)
+      @test (f, getfield(from_struct, f)) == (f, getfield(tmpl, f))
+      @test (f, getfield(from_empty, f)) == (f, getfield(tmpl, f))
+    end
+    # 0.30.0 agreement for the ten release keys: template = struct = loader
+    # fallback = the keyword defaults the solver entry points resolve to
+    # (read back from the performance profile of a config-less library run
+    # on the shipped sp_case118) = the effective configuration of a service
+    # run. The keyword defaults read DEFAULT_QLIMIT_CONFIG and
+    # DEFAULT_NEWTON_UPDATE; the net and the MATPOWER importer read the
+    # hysteresis and cooldown from the same constant, so final_q_accept_pu
+    # ("auto" = 2 * hysteresis) agrees too.
+    tmpl_cfg = Sparlectra.SparlectraConfig(Sparlectra.load_yaml_dict(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH))
+    empty_cfg = Sparlectra.SparlectraConfig(Dict{String,Any}("config_version" => 1))
+    expected = (newton_update = :polar, start_iter = 3, start_mode = :iteration_or_auto, guard = true, guard_min_q_range_pu = 0.02,
+      guard_narrow_range_mode = :lock_pq, guard_violation_mode = :lock_pq, guard_max_switches = 3, final_q_accept_pu = 0.02, auto_profile = :off)
+    for cfg in (tmpl_cfg, empty_cfg, Sparlectra.SparlectraConfig())
+      q = cfg.powerflow.qlimits
+      @test (cfg.powerflow.newton_update, q.start_iter, q.start_mode, q.guard, q.guard_min_q_range_pu, q.guard_narrow_range_mode, q.guard_violation_mode, q.guard_max_switches, q.final_q_accept_pu, cfg.model.auto_profile) == values(expected)
+    end
+    @test Sparlectra.DEFAULT_NEWTON_UPDATE === expected.newton_update
+    lib_net = Sparlectra.createNetFromMatPowerFile(filename = joinpath(dirname(@__DIR__), "data", "mpower", "sp_case118.m"))
+    prof = Dict{Symbol,Any}()
+    redirect_stdout(devnull) do
+      runpf!(lib_net, 30, 1e-8, 0; performance_profile = prof)
+    end
+    @test (prof[:newton_update], prof[:qlimit_start_iter], prof[:qlimit_start_mode], prof[:qlimit_guard], prof[:qlimit_guard_min_q_range_pu], prof[:qlimit_guard_narrow_range_mode], prof[:qlimit_guard_violation_mode], prof[:qlimit_guard_max_switches], prof[:final_q_accept_pu]) ==
+          (expected.newton_update, expected.start_iter, expected.start_mode, expected.guard, expected.guard_min_q_range_pu, expected.guard_narrow_range_mode, expected.guard_violation_mode, expected.guard_max_switches, expected.final_q_accept_pu)
   end)() end
   return nothing
 end

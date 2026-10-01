@@ -138,6 +138,7 @@ function _webui_test_form(casefile, config_file, output_root)
     "power_flow_external_grid_sk_mva" => "2000.0",
     "power_flow_external_grid_rx" => "0.1",
     "power_flow_linear_solver" => "umfpack",
+    "power_flow_newton_update" => "polar",
     "power_flow_rescue" => "true",
     "power_flow_auto_slack" => "true",
     "runtime_parallel_enabled" => "true",
@@ -683,9 +684,10 @@ settings:
       start_voltage_select = _webui_select_block(case14_form, "power_flow_start_voltage_mode")
       @test occursin("value=\"profile_blend\"", start_voltage_select)
       @test !occursin("bus_vm_va_blend", start_voltage_select)
-      # the auto-profile selector renders on the Case page
+      # the auto-profile selector renders on the Case page, in the
+      # experimental convention block, at the template default off (0.30.0)
       case14_case_page = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/case?casefile=$(SparlectraApp._webui_urlencode(case14))"; output_root = root).body)
-      _webui_assert_selected(case14_case_page, "matpower_import_auto_profile", "recommend")
+      _webui_assert_selected(case14_case_page, "matpower_import_auto_profile", "off")
       _webui_assert_selected(case14_form, "output_logfile_results", "full")
 
       request_form = _webui_test_form("case145.m", "configuration.yaml", root)
@@ -1750,9 +1752,10 @@ form:
       # solver/output/expert material on the Settings page
       case_page_html = SparlectraApp.render_case_page(output_root = output_root)
       settings_page_html = SparlectraApp.render_settings_page(output_root = output_root)
-      @test occursin("<option value=\"off\">off</option>", case_page_html)
-      @test occursin("<option value=\"recommend\" selected>recommend</option>", case_page_html)
+      @test occursin("<option value=\"off\" selected>off</option>", case_page_html)
+      @test occursin("<option value=\"recommend\">recommend</option>", case_page_html)
       @test occursin("<option value=\"apply\">apply</option>", case_page_html)
+      @test occursin("<legend>MATPOWER conventions (experimental)</legend>", case_page_html)
       @test occursin("<legend>MATPOWER import conventions</legend>", case_page_html)
       @test !occursin("matpower_simultaneous", case_page_html)
       @test !occursin("matpower_one_at_a_time", case_page_html)
@@ -1816,6 +1819,7 @@ form:
         "power_flow_qlimits_guard_log" => "power_flow.qlimits.guard.log",
         "power_flow_solver" => "power_flow.solver",
         "power_flow_linear_solver" => "power_flow.linear_solver",
+        "power_flow_newton_update" => "power_flow.newton_update",
         "power_flow_apslf_order" => "power_flow.apslf.order",
         "power_flow_apslf_use_pade" => "power_flow.apslf.use_pade",
         "power_flow_apslf_nr_polish" => "power_flow.apslf.nr_polish",
@@ -1998,9 +2002,10 @@ form:
       # distributed-slack options, and the non-convergence handling block); these must be
       # marked so client-side JS can gray them out when power_flow_solver=apslf or
       # power_flow_solver=dc is selected.
-      # 12: the ten NR-only groups plus the APSLF and DC start-value
-      # checkboxes, which the flat start greys as well
-      @test count("data-nr-only-field", settings_page_html) == 12
+      # 13: the ten NR-only groups, the APSLF and DC start-value
+      # checkboxes, which the flat start greys as well, and the Experimental
+      # block (the Newton update, 0.30.0)
+      @test count("data-nr-only-field", settings_page_html) == 13
       @test occursin("<fieldset class=\"distributed-slack-options\" data-nr-only-field>", settings_page_html)
       # The external-grid conversion is a net transformation, not an NR-only
       # solver option — it must stay usable with the APSLF and DC solvers, so

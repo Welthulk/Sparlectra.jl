@@ -32,6 +32,7 @@ function run_complex_nr_rectangular(
   damp::Float64 = 1.0,
   autodamp::Bool = false,
   autodamp_min::Float64 = 0.05,
+  newton_update::Symbol = DEFAULT_NEWTON_UPDATE,
   wrong_branch_detection::Symbol = :warn,
   wrong_branch_rescue::Bool = false,
   wrong_branch_min_vm_pu::Float64 = 0.70,
@@ -60,7 +61,7 @@ function run_complex_nr_rectangular(
       return V, true, iter, history
     end
 
-    V = complex_newton_step_rectangular(Ybus, V, S; slack_idx = slack_idx, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, bus_types = bus_types, Vset = Vset, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm, performance_profile = performance_profile)
+    V = complex_newton_step_rectangular(Ybus, V, S; slack_idx = slack_idx, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, newton_update = newton_update, bus_types = bus_types, Vset = Vset, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm, performance_profile = performance_profile)
   end
 
   return V, false, maxiter, history

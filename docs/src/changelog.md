@@ -1,3 +1,12 @@
+# Version 0.30.0 - 2026-10-01
+
+The Newton step is applied in polar form; Q-limit defaults follow the packaged template.
+
+- Changed: the Newton update is applied in polar form by default (`power_flow.newton_update: polar`); `rectangular` remains available. Converges from a flat start where the rectangular update diverged (case9241pegase in 7 iterations) and saves 1 to 3 iterations on transmission cases.
+- Changed: Q-limit defaults follow the packaged template (`start_iter` 3, `start_mode` `iteration_or_auto`, guard on with `min_q_range_pu` 0.02, `max_switches` 3).
+- Changed: MATPOWER convention overrides and the convention scan are an experimental feature, off by default and silent unless enabled.
+- Added: documentation pages on the Newton update and on start strategies by case.
+
 # Version 0.20.5 - 2026-09-30
 
 Defects found by the grid-bench convergence study.

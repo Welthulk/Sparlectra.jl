@@ -99,6 +99,30 @@ Steps:
 
 5. Update the state with fixed or automatic damping.
 
+### [Newton Update: Rectangular or Polar](@id newton_update)
+
+The step `Δx = (ΔV_r, ΔV_i)` is a tangent vector at the current iterate.
+`power_flow.newton_update` selects how it is applied to the bus voltages:
+
+| value | update of every non-slack bus | property |
+|---|---|---|
+| `rectangular` (the update up to 0.20.5) | `V ← V + ΔV` | A pure rotation `ΔV/V = jb` inflates the magnitude by `sqrt(1 + b²)`. |
+| `polar` (default) | `V ← V (1 + a) e^{jb}` with `ΔV/V = a + jb` | Magnitude times `1 + a`, angle plus `b`: the polar Newton update, exact for rotations and for scalings. |
+
+Both are Newton's method with the same Jacobian and converge to the same
+state; they differ in the iterates. From a flat start the first steps have
+to rotate whole regions by the solution angles (60 to 70 degrees on the
+large PEGASE files), and the linear update lands far from the unit circle:
+on case9241pegase the first rectangular step puts 9226 of 9241 buses above
+1.1 pu (maximum 7 pu) and the iteration diverges, while the polar update
+keeps every magnitude between 0.91 and 1.21 pu and converges in six steps.
+With `polar` the rectangular Jacobian reproduces MATPOWER's `newtonpf`
+iterates to rounding, step for step. Damping (`autodamp`, the merit line
+search, the trust region) scales the tangent step before it is applied, so
+it works with either update. The worked example and the first-step table
+are on [Newton update](newton_update.md); the recipes per case on
+[Start strategies by case](start_strategies.md).
+
 ### Automatic Rectangular Newton Damping
 
 For difficult flat-start studies, enable residual-based backtracking:

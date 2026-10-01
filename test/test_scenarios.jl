@@ -405,7 +405,9 @@ function run_scenario_engine_extended_tests()
     # below, 240 rows instead of 82), no longer the external pre-engine
     # oracle on the downloaded case118. The fixture is created by the first
     # run that finds it missing and printed LOUDLY so it gets committed; from
-    # then on every run compares against it.
+    # then on every run compares against it. Regenerated at 0.30.0 (polar
+    # Newton update, template Q-limit defaults): 3 of 240 contingencies end
+    # in another active set, the rest differ in iteration counts only.
     fixture = abspath(joinpath(@__DIR__, "fixtures", "contingency_sp_case118_n1.csv"))
     case_path = abspath(joinpath(dirname(@__DIR__), "data", "mpower", "sp_case118.m"))
     @test isfile(case_path)
@@ -482,12 +484,20 @@ function run_scenario_engine_extended_tests()
     # and CSV format on every install without a download; sp_case60 keeps
     # the tracked file small (10k, the 188 variant carried 27-bus violation
     # lists per row).
+    # Regenerated at 0.30.0 for the polar Newton update and the template's
+    # Q-limit defaults (iteration counts one lower on most rows, end states
+    # at the 1e-8 level): like the case118 gate, the first run that finds
+    # the fixture missing creates it from the engine's own CSV and says so.
     fixture = abspath(joinpath(@__DIR__, "fixtures", "contingency_sp_case60_n1_e93eafc.csv"))
-    @test isfile(fixture)
     net = Sparlectra.importSCF(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case60.scf.json")))
     cases = vcat(Sparlectra.generateN1Branches(net), Sparlectra.generateN1Generators(net))
     results = Sparlectra.runContingencies!(net, cases)
     out = Sparlectra.writeContingencyResultsCSV(joinpath(mktempdir(), "sp60_n1.csv"), results)
+    if !isfile(fixture)
+      cp(out, fixture)
+      println("      scenario engine sp_case60 fixture: CREATED ", fixture, " (commit it; this run compared nothing)")
+    end
+    @test isfile(fixture)
     @test _csv_fixture_matches(out, fixture)
   end)() end
 

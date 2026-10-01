@@ -118,8 +118,8 @@ end
 Typed reactive-power limit switching configuration used by power-flow runners.
 """
 Base.@kwdef struct QLimitConfig
-  start_iter::Int = 2
-  start_mode::Symbol = :iteration
+  start_iter::Int = 3
+  start_mode::Symbol = :iteration_or_auto
   auto_q_delta_pu::Float64 = 1e-4
   hysteresis_pu::Float64 = 0.01
   cooldown_iters::Int = 1
@@ -131,15 +131,15 @@ Base.@kwdef struct QLimitConfig
   # an overshoot up to hysteresis_pu is within_hysteresis, up to this value
   # bounded (accepted with a warning), beyond it a remaining violation
   final_q_accept_pu::Float64 = 0.02
-  guard::Bool = false
-  guard_min_q_range_pu::Float64 = 1e-4
+  guard::Bool = true
+  guard_min_q_range_pu::Float64 = 0.02
   guard_zero_range_mode::Symbol = :lock_pq
-  guard_narrow_range_mode::Symbol = :prefer_pq
-  guard_max_switches::Int = 10
+  guard_narrow_range_mode::Symbol = :lock_pq
+  guard_max_switches::Int = 3
   guard_freeze_after_repeated_switching::Bool = true
   guard_accept_bounded_violations::Bool = false
   guard_max_remaining_violations::Int = 0
-  guard_violation_mode::Symbol = :delayed_switch
+  guard_violation_mode::Symbol = :lock_pq
   guard_violation_threshold_pu::Float64 = 1e-4
   guard_log::Bool = true
   trace_buses::Vector{Int} = Int[]
@@ -338,6 +338,12 @@ Base.@kwdef struct PowerFlowConfig
   max_iter::Int = 30
   autodamp::Bool = false
   autodamp_min::Float64 = 0.05
+  # how the Newton step is applied to the complex bus voltages:
+  # :polar (default since 0.21) applies it as the polar Newton update
+  # (magnitude times 1 + Re(dV/V), angle plus Im(dV/V)), which reproduces
+  # MATPOWER's newtonpf iterates with the same Jacobian; :rectangular adds
+  # the step (V + dV), the update up to 0.20.5
+  newton_update::Symbol = :polar
   # Promote the strongest injection to slack when none is registered
   # (ensureSlack!); off by default so data errors stay visible.
   auto_slack::Bool = false
@@ -392,6 +398,16 @@ end
 const WRONG_BRANCH_DETECTION_VALUES = [:off, :warn, :fail, :rescue]
 const POWERFLOW_SOLVER_VALUES = (:rectangular, :apslf, :dc)
 const POWERFLOW_LINEAR_SOLVER_VALUES = (:umfpack, :umfpack_reuse)
+const POWERFLOW_NEWTON_UPDATE_VALUES = (:rectangular, :polar)
+# The one source of the Q-limit and Newton-update defaults for the keyword
+# entry points (runpf!, runpf_rectangular!, run_control!): their keyword
+# defaults read these instead of carrying literals, so a library call
+# without a configuration gets the template's values. Literals that had
+# drifted from the template (start_iter 2 against 3, guard off against on,
+# min_q_range 1e-4 against 0.02) had drifted apart before 0.30.0; the
+# coverage test pins template, struct and loader fallback to each other.
+const DEFAULT_QLIMIT_CONFIG = QLimitConfig()
+const DEFAULT_NEWTON_UPDATE = PowerFlowConfig().newton_update
 # (single definition further below, next to the other island constants; a
 # duplicate Vector-typed definition used to live here)
 
@@ -1436,7 +1452,7 @@ function QLimitConfig(raw::AbstractDict)
   mode_off = mode_raw === :off
   qlimits_enabled = mode_off ? false : _raw_get(raw, "enabled", true)
   guard_raw = _raw_get(raw, "guard", Dict{String,Any}())
-  guard_enabled_default = guard_raw isa AbstractDict ? _as_bool_cfg(_raw_get(guard_raw, "enabled", false)) : _as_bool_cfg(guard_raw)
+  guard_enabled_default = guard_raw isa AbstractDict ? _as_bool_cfg(_raw_get(guard_raw, "enabled", true)) : _as_bool_cfg(guard_raw)
   guard_cfg = guard_raw isa AbstractDict ? guard_raw : Dict{String,Any}()
   merged = merge(Dict{Any,Any}(raw), Dict{Any,Any}(guard_cfg))
   hysteresis_value = _validate_nonnegative("power_flow.qlimits.hysteresis_pu", _as_float_cfg(_raw_get(merged, "hysteresis_pu", _raw_get(merged, "q_hyst_pu", 0.01))))
@@ -1450,10 +1466,10 @@ function QLimitConfig(raw::AbstractDict)
   final_q_accept_value = final_q_auto ? 2 * hysteresis_value : _validate_nonnegative("power_flow.qlimits.final_q_accept_pu", _as_float_cfg(final_q_raw))
   final_q_accept_value >= hysteresis_value || throw(ArgumentError("power_flow.qlimits.final_q_accept_pu must be >= hysteresis_pu ($(hysteresis_value)); got $(final_q_accept_value)."))
   return QLimitConfig(
-    start_iter = _as_int_cfg(_raw_get(merged, "start_iter", _raw_get(merged, "qlimit_start_iter", 2))),
+    start_iter = _as_int_cfg(_raw_get(merged, "start_iter", _raw_get(merged, "qlimit_start_iter", 3))),
     start_mode = _validate_allowed_symbol(
       "power_flow.qlimits.start_mode",
-      _as_symbol_cfg((_raw_get(merged, "start_mode", nothing) isa AbstractDict) ? _raw_get(merged, "qlimit_start_mode", :iteration) : _raw_get(merged, "start_mode", _raw_get(merged, "qlimit_start_mode", :iteration))),
+      _as_symbol_cfg((_raw_get(merged, "start_mode", nothing) isa AbstractDict) ? _raw_get(merged, "qlimit_start_mode", :iteration_or_auto) : _raw_get(merged, "start_mode", _raw_get(merged, "qlimit_start_mode", :iteration_or_auto))),
       QLIMIT_START_MODE_VALUES,
     ),
     auto_q_delta_pu = _validate_nonnegative("qlimit_auto_q_delta_pu", _as_float_cfg(_raw_get(merged, "auto_q_delta_pu", _raw_get(merged, "qlimit_auto_q_delta_pu", 1e-4)))),
@@ -1462,18 +1478,18 @@ function QLimitConfig(raw::AbstractDict)
     reenable_v_hyst_pu = _validate_nonnegative("power_flow.qlimits.reenable_v_hyst_pu", _as_float_cfg(_raw_get(merged, "reenable_v_hyst_pu", 1e-4))),
     final_q_accept_pu = final_q_accept_value,
     guard = _as_bool_cfg(_raw_get(raw, "qlimit_guard", guard_enabled_default)),
-    guard_min_q_range_pu = _validate_nonnegative("qlimit_guard_min_q_range_pu", _as_float_cfg(_raw_get(merged, "min_q_range_pu", _raw_get(merged, "guard_min_q_range_pu", _raw_get(merged, "qlimit_guard_min_q_range_pu", 1e-4))))),
+    guard_min_q_range_pu = _validate_nonnegative("qlimit_guard_min_q_range_pu", _as_float_cfg(_raw_get(merged, "min_q_range_pu", _raw_get(merged, "guard_min_q_range_pu", _raw_get(merged, "qlimit_guard_min_q_range_pu", 0.02))))),
     guard_zero_range_mode = _validate_allowed_symbol("power_flow.qlimits.guard.zero_range_mode", _as_symbol_cfg(_raw_get(merged, "zero_range_mode", _raw_get(merged, "guard_zero_range_mode", _raw_get(merged, "qlimit_guard_zero_range_mode", :lock_pq)))), QLIMIT_GUARD_ZERO_RANGE_MODE_VALUES),
     guard_narrow_range_mode = _validate_allowed_symbol(
       "power_flow.qlimits.guard.narrow_range_mode",
-      _as_symbol_cfg(_raw_get(merged, "narrow_range_mode", _raw_get(merged, "guard_narrow_range_mode", _raw_get(merged, "qlimit_guard_narrow_range_mode", :prefer_pq)))),
+      _as_symbol_cfg(_raw_get(merged, "narrow_range_mode", _raw_get(merged, "guard_narrow_range_mode", _raw_get(merged, "qlimit_guard_narrow_range_mode", :lock_pq)))),
       QLIMIT_GUARD_NARROW_RANGE_MODE_VALUES,
     ),
-    guard_max_switches = _as_int_cfg(_raw_get(merged, "max_switches", _raw_get(merged, "guard_max_switches", _raw_get(merged, "qlimit_guard_max_switches", 10)))),
+    guard_max_switches = _as_int_cfg(_raw_get(merged, "max_switches", _raw_get(merged, "guard_max_switches", _raw_get(merged, "qlimit_guard_max_switches", 3)))),
     guard_freeze_after_repeated_switching = _as_bool_cfg(_raw_get(merged, "freeze_after_repeated_switching", _raw_get(merged, "guard_freeze_after_repeated_switching", _raw_get(merged, "qlimit_guard_freeze_after_repeated_switching", true)))),
     guard_accept_bounded_violations = _as_bool_cfg(_raw_get(merged, "accept_bounded_violations", _raw_get(merged, "guard_accept_bounded_violations", _raw_get(merged, "qlimit_guard_accept_bounded_violations", false)))),
     guard_max_remaining_violations = _as_int_cfg(_raw_get(merged, "max_remaining_violations", _raw_get(merged, "guard_max_remaining_violations", _raw_get(merged, "qlimit_guard_max_remaining_violations", 0)))),
-    guard_violation_mode = _validate_allowed_symbol("power_flow.qlimits.guard.violation_mode", _as_symbol_cfg(_raw_get(merged, "violation_mode", _raw_get(merged, "guard_violation_mode", _raw_get(merged, "qlimit_guard_violation_mode", :delayed_switch)))), QLIMIT_GUARD_VIOLATION_MODE_VALUES),
+    guard_violation_mode = _validate_allowed_symbol("power_flow.qlimits.guard.violation_mode", _as_symbol_cfg(_raw_get(merged, "violation_mode", _raw_get(merged, "guard_violation_mode", _raw_get(merged, "qlimit_guard_violation_mode", :lock_pq)))), QLIMIT_GUARD_VIOLATION_MODE_VALUES),
     guard_violation_threshold_pu = _validate_nonnegative("qlimit_guard_violation_threshold_pu", _as_float_cfg(_raw_get(merged, "violation_threshold_pu", _raw_get(merged, "guard_violation_threshold_pu", _raw_get(merged, "qlimit_guard_violation_threshold_pu", 1e-4))))),
     guard_log = _as_bool_cfg(_raw_get(merged, "log", _raw_get(merged, "guard_log", _raw_get(merged, "qlimit_guard_log", true)))),
     trace_buses = _as_int_vector_cfg(_raw_get(merged, "trace_buses", _raw_get(merged, "qlimit_trace_buses", Int[]))),
@@ -1567,6 +1583,7 @@ function PowerFlowConfig(raw::AbstractDict)
     max_iter = _as_int_cfg(_raw_get(merged, "max_iter", _raw_get(merged, "max_ite", 30))),
     autodamp = autodamp,
     autodamp_min = _validate_positive("powerflow.autodamp_min", _as_float_cfg(_raw_get(merged, "autodamp_min", 0.05))),
+    newton_update = _validate_allowed_symbol("power_flow.newton_update", _as_symbol_cfg(_raw_get(merged, "newton_update", :polar)), POWERFLOW_NEWTON_UPDATE_VALUES),
     auto_slack = _as_bool_cfg(_raw_get(merged, "auto_slack", false)),
     rescue = _as_bool_cfg(_raw_get(merged, "rescue", false)),
     wrong_branch_detection = _validate_allowed_symbol("power_flow.wrong_branch_detection", _as_symbol_cfg(_raw_get(merged, "wrong_branch_detection", :warn)), WRONG_BRANCH_DETECTION_VALUES),
@@ -1780,7 +1797,7 @@ function ModelConfig(raw::AbstractDict)
   return ModelConfig(
     bus_shunt_model = _validate_allowed_symbol("model.bus_shunt_model", _as_symbol_cfg(_raw_get(merged, "bus_shunt_model", :admittance)), MATPOWER_BUS_SHUNT_MODEL_VALUES),
     tap_changer_model = _validate_allowed_symbol("model.tap_changer_model", _as_symbol_cfg(_raw_get(merged, "tap_changer_model", :ideal)), TRANSFORMER_TAP_CHANGER_MODEL_VALUES),
-    auto_profile = _validate_allowed_symbol("model.auto_profile", _as_auto_profile_symbol_cfg(_raw_get(merged, "auto_profile", :recommend)), MATPOWER_AUTO_PROFILE_VALUES),
+    auto_profile = _validate_allowed_symbol("model.auto_profile", _as_auto_profile_symbol_cfg(_raw_get(merged, "auto_profile", :off)), MATPOWER_AUTO_PROFILE_VALUES),
     auto_profile_log = _as_bool_cfg(_raw_get(merged, "auto_profile_log", true)),
     auto_profile_max_fit_pu = _validate_nonnegative("model.auto_profile_max_fit_pu", _as_float_cfg(_raw_get(merged, "auto_profile_max_fit_pu", 0.1))),
     net_cache_enabled = _as_bool_cfg(_raw_get(merged, "net_cache_enabled", false)),

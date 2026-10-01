@@ -467,13 +467,16 @@ power_flow:
       @test occursin("Q-limit detail artifact  : q_limit.log", run_log)
       @test occursin("full details        : q_limit.log", run_log)
       @test !occursin("full details     : q_limit_initial_limits.csv", run_log)
-      # the console (and with it run.log) is COMPACT: it
-      # names the case and summarizes the convention checks instead of
-      # printing three MATPOWER option blocks per run. The detailed record
-      # lives in the matpower_auto_profile.log artifact, checked below.
+      # the console (and with it run.log) is COMPACT: it names the case and
+      # nothing about conventions: the template runs the standard MATPOWER
+      # reading with the experimental scan off (0.30.0), and at the standard
+      # reading no convention line and no auto-profile artifact exist
       @test occursin("Case: ", run_log)
-      @test occursin("Import conventions:", run_log)
+      @test !occursin("Import conventions", run_log)
+      @test !occursin("experimental", run_log)
       @test !occursin("Original MATPOWER import options", run_log)
+      @test !isfile(joinpath(output_dir, "matpower_auto_profile.log"))
+      @test !any(artifact -> artifact.kind === :matpower_auto_profile, result.artifacts)
       @test occursin("Total time  :", run_log)
       @test occursin("Output time :", run_log)
       @test occursin("Solver time :", run_log)
@@ -841,7 +844,13 @@ power_flow:
         sp14_check = run_fixed_reference_self_check(casefile = sp14, output_dir = joinpath(tmpdir, "self_check_sp14"))
         @test sp14_check.raw_result !== nothing
         @test sp14_check.raw_result.iterations == 1
-        @test isapprox(sp14_check.raw_result.final_mismatch, 0.09082632227760662; rtol = 1e-6)
+        # final_mismatch is the residual AFTER the single corrective step
+        # (self_check.log names it final_mismatch_after_solve; the fixed
+        # reference itself is start_state_residual_inf, captured before the
+        # step), so it depends on how the step is applied: 0.09082632227760662
+        # with the rectangular update up to 0.20.5, 0.0908293221606245 with
+        # the polar update that is the default since 0.30.0.
+        @test isapprox(sp14_check.raw_result.final_mismatch, 0.0908293221606245; rtol = 1e-6)
 
         # Neither a case configuration file nor a caller override may move
         # the fixed reference. Both were possible before this fix: the file
@@ -1069,10 +1078,11 @@ power_flow:
       @test manual_effective_cfg.matpower.shift_sign == -1.0
       @test manual_effective_cfg.matpower.shift_unit === :rad
       manual_run_log = read(joinpath(manual_import_output, "run.log"), String)
-      # auto-profile off and a compact console: the conventions that move
-      # results are still named, on one line instead of two option blocks.
-      # The complete set stays in effective_config.yaml (asserted above).
-      @test occursin("Import conventions: ratio=reciprocal", manual_run_log)
+      # scan off and a compact console: a convention set away from the
+      # standard reading is named, on one line marked experimental, instead
+      # of two option blocks. The complete set stays in effective_config.yaml
+      # (asserted above).
+      @test occursin("experimental: Import conventions: ratio=reciprocal", manual_run_log)
       @test occursin("shift=rad", manual_run_log)
       @test occursin("sign -1.0", manual_run_log)
       @test !occursin("Original MATPOWER import options", manual_run_log)

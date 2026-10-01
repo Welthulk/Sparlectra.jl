@@ -39,8 +39,8 @@ end
 function _write_matpower_auto_profile_artifact(output_path::AbstractString, profile, cfg::SparlectraConfig; casefile::AbstractString)::String
   artifact = joinpath(output_path, "matpower_auto_profile.log")
   open(artifact, "w") do io
-    println(io, "MATPOWER import auto-profile artifact")
-    println(io, "====================================")
+    println(io, "MATPOWER import auto-profile artifact (experimental)")
+    println(io, "===================================================")
     # the artifact is the DETAILED record, independent of how quiet the
     # console is configured to be
     write_matpower_import_auto_profile(io, profile, cfg; casefile = casefile, verbosity = :full)

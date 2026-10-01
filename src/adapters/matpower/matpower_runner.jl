@@ -785,7 +785,7 @@ function matpower_import_auto_profile(mpc, cfg::SparlectraConfig; mode::Symbol =
       guard_narrow_range_mode = :lock_pq,
       guard_zero_range_mode = :lock_pq,
       guard_violation_mode = :lock_pq,
-      guard_max_switches = 10,
+      guard_max_switches = DEFAULT_QLIMIT_CONFIG.guard_max_switches,
       guard_max_remaining_violations = 0,
     )
     for (field, rec) in pairs(q_recs)
@@ -951,11 +951,11 @@ function write_matpower_import_auto_profile(io::IO, auto_profile_result, cfg::Sp
   # on every convention row, so the first one is enough)
   inconclusive = findfirst(row -> startswith(row.reason, _AUTO_PROFILE_SCAN_INCONCLUSIVE), rows)
   if isempty(changed)
-    println(io, "Import conventions: ", length(rows), " checks, current settings kept.")
+    println(io, "experimental: Import conventions: ", length(rows), " checks, current settings kept.")
     inconclusive === nothing || println(io, "  ", rows[inconclusive].reason)
     return nothing
   end
-  println(io, "Import conventions: ", length(changed), " of ", length(rows), " checks recommend a change.")
+  println(io, "experimental: Import conventions: ", length(changed), " of ", length(rows), " checks recommend a change.")
   for row in changed
     reason = isempty(row.evidence) ? row.reason : string(row.reason, " (", row.evidence, ")")
     println(io, "  ", row.option, ": ", row.current, " -> ", row.recommended, "  ", reason)

@@ -576,23 +576,30 @@ end)() end
         return guarded_net
       end
 
-      # Regression: lower-level solver callers must opt in before the guard
-      # locks PV buses to PQ during rectangular pre-processing — including
-      # zero-headroom buses (qmin == qmax). Doing that unconditionally is
-      # physically defensible but was MEASURED to cost convergence on a real
-      # 82000-bus case (rescue converges in 66 iterations without it, fails
-      # with it), and those limits are not binding at the solution anyway.
+      # Since 0.30.0 the guard is on by default (the packaged template's
+      # value; struct, loader fallback and keyword literals agree, see the
+      # configuration coverage test), so a config-less run locks the
+      # zero-headroom bus (qmin == qmax) to PQ before the first Newton step,
+      # and switching it off is the explicit way back. Up to 0.20.5 the
+      # struct default was guard = false and this test asserted the opposite
+      # (`isempty(default_net.qLimitLog)` for the default run, one lock only
+      # with `QLimitConfig(guard = true)`): lower-level callers had to opt
+      # in, because the unconditional lock was MEASURED to cost convergence
+      # on a real 82000-bus case (the rescue ladder converges in 66
+      # iterations without it, fails with it) although those limits are not
+      # binding at the solution. That observation stays an open point of
+      # the guard default, not decided by this test.
       default_net = zero_range_pv_net()
       redirect_stdout(devnull) do
         runpf!(default_net; config = PowerFlowConfig(max_iter = 0))
       end
-      @test isempty(default_net.qLimitLog)
+      @test length(default_net.qLimitLog) == 1
 
-      opt_in_net = zero_range_pv_net()
+      opt_out_net = zero_range_pv_net()
       redirect_stdout(devnull) do
-        runpf!(opt_in_net; config = PowerFlowConfig(max_iter = 0, qlimits = QLimitConfig(guard = true)))
+        runpf!(opt_out_net; config = PowerFlowConfig(max_iter = 0, qlimits = QLimitConfig(guard = false)))
       end
-      @test length(opt_in_net.qLimitLog) == 1
+      @test isempty(opt_out_net.qLimitLog)
 
       # a run stopped by the switching cap names the key, its value and the
       # buses that reached it (the guard's lock counts as the bus's first
