@@ -133,6 +133,7 @@ function _island_solver_settings(cfg::PowerFlowConfig)
     autodamp_min = cfg.autodamp_min,
     newton_update = cfg.newton_update,
     power_mode = cfg.power_mode,
+    power_mode_lu = cfg.power_mode_lu,
     jacobian_reuse = cfg.jacobian_reuse,
     jacobian_reuse_min_reduction = cfg.jacobian_reuse_min_reduction,
     jacobian_reuse_max_steps = cfg.jacobian_reuse_max_steps,

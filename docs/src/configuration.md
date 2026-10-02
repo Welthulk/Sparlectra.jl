@@ -64,9 +64,12 @@ A file without `config_version` reads as version 0: it still loads, the
 version-0 aliases are applied (the `model.*` keys lived in
 `matpower_import`/`transformer`, `runtime.case`/`runtime.cases` in
 `matpower_import`), and the loader reports the missing version and every
-translated legacy key. `refresh_sparlectra_config_file` rewrites such a file
-to the current layout; a [sysimage](sysimage.md) build does it for the Web
-UI configuration. A `config_version` newer than the running Sparlectra is
+translated legacy key. `refresh_sparlectra_config_file` (in the Web UI
+**Refresh configuration**) rewrites such a file to the current layout and
+deletes every key no loader reads any more: removed and deprecated keys,
+keys this version does not know, and a `form` block (form defaults live in
+case files); each deletion is named, and the written file keeps a backup. A
+[sysimage](sysimage.md) build does it for the Web UI configuration. A `config_version` newer than the running Sparlectra is
 an error. `scope` is `general` for the installation-wide file, `case` for a
 per-case file next to its case.
 
@@ -456,8 +459,8 @@ file, not the `control.controllers` schema.
 | `output.result_table_max_rows` | `200` | Row cap for the classical result tables. |
 | `output.result_table_large_case_threshold_buses` | `1000` | Bus count from which a case counts as large for result rendering. |
 | `output.result_table_large_case_mode` | `summary` | What large cases print instead of full tables (`summary`, `classic`, `full`). |
-| `output.csv_format` | `technical` | Delimiter/decimal-separator format of every CSV file a run writes (`write_result_csv`): `bus_voltages_complex.csv`, `branch_flows.csv`, `bus_powers.csv`, `q_limit_*.csv`, the short-circuit, contingency and scenario tables, the SE diagnostic exports and `se_state.csv`, `ac_islands.csv`, the SV comparison and the DTF outage metrics. Only the measurement CSV that Sparlectra reads back keeps its fixed layout. Allowed values: `technical` (comma delimiter, dot decimal), `excel_de` (semicolon delimiter, comma decimal, dot thousands separator), `excel_us` (comma delimiter, dot decimal, comma thousands separator). The API's `detailed_result_csv_format`/`detailed_result_csv_semicolon` request keywords are a deprecated per-request override of this key. |
-| `webui.operation_log_retention_days` | `10` | Int, `>= 0`. How far the operation log reaches back. Every Web UI start drops older entries from every operation log it knows; `0` keeps only the current session. Lower it when the log page grows unwieldy: its size comes from the number of entries, not from their age. The environment variable `SPARLECTRA_WEBUI_OPERATION_LOG_RETENTION_DAYS` still wins, for headless runs that read no configuration file. |
+| `output.csv_format` | `excel_de` | Delimiter/decimal-separator format of every CSV file a run writes (`write_result_csv`): `bus_voltages_complex.csv`, `branch_flows.csv`, `bus_powers.csv`, `q_limit_*.csv`, the short-circuit, contingency and scenario tables, the SE diagnostic exports and `se_state.csv`, `ac_islands.csv`, the SV comparison and the DTF outage metrics. Only the measurement CSV that Sparlectra reads back keeps its fixed layout. Allowed values: `technical` (comma delimiter, dot decimal), `excel_de` (semicolon delimiter, comma decimal, dot thousands separator), `excel_us` (comma delimiter, dot decimal, comma thousands separator). The API's `detailed_result_csv_format`/`detailed_result_csv_semicolon` request keywords are a deprecated per-request override of this key. |
+| `webui.operation_log_retention_days` | `3` | Int, `>= 0`. How far the operation log reaches back. Every Web UI start drops older entries from every operation log it knows; `0` keeps only the current session. Lower it when the log page grows unwieldy: its size comes from the number of entries, not from their age. The environment variable `SPARLECTRA_WEBUI_OPERATION_LOG_RETENTION_DAYS` still wins, for headless runs that read no configuration file. |
 
 | `webui.docs_base_url` | `https://welthulk.github.io/Sparlectra.jl/` | String. Base URL of the published documentation the help pages (the **?** next to a control) and the header link open; set it to a local docs build or a pinned version folder. A link only, nothing is fetched; the help pages themselves ship with the application. |
 

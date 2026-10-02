@@ -13,14 +13,16 @@
 # limitations under the License.
 
 # file: ext/SparlectraKLUExt.jl
-# purpose: the KLU sparse LU for power mode (0.30.1). Loaded by `using KLU`
+# purpose: the KLU sparse LU for power mode (0.30.1) and the estimator's
+#          `state_estimation.linear_solver = klu`. Loaded by `using KLU`
 #          next to Sparlectra; the base package does not depend on KLU.
 #          On power-flow Jacobians of 5.7k to 60k unknowns KLU's numeric
 #          refactorization is 6 to 20 times faster than UMFPACK's lu!; on
-#          very large Jacobians with heavy fill-in (an 82000-bus synthetic
-#          case) UMFPACK is faster, which is why KLU is not the default of
-#          a single run. One context per solve and per task:
-#          a KLU factorization is never shared across threads.
+#          very large Jacobians (an 82000-bus synthetic case) UMFPACK is
+#          faster, which is why power mode chooses per network from KLU's
+#          symbolic flop estimate (`power_flow.power_mode_lu = auto`).
+#          One factorization per solve and per task: a KLU factorization
+#          is never shared across threads.
 
 module SparlectraKLUExt
 
@@ -29,6 +31,8 @@ using KLU
 using SparseArrays
 using LinearAlgebra: ldiv!
 
+# The estimator's LU context (`_se_linear_context(:klu)`); power mode uses
+# Sparlectra.PowerModeLuContext with the two factorization methods below.
 mutable struct KluReuseNewtonContext <: Sparlectra.AbstractNewtonSolverContext
   fact::Union{Nothing,KLU.KLUFactorization{Float64,Int64}}
   nvar::Int
@@ -48,6 +52,21 @@ Sparlectra._newton_full_factorization(::KluReuseNewtonContext, J::SparseMatrixCS
 # klu! refactors numerically on the symbolic analysis of the stored object
 Sparlectra._newton_refactorize!(ctx::KluReuseNewtonContext, J::SparseMatrixCSC{Float64,Int64}) = klu!(ctx.fact, J)
 Sparlectra._newton_context_backend(::KluReuseNewtonContext) = :klu
+
+# power mode's KLU (Sparlectra.PowerModeLuContext with backend :klu)
+Sparlectra._klu_factorize(J::SparseMatrixCSC{Float64,Int64}) = klu(J)
+Sparlectra._klu_refactorize!(F::KLU.KLUFactorization{Float64,Int64}, J::SparseMatrixCSC{Float64,Int64}) = klu!(F, J)
+
+# power_mode_lu = auto: KLU's symbolic analysis alone (BTF plus AMD, no
+# numeric work) and its estimate of the factorization flops; the analysed
+# object is factorized on that analysis when KLU is chosen
+function Sparlectra._klu_analyze(J::SparseMatrixCSC{Float64,Int64})
+  K = KLU.KLUFactorization(J)
+  KLU.klu_analyze!(K)
+  symbolic = unsafe_load(Ptr{KLU.klu_l_symbolic}(K._symbolic))
+  return K, Float64(symbolic.est_flops)
+end
+Sparlectra._klu_factor_analyzed!(K::KLU.KLUFactorization{Float64,Int64}) = KLU.klu_factor!(K)
 
 function __init__()
   Sparlectra._POWER_MODE_LINEAR_CONTEXT[] = () -> KluReuseNewtonContext()

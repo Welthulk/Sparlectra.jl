@@ -180,7 +180,8 @@ function run_api_extended_tests()
 
       casefile = _write_api_test_case_ext(joinpath(tmpdir, "case_api.m"))
       template = joinpath(tmpdir, "config_template.yaml")
-      cp(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, template)
+      # CSV cells and run-log lines are asserted by content below
+      cp(technical_output_config_path(), template)
       template_before = read(template, String)
       output_dir = joinpath(tmpdir, "success")
 
@@ -1223,7 +1224,8 @@ power_flow:
     mktempdir() do tmpdir
       casefile = _write_api_test_case_ext(joinpath(tmpdir, "case_service.m"))
       config_file = joinpath(tmpdir, "service_config.yaml")
-      cp(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, config_file)
+      # CSV cells and run-log lines are asserted by content below
+      cp(technical_output_config_path(), config_file)
       output_root = joinpath(tmpdir, "powerflow_service")
 
       @testset "Web UI case resolution" begin (function ()

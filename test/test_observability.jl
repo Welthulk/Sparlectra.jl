@@ -419,6 +419,14 @@ function test_observability_takahashi_diagnostics(fx)::Bool
     @test maximum(abs.(d.state_variances .- t.state_variances) ./ abs.(d.state_variances)) < 1e-10
     # suspicion order identical
     @test sortperm(abs.(d.rn); rev = true) == sortperm(abs.(t.rn); rev = true)
+    # the blockwise route (above the dense state cap) computes the same
+    # Omega diagonal and the same K maxima from the sparse factorization
+    b = Sparlectra._residual_diagnostics_blockwise(H, r, w)
+    @test b.omega_path == :blockwise
+    @test maximum(abs.(d.wii .- b.wii) ./ max.(abs.(d.wii), 1e-12)) < 1e-10
+    @test maximum(abs.(d.state_variances .- b.state_variances) ./ abs.(d.state_variances)) < 1e-10
+    kd = Sparlectra._residual_correlation_max(d.omega)   # the dense path always carries the full Omega
+    @test maximum(abs.(kd .- Sparlectra._residual_correlation_max_blockwise(H, w))) < 1e-8
   end
 
   @testset "State estimation Takahashi diagnostics" begin (function ()

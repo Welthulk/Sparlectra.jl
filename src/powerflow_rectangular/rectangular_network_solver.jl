@@ -302,6 +302,7 @@ function runpf_rectangular!(
   autodamp_min::Float64 = 0.05,
   newton_update::Symbol = DEFAULT_NEWTON_UPDATE,
   power_mode::Bool = false,
+  power_mode_lu::Symbol = DEFAULT_POWER_MODE_LU,
   jacobian_reuse::Bool = DEFAULT_JACOBIAN_REUSE,
   jacobian_reuse_min_reduction::Float64 = DEFAULT_JACOBIAN_REUSE_MIN_REDUCTION,
   jacobian_reuse_max_steps::Int = DEFAULT_JACOBIAN_REUSE_MAX_STEPS,
@@ -418,6 +419,7 @@ function runpf_rectangular!(
       autodamp_min = autodamp_min,
       newton_update = newton_update,
       power_mode = power_mode,
+      power_mode_lu = power_mode_lu,
       jacobian_reuse = jacobian_reuse,
       jacobian_reuse_min_reduction = jacobian_reuse_min_reduction,
       jacobian_reuse_max_steps = jacobian_reuse_max_steps,
@@ -833,12 +835,13 @@ function runpf_rectangular!(
     fill!(workspace.current_pv_qreq_pu, NaN)
     fill!(workspace.prev_pv_qreq_pu, NaN)
     fill!(workspace.lock_mask, false)
-    if power_cache.linear_ctx === nothing
-      power_cache.linear_ctx = _power_mode_new_context()
-    else
-      power_cache.context_reuse_count += 1
-    end
-    linear_ctx = power_cache.linear_ctx
+    power_cache.linear_ctx isa PowerModeLuContext && (power_cache.context_reuse_count += 1)
+    # the sparse LU of this solve (power_flow.power_mode_lu, 0.30.2): under
+    # `auto` decided once per network at the first factorization of its
+    # first power-mode solve (KLU's symbolic flop estimate against
+    # POWER_MODE_LU_KLU_MAX_FLOPS), then kept for every later solve, also
+    # after outages and other pattern changes
+    linear_ctx = _power_mode_lu_select!(power_cache, power_mode_lu)
     # dishonest Newton bookkeeping (0.30.2): maximum mismatch before the
     # previous Newton step, steps taken, reused steps in total and in a row,
     # and whether the last step was a reused one
@@ -897,8 +900,11 @@ function runpf_rectangular!(
     performance_profile[:rectangular_workspace_reason] = rectangular_workspace_reason
     performance_profile[:rectangular_workspace_nbus] = nb
     performance_profile[:rectangular_workspace_nstate] = 2 * max(nb - 1, 0)
-    performance_profile[:linear_solver_backend] = power_mode ? power_mode_linear_solver_backend() : linear_solver
+    # the backend at the start of the solve; the final one (after an `auto`
+    # decision) replaces it in _merge_linear_solver_diagnostics
+    performance_profile[:linear_solver_backend] = power_mode ? _newton_context_backend(linear_ctx) : linear_solver
     performance_profile[:power_mode] = power_mode
+    performance_profile[:power_mode_lu] = power_mode_lu
     performance_profile[:jacobian_reuse_min_reduction] = jacobian_reuse_min_reduction
     performance_profile[:jacobian_reuse_max_steps] = jacobian_reuse_max_steps
     # the effective update and Q-limit settings of this solve, so a library
@@ -1364,6 +1370,17 @@ function runpf_rectangular!(
     status_build_ = _merge_merit_linesearch_diagnostics(status_build_, performance_profile, merit_step_diagnostics, merit_enabled)
     status_build_ = _merge_trust_region_diagnostics(status_build_, performance_profile, tr_step_diagnostics, trust_region_enabled)
     status_build_ = _merge_linear_solver_diagnostics(status_build_, performance_profile, linear_solver, linear_ctx; jacobian_reuse = jacobian_reuse, jacobian_reuse_steps = jr_reused_steps, jacobian_reuse_refactorisations = jr_newton_steps - jr_reused_steps, jacobian_reuse_discarded = jr_discarded_steps)
+    # power-mode LU (0.30.2): the choice, its source and the KLU estimate,
+    # only when power mode is on (an option that is off reports nothing)
+    if power_mode
+      lu_status = _power_mode_lu_status(power_cache, linear_ctx, power_mode_lu)
+      status_build_ = merge(status_build_, (status = (; status_build_.status..., lu_status...),))
+      if performance_profile isa AbstractDict
+        for (k, v) in pairs(lu_status)
+          performance_profile[k] = v
+        end
+      end
+    end
     status_build_ = _merge_distributed_slack_diagnostics(status_build_, performance_profile, net, dslack, Sbase, verbose)
     # Lazy Jacobian condition estimate over the EXACT system this solve
     # factored (post-merge topology, final Q-limit active set, final
@@ -1452,6 +1469,7 @@ function runpf_rectangular!(
   autodamp_min::Float64 = 0.05,
   newton_update::Symbol = DEFAULT_NEWTON_UPDATE,
   power_mode::Bool = false,
+  power_mode_lu::Symbol = DEFAULT_POWER_MODE_LU,
   jacobian_reuse::Bool = DEFAULT_JACOBIAN_REUSE,
   jacobian_reuse_min_reduction::Float64 = DEFAULT_JACOBIAN_REUSE_MIN_REDUCTION,
   jacobian_reuse_max_steps::Int = DEFAULT_JACOBIAN_REUSE_MAX_STEPS,
@@ -1554,6 +1572,7 @@ function runpf_rectangular!(
     autodamp_min = autodamp_min,
     newton_update = newton_update,
     power_mode = power_mode,
+    power_mode_lu = power_mode_lu,
     jacobian_reuse = jacobian_reuse,
     jacobian_reuse_min_reduction = jacobian_reuse_min_reduction,
     jacobian_reuse_max_steps = jacobian_reuse_max_steps,
@@ -1678,6 +1697,7 @@ function _runpf_config_once!(net::Net, config::PowerFlowConfig; verbose::Int = 0
     autodamp_min = config.autodamp_min,
     newton_update = config.newton_update,
     power_mode = config.power_mode,
+    power_mode_lu = config.power_mode_lu,
     jacobian_reuse = config.jacobian_reuse,
     jacobian_reuse_min_reduction = config.jacobian_reuse_min_reduction,
     jacobian_reuse_max_steps = config.jacobian_reuse_max_steps,
@@ -2219,6 +2239,7 @@ function runpf!(
   autodamp_min::Float64 = 0.05,
   newton_update::Symbol = DEFAULT_NEWTON_UPDATE,
   power_mode::Bool = false,
+  power_mode_lu::Symbol = DEFAULT_POWER_MODE_LU,
   jacobian_reuse::Bool = DEFAULT_JACOBIAN_REUSE,
   jacobian_reuse_min_reduction::Float64 = DEFAULT_JACOBIAN_REUSE_MIN_REDUCTION,
   jacobian_reuse_max_steps::Int = DEFAULT_JACOBIAN_REUSE_MAX_STEPS,
@@ -2401,6 +2422,12 @@ function runpf!(
     # A worker writes only into its own worker_profile: the shared profile on
     # the serial path (today's behavior), a _perf_profile_child on the
     # parallel path; the diagnostic prefix is therefore a per-worker value.
+    # power mode: the island nets are fresh copies in every solve; they
+    # record their `power_mode_lu = auto` decision into the memo of the
+    # caller's network under the island's smallest bus index, so each island
+    # decides once per network and not in every solve. Taken here, before
+    # any island task starts (the memo has its own lock).
+    island_lu_memo = power_mode ? _power_cache!(net).lu_memo : nothing
     solve_island = function (row, worker_profile)
       local it = 0
       local status = 2
@@ -2413,6 +2440,7 @@ function runpf!(
       worker_profile isa AbstractDict && (worker_profile[:diagnostic_artifact_prefix] = "ac_island_$(row.island_id)_")
       try
         inet = _prepare_island_net(wnet, row)
+        island_lu_memo === nothing || _share_power_mode_lu_memo!(inet, island_lu_memo, minimum(row.buses))
         stage = :pre_nr_setup
         it, status = runpf_rectangular!(
           inet,
@@ -2424,6 +2452,7 @@ function runpf!(
           autodamp_min = autodamp_min,
           newton_update = newton_update,
           power_mode = power_mode,
+          power_mode_lu = power_mode_lu,
           jacobian_reuse = jacobian_reuse,
           jacobian_reuse_min_reduction = jacobian_reuse_min_reduction,
           jacobian_reuse_max_steps = jacobian_reuse_max_steps,
@@ -2716,6 +2745,23 @@ function runpf!(
         ),
       )
     end
+    # power-mode LU (0.30.2): the base status is one island's; the
+    # aggregate carries every island's choice in one run-log line and the
+    # per-island rows, the estimates stay per island
+    lu_islands = sort([(id, st) for (id, st) in island_statuses if hasproperty(st, :power_mode_lu_line)]; by = first)
+    if !isempty(lu_islands)
+      common(f) = (vals = unique(getproperty(st, f) for (_, st) in lu_islands); length(vals) == 1 ? only(vals) : :mixed)
+      aggregate_status = merge(
+        aggregate_status,
+        (;
+          power_mode_lu_choice = common(:power_mode_lu_choice),
+          power_mode_lu_source = common(:power_mode_lu_source),
+          power_mode_lu_klu_est_flops = NaN,
+          power_mode_lu_line = join(("island $(id): $(st.power_mode_lu_line)" for (id, st) in lu_islands), "; "),
+          power_mode_lu_islands = [(island_id = id, choice = st.power_mode_lu_choice, source = st.power_mode_lu_source, klu_est_flops = st.power_mode_lu_klu_est_flops) for (id, st) in lu_islands],
+        ),
+      )
+    end
     _set_rectangular_pf_status!(net, aggregate_status)
     if performance_profile isa AbstractDict
       performance_profile[:island_wise_all_converged] = true
@@ -2737,6 +2783,9 @@ function runpf!(
   if method === :rectangular
     if has_merges
       has_vdep_control && error("runpf!: voltage-dependent injections, including P(U)/Q(U) controllers and bus_shunt_model=voltage_dependent_injection, are not supported with active-link merge handling in rectangular mode. Disable merges or use a topology without internal isolated buses.")
+      # the merged working copy is fresh in every solve: it takes the LU memo
+      # of the caller's network (see the island path)
+      power_mode && _share_power_mode_lu_memo!(wnet, _power_cache!(net).lu_memo, 0)
       iters, erg = runpf_rectangular!(
         wnet,
         maxIte,
@@ -2747,6 +2796,7 @@ function runpf!(
         autodamp_min = autodamp_min,
         newton_update = newton_update,
         power_mode = power_mode,
+        power_mode_lu = power_mode_lu,
         jacobian_reuse = jacobian_reuse,
         jacobian_reuse_min_reduction = jacobian_reuse_min_reduction,
         jacobian_reuse_max_steps = jacobian_reuse_max_steps,
@@ -2848,6 +2898,7 @@ function runpf!(
         autodamp_min = autodamp_min,
         newton_update = newton_update,
         power_mode = power_mode,
+        power_mode_lu = power_mode_lu,
         jacobian_reuse = jacobian_reuse,
         jacobian_reuse_min_reduction = jacobian_reuse_min_reduction,
         jacobian_reuse_max_steps = jacobian_reuse_max_steps,

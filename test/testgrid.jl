@@ -2498,7 +2498,9 @@ function test_wrong_branch_output_visibility()::Bool
     island_result.final_converged || return ("", String[], Int[])
     text = read(joinpath(tmpdir, "ac_island_solver_summary.csv"), String)
     csv_lines = split(strip(text), '\n')
-    return (text, split(csv_lines[1], ','), [length(split(line, ',')) for line in csv_lines[2:end]])
+    # the report follows output.csv_format (excel_de by default since 0.30.2)
+    delim = occursin(';', csv_lines[1]) ? ';' : ','
+    return (text, split(csv_lines[1], delim), [length(split(line, delim)) for line in csv_lines[2:end]])
   end
   isempty(csv_text) && return false
   header_fields[(end-1):end] == ["wrong_branch_status", "wrong_branch_reason"] || return false
@@ -2508,7 +2510,8 @@ function test_wrong_branch_output_visibility()::Bool
     ',',
   ) || return false
   all(count -> count == length(header_fields), row_field_counts) || return false
-  occursin("wrong_branch_status: warn", csv_text) || occursin(",warn,", csv_text) || return false
+  # the cell check holds in either delimiter (excel_de is the default since 0.30.2)
+  occursin("wrong_branch_status: warn", csv_text) || occursin(",warn,", csv_text) || occursin(";warn;", csv_text) || return false
 
   return true
 end

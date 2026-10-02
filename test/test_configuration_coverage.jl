@@ -138,7 +138,7 @@ function test_configuration_yaml_key_coverage()
     leaves = _canonical_yaml_leaf_keys()
 
     mapped_keys = Set([
-      "power_flow.method", "power_flow.mode", "power_flow.solver", "power_flow.linear_solver", "power_flow.newton_update", "power_flow.power_mode", "power_flow.jacobian_reuse", "power_flow.jacobian_reuse_min_reduction", "power_flow.jacobian_reuse_max_steps", "contingency.screening.mode", "contingency.screening.margin_pct", "contingency.warm_active_set", "power_flow.apslf.order", "power_flow.apslf.use_pade", "power_flow.apslf.nr_polish", "power_flow.apslf.convergence_radius", "power_flow.apslf_start.enabled", "power_flow.apslf_start.order", "power_flow.flatstart", "power_flow.tol", "power_flow.max_iter", "power_flow.autodamp", "power_flow.autodamp_min", "power_flow.auto_slack", "power_flow.rescue", "power_flow.dc.fallback", "power_flow.wrong_branch_detection", "power_flow.wrong_branch_rescue", "power_flow.wrong_branch_min_vm_pu", "power_flow.wrong_branch_max_vm_pu", "power_flow.wrong_branch_max_angle_spread_deg", "power_flow.wrong_branch_max_branch_angle_deg", "power_flow.wrong_branch_min_low_vm_count", "power_flow.wrong_branch_min_vn_kV", "power_flow.wrong_branch_low_vm_share", "power_flow.wrong_branch_max_bus_angle_deg", "power_flow.wrong_branch_max_plain_steps", "power_flow.wrong_branch_collapse_vm_pu", "power_flow.wrong_branch_rescue_max_attempts", "power_flow.rectangular_workspace_reuse", "power_flow.rectangular_preallocate_workspace", "power_flow.rectangular_workspace_min_buses",
+      "power_flow.method", "power_flow.mode", "power_flow.solver", "power_flow.linear_solver", "power_flow.newton_update", "power_flow.power_mode", "power_flow.power_mode_lu", "power_flow.jacobian_reuse", "power_flow.jacobian_reuse_min_reduction", "power_flow.jacobian_reuse_max_steps", "contingency.screening.mode", "contingency.screening.margin_pct", "contingency.warm_active_set", "power_flow.apslf.order", "power_flow.apslf.use_pade", "power_flow.apslf.nr_polish", "power_flow.apslf.convergence_radius", "power_flow.apslf_start.enabled", "power_flow.apslf_start.order", "power_flow.flatstart", "power_flow.tol", "power_flow.max_iter", "power_flow.autodamp", "power_flow.autodamp_min", "power_flow.auto_slack", "power_flow.rescue", "power_flow.dc.fallback", "power_flow.wrong_branch_detection", "power_flow.wrong_branch_rescue", "power_flow.wrong_branch_min_vm_pu", "power_flow.wrong_branch_max_vm_pu", "power_flow.wrong_branch_max_angle_spread_deg", "power_flow.wrong_branch_max_branch_angle_deg", "power_flow.wrong_branch_min_low_vm_count", "power_flow.wrong_branch_min_vn_kV", "power_flow.wrong_branch_low_vm_share", "power_flow.wrong_branch_max_bus_angle_deg", "power_flow.wrong_branch_max_plain_steps", "power_flow.wrong_branch_collapse_vm_pu", "power_flow.wrong_branch_rescue_max_attempts", "power_flow.rectangular_workspace_reuse", "power_flow.rectangular_preallocate_workspace", "power_flow.rectangular_workspace_min_buses",
       "power_flow.islands.enabled", "power_flow.islands.parallel_min_buses", "power_flow.islands.reference_policy", "power_flow.islands.diagnostic_continue_after_failure",
       "power_flow.distributed_slack.enabled", "power_flow.distributed_slack.p_mode", "power_flow.distributed_slack.respect_p_limits", "power_flow.distributed_slack.fallback", "power_flow.distributed_slack.weights",
       "power_flow.external_grid.enabled", "power_flow.external_grid.source", "power_flow.external_grid.sk_MVA", "power_flow.external_grid.rx",
@@ -199,6 +199,7 @@ function test_configuration_yaml_key_coverage()
       "power_flow.autodamp_min" => :PowerFlowConfig,
       "power_flow.newton_update" => :PowerFlowConfig,
       "power_flow.power_mode" => :PowerFlowConfig,
+      "power_flow.power_mode_lu" => :PowerFlowConfig,
       "power_flow.jacobian_reuse" => :PowerFlowConfig,
       "power_flow.jacobian_reuse_min_reduction" => :PowerFlowConfig,
       "power_flow.jacobian_reuse_max_steps" => :PowerFlowConfig,
@@ -665,6 +666,15 @@ power_flow:
     @test (prof[:jacobian_reuse], prof[:jacobian_reuse_min_reduction], prof[:jacobian_reuse_max_steps]) == jr_expected
     @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict{String,Any}("config_version" => 1, "power_flow" => Dict{String,Any}("jacobian_reuse_min_reduction" => 1.0)))
     @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict{String,Any}("config_version" => 1, "power_flow" => Dict{String,Any}("jacobian_reuse_max_steps" => 0)))
+    # power_flow.power_mode_lu (0.30.2) the same way, and an unknown value is
+    # refused by the loader and the override validation
+    for cfg in (tmpl_cfg, empty_cfg, Sparlectra.SparlectraConfig())
+      @test cfg.powerflow.power_mode_lu === :auto
+    end
+    @test Sparlectra.DEFAULT_POWER_MODE_LU === :auto
+    @test prof[:power_mode_lu] === :auto
+    @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict{String,Any}("config_version" => 1, "power_flow" => Dict{String,Any}("power_mode_lu" => "pardiso")))
+    @test_throws ArgumentError Sparlectra.validate_gui_config_overrides(Dict{String,Any}("power_flow.power_mode_lu" => "pardiso"))
   end)() end
   return nothing
 end
@@ -1463,17 +1473,36 @@ function test_configuration_refresh()
 
     # form fields of the Web UI benchmark option (taken out in 0.20.2) in an
     # older stored configuration: removed and named, the refresh does not
-    # stop; the benchmark section of the configuration stays
+    # stop; the benchmark section of the configuration stays. Since 0.30.2
+    # the rest of the `form` block goes too: the Web UI reads form defaults
+    # from case files only, so in the configuration file it is never read
     retired = test_scratch_path(".yaml")
     write(retired, "config_version: 1\nscope: general\nbenchmark:\n  samples: 7\nform:\n  benchmark_samples: 10\n  benchmark_seconds: 1.0\n  gen_seed: 3\n")
     retired_result = Sparlectra.refresh_sparlectra_config_file(retired)
     @test retired_result.success
     @test retired_result.changed
-    @test retired_result.removed_keys == ["form.benchmark_samples", "form.benchmark_seconds"]
+    @test retired_result.removed_keys == ["form", "form.benchmark_samples", "form.benchmark_seconds"]
     @test count(w -> occursin("the Web UI has no benchmark option", w), retired_result.warnings) == 2
     @test !occursin("benchmark_samples", retired_result.refreshed_text)
-    @test occursin("gen_seed: 3", retired_result.refreshed_text)
+    @test !occursin("gen_seed", retired_result.refreshed_text)
     @test occursin("samples: 7", retired_result.refreshed_text)
+
+    # keys no loader reads any more are deleted by a refresh and named:
+    # a removed key (islands.mode), a silently removed one (webui.warmup) and
+    # a key this version does not know, and the form block; the refreshed
+    # text loads without an ignored-key warning
+    superfluous = test_scratch_path(".yaml")
+    write(superfluous, "config_version: 1\nscope: general\npower_flow:\n  tol: 1.0e-7\n  islands:\n    mode: solve_parallel\n  no_such_key: 3\nwebui:\n  warmup: true\nform:\n  gen_seed: 4\n")
+    superfluous_result = Sparlectra.refresh_sparlectra_config_file(superfluous)
+    @test superfluous_result.success
+    @test sort(superfluous_result.removed_keys) == ["form", "power_flow.islands.mode", "power_flow.no_such_key", "webui.warmup"]
+    @test count(w -> startswith(w, "Removed power_flow.islands.mode:"), superfluous_result.warnings) == 1
+    @test !occursin("solve_parallel", superfluous_result.refreshed_text) && !occursin("no_such_key", superfluous_result.refreshed_text) && !occursin("warmup: true", superfluous_result.refreshed_text)
+    @test occursin("tol: 1.0e-7", superfluous_result.refreshed_text) && !occursin("gen_seed", superfluous_result.refreshed_text)
+    reloaded = test_scratch_path(".yaml")
+    write(reloaded, superfluous_result.refreshed_text)
+    reloaded_cfg = @test_logs min_level = Logging.Warn Sparlectra.load_sparlectra_config(reloaded; reload = true)
+    @test reloaded_cfg.powerflow.tol == 1.0e-7
 
     for (legacy, canonical) in (("matpower_simultaneous", "classic_simultaneous"), ("matpower_one_at_a_time", "classic_one_at_a_time"))
       p = test_scratch_path(".yaml")

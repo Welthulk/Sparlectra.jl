@@ -98,6 +98,18 @@ function _webui_experimental_select(profile_values)
   return replace(select, "<select " => attrs; count = 1)
 end
 
+# The power-mode LU select (0.30.2) directly under the power-mode checkbox.
+# Disabled server-side while power mode is off, so the state is right
+# without JS (the form script keeps it in step with the checkbox): a
+# disabled control is dropped from the form entry list, and the configured
+# value applies.
+function _webui_power_mode_lu_select(profile_values)
+  select = _webui_select("power_flow_power_mode_lu", _webui_option_allowed_values("power_flow_power_mode_lu"), _webui_selected(profile_values, "power_flow_power_mode_lu", _webui_option_default("power_flow_power_mode_lu")))
+  power_mode_on = _webui_form_string(_webui_selected(profile_values, "power_flow_power_mode", _webui_option_default("power_flow_power_mode"))) == "true"
+  attrs = power_mode_on ? "<select data-power-mode-field " : "<select data-power-mode-field disabled "
+  return replace(select, "<select " => attrs; count = 1)
+end
+
 # --- Q-limit block (task 0.20.2) ------------------------------------------
 # Grey-out markers read by the form script: data-qlimit-field (every field of
 # the block; off while the handling is off), data-qlimit-active-set-field
@@ -1774,8 +1786,9 @@ $(_webui_qlimit_block_html(profile_values))
 <legend>Solver backend</legend>
 <label>$(_webui_field_label("power_flow_linear_solver", "Linear solver backend"))$(_webui_select("power_flow_linear_solver", _webui_option_allowed_values("power_flow_linear_solver"), _webui_selected(profile_values, "power_flow_linear_solver", _webui_option_default("power_flow_linear_solver"))))</label>
 <p class=\"field-help\">Sparse linear-algebra backend for the rectangular Newton step only (independent of the <strong>Solver</strong> choice above). <code>umfpack_reuse</code> (default) reuses the symbolic analysis across iterations via <code>lu!</code>; <code>umfpack</code> analyzes every iteration anew.</p>
-<label class=\"check span-2\" data-nr-only-field><input name=\"power_flow_power_mode\" type=\"hidden\" value=\"false\"><input name=\"power_flow_power_mode\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_power_mode", _webui_option_default("power_flow_power_mode")))>$(_webui_field_label("power_flow_power_mode", "Power mode: keep Ybus, LU analysis and work arrays for repeated solves (single run: leave it off)"))</label>
-<p class=\"field-help\">Power mode keeps the Ybus, the LU analysis and the work arrays on the network between solves and runs the final diagnostics in a light form; the solution is the same. It pays off on repeated solves (N-1, scenarios); leave it off for a single run. With the KLU extension loaded (the application loads it) power mode factorises with KLU.</p>
+<label class=\"check span-2\" data-nr-only-field><input name=\"power_flow_power_mode\" type=\"hidden\" value=\"false\"><input name=\"power_flow_power_mode\" type=\"checkbox\" value=\"true\" data-power-mode-toggle$(_webui_checked(profile_values, "power_flow_power_mode", _webui_option_default("power_flow_power_mode")))>$(_webui_field_label("power_flow_power_mode", "Power mode: keep Ybus, LU analysis and work arrays for repeated solves (single run: leave it off)"))</label>
+<label data-nr-only-field>$(_webui_field_label("power_flow_power_mode_lu", "Power-mode LU"))$(_webui_power_mode_lu_select(profile_values))</label>
+<p class=\"field-help\">Power mode keeps the Ybus, the LU analysis and the work arrays on the network between solves and runs the final diagnostics in a light form; the solution is the same. It pays off on repeated solves (N-1, scenarios); leave it off for a single run. The power-mode LU is greyed while power mode is off: <code>auto</code> (default) chooses once per network from KLU's symbolic flop estimate (KLU for small and medium networks, UMFPACK for very large ones); <code>klu</code> and <code>umfpack</code> fix it.</p>
 <label class=\"check span-2\" data-nr-only-field><input name=\"power_flow_jacobian_reuse\" type=\"hidden\" value=\"false\"><input name=\"power_flow_jacobian_reuse\" type=\"checkbox\" value=\"true\" data-jacobian-reuse-toggle$(_webui_checked(profile_values, "power_flow_jacobian_reuse", _webui_option_default("power_flow_jacobian_reuse")))>$(_webui_field_label("power_flow_jacobian_reuse", "Dishonest Newton (reuse Jacobian factorisation)"))</label>
 <label data-nr-only-field>$(_webui_field_label("power_flow_jacobian_reuse_min_reduction", "Minimum mismatch reduction per step"))<input name=\"power_flow_jacobian_reuse_min_reduction\" type=\"number\" step=\"any\" min=\"1\" data-jacobian-reuse-field value=\"$(_webui_input_value(profile_values, "power_flow_jacobian_reuse_min_reduction", _webui_option_default("power_flow_jacobian_reuse_min_reduction")))\"></label>
 <label data-nr-only-field>$(_webui_field_label("power_flow_jacobian_reuse_max_steps", "Maximum reused steps in a row"))<input name=\"power_flow_jacobian_reuse_max_steps\" type=\"number\" step=\"1\" min=\"1\" data-jacobian-reuse-field value=\"$(_webui_input_value(profile_values, "power_flow_jacobian_reuse_max_steps", _webui_option_default("power_flow_jacobian_reuse_max_steps")))\"></label>
@@ -1965,6 +1978,7 @@ document.addEventListener('DOMContentLoaded', function () {
     });
     updateExperimentalOptions();
     updateJacobianReuseOptions();
+    updatePowerModeOptions();
     updatingStepControl = false;
   };
   if (experimentalToggle !== null) {
@@ -1991,6 +2005,19 @@ document.addEventListener('DOMContentLoaded', function () {
     updateJacobianReuseOptions();
     jacobianReuseToggle.addEventListener('change', updateJacobianReuseOptions);
     if (linearSolverSelect !== null) linearSolverSelect.addEventListener('change', updateJacobianReuseOptions);
+  }
+  // Power-mode LU: greyed while power mode is off (a disabled select is not
+  // submitted, the configured value applies)
+  const powerModeToggle = document.querySelector('input[data-power-mode-toggle]');
+  const powerModeFields = document.querySelectorAll('[data-power-mode-field]');
+  const updatePowerModeOptions = function () {
+    if (powerModeToggle === null) return;
+    const on = powerModeToggle.checked && !powerModeToggle.disabled;
+    powerModeFields.forEach(function (field) { field.disabled = !on; });
+  };
+  if (powerModeToggle !== null) {
+    updatePowerModeOptions();
+    powerModeToggle.addEventListener('change', updatePowerModeOptions);
   }
   if (autodampToggle !== null) {
     updateStepControlOptions();
@@ -3691,7 +3718,7 @@ function _webui_se_summary(result::AbstractDict)::Union{Nothing,String}
   # otherwise, and its J measures the model positions. Marked line, not a
   # footnote.
   if get(metadata, "se_tap_estimation_fallback", false) == true
-    push!(parts, string("WARNING: ", _SE_TAP_FALLBACK_NOTE))
+    push!(parts, string("WARNING: ", _se_tap_fallback_note(metadata)))
   end
   tapc = Int(get(metadata, "se_tap_count", 0))
   if tapc > 0
@@ -3775,7 +3802,7 @@ function _webui_se_tap_section(result::AbstractDict)::String
   # that are model values is worse than showing none
   if get(metadata, "se_tap_estimation_fallback", false) == true
     return string("<section class=\"result-block\"><h3>Transformer tap estimation</h3>",
-      "<p class=\"warning\">", esc(_SE_TAP_FALLBACK_NOTE), "</p></section>")
+      "<p class=\"warning\">", esc(_se_tap_fallback_note(metadata)), "</p></section>")
   end
   (rows isa AbstractVector && !isempty(rows)) || return ""
   anymrid = any(!isempty(String(get(t, "mrid", ""))) for t in rows)

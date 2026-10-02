@@ -214,10 +214,9 @@ function run_contingency_tests()
       lines = readlines(csv)
       @test length(lines) == length(results) + 1
       # Since issue #376 the writer follows the same run-wide CSV format as
-      # every other artifact; the default is now "technical" (comma
-      # delimiter), matching output.csv_format's default. "excel_de"
-      # reproduces the historical hardcoded semicolon delimiter.
-      @test startswith(lines[1], "name,weight,converged,iterations,start_used")
+      # every other artifact; the default is "excel_de" (semicolon
+      # delimiter) since 0.30.2, matching output.csv_format's default.
+      @test startswith(lines[1], "name;weight;converged;iterations;start_used")
       csv_de = joinpath(mktempdir(), "n1_de.csv")
       @test writeContingencyResultsCSV(csv_de, results; format = "excel_de") == csv_de
       lines_de = readlines(csv_de)

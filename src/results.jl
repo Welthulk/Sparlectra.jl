@@ -967,6 +967,11 @@ function printACPFlowResults(
   if rect_status_hdr !== nothing && hasproperty(rect_status_hdr, :jacobian_reuse) && rect_status_hdr.jacobian_reuse
     @printf(io, "Jacobian reuse : %d reused steps, %d refactorisations, %d discarded\n", rect_status_hdr.jacobian_reuse_steps, rect_status_hdr.jacobian_reuse_refactorisations, rect_status_hdr.jacobian_reuse_discarded)
   end
+  # power-mode LU (0.30.2): the sparse LU the solve used, where the choice
+  # came from and both probe times; only with power mode
+  if rect_status_hdr !== nothing && hasproperty(rect_status_hdr, :power_mode_lu_line)
+    @printf(io, "Power-mode LU  : %s\n", String(rect_status_hdr.power_mode_lu_line))
+  end
 
   @printf(io, "BaseMVA        :%10d\n", net.baseMVA)
   # sources appear in the count only when present, keeping the common

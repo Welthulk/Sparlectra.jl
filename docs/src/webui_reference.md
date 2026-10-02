@@ -848,7 +848,11 @@ it with the same parser and duplicate-key checks, writes only after
 validation with a timestamped backup, and warns when a case configuration
 file still overrides the global YAML through the prefilled form. After a
 save the server reloads the file, so the form shows the new values on the
-next page load.
+next page load. The search box above the text finds plain text (case does
+not matter; Enter or **Next** for the next hit, Shift+Enter or **Previous**
+for the one before) or, for a dotted key such as
+`power_flow.qlimits.guard.enabled`, jumps to exactly that key by following
+the YAML nesting.
 
 Form values override the YAML configuration; the order is described in
 [Configuration](configuration.md). Each run writes `effective_config.yaml`.

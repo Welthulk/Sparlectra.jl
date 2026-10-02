@@ -173,6 +173,31 @@ function _classic_outer_loop_runlog_line(rect_status)
   return string("Classic Q-limit outer loop: ", passes, passes == 1 ? " pass" : " passes", ", stop: ", stop)
 end
 
+# power-mode LU (0.30.2): the sparse LU of the power-mode solve, where the
+# choice came from and KLU's symbolic flop estimate it was made on (NaN for a
+# configured choice), with the threshold of `auto`; with islands also one
+# row per island. Nothing without power mode.
+function _power_mode_lu_lifecycle_metadata(rect_status)::Dict{String,Any}
+  (rect_status !== nothing && hasproperty(rect_status, :power_mode_lu_line)) || return Dict{String,Any}()
+  md = Dict{String,Any}(
+    "power_mode_lu" => String(rect_status.power_mode_lu),
+    "power_mode_lu_choice" => String(rect_status.power_mode_lu_choice),
+    "power_mode_lu_source" => String(rect_status.power_mode_lu_source),
+    "power_mode_lu_klu_est_flops" => rect_status.power_mode_lu_klu_est_flops,
+    "power_mode_lu_threshold_flops" => rect_status.power_mode_lu_threshold_flops,
+    "power_mode_lu_line" => String(rect_status.power_mode_lu_line),
+  )
+  if hasproperty(rect_status, :power_mode_lu_islands)
+    md["power_mode_lu_islands"] = [Dict{String,Any}(
+      "island_id" => row.island_id,
+      "choice" => String(row.choice),
+      "source" => String(row.source),
+      "klu_est_flops" => row.klu_est_flops,
+    ) for row in rect_status.power_mode_lu_islands]
+  end
+  return md
+end
+
 function _build_success_lifecycle_metadata(raw_result::SparlectraRunResult, config::SparlectraConfig; numerical_success::Bool, final_outcome::Dict{String,Any}, csv_export_status::AbstractString, csv_export_skip_reason, csv_export_error, csv_artifacts::Vector{String}, detailed_result_csv::Bool, config_overrides, config_override_source::AbstractString, casefile, config_file, performance_timing, run_diagnostics::Bool, csv_format_name::AbstractString, qlimit_metadata::AbstractDict, csv_timing_metadata::AbstractDict)::Dict{String,Any}
   qv = _qv_characteristic_summary(raw_result.net, raw_result.numerical_converged)
   fq = _final_q_check_summary(raw_result)
@@ -248,7 +273,7 @@ function _build_success_lifecycle_metadata(raw_result::SparlectraRunResult, conf
       "detailed_result_csv" => detailed_result_csv,
       "detailed_result_csv_format" => csv_format_name,
     )),
-  ), qlimit_metadata, current_iteration_metadata, merit_linesearch_metadata, wrong_branch_metadata, trust_region_metadata, island_wise_metadata, _jacobian_reuse_lifecycle_metadata(rect_status))
+  ), qlimit_metadata, current_iteration_metadata, merit_linesearch_metadata, wrong_branch_metadata, trust_region_metadata, island_wise_metadata, _jacobian_reuse_lifecycle_metadata(rect_status), _power_mode_lu_lifecycle_metadata(rect_status))
   # Partial CSV exports are still successful API runs, but the Web UI needs the
   # partial file error in the stable lifecycle field used by Last Errors.
   haskey(csv_timing_metadata, :partial_error) && (metadata["detailed_result_csv_error"] = csv_timing_metadata[:partial_error])

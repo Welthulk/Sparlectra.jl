@@ -101,7 +101,7 @@ What a run writes besides its result: the console summary and its diagnostics, t
 | `output.console_diagnostics` | Symbol/String | `compact` | `off`, `compact`, `summary`, `full` | Diagnostic detail on console. |
 | `output.console_q_limit_events` | Symbol/String | `summary` | `off`, `summary`, `full` | Q-limit/PV→PQ event console detail. |
 | `output.console_max_rows` | Int | `100` | non-negative integer | Max rows in compact console tables. |
-| `output.logfile_results` | Symbol/String | `off` | `off`, `compact`, `classic`, `full` | Solved result table detail in logfile. |
+| `output.logfile_results` | Symbol/String | `classic` (`off` without a configuration file) | `off`, `compact`, `classic`, `full` | Solved result table detail in logfile. |
 | `output.detailed_result_csv_write_mode` | Symbol/String | `auto` | `auto`, `buffered`, `streaming` | Detailed CSV artifact write strategy; `auto` streams very large outputs. |
 | `output.detailed_result_csv_exporter` | Symbol/String | `auto` | `auto`, `report`, `direct` | Detailed CSV row-generation path; `auto` uses the direct streaming exporter for large bus counts. |
 | `output.detailed_result_csv_direct_threshold_buses` | Int | `10000` | positive integer | Bus-count threshold where `auto` switches detailed CSV export from report generation to direct streaming. |
@@ -173,6 +173,8 @@ Switching it on:
 - KLU: load the extension with `using KLU` next to `using Sparlectra`
   (the application package loads it, so the service and the Web UI have
   it). Without it power mode factorises with UMFPACK and gains less.
+  Which of the two a network gets is `power_flow.power_mode_lu`, see
+  [below](@ref power_mode_lu).
 
 Between solves the network keeps its Ybus
 (reused while the fingerprint of the branch admittances, terminals and
@@ -184,16 +186,9 @@ diagnostics of the final status are skipped (the maxima and the worst
 row stay). Nothing else changes: same Jacobian, same polar update, same
 Q-limit handling, same tolerance, the same solution to 1e-12 pu.
 
-The sparse LU of power mode is KLU when the KLU package extension is
-loaded (`using KLU` next to `using Sparlectra`; the application package
-loads it, so the service and the Web UI have it), UMFPACK with the kept
-analysis otherwise. KLU's numeric refactorization is 6 to 20 times faster
-than UMFPACK's on power-flow Jacobians of 5k to 60k unknowns; on very
-large Jacobians with heavy fill-in (an 82000-bus synthetic case) UMFPACK
-is faster, which is one reason power mode is a switch and not the default.
-On such a network KLU's refactorization costs more than the kept workspaces
-save, and power mode with KLU takes longer than a solve without power mode;
-leave power mode off there.
+The sparse LU of power mode is KLU or UMFPACK with the kept analysis,
+chosen per network by `power_flow.power_mode_lu` (next section); without
+the KLU package extension it is always UMFPACK.
 
 Measured warm solve (second and later solves on the same imported
 network, median of 20, single thread, flat start, Q limits off, the
@@ -215,6 +210,55 @@ The rule: a single run leaves it off (the first solve pays the analysis
 either way, and the ranked diagnostics are what a single run wants to
 read); a loop over one network switches it on. `reset_power_mode!(net)`
 drops the kept state when the memory is wanted back.
+
+### [Power-mode LU: KLU or UMFPACK](@id power_mode_lu)
+
+KLU's numeric refactorization is 6 to 20 times faster than UMFPACK's on
+power-flow Jacobians of 5k to 60k unknowns. On very large Jacobians it is
+the other way round: KLU's partial pivoting takes thousands of
+off-diagonal pivots there, its factor grows well beyond the estimate of
+its analysis, and on the 82000-bus case_SyntheticUSA a power-mode run
+with KLU took more than twice as long as one without power mode. Neither
+backend is right for every network, so `auto` chooses per network:
+
+| `power_flow.power_mode_lu` | sparse LU of power mode |
+|---|---|
+| `auto` (default) | KLU's symbolic analysis of the first power-mode Jacobian of a network (`klu_analyze`: block triangular form and AMD ordering, no numeric work) estimates the factorization flops; up to `Sparlectra.POWER_MODE_LU_KLU_MAX_FLOPS` (5e7) power mode factorizes with KLU, above it with UMFPACK; without the KLU extension always UMFPACK |
+| `klu` | KLU (UMFPACK with a warning when the extension is not loaded) |
+| `umfpack` | UMFPACK |
+
+The threshold is fitted on measured Jacobians: KLU refactorized faster on
+case2869pegase, case9241pegase, mvlv29840, case_ACTIVSg2000,
+case13659pegase and the two small islands of case_SyntheticUSA (estimates
+1.8e6 to 2.7e7 flops), UMFPACK on case_ACTIVSg25k and the 70000-bus
+island of case_SyntheticUSA (1.3e8 and 5.6e8). The estimate cannot see
+KLU's numeric pivoting; it stands in for it through the size of the
+problem. A network far from the measured ones may get the slower backend;
+`klu` or `umfpack` then fix the choice.
+
+The choice is made once per network, at the first factorization of its
+first power-mode solve, and kept for every later solve of that network:
+outages, other bus types, other Ybus patterns, N-1 and scenario runs (the
+workers are copies of the solved base case and keep its choice). An
+island solved on its own decides once for itself; an island an outage
+splits off takes the choice of the network it came from. A newly imported
+network decides again, and so does a network after
+`reset_power_mode!(net)`. The decision costs one symbolic analysis; when
+KLU wins, its factorization goes on from that analysis. The solution is
+the same with every value.
+
+The run log names the choice in the result header with the estimate, for
+example
+
+```text
+Power-mode LU  : klu (KLU symbolic estimate 1.95e+06 flops, at most the threshold 5e+07; decided in this solve)
+```
+
+and the run metadata carries it as `power_mode_lu_choice`,
+`power_mode_lu_source`, `power_mode_lu_klu_est_flops` and
+`power_mode_lu_threshold_flops` (one row per island in
+`power_mode_lu_islands`). Web UI: the select **Power-mode LU** directly
+under the power-mode checkbox, greyed while power mode is off.
 
 ### [Dishonest Newton](@id dishonest_newton)
 
@@ -298,7 +342,7 @@ and the Web UI has no benchmark option.
 | `benchmark.enabled` | Bool | `false` | `true`, `false` | Enable benchmark mode of `run_matpower_case` (needs `using BenchmarkTools`). |
 | `benchmark.methods` | Vector{Symbol/String} | `[rectangular]` | `rectangular` (current PF core) | Methods benchmarked. |
 | `benchmark.seconds` | Float64 | `2.0` | positive real | Benchmark max. time budget. This is not a minimum runtime, solver timeout, or iteration limit; a running sample is not interrupted. |
-| `benchmark.samples` | Int | `50` | positive integer | Max benchmark samples per method. The benchmark may finish earlier when this count is reached before the time budget, or collect fewer samples when the time budget is reached first. |
+| `benchmark.samples` | Int | `30` | positive integer | Max benchmark samples per method. The benchmark may finish earlier when this count is reached before the time budget, or collect fewer samples when the time budget is reached first. |
 | `benchmark.show_once` | Bool | `false` | `true`, `false` | Run one full visible solve before timing loop. |
 | `benchmark.show_once_output` | Symbol/String | `classic` | `classic`, `dataframe`, `compact` | Output format for `show_once`. |
 | `benchmark.show_once_max_nodes` | Int | `0` | non-negative integer | Row cap for one-shot output. |

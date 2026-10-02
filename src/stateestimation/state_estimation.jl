@@ -665,16 +665,24 @@ function _residual_diagnostics(H::AbstractMatrix{<:Real}, r::Vector{Float64}, w:
     @warn "SE diagnostics: the residual-correlation K report needs the full m×m residual covariance and m=$(m) exceeds $(_SE_FULL_OMEGA_MAX_M); the report is skipped for this run"
     need_full_omega = false
   end
-  takahashi_reason = ""
+  # above the dense state cap the full Omega is never formed: the dense pinv
+  # of G is cubic in n. Omega_ii comes from the Takahashi route (or the
+  # blockwise sparse solve below), and a K request is served by
+  # _residual_correlation_max_blockwise in the caller, column block by
+  # column block. Before this, a K request pinned the dense path and a
+  # 1354-bus case (2707 states) failed the whole run with "no affordable
+  # route", although no part of the diagnostics needs a dense G inverse.
+  need_full_omega && n > _SE_DENSE_LINALG_MAX_N && (need_full_omega = false)
   if !need_full_omega && n >= minStates
     sp, takahashi_reason = _residual_diagnostics_takahashi(H, r, w)
     sp !== nothing && return sp
-    @warn "SE diagnostics: Takahashi selected inverse unavailable ($(takahashi_reason)); falling back to the dense path"
+    @warn "SE diagnostics: Takahashi selected inverse unavailable ($(takahashi_reason)); falling back to the $(n > _SE_DENSE_LINALG_MAX_N ? "blockwise sparse" : "dense") path"
   end
-  # the dense pinv fallback is cubic in n: below the threshold it is the
-  # small-system default and the K-report path; above it no affordable
-  # route remains and the estimator says so instead of allocating
-  n > _SE_DENSE_LINALG_MAX_N && error("SE diagnostics: no affordable route for n=$(n) states (dense fallback capped at $(_SE_DENSE_LINALG_MAX_N)$(isempty(takahashi_reason) ? "" : "; Takahashi refused: " * takahashi_reason))")
+  # the dense pinv is cubic in n: below the cap it is the small-system
+  # default and the K-report path; above it the blockwise sparse solve
+  # (one factorization of G, block right-hand sides) gives the same
+  # diagonal without ever holding a dense n×n or m×m matrix
+  n > _SE_DENSE_LINALG_MAX_N && return _residual_diagnostics_blockwise(H, r, w)
 
   # Matrix(H) restores the exact zeros the sparse assembly dropped, so this
   # small dense path computes bit for bit what the historical dense H did
@@ -804,6 +812,113 @@ function _residual_correlation_max(Ω::AbstractMatrix{Float64})
       (j == i || d[j] <= eps(Float64)) && continue
       k = abs(real(Ω[i, j])) / sqrt(d[i] * d[j])
       k > kmax[i] && (kmax[i] = k)
+    end
+  end
+  return kmax
+end
+
+## Blockwise residual covariance for systems above the dense cap.
+##
+## Ω = W⁻¹ − H G⁻¹ Hᵀ with G = Hᵀ W H. Column j of Ω needs one solve
+## G x = h_jᵀ (h_j = row j of H) and one sparse product H x, so a block of
+## columns costs one multi-RHS solve on the sparse factorization and never
+## more than an n×b and an m×b dense block in memory. G is factorized ONCE
+## per call (UMFPACK; G is nonsingular whenever the estimate converged).
+const _SE_OMEGA_BLOCK = 256
+
+## Sparse G and its factorization. The one expected failure is a singular
+## gain matrix (an unobservable set reached the diagnostics); it is turned
+## into an error naming that cause, which the callers already report
+## (validate_measurements fails the run with the text, the suppression
+## round warns and suppresses nothing).
+function _omega_gain_factor(Hs::SparseMatrixCSC{Float64,Int}, w::Vector{Float64})
+  G = Hs' * (Diagonal(w) * Hs)
+  return try
+    lu(G)
+  catch err
+    err isa SingularException || rethrow()
+    error("SE diagnostics: the gain matrix G = H'WH is singular (state $(err.info) not observable); no residual covariance exists")
+  end
+end
+
+## Ω_jj for every row j: per block, X = G⁻¹ Hᵀ[:, block], then
+## Ω_jj = 1/w_j − h_j X[:, j] over the nonzeros of row j only.
+function _omega_diag_blockwise(Ht::SparseMatrixCSC{Float64,Int}, w::Vector{Float64}, F)
+  m = size(Ht, 2)
+  d = zeros(Float64, m)
+  for c0 = 1:_SE_OMEGA_BLOCK:m
+    cols = c0:min(c0 + _SE_OMEGA_BLOCK - 1, m)
+    X = F \ Matrix{Float64}(Ht[:, cols])
+    for (jj, j) in enumerate(cols)
+      acc = 0.0
+      for a = Ht.colptr[j]:(Ht.colptr[j+1]-1)
+        acc += Ht.nzval[a] * X[Ht.rowval[a], jj]
+      end
+      # same clamp as the dense and Takahashi paths: roundoff can push a
+      # critical row (Ω_jj = 0 exactly) a hair below zero
+      d[j] = max(1.0 / w[j] - acc, 0.0)
+    end
+  end
+  return d
+end
+
+## Diagnostics on the blockwise route: the same (rn, wii, omega,
+## omega_path, state_variances) tuple as the other two paths, with
+## omega = nothing (Ω_ii only, as on the Takahashi path). diag(G⁻¹) comes
+## from identity blocks on the same factorization.
+function _residual_diagnostics_blockwise(H::AbstractMatrix{<:Real}, r::Vector{Float64}, w::Vector{Float64})
+  m, n = size(H)
+  Hs = H isa SparseMatrixCSC{Float64,Int} ? H : sparse(Matrix{Float64}(H))
+  F = _omega_gain_factor(Hs, w)
+  Ht = SparseMatrixCSC(transpose(Hs))
+  d = _omega_diag_blockwise(Ht, w, F)
+  rn = zeros(Float64, m)
+  wii = zeros(Float64, m)
+  for i = 1:m
+    wii[i] = d[i] * w[i]
+    rn[i] = d[i] <= eps(Float64) ? 0.0 : r[i] / sqrt(d[i])
+  end
+  sv = zeros(Float64, n)
+  for c0 = 1:_SE_OMEGA_BLOCK:n
+    cols = c0:min(c0 + _SE_OMEGA_BLOCK - 1, n)
+    E = zeros(Float64, n, length(cols))
+    for (jj, j) in enumerate(cols)
+      E[j, jj] = 1.0
+    end
+    X = F \ E
+    for (jj, j) in enumerate(cols)
+      sv[j] = X[j, jj]
+    end
+  end
+  return (rn = rn, wii = wii, omega = nothing, omega_path = :blockwise, state_variances = sv)
+end
+
+## K report without the full Ω: the same per-row maximum as
+## _residual_correlation_max, computed column block by column block. Two
+## passes because every coefficient needs BOTH diagonal entries: the first
+## pass collects diag(Ω), the second forms Ω[:, block] = W⁻¹[:, block] −
+## H X and reads the column maximum. Ω is symmetric, so the maximum over
+## column j is the maximum over row j. Memory: one m×b block.
+function _residual_correlation_max_blockwise(H::AbstractMatrix{<:Real}, w::Vector{Float64})
+  m = size(H, 1)
+  Hs = H isa SparseMatrixCSC{Float64,Int} ? H : sparse(Matrix{Float64}(H))
+  F = _omega_gain_factor(Hs, w)
+  Ht = SparseMatrixCSC(transpose(Hs))
+  d = _omega_diag_blockwise(Ht, w, F)
+  kmax = zeros(Float64, m)
+  for c0 = 1:_SE_OMEGA_BLOCK:m
+    cols = c0:min(c0 + _SE_OMEGA_BLOCK - 1, m)
+    Y = Hs * (F \ Matrix{Float64}(Ht[:, cols]))   # (H G⁻¹ Hᵀ)[:, cols]
+    for (jj, j) in enumerate(cols)
+      d[j] <= eps(Float64) && continue
+      best = 0.0
+      for i = 1:m
+        (i == j || d[i] <= eps(Float64)) && continue
+        # off the diagonal W⁻¹ is zero, so Ω_ij = −Y_ij
+        k = abs(Y[i, jj]) / sqrt(d[i] * d[j])
+        k > best && (best = k)
+      end
+      kmax[j] = best
     end
   end
   return kmax
@@ -2675,9 +2790,9 @@ end
 _SENormalEquationsSolver(backend::Symbol = :umfpack) = _SENormalEquationsSolver(_se_linear_context(backend), nothing, Int64[], Int64[], 0, 0)
 
 # The LU context for `state_estimation.linear_solver`. UMFPACK is chosen
-# explicitly, not through `_power_mode_new_context()`: that one turns into
-# KLU as soon as any code in the session loads KLU for power mode, and the
-# estimator's arithmetic must not depend on what else was loaded. :klu takes
+# explicitly, independent of whether some code in the session loaded KLU for
+# power mode: the estimator's arithmetic must not depend on what else was
+# loaded. :klu takes
 # the KLU extension's constructor when it is registered; without it the
 # estimator still runs, on UMFPACK, and says once why.
 function _se_linear_context(backend::Symbol)
@@ -3764,11 +3879,22 @@ function validate_measurements(net::Net, measurements::Vector{Measurement})
   w = _weight_vector(activeMeas)
   r = z - h
   _wrap_angle_residuals!(r, activeMeas)
-  # K needs the full Omega, so a correlation request pins the dense path;
-  # otherwise the Takahashi selected inverse takes over above the size
-  # threshold (with an automatic dense fallback on any guard failure)
+  # K needs the full Omega up to the dense state cap, so there a
+  # correlation request pins the dense path; otherwise the Takahashi
+  # selected inverse takes over above the size threshold (with an
+  # automatic fallback on any guard failure)
   rd = _residual_diagnostics(H, r, w; need_full_omega = reportResidualCorrelation, minStates = base.takahashi_min_states)
-  kmax = reportResidualCorrelation && rd.omega !== nothing ? _residual_correlation_max(rd.omega) : nothing
+  kmax = nothing
+  if reportResidualCorrelation
+    if rd.omega !== nothing
+      kmax = _residual_correlation_max(rd.omega)
+    elseif size(H, 1) <= _SE_FULL_OMEGA_MAX_M
+      # above the dense state cap: K column block by column block on the
+      # sparse factorization (the m cap stays the run-time budget; beyond
+      # it _residual_diagnostics already warned that the report is skipped)
+      kmax = _residual_correlation_max_blockwise(H, w)
+    end
+  end
   ranking = _build_measurement_suspicion_report(activeMeas, activeIdx, r, rd.rn; normalizedThreshold = normalizedThreshold, wii = rd.wii, wiiThreshold = wiiThreshold, kmax = kmax)
 
   suspicious = [row for row in ranking if row.suspicious]

@@ -67,9 +67,11 @@ end
 # Split a summary CSV into a header-name => column-index map plus data rows.
 function _island_diag_read_summary(path::AbstractString)
   lines = split(strip(read(path, String)), '\n')
-  header = split(lines[1], ',')
+  # the report follows output.csv_format (excel_de by default since 0.30.2)
+  delim = occursin(';', lines[1]) ? ';' : ','
+  header = split(lines[1], delim)
   col = Dict(String(name) => i for (i, name) in enumerate(header))
-  rows = [split(line, ',') for line in lines[2:end]]
+  rows = [split(line, delim) for line in lines[2:end]]
   return col, rows
 end
 
@@ -143,7 +145,8 @@ function run_island_diagnostics_tests()
         # Mirrors execution.jl on failure: the combined status handed to the
         # diagnostics writer is the failed island's own status (tagged with
         # island_id = 1), plus the run-level iteration count.
-        Sparlectra._write_ac_island_diagnostics!(net, cfg, profile; status = failed_status, iterations = 80)
+        # the asserted cells are the technical spelling (decimal point)
+        with_technical_output(() -> Sparlectra._write_ac_island_diagnostics!(net, cfg, profile; status = failed_status, iterations = 80))
         col, rows = _island_diag_read_summary(joinpath(dir, "ac_island_solver_summary.csv"))
         @test length(rows) == 2
         row1 = rows[1]

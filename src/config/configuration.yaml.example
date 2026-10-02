@@ -90,6 +90,11 @@ power_flow:
   # mismatch diagnostics are skipped during the solve. Same Jacobian, same
   # update, same solution; off for a single run.
   power_mode: false
+  # Sparse LU of power mode: auto chooses once per network from KLU's
+  # symbolic flop estimate of the first Jacobian (KLU up to 5e7 flops,
+  # UMFPACK above; UMFPACK when KLU is not loaded); klu or umfpack fix the
+  # backend. Read only with power_mode: true.
+  power_mode_lu: auto
   # Dishonest Newton: after a Newton step that cut the maximum mismatch by
   # at least `jacobian_reuse_min_reduction`, the next step solves with the
   # previous factorization (no Jacobian refill, no refactorization), at
@@ -271,7 +276,7 @@ power_flow:
     scale_v: 1.0
     # true = fall back to the max-mismatch criterion if no trial satisfies Armijo;
     # false = fall back to the most conservative finite trial (today's autodamp fallback).
-    fallback_max_mismatch: true
+    fallback_max_mismatch: false
 
   # Optional scaled-Newton trust-region step control: an alternative to
   # autodamp that caps the Newton step norm at an adaptive radius and
@@ -710,7 +715,7 @@ output:
   console_q_limit_events: summary
   console_max_rows: 100
   # Allowed values: off, compact, classic, full
-  logfile_results: full
+  logfile_results: classic
   result_table_max_rows: 200
   result_table_large_case_threshold_buses: 1000
   # Allowed values: summary, classic, full
@@ -734,7 +739,7 @@ output:
   # Allowed values: technical, excel_de, excel_us
   # Delimiter and decimal separator of EVERY CSV file a run writes (technical,
   # excel_de, excel_us); the one central CSV setting, whatever writes the file.
-  csv_format: technical
+  csv_format: excel_de
   # Allowed values: off, compact, full
   logfile_diagnostics: compact
   # Allowed values: off, compact, full
@@ -754,7 +759,7 @@ benchmark:
   # Allowed values: rectangular
   methods: [rectangular]
   seconds: 2.0
-  samples: 50
+  samples: 30
   show_once: false
   # Allowed values: classic, dataframe, compact
   show_once_output: classic
@@ -855,7 +860,7 @@ webui:
   # older entries from every operation log it knows; 0 keeps only the current
   # session. Lower this when the log page grows unwieldy (the size comes from
   # the number of entries, not from their age).
-  operation_log_retention_days: 10
+  operation_log_retention_days: 3
   # Base URL of the published documentation that the help icons (?) next to
   # the form fields open in a new tab. Point it at a local docs build
   # (file:///.../docs/build/), the dev site (.../dev/) or a pinned version

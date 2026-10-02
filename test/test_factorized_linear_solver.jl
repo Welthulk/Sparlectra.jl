@@ -350,41 +350,122 @@ function run_factorized_linear_solver_tests()
       @test occursin("name=\"power_flow_linear_solver\"", expert_html)
       @test occursin("<option value=\"umfpack_reuse\" selected>", expert_html)
       @test occursin("<option value=\"umfpack\"", expert_html)
-      @test !occursin("<option value=\"klu\"", expert_html)
+      # klu is no value of power_flow.linear_solver (it is one of the
+      # power-mode LU select since 0.30.2, so only the linear-solver select
+      # is searched)
+      linear_select = match(r"<select id=\"power_flow_linear_solver\"[^>]*>.*?</select>"s, expert_html)
+      @test linear_select !== nothing && !occursin("<option value=\"klu\"", linear_select.match)
       linear_topic = SparlectraApp.resolve_webui_help_topic("power_flow.linear_solver")
       @test linear_topic !== nothing && !isempty(linear_topic.hint)
       @test occursin("href=\"$(SparlectraApp.webui_help_page_url("power_flow.linear_solver"))\"", form_html)
     end)() end
-    @testset "power mode: KLU extension" begin (function ()
+    @testset "power mode: KLU extension and power_mode_lu" begin (function ()
+      path = joinpath(dirname(@__DIR__), "data", "mpower", "sp_case118.m")
+      state(n) = [b._vm_pu * cis(deg2rad(b._va_deg)) for b in n.nodeVec]
+      lu_status(n) = Sparlectra.rectangular_pf_status(n)
+      ref_net = Sparlectra.createNetFromMatPowerFile(filename = path)
+      it_ref, erg_ref = runpf!(ref_net, 30, 1e-10, 0; qlimits_enabled = false)
+      @test erg_ref == 0
+      # without the extension (hook cleared, as in a session without
+      # `using KLU`): auto is UMFPACK without a decision, klu falls back to
+      # UMFPACK with one warning naming the extension
+      saved = Sparlectra._POWER_MODE_LINEAR_CONTEXT[]
+      try
+        Sparlectra._POWER_MODE_LINEAR_CONTEXT[] = nothing
+        @test Sparlectra.power_mode_linear_solver_backend() === :umfpack_reuse
+        net = Sparlectra.createNetFromMatPowerFile(filename = path)
+        runpf!(net, 30, 1e-10, 0; qlimits_enabled = false, power_mode = true)
+        st = lu_status(net)
+        @test (st.power_mode_lu, st.power_mode_lu_choice, st.power_mode_lu_source) == (:auto, :umfpack, :klu_not_loaded)
+        @test isnan(st.power_mode_lu_klu_est_flops)
+        @test maximum(abs.(state(net) .- state(ref_net))) <= 1e-12
+        net = Sparlectra.createNetFromMatPowerFile(filename = path)
+        @test_logs (:warn, r"SparlectraKLUExt") match_mode = :any runpf!(net, 30, 1e-10, 0; qlimits_enabled = false, power_mode = true, power_mode_lu = :klu)
+        @test lu_status(net).power_mode_lu_choice === :umfpack
+      finally
+        Sparlectra._POWER_MODE_LINEAR_CONTEXT[] = saved
+      end
+      @test_throws ArgumentError runpf!(Sparlectra.createNetFromMatPowerFile(filename = path), 30, 1e-10, 0; qlimits_enabled = false, power_mode = true, power_mode_lu = :pardiso)
       if !_KLU_AVAILABLE
         println("      power mode KLU extension: SKIPPED (KLU.jl not loadable in this session)")
-        @test Sparlectra.power_mode_linear_solver_backend() === :umfpack_reuse
         return nothing
       end
       println("      power mode KLU extension: RAN")
       @test Sparlectra.power_mode_linear_solver_backend() === :klu
-      path = joinpath(dirname(@__DIR__), "data", "mpower", "sp_case118.m")
-      ref_net = Sparlectra.createNetFromMatPowerFile(filename = path)
-      it_ref, erg_ref = runpf!(ref_net, 30, 1e-10, 0; qlimits_enabled = false)
-      net = Sparlectra.createNetFromMatPowerFile(filename = path)
-      prof = Dict{Symbol,Any}()
-      it_pm, erg_pm = runpf!(net, 30, 1e-10, 0; qlimits_enabled = false, power_mode = true, performance_profile = prof)
-      @test erg_pm == 0 && erg_ref == 0 && it_pm == it_ref
-      @test prof[:linear_solver_backend] === :klu
-      @test Sparlectra._newton_context_backend(net._power_cache.linear_ctx) === :klu
-      state(n) = [b._vm_pu * cis(deg2rad(b._va_deg)) for b in n.nodeVec]
-      @test maximum(abs.(state(net) .- state(ref_net))) <= 1e-12
-      # warm solve on the same net: KLU refactors on the kept analysis
-      fresh = Sparlectra.createNetFromMatPowerFile(filename = path)
-      for (a, b) in zip(net.nodeVec, fresh.nodeVec)
-        a._vm_pu = b._vm_pu
-        a._va_deg = b._va_deg
+      # the rule of auto: KLU up to the threshold of KLU's symbolic flop
+      # estimate, UMFPACK above
+      thr = Sparlectra.POWER_MODE_LU_KLU_MAX_FLOPS
+      @test Sparlectra._power_mode_lu_choice(thr) === :klu && Sparlectra._power_mode_lu_choice(nextfloat(thr)) === :umfpack
+      # every value gives the same solution; klu and umfpack say so, auto
+      # decides on the first solve from the symbolic estimate (sp_case118 is
+      # far below the threshold: KLU)
+      for (lu, backend) in ((:klu, :klu), (:umfpack, :umfpack_reuse), (:auto, :klu))
+        net = Sparlectra.createNetFromMatPowerFile(filename = path)
+        prof = Dict{Symbol,Any}()
+        it_pm, erg_pm = runpf!(net, 30, 1e-10, 0; qlimits_enabled = false, power_mode = true, power_mode_lu = lu, performance_profile = prof)
+        @test erg_pm == 0 && it_pm == it_ref
+        @test maximum(abs.(state(net) .- state(ref_net))) <= 1e-12
+        st = lu_status(net)
+        @test st.power_mode_lu === lu && prof[:linear_solver_backend] === backend
+        @test Sparlectra._newton_context_backend(net._power_cache.linear_ctx) === backend
+        if lu === :auto
+          @test st.power_mode_lu_source === :decided && st.power_mode_lu_choice === :klu
+          @test 0 < st.power_mode_lu_klu_est_flops <= thr && occursin("KLU symbolic estimate", st.power_mode_lu_line)
+        else
+          @test st.power_mode_lu_source === :configured && isnan(st.power_mode_lu_klu_est_flops)
+        end
       end
-      it2, erg2 = runpf!(net, 30, 1e-10, 0; qlimits_enabled = false, power_mode = true)
-      @test erg2 == 0 && it2 == it_ref
-      @test maximum(abs.(state(net) .- state(ref_net))) <= 1e-12
-      ctx = net._power_cache.linear_ctx
-      @test ctx.analyze_count == 1 && ctx.refactor_count >= it_ref && ctx.fallback_count == 0
+      # warm solves on the same net: KLU refactors on the kept analysis; under
+      # auto the second solve takes the decision of the first, also after a
+      # branch outage (once per network), on a copy of the net (the N-1 and
+      # scenario workers) and not after reset_power_mode!
+      for lu in (:klu, :auto)
+        net = Sparlectra.createNetFromMatPowerFile(filename = path)
+        runpf!(net, 30, 1e-10, 0; qlimits_enabled = false, power_mode = true, power_mode_lu = lu)
+        first_status = lu_status(net)
+        fresh = Sparlectra.createNetFromMatPowerFile(filename = path)
+        for (a, b) in zip(net.nodeVec, fresh.nodeVec)
+          a._vm_pu = b._vm_pu
+          a._va_deg = b._va_deg
+        end
+        worker = deepcopy(net)
+        it2, erg2 = runpf!(net, 30, 1e-10, 0; qlimits_enabled = false, power_mode = true, power_mode_lu = lu)
+        @test erg2 == 0 && it2 == it_ref
+        @test maximum(abs.(state(net) .- state(ref_net))) <= 1e-12
+        ctx = net._power_cache.linear_ctx
+        @test ctx.analyze_count == 1 && ctx.refactor_count >= it_ref && ctx.fallback_count == 0
+        st = lu_status(net)
+        @test st.power_mode_lu_choice === first_status.power_mode_lu_choice
+        lu === :klu && continue
+        @test st.power_mode_lu_source === :earlier_decision && st.power_mode_lu_klu_est_flops == first_status.power_mode_lu_klu_est_flops
+        @test occursin("earlier solve", st.power_mode_lu_line)
+        setBranchStatus!(net.branchVec[1], false)
+        runpf!(net, 30, 1e-10, 0; qlimits_enabled = false, power_mode = true)
+        @test lu_status(net).power_mode_lu_source === :earlier_decision
+        runpf!(worker, 30, 1e-10, 0; qlimits_enabled = false, power_mode = true)
+        @test lu_status(worker).power_mode_lu_source === :earlier_decision
+        # from the file start again (a converged state needs no factorization,
+        # and a solve without one decides nothing)
+        Sparlectra.reset_power_mode!(net)
+        for (a, b) in zip(net.nodeVec, fresh.nodeVec)
+          a._vm_pu = b._vm_pu
+          a._va_deg = b._va_deg
+        end
+        runpf!(net, 30, 1e-10, 0; qlimits_enabled = false, power_mode = true)
+        @test lu_status(net).power_mode_lu_source === :decided
+      end
+      # island path: the island nets are fresh in every solve and record
+      # into the memo of the caller's network, one decision per island
+      island_net = _reuse_two_island_net()
+      for round in 1:2
+        _, erg = runpf!(island_net, 20, 1e-8, 0; islands_enabled = true, power_mode = true)
+        @test erg == 0
+        rows = lu_status(island_net).power_mode_lu_islands
+        @test length(rows) == 2
+        @test all(r -> r.source === (round == 1 ? :decided : :earlier_decision), rows)
+        @test occursin("island 1:", lu_status(island_net).power_mode_lu_line) && occursin("island 2:", lu_status(island_net).power_mode_lu_line)
+      end
+      @test sort(collect(keys(island_net._power_cache.lu_memo.decisions))) == [1, 3]
     end)() end
   end)() end
 end

@@ -559,9 +559,11 @@ backends.
 
 KLU is not a value of `power_flow.linear_solver`: for a single solve it
 is not faster than `umfpack_reuse`, and a KLU factorization shared across
-threads gives silently wrong results. Power mode uses KLU when the KLU
+threads gives silently wrong results. Power mode can use KLU when the KLU
 package extension is loaded (`using KLU`), one factorization per network
-and never shared; see [Power mode](@ref power-mode).
+and never shared; `power_flow.power_mode_lu` chooses between KLU and
+UMFPACK per network (`auto` from KLU's symbolic flop estimate); see
+[Power-mode LU](@ref power_mode_lu).
 
 Behavior of the reuse backend:
 

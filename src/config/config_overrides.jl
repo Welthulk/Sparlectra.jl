@@ -56,6 +56,7 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "power_flow.linear_solver",
   "power_flow.newton_update",
   "power_flow.power_mode",
+  "power_flow.power_mode_lu",
   "power_flow.jacobian_reuse",
   "power_flow.jacobian_reuse_min_reduction",
   "power_flow.jacobian_reuse_max_steps",
@@ -255,6 +256,8 @@ function _validate_gui_override_value(key::String, value)
     _validate_allowed_symbol(key, _as_symbol_cfg(value), POWERFLOW_LINEAR_SOLVER_VALUES)
   elseif key == "power_flow.newton_update"
     _validate_allowed_symbol(key, _as_symbol_cfg(value), POWERFLOW_NEWTON_UPDATE_VALUES)
+  elseif key == "power_flow.power_mode_lu"
+    _validate_allowed_symbol(key, _as_symbol_cfg(value), POWER_MODE_LU_VALUES)
   elseif key == "power_flow.qlimits.enforcement_mode"
     # "off" is the disabled state, accepted like in `QLimitConfig`
     mode = _as_symbol_cfg(value)
@@ -454,7 +457,7 @@ function load_case_config(case_path::AbstractString)::Dict{String,Any}
   # the warning the configuration file gets, never refused: an old case
   # file must keep loading
   for key in sort!(String[k for k in keys(out) if haskey(_REMOVED_NOTED_CONFIG_KEYS, k)])
-    @warn "Configuration key $(key) in $(basename(path)) is ignored: $(_REMOVED_NOTED_CONFIG_KEYS[key])"
+    @warn "Configuration key $(key) in $(basename(path)) is ignored: $(_REMOVED_NOTED_CONFIG_KEYS[key])" maxlog = 1 _id = Symbol("removed_case_key_", key, "_", path)
     delete!(out, key)
   end
   bad = sort!(String[k for k in keys(out) if !scf_is_case_config_key(k)])
@@ -703,6 +706,7 @@ const CONFIG_OVERRIDE_REPORT_KEYS = String[
   "power_flow.autodamp_min",
   "power_flow.newton_update",
   "power_flow.power_mode",
+  "power_flow.power_mode_lu",
   "power_flow.jacobian_reuse",
   "power_flow.jacobian_reuse_min_reduction",
   "power_flow.jacobian_reuse_max_steps",

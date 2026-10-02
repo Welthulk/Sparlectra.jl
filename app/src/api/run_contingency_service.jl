@@ -23,6 +23,11 @@
 #          dir, no cache workflow of its own). rescue_ladder is read from the
 #          config; the outage kind is a run parameter, not a config key.
 
+# power mode (0.30.1) with its sparse LU choice (0.30.2) for the worker
+# solves of the scenario engine and N-1, only when the configuration
+# switches power mode on
+_power_mode_kwargs(pf) = pf.power_mode ? (; power_mode = true, power_mode_lu = pf.power_mode_lu) : (;)
+
 # dishonest Newton (0.30.2) for the worker solves of the scenario engine and
 # N-1, only when the configuration switches it on
 _jacobian_reuse_kwargs(pf) = pf.jacobian_reuse ? (; jacobian_reuse = true, jacobian_reuse_min_reduction = pf.jacobian_reuse_min_reduction, jacobian_reuse_max_steps = pf.jacobian_reuse_max_steps) : (;)
@@ -221,7 +226,7 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
       end
       # power mode (0.30.1) reaches the scenario engine's worker nets like the N-1 path below
       runScenarios!(net, set; index = idx, rescue_ladder = config.contingency.rescue_ladder, screening_mode = screen_mode, screening_margin_pct = screen_margin,
-        (config.powerflow.power_mode ? (; power_mode = true) : (;))..., _jacobian_reuse_kwargs(config.powerflow)...,
+        _power_mode_kwargs(config.powerflow)..., _jacobian_reuse_kwargs(config.powerflow)...,
         warm_active_set = config.contingency.warm_active_set, warm_note = warm_note)
     catch err
       err isa PowerFlowAborted && rethrow()
@@ -301,7 +306,7 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
   dslack_kwargs = dslack.enabled ? (; distributed_slack_enabled = true, distributed_slack_p_mode = dslack.p_mode, distributed_slack_fallback = dslack.fallback) : (;)
   # power mode (0.30.1): the worker nets of the engine keep their Ybus,
   # factorization and work arrays across the outages when the caller set it
-  config.powerflow.power_mode && (dslack_kwargs = (; dslack_kwargs..., power_mode = true))
+  dslack_kwargs = (; dslack_kwargs..., _power_mode_kwargs(config.powerflow)...)
   dslack_kwargs = (; dslack_kwargs..., _jacobian_reuse_kwargs(config.powerflow)...)
   if results === nothing
     # an outage that removes the reference, or splits off an island without

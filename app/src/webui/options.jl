@@ -118,6 +118,7 @@ const WEBUI_OPTION_SPECS = WebUIOptionSpec[
   # the NEXT Web UI start, so it is not stored per case.
   WebUIOptionSpec("power_flow.rescue", "power_flow_rescue", Bool, :checkbox, true, (), :expert, :case, true),
   WebUIOptionSpec("power_flow.power_mode", "power_flow_power_mode", Bool, :checkbox, false, (), :expert, :case, true),
+  WebUIOptionSpec("power_flow.power_mode_lu", "power_flow_power_mode_lu", String, :select, String(DEFAULT_POWER_MODE_LU), POWER_MODE_LU_VALUES, :expert, :case, true),
   WebUIOptionSpec("power_flow.jacobian_reuse", "power_flow_jacobian_reuse", Bool, :checkbox, DEFAULT_JACOBIAN_REUSE, (), :expert, :case, true),
   WebUIOptionSpec("power_flow.jacobian_reuse_min_reduction", "power_flow_jacobian_reuse_min_reduction", Float64, :number, DEFAULT_JACOBIAN_REUSE_MIN_REDUCTION, (), :expert, :case, true),
   WebUIOptionSpec("power_flow.jacobian_reuse_max_steps", "power_flow_jacobian_reuse_max_steps", Int, :number, DEFAULT_JACOBIAN_REUSE_MAX_STEPS, (), :expert, :case, true),

@@ -202,6 +202,16 @@ end
 ## is otherwise indistinguishable from a successful tap estimation.
 const _SE_TAP_FALLBACK_NOTE = "tap estimation did NOT converge: every tap was frozen at its MODEL position, so the tap positions in this result are model values, not estimates. The J of this run therefore measures the model tap positions, and a large J is expected when those positions are wrong."
 
+## The same statement when the staged tap estimate converged but its FIXED
+## positions fitted the measurements worse than the model positions did
+## (the acceptance rule after the staged start). Same three surfaces.
+const _SE_TAP_REJECTED_NOTE = "tap estimation was REJECTED: its positions, fixed to the mechanical steps, fitted the measurements worse than the model positions, so every tap was frozen at its MODEL position and the tap positions in this result are model values, not estimates. The set does not pin these taps reliably."
+
+## The note for a fallback run, chosen by the reason the service recorded
+## (`se_tap_estimation_fallback_reason`; runs before the reason existed
+## carry none and were all non-convergences).
+_se_tap_fallback_note(metadata) = get(metadata, "se_tap_estimation_fallback_reason", "not_converged") == "worse_fit" ? _SE_TAP_REJECTED_NOTE : _SE_TAP_FALLBACK_NOTE
+
 _any_tap_released(net::Net)::Bool = any(b -> b.tap_est_mode !== :none, net.branchVec)
 
 ## Freeze every released tap back to its model position and report how many
@@ -215,6 +225,18 @@ function _freeze_all_tap_estimation!(net::Net)::Int
     frozen += 1
   end
   return frozen
+end
+
+## Which transformers are released, in which mode and regulator direction,
+## so a staged start can freeze them for one solve and release exactly the
+## same set again (setTapEstimation! with enabled = false clears alpha).
+_tap_release_snapshot(net::Net) = [(k, b.tap_est_mode, b.tap_est_alpha_deg) for (k, b) in enumerate(net.branchVec) if b.tap_est_mode !== :none]
+
+function _restore_tap_release!(net::Net, snap)
+  for (k, mode, alpha) in snap
+    setTapEstimation!(net; trafo = k, mode = mode, alpha_deg = mode === :ratio ? nothing : alpha)
+  end
+  return length(snap)
 end
 
 ## Iterations a run actually needed, not just its LAST solve. With released
@@ -361,6 +383,11 @@ Options: `max_iter`, `tol`, `flatstart`, `robust`, `max_eliminations`,
 that carries a ratio tap changer (`setTapEstimation!` mode `:ratio`) before
 the solve; the estimator then fixes each tap to its nearest mechanical step
 and reports J before versus after the fixation (`se_tap_estimates.csv`).
+That release is staged: one solve with the taps frozen first, the estimate
+from that state, kept only if its fixed positions fit at least as well as
+the model positions (otherwise the frozen-tap fallback, reason
+`worse_fit`). The internal keyword `tap_staged_start = false` keeps the
+release cold (regression fixtures only).
 
 Failure reasons: `se_unsupported_format`, `import_error`,
 `invalid_measurements` (missing/unreadable/rejected file),
@@ -402,12 +429,17 @@ function _run_state_estimation_service(
   # this an SE run read the configuration file only and every per-run
   # setting of the form was lost on the way (the CSV format among them)
   config_overrides::AbstractDict = Dict{String,Any}(),
+  # internal: false keeps the mass release COLD (no frozen pre-solve, no
+  # acceptance rule). No request field sets it; it exists for the
+  # regression fixtures that pin what the diagnostics do on a cold tap run
+  # (a reverted elimination is reachable only there) and for comparisons.
+  tap_staged_start::Bool = true,
 )::SparlectraApiResult
   # the callback and the overrides arrive in a different type from every call
   # site; behind `_SeRunOptions` the 700-line body below has one
   # specialization (the same arrangement as `_run_sparlectra_api`)
   options = _SeRunOptions(max_iter, tol, flatstart, robust, max_eliminations, report_correlation, k_eliminate, robust_mode, robust_k1,
-    robust_k2, k_suppress, suppression_sigma, phase_callback, config_overrides)
+    robust_k2, k_suppress, suppression_sigma, phase_callback, config_overrides, tap_staged_start)
   return _run_state_estimation_service_body(String(case_path), String(config_file), String(output_dir), run_id, String(measurement_file),
     update_shunts, tap_estimation, case_format, options)
 end
@@ -430,6 +462,7 @@ struct _SeRunOptions
   suppression_sigma::Union{Nothing,Float64}
   phase_callback::Any
   config_overrides::Any
+  tap_staged_start::Bool
 end
 
 function _run_state_estimation_service_body(
@@ -456,6 +489,7 @@ function _run_state_estimation_service_body(
   k_suppress = options.k_suppress
   suppression_sigma = options.suppression_sigma
   phase_callback = options.phase_callback
+  tap_staged_start = options.tap_staged_start
   config_overrides = options.config_overrides
   mkpath(output_dir)
   logfile = joinpath(output_dir, "run.log")
@@ -764,6 +798,48 @@ function _run_state_estimation_service_body(
 
   # diagnostics (report) plus the final state-writing run (chain anchor)
   se_phase("estimation_diagnostics")
+  # Staged start for the mass release. From flat voltages the released tap
+  # states take large first steps, the per-iteration tap step limit then
+  # scales the WHOLE step down, and the estimate crawls: case1354pegase
+  # with 240 released transformers needed 63 iterations on a generated
+  # measurement set with four deviated taps, so a limit of 50 never reached it,
+  # the fallback below froze every tap and the run reported J/dof 16
+  # instead of 1.02. One solve with the taps frozen first puts the
+  # voltages next to the solution; released from there, the same estimate
+  # needed 4 iterations and reached the same J. The frozen solve is also
+  # the reference of the acceptance rule below, which is why it runs under
+  # a configured warm start too (there the MiniGrid fixture
+  # cgmes_minigrid_elimination_reverted converged straight to the badly
+  # rounding tap estimate, J 16382 against 1114 with the model taps).
+  # Only for the mass release: a set-documented or explicit release names
+  # a few transformers and converges from flat (7 iterations on the same
+  # set), and its positions are the point of the run.
+  staged_pre = nothing
+  if tap_staged_start && tap_estimation && tap_released > 0
+    tap_snap = _tap_release_snapshot(net)
+    _freeze_all_tap_estimation!(net)
+    v_start = [(nd._vm_pu, nd._va_deg) for nd in net.nodeVec]
+    pre = with_sparlectra_config(() -> runse!(net), run_cfg)
+    _restore_tap_release!(net, tap_snap)
+    if pre.converged
+      staged_pre = pre
+      run_cfg = _sparlectra_config_with(run_cfg; state_estimation = _se_config_with(run_cfg.state_estimation; flatstart = false))
+    else
+      # the pre-solve wrote its diverged iterate into the net; the released
+      # run then starts from the state it would have had without the staging
+      for (i, nd) in enumerate(net.nodeVec)
+        nd._vm_pu, nd._va_deg = v_start[i]
+      end
+    end
+    base_metadata["se_tap_staged_start"] = pre.converged
+    open(logfile, "a") do io
+      if pre.converged
+        println(io, "tap estimation: staged start, one solve with the ", length(tap_snap), " released tap(s) frozen (", pre.iterations, " iteration(s), J = ", round(pre.objectiveJ; sigdigits = 6), ", dof ", pre.dof, "), then the taps are estimated from that state")
+      else
+        println(io, "tap estimation: the staged start did not converge with the taps frozen (", pre.iterations, " iteration(s)); the released run starts as configured")
+      end
+    end
+  end
   diag = with_sparlectra_config(() -> runse_diagnostics(net), run_cfg)
   # eliminated rows leave the FINAL run: the diagnostics identified them on
   # its own copy, so deactivate them here or the headline J would keep
@@ -790,7 +866,21 @@ function _run_state_estimation_service_body(
   # estimation is repeated once. The log says it happened, because a silent
   # retry would hide that the reported taps are model values, not estimates.
   tap_fallback_used = false
-  if !res.converged && _any_tap_released(net)
+  # Acceptance rule for the staged start: the staged estimate converges
+  # where the cold one crawled, but on a set that cannot pin its taps it
+  # converges to positions that round badly. Measured on the MiniGrid
+  # fixture cgmes_minigrid_elimination_reverted: J 1089 before the
+  # fixation, 16382 after it, against 1114 with the model taps (the cold
+  # run fell back to those). The FIXED estimate is therefore kept only if
+  # it fits at least as well as the model positions in the pre-solve. The
+  # comparison is conservative: the final run carries no more rows than
+  # the pre-solve (eliminated rows are inactive), so a larger J here is a
+  # worse fit for certain. "Larger" carries a relative margin of 1e-6: a
+  # tap fixed back onto its model step solves the same problem as the
+  # pre-solve, and the two J then differ in the last digits only (seen:
+  # 49.4686 against 49.4686 rejected without the margin).
+  tap_worse_fit = staged_pre !== nothing && res.converged && _any_tap_released(net) && res.objectiveJ > staged_pre.objectiveJ * (1.0 + 1.0e-6)
+  if (!res.converged || tap_worse_fit) && _any_tap_released(net)
     frozen = _freeze_all_tap_estimation!(net)
     # The failed run wrote its state into the net (updateNet = true is not
     # gated on convergence), so without this the retry starts from the
@@ -806,12 +896,21 @@ function _run_state_estimation_service_body(
       end
     end
     open(logfile, "a") do io
-      println(io, "state estimation did not converge with ", frozen, " released transformer tap(s); repeating WITHOUT tap estimation (the taps keep their model position). A set that cannot pin its taps needs more measurements around those transformers, not more iterations.")
+      if tap_worse_fit
+        println(io, "tap estimation rejected: the ", frozen, " estimated tap(s), fixed to their mechanical steps, give J = ", round(res.objectiveJ; sigdigits = 6), " (dof ", res.dof, ") against J = ", round(staged_pre.objectiveJ; sigdigits = 6), " (dof ", staged_pre.dof, ") with the model positions; repeating WITHOUT tap estimation (the taps keep their model position).")
+      else
+        println(io, "state estimation did not converge with ", frozen, " released transformer tap(s); repeating WITHOUT tap estimation (the taps keep their model position). A set that cannot pin its taps needs more measurements around those transformers, not more iterations.")
+      end
     end
-    @info "state estimation: tap estimation switched off after a non-converged run" released = frozen
+    if tap_worse_fit
+      @info "state estimation: tap estimation rejected, the fixed taps fit worse than the model positions" released = frozen
+    else
+      @info "state estimation: tap estimation switched off after a non-converged run" released = frozen
+    end
     res = with_sparlectra_config(() -> runse!(net), run_cfg)
     tap_fallback_used = res.converged
     base_metadata["se_tap_estimation_fallback"] = tap_fallback_used
+    base_metadata["se_tap_estimation_fallback_reason"] = tap_worse_fit ? "worse_fit" : "not_converged"
     if tap_fallback_used
       # The diagnostics above described the RELEASED-tap attempt (its J of
       # the diverged iterate, its dof with the tap states), while the
@@ -845,7 +944,7 @@ function _run_state_estimation_service_body(
   open(joinpath(output_dir, "se_diagnostics.md"), "w") do io
     # same statement the result page carries: the tap positions below are
     # model values, so the J of this run measures THEM
-    tap_fallback_used && println(io, "\n> **Tap estimation fallback.** ", _SE_TAP_FALLBACK_NOTE, " The diagnostics below describe that frozen-tap run, the same one the status line reports.\n")
+    tap_fallback_used && println(io, "\n> **Tap estimation fallback.** ", _se_tap_fallback_note(base_metadata), " The diagnostics below describe that frozen-tap run, the same one the status line reports.\n")
     # The numbers the status line and run.log report come from the FINAL
     # run (res); the diagnostics pass below ran on every active row before
     # any elimination, so its own J counts rows the reported run no longer

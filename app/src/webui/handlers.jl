@@ -1472,6 +1472,99 @@ function handle_powerflow_config_refresh(form::AbstractDict; write::Bool = false
   end
 end
 
+# Search in the configuration editor (client side, no request): plain text,
+# case-insensitive, Enter / Shift+Enter step through the hits; a dotted key
+# such as power_flow.qlimits.guard.enabled is followed through the YAML
+# indentation (direct children of each level only) and jumps to that key.
+# The search box sits outside the form and its input has no name, so Enter
+# never submits the YAML. A raw string: the script carries backslashes.
+const _WEBUI_CONFIG_EDITOR_SEARCH_SCRIPT = raw"""<script>
+(function () {
+  const box = document.querySelector('[data-config-search]');
+  const area = document.querySelector('textarea[name="config_text"]');
+  if (box === null || area === null) return;
+  const input = box.querySelector('input');
+  const info = box.querySelector('[data-config-search-info]');
+  let hits = [];
+  let pos = -1;
+  // the query the hits belong to: Enter right after typing (before the
+  // debounced search ran) must search the new text, not step the old hits
+  let searched = null;
+  const keyHit = function (query) {
+    if (query.indexOf('.') < 0 || /\s/.test(query)) return null;
+    const parts = query.split('.');
+    const lines = area.value.split('\n');
+    const starts = [];
+    let offset = 0;
+    lines.forEach(function (line) { starts.push(offset); offset += line.length + 1; });
+    let from = 0;
+    let parentIndent = -1;
+    let found = -1;
+    for (let p = 0; p < parts.length; p++) {
+      found = -1;
+      let childIndent = -1;
+      for (let i = from; i < lines.length; i++) {
+        const m = lines[i].match(/^(\s*)([^\s#:][^:#]*):/);
+        if (m === null) continue;
+        const indent = m[1].length;
+        if (indent <= parentIndent) break;
+        if (childIndent < 0) childIndent = indent;
+        if (indent === childIndent && m[2].trim() === parts[p]) { found = i; break; }
+      }
+      if (found < 0) return null;
+      parentIndent = lines[found].match(/^\s*/)[0].length;
+      from = found + 1;
+    }
+    const last = parts[parts.length - 1];
+    return { start: starts[found] + lines[found].indexOf(last), length: last.length };
+  };
+  const textHits = function (query) {
+    const out = [];
+    const hay = area.value.toLowerCase();
+    const needle = query.toLowerCase();
+    let i = hay.indexOf(needle);
+    while (i >= 0) { out.push({ start: i, length: needle.length }); i = hay.indexOf(needle, i + Math.max(needle.length, 1)); }
+    return out;
+  };
+  const show = function () {
+    if (hits.length === 0) { info.textContent = input.value.trim() === '' ? '' : 'no match'; return; }
+    const hit = hits[pos];
+    area.focus();
+    area.setSelectionRange(hit.start, hit.start + hit.length);
+    const line = area.value.slice(0, hit.start).split('\n').length - 1;
+    const style = window.getComputedStyle(area);
+    const lineHeight = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.2;
+    area.scrollTop = Math.max(0, line * lineHeight - area.clientHeight / 3);
+    info.textContent = (pos + 1) + ' / ' + hits.length + ' (line ' + (line + 1) + ')';
+    input.focus();
+  };
+  const search = function () {
+    const query = input.value.trim();
+    searched = query;
+    if (query === '') { hits = []; pos = -1; show(); return; }
+    const key = keyHit(query);
+    hits = key === null ? textHits(query) : [key];
+    pos = hits.length > 0 ? 0 : -1;
+    show();
+  };
+  const step = function (delta) {
+    if (searched !== input.value.trim() || hits.length === 0) { search(); return; }
+    pos = (pos + delta + hits.length) % hits.length;
+    show();
+  };
+  let timer = null;
+  input.addEventListener('input', function () { window.clearTimeout(timer); timer = window.setTimeout(search, 200); });
+  input.addEventListener('keydown', function (event) {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    window.clearTimeout(timer);
+    step(event.shiftKey ? -1 : 1);
+  });
+  box.querySelector('[data-config-search-next]').addEventListener('click', function () { step(1); });
+  box.querySelector('[data-config-search-prev]').addEventListener('click', function () { step(-1); });
+})();
+</script>"""
+
 function handle_powerflow_config_editor(config_file::AbstractString; message::AbstractString = "", status::Integer = 200, config_text::Union{Nothing,AbstractString} = nothing)::SparlectraWebUIResponse
   path = isempty(strip(config_file)) ? DEFAULT_SPARLECTRA_CONFIG_PATH : String(config_file)
   text = config_text === nothing ? (isfile(path) ? read(path, String) : "") : String(config_text)
@@ -1483,12 +1576,19 @@ function handle_powerflow_config_editor(config_file::AbstractString; message::Ab
 $(notice)
 <p>Active configuration file: <code>$(_webui_escape(path))</code></p>
 $(sidecar_note)
+<div class="config-search" data-config-search>
+<input type="search" placeholder="Search text or a key such as power_flow.qlimits.guard.enabled" aria-label="Search in the configuration" size="60">
+<button type="button" class="secondary-button" data-config-search-prev>Previous</button>
+<button type="button" class="secondary-button" data-config-search-next>Next</button>
+<span data-config-search-info></span>
+</div>
 <form method="post" action="/powerflow/config/edit">
 <input type="hidden" name="config_file" value="$(_webui_escape(path))">
 <textarea name="config_text" rows="30" style="width: 100%; font-family: monospace;">$(_webui_escape(text))</textarea>
 <p><button type="submit">Save YAML configuration</button></p>
 </form>
 </section>
+$(_WEBUI_CONFIG_EDITOR_SEARCH_SCRIPT)
 """
   return _webui_html(_webui_layout("Configuration Editor", body; show_back = true); status)
 end
