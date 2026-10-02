@@ -20,31 +20,29 @@ using Printf
 
 fmt2(x) = x === nothing ? "NaN" : x isa AbstractFloat && isnan(x) ? "NaN" : x isa Real ? @sprintf("%.2f", x) : string(x)
 
-"""
-using_links.jl
-
-Example network with a busbar coupler (`Bus1` ↔ `Bus1a`) represented as a
-Sparlectra bus link.
-
-Requested topology:
-- Branches: Bus1→Bus3, Bus2→Bus4, Bus3→Bus4, Bus1a→Bus4
-- Additional topological link: Bus1↔Bus1a
-- Injections at Bus1, Bus4 and Bus5 (Bus5 is slack)
-
-Important note:
-- Active links are treated as ideal bus couplers during `runpf!`.
-- Buses connected by active links are merged in the internal power-flow model,
-  so they share the same voltage magnitude and angle.
-- `calcLinkFlowsKCL!` is still applied after `runpf!` to allocate/report a
-  consistent link exchange on the original topology.
-- A bus link to a slack bus is usually not meaningful, because the ideal merge
-  can weaken the interpretation of the slack angle reference.
-
-The script runs two scenarios:
-1) Link closed (`status = 1`)
-2) Link open   (`status = 0`)
-
-"""
+# using_links.jl
+#
+# Example network with a busbar coupler (`Bus1` ↔ `Bus1a`) represented as a
+# Sparlectra bus link.
+#
+# Requested topology:
+# - Branches: Bus1→Bus3, Bus2→Bus4, Bus3→Bus4, Bus1a→Bus4
+# - Additional topological link: Bus1↔Bus1a
+# - Injections at Bus1, Bus4 and Bus5 (Bus5 is slack)
+#
+# Important note:
+# - Active links are treated as ideal bus couplers during `runpf!`.
+# - Buses connected by active links are merged in the internal power-flow model,
+#   so they share the same voltage magnitude and angle.
+# - `calcLinkFlowsKCL!` is still applied after `runpf!` to allocate/report a
+#   consistent link exchange on the original topology.
+# - A bus link to a slack bus is usually not meaningful, because the ideal merge
+#   can weaken the interpretation of the slack angle reference.
+#
+# The script runs two scenarios:
+# 1) Link closed (`status = 1`)
+# 2) Link open   (`status = 0`)
+#
 
 using Sparlectra
 

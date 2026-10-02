@@ -487,6 +487,7 @@ end
                       rescue_ladder = [:warm],
                       parallel_enabled = nothing, parallel_max_tasks = nothing,
                       parallel_min_work_items = nothing,
+                      progress = nothing,
                       kwargs...) -> Vector{ContingencyResult}
 
 Evaluate branch-outage contingencies. The base `net` is NEVER mutated: a
@@ -503,22 +504,21 @@ duplicate-free subset of `(:warm, :apslf, :dc, :flat)`, default `[:warm]`
 case-local net with a distinct start recipe, tried in order until one
 converges; the winning stage is reported as `start_used`:
 - `:warm`: the template (base-case) voltages;
-- `:apslf`: an APSLF start (the
-  dropped with a warning when the extension is not loaded);
+- `:apslf`: APSLF (AnalyticLoadFlow) start values;
 - `:dc`: flat magnitudes with DC-projected start angles;
 - `:flat`: `flatstart = true`.
 The full solver rescue ladder (`:settled_qlimits`, `:autodamp`) is NOT used
 per case, only for the base case (below).
 
 When the base case does not converge, it is retried through the solver rescue
-ladder (`runpf!` with `rescue = true`) before falling back to a flat template
-with a warning. `auto_slack` (default `true`) hands the reference to the
+ladder (the strategies of `runpf!` with `rescue = true`, on the same keywords
+as the base solve) before falling back to a flat template with a warning. `auto_slack` (default `true`) hands the reference to the
 best remaining unit when an outage removes it, for the whole network and
 for an island that lost it: the stated reference priority first
 (`ProSumer.referencePriority`, 1 is the strongest), then
 [`reference_candidate_rank`](@ref); the row then names the bus. With `auto_slack = false` such a case ends on the
-missing reference. Remaining `kwargs...` are forwarded to the `:warm`/`:flat`/`:dc`
-contingency solves (the `:apslf` config path does not forward them).
+missing reference. Remaining `kwargs...` (distributed slack, Q-limit settings, ...)
+are forwarded to the base solve, its rescue and every ladder stage.
 
 `retry_flat_start` is DEPRECATED (kept one minor cycle): `retry_flat_start =
 true` now just appends `:flat` to the ladder.
@@ -527,6 +527,17 @@ The batch fans out over Julia threads in `runtime.parallel.max_tasks`
 chunks (gated by `runtime.parallel.*`; the three `parallel_*` keywords
 override the active configuration). Parallel and serial runs produce
 identical results.
+
+`progress` (default `nothing`) is an optional callable invoked as
+`progress(done::Int, total::Int)` once after every finished outage, so a
+caller can show how far the batch is (the Web UI N-1 counter uses it).
+`total` is the number of cases; `done` counts every finished case, solved,
+screened or failed alike, and the base-case solve is not counted. Over
+one batch the callback sees each value of `1:total` exactly once. On a
+parallel batch it is called from the worker threads, possibly at the same
+time and out of order (5 can arrive before 4), so it must be thread safe
+(take a lock around shared state, keep the maximum of `done` for a
+display) and should return quickly. An exception it throws ends the batch.
 
 `screening_mode` / `screening_margin_pct`: `:off`
 (default, bit-identical to the pre-screening behavior) solves every case
@@ -555,6 +566,7 @@ function runContingencies!(
     auto_slack::Bool=true,
     warm_active_set::Bool=false,
     warm_note::Union{Nothing,Base.RefValue{String}}=nothing,
+    @nospecialize(progress=nothing),
     kwargs...,
 )
     vm_min_pu < vm_max_pu || throw(ArgumentError("runContingencies!: vm_min_pu must be below vm_max_pu."))
@@ -574,7 +586,10 @@ function runContingencies!(
     # per-case-deepcopy implementation
     engine = ScenarioEngine(net; vm_min_pu=vm_min_pu, vm_max_pu=vm_max_pu, maxIte=maxIte, tol=tol, ladder=ladder, pf_kwargs=(; auto_slack=auto_slack, kwargs...), screening_mode=screening_mode, screening_margin_pct=screening_margin_pct, warm_active_set=warm_active_set, warm_note=warm_note)
     items = _engine_items_from_cases(engine.template, cases)
-    return _run_engine_batch(engine, items; parallel_enabled=parallel_enabled, parallel_max_tasks=parallel_max_tasks, parallel_min_work_items=parallel_min_work_items)
+    # `progress` is only passed through here (@nospecialize: this body and
+    # the batch compile once, whatever the callback type); the batch wraps
+    # it in a concrete struct (see _BatchProgress in src/scenario/engine.jl)
+    return _run_engine_batch(engine, items; parallel_enabled=parallel_enabled, parallel_max_tasks=parallel_max_tasks, parallel_min_work_items=parallel_min_work_items, progress=progress)
 end
 
 """

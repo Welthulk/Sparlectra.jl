@@ -80,6 +80,8 @@ function _rectangular_status_diagnostics(rect_status)::NamedTuple
     wrong_branch_max_branch_angle_deg = _rect_status_get(rect_status, :wrong_branch_max_branch_angle_deg, NaN),
     wrong_branch_branch_angle_violation_count = _rect_status_get(rect_status, :wrong_branch_branch_angle_violation_count, 0),
     wrong_branch_worst_branch_angle_deg = _rect_status_get(rect_status, :wrong_branch_worst_branch_angle_deg, NaN),
+    wrong_branch_reference_branch_angle_deg = _rect_status_get(rect_status, :wrong_branch_reference_branch_angle_deg, NaN),
+    wrong_branch_reference_branch = _rect_status_get(rect_status, :wrong_branch_reference_branch, ""),
     wrong_branch_rescue_attempted = _rect_status_get(rect_status, :wrong_branch_rescue_attempted, false),
     wrong_branch_rescue_reason = _rect_status_get(rect_status, :wrong_branch_rescue_reason, :disabled),
     wrong_branch_rescue_used = _rect_status_get(rect_status, :wrong_branch_rescue_used, false),

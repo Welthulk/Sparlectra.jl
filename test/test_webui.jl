@@ -298,31 +298,34 @@ function run_webui_fast_tests()
             @test occursin("down-weight from |r|/sigma", knees_note)
             @test !occursin("se_robust_k1: 10", read(Sparlectra.case_config_path(joinpath(cache, "sp_case14.scf.json")), String))
             SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "sp_case14.scf.json", "settings_target" => "this_case", "power_flow_solver" => "rectangular"); output_root=root, runtime=rt)
-            # the flat start is the one start switch: the saved start settings
-            # stay as posted, the run switches them off while the flat start is
-            # on and names them in run.log; unchecking gives them back
-            resp_flat = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "sp_case14.scf.json", "settings_target" => "this_case", "power_flow_flatstart" => "true", "power_flow_apslf_start_enabled" => "true", "power_flow_start_current_iteration_enabled" => "true", "power_flow_start_angle_mode" => "dc", "power_flow_start_voltage_mode" => "profile_blend"); output_root=root, runtime=rt)
+            # the flat start sets only the profile (#463): the saved start
+            # settings stay as posted, the start machines run from the flat
+            # profile, only the two start modes are set to classic for the
+            # run (named in run.log); unchecking gives the modes back. The
+            # ratio-profile switch travels from the form into the case file.
+            resp_flat = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "sp_case14.scf.json", "settings_target" => "this_case", "power_flow_flatstart" => "true", "power_flow_ratio_profile" => "false", "power_flow_start_current_iteration_enabled" => "true", "power_flow_start_angle_mode" => "dc", "power_flow_start_voltage_mode" => "profile_blend"); output_root=root, runtime=rt)
             @test resp_flat.status in (302, 303)
             flat_cfg = Sparlectra.load_case_config(joinpath(cache, "sp_case14.scf.json"))
             @test flat_cfg["power_flow.flatstart"] === true
-            @test flat_cfg["power_flow.apslf_start.enabled"] === true
+            @test flat_cfg["power_flow.start_mode.ratio_profile"] === false
             @test flat_cfg["power_flow.start_current_iteration.enabled"] === true
             run_flat = SparlectraApp.start_powerflow_run(Dict("casefile" => "sp_case14.scf.json", "config_file" => cfg_rt, "output_root" => root); case_directory=cache)
             @test run_flat["status"] == "succeeded"
             run_log = read(joinpath(String(run_flat["output_dir"]), "run.log"), String)
-            # the start projection is one of the machines: without the switch a DC
-            # or blended candidate could still win the start (seen on sp_case118)
-            @test !occursin("start projection selected", run_log)
-            forced_cfg, forced_keys = Sparlectra._flatstart_forced_off_config(Sparlectra.load_sparlectra_config(cfg_rt; reload = true, overrides = Dict{String,Any}("power_flow" => Dict{String,Any}("flatstart" => true, "start_mode" => Dict{String,Any}("start_projection" => true)))))
-            @test forced_cfg.powerflow.start_mode.start_projection === false
-            @test "power_flow.start_mode.start_projection=false" in forced_keys
-            @test occursin("Flat start: start-value machines forced off for this run: power_flow.apslf_start.enabled=false, power_flow.start_current_iteration.enabled=false, power_flow.start_mode.start_projection=false, power_flow.start_mode.angle_mode=classic, power_flow.start_mode.voltage_mode=classic", run_log)
+            @test occursin("Flat start: start modes set to classic for this run: power_flow.start_mode.angle_mode=classic, power_flow.start_mode.voltage_mode=classic", run_log)
             @test occursin(r"Flatstart\s+:\s+Yes", run_log)
-            @test run_flat["metadata"]["current_iteration_enabled"] === false
+            # the pre-solve was not switched off by the flat start
+            @test run_flat["metadata"]["current_iteration_enabled"] === true
+            profile_cfg, profile_keys = Sparlectra._flatstart_profile_config(Sparlectra.load_sparlectra_config(cfg_rt; reload = true, overrides = Dict{String,Any}("power_flow" => Dict{String,Any}("flatstart" => true, "apslf_start" => Dict{String,Any}("enabled" => true), "start_mode" => Dict{String,Any}("start_projection" => true, "angle_mode" => "dc")))))
+            @test profile_cfg.powerflow.start_mode.start_projection === true
+            @test profile_cfg.powerflow.apslf_start.enabled === true
+            @test profile_cfg.powerflow.start_mode.angle_mode === :classic
+            @test "power_flow.start_mode.angle_mode=classic" in profile_keys
+            @test !any(k -> occursin("start_projection", k) || occursin("apslf_start", k), profile_keys)
             SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "sp_case14.scf.json", "settings_target" => "this_case", "power_flow_flatstart" => "false"); output_root=root, runtime=rt)
             off_cfg = Sparlectra.load_case_config(joinpath(cache, "sp_case14.scf.json"))
             @test off_cfg["power_flow.flatstart"] === false
-            @test off_cfg["power_flow.apslf_start.enabled"] === true
+            @test off_cfg["power_flow.start_mode.angle_mode"] == "dc"
             # machine-scope keys are named and kept out of the case file
             resp2 = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "sp_case14.scf.json", "settings_target" => "this_case", "output_logfile_results" => "full"); output_root=root, runtime=rt)
             @test occursin("output.logfile_results", SparlectraApp._webui_urldecode(Dict(resp2.headers)["Location"]))
@@ -618,10 +621,10 @@ function run_webui_fast_tests()
             @test isempty(readlines(log))
             # the configuration carries it, with the documented default
             cfg = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload=true)
-            @test cfg.webui.operation_log_retention_days == 3
+            @test cfg.webui.operation_log_retention_days == 10
             lowered = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload=true,
-                overrides=Dict{String,Any}("webui" => Dict{String,Any}("operation_log_retention_days" => 1)))
-            @test lowered.webui.operation_log_retention_days == 1
+                overrides=Dict{String,Any}("webui" => Dict{String,Any}("operation_log_retention_days" => 3)))
+            @test lowered.webui.operation_log_retention_days == 3
             @test SparlectraApp._webui_operation_log_options(; retention_days=3).retention_days == 3
             @test_throws ArgumentError Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload=true,
                 overrides=Dict{String,Any}("webui" => Dict{String,Any}("operation_log_retention_days" => -1)))
@@ -714,7 +717,7 @@ function run_webui_fast_tests()
             mkpath(cases)
             case_path = joinpath(cases, "warmup_casePST.m")
             cp(joinpath(dirname(@__DIR__), "data", "mpower", "warmup_casePST.m"), case_path)
-            rt = (; case_directory=cases, config_file=technical_output_config_path(), operation_log=SparlectraApp.webui_operation_log_path(root), startup_config_error=nothing, runner=SparlectraApp.start_powerflow_run)
+            rt = (; case_directory=cases, config_file=Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, operation_log=SparlectraApp.webui_operation_log_path(root), startup_config_error=nothing, runner=SparlectraApp.start_powerflow_run)
             bytes = s -> Vector{UInt8}(codeunits(s))
 
             # upload classification: v1 CSV -> measurement_set; CSV without the
@@ -867,7 +870,7 @@ function run_webui_fast_tests()
             rm(mfile)
             mname = written_set(gen3)
             mfile = joinpath(cases, mname)
-            netchk = Sparlectra._import_sparlectra_net(case_path, nothing, Sparlectra.load_sparlectra_config(technical_output_config_path(); reload=true))
+            netchk = Sparlectra._import_sparlectra_net(case_path, nothing, Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload=true))
             readMeasurementsCSV!(netchk; file=mfile)
             fl = measurementSigmaFloors()
             frac(t) = t == Sparlectra.VmMeas ? 0.01 : (t in (Sparlectra.QinjMeas, Sparlectra.QflowMeas) ? 0.01 : 0.02)
@@ -889,7 +892,7 @@ function run_webui_fast_tests()
             rm(mfile)
             mname = written_set(genia)
             mfile = joinpath(cases, mname)
-            netia = Sparlectra._import_sparlectra_net(case_path, nothing, Sparlectra.load_sparlectra_config(technical_output_config_path(); reload=true))
+            netia = Sparlectra._import_sparlectra_net(case_path, nothing, Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload=true))
             readMeasurementsCSV!(netia; file=mfile)
             iarows = [m for m in netia.measurements if m.typ == Sparlectra.IaMeas]
             @test !isempty(iarows) && all(m.sigma == 0.1 for m in iarows)
@@ -928,7 +931,7 @@ function run_webui_fast_tests()
             dlbad = SparlectraApp.route_sparlectra_webui("GET", "/stateestimation/measurements/download?file=../evil.csv", Dict{String,String}("file" => "../evil.csv"); output_root=root, runtime=rt)
             @test dlbad.status in (400, 404)
             # the commented file still parses and round-trips
-            netc = Sparlectra._import_sparlectra_net(case_path, nothing, Sparlectra.load_sparlectra_config(technical_output_config_path(); reload=true))
+            netc = Sparlectra._import_sparlectra_net(case_path, nothing, Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload=true))
             rc = readMeasurementsCSV!(netc; file=mfile)
             @test rc.total > 0
             # out-of-range percentage is rejected
@@ -1089,7 +1092,7 @@ function run_webui_fast_tests()
 
             # the SE service refuses a set bound to a different case up front,
             # naming both cases (the d27fbc77 confusion: warmup_casePST set on case85)
-            rGate = start_powerflow_run(Dict{String,Any}("casefile" => case9_path, "config_file" => technical_output_config_path(), "output_root" => root, "se_mode" => true, "measurement_file" => mfile))
+            rGate = start_powerflow_run(Dict{String,Any}("casefile" => case9_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true, "measurement_file" => mfile))
             @test rGate["status"] != "succeeded"
             @test occursin("bound to case warmup_casePST.m", rGate["message"])
             @test occursin("sp_case5.scf.json", rGate["message"])
@@ -1114,7 +1117,7 @@ function run_webui_fast_tests()
             write(mfile, content0)   # restore the clean set for the runs below
 
             # service-level SE run: artifacts present, history row kind se
-            r1 = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => technical_output_config_path(), "output_root" => root, "se_mode" => true, "measurement_file" => mfile))
+            r1 = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true, "measurement_file" => mfile))
             @test r1["status"] == "succeeded"
             id1 = r1["run_id"]
             for artifact in ("se_state.csv", "se_diagnostics.md", "se_view.md", "measurements.csv")
@@ -1148,7 +1151,7 @@ function run_webui_fast_tests()
             rm(mfile)
             mname = written_set(gentap2)
             mfile = joinpath(cases, mname)
-            rtap = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => technical_output_config_path(), "output_root" => root, "se_mode" => true, "measurement_file" => mfile, "se_tap_estimation" => true))
+            rtap = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true, "measurement_file" => mfile, "se_tap_estimation" => true))
             @test rtap["status"] == "succeeded"
             idtap = rtap["run_id"]
             tapcsv = joinpath(root, idtap, "se_tap_estimates.csv")
@@ -1191,7 +1194,7 @@ function run_webui_fast_tests()
             # hint this produced a J nobody could explain, and the hint only
             # appeared after a converged run (if transformers were changed, that option has to
             # be on by itself).
-            rhint = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => technical_output_config_path(), "output_root" => root, "se_mode" => true, "measurement_file" => mfile))
+            rhint = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true, "measurement_file" => mfile))
             @test rhint["status"] == "succeeded"
             @test rhint["metadata"]["se_set_tap_deviation"] == true
             @test !isempty(rhint["metadata"]["se_auto_released_taps"])
@@ -1201,7 +1204,7 @@ function run_webui_fast_tests()
             # bad data lands findable: gross error in the set -> se_bad_data.csv
             # with the measurement, its location, and the eliminated flag
             mfile, mname = regenerate(Dict{String,Any}("casefile" => "warmup_casePST.m", "gross_error_k" => "10"))
-            rbd = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => technical_output_config_path(), "output_root" => root, "se_mode" => true, "measurement_file" => mfile))
+            rbd = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true, "measurement_file" => mfile))
             @test rbd["status"] == "succeeded"
             bdcsv = joinpath(root, rbd["run_id"], "se_bad_data.csv")
             @test isfile(bdcsv)
@@ -1256,14 +1259,14 @@ function run_webui_fast_tests()
             @test SparlectraApp._webui_case_claim!("warmup_casePST.m", "generating measurements")
             busy_resp = SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/generate-measurements", Dict{String,Any}("casefile" => "warmup_casePST.m"); output_root=root, runtime=rt)
             @test occursin("is busy", SparlectraApp._webui_urldecode(Dict(busy_resp.headers)["Location"]))
-            busy_run = SparlectraApp.start_webui_powerflow_run(Dict{String,Any}("casefile" => "warmup_casePST.m", "output_root" => root, "config_file" => technical_output_config_path()); case_directory=cases)
+            busy_run = SparlectraApp.start_webui_powerflow_run(Dict{String,Any}("casefile" => "warmup_casePST.m", "output_root" => root, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH); case_directory=cases)
             @test busy_run["status"] == "failed" && occursin("busy", String(busy_run["message"]))
             SparlectraApp._webui_case_release!("warmup_casePST.m")
             @test SparlectraApp._webui_case_busy("warmup_casePST.m") === nothing
             # the full default set measures injections at every bus, so every
             # branch keeps its from end and no to-direction flow rows remain
             @test all(l -> !(startswith(l, "PflowMeas") && length(split(l, ",")) >= 7 && split(l, ",")[7] == "to"), split(one1, "\n"))
-            rone = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => technical_output_config_path(), "output_root" => root, "se_mode" => true, "measurement_file" => mfile))
+            rone = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true, "measurement_file" => mfile))
             @test rone["status"] == "succeeded"
 
             # passive nodes as protected zero-injection constraints: ZI rows
@@ -1276,7 +1279,7 @@ function run_webui_fast_tests()
             ziline = first(zilines)
             zibus = split(ziline, ",")[2]
             @test !any(l -> startswith(l, "PinjMeas,$(zibus),") && !occursin("ZI_", l), split(zi1, "\n"))
-            rzi = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => technical_output_config_path(), "output_root" => root, "se_mode" => true, "measurement_file" => mfile))
+            rzi = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true, "measurement_file" => mfile))
             @test rzi["status"] == "succeeded"
             @test rzi["metadata"]["se_eliminations"] == 0
 
@@ -1300,13 +1303,13 @@ function run_webui_fast_tests()
             # the staged service path equals the legacy Bool bitwise, the delta
             # artifact exists for generated sets, invalid modes reject
             mfile, mname = regenerate(Dict{String,Any}("casefile" => "warmup_casePST.m"))
-            rst = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => technical_output_config_path(), "output_root" => root, "se_mode" => true, "measurement_file" => mfile, "se_robust_mode" => "staged", "se_robust_k1" => 3.0, "se_robust_k2" => 6.0))
+            rst = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true, "measurement_file" => mfile, "se_robust_mode" => "staged", "se_robust_k1" => 3.0, "se_robust_k2" => 6.0))
             @test rst["status"] == "succeeded"
             @test rst["metadata"]["se_robust_mode"] == "staged"
             # knees out of order: the staged run refuses them naming both form
             # fields; without staged down-weighting the pair is not read, the
             # run goes through on the configured pair and run.log says so
-            knee_request = Dict{String,Any}("casefile" => case_path, "config_file" => technical_output_config_path(), "output_root" => root, "se_mode" => true, "measurement_file" => mfile, "se_robust_k1" => 10.0, "se_robust_k2" => 6.0)
+            knee_request = Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true, "measurement_file" => mfile, "se_robust_k1" => 10.0, "se_robust_k2" => 6.0)
             knee_staged = start_powerflow_run(merge(knee_request, Dict{String,Any}("se_robust_mode" => "staged")))
             @test knee_staged["status"] == "failed"
             @test occursin("down-weight from |r|/sigma", knee_staged["message"]) && occursin("k1=10.0, k2=6.0", knee_staged["message"])
@@ -1319,15 +1322,15 @@ function run_webui_fast_tests()
             # scope, like power_flow.solver), so it now travels as the dotted
             # config override "state_estimation.robust_mode", not as the bare
             # form field; se_robust_k2 has no config key and is unaffected.
-            reqrec = SparlectraApp._webui_request_settings_for_profile(SparlectraApp.powerflow_webui_request(Dict{String,Any}("se_mode" => "true", "casefile" => case_path, "config_file" => technical_output_config_path(), "measurement_file" => mfile, "se_robust_mode" => "staged", "se_robust_k2" => "6.0"); default_output_root=root))
+            reqrec = SparlectraApp._webui_request_settings_for_profile(SparlectraApp.powerflow_webui_request(Dict{String,Any}("se_mode" => "true", "casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "measurement_file" => mfile, "se_robust_mode" => "staged", "se_robust_k2" => "6.0"); default_output_root=root))
             @test reqrec["state_estimation.robust_mode"] == "staged"
             @test reqrec["se_robust_k2"] == 6.0
-            rleg = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => technical_output_config_path(), "output_root" => root, "se_mode" => true, "measurement_file" => mfile, "se_robust" => true))
+            rleg = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true, "measurement_file" => mfile, "se_robust" => true))
             @test rleg["metadata"]["se_robust_mode"] == "staged"
             @test rst["metadata"]["se_objective"] == rleg["metadata"]["se_objective"]
             @test isfile(joinpath(root, rst["run_id"], "se_deltas.csv"))
             @test occursin("kind,id,type,bus,from_bus,to_bus,measured,truth,estimated", read(joinpath(root, rst["run_id"], "se_deltas.csv"), String))
-            rbadmode = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => technical_output_config_path(), "output_root" => root, "se_mode" => true, "measurement_file" => mfile, "se_robust_mode" => "bogus"))
+            rbadmode = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true, "measurement_file" => mfile, "se_robust_mode" => "bogus"))
             @test rbadmode["status"] != "succeeded"
             @test occursin("se_robust_mode", rbadmode["message"])
 
@@ -1381,7 +1384,7 @@ function run_webui_fast_tests()
             # stays on the honest J (eliminations off so the rows STAY suppressed)
             gja = joinpath(root, "gen_jactive.csv")
             SparlectraApp._se_generate_measurement_set(case_path, gja, SparlectraApp.MeasurementGeneratorOptions(; noise=false, gross_k=12.0, gross_count=2, tap_steps=0.0, include_i=false, sigma_u_pct=0.5, sigma_i_pct=1.0, sigma_p_pct=1.0, sigma_q_pct=1.0, sigma_ia_deg=0.0, seed=42))
-            rja = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => technical_output_config_path(), "output_root" => root, "se_mode" => true, "measurement_file" => gja, "se_robust_mode" => "replacement", "se_max_eliminations" => 0))
+            rja = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true, "measurement_file" => gja, "se_robust_mode" => "replacement", "se_max_eliminations" => 0))
             @test rja["status"] == "succeeded"
             @test rja["metadata"]["se_suppressed_rows"] >= 1
             @test rja["metadata"]["se_objective_active"] < rja["metadata"]["se_objective"]
@@ -1394,7 +1397,7 @@ function run_webui_fast_tests()
             # 10-sigma row still pushed the headline to J = 149 at dof 42)
             gjb = joinpath(root, "gen_jelim.csv")
             SparlectraApp._se_generate_measurement_set(case_path, gjb, SparlectraApp.MeasurementGeneratorOptions(; noise=true, gross_k=10.0, gross_count=1, tap_steps=0.0, include_i=false, sigma_u_pct=0.5, sigma_i_pct=1.0, sigma_p_pct=1.0, sigma_q_pct=1.0, sigma_ia_deg=0.0, seed=42))
-            rje = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => technical_output_config_path(), "output_root" => root, "se_mode" => true, "measurement_file" => gjb, "se_robust_mode" => "replacement", "se_k_suppress" => 4.0))
+            rje = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true, "measurement_file" => gjb, "se_robust_mode" => "replacement", "se_k_suppress" => 4.0))
             @test rje["status"] == "succeeded"
             @test rje["metadata"]["se_eliminations"] == 1
             @test rje["metadata"]["se_band_reason"] == "ok"
@@ -1417,7 +1420,7 @@ function run_webui_fast_tests()
             # reads like a broken statistic); an explicit false stays unchecked
             @test occursin("name=\"noise\" value=\"true\" checked", SparlectraApp.render_se_form(; cases=["case14.m"], selected_case="case14.m"))
             @test !occursin("name=\"noise\" value=\"true\" checked", SparlectraApp.render_se_form(; cases=["case14.m"], selected_case="case14.m", gen_values=Dict{String,String}("noise" => "false")))
-            rpst = start_powerflow_run(Dict{String,Any}("casefile" => pstcase, "config_file" => technical_output_config_path(), "output_root" => root, "se_mode" => true, "measurement_file" => pstout, "se_tap_estimation" => true))
+            rpst = start_powerflow_run(Dict{String,Any}("casefile" => pstcase, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true, "measurement_file" => pstout, "se_tap_estimation" => true))
             @test rpst["status"] == "succeeded"
             @test rpst["metadata"]["se_band_reason"] == "ok"
             pstrow = only(t for t in rpst["metadata"]["se_tap_estimates"] if t["branch"] == 8)
@@ -1428,7 +1431,7 @@ function run_webui_fast_tests()
             @test gsurow["source"] == "calculated"
 
             # chain PF (:se_snapshot): immediate convergence, slack pickup recorded
-            r2 = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => technical_output_config_path(), "output_root" => root, "se_start_run_id" => id1, "se_start_mode" => "se_snapshot"))
+            r2 = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_start_run_id" => id1, "se_start_mode" => "se_snapshot"))
             @test r2["status"] == "succeeded"
             @test r2["iterations"] <= 1
             @test abs(r2["metadata"]["slack_pickup_mw"]) < 1e-6
@@ -1448,10 +1451,10 @@ function run_webui_fast_tests()
             # 1e-9 agreement); screening estimates are first-order functions of the
             # base state itself and legitimately differ at the solver-tolerance
             # level, so they are not part of the chain-parity contract
-            r3 = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => technical_output_config_path(), "output_root" => root, "contingency_mode" => true, "contingency_kind" => "branch", "screening_mode" => "off", "se_start_run_id" => id1))
+            r3 = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "contingency_mode" => true, "contingency_kind" => "branch", "screening_mode" => "off", "se_start_run_id" => id1))
             @test r3["status"] == "succeeded"
             @test r3["metadata"]["se_run_id"] == id1
-            r4 = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => technical_output_config_path(), "output_root" => root, "contingency_mode" => true, "contingency_kind" => "branch", "screening_mode" => "off"))
+            r4 = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "contingency_mode" => true, "contingency_kind" => "branch", "screening_mode" => "off"))
             @test r4["status"] == "succeeded"
             # identical results: structural fields exact, numeric fields to 1e-9
             # (the SE-started base solve walks a different iteration path than the
@@ -1481,10 +1484,10 @@ function run_webui_fast_tests()
             end
 
             # chain without a preceding SE run errors clearly (both entry points)
-            r5 = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => technical_output_config_path(), "output_root" => root, "se_start_run_id" => "does-not-exist"))
+            r5 = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_start_run_id" => "does-not-exist"))
             @test r5["status"] == "failed"
             # se_mode without a measurement file is rejected up front
-            r6 = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => technical_output_config_path(), "output_root" => root, "se_mode" => true))
+            r6 = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true))
             @test r6["status"] == "failed"
         end)() end
 

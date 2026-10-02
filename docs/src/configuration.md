@@ -320,7 +320,13 @@ reaches the floor, on the highest level alone); a bus below
 `power_flow.wrong_branch_collapse_vm_pu` (0.5 pu) is a finding on every
 level, floor or not; the angle spread and the
 branch-angle rule stay on the highest level (branch-angle checks: both ends
-on that level). The reported `min_vm_pu`/`max_vm_pu`, the lowest-bus list
+on that level). The angle across every in-service branch at the
+reference bus is judged on every level, phase shift compensated: above
+`power_flow.wrong_branch_max_reference_branch_angle_deg` (90 degrees) the
+result is reported as `reference_branch_angle_exceeded`. It catches a
+solution rotated as a whole against a reference machine that sits behind
+its own transformer, a branch the highest-level rule does not see. The
+reported `min_vm_pu`/`max_vm_pu`, the lowest-bus list
 and `wrong_branch_level_kV` with its counts refer to the judged levels. A
 run that takes more than `power_flow.wrong_branch_max_plain_steps` Newton
 steps without a switching event is reported
@@ -343,7 +349,7 @@ well-posed case takes 7 to 14 steps, 60 is a branch signal.
 | AC island diagnostics CSV (`ac_island_solver_summary.csv`, one row per island) | trailing `wrong_branch_status`/`wrong_branch_reason` columns next to the `wrong_branch_detection` *setting* column; the per-island `ac_island_<id>_solver.log` lists both fields. |
 | Console/log summary (`printACPFlowResults`) | a `Wrong-branch   : SUSPECT (...)` or `Wrong-branch   : FAIL (...)` line, printed only when the result is neither `ok` nor `not_checked`. |
 | Web UI run result page | a "Wrong-branch check" badge with the run-status styling; omitted when the result is `not_checked`. |
-| `run_sparlectra_api` result metadata | `wrong_branch_status`, `wrong_branch_reason`, `wrong_branch_low_vm_count`, `wrong_branch_high_vm_count`, `wrong_branch_level_kV`, `wrong_branch_level_low_vm_count`, `wrong_branch_level_bus_count`, `wrong_branch_max_bus_angle_deg`, `wrong_branch_plain_steps`, `wrong_branch_plain_steps_exceeded`, `wrong_branch_angle_spread_deg`, `wrong_branch_branch_angle_violation_count`. |
+| `run_sparlectra_api` result metadata | `wrong_branch_status`, `wrong_branch_reason`, `wrong_branch_low_vm_count`, `wrong_branch_high_vm_count`, `wrong_branch_level_kV`, `wrong_branch_level_low_vm_count`, `wrong_branch_level_bus_count`, `wrong_branch_max_bus_angle_deg`, `wrong_branch_plain_steps`, `wrong_branch_plain_steps_exceeded`, `wrong_branch_angle_spread_deg`, `wrong_branch_branch_angle_violation_count`, `wrong_branch_reference_branch_angle_deg` with `wrong_branch_reference_branch` (the largest angle across a branch at the reference bus and that branch in case bus numbers, measured on every checked run). |
 
 | `status` value | Meaning |
 |---|---|
@@ -354,7 +360,7 @@ well-posed case takes 7 to 14 steps, 60 is a branch signal.
 | `not_checked` | `wrong_branch_detection = off`, or the check never ran (e.g. a non-finite solution) |
 
 `reason` values: `none`, `voltage_collapse`, `low_voltage_level_share`, `low_voltage_magnitude`, `high_voltage_magnitude`, `bus_angle_exceeded`,
-`angle_spread_exceeded`, `branch_angle_exceeded`, `nonfinite_voltage`,
+`angle_spread_exceeded`, `branch_angle_exceeded`, `reference_branch_angle_exceeded`, `nonfinite_voltage`,
 `disabled`, `rescue_requested_but_not_available`.
 
 The wrong-branch retry loop (`wrong_branch_detection = rescue`) is a
@@ -379,6 +385,7 @@ Tuning keys of the detector (all under `power_flow.`):
 | `power_flow.wrong_branch_max_angle_spread_deg` | `180.0` | Maximum admissible total angle spread of the solution. |
 | `power_flow.wrong_branch_max_branch_angle_deg` | `90.0` | Bound on the angle difference across an active branch of the highest level (phase shift compensated). |
 | `power_flow.wrong_branch_max_bus_angle_deg` | `120.0` | Bound on any judged bus angle relative to the slack (`bus_angle_exceeded`). |
+| `power_flow.wrong_branch_max_reference_branch_angle_deg` | `90.0` | Bound on the angle across any in-service branch at the reference bus, every level, phase shift compensated (`reference_branch_angle_exceeded`, ranked before `bus_angle_exceeded`; 0 switches the rule off). |
 | `power_flow.wrong_branch_max_plain_steps` | `20` | Newton steps without a switching event above which `wrong_branch_plain_steps_exceeded` is reported. |
 | `power_flow.wrong_branch_rescue` | `false` | Reserved switch for the unimplemented rescue loop; reports instead of retrying. |
 | `power_flow.wrong_branch_rescue_max_attempts` | `2` | Attempt bound for that reserved mode. |
@@ -459,8 +466,8 @@ file, not the `control.controllers` schema.
 | `output.result_table_max_rows` | `200` | Row cap for the classical result tables. |
 | `output.result_table_large_case_threshold_buses` | `1000` | Bus count from which a case counts as large for result rendering. |
 | `output.result_table_large_case_mode` | `summary` | What large cases print instead of full tables (`summary`, `classic`, `full`). |
-| `output.csv_format` | `excel_de` | Delimiter/decimal-separator format of every CSV file a run writes (`write_result_csv`): `bus_voltages_complex.csv`, `branch_flows.csv`, `bus_powers.csv`, `q_limit_*.csv`, the short-circuit, contingency and scenario tables, the SE diagnostic exports and `se_state.csv`, `ac_islands.csv`, the SV comparison and the DTF outage metrics. Only the measurement CSV that Sparlectra reads back keeps its fixed layout. Allowed values: `technical` (comma delimiter, dot decimal), `excel_de` (semicolon delimiter, comma decimal, dot thousands separator), `excel_us` (comma delimiter, dot decimal, comma thousands separator). The API's `detailed_result_csv_format`/`detailed_result_csv_semicolon` request keywords are a deprecated per-request override of this key. |
-| `webui.operation_log_retention_days` | `3` | Int, `>= 0`. How far the operation log reaches back. Every Web UI start drops older entries from every operation log it knows; `0` keeps only the current session. Lower it when the log page grows unwieldy: its size comes from the number of entries, not from their age. The environment variable `SPARLECTRA_WEBUI_OPERATION_LOG_RETENTION_DAYS` still wins, for headless runs that read no configuration file. |
+| `output.csv_format` | `technical` | Delimiter/decimal-separator format of every CSV file a run writes (`write_result_csv`): `bus_voltages_complex.csv`, `branch_flows.csv`, `bus_powers.csv`, `q_limit_*.csv`, the short-circuit, contingency and scenario tables, the SE diagnostic exports and `se_state.csv`, `ac_islands.csv`, the SV comparison and the DTF outage metrics. Only the measurement CSV that Sparlectra reads back keeps its fixed layout. Allowed values: `technical` (comma delimiter, dot decimal), `excel_de` (semicolon delimiter, comma decimal, dot thousands separator), `excel_us` (comma delimiter, dot decimal, comma thousands separator). The API's `detailed_result_csv_format`/`detailed_result_csv_semicolon` request keywords are a deprecated per-request override of this key. |
+| `webui.operation_log_retention_days` | `10` | Int, `>= 0`. How far the operation log reaches back. Every Web UI start drops older entries from every operation log it knows; `0` keeps only the current session. Lower it when the log page grows unwieldy: its size comes from the number of entries, not from their age. The environment variable `SPARLECTRA_WEBUI_OPERATION_LOG_RETENTION_DAYS` still wins, for headless runs that read no configuration file. |
 
 | `webui.docs_base_url` | `https://welthulk.github.io/Sparlectra.jl/` | String. Base URL of the published documentation the help pages (the **?** next to a control) and the header link open; set it to a local docs build or a pinned version folder. A link only, nothing is fetched; the help pages themselves ship with the application. |
 

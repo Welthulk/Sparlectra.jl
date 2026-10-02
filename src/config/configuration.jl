@@ -40,6 +40,11 @@ Base.@kwdef struct StartModeConfig
   measure_candidates::Bool = true
   accept_unmeasured_dc_start::Bool = false
   dc_seed_unconditional::Bool = false
+  # flat starts only (#463 / task_close_all_0302 B): the start projection
+  # also measures the flat profile with every PQ magnitude scaled by the
+  # product of the off-nominal transformer ratios on its path from the
+  # reference; see _ratio_profile_factors
+  ratio_profile::Bool = true
   reuse_import_data::Bool = true
   blend_lambdas::Vector{Float64} = [0.25, 0.5, 0.75]
   dc_angle_limit_deg::Float64 = 60.0
@@ -80,7 +85,7 @@ Base.@kwdef struct MeritLineSearchConfig
   scale_p::Float64 = 1.0
   scale_q::Float64 = 1.0
   scale_v::Float64 = 1.0
-  fallback_max_mismatch::Bool = false
+  fallback_max_mismatch::Bool = true
 end
 
 """
@@ -147,6 +152,9 @@ Base.@kwdef struct QLimitConfig
   guard_violation_threshold_pu::Float64 = 1e-4
   guard_log::Bool = true
   trace_buses::Vector{Int} = Int[]
+  # PV buses (internal positions) that run as PQ from the start of every
+  # solve, at their scheduled Q clamped into their limits, never released
+  # back to PV; read only while Q limits are enforced
   lock_pv_to_pq_buses::Vector{Int} = Int[]
   ignore_q_limits::Bool = false
   enforcement_mode::Symbol = :active_set
@@ -420,6 +428,14 @@ Base.@kwdef struct PowerFlowConfig
   # not (case2848rte's flat-start branch sits on its 63 kV level at 0.02 pu;
   # the generated distribution feeders stay above 0.67)
   wrong_branch_collapse_vm_pu::Float64 = 0.5
+  # issue #462: the angle across every in-service branch at the reference
+  # bus, phase shift compensated, on ANY voltage level (the branch-angle
+  # rule above sees only branches with both ends on the highest level, so a
+  # reference transformer into a lower level was never judged). Beyond
+  # 90 degrees a branch sits past the maximum of its P-delta curve. A
+  # finding is a warning (reason reference_branch_angle_exceeded); 0
+  # switches the rule off.
+  wrong_branch_max_reference_branch_angle_deg::Float64 = 90.0
   wrong_branch_rescue_max_attempts::Int = 2
   rectangular_workspace_reuse::Bool = true
   rectangular_preallocate_workspace::Symbol = :auto
@@ -920,7 +936,7 @@ Base.@kwdef struct OutputConfig
   # those are still accepted as a per-request override (deprecated alias,
   # issue #376) and, when given, win over this config value for the whole
   # run so existing API/Web UI callers keep working unchanged.
-  csv_format::Symbol = :excel_de
+  csv_format::Symbol = :technical
   logfile_diagnostics::Symbol = :compact
   logfile_performance::Symbol = :compact
   logfile_warnings::Symbol = :table
@@ -940,7 +956,7 @@ Base.@kwdef struct WebUIConfig
   # older than this; 0 keeps only the current session. The environment
   # variable SPARLECTRA_WEBUI_OPERATION_LOG_RETENTION_DAYS still wins, for
   # headless runs that never read this file.
-  operation_log_retention_days::Int = 3
+  operation_log_retention_days::Int = 10
   # Base URL of the published documentation the help icons open (the Web UI
   # carries no documentation of its own). Override for a local docs build,
   # the dev site or a pinned version folder. A link only, never fetched.
@@ -1440,6 +1456,7 @@ function StartModeConfig(raw::AbstractDict)
     measure_candidates = _as_bool_cfg(_raw_get(raw, "measure_candidates", _raw_get(raw, "start_projection_measure_candidates", true))),
     accept_unmeasured_dc_start = _as_bool_cfg(_raw_get(raw, "accept_unmeasured_dc_start", _raw_get(raw, "start_projection_accept_unmeasured_dc_start", false))),
     dc_seed_unconditional = _as_bool_cfg(_raw_get(raw, "dc_seed_unconditional", false)),
+    ratio_profile = _as_bool_cfg(_raw_get(raw, "ratio_profile", true)),
     reuse_import_data = _as_bool_cfg(_raw_get(raw, "reuse_import_data", _raw_get(raw, "start_projection_reuse_import_data", true))),
     blend_lambdas = _as_float_vector_cfg(_raw_get(raw, "blend_lambdas", _raw_get(raw, "start_projection_blend_lambdas", [0.25, 0.5, 0.75]))),
     dc_angle_limit_deg = _validate_positive("start_projection_dc_angle_limit_deg", _as_float_cfg(_raw_get(raw, "dc_angle_limit_deg", _raw_get(raw, "start_projection_dc_angle_limit_deg", 60.0)))),
@@ -1479,7 +1496,7 @@ function MeritLineSearchConfig(raw::AbstractDict)
     scale_p = _validate_positive("power_flow.merit.scale_p", _as_float_cfg(_raw_get(raw, "scale_p", 1.0))),
     scale_q = _validate_positive("power_flow.merit.scale_q", _as_float_cfg(_raw_get(raw, "scale_q", 1.0))),
     scale_v = _validate_positive("power_flow.merit.scale_v", _as_float_cfg(_raw_get(raw, "scale_v", 1.0))),
-    fallback_max_mismatch = _as_bool_cfg(_raw_get(raw, "fallback_max_mismatch", false)),
+    fallback_max_mismatch = _as_bool_cfg(_raw_get(raw, "fallback_max_mismatch", true)),
   )
 end
 
@@ -1639,6 +1656,8 @@ function PowerFlowConfig(raw::AbstractDict)
   wrong_branch_max_plain_steps = _as_int_cfg(_raw_get(merged, "wrong_branch_max_plain_steps", 20))
   wrong_branch_max_plain_steps >= 0 || throw(ArgumentError("power_flow.wrong_branch_max_plain_steps must be >= 0."))
   wrong_branch_collapse_vm_pu = _validate_nonnegative("power_flow.wrong_branch_collapse_vm_pu", _as_float_cfg(_raw_get(merged, "wrong_branch_collapse_vm_pu", 0.5)))
+  # issue #462, the reference-branch angle bound (0 = rule off)
+  wrong_branch_max_reference_branch_angle_deg = _validate_nonnegative("power_flow.wrong_branch_max_reference_branch_angle_deg", _as_float_cfg(_raw_get(merged, "wrong_branch_max_reference_branch_angle_deg", 90.0)))
   wrong_branch_rescue_max_attempts = _as_int_cfg(_raw_get(merged, "wrong_branch_rescue_max_attempts", 2))
   wrong_branch_rescue_max_attempts >= 0 || throw(ArgumentError("power_flow.wrong_branch_rescue_max_attempts must be >= 0."))
   autodamp = _as_bool_cfg(_raw_get(merged, "autodamp", false))
@@ -1697,6 +1716,7 @@ function PowerFlowConfig(raw::AbstractDict)
     wrong_branch_max_bus_angle_deg = wrong_branch_max_bus_angle_deg,
     wrong_branch_max_plain_steps = wrong_branch_max_plain_steps,
     wrong_branch_collapse_vm_pu = wrong_branch_collapse_vm_pu,
+    wrong_branch_max_reference_branch_angle_deg = wrong_branch_max_reference_branch_angle_deg,
     wrong_branch_rescue_max_attempts = wrong_branch_rescue_max_attempts,
     rectangular_workspace_reuse = _as_bool_cfg(_raw_get(merged, "rectangular_workspace_reuse", true)),
     rectangular_preallocate_workspace = _validate_allowed_symbol("power_flow.rectangular_preallocate_workspace", _as_symbol_cfg(_raw_get(merged, "rectangular_preallocate_workspace", :auto)), RECTANGULAR_PREALLOCATE_WORKSPACE_VALUES),
@@ -2048,7 +2068,7 @@ function OutputConfig(raw::AbstractDict)
     # working. `csv_format` wins if both are set.
     csv_format = _validate_allowed_symbol(
       "output.csv_format",
-      _as_symbol_cfg(_raw_get(merged, "csv_format", _raw_get(merged, "detailed_result_csv_format", :excel_de))),
+      _as_symbol_cfg(_raw_get(merged, "csv_format", _raw_get(merged, "detailed_result_csv_format", :technical))),
       OUTPUT_CSV_FORMAT_VALUES,
     ),
   )
@@ -2079,7 +2099,7 @@ function WebUIConfig(raw::AbstractDict)
   merged = _merged_section(raw, "webui")
   return WebUIConfig(
     show_case_settings_notice = _as_bool_cfg(_raw_get(merged, "show_case_settings_notice", true)),
-    operation_log_retention_days = Int(_validate_nonnegative("webui.operation_log_retention_days", _as_int_cfg(_raw_get(merged, "operation_log_retention_days", 3)))),
+    operation_log_retention_days = Int(_validate_nonnegative("webui.operation_log_retention_days", _as_int_cfg(_raw_get(merged, "operation_log_retention_days", 10)))),
     docs_base_url = String(_as_string_cfg(_raw_get(merged, "docs_base_url", "https://welthulk.github.io/Sparlectra.jl/"))),
   )
 end

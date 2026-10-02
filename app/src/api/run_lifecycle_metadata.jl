@@ -74,6 +74,11 @@ function _wrong_branch_lifecycle_metadata(rect_status)::Dict{String,Any}
     "wrong_branch_plain_steps_exceeded" => get_field(:wrong_branch_plain_steps_exceeded, false),
     "wrong_branch_angle_spread_deg" => get_field(:wrong_branch_angle_spread_deg, NaN),
     "wrong_branch_branch_angle_violation_count" => get_field(:wrong_branch_branch_angle_violation_count, 0),
+    # issue #462: the largest angle across a branch at the reference bus and
+    # that branch in case bus numbers ("from-to"), measured on every checked
+    # run, also when another reason carries the finding
+    "wrong_branch_reference_branch_angle_deg" => get_field(:wrong_branch_reference_branch_angle_deg, NaN),
+    "wrong_branch_reference_branch" => String(get_field(:wrong_branch_reference_branch, "")),
   )
 end
 

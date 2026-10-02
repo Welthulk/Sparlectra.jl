@@ -41,12 +41,6 @@ function to_dict(artifact::SparlectraApiArtifact)::Dict{String,Any}
   )
 end
 
-"""
-    to_dict(result::SparlectraApiResult; include_raw_result=false) -> Dict{String,Any}
-
-Convert an API result to a transport-safe dictionary. `raw_result` is omitted
-by default because the solved network is not a stable JSON/YAML transport type.
-"""
 # the numerical state of the AC solve from the final outcome (absent or
 # `nothing` on the failure paths before a solve): then the accepted flag
 function _numerical_converged_of(result::SparlectraApiResult)
@@ -55,6 +49,12 @@ function _numerical_converged_of(result::SparlectraApiResult)
   return get(outcome, "numerical_converged", result.converged)
 end
 
+"""
+    to_dict(result::SparlectraApiResult; include_raw_result=false) -> Dict{String,Any}
+
+Convert an API result to a transport-safe dictionary. `raw_result` is omitted
+by default because the solved network is not a stable JSON/YAML transport type.
+"""
 function to_dict(result::SparlectraApiResult; include_raw_result::Bool = false)::Dict{String,Any}
   data = Dict{String,Any}(
     "run_id" => result.run_id,

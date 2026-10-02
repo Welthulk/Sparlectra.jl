@@ -214,6 +214,7 @@ function _finalize_rectangular_wrong_branch_diagnostics(
   wrong_branch_max_bus_angle_deg::Float64 = 120.0,
   wrong_branch_max_plain_steps::Int = 20,
   wrong_branch_collapse_vm_pu::Float64 = 0.5,
+  wrong_branch_max_reference_branch_angle_deg::Float64 = 90.0,
   plain_steps::Int = 0,
   net,
 )
@@ -237,6 +238,7 @@ function _finalize_rectangular_wrong_branch_diagnostics(
       max_bus_angle_deg = wrong_branch_max_bus_angle_deg,
       max_plain_steps = wrong_branch_max_plain_steps,
       collapse_vm_pu = wrong_branch_collapse_vm_pu,
+      max_reference_branch_angle_deg = wrong_branch_max_reference_branch_angle_deg,
       plain_steps = plain_steps,
       net = net,
     )
@@ -370,6 +372,10 @@ function _build_rectangular_final_status(
     wrong_branch_max_branch_angle_deg = branch_quality.max_branch_angle_deg,
     wrong_branch_branch_angle_violation_count = branch_quality.branch_angle_violation_count,
     wrong_branch_worst_branch_angle_deg = branch_quality.worst_branch_angle_deg,
+    # issue #462: the largest angle across a branch at the reference bus
+    # (NaN when not checked) and that branch in case bus numbers
+    wrong_branch_reference_branch_angle_deg = branch_quality.reference_branch_angle_deg,
+    wrong_branch_reference_branch = branch_quality.reference_branch,
     wrong_branch_rescue_attempted = wrong_branch_rescue_attempted,
     wrong_branch_rescue_reason = wrong_branch_rescue_reason,
     # Reserved fields keep downstream status consumers schema-stable.

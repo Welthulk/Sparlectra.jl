@@ -326,8 +326,6 @@ function _webui_file_input(name::AbstractString; accept::AbstractString = "", mu
   )
 end
 
-"""Render a file-path dropdown while showing only each file's basename."""
-
 const WEBUI_STATUS_AUTO_REFRESH_SECONDS = 2
 const _WEBUI_ACTIVE_RUN_STATUSES = Set(("queued", "running", "aborting"))
 
@@ -1532,15 +1530,6 @@ function _webui_adapter_option_html(field::AbstractString, profile_values)::Stri
   return "<label$(pres.attrs)$(title_attr)>$(label)<input name=\"$(field)\" type=\"$(input_type)\"$(pres.input_attrs) value=\"$(_webui_escape(string(value)))\"></label>"
 end
 
-"""
-    _webui_adapter_options_html(key, profile_values) -> String
-
-The generated option group of one adapter section: the field
-set is derived from `options_type(adapter)` and the :adapter-scope specs,
-the order and wording come from the presentation table, both pinned by
-load-time asserts. Returns "" for an adapter without form options (DTF,
-PGM).
-"""
 # the five fields of the experimental convention block and the standard
 # reading they default to (the reading that passes the power-balance check
 # on every case of the grid-bench study); the block counts as active when
@@ -1558,6 +1547,15 @@ function _webui_matpower_conventions_active(profile_values)::Bool
   return false
 end
 
+"""
+    _webui_adapter_options_html(key, profile_values) -> String
+
+The generated option group of one adapter section: the field
+set is derived from `options_type(adapter)` and the :adapter-scope specs,
+the order and wording come from the presentation table, both pinned by
+load-time asserts. Returns "" for an adapter without form options (DTF,
+PGM).
+"""
 function _webui_adapter_options_html(key::Symbol, profile_values)::String
   for sec in _WEBUI_ADAPTER_SECTIONS
     sec.key == key || continue
@@ -1772,10 +1770,12 @@ $(_webui_qlimit_block_html(profile_values))
 <details id="apslf-start-options" class="span-2 apslf-start-options" data-apslf-start-options data-ac-only-field>
 <summary>Newton-Raphson start values</summary>
 <label class=\"check\"><input name=\"power_flow_flatstart\" type=\"hidden\" value=\"false\"><input name=\"power_flow_flatstart\" type=\"checkbox\" value=\"true\" data-flatstart-toggle$(_webui_checked(profile_values, "power_flow_flatstart", _webui_option_default("power_flow_flatstart")))>$(_webui_field_label("power_flow_flatstart", "Flat start"))</label>
-<p class=\"field-help\">Start every bus at 1.0 pu and 0 degrees and ignore the imported start voltages. While this is on, a run switches the APSLF and DC start values, the current-iteration pre-solve and the start angle/voltage modes off; their saved values stay and return when the flat start is unchecked. A CGMES run starts flat as well unless its start values are set to sv on the Case page.</p>
-<label class=\"check\" data-nr-only-field data-flatstart-inactive-field><input name=\"power_flow_apslf_start_enabled\" type=\"hidden\" value=\"false\"><input name=\"power_flow_apslf_start_enabled\" type=\"checkbox\" value=\"true\" data-apslf-start-toggle$(_webui_checked(profile_values, "power_flow_apslf_start_enabled", _webui_option_default("power_flow_apslf_start_enabled")))>$(_webui_field_label("power_flow_apslf_start_enabled", "Use APSLF start values"))</label>
+<p class=\"field-help\">Start every bus at 1.0 pu and 0 degrees and ignore the imported start voltages. The flat start sets only this profile: the start values below and the start projection still run from it when they are on; only the start angle and voltage modes are ignored (greyed) while it is set. A CGMES run starts flat as well unless its start values are set to sv on the Case page.</p>
+<label class=\"check\" data-nr-only-field data-flatstart-required-field><input name=\"power_flow_ratio_profile\" type=\"hidden\" value=\"false\"><input name=\"power_flow_ratio_profile\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_ratio_profile", _webui_option_default("power_flow_ratio_profile")))>$(_webui_field_label("power_flow_ratio_profile", "Ratio profile as a start candidate"))</label>
+<p class=\"field-help\">Flat start only: the start projection also tries the flat profile with each voltage level scaled by the transformer ratios on its path from the slack, and keeps it when its mismatch is at least 10 percent lower. Greyed while the flat start is off.</p>
+<label class=\"check\" data-nr-only-field><input name=\"power_flow_apslf_start_enabled\" type=\"hidden\" value=\"false\"><input name=\"power_flow_apslf_start_enabled\" type=\"checkbox\" value=\"true\" data-apslf-start-toggle$(_webui_checked(profile_values, "power_flow_apslf_start_enabled", _webui_option_default("power_flow_apslf_start_enabled")))>$(_webui_field_label("power_flow_apslf_start_enabled", "Use APSLF start values"))</label>
 <label class=\"field-indent\">$(_webui_field_label("power_flow_apslf_start_order", "Highest coefficient (order)"))<input name=\"power_flow_apslf_start_order\" type=\"number\" min=\"1\" data-apslf-start-order value=\"$(_webui_input_value(profile_values, "power_flow_apslf_start_order", _webui_option_default("power_flow_apslf_start_order")))\"></label>
-<label class=\"check\" data-nr-only-field data-flatstart-inactive-field><input name=\"power_flow_dc_seed_unconditional\" type=\"hidden\" value=\"false\"><input name=\"power_flow_dc_seed_unconditional\" type=\"checkbox\" value=\"true\" data-dc-seed-toggle$(_webui_checked(profile_values, "power_flow_dc_seed_unconditional", _webui_option_default("power_flow_dc_seed_unconditional")))>$(_webui_field_label("power_flow_dc_seed_unconditional", "Use DC start values"))</label>
+<label class=\"check\" data-nr-only-field><input name=\"power_flow_dc_seed_unconditional\" type=\"hidden\" value=\"false\"><input name=\"power_flow_dc_seed_unconditional\" type=\"checkbox\" value=\"true\" data-dc-seed-toggle$(_webui_checked(profile_values, "power_flow_dc_seed_unconditional", _webui_option_default("power_flow_dc_seed_unconditional")))>$(_webui_field_label("power_flow_dc_seed_unconditional", "Use DC start values"))</label>
 </details>
 <label data-nr-only-field>$(_webui_field_label("power_flow_wrong_branch_detection", "Wrong-branch detection"))$(_webui_select("power_flow_wrong_branch_detection", _webui_option_allowed_values("power_flow_wrong_branch_detection"), _webui_selected(profile_values, "power_flow_wrong_branch_detection", _webui_option_default("power_flow_wrong_branch_detection"))))</label>
 <label data-nr-only-field data-dc-seed-inactive-field data-flatstart-inactive-field>$(_webui_field_label("power_flow_start_angle_mode", "Start angle mode"))$(_webui_select("power_flow_start_angle_mode", _webui_option_allowed_values("power_flow_start_angle_mode"), _webui_selected(profile_values, "power_flow_start_angle_mode", _webui_option_default("power_flow_start_angle_mode"))))</label>
@@ -1793,7 +1793,7 @@ $(_webui_qlimit_block_html(profile_values))
 <label data-nr-only-field>$(_webui_field_label("power_flow_jacobian_reuse_min_reduction", "Minimum mismatch reduction per step"))<input name=\"power_flow_jacobian_reuse_min_reduction\" type=\"number\" step=\"any\" min=\"1\" data-jacobian-reuse-field value=\"$(_webui_input_value(profile_values, "power_flow_jacobian_reuse_min_reduction", _webui_option_default("power_flow_jacobian_reuse_min_reduction")))\"></label>
 <label data-nr-only-field>$(_webui_field_label("power_flow_jacobian_reuse_max_steps", "Maximum reused steps in a row"))<input name=\"power_flow_jacobian_reuse_max_steps\" type=\"number\" step=\"1\" min=\"1\" data-jacobian-reuse-field value=\"$(_webui_input_value(profile_values, "power_flow_jacobian_reuse_max_steps", _webui_option_default("power_flow_jacobian_reuse_max_steps")))\"></label>
 <p class=\"field-help span-2\" data-jacobian-reuse-umfpack-hint hidden>Jacobian reuse ignored: linear_solver umfpack keeps no factorisation; use umfpack_reuse or KLU.</p>
-<p class=\"field-help\">Dishonest Newton solves the next step with the previous factorisation while the mismatch falls by the minimum reduction per step; it changes the iteration count, not the solution. It pays off most with power mode on large transmission cases; N-1 and scenario runs get slower with it.</p>
+<p class=\"field-help\">Dishonest Newton solves the next step with the previous factorisation while the mismatch falls by the minimum reduction per step; it changes the iteration count, not the solution. It pays off most with power mode on large transmission cases; N-1 and scenario runs get slightly slower with it.</p>
 </fieldset>
 <fieldset class=\"external-grid-options\">
 <legend>External grid source</legend>
@@ -1827,7 +1827,7 @@ $(isempty(profile_path) ? "" : "<fieldset class=\"saved-case-settings\">
 <label class=\"check span-2\"><input name=\"contingency_warm_active_set\" type=\"hidden\" value=\"false\"><input name=\"contingency_warm_active_set\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "contingency_warm_active_set", _webui_option_default("contingency_warm_active_set")))>$(_webui_field_label("contingency_warm_active_set", "Warm active set (start outages from the base case's PV/PQ state)"))</label>
 <p class=\"field-help\">N-1 and scenario runs only. <code>flag</code> estimates every outage with one Woodbury-corrected Newton step on the base factorisation and solves in full only the outages whose estimate comes within the margin of a limit; <code>only</code> keeps the estimates. Off by default: a one-step estimate cannot see every outage class (a generator falling to PQ), so check the screened share on your network once before relying on it.</p>
 </fieldset>
-<fieldset class=\"start-current-iteration-options advanced-start-values\" data-nr-only-field data-flatstart-inactive-field>
+<fieldset class=\"start-current-iteration-options advanced-start-values\" data-nr-only-field>
 <legend>Advanced start values</legend>
 <label class=\"check span-2\"><input name=\"power_flow_start_current_iteration_enabled\" type=\"hidden\" value=\"false\"><input name=\"power_flow_start_current_iteration_enabled\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_start_current_iteration_enabled", _webui_option_default("power_flow_start_current_iteration_enabled")))>$(_webui_field_label("power_flow_start_current_iteration_enabled", "Enable current-iteration pre-solve"))</label>
 <label>$(_webui_field_label("power_flow_start_current_iteration_max_iter", "Current-iteration max iterations"))<input name=\"power_flow_start_current_iteration_max_iter\" type=\"number\" min=\"1\" value=\"$(_webui_input_value(profile_values, "power_flow_start_current_iteration_max_iter", _webui_option_default("power_flow_start_current_iteration_max_iter")))\"></label>
@@ -1888,9 +1888,13 @@ document.addEventListener('DOMContentLoaded', function () {
   const dcSeedToggle = document.querySelector('input[data-dc-seed-toggle]');
   const flatstartToggle = document.querySelector('input[data-flatstart-toggle]');
   const isFlatstartOn = function () { return flatstartToggle !== null && flatstartToggle.checked; };
-  // The flat start greys the other start controls in place; their values
-  // stay as they are (a greyed control is not posted, so a save keeps the
-  // stored value) and the run overrides them while the flat start is on.
+  // The flat start greys the two start-mode controls in place (the run sets
+  // both to classic while the flat start is on, #463); their values stay as
+  // they are (a greyed control is not posted, so a save keeps the stored
+  // value). The start machines are not greyed: they follow their own keys
+  // and run from the flat profile. The ratio-profile candidate is the
+  // opposite case: it acts only on a flat start, so it is greyed while the
+  // flat start is off.
   const updateApslfStartOrder = function () {
     if (apslfStartOrderInput !== null) apslfStartOrderInput.disabled = apslfStartToggle !== null && !apslfStartToggle.checked;
   };
@@ -1974,7 +1978,8 @@ document.addEventListener('DOMContentLoaded', function () {
     nrOnlyFields.forEach(function (container) {
       const dcSeedMakesInactive = dcSeedActive && container.hasAttribute('data-dc-seed-inactive-field');
       const flatstartMakesInactive = flatstartActive && container.hasAttribute('data-flatstart-inactive-field');
-      setSolverGroupInactive(container, hideNrOnly || dcSeedMakesInactive || flatstartMakesInactive);
+      const flatstartRequired = !flatstartActive && container.hasAttribute('data-flatstart-required-field');
+      setSolverGroupInactive(container, hideNrOnly || dcSeedMakesInactive || flatstartMakesInactive || flatstartRequired);
     });
     updateExperimentalOptions();
     updateJacobianReuseOptions();
@@ -2862,6 +2867,26 @@ function _webui_run_method(entry::AbstractDict, stored::AbstractString)
   isempty(stored) ? "rectangular" : String(stored)
 end
 
+## Outage counter of a RUNNING N-1 / scenario job: how many outages the
+## batch has finished so far. The job snapshot carries
+## `progress_done` / `progress_total` once the first outage of the batch
+## has finished (see `_update_webui_job_progress!`); before that, and for
+## every other run kind, there is no card. The card sits inside
+## `main[data-refresh-url]`, so the status poll of `_webui_layout` (fetch
+## the re-rendered page every WEBUI_STATUS_AUTO_REFRESH_SECONDS, swap the
+## <main>) brings each new count to the browser; no extra script and no
+## operation-log line per outage. The data attributes carry the raw
+## numbers for anything that wants them without parsing the text.
+function _webui_batch_progress_card(result::AbstractDict)
+  total = get(result, "progress_total", nothing)
+  done = get(result, "progress_done", nothing)
+  (total isa Integer && done isa Integer && total > 0) || return nothing
+  scenarios = get(result, "progress_unit", "outages") == "scenarios"
+  label = scenarios ? "Scenarios done" : "Outages done"
+  text = scenarios ? "Scenarios: $(done) / $(total) scenarios" : "N-1: $(done) / $(total) outages"
+  return (label, "<strong id=\"batch-progress\" data-progress-done=\"$(done)\" data-progress-total=\"$(total)\">$(_webui_escape(text))</strong>")
+end
+
 function render_powerflow_result(result::AbstractDict)::String
   run_id = get(result, "run_id", "")
   rows = join(("<tr><th>$(_webui_escape(field))</th><td>$(_webui_escape(_webui_result_value(result, field)))</td></tr>" for field in _WEBUI_RESULT_FIELDS), "")
@@ -2892,7 +2917,10 @@ function render_powerflow_result(result::AbstractDict)::String
   isempty(phase) && (phase = "n/a")
   phase_card = ("Phase", "<code>$(_webui_escape(phase))</code>")
   summary_rows = if active
-    (("Run status", status_badge), case_card, phase_card, ("Elapsed time", "<strong>$(_webui_escape(_format_elapsed_duration(_webui_elapsed_seconds(result, active))))</strong>"))
+    live = Any[("Run status", status_badge), case_card, phase_card, ("Elapsed time", "<strong>$(_webui_escape(_format_elapsed_duration(_webui_elapsed_seconds(result, active))))</strong>")]
+    progress_card = _webui_batch_progress_card(result)
+    progress_card === nothing || push!(live, progress_card)
+    Tuple(live)
   else
     base = [("Run status", status_badge), case_card, phase_card, ("Solver", "<code>$(_webui_escape(solver_name))</code>")]
     solver_name == "dc" && push!(base, ("Model", "<span class=\"status-badge status-info\">DC solution</span>"))

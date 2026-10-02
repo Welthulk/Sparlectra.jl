@@ -49,10 +49,16 @@ function _execute_sparlectra_powerflow!(net::Net, cfg::SparlectraConfig; perform
         # off for this run only, via a local pf_cfg copy, so it cannot second-guess or
         # blend away the DC seed net already carries (project_rectangular_start is a
         # pure passthrough when start_projection=false).
+        # The seed is itself a flat-magnitude start (PQ buses at 1.0 pu, PV and
+        # slack at their regulated magnitudes, DC angles), so the solve reads
+        # it from the net with flatstart = false: under a flat start the
+        # solver would otherwise rebuild 1.0 pu / 0 degrees and drop the seed
+        # angles. Since #463 the flat start no longer switches the seed off,
+        # so this is the path that makes `flatstart: true` plus the seed work.
         solve_pf_cfg = pf_cfg
         if pf_cfg.start_mode.dc_seed_unconditional
           _dc_seed_rectangular_angles!(net, pf_cfg; verbose = verbose, performance_profile = performance_profile)
-          solve_pf_cfg = _copy_powerflow_with(pf_cfg; start_mode = _copy_start_mode_with(pf_cfg.start_mode; start_projection = false))
+          solve_pf_cfg = _copy_powerflow_with(pf_cfg; start_mode = _copy_start_mode_with(pf_cfg.start_mode; start_projection = false, flatstart = false))
         end
         if pf_cfg.solver === :apslf
           if !isempty(controllers) || has_voltage_dependent_control(net)

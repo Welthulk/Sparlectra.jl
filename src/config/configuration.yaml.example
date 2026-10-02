@@ -58,7 +58,12 @@ power_flow:
   apslf_start:
     enabled: false
     order: 40
-  # Legacy start switch (true = synthetic flat start). Keep aligned with start_mode below.
+  # Flat start (true = every bus at 1.0 pu and 0 degrees, PV and slack at
+  # their setpoints). It sets only the start profile: the start machines
+  # (start_mode.start_projection, start_mode.dc_seed_unconditional,
+  # start_current_iteration, apslf_start) follow their own keys and run from
+  # the flat profile; only start_mode.angle_mode and voltage_mode are treated
+  # as classic while it is on.
   # Default false: imported start voltages (MATPOWER VM/VA, CGMES SvVoltage) reach the
   # solver — a flat start silently discarded the CGMES SV state (RealGrid divergence,
   # case) while MATPOWER runs only masked it via the projected start modes.
@@ -161,6 +166,11 @@ power_flow:
   # A bus below this magnitude is a wrong branch on every level, floor or
   # not (reason voltage_collapse); 0 switches the rule off.
   wrong_branch_collapse_vm_pu: 0.5
+  # Angle across every in-service branch at the reference bus, on any
+  # voltage level, phase shift compensated (degrees); beyond it the result
+  # is reported (reason reference_branch_angle_exceeded). 0 switches the
+  # rule off.
+  wrong_branch_max_reference_branch_angle_deg: 90.0
   wrong_branch_rescue_max_attempts: 2
 
   # Rectangular workspace handling.
@@ -243,6 +253,14 @@ power_flow:
     # seed_ac_start=true behavior. Mutually exclusive with
     # power_flow.apslf_start.enabled and power_flow.solver in (apslf, dc).
     dc_seed_unconditional: false
+    # Flat starts only: the start projection also measures the ratio profile,
+    # the flat profile with every PQ bus magnitude scaled by the product of
+    # the off-nominal transformer ratios on its path from the reference (PV
+    # and slack keep their setpoints, angles stay 0). Like the DC and blend
+    # candidates it replaces the flat profile only when its mismatch 2-norm
+    # is at least 10 percent lower. Inert unless start_projection is on and
+    # power_flow.flatstart is true.
+    ratio_profile: true
     # Reuse imported MATPOWER reference values during start generation.
     reuse_import_data: true
     # Candidate blend factors used when try_blend_scan=true.
@@ -276,7 +294,7 @@ power_flow:
     scale_v: 1.0
     # true = fall back to the max-mismatch criterion if no trial satisfies Armijo;
     # false = fall back to the most conservative finite trial (today's autodamp fallback).
-    fallback_max_mismatch: false
+    fallback_max_mismatch: true
 
   # Optional scaled-Newton trust-region step control: an alternative to
   # autodamp that caps the Newton step norm at an adaptive radius and
@@ -715,7 +733,11 @@ output:
   console_q_limit_events: summary
   console_max_rows: 100
   # Allowed values: off, compact, classic, full
-  logfile_results: classic
+  # Deliberately differs from the library default: without a configuration
+  # file a library run writes no result table into its log (off); this
+  # template, which the Web UI and the services start from, logs the full
+  # table (the run.log of a Web UI run carries it).
+  logfile_results: full
   result_table_max_rows: 200
   result_table_large_case_threshold_buses: 1000
   # Allowed values: summary, classic, full
@@ -739,7 +761,7 @@ output:
   # Allowed values: technical, excel_de, excel_us
   # Delimiter and decimal separator of EVERY CSV file a run writes (technical,
   # excel_de, excel_us); the one central CSV setting, whatever writes the file.
-  csv_format: excel_de
+  csv_format: technical
   # Allowed values: off, compact, full
   logfile_diagnostics: compact
   # Allowed values: off, compact, full
@@ -860,7 +882,7 @@ webui:
   # older entries from every operation log it knows; 0 keeps only the current
   # session. Lower this when the log page grows unwieldy (the size comes from
   # the number of entries, not from their age).
-  operation_log_retention_days: 3
+  operation_log_retention_days: 10
   # Base URL of the published documentation that the help icons (?) next to
   # the form fields open in a new tab. Point it at a local docs build
   # (file:///.../docs/build/), the dev site (.../dev/) or a pinned version

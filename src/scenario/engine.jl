@@ -120,17 +120,35 @@ function ScenarioEngine(net::Net; vm_min_pu::Float64 = 0.9, vm_max_pu::Float64 =
     # #331 Phase 1 item 4: the base case gets the full solver rescue ladder
     # (alternate start, autodamp, settled Q-limits, DC seed) before being
     # declared unsolvable; only then fall back to the flat template.
-    rescued = deepcopy(net)
-    base_converged = try
-      _, r_erg = runpf!(rescued, PowerFlowConfig(rescue = true, islands_enabled = true, max_iter = maxIte, tol = tol))
-      r_erg == 0
-    catch err
-      _rethrow_unless_solver_failure(err)
-      false
+    # The ladder runs on the SAME keywords as the base solve above, each
+    # strategy only overriding what it names: a default PowerFlowConfig
+    # here dropped distributed slack, auto_slack, the Q-limit settings,
+    # newton_update and power_mode, and a rescued template then carried a
+    # different slack distribution than the batch asked for (#456). The
+    # plain attempt is not repeated, it is the base solve that just failed.
+    base_kw = (; islands_enabled = true, pf_kwargs...)
+    base_flatstart = get(base_kw, :opt_flatstart, net.flatstart) === true
+    for (name, variant_kw) in _rescue_kwargs_variants(base_kw, base_flatstart)
+      # a fresh copy per strategy: a failed attempt leaves switched bus
+      # types and a promoted slack behind, not only voltages
+      rescued = deepcopy(net)
+      println("rescue: AC solve did not converge, retrying with strategy '", name, "'.")
+      rescued_ok = try
+        r_it, r_erg = runpf!(rescued, maxIte, tol, 0; variant_kw...)
+        r_erg == 0 && println("rescue: strategy '", name, "' converged after ", r_it, " iteration(s).")
+        r_erg == 0
+      catch err
+        _rethrow_unless_solver_failure(err)
+        false
+      end
+      if rescued_ok
+        base_converged = true
+        template = rescued
+        break
+      end
     end
-    if base_converged
-      template = rescued
-    else
+    base_converged || println("rescue: no strategy converged.")
+    if !base_converged
       @warn "ScenarioEngine: the base case did not converge even with the solver rescue ladder; scenarios start FLAT instead of warm."
       template = deepcopy(net)
       template.flatstart = true
@@ -885,7 +903,6 @@ function _evaluate_outaged_net!(engine::ScenarioEngine, work::Net, name::String,
   markIsolatedBuses!(net = work, log = false)
   cut_off = Int[i for i in eachindex(work.nodeVec) if isIsolated(work.nodeVec[i]) && !(i in isolated_before)]
   cut_off_note, cut_off_load_mw = _cut_off_bus_note(work, cut_off)
-  auto_slack = get(Dict(pairs(pf_kw)), :auto_slack, false) == true
   # the same detection the solve runs: an island without a slack or PV bus
   # takes its best generating unit (stated reference priority first, then
   # the strongest) regardless of auto_slack
@@ -917,10 +934,12 @@ function _evaluate_outaged_net!(engine::ScenarioEngine, work::Net, name::String,
         _dc_seed_rectangular_angles!(work, PowerFlowConfig(max_iter = engine.maxIte, tol = engine.tol))
         it_stage, erg = runpf!(work, engine.maxIte, engine.tol, 0; islands_enabled = true, pf_kw...)
       elseif stage === :apslf
-        # APSLF start via the config-driven solve (rescue OFF: one bounded
-        # attempt); pf_kwargs are not forwarded on this path
+        # APSLF start values, one bounded attempt on the same keywords as
+        # every other stage. A default PowerFlowConfig here forwarded only
+        # auto_slack and solved this stage on a single slack and default
+        # Q-limit settings whatever the batch asked for (#456).
         work.flatstart = false
-        it_stage, erg = runpf!(work, PowerFlowConfig(rescue = false, islands_enabled = true, max_iter = engine.maxIte, tol = engine.tol, auto_slack = auto_slack, apslf_start = ApslfStartConfig(enabled = true, order = 40)))
+        it_stage, erg = runpf!(work, engine.maxIte, engine.tol, 0; islands_enabled = true, pf_kw..., apslf_start_enabled = true, apslf_start_order = 40)
       end
       total_it += it_stage
       if erg == 0
@@ -1054,6 +1073,35 @@ function _evaluate_item(engine::ScenarioEngine, worker::ScenarioWorker, it)::Sce
   return ScenarioResult(evaluate!(engine, worker, it), false, nothing)
 end
 
+# Progress reporting of a batch (Web UI N-1 counter). The
+# caller's callable sits in an `Any` field and the keyword is
+# @nospecialize, so the batch runner compiles ONCE, not once per closure
+# type (compile-time rule: a callback keyword goes behind @nospecialize or
+# a concrete struct); the dynamic call costs well under a
+# microsecond against a full power-flow solve per item. `done` is an
+# atomic counter because the parallel branch finishes items on several
+# threads at once: every finished item increments it exactly once and the
+# callback receives the value AFTER its own increment, so the values the
+# callback sees across a batch are exactly 1:total, each once. On threads
+# they may arrive out of order (4 can be reported after 5); a consumer that
+# displays a counter keeps the maximum.
+struct _BatchProgress
+  callback::Any                  # nothing, or callable (done::Int, total::Int)
+  done::Threads.Atomic{Int}
+  total::Int
+end
+
+_BatchProgress(callback, total::Int) = _BatchProgress(callback, Threads.Atomic{Int}(0), total)
+
+# one finished item: count it and tell the caller. Screened items, failed
+# items (unknown element) and solved items all count, the base-case solve
+# never does (it runs in the ScenarioEngine constructor, before the batch).
+function _progress_tick!(p::_BatchProgress)
+  done = Threads.atomic_add!(p.done, 1) + 1   # atomic_add! returns the OLD value
+  p.callback === nothing || p.callback(done, p.total)
+  return nothing
+end
+
 # The batch runner: chunked over Julia threads exactly like the old
 # runContingencies! fan-out, with the serial path running the SAME
 # evaluate! on one worker (threads rule: serial path is the same function).
@@ -1062,11 +1110,13 @@ end
 # state is indexed by CHUNK, never by threadid. With screening :off the
 # batch returns the historical Vector{ContingencyResult}; otherwise every
 # row is a ScenarioResult.
-function _run_engine_batch(engine::ScenarioEngine, items::Vector{_ScenarioItem}; parallel_enabled::Union{Nothing,Bool} = nothing, parallel_max_tasks::Union{Nothing,Int} = nothing, parallel_min_work_items::Union{Nothing,Int} = nothing)
+function _run_engine_batch(engine::ScenarioEngine, items::Vector{_ScenarioItem}; parallel_enabled::Union{Nothing,Bool} = nothing, parallel_max_tasks::Union{Nothing,Int} = nothing, parallel_min_work_items::Union{Nothing,Int} = nothing, @nospecialize(progress = nothing))
   screening_off = engine.screening_mode === :off
   isempty(items) && return screening_off ? ContingencyResult[] : ScenarioResult[]
   eval_one = screening_off ? evaluate! : _evaluate_item
   results = Vector{Any}(undef, length(items))
+  # shared by all chunks; only read and atomically incremented in the tasks
+  tracker = _BatchProgress(progress, length(items))
   parallel_on, parallel_cap, parallel_min_items = _resolve_parallel_runtime(parallel_enabled, parallel_max_tasks, parallel_min_work_items)
   use_parallel = parallel_on && Threads.nthreads() > 1 && parallel_cap > 1 && length(items) >= parallel_min_items
   if use_parallel
@@ -1079,6 +1129,8 @@ function _run_engine_batch(engine::ScenarioEngine, items::Vector{_ScenarioItem};
           # token is process-wide, so it is visible inside this task
           sparlectra_check_abort()
           results[idx] = eval_one(engine, chunk_workers[ci], items[idx])
+          # no assignment here: the task body must not rebind enclosing names
+          _progress_tick!(tracker)
         end
       end for ci in eachindex(chunks)
     ]
@@ -1088,6 +1140,7 @@ function _run_engine_batch(engine::ScenarioEngine, items::Vector{_ScenarioItem};
     for idx in eachindex(items)
       sparlectra_check_abort()
       results[idx] = eval_one(engine, serial_worker, items[idx])
+      _progress_tick!(tracker)
     end
   end
   screening_off && return ContingencyResult[results[i] for i in eachindex(items)]
@@ -1140,6 +1193,9 @@ keyword surface matches `runContingencies!` (`vm_min_pu`, `vm_max_pu`,
 `maxIte`, `tol`, `rescue_ladder`, the `parallel_*` overrides); remaining
 keywords reach the per-scenario power-flow solves. Results are returned
 in scenario order; failures are reported in the result, never thrown.
+`progress` reports the batch progress exactly as in
+[`runContingencies!`](@ref) (one call per finished scenario, thread safe
+callable required).
 
 Screening: with `screening_mode = :flag` every
 non-islanding single outage is estimated first with one Woodbury-corrected
@@ -1171,6 +1227,7 @@ function runScenarios!(
   auto_slack::Bool = true,
   warm_active_set::Bool = false,
   warm_note::Union{Nothing,Base.RefValue{String}} = nothing,
+  @nospecialize(progress = nothing),
   kwargs...,
 )
   validate_scenarios(set, index, net)
@@ -1179,7 +1236,7 @@ function runScenarios!(
   ladder = _validate_contingency_ladder(rescue_ladder; context = "runScenarios!: rescue_ladder")
   engine = ScenarioEngine(net; vm_min_pu = vm_min_pu, vm_max_pu = vm_max_pu, maxIte = maxIte, tol = tol, ladder = ladder, index = index, pf_kwargs = (; auto_slack = auto_slack, kwargs...), screening_mode = screening_mode, screening_margin_pct = screening_margin_pct, warm_active_set = warm_active_set, warm_note = warm_note)
   items = _ScenarioItem[_engine_item_from_scenario(s, index) for s in scenarios]
-  return _run_engine_batch(engine, items; parallel_enabled = parallel_enabled, parallel_max_tasks = parallel_max_tasks, parallel_min_work_items = parallel_min_work_items)
+  return _run_engine_batch(engine, items; parallel_enabled = parallel_enabled, parallel_max_tasks = parallel_max_tasks, parallel_min_work_items = parallel_min_work_items, progress = progress)
 end
 
 runScenarios!(net::Net, scenarios::Vector{Scenario}; kwargs...) = runScenarios!(net, ScenarioSet(scenarios = scenarios); kwargs...)

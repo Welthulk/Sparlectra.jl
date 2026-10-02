@@ -432,10 +432,15 @@ the angles are clipped by `start_projection_dc_angle_limit_deg` before
 seeding Newton.
 
 Blended starts combine the DC-angle predictor with the stored MATPOWER
-`VM`/`VA` data or the raw flat start. The projection scans the requested
-candidates and keeps the one with the smallest rectangular mismatch, which
-helps avoid wrong low-voltage or wrong-angle branches without changing the
-convergence criteria:
+`VM`/`VA` data or the raw flat start. On a flat start the projection also
+measures the ratio profile (`start_projection_ratio_profile`, configuration
+key `power_flow.start_mode.ratio_profile`): the flat magnitudes of the PQ
+buses multiplied by the product of the off-nominal transformer ratios on the
+path from the reference, so that no transformer carries a circulating current
+at the start. The projection scans the requested candidates and keeps the one
+with the smallest residual 2-norm when it is at least 10 percent below the raw
+seed's, which helps avoid wrong low-voltage or wrong-angle branches without
+changing the convergence criteria:
 
 ```julia
 runpf!(net, 60, 1e-8, 1;
@@ -445,6 +450,7 @@ runpf!(net, 60, 1e-8, 1;
     start_projection_try_blend_scan = true,
     start_projection_blend_lambdas = [0.25, 0.5, 0.75],
     start_projection_dc_angle_limit_deg = 60.0,
+    start_projection_ratio_profile = true,
 )
 ```
 

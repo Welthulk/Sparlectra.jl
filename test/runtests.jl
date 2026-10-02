@@ -148,6 +148,7 @@ const TEST_GROUPS = TestGroup[
     TestGroup("configuration", ["test_configuration_coverage.jl"], [:run_configuration_coverage_tests]),
     TestGroup("configuration_docs", ["test_configuration_docs.jl"], [:run_configuration_docs_tests]),
     TestGroup("repository_hygiene", ["test_repository_hygiene.jl"], [:run_repository_hygiene_tests]),
+    TestGroup("docstrings", ["test_docstrings.jl"], [:run_docstring_tests]),
     # --- webui: the local browser UI
     TestGroup("webui", ["test_webui.jl"], [:run_webui_fast_tests]),
     TestGroup("webui_extended", ["test_webui_extended.jl"], [:run_webui_extended_tests]),
@@ -177,7 +178,7 @@ const TEST_GROUPS = TestGroup[
 # release; `all` is all of them. The documentation build is a gate of its own
 # (tools/run_gates.sh docs), not a test profile.
 const TEST_PROFILES = Dict{Symbol,Vector{String}}(
-    :fast => ["core_model", "terminal_status", "powerflow_rectangular", "factorized_linear_solver", "pv_voltage_residuals", "3wt_phase_taps", "dc_powerflow", "distributed_slack", "island_diagnostics", "external_grid", "matpower_metadata", "programmatic_api"],
+    :fast => ["docstrings", "core_model", "terminal_status", "powerflow_rectangular", "factorized_linear_solver", "pv_voltage_residuals", "3wt_phase_taps", "dc_powerflow", "distributed_slack", "island_diagnostics", "external_grid", "matpower_metadata", "programmatic_api"],
     :pf => ["auto_powerflow", "short_circuit", "parallel_foundation", "contingency", "scenarios", "controls", "core_model_extended", "contingency_extended", "scenario_engine", "apslf"],
     :se => ["state_estimation", "observability", "topology_validation"],
     :config => ["configuration", "configuration_docs", "repository_hygiene"],

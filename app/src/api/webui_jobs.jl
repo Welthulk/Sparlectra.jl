@@ -113,6 +113,26 @@ function _update_webui_job_phase!(job::AbstractDict, phase::AbstractString)
   return nothing
 end
 
+## Outage counter of an N-1 / scenario job: the batch calls
+## this once per finished outage, on a parallel batch from several worker
+## threads at once and possibly out of order, so the job keeps the MAXIMUM
+## of `done` under the service lock (the status page must never count
+## backwards). It also refreshes the progress timestamp and the heartbeat:
+## during a long batch no phase changes, and without this the heartbeat
+## froze at the phase that started the batch. Deliberately NO operation-log
+## event here; the log stays high level (one line per phase, not per outage).
+function _update_webui_job_progress!(job::AbstractDict, done::Integer, total::Integer, unit::AbstractString = "outages")
+  now = Dates.now(Dates.UTC)
+  lock(_POWERFLOW_SERVICE_LOCK) do
+    job["progress_done"] = max(Int(done), Int(get(job, "progress_done", 0)))
+    job["progress_total"] = Int(total)
+    job["progress_unit"] = String(unit)
+    job["last_progress_at"] = now
+    job["last_heartbeat"] = Dates.format(now, dateformat"yyyy-mm-ddTHH:MM:SS.sssZ")
+  end
+  return nothing
+end
+
 function _webui_phase_event!(job::AbstractDict, phase::AbstractString, event_callback)
   phase_name = String(phase)
   # Keep the operation log high-level: detailed aggregate timings belong in the
@@ -314,6 +334,10 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
   # status page name it (a running state estimation used to announce
   # itself as a PowerFlow run)
   kind_label = _webui_run_kind_label(request)
+  # what the batch counter counts: an id-addressed scenario source runs
+  # general scenarios, every other contingency run single outages (the
+  # n1_* scenario sources are generated outage lists)
+  progress_unit = _service_request_value(request, "scenario_source", nothing) in ("file_block", "external_file") ? "scenarios" : "outages"
   job = Dict{String,Any}(
     "kind_label" => kind_label,
     "run_mode" => something(_webui_request_run_mode(request), ""),
@@ -379,6 +403,9 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
       sparlectra_arm_abort_token!(job["abort_requested"])
       worker_request["phase_callback"] = phase -> _webui_phase_event!(job, phase, event_callback)
       worker_request["operation_callback"] = (event; fields...) -> event_callback(event; fields...)
+      # read only by contingency_mode runs (N-1 and scenario batches); the
+      # closure is thread safe because the update takes the service lock
+      worker_request["progress_callback"] = (done, total) -> _update_webui_job_progress!(job, done, total, progress_unit)
       result = try
         runner(worker_request; case_directory)
       catch err

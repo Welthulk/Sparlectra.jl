@@ -16,14 +16,12 @@
 # file: examples/others/export_solution.jl
 # purpose: runs Sparlectra's internal solver, exports a solver-agnostic PFModel/PFSolution, and optionally compares against an external-solver run via runpf_external!
 
-"""
-export_solution_for_external_solver.jl
-
-Run Sparlectra's internal solver and export a solver-agnostic PFModel + PFSolution
-for external solver experiments. Optionally also run an external-solver path
-(via `runpf_external!`) to test the interface and compare against the internal
-reference.
-"""
+# export_solution_for_external_solver.jl
+#
+# Run Sparlectra's internal solver and export a solver-agnostic PFModel + PFSolution
+# for external solver experiments. Optionally also run an external-solver path
+# (via `runpf_external!`) to test the interface and compare against the internal
+# reference.
 
 using Sparlectra
 using Dates

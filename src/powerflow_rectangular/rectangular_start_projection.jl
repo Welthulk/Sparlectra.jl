@@ -375,12 +375,95 @@ function _blend_voltage_starts(Vraw::Vector{ComplexF64}, Vdc::Vector{ComplexF64}
 end
 
 """
+    _ratio_profile_factors(net::Net, slack_idx::Int) -> Vector{Float64}
+
+Per-bus scale factors of the ratio-profile start candidate
+(`power_flow.start_mode.ratio_profile`): the product of the off-nominal
+winding ratios on the path from the reference bus `slack_idx`, found by a
+breadth-first search over the in-service branches (the path with the fewest
+branches; a line contributes 1, a transformer its LIVE ratio magnitude,
+`abs(calcBranchRatio(br))`, the same complex ratio the Ybus stamps, phase
+shift ignored because the candidate keeps the angles). The ratio sits on the
+from side (`V_from / t` faces the series impedance), so no current flows
+through an unloaded branch when `|V_to| = |V_from| / |t|`: stepping from
+the from bus to the to bus divides by `|t|`, the reverse step multiplies.
+Every bus of one voltage level therefore gets the same factor, and a flat
+start scaled by it carries no circulating current through the
+transformers. Buses the search does not reach (isolated buses, another
+island) keep the factor 1.0, i.e. their flat value.
+
+Why it exists: a flat start puts the full ratio offset of every off-nominal
+transformer across its series impedance. On the CGMES MiniGrid the two
+star-equivalent 110 kV windings (r 0.00044 pu, x about 0, ratio 0.96491)
+then carry 164 pu of circulating active power on a 9 MW case, and the polar
+Newton update diverges from that start; scaled by the ratios the start
+mismatch drops to 0.09 pu and polar Newton converges in three steps.
+"""
+function _ratio_profile_factors(net::Net, slack_idx::Int)::Vector{Float64}
+  n = length(net.nodeVec)
+  factors = fill(NaN, n)
+  1 <= slack_idx <= n || return fill(1.0, n)
+  # adjacency of the in-service branches once, so the search is linear in
+  # the number of branches (a scan of every branch per visited bus would be
+  # quadratic on the 10000-bus cases)
+  adjacency = [Tuple{Int,Float64}[] for _ = 1:n]
+  for br in net.branchVec
+    br.status == 1 || continue
+    f = Int(br.fromBus)
+    t = Int(br.toBus)
+    (1 <= f <= n && 1 <= t <= n && f != t) || continue
+    ratio = abs(calcBranchRatio(br))
+    # a degenerate ratio would put a zero or non-finite factor into the
+    # start; such a branch is not used as a path (the bus keeps 1.0 if no
+    # other path reaches it)
+    (isfinite(ratio) && ratio > 0.0) || continue
+    # from -> to divides by the ratio, to -> from multiplies by it
+    push!(adjacency[f], (t, 1.0 / ratio))
+    push!(adjacency[t], (f, ratio))
+  end
+  factors[slack_idx] = 1.0
+  queue = [slack_idx]
+  head = 1
+  while head <= length(queue)
+    k = queue[head]
+    head += 1
+    for (j, step) in adjacency[k]
+      isnan(factors[j]) || continue
+      factors[j] = factors[k] * step
+      push!(queue, j)
+    end
+  end
+  # unreached buses keep their flat value
+  @inbounds for k in eachindex(factors)
+    isnan(factors[k]) && (factors[k] = 1.0)
+  end
+  return factors
+end
+
+# The ratio-profile candidate: the sanitized seed with every PQ magnitude
+# scaled by its factor, angles unchanged (0 on a flat start). PV and slack
+# buses keep their magnitudes: those are regulated setpoints the solve holds
+# by a voltage row, and the slack is the reference, so a scaled value would
+# only add a residual there (and on the MiniGrid there is no PV bus, so the
+# finding behind the candidate does not depend on this choice).
+function _ratio_profile_start(raw::Vector{ComplexF64}, factors::Vector{Float64}, bus_types::Vector{Symbol}, slack_idx::Int)
+  V = copy(raw)
+  @inbounds for k in eachindex(V)
+    (k == slack_idx || bus_types[k] !== :PQ) && continue
+    V[k] = raw[k] * factors[k]
+  end
+  return V
+end
+
+"""
 Selects a numerically robust rectangular voltage start vector for Newton-Raphson.
 
 The function optionally evaluates multiple start candidates derived from the raw seed:
 - sanitized raw start,
 - DC-angle start,
-- optional raw/DC blended starts.
+- optional raw/DC blended starts,
+- on a flat start, the ratio profile (PQ magnitudes scaled by the transformer
+  ratios on the path from the reference).
 
 Default behavior chooses the finite measured start candidate with the smallest
 residual 2-norm, and a candidate replaces the raw seed only when its 2-norm is
@@ -414,6 +497,14 @@ as reference in all generated candidates.
 - `dc_angle_limit_deg::Float64=60.0`: Absolute cap for non-slack relative DC angles.
 - `verbose::Int=0`: Logging verbosity.
 - `performance_profile=nothing`: Optional profiling dictionary for timing/diagnostics.
+- `ratio_profile_factors=Float64[]`: per-bus factors from `_ratio_profile_factors`
+  (the caller passes them only for a flat start with
+  `power_flow.start_mode.ratio_profile` on). Non-empty, the ratio-profile
+  candidate (PQ magnitudes scaled by the factors, angles kept) is measured
+  after the DC and blend candidates and wins under the same rule (smallest
+  residual 2-norm, at least 10 percent below the raw seed); a requested DC
+  angle start (`requested_angle_mode = :dc`) excludes it like the blends.
+  Empty (the default), nothing is built and the selection is unchanged.
 - `dc_model=nothing`: A [`_ProjectionDcModel`](@ref) (the net's `Bbus` and `Pbusinj`
   from [`assemble_dc_bbus`](@ref), built by `_projection_dc_model`) so the DC candidate
   solves the same DC power flow as `rundcpf!`, phase-shifter injections included.
@@ -442,6 +533,7 @@ function project_rectangular_start(
   verbose::Int = 0,
   performance_profile = nothing,
   dc_model::Union{Nothing,_ProjectionDcModel} = nothing,
+  ratio_profile_factors::Vector{Float64} = Float64[],
 )
   enabled || return Vraw
   # Projection is opt-in and must be numerically bounded by a positive angle cap.
@@ -551,6 +643,32 @@ function project_rectangular_start(
     end
   end
 
+  # ratio-profile candidate (flat starts only; the caller passes the factors
+  # only then). Measured like the DC and blend candidates and selected by the
+  # same rule; a requested DC angle start keeps precedence, as it does over
+  # the blends.
+  ratio_mis = NaN
+  ratio_l2 = NaN
+  ratio_profile_built = false
+  if !isempty(ratio_profile_factors)
+    length(ratio_profile_factors) == length(raw) || throw(DimensionMismatch("ratio_profile_factors has $(length(ratio_profile_factors)) entries for $(length(raw)) buses."))
+    Vratio = _ratio_profile_start(raw, ratio_profile_factors, bus_types, slack_idx)
+    ratio_profile_built = true
+    candidate_count += 1
+    ratio_m = measure_candidates ? _perf_profile_time!(performance_profile, :start_projection_mismatch_evaluation) do
+      _start_candidate_mismatch(Ybus, Vratio, S, bus_types, Vset, slack_idx)
+    end : (max = NaN, l2 = NaN)
+    ratio_mis = ratio_m.max
+    ratio_l2 = ratio_m.l2
+    if !dc_angle_required && measure_candidates && _start_candidate_wins(ratio_l2, best_l2, raw_l2)
+      best = Vratio
+      best_name = :ratio_profile
+      best_mis = ratio_mis
+      best_l2 = ratio_l2
+      selection_reason = isfinite(raw_l2) ? :finite_improvement : :finite_candidate_replaces_nonfinite_raw
+    end
+  end
+
   if branch_guard
     _perf_profile_time!(performance_profile, :start_projection_branch_guard_checks) do
       # Final safety belt: never return a non-finite candidate into NR.
@@ -600,6 +718,9 @@ function project_rectangular_start(
       dc_mismatch = isfinite(dc_mis) ? dc_mis : missing,
       dc_model = dc_model_name,
       best_blend_mismatch = isfinite(best_blend_mis) ? best_blend_mis : missing,
+      ratio_profile_built = ratio_profile_built,
+      ratio_profile_mismatch = isfinite(ratio_mis) ? ratio_mis : missing,
+      ratio_profile_mismatch_l2 = isfinite(ratio_l2) ? ratio_l2 : missing,
       projected_mismatch = reported_best_mis,
       fallback_to_raw = fallback_to_raw,
       fallback_reason = fallback_reason,

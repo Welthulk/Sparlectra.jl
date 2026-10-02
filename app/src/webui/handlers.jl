@@ -1172,8 +1172,9 @@ end
 # generator off in the same save.
 function _webui_resolve_solver_start_conflict!(updates::AbstractDict)
   get(updates, "power_flow.solver", nothing) == "apslf" && (updates["power_flow.apslf_start.enabled"] = false)
-  # the flat start does not touch the other start settings here: the run
-  # overrides them (_flatstart_forced_off_config), the page greys them, and
+  # the flat start does not touch the other start settings here: the start
+  # machines follow their own keys, only the two start modes are overridden
+  # by the run (_flatstart_profile_config), the page greys those two, and
   # they come back as saved when the flat start is unchecked again
   return updates
 end

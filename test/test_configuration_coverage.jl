@@ -138,11 +138,11 @@ function test_configuration_yaml_key_coverage()
     leaves = _canonical_yaml_leaf_keys()
 
     mapped_keys = Set([
-      "power_flow.method", "power_flow.mode", "power_flow.solver", "power_flow.linear_solver", "power_flow.newton_update", "power_flow.power_mode", "power_flow.power_mode_lu", "power_flow.jacobian_reuse", "power_flow.jacobian_reuse_min_reduction", "power_flow.jacobian_reuse_max_steps", "contingency.screening.mode", "contingency.screening.margin_pct", "contingency.warm_active_set", "power_flow.apslf.order", "power_flow.apslf.use_pade", "power_flow.apslf.nr_polish", "power_flow.apslf.convergence_radius", "power_flow.apslf_start.enabled", "power_flow.apslf_start.order", "power_flow.flatstart", "power_flow.tol", "power_flow.max_iter", "power_flow.autodamp", "power_flow.autodamp_min", "power_flow.auto_slack", "power_flow.rescue", "power_flow.dc.fallback", "power_flow.wrong_branch_detection", "power_flow.wrong_branch_rescue", "power_flow.wrong_branch_min_vm_pu", "power_flow.wrong_branch_max_vm_pu", "power_flow.wrong_branch_max_angle_spread_deg", "power_flow.wrong_branch_max_branch_angle_deg", "power_flow.wrong_branch_min_low_vm_count", "power_flow.wrong_branch_min_vn_kV", "power_flow.wrong_branch_low_vm_share", "power_flow.wrong_branch_max_bus_angle_deg", "power_flow.wrong_branch_max_plain_steps", "power_flow.wrong_branch_collapse_vm_pu", "power_flow.wrong_branch_rescue_max_attempts", "power_flow.rectangular_workspace_reuse", "power_flow.rectangular_preallocate_workspace", "power_flow.rectangular_workspace_min_buses",
+      "power_flow.method", "power_flow.mode", "power_flow.solver", "power_flow.linear_solver", "power_flow.newton_update", "power_flow.power_mode", "power_flow.power_mode_lu", "power_flow.jacobian_reuse", "power_flow.jacobian_reuse_min_reduction", "power_flow.jacobian_reuse_max_steps", "contingency.screening.mode", "contingency.screening.margin_pct", "contingency.warm_active_set", "power_flow.apslf.order", "power_flow.apslf.use_pade", "power_flow.apslf.nr_polish", "power_flow.apslf.convergence_radius", "power_flow.apslf_start.enabled", "power_flow.apslf_start.order", "power_flow.flatstart", "power_flow.tol", "power_flow.max_iter", "power_flow.autodamp", "power_flow.autodamp_min", "power_flow.auto_slack", "power_flow.rescue", "power_flow.dc.fallback", "power_flow.wrong_branch_detection", "power_flow.wrong_branch_rescue", "power_flow.wrong_branch_min_vm_pu", "power_flow.wrong_branch_max_vm_pu", "power_flow.wrong_branch_max_angle_spread_deg", "power_flow.wrong_branch_max_branch_angle_deg", "power_flow.wrong_branch_min_low_vm_count", "power_flow.wrong_branch_min_vn_kV", "power_flow.wrong_branch_low_vm_share", "power_flow.wrong_branch_max_bus_angle_deg", "power_flow.wrong_branch_max_plain_steps", "power_flow.wrong_branch_collapse_vm_pu", "power_flow.wrong_branch_max_reference_branch_angle_deg", "power_flow.wrong_branch_rescue_max_attempts", "power_flow.rectangular_workspace_reuse", "power_flow.rectangular_preallocate_workspace", "power_flow.rectangular_workspace_min_buses",
       "power_flow.islands.enabled", "power_flow.islands.parallel_min_buses", "power_flow.islands.reference_policy", "power_flow.islands.diagnostic_continue_after_failure",
       "power_flow.distributed_slack.enabled", "power_flow.distributed_slack.p_mode", "power_flow.distributed_slack.respect_p_limits", "power_flow.distributed_slack.fallback", "power_flow.distributed_slack.weights",
       "power_flow.external_grid.enabled", "power_flow.external_grid.source", "power_flow.external_grid.sk_MVA", "power_flow.external_grid.rx",
-      "power_flow.start_mode.angle_mode", "power_flow.start_mode.voltage_mode", "power_flow.start_mode.profile_source", "power_flow.start_mode.start_projection", "power_flow.start_mode.try_dc_start", "power_flow.start_mode.try_blend_scan", "power_flow.start_mode.branch_guard", "power_flow.start_mode.measure_candidates", "power_flow.start_mode.accept_unmeasured_dc_start", "power_flow.start_mode.dc_seed_unconditional", "power_flow.start_mode.reuse_import_data", "power_flow.start_mode.blend_lambdas", "power_flow.start_mode.dc_angle_limit_deg",
+      "power_flow.start_mode.angle_mode", "power_flow.start_mode.voltage_mode", "power_flow.start_mode.profile_source", "power_flow.start_mode.start_projection", "power_flow.start_mode.try_dc_start", "power_flow.start_mode.try_blend_scan", "power_flow.start_mode.branch_guard", "power_flow.start_mode.measure_candidates", "power_flow.start_mode.accept_unmeasured_dc_start", "power_flow.start_mode.dc_seed_unconditional", "power_flow.start_mode.ratio_profile", "power_flow.start_mode.reuse_import_data", "power_flow.start_mode.blend_lambdas", "power_flow.start_mode.dc_angle_limit_deg",
       "power_flow.start_current_iteration.enabled", "power_flow.start_current_iteration.max_iter", "power_flow.start_current_iteration.tol", "power_flow.start_current_iteration.damping", "power_flow.start_current_iteration.accept_only_if_improved", "power_flow.start_current_iteration.min_improvement_factor", "power_flow.start_current_iteration.vm_min_pu", "power_flow.start_current_iteration.vm_max_pu", "power_flow.start_current_iteration.max_angle_step_deg", "power_flow.start_current_iteration.only_for_large_cases",
       "power_flow.merit.enabled", "power_flow.merit.armijo_c1", "power_flow.merit.scale_p", "power_flow.merit.scale_q", "power_flow.merit.scale_v", "power_flow.merit.fallback_max_mismatch",
       "power_flow.trust_region.enabled", "power_flow.trust_region.initial_radius", "power_flow.trust_region.min_radius", "power_flow.trust_region.max_radius", "power_flow.trust_region.eta_accept", "power_flow.trust_region.shrink_factor", "power_flow.trust_region.expand_factor", "power_flow.trust_region.expand_threshold", "power_flow.trust_region.step_mode",
@@ -648,6 +648,17 @@ power_flow:
       @test (cfg.powerflow.newton_update, q.start_iter, q.start_mode, q.guard, q.guard_min_q_range_pu, q.guard_narrow_range_mode, q.guard_violation_mode, q.guard_max_switches, q.final_q_accept_pu, cfg.model.auto_profile) == values(expected)
     end
     @test Sparlectra.DEFAULT_NEWTON_UPDATE === expected.newton_update
+    # the batch path (N-1 and scenarios through the contingency service)
+    # takes its Q-limit keywords from the same mapping as the single run
+    # (_qlimit_solver_kwargs); before 0.30.2 it forwarded none of them. The
+    # template and an empty configuration map to the release defaults here,
+    # and the service test "scenario service sources (step 5)" shows that a
+    # configured lock list changes an N-1 result.
+    for cfg in (tmpl_cfg, empty_cfg)
+      qk = Sparlectra._qlimit_solver_kwargs(cfg.powerflow.qlimits)
+      @test (qk.qlimit_start_iter, qk.qlimit_start_mode, qk.qlimit_guard, qk.qlimit_guard_min_q_range_pu, qk.qlimit_guard_narrow_range_mode, qk.qlimit_guard_violation_mode, qk.qlimit_guard_max_switches) ==
+            (expected.start_iter, expected.start_mode, expected.guard, expected.guard_min_q_range_pu, expected.guard_narrow_range_mode, expected.guard_violation_mode, expected.guard_max_switches)
+    end
     lib_net = Sparlectra.createNetFromMatPowerFile(filename = joinpath(dirname(@__DIR__), "data", "mpower", "sp_case118.m"))
     prof = Dict{Symbol,Any}()
     redirect_stdout(devnull) do
@@ -666,6 +677,14 @@ power_flow:
     @test (prof[:jacobian_reuse], prof[:jacobian_reuse_min_reduction], prof[:jacobian_reuse_max_steps]) == jr_expected
     @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict{String,Any}("config_version" => 1, "power_flow" => Dict{String,Any}("jacobian_reuse_min_reduction" => 1.0)))
     @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict{String,Any}("config_version" => 1, "power_flow" => Dict{String,Any}("jacobian_reuse_max_steps" => 0)))
+    # Deliberate exception to the one-default rule above, which covers the
+    # solver behaviour: output.logfile_results is log verbosity. A library run
+    # without a configuration file stays quiet (off), the packaged template
+    # that the Web UI and the services start from logs the full result table.
+    # Pinned here so the difference cannot drift unnoticed.
+    @test Sparlectra.OutputConfig().logfile_results === :off
+    @test empty_cfg.output.logfile_results === :off
+    @test tmpl_cfg.output.logfile_results === :full
     # power_flow.power_mode_lu (0.30.2) the same way, and an unknown value is
     # refused by the loader and the override validation
     for cfg in (tmpl_cfg, empty_cfg, Sparlectra.SparlectraConfig())

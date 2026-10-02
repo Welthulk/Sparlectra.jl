@@ -27,10 +27,11 @@ const CGMES_TESTSET_URLS = [
   "https://eepublicdownloads.entsoe.eu/clean-documents/CIM_documents/Grid_Model_CIM/TestConfigurations_packageCASv2.0.zip",
 ]
 
-"""Cache directory for the ENTSO-E test configurations (`data/CGMES`, override via `SPARLECTRA_CGMES_CACHE`)."""
 # the cache anchors at the REPOSITORY root; the extra dirname pays for the
 # stage-5 move of this file from src/cgmes to src/adapters/cgmes (a stale
 # two-level form silently cached and re-downloaded under src/data)
+
+"""Cache directory for the ENTSO-E test configurations (`data/CGMES`, override via `SPARLECTRA_CGMES_CACHE`)."""
 cgmesTestSetCacheDir() = get(ENV, "SPARLECTRA_CGMES_CACHE", joinpath(dirname(dirname(dirname(@__DIR__))), "data", "CGMES"))
 
 const _MG = joinpath("MicroGrid", "BaseCase_BC")

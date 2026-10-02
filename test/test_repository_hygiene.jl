@@ -144,73 +144,8 @@ function _reference_page_coverage_violations(repo::AbstractString)::Vector{Strin
     return violations
 end
 
-# A docstring is attached to the definition that FOLLOWS it. Put a blank
-# line in between and Julia keeps the string as a standalone expression: the
-# binding stays undocumented, without an error and without a warning. Nothing
-# in a test run sees it; only the documentation build does, and only when a
-# page happens to link the binding with @ref. Exactly that took
-# the docs build down (`ensure_casefile`, linked from three pages), and the
-# same blank line had quietly eaten the docstrings of `addBranch!`,
-# `addZeroInjectionMeasurements!` and the keyword method of
-# `runpf_rectangular!` months earlier.
-#
-# The scan tracks triple-quote delimiters and only treats a block as a
-# docstring when its OPENING delimiter stands alone on its line: that
-# separates a docstring from a multi-line string constant such as
-# `const TEXT = """`, where a blank line before the next definition is
-# perfectly normal.
-const _DEFINITION_LINE = r"^\s*(?:@\w+[^\s]*\s+)*(?:function|macro|module|baremodule|const|abstract\s+type|primitive\s+type|mutable\s+struct|struct)\b"
-
-function _detached_docstring_violations(repo::AbstractString)::Vector{String}
-    violations = String[]
-    tracked = filter(f -> endswith(f, ".jl"), split(chomp(read(`git -C $repo ls-files src test examples`, String)), "\n"))
-    for rel in tracked
-        # this file documents the pattern in its own comments and fixtures
-        rel == "test/test_repository_hygiene.jl" && continue
-        path = joinpath(repo, rel)
-        isfile(path) || continue
-        lines = readlines(path)
-        inside = false          # inside a triple-quoted block
-        bare_opener = false     # ... and that block opened with a lone delimiter
-        for (i, line) in pairs(lines)
-            delimiters = length(collect(eachmatch(r"\"\"\"", line)))
-            closed = false
-            if isodd(delimiters)
-                if inside
-                    inside = false
-                    closed = bare_opener
-                else
-                    inside = true
-                    # `"""`, `raw"""` or `md"""` with nothing else on the line
-                    bare_opener = occursin(r"^\s*(?:[A-Za-z_]\w*)?\"\"\"\s*$", line)
-                end
-            end
-            # a lone single-line string (`"Short doc."`) detaches the same way
-            if !inside && !closed && occursin(r"^\s*\"[^\"].*[^\\]\"\s*$", line)
-                closed = true
-            end
-            closed || continue
-            j = i + 1
-            while j <= length(lines) && isempty(strip(lines[j]))
-                j += 1
-            end
-            j > length(lines) && continue
-            # a comment right below the docstring: the parser skips it and
-            # hands the text to whatever definition follows the comment,
-            # which is how a helper put between a docstring and its function
-            # takes the documentation of that function
-            if j == i + 1 && startswith(lstrip(lines[j]), "#")
-                push!(violations, "$(rel):$(i): a comment follows the docstring; the text goes to the definition after the comment, put the docstring directly above what it documents")
-                continue
-            end
-            j == i + 1 && continue  # no blank line: correctly attached
-            if occursin(_DEFINITION_LINE, lines[j]) || occursin(r"^\s*[A-Za-z_]\w*[!?]?\s*\(.*\)\s*=", lines[j])
-                push!(violations, "$(rel):$(i): blank line between the docstring and the definition on line $(j) detaches it")
-            end
-        end
-    end
-    return violations
-end
+# The detached-docstring check moved to test/test_docstrings.jl (fast
+# profile, parser based, all of src/, app/src/, ext/, test/, examples/).
 
 function run_repository_hygiene_tests()
     @testset "repository hygiene" begin (function ()
@@ -254,10 +189,6 @@ function run_repository_hygiene_tests()
         static_tracked = split(chomp(read(`git -C $repo ls-files $static_rel`, String)), "\n")
         static_missing = String[string(static_rel, "/", name) for name in readdir(joinpath(repo, static_rel)) if !(string(static_rel, "/", name) in static_tracked)]
         isempty(static_missing) || error(join(["Web UI static files that are not tracked (check .gitignore):"; static_missing], "\n"))
-        detached = _detached_docstring_violations(repo)
-        if !isempty(detached)
-            error(join(["docstrings detached from their definition:"; detached], "\n"))
-        end
         # additional check files next to this one (name pattern private_*.jl)
         # are included when present and named in the group report
         extra = sort(filter(f -> startswith(f, "private_") && endswith(f, ".jl"), readdir(@__DIR__)))

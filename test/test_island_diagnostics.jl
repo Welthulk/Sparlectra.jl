@@ -67,11 +67,9 @@ end
 # Split a summary CSV into a header-name => column-index map plus data rows.
 function _island_diag_read_summary(path::AbstractString)
   lines = split(strip(read(path, String)), '\n')
-  # the report follows output.csv_format (excel_de by default since 0.30.2)
-  delim = occursin(';', lines[1]) ? ';' : ','
-  header = split(lines[1], delim)
+  header = split(lines[1], ',')
   col = Dict(String(name) => i for (i, name) in enumerate(header))
-  rows = [split(line, delim) for line in lines[2:end]]
+  rows = [split(line, ',') for line in lines[2:end]]
   return col, rows
 end
 
@@ -145,8 +143,7 @@ function run_island_diagnostics_tests()
         # Mirrors execution.jl on failure: the combined status handed to the
         # diagnostics writer is the failed island's own status (tagged with
         # island_id = 1), plus the run-level iteration count.
-        # the asserted cells are the technical spelling (decimal point)
-        with_technical_output(() -> Sparlectra._write_ac_island_diagnostics!(net, cfg, profile; status = failed_status, iterations = 80))
+        Sparlectra._write_ac_island_diagnostics!(net, cfg, profile; status = failed_status, iterations = 80)
         col, rows = _island_diag_read_summary(joinpath(dir, "ac_island_solver_summary.csv"))
         @test length(rows) == 2
         row1 = rows[1]
@@ -281,6 +278,52 @@ function run_island_diagnostics_tests()
       auto4 = mkautonet()
       addProsumer!(net = auto4, busName = "G1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "G1")
       @test ensureSlack!(auto4; log = false) === nothing
+    end)() end
+
+    @testset "an island without unknowns: a lone generator and a lone load" begin (function ()
+      # A PV generator left alone on its AC island (its only line out) is
+      # the island's reference and nothing else: no unknown, Newton has
+      # nothing to solve. The loop used to reduce over the empty mismatch
+      # vector and the whole run failed with an ArgumentError (found on
+      # case_ACTIVSg2000, a generator behind its outaged unit transformer).
+      # Power mode builds the light final diagnostics, which took the worst
+      # row of the same empty vector (argmax over nothing); both paths run.
+      for pm in (false, true)
+        net = Net(name = "pv_alone", baseMVA = 100.0)
+        for b in ("S", "L", "G")
+          addBus!(net = net, busName = b, vn_kV = 110.0)
+        end
+        addPIModelACLine!(net = net, fromBus = "S", toBus = "L", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+        addPIModelACLine!(net = net, fromBus = "L", toBus = "G", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+        addProsumer!(net = net, busName = "S", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "S")
+        addProsumer!(net = net, busName = "L", type = "ENERGYCONSUMER", p = 30.0, q = 10.0)
+        addProsumer!(net = net, busName = "G", type = "SYNCHRONOUSMACHINE", p = 20.0, vm_pu = 1.02, va_deg = 0.0)
+        Sparlectra.setBranchStatus!(net.branchVec[2], false)
+        prof = Dict{Symbol,Any}()
+        _, erg = redirect_stdout(devnull) do
+          runpf!(net, 30, 1e-8, 0; islands_enabled = true, power_mode = pm, performance_profile = prof)
+        end
+        @test erg == 0
+        lone = [st for st in values(prof[:ac_island_solver_statuses]) if get(st, :no_unknowns, false) === true]
+        @test length(lone) == 1
+        @test lone[1].status === :converged
+        @test lone[1].iterations == 0
+        @test net.nodeVec[3]._vm_pu == 1.02
+      end
+
+      # The N-1 engine on the shipped sp_case60: an outage that cuts off a
+      # generator bus and one that cuts off a pure load bus, both without
+      # error and with their own note (the generator out of service, the
+      # load not supplied; a bus without infeed is never promoted)
+      net60 = Sparlectra.importSCF(joinpath(dirname(@__DIR__), "data", "scf", "sp_case60.scf.json"))
+      cases = [c for c in generateN1Branches(net60) if c.name in ("B_ACL_20_56_57", "B_ACL_20_53_54")]
+      @test length(cases) == 2
+      res = Dict(r.name => r for r in redirect_stdout(() -> runContingencies!(net60, cases), devnull))
+      gen_out = res["B_ACL_20_56_57"]
+      load_out = res["B_ACL_20_53_54"]
+      @test gen_out.converged && load_out.converged
+      @test occursin("generating unit(s)", something(gen_out.error, "")) && gen_out.shed_load_mw == 0.0
+      @test occursin("load disconnected", something(load_out.error, "")) && load_out.shed_load_mw > 0.0
     end)() end
 
     @testset "single-island run keeps the combined-status fallback" begin (function ()

@@ -32,6 +32,19 @@ _power_mode_kwargs(pf) = pf.power_mode ? (; power_mode = true, power_mode_lu = p
 # N-1, only when the configuration switches it on
 _jacobian_reuse_kwargs(pf) = pf.jacobian_reuse ? (; jacobian_reuse = true, jacobian_reuse_min_reduction = pf.jacobian_reuse_min_reduction, jacobian_reuse_max_steps = pf.jacobian_reuse_max_steps) : (;)
 
+# the distributed-slack model of the run configuration for the scenario
+# engine and N-1: every key of power_flow.distributed_slack, so the base
+# case, its rescue and every scenario share the units as configured (the
+# scenario-source path passed none of them and the N-1 path left out the
+# weights and respect_p_limits, #456)
+_distributed_slack_kwargs(pf) = pf.distributed_slack.enabled ? (; distributed_slack_enabled = true, distributed_slack_p_mode = pf.distributed_slack.p_mode, distributed_slack_respect_p_limits = pf.distributed_slack.respect_p_limits, distributed_slack_fallback = pf.distributed_slack.fallback, distributed_slack_weights = pf.distributed_slack.weights) : (;)
+
+# the solver keywords both engine entries (scenario source, generated N-1
+# cases) receive from the run configuration
+# the Q-limit keywords come from the library's one mapping (the same the
+# single run uses), so N-1 and scenarios honour power_flow.qlimits.*
+_engine_solver_kwargs(pf) = (; _distributed_slack_kwargs(pf)..., _power_mode_kwargs(pf)..., _jacobian_reuse_kwargs(pf)..., _qlimit_solver_kwargs(pf.qlimits)...)
+
 # Resolve the case file's contingency definition into runner cases. Component
 # ids are resolved through `extra[<id>].name`, which is why that name is
 # mandatory wherever anything refers to an object. The runner takes ONE
@@ -98,6 +111,11 @@ scenario model, `external_file` a scenario JSON named by `scenario_file`,
 active the CSV gains the `screened`/`screening_estimate` columns and the
 metadata reports `contingency_screening_mode` and `contingency_screened`.
 
+`progress` (default `nothing`) is handed to [`runContingencies!`](@ref) /
+`runScenarios!` unchanged: a thread-safe callable `progress(done, total)`
+called once per finished outage or scenario. The Web UI job passes one
+that stores the counter in the job snapshot (see `webui_jobs.jl`).
+
 Failure behavior: `contingency_unsupported_format` (not MATPOWER, CGMES,
 PowSyBl or Sparlectra Case Format),
 `contingency_no_cases` (no in-service element of the requested kind),
@@ -105,7 +123,7 @@ PowSyBl or Sparlectra Case Format),
 `screening_mode`, missing `scenario_file`), plus the shared import/config
 failures.
 """
-function _run_contingency_service(case_path::AbstractString, config_file::AbstractString, output_dir::AbstractString, run_id::String, kind::AbstractString; config_overrides::AbstractDict = Dict{String,Any}(), weights_path::Union{Nothing,AbstractString} = nothing, se_state_file::Union{Nothing,AbstractString} = nothing, se_run_id::Union{Nothing,AbstractString} = nothing, se_start_mode::AbstractString = "se_state", scenario_source::Union{Nothing,AbstractString} = nothing, scenario_file::Union{Nothing,AbstractString} = nothing, screening_mode::Union{Nothing,AbstractString} = nothing, screening_margin_pct::Union{Nothing,Real} = nothing)::SparlectraApiResult
+function _run_contingency_service(case_path::AbstractString, config_file::AbstractString, output_dir::AbstractString, run_id::String, kind::AbstractString; config_overrides::AbstractDict = Dict{String,Any}(), weights_path::Union{Nothing,AbstractString} = nothing, se_state_file::Union{Nothing,AbstractString} = nothing, se_run_id::Union{Nothing,AbstractString} = nothing, se_start_mode::AbstractString = "se_state", scenario_source::Union{Nothing,AbstractString} = nothing, scenario_file::Union{Nothing,AbstractString} = nothing, screening_mode::Union{Nothing,AbstractString} = nothing, screening_margin_pct::Union{Nothing,Real} = nothing, @nospecialize(progress = nothing))::SparlectraApiResult
   mkpath(output_dir)
   logfile = joinpath(output_dir, "run.log")
   result_file = joinpath(output_dir, "result.json")
@@ -224,10 +242,12 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
       else
         scenario_set_from_dict(scf_json_parse(read(String(scenario_file), String)))
       end
-      # power mode (0.30.1) reaches the scenario engine's worker nets like the N-1 path below
+      # distributed slack, power mode and Jacobian reuse reach the scenario
+      # engine exactly as on the N-1 path below (distributed slack used to be
+      # missing here while run.log announced it, #456)
       runScenarios!(net, set; index = idx, rescue_ladder = config.contingency.rescue_ladder, screening_mode = screen_mode, screening_margin_pct = screen_margin,
-        _power_mode_kwargs(config.powerflow)..., _jacobian_reuse_kwargs(config.powerflow)...,
-        warm_active_set = config.contingency.warm_active_set, warm_note = warm_note)
+        _engine_solver_kwargs(config.powerflow)...,
+        warm_active_set = config.contingency.warm_active_set, warm_note = warm_note, progress = progress)
     catch err
       err isa PowerFlowAborted && rethrow()
       return _api_failure("invalid_case_file", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
@@ -302,17 +322,15 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
   # mismatch of an outage as they share it in the base case (the outage of
   # the line that carries the reference unit's output has no solution on a
   # single slack in the IEEE 14-bus case, and one with the shared slack)
+  # (power mode: the worker nets of the engine keep their Ybus,
+  # factorization and work arrays across the outages when the caller set it)
   dslack = config.powerflow.distributed_slack
-  dslack_kwargs = dslack.enabled ? (; distributed_slack_enabled = true, distributed_slack_p_mode = dslack.p_mode, distributed_slack_fallback = dslack.fallback) : (;)
-  # power mode (0.30.1): the worker nets of the engine keep their Ybus,
-  # factorization and work arrays across the outages when the caller set it
-  dslack_kwargs = (; dslack_kwargs..., _power_mode_kwargs(config.powerflow)...)
-  dslack_kwargs = (; dslack_kwargs..., _jacobian_reuse_kwargs(config.powerflow)...)
+  dslack_kwargs = _engine_solver_kwargs(config.powerflow)
   if results === nothing
     # an outage that removes the reference, or splits off an island without
     # one, does not end the case: the strongest remaining unit takes over
     # and the result names it (auto_slack, the default of runContingencies!)
-    results = runContingencies!(net, cases; rescue_ladder = config.contingency.rescue_ladder, screening_mode = screen_mode, screening_margin_pct = screen_margin, warm_active_set = config.contingency.warm_active_set, warm_note = warm_note, dslack_kwargs...)
+    results = runContingencies!(net, cases; rescue_ladder = config.contingency.rescue_ladder, screening_mode = screen_mode, screening_margin_pct = screen_margin, warm_active_set = config.contingency.warm_active_set, warm_note = warm_note, progress = progress, dslack_kwargs...)
   end
   n_screened = eltype(results) === ScenarioResult ? count(r -> r.screened, results) : 0
   report = buildContingencyReport(results)

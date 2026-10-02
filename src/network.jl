@@ -21,9 +21,12 @@
 """
     Net
 
-Represents an electrical network.
+The in-memory network: buses, branches, prosumers, shunts, links and the
+run-level state the solvers read (Q-limit parameters, flat-start flag,
+measurements, solver status). Built by the importers or by the `add*!`
+constructors.
 
-# Fields
+# Fields (selection)
 - `name::String`: Name of the network.
 - `baseMVA::Float64`: Base MVA of the network.
 - `slackVec::Vector{Int}`: Vector containing indices of slack buses.
@@ -33,14 +36,16 @@ Represents an electrical network.
 - `linesAC::Vector{ACLineSegment}`: Vector containing AC line segments.
 - `trafos::Vector{PowerTransformer}`: Vector containing power transformers.
 - `branchVec::Vector{Branch}`: Vector containing branches in the network.
+- `linkVec::Vector{BusLink}`: impedance-less bus links (busbar couplers), see `addLink!`.
 - `prosumpsVec::Vector{ProSumer}`: Vector containing prosumers in the network.
 - `shuntVec::Vector{Shunt}`: Vector containing shunts in the network.
 - `busDict::Dict{String,Int}`: Dictionary mapping bus names to indices.
 - `busOrigIdxDict::Dict{Int,Int}`: Dictionary mapping current bus indices to original indices.
 - `busOriginalNameDict::Dict{Int,String}`: Optional original source-file bus names keyed by current bus index.
-- `branchDict::Dict{Tuple{Int, Int},Int}`: Dictionary mapping branch tuples to indices.
 - `totalLosses::Vector{Tuple{Float64,Float64}}`: Vector containing tuples of total power losses.
 - `_locked::Bool`: Boolean indicating if the network is locked.
+- `flatstart::Bool`: start mode of the power flow (1 pu and 0 degrees instead of the stored bus voltages).
+- `bus_shunt_model::Symbol`: how bus shunts enter the power flow (`:admittance` or `:voltage_dependent_injection`).
 - `measurements::Vector`: State-estimation measurements stored on the network.
 - `matpower_branch_metadata::Dict{Int,NamedTuple}`: Optional MATPOWER branch metadata keyed by imported branch index.
 - `for001Contingencies::Vector{String}`: Optional FOR001 contingency branch names imported from MATPOWER metadata.
@@ -48,7 +53,7 @@ Represents an electrical network.
 - `cgmes_ids::Dict{String,String}`: CGMES mRIDs keyed by structural identity (e.g. `"TN|<bus>"`, `"ACL|<busA>|<busB>|<k>"`); filled by the CGMES importer and reused by the CGMES exporter so exported ids stay stable.
 
 # Constructors
-- `Net(name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1)`: Creates a new `Net` object with the given name, base MVA, and optional voltage limits.
+- `Net(; name::String, baseMVA::Float64, vmin_pu = 0.9, vmax_pu = 1.1, flatstart = false, bus_shunt_model = :admittance, ...)`: Creates an empty `Net` with the given name, base MVA and voltage limits; the remaining keywords set the Q-limit parameters.
 
 # Functions
 - `addBus!(; net::Net, ...)`: Adds a bus to the network.
@@ -59,28 +64,22 @@ Represents an electrical network.
 - `addPIModelTrafo!(; net::Net, ...)`: Adds a transformer with PI model to the network.
 - `add2WTrafo!(; net::Net, ...)`: Adds a two-winding transformer to the network.
 - `addProsumer!(; net::Net, ...)`: Adds a prosumer to the network.
+- `addLink!(; net::Net, fromBus::String, toBus::String, status)`: Adds a bus link to the network.
 - `lockNet!(; net::Net, locked::Bool)`: Locks or unlocks the network.
 - `validate!(; net::Net)`: Validates the network.
 - `get_bus_vn_kV(; net::Net, busName::String)`: Gets the voltage level of a bus by name.
 - `get_vn_kV(; net::Net, busIdx::Int)`: Gets the voltage level of a bus by index.
 - `getBusType(; net::Net, busName::String)`: Gets the type of a bus by name.
-- `updateBranchParameters!(; net::Net, fromBus::String, toBus::String, branch::BranchModel)`: Updates the parameters of a branch in the network.
+- `updateBranchParameters!(; net::Net, branchNr::Int, branch::BranchModel)`: Updates the parameters of a branch in the network.
 - `setNetBranchStatus!(; net::Net, branchNr::Int, status::Int)`: Sets the status of a branch.
 - `setTotalLosses!(; net::Net, pLosses::Float64, qLosses::Float64)`: Sets the total losses of the network.
 - `getTotalLosses(; net::Net)`: Gets the total losses of the network.
 - `getNetOrigBusIdx(; net::Net, busName::String)`: Gets the original index of a bus in the network.
-- `getNetBusIdx(; net::Net, busName::String)`: Gets the index of a bus in the network.
+- `geNetBusIdx(; net::Net, busName::String)`: Gets the index of a bus in the network.
 - `hasBusInNet(; net::Net, busName::String)`: Checks if a bus exists in the network.
-- `addBusGenPower!(; net::Net, busName::String, pGen::Float64, qGen::Float64)`: Adds generator power to a bus.
-- `addBusLoadPower!(; net::Net, busName::String, pLoad::Float64, qLoad::Float64)`: Adds load power to a bus.
+- `addBusGenPower!(; net::Net, busName::String, p::Float64, q::Float64)`: Adds generator power to a bus.
+- `addBusLoadPower!(; net::Net, busName::String, p::Float64, q::Float64)`: Adds load power to a bus.
 - `getNetBranch(; net::Net, fromBus::String, toBus::String)`: Retrieves the branch between two specified buses in the network.
-"""
-
-"""
-The in-memory network: buses, branches, prosumers, shunts, links and the
-run-level state the solvers read (Q-limit parameters, flat-start flag,
-measurements, solver status). Built by the importers or by the `add*!`
-constructors.
 """
 mutable struct Net
   name::String
@@ -977,27 +976,6 @@ function addACLine!(; net::Net, fromBus::String, toBus::String, length::Float64,
   addBranch!(net = net, from = from, to = to, branch = acseg, vn_kV = vn_kV, status = status, values_are_pu = true, from_status = from_status, to_status = to_status)
 end
 
-"""
-    addPIModelACLine!(; net::Net, fromBus::String, toBus::String, r_pu::Float64, x_pu::Float64, b_pu::Float64, g_pu::Union{Nothing,Float64}=nothing, status::Int, ratedS::Union{Nothing,Float64}=nothing)
-
-Adds a PI model AC line to the network.
-
-# Arguments
-- `net::Net`: The network.
-- `fromBus::String`: The name of the bus where the line starts.
-- `toBus::String`: The name of the bus where the line ends.
-- `r_pu::Float64`: The per unit resistance of the line.
-- `x_pu::Float64`: The per unit reactance of the line.
-- `b_pu::Float64`: The per unit total line charging susceptance of the line.
-- `g_pu::Union{Nothing,Float64}`: The per unit total shunt conductance of the line (e.g. CGMES `gch` after conversion). Default is `nothing` (treated as 0.0).
-- `status::Int`: The status of the line. 1 = in service, 0 = out of service.
-- `ratedS::Union{Nothing,Float64}`: The rated power of the line.
-
-# Example
-```julia
-addPIModelACLine!(net = network, fromBus = "Bus1", toBus = "Bus2", r_pu = 0.01, x_pu = 0.1, b_pu = 0.02, status = 1, ratedS = 100.0)
-```
-"""
 function _addPIModelACLine_by_idx!(; net::Net, from::Int, to::Int, r_pu::Float64, x_pu::Float64, b_pu::Float64, g_pu::Union{Nothing,Float64} = nothing, status::Int, ratedS::Union{Nothing,Float64} = nothing, from_status::Union{Nothing,Integer} = nothing, to_status::Union{Nothing,Integer} = nothing, g_from_pu = nothing, b_from_pu = nothing, g_to_pu = nothing, b_to_pu = nothing)
   @assert from != to "From and to bus must be different"
   vn_kV = getNodeVn(net.nodeVec[from])
@@ -1017,9 +995,30 @@ function _addPIModelACLine_by_idx!(; net::Net, from::Int, to::Int, r_pu::Float64
 end
 
 """
-    addPIModelACLine!(; net, fromBus, toBus, r_pu, x_pu, b_pu, status, ...)
+    addPIModelACLine!(; net::Net, fromBus::String, toBus::String, r_pu::Float64, x_pu::Float64, b_pu::Float64, status::Int,
+                      g_pu=nothing, ratedS=nothing, from_status=nothing, to_status=nothing,
+                      g_from_pu=nothing, b_from_pu=nothing, g_to_pu=nothing, b_to_pu=nothing)
 
-Add an AC line branch from PI-model per-unit parameters.
+Adds an AC line branch to the network from PI-model per-unit parameters. Both
+buses must exist, differ and lie on the same voltage level.
+
+# Arguments
+- `net::Net`: The network.
+- `fromBus::String`: The name of the bus where the line starts.
+- `toBus::String`: The name of the bus where the line ends.
+- `r_pu::Float64`: The per unit resistance of the line.
+- `x_pu::Float64`: The per unit reactance of the line.
+- `b_pu::Float64`: The per unit total line charging susceptance of the line.
+- `status::Int`: The status of the line. 1 = in service, 0 = out of service.
+- `g_pu::Union{Nothing,Float64}`: The per unit total shunt conductance of the line (e.g. CGMES `gch` after conversion). Default is `nothing` (treated as 0.0).
+- `ratedS::Union{Nothing,Float64}`: The rated power of the line in MVA. Default is `nothing`.
+- `from_status`, `to_status`: The switch state of each end (0 or 1); `nothing` (default) takes `status`. One open end leaves the line connected at the other.
+- `g_from_pu`, `b_from_pu`, `g_to_pu`, `b_to_pu`: An explicit split of the shunt admittance onto the two ends, all four together or none (an `ArgumentError` otherwise); when given, the stored totals `g_pu` and `b_pu` are their sums.
+
+# Example
+```julia
+addPIModelACLine!(net = network, fromBus = "Bus1", toBus = "Bus2", r_pu = 0.01, x_pu = 0.1, b_pu = 0.02, status = 1, ratedS = 100.0)
+```
 """
 function addPIModelACLine!(; net::Net, fromBus::String, toBus::String, r_pu::Float64, x_pu::Float64, b_pu::Float64, g_pu::Union{Nothing,Float64} = nothing, status::Int, ratedS::Union{Nothing,Float64} = nothing, from_status::Union{Nothing,Integer} = nothing, to_status::Union{Nothing,Integer} = nothing, g_from_pu = nothing, b_from_pu = nothing, g_to_pu = nothing, b_to_pu = nothing)
   from = geNetBusIdx(net = net, busName = fromBus)
@@ -1722,16 +1721,20 @@ end
 """
     setNetBranchStatus!(; net::Net, branchNr::Int, status::Int)
 
-Sets the status of a branch in the network.
+Sets the status of a branch in the network and refreshes the isolated-bus
+marks of the network afterwards.
 
 # Arguments
 - `net::Net`: The network.
-- `branchNr::Int`: The number of the branch.
-- `status::Int`: The status of the branch. 1 = in service, 0 = out of service.
+- `branchNr::Int`: The number of the branch (its position in `net.branchVec`).
+- `status::Int`: The status of the branch: 1 = in service, any other value =
+  out of service.
 
 # Example
 ```julia
 setNetBranchStatus!(net = network, branchNr = 1, status = 1)
+brVec = getNetBranchNumberVec(net = network, fromBus = "B1", toBus = "B2")
+setNetBranchStatus!(net = network, branchNr = brVec[1], status = 0)
 ```
 """
 function setNetBranchStatus!(; net::Net, branchNr::Int, status::Int)
@@ -1755,7 +1758,7 @@ function setNodeVoltage!(; net::Net, busName::String, vm_pu::Float64, va_deg::Fl
 end
 
 """
-    setBusAngle!(; net::Net, busName::String, va_deg::Float64)
+    setNodeAngle!(; net::Net, busName::String, va_deg::Float64)
 Sets the voltage angle of a bus in the network.
 # Arguments
 - `net::Net`: The network.
@@ -1776,19 +1779,16 @@ function setNodeAngle!(; net::Net, busName::String, va_deg::Float64)
 end
 
 """
-    setNetBranchStatus!(; net::Net, branchNr::Int, status::Int)
+    getNetBranchNumberVec(; net::Net, fromBus::String, toBus::String) -> Vector{Int}
 
-Sets the status of a branch in the network.
-
-# Arguments
-- `net::Net`: The network.
-- `branchNr::Int`: The number of the branch.
-- `status::Int`: The status of the branch. 1 = in service, 0 = out of service.
+The numbers (positions in `net.branchVec`) of every branch that runs from
+`fromBus` to `toBus`, in this direction; parallel branches give several
+numbers, none gives an empty vector. An unknown bus name is an error.
 
 # Example
 ```julia
-  brVec = getNetBranchNumberVec(net = net, fromBus = "B1", toBus = "B2")  
-  setNetBranchStatus!(net = net, branchNr = brVec[1], status = 0)
+brVec = getNetBranchNumberVec(net = net, fromBus = "B1", toBus = "B2")
+setNetBranchStatus!(net = net, branchNr = brVec[1], status = 0)
 ```
 """
 function getNetBranchNumberVec(; net::Net, fromBus::String, toBus::String)::Vector{Int}
@@ -2463,7 +2463,7 @@ function ensureSlack!(net::Net; log::Bool = true)::Union{Nothing,Int}
 end
 
 """
-    initial_Vrect_from_net(net) -> (V0, slack_idx)
+    initialVrect(net) -> (V0, slack_idx)
 
 Build the initial complex voltage vector V0 from the network bus data
 (Vm, Va), and detect the slack bus index.

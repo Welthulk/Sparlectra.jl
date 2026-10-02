@@ -545,7 +545,7 @@ function calcNeutralU(neutralU_ratio::Float64, vn_hv::Float64, tap_min::Integer,
 end
 
 """
-    toPU_RXGB(; r::Float64, x::Float64, g::Union{Nothing, Float64}=nothing, b::Union{Nothing, Float64}=nothing, v_kv::Float64, baseMVA::Float64)::Tuple{Float64, Float64, Float64, Float64}
+    toPU_RXBG(; r::Float64, x::Float64, g::Union{Nothing, Float64}=nothing, b::Union{Nothing, Float64}=nothing, v_kv::Float64, baseMVA::Float64)::Tuple{Float64, Float64, Float64, Float64}
 
 Converts the resistance, reactance, conductance, and susceptance from physical units to per unit.
 
