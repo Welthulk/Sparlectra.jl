@@ -1,28 +1,21 @@
 # Version 0.30.2 - 2026-10-02
 
 Faster N-1 and state estimation, parallel islands, island references.
-
-- Added: `power_flow.jacobian_reuse` (dishonest Newton), off by default.
-- Added: `contingency.warm_active_set` starts N-1 outages and scenarios from the base case's PV/PQ state, off by default.
-- Added: reference priority per infeed (CGMES semantics); it picks the reference of an island without one and the replacement of a failed slack in N-1. Read and written by MATPOWER, CGMES and SCF. See [Reference priority](slack_vs_source.md#Reference-priority).
-- Added: `power_flow.qlimits.classic_max_passes` (default 30); run log and metadata state why the classic loop stopped (#464).
-- Added: N-1 screening settings on the Settings page.
-- Added: search field in the configuration editor of the Web UI.
-- Added: power mode chooses KLU or UMFPACK once per network.
-- Changed: islands are solved in parallel in power flow and state estimation when Julia has more than one thread; `power_flow.islands.mode` is ignored.
-- Changed: state estimation about 40 percent faster on large networks; `state_estimation.linear_solver` selects UMFPACK or KLU.
-- Changed: N-1 screening judges a branch by the change the outage causes on it.
-- Changed: APSLF reports case bus numbers, the Padé margin and a series radius; without Q limits one series solve instead of up to 30 (#461).
-- Changed: "Refresh configuration" removes every key no loader reads (with a backup); removed and unknown keys warn once per process.
-- Fixed: the start projection could replace a near-solved file state by a worse start; candidates are ranked by the residual 2-norm (#465).
-- Fixed: MATPOWER cases with several type-3 buses kept only the first reference; every island keeps its own.
-- Fixed: island runs used the reactive limits of the wrong buses.
-- Fixed: APSLF took the slack and PV voltage from the bus instead of the generator.
-- Fixed: the classic Q-limit loop reported "converged" at its pass limit.
-- Fixed: power mode reused the Jacobian pattern of the previous outage in N-1 and scenarios.
-- Fixed: the scenario worker reset cleared the power-mode cache after every scenario (#457).
-- Fixed: N-1 and scenarios wrote the island report to one fixed temporary file.
-- Fixed: stopping the Web UI during an N-1 run with power mode could crash the process.
+## Added
+- power mode chooses KLU or UMFPACK per network; optional dishonest Newton (`power_flow.jacobian_reuse`, #466).
+- warm active set for N-1 and scenarios (`contingency.warm_active_set`).
+- Added: reference priority per infeed (CGMES semantics). See [Reference priority](slack_vs_source.md#Reference-priority).
+- a flat start also tries a profile scaled by the transformer ratios.
+- Added: the wrong-branch check also measures the angle across the reference bus's branches (#462).
+## Changed
+- islands are solved in parallel in power flow and state estimation.
+- state estimation about 40 percent faster on large networks.
+- `flatstart` sets only the start profile (#463); for a bare flat start set `start_mode.start_projection: false`.
+- N-1 screening judges a branch by the change the outage causes.
+- Web UI: outage counter for N-1, screening settings, search in the configuration editor; "Refresh configuration" removes unused keys.
+## Fixed
+- start selection, island references and island Q limits (#465); power mode in N-1 (#457); APSLF setpoints and diagnostics (#461); classic Q-limit loop at its pass limit (#464); N-1 rescue and Q-limit settings in N-1 (#456); `lock_pv_to_pq_buses` (#458).
+- state-estimation diagnostics above 2000 states, tap estimation from a flat start, a crash when stopping the Web UI during N-1; power mode on an island of a single bus; eight docstrings (including `runpf!` and `runse!`) that `?` did not show.
 
 # Version 0.30.1 - 2026-10-01
 

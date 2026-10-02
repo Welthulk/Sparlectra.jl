@@ -346,19 +346,60 @@ function run_solver_interface_tests()
       @test net.qmax_pu[2] >= 0.0
     end)() end
 
-    # Verifies that configured lock_pv_to_pq_buses keeps selected PV buses from switching to PQ.
+    # power_flow.qlimits.lock_pv_to_pq_buses (#458): a listed PV bus runs as
+    # PQ from the start, at its scheduled Q (33.2 MVAr at STATION1) clamped
+    # into its limits, logged at iteration 0, never released back to PV. The
+    # list used to only exclude the bus from PV->PQ switching: with limits of
+    # +-1 MVAr the bus stayed PV at 32.9 MVAr and the run failed. Guard off,
+    # so nothing but the list reclassifies the bus; both enforcement families.
     @testset "PV->PQ lock option" begin (function ()
-      net_unlocked = createTest3BusNet()
-      setQLimits!(net = net_unlocked, qmin_MVar = -1.0, qmax_MVar = 1.0, busName = "STATION1")
-      _, erg_unlocked = runpf!(net_unlocked, 20, 1e-6, 0; method = :rectangular)
-      @test erg_unlocked == 0
-      @test getNodeType(net_unlocked.nodeVec[2]) == Sparlectra.PQ
-
-      net_locked = createTest3BusNet()
-      setQLimits!(net = net_locked, qmin_MVar = -1.0, qmax_MVar = 1.0, busName = "STATION1")
-      _, erg_locked = runpf!(net_locked, 20, 1e-6, 0; method = :rectangular, lock_pv_to_pq_buses = [2])
-      @test erg_locked == 1
-      @test getNodeType(net_locked.nodeVec[2]) == Sparlectra.PV
+      vset = 1.027273
+      for mode in (:active_set, :classic_simultaneous)
+        solve(lock, limited; qlimits_enabled = true) = begin
+          n = createTest3BusNet()
+          limited && setQLimits!(net = n, qmin_MVar = -1.0, qmax_MVar = 1.0, busName = "STATION1")
+          _, erg = runpf!(n, 20, 1e-6, 0; method = :rectangular, qlimit_guard = false, qlimit_enforcement_mode = mode, qlimits_enabled = qlimits_enabled, lock_pv_to_pq_buses = lock)
+          (n, erg)
+        end
+        # limits of +-1 MVAr: unlocked the active set clamps the machine
+        # during the iteration, locked it starts as PQ at the clamped value
+        net_unlocked, erg_unlocked = solve(Int[], true)
+        @test (mode, erg_unlocked) == (mode, 0)
+        @test getNodeType(net_unlocked.nodeVec[2]) == Sparlectra.PQ
+        @test first(net_unlocked.qLimitLog).iter > 0
+        net_locked, erg_locked = solve([2], true)
+        @test (mode, erg_locked) == (mode, 0)
+        @test getNodeType(net_locked.nodeVec[2]) == Sparlectra.PQ
+        @test [(e.iter, e.bus, e.side) for e in net_locked.qLimitLog] == [(0, 2, :max)]
+        @test isapprox(net_locked.nodeVec[2]._vm_pu, net_unlocked.nodeVec[2]._vm_pu; atol = 1e-6)
+        # no limits at all: unlocked the machine holds its setpoint as PV,
+        # locked it runs as PQ at its scheduled 33.2 MVAr and the voltage
+        # floats off the setpoint
+        free_unlocked, erg_fu = solve(Int[], false)
+        @test erg_fu == 0
+        @test getNodeType(free_unlocked.nodeVec[2]) == Sparlectra.PV
+        @test isapprox(free_unlocked.nodeVec[2]._vm_pu, vset; atol = 1e-6)
+        free_locked, erg_fl = solve([2], false)
+        @test erg_fl == 0
+        @test getNodeType(free_locked.nodeVec[2]) == Sparlectra.PQ
+        @test isapprox(free_locked.nodeVec[2]._qƩGen, 33.2; atol = 1e-9)
+        @test abs(free_locked.nodeVec[2]._vm_pu - vset) > 1e-4
+        # the list is a Q-limit setting: with Q limits ignored it does nothing
+        ignored, erg_ig = solve([2], false; qlimits_enabled = false)
+        @test erg_ig == 0
+        @test getNodeType(ignored.nodeVec[2]) == Sparlectra.PV
+      end
+      # the configuration path reaches the same conversion, and the final
+      # check accepts the run (it used to end final_converged = false)
+      quiet = OutputConfig(logfile_results = :off, console_summary = false, startup_latency_hint = false)
+      cfg_net = createTest3BusNet()
+      setQLimits!(net = cfg_net, qmin_MVar = -1.0, qmax_MVar = 1.0, busName = "STATION1")
+      r = redirect_stdout(devnull) do
+        run_sparlectra(net = cfg_net, config = SparlectraConfig(powerflow = PowerFlowConfig(qlimits = QLimitConfig(guard = false, lock_pv_to_pq_buses = [2])), output = quiet))
+      end
+      @test r.final_converged
+      @test getNodeType(cfg_net.nodeVec[2]) == Sparlectra.PQ
+      @test isapprox(cfg_net.nodeVec[2]._qƩGen, 1.0; atol = 1e-9)
     end)() end
 
     @testset "Rectangular Q-limit trace diagnostics" begin (function ()
@@ -523,6 +564,47 @@ end)() end
       @test guarded == [bus]
       @test bus_types[bus] == :PQ
       @test length(net.qLimitLog) == 1
+
+      # The locked bus starts from the voltage its own fixed injection gives
+      # against its neighbours, not from the machine setpoint: its bus
+      # equation holds at the start, every other bus keeps its start value.
+      Y3 = Sparlectra.createYBUS(net = net, sparse = true, printYBUS = false)
+      V3 = ComplexF64[1.02, 1.04, 1.0]
+      V3_before = copy(V3)
+      sweeps = Sparlectra._start_guarded_buses_from_fixed_injection!(V3, Y3, S, guarded)
+      @test sweeps >= 1
+      @test abs(V3[bus] * conj((Y3 * V3)[bus]) - S[bus]) < 1e-9
+      @test all(V3[k] == V3_before[k] for k in eachindex(V3) if k != bus)
+
+      # Regression (case_SyntheticUSA island 1 did not converge with the
+      # guard on): every PV machine of sp_case1354 with a zero Q band at 0
+      # and a setpoint of 1.06 pu it cannot hold, its bus voltage at that
+      # setpoint (as the importer starts a PV bus). Locked at the setpoint
+      # Newton stopped at the iteration limit, damped or not; started from
+      # the fixed injection it converges in 7 iterations and every guarded
+      # bus ends PQ with zero generator Q. The run uses autodamp = true, the
+      # template default, on purpose: with 259 of 260 machines locked the
+      # network is almost all PQ and undamped Newton fails here from either
+      # start. With the bus voltages left at 1.0 pu below the setpoint (a
+      # state the importer does not produce) the old start converged
+      # undamped in 10 iterations and the new one does not, because the
+      # corrected magnitudes make the first full step larger; damped, both
+      # starts converge there (measured).
+      zb_net = Sparlectra.createNetFromMatPowerFile(filename = joinpath(dirname(@__DIR__), "data", "mpower", "sp_case1354.m"))
+      zb_pv = Set(k for (k, n) in enumerate(zb_net.nodeVec) if Sparlectra.getNodeType(n) == Sparlectra.PV)
+      for ps in zb_net.prosumpsVec
+        (Sparlectra.isGenerator(ps) && ps.comp.cFrom_bus in zb_pv) || continue
+        ps.minQ = 0.0
+        ps.maxQ = 0.0
+        ps.vm_pu = 1.06
+      end
+      foreach(k -> Sparlectra.setVmVa!(node = zb_net.nodeVec[k], vm_pu = 1.06), zb_pv)
+      Sparlectra.buildQLimits!(zb_net)
+      _, zb_erg = runpf!(zb_net, 30, 1e-8, 0; qlimits_enabled = true, qlimit_guard = true, qlimit_guard_min_q_range_pu = 0.02, autodamp = true)
+      @test zb_erg == 0
+      @test Sparlectra.rectangular_pf_status(zb_net).guarded_narrow_q_pv_buses == length(zb_pv)
+      @test all(Sparlectra.getNodeType(zb_net.nodeVec[k]) == Sparlectra.PQ for k in zb_pv)
+      @test all(abs(something(zb_net.nodeVec[k]._qƩGen, NaN)) < 1e-9 for k in zb_pv)
 
       bus_types[bus] = :PV
       changed, reenabled = Sparlectra.active_set_q_limits!(

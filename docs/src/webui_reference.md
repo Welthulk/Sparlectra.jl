@@ -488,12 +488,23 @@ degrees on every bus and ignores the imported start voltages (MATPOWER
 seed the solve; a delivery is built around its own operating point, so that
 is the better start for real networks and the default.
 
-This checkbox is the one start switch: while it is on, a run switches
-**Use APSLF start values**, **Use DC start values**, the current-iteration
-pre-solve and the start projection off and treats both start modes as
-`classic`, so the start really is flat and no projection or pre-solve moves
-it; the run log names what was switched off. The greyed controls keep their
-saved values and come back when the flat start is unchecked.
+The checkbox sets only the start profile. **Use APSLF start values**,
+**Use DC start values**, the current-iteration pre-solve and the start
+projection follow their own settings and run from the flat profile; while
+the flat start is on, a run treats the two start modes as `classic`
+(they choose a profile themselves), the page greys them and the run log
+names the override. The greyed controls keep their saved values and come
+back when the flat start is unchecked. A bare flat start needs the start
+machines off (the start projection is a configuration-file key,
+`power_flow.start_mode.start_projection`).
+
+**Ratio profile as a start candidate** (`power_flow.start_mode.ratio_profile`,
+on by default) acts only on a flat start and is greyed otherwise: the start
+projection also tries the flat profile with each voltage level scaled by the
+transformer ratios on its path from the slack, and keeps it when its
+mismatch is at least 10 percent lower. It is the start that lets a flat
+start converge on networks with stiff off-nominal windings (the CGMES
+MiniGrid among them); see [Start strategies](start_strategies.md).
 
 A CGMES run honours the flat start under **CGMES start values** = `auto`;
 an explicit `sv` on the Case page still starts from the delivery state
@@ -673,6 +684,14 @@ logged as user actions); terminal pages stop refreshing. The start page and
 the run history show a banner with **Open status** and **Abort** while a
 job is queued or running. A queued, running or aborting run cannot be
 deleted; a terminal one can.
+
+An N-1 or scenario run (see Scenarios and N-1 above) also
+shows how far its batch is: **Outages done** reads `N-1: 37 / 186 outages`
+(a run of the case file's own or an uploaded scenario set reads
+**Scenarios done**, `Scenarios: 3 / 10 scenarios`) and moves with every
+refresh. The counter appears once the first outage has finished, so the
+import and the base-case solve come before it; screened outages count as
+done like solved ones. The finished page shows the N-1 table instead.
 
 For large cases, the result page, `run.log`, `result.json` and
 `performance.log` show time per phase (reader, network builder, solver,

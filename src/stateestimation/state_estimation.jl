@@ -2600,19 +2600,6 @@ function _runse_islands!(net::Net, measurements::Vector{Measurement}, cfg::State
   return SEResult(mergedV, conv, iters, norm(residuals), residuals, Jsum, νsum, _j_within_3sigma_band(Jsum, νsum), nα == 1 ? αdeg : nothing, anyShunt ? shuntRows : nothing, anyRobust ? robustRows : nothing, islandsInfo, anyTap ? tapRows : nothing, anyTap ? (fixed = tapAllFixed, j_before = tapJBefore, dof_before = tapDofBefore, j_after = tapJAfter, dof_after = tapDofAfter, offgrid_residual = tapAnyOffgrid) : nothing, nothing, anyActiveObj ? (j = activeJsum, dof = activeνsum, suppressed = suppressedSum) : nothing)
 end
 
-"""
-    runse!(net) -> StateEstimationResult
-
-Run the weighted-least-squares state estimation on the network's
-measurements, island-wise, and write the estimated state back when
-`state_estimation.update_net` is set. The estimator reads every setting
-from the active configuration (#381); nothing is passed per call. A run
-with other settings wraps the call:
-
-    with_state_estimation_config(max_iter = 12, update_net = false) do
-      runse!(net)
-    end
-"""
 function _runse_configured!(net::Net, measurements::Vector{Measurement}, cfg::StateEstimationConfig)
   # stage-1 topology precheck (advisory): run BEFORE the partition,
   # warn per finding, attach the findings to the result. The estimation
@@ -3661,10 +3648,22 @@ end
 # configuration of the case.
 """
     runse!(net, measurements) -> SEResult
+    runse!(net) -> SEResult
 
-Run a first classical nonlinear weighted least-squares state estimator.
-All settings come from the active configuration (`state_estimation_config()`);
-a deviating run installs its settings with `with_state_estimation_config`.
+Run the nonlinear weighted-least-squares state estimation, island by island;
+`runse!(net)` uses the measurements stored on the net (`net.measurements`).
+The estimated state is written back when `state_estimation.update_net` is set
+(default `true`). The estimator reads every setting from the active
+configuration (`state_estimation_config()`, #381); nothing is passed per
+call. A run with other settings wraps the call:
+
+    with_state_estimation_config(max_iter = 12, update_net = false) do
+      runse!(net)
+    end
+
+With `state_estimation.topology_precheck` (default `true`) an advisory
+topology check runs first: its findings are warned once per run and attached
+to the result, and the estimation always proceeds.
 
 State representation:
 - bus voltage angles for all non-slack buses (radians)

@@ -46,22 +46,23 @@ function calc_injections(Y::AbstractMatrix{ComplexF64}, V::AbstractVector{Comple
   return V .* conj.(I)
 end
 
-"""
-    solve_sparse_system(A::SparseMatrixCSC, b; context=:powerflow)
-
-Solve a sparse linear system without densifying `A`. The primary path uses the
-standard sparse direct solve (UMFPACK for sparse floating-point matrices where
-available), with sparse QR as a singular-step fallback. If both sparse paths
-fail, the caller receives a clear error instead of an accidental dense SVD or
-`Matrix(A)` fallback in the power-flow core.
-"""
+# largest system (rows or columns) the dense SVD fallback accepts; a larger
+# singular system is an error, never densified
 const DEFAULT_DENSE_FALLBACK_MAX_N = 64
 
 """
-    solve_sparse_system(A, b; context, diagnostics) -> Vector
+    solve_sparse_system(A::SparseMatrixCSC, b; context=:powerflow, diagnostics=nothing) -> Vector
 
-Solve the sparse linear system with the configured backend, recording
-conditioning diagnostics when asked.
+Solve the sparse linear system `A*x = b`. The primary path is the standard
+sparse solve `A \\ b` (UMFPACK LU for a general square matrix), with sparse
+QR as the fallback for a singular matrix. If QR fails as well, a system of at
+most `DEFAULT_DENSE_FALLBACK_MAX_N` (64) rows and columns is solved densely
+through an SVD pseudo-inverse; a larger one throws
+`LinearAlgebra.SingularException` instead of being densified. Any other error
+is rethrown. When `diagnostics` is a dictionary, the backend used
+(`:sparse_backslash`, `:sparse_qr_fallback` or
+`:dense_svd_fallback_small_system`), `context` and the matrix dimensions are
+written into it.
 """
 function solve_sparse_system(A::SparseMatrixCSC, b; context::Symbol = :powerflow, diagnostics = nothing)
   backend = :sparse_backslash

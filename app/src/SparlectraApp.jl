@@ -48,6 +48,7 @@ const SPARLECTRA_APP_ROOT = normpath(joinpath(@__DIR__, ".."))
 # fails at load time, never at the first click.
 import Sparlectra:
   _flatten_config_values!,
+  _qlimit_solver_kwargs,
   EnergyConsumer,
   ExternalNetworkInjection,
   IaMeas,

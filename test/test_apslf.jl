@@ -406,6 +406,22 @@ function run_apslf_tests()
                 @test String(st.apslf_convergence_level) == "GRN"
                 println("      APSLF against NR on ", label, ": max |dVm| ", maximum(abs.(vm_nr .- vm_ap)), " pu, ", st.apslf_convergence_line)
             end
+            # A fixed phase shift is modelled through the unsymmetric Y-bus:
+            # the shipped sp_casePST with its shifter at -20 degrees agrees
+            # with NR. The interim germ pin (until AnalyticLoadFlow ships its
+            # own phase-shifter support) recognises the shifter by the
+            # asymmetry and pins :deviation; a network without one keeps the
+            # package default.
+            scf_pst = joinpath(dirname(@__DIR__), "data", "scf", "sp_casePST.scf.json")
+            pst20() = (n = Sparlectra.importSCF(scf_pst); foreach(b -> b.phase_shift_deg != 0 && (b.phase_shift_deg = -20.0), n.branchVec); n)
+            @test Sparlectra._apslf_germ_kwargs((Y = Sparlectra.buildPfModel(pst20(); opt_sparse = true).Ybus,)) == (; germ = :deviation)
+            @test Sparlectra._apslf_germ_kwargs((Y = Sparlectra.buildPfModel(Sparlectra.importSCF(scf5); opt_sparse = true).Ybus,)) == (;)
+            r_nr_pst = run_sparlectra(net=pst20(), config=cfg_nr)
+            r_ap_pst = run_sparlectra(net=pst20(), config=cfg_ap)
+            @test r_nr_pst.final_converged
+            @test r_ap_pst.final_converged
+            @test maximum(abs.(getfield.(r_nr_pst.net.nodeVec, :_vm_pu) .- getfield.(r_ap_pst.net.nodeVec, :_vm_pu))) < 1e-6
+            @test maximum(abs.(getfield.(r_nr_pst.net.nodeVec, :_va_deg) .- getfield.(r_ap_pst.net.nodeVec, :_va_deg))) < 1e-4
             # 0.30.2: the slack and PV voltage come from the generator, not
             # from the bus. A net built without a bus vm_pu used to solve
             # APSLF with the slack at 1.0 pu while Newton held the

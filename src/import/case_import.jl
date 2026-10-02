@@ -257,10 +257,12 @@ wording of those refusals is part of each service's contract.
 function import_case(path::AbstractString, general_config::SparlectraConfig; requested_format::Symbol = :auto, run_kind::Symbol = :powerflow, name::AbstractString = basename(path), performance_profile = nothing, phase_callback = phase -> nothing)
   fmt = _detect_case_format(String(path); requested = requested_format)
   provenance = Dict{String,Any}("source_path" => String(path))
-  # the flat start overrides the other start machines for this run, for
-  # every format; the caller reports the list in its run log
-  general_config, flatstart_forced = _flatstart_forced_off_config(general_config)
-  provenance["flatstart_forced_off"] = flatstart_forced
+  # the flat start sets the voltage profile for this run, for every format:
+  # the two start modes go classic (they would choose another profile), the
+  # start machines follow their own keys (#463); the caller reports the
+  # overridden keys in its run log
+  general_config, flatstart_overrides = _flatstart_profile_config(general_config)
+  provenance["flatstart_overrides"] = flatstart_overrides
   if fmt === :matpower || fmt === :scf
     ctx = _import_sparlectra_context(String(path), nothing, general_config; performance_profile = performance_profile)
     provenance["auto_profile_result"] = ctx.auto_profile_result

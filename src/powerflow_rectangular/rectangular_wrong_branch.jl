@@ -88,8 +88,10 @@ some diagnostics are not available (e.g., no branch checks).
   max_bus_angle_deg::Float64 = NaN,
   plain_steps::Int = 0,
   plain_steps_exceeded::Bool = false,
+  reference_branch_angle_deg::Float64 = NaN,
+  reference_branch::String = "",
 )
-  return (; status, reason, min_vm_pu, max_vm_pu, low_vm_count, high_vm_count, angle_spread_deg, max_branch_angle_deg, worst_branch_angle_deg, branch_angle_violation_count, worst_branch, lowest_buses, level_kV, level_low_vm_count, level_bus_count, max_bus_angle_deg, plain_steps, plain_steps_exceeded)
+  return (; status, reason, min_vm_pu, max_vm_pu, low_vm_count, high_vm_count, angle_spread_deg, max_branch_angle_deg, worst_branch_angle_deg, branch_angle_violation_count, worst_branch, lowest_buses, level_kV, level_low_vm_count, level_bus_count, max_bus_angle_deg, plain_steps, plain_steps_exceeded, reference_branch_angle_deg, reference_branch)
 end
 
 # Explicit "diagnostics disabled" payload to distinguish from a checked-and-ok state.
@@ -122,10 +124,17 @@ buses of its 150 kV level at 0.33 pu while its three 750 kV buses were
 clean). The reported `min_vm_pu`/`max_vm_pu`/`lowest_buses` refer to all
 levels. Without a `net` every bus is in scope for every heuristic.
 
+With a `net`, the angle across every in-service branch at the reference bus
+`slack_idx` is measured on every level (phase shift compensated) and
+returned as `reference_branch_angle_deg` with the branch in case bus
+numbers (`reference_branch`); above a positive
+`max_reference_branch_angle_deg` it raises `reference_branch_angle_exceeded`
+(the default 0 leaves the rule off for unit-level callers).
+
 # Returns
 A normalized diagnostic NamedTuple created by `_wrong_branch_result`.
 """
-function _check_wrong_branch_solution(V::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int; net::Union{Nothing,Net} = nothing, min_vm_pu::Float64, max_vm_pu::Float64, max_angle_spread_deg::Float64, max_branch_angle_deg::Float64 = Inf, min_low_vm_count::Int, min_vn_kV::Float64 = 100.0, low_vm_share::Float64 = 0.05, max_bus_angle_deg::Float64 = Inf, max_plain_steps::Int = 0, collapse_vm_pu::Float64 = 0.0, plain_steps::Int = 0)
+function _check_wrong_branch_solution(V::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int; net::Union{Nothing,Net} = nothing, min_vm_pu::Float64, max_vm_pu::Float64, max_angle_spread_deg::Float64, max_branch_angle_deg::Float64 = Inf, min_low_vm_count::Int, min_vn_kV::Float64 = 100.0, low_vm_share::Float64 = 0.05, max_bus_angle_deg::Float64 = Inf, max_plain_steps::Int = 0, collapse_vm_pu::Float64 = 0.0, plain_steps::Int = 0, max_reference_branch_angle_deg::Float64 = 0.0)
   # This helper is intentionally conservative: suspicious states are classified
   # as :warn so caller policy (:warn/:fail/:rescue) decides final acceptance.
   n = length(V)
@@ -250,6 +259,38 @@ function _check_wrong_branch_solution(V::Vector{ComplexF64}, bus_types::Vector{S
     end
   end
 
+  # (c) issue #462: the angle across every in-service branch at the
+  # reference bus, on ANY voltage level. The branch-angle rule above sees
+  # only branches with both ends on the highest level, and a reference
+  # machine behind its own transformer into a lower level is exactly the
+  # branch it skips: case13659pegase's reference transformer 1-3876 carried
+  # 164 degrees on a root whose magnitudes equal the operating state's (the
+  # network rotated as a whole against the reference). The angle is
+  # measured whenever a net is at hand (reported even without a finding);
+  # the reason is raised only with a positive bound. Phase shift
+  # compensated as in the branch-angle rule; couplers in net.linkVec are
+  # impedanceless and carry no angle, so they stay out here as well.
+  reference_branch_angle_seen_deg = NaN
+  reference_branch_label = ""
+  if !isnothing(net) && length(net.nodeVec) == n
+    @inbounds for br in net.branchVec
+      br.status == 1 || continue
+      from = br.fromBus
+      to = br.toBus
+      (from == slack_idx || to == slack_idx) || continue
+      (1 <= from <= n && 1 <= to <= n) || continue
+      phase_shift_deg = Float64(br.phase_shift_deg)
+      eff_abs_deg = abs(_wrap_to_180_deg(rad2deg(angle(V[from])) - rad2deg(angle(V[to])) - phase_shift_deg))
+      if !(eff_abs_deg <= reference_branch_angle_seen_deg)
+        # first branch (NaN start) or a larger angle; the label carries
+        # the case bus numbers, the numbers a reader finds in the file
+        reference_branch_angle_seen_deg = eff_abs_deg
+        reference_branch_label = string(_qlimit_original_bus_id(net, from), "-", _qlimit_original_bus_id(net, to))
+      end
+    end
+  end
+  reference_branch_exceeded = max_reference_branch_angle_deg > 0.0 && isfinite(reference_branch_angle_seen_deg) && reference_branch_angle_seen_deg > max_reference_branch_angle_deg
+
   # Keep the three lowest-voltage buses (over every energised level) for
   # compact diagnostics in logs/tables.
   lowest_order = sort(vm_indices; by = i -> vm[i])
@@ -280,6 +321,13 @@ function _check_wrong_branch_solution(V::Vector{ComplexF64}, bus_types::Vector{S
   elseif branch_angle_violation_count > 0
     status = :warn
     reason = :branch_angle_exceeded
+  elseif reference_branch_exceeded
+    # ahead of bus_angle_exceeded on purpose: a rotated root trips both
+    # (every bus far from the reference), and this reason names the branch
+    # that carries the rotation. A magnitude finding keeps precedence; the
+    # measured angle is reported in either case.
+    status = :warn
+    reason = :reference_branch_angle_exceeded
   elseif max_bus_angle_seen_deg > max_bus_angle_deg
     status = :warn
     reason = :bus_angle_exceeded
@@ -304,5 +352,7 @@ function _check_wrong_branch_solution(V::Vector{ComplexF64}, bus_types::Vector{S
     max_bus_angle_deg = max_bus_angle_seen_deg,
     plain_steps = plain_steps,
     plain_steps_exceeded = plain_steps_exceeded,
+    reference_branch_angle_deg = reference_branch_angle_seen_deg,
+    reference_branch = reference_branch_label,
   )
 end

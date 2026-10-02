@@ -499,17 +499,17 @@ function _run_sparlectra_api(;
     detailed_result_csv, detailed_result_csv_semicolon, export_cgmes, run_id, options)
 end
 
-# the body of `_run_sparlectra_api`: concrete positional arguments and the
-# loosely typed options behind `_ApiRunOptions`, so it has one specialization
-# one run.log line naming the start machines the flat start switched off
-# for this run (the stored configuration keeps them, see
-# _flatstart_forced_off_config)
-function _write_flatstart_forced_off(io::IO, provenance::AbstractDict)
-  forced = get(provenance, "flatstart_forced_off", String[])
-  isempty(forced) || println(io, "Flat start: start-value machines forced off for this run: ", join(forced, ", "))
+# one run.log line naming the start-mode keys the flat start set to classic
+# for this run (the stored configuration keeps them; the start machines
+# follow their own keys, see _flatstart_profile_config)
+function _write_flatstart_overrides(io::IO, provenance::AbstractDict)
+  overridden = get(provenance, "flatstart_overrides", String[])
+  isempty(overridden) || println(io, "Flat start: start modes set to classic for this run: ", join(overridden, ", "))
   return nothing
 end
 
+# the body of `_run_sparlectra_api`: concrete positional arguments and the
+# loosely typed options behind `_ApiRunOptions`, so it has one specialization
 function _run_sparlectra_api_body(
   casefile::String,
   config_file::String,
@@ -802,7 +802,7 @@ function _run_sparlectra_api_body(
         # substituted values a reader of the narrative must not miss.
         println(io, "CGMES input (", length(paths), " path(s), ", length(cgmes_result.net.nodeVec), " buses)")
         println(io, start_decision)
-        _write_flatstart_forced_off(io, imported_cgmes.provenance)
+        _write_flatstart_overrides(io, imported_cgmes.provenance)
         external_grid_note === nothing || println(io, external_grid_note)
         cgmes_warnings = [m for m in cgmes_result.messages if startswith(m, "warning:")]
         println(io, "  importer messages: ", length(cgmes_result.messages), " (", length(cgmes_warnings), " warning(s)) — full report in cgmes.log")
@@ -976,7 +976,7 @@ function _run_sparlectra_api_body(
           # exactly as before, and the shared performance profile carries the
           # auto-profile records the artifact writer reads below.
           imported = import_case(case_path, config; performance_profile = api_performance_profile)
-          _write_flatstart_forced_off(io, imported.provenance)
+          _write_flatstart_overrides(io, imported.provenance)
           haskey(imported.provenance, "powsybl_report") && (powsybl_import_report = Sparlectra.format_powsybl_report(imported.provenance["powsybl_report"]))
           raw_result = run_sparlectra(net = imported.net, config = imported.config, performance_profile = api_performance_profile)
         end

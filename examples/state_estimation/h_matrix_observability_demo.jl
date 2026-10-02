@@ -16,18 +16,16 @@
 # file: examples/state_estimation/h_matrix_observability_demo.jl
 # purpose: builds small measurement Jacobians H (m×n) and demonstrates the public observability helpers (evaluate_observability_matrix, numerical/structural observability and row-redundancy checks)
 
-"""
-Demo for small measurement Jacobians H (m×n).
-
-This example reuses public observability helpers from `state_estimation.jl`:
-- `evaluate_observability_matrix`
-- `evaluate_local_observability_matrix`
-- `numerical_observable` / `structural_observable`
-- `numerical_row_redundant` / `structural_row_redundant`
-
-Run from project root:
-  julia --project=. examples/state_estimation/h_matrix_observability_demo.jl
-"""
+# Demo for small measurement Jacobians H (m×n).
+#
+# This example reuses public observability helpers from `state_estimation.jl`:
+# - `evaluate_observability_matrix`
+# - `evaluate_local_observability_matrix`
+# - `numerical_observable` / `structural_observable`
+# - `numerical_row_redundant` / `structural_row_redundant`
+#
+# Run from project root:
+#   julia --project=. examples/state_estimation/h_matrix_observability_demo.jl
 
 using Sparlectra
 using Printf

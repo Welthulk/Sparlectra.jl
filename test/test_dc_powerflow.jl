@@ -275,6 +275,19 @@ function run_dc_powerflow_tests()
       @test dc_pf_status(result.net).solver === :dc
       @test Sparlectra.rectangular_pf_status(result.net) !== nothing
 
+      # The seed under a flat start (#463: the flat start no longer switches
+      # it off): the solve must start from the seeded angles, not rebuild
+      # 1.0 pu / 0 degrees over them. The seed is a flat-magnitude start
+      # either way, so the first mismatch equals the seed's from the stored
+      # profile and differs from the bare flat start's.
+      seed_start(flat, seed) = (r = run_sparlectra(casefile = "sp_case14.scf.json", path = joinpath(dirname(@__DIR__), "data", "scf"), config = Sparlectra.SparlectraConfig(powerflow = Sparlectra.PowerFlowConfig(start_mode = Sparlectra.StartModeConfig(flatstart = flat, dc_seed_unconditional = seed)), output = OutputConfig(logfile_results = :off))); (r.final_converged, Sparlectra.rectangular_pf_status(r.net).initial_mismatch))
+      conv_flat_seed, mis_flat_seed = seed_start(true, true)
+      conv_stored_seed, mis_stored_seed = seed_start(false, true)
+      conv_flat, mis_flat = seed_start(true, false)
+      @test conv_flat_seed && conv_stored_seed && conv_flat
+      @test mis_flat_seed == mis_stored_seed
+      @test !isapprox(mis_flat_seed, mis_flat; rtol = 1e-3)
+
       # Regression: default (dc_seed_unconditional=false) still converges the same case.
       cfg_default = Sparlectra.SparlectraConfig(output = OutputConfig(logfile_results = :off))
       result_default = run_sparlectra(casefile = "sp_case5.scf.json", path = joinpath(dirname(@__DIR__), "data", "scf"), config = cfg_default)

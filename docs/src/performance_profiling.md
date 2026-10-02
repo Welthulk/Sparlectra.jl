@@ -101,7 +101,7 @@ What a run writes besides its result: the console summary and its diagnostics, t
 | `output.console_diagnostics` | Symbol/String | `compact` | `off`, `compact`, `summary`, `full` | Diagnostic detail on console. |
 | `output.console_q_limit_events` | Symbol/String | `summary` | `off`, `summary`, `full` | Q-limit/PV→PQ event console detail. |
 | `output.console_max_rows` | Int | `100` | non-negative integer | Max rows in compact console tables. |
-| `output.logfile_results` | Symbol/String | `classic` (`off` without a configuration file) | `off`, `compact`, `classic`, `full` | Solved result table detail in logfile. |
+| `output.logfile_results` | Symbol/String | `off` (`full` in the packaged template) | `off`, `compact`, `classic`, `full` | Solved result table detail in logfile. A library run without a configuration file stays quiet; the template, which the Web UI and the services start from, logs the full table. |
 | `output.detailed_result_csv_write_mode` | Symbol/String | `auto` | `auto`, `buffered`, `streaming` | Detailed CSV artifact write strategy; `auto` streams very large outputs. |
 | `output.detailed_result_csv_exporter` | Symbol/String | `auto` | `auto`, `report`, `direct` | Detailed CSV row-generation path; `auto` uses the direct streaming exporter for large bus counts. |
 | `output.detailed_result_csv_direct_threshold_buses` | Int | `10000` | positive integer | Bus-count threshold where `auto` switches detailed CSV export from report generation to direct streaming. |
@@ -280,7 +280,7 @@ Does it pay off? In short:
 | repeated solves of one large transmission case, power mode with KLU | about 7 percent faster |
 | the same with UMFPACK (no KLU extension) | 12 to 15 percent faster |
 | radial distribution grids | none or slightly slower |
-| N-1 and scenario runs (warm starts, few steps) | slower, up to twice the time |
+| N-1 and scenario runs (warm starts, few steps) | slower (6 percent in the N-1 measurement below) |
 | a single run | no point: the factorization is not the bottleneck |
 
 A reused step converges linearly instead of quadratically: on the
@@ -307,19 +307,25 @@ switch saves 12 to 15 percent. The rule: a loop over one network switches
 power mode on, and on large transmission cases dishonest Newton on top.
 
 Not for N-1 and scenario runs. A warm-started outage solve converges in a
-few fast steps, the switch adds about two steps per outage and saves a
+few fast steps; the switch adds steps per outage and saves a
 factorization that KLU makes cheap. Full branch N-1 of case_ACTIVSg2000
-(3206 outages, 16 threads):
+(3206 outages):
 
 | variant | wall time |
 |---|---|
-| serial | 504 s |
-| parallel | 128 s |
-| parallel, power mode | 69 s |
-| parallel, power mode, dishonest Newton | 139 s |
+| serial | 343 s |
+| parallel | 83 s |
+| parallel, power mode | 70 s |
+| parallel, power mode, dishonest Newton | 74 s |
 
-Power mode is the lever for N-1 here; dishonest Newton doubles the time
-(serially it costs 7 percent, 8.0 to 9.8 iterations per outage).
+Measured with Sparlectra 0.30.2: `runContingencies!` on the outages of
+`generateN1Branches`, 16 threads for the parallel rows, KLU loaded, the
+four variants interleaved, median of three series each, after a warm-up
+of every variant (compile time not included); every variant gives the
+same per-outage results as the serial one.
+
+On top of the threads, power mode makes N-1 about 1.2 times as fast;
+dishonest Newton on top costs 6 percent.
 
 ## [Benchmark configuration](@id perf-benchmark)
 

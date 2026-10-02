@@ -316,7 +316,9 @@ function _rectangular_mismatch_diagnostics(Ybus, V::Vector{ComplexF64}, S::Vecto
     # cost 6 to 20 percent of a warm solve (bus-id lookups, three extra
     # mismatch evaluations); the final status keeps the maxima and the
     # worst row from the one evaluation above, the lists stay empty
-    worst_row = argmax(abs.(final_F))
+    # an island that is its reference bus alone has no mismatch row at
+    # all (no unknown); there is no worst row then, and the maxima stay 0
+    worst_row = isempty(final_F) ? 0 : argmax(abs.(final_F))
     worst_bus = 0
     row = 1
     @inbounds for bus in eachindex(V)
@@ -324,8 +326,8 @@ function _rectangular_mismatch_diagnostics(Ybus, V::Vector{ComplexF64}, S::Vecto
       (row == worst_row || row + 1 == worst_row) && (worst_bus = bus; break)
       row += 2
     end
-    worst_equation = isodd(worst_row) ? :P : (worst_bus > 0 && bus_types[worst_bus] == :PQ ? :Q : :V)
-    mismatch_rows = (worst = (bus_id = worst_bus, bus_index = worst_bus, equation = worst_equation, mismatch = final_F[worst_row]), top = NamedTuple[])
+    worst_equation = worst_row == 0 ? :none : isodd(worst_row) ? :P : (worst_bus > 0 && bus_types[worst_bus] == :PQ ? :Q : :V)
+    mismatch_rows = (worst = (bus_id = worst_bus, bus_index = worst_bus, equation = worst_equation, mismatch = worst_row == 0 ? 0.0 : final_F[worst_row]), top = NamedTuple[])
     primary_mismatch_rows = NamedTuple[]
     top_mismatch_snapshots = NamedTuple[]
   else
@@ -361,6 +363,8 @@ function _rectangular_mismatch_diagnostics(Ybus, V::Vector{ComplexF64}, S::Vecto
   )
 end
 
+_median(xs::AbstractVector{<:Real})::Float64 = (s = sort(xs); n = length(s); isodd(n) ? Float64(s[(n+1)÷2]) : Float64(s[n÷2] + s[n÷2+1]) / 2)
+
 """
     _branch_anomaly_diagnostics(net, bus_index; top_n=5) -> Vector{NamedTuple}
 
@@ -377,8 +381,6 @@ This is a passive read of already-imported network data — it does not modify
 mismatch" into "bus 42 has the worst mismatch, and its transformer branch #17
 has a suspicious 0.62 tap ratio" for `diagnose.log`.
 """
-_median(xs::AbstractVector{<:Real})::Float64 = (s = sort(xs); n = length(s); isodd(n) ? Float64(s[(n+1)÷2]) : Float64(s[n÷2] + s[n÷2+1]) / 2)
-
 function _branch_anomaly_diagnostics(net::Net, bus_index::Integer; top_n::Int = 5)
   rows = NamedTuple[]
   bus_index < 1 && return rows

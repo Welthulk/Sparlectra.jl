@@ -229,8 +229,21 @@ end
 # off in the single-pass call and, within the same size bounds, run here
 # with the default number of passes, which keeps the result of the former
 # single call.
+# INTERIM, remove when AnalyticLoadFlow releases its own phase-shifter
+# support and the compat bound moves past it (Sparlectra issue #470, "Remove the
+# interim phase-shifter handling for APSLF once AnalyticLoadFlow supports
+# phase shifters"). A network with phase-shifting transformers has an
+# unsymmetric Y-bus (a complex tap ratio; real off-nominal taps keep Y
+# symmetric). The registered AnalyticLoadFlow 0.9.16 models a fixed shift
+# exactly with the :deviation and :noload germs (sp_casePST at -5.73, -20
+# and +15 degrees agrees with Newton to 1e-14 pu) and not with :flat (not
+# converged, 0.09 to 0.31 pu off), so such a run pins :deviation instead of
+# relying on the package default staying :deviation.
+_apslf_has_phase_shift(Y) = maximum(abs, Y - transpose(Y); init = 0.0) > 1.0e-12 * max(1.0, maximum(abs, Y; init = 0.0))
+_apslf_germ_kwargs(spec) = _apslf_has_phase_shift(spec.Y) ? (; germ = :deviation) : (;)
+
 function _apslf_solve(solver::ApslfSolver, spec)
-  common = (mode = solver.mode, order = solver.order, use_pade = solver.use_pade, nr_polish = solver.nr_polish, return_coeffs = true)
+  common = (mode = solver.mode, order = solver.order, use_pade = solver.use_pade, nr_polish = solver.nr_polish, return_coeffs = true, _apslf_germ_kwargs(spec)...)
   limits_free = !any(isfinite, spec.Qmin) && !any(isfinite, spec.Qmax)
   (solver.mode === :direct && limits_free) || return AnalyticLoadFlow.solve_pf_apslf(spec; common...)
   res = AnalyticLoadFlow.solve_pf_apslf(spec; common..., max_outer = 1, outer_fallback_nbus_max = 0)

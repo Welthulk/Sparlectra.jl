@@ -14,7 +14,8 @@ alone, and it is not a property of the case alone.
 The start strategies, from the cheapest to the most expensive, each with
 the key that switches it on (every key under `power_flow`):
 
-1. **Flat start, plain Newton**: `flatstart: true`, `autodamp: false`.
+1. **Flat start, plain Newton**: `flatstart: true`, `autodamp: false`,
+   `start_mode.start_projection: false`.
 2. **More iterations**: `max_iter: 80` instead of 30; it decides nothing
    on the cases below, a flat start that diverges in 16 steps diverges in
    80 too.
@@ -39,9 +40,25 @@ the key that switches it on (every key under `power_flow`):
 10. **Auto mode**: `mode: auto`; the configuration is filled from the
     imported network, the stages above are escalated as needed.
 
-`flatstart: true` forces every start machine off; a flat start with a
-machine is written `flatstart: false` plus the machine, which then
-overrides the stored columns.
+`flatstart: true` sets only the start profile: every start machine
+follows its own key and runs from the flat profile, so a flat start with
+a machine is written as `flatstart: true` plus the machine. The two start
+modes (`angle_mode`, `voltage_mode`) choose a profile themselves and are
+treated as `classic` under a flat start; the DC angles stay available
+through the projection's measured DC candidate. Recipe 1, the bare flat
+start, therefore needs the projection off as well
+(`start_mode.start_projection: false`).
+
+With the projection on, a flat start also tries the ratio profile
+(`start_mode.ratio_profile`, default `true`): the flat magnitudes scaled per
+voltage level by the off-nominal transformer ratios on the path from the
+reference. A flat start drives a circulating current through every
+off-nominal transformer; where a stiff winding sits off nominal, as in the
+star equivalent of a three-winding transformer, that current can dominate
+the whole start. On the CGMES MiniGrid it is 164 pu of active power on a
+9 MW case, and the polar update diverges from the flat start; the ratio
+profile starts at 0.09 pu and converges in three Newton steps to the
+delivery's own state.
 
 ## Recipes
 
@@ -62,14 +79,14 @@ polish).
 | case3120sp | 3120 | converges | | 7 | converges | |
 | case9241pegase | 9241 | converges | | 7 | converges | diverged with the rectangular update; needed `autodamp: true` (13) up to 0.20.5 |
 | case1888rte | 1888 | does not converge | DC-seed angles (recipe 4) | 6 | converges, operating solution | with the rectangular update the flat start converged to a low-voltage branch (min Vm 0.06 pu, 1396.9 MW against 980.7 MW) |
-| case6495rte | 6495 | does not converge | DC-seed angles (recipe 4) | 8 | does not converge: phase shifters of 6 to 10 degrees on x = 3e-4 pu; not yet supported in the APSLF path | 2543.8 MW; the file's columns converge in 3 |
+| case6495rte | 6495 | does not converge | DC-seed angles (recipe 4) | 8 | does not converge, with or without its phase shifters (all 17 set to 0 degrees: still not converged) | 2543.8 MW; the file's columns converge in 3 |
 | case4_dist | 4 | converges | | 4 | converges | |
 | case18 | 18 | converges | | 5 | converges | |
 | case33bw | 33 | converges | | 4 | converges | |
 | mvlv1004 | 1004 | converges | | 7 | converges | |
 | mvlv10616 | 10616 | converges | | 6 | converges | |
 | mvlv29840 | 29840 | converges | | 6 | converges | |
-| case13659pegase | 13659 | does not converge | projection with blend scan (recipe 5) from the flat start, or the file's columns | 9 | does not converge: the reference bus (a 42 MW machine behind one 0.14 pu transformer) carries the file's dispatch surplus along the series path | 8737.2 MW, min Vm 0.84 pu; the undamped rungs with the DC seed land on a second root with 164 degrees across the slack transformer, which the wrong-branch check rejects (`bus_angle_exceeded`) |
+| case13659pegase | 13659 | does not converge | projection with blend scan (recipe 5) from the flat start, or the file's columns | 9 | does not converge: the reference bus (a 42 MW machine behind one 0.14 pu transformer) carries the file's dispatch surplus along the series path | 8737.2 MW, min Vm 0.84 pu; the undamped rungs with the DC seed land on a second root rotated by 164 degrees against the reference bus (170 degrees across the reference transformer against 6 on the operating root), which the wrong-branch check flags (`reference_branch_angle_exceeded`) |
 
 A converged state is not always the operating state. The wrong-branch
 check (`power_flow.wrong_branch_detection`, see

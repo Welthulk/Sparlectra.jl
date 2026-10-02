@@ -121,6 +121,7 @@ function _write_powerflow_mismatch_diagnostics(io::IO, result::SparlectraRunResu
   if mode === :full
     for key in (
       :best_blend_mismatch,
+      :ratio_profile_mismatch,
       :start_projection_mismatch_before,
       :start_projection_mismatch_after,
       :current_iteration_candidate_mismatch,

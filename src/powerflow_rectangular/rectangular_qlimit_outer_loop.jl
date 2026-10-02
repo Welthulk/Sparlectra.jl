@@ -90,6 +90,46 @@ function _matpower_bus_has_regulating_generator(net::Net, bus::Int, fixed_gens::
   return false
 end
 
+# power_flow.qlimits.lock_pv_to_pq_buses in the classical modes (#458): the
+# inner solves of the outer loop run with the active set off, so the
+# conversion of the active-set path (_lock_listed_pv_buses_as_pq!) never
+# reaches them. The listed PV buses are converted here once, before the
+# base solve, with the outer loop's own clamp mechanics: every regulating
+# unit at the bus is fixed at its scheduled Q clamped into its own limits
+# (the fixed_gens mark keeps the violation scan off it), the bus turns PQ
+# once no regulating unit is left, and the conversion is logged at
+# iteration 0. Slack buses are not converted (the list names PV buses).
+function _lock_listed_pv_buses_classic!(net::Net, fixed_gens::BitVector, buses::AbstractVector{Int}; verbose::Int = 0)
+  locked = Int[]
+  for bus in unique(buses)
+    1 <= bus <= length(net.nodeVec) || continue
+    getNodeType(net.nodeVec[bus]) == PV || continue
+    clamp_side = :none
+    q_bus = 0.0
+    for gen_idx in _generators_at_bus(net, bus)
+      ps = net.prosumpsVec[gen_idx]
+      isRegulating(ps) || continue
+      q = something(ps.qVal, 0.0)
+      if ps.maxQ !== nothing && q > ps.maxQ
+        q, clamp_side = ps.maxQ, :max
+      elseif ps.minQ !== nothing && q < ps.minQ
+        q, clamp_side = ps.minQ, :min
+      end
+      ps.qVal = q
+      fixed_gens[gen_idx] = true
+      q_bus += q
+    end
+    _matpower_bus_has_regulating_generator(net, bus, fixed_gens) && continue
+    setNodeType!(net.nodeVec[bus], "PQ")
+    logQLimitHit!(net, 0, bus, clamp_side === :none ? (q_bus >= 0.0 ? :max : :min) : clamp_side)
+    push!(locked, bus)
+  end
+  if verbose > 0 && !isempty(locked)
+    @printf(stdout, "Q-limit: %d PV bus(es) of power_flow.qlimits.lock_pv_to_pq_buses run as PQ from the start (bus %s).\n", length(locked), join((_qlimit_original_bus_id(net, b) for b in locked), ", "))
+  end
+  return locked
+end
+
 function _select_new_reference_bus!(net::Net, old_ref::Int)
   for (bus, node) in enumerate(net.nodeVec)
     getNodeType(node) == PV || continue
@@ -147,6 +187,7 @@ function _run_q_limits_matpower_outer_loop!(
   start_projection_dc_angle_limit_deg::Float64,
   start_projection_requested_angle_mode::Symbol,
   start_projection_requested_voltage_mode::Symbol,
+  start_projection_ratio_profile::Bool,
   start_current_iteration_enabled::Bool,
   start_current_iteration_max_iter::Int,
   start_current_iteration_tol::Float64,
@@ -171,6 +212,7 @@ function _run_q_limits_matpower_outer_loop!(
   wrong_branch_max_bus_angle_deg::Float64 = 120.0,
   wrong_branch_max_plain_steps::Int = 20,
   wrong_branch_collapse_vm_pu::Float64 = 0.5,
+  wrong_branch_max_reference_branch_angle_deg::Float64 = 90.0,
   wrong_branch_rescue_max_attempts::Int,
   performance_profile,
   rectangular_workspace_reuse::Bool,
@@ -182,10 +224,12 @@ function _run_q_limits_matpower_outer_loop!(
   distributed_slack_respect_p_limits::Bool = true,
   distributed_slack_fallback::Symbol = :error,
   distributed_slack_weights::AbstractDict{String,Float64} = Dict{String,Float64}(),
+  lock_pv_to_pq_buses::AbstractVector{Int} = Int[],
 )
   mode in (:classic_simultaneous, :classic_one_at_a_time) || error("Unsupported classical Q-limit mode $(mode).")
   resetQLimitLog!(net)
   fixed_gens = falses(length(net.prosumpsVec))
+  _lock_listed_pv_buses_classic!(net, fixed_gens, lock_pv_to_pq_buses; verbose = verbose)
   outer_rows = NamedTuple[]
   total_iters = 0
   base_pf_converged = false
@@ -252,6 +296,7 @@ function _run_q_limits_matpower_outer_loop!(
         start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
         start_projection_requested_angle_mode = start_projection_requested_angle_mode,
         start_projection_requested_voltage_mode = start_projection_requested_voltage_mode,
+        start_projection_ratio_profile = start_projection_ratio_profile,
         start_current_iteration_enabled = outer == 0 ? start_current_iteration_enabled : false,
         start_current_iteration_max_iter = start_current_iteration_max_iter,
         start_current_iteration_tol = start_current_iteration_tol,
@@ -279,6 +324,7 @@ function _run_q_limits_matpower_outer_loop!(
         wrong_branch_max_bus_angle_deg = wrong_branch_max_bus_angle_deg,
         wrong_branch_max_plain_steps = wrong_branch_max_plain_steps,
         wrong_branch_collapse_vm_pu = wrong_branch_collapse_vm_pu,
+        wrong_branch_max_reference_branch_angle_deg = wrong_branch_max_reference_branch_angle_deg,
         wrong_branch_rescue_max_attempts = wrong_branch_rescue_max_attempts,
         performance_profile = performance_profile,
         rectangular_workspace_reuse = rectangular_workspace_reuse,

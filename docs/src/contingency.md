@@ -39,7 +39,9 @@ evaluation on an operated grid.
   removed from the bus shunt for that case as well.
 - Warm start from the base solution: every case starts from the solved
   base operating point. A base case that does not converge is retried
-  through the solver rescue ladder (`runpf!` with `rescue = true`) before
+  through the solver rescue ladder (the strategies of `runpf!` with
+  `rescue = true`, on the same solver keywords as the base solve, so
+  distributed slack and the Q-limit settings hold there too) before
   the batch falls back to flat starts with one warning; treat that warning
   as "fix the base case first", a flat start on a large imported case
   frequently diverges. Per case, `contingency.rescue_ladder` (an ordered,
@@ -56,7 +58,7 @@ evaluation on an operated grid.
 | Ladder stage | Start values | Solver keywords |
 |---|---|---|
 | `:warm` | the template (base-case) voltages | forwards the extra `runpf!` keywords (`trust_region_enabled` and the like) |
-| `:apslf` | an APSLF start (AnalyticLoadFlow.jl is a required dependency, so the stage is always available) | a config-driven solve without the extra keywords |
+| `:apslf` | an APSLF start (AnalyticLoadFlow.jl is a required dependency, so the stage is always available) | forwards the extra keywords |
 | `:dc` | flat magnitudes with DC-projected start angles | forwards the extra keywords |
 | `:flat` | `flatstart = true` | forwards the extra keywords; `retry_flat_start` is a deprecated alias for appending `:flat` |
 

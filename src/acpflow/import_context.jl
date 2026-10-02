@@ -142,36 +142,39 @@ function _cgmes_start_values_powerflow(pf_cfg::PowerFlowConfig, start_values::Sy
 end
 
 """
-    _flatstart_forced_off_config(cfg) -> (SparlectraConfig, overridden::Vector{String})
+    _flatstart_profile_config(cfg) -> (SparlectraConfig, overridden::Vector{String})
 
-The flat start is the one start switch a run honours over the other
-start-value machines: with `power_flow.flatstart = true` the APSLF start
-generator, the unconditional DC seed, the current-iteration pre-solve and
-the start projection (DC-angle candidate and blend scan) are switched off
-for this run and both start modes go `classic`, so the solve really starts
-at 1.0 pu and 0 degrees. Without the projection switch a DC or blended
-candidate could still win the start on mismatch alone. The stored configuration is
-left as it is (the Web UI keeps those values and only greys the controls);
-the returned list names every key that was overridden, for the run log.
+The flat start chooses the voltage PROFILE a run starts from and nothing
+else (#463): with `power_flow.flatstart = true` every bus starts at 1.0 pu
+(PV and slack buses at their setpoints) and 0 degrees instead of the
+imported voltages, and every start machine follows its own key and works
+from that flat profile: the start projection with its DC, blend and
+ratio-profile candidates (`start_mode.start_projection`), the unconditional
+DC seed (`start_mode.dc_seed_unconditional`), the current-iteration
+pre-solve (`start_current_iteration.enabled`) and the APSLF start
+(`apslf_start.enabled`). Before #463 the flat start switched all of them
+off, so "projection from a flat start" could not be configured as written.
+
+What the flat start still overrides are the two start MODES, because they
+choose a profile as well: `voltage_mode` and the imported-angle
+`angle_mode`s read the stored columns (the MATPOWER import applies them only
+under a flat start and would turn it into a blended imported start), and
+`angle_mode = dc` makes the DC angles a requested start that excludes the
+measured candidates. Both go `classic` for this run; the DC angles stay
+available as the projection's measured DC candidate (`try_dc_start`). The
+stored configuration is left as it is (the Web UI greys the two mode
+controls while the flat start is on); the returned list names every
+overridden key for the run log.
 """
-function _flatstart_forced_off_config(cfg::SparlectraConfig)
+function _flatstart_profile_config(cfg::SparlectraConfig)
   pf = cfg.powerflow
   pf.start_mode.flatstart || return cfg, String[]
   overridden = String[]
-  pf.apslf_start.enabled && push!(overridden, "power_flow.apslf_start.enabled=false")
-  pf.start_mode.dc_seed_unconditional && push!(overridden, "power_flow.start_mode.dc_seed_unconditional=false")
-  pf.start_current_iteration.enabled && push!(overridden, "power_flow.start_current_iteration.enabled=false")
-  pf.start_mode.start_projection && push!(overridden, "power_flow.start_mode.start_projection=false")
   pf.start_mode.angle_mode === :classic || push!(overridden, "power_flow.start_mode.angle_mode=classic")
   pf.start_mode.voltage_mode === :classic || push!(overridden, "power_flow.start_mode.voltage_mode=classic")
   isempty(overridden) && return cfg, overridden
-  start_mode = _copy_start_mode_with(pf.start_mode; dc_seed_unconditional = false, start_projection = false, angle_mode = :classic, voltage_mode = :classic)
-  pf2 = _copy_powerflow_with(pf;
-    start_mode = start_mode,
-    apslf_start = ApslfStartConfig(enabled = false, order = pf.apslf_start.order),
-    start_current_iteration = _copy_start_current_iteration_with(pf.start_current_iteration; enabled = false),
-  )
-  return _copy_sparlectra_with_powerflow(cfg, pf2), overridden
+  start_mode = _copy_start_mode_with(pf.start_mode; angle_mode = :classic, voltage_mode = :classic)
+  return _copy_sparlectra_with_powerflow(cfg, _copy_powerflow_with(pf; start_mode = start_mode)), overridden
 end
 
 function _resolve_matpower_powerflow_ids_after_import(net::Net, cfg::SparlectraConfig; verbose::Int = 0)::SparlectraConfig

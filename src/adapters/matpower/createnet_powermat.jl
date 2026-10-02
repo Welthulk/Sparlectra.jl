@@ -77,40 +77,6 @@ end
 
 #! format: on
 
-"""
-    createNetFromMatPowerCase(; mpc, log=false, flatstart=false) -> Net
-
-Builds a Sparlectra `Net` from a MATPOWER-like container `mpc`.
-
-`mpc` can be either:
-- a `NamedTuple` with fields `name, baseMVA, bus, gen, branch` (optionally `gencost, bus_name`)
-- or a struct with the same field names (e.g. `MatpowerCase`)
-
-All matrices are expected in MATPOWER v2 column conventions.
-
-`bus_shunt_model` controls how MATPOWER bus `Gs`/`Bs` values are represented:
-`"admittance"` stamps them into Ybus (default), while
-`"voltage_dependent_injection"` keeps them out of Ybus and evaluates their
-|V|²-dependent contribution in the rectangular mismatch path.
-
-`matpower_shift_sign` and `matpower_shift_unit` control how MATPOWER branch
-`SHIFT` values are converted before they are stored as Sparlectra transformer
-phase shifts. Defaults preserve MATPOWER convention: `SHIFT` is in degrees,
-positive on the branch from side. PEGASE-style data sets may require
-`matpower_shift_unit = "rad"` and/or `matpower_shift_sign = -1`.
-
-`matpower_ratio` controls MATPOWER branch `TAP` import. The default `"normal"`
-uses the `TAP` value directly (with MATPOWER `0` treated as `1`). Set
-`matpower_ratio = "reciprocal"` when an input data set stores the inverse tap
-ratio expected by Sparlectra.
-
-`tap_changer_model` selects the tap-changer model applied to all transformers
-(`transformer.tap_changer_model` in the central configuration). `:ideal`
-(default) keeps the imported series impedance unchanged;
-`:impedance_correction` re-refers R/X through the tapped winding via
-[`calcTapCorrectedRX`](@ref), interpreting the effective off-nominal tap ratio
-as the tap deviation of the tapped winding.
-"""
 function _apply_matpower_reference_override!(net::Net, slack_orig_idx::Int, bus_idx_by_orig::Dict{Int,Int}; reference_vm_pu::Union{Nothing,Float64} = nothing, reference_va_deg::Union{Nothing,Float64} = nothing)
   slack_orig_idx != 0 || return nothing
   node_idx = get(bus_idx_by_orig, slack_orig_idx, 0)
@@ -294,16 +260,46 @@ function _matpower_dcline_terminal_voltage_control(net::Net, bus_idx::Int, bus_t
 end
 
 """
-    createNetFromMatPowerCase(; mpc, kwargs...) -> Net
+    createNetFromMatPowerCase(; mpc, log=false, flatstart=false, kwargs...) -> Net
 
-Build a network from an already parsed MATPOWER case object `mpc` (a
-[`MatpowerIO.MatpowerCase`](@ref) as [`MatpowerIO.read_case`](@ref) returns). This is the construction core behind
-[`createNetFromMatPowerFile`](@ref): bus, branch, generator, and shunt import,
-PQ generator controllers, and the MATPOWER convention switches
-(`matpower_shift_sign`, `matpower_shift_unit`, `matpower_ratio`,
-`tap_changer_model`). `flatstart` discards the case voltage state,
-`bus_shunt_model` selects how bus shunts are modeled, and `profile` collects
-per-stage import timings when given. Throws on inconsistent case data.
+Builds a Sparlectra `Net` from an already parsed MATPOWER case object `mpc`.
+This is the construction core behind [`createNetFromMatPowerFile`](@ref): bus,
+branch, generator and shunt import, PQ generator controllers, and the MATPOWER
+convention switches below. `flatstart` is stored as the start mode of the
+net: the solver then starts from 1 pu and 0 degrees instead of the case VM/VA,
+keeping the reference bus voltage and the PV voltage magnitudes. `profile`
+collects per-stage import timings when given. Throws on inconsistent case data.
+
+`mpc` can be either:
+- a [`MatpowerIO.MatpowerCase`](@ref) as [`MatpowerIO.read_case`](@ref) returns
+- or a `NamedTuple` (or any struct) with the fields `baseMVA, bus, gen,
+  branch`; `name` is optional (default `"mpc"`), and an optional `bus_name`
+  vector names the buses when `apply_bus_names = true`
+
+All matrices are expected in MATPOWER v2 column conventions.
+
+`bus_shunt_model` controls how MATPOWER bus `Gs`/`Bs` values are represented:
+`"admittance"` stamps them into Ybus (default), while
+`"voltage_dependent_injection"` keeps them out of Ybus and evaluates their
+|V|²-dependent contribution in the rectangular mismatch path.
+
+`matpower_shift_sign` and `matpower_shift_unit` control how MATPOWER branch
+`SHIFT` values are converted before they are stored as Sparlectra transformer
+phase shifts. Defaults preserve MATPOWER convention: `SHIFT` is in degrees,
+positive on the branch from side. PEGASE-style data sets may require
+`matpower_shift_unit = "rad"` and/or `matpower_shift_sign = -1`.
+
+`matpower_ratio` controls MATPOWER branch `TAP` import. The default `"normal"`
+uses the `TAP` value directly (with MATPOWER `0` treated as `1`). Set
+`matpower_ratio = "reciprocal"` when an input data set stores the inverse tap
+ratio expected by Sparlectra.
+
+`tap_changer_model` selects the tap-changer model applied to all transformers
+(`transformer.tap_changer_model` in the central configuration). `:ideal`
+(default) keeps the imported series impedance unchanged;
+`:impedance_correction` re-refers R/X through the tapped winding via
+[`calcTapCorrectedRX`](@ref), interpreting the effective off-nominal tap ratio
+as the tap deviation of the tapped winding.
 """
 function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false, cooldown::Int = DEFAULT_QLIMIT_CONFIG.cooldown_iters, q_hyst_pu::Float64 = DEFAULT_QLIMIT_CONFIG.hysteresis_pu, enable_pq_gen_controllers::Bool = true, bus_shunt_model = :admittance, matpower_shift_sign::Real = 1.0, matpower_shift_unit = :deg, matpower_ratio = :normal, tap_changer_model::Symbol = :ideal, reference_vm_pu::Union{Nothing,Float64} = nothing, reference_va_deg::Union{Nothing,Float64} = nothing, matpower_pv_voltage_source = :gen_vg, matpower_pv_voltage_mismatch_tol_pu::Float64 = 1e-4, preallocate_network::Symbol = :auto, preallocate_min_buses::Int = 1000, apply_bus_names::Bool = false, apply_branch_names::Bool = false, apply_branch_kind::Bool = false, import_for001_contingencies::Bool = true, matpower_dcline_mode::Symbol = :pf_injections, profile::Union{Nothing,AbstractDict}=nothing)::Net
   # Small logger helper

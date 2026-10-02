@@ -880,6 +880,65 @@ function test_rectangular_start_projection_keeps_raw_without_finite_improvement(
          all(field -> hasproperty(invalid_summary, field), required_fields)
 end
 
+# The ratio-profile start candidate (power_flow.start_mode.ratio_profile):
+# on a flat start the projection also measures the flat profile with every
+# PQ magnitude scaled by the off-nominal ratios on its path from the
+# reference. Pinned: the exact two-bus case (the candidate IS the solution),
+# no candidate without factors, a requested DC start keeping precedence,
+# the breadth-first factors on a shipped case, and the forwarding chain
+# from the keyword and from the configuration down to the projection.
+function test_rectangular_start_projection_ratio_profile()::Bool
+  # one branch with the tap t on its from side and no load: the solution is
+  # V2 = V1 / t, and the flat start puts the whole ratio offset across the
+  # series impedance
+  t = 0.95
+  y = 1.0 / (0.01 + 0.1im)
+  Y = sparse(ComplexF64[y/t^2 -y/t; -y/t y])
+  Vraw = ComplexF64[1.0, 1.0]
+  S = zeros(ComplexF64, 2)
+  bus_types = [:Slack, :PQ]
+  Vset = [1.0, 1.0]
+  factors = [1.0, 1.0 / t]
+  run_projection(; kw...) = (prof = Dict{Symbol,Any}(:enabled => true); V = Sparlectra.project_rectangular_start(Y, Vraw, S, bus_types, Vset, 1; enabled = true, try_dc_start = true, try_blend_scan = true, performance_profile = prof, kw...); (V, prof[:start_projection_summary]))
+  V1, s1 = run_projection(; ratio_profile_factors = factors)
+  exact = s1.selected === :ratio_profile && s1.reason === :finite_improvement && V1[2] == ComplexF64(1.0 / t, 0.0) && V1[1] == Vraw[1] && s1.ratio_profile_built === true && s1.ratio_profile_mismatch < 1e-12 && s1.candidates == 6
+  # no factors: nothing is built and the selection is the one without the
+  # candidate (the flat seed against DC and blends, all equal here)
+  V0, s0 = run_projection()
+  no_candidate = s0.ratio_profile_built === false && ismissing(s0.ratio_profile_mismatch) && s0.selected === :raw && V0 == Vraw && s0.candidates == 5
+  # a requested DC angle start keeps precedence over the candidate, as it
+  # does over the blends; the candidate is still measured and reported
+  Vdc, sdc = run_projection(; ratio_profile_factors = factors, requested_angle_mode = :dc)
+  dc_first = sdc.selected !== :ratio_profile && sdc.ratio_profile_built === true && Vdc != V1
+
+  # breadth-first factors on a shipped case: the shipped transformers sit at
+  # their nominal ratio, so one of them is moved off nominal (0.95) here.
+  # The reference has 1.0, every other bus is its search parent's factor
+  # times one branch step, and the level behind that transformer differs
+  # from 1.0
+  net = load_fixture_net("sp_case14")
+  itr = findfirst(br -> Sparlectra.getNodeVn(net.nodeVec[Int(br.fromBus)]) != Sparlectra.getNodeVn(net.nodeVec[Int(br.toBus)]), net.branchVec)
+  itr === nothing && return false
+  net.branchVec[itr].ratio = 0.95
+  net.branchVec[itr].tap_ratio = 0.95
+  slack = findfirst(nd -> Sparlectra.getNodeType(nd) == Sparlectra.Slack, net.nodeVec)
+  f = Sparlectra._ratio_profile_factors(net, slack)
+  steps(k) = [f[Int(br.fromBus)] * (1.0 / abs(Sparlectra.calcBranchRatio(br))) for br in net.branchVec if br.status == 1 && Int(br.toBus) == k] ∪ [f[Int(br.toBus)] * abs(Sparlectra.calcBranchRatio(br)) for br in net.branchVec if br.status == 1 && Int(br.fromBus) == k]
+  bfs = f[slack] == 1.0 && all(k -> k == slack || f[k] in steps(k), eachindex(f)) && any(x -> x != 1.0, f) && all(x -> isfinite(x) && x > 0.0, f)
+
+  # forwarding: the solver builds the candidate only for a flat start with
+  # the projection and the keyword on; the configuration default reaches it
+  built(net0; kw...) = (prof = Dict{Symbol,Any}(:enabled => true); Sparlectra.runpf_rectangular!(net0; maxiter = 30, tol = 1e-8, damp = 1.0, qlimits_enabled = false, performance_profile = prof, kw...); prof[:start_projection_summary].ratio_profile_built)
+  chain = built(load_fixture_net("sp_case14"); opt_flatstart = true, start_projection = true, start_projection_ratio_profile = true) === true &&
+          built(load_fixture_net("sp_case14"); opt_flatstart = true, start_projection = true) === false &&
+          built(load_fixture_net("sp_case14"); opt_flatstart = false, start_projection = true, start_projection_ratio_profile = true) === false
+  cfg_prof = Dict{Symbol,Any}(:enabled => true)
+  runpf!(load_fixture_net("sp_case14"); config = Sparlectra.PowerFlowConfig(start_mode = Sparlectra.StartModeConfig(flatstart = true, start_projection = true)), performance_profile = cfg_prof)
+  config_default = Sparlectra.StartModeConfig().ratio_profile === true && cfg_prof[:start_projection_summary].ratio_profile_built === true
+
+  return exact && no_candidate && dc_first && bfs && chain && config_default
+end
+
 function test_matpower_vmva_selfcheck_noncontiguous_bus_numbers()::Bool
   mpc = Sparlectra.MatpowerIO.MatpowerCase(
     "case_noncontig",
@@ -1840,7 +1899,18 @@ mpc.branch = [
   st_noq = Sparlectra.rectangular_pf_status(result_noq.net)
   noq_ok = st_noq.wrong_branch_status === :warn && st_noq.wrong_branch_reason === :branch_angle_exceeded && result_noq.final_converged === true
 
-  return warn_ok && fail_ok && noq_ok
+  # issue #462: the reference-branch bound travels the same chain
+  # (configuration -> runpf! -> final status). The branch-angle rule stays
+  # at its 90 degrees, so the 1-2 branch at the reference is caught by the
+  # new rule alone; warn only, the run stays converged
+  cfg_ref = Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("wrong_branch_detection" => "warn", "wrong_branch_max_reference_branch_angle_deg" => 0.001, "qlimits" => Dict("enabled" => false)), "output" => Dict("logfile_results" => "off")))
+  result_ref = redirect_stdout(devnull) do
+    Sparlectra.run_sparlectra(casefile = basename(case_path), path = dirname(case_path), config = cfg_ref)
+  end
+  st_ref = Sparlectra.rectangular_pf_status(result_ref.net)
+  ref_ok = st_ref.wrong_branch_status === :warn && st_ref.wrong_branch_reason === :reference_branch_angle_exceeded && st_ref.wrong_branch_reference_branch == "1-2" && st_ref.wrong_branch_reference_branch_angle_deg > 0.001 && result_ref.final_converged === true
+
+  return warn_ok && fail_ok && noq_ok && ref_ok
 end
 
 # The voltage band of the wrong-branch check judges every energised level,
@@ -1883,6 +1953,38 @@ function test_wrong_branch_voltage_band_every_level()::Bool
   res_steps = Sparlectra._check_wrong_branch_solution(ComplexF64[1.0 + 0.0im, 0.99 - 0.01im, 0.98 - 0.02im], bus_types, Vset, 1; net = net, min_vm_pu = 0.70, max_vm_pu = 1.30, max_angle_spread_deg = 180.0, max_branch_angle_deg = 90.0, min_low_vm_count = 1, max_plain_steps = 20, plain_steps = 25)
   steps_ok = res_steps.status === :ok && res_steps.plain_steps == 25 && res_steps.plain_steps_exceeded === true
   return share_ok && floor_ok && ang_ok && steps_ok
+end
+
+# Issue #462: the angle across the reference bus's own branches. The shipped
+# sp_casePST has the topology of case13659pegase's reference: the machine at
+# bus 1 (15.5 kV) reaches the 230 kV network through its own transformer,
+# a branch the highest-level branch-angle rule never sees. Its operating
+# root stays quiet; the same state rotated as a whole by 164 degrees
+# against the reference (case13659pegase's rotated root: magnitudes of the
+# operating state, every other bus 164.5 degrees away) is flagged with the
+# new reason, ahead of bus_angle_exceeded, and naming the transformer.
+function test_wrong_branch_reference_branch_angle()::Bool
+  case = joinpath(@__DIR__, "..", "data", "scf", "sp_casePST.scf.json")
+  net = Sparlectra.importSCF(case)
+  cfg = Sparlectra.SparlectraConfig(Dict("output" => Dict("logfile_results" => "off", "console_summary" => false)))
+  r = redirect_stdout(devnull) do
+    Sparlectra.run_sparlectra(net = net, config = cfg)
+  end
+  st = Sparlectra.rectangular_pf_status(net)
+  # template default 90 degrees; the operating root sits at 1.4 degrees
+  operating_ok = r.final_converged && st.wrong_branch_status === :ok && st.wrong_branch_reference_branch == "1-2" && st.wrong_branch_reference_branch_angle_deg < 10.0
+  slack = findfirst(n -> Sparlectra.getNodeType(n) == Sparlectra.Slack, net.nodeVec)
+  V = ComplexF64[n._vm_pu * cis(deg2rad(n._va_deg)) for n in net.nodeVec]
+  Vrot = ComplexF64[i == slack ? V[i] : V[i] * cis(deg2rad(164.0)) for i in eachindex(V)]
+  bus_types = [i == slack ? :Slack : :PQ for i in eachindex(V)]
+  check(Vs, bound) = Sparlectra._check_wrong_branch_solution(Vs, bus_types, ones(length(Vs)), slack; net = net, min_vm_pu = 0.70, max_vm_pu = 1.30, max_angle_spread_deg = 180.0, max_branch_angle_deg = 90.0, min_low_vm_count = 1, max_bus_angle_deg = 120.0, collapse_vm_pu = 0.5, max_reference_branch_angle_deg = bound)
+  rot = check(Vrot, 90.0)
+  rotated_ok = rot.status === :warn && rot.reason === :reference_branch_angle_exceeded && rot.reference_branch == "1-2" && 160.0 < rot.reference_branch_angle_deg < 170.0
+  # the rule off (0): the same state falls back to the bus-angle rule, the
+  # angle is still measured
+  off = check(Vrot, 0.0)
+  off_ok = off.reason === :bus_angle_exceeded && off.reference_branch_angle_deg == rot.reference_branch_angle_deg
+  return operating_ok && rotated_ok && off_ok
 end
 
 function test_link_kcl_simple()
@@ -2498,9 +2600,7 @@ function test_wrong_branch_output_visibility()::Bool
     island_result.final_converged || return ("", String[], Int[])
     text = read(joinpath(tmpdir, "ac_island_solver_summary.csv"), String)
     csv_lines = split(strip(text), '\n')
-    # the report follows output.csv_format (excel_de by default since 0.30.2)
-    delim = occursin(';', csv_lines[1]) ? ';' : ','
-    return (text, split(csv_lines[1], delim), [length(split(line, delim)) for line in csv_lines[2:end]])
+    return (text, split(csv_lines[1], ','), [length(split(line, ',')) for line in csv_lines[2:end]])
   end
   isempty(csv_text) && return false
   header_fields[(end-1):end] == ["wrong_branch_status", "wrong_branch_reason"] || return false
@@ -2510,8 +2610,7 @@ function test_wrong_branch_output_visibility()::Bool
     ',',
   ) || return false
   all(count -> count == length(header_fields), row_field_counts) || return false
-  # the cell check holds in either delimiter (excel_de is the default since 0.30.2)
-  occursin("wrong_branch_status: warn", csv_text) || occursin(",warn,", csv_text) || occursin(";warn;", csv_text) || return false
+  occursin("wrong_branch_status: warn", csv_text) || occursin(",warn,", csv_text) || return false
 
   return true
 end
@@ -3645,6 +3744,7 @@ function run_grid_fast_tests()
       @test test_matpower_file_import_honors_explicit_overrides() == true
       @test test_run_sparlectra_forwards_wrong_branch_config() == true
       @test test_wrong_branch_voltage_band_every_level() == true
+      @test test_wrong_branch_reference_branch_angle() == true
       @test test_run_sparlectra_normalizes_projected_matpower_starts() == true
       @test test_run_sparlectra_resolves_matpower_lock_bus_ids() == true
     end)() end
@@ -3663,6 +3763,7 @@ function run_grid_fast_tests()
       @test test_rectangular_start_projection_improves_dc_seed() == true
       @test test_rectangular_start_projection_dc_candidate_matches_rundcpf() == true
       @test test_rectangular_start_projection_keeps_raw_without_finite_improvement() == true
+      @test test_rectangular_start_projection_ratio_profile() == true
       @test test_q_limit_adjust_vset_success() == true
       @test test_q_limit_adjust_vset_no_controller_switches() == true
       @test test_q_limit_adjust_vset_multiple_controllers_error() == true

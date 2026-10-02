@@ -767,6 +767,9 @@ function _print_wrong_branch_summary_line(io::IO, net::Net)
     @sprintf("angle spread %.1f°", _rect_status_get(rect_status, :wrong_branch_angle_spread_deg, NaN))
   elseif reason === :branch_angle_exceeded
     string(_rect_status_get(rect_status, :wrong_branch_branch_angle_violation_count, 0), " branch-angle violation(s)")
+  elseif reason === :reference_branch_angle_exceeded
+    # issue #462: the angle and the branch at the reference bus (case bus numbers)
+    @sprintf("%.1f° across reference branch %s", _rect_status_get(rect_status, :wrong_branch_reference_branch_angle_deg, NaN), _rect_status_get(rect_status, :wrong_branch_reference_branch, "?"))
   else
     string(reason)
   end

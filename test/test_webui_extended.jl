@@ -526,9 +526,8 @@ function run_webui_extended_tests()
       @test !occursin("name=\"benchmark_enabled\"", loaded_run)
       _webui_assert_selected(loaded_form, "power_flow_qlimits_enforcement_mode", "active_set")
       # the CSV format is machine scope: the configuration file's value
-      # shows, whatever the run form said before the save (the template's
-      # excel_de since 0.30.2)
-      _webui_assert_selected(loaded_form, "detailed_result_csv_format", "excel_de")
+      # shows, whatever the run form said before the save
+      _webui_assert_selected(loaded_form, "detailed_result_csv_format", "technical")
 
       notice_off_root = mktempdir()
       notice_off_config = joinpath(notice_off_root, "configuration.yaml")
@@ -643,7 +642,7 @@ settings:
       _webui_assert_selected(case118_form, "power_flow_start_voltage_mode", "classic")
       _webui_assert_selected(case118_form, "power_flow_wrong_branch_detection", "off")
       _webui_assert_selected(case118_form, "performance_timing", "compact")
-      _webui_assert_selected(case118_form, "detailed_result_csv_format", "excel_de")
+      _webui_assert_selected(case118_form, "detailed_result_csv_format", "technical")
       # the MATPOWER import conventions render on the Case page; the
       # saved profile must prefill THAT form
       case118_case_page = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/case?casefile=$(SparlectraApp._webui_urlencode(case118))"; output_root = root).body)
@@ -689,7 +688,7 @@ settings:
       # experimental convention block, at the template default off (0.30.0)
       case14_case_page = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/case?casefile=$(SparlectraApp._webui_urlencode(case14))"; output_root = root).body)
       _webui_assert_selected(case14_case_page, "matpower_import_auto_profile", "off")
-      _webui_assert_selected(case14_form, "output_logfile_results", "classic")
+      _webui_assert_selected(case14_form, "output_logfile_results", "full")
 
       request_form = _webui_test_form("case145.m", "configuration.yaml", root)
       request_form["power_flow_tol"] = "2e-6"
@@ -741,7 +740,7 @@ form:
       _webui_assert_checked(unsupported_form, "power_flow_autodamp", false)
       _webui_assert_value(unsupported_form, "power_flow_tol", "9.0e-7")
       _webui_assert_selected(unsupported_form, "power_flow_start_angle_mode", "dc")
-      _webui_assert_selected(unsupported_form, "detailed_result_csv_format", "excel_de")
+      _webui_assert_selected(unsupported_form, "detailed_result_csv_format", "technical")
       @test occursin("case_settings_field_ignored", read(SparlectraApp.webui_operation_log_path(root), String))
 
       fresh_root = mktempdir()
@@ -1281,11 +1280,8 @@ form:
         cp(joinpath(iidm_exports["output_dir"], String(iidm_exports["metadata"]["cgmes_export_files"])), joinpath(case_directory, "ieee14_export_cgmes.zip"))
         magnitudes(result) = begin
           rows = readlines(joinpath(result["output_dir"], "bus_voltages_complex.csv"))
-          # the file follows output.csv_format (excel_de by default since
-          # 0.30.2: semicolon cells, decimal comma; vm_pu has no thousands)
-          delim = occursin(';', rows[1]) ? ';' : ','
-          column = findfirst(==("vm_pu"), split(rows[1], delim))
-          sort!([parse(Float64, replace(split(row, delim)[column], ',' => '.')) for row in rows[2:end]])
+          column = findfirst(==("vm_pu"), split(rows[1], ","))
+          sort!([parse(Float64, split(row, ",")[column]) for row in rows[2:end]])
         end
         source_vm = magnitudes(iidm_exports)
         for exported in ("ieee14_export.m", "ieee14_export_cgmes.zip", "ieee14.scf.json")
@@ -1838,6 +1834,7 @@ form:
         "power_flow_apslf_nr_polish" => "power_flow.apslf.nr_polish",
         "power_flow_apslf_convergence_radius" => "power_flow.apslf.convergence_radius",
         "power_flow_flatstart" => "power_flow.flatstart",
+        "power_flow_ratio_profile" => "power_flow.start_mode.ratio_profile",
         "power_flow_apslf_start_enabled" => "power_flow.apslf_start.enabled",
         "power_flow_apslf_start_order" => "power_flow.apslf_start.order",
         "power_flow_wrong_branch_detection" => "power_flow.wrong_branch_detection",
@@ -1958,7 +1955,7 @@ form:
       @test occursin("name=\"performance_timing\"", settings_page_html)
       @test !occursin("name=\"run_diagnostics\"", form_html)
       @test occursin("Advanced start values", settings_page_html)
-      @test occursin("<fieldset class=\"start-current-iteration-options advanced-start-values\" data-nr-only-field data-flatstart-inactive-field>", settings_page_html)
+      @test occursin("<fieldset class=\"start-current-iteration-options advanced-start-values\" data-nr-only-field>", settings_page_html)
       @test occursin("<legend>Advanced start values</legend>", settings_page_html)
       @test occursin("Enable current-iteration pre-solve", settings_page_html)
       @test findfirst("<details class=\"span-2 expert-section\">", settings_page_html) < findfirst("<legend>Advanced start values</legend>", settings_page_html)
@@ -2016,9 +2013,9 @@ form:
       # marked so client-side JS can gray them out when power_flow_solver=apslf or
       # power_flow_solver=dc is selected.
       # 14: the ten NR-only groups, the APSLF and DC start-value
-      # checkboxes, which the flat start greys as well, the Experimental
-      # block (the Newton update, 0.30.0) and the power-mode checkbox (0.30.1)
-      @test count("data-nr-only-field", settings_page_html) == 18   # + the dishonest-Newton checkbox and its two fields, the power-mode LU select (0.30.2)
+      # checkboxes, the Experimental block (the Newton update, 0.30.0) and
+      # the power-mode checkbox (0.30.1)
+      @test count("data-nr-only-field", settings_page_html) == 19   # + the dishonest-Newton checkbox and its two fields, the power-mode LU select (0.30.2), the ratio-profile checkbox (greyed while the flat start is off)
       @test occursin("<fieldset class=\"distributed-slack-options\" data-nr-only-field>", settings_page_html)
       # Experimental block (0.30.1): greyed out by default, its select
       # disabled server-side (a disabled control is not submitted, the
@@ -2045,13 +2042,13 @@ form:
       @test occursin(r"<label data-nr-only-field><span class=\"field-label\" title=\"[^\"]*\">Wrong-branch detection ", settings_page_html)
       @test occursin(r"<label data-nr-only-field data-dc-seed-inactive-field data-flatstart-inactive-field><span class=\"field-label\" title=\"[^\"]*\">Start angle mode ", settings_page_html)
       @test occursin(r"<label data-nr-only-field data-dc-seed-inactive-field data-flatstart-inactive-field><span class=\"field-label\" title=\"[^\"]*\">Start voltage mode ", settings_page_html)
-      @test occursin("<fieldset class=\"start-current-iteration-options advanced-start-values\" data-nr-only-field data-flatstart-inactive-field>", settings_page_html)
+      @test occursin("<fieldset class=\"start-current-iteration-options advanced-start-values\" data-nr-only-field>", settings_page_html)
       @test occursin("const nrOnlyFields = document.querySelectorAll('[data-nr-only-field]')", settings_page_html)
       @test occursin("const isApslfMode = function () { return getSolverMode() === 'apslf'; }", settings_page_html)
       @test occursin("const hideNrOnly = apslf || dc", settings_page_html)
       @test occursin("autodampGroup.classList.toggle('disabled', !autodampOn)", settings_page_html)
       @test occursin("trustRegionGroup.classList.toggle('disabled', !trustRegionOn)", settings_page_html)
-      @test occursin("setSolverGroupInactive(container, hideNrOnly || dcSeedMakesInactive || flatstartMakesInactive)", settings_page_html)
+      @test occursin("setSolverGroupInactive(container, hideNrOnly || dcSeedMakesInactive || flatstartMakesInactive || flatstartRequired)", settings_page_html)
       # Mutually exclusive/inapplicable fields are grayed out in place (disabled inputs,
       # opacity via the "disabled" CSS class) rather than hidden -- switching solvers no
       # longer makes parts of the form vanish or jump around.
@@ -2116,10 +2113,10 @@ form:
       @test occursin("class=\"check span-2 detailed-csv-options\"", settings_page_html)
       @test !occursin("<summary>Detailed result CSV export</summary>", settings_page_html)
       @test occursin("name=\"detailed_result_csv_format\"", settings_page_html)
-      # 0.15.1: the configured value is selected (the template's excel_de
-      # since 0.30.2); no browser-language switch overrides it
-      @test occursin("<option value=\"excel_de\" selected>", settings_page_html)
-      @test occursin("<option value=\"technical\">", settings_page_html)
+      # 0.15.1: the configured value is selected (technical in this
+      # configuration file); no browser-language switch overrides it
+      @test occursin("<option value=\"technical\" selected>", settings_page_html)
+      @test occursin("<option value=\"excel_de\">", settings_page_html)
       @test occursin("<option value=\"excel_us\">", settings_page_html)
       @test !occursin("navigator.languages", settings_page_html)
       @test !occursin("Use Excel CSV format with semicolon delimiter", settings_page_html)
@@ -3313,8 +3310,8 @@ result = get_powerflow_result(run_id)
         @test run_result["metadata"]["contingency_screening_mode"] == "flag"
         csv_text = read(joinpath(root, run_result["run_id"], "contingency_n1.csv"), String)
         @test occursin("step6 triple", csv_text)
-        # default format is "excel_de" (semicolon delimiter) since 0.30.2
-        @test endswith(first(split(csv_text, '\n')), ";screened;screening_estimate")
+        # default format is "technical" (comma delimiter) since issue #376
+        @test endswith(first(split(csv_text, '\n')), ",screened,screening_estimate")
 
         # the result page renders the N-1 table (the screened marker must be visible in the browser, not only in the
         # CSV). The file_block run carries ONE multi-op scenario, which is
@@ -3433,6 +3430,75 @@ result = get_powerflow_result(run_id)
         main_scf = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow?casefile=$(SparlectraApp._webui_urlencode(scf_name))"; output_root = root, runtime = rt).body)
         @test occursin("value=\"file_block\"", main_scf)
         @test occursin("scenario-editor-link", main_scf)
+
+        # flow 4: the outage counter of a RUNNING N-1 job. The
+        # runner holds the batch inside the progress callback of the first
+        # finished outage, so the job is observably mid-run: the snapshot
+        # carries progress_done/progress_total, and the status page the
+        # browser polls (main[data-refresh-url], swapped every
+        # WEBUI_STATUS_AUTO_REFRESH_SECONDS) renders the counter element
+        # from it. After release the counter ends at done == total.
+        ct_entered = Channel{Nothing}(1)
+        ct_release = Channel{Symbol}(1)
+        ct_runner = function (request; case_directory = nothing)
+          inner = request["progress_callback"]
+          request["progress_callback"] = function (done, total)
+            inner(done, total)
+            # exactly one call has done == 1, also on a threaded batch
+            if done == 1
+              put!(ct_entered, nothing)
+              take!(ct_release)
+            end
+            return nothing
+          end
+          return SparlectraApp.start_powerflow_run(request; case_directory)
+        end
+        op_log_path = SparlectraApp.webui_operation_log_path(root)
+        ct_event = (event; fields...) -> SparlectraApp.record_webui_operation!(root, event; route = "/powerflow/run", method = "POST", user_action = false, fields...)
+        ct_request = Dict{String,Any}("casefile" => scf_path, "config_file" => config_path, "output_root" => root, "contingency_mode" => true, "contingency_kind" => "branch", "scenario_source" => "n1_branches", "screening_mode" => "off")
+        n_outages = length(Sparlectra.generateN1Branches(Sparlectra.importSCF(scf_path)))
+        for finish in (:release, :abort)
+          ct_job = SparlectraApp.start_webui_powerflow_run(copy(ct_request); runner = ct_runner, event_callback = ct_event)
+          ct_id = ct_job["run_id"]
+          take!(ct_entered)
+          mid = SparlectraApp.get_webui_powerflow_job(ct_id)
+          @test mid["status"] == "running"
+          @test mid["progress_total"] == n_outages
+          @test 1 <= mid["progress_done"] < n_outages
+          mid_html = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/result/$(ct_id)?autorefresh=1"; output_root = root, runtime = rt).body)
+          # the counter element with the snapshot numbers, inside the
+          # polled <main>, and the poll script that re-fetches it
+          # (on a threaded batch the other chunks keep counting between the
+          # snapshot and the render, so the page may show a later count, but
+          # never an earlier one and never the end: one chunk is held)
+          counter = match(r"id=\"batch-progress\" data-progress-done=\"(\d+)\" data-progress-total=\"(\d+)\"", mid_html)
+          @test counter !== nothing
+          if counter !== nothing
+            @test parse(Int, counter[2]) == n_outages
+            @test mid["progress_done"] <= parse(Int, counter[1]) < n_outages
+          end
+          @test occursin("data-refresh-url=\"/powerflow/result/$(ct_id)?autorefresh=1\"", mid_html)
+          @test occursin("const scheduleAutoRefresh = function ()", mid_html)
+          if finish === :abort
+            # the abort token still reaches the batch: the next outage
+            # check after the release ends the run as aborted
+            @test SparlectraApp.route_sparlectra_webui("POST", "/powerflow/abort/$(ct_id)"; output_root = root, runtime = rt).status == 303
+          end
+          put!(ct_release, finish)
+          wait(SparlectraApp._POWERFLOW_WEBUI_JOBS[ct_id]["task"])
+          final_job = SparlectraApp._POWERFLOW_WEBUI_JOBS[ct_id]
+          if finish === :release
+            @test final_job["status"] == "success"
+            @test final_job["progress_done"] == final_job["progress_total"] == n_outages
+            # a finished job renders no counter (the N-1 table takes over)
+            @test !occursin("id=\"batch-progress\"", String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/result/$(ct_id)"; output_root = root, runtime = rt).body))
+          else
+            @test final_job["status"] == "aborted"
+            @test final_job["progress_done"] < n_outages
+          end
+          # the operation log stays high level: no line per outage
+          @test count(line -> occursin(ct_id, line), eachline(op_log_path)) < n_outages
+        end
       end
     end
   end)() end

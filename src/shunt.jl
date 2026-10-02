@@ -22,31 +22,28 @@
 """
     Shunt
 
-A mutable structure representing a shunt in a power system.
+A bus shunt: its admittance in per unit, its model (admittance or
+voltage-dependent injection), its status and the powers it draws after a solve.
 
 # Fields
 - `comp::AbstractComponent`: The component of the shunt.
 - `vn_kV::Float64`: The nominal voltage of the shunt in kV.
 - `baseMVA::Float64`: The base MVA for per unit calculations.
 - `busIdx::Int`: The index of the bus.
-- `p_shunt::Float64`: The active power of the shunt (MW) - results after solve.
-- `q_shunt::Float64`: The reactive power of the shunt (MVar) - results after solve.
-- `G_shunt::Float64`: The conductance of the shunt (S) - optional input/debug.
-- `B_shunt::Float64`: The susceptance of the shunt (S) - optional input/debug.
+- `p_shunt::Float64`: The active power of the shunt (MW): 0 after construction, the solved draw after a solve.
+- `q_shunt::Float64`: The reactive power of the shunt (MVar): 0 after construction, the solved draw after a solve.
+- `G_shunt::Float64`: The conductance of the shunt; the constructor stores the real part of `y_pu_shunt` (per unit).
+- `B_shunt::Float64`: The susceptance of the shunt; the constructor stores the imaginary part of `y_pu_shunt` (per unit).
 - `y_pu_shunt::ComplexF64`: The shunt admittance in per unit (solver-relevant for Y-shunts).
 - `model::Symbol`: The shunt model - `:Y` for admittance-matrix stamping, `:VoltageDependentInjection` for voltage-dependent mismatch terms, or `:PQ` for legacy constant power.
 - `status::Int`: The status of the shunt. 1 = in service, 0 = out of service.
+- `estimate::Bool`: released for susceptance estimation in the state estimation (default `false`, see `setShuntEstimation!`).
 
 # Constructors
-- `Shunt(; fromBus::Int, id::Int, base_MVA::Float64, vn_kV_shunt::Float64, p_shunt::Union{Nothing,Float64} = nothing, q_shunt::Union{Nothing,Float64} = nothing, g_shunt::Union{Nothing,Float64} = nothing, b_shunt::Union{Nothing,Float64} = nothing, y_pu::Union{Nothing,ComplexF64} = nothing, values_are_pu::Bool = false, model::Symbol = :Y, ratio::Float64 = 1.0, status::Int = 1)`: Creates a new `Shunt` instance. Provide either `y_pu` OR (`g_shunt`, `b_shunt`) OR (`p_shunt`, `q_shunt`).
+- `Shunt(; fromBus::Int, id::Int, base_MVA::Float64, vn_kV_shunt::Float64, p_shunt::Union{Nothing,Float64} = nothing, q_shunt::Union{Nothing,Float64} = nothing, g_shunt::Union{Nothing,Float64} = nothing, b_shunt::Union{Nothing,Float64} = nothing, y_pu::Union{Nothing,ComplexF64} = nothing, values_are_pu::Bool = false, model::Symbol = :Y, ratio::Float64 = 1.0, status::Int = 1)`: Creates a new `Shunt` instance. Provide either `y_pu` OR (`g_shunt`, `b_shunt`) OR (`p_shunt`, `q_shunt`). `g_shunt`/`b_shunt` are in Siemens unless `values_are_pu = true`; `p_shunt`/`q_shunt` are MW/MVar at 1 pu voltage for `model = :Y`, while `model = :PQ` leaves the admittance at zero.
 
 # Methods
 - `Base.show(io::IO, shunt::Shunt)`: Prints the `Shunt` instance.
-"""
-
-"""
-A bus shunt: its admittance in per unit, the nominal draw it was built
-from, its model (admittance or voltage-dependent injection) and status.
 """
 mutable struct Shunt
   comp::AbstractComponent

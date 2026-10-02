@@ -335,6 +335,15 @@ function run_parallel_foundation_tests()
       # position 2 of the second island
       locked = qsolve(:rectangular, (:A, :B); lock = [2])
       @test isapprox(vm_of(locked, ("B1", "B2", "B3")), vm_of(qsolve(:rectangular, (:B,)), ("B1", "B2", "B3")); atol = 1e-9)
+      # and A2 itself runs as PQ (#458), converted inside its island at
+      # iteration 0: its voltage leaves the 1.01 pu setpoint, and the
+      # conversion comes back to the whole net as a Q-limit entry (the
+      # island path carries switched buses as entries and voltages, not as
+      # node types; the same holds for B2's clamp)
+      a2 = locked.busDict["A2"]
+      @test abs(locked.nodeVec[a2]._vm_pu - 1.01) > 1e-3
+      @test any(e -> e.bus == a2 && e.iter == 0, locked.qLimitLog)
+      @test isapprox(vm_of(qsolve(:rectangular, (:A, :B)), ("A2",))[1], 1.01; atol = 1e-9)
     end)() end
 
     @testset "startup summary line" begin (function ()

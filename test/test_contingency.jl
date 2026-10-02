@@ -120,6 +120,21 @@ function run_contingency_tests()
         par = runContingencies!(net, cases; parallel_enabled = true, parallel_max_tasks = max_tasks, parallel_min_work_items = 2)
         @test all(_contingency_results_equal(serial[i], par[i]) for i in eachindex(serial))
       end
+      # progress callback (Web UI N-1 counter): one call per
+      # finished outage, serial and parallel, each value of 1:total exactly
+      # once with the right total, and the results unchanged by it.
+      # Repeated 5x per path (threads rule: a single parallel run can pass
+      # by luck); the callback runs on worker threads, so it locks.
+      for parallel in (false, true), rep in 1:5
+        seen = Tuple{Int,Int}[]
+        seen_lock = ReentrantLock()
+        cb = (done, total) -> lock(() -> push!(seen, (done, total)), seen_lock)
+        with_progress = runContingencies!(net, cases; parallel_enabled = parallel, parallel_max_tasks = Threads.nthreads(), parallel_min_work_items = 2, progress = cb)
+        @test length(seen) == length(cases)
+        @test all(t -> t[2] == length(cases), seen)
+        @test sort!(first.(seen)) == collect(1:length(cases))
+        @test all(_contingency_results_equal(serial[i], with_progress[i]) for i in eachindex(serial))
+      end
       # the base net is never mutated: same branch count, same voltages
       @test length(net.branchVec) == before_branches
       @test isequal([n._vm_pu for n in net.nodeVec], before_vm)
@@ -214,9 +229,10 @@ function run_contingency_tests()
       lines = readlines(csv)
       @test length(lines) == length(results) + 1
       # Since issue #376 the writer follows the same run-wide CSV format as
-      # every other artifact; the default is "excel_de" (semicolon
-      # delimiter) since 0.30.2, matching output.csv_format's default.
-      @test startswith(lines[1], "name;weight;converged;iterations;start_used")
+      # every other artifact; the default is now "technical" (comma
+      # delimiter), matching output.csv_format's default. "excel_de"
+      # reproduces the historical hardcoded semicolon delimiter.
+      @test startswith(lines[1], "name,weight,converged,iterations,start_used")
       csv_de = joinpath(mktempdir(), "n1_de.csv")
       @test writeContingencyResultsCSV(csv_de, results; format = "excel_de") == csv_de
       lines_de = readlines(csv_de)
@@ -652,6 +668,65 @@ function run_contingency_tests()
       # fallen to the flat template, there would be no rescued warm state)
       @test length(results) == length(ccases)
       @test any(r -> r.converged && r.start_used === :warm, results)
+
+      # #456: the rescue and the :apslf stage solve on the batch's own
+      # keywords. sp_case14 with distributed slack, seeded so badly that the
+      # base solve fails: the rescued template must carry the distributed
+      # solution (the flat-start reference), not the single-slack one the
+      # rescue used to fall back to (template angles were 4.8 degrees off the
+      # distributed reference and equal to the single-slack one).
+      function _bad_seed_14()
+        n = load_fixture_net("sp_case14")
+        n.flatstart = false
+        for node in n.nodeVec
+          getNodeType(node) === Sparlectra.Slack && continue
+          node._vm_pu = 0.02
+          node._va_deg = -179.0
+        end
+        return n
+      end
+      function _flat_ref(; kw...)
+        n = load_fixture_net("sp_case14")
+        n.flatstart = true
+        _, erg = runpf!(n, 30, 1e-8, 0; islands_enabled = true, kw...)
+        return (n, erg)
+      end
+      # the participation warnings of pg-weighted sharing on this case are
+      # expected and not the subject here
+      _, (ref_ds, ref_ss, erg_seed, engine) = Test.collect_test_logs() do
+        redirect_stdout(devnull) do
+          ds = _flat_ref(distributed_slack_enabled = true)
+          ss = _flat_ref()
+          _, e = runpf!(_bad_seed_14(), 30, 1e-8, 0; islands_enabled = true, distributed_slack_enabled = true)
+          eng = Sparlectra.ScenarioEngine(_bad_seed_14(); pf_kwargs = (; distributed_slack_enabled = true))
+          (ds, ss, e, eng)
+        end
+      end
+      # pre-conditions: the seed defeats the plain solve, and the two slack
+      # models give clearly different angles on this case
+      @test ref_ds[2] == 0 && ref_ss[2] == 0
+      ref_ds, ref_ss = ref_ds[1], ref_ss[1]
+      @test erg_seed != 0
+      dva(a, b) = maximum(abs(a.nodeVec[i]._va_deg - b.nodeVec[i]._va_deg) for i in eachindex(a.nodeVec))
+      @test dva(ref_ds, ref_ss) > 1.0
+      @test engine.base_converged
+      @test dva(engine.template, ref_ds) < 1e-4
+      # the :apslf stage reaches the same distributed-slack solution as the
+      # :warm stage on every outage both solve (it used to differ by up to
+      # 30 loading points: a single-slack solve)
+      net14 = load_fixture_net("sp_case14")
+      cases14 = generateN1Branches(net14)
+      _, (warm14, apslf14) = Test.collect_test_logs() do
+        redirect_stdout(devnull) do
+          w = runContingencies!(net14, cases14; parallel_enabled = false, distributed_slack_enabled = true, rescue_ladder = [:warm])
+          a = runContingencies!(net14, cases14; parallel_enabled = false, distributed_slack_enabled = true, rescue_ladder = [:apslf])
+          (w, a)
+        end
+      end
+      both = [i for i in eachindex(warm14) if warm14[i].converged && apslf14[i].converged]
+      @test !isempty(both)
+      @test all(i -> apslf14[i].start_used === :apslf, both)
+      @test maximum(abs(warm14[i].max_branch_loading_pct - apslf14[i].max_branch_loading_pct) for i in both) < 1e-3
     end)() end
   end)() end
 end
