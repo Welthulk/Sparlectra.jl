@@ -1288,6 +1288,12 @@ function _pvVoltage(net, bus::String, vset::Union{Nothing,Float64})::Float64
   return something(node._vm_pu, 1.0)
 end
 
+# The referencePriority of a machine or network injection as the prosumer
+# keeps it: CIM states an integer, 0 means "no preference" and so does any
+# value below 1 (the importer reads numbers as Float64, a negative or
+# fractional value below 1 is no priority in the CGMES sense either)
+_cgmesReferencePriority(prio::Float64)::Int = (isfinite(prio) && prio >= 1.0) ? round(Int, prio) : 0
+
 # slack candidate bookkeeping for the slack selection
 #
 # The tuples are laid out so that plain ascending `sort!` implements the ranking:
@@ -1916,6 +1922,9 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
         bus = bus,
         type = "SYNCHRONOUSMACHINE",
         participationFactor = participation,
+        # the unit's own referencePriority travels onto its prosumer (0.30.2)
+        # whatever the slack selection below makes of it
+        referencePriority = _cgmesReferencePriority(prio),
         p = -num(sm, :p, 0.0),                       # CGMES machine sign: p < 0 = injection
         q = -num(sm, :q, 0.0),
         pMin = gu === nothing ? nothing : num(gu, :minOperatingP),
@@ -2005,6 +2014,7 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
       (
         bus = bus,
         type = "EXTERNALNETWORKINJECTION",
+        referencePriority = _cgmesReferencePriority(prio),
         p = -num(eni, :p, 0.0),                      # load convention → injection
         q = -num(eni, :q, 0.0),
         pMin = _limitHullMin(num(eni, :minP), num(eni, :maxP)),
@@ -2263,6 +2273,9 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
       # only machine tuples carry a participation factor; every other pending
       # injection type reads out as `nothing` here
       participationFactor = get(inj, :participationFactor, nothing),
+      # only machine and network-injection tuples carry a priority; an
+      # EquivalentInjection or an SVC states none (0)
+      referencePriority = get(inj, :referencePriority, 0),
       defer_bus_type_refresh = true,
     )
     # Record the index per source mRID for post-build steps (HVDC pairs).

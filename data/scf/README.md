@@ -105,6 +105,22 @@ version bump.
 `pgm_interop.json` is the plain power-grid-model interoperability probe
 used by the adapter detection tests.
 
+## two_islands_prio (reference priority example)
+
+Seven 110 kV buses in two AC islands (the tie `Kesselau_110`-`Dornberg_110`
+is open). The north island has its slack, the grid infeed at `Almhof_110`
+(reference priority 1), plus a 60 MW machine at `Brunntal_110` (priority 2)
+and a 200 MW machine at `Kesselau_110` (none). The south island has no
+slack: `Dornberg_110` (40 MW, priority 2), `Eschwald_110` (150 MW, no
+priority, the largest unit) and `Fennwiese_110` (60 MW, priority 1) regulate
+their voltage, `Gruenau_110` carries 100 MW load. The south island takes
+`Fennwiese_110` as its reference (priority 1), `Eschwald_110` once the
+priorities are cleared; the outage of the north infeed hands its island to
+`Brunntal_110`. Power flow only, no measurements, no sidecar. Written by
+`exportSCF(build_case(); case_name = "two_islands_prio")` with the builder of
+`examples/others/exp_island_reference_priority.jl`, the example that walks
+through it.
+
 ## sp_case14_qu
 
 `sp_case14` plus one synchronous machine at the load bus `Ilmrode_110` (a PQ

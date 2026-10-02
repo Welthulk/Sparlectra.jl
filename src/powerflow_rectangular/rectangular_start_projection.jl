@@ -333,6 +333,29 @@ function _dc_start_quality_diagnostics(Ybus, Vdc::Union{Nothing,Vector{ComplexF6
   )
 end
 
+# A start candidate replaces the raw seed only when its residual 2-norm is at
+# least this factor below the seed's (#465):
+# a solved state from the case file must not lose to a candidate that is
+# only marginally better, and not by a metric one row dominates.
+const START_PROJECTION_MIN_IMPROVEMENT = 0.9
+
+# Residual of a start candidate in both metrics from ONE evaluation: the
+# 2-norm decides the selection (#465: on case_SyntheticUSA the largest
+# single row was a Q row of one bus the angles cannot change, so the max
+# ranked the DC start 0.06 pu "better" while it diverges and the file state
+# converges in six steps; the 2-norm ranks them 524 against 480), the max is
+# kept for the reported mismatch fields, which have always meant the max.
+function _start_candidate_mismatch(Ybus, V::Vector{ComplexF64}, S::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int)
+  F = mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx)
+  return (max = _max_abs_mismatch(F), l2 = norm(F))
+end
+
+# true when a candidate with residual 2-norm `cand` may replace the current
+# best (`best`) given the raw seed's 2-norm `raw`: better than the best and,
+# for a finite raw seed, at least START_PROJECTION_MIN_IMPROVEMENT below it
+_start_candidate_wins(cand::Float64, best::Float64, raw::Float64) =
+  isfinite(cand) && (!isfinite(best) || cand < best) && (!isfinite(raw) || cand < START_PROJECTION_MIN_IMPROVEMENT * raw)
+
 function _blend_voltage_starts(Vraw::Vector{ComplexF64}, Vdc::Vector{ComplexF64}, λ::Float64, slack_idx::Int)
   0.0 <= λ <= 1.0 || error("blend lambda must satisfy 0 ≤ λ ≤ 1 (got $(λ)).")
   V = similar(Vraw)
@@ -359,11 +382,15 @@ The function optionally evaluates multiple start candidates derived from the raw
 - DC-angle start,
 - optional raw/DC blended starts.
 
-Default behavior chooses the best finite measured start candidate. Requested DC
+Default behavior chooses the finite measured start candidate with the smallest
+residual 2-norm, and a candidate replaces the raw seed only when its 2-norm is
+at least 10 percent below the seed's (`START_PROJECTION_MIN_IMPROVEMENT`), so a
+solved state from the case file is not traded for a marginally different
+start (#465). The reported mismatch fields keep the max of the residual. Requested DC
 behavior is different: when `requested_angle_mode == :dc`, a finite and guarded
 DC-angle start is used as the requested baseline, and raw is used only if the
-DC candidate is invalid/non-finite or rejected by a start guard, or if the raw
-seed's measured mismatch is already smaller than the DC start's (a solved
+DC candidate is invalid/non-finite or rejected by a start guard, or if the DC
+start's residual 2-norm is not at least 10 percent below the raw seed's (a solved
 state from the case file must not be replaced by a colder start; reason
 `:raw_seed_closer_than_dc_start`). The slack-bus complex voltage is preserved
 as reference in all generated candidates.
@@ -428,10 +455,14 @@ function project_rectangular_start(
   end
   best = raw
   best_name = :raw
-  raw_mis = measure_candidates ? _perf_profile_time!(performance_profile, :start_projection_mismatch_evaluation) do
-    _max_rectangular_mismatch(Ybus, raw, S, bus_types, Vset, slack_idx)
-  end : NaN
+  raw_m = measure_candidates ? _perf_profile_time!(performance_profile, :start_projection_mismatch_evaluation) do
+    _start_candidate_mismatch(Ybus, raw, S, bus_types, Vset, slack_idx)
+  end : (max = NaN, l2 = NaN)
+  # *_mis are the max (reported fields), *_l2 the 2-norm (selection)
+  raw_mis = raw_m.max
+  raw_l2 = raw_m.l2
   best_mis = raw_mis
+  best_l2 = raw_l2
   selection_reason = measure_candidates ? :raw_baseline : :candidate_mismatch_not_measured
   Vdc = nothing
   dc_mis = NaN
@@ -442,6 +473,7 @@ function project_rectangular_start(
   fallback_to_raw = false
   fallback_reason = missing
   best_blend_mis = NaN
+  dc_l2 = NaN
 
   if try_dc_start || dc_angle_required
     Vdc = _perf_profile_time!(performance_profile, :start_projection_dc_start_construction) do
@@ -450,10 +482,12 @@ function project_rectangular_start(
     dc_angle_start_built = true
     dc_angle_start_valid = all(isfinite, real.(Vdc)) && all(isfinite, imag.(Vdc))
     candidate_count += 1
-    dc_mis = measure_candidates ? _perf_profile_time!(performance_profile, :start_projection_mismatch_evaluation) do
-      _max_rectangular_mismatch(Ybus, Vdc, S, bus_types, Vset, slack_idx)
-    end : NaN
-    if dc_angle_required && dc_angle_start_valid && measure_candidates && isfinite(raw_mis) && isfinite(dc_mis) && raw_mis < dc_mis
+    dc_m = measure_candidates ? _perf_profile_time!(performance_profile, :start_projection_mismatch_evaluation) do
+      _start_candidate_mismatch(Ybus, Vdc, S, bus_types, Vset, slack_idx)
+    end : (max = NaN, l2 = NaN)
+    dc_mis = dc_m.max
+    dc_l2 = dc_m.l2
+    if dc_angle_required && dc_angle_start_valid && measure_candidates && isfinite(raw_l2) && isfinite(dc_l2) && !(dc_l2 < START_PROJECTION_MIN_IMPROVEMENT * raw_l2)
       # The requested DC angles are a start for cold seeds; a seed that is
       # already closer to the solution than the DC start (a solved state
       # from the case file, a previous run) is kept, otherwise the request
@@ -461,6 +495,7 @@ function project_rectangular_start(
       # not converge at all (case6495rte: 0.03 pu against 575 pu).
       best_name = :raw
       best_mis = raw_mis
+      best_l2 = raw_l2
       fallback_to_raw = true
       fallback_reason = :raw_seed_closer_than_dc_start
       selection_reason = fallback_reason
@@ -468,6 +503,7 @@ function project_rectangular_start(
       best = Vdc
       best_name = :dc_start
       best_mis = dc_mis
+      best_l2 = dc_l2
       dc_angle_start_applied = true
       selection_reason = :requested_dc_angle_start
     elseif dc_angle_required
@@ -476,11 +512,12 @@ function project_rectangular_start(
       fallback_to_raw = true
       fallback_reason = :invalid_dc_angle_start
       selection_reason = fallback_reason
-    elseif measure_candidates && isfinite(dc_mis) && (!isfinite(best_mis) || dc_mis < best_mis)
+    elseif measure_candidates && _start_candidate_wins(dc_l2, best_l2, raw_l2)
       best = Vdc
       best_name = :dc_start
       best_mis = dc_mis
-      selection_reason = isfinite(raw_mis) ? :finite_improvement : :finite_candidate_replaces_nonfinite_raw
+      best_l2 = dc_l2
+      selection_reason = isfinite(raw_l2) ? :finite_improvement : :finite_candidate_replaces_nonfinite_raw
     elseif !measure_candidates && accept_unmeasured_dc_start
       # Optional policy: prefer structured DC start even without mismatch evaluation.
       best = Vdc
@@ -495,17 +532,20 @@ function project_rectangular_start(
         λ = Float64(λ_raw)
         Vblend = _blend_voltage_starts(raw, Vdc, λ, slack_idx)
         candidate_count += 1
-        blend_mis = measure_candidates ? _perf_profile_time!(performance_profile, :start_projection_mismatch_evaluation) do
-          _max_rectangular_mismatch(Ybus, Vblend, S, bus_types, Vset, slack_idx)
-        end : NaN
+        blend_m = measure_candidates ? _perf_profile_time!(performance_profile, :start_projection_mismatch_evaluation) do
+          _start_candidate_mismatch(Ybus, Vblend, S, bus_types, Vset, slack_idx)
+        end : (max = NaN, l2 = NaN)
+        blend_mis = blend_m.max
+        blend_l2 = blend_m.l2
         if isfinite(blend_mis) && (!isfinite(best_blend_mis) || blend_mis < best_blend_mis)
           best_blend_mis = blend_mis
         end
-        if !dc_angle_required && measure_candidates && isfinite(blend_mis) && (!isfinite(best_mis) || blend_mis < best_mis)
+        if !dc_angle_required && measure_candidates && _start_candidate_wins(blend_l2, best_l2, raw_l2)
           best = Vblend
           best_name = Symbol("blend_", λ)
           best_mis = blend_mis
-          selection_reason = isfinite(raw_mis) ? :finite_improvement : :finite_candidate_replaces_nonfinite_raw
+          best_l2 = blend_l2
+          selection_reason = isfinite(raw_l2) ? :finite_improvement : :finite_candidate_replaces_nonfinite_raw
         end
       end
     end
@@ -519,6 +559,7 @@ function project_rectangular_start(
         best = raw
         best_name = dc_angle_required ? :explicit_fallback_raw : :raw
         best_mis = raw_mis
+        best_l2 = raw_l2
         selection_reason = dc_angle_required ? :invalid_dc_angle_start : :nonfinite_selected_voltage
         fallback_to_raw = dc_angle_required
         fallback_reason = dc_angle_required ? :invalid_dc_angle_start : fallback_reason
@@ -565,6 +606,12 @@ function project_rectangular_start(
       raw_fallback_reason = fallback_reason,
       start_projection_mismatch_before = isfinite(raw_mis) ? raw_mis : missing,
       start_projection_mismatch_after = reported_best_mis,
+      # the selection compares residual 2-norms (#465); the *_mismatch
+      # fields above stay the max of the same residual
+      selection_metric = :l2_norm,
+      raw_mismatch_l2 = isfinite(raw_l2) ? raw_l2 : missing,
+      dc_mismatch_l2 = isfinite(dc_l2) ? dc_l2 : missing,
+      best_mismatch_l2 = isfinite(best_l2) ? best_l2 : missing,
       dc_quality...,
     )
   end

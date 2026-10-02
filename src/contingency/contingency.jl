@@ -513,9 +513,10 @@ per case, only for the base case (below).
 When the base case does not converge, it is retried through the solver rescue
 ladder (`runpf!` with `rescue = true`) before falling back to a flat template
 with a warning. `auto_slack` (default `true`) hands the reference to the
-strongest remaining unit when an outage removes it, for the whole network
-and for an island that lost it ([`reference_candidate_rank`](@ref)); the
-row then names the bus. With `auto_slack = false` such a case ends on the
+best remaining unit when an outage removes it, for the whole network and
+for an island that lost it: the stated reference priority first
+(`ProSumer.referencePriority`, 1 is the strongest), then
+[`reference_candidate_rank`](@ref); the row then names the bus. With `auto_slack = false` such a case ends on the
 missing reference. Remaining `kwargs...` are forwarded to the `:warm`/`:flat`/`:dc`
 contingency solves (the `:apslf` config path does not forward them).
 
@@ -552,6 +553,8 @@ function runContingencies!(
     parallel_max_tasks::Union{Nothing,Int}=nothing,
     parallel_min_work_items::Union{Nothing,Int}=nothing,
     auto_slack::Bool=true,
+    warm_active_set::Bool=false,
+    warm_note::Union{Nothing,Base.RefValue{String}}=nothing,
     kwargs...,
 )
     vm_min_pu < vm_max_pu || throw(ArgumentError("runContingencies!: vm_min_pu must be below vm_max_pu."))
@@ -569,7 +572,7 @@ function runContingencies!(
     # template hygiene, base loadings, chunked workers all live there); the
     # case118 CSV fixture pins these results byte for byte to the pre-engine
     # per-case-deepcopy implementation
-    engine = ScenarioEngine(net; vm_min_pu=vm_min_pu, vm_max_pu=vm_max_pu, maxIte=maxIte, tol=tol, ladder=ladder, pf_kwargs=(; auto_slack=auto_slack, kwargs...), screening_mode=screening_mode, screening_margin_pct=screening_margin_pct)
+    engine = ScenarioEngine(net; vm_min_pu=vm_min_pu, vm_max_pu=vm_max_pu, maxIte=maxIte, tol=tol, ladder=ladder, pf_kwargs=(; auto_slack=auto_slack, kwargs...), screening_mode=screening_mode, screening_margin_pct=screening_margin_pct, warm_active_set=warm_active_set, warm_note=warm_note)
     items = _engine_items_from_cases(engine.template, cases)
     return _run_engine_batch(engine, items; parallel_enabled=parallel_enabled, parallel_max_tasks=parallel_max_tasks, parallel_min_work_items=parallel_min_work_items)
 end

@@ -127,9 +127,13 @@ solver = apslf_solver(order = 24, use_pade = true, nr_polish = false)
   convergence radius).
 - `nr_polish::Bool`: Newton-Raphson polishing step on the series result
   (off by default).
-- `convergence_radius::Bool`: evaluate the Padé-pole margin
-  (`stability_from_Vcoeff`) and report it as the APSLF convergence radius
-  next to the Jacobian condition (on by default; costs about one solve).
+- `convergence_radius::Bool`: evaluate the Padé margin
+  (`stability_from_Vcoeff`, the distance of the nearest Padé pole to
+  `s = 1`) and report it next to the Jacobian condition (on by default;
+  costs about one solve). The margin is not the radius of convergence of
+  the series; that one, a root test on the growth of the voltage
+  coefficients, is reported next to it in every APSLF run (series radius
+  below 1: the plain series does not reach `s = 1`).
 - `mode::Symbol`: `:direct` (native PV handling) or `:outer` (PQ-only
   series plus an outer secant loop for PV enforcement).
 
@@ -147,9 +151,14 @@ iters, status, sol = runpf_external!(net, apslf_solver(); tol = 1e-8)
 Spec mapping `PFModel → AnalyticLoadFlow`: `Ybus → Y`, `busType → bustype`,
 `real/imag(Sspec) → Pspec/Qspec`, `Vset → Vm`, `qmin_pu/qmax_pu → Qmin/Qmax`
 (unconstrained when `model` carries no Q-limits), `slack_idx → slack`.
-`sol.meta` carries the series/Padé `order`, an APSLF stability indicator
-(`dmin`/`pole`/`bus`/`level`, from the distance of the Padé poles to the
-evaluation point `s = 1`) and NR-polish bookkeeping.
+`sol.meta` carries the series/Padé `order`, the Padé margin
+(`stability`: `dmin`/`pole`/`bus`/`level`, from the distance of the Padé
+poles to the evaluation point `s = 1`), the series radius
+(`series_radius`: `radius`/`bus`) and NR-polish bookkeeping; both bus fields
+are node indices of the solved net, while the framework run reports case bus
+numbers. Without a finite reactive limit (Q limits off) the direct kernel
+runs one pass: nothing can switch, so further passes would repeat the same
+series solve.
 
 ### Framework integration
 

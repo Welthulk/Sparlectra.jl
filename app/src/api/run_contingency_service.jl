@@ -23,6 +23,11 @@
 #          dir, no cache workflow of its own). rescue_ladder is read from the
 #          config; the outage kind is a run parameter, not a config key.
 
+# power mode (0.30.1) with its sparse LU choice (0.30.2) for the worker
+# solves of the scenario engine and N-1, only when the configuration
+# switches power mode on
+_power_mode_kwargs(pf) = pf.power_mode ? (; power_mode = true, power_mode_lu = pf.power_mode_lu) : (;)
+
 # dishonest Newton (0.30.2) for the worker solves of the scenario engine and
 # N-1, only when the configuration switches it on
 _jacobian_reuse_kwargs(pf) = pf.jacobian_reuse ? (; jacobian_reuse = true, jacobian_reuse_min_reduction = pf.jacobian_reuse_min_reduction, jacobian_reuse_max_steps = pf.jacobian_reuse_max_steps) : (;)
@@ -77,8 +82,9 @@ metadata reports `contingency_weights_applied` and `contingency_weighted_cases`.
 
 An outage that removes the reference (the slack unit itself, or the branch
 that ties it to an island) does not end the case: the run solves with
-`auto_slack`, the strongest remaining unit takes over (an island without a
-voltage-controlled unit takes its strongest generating unit), and the row
+`auto_slack`, the best remaining unit takes over (stated reference priority
+first, then the strongest unit; an island without a voltage-controlled unit
+takes its best generating unit), and the row
 names the bus ("reference taken over by bus ..."). Only an island without
 any generating unit stays without a reference and is reported as islanded
 with the load it loses.
@@ -189,6 +195,8 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
     return _api_failure("invalid_request", "screening_mode must be off, flag, or only; got \"$(screening_mode)\".", run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
   end
   screen_margin = screening_margin_pct === nothing ? config.contingency.screening_margin_pct : Float64(screening_margin_pct)
+  # the warm-active-set line of the scenario engine, written into run.log
+  warm_note = Ref("")
   if !(isfinite(screen_margin) && screen_margin >= 0.0)
     return _api_failure("invalid_request", "screening_margin_pct must be a finite value >= 0; got $(screen_margin).", run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
   end
@@ -218,7 +226,8 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
       end
       # power mode (0.30.1) reaches the scenario engine's worker nets like the N-1 path below
       runScenarios!(net, set; index = idx, rescue_ladder = config.contingency.rescue_ladder, screening_mode = screen_mode, screening_margin_pct = screen_margin,
-        (config.powerflow.power_mode ? (; power_mode = true) : (;))..., _jacobian_reuse_kwargs(config.powerflow)...)
+        _power_mode_kwargs(config.powerflow)..., _jacobian_reuse_kwargs(config.powerflow)...,
+        warm_active_set = config.contingency.warm_active_set, warm_note = warm_note)
     catch err
       err isa PowerFlowAborted && rethrow()
       return _api_failure("invalid_case_file", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
@@ -297,13 +306,13 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
   dslack_kwargs = dslack.enabled ? (; distributed_slack_enabled = true, distributed_slack_p_mode = dslack.p_mode, distributed_slack_fallback = dslack.fallback) : (;)
   # power mode (0.30.1): the worker nets of the engine keep their Ybus,
   # factorization and work arrays across the outages when the caller set it
-  config.powerflow.power_mode && (dslack_kwargs = (; dslack_kwargs..., power_mode = true))
+  dslack_kwargs = (; dslack_kwargs..., _power_mode_kwargs(config.powerflow)...)
   dslack_kwargs = (; dslack_kwargs..., _jacobian_reuse_kwargs(config.powerflow)...)
   if results === nothing
     # an outage that removes the reference, or splits off an island without
     # one, does not end the case: the strongest remaining unit takes over
     # and the result names it (auto_slack, the default of runContingencies!)
-    results = runContingencies!(net, cases; rescue_ladder = config.contingency.rescue_ladder, screening_mode = screen_mode, screening_margin_pct = screen_margin, dslack_kwargs...)
+    results = runContingencies!(net, cases; rescue_ladder = config.contingency.rescue_ladder, screening_mode = screen_mode, screening_margin_pct = screen_margin, warm_active_set = config.contingency.warm_active_set, warm_note = warm_note, dslack_kwargs...)
   end
   n_screened = eltype(results) === ScenarioResult ? count(r -> r.screened, results) : 0
   report = buildContingencyReport(results)
@@ -326,6 +335,8 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
     end
     se_run_id !== nothing && println(io, "base case: SE-started (", se_start_mode, ") from SE run ", se_run_id)
     println(io, "rescue ladder: ", config.contingency.rescue_ladder)
+    # warm active set (0.30.2): one line when on, nothing when off
+    isempty(warm_note[]) || println(io, warm_note[])
     println(io, "reference: an outage that removes it hands it to the strongest remaining unit (auto_slack)")
     println(io, "slack: ", dslack.enabled ? "distributed (power_flow.distributed_slack, p_mode $(dslack.p_mode))" : "single reference bus per island (power_flow.distributed_slack is off)")
     if screen_mode === :off

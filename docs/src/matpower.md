@@ -290,9 +290,10 @@ runs write `matpower_dcline.csv` describing the mapping.
 No AC branches, dummy admittances or tiny impedance bridges are created
 between the terminals, so large cases such as `case_SyntheticUSA.m` consist
 of several AC Ybus components coupled only through DC-line injections.
-`power_flow.islands.enabled = true` is the default; with
-`power_flow.islands.mode = solve_independent` each AC island is solved by the
-rectangular NR solver and the states are merged into one result. The
+`power_flow.islands.enabled = true` is the default; each AC island is
+solved by the rectangular NR solver (large islands on their own threads,
+see [Parallel Execution](parallel_execution.md)) and the states are merged
+into one result. The
 artifact `ac_islands.csv` records per island the reference bus, status,
 active DC-line terminal count, power totals and pre-slack active-power
 imbalance.
@@ -344,8 +345,14 @@ The direct importer takes the same switches as keywords
 
 - The file must define or return `mpc` with `mpc.version` `'2'`; decimal
   values use a decimal point.
-- Bus numbers in `branch` and `gen` must exist in `mpc.bus`, and each
-  connected island needs at least one in-service reference bus.
+- Bus numbers in `branch` and `gen` must exist in `mpc.bus`. Every type-3
+  bus becomes the reference of its AC island; a second one in the same
+  island stays a PV bus, with a warning. The units of every type-3 bus get
+  reference priority 1, so they are the first to take over when their
+  island loses its reference
+  ([Reference priority](slack_vs_source.md#Reference-priority)). An island
+  without a type-3 bus takes the bus of its best voltage-controlled unit;
+  one without any generating unit cannot be solved.
 - Inactive generators or branches carry status `0`; per-unit branch
   impedances must be consistent with `baseMVA` and the voltage base.
 - Transformer conductance lives on `PowerTransformerWinding.g` and flows

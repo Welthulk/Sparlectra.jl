@@ -530,6 +530,21 @@ function test_state_estimation_sequential_elimination()::Bool
       rdbig = @test_logs (:warn, r"K report .* skipped") Sparlectra._residual_diagnostics(Hbig, zeros(Float64, mbig), ones(Float64, mbig); need_full_omega = true, minStates = 1)
       @test rdbig.omega === nothing
       @test length(rdbig.wii) == mbig
+      # beyond the dense state cap with few measurements (case1354pegase:
+      # 2707 states failed the whole run with "no affordable route"): no
+      # error and no warning, the Takahashi route serves w_ii and the K
+      # columns come blockwise; a Takahashi refusal there lands on the
+      # blockwise route instead of the error
+      nwide = Sparlectra._SE_DENSE_LINALG_MAX_N + 1
+      Hwide = SparseArrays.sparse(1:nwide, 1:nwide, 1.0, nwide, nwide)
+      rdwide = @test_logs Sparlectra._residual_diagnostics(Hwide, zeros(Float64, nwide), ones(Float64, nwide); need_full_omega = true, minStates = 1)
+      @test rdwide.omega === nothing
+      @test rdwide.omega_path === :takahashi
+      @test length(rdwide.wii) == nwide
+      rdblk = Sparlectra._residual_diagnostics(Hwide, zeros(Float64, nwide), ones(Float64, nwide); minStates = typemax(Int))
+      @test rdblk.omega_path === :blockwise
+      @test rdblk.wii == rdwide.wii
+      @test Sparlectra._residual_correlation_max_blockwise(Hwide, ones(Float64, nwide)) == zeros(Float64, nwide)
     end)()
     reportK = with_state_estimation_config(max_iter = 20, tol = 1e-8, report_residual_correlation = true) do
       validate_measurements(net, meas)
@@ -1389,9 +1404,12 @@ function test_state_estimation_measurement_csv()::Bool
     @test all(a == b for (a, b) in zip(porig, pnet.measurements))
     # a branch_nr pointing at a branch with other endpoints is rejected
     plines = readlines(fpar)
-    pparts = split(plines[3], ",")
+    # the file follows output.csv_format (excel_de by default since 0.30.2:
+    # semicolon cells, decimal comma), so split on the delimiter it carries
+    pdelim = occursin(';', plines[3]) ? ";" : ","
+    pparts = split(plines[3], pdelim)
     pparts[5] = "3"
-    plines[3] = join(pparts, ",")
+    plines[3] = join(pparts, pdelim)
     badnr = joinpath(dir, "badnr.csv")
     open(io -> foreach(l -> println(io, l), plines), badnr, "w")
     errB = try
@@ -1618,6 +1636,45 @@ function test_state_estimation_islands()::Bool
     @test res.dof == sum(i.dof for i in res.islands)
     # merged voltages are in ORIGINAL bus numbering and match the PF truth
     @test maximum(abs.(abs.(res.voltages) .- vm_true)) < 1e-6
+
+    # 0.30.2: islands estimated on their own tasks equal the serial run.
+    # The fixture's islands have 3 and 2 buses, so the size threshold is
+    # lowered to 1; the serial reference switches runtime.parallel off.
+    function _se_islands_with(parallel::Bool)
+      active = Sparlectra.active_sparlectra_config()
+      pf = Sparlectra._copy_powerflow_with(active.powerflow; islands_parallel_min_buses = 1)
+      rt = Sparlectra.RuntimeConfig(parallel = Sparlectra.ParallelRuntimeConfig(enabled = parallel))
+      cfg = Sparlectra._sparlectra_config_with(active; powerflow = pf, runtime = rt)
+      return Sparlectra.with_sparlectra_config(cfg) do
+        with_state_estimation_config(max_iter = 30, tol = 1e-10, update_net = false) do
+          runse!(net, meas)
+        end
+      end
+    end
+    se_serial = _se_islands_with(false)
+    for _ = 1:5
+      se_par = _se_islands_with(true)
+      @test se_par.voltages == se_serial.voltages
+      @test se_par.residuals == se_serial.residuals
+      @test se_par.objectiveJ == se_serial.objectiveJ
+      @test [i.iterations for i in se_par.islands] == [i.iterations for i in se_serial.islands]
+    end
+    println("      SE islands in parallel vs serial: ", Threads.nthreads() > 1 ? "RAN with $(Threads.nthreads()) threads (5 repeated comparisons)" : "single-threaded process, both runs take the serial path (comparison trivially equal)")
+
+    # a shunt measurement in the second island (0.30.2): the island subnet
+    # looked shunts up in the dictionary of the whole net, keyed by the
+    # net-wide bus numbers, and failed with "no shunt registered at this bus"
+    netS = _two_island_net()
+    addShunt!(net = netS, busName = "B2", pShunt = 0.0, qShunt = 5.0)
+    runpf!(netS, 40, 1e-10, 0; islands_enabled = true)
+    vm_shunt = [n._vm_pu for n in netS.nodeVec]
+    measS = generateMeasurementsFromPF(netS; noise = false, includeShuntQ = true)
+    @test any(m -> m.typ == Sparlectra.ShuntQMeas, measS)
+    resS = with_state_estimation_config(max_iter = 30, tol = 1e-10, update_net = false) do
+      runse!(netS, measS)
+    end
+    @test resS.converged
+    @test maximum(abs.(abs.(resS.voltages) .- vm_shunt)) < 1e-6
 
     # the printed diagnostics carry the per-island band test (no island can
     # hide inside the summed chi-square)
@@ -2502,7 +2559,7 @@ end
 # else is re-emitted for the runner's warning check. `f` receives the
 # result dict, run.log and se_diagnostics.md; without the cache the run is
 # reported as SKIPPED and `f` is not called.
-function _minigrid_fallback_run(f::Function, set::AbstractString, name::AbstractString)
+function _minigrid_fallback_run(f::Function, set::AbstractString, name::AbstractString; staged::Bool = false)
   root = joinpath(Sparlectra.CGMESImporter.cgmesTestSetCacheDir(), "extracted", "MiniGrid", "BusBranch")
   base = joinpath(root, "CGMES_v2.4.15_MiniGridTestConfiguration_BaseCase_v3")
   boundary = joinpath(root, "CGMES_v2.4.15_MiniGridTestConfiguration_Boundary_v3")
@@ -2523,7 +2580,7 @@ function _minigrid_fallback_run(f::Function, set::AbstractString, name::Abstract
     logger = Test.TestLogger(min_level = Logging.Warn)
     res = Logging.with_logger(logger) do
       redirect_stdout(devnull) do
-        SparlectraApp._run_state_estimation_service(z, Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, out, name, set; tap_estimation = true, max_iter = 50)
+        SparlectraApp._run_state_estimation_service(z, Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, out, name, set; tap_estimation = true, max_iter = 50, tap_staged_start = staged)
       end
     end
     for record in logger.logs
@@ -2581,12 +2638,24 @@ function test_state_estimation_tap_fallback_diagnostics_consistent()::Bool
     @test occursin("frozen at their model positions", SparlectraApp._se_truth_run_warning(Dict{String,Any}("se_band_reason" => "ok", "se_tap_estimation_fallback" => true)))
     @test SparlectraApp._se_truth_run_warning(Dict{String,Any}("se_band_reason" => "ok", "numerical_status" => "converged")) == ""
     set = joinpath(@__DIR__, "fixtures", "measurements", "cgmes_minigrid_tap_fallback.measurements.csv")
+    # the COLD mass release (no staged start) does not converge here and
+    # falls back; the fixture pins that path's report
     _minigrid_fallback_run(set, "minigrid_fb") do dd, log, diag
       _assert_minigrid_fallback_report(dd, log, diag, "minigrid_fb", set)
       @test occursin("- **Eliminated rows:** 3 ", diag)
       @test occursin("(stop: max_eliminations)", diag)
       @test !occursin("Reverted:", diag)
       @test !occursin("Not eliminated", diag)
+    end
+    # the staged start (the service default) converges on the same set, and
+    # the fixed taps fit better than the model positions (measured J 1964 at
+    # dof 75 against 2859 at dof 78), so the estimate is kept
+    _minigrid_fallback_run(set, "minigrid_fb_staged"; staged = true) do dd, log, diag
+      @test dd["status"] == "succeeded"
+      @test get(dd["metadata"], "se_tap_staged_start", false) == true
+      @test get(dd["metadata"], "se_tap_estimation_fallback", false) == false
+      @test occursin("tap estimation: staged start", log)
+      @test !occursin("repeating WITHOUT tap estimation", log)
     end
   end
   return true
@@ -2612,6 +2681,18 @@ function test_state_estimation_elimination_reverted()::Bool
       @test occursin("- **Not eliminated:** `", diag)
       @test occursin("(stop: not_converged)", diag)
       @test occursin("Reverted:", diag)
+    end
+    # the acceptance rule of the staged start: on this set the staged
+    # estimate converges but its fixed taps fit far worse than the model
+    # positions (measured J 16382 against 1114), so it is rejected and the
+    # run falls back with its own reason and note on every surface
+    _minigrid_fallback_run(set, "minigrid_rev_staged"; staged = true) do dd, log, diag
+      _assert_minigrid_fallback_report(dd, log, diag, "minigrid_rev_staged", set)
+      @test get(dd["metadata"], "se_tap_estimation_fallback_reason", "") == "worse_fit"
+      @test occursin("tap estimation rejected:", log)
+      @test occursin(SparlectraApp._SE_TAP_REJECTED_NOTE, diag)
+      @test occursin(SparlectraApp._SE_TAP_REJECTED_NOTE, SparlectraApp._webui_se_summary(dd))
+      @test occursin(SparlectraApp._webui_escape(SparlectraApp._SE_TAP_REJECTED_NOTE), SparlectraApp._webui_se_tap_section(dd))
     end
   end
   return true
@@ -2713,20 +2794,33 @@ function test_state_estimation_tap_fallback()::Bool
     # the fallback must be visible on all THREE
     # surfaces, because a run whose tap positions are MODEL values looks
     # exactly like a successful tap estimation otherwise, and its J measures
-    # those model positions. sp_case60 at a cap of 4 is the shipped fixture
-    # that produces a SUCCEEDING run with the fallback used: the tap solve
-    # needs more iterations than the plain one, so the first attempt fails
-    # and the repeat converges (measured; the same holds for
-    # sp_case188, while sp_case14 already converges with the taps).
+    # those model positions. Under a flat start the staged start (taps
+    # frozen for one solve, then released from that state) rescues the
+    # shipped cases at a cap of 4, where the cold tap solve used to fail
+    # (sp_case60 and sp_case188 needed the fallback before; case1354pegase
+    # with 240 released taps needed 63 iterations cold and 4 staged). The
+    # fallback is still reached from a configured WARM start, which skips
+    # the staging: sp_case188 at a cap of 3 converges plain but not with
+    # the taps, so the repeat succeeds (measured).
     mktempdir() do d
-      shipped = joinpath(dirname(@__DIR__), "data", "scf", "sp_case60.scf.json")
-      set = joinpath(d, "gen60.csv")
+      shipped = joinpath(dirname(@__DIR__), "data", "scf", "sp_case188.scf.json")
+      set = joinpath(d, "gen188.csv")
       SparlectraApp._se_generate_measurement_set(shipped, set, SparlectraApp.MeasurementGeneratorOptions(; noise = true, gross_k = 0.0, tap_steps = 0.0,
         include_i = false, sigma_u_pct = 0.5, sigma_i_pct = 1.0, sigma_p_pct = 1.0, sigma_q_pct = 1.0,
         sigma_ia_deg = 0.0, seed = 42))
+      # the staged start itself: flat start, cap 4, the mass release
+      # converges WITHOUT the fallback
+      res_st = redirect_stdout(devnull) do
+        SparlectraApp._run_state_estimation_service(shipped, Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH,
+          joinpath(d, "st"), "tapst188", set; tap_estimation = true, max_iter = 4, flatstart = true)
+      end
+      dst = SparlectraApp.to_dict(res_st)
+      @test dst["status"] == "succeeded"
+      @test get(dst["metadata"], "se_tap_staged_start", false) == true
+      @test get(dst["metadata"], "se_tap_estimation_fallback", false) == false
       res = redirect_stdout(devnull) do
         SparlectraApp._run_state_estimation_service(shipped, Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH,
-          joinpath(d, "fb"), "tapfb60", set; tap_estimation = true, max_iter = 4)
+          joinpath(d, "fb"), "tapfb188", set; tap_estimation = true, max_iter = 3, flatstart = false)
       end
       dd = SparlectraApp.to_dict(res)
       @test dd["status"] == "succeeded"

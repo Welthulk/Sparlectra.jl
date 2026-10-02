@@ -125,6 +125,15 @@ feature on; the case has to ask for it in its `config` block:
 weight list keyed by bus name is a run setting, not network data. See
 [Power-Flow Configuration](powerflow_configuration.md).
 
+Which appliance holds the reference is a flag of the appliance,
+`extra.<appliance>.reference_pri`. Which one takes it over when an island
+has none, or when the slack is lost in N-1, is its reference priority,
+`extra.<appliance>.reference_priority`: an integer with the CGMES semantics
+(1 is the strongest, larger is weaker), written only where one is stated.
+The field is optional: a file without it, every file written before 0.30.2
+included, reads unchanged with no priority on any unit. See
+[Reference priority](slack_vs_source.md#Reference-priority).
+
 ## Importers and the typed case
 
 Every input format has its own importer that builds the network directly
@@ -246,6 +255,7 @@ keeps every attribute PGM requires.
 | `extra.<machine>.qu_control.interpolation`, `pu_control.interpolation` | `"linear"` | piecewise linear characteristic |
 | `extra.<machine>.qu_control.qmin_mvar`, `qmax_mvar`, `pu_control.pmin_mw`, `pmax_mw` | absent | no limit on the controlled value |
 | `extra.<machine>.regulated`, `apu_node` | `false` | |
+| `extra.<machine>.reference_priority` | `0` | no reference priority stated |
 | `extra.<branch>.meta.sn_mva` | absent | no rating recorded |
 | `components.tap_changer[].tap_est_mode` | `"none"` | the tap is not released for estimation |
 | `components.transformer3w[].status` | `1` | in service |

@@ -179,6 +179,9 @@ function convert_case(::MatpowerAdapter, mpc, opts::MatpowerAdapterOptions)::SCF
   u_rated_by_orig = Dict{Int,Float64}()
   zb_by_orig = Dict{Int,Float64}()
   slack_orig = 0
+  # every type-3 bus that is its AC island's reference, the same rule as the
+  # direct import (#465, _matpower_island_references)
+  ref_buses = _matpower_island_references(busData, brData, _matpower_sparlectra_links(mpc), BUS_I, BUS_TYPE, F_BUS, T_BUS, BR_STATUS)
   isolated_ids = Int[]
   start_nodes = spar.start_state.nodes
   spar.start_state.source = "matpower_case"
@@ -381,7 +384,10 @@ function convert_case(::MatpowerAdapter, mpc, opts::MatpowerAdapterOptions)::SCF
       isfinite(qMax) && (e["max_q_mvar"] = qMax)
       isfinite(qMin) && (e["min_q_mvar"] = qMin)
     end
-    slack_orig == orig && (e["reference_pri"] = true)
+    orig in ref_buses && (e["reference_pri"] = true)
+    # type 3 is reference priority 1 for every unit of the bus, as in the
+    # direct import (a demoted second type-3 bus included)
+    btype == 3 && (e["reference_priority"] = 1)
     # PQ generator limits become constant P(U)/Q(U) controllers on build,
     # exactly like the direct import (stage-3a carrier; the flag makes the
     # derivation explicit so existing SCF files stay untouched)
@@ -518,7 +524,8 @@ function convert_case(::MatpowerAdapter, mpc, opts::MatpowerAdapterOptions)::SCF
 
   # --- roles, contingencies, provenance -----------------------------------
   if slack_orig != 0
-    spar.roles.slack = SCFSlackRole(mode = isempty(participation) ? "single" : "distributed", nodes = Int[node_id_by_orig[slack_orig]], participation = participation)
+    ref_nodes = Int[node_id_by_orig[Int(row[BUS_I])] for row in eachrow(busData) if Int(row[BUS_I]) in ref_buses]
+    spar.roles.slack = SCFSlackRole(mode = isempty(participation) ? "single" : "distributed", nodes = ref_nodes, participation = participation)
   end
   isempty(isolated_ids) || (spar.roles.isolated_nodes = isolated_ids)
   if opts.import_for001_contingencies && hasproperty(mpc, :for001_contingencies) && getproperty(mpc, :for001_contingencies) !== nothing

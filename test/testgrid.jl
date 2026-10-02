@@ -508,6 +508,30 @@ function test_power_mode_same_solution_and_topology_change()::Bool
       cache.ybus_reuse_count == 1 || return false   # the fingerprint moved, the Ybus was rebuilt
     end
   end
+  # 0.30.2: N-1 with power mode equals N-1 without it, outage by outage.
+  # The kept Jacobian assembly replays recorded positions; it was reused
+  # when the bus types matched the previous solve's START types although
+  # (a) that solve had ended with other types and (b) an outage had rebuilt
+  # the Ybus with another pattern. With the warm active set the types match
+  # from outage to outage, which made 55 of 186 sp_case118 outages differ
+  # (one diverged) before the fix.
+  path118 = joinpath(dirname(@__DIR__), "data", "mpower", "sp_case118.m")
+  cases = Sparlectra.generateN1Branches(Sparlectra.createNetFromMatPowerFile(filename = path118))
+  plain = Sparlectra.runContingencies!(Sparlectra.createNetFromMatPowerFile(filename = path118), cases; parallel_enabled = false, warm_active_set = true, warm_note = Ref(""))
+  pm = Sparlectra.runContingencies!(Sparlectra.createNetFromMatPowerFile(filename = path118), cases; parallel_enabled = false, warm_active_set = true, power_mode = true, warm_note = Ref(""))
+  all(i -> plain[i].converged == pm[i].converged && plain[i].iterations == pm[i].iterations, eachindex(plain)) || return false
+  # #457: the worker reset must not wipe the worker's power-mode cache when
+  # the template carries none (a rescued or flat base case)
+  template = Sparlectra.createNetFromMatPowerFile(filename = path118)
+  template._power_cache = nothing
+  work = deepcopy(template)
+  runpf!(work, 30, 1e-8, 0; power_mode = true)
+  kept = work._power_cache
+  kept isa Sparlectra.PowerModeCache || return false
+  Sparlectra._reset_scenario_worker!(work, template)
+  work._power_cache === kept || return false
+  runpf!(work, 30, 1e-8, 0; power_mode = true)
+  kept.context_reuse_count >= 1 || return false
   return true
 end
 
@@ -711,11 +735,15 @@ function test_rectangular_start_projection_keeps_raw_without_finite_improvement(
   nonfinite_profile = Dict{Symbol,Any}(:enabled => true)
   Vnonfinite = Sparlectra.project_rectangular_start(Y, Vraw, ComplexF64[0.0+0.0im, NaN+0.0im], bus_types, Vset, 1; enabled = true, try_dc_start = true, try_blend_scan = false, measure_candidates = true, performance_profile = nonfinite_profile)
 
+  # a requested DC start replaces the seed when its residual 2-norm is at
+  # least 10 percent below the seed's (#465): with load at bus 2 the flat
+  # seed has 1.02, the DC start 0.25
+  Srequested = ComplexF64[0.0+0.0im, -1.0-0.2im]
   requested_dc_profile = Dict{Symbol,Any}(:enabled => true)
   Vrequested_dc = Sparlectra.project_rectangular_start(
     Y,
     Vraw,
-    ComplexF64[0.0+0.0im, 0.0+0.0im],
+    Srequested,
     bus_types,
     Vset,
     1;
@@ -727,6 +755,12 @@ function test_rectangular_start_projection_keeps_raw_without_finite_improvement(
     requested_voltage_mode = :profile_blend,
     performance_profile = requested_dc_profile,
   )
+
+  # without injections the flat seed is the exact solution and the DC start
+  # equals it: no candidate is 10 percent better, the seed stays (#465)
+  tie_profile = Dict{Symbol,Any}(:enabled => true)
+  Sparlectra.project_rectangular_start(Y, Vraw, ComplexF64[0.0+0.0im, 0.0+0.0im], bus_types, Vset, 1; enabled = true, try_dc_start = true, try_blend_scan = false, measure_candidates = true, requested_angle_mode = :dc, requested_voltage_mode = :profile_blend, performance_profile = tie_profile)
+  tie_summary = tie_profile[:start_projection_summary]
 
   invalid_dc_profile = Dict{Symbol,Any}(:enabled => true)
   Vinvalid_dc = Sparlectra.project_rectangular_start(
@@ -818,7 +852,9 @@ function test_rectangular_start_projection_keeps_raw_without_finite_improvement(
          nonfinite_profile[:start_projection_summary].selected === :raw &&
          nonfinite_profile[:start_projection_summary].reason === :no_finite_improvement &&
          ismissing(nonfinite_profile[:start_projection_summary].best_mismatch) &&
-         Vrequested_dc == Sparlectra._dc_angle_start_rectangular(Y, Vraw, ComplexF64[0.0+0.0im, 0.0+0.0im], bus_types, Vset, 1; dc_angle_limit_deg = 60.0) &&
+         Vrequested_dc == Sparlectra._dc_angle_start_rectangular(Y, Vraw, Srequested, bus_types, Vset, 1; dc_angle_limit_deg = 60.0) &&
+         tie_summary.selected === :raw &&
+         tie_summary.reason === :raw_seed_closer_than_dc_start &&
          requested_summary.selected === :dc_start &&
          requested_summary.reason === :requested_dc_angle_start &&
          requested_summary.dc_angle_start_built === true &&
@@ -2462,7 +2498,9 @@ function test_wrong_branch_output_visibility()::Bool
     island_result.final_converged || return ("", String[], Int[])
     text = read(joinpath(tmpdir, "ac_island_solver_summary.csv"), String)
     csv_lines = split(strip(text), '\n')
-    return (text, split(csv_lines[1], ','), [length(split(line, ',')) for line in csv_lines[2:end]])
+    # the report follows output.csv_format (excel_de by default since 0.30.2)
+    delim = occursin(';', csv_lines[1]) ? ';' : ','
+    return (text, split(csv_lines[1], delim), [length(split(line, delim)) for line in csv_lines[2:end]])
   end
   isempty(csv_text) && return false
   header_fields[(end-1):end] == ["wrong_branch_status", "wrong_branch_reason"] || return false
@@ -2472,7 +2510,8 @@ function test_wrong_branch_output_visibility()::Bool
     ',',
   ) || return false
   all(count -> count == length(header_fields), row_field_counts) || return false
-  occursin("wrong_branch_status: warn", csv_text) || occursin(",warn,", csv_text) || return false
+  # the cell check holds in either delimiter (excel_de is the default since 0.30.2)
+  occursin("wrong_branch_status: warn", csv_text) || occursin(",warn,", csv_text) || occursin(";warn;", csv_text) || return false
 
   return true
 end

@@ -1079,7 +1079,7 @@ println("rows identical: ", isequal(sc_ser.rows, sc_par.rows))
 # to the very same serial function). The real effect wants your local
 # machine: `julia --threads=auto --project=.
 # examples/run_parallel_suite.jl` runs the three dedicated demos, island
-# solving (`power_flow.islands.mode: solve_parallel`), this fault sweep at
+# solving (islands of 200 buses or more on their own threads), this fault sweep at
 # 8000 buses, and a full N-1 contingency batch on case1354pegase (measured
 # 71.7 s serial vs 17.6 s on 16 threads), each asserting serial/parallel
 # identity. The N-1 batch itself is chapter 5 (Example 5.1); on a large

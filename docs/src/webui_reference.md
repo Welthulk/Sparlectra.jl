@@ -66,6 +66,12 @@ Then it looks for a usable sysimage and offers to build one; the build,
 its flags, the staleness rules and the **Sysimage** page are on
 [Sysimage](sysimage.md).
 
+The start scripts run Julia with more than one thread
+(`JULIA_NUM_THREADS=auto` unless set). A case that splits into several
+islands then solves its large islands in parallel, in the power flow and
+in the state estimation; there is no control for it, see
+[Parallel Execution](parallel_execution.md).
+
 ### From the Julia REPL
 
 ```julia
@@ -375,8 +381,10 @@ The settings and run forms offer:
   enforcement-mode selector in one block; the selector also offers **off**
   and shows it whenever the handling is off. Below them, **PV/PQ
   switching** shows the hysteresis and the final check bound
-  (`final_q_accept_pu`, `auto` or a value in pu; the two settings the
-  classic modes read), the first switching iteration (`start_iter`), the
+  (`final_q_accept_pu`, `auto` or a value in pu), the pass limit of the
+  classic outer loop (`classic_max_passes`, greyed in the active-set mode;
+  these three are the settings the classic modes read), the first
+  switching iteration (`start_iter`), the
   maximum switches per bus (`guard.max_switches`), freezing after repeated
   switching and the narrow-range guard switch (`guard.enabled`); **Advanced**
   holds the rest of `power_flow.qlimits`: start rule and auto threshold,
@@ -840,7 +848,11 @@ it with the same parser and duplicate-key checks, writes only after
 validation with a timestamped backup, and warns when a case configuration
 file still overrides the global YAML through the prefilled form. After a
 save the server reloads the file, so the form shows the new values on the
-next page load.
+next page load. The search box above the text finds plain text (case does
+not matter; Enter or **Next** for the next hit, Shift+Enter or **Previous**
+for the one before) or, for a dotted key such as
+`power_flow.qlimits.guard.enabled`, jumps to exactly that key by following
+the YAML nesting.
 
 Form values override the YAML configuration; the order is described in
 [Configuration](configuration.md). Each run writes `effective_config.yaml`.

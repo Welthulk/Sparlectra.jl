@@ -261,6 +261,33 @@ mpc.dcline = [
       @test result2.converged == true
       @test net_paired.prosumpsVec[m.from_prosumer].pVal == -40.0
       @test net_paired.prosumpsVec[m.to_prosumer].pVal == 40.0 - (3.0 + 0.0125 * 40.0)
+      # #465: MATPOWER carries one reference per synchronous area. With bus 3
+      # typed 3 as well, each island keeps the reference of the file (before
+      # 0.30.2 only the first type-3 bus became Slack and bus 3 lost its
+      # voltage control); joined by an AC branch, the second reference of the
+      # same island stays a voltage-regulated PV bus, with a warning
+      two_refs = replace(read(path, String), "3 2 0 0 0 0 1 1.0 0 380 1 1.1 0.9;" => "3 3 0 0 0 0 1 1.0 0 380 1 1.1 0.9;")
+      path_refs = joinpath(case, "case_b2b_two_refs.m")
+      write(path_refs, two_refs)
+      net_refs = createNetFromMatPowerFile(filename = path_refs, matpower_dcline_mode = :pf_injections)
+      @test Sparlectra.getNodeType(net_refs.nodeVec[1]) == Sparlectra.Slack
+      @test Sparlectra.getNodeType(net_refs.nodeVec[3]) == Sparlectra.Slack
+      _, erg_refs = runpf!(net_refs, 40, 1e-9, 0; method = :rectangular, islands_enabled = true)
+      @test erg_refs == 0
+      # the SCF conversion of the case carries the same two references
+      mpc_refs = Sparlectra.MatpowerIO.read_case(path_refs; legacy_compat = true)
+      scf_refs = Sparlectra.convert_case(Sparlectra.MatpowerAdapter(), mpc_refs, Sparlectra.matpower_adapter_options(Sparlectra.active_sparlectra_config()))
+      @test length(scf_refs.sparlectra.roles.slack.nodes) == 2
+      path_tied = joinpath(case, "case_b2b_tied.m")
+      write(path_tied, replace(two_refs, "3 4 0.01 0.08 0 250 250 250 0 0 1 -360 360;" => "3 4 0.01 0.08 0 250 250 250 0 0 1 -360 360;\n2 3 0.01 0.08 0 250 250 250 0 0 1 -360 360;"))
+      net_tied = @test_logs (:warn, r"second reference bus 3 in the AC island of reference bus 1") match_mode = :any createNetFromMatPowerFile(filename = path_tied, matpower_dcline_mode = :pf_injections)
+      @test Sparlectra.getNodeType(net_tied.nodeVec[1]) == Sparlectra.Slack
+      @test Sparlectra.getNodeType(net_tied.nodeVec[3]) == Sparlectra.PV
+      # type 3 is reference priority 1 for every unit of the bus, the demoted
+      # second reference included: it is the first to take over its island
+      # (0.30.2); the SCF conversion writes the same priorities
+      @test [ps.referencePriority for ps in net_tied.prosumpsVec if Sparlectra.getPosumerBusIndex(ps) in (1, 3)] == [1, 1]
+      @test count(e -> e isa AbstractDict && get(e, "reference_priority", 0) == 1, values(scf_refs.sparlectra.extra)) == 2
     end)() end
 
     @testset "island_feed mode (grid-forming to side)" begin (function ()

@@ -68,6 +68,8 @@ const WEBUI_OPTION_SPECS = WebUIOptionSpec[
   # `auto` or a bound in pu: read by every mode, the classic ones included
   WebUIOptionSpec("power_flow.qlimits.final_q_accept_pu", "power_flow_qlimits_final_q_accept_pu", Union{Float64,String}, :text, "auto", (), :expert, :case, true),
   WebUIOptionSpec("power_flow.qlimits.hysteresis_pu", "power_flow_qlimits_hysteresis_pu", Float64, :number, "1e-2", (), :expert, :case, true),
+  # pass limit of the classic outer loop: read by the classic modes only
+  WebUIOptionSpec("power_flow.qlimits.classic_max_passes", "power_flow_qlimits_classic_max_passes", Int, :number, 30, (), :expert, :case, true),
   WebUIOptionSpec("power_flow.qlimits.cooldown_iters", "power_flow_qlimits_cooldown_iters", Int, :number, 1, (), :expert, :case, true),
   WebUIOptionSpec("power_flow.qlimits.reenable_v_hyst_pu", "power_flow_qlimits_reenable_v_hyst_pu", Float64, :number, "1e-4", (), :expert, :case, true),
   WebUIOptionSpec("power_flow.qlimits.trace_buses", "power_flow_qlimits_trace_buses", Vector{Int}, :text, "", (), :expert, :case, true),
@@ -116,11 +118,13 @@ const WEBUI_OPTION_SPECS = WebUIOptionSpec[
   # the NEXT Web UI start, so it is not stored per case.
   WebUIOptionSpec("power_flow.rescue", "power_flow_rescue", Bool, :checkbox, true, (), :expert, :case, true),
   WebUIOptionSpec("power_flow.power_mode", "power_flow_power_mode", Bool, :checkbox, false, (), :expert, :case, true),
+  WebUIOptionSpec("power_flow.power_mode_lu", "power_flow_power_mode_lu", String, :select, String(DEFAULT_POWER_MODE_LU), POWER_MODE_LU_VALUES, :expert, :case, true),
   WebUIOptionSpec("power_flow.jacobian_reuse", "power_flow_jacobian_reuse", Bool, :checkbox, DEFAULT_JACOBIAN_REUSE, (), :expert, :case, true),
   WebUIOptionSpec("power_flow.jacobian_reuse_min_reduction", "power_flow_jacobian_reuse_min_reduction", Float64, :number, DEFAULT_JACOBIAN_REUSE_MIN_REDUCTION, (), :expert, :case, true),
   WebUIOptionSpec("power_flow.jacobian_reuse_max_steps", "power_flow_jacobian_reuse_max_steps", Int, :number, DEFAULT_JACOBIAN_REUSE_MAX_STEPS, (), :expert, :case, true),
   WebUIOptionSpec("contingency.screening.mode", "contingency_screening_mode", String, :select, "off", CONTINGENCY_SCREENING_MODE_VALUES, :expert, :case, true),
   WebUIOptionSpec("contingency.screening.margin_pct", "contingency_screening_margin_pct", Float64, :number, 10.0, (), :expert, :case, true),
+  WebUIOptionSpec("contingency.warm_active_set", "contingency_warm_active_set", Bool, :checkbox, false, (), :expert, :case, true),
   WebUIOptionSpec("power_flow.auto_slack", "power_flow_auto_slack", Bool, :checkbox, false, (), :expert, :case, true),
   WebUIOptionSpec("runtime.parallel.enabled", "runtime_parallel_enabled", Bool, :checkbox, true, (), :expert, :session, true),
   WebUIOptionSpec("power_flow.dc.fallback", "power_flow_dc_fallback", Bool, :checkbox, false, (), :expert, :case, true),

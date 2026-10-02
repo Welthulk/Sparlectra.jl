@@ -526,8 +526,9 @@ function run_webui_extended_tests()
       @test !occursin("name=\"benchmark_enabled\"", loaded_run)
       _webui_assert_selected(loaded_form, "power_flow_qlimits_enforcement_mode", "active_set")
       # the CSV format is machine scope: the configuration file's value
-      # shows, whatever the run form said before the save
-      _webui_assert_selected(loaded_form, "detailed_result_csv_format", "technical")
+      # shows, whatever the run form said before the save (the template's
+      # excel_de since 0.30.2)
+      _webui_assert_selected(loaded_form, "detailed_result_csv_format", "excel_de")
 
       notice_off_root = mktempdir()
       notice_off_config = joinpath(notice_off_root, "configuration.yaml")
@@ -642,7 +643,7 @@ settings:
       _webui_assert_selected(case118_form, "power_flow_start_voltage_mode", "classic")
       _webui_assert_selected(case118_form, "power_flow_wrong_branch_detection", "off")
       _webui_assert_selected(case118_form, "performance_timing", "compact")
-      _webui_assert_selected(case118_form, "detailed_result_csv_format", "technical")
+      _webui_assert_selected(case118_form, "detailed_result_csv_format", "excel_de")
       # the MATPOWER import conventions render on the Case page; the
       # saved profile must prefill THAT form
       case118_case_page = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/case?casefile=$(SparlectraApp._webui_urlencode(case118))"; output_root = root).body)
@@ -688,7 +689,7 @@ settings:
       # experimental convention block, at the template default off (0.30.0)
       case14_case_page = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/case?casefile=$(SparlectraApp._webui_urlencode(case14))"; output_root = root).body)
       _webui_assert_selected(case14_case_page, "matpower_import_auto_profile", "off")
-      _webui_assert_selected(case14_form, "output_logfile_results", "full")
+      _webui_assert_selected(case14_form, "output_logfile_results", "classic")
 
       request_form = _webui_test_form("case145.m", "configuration.yaml", root)
       request_form["power_flow_tol"] = "2e-6"
@@ -740,7 +741,7 @@ form:
       _webui_assert_checked(unsupported_form, "power_flow_autodamp", false)
       _webui_assert_value(unsupported_form, "power_flow_tol", "9.0e-7")
       _webui_assert_selected(unsupported_form, "power_flow_start_angle_mode", "dc")
-      _webui_assert_selected(unsupported_form, "detailed_result_csv_format", "technical")
+      _webui_assert_selected(unsupported_form, "detailed_result_csv_format", "excel_de")
       @test occursin("case_settings_field_ignored", read(SparlectraApp.webui_operation_log_path(root), String))
 
       fresh_root = mktempdir()
@@ -1280,8 +1281,11 @@ form:
         cp(joinpath(iidm_exports["output_dir"], String(iidm_exports["metadata"]["cgmes_export_files"])), joinpath(case_directory, "ieee14_export_cgmes.zip"))
         magnitudes(result) = begin
           rows = readlines(joinpath(result["output_dir"], "bus_voltages_complex.csv"))
-          column = findfirst(==("vm_pu"), split(rows[1], ","))
-          sort!([parse(Float64, split(row, ",")[column]) for row in rows[2:end]])
+          # the file follows output.csv_format (excel_de by default since
+          # 0.30.2: semicolon cells, decimal comma; vm_pu has no thousands)
+          delim = occursin(';', rows[1]) ? ';' : ','
+          column = findfirst(==("vm_pu"), split(rows[1], delim))
+          sort!([parse(Float64, replace(split(row, delim)[column], ',' => '.')) for row in rows[2:end]])
         end
         source_vm = magnitudes(iidm_exports)
         for exported in ("ieee14_export.m", "ieee14_export_cgmes.zip", "ieee14.scf.json")
@@ -1798,6 +1802,7 @@ form:
         "power_flow_qlimits_enabled" => "power_flow.qlimits.enabled",
         "power_flow_qlimits_enforcement_mode" => "power_flow.qlimits.enforcement_mode",
         "power_flow_qlimits_final_q_accept_pu" => "power_flow.qlimits.final_q_accept_pu",
+        "power_flow_qlimits_classic_max_passes" => "power_flow.qlimits.classic_max_passes",
         "power_flow_qlimits_start_iter" => "power_flow.qlimits.start_iter",
         "power_flow_qlimits_start_mode" => "power_flow.qlimits.start_mode",
         "power_flow_qlimits_auto_q_delta_pu" => "power_flow.qlimits.auto_q_delta_pu",
@@ -1821,11 +1826,13 @@ form:
         "power_flow_linear_solver" => "power_flow.linear_solver",
         "power_flow_newton_update" => "power_flow.newton_update",
         "power_flow_power_mode" => "power_flow.power_mode",
+        "power_flow_power_mode_lu" => "power_flow.power_mode_lu",
         "power_flow_jacobian_reuse" => "power_flow.jacobian_reuse",
         "power_flow_jacobian_reuse_min_reduction" => "power_flow.jacobian_reuse_min_reduction",
         "power_flow_jacobian_reuse_max_steps" => "power_flow.jacobian_reuse_max_steps",
         "contingency_screening_mode" => "contingency.screening.mode",
         "contingency_screening_margin_pct" => "contingency.screening.margin_pct",
+        "contingency_warm_active_set" => "contingency.warm_active_set",
         "power_flow_apslf_order" => "power_flow.apslf.order",
         "power_flow_apslf_use_pade" => "power_flow.apslf.use_pade",
         "power_flow_apslf_nr_polish" => "power_flow.apslf.nr_polish",
@@ -2011,7 +2018,7 @@ form:
       # 14: the ten NR-only groups, the APSLF and DC start-value
       # checkboxes, which the flat start greys as well, the Experimental
       # block (the Newton update, 0.30.0) and the power-mode checkbox (0.30.1)
-      @test count("data-nr-only-field", settings_page_html) == 17   # + the dishonest-Newton checkbox and its two fields (0.30.2)
+      @test count("data-nr-only-field", settings_page_html) == 18   # + the dishonest-Newton checkbox and its two fields, the power-mode LU select (0.30.2)
       @test occursin("<fieldset class=\"distributed-slack-options\" data-nr-only-field>", settings_page_html)
       # Experimental block (0.30.1): greyed out by default, its select
       # disabled server-side (a disabled control is not submitted, the
@@ -2109,10 +2116,10 @@ form:
       @test occursin("class=\"check span-2 detailed-csv-options\"", settings_page_html)
       @test !occursin("<summary>Detailed result CSV export</summary>", settings_page_html)
       @test occursin("name=\"detailed_result_csv_format\"", settings_page_html)
-      # 0.15.1: the configured value is selected (technical in this
-      # configuration file); no browser-language switch overrides it
-      @test occursin("<option value=\"technical\" selected>", settings_page_html)
-      @test occursin("<option value=\"excel_de\">", settings_page_html)
+      # 0.15.1: the configured value is selected (the template's excel_de
+      # since 0.30.2); no browser-language switch overrides it
+      @test occursin("<option value=\"excel_de\" selected>", settings_page_html)
+      @test occursin("<option value=\"technical\">", settings_page_html)
       @test occursin("<option value=\"excel_us\">", settings_page_html)
       @test !occursin("navigator.languages", settings_page_html)
       @test !occursin("Use Excel CSV format with semicolon delimiter", settings_page_html)
@@ -2205,12 +2212,21 @@ result = get_powerflow_result(run_id)
       # in the reloaded Settings form
       @test !occursin("Jacobian reuse", manual_run_log)
       @test !haskey(manual_result["metadata"], "jacobian_reuse_reused_steps")
+      # power-mode LU (0.30.2): silent without power mode, and the greyed
+      # (not submitted) select leaves the configured default in place
+      @test !occursin("Power-mode LU", manual_run_log)
+      @test !haskey(manual_result["metadata"], "power_mode_lu_choice")
+      @test manual_effective_cfg.powerflow.power_mode_lu === :auto
       reuse_form = copy(form)
       reuse_form["power_flow_jacobian_reuse"] = "true"
       reuse_form["power_flow_jacobian_reuse_min_reduction"] = "5"
       reuse_form["power_flow_jacobian_reuse_max_steps"] = "2"
       # the test form runs linear_solver umfpack, which keeps no factorisation
       reuse_form["power_flow_linear_solver"] = "umfpack_reuse"
+      # the same run with power mode and a fixed power-mode LU: the choice
+      # reaches the solver, run.log and the metadata, and survives the save
+      reuse_form["power_flow_power_mode"] = "true"
+      reuse_form["power_flow_power_mode_lu"] = "umfpack"
       reuse_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/run", reuse_form; output_root)
       reuse_run_id = basename(only(header.second for header in reuse_response.headers if header.first == "Location"))
       wait(SparlectraApp._POWERFLOW_WEBUI_JOBS[reuse_run_id]["task"])
@@ -2226,6 +2242,9 @@ result = get_powerflow_result(run_id)
       @test SparlectraApp._jacobian_reuse_runlog_line(Sparlectra.SparlectraConfig().powerflow) === nothing
       @test occursin(r"Jacobian reuse\s*: \d+ reused steps, \d+ refactorisations", reuse_run_log)
       @test haskey(reuse_result["metadata"], "jacobian_reuse_reused_steps") && haskey(reuse_result["metadata"], "jacobian_reuse_refactorisations")
+      @test reuse_cfg.powerflow.power_mode && reuse_cfg.powerflow.power_mode_lu === :umfpack
+      @test occursin("Power-mode LU  : umfpack (power_mode_lu = umfpack)", reuse_run_log)
+      @test reuse_result["metadata"]["power_mode_lu_choice"] == "umfpack" && reuse_result["metadata"]["power_mode_lu_source"] == "configured"
       reuse_save = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/result/$(reuse_run_id)/case-settings/save", Dict{String,String}(); output_root)
       @test reuse_save.status == 200
       reuse_casefile = form["casefile_manual"]
@@ -2235,13 +2254,16 @@ result = get_powerflow_result(run_id)
       _webui_assert_checked(reuse_reloaded, "power_flow_jacobian_reuse", true)
       _webui_assert_value(reuse_reloaded, "power_flow_jacobian_reuse_min_reduction", "5.0")
       _webui_assert_value(reuse_reloaded, "power_flow_jacobian_reuse_max_steps", "2")
+      @test reuse_cc["power_flow.power_mode_lu"] == "umfpack"
+      _webui_assert_selected(reuse_reloaded, "power_flow_power_mode_lu", "umfpack")
       # N-1 screening from the Settings form reaches the effective configuration
       screen_form = copy(form)
       screen_form["contingency_screening_mode"] = "flag"
       screen_form["contingency_screening_margin_pct"] = "15"
+      screen_form["contingency_warm_active_set"] = "true"
       screen_request = SparlectraApp.powerflow_webui_request(screen_form; default_output_root = output_root)
       screen_cfg, _ = Sparlectra._load_api_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, Sparlectra.validate_gui_config_overrides(screen_request["config_overrides"]))
-      @test (screen_cfg.contingency.screening_mode, screen_cfg.contingency.screening_margin_pct) == (:flag, 15.0)
+      @test (screen_cfg.contingency.screening_mode, screen_cfg.contingency.screening_margin_pct, screen_cfg.contingency.warm_active_set) == (:flag, 15.0, true)
       # stopping the Web UI aborts and awaits a running job before the
       # process may exit (native factorizations in use by worker threads
       # crashed the process on stop): a runner that solves until the abort
@@ -3291,8 +3313,8 @@ result = get_powerflow_result(run_id)
         @test run_result["metadata"]["contingency_screening_mode"] == "flag"
         csv_text = read(joinpath(root, run_result["run_id"], "contingency_n1.csv"), String)
         @test occursin("step6 triple", csv_text)
-        # default format is "technical" (comma delimiter) since issue #376
-        @test endswith(first(split(csv_text, '\n')), ",screened,screening_estimate")
+        # default format is "excel_de" (semicolon delimiter) since 0.30.2
+        @test endswith(first(split(csv_text, '\n')), ";screened;screening_estimate")
 
         # the result page renders the N-1 table (the screened marker must be visible in the browser, not only in the
         # CSV). The file_block run carries ONE multi-op scenario, which is

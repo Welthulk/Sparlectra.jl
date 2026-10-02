@@ -198,6 +198,31 @@ the cache instead.
 """
 const _FIXTURE_NET_CACHE = Dict{String,Any}()
 
+## The configuration template with the output defaults before 0.30.2 (comma
+## CSV with a decimal point, full result block in run.log). Since 0.30.2 the
+## shipped defaults are excel_de and classic. Tests that read CSV cells or run-log lines by content run on
+## this copy; the tests of the defaults themselves keep the template. Built
+## once per process from the template, so every other key stays the shipped
+## one; it fails loudly when the template no longer carries the two values
+## it rewrites (a silent no-op would test the wrong format).
+const _TECHNICAL_OUTPUT_CONFIG = Ref{String}("")
+function technical_output_config_path()::String
+  path = _TECHNICAL_OUTPUT_CONFIG[]
+  (isempty(path) || !isfile(path)) || return path
+  text = read(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, String)
+  (occursin("  csv_format: excel_de\n", text) && occursin("  logfile_results: classic\n", text)) ||
+    error("technical_output_config_path: the template no longer carries csv_format excel_de and logfile_results classic")
+  text = replace(text, "  csv_format: excel_de\n" => "  csv_format: technical\n", "  logfile_results: classic\n" => "  logfile_results: full\n")
+  path = joinpath(mktempdir(), "configuration_technical_output.yaml")
+  write(path, text)
+  _TECHNICAL_OUTPUT_CONFIG[] = path
+  return path
+end
+
+## Runs `f` under the technical-output configuration (library writers read
+## the format from the active configuration).
+with_technical_output(f) = Sparlectra.with_sparlectra_config(f, Sparlectra.load_sparlectra_config(technical_output_config_path(); reload = true))
+
 function load_fixture_net(name::AbstractString)
   net = get!(_FIXTURE_NET_CACHE, String(name)) do
     _import_fixture_net(String(name))

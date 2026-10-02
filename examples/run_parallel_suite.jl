@@ -29,7 +29,7 @@ haskey(ENV, "JULIA_NUM_THREADS") || (ENV["JULIA_NUM_THREADS"] = "auto")
 include(joinpath(@__DIR__, "others", "example_suite_runner.jl"))
 
 const SUITE_SPECS = ExampleSpec[
-  ExampleSpec(name = "parallel_islands", file = "powerflow/exp_parallel_islands.jl", purpose = "power_flow.islands.mode solve_parallel vs solve_independent on an 8-island net, bitwise-identical voltages"),
+  ExampleSpec(name = "parallel_islands", file = "powerflow/exp_parallel_islands.jl", purpose = "islands on their own threads (parallel_min_buses) vs serial"),
   ExampleSpec(name = "parallel_sc_sweep", file = "others/exp_parallel_sc_sweep.jl", purpose = "IEC 60909-0 all-bus sweep serial vs threaded chunks (8000 fault locations), row-identical results"),
   ExampleSpec(name = "contingency_n1", file = "others/exp_contingency_n1.jl", purpose = "full branch N-1 on case1354pegase serial vs parallel plus top-10 worst contingencies (skips politely without the cached case)"),
 ]

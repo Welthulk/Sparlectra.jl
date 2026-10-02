@@ -90,6 +90,11 @@ power_flow:
   # mismatch diagnostics are skipped during the solve. Same Jacobian, same
   # update, same solution; off for a single run.
   power_mode: false
+  # Sparse LU of power mode: auto chooses once per network from KLU's
+  # symbolic flop estimate of the first Jacobian (KLU up to 5e7 flops,
+  # UMFPACK above; UMFPACK when KLU is not loaded); klu or umfpack fix the
+  # backend. Read only with power_mode: true.
+  power_mode_lu: auto
   # Dishonest Newton: after a Newton step that cut the maximum mismatch by
   # at least `jacobian_reuse_min_reduction`, the next step solves with the
   # previous factorization (no Jacobian refill, no refactorization), at
@@ -167,11 +172,13 @@ power_flow:
   # AC island diagnostic artifacts.
   islands:
     enabled: true
-    # Allowed values: solve_independent, solve_parallel
-    # solve_parallel solves the detected islands concurrently on Julia
-    # threads (gated by runtime.parallel.*); results are identical to
-    # solve_independent, only the wall clock changes.
-    mode: solve_independent
+    # Islands of at least this many buses are solved on their own Julia
+    # threads when two or more of them exist and Julia runs with more than
+    # one thread (runtime.parallel.enabled is the master switch); smaller
+    # islands follow on the calling thread. Results are identical to a
+    # serial solve, only the wall clock changes. (The former key `mode` is
+    # ignored with a warning since 0.30.2.)
+    parallel_min_buses: 200
     # Allowed values: matpower_like
     reference_policy: matpower_like
     diagnostic_continue_after_failure: true
@@ -269,7 +276,7 @@ power_flow:
     scale_v: 1.0
     # true = fall back to the max-mismatch criterion if no trial satisfies Armijo;
     # false = fall back to the most conservative finite trial (today's autodamp fallback).
-    fallback_max_mismatch: true
+    fallback_max_mismatch: false
 
   # Optional scaled-Newton trust-region step control: an alternative to
   # autodamp that caps the Newton step norm at an adaptive radius and
@@ -334,6 +341,14 @@ power_flow:
     # beyond it the run is not accepted. A number must be >= hysteresis_pu;
     # auto is twice the hysteresis.
     final_q_accept_pu: auto
+    # Pass limit of the classic outer loop (classic_simultaneous,
+    # classic_one_at_a_time): the power-flow solves after the base solve,
+    # one per Q-limit update. Violations found after the last of them stop
+    # the loop with the stop reason max_outer_iterations (run metadata
+    # q_limit_classic_outer_loop_stop); the run is then not converged and
+    # keeps the state of its last solve. Integer >= 1; the active-set mode
+    # does not read it.
+    classic_max_passes: 30
     # Optional bus-id filters for focused diagnostics/policies.
     trace_buses: []
     lock_pv_to_pq_buses: []
@@ -423,6 +438,18 @@ state_estimation:
   # State count from which the residual diagnostics use the sparse Takahashi
   # selected inverse instead of the dense pinv.
   takahashi_min_states: 200
+  # Sparse LU of the WLS normal equations when the gain matrix is not exactly
+  # symmetric (an exactly symmetric one goes to the Cholesky factorization on
+  # either setting). klu needs the KLU package extension (`using KLU` next to
+  # Sparlectra) and falls back to umfpack with one warning without it.
+  # Allowed values: umfpack, klu
+  linear_solver: umfpack
+  # Build the gain matrix H'WH exactly symmetric (upper triangle mirrored),
+  # so the normal equations always take the Cholesky factorization instead
+  # of LU. The plain product is symmetric only up to rounding; on large
+  # networks the Cholesky route is several times faster per iteration. The
+  # estimates differ from the plain product at the 1e-10 pu level.
+  symmetric_gain: false
   # How critical measurements are found: omega reads the diagonal of the
   # residual covariance from one selected-inverse pass (no size budget),
   # rank runs one rank test per row (the former method, budgeted).
@@ -688,7 +715,7 @@ output:
   console_q_limit_events: summary
   console_max_rows: 100
   # Allowed values: off, compact, classic, full
-  logfile_results: full
+  logfile_results: classic
   result_table_max_rows: 200
   result_table_large_case_threshold_buses: 1000
   # Allowed values: summary, classic, full
@@ -712,7 +739,7 @@ output:
   # Allowed values: technical, excel_de, excel_us
   # Delimiter and decimal separator of EVERY CSV file a run writes (technical,
   # excel_de, excel_us); the one central CSV setting, whatever writes the file.
-  csv_format: technical
+  csv_format: excel_de
   # Allowed values: off, compact, full
   logfile_diagnostics: compact
   # Allowed values: off, compact, full
@@ -732,7 +759,7 @@ benchmark:
   # Allowed values: rectangular
   methods: [rectangular]
   seconds: 2.0
-  samples: 50
+  samples: 30
   show_once: false
   # Allowed values: classic, dataframe, compact
   show_once_output: classic
@@ -765,6 +792,12 @@ contingency:
     # the margin) reaches 100 percent, or an estimated voltage comes within
     # margin percent of the band width of a band limit.
     margin_pct: 10.0
+  # Warm active set: every outage and scenario starts from the base case's
+  # PV/PQ state (its clamped machines as PQ at the reached limit) instead
+  # of the file's; the active set may still release or add clamps. About
+  # half the Newton steps per outage on cases with many clamped machines;
+  # it can change the limited solution where the active set is not unique.
+  warm_active_set: false
 
 control:
   # Enable the generic outer-loop control framework.
@@ -827,7 +860,7 @@ webui:
   # older entries from every operation log it knows; 0 keeps only the current
   # session. Lower this when the log page grows unwieldy (the size comes from
   # the number of entries, not from their age).
-  operation_log_retention_days: 10
+  operation_log_retention_days: 3
   # Base URL of the published documentation that the help icons (?) next to
   # the form fields open in a new tab. Point it at a local docs build
   # (file:///.../docs/build/), the dev site (.../dev/) or a pinned version

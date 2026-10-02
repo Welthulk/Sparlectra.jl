@@ -632,6 +632,10 @@ function _run_sparlectra_api_body(
   # machine-scope keys an old case file carried and the resolution dropped:
   # named in run.log next to the resolved options
   qlimit_metadata["case_file_dropped_keys"] = resolved.scf_dropped_keys
+  # removed keys (power_flow.islands.mode since 0.30.2) in the configuration
+  # or case file: the loader's warning is printed before the run starts, so
+  # run.log names them itself
+  qlimit_metadata["ignored_config_keys"] = ignored_removed_config_keys(config_path, case_path)
   qlimit_metadata["runtime_casefile"] = basename(case_path)
   qlimit_metadata["runtime_casefile_path"] = case_path
   matpower_metadata = _resolved_matpower_import_runtime_options(config)
@@ -1233,6 +1237,8 @@ function _run_sparlectra_api_body(
     # line); an option that is off prints no sub-parameters (0.30.1)
     qlimits_handled = _final_q_check_summary(raw_result).status != "qlimits_disabled"
     qlimits_handled && println(io, _final_q_check_summary(raw_result).line)
+    classic_line = raw_result.net === nothing ? nothing : _classic_outer_loop_runlog_line(rectangular_pf_status(raw_result.net))
+    classic_line === nothing || println(io, classic_line)
     if qlimits_handled && !isempty(q_limit_artifacts)
       println(io, "PV Q-limit details")
       println(io, "------------------")

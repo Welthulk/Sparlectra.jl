@@ -1133,6 +1133,10 @@ function _scf_extra(net::Net, ids::ScfIdMap)
     # of its bus: deriving it from "sits on a slack node" gave a LOAD at that
     # bus the reference as well (case57).
     ps.referencePri === nothing || (d["reference_pri"] = true)
+    # the reference priority (CGMES semantics, 1 = strongest) is written only
+    # where one is stated: 0 is the absent default, so a network without
+    # priorities writes the bytes it wrote before the field existed
+    ps.referencePriority > 0 && (d["reference_priority"] = ps.referencePriority)
     ps.isRegulated && (d["regulated"] = true)
     _scf_write_voltage_control!(d, ps, net.baseMVA)
     put(ids.prosumer[i], d)

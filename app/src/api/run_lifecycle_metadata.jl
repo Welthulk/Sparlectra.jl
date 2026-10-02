@@ -155,6 +155,49 @@ function _jacobian_reuse_lifecycle_metadata(rect_status)::Dict{String,Any}
   )
 end
 
+# The stop reason of the classic Q-limit outer loop as a string (the
+# final_outcome the loop wrote into the solver status), or nothing when the
+# run did not use a classic mode.
+function _classic_outer_loop_stop(rect_status)
+  rect_status === nothing && return nothing
+  (hasproperty(rect_status, :qlimit_enforcement_mode) && rect_status.qlimit_enforcement_mode in (:classic_simultaneous, :classic_one_at_a_time)) || return nothing
+  return hasproperty(rect_status, :final_outcome) ? String(rect_status.final_outcome) : nothing
+end
+
+# The run.log line of the classic outer loop: passes and stop reason on one
+# line, nothing when no classic mode ran.
+function _classic_outer_loop_runlog_line(rect_status)
+  stop = _classic_outer_loop_stop(rect_status)
+  stop === nothing && return nothing
+  passes = hasproperty(rect_status, :matpower_outer_iterations) ? rect_status.matpower_outer_iterations : 0
+  return string("Classic Q-limit outer loop: ", passes, passes == 1 ? " pass" : " passes", ", stop: ", stop)
+end
+
+# power-mode LU (0.30.2): the sparse LU of the power-mode solve, where the
+# choice came from and KLU's symbolic flop estimate it was made on (NaN for a
+# configured choice), with the threshold of `auto`; with islands also one
+# row per island. Nothing without power mode.
+function _power_mode_lu_lifecycle_metadata(rect_status)::Dict{String,Any}
+  (rect_status !== nothing && hasproperty(rect_status, :power_mode_lu_line)) || return Dict{String,Any}()
+  md = Dict{String,Any}(
+    "power_mode_lu" => String(rect_status.power_mode_lu),
+    "power_mode_lu_choice" => String(rect_status.power_mode_lu_choice),
+    "power_mode_lu_source" => String(rect_status.power_mode_lu_source),
+    "power_mode_lu_klu_est_flops" => rect_status.power_mode_lu_klu_est_flops,
+    "power_mode_lu_threshold_flops" => rect_status.power_mode_lu_threshold_flops,
+    "power_mode_lu_line" => String(rect_status.power_mode_lu_line),
+  )
+  if hasproperty(rect_status, :power_mode_lu_islands)
+    md["power_mode_lu_islands"] = [Dict{String,Any}(
+      "island_id" => row.island_id,
+      "choice" => String(row.choice),
+      "source" => String(row.source),
+      "klu_est_flops" => row.klu_est_flops,
+    ) for row in rect_status.power_mode_lu_islands]
+  end
+  return md
+end
+
 function _build_success_lifecycle_metadata(raw_result::SparlectraRunResult, config::SparlectraConfig; numerical_success::Bool, final_outcome::Dict{String,Any}, csv_export_status::AbstractString, csv_export_skip_reason, csv_export_error, csv_artifacts::Vector{String}, detailed_result_csv::Bool, config_overrides, config_override_source::AbstractString, casefile, config_file, performance_timing, run_diagnostics::Bool, csv_format_name::AbstractString, qlimit_metadata::AbstractDict, csv_timing_metadata::AbstractDict)::Dict{String,Any}
   qv = _qv_characteristic_summary(raw_result.net, raw_result.numerical_converged)
   fq = _final_q_check_summary(raw_result)
@@ -165,6 +208,11 @@ function _build_success_lifecycle_metadata(raw_result::SparlectraRunResult, conf
   trust_region_metadata = _trust_region_lifecycle_metadata(rect_status)
   island_wise_metadata = _island_wise_lifecycle_metadata(rect_status)
   classic_outer_loop_passes = rect_status !== nothing && hasproperty(rect_status, :matpower_outer_iterations) ? rect_status.matpower_outer_iterations : 0
+  # why the classic outer loop ended (converged, max_outer_iterations at the
+  # power_flow.qlimits.classic_max_passes limit, pf_not_converged_after_qlimit_update,
+  # no_reference_bus_remaining, base_pf_not_converged); nothing when no
+  # classic mode ran
+  classic_outer_loop_stop = _classic_outer_loop_stop(rect_status)
   pv_to_pq_events = raw_result.net === nothing ? 0 : length(raw_result.net.qLimitLog)
   active_set_events = config.powerflow.qlimits.enforcement_mode === :active_set ? pv_to_pq_events : 0
   # Jacobian conditioning of the exact system the rectangular solver
@@ -173,9 +221,18 @@ function _build_success_lifecycle_metadata(raw_result::SparlectraRunResult, conf
   # reconstruction is attempted for the overview.
   jacobian_kappa = raw_result.net === nothing ? nothing : _jacobian_condest(raw_result.net; warn_on_failure = false, context = "run metadata", require_thunk = true)
   apslf_radius_line = rect_status !== nothing && hasproperty(rect_status, :apslf_convergence_line) ? String(rect_status.apslf_convergence_line) : nothing
-  apslf_radius = rect_status !== nothing && hasproperty(rect_status, :apslf_convergence_radius) ? rect_status.apslf_convergence_radius : nothing
+  # the APSLF radii: the Padé margin dmin (nearest Padé pole to s = 1) and
+  # the coefficient-growth radius of the series, each with its case bus
+  apslf_field(name::Symbol) = rect_status !== nothing && hasproperty(rect_status, name) ? getproperty(rect_status, name) : nothing
   metadata = merge(Dict{String,Any}(
-    "apslf_convergence_radius" => apslf_radius,
+    "apslf_pade_margin" => apslf_field(:apslf_convergence_radius),
+    # DEPRECATED (0.30.2): the former name of apslf_pade_margin, same value.
+    # Still written so readers of 0.30.1 metadata keep working within the
+    # patch series; new readers use apslf_pade_margin.
+    "apslf_convergence_radius" => apslf_field(:apslf_convergence_radius),
+    "apslf_pade_margin_bus" => apslf_field(:apslf_convergence_bus),
+    "apslf_series_radius" => apslf_field(:apslf_series_radius),
+    "apslf_series_radius_bus" => apslf_field(:apslf_series_radius_bus),
     "apslf_convergence_line" => apslf_radius_line,
     "jacobian_condition_estimate" => jacobian_kappa,
     "jacobian_condition_verdict" => jacobian_kappa === nothing ? nothing : _condition_verdict(jacobian_kappa),
@@ -206,6 +263,7 @@ function _build_success_lifecycle_metadata(raw_result::SparlectraRunResult, conf
     "q_limit_active_set_events" => active_set_events,
     "q_limit_pv_to_pq_events" => pv_to_pq_events,
     "q_limit_classic_outer_loop_passes" => classic_outer_loop_passes,
+    "q_limit_classic_outer_loop_stop" => classic_outer_loop_stop,
     "webui_request_settings" => merge(Dict{String,Any}(String(key) => value for (key, value) in config_overrides), Dict{String,Any}(
       "casefile" => casefile,
       "config_file" => config_file,
@@ -215,7 +273,7 @@ function _build_success_lifecycle_metadata(raw_result::SparlectraRunResult, conf
       "detailed_result_csv" => detailed_result_csv,
       "detailed_result_csv_format" => csv_format_name,
     )),
-  ), qlimit_metadata, current_iteration_metadata, merit_linesearch_metadata, wrong_branch_metadata, trust_region_metadata, island_wise_metadata, _jacobian_reuse_lifecycle_metadata(rect_status))
+  ), qlimit_metadata, current_iteration_metadata, merit_linesearch_metadata, wrong_branch_metadata, trust_region_metadata, island_wise_metadata, _jacobian_reuse_lifecycle_metadata(rect_status), _power_mode_lu_lifecycle_metadata(rect_status))
   # Partial CSV exports are still successful API runs, but the Web UI needs the
   # partial file error in the stable lifecycle field used by Last Errors.
   haskey(csv_timing_metadata, :partial_error) && (metadata["detailed_result_csv_error"] = csv_timing_metadata[:partial_error])

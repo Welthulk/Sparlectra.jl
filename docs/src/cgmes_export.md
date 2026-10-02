@@ -13,8 +13,13 @@ with four profiles:
   bus links (closed `Breaker`s), each with terminals and topology
   associations. Optional zero-sequence line attributes and harvested
   short-circuit attributes go into the EquipmentShortCircuit part of EQ.
-- **SSH**: load and machine `p`/`q`, the slack unit's `referencePriority`,
-  voltage-regulation targets, tap steps, and shunt sections.
+- **SSH**: load and machine `p`/`q`, the `referencePriority` of every
+  machine and network injection (its stored
+  [reference priority](slack_vs_source.md#Reference-priority), 1 for a slack
+  unit that states none; a unit off the slack buses as strong as the slack
+  is named in the export notices, because a re-import takes the strongest
+  priority as its slack), voltage-regulation targets, tap steps, and shunt
+  sections.
 - **SV**: the current voltage state (`SvVoltage` per bus, `SvPowerFlow` per
   terminal): after a solve the solution, so a re-import can start from it
   (`cgmes_import.start_values: sv`) and validates against it; right after an

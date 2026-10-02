@@ -152,7 +152,43 @@ function run_parallel_foundation_tests()
       @test keeper \ b == x_ref
     end)() end
 
-    @testset "island solve_parallel identity (Phase 2)" begin (function ()
+    @testset "two islands of 300 buses: parallel equals serial (0.30.2)" begin (function ()
+      # two copies of the shipped sp_case300 in one net (bus numbers of the
+      # second shifted by 1000, names suffixed): two islands of 300 buses,
+      # each with its own slack, above the default threshold of 200 buses
+      mpc = Sparlectra.MatpowerIO.read_case(joinpath(dirname(@__DIR__), "data", "mpower", "sp_case300.m"); legacy_compat = true)
+      off = 1000.0
+      bus2 = copy(mpc.bus); bus2[:, 1] .+= off
+      gen2 = copy(mpc.gen); gen2[:, 1] .+= off
+      br2 = copy(mpc.branch); br2[:, 1] .+= off; br2[:, 2] .+= off
+      names2 = mpc.bus_name === nothing ? nothing : vcat(mpc.bus_name, [n * "_B" for n in mpc.bus_name])
+      two = Sparlectra.MatpowerIO.MatpowerCase("two_islands_300", mpc.baseMVA, vcat(mpc.bus, bus2), vcat(mpc.gen, gen2), vcat(mpc.branch, br2), nothing, names2, nothing, nothing, nothing, nothing, nothing)
+      solve = function (parallel::Bool)
+        net = Sparlectra.createNetFromMatPowerCase(mpc = two)
+        profile = Dict{Symbol,Any}(:enabled => true)
+        it, erg = runpf!(net, 30, 1e-8, 0; islands_enabled = true, islands_parallel_enabled = parallel, performance_profile = profile)
+        return (; net, profile, it, erg)
+      end
+      serial = solve(false)
+      @test serial.erg == 0
+      @test length(Sparlectra.detect_ac_islands(serial.net).rows) == 2
+      if Threads.nthreads() > 1
+        for _ = 1:3
+          par = solve(true)
+          @test haskey(par.profile[:timings], :parallel_wall_time)
+          @test par.erg == 0 && par.it == serial.it
+          @test all(par.net.nodeVec[i]._vm_pu == serial.net.nodeVec[i]._vm_pu && par.net.nodeVec[i]._va_deg == serial.net.nodeVec[i]._va_deg for i in eachindex(serial.net.nodeVec))
+          @test length(par.net.qLimitLog) == length(serial.net.qLimitLog)
+          @test Set(keys(par.profile[:ac_island_solver_statuses])) == Set(keys(serial.profile[:ac_island_solver_statuses]))
+          @test all(par.profile[:ac_island_solver_statuses][k].status === serial.profile[:ac_island_solver_statuses][k].status for k in keys(serial.profile[:ac_island_solver_statuses]))
+        end
+        println("      two islands of 300 buses: RAN with ", Threads.nthreads(), " threads (3 repeated comparisons)")
+      else
+        println("      two islands of 300 buses: SKIPPED the parallel comparison (single-threaded test process)")
+      end
+    end)() end
+
+    @testset "island parallel identity (Phase 2; by size since 0.30.2)" begin (function ()
       # multi-island fixture: n disconnected 3-bus feeders, distinct loads
       function build_multi_island(n)
         net = Net(name = "mi_$(n)", baseMVA = 100.0)
@@ -171,18 +207,21 @@ function run_parallel_foundation_tests()
         return net
       end
 
+      # 0.30.2: there is no serial mode to choose; the serial reference is
+      # runtime.parallel off (the master switch), the parallel run lowers
+      # the island size threshold to 1 (the fixture's islands have 3 buses)
       solve_mode = function (mode; max_tasks = Threads.nthreads())
         net = build_multi_island(5)
         profile = Dict{Symbol,Any}(:enabled => true)
-        it, erg = runpf!(net, 25, 1e-8, 0; islands_enabled = true, islands_mode = mode, islands_parallel_max_tasks = max_tasks, islands_parallel_min_work_items = 2, performance_profile = profile)
+        it, erg = runpf!(net, 25, 1e-8, 0; islands_enabled = true, islands_parallel_enabled = mode === :parallel, islands_parallel_min_buses = 1, islands_parallel_max_tasks = max_tasks, performance_profile = profile)
         return (; net, profile, it, erg)
       end
 
-      serial = solve_mode(:solve_independent)
+      serial = solve_mode(:serial)
       # BITWISE identity required (Phase 0 review item 5), for max_tasks=1
       # (falls back to the serial loop, same functions) and max_tasks=auto
       for max_tasks in (1, Threads.nthreads())
-        par = solve_mode(:solve_parallel; max_tasks = max_tasks)
+        par = solve_mode(:parallel; max_tasks = max_tasks)
         @test par.erg == 0
         @test par.it == serial.it
         for i in eachindex(serial.net.nodeVec)
@@ -201,13 +240,13 @@ function run_parallel_foundation_tests()
       if Threads.nthreads() > 1
         # the parallel path actually engaged: wall clock recorded, per-island
         # scalars merged under their island prefix, no shared-slot leftovers
-        par = solve_mode(:solve_parallel)
+        par = solve_mode(:parallel)
         @test haskey(par.profile[:timings], :parallel_wall_time)
         @test haskey(par.profile, :ac_island_1_linear_solver_backend)
         @test !haskey(par.profile, :diagnostic_artifact_prefix)
-        println("island solve_parallel: RAN with ", Threads.nthreads(), " threads")
+        println("island parallel: RAN with ", Threads.nthreads(), " threads")
       else
-        println("island solve_parallel: fallback-only run (single-threaded test process); the threaded assertions run in the --threads=4 battery")
+        println("island parallel: fallback-only run (single-threaded test process); the threaded assertions run in the --threads=4 battery")
       end
 
       # failure semantics under parallel: all islands report their REAL
@@ -216,7 +255,7 @@ function run_parallel_foundation_tests()
       # island 2 gets an absurd load so its solve fails
       addProsumer!(net = net_bad, busName = "B2", type = "ENERGYCONSUMER", p = 1.0e6, q = 1.0e6)
       profile_bad = Dict{Symbol,Any}(:enabled => true)
-      @test_throws Exception runpf!(net_bad, 15, 1e-8, 0; islands_enabled = true, islands_mode = :solve_parallel, islands_parallel_max_tasks = Threads.nthreads(), islands_parallel_min_work_items = 2, performance_profile = profile_bad)
+      @test_throws Exception runpf!(net_bad, 15, 1e-8, 0; islands_enabled = true, islands_parallel_enabled = true, islands_parallel_min_buses = 1, islands_parallel_max_tasks = Threads.nthreads(), performance_profile = profile_bad)
       statuses_bad = profile_bad[:ac_island_solver_statuses]
       if Threads.nthreads() > 1
         # parallel: every island already ran, all four report their REAL status
@@ -229,6 +268,73 @@ function run_parallel_foundation_tests()
         # so exactly the islands up to and including the failure are recorded
         @test length(statuses_bad) == 2
       end
+
+      # Q limits per island (0.30.2): each island net got the per-bus limit
+      # vectors of the whole net, so an island solve read the limits of
+      # buses 1..n of the net (rectangular) or dropped them for the length
+      # mismatch (APSLF). Two islands of three buses: island A carries a
+      # machine with a wide band, island B the machine B2 that clamps at
+      # Qmax when B is solved alone. The two-island run must clamp exactly
+      # as the single-island runs, with both solvers; the rectangular
+      # solver also on its parallel path (APSLF solves islands serially).
+      function qlimit_islands(parts)
+        net = Net(name = "qlimit_islands", baseMVA = 100.0)
+        if :A in parts
+          for b in ("A1", "A2", "A3")
+            addBus!(net = net, busName = b, vn_kV = 110.0, vm_pu = 1.02)
+          end
+          addProsumer!(net = net, busName = "A1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "A1")
+          addProsumer!(net = net, busName = "A2", type = "SYNCHRONOUSMACHINE", p = 20.0, q = 0.0, vm_pu = 1.01, qMin = -100.0, qMax = 100.0)
+          addProsumer!(net = net, busName = "A3", type = "ENERGYCONSUMER", p = 40.0, q = 12.0)
+          addPIModelACLine!(net = net, fromBus = "A1", toBus = "A2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+          addPIModelACLine!(net = net, fromBus = "A2", toBus = "A3", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+        end
+        if :B in parts
+          for b in ("B1", "B2", "B3")
+            addBus!(net = net, busName = b, vn_kV = 110.0, vm_pu = 1.02)
+          end
+          addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "B1")
+          addProsumer!(net = net, busName = "B2", type = "SYNCHRONOUSMACHINE", p = 10.0, q = 0.0, vm_pu = 1.05, qMin = -10.0, qMax = 10.0)
+          addProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER", p = 80.0, q = 25.0)
+          addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+          addPIModelACLine!(net = net, fromBus = "B2", toBus = "B3", r_pu = 0.02, x_pu = 0.12, b_pu = 0.0, status = 1)
+        end
+        return net
+      end
+      quiet = OutputConfig(logfile_results = :off, console_summary = false, startup_latency_hint = false)
+      qsolve = function (solver::Symbol, parts; parallel::Bool = false, lock = Int[])
+        net = qlimit_islands(parts)
+        if solver === :rectangular
+          _, erg = runpf!(net, 30, 1e-10, 0; islands_enabled = true, islands_parallel_enabled = parallel, islands_parallel_min_buses = 1, islands_parallel_max_tasks = Threads.nthreads(), lock_pv_to_pq_buses = lock)
+          @test erg == 0
+        else
+          r = run_sparlectra(net = net, config = SparlectraConfig(powerflow = PowerFlowConfig(solver = :apslf, tol = 1e-10, islands = Sparlectra.IslandPowerFlowConfig(enabled = true)), output = quiet))
+          @test r.final_converged
+        end
+        return net
+      end
+      clamped(net) = Dict(name => net.qLimitEvents[b] for (name, b) in net.busDict if haskey(net.qLimitEvents, b))
+      vm_of(net, names) = [net.nodeVec[net.busDict[n]]._vm_pu for n in names]
+      for solver in (:rectangular, :apslf)
+        only_a = qsolve(solver, (:A,))
+        only_b = qsolve(solver, (:B,))
+        @test clamped(only_b) == Dict("B2" => :max)
+        @test isempty(clamped(only_a))
+        runs = solver === :rectangular && Threads.nthreads() > 1 ? vcat([false], fill(true, 5)) : [false]
+        for parallel in runs
+          both = qsolve(solver, (:A, :B); parallel = parallel)
+          @test (solver, parallel, clamped(both)) == (solver, parallel, Dict("B2" => :max))
+          @test length(both.qLimitLog) == length(only_a.qLimitLog) + length(only_b.qLimitLog)
+          @test isapprox(vm_of(both, ("B1", "B2", "B3")), vm_of(only_b, ("B1", "B2", "B3")); atol = 1e-9)
+          @test isapprox(vm_of(both, ("A1", "A2", "A3")), vm_of(only_a, ("A1", "A2", "A3")); atol = 1e-9)
+        end
+      end
+      println("      Q limits per island: rectangular serial", Threads.nthreads() > 1 ? " and parallel (5 repeated runs, $(Threads.nthreads()) threads)" : " only (single-threaded process, the parallel runs SKIPPED)", ", APSLF serial")
+      # bus lists of internal positions go to the islands in their own
+      # numbering: locking A2 (position 2 of the net) must not lock B2,
+      # position 2 of the second island
+      locked = qsolve(:rectangular, (:A, :B); lock = [2])
+      @test isapprox(vm_of(locked, ("B1", "B2", "B3")), vm_of(qsolve(:rectangular, (:B,)), ("B1", "B2", "B3")); atol = 1e-9)
     end)() end
 
     @testset "startup summary line" begin (function ()

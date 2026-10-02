@@ -177,10 +177,48 @@ function _dcline_terminal_rows_by_bus(net::Net)
   return by_bus
 end
 
+# The reference choice of an island without one: among the units that pass
+# `eligible`, the one with the largest _reference_choice_key (stated
+# reference priority first, CGMES semantics, then reference_candidate_rank).
+# A static var compensator ranks below every other unit, whatever its
+# priority: it can hold a PV bus but not the island's active-power balance.
+# Equal keys go to the smallest bus index, so the choice is deterministic.
+# Returns (bus, reason) with the reason as the island report states it, or
+# (0, "") when no unit is eligible.
+function _island_reference_choice(eligible, units)
+  best = nothing
+  best_key = nothing
+  for ps in units
+    eligible(ps) || continue
+    key = (ps.comp.cTyp != StaticVarCompensator, _reference_choice_key(ps)..., -Int(ps.comp.cFrom_bus))
+    if best_key === nothing || key > best_key
+      best = ps
+      best_key = key
+    end
+  end
+  best === nothing && return (0, "")
+  why = best.referencePriority > 0 ? "reference priority $(best.referencePriority)" : "strongest unit without reference priority"
+  return (Int(best.comp.cFrom_bus), why)
+end
+
 """
+    detect_ac_islands(net; promote_generators = false) -> NamedTuple
+
 Build the per-island report the solver, the diagnostics writer and the CSV
 artifact all share. Purely descriptive -- it decides nothing, it only records
-what each island contains and which reference it *would* get.
+what each island contains and which reference it *would* get
+(`chosen_ref_bus`, `status`, and in `note` the reason):
+
+- an island with a Slack bus keeps it (`has_ref`);
+- otherwise the bus of its best voltage-controlled unit (`promote_pv_ref`);
+- otherwise, with `promote_generators` (the solver always passes it), the bus
+  of its best generating unit (`promote_generator_ref`); a static var
+  compensator is never chosen here;
+- otherwise none (`missing_ref`, the run is rejected).
+
+"Best" is the stated reference priority first (`ProSumer.referencePriority`,
+CGMES semantics: the smallest positive value wins, 0 states none), then
+[`reference_candidate_rank`](@ref); equal keys go to the smallest bus index.
 """
 function detect_ac_islands(net::Net; promote_generators::Bool = false)
   # Bus types are derived from prosumers, and the caller may have edited the
@@ -225,31 +263,41 @@ function detect_ac_islands(net::Net; promote_generators::Bool = false)
     total_gen_q = sum(something(net.nodeVec[bus]._qƩGen, 0.0) for bus in buses)
     total_dc_p = sum((Float64(t.p_mw) for t in dc_terms); init = 0.0)
     total_dc_q = sum((Float64(t.q_mvar) for t in dc_terms); init = 0.0)
-    # Reference selection, MATPOWER-like: an existing Slack wins; otherwise the
-    # island borrows a PV bus as its angle reference; otherwise it has none and
-    # _validate_island_references! will reject the whole run. `minimum` keeps
-    # the choice deterministic. chosen == 0 encodes "no candidate".
-    chosen = !isempty(refs) ? minimum(refs) : (!isempty(pvs) ? minimum(pvs) : 0)
-    status = !isempty(refs) ? "has_ref" : (!isempty(pvs) ? "promote_pv_ref" : "missing_ref")
-    note = !isempty(refs) ? "" : (!isempty(pvs) ? "matpower_like will promote PV bus $(chosen) as island angle reference" : "no REF/Slack or PV bus available")
+    # Reference selection: an existing Slack wins (`minimum` keeps a second,
+    # invalid one deterministic for _validate_single_reference_per_island!).
+    # Otherwise the island borrows the bus of its best voltage-controlled
+    # unit as angle reference (status promote_pv_ref), and failing that, with
+    # promote_generators (the auto_slack of the solve), the bus of its best
+    # generating unit (promote_generator_ref). "Best" is one order for both:
+    # the stated reference priority first, then reference_candidate_rank
+    # (_island_reference_choice). Before 0.30.2 the PV step took the smallest
+    # PV bus index. chosen == 0 encodes "no candidate"; without one
+    # _validate_island_references! rejects the run.
+    chosen = 0
+    status = "missing_ref"
+    note = "no REF/Slack or PV bus available"
+    if !isempty(refs)
+      chosen = minimum(refs)
+      status = "has_ref"
+      note = ""
+    elseif !isempty(pvs)
+      pvset = Set(pvs)
+      # the units that make a bus PV: refreshBusTypesFromProsumers! types a
+      # bus PV exactly when a regulating generator sits on it, so this set
+      # is never empty here
+      chosen, why = _island_reference_choice(ps -> Int(ps.comp.cFrom_bus) in pvset && isRegulating(ps), generators)
+      status = "promote_pv_ref"
+      note = "matpower_like will promote PV bus $(chosen) as island angle reference ($(why))"
+    end
     # The island lost its reference and carries no voltage-controlled unit,
-    # but it carries generation: with promote_generators (the auto_slack of
-    # the solve) its strongest unit takes over, by the one ranking of
-    # reference_candidate_rank. A static var compensator carries no active
-    # power and is never a candidate.
+    # but it carries generation: with promote_generators its best unit takes
+    # over. A static var compensator carries no active power and is never a
+    # candidate here.
     if chosen == 0 && promote_generators
-      best_key = (-1, -1, -Inf)
-      for ps in generators
-        ps.comp.cTyp == StaticVarCompensator && continue
-        key = _reference_rank(ps)
-        if key > best_key
-          best_key = key
-          chosen = Int(ps.comp.cFrom_bus)
-        end
-      end
+      chosen, why = _island_reference_choice(ps -> ps.comp.cTyp != StaticVarCompensator, generators)
       if chosen != 0
         status = "promote_generator_ref"
-        note = "auto_slack will promote the strongest generating unit at bus $(chosen) as island reference"
+        note = "auto_slack will promote the generating unit at bus $(chosen) as island reference ($(why))"
       end
     end
     push!(rows, (
@@ -413,6 +461,25 @@ function _prepare_island_net(net::Net, row)
     hasproperty(sh.comp, :cFrom_bus) && (sh.comp.cFrom_bus = sh.busIdx)
     hasproperty(sh.comp, :cTo_bus) && (sh.comp.cTo_bus = sh.busIdx)
   end
+  # bus -> position in shuntVec, keyed by the island's own bus numbers: the
+  # copied dictionary carried the net-wide keys and positions, so a lookup
+  # by island bus found no shunt, or the shunt of another island (the state
+  # estimator's shunt measurements read it)
+  empty!(inet.shuntDict)
+  for (k, sh) in enumerate(inet.shuntVec)
+    inet.shuntDict[Int(sh.busIdx)] = k
+  end
+  # Per-bus reactive limits in the island's numbering. The copied vectors
+  # were indexed by the net-wide bus numbers, and getQLimits_pu only rebuilds
+  # empty vectors: the rectangular solver read the limits of buses 1..n of
+  # the WHOLE net, the APSLF model dropped them for the length mismatch.
+  inet.qmin_pu, inet.qmax_pu = _island_q_limits(net, row.buses)
+  # The Q-limit records (event log, events by bus, pre-solve PV rows) carry
+  # net-wide bus numbers: an island starts with empty ones, its own solve
+  # fills them, and _sync_island_solution! maps the events back.
+  inet.qLimitLog = Any[]
+  empty!(inet.qLimitEvents)
+  empty!(inet.qLimitInitialPVRows)
   # Only slacks of *this* island survive, renumbered. Slacks of other islands
   # are dropped, not moved.
   inet.slackVec = [busmap[b] for b in net.slackVec if b in busset]
@@ -457,6 +524,30 @@ function _prepare_island_net(net::Net, row)
   return inet
 end
 
+# The per-bus reactive limits of `buses` (net-wide numbers, in island order)
+# as island vectors. Empty limits stay empty: the island then builds its own
+# from its prosumers, the per-bus sums the full net would build. Built limits
+# must cover every bus of the net; any other length is an error, not a
+# reason to drop or pad them (that is how island runs used the limits of the
+# wrong buses).
+function _island_q_limits(net::Net, buses::AbstractVector{Int})::Tuple{Vector{Float64},Vector{Float64}}
+  (isempty(net.qmin_pu) && isempty(net.qmax_pu)) && return (Float64[], Float64[])
+  nbus = length(net.nodeVec)
+  if length(net.qmin_pu) != nbus || length(net.qmax_pu) != nbus
+    throw(DimensionMismatch("AC island split: the per-bus Q limits of the net have $(length(net.qmin_pu)) (qmin_pu) and $(length(net.qmax_pu)) (qmax_pu) entries for $(nbus) buses; rebuild them with buildQLimits!(net) after changing buses or prosumers."))
+  end
+  return net.qmin_pu[buses], net.qmax_pu[buses]
+end
+
+# Island-local positions of the net-wide bus positions in `buses` that lie in
+# the island `row` (bus lists such as power_flow.qlimits.lock_pv_to_pq_buses,
+# which name internal positions of the whole net); the others are dropped.
+function _island_local_buses(row, buses::AbstractVector{<:Integer})::Vector{Int}
+  isempty(buses) && return Int[]
+  local_of = Dict(old => new for (new, old) in enumerate(row.buses))
+  return Int[local_of[Int(b)] for b in buses if haskey(local_of, Int(b))]
+end
+
 # Write one island's solution back into the full net. The inverse of the
 # renumbering done in _prepare_island_net: row.buses/row.branches map the
 # island-local position back to the net-wide index. Only results are copied --
@@ -479,5 +570,16 @@ function _sync_island_solution!(net::Net, inet::Net, row)
     net.branchVec[bridx].tBranchFlow = inet.branchVec[new].tBranchFlow
     net.branchVec[bridx].pLosses = inet.branchVec[new].pLosses
     net.branchVec[bridx].qLosses = inet.branchVec[new].qLosses
+  end
+  # the island's Q-limit records (island bus numbers) go to the net in its
+  # numbering, so result tables, the Q-V check and the switching counts see
+  # them as in a single-island run. The log and the per-bus events are
+  # copied separately: a machine released back to PV leaves the events but
+  # stays in the log, so replaying the log would clamp it again.
+  for ev in inet.qLimitLog
+    push!(net.qLimitLog, QLimitEvent(iter = ev.iter, bus = row.buses[ev.bus], side = ev.side))
+  end
+  for (bus, side) in inet.qLimitEvents
+    net.qLimitEvents[row.buses[bus]] = side
   end
 end

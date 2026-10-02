@@ -1513,6 +1513,15 @@ mpc.branch = [
         @test rect_status.iterations == iterations
       end
 
+      # without an output directory (library call, N-1 and scenario
+      # workers) no island artifact is written; the former fallback was a
+      # fixed file in tempdir() that every concurrent solve overwrote
+      tmp_artifact = joinpath(tempdir(), "ac_islands.csv")
+      tmp_before = isfile(tmp_artifact) ? mtime(tmp_artifact) : nothing
+      _, no_dir_erg = runpf!(deepcopy(net); config = PowerFlowConfig(max_iter = 40, islands_enabled = true))
+      @test no_dir_erg == 0
+      @test (isfile(tmp_artifact) ? mtime(tmp_artifact) : nothing) == tmp_before
+
       pv_ref_net = two_island_net(second_ref = :pv)
       pv_report = Sparlectra.detect_ac_islands(pv_ref_net)
       @test pv_report.rows[2].status == "promote_pv_ref"
@@ -1535,6 +1544,28 @@ mpc.branch = [
       no_ref_report = Sparlectra.detect_ac_islands(no_ref_net; promote_generators = true)
       @test no_ref_report.rows[2].status == "missing_ref"
       @test_throws ErrorException runpf!(no_ref_net; config = PowerFlowConfig(max_iter = 40, islands_enabled = true))
+
+      # 0.30.2 reference priority on the shipped two-island case: the south
+      # island has no slack; the unit with the best stated priority
+      # (Fennwiese_110, 1) wins over the largest one, and with the priorities
+      # cleared reference_candidate_rank decides (Eschwald_110, the largest),
+      # no longer the smallest PV bus index (Dornberg_110)
+      prio_file = joinpath(dirname(@__DIR__), "data", "scf", "two_islands_prio.scf.json")
+      prio_net = importSCF(prio_file)
+      south_ref(n) = only(r.chosen_ref_bus for r in Sparlectra.detect_ac_islands(n).rows if n.busDict["Gruenau_110"] in r.buses)
+      @test south_ref(prio_net) == prio_net.busDict["Fennwiese_110"]
+      plain_net = deepcopy(prio_net)
+      foreach(ps -> ps.referencePriority = 0, plain_net.prosumpsVec)
+      @test south_ref(plain_net) == plain_net.busDict["Eschwald_110"]
+      _, prio_erg = redirect_stdout(devnull) do
+        runpf!(prio_net, 40, 1e-8, 0; islands_enabled = true)
+      end
+      @test prio_erg == 0
+      # the chosen reference holds the island's angle
+      @test prio_net.nodeVec[prio_net.busDict["Fennwiese_110"]]._va_deg == 0.0
+      # the optional SCF field survives the round trip byte for byte
+      @test read(exportSCF(importSCF(prio_file); file = joinpath(mktempdir(), "prio.scf.json"), case_name = "two_islands_prio"), String) == read(prio_file, String)
+      @test_throws ArgumentError addProsumer!(net = plain_net, busName = "Gruenau_110", type = "GENERATOR", p = 1.0, referencePriority = -1)
     end)() end
 
     # A network with a single AC island never enters the independent per-island

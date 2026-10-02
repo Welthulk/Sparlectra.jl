@@ -80,7 +80,7 @@ Base.@kwdef struct MeritLineSearchConfig
   scale_p::Float64 = 1.0
   scale_q::Float64 = 1.0
   scale_v::Float64 = 1.0
-  fallback_max_mismatch::Bool = true
+  fallback_max_mismatch::Bool = false
 end
 
 """
@@ -131,6 +131,10 @@ Base.@kwdef struct QLimitConfig
   # an overshoot up to hysteresis_pu is within_hysteresis, up to this value
   # bounded (accepted with a warning), beyond it a remaining violation
   final_q_accept_pu::Float64 = 0.02
+  # pass limit of the classic outer loop (classic_simultaneous,
+  # classic_one_at_a_time): the power-flow solves after the base solve, one
+  # per Q-limit update; reaches the solver keyword qlimit_max_outer
+  classic_max_passes::Int = 30
   guard::Bool = true
   guard_min_q_range_pu::Float64 = 0.02
   guard_zero_range_mode::Symbol = :lock_pq
@@ -148,6 +152,10 @@ Base.@kwdef struct QLimitConfig
   enforcement_mode::Symbol = :active_set
 end
 
+# islands of at least this many buses run on their own tasks (0.30.2);
+# defined before the struct that uses it as a default
+const DEFAULT_ISLANDS_PARALLEL_MIN_BUSES = 200
+
 """
     IslandPowerFlowConfig
 
@@ -155,7 +163,12 @@ Configuration for AC-island-aware power-flow diagnostics.
 """
 Base.@kwdef struct IslandPowerFlowConfig
   enabled::Bool = true
+  # ignored since 0.30.2 (islands run in parallel by size, see
+  # parallel_min_buses); kept so that struct users keep compiling
   mode::Symbol = :solve_independent
+  # islands of at least this many buses run on their own tasks when two
+  # or more of them exist and Julia has more than one thread (0.30.2)
+  parallel_min_buses::Int = DEFAULT_ISLANDS_PARALLEL_MIN_BUSES
   reference_policy::Symbol = :matpower_like
   diagnostic_continue_after_failure::Bool = true
 end
@@ -239,6 +252,9 @@ Configuration of the N-1 contingency batch (issue #331).
   `:flag` is an opt-in for networks where the user has checked the
   screening share and the margins once. This config key drives the SERVICE
   path; the programmatic keyword default is `:off` as well.
+- `warm_active_set::Bool`: start every outage and scenario from the base
+  case's PV/PQ state (default `false`); see [N-1 Contingency
+  Analysis](@ref contingency_warm_active_set).
 - `screening_margin_pct::Float64`: the flagging margin (default `10.0`): a
   scenario is flagged for the full run when a branch's estimated loading
   plus the change the outage causes on it (at least 1 point, at most the
@@ -249,6 +265,11 @@ Base.@kwdef struct ContingencyConfig
   rescue_ladder::Vector{Symbol} = [:warm]
   screening_mode::Symbol = :off
   screening_margin_pct::Float64 = 10.0
+  # warm active set (0.30.2): outages and scenarios start from the base
+  # case's PV/PQ state (its clamped machines as PQ at the reached limit);
+  # the release rule stays free to undo a clamp. Off by default: it can
+  # change the limited solution where the active set is not unique.
+  warm_active_set::Bool = false
 end
 
 const CONTINGENCY_SCREENING_MODE_VALUES = (:off, :flag, :only)
@@ -350,6 +371,11 @@ Base.@kwdef struct PowerFlowConfig
   # loaded) and its work arrays between solves and skips the ranked
   # mismatch diagnostics; off for a single run
   power_mode::Bool = false
+  # sparse LU of power mode (0.30.2): `auto` chooses once per network from
+  # KLU's symbolic flop estimate of the first Jacobian against
+  # POWER_MODE_LU_KLU_MAX_FLOPS (UMFPACK when the KLU extension is not
+  # loaded); `klu` and `umfpack` fix the backend. Read only with power mode
+  power_mode_lu::Symbol = DEFAULT_POWER_MODE_LU
   # dishonest Newton (0.30.2, off by default): after a Newton step that cut
   # the maximum mismatch by at least `jacobian_reuse_min_reduction`, the
   # next step solves with the factorization of the previous Jacobian
@@ -400,6 +426,7 @@ Base.@kwdef struct PowerFlowConfig
   rectangular_workspace_min_buses::Int = 1000
   islands_enabled::Bool = true
   islands_mode::Symbol = :solve_independent
+  islands_parallel_min_buses::Int = DEFAULT_ISLANDS_PARALLEL_MIN_BUSES
   islands_reference_policy::Symbol = :matpower_like
   start_mode::StartModeConfig = StartModeConfig()
   start_current_iteration::StartCurrentIterationConfig = StartCurrentIterationConfig()
@@ -416,6 +443,10 @@ const WRONG_BRANCH_DETECTION_VALUES = [:off, :warn, :fail, :rescue]
 const POWERFLOW_SOLVER_VALUES = (:rectangular, :apslf, :dc)
 const POWERFLOW_LINEAR_SOLVER_VALUES = (:umfpack, :umfpack_reuse)
 const POWERFLOW_NEWTON_UPDATE_VALUES = (:rectangular, :polar)
+# power_flow.power_mode_lu (0.30.2): one source for the struct, the loader,
+# the override validation and the solver keyword default
+const POWER_MODE_LU_VALUES = (:auto, :klu, :umfpack)
+const DEFAULT_POWER_MODE_LU = :auto
 
 # Jacobian reuse (dishonest Newton) defaults (0.30.2), one source for the
 # struct, the loader and the solver keyword defaults.
@@ -543,6 +574,19 @@ Base.@kwdef struct StateEstimationConfig
   max_eliminations::Int = 3
   rank_tol_factor::Float64 = 10.0
   takahashi_min_states::Int = 200
+  # sparse LU of the WLS normal equations when the gain matrix is not
+  # exactly symmetric (an exactly symmetric one goes to CHOLMOD on either
+  # setting): :umfpack, or :klu through the KLU package extension
+  # (`using KLU`); :klu without the extension falls back to UMFPACK with one
+  # warning. UMFPACK is the default even with KLU loaded, so a session that
+  # loads KLU for power mode does not silently change the estimator's
+  # arithmetic.
+  linear_solver::Symbol = :umfpack
+  # build the WLS gain matrix G = H'WH exactly symmetric (upper triangle
+  # mirrored) so it always takes the Cholesky route; the plain product is
+  # symmetric only up to rounding and then goes to LU. Off by default: the
+  # estimates move at the 1e-10 pu level against the plain product.
+  symmetric_gain::Bool = false
   # critical-measurement classification (issue #394): :omega reads the
   # diagonal of the residual covariance from one selected-inverse pass,
   # :rank runs the former per-row rank tests (budgeted) as a cross-check
@@ -770,7 +814,7 @@ Base.@kwdef struct BenchmarkConfig
   enabled::Bool = false
   methods::Vector{Symbol} = [:rectangular]
   seconds::Float64 = 2.0
-  samples::Int = 50
+  samples::Int = 30
   show_once::Bool = false
   show_once_output::Symbol = :classic
   show_once_max_nodes::Int = 0
@@ -876,7 +920,7 @@ Base.@kwdef struct OutputConfig
   # those are still accepted as a per-request override (deprecated alias,
   # issue #376) and, when given, win over this config value for the whole
   # run so existing API/Web UI callers keep working unchanged.
-  csv_format::Symbol = :technical
+  csv_format::Symbol = :excel_de
   logfile_diagnostics::Symbol = :compact
   logfile_performance::Symbol = :compact
   logfile_warnings::Symbol = :table
@@ -896,7 +940,7 @@ Base.@kwdef struct WebUIConfig
   # older than this; 0 keeps only the current session. The environment
   # variable SPARLECTRA_WEBUI_OPERATION_LOG_RETENTION_DAYS still wins, for
   # headless runs that never read this file.
-  operation_log_retention_days::Int = 10
+  operation_log_retention_days::Int = 3
   # Base URL of the published documentation the help icons open (the Web UI
   # carries no documentation of its own). Override for a local docs build,
   # the dev site or a pinned version folder. A link only, never fetched.
@@ -1002,11 +1046,18 @@ const QLIMIT_GUARD_ZERO_RANGE_MODE_VALUES = (:lock_pq,)
 const QLIMIT_GUARD_NARROW_RANGE_MODE_VALUES = (:prefer_pq, :lock_pq)
 const QLIMIT_GUARD_VIOLATION_MODE_VALUES = (:delayed_switch, :lock_pq)
 const POWERFLOW_ISLAND_MODE_VALUES = (:solve_independent, :solve_parallel)
+
+
+function _validate_islands_parallel_min_buses(x::Int)::Int
+  x >= 1 || throw(ArgumentError("power_flow.islands.parallel_min_buses must be at least 1, got $(x)"))
+  return x
+end
 const POWERFLOW_ISLAND_REFERENCE_POLICY_VALUES = (:matpower_like,)
 const RECTANGULAR_PREALLOCATE_WORKSPACE_VALUES = (:off, :on, :auto)
 const STATE_ESTIMATION_METHOD_VALUES = (:wls,)
 const STATE_ESTIMATION_ROBUST_MODE_VALUES = (:off, :staged, :replacement)
 const STATE_ESTIMATION_PMU_REF_OFFSET_VALUES = (:auto, :off)
+const STATE_ESTIMATION_LINEAR_SOLVER_VALUES = (:umfpack, :klu)
 const MATPOWER_PV_VOLTAGE_SOURCE_VALUES = (:gen_vg, :bus_vm, :auto, :strict_check)
 const MATPOWER_COMPARE_VOLTAGE_REFERENCE_VALUES = (:bus_vm, :gen_vg, :imported_setpoint, :hybrid)
 const MATPOWER_SHIFT_UNIT_VALUES = (:deg, :rad)
@@ -1428,7 +1479,7 @@ function MeritLineSearchConfig(raw::AbstractDict)
     scale_p = _validate_positive("power_flow.merit.scale_p", _as_float_cfg(_raw_get(raw, "scale_p", 1.0))),
     scale_q = _validate_positive("power_flow.merit.scale_q", _as_float_cfg(_raw_get(raw, "scale_q", 1.0))),
     scale_v = _validate_positive("power_flow.merit.scale_v", _as_float_cfg(_raw_get(raw, "scale_v", 1.0))),
-    fallback_max_mismatch = _as_bool_cfg(_raw_get(raw, "fallback_max_mismatch", true)),
+    fallback_max_mismatch = _as_bool_cfg(_raw_get(raw, "fallback_max_mismatch", false)),
   )
 end
 
@@ -1478,6 +1529,13 @@ function ApslfStartConfig(raw::AbstractDict)
   )
 end
 
+# At least one pass: the outer loop runs the base solve and then up to this
+# many Q-limit updates, and the solver rejects qlimit_max_outer < 1.
+function _validate_classic_max_passes(x::Int)::Int
+  x >= 1 || throw(ArgumentError("power_flow.qlimits.classic_max_passes must be at least 1; got $(x)."))
+  return x
+end
+
 function QLimitConfig(raw::AbstractDict)
   # `enforcement_mode: off` means "no Q-limit handling", the same as
   # `enabled: false`. The Web UI offers "off" in its mode control, and its
@@ -1512,6 +1570,7 @@ function QLimitConfig(raw::AbstractDict)
     cooldown_iters = _as_int_cfg(_raw_get(merged, "cooldown_iters", 1)),
     reenable_v_hyst_pu = _validate_nonnegative("power_flow.qlimits.reenable_v_hyst_pu", _as_float_cfg(_raw_get(merged, "reenable_v_hyst_pu", 1e-4))),
     final_q_accept_pu = final_q_accept_value,
+    classic_max_passes = _validate_classic_max_passes(_as_int_cfg(_raw_get(merged, "classic_max_passes", 30))),
     guard = _as_bool_cfg(_raw_get(raw, "qlimit_guard", guard_enabled_default)),
     guard_min_q_range_pu = _validate_nonnegative("qlimit_guard_min_q_range_pu", _as_float_cfg(_raw_get(merged, "min_q_range_pu", _raw_get(merged, "guard_min_q_range_pu", _raw_get(merged, "qlimit_guard_min_q_range_pu", 0.02))))),
     guard_zero_range_mode = _validate_allowed_symbol("power_flow.qlimits.guard.zero_range_mode", _as_symbol_cfg(_raw_get(merged, "zero_range_mode", _raw_get(merged, "guard_zero_range_mode", _raw_get(merged, "qlimit_guard_zero_range_mode", :lock_pq)))), QLIMIT_GUARD_ZERO_RANGE_MODE_VALUES),
@@ -1620,6 +1679,7 @@ function PowerFlowConfig(raw::AbstractDict)
     autodamp_min = _validate_positive("powerflow.autodamp_min", _as_float_cfg(_raw_get(merged, "autodamp_min", 0.05))),
     newton_update = _validate_allowed_symbol("power_flow.newton_update", _as_symbol_cfg(_raw_get(merged, "newton_update", :polar)), POWERFLOW_NEWTON_UPDATE_VALUES),
     power_mode = _as_bool_cfg(_raw_get(merged, "power_mode", false)),
+    power_mode_lu = _validate_allowed_symbol("power_flow.power_mode_lu", _as_symbol_cfg(_raw_get(merged, "power_mode_lu", DEFAULT_POWER_MODE_LU)), POWER_MODE_LU_VALUES),
     jacobian_reuse = _as_bool_cfg(_raw_get(merged, "jacobian_reuse", DEFAULT_JACOBIAN_REUSE)),
     jacobian_reuse_min_reduction = _validate_jacobian_reuse_min_reduction(_as_float_cfg(_raw_get(merged, "jacobian_reuse_min_reduction", DEFAULT_JACOBIAN_REUSE_MIN_REDUCTION))),
     jacobian_reuse_max_steps = _validate_jacobian_reuse_max_steps(_as_int_cfg(_raw_get(merged, "jacobian_reuse_max_steps", DEFAULT_JACOBIAN_REUSE_MAX_STEPS))),
@@ -1642,7 +1702,7 @@ function PowerFlowConfig(raw::AbstractDict)
     rectangular_preallocate_workspace = _validate_allowed_symbol("power_flow.rectangular_preallocate_workspace", _as_symbol_cfg(_raw_get(merged, "rectangular_preallocate_workspace", :auto)), RECTANGULAR_PREALLOCATE_WORKSPACE_VALUES),
     rectangular_workspace_min_buses = _as_int_cfg(_raw_get(merged, "rectangular_workspace_min_buses", 1000)),
     islands_enabled = _as_bool_cfg(_raw_get(islands_raw, "enabled", true)),
-    islands_mode = _validate_allowed_symbol("power_flow.islands.mode", _as_symbol_cfg(_raw_get(islands_raw, "mode", :solve_independent)), POWERFLOW_ISLAND_MODE_VALUES),
+    islands_parallel_min_buses = _validate_islands_parallel_min_buses(_as_int_cfg(_raw_get(islands_raw, "parallel_min_buses", DEFAULT_ISLANDS_PARALLEL_MIN_BUSES))),
     islands_reference_policy = _validate_allowed_symbol("power_flow.islands.reference_policy", _as_symbol_cfg(_raw_get(islands_raw, "reference_policy", :matpower_like)), POWERFLOW_ISLAND_REFERENCE_POLICY_VALUES),
     start_mode = start_mode_cfg,
     start_current_iteration = StartCurrentIterationConfig(start_current_iteration_raw),
@@ -1699,7 +1759,7 @@ function IslandPowerFlowConfig(raw::AbstractDict)
   merged = haskey(raw, "islands") || haskey(raw, :islands) ? _merged_section(raw, "islands") : raw
   return IslandPowerFlowConfig(
     enabled = _as_bool_cfg(_raw_get(merged, "enabled", true)),
-    mode = _validate_allowed_symbol("power_flow.islands.mode", _as_symbol_cfg(_raw_get(merged, "mode", :solve_independent)), POWERFLOW_ISLAND_MODE_VALUES),
+    parallel_min_buses = _validate_islands_parallel_min_buses(_as_int_cfg(_raw_get(merged, "parallel_min_buses", DEFAULT_ISLANDS_PARALLEL_MIN_BUSES))),
     reference_policy = _validate_allowed_symbol("power_flow.islands.reference_policy", _as_symbol_cfg(_raw_get(merged, "reference_policy", :matpower_like)), POWERFLOW_ISLAND_REFERENCE_POLICY_VALUES),
     diagnostic_continue_after_failure = _as_bool_cfg(_raw_get(merged, "diagnostic_continue_after_failure", true)),
   )
@@ -1747,6 +1807,8 @@ function StateEstimationConfig(raw::AbstractDict)
     max_eliminations = Int(_validate_nonnegative("state_estimation.max_eliminations", _as_int_cfg(_raw_get(merged, "max_eliminations", 3)))),
     rank_tol_factor = Float64(_validate_positive("state_estimation.rank_tol_factor", _as_float_cfg(_raw_get(merged, "rank_tol_factor", 10.0)))),
     takahashi_min_states = Int(_validate_positive("state_estimation.takahashi_min_states", _as_int_cfg(_raw_get(merged, "takahashi_min_states", 200)))),
+    linear_solver = _validate_allowed_symbol("state_estimation.linear_solver", _as_symbol_cfg(_raw_get(merged, "linear_solver", :umfpack)), STATE_ESTIMATION_LINEAR_SOLVER_VALUES),
+    symmetric_gain = _as_bool_cfg(_raw_get(merged, "symmetric_gain", false)),
     criticality_method = _validate_allowed_symbol("state_estimation.criticality_method", _as_symbol_cfg(_raw_get(merged, "criticality_method", :omega)), [:omega, :rank]),
     rank_method = _validate_allowed_symbol("state_estimation.rank_method", _as_symbol_cfg(_raw_get(merged, "rank_method", :decomposition)), (:decomposition, :pivots)),
     ia_current_floor_A = Float64(_validate_positive("state_estimation.ia_current_floor_A", _as_float_cfg(_raw_get(merged, "ia_current_floor_A", 10.0)))),
@@ -1926,7 +1988,7 @@ function BenchmarkConfig(raw::AbstractDict)
     enabled = _as_bool_cfg(_raw_get(merged, "enabled", true)),
     methods = methods,
     seconds = _validate_positive("benchmark.seconds", _as_float_cfg(_raw_get(merged, "seconds", 2.0))),
-    samples = _as_int_cfg(_raw_get(merged, "samples", 50)),
+    samples = _as_int_cfg(_raw_get(merged, "samples", 30)),
     show_once = _as_bool_cfg(_raw_get(merged, "show_once", false)),
     show_once_output = _validate_allowed_symbol("benchmark.show_once_output", _as_symbol_cfg(_raw_get(merged, "show_once_output", :classic)), BENCHMARK_SHOW_ONCE_OUTPUT_VALUES),
     show_once_max_nodes = _as_int_cfg(_raw_get(merged, "show_once_max_nodes", 0)),
@@ -1943,7 +2005,8 @@ function ContingencyConfig(raw::AbstractDict)
   mode = _validate_allowed_symbol("contingency.screening.mode", _as_symbol_cfg(_raw_get(screening, "mode", :off)), CONTINGENCY_SCREENING_MODE_VALUES)
   margin = _as_float_cfg(_raw_get(screening, "margin_pct", 10.0))
   (isfinite(margin) && margin >= 0.0) || throw(ArgumentError("contingency.screening.margin_pct must be a finite value >= 0; got $(margin)."))
-  return ContingencyConfig(rescue_ladder = ladder, screening_mode = mode, screening_margin_pct = margin)
+  warm = _as_bool_cfg(_raw_get(merged, "warm_active_set", false))
+  return ContingencyConfig(rescue_ladder = ladder, screening_mode = mode, screening_margin_pct = margin, warm_active_set = warm)
 end
 
 # The deprecated diagnostics.* duplicates of output.* are warned about (and
@@ -1985,7 +2048,7 @@ function OutputConfig(raw::AbstractDict)
     # working. `csv_format` wins if both are set.
     csv_format = _validate_allowed_symbol(
       "output.csv_format",
-      _as_symbol_cfg(_raw_get(merged, "csv_format", _raw_get(merged, "detailed_result_csv_format", :technical))),
+      _as_symbol_cfg(_raw_get(merged, "csv_format", _raw_get(merged, "detailed_result_csv_format", :excel_de))),
       OUTPUT_CSV_FORMAT_VALUES,
     ),
   )
@@ -2016,7 +2079,7 @@ function WebUIConfig(raw::AbstractDict)
   merged = _merged_section(raw, "webui")
   return WebUIConfig(
     show_case_settings_notice = _as_bool_cfg(_raw_get(merged, "show_case_settings_notice", true)),
-    operation_log_retention_days = Int(_validate_nonnegative("webui.operation_log_retention_days", _as_int_cfg(_raw_get(merged, "operation_log_retention_days", 10)))),
+    operation_log_retention_days = Int(_validate_nonnegative("webui.operation_log_retention_days", _as_int_cfg(_raw_get(merged, "operation_log_retention_days", 3)))),
     docs_base_url = String(_as_string_cfg(_raw_get(merged, "docs_base_url", "https://welthulk.github.io/Sparlectra.jl/"))),
   )
 end
@@ -2094,6 +2157,14 @@ const _FREEFORM_MAPPING_CONFIG_KEYS = ("power_flow.distributed_slack.weights", "
 # IIDM reader needs no Python; the Web UI had written the key into every
 # saved configuration and case sidecar of 0.19.0.
 const _REMOVED_SILENT_CONFIG_KEYS = ("output.condition_number", "webui.warmup", "powsybl_import.python_exe")
+
+# Removed keys that are ignored WITH one line naming what replaced them
+# (the 0.20.0 rule: a removed key is a warning, never a failure).
+# power_flow.islands.mode, 0.30.2: islands run in parallel by size when
+# Julia has more than one thread; there is no mode to choose.
+const _REMOVED_NOTED_CONFIG_KEYS = Dict(
+  "power_flow.islands.mode" => "islands of one network run in parallel when Julia has more than one thread and at least two islands have power_flow.islands.parallel_min_buses buses (runtime.parallel.enabled is the master switch); remove the key.",
+)
 
 const _DEPRECATED_CONFIG_KEYS = Dict(
   "diagnostics.console_summary" => "output.console_summary",
@@ -2325,9 +2396,17 @@ function _validate_known_config_keys(user::AbstractDict, defaults::AbstractDict;
       continue
     end
     current_path in _REMOVED_SILENT_CONFIG_KEYS && continue
+    if haskey(_REMOVED_NOTED_CONFIG_KEYS, current_path)
+      # once per key and process: one run loads the configuration several
+      # times, and a stored file repeated the same line on every load (the
+      # service writes the key into each run.log instead)
+      @warn "Configuration key $(current_path) is ignored: $(_REMOVED_NOTED_CONFIG_KEYS[current_path])" maxlog = 1 _id = Symbol("removed_config_key_", current_path)
+      push!(drop, key)
+      continue
+    end
     if !haskey(defaults, skey)
       strict && throw(ArgumentError("Unknown Sparlectra configuration key: $(current_path)"))
-      @warn "Unknown Sparlectra configuration key $(current_path) is ignored (not a key of this Sparlectra version; check the spelling or remove it from the file)."
+      @warn "Unknown Sparlectra configuration key $(current_path) is ignored (not a key of this Sparlectra version; check the spelling or remove it from the file)." maxlog = 1 _id = Symbol("unknown_config_key_", current_path)
       push!(drop, key)
       continue
     end
@@ -2420,6 +2499,48 @@ function _remove_retired_webui_fields!(raw::AbstractDict, prefix::String, remove
   return removed
 end
 
+# Keys a refresh deletes because no loader reads them: the same decisions as
+# _validate_known_config_keys (removed keys, noted and silent; deprecated
+# keys that are ignored; keys the packaged template does not know), so a
+# refreshed file loads without a single ignored-key warning. A `form` block
+# counts as unknown here: the Web UI reads form defaults from CASE files
+# only, so in the configuration file it is never read and warned about on
+# every load. The free-form mappings are left alone; `methods` is validated
+# on its own.
+function _remove_superfluous_config_keys!(user::AbstractDict, defaults::AbstractDict, path::String, removed::Vector{String}, reasons::Vector{String})
+  for key in collect(keys(user))
+    skey = _canonical_config_key(_config_key(key))
+    isempty(path) && skey in ("_config_sources", "_config_metadata", "methods") && continue
+    current_path = isempty(path) ? skey : string(path, ".", skey)
+    reason = if current_path == "form"
+      "the Web UI reads form defaults from case files only"
+    elseif current_path == "matpower_import.benchmark"
+      "use benchmark.enabled"
+    elseif haskey(_DEPRECATED_CONFIG_KEYS, current_path)
+      "deprecated and ignored; use $(_DEPRECATED_CONFIG_KEYS[current_path])"
+    elseif current_path in _REMOVED_SILENT_CONFIG_KEYS
+      "no longer a configuration key"
+    elseif haskey(_REMOVED_NOTED_CONFIG_KEYS, current_path)
+      _REMOVED_NOTED_CONFIG_KEYS[current_path]
+    elseif !haskey(defaults, skey)
+      "not a key of this Sparlectra version"
+    else
+      nothing
+    end
+    if reason !== nothing
+      delete!(user, key)
+      push!(removed, current_path)
+      push!(reasons, string("Removed ", current_path, ": ", reason, endswith(reason, ".") ? "" : "."))
+      continue
+    end
+    value = user[key]
+    if value isa AbstractDict && !(current_path in _FREEFORM_MAPPING_CONFIG_KEYS) && defaults[skey] isa AbstractDict
+      _remove_superfluous_config_keys!(value, defaults[skey], current_path, removed, reasons)
+    end
+  end
+  return removed
+end
+
 # nested config dict -> flat dotted-key => scalar value map (read-only helper
 # for the user-set detection above)
 function _flatten_config_values!(out::Dict{String,Any}, raw::AbstractDict, prefix::String = "")
@@ -2465,6 +2586,10 @@ function refresh_sparlectra_config_file(path::AbstractString; write::Bool = fals
   missing_keys = String[]
   _add_missing_config_keys!(refreshed, defaults, missing_keys)
   normalize_deprecated && append!(normalized_keys, _normalize_deprecated_config_aliases!(refreshed))
+  # keys no loader reads any more (removed, deprecated-and-ignored, unknown):
+  # a refresh deletes them and names each one; AFTER the alias
+  # normalization, which moves a deprecated key's value to its replacement
+  _remove_superfluous_config_keys!(refreshed, defaults, "", removed_keys, warnings)
   refreshed_text = _yaml_dict_text(refreshed)
   original_text = read(path, String)
   changed = !isempty(missing_keys) || !isempty(normalized_keys) || !isempty(removed_keys) || refreshed_text != original_text

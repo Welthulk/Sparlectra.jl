@@ -359,10 +359,10 @@ function run_scenario_patch_tests()
       # the screening CSV appends exactly the two screening columns
       csv = read(Sparlectra.writeContingencyResultsCSV(joinpath(d, "flag.csv"), flagged), String)
       header = first(split(csv, '\n'))
-      # default format is "technical" (comma delimiter) since issue #376;
-      # see "printer and CSV writer" in test_contingency.jl for the excel_de
-      # (semicolon) coverage of the same writer.
-      @test endswith(header, ",screened,screening_estimate")
+      # default format is "excel_de" (semicolon delimiter) since 0.30.2;
+      # see "printer and CSV writer" in test_contingency.jl for the other
+      # formats of the same writer.
+      @test endswith(header, ";screened;screening_estimate")
       # :only never runs a full solve where an estimate exists; islanding
       # cases still carry real solves (start_used != :screen)
       only_res = Sparlectra.runContingencies!(net, cases14; screening_mode = :only, screening_margin_pct = 10.0)
@@ -408,6 +408,10 @@ function run_scenario_engine_extended_tests()
     # then on every run compares against it. Regenerated at 0.30.0 (polar
     # Newton update, template Q-limit defaults): 3 of 240 contingencies end
     # in another active set, the rest differ in iteration counts only.
+    # Regenerated at 0.30.2 (island runs read the reactive limits of their
+    # own buses): exactly the 3 outages that split the net (109-105,
+    # 114-93, 94-107) changed, in voltages and loading, 94-107 also in
+    # iterations (12 to 10); every non-islanding row is unchanged.
     fixture = abspath(joinpath(@__DIR__, "fixtures", "contingency_sp_case118_n1.csv"))
     case_path = abspath(joinpath(dirname(@__DIR__), "data", "mpower", "sp_case118.m"))
     @test isfile(case_path)
@@ -416,7 +420,8 @@ function run_scenario_engine_extended_tests()
       cases = vcat(Sparlectra.generateN1Branches(net), Sparlectra.generateN1Generators(net))
       @test length(cases) == 240
       results = Sparlectra.runContingencies!(net, cases)
-      out = Sparlectra.writeContingencyResultsCSV(joinpath(mktempdir(), "sp_case118_n1.csv"), results)
+      # the fixture is the technical spelling (comma, decimal point)
+      out = Sparlectra.writeContingencyResultsCSV(joinpath(mktempdir(), "sp_case118_n1.csv"), results; format = "technical")
       if !isfile(fixture)
         cp(out, fixture)
         println("      scenario engine sp_case118 fixture: CREATED ", fixture, " (commit it; this run compared nothing)")
@@ -469,6 +474,11 @@ function run_scenario_engine_extended_tests()
     ds_violating = Set(r.name for r in ds_full if !isempty(r.overloads) || !isempty(r.voltage_violations) || !r.converged)
     @test sort(collect(intersect(ds_violating, Set(r.name for r in ds_flagged if r.screened)))) == String[]
     @test count(r -> r.screened, ds_flagged) > 0
+    # warm active set (0.30.2): outages start from the base case's PV/PQ
+    # state; on the shipped grid the violation list is the same as without
+    warm = Sparlectra.runContingencies!(net, cases; warm_active_set = true, warm_note = Ref(""))
+    viol_list(rs) = [(r.name, r.converged, sort([o.name for o in r.overloads]), sort(r.voltage_violations)) for r in rs]
+    @test viol_list(warm) == viol_list(full)
     # change-based loading flag (0.30.2): a branch the base case already
     # loads at 95 percent used to flag every outage (the network-wide
     # maximum stayed above 100 - margin); now only outages that change it
@@ -505,7 +515,8 @@ function run_scenario_engine_extended_tests()
     net = Sparlectra.importSCF(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case60.scf.json")))
     cases = vcat(Sparlectra.generateN1Branches(net), Sparlectra.generateN1Generators(net))
     results = Sparlectra.runContingencies!(net, cases)
-    out = Sparlectra.writeContingencyResultsCSV(joinpath(mktempdir(), "sp60_n1.csv"), results)
+    # the fixture is the technical spelling (comma, decimal point)
+    out = Sparlectra.writeContingencyResultsCSV(joinpath(mktempdir(), "sp60_n1.csv"), results; format = "technical")
     if !isfile(fixture)
       cp(out, fixture)
       println("      scenario engine sp_case60 fixture: CREATED ", fixture, " (commit it; this run compared nothing)")
@@ -539,8 +550,9 @@ function run_scenario_engine_extended_tests()
       @test d1["metadata"]["contingency_cases_source"] == "scenario_file_block"
       @test haskey(d1["metadata"], "contingency_screened")
       csv1 = readlines(joinpath(dir, "run_fb", "contingency_n1.csv"))
-      # default format is "technical" (comma delimiter) since issue #376
-      @test endswith(first(csv1), ",screened,screening_estimate")
+      # the header ends with the two screening columns whatever the
+      # delimiter (excel_de, the semicolon, is the default since 0.30.2)
+      @test endswith(replace(first(csv1), ';' => ','), ",screened,screening_estimate")
       @test length(csv1) == 3
       # external scenario JSON, screening explicitly off: classic CSV columns
       scen_file = joinpath(dir, "scenarios.json")
@@ -551,7 +563,7 @@ function run_scenario_engine_extended_tests()
       @test d2["metadata"]["contingency_screening_mode"] == "off"
       @test d2["metadata"]["contingency_cases_source"] == "scenario_external_file"
       csv2 = readlines(joinpath(dir, "run_ext", "contingency_n1.csv"))
-      @test !endswith(first(csv2), ",screened,screening_estimate")
+      @test !endswith(replace(first(csv2), ';' => ','), ",screened,screening_estimate")
       # an n1 source works on any format and records itself
       res3 = SparlectraApp._run_contingency_service(case_file, cfgpath, joinpath(dir, "run_n1"), "step5_n1", "branch"; scenario_source = "n1_generators", screening_mode = "off")
       d3 = SparlectraApp.to_dict(res3)

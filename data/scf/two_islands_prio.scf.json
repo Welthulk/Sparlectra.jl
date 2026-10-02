@@ -1,0 +1,448 @@
+{
+  "version": "1.0",
+  "type": "input",
+  "is_batch": false,
+  "attributes": {},
+  "data": {
+    "line": [
+      {
+        "c1": 5.261320432789929e-7,
+        "from_node": 1,
+        "from_status": 1,
+        "id": 8,
+        "r1": 1.21,
+        "tan1": 0.0,
+        "to_node": 2,
+        "to_status": 1,
+        "x1": 7.26
+      },
+      {
+        "c1": 5.261320432789929e-7,
+        "from_node": 1,
+        "from_status": 1,
+        "id": 9,
+        "r1": 1.21,
+        "tan1": 0.0,
+        "to_node": 7,
+        "to_status": 1,
+        "x1": 7.26
+      },
+      {
+        "c1": 5.261320432789929e-7,
+        "from_node": 2,
+        "from_status": 1,
+        "id": 10,
+        "r1": 1.21,
+        "tan1": 0.0,
+        "to_node": 7,
+        "to_status": 1,
+        "x1": 7.26
+      },
+      {
+        "c1": 5.261320432789929e-7,
+        "from_node": 7,
+        "from_status": 0,
+        "id": 11,
+        "r1": 1.21,
+        "tan1": 0.0,
+        "to_node": 3,
+        "to_status": 0,
+        "x1": 7.26
+      },
+      {
+        "c1": 5.261320432789929e-7,
+        "from_node": 3,
+        "from_status": 1,
+        "id": 12,
+        "r1": 1.21,
+        "tan1": 0.0,
+        "to_node": 4,
+        "to_status": 1,
+        "x1": 7.26
+      },
+      {
+        "c1": 5.261320432789929e-7,
+        "from_node": 4,
+        "from_status": 1,
+        "id": 13,
+        "r1": 1.21,
+        "tan1": 0.0,
+        "to_node": 5,
+        "to_status": 1,
+        "x1": 7.26
+      },
+      {
+        "c1": 5.261320432789929e-7,
+        "from_node": 5,
+        "from_status": 1,
+        "id": 14,
+        "r1": 1.21,
+        "tan1": 0.0,
+        "to_node": 6,
+        "to_status": 1,
+        "x1": 7.26
+      },
+      {
+        "c1": 5.261320432789929e-7,
+        "from_node": 6,
+        "from_status": 1,
+        "id": 15,
+        "r1": 1.21,
+        "tan1": 0.0,
+        "to_node": 3,
+        "to_status": 1,
+        "x1": 7.26
+      }
+    ],
+    "node": [
+      {
+        "id": 1,
+        "u_rated": 110000.0
+      },
+      {
+        "id": 2,
+        "u_rated": 110000.0
+      },
+      {
+        "id": 3,
+        "u_rated": 110000.0
+      },
+      {
+        "id": 4,
+        "u_rated": 110000.0
+      },
+      {
+        "id": 5,
+        "u_rated": 110000.0
+      },
+      {
+        "id": 6,
+        "u_rated": 110000.0
+      },
+      {
+        "id": 7,
+        "u_rated": 110000.0
+      }
+    ],
+    "sym_gen": [
+      {
+        "id": 19,
+        "node": 1,
+        "p_specified": 0.0,
+        "q_specified": 0.0,
+        "status": 1,
+        "type": 0
+      },
+      {
+        "id": 20,
+        "node": 2,
+        "p_specified": 4.0e7,
+        "q_specified": 0.0,
+        "status": 1,
+        "type": 0
+      },
+      {
+        "id": 21,
+        "node": 7,
+        "p_specified": 8.0e7,
+        "q_specified": 0.0,
+        "status": 1,
+        "type": 0
+      },
+      {
+        "id": 22,
+        "node": 3,
+        "p_specified": 2.0e7,
+        "q_specified": 0.0,
+        "status": 1,
+        "type": 0
+      },
+      {
+        "id": 23,
+        "node": 4,
+        "p_specified": 6.0e7,
+        "q_specified": 0.0,
+        "status": 1,
+        "type": 0
+      },
+      {
+        "id": 24,
+        "node": 5,
+        "p_specified": 3.0e7,
+        "q_specified": 0.0,
+        "status": 1,
+        "type": 0
+      }
+    ],
+    "sym_load": [
+      {
+        "id": 16,
+        "node": 2,
+        "p_specified": 5.0e7,
+        "q_specified": 1.0e7,
+        "status": 1,
+        "type": 0
+      },
+      {
+        "id": 17,
+        "node": 7,
+        "p_specified": 9.0e7,
+        "q_specified": 2.0e7,
+        "status": 1,
+        "type": 0
+      },
+      {
+        "id": 18,
+        "node": 6,
+        "p_specified": 1.0e8,
+        "q_specified": 2.5e7,
+        "status": 1,
+        "type": 0
+      }
+    ],
+    "voltage_regulator": [
+      {
+        "id": 25,
+        "q_max": 3.0e7,
+        "q_min": -3.0e7,
+        "regulated_object": 20,
+        "status": 1,
+        "u_ref": 1.01
+      },
+      {
+        "id": 26,
+        "q_max": 8.0e7,
+        "q_min": -8.0e7,
+        "regulated_object": 21,
+        "status": 1,
+        "u_ref": 1.0
+      },
+      {
+        "id": 27,
+        "q_max": 2.0e7,
+        "q_min": -2.0e7,
+        "regulated_object": 22,
+        "status": 1,
+        "u_ref": 1.01
+      },
+      {
+        "id": 28,
+        "q_max": 6.0e7,
+        "q_min": -6.0e7,
+        "regulated_object": 23,
+        "status": 1,
+        "u_ref": 1.01
+      },
+      {
+        "id": 29,
+        "q_max": 3.0e7,
+        "q_min": -3.0e7,
+        "regulated_object": 24,
+        "status": 1,
+        "u_ref": 1.02
+      }
+    ]
+  },
+  "sparlectra": {
+    "extra": {
+      "1": {
+        "bus_index": 1,
+        "component_name": "Bus_1_110",
+        "external_id": "#Bus_1_110#",
+        "name": "Almhof_110",
+        "node_type": "Slack"
+      },
+      "10": {
+        "branch_index": 2,
+        "external_id": "#B_ACL_110_2_3#2",
+        "name": "B_ACL_110_2_3"
+      },
+      "11": {
+        "branch_index": 4,
+        "external_id": "#B_ACL_110_3_4#4",
+        "name": "B_ACL_110_3_4"
+      },
+      "12": {
+        "branch_index": 5,
+        "external_id": "#B_ACL_110_4_5#5",
+        "name": "B_ACL_110_4_5"
+      },
+      "13": {
+        "branch_index": 6,
+        "external_id": "#B_ACL_110_5_6#6",
+        "name": "B_ACL_110_5_6"
+      },
+      "14": {
+        "branch_index": 7,
+        "external_id": "#B_ACL_110_6_7#7",
+        "name": "B_ACL_110_6_7"
+      },
+      "15": {
+        "branch_index": 8,
+        "external_id": "#B_ACL_110_7_4#8",
+        "name": "B_ACL_110_7_4"
+      },
+      "16": {
+        "element_index": 3,
+        "external_id": "#Ld_110.0\\_2\\_#3",
+        "name": "Ld_110.0",
+        "prosumption_class": "Consumption",
+        "prosumption_type": "Load"
+      },
+      "17": {
+        "element_index": 5,
+        "external_id": "#Ld_110.0\\_3\\_#5",
+        "name": "Ld_110.0",
+        "prosumption_class": "Consumption",
+        "prosumption_type": "Load"
+      },
+      "18": {
+        "element_index": 9,
+        "external_id": "#Ld_110.0\\_7\\_#9",
+        "name": "Ld_110.0",
+        "prosumption_class": "Consumption",
+        "prosumption_type": "Load"
+      },
+      "19": {
+        "element_index": 1,
+        "external_id": "#Gen_110\\_1\\_#1",
+        "name": "Gen_110",
+        "prosumption_class": "Injection",
+        "prosumption_type": "Generator",
+        "reference_pri": true,
+        "reference_priority": 1,
+        "regulated": true,
+        "vm_pu": 1.02
+      },
+      "2": {
+        "bus_index": 2,
+        "component_name": "Bus_2_110",
+        "external_id": "#Bus_2_110#",
+        "name": "Brunntal_110",
+        "node_type": "PV"
+      },
+      "20": {
+        "element_index": 2,
+        "external_id": "#Gen_110\\_2\\_#2",
+        "max_p_mw": 60.0,
+        "max_q_mvar": 30.0,
+        "min_p_mw": 0.0,
+        "min_q_mvar": -30.0,
+        "name": "Gen_110",
+        "prosumption_class": "Injection",
+        "prosumption_type": "Generator",
+        "reference_priority": 2,
+        "regulated": true
+      },
+      "21": {
+        "element_index": 4,
+        "external_id": "#Gen_110\\_3\\_#4",
+        "max_p_mw": 200.0,
+        "max_q_mvar": 80.0,
+        "min_p_mw": 0.0,
+        "min_q_mvar": -80.0,
+        "name": "Gen_110",
+        "prosumption_class": "Injection",
+        "prosumption_type": "Generator",
+        "regulated": true
+      },
+      "22": {
+        "element_index": 6,
+        "external_id": "#Gen_110\\_4\\_#6",
+        "max_p_mw": 40.0,
+        "max_q_mvar": 20.0,
+        "min_p_mw": 0.0,
+        "min_q_mvar": -20.0,
+        "name": "Gen_110",
+        "prosumption_class": "Injection",
+        "prosumption_type": "Generator",
+        "reference_priority": 2,
+        "regulated": true
+      },
+      "23": {
+        "element_index": 7,
+        "external_id": "#Gen_110\\_5\\_#7",
+        "max_p_mw": 150.0,
+        "max_q_mvar": 60.0,
+        "min_p_mw": 0.0,
+        "min_q_mvar": -60.0,
+        "name": "Gen_110",
+        "prosumption_class": "Injection",
+        "prosumption_type": "Generator",
+        "regulated": true
+      },
+      "24": {
+        "element_index": 8,
+        "external_id": "#Gen_110\\_6\\_#8",
+        "max_p_mw": 60.0,
+        "max_q_mvar": 30.0,
+        "min_p_mw": 0.0,
+        "min_q_mvar": -30.0,
+        "name": "Gen_110",
+        "prosumption_class": "Injection",
+        "prosumption_type": "Generator",
+        "reference_priority": 1,
+        "regulated": true
+      },
+      "3": {
+        "bus_index": 4,
+        "component_name": "Bus_4_110",
+        "external_id": "#Bus_4_110#",
+        "name": "Dornberg_110",
+        "node_type": "PV"
+      },
+      "4": {
+        "bus_index": 5,
+        "component_name": "Bus_5_110",
+        "external_id": "#Bus_5_110#",
+        "name": "Eschwald_110",
+        "node_type": "PV"
+      },
+      "5": {
+        "bus_index": 6,
+        "component_name": "Bus_6_110",
+        "external_id": "#Bus_6_110#",
+        "name": "Fennwiese_110",
+        "node_type": "PV"
+      },
+      "6": {
+        "bus_index": 7,
+        "component_name": "Bus_7_110",
+        "external_id": "#Bus_7_110#",
+        "name": "Gruenau_110",
+        "node_type": "PQ"
+      },
+      "7": {
+        "bus_index": 3,
+        "component_name": "Bus_3_110",
+        "external_id": "#Bus_3_110#",
+        "name": "Kesselau_110",
+        "node_type": "PV"
+      },
+      "8": {
+        "branch_index": 1,
+        "external_id": "#B_ACL_110_1_2#1",
+        "name": "B_ACL_110_1_2"
+      },
+      "9": {
+        "branch_index": 3,
+        "external_id": "#B_ACL_110_1_3#3",
+        "name": "B_ACL_110_1_3"
+      }
+    },
+    "format_version": "1.0",
+    "meta": {
+      "case_name": "two_islands_prio",
+      "created_by": "Sparlectra 0.30.2",
+      "f_nom": 50.0,
+      "intended_calculations": ["power_flow"],
+      "s_base": 1.0e8
+    },
+    "roles": {
+      "slack": {
+        "mode": "single",
+        "nodes": [1]
+      }
+    }
+  }
+}

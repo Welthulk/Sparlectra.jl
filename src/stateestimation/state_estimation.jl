@@ -498,13 +498,10 @@ function _se_prepare(net::Net, measurements::Vector{Measurement})
   busmap = Dict{Int,Int}(old => new for (new, old) in enumerate(buses))
   branchmap = Dict{Int,Int}(old => new for (new, old) in enumerate(branches))
 
-  # the island builder replaces shuntVec but not shuntDict: rebuild it, and
-  # keep the original shunt positions for the updateShunts write-back (the
-  # subnet keeps net.shuntVec order, filtered to surviving buses)
-  empty!(snet.shuntDict)
-  for (k, sh) in enumerate(snet.shuntVec)
-    snet.shuntDict[sh.busIdx] = k
-  end
+  # the island builder rebuilds shuntVec and shuntDict in the subnet's
+  # numbering; keep the original shunt positions for the updateShunts
+  # write-back (the subnet keeps net.shuntVec order, filtered to surviving
+  # buses)
   shuntOrig = [k for (k, sh) in enumerate(net.shuntVec) if reps[Int(sh.busIdx)] in busset]
   length(shuntOrig) == length(snet.shuntVec) || error("SE link contraction: shunt bookkeeping out of sync (this is a bug)")
 
@@ -668,16 +665,24 @@ function _residual_diagnostics(H::AbstractMatrix{<:Real}, r::Vector{Float64}, w:
     @warn "SE diagnostics: the residual-correlation K report needs the full m×m residual covariance and m=$(m) exceeds $(_SE_FULL_OMEGA_MAX_M); the report is skipped for this run"
     need_full_omega = false
   end
-  takahashi_reason = ""
+  # above the dense state cap the full Omega is never formed: the dense pinv
+  # of G is cubic in n. Omega_ii comes from the Takahashi route (or the
+  # blockwise sparse solve below), and a K request is served by
+  # _residual_correlation_max_blockwise in the caller, column block by
+  # column block. Before this, a K request pinned the dense path and a
+  # 1354-bus case (2707 states) failed the whole run with "no affordable
+  # route", although no part of the diagnostics needs a dense G inverse.
+  need_full_omega && n > _SE_DENSE_LINALG_MAX_N && (need_full_omega = false)
   if !need_full_omega && n >= minStates
     sp, takahashi_reason = _residual_diagnostics_takahashi(H, r, w)
     sp !== nothing && return sp
-    @warn "SE diagnostics: Takahashi selected inverse unavailable ($(takahashi_reason)); falling back to the dense path"
+    @warn "SE diagnostics: Takahashi selected inverse unavailable ($(takahashi_reason)); falling back to the $(n > _SE_DENSE_LINALG_MAX_N ? "blockwise sparse" : "dense") path"
   end
-  # the dense pinv fallback is cubic in n: below the threshold it is the
-  # small-system default and the K-report path; above it no affordable
-  # route remains and the estimator says so instead of allocating
-  n > _SE_DENSE_LINALG_MAX_N && error("SE diagnostics: no affordable route for n=$(n) states (dense fallback capped at $(_SE_DENSE_LINALG_MAX_N)$(isempty(takahashi_reason) ? "" : "; Takahashi refused: " * takahashi_reason))")
+  # the dense pinv is cubic in n: below the cap it is the small-system
+  # default and the K-report path; above it the blockwise sparse solve
+  # (one factorization of G, block right-hand sides) gives the same
+  # diagonal without ever holding a dense n×n or m×m matrix
+  n > _SE_DENSE_LINALG_MAX_N && return _residual_diagnostics_blockwise(H, r, w)
 
   # Matrix(H) restores the exact zeros the sparse assembly dropped, so this
   # small dense path computes bit for bit what the historical dense H did
@@ -812,6 +817,113 @@ function _residual_correlation_max(Ω::AbstractMatrix{Float64})
   return kmax
 end
 
+## Blockwise residual covariance for systems above the dense cap.
+##
+## Ω = W⁻¹ − H G⁻¹ Hᵀ with G = Hᵀ W H. Column j of Ω needs one solve
+## G x = h_jᵀ (h_j = row j of H) and one sparse product H x, so a block of
+## columns costs one multi-RHS solve on the sparse factorization and never
+## more than an n×b and an m×b dense block in memory. G is factorized ONCE
+## per call (UMFPACK; G is nonsingular whenever the estimate converged).
+const _SE_OMEGA_BLOCK = 256
+
+## Sparse G and its factorization. The one expected failure is a singular
+## gain matrix (an unobservable set reached the diagnostics); it is turned
+## into an error naming that cause, which the callers already report
+## (validate_measurements fails the run with the text, the suppression
+## round warns and suppresses nothing).
+function _omega_gain_factor(Hs::SparseMatrixCSC{Float64,Int}, w::Vector{Float64})
+  G = Hs' * (Diagonal(w) * Hs)
+  return try
+    lu(G)
+  catch err
+    err isa SingularException || rethrow()
+    error("SE diagnostics: the gain matrix G = H'WH is singular (state $(err.info) not observable); no residual covariance exists")
+  end
+end
+
+## Ω_jj for every row j: per block, X = G⁻¹ Hᵀ[:, block], then
+## Ω_jj = 1/w_j − h_j X[:, j] over the nonzeros of row j only.
+function _omega_diag_blockwise(Ht::SparseMatrixCSC{Float64,Int}, w::Vector{Float64}, F)
+  m = size(Ht, 2)
+  d = zeros(Float64, m)
+  for c0 = 1:_SE_OMEGA_BLOCK:m
+    cols = c0:min(c0 + _SE_OMEGA_BLOCK - 1, m)
+    X = F \ Matrix{Float64}(Ht[:, cols])
+    for (jj, j) in enumerate(cols)
+      acc = 0.0
+      for a = Ht.colptr[j]:(Ht.colptr[j+1]-1)
+        acc += Ht.nzval[a] * X[Ht.rowval[a], jj]
+      end
+      # same clamp as the dense and Takahashi paths: roundoff can push a
+      # critical row (Ω_jj = 0 exactly) a hair below zero
+      d[j] = max(1.0 / w[j] - acc, 0.0)
+    end
+  end
+  return d
+end
+
+## Diagnostics on the blockwise route: the same (rn, wii, omega,
+## omega_path, state_variances) tuple as the other two paths, with
+## omega = nothing (Ω_ii only, as on the Takahashi path). diag(G⁻¹) comes
+## from identity blocks on the same factorization.
+function _residual_diagnostics_blockwise(H::AbstractMatrix{<:Real}, r::Vector{Float64}, w::Vector{Float64})
+  m, n = size(H)
+  Hs = H isa SparseMatrixCSC{Float64,Int} ? H : sparse(Matrix{Float64}(H))
+  F = _omega_gain_factor(Hs, w)
+  Ht = SparseMatrixCSC(transpose(Hs))
+  d = _omega_diag_blockwise(Ht, w, F)
+  rn = zeros(Float64, m)
+  wii = zeros(Float64, m)
+  for i = 1:m
+    wii[i] = d[i] * w[i]
+    rn[i] = d[i] <= eps(Float64) ? 0.0 : r[i] / sqrt(d[i])
+  end
+  sv = zeros(Float64, n)
+  for c0 = 1:_SE_OMEGA_BLOCK:n
+    cols = c0:min(c0 + _SE_OMEGA_BLOCK - 1, n)
+    E = zeros(Float64, n, length(cols))
+    for (jj, j) in enumerate(cols)
+      E[j, jj] = 1.0
+    end
+    X = F \ E
+    for (jj, j) in enumerate(cols)
+      sv[j] = X[j, jj]
+    end
+  end
+  return (rn = rn, wii = wii, omega = nothing, omega_path = :blockwise, state_variances = sv)
+end
+
+## K report without the full Ω: the same per-row maximum as
+## _residual_correlation_max, computed column block by column block. Two
+## passes because every coefficient needs BOTH diagonal entries: the first
+## pass collects diag(Ω), the second forms Ω[:, block] = W⁻¹[:, block] −
+## H X and reads the column maximum. Ω is symmetric, so the maximum over
+## column j is the maximum over row j. Memory: one m×b block.
+function _residual_correlation_max_blockwise(H::AbstractMatrix{<:Real}, w::Vector{Float64})
+  m = size(H, 1)
+  Hs = H isa SparseMatrixCSC{Float64,Int} ? H : sparse(Matrix{Float64}(H))
+  F = _omega_gain_factor(Hs, w)
+  Ht = SparseMatrixCSC(transpose(Hs))
+  d = _omega_diag_blockwise(Ht, w, F)
+  kmax = zeros(Float64, m)
+  for c0 = 1:_SE_OMEGA_BLOCK:m
+    cols = c0:min(c0 + _SE_OMEGA_BLOCK - 1, m)
+    Y = Hs * (F \ Matrix{Float64}(Ht[:, cols]))   # (H G⁻¹ Hᵀ)[:, cols]
+    for (jj, j) in enumerate(cols)
+      d[j] <= eps(Float64) && continue
+      best = 0.0
+      for i = 1:m
+        (i == j || d[i] <= eps(Float64)) && continue
+        # off the diagonal W⁻¹ is zero, so Ω_ij = −Y_ij
+        k = abs(Y[i, jj]) / sqrt(d[i] * d[j])
+        k > best && (best = k)
+      end
+      kmax[j] = best
+    end
+  end
+  return kmax
+end
+
 @inline function _chi_square_zscore(j::Float64, ν::Int)
   ν <= 0 && return Inf
   return (j - ν) / sqrt(2.0 * ν)
@@ -891,6 +1003,27 @@ end
 ## analytically at the CASCADE tap position of the current state; branch
 ## rows on such a trafo evaluate against its scratch branch.
 function _predict_measurements(measurements::Vector{Measurement}, net::Net, V::Vector{ComplexF64}, Ybus::AbstractMatrix{ComplexF64}; vaOffsetRad::Float64 = 0.0, shuntB::Union{Nothing,Dict{Int,Float64}} = nothing, tapOverlay = nothing)
+  Sbus_MVA = _predicted_injections_MVA(net, V, Ybus, shuntB, tapOverlay)
+  h = Vector{Float64}(undef, length(measurements))
+  @inbounds for (i, m) in enumerate(measurements)
+    h[i] = _measurement_prediction(m, net, V, Sbus_MVA, vaOffsetRad, shuntB, tapOverlay)
+  end
+  return h
+end
+
+## Row-restricted prediction for the colored FD assembly: re-evaluates only
+## `rows` into `h` (preset by the caller), with the SAME injections and the
+## SAME per-row function as `_predict_measurements`, so every evaluated
+## entry is bitwise the one the full prediction gives.
+function _predict_measurement_rows!(h::Vector{Float64}, rows::Vector{Int}, measurements::Vector{Measurement}, net::Net, V::Vector{ComplexF64}, Ybus::AbstractMatrix{ComplexF64}; vaOffsetRad::Float64 = 0.0, shuntB::Union{Nothing,Dict{Int,Float64}} = nothing, tapOverlay = nothing)
+  Sbus_MVA = _predicted_injections_MVA(net, V, Ybus, shuntB, tapOverlay)
+  @inbounds for i in rows
+    h[i] = _measurement_prediction(measurements[i], net, V, Sbus_MVA, vaOffsetRad, shuntB, tapOverlay)
+  end
+  return h
+end
+
+function _predicted_injections_MVA(net::Net, V::Vector{ComplexF64}, Ybus::AbstractMatrix{ComplexF64}, shuntB::Union{Nothing,Dict{Int,Float64}}, tapOverlay)
   Sbus_MVA = calc_injections(Ybus, V) .* net.baseMVA
   if shuntB !== nothing
     for (busIdx, b) in shuntB
@@ -907,11 +1040,7 @@ function _predict_measurements(measurements::Vector{Measurement}, net::Net, V::V
       Sbus_MVA[t] += V[t] * conj(ov.Y21 * V[f] + ov.Y22 * V[t]) * net.baseMVA
     end
   end
-  h = Vector{Float64}(undef, length(measurements))
-  @inbounds for (i, m) in enumerate(measurements)
-    h[i] = _measurement_prediction(m, net, V, Sbus_MVA, vaOffsetRad, shuntB, tapOverlay)
-  end
-  return h
+  return Sbus_MVA
 end
 
 ## Internal helper: finite-difference Jacobian H = ∂h/∂x.
@@ -938,6 +1067,7 @@ struct _FdColoring
   groups::Vector{Vector{Int}}      # columns per color, ascending
   rows_per_col::Vector{Vector{Int}}  # the column's measurement-row pattern
   row_covered::Vector{BitVector}   # per color: union of the group's rows
+  rows_of_color::Vector{Vector{Int}}  # the same union as an ascending row list
 end
 
 function _fd_coloring_from_pattern(H::SparseMatrixCSC{Float64})::_FdColoring
@@ -1096,7 +1226,7 @@ function _fd_coloring_from_rows(rows_per_col::Vector{Vector{Int}}, m::Int, n::In
       end
     end
   end
-  return _FdColoring(colors, groups, rows_per_col, row_covered)
+  return _FdColoring(colors, groups, rows_per_col, row_covered, [findall(rc) for rc in row_covered])
 end
 
 ## Returns:
@@ -1115,6 +1245,16 @@ end
 ## the base point came alive; the assembly then falls back to the
 ## per-column path for this call with one warning, correct over fast.
 ##
+## `check_pattern = false` evaluates per color only the rows inside the
+## group's pattern (`rows_of_color`) instead of all m rows, about a quarter
+## of the work on network structures; the evaluated entries are bitwise
+## those of the full prediction (same injections, same per-row function),
+## the others are the structural zeros. It skips the detector, which needs
+## every row, so the WLS loop arms the detector on the first assembly of
+## every solve and runs the restricted path after it (measured on
+## case_ACTIVSg25k, 203916 rows, 36 colors: 0.37 s to 0.10 s per assembly,
+## H bitwise unchanged).
+##
 ## Sparsity contract: the forward difference is computed column-wise
 ## exactly as the dense version did (same perturbation, same per-entry
 ## formula, bit-identical values). An entry whose difference is an EXACT
@@ -1122,7 +1262,7 @@ end
 ## zeros are what the Takahashi diagnostics note below already relies on
 ## (sparse(H) there recovered the true structure without a drop
 ## tolerance), so dropping them structurally changes no number downstream.
-function _measurement_jacobian_fd(measurements::Vector{Measurement}, net::Net, x::Vector{Float64}, slackIdx::Int, nbus::Int, Ybus::AbstractMatrix{ComplexF64}; eps::Float64 = 1e-6, withVaOffset::Bool = false, shuntMap::Union{Nothing,ShuntStateMap} = nothing, tapMap::Union{Nothing,TapStateMap} = nothing, coloring::Union{Nothing,_FdColoring} = nothing)
+function _measurement_jacobian_fd(measurements::Vector{Measurement}, net::Net, x::Vector{Float64}, slackIdx::Int, nbus::Int, Ybus::AbstractMatrix{ComplexF64}; eps::Float64 = 1e-6, withVaOffset::Bool = false, shuntMap::Union{Nothing,ShuntStateMap} = nothing, tapMap::Union{Nothing,TapStateMap} = nothing, coloring::Union{Nothing,_FdColoring} = nothing, check_pattern::Bool = true)
   _sb(xv) = shuntMap === nothing ? nothing : _shunt_b_override(xv, shuntMap)
   _tov(xv) = tapMap === nothing ? nothing : _tap_overlay(xv, tapMap, net)
   h0 = _predict_measurements(measurements, net, _state_to_voltage(x, slackIdx, nbus), Ybus; vaOffsetRad = _va_offset_from_state(x, withVaOffset), shuntB = _sb(x), tapOverlay = _tov(x))
@@ -1156,15 +1296,23 @@ function _measurement_jacobian_fd(measurements::Vector{Measurement}, net::Net, x
       for k in coloring.groups[c]
         xk[k] += eps
       end
-      hk = predict_at(xk)
-      covered = coloring.row_covered[c]
-      @inbounds for i = 1:m
-        if hk[i] != h0[i] && !covered[i]
-          pattern_ok = false
-          break
+      if check_pattern
+        hk = predict_at(xk)
+        covered = coloring.row_covered[c]
+        @inbounds for i = 1:m
+          if hk[i] != h0[i] && !covered[i]
+            pattern_ok = false
+            break
+          end
         end
+        pattern_ok || break
+      else
+        # only the rows the group's columns touch are re-evaluated; every
+        # other row keeps its base value, so its difference is the exact
+        # zero the structural pattern says it is
+        hk = copy(h0)
+        _predict_measurement_rows!(hk, coloring.rows_of_color[c], measurements, net, _state_to_voltage(xk, slackIdx, nbus), Ybus; vaOffsetRad = _va_offset_from_state(xk, withVaOffset), shuntB = _sb(xk), tapOverlay = _tov(xk))
       end
-      pattern_ok || break
       hk_by_color[c] = hk
     end
     if pattern_ok
@@ -2236,6 +2384,52 @@ function _se_remap_island_measurements(sub, measurements::Vector{Measurement}, i
   return meas, keptIdx
 end
 
+## The per-island estimations (0.30.2): islands of at least
+## `power_flow.islands.parallel_min_buses` buses run on their own tasks when
+## two or more of them carry measurements, Julia has more than one thread
+## and `runtime.parallel.enabled` is on (the master switch, as for the power
+## flow); smaller islands follow on this task, in island order. Every island
+## works on its own subnet copy and measurement list; nothing mutable is
+## shared, and the caller merges the results in island order.
+function _se_solve_islands(part, prepared::Vector{Any}, icfg::StateEstimationConfig)::Vector{Any}
+  n = length(prepared)
+  results = Vector{Any}(nothing, n)
+  active = active_sparlectra_config()
+  pr = active.runtime.parallel
+  min_buses = active.powerflow.islands_parallel_min_buses
+  big = [i for i in 1:n if prepared[i] !== nothing && part.rows[i].n_bus >= min_buses]
+  cap = parallel_max_tasks(pr)
+  if pr.enabled && Threads.nthreads() > 1 && cap > 1 && length(big) >= 2
+    tasks = Vector{Union{Nothing,Task}}(nothing, n)
+    sem = Base.Semaphore(max(1, cap))
+    for i in sort(big; by = i -> part.rows[i].n_bus, rev = true)
+      let p = prepared[i]
+        tasks[i] = Threads.@spawn begin
+          Base.acquire(sem)
+          try
+            _runse_with_config!(p.sub.inet, p.meas, icfg)
+          finally
+            Base.release(sem)
+          end
+        end
+      end
+    end
+    for i in big
+      results[i] = fetch(tasks[i])
+    end
+    for i in 1:n
+      (prepared[i] === nothing || tasks[i] !== nothing) && continue
+      results[i] = _runse_with_config!(prepared[i].sub.inet, prepared[i].meas, icfg)
+    end
+  else
+    for i in 1:n
+      prepared[i] === nothing && continue
+      results[i] = _runse_with_config!(prepared[i].sub.inet, prepared[i].meas, icfg)
+    end
+  end
+  return results
+end
+
 ## island-wise estimation: per-island solve on the subnet, merged result
 function _runse_islands!(net::Net, measurements::Vector{Measurement}, cfg::StateEstimationConfig, part)
   isempty(part.unassigned) || @warn "SE: $(length(part.unassigned)) measurement(s) reference isolated buses outside every island and are ignored"
@@ -2273,24 +2467,32 @@ function _runse_islands!(net::Net, measurements::Vector{Measurement}, cfg::State
   αdeg = nothing
   nα = 0
   estimated = 0
+  # 1. every island prepared serially: its subnet and its remapped
+  #    measurements (`nothing` when the island carries no usable one)
+  prepared = Vector{Any}(nothing, length(part.rows))
   for (iid, row) in enumerate(part.rows)
     idxs = part.perIsland[iid]
-    refBus = row.n_ref > 0 ? 0 : row.chosen_ref_bus
-    if isempty(idxs)
-      push!(islandsInfo, (island = iid, n_bus = row.n_bus, estimated = false, reason = :no_measurements, converged = false, iterations = 0, objectiveJ = 0.0, dof = 0, band_reason = :none, z_wh = NaN, promoted_ref_bus = refBus, va_ref_offset_deg = nothing))
-      continue
-    end
+    isempty(idxs) && continue
     sub = _se_island_subnet(net, row)
     meas_i, keptIdx = _se_remap_island_measurements(sub, measurements, idxs)
-    if isempty(meas_i)
+    isempty(meas_i) || (prepared[iid] = (sub = sub, meas = meas_i, keptIdx = keptIdx))
+  end
+  # update_net on the subnet is the read-back channel for the merged
+  # voltages (write-back into the parent happens below, gated by the
+  # caller's update_net); shunt write-back is mirrored explicitly
+  icfg = _copy_se_config_with(cfg; update_net = true)
+  # 2. the estimations, large islands on their own tasks (0.30.2)
+  island_results = _se_solve_islands(part, prepared, icfg)
+  # 3. merged in island order, exactly as the serial loop did
+  for (iid, row) in enumerate(part.rows)
+    refBus = row.n_ref > 0 ? 0 : row.chosen_ref_bus
+    if prepared[iid] === nothing
       push!(islandsInfo, (island = iid, n_bus = row.n_bus, estimated = false, reason = :no_measurements, converged = false, iterations = 0, objectiveJ = 0.0, dof = 0, band_reason = :none, z_wh = NaN, promoted_ref_bus = refBus, va_ref_offset_deg = nothing))
       continue
     end
-    # update_net on the subnet is the read-back channel for the merged
-    # voltages (write-back into the parent happens below, gated by the
-    # caller's update_net); shunt write-back is mirrored explicitly
-    icfg = _copy_se_config_with(cfg; update_net = true)
-    res = _runse_with_config!(sub.inet, meas_i, icfg)
+    sub = prepared[iid].sub
+    keptIdx = prepared[iid].keptIdx
+    res = island_results[iid]
     # the island run registered its chain start state under the subnet copy;
     # collect it for the merged parent-net registration below
     ist = _se_start_state(sub.inet)
@@ -2528,6 +2730,114 @@ function _tap_model_steps(br::Branch)
   end
   step2 = br.phase_step_deg > 0.0 ? br.phase_step_deg : 1.25
   return m1, calcSkewAngleTap(tap_fraction = r20, skew_angle_deg = br.tap_est_alpha_deg).effective_shift_deg / step2
+end
+
+# _se_gain_matrix(H, w, symmetric) -> SparseMatrixCSC: the WLS gain matrix
+# G = H' W H. The product is symmetric only up to rounding: entry (i, j)
+# sums H[k,i] * (w_k * H[k,j]) and entry (j, i) sums H[k,j] * (w_k * H[k,i]),
+# which round differently, so the bitwise symmetry test of the solve sends
+# such a G to LU instead of to CHOLMOD on the kept analysis. On
+# case_ACTIVSg25k 346k entries of G differ from G' (max |G - G'| 2048 on
+# max |G| 8e19), and the LU solve is about ten times slower per iteration
+# than the Cholesky one.
+# `symmetric = true` (`state_estimation.symmetric_gain`) keeps the upper
+# triangle as computed and mirrors it onto the lower one: a G that already
+# came out symmetric is unchanged in value, any other one now takes the
+# Cholesky route. Off by default: on the se test cases the estimates moved
+# by up to 1.6e-10 pu (a deliberately wrong topology that needs 43
+# iterations), above the 1e-10 bound the default has to keep.
+function _se_gain_matrix(H::SparseMatrixCSC{Float64}, w::AbstractVector{Float64}, symmetric::Bool)
+  G = H' * (Diagonal(w) * H)
+  return symmetric ? sparse(Symmetric(G, :U)) : G
+end
+
+# Factorization reuse for the WLS normal equations `G * dx = g`. Each
+# Gauss-Newton iteration used to hand G to `solve_linear`, whose sparse
+# backslash ran a full symbolic analysis plus numeric factorization every
+# time; the pattern of G only changes when the row set does (current gate,
+# Ia gate, tap fixation), so the analysis is kept per pattern and later
+# iterations refactor numerically.
+#
+# The ROUTE is the one `G \ g` takes, decided on the same tests in the same
+# order, so the arithmetic stays that of the old path:
+# - non-square, triangular or diagonal G: the old path itself, untouched;
+# - bitwise symmetric G (`ishermitian`, which is what backslash checks; the
+#   product H'WH is symmetric only up to rounding, some sets come out exact
+#   and some do not): CHOLMOD `cholesky(...; check = false)` as backslash
+#   does, with the symbolic analysis kept and `cholesky!` redoing only the
+#   numeric part (the same factor, the analysis is structural);
+# - any other G: LU through `solve_newton_factorized!`, UMFPACK `lu!` on the
+#   kept analysis, or KLU with `state_estimation.linear_solver = klu` (see
+#   `_se_linear_context`).
+# Every failure hands the system to the old path: a Cholesky that is not
+# positive definite goes to `solve_linear` (which retries the same Cholesky
+# and continues with LU), and `solve_newton_factorized!` falls back to
+# `solve_sparse_system` on any LU failure. The fallback chain for a
+# singular or ill-conditioned G (LU, sparse QR, small dense SVD) is
+# therefore exactly the one the estimator relied on before.
+#
+# One instance per `_runse_with_config!` call (one island), never shared
+# across islands or tasks: the contexts hold mutable factorizations.
+mutable struct _SENormalEquationsSolver
+  lu_ctx::AbstractNewtonSolverContext
+  chol::Union{Nothing,SparseArrays.CHOLMOD.Factor{Float64,Int64}}
+  chol_colptr::Vector{Int64}
+  chol_rowval::Vector{Int64}
+  chol_analyze_count::Int
+  chol_refactor_count::Int
+end
+
+_SENormalEquationsSolver(backend::Symbol = :umfpack) = _SENormalEquationsSolver(_se_linear_context(backend), nothing, Int64[], Int64[], 0, 0)
+
+# The LU context for `state_estimation.linear_solver`. UMFPACK is chosen
+# explicitly, independent of whether some code in the session loaded KLU for
+# power mode: the estimator's arithmetic must not depend on what else was
+# loaded. :klu takes
+# the KLU extension's constructor when it is registered; without it the
+# estimator still runs, on UMFPACK, and says once why.
+function _se_linear_context(backend::Symbol)
+  backend === :umfpack && return UmfpackReuseNewtonContext()
+  backend === :klu || throw(ArgumentError("state_estimation.linear_solver must be one of $(STATE_ESTIMATION_LINEAR_SOLVER_VALUES), got :$(backend)"))
+  ctor = _POWER_MODE_LINEAR_CONTEXT[]
+  if ctor === nothing
+    @warn "state_estimation.linear_solver = klu needs the KLU package extension (SparlectraKLUExt, loaded by `using KLU`), which is not loaded; the estimator uses UMFPACK" maxlog = 1
+    return UmfpackReuseNewtonContext()
+  end
+  return ctor()
+end
+
+# _se_solve_normal_equations!(ctx, G, g) -> Vector{Float64}: solve the WLS
+# normal equations `G * dx = g` with the factorization reuse of `ctx`. Same
+# matrix, same right-hand side and same route as `solve_linear(G, g)`; only
+# the repeated symbolic analysis is saved. Returns a vector the caller may
+# modify.
+function _se_solve_normal_equations!(ctx::_SENormalEquationsSolver, G::SparseMatrixCSC{Float64,Int64}, g::AbstractVector{Float64})
+  # the tests and their order are those of SparseArrays' `\` for a sparse
+  # matrix; the cases it does not factor by Cholesky or LU keep the old path
+  if size(G, 1) != size(G, 2) || istril(G) || istriu(G)
+    return solve_linear(G, g; allow_pinv = true, svd_max_n = 20_000)
+  end
+  if ishermitian(G)
+    hG = Hermitian(G)
+    if ctx.chol === nothing || ctx.chol_colptr != G.colptr || ctx.chol_rowval != G.rowval
+      ctx.chol = cholesky(hG; check = false)
+      ctx.chol_colptr = copy(G.colptr)
+      ctx.chol_rowval = copy(G.rowval)
+      ctx.chol_analyze_count += 1
+    else
+      cholesky!(ctx.chol, hG; check = false)
+      ctx.chol_refactor_count += 1
+    end
+    issuccess(ctx.chol) && return ctx.chol \ g
+    # not positive definite: drop the factor (the next iteration analyzes
+    # afresh, as the old path did every time) and take the old path, which
+    # repeats this Cholesky, fails the same way and continues with LU
+    ctx.chol = nothing
+    return solve_linear(G, g; allow_pinv = true, svd_max_n = 20_000)
+  end
+  # the context's solution buffer is overwritten by the next solve, and the
+  # caller scales the step in place: hand out a copy
+  return copy(solve_newton_factorized!(ctx.lu_ctx, G, g))
 end
 
 function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::StateEstimationConfig)
@@ -2839,6 +3149,11 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
   # up to one step below tol, which the smooth Omega does not notice.
   # The closure reassigns this enclosing local on purpose.
   local lastJacobian = nothing
+  # factorization reuse for the normal equations across all WLS runs of
+  # this call (suppression rounds and the tap fixation re-solve included);
+  # the pattern guard inside re-analyzes when the row set changes G
+  local seSolver = _SENormalEquationsSolver(cfg.linear_solver)
+  local symmetricGain = cfg.symmetric_gain
 
   function _wls_solve!(gateImag::Bool)
     converged = false
@@ -2857,14 +3172,23 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
     # two-point union and a convergence-gated union kept falling back).
     # Engaged from iteration 1 on large systems only (threshold comment
     # at the constant); the in-assembly detector remains the correctness
-    # guard and falls back loudly if a coupling were missing.
+    # guard and falls back loudly if a coupling were missing. It checks the
+    # first assembly of every solve, the later ones evaluate only the rows
+    # inside each color's pattern.
+    local fdPatternHeld = false
     local fdColoring = length(x) >= _SE_FD_COLORING_MIN_STATES ? _fd_structural_coloring(activeMeas, length(x), slackIdx, nbus, Ybus, withVaOffset, shuntMap, tapMap, net) : nothing
     for ite = 1:maxIte
       # one abort check per iteration: a Web UI run that the user gave up
       # on stops here instead of finishing its 20 iterations (the Jacobian
       # assembly below is the long pole, so this is the useful place)
       sparlectra_check_abort()
-      H, h, _ = _measurement_jacobian_fd(activeMeas, net, x, slackIdx, nbus, Ybus; eps = jacEps, withVaOffset = withVaOffset, shuntMap = shuntMap, tapMap = tapMap, coloring = fdColoring)
+      # the first assembly of each solve runs the pattern detector over all
+      # rows; when the pattern held there, the later ones take the
+      # row-restricted path (see the FD notes). A solve whose first
+      # assembly fell back keeps the detector, and with it the per-column
+      # fallback, on every iteration, as before.
+      H, h, fdColored = _measurement_jacobian_fd(activeMeas, net, x, slackIdx, nbus, Ybus; eps = jacEps, withVaOffset = withVaOffset, shuntMap = shuntMap, tapMap = tapMap, coloring = fdColoring, check_pattern = !fdPatternHeld)
+      ite == 1 && (fdPatternHeld = fdColored)
       lastJacobian = H
       r = z - h
       _wrap_angle_residuals!(r, activeMeas)
@@ -2902,16 +3226,16 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
       if gateImag && hasImag && ite < imagGate
         Hs = H[nonImagRows, :]
         ws = wSolve[nonImagRows]
-        G = Hs' * (Diagonal(ws) * Hs)
+        G = _se_gain_matrix(Hs, ws, symmetricGain)
         g = Hs' * (ws .* r[nonImagRows])
       elseif !isempty(iaRows) && !isempty(_ia_gated!(_state_to_voltage(x, slackIdx, nbus)))
         useRows = [i for i in eachindex(activeMeas) if !(i in iaGatedNow)]
         Hs = H[useRows, :]
         ws = wSolve[useRows]
-        G = Hs' * (Diagonal(ws) * Hs)
+        G = _se_gain_matrix(Hs, ws, symmetricGain)
         g = Hs' * (ws .* r[useRows])
       else
-        G = H' * (Diagonal(wSolve) * H)
+        G = _se_gain_matrix(H, wSolve, symmetricGain)
         g = H' * (wSolve .* r)
       end
 
@@ -2963,7 +3287,7 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
           end
         end
       end
-      Δx = solve_linear(G, g; allow_pinv = true, svd_max_n = 20_000)
+      Δx = _se_solve_normal_equations!(seSolver, G, g)
       # Released regulator states get a STEP LIMIT, not a hard band.
       # Measured on a CGMES delivery with 11 transformers off by
       # 4 mechanical steps: clamping the state into its declared band (both
@@ -3555,11 +3879,22 @@ function validate_measurements(net::Net, measurements::Vector{Measurement})
   w = _weight_vector(activeMeas)
   r = z - h
   _wrap_angle_residuals!(r, activeMeas)
-  # K needs the full Omega, so a correlation request pins the dense path;
-  # otherwise the Takahashi selected inverse takes over above the size
-  # threshold (with an automatic dense fallback on any guard failure)
+  # K needs the full Omega up to the dense state cap, so there a
+  # correlation request pins the dense path; otherwise the Takahashi
+  # selected inverse takes over above the size threshold (with an
+  # automatic fallback on any guard failure)
   rd = _residual_diagnostics(H, r, w; need_full_omega = reportResidualCorrelation, minStates = base.takahashi_min_states)
-  kmax = reportResidualCorrelation && rd.omega !== nothing ? _residual_correlation_max(rd.omega) : nothing
+  kmax = nothing
+  if reportResidualCorrelation
+    if rd.omega !== nothing
+      kmax = _residual_correlation_max(rd.omega)
+    elseif size(H, 1) <= _SE_FULL_OMEGA_MAX_M
+      # above the dense state cap: K column block by column block on the
+      # sparse factorization (the m cap stays the run-time budget; beyond
+      # it _residual_diagnostics already warned that the report is skipped)
+      kmax = _residual_correlation_max_blockwise(H, w)
+    end
+  end
   ranking = _build_measurement_suspicion_report(activeMeas, activeIdx, r, rd.rn; normalizedThreshold = normalizedThreshold, wii = rd.wii, wiiThreshold = wiiThreshold, kmax = kmax)
 
   suspicious = [row for row in ranking if row.suspicious]

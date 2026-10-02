@@ -138,12 +138,20 @@ reported result is that of the fixed run.
   transformer with all regulators frozen solves bitwise identical to no
   release and still appears in `tapEstimates` with its reason. Release and
   back-calculation are mutually exclusive per transformer.
+- The Web UI's "estimate taps" (every in-service transformer released)
+  first solves once with the taps frozen and then estimates them from that
+  state. From a flat start the many tap states otherwise crawl to the
+  solution (240 transformers needed 63 iterations instead of 4). The
+  estimate is kept only if its fixed positions fit the measurements at
+  least as well as the model positions of that first solve.
 - If the run does not converge with released taps (a set collectively too
-  thin for the released taps, which the single-tap guards cannot see),
-  every released tap is frozen back to its model position and the
-  estimation repeats once; the run log says so and the result metadata
-  carries `se_tap_estimation_fallback = true`, because the tap positions in
-  such a result are model values, not estimates.
+  thin for the released taps, which the single-tap guards cannot see), or
+  the estimate is rejected by that rule, every released tap is frozen back
+  to its model position and the estimation repeats once; the run log says
+  so and the result metadata carries `se_tap_estimation_fallback = true`
+  (reason in `se_tap_estimation_fallback_reason`: `not_converged` or
+  `worse_fit`), because the tap positions in such a result are model
+  values, not estimates.
 - A band failure that appears only through the fixation is not bad data:
   when the continuous fit passes or undershoots the band and the fixed run
   fails it `:high`, `tapFixation.offgrid_residual` is set (summary note

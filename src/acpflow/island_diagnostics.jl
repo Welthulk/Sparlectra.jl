@@ -133,6 +133,7 @@ function _island_solver_settings(cfg::PowerFlowConfig)
     autodamp_min = cfg.autodamp_min,
     newton_update = cfg.newton_update,
     power_mode = cfg.power_mode,
+    power_mode_lu = cfg.power_mode_lu,
     jacobian_reuse = cfg.jacobian_reuse,
     jacobian_reuse_min_reduction = cfg.jacobian_reuse_min_reduction,
     jacobian_reuse_max_steps = cfg.jacobian_reuse_max_steps,
@@ -175,7 +176,12 @@ end
 
 function _write_ac_island_diagnostics!(net::Net, cfg::PowerFlowConfig, performance_profile; status = nothing, iterations::Union{Nothing,Integer} = nothing)
   cfg.islands.enabled || return NamedTuple()
-  output_dir = performance_profile isa AbstractDict ? get(performance_profile, :output_dir, tempdir()) : tempdir()
+  # Island artifacts go into the run's own output directory only. Without
+  # one (a library call, every worker solve of N-1 and the scenario
+  # engine) nothing is written: the former fallback `tempdir()` was one
+  # fixed path that every concurrent solve overwrote.
+  output_dir = performance_profile isa AbstractDict ? get(performance_profile, :output_dir, nothing) : nothing
+  output_dir === nothing && return NamedTuple()
   mkpath(output_dir)
   pre = _collect_ac_island_diagnostics(net, cfg)
   statuses = performance_profile isa AbstractDict ? get(performance_profile, :ac_island_solver_statuses, nothing) : nothing

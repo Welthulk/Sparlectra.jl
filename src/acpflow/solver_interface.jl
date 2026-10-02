@@ -181,6 +181,9 @@ Build a canonical PF model from `net`:
   which excludes isolated buses and sorts by bus index.
 - Ybus is built via `createYBUS(net=net, sparse=opt_sparse, ...)` and is consistent
   with the same isolated-bus compression.
+- the voltage setpoint `Vset` of a slack or PV bus is the setpoint of its
+  regulating generator, with the node voltage and 1.0 pu as fallbacks, the
+  same lookup the rectangular solver uses.
 
 `include_limits=true` attaches qmin/qmax in per-unit as used by your NR-with-limits code.
 """
@@ -215,6 +218,8 @@ function buildPfModel(
   V0 = Vector{ComplexF64}(undef, n)
   Sspec = Vector{ComplexF64}(undef, n)
   Vset = ones(Float64, n)
+  # per-bus setpoints in net bus order (all nodes, isolated ones included)
+  vset_net = _bus_voltage_setpoints_from_prosumers(net)
 
   @inbounds for k in 1:n
     b = busVec[k]
@@ -237,10 +242,13 @@ function buildPfModel(
     # Specified injections in p.u. from BusData
     Sspec[k] = ComplexF64(b.pƩ, b.qƩ)
 
-    # PV/Slack voltage magnitude setpoint (best effort: node._vm_pu if present, else BusData vm)
+    # PV/Slack voltage magnitude setpoint: the setpoint of the regulating
+    # generator, with the node voltage and then 1.0 pu as fallbacks, the
+    # same lookup the rectangular solver uses. Reading only the node voltage
+    # solved a net built without a bus vm_pu with the slack at 1.0 pu
+    # instead of the generator's setpoint.
     if b.type == PV || b.type == Slack
-      vm_node = net.nodeVec[b.nodeIdx]._vm_pu
-      Vset[k] = (vm_node === nothing) ? b.vm_pu : Float64(vm_node)
+      Vset[k] = vset_net[b.nodeIdx]
     else
       Vset[k] = 1.0
     end
@@ -270,12 +278,15 @@ function buildPfModel(
   qmax_pu = Float64[]
   if include_limits
     qmin_pu, qmax_pu = getQLimits_pu(net)
-    if !(length(qmin_pu) == n && length(qmax_pu) == n)
-      # Fallback: do not fail hard; limits are optional.
-      qmin_pu = Float64[]
-      qmax_pu = Float64[]
-      (verbose > 0) && @warn "buildPfModel: q-limit vectors size mismatch; dropping q-limits for PFModel."
-    end
+    # The limits are per bus of the net (getQLimits_pu covers every bus);
+    # the model is per active bus. Isolated buses are not in the model, so
+    # the vectors are taken at busIdx_net. A length that matches neither is
+    # an error: the former silent drop solved island nets without any
+    # reactive limit.
+    nnet = length(net.nodeVec)
+    (length(qmin_pu) == nnet && length(qmax_pu) == nnet) || throw(DimensionMismatch("buildPfModel: the per-bus Q limits have $(length(qmin_pu)) (qmin_pu) and $(length(qmax_pu)) (qmax_pu) entries for $(nnet) buses of the net."))
+    qmin_pu = qmin_pu[busIdx_net]
+    qmax_pu = qmax_pu[busIdx_net]
   end
 
   return PFModel(

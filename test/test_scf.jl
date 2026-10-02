@@ -1118,7 +1118,7 @@ mpc.branch = [
       # the deviation reaches the run, and the truth value reaches the deltas
       @test occursin("documents a tap deviation", read(joinpath(d, "run_prov", "run.log"), String))
       @test isfile(joinpath(d, "run_prov", "se_deltas.csv"))
-      @test count(l -> startswith(l, "meas,"), readlines(joinpath(d, "run_prov", "se_deltas.csv"))) == 1
+      @test count(l -> startswith(l, "meas,") || startswith(l, "meas;"), readlines(joinpath(d, "run_prov", "se_deltas.csv"))) == 1
       # the headline leads with J/dof: a bare J grows with the row count and
       # reads as an alarm where J/dof says the set is healthy
       @test occursin("J/dof = ", SparlectraApp.to_dict(res_prov)["message"])
@@ -1196,46 +1196,52 @@ mpc.branch = [
       sclog = read(joinpath(d, "run_sc", "run.log"), String)
       @test occursin("from the case file", sclog)
       # issue #376 follow-up: the short-circuit CSVs follow output.csv_format
-      # like every other CSV artifact of a run. Default (technical): comma
-      # delimiter, dot decimal. excel_de (machine-scope key, so it comes from
-      # the general configuration file): semicolon delimiter, decimal comma.
+      # like every other CSV artifact of a run. Default (excel_de since
+      # 0.30.2): semicolon delimiter, decimal comma. technical (machine-scope
+      # key, so it comes from the general configuration file): comma
+      # delimiter, dot decimal.
       sc_default_lines = readlines(joinpath(d, "run_sc", "short_circuit_max.csv"))
-      @test sc_default_lines[1] == "bus,vn_kV,island,status,c,zk_ohm,rx_ratio,ik_kA,sk_MVA,kappa,ip_kA,flagged,reasons"
-      @test !occursin(';', sc_default_lines[2])
+      @test sc_default_lines[1] == "bus;vn_kV;island;status;c;zk_ohm;rx_ratio;ik_kA;sk_MVA;kappa;ip_kA;flagged;reasons"
+      @test occursin(';', sc_default_lines[2])
+      cfg_tech = technical_output_config_path()
       cfg_de = joinpath(d, "config_excel_de.yaml")
       cp(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, cfg_de)
       open(cfg_de, "a") do io
         println(io, "output:")
         println(io, "  csv_format: excel_de")
       end
-      res_sc_de = redirect_stdout(devnull) do
-        SparlectraApp._run_short_circuit_service(fsc, cfg_de, joinpath(d, "run_sc_de"), "scf_sc_de")
+      res_sc_tech = redirect_stdout(devnull) do
+        SparlectraApp._run_short_circuit_service(fsc, cfg_tech, joinpath(d, "run_sc_tech"), "scf_sc_tech")
       end
-      @test SparlectraApp.to_dict(res_sc_de)["status"] == "succeeded"
+      @test SparlectraApp.to_dict(res_sc_tech)["status"] == "succeeded"
       for name in ("short_circuit_max.csv", "short_circuit_min.csv")
-        sc_de_lines = readlines(joinpath(d, "run_sc_de", name))
-        @test sc_de_lines[1] == "bus;vn_kV;island;status;c;zk_ohm;rx_ratio;ik_kA;sk_MVA;kappa;ip_kA;flagged;reasons"
-        @test length(sc_de_lines) == length(sc_default_lines)
+        sc_tech_lines = readlines(joinpath(d, "run_sc_tech", name))
+        sc_def_lines = readlines(joinpath(d, "run_sc", name))
+        @test sc_tech_lines[1] == "bus,vn_kV,island,status,c,zk_ohm,rx_ratio,ik_kA,sk_MVA,kappa,ip_kA,flagged,reasons"
+        @test length(sc_tech_lines) == length(sc_def_lines)
         # the c column (fifth field, 1.1 for max / 0.95 for min at HV) always
         # carries a fraction, unlike vn_kV, which a whole kV value would
-        # print without any separator: dot decimal by default, decimal comma
-        # under excel_de
-        @test occursin('.', split(sc_default_lines[2], ',')[5])
-        @test !occursin('.', split(sc_de_lines[2], ';')[5])
-        @test occursin(',', split(sc_de_lines[2], ';')[5])
+        # print without any separator: decimal comma by default (excel_de),
+        # dot decimal under technical
+        @test occursin('.', split(sc_tech_lines[2], ',')[5])
+        @test !occursin('.', split(sc_def_lines[2], ';')[5])
+        @test occursin(',', split(sc_def_lines[2], ';')[5])
       end
       # issue #386: one writer for every result CSV. The SE state CSV follows
       # the format too and reads back in every format; the AC island report
       # and the generic writer as well.
       cfg_obj_de = Sparlectra.load_sparlectra_config(cfg_de; reload = true)
-      @test Sparlectra.result_csv_format() == "technical"
+      @test Sparlectra.result_csv_format() == "excel_de"
       @test with_sparlectra_config(Sparlectra.result_csv_format, cfg_obj_de) == "excel_de"
+      @test with_sparlectra_config(Sparlectra.result_csv_format, Sparlectra.load_sparlectra_config(cfg_tech; reload = true)) == "technical"
       gen_path = joinpath(d, "generic.csv")
       Sparlectra.write_result_csv(gen_path, ("name", "value", "flag"), (("a;b", 1234.5, true), ("c", 2, false)); format = "excel_de")
       gen_lines = readlines(gen_path)
       @test gen_lines[1] == "name;value;flag"
       @test gen_lines[2] == "\"a;b\";1.234,5;true"
       Sparlectra.write_result_csv(gen_path, ("name", "value"), (("x", 0.5),))
+      @test readlines(gen_path) == ["name;value", "x;0,5"]
+      Sparlectra.write_result_csv(gen_path, ("name", "value"), (("x", 0.5),); format = "technical")
       @test readlines(gen_path) == ["name,value", "x,0.5"]
       # SE state round trip under excel_de (decimal comma, semicolon)
       scf_dir = joinpath(dirname(@__DIR__), "data", "scf")
@@ -1278,7 +1284,7 @@ mpc.branch = [
       end
       @test occursin("csv_format: excel_de", read(joinpath(pf_req["output_dir"], "effective_config.yaml"), String))
       # the registry is the template again after the run
-      @test Sparlectra.result_csv_format() == "technical"
+      @test Sparlectra.result_csv_format() == "excel_de"
       # the same (older) request field reaches the state-estimation service
       # through the one override output.csv_format (a Web UI run kept
       # the comma in every SE artifact); the services themselves take no
