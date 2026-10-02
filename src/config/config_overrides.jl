@@ -29,6 +29,7 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "power_flow.qlimits.enabled",
   "power_flow.qlimits.enforcement_mode",
   "power_flow.qlimits.final_q_accept_pu",
+  "power_flow.qlimits.classic_max_passes",
   # the rest of the Q-limit block, for PV/PQ switching studies in the Web UI
   # (task 0.20.2): the start rule, hysteresis and cooldown, the bus lists
   # and the whole guard
@@ -60,6 +61,7 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "power_flow.jacobian_reuse_max_steps",
   "contingency.screening.mode",
   "contingency.screening.margin_pct",
+  "contingency.warm_active_set",
   "power_flow.apslf.order",
   "power_flow.apslf.use_pade",
   "power_flow.apslf.nr_polish",
@@ -97,7 +99,6 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "power_flow.trust_region.eta_accept",
   "power_flow.trust_region.step_mode",
   "power_flow.islands.enabled",
-  "power_flow.islands.mode",
   "power_flow.islands.reference_policy",
   "power_flow.islands.diagnostic_continue_after_failure",
   "cgmes_import.start_values",
@@ -163,6 +164,10 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "state_estimation.max_eliminations",
   "state_estimation.topology_precheck",
   "state_estimation.report_residual_correlation",
+  # the estimator's linear-algebra switches (sparse LU, symmetric gain
+  # matrix), performance choices; editable so a case sidecar can pin them
+  "state_estimation.linear_solver",
+  "state_estimation.symmetric_gain",
 ])
 
 function _flatten_config_keys!(keys_out::Set{String}, raw::AbstractDict, prefix::String = "")
@@ -180,7 +185,7 @@ function _validate_override_type(key::String, value, expected::Type)
 end
 
 function _validate_gui_override_value(key::String, value)
-  if key in ("power_flow.autodamp", "power_flow.flatstart", "power_flow.qlimits.enabled", "power_flow.start_current_iteration.enabled", "power_flow.start_current_iteration.accept_only_if_improved", "power_flow.start_current_iteration.only_for_large_cases", "power_flow.merit.enabled", "power_flow.merit.fallback_max_mismatch", "power_flow.trust_region.enabled", "power_flow.apslf.use_pade", "power_flow.apslf.nr_polish", "power_flow.apslf.convergence_radius", "power_flow.apslf_start.enabled", "power_flow.islands.enabled", "power_flow.islands.diagnostic_continue_after_failure", "power_flow.rescue", "power_flow.dc.fallback", "power_flow.auto_slack", "cgmes_import.require_boundary", "cgmes_import.infer_base_voltages", "powsybl_import.multi_slack", "benchmark.enabled", "matpower_import.apply_bus_names", "matpower_import.apply_branch_names", "matpower_import.apply_branch_kind", "matpower_import.import_for001_contingencies", "model.net_cache_enabled", "matpower_export.write_solution", "output.console_live", "output.console_summary", "output.startup_latency_hint", "state_estimation.flatstart", "state_estimation.robust", "state_estimation.topology_precheck", "state_estimation.report_residual_correlation", "power_flow.qlimits.guard.enabled", "power_flow.qlimits.guard.accept_bounded_violations", "power_flow.qlimits.guard.freeze_after_repeated_switching", "power_flow.qlimits.guard.log")
+  if key in ("power_flow.autodamp", "power_flow.flatstart", "power_flow.qlimits.enabled", "power_flow.start_current_iteration.enabled", "power_flow.start_current_iteration.accept_only_if_improved", "power_flow.start_current_iteration.only_for_large_cases", "power_flow.merit.enabled", "power_flow.merit.fallback_max_mismatch", "power_flow.trust_region.enabled", "power_flow.apslf.use_pade", "power_flow.apslf.nr_polish", "power_flow.apslf.convergence_radius", "power_flow.apslf_start.enabled", "power_flow.islands.enabled", "power_flow.islands.diagnostic_continue_after_failure", "power_flow.rescue", "power_flow.dc.fallback", "power_flow.auto_slack", "cgmes_import.require_boundary", "cgmes_import.infer_base_voltages", "powsybl_import.multi_slack", "benchmark.enabled", "matpower_import.apply_bus_names", "matpower_import.apply_branch_names", "matpower_import.apply_branch_kind", "matpower_import.import_for001_contingencies", "model.net_cache_enabled", "matpower_export.write_solution", "output.console_live", "output.console_summary", "output.startup_latency_hint", "state_estimation.flatstart", "state_estimation.robust", "state_estimation.topology_precheck", "state_estimation.report_residual_correlation", "state_estimation.symmetric_gain", "power_flow.qlimits.guard.enabled", "power_flow.qlimits.guard.accept_bounded_violations", "power_flow.qlimits.guard.freeze_after_repeated_switching", "power_flow.qlimits.guard.log")
     _validate_override_type(key, value, Bool)
   elseif key in ("power_flow.max_iter", "power_flow.start_current_iteration.max_iter", "power_flow.apslf.order", "power_flow.apslf_start.order", "benchmark.samples", "output.detailed_result_csv_direct_threshold_buses", "output.detailed_result_csv_buffer_initial_bytes", "output.detailed_result_csv_buffer_max_bytes", "output.detailed_result_csv_streaming_threshold_rows", "output.console_max_rows", "output.result_table_max_rows", "output.result_table_large_case_threshold_buses")
     _validate_override_type(key, value, Int)
@@ -194,6 +199,10 @@ function _validate_gui_override_value(key::String, value)
   elseif key in ("power_flow.qlimits.start_iter", "power_flow.qlimits.cooldown_iters", "power_flow.qlimits.guard.max_remaining_violations")
     _validate_override_type(key, value, Int)
     value >= 0 || throw(ArgumentError("Override $(key) must be non-negative; got $(value)."))
+  elseif key == "power_flow.qlimits.classic_max_passes"
+    # the base solve plus at least one Q-limit update; the solver rejects 0
+    _validate_override_type(key, value, Int)
+    value >= 1 || throw(ArgumentError("Override $(key) must be at least 1; got $(value)."))
   elseif key == "power_flow.qlimits.guard.max_switches"
     # the solver counts a bus as oscillating from max(max_switches, 1) on,
     # so 0 would silently mean 1
@@ -258,8 +267,6 @@ function _validate_gui_override_value(key::String, value)
     _validate_allowed_symbol(key, _as_symbol_cfg(value), POWERFLOW_START_VOLTAGE_MODE_VALUES)
   elseif key == "power_flow.trust_region.step_mode"
     _validate_allowed_symbol(key, _as_symbol_cfg(value), TRUST_REGION_STEP_MODE_VALUES)
-  elseif key == "power_flow.islands.mode"
-    _validate_allowed_symbol(key, _as_symbol_cfg(value), POWERFLOW_ISLAND_MODE_VALUES)
   elseif key == "power_flow.islands.reference_policy"
     _validate_allowed_symbol(key, _as_symbol_cfg(value), POWERFLOW_ISLAND_REFERENCE_POLICY_VALUES)
   elseif key == "model.auto_profile"
@@ -276,6 +283,8 @@ function _validate_gui_override_value(key::String, value)
     _validate_allowed_symbol(key, _as_symbol_cfg(value), MATPOWER_COMPARE_VOLTAGE_REFERENCE_VALUES)
   elseif key == "state_estimation.robust_mode"
     _validate_allowed_symbol(key, _as_symbol_cfg(value), STATE_ESTIMATION_ROBUST_MODE_VALUES)
+  elseif key == "state_estimation.linear_solver"
+    _validate_allowed_symbol(key, _as_symbol_cfg(value), STATE_ESTIMATION_LINEAR_SOLVER_VALUES)
   elseif key == "matpower_import.matpower_dcline_mode"
     _validate_allowed_symbol(key, _as_symbol_cfg(value), MATPOWER_DCLINE_MODE_VALUES)
   elseif key == "cgmes_import.hvdc_mode"
@@ -440,9 +449,39 @@ function load_case_config(case_path::AbstractString)::Dict{String,Any}
   # output.csv_format now and the form block entry is ignored)
   delete!(raw, "form")
   out = _flatten_config_values!(Dict{String,Any}(), raw)
+  # a key removed from the configuration (0.30.2: power_flow.islands.mode,
+  # which the Settings page wrote into case files before) is dropped with
+  # the warning the configuration file gets, never refused: an old case
+  # file must keep loading
+  for key in sort!(String[k for k in keys(out) if haskey(_REMOVED_NOTED_CONFIG_KEYS, k)])
+    @warn "Configuration key $(key) in $(basename(path)) is ignored: $(_REMOVED_NOTED_CONFIG_KEYS[key])"
+    delete!(out, key)
+  end
   bad = sort!(String[k for k in keys(out) if !scf_is_case_config_key(k)])
   isempty(bad) || throw(ArgumentError("Case configuration $(path): config key(s) $(join(bad, ", ")) are not case scope (logging, benchmarking, parallelism, Web UI and export settings belong in the configuration file). Remove them from the case configuration."))
   return out
+end
+
+"""
+    ignored_removed_config_keys(config_file, case_path) -> Vector{String}
+
+One line per configuration key that is no longer read (`_REMOVED_NOTED_CONFIG_KEYS`,
+0.30.2: `power_flow.islands.mode`) and still sits in the configuration file
+`config_file` or in the case configuration of `case_path`, naming the file
+and what replaced the key. The loaders drop such a key with a warning that
+is printed before a service run starts; the service writes these lines into
+its run.log so the archived run says it too. Empty when nothing is found.
+"""
+function ignored_removed_config_keys(config_file::AbstractString, case_path::AbstractString)::Vector{String}
+  lines = String[]
+  for path in (String(config_file), case_config_path(case_path))
+    isfile(path) || continue
+    flat = _flatten_config_values!(Dict{String,Any}(), load_yaml_dict(path))
+    for key in sort!(String[k for k in keys(flat) if haskey(_REMOVED_NOTED_CONFIG_KEYS, k)])
+      push!(lines, "Configuration key $(key) in $(basename(path)) is ignored: $(_REMOVED_NOTED_CONFIG_KEYS[key])")
+    end
+  end
+  return lines
 end
 
 """
@@ -669,6 +708,7 @@ const CONFIG_OVERRIDE_REPORT_KEYS = String[
   "power_flow.jacobian_reuse_max_steps",
   "contingency.screening.mode",
   "contingency.screening.margin_pct",
+  "contingency.warm_active_set",
   "power_flow.start_mode.angle_mode",
   "power_flow.start_mode.voltage_mode",
   "power_flow.qlimits.enabled",
@@ -681,7 +721,6 @@ const CONFIG_OVERRIDE_REPORT_KEYS = String[
   "power_flow.merit.enabled",
   "power_flow.trust_region.enabled",
   "power_flow.islands.enabled",
-  "power_flow.islands.mode",
   "power_flow.islands.reference_policy",
   "power_flow.islands.diagnostic_continue_after_failure",
   "power_flow.rescue",

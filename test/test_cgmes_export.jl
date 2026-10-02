@@ -254,6 +254,10 @@ function run_cgmes_export_tests()
       original = _roundtrip_net()
       @test _solve!(original)[2] == 0
       exported = _roundtrip_net()
+      # 0.30.2 reference priorities: the slack infeed states 1, the PV
+      # machine 3; both travel through SSH and come back on the prosumers
+      exported.prosumpsVec[1].referencePriority = 1
+      exported.prosumpsVec[2].referencePriority = 3
       @test _solve!(exported)[2] == 0
       dir = mktempdir()
       notes = String[]
@@ -269,6 +273,8 @@ function run_cgmes_export_tests()
       res = importCGMES(path = dir, name = "rt_back")
       net2 = res.net
       @test res.slack_bus == "HV1"
+      prio_by_bus(n) = sort!([(only(k for (k, v) in n.busDict if v == Int(ps.comp.cFrom_bus)), ps.referencePriority) for ps in n.prosumpsVec if ps.referencePriority > 0])
+      @test prio_by_bus(net2) == prio_by_bus(exported) == [("HV1", 1), ("HV2", 3)]
       @test length(net2.nodeVec) == length(original.nodeVec)
       @test length(net2.branchVec) == length(original.branchVec)
       @test length(net2.prosumpsVec) == length(original.prosumpsVec)

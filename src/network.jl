@@ -1312,6 +1312,10 @@ Add a prosumer (combination of a producer and consumer) to the network.
 - `vm_pu::Union{Nothing, Float64}`: Voltage magnitude setpoint. Default is `nothing`.
 - `va_deg::Union{Nothing, Float64}`: Voltage angle setpoint. Default is `nothing`.
 - `isRegulated::Bool`: Marks a prosumer as voltage-regulating for PV bus resolution. Default is `false`.
+- `referencePriority::Int`: Reference priority of the unit, CGMES semantics (0 = no preference,
+  1 = strongest, larger = weaker). It decides which unit becomes the reference of an AC island
+  without one and which unit replaces an outaged slack; it does not make the unit a slack by
+  itself (that is `referencePri`). Default is `0`. Throws `ArgumentError` for a negative value.
 """
 function addProsumer!(;
   net::Net,
@@ -1333,6 +1337,7 @@ function addProsumer!(;
   pu_controller::Union{Nothing,PUController} = nothing,
   isRegulated::Bool = false,
   participationFactor::Union{Nothing,Float64} = nothing,
+  referencePriority::Int = 0,
   defer_bus_type_refresh::Bool = false,
 )
   busIdx = geNetBusIdx(net = net, busName = busName)
@@ -1382,6 +1387,7 @@ function addProsumer!(;
     quController = qu_controller,
     puController = pu_controller,
     participationFactor = participationFactor,
+    referencePriority = referencePriority,
   )
   push!(net.prosumpsVec, ps)
   node = net.nodeVec[busIdx]
@@ -1439,6 +1445,8 @@ current).
   declared minimum feeder does not carry a spurious defaulted-data flag.
 - `name::Union{Nothing,String} = nothing`: feeder name (default `busName`).
 - `internal_impedance::Bool = false`: non-ideal load-flow variant (above).
+- `referencePriority::Int = 0`: reference priority of the source (CGMES
+  semantics, 1 = strongest), forwarded to [`addProsumer!`](@ref).
 
 Failure behavior: throws `ArgumentError` for a non-positive/non-finite
 `sk_max_MVA`, `sk_min_MVA > sk_max_MVA`, or negative R/X ratios. Multiple
@@ -1455,6 +1463,7 @@ function addExternalGrid!(;
   rx_min::Union{Nothing,Float64} = nothing,
   name::Union{Nothing,String} = nothing,
   internal_impedance::Bool = false,
+  referencePriority::Int = 0,
 )
   busIdx = geNetBusIdx(net = net, busName = busName)
   (isfinite(sk_max_MVA) && sk_max_MVA > 0.0) || throw(ArgumentError("addExternalGrid!: sk_max_MVA must be finite and > 0; got $(sk_max_MVA)."))
@@ -1484,12 +1493,12 @@ function addExternalGrid!(;
     x_pu = z_pu / sqrt(1.0 + rx_max^2)
     r_pu = rx_max * x_pu
     addPIModelACLine!(net = net, fromBus = internalName, toBus = busName, r_pu = r_pu, x_pu = x_pu, b_pu = 0.0, status = 1)
-    addProsumer!(net = net, busName = internalName, type = "EXTERNALNETWORKINJECTION", referencePri = internalName, vm_pu = vm_pu, va_deg = va_deg)
+    addProsumer!(net = net, busName = internalName, type = "EXTERNALNETWORKINJECTION", referencePri = internalName, vm_pu = vm_pu, va_deg = va_deg, referencePriority = referencePriority)
   else
     # Ideal variant (Stage 1): exactly the manual slack path — the prosumer
     # with referencePri marks the connection bus REF via
     # refreshBusTypesFromProsumers!.
-    addProsumer!(net = net, busName = busName, type = "EXTERNALNETWORKINJECTION", referencePri = busName, vm_pu = vm_pu, va_deg = va_deg)
+    addProsumer!(net = net, busName = busName, type = "EXTERNALNETWORKINJECTION", referencePri = busName, vm_pu = vm_pu, va_deg = va_deg, referencePriority = referencePriority)
   end
 
   # Feeder record for the short-circuit engine: full CGMES ENI tuple contract
@@ -2357,11 +2366,28 @@ island takes when an outage removed its reference. The larger tuple wins:
    start put it);
 3. the size of the unit: its rated power where it states one, else its
    maximum active power, else its scheduled output.
+
+For the units of a network a stated reference priority comes first
+(`ProSumer.referencePriority`, CGMES semantics: 1 is the strongest, 0 states
+none): the unit with the smallest positive priority wins, and this ranking
+decides between units of equal priority and among units without one. An
+importer that picks the slack of a file uses the ranking alone.
 """
 reference_candidate_rank(; external::Bool, regulates_locally::Bool, size::Real) = (external ? 1 : 0, regulates_locally ? 1 : 0, Float64(size))
 
 # the rank of a unit of the network
 _reference_rank(ps::ProSumer) = reference_candidate_rank(external = ps.comp.cTyp == ExternalNetworkInjection, regulates_locally = isRegulating(ps), size = _slack_candidate_strength(ps))
+
+# A stated reference priority as a key in which the larger value wins, like
+# the rank: priority p >= 1 maps to -p (1 beats 2), and a unit without a
+# stated priority (0, CGMES "no preference") ranks below every stated one.
+_reference_priority_key(ps::ProSumer)::Int = ps.referencePriority > 0 ? -ps.referencePriority : typemin(Int)
+
+# The one key of every choice among the units of a network (an island
+# without a reference, the unit ensureSlack! promotes, so the replacement of
+# an outaged slack in N-1): the stated priority first, then the rank. The
+# larger tuple wins; equal keys are broken by the caller (smallest bus).
+_reference_choice_key(ps::ProSumer)::Tuple{Int,Int,Int,Float64} = (_reference_priority_key(ps), _reference_rank(ps)...)
 
 function _slack_candidate_strength(ps::ProSumer)::Float64
   ps.ratedS !== nothing && ps.ratedS > 0.0 && return Float64(ps.ratedS)
@@ -2375,16 +2401,20 @@ end
 
 Make sure the network has a usable voltage reference. When at least one slack
 is already registered on a non-isolated bus, nothing changes and `nothing` is
-returned. Otherwise the strongest injection candidate on a non-isolated bus is
+returned. Otherwise the best injection candidate on a non-isolated bus is
 promoted to slack (`referencePri = 1`) and its bus index is returned.
 
-Candidate ranking ([`reference_candidate_rank`](@ref), the ranking of the
-importers as well): `ExternalNetworkInjection` units win over generators and
+Candidate order: a stated reference priority first (`referencePriority`,
+CGMES semantics: the smallest positive value wins, 0 states none), then
+[`reference_candidate_rank`](@ref), the ranking of the importers as well:
+`ExternalNetworkInjection` units win over generators and
 synchronous machines, a unit that regulates the voltage of its own bus wins
 over one that does not, and then the largest unit wins, sized by `ratedS`,
 then `maxP`, then the current dispatch `|p|`. Static var compensators are
 never promoted: they carry no active power. When no candidate exists the network is left untouched
-and the regular no-slack error will name the situation.
+and the regular no-slack error will name the situation. The N-1 run uses
+this promotion when an outage removes the slack (`auto_slack`, default on
+there).
 
 The promotion mutates the network: the chosen prosumer becomes the reference
 and the bus voltage gets a `1.0 pu / 0.0°` setpoint if it has none. Enabled at
@@ -2398,7 +2428,7 @@ function ensureSlack!(net::Net; log::Bool = true)::Union{Nothing,Int}
     isSlack(ps) && usable(getPosumerBusIndex(ps)) && return nothing
   end
   best = nothing
-  best_key = (-1, -1, -Inf)
+  best_key = (typemin(Int), -1, -1, -Inf)
   for ps in net.prosumpsVec
     isGenerator(ps) || continue
     # SVCs are injections in the prosumption typing but cannot carry the
@@ -2406,7 +2436,9 @@ function ensureSlack!(net::Net; log::Bool = true)::Union{Nothing,Int}
     ps.comp.cTyp == StaticVarCompensator && continue
     bus = getPosumerBusIndex(ps)
     usable(bus) || continue
-    key = _reference_rank(ps)
+    # stated reference priority first, then the rank; the strict `>` keeps
+    # the first unit in prosumer order among equal keys, as before
+    key = _reference_choice_key(ps)
     if key > best_key
       best_key = key
       best = ps
@@ -2424,7 +2456,8 @@ function ensureSlack!(net::Net; log::Bool = true)::Union{Nothing,Int}
   if log
     kind = best.comp.cTyp == ExternalNetworkInjection ? "external network injection" : "generator"
     strength = _slack_candidate_strength(best)
-    println("auto_slack: no usable slack registered — promoted $(kind) '$(getCompName(best.comp))' at bus '$(getCompName(node.comp))' ($(round(strength; digits = 1)) MVA/MW) to slack.")
+    why = best.referencePriority > 0 ? ", reference priority $(best.referencePriority)" : ""
+    println("auto_slack: no usable slack registered: promoted $(kind) '$(getCompName(best.comp))' at bus '$(getCompName(node.comp))' ($(round(strength; digits = 1)) MVA/MW$(why)) to slack.")
   end
   return bus
 end

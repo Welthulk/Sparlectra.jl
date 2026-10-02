@@ -103,7 +103,7 @@ own section, and a new module adds its own typed section and YAML subtree.
 | `output` | `OutputConfig` | Console/logfile behavior and result table sizing; `output.startup_latency_hint` silences the one-per-process note about JIT warm-up in sessions without a sysimage or executable (see [Sysimage](sysimage.md)) | Public / supported |
 | `performance` | `PerformanceConfig` | Profiling/reporting toggles and diagnostic volume controls | Public / supported |
 | `benchmark` | `BenchmarkConfig` | Repeated benchmark-run controls | Public / supported |
-| `contingency` | `ContingencyConfig` | N-1 contingency batch controls; `contingency.rescue_ladder` is the per-case start-value ladder (subset of `warm`/`apslf`/`dc`/`flat`), `contingency.screening.mode` (`off`/`flag`/`only`, default `off`; screening is a deliberate opt-in) switches the base-factorization outage screening on the service path, and `contingency.screening.margin_pct` (default `10.0`) is its flagging margin; see [N-1 Contingency Analysis](contingency.md) | Public / supported |
+| `contingency` | `ContingencyConfig` | N-1 contingency batch controls; `contingency.rescue_ladder` is the per-case start-value ladder (subset of `warm`/`apslf`/`dc`/`flat`), `contingency.screening.mode` (`off`/`flag`/`only`, default `off`; screening is a deliberate opt-in) switches the base-factorization outage screening on the service path, `contingency.screening.margin_pct` (default `10.0`) is its flagging margin, and `contingency.warm_active_set` (default `false`) starts each outage from the base case's Q-limit active set; see [N-1 Contingency Analysis](contingency.md) | Public / supported |
 | `control` | `ControlConfig` | Generic controller outer-loop orchestration controls; `control.controllers` holds declarative controller definitions, see the controllers section below | Public / supported |
 | `runtime` | `RuntimeConfig` | Case selection (`runtime.case`/`runtime.cases`) and Julia/BLAS thread control knobs for entry workflows | Public / supported |
 | `diagnostics` | `DiagnosticsConfig` | Effective-config logging (`log_effective_config` only; `diagnostics.console_*`/`logfile_diagnostics` duplicate `output.*`, are deprecated and ignored with a warning) | Public / supported |
@@ -152,8 +152,12 @@ power_flow:
 ```
 
 The `matpower_like` policy keeps an existing island REF/Slack bus, otherwise
-promotes the deterministic first PV/voltage-controlled bus as the island's
-angle reference; islands without REF/Slack or PV support fail before NR.
+promotes the bus of the island's best voltage-controlled unit as its angle
+reference, and without one the bus of its best generating unit. "Best" is
+the stated reference priority first (`referencePriority`, 1 is the
+strongest, see [Reference priority](slack_vs_source.md#Reference-priority)),
+then the ranking of `reference_candidate_rank` (network injection, local
+voltage control, size). Islands without any generating unit fail before NR.
 With multiple islands, `ac_islands.csv` in the run directory lists bus,
 branch, generator/load, DC-line terminal, power-balance, reference, and
 status diagnostics.

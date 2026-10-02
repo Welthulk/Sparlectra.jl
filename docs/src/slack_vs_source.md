@@ -82,6 +82,44 @@ vector is $x = [\,V_r(\text{non-slack});\; V_i(\text{non-slack})\,] \in
 through the $Y_\mathrm{bus}$ coupling terms of its neighbors (see the
 [Solver Guide](solver.md)).
 
+## Reference priority
+
+A case file names its slack; the question which unit takes over when there is
+none, or when the named one is gone, comes up in three places: an AC island
+without a reference of its own, the outage of the slack unit in N-1, and
+`auto_slack` on a case without a slack. Every unit carries a reference
+priority for that (`ProSumer.referencePriority`, the `referencePriority`
+keyword of `addProsumer!` and `addExternalGrid!`), with the semantics of the
+CGMES attribute of the same name: 0 states no preference, 1 is the strongest
+candidate, a larger number a weaker one. The priority does not make a unit the
+slack by itself; it orders the candidates when a reference has to be chosen.
+
+The order is the same in all three places:
+
+1. the smallest positive priority wins;
+2. between equal priorities, and among units without one,
+   [`reference_candidate_rank`](@ref) decides: a network injection before a
+   machine, a unit that regulates the voltage of its own bus before one that
+   does not, then the larger unit;
+3. equal keys go to the smallest bus index.
+
+An island without a reference considers its voltage-controlled units first and
+its other generating units only when it has none; a static var compensator is
+never the first choice, it carries no active power. Before 0.30.2 such an
+island took the smallest PV bus index.
+
+| Source | Priority |
+|---|---|
+| MATPOWER | type 3 is priority 1 for every unit of the bus, also on a second type-3 bus that stays PV in an island that already has its reference |
+| CGMES import | the `referencePriority` of every `SynchronousMachine` and `ExternalNetworkInjection`, as delivered; the slack choice of the import is unchanged ([CGMES Import](cgmes_import.md)) |
+| CGMES export | the stored priority of every machine and network injection; a slack unit without one is written with 1 ([CGMES Export](cgmes_export.md)) |
+| SCF | `extra.<appliance>.reference_priority`, optional, absent means 0 ([Case Format](scf.md)) |
+
+The island report `ac_islands.csv` names the chosen bus and the reason
+(reference priority or strongest unit), the N-1 result names the bus that took
+over. `examples/others/exp_island_reference_priority.jl` shows all of it on the
+shipped two-island case `data/scf/two_islands_prio.scf.json`.
+
 ## What the ideal slack idealizes away
 
 A bus whose voltage is held constant no matter what current it supplies is,

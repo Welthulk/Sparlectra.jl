@@ -1798,6 +1798,7 @@ form:
         "power_flow_qlimits_enabled" => "power_flow.qlimits.enabled",
         "power_flow_qlimits_enforcement_mode" => "power_flow.qlimits.enforcement_mode",
         "power_flow_qlimits_final_q_accept_pu" => "power_flow.qlimits.final_q_accept_pu",
+        "power_flow_qlimits_classic_max_passes" => "power_flow.qlimits.classic_max_passes",
         "power_flow_qlimits_start_iter" => "power_flow.qlimits.start_iter",
         "power_flow_qlimits_start_mode" => "power_flow.qlimits.start_mode",
         "power_flow_qlimits_auto_q_delta_pu" => "power_flow.qlimits.auto_q_delta_pu",
@@ -1826,6 +1827,7 @@ form:
         "power_flow_jacobian_reuse_max_steps" => "power_flow.jacobian_reuse_max_steps",
         "contingency_screening_mode" => "contingency.screening.mode",
         "contingency_screening_margin_pct" => "contingency.screening.margin_pct",
+        "contingency_warm_active_set" => "contingency.warm_active_set",
         "power_flow_apslf_order" => "power_flow.apslf.order",
         "power_flow_apslf_use_pade" => "power_flow.apslf.use_pade",
         "power_flow_apslf_nr_polish" => "power_flow.apslf.nr_polish",
@@ -2239,9 +2241,10 @@ result = get_powerflow_result(run_id)
       screen_form = copy(form)
       screen_form["contingency_screening_mode"] = "flag"
       screen_form["contingency_screening_margin_pct"] = "15"
+      screen_form["contingency_warm_active_set"] = "true"
       screen_request = SparlectraApp.powerflow_webui_request(screen_form; default_output_root = output_root)
       screen_cfg, _ = Sparlectra._load_api_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, Sparlectra.validate_gui_config_overrides(screen_request["config_overrides"]))
-      @test (screen_cfg.contingency.screening_mode, screen_cfg.contingency.screening_margin_pct) == (:flag, 15.0)
+      @test (screen_cfg.contingency.screening_mode, screen_cfg.contingency.screening_margin_pct, screen_cfg.contingency.warm_active_set) == (:flag, 15.0, true)
       # stopping the Web UI aborts and awaits a running job before the
       # process may exit (native factorizations in use by worker threads
       # crashed the process on stop): a runner that solves until the abort

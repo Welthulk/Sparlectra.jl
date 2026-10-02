@@ -178,6 +178,59 @@ function _matpower_sparlectra_links(mpc)::Union{Nothing,Matrix{Float64}}
   return getproperty(sp, :links)
 end
 
+# The reference buses of a MATPOWER case (#465). MATPOWER carries one
+# reference (BUS_TYPE 3) per synchronous area, so a case whose areas are
+# joined only by DC lines (case_SyntheticUSA: three interconnections, nine DC
+# lines, three type-3 buses) has one per AC island. Sparlectra allows one
+# reference per island (since 0.9.9): every type-3 bus becomes the Slack of
+# its island; a further type-3 bus in an island that already has one stays a
+# voltage-regulated PV bus, with a warning. Islands are the connected
+# components over the in-service branches and the in-service
+# mpc.sparlectra.links, the same connectivity the AC island detection uses
+# later. Returns the set of original bus numbers that become references, in
+# file order of the type-3 rows.
+function _matpower_island_references(busData, brData, links, BUS_I::Int, BUS_TYPE::Int, F_BUS::Int, T_BUS::Int, BR_STATUS::Int)::Set{Int}
+  refs = [Int(busData[r, BUS_I]) for r in axes(busData, 1) if Int(busData[r, BUS_TYPE]) == 3]
+  length(refs) <= 1 && return Set(refs)
+  # union-find over the original bus numbers
+  parent = Dict{Int,Int}(Int(busData[r, BUS_I]) => Int(busData[r, BUS_I]) for r in axes(busData, 1))
+  function root(x::Int)
+    while parent[x] != x
+      parent[x] = parent[parent[x]]
+      x = parent[x]
+    end
+    return x
+  end
+  function unite(a::Int, b::Int)
+    (haskey(parent, a) && haskey(parent, b)) || return nothing
+    ra, rb = root(a), root(b)
+    ra == rb || (parent[ra] = rb)
+    return nothing
+  end
+  for e in axes(brData, 1)
+    Int(brData[e, BR_STATUS]) == 0 && continue
+    unite(Int(brData[e, F_BUS]), Int(brData[e, T_BUS]))
+  end
+  if links !== nothing
+    for row in eachrow(links)
+      Int(row[3]) == 0 && continue
+      unite(Int(row[1]), Int(row[2]))
+    end
+  end
+  chosen = Set{Int}()
+  first_by_island = Dict{Int,Int}()
+  for bus in refs
+    island = root(bus)
+    if haskey(first_by_island, island)
+      @warn "MATPOWER case has a second reference bus $(bus) in the AC island of reference bus $(first_by_island[island]); one island carries one reference, bus $(bus) stays a voltage-regulated PV bus."
+    else
+      first_by_island[island] = bus
+      push!(chosen, bus)
+    end
+  end
+  return chosen
+end
+
 # mpc.sparlectra.branch_shunts matrix (branch bus Gs_MW Bs_MVar) or nothing.
 function _matpower_sparlectra_branch_shunts(mpc)::Union{Nothing,Matrix{Float64}}
   hasproperty(mpc, :sparlectra) || return nothing
@@ -354,6 +407,9 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
   sizehint!(bus_idx_by_orig, nbus)
 
   # --- Find slack bus index from BUS_TYPE==3 (MATPOWER) ---
+  # slackIdx is the first type-3 bus (the primary reference the voltage
+  # override below addresses); ref_buses holds every type-3 bus that becomes
+  # the Slack of its own AC island (#465, see _matpower_island_references)
   slackIdx = 0
   for row in eachrow(busData)
     btype = Int(row[BUS_TYPE])
@@ -362,6 +418,7 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
       break
     end
   end
+  ref_buses = _matpower_island_references(busData, brData, _matpower_sparlectra_links(mpc), BUS_I, BUS_TYPE, F_BUS, T_BUS, BR_STATUS)
 
   # --- Buses + Loads + Shunts (same semantics as your existing importer) ---
   mFak = 10.0
@@ -571,7 +628,10 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
     mBase = Float64(row[MBASE])
     btype = get(mp_bus_type, Int(row[GEN_BUS]), 1)
 
-    referencePri = (slackIdx == Int(row[GEN_BUS])) ? bus : nothing
+    referencePri = (Int(row[GEN_BUS]) in ref_buses) ? bus : nothing
+    # a type-3 bus that is not its island's reference (a second one in the
+    # same island) keeps its voltage control as a PV bus
+    demoted_ref = btype == 3 && referencePri === nothing
     (mBase != baseMVA) && @debug "generator $(bus) has different mBase than network baseMVA (allowed in MATPOWER)" bus mBase baseMVA
 
     # MATPOWER APF (area participation factor, column 21) → distributed-slack
@@ -614,7 +674,12 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
       qu_controller = qu_controller,
       pu_controller = pu_controller,
       participationFactor = participation,
-      isRegulated = (btype == 2),
+      # MATPOWER type 3 states "reference" and nothing finer: every unit on
+      # such a bus gets the strongest reference priority, also on a demoted
+      # second type-3 bus, so it is the first to take over when its island
+      # loses the reference (an outage of the slack unit in N-1)
+      referencePriority = btype == 3 ? 1 : 0,
+      isRegulated = (btype == 2) || demoted_ref,
       defer_bus_type_refresh = true,
     )
   end

@@ -115,6 +115,7 @@ function _run_q_limits_matpower_outer_loop!(
   jacobian_reuse::Bool = DEFAULT_JACOBIAN_REUSE,
   jacobian_reuse_min_reduction::Float64 = DEFAULT_JACOBIAN_REUSE_MIN_REDUCTION,
   jacobian_reuse_max_steps::Int = DEFAULT_JACOBIAN_REUSE_MAX_STEPS,
+  qlimit_warm_clamps::Dict{String,Symbol} = Dict{String,Symbol}(),
   merit_enabled::Bool = false,
   merit_armijo_c1::Float64 = 1.0e-4,
   merit_scale_p::Float64 = 1.0,
@@ -218,6 +219,7 @@ function _run_q_limits_matpower_outer_loop!(
         jacobian_reuse = jacobian_reuse,
         jacobian_reuse_min_reduction = jacobian_reuse_min_reduction,
         jacobian_reuse_max_steps = jacobian_reuse_max_steps,
+        qlimit_warm_clamps = qlimit_warm_clamps,
         merit_enabled = merit_enabled,
         merit_armijo_c1 = merit_armijo_c1,
         merit_scale_p = merit_scale_p,
@@ -308,6 +310,18 @@ function _run_q_limits_matpower_outer_loop!(
         break
       end
       qlimit_enforcement_started = true
+      # Pass limit (power_flow.qlimits.classic_max_passes) reached with
+      # violations left: the clamp found here would need one more solve.
+      # Applying it unsolved left the net in a state no solve produced, and
+      # the run was reported converged. The loop stops on the last solved
+      # state instead, with its violations, and the run is not converged
+      # (status set after the loop).
+      if outer == qlimit_max_outer
+        final_outcome = :max_outer_iterations
+        Sbus_pu, _ = _compute_rectangular_final_injections(Ybus, V, net.baseMVA)
+        final_q_check = classify_final_q_limits(net, Sbus_pu, bus_types, qmin_pu, qmax_pu; q_hyst_pu = net.q_hyst_pu, final_q_accept_pu = max(net.final_q_accept_pu, net.q_hyst_pu), tol = tol)
+        break
+      end
       selected = mode == :classic_simultaneous ? violations : [violations[argmax(getfield.(violations, :violation_pu))]]
       ref_changed = false
       for v in selected
@@ -332,10 +346,21 @@ function _run_q_limits_matpower_outer_loop!(
         push!(outer_rows, (outer_iter = outer + 1, mode = mode, gen_index = v.gen_index, bus_i = bus, violation_side = v.side, qg_before = v.q_before_pu * net.baseMVA, q_limit = v.q_limit_pu * net.baseMVA, violation_mvar = v.violation_pu * net.baseMVA, action = :clamp_and_convert, bus_type_before = old_type, bus_type_after = getNodeType(net.nodeVec[bus]), ref_changed = ref_changed))
       end
       verbose > 0 && @printf(stdout, "Classical Q-limit outer iter %d mode=%s selected=%d max_violation=%.6g MVAr ref_changed=%s\n", outer + 1, String(mode), length(selected), maximum(getfield.(violations, :violation_pu)) * net.baseMVA, string(ref_changed))
-      outer == qlimit_max_outer && (final_outcome = :max_outer_iterations)
     end
     st = rectangular_pf_status(net)
     if st !== nothing
+      # At the pass limit the last solve converged, but the Q limits are not
+      # enforced: the run is not converged, the status carries the reason.
+      # numerical_converged stays from that solve (its state is a valid
+      # power-flow solution); every other outcome keeps the status of the
+      # last solve as before.
+      if final_outcome === :max_outer_iterations
+        st = (; st..., final_converged = false, q_limit_active_set_ok = false, reason = :max_outer_iterations, reason_text = _rectangular_rejection_reason_text(:max_outer_iterations),
+          status = _rectangular_solver_status_symbol(Bool(st.numerical_converged), false, false, :max_outer_iterations))
+      end
+      # matpower_outer_iterations: the passes after the base solve, one per
+      # applied Q-limit update (an update found at the pass limit is not
+      # applied and not counted)
       _set_rectangular_pf_status!(net, (; st..., qlimit_enforcement_mode = mode, base_pf_converged = base_pf_converged, qlimit_enforcement_started = qlimit_enforcement_started, final_outcome = final_outcome, matpower_outer_iterations = maximum([0; getfield.(outer_rows, :outer_iter)]), matpower_outer_loop = outer_rows, qlimit_reenable_events = 0,
         pv_q_limit_violations = final_q_check === nothing ? 0 : final_q_check.violations,
         final_q_check_status = final_q_check === nothing ? :not_evaluated : final_q_check.status,

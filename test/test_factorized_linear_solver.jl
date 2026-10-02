@@ -28,6 +28,7 @@ _KLU_AVAILABLE && @eval using KLU
 using Test
 using SparseArrays
 using LinearAlgebra
+using Random
 
 function _reuse_two_island_net()::Net
   island_net = Net(name = "reuse_islands", baseMVA = 100.0)
@@ -187,6 +188,115 @@ function run_factorized_linear_solver_tests()
       x_ok = solve_newton_factorized!(ctx, J_ok, [2.0, 3.0]; pattern_changed = false)
       @test ctx.analyze_count >= 1
       @test norm(J_ok * x_ok - [2.0, 3.0]) < 1e-12
+    end)() end
+
+    @testset "State estimation normal equations: reuse keeps the old answers" begin (function ()
+      # The WLS solve keeps one analysis per pattern of G, but must give what
+      # `solve_linear` gave before on every route, the fallbacks for a
+      # singular G (least-squares step instead of an abort) included.
+      # Each matrix is solved twice with the same pattern and new values,
+      # so the second solve runs on the kept analysis.
+      spd = sparse([4.0 1.0 0.0; 1.0 3.0 1.0; 0.0 1.0 2.0])
+      unsym = sparse([4.0 1.0 0.0; 1.5 3.0 1.0; 0.0 0.5 2.0])
+      cases = [
+        # (name, G, route counter that must show the reuse)
+        ("symmetric (Cholesky)", spd, :chol),
+        ("unsymmetric (LU)", unsym, :lu),
+        ("singular symmetric", sparse([1.0 1.0 0.0; 1.0 1.0 0.0; 0.0 0.0 0.0]), :none),
+        ("singular unsymmetric", sparse([1.0 2.0 0.0; 1.0 2.0 0.0; 0.0 1.0 0.0]), :none),
+        ("diagonal", sparse(Diagonal([2.0, 3.0, 4.0])), :none),
+      ]
+      g = [1.0, 2.0, 3.0]
+      for (name, G, route) in cases
+        ctx = Sparlectra._SENormalEquationsSolver()
+        for scale in (1.0, 1.5)
+          Gs = copy(G)
+          Gs.nzval .*= scale
+          x_old = Sparlectra.solve_linear(Gs, g; allow_pinv = true, svd_max_n = 20_000)
+          x_new = Sparlectra._se_solve_normal_equations!(ctx, Gs, g)
+          @test isapprox(x_new, x_old; rtol = 1e-12, atol = 1e-12)
+        end
+        if route === :chol
+          @test ctx.chol_analyze_count == 1 && ctx.chol_refactor_count == 1
+        elseif route === :lu
+          @test ctx.lu_ctx.analyze_count == 1 && ctx.lu_ctx.refactor_count == 1 && ctx.lu_ctx.fallback_count == 0
+        end
+      end
+    end)() end
+
+    @testset "State estimation linear solver: umfpack default, klu switch" begin (function ()
+      @test Sparlectra.StateEstimationConfig(Dict{String,Any}()).linear_solver === :umfpack
+      raw_klu = Dict{String,Any}("state_estimation" => Dict{String,Any}("linear_solver" => "klu"))
+      @test Sparlectra.StateEstimationConfig(raw_klu).linear_solver === :klu
+      raw_bad = Dict{String,Any}("state_estimation" => Dict{String,Any}("linear_solver" => "nonsense"))
+      @test_throws ArgumentError Sparlectra.StateEstimationConfig(raw_bad)
+      # the default is UMFPACK even in a session that loaded KLU for power
+      # mode (this file loads it when it can): the estimator's arithmetic
+      # must not depend on what else the session loaded
+      @test Sparlectra._newton_context_backend(Sparlectra._SENormalEquationsSolver().lu_ctx) === :umfpack_reuse
+      scf_dir = joinpath(dirname(@__DIR__), "data", "scf")
+      load14() = begin
+        net = importSCF(joinpath(scf_dir, "sp_case14.scf.json"))
+        readMeasurementsCSV!(net; file = joinpath(scf_dir, "sp_case14.measurements.csv"))
+        net
+      end
+      ref = runse!(load14())
+      # klu without the extension: UMFPACK and one warning naming the
+      # extension; driven through the configuration, so the key's way into
+      # the solver is what is tested
+      saved = Sparlectra._POWER_MODE_LINEAR_CONTEXT[]
+      try
+        Sparlectra._POWER_MODE_LINEAR_CONTEXT[] = nothing
+        res = @test_logs (:warn, r"SparlectraKLUExt") match_mode = :any with_state_estimation_config(() -> runse!(load14()); linear_solver = :klu)
+        @test res.converged == ref.converged && res.iterations == ref.iterations
+        @test res.voltages == ref.voltages
+      finally
+        Sparlectra._POWER_MODE_LINEAR_CONTEXT[] = saved
+      end
+      if _KLU_AVAILABLE
+        println("      state estimation klu backend: RAN")
+        @test Sparlectra._newton_context_backend(Sparlectra._SENormalEquationsSolver(:klu).lu_ctx) === :klu
+        res = with_state_estimation_config(() -> runse!(load14()); linear_solver = :klu)
+        @test res.converged == ref.converged && res.iterations == ref.iterations
+        @test maximum(abs.(res.voltages .- ref.voltages)) <= 1e-10
+      else
+        println("      state estimation klu backend: SKIPPED (KLU.jl not loadable in this session)")
+      end
+    end)() end
+
+    @testset "State estimation gain matrix: symmetric_gain mirrors the upper triangle" begin (function ()
+      # the plain product H'WH is symmetric only up to rounding; this H
+      # is chosen so it is not (precondition, otherwise the test proves
+      # nothing), and then the plain G goes to LU
+      rng = Random.Xoshiro(1)
+      H = sprand(rng, 60, 20, 0.3)
+      w = rand(rng, 60) .* 1e3
+      G0 = Sparlectra._se_gain_matrix(H, w, false)
+      @test !ishermitian(G0)
+      @test G0 == H' * (Diagonal(w) * H)
+      G = Sparlectra._se_gain_matrix(H, w, true)
+      @test ishermitian(G)
+      @test triu(G) == triu(G0)   # the upper triangle as computed, bit for bit
+      g = H' * (w .* ones(60))
+      ctx = Sparlectra._SENormalEquationsSolver()
+      dx = Sparlectra._se_solve_normal_equations!(ctx, G, g)
+      @test ctx.chol_analyze_count == 1 && ctx.lu_ctx.analyze_count == 0
+      dx0 = Sparlectra._se_solve_normal_equations!(Sparlectra._SENormalEquationsSolver(), G0, g)
+      @test norm(dx - dx0) <= 1e-10 * norm(dx0)
+      @test Sparlectra.StateEstimationConfig(Dict{String,Any}()).symmetric_gain === false
+      @test Sparlectra.StateEstimationConfig(Dict{String,Any}("state_estimation" => Dict{String,Any}("symmetric_gain" => true))).symmetric_gain === true
+      # the key reaches the estimator: same iterations, estimates at the
+      # rounding level of the other factorization
+      scf_dir = joinpath(dirname(@__DIR__), "data", "scf")
+      load14() = begin
+        net = importSCF(joinpath(scf_dir, "sp_case14.scf.json"))
+        readMeasurementsCSV!(net; file = joinpath(scf_dir, "sp_case14.measurements.csv"))
+        net
+      end
+      ref = runse!(load14())
+      res = with_state_estimation_config(() -> runse!(load14()); symmetric_gain = true)
+      @test res.converged == ref.converged && res.iterations == ref.iterations
+      @test maximum(abs.(res.voltages .- ref.voltages)) <= 1e-9
     end)() end
 
     @testset "Multi-island run carries per-island counters" begin (function ()

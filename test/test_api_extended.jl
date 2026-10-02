@@ -217,6 +217,27 @@ function run_api_extended_tests()
       @test isfinite(result.metadata["jacobian_condition_estimate"])
       @test result.metadata["jacobian_condition_verdict"] isa String
       @test startswith(String(result.metadata["jacobian_condition_line"]), "kappa1(J) = ")
+      # 0.30.2: the Padé margin moved to apslf_pade_margin; the former key
+      # apslf_convergence_radius is still written (deprecated) with the same
+      # value, nothing on a Newton run
+      @test result.metadata["apslf_convergence_radius"] === nothing
+      apslf_result = run_sparlectra_api(casefile = casefile, config_file = template, output_dir = joinpath(tmpdir, "apslf"), config_overrides = Dict("power_flow.solver" => "apslf", "benchmark.enabled" => false), performance_timing = :compact)
+      @test apslf_result.success
+      @test apslf_result.metadata["apslf_pade_margin"] isa Float64 && isfinite(apslf_result.metadata["apslf_pade_margin"])
+      @test apslf_result.metadata["apslf_convergence_radius"] === apslf_result.metadata["apslf_pade_margin"]
+      # power_flow.islands.mode (removed in 0.30.2) in the configuration file
+      # and in a case file the Settings page wrote before: the run goes
+      # through, and run.log names both ignored keys
+      removed_dir = mkpath(joinpath(tmpdir, "removed_keys"))
+      removed_case = cp(casefile, joinpath(removed_dir, "case_api.m"))
+      write(joinpath(removed_dir, "case_api.config.yaml"), "config_version: 1\nscope: case\ncase: case_api.m\npower_flow:\n  islands:\n    mode: solve_independent\n")
+      removed_cfg = joinpath(removed_dir, "config.yaml")
+      write(removed_cfg, replace(read(template, String), "  islands:\n" => "  islands:\n    mode: solve_parallel\n"; count = 1))
+      removed_result = @test_logs (:warn, r"islands\.mode is ignored") (:warn, r"islands\.mode in case_api\.config\.yaml is ignored") match_mode = :any run_sparlectra_api(casefile = removed_case, config_file = removed_cfg, output_dir = joinpath(tmpdir, "removed_out"), config_overrides = Dict("benchmark.enabled" => false), performance_timing = :compact)
+      @test removed_result.success
+      removed_log = read(removed_result.logfile, String)
+      @test occursin("Configuration key power_flow.islands.mode in config.yaml is ignored", removed_log)
+      @test occursin("Configuration key power_flow.islands.mode in case_api.config.yaml is ignored", removed_log)
       no_dcline_mpc = Sparlectra.MatpowerIO.read_case(casefile; legacy_compat = false)
       @test Sparlectra.MatpowerIO.matpower_dcline_diagnostics(no_dcline_mpc)["matpower_dcline_active_count"] == 0
       empty_dcline_case = _write_api_dcline_case_ext(joinpath(tmpdir, "case_empty_dcline.m"); rows = "")
@@ -1378,11 +1399,34 @@ power_flow:
           @test occursin(mode, result_html)
           @test occursin("Runtime casefile", result_html)
           @test occursin(basename(casefile), result_html)
+          # #464: the stop reason of the classic outer loop next to the pass
+          # count, in the metadata and on one run.log line; nothing otherwise
+          @test mode_run["metadata"]["q_limit_classic_outer_loop_stop"] === (startswith(mode, "classic_") ? "converged" : nothing)
+          @test occursin("Classic Q-limit outer loop: ", run_log) == startswith(mode, "classic_")
           if startswith(mode, "classic_")
             @test occursin("Classical Q-limit outer-loop passes", result_html)
             @test !occursin("Q-limit handling: disabled\nQ-limit diagnostics: skipped", run_log) || occursin("Inner PF active-set Q-limit switching: disabled for classical outer-loop solve", run_log)
           end
         end
+        # a run that stops at the pass limit says so: the shipped Zeng case
+        # needs two Q-limit updates in classic_one_at_a_time, one pass is
+        # allowed (power_flow.qlimits.classic_max_passes)
+        zeng = joinpath(dirname(@__DIR__), "data", "scf", "case14_zeng_p306_one_at_a_time_C.scf.json")
+        limit_run = start_powerflow_run(Dict(
+          "casefile" => zeng,
+          "config_file" => config_file,
+          "output_root" => output_root,
+          "config_overrides" => Dict("power_flow.qlimits.enforcement_mode" => "classic_one_at_a_time", "power_flow.qlimits.classic_max_passes" => 1, "power_flow.rescue" => false),
+        ))
+        push!(qlimit_mode_run_ids, limit_run["run_id"])
+        @test limit_run["metadata"]["q_limit_classic_outer_loop_stop"] == "max_outer_iterations"
+        @test limit_run["metadata"]["q_limit_classic_outer_loop_passes"] == 1
+        @test occursin("Classic Q-limit outer loop: 1 pass, stop: max_outer_iterations", read(joinpath(limit_run["output_dir"], "run.log"), String))
+        # 0.30.2: a stop at the pass limit is not converged, the reason
+        # reaches the run metadata
+        @test limit_run["metadata"]["final_outcome"]["converged"] === false
+        @test limit_run["metadata"]["final_outcome"]["reason"] == "max_outer_iterations"
+        @test limit_run["metadata"]["run_status"] == "completed_nonconverged"
       end)() end
 
       index_path = joinpath(output_root, POWERFLOW_RUN_INDEX_FILENAME)

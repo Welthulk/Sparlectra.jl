@@ -131,6 +131,10 @@ Base.@kwdef struct QLimitConfig
   # an overshoot up to hysteresis_pu is within_hysteresis, up to this value
   # bounded (accepted with a warning), beyond it a remaining violation
   final_q_accept_pu::Float64 = 0.02
+  # pass limit of the classic outer loop (classic_simultaneous,
+  # classic_one_at_a_time): the power-flow solves after the base solve, one
+  # per Q-limit update; reaches the solver keyword qlimit_max_outer
+  classic_max_passes::Int = 30
   guard::Bool = true
   guard_min_q_range_pu::Float64 = 0.02
   guard_zero_range_mode::Symbol = :lock_pq
@@ -148,6 +152,10 @@ Base.@kwdef struct QLimitConfig
   enforcement_mode::Symbol = :active_set
 end
 
+# islands of at least this many buses run on their own tasks (0.30.2);
+# defined before the struct that uses it as a default
+const DEFAULT_ISLANDS_PARALLEL_MIN_BUSES = 200
+
 """
     IslandPowerFlowConfig
 
@@ -155,7 +163,12 @@ Configuration for AC-island-aware power-flow diagnostics.
 """
 Base.@kwdef struct IslandPowerFlowConfig
   enabled::Bool = true
+  # ignored since 0.30.2 (islands run in parallel by size, see
+  # parallel_min_buses); kept so that struct users keep compiling
   mode::Symbol = :solve_independent
+  # islands of at least this many buses run on their own tasks when two
+  # or more of them exist and Julia has more than one thread (0.30.2)
+  parallel_min_buses::Int = DEFAULT_ISLANDS_PARALLEL_MIN_BUSES
   reference_policy::Symbol = :matpower_like
   diagnostic_continue_after_failure::Bool = true
 end
@@ -239,6 +252,9 @@ Configuration of the N-1 contingency batch (issue #331).
   `:flag` is an opt-in for networks where the user has checked the
   screening share and the margins once. This config key drives the SERVICE
   path; the programmatic keyword default is `:off` as well.
+- `warm_active_set::Bool`: start every outage and scenario from the base
+  case's PV/PQ state (default `false`); see [N-1 Contingency
+  Analysis](@ref contingency_warm_active_set).
 - `screening_margin_pct::Float64`: the flagging margin (default `10.0`): a
   scenario is flagged for the full run when a branch's estimated loading
   plus the change the outage causes on it (at least 1 point, at most the
@@ -249,6 +265,11 @@ Base.@kwdef struct ContingencyConfig
   rescue_ladder::Vector{Symbol} = [:warm]
   screening_mode::Symbol = :off
   screening_margin_pct::Float64 = 10.0
+  # warm active set (0.30.2): outages and scenarios start from the base
+  # case's PV/PQ state (its clamped machines as PQ at the reached limit);
+  # the release rule stays free to undo a clamp. Off by default: it can
+  # change the limited solution where the active set is not unique.
+  warm_active_set::Bool = false
 end
 
 const CONTINGENCY_SCREENING_MODE_VALUES = (:off, :flag, :only)
@@ -400,6 +421,7 @@ Base.@kwdef struct PowerFlowConfig
   rectangular_workspace_min_buses::Int = 1000
   islands_enabled::Bool = true
   islands_mode::Symbol = :solve_independent
+  islands_parallel_min_buses::Int = DEFAULT_ISLANDS_PARALLEL_MIN_BUSES
   islands_reference_policy::Symbol = :matpower_like
   start_mode::StartModeConfig = StartModeConfig()
   start_current_iteration::StartCurrentIterationConfig = StartCurrentIterationConfig()
@@ -543,6 +565,19 @@ Base.@kwdef struct StateEstimationConfig
   max_eliminations::Int = 3
   rank_tol_factor::Float64 = 10.0
   takahashi_min_states::Int = 200
+  # sparse LU of the WLS normal equations when the gain matrix is not
+  # exactly symmetric (an exactly symmetric one goes to CHOLMOD on either
+  # setting): :umfpack, or :klu through the KLU package extension
+  # (`using KLU`); :klu without the extension falls back to UMFPACK with one
+  # warning. UMFPACK is the default even with KLU loaded, so a session that
+  # loads KLU for power mode does not silently change the estimator's
+  # arithmetic.
+  linear_solver::Symbol = :umfpack
+  # build the WLS gain matrix G = H'WH exactly symmetric (upper triangle
+  # mirrored) so it always takes the Cholesky route; the plain product is
+  # symmetric only up to rounding and then goes to LU. Off by default: the
+  # estimates move at the 1e-10 pu level against the plain product.
+  symmetric_gain::Bool = false
   # critical-measurement classification (issue #394): :omega reads the
   # diagonal of the residual covariance from one selected-inverse pass,
   # :rank runs the former per-row rank tests (budgeted) as a cross-check
@@ -1002,11 +1037,18 @@ const QLIMIT_GUARD_ZERO_RANGE_MODE_VALUES = (:lock_pq,)
 const QLIMIT_GUARD_NARROW_RANGE_MODE_VALUES = (:prefer_pq, :lock_pq)
 const QLIMIT_GUARD_VIOLATION_MODE_VALUES = (:delayed_switch, :lock_pq)
 const POWERFLOW_ISLAND_MODE_VALUES = (:solve_independent, :solve_parallel)
+
+
+function _validate_islands_parallel_min_buses(x::Int)::Int
+  x >= 1 || throw(ArgumentError("power_flow.islands.parallel_min_buses must be at least 1, got $(x)"))
+  return x
+end
 const POWERFLOW_ISLAND_REFERENCE_POLICY_VALUES = (:matpower_like,)
 const RECTANGULAR_PREALLOCATE_WORKSPACE_VALUES = (:off, :on, :auto)
 const STATE_ESTIMATION_METHOD_VALUES = (:wls,)
 const STATE_ESTIMATION_ROBUST_MODE_VALUES = (:off, :staged, :replacement)
 const STATE_ESTIMATION_PMU_REF_OFFSET_VALUES = (:auto, :off)
+const STATE_ESTIMATION_LINEAR_SOLVER_VALUES = (:umfpack, :klu)
 const MATPOWER_PV_VOLTAGE_SOURCE_VALUES = (:gen_vg, :bus_vm, :auto, :strict_check)
 const MATPOWER_COMPARE_VOLTAGE_REFERENCE_VALUES = (:bus_vm, :gen_vg, :imported_setpoint, :hybrid)
 const MATPOWER_SHIFT_UNIT_VALUES = (:deg, :rad)
@@ -1478,6 +1520,13 @@ function ApslfStartConfig(raw::AbstractDict)
   )
 end
 
+# At least one pass: the outer loop runs the base solve and then up to this
+# many Q-limit updates, and the solver rejects qlimit_max_outer < 1.
+function _validate_classic_max_passes(x::Int)::Int
+  x >= 1 || throw(ArgumentError("power_flow.qlimits.classic_max_passes must be at least 1; got $(x)."))
+  return x
+end
+
 function QLimitConfig(raw::AbstractDict)
   # `enforcement_mode: off` means "no Q-limit handling", the same as
   # `enabled: false`. The Web UI offers "off" in its mode control, and its
@@ -1512,6 +1561,7 @@ function QLimitConfig(raw::AbstractDict)
     cooldown_iters = _as_int_cfg(_raw_get(merged, "cooldown_iters", 1)),
     reenable_v_hyst_pu = _validate_nonnegative("power_flow.qlimits.reenable_v_hyst_pu", _as_float_cfg(_raw_get(merged, "reenable_v_hyst_pu", 1e-4))),
     final_q_accept_pu = final_q_accept_value,
+    classic_max_passes = _validate_classic_max_passes(_as_int_cfg(_raw_get(merged, "classic_max_passes", 30))),
     guard = _as_bool_cfg(_raw_get(raw, "qlimit_guard", guard_enabled_default)),
     guard_min_q_range_pu = _validate_nonnegative("qlimit_guard_min_q_range_pu", _as_float_cfg(_raw_get(merged, "min_q_range_pu", _raw_get(merged, "guard_min_q_range_pu", _raw_get(merged, "qlimit_guard_min_q_range_pu", 0.02))))),
     guard_zero_range_mode = _validate_allowed_symbol("power_flow.qlimits.guard.zero_range_mode", _as_symbol_cfg(_raw_get(merged, "zero_range_mode", _raw_get(merged, "guard_zero_range_mode", _raw_get(merged, "qlimit_guard_zero_range_mode", :lock_pq)))), QLIMIT_GUARD_ZERO_RANGE_MODE_VALUES),
@@ -1642,7 +1692,7 @@ function PowerFlowConfig(raw::AbstractDict)
     rectangular_preallocate_workspace = _validate_allowed_symbol("power_flow.rectangular_preallocate_workspace", _as_symbol_cfg(_raw_get(merged, "rectangular_preallocate_workspace", :auto)), RECTANGULAR_PREALLOCATE_WORKSPACE_VALUES),
     rectangular_workspace_min_buses = _as_int_cfg(_raw_get(merged, "rectangular_workspace_min_buses", 1000)),
     islands_enabled = _as_bool_cfg(_raw_get(islands_raw, "enabled", true)),
-    islands_mode = _validate_allowed_symbol("power_flow.islands.mode", _as_symbol_cfg(_raw_get(islands_raw, "mode", :solve_independent)), POWERFLOW_ISLAND_MODE_VALUES),
+    islands_parallel_min_buses = _validate_islands_parallel_min_buses(_as_int_cfg(_raw_get(islands_raw, "parallel_min_buses", DEFAULT_ISLANDS_PARALLEL_MIN_BUSES))),
     islands_reference_policy = _validate_allowed_symbol("power_flow.islands.reference_policy", _as_symbol_cfg(_raw_get(islands_raw, "reference_policy", :matpower_like)), POWERFLOW_ISLAND_REFERENCE_POLICY_VALUES),
     start_mode = start_mode_cfg,
     start_current_iteration = StartCurrentIterationConfig(start_current_iteration_raw),
@@ -1699,7 +1749,7 @@ function IslandPowerFlowConfig(raw::AbstractDict)
   merged = haskey(raw, "islands") || haskey(raw, :islands) ? _merged_section(raw, "islands") : raw
   return IslandPowerFlowConfig(
     enabled = _as_bool_cfg(_raw_get(merged, "enabled", true)),
-    mode = _validate_allowed_symbol("power_flow.islands.mode", _as_symbol_cfg(_raw_get(merged, "mode", :solve_independent)), POWERFLOW_ISLAND_MODE_VALUES),
+    parallel_min_buses = _validate_islands_parallel_min_buses(_as_int_cfg(_raw_get(merged, "parallel_min_buses", DEFAULT_ISLANDS_PARALLEL_MIN_BUSES))),
     reference_policy = _validate_allowed_symbol("power_flow.islands.reference_policy", _as_symbol_cfg(_raw_get(merged, "reference_policy", :matpower_like)), POWERFLOW_ISLAND_REFERENCE_POLICY_VALUES),
     diagnostic_continue_after_failure = _as_bool_cfg(_raw_get(merged, "diagnostic_continue_after_failure", true)),
   )
@@ -1747,6 +1797,8 @@ function StateEstimationConfig(raw::AbstractDict)
     max_eliminations = Int(_validate_nonnegative("state_estimation.max_eliminations", _as_int_cfg(_raw_get(merged, "max_eliminations", 3)))),
     rank_tol_factor = Float64(_validate_positive("state_estimation.rank_tol_factor", _as_float_cfg(_raw_get(merged, "rank_tol_factor", 10.0)))),
     takahashi_min_states = Int(_validate_positive("state_estimation.takahashi_min_states", _as_int_cfg(_raw_get(merged, "takahashi_min_states", 200)))),
+    linear_solver = _validate_allowed_symbol("state_estimation.linear_solver", _as_symbol_cfg(_raw_get(merged, "linear_solver", :umfpack)), STATE_ESTIMATION_LINEAR_SOLVER_VALUES),
+    symmetric_gain = _as_bool_cfg(_raw_get(merged, "symmetric_gain", false)),
     criticality_method = _validate_allowed_symbol("state_estimation.criticality_method", _as_symbol_cfg(_raw_get(merged, "criticality_method", :omega)), [:omega, :rank]),
     rank_method = _validate_allowed_symbol("state_estimation.rank_method", _as_symbol_cfg(_raw_get(merged, "rank_method", :decomposition)), (:decomposition, :pivots)),
     ia_current_floor_A = Float64(_validate_positive("state_estimation.ia_current_floor_A", _as_float_cfg(_raw_get(merged, "ia_current_floor_A", 10.0)))),
@@ -1943,7 +1995,8 @@ function ContingencyConfig(raw::AbstractDict)
   mode = _validate_allowed_symbol("contingency.screening.mode", _as_symbol_cfg(_raw_get(screening, "mode", :off)), CONTINGENCY_SCREENING_MODE_VALUES)
   margin = _as_float_cfg(_raw_get(screening, "margin_pct", 10.0))
   (isfinite(margin) && margin >= 0.0) || throw(ArgumentError("contingency.screening.margin_pct must be a finite value >= 0; got $(margin)."))
-  return ContingencyConfig(rescue_ladder = ladder, screening_mode = mode, screening_margin_pct = margin)
+  warm = _as_bool_cfg(_raw_get(merged, "warm_active_set", false))
+  return ContingencyConfig(rescue_ladder = ladder, screening_mode = mode, screening_margin_pct = margin, warm_active_set = warm)
 end
 
 # The deprecated diagnostics.* duplicates of output.* are warned about (and
@@ -2094,6 +2147,14 @@ const _FREEFORM_MAPPING_CONFIG_KEYS = ("power_flow.distributed_slack.weights", "
 # IIDM reader needs no Python; the Web UI had written the key into every
 # saved configuration and case sidecar of 0.19.0.
 const _REMOVED_SILENT_CONFIG_KEYS = ("output.condition_number", "webui.warmup", "powsybl_import.python_exe")
+
+# Removed keys that are ignored WITH one line naming what replaced them
+# (the 0.20.0 rule: a removed key is a warning, never a failure).
+# power_flow.islands.mode, 0.30.2: islands run in parallel by size when
+# Julia has more than one thread; there is no mode to choose.
+const _REMOVED_NOTED_CONFIG_KEYS = Dict(
+  "power_flow.islands.mode" => "islands of one network run in parallel when Julia has more than one thread and at least two islands have power_flow.islands.parallel_min_buses buses (runtime.parallel.enabled is the master switch); remove the key.",
+)
 
 const _DEPRECATED_CONFIG_KEYS = Dict(
   "diagnostics.console_summary" => "output.console_summary",
@@ -2325,6 +2386,11 @@ function _validate_known_config_keys(user::AbstractDict, defaults::AbstractDict;
       continue
     end
     current_path in _REMOVED_SILENT_CONFIG_KEYS && continue
+    if haskey(_REMOVED_NOTED_CONFIG_KEYS, current_path)
+      @warn "Configuration key $(current_path) is ignored: $(_REMOVED_NOTED_CONFIG_KEYS[current_path])"
+      push!(drop, key)
+      continue
+    end
     if !haskey(defaults, skey)
       strict && throw(ArgumentError("Unknown Sparlectra configuration key: $(current_path)"))
       @warn "Unknown Sparlectra configuration key $(current_path) is ignored (not a key of this Sparlectra version; check the spelling or remove it from the file)."

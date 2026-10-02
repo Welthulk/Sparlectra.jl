@@ -37,7 +37,9 @@ strategy, not the model, may be the decisive factor.
 |---|---|
 | Config key | `power_flow.qlimits.enforcement_mode`: `active_set` (default), `classic_simultaneous`, `classic_one_at_a_time` |
 | Config key | `power_flow.qlimits.reenable_v_hyst_pu` (default `1e-4` pu): voltage hysteresis for releasing a clamped machine back to PV |
-| Result field | solver status `converged_limits_failed` with reason `remaining_pv_q_limit_violations` |
+| Config key | `power_flow.qlimits.classic_max_passes` (default `30`): pass limit of the classic outer loop; a loop stopped there leaves the run not converged, on the state of its last solve |
+| Result field | run metadata `q_limit_classic_outer_loop_passes` and `q_limit_classic_outer_loop_stop` (`converged`, `max_outer_iterations`, `pf_not_converged_after_qlimit_update`, `no_reference_bus_remaining`, `base_pf_not_converged`); `run.log` names both on one line |
+| Result field | solver status `converged_limits_failed` with reason `remaining_pv_q_limit_violations`, or with reason `max_outer_iterations` when the classic loop stopped at its pass limit |
 
 - `active_set`: in-iteration switching with guards such as hysteresis,
   cooldown, narrow-range locking and repeated-switching protection.

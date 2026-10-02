@@ -104,7 +104,7 @@ exactly the old `runContingencies!` preamble), clear the solver status
 and Q-limit logs the workers must not inherit, and record the base branch
 loadings. `net` itself is never mutated.
 """
-function ScenarioEngine(net::Net; vm_min_pu::Float64 = 0.9, vm_max_pu::Float64 = 1.1, maxIte::Int = 30, tol::Float64 = 1e-8, ladder::Vector{Symbol} = Symbol[:warm], index::Union{Nothing,ScenarioIndex} = nothing, pf_kwargs = NamedTuple(), screening_mode::Symbol = :off, screening_margin_pct::Float64 = 10.0)
+function ScenarioEngine(net::Net; vm_min_pu::Float64 = 0.9, vm_max_pu::Float64 = 1.1, maxIte::Int = 30, tol::Float64 = 1e-8, ladder::Vector{Symbol} = Symbol[:warm], index::Union{Nothing,ScenarioIndex} = nothing, pf_kwargs = NamedTuple(), screening_mode::Symbol = :off, screening_margin_pct::Float64 = 10.0, warm_active_set::Bool = false, warm_note::Union{Nothing,Base.RefValue{String}} = nothing)
   screening_mode in CONTINGENCY_SCREENING_MODE_VALUES || throw(ArgumentError("ScenarioEngine: screening_mode must be one of $(CONTINGENCY_SCREENING_MODE_VALUES), got :$(screening_mode)."))
   (isfinite(screening_margin_pct) && screening_margin_pct >= 0.0) || throw(ArgumentError("ScenarioEngine: screening_margin_pct must be a finite value >= 0."))
   vm_min_pu < vm_max_pu || throw(ArgumentError("ScenarioEngine: vm_min_pu must be below vm_max_pu."))
@@ -136,6 +136,33 @@ function ScenarioEngine(net::Net; vm_min_pu::Float64 = 0.9, vm_max_pu::Float64 =
       template.flatstart = true
     end
   end
+  # Warm active set (0.30.2, `contingency.warm_active_set`): the base
+  # case's clamped machines (bus name => reached side), read before the
+  # hygiene below empties the logs, start every worker solve as PQ at that
+  # limit (`qlimit_warm_clamps`); the release rule stays free to undo them.
+  # Without a converged base case or with Q limits off there is nothing to
+  # carry over, and one line says so.
+  if warm_active_set
+    qlimits_on = get(pf_kwargs, :qlimits_enabled, true) === true
+    note = if !base_converged
+      "Warm active set: not applied, the base case did not converge."
+    elseif !qlimits_on
+      "Warm active set: not applied, Q limits are off."
+    else
+      bus_names = Dict{Int,String}(idx => name for (name, idx) in template.busDict)
+      warm = Dict{String,Symbol}()
+      for (bus, side) in template.qLimitEvents
+        side in (:min, :max) || continue
+        name = get(bus_names, bus, nothing)
+        name === nothing || (warm[name] = side)
+      end
+      pf_kwargs = (; pf_kwargs..., qlimit_warm_clamps = warm)
+      "Warm active set: $(length(warm)) clamped machine bus(es) of the base case carried into every outage."
+    end
+    # the service passes a Ref and writes the line into run.log; a library
+    # call without one sees it on the console
+    warm_note === nothing ? println(note) : (warm_note[] = note)
+  end
   # template hygiene: the workers need the solved VOLTAGES, not the base
   # solver status or its Q-limit event logs
   template._rectangular_pf_status = nothing
@@ -165,6 +192,10 @@ end
 # mutable objects into the worker.
 function _scenario_copy_scalar_fields!(dst::T, src::T) where {T}
   for f in fieldnames(T)
+    # the power-mode cache belongs to the worker, never to the template:
+    # a template without one (`nothing`, e.g. a rescued or flat base case)
+    # would otherwise wipe the worker's cache after every scenario (#457)
+    f === :_power_cache && continue
     v = getfield(src, f)
     if v === nothing || v isa Number || v isa Symbol || v isa AbstractString || v isa Enum
       setfield!(dst, f, v)
@@ -842,7 +873,9 @@ end
 # snapshot is taken AFTER markIsolatedBuses! on purpose: isolation zeroes
 # the isolated bus voltages, and the warm start of every ladder stage must
 # include those zeroes (bitwise with the old per-case deepcopy path).
-function _evaluate_outaged_net!(engine::ScenarioEngine, work::Net, name::String, weight::Float64)
+function _evaluate_outaged_net!(engine::ScenarioEngine, work::Net, name::String, weight::Float64; cold::Bool = false)
+  # warm active set: the cold retry solves without the base case's clamps
+  pf_kw = cold ? Base.structdiff(engine.pf_kwargs, NamedTuple{(:qlimit_warm_clamps,)}) : engine.pf_kwargs
   # buses the outage itself cuts off: isolated after the marking, not before.
   # A single bus without a connection is no island for the detector below
   # (it drops isolated buses), so without this the outage of a radial
@@ -852,9 +885,10 @@ function _evaluate_outaged_net!(engine::ScenarioEngine, work::Net, name::String,
   markIsolatedBuses!(net = work, log = false)
   cut_off = Int[i for i in eachindex(work.nodeVec) if isIsolated(work.nodeVec[i]) && !(i in isolated_before)]
   cut_off_note, cut_off_load_mw = _cut_off_bus_note(work, cut_off)
-  auto_slack = get(Dict(pairs(engine.pf_kwargs)), :auto_slack, false) == true
+  auto_slack = get(Dict(pairs(pf_kw)), :auto_slack, false) == true
   # the same detection the solve runs: an island without a slack or PV bus
-  # takes its strongest generating unit regardless of auto_slack
+  # takes its best generating unit (stated reference priority first, then
+  # the strongest) regardless of auto_slack
   island_report = detect_ac_islands(work; promote_generators = true)
   island_count = length(island_report.rows)
   # rows for reference-less islands, kept so an islanding failure is
@@ -873,15 +907,15 @@ function _evaluate_outaged_net!(engine::ScenarioEngine, work::Net, name::String,
       erg = 1
       if stage === :warm
         work.flatstart = template_flatstart
-        it_stage, erg = runpf!(work, engine.maxIte, engine.tol, 0; islands_enabled = true, engine.pf_kwargs...)
+        it_stage, erg = runpf!(work, engine.maxIte, engine.tol, 0; islands_enabled = true, pf_kw...)
       elseif stage === :flat
         work.flatstart = true
-        it_stage, erg = runpf!(work, engine.maxIte, engine.tol, 0; islands_enabled = true, engine.pf_kwargs...)
+        it_stage, erg = runpf!(work, engine.maxIte, engine.tol, 0; islands_enabled = true, pf_kw...)
       elseif stage === :dc
         # flat magnitudes with DC-projected start angles
         work.flatstart = false
         _dc_seed_rectangular_angles!(work, PowerFlowConfig(max_iter = engine.maxIte, tol = engine.tol))
-        it_stage, erg = runpf!(work, engine.maxIte, engine.tol, 0; islands_enabled = true, engine.pf_kwargs...)
+        it_stage, erg = runpf!(work, engine.maxIte, engine.tol, 0; islands_enabled = true, pf_kw...)
       elseif stage === :apslf
         # APSLF start via the config-driven solve (rescue OFF: one bounded
         # attempt); pf_kwargs are not forwarded on this path
@@ -938,6 +972,19 @@ prosumer reinserted afterwards. A patch item applies its operations
 through [`apply!`](@ref) with the documented scenario semantics.
 """
 function evaluate!(engine::ScenarioEngine, worker::ScenarioWorker, it::_ScenarioOutageItem)::ContingencyResult
+  result = _evaluate_outage_item!(engine, worker, it; cold = false)
+  # warm active set (0.30.2): an outage that does not converge from the
+  # base case's clamps is solved again on a freshly reset worker from the
+  # file's PV/PQ state, so the switch never loses an outage the plain start
+  # solves (case300: one outage converged only without it)
+  if !result.converged && haskey(engine.pf_kwargs, :qlimit_warm_clamps)
+    cold = _evaluate_outage_item!(engine, worker, it; cold = true)
+    cold.converged && return _warm_cold_result(cold)
+  end
+  return result
+end
+
+function _evaluate_outage_item!(engine::ScenarioEngine, worker::ScenarioWorker, it::_ScenarioOutageItem; cold::Bool)::ContingencyResult
   work = worker.net
   removed_prosumer = nothing
   if it.kind === :gen
@@ -952,10 +999,17 @@ function evaluate!(engine::ScenarioEngine, worker::ScenarioWorker, it::_Scenario
     # asymmetric branch shunt) leaves with it; the worker reset restores it
     _remove_branch_shunt_parts!(work, it.internal)
   end
-  result = _evaluate_outaged_net!(engine, work, it.name, it.weight)
+  result = _evaluate_outaged_net!(engine, work, it.name, it.weight; cold = cold)
   removed_prosumer === nothing || insert!(work.prosumpsVec, it.internal, removed_prosumer)
   _reset_scenario_worker!(work, engine.template)
   return result
+end
+
+# a cold-retry result: start_used names the retry, the note says why
+function _warm_cold_result(r::ContingencyResult)::ContingencyResult
+  why = "warm active set did not converge, solved from the file's PV/PQ state"
+  note = (r.error === nothing || isempty(r.error)) ? why : string(r.error, "; ", why)
+  return ContingencyResult(r.name, r.weight, r.converged, r.iterations, :warm_cold, r.max_vm_pu, r.min_vm_pu, r.max_branch_loading_pct, r.severity, r.overloads, r.voltage_violations, r.island_count, r.shed_load_mw, note)
 end
 
 evaluate!(::ScenarioEngine, ::ScenarioWorker, it::_ScenarioFailedItem)::ContingencyResult = ContingencyResult(it.name, it.weight, false, 0, :none, NaN, NaN, NaN, NaN, OverloadRecord[], String[], 0, 0.0, it.message)
@@ -967,6 +1021,14 @@ function evaluate!(engine::ScenarioEngine, worker::ScenarioWorker, it::_Scenario
   result = _evaluate_outaged_net!(engine, work, it.scenario.name, it.scenario.weight)
   restore!(work, undo)
   _reset_scenario_worker!(work, engine.template)
+  # warm active set: the same cold retry as for an outage item
+  if !result.converged && haskey(engine.pf_kwargs, :qlimit_warm_clamps)
+    undo = apply!(work, it.scenario.ops, engine.index)
+    cold = _evaluate_outaged_net!(engine, work, it.scenario.name, it.scenario.weight; cold = true)
+    restore!(work, undo)
+    _reset_scenario_worker!(work, engine.template)
+    cold.converged && return _warm_cold_result(cold)
+  end
   return result
 end
 
@@ -1107,13 +1169,15 @@ function runScenarios!(
   parallel_max_tasks::Union{Nothing,Int} = nothing,
   parallel_min_work_items::Union{Nothing,Int} = nothing,
   auto_slack::Bool = true,
+  warm_active_set::Bool = false,
+  warm_note::Union{Nothing,Base.RefValue{String}} = nothing,
   kwargs...,
 )
   validate_scenarios(set, index, net)
   scenarios = expand_scenarios(set, net, index)
   isempty(scenarios) && return screening_mode === :off ? ContingencyResult[] : ScenarioResult[]
   ladder = _validate_contingency_ladder(rescue_ladder; context = "runScenarios!: rescue_ladder")
-  engine = ScenarioEngine(net; vm_min_pu = vm_min_pu, vm_max_pu = vm_max_pu, maxIte = maxIte, tol = tol, ladder = ladder, index = index, pf_kwargs = (; auto_slack = auto_slack, kwargs...), screening_mode = screening_mode, screening_margin_pct = screening_margin_pct)
+  engine = ScenarioEngine(net; vm_min_pu = vm_min_pu, vm_max_pu = vm_max_pu, maxIte = maxIte, tol = tol, ladder = ladder, index = index, pf_kwargs = (; auto_slack = auto_slack, kwargs...), screening_mode = screening_mode, screening_margin_pct = screening_margin_pct, warm_active_set = warm_active_set, warm_note = warm_note)
   items = _ScenarioItem[_engine_item_from_scenario(s, index) for s in scenarios]
   return _run_engine_batch(engine, items; parallel_enabled = parallel_enabled, parallel_max_tasks = parallel_max_tasks, parallel_min_work_items = parallel_min_work_items)
 end

@@ -305,6 +305,7 @@ function runpf_rectangular!(
   jacobian_reuse::Bool = DEFAULT_JACOBIAN_REUSE,
   jacobian_reuse_min_reduction::Float64 = DEFAULT_JACOBIAN_REUSE_MIN_REDUCTION,
   jacobian_reuse_max_steps::Int = DEFAULT_JACOBIAN_REUSE_MAX_STEPS,
+  qlimit_warm_clamps::Dict{String,Symbol} = Dict{String,Symbol}(),
   merit_enabled::Bool = false,
   merit_armijo_c1::Float64 = 1.0e-4,
   merit_scale_p::Float64 = 1.0,
@@ -420,6 +421,7 @@ function runpf_rectangular!(
       jacobian_reuse = jacobian_reuse,
       jacobian_reuse_min_reduction = jacobian_reuse_min_reduction,
       jacobian_reuse_max_steps = jacobian_reuse_max_steps,
+      qlimit_warm_clamps = qlimit_warm_clamps,
       merit_enabled = merit_enabled,
       merit_armijo_c1 = merit_armijo_c1,
       merit_scale_p = merit_scale_p,
@@ -506,9 +508,14 @@ function runpf_rectangular!(
   # warm solve on the benchmark cases
   power_cache = power_mode ? _power_cache!(net) : nothing
   ybus_fp = power_mode ? _ybus_fingerprint(net) : UInt64(0)
+  # a rebuilt Ybus may have another sparsity pattern (a branch out of
+  # service removes its entries), and the kept Jacobian assembly replays
+  # recorded positions of the old pattern: it is invalidated below
+  ybus_rebuilt = true
   if power_mode && power_cache.ybus !== nothing && power_cache.ybus_fingerprint == ybus_fp && power_cache.n == n
     Ybus = power_cache.ybus
     power_cache.ybus_reuse_count += 1
+    ybus_rebuilt = false
   else
     Yred = _perf_profile_time!(performance_profile, :ybus_assembly) do
       createYBUS(net = net, sparse = true, printYBUS = (verbose > 1))
@@ -725,6 +732,29 @@ function runpf_rectangular!(
     mask
   end
 
+  # Warm active set (0.30.2, N-1 and scenario workers): the base case's
+  # clamped machines start as PQ at the limit they reached, set AFTER the
+  # PV origin mask so they keep their PV origin and the release rule of
+  # the active set stays free to undo a clamp (PQ->PV when the voltage
+  # recovers). Keyed by bus NAME, which survives the island subnets'
+  # renumbering. The clamp is the active set's own: PQ type, injection at
+  # the limit minus the load, generator Q on the node, an event at
+  # iteration 0 with its side.
+  if qlimits_enabled && !isempty(qlimit_warm_clamps)
+    qload_warm = build_qload_pu(net)
+    for (name, side) in qlimit_warm_clamps
+      bus = get(net.busDict, name, 0)
+      (1 <= bus <= nb && bus_types[bus] == :PV) || continue
+      (bus <= length(qmin_pu) && bus <= length(qmax_pu)) || continue
+      qclamp = side === :max ? qmax_pu[bus] : qmin_pu[bus]
+      isfinite(qclamp) || continue
+      bus_types[bus] = :PQ
+      S[bus] = ComplexF64(real(S[bus]), qclamp - qload_warm[bus])
+      net.nodeVec[bus]._qƩGen = qclamp * net.baseMVA
+      logQLimitHit!(net, 0, bus, side)
+    end
+  end
+
   cooldown_iters = opt_cooldown_iters !== nothing ? opt_cooldown_iters : (hasfield(typeof(net), :cooldown_iters) ? net.cooldown_iters : 0)
   q_hyst_pu      = opt_q_hyst_pu !== nothing ? opt_q_hyst_pu : (hasfield(typeof(net), :q_hyst_pu) ? net.q_hyst_pu : 0.0)
   # voltage margin of the PQ->PV release (#375), stamped on the net from
@@ -819,11 +849,22 @@ function runpf_rectangular!(
     jr_consecutive = 0
     jr_last_reused = false
     jr_discarded_steps = 0
+    # The kept Jacobian assembly was last built with the bus types the
+    # PREVIOUS solve ENDED with (an active-set switch inside that solve
+    # rebuilt it), so the fingerprint is stored at the end of every solve
+    # (after the loop) and compared here with this solve's start types. It
+    # used to be stored here, at the start: a solve that switched buses
+    # left the assembly of its final types behind while the fingerprint
+    # still named its start types, and the next solve starting from those
+    # start types reused an assembly of the wrong pattern (found with the
+    # warm active set: N-1 outages diverged after an earlier outage on the
+    # same worker had switched buses). The sentinel 0 forces a rebuild
+    # when a solve leaves by an exception before the end.
     bus_type_fp = hash(bus_types)
-    if power_cache.bus_type_fingerprint != bus_type_fp
+    if power_cache.bus_type_fingerprint != bus_type_fp || ybus_rebuilt
       linear_ctx.assembly.valid = false
-      power_cache.bus_type_fingerprint = bus_type_fp
     end
+    power_cache.bus_type_fingerprint = UInt64(0)
   else
     workspace = RectangularIterationWorkspace(nb)
     linear_ctx = newton_linear_solver_context(linear_solver)
@@ -1177,6 +1218,8 @@ function runpf_rectangular!(
   # --- mirror bus_types back into Net/node types (PV->PQ switching) ---
   _perf_profile_time!(performance_profile, :solver_final_active_set_sync) do
     _sync_rectangular_bus_types_to_net!(net, bus_types)
+    # power mode: the assembly in the kept context matches the final types
+    power_cache === nothing || (power_cache.bus_type_fingerprint = hash(bus_types))
   end
   # "numerical" convergence means the mismatch norm fell below tol. That is
   # necessary but not sufficient: the checks below can still reject the result.
@@ -1412,6 +1455,7 @@ function runpf_rectangular!(
   jacobian_reuse::Bool = DEFAULT_JACOBIAN_REUSE,
   jacobian_reuse_min_reduction::Float64 = DEFAULT_JACOBIAN_REUSE_MIN_REDUCTION,
   jacobian_reuse_max_steps::Int = DEFAULT_JACOBIAN_REUSE_MAX_STEPS,
+  qlimit_warm_clamps::Dict{String,Symbol} = Dict{String,Symbol}(),
   merit_enabled::Bool = false,
   merit_armijo_c1::Float64 = 1.0e-4,
   merit_scale_p::Float64 = 1.0,
@@ -1513,6 +1557,7 @@ function runpf_rectangular!(
     jacobian_reuse = jacobian_reuse,
     jacobian_reuse_min_reduction = jacobian_reuse_min_reduction,
     jacobian_reuse_max_steps = jacobian_reuse_max_steps,
+    qlimit_warm_clamps = qlimit_warm_clamps,
     merit_enabled = merit_enabled,
     merit_armijo_c1 = merit_armijo_c1,
     merit_scale_p = merit_scale_p,
@@ -1624,6 +1669,10 @@ function _runpf_config_once!(net::Net, config::PowerFlowConfig; verbose::Int = 0
     # stay the default for config-less calls
     opt_cooldown_iters = qlim.cooldown_iters,
     opt_q_hyst_pu = qlim.hysteresis_pu,
+    # pass limit of the classic outer loop; only the classic modes read it
+    # on this path (qlimit_mode stays :switch_to_pq, so the adjust_vset
+    # step budget that shares the keyword is not reached from a config)
+    qlimit_max_outer = qlim.classic_max_passes,
     damp = damp,
     autodamp = config.autodamp,
     autodamp_min = config.autodamp_min,
@@ -1710,6 +1759,7 @@ function _runpf_config_once!(net::Net, config::PowerFlowConfig; verbose::Int = 0
     linear_solver = config.linear_solver,
     islands_enabled = config.islands_enabled,
     islands_mode = config.islands_mode,
+    islands_parallel_min_buses = config.islands_parallel_min_buses,
     islands_reference_policy = config.islands_reference_policy,
     islands_diagnostic_continue_after_failure = config.islands.diagnostic_continue_after_failure,
     islands_parallel_enabled = islands_parallel_enabled,
@@ -2172,6 +2222,7 @@ function runpf!(
   jacobian_reuse::Bool = DEFAULT_JACOBIAN_REUSE,
   jacobian_reuse_min_reduction::Float64 = DEFAULT_JACOBIAN_REUSE_MIN_REDUCTION,
   jacobian_reuse_max_steps::Int = DEFAULT_JACOBIAN_REUSE_MAX_STEPS,
+  qlimit_warm_clamps::Dict{String,Symbol} = Dict{String,Symbol}(),
   merit_enabled::Bool = false,
   merit_armijo_c1::Float64 = 1.0e-4,
   merit_scale_p::Float64 = 1.0,
@@ -2264,6 +2315,10 @@ function runpf!(
   islands_parallel_enabled::Union{Nothing,Bool} = nothing,
   islands_parallel_max_tasks::Union{Nothing,Int} = nothing,
   islands_parallel_min_work_items::Union{Nothing,Int} = nothing,
+  # islands of at least this many buses run on their own tasks when two or
+  # more of them exist (0.30.2, power_flow.islands.parallel_min_buses);
+  # `nothing` takes the default
+  islands_parallel_min_buses::Union{Nothing,Int} = nothing,
   distributed_slack_enabled::Bool = false,
   distributed_slack_p_mode::Symbol = :pg_weighted,
   distributed_slack_respect_p_limits::Bool = true,
@@ -2314,14 +2369,19 @@ function runpf!(
   _validate_single_reference_per_island!(wnet, island_report)
   if length(island_report.rows) > 1 && any(row -> row.n_branch > 0, island_report.rows)
     _print_ac_island_summary(island_report)
-    try
-      artifact_dir = performance_profile isa AbstractDict ? String(get(performance_profile, :output_dir, tempdir())) : tempdir()
-      mkpath(artifact_dir)
-      island_artifact = joinpath(artifact_dir, "ac_islands.csv")
-      write_ac_island_report(island_artifact, island_report)
-      println("AC island diagnostic artifact: ", island_artifact)
-    catch err
-      @warn "Unable to write AC island diagnostic artifact" exception = (err, catch_backtrace())
+    # the artifact goes into the run's output directory only; without one
+    # (library calls, N-1 and scenario workers) nothing is written: the
+    # former fallback tempdir() was one fixed path every solve overwrote
+    artifact_dir = performance_profile isa AbstractDict ? get(performance_profile, :output_dir, nothing) : nothing
+    if artifact_dir !== nothing
+      try
+        mkpath(String(artifact_dir))
+        island_artifact = joinpath(String(artifact_dir), "ac_islands.csv")
+        write_ac_island_report(island_artifact, island_report)
+        println("AC island diagnostic artifact: ", island_artifact)
+      catch err
+        @warn "Unable to write AC island diagnostic artifact" exception = (err, catch_backtrace())
+      end
     end
     if !islands_enabled
       error(AC_ISLAND_DISABLED_MESSAGE)
@@ -2329,6 +2389,9 @@ function runpf!(
     islands_mode in (:solve_independent, :solve_parallel) || error("Unsupported power_flow.islands.mode=$(islands_mode).")
     islands_reference_policy === :matpower_like || error("Unsupported power_flow.islands.reference_policy=$(islands_reference_policy).")
     _validate_island_references!(island_report)
+    # a fresh Q-limit log per solve, like the single-island path: the
+    # islands' events are copied in by _sync_island_solution!
+    resetQLimitLog!(wnet)
     total_iters = 0
     first_failure = nothing
     island_statuses = Dict{Int,Any}()
@@ -2364,6 +2427,7 @@ function runpf!(
           jacobian_reuse = jacobian_reuse,
           jacobian_reuse_min_reduction = jacobian_reuse_min_reduction,
           jacobian_reuse_max_steps = jacobian_reuse_max_steps,
+          qlimit_warm_clamps = qlimit_warm_clamps,
           merit_enabled = merit_enabled,
           merit_armijo_c1 = merit_armijo_c1,
           merit_scale_p = merit_scale_p,
@@ -2396,7 +2460,9 @@ function runpf!(
     opt_cooldown_iters = opt_cooldown_iters,
     opt_q_hyst_pu = opt_q_hyst_pu,
           pv_table_rows = pv_table_rows,
-          lock_pv_to_pq_buses = lock_pv_to_pq_buses,
+          # internal positions of the whole net -> positions in this island
+          # (the island renumbers its buses 1..n_island)
+          lock_pv_to_pq_buses = _island_local_buses(row, lock_pv_to_pq_buses),
           qlimit_mode = qlimit_mode,
           qlimit_max_outer = qlimit_max_outer,
           start_projection = start_projection,
@@ -2517,19 +2583,27 @@ function runpf!(
     parallel_runtime = runtime_config().parallel
     parallel_on = something(islands_parallel_enabled, parallel_runtime.enabled)
     parallel_cap = islands_parallel_max_tasks === nothing ? parallel_max_tasks(parallel_runtime) : islands_parallel_max_tasks
-    parallel_min_items = something(islands_parallel_min_work_items, parallel_runtime.min_work_items)
-    use_parallel = islands_mode === :solve_parallel && parallel_on && Threads.nthreads() > 1 && parallel_cap > 1 && length(island_report.rows) >= parallel_min_items
+    # 0.30.2: parallel island solving is not a mode any more. Islands of at
+    # least `islands_parallel_min_buses` buses run on their own tasks
+    # whenever two or more of them exist, the process has more than one
+    # thread and runtime.parallel.enabled is on (the only master switch);
+    # smaller islands run afterwards on this task. With one thread, or
+    # below the threshold, the solve is the serial loop below.
+    min_buses = something(islands_parallel_min_buses, DEFAULT_ISLANDS_PARALLEL_MIN_BUSES)
+    rows = island_report.rows
+    big_islands = [i for i in eachindex(rows) if rows[i].n_bus >= min_buses]
+    use_parallel = parallel_on && Threads.nthreads() > 1 && parallel_cap > 1 && length(big_islands) >= 2
 
     if use_parallel
-      rows = island_report.rows
-      # spawn in DESCENDING bus-count order (largest island starts first for
-      # load balance); fetch and post-process in island-report order so the
-      # merged results and status sequences stay deterministic
-      spawn_order = sortperm(collect(eachindex(rows)); by = i -> rows[i].n_bus, rev = true)
+      # spawn the large islands in DESCENDING bus-count order (largest first
+      # for load balance); every island owns its subnet, workspace, linear
+      # context and status (solve_island works on _prepare_island_net, a
+      # copy); fetch and post-process in island-report order so the merged
+      # results, statuses and logs stay deterministic
+      spawn_order = sort(big_islands; by = i -> rows[i].n_bus, rev = true)
       children = Vector{Any}(undef, length(rows))
-      tasks = Vector{Task}(undef, length(rows))
-      # the semaphore enforces runtime.parallel.max_tasks (one task per
-      # island; chunking is unnecessary at island counts)
+      tasks = Vector{Union{Nothing,Task}}(nothing, length(rows))
+      # the semaphore enforces runtime.parallel.max_tasks
       sem = Base.Semaphore(max(1, parallel_cap))
       t_fanout = time_ns()
       for i in spawn_order
@@ -2545,7 +2619,17 @@ function runpf!(
           end
         end
       end
-      results = [fetch(tasks[i]) for i in eachindex(rows)]
+      results = Vector{Any}(undef, length(rows))
+      for i in big_islands
+        results[i] = fetch(tasks[i])
+      end
+      # the small islands after the parallel ones, on this task, in island
+      # order
+      for i in eachindex(rows)
+        tasks[i] === nothing || continue
+        children[i] = _perf_profile_child(performance_profile)
+        results[i] = solve_island(rows[i], children[i])
+      end
       _perf_profile_add!(performance_profile, :parallel_wall_time, (time_ns() - t_fanout) / 1e9, 0)
       for i in eachindex(rows)
         _perf_profile_merge!(performance_profile, children[i], "ac_island_$(rows[i].island_id)_")
@@ -2666,6 +2750,7 @@ function runpf!(
         jacobian_reuse = jacobian_reuse,
         jacobian_reuse_min_reduction = jacobian_reuse_min_reduction,
         jacobian_reuse_max_steps = jacobian_reuse_max_steps,
+        qlimit_warm_clamps = qlimit_warm_clamps,
         merit_enabled = merit_enabled,
         merit_armijo_c1 = merit_armijo_c1,
         merit_scale_p = merit_scale_p,
@@ -2766,6 +2851,7 @@ function runpf!(
         jacobian_reuse = jacobian_reuse,
         jacobian_reuse_min_reduction = jacobian_reuse_min_reduction,
         jacobian_reuse_max_steps = jacobian_reuse_max_steps,
+        qlimit_warm_clamps = qlimit_warm_clamps,
         merit_enabled = merit_enabled,
         merit_armijo_c1 = merit_armijo_c1,
         merit_scale_p = merit_scale_p,

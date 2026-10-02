@@ -358,6 +358,24 @@ function run_contingency_tests()
       end
       @test count(r -> r.converged, sauto) == 2
       @test only(r for r in sauto if !r.converged).error == "islanded: load-only, 5.0 MW load disconnected"
+
+      # 0.30.2 reference priority on the shipped two-island case: the outage
+      # of the north slack hands its island to the unit with the stated
+      # priority (Brunntal_110, 2), not to the largest unit (Kesselau_110),
+      # which takes over once the priorities are cleared
+      pnet = importSCF(joinpath(dirname(@__DIR__), "data", "scf", "two_islands_prio.scf.json"))
+      pslack = findfirst(Sparlectra.isSlack, pnet.prosumpsVec)
+      pname = getCompName(pnet.prosumpsVec[pslack].comp)
+      pcase = only(c for c in generateN1Generators(pnet) if c.element in (pname, string(pname, "#", pslack)))
+      pplain = deepcopy(pnet)
+      foreach(ps -> ps.referencePriority = 0, pplain.prosumpsVec)
+      for (n, bus) in ((pnet, "Brunntal_110"), (pplain, "Kesselau_110"))
+        r = only(redirect_stdout(devnull) do
+          runContingencies!(n, [pcase]; parallel_enabled = false)
+        end)
+        @test r.converged
+        @test occursin("reference taken over by bus $(bus) ", r.error)
+      end
     end)() end
 
     @testset "an outage that cuts off a bus is reported as islanding" begin (function ()

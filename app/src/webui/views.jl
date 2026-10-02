@@ -102,13 +102,14 @@ end
 # Grey-out markers read by the form script: data-qlimit-field (every field of
 # the block; off while the handling is off), data-qlimit-active-set-field
 # (no effect in the classic modes, whose inner solves run without Q limits
-# and read only the hysteresis), data-qlimit-guard-field (only what
+# and read only the hysteresis), data-qlimit-classic-field (the reverse: read
+# by the classic modes only, the pass limit), data-qlimit-guard-field (only what
 # guard.enabled switches: the narrow- and zero-range rules and their log;
 # the switch cap, freezing and the violation rule act without it). A greyed
 # control is not posted, so the hidden false of a checkbox carries the same
 # marker: otherwise a save would overwrite a stored true with false.
-function _webui_qlimit_markers(; active_set::Bool = true, guard::Bool = false)::String
-  return string(" data-qlimit-field", active_set ? " data-qlimit-active-set-field" : "", guard ? " data-qlimit-guard-field" : "")
+function _webui_qlimit_markers(; active_set::Bool = true, guard::Bool = false, classic::Bool = false)::String
+  return string(" data-qlimit-field", active_set ? " data-qlimit-active-set-field" : "", classic ? " data-qlimit-classic-field" : "", guard ? " data-qlimit-guard-field" : "")
 end
 
 function _webui_qlimit_checkbox(profile_values, field::String, label::String, markers::String; extra::String = "")::String
@@ -138,7 +139,7 @@ end
 
 The Q-limit block of the power-flow form below the master switch and the
 mode: directly the two settings every mode reads (hysteresis, final check
-bound; the only ones the classic modes use) and the four a PV/PQ switching
+bound), the pass limit only the classic modes read, and the four a PV/PQ switching
 study turns first (first switching iteration, guard, switch cap, freezing),
 everything else of `power_flow.qlimits` under Advanced. Values come from `profile_values`
 (configuration file and case settings), defaults from the option specs.
@@ -146,17 +147,19 @@ everything else of `power_flow.qlimits` under Advanced. Values come from `profil
 function _webui_qlimit_block_html(profile_values)::String
   as = _webui_qlimit_markers()
   both = _webui_qlimit_markers(active_set = false)
+  cl = _webui_qlimit_markers(active_set = false, classic = true)
   gr = _webui_qlimit_markers(guard = true)
   guard_help = _webui_help_link("power_flow.qlimits.guard.enabled", "Q-limit guard")
   return string(
     "<fieldset class=\"span-2 qlimit-options\"><legend>PV/PQ switching", isempty(guard_help) ? "" : " " * guard_help, "</legend>",
     _webui_qlimit_sci(profile_values, "power_flow_qlimits_hysteresis_pu", "Q hysteresis (pu)", both),
     _webui_qlimit_buses(profile_values, "power_flow_qlimits_final_q_accept_pu", "Final check bound (pu, or auto)", both, "auto"),
+    _webui_qlimit_int(profile_values, "power_flow_qlimits_classic_max_passes", "Classic outer-loop passes", cl; min = 1),
     _webui_qlimit_int(profile_values, "power_flow_qlimits_start_iter", "First switching iteration", as),
     _webui_qlimit_int(profile_values, "power_flow_qlimits_guard_max_switches", "Maximum switches per bus", as; min = 1),
     _webui_qlimit_checkbox(profile_values, "power_flow_qlimits_guard_freeze_after_repeated_switching", "Freeze after repeated switching", as),
     _webui_qlimit_checkbox(profile_values, "power_flow_qlimits_guard_enabled", "Narrow-range guard enabled", as; extra = " data-qlimit-guard-toggle"),
-    "<p class=\"field-help span-2\">The classic modes solve the power flow completely and then check the Q limits, again after every clamp (MATPOWER style), so there is no start iteration for them; they read the hysteresis and the final check bound, the fields they do not read are greyed. The guard switch covers the narrow- and zero-range rules; the switch cap, freezing and the violation rule act without it.</p>",
+    "<p class=\"field-help span-2\">The classic modes solve the power flow completely and then check the Q limits, again after every clamp (MATPOWER style), so there is no start iteration for them; they read the hysteresis, the final check bound and their pass limit, the fields they do not read are greyed (the pass limit in the active-set mode). The guard switch covers the narrow- and zero-range rules; the switch cap, freezing and the violation rule act without it.</p>",
     "<details class=\"span-2 qlimit-advanced\"><summary>Advanced</summary>",
     _webui_qlimit_select(profile_values, "power_flow_qlimits_start_mode", "Switching start rule", as),
     _webui_qlimit_sci(profile_values, "power_flow_qlimits_auto_q_delta_pu", "Auto start threshold (pu)", as),
@@ -1808,6 +1811,7 @@ $(isempty(profile_path) ? "" : "<fieldset class=\"saved-case-settings\">
 <legend>N-1 screening</legend>
 <label>$(_webui_field_label("contingency_screening_mode", "Screening"))$(_webui_select("contingency_screening_mode", _webui_option_allowed_values("contingency_screening_mode"), _webui_selected(profile_values, "contingency_screening_mode", _webui_option_default("contingency_screening_mode"))))</label>
 <label>$(_webui_field_label("contingency_screening_margin_pct", "Margin to a limit (percent)"))<input name=\"contingency_screening_margin_pct\" type=\"number\" step=\"any\" min=\"0\" value=\"$(_webui_input_value(profile_values, "contingency_screening_margin_pct", _webui_option_default("contingency_screening_margin_pct")))\"></label>
+<label class=\"check span-2\"><input name=\"contingency_warm_active_set\" type=\"hidden\" value=\"false\"><input name=\"contingency_warm_active_set\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "contingency_warm_active_set", _webui_option_default("contingency_warm_active_set")))>$(_webui_field_label("contingency_warm_active_set", "Warm active set (start outages from the base case's PV/PQ state)"))</label>
 <p class=\"field-help\">N-1 and scenario runs only. <code>flag</code> estimates every outage with one Woodbury-corrected Newton step on the base factorisation and solves in full only the outages whose estimate comes within the margin of a limit; <code>only</code> keeps the estimates. Off by default: a one-step estimate cannot see every outage class (a generator falling to PQ), so check the screened share on your network once before relying on it.</p>
 </fieldset>
 <fieldset class=\"start-current-iteration-options advanced-start-values\" data-nr-only-field data-flatstart-inactive-field>
@@ -2073,6 +2077,7 @@ document.addEventListener('DOMContentLoaded', function () {
     document.querySelectorAll('[data-qlimit-field]').forEach(function (field) {
       let inactive = !on || dc;
       if (!inactive && classic && field.hasAttribute('data-qlimit-active-set-field')) inactive = true;
+      if (!inactive && !classic && field.hasAttribute('data-qlimit-classic-field')) inactive = true;
       if (!inactive && !guardOn && field.hasAttribute('data-qlimit-guard-field')) inactive = true;
       field.disabled = inactive;
       const label = field.closest('label');

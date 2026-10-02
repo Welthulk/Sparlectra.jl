@@ -220,6 +220,22 @@ function run_apslf_tests()
                 @test occursin("AnalyticLoadFlow 0.9.14 is loaded", msg)
                 @test occursin(string(Sparlectra.APSLF_MIN_VERSION), msg)
                 @test occursin("Pkg.update(\"AnalyticLoadFlow\")", msg)
+                # The size bounds of the outer-mode fallback (_apslf_solve runs
+                # it itself) are mirrored from AnalyticLoadFlow 0.9.16, which
+                # provides no binding for them: they are literal keyword
+                # defaults of solve_pf_apslf in src/solver_core.jl. The loaded
+                # package's source must still carry the same defaults, and a
+                # binding named like a fallback bound must not have appeared;
+                # either change fails here, and the constants then have to be
+                # re-checked or read from the package.
+                mirrored_from = v"0.9.16"
+                @test pkgversion(AnalyticLoadFlow) >= mirrored_from
+                @test (Sparlectra._APSLF_OUTER_FALLBACK_NBUS_MAX, Sparlectra._APSLF_OUTER_FALLBACK_PV_BUS_MAX) == (2000, 250)
+                alf_core = read(joinpath(pkgdir(AnalyticLoadFlow), "src", "solver_core.jl"), String)
+                alf_default(key) = (m = match(Regex("$(key)\\) \\? Int\\(kw_forward\\.$(key)\\) : (\\d+)"), alf_core); m === nothing ? nothing : parse(Int, m[1]))
+                @test alf_default("outer_fallback_nbus_max") == Sparlectra._APSLF_OUTER_FALLBACK_NBUS_MAX
+                @test alf_default("outer_fallback_pv_bus_max") == Sparlectra._APSLF_OUTER_FALLBACK_PV_BUS_MAX
+                @test isempty(filter(n -> occursin("fallback", lowercase(String(n))), names(AnalyticLoadFlow; all = true)))
             end)() end
 
             @testset "residual judged against the final active set (0.13.0)" begin (function ()
@@ -258,6 +274,26 @@ function run_apslf_tests()
                     end
                 end
                 @test occursin("APSLF radius   :", read(hdr_path, String))
+                # #461: the clamp counts as a PV->PQ switching event of the status
+                @test r.diagnostics.pv_pq_switching_events == 1
+                @test isfinite(st.apslf_series_radius) && occursin("series radius R", String(st.apslf_convergence_line))
+                # #461 on the shipped sp_case118 with every case bus number
+                # shifted by 1000: the radius buses are case bus numbers (an
+                # internal index 1..118 cannot pass), and the PV->PQ count of
+                # the status equals the clamps in the Q-limit log
+                mpc = Sparlectra.MatpowerIO.read_case(joinpath(dirname(@__DIR__), "data", "mpower", "sp_case118.m"))
+                mpc.bus[:, 1] .+= 1000
+                mpc.gen[:, 1] .+= 1000
+                mpc.branch[:, 1:2] .+= 1000
+                net118 = Sparlectra.createNetFromMatPowerCase(mpc = mpc)
+                r118 = run_sparlectra(net = net118, config = cfg_ap)
+                @test r118.final_converged
+                st118 = Sparlectra.rectangular_pf_status(net118)
+                @test st118.apslf_convergence_bus in 1001:1118
+                @test st118.apslf_series_radius_bus in 1001:1118
+                @test occursin(string("at bus ", st118.apslf_convergence_bus, ","), String(st118.apslf_convergence_line))
+                @test !isempty(net118.qLimitLog)
+                @test r118.diagnostics.pv_pq_switching_events == length(net118.qLimitLog)
                 # switched off: the solve stays, the line says so
                 net = _clamp_net()
                 cfg_off = SparlectraConfig(powerflow=PowerFlowConfig(solver=:apslf, tol=1e-8, apslf=Sparlectra.ApslfConfig(convergence_radius=false)), output=OutputConfig(logfile_results=:off))
@@ -369,6 +405,32 @@ function run_apslf_tests()
                 st = Sparlectra.rectangular_pf_status(r_ap.net)
                 @test String(st.apslf_convergence_level) == "GRN"
                 println("      APSLF against NR on ", label, ": max |dVm| ", maximum(abs.(vm_nr .- vm_ap)), " pu, ", st.apslf_convergence_line)
+            end
+            # 0.30.2: the slack and PV voltage come from the generator, not
+            # from the bus. A net built without a bus vm_pu used to solve
+            # APSLF with the slack at 1.0 pu while Newton held the
+            # generator's 1.02 pu.
+            function ring3_gen_vm()
+                net = Net(name="apslf_ring3_gen_vm", baseMVA=100.0)
+                addBus!(net=net, busName="B1", vn_kV=110.0)
+                addBus!(net=net, busName="B2", vn_kV=110.0)
+                addBus!(net=net, busName="B3", vn_kV=110.0)
+                addPIModelACLine!(net=net, fromBus="B1", toBus="B2", r_pu=0.010, x_pu=0.080, b_pu=0.0, status=1)
+                addPIModelACLine!(net=net, fromBus="B2", toBus="B3", r_pu=0.011, x_pu=0.085, b_pu=0.0, status=1)
+                addPIModelACLine!(net=net, fromBus="B3", toBus="B1", r_pu=0.012, x_pu=0.090, b_pu=0.0, status=1)
+                addProsumer!(net=net, busName="B1", type="EXTERNALNETWORKINJECTION", referencePri="B1", vm_pu=1.02, va_deg=0.0)
+                addProsumer!(net=net, busName="B2", type="SYNCHRONOUSMACHINE", p=20.0, vm_pu=1.03)
+                addProsumer!(net=net, busName="B3", type="LOAD", p=30.0, q=10.0)
+                ok, msg = validate!(net=net)
+                ok || error("ring3_gen_vm invalid: $msg")
+                return net
+            end
+            @test Sparlectra.buildPfModel(ring3_gen_vm(); include_limits=false).Vset[1:2] == [1.02, 1.03]
+            for cfg in (cfg_nr, cfg_ap)
+                r = run_sparlectra(net=ring3_gen_vm(), config=cfg)
+                @test r.final_converged
+                @test r.net.nodeVec[1]._vm_pu ≈ 1.02 atol = 1e-10
+                @test r.net.nodeVec[2]._vm_pu ≈ 1.03 atol = 1e-8
             end
         end)() end
 

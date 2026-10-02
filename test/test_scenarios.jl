@@ -408,6 +408,10 @@ function run_scenario_engine_extended_tests()
     # then on every run compares against it. Regenerated at 0.30.0 (polar
     # Newton update, template Q-limit defaults): 3 of 240 contingencies end
     # in another active set, the rest differ in iteration counts only.
+    # Regenerated at 0.30.2 (island runs read the reactive limits of their
+    # own buses): exactly the 3 outages that split the net (109-105,
+    # 114-93, 94-107) changed, in voltages and loading, 94-107 also in
+    # iterations (12 to 10); every non-islanding row is unchanged.
     fixture = abspath(joinpath(@__DIR__, "fixtures", "contingency_sp_case118_n1.csv"))
     case_path = abspath(joinpath(dirname(@__DIR__), "data", "mpower", "sp_case118.m"))
     @test isfile(case_path)
@@ -469,6 +473,11 @@ function run_scenario_engine_extended_tests()
     ds_violating = Set(r.name for r in ds_full if !isempty(r.overloads) || !isempty(r.voltage_violations) || !r.converged)
     @test sort(collect(intersect(ds_violating, Set(r.name for r in ds_flagged if r.screened)))) == String[]
     @test count(r -> r.screened, ds_flagged) > 0
+    # warm active set (0.30.2): outages start from the base case's PV/PQ
+    # state; on the shipped grid the violation list is the same as without
+    warm = Sparlectra.runContingencies!(net, cases; warm_active_set = true, warm_note = Ref(""))
+    viol_list(rs) = [(r.name, r.converged, sort([o.name for o in r.overloads]), sort(r.voltage_violations)) for r in rs]
+    @test viol_list(warm) == viol_list(full)
     # change-based loading flag (0.30.2): a branch the base case already
     # loads at 95 percent used to flag every outage (the network-wide
     # maximum stayed above 100 - margin); now only outages that change it

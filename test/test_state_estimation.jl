@@ -1619,6 +1619,45 @@ function test_state_estimation_islands()::Bool
     # merged voltages are in ORIGINAL bus numbering and match the PF truth
     @test maximum(abs.(abs.(res.voltages) .- vm_true)) < 1e-6
 
+    # 0.30.2: islands estimated on their own tasks equal the serial run.
+    # The fixture's islands have 3 and 2 buses, so the size threshold is
+    # lowered to 1; the serial reference switches runtime.parallel off.
+    function _se_islands_with(parallel::Bool)
+      active = Sparlectra.active_sparlectra_config()
+      pf = Sparlectra._copy_powerflow_with(active.powerflow; islands_parallel_min_buses = 1)
+      rt = Sparlectra.RuntimeConfig(parallel = Sparlectra.ParallelRuntimeConfig(enabled = parallel))
+      cfg = Sparlectra._sparlectra_config_with(active; powerflow = pf, runtime = rt)
+      return Sparlectra.with_sparlectra_config(cfg) do
+        with_state_estimation_config(max_iter = 30, tol = 1e-10, update_net = false) do
+          runse!(net, meas)
+        end
+      end
+    end
+    se_serial = _se_islands_with(false)
+    for _ = 1:5
+      se_par = _se_islands_with(true)
+      @test se_par.voltages == se_serial.voltages
+      @test se_par.residuals == se_serial.residuals
+      @test se_par.objectiveJ == se_serial.objectiveJ
+      @test [i.iterations for i in se_par.islands] == [i.iterations for i in se_serial.islands]
+    end
+    println("      SE islands in parallel vs serial: ", Threads.nthreads() > 1 ? "RAN with $(Threads.nthreads()) threads (5 repeated comparisons)" : "single-threaded process, both runs take the serial path (comparison trivially equal)")
+
+    # a shunt measurement in the second island (0.30.2): the island subnet
+    # looked shunts up in the dictionary of the whole net, keyed by the
+    # net-wide bus numbers, and failed with "no shunt registered at this bus"
+    netS = _two_island_net()
+    addShunt!(net = netS, busName = "B2", pShunt = 0.0, qShunt = 5.0)
+    runpf!(netS, 40, 1e-10, 0; islands_enabled = true)
+    vm_shunt = [n._vm_pu for n in netS.nodeVec]
+    measS = generateMeasurementsFromPF(netS; noise = false, includeShuntQ = true)
+    @test any(m -> m.typ == Sparlectra.ShuntQMeas, measS)
+    resS = with_state_estimation_config(max_iter = 30, tol = 1e-10, update_net = false) do
+      runse!(netS, measS)
+    end
+    @test resS.converged
+    @test maximum(abs.(abs.(resS.voltages) .- vm_shunt)) < 1e-6
+
     # the printed diagnostics carry the per-island band test (no island can
     # hide inside the summed chi-square)
     rep = with_state_estimation_config(max_iter = 30, tol = 1e-8) do

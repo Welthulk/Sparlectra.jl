@@ -628,7 +628,7 @@ function _collectProsumerRecs(net::Sparlectra.Net, idx2busName::Dict{Int,String}
         name = ps.comp.cName,
         p_ssh = machine_kind ? -pv : pv,
         q_ssh = machine_kind ? -qv : qv,
-        referencePriority = ((kind === :sm || kind === :eni) && busIdx in slackset) ? 1 : 0,
+        referencePriority = (kind === :sm || kind === :eni) ? _exportReferencePriority(ps, busIdx in slackset) : 0,
         rc_target_kV = rc_target_kV,
         ratedS = ps.ratedS,
         minQ = ps.minQ,
@@ -639,7 +639,31 @@ function _collectProsumerRecs(net::Sparlectra.Net, idx2busName::Dict{Int,String}
       ),
     )
   end
+  _noticeReferencePriorityConflict!(notices, recs, slackset, idx2busName)
   return recs
+end
+
+# The referencePriority a machine or network injection is written with
+# (0.30.2): its stored priority where it states one, so a re-import carries
+# the order of the network; a unit on a slack bus without one keeps the 1
+# the export wrote before priorities were stored, which is what makes the
+# re-import find the same slack (this export writes no SV angle reference).
+_exportReferencePriority(ps, on_slack_bus::Bool)::Int = ps.referencePriority > 0 ? ps.referencePriority : (on_slack_bus ? 1 : 0)
+
+# The importer takes the strongest referencePriority of the delivery as its
+# slack. A unit off the slack buses that states a priority as strong as the
+# slack's (or stronger) can therefore move the slack on a re-import; the
+# export writes the stored values as they are and names the case instead of
+# rewriting a priority the network states.
+function _noticeReferencePriorityConflict!(notices::Vector{String}, recs, slackset::Set{Int}, idx2busName::Dict{Int,String})
+  slack_prio = [r.referencePriority for r in recs if r.referencePriority > 0 && r.busIdx in slackset]
+  isempty(slack_prio) && return nothing
+  best = minimum(slack_prio)
+  for r in recs
+    (r.referencePriority > 0 && !(r.busIdx in slackset) && r.referencePriority <= best) || continue
+    push!(notices, "referencePriority $(r.referencePriority) of $(r.name) at $(_exportBusName(idx2busName, r.busIdx)) is as strong as the slack's ($(best)): a re-import may take that bus as its slack")
+  end
+  return nothing
 end
 
 function _collectShuntRecs(net::Sparlectra.Net, idx2busName::Dict{Int,String}, claim, lineExcess::Vector{NamedTuple} = NamedTuple[])
@@ -1520,8 +1544,11 @@ end
 
 Exports a Sparlectra `Net` as CGMES-2.4.15 profile files: EQ + TP (buses, AC
 lines, transformers, loads, machines, external network injections,
-asynchronous machines, shunts), SSH (operating points p/q, slack
-`referencePriority`, voltage-regulation targets, shunt sections), and SV
+asynchronous machines, shunts), SSH (operating points p/q, the
+`referencePriority` of every machine and network injection: its stored
+`ProSumer.referencePriority`, 1 for a slack unit without one; a unit off the
+slack buses that is as strong as the slack is named in `notices`,
+voltage-regulation targets, shunt sections), and SV
 (the network's current voltage state with per-terminal `SvPowerFlow` rows —
 after a solve: the solution). `sc_line_data` supplies optional zero-sequence
 data per line index (order of `net.linesAC`); `sc_source` writes the

@@ -1,11 +1,25 @@
-# Version 0.30.2 - 2026-10-01
+# Version 0.30.2 - 2026-10-02
 
-Dishonest Newton for repeated solves; N-1 screening in the Web UI.
+Faster N-1, parallel islands and state estimation; start selection, island references and island fixes.
 
 - Added: `power_flow.jacobian_reuse` (dishonest Newton) reuses the Jacobian factorisation while the mismatch falls fast; off by default, Web UI checkbox under Solver backend.
-- Added: N-1 screening (`contingency.screening.mode`) selectable on the Settings page of the Web UI; off by default.
+- Fixed: stopping the Web UI during an N-1 run with power mode could crash the process; running jobs are aborted and awaited before exit.
 - Changed: N-1 screening judges a branch by the change the outage causes on it; a base case with one branch near its limit no longer sends every outage to the full solve.
-- Fix: stopping the Web UI during a run aborts the run first; stopping during an N-1 run with power mode could crash the process.
+- Added: N-1 screening settings on the Settings page.
+- Fixed: N-1 and scenario solves no longer write the island report to one fixed file in the temporary directory.
+- Fixed: power mode reused the Jacobian pattern of the previous outage in N-1 and scenario runs, which slowed some outage solves or made them fail.
+- Fixed: the scenario engine's worker reset no longer clears the power-mode cache after every scenario (#457).
+- Added: `contingency.warm_active_set` starts N-1 outages and scenarios from the base case's PV/PQ state; off by default.
+- Changed: islands of one network are solved in parallel in power flow and state estimation when Julia runs with more than one thread (islands of at least `power_flow.islands.parallel_min_buses` buses, default 200); `power_flow.islands.mode` is ignored.
+- Changed: state estimation is faster on large networks (about 40 percent on a 25000-bus case); `state_estimation.linear_solver` chooses UMFPACK (default) or KLU, `state_estimation.symmetric_gain` (off) sends the normal equations to the Cholesky factorization.
+- Fixed: the start projection could replace a case file's near-solved state by a worse start, so case_SyntheticUSA did not converge; candidates are now ranked by the residual 2-norm and must be at least 10 percent better (#465).
+- Fixed: a MATPOWER case with one reference bus per island (several type-3 buses) kept only the first one; every island now keeps its own.
+- Added: a reference priority per infeed (CGMES semantics, 1 is the strongest) decides which unit becomes the reference of an island without one and which unit replaces a failed slack in N-1; without priorities the strongest unit wins instead of the lowest bus index. MATPOWER, CGMES and SCF read and write it. See [Reference priority](slack_vs_source.md#Reference-priority).
+- Changed: APSLF reports case bus numbers, the Padé margin and a series radius; without Q limits one series solve instead of up to 30 (#461).
+- Added: `power_flow.qlimits.classic_max_passes` (default 30); run log and metadata state why the classic loop stopped (#464).
+- Fixed: island runs used the reactive limits of the wrong buses.
+- Fixed: APSLF took the slack and PV voltage from the bus instead of the generator.
+- Fixed: the classic Q-limit loop reported "converged" when it stopped at its pass limit.
 
 # Version 0.30.1 - 2026-10-01
 

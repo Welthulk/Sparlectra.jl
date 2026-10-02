@@ -100,6 +100,7 @@ function _rectangular_rejection_reason_text(reason::Symbol)
   reason == :rescue_requested_but_not_available && return "wrong-branch rescue requested but not available"
   reason == :nonfinite_voltage && return "non-finite voltage state"
   reason == :nonfinite_branch_angle && return "non-finite branch angle state"
+  reason == :max_outer_iterations && return "classic Q-limit outer loop stopped at its pass limit (power_flow.qlimits.classic_max_passes) with Q-limit violations left"
   # Fallback for unforeseen reasons: convert underscore to space.
   return replace(String(reason), "_" => " ")
 end

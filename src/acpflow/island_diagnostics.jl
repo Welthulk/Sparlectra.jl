@@ -175,7 +175,12 @@ end
 
 function _write_ac_island_diagnostics!(net::Net, cfg::PowerFlowConfig, performance_profile; status = nothing, iterations::Union{Nothing,Integer} = nothing)
   cfg.islands.enabled || return NamedTuple()
-  output_dir = performance_profile isa AbstractDict ? get(performance_profile, :output_dir, tempdir()) : tempdir()
+  # Island artifacts go into the run's own output directory only. Without
+  # one (a library call, every worker solve of N-1 and the scenario
+  # engine) nothing is written: the former fallback `tempdir()` was one
+  # fixed path that every concurrent solve overwrote.
+  output_dir = performance_profile isa AbstractDict ? get(performance_profile, :output_dir, nothing) : nothing
+  output_dir === nothing && return NamedTuple()
   mkpath(output_dir)
   pre = _collect_ac_island_diagnostics(net, cfg)
   statuses = performance_profile isa AbstractDict ? get(performance_profile, :ac_island_solver_statuses, nothing) : nothing

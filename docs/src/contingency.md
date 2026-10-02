@@ -78,20 +78,23 @@ convergence: it cannot give a reference to a load-only island.
   has no voltage or frequency regulation and no valid angle reference, and
   an arbitrary PQ slack would be physically meaningless. Such an outage
   reports `error = "islanded: load-only, X MW load disconnected"`. An
-  island that keeps a generating unit always finds itself a reference: a
-  PV bus first, otherwise its strongest generating unit (a fixed-injection
-  PQ unit included), independent of `auto_slack`; the row names the bus
-  that took over. Only an island whose generation is static compensation
+  island that keeps a generating unit always finds itself a reference: the
+  bus of its best voltage-controlled unit first, otherwise of its best
+  generating unit (a fixed-injection PQ unit included), independent of
+  `auto_slack`; the row names the bus that took over. Only an island whose generation is static compensation
   alone reports `"islanded without reference: ... generation stranded"`.
 - Lost reference: `runContingencies!`, `runScenarios!`, the service and
   the Web UI solve with `auto_slack` (the default). When an outage removes
   the reference (the slack unit, or
-  the branch that ties it to an island), the strongest remaining unit
-  takes over by the ranking every reference choice uses
-  ([`reference_candidate_rank`](@ref): an external network injection first,
+  the branch that ties it to an island), the best remaining unit takes
+  over by the order every reference choice uses: the stated reference
+  priority first (`referencePriority`, 1 is the strongest, see
+  [Reference priority](slack_vs_source.md#Reference-priority)), then
+  [`reference_candidate_rank`](@ref) (an external network injection first,
   then a unit that regulates the voltage of its own bus, then the size);
-  an island without a voltage-controlled unit takes its strongest
-  generating unit. The row names the bus ("reference taken over by bus
+  an island without a voltage-controlled unit takes its best generating
+  unit. Setting priorities gives the replacement of the slack a
+  user-controlled order. The row names the bus ("reference taken over by bus
   ..."). Only an island without any generating unit stays without a
   reference. `auto_slack = false` ends such a case on the missing
   reference instead.
@@ -180,6 +183,36 @@ violations (the reported `screened` count and reason breakdown).
     calibration (case300, five networks and 1478 N-1 cases with margin 10,
     zero false negatives), not from an average; on a base case that
     already sits at its limits the screening share is honestly zero.
+
+## [Warm active set](@id contingency_warm_active_set)
+
+The base case of an N-1 batch is solved with Q limits, and on a large
+network many machines end clamped at a limit. Without the warm start
+every outage starts from the base voltages but with the file's bus
+types, so it clamps the same machines again (a jump of the mismatch and
+about twice the Newton steps). `contingency.warm_active_set: true`
+(keyword `warm_active_set = true` on `runContingencies!` and
+`runScenarios!`, Web UI: the checkbox in the "N-1 screening" fieldset of
+the Settings page) starts every outage and scenario with the base case's
+clamped machines as PQ at the limit they reached. The active set stays
+free: a clamped machine whose voltage recovers goes back to PV, new
+clamps follow the normal rules.
+
+| Use | Effect |
+|---|---|
+| default | `false` |
+| applies when | the base case converged with Q limits on; otherwise one line in the run log says why it was not applied |
+| result | the same where the limited solution is unique; where it is not, the warm start can end on another limited solution |
+| an outage that does not converge from the warm state | is solved again at once from the file's PV/PQ state; `start_used` is `warm_cold` and the note says so |
+
+Measured on full branch N-1 (warm start off against on): case_ACTIVSg2000
+needs about half the Newton steps (8.0 to 4.2 per outage) with the same
+convergence and the same violation list on all 3206 outages, 78 outages
+end with one other machine clamped. On case300 one outage converged only
+from the file's state and another only from the warm state: near the
+limit of solvability the start decides which limited solution, if any,
+Newton reaches. The retry above keeps every outage the plain start
+solves.
 
 ## Generator outages
 

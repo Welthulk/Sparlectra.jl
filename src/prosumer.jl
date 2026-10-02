@@ -322,6 +322,12 @@ A mutable structure representing a prosumer in a power system. A prosumer is an 
 - `pLoad::Float64`: The active power consumption of the prosumer.
 - `qLoad::Float64`: The reactive power consumption of the prosumer.
 - `status::Int`: The status of the prosumer. 1 = in service, 0 = out of service.
+- `referencePri`: marker of the unit that holds the reference (slack) role; it
+  stores a bus index, see `isSlack`.
+- `referencePriority::Int`: reference priority with CGMES `referencePriority`
+  semantics (0 = no preference, 1 = strongest, larger = weaker). It orders the
+  units that may take over a reference: an AC island without one and the
+  replacement of an outaged slack ([`ensureSlack!`](@ref)). Default 0.
 
 # Constructors
 - `ProSumer(comp::AbstractComponent, busIdx::Int, pGen::Float64, qGen::Float64, pLoad::Float64, qLoad::Float64, status::Int)`: Creates a new `ProSumer` instance.
@@ -364,6 +370,13 @@ mutable struct ProSumer
   # NO effect on the power flow unless power_flow.distributed_slack selects the
   # `imported` mode — importing must never change results by itself.
   participationFactor::Union{Nothing,Float64}
+  # Reference priority (0.30.2), CGMES `referencePriority` semantics: 0 = no
+  # stated preference, 1 = the strongest candidate, larger = weaker. It is a
+  # RANK, not a marker: `referencePri` above holds the bus index of the unit
+  # that IS the reference, this field orders the units that may BECOME one
+  # (an island without a reference, the replacement of an outaged slack).
+  # Imported from MATPOWER type 3 (1) and CGMES, written by SCF and CGMES.
+  referencePriority::Int
   qGenRepl::Union{Nothing,Float64}
   pRes::Union{Nothing,Float64}
   qRes::Union{Nothing,Float64}
@@ -395,7 +408,9 @@ mutable struct ProSumer
     quController::Union{Nothing,QUController} = nothing,
     puController::Union{Nothing,PUController} = nothing,
     participationFactor::Union{Nothing,Float64} = nothing,
+    referencePriority::Integer = 0,
   )
+    referencePriority >= 0 || throw(ArgumentError("ProSumer: referencePriority must be >= 0 (0 = no preference, 1 = strongest), got $(referencePriority)"))
     if participationFactor !== nothing
       (isfinite(participationFactor) && participationFactor >= 0.0) || throw(ArgumentError("ProSumer: participationFactor must be finite and >= 0, got $(participationFactor)"))
     end
@@ -409,7 +424,7 @@ mutable struct ProSumer
       va_deg = 0.0
     end
 
-    new(comp, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, vm_pu, va_deg, vstep_pu, tap_steps_down, tap_steps_up, vset_adjust, isRegulated, type, isAPUNode, quController, puController, participationFactor, nothing, nothing, nothing)
+    new(comp, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, vm_pu, va_deg, vstep_pu, tap_steps_down, tap_steps_up, vset_adjust, isRegulated, type, isAPUNode, quController, puController, participationFactor, Int(referencePriority), nothing, nothing, nothing)
   end
 
   function Base.show(io::IO, prosumption::ProSumer)
@@ -458,6 +473,10 @@ mutable struct ProSumer
 
     if (!isnothing(prosumption.referencePri))
       print(io, "referencePri: ", prosumption.referencePri, ", ")
+    end
+
+    if prosumption.referencePriority > 0
+      print(io, "referencePriority: ", prosumption.referencePriority, ", ")
     end
 
     if (!isnothing(prosumption.vm_pu))

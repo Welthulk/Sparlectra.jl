@@ -191,6 +191,9 @@ analysis otherwise. KLU's numeric refactorization is 6 to 20 times faster
 than UMFPACK's on power-flow Jacobians of 5k to 60k unknowns; on very
 large Jacobians with heavy fill-in (an 82000-bus synthetic case) UMFPACK
 is faster, which is one reason power mode is a switch and not the default.
+On such a network KLU's refactorization costs more than the kept workspaces
+save, and power mode with KLU takes longer than a solve without power mode;
+leave power mode off there.
 
 Measured warm solve (second and later solves on the same imported
 network, median of 20, single thread, flat start, Q limits off, the

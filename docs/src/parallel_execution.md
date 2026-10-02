@@ -1,13 +1,21 @@
 # Parallel Execution
 
-Sparlectra runs independent work items on Julia threads. Three computation
+Sparlectra runs independent work items on Julia threads. Four computation
 sites fan out; everything else is serial on purpose.
 
 ## What runs in parallel
 
-* **Island solves** (`power_flow.islands.mode = solve_parallel`): a net
-  that splits into several synchronous AC islands solves them
-  concurrently, largest island first.
+* **Island solves**: a net that splits into several synchronous AC
+  islands solves every island of at least
+  `power_flow.islands.parallel_min_buses` (default 200) buses on its own
+  task, largest first, whenever two or more such islands exist; smaller
+  islands follow serially. This is not a mode to choose: with one thread,
+  or below the threshold, the solve is serial by itself. The former key
+  `power_flow.islands.mode` is ignored with a warning since 0.30.2.
+* **State-estimation islands**: the per-island estimation follows the
+  same rule and threshold (`power_flow.islands.parallel_min_buses`),
+  every island on its own subnet copy; the results are merged in island
+  order.
 * **Short-circuit sweeps** (`runShortCircuit!` over many fault buses): the
   per-bus evaluations run in chunks. The selected-inverse sweep
   (`sweep_method = :takahashi`, see [Short Circuit](short_circuit.md)) is
@@ -49,7 +57,7 @@ runtime:
     min_work_items: 4
 power_flow:
   islands:
-    mode: solve_parallel
+    parallel_min_buses: 200
 ```
 
 ## Guarantees

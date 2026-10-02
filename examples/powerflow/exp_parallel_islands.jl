@@ -15,10 +15,11 @@
 # Date: 2026-08-20
 # file: examples/powerflow/exp_parallel_islands.jl
 # purpose: feel-the-progress demo for the parallel island path (Phase 2 of
-#          the multi-core work): the same multi-island net solved with
-#          power_flow.islands.mode = solve_independent (serial) and
-#          solve_parallel, wall clock side by side plus a voltage-identity
-#          check. Run with threads to see the effect:
+#          the multi-core work): the same multi-island net solved serially
+#          (runtime.parallel off) and in parallel (islands of at least
+#          power_flow.islands.parallel_min_buses buses on their own threads,
+#          the default since 0.30.2), wall clock side by side plus a
+#          voltage-identity check. Run with threads to see the effect:
 #          julia --threads=auto --project=. examples/powerflow/exp_parallel_islands.jl
 
 using Sparlectra
@@ -52,7 +53,9 @@ function solve_islands(mode::Symbol, n::Int, m::Int)
   net = build_island_net(n, m)
   profile = Dict{Symbol,Any}(:enabled => true)
   etime = @elapsed begin
-    ite, erg = runpf!(net, 30, 1e-8, 0; islands_enabled = true, islands_mode = mode, islands_parallel_min_work_items = 2, performance_profile = profile)
+    # the warm-up copy has 12-bus islands, below the default threshold of
+    # 200 buses: the threshold is lowered to 1 so both copies take the path
+    ite, erg = runpf!(net, 30, 1e-8, 0; islands_enabled = true, islands_parallel_enabled = mode === :parallel, islands_parallel_min_buses = 1, performance_profile = profile)
     erg == 0 || error("$(mode) solve did not converge (erg=$(erg))")
   end
   return (; net, profile, etime)
@@ -68,16 +71,16 @@ function main()
   println()
 
   # warm both paths on a tiny copy so compilation stays out of the timings
-  solve_islands(:solve_independent, 2, 12)
-  solve_islands(:solve_parallel, 2, 12)
+  solve_islands(:serial, 2, 12)
+  solve_islands(:parallel, 2, 12)
 
-  serial = solve_islands(:solve_independent, n_islands, buses_per_island)
-  parallel = solve_islands(:solve_parallel, n_islands, buses_per_island)
+  serial = solve_islands(:serial, n_islands, buses_per_island)
+  parallel = solve_islands(:parallel, n_islands, buses_per_island)
 
   identical = all(serial.net.nodeVec[i]._vm_pu == parallel.net.nodeVec[i]._vm_pu && serial.net.nodeVec[i]._va_deg == parallel.net.nodeVec[i]._va_deg for i in eachindex(serial.net.nodeVec))
 
-  println("serial   (solve_independent): ", round(serial.etime; digits = 3), " s")
-  println("parallel (solve_parallel)   : ", round(parallel.etime; digits = 3), " s")
+  println("serial   (parallel off)     : ", round(serial.etime; digits = 3), " s")
+  println("parallel (islands on threads): ", round(parallel.etime; digits = 3), " s")
   if haskey(parallel.profile[:timings], :parallel_wall_time)
     wall = parallel.profile[:timings][:parallel_wall_time].elapsed_s
     println("parallel fan-out wall clock : ", round(wall; digits = 3), " s (island solves only, without island detection and merge)")

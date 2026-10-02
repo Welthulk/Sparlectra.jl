@@ -186,6 +186,7 @@ import Sparlectra:
   format_tolerance_physical,
   import_case,
   load_case_config,
+  ignored_removed_config_keys,
   matpower_import_auto_profile,
   options_type,
   rectangular_pf_status,

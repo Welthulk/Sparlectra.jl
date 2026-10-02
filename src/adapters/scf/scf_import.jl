@@ -73,6 +73,15 @@ end
 _scf_num(v, context::AbstractString)::Float64 = v isa Number ? Float64(v) : throw(ArgumentError("SCF: $(context) must be a number, got $(repr(v))."))
 _scf_int(v, context::AbstractString)::Int = v isa Integer ? Int(v) : (v isa AbstractFloat && isinteger(v) ? Int(v) : throw(ArgumentError("SCF: $(context) must be an integer, got $(repr(v)).")))
 
+# extra.<appliance>.reference_priority: a non-negative integer with CGMES
+# semantics (0 = no preference, 1 = strongest); anything else is a broken
+# file and is named, not clamped
+function _scf_reference_priority(v, name::AbstractString)::Int
+  p = _scf_int(v, "extra.reference_priority of $(name)")
+  p >= 0 || throw(ArgumentError("SCF: extra.reference_priority of $(name) must be >= 0 (0 = no preference, 1 = strongest), got $(p)."))
+  return p
+end
+
 ## --- stage 1: schema -------------------------------------------------------
 
 """
@@ -800,6 +809,9 @@ function _scf_net_from_case(case::SCFCase)::Net
         # and refreshes once when the network is complete.
         defer_bus_type_refresh = true,
         participationFactor = get(participation, id, nothing),
+        # optional since 0.30.2: a file without the key (every file written
+        # before) states no priority, which is the default 0
+        referencePriority = haskey(e, "reference_priority") ? _scf_reference_priority(e["reference_priority"], ctrl_name) : 0,
       )
       # ratings are not constructor keywords (the PV/APU flags are derived
       # from the bus type and the voltage setpoint); restore them on the
