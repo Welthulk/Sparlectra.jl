@@ -412,12 +412,12 @@ function run_scenario_engine_extended_tests()
     # own buses): exactly the 3 outages that split the net (109-105,
     # 114-93, 94-107) changed, in voltages and loading, 94-107 also in
     # iterations (12 to 10); every non-islanding row is unchanged.
-    # Regenerated at 0.30.3 (warm active set default with its cold
-    # check): 215 of 240 rows changed in the
-    # iteration count only (the warm start saves steps), the values in the
-    # last digits; one real change, B_ACL_345_68_81 (overloads, so checked
-    # cold): the warm result is the less favourable one (min Vm 0.98014
-    # against 0.98070 cold, 240.3 against 239.2 percent) and stands.
+    # Regenerated at 0.30.3 (warm active set default): 215 of 240 rows
+    # changed in the iteration count only (the warm start saves steps), the
+    # values in the last digits; one real change, B_ACL_345_68_81 (min Vm
+    # 0.98014 against 0.98070 cold, 240.3 against 239.2 percent). The
+    # optional cold check would keep this warm result as well (it is the
+    # less favourable one), so the fixture holds with the check on or off.
     fixture = abspath(joinpath(@__DIR__, "fixtures", "contingency_sp_case118_n1.csv"))
     case_path = abspath(joinpath(dirname(@__DIR__), "data", "mpower", "sp_case118.m"))
     @test isfile(case_path)
@@ -490,15 +490,15 @@ function run_scenario_engine_extended_tests()
     # cold check (0.30.3): with a margin that covers every outage, each warm
     # result is solved cold as well and the less favourable one counts, so
     # no outage ends more favourable than in the cold run
-    checked = Sparlectra.runContingencies!(net, cases; warm_active_set = true, warm_cold_check_margin_pu = 1.0, warm_note = Ref(""))
+    checked = Sparlectra.runContingencies!(net, cases; warm_active_set = true, warm_cold_check = true, warm_cold_check_margin_pu = 1.0, warm_note = Ref(""))
     @test all(!Sparlectra._contingency_less_favourable(c, k) for (c, k) in zip(cold, checked))
     # the order of "less favourable": a failed result never wins, then more
     # violations, then the lower lowest voltage, then the higher loading
     row(conv, nviol, vmin, load) = Sparlectra.ContingencyResult("x", 1.0, conv, 3, :warm, 1.05, vmin, load, 0.0, Sparlectra.OverloadRecord[], ["b$(i)" for i in 1:nviol], 1, 0.0, nothing)
-    # the switch (contingency.warm_cold_check): with the same margin a tight
-    # warm result is checked when on and never when off
-    check_on = Sparlectra.ScenarioEngine(net; warm_cold_check_margin_pu = 1.0, warm_note = Ref(""))
-    check_off = Sparlectra.ScenarioEngine(net; warm_cold_check = false, warm_cold_check_margin_pu = 1.0, warm_note = Ref(""))
+    # the switch (contingency.warm_cold_check, default off): with the same
+    # margin a tight warm result is checked when on and never by default
+    check_on = Sparlectra.ScenarioEngine(net; warm_cold_check = true, warm_cold_check_margin_pu = 1.0, warm_note = Ref(""))
+    check_off = Sparlectra.ScenarioEngine(net; warm_cold_check_margin_pu = 1.0, warm_note = Ref(""))
     @test Sparlectra._warm_needs_cold_check(check_on, row(true, 0, 0.95, 50.0))
     @test !Sparlectra._warm_needs_cold_check(check_off, row(true, 0, 0.95, 50.0))
     @test !Sparlectra._warm_needs_cold_check(check_off, row(true, 2, 0.85, 120.0))

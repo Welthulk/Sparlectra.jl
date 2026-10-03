@@ -2260,11 +2260,12 @@ result = get_powerflow_result(run_id)
       screen_form["contingency_screening_mode"] = "flag"
       screen_form["contingency_screening_margin_pct"] = "15"
       screen_form["contingency_warm_active_set"] = "true"
-      # an unchecked box posts only its hidden "false"
-      screen_form["contingency_warm_cold_check"] = "false"
+      # the checked box (its value after the hidden "false") switches the
+      # cold check on against its default off
+      screen_form["contingency_warm_cold_check"] = "true"
       screen_request = SparlectraApp.powerflow_webui_request(screen_form; default_output_root = output_root)
       screen_cfg, _ = Sparlectra._load_api_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, Sparlectra.validate_gui_config_overrides(screen_request["config_overrides"]))
-      @test (screen_cfg.contingency.screening_mode, screen_cfg.contingency.screening_margin_pct, screen_cfg.contingency.warm_active_set, screen_cfg.contingency.warm_cold_check) == (:flag, 15.0, true, false)
+      @test (screen_cfg.contingency.screening_mode, screen_cfg.contingency.screening_margin_pct, screen_cfg.contingency.warm_active_set, screen_cfg.contingency.warm_cold_check) == (:flag, 15.0, true, true)
       # stopping the Web UI aborts and awaits a running job before the
       # process may exit (native factorizations in use by worker threads
       # crashed the process on stop): a runner that solves until the abort

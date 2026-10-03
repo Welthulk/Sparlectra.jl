@@ -109,7 +109,7 @@ exactly the old `runContingencies!` preamble), clear the solver status
 and Q-limit logs the workers must not inherit, and record the base branch
 loadings. `net` itself is never mutated.
 """
-function ScenarioEngine(net::Net; vm_min_pu::Float64 = 0.9, vm_max_pu::Float64 = 1.1, maxIte::Int = 30, tol::Float64 = 1e-8, ladder::Vector{Symbol} = Symbol[:warm], index::Union{Nothing,ScenarioIndex} = nothing, pf_kwargs = NamedTuple(), screening_mode::Symbol = :off, screening_margin_pct::Float64 = 10.0, warm_active_set::Bool = true, warm_note::Union{Nothing,Base.RefValue{String}} = nothing, warm_cold_check::Bool = true, warm_cold_check_margin_pu::Float64 = DEFAULT_WARM_COLD_CHECK_MARGIN_PU)
+function ScenarioEngine(net::Net; vm_min_pu::Float64 = 0.9, vm_max_pu::Float64 = 1.1, maxIte::Int = 30, tol::Float64 = 1e-8, ladder::Vector{Symbol} = Symbol[:warm], index::Union{Nothing,ScenarioIndex} = nothing, pf_kwargs = NamedTuple(), screening_mode::Symbol = :off, screening_margin_pct::Float64 = 10.0, warm_active_set::Bool = true, warm_note::Union{Nothing,Base.RefValue{String}} = nothing, warm_cold_check::Bool = false, warm_cold_check_margin_pu::Float64 = DEFAULT_WARM_COLD_CHECK_MARGIN_PU)
   screening_mode in CONTINGENCY_SCREENING_MODE_VALUES || throw(ArgumentError("ScenarioEngine: screening_mode must be one of $(CONTINGENCY_SCREENING_MODE_VALUES), got :$(screening_mode)."))
   (isfinite(screening_margin_pct) && screening_margin_pct >= 0.0) || throw(ArgumentError("ScenarioEngine: screening_margin_pct must be a finite value >= 0."))
   vm_min_pu < vm_max_pu || throw(ArgumentError("ScenarioEngine: vm_min_pu must be below vm_max_pu."))
@@ -1006,8 +1006,8 @@ function evaluate!(engine::ScenarioEngine, worker::ScenarioWorker, it::_Scenario
     cold = _evaluate_outage_item!(engine, worker, it; cold = true)
     cold.converged && return _warm_cold_result(cold)
   end
-  # cold check (0.30.3): a converged warm result near the lower voltage
-  # limit or with a violation is solved cold as well, the less favourable
+  # cold check (0.30.3, option, off by default): a converged warm result
+  # near the lower voltage limit or with a violation is solved cold as well, the less favourable
   # result counts (where the active set is not unique the warm start can
   # land on a more favourable valid solution than the cold one)
   if _warm_needs_cold_check(engine, result)
@@ -1285,7 +1285,7 @@ function runScenarios!(
   parallel_min_work_items::Union{Nothing,Int} = nothing,
   auto_slack::Bool = true,
   warm_active_set::Bool = true,
-  warm_cold_check::Bool = true,
+  warm_cold_check::Bool = false,
   warm_cold_check_margin_pu::Float64 = DEFAULT_WARM_COLD_CHECK_MARGIN_PU,
   warm_note::Union{Nothing,Base.RefValue{String}} = nothing,
   @nospecialize(progress = nothing),

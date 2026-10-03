@@ -819,14 +819,14 @@ contingency:
   # of the file's; the active set may still release or add clamps. About
   # half the Newton steps per outage on cases with many clamped machines.
   # Where the active set is not unique it can land on another valid
-  # solution, so the cold check below backs it.
+  # solution; the cold check below is an option for that case.
   warm_active_set: true
-  # Cold check of the warm active set (switch and margin): when on, an
-  # outage or scenario whose lowest voltage comes within this margin (pu)
-  # of the lower voltage limit, or that has an overload or a voltage
-  # violation, is solved a second time cold and the less favourable result
-  # counts. Off reports the warm result alone.
-  warm_cold_check: true
+  # Cold check of the warm active set (switch, default off, and margin):
+  # when on, an outage or scenario whose lowest voltage comes within this
+  # margin (pu) of the lower voltage limit, or that has an overload or a
+  # voltage violation, is solved a second time cold and the less favourable
+  # result counts. Off reports the warm result alone.
+  warm_cold_check: false
   warm_cold_check_margin_pu: 0.02
 
 control:
