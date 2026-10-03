@@ -1645,8 +1645,11 @@ mpc.branch = [
       @test prio_erg == 0
       # the chosen reference holds the island's angle
       @test prio_net.nodeVec[prio_net.busDict["Fennwiese_110"]]._va_deg == 0.0
-      # the optional SCF field survives the round trip byte for byte
-      @test read(exportSCF(importSCF(prio_file); file = joinpath(mktempdir(), "prio.scf.json"), case_name = "two_islands_prio"), String) == read(prio_file, String)
+      # the optional SCF field survives the round trip byte for byte, except
+      # the "created_by" stamp: it names the package version that wrote the
+      # file, so a version bump alone must not fail the comparison
+      unstamped(text) = replace(text, r"\"created_by\": \"Sparlectra [^\"]*\"" => "\"created_by\": \"\"")
+      @test unstamped(read(exportSCF(importSCF(prio_file); file = joinpath(mktempdir(), "prio.scf.json"), case_name = "two_islands_prio"), String)) == unstamped(read(prio_file, String))
       @test_throws ArgumentError addProsumer!(net = plain_net, busName = "Gruenau_110", type = "GENERATOR", p = 1.0, referencePriority = -1)
     end)() end
 

@@ -1137,6 +1137,13 @@ function _scf_extra(net::Net, ids::ScfIdMap)
     # where one is stated: 0 is the absent default, so a network without
     # priorities writes the bytes it wrote before the field existed
     ps.referencePriority > 0 && (d["reference_priority"] = ps.referencePriority)
+    # MATPOWER generator costs (#471), written only where a unit carries them,
+    # so a network without costs writes the bytes it wrote before
+    if ps.gencost !== nothing
+      gc = Dict{String,Any}("p" => ps.gencost.p)
+      ps.gencost.q === nothing || (gc["q"] = ps.gencost.q)
+      d["gencost"] = gc
+    end
     ps.isRegulated && (d["regulated"] = true)
     _scf_write_voltage_control!(d, ps, net.baseMVA)
     put(ids.prosumer[i], d)

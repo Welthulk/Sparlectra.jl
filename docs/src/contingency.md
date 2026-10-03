@@ -192,29 +192,48 @@ The base case of an N-1 batch is solved with Q limits, and on a large
 network many machines end clamped at a limit. Without the warm start
 every outage starts from the base voltages but with the file's bus
 types, so it clamps the same machines again (a jump of the mismatch and
-about twice the Newton steps). `contingency.warm_active_set: true`
-(keyword `warm_active_set = true` on `runContingencies!` and
-`runScenarios!`, Web UI: the checkbox in the "N-1 screening" fieldset of
-the Settings page) starts every outage and scenario with the base case's
-clamped machines as PQ at the limit they reached. The active set stays
-free: a clamped machine whose voltage recovers goes back to PV, new
-clamps follow the normal rules.
+about twice the Newton steps). The warm active set
+(`contingency.warm_active_set`, default `true` since 0.30.3; keyword
+`warm_active_set` on `runContingencies!` and `runScenarios!`; Web UI: the
+checkbox in the "N-1 screening" fieldset of the Settings page) starts every
+outage and scenario with the base case's clamped machines as PQ at the
+limit they reached. The active set stays free: a clamped machine whose
+voltage recovers goes back to PV, new clamps follow the normal rules.
+
+With reactive limits a power flow can have two valid solutions: the same
+outage, solved from different starting bus types, can end with a machine
+clamped at its limit in one solution and holding its voltage in the other,
+both within every Q limit. The warm start can therefore reach a different
+solution than the cold one, and on the measured cases it was the more
+favourable one. Hence the cold check: a warm result whose lowest voltage
+comes within `contingency.warm_cold_check_margin_pu` (default `0.02` pu) of
+the lower voltage limit, or that has an overload or a voltage violation, is
+solved a second time from the file's PV/PQ state, and the less favourable of
+the two counts (more violations, then the lower lowest voltage, then the
+higher loading). The check is a switch of its own
+(`contingency.warm_cold_check`, default `true`; keyword `warm_cold_check`;
+Web UI: "Cold check of tight outages" next to the margin field); switched
+off, every outage reports its warm result.
 
 | Use | Effect |
 |---|---|
-| default | `false` |
+| default | `true` (warm active set and cold check) |
 | applies when | the base case converged with Q limits on; otherwise one line in the run log says why it was not applied |
-| result | the same where the limited solution is unique; where it is not, the warm start can end on another limited solution |
+| result | the same where the limited solution is unique; where it is not, an outage near a limit or with a violation is checked cold |
 | an outage that does not converge from the warm state | is solved again at once from the file's PV/PQ state; `start_used` is `warm_cold` and the note says so |
+| an outage the cold check judges less favourable cold | the cold result counts; `start_used` is `warm_cold_check` and the note names the warm result |
 
-Measured on full branch N-1 (warm start off against on): case_ACTIVSg2000
-needs about half the Newton steps (8.0 to 4.2 per outage) with the same
-convergence and the same violation list on all 3206 outages, 78 outages
-end with one other machine clamped. On case300 one outage converged only
-from the file's state and another only from the warm state: near the
-limit of solvability the start decides which limited solution, if any,
-Newton reaches. The retry above keeps every outage the plain start
-solves.
+On case_ACTIVSg2000 (full branch N-1, 3206 outages) the warm start needs
+about half the Newton steps (8.0 to 4.2 per outage) with the same
+convergence and the same violation list. On five outages of unit
+transformers the two starts end on different solutions: seven machines hold
+their voltage warm and stay clamped cold. The cold check then reports the
+cold result, the less favourable of the two; it is a conservative choice,
+not a statement about which solution is the physical one. On case300 one
+outage converged only from the file's state and another only from the warm
+state: near the limit of solvability the start decides which limited
+solution, if any, Newton reaches. The retry above keeps every
+outage the plain start solves.
 
 ## Generator outages
 

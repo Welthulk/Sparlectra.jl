@@ -11,7 +11,8 @@ MATPOWER Manual, Appendix "Data File Format":
 and the named column constants
 <https://matpower.org/docs/ref/matpower6.0/define_constants.html>). A plain
 power flow needs `baseMVA`, `bus`, `gen` and `branch`; `gencost` serves
-optimal power flow and is read but not used.
+optimal power flow: Sparlectra has none, keeps the cost rows with the
+generators and writes them back on export (see [Generator costs](@ref matpower_gencost)).
 
 ## Import
 
@@ -328,7 +329,7 @@ The direct importer takes the same switches as keywords
 | `mpc.bus` | Network nodes: type (`1` PQ, `2` PV, `3` reference, `4` isolated), demand, shunts, `VM`/`VA` start or reference values, base voltage, limits | Lines and transformers refer to `BUS_I`. |
 | `mpc.gen` | Generators: `PG`, `VG` setpoint, `QMAX`/`QMIN` for Q-limit handling, status | `PG`, `VG`, `QMAX` and `QMIN` are the values to inspect first. |
 | `mpc.branch` | Lines and transformers: `BR_R`/`BR_X`, charging, ratings, `TAP`, `SHIFT`, status | A non-zero tap ratio or phase shift marks a transformer; `TAP = 0` is treated as ratio `1`. |
-| `mpc.gencost` | Optimal power flow | Read, not used; never written. |
+| `mpc.gencost` | Optimal power flow | Kept per generator ([`GenCost`](@ref)) and written back unchanged on export; no calculation reads it. |
 | `mpc.bus_name` | Readable bus names | `matpower_import.apply_bus_names: true`; the original `BUS_I` values stay in `busOrigIdxDict`. |
 | `mpc.branch_name` | Readable branch/source names, outage mapping | `matpower_import.apply_branch_names = true`; lands in `net.matpower_branch_metadata`. |
 | `mpc.branch_kind` | Line/transformer classification override | `matpower_import.apply_branch_kind = true`; `L`, `LINE`, `ACL` force a line, `T`, `TRAFO`, `TRANSFORMER`, `2WT` a transformer. Missing or length-mismatched metadata falls back to the electrical heuristic. |
@@ -418,7 +419,7 @@ writeMatpowerCasefile(net, filepath)                          # configuration de
 | `true` (default) | `mpc.bus` `VM`/`VA` carry the solved node state and `mpc.branch` gains the standard MATPOWER result columns 14-17 (`PF`, `QF`, `PT`, `QT`, flow into the branch at each end) from the branch-flow report path; the exporter does not recompute flows. `mpc.sparlectra.solution_written = 1` marks columns 8/9 and 14-17 as a solution. An unsolved network (no branch flows) warns and falls back to the 13-column model-only export. |
 | `false` | A pure model file: `mpc.branch` keeps its 13 columns, `VM = 1.0`/`VA = 0.0` for all non-slack/non-PV buses (slack and PV setpoints are preserved). |
 
-Sparlectra writes no OPF columns 18-21 and no `mpc.gencost`. Exported `.m`
+Sparlectra writes no OPF columns 18-21. Exported `.m`
 files with transformer losses carry a `SPARLECTRA EXTENSION WARNING` comment
 because plain MATPOWER ignores the `mpc.sparlectra` block.
 
@@ -456,6 +457,30 @@ branch, so an N-1 outage of the branch takes them away with it.
     converter parameters the case does not carry. The price is that the AC
     components joined only by DC lines are separate islands, which the
     island solver handles instead of an artificial bridge branch.
+
+### [Generator costs](@id matpower_gencost)
+
+Sparlectra has no optimal power flow, but a case it writes stays usable with
+MATPOWER's `runopf`: the `mpc.gencost` rows are kept with their generators
+and written back unchanged, in the model export and in the
+`<case>_calc_<date>.m` file of a service run.
+
+- Import: row `g` of `mpc.gencost` belongs to generator row `g`; a block with
+  twice as many rows carries the reactive-power costs of the same units in
+  its second half. Both MATPOWER cost models are kept: 1 (piecewise linear)
+  and 2 (polynomial). Each generator holds its rows as a [`GenCost`](@ref)
+  in `ProSumer.gencost`. A block whose row count fits neither, or that holds
+  a row which is not a valid model 1 or 2 row, is not imported, with a
+  warning that names the reason; the network itself imports as before.
+  Out-of-service generators are not imported, and their cost rows with them.
+- Export: the rows are written in the order of the `mpc.gen` rows, padded
+  with zeros to the widest row. When only some generators carry costs (a
+  unit added in Sparlectra, a slack generator the exporter adds), no block is
+  written and a warning names the units without costs: a partial block would
+  assign the rows to the wrong generators. Reactive-power rows are written
+  only when every unit has one. A case without `gencost` writes none.
+- SCF stores the rows per machine as `extra.<machine>.gencost` (see
+  [Case Format](scf.md)).
 
 ## [Citation and case-file usage](@id matpower-citation)
 

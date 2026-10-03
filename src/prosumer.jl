@@ -308,6 +308,64 @@ function make_characteristic(points::Vector{Tuple{Float64,Float64}}; voltage_uni
   return VoltageCharacteristic(converted; interpolation = interpolation)
 end
 
+"""
+    GenCost(p, q = nothing)
+
+Generator cost data of one generating unit in MATPOWER `mpc.gencost` form,
+kept so a MATPOWER or SCF export writes it back unchanged. Sparlectra has no
+OPF: no calculation reads it.
+
+- `p::Vector{Float64}`: the active-power cost row: `MODEL`, `STARTUP`,
+  `SHUTDOWN`, `NCOST`, then `NCOST` (x, y) points for model 1 (piecewise
+  linear) or `NCOST` polynomial coefficients, highest order first, for
+  model 2. Kept as read, trailing zero padding included.
+- `q::Union{Nothing,Vector{Float64}}`: the reactive-power cost row in the same
+  form, `nothing` when the case has none.
+
+Throws `ArgumentError` when a row is not a valid model 1 or 2 row (see
+`gencost_row_problem`).
+"""
+struct GenCost
+  p::Vector{Float64}
+  q::Union{Nothing,Vector{Float64}}
+  function GenCost(p::AbstractVector{<:Real}, q::Union{Nothing,AbstractVector{<:Real}} = nothing)
+    pv = validate_gencost_row(Float64.(collect(p)), "P cost row")
+    qv = q === nothing ? nothing : validate_gencost_row(Float64.(collect(q)), "Q cost row")
+    return new(pv, qv)
+  end
+end
+
+"""
+    gencost_row_problem(row) -> Union{Nothing,String}
+
+What is wrong with one MATPOWER `gencost` row, or `nothing` for a valid one:
+`MODEL` is 1 (piecewise linear) or 2 (polynomial), `NCOST` is a non-negative
+integer (at least 2 points for model 1), the row holds the `2*NCOST` (model
+1) or `NCOST` (model 2) values after the four leading columns, and values
+beyond them are zero padding.
+"""
+function gencost_row_problem(row::Vector{Float64})::Union{Nothing,String}
+  length(row) >= 4 || return "at least 4 values (MODEL STARTUP SHUTDOWN NCOST), got $(length(row))"
+  all(isfinite, row) || return "non-finite value"
+  model = row[1]
+  model in (1.0, 2.0) || return "MODEL must be 1 (piecewise linear) or 2 (polynomial), got $(model)"
+  ncost = row[4]
+  (isinteger(ncost) && ncost >= 0) || return "NCOST must be a non-negative integer, got $(ncost)"
+  n = Int(ncost)
+  model == 1.0 && n < 2 && return "a piecewise linear cost needs NCOST >= 2 points, got $(n)"
+  needed = 4 + (model == 1.0 ? 2n : n)
+  length(row) >= needed || return "MODEL $(Int(model)) with NCOST $(n) needs $(needed) values, got $(length(row))"
+  all(iszero, @view row[(needed + 1):end]) || return "values beyond the $(needed) of MODEL $(Int(model)) with NCOST $(n) must be zero padding"
+  return nothing
+end
+
+# the row unchanged, or an ArgumentError naming `label` and the problem
+function validate_gencost_row(row::Vector{Float64}, label::AbstractString)::Vector{Float64}
+  problem = gencost_row_problem(row)
+  problem === nothing || throw(ArgumentError("gencost $(label): $(problem)."))
+  return row
+end
+
 # Data type to describe producers and consumers
 """
     ProSumer
@@ -328,6 +386,9 @@ A mutable structure representing a prosumer in a power system. A prosumer is an 
   semantics (0 = no preference, 1 = strongest, larger = weaker). It orders the
   units that may take over a reference: an AC island without one and the
   replacement of an outaged slack ([`ensureSlack!`](@ref)). Default 0.
+- `gencost::Union{Nothing,GenCost}`: MATPOWER generator cost rows of a
+  generating unit ([`GenCost`](@ref)), kept for the export; no calculation
+  reads it. `nothing` when the source has none.
 
 # Constructors
 - `ProSumer(comp::AbstractComponent, busIdx::Int, pGen::Float64, qGen::Float64, pLoad::Float64, qLoad::Float64, status::Int)`: Creates a new `ProSumer` instance.
@@ -377,6 +438,9 @@ mutable struct ProSumer
   # (an island without a reference, the replacement of an outaged slack).
   # Imported from MATPOWER type 3 (1) and CGMES, written by SCF and CGMES.
   referencePriority::Int
+  # MATPOWER mpc.gencost rows of this unit (0.30.3, #471): carried for the
+  # MATPOWER and SCF export only, never read by a calculation (no OPF)
+  gencost::Union{Nothing,GenCost}
   qGenRepl::Union{Nothing,Float64}
   pRes::Union{Nothing,Float64}
   qRes::Union{Nothing,Float64}
@@ -409,6 +473,7 @@ mutable struct ProSumer
     puController::Union{Nothing,PUController} = nothing,
     participationFactor::Union{Nothing,Float64} = nothing,
     referencePriority::Integer = 0,
+    gencost::Union{Nothing,GenCost} = nothing,
   )
     referencePriority >= 0 || throw(ArgumentError("ProSumer: referencePriority must be >= 0 (0 = no preference, 1 = strongest), got $(referencePriority)"))
     if participationFactor !== nothing
@@ -424,7 +489,7 @@ mutable struct ProSumer
       va_deg = 0.0
     end
 
-    new(comp, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, vm_pu, va_deg, vstep_pu, tap_steps_down, tap_steps_up, vset_adjust, isRegulated, type, isAPUNode, quController, puController, participationFactor, Int(referencePriority), nothing, nothing, nothing)
+    new(comp, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, vm_pu, va_deg, vstep_pu, tap_steps_down, tap_steps_up, vset_adjust, isRegulated, type, isAPUNode, quController, puController, participationFactor, Int(referencePriority), gencost, nothing, nothing, nothing)
   end
 
   function Base.show(io::IO, prosumption::ProSumer)

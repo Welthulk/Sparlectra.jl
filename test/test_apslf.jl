@@ -406,16 +406,12 @@ function run_apslf_tests()
                 @test String(st.apslf_convergence_level) == "GRN"
                 println("      APSLF against NR on ", label, ": max |dVm| ", maximum(abs.(vm_nr .- vm_ap)), " pu, ", st.apslf_convergence_line)
             end
-            # A fixed phase shift is modelled through the unsymmetric Y-bus:
-            # the shipped sp_casePST with its shifter at -20 degrees agrees
-            # with NR. The interim germ pin (until AnalyticLoadFlow ships its
-            # own phase-shifter support) recognises the shifter by the
-            # asymmetry and pins :deviation; a network without one keeps the
-            # package default.
+            # A fixed phase shift is modelled through the unsymmetric Y-bus
+            # Sparlectra hands to AnalyticLoadFlow: the shipped sp_casePST
+            # with its shifter at -20 degrees agrees with NR with the
+            # package's own default germ (no pin since 0.30.3, #470).
             scf_pst = joinpath(dirname(@__DIR__), "data", "scf", "sp_casePST.scf.json")
             pst20() = (n = Sparlectra.importSCF(scf_pst); foreach(b -> b.phase_shift_deg != 0 && (b.phase_shift_deg = -20.0), n.branchVec); n)
-            @test Sparlectra._apslf_germ_kwargs((Y = Sparlectra.buildPfModel(pst20(); opt_sparse = true).Ybus,)) == (; germ = :deviation)
-            @test Sparlectra._apslf_germ_kwargs((Y = Sparlectra.buildPfModel(Sparlectra.importSCF(scf5); opt_sparse = true).Ybus,)) == (;)
             r_nr_pst = run_sparlectra(net=pst20(), config=cfg_nr)
             r_ap_pst = run_sparlectra(net=pst20(), config=cfg_ap)
             @test r_nr_pst.final_converged

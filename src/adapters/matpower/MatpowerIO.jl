@@ -280,6 +280,9 @@ function read_case_m(path::AbstractString; legacy_compat::Bool = true)
   branch = parse_matrix_block(txt, "mpc.branch"; ncols = 13)
 
   gencost = try_parse_matrix_block(txt, "mpc.gencost")
+  # optional block: absent is normal, present but unreadable is reported
+  # (it used to vanish without a message, #471)
+  gencost === nothing && occursin(r"mpc\.gencost\s*=", txt) && @warn "MATPOWER case $(name): mpc.gencost is present but could not be parsed; the case is imported without generator costs."
   bus_name = try_parse_string_vector(txt, "mpc.bus_name")
   branch_name = try_parse_string_vector(txt, "mpc.branch_name")
   branch_kind = try_parse_string_vector(txt, "mpc.branch_kind")

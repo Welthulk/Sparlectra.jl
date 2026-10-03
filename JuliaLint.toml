@@ -1,2 +1,7 @@
+# Checkouts that tools create inside the repository (worktrees under .git/
+# and .claude/) carry their own JuliaLint.toml. Excluded here, their files
+# and their config files report nothing (an enclosing exclude always wins).
+exclude = [".git/**", ".claude/**"]
+
 [rules]
 include_errors = "off"

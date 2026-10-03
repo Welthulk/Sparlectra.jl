@@ -237,6 +237,9 @@ function writeGeneratorData(sb_mva::Float64, NodeDict::Dict{Int,Node}, ProSumVec
   write(file, "%bus\tPg\tQg\tQmax\tQmin\tVg\tmBase\tstatus\tPmax\tPmin\tPc1\tPc2\tQc1min\tQc1max\tQc2min\tQc2max\tramp_agc\tramp_10\tramp_30\tramp_q\tapf\n")
   #! format: on
   slackGeneratorFound = false
+  # the unit behind each written mpc.gen row, in row order (nothing for a
+  # row the exporter adds itself); writeCostData aligns mpc.gencost to it
+  exported = Union{Nothing,ProSumer}[]
 
   function getLine(node::Node, prosum::ProSumer)
     name = prosum.comp.cName
@@ -301,6 +304,7 @@ function writeGeneratorData(sb_mva::Float64, NodeDict::Dict{Int,Node}, ProSumVec
       result, line = getLine(node, prosum)
       if result
         write(file, line)
+        push!(exported, prosum)
       end
     end # if   
   end # for
@@ -308,9 +312,57 @@ function writeGeneratorData(sb_mva::Float64, NodeDict::Dict{Int,Node}, ProSumVec
     @info "No PV-Bus found and no Slack-Generator defined -> add a Slack-Generator"
     line = getLineSlackGenerator()
     write(file, line)
+    push!(exported, nothing)
   end # if
   write(file, "];\n")
+  return exported
 end # WriteGeneratorData
+
+# MATPOWER cost numbers: an integer value without the ".0" a hand-written
+# case does not carry, everything else in Julia's shortest round-trip form,
+# so a re-read gives the same Float64
+_matpower_cost_number(x::Float64) = (isinteger(x) && abs(x) < 1e15) ? string(Int(x)) : string(x)
+
+"""
+    writeCostData(file, gens)
+
+Write `mpc.gencost` for the generator rows just written (`gens`, one entry per
+`mpc.gen` row in its order, `nothing` for a row the exporter added itself,
+such as the synthetic slack generator). The P rows come first, the Q rows of
+the same units after them (MATPOWER layout), each row as imported and
+padded with zeros to the widest row.
+
+No block is written when no generator carries cost data. When only some do
+(a generator added in Sparlectra, a synthetic row), a warning names the
+units without a row and no block is written: a partial matrix would assign
+the rows to the wrong generators. Q rows are written only when every unit
+has one; otherwise a warning says the Q costs are left out.
+"""
+function writeCostData(file, gens::Vector{Union{Nothing,ProSumer}})
+  any(g -> g !== nothing && g.gencost !== nothing, gens) || return nothing
+  missing_rows = [g === nothing ? "generator row $(k) (added by the exporter)" : getCompName(g.comp) for (k, g) in enumerate(gens) if g === nothing || g.gencost === nothing]
+  if !isempty(missing_rows)
+    @warn "MATPOWER export: mpc.gencost not written, $(length(missing_rows)) of $(length(gens)) generator rows carry no cost data (a partial block would assign the rows to the wrong units)" generators = join(first(missing_rows, 10), ", ")
+    return nothing
+  end
+  costs = [g.gencost for g in gens]
+  with_q = all(c -> c.q !== nothing, costs)
+  (!with_q && any(c -> c.q !== nothing, costs)) && @warn "MATPOWER export: only some generators carry a Q cost row; mpc.gencost is written with the P rows only" with_q_rows = count(c -> c.q !== nothing, costs) generators = length(costs)
+  rows = Vector{Vector{Float64}}([c.p for c in costs])
+  with_q && append!(rows, [c.q for c in costs])
+  width = maximum(length, rows)
+  write(file, "\n%% generator cost data\n")
+  write(file, "%\t1\tstartup\tshutdown\tn\tx1\ty1\t...\txn\tyn\n")
+  write(file, "%\t2\tstartup\tshutdown\tn\tc(n-1)\t...\tc0\n")
+  write(file, "mpc.gencost = [\n")
+  for r in rows
+    padded = vcat(r, zeros(width - length(r)))
+    write(file, "\t", join(_matpower_cost_number.(padded), "\t"), ";\n")
+  end
+  write(file, "];\n")
+  return nothing
+end
+
 
 function _matpower_branch_kind(net::Net, i::Int, br::Branch)
   meta = get(net.matpower_branch_metadata, i, nothing)
@@ -632,10 +684,11 @@ function writeMatpowerCasefile(net::Net, pathfilename::String; write_solution::U
   writeHeader(net.baseMVA, file, case; has_transformer_loss_metadata = !isempty(transformer_loss_rows), source_case = source_case, solution_written = write_result_columns)
   hasPVBus, slackIdx, vgSlack = writeBusData(net, file; write_solution = requested_write_solution, branch_shunt_rows = branch_shunt_rows)
 
-  writeGeneratorData(net.baseMVA, NodeDict, net.prosumpsVec, file, hasPVBus, slackIdx, vgSlack)
+  exported_gens = writeGeneratorData(net.baseMVA, NodeDict, net.prosumpsVec, file, hasPVBus, slackIdx, vgSlack)
 
   writeBranchData(net, file; write_solution = write_result_columns)
+  # generator costs (#471): carried from the import, written back unchanged
+  writeCostData(file, exported_gens)
   writeSparlectraMetadata(net, file; solution_written = write_result_columns, branch_shunt_rows = branch_shunt_rows)
-  #writeCostData(file)
   close(file)
 end # writeMatpowerCasefile

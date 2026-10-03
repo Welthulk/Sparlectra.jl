@@ -59,6 +59,21 @@ mpc.branch = [
 	8	9	0.0119	0.1008	0.209	150.0	150.0	150.0	0.0	0.0	1	-360.0	360.0;
 ];
 
+%% generator cost data
+% Self-built illustrative values, one per MATPOWER cost model, plus reactive
+% costs: Sparlectra has no OPF and reads no cost; the block is carried
+% through import and export unchanged.
+%	1	startup	shutdown	n	x1	y1	...	xn	yn
+%	2	startup	shutdown	n	c(n-1)	...	c0
+mpc.gencost = [
+	2	0	0	3	0.02	18	120	0	0	0;
+	1	300	0	3	10	400	150	2100	300	3900;
+	2	0	0	2	22	0	0	0	0	0;
+	2	0	0	3	0.001	0	0	0	0	0;
+	2	0	0	2	0.5	0	0	0	0	0;
+	2	0	0	3	0.002	0	0	0	0	0;
+];
+
 %% bus names (imported with matpower_import.apply_bus_names)
 mpc.bus_name = {
 	'Kraftwerk_Nord_16p5';

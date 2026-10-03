@@ -412,6 +412,12 @@ function run_scenario_engine_extended_tests()
     # own buses): exactly the 3 outages that split the net (109-105,
     # 114-93, 94-107) changed, in voltages and loading, 94-107 also in
     # iterations (12 to 10); every non-islanding row is unchanged.
+    # Regenerated at 0.30.3 (warm active set default with its cold
+    # check): 215 of 240 rows changed in the
+    # iteration count only (the warm start saves steps), the values in the
+    # last digits; one real change, B_ACL_345_68_81 (overloads, so checked
+    # cold): the warm result is the less favourable one (min Vm 0.98014
+    # against 0.98070 cold, 240.3 against 239.2 percent) and stands.
     fixture = abspath(joinpath(@__DIR__, "fixtures", "contingency_sp_case118_n1.csv"))
     case_path = abspath(joinpath(dirname(@__DIR__), "data", "mpower", "sp_case118.m"))
     @test isfile(case_path)
@@ -473,11 +479,36 @@ function run_scenario_engine_extended_tests()
     ds_violating = Set(r.name for r in ds_full if !isempty(r.overloads) || !isempty(r.voltage_violations) || !r.converged)
     @test sort(collect(intersect(ds_violating, Set(r.name for r in ds_flagged if r.screened)))) == String[]
     @test count(r -> r.screened, ds_flagged) > 0
-    # warm active set (0.30.2): outages start from the base case's PV/PQ
-    # state; on the shipped grid the violation list is the same as without
+    # warm active set (0.30.2, default since 0.30.3): outages start from the
+    # base case's PV/PQ state; on the shipped grid the violation list is the
+    # same as from the file's PV/PQ state (the cold run, named explicitly
+    # since the default changed)
     warm = Sparlectra.runContingencies!(net, cases; warm_active_set = true, warm_note = Ref(""))
+    cold = Sparlectra.runContingencies!(net, cases; warm_active_set = false)
     viol_list(rs) = [(r.name, r.converged, sort([o.name for o in r.overloads]), sort(r.voltage_violations)) for r in rs]
-    @test viol_list(warm) == viol_list(full)
+    @test viol_list(warm) == viol_list(cold)
+    # cold check (0.30.3): with a margin that covers every outage, each warm
+    # result is solved cold as well and the less favourable one counts, so
+    # no outage ends more favourable than in the cold run
+    checked = Sparlectra.runContingencies!(net, cases; warm_active_set = true, warm_cold_check_margin_pu = 1.0, warm_note = Ref(""))
+    @test all(!Sparlectra._contingency_less_favourable(c, k) for (c, k) in zip(cold, checked))
+    # the order of "less favourable": a failed result never wins, then more
+    # violations, then the lower lowest voltage, then the higher loading
+    row(conv, nviol, vmin, load) = Sparlectra.ContingencyResult("x", 1.0, conv, 3, :warm, 1.05, vmin, load, 0.0, Sparlectra.OverloadRecord[], ["b$(i)" for i in 1:nviol], 1, 0.0, nothing)
+    # the switch (contingency.warm_cold_check): with the same margin a tight
+    # warm result is checked when on and never when off
+    check_on = Sparlectra.ScenarioEngine(net; warm_cold_check_margin_pu = 1.0, warm_note = Ref(""))
+    check_off = Sparlectra.ScenarioEngine(net; warm_cold_check = false, warm_cold_check_margin_pu = 1.0, warm_note = Ref(""))
+    @test Sparlectra._warm_needs_cold_check(check_on, row(true, 0, 0.95, 50.0))
+    @test !Sparlectra._warm_needs_cold_check(check_off, row(true, 0, 0.95, 50.0))
+    @test !Sparlectra._warm_needs_cold_check(check_off, row(true, 2, 0.85, 120.0))
+    @test Sparlectra._contingency_less_favourable(row(true, 1, 0.97, 50.0), row(true, 0, 0.92, 90.0))
+    @test Sparlectra._contingency_less_favourable(row(true, 0, 0.94, 50.0), row(true, 0, 0.95, 90.0))
+    @test Sparlectra._contingency_less_favourable(row(true, 0, 0.95, 91.0), row(true, 0, 0.95, 90.0))
+    @test !Sparlectra._contingency_less_favourable(row(false, 0, NaN, NaN), row(true, 0, 0.95, 90.0))
+    # rounding noise of two solves of the same solution decides nothing
+    @test !Sparlectra._contingency_less_favourable(row(true, 0, 0.95 - 1e-9, 90.0 + 1e-6), row(true, 0, 0.95, 90.0))
+    @test Sparlectra._contingency_less_favourable(row(true, 0, 0.95, 90.0), row(false, 0, NaN, NaN))
     # change-based loading flag (0.30.2): a branch the base case already
     # loads at 95 percent used to flag every outage (the network-wide
     # maximum stayed above 100 - margin); now only outages that change it

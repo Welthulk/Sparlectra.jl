@@ -100,7 +100,9 @@ Outcome of one [`ContingencyCase`](@ref) evaluated by
 - `iterations::Int`: Newton iterations of the contingency solve (0 when the
   solve never ran; the sum across ladder stages that were attempted).
 - `start_used::Symbol`: the start-value ladder stage that converged
-  (`:warm`, `:apslf`, `:dc`, or `:flat`), `:none` for a failed case.
+  (`:warm`, `:apslf`, `:dc`, or `:flat`), `:none` for a failed case; with the
+  warm active set `:warm_cold` (the warm solve failed, the cold one counts) or
+  `:warm_cold_check` (the cold check found a less favourable result).
 - `max_vm_pu::Float64` / `min_vm_pu::Float64`: voltage envelope over the
   non-isolated buses of the solved case (NaN when not solved).
 - `max_branch_loading_pct::Float64`: maximum loading over all rated
@@ -548,6 +550,15 @@ active the return type is `Vector{ScenarioResult}` (`screened` marks rows
 whose metric columns carry estimates). The `contingency.screening.*`
 configuration (default `:flag`) drives the service path, not this
 programmatic default.
+
+`warm_active_set` (default `true` since 0.30.3) starts every outage from the
+base case's PV/PQ state. Where the limited solution is not unique this can
+end on a more favourable valid solution than the cold start, so a converged
+warm result whose lowest voltage comes within `warm_cold_check_margin_pu`
+(default `0.02`) of `vm_min_pu`, or that has an overload or a voltage
+violation, is solved a second time cold and the less favourable result counts
+(`start_used = :warm_cold_check`); `warm_cold_check = false` switches that
+second solve off. See [Warm active set](@ref contingency_warm_active_set).
 """
 function runContingencies!(
     net::Net,
@@ -564,7 +575,9 @@ function runContingencies!(
     parallel_max_tasks::Union{Nothing,Int}=nothing,
     parallel_min_work_items::Union{Nothing,Int}=nothing,
     auto_slack::Bool=true,
-    warm_active_set::Bool=false,
+    warm_active_set::Bool=true,
+    warm_cold_check::Bool=true,
+    warm_cold_check_margin_pu::Float64=DEFAULT_WARM_COLD_CHECK_MARGIN_PU,
     warm_note::Union{Nothing,Base.RefValue{String}}=nothing,
     @nospecialize(progress=nothing),
     kwargs...,
@@ -584,7 +597,7 @@ function runContingencies!(
     # template hygiene, base loadings, chunked workers all live there); the
     # case118 CSV fixture pins these results byte for byte to the pre-engine
     # per-case-deepcopy implementation
-    engine = ScenarioEngine(net; vm_min_pu=vm_min_pu, vm_max_pu=vm_max_pu, maxIte=maxIte, tol=tol, ladder=ladder, pf_kwargs=(; auto_slack=auto_slack, kwargs...), screening_mode=screening_mode, screening_margin_pct=screening_margin_pct, warm_active_set=warm_active_set, warm_note=warm_note)
+    engine = ScenarioEngine(net; vm_min_pu=vm_min_pu, vm_max_pu=vm_max_pu, maxIte=maxIte, tol=tol, ladder=ladder, pf_kwargs=(; auto_slack=auto_slack, kwargs...), screening_mode=screening_mode, screening_margin_pct=screening_margin_pct, warm_active_set=warm_active_set, warm_note=warm_note, warm_cold_check=warm_cold_check, warm_cold_check_margin_pu=warm_cold_check_margin_pu)
     items = _engine_items_from_cases(engine.template, cases)
     # `progress` is only passed through here (@nospecialize: this body and
     # the batch compile once, whatever the callback type); the batch wraps

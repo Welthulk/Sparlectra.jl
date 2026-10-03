@@ -77,6 +77,37 @@ end
 
 #! format: on
 
+# mpc.gencost (#471), shared by the direct import and the SCF converter: row
+# g belongs to gen row g, rows ngen+1:2ngen (when present) are the
+# reactive-power costs of the same units. `nothing` when the case has no cost
+# block. A block that cannot be assigned (another row count) or holds a row
+# that is not a valid model 1 or 2 row is dropped with a warning naming the
+# reason: the costs feed no calculation, so they must not make a case that
+# imported before unimportable, and they must not vanish silently either.
+function _matpower_gencost_matrix(mpc, ngen::Int, name::AbstractString)::Union{Nothing,Matrix{Float64}}
+  raw = hasproperty(mpc, :gencost) ? getproperty(mpc, :gencost) : nothing
+  raw === nothing && return nothing
+  m = convert(Matrix{Float64}, raw)
+  if !(size(m, 1) in (ngen, 2 * ngen))
+    @warn "MATPOWER case $(name): mpc.gencost has $(size(m, 1)) rows for $(ngen) generators (expected $(ngen) or $(2 * ngen)); the generator costs are not imported."
+    return nothing
+  end
+  for r in axes(m, 1)
+    problem = gencost_row_problem(m[r, :])
+    if problem !== nothing
+      @warn "MATPOWER case $(name): mpc.gencost row $(r): $(problem); the generator costs are not imported."
+      return nothing
+    end
+  end
+  return m
+end
+
+# the GenCost of gen row `gen_row` (validated by the GenCost constructor)
+function _matpower_gencost_of_row(m::Matrix{Float64}, ngen::Int, gen_row::Int)::GenCost
+  q = size(m, 1) == 2 * ngen ? m[ngen + gen_row, :] : nothing
+  return GenCost(m[gen_row, :], q)
+end
+
 function _apply_matpower_reference_override!(net::Net, slack_orig_idx::Int, bus_idx_by_orig::Dict{Int,Int}; reference_vm_pu::Union{Nothing,Float64} = nothing, reference_va_deg::Union{Nothing,Float64} = nothing)
   slack_orig_idx != 0 || return nothing
   node_idx = get(bus_idx_by_orig, slack_orig_idx, 0)
@@ -605,8 +636,11 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
   end
 
   # --- Generators ---
+  # generator costs (#471): kept on the generator for the MATPOWER and SCF
+  # export, never read by a calculation
+  gencost_mat = _matpower_gencost_matrix(mpc, size(genData, 1), name)
   pq_gen_controller_count = 0
-  for row in eachrow(genData)
+  for (gen_row, row) in enumerate(eachrow(genData))
     status = Int(row[GEN_STATUS])
     status < 1 && continue
 
@@ -678,6 +712,7 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
       isRegulated = (btype == 2) || demoted_ref,
       defer_bus_type_refresh = true,
     )
+    gencost_mat === nothing || (myNet.prosumpsVec[end].gencost = _matpower_gencost_of_row(gencost_mat, size(genData, 1), gen_row))
   end
 
   if matpower_dcline_mode in (:pf_injections, :paired_control)
