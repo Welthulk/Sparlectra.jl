@@ -57,6 +57,12 @@ jobs:
           key: matpower-cases-${{ hashFiles('test/**') }}
           restore-keys: |
             matpower-cases-
+      # The cache directory also holds the SHIPPED cases (sp_case9.m and the
+      # other tracked files). A restore through the prefix match brings back
+      # the copies of an older run and overwrote a changed shipped case (the
+      # gencost block of sp_case9.m vanished on CI). Reset the tracked files
+      # to the checkout; downloaded, untracked cases stay.
+      - run: git checkout -- data/mpower
       - uses: julia-actions/julia-buildpkg@v1
       # The fast profile is the risk-based gate: it carries every numerics,
       # model and format group (rectangular solver, factorized linear
