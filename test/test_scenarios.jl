@@ -418,6 +418,9 @@ function run_scenario_engine_extended_tests()
     # 0.98014 against 0.98070 cold, 240.3 against 239.2 percent). The
     # optional cold check would keep this warm result as well (it is the
     # less favourable one), so the fixture holds with the check on or off.
+    # Regenerated for #475 (joint extra release of twice-clamped machines on
+    # a converged iterate): one cell, B_ACL_345_68_81 iterations 16 to 22;
+    # its group release does not hold and is undone, every value stays.
     fixture = abspath(joinpath(@__DIR__, "fixtures", "contingency_sp_case118_n1.csv"))
     case_path = abspath(joinpath(dirname(@__DIR__), "data", "mpower", "sp_case118.m"))
     @test isfile(case_path)

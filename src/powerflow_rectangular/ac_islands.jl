@@ -577,7 +577,7 @@ function _sync_island_solution!(net::Net, inet::Net, row)
   # copied separately: a machine released back to PV leaves the events but
   # stays in the log, so replaying the log would clamp it again.
   for ev in inet.qLimitLog
-    push!(net.qLimitLog, QLimitEvent(iter = ev.iter, bus = row.buses[ev.bus], side = ev.side))
+    push!(net.qLimitLog, QLimitEvent(iter = ev.iter, bus = row.buses[ev.bus], side = ev.side, kind = ev.kind))
   end
   for (bus, side) in inet.qLimitEvents
     net.qLimitEvents[row.buses[bus]] = side
