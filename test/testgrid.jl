@@ -3186,7 +3186,47 @@ function test_q_limit_hysteresis_delays_small_pv_to_pq_overshoot()::Bool
   )
   second_reenable_blocked = !changed && !reenabled && bus_types[1] == :PQ && length(net.qLimitLog) == 2
 
-  return delayed && first_switch && first_reenable && second_switch && second_reenable_blocked
+  # #475: on a converged iterate the twice-clamped bus gets the joint extra
+  # release; when it violates again it goes back as a group revert (logged,
+  # but not counted as a hit), and the solve makes no further extra release
+  reenable_call(it; converged) = Sparlectra.active_set_q_limits!(
+    net,
+    it,
+    nb;
+    get_qreq_pu = _ -> 0.0,
+    is_pv = bus -> (bus_types[bus] == :PV),
+    make_pq! = (bus, _qclamp, _side) -> (bus_types[bus] = :PQ),
+    make_pv! = bus -> (bus_types[bus] = :PV),
+    qmin_pu = qmin_pu,
+    qmax_pu = qmax_pu,
+    pv_orig_mask = pv_orig_mask,
+    allow_reenable = true,
+    q_hyst_pu = 0.10,
+    cooldown_iters = 0,
+    converged_iterate = converged,
+  )
+  changed, reenabled = reenable_call(6; converged = true)
+  converged_reenable = !changed && reenabled && bus_types[1] == :PV
+  changed, _ = Sparlectra.active_set_q_limits!(
+    net,
+    7,
+    nb;
+    get_qreq_pu = _ -> 1.11,
+    is_pv = bus -> (bus_types[bus] == :PV),
+    make_pq! = (bus, _qclamp, _side) -> (bus_types[bus] = :PQ),
+    make_pv! = bus -> (bus_types[bus] = :PV),
+    qmin_pu = qmin_pu,
+    qmax_pu = qmax_pu,
+    pv_orig_mask = pv_orig_mask,
+    allow_reenable = false,
+    q_hyst_pu = 0.10,
+    cooldown_iters = 0,
+  )
+  group_revert = changed && bus_types[1] == :PQ && net.qLimitLog[end].kind === :group_revert && Sparlectra.qlimit_switch_count(net, 1) == 2
+  changed, reenabled = reenable_call(8; converged = true)
+  no_second_extra = !changed && !reenabled && bus_types[1] == :PQ
+
+  return delayed && first_switch && first_reenable && second_switch && second_reenable_blocked && converged_reenable && group_revert && no_second_extra
 end
 
 function test_q_limit_violation_guard_bypasses_hysteresis_for_strong_overshoot()::Bool

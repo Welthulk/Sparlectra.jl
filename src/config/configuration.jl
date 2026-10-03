@@ -283,10 +283,8 @@ Base.@kwdef struct ContingencyConfig
   # warm active set (0.30.2): outages and scenarios start from the base
   # case's PV/PQ state (its clamped machines as PQ at the reached limit);
   # the release rule stays free to undo a clamp. Default since 0.30.3:
-  # where the active set is not unique the warm start can land on a
-  # different solution (ACTIVSg2000: five outages up to 0.011 pu higher min
-  # Vm than cold); there the warm one is the consistent one, the cold start
-  # leaves machines clamped below their setpoint (#475)
+  # about half the Newton steps; where the active set is not unique the warm
+  # start can land on a different solution than the cold one
   warm_active_set::Bool = true
   # the cold check of the warm active set, an option (default off): when on,
   # a warm result within this margin (pu) above the lower voltage limit, or

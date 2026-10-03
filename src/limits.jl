@@ -76,6 +76,11 @@ Base.@kwdef struct QLimitEvent
   iter::Int
   bus::Int
   side::Symbol   # :min | :max
+  # :hit for a limit hit; :group_revert when a jointly released group of
+  # twice-clamped buses goes back to its limits (#475). A revert is a switch
+  # but not a hit: the per-bus hit counts (one-retry guard, max_switches)
+  # leave it out
+  kind::Symbol = :hit
 end
 
 """
@@ -84,18 +89,19 @@ end
 Record a Q-limit hit (bus, iteration, min or max side) in the network's
 Q-limit log.
 """
-function logQLimitHit!(net::Net, iter::Int, bus::Int, side::Symbol)
-  push!(net.qLimitLog, QLimitEvent(iter = iter, bus = bus, side = side))
+function logQLimitHit!(net::Net, iter::Int, bus::Int, side::Symbol; kind::Symbol = :hit)
+  push!(net.qLimitLog, QLimitEvent(iter = iter, bus = bus, side = side, kind = kind))
   net.qLimitEvents[bus] = side
 end
 
 function qlimit_switch_count(net::Net, bus::Int)::Int
-  return count(ev -> ev.bus == bus, net.qLimitLog)
+  return count(ev -> ev.bus == bus && ev.kind === :hit, net.qLimitLog)
 end
 
 function qlimit_switch_counts(net::Net)
   counts = Dict{Int,Int}()
   for ev in net.qLimitLog
+    ev.kind === :hit || continue
     counts[ev.bus] = get(counts, ev.bus, 0) + 1
   end
   return counts
@@ -516,6 +522,7 @@ end
         get_vm_pu=nothing,
         get_vset_pu=nothing,
         v_hyst_pu::Float64=1e-4,
+        converged_iterate::Bool=false,
         verbose::Int=0,
         io::IO=stdout,
     ) -> (changed::Bool, reenabled::Bool)
@@ -531,6 +538,18 @@ could never be true at a converged point and non-physical solutions were
 kept. The Q test remains the fallback for a bus without a stored side or
 without the voltage callbacks. Cooldown and the one-retry guard apply to
 both forms.
+
+The one-retry guard keeps a bus clamped once it has hit its limit twice,
+against chattering in unsettled iterates. On a converged iterate
+(`converged_iterate = true`) on which nothing else switched, all such buses
+whose voltage sits on the release side are released together, once: a
+clamp taken in an early iterate must not outlive the state that caused it
+(#475: seven machines stayed at Qmin with the voltage below their
+setpoint). When one of the group violates its limit again, the whole group
+goes back to its limits (logged as `kind = :group_revert`, not counted as a
+hit) and the solve makes no further extra release; released one by one or
+all without the revert, a group of mutually supporting machines diverged
+(sp_case118, outage of branch 68-81).
 
 Callbacks:
 - get_qreq_pu(bus) -> Float64
@@ -558,6 +577,7 @@ function active_set_q_limits!(
   get_vm_pu = nothing,
   get_vset_pu = nothing,
   v_hyst_pu::Float64 = 1e-4,
+  converged_iterate::Bool = false,
   lock_pv_to_pq_buses::AbstractVector{Int} = Int[],
   on_violation! = nothing,
   verbose::Int = 0,
@@ -594,16 +614,22 @@ function active_set_q_limits!(
   # which is exactly what the repeated scan computed, amortized to O(1).
   switch_counts = Dict{Int,Int}()
   counted_upto = 0
+  group_reverted = false
   switch_count = function (bus::Int)
     @inbounds while counted_upto < length(net.qLimitLog)
       counted_upto += 1
-      ev_bus = net.qLimitLog[counted_upto].bus
-      switch_counts[ev_bus] = get(switch_counts, ev_bus, 0) + 1
+      ev = net.qLimitLog[counted_upto]
+      if ev.kind === :hit
+        switch_counts[ev.bus] = get(switch_counts, ev.bus, 0) + 1
+      else
+        group_reverted = true
+      end
     end
     return get(switch_counts, bus, 0)
   end
 
   # --- PV -> PQ ------------------------------------------------------------
+  extra_group_failed = false
   @inbounds for bus = 1:nb
     is_pv(bus) || continue
     lock_mask[bus] && continue
@@ -657,6 +683,11 @@ function active_set_q_limits!(
       continue
     end
 
+    # a PV bus with exactly two hits can only come from the extra release of
+    # a converged iterate (#475; the normal release stops at one hit)
+    in_group = switch_count(bus) == 2
+    in_group && (extra_group_failed = true)
+
     handled = false
     if !isnothing(on_violation!)
       handled = on_violation!(bus, qreq, side, qclamp)
@@ -666,7 +697,7 @@ function active_set_q_limits!(
       changed = true
     elseif side == :max
       make_pq!(bus, qclamp, side)
-      logQLimitHit!(net, it, bus, side)
+      logQLimitHit!(net, it, bus, side; kind = in_group ? :group_revert : :hit)
       changed = true
       if verbose > 0
         if max_console_rows < 0 || printed_events < max_console_rows
@@ -678,7 +709,7 @@ function active_set_q_limits!(
       end
     else
       make_pq!(bus, qclamp, side)
-      logQLimitHit!(net, it, bus, side)
+      logQLimitHit!(net, it, bus, side; kind = in_group ? :group_revert : :hit)
       changed = true
       if verbose > 0
         if max_console_rows < 0 || printed_events < max_console_rows
@@ -691,7 +722,52 @@ function active_set_q_limits!(
     end
   end
 
+  # The extra group of #475 is released together; when one of its machines
+  # violates again, the release did not hold for the group (the machines
+  # support each other's voltage), so every machine still PV in it goes back
+  # to the limit it had before. The revert is logged as such, not as a hit,
+  # and ends the extra releases of this solve; the state is one Newton step
+  # from the converged point it came from.
+  if extra_group_failed
+    last_side = Dict{Int,Symbol}()
+    for ev in net.qLimitLog
+      ev.kind === :hit && (last_side[ev.bus] = ev.side)
+    end
+    @inbounds for bus = 1:nb
+      (is_pv(bus) && switch_count(bus) == 2) || continue
+      side = get(last_side, bus, :none)
+      side in (:min, :max) || continue
+      make_pq!(bus, side == :max ? qmax_pu[bus] : qmin_pu[bus], side)
+      logQLimitHit!(net, it, bus, side; kind = :group_revert)
+      changed = true
+      if verbose > 0
+        @printf(io, "PV->PQ Bus %d: back to Q%s with its group, the joint release did not hold (it=%d)\n", bus, String(side), it)
+      end
+    end
+  end
+
   # --- Optional PQ -> PV ---------------------------------------------------
+  # the extra release of a twice-clamped bus on a converged iterate (#475):
+  # every candidate together (the machines of the five ACTIVSg2000 outages
+  # hold their voltage only as a group), and only when nothing else switched
+  # in this iterate; a group that does not hold is clamped back above
+  extra_buses = Int[]
+  # one failed group ends the extra releases of this solve (its revert is in
+  # the log; switch_count(0) brings the scan up to date)
+  switch_count(0)
+  extra_allowed = converged_iterate && !group_reverted
+  release! = function (bus::Int, side::Symbol, voltage_rule::Bool, qreq::Float64, lo::Float64, hi::Float64)
+    make_pv!(bus)
+    delete!(net.qLimitEvents, bus)   # clear event after re-enable
+    reenabled = true
+    if verbose > 0
+      if voltage_rule
+        @printf(io, "PQ->PV Bus %d: clamped at %s, Vm=%.5f pu %s Vset=%.5f pu (margin %.1e), released\n", bus, String(side), get_vm_pu(bus), side == :max ? "above" : "below", get_vset_pu(bus), v_hyst_pu)
+      else
+        @printf(io, "PQ->PV Bus %d: Q=%.6f pu (%.6f MVAr) within (%.6f, %.6f) pu ((%.6f, %.6f) MVAr)\n", bus, qreq, qreq * net.baseMVA, lo, hi, lo * net.baseMVA, hi * net.baseMVA)
+      end
+    end
+  end
   if allow_reenable
     @inbounds for bus = 1:nb
       # Guards: was PV originally + has event + currently NOT PV
@@ -703,9 +779,13 @@ function active_set_q_limits!(
 
       # A re-enabled bus that violates its Q limit again is likely chattering
       # between the PQ clamp and the PV voltage constraint. Keep it clamped
-      # after the first retry instead of re-enabling it indefinitely.
+      # after the first retry instead of re-enabling it indefinitely. On a
+      # converged iterate the twice-clamped buses are candidates for the
+      # joint extra release (#475): both clamps may stem from transient
+      # iterates, and the converged voltage decides.
       prior_hits = switch_count(bus)
-      prior_hits > 1 && continue
+      prior_hits > (extra_allowed ? 2 : 1) && continue
+      extra = prior_hits == 2
 
       qreq = get_qreq_pu(bus)
       lo, hi = q_limit_band(qmin_pu, qmax_pu, bus, q_hyst_pu)
@@ -730,17 +810,19 @@ function active_set_q_limits!(
         end
       end
 
-      if ready
-        make_pv!(bus)
-        delete!(net.qLimitEvents, bus)   # clear event after re-enable
-        reenabled = true
-        if verbose > 0
-          if voltage_rule
-            @printf(io, "PQ->PV Bus %d: clamped at %s, Vm=%.5f pu %s Vset=%.5f pu (margin %.1e), released\n", bus, String(side), get_vm_pu(bus), side == :max ? "above" : "below", get_vset_pu(bus), v_hyst_pu)
-          else
-            @printf(io, "PQ->PV Bus %d: Q=%.6f pu (%.6f MVAr) within (%.6f, %.6f) pu ((%.6f, %.6f) MVAr)\n", bus, qreq, qreq * net.baseMVA, lo, hi, lo * net.baseMVA, hi * net.baseMVA)
-          end
-        end
+      if ready && extra
+        # collected, released together after the loop
+        push!(extra_buses, bus)
+      elseif ready
+        release!(bus, side, voltage_rule, qreq, lo, hi)
+      end
+    end
+    if !isempty(extra_buses) && !changed && !reenabled
+      for bus in extra_buses
+        side = net.qLimitEvents[bus]
+        voltage_rule = get_vm_pu !== nothing && get_vset_pu !== nothing && side in (:min, :max)
+        lo, hi = q_limit_band(qmin_pu, qmax_pu, bus, q_hyst_pu)
+        release!(bus, side, voltage_rule, get_qreq_pu(bus), lo, hi)
       end
     end
   end
