@@ -226,12 +226,13 @@ higher loading). Off, every outage reports its warm result.
 On case_ACTIVSg2000 (full branch N-1, 3206 outages) the warm start needs
 about half the Newton steps (8.0 to 4.2 per outage) with the same
 convergence and the same violation list. On five outages of unit
-transformers the two starts used to end on different solutions: cold, seven
-machines stayed at their lower Q limit with the voltage below their
-setpoint, because a machine that had clamped twice in early iterations was
-never released again. A twice-clamped machine now gets one more release at
-the converged point when its voltage is on the release side (#475), and
-both starts give the same result there. On case300 one outage converged only from the file's state and another only from the warm
+transformers the two starts end on different solutions: seven machines hold
+their voltage warm and stay clamped cold. Cold, they sit at their lower Q
+limit with the voltage below their setpoint, which is not a consistent
+limited state (a machine clamping twice is not released again, #475); the
+warm solution is consistent and is reported by default. With the cold check
+on, these five report the cold result, the less favourable of the two. On
+case300 one outage converged only from the file's state and another only from the warm
 state: near the limit of solvability the start decides which limited
 solution, if any, Newton reaches. The retry above keeps every
 outage the plain start solves.
