@@ -133,7 +133,8 @@ the rectangular variant):
    setpoint needs less than Qmax to hold it (the "back off" rule of
    Sundaresh and Rao, Sadhana 40(4), 2015). The Q band test above is the
    fallback for callers that pass no voltages; cooldown and the one-retry
-   guard still apply.
+   guard still apply (at the converged point a twice-clamped machine gets
+   one more release, #475).
    `examples/powerflow/example_qlimit_reenable_voltage_rule.jl` shows the
    difference on the Zeng/Chiang 14-bus case.
 

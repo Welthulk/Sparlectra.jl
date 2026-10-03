@@ -516,6 +516,7 @@ end
         get_vm_pu=nothing,
         get_vset_pu=nothing,
         v_hyst_pu::Float64=1e-4,
+        converged_iterate::Bool=false,
         verbose::Int=0,
         io::IO=stdout,
     ) -> (changed::Bool, reenabled::Bool)
@@ -531,6 +532,14 @@ could never be true at a converged point and non-physical solutions were
 kept. The Q test remains the fallback for a bus without a stored side or
 without the voltage callbacks. Cooldown and the one-retry guard apply to
 both forms.
+
+The one-retry guard keeps a bus clamped once it has hit its limit twice,
+against chattering in unsettled iterates. On a converged iterate
+(`converged_iterate = true`) such a bus gets one more release when its
+voltage sits on the release side: a clamp taken in an early iterate must not
+outlive the state that caused it (#475: seven machines stayed at Qmin with
+the voltage below their setpoint). A third hit freezes the bus for good, so
+the extra release cannot chatter.
 
 Callbacks:
 - get_qreq_pu(bus) -> Float64
@@ -558,6 +567,7 @@ function active_set_q_limits!(
   get_vm_pu = nothing,
   get_vset_pu = nothing,
   v_hyst_pu::Float64 = 1e-4,
+  converged_iterate::Bool = false,
   lock_pv_to_pq_buses::AbstractVector{Int} = Int[],
   on_violation! = nothing,
   verbose::Int = 0,
@@ -703,9 +713,12 @@ function active_set_q_limits!(
 
       # A re-enabled bus that violates its Q limit again is likely chattering
       # between the PQ clamp and the PV voltage constraint. Keep it clamped
-      # after the first retry instead of re-enabling it indefinitely.
+      # after the first retry instead of re-enabling it indefinitely. On a
+      # converged iterate a twice-clamped bus gets one more release (#475):
+      # both clamps may stem from transient iterates, and the converged
+      # voltage decides; a third hit freezes it for good.
       prior_hits = switch_count(bus)
-      prior_hits > 1 && continue
+      prior_hits > (converged_iterate ? 2 : 1) && continue
 
       qreq = get_qreq_pu(bus)
       lo, hi = q_limit_band(qmin_pu, qmax_pu, bus, q_hyst_pu)
