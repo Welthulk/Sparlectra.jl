@@ -126,7 +126,7 @@ const WEBUI_OPTION_SPECS = WebUIOptionSpec[
   WebUIOptionSpec("contingency.screening.mode", "contingency_screening_mode", String, :select, "off", CONTINGENCY_SCREENING_MODE_VALUES, :expert, :case, true),
   WebUIOptionSpec("contingency.screening.margin_pct", "contingency_screening_margin_pct", Float64, :number, 10.0, (), :expert, :case, true),
   WebUIOptionSpec("contingency.warm_active_set", "contingency_warm_active_set", Bool, :checkbox, true, (), :expert, :case, true),
-  WebUIOptionSpec("contingency.warm_cold_check", "contingency_warm_cold_check", Bool, :checkbox, true, (), :expert, :case, true),
+  WebUIOptionSpec("contingency.warm_cold_check", "contingency_warm_cold_check", Bool, :checkbox, false, (), :expert, :case, true),
   WebUIOptionSpec("contingency.warm_cold_check_margin_pu", "contingency_warm_cold_check_margin_pu", Float64, :number, 0.02, (), :expert, :case, true),
   WebUIOptionSpec("power_flow.auto_slack", "power_flow_auto_slack", Bool, :checkbox, false, (), :expert, :case, true),
   WebUIOptionSpec("runtime.parallel.enabled", "runtime_parallel_enabled", Bool, :checkbox, true, (), :expert, :session, true),

@@ -205,32 +205,34 @@ outage, solved from different starting bus types, can end with a machine
 clamped at its limit in one solution and holding its voltage in the other,
 both within every Q limit. The warm start can therefore reach a different
 solution than the cold one, and on the measured cases it was the more
-favourable one. Hence the cold check: a warm result whose lowest voltage
-comes within `contingency.warm_cold_check_margin_pu` (default `0.02` pu) of
-the lower voltage limit, or that has an overload or a voltage violation, is
+favourable one. The cold check is an option for that case
+(`contingency.warm_cold_check`, default `false`; keyword `warm_cold_check`;
+Web UI: "Cold check of tight outages" next to the margin field): when on, a
+warm result whose lowest voltage comes within
+`contingency.warm_cold_check_margin_pu` (default `0.02` pu) of the lower
+voltage limit, or that has an overload or a voltage violation, is
 solved a second time from the file's PV/PQ state, and the less favourable of
 the two counts (more violations, then the lower lowest voltage, then the
-higher loading). The check is a switch of its own
-(`contingency.warm_cold_check`, default `true`; keyword `warm_cold_check`;
-Web UI: "Cold check of tight outages" next to the margin field); switched
-off, every outage reports its warm result.
+higher loading). Off, every outage reports its warm result.
 
 | Use | Effect |
 |---|---|
-| default | `true` (warm active set and cold check) |
+| default | warm active set `true`, cold check `false` |
 | applies when | the base case converged with Q limits on; otherwise one line in the run log says why it was not applied |
-| result | the same where the limited solution is unique; where it is not, an outage near a limit or with a violation is checked cold |
+| result | the same where the limited solution is unique; where it is not, the warm one (with the cold check on, an outage near a limit or with a violation is checked cold) |
 | an outage that does not converge from the warm state | is solved again at once from the file's PV/PQ state; `start_used` is `warm_cold` and the note says so |
-| an outage the cold check judges less favourable cold | the cold result counts; `start_used` is `warm_cold_check` and the note names the warm result |
+| with the cold check on, an outage it judges less favourable cold | the cold result counts; `start_used` is `warm_cold_check` and the note names the warm result |
 
 On case_ACTIVSg2000 (full branch N-1, 3206 outages) the warm start needs
 about half the Newton steps (8.0 to 4.2 per outage) with the same
 convergence and the same violation list. On five outages of unit
 transformers the two starts end on different solutions: seven machines hold
-their voltage warm and stay clamped cold. The cold check then reports the
-cold result, the less favourable of the two; it is a conservative choice,
-not a statement about which solution is the physical one. On case300 one
-outage converged only from the file's state and another only from the warm
+their voltage warm and stay clamped cold. Cold, they sit at their lower Q
+limit with the voltage below their setpoint, which is not a consistent
+limited state (a machine clamping twice is not released again, #475); the
+warm solution is consistent and is reported by default. With the cold check
+on, these five report the cold result, the less favourable of the two. On
+case300 one outage converged only from the file's state and another only from the warm
 state: near the limit of solvability the start decides which limited
 solution, if any, Newton reaches. The retry above keeps every
 outage the plain start solves.

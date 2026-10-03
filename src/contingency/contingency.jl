@@ -553,12 +553,11 @@ programmatic default.
 
 `warm_active_set` (default `true` since 0.30.3) starts every outage from the
 base case's PV/PQ state. Where the limited solution is not unique this can
-end on a more favourable valid solution than the cold start, so a converged
-warm result whose lowest voltage comes within `warm_cold_check_margin_pu`
-(default `0.02`) of `vm_min_pu`, or that has an overload or a voltage
-violation, is solved a second time cold and the less favourable result counts
-(`start_used = :warm_cold_check`); `warm_cold_check = false` switches that
-second solve off. See [Warm active set](@ref contingency_warm_active_set).
+end on another valid solution than the cold start. With `warm_cold_check =
+true` (default `false`) a converged warm result whose lowest voltage comes
+within `warm_cold_check_margin_pu` (default `0.02`) of `vm_min_pu`, or that
+has an overload or a voltage violation, is solved a second time cold and the
+less favourable result counts (`start_used = :warm_cold_check`). See [Warm active set](@ref contingency_warm_active_set).
 """
 function runContingencies!(
     net::Net,
@@ -576,7 +575,7 @@ function runContingencies!(
     parallel_min_work_items::Union{Nothing,Int}=nothing,
     auto_slack::Bool=true,
     warm_active_set::Bool=true,
-    warm_cold_check::Bool=true,
+    warm_cold_check::Bool=false,
     warm_cold_check_margin_pu::Float64=DEFAULT_WARM_COLD_CHECK_MARGIN_PU,
     warm_note::Union{Nothing,Base.RefValue{String}}=nothing,
     @nospecialize(progress=nothing),
