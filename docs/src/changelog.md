@@ -8,7 +8,6 @@ MATPOWER generator costs.
 - APSLF: the interim germ pin for phase shifters is removed; results are unchanged (#470).
 ## Fixed
 - `updatePQShunt!` stores the shunt in per unit like the constructor; `show` of a shunt (#474).
-- Q limits: a machine clamped twice gets one more release at the converged point when its voltage is on the release side; cold and warm N-1 starts agree again (#475).
 
 # Version 0.30.2 - 2026-10-02
 

@@ -171,9 +171,6 @@ function _handle_rectangular_qlimit_iteration!(
         get_vm_pu = bus -> abs(V[bus]),
         get_vset_pu = bus -> Vset[bus],
         v_hyst_pu = reenable_v_hyst_pu,
-        # the one-retry guard gives a twice-clamped bus one more release on
-        # a converged iterate (#475)
-        converged_iterate = converged_this_iter,
         lock_pv_to_pq_buses = lock_pv_to_pq_buses,
         on_violation! = qlimit_mode == :adjust_vset ? ((bus, qreq, side, qclamp) -> _try_adjust_vset_on_q_limit!(net, bus, side, it, controllers, base_vset, Vset, adjust_counter, qlimit_max_outer, verbose)) : nothing,
         verbose = verbose,

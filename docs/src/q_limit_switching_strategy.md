@@ -55,10 +55,7 @@ the voltage side: a machine at Qmax whose voltage sits above its setpoint
 by more than the hysteresis needs less than Qmax to hold the setpoint and
 goes back to PV; the mirror image applies at Qmin. Cooldown and the
 one-retry guard still apply, so a machine flipping between the clamp and
-the voltage constraint is held after its first retry. At the converged
-point a machine held this way gets one more release when its voltage is on
-the release side (its two clamps may stem from early iterations); a third
-clamp holds it for good (#475).
+the voltage constraint is held after its first retry.
 
 A run can converge numerically and still fail to hold every reactive
 limit: the status `converged_limits_failed` says that no admissible active
