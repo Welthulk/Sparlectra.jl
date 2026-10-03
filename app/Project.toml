@@ -1,6 +1,6 @@
 name = "SparlectraApp"
 uuid = "2e39659a-4f4c-4326-b34e-e3df865cea74"
-version = "0.30.2"
+version = "0.30.3"
 authors = ["Udo Schmitz"]
 
 [deps]

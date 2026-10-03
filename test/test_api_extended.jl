@@ -1021,7 +1021,14 @@ power_flow:
       @test occursin("calculated state of the run", calc_head)
       @test occursin("function mpc = case_api_calc_", calc_head)
       @test read(casefile) == input_bytes
-      @test SparlectraApp._matpower_calc_export_name("/x/case 9-a.m"; date = Dates.Date(2026, 9, 30)) == "case_9_a_calc_20260930.m"
+# generator costs (#471) reach the calc file unchanged: the shipped
+# sp_case9 carries a gencost block with both cost models and Q rows
+case9 = cp(joinpath(dirname(@__DIR__), "data", "mpower", "sp_case9.m"), joinpath(tmpdir, "sp_case9.m"))
+calc9 = run_sparlectra_api(casefile = case9, config_file = template, output_dir = joinpath(tmpdir, "matpower_export_9"), matpower_export_requested = true)
+@test calc9.success
+calc9_file = joinpath(tmpdir, "matpower_export_9", string("sp_case9_calc_", Dates.format(Dates.today(), "yyyymmdd"), ".m"))
+@test Sparlectra.MatpowerIO.read_case(calc9_file).gencost == Sparlectra.MatpowerIO.read_case(case9).gencost
+@test SparlectraApp._matpower_calc_export_name("/x/case 9-a.m"; date = Dates.Date(2026, 9, 30)) == "case_9_a_calc_20260930.m"
       # a run the solver rejects (wrong branch, fail mode with an
       # unreachable branch-angle bound) reports converged = false with
       # status not_converged; the numerical state stays in the metadata

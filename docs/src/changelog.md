@@ -1,3 +1,14 @@
+# Version 0.30.3 - 2026-10-03
+
+Warm active set by default, MATPOWER generator costs.
+## Added
+- MATPOWER generator costs (`mpc.gencost`) kept per generator and written back unchanged, also through SCF (#471).
+## Changed
+- warm active set is the default for N-1 and scenarios; outages near the voltage limit or with a violation are also solved cold and the less favourable result counts (`contingency.warm_cold_check_margin_pu`).
+- APSLF: the interim germ pin for phase shifters is removed; results are unchanged (#470).
+## Fixed
+- `updatePQShunt!` stores the shunt in per unit like the constructor; `show` of a shunt (#474).
+
 # Version 0.30.2 - 2026-10-02
 
 Faster N-1 and state estimation, parallel islands, island references.

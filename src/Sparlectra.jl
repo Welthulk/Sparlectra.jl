@@ -120,6 +120,7 @@ export
 
   # ProSumer
   ProSumer,
+  GenCost,                               # MATPOWER generator cost rows of a unit, kept for the export (no OPF reads them).
   AbstractVoltageDependentController,
   VoltageCharacteristic,                 # Q(U)/P(U) characteristic: points plus linear, spline or polynomial interpolation.
   PiecewiseLinearCharacteristic,         # Former name of VoltageCharacteristic, alias for one minor release.

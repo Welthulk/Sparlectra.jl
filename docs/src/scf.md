@@ -134,6 +134,13 @@ The field is optional: a file without it, every file written before 0.30.2
 included, reads unchanged with no priority on any unit. See
 [Reference priority](slack_vs_source.md#Reference-priority).
 
+Generator costs from a MATPOWER case (`mpc.gencost`) sit on their machine
+as `extra.<machine>.gencost`: `{"p": [...], "q": [...]}`, each a MATPOWER
+cost row (`MODEL`, `STARTUP`, `SHUTDOWN`, `NCOST`, then points or
+coefficients), `q` optional. No calculation reads them; they are kept so a
+MATPOWER export writes the block back unchanged. See
+[Generator costs](@ref matpower_gencost).
+
 ## Importers and the typed case
 
 Every input format has its own importer that builds the network directly
@@ -256,6 +263,7 @@ keeps every attribute PGM requires.
 | `extra.<machine>.qu_control.qmin_mvar`, `qmax_mvar`, `pu_control.pmin_mw`, `pmax_mw` | absent | no limit on the controlled value |
 | `extra.<machine>.regulated`, `apu_node` | `false` | |
 | `extra.<machine>.reference_priority` | `0` | no reference priority stated |
+| `extra.<machine>.gencost` | absent | no generator cost data |
 | `extra.<branch>.meta.sn_mva` | absent | no rating recorded |
 | `components.tap_changer[].tap_est_mode` | `"none"` | the tap is not released for estimation |
 | `components.transformer3w[].status` | `1` | in service |

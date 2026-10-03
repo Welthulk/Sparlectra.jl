@@ -350,7 +350,9 @@ function convert_case(::MatpowerAdapter, mpc, opts::MatpowerAdapterOptions)::SCF
   end
 
   regulator_rows = Tuple{Int,Int,Float64,Float64,Float64}[]  # (gen_id, node_id, u_ref, qmin, qmax)
-  for row in eachrow(genData)
+  # generator costs (#471), assigned exactly as in the direct import
+  gencost_mat = _matpower_gencost_matrix(mpc, size(genData, 1), name)
+  for (gen_row, row) in enumerate(eachrow(genData))
     Int(row[GEN_STATUS]) < 1 && continue
     orig = Int(row[GEN_BUS])
     node_id = node_id_by_orig[orig]
@@ -394,6 +396,10 @@ function convert_case(::MatpowerAdapter, mpc, opts::MatpowerAdapterOptions)::SCF
     opts.enable_pq_gen_controllers && btype == 1 && (e["pq_gen_controller"] = true)
     apf_raw = length(row) >= APF ? Float64(row[APF]) : 0.0
     (isfinite(apf_raw) && apf_raw > 0.0) && push!(participation, SCFParticipationEntry(object = id, factor = apf_raw))
+    if gencost_mat !== nothing
+      gc = _matpower_gencost_of_row(gencost_mat, size(genData, 1), gen_row)
+      e["gencost"] = gc.q === nothing ? Dict{String,Any}("p" => gc.p) : Dict{String,Any}("p" => gc.p, "q" => gc.q)
+    end
     extra[string(id)] = e
   end
 

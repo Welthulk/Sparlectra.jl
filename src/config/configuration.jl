@@ -261,8 +261,16 @@ Configuration of the N-1 contingency batch (issue #331).
   screening share and the margins once. This config key drives the SERVICE
   path; the programmatic keyword default is `:off` as well.
 - `warm_active_set::Bool`: start every outage and scenario from the base
-  case's PV/PQ state (default `false`); see [N-1 Contingency
+  case's PV/PQ state (default `true` since 0.30.3); see [N-1 Contingency
   Analysis](@ref contingency_warm_active_set).
+- `warm_cold_check::Bool`: switch for the cold check below (default `true`);
+  `false` reports the warm result alone, also where it is the more favourable
+  of two valid solutions.
+- `warm_cold_check_margin_pu::Float64`: with the warm active set, an outage
+  or scenario whose lowest voltage comes within this margin of the lower
+  voltage limit, or that has an overload or a voltage violation, is solved
+  a second time cold (from the file's PV/PQ state) and the less favourable of
+  the two results counts (default `0.02`).
 - `screening_margin_pct::Float64`: the flagging margin (default `10.0`): a
   scenario is flagged for the full run when a branch's estimated loading
   plus the change the outage causes on it (at least 1 point, at most the
@@ -275,10 +283,21 @@ Base.@kwdef struct ContingencyConfig
   screening_margin_pct::Float64 = 10.0
   # warm active set (0.30.2): outages and scenarios start from the base
   # case's PV/PQ state (its clamped machines as PQ at the reached limit);
-  # the release rule stays free to undo a clamp. Off by default: it can
-  # change the limited solution where the active set is not unique.
-  warm_active_set::Bool = false
+  # the release rule stays free to undo a clamp. Default since 0.30.3,
+  # together with the cold check below: where the active set is not unique
+  # the warm start can land on a different, more favourable solution
+  # (ACTIVSg2000: five outages up to 0.011 pu higher min Vm than cold); the
+  # cold check reports the less favourable one, a conservative choice
+  warm_active_set::Bool = true
+  # the cold check of the warm active set: when on, a warm result within this
+  # margin (pu) above the lower voltage limit, or with a violation, is solved
+  # again cold and the less favourable result counts
+  warm_cold_check::Bool = true
+  warm_cold_check_margin_pu::Float64 = 0.02
 end
+
+# the default of the cold-check margin, one source with the struct above
+const DEFAULT_WARM_COLD_CHECK_MARGIN_PU = ContingencyConfig().warm_cold_check_margin_pu
 
 const CONTINGENCY_SCREENING_MODE_VALUES = (:off, :flag, :only)
 
@@ -2025,8 +2044,11 @@ function ContingencyConfig(raw::AbstractDict)
   mode = _validate_allowed_symbol("contingency.screening.mode", _as_symbol_cfg(_raw_get(screening, "mode", :off)), CONTINGENCY_SCREENING_MODE_VALUES)
   margin = _as_float_cfg(_raw_get(screening, "margin_pct", 10.0))
   (isfinite(margin) && margin >= 0.0) || throw(ArgumentError("contingency.screening.margin_pct must be a finite value >= 0; got $(margin)."))
-  warm = _as_bool_cfg(_raw_get(merged, "warm_active_set", false))
-  return ContingencyConfig(rescue_ladder = ladder, screening_mode = mode, screening_margin_pct = margin, warm_active_set = warm)
+  warm = _as_bool_cfg(_raw_get(merged, "warm_active_set", true))
+  cold_check = _as_bool_cfg(_raw_get(merged, "warm_cold_check", true))
+  cold_margin = _as_float_cfg(_raw_get(merged, "warm_cold_check_margin_pu", DEFAULT_WARM_COLD_CHECK_MARGIN_PU))
+  (isfinite(cold_margin) && cold_margin >= 0.0) || throw(ArgumentError("contingency.warm_cold_check_margin_pu must be a finite value >= 0; got $(cold_margin)."))
+  return ContingencyConfig(rescue_ladder = ladder, screening_mode = mode, screening_margin_pct = margin, warm_active_set = warm, warm_cold_check = cold_check, warm_cold_check_margin_pu = cold_margin)
 end
 
 # The deprecated diagnostics.* duplicates of output.* are warned about (and

@@ -201,6 +201,41 @@ function test_NBI_MDO()
   return result
 end
 
+# updatePQShunt! must set the same per-unit admittance as the constructor path
+# (addShunt!): it used to store G and B in Siemens (p / vn_kV^2) next to a
+# per-unit y, so the two writers of these fields disagreed. Both shunts must
+# give the same power flow, and `show` must write its whole text to its own
+# stream (a `print(IO, ...)` sent part of it to stdout).
+function test_shunt_update_matches_constructor()::Bool
+  function shunt_net(p, q)
+    net = Net(name = "shunt_update", baseMVA = 100.0)
+    addBus!(net = net, busName = "S", vn_kV = 110.0)
+    addBus!(net = net, busName = "L", vn_kV = 110.0)
+    addPIModelACLine!(net = net, fromBus = "S", toBus = "L", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+    addProsumer!(net = net, busName = "S", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "S")
+    addProsumer!(net = net, busName = "L", type = "ENERGYCONSUMER", p = 40.0, q = 10.0)
+    addShunt!(net = net, busName = "L", pShunt = p, qShunt = q)
+    return net
+  end
+  a = shunt_net(2.0, 8.0)
+  b = shunt_net(0.0, 0.0)
+  updatePQShunt!(b.shuntVec[1], 2.0, 8.0)
+  sa, sb = a.shuntVec[1], b.shuntVec[1]
+  same_y = sa.y_pu_shunt == sb.y_pu_shunt && sa.G_shunt == sb.G_shunt && sa.B_shunt == sb.B_shunt
+  # 8 MVar at 1 pu on a 100 MVA base is 0.08 pu (the Siemens value would be 8 / 110^2)
+  per_unit = isapprox(sb.G_shunt, 0.02; atol = 1e-15) && isapprox(sb.B_shunt, 0.08; atol = 1e-15)
+  _, ea = runpf!(a, 30, 1e-10, 0)
+  _, eb = runpf!(b, 30, 1e-10, 0)
+  dvm = maximum(abs(x._vm_pu - y._vm_pu) for (x, y) in zip(a.nodeVec, b.nodeVec))
+  dva = maximum(abs(x._va_deg - y._va_deg) for (x, y) in zip(a.nodeVec, b.nodeVec))
+  same_pf = ea == 0 && eb == 0 && dvm < 1e-12 && dva < 1e-10
+  shown = sprint(show, sb)
+  whole_show = occursin(string(sb.y_pu_shunt), shown)
+  ok = same_y && per_unit && same_pf && whole_show
+  ok || @warn "updatePQShunt! and the constructor disagree" same_y per_unit same_pf dvm dva whole_show
+  return ok
+end
+
 function testNetwork()::Bool
   myNet = createCIGRE()
   result, msg = validate!(net = myNet)
@@ -3718,6 +3753,7 @@ function run_grid_fast_tests()
     @testset "Transformer and network validation" begin (function ()
       @test test_2WTPITrafo() == true
       @test test_3WTPITrafo() == true
+      @test test_shunt_update_matches_constructor() == true
       @test testNetwork() == true
       @test testISOBusses() == true
     end)() end

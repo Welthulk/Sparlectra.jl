@@ -73,6 +73,15 @@ end
 _scf_num(v, context::AbstractString)::Float64 = v isa Number ? Float64(v) : throw(ArgumentError("SCF: $(context) must be a number, got $(repr(v))."))
 _scf_int(v, context::AbstractString)::Int = v isa Integer ? Int(v) : (v isa AbstractFloat && isinteger(v) ? Int(v) : throw(ArgumentError("SCF: $(context) must be an integer, got $(repr(v)).")))
 
+# extra.<appliance>.gencost: {"p": [...], "q": [...]} with MATPOWER gencost
+# rows (q optional), see GenCost
+function _scf_gencost(v, name::AbstractString)::GenCost
+  v isa AbstractDict || throw(ArgumentError("SCF: extra.gencost of $(name) must be an object with \"p\" (and optionally \"q\")."))
+  haskey(v, "p") || throw(ArgumentError("SCF: extra.gencost of $(name) has no \"p\" row."))
+  row(x, which) = (x isa AbstractVector && all(y -> y isa Real, x)) ? Float64.(x) : throw(ArgumentError("SCF: extra.gencost.$(which) of $(name) must be a list of numbers."))
+  return GenCost(row(v["p"], "p"), haskey(v, "q") ? row(v["q"], "q") : nothing)
+end
+
 # extra.<appliance>.reference_priority: a non-negative integer with CGMES
 # semantics (0 = no preference, 1 = strongest); anything else is a broken
 # file and is named, not clamped
@@ -822,6 +831,9 @@ function _scf_net_from_case(case::SCFCase)::Net
       # the APU flag is derived from the bus type AT CONSTRUCTION time, and the
       # reader sets the final bus types first, so it must come from the file
       _scf_get(e, "apu_node", false) === true && (ps.isAPUNode = true)
+      # MATPOWER generator costs (#471): optional, validated like the MATPOWER
+      # import (GenCost throws on a row that is not a model 1 or 2 row)
+      haskey(e, "gencost") && (ps.gencost = _scf_gencost(e["gencost"], ctrl_name))
       # addProsumer! auto-regulates anything that carries a voltage setpoint,
       # so restoring the setpoint of an UNREGULATED machine would silently
       # promote it to a PV generator. The file knows which it was.

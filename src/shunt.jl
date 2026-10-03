@@ -136,10 +136,10 @@ mutable struct Shunt
     print(io, "model: ", shunt.model, ", ")
     print(io, "status: ", shunt.status, ", ")
     print(io, "p_shunt: ", shunt.p_shunt, " MW, ")
-    print(io, "q_shunt: ", shunt.q_shunt, " MVar ")
-    print(io, "G_shunt: ", shunt.G_shunt, " S, ")
-    print(io, "B_shunt: ", shunt.B_shunt, " S ")
-    print(IO, "y_pu_shunt: ", shunt.y_pu_shunt)
+    print(io, "q_shunt: ", shunt.q_shunt, " MVar, ")
+    print(io, "G_shunt: ", shunt.G_shunt, " pu, ")
+    print(io, "B_shunt: ", shunt.B_shunt, " pu, ")
+    print(io, "y_pu_shunt: ", shunt.y_pu_shunt)
     print(io, ")")
   end
 
@@ -157,7 +157,9 @@ end
 """
     getPQShunt(o) -> (p, q)
 
-The nominal shunt draw in MW/MVar at 1 pu voltage.
+The shunt draw in MW/MVar: 0 after construction, the draw at 1 pu voltage
+after [`updatePQShunt!`](@ref), and the solved draw (scaled with the squared
+bus voltage) after a power flow.
 """
 function getPQShunt(o::Shunt)::Tuple{Float64,Float64}
   return (o.p_shunt, o.q_shunt)
@@ -166,14 +168,20 @@ end
 """
     updatePQShunt!(o, p, q)
 
-Update the shunt draw and recompute its per-unit admittance.
+Set the shunt from its draw `p`/`q` in MW/MVar at 1 pu voltage, the same
+way the constructor and `addShunt!` do: the per-unit admittance becomes
+`y_pu_shunt = (p + jq) / baseMVA`, `G_shunt`/`B_shunt` its real and imaginary
+part (per unit), and `p_shunt`/`q_shunt` hold `p`/`q` until the next power
+flow writes the solved draw.
 """
 function updatePQShunt!(o::Shunt, p::Float64, q::Float64)
   o.p_shunt = p
   o.q_shunt = q
-  o.G_shunt = p / o.vn_kV^2
-  o.B_shunt = q / o.vn_kV^2
-  o.y_pu_shunt = Complex(o.p_shunt, o.q_shunt) / o.baseMVA
+  o.y_pu_shunt = ComplexF64(p, q) / o.baseMVA
+  # per unit like the constructor; this used to store p / vn_kV^2 (Siemens)
+  o.G_shunt = real(o.y_pu_shunt)
+  o.B_shunt = imag(o.y_pu_shunt)
+  return nothing
 end
 
 

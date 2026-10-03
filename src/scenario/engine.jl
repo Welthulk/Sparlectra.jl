@@ -93,6 +93,11 @@ struct ScenarioEngine
   # bus an island without a slack was given): a case names a reference as
   # taken over only when it is none of these
   base_reference_buses::Set{Int}
+  # the cold check of the warm active set (0.30.3): when switched on, a warm
+  # result within this margin above vm_min_pu, or with a violation, is solved
+  # cold as well
+  warm_cold_check::Bool
+  warm_cold_check_margin_pu::Float64
 end
 
 """
@@ -104,10 +109,11 @@ exactly the old `runContingencies!` preamble), clear the solver status
 and Q-limit logs the workers must not inherit, and record the base branch
 loadings. `net` itself is never mutated.
 """
-function ScenarioEngine(net::Net; vm_min_pu::Float64 = 0.9, vm_max_pu::Float64 = 1.1, maxIte::Int = 30, tol::Float64 = 1e-8, ladder::Vector{Symbol} = Symbol[:warm], index::Union{Nothing,ScenarioIndex} = nothing, pf_kwargs = NamedTuple(), screening_mode::Symbol = :off, screening_margin_pct::Float64 = 10.0, warm_active_set::Bool = false, warm_note::Union{Nothing,Base.RefValue{String}} = nothing)
+function ScenarioEngine(net::Net; vm_min_pu::Float64 = 0.9, vm_max_pu::Float64 = 1.1, maxIte::Int = 30, tol::Float64 = 1e-8, ladder::Vector{Symbol} = Symbol[:warm], index::Union{Nothing,ScenarioIndex} = nothing, pf_kwargs = NamedTuple(), screening_mode::Symbol = :off, screening_margin_pct::Float64 = 10.0, warm_active_set::Bool = true, warm_note::Union{Nothing,Base.RefValue{String}} = nothing, warm_cold_check::Bool = true, warm_cold_check_margin_pu::Float64 = DEFAULT_WARM_COLD_CHECK_MARGIN_PU)
   screening_mode in CONTINGENCY_SCREENING_MODE_VALUES || throw(ArgumentError("ScenarioEngine: screening_mode must be one of $(CONTINGENCY_SCREENING_MODE_VALUES), got :$(screening_mode)."))
   (isfinite(screening_margin_pct) && screening_margin_pct >= 0.0) || throw(ArgumentError("ScenarioEngine: screening_margin_pct must be a finite value >= 0."))
   vm_min_pu < vm_max_pu || throw(ArgumentError("ScenarioEngine: vm_min_pu must be below vm_max_pu."))
+  (isfinite(warm_cold_check_margin_pu) && warm_cold_check_margin_pu >= 0.0) || throw(ArgumentError("ScenarioEngine: warm_cold_check_margin_pu must be a finite value >= 0."))
   template = deepcopy(net)
   base_converged = try
     _, base_erg = runpf!(template, maxIte, tol, 0; islands_enabled = true, pf_kwargs...)
@@ -199,7 +205,7 @@ function ScenarioEngine(net::Net; vm_min_pu::Float64 = 0.9, vm_max_pu::Float64 =
   for row in detect_ac_islands(template; promote_generators = true).rows
     row.chosen_ref_bus > 0 && push!(base_refs, Int(row.chosen_ref_bus))
   end
-  return ScenarioEngine(template, base_converged, base_loadings, index, vm_min_pu, vm_max_pu, maxIte, tol, ladder, pf_kwargs, screening_mode, screening_margin_pct, screen, base_refs)
+  return ScenarioEngine(template, base_converged, base_loadings, index, vm_min_pu, vm_max_pu, maxIte, tol, ladder, pf_kwargs, screening_mode, screening_margin_pct, screen, base_refs, warm_cold_check, warm_cold_check_margin_pu)
 end
 
 # --- worker reset -------------------------------------------------------------
@@ -1000,6 +1006,14 @@ function evaluate!(engine::ScenarioEngine, worker::ScenarioWorker, it::_Scenario
     cold = _evaluate_outage_item!(engine, worker, it; cold = true)
     cold.converged && return _warm_cold_result(cold)
   end
+  # cold check (0.30.3): a converged warm result near the lower voltage
+  # limit or with a violation is solved cold as well, the less favourable
+  # result counts (where the active set is not unique the warm start can
+  # land on a more favourable valid solution than the cold one)
+  if _warm_needs_cold_check(engine, result)
+    cold = _evaluate_outage_item!(engine, worker, it; cold = true)
+    _contingency_less_favourable(cold, result) && return _warm_checked_result(cold, result)
+  end
   return result
 end
 
@@ -1025,6 +1039,43 @@ function _evaluate_outage_item!(engine::ScenarioEngine, worker::ScenarioWorker, 
 end
 
 # a cold-retry result: start_used names the retry, the note says why
+# The cold check of the warm active set (0.30.3): only a CONVERGED warm
+# result is checked (a failed one already gets the cold retry), and only
+# where it matters: the lowest voltage within the margin above the lower
+# limit, or any overload or voltage violation.
+function _warm_needs_cold_check(engine::ScenarioEngine, r::ContingencyResult)::Bool
+  engine.warm_cold_check || return false
+  haskey(engine.pf_kwargs, :qlimit_warm_clamps) || return false
+  r.converged || return false
+  return r.min_vm_pu < engine.vm_min_pu + engine.warm_cold_check_margin_pu || !isempty(r.overloads) || !isempty(r.voltage_violations)
+end
+
+# "less favourable", in this order: a converged result against a failed one
+# never loses (a failed cold solve leaves the warm result standing); more
+# violations (overloads plus voltage violations); then the lower lowest
+# voltage; then the higher largest branch loading. Voltages within 1e-6 pu
+# and loadings within 0.01 percentage points count as equal (the tolerance
+# of the N-1 power-mode comparison, #459): two solves of the same solution
+# differ in the last digits, and without it the rounding noise decided
+# (sp_case118: 25 of 240 outages took a cold result identical to the warm).
+const _WARM_CHECK_VM_TOL_PU = 1.0e-6
+const _WARM_CHECK_LOADING_TOL_PCT = 0.01
+function _contingency_less_favourable(a::ContingencyResult, b::ContingencyResult)::Bool
+  a.converged || return false
+  b.converged || return true
+  va = length(a.overloads) + length(a.voltage_violations)
+  vb = length(b.overloads) + length(b.voltage_violations)
+  va != vb && return va > vb
+  abs(a.min_vm_pu - b.min_vm_pu) > _WARM_CHECK_VM_TOL_PU && return a.min_vm_pu < b.min_vm_pu
+  return a.max_branch_loading_pct > b.max_branch_loading_pct + _WARM_CHECK_LOADING_TOL_PCT
+end
+
+function _warm_checked_result(cold::ContingencyResult, warm::ContingencyResult)::ContingencyResult
+  why = string("warm active set result (min Vm ", round(warm.min_vm_pu; digits = 5), " pu) replaced by the less favourable cold solve")
+  note = (cold.error === nothing || isempty(cold.error)) ? why : string(cold.error, "; ", why)
+  return ContingencyResult(cold.name, cold.weight, cold.converged, cold.iterations, :warm_cold_check, cold.max_vm_pu, cold.min_vm_pu, cold.max_branch_loading_pct, cold.severity, cold.overloads, cold.voltage_violations, cold.island_count, cold.shed_load_mw, note)
+end
+
 function _warm_cold_result(r::ContingencyResult)::ContingencyResult
   why = "warm active set did not converge, solved from the file's PV/PQ state"
   note = (r.error === nothing || isempty(r.error)) ? why : string(r.error, "; ", why)
@@ -1047,6 +1098,14 @@ function evaluate!(engine::ScenarioEngine, worker::ScenarioWorker, it::_Scenario
     restore!(work, undo)
     _reset_scenario_worker!(work, engine.template)
     cold.converged && return _warm_cold_result(cold)
+  end
+  # the same cold check as for an outage item
+  if _warm_needs_cold_check(engine, result)
+    undo = apply!(work, it.scenario.ops, engine.index)
+    cold = _evaluate_outaged_net!(engine, work, it.scenario.name, it.scenario.weight; cold = true)
+    restore!(work, undo)
+    _reset_scenario_worker!(work, engine.template)
+    _contingency_less_favourable(cold, result) && return _warm_checked_result(cold, result)
   end
   return result
 end
@@ -1225,7 +1284,9 @@ function runScenarios!(
   parallel_max_tasks::Union{Nothing,Int} = nothing,
   parallel_min_work_items::Union{Nothing,Int} = nothing,
   auto_slack::Bool = true,
-  warm_active_set::Bool = false,
+  warm_active_set::Bool = true,
+  warm_cold_check::Bool = true,
+  warm_cold_check_margin_pu::Float64 = DEFAULT_WARM_COLD_CHECK_MARGIN_PU,
   warm_note::Union{Nothing,Base.RefValue{String}} = nothing,
   @nospecialize(progress = nothing),
   kwargs...,
@@ -1234,7 +1295,7 @@ function runScenarios!(
   scenarios = expand_scenarios(set, net, index)
   isempty(scenarios) && return screening_mode === :off ? ContingencyResult[] : ScenarioResult[]
   ladder = _validate_contingency_ladder(rescue_ladder; context = "runScenarios!: rescue_ladder")
-  engine = ScenarioEngine(net; vm_min_pu = vm_min_pu, vm_max_pu = vm_max_pu, maxIte = maxIte, tol = tol, ladder = ladder, index = index, pf_kwargs = (; auto_slack = auto_slack, kwargs...), screening_mode = screening_mode, screening_margin_pct = screening_margin_pct, warm_active_set = warm_active_set, warm_note = warm_note)
+  engine = ScenarioEngine(net; vm_min_pu = vm_min_pu, vm_max_pu = vm_max_pu, maxIte = maxIte, tol = tol, ladder = ladder, index = index, pf_kwargs = (; auto_slack = auto_slack, kwargs...), screening_mode = screening_mode, screening_margin_pct = screening_margin_pct, warm_active_set = warm_active_set, warm_note = warm_note, warm_cold_check = warm_cold_check, warm_cold_check_margin_pu = warm_cold_check_margin_pu)
   items = _ScenarioItem[_engine_item_from_scenario(s, index) for s in scenarios]
   return _run_engine_batch(engine, items; parallel_enabled = parallel_enabled, parallel_max_tasks = parallel_max_tasks, parallel_min_work_items = parallel_min_work_items, progress = progress)
 end
