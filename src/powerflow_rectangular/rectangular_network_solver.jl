@@ -561,6 +561,10 @@ function runpf_rectangular!(
     _bus_voltage_setpoints_from_prosumers(net; performance_profile = performance_profile)
   end
 
+  # isolated rows: their injection is zero; kept as a list because a
+  # voltage-dependent controller rebuilds S every iteration (see the Newton
+  # loop) and the zero has to be applied again there
+  isolated_rows = Int[]
   _perf_profile_time!(performance_profile, :solver_bus_type_scan) do
     @inbounds for (k, node) in enumerate(nodes)
       BusType = getNodeType(node)
@@ -575,6 +579,7 @@ function runpf_rectangular!(
         # Their injections are forced to zero so they do not affect the solved grid.
         bus_types[k] = :PQ
         S[k] = 0.0 + 0.0im
+        push!(isolated_rows, k)
       else
         error("runpf_rectangular!: unsupported bus type at bus $k, given: $(BusType)")
       end
@@ -1012,6 +1017,16 @@ function runpf_rectangular!(
     if has_vdep_control
       S, dPinj_dVm, dQinj_dVm = _perf_profile_time!(performance_profile, :iteration_controlled_injections) do
         buildControlledSVec(net, V)
+      end
+      # the rebuild covers every bus; an isolated bus stays a neutral row.
+      # Without this its schedule came back each iteration and left a
+      # residual no Newton step can remove (N-1 on case6495rte with its 91
+      # P(U)/Q(U) controllers: every outage that cut off a loaded bus
+      # stagnated at that load instead of solving the remaining network)
+      @inbounds for k in isolated_rows
+        S[k] = 0.0 + 0.0im
+        dPinj_dVm[k] = 0.0
+        dQinj_dVm[k] = 0.0
       end
     end
 

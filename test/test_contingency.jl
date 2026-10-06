@@ -419,6 +419,15 @@ function run_contingency_tests()
       load_cut = only(r for r in res if r.shed_load_mw > 0.0)
       @test load_cut.shed_load_mw == 7.0
       @test startswith(load_cut.error, "islanded: bus C cut off, 7.0 MW load disconnected")
+      # the same cut-off with a Q(U) controller anywhere in the net: the
+      # controller rebuilds the injections every iteration, and the cut-off
+      # load used to come back as a residual no step could remove (case6495rte
+      # with its P(U)/Q(U) controllers: the outage stagnated at that load)
+      qnet = deepcopy(net)
+      addProsumer!(net = qnet, busName = "B", type = "GENERATOR", p = 2.0, q = 0.0, qu_controller = QUController(VoltageCharacteristic([(0.95, 0.05), (1.05, -0.05)]); qmin_pu = -0.1, qmax_pu = 0.1))
+      qres = runContingencies!(qnet, [c for c in generateN1Branches(qnet) if c.element == only(r.name for r in res if r === load_cut)]; parallel_enabled = false)
+      @test only(qres).converged
+      @test startswith(only(qres).error, "islanded: bus C cut off, 7.0 MW load disconnected")
       unit_cut = only(r for r in res if r.error !== nothing && occursin("bus G cut off", r.error))
       @test occursin("1 generating unit(s) with 4.0 MW out of service", unit_cut.error)
       @test unit_cut.shed_load_mw == 0.0
