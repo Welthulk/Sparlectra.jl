@@ -361,3 +361,26 @@ function createTest3BusNet(; cooldown = 0, hyst_pu = 0.0, qlim_min = nothing, ql
 
   return Bus3Net
 end
+
+# A small network with one three-winding transformer in the star equivalent
+# (add3WTPiModelTrafo!): B1 (380 kV, reference) -- line -- B2; transformer
+# B2/B3/B4 (380/110/20 kV) with its star point Aux3WT_B2_B3_B4; a parallel
+# two-winding transformer B2-B3, so the whole three-winding transformer out
+# still supplies B3 and B5 (40 MW behind a 110 kV line); B4 (2 MW) hangs on
+# the three-winding transformer alone. Shared by the N-1 and scenario tests.
+function three_winding_star_net()::Net
+  net = Net(name = "n1_3wt_star", baseMVA = 100.0)
+  addBus!(net = net, busName = "B1", vn_kV = 380.0)
+  addBus!(net = net, busName = "B2", vn_kV = 380.0)
+  addBus!(net = net, busName = "B3", vn_kV = 110.0)
+  addBus!(net = net, busName = "B4", vn_kV = 20.0)
+  addBus!(net = net, busName = "B5", vn_kV = 110.0)
+  addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
+  addACLine!(net = net, fromBus = "B1", toBus = "B2", length = 1.0, r = 0.003, x = 0.03)
+  add3WTPiModelTrafo!(net = net, HBBus = "B2", MBBus = "B3", LVBus = "B4", r = (0.2, 0.3, 0.4), x = (4.0, 6.0, 10.0), b = (0.0, 0.0, 0.0), ratedU_kV = (380.0, 110.0, 20.0), ratedS_MVA = (300.0, 200.0, 50.0), status = 1)
+  add2WTrafo!(net = net, fromBus = "B2", toBus = "B3", sn_mva = 300.0, vk_percent = 12.0, vkr_percent = 0.3, pfe_kw = 0.0, i0_percent = 0.0)
+  addACLine!(net = net, fromBus = "B3", toBus = "B5", length = 1.0, r = 0.01, x = 0.04)
+  addProsumer!(net = net, busName = "B5", type = "ENERGYCONSUMER", p = 40.0, q = 10.0)
+  addProsumer!(net = net, busName = "B4", type = "ENERGYCONSUMER", p = 2.0, q = 0.5)
+  return net
+end

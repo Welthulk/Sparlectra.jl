@@ -60,9 +60,21 @@ function _scf_contingency_cases_from_file(case_path::AbstractString, study::Abst
   # nor a generator is a broken case list and says so here.
   branch_names = Set(getCompName(br.comp) for br in net.branchVec)
   gen_cases = Dict(c.element => c for c in generateN1Generators(net))
+  # a case that lists exactly the legs of one three-winding transformer is
+  # that transformer as a whole (it trips as one element)
+  star_names = Dict{Int,String}(idx => name for (name, idx) in net.busDict)
+  leg_sets = Dict(Set(getCompName(net.branchVec[k].comp) for k in g.legs) => g for g in _three_winding_groups(net))
   out = ContingencyCase[]
   for case in get(study, "cases", [])
     outages = get(case, "outages", [])
+    if length(outages) > 1
+      legs = Set(name_of(_scf_int(o["component"], "a contingency outage component")) for o in outages)
+      grp = get(leg_sets, legs, nothing)
+      if grp !== nothing
+        push!(out, ContingencyCase(String(get(case, "name", grp.name)), :transformer3w, star_names[grp.star], haskey(case, "weight") ? Float64(case["weight"]) : 1.0))
+        continue
+      end
+    end
     length(outages) == 1 || throw(ArgumentError("SCF contingencies: case $(get(case, "name", "?")) lists $(length(outages)) outages; the N-1 runner takes one element per case (common-mode and N-2 studies are not supported yet)."))
     element = name_of(_scf_int(only(outages)["component"], "a contingency outage component"))
     kind = element in branch_names ? :branch : haskey(gen_cases, element) ? :gen : throw(ArgumentError("SCF contingencies: $(repr(element)) is neither an in-service branch nor a generator of this network."))
@@ -333,6 +345,8 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
     results = runContingencies!(net, cases; rescue_ladder = config.contingency.rescue_ladder, maxIte = config.contingency.max_iter, base_maxIte = config.powerflow.max_iter, screening_mode = screen_mode, screening_margin_pct = screen_margin, warm_active_set = config.contingency.warm_active_set, warm_cold_check = config.contingency.warm_cold_check, warm_cold_check_margin_pu = config.contingency.warm_cold_check_margin_pu, warm_note = warm_note, progress = progress, dslack_kwargs...)
   end
   n_screened = eltype(results) === ScenarioResult ? count(r -> r.screened, results) : 0
+  # a requested screening the network does not allow is named in run.log
+  screen_reason = screen_mode === :off ? nothing : _screening_unavailable_reason(net)
   report = buildContingencyReport(results)
   csv = writeContingencyResultsCSV(joinpath(output_dir, "contingency_n1.csv"), results; format = String(config.output.csv_format))
 
@@ -359,6 +373,8 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
     println(io, "slack: ", dslack.enabled ? "distributed (power_flow.distributed_slack, p_mode $(dslack.p_mode))" : "single reference bus per island (power_flow.distributed_slack is off)")
     if screen_mode === :off
       println(io, "screening: off (every scenario fully solved)")
+    elseif screen_reason !== nothing
+      println(io, "screening: ", screen_mode, " requested but not available: ", screen_reason, "; every scenario fully solved")
     else
       println(io, "screening: ", screen_mode, " (margin ", screen_margin, " %), ", n_screened, " of ", length(results), " scenario(s) screened; screened rows carry first-order estimates, not full solves")
     end

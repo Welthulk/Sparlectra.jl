@@ -142,8 +142,10 @@ _effective_bus_name(busNameByIdx::AbstractDict, net::Net, bus_idx::Int)::String 
 # presentation only (result table, structured report, CSV/JSON rows).
 _is_external_grid_internal_bus(name::AbstractString)::Bool = endswith(name, "__extgrid_int")
 
-function _bus_type_label(nodeType, name::AbstractString)::String
+function _bus_type_label(nodeType, name::AbstractString; star::Bool = false)::String
   nodeType == Sparlectra.Slack && _is_external_grid_internal_bus(name) && return "SOURCE"
+  # a three-winding star point: a computational node, shown but marked
+  star && return "AUX"
   return toString(nodeType)
 end
 
@@ -493,6 +495,7 @@ function buildACPFlowReport(net::Net; ct::Float64 = 0.0, ite::Int = 0, tol::Floa
   nodes_sorted = sort(net.nodeVec, by = x -> x.busIdx)
   power_components = _bus_power_component_cache(net)
   control_labels = _bus_control_flag_cache(net)
+  stars = _three_winding_star_points(net)
 
   node_rows = NamedTuple[]
   for n in nodes_sorted
@@ -502,7 +505,7 @@ function buildACPFlowReport(net::Net; ct::Float64 = 0.0, ite::Int = 0, tol::Floa
       (
         bus = n.busIdx,
         bus_name = _effective_bus_name(busNameByIdx, net, n.busIdx),
-        type = _bus_type_label(n._nodeType, _effective_bus_name(busNameByIdx, net, n.busIdx)),
+        type = _bus_type_label(n._nodeType, _effective_bus_name(busNameByIdx, net, n.busIdx); star = n.busIdx in stars),
         vm_pu = n._vm_pu,
         va_deg = n._va_deg,
         vn_kV = n.comp.cVN,
@@ -907,7 +910,9 @@ function printACPFlowResults(
         nslack += 1
       end
     end
-    if occursin("_Aux_", n.comp.cName)
+    # auxiliary buses (star points and other internal nodes); the component
+    # name of an isAux build starts with "Aux_" (getNodeComp)
+    if _is_aux_node(n)
       auxb += 1
     end
   end
@@ -1128,6 +1133,7 @@ function printACPFlowResults(
   pShunt_str = qShunt_str = ""
   tpShunt = tqShunt = 0.0
   shown_bus_rows = 0
+  stars = _three_winding_star_points(net)
   for n in nodes
     if !isnothing(max_rows) && shown_bus_rows >= max_rows
       break
@@ -1176,7 +1182,7 @@ function printACPFlowResults(
       qShunt_str = ""
     end
     nodeName = get(busNameByIdx, n.busIdx, n.comp.cName)
-    typeStr = _bus_type_label(n._nodeType, nodeName)
+    typeStr = _bus_type_label(n._nodeType, nodeName; star = n.busIdx in stars)
     controlStr = _cached_control_label(control_labels, n.busIdx)
     if n.busIdx in open_end_buses
       controlStr = (isempty(controlStr) || controlStr == "-") ? "open-end" : string(controlStr, ",open-end")

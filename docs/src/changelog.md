@@ -1,8 +1,12 @@
 # Version 0.31.1 - 2026-10-06
 
-Flat start of three-winding star points.
+Flat start of three-winding star points, N-1 fixes.
 ## Changed
 - Flat start: three-winding star points start at the ratio of their stiffest winding, so the CGMES MiniGrid also solves from the bare flat start with the polar update.
+- N-1: a three-winding transformer trips as a whole (one case named after it), and its star point no longer counts for voltage limits.
+- Web UI: the N-1 settings, with the outage iteration limit, sit in their own box on the Settings page.
+## Fixed
+- N-1 outages start from the solved base case also when the configuration sets a flat start (case6495rte: no outage converged before).
 
 # Version 0.31.0 - 2026-10-05
 

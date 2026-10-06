@@ -440,6 +440,31 @@ function run_contingency_tests()
       @test !occursin("island", taken[1].error)
       plain = runContingencies!(net, units; parallel_enabled = false, auto_slack = false)
       @test any(r -> !r.converged && occursin("no slack bus", r.error), plain)
+
+      # a three-winding transformer (star equivalent) trips as a whole: one
+      # case named after it, no single-winding case unless asked for; with
+      # the transformer out the isolated star point is dropped silently and
+      # only the real bus behind it (B4, 2 MW) is reported
+      star = three_winding_star_net()
+      grp = only(Sparlectra._three_winding_groups(star))
+      legs = Set(getCompName(star.branchVec[k].comp) for k in grp.legs)
+      cases3 = generateN1Branches(star)
+      t3 = only(c for c in cases3 if c.kind === :transformer3w)
+      @test t3.name == "B2_B3_B4"
+      @test !any(c -> c.element in legs, cases3)
+      @test count(c -> c.element in legs, generateN1Branches(star; three_winding_legs = true)) == 3
+      r3 = only(redirect_stdout(() -> runContingencies!(star, [t3]; parallel_enabled = false), devnull))
+      @test r3.converged
+      @test r3.shed_load_mw == 2.0
+      @test r3.error == "islanded: bus B4 cut off, 2.0 MW load disconnected; the remaining network solved"
+      # the star point never counts for the voltage band: an upper limit just
+      # below its solved voltage flags the visible buses above it, not it
+      runpf!(star, 30, 1e-8, 0)
+      vstar = star.nodeVec[grp.star]._vm_pu
+      m = Sparlectra._contingency_metrics(star, 0.9, vstar - 1e-6, Dict{String,Float64}())
+      @test !("Aux3WT_B2_B3_B4" in m.violations)
+      @test !isempty(m.violations)
+      @test m.vmin == minimum(star.nodeVec[k]._vm_pu for k in eachindex(star.nodeVec) if k != grp.star)
     end)() end
 
     @testset "overload reporting (#331 Phase 4)" begin (function ()
@@ -483,6 +508,12 @@ function run_contingency_tests()
       txt = sprint(printContingencyReport, rep)
       @test occursin("N-1 contingency report", txt)
       @test occursin("most-overloaded branches", txt)
+      # parallel circuits share a name: three overload records of one name in
+      # ONE contingency count that contingency once (case6495rte reported a
+      # branch overloaded by 21045 of 9019 contingencies)
+      rec = OverloadRecord("PAR", 112.0, 90.0, 22.0, 112.0, 100.0)
+      twins = [ContingencyResult("out$(k)", 1.0, true, 3, :warm, 1.0, 0.95, 112.0, 12.0, [rec, rec, rec], String[], 1, 0.0, nothing) for k in 1:2]
+      @test buildContingencyReport(twins).top_overloaded == ["PAR" => 2]
 
       # shed_load_mw is a structured field and feeds the report's shed total.
       # Cutting M-L1 strands the load-only island {L1, L2} (7 + 3 MW); the slack
@@ -589,6 +620,17 @@ function run_contingency_tests()
       # default [:warm]: converged cases report :warm, failed cases :none
       base = runContingencies!(net, cases)
       @test all(r -> r.converged ? r.start_used === :warm : r.start_used === :none, base)
+      # :warm starts from the solved base voltages even when the imported
+      # net carries a flat-start flag (power_flow.flatstart = true): the
+      # flag only changes how the BASE case starts, so every outage takes
+      # the same iterations and lands on the same solution. Before 0.31.1
+      # the flag turned each :warm stage into a plain flat start
+      # (case6495rte: no outage converged).
+      flagged = load_fixture_net("sp_case14")
+      flagged.flatstart = true
+      warm_flag = runContingencies!(flagged, cases)
+      @test [r.iterations for r in warm_flag] == [r.iterations for r in base]
+      @test all(isapprox(a.min_vm_pu, b.min_vm_pu; atol = 1e-9) || (isnan(a.min_vm_pu) && isnan(b.min_vm_pu)) for (a, b) in zip(warm_flag, base))
       # the table gains a start column, the CSV a start_used field
       @test occursin("start", sprint(io -> printContingencyResults(io, base[1:3])))
 
