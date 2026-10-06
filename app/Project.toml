@@ -1,6 +1,6 @@
 name = "SparlectraApp"
 uuid = "2e39659a-4f4c-4326-b34e-e3df865cea74"
-version = "0.30.3"
+version = "0.31.0"
 authors = ["Udo Schmitz"]
 
 [deps]
@@ -25,7 +25,7 @@ ZipArchives = "49080126-0e18-4c2a-b176-c102e4b3760c"
 Sparlectra = {path = ".."}
 
 [compat]
-AnalyticLoadFlow = "0.9.16"
+AnalyticLoadFlow = "0.10"
 Dates = "1"
 KLU = "0.6"
 LinearAlgebra = "1"
@@ -36,7 +36,7 @@ Printf = "1"
 Random = "1"
 SHA = "0.7, 1"
 Sockets = "1"
-Sparlectra = "0.30"
+Sparlectra = "0.31"
 SparseArrays = "1"
 TOML = "1.0.3"
 UUIDs = "1"

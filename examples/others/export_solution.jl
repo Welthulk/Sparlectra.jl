@@ -121,13 +121,22 @@ function _write_comparison_csv(path::AbstractString, net::Net, model_ref::PFMode
   return path
 end
 
+# a case path as given, else a shipped case under data/mpower; examples never
+# download a case
+function _local_case(case::AbstractString)
+  isfile(case) && return abspath(case)
+  shipped = joinpath(Sparlectra.MPOWER_DIR, case)
+  isfile(shipped) && return shipped
+  error("Case $(case) is neither a file nor a shipped case in $(Sparlectra.MPOWER_DIR) (for example sp_case9.m).")
+end
+
 struct DummyExternalSolver <: Sparlectra.AbstractExternalSolver
   casefile::String
   config::Sparlectra.SparlectraConfig
 end
 
 function Sparlectra.solvePf(solver::DummyExternalSolver, model::Sparlectra.PFModel; tol = 1e-8, kwargs...)
-  local_case = isfile(solver.casefile) ? abspath(solver.casefile) : Sparlectra.FetchMatpowerCase.ensure_casefile(solver.casefile)
+  local_case = _local_case(solver.casefile)
   net_tmp = createNetFromMatPowerFile(filename = local_case, log = false, flatstart = solver.config.powerflow.start_mode.flatstart)
   runpf!(net_tmp; config = solver.config)
   model_tmp = buildPfModel(net_tmp; flatstart = false, include_limits = false, verbose = 0)
@@ -152,7 +161,7 @@ function main(args = ARGS)
     throw(ArgumentError("No MATPOWER case provided. Pass a casefile as first positional argument or set `matpower.case` in configuration."))
   end
 
-  local_case = Sparlectra.FetchMatpowerCase.ensure_casefile(resolved_case)
+  local_case = _local_case(resolved_case)
   output_dir = _ensure_export_outdir(resolved_case; output_dir_override = cli.output_dir_override)
   summary_file = joinpath(output_dir, "summary.txt")
   matpower_export_file = nothing

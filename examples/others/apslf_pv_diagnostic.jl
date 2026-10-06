@@ -50,7 +50,7 @@ ldiv!(@view(C[:, 2]), F, b)
 @printf("2. ldiv! into a view, residual: %.2e (expected ~1e-14), column 1/3 untouched: %s\n", norm(A * C[:, 2] - b) / norm(b), all(iszero, C[:, 1]) && all(iszero, C[:, 3]))
 
 # 3. AnalyticLoadFlow's own PV case, raw solver
-res9 = solve_demo_case(demo_case_9bus(); order = 24, use_pade = true, nr_polish = false, verbose = 0)
+res9 = solve_demo_case(demo_case_9bus(); order = 24, nr_polish = false, verbose = 0)
 res9_mismatch = hasproperty(res9, :residual_inf) ? res9.residual_inf : NaN
 @printf("3. AnalyticLoadFlow 9-bus (PV buses), raw solver without polish: converged = %s, mismatch %.2e\n", res9.converged, res9_mismatch)
 

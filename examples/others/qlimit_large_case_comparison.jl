@@ -28,7 +28,9 @@ const run_sparlectra_api = SparlectraApp.run_sparlectra_api
 const SparlectraApiResult = SparlectraApp.SparlectraApiResult
 
 const QLIMIT_LARGE_CASE_MODES = (:active_set, :classic_simultaneous, :classic_one_at_a_time)
-const QLIMIT_LARGE_CASE_DEFAULTS = ("case13659pegase.m", "case_SyntheticUSA.m")
+# the two largest shipped cases (data/mpower); examples never download a
+# case, a larger one is passed as a local path
+const QLIMIT_LARGE_CASE_DEFAULTS = ("sp_case1354.m", "sp_case300.m")
 const QLIMIT_LARGE_CASE_START_PROFILES = (:classic_start, :robust_dc_start, :autoprofile_dc_start)
 const QLIMIT_LARGE_CASE_SUMMARY_BASENAME = "qlimit_large_case_mode_comparison"
 const QLIMIT_ARTIFACT_NAMES = ("q_limit.log", "q_limit_events.csv", "q_limit_initial_limits.csv", "q_limit_classic_outer_loop.csv", "effective_config.yaml", "matpower_auto_profile.log")
@@ -163,11 +165,14 @@ function _validate_qlimit_start_profiles!(profiles)
   return nothing
 end
 
+# a case path as given, else a shipped case (data/mpower), else a case
+# already in `outdir`; nothing is downloaded, a missing case is reported as
+# not available and its rows are skipped
 function _resolve_qlimit_large_case(case::AbstractString; outdir::AbstractString)
-  local_path = joinpath(outdir, case)
-  existed = isfile(local_path)
-  path = ensure_casefile(case; outdir = outdir, to_jl = false)
-  return Dict{String,Any}("available" => true, "path" => path, "status" => existed ? "cached" : "downloaded", "source" => existed ? "cache" : "download")
+  for (path, source) in ((case, "path"), (joinpath(Sparlectra.MPOWER_DIR, case), "shipped"), (joinpath(outdir, case), "cache"))
+    isfile(path) && return Dict{String,Any}("available" => true, "path" => abspath(path), "status" => "local", "source" => source)
+  end
+  return Dict{String,Any}("available" => false, "path" => "", "status" => "missing", "source" => "unavailable", "reason" => "case $(case) is not a local file nor a shipped case; examples do not download")
 end
 
 function _profile_overrides(profile::Symbol)
@@ -448,7 +453,7 @@ end
 
 function _write_qlimit_summary_json(path::AbstractString, rows)
   open(path, "w") do io
-    _write_json(io, rows)
+    SparlectraApp._write_json(io, rows)
     println(io)
   end
   return path

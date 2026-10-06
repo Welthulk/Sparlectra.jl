@@ -20,6 +20,18 @@ function _runner_verbose(cfg::SparlectraConfig)::Int
   return cfg.output.console_diagnostics === :full ? 1 : 0
 end
 
+# The controllers an APSLF run leaves inactive, named in one warning: the
+# outer-loop controllers (tap changers, phase shifters, machine voltage
+# control) and the prosumers with a Q(U)/P(U) controller plus the
+# voltage-dependent shunts. Nothing on the net is changed.
+function _warn_apslf_controllers_inactive(net::Net, controllers)
+  n_vdep = count(ps -> has_qu_controller(ps) || has_pu_controller(ps), net.prosumpsVec)
+  n_shunt = count(sh -> sh.status != 0 && sh.model == :VoltageDependentInjection, net.shuntVec)
+  (isempty(controllers) && n_vdep == 0 && n_shunt == 0) && return nothing
+  @warn "power_flow.solver=apslf runs without controllers: $(length(controllers)) outer-loop controller(s) (tap changer, phase shifter, machine voltage control) are not run, $(n_vdep) Q(U)/P(U) controller(s) and $(n_shunt) voltage-dependent shunt(s) are not applied; their static setpoints are used. Set power_flow.solver=rectangular to include them." outer_controllers = length(controllers) qu_pu_controllers = n_vdep voltage_dependent_shunts = n_shunt
+  return nothing
+end
+
 function _execute_sparlectra_powerflow!(net::Net, cfg::SparlectraConfig; performance_profile = nothing)
   pf_cfg = cfg.powerflow
   verbose = _runner_verbose(cfg)
@@ -61,9 +73,13 @@ function _execute_sparlectra_powerflow!(net::Net, cfg::SparlectraConfig; perform
           solve_pf_cfg = _copy_powerflow_with(pf_cfg; start_mode = _copy_start_mode_with(pf_cfg.start_mode; start_projection = false, flatstart = false))
         end
         if pf_cfg.solver === :apslf
-          if !isempty(controllers) || has_voltage_dependent_control(net)
-            throw(ArgumentError("power_flow.solver=apslf does not support active controllers: neither the outer-loop tap-changer and phase-shifting transformer controllers nor the voltage-dependent Q(U)/P(U) controllers, which act inside the Newton step. Disable the controllers or set power_flow.solver=rectangular."))
-          end
+          # APSLF solves the static injections and never evaluates a
+          # controller: the outer-loop tap/PST controllers are not run and the
+          # Q(U)/P(U) controllers and voltage-dependent shunts are not applied.
+          # The run goes on without them and says so (it used to refuse the
+          # run, which stopped every APSLF run on a MATPOWER case whose PQ
+          # generator limits the importer maps to flat P(U)/Q(U) controllers)
+          _warn_apslf_controllers_inactive(net, controllers)
           ite, status = _run_apslf_powerflow!(net, pf_cfg; verbose = verbose, performance_profile = performance_profile)
           (ite, status, :none)
         elseif pf_cfg.solver === :dc

@@ -142,6 +142,16 @@ level.
 | FOR001 metadata | `generateContingenciesFromFOR001(net)` | imported MATPOWER FOR001 contingency names; unresolvable names become failed result rows |
 | scenarios block or JSON | `runScenarios!` | the per-scenario `weight` of the block; a weight file applies to case-list runs only (the outage-kind selector and the `n1_*` scenario sources) |
 
+## [Iteration limits](@id contingency_iteration_limits)
+
+The base case of a batch is solved with `power_flow.max_iter`, every
+outage and scenario with `contingency.max_iter` (default `30`; keyword
+`maxIte` of `runContingencies!` and `runScenarios!`, `base_maxIte` for the
+base case). A lower outage limit keeps a large batch fast: an outage that
+needs more steps ends as not converged instead of iterating on. Web UI:
+"Outage max iterations" in the "N-1 screening" fieldset of the Settings
+page.
+
 ## [Screening](@id contingency_screening)
 
 With `screening_mode = :flag` (keyword on `runContingencies!` and

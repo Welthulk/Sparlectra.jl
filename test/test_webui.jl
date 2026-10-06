@@ -1576,14 +1576,14 @@ function run_webui_fast_tests()
 
             # regression (already true, kept per the issue): power_flow.solver in
             # the case sidecar reaches the run without touching Settings. The
-            # shipped sp_case* demos all carry active Q(U)/P(U) controllers,
-            # which apslf refuses outright (a real, unrelated constraint), so the
-            # check is that the sidecar's solver choice reaches the run at all
-            # (visible in effective_config.yaml / the failure naming apslf by
-            # name), not that apslf converges on one of these networks.
+            # shipped sp_case* demos carry active controllers, which an apslf
+            # run leaves inactive with one warning that names apslf (0.31.0);
+            # that warning in run.log shows the sidecar's solver choice reached
+            # the run.
             write(joinpath(casedir, "sp_case14.config.yaml"), "config_version: 1\nscope: case\ncase: sp_case14.scf.json\npower_flow:\n  solver: apslf\n")
             run_solver = SparlectraApp.start_powerflow_run(Dict("casefile" => "sp_case14.scf.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root); case_directory=casedir)
-            @test occursin("power_flow.solver=apslf", string(get(run_solver, "message", "")))
+            @test get(run_solver, "success", false) === true
+            @test occursin("power_flow.solver=apslf runs without controllers", read(joinpath(run_solver["output_dir"], "run.log"), String))
         end)() end
 
         @testset "browser opening falls back to the system default" begin (function ()
@@ -1751,7 +1751,7 @@ function run_webui_fast_tests()
                 @test occursin("<dt>Julia</dt><dd><code>$(VERSION)</code></dd>", body)
                 # and the AnalyticLoadFlow it solves with, so an outdated
                 # environment is visible on screen
-                @test occursin("<dt>AnalyticLoadFlow</dt><dd><code>v$(pkgversion(Sparlectra.AnalyticLoadFlow))</code> <a href=\"https://github.com/Welthulk/AnalyticLoadFlow.jl\"", body)
+                @test occursin("<dt>AnalyticLoadFlow</dt><dd><code>v$(pkgversion(Sparlectra.AnalyticLoadFlow))</code> <a href=\"https://github.com/SOPTIM/AnalyticLoadFlow.jl\"", body)
                 # and the application package, which has its own version;
                 # the header bar keeps naming the library
                 @test occursin("<dt>Application</dt><dd><code>SparlectraApp v$(pkgversion(SparlectraApp))</code></dd>", body)

@@ -17,7 +17,7 @@
 # purpose: compares Q-limit large-case start-profile/enforcement-mode combinations across configured MATPOWER cases (experimental diagnostic tooling)
 
 using Sparlectra
-include(joinpath(@__DIR__, "..", "experimental", "qlimit_large_case_comparison.jl"))
+include(joinpath(@__DIR__, "..", "others", "qlimit_large_case_comparison.jl"))
 include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
 function _parse_args(args)

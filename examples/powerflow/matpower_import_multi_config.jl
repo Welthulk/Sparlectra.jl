@@ -32,7 +32,7 @@ include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 # Command-line usage is preferred and works from the repository root:
 #
 #   julia --project=. examples/powerflow/matpower_import_multi_config.jl \
-#     data/mpower/case14.m \
+#     data/mpower/sp_case118.m \
 #     --config=path/to/config_a.yaml \
 #     --config=path/to/config_b.yaml \
 #     --status-only
@@ -42,7 +42,7 @@ include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 # VS_CODE_CONFIG_FILES empty to use the normal Sparlectra configuration lookup.
 # The script never creates, edits, or rewrites YAML files.
 
-const VS_CODE_CASEFILE = "data/mpower/case14.m"
+const VS_CODE_CASEFILE = "data/mpower/sp_case118.m"
 
 const VS_CODE_CONFIG_FILES = String[]
 
@@ -90,13 +90,13 @@ Options:
 
 Examples:
   julia --project=. examples/powerflow/matpower_import_multi_config.jl \
-    data/mpower/case14.m \
+    data/mpower/sp_case118.m \
     --config=path/to/config_a.yaml \
     --config=path/to/config_b.yaml \
     --status-only
 
   julia --project=. examples/powerflow/matpower_import_multi_config.jl \
-    data/mpower/case14.m \
+    data/mpower/sp_case118.m \
     --configs=path/to/config_a.yaml,path/to/config_b.yaml \
     --runner
 """)

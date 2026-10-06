@@ -39,7 +39,7 @@ include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 using Random
 
 const OUTDIR = joinpath(@__DIR__, "..", "_out")
-const CASEFILE = "case9.m"
+const CASEFILE = "sp_case9.m"
 
 # PMU buses: a small subset is enough — each PMU pins one bus angle, the
 # offset state α costs exactly one of those pins.
@@ -92,16 +92,11 @@ end
 
 function _run_pmu_angle_example(io::IO)
   mkpath(OUTDIR)
-  local_case = joinpath(Sparlectra.MPOWER_DIR, CASEFILE)
-  case_path = if isfile(local_case)
-    local_case
-  else
-    try
-      Sparlectra.FetchMatpowerCase.ensure_casefile(CASEFILE; outdir = Sparlectra.MPOWER_DIR, to_jl = false, overwrite = false)
-    catch err
-      error("Could not obtain MATPOWER case $(CASEFILE). Please place it in $(Sparlectra.MPOWER_DIR) or allow network download. Original error: $(err)")
-    end
-  end
+  # the shipped case (data/mpower); examples never download a case
+  # (another case works too: fetch one yourself, e.g. with
+  # Sparlectra.ensure_casefile("case14.m"), and use its path here)
+  case_path = joinpath(Sparlectra.MPOWER_DIR, CASEFILE)
+  isfile(case_path) || error("Shipped case $(CASEFILE) not found in $(Sparlectra.MPOWER_DIR).")
 
   net = createNetFromMatPowerFile(filename = case_path)
   it_pf, erg_pf = runpf!(net, 40, 1e-10, 0; method = :rectangular)

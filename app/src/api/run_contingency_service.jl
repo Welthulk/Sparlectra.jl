@@ -245,7 +245,7 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
       # distributed slack, power mode and Jacobian reuse reach the scenario
       # engine exactly as on the N-1 path below (distributed slack used to be
       # missing here while run.log announced it, #456)
-      runScenarios!(net, set; index = idx, rescue_ladder = config.contingency.rescue_ladder, screening_mode = screen_mode, screening_margin_pct = screen_margin,
+      runScenarios!(net, set; index = idx, rescue_ladder = config.contingency.rescue_ladder, maxIte = config.contingency.max_iter, base_maxIte = config.powerflow.max_iter, screening_mode = screen_mode, screening_margin_pct = screen_margin,
         _engine_solver_kwargs(config.powerflow)...,
         warm_active_set = config.contingency.warm_active_set, warm_cold_check = config.contingency.warm_cold_check, warm_cold_check_margin_pu = config.contingency.warm_cold_check_margin_pu, warm_note = warm_note, progress = progress)
     catch err
@@ -330,7 +330,7 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
     # an outage that removes the reference, or splits off an island without
     # one, does not end the case: the strongest remaining unit takes over
     # and the result names it (auto_slack, the default of runContingencies!)
-    results = runContingencies!(net, cases; rescue_ladder = config.contingency.rescue_ladder, screening_mode = screen_mode, screening_margin_pct = screen_margin, warm_active_set = config.contingency.warm_active_set, warm_cold_check = config.contingency.warm_cold_check, warm_cold_check_margin_pu = config.contingency.warm_cold_check_margin_pu, warm_note = warm_note, progress = progress, dslack_kwargs...)
+    results = runContingencies!(net, cases; rescue_ladder = config.contingency.rescue_ladder, maxIte = config.contingency.max_iter, base_maxIte = config.powerflow.max_iter, screening_mode = screen_mode, screening_margin_pct = screen_margin, warm_active_set = config.contingency.warm_active_set, warm_cold_check = config.contingency.warm_cold_check, warm_cold_check_margin_pu = config.contingency.warm_cold_check_margin_pu, warm_note = warm_note, progress = progress, dslack_kwargs...)
   end
   n_screened = eltype(results) === ScenarioResult ? count(r -> r.screened, results) : 0
   report = buildContingencyReport(results)

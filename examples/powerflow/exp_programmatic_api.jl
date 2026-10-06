@@ -14,15 +14,18 @@
 
 # Date: 2026-06-10
 # file: examples/powerflow/exp_programmatic_api.jl
-# purpose: runs one MATPOWER case through the GUI-ready run_sparlectra_api contract and lists explicit artifacts
+# purpose: runs one shipped case through the GUI-ready run_sparlectra_api contract and lists explicit artifacts
 
 using Sparlectra
 using SparlectraApp
 include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
-function main(; casefile::AbstractString = "case5.m", output_dir::AbstractString = joinpath(@__DIR__, "..", "_out", "api_run"))
-  print_example_banner("examples/powerflow/exp_programmatic_api.jl", "runs one MATPOWER case through the GUI-ready run_sparlectra_api contract and lists explicit artifacts")
-  case_path = ensure_casefile(casefile)
+# the shipped 5-bus case (data/scf); examples never download a case
+# (another case works too: fetch one yourself, e.g. with
+# Sparlectra.ensure_casefile("case14.m"), and use its path here)
+function main(; casefile::AbstractString = joinpath(pkgdir(Sparlectra), "data", "scf", "sp_case5.scf.json"), output_dir::AbstractString = joinpath(@__DIR__, "..", "_out", "api_run"))
+  print_example_banner("examples/powerflow/exp_programmatic_api.jl", "runs one shipped case through the GUI-ready run_sparlectra_api contract and lists explicit artifacts")
+  case_path = casefile
   result = run_sparlectra_api(
     casefile = case_path,
     config_file = Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH,

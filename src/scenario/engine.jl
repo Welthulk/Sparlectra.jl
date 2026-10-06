@@ -98,6 +98,9 @@ struct ScenarioEngine
   # cold as well
   warm_cold_check::Bool
   warm_cold_check_margin_pu::Float64
+  # the iteration limit of the base-case solve; maxIte above is the limit of
+  # every outage and scenario solve
+  base_maxIte::Int
 end
 
 """
@@ -109,14 +112,18 @@ exactly the old `runContingencies!` preamble), clear the solver status
 and Q-limit logs the workers must not inherit, and record the base branch
 loadings. `net` itself is never mutated.
 """
-function ScenarioEngine(net::Net; vm_min_pu::Float64 = 0.9, vm_max_pu::Float64 = 1.1, maxIte::Int = 30, tol::Float64 = 1e-8, ladder::Vector{Symbol} = Symbol[:warm], index::Union{Nothing,ScenarioIndex} = nothing, pf_kwargs = NamedTuple(), screening_mode::Symbol = :off, screening_margin_pct::Float64 = 10.0, warm_active_set::Bool = true, warm_note::Union{Nothing,Base.RefValue{String}} = nothing, warm_cold_check::Bool = false, warm_cold_check_margin_pu::Float64 = DEFAULT_WARM_COLD_CHECK_MARGIN_PU)
+function ScenarioEngine(net::Net; vm_min_pu::Float64 = 0.9, vm_max_pu::Float64 = 1.1, maxIte::Int = 30, tol::Float64 = 1e-8, ladder::Vector{Symbol} = Symbol[:warm], index::Union{Nothing,ScenarioIndex} = nothing, pf_kwargs = NamedTuple(), screening_mode::Symbol = :off, screening_margin_pct::Float64 = 10.0, warm_active_set::Bool = true, warm_note::Union{Nothing,Base.RefValue{String}} = nothing, warm_cold_check::Bool = false, warm_cold_check_margin_pu::Float64 = DEFAULT_WARM_COLD_CHECK_MARGIN_PU, base_maxIte::Int = 0)
   screening_mode in CONTINGENCY_SCREENING_MODE_VALUES || throw(ArgumentError("ScenarioEngine: screening_mode must be one of $(CONTINGENCY_SCREENING_MODE_VALUES), got :$(screening_mode)."))
   (isfinite(screening_margin_pct) && screening_margin_pct >= 0.0) || throw(ArgumentError("ScenarioEngine: screening_margin_pct must be a finite value >= 0."))
   vm_min_pu < vm_max_pu || throw(ArgumentError("ScenarioEngine: vm_min_pu must be below vm_max_pu."))
   (isfinite(warm_cold_check_margin_pu) && warm_cold_check_margin_pu >= 0.0) || throw(ArgumentError("ScenarioEngine: warm_cold_check_margin_pu must be a finite value >= 0."))
+  base_maxIte >= 0 || throw(ArgumentError("ScenarioEngine: base_maxIte must be >= 0 (0: the same as maxIte)."))
+  # the base case may get more iterations than an outage (contingency.max_iter
+  # below power_flow.max_iter keeps a batch fast); 0 keeps one limit for both
+  base_ite = base_maxIte > 0 ? base_maxIte : maxIte
   template = deepcopy(net)
   base_converged = try
-    _, base_erg = runpf!(template, maxIte, tol, 0; islands_enabled = true, pf_kwargs...)
+    _, base_erg = runpf!(template, base_ite, tol, 0; islands_enabled = true, pf_kwargs...)
     base_erg == 0
   catch err
     _rethrow_unless_solver_failure(err)
@@ -140,7 +147,7 @@ function ScenarioEngine(net::Net; vm_min_pu::Float64 = 0.9, vm_max_pu::Float64 =
       rescued = deepcopy(net)
       println("rescue: AC solve did not converge, retrying with strategy '", name, "'.")
       rescued_ok = try
-        r_it, r_erg = runpf!(rescued, maxIte, tol, 0; variant_kw...)
+        r_it, r_erg = runpf!(rescued, base_ite, tol, 0; variant_kw...)
         r_erg == 0 && println("rescue: strategy '", name, "' converged after ", r_it, " iteration(s).")
         r_erg == 0
       catch err
@@ -205,7 +212,7 @@ function ScenarioEngine(net::Net; vm_min_pu::Float64 = 0.9, vm_max_pu::Float64 =
   for row in detect_ac_islands(template; promote_generators = true).rows
     row.chosen_ref_bus > 0 && push!(base_refs, Int(row.chosen_ref_bus))
   end
-  return ScenarioEngine(template, base_converged, base_loadings, index, vm_min_pu, vm_max_pu, maxIte, tol, ladder, pf_kwargs, screening_mode, screening_margin_pct, screen, base_refs, warm_cold_check, warm_cold_check_margin_pu)
+  return ScenarioEngine(template, base_converged, base_loadings, index, vm_min_pu, vm_max_pu, maxIte, tol, ladder, pf_kwargs, screening_mode, screening_margin_pct, screen, base_refs, warm_cold_check, warm_cold_check_margin_pu, base_ite)
 end
 
 # --- worker reset -------------------------------------------------------------
@@ -1249,7 +1256,7 @@ reproduces [`runContingencies!`](@ref) exactly; general patch scenarios
 (setpoint changes, load scalings, multi-op outages) run the same ladder
 and metrics on the patched working copy. `net` is never mutated. The
 keyword surface matches `runContingencies!` (`vm_min_pu`, `vm_max_pu`,
-`maxIte`, `tol`, `rescue_ladder`, the `parallel_*` overrides); remaining
+`maxIte`, `base_maxIte`, `tol`, `rescue_ladder`, the `parallel_*` overrides); remaining
 keywords reach the per-scenario power-flow solves. Results are returned
 in scenario order; failures are reported in the result, never thrown.
 `progress` reports the batch progress exactly as in
@@ -1287,6 +1294,7 @@ function runScenarios!(
   warm_active_set::Bool = true,
   warm_cold_check::Bool = false,
   warm_cold_check_margin_pu::Float64 = DEFAULT_WARM_COLD_CHECK_MARGIN_PU,
+  base_maxIte::Int = 0,
   warm_note::Union{Nothing,Base.RefValue{String}} = nothing,
   @nospecialize(progress = nothing),
   kwargs...,
@@ -1295,7 +1303,7 @@ function runScenarios!(
   scenarios = expand_scenarios(set, net, index)
   isempty(scenarios) && return screening_mode === :off ? ContingencyResult[] : ScenarioResult[]
   ladder = _validate_contingency_ladder(rescue_ladder; context = "runScenarios!: rescue_ladder")
-  engine = ScenarioEngine(net; vm_min_pu = vm_min_pu, vm_max_pu = vm_max_pu, maxIte = maxIte, tol = tol, ladder = ladder, index = index, pf_kwargs = (; auto_slack = auto_slack, kwargs...), screening_mode = screening_mode, screening_margin_pct = screening_margin_pct, warm_active_set = warm_active_set, warm_note = warm_note, warm_cold_check = warm_cold_check, warm_cold_check_margin_pu = warm_cold_check_margin_pu)
+  engine = ScenarioEngine(net; vm_min_pu = vm_min_pu, vm_max_pu = vm_max_pu, maxIte = maxIte, tol = tol, ladder = ladder, index = index, pf_kwargs = (; auto_slack = auto_slack, kwargs...), screening_mode = screening_mode, screening_margin_pct = screening_margin_pct, warm_active_set = warm_active_set, warm_note = warm_note, warm_cold_check = warm_cold_check, warm_cold_check_margin_pu = warm_cold_check_margin_pu, base_maxIte = base_maxIte)
   items = _ScenarioItem[_engine_item_from_scenario(s, index) for s in scenarios]
   return _run_engine_batch(engine, items; parallel_enabled = parallel_enabled, parallel_max_tasks = parallel_max_tasks, parallel_min_work_items = parallel_min_work_items, progress = progress)
 end

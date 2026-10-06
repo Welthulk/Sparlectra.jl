@@ -505,6 +505,19 @@ function run_scenario_engine_extended_tests()
     @test Sparlectra._warm_needs_cold_check(check_on, row(true, 0, 0.95, 50.0))
     @test !Sparlectra._warm_needs_cold_check(check_off, row(true, 0, 0.95, 50.0))
     @test !Sparlectra._warm_needs_cold_check(check_off, row(true, 2, 0.85, 120.0))
+    # iteration limits (contingency.max_iter, 0.31.0): maxIte caps every
+    # outage solve, base_maxIte the base case; from start angles 0 the base
+    # case needs more than one step
+    flat_angles = deepcopy(net)
+    foreach(n -> (n._va_deg = 0.0), flat_angles.nodeVec)
+    quietly(f) = Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
+        redirect_stdout(f, devnull)
+    end
+    @test !quietly(() -> Sparlectra.ScenarioEngine(flat_angles; maxIte = 1, warm_note = Ref(""))).base_converged
+    split_limits = quietly(() -> Sparlectra.ScenarioEngine(flat_angles; maxIte = 1, base_maxIte = 30, warm_note = Ref("")))
+    @test split_limits.base_converged && (split_limits.maxIte, split_limits.base_maxIte) == (1, 30)
+    capped = quietly(() -> Sparlectra.runContingencies!(net, cases[1:10]; maxIte = 1, base_maxIte = 30, warm_note = Ref("")))
+    @test all(r -> !r.converged && r.iterations <= 1, capped)
     @test Sparlectra._contingency_less_favourable(row(true, 1, 0.97, 50.0), row(true, 0, 0.92, 90.0))
     @test Sparlectra._contingency_less_favourable(row(true, 0, 0.94, 50.0), row(true, 0, 0.95, 90.0))
     @test Sparlectra._contingency_less_favourable(row(true, 0, 0.95, 91.0), row(true, 0, 0.95, 90.0))

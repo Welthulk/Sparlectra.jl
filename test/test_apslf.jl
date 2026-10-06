@@ -70,7 +70,7 @@ function run_apslf_tests()
             println(stderr, "      probe ", label, " model: busType ", model.busType, ", slack ", model.slack_idx, ", Sspec ", model.Sspec, ", Vset ", model.Vset)
             println(stderr, "      probe ", label, " model: Ybus ", Matrix(model.Ybus))
             println(stderr, "      probe ", label, " Newton |V| in PF order: ", vm_nr)
-            res = AnalyticLoadFlow.solve_pf_apslf(spec; mode=:direct, order=24, use_pade=true, nr_polish=false, return_coeffs=true)
+            res = AnalyticLoadFlow.solve_pf_apslf(spec; mode=:direct, order=24, nr_polish=false, return_coeffs=true)
             println(stderr, "      probe ", label, " AnalyticLoadFlow on that spec: converged = ", res.converged, ", reason ", get(res, :reason, :none), ", outer_iters ", res.outer_iters, ", |V| ", abs.(res.V), ", Q ", res.Q, ", bustype ", res.bustype, ", ALF mismatch ", AnalyticLoadFlow.max_mismatch_on_specY(spec, res.V), ", max |dVm| vs NR ", maximum(abs.(abs.(res.V) .- vm_nr)))
             sol = Sparlectra.solvePf(apslf_solver(), model; tol=1e-8)
             println(stderr, "      probe ", label, " solvePf on that model: converged = ", sol.converged, ", residual_inf ", sol.residual_inf, ", |V| ", abs.(sol.V), ", max |dVm| vs NR ", maximum(abs.(abs.(sol.V) .- vm_nr)))
@@ -90,7 +90,6 @@ function run_apslf_tests()
                 @test default_cfg.powerflow.solver === :rectangular
                 @test default_cfg.powerflow.apslf.order == 24
                 @test default_cfg.powerflow.apslf.convergence_radius === true
-                @test default_cfg.powerflow.apslf.use_pade === true
                 @test default_cfg.powerflow.apslf.nr_polish === false
                 @test default_cfg.powerflow.apslf_start.enabled === false
                 @test default_cfg.powerflow.apslf_start.order == 40
@@ -125,17 +124,18 @@ function run_apslf_tests()
                 @test cfg_bad.powerflow.apslf.order == Sparlectra.SparlectraConfig().powerflow.apslf.order
             end)() end
 
-            @testset "Controller + APSLF solver rejection" begin (function ()
-                # load_fixture_net: the shipped sp_case14 carries a REAL declared tap
-                # controller (no download, no hand-attached controller)
+            @testset "Controller + APSLF solver: runs without them, with a warning" begin (function ()
+                # the shipped sp_case14 carries a REAL declared tap controller; an
+                # APSLF run does not refuse it any more (0.31.0): it solves the
+                # static setpoints and one warning names what is not applied
                 net = Sparlectra.importSCF(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json")))
                 @test length(Sparlectra.collect_outer_controllers(net)) == 1
 
-                cfg = Sparlectra.SparlectraConfig(powerflow=Sparlectra.PowerFlowConfig(solver=:apslf), output=OutputConfig(logfile_results=:off))
-                # No AnalyticLoadFlow.jl is required here: the controller check runs
-                # before the solver is even constructed, so this rejects identically
-                # regardless of whether the extension is loaded.
-                @test_throws ArgumentError run_sparlectra(net=net, config=cfg)
+                cfg = Sparlectra.SparlectraConfig(powerflow=Sparlectra.PowerFlowConfig(solver=:apslf), output=OutputConfig(logfile_results=:off, console_summary=false))
+                res = @test_logs (:warn, r"power_flow.solver=apslf runs without controllers: 1 outer-loop controller") match_mode=:any redirect_stdout(devnull) do
+                    run_sparlectra(net=net, config=cfg)
+                end
+                @test res.final_converged
             end)() end
 
             @testset "WebUI form parsing for APSLF fields -> effective config" begin (function ()
@@ -143,7 +143,6 @@ function run_apslf_tests()
                     "casefile" => "case14.m",
                     "power_flow_solver" => "apslf",
                     "power_flow_apslf_order" => "25",
-                    "power_flow_apslf_use_pade" => "false",
                     "power_flow_apslf_nr_polish" => "true",
                     "power_flow_apslf_start_enabled" => "false",
                     "power_flow_apslf_start_order" => "40",
@@ -152,7 +151,6 @@ function run_apslf_tests()
                 overrides = request["config_overrides"]
                 @test overrides["power_flow.solver"] == "apslf"
                 @test overrides["power_flow.apslf.order"] === 25
-                @test overrides["power_flow.apslf.use_pade"] === false
                 @test overrides["power_flow.apslf.nr_polish"] === true
                 @test overrides["power_flow.apslf_start.enabled"] === false
                 @test overrides["power_flow.apslf_start.order"] === 40
@@ -161,15 +159,14 @@ function run_apslf_tests()
                 cfg, _ = Sparlectra._load_api_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, nested)
                 @test cfg.powerflow.solver === :apslf
                 @test cfg.powerflow.apslf.order == 25
-                @test cfg.powerflow.apslf.use_pade === false
                 @test cfg.powerflow.apslf.nr_polish === true
 
                 # Unchecked checkbox explicitly submits "false" (hidden+checkbox HTML
                 # pairing), the same semantics as the Q-limit checkbox pattern: the key
                 # is present with an explicit false, not omitted.
                 disabled_form = copy(form)
-                disabled_form["power_flow_apslf_use_pade"] = "false"
-                @test SparlectraApp.powerflow_webui_request(disabled_form)["config_overrides"]["power_flow.apslf.use_pade"] === false
+                disabled_form["power_flow_apslf_nr_polish"] = "false"
+                @test SparlectraApp.powerflow_webui_request(disabled_form)["config_overrides"]["power_flow.apslf.nr_polish"] === false
 
                 # A field genuinely absent from the submitted form (e.g. a stale
                 # client) is skipped rather than defaulted to false.
@@ -195,9 +192,9 @@ function run_apslf_tests()
                 solver = Sparlectra.apslf_solver()
                 @test solver isa Sparlectra.ApslfSolver
                 @test solver isa Sparlectra.AbstractExternalSolver
-                @test solver.order == 24 && solver.use_pade && !solver.nr_polish && solver.mode === :direct && solver.convergence_radius
-                tuned = Sparlectra.apslf_solver(order=40, use_pade=false, nr_polish=false, mode=:outer, convergence_radius=false)
-                @test (tuned.order, tuned.use_pade, tuned.nr_polish, tuned.mode, tuned.convergence_radius) == (40, false, false, :outer, false)
+                @test solver.order == 24 && !solver.nr_polish && solver.mode === :direct && solver.convergence_radius
+                tuned = Sparlectra.apslf_solver(order=40, nr_polish=false, mode=:outer, convergence_radius=false)
+                @test (tuned.order, tuned.nr_polish, tuned.mode, tuned.convergence_radius) == (40, false, :outer, false)
             end)() end
 
             @testset "AnalyticLoadFlow version guard" begin (function ()
@@ -221,14 +218,14 @@ function run_apslf_tests()
                 @test occursin(string(Sparlectra.APSLF_MIN_VERSION), msg)
                 @test occursin("Pkg.update(\"AnalyticLoadFlow\")", msg)
                 # The size bounds of the outer-mode fallback (_apslf_solve runs
-                # it itself) are mirrored from AnalyticLoadFlow 0.9.16, which
+                # it itself) are mirrored from AnalyticLoadFlow 0.10.0, which
                 # provides no binding for them: they are literal keyword
                 # defaults of solve_pf_apslf in src/solver_core.jl. The loaded
                 # package's source must still carry the same defaults, and a
                 # binding named like a fallback bound must not have appeared;
                 # either change fails here, and the constants then have to be
                 # re-checked or read from the package.
-                mirrored_from = v"0.9.16"
+                mirrored_from = v"0.10.0"
                 @test pkgversion(AnalyticLoadFlow) >= mirrored_from
                 @test (Sparlectra._APSLF_OUTER_FALLBACK_NBUS_MAX, Sparlectra._APSLF_OUTER_FALLBACK_PV_BUS_MAX) == (2000, 250)
                 alf_core = read(joinpath(pkgdir(AnalyticLoadFlow), "src", "solver_core.jl"), String)
@@ -322,7 +319,7 @@ function run_apslf_tests()
                 @test spec_q.Qmin == model_q.qmin_pu
                 @test spec_q.Qmax == model_q.qmax_pu
 
-                solver = Sparlectra.ApslfSolver(order=20, use_pade=true)
+                solver = Sparlectra.ApslfSolver(order=20)
                 sol = solvePf(solver, model)
                 @test sol isa PFSolution
                 @test length(sol.V) == n

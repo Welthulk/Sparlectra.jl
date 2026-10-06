@@ -21,12 +21,15 @@ using SparlectraApp
 include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
 function main(;
-  casefile::AbstractString = "case5.m",
+  # the shipped 5-bus case (data/scf); examples never download a case
+  # (another case works too: fetch one yourself, e.g. with
+  # Sparlectra.ensure_casefile("case14.m"), and use its path here)
+  casefile::AbstractString = joinpath(pkgdir(Sparlectra), "data", "scf", "sp_case5.scf.json"),
   output_root::AbstractString = joinpath(@__DIR__, "..", "_out", "powerflow_service"),
 )
   print_example_banner("examples/powerflow/exp_powerflow_service.jl", "starts a local PowerFlow service run, looks up its serialized result by run ID, and lists its artifacts without an HTTP server")
   request = Dict(
-    "casefile" => ensure_casefile(casefile),
+    "casefile" => casefile,
     "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH,
     "output_root" => output_root,
     "config_overrides" => Dict(

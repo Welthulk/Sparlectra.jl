@@ -47,14 +47,15 @@ function real_block_jacobian(net)
   return J[keep, keep]
 end
 
-function main(; casefile::AbstractString = "case14.m")
+# the shipped 14-bus case (data/scf); examples never download a case
+# (another case works too: fetch one yourself, e.g. with
+# Sparlectra.ensure_casefile("case14.m"), and use its path here)
+function main(; casefile::AbstractString = joinpath(pkgdir(Sparlectra), "data", "scf", "sp_case14.scf.json"))
   print_example_banner("examples/powerflow/exp_condition_number.jl", "estimates the condition number of a power-flow Jacobian at the solved operating point")
-  case_path = ensure_casefile(casefile)
-
-  net = createNetFromMatPowerFile(filename = case_path)
+  net = importSCF(casefile)
   ite, erg = runpf!(net, 40, 1e-8, 0; method = :rectangular)
   erg == 0 || error("power flow did not converge (erg=$(erg))")
-  println("solved $(casefile) in $(ite) iteration(s)")
+  println("solved $(basename(casefile)) in $(ite) iteration(s)")
 
   J = real_block_jacobian(net)
   println()
@@ -62,7 +63,7 @@ function main(; casefile::AbstractString = "case14.m")
   kappa = reportCondition(J)
 
   # exact 2-norm condition number for comparison (dense SVD; only sensible
-  # for small nets like case14)
+  # for small nets like sp_case14)
   println("exact 2-norm condition number: ", round(cond(Matrix(J), 2), sigdigits = 3))
 
   # a nearly isolated bus (all incident admittances scaled down) drives the

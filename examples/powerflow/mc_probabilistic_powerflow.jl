@@ -14,7 +14,7 @@
 
 # Date: 2026-07-24
 # file: examples/powerflow/mc_probabilistic_powerflow.jl
-# purpose: Monte-Carlo probabilistic power flow on case14 — random load scaling,
+# purpose: Monte-Carlo probabilistic power flow on the shipped sp_case14: random load scaling,
 #          per-bus voltage statistics from repeated runpf! solves
 
 using Sparlectra
@@ -31,7 +31,10 @@ const LOAD_FACTOR_MIN = 0.5     # truncation bounds for the scaling factor
 const LOAD_FACTOR_MAX = 1.5
 const VM_BAND = (0.95, 1.05)    # acceptable voltage band [pu]
 const RNG_SEED = 20260724       # reproducibility: same seed -> same numbers
-const CASEFILE = "case14.m"
+# the shipped 14-bus case (data/scf); examples never download a case
+# (another case works too: fetch one yourself, e.g. with
+# Sparlectra.ensure_casefile("case14.m"), and use its path here)
+const CASEFILE = joinpath(pkgdir(Sparlectra), "data", "scf", "sp_case14.scf.json")
 
 """Draw a truncated-normal load factor Normal(1, LOAD_SIGMA) in [MIN, MAX] by rejection."""
 function drawLoadFactor(rng::AbstractRNG)::Float64
@@ -42,10 +45,9 @@ function drawLoadFactor(rng::AbstractRNG)::Float64
 end
 
 function main()
-  print_example_banner("examples/powerflow/mc_probabilistic_powerflow.jl", "Monte-Carlo probabilistic power flow on case14 with random load scaling")
+  print_example_banner("examples/powerflow/mc_probabilistic_powerflow.jl", "Monte-Carlo probabilistic power flow on sp_case14 with random load scaling")
 
-  case_path = ensure_casefile(CASEFILE)
-  net = createNetFromMatPowerFile(filename = case_path)
+  net = importSCF(CASEFILE)
   nb = length(net.nodeVec)
 
   # Base-case solve.

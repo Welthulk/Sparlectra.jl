@@ -6,5 +6,4 @@
 # defaults from src/configuration.yaml.example).
 
 order: 40
-use_pade: true
 nr_polish: true

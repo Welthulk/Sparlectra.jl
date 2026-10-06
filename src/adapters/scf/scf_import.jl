@@ -1488,6 +1488,12 @@ function scf_case_config(file::AbstractString; dropped::Union{Nothing,Vector{Str
   # setting which quietly does not apply is exactly the silent acceptance this
   # format exists to prevent. Older files that carried the whole form need one
   # re-export.
+  # a key removed from the configuration is dropped with the warning the
+  # configuration file gets, never refused (same rule as a case configuration)
+  for key in sort!(String[k for k in keys(out) if haskey(_REMOVED_NOTED_CONFIG_KEYS, k)])
+    @warn "SCF: configuration key $(key) is ignored: $(_REMOVED_NOTED_CONFIG_KEYS[key])" maxlog = 1 _id = Symbol("removed_scf_key_", key)
+    delete!(out, key)
+  end
   bad = sort!(String[k for k in keys(out) if !scf_is_case_config_key(k)])
   writer = _scf_writer_version(spar)
   if !isempty(bad) && writer !== nothing && writer < _SCF_MACHINE_KEYS_TOLERATED_BELOW

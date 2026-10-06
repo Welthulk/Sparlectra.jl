@@ -31,7 +31,7 @@ using Random
 include("state_estimation_wls.jl")
 
 const OUTDIR_OBS = joinpath(@__DIR__, "..", "_out")
-const CASEFILE_OBS = "case9.m"
+const CASEFILE_OBS = "sp_case9.m"
 
 """
 Return the state-vector column indices for voltage angles and magnitudes,
@@ -370,12 +370,11 @@ to the provided IO handle.
 function run_state_estimation_observability_example(io::IO)
   mkpath(OUTDIR_OBS)
 
-  local_case = joinpath(Sparlectra.MPOWER_DIR, CASEFILE_OBS)
-  case_path = if isfile(local_case)
-    local_case
-  else
-    Sparlectra.FetchMatpowerCase.ensure_casefile(CASEFILE_OBS; outdir = Sparlectra.MPOWER_DIR, to_jl = false, overwrite = false)
-  end
+  # the shipped case (data/mpower); examples never download a case
+  # (another case works too: fetch one yourself, e.g. with
+  # Sparlectra.ensure_casefile("case14.m"), and use its path here)
+  case_path = joinpath(Sparlectra.MPOWER_DIR, CASEFILE_OBS)
+  isfile(case_path) || error("Shipped case $(CASEFILE_OBS) not found in $(Sparlectra.MPOWER_DIR).")
 
   net = createNetFromMatPowerFile(filename = case_path)
   _, erg_pf = runpf!(net, 40, 1e-10, 0; method = :rectangular)
