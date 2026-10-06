@@ -109,7 +109,7 @@ Neither overloads `Base.show`, so there are no global display side effects.
 
 `ApslfSolver` (`src/acpflow/apslf_solver.jl`) is the built-in
 `AbstractExternalSolver` for
-[AnalyticLoadFlow.jl](https://github.com/Welthulk/AnalyticLoadFlow.jl), an
+[AnalyticLoadFlow.jl](https://github.com/SOPTIM/AnalyticLoadFlow.jl), an
 analytic power-series (holomorphic-embedding style) load-flow solver.
 AnalyticLoadFlow.jl is a required dependency, so the solver, the `:apslf`
 stages of the contingency rescue ladder and the automatic power-flow mode
@@ -118,13 +118,10 @@ are always available:
 ```julia
 using Sparlectra                 # AnalyticLoadFlow comes with it
 
-solver = apslf_solver(order = 24, use_pade = true, nr_polish = false)
+solver = apslf_solver(order = 24, nr_polish = false)
 ```
 
 - `order::Int`: highest power-series coefficient.
-- `use_pade::Bool`: evaluate the voltage series via Padé `[L/M]`
-  approximants instead of direct Taylor summation (usually a larger
-  convergence radius).
 - `nr_polish::Bool`: Newton-Raphson polishing step on the series result
   (off by default).
 - `convergence_radius::Bool`: evaluate the Padé margin
@@ -136,6 +133,9 @@ solver = apslf_solver(order = 24, use_pade = true, nr_polish = false)
   below 1: the plain series does not reach `s = 1`).
 - `mode::Symbol`: `:direct` (native PV handling) or `:outer` (PQ-only
   series plus an outer secant loop for PV enforcement).
+
+The voltage series is always evaluated with Padé `[L/M]` approximants
+(AnalyticLoadFlow 0.10.0); there is no switch for it.
 
 The residual of an APSLF solution is judged against the bus types the
 solver ended with: a machine clamped at a reactive limit is a PQ bus at
@@ -179,9 +179,11 @@ rectangular path:
   `V(s=0) = 1∠0`; `model.V0`, `start_mode` and `start_projection` have no
   effect. This is inherent to the embedding.
 - **No OLTC, tap-changer or phase-shifting-transformer control and no
-  Q(U)/P(U) control.** `power_flow.solver = apslf` with any active
-  controller is rejected up front with an error; there is no fallback to a
-  partially controlled solve.
+  Q(U)/P(U) control.** With `power_flow.solver = apslf` the controllers
+  stay inactive: the outer-loop tap and phase-shifter controllers are not
+  run, Q(U)/P(U) controllers and voltage-dependent shunts are not applied,
+  and their static setpoints are solved. One warning in the run log names
+  how many of each were left out.
 - **Q-limits are simple PV→PQ only.** AnalyticLoadFlow.jl switches PV↔PQ
   against `Qmin`/`Qmax` inside the series solve; `power_flow.qlimits.guard`,
   `enforcement_mode`, hysteresis and cooldown settings do not apply.

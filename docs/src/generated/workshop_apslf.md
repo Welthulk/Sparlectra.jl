@@ -32,8 +32,8 @@ and this chapter shows each of them on a network you can inspect:
 
 Nothing here needs an extra installation: AnalyticLoadFlow.jl is a
 dependency of Sparlectra, and `power_flow.solver = apslf` in the
-configuration switches a run over to it. Sparlectra 0.17 needs
-AnalyticLoadFlow 0.9.16 or newer and refuses to load with an older one,
+configuration switches a run over to it. Sparlectra 0.31 needs
+AnalyticLoadFlow 0.10.0 or newer and refuses to load with an older one,
 so the version below is the one this workshop was written against:
 
 ## Warm-up and shared helpers
@@ -338,11 +338,11 @@ contingency batch reaches for when a warm start fails
 The series solves the algebraic power-flow equations and nothing else.
 Outer-loop controllers (tap changers with a voltage target, Q(U)
 characteristics, remote voltage control) change the model between
-solves, so `power_flow.solver = apslf` alone is not offered for such a
-network: Sparlectra refuses the combination at the start of the run
-instead of running the solver on a model whose controllers would stay
-silent. The shipped `sp_case14` carries a tap controller. For it the
-hybrid start of Part 3 is the way to use the series: the controllers run
+solves, so with `power_flow.solver = apslf` they stay inactive: the run
+solves the static setpoints and one warning in the log names how many
+controllers were left out. The shipped `sp_case14` carries a tap
+controller. To solve it with the controller active, the hybrid start of
+Part 3 is the way to use the series: the controllers run
 in the rectangular outer loop, the series only supplies the start value,
 and the network solves with the tap controller active. The
 configuration is repeated here so this cell runs on its own:
@@ -382,5 +382,5 @@ power_flow:
 ```
 
 See [Power Flow Configuration](https://welthulk.github.io/Sparlectra.jl/powerflow_configuration/) for every key and the
-[AnalyticLoadFlow.jl workshop](https://github.com/Welthulk/AnalyticLoadFlow.jl) for the theory, the recursion by hand, and the raw solver API.
+[AnalyticLoadFlow.jl workshop](https://github.com/SOPTIM/AnalyticLoadFlow.jl) for the theory, the recursion by hand, and the raw solver API.
 

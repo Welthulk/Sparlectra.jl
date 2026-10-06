@@ -92,11 +92,14 @@ function _write_perturbed_case(source_path::AbstractString, target_path::Abstrac
     return perturbed
 end
 
-function main(; casefile::AbstractString="case14.m", output_root::AbstractString=joinpath(@__DIR__, "..", "_out", "diagnose_self_check"))
+# the shipped sp_case118 (data/mpower); examples never download a case
+# (another case works too: fetch one yourself, e.g. with
+# Sparlectra.ensure_casefile("case14.m"), and use its path here)
+function main(; casefile::AbstractString=joinpath(pkgdir(Sparlectra), "data", "mpower", "sp_case118.m"), output_root::AbstractString=joinpath(@__DIR__, "..", "_out", "diagnose_self_check"))
     print_example_banner("examples/others/exp_diagnose_self_check.jl", "demonstrates run_fixed_reference_self_check and the narrative diagnose.log report on a case with a deliberately shifted branch reactance")
-    source_path = ensure_casefile(casefile)
+    source_path = casefile
     mkpath(output_root)
-    perturbed_path = joinpath(output_root, "case14_perturbed_branch.m")
+    perturbed_path = joinpath(output_root, "sp_case118_perturbed_branch.m")
     _write_perturbed_case(source_path, perturbed_path)
 
     self_check = run_fixed_reference_self_check(

@@ -23,7 +23,7 @@ include(joinpath(@__DIR__, "others", "example_suite_runner.jl"))
 const SUITE_SPECS = ExampleSpec[
   ExampleSpec(name = "dc_powerflow", file = "powerflow/exp_dc_powerflow.jl", purpose = "standalone DC power flow, optionally seeding the AC Newton-Raphson solve"),
   ExampleSpec(name = "condition_number", file = "powerflow/exp_condition_number.jl", purpose = "Jacobian condition-number estimate at the solved operating point, incl. a stressed near-singular variant"),
-  ExampleSpec(name = "programmatic_api", file = "powerflow/exp_programmatic_api.jl", purpose = "runs one MATPOWER case through the GUI-ready run_sparlectra_api contract"),
+  ExampleSpec(name = "programmatic_api", file = "powerflow/exp_programmatic_api.jl", purpose = "runs one shipped case through the GUI-ready run_sparlectra_api contract"),
   ExampleSpec(name = "powerflow_service", file = "powerflow/exp_powerflow_service.jl", purpose = "local PowerFlow service run with result lookup by run ID (no HTTP server)"),
   ExampleSpec(name = "current_iteration_start", file = "powerflow/exp_current_iteration_start.jl", purpose = "guarded current-iteration start pre-solve via API configuration overrides"),
   ExampleSpec(name = "q_limit_voltage_adjustment", file = "powerflow/example_q_limit_voltage_adjustment.jl", purpose = "compares Q-limit :adjust_vset outcomes across three PV->PQ scenarios"),
@@ -39,7 +39,7 @@ const SUITE_SPECS = ExampleSpec[
   ExampleSpec(name = "mc_probabilistic_powerflow", file = "powerflow/mc_probabilistic_powerflow.jl", purpose = "Monte-Carlo probabilistic power flow on case14"),
   ExampleSpec(name = "synthetic_tiled_grid_pf_perf", file = "powerflow/exp_synthetic_tiled_grid_pf_perf.jl", heavy = true, timeout_s = 1800, purpose = "synthetic tiled-grid power-flow performance benchmark"),
   ExampleSpec(name = "qlimit_large_case_mode_comparison", file = "powerflow/qlimit_large_case_mode_comparison.jl", heavy = true, timeout_s = 1800, purpose = "Q-limit start-profile/enforcement-mode comparison on very large MATPOWER cases"),
-  ExampleSpec(name = "apslf_demo", file = "powerflow/apslf_demo.jl", optional = true, requires_package = "AnalyticLoadFlow", purpose = "compares the internal rectangular NR solver against the APSLF solver on case30"),
+  ExampleSpec(name = "apslf_demo", file = "powerflow/apslf_demo.jl", optional = true, requires_package = "AnalyticLoadFlow", purpose = "compares the internal rectangular NR solver against the APSLF solver on sp_case118"),
 ]
 
 # SPARLECTRA_EXAMPLE_SUITE_NO_MAIN=1 is a test-only escape hatch: it lets the

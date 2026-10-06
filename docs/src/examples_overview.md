@@ -33,7 +33,7 @@ summary at the end): `run_powerflow_suite.jl`, `run_others_suite.jl`,
 | `exp_hvdc_meshed_ac_tie.jl` | `others` | HVDC pair in parallel to an AC tie: one reference per synchronous island, setpoint pair as parallel PQ path, `island_feed` rejected ([theory](hvdc_back_to_back.md)) | others |
 | `exp_parallel_islands.jl` | `powerflow` | islands on their own threads vs a serial solve on an 8-island net, wall clocks side by side, bitwise-identical voltages | parallel |
 | `exp_parallel_sc_sweep.jl` | `others` | IEC 60909-0 all-bus sweep serial vs threaded chunks (8000 fault locations), row-identical results | parallel |
-| `exp_contingency_n1.jl` | `others` | Full branch N-1 on case1354pegase (`runContingencies!`): serial vs parallel, warm-start evidence, top-10 worst contingencies ([theory](contingency.md)) | parallel |
+| `exp_contingency_n1.jl` | `others` | Full branch N-1 on the shipped `sp_case1354.m` (`runContingencies!`): serial vs parallel, warm-start evidence, top-10 worst contingencies ([theory](contingency.md)) | parallel |
 | `exp_open_terminal_line.jl` | `others` | One-sided open line: full charging draw at the closed bus and the Ferranti rise at the open end ([theory](branchmodel.md)) | others |
 | `exp_current_iteration_start.jl` | `powerflow` | Guarded current-iteration start pre-solve via config overrides | powerflow |
 | `exp_diagnose_self_check.jl` | `others` | `run_fixed_reference_self_check` and the narrative `diagnose.log` report | others |
@@ -43,7 +43,7 @@ summary at the end): `run_powerflow_suite.jl`, `run_others_suite.jl`,
 | `exp_synthetic_tiled_grid_pf_perf.jl` | `powerflow` | Synthetic tiled-grid PF performance study | powerflow |
 | `qlimit_large_case_mode_comparison.jl` | `powerflow` | Q-limit enforcement modes on large cases | powerflow |
 | `apslf_demo.jl` | `powerflow` | APSLF analytic solver as standalone/primary/start-value backend | powerflow |
-| `mc_probabilistic_powerflow.jl` | `powerflow` | Monte-Carlo load scaling on `case14.m` (N = 1000): per-bus Vm statistics, band violations, convergence rate | powerflow |
+| `mc_probabilistic_powerflow.jl` | `powerflow` | Monte-Carlo load scaling on the shipped `sp_case14` (N = 1000): per-bus Vm statistics, band violations, convergence rate | powerflow |
 
 ## Transformers and controllers
 

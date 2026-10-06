@@ -42,8 +42,6 @@ power_flow:
   apslf:
     # Highest power-series coefficient to compute.
     order: 24
-    # Evaluate the voltage series via Pade [L/M] approximants instead of direct Taylor summation.
-    use_pade: true
     # Run a Newton-Raphson polishing step on the series result (debugging
     # aid; the series alone is a load-flow solution).
     nr_polish: false
@@ -53,7 +51,7 @@ power_flow:
     convergence_radius: true
   # Use the APSLF solver as a start-value generator ahead of the rectangular
   # Newton-Raphson solve. Incompatible with solver: apslf (start generator is
-  # only meaningful ahead of NR). No use_pade/nr_polish here: polishing is left
+  # only meaningful ahead of NR). No nr_polish here: polishing is left
   # to the downstream NR solve (nr_polish=false internally).
   apslf_start:
     enabled: false
@@ -795,6 +793,10 @@ contingency:
   # Allowed stages: warm (base-case voltages), apslf (APSLF start, needs
   # AnalyticLoadFlow.jl), dc (flat magnitudes, DC-projected angles), flat.
   rescue_ladder: [warm]
+  # Iteration limit of every outage and scenario solve. The base case of
+  # the batch is solved with power_flow.max_iter; a lower value here keeps
+  # a large batch fast.
+  max_iter: 30
   # Contingency screening on the base Jacobian factorization: every
   # non-islanding outage is estimated with ONE Woodbury-corrected Newton
   # step (no refactorization, no full solve), and only scenarios whose

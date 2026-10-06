@@ -168,7 +168,7 @@ function _run_guarded_apslf_start(Ybus, Vraw::Vector{ComplexF64}, S::Vector{Comp
   end
   n = length(Vraw)
   initial_mismatch = _max_rectangular_mismatch(Ybus, Vraw, S, bus_types, Vset, slack_idx)
-  solver = apslf_solver(order = order, use_pade = true, nr_polish = false)
+  solver = apslf_solver(order = order, nr_polish = false)
   accepted = false
   final_mismatch = initial_mismatch
   reason = :not_improved

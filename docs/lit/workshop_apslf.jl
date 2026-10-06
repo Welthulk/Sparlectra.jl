@@ -50,8 +50,8 @@
 #
 # Nothing here needs an extra installation: AnalyticLoadFlow.jl is a
 # dependency of Sparlectra, and `power_flow.solver = apslf` in the
-# configuration switches a run over to it. Sparlectra 0.17 needs
-# AnalyticLoadFlow 0.9.16 or newer and refuses to load with an older one,
+# configuration switches a run over to it. Sparlectra 0.31 needs
+# AnalyticLoadFlow 0.10.0 or newer and refuses to load with an older one,
 # so the version below is the one this workshop was written against:
 
 #nb # > **Colab is slow here.** The install cell below fetches Sparlectra and
@@ -157,7 +157,7 @@ warmup()
 
 ## uses: build_ring7, cfg_apslf, cfg_nr (warm-up cell)
 println("AnalyticLoadFlow ", pkgversion(Sparlectra.AnalyticLoadFlow))
-@assert pkgversion(Sparlectra.AnalyticLoadFlow) >= v"0.9.16"                #src
+@assert pkgversion(Sparlectra.AnalyticLoadFlow) >= v"0.10.0"                #src
 
 res_nr = run_sparlectra(net=build_ring7("ring7 NR"), config=cfg_nr)
 res_ap = run_sparlectra(net=build_ring7("ring7 APSLF"), config=cfg_apslf)
@@ -362,11 +362,11 @@ println("APSLF start : ", r_hyb.outcome, ", ", r_hyb.iterations, " Newton iterat
 # The series solves the algebraic power-flow equations and nothing else.
 # Outer-loop controllers (tap changers with a voltage target, Q(U)
 # characteristics, remote voltage control) change the model between
-# solves, so `power_flow.solver = apslf` alone is not offered for such a
-# network: Sparlectra refuses the combination at the start of the run
-# instead of running the solver on a model whose controllers would stay
-# silent. The shipped `sp_case14` carries a tap controller. For it the
-# hybrid start of Part 3 is the way to use the series: the controllers run
+# solves, so with `power_flow.solver = apslf` they stay inactive: the run
+# solves the static setpoints and one warning in the log names how many
+# controllers were left out. The shipped `sp_case14` carries a tap
+# controller. To solve it with the controller active, the hybrid start of
+# Part 3 is the way to use the series: the controllers run
 # in the rectangular outer loop, the series only supplies the start value,
 # and the network solves with the tap controller active. The
 # configuration is repeated here so this cell runs on its own:
@@ -377,12 +377,13 @@ cfg_hybrid = SparlectraConfig(powerflow=PowerFlowConfig(solver=:rectangular, aps
 r14 = run_sparlectra(net=importSCF(case14), config=cfg_hybrid)
 println("hybrid start on sp_case14: ", r14.outcome, ", ", r14.iterations, " Newton iterations")
 @assert r14.final_converged                                                 #src
-refused = try                                                               #src
-    run_sparlectra(net=importSCF(case14), config=cfg_apslf); ""             #src
-catch err                                                                   #src
-    sprint(showerror, err)                                                  #src
+import Logging                                                              #src
+apslf_log = IOBuffer()                                                      #src
+r14_apslf = Logging.with_logger(Logging.SimpleLogger(apslf_log)) do         #src
+    run_sparlectra(net=importSCF(case14), config=cfg_apslf)                 #src
 end                                                                         #src
-@assert occursin("does not support active controllers", refused)            #src
+@assert occursin("runs without controllers", String(take!(apslf_log)))     #src
+@assert r14_apslf.final_converged                                           #src
 
 # ## Summary
 #
@@ -411,4 +412,4 @@ end                                                                         #src
 # ```
 #
 # See [Power Flow Configuration](https://welthulk.github.io/Sparlectra.jl/powerflow_configuration/) for every key and the
-# [AnalyticLoadFlow.jl workshop](https://github.com/Welthulk/AnalyticLoadFlow.jl) for the theory, the recursion by hand, and the raw solver API.
+# [AnalyticLoadFlow.jl workshop](https://github.com/SOPTIM/AnalyticLoadFlow.jl) for the theory, the recursion by hand, and the raw solver API.

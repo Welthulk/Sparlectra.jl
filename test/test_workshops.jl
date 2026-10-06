@@ -66,7 +66,9 @@ function run_workshop_tests()
     # into an endless loop (26 GB before it was killed)
     tool = Module(:WorkshopUsesTool)
     Base.include(tool, joinpath(dirname(@__DIR__), "tools", "workshop_uses_comments.jl"))
-    rewrite = getfield(tool, :rewrite)
+    # the binding is defined by the include above: reach it through
+    # invokelatest so no world-age warning reaches the test output
+    rewrite = Base.invokelatest(getfield, tool, :rewrite)
     tight = ["# ## Head", "# text", "x = 1", "", "# more", "y = x + 1"]
     @test Base.invokelatest(rewrite, tight) == ["# ## Head", "# text", "x = 1", "", "# more", "## uses: x (Head)", "@isdefined(x) || error(\"Run the section \\\"Head\\\" first: it sets up x.\")", "y = x + 1"]
     # a name from the warm-up cell (the one with `using Sparlectra`) gets

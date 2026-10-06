@@ -106,7 +106,6 @@ function _webui_test_form(casefile, config_file, output_root)
     "power_flow_qlimits_enforcement_mode" => "classic_simultaneous",
     "power_flow_solver" => "rectangular",
     "power_flow_apslf_order" => "40",
-    "power_flow_apslf_use_pade" => "true",
     "power_flow_apslf_nr_polish" => "true",
     "power_flow_apslf_start_enabled" => "false",
     "power_flow_apslf_start_order" => "40",
@@ -1828,11 +1827,11 @@ form:
         "power_flow_jacobian_reuse_max_steps" => "power_flow.jacobian_reuse_max_steps",
         "contingency_screening_mode" => "contingency.screening.mode",
         "contingency_screening_margin_pct" => "contingency.screening.margin_pct",
+        "contingency_max_iter" => "contingency.max_iter",
         "contingency_warm_active_set" => "contingency.warm_active_set",
         "contingency_warm_cold_check" => "contingency.warm_cold_check",
         "contingency_warm_cold_check_margin_pu" => "contingency.warm_cold_check_margin_pu",
         "power_flow_apslf_order" => "power_flow.apslf.order",
-        "power_flow_apslf_use_pade" => "power_flow.apslf.use_pade",
         "power_flow_apslf_nr_polish" => "power_flow.apslf.nr_polish",
         "power_flow_apslf_convergence_radius" => "power_flow.apslf.convergence_radius",
         "power_flow_flatstart" => "power_flow.flatstart",
@@ -2260,12 +2259,13 @@ result = get_powerflow_result(run_id)
       screen_form["contingency_screening_mode"] = "flag"
       screen_form["contingency_screening_margin_pct"] = "15"
       screen_form["contingency_warm_active_set"] = "true"
+      screen_form["contingency_max_iter"] = "12"
       # the checked box (its value after the hidden "false") switches the
       # cold check on against its default off
       screen_form["contingency_warm_cold_check"] = "true"
       screen_request = SparlectraApp.powerflow_webui_request(screen_form; default_output_root = output_root)
       screen_cfg, _ = Sparlectra._load_api_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, Sparlectra.validate_gui_config_overrides(screen_request["config_overrides"]))
-      @test (screen_cfg.contingency.screening_mode, screen_cfg.contingency.screening_margin_pct, screen_cfg.contingency.warm_active_set, screen_cfg.contingency.warm_cold_check) == (:flag, 15.0, true, true)
+      @test (screen_cfg.contingency.screening_mode, screen_cfg.contingency.screening_margin_pct, screen_cfg.contingency.warm_active_set, screen_cfg.contingency.warm_cold_check, screen_cfg.contingency.max_iter) == (:flag, 15.0, true, true, 12)
       # stopping the Web UI aborts and awaits a running job before the
       # process may exit (native factorizations in use by worker threads
       # crashed the process on stop): a runner that solves until the abort

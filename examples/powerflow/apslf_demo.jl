@@ -14,13 +14,12 @@
 
 # Date: 2026-07-21
 # file: examples/powerflow/apslf_demo.jl
-# purpose: compares the internal rectangular Newton-Raphson solver against the AnalyticLoadFlow.jl-backed APSLF solver (standalone and as an NR start-value generator) on case30
+# purpose: compares the internal rectangular Newton-Raphson solver against the AnalyticLoadFlow.jl-backed APSLF solver (standalone and as an NR start-value generator) on sp_case118
 
-# APSLF (used by AnalyticLoadFlow.jl, an optional weak dependency — see
-# ext/SparlectraAnalyticLoadFlowExt.jl) is an analytic power-series load-flow
-# method: it expands the bus voltages as a power series in an embedding
-# parameter s and evaluates that series at s=1, optionally through Padé
-# [L/M] approximants (`use_pade`) for a larger effective convergence radius.
+# APSLF (AnalyticLoadFlow.jl, a required dependency of Sparlectra) is an
+# analytic power-series load-flow method: it expands the bus voltages as a
+# power series in an embedding parameter s and evaluates that series at s=1
+# through Padé [L/M] approximants for a larger effective convergence radius.
 # The series always starts from the canonical analytic germ V(s=0) = 1∠0 —
 # there is no configurable start voltage, unlike the rectangular Newton-
 # Raphson solver, because the embedding construction fixes that boundary
@@ -55,24 +54,22 @@ using Printf
 include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
 """
-    _apslf_demo_options(path) -> (order, use_pade, nr_polish)
+    _apslf_demo_options(path) -> (order, nr_polish)
 
-Read optional `order`/`use_pade`/`nr_polish` overrides for this example from
+Read optional `order`/`nr_polish` overrides for this example from
 a small standalone YAML file via the existing YAML-subset parser
 (`Sparlectra.load_yaml_dict`). Falls back to the `power_flow.apslf` defaults
-(order=40, use_pade=true, nr_polish=true) when `path` does not exist.
+(order=40, nr_polish=true) when `path` does not exist.
 """
 function _apslf_demo_options(path::AbstractString)
   order = 6
-  use_pade = true
   nr_polish = true
   if isfile(path)
     raw = Sparlectra.load_yaml_dict(path)
     order = Int(get(raw, "order", order))
-    use_pade = Bool(get(raw, "use_pade", use_pade))
     nr_polish = Bool(get(raw, "nr_polish", nr_polish))
   end
-  return (; order, use_pade, nr_polish)
+  return (; order, nr_polish)
 end
 
 """
@@ -88,20 +85,24 @@ function _apslf_demo_deltas(net::Net, reference_net::Net)
 end
 
 function main(;
-  casefile::AbstractString = "case30.m",
+  # the shipped sp_case118 (data/mpower); examples never download a case
+  # (another case works too: fetch one yourself, e.g. with
+  # Sparlectra.ensure_casefile("case14.m"), and use its path here)
+  casefile::AbstractString = "sp_case118.m",
   demo_config_file::AbstractString = joinpath(@__DIR__, "apslf_demo.yaml.example"),
 )
-  print_example_banner("examples/powerflow/apslf_demo.jl", "compares the internal rectangular Newton-Raphson solver against the AnalyticLoadFlow.jl-backed APSLF solver (standalone and as an NR start-value generator) on case30")
+  print_example_banner("examples/powerflow/apslf_demo.jl", "compares the internal rectangular Newton-Raphson solver against the AnalyticLoadFlow.jl-backed APSLF solver (standalone and as an NR start-value generator) on sp_case118")
 
   opts = _apslf_demo_options(demo_config_file)
-  println("APSLF options: order=", opts.order, "  use_pade=", opts.use_pade, "  nr_polish=", opts.nr_polish)
+  println("APSLF options: order=", opts.order, "  nr_polish=", opts.nr_polish)
   println()
 
   config_file = Sparlectra.configuration_path_from_inputs(
     env_var = "SPARLECTRA_CONFIGURATION_YAML",
     fallback_paths = [Sparlectra.USER_SPARLECTRA_CONFIG_PATH, Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH],
   )
-  case_path = ensure_casefile(casefile)
+  case_path = joinpath(Sparlectra.MPOWER_DIR, casefile)
+  isfile(case_path) || error("Shipped case $(casefile) not found in $(Sparlectra.MPOWER_DIR).")
   mpc = Sparlectra.MatpowerIO.read_case(case_path)
 
   # A) NR reference.
@@ -116,7 +117,7 @@ function main(;
   cfg_apslf = Sparlectra.load_sparlectra_config(config_file; reload = true, overrides = Dict(
     "power_flow" => Dict(
       "solver" => "apslf",
-      "apslf" => Dict("order" => opts.order, "use_pade" => opts.use_pade, "nr_polish" => opts.nr_polish),
+      "apslf" => Dict("order" => opts.order, "nr_polish" => opts.nr_polish),
     ),
     "output" => Dict("logfile_results" => "off"),
   ))
@@ -241,7 +242,7 @@ function _nose_solve_apslf(p_MW::Float64, q_MVAr::Float64)
   net = _nose_build_net(p_MW, q_MVAr)
   cfg = SparlectraConfig(powerflow = PowerFlowConfig(
     max_iter = _NOSE_MAX_ITER, tol = _NOSE_TOL,
-    solver = :apslf, apslf = Sparlectra.ApslfConfig(order = 40, use_pade = true, nr_polish = false),
+    solver = :apslf, apslf = Sparlectra.ApslfConfig(order = 40, nr_polish = false),
   ))
   result = run_sparlectra(net = net, config = cfg)
   vm = result.final_converged ? net.nodeVec[2]._vm_pu : NaN

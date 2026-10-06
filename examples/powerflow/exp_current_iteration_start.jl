@@ -20,9 +20,12 @@ using Sparlectra
 using SparlectraApp
 include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
-function main(; casefile::AbstractString = "case5.m", output_dir::AbstractString = joinpath(@__DIR__, "..", "_out", "current_iteration_start"))
+# the shipped 5-bus case (data/scf); examples never download a case
+# (another case works too: fetch one yourself, e.g. with
+# Sparlectra.ensure_casefile("case14.m"), and use its path here)
+function main(; casefile::AbstractString = joinpath(pkgdir(Sparlectra), "data", "scf", "sp_case5.scf.json"), output_dir::AbstractString = joinpath(@__DIR__, "..", "_out", "current_iteration_start"))
   print_example_banner("examples/powerflow/exp_current_iteration_start.jl", "demonstrates enabling the guarded current-iteration start pre-solve via API configuration overrides and prints its metadata/artifact status")
-  case_path = ensure_casefile(casefile)
+  case_path = casefile
   result = run_sparlectra_api(
     casefile = case_path,
     config_file = Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH,

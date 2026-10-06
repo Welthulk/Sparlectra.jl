@@ -27,8 +27,6 @@ Adapter that runs a `PFModel` through AnalyticLoadFlow.jl's `solve_pf_apslf`.
 
 Fields:
 - `order::Int = 24`: highest power-series coefficient to compute.
-- `use_pade::Bool = true`: evaluate the voltage series via Padé `[L/M]` approximants
-  instead of direct Taylor summation.
 - `nr_polish::Bool = false`: run a Newton-Raphson polishing step on the series result.
   Off since 0.13.0 (AnalyticLoadFlow 0.9.15): the series alone is a load-flow
   solution, the polish is a debugging aid.
@@ -49,7 +47,6 @@ Fields:
 """
 Base.@kwdef struct ApslfSolver <: AbstractExternalSolver
   order::Int = 24
-  use_pade::Bool = true
   nr_polish::Bool = false
   mode::Symbol = :direct
   convergence_radius::Bool = true
@@ -58,9 +55,9 @@ end
 # Limits of the outer-mode fallback (PQ series plus a secant loop on the PV
 # reactive powers) that AnalyticLoadFlow.solve_pf_apslf runs after a failed
 # direct solve: the defaults of its keywords outer_fallback_nbus_max and
-# outer_fallback_pv_bus_max in AnalyticLoadFlow 0.9.16. The single-pass call
+# outer_fallback_pv_bus_max in AnalyticLoadFlow 0.10.0. The single-pass call
 # in _apslf_solve switches that fallback off and runs it itself, so it needs
-# the same bounds to stay equivalent. AnalyticLoadFlow 0.9.16 provides no
+# the same bounds to stay equivalent. AnalyticLoadFlow 0.10.0 provides no
 # binding for them (literal keyword defaults in its solver_core.jl), so they
 # are mirrored here; test_apslf.jl ("AnalyticLoadFlow version guard") names
 # the version and checks them against the loaded package's source. Once the
@@ -71,14 +68,16 @@ const _APSLF_OUTER_FALLBACK_PV_BUS_MAX = 250
 """
     APSLF_MIN_VERSION
 
-Lowest AnalyticLoadFlow.jl version the adapter is verified against. The
+Lowest AnalyticLoadFlow.jl version the adapter is verified against (0.10.0:
+the series is evaluated with Padé only, so the adapter passes no `use_pade`;
+an older version would fall back to direct Taylor summation). The
 Project.toml compat carries the same bound, but Julia does not check a
 Manifest against the compat at load time: an environment whose Manifest
 predates the bump loads the older version without a message, and an older
 version can return a wrong series result flagged as converged.
 `check_apslf_version` closes that gap at load time.
 """
-const APSLF_MIN_VERSION = v"0.9.16"
+const APSLF_MIN_VERSION = v"0.10.0"
 
 """
     check_apslf_version(loaded = pkgversion(AnalyticLoadFlow)) -> VersionNumber
@@ -195,7 +194,6 @@ function solvePf(solver::ApslfSolver, model::PFModel; kwargs...)
     solver = :apslf,
     mode = res.effective_mode,
     order = solver.order,
-    use_pade = solver.use_pade,
     stability = stability,
     series_radius = series_radius,
     nr_polish_enabled = res.nr_polish_enabled,
@@ -231,13 +229,10 @@ end
 # single call.
 # Phase shifters: Sparlectra builds the Y-bus with the complex tap ratio of
 # every phase-shifting transformer (an unsymmetric Y) and hands it over
-# complete, so AnalyticLoadFlow models a fixed shift without knowing the
-# device. Its default germ :deviation embeds the full Y; sp_casePST at -5.73,
-# -20 and +15 degrees agrees with Newton to 1e-13 pu, with or without the
-# former interim pin to :deviation (#470, removed in 0.30.3: it changed no
-# digit on any measured case).
+# complete; AnalyticLoadFlow (phase shifters supported since 0.10.0) solves
+# it with its default germ, no Sparlectra-side special case.
 function _apslf_solve(solver::ApslfSolver, spec)
-  common = (mode = solver.mode, order = solver.order, use_pade = solver.use_pade, nr_polish = solver.nr_polish, return_coeffs = true)
+  common = (mode = solver.mode, order = solver.order, nr_polish = solver.nr_polish, return_coeffs = true)
   limits_free = !any(isfinite, spec.Qmin) && !any(isfinite, spec.Qmax)
   (solver.mode === :direct && limits_free) || return AnalyticLoadFlow.solve_pf_apslf(spec; common...)
   res = AnalyticLoadFlow.solve_pf_apslf(spec; common..., max_outer = 1, outer_fallback_nbus_max = 0)

@@ -28,7 +28,7 @@
 
 function _apslf_solver_from_config(pf_cfg::PowerFlowConfig)
   acfg = pf_cfg.apslf
-  return apslf_solver(order = acfg.order, use_pade = acfg.use_pade, nr_polish = acfg.nr_polish, convergence_radius = acfg.convergence_radius)
+  return apslf_solver(order = acfg.order, nr_polish = acfg.nr_polish, convergence_radius = acfg.convergence_radius)
 end
 
 # Status fields carrying the two APSLF radii so the result header, the run

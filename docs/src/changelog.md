@@ -1,3 +1,9 @@
+# Version 0.31.0 - 2026-10-05
+
+AnalyticLoadFlow 0.10.0.
+## Changed
+- Integration of AnalyticLoadFlow 0.10.0 (phase shifters; Padé only, `power_flow.apslf.use_pade` removed).
+
 # Version 0.30.3 - 2026-10-03
 
 MATPOWER generator costs.

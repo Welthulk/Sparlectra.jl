@@ -49,7 +49,6 @@ power_flow:
   solver: rectangular   # rectangular | apslf
   apslf:
     order: 24
-    use_pade: true
     nr_polish: false
     convergence_radius: true
   apslf_start:
@@ -60,14 +59,13 @@ power_flow:
 | YAML path | Type | Default | Allowed values | Meaning | Use when | Avoid when | Performance impact | Interactions |
 |---|---:|---:|---|---|---|---|---|---|
 | `power_flow.solver` | Symbol/String | `rectangular` | `rectangular`, `apslf` | Selects the executing solver. | `apslf` to use the analytic power-series solver instead of NR. | `apslf` without AnalyticLoadFlow.jl loaded (raises a clear error). | `apslf` skips the NR iteration loop entirely. | Rejects `apslf_start.enabled=true` when set to `apslf`. |
-| `power_flow.apslf.order` | Int | `24` | `>= 1` | Highest power-series coefficient computed. | Higher for stressed/large-angle cases. | Unnecessarily high orders on easy cases (cost). | Higher order increases solve cost. | `use_pade`. |
-| `power_flow.apslf.use_pade` | Bool | `true` | `true`, `false` | Evaluate the voltage series via Padé `[L/M]` approximants instead of direct Taylor summation. | Default; improves convergence radius. | Direct Taylor comparison studies. | Small evaluation overhead, usually better accuracy per order. | `order`. |
+| `power_flow.apslf.order` | Int | `24` | `>= 1` | Highest power-series coefficient computed. | Higher for stressed/large-angle cases. | Unnecessarily high orders on easy cases (cost). | Higher order increases solve cost. | The series is always evaluated with Padé approximants. |
 | `power_flow.apslf.nr_polish` | Bool | `false` | `true`, `false` | Run a Newton-Raphson polishing step on the series result. | Debugging the series result against a Newton finish. | Default off: the series alone is a load-flow solution. | Adds a small number of NR iterations. | Only active when `solver=apslf`. |
 | `power_flow.apslf.convergence_radius` | Bool | `true` | `true`, `false` | Evaluate the Padé margin: the distance `dmin` of the nearest Padé pole to the evaluation point `s = 1`, with the case bus that owns it and a GRN/YEL/RED level (AnalyticLoadFlow `stability_from_Vcoeff`). Reported in the result header (`APSLF radius`), the run metadata (`apslf_pade_margin`, `apslf_pade_margin_bus`) and on the runs page next to the Jacobian condition. The margin is not the radius of convergence of the series: next to it every APSLF run reports the series radius, a root test on the growth of the voltage coefficients (`apslf_series_radius`, `apslf_series_radius_bus`; below 1 the plain series does not reach `s = 1`), which this key does not switch off. | Default; judges how far the series solution sits from its continuation limit. | Large networks where the evaluation (about the cost of the solve) is not wanted. | Comparable to the solve itself. | Only active when `solver=apslf`. |
 | `power_flow.apslf_start.enabled` | Bool | `false` | `true`, `false` | Use the APSLF solver as a start-value generator ahead of the rectangular NR solve (guarded, like `start_current_iteration`). | Difficult NR starts. | `solver=apslf` (rejected: start generator only makes sense ahead of NR). | Adds one series solve before NR. | `solver`, `apslf_start.order`. |
 | `power_flow.apslf_start.order` | Int | `40` | `>= 1` | Series order used by the start-value generator. | Same considerations as `apslf.order`. | Unnecessarily high orders for a start-only pass. | Higher order increases pre-solve cost. | `apslf_start.enabled`. |
 
-`power_flow.apslf_start` has no `use_pade`/`nr_polish` fields (polishing is
+`power_flow.apslf_start` has no `nr_polish` field (polishing is
 left to the NR solve, `nr_polish=false`) and always runs unconstrained
 (`Qmin`/`Qmax` are not passed): `power_flow.qlimits.*` governs only the
 rectangular NR solve that follows.
@@ -124,7 +122,7 @@ power_flow:
 
 | YAML path | Type | Default | Allowed values | Meaning | Use when | Avoid when | Performance impact | Interactions |
 |---|---:|---:|---|---|---|---|---|---|
-| `power_flow.solver` | Symbol/String | `rectangular` | `rectangular`, `apslf`, `dc` | Selects the executing solver. | `dc` for a fast linear screening solve or as an AC start-value source. | `dc` when Vm/Q/loss results are required (the model doesn't define them). | `dc` is a single direct linear solve, no iteration. | Rejects active controllers (the outer-loop tap/PST controllers and the Q(U)/P(U) controllers that act inside the Newton step), mirrors `apslf`. |
+| `power_flow.solver` | Symbol/String | `rectangular` | `rectangular`, `apslf`, `dc` | Selects the executing solver. | `dc` for a fast linear screening solve or as an AC start-value source. | `dc` when Vm/Q/loss results are required (the model doesn't define them). | `dc` is a single direct linear solve, no iteration. | Rejects active controllers (the outer-loop tap/PST controllers and the Q(U)/P(U) controllers that act inside the Newton step); `apslf` runs without them and warns instead. |
 | `power_flow.dc.angle_reference_deg` | Float64 | `0.0` | any real | Uniform angle offset added to every bus after the slack-referenced solve; the slack bus itself is fixed at this reference. | Matching an external reference-angle convention. | N/A | None (exact post-hoc shift, not a re-solve). | None; mathematically independent of the rest of the DC solve. |
 | `power_flow.dc.ignore_out_of_service` | Bool | `true` | `true` | Documents that `status == 0` branches are always excluded from `B'`. | Always (current fixed behavior). | N/A | N/A | Not currently a live toggle. |
 

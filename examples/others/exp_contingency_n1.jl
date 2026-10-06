@@ -14,38 +14,36 @@
 
 # Date: 2026-08-25
 # file: examples/others/exp_contingency_n1.jl
-# purpose: N-1 showcase on case1354pegase: case screening (voltage/rating
+# purpose: N-1 showcase on the shipped sp_case1354: case screening (voltage/rating
 #          filters) and per-case weights (#331 Phase 2), generator outages with
 #          auto/distributed slack (#331 Phase 3), then full branch N-1 serial vs
 #          parallel timing side by side, top 10 worst contingencies, plus the
-#          deepcopy cost and warm-start iteration numbers it prints. Needs the
-#          case1354pegase.m from the Web UI case cache; skips
-#          with a message when it is not cached. Run with threads:
+#          deepcopy cost and warm-start iteration numbers it prints. Uses the
+#          shipped data/mpower/sp_case1354.m (examples never download a case;
+#          another case works too: fetch one yourself, e.g. with
+#          Sparlectra.ensure_casefile("case14.m"), and set CASE_PATH).
+#          Run with threads:
 #          julia --threads=auto --project=. examples/others/exp_contingency_n1.jl
 
 using Sparlectra
 
 include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
-const CASE_PATH = joinpath(homedir(), ".local", "state", "sparlectra", "webui", "data", "mpower", "case1354pegase.m")
+const CASE_PATH = joinpath(Sparlectra.MPOWER_DIR, "sp_case1354.m")
 
 function main()
-  print_example_banner("examples/others/exp_contingency_n1.jl", "full branch N-1 on case1354pegase, serial vs parallel (Phase 4 of the multi-core work)")
+  print_example_banner("examples/others/exp_contingency_n1.jl", "full branch N-1 on sp_case1354, serial vs parallel (Phase 4 of the multi-core work)")
 
   if !isfile(CASE_PATH)
-    println("SKIPPED: case1354pegase.m not found under the Web UI case cache (", CASE_PATH, ").")
-    println("Fetch it once through the Web UI or the service path, then rerun.")
-    return nothing
+    error("Shipped case sp_case1354.m not found: $(CASE_PATH)")
   end
 
-  # PEGASE convention (from the case sidecar): branch angles are radians with
-  # inverted sign, tap ratio normal (the default; the convention with the
-  # fewest NR iterations is the correct one, which the auto-profile residual
-  # scan confirms). qlimits stay on: case1354 converges with the active set.
-  net = createNetFromMatPowerFile(filename = CASE_PATH, matpower_shift_unit = :rad, matpower_shift_sign = -1.0, matpower_ratio = :normal)
+  # the shipped synthetic operated grid, standard MATPOWER convention;
+  # qlimits stay on
+  net = createNetFromMatPowerFile(filename = CASE_PATH)
   cases = generateN1Branches(net)
   println("Julia threads : ", Threads.nthreads(), Threads.nthreads() == 1 ? "  <- start with julia --threads=auto to see the parallel effect" : "")
-  println("case          : case1354pegase, ", length(net.nodeVec), " buses, ", length(net.branchVec), " branches -> ", length(cases), " contingencies")
+  println("case          : sp_case1354, ", length(net.nodeVec), " buses, ", length(net.branchVec), " branches -> ", length(cases), " contingencies")
 
   # --- case screening and weights (#331 Phase 2) ---
   # On a large grid you rarely simulate every outage: screen the list down to

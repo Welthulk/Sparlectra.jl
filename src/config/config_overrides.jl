@@ -62,11 +62,11 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "power_flow.jacobian_reuse_max_steps",
   "contingency.screening.mode",
   "contingency.screening.margin_pct",
+  "contingency.max_iter",
   "contingency.warm_active_set",
   "contingency.warm_cold_check",
   "contingency.warm_cold_check_margin_pu",
   "power_flow.apslf.order",
-  "power_flow.apslf.use_pade",
   "power_flow.apslf.nr_polish",
   "power_flow.apslf.convergence_radius",
   "power_flow.apslf_start.enabled",
@@ -189,9 +189,9 @@ function _validate_override_type(key::String, value, expected::Type)
 end
 
 function _validate_gui_override_value(key::String, value)
-  if key in ("power_flow.autodamp", "power_flow.flatstart", "power_flow.start_mode.ratio_profile", "power_flow.qlimits.enabled", "power_flow.start_current_iteration.enabled", "power_flow.start_current_iteration.accept_only_if_improved", "power_flow.start_current_iteration.only_for_large_cases", "power_flow.merit.enabled", "power_flow.merit.fallback_max_mismatch", "power_flow.trust_region.enabled", "power_flow.apslf.use_pade", "power_flow.apslf.nr_polish", "power_flow.apslf.convergence_radius", "power_flow.apslf_start.enabled", "power_flow.islands.enabled", "power_flow.islands.diagnostic_continue_after_failure", "power_flow.rescue", "power_flow.dc.fallback", "power_flow.auto_slack", "cgmes_import.require_boundary", "cgmes_import.infer_base_voltages", "powsybl_import.multi_slack", "benchmark.enabled", "matpower_import.apply_bus_names", "matpower_import.apply_branch_names", "matpower_import.apply_branch_kind", "matpower_import.import_for001_contingencies", "model.net_cache_enabled", "matpower_export.write_solution", "output.console_live", "output.console_summary", "output.startup_latency_hint", "state_estimation.flatstart", "state_estimation.robust", "state_estimation.topology_precheck", "state_estimation.report_residual_correlation", "state_estimation.symmetric_gain", "power_flow.qlimits.guard.enabled", "power_flow.qlimits.guard.accept_bounded_violations", "power_flow.qlimits.guard.freeze_after_repeated_switching", "power_flow.qlimits.guard.log")
+  if key in ("power_flow.autodamp", "power_flow.flatstart", "power_flow.start_mode.ratio_profile", "power_flow.qlimits.enabled", "power_flow.start_current_iteration.enabled", "power_flow.start_current_iteration.accept_only_if_improved", "power_flow.start_current_iteration.only_for_large_cases", "power_flow.merit.enabled", "power_flow.merit.fallback_max_mismatch", "power_flow.trust_region.enabled", "power_flow.apslf.nr_polish", "power_flow.apslf.convergence_radius", "power_flow.apslf_start.enabled", "power_flow.islands.enabled", "power_flow.islands.diagnostic_continue_after_failure", "power_flow.rescue", "power_flow.dc.fallback", "power_flow.auto_slack", "cgmes_import.require_boundary", "cgmes_import.infer_base_voltages", "powsybl_import.multi_slack", "benchmark.enabled", "matpower_import.apply_bus_names", "matpower_import.apply_branch_names", "matpower_import.apply_branch_kind", "matpower_import.import_for001_contingencies", "model.net_cache_enabled", "matpower_export.write_solution", "output.console_live", "output.console_summary", "output.startup_latency_hint", "state_estimation.flatstart", "state_estimation.robust", "state_estimation.topology_precheck", "state_estimation.report_residual_correlation", "state_estimation.symmetric_gain", "power_flow.qlimits.guard.enabled", "power_flow.qlimits.guard.accept_bounded_violations", "power_flow.qlimits.guard.freeze_after_repeated_switching", "power_flow.qlimits.guard.log")
     _validate_override_type(key, value, Bool)
-  elseif key in ("power_flow.max_iter", "power_flow.start_current_iteration.max_iter", "power_flow.apslf.order", "power_flow.apslf_start.order", "benchmark.samples", "output.detailed_result_csv_direct_threshold_buses", "output.detailed_result_csv_buffer_initial_bytes", "output.detailed_result_csv_buffer_max_bytes", "output.detailed_result_csv_streaming_threshold_rows", "output.console_max_rows", "output.result_table_max_rows", "output.result_table_large_case_threshold_buses")
+  elseif key in ("power_flow.max_iter", "contingency.max_iter", "power_flow.start_current_iteration.max_iter", "power_flow.apslf.order", "power_flow.apslf_start.order", "benchmark.samples", "output.detailed_result_csv_direct_threshold_buses", "output.detailed_result_csv_buffer_initial_bytes", "output.detailed_result_csv_buffer_max_bytes", "output.detailed_result_csv_streaming_threshold_rows", "output.console_max_rows", "output.result_table_max_rows", "output.result_table_large_case_threshold_buses")
     _validate_override_type(key, value, Int)
     if key == "power_flow.start_current_iteration.max_iter"
       value >= 0 || throw(ArgumentError("Override $(key) must be non-negative; got $(value)."))
@@ -715,6 +715,7 @@ const CONFIG_OVERRIDE_REPORT_KEYS = String[
   "power_flow.jacobian_reuse_max_steps",
   "contingency.screening.mode",
   "contingency.screening.margin_pct",
+  "contingency.max_iter",
   "contingency.warm_active_set",
   "contingency.warm_cold_check",
   "contingency.warm_cold_check_margin_pu",

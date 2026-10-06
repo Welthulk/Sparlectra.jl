@@ -1,6 +1,6 @@
 name = "Sparlectra"
 uuid = "31ce9bba-fd9d-44a1-b005-f5f509afda38"
-version = "0.30.3"
+version = "0.31.0"
 authors = ["Udo Schmitz"]
 description = "load flow calculation using newton-raphson"
 
@@ -33,7 +33,7 @@ SparlectraBenchmarkToolsExt = "BenchmarkTools"
 SparlectraKLUExt = "KLU"
 
 [compat]
-AnalyticLoadFlow = "0.9.16, 0.10"
+AnalyticLoadFlow = "0.10"
 BenchmarkTools = "1.6"
 Dates = "1"
 DelimitedFiles = "1"

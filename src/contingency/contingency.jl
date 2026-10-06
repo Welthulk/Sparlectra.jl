@@ -485,7 +485,7 @@ end
 """
     runContingencies!(net::Net, cases::Vector{ContingencyCase};
                       vm_min_pu = 0.9, vm_max_pu = 1.1,
-                      maxIte = 30, tol = 1e-8,
+                      maxIte = 30, base_maxIte = 0, tol = 1e-8,
                       rescue_ladder = [:warm],
                       parallel_enabled = nothing, parallel_max_tasks = nothing,
                       parallel_min_work_items = nothing,
@@ -499,6 +499,10 @@ its own `deepcopy` of that template, removes its branch via
 band plus branch loadings against `sn_MVA` ratings. Cases are returned in
 input order; failures (no convergence, islanding without reference, unknown
 element) are REPORTED in the result, never thrown.
+
+`maxIte` is the iteration limit of every outage solve, `base_maxIte` the
+limit of the base-case solve (`0`: the same as `maxIte`); the service path
+passes `contingency.max_iter` and `power_flow.max_iter`.
 
 `rescue_ladder` is the per-case start-value ladder (#331): an ordered,
 duplicate-free subset of `(:warm, :apslf, :dc, :flat)`, default `[:warm]`
@@ -577,6 +581,7 @@ function runContingencies!(
     warm_active_set::Bool=true,
     warm_cold_check::Bool=false,
     warm_cold_check_margin_pu::Float64=DEFAULT_WARM_COLD_CHECK_MARGIN_PU,
+    base_maxIte::Int=0,
     warm_note::Union{Nothing,Base.RefValue{String}}=nothing,
     @nospecialize(progress=nothing),
     kwargs...,
@@ -596,7 +601,7 @@ function runContingencies!(
     # template hygiene, base loadings, chunked workers all live there); the
     # case118 CSV fixture pins these results byte for byte to the pre-engine
     # per-case-deepcopy implementation
-    engine = ScenarioEngine(net; vm_min_pu=vm_min_pu, vm_max_pu=vm_max_pu, maxIte=maxIte, tol=tol, ladder=ladder, pf_kwargs=(; auto_slack=auto_slack, kwargs...), screening_mode=screening_mode, screening_margin_pct=screening_margin_pct, warm_active_set=warm_active_set, warm_note=warm_note, warm_cold_check=warm_cold_check, warm_cold_check_margin_pu=warm_cold_check_margin_pu)
+    engine = ScenarioEngine(net; vm_min_pu=vm_min_pu, vm_max_pu=vm_max_pu, maxIte=maxIte, tol=tol, ladder=ladder, pf_kwargs=(; auto_slack=auto_slack, kwargs...), screening_mode=screening_mode, screening_margin_pct=screening_margin_pct, warm_active_set=warm_active_set, warm_note=warm_note, warm_cold_check=warm_cold_check, warm_cold_check_margin_pu=warm_cold_check_margin_pu, base_maxIte=base_maxIte)
     items = _engine_items_from_cases(engine.template, cases)
     # `progress` is only passed through here (@nospecialize: this body and
     # the batch compile once, whatever the callback type); the batch wraps

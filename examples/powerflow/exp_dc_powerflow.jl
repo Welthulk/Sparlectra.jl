@@ -20,9 +20,13 @@ using Sparlectra
 
 include(joinpath(@__DIR__, "..", "others", "example_header.jl"))
 
-function main(; casefile::AbstractString = "case9.m")
+function main(; casefile::AbstractString = "sp_case9.m")
   print_example_banner("examples/powerflow/exp_dc_powerflow.jl", "solves a standalone DC power flow (MATPOWER rundcpf equivalent) and optionally seeds the AC Newton-Raphson solve from it")
-  case_path = ensure_casefile(casefile)
+  # the shipped case (data/mpower); examples never download a case
+  # (another case works too: fetch one yourself, e.g. with
+  # Sparlectra.ensure_casefile("case14.m"), and use its path here)
+  case_path = joinpath(Sparlectra.MPOWER_DIR, casefile)
+  isfile(case_path) || error("Shipped case $(casefile) not found in $(Sparlectra.MPOWER_DIR).")
 
   println("=== Standalone DC power flow ===")
   net = createNetFromMatPowerFile(filename = case_path)

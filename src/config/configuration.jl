@@ -243,6 +243,10 @@ const DISTRIBUTED_SLACK_FALLBACK_VALUES = (:error, :ref_only)
 Configuration of the N-1 contingency batch (issue #331).
 
 # Fields
+- `max_iter::Int`: iteration limit of every outage and scenario solve
+  (default `30`); the base case of the batch is solved with
+  `power_flow.max_iter`, so a lower value here keeps a batch fast without
+  touching the base case.
 - `rescue_ladder::Vector{Symbol}`: the per-case start-value ladder, an ordered,
   duplicate-free subset of `(:warm, :apslf, :dc, :flat)`. Default `[:warm]`
   reproduces the pre-#331 single warm solve. Each stage is one bounded solve
@@ -278,6 +282,9 @@ Configuration of the N-1 contingency batch (issue #331).
 """
 Base.@kwdef struct ContingencyConfig
   rescue_ladder::Vector{Symbol} = [:warm]
+  # iteration limit of every outage and scenario solve; the base case of the
+  # batch keeps power_flow.max_iter (30 is the limit the batch always used)
+  max_iter::Int = 30
   screening_mode::Symbol = :off
   screening_margin_pct::Float64 = 10.0
   # warm active set (0.30.2): outages and scenarios start from the base
@@ -330,11 +337,12 @@ const EXTERNAL_GRID_SOURCE_VALUES = (:auto, :config)
     ApslfConfig
 
 Typed configuration for the AnalyticLoadFlow.jl-backed analytic power-series
-solver (`ApslfSolver`), used when `power_flow.solver == :apslf`.
+solver (`ApslfSolver`), used when `power_flow.solver == :apslf`. The series
+is evaluated with Padé approximants (AnalyticLoadFlow 0.10.0 has no other
+evaluation), so there is no evaluation switch.
 """
 Base.@kwdef struct ApslfConfig
   order::Int = 24
-  use_pade::Bool = true
   nr_polish::Bool = false
   # Padé-pole margin (APSLF convergence radius) evaluated after the solve;
   # costs about as much as the solve, hence switchable
@@ -346,7 +354,7 @@ end
 
 Typed configuration for using the analytic power-series solver as a start-value
 generator ahead of the rectangular Newton-Raphson solve. Deliberately has no
-`use_pade`/`nr_polish` fields: polishing is left to the downstream NR solve, so
+`nr_polish` field: polishing is left to the downstream NR solve, so
 the generator always runs with `nr_polish=false` internally.
 """
 Base.@kwdef struct ApslfStartConfig
@@ -1548,7 +1556,6 @@ function ApslfConfig(raw::AbstractDict)
   order >= 1 || throw(ArgumentError("power_flow.apslf.order must be >= 1; got $(order)."))
   return ApslfConfig(
     order = order,
-    use_pade = _as_bool_cfg(_raw_get(raw, "use_pade", true)),
     nr_polish = _as_bool_cfg(_raw_get(raw, "nr_polish", false)),
     convergence_radius = _as_bool_cfg(_raw_get(raw, "convergence_radius", true)),
   )
@@ -2046,7 +2053,9 @@ function ContingencyConfig(raw::AbstractDict)
   cold_check = _as_bool_cfg(_raw_get(merged, "warm_cold_check", false))
   cold_margin = _as_float_cfg(_raw_get(merged, "warm_cold_check_margin_pu", DEFAULT_WARM_COLD_CHECK_MARGIN_PU))
   (isfinite(cold_margin) && cold_margin >= 0.0) || throw(ArgumentError("contingency.warm_cold_check_margin_pu must be a finite value >= 0; got $(cold_margin)."))
-  return ContingencyConfig(rescue_ladder = ladder, screening_mode = mode, screening_margin_pct = margin, warm_active_set = warm, warm_cold_check = cold_check, warm_cold_check_margin_pu = cold_margin)
+  max_iter = _as_int_cfg(_raw_get(merged, "max_iter", 30))
+  max_iter >= 1 || throw(ArgumentError("contingency.max_iter must be >= 1; got $(max_iter)."))
+  return ContingencyConfig(rescue_ladder = ladder, max_iter = max_iter, screening_mode = mode, screening_margin_pct = margin, warm_active_set = warm, warm_cold_check = cold_check, warm_cold_check_margin_pu = cold_margin)
 end
 
 # The deprecated diagnostics.* duplicates of output.* are warned about (and
@@ -2203,6 +2212,7 @@ const _REMOVED_SILENT_CONFIG_KEYS = ("output.condition_number", "webui.warmup", 
 # power_flow.islands.mode, 0.30.2: islands run in parallel by size when
 # Julia has more than one thread; there is no mode to choose.
 const _REMOVED_NOTED_CONFIG_KEYS = Dict(
+  "power_flow.apslf.use_pade" => "AnalyticLoadFlow 0.10.0 evaluates the series with Padé approximants only (Sparlectra 0.31.0); remove the key.",
   "power_flow.islands.mode" => "islands of one network run in parallel when Julia has more than one thread and at least two islands have power_flow.islands.parallel_min_buses buses (runtime.parallel.enabled is the master switch); remove the key.",
 )
 
