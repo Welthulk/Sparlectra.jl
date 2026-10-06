@@ -178,6 +178,12 @@ function getNodeComp(Vn_kV::Float64, node_idx::Int, nodeType, isAux::Bool = fals
   return ImpPGMComp(cID, name, cTyp, Vn_kV, node_idx, node_idx)
 end
 
+# A node is auxiliary when it carries the AuxBus component type or was built
+# with `isAux` (getNodeComp above gives it the "Aux_" component name; every
+# importer creates its star points and internal nodes that way). Used by the
+# SCF export and the auxiliary-bus flat start of the rectangular solver.
+_is_aux_node(node::Node)::Bool = node.comp.cTyp == AuxBus || startswith(getCompName(node.comp), "Aux_")
+
 """
     addShuntPower!(; node, p, q)
 

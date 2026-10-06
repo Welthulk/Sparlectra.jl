@@ -1,3 +1,9 @@
+# Version 0.31.1 - 2026-10-06
+
+Flat start of three-winding star points.
+## Changed
+- Flat start: three-winding star points start at the ratio of their stiffest winding, so the CGMES MiniGrid also solves from the bare flat start with the polar update.
+
 # Version 0.31.0 - 2026-10-05
 
 AnalyticLoadFlow 0.10.0.

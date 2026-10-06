@@ -374,6 +374,33 @@ function _blend_voltage_starts(Vraw::Vector{ComplexF64}, Vdc::Vector{ComplexF64}
   return V
 end
 
+# Per-bus list of the in-service branch ends, `(neighbour, step, branch
+# index)`, shared by the ratio-profile candidate and the auxiliary-bus flat
+# start. `step` is the factor of a current-free step from this bus to the
+# neighbour: the ratio sits on the from side (`V_from / t` faces the series
+# impedance), so from -> to divides by `|t|` and to -> from multiplies by it
+# (`abs(calcBranchRatio(br))`, the live ratio the Ybus stamps). Built once,
+# so a search over it is linear in the number of branches (a scan of every
+# branch per visited bus would be quadratic on the 10000-bus cases).
+function _ratio_profile_adjacency(net::Net)
+  n = length(net.nodeVec)
+  adjacency = [Tuple{Int,Float64,Int}[] for _ = 1:n]
+  for (b, br) in enumerate(net.branchVec)
+    br.status == 1 || continue
+    f = Int(br.fromBus)
+    t = Int(br.toBus)
+    (1 <= f <= n && 1 <= t <= n && f != t) || continue
+    ratio = abs(calcBranchRatio(br))
+    # a degenerate ratio would put a zero or non-finite factor into the
+    # start; such a branch is not used as a path (the bus keeps its flat
+    # value if no other branch reaches it)
+    (isfinite(ratio) && ratio > 0.0) || continue
+    push!(adjacency[f], (t, 1.0 / ratio, b))
+    push!(adjacency[t], (f, ratio, b))
+  end
+  return adjacency
+end
+
 """
     _ratio_profile_factors(net::Net, slack_idx::Int) -> Vector{Float64}
 
@@ -403,31 +430,14 @@ function _ratio_profile_factors(net::Net, slack_idx::Int)::Vector{Float64}
   n = length(net.nodeVec)
   factors = fill(NaN, n)
   1 <= slack_idx <= n || return fill(1.0, n)
-  # adjacency of the in-service branches once, so the search is linear in
-  # the number of branches (a scan of every branch per visited bus would be
-  # quadratic on the 10000-bus cases)
-  adjacency = [Tuple{Int,Float64}[] for _ = 1:n]
-  for br in net.branchVec
-    br.status == 1 || continue
-    f = Int(br.fromBus)
-    t = Int(br.toBus)
-    (1 <= f <= n && 1 <= t <= n && f != t) || continue
-    ratio = abs(calcBranchRatio(br))
-    # a degenerate ratio would put a zero or non-finite factor into the
-    # start; such a branch is not used as a path (the bus keeps 1.0 if no
-    # other path reaches it)
-    (isfinite(ratio) && ratio > 0.0) || continue
-    # from -> to divides by the ratio, to -> from multiplies by it
-    push!(adjacency[f], (t, 1.0 / ratio))
-    push!(adjacency[t], (f, ratio))
-  end
+  adjacency = _ratio_profile_adjacency(net)
   factors[slack_idx] = 1.0
   queue = [slack_idx]
   head = 1
   while head <= length(queue)
     k = queue[head]
     head += 1
-    for (j, step) in adjacency[k]
+    for (j, step, _) in adjacency[k]
       isnan(factors[j]) || continue
       factors[j] = factors[k] * step
       push!(queue, j)
@@ -438,6 +448,58 @@ function _ratio_profile_factors(net::Net, slack_idx::Int)::Vector{Float64}
     isnan(factors[k]) && (factors[k] = 1.0)
   end
   return factors
+end
+
+"""
+    _aux_bus_flat_start!(V0, net, slack_idx) -> Int
+
+Flat start of the auxiliary buses (three-winding star points and the other
+internal nodes an importer creates, see `_is_aux_node`): every in-service PQ
+auxiliary bus starts at the value that lets no current flow through its
+branch with the smallest series impedance `|r + jx|`, i.e. the flat value of
+the visible bus at the other end times the ratio step of
+`_ratio_profile_adjacency` (the same step the ratio-profile candidate
+multiplies along its path). The angle is the neighbour's (0 on a flat
+start). Visible buses keep their flat values, and branches to another
+auxiliary bus are not used. Applied on every flat start of the rectangular
+solver, with or without the start projection. Returns the number of buses
+set; a net without auxiliary PQ buses returns 0 before anything is built,
+so its start vector stays bit-identical.
+
+Why it exists: a star point has no load and starts at 1.0 pu, but its
+stiffest winding has an off-nominal ratio. On the CGMES MiniGrid the two
+110 kV star windings (r 0.00044 pu, ratio 0.96491) then carry 164 pu of
+circulating active power on a 9 MW case, and the polar Newton update
+diverges from that start.
+"""
+function _aux_bus_flat_start!(V0::Vector{ComplexF64}, net::Net, slack_idx::Int)::Int
+  nodes = net.nodeVec
+  is_aux = [k != slack_idx && getNodeType(nodes[k]) == PQ && _is_aux_node(nodes[k]) for k in eachindex(nodes)]
+  any(is_aux) || return 0
+  adjacency = _ratio_profile_adjacency(net)
+  changed = 0
+  for k in eachindex(nodes)
+    is_aux[k] || continue
+    best_j = 0
+    best_step = NaN
+    best_z = Inf
+    for (j, step, b) in adjacency[k]
+      # the other end must be a visible bus, which holds its flat value
+      is_aux[j] && continue
+      br = net.branchVec[b]
+      z = abs(complex(br.r_pu, br.x_pu))
+      if z < best_z
+        best_z = z
+        best_j = j
+        best_step = step
+      end
+    end
+    best_j == 0 && continue
+    # step leads from k to the neighbour (V_j = V_k * step), so V_k = V_j / step
+    V0[k] = V0[best_j] / best_step
+    changed += 1
+  end
+  return changed
 end
 
 # The ratio-profile candidate: the sanitized seed with every PQ magnitude

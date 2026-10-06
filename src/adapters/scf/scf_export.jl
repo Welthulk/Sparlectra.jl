@@ -832,11 +832,9 @@ const _SCF_DEFAULT_TAP_EST_MODE = "none"
 # a node is auxiliary when it carries the AuxBus type or is a three-winding
 # star point (the importer's naming convention)
 function _scf_is_aux_node(net::Net, i::Int)::Bool
-  nd = net.nodeVec[i]
-  nd.comp.cTyp == AuxBus && return true
-  # the three-winding star point: the importer builds it with isAux (giving
-  # the component name an "Aux_" prefix) and names the bus AUX3WT_<trafo>
-  startswith(getCompName(nd.comp), "Aux_") && return true
+  # the AuxBus type or an isAux build ("Aux_" component name), then the
+  # importer's bus name of a three-winding star point, AUX3WT_<trafo>
+  _is_aux_node(net.nodeVec[i]) && return true
   return startswith(_scf_bus_name(net, i), _SCF_STAR_NODE_PREFIX)
 end
 

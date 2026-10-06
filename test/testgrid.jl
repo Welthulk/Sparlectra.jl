@@ -971,7 +971,39 @@ function test_rectangular_start_projection_ratio_profile()::Bool
   runpf!(load_fixture_net("sp_case14"); config = Sparlectra.PowerFlowConfig(start_mode = Sparlectra.StartModeConfig(flatstart = true, start_projection = true)), performance_profile = cfg_prof)
   config_default = Sparlectra.StartModeConfig().ratio_profile === true && cfg_prof[:start_projection_summary].ratio_profile_built === true
 
-  return exact && no_candidate && dc_first && bfs && chain && config_default
+  # auxiliary-bus flat start (the same branch steps, limited to auxiliary
+  # buses, applied without the projection): a net without auxiliary buses
+  # keeps its flat start vector bit-identical (sp_case14 with the moved
+  # transformer from above)
+  Vflat, _ = Sparlectra.initialVrect(net; flatstart = true)
+  Vkept = copy(Vflat)
+  no_aux = Sparlectra._aux_bus_flat_start!(Vkept, net, slack) == 0 && isequal(Vkept, Vflat)
+  # a star point between the reference (stiff winding, ratio 0.95 on the
+  # star side) and a load bus (weaker winding, ratio 1): the star point starts
+  # at the current-free value of the stiff winding, the visible buses stay
+  # flat, and the solver applies it without the projection: the initial
+  # mismatch is the 0.05 pu offset across the weak winding (about 0.5 pu),
+  # where the plain flat start would put it across the stiff one (over 40 pu)
+  star_net() = begin
+    sn = Net(name = "aux_star", baseMVA = 100.0)
+    addBus!(net = sn, busName = "R", vn_kV = 110.0)
+    addBus!(net = sn, busName = "AUX3WT_T", vn_kV = 110.0, isAux = true)
+    addBus!(net = sn, busName = "L", vn_kV = 110.0)
+    addProsumer!(net = sn, busName = "R", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "R")
+    addPIModelTrafo!(net = sn, fromBus = "AUX3WT_T", toBus = "R", r_pu = 0.0005, x_pu = 0.001, b_pu = 0.0, status = 1, ratio = 0.95, ratedS = 100.0)
+    addPIModelTrafo!(net = sn, fromBus = "AUX3WT_T", toBus = "L", r_pu = 0.01, x_pu = 0.1, b_pu = 0.0, status = 1, ratio = 1.0, ratedS = 100.0)
+    addProsumer!(net = sn, busName = "L", type = "ENERGYCONSUMER", p = 5.0, q = 1.0)
+    sn
+  end
+  sn = star_net()
+  ka, kr, kl = sn.busDict["AUX3WT_T"], sn.busDict["R"], sn.busDict["L"]
+  Vs, sslack = Sparlectra.initialVrect(sn; flatstart = true)
+  rule = Sparlectra._aux_bus_flat_start!(Vs, sn, sslack) == 1 && isapprox(Vs[ka], ComplexF64(abs(Sparlectra.calcBranchRatio(sn.branchVec[1])), 0.0); atol = 1e-14) && Vs[kr] == 1.0 + 0.0im && Vs[kl] == 1.0 + 0.0im
+  sn2 = star_net()
+  _, erg = Sparlectra.runpf_rectangular!(sn2; maxiter = 30, tol = 1e-8, damp = 1.0, newton_update = :polar, opt_flatstart = true, start_projection = false, qlimits_enabled = false, verbose = 0)
+  solver_chain = erg == 0 && Sparlectra.rectangular_pf_status(sn2).initial_mismatch < 1.0
+
+  return exact && no_candidate && dc_first && bfs && chain && config_default && no_aux && rule && solver_chain
 end
 
 function test_matpower_vmva_selfcheck_noncontiguous_bus_numbers()::Bool

@@ -588,6 +588,18 @@ function runpf_rectangular!(
     V0[slack_idx] = _apply_voltage_magnitude_preserving_angle(V0[slack_idx], Vset[slack_idx])
   end
 
+  # Flat start: auxiliary PQ buses (three-winding star points) start at the
+  # current-free value of their stiffest winding instead of 1.0 pu, with or
+  # without the start projection; visible buses keep their flat values and a
+  # net without auxiliary buses keeps its start vector bit-identical. After
+  # the slack fix, so a star point next to the reference sees its setpoint.
+  if opt_flatstart
+    n_aux_start = _perf_profile_time!(performance_profile, :solver_aux_bus_flat_start) do
+      _aux_bus_flat_start!(V0, net, slack_idx)
+    end
+    verbose > 0 && n_aux_start > 0 && @info "flat start: $(n_aux_start) auxiliary bus(es) start at the ratio of their lowest-impedance branch"
+  end
+
   # Distributed slack (issue #192): discover participants on the FINAL bus
   # types and freeze the alpha vector for the whole solve — later PV→PQ
   # switching does not change participation. `nothing` (disabled, or ref_only

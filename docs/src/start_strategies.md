@@ -60,6 +60,14 @@ the whole start. On the CGMES MiniGrid it is 164 pu of active power on a
 profile starts at 0.09 pu and converges in three Newton steps to the
 delivery's own state.
 
+Independent of the projection, every flat start sets the auxiliary buses
+(the star points of three-winding transformers) to the current-free value
+of their lowest-impedance winding; the visible buses keep 1.0 pu and 0
+degrees. That removes the circulating current of the stiff star windings,
+so the MiniGrid also converges from the bare flat start (polar update,
+projection off, pure Newton) in four Newton steps. A network without
+auxiliary buses starts exactly as before.
+
 ## Recipes
 
 Plain Newton from the flat start with the polar update and no damping,
