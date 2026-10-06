@@ -1,3 +1,9 @@
+# Version 0.31.2 - 2026-10-06
+
+N-1 with voltage-dependent controllers.
+## Fixed
+- N-1: an outage that cuts off a loaded bus now solves the remaining network also when the case has Q(U)/P(U) controllers (case6495rte: those outages did not converge before).
+
 # Version 0.31.1 - 2026-10-06
 
 Flat start of three-winding star points, N-1 fixes.
