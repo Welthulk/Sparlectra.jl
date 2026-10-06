@@ -26,8 +26,8 @@
 struct _ScenarioOutageItem
   name::String
   weight::Float64
-  kind::Symbol        # :branch or :gen
-  internal::Int       # branchVec / prosumpsVec position on the template
+  kind::Symbol        # :branch, :gen or :transformer3w
+  internal::Int       # branchVec / prosumpsVec position, the star bus for :transformer3w
 end
 
 # a case whose element did not resolve: reported, never thrown (old contract)
@@ -196,6 +196,12 @@ function ScenarioEngine(net::Net; vm_min_pu::Float64 = 0.9, vm_max_pu::Float64 =
   end
   # template hygiene: the workers need the solved VOLTAGES, not the base
   # solver status or its Q-limit event logs
+  # A converged base case: its solved voltages ARE the warm start of every
+  # scenario, whatever start flag the imported net carried. A configured
+  # flat start (power_flow.flatstart) left on the template turned every
+  # :warm stage into a flat start without the start machinery
+  # (case6495rte: 0 of 100 outages converged, 81 from the solved voltages).
+  base_converged && (template.flatstart = false)
   template._rectangular_pf_status = nothing
   template._dc_pf_status = nothing
   empty!(template.qLimitLog)
@@ -381,6 +387,18 @@ function _scenario_bridge_branches(net::Net)::Set{Int}
   return bridges
 end
 
+# Why the screening estimate cannot run on this network, `nothing` when it
+# can: a voltage-dependent controller (Q(U)/P(U) at a prosumer, a
+# voltage-dependent shunt) makes the injections depend on the voltage, which
+# the one-step estimate on the base factorisation does not model. One source
+# for the screening build below and the service's run.log line, so a batch
+# that asked for screening says why none happened (case6495rte: 91 P(U)/Q(U)
+# controllers from the MATPOWER import, "0 of 9019 screened" without a word).
+function _screening_unavailable_reason(net::Net)::Union{Nothing,String}
+  has_voltage_dependent_control(net) && return "the network has voltage-dependent controllers (Q(U)/P(U) or voltage-dependent shunts), which the one-step estimate does not model"
+  return nothing
+end
+
 # Build the screening state, or return nothing when screening cannot be
 # trusted on this template: base not converged, voltage-dependent
 # injections (the specified-S vector is state dependent), a residual that
@@ -392,7 +410,7 @@ end
 # residual row, same factorization machinery.
 function _build_screening_state(template::Net, base_converged::Bool, tol::Float64, pf_kwargs, base_loadings::AbstractDict = Dict{String,Float64}())
   base_converged || return nothing
-  has_voltage_dependent_control(template) && return nothing
+  _screening_unavailable_reason(template) === nothing || return nothing
   n = length(template.nodeVec)
   Yred = createYBUS(net = template, sparse = true)
   Ybus = size(Yred, 1) == n ? Yred : _expand_ybus_for_isolated_nodes(Yred, n, template.isoNodes)
@@ -583,6 +601,9 @@ _screen_unscreenable(reason::Symbol) = (flagged = true, estimate = nothing, est_
 function _screen_outage(engine::ScenarioEngine, it::_ScenarioOutageItem)
   sc = engine.screen
   sc === nothing && return _screen_unscreenable(:no_screening_state)
+  # a three-winding transformer opens several legs at once; the estimate
+  # removes one branch, so the case goes to the full run
+  it.kind === :transformer3w && return _screen_unscreenable(:three_winding_transformer)
   template = engine.template
   outaged_branch = 0
   local Yb, S1, types1
@@ -706,8 +727,11 @@ function _screen_outage(engine::ScenarioEngine, it::_ScenarioOutageItem)
   vmax = -Inf
   est_violations = String[]
   bus_names = Dict{Int,String}(idx => name for (name, idx) in template.busDict)
+  # three-winding star points are no buses for the voltage band (as in
+  # _contingency_metrics)
+  stars = _three_winding_star_points(template)
   for node in template.nodeVec
-    node.busIdx in sc.iso && continue
+    (node.busIdx in sc.iso || node.busIdx in stars) && continue
     vm = abs(Vest[node.busIdx])
     isfinite(vm) || continue
     vmin = min(vmin, vm)
@@ -881,7 +905,7 @@ function _cut_off_bus_note(net::Net, cut_off::Vector{Int})
   end
   listed = join((get(names, i, string(i)) for i in first(cut_off, 5)), ", ")
   length(cut_off) > 5 && (listed *= ", ...")
-  parts = String["$(round(load_mw; digits = 1)) MW load disconnected"]
+  parts = String["$(round(load_mw; digits = 1)) MW load disconnected$(_negative_load_note(load_mw))"]
   units > 0 && push!(parts, "$(units) generating unit(s) with $(round(gen_mw; digits = 1)) MW out of service")
   note = "islanded: $(length(cut_off) == 1 ? "bus" : "buses") $(listed) cut off, $(join(parts, ", ")); the remaining network solved"
   return (note, load_mw)
@@ -914,7 +938,11 @@ function _evaluate_outaged_net!(engine::ScenarioEngine, work::Net, name::String,
   # unit is out of service.
   isolated_before = Set{Int}(i for i in eachindex(work.nodeVec) if isIsolated(work.nodeVec[i]))
   markIsolatedBuses!(net = work, log = false)
-  cut_off = Int[i for i in eachindex(work.nodeVec) if isIsolated(work.nodeVec[i]) && !(i in isolated_before)]
+  # a three-winding star point the outage isolated (the whole transformer
+  # out) is dropped silently: it is a computational node, no bus that loses
+  # supply
+  stars = _three_winding_star_points(work)
+  cut_off = Int[i for i in eachindex(work.nodeVec) if isIsolated(work.nodeVec[i]) && !(i in isolated_before) && !(i in stars)]
   cut_off_note, cut_off_load_mw = _cut_off_bus_note(work, cut_off)
   # the same detection the solve runs: an island without a slack or PV bus
   # takes its best generating unit (stated reference priority first, then
@@ -1030,6 +1058,16 @@ function _evaluate_outage_item!(engine::ScenarioEngine, worker::ScenarioWorker, 
   if it.kind === :gen
     removed_prosumer = work.prosumpsVec[it.internal]
     _remove_contingency_generator!(work, it.internal)
+  elseif it.kind === :transformer3w
+    # the whole three-winding transformer: every branch at its star point
+    # (it.internal is the star bus) opens, as one outage
+    for (k, br) in enumerate(work.branchVec)
+      (Int(br.fromBus) == it.internal || Int(br.toBus) == it.internal) || continue
+      br.status = 0
+      br.from_status = 0
+      br.to_status = 0
+      _remove_branch_shunt_parts!(work, k)
+    end
   else
     br = work.branchVec[it.internal]
     br.status = 0
@@ -1221,6 +1259,12 @@ function _engine_items_from_cases(template::Net, cases::Vector{ContingencyCase})
     if case.kind === :gen
       pidx = _resolve_contingency_generator(template, case.element)
       push!(items, pidx === nothing ? _ScenarioFailedItem(case.name, case.weight, "unknown generator $(case.element) (not found in net.prosumpsVec)") : _ScenarioOutageItem(case.name, case.weight, :gen, pidx))
+    elseif case.kind === :transformer3w
+      # the element is the star-point bus; it must still be the star point
+      # of a three-winding transformer on this net
+      star = get(template.busDict, case.element, nothing)
+      ok = star !== nothing && star in _three_winding_star_points(template)
+      push!(items, ok ? _ScenarioOutageItem(case.name, case.weight, :transformer3w, star) : _ScenarioFailedItem(case.name, case.weight, "unknown three-winding transformer star point $(case.element)"))
     else
       idx = _resolve_contingency_branch(template, case.element)
       push!(items, idx === nothing ? _ScenarioFailedItem(case.name, case.weight, "unknown branch $(case.element) (not found in net.branchVec)") : _ScenarioOutageItem(case.name, case.weight, :branch, idx))

@@ -128,7 +128,7 @@ level.
 
 | Criterion | Keyword or config key | Result field |
 |---|---|---|
-| Voltage band | `vm_min_pu`, `vm_max_pu` (defaults 0.9/1.1) | `voltage_violations` (buses outside the band); `min_vm_pu`, `max_vm_pu` (envelope over the non-isolated buses) |
+| Voltage band | `vm_min_pu`, `vm_max_pu` (defaults 0.9/1.1) | `voltage_violations` (buses outside the band); `min_vm_pu`, `max_vm_pu` (envelope over the non-isolated buses; the star point of a three-winding transformer never counts) |
 | Branch loading | `sn_MVA` rating of the branch (MATPOWER `RATE_A`, CGMES `ratedS`); loading is `100 · max(\|S_from\|, \|S_to\|) / sn_MVA` | `max_branch_loading_pct` (worst value; `NaN` without any rated branch, no rating model is invented); `overloads`, branches above 100 percent as [`OverloadRecord`](@ref)s (name, loading, base-case loading and the `delta_pct` to it, `s_MVA`, `sn_MVA`, worst first) |
 | Severity | `severity = weight · max(0, max loading - 100)` | `severity` (`NaN` for a failed case; `printContingencyResults` ranks by it, failures first) |
 | Convergence | `maxIte`, `contingency.rescue_ladder` | `converged`, `iterations`, `start_used` |
@@ -137,10 +137,26 @@ level.
 
 | Case source | Call | Selection |
 |---|---|---|
-| in-service branches | `generateN1Branches(net; include_transformers = true)` | transformers recognized by component type or a nonzero winding ratio; filters `min_vn_kV` (kept when the higher endpoint voltage clears the threshold, so an EHV/HV transformer stays in), `min_sn_MVA` (rated at or above), `name_pattern` (a `Regex` or a substring); all default to no filter |
+| in-service branches | `generateN1Branches(net; include_transformers = true)` | transformers recognized by component type or a nonzero winding ratio; filters `min_vn_kV` (kept when the higher endpoint voltage clears the threshold, so an EHV/HV transformer stays in), `min_sn_MVA` (rated at or above), `name_pattern` (a `Regex` or a substring); all default to no filter; a three-winding transformer is one `kind = :transformer3w` case, see [Three-winding transformers](@ref contingency_three_winding) |
 | generators | `generateN1Generators(net; min_pg_MW, name_pattern)` | one `kind = :gen` case per in-service generator, external-grid feed-in or synchronous machine, filtered by `\|Pg\|` or name |
 | FOR001 metadata | `generateContingenciesFromFOR001(net)` | imported MATPOWER FOR001 contingency names; unresolvable names become failed result rows |
 | scenarios block or JSON | `runScenarios!` | the per-scenario `weight` of the block; a weight file applies to case-list runs only (the outage-kind selector and the `n1_*` scenario sources) |
+
+## [Three-winding transformers](@id contingency_three_winding)
+
+A three-winding transformer is modelled as a star equivalent: three legs
+meeting in an auxiliary star-point bus. In operation it trips as a whole,
+so `generateN1Branches` lists it as ONE case of kind `:transformer3w`,
+named after the transformer, that opens all of its legs; single-winding
+outages are listed only with `three_winding_legs = true`. The `n1_branches`
+scenario mode expands it to one scenario with a status patch per leg, and
+a case-file contingency that lists exactly the legs of one transformer runs
+as that transformer.
+
+The star point is a computational node, its voltage no bus voltage: it
+never enters `min_vm_pu`, `max_vm_pu` or `voltage_violations`, and with the
+transformer out it is dropped silently (no island, no lost load). The bus
+tables show it with the type `AUX`.
 
 ## [Iteration limits](@id contingency_iteration_limits)
 
@@ -149,7 +165,7 @@ outage and scenario with `contingency.max_iter` (default `30`; keyword
 `maxIte` of `runContingencies!` and `runScenarios!`, `base_maxIte` for the
 base case). A lower outage limit keeps a large batch fast: an outage that
 needs more steps ends as not converged instead of iterating on. Web UI:
-"Outage max iterations" in the "N-1 screening" fieldset of the Settings
+"Outage max iterations" in the "N-1 contingency" box of the Settings
 page.
 
 ## [Screening](@id contingency_screening)
@@ -205,7 +221,7 @@ types, so it clamps the same machines again (a jump of the mismatch and
 about twice the Newton steps). The warm active set
 (`contingency.warm_active_set`, default `true` since 0.30.3; keyword
 `warm_active_set` on `runContingencies!` and `runScenarios!`; Web UI: the
-checkbox in the "N-1 screening" fieldset of the Settings page) starts every
+checkbox in the "N-1 contingency" box of the Settings page) starts every
 outage and scenario with the base case's clamped machines as PQ at the
 limit they reached. The active set stays free: a clamped machine whose
 voltage recovers goes back to PV, new clamps follow the normal rules.

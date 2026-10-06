@@ -384,6 +384,24 @@ function run_scenario_patch_tests()
       @test length(alln1) == length(reference) + length(gref)
       excluded = expand_scenarios(ScenarioSet(mode = :n1_branches, exclusions = [reference[1].element]), net, index)
       @test length(excluded) == length(reference) - 1
+
+      # a three-winding transformer expands to ONE scenario that opens all
+      # three legs (through SCF, which carries the star point and the leg
+      # ids), and that scenario gives the same result as the N-1 case
+      path = tempname() * ".scf.json"
+      Sparlectra.exportSCF(three_winding_star_net(); file = path)
+      starcase = read_scf_json(path)
+      starnet = Sparlectra.build_net(starcase)
+      staridx = ScenarioIndex(starcase)
+      t3s = only(s for s in expand_scenarios(ScenarioSet(mode = :n1_branches), starnet, staridx) if s.name == "B2_B3_B4")
+      @test length(t3s.ops) == 3
+      @test all(op -> op.op === :status && op.value == 0.0 && op.target === :transformer, t3s.ops)
+      rs = only(redirect_stdout(() -> Sparlectra.runScenarios!(starnet, [t3s]; index = staridx), devnull))
+      rc = only(redirect_stdout(() -> Sparlectra.runContingencies!(starnet, [c for c in Sparlectra.generateN1Branches(starnet) if c.kind === :transformer3w]), devnull))
+      @test rs.converged && rc.converged
+      @test rs.min_vm_pu == rc.min_vm_pu
+      @test rs.voltage_violations == rc.voltage_violations
+      @test rs.error == rc.error
     end)() end
   end)() end
   return nothing
@@ -598,6 +616,12 @@ function run_scenario_engine_extended_tests()
       # default format is "technical" (comma delimiter) since issue #376
       @test endswith(first(csv1), ",screened,screening_estimate")
       @test length(csv1) == 3
+      # a requested screening the network does not allow (the shipped Q(U)
+      # case carries a voltage-dependent controller) says why in run.log
+      qu = abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14_qu.scf.json"))
+      resqu = SparlectraApp._run_contingency_service(qu, cfgpath, joinpath(dir, "run_qu"), "step5_qu", "branch"; screening_mode = "flag")
+      @test SparlectraApp.to_dict(resqu)["status"] == "succeeded"
+      @test any(l -> occursin("screening: flag requested but not available: the network has voltage-dependent controllers", l), readlines(joinpath(dir, "run_qu", "run.log")))
       # external scenario JSON, screening explicitly off: classic CSV columns
       scen_file = joinpath(dir, "scenarios.json")
       write(scen_file, Sparlectra.scf_json_string(scenario_set_dict(set)))

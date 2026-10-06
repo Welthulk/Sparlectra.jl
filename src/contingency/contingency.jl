@@ -26,15 +26,17 @@ One contingency to evaluate: the outage of a single network element.
 
 # Fields
 - `name::String`: display name of the case (defaults to the element name).
-- `kind::Symbol`: `:branch` (a line/transformer outage) or `:gen` (a generator
-  outage).
+- `kind::Symbol`: `:branch` (a line/transformer outage), `:gen` (a generator
+  outage) or `:transformer3w` (a three-winding transformer as a whole: every
+  leg of its star equivalent opens together).
 - `element::String`: for `:branch`, the branch component name as reported by
   `getCompName(branch.comp)`, resolved against `net.branchVec`; for `:gen`, the
   generator prosumer's component name, resolved against `net.prosumpsVec`. Both
   can share a component name (parallel circuits, several units at one bus), so
   `generateN1Branches` / `generateN1Generators` disambiguate duplicates as
   `"<name>#<index>"` and the resolver verifies the index carries that name
-  before use.
+  before use. For `:transformer3w`, the name of the transformer's star-point
+  bus (the case `name` is the transformer's name).
 - `weight::Float64`: a per-case importance/probability weight (default `1.0`),
   carried through to the [`ContingencyResult`](@ref) so a weighted ranking can
   read it. Set it via the 4-argument constructor, or attach outage rates in bulk
@@ -50,7 +52,7 @@ struct ContingencyCase
     element::String
     weight::Float64
     function ContingencyCase(name::String, kind::Symbol, element::String, weight::Real=1.0)
-        kind in (:branch, :gen) || throw(ArgumentError("ContingencyCase: kind must be :branch or :gen, got :$(kind)."))
+        kind in (:branch, :gen, :transformer3w) || throw(ArgumentError("ContingencyCase: kind must be :branch, :gen or :transformer3w, got :$(kind)."))
         (isfinite(weight) && weight >= 0.0) || throw(ArgumentError("ContingencyCase: weight must be a finite value >= 0, got $(weight)."))
         return new(name, kind, element, Float64(weight))
     end
@@ -145,9 +147,48 @@ struct ContingencyResult
     error::Union{Nothing,String}
 end
 
+# A branch counts as a transformer when its component type is `Trafo`
+# (net-builder path) or its winding ratio is nonzero (the classical MATPOWER
+# indicator: line rows carry `ratio = 0`).
+_is_transformer_branch(br::Branch)::Bool = br.comp.cTyp === Trafo || br.ratio != 0.0
+
+# The star points of the three-winding transformers of `net` with their legs:
+# an auxiliary bus (`_is_aux_node`, the way every importer builds a star
+# point) whose two or more branches are all transformers. That excludes the
+# other auxiliary buses (the internal bus of an external grid and the
+# boundary node of a dangling line hang on a line). `name` is the
+# transformer's name: the star bus name without the importer's prefix or
+# suffix (`AUX3WT_<name>` from CGMES, `Aux3WT_<hv>_<mv>_<lv>` from
+# add3WTPiModelTrafo!, `<id>_star` from PowSyBl). Sorted by star bus.
+function _three_winding_groups(net::Net)
+    nodes = net.nodeVec
+    legs = Dict{Int,Vector{Int}}()
+    for (k, br) in enumerate(net.branchVec)
+        for b in (Int(br.fromBus), Int(br.toBus))
+            (1 <= b <= length(nodes) && _is_aux_node(nodes[b])) || continue
+            push!(get!(Vector{Int}, legs, b), k)
+        end
+    end
+    groups = NamedTuple{(:name, :star, :legs),Tuple{String,Int,Vector{Int}}}[]
+    isempty(legs) && return groups
+    bus_names = Dict{Int,String}(idx => name for (name, idx) in net.busDict)
+    for star in sort!(collect(keys(legs)))
+        ks = legs[star]
+        (length(ks) >= 2 && all(k -> _is_transformer_branch(net.branchVec[k]), ks)) || continue
+        bus = get(bus_names, star, getCompName(nodes[star].comp))
+        name = replace(replace(bus, r"^(AUX3WT_|Aux3WT_)" => ""), r"_star$" => "")
+        push!(groups, (name = name, star = star, legs = ks))
+    end
+    return groups
+end
+
+# the star-point bus indices alone (voltage metrics and cut-off notes skip them)
+_three_winding_star_points(net::Net)::Set{Int} = Set{Int}(g.star for g in _three_winding_groups(net))
+
 """
     generateN1Branches(net::Net; include_transformers = true,
-                       min_vn_kV = 0.0, min_sn_MVA = 0.0, name_pattern = nothing)
+                       min_vn_kV = 0.0, min_sn_MVA = 0.0, name_pattern = nothing,
+                       three_winding_legs = false)
         -> Vector{ContingencyCase}
 
 Generate one branch-outage [`ContingencyCase`](@ref) per in-service branch
@@ -167,20 +208,45 @@ grid (all default to "no filter"):
   least this value. Unrated branches are dropped when this filter is active.
 - `name_pattern`: keep a branch only if its component name matches this
   `Regex` or contains this substring.
+
+A three-winding transformer (a star equivalent: three legs meeting in an
+auxiliary star-point bus) trips as a whole: it gets ONE case of kind
+`:transformer3w`, named after the transformer, that opens all of its legs.
+Its legs are not listed one by one unless `three_winding_legs = true`. The
+screening filters apply to the transformer: it is kept when it counts as a
+transformer under `include_transformers`, its highest terminal voltage meets
+`min_vn_kV`, its largest leg rating meets `min_sn_MVA`, and its name matches
+`name_pattern`; it is listed while at least one leg is in service and closed.
 """
 function generateN1Branches(net::Net; include_transformers::Bool=true,
     min_vn_kV::Real=0.0, min_sn_MVA::Real=0.0,
-    name_pattern::Union{Nothing,AbstractString,Regex}=nothing)::Vector{ContingencyCase}
+    name_pattern::Union{Nothing,AbstractString,Regex}=nothing,
+    three_winding_legs::Bool=false)::Vector{ContingencyCase}
     name_count = Dict{String,Int}()
     for br in net.branchVec
         name = getCompName(br.comp)
         name_count[name] = get(name_count, name, 0) + 1
     end
+    # the transformer case takes the place of its first leg in the list
+    group_at_leg = Dict{Int,Int}()
+    leg_of_group = Set{Int}()
+    groups = _three_winding_groups(net)
+    for (g, grp) in enumerate(groups)
+        group_at_leg[minimum(grp.legs)] = g
+        union!(leg_of_group, grp.legs)
+    end
+    star_names = Dict{Int,String}(idx => name for (name, idx) in net.busDict)
     cases = ContingencyCase[]
-    for br in net.branchVec
+    for (k, br) in enumerate(net.branchVec)
+        if haskey(group_at_leg, k)
+            grp = groups[group_at_leg[k]]
+            _three_winding_case_kept(net, grp; include_transformers=include_transformers, min_vn_kV=min_vn_kV, min_sn_MVA=min_sn_MVA, name_pattern=name_pattern) &&
+                push!(cases, ContingencyCase(grp.name, :transformer3w, star_names[grp.star]))
+        end
+        three_winding_legs || !(k in leg_of_group) || continue
         br.status == 1 || continue
         _branch_terminal_state(br) === :closed || continue
-        is_transformer = br.comp.cTyp === Trafo || br.ratio != 0.0
+        is_transformer = _is_transformer_branch(br)
         include_transformers || !is_transformer || continue
         # voltage-level screen: the higher endpoint voltage is the level the branch
         # belongs to (keeps EHV/HV transformers when screening for the top grid)
@@ -203,6 +269,22 @@ function generateN1Branches(net::Net; include_transformers::Bool=true,
         push!(cases, ContingencyCase(element, :branch, element))
     end
     return cases
+end
+
+# the screening filters of generateN1Branches applied to one three-winding
+# transformer (see its docstring)
+function _three_winding_case_kept(net::Net, grp; include_transformers::Bool, min_vn_kV::Real, min_sn_MVA::Real, name_pattern)::Bool
+    include_transformers || return false
+    any(k -> net.branchVec[k].status == 1 && _branch_terminal_state(net.branchVec[k]) === :closed, grp.legs) || return false
+    if min_vn_kV > 0.0
+        vn = maximum(max(getNodeVn(net.nodeVec[Int(net.branchVec[k].fromBus)]), getNodeVn(net.nodeVec[Int(net.branchVec[k].toBus)])) for k in grp.legs)
+        vn >= min_vn_kV || return false
+    end
+    if min_sn_MVA > 0.0
+        ratings = [r for r in (net.branchVec[k].sn_MVA for k in grp.legs) if r !== nothing && isfinite(r)]
+        (!isempty(ratings) && maximum(ratings) >= min_sn_MVA) || return false
+    end
+    return name_pattern === nothing || occursin(name_pattern, grp.name)
 end
 
 """
@@ -383,12 +465,15 @@ end
 # evaluate the solved contingency net against the limit band; pure reader
 function _contingency_metrics(cnet::Net, vm_min_pu::Float64, vm_max_pu::Float64, base_loadings::Dict{String,Float64})
     iso = Set(cnet.isoNodes)
+    # a three-winding star point is a computational node, its voltage is no
+    # bus voltage: it never enters the envelope or the violation list
+    stars = _three_winding_star_points(cnet)
     bus_names = Dict{Int,String}(idx => name for (name, idx) in cnet.busDict)
     vmin = Inf
     vmax = -Inf
     violations = String[]
     for node in cnet.nodeVec
-        node.busIdx in iso && continue
+        (node.busIdx in iso || node.busIdx in stars) && continue
         vm = something(node._vm_pu, NaN)
         isfinite(vm) || continue
         vmin = min(vmin, vm)
@@ -459,6 +544,12 @@ function _validate_contingency_ladder(ladder::AbstractVector{Symbol}; context::A
     return Symbol[ladder...]
 end
 
+# A negative disconnected load is the case file's, not a sign error: some
+# cases (the RTE MATPOWER cases: case6495rte has 278 buses with negative PD,
+# -10903 MW together) model an infeed as a negative load. The note says so
+# next to the figure.
+_negative_load_note(load_mw::Real)::String = load_mw < 0.0 ? " (negative: the case file gives these buses a negative load, an infeed modelled as load)" : ""
+
 # Build the result row for an outage that strands one or more islands without a
 # valid angle reference. The message is deliberately specific so the operator
 # reads the cause, not just the symptom: a load-only island is a clean load-shed
@@ -477,7 +568,7 @@ function _islanded_contingency_result(name::AbstractString, weight::Float64, isl
     msg = if stranded_gen_mw > 1e-6
         "islanded without reference: $(round(shed_mw; digits = 1)) MW load, $(round(stranded_gen_mw; digits = 1)) MW generation stranded (no voltage-controlled source)"
     else
-        "islanded: load-only, $(round(shed_mw; digits = 1)) MW load disconnected"
+        "islanded: load-only, $(round(shed_mw; digits = 1)) MW load disconnected$(_negative_load_note(shed_mw))"
     end
     return ContingencyResult(name, weight, false, 0, :none, NaN, NaN, NaN, NaN, OverloadRecord[], String[], island_count, shed_mw, msg)
 end
@@ -786,10 +877,12 @@ function buildContingencyReport(results::AbstractVector{ContingencyResult}; top:
         end
     end
 
-    # how many distinct contingencies overload each branch
+    # how many distinct contingencies overload each branch: a name counts once
+    # per contingency (parallel circuits share a component name, and three
+    # overloaded parallel transformers counted one outage three times)
     counts = Dict{String,Int}()
-    for r in results, o in r.overloads
-        counts[o.name] = get(counts, o.name, 0) + 1
+    for r in results, name in unique(o.name for o in r.overloads)
+        counts[name] = get(counts, name, 0) + 1
     end
     ranked = sort!(collect(counts); by=p -> (-p.second, p.first))
     top_overloaded = ranked[1:min(top, length(ranked))]

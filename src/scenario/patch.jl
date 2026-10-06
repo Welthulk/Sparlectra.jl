@@ -186,9 +186,11 @@ end
 
 Expand the N-1 modes to explicit scenarios through the EXISTING
 generators (`generateN1Branches`, `generateN1Generators`), honoring
-`exclusions` by case element name; `:explicit` returns the stored
-scenarios unchanged. Every expanded scenario carries exactly one status
-patch, which is what makes N-1 the special case of the model.
+`exclusions` by case element name (or, for a three-winding transformer,
+its name); `:explicit` returns the stored scenarios unchanged. Every
+expanded scenario carries exactly one status patch, which is what makes N-1
+the special case of the model; the one exception is a three-winding
+transformer, which trips as a whole: its scenario patches every leg.
 """
 function expand_scenarios(set::ScenarioSet, net::Net, index::ScenarioIndex)::Vector{Scenario}
   set.mode === :explicit && return set.scenarios
@@ -207,8 +209,18 @@ function expand_scenarios(set::ScenarioSet, net::Net, index::ScenarioIndex)::Vec
   end
   out = Scenario[]
   if set.mode in (:n1_branches, :n1_all)
+    groups = Dict(g.star => g for g in _three_winding_groups(net))
     for case in generateN1Branches(net)
-      case.element in excluded && continue
+      (case.element in excluded || case.name in excluded) && continue
+      if case.kind === :transformer3w
+        # the whole three-winding transformer: one scenario with a status
+        # patch per leg (a multi-op scenario runs the patch path)
+        grp = groups[net.busDict[case.element]]
+        ids = [get(id_by_internal_branch, k, nothing) for k in grp.legs]
+        any(isnothing, ids) && continue
+        push!(out, Scenario(name = case.name, weight = case.weight, ops = [PatchOp(op = :status, target = index.kind_by_id[id], id = id, value = 0.0) for id in ids]))
+        continue
+      end
       internal = _resolve_contingency_branch(net, case.element)
       internal === nothing && continue
       id = get(id_by_internal_branch, internal, nothing)
