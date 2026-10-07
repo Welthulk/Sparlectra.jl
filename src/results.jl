@@ -142,6 +142,21 @@ _effective_bus_name(busNameByIdx::AbstractDict, net::Net, bus_idx::Int)::String 
 # presentation only (result table, structured report, CSV/JSON rows).
 _is_external_grid_internal_bus(name::AbstractString)::Bool = endswith(name, "__extgrid_int")
 
+# The rescue lines of the result header, `nothing` when the configured start
+# solved by itself (see _record_rescue! for the status fields). `flat_suffix`
+# goes behind the Flatstart value, `text` is the Rescue line.
+function _rescue_header_line(net::Net)
+  st = rectangular_pf_status(net)
+  (st === nothing || !hasproperty(st, :rescue_used) || st.rescue_used !== true) && return nothing
+  first = st.rescue_first_flatstart ? "flat start" : "start from the stored voltages"
+  strategy = st.rescue_strategy
+  if strategy === :none
+    return (flat_suffix = " (failed, rescue did not converge)", text = string("the ", first, " failed after ", st.rescue_first_iterations, " iteration(s); no rescue strategy converged"))
+  end
+  how = strategy === :alternate_start ? (st.rescue_first_flatstart ? " (start from the stored voltages)" : " (flat start)") : ""
+  return (flat_suffix = " (failed, rescued)", text = string("the ", first, " failed after ", st.rescue_first_iterations, " iteration(s); strategy '", strategy, "'", how, " converged, Iterations above are the rescue solve's"))
+end
+
 function _bus_type_label(nodeType, name::AbstractString; star::Bool = false)::String
   nodeType == Sparlectra.Slack && _is_external_grid_internal_bus(name) && return "SOURCE"
   # a three-winding star point: a computational node, shown but marked
@@ -941,7 +956,15 @@ function printACPFlowResults(
   if cres !== nothing && cres.powerflow_solves > 1
     @printf(io, "Control passes :%10d (Iterations above = last pass; %d inner iterations in total)\n", cres.powerflow_solves, cres.total_pf_iterations)
   end
-  @printf(io, "Flatstart      :%10s\n", net.flatstart ? "Yes" : "No")
+  rescue_line = _rescue_header_line(net)
+  if rescue_line === nothing
+    @printf(io, "Flatstart      :%10s\n", net.flatstart ? "Yes" : "No")
+  else
+    # the configured start failed and the rescue ladder solved: the header
+    # says so instead of a bare "Yes" next to the rescue solve's iterations
+    @printf(io, "Flatstart      :%10s%s\n", net.flatstart ? "Yes" : "No", rescue_line.flat_suffix)
+    println(io, "Rescue         : ", rescue_line.text)
+  end
   @printf(io, "Tolerance      : %.1e\n", tol)
   @printf(io, "Solver         :%15s\n", string(solver))
   if converged
