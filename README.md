@@ -169,7 +169,7 @@ Bug reports, test networks and import edge cases (CGMES, MATPOWER, DTF, PowSyBl 
 
 ## Sponsors
 
-<a href="https://www.soptim.de"><img src="docs/src/assets/soptim_logo.png" alt="SOPTIM AG" width="180" /></a>
+<a href="https://www.soptim.de"><img src="docs/src/assets/SOPTIM_Logo.png" alt="SOPTIM AG" width="180" /></a>
 
 The development of Sparlectra.jl is supported by [SOPTIM AG](https://www.soptim.de), Aachen, Germany.
 
