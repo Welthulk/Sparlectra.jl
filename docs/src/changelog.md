@@ -3,6 +3,8 @@
 Rescued power flows say so.
 ## Changed
 - A power flow solved by the rescue ladder says so: the result header names the failed start and its iterations next to the rescue strategy, and the Web UI result shows a Rescue row.
+## Fixed
+- Web UI: CGMES cases export as SCF and PGM, and an unregulated boundary injection stays unregulated after the round trip.
 
 # Version 0.31.2 - 2026-10-06
 

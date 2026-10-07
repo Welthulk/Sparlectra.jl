@@ -151,7 +151,6 @@ import Sparlectra:
   _format_csv_number,
   _format_top_mismatch_rows,
   _hvdc_link_flow_rows,
-  _import_sparlectra_net,
   _is_machine_transformer,
   _islandwise_failure_message,
   _jacobian_condest,

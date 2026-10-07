@@ -21,6 +21,9 @@
 
 # the shared capture helper needs both stdlibs when this file runs standalone
 using Logging
+# the Web UI export test packs a shipped CGMES delivery into a zip, the form
+# the case directory holds it in
+import ZipArchives
 
 # the fixture comparison lives with the demo-case tests, so both use one rule
 isdefined(@__MODULE__, :scf_roundtrip_field_diffs) || include("test_scf_support.jl")
@@ -887,6 +890,32 @@ mpc.branch = [
       qnet = importSCF(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14_qu.scf.json")))
       @test any(has_qu_controller, qnet.prosumpsVec)
       @test_logs (:warn, r"voltage-dependent Q\(U\)/P\(U\) control") match_mode = :any exportSCF(qnet; file = joinpath(d, "strict_qu.json"), strict_pgm = true)
+
+      # an unregulated external network injection (a CGMES boundary or area
+      # equivalent, built the way the CGMES importer builds it) is a PQ
+      # injection, not a voltage source: the full file keeps it unregulated
+      # and the solution unchanged, the strict file has one source only.
+      # Before 0.31.3 both wrote it as a PGM source: it came back regulated
+      # at 1.0 pu (CGMES MiniGrid: 0.039 pu off), and a strict file had one
+      # reference per injection
+      eni = Net(name = "scf_unregulated_eni", baseMVA = 100.0)
+      addBus!(net = eni, busName = "A", vn_kV = 110.0)
+      addBus!(net = eni, busName = "B", vn_kV = 110.0)
+      addPIModelACLine!(net = eni, fromBus = "A", toBus = "B", r_pu = 0.01, x_pu = 0.1, b_pu = 0.0, status = 1)
+      addProsumer!(net = eni, busName = "A", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "A")
+      addProsumer!(net = eni, busName = "B", type = "EXTERNALNETWORKINJECTION", p = -5.0, q = -1.0, isRegulated = false)
+      eni.prosumpsVec[end].comp.cTyp = Sparlectra.ExternalNetworkInjection
+      addProsumer!(net = eni, busName = "B", type = "ENERGYCONSUMER", p = 20.0, q = 4.0)
+      runpf!(eni, 30, 1e-10, 0)
+      vm_b = getNodeVm(eni.nodeVec[2])
+      back_eni = importSCF(exportSCF(eni; file = joinpath(d, "eni.scf.json")))
+      kept = only(ps for ps in back_eni.prosumpsVec if Int(ps.comp.cFrom_bus) == 2 && ps.comp.cTyp == Sparlectra.ExternalNetworkInjection)
+      @test kept.isRegulated === false
+      runpf!(back_eni, 30, 1e-10, 0)
+      @test abs(getNodeVm(back_eni.nodeVec[2]) - vm_b) < 1e-12
+      strict_eni_file = @test_logs (:warn,) match_mode = :any exportSCF(eni; file = joinpath(d, "eni.pgm.json"), strict_pgm = true)
+      strict_eni = Sparlectra.scf_json_parse(read(strict_eni_file, String))
+      @test length(strict_eni["data"]["source"]) == 1
     end)() end
 
     @testset "three-winding transformer from a nameplate" begin (function ()
@@ -1459,6 +1488,26 @@ mpc.branch = [
       end
       @test isfile(joinpath(cases, "warmup_casePST.pgm.json"))
       @test !haskey(Sparlectra.scf_json_parse(read(joinpath(cases, "warmup_casePST.pgm.json"), String)), "sparlectra")
+
+      # a CGMES case (a zip in the case directory) exports as well, through the
+      # importer the power-flow run uses; before 0.31.3 the export read cases
+      # with the file-format importer and stopped with "file extension .zip is
+      # not supported". The shipped sp_case14 delivery, packed at test time
+      zip14 = joinpath(cases, "sp_case14_cgmes.zip")
+      ZipArchives.ZipWriter(zip14) do w
+        for f in sort(readdir(cgmes_fixture_dir("sp_case14"); join = true))
+          ZipArchives.zip_newfile(w, basename(f))
+          write(w, read(f))
+        end
+      end
+      cg = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/export-scf", Dict{String,Any}("casefile" => "sp_case14_cgmes.zip", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH); output_root = root, runtime = rt)
+      @test occursin("Exported", string(cg))
+      @test isfile(joinpath(cases, "sp_case14_cgmes.scf.json"))
+      cg_pgm = run_with_expected_warnings((r"strict_pgm = true",)) do
+        SparlectraApp.route_sparlectra_webui("POST", "/powerflow/export-scf", Dict{String,Any}("casefile" => "sp_case14_cgmes.zip", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "scf_strict_pgm" => "true"); output_root = root, runtime = rt)
+      end
+      @test occursin("Exported", string(cg_pgm))
+      @test isfile(joinpath(cases, "sp_case14_cgmes.pgm.json"))
 
       # the exported file can be taken back out of the case directory: the
       # export names it in the redirect, the page offers it, and the route

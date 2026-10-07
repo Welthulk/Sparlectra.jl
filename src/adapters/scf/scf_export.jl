@@ -54,6 +54,17 @@ const SCF_PGM_VERSION = "1.0"
 # file is stable against Dict iteration order and against rebuilds
 const _SCF_ID_TYPE_ORDER = ("node", "line", "generic_branch", "link", "source", "sym_load", "sym_gen", "shunt", "voltage_regulator", "sym_voltage_sensor", "sym_power_sensor", "sym_current_sensor", "tap_changer", "transformer3w")
 
+# A PGM `source` is a voltage source: it holds its node at u_ref. An external
+# network injection is written as one only when it acts like that, i.e. it
+# regulates its voltage or carries the reference. An unregulated injection
+# with a fixed P/Q (a CGMES boundary or area equivalent: the MiniGrid's
+# Gen_380/Gen_110 at P = 0) is a PQ injection and goes out as a `sym_gen`;
+# its extra entry keeps the component type, so the reader rebuilds the
+# external network injection, unregulated. As a source it came back
+# regulated at 1.0 pu (0.039 pu off at its bus after the round trip) and a
+# strict PGM file got one voltage source per such injection.
+_scf_is_pgm_source(ps::ProSumer)::Bool = ps.comp.cTyp == ExternalNetworkInjection && (ps.isRegulated || ps.referencePri !== nothing)
+
 ## --- unit helpers ----------------------------------------------------------
 ## Sparlectra works in per-unit on net.baseMVA with kV bus bases; SCF is SI
 ## (V, W, var, VA, ohm, siemens, farad, A, rad) like PGM.
@@ -150,7 +161,7 @@ function scf_id_map(net::Net)::ScfIdMap
   end
   # prosumers split into sources (external network injection at the slack),
   # generators, and loads; the type walk keeps ids stable per class
-  srcidx = [i for i in eachindex(net.prosumpsVec) if net.prosumpsVec[i].comp.cTyp == ExternalNetworkInjection]
+  srcidx = [i for i in eachindex(net.prosumpsVec) if _scf_is_pgm_source(net.prosumpsVec[i])]
   genidx = [i for i in eachindex(net.prosumpsVec) if isGenerator(net.prosumpsVec[i]) && !(i in srcidx)]
   loadidx = [i for i in eachindex(net.prosumpsVec) if !isGenerator(net.prosumpsVec[i]) && !(i in srcidx)]
   prosumer = Dict{Int,Int}()
@@ -471,9 +482,10 @@ function _scf_appliances(net::Net, ids::ScfIdMap)
     node === nothing && continue
     p_w = (ps.pVal === nothing ? 0.0 : ps.pVal) * 1.0e6
     q_var = (ps.qVal === nothing ? 0.0 : ps.qVal) * 1.0e6
-    # PGM's `source` IS the external network injection, so the COMPONENT type
-    # decides (proSumptionType only says Injection or Consumption)
-    if ps.comp.cTyp == ExternalNetworkInjection
+    # PGM's `source` IS the external network injection that holds a voltage,
+    # so the COMPONENT type and the regulation decide (proSumptionType only
+    # says Injection or Consumption; see _scf_is_pgm_source)
+    if _scf_is_pgm_source(ps)
       row = Dict{String,Any}("id" => id, "node" => node, "status" => 1, "u_ref" => ps.vm_pu === nothing ? 1.0 : ps.vm_pu)
       ps.va_deg === nothing || (row["u_ref_angle"] = deg2rad(ps.va_deg))
       # PGM's source is a voltage source BEHIND its impedance, so a complete
