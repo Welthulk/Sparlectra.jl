@@ -452,7 +452,11 @@ function handle_powerflow_export_scf(form::AbstractDict; output_root::AbstractSt
     overrides = Dict{String,Any}(String(k) => v for (k, v) in get(request, "config_overrides", Dict{String,Any}()))
     config_file = String(get(request, "config_file", DEFAULT_SPARLECTRA_CONFIG_PATH))
     config, _ = _load_api_config(config_file, validate_gui_config_overrides(overrides))
-    net = _import_sparlectra_net(case_path, nothing, config)
+    # the shared importer of the power-flow and N-1 paths: every case format
+    # the Web UI runs (MATPOWER, SCF, DTF, CGMES, PowSyBl), not only the
+    # file-based ones (a CGMES .zip failed here with "extension .zip is not
+    # supported")
+    net = import_case(case_path, config; run_kind = :powerflow).net
     sidecar = string(first(splitext(case_path)), ".measurements.csv")
     # the set's own provenance comments travel into the case file: whether the
     # values carry noise decides how a J from them may be read at all
@@ -547,7 +551,11 @@ function handle_powerflow_case_save_as(form::AbstractDict; output_root::Abstract
     overrides = Dict{String,Any}(String(k) => v for (k, v) in get(request, "config_overrides", Dict{String,Any}()))
     config_file = String(get(request, "config_file", DEFAULT_SPARLECTRA_CONFIG_PATH))
     config, _ = _load_api_config(config_file, validate_gui_config_overrides(overrides))
-    net = _import_sparlectra_net(case_path, nothing, config)
+    # the shared importer (every format the Web UI runs, CGMES included); the
+    # optional solve below runs on the configuration the import settled on
+    imported = import_case(case_path, config; run_kind = :powerflow)
+    net = imported.net
+    config = imported.config
     sidecar = string(first(splitext(case_path)), ".measurements.csv")
     provenance = Dict{String,Any}()
     if isfile(sidecar)
@@ -781,7 +789,8 @@ function handle_contingency_weights_page(query::AbstractDict; output_root::Abstr
   if isfile(case_path)
     try
       config = load_sparlectra_config(config_file; reload = true)
-      net = _import_sparlectra_net(case_path, nothing, config)
+      # the shared importer, so a CGMES case lists its elements too
+      net = import_case(case_path, config; run_kind = :contingency).net
       all_elements = vcat([c.name for c in generateN1Branches(net)], [c.name for c in generateN1Generators(net)])
     catch err
       net_error = first(split(sprint(showerror, err), '\n'))
