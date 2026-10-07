@@ -1856,6 +1856,22 @@ mpc.branch = [
       @test rerg == 0
       @test rite > 0
       @test get(profile, :ac_rescue_strategy, :missing) in (:alternate_start, :autodamp, :dc_seed, :settled_qlimits)
+      # the solver status and the result header say the solution came from
+      # the rescue, with the failed first solve's start and iterations
+      # (before 0.31.3 the header read a bare "Flatstart" with the rescue's
+      # iteration count)
+      rst = Sparlectra.rectangular_pf_status(rescued)
+      @test rst.rescue_used === true
+      @test rst.rescue_strategy === profile[:ac_rescue_strategy]
+      @test rst.rescue_first_flatstart === false
+      @test rst.rescue_first_iterations == 5
+      header_file = tempname()
+      open(header_file, "w") do io
+        redirect_stdout(() -> printACPFlowResults(rescued, 0.0, rite, 1e-8; converged = true), io)
+      end
+      header = read(header_file, String)
+      @test occursin("Rescue         : the start from the stored voltages failed after 5 iteration(s); strategy '$(profile[:ac_rescue_strategy])'", header)
+      @test occursin("(failed, rescued)", header)
 
       # The ladder must offer the globalization package for Q-limit-noisy
       # systems: merit line search, a low damping floor, and Q-limit
@@ -1879,6 +1895,7 @@ mpc.branch = [
       ferg = last(runpf!(infeasible, cfg_fb; performance_profile = profile_fb))
       @test ferg == 1
       @test get(profile_fb, :ac_rescue_strategy, :missing) == :none
+      @test Sparlectra.rectangular_pf_status(infeasible).rescue_strategy === :none
       @test get(profile_fb, :dc_fallback_applied, false) === true
       @test infeasible.nodeVec[2]._vm_pu == 1.0
       @test infeasible.nodeVec[2]._va_deg < 0.0
@@ -1894,6 +1911,7 @@ mpc.branch = [
       profile_off = Dict{Symbol,Any}()
       @test last(runpf!(off, cfg_off; performance_profile = profile_off)) == 1
       @test !haskey(profile_off, :ac_rescue_strategy)
+      @test !hasproperty(Sparlectra.rectangular_pf_status(off), :rescue_used)
       @test !haskey(profile_off, :dc_fallback_applied)
     end)() end
   end)() end

@@ -2945,6 +2945,8 @@ function render_powerflow_result(result::AbstractDict)::String
     cgmes_export_summary === nothing || push!(base, ("CGMES export", cgmes_export_summary))
     auto_summary = _webui_auto_mode_summary(result)
     auto_summary === nothing || push!(base, ("Auto mode", auto_summary))
+    rescue_summary = _webui_rescue_summary(result)
+    rescue_summary === nothing || push!(base, ("Rescue", rescue_summary))
     se_summary = _webui_se_summary(result)
     se_summary === nothing || push!(base, ("State estimation", se_summary))
     se_start_summary = _webui_se_start_summary(result)
@@ -3648,6 +3650,21 @@ end
 # ---------------------------------------------------------------------------
 
 ## result-summary card for an SE run (metadata run_mode == "se")
+
+# rescue row of the result summary: shown only when the rescue ladder ran,
+# so a rescued run never reads as solved by its configured start
+function _webui_rescue_summary(result::AbstractDict)::Union{Nothing,String}
+  metadata = get(result, "metadata", nothing)
+  metadata isa AbstractDict || return nothing
+  get(metadata, "rescue_used", false) === true || return nothing
+  first = get(metadata, "rescue_first_flatstart", false) === true ? "flat start" : "start from the stored voltages"
+  strategy = String(get(metadata, "rescue_strategy", "?"))
+  failed = "the $(first) failed after $(get(metadata, "rescue_first_iterations", "?")) iteration(s)"
+  # alternate_start toggles the start: name the start that solved
+  how = strategy == "alternate_start" ? (get(metadata, "rescue_first_flatstart", false) === true ? " (start from the stored voltages)" : " (flat start)") : ""
+  return _webui_escape(strategy == "none" ? "$(failed); no rescue strategy converged" : "$(failed); strategy '$(strategy)'$(how) converged")
+end
+
 # auto power-flow mode card: profile, escalation depth, final solver, the
 # advisory hint list, and a loud DC-fallback label (never mistakable for AC)
 function _webui_auto_mode_summary(result::AbstractDict)::Union{Nothing,String}

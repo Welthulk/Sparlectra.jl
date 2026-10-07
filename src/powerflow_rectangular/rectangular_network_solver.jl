@@ -2011,6 +2011,22 @@ function _rescue_kwargs_variants(kw::NamedTuple, flatstart::Bool)
   return variants
 end
 
+# The rescue ladder on the solver status of the net, so the result header,
+# run.log and the service metadata can say that the solution did NOT come
+# from the configured start: `rescue_used`, the winning `rescue_strategy`
+# (`:none` when no strategy converged), the start of the failed first solve
+# (`rescue_first_flatstart`) and its iteration count
+# (`rescue_first_iterations`; the reported iterations are the rescue
+# solve's). Without this a flat start rescued by 'alternate_start' (a start
+# from the file's voltages) read "Flatstart: Yes" with the rescue's 3
+# iterations (case6495rte).
+function _record_rescue!(net::Net, strategy::Symbol, first_flatstart::Bool, first_iterations::Int)
+  status = rectangular_pf_status(net)
+  status === nothing && return nothing
+  _set_rectangular_pf_status!(net, merge(status, (; rescue_used = true, rescue_strategy = strategy, rescue_first_flatstart = first_flatstart, rescue_first_iterations = first_iterations)))
+  return nothing
+end
+
 ## Resolve power_flow.tol_MW against the network base. Returns the configuration unchanged when the key is not set, so the
 ## default path allocates nothing and behaves exactly as before.
 function _resolve_tolerance_for_net(config::PowerFlowConfig, net::Net; verbose::Int = 0)
@@ -2059,11 +2075,13 @@ function _runpf_with_config!(net::Net, config::PowerFlowConfig; verbose::Int = 0
       if rerg == 0
         println("rescue: strategy '", name, "' converged after ", rite, " iteration(s).")
         performance_profile isa AbstractDict && (performance_profile[:ac_rescue_strategy] = name)
+        _record_rescue!(net, name, config.start_mode.flatstart, ite)
         return (rite, 0)
       end
     end
     println("rescue: no strategy converged.")
     performance_profile isa AbstractDict && (performance_profile[:ac_rescue_strategy] = :none)
+    _record_rescue!(net, :none, config.start_mode.flatstart, ite)
   end
 
   if config.dc.fallback

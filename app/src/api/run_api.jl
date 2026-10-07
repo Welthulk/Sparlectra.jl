@@ -1347,6 +1347,17 @@ function _run_sparlectra_api_body(
   # A DC fallback stays converged = false for the AC problem and is flagged
   # separately so integrators can never mistake it for an AC solution.
   auto_rec = raw_result.net === nothing ? nothing : auto_pf_record(raw_result.net)
+  # the rescue ladder solved instead of the configured start (or tried and
+  # failed): the solver status carries it (_record_rescue!), the metadata
+  # make it visible to the Web UI and a script reading result.json
+  rescue_st = raw_result.net === nothing ? nothing : rectangular_pf_status(raw_result.net)
+  rescue_used = rescue_st !== nothing && hasproperty(rescue_st, :rescue_used) && rescue_st.rescue_used === true
+  final_metadata["rescue_used"] = rescue_used
+  if rescue_used
+    final_metadata["rescue_strategy"] = String(rescue_st.rescue_strategy)
+    final_metadata["rescue_first_flatstart"] = rescue_st.rescue_first_flatstart
+    final_metadata["rescue_first_iterations"] = rescue_st.rescue_first_iterations
+  end
   final_metadata["auto_mode_enabled"] = auto_rec !== nothing
   if auto_rec !== nothing
     final_metadata["auto_profile"] = String(auto_rec.profile)

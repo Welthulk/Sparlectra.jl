@@ -1,3 +1,9 @@
+# Version 0.31.3 - 2026-10-07
+
+Rescued power flows say so.
+## Changed
+- A power flow solved by the rescue ladder says so: the result header names the failed start and its iterations next to the rescue strategy, and the Web UI result shows a Rescue row.
+
 # Version 0.31.2 - 2026-10-06
 
 N-1 with voltage-dependent controllers.
