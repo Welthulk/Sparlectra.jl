@@ -26,7 +26,7 @@ module SysimageLauncher
 using TOML
 using SHA
 
-export handle_sysimage, unresolved_dependencies, compat_lower_bound, outdated_dependencies, repair_environment, prepare_environments, sysimage_source_roots, sysimage_build_script, external_sysimage, remove_stale_sysimage, ENV_ONLY_FLAG
+export handle_sysimage, unresolved_dependencies, compat_lower_bound, outdated_dependencies, repair_environment, prepare_environments, sysimage_source_roots, sysimage_build_script, external_sysimage, remove_stale_sysimage, running_on_sysimage, warm_webui_page, ENV_ONLY_FLAG
 
 const REBUILD_FLAG = "--rebuild-sysimage"
 const NO_IMAGE_FLAG = "--no-sysimage"
@@ -478,6 +478,50 @@ function handle_sysimage(args::Vector{String}, script::AbstractString, project_d
     println("The outdated sysimage was removed; start with $(basename(script)) $(REBUILD_FLAG) to build a new one.")
   end
   return nothing
+end
+
+"""
+    running_on_sysimage(; current = <image of this process>) -> Bool
+
+Whether this process runs on a sysimage of its own (the managed Web UI
+image or one given with `-J`) rather than the stock Julia image `sys.*`.
+On such an image the Web UI pages are compiled already.
+"""
+running_on_sysimage(; current::AbstractString = unsafe_string(Base.JLOptions().image_file))::Bool = !isempty(current) && !startswith(basename(current), "sys.")
+
+"""
+    warm_webui_page(render; io = stdout) -> Bool
+
+Run `render()` once and report it on `io`: `Preparing the first page`,
+then `ready in N s`. `render` produces the Web UI start page the way the
+server does for a request (the launcher passes the server's own routing
+call), so the window that opens next shows a usable page at once. The
+package image of the application carries the start page compiled, so this
+takes a few seconds; the long compile after an installation or update
+happens earlier, when the packages load. Returns what `render` returns
+(`true` for a usable page). An error from `render` is printed with its
+message and `false` returned; the window opens anyway and shows the same
+error on its own request.
+
+`render` runs on the calling task, which yields as usual: a render that
+logs a warning or touches the event loop needs that, a busy wait on the
+calling thread deadlocked exactly there.
+"""
+function warm_webui_page(render; io::IO = stdout)::Bool
+  print(io, "Preparing the first page ... ")
+  flush(io)
+  started = time()
+  outcome = try
+    render()
+  catch err
+    # the page itself failed to render: the window shows the same error on
+    # its own request, so the start goes on and the console names the reason
+    println(io, "not prepared (", sprint(showerror, err), "); opening the window anyway.")
+    return false
+  end
+  ok = outcome === true
+  println(io, ok ? "ready in $(round(Int, time() - started)) s." : "not ready; opening the window anyway.")
+  return ok
 end
 
 end # module

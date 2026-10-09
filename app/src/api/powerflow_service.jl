@@ -221,7 +221,7 @@ function _service_effective_csv_format(config_overrides::AbstractDict, config_fi
       nothing
     end
   end
-  return _resolve_detailed_csv_format(name === nothing ? "technical" : String(name))
+  return _resolve_detailed_csv_format(name === nothing ? "auto" : String(name))
 end
 
 """

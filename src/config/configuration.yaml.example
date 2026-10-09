@@ -755,11 +755,14 @@ output:
   # tables, short-circuit, island diagnostics). technical = comma delimiter,
   # dot decimal; excel_de = semicolon delimiter, comma decimal, dot
   # thousands separator (opens correctly in a German-locale Excel);
-  # excel_us = comma delimiter, dot decimal, comma thousands separator.
-  # Allowed values: technical, excel_de, excel_us
-  # Delimiter and decimal separator of EVERY CSV file a run writes (technical,
-  # excel_de, excel_us); the one central CSV setting, whatever writes the file.
-  csv_format: technical
+  # excel_us = comma delimiter, dot decimal, comma thousands separator;
+  # auto = follow the regional settings of the machine (decimal comma gives
+  # excel_de, decimal point excel_us; the C/POSIX locale gives technical).
+  # Allowed values: auto, technical, excel_de, excel_us
+  # Delimiter and decimal separator of EVERY CSV file a run writes (auto,
+  # technical, excel_de, excel_us); the one central CSV setting, whatever
+  # writes the file.
+  csv_format: auto
   # Allowed values: off, compact, full
   logfile_diagnostics: compact
   # Allowed values: off, compact, full

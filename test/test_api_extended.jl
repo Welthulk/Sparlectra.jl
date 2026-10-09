@@ -164,6 +164,40 @@ function run_api_extended_tests()
         @test String(take!(direct_buffer)) == old_cell
       end
       @test_throws ArgumentError Sparlectra._resolve_detailed_csv_format("unknown")
+      # 0.32.0: `auto` (the default) follows the regional settings. A POSIX
+      # locale variable wins on every system; the portable locale keeps the
+      # technical format, a decimal comma gives excel_de, a decimal point
+      # excel_us, an unknown locale technical with a warning naming it.
+      @test Sparlectra.OutputConfig().csv_format == :auto
+      @test Sparlectra.OutputConfig(Dict{String,Any}("output" => Dict{String,Any}("csv_format" => "auto"))).csv_format == :auto
+      for portable in ("C", "C.UTF-8", "POSIX")
+        withenv("LC_ALL" => portable) do
+          @test Sparlectra.system_csv_format() == "technical"
+          @test Sparlectra._resolve_detailed_csv_format("auto").name == "technical"
+        end
+      end
+      withenv("LC_ALL" => "xx_YY.UTF-8") do
+        @test (@test_logs (:warn, r"locale \"xx_YY.UTF-8\" is not available") Sparlectra.system_csv_format()) == "technical"
+      end
+      # an empty LC_ALL counts as unset, LC_NUMERIC is next
+      withenv("LC_ALL" => "", "LC_NUMERIC" => "C") do
+        @test Sparlectra.system_csv_format() == "technical"
+      end
+      # the national locales need the locale installed on Linux (CI images
+      # usually have C.UTF-8 only); Windows knows every name
+      for (locale_name, expected, delimiter) in (("de_DE.UTF-8", "excel_de", ';'), ("en_US.UTF-8", "excel_us", ','))
+        available = Sys.iswindows() || (Sys.islinux() && Sparlectra._posix_decimal_separator(locale_name) !== nothing)
+        if available
+          withenv("LC_ALL" => locale_name) do
+            @test Sparlectra.system_csv_format() == expected
+            resolved = Sparlectra._resolve_detailed_csv_format("auto")
+            @test resolved.name == expected
+            @test resolved.delimiter == delimiter
+          end
+        end
+        # the runner surfaces lines with SKIPPED under the group's PASS line
+        available || println("      csv format auto under $(locale_name): SKIPPED (locale not installed)")
+      end
       control_net = _control_label_test_net()
       control_cache = Sparlectra._bus_control_flag_cache(control_net)
       for node in control_net.nodeVec

@@ -18,6 +18,13 @@
 #          includes the test files of its groups, and runs the grouped
 #          testsets with quiet output capture
 using Sparlectra
+# output.csv_format defaults to `auto` (0.32.0), which follows the regional
+# settings of the machine: on a German desktop every CSV of the suite would
+# carry semicolons, on CI commas. The suite pins the portable locale, which
+# `auto` maps to technical on every system (a POSIX locale variable wins on
+# Windows too); child processes the tests start inherit it. The test of
+# `auto` itself sets its locales with withenv.
+ENV["LC_ALL"] = "C.UTF-8"
 # the application package (service layer, Web UI) lives in app/ with its own
 # environment; it is loaded from there for the groups that test it and for
 # the smoke test of the fast profile. A fresh checkout (Pkg.test on CI, a
