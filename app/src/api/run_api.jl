@@ -389,7 +389,7 @@ never modified. `performance_timing` may be `:off`, `:compact`, or `:full` and
 writes a single-run `performance.log`; `run_diagnostics=true` captures existing
 PowerFlow diagnostic printers in `diagnose.log`; and `detailed_result_csv=true`
 writes Excel-friendly bus-voltage and branch-flow CSV artifacts. Optional
-`detailed_result_csv_format` accepts `technical`, `excel_de`, or `excel_us`.
+`detailed_result_csv_format` accepts `auto`, `technical`, `excel_de`, or `excel_us`.
 The legacy `detailed_result_csv_semicolon=true` maps to `excel_de` when the
 explicit format is omitted. Artifact generation does not change PowerFlow run
 success.

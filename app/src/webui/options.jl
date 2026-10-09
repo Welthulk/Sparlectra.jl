@@ -221,7 +221,7 @@ const WEBUI_OPTION_SPECS = WebUIOptionSpec[
   # the other output keys, saved to the configuration file, posted as a run
   # override like every other configuration field; a run type that does not
   # render the field (state estimation) reads the same configured value
-  WebUIOptionSpec("output.csv_format", "detailed_result_csv_format", String, :select, "technical", ("technical", "excel_de", "excel_us"), :basic, :session, false),
+  WebUIOptionSpec("output.csv_format", "detailed_result_csv_format", String, :select, "auto", ("auto", "technical", "excel_de", "excel_us"), :basic, :session, false),
   WebUIOptionSpec(nothing, "export_cgmes", Bool, :checkbox, false, (), :basic, :case, true),
 ]
 

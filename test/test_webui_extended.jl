@@ -223,6 +223,22 @@ function run_webui_extended_tests()
         # the first instance keeps serving untouched
         @test isopen(running.listener)
         @test occursin("HTTP/1.1 200 OK", _webui_http_request(running_port, "GET", "/powerflow"))
+        # 0.32.0: without a sysimage start_webui.jl renders the start page
+        # through the server's own routing call before it opens the window
+        # (dots in the console meanwhile)
+        launcher = Module(:LauncherWarmup)
+        Base.include(launcher, joinpath(Sparlectra.SPARLECTRA_ROOT, "tools", "sysimage_launcher.jl"))
+        SL = Base.invokelatest(getfield, launcher, :SysimageLauncher)
+        sl(name, args...; kw...) = Base.invokelatest(Base.invokelatest(getfield, SL, name), args...; kw...)
+        @test sl(:running_on_sysimage; current = "/opt/julia/lib/julia/sys.so") == false
+        @test sl(:running_on_sysimage; current = "/home/u/.local/state/sparlectra/webui/sysimage/sparlectra.so") == true
+        warm_io = IOBuffer()
+        render = () -> SparlectraApp.route_sparlectra_webui("GET", "/powerflow", Dict{String,String}(); output_root = abspath(mktempdir()), runtime = running.runtime).status == 200
+        @test sl(:warm_webui_page, render; io = warm_io) == true
+        @test occursin(r"ready in \d+ s\.", String(take!(warm_io)))
+        # a page that fails to render: the reason is printed, the window opens anyway
+        @test sl(:warm_webui_page, () -> error("render broke"); io = warm_io) == false
+        @test occursin("not prepared (render broke)", String(take!(warm_io)))
       finally
         close(running)
       end
@@ -526,7 +542,7 @@ function run_webui_extended_tests()
       _webui_assert_selected(loaded_form, "power_flow_qlimits_enforcement_mode", "active_set")
       # the CSV format is machine scope: the configuration file's value
       # shows, whatever the run form said before the save
-      _webui_assert_selected(loaded_form, "detailed_result_csv_format", "technical")
+      _webui_assert_selected(loaded_form, "detailed_result_csv_format", "auto")
 
       notice_off_root = mktempdir()
       notice_off_config = joinpath(notice_off_root, "configuration.yaml")
@@ -641,7 +657,7 @@ settings:
       _webui_assert_selected(case118_form, "power_flow_start_voltage_mode", "classic")
       _webui_assert_selected(case118_form, "power_flow_wrong_branch_detection", "off")
       _webui_assert_selected(case118_form, "performance_timing", "compact")
-      _webui_assert_selected(case118_form, "detailed_result_csv_format", "technical")
+      _webui_assert_selected(case118_form, "detailed_result_csv_format", "auto")
       # the MATPOWER import conventions render on the Case page; the
       # saved profile must prefill THAT form
       case118_case_page = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/case?casefile=$(SparlectraApp._webui_urlencode(case118))"; output_root = root).body)
@@ -666,7 +682,7 @@ settings:
       @test occursin("target.searchParams.set('config_file', configInput.value)", dropdown_case)
       dropdown_loaded_form = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/settings?casefile=$(SparlectraApp._webui_urlencode(case118))&config_file=$(SparlectraApp._webui_urlencode("configuration.yaml"))"; output_root = root).body)
       _webui_assert_value(dropdown_loaded_form, "power_flow_max_iter", "80")
-      _webui_assert_selected(dropdown_loaded_form, "detailed_result_csv_format", "technical")
+      _webui_assert_selected(dropdown_loaded_form, "detailed_result_csv_format", "auto")
 
       case14 = joinpath(root, "case14.m")
       write(case14, "% case fixture\n")
@@ -739,7 +755,7 @@ form:
       _webui_assert_checked(unsupported_form, "power_flow_autodamp", false)
       _webui_assert_value(unsupported_form, "power_flow_tol", "9.0e-7")
       _webui_assert_selected(unsupported_form, "power_flow_start_angle_mode", "dc")
-      _webui_assert_selected(unsupported_form, "detailed_result_csv_format", "technical")
+      _webui_assert_selected(unsupported_form, "detailed_result_csv_format", "auto")
       @test occursin("case_settings_field_ignored", read(SparlectraApp.webui_operation_log_path(root), String))
 
       fresh_root = mktempdir()
@@ -2114,9 +2130,10 @@ form:
       @test occursin("class=\"check span-2 detailed-csv-options\"", settings_page_html)
       @test !occursin("<summary>Detailed result CSV export</summary>", settings_page_html)
       @test occursin("name=\"detailed_result_csv_format\"", settings_page_html)
-      # 0.15.1: the configured value is selected (technical in this
-      # configuration file); no browser-language switch overrides it
-      @test occursin("<option value=\"technical\" selected>", settings_page_html)
+      # 0.15.1: the configured value is selected (auto in this
+      # configuration file since 0.32.0); no browser-language switch overrides it
+      @test occursin("<option value=\"auto\" selected>", settings_page_html)
+      @test occursin("<option value=\"technical\">", settings_page_html)
       @test occursin("<option value=\"excel_de\">", settings_page_html)
       @test occursin("<option value=\"excel_us\">", settings_page_html)
       @test !occursin("navigator.languages", settings_page_html)

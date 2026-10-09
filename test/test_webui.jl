@@ -396,6 +396,20 @@ function run_webui_fast_tests()
         end)() end
 
         @testset "the provisioned configuration follows changed template defaults" begin (function ()
+            # 0.32.0 one-time reset: the CSV format becomes auto even where
+            # the user saved another value, exactly once; the user's next
+            # choice stays
+            mktempdir() do dir
+                cfg = joinpath(dir, "configuration.yaml")
+                write(cfg, replace(read(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, String), "csv_format: auto" => "csv_format: excel_de"))
+                cp(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, joinpath(dir, "configuration.template.yaml"))
+                SparlectraApp._webui_record_user_keys!(cfg, ("output.csv_format",))
+                @test [(c.key, c.old, c.new) for c in SparlectraApp._webui_follow_template_defaults!(cfg)] == [("output.csv_format", "excel_de", "auto")]
+                @test Sparlectra.load_sparlectra_config(cfg; reload = true).output.csv_format === :auto
+                SparlectraApp._webui_write_general_settings!(cfg, Dict{String,Any}("output.csv_format" => "excel_de"))
+                @test isempty(SparlectraApp._webui_follow_template_defaults!(cfg))
+                @test Sparlectra.load_sparlectra_config(cfg; reload = true).output.csv_format === :excel_de
+            end
             # a copy of the template provisioned by an older release still
             # carries the old default of a key the user never touched; it
             # follows the new template value, a value the user set stays
@@ -403,11 +417,13 @@ function run_webui_fast_tests()
                 cfg = joinpath(dir, "configuration.yaml")
                 text = read(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, String)
                 @test occursin("linear_solver: umfpack_reuse", text)
-                # an old copy: the old default of the solver, a user choice for the tolerance
-                write(cfg, replace(replace(text, "linear_solver: umfpack_reuse" => "linear_solver: umfpack"), r"^  tol: [^\n]*"m => "  tol: 1.0e-7"))
+                # an old copy: the old defaults of the solver and of the CSV
+                # format (technical before 0.32.0), a user choice for the tolerance
+                write(cfg, replace(text, "linear_solver: umfpack_reuse" => "linear_solver: umfpack", "csv_format: auto" => "csv_format: technical", r"^  tol: [^\n]*"m => "  tol: 1.0e-7"))
                 changed = SparlectraApp._webui_follow_template_defaults!(cfg)
                 # the report names key, old and new value for the start message
                 @test any(c -> c.key == "power_flow.linear_solver" && c.old == "umfpack" && c.new == "umfpack_reuse", changed)
+                @test any(c -> c.key == "output.csv_format" && c.old == "technical" && c.new == "auto", changed)
                 @test Sparlectra.load_sparlectra_config(cfg; reload = true).powerflow.linear_solver === :umfpack_reuse
                 @test Sparlectra.load_sparlectra_config(cfg; reload = true).powerflow.tol == 1.0e-7
                 @test isfile(joinpath(dir, "configuration.template.yaml"))
@@ -782,6 +798,12 @@ function run_webui_fast_tests()
             mfile = joinpath(cases, mname)
             @test isfile(mfile)
             @test SparlectraApp._webui_is_measurement_csv(mfile)
+            # a rejected generation writes no file and says why in the
+            # operation log (it used to leave no trace there at all)
+            rejected = SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/generate-measurements", Dict{String,Any}("casefile" => "warmup_casePST.m", "sigma_u_pct" => "-1"); output_root=root, runtime=rt)
+            @test rejected.status == 303
+            @test !occursin("measurement_file=", Dict(rejected.headers)["Location"])
+            @test occursin(r"\"event\":\"se_measurements_rejected\".*sigma U must be a positive percentage", read(rt.operation_log, String))
             # the written set is armed for the next run: the redirect names it
             # and the page selects it (a noisy copy next to its
             # noise-free original was otherwise never the armed one)

@@ -1,6 +1,6 @@
 name = "SparlectraApp"
 uuid = "2e39659a-4f4c-4326-b34e-e3df865cea74"
-version = "0.31.3"
+version = "0.32.0"
 authors = ["Udo Schmitz"]
 
 [deps]
@@ -36,7 +36,7 @@ Printf = "1"
 Random = "1"
 SHA = "0.7, 1"
 Sockets = "1"
-Sparlectra = "0.31"
+Sparlectra = "0.32"
 SparseArrays = "1"
 TOML = "1.0.3"
 UUIDs = "1"

@@ -28,8 +28,8 @@ is two-staged:
 
    with `f = state_estimation.rank_tol_factor` (default 10.0) and
    `jacEps` as $\varepsilon_J$; an explicitly passed `tol` always wins.
-   The rank runs on a column-normalized Jacobian; rows are not divided
-   by their sigma.
+   The rank runs on a Jacobian whose rows and then columns are
+   normalized to unit norm; rows are not divided by their sigma.
 
 Typical metrics of the result: the measurement count `m`, the state
 count `n`, the redundancy and the redundancy ratio
@@ -40,7 +40,7 @@ r = m - n, \qquad \rho = \frac{m}{n},
 
 the structural and numerical flags, and the quality label.
 
-!!! details "Why the rank uses a column-normalized Jacobian and an FD-aware tolerance"
+!!! details "Why the rank uses a normalized Jacobian and an FD-aware tolerance"
     An eps-scale SVD tolerance would count FD noise as rank and can miss
     a structurally unobservable direction, hence the tolerance is tied to
     `jacEps`.
@@ -58,7 +58,12 @@ the structural and numerical flags, and the quality label.
     under positive row scaling, so sigma answers nothing here, while
     dividing by it lifts zero-injection pseudo-measurements (sigma
     `1e-6`) six orders of magnitude above ordinary rows and lets them
-    dominate the tolerance.
+    dominate the tolerance. Rows are normalized to unit norm instead,
+    before the columns: a bus coupler entered as a branch with
+    near-zero impedance (for example `x = 1e-5` pu) otherwise dominates
+    the columns of its two buses, and the column normalization alone
+    pushes the line that feeds them below the cut, so a fully measured
+    network reads as not observable.
 
 ## The quality labels
 
