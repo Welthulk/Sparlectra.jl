@@ -1761,7 +1761,7 @@ function run_webui_fast_tests()
             # as the user clicked Operation Log, Run history, Last errors, Docs or a
             # result page. Everything it shows describes the running server, not the
             # page, so the header builds it itself now.
-            root = SparlectraApp.default_webui_output_root()
+            root = mktempdir()   # never the user's real state directory: the pages log their visits there
             for path in ("/powerflow", "/powerflow/case", "/powerflow/settings", "/powerflow/history",
                 "/webui/operation-log", "/webui/last-errors", "/webui/sysimage")
                 response = SparlectraApp.route_sparlectra_webui("GET", path; output_root=root)
@@ -1793,7 +1793,7 @@ function run_webui_fast_tests()
         # in two browser tabs.
         @testset "run comparison" begin (function ()
             @testset "history offers a selection and a compare button" begin (function ()
-                root = SparlectraApp.default_webui_output_root()
+                root = mktempdir()
                 body = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/history"; output_root=root).body)
                 @test occursin("action=\"/powerflow/compare\"", body)
                 @test occursin("Compare selected runs", body)
@@ -1893,7 +1893,7 @@ function run_webui_fast_tests()
             end)() end
 
             @testset "the route insists on exactly two runs" begin (function ()
-                root = SparlectraApp.default_webui_output_root()
+                root = mktempdir()
                 for target in ("/powerflow/compare", "/powerflow/compare?run=only-one")
                     response = SparlectraApp.route_sparlectra_webui("GET", target; output_root=root)
                     @test (target, response.status) == (target, 400)
