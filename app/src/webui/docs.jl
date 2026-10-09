@@ -164,7 +164,7 @@ const WEBUI_HELP_TOPICS = Dict(
   "output.logfile_results" => (label = "Logfile output mode", hint = "Detail of the solved result tables in run.log: off, compact, classic (result report plus timing summary) or full (adds the effective configuration).", doc = "performance_profiling/#perf-output"),
   "webui.performance_timing" => (label = "Performance timing", hint = "Write performance.log with the phases of one request (parsing, case loading, solve, artifacts); full adds internal profile entries, off writes nothing.", doc = "webui_reference/#webui-output-modes"),
   "webui.detailed_result_csv" => (label = "Bus/branch CSV files", hint = "Write bus_voltages_complex.csv and branch_flows.csv with per-bus voltages and per-branch flows. Off by default because large networks produce large files.", doc = "webui_reference/#webui-output-modes"),
-  "webui.detailed_result_csv_format" => (label = "CSV format (every CSV file of a run)", hint = "Delimiter and decimal separator of every CSV a run writes: technical (comma, point), excel_de (semicolon, decimal comma) or excel_us. A machine-wide setting.", doc = "webui_reference/#webui-output-modes"),
+  "webui.detailed_result_csv_format" => (label = "CSV format (every CSV file of a run)", hint = "Delimiter and decimal separator of every CSV a run writes: auto (default, regional settings), technical, excel_de or excel_us. A machine-wide setting.", doc = "webui_reference/#webui-output-modes"),
   "webui.export_cgmes" => (label = "CGMES export artifact", hint = "Write the case as one re-importable CGMES delivery (EQ, TP, SSH, SV in a ZIP) into the run's artifacts, for every case format and also on non-converged runs.", doc = "cgmes_export/#cgmes-export-webui"),
 )
 

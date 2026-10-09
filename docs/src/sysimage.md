@@ -16,7 +16,11 @@ seconds. The Web UI start offers to build the image; the
 2. A missing or outdated image is named and the start asks
    `Build the sysimage now? [y/N]`: `y` or `--rebuild-sysimage` builds, no
    answer (Enter, 30 seconds, no terminal) means no, and every path
-   compiles on first use.
+   compiles on first use, except the start page: the package image of the
+   application carries it compiled (its build takes about a minute longer
+   once per installation or update). Before the window opens the start
+   page is rendered once (`Preparing the first page ... ready in N s`),
+   then the window opens with a usable page.
 3. The build first migrates the Web UI configuration to the current key
    layout (`refresh_sparlectra_config_file`, timestamped backup);
    duplicate YAML keys, for example, stop it with the reason named: start

@@ -960,8 +960,10 @@ Base.@kwdef struct OutputConfig
   # `detailed_result_csv_format`/`detailed_result_csv_semicolon` parameters;
   # those are still accepted as a per-request override (deprecated alias,
   # issue #376) and, when given, win over this config value for the whole
-  # run so existing API/Web UI callers keep working unchanged.
-  csv_format::Symbol = :technical
+  # run so existing API/Web UI callers keep working unchanged. `auto` (the
+  # default since 0.32.0) follows the regional settings of the machine at
+  # write time, see `system_csv_format`.
+  csv_format::Symbol = :auto
   logfile_diagnostics::Symbol = :compact
   logfile_performance::Symbol = :compact
   logfile_warnings::Symbol = :table
@@ -1128,7 +1130,7 @@ const OUTPUT_LOGFILE_RESULTS_VALUES = (:off, :compact, :classic, :full)
 const OUTPUT_RESULT_TABLE_LARGE_CASE_MODE_VALUES = (:summary, :classic, :full)
 const OUTPUT_DETAILED_RESULT_CSV_WRITE_MODE_VALUES = (:auto, :buffered, :streaming)
 const OUTPUT_DETAILED_RESULT_CSV_EXPORTER_VALUES = (:auto, :report, :direct)
-const OUTPUT_CSV_FORMAT_VALUES = (:technical, :excel_de, :excel_us)
+const OUTPUT_CSV_FORMAT_VALUES = (:auto, :technical, :excel_de, :excel_us)
 const OUTPUT_LOGFILE_DIAGNOSTICS_VALUES = (:off, :compact, :full)
 const OUTPUT_LOGFILE_PERFORMANCE_VALUES = (:off, :compact, :full)
 const OUTPUT_LOGFILE_WARNINGS_VALUES = (:off, :summary, :table, :full)
@@ -2097,7 +2099,7 @@ function OutputConfig(raw::AbstractDict)
     # working. `csv_format` wins if both are set.
     csv_format = _validate_allowed_symbol(
       "output.csv_format",
-      _as_symbol_cfg(_raw_get(merged, "csv_format", _raw_get(merged, "detailed_result_csv_format", :technical))),
+      _as_symbol_cfg(_raw_get(merged, "csv_format", _raw_get(merged, "detailed_result_csv_format", :auto))),
       OUTPUT_CSV_FORMAT_VALUES,
     ),
   )

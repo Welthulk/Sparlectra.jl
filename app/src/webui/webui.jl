@@ -492,6 +492,14 @@ end
 # provisioned before the copy was introduced); afterwards the copy decides.
 const _WEBUI_DEFAULT_MIGRATIONS = [("power_flow.linear_solver", "umfpack", "umfpack_reuse"), ("state_estimation.report_residual_correlation", false, true), ("state_estimation.update_shunts", false, true)]
 
+# One-time resets (release, key, value): unlike a migration, a reset sets the
+# key whatever it holds, a value the user saved included, so every
+# installation starts the release from the same state (0.32.0: the CSV
+# format is `auto` everywhere, a user who wants another format sets it
+# again). Each reset applies once per configuration file and is recorded
+# in `<file>.resets.txt`; a value the user sets afterwards stays.
+const _WEBUI_ONE_TIME_RESETS = [("0.32.0", "output.csv_format", "auto")]
+
 """
     _webui_follow_template_defaults!(configuration) -> Vector{String}
 
@@ -510,7 +518,10 @@ outside the Web UI and equal to the old default cannot be told apart and
 follows. Keys the template gained are added. The template copy is then
 replaced by the current template. Without a copy (a file provisioned
 before this existed) only the known default migrations apply, under the
-same user-key rule. Returns one `(key, old, new)` entry per changed key;
+same user-key rule. Last, every one-time reset of `_WEBUI_ONE_TIME_RESETS`
+not yet recorded in `<file>.resets.txt` sets its key regardless of the
+value or the user-key record, and is recorded, so it never applies twice.
+Returns one `(key, old, new)` entry per changed key;
 a change writes a backup `<file>.template-follow.bak` first, and the
 caller reports the entries at start.
 """
@@ -554,11 +565,27 @@ function _webui_follow_template_defaults!(configuration::AbstractString)::Vector
     _dotted_config_set!(user, key, new_value)
     push!(changed, (key = key, old = nothing, new = new_value))
   end
+  applied_resets = _webui_applied_resets(configuration)
+  new_resets = String[]
+  for (release, key, value) in _WEBUI_ONE_TIME_RESETS
+    reset_id = string(release, " ", key)
+    reset_id in applied_resets && continue
+    push!(new_resets, reset_id)
+    # read from `user`, not `user_flat`: the template follow above may have
+    # moved the key already, and the report must not name it twice
+    old_value = _dotted_config_value(user, key)
+    old_value == value && continue
+    _dotted_config_set!(user, key, value)
+    filter!(c -> c.key != key, changed)
+    push!(changed, (key = key, old = old_value, new = value))
+  end
   if !isempty(changed)
     cp(configuration, string(configuration, ".template-follow.bak"); force = true)
     _write_yaml_file(configuration, user)
     sort!(changed; by = c -> c.key)
   end
+  # recorded after the file is written: a crash before leaves the reset due
+  isempty(new_resets) || _webui_record_resets!(configuration, new_resets)
   isfile(template_copy) && read(template_copy, String) == read(DEFAULT_SPARLECTRA_CONFIG_PATH, String) || cp(DEFAULT_SPARLECTRA_CONFIG_PATH, template_copy; force = true)
   return changed
 end
@@ -589,6 +616,23 @@ function _webui_record_user_keys!(config_file::AbstractString, keys)
   merged = union(_webui_user_keys(config_file), Set{String}(String(k) for k in keys))
   isempty(merged) && return nothing
   write(_webui_user_keys_path(config_file), join(sort!(collect(merged)), "\n") * "\n")
+  return nothing
+end
+
+# The one-time resets already applied to a configuration file:
+# `<file>.resets.txt`, one "<release> <key>" per line (see
+# `_WEBUI_ONE_TIME_RESETS`). A missing file means none applied yet.
+_webui_resets_path(config_file::AbstractString) = string(config_file, ".resets.txt")
+
+function _webui_applied_resets(config_file::AbstractString)::Set{String}
+  path = _webui_resets_path(config_file)
+  isfile(path) || return Set{String}()
+  return Set{String}(strip(l) for l in readlines(path) if !isempty(strip(l)))
+end
+
+function _webui_record_resets!(config_file::AbstractString, reset_ids)
+  merged = union(_webui_applied_resets(config_file), Set{String}(String(r) for r in reset_ids))
+  write(_webui_resets_path(config_file), join(sort!(collect(merged)), "\n") * "\n")
   return nothing
 end
 

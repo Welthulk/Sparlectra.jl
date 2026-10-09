@@ -25,7 +25,7 @@
 # no package load. Julia can only take an image at process start (-J), so a
 # process that wants one has to start itself again.
 include(joinpath(@__DIR__, "tools", "sysimage_launcher.jl"))
-using .SysimageLauncher: handle_sysimage, prepare_environments, repair_environment, ENV_ONLY_FLAG
+using .SysimageLauncher: handle_sysimage, prepare_environments, repair_environment, running_on_sysimage, warm_webui_page, ENV_ONLY_FLAG
 
 const _SPARLECTRA_LIBRARY_DIR = abspath(@__DIR__)
 const _SPARLECTRA_APP_DIR = abspath(joinpath(@__DIR__, "app"))
@@ -74,13 +74,28 @@ if _ENV_ONLY
 end
 
 function main()
-  # No warm-up: either this process runs on the sysimage, where the code is
-  # already compiled, or the user chose to compile on first use and was told
-  # so. A hidden warm-up run on top of that only delayed the first page.
-  server = SparlectraApp.start_sparlectra_webui(open_browser = true)
-  # nothing = a Sparlectra Web UI already runs on the port; it was opened in
-  # the browser instead, so there is no new server task to wait on.
-  server === nothing && return nothing
+  # On a sysimage the pages are compiled already and the window opens at
+  # once. Without one, the package image of the application carries the
+  # compiled start page (app/src/precompile.jl); the launcher starts the
+  # server without a window, renders the start page once through the
+  # server's own routing call (same runtime, same argument types as a GET
+  # request, so the window's request finds everything ready) and opens the
+  # window when the page is ready, a few seconds later.
+  on_sysimage = running_on_sysimage()
+  server = SparlectraApp.start_sparlectra_webui(open_browser = on_sysimage)
+  # nothing = a Sparlectra Web UI already runs on the port; on a sysimage it
+  # was opened in the browser already, without one it is opened here (that
+  # instance compiled its pages long ago); no new server task to wait on.
+  if server === nothing
+    on_sysimage || SparlectraApp._webui_open_browser("http://127.0.0.1:8080/powerflow")
+    return nothing
+  end
+  if !on_sysimage
+    # the request line split into SubStrings like the server reads it, so the
+    # call meets the code the package image compiled for a real GET
+    warm_webui_page(() -> SparlectraApp.route_sparlectra_webui(split("GET /powerflow")..., Dict{String,String}(); output_root = abspath(SparlectraApp.default_webui_output_root()), runtime = server.runtime).status == 200)
+    SparlectraApp._webui_open_browser(server.url)
+  end
 
   try
     wait(server.task)

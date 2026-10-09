@@ -1,3 +1,10 @@
+# Version 0.32.0 - 2026-10-09
+
+CSV format from the regional settings, Web UI start without a sysimage.
+## Changed
+- The CSV format follows the regional settings of the machine by default (`output.csv_format = auto`, Windows and Linux): a decimal comma writes `excel_de`, a decimal point `excel_us`. Every Web UI configuration starts the release with `auto` once; a format chosen afterwards stays.
+- Web UI without a sysimage: the start page is compiled once with the package, so the window shows it within seconds.
+
 # Version 0.31.3 - 2026-10-07
 
 Rescued power flows say so.

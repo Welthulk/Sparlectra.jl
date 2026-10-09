@@ -19,12 +19,101 @@
 #          results, state estimation) writes CSV through this file, so it
 #          lives in the core and not in the service layer.
 
+# The POSIX locale name that decides the numeric format, in the precedence
+# the C library uses itself: LC_ALL, then LC_NUMERIC, then LANG; an empty
+# variable counts as unset. `nothing` when none is set.
+function _posix_numeric_locale_name()::Union{Nothing,String}
+  for var in ("LC_ALL", "LC_NUMERIC", "LANG")
+    value = strip(get(ENV, var, ""))
+    isempty(value) || return String(value)
+  end
+  return nothing
+end
+
+# "C", "POSIX", "C.UTF-8" and friends: the portable locale, no national
+# number format, so `auto` keeps the technical format there (CI, servers,
+# containers)
+_is_portable_locale_name(name::AbstractString)::Bool = name == "C" || name == "POSIX" || startswith(name, "C.")
+
+# The decimal separator of a named POSIX locale, read through newlocale and
+# nl_langinfo_l so the process-wide locale (which Julia leaves at "C") is
+# never touched. Constants are the glibc/musl values: LC_NUMERIC_MASK =
+# 1 << LC_NUMERIC = 2, RADIXCHAR = _NL_ITEM(LC_NUMERIC, 0) = 0x10000.
+# `nothing` when the locale is not installed (newlocale returns NULL).
+function _posix_decimal_separator(name::AbstractString)::Union{Nothing,String}
+  locale = ccall(:newlocale, Ptr{Cvoid}, (Cint, Cstring, Ptr{Cvoid}), Cint(2), name, C_NULL)
+  locale == C_NULL && return nothing
+  separator = unsafe_string(ccall(:nl_langinfo_l, Cstring, (Cint, Ptr{Cvoid}), Cint(0x10000), locale))
+  ccall(:freelocale, Cvoid, (Ptr{Cvoid},), locale)
+  return separator
+end
+
+# The decimal separator of a Windows locale through GetLocaleInfoEx
+# (LOCALE_SDECIMAL = 0x0E). `name === nothing` asks for the user default
+# locale, i.e. the Region settings of the signed-in user, the same source
+# Excel reads. `nothing` when Windows does not know the locale name.
+function _windows_decimal_separator(name::Union{Nothing,AbstractString})::Union{Nothing,String}
+  buffer = zeros(UInt16, 8)
+  written = if name === nothing
+    ccall((:GetLocaleInfoEx, "kernel32"), stdcall, Cint, (Ptr{UInt16}, UInt32, Ptr{UInt16}, Cint), C_NULL, UInt32(0x0E), buffer, Cint(length(buffer)))
+  else
+    ccall((:GetLocaleInfoEx, "kernel32"), stdcall, Cint, (Cwstring, UInt32, Ptr{UInt16}, Cint), name, UInt32(0x0E), buffer, Cint(length(buffer)))
+  end
+  written <= 0 && return nothing
+  # `written` counts the terminating NUL
+  return transcode(String, buffer[1:(written-1)])
+end
+
+"""
+    system_csv_format() -> String
+
+The CSV format that `output.csv_format = auto` resolves to on this machine:
+`excel_de` when the user's regional settings use a decimal comma,
+`excel_us` when they use a decimal point, `technical` otherwise.
+
+The regional setting is read where the operating system keeps it. A POSIX
+locale variable (`LC_ALL`, then `LC_NUMERIC`, then `LANG`) wins on every
+system; without one, Windows answers from the Region settings of the
+signed-in user (`GetLocaleInfoEx`), the source Excel uses. The portable
+locale (`C`, `POSIX`, `C.UTF-8`), no locale on Linux, and other systems
+(macOS, BSD) give `technical`. A locale name the system does not know gives
+`technical` with a warning naming it (once per session). Evaluated on every
+call, so a changed regional setting applies to the next run.
+"""
+function system_csv_format()::String
+  name = _posix_numeric_locale_name()
+  name !== nothing && _is_portable_locale_name(name) && return "technical"
+  separator = if Sys.iswindows()
+    # a POSIX name such as "de_DE.UTF-8@euro" becomes the Windows name "de-DE"
+    _windows_decimal_separator(name === nothing ? nothing : replace(first(split(name, ('.', '@'))), '_' => '-'))
+  elseif Sys.islinux()
+    name === nothing ? nothing : _posix_decimal_separator(name)
+  else
+    return "technical"
+  end
+  if separator === nothing
+    # the expected failure: a locale variable names a locale the system does
+    # not have installed (or Windows does not know); no locale on Linux is
+    # the plain default and stays silent
+    name === nothing || @warn "CSV format auto: locale \"$(name)\" is not available on this system, using technical" maxlog = 1
+    return "technical"
+  end
+  separator == "," && return "excel_de"
+  separator == "." && return "excel_us"
+  # another decimal sign (for example the Arabic one) has no Excel preset
+  return "technical"
+end
+
 function _resolve_detailed_csv_format(value)::NamedTuple
   name = String(value)
+  # `auto` resolves here, at the moment a CSV is written, so a configuration
+  # file saving `auto` stays portable between machines; the returned name is
+  # the concrete format, which is what the number formatting below tests
+  name == "auto" && (name = system_csv_format())
   name == "technical" && return (name = name, delimiter = ',', decimal_separator = '.', thousands_separator = "")
   name == "excel_de" && return (name = name, delimiter = ';', decimal_separator = ',', thousands_separator = ".")
   name == "excel_us" && return (name = name, delimiter = ',', decimal_separator = '.', thousands_separator = ",")
-  throw(ArgumentError("Unsupported detailed_result_csv_format \"$(name)\". Expected technical, excel_de, or excel_us."))
+  throw(ArgumentError("Unsupported detailed_result_csv_format \"$(name)\". Expected auto, technical, excel_de, or excel_us."))
 end
 
 function _group_csv_integer(text::AbstractString, separator::AbstractString)::String

@@ -212,6 +212,32 @@ function test_observability_metrics(fx)::Bool
       evaluate_global_observability(netH)
     end
     @test obsK.numerical_observable
+    # a bus coupler entered as a branch (r = 0, x = 1e-5 pu, admittance 1e5
+    # against about 600 for the feeding lines, the case141 pattern): its rows
+    # dominated both bus columns, the column normalization alone shrank the
+    # feeding line's entries below the cut and a fully measured radial
+    # net read rank 6 of 7, "not observable"
+    netC = Net(name = "coupler", baseMVA = 10.0)
+    for i = 1:4
+      addBus!(net = netC, busName = "B$(i)", vn_kV = 12.47, vm_pu = 1.0, va_deg = 0.0)
+    end
+    addPIModelACLine!(net = netC, fromBus = "B1", toBus = "B2", r_pu = 0.0037, x_pu = 0.0016, b_pu = 0.0, status = 1)
+    addPIModelACLine!(net = netC, fromBus = "B2", toBus = "B3", r_pu = 0.0037, x_pu = 0.0016, b_pu = 0.0, status = 1)
+    addPIModelACLine!(net = netC, fromBus = "B3", toBus = "B4", r_pu = 0.0, x_pu = 1e-5, b_pu = 0.0, status = 1)
+    addProsumer!(net = netC, busName = "B1", type = "EXTERNALNETWORKINJECTION", referencePri = "B1", vm_pu = 1.0, va_deg = 0.0)
+    for (b, p, q) in [("B2", 0.3, 0.1), ("B3", 0.5, 0.2), ("B4", 0.15, 0.05)]
+      addProsumer!(net = netC, busName = b, type = "LOAD", p = p, q = q)
+    end
+    okC, msgC = validate!(net = netC)
+    okC || error("test net invalid: $msgC")
+    _, ergC = runpf!(netC, 40, 1e-10, 0)
+    @test ergC == 0
+    msC = generateMeasurementsFromPF(netC; includeVm = true, includePinj = true, includeQinj = true, includePflow = true, includeQflow = true, noise = false)
+    obsC = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
+      evaluate_global_observability(netC, msC)
+    end
+    @test obsC.numerical_observable
+    @test obsC.numerical_rank == obsC.n_states
   end)() end
 
   return true

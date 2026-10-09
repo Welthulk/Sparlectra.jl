@@ -1563,30 +1563,55 @@ end
 """
     _column_normalized(H) -> SparseMatrixCSC
 
-Normalize every column of `H` to unit norm for the rank test.
+Normalize every row of `H` to unit norm, then every column, for the rank
+test.
 
-Rank does not change under column scaling, but its NUMERICAL determination
-does. Unscaled, a voltage column (entries around 1) sits next to an angle
-column whose entries carry the branch admittances of a 765 kV line, so the
-columns span orders of magnitude; `sigma_max` then belongs to the largest
-scale and genuine small singular values fall below a relative cut. That
-read as a rank deficit on a 25000-bus network whose set was four times
-overdetermined.
+Rank does not change under positive row or column scaling, but its
+NUMERICAL determination does. Unscaled, a voltage column (entries around 1)
+sits next to an angle column whose entries carry the branch admittances of
+a 765 kV line, so the columns span orders of magnitude; `sigma_max` then
+belongs to the largest scale and genuine small singular values fall below a
+relative cut. That read as a rank deficit on a 25000-bus network whose set
+was four times overdetermined; the column normalization fixes it.
 
-Rows are deliberately NOT scaled by sigma. The rank is invariant under
-positive row scaling, so sigma carries no information for this question,
-and dividing by it is actively harmful: zero-injection pseudo-measurements
-carry sigma 1e-6 against 0.01 to 24 for real ones, so the division lifts
-those rows by six orders of magnitude, they take over `sigma_max`, and
-everything else drops below the cut. Measured on that network: raw deficit
-191, with row scaling 12308, with column normalization alone 0.
+Columns alone are not enough when one branch is orders of magnitude
+stiffer than the rest, a bus coupler entered as a branch with near-zero
+impedance (case141: buses 86 and 87, x = 1e-5 pu, admittance 1e5 against
+about 250 for the line that feeds them). The coupler's flow and injection
+rows dominate both bus columns, the column normalization shrinks the
+feeding line's entries to about 1e-5, and the common mode of the two buses
+fell below the cut: rank 279 of 281, "not observable", although the
+feeding line's flows measure both buses. Normalizing every ROW to unit norm
+first takes the coupler's magnitude out of its rows, so the column
+normalization afterwards sees comparable entries: rank 281 there, and
+unchanged full rank and critical sets on case1354pegase and
+case13659pegase.
 
-A column of norm zero carries no measurement at all and stays zero, so it
-keeps producing the rank deficit it should.
+Rows are scaled to unit norm, deliberately NOT by sigma: dividing by sigma
+lifts zero-injection pseudo-measurements (sigma 1e-6 against 0.01 to 24 for
+real ones) by six orders of magnitude, they take over `sigma_max`, and
+everything else drops below the cut (measured on the 25000-bus network:
+raw deficit 191, with sigma row scaling 12308, with column normalization
+alone 0). A unit row norm gives every measurement the same weight in the
+rank test whatever its sigma or its electrical magnitude.
+
+A row or column of norm zero carries nothing and stays zero, so an
+unmeasured state keeps producing the rank deficit it should.
 """
 function _column_normalized(H::AbstractMatrix{<:Real})
   Hs = sparse(H)
   vals = nonzeros(Hs)
+  # rows first: one pass over the stored entries for the row norms, a
+  # second one to divide (CSC has no cheap row access)
+  rows = rowvals(Hs)
+  rowsq = zeros(Float64, size(Hs, 1))
+  for k in eachindex(vals)
+    rowsq[rows[k]] += abs2(vals[k])
+  end
+  for k in eachindex(vals)
+    rn = sqrt(rowsq[rows[k]])
+    (isfinite(rn) && rn > 0.0) && (vals[k] /= rn)
+  end
   for j = 1:size(Hs, 2)
     r = nzrange(Hs, j)
     isempty(r) && continue
@@ -1943,7 +1968,7 @@ function evaluate_global_observability(net::Net, measurements::Vector{Measuremen
   x = _initial_state_vector(net, slackIdx; flatstart = flatstart, withVaOffset = withVaOffset)
   H, _ = _measurement_jacobian_fd(activeMeas, net, x, slackIdx, nbus, Ybus; eps = jacEps, withVaOffset = withVaOffset)
 
-  # Normalize columns before the rank test: one tolerance then means the
+  # Normalize rows, then columns, before the rank test: one tolerance then means the
   # same thing at 14 buses and at 25000 (see _column_normalized).
   Hs = _column_normalized(H)
   effTol = tol

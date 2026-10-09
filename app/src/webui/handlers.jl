@@ -2468,7 +2468,10 @@ function handle_se_generate_measurements(form::AbstractDict; output_root::Abstra
   # sticky inputs: every generator value travels back in the redirect as a
   # g_* query key so the re-rendered form keeps what the user typed
   gq = join(("&g_$(k)=$(_webui_urlencode(String(_webui_form_value(form, k, ""))))" for k in ("noise", "gross_error_k", "gross_error_count", "tap_error_steps", "tap_error_count", "sigma_u_pct", "include_currents", "sigma_i_pct", "sigma_ia_deg", "sigma_p_pct", "sigma_q_pct", "gen_truth_source", "gen_truth_run_id", "gen_flow_ends", "gen_passive_sigma", "gen_passive_as_zi", "gen_seed")), "")
-  redirectq(msg) = _webui_se_redirect(casefile, msg; extra_query = gq)
+  # every exit through here is a rejection; it goes into the operation log
+  # with its reason, because the page shows the message once and a click
+  # that wrote no file otherwise left no trace at all
+  redirectq(msg) = (record_webui_operation!(operation_log, "se_measurements_rejected"; route = "/stateestimation/generate-measurements", method = "POST", user_action = true, casefile = casefile, status = "rejected", message = msg); _webui_se_redirect(casefile, msg; extra_query = gq))
   isempty(casefile) && return redirectq("no case selected")
   case_path = joinpath(directory, basename(casefile))
   isfile(case_path) || return redirectq("case not found: $(casefile)")

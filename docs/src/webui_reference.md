@@ -764,8 +764,13 @@ missing optional artifacts and unsafe names.
 - **CSV format** is the machine-scope key `output.csv_format` (**Save
   settings** writes it to the configuration file, a per-case save leaves it
   out) and applies to every CSV of every run type, state estimation
-  included: `technical` (default: comma delimiter, decimal point, no
-  grouping), `excel_de` (semicolon, decimal comma, thousands dot),
+  included: `auto` (default: follows the regional settings of the
+  machine, a decimal comma gives `excel_de`, a decimal point `excel_us`;
+  on Windows the Region settings of the signed-in user, on Linux the
+  locale variables `LC_ALL`, `LC_NUMERIC`, `LANG`; the C/POSIX locale
+  gives `technical`; the first start of 0.32.0 sets every existing Web UI
+  configuration to `auto` once, a format chosen afterwards stays),
+  `technical` (comma delimiter, decimal point, no grouping), `excel_de` (semicolon, decimal comma, thousands dot),
   `excel_us` (comma, decimal point, thousands comma, grouped numbers
   quoted). The Excel formats avoid exponent notation where practical;
   `v_complex` follows the decimal notation, `v_re`/`v_im` stay numeric.

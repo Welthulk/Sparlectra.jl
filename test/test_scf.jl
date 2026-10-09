@@ -1257,7 +1257,7 @@ mpc.branch = [
       # the format too and reads back in every format; the AC island report
       # and the generic writer as well.
       cfg_obj_de = Sparlectra.load_sparlectra_config(cfg_de; reload = true)
-      @test Sparlectra.result_csv_format() == "technical"
+      @test Sparlectra.result_csv_format() == "auto"
       @test with_sparlectra_config(Sparlectra.result_csv_format, cfg_obj_de) == "excel_de"
       gen_path = joinpath(d, "generic.csv")
       Sparlectra.write_result_csv(gen_path, ("name", "value", "flag"), (("a;b", 1234.5, true), ("c", 2, false)); format = "excel_de")
@@ -1307,7 +1307,7 @@ mpc.branch = [
       end
       @test occursin("csv_format: excel_de", read(joinpath(pf_req["output_dir"], "effective_config.yaml"), String))
       # the registry is the template again after the run
-      @test Sparlectra.result_csv_format() == "technical"
+      @test Sparlectra.result_csv_format() == "auto"
       # the same (older) request field reaches the state-estimation service
       # through the one override output.csv_format (a Web UI run kept
       # the comma in every SE artifact); the services themselves take no
