@@ -1258,11 +1258,13 @@ Add a two-winding transformer to the network.
 - `net::Net`: The network to which the transformer will be added.
 - `fromBus::String`: The name of the bus where the transformer originates.
 - `toBus::String`: The name of the bus where the transformer terminates.
-- `sn_mva::Float64`: Rated power of the transformer.
-- `vk_percent::Float64`: Voltage regulation percent of the transformer.
-- `vkr_percent::Float64`: Voltage regulation percent of the transformer.
-- `pfe_kw::Float64`: Iron loss of the transformer.
-- `i0_percent::Float64`: No-load current percent of the transformer.
+- `sn_mva::Float64`: Rated power of the transformer in MVA.
+- `vk_percent::Float64`: Short-circuit voltage in percent of the rated voltage.
+- `vkr_percent::Float64`: Resistive part of the short-circuit voltage in
+  percent (0 for a lossless series impedance).
+- `pfe_kw::Float64`: Iron (no-load) loss in kW; with `i0_percent` it forms the
+  magnetizing branch (`g`, `b` of the winding), 0 for none.
+- `i0_percent::Float64`: No-load current in percent of the rated current.
 - `status::Int`: The status of the transformer. Default is 1.
 """
 function add2WTrafo!(; net::Net, fromBus::String, toBus::String, sn_mva::Float64, vk_percent::Float64, vkr_percent::Float64, pfe_kw::Float64, i0_percent::Float64, status::Int = 1, controls::Union{Nothing,Vector{PowerTransformerControl}} = nothing, from_status::Union{Nothing,Integer} = nothing, to_status::Union{Nothing,Integer} = nothing)

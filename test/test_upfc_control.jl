@@ -232,6 +232,17 @@ function run_upfc_control_tests()
         @test abs(u.p_se_mw) > 1e-3
         # DC-link balance holds on the re-solved state
         @test u.dc_residual_mw <= 0.05
+        # the pair is lossless to the network: the series converter's active
+        # power is stamped into the branch as |I_s|^2 Re(z_add), and the shunt
+        # converter injects exactly that at the bus. Until 0.32.0 the shunt
+        # ABSORBED it as well (P_sh had the sign of the absorbed power), so a
+        # lossless device drew 2 |I_s|^2 Re(z_add) from the network.
+        brij = getNetBranch(net = net, fromBus = "I", toBus = "J")
+        vc(b) = (n = net.nodeVec[geNetBusIdx(net = net, busName = b)]; n._vm_pu * cis(deg2rad(n._va_deg)))
+        i_s = (vc("I") - vc("J")) / complex(brij.r_pu, brij.x_pu)
+        z_add = complex(brij.r_pu - brij.r_base_pu, brij.x_pu - brij.x_base_pu)
+        @test isapprox(u.p_sh_mw, abs2(i_s) * real(z_add) * net.baseMVA; atol = 0.05)
+        @test isapprox(u.p_se_mw, -u.p_sh_mw; atol = 1e-9)
         # shunt reactive setpoint delivered (within its coupled rating)
         @test isapprox(u.q_sh_mvar, qsh; atol = 1e-6)
         @test u.upfc_group == "UPFC_I_J"
@@ -395,15 +406,17 @@ function run_upfc_control_tests()
       @test length(rb.rows) >= 1
       base_brij = getNetBranch(net = base, fromBus = "I", toBus = "J")
 
-      # after a full-UPFC control run the I->J branch carries a NEGATIVE live r,
-      # while its physical base is preserved
+      # after a full-UPFC control run the I->J branch carries a live r that
+      # differs from its physical base (the sign of Re(z_add) depends on the
+      # operating point: until 0.32.1 it was negative here as a consequence of
+      # the inverted DC-link balance), while the base is preserved
       net = _build_upfc_mesh()
       addUpfcControl!(net; model = :full, fromBus = "I", toBus = "J", shunt_bus = "I",
                       p_target_mw = 48.0, q_target_mvar = 8.0, q_shunt_mvar = 0.0,
                       v_inj_max_pu = 0.30, s_max_mva = 120.0, deadband_p_mw = 1e-2, deadband_q_mvar = 1e-2, max_outer_iters = 80)
       run_control!(net; control_config = ControlConfig(max_outer_iterations = 80))
       brij = getNetBranch(net = net, fromBus = "I", toBus = "J")
-      @test brij.r_pu < 0.0                                    # live operating point: negative r
+      @test !isapprox(brij.r_pu, brij.r_base_pu; atol = 1e-9)  # live operating point differs from the base
       @test brij.r_base_pu > 0.0                               # physical base preserved
       @test isapprox(brij.r_base_pu, base_brij.r_pu; atol = 1e-12)
       @test isapprox(brij.x_base_pu, base_brij.x_pu; atol = 1e-12)

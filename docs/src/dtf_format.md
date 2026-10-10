@@ -1,21 +1,19 @@
 # DTF legacy input format
 
 Sparlectra reads the fixed-column DTF files of the legacy Testnetz13
-validation examples natively, without routing through MATPOWER:
-`DTFImporter.read_dtf` parses a file, `DTFImporter.build_net` or
-`createNetFromDTFFile` builds the `Net`. The FOR001-specific information
-(outage cards, trailing records, transformer control fields, nameplate
-voltages, branch identity metadata) stays on typed records, raw lines
-included, for audit. FOR002 text reports are validation references, not
-model input. A small deck of Sparlectra's own ships as
-`data/dtf_demo/sp_dtf5.DAT` (see [Demo cases](demo_cases.md)).
+validation examples natively: `DTFImporter.read_dtf` parses a file,
+`DTFImporter.build_net` or `createNetFromDTFFile` builds the `Net`.
+Outage cards, trailing records, transformer control fields, nameplate
+voltages and branch identity metadata stay on typed records, raw lines
+included. FOR002 text reports are validation references, not model
+input. Sparlectra's own deck ships as `data/dtf_demo/sp_dtf5.DAT`
+([Demo cases](demo_cases.md)).
 
 ## Format detection
 
-A DTF deck is recognised by its content, and the reader is the judge: a
-file that `read_dtf` takes as a network (every card the size card counts
-is there, and one bus card is the slack bus) is a deck,
-whatever the file is called. No format has to be named:
+A DTF deck is recognised by its content: a file that `read_dtf` takes as a
+network (every card the size card counts is there, and one bus card is
+the slack bus) is a deck, whatever its name. No format has to be named:
 
 ```julia
 run_sparlectra(casefile = "data/dtf_demo/sp_dtf5.DAT")
@@ -43,11 +41,11 @@ reason. `DTFImporter.is_dtf_deck(path)` answers the question alone.
 
 Every non-empty record between `AUSFALL` and `ENDE` identifies one branch
 outage by branch kind, voltage-level index, parallel identifier, from-bus
-name and to-bus name. Applying one requires an unambiguous match to exactly
-one base-network branch; a missing or ambiguous match produces a diagnostic
-and removes nothing. Branch cards carry no per-end switch field, so a
-partially open branch cannot be expressed: the aggregate branch status is
-used.
+name and to-bus name. Applying one requires a match to exactly one
+base-network branch; a missing or ambiguous match produces a diagnostic
+and removes nothing. Branch cards carry no per-end switch field, so the
+aggregate branch status is used; a partially open branch cannot be
+expressed.
 
 ## PV, PQ and slack bus interpretation
 
@@ -73,29 +71,28 @@ The nameplate ratio stays visible in the metadata fields
 `base_ratio_used`, `tap_fraction`, `skew_angle_deg`, `effective_ratio` and
 `effective_shift_deg`.
 
-With `model.tap_changer_model = impedance_correction` (see [Transformer
-tap-changer model](configuration.md#transformer-tap-changer-model)) the
+With `model.tap_changer_model = impedance_correction` the
 `tap_fraction`/`skew_angle_deg` values are also folded into the transformer
-series impedance (`Branch.r_pu`/`Branch.x_pu`), scaling R and X with
-`|1 + f·e^(jφ)|²`; a subsequent `writeMatpowerCasefile` export writes the
-corrected values, not the raw card impedance.
+series impedance, and a later `writeMatpowerCasefile` export writes the
+corrected values with a reimport marker
+([Transformer tap-changer model](configuration.md#transformer-tap-changer-model)).
 
-**Schraegregler skew angle.** The 60-degree field of the Schraegregler
-example is the skew angle of the regulating voltage, not the final phase
-shift: the complex tap follows from tap range, tap position and skew angle,
-converted to the from-side off-nominal convention (reciprocal magnitude,
-negative regulating-vector angle).
+The 60-degree field of the Schraegregler example is the skew angle of the
+regulating voltage, not the final phase shift: the complex tap follows
+from tap range, tap position and skew angle, converted to the from-side
+off-nominal convention (reciprocal magnitude, negative regulating-vector
+angle).
 
 ## Transformer shunt conductance and losses
 
-DTF transformer `G` is stored as `Branch.g_pu` next to `Branch.b_pu`,
-`r_pu`, `x_pu`, tap ratio and phase shift, not as terminal bus shunts.
+DTF transformer `G` is stored as `Branch.g_pu`, part of the PI branch
+model, not as a terminal bus shunt ([Branch model](branchmodel.md)).
 `calcNetLosses!` sums branch-end powers (`S_from + S_to`), so total losses
 include the longitudinal `R` and the voltage-dependent `G` losses; the
-separate I²R helper reports the longitudinal component only. The
-MATPOWER transformer-loss extension ([MATPOWER cases](matpower.md))
-preserves `g_pu` across export/reimport round trips; standard MATPOWER
-readers ignore it.
+separate I²R helper reports the longitudinal component only. The MATPOWER
+export keeps `g_pu` across a round trip in
+`mpc.sparlectra.transformer_losses` ([MATPOWER cases](matpower.md));
+standard MATPOWER readers ignore it.
 
 ## Validation against FOR002
 
@@ -105,8 +102,8 @@ cases A-E in both `:neutral_one` and `:winding_over_network` mode.
 ## Web UI `.DAT` roles
 
 The Web UI classifies `.DAT` uploads by content (`FOR002.DAT`-style names
-are hints only) before offering them in the PowerFlow selector; a network
-case is what the format detection above takes as a deck:
+are hints only); a network case is what the format detection above takes
+as a deck:
 
 | Role | Meaning |
 |---|---|

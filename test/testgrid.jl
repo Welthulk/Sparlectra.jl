@@ -22,6 +22,54 @@
 # CIGRE HV network
 # Source of this network can be found here (Task Force C6.04.02 ): https://www.researchgate.net/publication/271963972_TF_C60402_TB_575_--_Benchmark_Systems_for_Network_Integration_of_Renewable_and_Distributed_Energy_Resources
 
+# Nameplate to equivalent circuit (0.32.0): the short-circuit loss path carried
+# a unit factor of 1e-9 instead of 1e-3 (r_k of 1.5e-6 ohm instead of 1.5
+# ohm), the iron-loss conductance was taken in kW/kV^2 (a thousand times too
+# large) so the magnetizing susceptance fell into a silent catch and came out
+# as 0, and add2WTrafo! passed pfe_kw as the short-circuit loss with p0_kW = 0,
+# so the magnetizing branch it promised was always empty. Expected values from
+# the textbook formulas for a 110 kV, 40 MVA unit: v_k 12 %, v_kr 0.5 %
+# (P_k 200 kW gives the same r_k), P_fe 30 kW, i_0 0.5 %.
+function test_transformer_nameplate_conversion()::Bool
+  zb = 110.0^2 / 40.0                      # 302.5 ohm
+  r_expected = 0.005 * zb                  # 1.5125 ohm
+  x_expected = sqrt((0.12 * zb)^2 - r_expected^2)
+  g_expected = 30e3 / 110e3^2              # 2.479e-6 S
+  y_expected = 0.005 * 40e6 / 110e3^2      # 1.653e-5 S
+  b_expected = -sqrt(y_expected^2 - g_expected^2)
+  for md in (
+    Sparlectra.TransformerModelParameters(sn_MVA = 40.0, vk_percent = 12.0, vkr_percent = 0.5, i0_percent = 0.5, p0_kW = 30.0),
+    Sparlectra.TransformerModelParameters(sn_MVA = 40.0, vk_percent = 12.0, pk_kW = 200.0, i0_percent = 0.5, p0_kW = 30.0),
+  )
+    r, x, g, b = Sparlectra.calcTransformerRXGB(110.0, md)
+    isapprox(r, r_expected; rtol = 1e-12) || return false
+    isapprox(x, x_expected; rtol = 1e-12) || return false
+    isapprox(g, g_expected; rtol = 1e-12) || return false
+    isapprox(b, b_expected; rtol = 1e-12) || return false
+  end
+  # an inconsistent nameplate (no-load current below the iron-loss current)
+  # says so instead of swallowing a DomainError
+  md_bad = Sparlectra.TransformerModelParameters(sn_MVA = 40.0, vk_percent = 12.0, vkr_percent = 0.5, i0_percent = 0.001, p0_kW = 30.0)
+  _, _, g_bad, b_bad = @test_logs (:warn, r"no-load current i0 = 0.001 %") Sparlectra.calcTransformerRXGB(110.0, md_bad)
+  (isapprox(g_bad, g_expected; rtol = 1e-12) && b_bad == 0.0) || return false
+  # the same nameplate through add2WTrafo!: the branch carries the magnetizing
+  # branch on the 110 kV / 100 MVA base (g_pu = g * Vn^2 / S_base)
+  net = Net(name = "nameplate", baseMVA = 100.0)
+  addBus!(net = net, busName = "HV", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
+  addBus!(net = net, busName = "LV", vn_kV = 20.0, vm_pu = 1.0, va_deg = 0.0)
+  add2WTrafo!(net = net, fromBus = "HV", toBus = "LV", sn_mva = 40.0, vk_percent = 12.0, vkr_percent = 0.5, pfe_kw = 30.0, i0_percent = 0.5)
+  br = net.branchVec[1]
+  zb100 = 110.0^2 / 100.0
+  isapprox(br.r_pu, r_expected / zb100; rtol = 1e-12) || return false
+  isapprox(br.x_pu, x_expected / zb100; rtol = 1e-12) || return false
+  isapprox(br.g_pu, g_expected * zb100; rtol = 1e-12) || return false
+  isapprox(br.b_pu, b_expected * zb100; rtol = 1e-12) || return false
+  # a unit without loss data stays lossless and without a magnetizing branch
+  add2WTrafo!(net = net, fromBus = "HV", toBus = "LV", sn_mva = 40.0, vk_percent = 12.0, vkr_percent = 0.0, pfe_kw = 0.0, i0_percent = 0.0)
+  br0 = net.branchVec[2]
+  return br0.r_pu == 0.0 && br0.g_pu == 0.0 && br0.b_pu == 0.0 && isapprox(br0.x_pu, 0.12 * zb / zb100; rtol = 1e-12)
+end
+
 function test_2WTPITrafo()
   Sbase_MVA = 1000.0
   netName = "trafo_2W_PIT"
@@ -3823,6 +3871,7 @@ function run_grid_fast_tests()
       @test test_remove_functions_compact() == true
     end)() end
     @testset "Transformer and network validation" begin (function ()
+      @test test_transformer_nameplate_conversion() == true
       @test test_2WTPITrafo() == true
       @test test_3WTPITrafo() == true
       @test test_shunt_update_matches_constructor() == true

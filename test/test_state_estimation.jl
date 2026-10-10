@@ -1213,6 +1213,14 @@ function test_state_estimation_wilson_hilferty()::Bool
     sLow = summarize_se_diagnostics(repLow)
     @test occursin("implausibly small", sLow.reason)
     @test occursin("overestimated", sLow.reason)
+    # a :low band is not bad data: the sequential elimination does not start
+    # (until 0.32.1 it ran on every band failure and reported the budget or
+    # the missing suspects instead of the reason)
+    diagLow = with_state_estimation_config(max_iter = 30, tol = 1e-8, max_eliminations = 3) do
+      runse_diagnostics(net, measClean)
+    end
+    @test diagLow.stop_reason == :band_low
+    @test isempty(diagLow.eliminations)
 
     measBad = generateMeasurementsFromPF(net; noise = true, stddev = std, rng = MersenneTwister(7))
     bi = findfirst(m -> m.typ == Sparlectra.VmMeas, measBad)
