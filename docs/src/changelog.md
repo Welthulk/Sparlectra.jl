@@ -1,7 +1,10 @@
 # Version 0.32.1 - 2026-10-10
 
 Documentation pass and three numerical fixes.
+## Added
+- Web UI: position and size is now stored
 ## Fixed
+- Web UI: the DC solver selection on the Settings page is applied
 - UPFC full model: the shunt converter now supplies the active power the series converter exchanges with the line (the balance had the wrong sign).
 - Transformers from nameplate data carry their magnetizing branch and the resistance from the short-circuit loss; both were off by unit factors or dropped.
 - State estimation: a J below the band no longer triggers the sequential elimination.
