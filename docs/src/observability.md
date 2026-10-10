@@ -1,17 +1,15 @@
 # Observability
 
 Observability answers one question before any estimate exists: does the
-measurement set determine the network state at all, and if not, where
-does it fail? State-estimation quality depends on it more than on any
-solver knob, which is why the checks run standalone, before and
-independently of `runse!`.
+measurement set determine the network state, and if not, where does it
+fail? The checks run standalone, before and independently of `runse!`.
 
 ## What the global check answers
 
-`evaluate_global_observability(net; ...)` assesses whether the complete
+`evaluate_global_observability(net; ...)` decides whether the complete
 state (all bus angles and magnitudes, plus released extra states) is
-determined by the active measurements in `net.measurements`. The check
-is two-staged:
+determined by the active measurements in `net.measurements`, in two
+stages:
 
 1. **Structural stage**: `detect_ac_islands` runs on the contracted SE
    net. More than one synchronous island containing measured buses
@@ -28,11 +26,15 @@ is two-staged:
 
    with `f = state_estimation.rank_tol_factor` (default 10.0) and
    `jacEps` as $\varepsilon_J$; an explicitly passed `tol` always wins.
-   The rank runs on a Jacobian whose rows and then columns are
-   normalized to unit norm; rows are not divided by their sigma.
+   The global rank runs on a Jacobian whose rows and then columns are
+   normalized to unit norm, and $\sigma_{\max}$ is the largest singular
+   value of that normalized matrix; rows are not divided by their sigma.
+   The local check (`evaluate_local_observability`) takes its submatrix
+   from the raw finite-difference Jacobian and its $\sigma_{\max}$ from
+   that submatrix.
 
-Typical metrics of the result: the measurement count `m`, the state
-count `n`, the redundancy and the redundancy ratio
+The result reports the measurement count `m`, the state count `n`, the
+redundancy and the redundancy ratio
 
 ```math
 r = m - n, \qquad \rho = \frac{m}{n},
@@ -40,30 +42,17 @@ r = m - n, \qquad \rho = \frac{m}{n},
 
 the structural and numerical flags, and the quality label.
 
-!!! details "Why the rank uses a normalized Jacobian and an FD-aware tolerance"
-    An eps-scale SVD tolerance would count FD noise as rank and can miss
-    a structurally unobservable direction, hence the tolerance is tied to
-    `jacEps`.
-
-    The tolerance is relative to `sigma_max` and would otherwise mean
-    different things on different networks: a voltage column carries
-    entries around 1, an angle column the admittances of a 765 kV line,
-    and on a large network the genuine small singular values drop below
-    a cut that is measured against the largest column. Column
-    normalization removes that dependence, and with it the verdict is
-    insensitive to the factor over several orders of magnitude; only a
-    very large factor starts cutting into genuine directions.
-
-    Rows are deliberately not divided by their sigma. Rank is invariant
-    under positive row scaling, so sigma answers nothing here, while
-    dividing by it lifts zero-injection pseudo-measurements (sigma
-    `1e-6`) six orders of magnitude above ordinary rows and lets them
-    dominate the tolerance. Rows are normalized to unit norm instead,
-    before the columns: a bus coupler entered as a branch with
-    near-zero impedance (for example `x = 1e-5` pu) otherwise dominates
-    the columns of its two buses, and the column normalization alone
-    pushes the line that feeds them below the cut, so a fully measured
-    network reads as not observable.
+Why normalize: against the raw matrix the tolerance means different things
+on different networks (a voltage column carries entries around 1, an angle
+column the admittances of a line), and on a large network genuine small
+singular values drop below a cut measured against the largest column.
+Column normalization removes that dependence, and the verdict becomes
+insensitive to the factor over several orders of magnitude. Rows are not
+divided by their sigma, which would lift zero-injection pseudo-measurements
+(sigma `1e-6`) six orders of magnitude above ordinary rows; they are
+normalized to unit norm, before the columns, because a bus coupler entered
+as a branch with near-zero impedance (`x = 1e-5` pu) otherwise dominates
+the columns of its two buses and pushes the feeding line below the cut.
 
 ## The quality labels
 
@@ -77,35 +66,28 @@ the structural and numerical flags, and the quality label.
 
 The answer to `:not_observable` is a measurement, not a tolerance.
 `unobservable_state_columns` names the states the set does not pin down;
-adding a flow or injection measurement at one of those places fixes the
-cause. Lowering `rank_tol_factor` only moves the line at which a
-direction counts as present, so a set that genuinely lacks information
-passes as observable and the estimate silently rests on the start
-values in those directions.
+a flow or injection measurement at one of those places fixes the cause.
+Lowering `rank_tol_factor` only moves the line at which a direction
+counts as present, and the estimate then silently rests on the start
+values in the unmeasured directions.
 
 ## What the local check answers
 
 `evaluate_local_observability(net, cols; ...)` asks the same question
 for a chosen subset of state columns, for example one bus angle and one
-magnitude. That is the placement instrument: instead of an optimizer,
-Sparlectra lets you probe exactly the states you care about and see
-whether the present set pins them, which is what manual sensor and
-PMU placement studies need. The scope is stated in the
-[feature matrix](feature_matrix.md): there is no observable-island
-decomposition, no automatic pseudo-measurement restoration, and no
-placement optimizer; local observability on a chosen subset plus
-explicit critical-measurement reporting is the offered alternative.
+magnitude: the instrument for manual sensor and PMU placement studies.
+There is no observable-island decomposition, no automatic
+pseudo-measurement restoration and no placement optimizer, see the
+[feature matrix](feature_matrix.md).
 
 ## Critical measurements, and why their residual is zero
 
 A measurement is critical when removing it makes the system
 unobservable: its information exists nowhere else in the set. The
-estimate then reproduces it exactly, so its residual is exactly zero
-regardless of its error, and no residual-based test can ever flag it.
-That is the practical reason redundancy matters: a gross error in a
-critical measurement is invisible to the diagnostics and lands fully
-in the state. The diagnostics report classifies critical versus
-redundant measurements for exactly this reason.
+estimate then reproduces it exactly, its residual is zero regardless of
+its error, and no residual-based test can flag it: a gross error in a
+critical measurement lands fully in the state. The diagnostics report
+classifies critical versus redundant measurements for this reason.
 
 ### How the critical measurements are found
 
@@ -116,14 +98,13 @@ The residual sensitivity matrix
 ```
 
 says how much of a measurement error becomes visible in that
-measurement's own residual. For a critical measurement `Omega_ii` is
-exactly zero: the estimator adapts to the row completely, its residual
-is always zero, an error there stays invisible. Only the diagonal of
-`H G^-1 H'` is needed, never the full inverse; the Takahashi selected
-inverse delivers that diagonal from the factorization of `G` (Takahashi
-above `takahashi_min_states` states, the dense path below). Weights do
-not move the zeros, only the scale in between, so the observability
-check runs it with unit weights and no sigma has to be known.
+measurement's own residual; for a critical measurement `Omega_ii` is
+exactly zero. Only the diagonal of `H G^-1 H'` is needed, never the full
+inverse; the Takahashi selected inverse delivers it from the
+factorization of `G` (Takahashi above `takahashi_min_states` states, the
+dense path below). Weights do not move the zeros, only the scale in
+between, so the observability check runs with unit weights and no sigma
+has to be known.
 
 The threshold is dimensionless on the share of a row's own error that
 reaches its residual,
@@ -140,65 +121,34 @@ w_{ii} \le \max\!\left( \left(\frac{\text{tol}}{\sigma_{\max}}\right)^{2},\; 10^
 
 the FD-aware rank tolerance made relative to `sigma_max` and squared,
 floored at `1e-8`: far above the rounding of the selected inverse and far
-below any real redundancy.
+below any real redundancy. The floor is needed because a structurally
+critical row can come back at `1e-12` from fill-in and rounding instead of
+at zero.
 
-The per-row rank tests are available as
-`state_estimation.criticality_method = rank` (budgeted at 300000 rows
-times states, `criticality_skipped = true` above) as the cross-check;
-the test suite runs both methods against each other on a boundary case
-(a demo set with one flow measurement removed).
-
-!!! details "Why the selected inverse replaces the per-row rank tests"
-    The literal reading of the definition strikes every measurement row
-    in turn and decides the rank of the remaining Jacobian again (a dense
-    SVD up to 2000 states, a sparse QR above). With m measurements that
-    is m rank decisions, which is why that method is budgeted by rows
-    times states and skipped above the budget, leaving large networks
-    without a criticality flag.
-
-    `Omega_ii = 0` is the statement of the rank test, reached from the
-    other side, and one factorization answers it for all rows at once:
-    the classification costs a fraction of the rank tests; there is no
-    size budget, every set the estimator itself can factorize gets its
-    flag; the information is graded at no extra cost, because
-    `Omega_ii = 0` means critical while the normalized `wii` below the 0.3
-    guideline means nearly critical, where the rank test can only answer
-    yes or no; and the diagnostics report and the classification compute
-    the same quantity in one code path.
-
-    The open point is the tolerance. The rank test is binary, `Omega_ii`
-    is a floating-point number, and a structurally critical row can come
-    back at `1e-12` from fill-in and rounding instead of at zero. Hence
-    the dimensionless threshold on `wii` above.
+The per-row rank tests remain as `state_estimation.criticality_method =
+rank` for a cross-check: one rank decision per measurement row (a dense
+SVD up to 2000 states, a sparse QR above), budgeted at 300000 rows times
+states and skipped above it (`criticality_skipped = true`). The selected
+inverse answers the same question from one factorization for all rows,
+has no size budget, and grades the information: `Omega_ii = 0` means
+critical, a normalized `wii` below the 0.3 guideline nearly critical.
 
 ### Rank source
 
-The rank itself has two sources, and the report names the one used in
-`rank_method`.
-
+The report names the rank source in `rank_method`.
 `state_estimation.rank_method = decomposition` (the default) is the SVD of
-the Jacobian below 2000 states and the sparse QR factorization above. It
-gives the exact numerical rank, deficit included, and on every shipped case
-it costs about the same as the alternative.
-
-`pivots` reads the rank from the LDLt factorization of the gain matrix
-`H'H`, the factorization the criticality pass needs anyway, as the number
-of pivots above the squared rank tolerance. That count is exact when the
-Jacobian has full rank. On a deficit it is not (the pivots of an LDLt are
+the Jacobian below 2000 states and the sparse QR factorization above: the
+exact numerical rank, deficit included. `pivots` reads the rank from the
+LDLt factorization of the gain matrix `H'H`, which the criticality pass
+needs anyway, as the number of pivots above the squared rank tolerance;
+exact for a full-rank Jacobian, not on a deficit (the pivots of an LDLt are
 not the eigenvalues of the gain matrix, and a singular gain matrix cannot
-be factorized at all), so the pivot rule hands every deficit to the
-decomposition and reports `rank_method = decomposition` for it.
-
-Both settings state the same rank on every case. Choose `pivots` where the
-decomposition is the measured cost on a very large state vector;
-otherwise the default is the exact answer at no extra cost.
-
-The result carries `criticality_wii` per active row and
-`criticality_method`; the state-estimation run log lists the critical
-rows and the nearly critical ones. The rank decision for the
-observability verdict itself: up to 2000 states the exact dense SVD,
-above that a sparse QR factorization with the identical FD-aware
-tolerance.
+be factorized at all), so every deficit goes to the decomposition and is
+reported as `rank_method = decomposition`. Both settings state the same
+rank on every case; choose `pivots` where the decomposition is the measured
+cost on a very large state vector. The result carries `criticality_wii`
+per active row and `criticality_method`; the run log lists the critical
+and the nearly critical rows.
 
 ## `w_ii`, the localizability indicator
 
@@ -207,24 +157,17 @@ measurement `i`'s own error that reaches its own residual. `wii` near 1
 means an error there shows up almost fully in the residual (well
 localizable); `wii` near 0 marks a nearly critical measurement whose
 error hides in the state estimate. The report flags
-`localizable = wii > wiiThreshold` with the literature threshold 0.3:
-below it, the largest-normalized-residual logic cannot be trusted to
-point at the truly faulty meter. The threshold is the established
-guideline from the bad-data literature, not a tuned constant.
+`localizable = wii > wiiThreshold` with the threshold 0.3 from the
+bad-data literature: below it, the largest-normalized-residual logic
+cannot be trusted to point at the faulty meter.
 
 ## The correlation bound for singly redundant groups
 
-With the optional K-matrix report, each ranking row carries the maximum
-absolute correlation of its normalized residual over all partners,
-
-```math
-K = D^{-1/2}\, \Omega\, D^{-1/2} .
-```
-
-Above `1/sqrt(2)` (about 0.707) two measurements form a simply redundant
-group: a gross error in one is statistically indistinguishable from an
-error in the other, and the report marks the row. This is reporting
-only, never automatic action.
+The optional K-matrix report marks rows whose normalized residual
+correlates with a partner above `1/sqrt(2)` (about 0.707): a simply
+redundant group, in which a gross error cannot be attributed to one of
+the two. Formula, configuration and result fields:
+[Residual correlations](@ref se-k-report).
 
 ## How zero-injection buses enter
 
@@ -234,21 +177,18 @@ weighted zero-injection pseudo-measurements, which raise observability
 and redundancy around the bus; they are protected from elimination and
 robust down-weighting, because removing exact knowledge is never the
 right reaction to a residual. The weight is finite (a hard-constraint
-solver block is deliberately not implemented, see the feature matrix),
-so extreme weights versus conditioning is a real trade recorded in
-[State Estimation](state_estimation.md).
+solver block is not implemented, see the feature matrix), so extreme
+weights trade against conditioning.
 
 ## Reading the diagnostics table
 
-Each active measurement gets one row: its identity (type, location,
-sigma), the normalized residual against the residual covariance, the
-`wii` column with the localizable flag, the critical/redundant
-classification, and, when the K report is on, the correlation mark.
-Read it in this order: the band test first (is the set consistent at
-all), then the largest normalized residual among localizable rows,
-then `wii` before trusting any single-row verdict, and treat critical
-rows as unprotected rather than clean. The full ranking semantics,
-elimination trace and robust interplay live in
+Each active measurement gets one row: type, location, sigma, the
+normalized residual, `wii` with the localizable flag, the
+critical/redundant classification and, when the K report is on, the
+correlation mark. Read the band test first, then the largest normalized
+residual among localizable rows, then `wii` before trusting any single-row
+verdict; treat critical rows as unprotected rather than clean. Ranking
+semantics, elimination trace and robust interplay:
 [State Estimation](state_estimation.md).
 
 ## The H matrix as the didactic entry
@@ -256,12 +196,9 @@ elimination trace and robust interplay live in
 `measurement_jacobian(net; ...)` returns the labeled Jacobian behind
 both checks: `H` with one described row per active measurement and
 named state columns (`Va(bus)`, `Vm(bus)`, plus `alpha` when PMU angle
-measurements activate the reference-offset state). Seeing which rows
-touch which columns makes structural observability concrete before any
-SVD runs. The state-estimation example suite
-(`examples/run_state_estimation_suite.jl`) writes such a
-measurement-matrix page, including a stability verdict from rank,
-redundancy and `cond(H)`, on every run; the
+measurements activate the reference-offset state), which shows which
+rows touch which columns before any SVD runs. The example suite
+`examples/run_state_estimation_suite.jl` writes such a measurement-matrix
+page with a stability verdict from rank, redundancy and `cond(H)`; the
 [state estimation workshop](generated/workshop_state_estimation.md)
-walks the same matrix on a small network and shows observability
-breaking down live.
+walks the same matrix on a small network.

@@ -1,7 +1,7 @@
 # Network Reports (ACPFlowReport)
 
-Besides the formatted terminal output (`printACPFlowResults`), Sparlectra provides a
-machine-readable report object for downstream processing.
+`buildACPFlowReport` returns a machine-readable report object next to the
+formatted terminal output of `printACPFlowResults`.
 
 ## Build a report
 
@@ -40,17 +40,12 @@ report = buildACPFlowReport(
 )
 ```
 
+The snippet is a complete script for a `julia --project=.` session.
+
 ## Report content
 
-`ACPFlowReport` contains:
-
-- `metadata`
-- `nodes`
-- `branches`
-- `links`
-- `q_limit_events`
-
-Example access:
+`ACPFlowReport` has the fields `metadata`, `nodes`, `branches`, `links`,
+`transformer_controls`, `q_limit_events` and `hvdc_links`:
 
 ```julia
 report.metadata.total_p_loss_MW
@@ -61,7 +56,7 @@ report.links
 
 ## DataFrame conversion
 
-Each table-like vector can be converted directly:
+Each vector field converts directly:
 
 ```julia
 using DataFrames
@@ -70,9 +65,3 @@ nodes_df = DataFrame(report.nodes)
 branches_df = DataFrame(report.branches)
 links_df = DataFrame(report.links)
 ```
-
-## Full runnable example
-
-The "Build a report" snippet above is a complete runnable script: paste it
-into a `julia --project=.` session and follow it with the access and
-DataFrame-conversion lines from this page.

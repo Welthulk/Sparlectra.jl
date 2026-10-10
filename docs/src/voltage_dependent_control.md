@@ -1,22 +1,17 @@
 # Voltage-dependent prosumer control: Q(U) and P(U) (rectangular solver)
 
-Voltage-dependent active/reactive power control for prosumers:
+`QUController` sets `Q = f_Q(|V|)` and `PUController` sets `P = f_P(|V|)`
+for a prosumer. Both are state-dependent injections, not PV equality
+constraints: the bus type (`Slack`, `PV`, `PQ`) stays unchanged. `Q(U)` is
+the droop for volt/var support, `P(U)` a curtailed or voltage-sensitive
+active injection.
 
-- `QUController`: `Q = f_Q(|V|)`
-- `PUController`: `P = f_P(|V|)`
-
-These are soft controls (state-dependent injections), not hard PV equality
-constraints; the structural bus type (`Slack`, `PV`, `PQ`) stays unchanged.
-The control is attached to the prosumer, not to bus typing: `Q(U)` droop
-for volt/var support, `P(U)` for curtailed or voltage-sensitive active
-injection.
-
-Capability limits are not controls. A CGMES `ReactiveCapabilityCurve`
-describes Q bounds as a function of active power Q(P): it is evaluated at
-import time into ordinary `minQ`/`maxQ` limits and enforced by the
-[Q-limit switching machinery](q_limit_switching_strategy.md), never through
-a `QUController` (a bound as voltage-dependent setpoint would wander
-with $|V|$). Both mechanisms can coexist on one machine.
+Capability limits are not controls. A CGMES `ReactiveCapabilityCurve` gives
+the Q bounds as a function of P; the import evaluates it into ordinary
+`minQ`/`maxQ` limits, which the
+[Q-limit switching](q_limit_switching_strategy.md) enforces, never a
+`QUController` (a bound as voltage-dependent setpoint would wander with
+$|V|$). Both can coexist on one machine.
 
 ## Rectangular state and voltage magnitude
 
@@ -32,13 +27,13 @@ For `|V_i| > 0`,
 \frac{\partial |V_i|}{\partial f_i} = \frac{f_i}{|V_i|}.
 ```
 
-The implementation uses
+These derivatives use
 
 ```math
 |V_i|_\varepsilon = \max(|V_i|, \varepsilon),\quad \varepsilon = 10^{-9}
 ```
 
-in these derivatives to avoid division by zero near a collapsed voltage.
+against division by zero at a collapsed voltage.
 
 ## Controlled specified injections
 
@@ -79,12 +74,12 @@ For each non-slack bus:
 \Delta V_i = |V_i| - V_i^{\mathrm{set}}.
 ```
 
-Only the specified injection part becomes state-dependent.
+Only the specified injection becomes state-dependent.
 
 ## Jacobian extension by chain rule (local terms)
 
-`P_spec` / `Q_spec` depend only on the local `|V_i|`, so the extra Jacobian
-terms are local (bus `i` row, bus `i` state columns).
+`P_spec` / `Q_spec` depend on the local `|V_i|` only, so the extra Jacobian
+terms sit in the row of bus `i` and the state columns of bus `i`.
 
 Active-power mismatch row:
 
@@ -114,24 +109,24 @@ Reactive-power mismatch row (PQ buses):
 - \frac{dQ_i^{\mathrm{spec}}}{d|V_i|}\,\frac{f_i}{|V_i|}.
 ```
 
-PV second rows (`ΔV`) get no `Q(U)` term: that row is the voltage magnitude
-mismatch.
+The PV second row (`ΔV`) is the voltage magnitude mismatch and gets no
+`Q(U)` term.
 
 ## Characteristic interpolation and derivative
 
-Controllers use ordered points `(u_k, y_k)` internally in p.u. Points are
-given directly in p.u. (`voltage_unit=:pu`, `value_unit=:pu`) or in
-physical units (`voltage_unit=:kV`, `value_unit=:MW`/`:MVAr`) with
-conversion metadata (`vn_kV`, `sbase_MVA`).
+A controller holds ordered points `(u_k, y_k)` in p.u. They are given in
+p.u. (`voltage_unit=:pu`, `value_unit=:pu`) or in physical units
+(`voltage_unit=:kV`, `value_unit=:MW`/`:MVAr`) with the conversion data
+`vn_kV` and `sbase_MVA`.
 
-`make_characteristic(...; interpolation = ...)` selects the interpolation:
+`make_characteristic(...; interpolation = ...)` selects:
 
 - `:linear` (default): piecewise linear.
 - `:spline`: natural cubic spline through all points.
-- `:polynomial`: one global interpolating polynomial through all points.
+- `:polynomial`: one interpolating polynomial through all points.
 
-With only two points, `:spline` and `:polynomial` reduce to a straight
-line. For `:linear`, inside segment `[u_k, u_{k+1}]`:
+With two points, `:spline` and `:polynomial` are the straight line. For
+`:linear`, inside segment `[u_k, u_{k+1}]`:
 
 ```math
 y(u) = y_k + \frac{y_{k+1}-y_k}{u_{k+1}-u_k}(u-u_k),
@@ -139,12 +134,13 @@ y(u) = y_k + \frac{y_{k+1}-y_k}{u_{k+1}-u_k}(u-u_k),
 \frac{dy}{du} = \frac{y_{k+1}-y_k}{u_{k+1}-u_k}.
 ```
 
-Conventions for all modes:
+For all modes:
 
-- Below the first point: clamp to the first value, derivative `0`.
-- Above the last point: clamp to the last value, derivative `0`.
-- At breakpoints: segment-wise evaluation (continuous value; slope is
-  side-dependent).
+- Below the first point and above the last: value clamped to that end
+  point, derivative `0`.
+- At an interior breakpoint: continuous value; `:linear` takes the slope of
+  the segment left of the breakpoint, `:spline` and `:polynomial` have a
+  continuous slope there.
 - At an explicit min/max saturation: output clamped, derivative `0`.
 
 ## API usage
@@ -190,24 +186,19 @@ runpf!(net, 30, 1e-8, 0)
 | Use | Where |
 |---|---|
 | Call | `make_characteristic` plus `QUController`/`PUController` on `addProsumer!` |
-| Case file (SCF) | `extra.<machine>.qu_control` / `pu_control`: points in per unit, interpolation mode, limits in MVAr / MW; `exportSCF` writes them for every machine with a controller, a hand-written file is validated when read ([SCF](scf.md)) |
+| Case file (SCF) | `extra.<machine>.qu_control` / `pu_control`; `exportSCF` writes them for every machine with a controller ([SCF](scf.md)) |
 | MATPOWER | `Pmin/Pmax/Qmin/Qmax` of a generator on a `PQ` bus (`BUS_TYPE = 1`) become constant P(U)/Q(U) controllers (a fixed value with limits, no curve), logged as an import message |
-| CGMES, YAML | CGMES carries no Q(U) characteristic; the YAML configuration has no entry either, a characteristic is network data, not a setting |
+| CGMES, YAML | CGMES carries no Q(U) characteristic, and the YAML configuration has no entry: a characteristic is network data, not a setting |
 
 Whatever the source, the Jacobian uses the analytic derivative of the
 interpolated curve, not a difference quotient; outside the point range and
 at a limit it is zero.
-
-## Solver support and limitation
-
-Supported on the default rectangular solver path; legacy polar/classic
-solver modes are deprecated.
 
 ## Result printout semantics (`Type` vs `Control`)
 
 - `Type`: structural bus class (`Slack`, `PV`, `PQ`).
 - `Control`: voltage-dependent behavior (`Q(U)`, `P(U)`, `Q(U), P(U)`, or
   `-`).
-- `Pg/Qg/Pl/Ql`: effective solved bus power components; for prosumers with
-  `Q(U)`/`P(U)` these are the controller-evaluated setpoints at the solved
-  bus voltage, not the static `p`/`q` inputs.
+- `Pg/Qg/Pl/Ql`: solved bus power components; for prosumers with
+  `Q(U)`/`P(U)` these are the setpoints evaluated at the solved bus
+  voltage, not the static `p`/`q` inputs.

@@ -35,7 +35,7 @@ mutable struct TransformerModelParameters
   function TransformerModelParameters(; sn_MVA::Float64, vk_percent::Float64, vkr_percent::Union{Nothing,Float64} = nothing, pk_kW::Union{Nothing,Float64} = nothing, i0_percent::Float64, p0_kW::Float64)
     @assert sn_MVA > 0.0 "sn_mva must be > 0.0"
     @assert vk_percent > 0.0 "uk_percent must be > 0.0"
-    @assert !(pk_kW === nothing && ukr_percent === nothing) "At least one of the parameters pk_kw=$(pk_kw) or ukr_percent=$(ukr_percent) must be set"
+    @assert !(pk_kW === nothing && vkr_percent === nothing) "At least one of the parameters pk_kW or vkr_percent must be set"
 
     new(sn_MVA, vk_percent, pk_kW, i0_percent, p0_kW, vkr_percent)
   end
@@ -55,19 +55,37 @@ mutable struct TransformerModelParameters
 end
 
 
+"""
+    calcTransformerRXGB(Vn_kV, modelData) -> (rk, xk, gm, bm)
+
+The series resistance and reactance in ohm and the magnetizing conductance
+and susceptance in siemens of a winding from its nameplate data, referred
+to `Vn_kV`: `z_k = v_k/100 * Vn^2/S_n`, `r_k = v_kr/100 * Vn^2/S_n` (or from
+the short-circuit loss, `r_k = P_k * Vn^2/S_n^2`), `x_k = sqrt(z_k^2 - r_k^2)`,
+`g_m = P_fe/Vn^2`, `b_m = -sqrt((i_0/100 * S_n/Vn^2)^2 - g_m^2)` (inductive,
+hence negative). `P_k`, `P_fe` in kW, `Vn` in kV, `S_n` in MVA; the unit
+factors are applied here. Without `vkr_percent` and `pk_kW` the winding is
+lossless (`r_k = 0`); without `p0_kW` or `i0_percent` there is no
+magnetizing branch. A no-load current too small for the iron loss
+(`|Y_m| < g_m`) leaves `b_m = 0` with a warning naming the winding data.
+"""
 function calcTransformerRXGB(Vn_kV::Float64, modelData::TransformerModelParameters)::Tuple{Float64,Float64,Float64,Float64}
   z_base = Vn_kV^2 / modelData.sn_MVA
-  # Impedanz  
+  # short-circuit impedance
   zk = modelData.vk_percent * 1e-2 * z_base
 
-  # Resistanz
+  # resistance: from the real part of the short-circuit voltage, else from
+  # the short-circuit loss r_k = P_k U^2 / S^2 (kW * kV^2 / MVA^2 = 1e-3 ohm),
+  # else lossless
   if !isnothing(modelData.vkr_percent) && modelData.vkr_percent > 0.0
     rk = modelData.vkr_percent * 1e-2 * z_base
+  elseif !isnothing(modelData.pk_kW) && modelData.pk_kW > 0.0
+    rk = (Vn_kV^2 / modelData.sn_MVA^2) * modelData.pk_kW * 1e-3
   else
-    rk = (Vn_kV^2 / modelData.sn_MVA^2) * modelData.pk_kW * 1e-9
+    rk = 0.0
   end
 
-  # Reaktanz
+  # reactance
   xk = 0.0
   if rk < zk
     xk = sqrt(zk^2 - rk^2)
@@ -75,17 +93,19 @@ function calcTransformerRXGB(Vn_kV::Float64, modelData::TransformerModelParamete
     @warn "rk >= zk, xk is set to 0.0"
   end
 
-  # Suszeptanz
+  # magnetizing branch: g_m = P_fe / U^2 (kW / kV^2 = 1e-3 S), |Y_m| = I_0 / U
+  # = i_0/100 * S_n / U^2 (MVA / kV^2 = S), b_m the remaining part, inductive
   if !isnothing(modelData.p0_kW) && modelData.p0_kW > 0.0 && !isnothing(modelData.i0_percent) && modelData.i0_percent > 0.0
-    pfe = modelData.p0_kW
     v_quad = Vn_kV^2
-    Yfe = pfe / v_quad # realpart
-    Yabs = modelData.i0_percent * 1e-2 * modelData.sn_MVA / v_quad # = sqrt(Yfe^2 + Yx^2)
-    gm = Yfe
-    try
-      bm = -1.0 * sqrt(Yabs^2 - Yfe^2)
-    catch
-      @debug "bm is set to 0.0 (Yabs^2 - Yfe^2 < 0.0)"
+    gm = modelData.p0_kW * 1e-3 / v_quad
+    Yabs = modelData.i0_percent * 1e-2 * modelData.sn_MVA / v_quad
+    if Yabs >= gm
+      bm = -sqrt(Yabs^2 - gm^2)
+    else
+      # the expected failure: a no-load current that cannot even carry the
+      # iron loss (inconsistent nameplate); the conductance stays, the
+      # susceptance cannot be derived
+      @warn "transformer nameplate: no-load current i0 = $(modelData.i0_percent) % gives |Y_m| = $(Yabs) S below the iron-loss conductance $(gm) S (P_fe = $(modelData.p0_kW) kW at $(Vn_kV) kV); magnetizing susceptance set to 0"
       bm = 0.0
     end
   else
@@ -450,7 +470,10 @@ mutable struct PowerTransformerWinding
       ctrls = isnothing(controls) ? PowerTransformerControl[] : controls
       new(Vn_kV, 0.0, 0.0, 0.0, 0.0, ratio, shift_degree, ratedU, ratedS, taps, ctrls, false, nothing, true, phase_taps)
     else
-      r, x, b, g = calcTransformerRXGB(ratedU, modelData)
+      # calcTransformerRXGB returns (r, x, g, b); the field order is (b, g).
+      # The destructuring read `r, x, b, g` until 0.32.1 and swapped the two,
+      # unnoticed while both were always 0 (see calcTransformerRXGB).
+      r, x, g, b = calcTransformerRXGB(ratedU, modelData)
       ctrls = isnothing(controls) ? PowerTransformerControl[] : controls
       new(Vn_kV, r, x, b, g, ratio, shift_degree, ratedU, ratedS, taps, ctrls, false, modelData, false, phase_taps)
     end
@@ -794,7 +817,10 @@ changer.
 function create2WTRatioTransformerNoTaps(; from::Int, to::Int, vn_hv_kV::Float64, vn_lv_kV::Float64, sn_mva::Float64, vk_percent::Float64, vkr_percent::Float64, pfe_kw::Float64, i0_percent::Float64)::PowerTransformer
   c = getTrafoImpPGMComp(false, vn_hv_kV, from, to)
 
-  modelData = TransformerModelParameters(sn_MVA = sn_mva, vk_percent = vk_percent, vkr_percent = vkr_percent, pk_kW = pfe_kw, i0_percent = i0_percent, p0_kW = 0.0)
+  # pfe_kw is the iron (no-load) loss: it belongs to the magnetizing branch
+  # (p0_kW), not to the short-circuit resistance; until 0.32.0 it was passed
+  # as pk_kW with p0_kW = 0, so the magnetizing branch was always empty
+  modelData = TransformerModelParameters(sn_MVA = sn_mva, vk_percent = vk_percent, vkr_percent = vkr_percent, pk_kW = nothing, i0_percent = i0_percent, p0_kW = pfe_kw)
   w1 = PowerTransformerWinding(Vn_kV = vn_hv_kV, modelData = (vn_hv_kV >= vn_lv_kV ? modelData : nothing))
   w2 = PowerTransformerWinding(Vn_kV = vn_lv_kV, modelData = (vn_hv_kV >= vn_lv_kV ? nothing : modelData))
 
@@ -893,7 +919,8 @@ function create3WTWindings!(; u_kV::Array{Float64,1}, sn_MVA::Array{Float64,1}, 
   for side = 1:3
     tap = (side - 1 == tap_side) ? tap : nothing
     wpt = (side == phase_tap_side) ? phase_taps : nothing
-    w = PowerTransformerWinding(u_kV[side], pVec[side][1], pVec[side][2], pVec[side][3], pVec[side][4], nothing, sh_deg[side], u_kV[side], sn_MVA[side], tap, false, addEx_Side[side], nothing, wpt)
+    # pVec holds (r, x, g, b); the positional constructor takes (Vn, r, x, b, g)
+    w = PowerTransformerWinding(u_kV[side], pVec[side][1], pVec[side][2], pVec[side][4], pVec[side][3], nothing, sh_deg[side], u_kV[side], sn_MVA[side], tap, false, addEx_Side[side], nothing, wpt)
     push!(wVec, w)
   end
 

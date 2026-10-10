@@ -1,8 +1,7 @@
 # Synthetic Tiled Grids
 
-The dependency-free tiled-grid builder creates reproducible AC power-flow
-benchmark networks of scalable size from Julia code, without any case
-file.
+The tiled-grid builder creates reproducible AC power-flow benchmark
+networks of scalable size from Julia code, without a case file.
 
 ## Builder API
 
@@ -14,10 +13,9 @@ result = run_sparlectra(net = net)
 println(result.outcome)
 ```
 
-`build_tiled_grid_net` is an alias for `build_synthetic_tiled_grid_net`.
-The requested bus count is an upper bound: the builder chooses the largest
-grid with `rows * cols <= max_buses` while keeping `cols / rows` close to
-`aspect_ratio`.
+`build_tiled_grid_net` is an alias. The requested bus count is an upper
+bound: the builder chooses the largest grid with `rows * cols <= max_buses`
+whose `cols / rows` is closest to `aspect_ratio`.
 
 ## Topology
 
@@ -40,9 +38,9 @@ The branch count is
 N_{branch} = rows(cols - 1) + (rows - 1)cols + (rows - 1)(cols - 1).
 ```
 
-All branches use the Sparlectra AC PI convention: series impedance
-`r + im*x` in p.u., total shunt admittance `g + im*b` in p.u., split
-half/half in Y-bus and branch-flow calculations.
+All branches are PI-model lines in the Sparlectra convention (series
+impedance `r + im*x` and total shunt admittance `g + im*b` in p.u., shunt
+split half/half), see [Branch model](branchmodel.md).
 
 ## Electrical setup
 
@@ -67,43 +65,40 @@ vm_slack = 1.0
 vm_flat = 1.0
 ```
 
-The returned metadata holds requested and actual bus counts, `rows`,
-`cols`, `branch_count`, bus role lists and scheduled generation/load
-values (MW/MVAr; line parameters and voltages in p.u.).
+The metadata holds requested and actual bus counts, `rows`, `cols`,
+`branch_count`, the bus roles and the scheduled generation and load
+(MW/MVAr).
 
 ## YAML configuration utility
 
-The example benchmark uses Sparlectra's YAML subset parser:
+`load_yaml_dict` is Sparlectra's YAML subset parser:
 
 ```julia
-cfg = load_yaml_dict("examples/powerflow/exp_synthetic_tiled_grid_pf_perf.yaml.example")
+cfg = load_yaml_dict(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH)
 ```
 
-It supports comments beginning with `#`, nested 2-space-indented
-dictionaries, scalar key-value pairs, booleans, `null`/`~`, integers,
-floating-point numbers, symbols such as `:rectangular`, strings, and
-one-line scalar lists such as `[100, 300, 500]`.
+It supports `#` comments, nested 2-space-indented dictionaries, scalar
+key-value pairs (booleans, `null`/`~`, integers, floats, symbols such as
+`:rectangular`, strings) and one-line scalar lists such as
+`[100, 300, 500]`.
 
 ## Running the example
 
 ```bash
 julia --project=. examples/powerflow/exp_synthetic_tiled_grid_pf_perf.jl
 julia --project=. examples/powerflow/exp_synthetic_tiled_grid_pf_perf.jl 100 300 1000
-julia --project=. examples/powerflow/exp_synthetic_tiled_grid_pf_perf.jl examples/powerflow/exp_synthetic_tiled_grid_pf_perf.yaml
-# if the .yaml file is missing, the runner tries .yaml.example automatically
-julia --project=. examples/powerflow/exp_synthetic_tiled_grid_pf_perf.jl examples/powerflow/exp_synthetic_tiled_grid_pf_perf.yaml --max-buses=5000
 ```
 
-Without a configuration path, or when neither the YAML file nor its
-`.yaml.example` fallback exists, the example says so and uses built-in
-defaults. It prints a summary (grid size, branch count, convergence,
-iterations, solve time, mismatch, build timing, allocations, total
-runtime), writes a timestamped log under `examples/_out` and plots `nbus`
-versus solve time in ASCII.
+Every argument is a bus limit; without one the runner builds one grid of
+at most 20 buses. The solver configuration comes from the file named in
+`SPARLECTRA_CONFIGURATION_YAML`, else from `examples/configuration.yaml`
+if it exists, else from the built-in defaults. The runner prints one row
+per limit (limit, bus count, convergence flags, outcome, reason,
+iterations, solve time in milliseconds) and writes the same table to a
+timestamped log under `examples/_out`.
 
 ## Limitations
 
-An artificial one-voltage-level grid for solver scaling, diagnostics and
-regression checks: no realistic protection, transformer or operational
-constraints, and convergence behavior may differ from real transmission
-or distribution cases.
+An artificial one-voltage-level grid for solver scaling and regression
+checks: no protection, transformer or operational constraints, and
+convergence behavior may differ from real cases.
