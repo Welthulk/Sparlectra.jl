@@ -30,9 +30,16 @@
 #   The series converter injects a voltage V_se of ARBITRARY phase; it is
 #   realised as an equivalent series impedance z_add = V_se / I_s added to the
 #   branch (Re(z_add) < 0 when the converter injects active power), reusing the
-#   SSSC branch re-stamp mechanism, so no injection carrier is needed. Its
-#   active power P_se = Re(V_se·conj(I_s)) = |I_s|^2·Re(z_add) flows through the
-#   DC link and is supplied by the shunt converter at bus i (P_sh = -P_se). The
+#   SSSC branch re-stamp mechanism, so no injection carrier is needed. V_se is
+#   a voltage DROP in the direction of I_s (I_s = y_s (V_i - V_j - V_se)), so
+#   Re(V_se·conj(I_s)) = |I_s|^2·Re(z_add) is the power the series converter
+#   ABSORBS from the line, like a resistor stamped into the branch. The power
+#   it delivers into the line is P_se = -Re(V_se·conj(I_s)) = -|I_s|^2·Re(z_add);
+#   it comes through the DC link from the shunt converter, which draws it from
+#   bus i: P_sh = -P_se as a generator injection (negative while the series
+#   converter delivers, positive while it absorbs). With the sign the other way
+#   round (the state until 0.32.0) both converters absorbed |I_s|^2·Re(z_add)
+#   and a lossless device drew twice that from the network. The
 #   phase-shifter degree of freedom (independent P AND Q on one line) is exactly
 #   what the #325 quadrature composite lacks: there V_se is orthogonal to I_s,
 #   P_se = 0, the DC link idles, and the device collapses to SSSC + STATCOM.
@@ -54,9 +61,10 @@ Full unified power flow controller (issue #326), the DC-link-coupled model.
 The series converter injects a voltage `V_se` of ARBITRARY phase into the line
 `fromBus`->`toBus`, steering the from-end line flow to `(p_target_mw,
 q_target_mvar)` INDEPENDENTLY (the phase-shifter degree of freedom the #325
-quadrature composite lacks). The active power the series converter exchanges
-with the line, `P_se = Re(V_se·conj(I_s))`, flows through the DC link and is
-supplied by the shunt converter (`P_sh = -P_se`) at `shunt_bus`; the shunt also
+quadrature composite lacks). The active power the series converter delivers
+into the line, `P_se = -Re(V_se·conj(I_s)) = -|I_s|^2·Re(z_add)` (`V_se` is a
+drop in the direction of `I_s`), flows through the DC link and is drawn from
+`shunt_bus` by the shunt converter (`P_sh = -P_se`); the shunt also
 delivers the reactive setpoint `q_shunt_mvar`, clamped to the current-based
 rating whose reactive headroom is coupled to `P_sh` by
 `Q_max = sqrt((V_shunt·s_max)^2 - P_sh^2)`.
@@ -92,7 +100,7 @@ mutable struct UpfcFullControl <: AbstractOuterController
   at_limit::Bool
   v_se_pu::ComplexF64          # current series injected voltage
   i_s_pu::ComplexF64           # last measured series current
-  p_se_mw::Float64             # series converter active power (into the line)
+  p_se_mw::Float64             # series converter active power delivered into the line (-|I_s|^2 Re(z_add))
   q_sh_mvar::Float64           # shunt reactive injection (after the coupled clamp)
   p_sh_mw::Float64             # shunt active injection (= -p_se)
   qmin_mvar::Float64           # live coupled shunt bound
@@ -290,7 +298,7 @@ function control_evaluate!(ctrl::UpfcFullControl, net::Net, ::AbstractControlSta
   # DC-link residual on the RE-SOLVED state: the balance holds by construction
   # only at the frozen state each iteration; after the re-solve the voltages
   # move, so this is a genuine convergence quantity
-  p_se_now = ctrl.series_phase === :quadrature ? 0.0 : real(ctrl.v_se_pu * conj(ctrl.i_s_pu)) * net.baseMVA
+  p_se_now = ctrl.series_phase === :quadrature ? 0.0 : -real(ctrl.v_se_pu * conj(ctrl.i_s_pu)) * net.baseMVA
   ctrl.dc_residual_mw = abs(p_se_now + ctrl.p_sh_mw)
   # convergence: from-end flow targets (P always; Q only in :free)
   p_ok = abs(p - ctrl.p_target_mw) <= ctrl.deadband_p_mw
@@ -374,14 +382,16 @@ function control_propose_update!(ctrl::UpfcFullControl, net::Net, ::AbstractCont
     end
   end
 
-  # series converter active power P_se = Re(V_se·conj(I_s)) at the proposed
-  # impedance (0 by construction in quadrature)
+  # series converter active power delivered into the line at the proposed
+  # impedance, P_se = -Re(V_se·conj(I_s)) = -|I_s|^2 Re(z_add) (V_se is a drop
+  # in the direction of I_s; 0 by construction in quadrature)
   y_new = 1.0 / complex(r_new, x_new)
   i_s_new = y_new * ΔV
-  p_se_mw = ctrl.series_phase === :quadrature ? 0.0 : real(v_se * conj(i_s_new)) * base
+  p_se_mw = ctrl.series_phase === :quadrature ? 0.0 : -real(v_se * conj(i_s_new)) * base
 
-  # shunt: DC-link balance P_sh = -P_se, reactive setpoint clamped to the
-  # coupled bound Q_max = sqrt((V_shunt·s_max)^2 - P_sh^2)
+  # shunt: DC-link balance P_sh = -P_se (the shunt converter draws from the
+  # bus what the series converter delivers into the line), reactive setpoint
+  # clamped to the coupled bound Q_max = sqrt((V_shunt·s_max)^2 - P_sh^2)
   p_sh_mw = -p_se_mw
   vsh = get_bus_vm_pu(net, ctrl.shunt_bus)
   s_lim = (isfinite(vsh) && vsh > 0.0 ? vsh : 1.0) * ctrl.s_max_mva

@@ -1,18 +1,17 @@
 # Central Configuration
 
-Sparlectra uses one central, typed configuration model. The entry point
-`Sparlectra.load_sparlectra_config(...)` loads the YAML defaults, overlays a
-user YAML, applies programmatic overrides, validates key names and value
-domains, and builds the typed `SparlectraConfig` the runtime modules read.
+`Sparlectra.load_sparlectra_config(...)` loads the packaged defaults,
+overlays a user YAML and programmatic overrides, validates keys and values,
+and builds the typed `SparlectraConfig` every module reads.
 
 ## Configuration files and selectors
 
 | Item | Path / mechanism | Role |
 |---|---|---|
-| Default config | `src/config/configuration.yaml.example` | Version-controlled baseline for all options. |
-| User override | `examples/configuration.yaml` | Local override file (project default user path). |
-| Explicit config path | `load_sparlectra_config("/path/to/file.yaml")` | Replaces default user override path for that load call. |
-| Environment-based path selection helper | `SPARLECTRA_CONFIGURATION_YAML` via `configuration_path_from_inputs(...)` | Used by script/example path resolution workflows. |
+| Packaged defaults | `src/config/configuration.yaml.example` | Baseline for every key, commented. |
+| User override | `examples/configuration.yaml` | Local override (default user path). |
+| Explicit path | `load_sparlectra_config("/path/to/file.yaml")` | Replaces the default user path for that call. |
+| Environment variable | `SPARLECTRA_CONFIGURATION_YAML` via `configuration_path_from_inputs(...)` | Path selection in scripts and examples. |
 
 ## Merge precedence
 
@@ -22,153 +21,93 @@ A later level wins:
 |---|---|---|
 | 1 | `src/config/configuration.yaml.example` | packaged defaults |
 | 2 | user YAML: `examples/configuration.yaml` or an explicit `user_path` | |
-| 3 | case configuration file next to the case | `<stem>.config.yaml` for an SCF case, `<file name>.config.yaml` (such as `case118.m.config.yaml`) for every other format, so a MATPOWER case and its SCF export keep separate files |
+| 3 | case configuration file next to the case | `<stem>.config.yaml` for an SCF case, else `<file name>.config.yaml` (`case118.m.config.yaml`), so a MATPOWER case and its SCF export keep separate files |
 | 4 | Web UI form and runtime values of a service or Web UI run | |
 | 5 | programmatic overrides | `cli_overrides`, then `overrides` (the API's `config_overrides`) |
 | 6 | post-processing | such as `model.auto_profile: apply` |
 
-Unknown or removed keys in a configuration file are warned about (once,
-naming the key) and ignored, so a file written by an earlier release keeps
-loading; a removed key's warning carries the migration hint (for example
-`matpower_import.benchmark` to `benchmark.enabled`). Programmatic and
-command-line overrides are calls, not files: an unknown key there is an
-error.
+An unknown or removed key in a file is warned about once (a removed key
+with its migration hint) and ignored, so a file from an earlier release
+keeps loading.
 
-When a case ships its own configuration file, case-scope keys skip level 2
-and resolve from the case file straight to the packaged defaults, so the
-same case-plus-config pair computes the same numbers on every installation;
-only machine-scope keys (`output.*`, `benchmark.*`, `runtime.*`, `webui.*`,
-`matpower_export.*`) still read the user file. See
+Case-scope keys are `matpower_import.*`, `cgmes_import.*`,
+`powsybl_import.*`, `power_flow.*`, `state_estimation.*` and
+`short_circuit.*` (`scf_is_case_config_key(key)` answers per key). When
+a case ships its own configuration file, these keys skip level 2 and
+resolve from the case file straight to the packaged defaults, so the case
+computes the same numbers on every installation. Machine-scope keys (`output.*`, `benchmark.*`, `runtime.*`, `webui.*`,
+`matpower_export.*`) still read the user file; a case file that states one
+is refused by name. The in-file block `sparlectra.config` is deprecated and
+applied below the case configuration file with a warning.
+`effective_config.yaml` of each run records what took effect. See
 [Configuration precedence](scf.md#Configuration-precedence).
-
-The case file's own `sparlectra.config` block is deprecated: the writer
-does not emit it, the reader still applies it below the case
-configuration file (between levels 3 and 1 for case-scope keys) with a
-warning naming the case configuration file as the new place. Case-scope
-keys are `matpower_import.*`, `cgmes_import.*`, `powsybl_import.*`, `power_flow.*`,
-`state_estimation.*` and `short_circuit.*`; `scf_is_case_config_key(key)`
-answers it for a single key, and a case file that states a key outside
-that scope is refused by name when it is read. `effective_config.yaml`
-of each run records what took effect.
 
 ## File version and scope
 
-Every configuration file declares its format as the first keys:
+Every configuration file starts with its format version and scope:
 
 ```yaml
 config_version: 1
 scope: general
 ```
 
-A file without `config_version` reads as version 0: it still loads, the
-version-0 aliases are applied (the `model.*` keys lived in
-`matpower_import`/`transformer`, `runtime.case`/`runtime.cases` in
-`matpower_import`), and the loader reports the missing version and every
-translated legacy key. `refresh_sparlectra_config_file` (in the Web UI
-**Refresh configuration**) rewrites such a file to the current layout and
-deletes every key no loader reads any more: removed and deprecated keys,
-keys this version does not know, and a `form` block (form defaults live in
-case files); each deletion is named, and the written file keeps a backup. A
-[sysimage](sysimage.md) build does it for the Web UI configuration. A `config_version` newer than the running Sparlectra is
-an error. `scope` is `general` for the installation-wide file, `case` for a
-per-case file next to its case.
+A file without `config_version` reads as version 0: it loads through the
+version-0 aliases (`model.*` lived in `matpower_import` and `transformer`,
+`runtime.case`/`runtime.cases` in `matpower_import`), and the loader names
+the missing version and every translated key. A `config_version` newer
+than the running Sparlectra is an error. `scope` is `general` for the
+installation-wide file and `case` for a file next to its case.
 
-## Typed central object
-
-The merged YAML is converted into `SparlectraConfig`; every module reads its
-own section, and a new module adds its own typed section and YAML subtree.
-
-| `SparlectraConfig` field | Read by |
-|---|---|
-| `powerflow::PowerFlowConfig` | power flow (`config.powerflow`) |
-| `state_estimation::StateEstimationConfig` | state estimation (`config.state_estimation`) |
-| `matpower::MatpowerImportConfig` | MATPOWER import (`config.matpower`) |
-| `model::ModelConfig` | all importers |
-| `performance::PerformanceConfig`, `benchmark::BenchmarkConfig` | profiling and benchmarks (`config.performance`, `config.benchmark`) |
-| `contingency::ContingencyConfig` | N-1 batches |
-| `runtime::RuntimeConfig` (incl. `runtime.parallel.*` as `ParallelRuntimeConfig`) | entry workflows, thread control |
-| `diagnostics::DiagnosticsConfig`, `output::OutputConfig` | output and reporting (`config.output`, `config.diagnostics`) |
-| `control::ControlConfig` | controller outer loop |
-| `cgmes::CGMESImportConfig` | CGMES import |
-| `shortcircuit::ShortCircuitConfig` | short-circuit evaluation |
+`refresh_sparlectra_config_file(path; write = false)` checks a file against
+the current template: user values are kept, missing keys come from the
+template, duplicate keys are reported, `normalize_deprecated = true`
+rewrites known aliases, and every key no loader reads any more (removed,
+deprecated, unknown, a `form` block) is deleted and named. Nothing is
+written without `write = true`; a write first saves a
+`.bak-YYYYmmdd-HHMMSS` backup, and duplicate keys block it. The Web UI
+button **Refresh configuration** and a [sysimage](sysimage.md) build call
+it; nothing rewrites a user file at startup.
 
 ## YAML structure (section map)
 
-| YAML section | Typed section | Purpose | Status |
-|---|---|---|---|
-| `power_flow` | `PowerFlowConfig` | Rectangular power-flow solver controls, start mode, Q-limits; `power_flow.mode` switches between `manual` and the network-driven `auto` strategy (see [Power-Flow Configuration](powerflow_configuration.md) and the [Integration Guide](integration.md)) | Public / supported |
-| `matpower_import` | `MatpowerImportConfig` | MATPOWER import interpretation options | Public / supported |
-| `cgmes_import` | `CGMESImportConfig` | CGMES delivery path + import options (see [CGMES Import](cgmes_import.md)) | Public / supported |
-| `powsybl_import` | `PowsyblImportConfig` | PowSyBl IIDM import options (see [PowSyBl Import](powsybl_import.md)) | Public / supported |
-| `short_circuit` | `ShortCircuitConfig` | IEC 60909 short-circuit evaluation; `short_circuit.c_factor` overrides the Table-1 voltage factor, `short_circuit.sweep_method` (`auto`/`solves`/`takahashi`) selects the all-bus Thevenin sweep and `short_circuit.takahashi_min_buses` the island size from which the selected inverse is used (see [Short-Circuit Analysis](short_circuit.md)) | Public / supported |
-| `model` | `ModelConfig` | Model construction shared by all importers (bus shunt model, tap-changer model, auto profile, net cache, preallocation) | Public / supported |
-| `state_estimation` | `StateEstimationConfig` | State-estimation runtime controls | Public / supported |
-| `output` | `OutputConfig` | Console/logfile behavior and result table sizing; `output.startup_latency_hint` silences the one-per-process note about JIT warm-up in sessions without a sysimage or executable (see [Sysimage](sysimage.md)) | Public / supported |
-| `performance` | `PerformanceConfig` | Profiling/reporting toggles and diagnostic volume controls | Public / supported |
-| `benchmark` | `BenchmarkConfig` | Repeated benchmark-run controls | Public / supported |
-| `contingency` | `ContingencyConfig` | N-1 contingency batch controls; `contingency.rescue_ladder` is the per-case start-value ladder (subset of `warm`/`apslf`/`dc`/`flat`), `contingency.max_iter` (default `30`) is the iteration limit of every outage while the base case keeps `power_flow.max_iter`, `contingency.screening.mode` (`off`/`flag`/`only`, default `off`; screening is a deliberate opt-in) switches the base-factorization outage screening on the service path, `contingency.screening.margin_pct` (default `10.0`) is its flagging margin, `contingency.warm_active_set` (default `true`) starts each outage from the base case's Q-limit active set, `contingency.warm_cold_check` (default `false`) switches its optional cold check, and `contingency.warm_cold_check_margin_pu` (default `0.02`) is the margin of that check; see [N-1 Contingency Analysis](contingency.md) | Public / supported |
-| `control` | `ControlConfig` | Generic controller outer-loop orchestration controls; `control.controllers` holds declarative controller definitions, see the controllers section below | Public / supported |
-| `runtime` | `RuntimeConfig` | Case selection (`runtime.case`/`runtime.cases`) and Julia/BLAS thread control knobs for entry workflows | Public / supported |
-| `diagnostics` | `DiagnosticsConfig` | Effective-config logging (`log_effective_config` only; `diagnostics.console_*`/`logfile_diagnostics` duplicate `output.*`, are deprecated and ignored with a warning) | Public / supported |
-| `webui` | `WebUIConfig` | Web UI presentation preferences (e.g. `webui.show_case_settings_notice`) | Public / supported |
-| `extensions` | reserved (not mapped to typed runtime fields) | Future extension placeholder | Reserved |
+The merged YAML becomes a `SparlectraConfig`; each module reads its own
+typed section.
 
-The supported public power-flow solver path is rectangular
-(`power_flow.method: rectangular`).
+| YAML section | Typed section | Purpose |
+|---|---|---|
+| `power_flow` | `PowerFlowConfig` | Solver, start mode, Q limits, `power_flow.mode` (`manual` or `auto`): [Power-Flow Configuration](powerflow_configuration.md), [Integration Guide](integration.md). |
+| `matpower_import` | `MatpowerImportConfig` | Import conventions, the metadata keys `matpower_import.apply_bus_names`, `apply_branch_names`, `apply_branch_kind`, `import_for001_contingencies` and `matpower_import.matpower_dcline_mode`: [Option reference](@ref matpower-options). |
+| `cgmes_import` | `CGMESImportConfig` | [CGMES Import](cgmes_import.md). |
+| `powsybl_import` | `PowsyblImportConfig` | [PowSyBl Import](powsybl_import.md). |
+| `short_circuit` | `ShortCircuitConfig` | IEC 60909 short circuit: `short_circuit.c_factor`, `short_circuit.sweep_method` (`auto`, `solves`, `takahashi`), `short_circuit.takahashi_min_buses`; [Short-Circuit Analysis](short_circuit.md). |
+| `model` | `ModelConfig` | Model construction for every importer: bus shunt model, tap-changer model (below), auto profile, net cache, preallocation. |
+| `state_estimation` | `StateEstimationConfig` | [State-Estimation Configuration](state_estimation_configuration.md). |
+| `output` | `OutputConfig` | Console and logfile output, result tables (keys below and in [Output configuration](@ref perf-output)); `output.startup_latency_hint: false` silences the one-per-process JIT warm-up note of runs without a sysimage or executable. |
+| `performance` | `PerformanceConfig` | Profiling and diagnostic volume: [Performance and Profiling](performance_profiling.md). |
+| `benchmark` | `BenchmarkConfig` | Repeated benchmark runs: [Benchmark configuration](@ref perf-benchmark). |
+| `contingency` | `ContingencyConfig` | N-1 batch: `contingency.rescue_ladder`, `contingency.max_iter`, `contingency.screening.mode`, `contingency.screening.margin_pct`, `contingency.warm_active_set`, `contingency.warm_cold_check`, `contingency.warm_cold_check_margin_pu`; [N-1 Contingency Analysis](contingency.md). |
+| `control` | `ControlConfig` | Controller outer loop and declarative controllers, below. |
+| `runtime` | `RuntimeConfig` | Case selection (`runtime.case`, `runtime.cases`), thread control, `runtime.parallel.*` ([Parallel execution](parallel_execution.md)). |
+| `diagnostics` | `DiagnosticsConfig` | `log_effective_config` only; the former `diagnostics.console_*`/`logfile_diagnostics` duplicate `output.*` and are ignored with a warning. |
+| `webui` | `WebUIConfig` | Web UI preferences such as `webui.show_case_settings_notice`; keys below. |
+| `extensions` | reserved | Placeholder, not mapped to typed fields. |
 
 ## Option lifecycle and compatibility policy
 
-Prefer the canonical nested keys of the example YAML and the module pages.
+Prefer the nested keys of the template.
 
 | Class | Meaning |
 |---|---|
-| Public / supported | keys in `src/config/configuration.yaml.example` and typed section constructors |
-| Reserved | schema placeholders such as `extensions.reserved` for forward compatibility |
-| Deprecated compatibility aliases | accepted for migration but not preferred in new YAML (for example `max_ite` and some start-projection alias keys) |
-| Removed | keys that warn with migration guidance and are ignored (for example `matpower_import.benchmark`) |
-| Internal-only implementation details | not a stable external user API |
-
-### MATPOWER import metadata and DC-line options
-
-`matpower_import.apply_bus_names`, `apply_branch_names`, and
-`apply_branch_kind` default to `false` (numeric bus names, heuristic branch
-classification); enable them for cases that carry `mpc.bus_name` and
-user-defined `mpc.branch_name`/`mpc.branch_kind`.
-`import_for001_contingencies` (default `true`) preserves user-defined
-`mpc.for001_contingencies` for validation workflows.
-`matpower_import.matpower_dcline_mode` defaults to `:pf_injections`
-(DC-line terminals as simple power-flow injections); `:reject_active`
-rejects active DC-line rows. OPF and `dclinecost` are unsupported.
-
-### AC island solving
-
-MATPOWER `mpc.dcline` terminal injections add no Ybus branches, so they do
-not tie disconnected AC islands together. `power_flow.islands.enabled: true`
-is the default: disconnected AC components are solved independently.
-
-```yaml
-power_flow:
-  islands:
-    enabled: true
-    mode: solve_independent
-    reference_policy: matpower_like
-```
-
-The `matpower_like` policy keeps an existing island REF/Slack bus, otherwise
-promotes the bus of the island's best voltage-controlled unit as its angle
-reference, and without one the bus of its best generating unit. "Best" is
-the stated reference priority first (`referencePriority`, 1 is the
-strongest, see [Reference priority](slack_vs_source.md#Reference-priority)),
-then the ranking of `reference_candidate_rank` (network injection, local
-voltage control, size). Islands without any generating unit fail before NR.
-With multiple islands, `ac_islands.csv` in the run directory lists bus,
-branch, generator/load, DC-line terminal, power-balance, reference, and
-status diagnostics.
+| Public / supported | keys in `src/config/configuration.yaml.example` and the typed constructors |
+| Reserved | placeholders such as `extensions.reserved` |
+| Deprecated aliases | accepted for migration, not for new files (`max_ite`, some start-projection aliases) |
+| Removed | warn with a migration hint, ignored (`matpower_import.benchmark`) |
+| Internal | not a stable API |
 
 ### Transformer tap-changer model
 
-`model.tap_changer_model` selects, for all transformers of an imported case,
-whether the tap changer is electrically ideal or affects the series
+`model.tap_changer_model` decides for every transformer of an imported case
+whether a tap step changes the winding ratio alone or also the series
 impedance:
 
 ```yaml
@@ -179,79 +118,50 @@ model:
 
 | Value | Effect |
 |---|---|
-| `ideal` (default) | Tap steps only change the complex winding ratio; the series impedance (R, X) keeps its neutral-position value. |
-| `impedance_correction` | Tap steps additionally re-refer the series impedance through the tapped winding (R and X scaled, see below). |
+| `ideal` (default) | Tap steps change the complex winding ratio; R and X keep their neutral-position values. |
+| `impedance_correction` | Tap steps also re-refer R and X through the tapped winding; the correction math is in [`calcTapCorrectedRX`](@ref) / [`calcTapImpedanceCorrectionFactor`](@ref), see the [branch model](branchmodel.md). |
 
-With `impedance_correction`, R and X are scaled with the squared magnitude
-of the regulating vector, `|1 + f·e^(jφ)|²`, where `f` is the longitudinal
-regulating-voltage fraction and `φ` the skew angle (0° for a pure
-longitudinal/ratio tap changer). Read by the MATPOWER importer
-(`createNetFromMatPowerFile`/`createNetFromMatPowerCase`) and the native DTF
-importer (`DTFImporter.build_net`/`createNetFromDTFFile`); the correction
-math lives once, in [`calcTapCorrectedRX`](@ref) /
-[`calcTapImpedanceCorrectionFactor`](@ref) (`src/equicircuit.jl`). A
-subsequent [`writeMatpowerCasefile`](@ref) export writes the corrected
-`Branch.r_pu`/`Branch.x_pu` values and records the roundtrip marker
-`mpc.sparlectra.tap_changer_model = 'impedance_correction'` so a reimport
-does not reapply the correction; see
+The MATPOWER and DTF importers read the key. [`writeMatpowerCasefile`](@ref)
+writes the corrected `Branch.r_pu`/`Branch.x_pu` with a roundtrip marker,
+so a reimport does not correct twice; see
 [Tap-impedance correction and reimport](matpower.md#tap-impedance-correction-and-reimport).
 
 ## Loader and validation behavior
 
-- User YAML and override keys are validated against the schema tree of
-  `src/config/configuration.yaml.example`; an unknown key in the YAML is
-  warned about and dropped, an unknown override key throws `ArgumentError`.
-  The Web UI configuration editor rejects an unknown key while the text is
-  edited, so a typo is caught before the file is saved.
-- Type and domain checks (Symbol allow-lists, positivity) run while
-  constructing the typed objects; some legacy aliases are accepted there.
+- Keys are validated against the schema tree of the template: an unknown
+  key in a file is warned about and dropped, an unknown override key throws
+  `ArgumentError`. The Web UI configuration editor rejects an unknown key
+  while the text is edited.
+- Type and domain checks (allowed symbols, positivity) run while the typed
+  objects are built; some legacy aliases are accepted there.
 - `load_sparlectra_config(...)` caches the typed result for unchanged files
-  without overrides; file hash/mtime changes invalidate the cache.
+  without overrides; a changed hash or mtime invalidates it.
 
 ## Minimal example YAML
 
 ```yaml
+config_version: 1
+scope: general
+
 power_flow:
   method: rectangular
   tol: 1.0e-5
   max_iter: 80
   autodamp: true
   autodamp_min: 0.05
-
   start_mode:
     angle_mode: dc
     voltage_mode: profile_blend
     profile_source: matpower_reference
     start_projection: true
-    try_dc_start: true
-    try_blend_scan: true
-    blend_lambdas: [0.25, 0.5, 0.75]
-    dc_angle_limit_deg: 60.0
-
-  start_current_iteration:
-    enabled: false
-    max_iter: 10
-    tol: 1.0e-3
-    damping: 0.5
-    accept_only_if_improved: true
-    min_improvement_factor: 0.98
-    vm_min_pu: 0.5
-    vm_max_pu: 1.5
-    max_angle_step_deg: 30.0
-    only_for_large_cases: false
-
   qlimits:
     enabled: true
     enforcement_mode: active_set
-    start_iter: 3
-    start_mode: iteration_or_auto
+
+model:
+  auto_profile: off
 
 matpower_import:
-  case: case14.m
-  # Non-empty cases take precedence for run_sparlectra_cases.
-  cases: [case14.m, case118.m]
-  auto_profile: off
-  auto_profile_log: true
   pv_voltage_source: gen_vg
 
 state_estimation:
@@ -266,129 +176,96 @@ performance:
   enabled: true
   level: iteration
 
-benchmark:
-  enabled: true
-  methods: [rectangular]
-
 runtime:
+  case: case14.m
+  cases: [case14.m, case118.m]   # non-empty wins for run_sparlectra_cases
   julia_threads: keep
   blas_threads: keep
-  casefile: ""
-  case_name: ""
-  case_source: ""
-  configured_default_casefile: ""
-
-extensions:
-  reserved: true
 ```
-
-`power_flow.qlimits.enforcement_mode` selects the reactive-limit algorithm:
-`active_set` is the in-iteration PV to PQ active-set switching;
-`classic_simultaneous` and `classic_one_at_a_time` run a classical outer
-loop (solve with switching disabled, clamp violating generator Q to the
-limit, convert those buses to PQ, rerun without PQ to PV re-enable). The
-legacy aliases `matpower_simultaneous` and `matpower_one_at_a_time` are
-normalized to the `classic_*` value.
-
-`model.auto_profile` controls the experimental MATPOWER convention scan:
-`off` (default since 0.30.0, nothing about conventions is logged at the
-standard reading), `recommend` (log a recommendation table, change
-nothing), `apply` (apply only unambiguous import-convention
-recommendations). The runner never rewrites user YAML files. See
-[MATPOWER conventions (experimental)](@ref matpower_conventions_experimental).
 
 ## [Wrong-branch detection semantics (rectangular PF)](@id config-wrong-branch)
 
-`power_flow.wrong_branch_detection` is a post-convergence plausibility check
-for rectangular PF results; it is heuristic and does not prove global branch
-correctness.
+`power_flow.wrong_branch_detection` is a heuristic plausibility check of
+every numerically converged AC result, with or without reactive limits; it
+proves nothing about the solution branch.
 
 | Mode | Effect |
 |---|---|
-| `off` | checker disabled |
-| `warn` | suspicious solutions are reported in rectangular status metadata; numerical convergence remains accepted |
-| `fail` | suspicious solutions are treated as failed final convergence |
-| `rescue` | reserved mode: a suspicious solution reports `rescue_requested_but_not_available`; no retry loop runs |
+| `off` | no check |
+| `warn` (default) | a suspicious solution is reported in the status metadata, the run stays converged |
+| `fail` | a suspicious solution counts as non-convergence |
+| `rescue` | reserved: reports `rescue_requested_but_not_available`, no retry runs |
 
-The check runs on every numerically converged AC result, with or without
-reactive limits. The thresholds cover the voltage magnitude band, the share
-of a voltage level below that band, the global angle spread, single bus
-angles and active-branch angle differences. The magnitude band and the
-level-share rule are judged on every energised bus whose nominal voltage is
-at or above `power_flow.wrong_branch_min_vn_kV` (100 kV; when no level
-reaches the floor, on the highest level alone); a bus below
-`power_flow.wrong_branch_collapse_vm_pu` (0.5 pu) is a finding on every
-level, floor or not; the angle spread and the
-branch-angle rule stay on the highest level (branch-angle checks: both ends
-on that level). The angle across every in-service branch at the
-reference bus is judged on every level, phase shift compensated: above
-`power_flow.wrong_branch_max_reference_branch_angle_deg` (90 degrees) the
-result is reported as `reference_branch_angle_exceeded`. It catches a
-solution rotated as a whole against a reference machine that sits behind
-its own transformer, a branch the highest-level rule does not see. The
-reported `min_vm_pu`/`max_vm_pu`, the lowest-bus list
+The magnitude band (`wrong_branch_min_vm_pu` to `wrong_branch_max_vm_pu`)
+and the level-share rule are judged on every energised bus whose nominal
+voltage is at or above `wrong_branch_min_vn_kV`; when no level reaches the
+floor, on the highest level alone. A bus below
+`wrong_branch_collapse_vm_pu` is a finding on every level. The angle spread
+and the branch-angle rule stay on the highest level (both ends of the branch
+on that level). The angle across every in-service branch at the reference
+bus is judged on every level, phase shift compensated
+(`reference_branch_angle_exceeded`); it catches a solution rotated as a
+whole against a reference machine behind its own transformer. The reported
+magnitudes, lowest-bus list
 and `wrong_branch_level_kV` with its counts refer to the judged levels. A
-run that takes more than `power_flow.wrong_branch_max_plain_steps` Newton
-steps without a switching event is reported
-(`wrong_branch_plain_steps_exceeded`) without changing the status: a
-well-posed case takes 7 to 14 steps, 60 is a branch signal.
+run with more than `wrong_branch_max_plain_steps` Newton steps without a
+switching event is reported (`wrong_branch_plain_steps_exceeded`) without
+changing the status; a well-posed case takes 7 to 14 steps.
 
 !!! details "Why the angle rules stay on the highest voltage level"
-    Sub-transmission levels routinely run at 0.94 to 0.97 pu in healthy
-    snapshots with their own angle spread; the magnitude band (0.70 pu)
-    is far below that and is judged on every transmission level, because
-    a collapse can sit on a lower level while the top level is clean
-    (a 13659-bus case ended with 130 buses of its 150 kV level at 0.33
-    pu under three clean 750 kV buses).
+    Sub-transmission levels run at 0.94 to 0.97 pu in healthy snapshots
+    with their own angle spread. The magnitude band (0.70 pu) is far below
+    that and is judged on every transmission level, because a collapse can
+    sit on a lower level under a clean top level (a 13659-bus case ended
+    with 130 buses of its 150 kV level at 0.33 pu under three clean 750 kV
+    buses).
 
 ### Where the result is visible
 
 | Surface | Fields |
 |---|---|
-| `ACPFlowReport.metadata` | `wrong_branch_status` and `wrong_branch_reason`. |
-| AC island diagnostics CSV (`ac_island_solver_summary.csv`, one row per island) | trailing `wrong_branch_status`/`wrong_branch_reason` columns next to the `wrong_branch_detection` *setting* column; the per-island `ac_island_<id>_solver.log` lists both fields. |
-| Console/log summary (`printACPFlowResults`) | a `Wrong-branch   : SUSPECT (...)` or `Wrong-branch   : FAIL (...)` line, printed only when the result is neither `ok` nor `not_checked`. |
-| Web UI run result page | a "Wrong-branch check" badge with the run-status styling; omitted when the result is `not_checked`. |
-| `run_sparlectra_api` result metadata | `wrong_branch_status`, `wrong_branch_reason`, `wrong_branch_low_vm_count`, `wrong_branch_high_vm_count`, `wrong_branch_level_kV`, `wrong_branch_level_low_vm_count`, `wrong_branch_level_bus_count`, `wrong_branch_max_bus_angle_deg`, `wrong_branch_plain_steps`, `wrong_branch_plain_steps_exceeded`, `wrong_branch_angle_spread_deg`, `wrong_branch_branch_angle_violation_count`, `wrong_branch_reference_branch_angle_deg` with `wrong_branch_reference_branch` (the largest angle across a branch at the reference bus and that branch in case bus numbers, measured on every checked run). |
+| `ACPFlowReport.metadata` | `wrong_branch_status`, `wrong_branch_reason` |
+| `run_sparlectra_api` result metadata | the two fields above plus `wrong_branch_low_vm_count`, `wrong_branch_high_vm_count`, `wrong_branch_level_kV`, `wrong_branch_level_low_vm_count`, `wrong_branch_level_bus_count`, `wrong_branch_max_bus_angle_deg`, `wrong_branch_plain_steps`, `wrong_branch_plain_steps_exceeded`, `wrong_branch_angle_spread_deg`, `wrong_branch_branch_angle_violation_count`, `wrong_branch_reference_branch_angle_deg` with `wrong_branch_reference_branch` (the largest angle across a branch at the reference bus and that branch in case bus numbers) |
+| `ac_island_solver_summary.csv`, `ac_island_<id>_solver.log` | `wrong_branch_status`/`wrong_branch_reason` per island, next to the `wrong_branch_detection` setting column |
+| `printACPFlowResults` | a `Wrong-branch   : SUSPECT (...)` or `FAIL (...)` line unless the result is `ok` or `not_checked` |
+| Web UI run result page | a "Wrong-branch check" badge unless `not_checked` |
 
 | `status` value | Meaning |
 |---|---|
 | `ok` | checked, no finding |
-| `warn` | suspicious, result accepted under `wrong_branch_detection = warn` |
-| `fail` | suspicious, treated as non-convergence under `fail` |
+| `warn` | suspicious, accepted under `warn` |
+| `fail` | suspicious, non-convergence under `fail` |
 | `wrong_branch_rescue_not_implemented` | the reserved `rescue` mode was requested |
-| `not_checked` | `wrong_branch_detection = off`, or the check never ran (e.g. a non-finite solution) |
+| `not_checked` | `off`, or the check never ran (non-finite solution) |
 
-`reason` values: `none`, `voltage_collapse`, `low_voltage_level_share`, `low_voltage_magnitude`, `high_voltage_magnitude`, `bus_angle_exceeded`,
-`angle_spread_exceeded`, `branch_angle_exceeded`, `reference_branch_angle_exceeded`, `nonfinite_voltage`,
-`disabled`, `rescue_requested_but_not_available`.
+`reason` values: `none`, `voltage_collapse`, `low_voltage_level_share`,
+`low_voltage_magnitude`, `high_voltage_magnitude`, `bus_angle_exceeded`,
+`angle_spread_exceeded`, `branch_angle_exceeded`,
+`reference_branch_angle_exceeded`, `nonfinite_voltage`, `disabled`,
+`rescue_requested_but_not_available`.
 
-The wrong-branch retry loop (`wrong_branch_detection = rescue`) is a
-reserved mode and not implemented; it reports
-`rescue_requested_but_not_available`. It is distinct from the general
-rescue ladder for failed AC solves (`power_flow.rescue`, see
-[Power-Flow Configuration](powerflow_configuration.md#pf-solver-core)).
-For hard flat-start cases the mitigations are this detection and the APSLF
-solver as an alternative start/solve path (see
-[External Solvers](external_solvers.md)).
+The reserved `rescue` mode is not the rescue ladder for failed AC solves
+(`power_flow.rescue`, [Solver core options](@ref pf-solver-core)). For hard
+flat-start cases the mitigations are this check and the APSLF solver
+([External Solvers](external_solvers.md)).
 
-Tuning keys of the detector (all under `power_flow.`):
+Tuning keys (all under `power_flow.`):
 
 | Key | Default | Meaning |
 |---|---|---|
-| `power_flow.wrong_branch_min_vm_pu` | `0.70` | Lower edge of the plausibility band; solved magnitudes below it count as suspicious. |
+| `power_flow.wrong_branch_min_vm_pu` | `0.70` | Lower edge of the plausibility band. |
 | `power_flow.wrong_branch_max_vm_pu` | `1.30` | Upper edge of the plausibility band. |
-| `power_flow.wrong_branch_min_low_vm_count` | `1` | How many sub-band buses it takes to raise the finding. |
+| `power_flow.wrong_branch_min_low_vm_count` | `1` | Sub-band buses it takes to raise the finding. |
 | `power_flow.wrong_branch_min_vn_kV` | `100.0` | Nominal-voltage floor of the judged levels (magnitude band and level share). |
 | `power_flow.wrong_branch_low_vm_share` | `0.05` | Share of a level's buses below the band that raises `low_voltage_level_share`. |
-| `power_flow.wrong_branch_collapse_vm_pu` | `0.5` | A bus below this magnitude on ANY level raises `voltage_collapse` (0 switches the rule off). |
-| `power_flow.wrong_branch_max_angle_spread_deg` | `180.0` | Maximum admissible total angle spread of the solution. |
-| `power_flow.wrong_branch_max_branch_angle_deg` | `90.0` | Bound on the angle difference across an active branch of the highest level (phase shift compensated). |
+| `power_flow.wrong_branch_collapse_vm_pu` | `0.5` | A bus below this magnitude on any level raises `voltage_collapse`; 0 switches the rule off. |
+| `power_flow.wrong_branch_max_angle_spread_deg` | `180.0` | Maximum total angle spread of the solution. |
+| `power_flow.wrong_branch_max_branch_angle_deg` | `90.0` | Bound on the angle across an active branch of the highest level, phase shift compensated. |
 | `power_flow.wrong_branch_max_bus_angle_deg` | `120.0` | Bound on any judged bus angle relative to the slack (`bus_angle_exceeded`). |
-| `power_flow.wrong_branch_max_reference_branch_angle_deg` | `90.0` | Bound on the angle across any in-service branch at the reference bus, every level, phase shift compensated (`reference_branch_angle_exceeded`, ranked before `bus_angle_exceeded`; 0 switches the rule off). |
+| `power_flow.wrong_branch_max_reference_branch_angle_deg` | `90.0` | Bound on the angle across any in-service branch at the reference bus, every level, phase shift compensated (`reference_branch_angle_exceeded`, ranked before `bus_angle_exceeded`); 0 switches the rule off. |
 | `power_flow.wrong_branch_max_plain_steps` | `20` | Newton steps without a switching event above which `wrong_branch_plain_steps_exceeded` is reported. |
-| `power_flow.wrong_branch_rescue` | `false` | Reserved switch for the unimplemented rescue loop; reports instead of retrying. |
-| `power_flow.wrong_branch_rescue_max_attempts` | `2` | Attempt bound for that reserved mode. |
+| `power_flow.wrong_branch_rescue` | `false` | Reserved switch of the unimplemented rescue loop; reports instead of retrying. |
+| `power_flow.wrong_branch_rescue_max_attempts` | `2` | Attempt bound of that reserved mode. |
 
 ## Control configuration (generic outer loop)
 
@@ -406,17 +283,17 @@ control:
 | Key | Type | Default | Meaning |
 |---|---:|---:|---|
 | `control.enabled` | Bool | `true` | Run the outer control loop (`run_control!`) around the inner solver when controllers exist. |
-| `control.max_outer_iterations` | Int | `20` | Outer-loop budget shared by all active controllers. Does not control inner NR iterations. |
+| `control.max_outer_iterations` | Int | `20` | Outer-loop budget shared by all controllers; independent of `power_flow.max_iter`. |
 | `control.trace` | Bool | `true` | Collect machine-readable rows in `ControlRunResult.trace`. |
-| `control.log_iterations` | Bool | `true` | One console line per control pass (converged, mismatch, active-set changes) when `output.console_diagnostics` is `full`. |
-| `control.stop_on_pf_failure` | Bool | `true` | Abort the orchestration when the inner power flow fails. |
-| `control.verbose_passes` | Bool | `false` | Repeat the full inner-solver diagnostic blocks on every control pass. Off: the first pass prints them once, later passes get the one-line summary. |
-| `control.controllers` | Mapping | `{}` | Declarative controller instantiation: one named mapping per controller, applied to the net before the outer loop. See [Control Framework](control_framework.md) for the schema. |
+| `control.log_iterations` | Bool | `true` | One console line per control pass when `output.console_diagnostics` is `full`. |
+| `control.stop_on_pf_failure` | Bool | `true` | Abort when the inner power flow fails. |
+| `control.verbose_passes` | Bool | `false` | Repeat the full inner-solver diagnostic blocks on every pass; off prints them once and summarizes later passes in one line. |
+| `control.controllers` | Mapping | `{}` | Declarative controllers, applied to the net before the outer loop (below; mechanics in [Control Framework](control_framework.md)). |
 
 ### Declarative controllers (`control.controllers`)
 
-One named entry per controller; the `type` key selects the device function,
-the remaining keys mirror its keyword arguments (bus/branch/transformer
+One named entry per controller; `type` selects the device function, the
+other keys mirror its keyword arguments (bus, branch and transformer
 references by name). Block style only: the minimal YAML reader has no
 `- item` sequences.
 
@@ -447,47 +324,39 @@ control:
 | `hvdc_pair` | `addHvdcPairControl!` | |
 | `upfc` | `addUpfcControl!` | `model: quadrature` registers the SSSC+STATCOM pair, `model: full` the DC-link-coupled independent-P/Q model, see [FACTS Devices](facts.md) |
 
-Unknown types or keys and missing required keys fail at configuration load;
-unknown bus/branch/transformer references and invalid limits fail at apply
-time naming the entry. An entry whose element already carries a controller
-of the same type is skipped. `applyConfiguredControllers!` applies a
-configuration to a programmatically built net.
-`examples/others/tap_control_demo_grid.yaml` (setpoints and tap/phase
-parameters `oltc`, `pst`, `schraeg` for
-`examples/others/tap_control_demo_grid.jl`) is an example-specific input
-file, not the `control.controllers` schema.
+Unknown types, unknown keys and missing required keys fail at configuration
+load; unresolvable references and invalid limits fail at apply time, naming
+the entry. An element that already carries a controller of the same type
+is skipped. `applyConfiguredControllers!` applies the block to a
+programmatically built net.
 
 ## Bookkeeping and console keys
 
 | Key | Default | Meaning |
 |---|---|---|
-| `runtime.casefile`, `runtime.case_name`, `runtime.case_source`, `runtime.configured_default_casefile` | `""` | Populated by the API/Web UI into the `effective_config.yaml` run artifact; they record which case a run actually used and where it came from. Not user inputs. |
-| `output.console_live` | `false` | Mirror captured run output live to the real console during API/service runs; the archived `run.log` stays identical. |
-| `output.result_table_max_rows` | `200` | Row cap for the classical result tables. |
+| `runtime.casefile`, `runtime.case_name`, `runtime.case_source`, `runtime.configured_default_casefile` | `""` | Written by the API and the Web UI into `effective_config.yaml`: which case a run used and where it came from. Not user inputs. |
+| `output.console_live` | `false` | Mirror the captured run output live to the console during API runs; `run.log` stays identical. |
+| `output.result_table_max_rows` | `200` | Row cap of the classical result tables. |
 | `output.result_table_large_case_threshold_buses` | `1000` | Bus count from which a case counts as large for result rendering. |
-| `output.result_table_large_case_mode` | `summary` | What large cases print instead of full tables (`summary`, `classic`, `full`). |
-| `output.csv_format` | `auto` | Delimiter/decimal-separator format of every CSV file a run writes (`write_result_csv`): `bus_voltages_complex.csv`, `branch_flows.csv`, `bus_powers.csv`, `q_limit_*.csv`, the short-circuit, contingency and scenario tables, the SE diagnostic exports and `se_state.csv`, `ac_islands.csv`, the SV comparison and the DTF outage metrics. Only the measurement CSV that Sparlectra reads back keeps its fixed layout. Allowed values: `auto` (follows the regional settings of the machine, see `system_csv_format`: a decimal comma gives `excel_de`, a decimal point `excel_us`, the C/POSIX locale `technical`), `technical` (comma delimiter, dot decimal), `excel_de` (semicolon delimiter, comma decimal, dot thousands separator), `excel_us` (comma delimiter, dot decimal, comma thousands separator). The API's `detailed_result_csv_format`/`detailed_result_csv_semicolon` request keywords are a deprecated per-request override of this key. |
-| `webui.operation_log_retention_days` | `10` | Int, `>= 0`. How far the operation log reaches back. Every Web UI start drops older entries from every operation log it knows; `0` keeps only the current session. Lower it when the log page grows unwieldy: its size comes from the number of entries, not from their age. The environment variable `SPARLECTRA_WEBUI_OPERATION_LOG_RETENTION_DAYS` still wins, for headless runs that read no configuration file. |
-
-| `webui.docs_base_url` | `https://welthulk.github.io/Sparlectra.jl/` | String. Base URL of the published documentation the help pages (the **?** next to a control) and the header link open; set it to a local docs build or a pinned version folder. A link only, nothing is fetched; the help pages themselves ship with the application. |
+| `output.result_table_large_case_mode` | `summary` | What large cases print instead of full tables: `summary`, `classic`, `full`. |
+| `output.csv_format` | `auto` | Delimiter and decimal separator of every CSV file a run writes; only the measurement CSV Sparlectra reads back keeps its fixed layout. `auto` follows the regional settings of the machine (decimal comma gives `excel_de`, decimal point `excel_us`, the C/POSIX locale `technical`); `technical` is comma delimiter, dot decimal; `excel_de` semicolon delimiter, comma decimal, dot thousands separator; `excel_us` comma delimiter, dot decimal, comma thousands separator. The API keywords `detailed_result_csv_format`/`detailed_result_csv_semicolon` are a deprecated per-request override. |
+| `webui.operation_log_retention_days` | `10` | Int `>= 0`: days the operation log reaches back. Every Web UI start drops older entries; `0` keeps only the current session. The environment variable `SPARLECTRA_WEBUI_OPERATION_LOG_RETENTION_DAYS` wins (headless runs without a configuration file). |
+| `webui.docs_base_url` | `https://welthulk.github.io/Sparlectra.jl/` | Base URL of the published documentation that the help pages (the **?** next to a control) and the header link open; point it at a local build or a pinned version. A link only, nothing is fetched. |
 
 ## Migration notes
 
 | Legacy / old key | Canonical key | Notes |
 |---|---|---|
-| `matpower_import.benchmark` | `benchmark.enabled` | Moved to the top-level `benchmark` section. |
-| `methods` (top-level legacy path) | `benchmark.methods` | Keep benchmark methods in `benchmark`. |
-| `max_ite` | `power_flow.max_iter` | Legacy alias; prefer the canonical nested key. |
+| `matpower_import.benchmark` | `benchmark.enabled` | removed, warns with this hint |
+| `methods` (top-level legacy path) | `benchmark.methods` | |
+| `max_ite` | `power_flow.max_iter` | deprecated alias |
 
 ## Detailed references
 
-- [Power-Flow Configuration](powerflow_configuration.md)
-- [MATPOWER cases](matpower.md)
-- [State-Estimation Configuration](state_estimation_configuration.md)
-- [Performance and Profiling Configuration](performance_profiling.md)
-
-The canonical key set lives in one place,
-[`src/config/configuration.yaml.example`](https://github.com/Welthulk/Sparlectra.jl/blob/main/src/config/configuration.yaml.example),
-commented per key and always current. The effective configuration of a run,
-with every default and override resolved, prints via
-`print_effective_config`.
+[Power-Flow Configuration](powerflow_configuration.md),
+[State-Estimation Configuration](state_estimation_configuration.md),
+[MATPOWER cases](matpower.md),
+[Performance and Profiling Configuration](performance_profiling.md).
+The canonical key set is
+[`src/config/configuration.yaml.example`](https://github.com/Welthulk/Sparlectra.jl/blob/main/src/config/configuration.yaml.example);
+`print_effective_config` prints a run's effective configuration.

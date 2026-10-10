@@ -1,11 +1,10 @@
 # [PowSyBl Import](@id powsybl_import)
 
-IIDM is the native network format of [PowSyBl](https://www.powsybl.org),
-the open-source power system framework of the LF Energy foundation; its
-XML variant XIIDM (`.xiidm`, `.xml`) carries node-breaker topology, tap
-changers, HVDC links and limits. Sparlectra reads the file itself, in
-Julia, without Python: `import_case`, `run_sparlectra` and the Web UI take
-a `.xiidm` file as they take a MATPOWER case, and the import reproduces the
+IIDM is the native network format of [PowSyBl](https://www.powsybl.org);
+its XML variant XIIDM (`.xiidm`, `.xml`) carries node-breaker topology,
+tap changers, HVDC links and limits. Sparlectra reads the file in Julia,
+without Python: `import_case`, `run_sparlectra` and the Web UI take a
+`.xiidm` file as they take a MATPOWER case, and the import reproduces the
 OpenLoadFlow solution of the same network.
 
 ```julia
@@ -21,10 +20,10 @@ network from them. It resolves:
 
 - the bus-breaker and bus views of a node-breaker substation: nodes merge
   through internal connections and closed switches, a retained switch
-  stays in the bus-breaker view (as a link of the built network), a bus
-  is valid on powsybl's rule (a busbar section with a feeder, or a branch
-  with two feeders), and the buses are named `<voltage level>_<lowest
-  node>` as powsybl names them;
+  stays in the bus-breaker view (a link of the built network), a bus is
+  valid on powsybl's rule (a busbar section with a feeder, or a branch
+  with two feeders), and buses are named `<voltage level>_<lowest node>`
+  as powsybl names them;
 - the connected and synchronous components, numbered by size;
 - the current step of every ratio and phase tap changer: `rho`, `alpha`
   and the step corrections of `r`, `x`, `g`, `b`, on two- and
@@ -36,9 +35,9 @@ network from them. It resolves:
 - dangling and tie lines, HVDC lines with their converter stations,
   static var compensators, linear and non-linear shunts.
 
-Areas and properties are ignored, and of the extensions one is read: the
+Areas and properties are ignored; of the extensions only the
 short-circuit data of a generator (`generatorShortCircuit`, see
-[Run kinds](@ref powsybl_run_kinds)). Two constructs are refused
+[Run kinds](@ref powsybl_run_kinds)) is read. Two constructs are refused
 with a message naming them: a compressed file (`.xiidm.bz2`, `.gz`: unpack
 it first) and the tie-line form of IIDM versions before 1.10 (the two
 half lines inline). The bus state written in the file seeds the start
@@ -50,30 +49,22 @@ the import then starts flat and says so in the report.
 
 The reader takes the IIDM XML schema versions 1.0 to 1.17 (the namespace
 `http://www.powsybl.org/schema/iidm/1_<n>`). It is verified against files
-of version 1.17, which is what pypowsybl 1.16 writes; for older files it
-knows the element forms that changed on the way: the linear shunt model
-on the element itself (before 1.3), `danglingLine` with `ucteXnodeCode`
-(before 1.17, `boundaryLine` with `pairingKey` since), tie lines by
+of version 1.17 (what pypowsybl 1.16 writes); for older files it knows
+the element forms that changed on the way: the linear shunt model on the
+element itself (before 1.3), `danglingLine` with `ucteXnodeCode` (before
+1.17, `boundaryLine` with `pairingKey` since), tie lines by
 `danglingLineId1`/`2` (1.10 to 1.16) and `boundaryLineId1`/`2` (1.17),
 `currentLimits1`/`2` on the element (before 1.12) next to the limits
 groups, a static var compensator without the `regulating` attribute
 (mode `OFF` then means not regulating), `targetV` on a ratio tap changer
 (before 1.12) next to `regulationValue`. A construct of a newer schema
 that the reader does not know is ignored, never guessed; a construct it
-cannot map is refused with its name. Compressed files are not read.
+cannot map is refused with its name.
 
 ## Source
 
-The source is the IIDM file (`.xiidm`, `.xml`): `import_case` and the Web
-UI detect it by its first bytes (the IIDM namespace), not by the
-extension.
-
-The test suite keeps a table bundle next to each of its fixture files (a
-directory `<case>.powsybl` with the tables as CSV files and the
-OpenLoadFlow voltages in `reference_buses.csv`). That is an internal
-reference, frozen with the fixtures: the reader is checked against it
-column by column and the power flow against its voltages. It is not a
-delivery form, and the Web UI does not offer it.
+`import_case` and the Web UI detect an IIDM file by its first bytes (the
+IIDM namespace), not by the extension.
 
 ## Bus model
 
@@ -89,22 +80,16 @@ meet at `<pairing_key>_xnode`.
 
 ## Example files
 
-`data/powsybl` ships `ieee14.xiidm`, `four_substations.xiidm`,
-`micro_grid_be.xiidm` and `ieee14_sc.xiidm` (the IEEE case with
-short-circuit data, see [Run kinds](@ref powsybl_run_kinds)); the Web UI
-case selector offers them. The test suite covers two networks more.
+`data/powsybl` ships three of PowSyBl's own example networks and a
+short-circuit variant of the IEEE case; the Web UI case selector offers
+them, and the import reproduces the OpenLoadFlow voltages of each.
 
 | case | what it covers |
 |---|---|
 | `ieee14` | the IEEE 14-bus case: Y-bus identity with MATPOWER `case14` on every entry, including the two branches PowSyBl imports as lines between voltage levels (each keeps its one-sided shunt on its own terminal, see Conventions) |
-| `ieee57` (test suite) | 57 buses, 17 transformers, two parallel transformer pairs, a distributed slack |
 | `four_substations` | node-breaker topology with retained switches, a phase-shifting transformer, VSC and LCC HVDC links, an SVC, curve reactive limits, temporary limits, two synchronous components |
 | `micro_grid_be` | CGMES origin, a three-winding transformer with a ratio tap changer, remote voltage regulation, dangling lines |
-| `eurostag_tie_lines` (test suite) | tie lines built from paired dangling lines |
-
-The files are PowSyBl's own example networks. The import reproduces the
-OpenLoadFlow voltages of each of the five within the bands of the test
-suite.
+| `ieee14_sc` | the IEEE case with short-circuit data on its generators, see [Run kinds](@ref powsybl_run_kinds) |
 
 ## Conventions
 
@@ -116,14 +101,11 @@ Settled against the OpenLoadFlow voltages of the example files:
   `ratio = vn_to / (rho * vn_from)`; the phase shift is `-alpha`. The
   `_at_current_tap` impedances are used, no tap tables reach the network.
 - **Magnetizing admittance.** The whole `g`, `b` of a transformer sits on
-  side 1, behind the ideal transformer, as OpenLoadFlow places it; three-
-  winding legs alike. The branch carries it as its from-terminal arm
-  (`g_from_pu`, `b_from_pu`), a line keeps `g1`, `b1` and `g2`, `b2` on
-  their own terminals, and a dangling line its admittance on the network
-  terminal; no bus shunt is created for any of them, so the shunt list of
-  an imported network holds the shunt compensators only, an outage takes
-  the admittance away with its branch, and the SCF export keeps the split
-  (see [Branch model](branchmodel.md)).
+  side 1, behind the ideal transformer, as OpenLoadFlow places it; the
+  branch carries it as its from-terminal arm, a line keeps `g1`, `b1` and
+  `g2`, `b2` on their own terminals, a dangling line its admittance on the
+  network terminal; no bus shunt is created for any of them
+  ([Where the magnetizing admittance sits](@ref magnetizing_placement)).
 - **Lines between voltage levels.** PowSyBl keeps a plain conductor and
   OpenLoadFlow's default line model is exactly that; Sparlectra builds it
   as the ratio branch `vn_to / vn_from` with the impedance on the to-side
@@ -141,17 +123,16 @@ Settled against the OpenLoadFlow voltages of the example files:
   generators with a nonzero target proportionally to `max_p`; the importer
   carries that rule as participation factors, so
   `power_flow.distributed_slack.enabled = true` with `p_mode = imported`
-  reproduces OpenLoadFlow's balance; in that mode a unit takes part
-  wherever it sits, also as PQ (a non-regulating generator, or a unit the
-  `remote` regulation mode runs as PQ). Without it the slack generator of
-  each component absorbs the whole mismatch.
+  reproduces OpenLoadFlow's balance (a unit takes part wherever it sits,
+  also as PQ). Without it the slack generator of each component absorbs
+  the whole mismatch.
 - **Slack choice.** Per synchronous component a regulating unit, by the
   ranking every reference choice uses ([`reference_candidate_rank`](@ref)):
   a unit whose setpoint applies to its own bus before one that regulates a
-  remote bus (the slack bus keeps its start voltage, so a remotely
-  regulating slack would leave its own bus wherever the file's state put
-  it), then the largest unit, by its rated power where the file states
-  one and by `max_p` otherwise; `slack_ids` overrides the choice.
+  remote bus (a remotely regulating slack would leave its own bus at the
+  file's start voltage), then the largest unit, by rated power where the
+  file states one and by `max_p` otherwise; `slack_ids` overrides the
+  choice.
 - **Reactive limits.** OpenLoadFlow switches a unit at its limit without
   hysteresis; Sparlectra's `power_flow.qlimits.hysteresis_pu` (default
   0.01) keeps a unit PV inside the band. Set it small to match
@@ -170,7 +151,7 @@ The `powsybl_import` scope (canonical section `powsybl`, alias
 | Key | Default | Meaning |
 |---|---|---|
 | `powsybl_import.base_mva` | `100.0` | System base in MVA. |
-| `powsybl_import.hvdc_mode` | `fixed_injection` | `fixed_injection` or `paired_control`; the latter is not implemented for PowSyBl sources in this release and is rejected with the mode named. |
+| `powsybl_import.hvdc_mode` | `fixed_injection` | `fixed_injection` or `paired_control`; the latter is not implemented for PowSyBl sources and is rejected with the mode named. |
 | `powsybl_import.slack_ids` | `[]` | Generator ids that override the slack choice of their synchronous component; a YAML list or one string with `;` between the ids. |
 | `powsybl_import.multi_slack` | `true` | One slack per synchronous component; `false` keeps only the component of the first slack and reports the others. |
 | `powsybl_import.remote_regulation` | `hold_local` | `hold_local`, `pq` (PQ with `target_q`) or `remote` (outer-loop machine voltage control on the regulated bus). |
@@ -178,8 +159,8 @@ The `powsybl_import` scope (canonical section `powsybl`, alias
 The import report (counts per element type, every skipped element with
 its reason, the slack decision per component, notices) is printed by
 `format_powsybl_report` and travels with the imported case as
-`provenance["powsybl_report"]`. A power-flow run of the service or the Web
-UI writes it as the artifact `powsybl_import.log`.
+`provenance["powsybl_report"]`; a run of the service or the Web UI writes
+it as the artifact `powsybl_import.log`.
 
 ## [Run kinds](@id powsybl_run_kinds)
 
@@ -199,26 +180,16 @@ and `stepUpTransformerX` of the extension `generatorShortCircuit`
 lies in series with the subtransient one). A generator without the
 extension is evaluated with the default `x''_d` of
 [Short-Circuit Analysis](short_circuit.md), and every row that depends on
-it carries the flag and the reason. Four states follow from the data:
-
-| Data in the file | Run |
-|---|---|
-| every generator carries the extension and a rated power | status `succeeded`, no flag |
-| some generators carry the extension, others do not | status `warning` (reason `short_circuit_partial_defaults`): the message counts the sources with data, the rows the others feed are flagged |
-| no generator carries the extension, rated powers are there | status `warning` (reason `short_circuit_defaults_only`): a complete table on the default reactance, the statement leads the message and `run.log` |
-| no generator carries the extension or a rated power | refused with `short_circuit_data_missing`: no source impedance comes from the file; the Web UI does not offer the button for such a file |
-
-The rule is the one of every format
-([Short-Circuit Analysis](@ref short_circuit_source_data)). Of the shipped files `ieee14.xiidm` is of the last kind (the
-IEEE case defines neither value), `micro_grid_be.xiidm` of the third, and
-`ieee14_sc.xiidm` of the first: the same network with assumed ratings and
-`x''_d = 0.2` pu, built by `tools/build_powsybl_sc_demo.jl`.
-
-A generator with neither value in a file where others carry data gets a
-reason of its own on the rows it feeds.
+it carries the flag and the reason; the run status follows the rule of
+every format ([Source data and run status](@ref short_circuit_source_data)).
+Of the shipped files `ieee14.xiidm` carries neither reactances nor rated
+powers (the run is refused), `micro_grid_be.xiidm` carries rated powers
+only (defaults with a warning), and `ieee14_sc.xiidm` carries complete
+data: the same network with assumed ratings and `x''_d = 0.2` pu, built
+by `tools/build_powsybl_sc_demo.jl`.
 
 ## Out of scope
 
 Snapshots with missing injections and injection patching, time-series
 batches, tap and voltage controllers from IIDM regulation data (the step
-tables are read, not used), IIDM export, compressed IIDM files.
+tables are read, not used), IIDM export.

@@ -1,25 +1,24 @@
 # Solver Guide
 
 The internal power-flow path is the sparse rectangular complex-state
-Newton-Raphson solver. Its layers under `src/powerflow_rectangular/`:
-
-* `rectangular_core_equations.jl`: residual/equation helpers, including `mismatch_rectangular`.
-* `rectangular_jacobian_builders.jl`: the analytic rectangular Jacobian builders.
-* `rectangular_newton_step.jl`: Newton-step update and damping helpers.
-* `rectangular_standalone_solver.jl`: `run_complex_nr_rectangular`, the standalone array-level Newton driver.
-* `rectangular_network_solver.jl`: `runpf_rectangular!`, the network-integrated entry point and orchestration.
+Newton-Raphson solver: `runpf_rectangular!` (network level,
+`src/powerflow_rectangular/rectangular_network_solver.jl`) over
+`run_complex_nr_rectangular` (array level), with the residual helpers
+(`mismatch_rectangular`), the analytic Jacobian builders and the step
+control (damping, line search, trust region) in the same directory.
 
 ## Rectangular Complex-State Newton-Raphson
 
 ### Motivation and State Vector
 
-The rectangular complex-state NR uses the complex bus voltages
+The state variables are the complex bus voltages
 
 ```math
-V_i = V_{r,i} + j V_{i,i}
+V_k = V_{r,k} + j V_{i,k}
 ```
 
-as state variables instead of magnitudes and angles. The state vector is
+(real part $V_{r,k}$ and imaginary part $V_{i,k}$ of bus $k$), not magnitudes
+and angles. The state vector is
 
 ```math
 x =
@@ -50,9 +49,9 @@ mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx)
     -> Vector{Float64}
 ```
 
-builds the real-valued residual vector `F(V)`:
+builds the residual vector `F(V)`:
 
-* For each **PQ bus** $i \ne \text{slack}$:
+* PQ bus $i \ne \text{slack}$:
 
   ```math
   \Delta P_i = \Re(S_{\text{calc},i}) - \Re(S_{\text{spec},i})
@@ -60,7 +59,7 @@ builds the real-valued residual vector `F(V)`:
   \Delta Q_i = \Im(S_{\text{calc},i}) - \Im(S_{\text{spec},i})
   ```
 
-* For each **PV bus** $i \ne \text{slack}$:
+* PV bus $i \ne \text{slack}$:
 
   ```math
   \Delta P_i = \Re(S_{\text{calc},i}) - \Re(S_{\text{spec},i})
@@ -68,11 +67,11 @@ builds the real-valued residual vector `F(V)`:
   \Delta V_i = |V_i| - V_\text{set,i}
   ```
 
-The stacked residual vector has size `2(n-1)` and matches the state dimension.
+The residual has `2(n-1)` entries, the state dimension.
 
 ### Analytic Rectangular Newton Step
 
-`complex_newton_step_rectangular` performs one Newton step with an analytic
+`complex_newton_step_rectangular` performs one Newton step with the analytic
 Jacobian:
 
 ```julia
@@ -86,46 +85,38 @@ complex_newton_step_rectangular(Ybus, V, S;
 )
 ```
 
-Steps:
+It computes currents and powers, forms `F(V)`, assembles `J = ∂F/∂x`, solves
 
-1. Compute currents and powers.
-2. Form the residual `F(V)`.
-3. Assemble the Jacobian `J = ∂F/∂x`.
-4. Solve
+```math
+J(x_k)\,\Delta x_k = -F(x_k)
+```
 
-   ```math
-   J(x_k)\,\Delta x_k = -F(x_k)
-   ```
-
-5. Update the state with fixed or automatic damping.
+and applies the step with fixed or automatic damping.
 
 ### [Newton Update: Rectangular or Polar](@id newton_update)
 
-The step `Δx = (ΔV_r, ΔV_i)` is a tangent vector at the current iterate.
-`power_flow.newton_update` selects how it is applied to the bus voltages:
+`power_flow.newton_update` selects how the step `Δx = (ΔV_r, ΔV_i)` is
+applied to every non-slack bus:
 
-| value | update of every non-slack bus | property |
+| value | update | property |
 |---|---|---|
-| `rectangular` (the update up to 0.20.5) | `V ← V + ΔV` | A pure rotation `ΔV/V = jb` inflates the magnitude by `sqrt(1 + b²)`. |
-| `polar` (default) | `V ← V (1 + a) e^{jb}` with `ΔV/V = a + jb` | Magnitude times `1 + a`, angle plus `b`: the polar Newton update, exact for rotations and for scalings. |
+| `rectangular` | `V ← V + ΔV` | A pure rotation `ΔV/V = jb` inflates the magnitude by `sqrt(1 + b²)`. |
+| `polar` (default) | `V ← V (1 + a) e^{jb}` with `ΔV/V = a + jb` | Magnitude times `1 + a`, angle plus `b`: exact for rotations and for scalings. |
 
-Both are Newton's method with the same Jacobian and converge to the same
-state; they differ in the iterates. From a flat start the first steps have
-to rotate whole regions by the solution angles (60 to 70 degrees on the
-large PEGASE files), and the linear update lands far from the unit circle:
-on case9241pegase the first rectangular step puts 9226 of 9241 buses above
-1.1 pu (maximum 7 pu) and the iteration diverges, while the polar update
-keeps every magnitude between 0.91 and 1.21 pu and converges in six steps.
-With `polar` the rectangular Jacobian reproduces MATPOWER's `newtonpf`
-iterates to rounding, step for step. Damping (`autodamp`, the merit line
-search, the trust region) scales the tangent step before it is applied, so
-it works with either update. The worked example and the first-step table
-are on [Newton update](newton_update.md); the recipes per case on
+Same Jacobian, same solution, different iterates; from a flat start on a
+large transmission case the difference decides convergence. Damping
+(`autodamp`, the merit line search, the trust region) scales the step
+before it is applied and works with either update. Example and
+measurements: [Newton update](newton_update.md); recipes per case:
 [Start strategies by case](start_strategies.md).
 
 ### Automatic Rectangular Newton Damping
 
-For difficult flat-start studies, enable residual-based backtracking:
+`autodamp = true` backtracks on the residual: trial step lengths run from
+`damp` down to `autodamp_min` by halving, and the first trial that reduces
+the maximum absolute mismatch is accepted. If none does, the solver takes
+the best finite trial and rebuilds Jacobian and active set in the next
+iteration. Only the scalar step length changes.
 
 ```julia
 runpf!(net, 60, 1e-8, 1;
@@ -135,20 +126,11 @@ runpf!(net, 60, 1e-8, 1;
 )
 ```
 
-With `autodamp = true` the solver tests trial step lengths from `damp` down
-to `autodamp_min` by halving. The first trial that reduces the maximum
-absolute mismatch is accepted; if none improves, the solver continues with
-the best finite conservative trial so the next iteration can rebuild the
-Jacobian and active-set state. This line-search style damping only chooses
-the scalar step length of the computed Newton correction; model, bus
-equations, Q-limit logic and Jacobian are untouched.
-
 ### Merit-Function Line Search
 
-Autodamp accepts the first trial step that reduces the **maximum absolute
-mismatch**, an $\infty$-norm criterion without a sufficient-decrease
-guarantee. `power_flow.merit` adds an opt-in acceptance test based on a
-scalar merit function inside the same backtracking loop.
+Autodamp's test (a smaller maximum mismatch) has no sufficient-decrease
+guarantee. `power_flow.merit` adds an opt-in Armijo test on a scalar merit
+function inside the same backtracking loop.
 
 | Use | Where |
 |---|---|
@@ -157,119 +139,91 @@ scalar merit function inside the same backtracking loop.
 
 #### Root-finding vs. optimization view
 
-Newton-Raphson solves $F(x) = 0$. The same residual defines the scalar merit
-function
+The residual defines the merit function
 
 ```math
 f(x) = \frac{1}{2} \lVert W F(x) \rVert_2^2
 ```
 
-where $W$ is the optional diagonal scaling matrix of the residual-scaling
-weights `scale_p`/`scale_q`/`scale_v`. Minimizing $f$
-and solving $F(x) = 0$ share their solutions whenever $F(x) = 0$ is
-attainable ($f = 0$ there).
-
-The existing Newton direction is a descent direction for $f$ without any
-extra factorization, because of the gradient
+with $W$ the diagonal matrix of the weights `scale_p`/`scale_q`/`scale_v`;
+where $F(x) = 0$ is attainable, the minimizers of $f$ are the roots of $F$.
+Its gradient is
 
 ```math
 \nabla f(x) = J(x)^\top W^\top W F(x)
 ```
 
-With the Newton direction $\Delta x = -J(x)^{-1} F(x)$ and $W = I$:
+and with $J \Delta x = -F$ the directional derivative
 
 ```math
-\nabla f(x)^\top \Delta x = -F(x)^\top J(x)^{-\top} J(x)^\top J(x)^\top J(x)^{-1} F(x)
+\nabla f(x)^\top \Delta x = F(x)^\top W^\top W \, J(x) \, \Delta x = -\lVert W F(x) \rVert_2^2 < 0
 ```
 
-reduces, using $J \Delta x = -F$, to
-
-```math
-\nabla f(x)^\top \Delta x = -\lVert W F(x) \rVert_2^2 < 0
-```
-
-whenever $F(x) \ne 0$. The directional derivative comes directly from the
-already computed mismatch vector.
+is negative whenever $F(x) \ne 0$: the Newton direction descends $f$ at no
+extra cost.
 
 #### Armijo sufficient-decrease acceptance
 
-For each trial step length $\lambda$ (same order as autodamp: `damp`, then
-halved down to `autodamp_min`), the merit line search accepts the first
-$\lambda$ satisfying the Armijo condition:
+For the trial step lengths $\lambda$ (`damp`, then halved down to
+`autodamp_min`) the first one with
 
 ```math
 f(x + \lambda \Delta x) \le f(x) + c_1 \, \lambda \, \nabla f(x)^\top \Delta x
 ```
 
-`power_flow.merit.armijo_c1` is $c_1 \in (0, 0.5)$. Smaller $c_1$ accepts
-almost any step that decreases $f$; larger $c_1$ demands a larger fraction
-of the predicted linear decrease and backtracks further (Nocedal & Wright,
-*Numerical Optimization*, line-search chapter).
-
-Armijo acceptance guarantees descent on the aggregate residual energy $f$;
-the max-mismatch criterion only asks whether the single worst bus equation
-improved. A step can reduce the worst-bus mismatch while increasing the
-overall residual energy elsewhere, or vice versa, so the two criteria can
-accept different step lengths in the same iteration.
+is accepted. `power_flow.merit.armijo_c1` is $c_1 \in (0, 0.5)$: a small
+$c_1$ accepts almost any decrease of $f$, a large one demands a larger share
+of the predicted decrease and backtracks further (Nocedal and Wright,
+*Numerical Optimization*, line-search chapter). Armijo guarantees descent of
+the aggregate residual energy, the max-mismatch test only an improvement of
+the worst bus equation; a step can do one without the other, so the two
+tests can accept different step lengths.
 
 If no trial satisfies Armijo, `power_flow.merit.fallback_max_mismatch`
-selects the fallback:
-
-* `true` (default): the classic max-mismatch criterion for this iteration
-  (first improving trial, else the conservative best-finite trial);
-* `false`: straight to the conservative best-finite trial.
+decides: `true` (default) uses the max-mismatch criterion for this iteration
+(first improving trial, else the best finite trial), `false` goes straight
+to the best finite trial.
 
 #### Limits
 
-* Minimizing $f$ is not equivalent to solving $F(x) = 0$: $f$ can have local
-  minima with $F(x) \ne 0$, so Armijo at every iteration does not guarantee
-  convergence to a root.
-* The criterion does not influence *which* solution branch (a high- versus
-  a low-voltage operating point) the solver converges to; it only accepts
-  or rejects step lengths along Newton's path.
-* A PV/PQ active-set switch changes what residual entries *mean* (a
-  $\Delta Q$ entry becomes a $\Delta V$ entry, or vice versa). Comparing $f$
-  across such a switch is not well-defined, so the merit comparison is
-  skipped in that iteration, which falls back to the max-mismatch criterion
-  and is logged with `accept_reason = active_set_skip` (log format:
-  [Merit-function line search options](@ref pf-merit)).
+* $f$ can have local minima with $F(x) \ne 0$; Armijo at every iteration
+  does not guarantee a root.
+* The test chooses step lengths along Newton's path, not the solution branch
+  (a high- versus a low-voltage operating point).
+* A PV/PQ switch changes what the residual entries mean ($\Delta Q$ becomes
+  $\Delta V$ or vice versa), so $f$ is not comparable across it; that
+  iteration uses the max-mismatch criterion and logs
+  `accept_reason = active_set_skip`.
 
 #### Residual scaling
 
-$P$, $Q$, and voltage-setpoint ($V$) residual entries can differ by orders
-of magnitude depending on the per-unit base and grid mix, and one equation
-type can then dominate $f$ and weaken the sufficient-decrease guarantee for
-the others. `power_flow.merit.scale_p`, `power_flow.merit.scale_q`, and
-`power_flow.merit.scale_v` are the diagonal weights $W$ per equation type:
-`ΔP_i` entries use `scale_p`; the second equation per non-slack bus uses
-`scale_q` for PQ buses and `scale_v` for PV buses. Leave all three at `1.0`
-unless diagnostics show one residual type dominating.
+$P$, $Q$ and $V$ residual entries can differ by orders of magnitude
+(per-unit base, grid mix), and one type then dominates $f$.
+`power_flow.merit.scale_p`, `scale_q` and `scale_v` are the weights $W$:
+`ΔP_i` entries use `scale_p`, the second equation of a non-slack bus
+`scale_q` (PQ) or `scale_v` (PV). Leave all three at `1.0` unless
+diagnostics show one type dominating.
 
 ### Trust-Region Step Control
 
-`power_flow.trust_region` is an alternative step control to autodamp: a
-**scaled-Newton trust region**. It is disabled by default and mutually
-exclusive with `power_flow.autodamp`: both decide how far to step along the
-Newton direction, so enabling both is a configuration error.
+`power_flow.trust_region` caps the Newton step at an adaptive radius and
+accepts trials by merit decrease. It is off by default and mutually
+exclusive with `power_flow.autodamp` (both decide the step length; enabling
+both is a configuration error).
 
 | Use | Where |
 |---|---|
-| Config key | `power_flow.trust_region.enabled` (default `false`); `step_mode` (`:scaled`, `:dogleg`), `eta_accept`, `expand_threshold`, `expand_factor`, `shrink_factor`, `min_radius` under the same prefix |
+| Config key | `power_flow.trust_region.enabled` (default `false`); `step_mode` (`:scaled`, `:dogleg`), `eta_accept`, `expand_threshold`, `expand_factor`, `shrink_factor`, `min_radius` under the same prefix ([Trust-region step control options](@ref pf-trust-region)) |
 | Result field | `accept_reason` (`:dogleg_newton`, `:dogleg_cauchy`, `:dogleg_interp`, `:active_set_skip`); non-convergence reason `:trust_region_collapsed` |
 
 #### Step-construction modes: `scaled` and `dogleg`
 
-Classical trust-region methods restrict the Newton correction to a ball of
-radius $\Delta$ around the current iterate, typically choosing the trial
-step by a *dogleg* or *Steihaug-CG* interpolation between the
-steepest-descent and full Newton directions.
-`power_flow.trust_region.step_mode` selects between two constructions; both
-share the acceptance rule below.
+`power_flow.trust_region.step_mode` selects the trial step inside the radius
+$\Delta$; both modes share the acceptance rule below.
 
 ##### `step_mode = :scaled` (default)
 
-The trial step is the full Newton direction $\Delta x$, rescaled when it
-exceeds the radius:
+The Newton direction $\Delta x$, rescaled when it exceeds the radius:
 
 ```math
 \Delta x_{\text{scaled}} =
@@ -279,168 +233,140 @@ exceeds the radius:
 \end{cases}
 ```
 
-The direction is always the analytic Newton direction, as in the
-autodamp/fixed-damping paths; only the step *length* is controlled.
+Only the length is controlled, as with autodamp.
 
 ##### `step_mode = :dogleg`
 
-`scaled` steps degrade when the Newton direction stops being a useful
-descent direction (for example with a very ill-conditioned Jacobian): every
-rescale points the same bad way, so the solver either keeps taking uphill
-steps or shrinks the radius toward collapse. Dogleg adds a second endpoint,
-the steepest-descent (Cauchy) step on the local quadratic model of the merit
-function, and interpolates along the Cauchy-to-Newton path.
+`scaled` degrades when the Newton direction is no descent direction (an
+ill-conditioned Jacobian): every rescale points the same way, uphill or
+into radius collapse. Dogleg interpolates between the steepest-descent
+(Cauchy) step of the local quadratic model and the Newton step.
 
 **Merit-function gradient.** With $f(x) = \frac{1}{2}\lVert F(x) \rVert_2^2$
-(unweighted, $W = I$, the convention `m(x)` uses for both step modes), the
-gradient is
+(unweighted, $W = I$, for both step modes):
 
 ```math
 g(x) = J(x)^{\mathsf{T}} F(x)
 ```
 
-one transposed sparse matrix-vector product, no additional factorization.
+one transposed sparse matrix-vector product.
 
-**Cauchy point.** The steepest-descent minimizer of the local quadratic model
+**Cauchy point.** The minimizer of the local quadratic model
 $m(p) = f + g^{\mathsf{T}}p + \frac{1}{2}p^{\mathsf{T}}(J^{\mathsf{T}}J)p$
-along $-g$ is
+along $-g$:
 
 ```math
 \alpha^\ast = \frac{\lVert g \rVert_2^2}{\lVert Jg \rVert_2^2}
 \qquad p_C = -\alpha^\ast g
 ```
 
-one more sparse matrix-vector product ($Jg$), clipped to
-$\lVert p_C \rVert \le \Delta$ when used as the trial step.
+one more sparse product ($Jg$), clipped to $\lVert p_C \rVert \le \Delta$ as
+a trial step.
 
-**Dogleg path.** With the Newton step $p_N = \Delta x$ and radius $\Delta$:
+**Dogleg path.** With $p_N = \Delta x$ and radius $\Delta$:
 
 1. $\lVert p_N \rVert \le \Delta$: the full Newton step
-   (`accept_reason = :dogleg_newton`, identical to `scaled` where the radius
-   does not bind).
+   (`accept_reason = :dogleg_newton`, as `scaled` where the radius does not
+   bind).
 2. $\lVert p_C \rVert \ge \Delta$: $p_C$ rescaled to length $\Delta$
    (`accept_reason = :dogleg_cauchy`, pure steepest descent).
-3. Otherwise: interpolate $p(\tau) = p_C + \tau (p_N - p_C)$, $\tau \in
-   [0,1]$, with $\tau$ such that $\lVert p(\tau) \rVert = \Delta$
-   (`accept_reason = :dogleg_interp`). This is the scalar quadratic
-   $a\tau^2 + b\tau + c = 0$ with
+3. Otherwise $p(\tau) = p_C + \tau (p_N - p_C)$, $\tau \in [0,1]$, with
+   $\lVert p(\tau) \rVert = \Delta$ (`accept_reason = :dogleg_interp`): the
+   scalar quadratic $a\tau^2 + b\tau + c = 0$ with
    $a = \lVert d \rVert_2^2$, $b = 2\, p_C^{\mathsf{T}} d$,
    $c = \lVert p_C \rVert_2^2 - \Delta^2$, $d = p_N - p_C$, solved in closed
    form.
 
-Along the dogleg path $\lVert p(\tau) \rVert$ increases monotonically and
-the model value $m(p(\tau))$ decreases monotonically **provided**
-$J^{\mathsf{T}}J$ is positive definite (Nocedal & Wright, trust-region
-chapter). Near a singular Jacobian, the regime dogleg is meant to help with,
-$J^{\mathsf{T}}J$ may only be positive *semidefinite*; the path is still
-defined, but its Newton endpoint can be a poor local model. Dogleg therefore
-buys graceful degradation (Cauchy-direction progress) for *transiently*
-ill-conditioned Jacobians, not a global-convergence guarantee. The two
-escalations in the literature, Levenberg-Marquardt
-($(J^{\mathsf{T}}J + \lambda I) \Delta x = -J^{\mathsf{T}}F$, a new
-factorization per $\lambda$-change) and Steihaug-CG (matrix-free, terminates
-on negative curvature or the radius boundary), are not implemented.
+Along the path $\lVert p(\tau) \rVert$ increases and $m(p(\tau))$ decreases
+monotonically provided $J^{\mathsf{T}}J$ is positive definite (Nocedal and
+Wright, trust-region chapter); near a singular Jacobian it may only be
+semidefinite, and the Newton endpoint can be a poor model. Dogleg gives
+Cauchy-direction progress through a transiently ill-conditioned Jacobian,
+not a global-convergence guarantee. Levenberg-Marquardt and Steihaug-CG are
+not implemented.
 
-**Active-set switches.** A PV/PQ switch changes what the residual entries
-mean, so a gradient or Cauchy point computed before the switch is invalid
-after it. As in the merit line search, the dogleg comparison is skipped when
-a switch happened in this iteration: a single `scaled`-style trial at the
-current radius is accepted unconditionally
-(`accept_reason = :active_set_skip`) and the radius stays unchanged.
+**Active-set switches.** A PV/PQ switch invalidates a gradient or Cauchy
+point computed before it, so the dogleg comparison is skipped in that
+iteration: one `scaled`-style trial at the current radius is accepted
+unconditionally (`accept_reason = :active_set_skip`) and the radius stays.
 
 #### Acceptance by merit decrease
 
-Step acceptance reuses the merit function of the
-[Merit-Function Line Search](@ref), $f(x) = \frac{1}{2}\lVert F(x) \rVert_2^2$
-(unweighted, $W = I$). For a trial step $p$ (the rescaled Newton step or the
-dogleg step), the **actual reduction** is
+For a trial step $p$ the actual reduction of
+$f(x) = \frac{1}{2}\lVert F(x) \rVert_2^2$ ($W = I$) is
 
 ```math
 \text{ared} = f(x) - f(x + p)
 ```
 
-and the **predicted reduction** comes from the local linear model of $F$
-around $x$:
+and the predicted reduction from the linear model of $F$ is
 
 ```math
 \text{pred} = f(x) - \frac{1}{2} \lVert F(x) + J(x)\, p \rVert_2^2
 ```
 
-The ratio $\rho = \text{ared} / \max(\text{pred}, \varepsilon)$ measures how
-well the linear model predicted the improvement. A trial is accepted when
-$\rho \ge \eta_{\text{accept}}$ (`power_flow.trust_region.eta_accept`);
-`pred` uses a matrix-vector product with the already factored Jacobian, not
-a second Jacobian build or linear solve.
+A trial is accepted when
+$\rho = \text{ared} / \max(\text{pred}, \varepsilon) \ge \eta_{\text{accept}}$
+(`power_flow.trust_region.eta_accept`); `pred` is one matrix-vector product
+with the factored Jacobian.
 
 #### Radius update
 
-The radius $\Delta$ persists across Newton iterations (autodamp restarts
-`damp` per iteration) and adapts from $\rho$:
+The radius persists across Newton iterations (autodamp restarts `damp`
+every iteration):
 
-* **Accepted** ($\rho \ge \eta_{\text{accept}}$): the step is taken. If it
-  also hit the radius boundary ($\lVert \Delta x \rVert > \Delta$ in
-  `scaled` mode, or `accept_reason` is `:dogleg_cauchy`/`:dogleg_interp` in
-  `dogleg` mode) and $\rho \ge$ `expand_threshold`, the radius expands:
-  $\Delta \leftarrow \min(\Delta \cdot \texttt{expand\_factor}, \Delta_{\max})$.
-  Otherwise the radius is unchanged.
-* **Rejected** ($\rho < \eta_{\text{accept}}$): the radius shrinks,
-  $\Delta \leftarrow \Delta \cdot \texttt{shrink\_factor}$, and the *same*
-  Newton iteration retries with the smaller radius: no new Jacobian build or
-  linear solve, only a re-evaluation of the step construction and a fresh
-  mismatch evaluation, as autodamp reuses one Newton correction across its
-  trials.
-* **Collapsed**: if $\Delta$ falls below `power_flow.trust_region.min_radius`
-  without an accepted step, the solver declares non-convergence with reason
-  `:trust_region_collapsed` instead of looping indefinitely.
+* Accepted: the step is taken; if it hit the boundary
+  ($\lVert \Delta x \rVert > \Delta$ in `scaled` mode, `:dogleg_cauchy` or
+  `:dogleg_interp` in `dogleg` mode) and $\rho \ge$ `expand_threshold`, the
+  radius becomes $\min(\Delta \cdot \texttt{expand\_factor}, \Delta_{\max})$.
+* Rejected: $\Delta \leftarrow \Delta \cdot \texttt{shrink\_factor}$, and the
+  same iteration retries with the smaller radius without a new Jacobian or
+  linear solve.
+* Collapsed: below `power_flow.trust_region.min_radius` without an accepted
+  step the solver stops with reason `:trust_region_collapsed`.
 
 #### Limits
 
-* Neither mode is a global-convergence guarantee or a wrong-branch selector;
-  both are step-length controls on the existing analytic Newton direction,
-  and `dogleg` does not fix a bad start (a start-mode question).
-* `dogleg`'s Cauchy (steepest-descent) steps can be slow on badly scaled
-  problems, inherent to the method. The dogleg gradient always uses $W = I$;
-  weighted descent exists only via `power_flow.merit.scale_p/q/v` on the
-  (mutually exclusive) merit-function line search.
-
-General theory: Nocedal & Wright, *Numerical Optimization*, the chapters on
-trust-region methods (dogleg, Cauchy point, Steihaug-CG) and line-search
-methods (Armijo).
+Neither mode guarantees global convergence or selects the solution branch;
+both control the step length along the Newton direction, and `dogleg` does
+not repair a bad start. Cauchy steps can be slow on badly scaled problems.
+The dogleg gradient always uses $W = I$; weighted descent exists only
+through `power_flow.merit.scale_p/q/v` on the (mutually exclusive) merit
+line search.
 
 ### Start Projection for Difficult Seeds
 
 #### DC-angle flat-start background
 
-A conventional AC flat start sets bus voltages near $1.0\,\mathrm{pu}$ and
-all non-slack angles near $0^\circ$. That seed ignores the active-power flow
-pattern encoded in topology, branch reactances, transformer phase shifts and
-injections; in large or heavily phase-shifted cases the first Newton step
-can start far from the physically relevant angle branch.
-
-The DC-angle seed uses the active-power part of the model as a linearized
-predictor for the angles: voltage magnitudes near nominal, resistance and
-reactive coupling neglected, branch active power approximated by the angle
-difference over the branch reactance. This gives the sparse linear system
+A flat start (magnitudes near $1.0\,\mathrm{pu}$, non-slack angles
+$0^\circ$) ignores the active-power pattern of topology, reactances, phase
+shifts and injections; on a large or heavily phase-shifted case the first
+Newton step can start far from the physical angle branch. The DC-angle seed
+takes the angles from the linearized active-power model (magnitudes
+nominal, resistance and reactive coupling neglected, branch flow
+proportional to the angle difference over the reactance):
 
 ```math
 B'\theta = P
 ```
 
-where $P$ is the net active-power injection vector and $B'$ is assembled
-from the branch susceptance structure. The slack angle fixes the reference;
-the angles are clipped by `start_projection_dc_angle_limit_deg` before
-seeding Newton.
+with $P$ the net active-power injections (with a DC model present
+$P - P_{\mathrm{inj}}$, the phase-shifter injections the DC power flow
+subtracts) and $B'$ assembled from the branch susceptances. The slack angle
+is the reference; the angles are clipped by
+`start_projection_dc_angle_limit_deg`.
 
 Blended starts combine the DC-angle predictor with the stored MATPOWER
-`VM`/`VA` data or the raw flat start. On a flat start the projection also
-measures the ratio profile (`start_projection_ratio_profile`, configuration
-key `power_flow.start_mode.ratio_profile`): the flat magnitudes of the PQ
-buses multiplied by the product of the off-nominal transformer ratios on the
-path from the reference, so that no transformer carries a circulating current
-at the start. The projection scans the requested candidates and keeps the one
-with the smallest residual 2-norm when it is at least 10 percent below the raw
-seed's, which helps avoid wrong low-voltage or wrong-angle branches without
-changing the convergence criteria:
+`VM`/`VA` data or the flat start. On a flat start the projection also
+measures the ratio profile (`start_projection_ratio_profile`, key
+`power_flow.start_mode.ratio_profile`): the flat magnitudes of the PQ buses
+multiplied by the product of the off-nominal transformer ratios on the path
+from the reference (the ratio sits on the from side: a step from the from
+bus to the to bus divides by $\lvert t \rvert$, the reverse step multiplies
+by it), so that no transformer carries a circulating current at the start.
+The projection keeps the candidate with the smallest residual 2-norm when it
+is at least 10 percent below the raw seed's, which helps avoid wrong
+low-voltage or wrong-angle branches; the convergence criteria are unchanged.
 
 ```julia
 runpf!(net, 60, 1e-8, 1;
@@ -454,182 +380,151 @@ runpf!(net, 60, 1e-8, 1;
 )
 ```
 
-The projection sanitizes the raw seed before the scan. The same options are
-available through `buildPfModel` and `runpf_external!`, so external solvers
-receive the projected `model.V0`.
+The same keywords exist on `buildPfModel` and `runpf_external!`, so an
+external solver receives the projected `model.V0`.
 
 ## Distributed Active-Power Slack
 
 ### Why a single slack bus is a modeling artifact
 
-The classical formulation fixes the reference bus's voltage and lets its
-computed injection absorb whatever the network needs beyond the scheduled
-injections (imbalance plus losses). Physically no single machine does this:
-primary control raises many generators together, each by its droop share. The single-slack model concentrates that response on one
-bus and distorts the flows around it, visibly so in large imported cases
-where the reference machine absorbs tens of MW that real dispatch would
-spread over an area.
-
-The distributed slack uses the primary-control picture: a set of
-**participants** shares the imbalance according to normalized
-**participation factors** $\alpha_i$ with $\sum_i \alpha_i = 1$.
+The classical formulation lets the reference bus absorb the imbalance plus
+the losses. No single machine does this: primary control raises many
+generators together, each by its droop share. Concentrating that response
+on one bus distorts the flows around it; in large imported cases the
+reference machine absorbs tens of MW that real dispatch spreads over an
+area. The distributed slack shares the imbalance among **participants** by
+normalized **participation factors** $\alpha_i$ with $\sum_i \alpha_i = 1$.
 
 ### Formulation
 
-One scalar unknown $\lambda_P$ (the island's total imbalance in p.u.) is
-added to the state. Every participant bus $i$ (including the reference bus
-if it participates) gets the modified active-power residual
+One scalar unknown $\lambda_P$ (the island's total imbalance in p.u.) joins
+the state. Every participant bus $i$ (the reference bus included if it
+participates) gets the active-power residual
 
 ```math
 r_{P,i} = P_{\text{calc},i}(V) - P_{\text{spec},i} - \alpha_i\,\lambda_P
 ```
 
-so its solved injection is its schedule plus its share of the imbalance.
-Non-participants keep their residual ($\alpha_i = 0$).
+so its solved injection is its schedule plus its share; non-participants
+keep their residual ($\alpha_i = 0$).
 
-The system stays square through a **role separation at the reference bus**:
-its voltage magnitude *and angle* stay fixed (the angle reference is
-untouched), but its active power stops being free. The reference bus's P
-residual becomes an ordinary equation, **appended as the last row** of the
-residual vector (the interleaved `[ΔP_i, ΔQ/ΔV_i]` layout of the `2(n-1)`
-voltage rows is untouched). One new unknown ($\lambda_P$), one new equation
-(REF-P): the Jacobian gains one column ($-\alpha_i$ at the participant P
-rows) and one row (the network derivatives
+The system stays square through a role separation at the reference bus: its
+voltage magnitude and angle stay fixed, its active power stops being free.
+Its P residual becomes an ordinary equation, appended as the last row (the
+interleaved `[ΔP_i, ΔQ/ΔV_i]` layout of the `2(n-1)` voltage rows is
+unchanged): one new unknown, one new equation (REF-P), one Jacobian column
+($-\alpha_i$ at the participant P rows) and one row (the network derivatives
 $\partial P_\text{ref}/\partial V_{r,j}, \partial P_\text{ref}/\partial V_{i,j}$,
 plus $-\alpha_\text{ref}$ in the $\lambda_P$ column).
 
 With all weight on the reference bus ($\alpha_\text{ref} = 1$) the appended
 equation reads $P_{\text{calc,ref}} - P_{\text{spec,ref}} - \lambda_P = 0$
-and decouples from the voltage solution: the classical single-slack result
-is reproduced exactly, with $\lambda_P$ reporting the classically
-REF-absorbed power. This equivalence is a regression test.
+and decouples from the voltage solution: the classical result is reproduced
+exactly, with $\lambda_P$ reporting the classically absorbed power (a
+regression test).
 
 ### When and how it applies
 
 | Use | Where |
 |---|---|
-| Config key | `power_flow.distributed_slack.enabled` (default `false`); `p_mode`, `fallback`, `respect_p_limits` under the same prefix ([Power-Flow Configuration](powerflow_configuration.md)) |
+| Config key | `power_flow.distributed_slack.enabled` (default `false`); `p_mode`, `fallback`, `respect_p_limits` under the same prefix ([Distributed active-power slack](@ref pf-distributed-slack)) |
 | Result field | $\lambda_P$ in the per-island solver statuses; P-limit warnings counted in the run metadata |
 
-* **Disabled path.** Imported participation factors (MATPOWER `APF`, CGMES
-  `GeneratingUnit.normalPF`) are carried on the `ProSumer` but never
-  activate the feature; the disabled path is bit-identical to the classical
-  solver.
-* **Participants** are the generator-type prosumers at the island's REF and
-  PV buses at solve start. Fixed injections at PQ buses (Stage-0 HVDC
-  converter injections, kept boundary equivalents) never participate.
-  Participation is frozen per solve: a participant that hits its Q limit
-  and switches PV to PQ keeps its $\alpha_i$; reactive saturation does not
-  remove a machine from primary control.
-* **Per island.** Every island builds its own participant set and solves for
-  its own $\lambda_P$. Islands without a valid participant abort
-  (`fallback: error`) or solve classically with a warning
-  (`fallback: ref_only`).
-* **Weight modes** (`p_mode`): `pg_weighted` (scheduled `Pg`, the default),
-  `pmax_weighted`, `headroom_weighted` (`max(maxP - Pg, 0)`), `imported`
-  (the `APF`/`normalPF` factor), `explicit` (a config table).
-* **Step control.** Autodamp, merit line search and trust region evaluate
-  trial states $V + a\,\delta V$; the trial multiplier
-  $\lambda_P + a\,\delta\lambda_P$ is staged alongside. In the weighted
-  merit norm the REF-P row is scaled with `merit.scale_p` like every other
-  active-power residual.
-* **P limits are advisory**: with `respect_p_limits = true` each participant
-  whose corrected output leaves `[minP, maxP]` produces a warning and is
-  counted in the metadata; there is no clamp-and-resolve round.
-* The $\lambda$-augmented system requires the sparse Jacobian path (the
-  default); the dense builder rejects it.
-* **Comparing against a single-slack reference state** (for example a CGMES
-  SV profile): the branch flows deviate by the distributed correction while
-  the voltages stay put; the comparison then measures the slack-distribution
-  difference, not solver error.
+* Imported participation factors (MATPOWER `APF`, CGMES
+  `GeneratingUnit.normalPF`) are stored on the `ProSumer` but never activate
+  the feature; the disabled path is bit-identical to the classical solver.
+* Participants are the generator-type prosumers at the island's REF and PV
+  buses at solve start; fixed injections at PQ buses (HVDC converter
+  injections, boundary equivalents) never participate. Participation is
+  frozen per solve: a participant that hits its Q limit and becomes PQ keeps
+  its $\alpha_i$.
+* Every island solves for its own $\lambda_P$; an island without a valid
+  participant aborts (`fallback: error`) or solves classically with a
+  warning (`fallback: ref_only`).
+* Autodamp, merit line search and trust region stage the trial multiplier
+  $\lambda_P + a\,\delta\lambda_P$ with the trial state $V + a\,\delta V$;
+  in the weighted merit norm the REF-P row is scaled with `merit.scale_p`.
+* P limits are advisory: with `respect_p_limits = true` a participant whose
+  corrected output leaves `[minP, maxP]` produces a warning, counted in the
+  metadata; there is no clamp-and-resolve round.
+* The augmented system requires the sparse Jacobian path (the default); the
+  dense builder rejects it.
+* Against a single-slack reference state (a CGMES SV profile) the branch
+  flows deviate by the distributed correction while the voltages stay put;
+  the comparison measures the slack distribution, not solver error.
 
 ## Linear solver backends
 
-The linear solve of the Newton step (`J · δx = -F`) supports two sparse
-backends.
+The Newton step `J · δx = -F` has two sparse backends.
 
 | Use | Where |
 |---|---|
 | Config key | `power_flow.linear_solver`: `umfpack_reuse` (default) or `umfpack`; independent of `power_flow.solver`, which selects the power-flow method (rectangular / apslf / dc) |
 | Result field | backend plus the counters `linear_solver_analyze_count`, `linear_solver_refactor_count`, `linear_solver_fallback_count` in the solver status and the performance profile, per island on the island path |
 
-* **`umfpack`**: the standard sparse direct solve (`J \ F` through
-  `solve_sparse_system`), with sparse-QR and small-system SVD fallbacks. Each
-  iteration pays full symbolic analysis plus numeric factorization.
-* **`umfpack_reuse`**: the same UMFPACK multifrontal factorization, but the
-  symbolic analysis of the first iteration is kept and reused via
-  `lu!(F, J)` (numeric refactorization only). The Jacobian pattern is
-  constant across NR iterations unless the active set changes, so the
-  analysis is paid once per active set; usually the fastest choice on
-  large cases.
+* `umfpack`: the sparse direct solve (`J \ F` through `solve_sparse_system`)
+  with sparse-QR and small-system SVD fallbacks; every iteration pays
+  symbolic analysis plus numeric factorization.
+* `umfpack_reuse`: the same factorization with the symbolic analysis of the
+  first iteration kept and reused via `lu!(F, J)`. The pattern is constant
+  across iterations unless the active set changes, so the analysis is paid
+  once per active set; usually the fastest choice on large cases.
 
-KLU is not a value of `power_flow.linear_solver`: for a single solve it
-is not faster than `umfpack_reuse`, and a KLU factorization shared across
-threads gives silently wrong results. Power mode can use KLU when the KLU
-package extension is loaded (`using KLU`), one factorization per network
-and never shared; `power_flow.power_mode_lu` chooses between KLU and
-UMFPACK per network (`auto` from KLU's symbolic flop estimate); see
+KLU is not a value of `power_flow.linear_solver`: for a single solve it is
+not faster than `umfpack_reuse`, and a KLU factorization shared across
+threads gives silently wrong results. Power mode uses KLU when the extension
+is loaded (`using KLU`), one factorization per network, never shared;
+`power_flow.power_mode_lu` chooses per network, see
 [Power-mode LU](@ref power_mode_lu).
 
-Behavior of the reuse backend:
-
-* A PV/PQ switch changes the sparsity pattern, so that iteration re-runs
-  analyze plus factor. Independent of that signal, the stored
-  `colptr`/`rowval` fingerprint of the analyzed pattern is compared against
-  the current Jacobian before every refactorization, and any drift triggers
-  a re-analyze.
-* The Jacobian is assembled with a value-independent sparsity pattern, so
-  the pattern depends only on the Ybus structure and the bus types.
-* Any factorization error (structure mismatch, bad pivots, singularity)
-  resets the context and delegates that solve to the `umfpack` chain, so
-  the `:singular_newton_step` handling and the QR/SVD fallbacks keep
-  working.
-* The context covers only the main Newton solve (the dogleg/trust-region
-  internals keep their path), lives for one `runpf_rectangular!` invocation
-  (one island on the island path), and is never shared across islands or
-  threads.
+The reuse backend re-runs analyze plus factor after a PV/PQ switch (the
+pattern changes) and whenever the stored `colptr`/`rowval` fingerprint of
+the analyzed pattern differs from the current Jacobian; the Jacobian is
+assembled with a value-independent pattern, so the pattern depends only on
+the Ybus structure and the bus types. A factorization error (structure
+mismatch, bad pivots, singularity) resets the context and delegates that
+solve to the `umfpack` chain, so the `:singular_newton_step` handling and
+the QR/SVD fallbacks keep working. The context covers the main Newton solve
+only (the trust-region internals keep their path), lives for one
+`runpf_rectangular!` call (one island on the island path) and is never
+shared across islands or threads.
 
 ### [Dishonest Newton](@id dishonest_newton_solver)
 
-Dishonest Newton with adaptive refactorisation
-(`power_flow.jacobian_reuse`, off by default) keeps the factorization of
-the Jacobian for the next step while the Newton iteration converges fast:
-after a step that cut the maximum mismatch by at least
-`jacobian_reuse_min_reduction` (default 10), the next step solves the new
-mismatch with the previous LU factors, without refilling or refactorising
-the Jacobian. Otherwise the step refills and refactorises as usual. The
-rules:
+`power_flow.jacobian_reuse` (off by default) keeps the LU factors of the
+Jacobian for the next step while the iteration converges fast: after a step
+that cut the maximum mismatch by at least `jacobian_reuse_min_reduction`
+(default 10), the next step solves the new mismatch with the previous
+factors, without refilling or refactorising the Jacobian. Otherwise the step
+refills and refactorises as usual. The rules:
 
 1. Never in the first two steps.
 2. Never in a step in which the Q-limit active set converted or released a
-   bus (outer-loop controllers act between solves, each solve starts with
+   bus (outer-loop controllers act between solves; each solve starts with
    honest steps).
 3. A reused step that does not cut the mismatch by the factor is kept, and
    the next step refactorises.
 4. At most `jacobian_reuse_max_steps` (default 3) reused steps in a row.
-5. Tolerance and convergence test are unchanged; the final state equals
-   the honest Newton solution within the tolerance.
+5. Tolerance and convergence test are unchanged; the final state equals the
+   honest Newton solution within the tolerance.
 6. Works with and without power mode, on `umfpack_reuse` and on KLU (power
-   mode), with the polar and the rectangular update, on the rectangular
-   Newton path. With `linear_solver: umfpack` there is no factorization to
-   keep and with the trust region every step needs the current Jacobian;
-   the run log then says that the switch was ignored.
+   mode), with the polar and the rectangular update. With
+   `linear_solver: umfpack` there is no factorization to keep, and with the
+   trust region every step needs the current Jacobian; the run log then
+   says that the switch was ignored.
 
-The method changes the iteration count, not the solution: a reused step
-converges linearly instead of quadratically, so a run takes more steps
-but fewer factorizations. It pays off where the factorization is a large
-part of the step and many steps are taken; warm-started N-1 and scenario
-solves get slower with it. See [Dishonest Newton](@ref dishonest_newton)
-on the performance page. With the switch on, the solver status and the run log
-carry the reused steps and the refactorisations.
+A reused step converges linearly instead of quadratically: more steps, fewer
+factorizations. The switch pays where the factorization dominates the step
+and many steps are taken; warm-started N-1 and scenario solves get slower
+with it. Measurements: [Dishonest Newton](@ref dishonest_newton) on the
+performance page. The solver status and the run log carry the reused steps
+and the refactorisations.
 
 ## Solver-Specific Interaction with Power Limits
 
-When a PV bus hits a Q-limit, the solver does not merely clamp a reported
-reactive power. It changes the equation type of that bus from `(ΔP, ΔV)`
-(PV) to `(ΔP, ΔQ)` (PQ), represented through the `bus_types` vector.
-
-The start of PV to PQ switching can be controlled for difficult cases:
+A PV bus that hits a Q limit changes its equation type from `(ΔP, ΔV)` to
+`(ΔP, ΔQ)` through the `bus_types` vector; the reported reactive power is
+not merely clamped. When the switching starts is a keyword:
 
 ```julia
 runpf!(net, 60, 1e-8, 1;
@@ -639,10 +534,10 @@ runpf!(net, 60, 1e-8, 1;
 ```
 
 `qlimit_start_mode = :auto` waits until the PV reactive-power requests have
-stabilized; the threshold is `qlimit_auto_q_delta_pu` in p.u. The hybrid
-`:iteration_or_auto` mode starts when either the configured iteration or the
-stabilization criterion is reached. Operational and data-model side:
-[Powerlimits Guide](powerlimits.md).
+settled (threshold `qlimit_auto_q_delta_pu` in p.u.); `:iteration_or_auto`
+starts at whichever comes first. Mechanics and data model:
+[Powerlimits Guide](powerlimits.md); keys:
+[Q-limit options and guard](@ref pf-qlimits).
 
 ## Voltage-dependent P(U)/Q(U) controls
 
@@ -654,16 +549,16 @@ are added to the Jacobian. Derivation, API and output semantics (`Type` vs
 
 ## Jacobian condition-number diagnostics
 
-When a Newton solve stalls or diverges, the first question is whether the
-Jacobian is numerically healthy at the operating point. `condestJacobian(J)`
-estimates the 1-norm condition number
+`condestJacobian(J)` estimates the 1-norm condition number
 ``\kappa_1(J) = \|J\|_1 \cdot \|J^{-1}\|_1`` with the Hager/Higham estimator
-on the LU factorization, so it works on the sparse Jacobians the Newton step
-factors anyway; `exact = true` switches to the exact dense 2-norm via SVD
-for small systems. `reportCondition(J)` prints the estimate with the rough
-number of Float64 digits lost and a verdict (well conditioned below `1e6`,
-borderline below `1e10`, convergence at risk below `1e14`, numerically
-singular above).
+on the LU factorization the Newton step factors anyway; `exact = true`
+computes the dense 2-norm via SVD for small systems. `reportCondition(J)`
+prints the estimate, the attainable relative accuracy
+$\kappa_1 \cdot \varepsilon_{\mathrm{Float64}}$ and a verdict (well
+conditioned below `1e6`, borderline below `1e10`, convergence at risk below
+`1e14`, numerically singular above). The net method builds the solver's
+Jacobian at the net's current voltage state: the operating point after a
+converged run, the last iterate after a failed one.
 
 ```julia
 kappa = reportCondition(J)          # prints and returns the estimate
@@ -672,10 +567,7 @@ kappa = condestJacobian(J; exact = true)  # dense SVD, small nets only
 kappa = condestJacobian(net)        # solver Jacobian at the net's current state
 ```
 
-The net method builds the same sparse PQ/PV Jacobian the rectangular solver
-factors, at the net's current voltage state: the operating point after a
-converged run, the last iterate after a failed one. The diagnostics are
-always on, without configuration:
+Always on, without configuration:
 
 | Use | Where |
 |---|---|

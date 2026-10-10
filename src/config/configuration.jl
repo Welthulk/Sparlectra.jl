@@ -800,7 +800,7 @@ Base.@kwdef struct ModelConfig
   auto_profile_max_fit_pu::Float64 = 0.1
   net_cache_enabled::Bool = false
   preallocate_network::Symbol = :auto
-  preallocate_min_buses::Int = 1000
+  preallocate_min_buses::Int = 500
 end
 
 """
@@ -1949,7 +1949,7 @@ function ModelConfig(raw::AbstractDict)
     auto_profile_max_fit_pu = _validate_nonnegative("model.auto_profile_max_fit_pu", _as_float_cfg(_raw_get(merged, "auto_profile_max_fit_pu", 0.1))),
     net_cache_enabled = _as_bool_cfg(_raw_get(merged, "net_cache_enabled", false)),
     preallocate_network = _validate_allowed_symbol("model.preallocate_network", _as_symbol_cfg(_raw_get(merged, "preallocate_network", :auto)), [:off, :on, :auto]),
-    preallocate_min_buses = _as_int_cfg(_raw_get(merged, "preallocate_min_buses", 1000)),
+    preallocate_min_buses = _as_int_cfg(_raw_get(merged, "preallocate_min_buses", 500)),
   )
 end
 

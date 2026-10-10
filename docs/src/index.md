@@ -179,6 +179,14 @@ Full documentation: <https://welthulk.github.io/Sparlectra.jl/>
 
 Bug reports, test networks and import edge cases (CGMES, MATPOWER, DTF, PowSyBl IIDM) are welcome. Questions: [Discussions](https://github.com/Welthulk/Sparlectra.jl/discussions). Please read [CONTRIBUTING.md](https://github.com/Welthulk/Sparlectra.jl/blob/main/CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](https://github.com/Welthulk/Sparlectra.jl/blob/main/CODE_OF_CONDUCT.md) first.
 
+## Sponsors
+
+```@raw html
+<a href="https://www.soptim.de"><img src="assets/SOPTIM_Logo2.png" alt="SOPTIM AG" width="180" /></a>
+```
+
+The development of Sparlectra.jl is supported by [SOPTIM AG](https://www.soptim.de), Aachen, Germany.
+
 ## Citing
 
 ```bibtex

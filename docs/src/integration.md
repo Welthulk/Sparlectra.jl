@@ -20,45 +20,42 @@ println(result.metadata["auto_profile"])
 println(result.output_dir)      # artifacts live here
 ```
 
-The case file (MATPOWER, CGMES ZIP or DTF) is imported, auto mode picks the
-solver strategy, and the run directory carries every artifact. Full call
-surface: [Programmatic API](programmatic_api.md).
+The case file (MATPOWER, CGMES ZIP, PowSyBl IIDM, SCF or DTF) is
+imported, auto mode picks the solver strategy, and the run directory
+carries every artifact. Call surface and result fields:
+[Programmatic API](programmatic_api.md); request dictionaries and the run
+registry: [Local PowerFlow Service](powerflow_service.md).
 
 ## Loading both packages
 
 `using Sparlectra, SparlectraApp` works in a Julia started in the checkout
-with `--project=app`. Elsewhere:
+with `--project=app`. In the default environment neither package is
+found (the registry offers `Sparlectra`, the library alone); activate the
+application environment first:
 
-* Plain REPL (prompt `(@v1.13) pkg>`, the default environment): neither
-  package is found, and Julia offers to install `Sparlectra` from the
-  registry, which is the library alone. Activate the application
-  environment first:
+```julia
+using Pkg
+Pkg.activate("path/to/Sparlectra/app")   # the checkout's app/ directory
+Pkg.instantiate()                        # first time only
+using Sparlectra, SparlectraApp
+```
 
-  ```julia
-  using Pkg
-  Pkg.activate("path/to/Sparlectra/app")   # the checkout's app/ directory
-  Pkg.instantiate()                        # first time only
-  using Sparlectra, SparlectraApp
-  ```
+On the library project (`julia --project=.`) only `SparlectraApp` is
+missing: put `app/` on the load path, as `start_webui.jl` does, or
+activate `app/` as above:
 
-* REPL on the library project (`julia --project=.`, the editor default for
-  the checkout): only `SparlectraApp` is missing. Put `app/` on the load
-  path, as `start_webui.jl` does, or activate `app/` as above:
-
-  ```julia
-  push!(LOAD_PATH, joinpath(pwd(), "app"))   # from the checkout root
-  using Sparlectra, SparlectraApp
-  ```
+```julia
+push!(LOAD_PATH, joinpath(pwd(), "app"))   # from the checkout root
+using Sparlectra, SparlectraApp
+```
 
 ## The configuration file
 
-Every option is a key in one YAML file, and `effective_config.yaml` in the
-run directory states what took effect. Precedence, highest first: an
-explicit override in the call, the case configuration file next to the case
-(`<stem>.config.yaml`), the machine's YAML configuration.
-
-**Creating one.** Copy the packaged template; it carries every key with its
-default and a comment:
+Every option is a key in one YAML file; `effective_config.yaml` in the
+run directory states what took effect. Precedence, scopes and key
+reference: [Configuration](configuration.md); power-flow options:
+[PowerFlow Configuration](powerflow_configuration.md). The packaged
+template carries every key with its default and a comment:
 
 ```julia
 using Sparlectra
@@ -66,10 +63,7 @@ using SparlectraApp   # service API: environment app/, or app/ on the load path
 cp(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "my_configuration.yaml")
 ```
 
-In the Web UI the same file is edited on the Settings page (Configuration
-Editor with Check and Refresh), which validates before saving.
-
-**Using one.** Per run, or once per session:
+Per run, or once per session:
 
 ```julia
 result = run_sparlectra_api(casefile = "case118.m", output_dir = "runs/a",
@@ -82,25 +76,17 @@ runpf!(net)                    # every later call uses it
 Single values need no file: `config_overrides = Dict("power_flow.tol" =>
 1e-6)` in the API call, or `--set power_flow.tol=1e-6` on the command line.
 Unknown keys and invalid values are refused by name before anything runs.
-
-**A case can bring its own settings.** A `<stem>.config.yaml` next to a
-case file wins over the machine configuration, so the case computes the
-same numbers on every installation. `write_case_config(case, Dict(...))`
-writes one. Only case-scope keys are accepted there (import conventions,
-solver surface, state estimation, short circuit); logging, benchmarking,
-parallelism and Web UI settings stay with the machine.
-
-Key reference, merge precedence and compatibility policy:
-[Configuration](configuration.md). Power-flow options and their trade-offs:
-[PowerFlow Configuration](powerflow_configuration.md).
+A `<stem>.config.yaml` next to a case file carries the case's own
+settings and wins over the machine configuration
+([Configuration precedence](scf.md#Configuration-precedence)); the Web UI
+edits the machine file on its Settings page.
 
 ## Startup latency
 
-The first run in a fresh Julia process compiles and is slow, later runs are
-fast: keep the process running, or build a [sysimage](sysimage.md) once
-(that page also covers the standalone executable, a checkout tool that is
-not part of the package). The one-line hint at the first run of a native
-process is silenced with `output.startup_latency_hint: false`.
+The first run in a fresh Julia process compiles and is slow, later runs
+are fast: keep the process running, or build a [sysimage](sysimage.md)
+once. `output.startup_latency_hint: false` silences the one-line hint at
+the first run.
 
 ## Auto mode
 
@@ -109,22 +95,21 @@ R/X profile, phase shifters, start profile, generator Q limits) and fills
 the start-value, step-control and Q-limit strategy. On non-convergence a
 bounded escalation ladder retries with stronger strategies, up to an
 APSLF-seeded Newton-Raphson run and an optional DC fallback
-(`power_flow.dc.fallback`, off by default, API-only).
-
-It never changes the tolerance, mutates the network, overrides an option
-you set explicitly, or reports a DC result as an AC solution. Every
-decision, precedence conflict, escalation attempt and hint lands in the
+(`power_flow.dc.fallback`, off by default, API-only). It never changes
+the tolerance, mutates the network, overrides an option you set
+explicitly, or reports a DC result as an AC solution. Every decision,
+precedence conflict, escalation attempt and hint lands in the
 `auto_mode_decision.log` artifact of the run.
 
 ## Q limits
 
 When a generator's reactive limit binds, its bus switches from voltage
-control (PV) to fixed injection (PQ): physics, not an error. Bad or missing
-limit data is the most common cause of non-convergence and strange
-voltages. Auto mode handles switching, guards and enforcement mode, and
-reports what it did as one-line hints (`auto_hints` in the result metadata,
-the decision log, the Web UI result page). The hints name the buses and
-generators to check in the source data.
+control (PV) to fixed injection (PQ): physics, not an error. Bad or
+missing limit data is the most common cause of non-convergence and
+strange voltages. Auto mode handles switching, guards and enforcement
+mode, and reports what it did as one-line hints (`auto_hints` in the
+result metadata, the decision log, the Web UI result page) that name the
+buses and generators to check in the source data.
 
 ## Result contract
 

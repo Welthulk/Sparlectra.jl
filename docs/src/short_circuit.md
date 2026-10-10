@@ -1,19 +1,16 @@
 # Short-Circuit Analysis
 
 Sparlectra computes balanced three-phase short-circuit currents (`Ik''`
-maximum and minimum, peak current `i_p`) for CGMES deliveries, via
-[`runShortCircuit!`](@ref) and the Web UI's **Short circuit** button.
-Unbalanced faults (single line-to-earth, line-to-line) are not supported.
+maximum and minimum, peak current `i_p`) via [`runShortCircuit!`](@ref)
+and the Web UI's **Short circuit** button. Unbalanced faults (single
+line-to-earth, line-to-line) are not supported.
 
-Short-circuit analysis asks what current flows when the network faults:
-what the switchgear must interrupt, what busbars and conductors must
-withstand, and whether protection trips selectively. The maximum fault
-current sizes the equipment; the minimum is the one a protection scheme
-must still see.
+The maximum fault current sizes switchgear, busbars and conductors; the
+minimum is the one a protection scheme must still see.
 
 ## How it is commonly done: IEC 60909
 
-IEC 60909 is a quasi-static calculation with defined safety margins:
+IEC 60909 is a quasi-static calculation with defined safety margins,
 reproducible and conservative without dynamic machine models.
 
 **Equivalent voltage source at the fault location.** The network is
@@ -40,8 +37,9 @@ i_p = \kappa \,\sqrt{2}\; I_k'',
 \kappa \approx 1.02 + 0.98\, e^{-3R/X}
 ```
 
-so the R/X ratio at the fault matters, not just the impedance magnitude.
-Breaking and thermal equivalent currents follow as well.
+so the R/X ratio at the fault matters, not only the impedance magnitude
+(the generic factor; Sparlectra reports the method-b form of the result
+section). Breaking and thermal equivalent currents follow as well.
 
 **Where the fault current comes from.** A synchronous machine feeds the
 fault through its subtransient reactance (`x''_d`), a network feeder
@@ -73,7 +71,7 @@ voltage sag and branch contributions.
 
 **What the Takahashi method adds.** Takahashi, Fagan and Chen (1973)
 showed that all inverse elements inside the sparsity pattern of the LU
-factors, in particular the entire diagonal, follow from one backward pass
+factors, the entire diagonal among them, follow from one backward pass
 over the factors at a cost comparable to the factorization: an all-bus
 sweep scales like one factorization, not like `n` solves.
 
@@ -90,9 +88,9 @@ Z = \tilde U^{-1}D^{-1} + Z\,(I - L).
 ```
 
 $D^{-1}L^{-1}$ is lower triangular and $I - \tilde U$ strictly upper
-triangular, so the first identity expresses every diagonal and upper entry
-of $Z$ through entries with larger row index; the second does the same for
-the lower entries through larger column indices:
+triangular, so the first identity gives every diagonal and upper entry of
+$Z$ from entries with larger row index, the second the lower entries from
+larger column indices:
 
 ```math
 Z_{jj} = \frac{1}{d_j} - \sum_{k > j} \tilde U_{jk} Z_{kj},
@@ -102,23 +100,23 @@ Z_{ij} = -\sum_{k > i} \tilde U_{ik} Z_{kj} \;\; (i < j),
 Z_{ij} = -\sum_{k > j} Z_{ik} L_{kj} \;\; (i > j).
 ```
 
-Processing columns from $n$ down to $1$ needs no entry that is not yet
-computed. Restricted to the sparsity pattern of $(L + U)^{\mathsf T}$ (the
-filled factors), the sums only reference entries inside that pattern, so
-the selected inverse costs one backward pass over
+Columns processed from $n$ down to $1$ need no entry not yet computed.
+Restricted to the sparsity pattern of $(L + U)^{\mathsf T}$ (the filled
+factors), the sums reference only entries inside that pattern, so the
+selected inverse costs one backward pass over
 $\mathrm{nnz}(L) + \mathrm{nnz}(U)$ entries. The diagonal stays inside the
-pattern as long as row and column pivot orders coincide, which UMFPACK's
+pattern while row and column pivot orders coincide, which UMFPACK's
 symmetric strategy produces on the structurally symmetric $Y_{sc}$; the
 implementation checks this and counts every out-of-pattern reference.
 
 Per-bus faults use the column solve, all-bus sweeps the Takahashi sparse
-inverse, one pass per island. `sweep_method = :auto` (default) applies the pass
-to islands with at least `short_circuit.takahashi_min_buses` buses
+inverse, one pass per island. `sweep_method = :auto` (default) applies the
+pass to islands with at least `short_circuit.takahashi_min_buses` buses
 (default 50); `:takahashi` and `:solves` force one method for every
 island. Results agree with `:solves` to about `1e-15` relative, not
 bitwise; islands where the method does not apply (unsymmetric UMFPACK
-pivot ordering, pattern-closure violation) fall back to column solves.
-The service and Web UI paths honor `short_circuit.sweep_method`. Threaded
+pivot ordering, pattern-closure violation) fall back to column solves. The
+service and Web UI paths honor `short_circuit.sweep_method`. Threaded
 sweeps (`runtime.parallel.*`) compose with the pass.
 
 ## How Sparlectra does it
@@ -129,12 +127,12 @@ sweeps (`runtime.parallel.*`) compose with the pass.
 | Config key | `short_circuit.c_factor` (or the `c_factor` keyword): scalar expert override of the voltage factor for verification runs; `short_circuit.sweep_method` (`:auto`, `:takahashi`, `:solves`), `short_circuit.takahashi_min_buses` (default 50) |
 | Result field | per fault bus `Ik''` (kA), `Sk''` (MVA), `κ`, `i_p`, `status` (`:no_source` with `NaN` currents), `contains_defaulted_data` plus a reason list |
 | Artifact | `short_circuit_max.csv`, `short_circuit_min.csv`; coverage view in `cgmes.log` |
-| Web UI | PowerFlow form, **Short circuit** button: both cases, no power-flow solve; offered for CGMES deliveries with short-circuit source data, Sparlectra Case Format cases with source entries and PowSyBl cases ([Web UI](webui.md)) |
+| Web UI | PowerFlow form, **Short circuit** button: both cases, no power-flow solve; which cases offer it: [Web UI](webui.md) |
 
 **The data.** Every CGMES import harvests the short-circuit source data
-into `CGMESImportResult.shortcircuit` and stores it on the network
-(`net.sc_sources`) as well, so an export or a run of the network alone has
-it (read, never altered, CGMES units):
+into `CGMESImportResult.shortcircuit` and onto the network
+(`net.sc_sources`), so an export or a run of the network alone has it
+(read, never altered, CGMES units):
 
 | Class | Harvested attributes | Role in the calculation |
 |---|---|---|
@@ -145,8 +143,8 @@ it (read, never altered, CGMES units):
 | `EquivalentInjection` | `r`, `x`, `r0`, `x0`, `r2`, `x2` | boundary equivalents in all three sequence networks |
 | `AsynchronousMachine` | `iaIrRatio`, `rxLockedRotorRatio`, `efficiency`, `ratedMechanicalPower`, `polePairNumber`, `ratedS`, `ratedU`, `ratedPowerFactor` | motor contribution to the maximum current (locked-rotor impedance) |
 
-`shortCircuitCoverage(result.shortcircuit)` reports per class the record
-count and per attribute the fill rate; `printShortCircuitCoverage` renders
+`shortCircuitCoverage(result.shortcircuit)` reports the record count per
+class and the fill rate per attribute; `printShortCircuitCoverage` renders
 it, and every CGMES run writes the same view into `cgmes.log`.
 
 **The calculation.** [`runShortCircuit!`](@ref) computes the balanced
@@ -160,16 +158,18 @@ printShortCircuitResult(sc)
 ```
 
 Per fault bus: `Ik''` (kA), `Sk''` (MVA), and `κ`/`i_p` from the R/X ratio
-at the fault location (IEC 60909-0 method b, capped at 1.8 below 1 kV /
-2.0 above). Four source types feed the fault:
+of $Z_k$ at the fault location (IEC 60909-0 method b: the reported value is
+$\kappa = \min\bigl(1.15\,(1.02 + 0.98\, e^{-3R/X}),\ \kappa_{\max}\bigr)$
+with $\kappa_{\max} = 1.8$ up to and including 1 kV and $2.0$ above). Four
+source types feed the fault:
 
-- **synchronous machines**: `x''_d` on machine base, converted to network
+- synchronous machines: `x''_d` on machine base, converted to network
   base, with the §6.6.3 fictitious resistance;
-- **network feeders** (`ExternalNetworkInjection`): equivalent impedance
-  from the declared initial short-circuit current and R/X ratio,
-  reproduced exactly at the connection point;
-- **boundary equivalents** with a declared positive-sequence impedance;
-- **asynchronous motors**: locked-rotor impedance
+- network feeders (`ExternalNetworkInjection`): equivalent impedance from
+  the declared initial short-circuit current and R/X ratio, reproduced
+  exactly at the connection point;
+- boundary equivalents with a declared positive-sequence impedance;
+- asynchronous motors: locked-rotor impedance
   `Z_M = (1/(I_LR/I_rM)) · U_rM²/S_rM` per §6.7, with `S_rM` from the rated
   apparent power or from mechanical power, efficiency and power factor;
   motors enter only the maximum case.
@@ -179,17 +179,17 @@ Voltage factors follow IEC 60909-0 Table 1 by voltage level (`c_max`
 
 **Safety flags.** Every substituted default and every skipped contribution
 is flagged on the affected result rows (`contains_defaulted_data` plus a
-reason list). Substitutions: a machine without `x''_d` gets 0.2 pu on
-the size of the machine (its rated power, else its maximum active power,
-else the network base, which carries a reason of its own; a maximum of
-9999 MW and above is a placeholder and no size); a feeder without an R/X ratio gets R = 0.1·X; a motor
-without a locked-rotor R/X ratio gets the §6.7.2 guidance value
-(0.10/0.15 for MV motors, 0.42 for LV). A motor or feeder whose impedance
-cannot be formed is skipped and its island flagged: the maximum current is
-then a lower bound, the non-conservative direction. Buses in islands
-without any source report `status = :no_source` with `NaN` currents.
-Every format counts a machine without data as a source on the default, so
-a run is `succeeded` only when every source carries its data (next section).
+reason list). A machine without `x''_d` gets 0.2 pu on its size (rated
+power, else maximum active power, else the network base with a reason of
+its own; a maximum of 9999 MW and above is a placeholder, not a size); a
+feeder without an R/X ratio gets R = 0.1·X; a motor without a locked-rotor
+R/X ratio gets the §6.7.2 guidance value (0.10/0.15 for MV motors, 0.42
+for LV). A motor or feeder whose impedance cannot be formed is skipped and
+its island flagged: the maximum current is then a lower bound, the
+non-conservative direction. Buses in islands without any source report
+`status = :no_source` with `NaN` currents. A machine without data counts
+as a source on the default in every format, so a run is `succeeded` only
+when every source carries its data (next section).
 
 ### [Source data and run status](@id short_circuit_source_data)
 
@@ -213,8 +213,7 @@ slightly high near transformers and generators. The LV `c_max` variant
 1.10 (+10 % voltage-tolerance bands) and a per-voltage-level `c` table are
 not available. Unbalanced faults and the breaking/thermal quantities need
 the zero-sequence model, whose source data (transformer vector groups and
-earthing) is already harvested. The reference tests derive their expected
-values from the IEC formulas (`test/test_short_circuit.jl`).
+earthing) is already harvested.
 
 ## References
 

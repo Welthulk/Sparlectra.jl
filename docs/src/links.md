@@ -2,19 +2,14 @@
 
 ## Concept
 
-Links are impedance-less topological connections between buses: busbar
-couplers, sectionalizers, node splitting or merging in CIM imports. They
-enter a network via `addLink!`, from retained CGMES switches, or from the
-MATPOWER extension block `mpc.sparlectra.links` (one `fbus tbus status`
-row per coupler, written back on MATPOWER export; see
-[MATPOWER cases](matpower.md)).
+A link is an impedance-less connection between two buses: a busbar coupler,
+a sectionalizer, a node split or merge from a CIM import. Links come from
+`addLink!`, from retained CGMES switches, or from the MATPOWER block
+`mpc.sparlectra.links` (one `fbus tbus status` row per coupler, written
+back on export; see [MATPOWER cases](matpower.md)).
 
-A link is not a physical branch: no impedance, no Y-bus entry, a voltage
-equality constraint instead.
-
-## Mathematical interpretation
-
-A closed link between bus *i* and *j* imposes
+A link has no impedance and no Y-bus entry. A closed link between bus $i$
+and $j$ imposes the voltage constraint
 
 ```math
 [
@@ -22,17 +17,14 @@ V_i = V_j
 ]
 ```
 
-a topological constraint, not an admittance.
-
 ## Relation to KCL
 
-Kirchhoff's Current Law is enforced per bus after topology processing,
-not via admittance equations at the link; link flows are reconstructed
-after solving via power balancing.
+Kirchhoff's current law holds per bus after topology processing; link flows
+are reconstructed after the solve from the bus power balances.
 
 ## Zero-impedance loops (critical case)
 
-Multiple links forming a loop create a zero-impedance cycle:
+Links that form a loop create a zero-impedance cycle:
 
 ```
 Bus1 ──link── Bus2
@@ -42,14 +34,13 @@ Bus1 ──link── Bus2
 Bus3 ───────────
 ```
 
-No voltage drop in the loop, an underdetermined current distribution, a
-singular system if treated electrically.
+Without a voltage drop the current distribution is underdetermined;
+treated electrically, the system is singular.
 
 ## Resolution via Pseudoinverse
 
-Link flows in such loops are computed as a minimum-norm solution. With
-$A$ the incidence matrix of the link graph, $f$ the unknown link flows and
-$b$ the nodal power imbalance,
+With $A$ the incidence matrix of the link graph, $f$ the link flows and $b$
+the nodal power imbalance,
 
 ```math
 [
@@ -57,7 +48,7 @@ A f = b
 ]
 ```
 
-is rank-deficient, so
+is rank-deficient in a loop. The flows are the minimum-norm solution
 
 ```math
 [
@@ -65,31 +56,19 @@ f = A^{+} b
 ]
 ```
 
-with $A^{+}$ the Moore-Penrose pseudoinverse: a consistent KCL solution
-with the minimum 2-norm flow distribution, uniform flows in symmetric
-loops, no artificial circulation currents. Link flows in loops are not
-unique; the minimum-energy solution is deterministic.
+with $A^{+}$ the Moore-Penrose pseudoinverse: a consistent KCL solution,
+uniform flows in symmetric loops, no artificial circulating currents. Loop
+flows are not unique; the minimum-norm solution is deterministic.
 
 ## Modeling guidelines
 
 * Do not connect links to slack buses
 * Prefer identical bus types for linked buses
 * Use links only for topology, not impedance modeling
-* Avoid large link-only subgraphs without measurements (SE context)
+* Avoid large link-only subgraphs without measurements (state estimation)
 
 ## Example
 
 ```julia
 linkNr = addLink!(net = net, fromBus = "Bus1", toBus = "Bus1a", status = 1)
 ```
-
-## Summary
-
-| Aspect            | Behavior              |
-| ----------------- | --------------------- |
-| Electrical model  | none (no Y-bus entry) |
-| Constraint        | voltage equality      |
-| Loop handling     | pseudoinverse         |
-| Flow uniqueness   | not unique            |
-| Returned solution | minimum-norm          |
-

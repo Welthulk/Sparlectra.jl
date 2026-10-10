@@ -2,8 +2,8 @@
 
 Branches, transformers and phase-shifting transformers (PSTs) share one
 four-terminal equivalent circuit. Typed tap-changer models feed it, an
-outer-loop control regulates taps, and the models map onto the ENTSO-E CGMES
-data model.
+outer-loop control regulates taps, and the models map onto the ENTSO-E
+CGMES data model.
 
 ## 1. Common branch model
 
@@ -20,10 +20,9 @@ Y_{br} = \begin{bmatrix}
 \end{bmatrix}
 ```
 
-with `y_ser` the series admittance, $y_{0,from}$ and $y_{0,to}$ the shunt
-arm at each terminal, `R` and `X` the resistance and reactance, `G` and
-`B` the conductance and susceptance, and $N$ the complex transformation
-factor (1 for power lines):
+with `y_ser` the series admittance from the resistance `R` and the
+reactance `X`, and $y_{0,from}$, $y_{0,to}$ the shunt arms at the two
+terminals (conductance `G`, susceptance `B`):
 
 ```math
 N = \tau e^{j\phi}
@@ -40,17 +39,15 @@ y_{shunt} = y_{0,from} + y_{0,to} = G + jB
 
 The branch stores the two arms (`g_from_pu`, `b_from_pu`, `g_to_pu`,
 `b_to_pu`) and the totals `g_pu`, `b_pu` as their sums. MATPOWER and the
-symmetric pi are the case $y_{0,from} = y_{0,to} = (G + jB)/2$, which is
-what every builder produces when it is given totals only; the from arm sits
-behind the ideal transformer, so a transformer whose magnetizing admittance
-belongs to one side keeps it there (see
+symmetric pi are the case $y_{0,from} = y_{0,to} = (G + jB)/2$, which every
+builder produces when given totals only; the from arm sits behind the
+ideal transformer, so a transformer whose magnetizing admittance belongs to
+one side keeps it there (see
 [Where the magnetizing admittance sits](@ref magnetizing_placement)).
 
 The magnitude $\tau$ is the off-nominal tap ratio, the angle $\phi$ the
 phase shift. A pure ratio tap changer moves $\tau$, a pure phase shifter
-$\phi$, a combined regulator (German *Schrägregler*) both. This standard
-Y-bus-stamped model covers every transformer of practical interest: a real
-transformer or PST has a finite series impedance and is a normal branch stamp.
+$\phi$, a combined regulator (German *Schrägregler*) both.
 
 ### Circuit diagram
 
@@ -90,40 +87,35 @@ orientation also moves the ratio tap and is not a pure sign change.
 
 ### Diagonal entries (π-model + shunts)
 
-For a node $i$, the diagonal Y-bus entry is the nodal self-admittance:
+The diagonal Y-bus entry of node $i$ is the nodal self-admittance: the sum
+of what every branch at the bus stamps on its terminal, plus the explicit
+bus shunt:
 
 ```math
-Y_{ii} = \sum_{k \in \mathcal{N}(i)} y_{ik} + y_i^{sh}
+Y_{ii} = \sum_{k \in \mathcal{N}(i)} \left( y_{ik} + y_{0,i}^{(ik)} \right) + y_i^{sh}
 ```
 
-with $y_{ik}$ the series admittance of branch $i-k$ and $y_i^{sh}$ the
-explicit shunt admittance at bus $i$. For a π-model branch $i-k$ the local
-diagonal stamp is the series admittance plus the shunt arm of the terminal
-at bus $i$:
-
-```math
-Y_{ii} \mathrel{+}= y_{ik} + y_{0,i}
-```
-
-with $y_{0,i} = y_{ik}^{sh}/2$ for the symmetric split.
-
-and the off-diagonal relation is:
+with $y_{ik}$ the series admittance of branch $i-k$, $y_{0,i}^{(ik)}$ its
+shunt arm at the terminal $i$ ($y_{ik}^{sh}/2$ for the symmetric split) and
+$y_i^{sh}$ the explicit shunt admittance at bus $i$. The line is the case
+$t = 1$ of the stamp in section 1; a transformer divides the stamp of its
+from terminal by $\lvert t \rvert^2$ ($Y_{ff}$ above). The off-diagonal
+entry of a line is
 
 ```math
 Y_{ik} = -y_{ik}
 ```
 
-Hence (without explicit shunts):
+(a transformer: $-y_{ik}/\overline{t}$ and $-y_{ik}/t$, see $Y_{ft}$ and
+$Y_{tf}$). For a network of lines the diagonal is therefore the negative
+off-diagonal row sum plus the shunt arms and the bus shunt:
 
 ```math
-Y_{ii} = -\sum_{k \neq i} Y_{ik}
+Y_{ii} = -\sum_{k \neq i} Y_{ik} + \sum_{k \in \mathcal{N}(i)} y_{0,i}^{(ik)} + y_i^{sh}
 ```
 
-$Y_{ii}$ is the full self-admittance seen at bus $i$: network coupling
-(series paths) plus local shunts, the current leaving bus $i$ for
-$V_i = 1\,\mathrm{pu}$. In typical grids this supports diagonal dominance;
-the real part is usually non-negative, the imaginary part reflects the
-balance of inductive series effects and capacitive or inductive shunts.
+Only without any shunt (no line charging, no bus shunt) does the row sum
+vanish, $Y_{ii} = -\sum_{k \neq i} Y_{ik}$.
 
 The branch builders (`addACLine!`, `addPIModelACLine!`, `addPIModelTrafo!`)
 stamp series admittance plus half shunt on each side unless the four
@@ -139,16 +131,15 @@ behind the ideal transformer (`twtSplitShuntAdmittance = false`), and the
 PowSyBl importer keeps it there as the from arm with the to arm zero. A
 CGMES `PowerTransformerEnd` carries `g`, `b` per end; the importer refers
 end 1 to the to-side base and keeps each end's admittance on its own
-terminal. Both were bus shunts before 0.20.0, which an outage study or an
-export could not tell from a compensator. MATPOWER has no place for the
-split: its reader produces the symmetric half, its writer puts the
-symmetric part on the branch and the excess on a bus shunt named after the
-branch (see [MATPOWER](matpower.md)).
+terminal. MATPOWER has no place for the split: its reader produces the
+symmetric half, its writer puts the symmetric part on the branch and the
+excess on a bus shunt named after the branch (see
+[MATPOWER](matpower.md)).
 
 ### Bus-shunt modeling modes
 
-Two representations exist for real bus shunts imported from sources such as
-MATPOWER `Gs`/`Bs` columns:
+Bus shunts from sources such as the MATPOWER `Gs`/`Bs` columns enter in
+one of two ways:
 
 - `"admittance"` (default): the bus shunt admittance $y_i^{sh} = G_i + jB_i$
   is stamped into the Y-bus diagonal as part of $Y_{ii}$.
@@ -165,9 +156,8 @@ S_i^{sh} = |V_i|^2 \overline{y_i^{sh}}
 A positive conductance contributes positive active power; the reactive sign
 follows the conjugate of the shunt admittance. The rectangular mismatch uses
 `S_calc - S_spec`, so the injection mode subtracts $S_i^{sh}$ from the
-specified net injection. Both modes are equivalent and never double-count:
-each shunt is either stamped into Y-bus or an injection term. The injection
-mode keeps the admittance matrix to branch/network coupling only.
+specified net injection. Both modes give the same solution and never
+double-count: each shunt is either stamped into Y-bus or an injection term.
 
 ## 3. One-sided open branches
 
@@ -175,7 +165,7 @@ A branch carries two terminal flags `from_status`/`to_status` next to the
 aggregate `status`. The aggregate stays the user-facing switch
 (`setBranchStatus!` sets all three; `status = 1` iff both terminals are
 closed); `setBranchTerminalStatus!(br; from =, to =)` opens or closes
-individual terminals. The terminal state is one of `:closed`, `:open_from`,
+single terminals. The terminal state is one of `:closed`, `:open_from`,
 `:open_to`, `:open`.
 
 ### The pi reduction
@@ -206,9 +196,9 @@ $Y_{in} = Y_{22} - Y_{21} Y_{12} / Y_{11}$. Lines and transformers
 The voltage at the open terminal follows from the divider (zero current at
 the open end): with `to` open $U_{open} = -Y_{21}/Y_{22} \cdot U_{from}$. It
 reproduces the Ferranti rise ($|U_{open}| > |U_{from}|$ for $b > 0$) and is
-reported as a branch **result** (`open_end_vm_pu` / `open_end_va_deg`)
-without adding a node to the solved system; the open bus itself is isolated
-unless other branches feed it.
+reported as a branch result (`open_end_vm_pu` / `open_end_va_deg`) without
+adding a node to the solved system; the open bus itself is isolated unless
+other branches feed it.
 
 The closed terminal carries $S = |U|^2 \cdot \overline{Y_{in}}$: the
 imaginary part is the charging reactive power, the real part the power
@@ -220,28 +210,26 @@ the closed-terminal power.
 
 Keeping the full branch and attaching an auxiliary zero-injection PQ bus at
 the open end is exactly equivalent for a pure pi branch (the test suite uses
-it as the correctness anchor). It is not the production
-formulation because it adds one bus per open terminal and changes bus
-counts, island reports, result tables and the CGMES roundtrip identity. It
-becomes necessary only when equipment (a shunt, a load) is connected at the
-open end, which is out of scope.
+it as the correctness anchor), but it adds one bus per open terminal and
+would change bus counts, island reports, result tables and the CGMES
+roundtrip identity. Equipment at the open end (a shunt, a load) would need
+it and is out of scope.
 
-In the solvers: the Y-bus stamps only $Y_{in}$ on the diagonal of the closed
-bus; the DC power flow ignores the branch ($B'$ carries no shunts); the
+In the solvers the Y-bus stamps only $Y_{in}$ on the diagonal of the closed
+bus, the DC power flow ignores the branch ($B'$ carries no shunts), and the
 short-circuit matrix drops it like the charging arms of closed branches.
 Results mark partial rows `open@to`/`open@from`, count them under
 `Open terminals` in the header, and carry `terminal_state` plus the open-end
-voltage in `ACPFlowReport.branches` and the detailed CSV. In the classical
-bus table an isolated open-end bus shows the Ferranti voltage in its V/phi
-columns, flagged `open-end` in the Control column (skipped when several
+voltage in `ACPFlowReport.branches` and the detailed CSV. In the bus table
+an isolated open-end bus shows the Ferranti voltage in its V/phi columns,
+flagged `open-end` in the Control column (skipped when several
 one-sided-open branches end at the bus; an energized bus keeps its solved
 voltage). Example: `exp_open_terminal_line.jl`; the basic workshop tour
 shows it in chapter 2.
 
 ## 4. Tap-changer modelling layers
 
-Transformer and PST semantics are richer than a single `ratio + shift`
-branch. Source-format parsing, tap-changer semantics, equivalent-circuit
+Source-format parsing, tap-changer semantics, equivalent-circuit
 calculation and the solver representation are separate layers:
 
 ```text
@@ -257,7 +245,7 @@ Branch.ratio / Branch.shift_deg / Branch.x_pu
 Y-bus stamping / rectangular NR / outer-loop control
 ```
 
-Every tap/PST formula lives exactly once, in `equicircuit.jl`. Importers only
+Every tap/PST formula lives once, in `equicircuit.jl`. Importers only
 construct model structs and call the helpers.
 
 ### Data types (`transformer.jl`)
@@ -287,15 +275,13 @@ table::Union{Nothing,Vector{TapTablePoint}}   # used when kind == :tabular
 convention::Symbol
 ```
 
-**Tap table**: `TapTablePoint` holds one discrete tap row: `step`, `ratio`,
-`angle_deg`, and optional `x_pu`. A `PhaseTapChangerModel(kind = :tabular)`
-is backed by a non-empty vector of these with strictly ascending, unique
-steps (validated, never silently sorted). `lowStep`/`highStep` are derived
-from the table when omitted, `neutralStep` must be a step present in the
-table, and a tabular model carries no formula parameters
-(`voltage_step_increment`, `winding_connection_angle_deg`, `x_min`, `x_max`
-must be `nothing`). A table overrides formula-based reconstruction whenever
-present.
+**Tap table**: a `PhaseTapChangerModel(kind = :tabular)` is backed by a
+non-empty vector of `TapTablePoint` rows (`step`, `ratio`, `angle_deg`,
+optional `x_pu`) with strictly ascending, unique steps (validated, never
+silently sorted). `lowStep`/`highStep` default to the table range,
+`neutralStep` must be a step of the table, and the formula parameters
+(`voltage_step_increment`, `winding_connection_angle_deg`, `x_min`, `x_max`)
+must be `nothing`. A table overrides the formula path whenever present.
 
 Both kinds attach to a winding: `PowerTransformerWinding` has a
 `taps::Union{Nothing,PowerTransformerTaps}` slot and a parallel
@@ -303,9 +289,9 @@ Both kinds attach to a winding: `PowerTransformerWinding` has a
 tap changer hangs on a transformer end.
 
 !!! note "What the winding connection angle ψ means"
-    `winding_connection_angle_deg` (ψ) is **not** a symmetrical-components /
+    `winding_connection_angle_deg` (ψ) is not a symmetrical-components or
     sequence angle; Sparlectra works in the positive sequence, and ψ lives
-    there. ψ is the angle at which a regulator's *additional voltage* is
+    there. ψ is the angle at which a regulator's additional voltage is
     injected relative to the base voltage, the geometry of the regulating
     vector in the complex voltage plane:
 
@@ -314,20 +300,16 @@ tap changer hangs on a transformer end.
     f = (\text{step} - \text{neutralStep}) \cdot u
     ```
 
-    ψ decides **how a tap move splits between magnitude and phase**:
-
-    - **ψ = 0°**: added voltage in phase, a pure *longitudinal* (ratio)
-      regulator; the regulating vector stays real, `shift_deg` is exactly
-      `0`, only the ratio changes.
-    - **ψ = 90°**: added voltage in quadrature, a *quadrature booster*;
-      mainly a phase shift.
-    - **0° < ψ < 90°**: a *combined regulator* (Schrägregler); ratio and
-      phase change in the proportion set by ψ.
+    ψ decides how a tap move splits between magnitude and phase: at
+    ψ = 0° the added voltage is in phase (a pure longitudinal regulator,
+    the regulating vector stays real, `shift_deg` is exactly `0`), at
+    ψ = 90° in quadrature (a quadrature booster, mainly a phase shift),
+    and for 0° < ψ < 90° ratio and phase change in the proportion set by
+    ψ (a combined regulator, Schrägregler).
 
     From ψ and the tap fraction `f`, `calcPhaseTapAngleRatio` derives the
     effective `ratio` and `shift_deg` stamped into the branch (from-side
-    convention: `ratio = 1/|v|`, `shift = -arg(v)`). ψ shapes the effective
-    complex tap; it is not a per-phase or per-sequence quantity.
+    convention: `ratio = 1/|v|`, `shift = -arg(v)`).
 
 ### Constructing transformers
 
@@ -342,7 +324,7 @@ taps = PowerTransformerTaps(
 # convention defaults to :neutral_relative
 ```
 
-Symmetrical phase-shifter (pure quadrature-type angle regulation):
+Symmetrical phase shifter (pure angle regulation):
 
 ```julia
 pst_sym = PhaseTapChangerModel(
@@ -352,7 +334,7 @@ pst_sym = PhaseTapChangerModel(
 )
 ```
 
-Asymmetrical phase-shifter / combined regulator (ψ ≠ 0):
+Asymmetrical phase shifter / combined regulator (ψ ≠ 0):
 
 ```julia
 pst_skew = PhaseTapChangerModel(
@@ -364,7 +346,8 @@ pst_skew = PhaseTapChangerModel(
 # quadrature booster is the same with winding_connection_angle_deg = 90.0
 ```
 
-Tabular phase-shifter (table overrides formulas; carries no formula params):
+Tabular phase shifter (table overrides formulas; carries no formula
+parameters):
 
 ```julia
 table = [
@@ -394,30 +377,27 @@ addPIModelTrafo!(
 ### The resolver
 
 A winding that carries a typed model (`taps`, `phase_taps`) drives its
-branch by itself. `resolve_branch_taps!` (`equicircuit.jl`) runs when the
-transformer branch is built and whenever a tap controller moves a step:
-it takes `ratio` and `shift_deg` of the winding as the neutral point,
-multiplies the ratio-tap correction and the phase model's effective ratio
-onto it, adds the phase model's shift, derives the tap grid of the branch
-(`tap_min`, `tap_max`, `tap_step` from the ratio model's range,
-`phase_min_deg`, `phase_max_deg` and the mean degree per step from the
-phase model's range), applies `model.tap_changer_model` to `r_pu`/`x_pu`
-from the equipment base, and takes the model's own `X(alpha)` when it
-carries `x_min`/`x_max` or a table. The branch is then `taps_derived`.
+branch. `resolve_branch_taps!` (`equicircuit.jl`) runs when the transformer
+branch is built and whenever a tap controller moves a step: it takes
+`ratio` and `shift_deg` of the winding as the neutral point, multiplies the
+ratio-tap correction and the phase model's effective ratio onto it, adds
+the phase model's shift, derives the branch's tap grid (`tap_min`,
+`tap_max`, `tap_step`, `phase_min_deg`, `phase_max_deg`, mean degree per
+step) from the model ranges, applies `model.tap_changer_model` to
+`r_pu`/`x_pu` from the equipment base, and takes the model's own `X(alpha)`
+when it carries `x_min`/`x_max` or a table. The branch is then
+`taps_derived`.
 
-Precedence: with a model present the branch always shows the model's
-values; when the values the branch was built with differ from them by
-more than 1e-9, one line per transformer in `net.tapModelNotices` says
-what was replaced and at which step; a service run (Web UI, `run_powerflow_api`)
-writes those lines to the artifact `tap_models.log` and names it in the
-operation log. Without a model nothing changes: the explicit
+With a model present the branch always shows the model's values; when the
+values the branch was built with differ by more than 1e-9, one line per
+transformer in `net.tapModelNotices` says what was replaced and at which
+step, and a service run (Web UI, `run_powerflow_api`) writes those lines to
+the artifact `tap_models.log`. Without a model the explicit
 `ratio`/`shift_deg` and the legacy degree grid stay as they were.
-
-Controllers move the step, never `ratio`/`shift` directly, on a modelled
-transformer (the probe and the update pick the neighbouring step that
-comes closest to the proposal); the legacy degree and ratio grid remains
-for branches without a model. The state estimator's tap fixation rounds a
-derived phase regulator to the model's nearest step.
+Controllers move the step of a modelled transformer, never `ratio`/`shift`
+directly (probe and update pick the step closest to the proposal); the
+state estimator's tap fixation rounds a derived phase regulator to the
+model's nearest step.
 
 ### Behaviour (`equicircuit.jl`)
 
@@ -440,37 +420,23 @@ maps the regulating vector `1 + f·e^{jψ}` through the low-level primitive
 case. A `:tabular` model resolves ratio and angle by lookup and reconstructs
 the regulating vector from the stored degrees.
 
-### Reactance dependence X(α)
-
-`calcPhaseTapReactance` evaluates `X(α)` between the endpoint reactances
-`x_min = X(0)` and `x_max = X(αmax)` per technology, or returns the tabular
-`x_pu` of the row for a `:tabular` model; whether a solved operating point
-tracks `X(α)` as taps move is decided by the outer loop (section 5).
-
 ### Importer mapping
 
-- **DTF**: builds a `PhaseTapChangerModel(kind = :asymmetrical,
+- DTF builds a `PhaseTapChangerModel(kind = :asymmetrical,
   winding_connection_angle_deg = skew, ...)` and calls
   `calcPhaseTapAngleRatio` for the branch `ratio`/`shift`. The pure
   longitudinal case (ψ = 0) keeps the shift at exactly `0.0`.
-- **MATPOWER**: keeps the direct `TAP`/`SHIFT` path, the CGMES "General
-  Case" (raw values), without a model struct. Branch `SHIFT` is the phase
-  angle $\phi$ on the from side by default (`matpower_shift_unit = "deg"`,
-  `matpower_shift_sign = 1`); PEGASE-style cases with small radian-like
-  values use `matpower_shift_unit = "rad"` and `matpower_shift_sign = -1`.
-  Branch `TAP` is used as stored (`matpower_ratio = "normal"`); set
-  `matpower_ratio = "reciprocal"` for files whose off-nominal ratios must be
-  inverted on import.
+- MATPOWER keeps the direct `TAP`/`SHIFT` path, the CGMES "General Case"
+  (raw values), without a model struct; shift unit, shift sign and ratio
+  convention are import options ([MATPOWER](matpower.md)).
 
 ### Tap-impedance correction
 
-Independent of the typed PST models, `model.tap_changer_model` selects an
-imported-case tap-changer reactance treatment: `ideal` (default) keeps the
-tap changer free of series-impedance feedback, `impedance_correction`
-re-refers transformer R/X through the tapped winding via `|1 + f·e^{jφ}|²`.
-It applies to all transformers of an imported case (MATPOWER and DTF) and is
-implemented centrally in `calcTapCorrectedRX` /
-`calcTapImpedanceCorrectionFactor`; see
+Independent of the typed PST models, `model.tap_changer_model` selects
+whether the tap changer of an imported case (MATPOWER and DTF) is ideal
+(default) or re-refers the transformer R/X through the tapped winding
+(`impedance_correction`, implemented centrally in `calcTapCorrectedRX` /
+`calcTapImpedanceCorrectionFactor`); see
 [Transformer tap-changer model](configuration.md#Transformer-tap-changer-model).
 
 ### Three-winding transformers
@@ -478,11 +444,10 @@ implemented centrally in `calcTapCorrectedRX` /
 A three-winding transformer is a star (T) equivalent with an auxiliary
 star-point bus: each winding becomes its own `PowerTransformerWinding`,
 stamped as a separate branch to the AUX bus (`create3WTWindings!`, MVA
-method). Every winding carries its own `taps` and `phase_taps` slots, so a
-phase-shifting winding (for example a three-winding combined regulator) is
-represented by placing the regulating vector on the branch from that winding
-to the star point. Stamping and the ψ interpretation are the same as for a
-two-winding device.
+method). Every winding carries its own `taps` and `phase_taps` slots; a
+phase-shifting winding places the regulating vector on its branch to the
+star point, with the same stamping and ψ interpretation as a two-winding
+device.
 
 `create3WTWindings!` accepts an optional `phase_tap_side` (winding index
 `1..3`, `0` = none) and `phase_taps::PhaseTapChangerModel` pair, the same
@@ -501,16 +466,11 @@ the AUX-bus branch, and addressing a single 3WT winding from the outer-loop
 ## 5. Transformer control (outer loop)
 
 Transformers are regulated within the branch PI model using the complex tap
-`t = τ·e^{jφ}` and **without auxiliary nodes**: `τ` for voltage control, `φ`
+`t = τ·e^{jφ}` and without auxiliary nodes: `τ` for voltage control, `φ`
 for active-power-flow (PST) control, both together for combined regulation.
-
-### Numerical method
-
-Tap control is an outer loop around the power flow: solve, evaluate the
-control error, step the tap, re-solve. Loop mechanics, deadbands, limits and
-the hook interface: [Control Framework](control_framework.md). Branch-model
-specific are the complex tap in the PI equivalent and the tap-dependent
-reactance.
+Loop mechanics, deadbands, limits and the hook interface:
+[Control Framework](control_framework.md). Branch-model specific are the
+complex tap in the PI equivalent and the tap-dependent reactance.
 
 ### Tap-dependent reactance X(α)
 
@@ -520,9 +480,10 @@ angle: every accepted phase-tap move also updates the branch `x_pu`, and the
 next outer-loop solve re-stamps the Y-bus from it. Mapping from the
 controller's continuous angle to a reactance:
 
-- **formula models** (`:symmetrical`/`:asymmetrical` with `x_min`/`x_max`):
-  `calcPhaseTapReactance` evaluated at the continuous angle;
-- **tabular models**: the nearest table row by angle supplies its per-step
+- formula models (`:symmetrical`/`:asymmetrical` with `x_min = X(0)`,
+  `x_max = X(αmax)`): `calcPhaseTapReactance` evaluated at the continuous
+  angle;
+- tabular models: the nearest table row by angle supplies its per-step
   `x_pu` (no interpolation between rows).
 
 The coupling is opt-in per device: a winding without a typed model, a
@@ -530,9 +491,7 @@ formula model without `x_min`/`x_max`, or a tabular model without `x_pu`
 values keeps its static reactance (MATPOWER general-case PSTs,
 CGMES-flattened PSTs). The probe that estimates the tap direction perturbs
 the reactance consistently with the apply step, restores both, and refreshes
-the branch flows around each probe solve. The DTF importer persists its
-phase-tap model onto the winding, so DTF skew/longitudinal regulators take
-part in the coupling.
+the branch flows around each probe solve.
 
 ### Discrete tap behaviour
 
@@ -546,11 +505,13 @@ phase_shift_deg_new = clamp(phase_shift_deg ± phase_step_deg, phase_min_deg, ph
 The sign of a phase-shifter control action is probed on the active model,
 not hard-coded:
 
-1. Compute `P_ab(phi = 0 deg)`
-2. Compute `P_ab(phi = +5 deg)`
-3. Evaluate `Delta_P_ab = P_ab(5 deg) - P_ab(0 deg)`
-4. If `P_ab < target`, move `phi` in the direction that increases `P_ab`;
-   otherwise the opposite way.
+1. Read `P_ab` at the current phase angle.
+2. Move the phase tap one step up (`phase_step_deg`, clamped to the
+   range; on a modelled transformer one model step), re-solve, read
+   `P_ab` again.
+3. The sign of `Delta_P_ab` gives the direction in which `P_ab` grows.
+4. If `P_ab < target`, move `phi` in that direction; otherwise the
+   opposite way.
 
 See `examples/others/exp_pst_reactance_coupling.jl`.
 
@@ -588,19 +549,17 @@ addPIModelTrafo!(
 
 ### Scope and limits
 
-Basic remote voltage control: a `target_bus` measurement, one transformer
-tap as actuator, and a `target_vm_pu ± deadband` objective. Parallel
-transformers regulating the same bus form a master/slave group (`followers`
-on `addPowerTransformerControl!`, see "Master/slave groups for parallel
-transformers" in [Control Framework](control_framework.md)). Not covered:
-auxiliary transformer nodes, coupling of tap variables into the Newton
-iteration, participation-factor allocation and tap-limit redistribution
-within transformer groups.
+One `target_bus` measurement, one transformer tap as actuator, a
+`target_vm_pu ± deadband` objective; parallel transformers on one bus form
+a master/slave group ("Master/slave groups for parallel transformers" in
+[Control Framework](control_framework.md)). Not covered: auxiliary
+transformer nodes, tap variables inside the Newton iteration,
+participation-factor allocation and tap-limit redistribution within
+transformer groups.
 
 ## 6. CGMES / ENTSO-E mapping
 
-The typed tap-changer models follow the CGMES data model, so CIM-based
-exchange maps onto Sparlectra with minimal reinterpretation:
+The typed tap-changer models follow the CGMES data model:
 
 | Sparlectra | CGMES / CIM |
 |---|---|
@@ -630,9 +589,7 @@ corresponds to the CGMES "General Case".
 - IEC 61970-301 (CIM base) and the CGMES profiles: the classes in the
   mapping table above.
 - MATPOWER case format documentation: the `TAP` / `SHIFT` branch columns.
-- Sparlectra examples: `examples/others/tap_control_demo_grid.jl` (OLTC
-  voltage, PST active-power and combined regulation),
-  `examples/others/tap_control_schraeg_two_controllers.jl` (two controllers
-  with disjoint actuators on one transformer),
-  `examples/others/exp_pst_reactance_coupling.jl` (phase-shift direction,
-  tap-dependent reactance).
+- Sparlectra examples (`examples/others/`): `tap_control_demo_grid.jl`,
+  `tap_control_schraeg_two_controllers.jl`,
+  `exp_pst_reactance_coupling.jl`; see the
+  [examples overview](examples_overview.md).

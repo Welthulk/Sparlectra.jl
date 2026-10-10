@@ -3978,7 +3978,9 @@ Returns `(diagnostics, rerun, eliminations, stop_reason, final_diagnostics)`:
   `skipped_unlocalizable` counts the suspects that were passed over in that
   round BECAUSE they are not localizable, so the trace shows why the
   largest normalized residual was not the one removed.
-- `stop_reason`: `:consistent` (band test passed), `:no_suspicious_left`,
+- `stop_reason`: `:consistent` (band test passed), `:band_low` (J below the
+  band: the sigmas overstate the errors, not bad data, nothing eliminated),
+  `:no_suspicious_left`,
   `:no_localizable_suspect` (suspects remain, but none of them is
   localizable: the data cannot say which row is wrong, which points at a
   measurement gap around those rows rather than at bad data),
@@ -4020,6 +4022,16 @@ function runse_diagnostics(net::Net, measurements::Vector{Measurement})
     end
     if current.objective.within_3sigma
       stopReason = :consistent
+      break
+    end
+    # only a :high band failure (J above the band) says bad data; a :low
+    # failure means the sigmas overstate the errors, and removing a row can
+    # only lower J further, so the elimination does not start there (until
+    # 0.32.1 it ran on every band failure and reported the budget or the
+    # missing suspects as the reason)
+    bandReason = hasproperty(current.objective, :reason) ? current.objective.reason : :high
+    if bandReason == :low
+      stopReason = :band_low
       break
     end
     # candidates: suspicious, not elimination-protected (ranking is sorted
