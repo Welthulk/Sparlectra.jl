@@ -292,9 +292,54 @@ function _webui_windows_browser_candidates(environment)::Vector{String}
   return candidates
 end
 
-const _WEBUI_APP_WINDOW_SIZE = "1500,950"
+# Geometry of the --app window: the configured size (webui.window_width,
+# webui.window_height) and the position Stop Web UI saved at the last stop
+# (nothing = the browser places the window). Set from the runtime's
+# configuration file when the server starts; the default serves headless
+# renders and start_webui.jl's open after the warm-up.
+const _WEBUI_DEFAULT_WINDOW_GEOMETRY = (width = 1500, height = 950, x = nothing, y = nothing)
+const _WEBUI_WINDOW_GEOMETRY = Ref{NamedTuple{(:width, :height, :x, :y),Tuple{Int,Int,Union{Nothing,Int},Union{Nothing,Int}}}}(_WEBUI_DEFAULT_WINDOW_GEOMETRY)
 
-function _webui_app_window_command(url::String; platform::Symbol = _webui_platform(), executable_lookup = Sys.which, path_exists = ispath, environment = ENV)::Union{Cmd,Nothing}
+# The window geometry a configuration file holds; a file that cannot be
+# loaded yields the default (the configuration pages report the error).
+function _webui_window_geometry(config_file::AbstractString)
+  isfile(config_file) || return _WEBUI_DEFAULT_WINDOW_GEOMETRY
+  try
+    webui = load_sparlectra_config(config_file; reload = true).webui
+    return (width = webui.window_width, height = webui.window_height, x = webui.window_x, y = webui.window_y)
+  catch err
+    @debug "webui.window_* not read" config_file exception = err
+    return _WEBUI_DEFAULT_WINDOW_GEOMETRY
+  end
+end
+
+# Browser profile of the app window, beside the runs (<state>/webui/browser).
+# Set when the server starts; empty = no own profile (headless renders).
+const _WEBUI_BROWSER_PROFILE_DIR = Ref{String}("")
+
+# Chromium flags for the app window (Chromium 153, KDE, Wayland):
+# - --window-size/--window-position act only in a NEW browser process; with
+#   the user's Chromium already running the call is handed to it and both
+#   flags are ignored. An own --user-data-dir makes the app window its own
+#   process.
+# - Under Wayland a window can neither read (screenX/Y always 0) nor set its
+#   position; through XWayland (--ozone-platform=x11) both work.
+# The position only when both coordinates are set (the browser places the
+# window otherwise).
+function _webui_window_arguments(geometry; profile_dir::AbstractString = _WEBUI_BROWSER_PROFILE_DIR[], platform::Symbol = _webui_platform(), environment = ENV)::Vector{String}
+  arguments = ["--window-size=$(geometry.width),$(geometry.height)"]
+  if geometry.x !== nothing && geometry.y !== nothing
+    push!(arguments, "--window-position=$(geometry.x),$(geometry.y)")
+  end
+  if !isempty(profile_dir)
+    append!(arguments, ["--user-data-dir=$(profile_dir)", "--no-first-run", "--no-default-browser-check"])
+  end
+  platform == :linux && !isempty(get(environment, "WAYLAND_DISPLAY", "")) && push!(arguments, "--ozone-platform=x11")
+  return arguments
+end
+
+function _webui_app_window_command(url::String; geometry = _WEBUI_WINDOW_GEOMETRY[], profile_dir::AbstractString = _WEBUI_BROWSER_PROFILE_DIR[], platform::Symbol = _webui_platform(), executable_lookup = Sys.which, path_exists = ispath, environment = ENV)::Union{Cmd,Nothing}
+  window = _webui_window_arguments(geometry; profile_dir, platform, environment)
   if platform == :macos
     applications = (
       "/Applications/Microsoft Edge.app",
@@ -304,7 +349,7 @@ function _webui_app_window_command(url::String; platform::Symbol = _webui_platfo
     )
     application = findfirst(path_exists, applications)
     application === nothing && return nothing
-    return `open -na $(applications[application]) --args --app=$url --window-size=$(_WEBUI_APP_WINDOW_SIZE)`
+    return `open -na $(applications[application]) --args --app=$url $window`
   end
 
   candidates = platform == :windows ? _webui_windows_browser_candidates(environment) : String[
@@ -318,7 +363,7 @@ function _webui_app_window_command(url::String; platform::Symbol = _webui_platfo
   ]
   executable = _webui_first_executable(candidates; executable_lookup, path_exists)
   executable === nothing && return nothing
-  return `$executable --app=$url --window-size=$(_WEBUI_APP_WINDOW_SIZE)`
+  return `$executable --app=$url $window`
 end
 
 ## Open the URL with whatever the SYSTEM has registered as the default
@@ -360,14 +405,14 @@ function _webui_generic_open_command(url::String; platform::Symbol = _webui_plat
   return nothing
 end
 
-function _webui_browser_open_command(url::String; platform::Symbol = _webui_platform(), executable_lookup = Sys.which, path_exists = ispath, environment = ENV)::Union{Tuple{Cmd,Symbol},Nothing}
-  app_command = _webui_app_window_command(url; platform, executable_lookup, path_exists, environment)
+function _webui_browser_open_command(url::String; geometry = _WEBUI_WINDOW_GEOMETRY[], platform::Symbol = _webui_platform(), executable_lookup = Sys.which, path_exists = ispath, environment = ENV)::Union{Tuple{Cmd,Symbol},Nothing}
+  app_command = _webui_app_window_command(url; geometry, platform, executable_lookup, path_exists, environment)
   app_command === nothing || return (app_command, :app_window)
   return _webui_generic_open_command(url; platform, executable_lookup)
 end
 
-function _webui_app_command(url::String; platform::Symbol = _webui_platform(), executable_lookup = Sys.which, path_exists = ispath, environment = ENV)::Union{Cmd,Nothing}
-  selected = _webui_browser_open_command(url; platform, executable_lookup, path_exists, environment)
+function _webui_app_command(url::String; geometry = _WEBUI_WINDOW_GEOMETRY[], platform::Symbol = _webui_platform(), executable_lookup = Sys.which, path_exists = ispath, environment = ENV)::Union{Cmd,Nothing}
+  selected = _webui_browser_open_command(url; geometry, platform, executable_lookup, path_exists, environment)
   selected === nothing && return nothing
   return selected[1]
 end
@@ -403,8 +448,8 @@ function _webui_port_holds_sparlectra(host_string::AbstractString, port::Integer
   end
 end
 
-function _webui_open_browser(url::String)
-  selected = _webui_browser_open_command(url)
+function _webui_open_browser(url::String; geometry = _WEBUI_WINDOW_GEOMETRY[])
+  selected = _webui_browser_open_command(url; geometry)
   if selected === nothing
     @info "Selected Web UI browser-opening strategy" strategy = "manual_only" url
     @warn "Could not find an app-capable browser; open the Web UI URL manually" url
@@ -483,6 +528,60 @@ function _webui_request_shutdown!(runtime::_SparlectraWebUIRuntime; reason::Unio
   end
   listener === nothing || (isopen(listener) && close(listener))
   return nothing
+end
+
+# Window geometry a Stop Web UI click sends: the outer size and the screen
+# position of the app window, plus the hidden flag of the page. A minimized
+# window is not saved (document.hidden; Chromium on Windows also parks a
+# minimized window at -32000,-32000), nor are values no screen can show.
+# The size must be sane too: 200 px up to 16000 px (an 8K wall), a position
+# within +-16000 px (negative is a monitor left of or above the primary one).
+const _WEBUI_WINDOW_SIZE_RANGE = 200:16000
+const _WEBUI_WINDOW_POSITION_RANGE = -16000:16000
+
+function _webui_window_geometry_from_form(form::AbstractDict)
+  field(name) = strip(String(get(form, name, "")))
+  any(isempty(field(name)) for name in ("window_width", "window_height", "window_x", "window_y")) && return (status = "skipped", reason = "no_geometry")
+  field("window_hidden") == "1" && return (status = "skipped", reason = "window_minimized")
+  parsed = Dict{String,Int}()
+  for name in ("window_width", "window_height", "window_x", "window_y")
+    value = tryparse(Int, field(name))
+    value === nothing && return (status = "skipped", reason = "not_a_number", field = name, value = field(name))
+    parsed[name] = value
+  end
+  for name in ("window_width", "window_height")
+    parsed[name] in _WEBUI_WINDOW_SIZE_RANGE || return (status = "skipped", reason = "size_out_of_range", field = name, value = parsed[name])
+  end
+  for name in ("window_x", "window_y")
+    parsed[name] in _WEBUI_WINDOW_POSITION_RANGE || return (status = "skipped", reason = "position_out_of_range", field = name, value = parsed[name])
+  end
+  return (status = "ok", reason = "", width = parsed["window_width"], height = parsed["window_height"], x = parsed["window_x"], y = parsed["window_y"])
+end
+
+"""
+    _webui_save_window_geometry!(config_file, form) -> NamedTuple
+
+Write the app window geometry a Stop Web UI click sends (`window_width`,
+`window_height`, `window_x`, `window_y`, `window_hidden`) into
+`webui.window_*` of `config_file`, so the next start opens the window
+where it was. Returns `status` (`saved`, `skipped`, `failed`) and a
+`reason`; the four keys count as user keys afterwards. Nothing is written
+for a minimized window, for values outside the plausible ranges, for a
+missing file or for the packaged template.
+"""
+function _webui_save_window_geometry!(config_file::AbstractString, form::AbstractDict)
+  geometry = _webui_window_geometry_from_form(form)
+  geometry.status == "ok" || return geometry
+  isfile(config_file) || return (status = "skipped", reason = "config_file_missing")
+  _webui_is_packaged_template(config_file) && return (status = "skipped", reason = "packaged_template")
+  updates = Dict{String,Any}("webui" => Dict{String,Any}("window_width" => geometry.width, "window_height" => geometry.height, "window_x" => geometry.x, "window_y" => geometry.y))
+  try
+    _write_yaml_file(config_file, _merge_config_overrides(load_yaml_dict(config_file), updates))
+    _webui_record_user_keys!(config_file, ("webui.window_width", "webui.window_height", "webui.window_x", "webui.window_y"))
+  catch err
+    return (status = "failed", reason = sprint(showerror, err))
+  end
+  return (status = "saved", reason = "", width = geometry.width, height = geometry.height, x = geometry.x, y = geometry.y)
 end
 
 
@@ -697,6 +796,10 @@ function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Inte
     _webui_startup_failure!(_lifecycle_io, wrapped, catch_backtrace(); phase = "provision_runtime")
     throw(wrapped)
   end
+  # the app window opens with the size and position of the last stop, in its
+  # own browser profile (see _webui_window_arguments)
+  _WEBUI_WINDOW_GEOMETRY[] = _webui_window_geometry(paths.config_file)
+  _WEBUI_BROWSER_PROFILE_DIR[] = joinpath(dirname(root), "browser")
   # Prune once at startup so normal requests keep append-only operation logging
   # unless a size safety cap is reached later. The retention comes from the
   # configuration (webui.operation_log_retention_days, default 10 days); the
