@@ -988,6 +988,14 @@ Base.@kwdef struct WebUIConfig
   # carries no documentation of its own). Override for a local docs build,
   # the dev site or a pinned version folder. A link only, never fetched.
   docs_base_url::String = "https://welthulk.github.io/Sparlectra.jl/"
+  # Size (pixels) of the app window the Web UI opens, and its position once
+  # Stop Web UI has saved one (nothing = the browser places the window).
+  # Stop Web UI writes the current size and position here unless the window
+  # is minimized; Ctrl+C and close(server) write nothing.
+  window_width::Int = 1500
+  window_height::Int = 950
+  window_x::Union{Nothing,Int} = nothing
+  window_y::Union{Nothing,Int} = nothing
 end
 
 """
@@ -1408,6 +1416,8 @@ function _as_auto_profile_symbol_cfg(x)::Symbol
 end
 _as_bool_cfg(x)::Bool = as_bool(x)
 _as_int_cfg(x)::Int = x isa Integer ? Int(x) : parse(Int, String(x))
+# null, an empty string or missing stays nothing (a key that is set to "unset")
+_as_optional_int_cfg(x)::Union{Nothing,Int} = (x === nothing || (x isa AbstractString && isempty(strip(x)))) ? nothing : _as_int_cfg(x)
 _as_float_cfg(x)::Float64 = x isa Real ? Float64(x) : parse(Float64, String(x))
 
 function _as_float_vector_cfg(x)::Vector{Float64}
@@ -2132,6 +2142,10 @@ function WebUIConfig(raw::AbstractDict)
     show_case_settings_notice = _as_bool_cfg(_raw_get(merged, "show_case_settings_notice", true)),
     operation_log_retention_days = Int(_validate_nonnegative("webui.operation_log_retention_days", _as_int_cfg(_raw_get(merged, "operation_log_retention_days", 10)))),
     docs_base_url = String(_as_string_cfg(_raw_get(merged, "docs_base_url", "https://welthulk.github.io/Sparlectra.jl/"))),
+    window_width = Int(_validate_positive("webui.window_width", _as_int_cfg(_raw_get(merged, "window_width", 1500)))),
+    window_height = Int(_validate_positive("webui.window_height", _as_int_cfg(_raw_get(merged, "window_height", 950)))),
+    window_x = _as_optional_int_cfg(_raw_get(merged, "window_x", nothing)),
+    window_y = _as_optional_int_cfg(_raw_get(merged, "window_y", nothing)),
   )
 end
 

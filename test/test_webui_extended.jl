@@ -2071,11 +2071,16 @@ form:
       # longer makes parts of the form vanish or jump around.
       @test occursin("const setSolverGroupInactive = function (container, inactive)", settings_page_html)
       @test occursin("container.classList.toggle('disabled', inactive)", settings_page_html)
-      @test occursin("controls.forEach(function (control) { control.disabled = inactive; })", settings_page_html)
+      # the solver radios are exempt from the container graying (0.32.1): the
+      # fieldset around them was grayed under DC, which disabled the radios and
+      # dropped power_flow.solver from the save
+      @test occursin("if (control.hasAttribute('data-solver-radio')) return;", settings_page_html)
+      @test occursin("control.disabled = inactive;", settings_page_html)
       # AC/APSLF/DC are one unified, mutually exclusive radio group (no more separate
       # "Berechnungsmodell" radios plus a Solver dropdown, and no more power_flow_calc_mode
-      # field): radio buttons are never individually disabled, so there is no submission
-      # path that can silently drop power_flow.solver like the old disabled-<select> bug.
+      # field): radio buttons are never disabled, neither individually nor through a
+      # grayed container, so there is no submission path that can silently drop
+      # power_flow.solver like the old disabled-<select> bug.
       @test occursin("const acOnlyFields = document.querySelectorAll('[data-ac-only-field]')", settings_page_html)
       @test occursin("const updateSolverMode = function ()", settings_page_html)
       @test occursin("const solverRadios = document.querySelectorAll('input[data-solver-radio]')", settings_page_html)
@@ -2779,13 +2784,18 @@ result = get_powerflow_result(run_id)
 
         heartbeat_response = _webui_http_request(port, "POST", "/webui/heartbeat")
         @test occursin("HTTP/1.1 204", heartbeat_response)
-        shutdown_response = _webui_http_request(port, "POST", "/webui/shutdown")
+        # Stop Web UI sends the window geometry; the server saves it into
+        # its configuration file before it stops
+        shutdown_response = _webui_http_request(port, "POST", "/webui/shutdown"; body = "window_width=1234&window_height=876&window_x=12&window_y=34&window_hidden=0")
         @test timedwait(() -> istaskdone(server.task), 2.0) == :ok
         shutdown_output = String(take!(lifecycle_io))
         @test occursin("HTTP/1.1 200 OK", shutdown_response)
         @test occursin("Web UI stopped", shutdown_response)
         @test occursin("Sparlectra Web UI stopped by explicit shutdown.", shutdown_output)
         @test !isopen(server.listener)
+        stopped_webui = Sparlectra.load_sparlectra_config(server.runtime.config_file; reload = true).webui
+        @test (stopped_webui.window_width, stopped_webui.window_height, stopped_webui.window_x, stopped_webui.window_y) == (1234, 876, 12, 34)
+        @test occursin("\"event\":\"webui_window_geometry\"", read(server.runtime.operation_log, String))
       finally
         close(server)
       end

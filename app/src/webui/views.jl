@@ -453,7 +453,7 @@ function _webui_layout(title::AbstractString, content::AbstractString; show_back
   return """<!doctype html>
 <html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
 <title>$(_webui_escape(title)) · Sparlectra</title><link rel=\"stylesheet\" href=\"/static/sparlectra.css\"></head>
-<body><header class=\"site-header\"><a class=\"brand\" href=\"/powerflow\"><img class=\"brand-logo\" src=\"/assets/logo.png\" alt=\"Sparlectra.jl logo\">$(runtime_info)</a><nav><a href=\"/powerflow/case\">Case</a><a href=\"/powerflow/settings\">Settings</a><a href=\"/powerflow\">Runs</a><a href=\"/powerflow/history\">Run history</a><a href=\"/webui/operation-log\">Operation Log</a><a href=\"/help\">Help</a>$(_webui_help_search_form(""; header = true))<a class=\"project-docs-link\" href=\"$(_webui_escape(_webui_docs_base_url()))\" target=\"_blank\" rel=\"noopener noreferrer\"><svg class=\"github-icon\" viewBox=\"0 0 16 16\" aria-hidden=\"true\"><path fill=\"currentColor\" d=\"M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.64 5.47 7.72.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.51-2.01.38-2.53-.5-2.69-.96-.09-.23-.48-.96-.82-1.15-.28-.15-.68-.53-.01-.54.63-.01 1.08.59 1.23.83.72 1.23 1.87.88 2.33.67.07-.53.28-.88.51-1.08-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.2-.36-1.04.08-2.16 0 0 .67-.22 2.2.84A7.4 7.4 0 0 1 8 3.93c.68 0 1.36.09 2 .27 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.96.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.25.54.74.54 1.5 0 1.08-.01 1.95-.01 2.22 0 .22.15.47.55.39A8.15 8.15 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z\"/></svg><span>Project Docs</span></a>$(header_info)<a href=\"/webui/last-errors\">Last errors</a><form method="post" action="/webui/shutdown" class="exit-form"><button type="submit" class="exit-button">Stop Web UI</button></form></nav></header>
+<body><header class=\"site-header\"><a class=\"brand\" href=\"/powerflow\"><img class=\"brand-logo\" src=\"/assets/logo.png\" alt=\"Sparlectra.jl logo\">$(runtime_info)</a><nav><a href=\"/powerflow/case\">Case</a><a href=\"/powerflow/settings\">Settings</a><a href=\"/powerflow\">Runs</a><a href=\"/powerflow/history\">Run history</a><a href=\"/webui/operation-log\">Operation Log</a><a href=\"/help\">Help</a>$(_webui_help_search_form(""; header = true))<a class=\"project-docs-link\" href=\"$(_webui_escape(_webui_docs_base_url()))\" target=\"_blank\" rel=\"noopener noreferrer\"><svg class=\"github-icon\" viewBox=\"0 0 16 16\" aria-hidden=\"true\"><path fill=\"currentColor\" d=\"M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.64 5.47 7.72.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.51-2.01.38-2.53-.5-2.69-.96-.09-.23-.48-.96-.82-1.15-.28-.15-.68-.53-.01-.54.63-.01 1.08.59 1.23.83.72 1.23 1.87.88 2.33.67.07-.53.28-.88.51-1.08-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.2-.36-1.04.08-2.16 0 0 .67-.22 2.2.84A7.4 7.4 0 0 1 8 3.93c.68 0 1.36.09 2 .27 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.96.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.25.54.74.54 1.5 0 1.08-.01 1.95-.01 2.22 0 .22.15.47.55.39A8.15 8.15 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z\"/></svg><span>Project Docs</span></a>$(header_info)<a href=\"/webui/last-errors\">Last errors</a><form method="post" action="/webui/shutdown" class="exit-form"><input type="hidden" name="window_width"><input type="hidden" name="window_height"><input type="hidden" name="window_x"><input type="hidden" name="window_y"><input type="hidden" name="window_hidden"><button type="submit" class="exit-button">Stop Web UI</button></form><script>document.querySelector('form.exit-form').addEventListener('submit', function () { this.window_width.value = window.outerWidth; this.window_height.value = window.outerHeight; this.window_x.value = window.screenX; this.window_y.value = window.screenY; this.window_hidden.value = document.hidden ? '1' : '0'; });</script></nav></header>
 $(latency_banner)<main class="$(main_class)"$(refresh_attrs)>$(back_button)<h1>$(_webui_escape(title))</h1>$(content)</main><footer>$(_webui_escape(version_text)) · Local PowerFlow Web UI · loopback access only</footer>
 <script>
 (function () {
@@ -1729,9 +1729,9 @@ function _webui_settings_sections_html(; profile_values, config_default, profile
 <details class=\"span-2 expert-section\">
 <summary>Advanced options</summary>
 $(config_maintenance)
-<fieldset class=\"step-control-expert\" data-ac-only-field>
+<fieldset class=\"step-control-expert\">
 <legend>Step control &amp; solver</legend>
-<label class=\"check\" title=\"Pick start-value, step-control and Q-limit strategy from the network, retrying with stronger strategies on non-convergence. Explicit options below always win.\"><input name=\"power_flow_mode\" type=\"hidden\" value=\"manual\"><input name=\"power_flow_mode\" type=\"checkbox\" value=\"auto\"$(_webui_selected(profile_values, "power_flow_mode", "manual") == "auto" ? " checked" : "")>$(_webui_field_label("power_flow_mode", "Auto mode (network-driven strategy)"))</label>
+<label class=\"check\" data-ac-only-field title=\"Pick start-value, step-control and Q-limit strategy from the network, retrying with stronger strategies on non-convergence. Explicit options below always win.\"><input name=\"power_flow_mode\" type=\"hidden\" value=\"manual\"><input name=\"power_flow_mode\" type=\"checkbox\" value=\"auto\"$(_webui_selected(profile_values, "power_flow_mode", "manual") == "auto" ? " checked" : "")>$(_webui_field_label("power_flow_mode", "Auto mode (network-driven strategy)"))</label>
 <details class=\"span-2 step-control-options\" data-step-control-group=\"autodamp\" data-ac-only-field>
 <summary>Autodamping &amp; merit-function line search</summary>
 <label class=\"check\"><input name=\"power_flow_autodamp\" type=\"hidden\" value=\"false\"><input name=\"power_flow_autodamp\" type=\"checkbox\" value=\"true\" data-autodamp-toggle$(_webui_checked(profile_values, "power_flow_autodamp", _webui_option_default("power_flow_autodamp")))>$(_webui_field_label("power_flow_autodamp", "Autodamping enabled"))</label>
@@ -1873,11 +1873,19 @@ document.addEventListener('DOMContentLoaded', function () {
   // Gray out (disable, but keep visible/in place) a field group that does not apply
   // to the currently selected solver, instead of hiding it: mutually exclusive
   // solver options stay where the user last saw them rather than jumping around.
+  // The solver radios are never disabled, whatever container they sit in: a
+  // disabled control is dropped from the POST, so a save made while DC was
+  // selected kept the previously saved solver (and a case saved on DC could
+  // not be switched back). The fieldset around them carried
+  // data-ac-only-field until 0.32.1 and grayed the choice itself.
   const setSolverGroupInactive = function (container, inactive) {
     if (container === null) return;
     container.classList.toggle('disabled', inactive);
     const controls = container.matches('input, select') ? [container] : container.querySelectorAll('input, select');
-    controls.forEach(function (control) { control.disabled = inactive; });
+    controls.forEach(function (control) {
+      if (control.hasAttribute('data-solver-radio')) return;
+      control.disabled = inactive;
+    });
   };
   const updateSolverOptions = function () {
     const dc = isDcMode();

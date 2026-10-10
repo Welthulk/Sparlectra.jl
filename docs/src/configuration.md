@@ -342,6 +342,10 @@ programmatically built net.
 | `output.csv_format` | `auto` | Delimiter and decimal separator of every CSV file a run writes; only the measurement CSV Sparlectra reads back keeps its fixed layout. `auto` follows the regional settings of the machine (decimal comma gives `excel_de`, decimal point `excel_us`, the C/POSIX locale `technical`); `technical` is comma delimiter, dot decimal; `excel_de` semicolon delimiter, comma decimal, dot thousands separator; `excel_us` comma delimiter, dot decimal, comma thousands separator. The API keywords `detailed_result_csv_format`/`detailed_result_csv_semicolon` are a deprecated per-request override. |
 | `webui.operation_log_retention_days` | `10` | Int `>= 0`: days the operation log reaches back. Every Web UI start drops older entries; `0` keeps only the current session. The environment variable `SPARLECTRA_WEBUI_OPERATION_LOG_RETENTION_DAYS` wins (headless runs without a configuration file). |
 | `webui.docs_base_url` | `https://welthulk.github.io/Sparlectra.jl/` | Base URL of the published documentation that the help pages (the **?** next to a control) and the header link open; point it at a local build or a pinned version. A link only, nothing is fetched. |
+| `webui.window_width` | `1500` | Width in pixels of the app window the Web UI opens (Edge, Chrome, Chromium, Brave). |
+| `webui.window_height` | `950` | Height in pixels of that window. |
+| `webui.window_x` | `null` | Screen position of the window; `null` lets the browser place it. **Stop Web UI** saves size and position of the window here (not when it is minimized), and the next start opens the window there. `Ctrl+C` saves nothing. |
+| `webui.window_y` | `null` | See `webui.window_x`. |
 
 ## Migration notes
 

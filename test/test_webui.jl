@@ -550,6 +550,34 @@ function run_webui_fast_tests()
             with_sidecar = SparlectraApp.render_settings_page(output_root=mktempdir(), selected_casefile="c.m", case_profile=Dict{String,Any}("power_flow_solver" => "dc", "_profile_path" => prof))
             @test occursin("Reset saved settings for this case", with_sidecar)
             @test occursin("/powerflow/case-settings/reset", with_sidecar)
+            # The solver radios must not sit inside a container the page grays
+            # under the DC solver (data-ac-only-field, data-nr-only-field): the
+            # script disables every control of such a container, a disabled
+            # control is dropped from the POST, and the save then kept the
+            # previously saved solver (a Web UI run: DC chosen, APSLF solved;
+            # the delivery "stuck on dc" above was the same trap the other way
+            # round). Walked through the tag stack, not grepped, because the
+            # nesting is what decides.
+            ancestors = let html = with_sidecar
+                target = findfirst("name=\"power_flow_solver\" value=\"dc\"", html)
+                voids = Set(["input", "br", "img", "meta", "link", "hr"])
+                stack = String[]
+                for m in eachmatch(r"<(/?)([a-zA-Z0-9]+)([^>]*)>", html)
+                    m.offset >= first(target) && break
+                    closing, tag, attrs = m.captures
+                    tag = lowercase(tag)
+                    tag in voids && continue
+                    if closing == "/"
+                        i = findlast(x -> startswith(x, tag * " "), stack)
+                        i === nothing || deleteat!(stack, i:length(stack))
+                    else
+                        push!(stack, tag * " " * attrs)
+                    end
+                end
+                stack
+            end
+            @test !isempty(ancestors)
+            @test !any(a -> occursin("data-ac-only-field", a) || occursin("data-nr-only-field", a), ancestors)
             without = SparlectraApp.render_settings_page(output_root=mktempdir())
             @test !occursin("Reset saved settings for this case", without)
             # switching the case reloads the page server-side; the wait must be
@@ -1650,6 +1678,78 @@ function run_webui_fast_tests()
             win_chrome = SparlectraApp._webui_browser_open_command(url; platform=:windows,
                 executable_lookup=chrome, path_exists=no_path, environment=no_env)
             @test win_chrome[2] == :app_window
+        end)() end
+
+        @testset "app window geometry: configured size, saved by Stop Web UI" begin (function ()
+            # The app window opens with webui.window_width/height and, once a
+            # Stop Web UI click saved one, at webui.window_x/y. Stop sends the
+            # geometry as hidden fields; a minimized window (the hidden flag,
+            # or the -32000 Chromium parks it at on Windows) and implausible
+            # values are not saved.
+            url = "http://127.0.0.1:8080/powerflow"
+            chrome(name) = name == "google-chrome" ? "/usr/bin/google-chrome" : nothing
+            no_path(_) = false
+            no_env = Dict{String,String}()
+            default_cmd = SparlectraApp._webui_app_window_command(url; geometry=SparlectraApp._WEBUI_DEFAULT_WINDOW_GEOMETRY, profile_dir="", platform=:linux,
+                executable_lookup=chrome, path_exists=no_path, environment=no_env)
+            @test "--window-size=1500,950" in default_cmd.exec
+            @test !any(startswith("--window-position="), default_cmd.exec)
+            @test !any(startswith("--user-data-dir="), default_cmd.exec)
+            # the flags act only in a new browser process (own profile), and the
+            # position only through X11 under Wayland
+            placed = SparlectraApp._webui_app_window_command(url; geometry=(width=1200, height=800, x=-10, y=20), profile_dir="/state/browser", platform=:linux,
+                executable_lookup=chrome, path_exists=no_path, environment=Dict("WAYLAND_DISPLAY" => "wayland-0"))
+            @test "--window-size=1200,800" in placed.exec
+            @test "--window-position=-10,20" in placed.exec
+            @test "--user-data-dir=/state/browser" in placed.exec
+            @test "--ozone-platform=x11" in placed.exec
+            @test !("--ozone-platform=x11" in default_cmd.exec)
+            mac_cmd = SparlectraApp._webui_app_window_command(url; geometry=(width=1200, height=800, x=5, y=6), profile_dir="/state/browser", platform=:macos,
+                executable_lookup=no_path, path_exists=(p -> p == "/Applications/Google Chrome.app"), environment=Dict("WAYLAND_DISPLAY" => "wayland-0"))
+            @test "--window-position=5,6" in mac_cmd.exec
+            @test "--user-data-dir=/state/browser" in mac_cmd.exec
+            @test !("--ozone-platform=x11" in mac_cmd.exec)
+
+            # the template carries the defaults, the loader validates
+            cfg = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload=true)
+            @test (cfg.webui.window_width, cfg.webui.window_height, cfg.webui.window_x, cfg.webui.window_y) == (1500, 950, nothing, nothing)
+            @test_throws ArgumentError Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload=true,
+                overrides=Dict{String,Any}("webui" => Dict{String,Any}("window_width" => 0)))
+
+            mktempdir() do dir
+                file = joinpath(dir, "configuration.yaml")
+                cp(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, file)
+                @test SparlectraApp._webui_window_geometry(file) == SparlectraApp._WEBUI_DEFAULT_WINDOW_GEOMETRY
+                form(; kw...) = Dict{String,String}("window_width" => "1234", "window_height" => "876", "window_x" => "12", "window_y" => "-34", "window_hidden" => "0",
+                    (String(k) => v for (k, v) in kw)...)
+                saved = SparlectraApp._webui_save_window_geometry!(file, form())
+                @test saved.status == "saved"
+                @test SparlectraApp._webui_window_geometry(file) == (width=1234, height=876, x=12, y=-34)
+                @test Sparlectra.load_sparlectra_config(file; reload=true).webui.window_x == 12
+                @test issubset(["webui.window_width", "webui.window_height", "webui.window_x", "webui.window_y"], SparlectraApp._webui_user_keys(file))
+                # a minimized window, a parked one, nonsense sizes and a POST
+                # without the fields (curl, an older page) keep the file
+                for (fields, reason) in (
+                        ((window_hidden="1",), "window_minimized"),
+                        ((window_x="-32000", window_y="-32000"), "position_out_of_range"),
+                        ((window_width="0",), "size_out_of_range"),
+                        ((window_height="abc",), "not_a_number"),
+                        ((window_width="",), "no_geometry"),
+                    )
+                    skipped = SparlectraApp._webui_save_window_geometry!(file, form(; fields...))
+                    @test skipped.status == "skipped"
+                    @test skipped.reason == reason
+                end
+                @test SparlectraApp._webui_save_window_geometry!(file, Dict{String,String}()).reason == "no_geometry"
+                @test SparlectraApp._webui_window_geometry(file) == (width=1234, height=876, x=12, y=-34)
+                # the packaged template is never written
+                @test SparlectraApp._webui_save_window_geometry!(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, form()).reason == "packaged_template"
+            end
+            # the Stop form carries the fields the handler reads
+            page = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow"; output_root=mktempdir()).body)
+            for name in ("window_width", "window_height", "window_x", "window_y", "window_hidden")
+                @test occursin("name=\"$(name)\"", page)
+            end
         end)() end
 
         @testset "sysimage launcher decision" begin (function ()

@@ -429,6 +429,11 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
   elseif verb == "POST" && path == "/webui/shutdown"
     _webui_log_route!(log_root, "webui_shutdown_requested", verb, path; status = runtime === nothing ? "unavailable" : "accepted")
     runtime === nothing && return _webui_html(render_webui_error(503, "Web UI shutdown is unavailable outside a running server."); status = 503)
+    # the Stop click carries the window geometry; saved so the next start
+    # opens the window where it was (one log line, with the reason when
+    # nothing was saved)
+    geometry = _webui_save_window_geometry!(runtime.config_file, form)
+    _webui_log_route!(log_root, "webui_window_geometry", verb, path; status = geometry.status, (k => v for (k, v) in pairs(geometry) if k != :status)...)
     @async begin
       sleep(0.05)
       _webui_request_shutdown!(runtime; reason = :explicit_shutdown)

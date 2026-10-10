@@ -901,6 +901,14 @@ webui:
   # (file:///.../docs/build/), the dev site (.../dev/) or a pinned version
   # folder. The Web UI only links there, it never fetches anything.
   docs_base_url: https://welthulk.github.io/Sparlectra.jl/
+  # Size in pixels of the app window (Edge, Chrome, Chromium, Brave) and
+  # its position on the screen. Stop Web UI saves the current size and
+  # position here unless the window is minimized; the next start opens the
+  # window there. null lets the browser place the window.
+  window_width: 1500
+  window_height: 950
+  window_x: null
+  window_y: null
 
 extensions:
   # Reserved for future extension schemas.

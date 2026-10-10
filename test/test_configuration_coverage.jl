@@ -165,6 +165,7 @@ function test_configuration_yaml_key_coverage()
       "contingency.rescue_ladder", "contingency.screening.mode", "contingency.screening.margin_pct",
       "control.enabled", "control.max_outer_iterations", "control.trace", "control.log_iterations", "control.stop_on_pf_failure", "control.verbose_passes", "control.controllers",
       "webui.show_case_settings_notice", "webui.operation_log_retention_days", "webui.docs_base_url",
+      "webui.window_width", "webui.window_height", "webui.window_x", "webui.window_y",
       # these were in the typed configuration and
       # documented, but missing from the template, which made them
       # unreachable ("Unknown Sparlectra configuration key") for every user

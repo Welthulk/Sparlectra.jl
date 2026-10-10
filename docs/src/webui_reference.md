@@ -72,8 +72,9 @@ wait(server.task)
 A REPL session runs without the sysimage ([Sysimage](sysimage.md)). `start_sparlectra_webui` returns a
 `SparlectraWebUIServer` handle and serves as soon as the socket is bound.
 `open_browser = true` opens an app-style window (Microsoft Edge, Google
-Chrome, Chromium or Brave); without one of them the URL
-`http://127.0.0.1:8080/powerflow` is logged. If the port is occupied, stop
+Chrome, Chromium or Brave) with the size and position of
+`webui.window_*` ([Configuration](configuration.md)); without one of
+them the URL `http://127.0.0.1:8080/powerflow` is logged. If the port is occupied, stop
 the old Julia process or pass another `port`.
 
 ### Directories and files
@@ -82,7 +83,8 @@ Results go to `%LOCALAPPDATA%\Sparlectra\WebUI\runs` (Windows),
 `$XDG_STATE_HOME/sparlectra/webui/runs`, default
 `~/.local/state/sparlectra/webui/runs` (Linux) or
 `~/Library/Application Support/Sparlectra/WebUI/runs` (macOS). The
-operation log is in the sibling `logs`, downloaded and generated cases in
+operation log is in the sibling `logs`, the browser profile of the app
+window in `browser`, downloaded and generated cases in
 the sibling `data/mpower`, shared with `ensure_casefile` and the test
 suite (`SPARLECTRA_LARGE_CASES_DIR` overrides it for all three). The
 bundled `warmup_case*.jl` workloads land there too, hidden from the
@@ -686,6 +688,15 @@ application; with scripts switched off the field is a plain form.
 The server stops with **Stop Web UI**, `close(server)` or `Ctrl+C`. With
 `auto_shutdown_on_browser_close = true` it also stops when the browser has
 been gone for `browser_heartbeat_timeout_seconds` (best effort).
+
+**Stop Web UI** also saves the size and position of the app window into
+the configuration file (`webui.window_width`, `webui.window_height`,
+`webui.window_x`, `webui.window_y`), and the next start opens the window
+there. A minimized window is not saved; `Ctrl+C` and `close(server)` save
+nothing. The app window runs in its own browser profile (`browser` next to
+`runs`), because a browser that is already open ignores size and position
+of a new window. Under Linux with Wayland it runs through X11 (XWayland):
+Wayland windows can neither read nor set their screen position. The operation log records the save as `webui_window_geometry`.
 
 ## Limits
 
