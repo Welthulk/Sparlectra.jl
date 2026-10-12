@@ -145,6 +145,21 @@ function electricalIslandComponents(net::Net)::Vector{Vector{Int}}
   return sort!(collect(values(groups)); by = xs -> minimum(xs))
 end
 
+# Station of a bus: the representative of its closed-link contraction
+# cluster (a bus without links is its own station), and the member buses per
+# station. Shared by the state-estimation topology checks (findings and the
+# stage-2 clustering aggregate over stations, not raw buses) and the
+# correlated contingency events (a busbar section is a bus, a station its
+# cluster).
+function _station_map(net::Net)
+  reps = _active_link_representative_map(net)
+  members = Dict{Int,Vector{Int}}()
+  for b in eachindex(reps)
+    push!(get!(members, reps[b], Int[]), b)
+  end
+  return reps, members
+end
+
 """Bus index → electrical island number (see [`electricalIslandComponents`](@ref))."""
 function electricalIslandOfBus(net::Net)::Dict{Int,Int}
   out = Dict{Int,Int}()

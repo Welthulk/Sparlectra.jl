@@ -39,10 +39,10 @@ function run_contingency_tests()
       @test_throws ArgumentError ContingencyCase("x", :bus, "x")
 
       empty!(net.for001Contingencies)
-      append!(net.for001Contingencies, [cases[1].element, "NO_SUCH_BRANCH"])
+      append!(net.for001Contingencies, [only(cases[1].elements), "NO_SUCH_BRANCH"])
       for001 = generateContingenciesFromFOR001(net)
       @test length(for001) == 2
-      @test for001[2].element == "NO_SUCH_BRANCH"
+      @test only(for001[2].elements) == "NO_SUCH_BRANCH"
 
       # parallel circuits share a component name; every circuit must get its
       # own disambiguated case and remove ITS branch, not always the first
@@ -60,8 +60,8 @@ function run_contingency_tests()
       if twin_names[1] == twin_names[2]
         twin_cases = generateN1Branches(twin)
         @test length(twin_cases) == 2
-        @test twin_cases[1].element != twin_cases[2].element
-        @test occursin("#", twin_cases[1].element)
+        @test only(twin_cases[1].elements) != only(twin_cases[2].elements)
+        @test occursin("#", only(twin_cases[1].elements))
         twin_results = runContingencies!(twin, twin_cases; parallel_enabled = false)
         @test all(r -> r.converged, twin_results)
         # removing circuit 1 (low impedance) is a different case than
@@ -221,7 +221,7 @@ function run_contingency_tests()
       cases = generateN1Branches(net)[1:5]
       results = runContingencies!(net, cases; parallel_enabled = false)
       txt = sprint(io -> printContingencyResults(io, results; max_rows = 3))
-      @test occursin("N-1 contingency results", txt)
+      @test occursin("Contingency results", txt)
       @test occursin(results[2].name, txt)
       @test occursin("more row(s) not shown", txt)
       csv = joinpath(mktempdir(), "n1.csv")
@@ -232,11 +232,11 @@ function run_contingency_tests()
       # every other artifact; the default is now "technical" (comma
       # delimiter), matching output.csv_format's default. "excel_de"
       # reproduces the historical hardcoded semicolon delimiter.
-      @test startswith(lines[1], "name,weight,converged,iterations,start_used")
+      @test startswith(lines[1], "name,kind,elements,weight,converged,iterations,start_used")
       csv_de = joinpath(mktempdir(), "n1_de.csv")
       @test writeContingencyResultsCSV(csv_de, results; format = "excel_de") == csv_de
       lines_de = readlines(csv_de)
-      @test startswith(lines_de[1], "name;weight;converged;iterations;start_used")
+      @test startswith(lines_de[1], "name;kind;elements;weight;converged;iterations;start_used")
     end)() end
 
     @testset "case weights (#331 Phase 2)" begin (function ()
@@ -284,8 +284,8 @@ function run_contingency_tests()
       # weight 0 is a pure ranking weight, NOT a skip switch: solving a case
       # with weight 0 gives the same outcome as weight 1, only the weight field
       # differs, so nothing is skipped. Dropping an outage is the filters' job.
-      r1 = runContingencies!(net, [ContingencyCase(cases[1].name, :branch, cases[1].element, 1.0)]; parallel_enabled = false)[1]
-      r0 = runContingencies!(net, [ContingencyCase(cases[1].name, :branch, cases[1].element, 0.0)]; parallel_enabled = false)[1]
+      r1 = runContingencies!(net, [ContingencyCase(cases[1].name, :branch, only(cases[1].elements), 1.0)]; parallel_enabled = false)[1]
+      r0 = runContingencies!(net, [ContingencyCase(cases[1].name, :branch, only(cases[1].elements), 0.0)]; parallel_enabled = false)[1]
       @test r0.weight == 0.0
       @test r1.weight == 1.0
       @test r0.converged == r1.converged    # same solve outcome, not skipped
@@ -301,7 +301,7 @@ function run_contingency_tests()
       @test length(gcases) == 3
       @test all(c -> c.kind === :gen, gcases)
       # generator names are not unique, so they are disambiguated by index
-      @test all(c -> occursin("#", c.element), gcases)
+      @test all(c -> occursin("#", only(c.elements)), gcases)
 
       # Pg and name filters
       @test length(generateN1Generators(net; min_pg_MW = 1e9)) == 0
@@ -381,7 +381,7 @@ function run_contingency_tests()
       pnet = importSCF(joinpath(dirname(@__DIR__), "data", "scf", "two_islands_prio.scf.json"))
       pslack = findfirst(Sparlectra.isSlack, pnet.prosumpsVec)
       pname = getCompName(pnet.prosumpsVec[pslack].comp)
-      pcase = only(c for c in generateN1Generators(pnet) if c.element in (pname, string(pname, "#", pslack)))
+      pcase = only(c for c in generateN1Generators(pnet) if only(c.elements) in (pname, string(pname, "#", pslack)))
       pplain = deepcopy(pnet)
       foreach(ps -> ps.referencePriority = 0, pplain.prosumpsVec)
       for (n, bus) in ((pnet, "Brunntal_110"), (pplain, "Kesselau_110"))
@@ -425,7 +425,7 @@ function run_contingency_tests()
       # with its P(U)/Q(U) controllers: the outage stagnated at that load)
       qnet = deepcopy(net)
       addProsumer!(net = qnet, busName = "B", type = "GENERATOR", p = 2.0, q = 0.0, qu_controller = QUController(VoltageCharacteristic([(0.95, 0.05), (1.05, -0.05)]); qmin_pu = -0.1, qmax_pu = 0.1))
-      qres = runContingencies!(qnet, [c for c in generateN1Branches(qnet) if c.element == only(r.name for r in res if r === load_cut)]; parallel_enabled = false)
+      qres = runContingencies!(qnet, [c for c in generateN1Branches(qnet) if only(c.elements) == only(r.name for r in res if r === load_cut)]; parallel_enabled = false)
       @test only(qres).converged
       @test startswith(only(qres).error, "islanded: bus C cut off, 7.0 MW load disconnected")
       unit_cut = only(r for r in res if r.error !== nothing && occursin("bus G cut off", r.error))
@@ -460,8 +460,8 @@ function run_contingency_tests()
       cases3 = generateN1Branches(star)
       t3 = only(c for c in cases3 if c.kind === :transformer3w)
       @test t3.name == "B2_B3_B4"
-      @test !any(c -> c.element in legs, cases3)
-      @test count(c -> c.element in legs, generateN1Branches(star; three_winding_legs = true)) == 3
+      @test !any(c -> only(c.elements) in legs, cases3)
+      @test count(c -> only(c.elements) in legs, generateN1Branches(star; three_winding_legs = true)) == 3
       r3 = only(redirect_stdout(() -> runContingencies!(star, [t3]; parallel_enabled = false), devnull))
       @test r3.converged
       @test r3.shed_load_mw == 2.0
@@ -470,7 +470,7 @@ function run_contingency_tests()
       # below its solved voltage flags the visible buses above it, not it
       runpf!(star, 30, 1e-8, 0)
       vstar = star.nodeVec[grp.star]._vm_pu
-      m = Sparlectra._contingency_metrics(star, 0.9, vstar - 1e-6, Dict{String,Float64}())
+      m = Sparlectra._contingency_metrics(star, 0.9, vstar - 1e-6, fill(NaN, length(star.branchVec)), contingency_names(star))
       @test !("Aux3WT_B2_B3_B4" in m.violations)
       @test !isempty(m.violations)
       @test m.vmin == minimum(star.nodeVec[k]._vm_pu for k in eachindex(star.nodeVec) if k != grp.star)
@@ -515,13 +515,13 @@ function run_contingency_tests()
       @test rep.worst_severity_case != ""
       @test !isempty(rep.top_overloaded)
       txt = sprint(printContingencyReport, rep)
-      @test occursin("N-1 contingency report", txt)
+      @test occursin("Contingency report", txt)
       @test occursin("most-overloaded branches", txt)
       # parallel circuits share a name: three overload records of one name in
       # ONE contingency count that contingency once (case6495rte reported a
       # branch overloaded by 21045 of 9019 contingencies)
       rec = OverloadRecord("PAR", 112.0, 90.0, 22.0, 112.0, 100.0)
-      twins = [ContingencyResult("out$(k)", 1.0, true, 3, :warm, 1.0, 0.95, 112.0, 12.0, [rec, rec, rec], String[], 1, 0.0, nothing) for k in 1:2]
+      twins = [ContingencyResult("out$(k)", :branch, ["out$(k)"], 1.0, true, 3, :warm, 1.0, 0.95, 112.0, 12.0, [rec, rec, rec], String[], 1, 0.0, nothing) for k in 1:2]
       @test buildContingencyReport(twins).top_overloaded == ["PAR" => 2]
 
       # shed_load_mw is a structured field and feeds the report's shed total.
@@ -657,18 +657,6 @@ function run_contingency_tests()
       @test count(r -> r.converged, longer) >= count(r -> r.converged, base)
       @test all(base[i].converged ? _contingency_results_equal(base[i], longer[i]) : true for i in eachindex(base))
 
-      # retry_flat_start is a deprecated alias for appending :flat; converged
-      # cases are unchanged
-      retried = @test_logs (:warn, r"retry_flat_start is deprecated") match_mode = :any runContingencies!(net, cases; retry_flat_start = true)
-      @test all(base[i].converged ? _contingency_results_equal(base[i], retried[i]) : true for i in eachindex(base))
-
-      # alias collision: retry_flat_start = true with a ladder that ALREADY
-      # contains :flat must not trip the duplicate validation; the alias is a
-      # no-op there (no throw, identical results to the plain ladder)
-      with_flat = runContingencies!(net, cases; rescue_ladder = [:warm, :flat])
-      with_flat_alias = @test_logs (:warn, r"retry_flat_start is deprecated") match_mode = :any runContingencies!(net, cases; rescue_ladder = [:warm, :flat], retry_flat_start = true)
-      @test all(_contingency_results_equal(with_flat[i], with_flat_alias[i]) for i in eachindex(with_flat))
-
       # serial vs parallel identity holds with a multi-stage ladder too
       serial = runContingencies!(net, cases; rescue_ladder = [:warm, :dc], parallel_enabled = false)
       par = runContingencies!(net, cases; rescue_ladder = [:warm, :dc], parallel_enabled = true, parallel_max_tasks = 2, parallel_min_work_items = 2)
@@ -784,8 +772,8 @@ end
 
 # Extended profile: a small N-1 identity slice on the real case1354pegase
 # on the shipped sp_case1354. Serial vs parallel
-# field equality on a branch subset with max_tasks = 1 and auto, plus the
-# retry_flat_start smoke (must not change converged cases).
+# field equality on a branch subset with max_tasks = 1 and auto, plus a
+# flat stage in the ladder (must not change converged cases).
 function run_contingency_extended_tests()
   @testset "N-1 identity on sp_case1354 (extended)" begin (function ()
     # the shipped data/mpower/sp_case1354.m (synthetic 1354-bus grid, 2040
@@ -800,7 +788,7 @@ function run_contingency_extended_tests()
       par = runContingencies!(net, cases; parallel_enabled = true, parallel_max_tasks = max_tasks, parallel_min_work_items = 2)
       @test all(_contingency_results_equal(serial[i], par[i]) for i in eachindex(serial))
     end
-    retried = runContingencies!(net, cases; parallel_enabled = true, parallel_min_work_items = 2, retry_flat_start = true)
+    retried = runContingencies!(net, cases; parallel_enabled = true, parallel_min_work_items = 2, rescue_ladder = [:warm, :flat])
     @test all(!serial[i].converged || _contingency_results_equal(serial[i], retried[i]) for i in eachindex(serial))
     println("contingency extended case1354: RAN (", count(r -> r.converged, serial), "/60 converged, threads = ", Threads.nthreads(), ")")
   end)() end

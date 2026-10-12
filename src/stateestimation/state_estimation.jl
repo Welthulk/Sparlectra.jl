@@ -4098,7 +4098,7 @@ function runse_diagnostics(net::Net, measurements::Vector{Measurement})
   # finding requires the full fingerprint, never a part of it.
   topoFindings = nothing
   if stopReason == :max_eliminations && current.converged && hasproperty(current.objective, :reason) && current.objective.reason == :high
-    reps, mems = _topology_station_map(net)
+    reps, mems = _station_map(net)
     clusterMin = state_estimation_config().topology_cluster_min
     # station -> surviving suspects (a branch row counts for both terminals)
     byStation = Dict{Int,Vector{NamedTuple}}()

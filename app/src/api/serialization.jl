@@ -158,11 +158,11 @@ function _yaml_scalar(value)::String
   value isa Bool && return value ? "true" : "false"
   value isa Integer && return string(value)
   value isa AbstractFloat && return isfinite(value) ? string(value) : "null"
-  value isa Symbol && return String(value)
-  text = string(value)
-  isempty(text) && return "\"\""
-  occursin(r"[:#\[\]{},&*!|>'\"%@`]|^[-?]|\s$|^\s", text) && return string('"', replace(text, "\\" => "\\\\", "\"" => "\\\""), '"')
-  return text
+  # strings and symbols follow the library's one quoting rule, so the
+  # configuration reader gives back exactly what was written (Windows paths,
+  # regular expressions, quotes)
+  value isa Symbol && return yaml_string_text(String(value))
+  return yaml_string_text(string(value))
 end
 
 function _write_yaml(io::IO, value; indent::Int = 0)

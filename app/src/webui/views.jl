@@ -1713,6 +1713,16 @@ function _webui_settings_sections_html(; profile_values, config_default, profile
 <label class=\"check span-2\"><input name=\"contingency_warm_active_set\" type=\"hidden\" value=\"false\"><input name=\"contingency_warm_active_set\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "contingency_warm_active_set", _webui_option_default("contingency_warm_active_set")))>$(_webui_field_label("contingency_warm_active_set", "Warm active set (start outages from the base case's PV/PQ state)"))</label>
 <label class=\"check\"><input name=\"contingency_warm_cold_check\" type=\"hidden\" value=\"false\"><input name=\"contingency_warm_cold_check\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "contingency_warm_cold_check", _webui_option_default("contingency_warm_cold_check")))>$(_webui_field_label("contingency_warm_cold_check", "Cold check of tight outages"))</label>
 <label>$(_webui_field_label("contingency_warm_cold_check_margin_pu", "Cold check margin (pu)"))<input name="contingency_warm_cold_check_margin_pu" type="number" step="any" min="0" value="$(_webui_input_value(profile_values, "contingency_warm_cold_check_margin_pu", _webui_option_default("contingency_warm_cold_check_margin_pu")))"></label>
+<label class=\"check span-2\"><input name=\"contingency_events_enabled\" type=\"hidden\" value=\"false\"><input name=\"contingency_events_enabled\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "contingency_events_enabled", _webui_option_default("contingency_events_enabled")))>$(_webui_field_label("contingency_events_enabled", "Correlated events (SCF cases)"))</label>
+<label class=\"check\"><input name=\"contingency_events_double_circuits\" type=\"hidden\" value=\"false\"><input name=\"contingency_events_double_circuits\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "contingency_events_double_circuits", _webui_option_default("contingency_events_double_circuits")))>$(_webui_field_label("contingency_events_double_circuits", "Double circuits"))</label>
+<label class=\"check\"><input name=\"contingency_events_busbars\" type=\"hidden\" value=\"false\"><input name=\"contingency_events_busbars\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "contingency_events_busbars", _webui_option_default("contingency_events_busbars")))>$(_webui_field_label("contingency_events_busbars", "Busbar sections"))</label>
+<label class=\"check\"><input name=\"contingency_events_substations\" type=\"hidden\" value=\"false\"><input name=\"contingency_events_substations\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "contingency_events_substations", _webui_option_default("contingency_events_substations")))>$(_webui_field_label("contingency_events_substations", "Whole stations"))</label>
+<label class=\"check\"><input name=\"contingency_events_links\" type=\"hidden\" value=\"false\"><input name=\"contingency_events_links\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "contingency_events_links", _webui_option_default("contingency_events_links")))>$(_webui_field_label("contingency_events_links", "Couplers"))</label>
+<label class=\"check\"><input name=\"contingency_events_name_groups\" type=\"hidden\" value=\"false\"><input name=\"contingency_events_name_groups\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "contingency_events_name_groups", _webui_option_default("contingency_events_name_groups")))>$(_webui_field_label("contingency_events_name_groups", "Name groups"))</label>
+<label>$(_webui_field_label("contingency_events_max_members", "Event size limit"))<input name=\"contingency_events_max_members\" type=\"number\" step=\"1\" min=\"1\" value=\"$(_webui_input_value(profile_values, "contingency_events_max_members", _webui_option_default("contingency_events_max_members")))\"></label>
+<label class=\"check span-2\"><input name=\"contingency_pairs_enabled\" type=\"hidden\" value=\"false\"><input name=\"contingency_pairs_enabled\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "contingency_pairs_enabled", _webui_option_default("contingency_pairs_enabled")))>$(_webui_field_label("contingency_pairs_enabled", "N-2 pairs (SCF cases)"))</label>
+<label>$(_webui_field_label("contingency_pairs_rule", "Pair rule"))$(_webui_select("contingency_pairs_rule", _webui_option_allowed_values("contingency_pairs_rule"), _webui_selected(profile_values, "contingency_pairs_rule", _webui_option_default("contingency_pairs_rule"))))</label>
+<label>$(_webui_field_label("contingency_pairs_max_pairs", "Pair limit"))<input name=\"contingency_pairs_max_pairs\" type=\"number\" step=\"1\" min=\"1\" value=\"$(_webui_input_value(profile_values, "contingency_pairs_max_pairs", _webui_option_default("contingency_pairs_max_pairs")))\"></label>
 <p class=\"field-help\">N-1 and scenario runs only. <strong>Outage max iterations</strong> limits every outage solve; the base case keeps <strong>Maximum iterations</strong> above, so a smaller value here makes a long N-1 run faster. <code>flag</code> estimates every outage with one Woodbury-corrected Newton step on the base factorisation and solves in full only the outages whose estimate comes within the margin of a limit; <code>only</code> keeps the estimates. Off by default: a one-step estimate cannot see every outage class (a generator falling to PQ), so check the screened share on your network once before relying on it.</p>
 </fieldset>
 <fieldset class=\"distributed-slack-options\" data-nr-only-field>
@@ -2576,6 +2586,18 @@ end
 # N-1 contingency runs: one summary row with the outcome counts and the worst
 # loading. Names the slack-unit outage (a generator N-1 that removes the only
 # reference) so it does not read as a tool failure. Returns nothing otherwise.
+# the detail row of a result: the outaged elements when they are more than
+# the case name says, the overloaded branches and the buses outside the band
+function _webui_contingency_detail_row(r, ncols::Int)::String
+  parts = String[]
+  elements = split(String(r.elements), '|'; keepempty = false)
+  (length(elements) > 1 || (length(elements) == 1 && elements[1] != r.name)) && push!(parts, "out: " * join(elements, ", "))
+  isempty(r.overloads) || push!(parts, "overloaded: " * replace(String(r.overloads), "," => ", "))
+  isempty(r.violations) || push!(parts, "voltage band: " * replace(String(r.violations), "," => ", "))
+  isempty(parts) && return ""
+  return "<tr class=\"n1-detail\"><td></td><td colspan=\"$(ncols - 1)\">$(_webui_escape(join(parts, "; ")))</td></tr>"
+end
+
 function _webui_contingency_summary(result::AbstractDict)::Union{Nothing,String}
   metadata = get(result, "metadata", Dict{String,Any}())
   metadata isa AbstractDict || return nothing
@@ -2600,7 +2622,11 @@ function _webui_contingency_summary(result::AbstractDict)::Union{Nothing,String}
   screen_note = n_screened isa Real && n_screened > 0 ? string(", ", n_screened, " screened (estimates)") : ""
   source = string(get(metadata, "contingency_cases_source", ""))
   source_note = isempty(source) || source == "generated" ? "" : string(", source ", source)
-  text = string(kind, " N-1: ", conv, "/", n, " converged, ", isl, " islanded (", fmt(shed), " MW shed), worst loading ", fmt(worst), "%", weight_note, screen_note, source_note)
+  # correlated events and pairs (#355) are counted next to the single outages
+  by_kind = get(metadata, "contingency_cases_by_kind", Dict{String,Any}())
+  n_events = by_kind isa AbstractDict ? sum((v for (k, v) in by_kind if Symbol(k) in (CONTINGENCY_EVENT_KINDS..., :pair) && v isa Real); init = 0) : 0
+  event_note = n_events > 0 ? string(", ", n_events, " correlated event", n_events == 1 ? "" : "s") : ""
+  text = string(kind, " N-1: ", conv, "/", n, " converged, ", isl, " islanded (", fmt(shed), " MW shed), worst loading ", fmt(worst), "%", event_note, weight_note, screen_note, source_note)
   badge = ""
   if nonconv isa Real && nonconv > 0
     label = no_slack isa Real && no_slack > 0 ? "$(nonconv) non-converged incl. $(no_slack) that removed the only slack with no unit left to take over" : "$(nonconv) non-converged"
@@ -3031,7 +3057,9 @@ function _webui_contingency_table_section(result::AbstractDict)::String
   for row in table.rows
     sev = parsenum(get(row, "severity", ""))
     push!(rows, (
-      name = get(row, "name", ""), weight = get(row, "weight", ""), converged = get(row, "converged", "") == "true",
+      name = get(row, "name", ""), kind = get(row, "kind", ""), elements = get(row, "elements", ""),
+      overloads = get(row, "overloads", ""), violations = get(row, "voltage_violations", ""),
+      weight = get(row, "weight", ""), converged = get(row, "converged", "") == "true",
       iterations = get(row, "iterations", ""), start_used = get(row, "start_used", ""),
       min_vm = get(row, "min_vm_pu", ""), max_vm = get(row, "max_vm_pu", ""), max_loading = get(row, "max_branch_loading_pct", ""),
       severity = sev === nothing ? NaN : sev,
@@ -3048,7 +3076,7 @@ function _webui_contingency_table_section(result::AbstractDict)::String
     v = parsenum(s)
     v === nothing ? esc(s) : (isnan(v) ? "-" : string(round(v; digits = 4)))
   end
-  ncols = 11 + (has_screening ? 1 : 0)
+  ncols = 12 + (has_screening ? 1 : 0)
   body = join((begin
     detail = if !isempty(r.estimate)
       est = split(r.estimate, '|')
@@ -3060,12 +3088,13 @@ function _webui_contingency_table_section(result::AbstractDict)::String
     end
     string(
       "<tr class=\"", r.converged ? "n1-row" : "n1-row n1-failed", "\">",
-      "<td>$(esc(r.name))</td><td>$(fmtnum(r.weight))</td><td>$(r.converged ? "yes" : "NO")</td><td>$(esc(r.iterations))</td><td>$(esc(r.start_used))</td>",
+      "<td>$(esc(r.name))</td><td>$(esc(r.kind))</td><td>$(fmtnum(r.weight))</td><td>$(r.converged ? "yes" : "NO")</td><td>$(esc(r.iterations))</td><td>$(esc(r.start_used))</td>",
       "<td>$(fmtnum(r.min_vm))</td><td>$(fmtnum(r.max_vm))</td><td>$(fmtnum(r.max_loading))</td><td>$(fmtnum(string(r.severity)))</td>",
       "<td>$(esc(r.island_count))</td><td>$(fmtnum(r.shed))</td>",
       has_screening ? "<td class=\"n1-screened\">$(r.screened ? "yes" : "")</td>" : "",
       isempty(r.error) ? "" : "</tr><tr class=\"n1-detail n1-error\"><td></td><td colspan=\"$(ncols - 1)\">$(esc(r.error))</td>",
       "</tr>",
+      _webui_contingency_detail_row(r, ncols),
       detail,
     )
   end for r in shown), "")
@@ -3073,7 +3102,7 @@ function _webui_contingency_table_section(result::AbstractDict)::String
   csv_link = isempty(run_id) ? "contingency_n1.csv" : "<a href=\"/powerflow/artifact/$(_webui_urlencode(run_id))/contingency_n1.csv\">contingency_n1.csv</a>"
   cap_note = length(rows) > length(shown) ? " Showing the $(length(shown)) worst of $(length(rows)) rows;" : ""
   header_cells = string(
-    "<th>case</th><th>weight</th><th>converged</th><th>iter</th><th>start</th><th>Vmin [pu]</th><th>Vmax [pu]</th><th>loading [%]</th><th>severity</th><th>islands</th><th>shed [MW]</th>",
+    "<th>case</th><th>kind</th><th>weight</th><th>converged</th><th>iter</th><th>start</th><th>Vmin [pu]</th><th>Vmax [pu]</th><th>loading [%]</th><th>severity</th><th>islands</th><th>shed [MW]</th>",
     has_screening ? "<th>screened</th>" : "",
   )
   return string(

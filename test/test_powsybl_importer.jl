@@ -418,6 +418,25 @@ function run_powsybl_importer_tests()
         name = getCompName(back.branchVec[bidx].comp)
         res = runContingencies!(back, [ContingencyCase(name, :branch, name)]; parallel_enabled = false)
         @test length(res) == 1
+        # D2 of #355: a scenario on this reimport (the service converts a
+        # MATPOWER case to SCF for its scenario sources and runs the imported
+        # net) removes the part on the patch path too, and restores it; the
+        # patch path (forced by a neutral op) equals the outage path
+        mcase = Sparlectra.convert_case(MatpowerAdapter(), Sparlectra.MatpowerIO.read_case(mfile; legacy_compat = true), Sparlectra.matpower_adapter_options(cfg))
+        midx = ScenarioIndex(mcase)
+        bid = only(id for (id, k) in midx.internal_by_id if k == bidx && midx.kind_by_id[id] in (:branch, :transformer))
+        op_out = PatchOp(op = :status, target = midx.kind_by_id[bid], id = bid, value = 0.0)
+        work2 = deepcopy(back)
+        wsh2 = work2.shuntVec[findfirst(s -> s.busIdx == sh.busIdx, work2.shuntVec)]
+        undo = apply!(work2, [op_out], midx)
+        @test isapprox(wsh2.y_pu_shunt, y0 - part; atol = 1e-15)
+        restore!(work2, undo)
+        @test wsh2.y_pu_shunt == y0
+        neutral = first(id for (id, k) in midx.kind_by_id if k === :load)
+        rs = redirect_stdout(devnull) do
+          runScenarios!(back, [Scenario(name = "outage", ops = [op_out]), Scenario(name = "patched", ops = [op_out, PatchOp(op = :scale, target = :load, id = neutral, factor = 1.0)])]; index = midx, parallel_enabled = false)
+        end
+        @test all(f -> f in (:name, :kind, :elements) || isequal(getproperty(rs[1], f), getproperty(rs[2], f)), fieldnames(ContingencyResult))
         # the CGMES export follows the same rule: a segment has one charging
         # value, so the five dangling lines write their one-sided admittance
         # as a compensator at the network bus, named per line, and the

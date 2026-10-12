@@ -128,6 +128,18 @@ const WEBUI_OPTION_SPECS = WebUIOptionSpec[
   WebUIOptionSpec("contingency.warm_active_set", "contingency_warm_active_set", Bool, :checkbox, true, (), :expert, :case, true),
   WebUIOptionSpec("contingency.warm_cold_check", "contingency_warm_cold_check", Bool, :checkbox, false, (), :expert, :case, true),
   WebUIOptionSpec("contingency.warm_cold_check_margin_pu", "contingency_warm_cold_check_margin_pu", Float64, :number, 0.02, (), :expert, :case, true),
+  # correlated events and N-2 pairs (#355); the defaults come from the
+  # configuration structs, one source
+  WebUIOptionSpec("contingency.events.enabled", "contingency_events_enabled", Bool, :checkbox, ContingencyEventsConfig().enabled, (), :expert, :case, true),
+  WebUIOptionSpec("contingency.events.double_circuits", "contingency_events_double_circuits", Bool, :checkbox, ContingencyEventsConfig().double_circuits, (), :expert, :case, true),
+  WebUIOptionSpec("contingency.events.busbars", "contingency_events_busbars", Bool, :checkbox, ContingencyEventsConfig().busbars, (), :expert, :case, true),
+  WebUIOptionSpec("contingency.events.substations", "contingency_events_substations", Bool, :checkbox, ContingencyEventsConfig().substations, (), :expert, :case, true),
+  WebUIOptionSpec("contingency.events.links", "contingency_events_links", Bool, :checkbox, ContingencyEventsConfig().links, (), :expert, :case, true),
+  WebUIOptionSpec("contingency.events.name_groups", "contingency_events_name_groups", Bool, :checkbox, ContingencyEventsConfig().name_groups, (), :expert, :case, true),
+  WebUIOptionSpec("contingency.events.max_members", "contingency_events_max_members", Int, :number, ContingencyEventsConfig().max_members, (), :expert, :case, true),
+  WebUIOptionSpec("contingency.pairs.enabled", "contingency_pairs_enabled", Bool, :checkbox, ContingencyPairsConfig().enabled, (), :expert, :case, true),
+  WebUIOptionSpec("contingency.pairs.rule", "contingency_pairs_rule", String, :select, String(ContingencyPairsConfig().rule), CONTINGENCY_PAIR_RULE_VALUES, :expert, :case, true),
+  WebUIOptionSpec("contingency.pairs.max_pairs", "contingency_pairs_max_pairs", Int, :number, ContingencyPairsConfig().max_pairs, (), :expert, :case, true),
   WebUIOptionSpec("power_flow.auto_slack", "power_flow_auto_slack", Bool, :checkbox, false, (), :expert, :case, true),
   WebUIOptionSpec("runtime.parallel.enabled", "runtime_parallel_enabled", Bool, :checkbox, true, (), :expert, :session, true),
   WebUIOptionSpec("power_flow.dc.fallback", "power_flow_dc_fallback", Bool, :checkbox, false, (), :expert, :case, true),

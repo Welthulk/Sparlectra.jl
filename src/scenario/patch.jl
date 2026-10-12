@@ -47,39 +47,58 @@ end
 """
     Scenario
 
-A named, weighted, ordered list of patch operations.
+A named, weighted, ordered list of patch operations with a `kind` from the
+vocabulary of [`ContingencyCase`](@ref): `:explicit` for a user scenario
+(the default), a single-element kind for an expanded N-1 outage, an event
+class for a generated correlated event, `:pair` for an N-2 pair. The
+positional constructor `Scenario(name, weight, ops)` sets `:explicit`.
 """
 Base.@kwdef struct Scenario
   name::String
   weight::Float64 = 1.0
   ops::Vector{PatchOp} = PatchOp[]
+  kind::Symbol = :explicit
 end
+
+Scenario(name::String, weight::Real, ops::Vector{PatchOp}) = Scenario(name, Float64(weight), ops, :explicit)
 
 """
     ScenarioSet
 
 An ordered vector of scenarios plus the selection `mode` (`:explicit`,
-`:n1_branches`, `:n1_generators`, `:n1_all`) and the `exclusions` the N-1
-expansion honors. The N-1 modes expand to explicit scenarios at load time
+`:n1_branches`, `:n1_generators`, `:n1_all`), the `exclusions` the N-1
+expansion honors, and the correlated event classes `events` (any of
+`:double_circuits`, `:busbars`, `:substations`, `:links`, `:name_groups`,
+`:pairs`) generated next to the listed scenarios. The N-1 modes and the
+event classes expand to explicit scenarios at load time
 ([`expand_scenarios`](@ref)), so the engine sees one kind of input.
 """
 Base.@kwdef struct ScenarioSet
   scenarios::Vector{Scenario} = Scenario[]
   mode::Symbol = :explicit
   exclusions::Vector{String} = String[]
+  events::Vector{Symbol} = Symbol[]
 end
+
+# the event classes a scenario set (document key `events`) and the
+# configuration (contingency.events.*, contingency.pairs.*) can ask for
+const SCENARIO_EVENT_CLASSES = (:double_circuits, :busbars, :substations, :links, :name_groups, :pairs)
 
 """
     ScenarioIndex
 
 The id map of one typed case: SCF component id to component class and the
 INTERNAL index the built network uses (branch vector position for
-branches, prosumer position for appliances, shunt position for shunts),
-so a patch resolves without name lookups.
+branches, prosumer position for appliances, shunt position for shunts,
+link position for links), so a patch resolves without name lookups, plus
+the file name of every component the case names (`extra[<id>].name`), the
+source of the display names of contingency output
+([`contingency_names`](@ref)).
 """
 struct ScenarioIndex
   kind_by_id::Dict{Int,Symbol}
   internal_by_id::Dict{Int,Int}
+  name_by_id::Dict{Int,String}
 end
 
 function _scenario_internal(extra::Dict{String,Any}, id::Int, key::String)
@@ -112,9 +131,11 @@ function ScenarioIndex(case::SCFCase)
     v = _scenario_internal(extra, r.id, "branch_index")
     v === nothing || (internals[r.id] = v)
   end
-  for r in d.link
+  # the importer adds the links sorted by id (scf_import.jl), so the
+  # internal index is the rank in that order, not the file position
+  for (k, r) in enumerate(sort(d.link; by = x -> x.id))
     kinds[r.id] = :link
-    internals[r.id] = findfirst(x -> x.id == r.id, d.link)
+    internals[r.id] = k
   end
   for (rows, kind) in ((d.source, :external_grid), (d.sym_gen, :generator), (d.sym_load, :load))
     for r in rows
@@ -128,8 +149,45 @@ function ScenarioIndex(case::SCFCase)
     v = _scenario_internal(extra, r.id, "shunt_index")
     v === nothing || (internals[r.id] = v)
   end
-  return ScenarioIndex(kinds, internals)
+  names = Dict{Int,String}()
+  for (id_text, entry) in extra
+    entry isa AbstractDict || continue
+    name = get(entry, "name", nothing)
+    name isa AbstractString && !isempty(name) || continue
+    id = tryparse(Int, String(id_text))
+    id === nothing || (names[id] = String(name))
+  end
+  return ScenarioIndex(kinds, internals, names)
 end
+
+function contingency_names(net::Net, index::ScenarioIndex)::ContingencyNames
+  generated = contingency_names(net)
+  branch_raw = copy(generated.branch_raw)
+  gen_raw = copy(generated.gen_raw)
+  link_raw = copy(generated.link_raw)
+  applied = false
+  for (id, kind) in index.kind_by_id
+    name = get(index.name_by_id, id, nothing)
+    internal = get(index.internal_by_id, id, nothing)
+    (name === nothing || internal === nothing) && continue
+    if kind === :branch || kind === :transformer
+      1 <= internal <= length(branch_raw) || continue
+      branch_raw[internal] = name
+    elseif kind === :generator || kind === :external_grid
+      (1 <= internal <= length(gen_raw) && !isempty(gen_raw[internal])) || continue
+      gen_raw[internal] = name
+    elseif kind === :link
+      1 <= internal <= length(link_raw) || continue
+      link_raw[internal] = name
+    else
+      continue
+    end
+    applied = true
+  end
+  return _contingency_names(net, branch_raw, gen_raw, link_raw, !applied)
+end
+
+contingency_names(net::Net, case::SCFCase)::ContingencyNames = contingency_names(net, ScenarioIndex(case))
 
 _scenario_error(scenario::AbstractString, opidx::Int, msg::AbstractString) = throw(ArgumentError(string("scenario ", repr(String(scenario)), " op ", opidx, ": ", msg)))
 
@@ -142,12 +200,16 @@ non-empty op list and a unique name. Errors carry the scenario name and
 the op index. Returns `set` unchanged on success.
 """
 function validate_scenarios(set::ScenarioSet, index::ScenarioIndex)::ScenarioSet
+  for cls in set.events
+    cls in SCENARIO_EVENT_CLASSES || throw(ArgumentError(string("scenario events: unknown class ", cls, "; known: ", join(SCENARIO_EVENT_CLASSES, ", "))))
+  end
   seen = Set{String}()
   for s in set.scenarios
     isempty(strip(s.name)) && throw(ArgumentError("scenario names must be non-empty"))
     s.name in seen && throw(ArgumentError(string("duplicate scenario name ", repr(s.name))))
     push!(seen, s.name)
     isempty(s.ops) && throw(ArgumentError(string("scenario ", repr(s.name), ": empty op list")))
+    s.kind in CONTINGENCY_KINDS || throw(ArgumentError(string("scenario ", repr(s.name), ": kind must be one of ", join(CONTINGENCY_KINDS, ", "), ", got ", s.kind)))
     (isfinite(s.weight) && s.weight >= 0.0) || throw(ArgumentError(string("scenario ", repr(s.name), ": weight must be a finite value >= 0")))
     for (i, op) in enumerate(s.ops)
       kind = get(index.kind_by_id, op.id, nothing)
@@ -181,64 +243,83 @@ function validate_scenarios(set::ScenarioSet, index::ScenarioIndex)::ScenarioSet
   return set
 end
 
-"""
-    expand_scenarios(set, net, index) -> Vector{Scenario}
-
-Expand the N-1 modes to explicit scenarios through the EXISTING
-generators (`generateN1Branches`, `generateN1Generators`), honoring
-`exclusions` by case element name (or, for a three-winding transformer,
-its name); `:explicit` returns the stored scenarios unchanged. Every
-expanded scenario carries exactly one status patch, which is what makes N-1
-the special case of the model; the one exception is a three-winding
-transformer, which trips as a whole: its scenario patches every leg.
-"""
-function expand_scenarios(set::ScenarioSet, net::Net, index::ScenarioIndex)::Vector{Scenario}
-  set.mode === :explicit && return set.scenarios
-  set.mode in (:n1_branches, :n1_generators, :n1_all) || throw(ArgumentError(string("unknown scenario mode ", set.mode)))
-  excluded = Set(set.exclusions)
-  id_by_internal_branch = Dict{Int,Int}()
-  id_by_internal_appliance = Dict{Int,Int}()
+# SCF id per internal index of the classes an outage can address
+function _scenario_ids_by_internal(index::ScenarioIndex)
+  branch = Dict{Int,Int}()
+  appliance = Dict{Int,Int}()
+  link = Dict{Int,Int}()
   for (id, kind) in index.kind_by_id
     internal = get(index.internal_by_id, id, nothing)
     internal === nothing && continue
     if kind === :branch || kind === :transformer
-      id_by_internal_branch[internal] = id
+      branch[internal] = id
     elseif kind === :generator || kind === :external_grid
-      id_by_internal_appliance[internal] = id
+      appliance[internal] = id
+    elseif kind === :link
+      link[internal] = id
     end
   end
-  out = Scenario[]
-  if set.mode in (:n1_branches, :n1_all)
-    groups = Dict(g.star => g for g in _three_winding_groups(net))
-    for case in generateN1Branches(net)
-      (case.element in excluded || case.name in excluded) && continue
-      if case.kind === :transformer3w
-        # the whole three-winding transformer: one scenario with a status
-        # patch per leg (a multi-op scenario runs the patch path)
-        grp = groups[net.busDict[case.element]]
-        ids = [get(id_by_internal_branch, k, nothing) for k in grp.legs]
-        any(isnothing, ids) && continue
-        push!(out, Scenario(name = case.name, weight = case.weight, ops = [PatchOp(op = :status, target = index.kind_by_id[id], id = id, value = 0.0) for id in ids]))
-        continue
-      end
-      internal = _resolve_contingency_branch(net, case.element)
-      internal === nothing && continue
-      id = get(id_by_internal_branch, internal, nothing)
-      id === nothing && continue
-      target = index.kind_by_id[id]
-      push!(out, Scenario(name = case.name, weight = case.weight, ops = [PatchOp(op = :status, target = target, id = id, value = 0.0)]))
-    end
+  return (; branch, appliance, link)
+end
+
+"""
+    scenario_from_case(case, net, index; names = contingency_names(net, index)) -> Union{Nothing,Scenario}
+
+The scenario form of a [`ContingencyCase`](@ref): one status-0 operation
+per outaged element (every leg of a three-winding transformer), with the
+case's name, weight and kind. Returns `nothing` when an element does not
+resolve to a component of the case (a case list built for another
+network).
+"""
+function scenario_from_case(case::ContingencyCase, net::Net, index::ScenarioIndex; names::ContingencyNames = contingency_names(net, index), ids = _scenario_ids_by_internal(index))::Union{Nothing,Scenario}
+  members = _contingency_case_members(net, names, case)
+  members isa AbstractString && return nothing
+  ops = PatchOp[]
+  for (mkind, internal) in members
+    id = mkind === :branch ? get(ids.branch, internal, nothing) : mkind === :gen ? get(ids.appliance, internal, nothing) : get(ids.link, internal, nothing)
+    id === nothing && return nothing
+    push!(ops, PatchOp(op = :status, target = index.kind_by_id[id], id = id, value = 0.0))
   end
-  if set.mode in (:n1_generators, :n1_all)
-    for case in generateN1Generators(net)
-      case.element in excluded && continue
-      internal = _resolve_contingency_generator(net, case.element)
-      internal === nothing && continue
-      id = get(id_by_internal_appliance, internal, nothing)
-      id === nothing && continue
-      target = index.kind_by_id[id]
-      push!(out, Scenario(name = case.name, weight = case.weight, ops = [PatchOp(op = :status, target = target, id = id, value = 0.0)]))
-    end
+  return Scenario(name = case.name, weight = case.weight, ops = ops, kind = case.kind)
+end
+
+"""
+    expand_scenarios(set, net, index; events = ContingencyEventsConfig(), pairs = ContingencyPairsConfig()) -> Vector{Scenario}
+
+Expand a scenario set to the scenarios the engine runs. The N-1 modes
+expand through the EXISTING generators (`generateN1Branches`,
+`generateN1Generators`), honoring `exclusions` by element string or case
+name; every expanded scenario carries one status patch (a three-winding
+transformer one per leg) and the kind of its case. The event classes of
+`set.events` add the generated correlated events and N-2 pairs
+([`generateCorrelatedEvents`](@ref), [`generateBranchPairs`](@ref)); the
+generator options (`max_members`, `name_stem_pattern`, the pair rule and
+cap) come from `events` and `pairs`. Explicit scenarios come first, then
+the N-1 list, then the events. Case names and elements use the file names
+of the case ([`contingency_names`](@ref)).
+"""
+function expand_scenarios(set::ScenarioSet, net::Net, index::ScenarioIndex; events = ContingencyEventsConfig(), pairs = ContingencyPairsConfig())::Vector{Scenario}
+  set.mode in (:explicit, :n1_branches, :n1_generators, :n1_all) || throw(ArgumentError(string("unknown scenario mode ", set.mode)))
+  (set.mode === :explicit && isempty(set.events)) && return set.scenarios
+  names = contingency_names(net, index)
+  ids = _scenario_ids_by_internal(index)
+  excluded = Set(set.exclusions)
+  out = copy(set.scenarios)
+  cases = ContingencyCase[]
+  set.mode in (:n1_branches, :n1_all) && append!(cases, generateN1Branches(net; names = names))
+  set.mode in (:n1_generators, :n1_all) && append!(cases, generateN1Generators(net; names = names))
+  if !isempty(set.events)
+    classes = Set(set.events)
+    append!(cases, generateCorrelatedEvents(net; names = names,
+      double_circuits = :double_circuits in classes, busbars = :busbars in classes, substations = :substations in classes,
+      links = :links in classes, name_groups = :name_groups in classes,
+      max_members = events.max_members, name_stem_pattern = events.name_stem_pattern,
+      pairs = :pairs in classes, pair_rule = pairs.rule, max_pairs = pairs.max_pairs))
+  end
+  for case in cases
+    (case.name in excluded || any(in(excluded), case.elements)) && continue
+    sc = scenario_from_case(case, net, index; names = names, ids = ids)
+    sc === nothing || push!(out, sc)
   end
   return out
 end
@@ -253,6 +334,15 @@ function _scenario_op_dict(op::PatchOp)::Dict{String,Any}
   return d
 end
 
+# one scenario in document form; `kind` is written when it is not the
+# default :explicit, so a file of user scenarios reads and writes back
+# unchanged
+function _scenario_dict(s::Scenario)::Dict{String,Any}
+  d = Dict{String,Any}("name" => s.name, "weight" => s.weight, "ops" => Any[_scenario_op_dict(op) for op in s.ops])
+  s.kind === :explicit || (d["kind"] = String(s.kind))
+  return d
+end
+
 """
     scenario_set_dict(set) -> Dict{String,Any}
 
@@ -261,7 +351,8 @@ The document form of a scenario set (`sparlectra.scenarios`).
 function scenario_set_dict(set::ScenarioSet)::Dict{String,Any}
   d = Dict{String,Any}("mode" => String(set.mode))
   isempty(set.exclusions) || (d["exclusions"] = copy(set.exclusions))
-  isempty(set.scenarios) || (d["scenarios"] = Any[Dict{String,Any}("name" => s.name, "weight" => s.weight, "ops" => Any[_scenario_op_dict(op) for op in s.ops]) for s in set.scenarios])
+  isempty(set.events) || (d["events"] = Any[String(e) for e in set.events])
+  isempty(set.scenarios) || (d["scenarios"] = Any[_scenario_dict(s) for s in set.scenarios])
   return d
 end
 
@@ -278,7 +369,7 @@ function _scenario_from_dict(raw::AbstractDict)::Scenario
       factor = haskey(o, "factor") ? _scf_num(o["factor"], "scenario op factor") : nothing,
     ))
   end
-  return Scenario(name = String(_scf_require(raw, "name", "a scenario")), weight = haskey(raw, "weight") ? _scf_num(raw["weight"], "scenario weight") : 1.0, ops = ops)
+  return Scenario(name = String(_scf_require(raw, "name", "a scenario")), weight = haskey(raw, "weight") ? _scf_num(raw["weight"], "scenario weight") : 1.0, ops = ops, kind = Symbol(String(_scf_get(raw, "kind", "explicit"))))
 end
 
 """
@@ -291,46 +382,20 @@ function scenario_set_from_dict(raw::AbstractDict)::ScenarioSet
     scenarios = Scenario[_scenario_from_dict(s) for s in _scf_get(raw, "scenarios", [])],
     mode = Symbol(String(_scf_get(raw, "mode", "explicit"))),
     exclusions = String[String(x) for x in _scf_get(raw, "exclusions", [])],
+    events = Symbol[Symbol(String(x)) for x in _scf_get(raw, "events", [])],
   )
-end
-
-"""
-    scenario_set_from_contingencies(raw, case) -> ScenarioSet
-
-Map a legacy `sparlectra.contingencies` block onto the scenario model:
-`mode` and `exclusions` carry over, and every
-explicit case becomes one scenario with a status patch per outage
-component id.
-"""
-function scenario_set_from_contingencies(raw::AbstractDict, case::SCFCase)::ScenarioSet
-  index = ScenarioIndex(case)
-  mode_raw = String(_scf_get(raw, "mode", "explicit"))
-  mode = mode_raw == "all_branches" ? :n1_branches : mode_raw == "all_branches_plus" ? :n1_all : :explicit
-  scenarios = Scenario[]
-  for (k, c) in enumerate(_scf_get(raw, "cases", []))
-    c isa AbstractDict || continue
-    ops = PatchOp[]
-    for o in _scf_get(c, "outages", [])
-      id = _scf_int(_scf_require(o, "component", "a contingency outage"), "contingency outage component")
-      target = get(index.kind_by_id, id, :branch)
-      push!(ops, PatchOp(op = :status, target = target, id = id, value = 0.0))
-    end
-    push!(scenarios, Scenario(name = String(_scf_get(c, "name", string("contingency_", k))), weight = _scf_num(_scf_get(c, "weight", 1.0), "contingency weight"), ops = ops))
-  end
-  return ScenarioSet(scenarios = scenarios, mode = mode, exclusions = String[String(x) for x in _scf_get(raw, "exclusions", [])])
 end
 
 """
     scf_case_scenarios(case) -> Union{Nothing,ScenarioSet}
 
 The scenario set a typed case carries: the `scenarios` block when
-present, otherwise the legacy `contingencies` block mapped onto the
-scenario model, otherwise `nothing`.
+present, otherwise `nothing`. Scenarios are a Sparlectra Case Format
+feature; converting a case to another format does not carry them.
 """
 function scf_case_scenarios(case::SCFCase)::Union{Nothing,ScenarioSet}
   spar = case.sparlectra
   spar === nothing && return nothing
   isempty(spar.scenarios) || return scenario_set_from_dict(spar.scenarios)
-  isempty(spar.contingencies) || return scenario_set_from_contingencies(spar.contingencies, case)
   return nothing
 end

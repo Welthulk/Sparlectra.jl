@@ -833,6 +833,28 @@ contingency:
   # result counts. Off reports the warm result alone.
   warm_cold_check: false
   warm_cold_check_margin_pu: 0.02
+  # Correlated events added to a generated N-1 branch list (the n1_all and
+  # n1_branches sources and the branch outage run): elements that trip
+  # together. SCF cases only; other formats run plain N-1 and run.log says
+  # so. Loads, units and shunts of an opened busbar stay in the model and
+  # are reported as cut off.
+  events:
+    enabled: false
+    double_circuits: true     # branches with the same two endpoints
+    busbars: false            # one busbar section: its branches and its closed couplers
+    substations: false        # whole station: every branch at all its sections
+    links: false              # each closed coupler alone
+    name_groups: false        # branches whose file names share a stem
+    # the circuit suffix a name group strips (one or two digits); members
+    # must also share the voltage and the endpoint stations
+    name_stem_pattern: "[ _#(-]?[0-9]{1,2}[)]?$"
+    max_members: 6            # larger events are skipped
+  # N-2 branch pairs added to the same list. rule all: every unordered pair
+  # of closed branches. A run above max_pairs stops before solving.
+  pairs:
+    enabled: false
+    rule: all
+    max_pairs: 50000
 
 control:
   # Enable the generic outer-loop control framework.

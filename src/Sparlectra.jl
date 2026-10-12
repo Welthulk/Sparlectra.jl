@@ -167,6 +167,8 @@ export
   # yamlparams.jl
   parse_yaml_scalar,
   load_yaml_dict,
+  yaml_quoted,                            # The one quoting rule of the YAML writers (escapes backslash and quote).
+  yaml_string_text,                       # A string scalar as the writers emit it: bare or quoted, read back unchanged.
   merge_yaml_dict!,
   as_bool,
   as_int_vector,
@@ -188,6 +190,9 @@ export
   parallel_max_tasks,                     # Resolve max_tasks (auto = Threads.nthreads()) to a task count.
   DiagnosticsConfig,
   OutputConfig,
+  ContingencyConfig,                      # contingency.* settings (ladder, screening, warm start, events, pairs).
+  ContingencyEventsConfig,                # contingency.events.*: correlated event classes.
+  ContingencyPairsConfig,                 # contingency.pairs.*: N-2 pairs with a cap.
   SparlectraConfig,
   load_sparlectra_config,                 # Load a configuration file without activating it.
   load_sparlectra_config!,                # Load and activate a configuration file.
@@ -461,14 +466,14 @@ export
   format_powsybl_report,                  # The console block of a PowSyBl import report.
   PatchOp,                                # One scenario patch operation on an SCF component id.
   Scenario,                               # Named, weighted, ordered patch list.
-  ScenarioSet,                            # Scenario vector plus N-1 mode and exclusions.
+  ScenarioSet,                            # Scenario vector plus N-1 mode, exclusions and event classes.
+  scenario_from_case,                     # The scenario form of a contingency case (one status op per element).
   ScenarioIndex,                          # SCF id to component class and internal index, from the typed case.
   validate_scenarios,                     # Load-time validation with scenario name and op index in every error.
-  expand_scenarios,                       # Expand the N-1 modes through the existing generators.
-  scf_case_scenarios,                     # The scenario set a typed case carries (scenarios or mapped contingencies).
+  expand_scenarios,                       # Expand the N-1 modes and event classes through the generators.
+  scf_case_scenarios,                     # The scenario set a typed case carries (the scenarios block).
   scenario_set_dict,                      # Document form of a scenario set.
   scenario_set_from_dict,                 # Read a sparlectra.scenarios block.
-  scenario_set_from_contingencies,        # Map the legacy contingencies block onto the scenario model.
   UndoLog,                                # Reversible record of one apply!.
   apply!,                                 # Apply patch operations to a working copy with an undo log.
   restore!,                               # Replay the undo log in reverse; the copy returns to the base bitwise.
@@ -476,15 +481,24 @@ export
   ScenarioResult,                         # ContingencyResult surface plus screened flag and screening estimate.
   scf_case_config,                        # The dotted configuration overrides a case file carries (#342).
   scf_is_case_config_key,                 # Whether a configuration key describes the case or the installation (#342).
-  scf_case_studies,                       # The contingency and short-circuit study definitions of a case file (#342).
+  scf_case_studies,                       # The short-circuit study definition of a case file (#342).
   scf_extra_names,                        # Component id to reference name, so study blocks can be resolved against a network (#342).
   scf_validate_dataset,                   # File-level validation of a parsed case file, without building the network (#342).
   scf_fault_nodes,                        # The buses a case file's PGM fault rows point at (#342).
   ShortCircuitResult,                     # Result type of runShortCircuit! (safety-flagged rows).
 
-  # contingency.jl (N-1 batch, multi-core Phase 4)
-  ContingencyCase,                        # One outage case (name, kind = :branch/:gen, element, weight).
-  ContingencyResult,                      # Outcome of one case: convergence, envelope, overloads, shed load, weight.
+  # contingency.jl, names.jl, events.jl (N-1 batch, correlated events, N-2 pairs)
+  ContingencyCase,                        # One outage case: name, kind, the outaged elements, weight.
+  ContingencyResult,                      # Outcome of one case: kind, elements, convergence, envelope, overloads, shed load, weight.
+  ContingencyNames,                       # Display names of the outage elements (file names of an SCF case).
+  contingency_names,                      # The display-name map of a net, optionally with the file names of its SCF case.
+  generateDoubleCircuits,                 # Events: branches with the same two endpoints.
+  generateBusbarEvents,                   # Events: one busbar section with its branches and couplers.
+  generateSubstationEvents,               # Events: a whole station (buses joined by closed links).
+  generateLinkOutages,                    # One case per closed bus link (busbar coupler).
+  generateNameGroups,                     # Events: branches whose file names share a stem.
+  generateBranchPairs,                    # N-2 pairs of closed branches, with a cap.
+  generateCorrelatedEvents,               # The union of the event classes, duplicates removed.
   OverloadRecord,                         # One overloaded branch under a case (name + loading %).
   ContingencyReport,                      # Aggregate over a batch (counts, load shed, worst loading, top overloads).
   runContingencies!,                      # Evaluate a case batch on template copies, optionally threaded.
@@ -494,7 +508,7 @@ export
   applyContingencyWeights,                # Attach per-case weights (by name) to a case list.
   readContingencyWeightsCSV,              # Read case name -> outage weight from a two-column CSV.
   printContingencyResults,                # Fixed-width result table (style of printShortCircuitResult).
-  writeContingencyResultsCSV,             # Semicolon CSV writer for the result batch.
+  writeContingencyResultsCSV,             # CSV writer for the result batch (output.csv_format).
   buildContingencyReport,                 # Aggregate a result batch into a ContingencyReport.
   printContingencyReport,                 # Print the aggregate report summary block.
   NativeShortCircuitData,                 # Native SC source container on Net (filled by addExternalGrid!, #299).
@@ -785,7 +799,9 @@ include("shortcircuit/short_circuit.jl")
 # N-1 contingency batch API (multi-core Phase 4): needs the rectangular
 # solver, remove functions, island detection, and the parallel runtime
 # helpers included above.
+include("contingency/names.jl")
 include("contingency/contingency.jl")
+include("contingency/events.jl")
 include("scenario/patch.jl")
 include("scenario/apply.jl")
 include("scenario/engine.jl")

@@ -33,8 +33,9 @@ What one case import hands to a service run:
 - `provenance`: source path, per-format import records (the CGMES import
   result with its short-circuit data and SV bookkeeping, the parsed DTF
   case, the auto-profile decision), for the artifacts a service writes.
-- `studies`: the study definitions a case file carries (`contingencies`,
-  `short_circuit`); empty for every foreign format.
+- `studies`: the study definitions a case file carries (`short_circuit`);
+  empty for every foreign format. Scenarios and contingency studies are read
+  from the typed case (`scf_case_scenarios`), not from here.
 - `overrides`: reserved for auto-profile recommendations as override level;
   empty while the MATPOWER context still rewrites the run configuration itself.
 """
@@ -56,7 +57,7 @@ struct ImportedCase
   end
 end
 
-const _EMPTY_CASE_STUDIES = (contingencies = Dict{String,Any}(), short_circuit = Dict{String,Any}())
+const _EMPTY_CASE_STUDIES = (short_circuit = Dict{String,Any}(),)
 
 function _looks_like_cgmes(case_path::AbstractString)::Bool
   isdir(case_path) && return true

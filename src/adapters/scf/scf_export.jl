@@ -109,7 +109,7 @@ _scf_is_transformer(br::Branch)::Bool = br.ratio != 0.0
     _scf_bus_name(net, i) -> String
 
 The REFERENCE name of a bus: the `busDict` key. That is the name
-measurements, controllers, contingencies, and reports resolve against, and
+measurements, controllers, scenarios, and reports resolve against, and
 the name the reader has to restore; the internal component name ("Bus_1_110",
 "Aux_12_380") is kept separately in `extra.component_name` when it differs.
 """
@@ -1181,7 +1181,6 @@ function net_to_scf(
   source_reference::AbstractString = "",
   intended_calculations::Vector{String} = String["power_flow"],
   notes::AbstractString = "",
-  contingencies::Union{Nothing,AbstractDict} = nothing,
   scenarios::Union{Nothing,AbstractDict} = nothing,
   short_circuit::Union{Nothing,AbstractDict} = nothing,
   include_start_state::Bool = false,
@@ -1280,10 +1279,6 @@ function net_to_scf(
   # deprecated precedence level directly below that file.
   # study definitions: what to compute, not what came out. The result
   # contract is untouched; these blocks only describe the study.
-  contingencies === nothing || (spar["contingencies"] = Dict{String,Any}(String(k) => v for (k, v) in contingencies))
-  # the scenario block: the scenario-aware path writes
-  # scenarios; the deprecated contingencies keyword keeps its historical
-  # emission for existing callers
   scenarios === nothing || (spar["scenarios"] = Dict{String,Any}(String(k) => v for (k, v) in scenarios))
   short_circuit === nothing || (spar["short_circuit"] = Dict{String,Any}(String(k) => v for (k, v) in short_circuit))
   if include_start_state
@@ -1318,7 +1313,7 @@ function net_to_scf(
     haskey(spar, "tap_changer_models") && push!(dropped, "typed tap-changer models")
     any(ps -> has_qu_controller(ps) || has_pu_controller(ps), net.prosumpsVec) && push!(dropped, "voltage-dependent Q(U)/P(U) control")
     haskey(spar, "start_state") && push!(dropped, "start state")
-    (haskey(spar, "contingencies") || haskey(spar, "short_circuit")) && push!(dropped, "study definitions")
+    (haskey(spar, "scenarios") || haskey(spar, "short_circuit")) && push!(dropped, "study definitions")
     # g1 on a line row is the SCF extension for a conductance tan1 cannot
     # spell (b == 0); PGM's line has no such attribute, so a strict file
     # genuinely loses that conductance
@@ -1403,6 +1398,9 @@ Keyword arguments:
 - `measurement_provenance`: what is known about the measurement set (`noise`,
   `generator`, `seed`); it lands in `sparlectra.measurements.provenance` and
   is what tells a reader that a set is ideal rather than measured.
+- `scenarios`, `short_circuit`: study definitions written as the
+  `sparlectra.scenarios` and `sparlectra.short_circuit` blocks (the
+  document form of [`scenario_set_dict`](@ref) for scenarios).
 - `include_start_state`: write the current bus voltages as START values
   (never as results). Off by default, because a stale start state on an
   edited net is worse than none.

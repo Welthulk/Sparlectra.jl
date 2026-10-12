@@ -29,6 +29,11 @@ not a general-purpose YAML implementation. Supported scalars are booleans,
 `null`/`~`, integers, floating-point numbers, symbols written as `:name`,
 quoted strings, unquoted strings, and one-line scalar lists such as
 `[100, 300, 500]`.
+
+A double-quoted string resolves the two escapes the writers produce, `\\\\`
+(one backslash) and `\\"` (a quote); every other backslash stays as it is,
+so a hand-written `"C:\\data"` or `"\\d{1,2}"` reads unchanged. In a
+single-quoted string `''` is one quote, backslashes are literal.
 """
 function parse_yaml_scalar(raw::AbstractString)
   s = strip(raw)
@@ -40,8 +45,11 @@ function parse_yaml_scalar(raw::AbstractString)
     return [parse_yaml_scalar(part) for part in _split_yaml_inline_list(inner)]
   end
 
-  if (startswith(s, "\"") && endswith(s, "\"")) || (startswith(s, "'") && endswith(s, "'"))
-    return s[2:(end-1)]
+  if length(s) >= 2 && startswith(s, "\"") && endswith(s, "\"")
+    return _yaml_unescape_double(s[2:(end-1)])
+  end
+  if length(s) >= 2 && startswith(s, "'") && endswith(s, "'")
+    return replace(s[2:(end-1)], "''" => "'")
   end
 
   lower = lowercase(s)
@@ -69,9 +77,16 @@ function _split_yaml_inline_list(inner::AbstractString)::Vector{String}
   parts = String[]
   buf = IOBuffer()
   qchar = '\0'
+  escaped = false
   for ch in inner
     if qchar != '\0'
-      if ch == qchar
+      # inside double quotes a backslash escapes the next character, so
+      # \" does not end the string
+      if escaped
+        escaped = false
+      elseif qchar == '"' && ch == '\\'
+        escaped = true
+      elseif ch == qchar
         qchar = '\0'
       end
       print(buf, ch)
@@ -92,9 +107,16 @@ end
 function _strip_yaml_comment(line::AbstractString)::String
   buf = IOBuffer()
   qchar = '\0'
+  escaped = false
   for ch in line
     if qchar != '\0'
-      if ch == qchar
+      # inside double quotes a backslash escapes the next character, so
+      # \" does not end the string and a later # stays text
+      if escaped
+        escaped = false
+      elseif qchar == '"' && ch == '\\'
+        escaped = true
+      elseif ch == qchar
         qchar = '\0'
       end
       print(buf, ch)
@@ -108,6 +130,66 @@ function _strip_yaml_comment(line::AbstractString)::String
     end
   end
   return String(take!(buf))
+end
+
+# The inverse of _yaml_quoted: in a double-quoted scalar `\\` is one
+# backslash and `\"` a quote; any other backslash is kept with the character
+# after it, so hand-written Windows paths and regular expressions read as
+# written (and a file saved before 0.40.0 with doubled backslashes reads back
+# with single ones).
+function _yaml_unescape_double(body::AbstractString)::String
+  occursin('\\', body) || return String(body)
+  out = IOBuffer()
+  escaped = false
+  for ch in body
+    if escaped
+      (ch == '\\' || ch == '"') || print(out, '\\')
+      print(out, ch)
+      escaped = false
+    elseif ch == '\\'
+      escaped = true
+    else
+      print(out, ch)
+    end
+  end
+  escaped && print(out, '\\')
+  return String(take!(out))
+end
+
+"""
+    yaml_quoted(text) -> String
+
+The one quoting rule of Sparlectra's YAML writers: `text` in double quotes
+with every backslash written as `\\\\` and every quote as `\\"`, the two
+escapes [`parse_yaml_scalar`](@ref) resolves, so writing and reading give the
+same string for every value. A line break cannot be written in this
+line-based subset and throws an `ArgumentError`.
+"""
+function yaml_quoted(text::AbstractString)::String
+  (occursin('\n', text) || occursin('\r', text)) && throw(ArgumentError("YAML subset: a string value cannot contain a line break: $(repr(String(text)))"))
+  return string('"', replace(String(text), "\\" => "\\\\", "\"" => "\\\""), '"')
+end
+
+# A string is written bare only when the reader gives it back unchanged as a
+# string; everything else is quoted. This is the self-inverse criterion, not a
+# maintained list: it covers the YAML 1.1 boolean family (live case: the enum
+# value "off" was written bare and came back as `false`), null spellings,
+# every number form the reader knows including leading-zero integers,
+# ":symbol" spellings, inline-list lookalikes and padded values, and it stays
+# correct when parse_yaml_scalar learns new forms.
+function _yaml_ambiguous_scalar(s::AbstractString)
+  v = parse_yaml_scalar(String(s))
+  return !(v isa AbstractString && String(v) == String(s))
+end
+
+# a string scalar as the writers emit it: bare where that reads back
+# unchanged, quoted (yaml_quoted) where a character would end the value early
+# (`#` starts a comment, `:` a mapping), the reader would take it for another
+# type, or quotes and backslashes would be read differently
+function yaml_string_text(text::AbstractString)::String
+  s = String(text)
+  (isempty(s) || occursin(r"[:#\[\]{},&*!|>'\"%@`\\]|^[-?]|^\s|\s$", s) || _yaml_ambiguous_scalar(s)) && return yaml_quoted(s)
+  return s
 end
 
 """

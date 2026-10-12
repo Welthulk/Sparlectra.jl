@@ -1847,6 +1847,16 @@ form:
         "contingency_warm_active_set" => "contingency.warm_active_set",
         "contingency_warm_cold_check" => "contingency.warm_cold_check",
         "contingency_warm_cold_check_margin_pu" => "contingency.warm_cold_check_margin_pu",
+        "contingency_events_enabled" => "contingency.events.enabled",
+        "contingency_events_double_circuits" => "contingency.events.double_circuits",
+        "contingency_events_busbars" => "contingency.events.busbars",
+        "contingency_events_substations" => "contingency.events.substations",
+        "contingency_events_links" => "contingency.events.links",
+        "contingency_events_name_groups" => "contingency.events.name_groups",
+        "contingency_events_max_members" => "contingency.events.max_members",
+        "contingency_pairs_enabled" => "contingency.pairs.enabled",
+        "contingency_pairs_rule" => "contingency.pairs.rule",
+        "contingency_pairs_max_pairs" => "contingency.pairs.max_pairs",
         "power_flow_apslf_order" => "power_flow.apslf.order",
         "power_flow_apslf_nr_polish" => "power_flow.apslf.nr_polish",
         "power_flow_apslf_convergence_radius" => "power_flow.apslf.convergence_radius",
@@ -2288,6 +2298,25 @@ result = get_powerflow_result(run_id)
       screen_request = SparlectraApp.powerflow_webui_request(screen_form; default_output_root = output_root)
       screen_cfg, _ = Sparlectra._load_api_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, Sparlectra.validate_gui_config_overrides(screen_request["config_overrides"]))
       @test (screen_cfg.contingency.screening_mode, screen_cfg.contingency.screening_margin_pct, screen_cfg.contingency.warm_active_set, screen_cfg.contingency.warm_cold_check, screen_cfg.contingency.max_iter) == (:flag, 15.0, true, true, 12)
+      # correlated events and pairs (#355) from the same form
+      event_form = copy(form)
+      event_form["contingency_events_enabled"] = "true"
+      event_form["contingency_events_busbars"] = "true"
+      event_form["contingency_events_name_groups"] = "true"
+      event_form["contingency_events_max_members"] = "4"
+      event_form["contingency_pairs_enabled"] = "true"
+      event_form["contingency_pairs_max_pairs"] = "3000"
+      event_request = SparlectraApp.powerflow_webui_request(event_form; default_output_root = output_root)
+      event_cfg, _ = Sparlectra._load_api_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, Sparlectra.validate_gui_config_overrides(event_request["config_overrides"]))
+      ev = event_cfg.contingency.events
+      @test (ev.enabled, ev.double_circuits, ev.busbars, ev.substations, ev.links, ev.name_groups, ev.max_members) == (true, true, true, false, false, true, 4)
+      @test (event_cfg.contingency.pairs.enabled, event_cfg.contingency.pairs.rule, event_cfg.contingency.pairs.max_pairs) == (true, :all, 3000)
+      @test ev.name_stem_pattern == Sparlectra.ContingencyEventsConfig().name_stem_pattern
+      # the pattern survives a write of the configuration file (a Settings
+      # save rewrites the whole file)
+      rt_yaml = joinpath(mktempdir(), "rt.yaml")
+      SparlectraApp._write_yaml_file(rt_yaml, Sparlectra.load_yaml_dict(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH))
+      @test Sparlectra.load_sparlectra_config(rt_yaml; reload = true).contingency.events.name_stem_pattern == Sparlectra.ContingencyEventsConfig().name_stem_pattern
       # stopping the Web UI aborts and awaits a running job before the
       # process may exit (native factorizations in use by worker threads
       # crashed the process on stop): a runner that solves until the abort

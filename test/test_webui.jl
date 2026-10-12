@@ -395,6 +395,43 @@ function run_webui_fast_tests()
             @test ("power_flow.qlimits.guard.max_switches", "5", "7") in SparlectraApp._webui_compare_config_diff(run_q["output_dir"], run_g["output_dir"])
         end)() end
 
+        @testset "YAML writers and reader give back every string (0.40.0)" begin (function ()
+            # Both writers (the app's, used by the Settings save, and the
+            # library's, used by case configuration files) doubled every
+            # backslash and the reader kept them: a Windows path, a regular
+            # expression and a string with quotes came back changed after one
+            # save. One quoting rule now, and the reader resolves exactly its
+            # two escapes.
+            strings = ["C:\\data\\case.m", raw"[ _#(-]?\d{1,2}\)?$", "say \"hi\" # not a comment"]
+            mktempdir() do dir
+                for (label, writer) in (("app", (p, d) -> SparlectraApp._write_yaml_file(p, d)), ("library", (p, d) -> write(p, Sparlectra._yaml_dict_text(d))))
+                    for v in strings
+                        p = joinpath(dir, "rt.yaml")
+                        writer(p, Dict{String,Any}("k" => v, "list" => Any[v, "plain"]))
+                        back = Sparlectra.load_yaml_dict(p)
+                        @test (label, back["k"]) == (label, v)
+                        @test (label, back["list"]) == (label, Any[v, "plain"])
+                    end
+                end
+                # the Settings save rewrites the whole file: a stem pattern
+                # with backslashes (machine scope, not on the form) survives a
+                # save of another key, and hand-written Windows paths and
+                # regular expressions read as written
+                cfg = joinpath(dir, "configuration.yaml")
+                pattern = raw"[ _#(-]?\d{1,2}\)?$"
+                write(cfg, replace(read(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, String), "name_stem_pattern: \"[ _#(-]?[0-9]{1,2}[)]?\$\"" => "name_stem_pattern: \"$(pattern)\""))
+                @test Sparlectra.load_sparlectra_config(cfg; reload = true).contingency.events.name_stem_pattern == pattern
+                saved = SparlectraApp._webui_write_general_settings!(cfg, Dict{String,Any}("contingency.events.enabled" => true))
+                @test saved.ok
+                again = Sparlectra.load_sparlectra_config(cfg; reload = true).contingency.events
+                @test again.enabled && again.name_stem_pattern == pattern
+                # both pattern forms strip the same suffixes
+                stems(form) = [replace(n, Regex(form) => "") for n in ("Ostheim_Neuwiese_1", "Neubach_Waldsee", "Feld (2)", "Leitung_220")]
+                @test stems(pattern) == stems(Sparlectra.ContingencyEventsConfig().name_stem_pattern)
+                @test stems(pattern)[1:3] == ["Ostheim_Neuwiese", "Neubach_Waldsee", "Feld "]
+            end
+        end)() end
+
         @testset "the provisioned configuration follows changed template defaults" begin (function ()
             # 0.32.0 one-time reset: the CSV format becomes auto even where
             # the user saved another value, exactly once; the user's next

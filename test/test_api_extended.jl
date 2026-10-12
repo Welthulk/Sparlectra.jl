@@ -1011,7 +1011,9 @@ power_flow:
       @test occursin("\"run_id\":\"$(result.run_id)\"", json_result)
       @test occursin("\"schema_version\":\"1.0\"", json_result)
       @test occursin("run_id: $(result.run_id)", yaml_result)
-      @test occursin("schema_version: 1.0", yaml_result)
+      # a string that reads like a number is quoted (0.40.0), so the YAML
+      # gives back the string "1.0" the JSON carries, not the float 1.0
+      @test occursin("schema_version: \"1.0\"", yaml_result)
       @test occursin("\"status\":\"succeeded\"", json_result)
       @test occursin("status: succeeded", yaml_result)
       result_file_text = read(result.result_file, String)

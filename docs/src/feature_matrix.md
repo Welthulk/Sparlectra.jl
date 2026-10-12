@@ -56,14 +56,17 @@ Each table lists only concepts of its own domain; a missing row is not a gap.
 
 | Feature | Status | Notes |
 |---|:---:|---|
-| Branch-outage batches (`runContingencies!`) | ✅ | Warm-started cases on template copies of the solved base case, checked against the voltage band and `sn_MVA` loadings. [N-1 Contingency Analysis](contingency.md). |
+| Branch-outage batches (`runContingencies!`) | ✅ | Warm-started cases on a working copy of the solved base case, checked against the voltage band and `sn_MVA` loadings. [N-1 Contingency Analysis](contingency.md). |
+| Correlated events | ✅ | Double circuits, busbar sections, stations, couplers and file name groups as one case each (`generateCorrelatedEvents`), on the same path and screening as N-1; `contingency.events.*` in the service (SCF cases). |
+| N-2 pairs | ✅ | `generateBranchPairs`: every pair of closed branches, with a cap (`contingency.pairs.max_pairs`); no pruning rule (the tested rules missed harmful pairs). |
+| Display names | ✅ | Rows, elements and overloads carry the file names of an SCF case (`contingency_names`); the network keeps its generated names. |
 | Case sources | ✅ | `generateN1Branches` (in-service branches, transformer filter, parallel circuits as `name#branchIdx`) and imported MATPOWER FOR001 lists; filters `min_vn_kV` / `min_sn_MVA` / `name_pattern`. |
 | Generator outages | ✅ | `generateN1Generators` (`kind = :gen`, filters `min_pg_MW` / `name_pattern`). The slack absorbs the loss or `distributed_slack_enabled = true` shares it; `auto_slack` (the default of the batch entries, the service and the Web UI) promotes a survivor when the slack unit is the outage, and an island that lost its reference takes its best unit by stated priority. |
 | Case weights | ✅ | `weight` per case (default 1.0) for a severity-weighted ranking; `readContingencyWeightsCSV` + `applyContingencyWeights` attach outage rates. |
 | Failure semantics | ✅ | Islanding without a promotable reference, non-convergence and unresolvable elements are reported per case, not thrown; `contingency.rescue_ladder` tries several starts; a load-only island is a quantified load-shed result. |
 | Parallel execution | ✅ | The case list fans out over Julia threads (`runtime.parallel.*`), identical to the serial run. |
-| Output | ✅ | `printContingencyResults` (severity-ranked, failures first) and `writeContingencyResultsCSV`, with `OverloadRecord` loadings, shed load, weight and severity per case. |
-| Aggregate report | ✅ | `buildContingencyReport` folds a batch into a `ContingencyReport`; `printContingencyReport` prints it. |
+| Output | ✅ | `printContingencyResults` (severity-ranked, failures first) and `writeContingencyResultsCSV`, with the case kind, the outaged elements, `OverloadRecord` loadings, shed load, weight and severity per case. |
+| Aggregate report | ✅ | `buildContingencyReport` folds a batch into a `ContingencyReport` (counts by outcome and by kind); `printContingencyReport` prints it. |
 | Web UI | ✅ | **Contingency (N-1)** with a branch/generator selector runs the batch through the shared service path, writes `contingency_n1.csv` and a `run.log` report and shows an outcome summary; a slack-unit outage is named, not shown as a failure. |
 
 ## State estimation (WLS)

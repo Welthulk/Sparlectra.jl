@@ -96,6 +96,9 @@ function _csv_fixture_matches(out_path::AbstractString, fixture_path::AbstractSt
   return true
 end
 
+# every value of two result rows except the label (name, kind, elements)
+_scenario_values_equal(x, y) = all(f -> f in (:name, :kind, :elements) || isequal(getproperty(x, f), getproperty(y, f)), fieldnames(Sparlectra.ContingencyResult))
+
 function _scenario_case14()
   cfg = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true)
   mpc = Sparlectra.MatpowerIO.read_case(abspath(joinpath(dirname(@__DIR__), "data", "mpower", "warmup_casePST.m")); legacy_compat = true)
@@ -191,15 +194,23 @@ function run_scenario_patch_tests()
       case.sparlectra.scenarios = Dict{String,Any}()
     end)() end
 
-    @testset "legacy contingencies map onto the scenario model" begin (function ()
-      raw = Dict{String,Any}("mode" => "explicit", "cases" => Any[Dict{String,Any}("name" => "old style", "outages" => Any[Dict{String,Any}("component" => branch_id)])])
-      mapped = Sparlectra.scenario_set_from_contingencies(raw, case)
-      @test length(mapped.scenarios) == 1
-      @test mapped.scenarios[1].name == "old style"
-      @test mapped.scenarios[1].ops[1].op === :status
-      @test mapped.scenarios[1].ops[1].id == branch_id
-      @test mapped.scenarios[1].ops[1].target === :branch
-      @test validate_scenarios(mapped, index) === mapped
+    @testset "the removed contingencies block fails with the way out" begin (function ()
+      # 0.40.0: the legacy block is no longer read; a file that still
+      # carries it names the scenarios block and the editor instead of
+      # running something else
+      path = joinpath(mktempdir(), "legacy.scf.json")
+      write_scf_json(case, path)
+      root = Sparlectra.scf_json_parse(read(path, String))
+      root["sparlectra"]["contingencies"] = Dict{String,Any}("mode" => "explicit", "cases" => Any[Dict{String,Any}("name" => "old style", "outages" => Any[Dict{String,Any}("component" => branch_id)])])
+      write(path, Sparlectra.scf_json_string(root))
+      err = try
+        read_scf_json(path)
+        nothing
+      catch e
+        e
+      end
+      @test err isa ArgumentError
+      @test occursin("sparlectra.scenarios", err.msg) && occursin("scenario editor", err.msg)
     end)() end
 
     @testset "apply and restore: tap patch semantics" begin (function ()
@@ -303,9 +314,9 @@ function run_scenario_patch_tests()
       gen_id = first(id for (id, k) in index.kind_by_id if k === :generator)
       load_id2 = first(id for (id, k) in index.kind_by_id if k === :load)
       items = Any[
-        Sparlectra._ScenarioOutageItem("branch out", 1.0, :branch, branch_internal),
-        Sparlectra._ScenarioOutageItem("gen out", 1.0, :gen, index.internal_by_id[gen_id]),
-        Sparlectra._ScenarioPatchItem(Scenario(name = "load up", ops = [PatchOp(op = :scale, target = :load, id = load_id2, factor = 1.3)])),
+        Sparlectra._ScenarioOutageItem(Sparlectra._CaseLabel("branch out", :branch, ["branch out"], 1.0), [(:branch, branch_internal)]),
+        Sparlectra._ScenarioOutageItem(Sparlectra._CaseLabel("gen out", :gen, ["gen out"], 1.0), [(:gen, index.internal_by_id[gen_id])]),
+        Sparlectra._ScenarioPatchItem(Scenario(name = "load up", ops = [PatchOp(op = :scale, target = :load, id = load_id2, factor = 1.3)]), Sparlectra._CaseLabel("load up", :explicit, ["load up"], 1.0)),
       ]
       for it in items
         r = Sparlectra.evaluate!(engine, worker, it)
@@ -315,8 +326,10 @@ function run_scenario_patch_tests()
     end)() end
 
     @testset "engine: runScenarios! N-1 equals runContingencies!" begin (function ()
-      cases14 = vcat(Sparlectra.generateN1Branches(net), Sparlectra.generateN1Generators(net))
-      via_cases = Sparlectra.runContingencies!(net, cases14)
+      # both entries name the rows after the case file when given its map
+      file_names = contingency_names(net, index)
+      cases14 = vcat(Sparlectra.generateN1Branches(net; names = file_names), Sparlectra.generateN1Generators(net; names = file_names))
+      via_cases = Sparlectra.runContingencies!(net, cases14; names = file_names)
       via_scenarios = runScenarios!(net, ScenarioSet(mode = :n1_all); index = index)
       d = mktempdir()
       a = Sparlectra.writeContingencyResultsCSV(joinpath(d, "cases.csv"), via_cases)
@@ -371,18 +384,21 @@ function run_scenario_patch_tests()
     end)() end
 
     @testset "N-1 expansion equals the existing generators on case14" begin (function ()
+      # the expansion names the cases after the file (contingency_names
+      # with the index), the generator does the same with that map
       expanded = expand_scenarios(ScenarioSet(mode = :n1_branches), net, index)
-      reference = Sparlectra.generateN1Branches(net)
+      file_names = contingency_names(net, index)
+      reference = Sparlectra.generateN1Branches(net; names = file_names)
       @test length(expanded) == length(reference)
       @test [s.name for s in expanded] == [c.name for c in reference]
       @test all(length(s.ops) == 1 && s.ops[1].op === :status && s.ops[1].value == 0.0 for s in expanded)
       gens = expand_scenarios(ScenarioSet(mode = :n1_generators), net, index)
-      gref = Sparlectra.generateN1Generators(net)
+      gref = Sparlectra.generateN1Generators(net; names = file_names)
       @test length(gens) == length(gref)
       @test [s.name for s in gens] == [c.name for c in gref]
       alln1 = expand_scenarios(ScenarioSet(mode = :n1_all), net, index)
       @test length(alln1) == length(reference) + length(gref)
-      excluded = expand_scenarios(ScenarioSet(mode = :n1_branches, exclusions = [reference[1].element]), net, index)
+      excluded = expand_scenarios(ScenarioSet(mode = :n1_branches, exclusions = [only(reference[1].elements)]), net, index)
       @test length(excluded) == length(reference) - 1
 
       # a three-winding transformer expands to ONE scenario that opens all
@@ -402,6 +418,129 @@ function run_scenario_patch_tests()
       @test rs.min_vm_pu == rc.min_vm_pu
       @test rs.voltage_violations == rc.voltage_violations
       @test rs.error == rc.error
+      # 0.40.0: the legs are resolved when the item is built (member item);
+      # the same three ops forced through the patch path (a neutral scale
+      # op) give the bitwise same values, and the row lists the legs
+      @test rs.kind === :transformer3w && rc.kind === :transformer3w
+      @test length(rs.elements) == 3 && rs.elements == rc.elements
+      neutral = first(id for (id, k) in staridx.kind_by_id if k in (:load, :generator))
+      t3p = Scenario(name = "patched", ops = vcat(t3s.ops, [PatchOp(op = :scale, target = staridx.kind_by_id[neutral], id = neutral, factor = 1.0)]))
+      rp = only(redirect_stdout(() -> Sparlectra.runScenarios!(starnet, [t3p]; index = staridx), devnull))
+      @test _scenario_values_equal(rs, rp)
+    end)() end
+
+    @testset "events on the outage path (#355: D1, links, kinds)" begin (function ()
+      case60 = read_scf_json(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case60.scf.json")))
+      net60 = Sparlectra.build_net(case60)
+      idx60 = ScenarioIndex(case60)
+      out(id) = PatchOp(op = :status, target = idx60.kind_by_id[id], id = id, value = 0.0)
+      # D1: two generator outages in one scenario. The ops were applied in
+      # op order by position, so the second deletion hit the unit that had
+      # moved into the slot ([a, b] gave 0.8407 pu and 49.2 %, [b, a] 0.8664
+      # pu and 87.5 % on a35aa395). Both orders are now the same event.
+      gens = sort([id for (id, k) in idx60.kind_by_id if k === :generator]; by = id -> idx60.internal_by_id[id])
+      a, b = gens[1], gens[2]
+      neutral = first(id for (id, k) in idx60.kind_by_id if k === :load)
+      scen = [
+        Scenario(name = "ab", ops = [out(a), out(b)]),
+        Scenario(name = "ba", ops = [out(b), out(a)]),
+        # the same event through the patch path (a neutral op routes it there)
+        Scenario(name = "ab patched", ops = [out(a), out(b), PatchOp(op = :scale, target = :load, id = neutral, factor = 1.0)]),
+        Scenario(name = "ba patched", ops = [PatchOp(op = :scale, target = :load, id = neutral, factor = 1.0), out(b), out(a)]),
+      ]
+      r = redirect_stdout(() -> runScenarios!(net60, scen; index = idx60, parallel_enabled = false), devnull)
+      @test all(x -> x.converged, r)
+      @test _scenario_values_equal(r[1], r[2])
+      @test _scenario_values_equal(r[1], r[3])
+      @test _scenario_values_equal(r[3], r[4])
+      # the patch path removes exactly the two units, in either op order
+      before = [Sparlectra.getCompName(ps.comp) for ps in net60.prosumpsVec]
+      work = deepcopy(net60)
+      for ops in (scen[1].ops, scen[2].ops)
+        undo = apply!(work, ops, idx60)
+        @test length(work.prosumpsVec) == length(before) - 2
+        kept = Set(objectid(ps) for ps in work.prosumpsVec)
+        restore!(work, undo)
+        removed = [k for (k, ps) in enumerate(work.prosumpsVec) if !(objectid(ps) in kept)]
+        @test removed == sort([idx60.internal_by_id[a], idx60.internal_by_id[b]])
+      end
+      @test scf_roundtrip_field_diffs(net60, work) == String[]
+
+      # a link outage (the Neubach coupler) runs on the outage path and
+      # splits the station; its row names the link and reports the kind
+      link_case = only(generateLinkOutages(net60; names = contingency_names(net60, case60)))
+      @test link_case.kind === :link
+      rl = only(redirect_stdout(() -> runContingencies!(net60, [link_case]; names = contingency_names(net60, case60), parallel_enabled = false), devnull))
+      @test rl.kind === :link && rl.elements == link_case.elements
+      @test rl.converged
+      # a generated double circuit equals the hand-written explicit scenario
+      # of the same two outages, value for value
+      names60 = contingency_names(net60, case60)
+      dc = first(generateDoubleCircuits(net60; names = names60))
+      rdc = only(redirect_stdout(() -> runContingencies!(net60, [dc]; names = names60, parallel_enabled = false), devnull))
+      sdc = scenario_from_case(dc, net60, idx60; names = names60)
+      rsc = only(redirect_stdout(() -> runScenarios!(net60, [Scenario(name = "by hand", ops = sdc.ops)]; index = idx60, parallel_enabled = false), devnull))
+      @test rdc.kind === :double_circuit && rsc.kind === :explicit
+      @test rdc.elements == rsc.elements
+      @test _scenario_values_equal(rdc, rsc)
+    end)() end
+
+    @testset "correlated event generators on the demo cases (#355)" begin (function ()
+      demo(name) = (c = read_scf_json(abspath(joinpath(dirname(@__DIR__), "data", "scf", name * ".scf.json"))); n = Sparlectra.build_net(c); (c, n, contingency_names(n, c)))
+      # sp_case14: one double circuit (ids 26/27); its name group is the same
+      # member set and is removed as a duplicate
+      c14, n14, m14 = demo("sp_case14")
+      dc14 = generateDoubleCircuits(n14; names = m14)
+      @test length(dc14) == 1
+      @test sort(dc14[1].elements) == ["Ostheim_Neuwiese_1", "Ostheim_Neuwiese_2"]
+      both14 = generateCorrelatedEvents(n14; names = m14, double_circuits = true, name_groups = true)
+      @test [c.kind for c in both14] == [:double_circuit]
+      # sp_case60: six double circuits, the coupler, Neubach as two busbar
+      # sections and one station, the name group across the two sections
+      c60, n60, m60 = demo("sp_case60")
+      @test length(generateDoubleCircuits(n60; names = m60)) == 6
+      @test [c.elements for c in generateLinkOutages(n60; names = m60)] == [["Link_1"]]
+      bb = [c for c in generateBusbarEvents(n60; names = m60) if startswith(c.name, "BB Neubach_110")]
+      @test sort([c.name for c in bb]) == ["BB Neubach_110", "BB Neubach_110b"]
+      @test all(c -> "Link_1" in c.elements, bb)
+      sub = only(c for c in generateSubstationEvents(n60; names = m60) if c.name == "SUB Neubach_110")
+      @test !("Link_1" in sub.elements) && length(sub.elements) == 4
+      ng = only(c for c in generateNameGroups(n60; names = m60) if c.name == "NG Neubach_Waldsee")
+      @test length(ng.elements) == 2 && all(e -> startswith(e, "Neubach_Waldsee#"), ng.elements)
+      # sp_case188: seven double circuits, the coupler, the Eichried_Falkwik
+      # name group and the Falkwik station
+      c188, n188, m188 = demo("sp_case188")
+      @test length(generateDoubleCircuits(n188; names = m188)) == 7
+      @test length(generateLinkOutages(n188; names = m188)) == 1
+      @test sort(only(c for c in generateNameGroups(n188; names = m188) if c.name == "NG Eichried_Falkwik").elements) == ["Eichried_Falkwik_1", "Eichried_Falkwik_2"]
+      @test any(c -> c.name == "SUB Falkwik_380", generateSubstationEvents(n188; names = m188))
+      # no name group joins branches of different nominal voltage, on any
+      # demo case; a plain net without file names has no name groups
+      for (c, n, m) in (demo("sp_case5"), (c14, n14, m14), (c60, n60, m60), (c188, n188, m188))
+        for ev in generateNameGroups(n, names = m)
+          ks = [Sparlectra._resolve_named_branch(m, e) for e in ev.elements]
+          vns = unique(max(Sparlectra.getNodeVn(n.nodeVec[Int(n.branchVec[k].fromBus)]), Sparlectra.getNodeVn(n.nodeVec[Int(n.branchVec[k].toBus)])) for k in ks)
+          @test length(vns) == 1
+        end
+      end
+      @test isempty(redirect_stderr(() -> generateNameGroups(n60), devnull))
+      # one member set appears once, as the first class: a single-bus station
+      # is :busbar with busbars on, :substation with stations only
+      ev = generateCorrelatedEvents(n60; names = m60, busbars = true, substations = true, links = true, name_groups = true)
+      @test length(unique(Set(Sparlectra._contingency_case_members(n60, m60, c)) for c in ev)) == length(ev)
+      @test count(c -> c.kind === :substation, ev) == 1
+      subs_only = generateCorrelatedEvents(n60; names = m60, double_circuits = false, substations = true)
+      @test all(c -> c.kind === :substation, subs_only) && length(subs_only) > 1
+      # N-2 pairs: every unordered pair of closed branches, the pair that is
+      # also a double circuit listed once (as the event), and the cap stops
+      # before any case is built
+      @test length(generateBranchPairs(n14; names = m14)) == 136
+      @test length(generateBranchPairs(n60; names = m60)) == 2701
+      with_pairs = generateCorrelatedEvents(n14; names = m14, pairs = true)
+      @test count(c -> c.kind === :double_circuit, with_pairs) == 1
+      @test count(c -> c.kind === :pair, with_pairs) == 135
+      @test all(c -> c.kind !== :pair || length(c.elements) == 2, with_pairs)
+      @test_throws ArgumentError generateBranchPairs(n14; names = m14, max_pairs = 135)
     end)() end
   end)() end
   return nothing
@@ -439,6 +578,8 @@ function run_scenario_engine_extended_tests()
     # Regenerated for #475 (joint extra release of twice-clamped machines on
     # a converged iterate): one cell, B_ACL_345_68_81 iterations 16 to 22;
     # its group release does not hold and is undone, every value stays.
+    # Regenerated at 0.40.0 (#355): the columns kind and elements after the
+    # name; every other cell unchanged (compared column by column).
     fixture = abspath(joinpath(@__DIR__, "fixtures", "contingency_sp_case118_n1.csv"))
     case_path = abspath(joinpath(dirname(@__DIR__), "data", "mpower", "sp_case118.m"))
     @test isfile(case_path)
@@ -515,7 +656,7 @@ function run_scenario_engine_extended_tests()
     @test all(!Sparlectra._contingency_less_favourable(c, k) for (c, k) in zip(cold, checked))
     # the order of "less favourable": a failed result never wins, then more
     # violations, then the lower lowest voltage, then the higher loading
-    row(conv, nviol, vmin, load) = Sparlectra.ContingencyResult("x", 1.0, conv, 3, :warm, 1.05, vmin, load, 0.0, Sparlectra.OverloadRecord[], ["b$(i)" for i in 1:nviol], 1, 0.0, nothing)
+    row(conv, nviol, vmin, load) = Sparlectra.ContingencyResult("x", :explicit, String[], 1.0, conv, 3, :warm, 1.05, vmin, load, 0.0, Sparlectra.OverloadRecord[], ["b$(i)" for i in 1:nviol], 1, 0.0, nothing)
     # the switch (contingency.warm_cold_check, default off): with the same
     # margin a tight warm result is checked when on and never by default
     check_on = Sparlectra.ScenarioEngine(net; warm_cold_check = true, warm_cold_check_margin_pu = 1.0, warm_note = Ref(""))
@@ -548,8 +689,9 @@ function run_scenario_engine_extended_tests()
     # maximum stayed above 100 - margin); now only outages that change it
     # enough are flagged, still without a false negative
     eng = Sparlectra.ScenarioEngine(net)
-    top = argmax(b -> get(eng.base_loadings, Sparlectra.getCompName(b.comp), -Inf), net.branchVec)
-    top_loading = eng.base_loadings[Sparlectra.getCompName(top.comp)]
+    top_k = argmax(k -> isnan(eng.base_loadings[k]) ? -Inf : eng.base_loadings[k], eachindex(net.branchVec))
+    top = net.branchVec[top_k]
+    top_loading = eng.base_loadings[top_k]
     top.sn_MVA = top.sn_MVA * top_loading / 95.0
     hot_full = Sparlectra.runContingencies!(net, cases)
     hot_flagged = Sparlectra.runContingencies!(net, cases; screening_mode = :flag, screening_margin_pct = 10.0)
@@ -557,6 +699,65 @@ function run_scenario_engine_extended_tests()
     @test sort(collect(intersect(hot_violating, Set(r.name for r in hot_flagged if r.screened)))) == String[]
     @test count(r -> r.screened, hot_flagged) > 0
     println("      scenario engine sp_case60: RAN (", length(cases), " cases, ", count(r -> r.screened, flagged), " screened, 0 false negatives, ds ", count(r -> r.screened, ds_flagged), " screened, one branch at 95 percent ", count(r -> r.screened, hot_flagged), " screened)")
+  end)() end
+
+  @testset "scenario engine: screening of events and pairs (#355)" begin (function ()
+    # Every generated event and every N-2 pair is screened like a single
+    # outage (all branch members out of the Y-bus, all units out of the
+    # injections in one step). Acceptance: no false negative against the full
+    # solve, on the shipped SCF cases and sp_case118, events and pairs.
+    violating(rs) = Set(r.name for r in rs if !isempty(r.overloads) || !isempty(r.voltage_violations) || !r.converged)
+    function no_false_negative(net, cases, names)
+      full = redirect_stdout(() -> runContingencies!(net, cases; names = names), devnull)
+      flagged = redirect_stdout(() -> runContingencies!(net, cases; names = names, screening_mode = :flag, screening_margin_pct = 10.0), devnull)
+      missed = intersect(violating(full), Set(r.name for r in flagged if r.screened))
+      return (missed = sort(collect(missed)), screened = count(r -> r.screened, flagged), total = length(cases))
+    end
+    # the same judgement for the large lists without solving every case
+    # twice: a false negative can only be a case the screening KEEPS as an
+    # estimate (the decision _evaluate_item takes), so only those are solved
+    # in full (sp_case188 has 23436 pairs)
+    function no_false_negative_kept(net, cases, names)
+      eng = redirect_stdout(() -> Sparlectra.ScenarioEngine(net; screening_mode = :flag, screening_margin_pct = 10.0, names = names), devnull)
+      items = Sparlectra._engine_items_from_cases(eng.template, names, cases)
+      kept = ContingencyCase[]
+      for (c, it) in zip(cases, items)
+        it isa Sparlectra._ScenarioOutageItem || continue
+        scr = Sparlectra._screen_outage(eng, it)
+        (scr.estimate !== nothing && !scr.flagged) && push!(kept, c)
+      end
+      full = isempty(kept) ? ContingencyResult[] : redirect_stdout(() -> runContingencies!(net, kept; names = names), devnull)
+      return (missed = sort(collect(violating(full))), screened = length(kept), total = length(cases))
+    end
+    scf(name) = (c = read_scf_json(abspath(joinpath(dirname(@__DIR__), "data", "scf", name * ".scf.json"))); n = Sparlectra.build_net(c); (n, contingency_names(n, c)))
+    events(n, m) = generateCorrelatedEvents(n; names = m, busbars = true, substations = true, links = true, name_groups = true)
+    counts = String[]
+    for name in ("sp_case14", "sp_case60", "sp_case188")
+      n, m = scf(name)
+      check = name == "sp_case188" ? no_false_negative_kept : no_false_negative
+      ev = check(n, events(n, m), m)
+      @test ev.missed == String[]
+      pr = check(n, generateBranchPairs(n; names = m), m)
+      @test pr.missed == String[]
+      push!(counts, "$(name) events $(ev.screened)/$(ev.total), pairs $(pr.screened)/$(pr.total)")
+    end
+    n118 = Sparlectra.createNetFromMatPowerFile(filename = abspath(joinpath(dirname(@__DIR__), "data", "mpower", "sp_case118.m")), flatstart = false, enable_pq_gen_controllers = true, bus_shunt_model = :admittance, matpower_shift_sign = 1.0, matpower_shift_unit = :deg, matpower_ratio = :normal, tap_changer_model = :ideal)
+    m118 = contingency_names(n118)
+    ev118 = no_false_negative_kept(n118, events(n118, m118), m118)
+    @test ev118.missed == String[]
+    push!(counts, "sp_case118 events $(ev118.screened)/$(ev118.total)")
+    # the reasons: a coupler is never screened, an event that splits the
+    # graph neither, a double circuit of the meshed ring is
+    n60, m60 = scf("sp_case60")
+    eng = redirect_stdout(() -> Sparlectra.ScenarioEngine(n60; screening_mode = :flag, names = m60), devnull)
+    reason(case) = Sparlectra._screen_outage(eng, only(Sparlectra._engine_items_from_cases(eng.template, m60, [case]))).reason
+    @test reason(only(generateLinkOutages(n60; names = m60))) === :link
+    @test reason(first(c for c in generateBusbarEvents(n60; names = m60) if c.name == "BB Altau_220")) === :splits_graph
+    @test reason(first(generateDoubleCircuits(n60; names = m60))) in (:ok, :structural_pv_gen)
+    # above 32 changed Jacobian rows the dense correction is not tried
+    J0 = sparse(1.0LinearAlgebra.I, 40, 40)
+    @test Sparlectra._screen_woodbury_solve(lu(J0), J0, J0 + sparse(0.5LinearAlgebra.I, 40, 40), ones(40)) === :rank
+    println("      scenario engine event screening: RAN (", join(counts, "; "), ", 0 false negatives)")
   end)() end
 
   @testset "scenario engine sp_case60 CSV byte fixture" begin (function ()
@@ -575,10 +776,15 @@ function run_scenario_engine_extended_tests()
     # Q-limit defaults (iteration counts one lower on most rows, end states
     # at the 1e-8 level): like the case118 gate, the first run that finds
     # the fixture missing creates it from the engine's own CSV and says so.
-    fixture = abspath(joinpath(@__DIR__, "fixtures", "contingency_sp_case60_n1_e93eafc.csv"))
-    net = Sparlectra.importSCF(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case60.scf.json")))
-    cases = vcat(Sparlectra.generateN1Branches(net), Sparlectra.generateN1Generators(net))
-    results = Sparlectra.runContingencies!(net, cases)
+    # Regenerated at 0.40.0 (#355): the columns kind and elements, the case
+    # and overload names from the case file (contingency_names with the
+    # typed case), every numeric cell unchanged.
+    fixture = abspath(joinpath(@__DIR__, "fixtures", "contingency_sp_case60_n1.csv"))
+    scase = read_scf_json(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case60.scf.json")))
+    net = Sparlectra.build_net(scase)
+    file_names = contingency_names(net, scase)
+    cases = vcat(Sparlectra.generateN1Branches(net; names = file_names), Sparlectra.generateN1Generators(net; names = file_names))
+    results = Sparlectra.runContingencies!(net, cases; names = file_names)
     out = Sparlectra.writeContingencyResultsCSV(joinpath(mktempdir(), "sp60_n1.csv"), results)
     if !isfile(fixture)
       cp(out, fixture)
@@ -675,6 +881,53 @@ function run_scenario_engine_extended_tests()
     end
   end)() end
 
+  @testset "service: correlated events, pairs, display names (#355)" begin (function ()
+    cfgpath = Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH
+    dir = mktempdir()
+    sp14 = joinpath(dir, "sp_case14.scf.json")
+    cp(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json")), sp14)
+    run(sub, ov; kw...) = redirect_stdout(devnull) do
+      SparlectraApp.to_dict(SparlectraApp._run_contingency_service(sp14, cfgpath, joinpath(dir, sub), sub, "branch"; scenario_source = "n1_branches", screening_mode = "off", config_overrides = ov, kw...))
+    end
+    # events on: the double circuit runs next to the 17 single outages, the
+    # rows carry the file names, run.log and the metadata count by kind
+    d = run("ev", Dict{String,Any}("contingency.events.enabled" => true))
+    @test d["status"] == "succeeded"
+    @test d["metadata"]["contingency_cases_by_kind"] == Dict{String,Any}("branch" => 17, "double_circuit" => 1)
+    log = read(joinpath(dir, "ev", "run.log"), String)
+    @test occursin("correlated events: 1 double_circuit", log)
+    csv = read(joinpath(dir, "ev", "contingency_n1.csv"), String)
+    @test occursin("Ostheim_Neuwiese_1|Ostheim_Neuwiese_2", csv)
+    @test occursin("DC Ostheim_110-Neuwiese_110", csv)
+    # pairs: 136 pairs of 17 branches, the double-circuit pair listed once
+    # (as the event); the cap stops the run before solving
+    dp = run("pairs", Dict{String,Any}("contingency.events.enabled" => true, "contingency.pairs.enabled" => true))
+    @test dp["metadata"]["contingency_cases_by_kind"] == Dict{String,Any}("branch" => 17, "double_circuit" => 1, "pair" => 135)
+    dcap = run("cap", Dict{String,Any}("contingency.pairs.enabled" => true, "contingency.pairs.max_pairs" => 100))
+    @test dcap["status"] == "failed" && dcap["reason"] == "contingency_too_many_pairs"
+    @test occursin("136 pairs", dcap["message"])
+    # a MATPOWER case runs plain N-1 with events switched on, and says why
+    mp = abspath(joinpath(dirname(@__DIR__), "data", "mpower", "warmup_casePST.m"))
+    dm = redirect_stdout(devnull) do
+      SparlectraApp.to_dict(SparlectraApp._run_contingency_service(mp, cfgpath, joinpath(dir, "mp"), "mp", "branch"; scenario_source = "n1_branches", screening_mode = "off", config_overrides = Dict{String,Any}("contingency.events.enabled" => true)))
+    end
+    @test dm["status"] == "succeeded"
+    @test occursin("correlated events and pairs: not run, they need a Sparlectra Case Format case", read(joinpath(dir, "mp", "run.log"), String))
+    # weights saved under the generated names (before 0.40.0) still apply
+    net14 = Sparlectra.importSCF(sp14)
+    old_name = only(Sparlectra.generateN1Branches(net14)[1].elements)
+    new_name = only(Sparlectra.generateN1Branches(net14; names = contingency_names(net14, read_scf_json(sp14)))[1].elements)
+    @test old_name != new_name
+    wfile = joinpath(dir, "sp_case14.contingency-weights.csv")
+    write(wfile, "name;weight\n$(old_name);2.5\n")
+    dw = run("w", Dict{String,Any}(); weights_path = wfile)
+    @test dw["metadata"]["contingency_weighted_cases"] == 1
+    wlog = read(joinpath(dir, "w", "run.log"), String)
+    @test occursin("1 weight(s) stored under the generated names applied", wlog)
+    @test !occursin("match no branch", wlog)
+    @test occursin("$(new_name),branch,$(new_name),2.5,", read(joinpath(dir, "w", "contingency_n1.csv"), String))
+  end)() end
+
   @testset "scenario engine sp_case300 screening acceptance" begin (function ()
     # the operated-grid acceptance case per the test-network rule
     # (the test-network rule): case300 judges screening QUALITY, no false negatives at
@@ -702,11 +955,11 @@ function run_scenario_engine_extended_tests()
     # the Literate workshop is executable Julia and
     # carries an @assert next to every printed number; RUNNING it here is
     # what keeps the notebook from drifting silently. The workshop runs on
-    # the shipped data/mpower/sp_case118.m, so it needs no download and
-    # this test is no longer gated.
+    # the shipped SCF cases sp_case14 and sp_case60 (0.40.0: correlated
+    # events), so it needs no download.
     workshop = abspath(joinpath(dirname(@__DIR__), "docs", "lit", "workshop_scenarios.jl"))
     @test isfile(workshop)
-    @test isfile(joinpath(dirname(@__DIR__), "data", "mpower", "sp_case118.m"))
+    @test isfile(joinpath(dirname(@__DIR__), "data", "scf", "sp_case60.scf.json"))
     # a module with `include`, like a notebook's Main: the first cell
     # includes the workshop's warm-up file (a plain Module() has no include)
     sym = gensym(:WorkshopScenariosRun)

@@ -1014,47 +1014,46 @@ mpc.branch = [
       net = _scf_test_net()
       d = mktempdir()
       cfg = Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH
+      # 0.40.0: the study is the case file's scenarios block, run through the
+      # file_block source; a two-outage scenario runs as one event instead of
+      # being refused
+      base_file = exportSCF(net; file = joinpath(d, "cont.scf.json"))
+      scase = read_scf_json(base_file)
+      idx = ScenarioIndex(scase)
       ids = Sparlectra.scf_id_map(net)
       b1, b2 = ids.branch[1], ids.branch[2]
       n1, n2 = getCompName(net.branchVec[1].comp), getCompName(net.branchVec[2].comp)
-      cont = Dict{String,Any}("mode" => "explicit", "cases" => Any[
-        Dict{String,Any}("name" => "loss of $(n1)", "outages" => Any[Dict{String,Any}("component" => b1)], "weight" => 2.5),
-        Dict{String,Any}("name" => "loss of $(n2)", "outages" => Any[Dict{String,Any}("component" => b2)]),
+      out(id) = PatchOp(op = :status, target = idx.kind_by_id[id], id = id, value = 0.0)
+      set = ScenarioSet(scenarios = [
+        Scenario(name = "loss of $(n1)", weight = 2.5, ops = [out(b1)]),
+        Scenario(name = "loss of $(n2)", ops = [out(b2)]),
+        Scenario(name = "common mode", ops = [out(b1), out(b2)]),
       ])
-      f = exportSCF(net; file = joinpath(d, "cont.scf.json"), contingencies = cont)
+      scase.sparlectra.scenarios = scenario_set_dict(set)
+      f = write_scf_json(scase, base_file)
       res = redirect_stdout(devnull) do
-        SparlectraApp._run_contingency_service(f, cfg, joinpath(d, "run_explicit"), "scf_ct", "branch")
+        SparlectraApp._run_contingency_service(f, cfg, joinpath(d, "run_explicit"), "scf_ct", "branch"; scenario_source = "file_block")
       end
       md = SparlectraApp.to_dict(res)["metadata"]
       @test SparlectraApp.to_dict(res)["status"] == "succeeded"
-      @test md["contingency_cases_source"] == "case_file_explicit"
-      @test md["contingency_cases"] == 2                       # the file's list, not every branch
-      log = read(joinpath(d, "run_explicit", "run.log"), String)
-      @test occursin("case list: from the case file", log)
-      @test occursin("loss of $(n1)", read(joinpath(d, "run_explicit", "contingency_n1.csv"), String))
+      @test md["contingency_cases_source"] == "scenario_file_block"
+      @test md["contingency_cases"] == 3                       # the file's list, not every branch
+      csv_text = read(joinpath(d, "run_explicit", "contingency_n1.csv"), String)
+      @test occursin("loss of $(n1)", csv_text)
+      @test occursin("common mode", csv_text)
 
-      # all_branches sweeps everything EXCEPT the exclusions
-      generated = length(generateN1Branches(net))
-      excl = Dict{String,Any}("mode" => "all_branches", "exclude" => Any[n1])
-      fx = exportSCF(net; file = joinpath(d, "excl.scf.json"), contingencies = excl)
-      res_x = redirect_stdout(devnull) do
-        SparlectraApp._run_contingency_service(fx, cfg, joinpath(d, "run_excl"), "scf_ctx", "branch")
+      # a file that still carries the removed contingencies block fails with
+      # the way out, on the kind path as well
+      legacy = Sparlectra.scf_json_parse(read(f, String))
+      legacy["sparlectra"]["contingencies"] = Dict{String,Any}("mode" => "explicit", "cases" => Any[Dict{String,Any}("name" => "old", "outages" => Any[Dict{String,Any}("component" => b1)])])
+      fl = joinpath(d, "legacy.scf.json")
+      write(fl, Sparlectra.scf_json_string(legacy))
+      res_l = redirect_stdout(devnull) do
+        SparlectraApp._run_contingency_service(fl, cfg, joinpath(d, "run_legacy"), "scf_ctl", "branch")
       end
-      mdx = SparlectraApp.to_dict(res_x)["metadata"]
-      @test mdx["contingency_cases_source"] == "case_file_all_branches"
-      @test mdx["contingency_cases"] == generated - 1
-      @test !occursin(",$(n1),", read(joinpath(d, "run_excl", "contingency_n1.csv"), String))
-
-      # a case the runner cannot express (two outages at once) is refused by
-      # name instead of being silently reduced to its first element
-      multi = Dict{String,Any}("mode" => "explicit", "cases" => Any[Dict{String,Any}("name" => "common mode", "outages" => Any[Dict{String,Any}("component" => b1), Dict{String,Any}("component" => b2)])])
-      fm = exportSCF(net; file = joinpath(d, "multi.scf.json"), contingencies = multi)
-      res_m = redirect_stdout(devnull) do
-        SparlectraApp._run_contingency_service(fm, cfg, joinpath(d, "run_multi"), "scf_ctm", "branch")
-      end
-      dm = SparlectraApp.to_dict(res_m)
-      @test dm["status"] == "failed" && dm["reason"] == "invalid_case_file"
-      @test occursin("2 outages", dm["message"])
+      dl = SparlectraApp.to_dict(res_l)
+      @test dl["status"] == "failed"
+      @test occursin("sparlectra.scenarios", dl["message"])
 
       # A case file that carries its own configuration is loaded through the
       # API config path, and the service entry points take AbstractString: a
@@ -1354,30 +1353,24 @@ mpc.branch = [
     @testset "study definitions are carried and validated" begin (function ()
       net = _scf_test_net()
       d = mktempdir()
-      cont = Dict{String,Any}("mode" => "explicit", "cases" => Any[Dict{String,Any}("name" => "L34", "outages" => Any[Dict{String,Any}("component" => 11)])])
       sc = Dict{String,Any}("case" => "max", "sweep" => "all_buses")
-      f = exportSCF(net; file = joinpath(d, "study.scf.json"), contingencies = cont, short_circuit = sc)
+      f = exportSCF(net; file = joinpath(d, "study.scf.json"), short_circuit = sc)
       studies = scf_case_studies(f)
-      @test studies.contingencies["mode"] == "explicit"
-      @test length(studies.contingencies["cases"]) == 1
       @test studies.short_circuit["case"] == "max"
       # a case without study blocks reports empty, never a guessed default
       plain = scf_case_studies(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_casePST.scf.json")))
-      @test isempty(plain.contingencies) && isempty(plain.short_circuit)
+      @test isempty(plain.short_circuit)
       # broken study definitions fail on load, not at the start of a sweep
       root = Sparlectra.scf_json_parse(read(f, String))
-      bad_mode = deepcopy(root)
-      bad_mode["sparlectra"]["contingencies"]["mode"] = "sometimes"
-      @test_throws ArgumentError Sparlectra.scf_to_net(bad_mode)
+      legacy = deepcopy(root)
+      legacy["sparlectra"]["contingencies"] = Dict{String,Any}("mode" => "explicit", "cases" => Any[])
+      @test_throws ArgumentError Sparlectra.scf_to_net(legacy)
       bad_case = deepcopy(root)
       bad_case["sparlectra"]["short_circuit"]["case"] = "bogus"
       @test_throws ArgumentError Sparlectra.scf_to_net(bad_case)
       bad_cf = deepcopy(root)
       bad_cf["sparlectra"]["short_circuit"]["c_factor"] = 3.0
       @test_throws ArgumentError Sparlectra.scf_to_net(bad_cf)
-      empty_outages = deepcopy(root)
-      empty_outages["sparlectra"]["contingencies"]["cases"][1]["outages"] = Any[]
-      @test_throws ArgumentError Sparlectra.scf_to_net(empty_outages)
     end)() end
 
     @testset "SCF cases run through the framework and the service" begin (function ()

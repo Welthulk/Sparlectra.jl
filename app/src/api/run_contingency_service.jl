@@ -45,46 +45,6 @@ _distributed_slack_kwargs(pf) = pf.distributed_slack.enabled ? (; distributed_sl
 # single run uses), so N-1 and scenarios honour power_flow.qlimits.*
 _engine_solver_kwargs(pf) = (; _distributed_slack_kwargs(pf)..., _power_mode_kwargs(pf)..., _jacobian_reuse_kwargs(pf)..., _qlimit_solver_kwargs(pf.qlimits)...)
 
-# Resolve the case file's contingency definition into runner cases. Component
-# ids are resolved through `extra[<id>].name`, which is why that name is
-# mandatory wherever anything refers to an object. The runner takes ONE
-# element per case, so a multi-outage (common-mode or N-2) entry is rejected
-# by name instead of being silently reduced to its first element.
-function _scf_contingency_cases_from_file(case_path::AbstractString, study::AbstractDict, net::Net)::Vector{ContingencyCase}
-  names = scf_extra_names(case_path)
-  name_of(id) = get(names, Int(id)) do
-    throw(ArgumentError("SCF contingencies: component $(id) has no name in `extra`; the case list cannot be resolved."))
-  end
-  # The element kind follows from what the name resolves to in the network,
-  # not from a second field in the file: a name that matches neither a branch
-  # nor a generator is a broken case list and says so here.
-  branch_names = Set(getCompName(br.comp) for br in net.branchVec)
-  gen_cases = Dict(c.element => c for c in generateN1Generators(net))
-  # a case that lists exactly the legs of one three-winding transformer is
-  # that transformer as a whole (it trips as one element)
-  star_names = Dict{Int,String}(idx => name for (name, idx) in net.busDict)
-  leg_sets = Dict(Set(getCompName(net.branchVec[k].comp) for k in g.legs) => g for g in _three_winding_groups(net))
-  out = ContingencyCase[]
-  for case in get(study, "cases", [])
-    outages = get(case, "outages", [])
-    if length(outages) > 1
-      legs = Set(name_of(_scf_int(o["component"], "a contingency outage component")) for o in outages)
-      grp = get(leg_sets, legs, nothing)
-      if grp !== nothing
-        push!(out, ContingencyCase(String(get(case, "name", grp.name)), :transformer3w, star_names[grp.star], haskey(case, "weight") ? Float64(case["weight"]) : 1.0))
-        continue
-      end
-    end
-    length(outages) == 1 || throw(ArgumentError("SCF contingencies: case $(get(case, "name", "?")) lists $(length(outages)) outages; the N-1 runner takes one element per case (common-mode and N-2 studies are not supported yet)."))
-    element = name_of(_scf_int(only(outages)["component"], "a contingency outage component"))
-    kind = element in branch_names ? :branch : haskey(gen_cases, element) ? :gen : throw(ArgumentError("SCF contingencies: $(repr(element)) is neither an in-service branch nor a generator of this network."))
-    name = String(get(case, "name", element))
-    weight = haskey(case, "weight") ? Float64(case["weight"]) : 1.0
-    push!(out, ContingencyCase(name, kind, element, weight))
-  end
-  return out
-end
-
 """
     _run_contingency_service(case_path, config_file, output_dir, run_id, kind; weights_path = nothing) -> SparlectraApiResult
 
@@ -115,8 +75,7 @@ any generating unit stays without a reference and is reported as islanded
 with the load it loses.
 
 Scenario task step 5: the request may carry `scenario_source` (`file_block`
-runs the case file's own `scenarios`/`contingencies` block through the
-scenario model, `external_file` a scenario JSON named by `scenario_file`,
+runs the case file's own `scenarios` block through the scenario model, `external_file` a scenario JSON named by `scenario_file`,
 `n1_all`/`n1_branches`/`n1_generators` the generated case lists) and
 `screening_mode` (`off`/`flag`/`only`; absent means the
 `contingency.screening` configuration, default `off`). With screening
@@ -217,9 +176,8 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
     end
   end
 
-  # screening mode from the request, falling back to
-  # the contingency.screening configuration (whose default is :flag); the
-  # margin always comes from the configuration
+  # screening mode and margin from the request, each falling back to the
+  # contingency.screening configuration (mode default :off)
   screen_mode = screening_mode === nothing ? config.contingency.screening_mode : Symbol(lowercase(String(screening_mode)))
   if !(screen_mode in CONTINGENCY_SCREENING_MODE_VALUES)
     return _api_failure("invalid_request", "screening_mode must be off, flag, or only; got \"$(screening_mode)\".", run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
@@ -231,6 +189,22 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
     return _api_failure("invalid_request", "screening_margin_pct must be a finite value >= 0; got $(screen_margin).", run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
   end
   base_metadata["contingency_screening_mode"] = String(screen_mode)
+
+  # Display names of the output (0.40.0): an SCF case names its components
+  # in the file, every other format keeps the generated names. The net's own
+  # component names stay untouched. `generated_names` serves the weight
+  # aliases below (weights saved under the generated names before 0.40.0).
+  typed_case = nothing
+  if format === :scf
+    typed_case = try
+      read_scf_json(case_path)
+    catch err
+      err isa PowerFlowAborted && rethrow()
+      return _api_failure("invalid_case_file", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
+    end
+  end
+  generated_names = contingency_names(net)
+  names = typed_case === nothing ? generated_names : contingency_names(net, typed_case)
 
   # Scenario source (step 5). file_block and external_file run through the
   # scenario model addressed by SCF component ids, so they need the typed
@@ -245,11 +219,11 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
   cases = ContingencyCase[]
   if scenario_source in ("file_block", "external_file")
     scenario_result = try
-      scfcase = format === :scf ? read_scf_json(case_path) : convert_case(MatpowerAdapter(), MatpowerIO.read_case(case_path; legacy_compat = true), matpower_adapter_options(config))
+      scfcase = format === :scf ? typed_case : convert_case(MatpowerAdapter(), MatpowerIO.read_case(case_path; legacy_compat = true), matpower_adapter_options(config))
       idx = ScenarioIndex(scfcase)
       set = if scenario_source == "file_block"
         s = scf_case_scenarios(scfcase)
-        s === nothing && throw(ArgumentError("scenario_source file_block: the case file carries neither a scenarios nor a contingencies block."))
+        s === nothing && throw(ArgumentError("scenario_source file_block: the case file carries no scenarios block."))
         s
       else
         scenario_set_from_dict(scf_json_parse(read(String(scenario_file), String)))
@@ -259,10 +233,13 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
       # missing here while run.log announced it, #456)
       runScenarios!(net, set; index = idx, rescue_ladder = config.contingency.rescue_ladder, maxIte = config.contingency.max_iter, base_maxIte = config.powerflow.max_iter, screening_mode = screen_mode, screening_margin_pct = screen_margin,
         _engine_solver_kwargs(config.powerflow)...,
-        warm_active_set = config.contingency.warm_active_set, warm_cold_check = config.contingency.warm_cold_check, warm_cold_check_margin_pu = config.contingency.warm_cold_check_margin_pu, warm_note = warm_note, progress = progress)
+        warm_active_set = config.contingency.warm_active_set, warm_cold_check = config.contingency.warm_cold_check, warm_cold_check_margin_pu = config.contingency.warm_cold_check_margin_pu, warm_note = warm_note,
+        events = config.contingency.events, pairs = config.contingency.pairs, progress = progress)
     catch err
       err isa PowerFlowAborted && rethrow()
-      return _api_failure("invalid_case_file", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
+      # the pair cap of a file block that asks for pairs: named as such
+      reason = err isa ArgumentError && occursin("max_pairs", err.msg) ? "contingency_too_many_pairs" : "invalid_case_file"
+      return _api_failure(reason, sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
     end
     results = scenario_result
     scf_cases_source = string("scenario_", scenario_source)
@@ -271,37 +248,40 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
       return _api_failure("contingency_no_cases", "The scenario source $(scenario_source) produced no scenario to run.", run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
     end
   elseif scenario_source in ("n1_all", "n1_branches", "n1_generators")
-    cases = scenario_source == "n1_branches" ? generateN1Branches(net) : scenario_source == "n1_generators" ? generateN1Generators(net) : vcat(generateN1Branches(net), generateN1Generators(net))
+    cases = scenario_source == "n1_branches" ? generateN1Branches(net; names = names) : scenario_source == "n1_generators" ? generateN1Generators(net; names = names) : vcat(generateN1Branches(net; names = names), generateN1Generators(net; names = names))
     scf_cases_source = String(scenario_source)
     base_metadata["contingency_cases_source"] = scf_cases_source
   else
-    # A Sparlectra Case Format case may define the study itself (#342): the
-    # file's `contingencies` block then decides which cases run, so shipping a
-    # case ships the study it was meant for. Explicit request keys still pick
-    # the element kind; the file only supplies the case list.
-    scf_study = imported.studies.contingencies
-    cases = kind == "gen" ? generateN1Generators(net) : generateN1Branches(net)
-    if !isempty(scf_study)
-      mode = String(get(scf_study, "mode", "explicit"))
-      listed = try
-        _scf_contingency_cases_from_file(case_path, scf_study, net)
+    cases = kind == "gen" ? generateN1Generators(net; names = names) : generateN1Branches(net; names = names)
+  end
+
+  # Correlated events and N-2 pairs (#355, contingency.events.* and
+  # contingency.pairs.*): added to a generated BRANCH list of an SCF case.
+  # A generator-only list and the other formats run plain N-1, and run.log
+  # says why. A file block asks for its own events (its `events` key).
+  ev_cfg = config.contingency.events
+  pair_cfg = config.contingency.pairs
+  event_note = nothing
+  if results === nothing && (ev_cfg.enabled || pair_cfg.enabled)
+    branch_list = scenario_source in ("n1_all", "n1_branches") || (scenario_source === nothing && kind == "branch")
+    if typed_case === nothing
+      event_note = "correlated events and pairs: not run, they need a Sparlectra Case Format case (this case is $(format))"
+    elseif !branch_list
+      event_note = "correlated events and pairs: not run, the case list holds generators only"
+    else
+      extra = try
+        generateCorrelatedEvents(net; names = names,
+          double_circuits = ev_cfg.enabled && ev_cfg.double_circuits, busbars = ev_cfg.enabled && ev_cfg.busbars,
+          substations = ev_cfg.enabled && ev_cfg.substations, links = ev_cfg.enabled && ev_cfg.links, name_groups = ev_cfg.enabled && ev_cfg.name_groups,
+          name_stem_pattern = ev_cfg.name_stem_pattern, max_members = ev_cfg.max_members,
+          pairs = pair_cfg.enabled, pair_rule = pair_cfg.rule, max_pairs = pair_cfg.max_pairs)
       catch err
-        return _api_failure("invalid_case_file", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
+        (err isa ArgumentError && occursin("max_pairs", err.msg)) || rethrow()
+        return _api_failure("contingency_too_many_pairs", err.msg; run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
       end
-      excluded = Set(String(x) for x in get(scf_study, "exclude", []))
-      if mode == "explicit"
-        cases = listed
-        scf_cases_source = "case_file_explicit"
-      elseif mode == "all_branches"
-        cases = [c for c in cases if !(c.name in excluded) && !(c.element in excluded)]
-        scf_cases_source = "case_file_all_branches"
-      else
-        generated = [c for c in cases if !(c.name in excluded) && !(c.element in excluded)]
-        names = Set(c.name for c in generated)
-        cases = vcat(generated, [c for c in listed if !(c.name in names)])
-        scf_cases_source = "case_file_all_branches_plus"
-      end
-      base_metadata["contingency_cases_source"] = scf_cases_source
+      # an event equal to an N-1 case (a one-branch station) is not repeated
+      single = Set(c.name for c in cases)
+      append!(cases, [c for c in extra if !(c.name in single)])
     end
   end
   if results === nothing && isempty(cases)
@@ -313,15 +293,21 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
   # case edit, so names matching no case are warned about, never fatal; a file
   # that cannot be read leaves the run UNWEIGHTED rather than failing it.
   weights_applied = false
+  alias_hits = 0
   weighted_cases = 0
   unmatched = String[]
   weights_error = nothing
   if results === nothing && weights_path !== nothing && isfile(weights_path)
     try
       weights = readContingencyWeightsCSV(weights_path)
+      # weights saved under the generated names (before the file names of
+      # an SCF case were used) still apply, as aliases with one log line
+      aliases = _contingency_weight_aliases(net, names, generated_names, cases)
       case_names = Set(c.name for c in cases)
-      unmatched = sort!([String(n) for n in keys(weights) if !(n in case_names)])
-      cases = applyContingencyWeights(cases, weights)
+      alias_names = Set(values(aliases))
+      unmatched = sort!([String(n) for n in keys(weights) if !(n in case_names) && !(n in alias_names)])
+      alias_hits = count(c -> !haskey(weights, c.name) && haskey(weights, get(aliases, c.name, "")), cases)
+      cases = applyContingencyWeights(cases, weights; aliases = aliases)
       weighted_cases = count(c -> c.weight != 1.0, cases)
       weights_applied = true
     catch err
@@ -342,7 +328,7 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
     # an outage that removes the reference, or splits off an island without
     # one, does not end the case: the strongest remaining unit takes over
     # and the result names it (auto_slack, the default of runContingencies!)
-    results = runContingencies!(net, cases; rescue_ladder = config.contingency.rescue_ladder, maxIte = config.contingency.max_iter, base_maxIte = config.powerflow.max_iter, screening_mode = screen_mode, screening_margin_pct = screen_margin, warm_active_set = config.contingency.warm_active_set, warm_cold_check = config.contingency.warm_cold_check, warm_cold_check_margin_pu = config.contingency.warm_cold_check_margin_pu, warm_note = warm_note, progress = progress, dslack_kwargs...)
+    results = runContingencies!(net, cases; names = names, rescue_ladder = config.contingency.rescue_ladder, maxIte = config.contingency.max_iter, base_maxIte = config.powerflow.max_iter, screening_mode = screen_mode, screening_margin_pct = screen_margin, warm_active_set = config.contingency.warm_active_set, warm_cold_check = config.contingency.warm_cold_check, warm_cold_check_margin_pu = config.contingency.warm_cold_check_margin_pu, warm_note = warm_note, progress = progress, dslack_kwargs...)
   end
   n_screened = eltype(results) === ScenarioResult ? count(r -> r.screened, results) : 0
   # a requested screening the network does not allow is named in run.log
@@ -360,12 +346,16 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
     println(io, "N-1 contingency (", kind == "gen" ? "generator" : "branch", " outages) on ", basename(case_path))
     if startswith(scf_cases_source, "scenario_")
       println(io, "scenario source: ", replace(scf_cases_source, "scenario_" => ""), " (", length(results), " scenario(s))")
-    elseif startswith(scf_cases_source, "case_file")
-      println(io, "case list: from the case file's contingencies block (mode ", replace(scf_cases_source, "case_file_" => ""), ", ", length(cases), " case(s))")
     elseif scf_cases_source != "generated"
       println(io, "case list: ", scf_cases_source, " (", length(cases), " case(s))")
     end
     se_run_id !== nothing && println(io, "base case: SE-started (", se_start_mode, ") from SE run ", se_run_id)
+    event_note === nothing || println(io, event_note)
+    n_events = count(r -> r.kind in CONTINGENCY_EVENT_KINDS || r.kind === :pair, results)
+    if n_events > 0
+      by_kind = [(k, count(r -> r.kind === k, results)) for k in (CONTINGENCY_EVENT_KINDS..., :pair)]
+      println(io, "correlated events: ", join(["$(n) $(k)" for (k, n) in by_kind if n > 0], ", "), " (", n_events, " of ", length(results), " case(s))")
+    end
     println(io, "rescue ladder: ", config.contingency.rescue_ladder)
     # warm active set (0.30.2): one line when on, nothing when off
     isempty(warm_note[]) || println(io, warm_note[])
@@ -380,6 +370,7 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
     end
     if weights_applied
       println(io, "weights: applied ", weighted_cases, " non-default weight(s) from ", basename(String(weights_path)))
+      alias_hits > 0 && println(io, "weights: ", alias_hits, " weight(s) stored under the generated names applied to the cases now named after the case file; saving the weights editor writes the new names")
       if !isempty(unmatched)
         shown = first(unmatched, 10)
         println(io, "weights: ", length(unmatched), " weight name(s) match no ", kind == "gen" ? "generator" : "branch",
@@ -416,6 +407,8 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
       "contingency_weighted_cases" => weighted_cases,
       # screening (step 5): the mode that ran and how many rows are estimates
       "contingency_screened" => n_screened,
+      # cases per kind (#355): single outages, correlated events, pairs
+      "contingency_cases_by_kind" => Dict{String,Any}(String(k) => n for (k, n) in report.n_by_kind),
       # explicit run-status keys so history/result views render it like any
       # completed run
       "artifact_status" => "completed",
