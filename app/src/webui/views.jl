@@ -2889,7 +2889,10 @@ function _webui_result_page_title(result::AbstractDict)::String
   mode == "se" && return "State estimation result"
   mode == "powerflow_se_start" && return "PowerFlow result (started from a state estimate)"
   mode == "short_circuit" && return "Short-circuit result"
-  mode == "contingency" && return "N-1 contingency result"
+  # a run of the case file's scenarios block (the Scenarios button) is no N-1
+  if mode == "contingency"
+    return string(get(metadata, "contingency_cases_source", "")) == "scenario_file_block" ? "Scenarios result" : "N-1 contingency result"
+  end
   mode == "import_analysis" && return "Import analysis result"
   mode == "diagnose" && return "Diagnostic result"
   return "PowerFlow result"
@@ -3112,7 +3115,7 @@ function _webui_contingency_table_section(result::AbstractDict)::String
     has_screening ? "<th>screened</th>" : "",
   )
   return string(
-    "<section class=\"panel n1-result-table\"><h2>N-1 / scenario results</h2>",
+    "<section class=\"panel n1-result-table\"><h2>", string(get(metadata, "contingency_cases_source", "")) == "scenario_file_block" ? "Scenario results" : "N-1 results", "</h2>",
     "<p>Rows ranked by severity, failures first.$(cap_note) the complete list in input order is the CSV artifact $(csv_link).</p>",
     "<div class=\"table-scroll\"><table><thead><tr>", header_cells, "</tr></thead><tbody>", body, "</tbody></table></div></section>",
   )
