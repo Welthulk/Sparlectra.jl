@@ -3487,10 +3487,28 @@ result = get_powerflow_result(run_id)
         @test !occursin("scenario-op-rows", plain_page)
         main_plain = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow?casefile=$(SparlectraApp._webui_urlencode("step6_plain.m"))"; output_root = root, runtime = rt).body)
         @test occursin("scenario-scf-hint", main_plain)
-        @test !occursin("value=\"file_block\"", main_plain)
+        @test !occursin("data-scenarios-button", main_plain)
+        # 0.40.0: an SCF case WITH a scenarios block gets the Scenarios
+        # button, which runs the block alone; the N-1 list no longer offers
+        # the block, so there is one way to the scenarios
         main_scf = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow?casefile=$(SparlectraApp._webui_urlencode(scf_name))"; output_root = root, runtime = rt).body)
-        @test occursin("value=\"file_block\"", main_scf)
+        @test occursin("data-scenarios-button", main_scf)
+        @test !occursin("value=\"file_block\"", main_scf)
         @test occursin("scenario-editor-link", main_scf)
+        # an SCF case without a block: the editor, but no button
+        bare = Sparlectra.read_scf_json(scf_path)
+        bare.sparlectra.scenarios = Dict{String,Any}()
+        Sparlectra.write_scf_json(bare, joinpath(casedir, "step6_bare.scf.json"))
+        main_bare = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow?casefile=step6_bare.scf.json"; output_root = root, runtime = rt).body)
+        @test occursin("scenario-editor-link", main_bare)
+        @test !occursin("data-scenarios-button", main_bare)
+        # the button's request: a contingency run on the file block alone,
+        # whatever the N-1 list says
+        scen_request = SparlectraApp.powerflow_webui_request(Dict{String,Any}("casefile" => scf_name, "scenario_run" => "true", "scenario_source" => "n1_all"); default_output_root = root)
+        @test scen_request["contingency_mode"] === true
+        @test scen_request["scenario_source"] == "file_block"
+        n1_request = SparlectraApp.powerflow_webui_request(Dict{String,Any}("casefile" => scf_name, "contingency_mode" => "true", "scenario_source" => "n1_all"); default_output_root = root)
+        @test n1_request["scenario_source"] == "n1_all"
 
         # flow 4: the outage counter of a RUNNING N-1 job. The
         # runner holds the batch inside the progress callback of the first

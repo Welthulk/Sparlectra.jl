@@ -267,7 +267,7 @@ through the configuration precedence (`resolve_config`): saving with
 target "this case" writes case-scope keys into the case's configuration
 file, target "configuration file" merges into the general YAML (backup
 `.settings-save.bak`). The **Runs** page keeps the run parameters (modes,
-N-1 kind, scenario source, screening, DTF outage fields), the
+N-1 kind, N-1 list, screening, DTF outage fields), the
 state-estimation section (submitted with `se_mode`) and the N-1 editors
 as tabs. The measurement generator's
 fields are the generator options of
@@ -404,12 +404,17 @@ for the case wins over the file, and an edited control wins over both.
 ### Scenarios and N-1
 
 The action row of the run form carries the N-1 controls: outage kind
-(branch/generator), **scenario source** (generated N-1 lists, or the
-scenarios block of an SCF case), **screening mode** (configured / off /
-flag / only) with a **margin** field (empty means the configured
+(branch/generator), **N-1 list** (the outage kind, or all branches,
+branches or generators), **screening mode** (configured / off / flag /
+only) with a **margin** field (empty means the configured
 `contingency.screening.margin_pct`), and links to the weights editor and,
-for SCF cases, the scenario editor. The run summary names the screened
-count and the case-list source; the result page tabulates the cases
+for SCF cases, the scenario editor. **Contingency (N-1)** runs the list;
+with `contingency.events.enabled` an SCF case adds its correlated events
+to a branch list ([Correlated events](@ref contingency_events)). A case
+whose file carries a scenarios block also shows **Scenarios**: it runs the
+scenarios of the block (and the event classes the block asks for) and
+nothing else. The run summary names the screened count and the case-list
+source; the result page tabulates the cases
 ranked by severity with failures first, capped at 100 rows (the linked
 CSV keeps the complete list in input order). A screened row shows its
 one-step estimate, a flagged row the estimate next to the full-run
@@ -425,8 +430,8 @@ offers a raw-CSV text area and a file upload; a malformed CSV is rejected
 with the line number, rows left at `1.0` are omitted on save. A run picks
 the weights up whenever the file exists; names that match no element are
 reported in `run.log`. The file applies to case-list runs (the outage-kind
-selector and the `n1_*` scenario sources); a scenario run from a case
-file's block or an external scenario JSON uses the per-scenario `weight`.
+selector and the N-1 lists); a **Scenarios** run or an external scenario
+JSON uses the per-scenario `weight`.
 
 Scenarios need an SCF case; for other formats the form says so next to the
 export action. The **scenario editor** lists the open case's scenarios
