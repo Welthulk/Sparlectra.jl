@@ -1047,9 +1047,9 @@ writeContingencyResultsCSV(csv_n1, results)
 println("exported: ", csv_n1, " (", filesize(csv_n1), " bytes)")
 ````
 
-Two knobs worth knowing: `retry_flat_start = true` grants one bounded
-flat-start retry per failed case (the rescue ladder is deliberately NOT
-in this loop), and `generateN1Branches(net; include_transformers = false)`
+Two knobs worth knowing: `rescue_ladder = [:warm, :flat]` grants one
+bounded flat-start retry per failed case (the solver's own rescue ladder is
+deliberately NOT in this loop), and `generateN1Branches(net; include_transformers = false)`
 restricts the case list to AC lines. Parallel circuits are disambiguated
 as `name#branchIdx`, and imported MATPOWER FOR001 outage lists work as
 case sources too; see

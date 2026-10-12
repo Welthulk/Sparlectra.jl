@@ -2,7 +2,7 @@
 EditURL = "../../lit/workshop_scenarios.jl"
 ```
 
-# Scenarios and screening: outages as data
+# Scenarios and correlated events: outages as data
 
 > **Level: Advanced**, builds on the N-1 chapter of the tour.
 
@@ -11,57 +11,54 @@ EditURL = "../../lit/workshop_scenarios.jl"
 > **Note:** This workshop was created with AI assistance and is reviewed
 > and curated by the maintainer; it is not a fully machine-generated text.
 
-An N-1 study answers "which single outage hurts". This workshop goes one
-step further: outages and operating changes become DATA, a scenarios
-block inside a Sparlectra Case Format (SCF) file, so a case ships the
-study it was meant for. You will expand the classic N-1 list, write
-three scenarios by hand (a double outage, a load scaling, a generator
-setpoint change), run everything through `runScenarios!`, switch the
-contingency screening from `:off` to `:flag` and read what the screened
-share does and does not promise, and finally write the block back into
-a copy of the case file and read it again.
+An N-1 study asks which single outage hurts. Real faults often take more
+than one element: both circuits on the same towers, every line at a
+faulted busbar, a whole station. This workshop treats such events as
+data. Route A writes them into the scenarios block of a Sparlectra Case
+Format (SCF) file, so the case carries its study. Route B builds them
+with the generators of the API, the way the example
+`examples/others/exp_contingency_events.jl` does. Both routes run on the
+same engine path as N-1 and give the same rows.
 
 > **Note:** On Google Colab the install cell takes a minute or two on a
 > fresh session (package download and precompilation). Colab's Julia
 > version may change over time; this notebook targets Julia >= 1.12.
 
-## Warm-up and the study case
+## Warm-up and the study cases
 
 Julia compiles each function on first use. This cell loads the package
-and sets up what the chapters share (the study network `net`, its SCF
-file `scf_path`, the typed case `scfcase` and its `index`), so any chapter
-can run on its own after it; a code cell that uses a name from another
-cell says so in a comment. Its last line, `warmup()`, runs every path the
-chapters exercise once on the small shipped `sp_case9` (the MATPOWER
-import, the SCF export and read, the N-1 expansion, hand-written
-scenarios, `runScenarios!` with and without screening, and writing the
-scenarios block back), so nothing stalls mid-workshop; its code is in
-`docs/lit/warmup/workshop_scenarios.jl` of the package. How long the
-warm-up takes depends on the machine: a Colab session is several times
-slower than a desktop; every later cell then runs without compile pauses.
+and sets up what the chapters share, so any chapter can run on its own
+after it; a code cell that uses a name from another cell says so in a
+comment. Its last line, `warmup()`, runs every path the chapters use once
+on the small shipped `sp_case5`, so nothing stalls mid-workshop; its code
+is in `docs/lit/warmup/workshop_scenarios.jl` of the package. How long the
+warm-up takes depends on the machine.
 
-The study network is `sp_case118`, shipped with the package under
-`data/mpower`: a synthetic case with the cardinalities of the IEEE
-118-bus system (118 buses, 186 branches, 54 generators, three areas, a
-345 kV backbone over a 138 kV grid) and its own topology and names. We
-build the network once through the MATPOWER adapter and export it as an
-SCF file into a scratch directory, because THIS workshop edits the case
-file.
+The study cases are two shipped Sparlectra Case Format (SCF) files:
+`sp_case14`, a meshed 110 kV level with one double circuit, and
+`sp_case60`, a 220/110 kV grid with a double ring, a station of two
+busbar sections joined by a coupler, and a line pair that carries the
+same name on both legs. Scenarios are a feature of this format: the
+file carries them, and the result rows use the names written in the file.
 
 ````@example workshop_scenarios
 using Sparlectra
 
-# the study case all chapters share
-workdir = mktempdir()
-case_m = joinpath(dirname(dirname(pathof(Sparlectra))), "data", "mpower", "sp_case118.m")
-net = createNetFromMatPowerFile(filename=case_m, flatstart=false, enable_pq_gen_controllers=true, bus_shunt_model=:admittance, matpower_shift_sign=1.0, matpower_shift_unit=:deg, matpower_ratio=:normal, tap_changer_model=:ideal)
-scf_path = joinpath(workdir, "sp_case118_workshop.scf.json")
-exportSCF(net; file=scf_path, case_name="sp_case118_workshop", source_reference="sp_case118.m")
-scfcase = Sparlectra.read_scf_json(scf_path)
-index = ScenarioIndex(scfcase)
-println("buses: ", length(net.nodeVec), ", branches: ", length(net.branchVec))
-@assert length(net.nodeVec) == 118
-@assert length(net.branchVec) == 186
+# the two study cases, each as file path, typed case, network, id index
+# and the display names of the file
+data = joinpath(dirname(dirname(pathof(Sparlectra))), "data", "scf")
+function study(name)
+    path = joinpath(data, name * ".scf.json")
+    case = read_scf_json(path)
+    net = build_net(case)
+    return (path=path, case=case, net=net, index=ScenarioIndex(case), names=contingency_names(net, case))
+end
+c14 = study("sp_case14")
+c60 = study("sp_case60")
+println("sp_case14: ", length(c14.net.nodeVec), " buses, ", length(c14.net.branchVec), " branches; sp_case60: ", length(c60.net.nodeVec), " buses, ", length(c60.net.branchVec), " branches, ", length(c60.net.linkVec), " coupler")
+@assert length(c14.net.branchVec) == 17
+@assert length(c60.net.branchVec) == 74
+@assert length(c60.net.linkVec) == 1
 
 # compile every path the chapters use once; the warm-up code is in
 # docs/lit/warmup/workshop_scenarios.jl of the installed package
@@ -69,132 +66,196 @@ include(pkgdir(Sparlectra, "docs", "lit", "warmup", "workshop_scenarios.jl"))
 warmup()
 ````
 
-## The N-1 expansion
+## 1. The N-1 baseline
 
-The N-1 modes are the special case of the scenario model: one status
-patch per in-service branch or generator, expanded through the same
-generators `runContingencies!` uses.
+One case per in-service branch. `names = c14.names` makes the rows carry
+the line names of the file (`Ostheim_Neuwiese_1`) instead of the
+generated names of the network (`B_ACL_110_1_2#1`).
 
 ````@example workshop_scenarios
-# uses: index, net (warm-up cell)
-n1 = expand_scenarios(ScenarioSet(mode=:n1_all), net, index)
-n1_branches = expand_scenarios(ScenarioSet(mode=:n1_branches), net, index)
-println("N-1 all: ", length(n1), " scenarios (", length(n1_branches), " branch outages, ", length(n1) - length(n1_branches), " generator outages)")
-@assert length(n1) == 240
-@assert length(n1_branches) == 186
-@assert all(length(s.ops) == 1 for s in n1)
+# uses: c14 (warm-up cell)
+n1 = runContingencies!(c14.net, generateN1Branches(c14.net; names=c14.names); names=c14.names)
+println("N-1: ", length(n1), " outages, ", count(r -> r.converged, n1), " converged, ", count(r -> r.error !== nothing && occursin("island", r.error), n1), " cut a bus off")
+@assert length(n1) == 17
+@assert count(r -> r.converged, n1) == 14
+@assert all(r -> r.kind === :branch && length(r.elements) == 1, n1)
 ````
 
-## Three scenarios by hand
+## 2. The double circuit: by hand and generated
 
-A scenario is a named, weighted, ordered list of patch operations on SCF
-component ids. The ids come from the typed case; the `extra` block maps
-them to the reference names.
+The two lines between Ostheim and Neuwiese hang on the same towers; one
+fault can take both. Route A writes that event into the file: a scenario
+with two status operations on the SCF component ids. Route B asks
+`generateDoubleCircuits` for it. Both run as one outage of two branches
+and give the same row values.
 
 ````@example workshop_scenarios
-# uses: index, net, scfcase (warm-up cell)
-branch_ids = [r.id for r in scfcase.data.line]
-gen_id = first(id for (id, k) in index.kind_by_id if k === :generator)
-load_ids = [id for (id, k) in index.kind_by_id if k === :load]
-handmade = ScenarioSet(scenarios=[
-    Scenario(name="double outage", weight=2.0, ops=[
-        PatchOp(op=:status, target=:branch, id=branch_ids[1], value=0.0),
-        PatchOp(op=:status, target=:branch, id=branch_ids[2], value=0.0),
-    ]),
-    Scenario(name="load up 20 percent", ops=[PatchOp(op=:scale, target=:load, id=load_ids[1], factor=1.2)]),
-    Scenario(name="gen setpoint 25 MW", ops=[PatchOp(op=:set, target=:generator, id=gen_id, field=:p, value=25.0)]),
-])
-validate_scenarios(handmade, index)
-results = runScenarios!(net, handmade; index=index)
-for r in results
-    println(r.name, ": converged = ", r.converged, ", vmin = ", round(r.min_vm_pu; digits=4), " pu, iterations = ", r.iterations)
+# uses: c14 (warm-up cell)
+ids = sort([id for (id, nm) in c14.index.name_by_id if startswith(nm, "Ostheim_Neuwiese_")])
+by_hand = Scenario(name="both Ostheim-Neuwiese lines", ops=[PatchOp(op=:status, target=:branch, id=id, value=0.0) for id in ids])
+r_hand = only(runScenarios!(c14.net, [by_hand]; index=c14.index))
+dc = only(generateDoubleCircuits(c14.net; names=c14.names))
+r_gen = only(runContingencies!(c14.net, [dc]; names=c14.names))
+println(r_hand.name, " (", r_hand.kind, "): vmin ", round(r_hand.min_vm_pu; digits=4), " pu, max loading ", round(r_hand.max_branch_loading_pct; digits=1), " %")
+println(r_gen.name, " (", r_gen.kind, "): vmin ", round(r_gen.min_vm_pu; digits=4), " pu, max loading ", round(r_gen.max_branch_loading_pct; digits=1), " %")
+@assert ids == [26, 27]
+@assert r_hand.kind === :explicit && r_gen.kind === :double_circuit
+@assert r_hand.elements == r_gen.elements == ["Ostheim_Neuwiese_1", "Ostheim_Neuwiese_2"]
+@assert r_hand.min_vm_pu == r_gen.min_vm_pu && r_hand.max_branch_loading_pct == r_gen.max_branch_loading_pct
+````
+
+## 3. Generated events from the file and from the configuration
+
+A scenarios block can ask for the events instead of listing them: the
+key `events` names the classes. We write it into a copy of the case file,
+read it back and run it. The service does the same for a plain N-1 run
+when `contingency.events.enabled` is set; the class switches are the
+other `contingency.events.*` keys, here as a `ContingencyEventsConfig`.
+
+````@example workshop_scenarios
+# uses: c14 (warm-up cell); by_hand (2. The double circuit: by hand and generated)
+@isdefined(by_hand) || error("Run the section \"2. The double circuit: by hand and generated\" first: it sets up by_hand.")
+workdir = mktempdir()
+copy14 = joinpath(workdir, "sp_case14.scf.json")
+set = ScenarioSet(scenarios=[by_hand], events=[:double_circuits, :busbars])
+c14.case.sparlectra.scenarios = scenario_set_dict(set)
+write_scf_json(c14.case, copy14)
+back = scf_case_scenarios(read_scf_json(copy14))
+from_file = runScenarios!(c14.net, back; index=c14.index)
+kinds = Dict(k => count(r -> r.kind === k, from_file) for k in unique(r.kind for r in from_file))
+println("from the file: ", length(from_file), " cases ", kinds)
+cfg = ContingencyEventsConfig(enabled=true, double_circuits=true, busbars=true)
+from_cfg = generateCorrelatedEvents(c14.net; names=c14.names, double_circuits=cfg.double_circuits, busbars=cfg.busbars, max_members=cfg.max_members)
+println("from the configuration: ", length(from_cfg), " events")
+@assert back.events == [:double_circuits, :busbars]
+@assert kinds[:explicit] == 1 && kinds[:double_circuit] == 1 && kinds[:busbar] == 12
+@assert length(from_cfg) == 13
+````
+
+In the Web UI the scenario source `file_block` runs this block; the
+Settings page carries the `contingency.events.*` switches in its N-1 box.
+
+## 4. Neubach: the coupler, one section, the whole station
+
+Station Neubach on sp_case60 has two 110 kV busbar sections joined by a
+coupler (a bus link). Opening the coupler alone splits the station into
+two buses. A busbar fault on one section opens its lines and the
+coupler; the other section stays. A station fault opens every line at
+both sections. Loads and units stay in the model; what the event cuts
+off is reported (`shed_load_mw`, the note in `error`).
+
+````@example workshop_scenarios
+# uses: c60 (warm-up cell)
+neubach = vcat(generateLinkOutages(c60.net; names=c60.names),
+    [c for c in generateBusbarEvents(c60.net; names=c60.names) if startswith(c.name, "BB Neubach_110")],
+    [c for c in generateSubstationEvents(c60.net; names=c60.names) if c.name == "SUB Neubach_110"])
+for r in runContingencies!(c60.net, neubach; names=c60.names)
+    println(rpad(r.name, 20), rpad(String(r.kind), 12), "out: ", join(r.elements, ", "), "; shed ", r.shed_load_mw, " MW; ", something(r.error, "nothing cut off"))
 end
-@assert length(results) == 3
-@assert all(r.converged for r in results)
-@assert all(isfinite(r.min_vm_pu) for r in results)
+@assert [c.kind for c in neubach] == [:link, :busbar, :busbar, :substation]
+@assert "Link_1" in neubach[2].elements && "Link_1" in neubach[3].elements
+@assert !("Link_1" in neubach[4].elements)
 ````
 
-The multi-op scenario runs the SAME solver ladder and metrics as an N-1
-case; the difference is only where the patch list comes from.
+## 5. A name group across two sections
 
-## Screening: off against flag
-
-With screening `:off` (the default everywhere) every scenario gets the
-full solve, byte for byte the historical result. With `:flag` every
-non-islanding single outage is estimated first with one Woodbury-corrected
-Newton step on the factorized base Jacobian, and only scenarios whose
-estimate comes close to a limit run fully. Screening is a deliberate
-opt-in: a linearized step cannot see a bus-type switch, so a class of
-generator outages (reactive capability loss) is flagged structurally,
-and the honest check before using `:flag` on your own network is exactly
-the pair of numbers printed here.
+The line pair `Neubach_Waldsee` carries the same name on both legs and
+starts at the two different sections of Neubach. Its endpoints differ,
+so `generateDoubleCircuits` does not see it; only the names say it is
+one corridor. Two legs with the same name get `#<index>` in the output.
 
 ````@example workshop_scenarios
-# uses: index (warm-up cell); net (warm-up cell, Three scenarios by hand)
-@isdefined(net) || error("Run the section \"Three scenarios by hand\" first: it sets up net.")
-full_set = ScenarioSet(mode=:n1_all)
-t_off = @elapsed off_results = runScenarios!(net, full_set; index=index)
-t_flag = @elapsed flag_results = runScenarios!(net, full_set; index=index, screening_mode=:flag)
-n_screened = count(r -> r.screened, flag_results)
-println("off: ", length(off_results), " full solves in ", round(t_off; digits=2), " s")
-println("flag: ", n_screened, " of ", length(flag_results), " screened (", round(100 * n_screened / length(flag_results); digits=1), " %) in ", round(t_flag; digits=2), " s")
-@assert off_results isa Vector{Sparlectra.ContingencyResult}
-@assert flag_results isa Vector{ScenarioResult}
-@assert length(off_results) == 240
-@assert length(flag_results) == 240
-@assert n_screened > 0
-# no violating case may ever be screened away (the acceptance criterion)
-violating = Set(r.name for r in off_results if !isempty(r.overloads) || !isempty(r.voltage_violations) || !r.converged)
-@assert isempty(intersect(violating, Set(r.name for r in flag_results if r.screened)))
+# uses: c60 (warm-up cell)
+ng = only(c for c in generateNameGroups(c60.net; names=c60.names) if c.name == "NG Neubach_Waldsee")
+println(ng.name, ": ", join(ng.elements, ", "))
+@assert length(ng.elements) == 2 && all(e -> startswith(e, "Neubach_Waldsee#"), ng.elements)
+@assert !any(c -> Set(c.elements) == Set(ng.elements), generateDoubleCircuits(c60.net; names=c60.names))
 ````
 
-## One screened and one flagged case in detail
+## 6. Two generators in one event
 
-A screened row carries `start_used = :screen` and the estimate; a
-flagged row carries the FULL run plus the estimate that flagged it.
+An event may take several units. The order of the operations does not
+matter: units leave the working copy in descending position order, so
+no position shifts under another one.
 
 ````@example workshop_scenarios
-# uses: flag_results, off_results (Screening: off against flag)
-(@isdefined(flag_results) && @isdefined(off_results)) || error("Run the section \"Screening: off against flag\" first: it sets up flag_results, off_results.")
-screened_row = first(r for r in flag_results if r.screened)
-full_row = only(r for r in off_results if r.name == screened_row.name)
-println("screened ", screened_row.name, ": estimated vmin ", round(screened_row.min_vm_pu; digits=4), " pu against full-run vmin ", round(full_row.min_vm_pu; digits=4), " pu")
-@assert screened_row.start_used === :screen
-@assert screened_row.screening_estimate !== nothing
-@assert abs(screened_row.min_vm_pu - full_row.min_vm_pu) < 0.02
-
-flagged_row = first(r for r in flag_results if !r.screened && r.screening_estimate !== nothing)
-println("flagged ", flagged_row.name, ": full solve ran (start = ", flagged_row.start_used, "), estimate said vmin ", round(flagged_row.screening_estimate.vmin_pu; digits=4), " pu")
-@assert flagged_row.start_used !== :screen
-@assert flagged_row.converged || flagged_row.error !== nothing
+# uses: c60 (warm-up cell)
+gens = sort([id for (id, k) in c60.index.kind_by_id if k === :generator]; by=id -> c60.index.internal_by_id[id])
+unit(id) = PatchOp(op=:status, target=:generator, id=id, value=0.0)
+ab, ba = runScenarios!(c60.net, [Scenario(name="a then b", ops=[unit(gens[1]), unit(gens[2])]), Scenario(name="b then a", ops=[unit(gens[2]), unit(gens[1])])]; index=c60.index)
+println("a then b: vmin ", round(ab.min_vm_pu; digits=4), " pu; b then a: vmin ", round(ba.min_vm_pu; digits=4), " pu")
+@assert ab.min_vm_pu == ba.min_vm_pu && ab.max_branch_loading_pct == ba.max_branch_loading_pct
 ````
 
-## The scenarios block travels with the case
+## 7. N-2 pairs
 
-Writing the block into the SCF file makes the study part of the case:
-the Web UI, the service (`scenario_source = file_block`) and the CLI all
-read it from there.
+`generateBranchPairs` lists every pair of closed branches: 2701 on
+sp_case60. A pair is harmful when it fails, cuts a bus off, overloads a
+branch or leaves the voltage band. Most harmful pairs contain a single
+outage that is harmful on its own. The interesting ones are harmful
+although both singles are harmless.
 
 ````@example workshop_scenarios
-# uses: scf_path, scfcase (warm-up cell); handmade (Three scenarios by hand)
-@isdefined(handmade) || error("Run the section \"Three scenarios by hand\" first: it sets up handmade.")
-scfcase.sparlectra.scenarios = scenario_set_dict(handmade)
-Sparlectra.write_scf_json(scfcase, scf_path)
-back = scf_case_scenarios(Sparlectra.read_scf_json(scf_path))
-println("re-read scenarios: ", join((s.name for s in back.scenarios), ", "))
-@assert back !== nothing
-@assert [s.name for s in back.scenarios] == [s.name for s in handmade.scenarios]
-@assert back.scenarios[1].weight == 2.0
-@assert length(back.scenarios[1].ops) == 2
+# uses: c60 (warm-up cell)
+harmful(r) = !r.converged || (r.error !== nothing && occursin("island", r.error)) || !isempty(r.overloads) || !isempty(r.voltage_violations)
+singles = generateN1Branches(c60.net; names=c60.names)
+# the island reports of 2701 solves would fill the page; the runs are quiet
+single_results = redirect_stdout(() -> runContingencies!(c60.net, singles; names=c60.names), devnull)
+single_harm = Dict(only(c.elements) => harmful(r) for (c, r) in zip(singles, single_results))
+pairs = generateBranchPairs(c60.net; names=c60.names)
+pair_results = redirect_stdout(() -> runContingencies!(c60.net, pairs; names=c60.names), devnull)
+emergent = [p for (p, r) in zip(pairs, pair_results) if harmful(r) && !any(e -> single_harm[e], p.elements)]
+circuits = Set(Set(c.elements) for c in generateDoubleCircuits(c60.net; names=c60.names))
+println(length(pairs), " pairs, ", count(harmful, pair_results), " harmful, ", length(emergent), " harmful with two harmless singles, ", count(p -> Set(p.elements) in circuits, emergent), " of them double circuits")
+@assert length(pairs) == 2701
+@assert count(harmful, pair_results) == 1164
+@assert length(emergent) == 124
+@assert count(p -> Set(p.elements) in circuits, emergent) == 0
 ````
+
+None of the six double circuits is among them: the ring carries each
+corridor twice, and losing both legs moves the flow to the other half of
+the ring. The 124 are mostly voltage events: two lines whose outages
+each lower the same buses a little, together below 0.9 pu. That is why a
+rule that keeps only pairs with a single near a limit misses some of
+them; the full list is the safe choice on a network of this size.
+
+## 8. Reading the results
+
+Every row says what it is (`kind`) and what was out (`elements`, by the
+names of the file). The report counts the cases per kind; the CSV writes
+both columns after the name, the elements joined by `|`.
+
+````@example workshop_scenarios
+# uses: c60 (warm-up cell); neubach (4. Neubach: the coupler, one section, the whole station); workdir (3. Generated events from the file and from the configuration)
+@isdefined(neubach) || error("Run the section \"4. Neubach: the coupler, one section, the whole station\" first: it sets up neubach.")
+@isdefined(workdir) || error("Run the section \"3. Generated events from the file and from the configuration\" first: it sets up workdir.")
+report = buildContingencyReport(redirect_stdout(() -> runContingencies!(c60.net, vcat(generateN1Branches(c60.net; names=c60.names), neubach); names=c60.names), devnull))
+println("cases by kind: ", join(["$(k) $(n)" for (k, n) in report.n_by_kind], ", "))
+# format="technical" fixes comma and decimal point; the default follows the regional settings
+csv = writeContingencyResultsCSV(joinpath(workdir, "events.csv"), redirect_stdout(() -> runContingencies!(c60.net, neubach; names=c60.names), devnull); format="technical")
+println(first(readlines(csv)))
+@assert report.n_by_kind == [:branch => 74, :link => 1, :busbar => 2, :substation => 1]
+@assert startswith(first(readlines(csv)), "name,kind,elements,")
+````
+
+The Web UI shows the same: a `kind` column, the elements and the
+overloaded branches in the line below each row, and the count of events
+in the run summary.
+
+## 9. SCF only
+
+Scenarios and events belong to the Sparlectra Case Format. A MATPOWER,
+CGMES or PowSyBl case runs a plain N-1 (the service says so in
+`run.log`), and converting an SCF case to one of these formats does not
+carry the scenarios block.
 
 ## Where to go from here
 
-- [N-1 Contingency Analysis](../contingency.md): the execution model, the
-  screening section with the calibration table, and why `:off` is the
-  default.
-- [Sparlectra Case Format](../scf.md): the scenarios block in the format
-  specification.
-- The Web UI's scenario editor (`/powerflow/scenarios`) edits exactly the
-  block this workshop wrote by hand.
+- [N-1 Contingency Analysis](../contingency.md): correlated events, N-2
+  pairs, screening and the display names.
+- [Sparlectra Case Format](../scf.md): the scenarios block with `kind`
+  and `events`.
+- The example `examples/others/exp_contingency_events.jl` runs the same
+  steps as a script.
 

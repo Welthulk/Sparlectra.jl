@@ -326,7 +326,6 @@ Base.@kwdef mutable struct SCFSparlectra
   extra::Dict{String,Any} = Dict{String,Any}()
   measurements::Dict{String,Any} = Dict{String,Any}()
   start_state::SCFStartState = SCFStartState()
-  contingencies::Dict{String,Any} = Dict{String,Any}()
   short_circuit::Dict{String,Any} = Dict{String,Any}()
   config::Dict{String,Any} = Dict{String,Any}()
   transformer_types::Dict{String,Any} = Dict{String,Any}()
@@ -653,7 +652,6 @@ function scfcase_from_root(root::AbstractDict)::SCFCase
       extra = _scfcase_dict(_scf_get(spar_raw, "extra", nothing)),
       measurements = _scfcase_dict(_scf_get(spar_raw, "measurements", nothing)),
       start_state = _scfcase_start_state(_scf_get(spar_raw, "start_state", nothing)),
-      contingencies = _scfcase_dict(_scf_get(spar_raw, "contingencies", nothing)),
       short_circuit = _scfcase_dict(_scf_get(spar_raw, "short_circuit", nothing)),
       config = _scfcase_dict(_scf_get(spar_raw, "config", nothing)),
       transformer_types = _scfcase_dict(_scf_get(spar_raw, "transformer_types", nothing)),
@@ -806,7 +804,7 @@ function scf_root_dict(case::SCFCase)::Dict{String,Any}
     isempty(components) || (sd["components"] = components)
     start_state = _scfdict_start_state(spar.start_state)
     isempty(start_state) || (sd["start_state"] = start_state)
-    for (key, block) in (("measurements", spar.measurements), ("contingencies", spar.contingencies), ("short_circuit", spar.short_circuit), ("config", spar.config), ("transformer_types", spar.transformer_types), ("scenarios", spar.scenarios), ("branch_shunt_split", spar.branch_shunt_split), ("tap_changer_models", spar.tap_changer_models))
+    for (key, block) in (("measurements", spar.measurements), ("short_circuit", spar.short_circuit), ("config", spar.config), ("transformer_types", spar.transformer_types), ("scenarios", spar.scenarios), ("branch_shunt_split", spar.branch_shunt_split), ("tap_changer_models", spar.tap_changer_models))
       isempty(block) || (sd[key] = block)
     end
     root["sparlectra"] = sd

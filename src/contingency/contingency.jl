@@ -13,52 +13,69 @@
 # limitations under the License.
 
 # file: src/contingency/contingency.jl
-# purpose: N-1 contingency batch API: branch-outage cases generated
-#          from the net or from imported FOR001 lists, solved on isolated
-#          deep copies (optionally in parallel on Julia threads), evaluated
+# purpose: contingency batch API: outage cases (single elements and
+#          correlated events) generated from the net or from imported FOR001
+#          lists, solved on the scenario engine (src/scenario/engine.jl: one
+#          reusable working copy per chunk, reset to the solved base after
+#          every case, optionally in parallel on Julia threads), evaluated
 #          against voltage and loading limits, reported as a result table
 #          and CSV. The base net is never mutated.
 
 """
     ContingencyCase
 
-One contingency to evaluate: the outage of a single network element.
+One contingency to evaluate: the outage of a single network element or of a
+group of elements that trip together (a correlated event, an N-2 pair).
 
 # Fields
 - `name::String`: display name of the case (defaults to the element name).
-- `kind::Symbol`: `:branch` (a line/transformer outage), `:gen` (a generator
-  outage) or `:transformer3w` (a three-winding transformer as a whole: every
-  leg of its star equivalent opens together).
-- `element::String`: for `:branch`, the branch component name as reported by
-  `getCompName(branch.comp)`, resolved against `net.branchVec`; for `:gen`, the
-  generator prosumer's component name, resolved against `net.prosumpsVec`. Both
-  can share a component name (parallel circuits, several units at one bus), so
-  `generateN1Branches` / `generateN1Generators` disambiguate duplicates as
-  `"<name>#<index>"` and the resolver verifies the index carries that name
-  before use. For `:transformer3w`, the name of the transformer's star-point
-  bus (the case `name` is the transformer's name).
+- `kind::Symbol`: what the case is (one vocabulary with
+  [`Scenario`](@ref) and [`ContingencyResult`](@ref)):
+  - single elements: `:branch` (a line or transformer), `:gen` (a
+    generator), `:transformer3w` (a three-winding transformer as a whole:
+    every leg of its star equivalent opens together), `:link` (a closed bus
+    link, a busbar coupler);
+  - correlated events: `:double_circuit`, `:busbar`, `:substation`,
+    `:name_group` (see [`generateCorrelatedEvents`](@ref));
+  - `:explicit` for a hand-written group, `:pair` for an N-2 pair
+    ([`generateBranchPairs`](@ref)).
+- `elements::Vector{String}`: the outaged elements as element strings of
+  [`contingency_names`](@ref): a branch, generator or link name, with
+  `"#<index>"` where the name is not unique. A single-element kind carries
+  exactly one entry; for `:transformer3w` it is the name of the
+  transformer's star-point bus. The members of a group are resolved
+  against branches, links and generators in that order; a string that
+  names more than one of them is reported as a failed case.
 - `weight::Float64`: a per-case importance/probability weight (default `1.0`),
   carried through to the [`ContingencyResult`](@ref) so a weighted ranking can
-  read it. Set it via the 4-argument constructor, or attach outage rates in bulk
-  with [`applyContingencyWeights`](@ref) / [`readContingencyWeightsCSV`](@ref).
+  read it. Set it via the constructor, or attach outage rates in bulk with
+  [`applyContingencyWeights`](@ref) / [`readContingencyWeightsCSV`](@ref).
   A weight of `0` is a pure ranking weight, NOT a skip switch: the case is still
   solved and reported, and only a weighted ranking neutralizes it. To leave an
   outage out of the batch entirely, drop it at generation time with the
-  `generateN1Branches` screening filters.
+  generator filters.
+
+Constructors: `ContingencyCase(name, kind, elements::Vector{String}, weight = 1.0)`,
+the single-element shorthand `ContingencyCase(name, kind, element::String,
+weight = 1.0)`, and `ContingencyCase(element)` for a branch outage named
+after its element.
 """
 struct ContingencyCase
     name::String
     kind::Symbol
-    element::String
+    elements::Vector{String}
     weight::Float64
-    function ContingencyCase(name::String, kind::Symbol, element::String, weight::Real=1.0)
-        kind in (:branch, :gen, :transformer3w) || throw(ArgumentError("ContingencyCase: kind must be :branch, :gen or :transformer3w, got :$(kind)."))
+    function ContingencyCase(name::String, kind::Symbol, elements::Vector{String}, weight::Real=1.0)
+        kind in CONTINGENCY_KINDS || throw(ArgumentError("ContingencyCase: kind must be one of $(join(CONTINGENCY_KINDS, ", ")), got :$(kind)."))
+        isempty(elements) && throw(ArgumentError("ContingencyCase: $(repr(name)) names no element."))
+        (kind in CONTINGENCY_SINGLE_KINDS && length(elements) != 1) && throw(ArgumentError("ContingencyCase: a :$(kind) case names exactly one element, got $(length(elements))."))
         (isfinite(weight) && weight >= 0.0) || throw(ArgumentError("ContingencyCase: weight must be a finite value >= 0, got $(weight)."))
-        return new(name, kind, element, Float64(weight))
+        return new(name, kind, elements, Float64(weight))
     end
 end
 
-ContingencyCase(element::String) = ContingencyCase(element, :branch, element)
+ContingencyCase(name::String, kind::Symbol, element::String, weight::Real=1.0) = ContingencyCase(name, kind, String[element], weight)
+ContingencyCase(element::String) = ContingencyCase(element, :branch, String[element])
 
 """
     OverloadRecord
@@ -91,11 +108,16 @@ end
 """
     ContingencyResult
 
-Outcome of one [`ContingencyCase`](@ref) evaluated by
-[`runContingencies!`](@ref).
+Outcome of one [`ContingencyCase`](@ref) or [`Scenario`](@ref) evaluated by
+[`runContingencies!`](@ref) or [`runScenarios!`](@ref).
 
 # Fields
 - `name::String`: the case name.
+- `kind::Symbol`: the case kind (see [`ContingencyCase`](@ref); `:explicit`
+  for a user scenario).
+- `elements::Vector{String}`: the outaged elements as element strings of
+  [`contingency_names`](@ref); a three-winding transformer lists its legs,
+  a scenario every component its operations touch.
 - `weight::Float64`: the originating case's importance/probability weight
   (default `1.0`), carried through unchanged for weighted ranking.
 - `converged::Bool`: whether the post-outage power flow converged.
@@ -132,6 +154,8 @@ Outcome of one [`ContingencyCase`](@ref) evaluated by
 """
 struct ContingencyResult
     name::String
+    kind::Symbol
+    elements::Vector{String}
     weight::Float64
     converged::Bool
     iterations::Int
@@ -188,7 +212,7 @@ _three_winding_star_points(net::Net)::Set{Int} = Set{Int}(g.star for g in _three
 """
     generateN1Branches(net::Net; include_transformers = true,
                        min_vn_kV = 0.0, min_sn_MVA = 0.0, name_pattern = nothing,
-                       three_winding_legs = false)
+                       three_winding_legs = false, names = contingency_names(net))
         -> Vector{ContingencyCase}
 
 Generate one branch-outage [`ContingencyCase`](@ref) per in-service branch
@@ -206,8 +230,13 @@ grid (all default to "no filter"):
   kept). Screens N-1 down to the transmission grid.
 - `min_sn_MVA`: keep a branch only if it carries a finite `sn_MVA` rating of at
   least this value. Unrated branches are dropped when this filter is active.
-- `name_pattern`: keep a branch only if its component name matches this
+- `name_pattern`: keep a branch only if its display name matches this
   `Regex` or contains this substring.
+
+Case names and elements come from `names` ([`contingency_names`](@ref)):
+the generated component names by default, the file names of an SCF case
+when its map is passed. A name shared by several branches (parallel
+circuits) carries `"#<branch index>"`.
 
 A three-winding transformer (a star equivalent: three legs meeting in an
 auxiliary star-point bus) trips as a whole: it gets ONE case of kind
@@ -221,12 +250,7 @@ transformer under `include_transformers`, its highest terminal voltage meets
 function generateN1Branches(net::Net; include_transformers::Bool=true,
     min_vn_kV::Real=0.0, min_sn_MVA::Real=0.0,
     name_pattern::Union{Nothing,AbstractString,Regex}=nothing,
-    three_winding_legs::Bool=false)::Vector{ContingencyCase}
-    name_count = Dict{String,Int}()
-    for br in net.branchVec
-        name = getCompName(br.comp)
-        name_count[name] = get(name_count, name, 0) + 1
-    end
+    three_winding_legs::Bool=false, names::ContingencyNames=contingency_names(net))::Vector{ContingencyCase}
     # the transformer case takes the place of its first leg in the list
     group_at_leg = Dict{Int,Int}()
     leg_of_group = Set{Int}()
@@ -260,12 +284,10 @@ function generateN1Branches(net::Net; include_transformers::Bool=true,
             rating = br.sn_MVA
             (rating !== nothing && isfinite(rating) && rating >= min_sn_MVA) || continue
         end
-        name = getCompName(br.comp)
-        (name_pattern === nothing || occursin(name_pattern, name)) || continue
-        # parallel circuits share a component name; disambiguate by branch index
-        # so every circuit gets its OWN outage case (a bare name would always
-        # resolve to the first circuit and evaluate the same outage twice)
-        element = name_count[name] > 1 ? string(name, "#", br.branchIdx) : name
+        (name_pattern === nothing || occursin(name_pattern, names.branch_raw[k])) || continue
+        # the element string carries "#<index>" where the display name is
+        # shared (parallel circuits), so every circuit gets its OWN outage case
+        element = names.branch[k]
         push!(cases, ContingencyCase(element, :branch, element))
     end
     return cases
@@ -307,64 +329,76 @@ Optional screening filters (default to "no filter"):
   tiny or zero-output units).
 - `name_pattern`: keep names matching a `Regex` or containing a substring.
 
-Generator component names are not unique (several units can share one name or
-bus); duplicates are disambiguated as `"<name>#<prosumerIndex>"`.
+Generator names come from `names` ([`contingency_names`](@ref)) and are not
+unique (several units can share one name or bus); duplicates are
+disambiguated as `"<name>#<prosumerIndex>"`.
 """
 function generateN1Generators(net::Net; min_pg_MW::Real=0.0,
-    name_pattern::Union{Nothing,AbstractString,Regex}=nothing)::Vector{ContingencyCase}
-    name_count = Dict{String,Int}()
-    for ps in net.prosumpsVec
-        isGenerator(ps) || continue
-        name = getCompName(ps.comp)
-        name_count[name] = get(name_count, name, 0) + 1
-    end
+    name_pattern::Union{Nothing,AbstractString,Regex}=nothing, names::ContingencyNames=contingency_names(net))::Vector{ContingencyCase}
     cases = ContingencyCase[]
     for (pidx, ps) in enumerate(net.prosumpsVec)
         isGenerator(ps) || continue
         if min_pg_MW > 0.0
             abs(something(ps.pVal, 0.0)) >= min_pg_MW || continue
         end
-        name = getCompName(ps.comp)
-        (name_pattern === nothing || occursin(name_pattern, name)) || continue
-        # generator names are not unique (unlike branch names); disambiguate by the
-        # prosumer index so every unit resolves to its OWN outage
-        element = name_count[name] > 1 ? string(name, "#", pidx) : name
+        (name_pattern === nothing || occursin(name_pattern, names.gen_raw[pidx])) || continue
+        # the element string carries "#<prosumer index>" where the name is
+        # shared, so every unit resolves to its OWN outage
+        element = names.gen[pidx]
         push!(cases, ContingencyCase(element, :gen, element))
     end
     return cases
 end
 
-# resolve a case element against branchVec: either a plain component name
-# (first match) or the disambiguated "<name>#<branchIdx>" form, where the
-# index must carry the expected name (guards against stale case lists)
-function _resolve_contingency_branch(cnet::Net, element::String)::Union{Nothing,Int}
-    hash_pos = findlast('#', element)
-    if hash_pos !== nothing
-        idx = tryparse(Int, element[(hash_pos+1):end])
-        name = element[1:(hash_pos-1)]
-        if idx !== nothing && 1 <= idx <= length(cnet.branchVec) && getCompName(cnet.branchVec[idx].comp) == name
-            return idx
-        end
-        return nothing
+# resolve a case element against branchVec / prosumpsVec through the display
+# names of the batch (see _resolve_named_element in names.jl): the element
+# string, its "<name>#<index>" form, or a bare name (first match); a
+# generator element must name a generator
+_resolve_contingency_branch(names::ContingencyNames, element::AbstractString)::Union{Nothing,Int} = _resolve_named_branch(names, element)
+_resolve_contingency_generator(names::ContingencyNames, element::AbstractString)::Union{Nothing,Int} = _resolve_named_generator(names, element)
+
+# The members of a case as (class, internal index) with class :branch, :gen
+# or :link, in element order; a three-winding transformer resolves to its
+# legs. Resolution happens once, on the unmutated template, so the workers
+# never look up a name. Returns the reason as a String when an element does
+# not resolve; a group element is looked up as branch, link and generator,
+# and one that names more than one of them is refused instead of guessed.
+function _contingency_case_members(net::Net, names::ContingencyNames, case::ContingencyCase)::Union{String,Vector{Tuple{Symbol,Int}}}
+    if case.kind === :transformer3w
+        element = only(case.elements)
+        star = get(net.busDict, element, nothing)
+        grp = star === nothing ? nothing : findfirst(g -> g.star == star, _three_winding_groups(net))
+        grp === nothing && return "unknown three-winding transformer star point $(element)"
+        return Tuple{Symbol,Int}[(:branch, k) for k in _three_winding_groups(net)[grp].legs]
+    elseif case.kind === :branch
+        k = _resolve_contingency_branch(names, only(case.elements))
+        return k === nothing ? "unknown branch $(only(case.elements)) (not found in net.branchVec)" : Tuple{Symbol,Int}[(:branch, k)]
+    elseif case.kind === :gen
+        p = _resolve_contingency_generator(names, only(case.elements))
+        return p === nothing ? "unknown generator $(only(case.elements)) (not found in net.prosumpsVec)" : Tuple{Symbol,Int}[(:gen, p)]
+    elseif case.kind === :link
+        l = _resolve_named_link(names, only(case.elements))
+        return l === nothing ? "unknown link $(only(case.elements)) (not found in net.linkVec)" : Tuple{Symbol,Int}[(:link, l)]
     end
-    return findfirst(b -> getCompName(b.comp) == element, cnet.branchVec)
+    members = Tuple{Symbol,Int}[]
+    for element in case.elements
+        hits = Tuple{Symbol,Int}[]
+        k = _resolve_contingency_branch(names, element)
+        k === nothing || push!(hits, (:branch, k))
+        l = _resolve_named_link(names, element)
+        l === nothing || push!(hits, (:link, l))
+        p = _resolve_contingency_generator(names, element)
+        p === nothing || push!(hits, (:gen, p))
+        isempty(hits) && return "unknown element $(element) (no branch, link or generator of that name)"
+        length(hits) > 1 && return "element $(element) names more than one component ($(join(first.(hits), ", "))); use the element string with #<index>"
+        push!(members, only(hits))
+    end
+    return members
 end
 
-# resolve a generator case element against prosumpsVec: a plain component name
-# (first generator match) or the disambiguated "<name>#<prosumerIndex>" form,
-# where the index must be a generator carrying the expected name
-function _resolve_contingency_generator(cnet::Net, element::String)::Union{Nothing,Int}
-    hash_pos = findlast('#', element)
-    if hash_pos !== nothing
-        idx = tryparse(Int, element[(hash_pos+1):end])
-        name = element[1:(hash_pos-1)]
-        if idx !== nothing && 1 <= idx <= length(cnet.prosumpsVec) && isGenerator(cnet.prosumpsVec[idx]) && getCompName(cnet.prosumpsVec[idx].comp) == name
-            return idx
-        end
-        return nothing
-    end
-    return findfirst(ps -> isGenerator(ps) && getCompName(ps.comp) == element, cnet.prosumpsVec)
-end
+# the element strings a result row reports for resolved members
+_contingency_member_elements(names::ContingencyNames, members::Vector{Tuple{Symbol,Int}})::Vector{String} =
+    String[m === :branch ? names.branch[k] : m === :gen ? names.gen[k] : names.link[k] for (m, k) in members]
 
 # take one generator out of service on a case-local net: delete just that
 # prosumer. buildComplexSVec reads generation straight from prosumpsVec, so the
@@ -413,7 +447,7 @@ actionable error instead of dropping them silently.
 generateContingenciesFromFOR001(net::Net)::Vector{ContingencyCase} = [ContingencyCase(name, :branch, name) for name in net.for001Contingencies]
 
 """
-    applyContingencyWeights(cases, weights; default = 1.0) -> Vector{ContingencyCase}
+    applyContingencyWeights(cases, weights; default = 1.0, aliases = Dict()) -> Vector{ContingencyCase}
 
 Return a copy of `cases` with each case's `weight` set from `weights`
 (an `AbstractDict` mapping case name to a non-negative number), looked up by
@@ -421,9 +455,32 @@ Return a copy of `cases` with each case's `weight` set from `weights`
 attach per-branch outage rates read with [`readContingencyWeightsCSV`](@ref)
 before calling [`runContingencies!`](@ref); [`ContingencyCase`](@ref) is
 immutable, so this builds new cases rather than mutating in place.
+
+`aliases` maps a case name to an older name of the same case (the generated
+name an SCF case carried before its file names were used, see
+[`contingency_names`](@ref)): a weight stored under the old name applies
+when none is stored under the current one.
 """
-function applyContingencyWeights(cases::AbstractVector{ContingencyCase}, weights::AbstractDict; default::Real=1.0)::Vector{ContingencyCase}
-    return ContingencyCase[ContingencyCase(c.name, c.kind, c.element, Float64(get(weights, c.name, default))) for c in cases]
+function applyContingencyWeights(cases::AbstractVector{ContingencyCase}, weights::AbstractDict; default::Real=1.0, aliases::AbstractDict=Dict{String,String}())::Vector{ContingencyCase}
+    weight_of(c) = haskey(weights, c.name) ? weights[c.name] : get(weights, get(aliases, c.name, nothing), default)
+    return ContingencyCase[ContingencyCase(c.name, c.kind, c.elements, Float64(weight_of(c))) for c in cases]
+end
+
+# The older names of single-element cases, for weights saved before the file
+# names of an SCF case were used (0.40.0): case name => the generated element
+# string of the same branch or generator, only where the two differ.
+function _contingency_weight_aliases(net::Net, names::ContingencyNames, generated::ContingencyNames, cases::AbstractVector{ContingencyCase})::Dict{String,String}
+    aliases = Dict{String,String}()
+    names.generated && return aliases
+    for c in cases
+        c.kind in (:branch, :gen) || continue
+        members = _contingency_case_members(net, names, c)
+        members isa AbstractString && continue
+        mkind, k = only(members)
+        old = mkind === :branch ? generated.branch[k] : generated.gen[k]
+        old == c.name || (aliases[c.name] = old)
+    end
+    return aliases
 end
 
 """
@@ -463,7 +520,12 @@ function readContingencyWeightsCSV(path::AbstractString)::Dict{String,Float64}
 end
 
 # evaluate the solved contingency net against the limit band; pure reader
-function _contingency_metrics(cnet::Net, vm_min_pu::Float64, vm_max_pu::Float64, base_loadings::Dict{String,Float64})
+# loading-based metrics of a solved working copy. `base_loadings` is the
+# base-case loading per branch index (NaN without a rating or a converged
+# base), `names` the display names of the batch: an overload names the
+# branch by its element string, so parallel circuits are told apart and
+# each reports its own base value
+function _contingency_metrics(cnet::Net, vm_min_pu::Float64, vm_max_pu::Float64, base_loadings::Vector{Float64}, names::ContingencyNames)
     iso = Set(cnet.isoNodes)
     # a three-winding star point is a computational node, its voltage is no
     # bus voltage: it never enters the envelope or the violation list
@@ -484,7 +546,7 @@ function _contingency_metrics(cnet::Net, vm_min_pu::Float64, vm_max_pu::Float64,
     end
     max_loading = NaN
     overloads = OverloadRecord[]
-    for br in cnet.branchVec
+    for (k, br) in enumerate(cnet.branchVec)
         br.status == 1 || continue
         rating = br.sn_MVA
         (rating === nothing || !isfinite(rating) || rating <= 0.0) && continue
@@ -494,11 +556,8 @@ function _contingency_metrics(cnet::Net, vm_min_pu::Float64, vm_max_pu::Float64,
         loading = 100.0 * s_mva / rating
         (isnan(max_loading) || loading > max_loading) && (max_loading = loading)
         if loading > 100.0
-            name = getCompName(br.comp)
-            # base loading is looked up by name; parallel circuits share a name, so
-            # their base value is an approximation (their base loadings are close)
-            base = get(base_loadings, name, NaN)
-            push!(overloads, OverloadRecord(name, loading, base, loading - base, s_mva, rating))
+            base = k <= length(base_loadings) ? base_loadings[k] : NaN
+            push!(overloads, OverloadRecord(names.branch[k], loading, base, loading - base, s_mva, rating))
         end
     end
     # worst-loaded branch first, so the result list and the report read top-down
@@ -506,18 +565,20 @@ function _contingency_metrics(cnet::Net, vm_min_pu::Float64, vm_max_pu::Float64,
     return (; vmin=isfinite(vmin) ? vmin : NaN, vmax=isfinite(vmax) ? vmax : NaN, violations, max_loading, overloads)
 end
 
-# base-case loading per rated branch (component name -> loading_pct), computed
-# ONCE on the solved template so every contingency can report the delta to the
-# pre-outage state. Empty when the base did not converge (deltas are then NaN).
-function _base_branch_loadings(net::Net)::Dict{String,Float64}
-    loadings = Dict{String,Float64}()
-    for br in net.branchVec
+# base-case loading per branch index in percent (NaN for a branch out of
+# service or without a rating), computed ONCE on the solved template so every
+# contingency can report the delta to the pre-outage state. By index, not by
+# name: parallel circuits share a generated name, and a name lookup gave
+# both circuits the base value of the last one.
+function _base_branch_loadings(net::Net)::Vector{Float64}
+    loadings = fill(NaN, length(net.branchVec))
+    for (k, br) in enumerate(net.branchVec)
         br.status == 1 || continue
         rating = br.sn_MVA
         (rating === nothing || !isfinite(rating) || rating <= 0.0) && continue
         s_from = br.fBranchFlow === nothing ? 0.0 : hypot(something(br.fBranchFlow.pFlow, 0.0), something(br.fBranchFlow.qFlow, 0.0))
         s_to = br.tBranchFlow === nothing ? 0.0 : hypot(something(br.tBranchFlow.pFlow, 0.0), something(br.tBranchFlow.qFlow, 0.0))
-        loadings[getCompName(br.comp)] = 100.0 * max(s_from, s_to) / rating
+        loadings[k] = 100.0 * max(s_from, s_to) / rating
     end
     return loadings
 end
@@ -559,10 +620,24 @@ _negative_load_note(load_mw::Real)::String = load_mw < 0.0 ? " (negative: the ca
 # stays simple. The MW figures are the total scheduled load / generation summed
 # over the reference-less island(s) (`refless` are the detect_ac_islands rows
 # with chosen_ref_bus == 0).
-function _islanded_contingency_result(name::AbstractString, weight::Float64, island_count::Int, refless::AbstractVector)
+# what a result row says about its case: name, kind, the outaged elements and
+# the weight. Built once per work item and handed to every result constructor,
+# so no path can drop the provenance of a row.
+struct _CaseLabel
+    name::String
+    kind::Symbol
+    elements::Vector{String}
+    weight::Float64
+end
+
+# a row without a solved state (failed, unresolved, islanded without reference)
+_failed_contingency_result(lbl::_CaseLabel, iterations::Int, island_count::Int, shed_mw::Float64, msg::AbstractString) =
+    ContingencyResult(lbl.name, lbl.kind, lbl.elements, lbl.weight, false, iterations, :none, NaN, NaN, NaN, NaN, OverloadRecord[], String[], island_count, shed_mw, msg)
+
+function _islanded_contingency_result(lbl::_CaseLabel, island_count::Int, refless::AbstractVector)
     # fallback: the solver reported islanding the pre-merge snapshot did not see
     # (no refless rows to size), so report the cause generically rather than 0 MW
-    isempty(refless) && return ContingencyResult(name, weight, false, 0, :none, NaN, NaN, NaN, NaN, OverloadRecord[], String[], island_count, 0.0, "islanded without reference")
+    isempty(refless) && return _failed_contingency_result(lbl, 0, island_count, 0.0, "islanded without reference")
     shed_mw = sum(r.total_load_p_mw for r in refless)
     stranded_gen_mw = sum(r.total_gen_p_mw for r in refless)
     msg = if stranded_gen_mw > 1e-6
@@ -570,7 +645,7 @@ function _islanded_contingency_result(name::AbstractString, weight::Float64, isl
     else
         "islanded: load-only, $(round(shed_mw; digits = 1)) MW load disconnected$(_negative_load_note(shed_mw))"
     end
-    return ContingencyResult(name, weight, false, 0, :none, NaN, NaN, NaN, NaN, OverloadRecord[], String[], island_count, shed_mw, msg)
+    return _failed_contingency_result(lbl, 0, island_count, shed_mw, msg)
 end
 
 """
@@ -583,13 +658,15 @@ end
                       progress = nothing,
                       kwargs...) -> Vector{ContingencyResult}
 
-Evaluate branch-outage contingencies. The base `net` is NEVER mutated: a
-solved template copy is created first (the warm start), and each case works on
-its own `deepcopy` of that template, removes its branch via
-[`removeBranch!`](@ref), solves, and evaluates the `[vm_min_pu, vm_max_pu]`
-band plus branch loadings against `sn_MVA` ratings. Cases are returned in
-input order; failures (no convergence, islanding without reference, unknown
-element) are REPORTED in the result, never thrown.
+Evaluate outage contingencies. The base `net` is NEVER mutated: the batch
+runs on the scenario engine, which solves a template copy first (the warm
+start) and evaluates every case on a reusable working copy that is reset to
+the template afterwards. A case opens its branches (status and both
+terminals), removes its units, then solves and evaluates the
+`[vm_min_pu, vm_max_pu]` band plus branch loadings against `sn_MVA` ratings.
+Cases are returned in input order; failures (no convergence, islanding
+without reference, unknown element) are REPORTED in the result, never
+thrown.
 
 `maxIte` is the iteration limit of every outage solve, `base_maxIte` the
 limit of the base-case solve (`0`: the same as `maxIte`); the service path
@@ -617,9 +694,6 @@ for an island that lost it: the stated reference priority first
 missing reference. Remaining `kwargs...` (distributed slack, Q-limit settings, ...)
 are forwarded to the base solve, its rescue and every ladder stage.
 
-`retry_flat_start` is DEPRECATED (kept one minor cycle): `retry_flat_start =
-true` now just appends `:flat` to the ladder.
-
 The batch fans out over Julia threads in `runtime.parallel.max_tasks`
 chunks (gated by `runtime.parallel.*`; the three `parallel_*` keywords
 override the active configuration). Parallel and serial runs produce
@@ -643,8 +717,7 @@ non-islanding outage first on the base Jacobian factorization and fully
 solves only flagged cases; `:only` keeps the estimates. With screening
 active the return type is `Vector{ScenarioResult}` (`screened` marks rows
 whose metric columns carry estimates). The `contingency.screening.*`
-configuration (default `:flag`) drives the service path, not this
-programmatic default.
+configuration (default `:off` as well) drives the service path.
 
 `warm_active_set` (default `true` since 0.30.3) starts every outage from the
 base case's PV/PQ state. Where the limited solution is not unique this can
@@ -653,6 +726,12 @@ true` (default `false`) a converged warm result whose lowest voltage comes
 within `warm_cold_check_margin_pu` (default `0.02`) of `vm_min_pu`, or that
 has an overload or a voltage violation, is solved a second time cold and the
 less favourable result counts (`start_used = :warm_cold_check`). See [Warm active set](@ref contingency_warm_active_set).
+
+`names` ([`contingency_names`](@ref)) resolves the case elements and names
+the result rows and overloads: the generated component names by default,
+the file names of an SCF case when its map is passed (the service does).
+A case of several elements (a correlated event, an N-2 pair) opens all of
+them in one solve.
 """
 function runContingencies!(
     net::Net,
@@ -662,7 +741,6 @@ function runContingencies!(
     maxIte::Int=30,
     tol::Float64=1e-8,
     rescue_ladder::Vector{Symbol}=[:warm],
-    retry_flat_start::Union{Nothing,Bool}=nothing,
     screening_mode::Symbol=:off,
     screening_margin_pct::Float64=10.0,
     parallel_enabled::Union{Nothing,Bool}=nothing,
@@ -674,6 +752,7 @@ function runContingencies!(
     warm_cold_check_margin_pu::Float64=DEFAULT_WARM_COLD_CHECK_MARGIN_PU,
     base_maxIte::Int=0,
     warm_note::Union{Nothing,Base.RefValue{String}}=nothing,
+    names::ContingencyNames=contingency_names(net),
     @nospecialize(progress=nothing),
     kwargs...,
 )
@@ -682,18 +761,12 @@ function runContingencies!(
 
     # resolve the per-case start-value ladder (#331 Phase 1)
     ladder = _validate_contingency_ladder(rescue_ladder; context="runContingencies!: rescue_ladder")
-    # retry_flat_start is DEPRECATED: it is now an alias for appending :flat to
-    # the ladder. Kept one minor cycle; remove after 0.9.x.
-    if retry_flat_start !== nothing
-        @warn "runContingencies!: the keyword retry_flat_start is deprecated; pass rescue_ladder instead (retry_flat_start = true is now an alias for appending :flat to the ladder)."
-        retry_flat_start && !(:flat in ladder) && push!(ladder, :flat)
-    end
     # the batch runs on the scenario engine (base solve,
     # template hygiene, base loadings, chunked workers all live there); the
     # case118 CSV fixture pins these results byte for byte to the pre-engine
     # per-case-deepcopy implementation
-    engine = ScenarioEngine(net; vm_min_pu=vm_min_pu, vm_max_pu=vm_max_pu, maxIte=maxIte, tol=tol, ladder=ladder, pf_kwargs=(; auto_slack=auto_slack, kwargs...), screening_mode=screening_mode, screening_margin_pct=screening_margin_pct, warm_active_set=warm_active_set, warm_note=warm_note, warm_cold_check=warm_cold_check, warm_cold_check_margin_pu=warm_cold_check_margin_pu, base_maxIte=base_maxIte)
-    items = _engine_items_from_cases(engine.template, cases)
+    engine = ScenarioEngine(net; vm_min_pu=vm_min_pu, vm_max_pu=vm_max_pu, maxIte=maxIte, tol=tol, ladder=ladder, pf_kwargs=(; auto_slack=auto_slack, kwargs...), screening_mode=screening_mode, screening_margin_pct=screening_margin_pct, warm_active_set=warm_active_set, warm_note=warm_note, warm_cold_check=warm_cold_check, warm_cold_check_margin_pu=warm_cold_check_margin_pu, base_maxIte=base_maxIte, names=names)
+    items = _engine_items_from_cases(engine.template, names, cases)
     # `progress` is only passed through here (@nospecialize: this body and
     # the batch compile once, whatever the callback type); the batch wraps
     # it in a concrete struct (see _BatchProgress in src/scenario/engine.jl)
@@ -726,18 +799,19 @@ function printContingencyResults(io::IO, results::Vector{ContingencyResult}; max
     else
         throw(ArgumentError("printContingencyResults: sort_by must be :severity or :none, got :$(sort_by)."))
     end
-    println(io, "N-1 contingency results (", length(results), " case(s), ", count(r -> r.converged, results), " converged)")
-    println(io, "-"^151)
-    @printf(io, "%-28s %-9s %5s %-6s %9s %9s %12s %8s %8s %7s %8s %7s %8s  %s\n", "case", "converged", "iter", "start", "Vmin[pu]", "Vmax[pu]", "loading[%]", "overld", "V-viol", "islands", "shed[MW]", "weight", "severity", "error")
-    println(io, "-"^151)
+    println(io, "Contingency results (", length(results), " case(s), ", count(r -> r.converged, results), " converged)")
+    println(io, "-"^166)
+    @printf(io, "%-28s %-14s %-9s %5s %-6s %9s %9s %12s %8s %8s %7s %8s %7s %8s  %s\n", "case", "kind", "converged", "iter", "start", "Vmin[pu]", "Vmax[pu]", "loading[%]", "overld", "V-viol", "islands", "shed[MW]", "weight", "severity", "error")
+    println(io, "-"^166)
     shown = 0
     for r in ordered
         shown >= max_rows && break
         shown += 1
         @printf(
             io,
-            "%-28s %-9s %5d %-6s %9s %9s %12s %8d %8d %7d %8s %7s %8s  %s\n",
+            "%-28s %-14s %-9s %5d %-6s %9s %9s %12s %8d %8d %7d %8s %7s %8s  %s\n",
             _fitColumn(r.name, 28),
+            String(r.kind),
             r.converged ? "yes" : "NO",
             r.iterations,
             String(r.start_used),
@@ -754,7 +828,7 @@ function printContingencyResults(io::IO, results::Vector{ContingencyResult}; max
         )
     end
     shown < length(ordered) && println(io, "... ", length(ordered) - shown, " more row(s) not shown (max_rows = ", max_rows, ")")
-    println(io, "-"^151)
+    println(io, "-"^166)
     return nothing
 end
 
@@ -762,7 +836,7 @@ end
     writeContingencyResultsCSV(path::AbstractString, results::Vector{ContingencyResult}; format = "technical")
 
 Write the contingency results as a CSV (one row per case, always in input
-order): name, weight, converged, iterations, the start-value ladder stage
+order): name, kind, the outaged elements (joined by `|`), weight, converged, iterations, the start-value ladder stage
 that converged, voltage envelope, worst loading, severity, the overloaded
 branches (each `name@loading%`, the per-branch delta to base lives in the
 structured `overloads` field), voltage-violation list, island count, shed
@@ -774,12 +848,14 @@ hardcoded semicolon delimiter is now what `excel_de` selects, so an existing
 shape. Returns `path`.
 """
 function writeContingencyResultsCSV(path::AbstractString, results::Vector{ContingencyResult}; format=result_csv_format())
-    header = ("name", "weight", "converged", "iterations", "start_used", "min_vm_pu", "max_vm_pu", "max_branch_loading_pct", "severity", "overloads", "voltage_violations", "island_count", "shed_load_mw", "error")
+    header = ("name", "kind", "elements", "weight", "converged", "iterations", "start_used", "min_vm_pu", "max_vm_pu", "max_branch_loading_pct", "severity", "overloads", "voltage_violations", "island_count", "shed_load_mw", "error")
     rows = (
         begin
             overloads = join(["$(o.name)@$(round(o.loading_pct; digits = 1))" for o in r.overloads], ",")
             (
                 r.name,
+                String(r.kind),
+                join(r.elements, "|"),
                 r.weight,
                 r.converged,
                 r.iterations,
@@ -805,8 +881,9 @@ end
 
 Aggregate view over a contingency batch (built by
 [`buildContingencyReport`](@ref)): case counts by outcome, the total and worst
-load shed, the single worst branch loading, the worst weighted `severity`, and
-the branches overloaded by the most contingencies. Print it with
+load shed, the single worst branch loading, the worst weighted `severity`,
+the branches overloaded by the most contingencies, and the number of cases
+per kind (`n_by_kind`). Print it with
 [`printContingencyReport`](@ref).
 """
 struct ContingencyReport
@@ -825,6 +902,8 @@ struct ContingencyReport
     worst_severity_case::String
     worst_severity::Float64
     top_overloaded::Vector{Pair{String,Int}}
+    # cases per kind, in the order of CONTINGENCY_KINDS
+    n_by_kind::Vector{Pair{Symbol,Int}}
 end
 
 # an islanded-without-reference outcome (branch or generator) carries "island"
@@ -887,7 +966,13 @@ function buildContingencyReport(results::AbstractVector{ContingencyResult}; top:
     ranked = sort!(collect(counts); by=p -> (-p.second, p.first))
     top_overloaded = ranked[1:min(top, length(ranked))]
 
-    return ContingencyReport(length(results), n_converged, n_islanded, n_nonconverged, n_with_overload, n_with_voltage_violation, total_shed, worst_shed_case, worst_shed_mw, worst_loading_case, worst_loading_branch, worst_loading_pct, worst_severity_case, worst_severity, top_overloaded)
+    by_kind = Dict{Symbol,Int}()
+    for r in results
+        by_kind[r.kind] = get(by_kind, r.kind, 0) + 1
+    end
+    n_by_kind = Pair{Symbol,Int}[k => by_kind[k] for k in CONTINGENCY_KINDS if haskey(by_kind, k)]
+
+    return ContingencyReport(length(results), n_converged, n_islanded, n_nonconverged, n_with_overload, n_with_voltage_violation, total_shed, worst_shed_case, worst_shed_mw, worst_loading_case, worst_loading_branch, worst_loading_pct, worst_severity_case, worst_severity, top_overloaded, n_by_kind)
 end
 
 printContingencyReport(report::ContingencyReport) = printContingencyReport(stdout, report)
@@ -899,8 +984,11 @@ Print the aggregate [`ContingencyReport`](@ref) as a compact summary block:
 outcome counts, load shed, worst loading, and the most-overloaded branches.
 """
 function printContingencyReport(io::IO, report::ContingencyReport)
-    println(io, "N-1 contingency report (", report.n_cases, " case(s))")
+    println(io, "Contingency report (", report.n_cases, " case(s))")
     println(io, "-"^60)
+    if !isempty(report.n_by_kind)
+        @printf(io, "  cases by kind          : %s\n", join(["$(k) $(n)" for (k, n) in report.n_by_kind], ", "))
+    end
     @printf(io, "  converged              : %d\n", report.n_converged)
     @printf(io, "  islanded (load shed)   : %d\n", report.n_islanded)
     @printf(io, "  non-converged          : %d\n", report.n_nonconverged)

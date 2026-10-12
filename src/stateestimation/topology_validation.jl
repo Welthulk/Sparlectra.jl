@@ -21,18 +21,6 @@
 #          ADVISORY: they produce findings and warnings, they never mutate
 #          a status, a measurement, or the model.
 
-## station of a bus: the representative of its closed-link contraction
-## cluster (a bus without links is its own station). Findings and the
-## stage-2 clustering aggregate over stations, not raw buses.
-function _topology_station_map(net::Net)
-  reps = _active_link_representative_map(net)
-  members = Dict{Int,Vector{Int}}()
-  for b in eachindex(reps)
-    push!(get!(members, reps[b], Int[]), b)
-  end
-  return reps, members
-end
-
 ## human-readable location label of a station
 function _topology_station_label(net::Net, rep::Int, members::Dict{Int,Vector{Int}})
   nby = _bus_name_by_idx(net)
@@ -92,7 +80,7 @@ function validate_topology(net::Net, measurements::Vector{Measurement} = Measure
   active = [m for m in measurements if m.active]
   nby = _bus_name_by_idx(net)
   busname(b) = get(nby, Int(b), string(Int(b)))
-  reps, members = _topology_station_map(net)
+  reps, members = _station_map(net)
 
   flowTypes = (PflowMeas, QflowMeas, ImagMeas)
   isflow(m) = m.typ in flowTypes && m.branchIdx !== nothing
@@ -294,7 +282,7 @@ function _topology_auto_candidates(net::Net, measurements::Vector{Measurement}; 
   # caller's solver settings, the tight defaults would under-iterate) and
   # collect every switchable element touching a suspected station
   diag = runse_diagnostics(net, measurements)
-  reps, _ = _topology_station_map(net)
+  reps, _ = _station_map(net)
   for f in something(diag.topology_findings, NamedTuple[])
     f.kind == :topology_error_suspected_at_station || continue
     rep = f.station

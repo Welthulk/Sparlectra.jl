@@ -293,8 +293,8 @@ The Sparlectra Y-bus stamps the tap on the **from** side, so
 | `branch_shunt_split` | per branch id, only for a branch whose two terminal shunt arms differ: `g_from_pu`, `b_from_pu`, `g_to_pu`, `b_to_pu` in pu on the branch base. The `data` section keeps the PGM totals (`c1`, `b1`); on load the row overrides the symmetric half. Absent block: symmetric |
 | `tap_changer_models` | per branch id, the typed tap-changer models of the from-side winding: `ratio` (the `PowerTransformerTaps` inputs: `vn_kv`, `step`, `low_step`, `high_step`, `neutral_step`, `voltage_increment_kv`, `neutral_u_kv`, `convention`), `phase` (`kind` `symmetrical`, `asymmetrical` or `tabular`, the steps, `voltage_step_increment`, `step_phase_shift_increment`, `winding_connection_angle_deg`, `x_min`, `x_max`, `convention`, and `table` rows `step`, `ratio`, `angle_deg`, `x_pu` for `tabular`), and `tap_changer_model` when the impedance correction is on. On load the models are restored onto the winding and the resolver derives ratio, shift and grid from them; `components.tap_changer` rows still describe the grid for readers that know no model. The older spelling `extra[<id>].phase_taps` is still read, with a warning |
 | `components.controllers` | FACTS and regulation, in the declarative `control.controllers` schema verbatim: same type names, same keyword names. The reader hands the entries to `applyConfiguredControllers!`, so there is one construction path |
-| `contingencies` | legacy N-1 study definition: `mode` (`explicit`, `all_branches`, `all_branches_plus`), the case list with their outages, exclusions. Still read, mapped onto the scenario model at load time; the writer emits `scenarios` only |
-| `scenarios` | the scenario model: `mode` (`explicit`, `n1_branches`, `n1_generators`, `n1_all`), `exclusions`, and the ordered scenario list, each scenario `name`, `weight` and its `ops` (`op` = `status`/`set`/`scale`, `target` component class, `id` the SCF component id, plus `value`, `field`, `factor` as the op needs). The N-1 modes expand through the same generators `runContingencies!` uses ([N-1 Contingency Analysis](contingency.md)) |
+| `contingencies` | removed in 0.40.0. A file that still carries the block fails on load with a message naming the `scenarios` block and the Web UI scenario editor |
+| `scenarios` | the scenario model: `mode` (`explicit`, `n1_branches`, `n1_generators`, `n1_all`), `exclusions`, `events` (correlated event classes generated next to the list: `double_circuits`, `busbars`, `substations`, `links`, `name_groups`, `pairs`), and the ordered scenario list, each scenario `name`, `weight`, an optional `kind` (written when it is not `explicit`) and its `ops` (`op` = `status`/`set`/`scale`, `target` component class, `id` the SCF component id, plus `value`, `field`, `factor` as the op needs). The N-1 modes and the event classes expand through the same generators `runContingencies!` uses ([N-1 Contingency Analysis](contingency.md)); a scenario of status-0 ops only runs as one outage event |
 | `short_circuit` | IEC 60909 study definition: `case` (`max`/`min`), optional `c_factor`, `sweep` (`all_buses`/`explicit`) and, for an explicit sweep, the `buses` list of node ids |
 | `measurements.rows` | what PGM sensors cannot carry: the Sparlectra row ids and sigmas behind each sensor, their positions in the measurement vector, active flags where they deviate, and a value only where the SI conversion is not bit-reversible |
 | `config` | case-specific dotted configuration keys (same allowlist the API and Web UI use); deprecated in favour of the case configuration file |
@@ -436,17 +436,14 @@ file's own configuration.
 
 | Study | File block | Entry | Result |
 |---|---|---|---|
-| N-1 and scenarios | `scenarios` (a scenario may combine several status, setpoint and scaling operations, so a double outage is one scenario); a legacy `contingencies` block is mapped onto it at load time, `mode` and exclusions carry over and every listed case becomes one scenario | `runScenarios!`; the service with `scenario_source = file_block`; the Web UI's scenario editor writes the block | the per-scenario `weight` is honored, `run.log` records where the case list came from |
+| N-1 and scenarios | `scenarios` (a scenario may combine several status, setpoint and scaling operations, so a double outage is one scenario) | `runScenarios!`; the service with `scenario_source = file_block`; the Web UI's scenario editor writes the block | the per-scenario `weight` is honored, `run.log` records where the case list came from |
 | State estimation | `measurements` | the run needs no separate CSV; an explicitly picked CSV wins | `measurements.csv` is still written as the run's artifact |
 | Short circuit | `short_circuit`: `case` (`max` or `min`), optional `c_factor`, the sweep | `sweep: explicit` takes a `buses` list of node ids resolved through `extra`; without an explicit sweep PGM's own `data.fault` rows name the faulted node | both cases are always evaluated (`short_circuit_max.csv`, `short_circuit_min.csv`); `case` only decides where the headline numbers come from |
 
 **Notes**
 
-- The legacy service path (no scenario source in the request) runs the
-  `contingencies` block as written: `explicit` the listed cases,
-  `all_branches` the sweep minus `exclude`, `all_branches_plus` the sweep
-  plus the listed extras; outages resolve through `extra[<id>].name`, and
-  a case with more than one outage is refused.
+- Scenarios are a feature of this format. Converting a case to MATPOWER,
+  CGMES or PowSyBl does not carry the `scenarios` block.
 - An unknown bus id in an explicit sweep fails the run; a `fault_type`
   other than `three_phase` or a non-zero `r_f`/`x_f` is refused on load
   (balanced bolted fault only). The file's `c_factor` applies at the

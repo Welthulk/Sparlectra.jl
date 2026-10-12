@@ -152,25 +152,15 @@ end
 
 # study definitions: validated here so a broken study block fails on load,
 # not at the start of a long sweep
-const _SCF_CONTINGENCY_MODES = ("explicit", "all_branches", "all_branches_plus")
+# the removed study block (0.40.0): still a known key so a file carrying it
+# fails with the way out instead of the generic unknown-key message
+const SCF_CONTINGENCIES_REMOVED_MESSAGE = "SCF: the sparlectra.contingencies block was removed in 0.40.0. Write the study as a sparlectra.scenarios block (one scenario per case, a status op with value 0 per outage); the Web UI scenario editor writes it."
 const _SCF_SHORT_CIRCUIT_CASES = ("max", "min")
 const _SCF_SHORT_CIRCUIT_SWEEPS = ("all_buses", "explicit")
 
 function _scf_validate_studies(root::AbstractDict)
   spar = _scf_get(root, "sparlectra", Dict{String,Any}())
-  cont = _scf_get(spar, "contingencies", nothing)
-  if cont isa AbstractDict
-    mode = String(_scf_get(cont, "mode", "explicit"))
-    mode in _SCF_CONTINGENCY_MODES || throw(ArgumentError("SCF: contingencies.mode must be one of $(join(_SCF_CONTINGENCY_MODES, ", ")); got $(repr(mode))."))
-    for case in _scf_get(cont, "cases", [])
-      case isa AbstractDict || throw(ArgumentError("SCF: every contingencies.cases entry must be an object."))
-      outages = _scf_require(case, "outages", "a contingency case")
-      (outages isa AbstractVector && !isempty(outages)) || throw(ArgumentError("SCF: a contingency case needs a non-empty outages list."))
-      for o in outages
-        _scf_require(o, "component", "a contingency outage")
-      end
-    end
-  end
+  _scf_get(spar, "contingencies", nothing) === nothing || throw(ArgumentError(SCF_CONTINGENCIES_REMOVED_MESSAGE))
   # PGM's own fault vocabulary: Sparlectra evaluates the balanced bolted
   # three-phase fault, so anything else in the file would be silently ignored
   for row in _scf_get(_scf_get(root, "data", Dict{String,Any}()), "fault", [])
@@ -1342,10 +1332,12 @@ end
 """
     scf_case_studies(file) -> NamedTuple
 
-The study definitions a case file carries: `(contingencies, short_circuit)`,
-each an empty dictionary when the file does not define that study. The
-blocks state WHAT to compute; the result contract of the runs themselves is
-unchanged.
+The study definitions a case file carries: `(short_circuit,)`, an empty
+dictionary when the file does not define that study. The block states WHAT
+to compute; the result contract of the run itself is unchanged. Contingency
+studies live in the `scenarios` block ([`scf_case_scenarios`](@ref)); a file
+that still carries the `contingencies` block removed in 0.40.0 fails here
+with a message naming the replacement.
 """
 function scf_case_studies(file::AbstractString)
   root = scf_json_parse(read(String(file), String))
@@ -1353,9 +1345,8 @@ function scf_case_studies(file::AbstractString)
   isempty(spar_rev) || _scf_require_current_revision(spar_rev)
   _scf_validate_studies(root)
   spar = _scf_get(root, "sparlectra", Dict{String,Any}())
-  cont = _scf_get(spar, "contingencies", Dict{String,Any}())
   sc = _scf_get(spar, "short_circuit", Dict{String,Any}())
-  return (contingencies = cont isa AbstractDict ? Dict{String,Any}(cont) : Dict{String,Any}(), short_circuit = sc isa AbstractDict ? Dict{String,Any}(sc) : Dict{String,Any}())
+  return (short_circuit = sc isa AbstractDict ? Dict{String,Any}(sc) : Dict{String,Any}(),)
 end
 
 """

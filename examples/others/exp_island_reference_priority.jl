@@ -82,7 +82,7 @@ function _slack_outage_note(net::Net)
   # generateN1Generators names a unit by its component name, with the
   # prosumer index appended where that name is not unique
   name = getCompName(net.prosumpsVec[infeed].comp)
-  case = only(c for c in generateN1Generators(net) if c.element in (name, string(name, "#", infeed)))
+  case = only(c for c in generateN1Generators(net) if only(c.elements) in (name, string(name, "#", infeed)))
   result = only(runContingencies!(net, [case]))
   return (converged = result.converged, note = something(result.error, ""))
 end

@@ -1,3 +1,16 @@
+# Version 0.40.0 - 2026-10-12
+
+## Added
+- Correlated contingency events for SCF cases (`contingency.events.*`) and N-2 branch pairs (`contingency.pairs.*`).
+- `kind` and `elements` in contingency results and CSV; SCF cases show the names from the case file.
+## Changed
+- Breaking: `ContingencyCase.element` is now `elements`.
+- Saved configuration strings (paths, patterns, quotes) read back unchanged.
+## Removed
+- Breaking: `retry_flat_start` and the `sparlectra.contingencies` block of SCF files.
+## Fixed
+- Two generator outages in one scenario removed the wrong second unit.
+
 # Version 0.32.1 - 2026-10-10
 
 Documentation pass and three numerical fixes.

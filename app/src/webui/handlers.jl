@@ -791,7 +791,11 @@ function handle_contingency_weights_page(query::AbstractDict; output_root::Abstr
       config = load_sparlectra_config(config_file; reload = true)
       # the shared importer, so a CGMES case lists its elements too
       net = import_case(case_path, config; run_kind = :contingency).net
-      all_elements = vcat([c.name for c in generateN1Branches(net)], [c.name for c in generateN1Generators(net)])
+      # the names the run uses: the file names of an SCF case, the
+      # generated names otherwise (a run still reads weights saved under the
+      # generated names, as aliases)
+      names = _detect_case_format(case_path) === :scf ? contingency_names(net, read_scf_json(case_path)) : contingency_names(net)
+      all_elements = vcat([c.name for c in generateN1Branches(net; names = names)], [c.name for c in generateN1Generators(net; names = names)])
     catch err
       net_error = first(split(sprint(showerror, err), '\n'))
     end

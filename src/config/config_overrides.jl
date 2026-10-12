@@ -66,6 +66,16 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "contingency.warm_active_set",
   "contingency.warm_cold_check",
   "contingency.warm_cold_check_margin_pu",
+  "contingency.events.enabled",
+  "contingency.events.double_circuits",
+  "contingency.events.busbars",
+  "contingency.events.substations",
+  "contingency.events.links",
+  "contingency.events.name_groups",
+  "contingency.events.max_members",
+  "contingency.pairs.enabled",
+  "contingency.pairs.rule",
+  "contingency.pairs.max_pairs",
   "power_flow.apslf.order",
   "power_flow.apslf.nr_polish",
   "power_flow.apslf.convergence_radius",
@@ -215,6 +225,13 @@ function _validate_gui_override_value(key::String, value)
   elseif key in ("power_flow.qlimits.auto_q_delta_pu", "power_flow.qlimits.hysteresis_pu", "power_flow.qlimits.reenable_v_hyst_pu", "power_flow.qlimits.guard.min_q_range_pu", "power_flow.qlimits.guard.violation_threshold_pu")
     _validate_override_type(key, value, Float64)
     isfinite(value) && value >= 0 || throw(ArgumentError("Override $(key) must be finite and non-negative; got $(value)."))
+  elseif key in ("contingency.events.enabled", "contingency.events.double_circuits", "contingency.events.busbars", "contingency.events.substations", "contingency.events.links", "contingency.events.name_groups", "contingency.pairs.enabled")
+    _validate_override_type(key, value, Bool)
+  elseif key in ("contingency.events.max_members", "contingency.pairs.max_pairs")
+    _validate_override_type(key, value, Int)
+    value >= 1 || throw(ArgumentError("Override $(key) must be at least 1; got $(value)."))
+  elseif key == "contingency.pairs.rule"
+    Symbol(String(value)) in CONTINGENCY_PAIR_RULE_VALUES || throw(ArgumentError("Override $(key) must be one of $(join(CONTINGENCY_PAIR_RULE_VALUES, ", ")); got $(repr(value))."))
   elseif key in ("power_flow.qlimits.trace_buses", "power_flow.qlimits.lock_pv_to_pq_buses")
     value isa AbstractVector && all(b -> b isa Integer && !(b isa Bool) && b >= 1, value) || throw(ArgumentError("Override $(key) must be a list of bus numbers (integers >= 1); got $(repr(value))."))
   elseif key == "power_flow.qlimits.final_q_accept_pu"
@@ -719,6 +736,16 @@ const CONFIG_OVERRIDE_REPORT_KEYS = String[
   "contingency.warm_active_set",
   "contingency.warm_cold_check",
   "contingency.warm_cold_check_margin_pu",
+  "contingency.events.enabled",
+  "contingency.events.double_circuits",
+  "contingency.events.busbars",
+  "contingency.events.substations",
+  "contingency.events.links",
+  "contingency.events.name_groups",
+  "contingency.events.max_members",
+  "contingency.pairs.enabled",
+  "contingency.pairs.rule",
+  "contingency.pairs.max_pairs",
   "power_flow.start_mode.angle_mode",
   "power_flow.start_mode.voltage_mode",
   "power_flow.start_mode.ratio_profile",

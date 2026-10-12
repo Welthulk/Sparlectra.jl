@@ -1,11 +1,13 @@
 # N-1 Contingency Analysis
 
 The contingency batch API evaluates outages or scenarios on a solved base
-case: which line, transformer or generator outage, or which patch
-scenario, violates voltage limits, overloads other branches or splits the
-network. Case lists come from `generateN1Branches` and
-`generateN1Generators`, from imported FOR001 metadata, or from a case
-file's scenarios block (`runScenarios!`).
+case: which line, transformer or generator outage, which group of elements
+that trip together, or which patch scenario violates voltage limits,
+overloads other branches or splits the network. Case lists come from
+`generateN1Branches` and `generateN1Generators`, from the event generators
+([Correlated events](@ref contingency_events)), from N-2 pairs
+([N-2 pairs](@ref contingency_pairs)), from imported FOR001 metadata, or
+from a case file's scenarios block (`runScenarios!`).
 
 ## Quick start
 
@@ -24,7 +26,8 @@ serially with identical results. Screening is off by default. The
 runnable showcase is `examples/others/exp_contingency_n1.jl` (the shipped
 `sp_case1354.m`, all branches, serial and parallel); its base case already
 carries overloads, so it shows throughput, not N-1 evaluation on an
-operated grid.
+operated grid. `examples/others/exp_contingency_events.jl` runs correlated
+events and N-2 pairs on the shipped SCF cases.
 
 ## Execution model
 
@@ -54,7 +57,7 @@ ladder cannot give a reference to a load-only island.
 | `:warm` | the template (base-case) voltages |
 | `:apslf` | an APSLF start (AnalyticLoadFlow.jl is a required dependency, so the stage is always available) |
 | `:dc` | flat magnitudes with DC-projected start angles |
-| `:flat` | `flatstart = true`; `retry_flat_start` is a deprecated alias for appending `:flat` |
+| `:flat` | `flatstart = true` |
 
 Failures are reported, never thrown: a case that does not converge, that
 islands without any reference or promotable generator, or whose element
@@ -117,8 +120,8 @@ an auxiliary star-point bus. It trips as a whole, so `generateN1Branches`
 lists it as one case of kind `:transformer3w`, named after the
 transformer, that opens all legs; single-winding outages need
 `three_winding_legs = true`. The `n1_branches` scenario mode expands it to
-one scenario with a status patch per leg, and a case-file contingency that
-lists exactly the legs of one transformer runs as that transformer.
+one scenario with a status patch per leg. The result row lists the legs in
+`elements`.
 
 The star point is a computational node, not a bus: it never enters
 `min_vm_pu`, `max_vm_pu` or `voltage_violations`, and with the transformer
@@ -227,13 +230,94 @@ slack, mirroring frequency control. An island that keeps injection but
 loses its only regulating unit reports
 `islanded without reference: X MW load, Y MW generation stranded`.
 
+## [Correlated events](@id contingency_events)
+
+Some elements trip together: two circuits on the same towers, every
+branch at a faulted busbar, a whole station. Such an event is one case
+with several elements, solved in one run on the same path as N-1. Five
+generators build them from the topology; each returns a list of
+[`ContingencyCase`](@ref)s:
+
+| Class | Generator | Members | Name |
+|---|---|---|---|
+| `:double_circuit` | [`generateDoubleCircuits`](@ref) | closed branches with the same two endpoints | `DC <bus>-<bus>` |
+| `:busbar` | [`generateBusbarEvents`](@ref) | one bus: its closed branches and its closed couplers; the other sections of the station stay | `BB <bus>` |
+| `:substation` | [`generateSubstationEvents`](@ref) | a station (buses joined by closed links): every closed branch at any of its buses | `SUB <bus>` |
+| `:link` | [`generateLinkOutages`](@ref) | one closed coupler | the link name |
+| `:name_group` | [`generateNameGroups`](@ref) | branches whose file names differ only in a circuit number (`_1`, `_2`), with the same voltage and the same endpoint stations | `NG <stem>` |
+
+[`generateCorrelatedEvents`](@ref) runs the selected classes and keeps
+every member set once, as the first class in the order of the table
+(double circuit, name group, busbar, station, link): a double circuit that
+is also a name group stays a double circuit, a station with one bus is a
+busbar event. Events with more than `max_members` elements are skipped; an
+event of one branch is no event (that is the N-1 case). The legs of a
+three-winding transformer are never members.
+
+A busbar or station event opens branches and couplers only. Loads, units
+and shunts at the buses stay in the model; the run reports what the event
+cuts off (`shed_load_mw`, stranded units, or an island with its own
+reference), as for a radial outage. Opening a coupler splits the station:
+the two sections run as separate buses.
+
+Name groups need the file names of an SCF case. A MATPOWER, CGMES or
+PowSyBl case keeps its generated names, so `generateNameGroups` returns an
+empty list there.
+
+```julia
+case = read_scf_json(joinpath(pkgdir(Sparlectra), "data", "scf", "sp_case60.scf.json"))
+net = build_net(case)
+names = contingency_names(net, case)                 # the file names
+cases = vcat(generateN1Branches(net; names = names),
+             generateCorrelatedEvents(net; names = names, busbars = true, links = true, name_groups = true))
+results = runContingencies!(net, cases; names = names)
+```
+
+The service adds the events to a branch N-1 of an SCF case (the
+`n1_all` and `n1_branches` sources and the branch outage run) when
+`contingency.events.enabled` is set; the class switches and the size limit
+are the other `contingency.events.*` keys
+([Configuration](configuration.md)). A generator-only run and the other
+formats run plain N-1, and `run.log` says why. A scenarios block asks for
+events with its `events` key ([Sparlectra Case Format](scf.md)).
+Scenarios, and with them the events, are a feature of the SCF case: a
+conversion to MATPOWER, CGMES or PowSyBl does not carry them.
+
+## [N-2 pairs](@id contingency_pairs)
+
+[`generateBranchPairs`](@ref) lists every unordered pair of closed branches
+as a case of kind `:pair`, named `P <a> + <b>`. The count grows with the
+square of the branch count: 74 branches give 2701 pairs, 217 give 23436.
+More than `max_pairs` pairs (default 50000) throw before anything is
+solved; the run never truncates silently. In the service,
+`contingency.pairs.enabled` adds the pairs to a branch N-1 of an SCF case;
+a pair with the same member set as an event is listed once, as the event.
+
+A rule that skips pairs which cannot be harmful would make this usable on
+larger networks. None ships: the candidates tested so far missed harmful
+pairs on the shipped demo cases, so `contingency.pairs.rule` knows `all`
+only.
+
+## [Display names](@id contingency_names)
+
+Contingency output names elements by [`contingency_names`](@ref): for an
+SCF case the file names (`sparlectra.extra[<id>].name`), for every other
+case the generated component names. A name shared by several elements
+(parallel circuits, two legs named alike) carries `#<index>`. The case
+names, the `elements` of a row, the overloaded branches, the report and the
+Web UI table use these names; the network's own component names are not
+changed, so the power flow, state estimation and every export keep the
+generated names. A weight file saved under the generated names before
+0.40.0 still applies: the run maps the old names to the cases and says so
+in `run.log`, and the weights editor writes the file names.
+
 ## Reporting
 
 | Output | Call | Content |
 |---|---|---|
 | table | `printContingencyResults` | fixed-width, severity ranked by default, `sort_by = :none` for input order |
-| CSV | `writeContingencyResultsCSV` | input order, with loading, severity, overloads, shed load and weight |
-| summary | `buildContingencyReport(results)`, `printContingencyReport` | a [`ContingencyReport`](@ref): counts by outcome (converged, islanded, non-converged, with overload, with voltage violation), total and worst load shed, the worst branch loading, the worst weighted severity, and the branches overloaded by the most contingencies |
+| CSV | `writeContingencyResultsCSV` | input order: `name`, `kind`, `elements` (joined by `\|`), weight, convergence, voltages, loading, severity, overloads, voltage violations, islands, shed load, error |
+| summary | `buildContingencyReport(results)`, `printContingencyReport` | a [`ContingencyReport`](@ref): counts by outcome (converged, islanded, non-converged, with overload, with voltage violation) and by kind, total and worst load shed, the worst branch loading, the worst weighted severity, and the branches overloaded by the most contingencies |
 
 The structured fields (`overloads::Vector{OverloadRecord}` with base and
 delta, `shed_load_mw`, `severity`) let a consumer rank and total without

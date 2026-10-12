@@ -68,6 +68,15 @@ function _scenario_branch!(log::UndoLog, net::Net, internal::Int, op::PatchOp)
     _undo_set!(log, br, :status, Int(op.value))
     _undo_set!(log, br, :from_status, Int(op.value))
     _undo_set!(log, br, :to_status, Int(op.value))
+    if op.value == 0.0
+      # the bus shunt part a MATPOWER reimport records for this branch leaves
+      # with it, as on the outage path (_remove_branch_shunt_parts!); the
+      # undo log restores the admittance (D2 of #355)
+      for sh in net.shuntVec
+        part = get(sh.branch_parts, internal, nothing)
+        part === nothing || _undo_set!(log, sh, :y_pu_shunt, sh.y_pu_shunt - part)
+      end
+    end
     log.refresh[] = true
   elseif op.op === :set && op.field === :tap_pos
     # the live ratio on the nameplate grid: tap = neutral / (1 + n * step),
@@ -86,13 +95,9 @@ function _scenario_prosumer!(log::UndoLog, net::Net, internal::Int, op::PatchOp)
   1 <= internal <= length(net.prosumpsVec) || throw(ArgumentError(string("prosumer index ", internal, " out of range")))
   ps = net.prosumpsVec[internal]
   if op.op === :status
-    if op.value == 0.0
-      # the contingency semantics: an outaged unit is REMOVED from the
-      # copy, exactly like _remove_contingency_generator!, but with the
-      # deletion recorded so restore! can reinsert it
-      _undo_deleteat!(log, net.prosumpsVec, internal)
-      log.refresh[] = true
-    end
+    # status 0 (the removal) is done by apply! after every other op; status 1
+    # on an in-service unit changes nothing
+    return nothing
   elseif op.op === :set
     if op.field === :p
       _undo_set!(log, ps, :pVal, Float64(op.value))
@@ -151,10 +156,19 @@ Apply the patch operations to the working copy `net`, addressing
 components through the [`ScenarioIndex`](@ref), and record every change.
 Derived state (node injection sums, bus types, Q-limit tables, the
 isolated-node registry) is refreshed once after the patches, exactly as
-the importers do after construction.
+the importers do after construction. Prosumer outages (status 0 on a
+generator, load or external grid) are applied after every other
+operation, highest position first, so the order of the ops does not
+change the result; a branch outage also removes the bus shunt part a
+MATPOWER reimport records for the branch.
 """
 function apply!(net::Net, ops::Vector{PatchOp}, index::ScenarioIndex)::UndoLog
   log = UndoLog()
+  # every internal index is resolved on the unpatched net; prosumer outages
+  # delete from prosumpsVec and shift every later position, so they run
+  # after all other ops, highest position first (two generator outages in
+  # ascending order removed the wrong second unit, D1 of #355)
+  deletions = Int[]
   for op in ops
     internal = get(index.internal_by_id, op.id, nothing)
     internal === nothing && throw(ArgumentError(string("component id ", op.id, " has no internal index")))
@@ -162,7 +176,12 @@ function apply!(net::Net, ops::Vector{PatchOp}, index::ScenarioIndex)::UndoLog
     if kind === :branch || kind === :transformer
       _scenario_branch!(log, net, internal, op)
     elseif kind === :generator || kind === :load || kind === :external_grid
-      _scenario_prosumer!(log, net, internal, op)
+      if op.op === :status && op.value == 0.0
+        1 <= internal <= length(net.prosumpsVec) || throw(ArgumentError(string("prosumer index ", internal, " out of range")))
+        push!(deletions, internal)
+      else
+        _scenario_prosumer!(log, net, internal, op)
+      end
     elseif kind === :shunt
       _scenario_shunt!(log, net, internal, op)
     elseif kind === :link
@@ -170,6 +189,13 @@ function apply!(net::Net, ops::Vector{PatchOp}, index::ScenarioIndex)::UndoLog
     else
       throw(ArgumentError(string("no apply rule for component class ", kind)))
     end
+  end
+  for internal in sort!(unique(deletions); rev = true)
+    # the contingency semantics: an outaged unit is REMOVED from the copy,
+    # like _remove_contingency_generator!, with the deletion recorded so
+    # restore! reinserts it
+    _undo_deleteat!(log, net.prosumpsVec, internal)
+    log.refresh[] = true
   end
   log.refresh[] && _scenario_refresh_derived!(net)
   return log

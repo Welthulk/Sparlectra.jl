@@ -31,8 +31,10 @@ with its migration hint) and ignored, so a file from an earlier release
 keeps loading.
 
 Case-scope keys are `matpower_import.*`, `cgmes_import.*`,
-`powsybl_import.*`, `power_flow.*`, `state_estimation.*` and
-`short_circuit.*` (`scf_is_case_config_key(key)` answers per key). When
+`powsybl_import.*`, `power_flow.*`, `state_estimation.*`,
+`short_circuit.*` and the contingency keys the Settings page edits
+(`scf_is_case_config_key(key)` answers per key; `contingency.rescue_ladder`
+and `contingency.events.name_stem_pattern` are machine scope). When
 a case ships its own configuration file, these keys skip level 2 and
 resolve from the case file straight to the packaged defaults, so the case
 computes the same numbers on every installation. Machine-scope keys (`output.*`, `benchmark.*`, `runtime.*`, `webui.*`,
@@ -85,7 +87,7 @@ typed section.
 | `output` | `OutputConfig` | Console and logfile output, result tables (keys below and in [Output configuration](@ref perf-output)); `output.startup_latency_hint: false` silences the one-per-process JIT warm-up note of runs without a sysimage or executable. |
 | `performance` | `PerformanceConfig` | Profiling and diagnostic volume: [Performance and Profiling](performance_profiling.md). |
 | `benchmark` | `BenchmarkConfig` | Repeated benchmark runs: [Benchmark configuration](@ref perf-benchmark). |
-| `contingency` | `ContingencyConfig` | N-1 batch: `contingency.rescue_ladder`, `contingency.max_iter`, `contingency.screening.mode`, `contingency.screening.margin_pct`, `contingency.warm_active_set`, `contingency.warm_cold_check`, `contingency.warm_cold_check_margin_pu`; [N-1 Contingency Analysis](contingency.md). |
+| `contingency` | `ContingencyConfig` | Contingency batch, correlated events and N-2 pairs; keys in [Contingency keys](@ref config_contingency_keys). |
 | `control` | `ControlConfig` | Controller outer loop and declarative controllers, below. |
 | `runtime` | `RuntimeConfig` | Case selection (`runtime.case`, `runtime.cases`), thread control, `runtime.parallel.*` ([Parallel execution](parallel_execution.md)). |
 | `diagnostics` | `DiagnosticsConfig` | `log_effective_config` only; the former `diagnostics.console_*`/`logfile_diagnostics` duplicate `output.*` and are ignored with a warning. |
@@ -136,6 +138,11 @@ so a reimport does not correct twice; see
   objects are built; some legacy aliases are accepted there.
 - `load_sparlectra_config(...)` caches the typed result for unchanged files
   without overrides; a changed hash or mtime invalidates it.
+- In a double-quoted string `\\` is one backslash and `\"` a quote; any
+  other backslash stays as written, so `"C:\data\case.m"` and
+  `"[ _#(-]?\d{1,2}\)?$"` read unchanged. The Settings save and case
+  configuration files write strings in this form, so a value reads back
+  exactly as it was saved.
 
 ## Minimal example YAML
 
@@ -329,6 +336,29 @@ load; unresolvable references and invalid limits fail at apply time, naming
 the entry. An element that already carries a controller of the same type
 is skipped. `applyConfiguredControllers!` applies the block to a
 programmatically built net.
+
+## [Contingency keys](@id config_contingency_keys)
+
+| Key | Default | Meaning |
+|---|---|---|
+| `contingency.rescue_ladder` | `[warm]` | Start-value stages per outage, tried in order: `warm`, `apslf`, `dc`, `flat`. |
+| `contingency.max_iter` | `30` | Iteration limit of every outage and scenario solve; the base case uses `power_flow.max_iter`. |
+| `contingency.screening.mode` | `off` | `off`, `flag` or `only` ([Screening](@ref contingency_screening)). |
+| `contingency.screening.margin_pct` | `10.0` | Distance to a limit below which an estimated outage gets the full solve. |
+| `contingency.warm_active_set` | `true` | Outages start from the PV/PQ state of the base case. |
+| `contingency.warm_cold_check` | `false` | Solve tight warm outages cold as well; the less favourable result counts. |
+| `contingency.warm_cold_check_margin_pu` | `0.02` | Voltage margin of the cold check. |
+| `contingency.events.enabled` | `false` | Add correlated events to a branch N-1 of an SCF case ([Correlated events](@ref contingency_events)). |
+| `contingency.events.double_circuits` | `true` | Branches with the same two endpoints. |
+| `contingency.events.busbars` | `false` | One busbar section: its branches and its closed couplers. |
+| `contingency.events.substations` | `false` | A whole station: every branch at all its sections. |
+| `contingency.events.links` | `false` | Each closed coupler alone. |
+| `contingency.events.name_groups` | `false` | Branches whose file names share a stem. |
+| `contingency.events.name_stem_pattern` | `[ _#(-]?[0-9]{1,2}[)]?$` | The circuit suffix a name group strips (regular expression). |
+| `contingency.events.max_members` | `6` | Events with more elements are skipped. |
+| `contingency.pairs.enabled` | `false` | Add N-2 branch pairs to a branch N-1 of an SCF case ([N-2 pairs](@ref contingency_pairs)). |
+| `contingency.pairs.rule` | `all` | Which pairs; `all` is every pair of closed branches. |
+| `contingency.pairs.max_pairs` | `50000` | A run with more pairs stops before solving. |
 
 ## Bookkeeping and console keys
 

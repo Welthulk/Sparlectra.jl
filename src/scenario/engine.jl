@@ -23,23 +23,25 @@
 # One resolved work item of a batch. Resolution happens ONCE on the
 # unmutated template (the same indices the per-case resolution of the old
 # implementation produced), so the workers never run name lookups.
+# An outage: every member opens (a branch: status and both terminals; a link:
+# status) or leaves (a generator), solved as one case. A single outage, a
+# three-winding transformer (its legs), a correlated event and an N-2 pair
+# are all this item, so they share the exact N-1 path and the screening.
 struct _ScenarioOutageItem
-  name::String
-  weight::Float64
-  kind::Symbol        # :branch, :gen or :transformer3w
-  internal::Int       # branchVec / prosumpsVec position, the star bus for :transformer3w
+  label::_CaseLabel
+  members::Vector{Tuple{Symbol,Int}}   # (:branch | :gen | :link, branchVec / prosumpsVec / linkVec position)
 end
 
 # a case whose element did not resolve: reported, never thrown (old contract)
 struct _ScenarioFailedItem
-  name::String
-  weight::Float64
+  label::_CaseLabel
   message::String
 end
 
-# a general patch scenario (anything that is not a single status-0 outage)
+# a general patch scenario (anything that is not a set of status-0 outages)
 struct _ScenarioPatchItem
   scenario::Scenario
+  label::_CaseLabel
 end
 
 const _ScenarioItem = Union{_ScenarioOutageItem,_ScenarioFailedItem,_ScenarioPatchItem}
@@ -78,7 +80,11 @@ run.
 struct ScenarioEngine
   template::Net
   base_converged::Bool
-  base_loadings::Dict{String,Float64}
+  # base-case loading in percent per branch index (NaN: out of service,
+  # unrated, or no converged base)
+  base_loadings::Vector{Float64}
+  # the display names of every result row and overload of the batch
+  names::ContingencyNames
   index::Union{Nothing,ScenarioIndex}
   vm_min_pu::Float64
   vm_max_pu::Float64
@@ -112,7 +118,7 @@ exactly the old `runContingencies!` preamble), clear the solver status
 and Q-limit logs the workers must not inherit, and record the base branch
 loadings. `net` itself is never mutated.
 """
-function ScenarioEngine(net::Net; vm_min_pu::Float64 = 0.9, vm_max_pu::Float64 = 1.1, maxIte::Int = 30, tol::Float64 = 1e-8, ladder::Vector{Symbol} = Symbol[:warm], index::Union{Nothing,ScenarioIndex} = nothing, pf_kwargs = NamedTuple(), screening_mode::Symbol = :off, screening_margin_pct::Float64 = 10.0, warm_active_set::Bool = true, warm_note::Union{Nothing,Base.RefValue{String}} = nothing, warm_cold_check::Bool = false, warm_cold_check_margin_pu::Float64 = DEFAULT_WARM_COLD_CHECK_MARGIN_PU, base_maxIte::Int = 0)
+function ScenarioEngine(net::Net; vm_min_pu::Float64 = 0.9, vm_max_pu::Float64 = 1.1, maxIte::Int = 30, tol::Float64 = 1e-8, ladder::Vector{Symbol} = Symbol[:warm], index::Union{Nothing,ScenarioIndex} = nothing, pf_kwargs = NamedTuple(), screening_mode::Symbol = :off, screening_margin_pct::Float64 = 10.0, warm_active_set::Bool = true, warm_note::Union{Nothing,Base.RefValue{String}} = nothing, warm_cold_check::Bool = false, warm_cold_check_margin_pu::Float64 = DEFAULT_WARM_COLD_CHECK_MARGIN_PU, base_maxIte::Int = 0, names::Union{Nothing,ContingencyNames} = nothing)
   screening_mode in CONTINGENCY_SCREENING_MODE_VALUES || throw(ArgumentError("ScenarioEngine: screening_mode must be one of $(CONTINGENCY_SCREENING_MODE_VALUES), got :$(screening_mode)."))
   (isfinite(screening_margin_pct) && screening_margin_pct >= 0.0) || throw(ArgumentError("ScenarioEngine: screening_margin_pct must be a finite value >= 0."))
   vm_min_pu < vm_max_pu || throw(ArgumentError("ScenarioEngine: vm_min_pu must be below vm_max_pu."))
@@ -207,18 +213,19 @@ function ScenarioEngine(net::Net; vm_min_pu::Float64 = 0.9, vm_max_pu::Float64 =
   empty!(template.qLimitLog)
   empty!(template.qLimitEvents)
   empty!(template.qLimitInitialPVRows)
-  base_loadings = Dict{String,Float64}()
+  base_loadings = fill(NaN, length(template.branchVec))
   if base_converged
     calcNetLosses!(template)
     base_loadings = _base_branch_loadings(template)
   end
+  names === nothing && (names = index === nothing ? contingency_names(net) : contingency_names(net, index))
   screen = screening_mode === :off ? nothing : _build_screening_state(template, base_converged, tol, pf_kwargs, base_loadings)
   base_refs = Set{Int}(Int(ps.comp.cFrom_bus) for ps in template.prosumpsVec if isSlack(ps))
   # islands always promote a generating unit (the solver does the same)
   for row in detect_ac_islands(template; promote_generators = true).rows
     row.chosen_ref_bus > 0 && push!(base_refs, Int(row.chosen_ref_bus))
   end
-  return ScenarioEngine(template, base_converged, base_loadings, index, vm_min_pu, vm_max_pu, maxIte, tol, ladder, pf_kwargs, screening_mode, screening_margin_pct, screen, base_refs, warm_cold_check, warm_cold_check_margin_pu, base_ite)
+  return ScenarioEngine(template, base_converged, base_loadings, names, index, vm_min_pu, vm_max_pu, maxIte, tol, ladder, pf_kwargs, screening_mode, screening_margin_pct, screen, base_refs, warm_cold_check, warm_cold_check_margin_pu, base_ite)
 end
 
 # --- worker reset -------------------------------------------------------------
@@ -408,7 +415,7 @@ end
 # system: the participation state at lambda = 0 (the solved template
 # dispatch already carries the base correction), one extra state and
 # residual row, same factorization machinery.
-function _build_screening_state(template::Net, base_converged::Bool, tol::Float64, pf_kwargs, base_loadings::AbstractDict = Dict{String,Float64}())
+function _build_screening_state(template::Net, base_converged::Bool, tol::Float64, pf_kwargs, base_loadings::Vector{Float64} = fill(NaN, length(template.branchVec)))
   base_converged || return nothing
   _screening_unavailable_reason(template) === nothing || return nothing
   n = length(template.nodeVec)
@@ -482,22 +489,22 @@ function _build_screening_state(template::Net, base_converged::Bool, tol::Float6
     _rethrow_unless_solver_failure(err)
     return nothing
   end
-  base_loading = Float64[get(base_loadings, getCompName(br.comp), NaN) for br in template.branchVec]
+  base_loading = copy(base_loadings)
   return ScreeningState(Ybus, V0, S0, bus_types, Vset, slack_idx, non_slack, J0, lu0, _scenario_bridge_branches(template), length(detect_ac_islands(template).rows), iso_set, ds, base_loading)
 end
 
 # Per-scenario copy of the shared participation state (lambda_trial is
 # mutated during the residual evaluations, and the shared state is read
-# concurrently by other chunks). For a generator outage the lost unit's
-# factor goes to zero and the surviving factors are renormalized;
-# `nothing` when the lost unit was the LAST participant (the augmented
+# concurrently by other chunks). For a generator outage the lost units'
+# factors go to zero and the surviving factors are renormalized;
+# `nothing` when no participant is left (the augmented
 # system loses its lambda state, dimensions no longer match the base
 # factorization, the full run owns that).
-function _screen_dslack_for_outage(ds, kind::Symbol, internal::Int)
+function _screen_dslack_for_outage(ds, removed::AbstractVector{Int})
   ds === nothing && return (nothing, true)
   table = ds.gen_table
-  if kind === :gen
-    surviving = [row for row in table if row.gen_index != internal]
+  if !isempty(removed)
+    surviving = [row for row in table if !(row.gen_index in removed)]
     if length(surviving) != length(table)
       isempty(surviving) && return (nothing, false)
       wsum = sum(row.weight for row in surviving)
@@ -548,7 +555,9 @@ function _screen_woodbury_solve(lu0, J0::SparseMatrixCSC{Float64,Int}, J1::Spars
   rows = sort!(unique(rows_nz))
   cols = sort!(unique(cols_nz))
   k = min(length(rows), length(cols))
-  k > 32 && return nothing
+  # above 32 rows the dense correction costs more than it saves; the caller
+  # reports :rank
+  k > 32 && return :rank
   x0 = lu0 \ b
   local corr
   try
@@ -590,59 +599,117 @@ const _SCREENING_TRUST_MISMATCH_PU = 0.005
 # screening share's denominator down by exactly these)
 _screen_unscreenable(reason::Symbol) = (flagged = true, estimate = nothing, est_overloads = OverloadRecord[], est_violations = String[], reason = reason)
 
+# Does opening `branches` split the closed-branch graph? Components are
+# counted over the buses that carry a closed branch or link in the base
+# case (closed links count as connectivity, as in the bridge search); an
+# event that leaves more components than the base has islands a part of
+# the network, which the one-step estimate cannot represent.
+function _screen_event_splits_graph(net::Net, branches::AbstractSet{Int})::Bool
+  n = length(net.nodeVec)
+  function components(skip)
+    parent = collect(1:n)
+    root(i) = (while parent[i] != i; parent[i] = parent[parent[i]]; i = parent[i]; end; i)
+    touched = falses(n)
+    for (k, br) in enumerate(net.branchVec)
+      (br.status == 1 && _branch_terminal_state(br) === :closed) || continue
+      f = Int(br.fromBus)
+      t = Int(br.toBus)
+      touched[f] = touched[t] = true
+      (skip && k in branches) && continue
+      a, b = root(f), root(t)
+      a == b || (parent[max(a, b)] = min(a, b))
+    end
+    for lk in net.linkVec
+      lk.status == 1 || continue
+      f = Int(lk.fromBus)
+      t = Int(lk.toBus)
+      (1 <= f <= n && 1 <= t <= n) || continue
+      touched[f] = touched[t] = true
+      a, b = root(f), root(t)
+      a == b || (parent[max(a, b)] = min(a, b))
+    end
+    return count(i -> touched[i] && root(i) == i, 1:n)
+  end
+  return components(true) > components(false)
+end
+
 # Screen one outage: one Woodbury-corrected Newton step from the base state
 # under the outaged model, then estimated loadings and voltages from the
-# trial state. Always returns a NamedTuple; `estimate === nothing` with a
-# `reason` when the scenario is not screenable (:no_screening_state,
-# :branch_not_closed, :bridge, :isolated_endpoint, :slack_unit,
-# :invalid_bus, :isolated_bus, :last_participant, :numeric), otherwise the
-# flag decision plus the estimate (`reason` is :structural_pv_gen when the
-# structural flag fired, :ok otherwise).
+# trial state. An outage of several members (a correlated event, an N-2
+# pair) removes every branch from the Y-bus and every unit from the
+# injections in the same step. Always returns a NamedTuple; `estimate ===
+# nothing` with a `reason` when the scenario is not screenable
+# (:no_screening_state, :three_winding_transformer, :link,
+# :branch_not_closed, :bridge, :splits_graph, :isolated_endpoint,
+# :slack_unit, :invalid_bus, :isolated_bus, :last_participant, :rank,
+# :numeric), otherwise the flag decision plus the estimate (`reason` is
+# :structural_pv_gen when the structural flag fired, :ok otherwise).
+#
+# A coupler (link) member is not screened: opening a link changes the bus
+# structure itself (the solver contracts closed-link clusters into one bus
+# before the Y-bus is built), so the outaged model is no low-rank update of
+# the base Y-bus and the factorization of the base Jacobian does not apply.
 function _screen_outage(engine::ScenarioEngine, it::_ScenarioOutageItem)
   sc = engine.screen
   sc === nothing && return _screen_unscreenable(:no_screening_state)
-  # a three-winding transformer opens several legs at once; the estimate
-  # removes one branch, so the case goes to the full run
-  it.kind === :transformer3w && return _screen_unscreenable(:three_winding_transformer)
+  # a three-winding transformer isolates its star point when all legs open;
+  # the case goes to the full run as before 0.40.0
+  it.label.kind === :transformer3w && return _screen_unscreenable(:three_winding_transformer)
+  any(m -> m[1] === :link, it.members) && return _screen_unscreenable(:link)
   template = engine.template
-  outaged_branch = 0
-  local Yb, S1, types1
-  if it.kind === :branch
-    br = template.branchVec[it.internal]
+  branches = Int[k for (m, k) in it.members if m === :branch]
+  gens = Int[k for (m, k) in it.members if m === :gen]
+  outaged = Set{Int}(branches)
+  Yb = sc.Ybus
+  S1 = sc.S0
+  types1 = sc.bus_types
+  for k in branches
+    br = template.branchVec[k]
     (br.status == 1 && _branch_terminal_state(br) === :closed) || return _screen_unscreenable(:branch_not_closed)
-    it.internal in sc.bridges && return _screen_unscreenable(:bridge)
-    f = Int(br.fromBus)
-    t = Int(br.toBus)
-    (f in sc.iso || t in sc.iso) && return _screen_unscreenable(:isolated_endpoint)
-    y11, y12, y21, y22 = calcAdmittance(br, br.comp.cVN, template.baseMVA)
+  end
+  if length(branches) == 1
+    only(branches) in sc.bridges && return _screen_unscreenable(:bridge)
+  elseif length(branches) > 1
+    _screen_event_splits_graph(template, outaged) && return _screen_unscreenable(:splits_graph)
+  end
+  if !isempty(branches)
     Yb = copy(sc.Ybus)
-    Yb[f, f] -= y11
-    Yb[t, t] -= y22
-    Yb[f, t] -= y12
-    Yb[t, f] -= y21
-    S1 = sc.S0
-    types1 = sc.bus_types
-    outaged_branch = it.internal
-  else
-    ps = template.prosumpsVec[it.internal]
-    # losing a slack unit changes the reference structure; the full run owns that
-    isSlack(ps) && return _screen_unscreenable(:slack_unit)
-    bus = getPosumerBusIndex(ps)
-    (1 <= bus <= length(template.nodeVec)) || return _screen_unscreenable(:invalid_bus)
-    bus in sc.iso && return _screen_unscreenable(:isolated_bus)
-    Yb = sc.Ybus
+    for k in branches
+      br = template.branchVec[k]
+      f = Int(br.fromBus)
+      t = Int(br.toBus)
+      (f in sc.iso || t in sc.iso) && return _screen_unscreenable(:isolated_endpoint)
+      y11, y12, y21, y22 = calcAdmittance(br, br.comp.cVN, template.baseMVA)
+      Yb[f, f] -= y11
+      Yb[t, t] -= y22
+      Yb[f, t] -= y12
+      Yb[t, f] -= y21
+    end
+  end
+  removed_units = Set{Int}(gens)
+  if !isempty(gens)
     S1 = copy(sc.S0)
-    S1[bus] -= ComplexF64(something(ps.pVal, 0.0), something(ps.qVal, 0.0)) / template.baseMVA
-    types1 = sc.bus_types
-    if sc.bus_types[bus] === :PV
-      survivor = any(other !== ps && isGenerator(other) && isRegulating(other) && getPosumerBusIndex(other) == bus for other in template.prosumpsVec)
+    for p in gens
+      ps = template.prosumpsVec[p]
+      # losing a slack unit changes the reference structure; the full run owns that
+      isSlack(ps) && return _screen_unscreenable(:slack_unit)
+      bus = getPosumerBusIndex(ps)
+      (1 <= bus <= length(template.nodeVec)) || return _screen_unscreenable(:invalid_bus)
+      bus in sc.iso && return _screen_unscreenable(:isolated_bus)
+      S1[bus] -= ComplexF64(something(ps.pVal, 0.0), something(ps.qVal, 0.0)) / template.baseMVA
+    end
+    # a PV bus whose last regulating unit leaves becomes PQ (per bus, after
+    # all units of the outage are gone)
+    for bus in unique(getPosumerBusIndex(template.prosumpsVec[p]) for p in gens)
+      sc.bus_types[bus] === :PV || continue
+      survivor = any(isGenerator(other) && isRegulating(other) && getPosumerBusIndex(other) == bus for (q, other) in enumerate(template.prosumpsVec) if !(q in removed_units))
       if !survivor
-        types1 = copy(sc.bus_types)
+        types1 === sc.bus_types && (types1 = copy(sc.bus_types))
         types1[bus] = :PQ
       end
     end
   end
-  ds1, screenable = _screen_dslack_for_outage(sc.ds, it.kind, it.internal)
+  ds1, screenable = _screen_dslack_for_outage(sc.ds, gens)
   screenable || return _screen_unscreenable(:last_participant)
   # Structural flag (case300 Gen_115#205 finding): the outage of a
   # REGULATING unit shrinks its bus's aggregated Q capability, which is
@@ -652,17 +719,15 @@ function _screen_outage(engine::ScenarioEngine, it::_ScenarioOutageItem)
   # at a bus the BASE solve had already clamped from PV to PQ, so the bus
   # type alone is not the criterion). Any bus that carries regulating
   # generation, whether currently PV or Q-clamped PQ, is in that class; a
-  # modeled PV-to-PQ demotion (last regulator lost, types1 changed) shows
-  # in the residual and needs no flag. No m2 gate can see this class, so
-  # it is flagged structurally, like bridge outages.
+  # modeled PV-to-PQ demotion (last regulator lost, the bus type changed)
+  # shows in the residual and needs no flag. No m2 gate can see this
+  # class, so it is flagged structurally, like bridge outages.
   structural_flag = false
-  if it.kind === :gen && types1 === sc.bus_types
-    ps0 = template.prosumpsVec[it.internal]
-    bus0 = getPosumerBusIndex(ps0)
-    if 1 <= bus0 <= length(sc.bus_types) && sc.bus_types[bus0] !== :Slack
-      regulating_here = any(isGenerator(other) && isRegulating(other) && getPosumerBusIndex(other) == bus0 for other in template.prosumpsVec)
-      regulating_here && (structural_flag = true)
-    end
+  for p in gens
+    bus0 = getPosumerBusIndex(template.prosumpsVec[p])
+    (1 <= bus0 <= length(sc.bus_types) && sc.bus_types[bus0] !== :Slack && types1[bus0] === sc.bus_types[bus0]) || continue
+    regulating_here = any(isGenerator(other) && isRegulating(other) && getPosumerBusIndex(other) == bus0 for other in template.prosumpsVec)
+    regulating_here && (structural_flag = true)
   end
   F1 = mismatch_rectangular(Yb, sc.V0, S1, types1, sc.Vset, sc.slack_idx; dslack = ds1)
   m1 = maximum(abs, F1)
@@ -675,6 +740,7 @@ function _screen_outage(engine::ScenarioEngine, it::_ScenarioOutageItem)
   rhs = Vector{Float64}(undef, length(F1))
   @. rhs = -F1
   dx = _screen_woodbury_solve(sc.lu0, sc.J0, J1, rhs)
+  dx === :rank && return _screen_unscreenable(:rank)
   dx === nothing && return _screen_unscreenable(:numeric)
   Vest = _apply_rectangular_delta(sc.V0, dx, sc.slack_idx, sc.non_slack, 1.0)
   all(isfinite, reinterpret(Float64, Vest)) || return _screen_unscreenable(:numeric)
@@ -691,7 +757,7 @@ function _screen_outage(engine::ScenarioEngine, it::_ScenarioOutageItem)
   loading_flag = false
   est_overloads = OverloadRecord[]
   for (bi, br2) in enumerate(template.branchVec)
-    bi == outaged_branch && continue
+    bi in outaged && continue
     br2.status == 1 || continue
     _branch_terminal_state(br2) === :closed || continue
     rating = br2.sn_MVA
@@ -717,9 +783,8 @@ function _screen_outage(engine::ScenarioEngine, it::_ScenarioOutageItem)
     unc = isnan(base_b) ? engine.screening_margin_pct : min(engine.screening_margin_pct, max(1.0, abs(loading - base_b)))
     loading + unc >= 100.0 && (loading_flag = true)
     if loading > 100.0
-      cname = getCompName(br2.comp)
-      base = get(engine.base_loadings, cname, NaN)
-      push!(est_overloads, OverloadRecord(cname, loading, base, loading - base, s_mva, rating))
+      base = engine.base_loadings[bi]
+      push!(est_overloads, OverloadRecord(engine.names.branch[bi], loading, base, loading - base, s_mva, rating))
     end
   end
   sort!(est_overloads; by = o -> -o.loading_pct)
@@ -780,9 +845,10 @@ end
 # columns carry the estimates, start_used reads :screen
 function _screened_result(engine::ScenarioEngine, it::_ScenarioOutageItem, scr)::ContingencyResult
   est = scr.estimate
-  severity = it.weight * max(0.0, isnan(est.max_loading_pct) ? 0.0 : est.max_loading_pct - 100.0)
+  lbl = it.label
+  severity = lbl.weight * max(0.0, isnan(est.max_loading_pct) ? 0.0 : est.max_loading_pct - 100.0)
   sc = engine.screen
-  return ContingencyResult(it.name, it.weight, true, 0, :screen, est.vmax_pu, est.vmin_pu, est.max_loading_pct, severity, scr.est_overloads, scr.est_violations, sc === nothing ? 0 : sc.base_island_count, 0.0, nothing)
+  return ContingencyResult(lbl.name, lbl.kind, lbl.elements, lbl.weight, true, 0, :screen, est.vmax_pu, est.vmin_pu, est.max_loading_pct, severity, scr.est_overloads, scr.est_violations, sc === nothing ? 0 : sc.base_island_count, 0.0, nothing)
 end
 
 """
@@ -822,7 +888,7 @@ delimiter and number formatting like every other CSV artifact a run writes
 delimiter.
 """
 function writeContingencyResultsCSV(path::AbstractString, results::Vector{ScenarioResult}; format = result_csv_format())
-  header = ("name", "weight", "converged", "iterations", "start_used", "min_vm_pu", "max_vm_pu", "max_branch_loading_pct", "severity", "overloads", "voltage_violations", "island_count", "shed_load_mw", "error", "screened", "screening_estimate")
+  header = ("name", "kind", "elements", "weight", "converged", "iterations", "start_used", "min_vm_pu", "max_vm_pu", "max_branch_loading_pct", "severity", "overloads", "voltage_violations", "island_count", "shed_load_mw", "error", "screened", "screening_estimate")
   resolved_format = _resolve_detailed_csv_format(format)
   rows = (
     begin
@@ -833,6 +899,8 @@ function writeContingencyResultsCSV(path::AbstractString, results::Vector{Scenar
       est = sr.screening_estimate === nothing ? "" : string(_format_csv_number(sr.screening_estimate.max_loading_pct, resolved_format), "|", _format_csv_number(sr.screening_estimate.vmin_pu, resolved_format), "|", _format_csv_number(sr.screening_estimate.vmax_pu, resolved_format))
       (
         r.name,
+        String(r.kind),
+        join(r.elements, "|"),
         r.weight,
         r.converged,
         r.iterations,
@@ -928,7 +996,7 @@ end
 # snapshot is taken AFTER markIsolatedBuses! on purpose: isolation zeroes
 # the isolated bus voltages, and the warm start of every ladder stage must
 # include those zeroes (bitwise with the old per-case deepcopy path).
-function _evaluate_outaged_net!(engine::ScenarioEngine, work::Net, name::String, weight::Float64; cold::Bool = false)
+function _evaluate_outaged_net!(engine::ScenarioEngine, work::Net, lbl::_CaseLabel; cold::Bool = false)
   # warm active set: the cold retry solves without the base case's clamps
   pf_kw = cold ? Base.structdiff(engine.pf_kwargs, NamedTuple{(:qlimit_warm_clamps,)}) : engine.pf_kwargs
   # buses the outage itself cuts off: isolated after the marking, not before.
@@ -985,8 +1053,8 @@ function _evaluate_outaged_net!(engine::ScenarioEngine, work::Net, name::String,
       total_it += it_stage
       if erg == 0
         calcNetLosses!(work)
-        m = _contingency_metrics(work, engine.vm_min_pu, engine.vm_max_pu, engine.base_loadings)
-        severity = weight * max(0.0, isnan(m.max_loading) ? 0.0 : m.max_loading - 100.0)
+        m = _contingency_metrics(work, engine.vm_min_pu, engine.vm_max_pu, engine.base_loadings, engine.names)
+        severity = lbl.weight * max(0.0, isnan(m.max_loading) ? 0.0 : m.max_loading - 100.0)
         # the remaining network solved; what the outage cut off is part of
         # the result (the load it disconnected, the note naming the buses)
         # a reference the outage removed and another unit took over: the
@@ -1001,7 +1069,7 @@ function _evaluate_outaged_net!(engine::ScenarioEngine, work::Net, name::String,
         end
         setdiff!(taken, engine.base_reference_buses, cut_off, isolated_before)
         note = _reference_note(work, sort!(collect(taken)), cut_off_note)
-        return ContingencyResult(name, weight, true, total_it, stage, m.vmax, m.vmin, m.max_loading, severity, m.overloads, m.violations, island_count, cut_off_load_mw, note)
+        return ContingencyResult(lbl.name, lbl.kind, lbl.elements, lbl.weight, true, total_it, stage, m.vmax, m.vmin, m.max_loading, severity, m.overloads, m.violations, island_count, cut_off_load_mw, note)
       end
       last_error = "power flow did not converge (status $(erg))"
     catch err
@@ -1011,12 +1079,12 @@ function _evaluate_outaged_net!(engine::ScenarioEngine, work::Net, name::String,
       # an outage that splits off a reference-less island surfaces as the
       # island-validation error; no start recipe fixes a topology fact
       if occursin("reference", msg) && (occursin("island", msg) || occursin("Island", msg))
-        return _islanded_contingency_result(name, weight, island_count, refless)
+        return _islanded_contingency_result(lbl, island_count, refless)
       end
       last_error = first(split(msg, '\n'))
     end
   end
-  return ContingencyResult(name, weight, false, total_it, :none, NaN, NaN, NaN, NaN, OverloadRecord[], String[], island_count, 0.0, last_error === nothing ? "power flow did not converge" : last_error)
+  return _failed_contingency_result(lbl, total_it, island_count, 0.0, last_error === nothing ? "power flow did not converge" : last_error)
 end
 
 """
@@ -1054,31 +1122,34 @@ end
 
 function _evaluate_outage_item!(engine::ScenarioEngine, worker::ScenarioWorker, it::_ScenarioOutageItem; cold::Bool)::ContingencyResult
   work = worker.net
-  removed_prosumer = nothing
-  if it.kind === :gen
-    removed_prosumer = work.prosumpsVec[it.internal]
-    _remove_contingency_generator!(work, it.internal)
-  elseif it.kind === :transformer3w
-    # the whole three-winding transformer: every branch at its star point
-    # (it.internal is the star bus) opens, as one outage
-    for (k, br) in enumerate(work.branchVec)
-      (Int(br.fromBus) == it.internal || Int(br.toBus) == it.internal) || continue
+  for (mkind, k) in it.members
+    if mkind === :branch
+      br = work.branchVec[k]
       br.status = 0
       br.from_status = 0
       br.to_status = 0
+      # a bus shunt part that stems from this branch (MATPOWER reimport of an
+      # asymmetric branch shunt) leaves with it; the worker reset restores it
       _remove_branch_shunt_parts!(work, k)
+    elseif mkind === :link
+      # an open coupler: the island detection and the solver see two buses
+      work.linkVec[k].status = 0
     end
-  else
-    br = work.branchVec[it.internal]
-    br.status = 0
-    br.from_status = 0
-    br.to_status = 0
-    # a bus shunt part that stems from this branch (MATPOWER reimport of an
-    # asymmetric branch shunt) leaves with it; the worker reset restores it
-    _remove_branch_shunt_parts!(work, it.internal)
   end
-  result = _evaluate_outaged_net!(engine, work, it.name, it.weight; cold = cold)
-  removed_prosumer === nothing || insert!(work.prosumpsVec, it.internal, removed_prosumer)
+  # Generators leave in DESCENDING position order and come back in
+  # ascending order: a deletion shifts every later position, so removing
+  # the highest first keeps every other recorded position valid (two units
+  # removed in ascending order hit the wrong second unit, D1 of #355).
+  gens = sort!([k for (mkind, k) in it.members if mkind === :gen]; rev = true)
+  removed = Pair{Int,Any}[]
+  for k in gens
+    push!(removed, k => work.prosumpsVec[k])
+    _remove_contingency_generator!(work, k)
+  end
+  result = _evaluate_outaged_net!(engine, work, it.label; cold = cold)
+  for (k, ps) in Iterators.reverse(removed)
+    insert!(work.prosumpsVec, k, ps)
+  end
   _reset_scenario_worker!(work, engine.template)
   return result
 end
@@ -1118,28 +1189,28 @@ end
 function _warm_checked_result(cold::ContingencyResult, warm::ContingencyResult)::ContingencyResult
   why = string("warm active set result (min Vm ", round(warm.min_vm_pu; digits = 5), " pu) replaced by the less favourable cold solve")
   note = (cold.error === nothing || isempty(cold.error)) ? why : string(cold.error, "; ", why)
-  return ContingencyResult(cold.name, cold.weight, cold.converged, cold.iterations, :warm_cold_check, cold.max_vm_pu, cold.min_vm_pu, cold.max_branch_loading_pct, cold.severity, cold.overloads, cold.voltage_violations, cold.island_count, cold.shed_load_mw, note)
+  return ContingencyResult(cold.name, cold.kind, cold.elements, cold.weight, cold.converged, cold.iterations, :warm_cold_check, cold.max_vm_pu, cold.min_vm_pu, cold.max_branch_loading_pct, cold.severity, cold.overloads, cold.voltage_violations, cold.island_count, cold.shed_load_mw, note)
 end
 
 function _warm_cold_result(r::ContingencyResult)::ContingencyResult
   why = "warm active set did not converge, solved from the file's PV/PQ state"
   note = (r.error === nothing || isempty(r.error)) ? why : string(r.error, "; ", why)
-  return ContingencyResult(r.name, r.weight, r.converged, r.iterations, :warm_cold, r.max_vm_pu, r.min_vm_pu, r.max_branch_loading_pct, r.severity, r.overloads, r.voltage_violations, r.island_count, r.shed_load_mw, note)
+  return ContingencyResult(r.name, r.kind, r.elements, r.weight, r.converged, r.iterations, :warm_cold, r.max_vm_pu, r.min_vm_pu, r.max_branch_loading_pct, r.severity, r.overloads, r.voltage_violations, r.island_count, r.shed_load_mw, note)
 end
 
-evaluate!(::ScenarioEngine, ::ScenarioWorker, it::_ScenarioFailedItem)::ContingencyResult = ContingencyResult(it.name, it.weight, false, 0, :none, NaN, NaN, NaN, NaN, OverloadRecord[], String[], 0, 0.0, it.message)
+evaluate!(::ScenarioEngine, ::ScenarioWorker, it::_ScenarioFailedItem)::ContingencyResult = _failed_contingency_result(it.label, 0, 0, 0.0, it.message)
 
 function evaluate!(engine::ScenarioEngine, worker::ScenarioWorker, it::_ScenarioPatchItem)::ContingencyResult
-  engine.index === nothing && return ContingencyResult(it.scenario.name, it.scenario.weight, false, 0, :none, NaN, NaN, NaN, NaN, OverloadRecord[], String[], 0, 0.0, "patch scenarios need an engine built with a ScenarioIndex")
+  engine.index === nothing && return _failed_contingency_result(it.label, 0, 0, 0.0, "patch scenarios need an engine built with a ScenarioIndex")
   work = worker.net
   undo = apply!(work, it.scenario.ops, engine.index)
-  result = _evaluate_outaged_net!(engine, work, it.scenario.name, it.scenario.weight)
+  result = _evaluate_outaged_net!(engine, work, it.label)
   restore!(work, undo)
   _reset_scenario_worker!(work, engine.template)
   # warm active set: the same cold retry as for an outage item
   if !result.converged && haskey(engine.pf_kwargs, :qlimit_warm_clamps)
     undo = apply!(work, it.scenario.ops, engine.index)
-    cold = _evaluate_outaged_net!(engine, work, it.scenario.name, it.scenario.weight; cold = true)
+    cold = _evaluate_outaged_net!(engine, work, it.label; cold = true)
     restore!(work, undo)
     _reset_scenario_worker!(work, engine.template)
     cold.converged && return _warm_cold_result(cold)
@@ -1147,7 +1218,7 @@ function evaluate!(engine::ScenarioEngine, worker::ScenarioWorker, it::_Scenario
   # the same cold check as for an outage item
   if _warm_needs_cold_check(engine, result)
     undo = apply!(work, it.scenario.ops, engine.index)
-    cold = _evaluate_outaged_net!(engine, work, it.scenario.name, it.scenario.weight; cold = true)
+    cold = _evaluate_outaged_net!(engine, work, it.label; cold = true)
     restore!(work, undo)
     _reset_scenario_worker!(work, engine.template)
     _contingency_less_favourable(cold, result) && return _warm_checked_result(cold, result)
@@ -1253,39 +1324,58 @@ end
 
 # resolve ContingencyCases against the template ONCE (the old code
 # resolved on the fresh per-case deepcopy, which carries the same indices)
-function _engine_items_from_cases(template::Net, cases::Vector{ContingencyCase})::Vector{_ScenarioItem}
+# Resolve a case list ONCE on the unmutated template (the same indices the
+# per-case resolution of the old implementation produced), so the workers
+# never run a name lookup; an element that does not resolve becomes a
+# failed row with the reason, never an exception (old contract).
+function _engine_items_from_cases(template::Net, names::ContingencyNames, cases::Vector{ContingencyCase})::Vector{_ScenarioItem}
   items = _ScenarioItem[]
   for case in cases
-    if case.kind === :gen
-      pidx = _resolve_contingency_generator(template, case.element)
-      push!(items, pidx === nothing ? _ScenarioFailedItem(case.name, case.weight, "unknown generator $(case.element) (not found in net.prosumpsVec)") : _ScenarioOutageItem(case.name, case.weight, :gen, pidx))
-    elseif case.kind === :transformer3w
-      # the element is the star-point bus; it must still be the star point
-      # of a three-winding transformer on this net
-      star = get(template.busDict, case.element, nothing)
-      ok = star !== nothing && star in _three_winding_star_points(template)
-      push!(items, ok ? _ScenarioOutageItem(case.name, case.weight, :transformer3w, star) : _ScenarioFailedItem(case.name, case.weight, "unknown three-winding transformer star point $(case.element)"))
+    members = _contingency_case_members(template, names, case)
+    if members isa AbstractString
+      push!(items, _ScenarioFailedItem(_CaseLabel(case.name, case.kind, copy(case.elements), case.weight), members))
     else
-      idx = _resolve_contingency_branch(template, case.element)
-      push!(items, idx === nothing ? _ScenarioFailedItem(case.name, case.weight, "unknown branch $(case.element) (not found in net.branchVec)") : _ScenarioOutageItem(case.name, case.weight, :branch, idx))
+      push!(items, _ScenarioOutageItem(_CaseLabel(case.name, case.kind, _contingency_member_elements(names, members), case.weight), unique(members)))
     end
   end
   return items
 end
 
-# A single status-0 op IS an N-1 outage and gets the contingency-exact
-# path (that identity is what makes N-1 the special case of the model);
-# everything else is a patch scenario with the documented apply! semantics.
-function _engine_item_from_scenario(s::Scenario, index::ScenarioIndex)::_ScenarioItem
-  if length(s.ops) == 1
-    op = s.ops[1]
-    if op.op === :status && op.value == 0.0 && op.target in (:branch, :transformer, :generator, :external_grid)
-      internal = get(index.internal_by_id, op.id, nothing)
-      internal === nothing && return _ScenarioFailedItem(s.name, s.weight, string("component id ", op.id, " has no internal index"))
-      return _ScenarioOutageItem(s.name, s.weight, op.target in (:branch, :transformer) ? :branch : :gen, internal)
+# the display name of the component one patch op addresses
+function _scenario_op_element(op::PatchOp, index::ScenarioIndex, names::ContingencyNames)::String
+  internal = get(index.internal_by_id, op.id, nothing)
+  if internal !== nothing
+    if op.target in (:branch, :transformer) && 1 <= internal <= length(names.branch)
+      return names.branch[internal]
+    elseif op.target in (:generator, :external_grid) && 1 <= internal <= length(names.gen) && !isempty(names.gen[internal])
+      return names.gen[internal]
+    elseif op.target === :link && 1 <= internal <= length(names.link)
+      return names.link[internal]
     end
   end
-  return _ScenarioPatchItem(s)
+  return get(index.name_by_id, op.id, string(op.target, " ", op.id))
+end
+
+const _SCENARIO_OUTAGE_TARGETS = (:branch, :transformer, :generator, :external_grid, :link)
+
+# A scenario whose ops are ALL status-0 outages of branches, transformers,
+# generators, external grids or links IS an outage and gets the
+# contingency-exact path (a single op is N-1, the identity that makes N-1
+# the special case of the model; several ops are an event). Everything else
+# is a patch scenario with the documented apply! semantics.
+function _engine_item_from_scenario(s::Scenario, index::ScenarioIndex, names::ContingencyNames)::_ScenarioItem
+  elements = unique(String[_scenario_op_element(op, index, names) for op in s.ops])
+  label = _CaseLabel(s.name, s.kind, elements, s.weight)
+  if !isempty(s.ops) && all(op -> op.op === :status && op.value == 0.0 && op.target in _SCENARIO_OUTAGE_TARGETS, s.ops)
+    members = Tuple{Symbol,Int}[]
+    for op in s.ops
+      internal = get(index.internal_by_id, op.id, nothing)
+      internal === nothing && return _ScenarioFailedItem(label, string("component id ", op.id, " has no internal index"))
+      push!(members, (op.target in (:branch, :transformer) ? :branch : op.target === :link ? :link : :gen, internal))
+    end
+    return _ScenarioOutageItem(label, unique(members))
+  end
+  return _ScenarioPatchItem(s, label)
 end
 
 """
@@ -1319,6 +1409,15 @@ pre-screening engine); the service path applies the
 (screening is a deliberate opt-in). With
 screening active the return type is `Vector{ScenarioResult}` (the
 `ContingencyResult` surface plus `screened` and `screening_estimate`).
+
+A scenario whose operations are all status-0 outages (of branches,
+transformers, generators, external grids or links) runs on the exact
+outage path, a single op as N-1, several as one event. Generator outages
+leave in descending position order, so the order of the ops does not
+change the result. `events` and `pairs` (a `ContingencyEventsConfig` and a
+`ContingencyPairsConfig`) carry the generator options for the event
+classes of `set.events`. Result rows name the components by the file
+names of the case ([`contingency_names`](@ref)).
 """
 function runScenarios!(
   net::Net,
@@ -1340,15 +1439,18 @@ function runScenarios!(
   warm_cold_check_margin_pu::Float64 = DEFAULT_WARM_COLD_CHECK_MARGIN_PU,
   base_maxIte::Int = 0,
   warm_note::Union{Nothing,Base.RefValue{String}} = nothing,
+  events = ContingencyEventsConfig(),
+  pairs = ContingencyPairsConfig(),
   @nospecialize(progress = nothing),
   kwargs...,
 )
   validate_scenarios(set, index, net)
-  scenarios = expand_scenarios(set, net, index)
+  scenarios = expand_scenarios(set, net, index; events = events, pairs = pairs)
+  names = contingency_names(net, index)
   isempty(scenarios) && return screening_mode === :off ? ContingencyResult[] : ScenarioResult[]
   ladder = _validate_contingency_ladder(rescue_ladder; context = "runScenarios!: rescue_ladder")
-  engine = ScenarioEngine(net; vm_min_pu = vm_min_pu, vm_max_pu = vm_max_pu, maxIte = maxIte, tol = tol, ladder = ladder, index = index, pf_kwargs = (; auto_slack = auto_slack, kwargs...), screening_mode = screening_mode, screening_margin_pct = screening_margin_pct, warm_active_set = warm_active_set, warm_note = warm_note, warm_cold_check = warm_cold_check, warm_cold_check_margin_pu = warm_cold_check_margin_pu, base_maxIte = base_maxIte)
-  items = _ScenarioItem[_engine_item_from_scenario(s, index) for s in scenarios]
+  engine = ScenarioEngine(net; vm_min_pu = vm_min_pu, vm_max_pu = vm_max_pu, maxIte = maxIte, tol = tol, ladder = ladder, index = index, pf_kwargs = (; auto_slack = auto_slack, kwargs...), screening_mode = screening_mode, screening_margin_pct = screening_margin_pct, warm_active_set = warm_active_set, warm_note = warm_note, warm_cold_check = warm_cold_check, warm_cold_check_margin_pu = warm_cold_check_margin_pu, base_maxIte = base_maxIte, names = names)
+  items = _ScenarioItem[_engine_item_from_scenario(s, index, names) for s in scenarios]
   return _run_engine_batch(engine, items; parallel_enabled = parallel_enabled, parallel_max_tasks = parallel_max_tasks, parallel_min_work_items = parallel_min_work_items, progress = progress)
 end
 

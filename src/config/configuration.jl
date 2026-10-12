@@ -238,9 +238,65 @@ const DISTRIBUTED_SLACK_P_MODE_VALUES = (:pg_weighted, :pmax_weighted, :headroom
 const DISTRIBUTED_SLACK_FALLBACK_VALUES = (:error, :ref_only)
 
 """
+    ContingencyEventsConfig
+
+Correlated contingency events (`contingency.events.*`): elements that trip
+together, added to a generated N-1 list of an SCF case
+([`generateCorrelatedEvents`](@ref)).
+
+# Fields
+- `enabled::Bool`: add the events at all (default `false`).
+- `double_circuits::Bool`: branches with the same two endpoints (default
+  `true`, effective once `enabled`).
+- `busbars::Bool`: one busbar section: its branches and its closed
+  couplers (default `false`).
+- `substations::Bool`: a whole station, every branch at all its sections
+  (default `false`).
+- `links::Bool`: each closed coupler alone (default `false`).
+- `name_groups::Bool`: branches whose file names share a stem (default
+  `false`).
+- `name_stem_pattern::String`: the regular expression of the circuit
+  suffix a name group strips (default `"[ _#(-]?[0-9]{1,2}[)]?\$"`).
+- `max_members::Int`: events with more members are skipped (default `6`).
+"""
+Base.@kwdef struct ContingencyEventsConfig
+  enabled::Bool = false
+  double_circuits::Bool = true
+  busbars::Bool = false
+  substations::Bool = false
+  links::Bool = false
+  name_groups::Bool = false
+  name_stem_pattern::String = "[ _#(-]?[0-9]{1,2}[)]?\$"
+  max_members::Int = 6
+end
+
+const CONTINGENCY_PAIR_RULE_VALUES = (:all,)
+
+"""
+    ContingencyPairsConfig
+
+N-2 branch pairs (`contingency.pairs.*`) added to a generated N-1 list of an
+SCF case ([`generateBranchPairs`](@ref)).
+
+# Fields
+- `enabled::Bool`: add the pairs (default `false`).
+- `rule::Symbol`: which pairs; `:all` is every unordered pair of closed
+  branches (the full enumeration).
+- `max_pairs::Int`: a run with more pairs stops with a message before
+  anything is solved (default `50000`); there is no silent truncation.
+"""
+Base.@kwdef struct ContingencyPairsConfig
+  enabled::Bool = false
+  rule::Symbol = :all
+  max_pairs::Int = 50000
+end
+
+"""
     ContingencyConfig
 
-Configuration of the N-1 contingency batch (issue #331).
+Configuration of the contingency batch (issue #331), with the correlated
+events (`events`, a [`ContingencyEventsConfig`](@ref)) and the N-2 pairs
+(`pairs`, a [`ContingencyPairsConfig`](@ref)) of #355.
 
 # Fields
 - `max_iter::Int`: iteration limit of every outage and scenario solve
@@ -299,6 +355,8 @@ Base.@kwdef struct ContingencyConfig
   # counts
   warm_cold_check::Bool = false
   warm_cold_check_margin_pu::Float64 = 0.02
+  events::ContingencyEventsConfig = ContingencyEventsConfig()
+  pairs::ContingencyPairsConfig = ContingencyPairsConfig()
 end
 
 # the default of the cold-check margin, one source with the struct above
@@ -2067,7 +2125,41 @@ function ContingencyConfig(raw::AbstractDict)
   (isfinite(cold_margin) && cold_margin >= 0.0) || throw(ArgumentError("contingency.warm_cold_check_margin_pu must be a finite value >= 0; got $(cold_margin)."))
   max_iter = _as_int_cfg(_raw_get(merged, "max_iter", 30))
   max_iter >= 1 || throw(ArgumentError("contingency.max_iter must be >= 1; got $(max_iter)."))
-  return ContingencyConfig(rescue_ladder = ladder, max_iter = max_iter, screening_mode = mode, screening_margin_pct = margin, warm_active_set = warm, warm_cold_check = cold_check, warm_cold_check_margin_pu = cold_margin)
+  return ContingencyConfig(rescue_ladder = ladder, max_iter = max_iter, screening_mode = mode, screening_margin_pct = margin, warm_active_set = warm, warm_cold_check = cold_check, warm_cold_check_margin_pu = cold_margin,
+    events = ContingencyEventsConfig(_raw_section(merged, "events")), pairs = ContingencyPairsConfig(_raw_section(merged, "pairs")))
+end
+
+# contingency.events.*: the defaults live in the struct, read once here
+function ContingencyEventsConfig(raw::AbstractDict)
+  d = ContingencyEventsConfig()
+  pattern = String(_as_string_cfg(_raw_get(raw, "name_stem_pattern", d.name_stem_pattern)))
+  try
+    Regex(pattern)
+  catch err
+    # the expected failure: a pattern the regex compiler rejects
+    err isa ErrorException || rethrow()
+    throw(ArgumentError("contingency.events.name_stem_pattern is not a valid regular expression: $(sprint(showerror, err))"))
+  end
+  return ContingencyEventsConfig(
+    enabled = _as_bool_cfg(_raw_get(raw, "enabled", d.enabled)),
+    double_circuits = _as_bool_cfg(_raw_get(raw, "double_circuits", d.double_circuits)),
+    busbars = _as_bool_cfg(_raw_get(raw, "busbars", d.busbars)),
+    substations = _as_bool_cfg(_raw_get(raw, "substations", d.substations)),
+    links = _as_bool_cfg(_raw_get(raw, "links", d.links)),
+    name_groups = _as_bool_cfg(_raw_get(raw, "name_groups", d.name_groups)),
+    name_stem_pattern = pattern,
+    max_members = Int(_validate_positive("contingency.events.max_members", _as_int_cfg(_raw_get(raw, "max_members", d.max_members)))),
+  )
+end
+
+# contingency.pairs.*: the defaults live in the struct, read once here
+function ContingencyPairsConfig(raw::AbstractDict)
+  d = ContingencyPairsConfig()
+  return ContingencyPairsConfig(
+    enabled = _as_bool_cfg(_raw_get(raw, "enabled", d.enabled)),
+    rule = _validate_allowed_symbol("contingency.pairs.rule", _as_symbol_cfg(_raw_get(raw, "rule", d.rule)), CONTINGENCY_PAIR_RULE_VALUES),
+    max_pairs = Int(_validate_positive("contingency.pairs.max_pairs", _as_int_cfg(_raw_get(raw, "max_pairs", d.max_pairs)))),
+  )
 end
 
 # The deprecated diagnostics.* duplicates of output.* are warned about (and
@@ -2805,24 +2897,13 @@ function _normalize_deprecated_config_aliases!(root::Dict{String,Any})::Vector{S
   return unique(normalized)
 end
 
-# A string is written bare only when the repository's own YAML reader
-# gives it back unchanged as a string; everything else is quoted. This is
-# the self-inverse criterion, not a maintained list: it covers the YAML
-# 1.1 boolean family (live case: the enum value "off" was written bare
-# and came back as `false`), null spellings, every number form the reader
-# knows including leading-zero integers, ":symbol" spellings,
-# inline-list lookalikes, and padded values, and it stays correct when
-# parse_yaml_scalar learns new forms.
-function _yaml_ambiguous_scalar(s::AbstractString)
-  v = parse_yaml_scalar(String(s))
-  return !(v isa AbstractString && String(v) == String(s))
-end
-
+# the scalar text of the library writer; strings follow the one quoting rule
+# of the YAML module (yaml_string_text), so writer and reader are inverse
 function _yaml_scalar_text(value)
   value === nothing && return "null"
   value isa Bool && return value ? "true" : "false"
-  value isa Symbol && return _yaml_ambiguous_scalar(String(value)) ? repr(String(value)) : String(value)
-  value isa AbstractString && return (occursin(r"[:#\[\],{}]|^$", value) || _yaml_ambiguous_scalar(value)) ? repr(String(value)) : String(value)
+  value isa Symbol && return yaml_string_text(String(value))
+  value isa AbstractString && return yaml_string_text(value)
   value isa AbstractVector && return string("[", join((_yaml_scalar_text(v) for v in value), ", "), "]")
   return string(value)
 end

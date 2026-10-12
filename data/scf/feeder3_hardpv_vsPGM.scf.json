@@ -228,18 +228,16 @@
               "factor": 1.1
             }
           ]
-        }
-      ]
-    },
-    "contingencies": {
-      "mode": "explicit",
-      "cases": [
+        },
         {
           "name": "line_B1_B2_out",
-          "outages": [
+          "weight": 1.0,
+          "ops": [
             {
-              "component": "line",
-              "id": 4
+              "op": "status",
+              "target": "branch",
+              "id": 4,
+              "value": 0.0
             }
           ]
         }
