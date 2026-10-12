@@ -169,8 +169,10 @@ println("from the configuration: ", length(from_cfg), " events")
 @assert kinds[:explicit] == 1 && kinds[:double_circuit] == 1 && kinds[:busbar] == 12
 @assert length(from_cfg) == 13
 
-# In the Web UI the scenario source `file_block` runs this block; the
-# Settings page carries the `contingency.events.*` switches in its N-1 box.
+# In the Web UI the button **Scenarios** runs this block (it appears for a
+# case file with a scenarios block); the Settings page carries the
+# `contingency.events.*` switches in its N-1 box, which add the events to a
+# **Contingency (N-1)** run.
 
 # ## 4. Neubach: the coupler, one section, the whole station
 #

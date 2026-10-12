@@ -1434,6 +1434,9 @@ function powerflow_webui_request(form::AbstractDict; default_output_root::Abstra
   outage_mode = strip(String(something(_webui_form_value(form, "dtf_outage_selection_mode", "none"), "none")))
   raw_selection = _webui_form_value(form, "dtf_outage_selection", String[])
   selection = raw_selection isa AbstractVector ? String.(raw_selection) : (isempty(strip(String(raw_selection))) ? String[] : [String(raw_selection)])
+  # the Scenarios button (shown for a case file with a scenarios block) is a
+  # contingency run on the file's block and nothing else
+  scenario_run = _webui_parse_form_value(_webui_form_value(form, "scenario_run", "false"), Bool, "scenario_run")
   return Dict{String,Any}(
     "casefile" => casefile,
     "case_format" => case_format,
@@ -1458,14 +1461,14 @@ function powerflow_webui_request(form::AbstractDict; default_output_root::Abstra
     "diagnose_mode" => _webui_parse_form_value(_webui_form_value(form, "diagnose_mode", "false"), Bool, "diagnose_mode"),
     "short_circuit_mode" => _webui_parse_form_value(_webui_form_value(form, "short_circuit_mode", "false"), Bool, "short_circuit_mode"),
     "import_analysis_mode" => _webui_parse_form_value(_webui_form_value(form, "import_analysis_mode", "false"), Bool, "import_analysis_mode"),
-    "contingency_mode" => _webui_parse_form_value(_webui_form_value(form, "contingency_mode", "false"), Bool, "contingency_mode"),
+    "contingency_mode" => scenario_run || _webui_parse_form_value(_webui_form_value(form, "contingency_mode", "false"), Bool, "contingency_mode"),
     # N-1 outage kind is a RUN parameter (branch / generator), read as a plain
     # request key like dtf_outage_selection, not a config override
     "contingency_kind" => strip(String(something(_webui_form_value(form, "contingency_kind", "branch"), "branch"))),
     # source, screening mode and margin are run
     # parameters; empty form values mean "not set" and keep the service
     # defaults (historical kind list, configured screening)
-    "scenario_source" => (v = strip(String(something(_webui_form_value(form, "scenario_source", ""), ""))); isempty(v) ? nothing : v),
+    "scenario_source" => scenario_run ? "file_block" : (v = strip(String(something(_webui_form_value(form, "scenario_source", ""), ""))); isempty(v) ? nothing : v),
     "screening_mode" => (v = strip(String(something(_webui_form_value(form, "screening_mode", ""), ""))); isempty(v) ? nothing : v),
     "screening_margin_pct" => (v = strip(String(something(_webui_form_value(form, "screening_margin_pct", ""), ""))); isempty(v) ? nothing : _webui_parse_form_value(v, Float64, "screening_margin_pct")),
     "detailed_result_csv" => request_options["detailed_result_csv"],

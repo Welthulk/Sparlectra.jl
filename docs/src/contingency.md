@@ -325,10 +325,11 @@ parsing message strings.
 
 ## Web UI
 
-The run form runs the batch on the loaded case (outage kind, scenario
-source, screening, weights editor), writes `contingency_n1.csv` and a
+**Contingency (N-1)** runs the batch on the loaded case (outage kind,
+N-1 list, screening, weights editor), writes `contingency_n1.csv` and a
 `run.log` report, and names a generator outage that removes the only
-slack in its summary (rerun with `auto_slack = true`). Controls:
+slack in its summary (rerun with `auto_slack = true`). For a case file
+with a scenarios block, **Scenarios** runs that block alone. Controls:
 [Scenarios and N-1](webui_reference.md#Scenarios-and-N-1).
 
 ## API

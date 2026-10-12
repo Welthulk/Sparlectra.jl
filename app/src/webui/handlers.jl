@@ -1006,6 +1006,29 @@ function _webui_scenario_from_form(form::AbstractDict)
   return Scenario(name = name, weight = weight, ops = ops)
 end
 
+# The typed case and its scenarios block (`set === nothing`: the case carries
+# no block), read once per Runs page for the editor tab and the Scenarios
+# button; `nothing` when the case is not an SCF case of the directory or
+# cannot be read (the page then shows neither, as before 0.40.0)
+function _webui_load_case_scenarios(case::AbstractString, directory::AbstractString)
+  _webui_scenarios_case_ok(case) || return nothing
+  case_path = joinpath(directory, case)
+  isfile(case_path) || return nothing
+  return try
+    c = read_scf_json(case_path)
+    (case = c, set = scf_case_scenarios(c), path = case_path)
+  catch err
+    # a broken case file is reported by the run itself; the page only drops
+    # the scenario controls
+    @debug "scenarios block not read" case_path exception = err
+    nothing
+  end
+end
+
+# whether the Scenarios button has something to run: a block with scenarios,
+# an N-1 mode or event classes
+_webui_scenarios_runnable(loaded)::Bool = loaded !== nothing && loaded.set !== nothing && (!isempty(loaded.set.scenarios) || loaded.set.mode !== :explicit || !isempty(loaded.set.events))
+
 """
     _webui_scenarios_editor_tab(case, directory) -> String
 
@@ -1016,18 +1039,10 @@ standalone editor page, which shares the same fragment renderer. Returns
 "" when the case is not a readable SCF file; the Runs page then simply
 shows no scenario tab (the standalone route still reports the reason).
 """
-function _webui_scenarios_editor_tab(case::AbstractString, directory::AbstractString)::String
-  _webui_scenarios_case_ok(case) || return ""
-  case_path = joinpath(directory, case)
-  isfile(case_path) || return ""
-  set, opts = try
-    c = read_scf_json(case_path)
-    sset = scf_case_scenarios(c)
-    (sset === nothing ? ScenarioSet() : sset, _webui_scenario_component_options(c))
-  catch
-    return ""
-  end
-  return _webui_scenarios_editor_fragment(; case = case, scenarios = set.scenarios, component_options = opts, file_digest = _config_file_hash(case_path))
+function _webui_scenarios_editor_tab(case::AbstractString, directory::AbstractString; loaded = _webui_load_case_scenarios(case, directory))::String
+  loaded === nothing && return ""
+  set = loaded.set === nothing ? ScenarioSet() : loaded.set
+  return _webui_scenarios_editor_fragment(; case = case, scenarios = set.scenarios, component_options = _webui_scenario_component_options(loaded.case), file_digest = _config_file_hash(loaded.path))
 end
 
 """

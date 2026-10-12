@@ -343,7 +343,11 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
   n_reference_taken = count(r -> r.error !== nothing && occursin("reference taken over", r.error), results)
 
   open(logfile, "a") do io
-    println(io, "N-1 contingency (", kind == "gen" ? "generator" : "branch", " outages) on ", basename(case_path))
+    if scenario_source == "file_block"
+      println(io, "Scenarios of the case file on ", basename(case_path))
+    else
+      println(io, "N-1 contingency (", kind == "gen" ? "generator" : "branch", " outages) on ", basename(case_path))
+    end
     if startswith(scf_cases_source, "scenario_")
       println(io, "scenario source: ", replace(scf_cases_source, "scenario_" => ""), " (", length(results), " scenario(s))")
     elseif scf_cases_source != "generated"
@@ -419,7 +423,7 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
   )
 
   message = string(
-    "Contingency N-1 (", kind == "gen" ? "generator" : "branch", ") completed - ",
+    scenario_source == "file_block" ? "Scenarios of the case file completed - " : string("Contingency N-1 (", kind == "gen" ? "generator" : "branch", ") completed - "),
     report.n_converged, " of ", report.n_cases, " converged, ",
     report.n_islanded, " islanded (", round(report.total_shed_load_mw; digits = 1), " MW shed)",
     n_screened > 0 ? ", $(n_screened) screened" : "",
