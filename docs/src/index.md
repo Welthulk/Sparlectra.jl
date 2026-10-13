@@ -153,7 +153,7 @@ Embedding Sparlectra in your own tooling (scripts, sysimage, API): [integration 
 Case management, run history and results in the browser. Cases can be taken from the local cache, uploaded (MATPOWER, DTF, CGMES ZIP, PowSyBl IIDM `.xiidm`) or fetched by name; three PowSyBl networks ship under `data/powsybl`. IIDM files are read in Julia, no Python is needed.
 
 ```@raw html
-<a href="assets/webui_v0.10.0.png"><img src="assets/webui_v0.10.0.png" alt="Sparlectra Web UI: case, settings, run and result" /></a>
+<a href="assets/webui_overview.png"><img src="assets/webui_overview.png" alt="Sparlectra Web UI: case, settings, run and result" /></a>
 ```
 
 ---

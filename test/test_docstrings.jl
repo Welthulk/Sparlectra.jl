@@ -14,12 +14,12 @@
 
 # file: test/test_docstrings.jl
 # purpose: fast-profile check that every docstring sits directly on the
-#          definition it documents (task_docstrings_0302). Replaces the
+#          definition it documents. Replaces the
 #          line-based scan of the config-profile hygiene group, which covered
 #          src/test/examples only and missed one-line docstrings, a helper
 #          placed directly below a docstring and doubled docstrings.
 
-# Measured on Julia 1.13.1 (task_docstrings_0302, item 4): a docstring is
+# Measured on Julia 1.13.1: a docstring is
 # attached only when the definition follows on the very next line. A blank
 # line or a comment line in between detaches it (the text is discarded and
 # `Meta.parseall` shows a bare String at block level); indentation of the

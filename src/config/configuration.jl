@@ -40,7 +40,7 @@ Base.@kwdef struct StartModeConfig
   measure_candidates::Bool = true
   accept_unmeasured_dc_start::Bool = false
   dc_seed_unconditional::Bool = false
-  # flat starts only (#463 / task_close_all_0302 B): the start projection
+  # flat starts only (#463): the start projection
   # also measures the flat profile with every PQ magnitude scaled by the
   # product of the off-nominal transformer ratios on its path from the
   # reference; see _ratio_profile_factors
