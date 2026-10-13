@@ -1,3 +1,8 @@
+# Version 0.40.1 - 2026-10-13
+
+## Fixed
+- Changelog wording.
+
 # Version 0.40.0 - 2026-10-12
 
 ## Added
@@ -885,7 +890,7 @@ IEC 60909 short-circuit stage (#277), CGMES export.
 
 ## Improved
 
-- `compareWithSV` removes the median angle offset before judging deltas — an IGM cut from a CGM keeps the global angle reference (a real 50Hertz delivery: ~27° on every bus, meaning nothing). Offset is reported separately.
+- `compareWithSV` removes the median angle offset before judging deltas: an IGM cut from a CGM keeps the global angle reference (a real delivery: ~27° on every bus, meaning nothing). Offset is reported separately.
 - Start scripts `start_webui.sh/.bat` and `install_webui.sh/.bat` in the repo root.
 - SVC-style voltage control via `addShuntVoltageControl!`; at the MVAr limit the device clamps to constant B (Q then follows V²). `controllableElements(net)` lists all controllers in one vocabulary.
 - PSTs update X(α) on tap moves when the winding carries reactance data. Fixed along the way: DTF importer dropped the phase-tap model, and the phase-probe compared stale flows against themselves.
