@@ -8,7 +8,7 @@ CSV view in the Web UI and CGMES import fixes.
 - Distributed slack: `Pg` is the schedule, `Pg eff` the delivered generation; units receive their share; island participation in network numbers.
 - Export and Web UI: no tap row at ratio 1 in the MATPOWER export; CSV export reported as skipped where no detailed CSV exists; a start from a second checkout keeps the sysimage of the other one.
 ## Changed
-- Tap data is set on every imported tap changer, also one the import does not regulate; results change where a controller configured later stepped on the default grid. See the changelog for the full list.
+- Tap data is set on every imported tap changer, also one the import does not regulate; results change where a controller configured later stepped on the default grid.
 
 # Version 0.41.0 - 2026-10-16
 
