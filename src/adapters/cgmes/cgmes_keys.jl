@@ -33,6 +33,13 @@
 #   LNC|<busA>|<busB>|<k>            cim:Line container of that segment
 #   PT|<busA>|<busB>|<k>             PowerTransformer (same pair/k rules,
 #                                    counted over transformer branches only)
+#   EQB|<busA>|<busB>|<k>            EquivalentBranch built as a line; <k>
+#                                    continues the ACL counter of its pair
+#   EQBT|<busA>|<busB>|<k>           EquivalentBranch built as a transformer
+#                                    branch (across levels, or phase-stamped
+#                                    for r21, x21); <k> continues the PT
+#                                    counter. Own prefix: both counters start
+#                                    at 1 on the same pair
 #   <ptkey>|E1 / |E2                 PowerTransformerEnd by end number
 #   <ptkey>|PTC                      single-step linear phase tap changer
 #                                    carrying the branch phase shift
@@ -74,6 +81,22 @@ end
 function cgmesKeyPowerTransformer(busA::AbstractString, busB::AbstractString, k::Integer)::String
   a, b = _cgmesOrderedPair(busA, busB)
   return string("PT|", a, "|", b, "|", k)
+end
+
+# An imported EquivalentBranch is a line or a transformer branch in the net;
+# the key, recorded only by the importer, tells the exporter to write the
+# branch back as EquivalentBranch
+function cgmesKeyEquivalentBranch(busA::AbstractString, busB::AbstractString, k::Integer)::String
+  a, b = _cgmesOrderedPair(busA, busB)
+  return string("EQB|", a, "|", b, "|", k)
+end
+
+# The same for an EquivalentBranch built as a transformer branch. A line
+# EquivalentBranch and a phase-stamped one can sit on the same bus pair with
+# the same <k> from their two counters, hence the own prefix
+function cgmesKeyEquivalentBranchTransformer(busA::AbstractString, busB::AbstractString, k::Integer)::String
+  a, b = _cgmesOrderedPair(busA, busB)
+  return string("EQBT|", a, "|", b, "|", k)
 end
 
 # normalized pair as the "bus" part of the shared (kind, bus) counter, so PT

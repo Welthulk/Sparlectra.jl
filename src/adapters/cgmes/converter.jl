@@ -39,6 +39,8 @@ Base.@kwdef struct CGMESAdapterOptions
   require_boundary::Bool = true
   infer_base_voltages::Bool = false
   hvdc_mode::Symbol = :injections
+  # EnergySource objects as PQ injections (cgmes_import.map_energy_source)
+  map_energy_source::Bool = false
   run_kind::Symbol = :powerflow
   name::String = ""
 end
@@ -59,11 +61,11 @@ The CGMES importer of the adapter contract: the
 delivery builds natively through importCGMES. The method maps the
 adapter options that the importer consumes; the SV start-value
 decision and the run-kind gating live in the config-rich service
-layer (_import_cgmes carries the thirteen cgmes_import values), which
+layer (_import_cgmes carries the fourteen cgmes_import values), which
 stays the path the services use.
 """
 function import_net(::CGMESAdapter, path::AbstractString, opts::CGMESAdapterOptions; config::SparlectraConfig = active_sparlectra_config())::Net
-  net = createNetFromCGMES(path = String(path), require_boundary = opts.require_boundary, infer_base_voltages = opts.infer_base_voltages, hvdc_mode = opts.hvdc_mode, bus_shunt_model = config.model.bus_shunt_model, name = isempty(opts.name) ? basename(String(path)) : opts.name)
+  net = createNetFromCGMES(path = String(path), require_boundary = opts.require_boundary, infer_base_voltages = opts.infer_base_voltages, hvdc_mode = opts.hvdc_mode, map_energy_source = opts.map_energy_source, bus_shunt_model = config.model.bus_shunt_model, name = isempty(opts.name) ? basename(String(path)) : opts.name)
   _apply_config_net_parameters!(net, config)
   return net
 end
@@ -80,6 +82,7 @@ function cgmes_adapter_options(cfg::SparlectraConfig; run_kind::Symbol = :powerf
     require_boundary = cg.require_boundary,
     infer_base_voltages = cg.infer_base_voltages,
     hvdc_mode = cg.hvdc_mode,
+    map_energy_source = cg.map_energy_source,
     run_kind = run_kind,
     name = String(name),
   )
@@ -112,6 +115,7 @@ function convert_case(::CGMESAdapter, source::AbstractString, opts::CGMESAdapter
       "require_boundary" => opts.require_boundary,
       "infer_base_voltages" => opts.infer_base_voltages,
       "hvdc_mode" => String(opts.hvdc_mode),
+      "map_energy_source" => opts.map_energy_source,
     ),
   )
   cfg = load_sparlectra_config(DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true, overrides = overrides)

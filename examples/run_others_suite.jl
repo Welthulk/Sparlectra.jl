@@ -56,6 +56,7 @@ const SUITE_SPECS = ExampleSpec[
   ExampleSpec(name = "using_links", file = "others/using_links.jl", purpose = "busbar coupler modeled as a bus link, demonstrating open/close link behavior"),
   ExampleSpec(name = "diagnose_self_check", file = "others/exp_diagnose_self_check.jl", project = "app", purpose = "run_fixed_reference_self_check and the narrative diagnose.log report"),
   ExampleSpec(name = "cgmes_export_demo", file = joinpath("cgmes", "cgmes_export_demo.jl"), optional = true, purpose = "CGMES 2.4.15 export (writeCGMESFiles) on a small net"),
+  ExampleSpec(name = "cgmes_export_physical", file = joinpath("cgmes", "cgmes_export_physical.jl"), purpose = "CGMES export of a net built from line data in ohm/km and nF/km, with the re-import"),
 ]
 
 const SUITE_NOTES = [

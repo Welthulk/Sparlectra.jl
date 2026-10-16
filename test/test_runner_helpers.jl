@@ -17,7 +17,9 @@
 #          ARGS/ENV, quiet_test_output, which captures a test group's
 #          output and replays a bounded excerpt on failure, and
 #          run_with_expected_warnings, which captures the advisories a test
-#          triggers on purpose and asserts that nothing else was logged
+#          triggers on purpose and asserts that nothing else was logged,
+#          and parallel_comparison_report, the RAN/SKIPPED line of every
+#          parallel-vs-serial comparison
 function selected_test_profile(args = ARGS, env = ENV)
   profile_args = [strip(String(arg)) for arg in args if !startswith(strip(String(arg)), "--")]
   cli_profile = isempty(profile_args) ? nothing : Symbol(first(profile_args))
@@ -90,6 +92,28 @@ function _surface_test_failures(path::AbstractString, err_io::IO; max_blocks::In
   return blocks
 end
 
+const PARALLEL_COMPARISON_TAG = "parallel comparison "
+
+"""
+    parallel_comparison_report(name)
+
+Print the report line of the parallel-vs-serial comparison `name`: RAN with
+the thread count, or SKIPPED in a single-threaded process. With one thread
+every parallel site falls back to its serial loop, so the comparison checks
+the serial path against itself and proves nothing about the threads. The
+comparisons run threaded, five times in one process, in the `threads` gate
+(`sh tools/run_gates.sh threads`). The runner shows these lines under the
+group in every profile.
+"""
+function parallel_comparison_report(name::AbstractString)
+  if Threads.nthreads() > 1
+    println(PARALLEL_COMPARISON_TAG, name, ": RAN with ", Threads.nthreads(), " threads")
+  else
+    println(PARALLEL_COMPARISON_TAG, name, ": SKIPPED, single-threaded process (both runs take the serial path); threaded in tools/run_gates.sh threads")
+  end
+  return nothing
+end
+
 function quiet_test_output(f::Function; verbose::Bool = sparlectra_test_verbose(), group::AbstractString = "test group", skipped_out::Union{Nothing,Vector{String}} = nothing)
   verbose && return Base.invokelatest(f)
   path = tempname()
@@ -104,9 +128,12 @@ function quiet_test_output(f::Function; verbose::Bool = sparlectra_test_verbose(
     # surface availability-gated SKIPPED report lines: the capture would
     # otherwise swallow exactly the "silent skip" the testing conventions
     # forbid (a gated testset states SKIPPED, but nobody saw it here)
+    # the same for the report line of every parallel-vs-serial comparison
+    # (parallel_comparison_report): RAN or SKIPPED, it is shown under the
+    # group, so a run says which comparisons were threaded
     skipped_out === nothing || open(path, "r") do io
       for line in eachline(io)
-        occursin("SKIPPED", line) && push!(skipped_out, String(strip(line)))
+        (occursin("SKIPPED", line) || startswith(strip(line), PARALLEL_COMPARISON_TAG)) && push!(skipped_out, String(strip(line)))
       end
     end
     # surface @test failures NOW instead of at the suite's end (they throw
@@ -337,8 +364,6 @@ function createTest3BusNet(; cooldown = 0, hyst_pu = 0.0, qlim_min = nothing, ql
   r = 0.0
   x = 0.4
   s = 25.0
-  c_nf_per_km = 9.55
-  tanδ = 0.0
 
   vm_pu_STATION1 = 1.027273
   vm_pu_VERBUND = 1.018182
@@ -351,9 +376,9 @@ function createTest3BusNet(; cooldown = 0, hyst_pu = 0.0, qlim_min = nothing, ql
   addBus!(net = Bus3Net, busName = "STATION1", vn_kV = 110.0)
   addBus!(net = Bus3Net, busName = "VERBUND", vn_kV = 110.0)
 
-  addACLine!(net = Bus3Net, fromBus = "ASTADT", toBus = "STATION1", length = s, r = r, x = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
-  addACLine!(net = Bus3Net, fromBus = "ASTADT", toBus = "VERBUND", length = s, r = r, x = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
-  addACLine!(net = Bus3Net, fromBus = "VERBUND", toBus = "STATION1", length = s, r = r, x = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
+  addACLine!(net = Bus3Net, fromBus = "ASTADT", toBus = "STATION1", length = s, r = r, x = x, b = 7.500552460445633e-05)
+  addACLine!(net = Bus3Net, fromBus = "ASTADT", toBus = "VERBUND", length = s, r = r, x = x, b = 7.500552460445633e-05)
+  addACLine!(net = Bus3Net, fromBus = "VERBUND", toBus = "STATION1", length = s, r = r, x = x, b = 7.500552460445633e-05)
 
   addProsumer!(net = Bus3Net, busName = "VERBUND", type = "EXTERNALNETWORKINJECTION", vm_pu = vm_pu_VERBUND, va_deg = 0.0, referencePri = "VERBUND")
   addProsumer!(net = Bus3Net, busName = "STATION1", type = "SYNCHRONOUSMACHINE", p = 70.0, q = 33.2, vm_pu = vm_pu_STATION1, qMax = qlim_max, qMin = qlim_min)
@@ -382,5 +407,91 @@ function three_winding_star_net()::Net
   addACLine!(net = net, fromBus = "B3", toBus = "B5", length = 1.0, r = 0.01, x = 0.04)
   addProsumer!(net = net, busName = "B5", type = "ENERGYCONSUMER", p = 40.0, q = 10.0)
   addProsumer!(net = net, busName = "B4", type = "ENERGYCONSUMER", p = 2.0, q = 0.5)
+  return net
+end
+
+# C - D, A - B, A - D, B - L1 ... B - L6, and C = B by a closed switch. The
+# line C - D comes first, so a CGMES import puts C first and C is the
+# smallest bus of the switch group {C, B}. Six loads behind B load the group
+# heavily enough that a solve starting it at 0 V ends on the low-voltage
+# branch. Used by the CGMES importer tests.
+function isolated_first_net()::Net
+  net = Net(name = "isolated_first", baseMVA = 100.0)
+  feeders = ["L$(i)" for i in 1:6]
+  for b in vcat(["C", "A", "B", "D"], feeders)
+    addBus!(net = net, busName = b, vn_kV = 110.0)
+  end
+  line(f, t, len) = addACLine!(net = net, fromBus = f, toBus = t, length = len, r = 0.02, x = 0.2, c_nf_per_km = 0.0, tanδ = 0.0)
+  line("C", "D", 100.0)
+  line("A", "B", 100.0)
+  line("A", "D", 100.0)
+  for l in feeders
+    line("B", l, 25.0)
+  end
+  addLink!(net = net, fromBus = "B", toBus = "C", status = 1)
+  addProsumer!(net = net, busName = "A", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "A")
+  addProsumer!(net = net, busName = "D", type = "ENERGYCONSUMER", p = 20.0, q = 6.0)
+  for l in feeders
+    addProsumer!(net = net, busName = l, type = "ENERGYCONSUMER", p = 20.0, q = 6.0)
+  end
+  ok, msg = validate!(net = net)
+  ok || error("isolated-first net invalid: $msg")
+  return net
+end
+
+# The solved isolated_first_net and two CGMES snapshots of it: s1 as
+# exported, s2 with both terminals of line C - D disconnected, so C keeps
+# only its switch to B and the import types it Isolated.
+function isolated_first_cgmes_snapshots()
+  C = Sparlectra.CGMESImporter
+  net = isolated_first_net()
+  redirect_stdout(() -> runpf!(net, 30, 1e-8, 0), devnull)
+  dir = mktempdir()
+  redirect_stdout(() -> writeCGMESFiles(net; path = dir), devnull)
+  s1 = redirect_stdout(() -> C.loadCGMES(sort!(readdir(dir; join = true))), devnull)
+  s2 = deepcopy(s1)
+  tn_c = only(x for x in s2.byclass[:TopologicalNode] if s2.objects[x].attrs[:name] == "C")
+  terms = [s2.objects[t] for t in s2.byclass[:Terminal]]
+  cd = only(m for m in s2.byclass[:ACLineSegment] if any(t -> t.refs[:ConductingEquipment] == m && t.refs[:TopologicalNode] == tn_c, terms))
+  for t in terms
+    t.refs[:ConductingEquipment] == cd && (t.attrs[:connected] = "false")
+  end
+  return net, s1, s2
+end
+
+# Bus B of the solved isolated_first_net with line C - D out of service,
+# solved from its own solution (C keeps its start): the high-voltage
+# solution of the second snapshot.
+function isolated_first_reference(net::Net)
+  n2 = deepcopy(net)
+  nc = n2.busDict["C"]
+  for br in n2.branchVec
+    (br.fromBus == nc || br.toBus == nc) && setBranchStatus!(br, false)
+  end
+  redirect_stdout(() -> runpf!(n2, 30, 1e-8, 0), devnull)
+  return n2.nodeVec[n2.busDict["B"]]
+end
+
+# A 110 kV net with a bus C that hangs on B through a closed link alone:
+# A (reference) -- B, A -- D, and with `ring = true` also B -- D; loads
+# B 10 MW, C 5 MW, D 20 MW. The import marking (branches only) types C
+# Isolated, the power flow solves it with B. Shared by the N-1 and scenario
+# tests of the link groups.
+function link_group_net(; ring::Bool)::Net
+  net = Net(name = ring ? "link_group_ring" : "link_group_radial", baseMVA = 100.0)
+  for b in ("A", "B", "C", "D")
+    addBus!(net = net, busName = b, vn_kV = 110.0)
+  end
+  addACLine!(net = net, fromBus = "A", toBus = "B", length = 10.0, r = 0.02, x = 0.2, c_nf_per_km = 0.0, tanδ = 0.0)
+  addACLine!(net = net, fromBus = "A", toBus = "D", length = 10.0, r = 0.02, x = 0.2, c_nf_per_km = 0.0, tanδ = 0.0)
+  ring && addACLine!(net = net, fromBus = "B", toBus = "D", length = 10.0, r = 0.02, x = 0.2, c_nf_per_km = 0.0, tanδ = 0.0)
+  # before the prosumers: addLink! wants both buses of one type
+  addLink!(net = net, fromBus = "B", toBus = "C", status = 1)
+  addProsumer!(net = net, busName = "A", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "A")
+  addProsumer!(net = net, busName = "B", type = "ENERGYCONSUMER", p = 10.0, q = 3.0)
+  addProsumer!(net = net, busName = "C", type = "ENERGYCONSUMER", p = 5.0, q = 2.0)
+  addProsumer!(net = net, busName = "D", type = "ENERGYCONSUMER", p = 20.0, q = 6.0)
+  ok, msg = validate!(net = net)
+  ok || error("link group net invalid: $msg")
   return net
 end

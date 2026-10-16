@@ -37,14 +37,27 @@ into `ACPFlowReport` (precedent: `rundcpf!` with its own report type).
 - `rows::Vector{NamedTuple}`: one row per requested fault bus with
   `bus` (name), `bus_idx`, `vn_kV`, `island`, `status` (`:ok` /
   `:no_source` / `:isolated`), `c`, `zk_ohm`, `rx_ratio`, `ik_kA`,
-  `sk_MVA`, `kappa`, `ip_kA`, `contains_defaulted_data`, `reasons`.
+  `sk_MVA`, `kappa`, `ip_kA`, `contains_defaulted_data`, `lower_bound`,
+  `reasons`.
   Safety-flag contract: whenever a source value was substituted with a
   documented default or a contribution was skipped, the affected rows carry
-  `contains_defaulted_data = true` plus the reason list — for the `:max`
-  case a skipped contribution makes `ik_kA` a **lower bound**, which is the
-  non-conservative direction for equipment rating.
+  `contains_defaulted_data = true` plus the reason list. In the `:max` case
+  a skipped contribution makes `ik_kA` a **lower bound**, which is the
+  non-conservative direction for equipment rating: every row of that
+  island carries `lower_bound = true`. A row on a default or a substitute
+  only is flagged but no lower bound.
 - `messages::Vector{String}`: the run's warnings/notices (same texts that
   were logged).
+- `status::Symbol`: the run status, `:succeeded`, `:warning` (some or all
+  sources without their data, entered with defaults) or `:failed` (no
+  source carries anything an impedance can come from, or no bus could be
+  evaluated). The service reports the same status (one rule, see
+  [Short circuit](@ref short_circuit_source_data)).
+- `status_reason::Union{Nothing,String}`: the reason code that goes with
+  the status (`short_circuit_partial_defaults`,
+  `short_circuit_defaults_only`, `short_circuit_flagged_lower_bound`,
+  `short_circuit_flagged_defaults`, `short_circuit_data_missing`), or
+  `nothing` for a run without any flag.
 """
 struct ShortCircuitResult
   case::Symbol
@@ -52,7 +65,13 @@ struct ShortCircuitResult
   c_factor_override::Float64
   rows::Vector{NamedTuple}
   messages::Vector{String}
+  status::Symbol
+  status_reason::Union{Nothing,String}
 end
+
+# prefix of the one message that counts the equivalent branches with a
+# negative r; printShortCircuitResult prints it as a report line
+const _SC_EB_NEGATIVE_R = "short-circuit: equivalent branches with negative r: "
 
 # IEC 60909-0 Table 1 voltage factors, keyed by nominal voltage level.
 # LV (Un <= 1 kV): c_max = 1.05 (the 1.10 variant for +10 % tolerance bands
@@ -81,6 +100,15 @@ _sc_usable(x) = x !== nothing && isfinite(Float64(x)) && Float64(x) > 0.0
 const SC_PMAX_PLACEHOLDER_MW = 9999.0
 _sc_usable_pmax(x) = _sc_usable(x) && Float64(x) < SC_PMAX_PLACEHOLDER_MW
 
+# The same for the rated power of a machine: a CGMES delivery that states
+# +-99999.9 MW as the limits of a unit writes ratedS = sqrt(2)*99999.9 MVA
+# next to them. Taken as a size, 0.2 pu on 141421 MVA made a wind unit an
+# ideal source with about 1180 kA at its 380 kV bus (measured on a real
+# delivery). A rated power of 9999 MVA and above is no size.
+const SC_RATEDS_PLACEHOLDER_MVA = 9999.0
+_sc_rated_placeholder(x) = _sc_usable(x) && Float64(x) >= SC_RATEDS_PLACEHOLDER_MVA
+_sc_usable_rated(x) = _sc_usable(x) && !_sc_rated_placeholder(x)
+
 """
     sc_machine_size(net, machine) -> (value, source)
 
@@ -91,12 +119,14 @@ caller falls back to the network base and flags it). The maximum active
 power comes from the record (`pmax_MW`) where the adapter carries it, and
 otherwise from the generating unit of the network at the machine's bus:
 the unit of the same name, or the only unit with a maximum at that bus. A maximum of
-`SC_PMAX_PLACEHOLDER_MW` and above is a placeholder and no size.
+`SC_PMAX_PLACEHOLDER_MW` and above is a placeholder and no size, and so
+is a rated power of `SC_RATEDS_PLACEHOLDER_MVA` and above: the search goes
+on with the maximum active power as if the record had no rated power.
 Several unnamed units at one bus give no answer rather than a guessed one.
 """
 function sc_machine_size(net::Net, m)
   rated = hasproperty(m, :ratedS_MVA) ? m.ratedS_MVA : nothing
-  _sc_usable(rated) && return (value = Float64(rated), source = :rated_s)
+  _sc_usable_rated(rated) && return (value = Float64(rated), source = :rated_s)
   pmax = hasproperty(m, :pmax_MW) ? m.pmax_MW : nothing
   _sc_usable_pmax(pmax) && return (value = Float64(pmax), source = :pmax)
   (hasproperty(m, :bus) && m.bus !== nothing) || return (value = nothing, source = :none)
@@ -108,6 +138,63 @@ function sc_machine_size(net::Net, m)
   length(named) == 1 && return (value = Float64(named[1].maxP), source = :pmax)
   length(units) == 1 && return (value = Float64(units[1].maxP), source = :pmax)
   return (value = nothing, source = :none)
+end
+
+# The state of the source data, the same rule for every case format and for
+# the library and the service. A source carries data when the quantity its
+# impedance comes from is in the case: x''d of a synchronous machine, the
+# short-circuit current of a feeder, the reactance of an equivalent
+# injection, the locked-rotor ratio of a motor. A source carries NOTHING when
+# the base of a default is missing as well (a machine without rated power; a
+# feeder, an equivalent or a motor without its quantity cannot be defaulted
+# at all). A rated power of SC_RATEDS_PLACEHOLDER_MVA and above is a
+# placeholder and counts as none.
+#   every source without anything -> refused (data missing)
+#   no source with data           -> warning, the table rests on defaults
+#   some sources without data     -> warning, the rows they feed are flagged
+#   every source with data        -> success
+_sc_field(record, name::Symbol) = hasproperty(record, name) ? getproperty(record, name) : nothing
+function _sc_source_data_state(sc)
+  total = 0
+  with_data = 0
+  without_any = 0
+  for m in sc.synchronous_machines
+    total += 1
+    has = _sc_usable(_sc_field(m, :satDirectSubtransX_pu))
+    has && (with_data += 1)
+    (!has && !_sc_usable_rated(_sc_field(m, :ratedS_MVA))) && (without_any += 1)
+  end
+  for f in sc.external_network_injections
+    total += 1
+    has = _sc_usable(_sc_field(f, :maxInitialSymShCCurrent_A)) || _sc_usable(_sc_field(f, :minInitialSymShCCurrent_A))
+    has ? (with_data += 1) : (without_any += 1)
+  end
+  for e in sc.equivalent_injections
+    total += 1
+    _sc_usable(_sc_field(e, :x_ohm)) ? (with_data += 1) : (without_any += 1)
+  end
+  for m in sc.asynchronous_machines
+    total += 1
+    # a motor without its locked-rotor ratio is skipped by the engine,
+    # there is no default for it
+    _sc_usable(_sc_field(m, :iaIrRatio)) ? (with_data += 1) : (without_any += 1)
+  end
+  refused = total > 0 && without_any == total
+  return (total = total, with_data = with_data, without_any = without_any, refused = refused, defaults_only = total > 0 && with_data == 0 && !refused, partial = with_data > 0 && with_data < total, warning = !refused && with_data < total)
+end
+
+# The run status and its reason code from the state of the source data and
+# the rows. A flagged row is a lower bound only where the engine set its
+# typed `lower_bound` (a skipped source in its island); a row on a default
+# is not, so it gets the neutral reason. The service takes status and reason from
+# the result (_sc_outcome), so both say the same.
+function _sc_run_status(state, rows::AbstractVector)
+  (state.refused || !any(row -> row.status === :ok, rows)) && return (status = :failed, reason = "short_circuit_data_missing")
+  state.defaults_only && return (status = :warning, reason = "short_circuit_defaults_only")
+  state.partial && return (status = :warning, reason = "short_circuit_partial_defaults")
+  any(row -> row.lower_bound, rows) && return (status = :succeeded, reason = "short_circuit_flagged_lower_bound")
+  any(row -> row.contains_defaulted_data, rows) && return (status = :succeeded, reason = "short_circuit_flagged_defaults")
+  return (status = :succeeded, reason = nothing)
 end
 
 # The Takahashi/Erisman-Tinney recursion moved to the shared module
@@ -122,15 +209,24 @@ const _takahashi_diag = takahashi_diag
 # admittance (pu on `base_mva`), plus per-bus and per-island safety-flag
 # reasons. Islands are flagged as a whole where a skipped contribution
 # affects every fault location fed from that island (motor/feeder skips).
+# `lower_islands` holds the islands in which a skipped source makes Ik''max
+# a lower bound; the rows read their typed `lower_bound` from it, not from
+# the reason text.
 function _sc_source_admittances(net::Net, sc, case::Symbol, c_override::Float64, bus_island::Dict{Int,Int}, messages::Vector{String})
   y_add = Dict{Int,ComplexF64}()
   bus_reasons = Dict{Int,Vector{String}}()
   island_reasons = Dict{Int,Vector{String}}()
+  lower_islands = Set{Int}()
   flag_bus = (idx, why) -> push!(get!(Vector{String}, bus_reasons, idx), why)
   flag_island = (idx, why) -> begin
     island = get(bus_island, idx, 0)
     island == 0 && return
     push!(get!(Vector{String}, island_reasons, island), why)
+  end
+  # a skipped source in the maximum case: Ik''max of the island is a lower bound
+  flag_lower = idx -> begin
+    island = get(bus_island, idx, 0)
+    island == 0 || push!(lower_islands, island)
   end
   note = why -> (push!(messages, why); @warn why)
 
@@ -147,7 +243,10 @@ function _sc_source_admittances(net::Net, sc, case::Symbol, c_override::Float64,
     name = something(m.name, m.mrid)
     xdpp = m.satDirectSubtransX_pu
     no_reactance = xdpp === nothing || !isfinite(Float64(xdpp)) || Float64(xdpp) <= 0.0
-    no_rating = m.ratedS_MVA === nothing || !isfinite(Float64(m.ratedS_MVA)) || Float64(m.ratedS_MVA) <= 0.0
+    no_rating = !_sc_usable_rated(m.ratedS_MVA)
+    # a placeholder rating is named in the reason, so the row says why the
+    # stated value was not used
+    placeholder = _sc_rated_placeholder(m.ratedS_MVA) ? "a placeholder ratedS of $(m.ratedS_MVA) MVA ($(SC_RATEDS_PLACEHOLDER_MVA) MVA and above is no size)" : nothing
     srated = m.ratedS_MVA
     if no_reactance
       # The default is a per-unit value on the size of the machine, so the
@@ -159,8 +258,12 @@ function _sc_source_admittances(net::Net, sc, case::Symbol, c_override::Float64,
       srated = something(size.value, sbase)
       why = if size.source === :rated_s
         "short-circuit: SynchronousMachine $(name) has no usable x''_d — default 0.2 pu (machine base) substituted"
+      elseif size.source === :pmax && placeholder !== nothing
+        "short-circuit: SynchronousMachine $(name) has no usable x''_d and $(placeholder): default 0.2 pu on its maximum active power $(srated) MW substituted"
       elseif size.source === :pmax
         "short-circuit: SynchronousMachine $(name) has no usable x''_d and no ratedS: default 0.2 pu on its maximum active power $(srated) MW substituted"
+      elseif placeholder !== nothing
+        "short-circuit: SynchronousMachine $(name) has no x''_d, $(placeholder) and no usable maximum active power: its contribution rests on defaults alone (0.2 pu on the network base $(sbase) MVA)"
       else
         "short-circuit: SynchronousMachine $(name) has neither x''_d nor ratedS nor a usable maximum active power: its contribution rests on defaults alone (0.2 pu on the network base $(sbase) MVA)"
       end
@@ -173,7 +276,7 @@ function _sc_source_admittances(net::Net, sc, case::Symbol, c_override::Float64,
       # adapter that converts from ohm (IIDM) has formed the value on the
       # network base already
       srated = sbase
-      why = "short-circuit: SynchronousMachine $(name) has no usable ratedS — network base $(sbase) MVA substituted"
+      why = placeholder === nothing ? "short-circuit: SynchronousMachine $(name) has no usable ratedS — network base $(sbase) MVA substituted" : "short-circuit: SynchronousMachine $(name) has $(placeholder): network base $(sbase) MVA substituted"
       note(why)
       flag_bus(busidx, why)
       flag_island(busidx, why)
@@ -209,6 +312,8 @@ function _sc_source_admittances(net::Net, sc, case::Symbol, c_override::Float64,
       why = "short-circuit: feeder $(name) has no usable $(case === :max ? "maxInitialSymShCCurrent" : "minInitialSymShCCurrent") — contribution skipped ($(case === :max ? "Ik''max is a lower bound" : "Ik''min may be overestimated"))"
       note(why)
       flag_island(busidx, why)
+      # in the minimum case the missing infeed overestimates, no lower bound
+      case === :max && flag_lower(busidx)
       continue
     end
     c = _sc_c_factor(vn, case, c_override)
@@ -281,6 +386,7 @@ function _sc_source_admittances(net::Net, sc, case::Symbol, c_override::Float64,
         why = "short-circuit: AsynchronousMachine $(name) has no usable $(missing_attr) — contribution skipped; Ik''max in its island is a lower bound"
         note(why)
         flag_island(busidx, why)
+        flag_lower(busidx)
         continue
       end
       z_ohm_total = (1.0 / Float64(ilr)) * Float64(urated)^2 / Float64(srated)
@@ -312,10 +418,11 @@ function _sc_source_admittances(net::Net, sc, case::Symbol, c_override::Float64,
       why = "short-circuit: AsynchronousMachine $(ps.comp.cName) — short-circuit attributes not harvested, contribution skipped; Ik''max in its island is a lower bound"
       note(why)
       flag_island(busidx, why)
+      flag_lower(busidx)
     end
   end
 
-  return y_add, bus_reasons, island_reasons
+  return y_add, bus_reasons, island_reasons, lower_islands
 end
 
 # Assemble the positive-sequence short-circuit admittance matrix of one
@@ -325,7 +432,10 @@ end
 # instead of re-implementing the branch model; deliberately NOT a patched
 # createYBUS — the PF assembly stays untouched by design and the
 # series-only variant needs no sparsity bookkeeping beyond this COO loop.
-function _sc_island_matrix(net::Net, island_buses::Vector{Int}, y_add::Dict{Int,ComplexF64})
+# `island_buses` are group representatives (`reps`, the closed-link map of
+# the power flow): every bus enters the matrix through the representative
+# of its group, so a closed switch is one node, as in _merged_pf_net.
+function _sc_island_matrix(net::Net, island_buses::Vector{Int}, y_add::Dict{Int,ComplexF64}, reps::Vector{Int})
   local_index = Dict{Int,Int}(bus => i for (i, bus) in enumerate(island_buses))
   n = length(island_buses)
   I = Int[]
@@ -337,8 +447,13 @@ function _sc_island_matrix(net::Net, island_buses::Vector{Int}, y_add::Dict{Int,
     # admittance is charging, which this series-only matrix deliberately
     # drops for closed branches as well, so it contributes nothing here.
     _branch_terminal_state(br) == :closed || continue
-    f = get(local_index, Int(br.fromBus), 0)
-    t = get(local_index, Int(br.toBus), 0)
+    rf = reps[Int(br.fromBus)]
+    rt = reps[Int(br.toBus)]
+    # a branch between two buses of one group is shorted by the closed link
+    # next to it; _merged_pf_net takes it out of service as well
+    (rf == rt && Int(br.fromBus) != Int(br.toBus)) && continue
+    f = get(local_index, rf, 0)
+    t = get(local_index, rt, 0)
     (f == 0 || t == 0) && continue
     # A physical line/transformer has r >= 0. A NEGATIVE series resistance can
     # Short circuit uses the PHYSICAL branch impedance (#329): under a fault the
@@ -347,7 +462,9 @@ function _sc_island_matrix(net::Net, island_buses::Vector{Int}, y_add::Dict{Int,
     # control run stamped onto r_pu/x_pu. calcBranchYserBase reads the base
     # (r_base_pu/x_base_pu). The base is physical, so this defensive check never
     # fires in the normal FACTS workflow; it guards only a corrupted base model.
-    if br.r_base_pu < 0.0
+    # an equivalent branch (network reduction, net.equivalent_branch_metadata)
+    # is no equipment: its negative r is taken over unchanged
+    if br.r_base_pu < 0.0 && !haskey(net.equivalent_branch_metadata, Int(br.branchIdx))
       error("runShortCircuit!: branch $(getCompName(br.comp)) has a negative base series resistance (r_base = $(br.r_base_pu) pu). The physical equipment impedance must be non-negative.")
     end
     ys = calcBranchYserBase(br)
@@ -360,7 +477,8 @@ function _sc_island_matrix(net::Net, island_buses::Vector{Int}, y_add::Dict{Int,
   end
   has_source = false
   for (bus, y) in y_add
-    li = get(local_index, bus, 0)
+    # a source on any member of a group feeds the group node
+    li = get(local_index, reps[bus], 0)
     li == 0 && continue
     push!(I, li); push!(J, li); push!(V, y)
     has_source = true
@@ -397,6 +515,14 @@ result rows (`contains_defaulted_data` + reasons), not only logged — for
 `:max` a skipped contribution makes the result a lower bound. Buses in
 islands without any short-circuit source report `status = :no_source` with
 `NaN` currents; isolated buses report `status = :isolated`.
+
+Closed links (busbar couplers, retained switches) are contracted as in the
+power flow: the buses of one closed-link group are one node of the
+short-circuit matrix. Every member of a fed group reports the `Ik''` of
+that node and the same island, sources on any member feed it, and the
+reasons of every member appear on each member's row. A branch between two
+buses of one group is shorted by the link and left out. A group counts as
+isolated only when all its members are in `net.isoNodes`.
 
 The function does not modify `net`; the `!` marks it as the acting entry
 point of the module family (`runpf!`, `rundcpf!`). Failure behavior: throws
@@ -452,9 +578,25 @@ function runShortCircuit!(
     end for b in buses]
   end
 
+  # Closed-link groups are contracted as in the power flow (_merged_pf_net):
+  # `reps` is the solver's group map, every bus counts through the
+  # representative of its group. Without a closed link reps[b] == b and
+  # everything below is the per-bus engine as before.
+  reps = _active_link_representative_map(net)
+  # members of the groups with more than one bus, keyed by representative;
+  # a bus missing here is a group of its own
+  group_members = Dict{Int,Vector{Int}}()
+  for bus in eachindex(reps)
+    r = reps[bus]
+    r == bus && continue
+    push!(get!(() -> [r], group_members, r), bus)
+  end
+  members_of(bus::Int) = get(group_members, reps[bus], nothing)
+
   # Island decomposition reused from the AC island diagnostics (BFS over
-  # in-service branches); isolated buses form single-bus islands there.
-  components = _ac_island_components(net)
+  # in-service branches plus the closed-link groups); isolated buses form
+  # single-bus islands there, an isolated group one island of its members.
+  components = _ac_island_components(net; links = true)
   bus_island = Dict{Int,Int}()
   for comp in components
     for bus in comp.buses
@@ -463,30 +605,44 @@ function runShortCircuit!(
   end
 
   messages = String[]
-  y_add, bus_reasons, island_reasons = _sc_source_admittances(net, sc_data, case, c_override, bus_island, messages)
+  y_add, bus_reasons, island_reasons, lower_islands = _sc_source_admittances(net, sc_data, case, c_override, bus_island, messages)
 
   # Result rows carry the user-facing bus names (busDict keys), not the
   # generated component names ("Bus_<idx>_<vn>").
   bus_names = Dict{Int,String}(idx => name for (name, idx) in net.busDict)
 
+  # A group is isolated when all its members are (net.isoNodes, the
+  # branch-only marking): a bus on a closed switch to a fed bus is part of
+  # the fed node, a group without any branch stays isolated.
   iso = Set(net.isoNodes)
+  for grp in values(group_members)
+    all(in(iso), grp) && continue
+    foreach(b -> delete!(iso, b), grp)
+  end
   needed_islands = Set(get(bus_island, bus, 0) for bus in fault_buses if !(bus in iso))
   delete!(needed_islands, 0)
 
   # One factorization per island (and case), one triangular solve per fault
-  # bus in it.
+  # bus in it. The matrix has one node per group (its representative).
   island_solutions = Dict{Int,Any}()
   for comp in components
     comp.island_id in needed_islands || continue
-    island_buses = [Int(b) for b in comp.buses if !(b in iso)]
+    island_buses = unique!([reps[Int(b)] for b in comp.buses if !(b in iso)])
     isempty(island_buses) && continue
-    Ysc, local_index, has_source = _sc_island_matrix(net, island_buses, y_add)
+    Ysc, local_index, has_source = _sc_island_matrix(net, island_buses, y_add, reps)
     if !has_source
       island_solutions[comp.island_id] = (factor = nothing, local_index = local_index)
       continue
     end
     island_solutions[comp.island_id] = (factor = LinearAlgebra.lu(Ysc), local_index = local_index)
   end
+
+  # equivalent branches with a negative series resistance in the islands of
+  # the fault buses: taken over unchanged, counted in one message. A branch
+  # inside one closed-link group is shorted and never enters the matrix
+  # (_sc_island_matrix), so it is not counted either.
+  n_eb_neg = count(br -> haskey(net.equivalent_branch_metadata, Int(br.branchIdx)) && br.r_base_pu < 0.0 && _branch_terminal_state(br) == :closed && reps[Int(br.fromBus)] != reps[Int(br.toBus)] && get(bus_island, Int(br.fromBus), 0) in needed_islands, net.branchVec)
+  n_eb_neg == 0 || push!(messages, string(_SC_EB_NEGATIVE_R, n_eb_neg, " in the islands of the fault buses, taken over unchanged"))
 
   # sweep_method = :takahashi: ONE selected-inverse pass per island replaces
   # the per-bus triangular solves (Erisman-Tinney on the UMFPACK factors;
@@ -519,19 +675,31 @@ function runShortCircuit!(
     name = get(bus_names, bus, getCompName(node.comp))
     island = get(bus_island, bus, 0)
     reasons = String[]
-    append!(reasons, get(bus_reasons, bus, String[]))
+    # a fault on a bus is a fault on its whole group: the reasons of every
+    # member apply. `local`: the row closure runs in parallel tasks and must
+    # not share a variable with the enclosing function
+    local row_group = members_of(bus)
+    if row_group === nothing
+      append!(reasons, get(bus_reasons, bus, String[]))
+    else
+      for member in row_group
+        append!(reasons, get(bus_reasons, member, String[]))
+      end
+    end
     append!(reasons, get(island_reasons, island, String[]))
     unique!(reasons)
+    # `local`: see row_group above
+    local lower = island in lower_islands
     c = _sc_c_factor(vn, case, c_override)
     if bus in iso
-      return (bus = name, bus_idx = bus, vn_kV = vn, island = island, status = :isolated, c = c, zk_ohm = NaN, rx_ratio = NaN, ik_kA = NaN, sk_MVA = NaN, kappa = NaN, ip_kA = NaN, contains_defaulted_data = !isempty(reasons), reasons = reasons)
+      return (bus = name, bus_idx = bus, vn_kV = vn, island = island, status = :isolated, c = c, zk_ohm = NaN, rx_ratio = NaN, ik_kA = NaN, sk_MVA = NaN, kappa = NaN, ip_kA = NaN, contains_defaulted_data = !isempty(reasons), lower_bound = lower, reasons = reasons)
     end
     sol = solution_for(island)
     if sol === nothing || sol.factor === nothing
       push!(reasons, "no short-circuit source in island $(island) — fault current undefined")
-      return (bus = name, bus_idx = bus, vn_kV = vn, island = island, status = :no_source, c = c, zk_ohm = NaN, rx_ratio = NaN, ik_kA = NaN, sk_MVA = NaN, kappa = NaN, ip_kA = NaN, contains_defaulted_data = true, reasons = reasons)
+      return (bus = name, bus_idx = bus, vn_kV = vn, island = island, status = :no_source, c = c, zk_ohm = NaN, rx_ratio = NaN, ik_kA = NaN, sk_MVA = NaN, kappa = NaN, ip_kA = NaN, contains_defaulted_data = true, lower_bound = lower, reasons = reasons)
     end
-    li = sol.local_index[bus]
+    li = sol.local_index[reps[bus]]
     dz = get(island_diag, island, nothing)
     z_pu = if dz === nothing
       rhs, solbuf = workspace_for(island, length(sol.local_index))
@@ -558,7 +726,7 @@ function runShortCircuit!(
       NaN
     end
     ip = isfinite(kappa) ? kappa * sqrt(2.0) * ik : NaN
-    return (bus = name, bus_idx = bus, vn_kV = vn, island = island, status = :ok, c = c, zk_ohm = zk, rx_ratio = rx, ik_kA = ik, sk_MVA = sk, kappa = kappa, ip_kA = ip, contains_defaulted_data = !isempty(reasons), reasons = reasons)
+    return (bus = name, bus_idx = bus, vn_kV = vn, island = island, status = :ok, c = c, zk_ohm = zk, rx_ratio = rx, ik_kA = ik, sk_MVA = sk, kappa = kappa, ip_kA = ip, contains_defaulted_data = !isempty(reasons), lower_bound = lower, reasons = reasons)
   end
 
   # lazily created per-owner workspaces: one (rhs, sol) buffer pair per
@@ -609,7 +777,8 @@ function runShortCircuit!(
     rows = NamedTuple[(sparlectra_check_abort(); compute_row(bus, shared_solution_for, workspace_for)) for bus in fault_buses]
   end
 
-  return ShortCircuitResult(case, net.baseMVA, c_override, rows, messages)
+  run_status = _sc_run_status(_sc_source_data_state(sc_data), rows)
+  return ShortCircuitResult(case, net.baseMVA, c_override, rows, messages, run_status.status, run_status.reason)
 end
 
 # the CGMES-result convenience overload lives in the adapters block
@@ -622,17 +791,33 @@ end
 # no pre-check here.
 runShortCircuit!(net::Net; kwargs...) = runShortCircuit!(net, net.sc_sources; kwargs...)
 
+# The head line of a result table: the run status with its reason, the
+# number of flagged rows and the number of rows whose Ik''max is a lower
+# bound. printShortCircuitResult starts with it, and the service puts the
+# same line into the run metadata, from where the Web UI shows it.
+function _sc_status_line(result::ShortCircuitResult)::String
+  flagged = count(row -> row.contains_defaulted_data, result.rows)
+  lower = count(row -> row.lower_bound, result.rows)
+  status = result.status_reason === nothing ? String(result.status) : string(result.status, " (", result.status_reason, ")")
+  return string("run status: ", status, ", ", flagged, " of ", length(result.rows), " rows flagged, ", lower, " rows with a lower bound")
+end
+
 """
     printShortCircuitResult(io::IO, result::ShortCircuitResult; max_rows = 50)
     printShortCircuitResult(result::ShortCircuitResult; max_rows = 50)
 
-Pretty-print a [`ShortCircuitResult`](@ref): one table row per fault bus
-(`Ik''`, `Sk''`, `kappa`, `i_p`, flag column), followed by the reason list of
-every flagged row. The Web UI "Short circuit" run writes the same rows as
-`short_circuit_max.csv` / `short_circuit_min.csv`.
+Pretty-print a [`ShortCircuitResult`](@ref). The first line names the run
+status with its reason, the number of flagged rows (defaulted or substituted
+data, skipped sources) and the number of rows whose `Ik''max` is a lower
+bound. Then one table row per fault bus (`Ik''`, `Sk''`, `kappa`, `i_p`,
+flag column), followed by the reason list of every flagged row. The Web UI
+"Short circuit" run writes the same rows as `short_circuit_max.csv` /
+`short_circuit_min.csv` and shows the first line above the table.
 """
 function printShortCircuitResult(io::IO, result::ShortCircuitResult; max_rows::Int = 50)
+  println(io, _sc_status_line(result))
   println(io, "Balanced 3-phase short circuit (IEC 60909-0) — case: ", result.case, result.c_factor_override > 0.0 ? ", c-factor override $(result.c_factor_override)" : ", c per IEC Table 1")
+  foreach(m -> println(io, m), filter(m -> startswith(m, _SC_EB_NEGATIVE_R), result.messages))
   println(io, rpad("bus", 24), rpad("Un[kV]", 9), rpad("Ik''[kA]", 11), rpad("Sk''[MVA]", 12), rpad("kappa", 8), rpad("ip[kA]", 11), rpad("status", 11), "flagged")
   shown = 0
   for row in result.rows

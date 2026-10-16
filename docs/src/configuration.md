@@ -274,6 +274,11 @@ Tuning keys (all under `power_flow.`):
 | `power_flow.wrong_branch_rescue` | `false` | Reserved switch of the unimplemented rescue loop; reports instead of retrying. |
 | `power_flow.wrong_branch_rescue_max_attempts` | `2` | Attempt bound of that reserved mode. |
 
+A second check after convergence, `power_flow.plausibility.vmin_warn`
+(default `0.7` pu), warns when an energized bus on any level ends below
+the threshold and names that bus; the status stays converged. See
+[Plausibility check](@ref pf_plausibility).
+
 ## Control configuration (generic outer loop)
 
 ```yaml

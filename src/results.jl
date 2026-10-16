@@ -207,6 +207,9 @@ function _original_branch_name(net::Net, br::Branch)::String
 end
 
 function _branch_kind_name(net::Net, br::Branch)::String
+  # a network equivalent (CGMES EquivalentBranch) is neither line nor
+  # transformer; its losses may be negative and are reported as they are
+  haskey(net.equivalent_branch_metadata, Int(br.branchIdx)) && return "equivalent_branch"
   meta = get(net.matpower_branch_metadata, br.branchIdx, nothing)
   if meta !== nothing
     hasproperty(meta, :orig_kind) && return String(getproperty(meta, :orig_kind))
@@ -462,10 +465,12 @@ end
 
 # Printed Type column of the branch table. Consult the import metadata
 # first so print and report rows (_branch_kind_name) agree for the same
-# branch, then fall back to the name marker. The PST label is a heuristic
+# branch ("EqBr" for a CGMES EquivalentBranch), then fall back to the name
+# marker. The PST label is a heuristic
 # (phase tap present, nonzero shift, no ratio tap) pending the typed
 # BranchKind enum (tracked separately).
 function _branch_kind_label(net::Net, br::Branch)::String
+  haskey(net.equivalent_branch_metadata, Int(br.branchIdx)) && return "EqBr"
   meta = get(net.matpower_branch_metadata, br.branchIdx, nothing)
   kind = if meta !== nothing && hasproperty(meta, :orig_kind)
     Symbol(getproperty(meta, :orig_kind))

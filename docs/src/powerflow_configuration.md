@@ -226,6 +226,35 @@ retries cannot stack sources. The result print names the connection in its
 `SOURCE`. Web UI: the **External grid source** fieldset of the advanced run
 options.
 
+## [Plausibility check](@id pf_plausibility)
+
+After a numerically converged AC solve the run checks the lowest voltage
+magnitude over all energized buses, on every voltage level. Below
+`power_flow.plausibility.vmin_warn` the run stays converged and gets a
+warning that names the lowest bus, its voltage and the number of buses
+below the threshold. A heavily loaded network has a second, low-voltage
+power-flow solution, and a poor start can lead Newton there; the check
+makes such a result visible.
+
+```yaml
+power_flow:
+  plausibility:
+    vmin_warn: 0.7
+```
+
+| YAML path | Type | Default | Allowed values | Meaning |
+|---|---:|---:|---|---|
+| `power_flow.plausibility.vmin_warn` | Float | `0.7` | `>= 0` | Lowest acceptable voltage in pu at an energized bus. `0` switches the check off. Settable per case in the case configuration file. |
+
+The warning goes to the log (in a service run to `run.log`). The result
+carries `diagnostics.plausibility_status` (`ok`, `low_voltage`,
+`not_checked`), `plausibility_min_vm_pu`, `plausibility_min_vm_bus`,
+`plausibility_low_vm_count` and `plausibility_warning`; the service result
+metadata carry the same fields. A run that did not converge and a DC solve
+are not checked. Unlike the wrong-branch detection (see
+[Central Configuration](configuration.md)), the check never changes the
+status, judges every level and names the bus.
+
 ## [Start mode options](@id pf-start-mode)
 
 Where the Newton-Raphson iteration starts: the angle and voltage modes, the
@@ -473,7 +502,7 @@ these keys form the Q-limit block of the power-flow form
 | `power_flow.qlimits.trace_buses` | Vector{Int} | `[]` | bus numbers of the case file (an internal position where no bus carries that number) | Write the switching events of these buses in detail to the Q-limit trace. |
 | `power_flow.qlimits.lock_pv_to_pq_buses` | Vector{Int} | `[]` | internal bus positions (1 = first bus); the file-based MATPOWER path maps case bus numbers to positions | Run the listed PV buses as PQ from the start, at their scheduled Q clamped into their limits; logged at iteration 0, never released back to PV. Read by every enforcement mode of the Newton solver, ignored with Q limits off and by APSLF. Auto mode adds the buses that switched too often. |
 | `power_flow.qlimits.guard.enabled` | Bool | `true` | `true`, `false` | Before the solve, run machines with a narrow or zero Q range as PQ (the range rules below). The switch cap, freezing, the violation rule and the bounded-violation acceptance act without it. |
-| `power_flow.qlimits.guard.min_q_range_pu` | Float64 | `0.02` | nonnegative real | Q range below which a PV bus counts as narrow. The range is judged per PV bus after every in-service machine of the bus is aggregated (Qmin and Qmax summed), so a zero-range machine next to a wide-range one on the same bus is not guarded; buses the case types PQ are never considered, and the reported count is PV buses, not machines. The keyword `qlimit_guard_min_q_range_pu` of `runpf_rectangular!` has the same default. |
+| `power_flow.qlimits.guard.min_q_range_pu` | Float64 | `0.02` | nonnegative real | Q range below which a PV bus counts as narrow. The range is judged per PV bus after its units are aggregated (Qmin and Qmax of the regulating and reference units summed, every other unit adds its fixed Q to both ends and no range, a Q(U) unit its Q at the held voltage), so a zero-range machine next to a wide-range one on the same bus is not guarded; buses the case types PQ are never considered, and the reported count is PV buses, not machines. The keyword `qlimit_guard_min_q_range_pu` of `runpf_rectangular!` has the same default. |
 | `power_flow.qlimits.guard.narrow_range_mode` | Symbol/String | `lock_pq` | `prefer_pq`, `lock_pq` | Rule for a narrow range: both values run the machine as PQ at the middle of its range from the start of the solve. |
 | `power_flow.qlimits.guard.zero_range_mode` | Symbol/String | `lock_pq` | `lock_pq` | Rule for `Qmin == Qmax`: run the machine as PQ at that Q. |
 | `power_flow.qlimits.guard.violation_mode` | Symbol/String | `lock_pq` | `delayed_switch`, `lock_pq` | When a violating machine switches to PQ: `lock_pq` once its Q exceeds the limit by `violation_threshold_pu`, `delayed_switch` once it exceeds the limit by `hysteresis_pu`. |

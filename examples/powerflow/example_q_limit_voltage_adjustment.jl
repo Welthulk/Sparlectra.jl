@@ -26,8 +26,8 @@ function build_case(; qmin = -15.0, qmax = 15.0)
   addBus!(net = net, busName = "PV1", vn_kV = 20.0)
   addBus!(net = net, busName = "PQ1", vn_kV = 20.0)
 
-  addACLine!(net = net, fromBus = "SLACK", toBus = "PV1", length = 5.0, r = 0.1, x = 0.2, c_nf_per_km = 8.5, tanδ = 0.0)
-  addACLine!(net = net, fromBus = "PV1", toBus = "PQ1", length = 8.0, r = 0.1, x = 0.2, c_nf_per_km = 8.5, tanδ = 0.0)
+  addACLine!(net = net, fromBus = "SLACK", toBus = "PV1", length = 5.0, r = 0.1, x = 0.2, b = 1.3351768777756622e-05)
+  addACLine!(net = net, fromBus = "PV1", toBus = "PQ1", length = 8.0, r = 0.1, x = 0.2, b = 2.1362830044410595e-05)
 
   addProsumer!(net = net, busName = "SLACK", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "SLACK")
   addProsumer!(net = net, busName = "PV1", type = "SYNCHRONOUSMACHINE", p = 70.0, q = 33.2, vm_pu = 1.025, qMin = qmin, qMax = qmax)

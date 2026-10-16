@@ -257,6 +257,7 @@ makedocs(
       "API and Services" => "reference_api.md",
       "ACPFlow Runner" => "reference_acpflow.md",
       "Core Model" => "reference_core.md",
+      "Results and Output" => "reference_results.md",
       "Rectangular Power Flow" => "reference_powerflow_rectangular.md",
       "DC Power Flow" => "reference_powerflow_dc.md",
       "Short Circuit" => "reference_shortcircuit.md",

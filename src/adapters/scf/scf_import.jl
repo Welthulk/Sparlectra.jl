@@ -545,6 +545,12 @@ function _scf_net_from_case(case::SCFCase)::Net
         tap_impedance_correction_factor = _scf_num(_scf_get(mb, "tap_impedance_correction_factor", 1.0), "matpower_branch.tap_impedance_correction_factor"),
       )
     end
+    # the delivered values of a CGMES EquivalentBranch
+    eb = _scf_get(be_all, "equivalent_branch", nothing)
+    if eb isa AbstractDict
+      ebnum(k) = _scf_num(eb[k], string("extra.equivalent_branch.", k))
+      net.equivalent_branch_metadata[length(net.branchVec)] = (r = ebnum("r_ohm"), x = ebnum("x_ohm"), r21 = ebnum("r21_ohm"), x21 = ebnum("x21_ohm"), vn_kV = ebnum("vn_kv"), stamped = eb["stamped"] === true)
+    end
     if haskey(be_all, "transformer_loss_g_pu") && !isempty(net.trafos)
       net.trafos[end].side1.g = _scf_num(be_all["transformer_loss_g_pu"], "extra.transformer_loss_g_pu")
     end

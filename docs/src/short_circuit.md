@@ -125,14 +125,16 @@ sweeps (`runtime.parallel.*`) compose with the pass.
 |---|---|
 | Call | [`runShortCircuit!`](@ref) (`case = :max` or `:min`, `buses = :all` or a list), `printShortCircuitResult`; coverage: `shortCircuitCoverage`, `printShortCircuitCoverage` |
 | Config key | `short_circuit.c_factor` (or the `c_factor` keyword): scalar expert override of the voltage factor for verification runs; `short_circuit.sweep_method` (`:auto`, `:takahashi`, `:solves`), `short_circuit.takahashi_min_buses` (default 50) |
-| Result field | per fault bus `Ik''` (kA), `Sk''` (MVA), `κ`, `i_p`, `status` (`:no_source` with `NaN` currents), `contains_defaulted_data` plus a reason list |
-| Artifact | `short_circuit_max.csv`, `short_circuit_min.csv`; coverage view in `cgmes.log` |
+| Result field | per fault bus `Ik''` (kA), `Sk''` (MVA), `κ`, `i_p`, `status` (`:no_source` with `NaN` currents), `contains_defaulted_data` plus a reason list, `lower_bound`; per run `status` and `status_reason` |
+| Artifact | `short_circuit_max.csv`, `short_circuit_min.csv` (one row per bus; `flagged`, `reasons` and `lower_bound` carry the flags); coverage view in `cgmes.log` |
 | Web UI | PowerFlow form, **Short circuit** button: both cases, no power-flow solve; which cases offer it: [Web UI](webui.md) |
 
 **The data.** Every CGMES import harvests the short-circuit source data
 into `CGMESImportResult.shortcircuit` and onto the network
 (`net.sc_sources`), so an export or a run of the network alone has it
-(read, never altered, CGMES units):
+(read, never altered, CGMES units). The source classes keep the records
+of the objects the import mapped onto the network; a skipped one (terminal
+disconnected, out of service) feeds no fault current:
 
 | Class | Harvested attributes | Role in the calculation |
 |---|---|---|
@@ -174,19 +176,39 @@ source types feed the fault:
   apparent power or from mechanical power, efficiency and power factor;
   motors enter only the maximum case.
 
+A branch built from a CGMES `EquivalentBranch` enters with its series
+impedance as delivered, also with a negative `r`: a network equivalent is no
+equipment. The report names the number of such branches with negative `r` in
+the islands of the fault buses in one line.
+
 Voltage factors follow IEC 60909-0 Table 1 by voltage level (`c_max`
 1.05/1.10, `c_min` 0.95/1.00).
+
+**Closed switches and links.** Buses joined by closed links (busbar
+couplers, retained CGMES switches) are contracted into one node, the same
+groups the power flow contracts. Every bus of a fed group reports the
+`Ik''` and the island of that node, also a bus that hangs on the network
+through a switch alone. Machines, feeders and motors on any bus of the
+group feed the node, and their reasons appear on every row of the group. A
+branch between two buses of one group is shorted by the link and left
+out. A group without any branch stays `:isolated`.
 
 **Safety flags.** Every substituted default and every skipped contribution
 is flagged on the affected result rows (`contains_defaulted_data` plus a
 reason list). A machine without `x''_d` gets 0.2 pu on its size (rated
 power, else maximum active power, else the network base with a reason of
-its own; a maximum of 9999 MW and above is a placeholder, not a size); a
+its own; a maximum of 9999 MW and above and a rated power of 9999 MVA and
+above are placeholders, not sizes, and the reason names a placeholder
+rated power; a machine with `x''_d` and a placeholder rated power takes the
+network base); a
 feeder without an R/X ratio gets R = 0.1·X; a motor without a locked-rotor
 R/X ratio gets the §6.7.2 guidance value (0.10/0.15 for MV motors, 0.42
 for LV). A motor or feeder whose impedance cannot be formed is skipped and
 its island flagged: the maximum current is then a lower bound, the
-non-conservative direction. Buses in islands without any source report
+non-conservative direction. Every row of such an island carries
+`lower_bound = true` (CSV column `lower_bound`, count
+`sc_lower_bound_rows` in the run metadata); a row on a default alone is
+flagged but has `lower_bound = false`. Buses in islands without any source report
 `status = :no_source` with `NaN` currents. A machine without data counts
 as a source on the default in every format, so a run is `succeeded` only
 when every source carries its data (next section).
@@ -201,6 +223,25 @@ One rule holds for the source data of every format:
 | some sources carry it | status `warning` (`short_circuit_partial_defaults`): the message counts the sources with data, the others enter with default reactances and the rows they feed are flagged with the reason |
 | no source carries it, the machines have a rated power | status `warning` (`short_circuit_defaults_only`): a complete table on default reactances, the statement leads the message and `run.log` |
 | no source carries anything an impedance can come from | refused with `short_circuit_data_missing` |
+
+A `succeeded` run with flagged rows gives the reason
+`short_circuit_flagged_lower_bound` when at least one row is a lower bound
+(a skipped source), else `short_circuit_flagged_defaults` (defaults only).
+
+The rule lives in the library: [`runShortCircuit!`](@ref) stores the
+status and its reason on the result (`status`, `status_reason`; `failed`
+with `short_circuit_data_missing` also when no bus could be evaluated), and
+the service reports them unchanged. The three levels and where they show:
+
+| Level | Printed table, `run.log` | CSV | Run metadata | Web UI |
+|---|---|---|---|---|
+| row: defaulted or substituted data | column `flagged`, reason list below the table | `flagged`, `reasons` | `sc_flagged_rows` | count on the result page, columns of the table |
+| island: `Ik''max` is a lower bound | head line (count), reason list | `lower_bound` | `sc_lower_bound_rows` | count on the result page, column of the table |
+| run: status and reason | head line | (none, see `result.json`) | `sc_status_line_max`, `sc_status_line_min`; `status`, `reason` in `result.json` | run status card, head line on the result page and above both tables |
+
+`printShortCircuitResult` starts every table with the head line, for
+example `run status: warning (short_circuit_partial_defaults), 4 of 4 rows
+flagged, 2 rows with a lower bound`.
 
 The quantity is `x''_d` of a synchronous machine, the short-circuit current
 of a feeder, the reactance of an equivalent injection, the locked-rotor

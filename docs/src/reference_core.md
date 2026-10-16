@@ -14,19 +14,13 @@ Pages = [
   "src/limits.jl",
   "src/lines.jl",
   "src/link.jl",
-  "src/losses.jl",
   "src/network.jl",
   "src/node.jl",
   "src/prosumer.jl",
   "src/remove_functions.jl",
-  "src/results.jl",
   "src/shunt.jl",
   "src/tap_changer_kinds.jl",
   "src/transformer.jl",
-  "src/performance_profile.jl",
-  "src/session.jl",
-  "src/csv_output.jl",
-  "src/result_csv.jl",
 ]
 Public = true
 Private = false
@@ -46,19 +40,13 @@ Pages = [
   "src/limits.jl",
   "src/lines.jl",
   "src/link.jl",
-  "src/losses.jl",
   "src/network.jl",
   "src/node.jl",
   "src/prosumer.jl",
   "src/remove_functions.jl",
-  "src/results.jl",
   "src/shunt.jl",
   "src/tap_changer_kinds.jl",
   "src/transformer.jl",
-  "src/performance_profile.jl",
-  "src/session.jl",
-  "src/csv_output.jl",
-  "src/result_csv.jl",
 ]
 Public = false
 Private = true

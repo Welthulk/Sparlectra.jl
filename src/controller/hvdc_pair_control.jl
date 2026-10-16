@@ -436,18 +436,18 @@ end
 
 # island_feed: what the grid-forming converter currently delivers into its
 # island (MW), i.e. the terminal output of the reference injection at the
-# PCC. Single-island runs have the slack's NET injection in _pƩGen (add the
-# local load back). Island runs write only voltages back to the parent net,
-# so the fallback derives the output from the fresh branch flows instead
-# (run_control! calls calcNetLosses! after every inner solve): local load
-# plus the active power flowing from the PCC into its in-service branches.
+# PCC. After a solve the slack bus holds that output in _pƩGen (the
+# generation, its local load included). Before a solve wrote it, the
+# fallback derives the output from the branch flows (run_control! calls
+# calcNetLosses! after every inner solve): local load plus the active power
+# flowing from the PCC into its in-service branches.
 # Returns nothing before the first solve. A shunt at the PCC is not
 # supported (documented in addHvdcPairControl!).
 function _hvdc_island_delivered(net::Net, ctrl::HvdcPairControl)::Union{Nothing,Float64}
   busIdx = geNetBusIdx(net = net, busName = ctrl.to_bus)
   node = net.nodeVec[busIdx]
   local_load = node._pƩLoad === nothing ? 0.0 : node._pƩLoad
-  node._pƩGen === nothing || return node._pƩGen + local_load
+  node._pƩGen === nothing || return node._pƩGen
   total = local_load
   any_flow = false
   for br in net.branchVec

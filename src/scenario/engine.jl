@@ -99,6 +99,11 @@ struct ScenarioEngine
   # bus an island without a slack was given): a case names a reference as
   # taken over only when it is none of these
   base_reference_buses::Set{Int}
+  # the buses the base case does not solve, by the rule of the power flow
+  # (markIsolatedBuses! with links = true): a bus behind a closed link is
+  # solved with its link group and is not in this set. An outage cuts off
+  # only buses outside it.
+  base_isolated::Set{Int}
   # the cold check of the warm active set (0.30.3): when switched on, a warm
   # result within this margin above vm_min_pu, or with a violation, is solved
   # cold as well
@@ -221,11 +226,14 @@ function ScenarioEngine(net::Net; vm_min_pu::Float64 = 0.9, vm_max_pu::Float64 =
   names === nothing && (names = index === nothing ? contingency_names(net) : contingency_names(net, index))
   screen = screening_mode === :off ? nothing : _build_screening_state(template, base_converged, tol, pf_kwargs, base_loadings)
   base_refs = Set{Int}(Int(ps.comp.cFrom_bus) for ps in template.prosumpsVec if isSlack(ps))
-  # islands always promote a generating unit (the solver does the same)
-  for row in detect_ac_islands(template; promote_generators = true).rows
+  # islands always promote a generating unit (the solver does the same);
+  # detected on the link-merged copy, as in every evaluation below
+  for row in detect_ac_islands(first(_merged_pf_net(template)); promote_generators = true).rows
     row.chosen_ref_bus > 0 && push!(base_refs, Int(row.chosen_ref_bus))
   end
-  return ScenarioEngine(template, base_converged, base_loadings, names, index, vm_min_pu, vm_max_pu, maxIte, tol, ladder, pf_kwargs, screening_mode, screening_margin_pct, screen, base_refs, warm_cold_check, warm_cold_check_margin_pu, base_ite)
+  # read without marking: marking would retype the template the workers copy
+  base_isolated = Set{Int}(_isolated_buses(template; links = true))
+  return ScenarioEngine(template, base_converged, base_loadings, names, index, vm_min_pu, vm_max_pu, maxIte, tol, ladder, pf_kwargs, screening_mode, screening_margin_pct, screen, base_refs, base_isolated, warm_cold_check, warm_cold_check_margin_pu, base_ite)
 end
 
 # --- worker reset -------------------------------------------------------------
@@ -254,7 +262,8 @@ end
 Reset a working copy to the template state after an evaluation. The patch
 itself is already undone (undo log replay, prosumer reinsertion); what
 remains is everything a SOLVE mutates: node voltages and types, branch
-status/flow/loss fields, prosumer write-backs, the isolated-node registry,
+status/flow/loss fields, prosumer write-backs, the isolated-node registry
+(with the list of buses the marking isolated itself),
 slack rows, Q-limit tables and logs, loss accumulators, and the solver
 status. The step-3 acceptance test proves the reset with the SCF
 reflection comparison: after evaluations with solves, the worker equals
@@ -284,7 +293,7 @@ function _reset_scenario_worker!(work::Net, template::Net)
   for i in eachindex(template.linkVec)
     _scenario_copy_scalar_fields!(work.linkVec[i], template.linkVec[i])
   end
-  for (wv, tv) in ((work.slackVec, template.slackVec), (work.isoNodes, template.isoNodes), (work.qmin_pu, template.qmin_pu), (work.qmax_pu, template.qmax_pu))
+  for (wv, tv) in ((work.slackVec, template.slackVec), (work.isoNodes, template.isoNodes), (work._marked_iso, template._marked_iso), (work.qmin_pu, template.qmin_pu), (work.qmax_pu, template.qmax_pu))
     empty!(wv)
     append!(wv, tv)
   end
@@ -1004,23 +1013,34 @@ function _evaluate_outaged_net!(engine::ScenarioEngine, work::Net, lbl::_CaseLab
   # (it drops isolated buses), so without this the outage of a radial
   # branch would read as a clean case although its load is gone or its
   # unit is out of service.
-  isolated_before = Set{Int}(i for i in eachindex(work.nodeVec) if isIsolated(work.nodeVec[i]))
-  markIsolatedBuses!(net = work, log = false)
+  # Both sides follow the rule of the power flow (links = true): a bus that
+  # hangs on the network only through a closed link is solved with its link
+  # group, so it is cut off exactly when its group is. The import types
+  # such a bus Isolated (branches only) and the type sticks, so the types
+  # cannot tell; before = the base case by that rule plus the buses the
+  # patch itself typed Isolated (a bus op of a scenario).
+  isolated_before = copy(engine.base_isolated)
+  for i in eachindex(work.nodeVec)
+    (isIsolated(work.nodeVec[i]) && !isIsolated(engine.template.nodeVec[i])) && push!(isolated_before, i)
+  end
+  markIsolatedBuses!(net = work, log = false, links = true)
   # a three-winding star point the outage isolated (the whole transformer
   # out) is dropped silently: it is a computational node, no bus that loses
   # supply
   stars = _three_winding_star_points(work)
-  cut_off = Int[i for i in eachindex(work.nodeVec) if isIsolated(work.nodeVec[i]) && !(i in isolated_before) && !(i in stars)]
+  cut_off = Int[i for i in work.isoNodes if !(i in isolated_before) && !(i in stars)]
   cut_off_note, cut_off_load_mw = _cut_off_bus_note(work, cut_off)
   # the same detection the solve runs: an island without a slack or PV bus
   # takes its best generating unit (stated reference priority first, then
-  # the strongest) regardless of auto_slack
-  island_report = detect_ac_islands(work; promote_generators = true)
+  # the strongest) regardless of auto_slack. It runs on the link-merged copy
+  # the solver builds (_merged_pf_net; the net itself when it has no closed
+  # link): on the raw net a bus that keeps only its link to a fed bus would
+  # count as an island of its own.
+  island_report = detect_ac_islands(first(_merged_pf_net(work)); promote_generators = true)
   island_count = length(island_report.rows)
   # rows for reference-less islands, kept so an islanding failure is
   # reported specifically (load-only vs. stranded generation). The solver
-  # stays the authority on solvability: it may link-merge synchronously
-  # tied islands this pre-merge snapshot cannot see.
+  # stays the authority on solvability.
   refless = [r for r in island_report.rows if r.chosen_ref_bus == 0]
   snap = _snapshot_start_voltages(work)
   template_flatstart = work.flatstart
@@ -1064,7 +1084,7 @@ function _evaluate_outaged_net!(engine::ScenarioEngine, work::Net, lbl::_CaseLab
         # the working copy by now, and an island without one is given its
         # bus by the same detection the solve used
         taken = Set{Int}(Int(ps.comp.cFrom_bus) for ps in work.prosumpsVec if isSlack(ps))
-        for row in detect_ac_islands(work; promote_generators = true).rows
+        for row in detect_ac_islands(first(_merged_pf_net(work)); promote_generators = true).rows
           (row.n_ref == 0 && row.chosen_ref_bus > 0) && push!(taken, Int(row.chosen_ref_bus))
         end
         setdiff!(taken, engine.base_reference_buses, cut_off, isolated_before)

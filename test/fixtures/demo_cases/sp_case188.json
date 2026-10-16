@@ -842,12 +842,12 @@
   },
   "short_circuit": {
     "Lindmoor_380": {
-      "ik_kA": 39.301806,
-      "sk_MVA": 25867.635207
+      "ik_kA": 39.320365,
+      "sk_MVA": 25879.850312
     },
     "Waldheim_110": {
-      "ik_kA": 2.226349,
-      "sk_MVA": 424.176429
+      "ik_kA": 2.263675,
+      "sk_MVA": 431.288074
     }
   },
   "state_estimation": {

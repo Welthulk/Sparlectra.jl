@@ -203,6 +203,23 @@ function _power_mode_lu_lifecycle_metadata(rect_status)::Dict{String,Any}
   return md
 end
 
+# the plausibility check of the run (power_flow.plausibility.vmin_warn):
+# status, the lowest energized bus with its voltage and the warning text
+# (nothing when no bus is below the threshold); empty for a result without
+# the check (DC)
+function _plausibility_lifecycle_metadata(raw_result::SparlectraRunResult)::Dict{String,Any}
+  d = raw_result.diagnostics
+  hasproperty(d, :plausibility_status) || return Dict{String,Any}()
+  return Dict{String,Any}(
+    "plausibility_status" => String(d.plausibility_status),
+    "plausibility_vmin_warn_pu" => d.plausibility_vmin_warn_pu,
+    "plausibility_min_vm_pu" => isfinite(d.plausibility_min_vm_pu) ? d.plausibility_min_vm_pu : nothing,
+    "plausibility_min_vm_bus" => d.plausibility_min_vm_bus,
+    "plausibility_low_vm_count" => d.plausibility_low_vm_count,
+    "plausibility_warning" => isempty(d.plausibility_warning) ? nothing : d.plausibility_warning,
+  )
+end
+
 function _build_success_lifecycle_metadata(raw_result::SparlectraRunResult, config::SparlectraConfig; numerical_success::Bool, final_outcome::Dict{String,Any}, csv_export_status::AbstractString, csv_export_skip_reason, csv_export_error, csv_artifacts::Vector{String}, detailed_result_csv::Bool, config_overrides, config_override_source::AbstractString, casefile, config_file, performance_timing, run_diagnostics::Bool, csv_format_name::AbstractString, qlimit_metadata::AbstractDict, csv_timing_metadata::AbstractDict)::Dict{String,Any}
   qv = _qv_characteristic_summary(raw_result.net, raw_result.numerical_converged)
   fq = _final_q_check_summary(raw_result)
@@ -278,7 +295,7 @@ function _build_success_lifecycle_metadata(raw_result::SparlectraRunResult, conf
       "detailed_result_csv" => detailed_result_csv,
       "detailed_result_csv_format" => csv_format_name,
     )),
-  ), qlimit_metadata, current_iteration_metadata, merit_linesearch_metadata, wrong_branch_metadata, trust_region_metadata, island_wise_metadata, _jacobian_reuse_lifecycle_metadata(rect_status), _power_mode_lu_lifecycle_metadata(rect_status))
+  ), qlimit_metadata, current_iteration_metadata, merit_linesearch_metadata, wrong_branch_metadata, trust_region_metadata, island_wise_metadata, _jacobian_reuse_lifecycle_metadata(rect_status), _power_mode_lu_lifecycle_metadata(rect_status), _plausibility_lifecycle_metadata(raw_result))
   # Partial CSV exports are still successful API runs, but the Web UI needs the
   # partial file error in the stable lifecycle field used by Last Errors.
   haskey(csv_timing_metadata, :partial_error) && (metadata["detailed_result_csv_error"] = csv_timing_metadata[:partial_error])

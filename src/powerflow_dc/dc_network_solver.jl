@@ -50,7 +50,7 @@ function _dc_pf_status(converged::Bool, iterations::Int; extra::NamedTuple = Nam
 end
 
 # Writes theta (deg) + vm_pu=1.0 into every bus, Pf/Pt (qFlow=0, lossless)
-# into every in-service branch, and the computed slack injection, all on
+# into every in-service branch, and the slack generation, all on
 # `inet` (an island-local net, or `net` itself in the single-island case).
 # Populating the same four branch-flow fields the AC path uses is what lets
 # _sync_island_solution! be reused completely unmodified for the multi-island
@@ -67,7 +67,11 @@ function _write_dc_solution!(inet::Net, slack_idx::Int, theta::Vector{Float64}, 
     br.pLosses = 0.0
     br.qLosses = 0.0
   end
-  inet.nodeVec[slack_idx]._pƩGen = slack_p_mw
+  # slack_p_mw is the injection into the branches; the slack bus's
+  # generation adds what the bus draws itself (its loads at the 1 pu just
+  # written, the static schedule buildComplexSVec gives the DC solve)
+  p_cons, _ = _bus_consumption_MVA(inet; controllers = false)
+  inet.nodeVec[slack_idx]._pƩGen = slack_p_mw + p_cons[slack_idx]
   return nothing
 end
 

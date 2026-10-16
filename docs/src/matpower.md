@@ -386,6 +386,10 @@ writeMatpowerCasefile(net, filepath)                          # configuration de
 | `true` (default) | `mpc.bus` `VM`/`VA` carry the solved node state and `mpc.branch` gains the standard MATPOWER result columns 14-17 (`PF`, `QF`, `PT`, `QT`, flow into the branch at each end) from the branch-flow report; the exporter does not recompute flows. `mpc.sparlectra.solution_written = 1` marks columns 8/9 and 14-17 as a solution. An unsolved network (no branch flows) warns and falls back to the 13-column model-only export. |
 | `false` | A pure model file: `mpc.branch` keeps its 13 columns, `VM = 1.0`/`VA = 0.0` for all non-slack/non-PV buses (slack and PV setpoints are preserved). |
 
+A unit without an active-power limit is written with `Pmax = 9999` and
+`Pmin = -9999`, the MATPOWER convention for an unlimited unit. The reactive
+limits of a unit without them stay at `±baseMVA`.
+
 Sparlectra writes no OPF columns 18-21. Exported `.m` files with
 transformer losses carry a `SPARLECTRA EXTENSION WARNING` comment, because
 plain MATPOWER ignores the `mpc.sparlectra` block and computes different

@@ -391,6 +391,27 @@ end
 
 const EXTERNAL_GRID_SOURCE_VALUES = (:auto, :config)
 
+# power_flow.plausibility.vmin_warn: one source for the struct and the loader
+const DEFAULT_PLAUSIBILITY_VMIN_WARN_PU = 0.7
+
+"""
+    PowerFlowPlausibilityConfig
+
+Plausibility check of a numerically converged AC power-flow solution. The
+check never changes the run status; it only reports.
+
+# Fields
+- `vmin_warn::Float64`: lowest acceptable voltage magnitude in pu at an
+  energized bus, on every voltage level. A converged solution with a bus
+  below it gets a warning that names the lowest bus and its voltage, in the
+  run result (`diagnostics.plausibility_warning`) and in the log. A Newton
+  solve can converge on the low-voltage branch of a heavily loaded network;
+  this check makes such a result visible. `0` switches the check off.
+"""
+Base.@kwdef struct PowerFlowPlausibilityConfig
+  vmin_warn::Float64 = DEFAULT_PLAUSIBILITY_VMIN_WARN_PU
+end
+
 """
     ApslfConfig
 
@@ -536,6 +557,7 @@ Base.@kwdef struct PowerFlowConfig
   dc::DcPowerFlowConfig = DcPowerFlowConfig()
   distributed_slack::DistributedSlackConfig = DistributedSlackConfig()
   external_grid::ExternalGridConfig = ExternalGridConfig()
+  plausibility::PowerFlowPlausibilityConfig = PowerFlowPlausibilityConfig()
 end
 
 const WRONG_BRANCH_DETECTION_VALUES = [:off, :warn, :fail, :rescue]
@@ -732,6 +754,10 @@ Options of the `cgmes_import` configuration block — the ENTSO-E CGMES import
   own bus.
 - `ignore_connected::Bool`: diagnostic override that treats every terminal as
   connected, for snapshots whose SSH flags contradict their own SV state.
+- `map_energy_source::Bool`: map every in-service, connected `EnergySource`
+  as a fixed PQ injection (`p = -activePower`, `q = -reactivePower` from the
+  SSH, load sign convention). Off by default: the objects are then left out
+  and counted in one import notice.
 - `vset_min_pu`, `vset_max_pu::Float64`: plausibility band for a voltage
   `RegulatingControl.targetValue`, in p.u. of the regulated bus's nominal
   voltage. A target outside the band is treated as a placeholder: it is ignored
@@ -743,6 +769,10 @@ Options of the `cgmes_import` configuration block — the ENTSO-E CGMES import
   without it every island beyond the primary one has no reference and the
   island-wise power flow refuses to run. Disable only to force the legacy
   single-reference behavior.
+- `equivalent_branch_min_z_pu::Float64`: an `EquivalentBranch` whose
+  impedance (`|z12|` and `|z21|`, per unit on the base of terminal 1) lies
+  below this value builds no branch: its two buses are joined as a link,
+  with a notice, like a closed switch. Default `1e-6`; 0 switches it off.
 - `start_values::Symbol`: Newton-Raphson start state for CGMES runs. `:flat`
   (default) uses a synthetic flat start — the solver earns the solution
   itself; `:sv` starts from the delivery's imported `SvVoltage` state and
@@ -758,9 +788,11 @@ Base.@kwdef struct CGMESImportConfig
   tap_control::Bool = false
   machine_control::Bool = false
   ignore_connected::Bool = false
+  map_energy_source::Bool = false
   vset_min_pu::Float64 = 0.5
   vset_max_pu::Float64 = 1.5
   multi_slack::Bool = true
+  equivalent_branch_min_z_pu::Float64 = 1e-6
   start_values::Symbol = :auto
   placeholder_guards::Symbol = :warn_skip
   # Reconstruct missing nominal voltages (SV snap + transformer ratedU +
@@ -1732,6 +1764,7 @@ function PowerFlowConfig(raw::AbstractDict)
   dc_raw = _raw_section(merged, "dc")
   distributed_slack_raw = _raw_section(merged, "distributed_slack")
   external_grid_raw = _raw_section(merged, "external_grid")
+  plausibility_raw = _raw_section(merged, "plausibility")
   solver = _validate_allowed_symbol("power_flow.solver", _as_symbol_cfg(_raw_get(merged, "solver", :rectangular)), POWERFLOW_SOLVER_VALUES)
   apslf_cfg = ApslfConfig(apslf_raw)
   apslf_start_cfg = ApslfStartConfig(apslf_start_raw)
@@ -1827,7 +1860,14 @@ function PowerFlowConfig(raw::AbstractDict)
     dc = DcPowerFlowConfig(dc_raw),
     distributed_slack = distributed_slack_cfg,
     external_grid = external_grid_cfg,
+    plausibility = PowerFlowPlausibilityConfig(plausibility_raw),
   )
+end
+
+function PowerFlowPlausibilityConfig(raw::AbstractDict)
+  vmin_warn = _as_float_cfg(_raw_get(raw, "vmin_warn", DEFAULT_PLAUSIBILITY_VMIN_WARN_PU))
+  isfinite(vmin_warn) && vmin_warn >= 0.0 || throw(ArgumentError("power_flow.plausibility.vmin_warn must be finite and non-negative (0 switches the check off); got $(vmin_warn)."))
+  return PowerFlowPlausibilityConfig(vmin_warn = vmin_warn)
 end
 
 function DcPowerFlowConfig(raw::AbstractDict)
@@ -1945,9 +1985,11 @@ function CGMESImportConfig(raw::AbstractDict)
     tap_control = _as_bool_cfg(_raw_get(merged, "tap_control", false)),
     machine_control = _as_bool_cfg(_raw_get(merged, "machine_control", false)),
     ignore_connected = _as_bool_cfg(_raw_get(merged, "ignore_connected", false)),
+    map_energy_source = _as_bool_cfg(_raw_get(merged, "map_energy_source", false)),
     vset_min_pu = _validate_nonnegative("cgmes_import.vset_min_pu", _as_float_cfg(_raw_get(merged, "vset_min_pu", 0.5))),
     vset_max_pu = _validate_positive("cgmes_import.vset_max_pu", _as_float_cfg(_raw_get(merged, "vset_max_pu", 1.5))),
     multi_slack = _as_bool_cfg(_raw_get(merged, "multi_slack", true)),
+    equivalent_branch_min_z_pu = _validate_nonnegative("cgmes_import.equivalent_branch_min_z_pu", _as_float_cfg(_raw_get(merged, "equivalent_branch_min_z_pu", 1e-6))),
     start_values = _validate_allowed_symbol("cgmes_import.start_values", _as_symbol_cfg(_raw_get(merged, "start_values", :auto)), CGMES_START_VALUES_VALUES),
     placeholder_guards = _validate_allowed_symbol("cgmes_import.placeholder_guards", _as_symbol_cfg(_raw_get(merged, "placeholder_guards", :warn_skip)), CGMES_PLACEHOLDER_GUARDS_VALUES),
     infer_base_voltages = _as_bool_cfg(_raw_get(merged, "infer_base_voltages", false)),

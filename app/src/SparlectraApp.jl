@@ -169,6 +169,8 @@ import Sparlectra:
   _residual_diagnostics,
   _resolve_detailed_csv_format,
   _run_sparlectra,
+  _sc_source_data_state,
+  _sc_status_line,
   _scf_measurement_provenance,
   _scf_source_reference,
   _screening_unavailable_reason,

@@ -216,3 +216,151 @@ function _handle_rectangular_qlimit_iteration!(
 
   return (; F, max_mis, changed, reenabled, converged_this_iter)
 end
+
+# Generator units of a bus whose Q the bus Q band takes at a fixed value
+# that follows the unit's own Q(U) characteristic: a non-regulating,
+# non-reference unit with a QUController on a bus held by a regulating or
+# reference unit. Same rule as _buildQLimits!, which puts such a unit into
+# the band with its Q at the held voltage.
+@inline _qband_follows_characteristic(ps, held::Bool) = held && !isRegulating(ps) && !isSlack(ps) && has_qu_controller(ps)
+
+"""
+    _reapply_qlimit_clamps!(S, dQinj_dVm, net, bus_types, V) -> Int
+
+Apply the Q-limit clamps again after `buildControlledSVec` rebuilt `S` for
+the current voltage `V`. With a voltage-dependent controller in the net the
+rectangular Newton loop rebuilds `S` every iteration from the units'
+schedules, and the rebuild dropped every clamp written before (active set
+`make_pq!`, the guard, `lock_pv_to_pq_buses`, the warm clamps): the
+regulating unit of a clamped bus was back at its scheduled Q.
+
+A clamped bus is a bus that started the solve as PV, is PQ in `bus_types`
+and has an entry in `net.qLimitEvents`. Its clamp value is the generator Q
+every clamp site writes to `node._qƩGen` (pu times `baseMVA`), in the terms
+of the bus Q band: a Q(U) unit that follows its characteristic (see
+`_buildQLimits!`) is in it with its Q at the held voltage. The clamp stands
+for the other generator units of the bus; the followers keep their Q at
+`V` from the rebuild. Per clamped bus:
+
+`S_q = S_q(rebuild) - Q_other(V) + Q_clamp - Q_follow(Vheld)`
+
+with `Q_other(V)` the Q the rebuild gave the other generator units. Loads,
+voltage-dependent shunts and the P part stay as rebuilt. `dQinj_dVm` loses
+the derivative of the other units that carry a Q(U) controller, since
+their Q is fixed by the clamp.
+
+Returns the number of clamped buses written.
+"""
+function _reapply_qlimit_clamps!(S::Vector{ComplexF64}, dQinj_dVm::Vector{Float64}, net::Net, bus_types::Vector{Symbol}, V::Vector{ComplexF64})
+  isempty(net.qLimitEvents) && return 0
+  nb = length(bus_types)
+  nodes = net.nodeVec
+  clamped = falses(nb)
+  nclamped = 0
+  for bus in keys(net.qLimitEvents)
+    (1 <= bus <= nb && bus_types[bus] == :PQ) || continue
+    # the node type is still the type the solve started with (the bus types
+    # are synced to the net only after the loop); a bus that started PQ has
+    # no clamp, its Q comes from its units
+    getNodeType(nodes[bus]) == PV || continue
+    nodes[bus]._qƩGen === nothing && continue
+    clamped[bus] = true
+    nclamped += 1
+  end
+  nclamped == 0 && return 0
+
+  held = falses(nb)
+  for ps in net.prosumpsVec
+    isGenerator(ps) || continue
+    bus = getPosumerBusIndex(ps)
+    (1 <= bus <= nb && clamped[bus]) || continue
+    (isRegulating(ps) || isSlack(ps)) && (held[bus] = true)
+  end
+
+  base = net.baseMVA
+  q_other = zeros(Float64, nb)
+  dq_other = zeros(Float64, nb)
+  q_follow_held = zeros(Float64, nb)
+  # held voltages as _buildQLimits! uses them, built only when a follower
+  # sits on a clamped bus
+  vheld = nothing
+  for ps in net.prosumpsVec
+    isGenerator(ps) || continue
+    bus = getPosumerBusIndex(ps)
+    (1 <= bus <= nb && clamped[bus]) || continue
+    if _qband_follows_characteristic(ps, held[bus])
+      vheld === nothing && (vheld = _bus_voltage_setpoints_from_prosumers(net))
+      q_follow_held[bus] += first(evaluate_controller(ps.quController, vheld[bus]))
+    elseif has_qu_controller(ps)
+      # the same evaluation buildControlledSVec put into S
+      q_pu, dq_pu = evaluate_controller(ps.quController, _safe_vm(abs(V[bus])))
+      q_other[bus] += q_pu
+      dq_other[bus] += dq_pu
+    else
+      q_other[bus] += something(ps.qVal, 0.0) / base
+    end
+  end
+
+  @inbounds for bus in eachindex(clamped)
+    clamped[bus] || continue
+    q_clamp = nodes[bus]._qƩGen / base
+    S[bus] = ComplexF64(real(S[bus]), imag(S[bus]) - q_other[bus] + q_clamp - q_follow_held[bus])
+    dQinj_dVm[bus] -= dq_other[bus]
+  end
+  return nclamped
+end
+
+"""
+    _clamped_bus_physical_qgen!(net, Sbus_MVA, q_consumed) -> Int
+
+Write the physical generator Q (MVAr) to `node._qƩGen` of every clamped bus
+(PQ with an entry in `net.qLimitEvents`) that carries a Q(U) unit following
+its characteristic (see `_reapply_qlimit_clamps!`). The clamp record is the
+band value, with the follower at its Q at the held voltage; the clamped bus
+does not hold that voltage, so the follower runs at another Q. The physical
+value is the solved injection plus what the bus consumes at its solved
+voltage magnitude (`q_consumed`, MVAr per bus from `_bus_consumption_MVA`):
+loads (a Q(U) load at its characteristic) and voltage-dependent shunts. A
+clamped bus without such a unit keeps its clamp record, which is its
+physical value already.
+
+Called after the solved voltages are written to the nodes. Returns the
+number of buses written.
+"""
+function _clamped_bus_physical_qgen!(net::Net, Sbus_MVA::AbstractVector, q_consumed::AbstractVector)
+  isempty(net.qLimitEvents) && return 0
+  nodes = net.nodeVec
+  nb = length(nodes)
+  clamped = falses(nb)
+  for bus in keys(net.qLimitEvents)
+    (1 <= bus <= nb && bus <= length(Sbus_MVA)) || continue
+    bus in net.isoNodes && continue
+    getNodeType(nodes[bus]) == PQ || continue
+    clamped[bus] = true
+  end
+  any(clamped) || return 0
+
+  held = falses(nb)
+  for ps in net.prosumpsVec
+    isGenerator(ps) || continue
+    bus = getPosumerBusIndex(ps)
+    (1 <= bus <= nb && clamped[bus]) || continue
+    (isRegulating(ps) || isSlack(ps)) && (held[bus] = true)
+  end
+  has_follower = falses(nb)
+  for ps in net.prosumpsVec
+    isGenerator(ps) || continue
+    bus = getPosumerBusIndex(ps)
+    (1 <= bus <= nb && clamped[bus]) || continue
+    _qband_follows_characteristic(ps, held[bus]) && (has_follower[bus] = true)
+  end
+  any(has_follower) || return 0
+
+  written = 0
+  for bus in eachindex(has_follower)
+    has_follower[bus] || continue
+    nodes[bus]._qƩGen = imag(Sbus_MVA[bus]) + q_consumed[bus]
+    written += 1
+  end
+  return written
+end

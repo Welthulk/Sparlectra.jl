@@ -321,12 +321,12 @@
   },
   "short_circuit": {
     "Altau_220": {
-      "ik_kA": 22.178666,
-      "sk_MVA": 8451.206803
+      "ik_kA": 22.189576,
+      "sk_MVA": 8455.364023
     },
     "Neuberg_110": {
-      "ik_kA": 1.717160,
-      "sk_MVA": 327.162931
+      "ik_kA": 1.719724,
+      "sk_MVA": 327.651373
     }
   },
   "state_estimation": {

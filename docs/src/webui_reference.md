@@ -454,7 +454,9 @@ machine is forced off (`flatstart = false`, `start_projection = false`,
 the forced settings outrank the form and the case configuration file. The
 run uses the normal pipeline and adds `self_check.log` (forced settings,
 start residual, for CGMES the count of buses without a usable
-`SvVoltage`, started at `1.0 pu / 0°`), `self_check_residuals.csv`
+`SvVoltage`, started at the voltage of a neighbour with one or at
+`1.0 pu / 0°`, and the tap changers whose `SvPowerFlow` fits another step
+clearly better than their `SvTapStep`), `self_check_residuals.csv`
 (per-bus P/Q residuals) and `diagnose_self_check_config.yaml`. Programmatically:
 [`run_fixed_reference_self_check`](@ref).
 
@@ -471,9 +473,10 @@ and minimum case in one run, without a power-flow solve. The button is
 enabled only when the case carries short-circuit source data; otherwise
 it is disabled with a tooltip. The run writes `short_circuit_max.csv` and
 `short_circuit_min.csv` (per-bus `Ik''`, `Sk''`, `κ`, `i_p`, safety flag
-and reasons) and a `run.log` with the data coverage report; rows with
-defaulted or skipped data get a warning badge because a flagged `Ik''max`
-is a lower bound. A MATPOWER or DTF case carries no source data and fails
+and reasons, `lower_bound`) and a `run.log` with the data coverage
+report. The result page and the view of each table start with the head
+line of the table: run status, flagged rows, rows whose `Ik''max` is a
+lower bound (a skipped source); both counts also show as warning badges. A MATPOWER or DTF case carries no source data and fails
 with `short_circuit_requires_cgmes`. Which data counts as a source in each
 format: [Short-Circuit Analysis](@ref short_circuit_source_data).
 

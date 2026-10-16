@@ -142,6 +142,7 @@ function test_configuration_yaml_key_coverage()
       "power_flow.islands.enabled", "power_flow.islands.parallel_min_buses", "power_flow.islands.reference_policy", "power_flow.islands.diagnostic_continue_after_failure",
       "power_flow.distributed_slack.enabled", "power_flow.distributed_slack.p_mode", "power_flow.distributed_slack.respect_p_limits", "power_flow.distributed_slack.fallback", "power_flow.distributed_slack.weights",
       "power_flow.external_grid.enabled", "power_flow.external_grid.source", "power_flow.external_grid.sk_MVA", "power_flow.external_grid.rx",
+      "power_flow.plausibility.vmin_warn",
       "power_flow.start_mode.angle_mode", "power_flow.start_mode.voltage_mode", "power_flow.start_mode.profile_source", "power_flow.start_mode.start_projection", "power_flow.start_mode.try_dc_start", "power_flow.start_mode.try_blend_scan", "power_flow.start_mode.branch_guard", "power_flow.start_mode.measure_candidates", "power_flow.start_mode.accept_unmeasured_dc_start", "power_flow.start_mode.dc_seed_unconditional", "power_flow.start_mode.ratio_profile", "power_flow.start_mode.reuse_import_data", "power_flow.start_mode.blend_lambdas", "power_flow.start_mode.dc_angle_limit_deg",
       "power_flow.start_current_iteration.enabled", "power_flow.start_current_iteration.max_iter", "power_flow.start_current_iteration.tol", "power_flow.start_current_iteration.damping", "power_flow.start_current_iteration.accept_only_if_improved", "power_flow.start_current_iteration.min_improvement_factor", "power_flow.start_current_iteration.vm_min_pu", "power_flow.start_current_iteration.vm_max_pu", "power_flow.start_current_iteration.max_angle_step_deg", "power_flow.start_current_iteration.only_for_large_cases",
       "power_flow.merit.enabled", "power_flow.merit.armijo_c1", "power_flow.merit.scale_p", "power_flow.merit.scale_q", "power_flow.merit.scale_v", "power_flow.merit.fallback_max_mismatch",
@@ -151,7 +152,7 @@ function test_configuration_yaml_key_coverage()
       "state_estimation.enabled", "state_estimation.method", "state_estimation.tol", "state_estimation.max_iter", "state_estimation.flatstart", "state_estimation.jac_eps", "state_estimation.update_net", "state_estimation.pmu_ref_offset", "state_estimation.observability.enabled",
       "matpower_import.pv_voltage_source", "matpower_import.pv_voltage_mismatch_tol_pu", "matpower_import.compare_voltage_reference", "matpower_import.shift_unit", "matpower_import.shift_sign", "matpower_import.ratio", "matpower_import.enable_pq_gen_controllers", "matpower_import.apply_bus_names", "matpower_import.apply_branch_names", "matpower_import.apply_branch_kind", "matpower_import.import_for001_contingencies", "matpower_import.matpower_dcline_mode",
       "model.bus_shunt_model", "model.tap_changer_model", "model.auto_profile", "model.auto_profile_log", "model.auto_profile_max_fit_pu", "model.net_cache_enabled", "model.preallocate_network", "model.preallocate_min_buses",
-      "cgmes_import.path", "cgmes_import.base_mva", "cgmes_import.require_boundary", "cgmes_import.tap_control", "cgmes_import.machine_control", "cgmes_import.ignore_connected", "cgmes_import.vset_min_pu", "cgmes_import.vset_max_pu", "cgmes_import.multi_slack", "cgmes_import.start_values", "cgmes_import.placeholder_guards", "cgmes_import.infer_base_voltages", "cgmes_import.hvdc_mode",
+      "cgmes_import.path", "cgmes_import.base_mva", "cgmes_import.require_boundary", "cgmes_import.tap_control", "cgmes_import.machine_control", "cgmes_import.ignore_connected", "cgmes_import.map_energy_source", "cgmes_import.vset_min_pu", "cgmes_import.vset_max_pu", "cgmes_import.multi_slack", "cgmes_import.equivalent_branch_min_z_pu", "cgmes_import.start_values", "cgmes_import.placeholder_guards", "cgmes_import.infer_base_voltages", "cgmes_import.hvdc_mode",
       "powsybl_import.base_mva", "powsybl_import.hvdc_mode", "powsybl_import.slack_ids", "powsybl_import.multi_slack", "powsybl_import.remote_regulation",
       "short_circuit.c_factor", "short_circuit.sweep_method", "short_circuit.takahashi_min_buses",
       "matpower_export.write_solution",
@@ -1023,6 +1024,14 @@ function test_configuration_value_domain_validation()
     end
     @test pg_err isa ArgumentError
     @test occursin("cgmes_import.placeholder_guards", sprint(showerror, pg_err))
+
+    # power_flow.plausibility.vmin_warn: 0 switches the check off and is
+    # valid, a negative threshold is refused in a file and as an override
+    @test Sparlectra.validate_gui_config_overrides(Dict{String,Any}("power_flow.plausibility.vmin_warn" => 0.0))["power_flow"]["plausibility"]["vmin_warn"] == 0.0
+    @test_throws ArgumentError Sparlectra.validate_gui_config_overrides(Dict{String,Any}("power_flow.plausibility.vmin_warn" => -0.1))
+    vw_bad = test_scratch_path(".yaml")
+    write(vw_bad, "power_flow:\n  plausibility:\n    vmin_warn: -0.1\n")
+    @test_throws ArgumentError Sparlectra.load_sparlectra_config(vw_bad; reload = true)
   end)() end
   return nothing
 end
@@ -1301,6 +1310,8 @@ function test_configuration_webui_keys_both_directions()
       "state_estimation.topology_precheck" => "issue #377: case scope, no dedicated UI control; set via configuration.yaml or the case sidecar",
       "state_estimation.linear_solver" => "estimator linear-algebra backend, a performance switch; set via configuration.yaml or the case sidecar",
       "state_estimation.symmetric_gain" => "estimator linear-algebra switch (Cholesky route for the gain matrix), a performance choice; set via configuration.yaml or the case sidecar",
+      "cgmes_import.map_energy_source" => "CGMES import switch for deliveries that carry generation as EnergySource; set via configuration.yaml or the case sidecar",
+      "power_flow.plausibility.vmin_warn" => "threshold of the plausibility warning after a converged run; set via configuration.yaml or the case sidecar",
     )
     for key in sort(collect(Sparlectra.GUI_EDITABLE_CONFIG_KEYS))
       key in have && continue

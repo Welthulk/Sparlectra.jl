@@ -1599,6 +1599,25 @@ function test_state_estimation_se_chain()::Bool
   return true
 end
 
+# two islands without a connection: A1-A2-A3 (meshed) and B1-B2, each with
+# its own reference
+function _se_two_island_net()
+  net = Net(name = "se_islands", baseMVA = 100.0)
+  for b in ("A1", "A2", "A3", "B1", "B2")
+    addBus!(net = net, busName = b, vn_kV = 110.0)
+  end
+  addPIModelACLine!(net = net, fromBus = "A1", toBus = "A2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "A2", toBus = "A3", r_pu = 0.012, x_pu = 0.09, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "A1", toBus = "A3", r_pu = 0.011, x_pu = 0.085, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+  addProsumer!(net = net, busName = "A1", type = "EXTERNALNETWORKINJECTION", referencePri = "A1", vm_pu = 1.02, va_deg = 0.0)
+  addProsumer!(net = net, busName = "A2", type = "ENERGYCONSUMER", p = 30.0, q = 10.0)
+  addProsumer!(net = net, busName = "A3", type = "ENERGYCONSUMER", p = 20.0, q = 6.0)
+  addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", referencePri = "B1", vm_pu = 1.0, va_deg = 0.0)
+  addProsumer!(net = net, busName = "B2", type = "ENERGYCONSUMER", p = 12.0, q = 4.0)
+  return net
+end
+
 function test_state_estimation_islands()::Bool
   # Island-wise SE (0.10.0): a two-island net (no connection between the
   # groups) is partitioned and every measured island is estimated with its
@@ -1607,24 +1626,7 @@ function test_state_estimation_islands()::Bool
   # discrepancy, which the noise-free phase-5 chain test could not see
   # (there takeover == model and the two modes trivially coincide).
   @testset "State estimation island-wise" begin (function ()
-    function _two_island_net()
-      net = Net(name = "se_islands", baseMVA = 100.0)
-      for b in ("A1", "A2", "A3", "B1", "B2")
-        addBus!(net = net, busName = b, vn_kV = 110.0)
-      end
-      addPIModelACLine!(net = net, fromBus = "A1", toBus = "A2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
-      addPIModelACLine!(net = net, fromBus = "A2", toBus = "A3", r_pu = 0.012, x_pu = 0.09, b_pu = 0.0, status = 1)
-      addPIModelACLine!(net = net, fromBus = "A1", toBus = "A3", r_pu = 0.011, x_pu = 0.085, b_pu = 0.0, status = 1)
-      addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
-      addProsumer!(net = net, busName = "A1", type = "EXTERNALNETWORKINJECTION", referencePri = "A1", vm_pu = 1.02, va_deg = 0.0)
-      addProsumer!(net = net, busName = "A2", type = "ENERGYCONSUMER", p = 30.0, q = 10.0)
-      addProsumer!(net = net, busName = "A3", type = "ENERGYCONSUMER", p = 20.0, q = 6.0)
-      addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", referencePri = "B1", vm_pu = 1.0, va_deg = 0.0)
-      addProsumer!(net = net, busName = "B2", type = "ENERGYCONSUMER", p = 12.0, q = 4.0)
-      return net
-    end
-
-    net = _two_island_net()
+    net = _se_two_island_net()
     ite, erg = runpf!(net, 40, 1e-10, 0; islands_enabled = true)
     @test erg == 0
     vm_true = [n._vm_pu for n in net.nodeVec]
@@ -1645,34 +1647,10 @@ function test_state_estimation_islands()::Bool
     # merged voltages are in ORIGINAL bus numbering and match the PF truth
     @test maximum(abs.(abs.(res.voltages) .- vm_true)) < 1e-6
 
-    # 0.30.2: islands estimated on their own tasks equal the serial run.
-    # The fixture's islands have 3 and 2 buses, so the size threshold is
-    # lowered to 1; the serial reference switches runtime.parallel off.
-    function _se_islands_with(parallel::Bool)
-      active = Sparlectra.active_sparlectra_config()
-      pf = Sparlectra._copy_powerflow_with(active.powerflow; islands_parallel_min_buses = 1)
-      rt = Sparlectra.RuntimeConfig(parallel = Sparlectra.ParallelRuntimeConfig(enabled = parallel))
-      cfg = Sparlectra._sparlectra_config_with(active; powerflow = pf, runtime = rt)
-      return Sparlectra.with_sparlectra_config(cfg) do
-        with_state_estimation_config(max_iter = 30, tol = 1e-10, update_net = false) do
-          runse!(net, meas)
-        end
-      end
-    end
-    se_serial = _se_islands_with(false)
-    for _ = 1:5
-      se_par = _se_islands_with(true)
-      @test se_par.voltages == se_serial.voltages
-      @test se_par.residuals == se_serial.residuals
-      @test se_par.objectiveJ == se_serial.objectiveJ
-      @test [i.iterations for i in se_par.islands] == [i.iterations for i in se_serial.islands]
-    end
-    println("      SE islands in parallel vs serial: ", Threads.nthreads() > 1 ? "RAN with $(Threads.nthreads()) threads (5 repeated comparisons)" : "single-threaded process, both runs take the serial path (comparison trivially equal)")
-
     # a shunt measurement in the second island (0.30.2): the island subnet
     # looked shunts up in the dictionary of the whole net, keyed by the
     # net-wide bus numbers, and failed with "no shunt registered at this bus"
-    netS = _two_island_net()
+    netS = _se_two_island_net()
     addShunt!(net = netS, busName = "B2", pShunt = 0.0, qShunt = 5.0)
     runpf!(netS, 40, 1e-10, 0; islands_enabled = true)
     vm_shunt = [n._vm_pu for n in netS.nodeVec]
@@ -1710,7 +1688,7 @@ function test_state_estimation_islands()::Bool
     # snapshot-vs-state distinction (regression for the inert phase-5
     # takeover): create a measurement/model discrepancy AFTER the
     # measurement set was taken, then chain both modes
-    net2 = _two_island_net()
+    net2 = _se_two_island_net()
     runpf!(net2, 40, 1e-10, 0; islands_enabled = true)
     meas2 = generateMeasurementsFromPF(net2; noise = false)
     # model drifts after the measurements were taken: +8 MW load at A3
@@ -1735,6 +1713,44 @@ function test_state_estimation_islands()::Bool
     @test maximum(abs.(vmState .- vmSnap)) > 1e-5
     # the temporary delta prosumers are gone again
     @test length(net2.prosumpsVec) == nPros
+  end)() end
+
+  return true
+end
+
+function test_state_estimation_islands_parallel()::Bool
+  # The island-wise SE on worker threads against the serial island loop. Run
+  # in the se profile and, repeated with four threads, in the threads profile
+  # (tools/run_gates.sh threads).
+  @testset "State estimation island-wise, parallel equals serial" begin (function ()
+    net = _se_two_island_net()
+    ite, erg = runpf!(net, 40, 1e-10, 0; islands_enabled = true)
+    @test erg == 0
+    meas = generateMeasurementsFromPF(net; noise = false)
+
+    # 0.30.2: islands estimated on their own tasks equal the serial run.
+    # The fixture's islands have 3 and 2 buses, so the size threshold is
+    # lowered to 1; the serial reference switches runtime.parallel off.
+    function _se_islands_with(parallel::Bool)
+      active = Sparlectra.active_sparlectra_config()
+      pf = Sparlectra._copy_powerflow_with(active.powerflow; islands_parallel_min_buses = 1)
+      rt = Sparlectra.RuntimeConfig(parallel = Sparlectra.ParallelRuntimeConfig(enabled = parallel))
+      cfg = Sparlectra._sparlectra_config_with(active; powerflow = pf, runtime = rt)
+      return Sparlectra.with_sparlectra_config(cfg) do
+        with_state_estimation_config(max_iter = 30, tol = 1e-10, update_net = false) do
+          runse!(net, meas)
+        end
+      end
+    end
+    se_serial = _se_islands_with(false)
+    for _ = 1:5
+      se_par = _se_islands_with(true)
+      @test se_par.voltages == se_serial.voltages
+      @test se_par.residuals == se_serial.residuals
+      @test se_par.objectiveJ == se_serial.objectiveJ
+      @test [i.iterations for i in se_par.islands] == [i.iterations for i in se_serial.islands]
+    end
+    parallel_comparison_report("SE, two islands (5 repeats)")
   end)() end
 
   return true
@@ -2883,6 +2899,7 @@ end
       ("Measurement CSV v1", test_state_estimation_measurement_csv),
       ("SE-to-PF chain", test_state_estimation_se_chain),
       ("Island-wise SE", test_state_estimation_islands),
+      ("Island-wise SE, parallel against serial", test_state_estimation_islands_parallel),
       ("Current-angle measurements (IaMeas)", test_state_estimation_ia_measurements),
       ("Tap PF equivalence gate", test_state_estimation_tap_pf_equivalence),
       ("Tap roundtrip and fixation", test_state_estimation_tap_roundtrip),
@@ -2902,5 +2919,13 @@ end
         @test _se_run_quiet(testfn) == true
       end)() end
     end
+  end)() end
+end
+
+# The island-wise SE on worker threads against the serial loop, alone: the
+# threads profile (tools/run_gates.sh threads) repeats it with four threads.
+function run_state_estimation_parallel_tests()
+  @testset "State estimation, parallel against serial" begin (function ()
+    @test _se_run_quiet(test_state_estimation_islands_parallel) == true
   end)() end
 end

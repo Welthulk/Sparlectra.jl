@@ -1028,6 +1028,10 @@ function runpf_rectangular!(
         dPinj_dVm[k] = 0.0
         dQinj_dVm[k] = 0.0
       end
+      # the same for a Q-limit clamp (active set, guard, lock list, warm
+      # clamps): without this the regulating unit of a clamped bus was back
+      # at its scheduled Q each iteration
+      _reapply_qlimit_clamps!(S, dQinj_dVm, net, bus_types, V)
     end
 
     # Mismatch with current bus_types and (possibly) voltage-dependent S.
@@ -2412,7 +2416,107 @@ function _merged_pf_net(net::Net)
       wnet.hvdcLinks[i] = HvdcLink(l.name, fb, tb, l.from_prosumer, l.to_prosumer, l.status, l.source, l.kind, l.controller_name)
     end
   end
+  # The per-bus Q bands are derived from the units of each bus and the copy
+  # still holds those of the original buses: the representative kept the
+  # band of its own units, the members' bands sat on Isolated buses, and a
+  # voltage-controlled cluster clamped at the representative's limit alone.
+  # Rebuild them from the units now on the representative.
+  buildQLimits!(wnet)
   return wnet, reps, true
+end
+
+# Inverse of the injection sums in _merged_pf_net: hand the solved bus powers
+# of `wnet` back to the buses of `net` (the representative returns its sums
+# to the members, not only vm and va). A bus
+# outside every link cluster takes the solver's values as they are. In a
+# cluster every member keeps its own scheduled generation and load. The
+# solver wrote the representative's outcome as the generation of the
+# cluster (slack P and Q, PV Q, the clamp of a bus at a Q limit). Hence:
+#  - P of a cluster with a reference: the reference member gets the cluster
+#    generation minus the scheduled generation of the other members;
+#  - Q of a cluster with a voltage-controlled or reference member: the
+#    members holding the voltage share the generator Q the other members do
+#    not schedule, each at the same relative position in its Q band (each at
+#    its own limit when the cluster is clamped), equally where a band is open
+#    or empty;
+#  - a Q-limit event of the representative goes to its voltage-controlled
+#    members, its log entries to the first of them, so result tables see the
+#    clamp as on a bus without link.
+function _split_merged_bus_powers!(net::Net, wnet::Net, reps::Vector{Int})
+  n = length(net.nodeVec)
+  nodes = net.nodeVec
+  members = [Int[] for _ = 1:n]
+  for b = 1:n
+    push!(members[reps[b]], b)
+  end
+  # reference buses and buses held by a regulating or reference unit (the
+  # held set of _buildQLimits!), taken from the units like the bus types
+  is_ref = falses(n)
+  held = falses(n)
+  for ps in net.prosumpsVec
+    isGenerator(ps) || continue
+    b = getPosumerBusIndex(ps)
+    1 <= b <= n || continue
+    isSlack(ps) && (is_ref[b] = true)
+    (isSlack(ps) || isRegulating(ps)) && (held[b] = true)
+  end
+  val(x) = something(x, 0.0)
+  # per-bus Q bands of the original net (MVAr), kept current by addProsumer!
+  bands = length(net.qmin_pu) == n && length(net.qmax_pu) == n
+  # bus that carries the Q-limit log entries of a representative
+  log_bus = collect(1:n)
+  resetQLimitLog!(net)
+  for r = 1:n
+    M = members[r]
+    isempty(M) && continue
+    w = wnet.nodeVec[r]
+    side = get(wnet.qLimitEvents, r, nothing)
+    if length(M) == 1
+      # only values the solver changed; the merge wrote 0.0 where the bus
+      # had `nothing`
+      w._pƩGen === nothing || w._pƩGen == val(nodes[r]._pƩGen) || (nodes[r]._pƩGen = w._pƩGen)
+      w._qƩGen === nothing || w._qƩGen == val(nodes[r]._qƩGen) || (nodes[r]._qƩGen = w._qƩGen)
+      side === nothing || (net.qLimitEvents[r] = side)
+      continue
+    end
+    # an isolated cluster was not solved, its members keep their values
+    r in wnet.isoNodes && continue
+    if getNodeType(w) == Slack && w._pƩGen !== nothing
+      refs = filter(b -> is_ref[b], M)
+      isempty(refs) && (refs = [r])
+      others = sum((val(nodes[b]._pƩGen) for b in M if !(b in refs)); init = 0.0)
+      # generation of each reference member (several share it equally)
+      gen = (w._pƩGen - others) / length(refs)
+      for b in refs
+        nodes[b]._pƩGen = gen
+      end
+    end
+    regs = filter(b -> held[b], M)
+    clamped = side !== nothing
+    if w._qƩGen !== nothing && !isempty(regs) && (clamped || getNodeType(w) in (Slack, PV))
+      # total generator Q of the cluster, then the part of the held members
+      total = w._qƩGen
+      q_held = total - sum((val(nodes[b]._qƩGen) for b in M if !held[b]); init = 0.0)
+      lo = bands ? [net.qmin_pu[b] * net.baseMVA for b in regs] : Float64[]
+      hi = bands ? [net.qmax_pu[b] * net.baseMVA for b in regs] : Float64[]
+      span = bands ? sum(hi .- lo) : 0.0
+      q = if bands && all(isfinite, lo) && all(isfinite, hi) && span > 0.0
+        lo .+ ((q_held - sum(lo)) / span) .* (hi .- lo)
+      else
+        fill(q_held / length(regs), length(regs))
+      end
+      for (b, qb) in zip(regs, q)
+        nodes[b]._qƩGen = qb
+        clamped && !is_ref[b] && (net.qLimitEvents[b] = side)
+      end
+      log_bus[r] = first(regs)
+    end
+  end
+  for ev in wnet.qLimitLog
+    push!(net.qLimitLog, QLimitEvent(iter = ev.iter, bus = log_bus[ev.bus], side = ev.side, kind = ev.kind))
+  end
+  isempty(wnet.totalBusPower) || setTotalBusPower!(net = net, p = last(wnet.totalBusPower)[1], q = last(wnet.totalBusPower)[2])
+  return nothing
 end
 
 """
@@ -2586,15 +2690,18 @@ function runpf!(
   # island-wise run with an active link merge die with an UndefVarError, after
   # all islands had already converged.
   function _sync_merged_results_to_original!()
-    # Only solved voltage state is back-propagated bus-wise: wnet holds the
-    # contracted topology, so every original bus reads its value from the
-    # representative of its link cluster. All buses of a cluster are electrically
-    # the same node, hence they legitimately share vm/va.
+    # wnet holds the contracted topology, so every original bus reads its
+    # voltage from the representative of its link cluster. All buses of a
+    # cluster are electrically the same node, hence they legitimately share
+    # vm/va.
     for i in eachindex(net.nodeVec)
       src = wnet.nodeVec[reps[i]]
       net.nodeVec[i]._vm_pu = src._vm_pu
       net.nodeVec[i]._va_deg = src._va_deg
     end
+    # the bus powers go back split over the members (slack P, PV/slack Q,
+    # Q-limit events, total bus power)
+    _split_merged_bus_powers!(net, wnet, reps)
     # Shunt powers depend on the bus voltage and were computed on the merged net,
     # where they sit on the representative. Recompute them on the original net so
     # reporting attributes them to the bus the user actually modelled.
@@ -2614,7 +2721,8 @@ function runpf!(
   # later as the generic unsupported-bus-type abort in the mismatch assembly
   _validate_single_reference_per_island!(wnet, island_report)
   if length(island_report.rows) > 1 && any(row -> row.n_branch > 0, island_report.rows)
-    _print_ac_island_summary(island_report)
+    # a run prints the table once itself (_execute_sparlectra_powerflow!)
+    verbose > 0 && _print_ac_island_summary(island_report)
     # the artifact goes into the run's output directory only; without one
     # (library calls, N-1 and scenario workers) nothing is written: the
     # former fallback tempdir() was one fixed path every solve overwrote

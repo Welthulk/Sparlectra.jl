@@ -14,7 +14,8 @@
 
 # file: test/runtests.jl
 # purpose: test suite entry point: selects a profile (fast, pf, se, config,
-#          webui, extd, adapters, install, extended, all) from ARGS/SPARLECTRA_TEST_PROFILE,
+#          webui, extd, adapters, install, workshops, extended, all, threads)
+#          from ARGS/SPARLECTRA_TEST_PROFILE,
 #          includes the test files of its groups, and runs the grouped
 #          testsets with quiet output capture
 using Sparlectra
@@ -210,6 +211,23 @@ let seen = String[]
     isempty(missing_groups) || error("test group(s) in no profile: " * join(missing_groups, ", "))
 end
 
+# The threads profile: the parallel-vs-serial comparisons of every
+# parallel site (short-circuit sweep, island power flow, N-1 batch,
+# island-wise SE), repeated THREAD_REPEATS times in ONE process that
+# must run with several threads (tools/run_gates.sh threads starts it with
+# --threads=4). In a single-threaded process every parallel site takes its
+# serial loop, so these comparisons check the serial path against itself;
+# that is how the base profiles run them. A single threaded run can pass by
+# luck, hence the repeats. These runners are also called inside their area
+# groups, so they are not base-profile groups and stay out of TEST_GROUPS.
+const THREAD_GROUPS = TestGroup[
+    TestGroup("short_circuit_parallel", ["test_short_circuit.jl"], [:run_short_circuit_parallel_tests]),
+    TestGroup("island_powerflow_parallel", ["test_parallel_foundation.jl"], [:run_parallel_island_tests]),
+    TestGroup("contingency_parallel", ["test_contingency.jl"], [:run_contingency_parallel_tests, :run_contingency_extended_tests]),
+    TestGroup("state_estimation_parallel", ["test_state_estimation.jl"], [:run_state_estimation_parallel_tests]),
+]
+const THREAD_REPEATS = 5
+
 profile_groups(profile::Symbol) = [g for name in TEST_PROFILES[profile] for g in TEST_GROUPS if g.name == name]
 
 """
@@ -229,11 +247,12 @@ function include_group_files(groups::Vector{TestGroup})
     return nothing
 end
 
+function run_entry(name::Symbol)
+    runner = Base.invokelatest(getfield, @__MODULE__, name)
+    return Base.invokelatest(runner)
+end
+
 function run_profile_groups(profile::Symbol, groups::Vector{TestGroup})
-    function run_entry(name::Symbol)
-        runner = Base.invokelatest(getfield, @__MODULE__, name)
-        return Base.invokelatest(runner)
-    end
     skipped = [g.name for g in groups if g.name in SKIP_GROUPS]
     isempty(skipped) || println("Skipped group(s) via SPARLECTRA_TEST_SKIP_GROUPS: ", join(skipped, ", "))
     selected = [g for g in groups if !(g.name in SKIP_GROUPS)]
@@ -263,8 +282,28 @@ function timed_include(label::AbstractString, f::Function)
     return timed.value
 end
 
+# the threads profile: every group of THREAD_GROUPS once per repeat, one
+# result line each; the comparison report lines (RAN with n threads) show
+# under every line
+function run_thread_groups()
+    Threads.nthreads() > 1 || error("the threads profile needs a multi-threaded process (julia --threads=4 ...; tools/run_gates.sh threads starts it so); with one thread every comparison checks the serial path against itself")
+    println("threads: ", Threads.nthreads(), ", ", THREAD_REPEATS, " repeats")
+    @testset "Sparlectra.jl threads profile" begin
+        total = THREAD_REPEATS * length(THREAD_GROUPS)
+        for rep in 1:THREAD_REPEATS, (k, g) in enumerate(THREAD_GROUPS)
+            i = (rep - 1) * length(THREAD_GROUPS) + k
+            run_profile_group(i, total, string(g.name, " (run ", rep, "/", THREAD_REPEATS, ")"), () -> foreach(run_entry, g.runners))
+        end
+    end
+end
+
 function main()
-    haskey(TEST_PROFILES, TEST_PROFILE) || error("Unknown test profile=$(TEST_PROFILE). Allowed: " * join(string.(sort(collect(keys(TEST_PROFILES)))), ", ") * ". Selection precedence: CLI arg, SPARLECTRA_TEST_PROFILE, default fast.")
+    if TEST_PROFILE === :threads
+        print_test_progress_header(TEST_PROFILE)
+        timed_include("threads", () -> include_group_files(THREAD_GROUPS))
+        return run_thread_groups()
+    end
+    haskey(TEST_PROFILES, TEST_PROFILE) || error("Unknown test profile=$(TEST_PROFILE). Allowed: " * join(string.(sort(vcat(collect(keys(TEST_PROFILES)), :threads))), ", ") * ". Selection precedence: CLI arg, SPARLECTRA_TEST_PROFILE, default fast.")
     print_test_progress_header(TEST_PROFILE)
     groups = profile_groups(TEST_PROFILE)
     timed_include(string(TEST_PROFILE), () -> include_group_files(groups))

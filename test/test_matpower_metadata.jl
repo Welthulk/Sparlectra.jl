@@ -587,6 +587,10 @@ mpc.sparlectra.tap_changers = [
         @test mpc_false.bus[load_row, 9] == 0.0 # Va reset for non-slack/PV bus
         slack_row = findfirst(==(1.0), mpc_false.bus[:, 1])
         @test mpc_false.bus[slack_row, 8] == net_ws.nodeVec[1]._vm_pu # slack setpoint preserved
+        # a unit without an active-power limit is written with the MATPOWER
+        # "unlimited" convention, not with +-baseMVA
+        gen_row = findfirst(==(1.0), mpc_false.gen[:, 1])
+        @test (mpc_false.gen[gen_row, 9], mpc_false.gen[gen_row, 10]) == (9999.0, -9999.0)
       end
     end)() end
 

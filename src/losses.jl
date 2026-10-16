@@ -46,10 +46,12 @@ function _closed_branch_flow_pu(V::Vector{ComplexF64}, from::Int, to::Int, br::B
   @assert tapSide == 1 || tapSide == 2
   ui = V[from]
   uj = V[to]
-  # tap handling (magnitude + angle)
-  ratio = (br.ratio != 0.0) ? br.ratio : 1.0
-  angle = (br.ratio != 0.0) ? br.angle : 0.0
-  tap = calcComplexRatio(tapRatio = ratio, angleInDegrees = angle)
+  # the LIVE tap (tap_ratio, phase_shift_deg), the complex ratio the Ybus
+  # stamps. The neutral ratio and angle differ from it where a nameplate tap
+  # sits off its neutral position (an SCF tap changer at pos 4): the flows
+  # then missed the solved state, 5.9 MVA of KCL error at the transformer
+  # bus on sp_case14.
+  tap = calcBranchRatio(br)
   if tapSide == 1
     ui /= tap
   elseif tapSide == 2

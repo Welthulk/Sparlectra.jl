@@ -87,7 +87,7 @@
       }
     },
     "iterations": 1,
-    "losses_mw": 1.68228
+    "losses_mw": 1.682823
   },
   "provenance": "Self-built Sparlectra demo network; the bus count in the name does not make it the IEEE case of that size, and no data was taken from MATPOWER, DTF or any other source.",
   "scenarios": {

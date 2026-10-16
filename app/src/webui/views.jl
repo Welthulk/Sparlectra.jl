@@ -2364,7 +2364,13 @@ window.addEventListener('pageshow', function () {
   if (form === null) return;
   form.classList.remove('is-submitting');
   form.removeAttribute('aria-busy');
-  form.querySelectorAll('button[type=submit]').forEach(function (b) { b.disabled = false; });
+  // re-enable after a back navigation, except a button the server rendered
+  // disabled for this case: pageshow also fires on the first load, and
+  // re-enabled every button there (Short circuit on a case without
+  // short-circuit data)
+  form.querySelectorAll('button[type=submit]').forEach(function (b) {
+    b.disabled = b.hasAttribute('data-sc-state') && b.getAttribute('data-sc-state') !== 'ready';
+  });
   const staleSubmitterValue = form.querySelector('input[type="hidden"][data-submitter-value]');
   if (staleSubmitterValue !== null) staleSubmitterValue.remove();
 });
@@ -2569,9 +2575,12 @@ function _webui_wrong_branch_badge(result::AbstractDict)::Union{Nothing,String}
   return "<span class=\"status-badge $(css_class)\">$(_webui_escape(label))</span>"
 end
 
-# Short-circuit runs: compact summary from the run metadata. A flagged
-# Ik''max is a lower bound (skipped/defaulted contributions), so flags render
-# as a warning badge rather than plain text. Returns nothing for other runs.
+# Short-circuit runs: compact summary from the run metadata. Flagged rows
+# (defaulted or substituted data) and rows whose Ik''max is a lower bound (a
+# skipped source, `sc_lower_bound_rows`) render as warning badges rather
+# than plain text. The card starts with the head line of the headline case
+# (`sc_status_line_<case>`, the line printShortCircuitResult prints first:
+# run status, flagged rows, lower-bound rows). Returns nothing for other runs.
 function _webui_short_circuit_summary(result::AbstractDict)::Union{Nothing,String}
   metadata = get(result, "metadata", Dict{String,Any}())
   metadata isa AbstractDict || return nothing
@@ -2582,10 +2591,15 @@ function _webui_short_circuit_summary(result::AbstractDict)::Union{Nothing,Strin
   flagged = get(metadata, "sc_flagged_rows", 0)
   rows = get(metadata, "sc_case_rows", 0)
   text = string("worst Ik''max ", fmt(ik), " kA @ ", worst_bus, " (", rows, " buses)")
-  badge = flagged isa Real && flagged > 0 ? " <span class=\"status-badge status-warning\">$(flagged) flagged — lower bound</span>" : ""
+  lower = get(metadata, "sc_lower_bound_rows", 0)
+  badge = flagged isa Real && flagged > 0 ? " <span class=\"status-badge status-warning\">$(flagged) flagged</span>" : ""
+  lower isa Real && lower > 0 && (badge *= " <span class=\"status-badge status-warning\">$(lower) lower bound</span>")
   # a table without any short-circuit data of the file says so first
   get(metadata, "sc_defaults_only", false) === true && (badge = " <span class=\"status-badge status-warning\">no short-circuit data in the case: default x''d on every source</span>" * badge)
-  return "<code>" * _webui_escape(text) * "</code>" * badge
+  # a run written before the head line existed has no such key
+  status_line = string(get(metadata, "sc_status_line_" * string(get(metadata, "sc_case_selected", "max")), ""))
+  head = isempty(status_line) ? "" : "<code class=\"sc-status-line\">" * _webui_escape(status_line) * "</code><br>"
+  return head * "<code>" * _webui_escape(text) * "</code>" * badge
 end
 
 # N-1 contingency runs: one summary row with the outcome counts and the worst
@@ -3218,7 +3232,7 @@ function _webui_artifact_markdown_html(text::AbstractString)::String
 end
 
 """
-    render_powerflow_artifact_page(artifact, preview; raw = false) -> String
+    render_powerflow_artifact_page(artifact, preview; raw = false, head_line = "") -> String
 
 The artifact viewer page. The artifact's MIME type decides the view: a CSV
 opens as a table, a Markdown report as rendered HTML, everything else as
@@ -3226,8 +3240,10 @@ escaped text in the wide monospace panel. `raw = true` forces the text panel
 for the two rendered kinds, and the page always carries the link to the
 other view, so a table never hides what the file really says. `preview` is
 the `(content, truncated)` tuple of `_read_webui_artifact_preview`.
+A non-empty `head_line` is shown above the table (the run status line of a
+short-circuit table, see `handle_powerflow_artifact`).
 """
-function render_powerflow_artifact_page(artifact, preview; raw::Bool = false)::String
+function render_powerflow_artifact_page(artifact, preview; raw::Bool = false, head_line::AbstractString = "")::String
   renderable = artifact.mime_type in ("text/csv", "text/markdown")
   notice = preview.truncated ? "<p class=\"alert warning\">Preview truncated to $(_WEBUI_ARTIFACT_PREVIEW_BYTES) bytes. Use Download for the complete artifact.</p>" : ""
   # the same name relative to /powerflow/artifact/<run>/ is this page without a query
@@ -3239,7 +3255,8 @@ function render_powerflow_artifact_page(artifact, preview; raw::Bool = false)::S
     body = "<pre class=\"artifact-text\">$(_webui_escape(preview.content))</pre>"
     toggle = renderable ? "<a class=\"button secondary\" href=\"$(name_href)\">$(artifact.mime_type == "text/csv" ? "Table" : "Rendered")</a>" : ""
   end
-  page = "<section class=\"artifact-text-page\"><p>$(toggle)<a class=\"button\" href=\"?download=1\">Download</a></p>$(notice)$(body)</section>"
+  head = isempty(head_line) ? "" : "<p class=\"sc-status-line\"><code>$(_webui_escape(head_line))</code></p>"
+  page = "<section class=\"artifact-text-page\"><p>$(toggle)<a class=\"button\" href=\"?download=1\">Download</a></p>$(notice)$(head)$(body)</section>"
   return _webui_layout("Artifact: $(artifact.name)", page; show_back = true, main_class = "page artifact-page")
 end
 

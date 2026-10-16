@@ -9,7 +9,17 @@ with four profiles:
   `GeneratingUnit` and, for voltage-regulating units, `RegulatingControl`,
   external network injections, asynchronous machines, static VAr
   compensators, `LinearShuntCompensator`s and bus links (closed
-  `Breaker`s), each with terminals and topology associations;
+  `Breaker`s), each with terminals and topology associations; a branch
+  the importer built from an `EquivalentBranch` goes out as
+  `EquivalentBranch` again (in one `EquivalentNetwork`), as long as it
+  carries no charging and no ratio and its shunt arms fit the phase stamp
+  of an asymmetric one ([Asymmetric EquivalentBranch](@ref cgmes_eb_phase_stamp));
+  `r`, `x`, `r21` and `x21` leave as delivered
+  (`Net.equivalent_branch_metadata`), also where the branch model uses the
+  geometric mean of $|z_{12}|$ and $|z_{21}|$; one notice counts those
+  objects, and the re-import builds the same branch. A branch changed since
+  the import leaves with the values of its model instead, $z_{12} = z_s
+  e^{-j\varphi}$ and $z_{21} = z_s e^{j\varphi}$;
   zero-sequence line attributes and harvested short-circuit attributes in
   the EquipmentShortCircuit part of EQ.
 - **SSH**: load and machine `p`/`q`, the `referencePriority` of every
@@ -52,8 +62,9 @@ increment is the shift angle. A winding with ratio-tap machinery
 data and current step; the end `ratedU` absorbs the residual.
 Three-winding transformers imported from CGMES are reassembled into one
 `PowerTransformer` with three ends and the original mRIDs when the
-reconstruction is exact, otherwise the star group stays two-winding with
-a notice.
+reconstruction is exact (a leg with a tap changer included, its tap
+flattened into the end `ratedU`), otherwise the star group stays
+two-winding with a notice.
 
 Keyword arguments:
 
@@ -74,7 +85,9 @@ Keyword arguments:
 - `notices::Vector{String}`: one line per model element the export could
   not carry exactly; without a sink the lines are emitted as warnings.
 
-Example: `examples/cgmes/cgmes_export_demo.jl`.
+Examples: `examples/cgmes/cgmes_export_demo.jl`, and
+`examples/cgmes/cgmes_export_physical.jl` for a net built from line data in
+ohm/km and nF/km, whose delivery carries the same physical values.
 
 ## Identity and mRIDs on export
 
@@ -89,6 +102,8 @@ called:
 | `ACL\|<busA>\|<busB>\|<k>` | `ACLineSegment`; the bus pair is sorted lexicographically, `<k>` numbers parallel lines on the same pair in first-seen order |
 | `LNC\|<busA>\|<busB>\|<k>` | `cim:Line` container of that segment |
 | `PT\|<busA>\|<busB>\|<k>` | `PowerTransformer` (same pair and `<k>` rules, counted over transformer branches) |
+| `EQB\|<busA>\|<busB>\|<k>` | `EquivalentBranch` built as a line, recorded by the importer; `<k>` continues the `ACL` counter of its pair |
+| `EQBT\|<busA>\|<busB>\|<k>` | `EquivalentBranch` built as a transformer branch (across two levels, or phase-stamped), recorded by the importer; `<k>` continues the `PT` counter of its pair |
 | `PT3\|<busA>\|<busB>\|<busC>\|<k>` | three-winding `PowerTransformer` over its sorted side buses |
 | `…\|E1` / `…\|E2` / `…\|E3` | `PowerTransformerEnd` by end number |
 | `…\|PTC` | the phase-shift-carrying linear phase tap changer |
@@ -170,5 +185,9 @@ the symmetric part on the segment and the excess of each terminal as a
 `LinearShuntCompensator` at that bus, like the
 [MATPOWER export](matpower.md). The delivery cannot say that the
 compensator belongs to the line, so an outage of the line leaves it in
-place; the notices name every such line.
+place; the notices name every such line. A two-winding transformer follows
+the same rule, since the importer reads its end admittances back as one
+total, half on each terminal: unequal arms (PowSyBl) write the
+smaller arm on both ends and the excess as a compensator, the from excess
+seen through the tap.
 Import: [CGMES Import](cgmes_import.md).

@@ -802,6 +802,9 @@ include("shortcircuit/short_circuit.jl")
 include("contingency/names.jl")
 include("contingency/contingency.jl")
 include("contingency/events.jl")
+# model flow at a branch terminal and per-island angle alignment against an
+# SV state, used by compareWithSV
+include("sv_compare_core.jl")
 include("scenario/patch.jl")
 include("scenario/apply.jl")
 include("scenario/engine.jl")

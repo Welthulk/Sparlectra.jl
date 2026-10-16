@@ -129,6 +129,11 @@ end
 
 # --- node-breaker topology processor (#314) ---------------------------------
 
+# Run condition of the processor below: connectivity nodes present and no
+# non-boundary topological node. importCGMES asks it as well, because a run
+# writes into the store.
+_nodeBreakerProcessorApplies(store::CGMESStore)::Bool = countOf(store, :ConnectivityNode) > 0 && !any(tn -> !(tn.mrid in store.boundary), objectsOf(store, :TopologicalNode))
+
 """
     applyNodeBreakerTopologyProcessor!(store, ctx) -> Bool
 
@@ -156,8 +161,7 @@ Runs only when connectivity nodes exist and no non-boundary topological
 node does; returns whether it ran. TP-carrying deliveries are untouched.
 """
 function applyNodeBreakerTopologyProcessor!(store::CGMESStore, ctx)::Bool
-  countOf(store, :ConnectivityNode) == 0 && return false
-  any(tn -> !(tn.mrid in store.boundary), objectsOf(store, :TopologicalNode)) && return false
+  _nodeBreakerProcessorApplies(store) || return false
 
   # union-find over connectivity-node mRIDs (path compression)
   parent = Dict{String,String}()

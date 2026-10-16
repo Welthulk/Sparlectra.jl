@@ -1319,12 +1319,12 @@ function testISOBusses()
   addBus!(net = net, busName = "B4", vn_kV = 220.0)
   addBus!(net = net, busName = "B5", vn_kV = 220.0)
 
-  addACLine!(net = net, fromBus = "B1", toBus = "B2", length = 100.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0, status = 1)
-  addACLine!(net = net, fromBus = "B1", toBus = "B3", length = 100.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0, status = 1)
-  addACLine!(net = net, fromBus = "B2", toBus = "B4", length = 100.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0, status = 1)
-  addACLine!(net = net, fromBus = "B3", toBus = "B4", length = 100.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0, status = 1)
-  addACLine!(net = net, fromBus = "B5", toBus = "B4", length = 300.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0, status = 1)
-  addACLine!(net = net, fromBus = "B5", toBus = "B4", length = 300.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0, status = 1)
+  addACLine!(net = net, fromBus = "B1", toBus = "B2", length = 100.0, r = 0.0653, x = 0.398, b = 0.0002852566129459532, ratedS = 250.0, status = 1)
+  addACLine!(net = net, fromBus = "B1", toBus = "B3", length = 100.0, r = 0.0653, x = 0.398, b = 0.0002852566129459532, ratedS = 250.0, status = 1)
+  addACLine!(net = net, fromBus = "B2", toBus = "B4", length = 100.0, r = 0.0653, x = 0.398, b = 0.0002852566129459532, ratedS = 250.0, status = 1)
+  addACLine!(net = net, fromBus = "B3", toBus = "B4", length = 100.0, r = 0.0653, x = 0.398, b = 0.0002852566129459532, ratedS = 250.0, status = 1)
+  addACLine!(net = net, fromBus = "B5", toBus = "B4", length = 300.0, r = 0.0653, x = 0.398, b = 0.0008557698388378598, ratedS = 250.0, status = 1)
+  addACLine!(net = net, fromBus = "B5", toBus = "B4", length = 300.0, r = 0.0653, x = 0.398, b = 0.0008557698388378598, ratedS = 250.0, status = 1)
 
   addShunt!(net = net, busName = "B3", pShunt = 0.0, qShunt = 180.0)
   addShunt!(net = net, busName = "B2", pShunt = 0.0, qShunt = 180.0)
@@ -1414,25 +1414,25 @@ function createCIGRE(lLine_6a6b = 0.01)::Net
   ###### ACLines   
   # 220kV-Lines
   # (bus1, bus2, length_km=100)
-  addACLine!(net = net, fromBus = "B1", toBus = "B2", length = 100.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0)
+  addACLine!(net = net, fromBus = "B1", toBus = "B2", length = 100.0, r = 0.0653, x = 0.398, b = 0.0002852566129459532)
   # (bus1, bus6a, length_km=300)
-  addACLine!(net = net, fromBus = "B1", toBus = "B6a", length = 300.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0)
+  addACLine!(net = net, fromBus = "B1", toBus = "B6a", length = 300.0, r = 0.0653, x = 0.398, b = 0.0008557698388378598)
   # (bus2, bus5, length_km=300)
-  addACLine!(net = net, fromBus = "B2", toBus = "B5", length = 300.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0)
+  addACLine!(net = net, fromBus = "B2", toBus = "B5", length = 300.0, r = 0.0653, x = 0.398, b = 0.0008557698388378598)
   # (bus3, bus4, length_km=100)
-  addACLine!(net = net, fromBus = "B3", toBus = "B4", length = 100.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0)
+  addACLine!(net = net, fromBus = "B3", toBus = "B4", length = 100.0, r = 0.0653, x = 0.398, b = 0.0002852566129459532)
   # (bus3, bus4, length_km=100)
-  addACLine!(net = net, fromBus = "B3", toBus = "B4", length = 300.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0)
+  addACLine!(net = net, fromBus = "B3", toBus = "B4", length = 300.0, r = 0.0653, x = 0.398, b = 0.0008557698388378598)
   # (bus4, bus5, length_km=300)
-  addACLine!(net = net, fromBus = "B4", toBus = "B5", length = 300.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0)
+  addACLine!(net = net, fromBus = "B4", toBus = "B5", length = 300.0, r = 0.0653, x = 0.398, b = 0.0008557698388378598)
   # (bus4, bus6a, length_km=300)
-  addACLine!(net = net, fromBus = "B4", toBus = "B6a", length = 300.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0)
+  addACLine!(net = net, fromBus = "B4", toBus = "B6a", length = 300.0, r = 0.0653, x = 0.398, b = 0.0008557698388378598)
   #(bus6a, bus6b, length_km=length_km_6a_6b)
-  addACLine!(net = net, fromBus = "B6a", toBus = "B6b", length = lLine_6a6b, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0)
+  addACLine!(net = net, fromBus = "B6a", toBus = "B6b", length = lLine_6a6b, r = 0.0653, x = 0.398, b = 2.0 * pi * 50.0 * (lLine_6a6b > 1.0 ? 9.08 * lLine_6a6b : 9.08) * 1e-9)
 
   # 380kV-Lines
   # (bus7, bus8, length_km=600)
-  addACLine!(net = net, fromBus = "B7", toBus = "B8", length = 600.0, r = 0.0328, x = 0.312, c_nf_per_km = 11.5, tanδ = 0.0)
+  addACLine!(net = net, fromBus = "B7", toBus = "B8", length = 600.0, r = 0.0328, x = 0.312, b = 0.002167698930976958)
 
   #### Trafos  
   # 'Trafo 1-7' (bus7, bus1, sn_mva=1000,  vn_hv_kv=380, vn_lv_kv=220, vkr_percent=0.0, vk_percent=13.0, pfe_kw=0, i0_percent=0,   shift_degree=0.0)
@@ -1479,8 +1479,6 @@ function createTest5BusNet(; cooldown = 0, hyst_pu = 0.0, qlim_min = nothing, ql
   netName = "test5bus"
   r = 0.05
   x = 0.5
-  c_nf_per_km = 10.0
-  tanδ = 0.0
 
   @debug "Creating $netName test network with qlim_min=$qlim_min, qlim_max=$qlim_max, pq_only=$pq_only"
 
@@ -1491,12 +1489,12 @@ function createTest5BusNet(; cooldown = 0, hyst_pu = 0.0, qlim_min = nothing, ql
   addBus!(net = Bus5Net, busName = "B4", vn_kV = 110.0)
   addBus!(net = Bus5Net, busName = "B5", vn_kV = 110.0)
 
-  addACLine!(net = Bus5Net, fromBus = "B1", toBus = "B3", length = 20.0, r = r, x = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
-  addACLine!(net = Bus5Net, fromBus = "B3", toBus = "B5", length = 50.0, r = r, x = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
-  addACLine!(net = Bus5Net, fromBus = "B5", toBus = "B4", length = 100.0, r = r, x = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
-  addACLine!(net = Bus5Net, fromBus = "B4", toBus = "B1", length = 100.0, r = r, x = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
-  addACLine!(net = Bus5Net, fromBus = "B4", toBus = "B2", length = 100.0, r = r, x = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
-  addACLine!(net = Bus5Net, fromBus = "B2", toBus = "B1", length = 20.0, r = r, x = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
+  addACLine!(net = Bus5Net, fromBus = "B1", toBus = "B3", length = 20.0, r = r, x = x, b = 6.283185307179587e-05)
+  addACLine!(net = Bus5Net, fromBus = "B3", toBus = "B5", length = 50.0, r = r, x = x, b = 0.00015707963267948968)
+  addACLine!(net = Bus5Net, fromBus = "B5", toBus = "B4", length = 100.0, r = r, x = x, b = 0.00031415926535897936)
+  addACLine!(net = Bus5Net, fromBus = "B4", toBus = "B1", length = 100.0, r = r, x = x, b = 0.00031415926535897936)
+  addACLine!(net = Bus5Net, fromBus = "B4", toBus = "B2", length = 100.0, r = r, x = x, b = 0.00031415926535897936)
+  addACLine!(net = Bus5Net, fromBus = "B2", toBus = "B1", length = 20.0, r = r, x = x, b = 6.283185307179587e-05)
 
   addProsumer!(net = Bus5Net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
   if mul_gens
@@ -1532,8 +1530,6 @@ function createTest2BusNet(; cooldown = 0, hyst_pu = 0.0, qlim_min = nothing, ql
   netName = "test2bus"
   r = 0.05
   x = 0.5
-  c_nf_per_km = 10.0
-  tanδ = 0.0
 
   @debug "Creating $netName test network with qlim_min=$qlim_min, qlim_max=$qlim_max"
 
@@ -1541,7 +1537,7 @@ function createTest2BusNet(; cooldown = 0, hyst_pu = 0.0, qlim_min = nothing, ql
   addBus!(net = Bus2Net, busName = "B1", vn_kV = 110.0)
   addBus!(net = Bus2Net, busName = "B2", vn_kV = 110.0)
 
-  addACLine!(net = Bus2Net, fromBus = "B1", toBus = "B2", length = 20.0, r = r, x = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
+  addACLine!(net = Bus2Net, fromBus = "B1", toBus = "B2", length = 20.0, r = r, x = x, b = 6.283185307179587e-05)
 
   addProsumer!(net = Bus2Net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
   addProsumer!(net = Bus2Net, busName = "B2", type = "SYNCHRONOUSMACHINE", p = 20.0, vm_pu = 1.05, va_deg = 0.0, qMax = qlim_max, qMin = qlim_min)
@@ -1624,6 +1620,55 @@ function test_5BusNet(verbose::Int = 0, qlim::Float64 = 20.0, method::Symbol = :
   end
 
   return hit == true
+end
+
+# A slack or PV bus that carries a load: the node keeps the GENERATION of the
+# bus, not the injection the solve gives (generation minus load). Up to
+# 0.50.0 every write-back (rectangular, external/APSLF, DC) stored the
+# injection, so the slack showed -40 MW instead of 20 MW and the PV machine
+# 0.8 MVAr instead of 4.8 MVAr. A lossless line between two 1 pu buses gives
+# hand values: 40 MW from B to A means sin(d) = 0.4 * 0.1, and each end draws
+# (1 - cos(d)) / x of reactive power. The units of the slack bus take the bus
+# value apart: the scheduled 5 MW unit keeps its 5 MW, the reference unit
+# without a schedule takes the 15 MW rest (it got 0 and the 5 MW unit all
+# 20 MW before).
+function test_slack_and_pv_bus_generation_with_load()::Bool
+  build() = begin
+    net = Net(name = "gen_with_load", baseMVA = 100.0)
+    addBus!(net = net, busName = "A", vn_kV = 110.0)
+    addBus!(net = net, busName = "B", vn_kV = 110.0)
+    addPIModelACLine!(net = net, fromBus = "A", toBus = "B", r_pu = 0.0, x_pu = 0.1, b_pu = 0.0, status = 1)
+    addProsumer!(net = net, busName = "A", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "A")
+    addProsumer!(net = net, busName = "A", type = "GENERATOR", p = 5.0, q = 1.0)
+    addProsumer!(net = net, busName = "A", type = "ENERGYCONSUMER", p = 60.0, q = 5.0)
+    addProsumer!(net = net, busName = "B", type = "SYNCHRONOUSMACHINE", p = 50.0, vm_pu = 1.0)
+    addProsumer!(net = net, busName = "B", type = "ENERGYCONSUMER", p = 10.0, q = 4.0)
+    net
+  end
+  q_line = (1.0 - sqrt(1.0 - 0.04^2)) / 0.1 * 100.0
+  net = build()
+  ok = last(runpf!(net, 30, 1e-12, 0; method = :rectangular)) == 0
+  a, b = net.nodeVec[1], net.nodeVec[2]
+  ok &= isapprox(a._pƩGen, 20.0; atol = 1e-8) && isapprox(a._qƩGen, 5.0 + q_line; atol = 1e-8)
+  ok &= isapprox(b._qƩGen, 4.0 + q_line; atol = 1e-8)
+  rows = buildACPFlowReport(net).nodes
+  ra = only(r for r in rows if r.bus == 1)
+  rb = only(r for r in rows if r.bus == 2)
+  ok &= isapprox(ra.p_gen_MW, 20.0; atol = 1e-8) && isapprox(rb.q_gen_MVar, 4.0 + q_line; atol = 1e-8)
+  distributeBusResults!(net)
+  ok &= isapprox(net.prosumpsVec[1].pRes, 15.0; atol = 1e-8) && isapprox(net.prosumpsVec[2].pRes, 5.0; atol = 1e-12)
+  ok &= isapprox(net.prosumpsVec[4].pRes, 50.0; atol = 1e-12)
+  # the external-solver write-back on the same solved voltages
+  model = buildPfModel(net; include_limits = false)
+  V = ComplexF64[n._vm_pu * cis(deg2rad(n._va_deg)) for n in net.nodeVec]
+  a._pƩGen = b._qƩGen = 0.0
+  applyPfSolution!(net, model, PFSolution(V = V, converged = true, iters = 0, residual_inf = 0.0))
+  ok &= isapprox(a._pƩGen, 20.0; atol = 1e-8) && isapprox(b._qƩGen, 4.0 + q_line; atol = 1e-8)
+  # DC: lossless, the same 20 MW
+  dnet = build()
+  rundcpf!(dnet)
+  ok &= isapprox(dnet.nodeVec[1]._pƩGen, 20.0; atol = 1e-8)
+  return ok
 end
 
 # -----------------------------------------------------------------------------
@@ -2168,8 +2213,8 @@ function test_link_bus_merge_pf()
   addBus!(net = net_link, busName = "B2", vn_kV = 110.0)
   addBus!(net = net_link, busName = "B3", vn_kV = 110.0)
 
-  addACLine!(net = net_link, fromBus = "B0", toBus = "B1", length = 5.0, r = 0.05, x = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
-  addACLine!(net = net_link, fromBus = "B2", toBus = "B3", length = 20.0, r = 0.05, x = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
+  addACLine!(net = net_link, fromBus = "B0", toBus = "B1", length = 5.0, r = 0.05, x = 0.5, b = 1.5707963267948967e-05)
+  addACLine!(net = net_link, fromBus = "B2", toBus = "B3", length = 20.0, r = 0.05, x = 0.5, b = 6.283185307179587e-05)
   addLink!(net = net_link, fromBus = "B1", toBus = "B2", status = 1)
 
   addProsumer!(net = net_link, busName = "B0", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B0")
@@ -2201,8 +2246,8 @@ function test_link_bus_merge_pf()
   addBus!(net = net_eq, busName = "B12", vn_kV = 110.0)
   addBus!(net = net_eq, busName = "B3", vn_kV = 110.0)
 
-  addACLine!(net = net_eq, fromBus = "B0", toBus = "B12", length = 5.0, r = 0.05, x = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
-  addACLine!(net = net_eq, fromBus = "B12", toBus = "B3", length = 20.0, r = 0.05, x = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
+  addACLine!(net = net_eq, fromBus = "B0", toBus = "B12", length = 5.0, r = 0.05, x = 0.5, b = 1.5707963267948967e-05)
+  addACLine!(net = net_eq, fromBus = "B12", toBus = "B3", length = 20.0, r = 0.05, x = 0.5, b = 6.283185307179587e-05)
   addProsumer!(net = net_eq, busName = "B0", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B0")
   addProsumer!(net = net_eq, busName = "B12", type = "GENERATOR", p = 10.0, q = 1.0)
   addProsumer!(net = net_eq, busName = "B12", type = "ENERGYCONSUMER", p = 15.0, q = 5.0)
@@ -2239,8 +2284,8 @@ function _build_non_representative_slack_net(name::String)
   addBus!(net = net, busName = "B2", vn_kV = 110.0)
   addBus!(net = net, busName = "B3", vn_kV = 110.0)
 
-  addACLine!(net = net, fromBus = "B0", toBus = "B1", length = 5.0, r = 0.05, x = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
-  addACLine!(net = net, fromBus = "B2", toBus = "B3", length = 20.0, r = 0.05, x = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
+  addACLine!(net = net, fromBus = "B0", toBus = "B1", length = 5.0, r = 0.05, x = 0.5, b = 1.5707963267948967e-05)
+  addACLine!(net = net, fromBus = "B2", toBus = "B3", length = 20.0, r = 0.05, x = 0.5, b = 6.283185307179587e-05)
   addLink!(net = net, fromBus = "B1", toBus = "B2", status = 1)
 
   addProsumer!(net = net, busName = "B2", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B2")
@@ -2256,8 +2301,8 @@ function _build_non_representative_slack_reference()
   addBus!(net = net, busName = "B12", vn_kV = 110.0)
   addBus!(net = net, busName = "B3", vn_kV = 110.0)
 
-  addACLine!(net = net, fromBus = "B0", toBus = "B12", length = 5.0, r = 0.05, x = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
-  addACLine!(net = net, fromBus = "B12", toBus = "B3", length = 20.0, r = 0.05, x = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
+  addACLine!(net = net, fromBus = "B0", toBus = "B12", length = 5.0, r = 0.05, x = 0.5, b = 1.5707963267948967e-05)
+  addACLine!(net = net, fromBus = "B12", toBus = "B3", length = 20.0, r = 0.05, x = 0.5, b = 6.283185307179587e-05)
 
   addProsumer!(net = net, busName = "B12", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B12")
   addProsumer!(net = net, busName = "B0", type = "ENERGYCONSUMER", p = 15.0, q = 5.0)
@@ -2340,6 +2385,101 @@ function test_link_merge_remaps_non_representative_slack()::Bool
   return ok
 end
 
+# A bus B1 joined by a closed link to B2, which carries a load and a
+# generator of `p2` MW, and with `linked = false` the same net with B1 and B2
+# merged by hand into B1. Without `pv` B1 holds the slack and B2's unit is a
+# PQ generator; with `pv` both buses carry a voltage-controlled machine with
+# Q limits and the slack sits on B0.
+function _link_power_net(linked::Bool; p2::Float64, pv::Bool = false, vm_pu::Float64 = 1.02)
+  net = Net(name = linked ? "link_powers" : "link_powers_ref", baseMVA = 100.0)
+  a = "B1"
+  b = linked ? "B2" : "B1"
+  for name in (linked ? ("B0", "B1", "B2", "B3") : ("B0", "B1", "B3"))
+    addBus!(net = net, busName = name, vn_kV = 110.0)
+  end
+  # charging of 10 nF/km in per unit on 110 kV and 100 MVA (Z_base 121 ohm)
+  b_pu(length_km) = 2π * 50.0 * 10.0e-9 * length_km * 110.0^2 / 100.0
+  addPIModelACLine!(net = net, fromBus = "B0", toBus = a, r_pu = 0.05, x_pu = 0.5, b_pu = b_pu(5.0), status = 1)
+  addPIModelACLine!(net = net, fromBus = b, toBus = "B3", r_pu = 0.05, x_pu = 0.5, b_pu = b_pu(20.0), status = 1)
+  # the link goes in before the units: addLink! refuses a slack bus and
+  # buses of different types
+  linked && addLink!(net = net, fromBus = "B1", toBus = "B2", status = 1)
+  if pv
+    addProsumer!(net = net, busName = "B0", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B0")
+    addProsumer!(net = net, busName = a, type = "SYNCHRONOUSMACHINE", p = 20.0, vm_pu = vm_pu, qMin = -10.0, qMax = 30.0)
+    addProsumer!(net = net, busName = b, type = "SYNCHRONOUSMACHINE", p = p2, vm_pu = vm_pu, qMin = -20.0, qMax = 20.0)
+  else
+    addProsumer!(net = net, busName = a, type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = a)
+    addProsumer!(net = net, busName = b, type = "GENERATOR", p = p2, q = 1.0)
+  end
+  addProsumer!(net = net, busName = a, type = "ENERGYCONSUMER", p = 5.0, q = 1.0)
+  addProsumer!(net = net, busName = b, type = "ENERGYCONSUMER", p = 15.0, q = 5.0)
+  addProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER", p = 25.0, q = 10.0)
+  addProsumer!(net = net, busName = "B0", type = "ENERGYCONSUMER", p = 8.0, q = 2.0)
+  return net
+end
+
+# runpf! solves a net with a closed link on a merged copy. The solved bus
+# powers have to come back to the members of the link cluster: the slack
+# balance on the slack bus, every other member keeps its own generation and
+# load, and a voltage-controlled pair shares its Q inside its limits. Only
+# the voltages came back before, the slack bus kept its input value and the
+# total bus power stayed empty.
+function test_link_merge_returns_bus_powers()::Bool
+  ok = true
+  idx(net, name) = geNetBusIdx(net = net, busName = name)
+  # B2 balanced in P (generation = load) and unbalanced
+  for p2 in (15.0, 10.0)
+    net = _link_power_net(true; p2 = p2)
+    ref = _link_power_net(false; p2 = p2)
+    ok &= last(runpf!(net, 30, 1e-10, 0; method = :rectangular)) == 0
+    ok &= last(runpf!(ref, 30, 1e-10, 0; method = :rectangular)) == 0
+    n1, n2 = net.nodeVec[idx(net, "B1")], net.nodeVec[idx(net, "B2")]
+    r1 = ref.nodeVec[idx(ref, "B1")]
+    # the slack bus kept its input value (here `nothing`) before the fix
+    (n1._pƩGen isa Float64 && n1._qƩGen isa Float64) || return false
+    # the slack bus value is the generation of its bus, so B2's own
+    # scheduled generation (p2 MW, 1 MVAr) is the only difference to the
+    # merged bus
+    ok &= isapprox(n1._pƩGen, r1._pƩGen - p2; atol = 1e-8)
+    ok &= isapprox(n1._qƩGen, r1._qƩGen - 1.0; atol = 1e-8)
+    # each member keeps its own load and generation
+    ok &= (n1._pƩLoad, n1._qƩLoad) == (5.0, 1.0)
+    ok &= (n2._pƩGen, n2._qƩGen, n2._pƩLoad, n2._qƩLoad) == (p2, 1.0, 15.0, 5.0)
+    ok &= all(isapprox.(getTotalBusPower(net = net), getTotalBusPower(net = ref); atol = 1e-8))
+    # the units take the bus results: the slack unit that of its bus
+    distributeBusResults!(net)
+    ok &= isapprox(net.prosumpsVec[1].pRes, n1._pƩGen; atol = 1e-12) && net.prosumpsVec[2].pRes == p2
+  end
+  # two linked PV machines: their Q sum is that of the merged bus, both at
+  # the same relative position in their own Q bands
+  net = _link_power_net(true; p2 = 10.0, pv = true)
+  ref = _link_power_net(false; p2 = 10.0, pv = true)
+  ok &= last(runpf!(net, 30, 1e-10, 0; method = :rectangular)) == 0
+  ok &= last(runpf!(ref, 30, 1e-10, 0; method = :rectangular)) == 0
+  n1, n2 = net.nodeVec[idx(net, "B1")], net.nodeVec[idx(net, "B2")]
+  r1 = ref.nodeVec[idx(ref, "B1")]
+  ok &= isapprox(n1._qƩGen + n2._qƩGen, r1._qƩGen; atol = 1e-8)
+  ok &= (n1._pƩGen, n2._pƩGen) == (20.0, 10.0)
+  # the bus values are the generator Q
+  g1, g2 = n1._qƩGen, n2._qƩGen
+  ok &= isapprox((g1 + 10.0) / 40.0, (g2 + 20.0) / 40.0; atol = 1e-10)
+  # a setpoint the pair cannot hold: the cluster clamps at the sum of both
+  # bands (50 MVAr) like the merged bus, at the same voltage, each machine at
+  # its own Qmax. The merged copy kept the band of the representative alone
+  # and clamped at its 30 MVAr, at another voltage.
+  net = _link_power_net(true; p2 = 10.0, pv = true, vm_pu = 1.15)
+  ref = _link_power_net(false; p2 = 10.0, pv = true, vm_pu = 1.15)
+  ok &= last(runpf!(net, 30, 1e-10, 0; method = :rectangular)) == 0
+  ok &= last(runpf!(ref, 30, 1e-10, 0; method = :rectangular)) == 0
+  n1, n2 = net.nodeVec[idx(net, "B1")], net.nodeVec[idx(net, "B2")]
+  r1 = ref.nodeVec[idx(ref, "B1")]
+  ok &= get(ref.qLimitEvents, idx(ref, "B1"), nothing) === :max
+  ok &= isapprox(r1._qƩGen, 50.0; atol = 1e-8) && isapprox(n1._vm_pu, r1._vm_pu; atol = 1e-8)
+  ok &= isapprox(n1._qƩGen, 30.0; atol = 1e-8) && isapprox(n2._qƩGen, 20.0; atol = 1e-8)
+  return ok
+end
+
 # Island-wise solving combined with link merges. Both features were tested
 # separately before, never together, and the combination crashed in
 # _sync_merged_results_to_original! *after* every island had converged. It is the
@@ -2352,7 +2492,7 @@ function test_island_solve_with_link_merge()::Bool
   net = _build_non_representative_slack_net("island_link_merge")
   addBus!(net = net, busName = "C0", vn_kV = 110.0)
   addBus!(net = net, busName = "C1", vn_kV = 110.0)
-  addACLine!(net = net, fromBus = "C0", toBus = "C1", length = 10.0, r = 0.05, x = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
+  addACLine!(net = net, fromBus = "C0", toBus = "C1", length = 10.0, r = 0.05, x = 0.5, b = 3.1415926535897935e-05)
   addProsumer!(net = net, busName = "C0", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "C0")
   addProsumer!(net = net, busName = "C1", type = "ENERGYCONSUMER", p = 8.0, q = 2.0)
 
@@ -2414,8 +2554,8 @@ function test_rectangular_link_merge_runs_without_warning()::Bool
   addBus!(net = net, busName = "B2", vn_kV = 110.0)
   addBus!(net = net, busName = "B3", vn_kV = 110.0)
 
-  addACLine!(net = net, fromBus = "B0", toBus = "B1", length = 5.0, r = 0.05, x = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
-  addACLine!(net = net, fromBus = "B2", toBus = "B3", length = 20.0, r = 0.05, x = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
+  addACLine!(net = net, fromBus = "B0", toBus = "B1", length = 5.0, r = 0.05, x = 0.5, b = 1.5707963267948967e-05)
+  addACLine!(net = net, fromBus = "B2", toBus = "B3", length = 20.0, r = 0.05, x = 0.5, b = 6.283185307179587e-05)
   addLink!(net = net, fromBus = "B1", toBus = "B2", status = 1)
   addProsumer!(net = net, busName = "B0", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B0")
   addProsumer!(net = net, busName = "B1", type = "GENERATOR", p = 10.0, q = 1.0)
@@ -2439,8 +2579,8 @@ function test_link_closed_keeps_shunt_reporting_on_original_bus()
   addBus!(net = net, busName = "B2", vn_kV = 110.0)
   addBus!(net = net, busName = "B3", vn_kV = 110.0)
 
-  addACLine!(net = net, fromBus = "B0", toBus = "B1", length = 5.0, r = 0.05, x = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
-  addACLine!(net = net, fromBus = "B2", toBus = "B3", length = 20.0, r = 0.05, x = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
+  addACLine!(net = net, fromBus = "B0", toBus = "B1", length = 5.0, r = 0.05, x = 0.5, b = 1.5707963267948967e-05)
+  addACLine!(net = net, fromBus = "B2", toBus = "B3", length = 20.0, r = 0.05, x = 0.5, b = 6.283185307179587e-05)
   addLink!(net = net, fromBus = "B1", toBus = "B2", status = 1)
   addShunt!(net = net, busName = "B2", pShunt = 0.0, qShunt = 5.0)
 
@@ -2550,8 +2690,8 @@ function test_link_ring_pf_stability()
   addBus!(net = net, busName = "B3", vn_kV = 110.0)
 
   # Two physical AC branches feed the ring from the slack side.
-  addACLine!(net = net, fromBus = "B0", toBus = "B1", length = 10.0, r = 0.05, x = 0.4, c_nf_per_km = 10.0, tanδ = 0.0)
-  addACLine!(net = net, fromBus = "B0", toBus = "B2", length = 12.0, r = 0.05, x = 0.4, c_nf_per_km = 10.0, tanδ = 0.0)
+  addACLine!(net = net, fromBus = "B0", toBus = "B1", length = 10.0, r = 0.05, x = 0.4, b = 3.1415926535897935e-05)
+  addACLine!(net = net, fromBus = "B0", toBus = "B2", length = 12.0, r = 0.05, x = 0.4, b = 3.7699111843077517e-05)
 
   # Three links form a closed loop (meshed/singular incidence structure).
   addLink!(net = net, fromBus = "B1", toBus = "B2", status = 1)
@@ -2736,7 +2876,7 @@ function test_report_uses_user_bus_names_and_pf_node_count()
   addBus!(net = net, busName = "Bus1", vn_kV = 110.0)
   addBus!(net = net, busName = "Bus1a", vn_kV = 110.0)
 
-  addACLine!(net = net, fromBus = "Slack", toBus = "Bus1", length = 5.0, r = 0.05, x = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
+  addACLine!(net = net, fromBus = "Slack", toBus = "Bus1", length = 5.0, r = 0.05, x = 0.5, b = 1.5707963267948967e-05)
   addLink!(net = net, fromBus = "Bus1", toBus = "Bus1a", status = 1)
 
   addProsumer!(net = net, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "Slack")
@@ -3455,16 +3595,45 @@ function test_regulated_generator_bus_targets_include_unregulated_generators()::
   # Additional unregulated generator at the same bus.
   addProsumer!(net = net, busName = "PVBus", type = "SYNCHRONOUSMACHINE", p = 7.5, q = 1.0, qMin = -10.0, qMax = 15.0)
 
+  # The Q band of a PV bus bounds its total generator Q. An unregulated unit
+  # runs at its fixed Q: it enters both ends with that Q, its own limits do
+  # not widen the band, and a missing limit does not open it (PVFix). A
+  # regulating unit without limits opens it, whichever unit comes first
+  # (PVOrder). A load at the bus does not count. A unit with a Q(U)
+  # characteristic is fixed at its Q at the held voltage (PVQU): 1.02 pu on
+  # the line from (0.95, 0.10) to (1.05, -0.10) gives -0.04 pu, neither its
+  # scheduled q nor its own limits count.
+  addBus!(net = net, busName = "PVFix", vn_kV = 110.0)
+  addProsumer!(net = net, busName = "PVFix", type = "SYNCHRONOUSMACHINE", p = 20.0, q = 3.0, vm_pu = 1.02, isRegulated = true, qMin = -30.0, qMax = 40.0)
+  addProsumer!(net = net, busName = "PVFix", type = "GENERATOR", p = 5.0, q = -2.0)
+  addProsumer!(net = net, busName = "PVFix", type = "ENERGYCONSUMER", p = 4.0, q = 1.0)
+  addBus!(net = net, busName = "PVOrder", vn_kV = 110.0)
+  addProsumer!(net = net, busName = "PVOrder", type = "SYNCHRONOUSMACHINE", p = 10.0, vm_pu = 1.01, isRegulated = true)
+  addProsumer!(net = net, busName = "PVOrder", type = "SYNCHRONOUSMACHINE", p = 10.0, vm_pu = 1.01, isRegulated = true, qMin = -20.0, qMax = 20.0)
+  addBus!(net = net, busName = "PVQU", vn_kV = 110.0)
+  addProsumer!(net = net, busName = "PVQU", type = "SYNCHRONOUSMACHINE", p = 20.0, q = 3.0, vm_pu = 1.02, isRegulated = true, qMin = -30.0, qMax = 40.0)
+  qu_curve = make_characteristic([(0.95, 0.10), (1.05, -0.10)])
+  addProsumer!(net = net, busName = "PVQU", type = "GENERATOR", p = 5.0, q = 2.0, qMin = -50.0, qMax = 50.0, qu_controller = QUController(qu_curve; qmin_MVAr = -50.0, qmax_MVAr = 50.0, sbase_MVA = 100.0))
+
   pv_bus = geNetBusIdx(net = net, busName = "PVBus")
+  fix_bus = geNetBusIdx(net = net, busName = "PVFix")
+  order_bus = geNetBusIdx(net = net, busName = "PVOrder")
+  qu_bus = geNetBusIdx(net = net, busName = "PVQU")
   node = net.nodeVec[pv_bus]
   qmin_pu, qmax_pu = getQLimits_pu(net)
 
   p_target_ok = isapprox(node._pƩGen, 27.5; atol = 1e-9, rtol = 0.0)
   q_target_ok = isapprox(node._qƩGen, 4.0; atol = 1e-9, rtol = 0.0)
-  q_limit_ok = isapprox(qmin_pu[pv_bus], -0.4; atol = 1e-9, rtol = 0.0) && isapprox(qmax_pu[pv_bus], 0.55; atol = 1e-9, rtol = 0.0)
+  # (-30 + 1) / 100 and (40 + 1) / 100
+  q_limit_ok = isapprox(qmin_pu[pv_bus], -0.29; atol = 1e-9, rtol = 0.0) && isapprox(qmax_pu[pv_bus], 0.41; atol = 1e-9, rtol = 0.0)
+  # (-30 - 2) / 100 and (40 - 2) / 100
+  fix_ok = isapprox(qmin_pu[fix_bus], -0.32; atol = 1e-9, rtol = 0.0) && isapprox(qmax_pu[fix_bus], 0.38; atol = 1e-9, rtol = 0.0)
+  order_ok = qmin_pu[order_bus] == -Inf && qmax_pu[order_bus] == Inf
+  # -0.30 - 0.04 and 0.40 - 0.04
+  qu_ok = isapprox(qmin_pu[qu_bus], -0.34; atol = 1e-9, rtol = 0.0) && isapprox(qmax_pu[qu_bus], 0.36; atol = 1e-9, rtol = 0.0)
   bus_type_ok = getEffectiveBusType(net = net, busName = "PVBus") == Sparlectra.PV
 
-  return p_target_ok && q_target_ok && q_limit_ok && bus_type_ok
+  return p_target_ok && q_target_ok && q_limit_ok && fix_ok && order_ok && qu_ok && bus_type_ok
 end
 
 function test_addprosumer_auto_regulated_flags()::Bool
@@ -3645,9 +3814,9 @@ function test_remove_functions_compact()
   addBus!(net = net, busName = "B3", vn_kV = 110.0)
   addBus!(net = net, busName = "B5", vn_kV = 110.0)
   addBus!(net = net, busName = "B6", vn_kV = 20.0)
-  addACLine!(net = net, fromBus = "B1", toBus = "B2", length = 10.0, r = 0.01, x = 0.1, c_nf_per_km = 10.0, tanδ = 0.0, ratedS = 100.0)
-  addACLine!(net = net, fromBus = "B2", toBus = "B3", length = 15.0, r = 0.01, x = 0.1, c_nf_per_km = 10.0, tanδ = 0.0, ratedS = 100.0)
-  addACLine!(net = net, fromBus = "B2", toBus = "B5", length = 15.0, r = 0.01, x = 0.1, c_nf_per_km = 10.0, tanδ = 0.0, ratedS = 100.0)
+  addACLine!(net = net, fromBus = "B1", toBus = "B2", length = 10.0, r = 0.01, x = 0.1, b = 3.1415926535897935e-05, ratedS = 100.0)
+  addACLine!(net = net, fromBus = "B2", toBus = "B3", length = 15.0, r = 0.01, x = 0.1, b = 4.71238898038469e-05, ratedS = 100.0)
+  addACLine!(net = net, fromBus = "B2", toBus = "B5", length = 15.0, r = 0.01, x = 0.1, b = 4.71238898038469e-05, ratedS = 100.0)
   add2WTrafo!(net = net, fromBus = "B1", toBus = "B6", sn_mva = 100.0, vk_percent = 10.0, vkr_percent = 0.5, pfe_kw = 20.0, i0_percent = 0.1)
   addShunt!(net = net, busName = "B2", pShunt = 0.0, qShunt = 10.0)
   addProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER", p = 50.0, q = 20.0)
@@ -3909,6 +4078,7 @@ function run_grid_fast_tests()
     @testset "Power flow scenarios" begin (function ()
       @test test_5BusNet(0, 10.0) == true
       @test test_3BusNet(0, 150.0, :rectangular, true) == true
+      @test test_slack_and_pv_bus_generation_with_load() == true
       @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :rectangular) == true
       @test test_rectangular_autodamp_backtracks_oversized_step() == true
       @test test_rectangular_polar_update_rotates_without_inflation() == true
@@ -3956,6 +4126,7 @@ function run_grid_fast_tests()
       @test test_link_bus_merge_pf() == true
       @test test_link_bus_merge_pf_default_method() == true
       @test test_link_merge_remaps_non_representative_slack() == true
+      @test test_link_merge_returns_bus_powers() == true
       @test test_island_solve_with_link_merge() == true
       @test test_rectangular_link_merge_runs_without_warning() == true
       @test test_link_closed_keeps_shunt_reporting_on_original_bus() == true

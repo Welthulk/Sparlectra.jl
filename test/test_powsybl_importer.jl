@@ -441,14 +441,18 @@ function run_powsybl_importer_tests()
         # value, so the five dangling lines write their one-sided admittance
         # as a compensator at the network bus, named per line, and the
         # delivery solves to the voltages of the source (the total on the
-        # segment, read back in halves, was 3e-3 pu off)
+        # segment, read back in halves, was 3e-3 pu off). The CGMES import
+        # puts half of a transformer's end admittance on each terminal
+        # (0.50.0), so the two transformers with their magnetizing arm on
+        # side 1 write it as a compensator too
         _, erg = runpf!(net, 60, 1e-10, 0; method = :rectangular, qlimits_enabled = false)
         @test erg == 0
         notes = String[]
         delivery = writeCGMESFiles(net; path = mkpath(joinpath(dir, "cgmes")), created = Dates.DateTime(2026, 1, 1), notices = notes, zip = true)
-        @test count(n -> occursin("the excess as a LinearShuntCompensator", n), notes) == 5
+        @test count(n -> startswith(n, "line ") && occursin("the excess as a LinearShuntCompensator", n), notes) == 5
+        @test count(n -> startswith(n, "transformer ") && occursin("the excess as a LinearShuntCompensator", n), notes) == 2
         cim = Sparlectra.importCGMES(path = delivery[end], require_boundary = false).net
-        @test length(cim.shuntVec) == length(net.shuntVec) + 5
+        @test length(cim.shuntVec) == length(net.shuntVec) + 7
         _, erg_cim = runpf!(cim, 60, 1e-10, 0; method = :rectangular, qlimits_enabled = false)
         @test erg_cim == 0
         vm_of(n) = (names = Dict(idx => name for (name, idx) in n.busDict); Dict(names[nd.busIdx] => nd._vm_pu for nd in n.nodeVec))

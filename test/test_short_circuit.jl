@@ -17,7 +17,8 @@
 #          (analytic derivations in the comments, computed independently of
 #          the implementation), the safety-flag contract (default + warning
 #          + result flag), asynchronous-machine lower-bound flagging, and
-#          short_circuit.c_factor config coverage. This file needs no CGMES
+#          short_circuit.c_factor config coverage, and the contraction of
+#          closed-link groups. This file needs no CGMES
 #          fixtures; the plausibility sweep on a real delivery returns with
 #          self-built CGMES deliveries in test_cgmes_importer.jl.
 
@@ -52,6 +53,24 @@ function _sc_two_bus_net(; r_pu = 0.05, x_pu = 0.5)
   # b_pu deliberately non-zero: IEC drops line charging, so it must not
   # change the result (asserted below).
   addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = r_pu, x_pu = x_pu, b_pu = 0.2, status = 1)
+  return net
+end
+
+# multi-island SC fixture: n feeder-fed rings of m buses with declared Sk''
+function _sc_sweep_net(n, m)
+  net = Net(name = "sc_sweep_$(n)x$(m)", baseMVA = 100.0)
+  for k in 1:n
+    name = i -> "S$(k)_B$(i)"
+    for i in 1:m
+      addBus!(net = net, busName = name(i), vn_kV = 110.0)
+    end
+    addExternalGrid!(net = net, busName = name(1), vm_pu = 1.0, sk_max_MVA = 2000.0 + 100.0 * k, sk_min_MVA = 1500.0, rx_max = 0.1, internal_impedance = false)
+    for i in 1:m
+      addPIModelACLine!(net = net, fromBus = name(i), toBus = name(i == m ? 1 : i + 1), r_pu = 0.001, x_pu = 0.004, b_pu = 0.0, status = 1)
+    end
+  end
+  ok, _ = validate!(net = net)
+  @test ok
   return net
 end
 
@@ -146,6 +165,8 @@ function run_short_circuit_tests()
       row = r.rows[1]
       @test row.status === :ok
       @test row.contains_defaulted_data == true
+      # a default reactance is flagged, but the machine feeds: no lower bound
+      @test row.lower_bound == false
       @test any(occursin("default 0.2 pu", reason) for reason in row.reasons)
       @test any(occursin("default 0.2 pu", m) for m in r.messages)
       # documented default actually applied: x = 0.2·(100/50) = 0.4 pu
@@ -178,6 +199,12 @@ function run_short_circuit_tests()
         # 9999 MW is how a case file says that no limit is stated
         ("placeholder maximum", net, sized((pmax_MW = 9999.0,)), 100.0, "nor a usable maximum active power"),
         ("placeholder maximum with one digit more", net, sized((pmax_MW = 99999.0,)), 100.0, "nor a usable maximum active power"),
+        # the same for the rated power: 9999 MVA and above is no size, the
+        # search goes on with the maximum and the reason names the value;
+        # sqrt(2)*99999.9 MVA is what a delivery with +-99999.9 limits carries
+        ("placeholder rated power, maximum of the unit at the bus", with_unit, sized((ratedS_MVA = 141421.2,)), 40.0, "has no usable x''_d and a placeholder ratedS of 141421.2 MVA (9999.0 MVA and above is no size): default 0.2 pu on its maximum active power 40.0 MW"),
+        ("placeholder rated power, no other size", net, sized((ratedS_MVA = 9999.0,)), 100.0, "has no x''_d, a placeholder ratedS of 9999.0 MVA (9999.0 MVA and above is no size) and no usable maximum active power"),
+        ("rated power just below the placeholder", with_unit, sized((ratedS_MVA = 9998.0,)), 9998.0, "default 0.2 pu (machine base)"),
       ]
         result = run_with_expected_warnings(() -> runShortCircuit!(network, _sc_data(machines = [record]); case = :max), ["SynchronousMachine G1"])
         @testset "$(label)" begin
@@ -187,6 +214,46 @@ function run_short_circuit_tests()
       end
       stated = run_with_expected_warnings(() -> runShortCircuit!(with_unit, _sc_data(machines = [sized((satDirectSubtransX_pu = 0.3,))]); case = :max), ["has no usable ratedS"])
       @test isapprox(stated.rows[1].ik_kA, ik_on(0.3, 100.0); rtol = 1e-9)
+      # a stated reactance next to a placeholder rated power: network base,
+      # and the reason names the placeholder
+      stated_ph = run_with_expected_warnings(() -> runShortCircuit!(with_unit, _sc_data(machines = [sized((satDirectSubtransX_pu = 0.3, ratedS_MVA = 141421.2))]); case = :max), ["has a placeholder ratedS"])
+      @test isapprox(stated_ph.rows[1].ik_kA, ik_on(0.3, 100.0); rtol = 1e-9)
+      @test "short-circuit: SynchronousMachine G1 has a placeholder ratedS of 141421.2 MVA (9999.0 MVA and above is no size): network base 100.0 MVA substituted" in stated_ph.rows[1].reasons
+      # two islands: a placeholder machine next to a feeder (default
+      # reactance, flagged, no lower bound) and a feeder without a current
+      # next to one with it (skipped source, lower bound in the maximum case
+      # only, where the engine sets the typed flag on every row of the island)
+      two = Net(name = "sc_two_islands", baseMVA = 100.0)
+      foreach(b -> addBus!(net = two, busName = b, vn_kV = 110.0), ("A", "B", "C", "D"))
+      addPIModelACLine!(net = two, fromBus = "A", toBus = "B", r_pu = 0.01, x_pu = 0.05, b_pu = 0.0, status = 1)
+      addPIModelACLine!(net = two, fromBus = "C", toBus = "D", r_pu = 0.01, x_pu = 0.05, b_pu = 0.0, status = 1)
+      two_sc = _sc_data(enis = [_sc_feeder(bus = "A", ikmax_A = 10_000.0, ikmin_A = 10_000.0, rx_max = 0.1, rx_min = 0.1, name = "F_A"), _sc_feeder(bus = "C", ikmax_A = 8_000.0, ikmin_A = 8_000.0, rx_max = 0.1, rx_min = 0.1, name = "F_C"), _sc_feeder(bus = "D", name = "F_D")], machines = [_sc_machine(bus = "B", ratedS = 141421.2, ratedU = 110.0, name = "G_PH")])
+      for case in (:max, :min)
+        two_res = run_with_expected_warnings(() -> runShortCircuit!(two, two_sc; case = case), ["G_PH", "F_D"])
+        rows = Dict(row.bus => row for row in two_res.rows)
+        @test all(rows[b].contains_defaulted_data for b in ("A", "B", "C", "D"))
+        @test [rows[b].lower_bound for b in ("A", "B", "C", "D")] == (case === :max ? [false, false, true, true] : [false, false, false, false])
+        # two of four sources without data: the run status is a warning, and
+        # the printed table starts with it and the two counts
+        @test (two_res.status, two_res.status_reason) == (:warning, "short_circuit_partial_defaults")
+        @test first(split(sprint(io -> printShortCircuitResult(io, two_res)), '\n')) == "run status: warning (short_circuit_partial_defaults), 4 of 4 rows flagged, $(case === :max ? 2 : 0) rows with a lower bound"
+      end
+      # every source with its data: succeeded without a reason; no source at
+      # all: no bus can be evaluated, failed as in the service
+      clean = runShortCircuit!(two, _sc_data(enis = [_sc_feeder(bus = "A", ikmax_A = 10_000.0, rx_max = 0.1, name = "F_A"), _sc_feeder(bus = "C", ikmax_A = 8_000.0, rx_max = 0.1, name = "F_C")]); case = :max)
+      @test (clean.status, clean.status_reason) == (:succeeded, nothing)
+      @test first(split(sprint(io -> printShortCircuitResult(io, clean)), '\n')) == "run status: succeeded, 0 of 4 rows flagged, 0 rows with a lower bound"
+      empty_res = runShortCircuit!(two, _sc_data(); case = :max)
+      @test (empty_res.status, empty_res.status_reason) == (:failed, "short_circuit_data_missing")
+      # the service outcome reads the typed flag: rows on a default alone
+      # (a feeder without its R/X ratio) are no lower bound
+      rx_default = run_with_expected_warnings(() -> runShortCircuit!(two, _sc_data(enis = [_sc_feeder(bus = "A", ikmax_A = 10_000.0, name = "F_A"), _sc_feeder(bus = "C", ikmax_A = 8_000.0, rx_max = 0.1, name = "F_C")]); case = :max), ["no usable R/X ratio"])
+      ok_state = (total = 2, with_data = 2, without_any = 0, refused = false, defaults_only = false, partial = false, warning = false)
+      @test SparlectraApp._sc_outcome(ok_state, rx_default, "t.csv").reason == "short_circuit_flagged_defaults"
+      # the service counts a machine with only a placeholder rated power as
+      # a source without any data, one with a real rating as defaultable
+      @test SparlectraApp._sc_source_data_state(_sc_data(machines = [sized((ratedS_MVA = 141421.2,))])).refused
+      @test !SparlectraApp._sc_source_data_state(_sc_data(machines = [sized((ratedS_MVA = 50.0,))])).refused
     end)() end
 
     @testset "asynchronous machine per hand-derived IEC §6.7 motor impedance" begin (function ()
@@ -251,10 +318,14 @@ function run_short_circuit_tests()
       rmax = @test_logs (:warn, r"AsynchronousMachine .* lower bound") match_mode = :any runShortCircuit!(net, sc; case = :max)
       # the whole island is a lower bound, not just the motor bus
       @test all(row.contains_defaulted_data for row in rmax.rows)
+      @test all(row.lower_bound for row in rmax.rows)
+      ok_state = (total = 1, with_data = 1, without_any = 0, refused = false, defaults_only = false, partial = false, warning = false)
+      @test SparlectraApp._sc_outcome(ok_state, rmax, "t.csv").reason == "short_circuit_flagged_lower_bound"
       @test all(any(occursin("lower bound", reason) for reason in row.reasons) for row in rmax.rows)
       # motors never contribute to (and never flag) the minimum case
       rmin = runShortCircuit!(net, sc; case = :min)
       @test all(!row.contains_defaulted_data for row in rmin.rows)
+      @test !any(row.lower_bound for row in rmin.rows)
     end)() end
 
     @testset "island without a source reports :no_source, isolated buses :isolated" begin (function ()
@@ -272,6 +343,87 @@ function run_short_circuit_tests()
       @test isnan(by_bus["C1"].ik_kA)
       @test by_bus["C1"].contains_defaulted_data == true
       @test any(occursin("no short-circuit source", reason) for reason in by_bus["C1"].reasons)
+    end)() end
+
+    @testset "closed-link groups are one node, as in the power flow" begin (function ()
+      # Ring A-B-D-A (ring = false drops B-D) with bus C on B through a
+      # closed link only, plus E-F: two buses joined by a closed link and no
+      # branch. Feeder at A (10 kA max, 8 kA min), optional feeder at C
+      # (5 kA max, 4 kA min), R/X 0.1 for both.
+      function link_net(ring::Bool)
+        net = Net(name = "sc_link_group", baseMVA = 100.0)
+        for b in ("A", "B", "C", "D", "E", "F")
+          addBus!(net = net, busName = b, vn_kV = 110.0)
+        end
+        addPIModelACLine!(net = net, fromBus = "A", toBus = "B", r_pu = 0.01, x_pu = 0.1, b_pu = 0.0, status = 1)
+        addPIModelACLine!(net = net, fromBus = "A", toBus = "D", r_pu = 0.01, x_pu = 0.1, b_pu = 0.0, status = 1)
+        ring && addPIModelACLine!(net = net, fromBus = "B", toBus = "D", r_pu = 0.01, x_pu = 0.1, b_pu = 0.0, status = 1)
+        addLink!(net = net, fromBus = "B", toBus = "C", status = 1)
+        addLink!(net = net, fromBus = "E", toBus = "F", status = 1)
+        # the marking the power flow sees: C, E and F have no branch
+        markIsolatedBuses!(net = net)
+        return net
+      end
+      feeder_a = _sc_feeder(bus = "A", ikmax_A = 10_000.0, ikmin_A = 8_000.0, rx_max = 0.1, rx_min = 0.1, name = "QA")
+      feeder_c = _sc_feeder(bus = "C", ikmax_A = 5_000.0, ikmin_A = 4_000.0, rx_max = 0.1, rx_min = 0.1, name = "QC")
+      rows(net, enis, case; sweep = :solves) = Dict(row.bus => row for row in runShortCircuit!(net, _sc_data(enis = enis); case = case, sweep_method = sweep).rows)
+
+      @testset "switch-only bus reports the Ik'' of its group ($(ring ? "ring" : "radial"))" for ring in (true, false)
+        net = link_net(ring)
+        @test net.isoNodes == sort([net.busDict[b] for b in ("C", "E", "F")])
+        for case in (:max, :min)
+          r = rows(net, [feeder_a], case)
+          @test r["C"].status === :ok
+          @test r["C"].ik_kA == r["B"].ik_kA
+          @test r["C"].island == r["B"].island
+          @test isfinite(r["C"].ik_kA)
+        end
+      end
+
+      @testset "source on a switch-only bus feeds its neighbour (hand values, ring)" begin
+        # Hand derivation on 110 kV (Z_base = 121 Ω), c = 1.10 (max) / 1.00 (min):
+        #   Z_Q = c·Un/(√3·Ik_declared), X_Q = Z_Q/√(1+0.1²), R_Q = 0.1·X_Q
+        #   Z_L = (0.01 + j0.1)·121 Ω per line
+        #   without source at C: Z_B = Z_QA + Z_L∥(2·Z_L) = Z_QA + (2/3)·Z_L
+        #   with source at C:    Z_B' = Z_QC ∥ Z_B (C and B are one node)
+        #   Ik'' = c·Un/(√3·|Z|)
+        # Every impedance has R/X = 0.1, so the two shares are in phase and
+        # the feeder at C adds exactly its declared current (5 kA, 4 kA min).
+        zq(c, ik_A) = (z = c * 110_000.0 / (sqrt(3.0) * ik_A); x = z / sqrt(1.0 + 0.1^2); 0.1 * x + im * x)
+        zl = (0.01 + 0.1im) * 121.0
+        net = link_net(true)
+        for (case, c, ia, ic) in ((:max, 1.10, 10_000.0, 5_000.0), (:min, 1.00, 8_000.0, 4_000.0))
+          zb = zq(c, ia) + (2.0 / 3.0) * zl
+          zb_c = 1.0 / (1.0 / zq(c, ic) + 1.0 / zb)
+          ik_without = c * 110.0 / (sqrt(3.0) * abs(zb))
+          ik_with = c * 110.0 / (sqrt(3.0) * abs(zb_c))
+          r0 = rows(net, [feeder_a], case)
+          r1 = rows(net, [feeder_a, feeder_c], case)
+          @test isapprox(r0["B"].ik_kA, ik_without; rtol = 1e-9)
+          @test isapprox(r1["B"].ik_kA, ik_with; rtol = 1e-9)
+          @test isapprox(r1["B"].ik_kA - r0["B"].ik_kA, ik_with - ik_without; rtol = 1e-7)
+          @test isapprox(r1["B"].ik_kA - r0["B"].ik_kA, ic / 1000.0; rtol = 1e-9)
+          @test isapprox(r1["B"].zk_ohm, abs(zb_c); rtol = 1e-9)
+          @test r1["C"].ik_kA == r1["B"].ik_kA
+          # the selected-inverse sweep works on the same contracted matrix
+          rt = rows(net, [feeder_a, feeder_c], case; sweep = :takahashi)
+          for b in ("A", "B", "C", "D")
+            @test isapprox(rt[b].ik_kA, r1[b].ik_kA; rtol = 1e-10)
+          end
+        end
+      end
+
+      @testset "group without a branch stays isolated" begin
+        net = link_net(true)
+        r = rows(net, [feeder_a, _sc_feeder(bus = "E", ikmax_A = 5_000.0, rx_max = 0.1, name = "QE")], :max)
+        for b in ("E", "F")
+          @test r[b].status === :isolated
+          @test isnan(r[b].ik_kA)
+        end
+        # one group, one island
+        @test r["E"].island == r["F"].island
+        @test r["E"].island != r["A"].island
+      end
     end)() end
 
     @testset "WebUI data-check gating helper" begin (function ()
@@ -312,85 +464,70 @@ function run_short_circuit_tests()
       @test occursin("short_circuit.c_factor", sprint(showerror, err))
     end)() end
 
-    @testset "parallel all-bus sweep identity (Phase 3)" begin (function ()
-      # multi-island SC fixture: n feeder-fed rings with declared Sk''
-      function build_sweep_net(n, m)
-        net = Net(name = "sc_sweep_$(n)x$(m)", baseMVA = 100.0)
-        for k in 1:n
-          name = i -> "S$(k)_B$(i)"
-          for i in 1:m
-            addBus!(net = net, busName = name(i), vn_kV = 110.0)
-          end
-          addExternalGrid!(net = net, busName = name(1), vm_pu = 1.0, sk_max_MVA = 2000.0 + 100.0 * k, sk_min_MVA = 1500.0, rx_max = 0.1, internal_impedance = false)
-          for i in 1:m
-            addPIModelACLine!(net = net, fromBus = name(i), toBus = name(i == m ? 1 : i + 1), r_pu = 0.001, x_pu = 0.004, b_pu = 0.0, status = 1)
-          end
-        end
-        ok, _ = validate!(net = net)
-        @test ok
-        return net
-      end
+    run_short_circuit_parallel_tests()
+  end)() end
+end
 
-      net = build_sweep_net(3, 40)
-      for case in (:max, :min)
-        serial = runShortCircuit!(net; case = case, parallel_enabled = false)
-        # row-by-row equality, == on all fields, NaN-aware via isequal,
-        # for the capped-serial fallback AND the genuinely parallel sweep
-        for max_tasks in (1, Threads.nthreads())
-          par = runShortCircuit!(net; case = case, parallel_enabled = true, parallel_max_tasks = max_tasks, parallel_min_work_items = 2)
-          @test length(par.rows) == length(serial.rows)
-          @test isequal(serial.rows, par.rows)
-        end
+# The parallel sweeps against the serial sweep. run_short_circuit_tests runs
+# them in the pf profile; the threads profile (tools/run_gates.sh threads)
+# repeats them with four threads.
+function run_short_circuit_parallel_tests()
+  @testset "parallel all-bus sweep identity (Phase 3)" begin (function ()
+    net = _sc_sweep_net(3, 40)
+    for case in (:max, :min)
+      serial = runShortCircuit!(net; case = case, parallel_enabled = false)
+      # row-by-row equality, == on all fields, NaN-aware via isequal,
+      # for the capped-serial fallback AND the genuinely parallel sweep
+      for max_tasks in (1, Threads.nthreads())
+        par = runShortCircuit!(net; case = case, parallel_enabled = true, parallel_max_tasks = max_tasks, parallel_min_work_items = 2)
+        @test length(par.rows) == length(serial.rows)
+        @test isequal(serial.rows, par.rows)
       end
-      if Threads.nthreads() > 1
-        println("sc parallel sweep: RAN with ", Threads.nthreads(), " threads")
-      else
-        println("sc parallel sweep: fallback-only run (single-threaded test process); the threaded path runs in the --threads=4 battery")
-      end
+    end
+    parallel_comparison_report("sc all-bus sweep, 3 rings of 40 buses")
 
-      # sweep_method = :takahashi: one selected-inverse pass per island;
-      # must agree with :solves to machine precision (documented: not
-      # bitwise) with identical statuses/flags, serial and parallel alike
-      @test_throws ArgumentError runShortCircuit!(net; sweep_method = :bogus)
-      @test_throws ArgumentError runShortCircuit!(net; takahashi_min_buses = 0)
-      solves_ref = runShortCircuit!(net; case = :max, sweep_method = :solves, parallel_enabled = false)
-      # sweep_method = :auto (the default): below the island threshold it is
-      # bitwise the solves sweep, with threshold 1 bitwise the takahashi
-      # sweep; the strategy choice itself never changes a row
-      auto_small = runShortCircuit!(net; case = :max, sweep_method = :auto, takahashi_min_buses = 10_000, parallel_enabled = false)
-      @test isequal(auto_small.rows, solves_ref.rows)
-      auto_tak = runShortCircuit!(net; case = :max, sweep_method = :auto, takahashi_min_buses = 1, parallel_enabled = false)
-      tak_ref = runShortCircuit!(net; case = :max, sweep_method = :takahashi, parallel_enabled = false)
-      @test isequal(auto_tak.rows, tak_ref.rows)
-      for parallel in (false, true)
-        tak = runShortCircuit!(net; case = :max, sweep_method = :takahashi, parallel_enabled = parallel, parallel_min_work_items = 2)
-        @test length(tak.rows) == length(solves_ref.rows)
-        for i in eachindex(solves_ref.rows)
-          a, b = solves_ref.rows[i], tak.rows[i]
-          @test a.status === b.status
-          @test a.contains_defaulted_data == b.contains_defaulted_data
-          if a.status === :ok
-            @test isapprox(a.ik_kA, b.ik_kA; rtol = 1e-10)
-            @test isapprox(a.zk_ohm, b.zk_ohm; rtol = 1e-10)
-            @test isapprox(a.sk_MVA, b.sk_MVA; rtol = 1e-10)
-          else
-            @test isequal(a.ik_kA, b.ik_kA)
-          end
+    # sweep_method = :takahashi: one selected-inverse pass per island;
+    # must agree with :solves to machine precision (documented: not
+    # bitwise) with identical statuses/flags, serial and parallel alike
+    @test_throws ArgumentError runShortCircuit!(net; sweep_method = :bogus)
+    @test_throws ArgumentError runShortCircuit!(net; takahashi_min_buses = 0)
+    solves_ref = runShortCircuit!(net; case = :max, sweep_method = :solves, parallel_enabled = false)
+    # sweep_method = :auto (the default): below the island threshold it is
+    # bitwise the solves sweep, with threshold 1 bitwise the takahashi
+    # sweep; the strategy choice itself never changes a row
+    auto_small = runShortCircuit!(net; case = :max, sweep_method = :auto, takahashi_min_buses = 10_000, parallel_enabled = false)
+    @test isequal(auto_small.rows, solves_ref.rows)
+    auto_tak = runShortCircuit!(net; case = :max, sweep_method = :auto, takahashi_min_buses = 1, parallel_enabled = false)
+    tak_ref = runShortCircuit!(net; case = :max, sweep_method = :takahashi, parallel_enabled = false)
+    @test isequal(auto_tak.rows, tak_ref.rows)
+    for parallel in (false, true)
+      tak = runShortCircuit!(net; case = :max, sweep_method = :takahashi, parallel_enabled = parallel, parallel_min_work_items = 2)
+      @test length(tak.rows) == length(solves_ref.rows)
+      for i in eachindex(solves_ref.rows)
+        a, b = solves_ref.rows[i], tak.rows[i]
+        @test a.status === b.status
+        @test a.contains_defaulted_data == b.contains_defaulted_data
+        if a.status === :ok
+          @test isapprox(a.ik_kA, b.ik_kA; rtol = 1e-10)
+          @test isapprox(a.zk_ohm, b.zk_ohm; rtol = 1e-10)
+          @test isapprox(a.sk_MVA, b.sk_MVA; rtol = 1e-10)
+        else
+          @test isequal(a.ik_kA, b.ik_kA)
         end
       end
-      # the takahashi sweep is deterministic: repeated runs are bitwise equal
-      tak1 = runShortCircuit!(net; case = :max, sweep_method = :takahashi, parallel_enabled = false)
-      tak2 = runShortCircuit!(net; case = :max, sweep_method = :takahashi, parallel_enabled = false)
-      @test isequal(tak1.rows, tak2.rows)
+    end
+    # the takahashi sweep is deterministic: repeated runs are bitwise equal
+    tak1 = runShortCircuit!(net; case = :max, sweep_method = :takahashi, parallel_enabled = false)
+    tak2 = runShortCircuit!(net; case = :max, sweep_method = :takahashi, parallel_enabled = false)
+    @test isequal(tak1.rows, tak2.rows)
 
-      # parallel sweep equality with buses = :all on the shipped operated
-      # grid (load_fixture_net: runs on every install; the case declares
-      # its own IEC 60909 source, so no hand-attached external grid)
-      net60 = load_fixture_net("sp_case60")
-      s60 = runShortCircuit!(net60; buses = :all, case = :max, parallel_enabled = false)
-      p60 = runShortCircuit!(net60; buses = :all, case = :max, parallel_enabled = true, parallel_min_work_items = 2)
-      @test isequal(s60.rows, p60.rows)
-      println("sc parallel sweep sp_case60: RAN")
-    end)() end
+    # parallel sweep equality with buses = :all on the shipped operated
+    # grid (load_fixture_net: runs on every install; the case declares
+    # its own IEC 60909 source, so no hand-attached external grid)
+    net60 = load_fixture_net("sp_case60")
+    s60 = runShortCircuit!(net60; buses = :all, case = :max, parallel_enabled = false)
+    p60 = runShortCircuit!(net60; buses = :all, case = :max, parallel_enabled = true, parallel_min_work_items = 2)
+    @test isequal(s60.rows, p60.rows)
+    parallel_comparison_report("sc all-bus sweep, sp_case60")
   end)() end
 end

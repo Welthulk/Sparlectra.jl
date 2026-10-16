@@ -316,6 +316,11 @@ function run_scf_tests()
       for row in root["data"]["generic_branch"]
         @test row["from_node"] == g["star_node"]
       end
+      # a leg turned to terminal → star (a tapped CGMES leg) is reported
+      turned = deepcopy(net)
+      br = turned.branchVec[2]
+      br.fromBus, br.toBus = br.toBus, br.fromBus
+      @test only(Sparlectra.net_to_scf(turned)["sparlectra"]["components"]["transformer3w"])["leg_direction"] == "mixed"
       # reference names (the busDict keys every other section resolves
       # against) are what `extra.name` carries; the internal component name
       # travels separately when it differs
@@ -1228,7 +1233,7 @@ mpc.branch = [
       # delimiter, dot decimal. excel_de (machine-scope key, so it comes from
       # the general configuration file): semicolon delimiter, decimal comma.
       sc_default_lines = readlines(joinpath(d, "run_sc", "short_circuit_max.csv"))
-      @test sc_default_lines[1] == "bus,vn_kV,island,status,c,zk_ohm,rx_ratio,ik_kA,sk_MVA,kappa,ip_kA,flagged,reasons"
+      @test sc_default_lines[1] == "bus,vn_kV,island,status,c,zk_ohm,rx_ratio,ik_kA,sk_MVA,kappa,ip_kA,flagged,reasons,lower_bound"
       @test !occursin(';', sc_default_lines[2])
       cfg_de = joinpath(d, "config_excel_de.yaml")
       cp(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, cfg_de)
@@ -1242,7 +1247,7 @@ mpc.branch = [
       @test SparlectraApp.to_dict(res_sc_de)["status"] == "succeeded"
       for name in ("short_circuit_max.csv", "short_circuit_min.csv")
         sc_de_lines = readlines(joinpath(d, "run_sc_de", name))
-        @test sc_de_lines[1] == "bus;vn_kV;island;status;c;zk_ohm;rx_ratio;ik_kA;sk_MVA;kappa;ip_kA;flagged;reasons"
+        @test sc_de_lines[1] == "bus;vn_kV;island;status;c;zk_ohm;rx_ratio;ik_kA;sk_MVA;kappa;ip_kA;flagged;reasons;lower_bound"
         @test length(sc_de_lines) == length(sc_default_lines)
         # the c column (fifth field, 1.1 for max / 0.95 for min at HV) always
         # carries a fraction, unlike vn_kV, which a whole kV value would

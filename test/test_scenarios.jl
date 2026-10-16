@@ -194,6 +194,37 @@ function run_scenario_patch_tests()
       case.sparlectra.scenarios = Dict{String,Any}()
     end)() end
 
+    @testset "every shipped SCF case resolves its components" begin (function ()
+      # ScenarioIndex reads the internal indices from the build-order fields
+      # of the extra block. Three hand-written feeder cases carried none, so
+      # every op on them failed in apply! ("component id 6 has no internal
+      # index"), the scenarios shipped in feeder3_hardpv_vsPGM included. Each
+      # index must exist and point at the element on the row's buses.
+      local dir, c, idx, n, bus_of, undo
+      at(vec, ix, id) = vec[ix.internal_by_id[id]]
+      ends(x) = Set(Int.((x.fromBus, x.toBus)))
+      dir = abspath(joinpath(dirname(@__DIR__), "data", "scf"))
+      for f in sort!(filter(name -> endswith(name, ".scf.json"), readdir(dir)))
+        c = read_scf_json(joinpath(dir, f))
+        idx = ScenarioIndex(c)
+        @test (f, sort!([id for id in keys(idx.kind_by_id) if !haskey(idx.internal_by_id, id)])) == (f, Int[])
+        n = Sparlectra.build_net(c)
+        bus_of = Dict(id => k for (k, id) in enumerate(Sparlectra.scf_node_ids_in_build_order(c)))
+        @test (f, [r.id for r in vcat(c.data.source, c.data.sym_gen, c.data.sym_load) if Sparlectra._scf_prosumer_bus(at(n.prosumpsVec, idx, r.id)) != bus_of[r.node]]) == (f, Int[])
+        @test (f, [r.id for r in vcat(c.data.line, c.data.generic_branch) if ends(at(n.branchVec, idx, r.id)) != Set((bus_of[r.from_node], bus_of[r.to_node]))]) == (f, Int[])
+        @test (f, [r.id for r in c.data.shunt if at(n.shuntVec, idx, r.id).busIdx != bus_of[r.node]]) == (f, Int[])
+        @test (f, [r.id for r in c.data.link if ends(at(n.linkVec, idx, r.id)) != Set((bus_of[r.from_node], bus_of[r.to_node]))]) == (f, Int[])
+        if f == "feeder3_hardpv_vsPGM.scf.json"
+          # the case's own scenarios block applies
+          for s in scf_case_scenarios(c).scenarios
+            undo = apply!(n, s.ops, idx)
+            @test (s.name, isempty(undo.entries)) == (s.name, false)
+            restore!(n, undo)
+          end
+        end
+      end
+    end)() end
+
     @testset "the removed contingencies block fails with the way out" begin (function ()
       # 0.40.0: the legacy block is no longer read; a file that still
       # carries it names the scenarios block and the editor instead of
@@ -213,6 +244,58 @@ function run_scenario_patch_tests()
       @test occursin("sparlectra.scenarios", err.msg) && occursin("scenario editor", err.msg)
     end)() end
 
+    @testset "apply! keeps the bus load sums for their readers" begin (function ()
+      # after a load outage the island totals (detect_ac_islands), the
+      # passive-bus test (findPassiveBuses) and the link-flow allocation
+      # (calcLinkFlowsKCL!) read the bus load sums: a patched net must give
+      # what a net built without that load gives, and restore! the base
+      path = abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case60.scf.json"))
+      # a load moved to a link end, so the link-flow allocation sees it;
+      # one load scaled and the moved one taken out (the reference case
+      # writes the same change into the case data)
+      function edited(; outage::Bool)
+        c = read_scf_json(path)
+        moved = c.data.sym_load[1]
+        moved.node = first(c.data.link).from_node
+        if outage
+          # the reference drops the row: build_net keeps a sym_load whose
+          # status is 0, so the status alone is no outage of the case data
+          other = c.data.sym_load[2]
+          other.p_specified *= 2.0
+          other.q_specified *= 2.0
+          deleteat!(c.data.sym_load, 1)
+        end
+        return c
+      end
+      # `local` is load-bearing: the enclosing test function holds `case`,
+      # `net` and `index` of case14, and a plain assignment in this nested
+      # function would overwrite them for every later testset
+      local case, ops, idx, base, net, ref, undo, solved
+      case = edited(outage = false)
+      ops = [PatchOp(op = :scale, target = :load, id = case.data.sym_load[2].id, factor = 2.0), PatchOp(op = :status, target = :load, id = case.data.sym_load[1].id, value = 0.0)]
+      idx = ScenarioIndex(case)
+      base = Sparlectra.build_net(case)
+      net = Sparlectra.build_net(case)
+      ref = Sparlectra.build_net(edited(outage = true))
+      undo = apply!(net, ops, idx)
+      sums(n) = [(something(nd._pƩLoad, 0.0), something(nd._qƩLoad, 0.0)) for nd in n.nodeVec]
+      @test all(isapprox.(first.(sums(net)), first.(sums(ref)); atol = 1e-9)) && all(isapprox.(last.(sums(net)), last.(sums(ref)); atol = 1e-9))
+      island_load(n) = sort!([round(r.total_load_p_mw; digits = 9) for r in Sparlectra.detect_ac_islands(n).rows])
+      @test island_load(net) == island_load(ref)
+      @test sort!(collect(Sparlectra.findPassiveBuses(net))) == sort!(collect(Sparlectra.findPassiveBuses(ref)))
+      restore!(net, undo)
+      @test scf_roundtrip_field_diffs(base, net) == String[]
+      # the link flow after a solve: patched copy against the reference
+      solved = Sparlectra.build_net(case)
+      apply!(solved, ops, idx)
+      for n in (solved, ref)
+        redirect_stdout(() -> runpf!(n, 40, 1e-9, 0), devnull)
+        calcLinkFlowsKCL!(n)
+      end
+      @test isapprox(first(solved.linkVec).pFlow_MW, first(ref.linkVec).pFlow_MW; atol = 1e-6)
+      @test isapprox(first(solved.linkVec).qFlow_MVar, first(ref.linkVec).qFlow_MVar; atol = 1e-6)
+    end)() end
+
     @testset "apply and restore: tap patch semantics" begin (function ()
       # a tap patch on an UNREGULATED transformer changes the ratio the
       # solver sees and restores it (first-class)
@@ -228,6 +311,35 @@ function run_scenario_patch_tests()
         restore!(net, undo)
         @test Sparlectra.calcBranchRatio(net.branchVec[tapped]) == before_ratio
       end
+    end)() end
+
+    @testset "set angle_deg on the external grid" begin (function ()
+      # validate_scenarios took the op and apply! threw "set field angle_deg
+      # does not apply to this appliance". The value is the source's
+      # u_ref_angle; on the reference unit every bus angle of the island
+      # moves by the same amount and the magnitudes stay.
+      local fcase, fidx, src, ops, fbase, fwork, k, bus, undo
+      fcase = read_scf_json(abspath(joinpath(dirname(@__DIR__), "data", "scf", "feeder3_hardpv_A.scf.json")))
+      fidx = ScenarioIndex(fcase)
+      src = only(fcase.data.source).id
+      ops = [PatchOp(op = :set, target = :external_grid, id = src, field = :angle_deg, value = 10.0)]
+      @test validate_scenarios(ScenarioSet(scenarios = [Scenario(name = "angle", ops = ops)]), fidx) isa ScenarioSet
+      fbase = Sparlectra.build_net(fcase)
+      fwork = Sparlectra.build_net(fcase)
+      k = fidx.internal_by_id[src]
+      bus = Sparlectra._scf_prosumer_bus(fwork.prosumpsVec[k])
+      undo = apply!(fwork, ops, fidx)
+      @test fwork.prosumpsVec[k].va_deg == 10.0 && fwork.nodeVec[bus]._va_deg == 10.0
+      restore!(fwork, undo)
+      @test isequal(fwork.prosumpsVec[k].va_deg, fbase.prosumpsVec[k].va_deg) && isequal(fwork.nodeVec[bus]._va_deg, fbase.nodeVec[bus]._va_deg)
+      apply!(fwork, ops, fidx)
+      for n in (fbase, fwork)
+        redirect_stdout(() -> runpf!(n, 40, 1e-9, 0), devnull)
+      end
+      # the solved angle comes back through angle(V), so the last bit may differ
+      @test isapprox(fwork.nodeVec[bus]._va_deg, 10.0; atol = 1e-9)
+      @test all(isapprox(fwork.nodeVec[i]._va_deg - fbase.nodeVec[i]._va_deg, 10.0; atol = 1e-9) for i in eachindex(fbase.nodeVec))
+      @test all(isapprox(fwork.nodeVec[i]._vm_pu, fbase.nodeVec[i]._vm_pu; atol = 1e-9) for i in eachindex(fbase.nodeVec))
     end)() end
 
     @testset "tap patch on a REGULATED transformer is rejected, controller named" begin (function ()
@@ -473,6 +585,54 @@ function run_scenario_patch_tests()
       rl = only(redirect_stdout(() -> runContingencies!(net60, [link_case]; names = contingency_names(net60, case60), parallel_enabled = false), devnull))
       @test rl.kind === :link && rl.elements == link_case.elements
       @test rl.converged
+      # markIsolatedBuses! with links = true marks by the link groups of the
+      # power flow: with every branch at one coupler bus open, that bus
+      # hangs on the other through the coupler and stays in service, the
+      # default (branches only) isolates it; with the branches at both
+      # coupler buses open the group has no branch and both are isolated
+      cpl = deepcopy(net60)
+      cpl_link = only(l for l in cpl.linkVec if l.status == 1)
+      cpl_buses = [Int(cpl_link.fromBus), Int(cpl_link.toBus)]
+      for br in cpl.branchVec
+        (Int(br.fromBus) == cpl_buses[1] || Int(br.toBus) == cpl_buses[1]) && Sparlectra.setBranchStatus!(br, false)
+      end
+      @test !any(in(Sparlectra.markIsolatedBuses!(net = deepcopy(cpl), links = true)), cpl_buses)
+      @test cpl_buses[1] in Sparlectra.markIsolatedBuses!(net = deepcopy(cpl))
+      for br in cpl.branchVec
+        (Int(br.fromBus) in cpl_buses || Int(br.toBus) in cpl_buses) && Sparlectra.setBranchStatus!(br, false)
+      end
+      @test all(in(Sparlectra.markIsolatedBuses!(net = cpl, links = true)), cpl_buses)
+      # links = true marks by the link groups of the power flow, bus by bus
+      # equal to the solver's isolation: C behind B in service, the
+      # branch-less group E-F and the group G-H whose only branch runs
+      # inside it isolated, J behind an open link isolated, the chain
+      # D-M-N in service
+      grp = Net(name = "link_groups", baseMVA = 100.0)
+      foreach(b -> addBus!(net = grp, busName = b, vn_kV = 110.0), ("A", "B", "C", "D", "E", "F", "G", "H", "J", "M", "N"))
+      for (f, t) in (("A", "B"), ("A", "D"), ("B", "D"), ("G", "H"))
+        addACLine!(net = grp, fromBus = f, toBus = t, length = 10.0, r = 0.02, x = 0.2, c_nf_per_km = 0.0, tanδ = 0.0)
+      end
+      for (f, t, s) in (("B", "C", 1), ("E", "F", 1), ("G", "H", 1), ("B", "J", 0), ("D", "M", 1), ("M", "N", 1))
+        addLink!(net = grp, fromBus = f, toBus = t, status = s)
+      end
+      addProsumer!(net = grp, busName = "A", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "A")
+      foreach(b -> addProsumer!(net = grp, busName = b, type = "ENERGYCONSUMER", p = 2.0, q = 0.5), ("B", "C", "D", "E", "G", "N"))
+      @test first(validate!(net = grp))
+      wnet, reps, _ = Sparlectra._merged_pf_net(grp)
+      solver_iso = [i for i in eachindex(grp.nodeVec) if reps[i] in wnet.isoNodes]
+      @test [grp.busDict[b] for b in ("E", "F", "G", "H", "J")] == solver_iso
+      @test Sparlectra.markIsolatedBuses!(net = deepcopy(grp), links = true) == solver_iso
+      # the patch path of runScenarios! counts a cut-off link group whole:
+      # opening A-B of the radial net cuts off B and C (15 MW), in the ring
+      # no branch outage cuts off C
+      for (ring, shed) in ((false, [15.0, 20.0]), (true, [0.0, 0.0, 0.0]))
+        lcase = read_scf_json(exportSCF(link_group_net(; ring = ring); file = joinpath(mktempdir(), "link_group.scf.json")))
+        lidx = ScenarioIndex(lcase)
+        lscen = [Scenario(name = string("out ", id), ops = [PatchOp(op = :status, target = :branch, id = id, value = 0.0)]) for id in sort!([id for (id, k) in lidx.kind_by_id if k === :branch])]
+        lres = redirect_stdout(() -> runScenarios!(Sparlectra.build_net(lcase), lscen; index = lidx, parallel_enabled = false), devnull)
+        @test [r.shed_load_mw for r in lres] == shed
+        @test count(r -> r.error !== nothing && occursin("B, C cut off", r.error), lres) == (ring ? 0 : 1)
+      end
       # a generated double circuit equals the hand-written explicit scenario
       # of the same two outages, value for value
       names60 = contingency_names(net60, case60)
@@ -779,6 +939,10 @@ function run_scenario_engine_extended_tests()
     # Regenerated at 0.40.0 (#355): the columns kind and elements, the case
     # and overload names from the case file (contingency_names with the
     # typed case), every numeric cell unchanged.
+    # Changed at 0.50.0 (link groups): the row of Neubach_Waldsee#29 no
+    # longer reports Neubach_110b cut off; the bus hangs on Neubach_110a
+    # through the coupler and the solve feeds it. Every numeric cell
+    # unchanged.
     fixture = abspath(joinpath(@__DIR__, "fixtures", "contingency_sp_case60_n1.csv"))
     scase = read_scf_json(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case60.scf.json")))
     net = Sparlectra.build_net(scase)

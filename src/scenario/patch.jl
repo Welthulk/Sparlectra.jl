@@ -33,7 +33,11 @@ One patch operation of a scenario: `op` is `:status`,
 component id. `:status` carries `value` (0 or 1); `:set` carries `field`
 (one of `p`, `q`, `vm_pu`, `tap_pos`, `b_pu`, `angle_deg`) and `value`;
 `:scale` carries `factor` and applies it to `p` and `q` together unless
-`field` names one of them. No structural operations exist by design.
+`field` names one of them. `angle_deg` is in degrees: the phase shift of
+a transformer, or the voltage angle of an external grid (the SCF
+`u_ref_angle`, which the file stores in radians); on the reference unit
+it sets the angle reference of its island. No structural operations
+exist by design.
 """
 Base.@kwdef struct PatchOp
   op::Symbol

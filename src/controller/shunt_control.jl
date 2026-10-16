@@ -218,14 +218,39 @@ control_initialize!(::ShuntVoltageControl, ::Net, context) = NoControlState()
 control_status(ctrl::ShuntVoltageControl, ::AbstractControlState)::Symbol = ctrl.status
 control_is_converged(ctrl::ShuntVoltageControl, ::AbstractControlState)::Bool = ctrl.converged
 # a parked bank (discrete mode, no whole block improves) blocks the loop
-# exactly like a range limit; it un-parks through apply when a later
-# operating point admits a whole-step move again
+# exactly like a range limit; evaluate re-decides it on every pass, so it
+# un-parks when a later operating point admits a whole-step move again
 control_is_blocked(ctrl::ShuntVoltageControl, ::AbstractControlState)::Bool = ctrl.at_limit || ctrl.parked
+
+# At its limit means: on the outermost admissible value (the last block in
+# discrete mode) AND the voltage error pointing further out. A bank on its
+# top block whose voltage another controller has since lifted above the band
+# is not at its limit, it has to switch back. Without the direction the flag
+# stayed set and the loop ended :converged with the bank outside its band.
+function _shunt_at_outer_limit(ctrl::ShuntVoltageControl)::Bool
+  ctrl.converged && return false
+  vm = ctrl.achieved_vm_pu
+  vm === nothing && return false
+  lo, hi = ctrl.step_mvar === nothing ? (ctrl.bs_min_mvar, ctrl.bs_max_mvar) :
+           (_shunt_step_ceil(ctrl.bs_min_mvar, ctrl.step_mvar), _shunt_step_floor(ctrl.bs_max_mvar, ctrl.step_mvar))
+  err = ctrl.target_vm_pu - vm
+  return (err > 0.0 && isapprox(ctrl.bs_mvar, hi; atol = 1e-9)) || (err < 0.0 && isapprox(ctrl.bs_mvar, lo; atol = 1e-9))
+end
 
 function control_evaluate!(ctrl::ShuntVoltageControl, net::Net, ::AbstractControlState, context)
   vm = get_bus_vm_pu(net, ctrl.bus)
   ctrl.achieved_vm_pu = vm
   ctrl.converged = _voltage_within_deadband(vm, ctrl.target_vm_pu, ctrl.deadband_vm_pu)
+  # re-decided from the voltage of this pass, as the tap controller resets
+  # its flag here: a flag from an earlier pass must not block the bank
+  ctrl.at_limit = _shunt_at_outer_limit(ctrl)
+  # parked the same way: the rule of apply (no whole block proposed) on the
+  # voltage of this pass. Kept from an earlier pass, the flag blocked a bank
+  # that another controller had moved out of its band since, and the loop
+  # ended :converged with the bank parked outside it.
+  if ctrl.step_mvar !== nothing
+    ctrl.parked = !ctrl.converged && !ctrl.at_limit && _shunt_no_whole_block(ctrl, net, context)
+  end
   ctrl.status = ctrl.converged ? :converged : (ctrl.at_limit ? :at_limit : (ctrl.parked ? :parked : :active))
   ctrl.outer_iters = context.outer_iteration
   return nothing
@@ -242,12 +267,20 @@ function control_propose_update!(ctrl::ShuntVoltageControl, net::Net, ::Abstract
   vm === nothing && return (old_bs = b0, new_bs = b0)
   err = ctrl.target_vm_pu - vm
 
-  Δb = if ctrl.prev_bs_mvar !== nothing && ctrl.prev_vm_pu !== nothing && abs(b0 - ctrl.prev_bs_mvar) > 1e-9
-    slope = (vm - ctrl.prev_vm_pu) / (b0 - ctrl.prev_bs_mvar)
-    slope > _MACHINE_CTRL_MIN_SLOPE ? err / slope : _shunt_ctrl_bootstrap_step(ctrl, b0, err)
-  else
-    _shunt_ctrl_bootstrap_step(ctrl, b0, err)
+  has_pair = ctrl.prev_bs_mvar !== nothing && ctrl.prev_vm_pu !== nothing && abs(b0 - ctrl.prev_bs_mvar) > 1e-9
+  # A discrete bank never overshoots its target (whole blocks, truncated
+  # toward it). An error against the direction of its last own step means
+  # another controller moved the operating point since; the secant over
+  # that step then mixes in the other move and gives a slope that is far
+  # too steep, so the bank would park outside its band. The pair is dropped
+  # (here only, the fields stay) and the bootstrap step applies.
+  if has_pair && ctrl.step_mvar !== nothing && sign(err) != sign(b0 - ctrl.prev_bs_mvar)
+    has_pair = false
   end
+  slope = has_pair ? (vm - ctrl.prev_vm_pu) / (b0 - ctrl.prev_bs_mvar) : 0.0
+  # the bootstrap step also applies when the measured slope is unusable
+  bootstrap = !(has_pair && slope > _MACHINE_CTRL_MIN_SLOPE)
+  Δb = bootstrap ? _shunt_ctrl_bootstrap_step(ctrl, b0, err) : err / slope
   new_bs = clamp(b0 + Δb, ctrl.bs_min_mvar, ctrl.bs_max_mvar)
   if ctrl.step_mvar !== nothing
     # discrete bank (#324): move whole blocks only, TRUNCATED toward the
@@ -255,15 +288,24 @@ function control_propose_update!(ctrl::ShuntVoltageControl, net::Net, ::Abstract
     # it cannot oscillate between two adjacent steps (anti-hunting). The
     # bootstrap probe may propose less than one block; widen it to the
     # first whole block in the probe direction so the secant gets its
-    # measurable (Bs, Vm) pair.
+    # measurable (Bs, Vm) pair. The same for a bootstrap step after a
+    # dropped pair or an unusable slope: a bank whose operating point
+    # another controller moved needs one block to measure again.
     step::Float64 = ctrl.step_mvar
     steps = trunc((new_bs - b0) / step)
-    if steps == 0.0 && ctrl.prev_bs_mvar === nothing && abs(new_bs - b0) > 1e-9
+    if steps == 0.0 && bootstrap && abs(new_bs - b0) > 1e-9
       steps = sign(new_bs - b0)
     end
     new_bs = clamp(b0 + steps * step, _shunt_step_ceil(ctrl.bs_min_mvar, step), _shunt_step_floor(ctrl.bs_max_mvar, step))
   end
   return (old_bs = b0, new_bs = new_bs)
+end
+
+# true when the proposal at the current voltage moves no whole block
+# (control_propose_update! reads the controller and changes nothing)
+function _shunt_no_whole_block(ctrl::ShuntVoltageControl, net::Net, context)::Bool
+  upd = control_propose_update!(ctrl, net, NoControlState(), context)
+  return abs(upd.new_bs - upd.old_bs) <= 1e-9
 end
 
 function _shunt_ctrl_bootstrap_step(ctrl::ShuntVoltageControl, b0::Float64, err::Float64)::Float64
@@ -288,12 +330,10 @@ function control_apply_update!(ctrl::ShuntVoltageControl, net::Net, ::AbstractCo
   # clamped susceptance = constant-B limit region; the injected Q keeps
   # following V² through the Y-bus, which is exactly the SVC device
   # behavior. In discrete mode the outermost admissible BLOCK is the limit.
-  if ctrl.step_mvar === nothing
-    ctrl.at_limit = !ctrl.converged && (isapprox(ctrl.bs_mvar, ctrl.bs_min_mvar; atol = 1e-9) || isapprox(ctrl.bs_mvar, ctrl.bs_max_mvar; atol = 1e-9))
-  else
-    lo = _shunt_step_ceil(ctrl.bs_min_mvar, ctrl.step_mvar)
-    hi = _shunt_step_floor(ctrl.bs_max_mvar, ctrl.step_mvar)
-    ctrl.at_limit = !ctrl.converged && (isapprox(ctrl.bs_mvar, lo; atol = 1e-9) || isapprox(ctrl.bs_mvar, hi; atol = 1e-9))
+  # The error is the one of the voltage before this move, the one that
+  # drove the device onto its outer value.
+  ctrl.at_limit = _shunt_at_outer_limit(ctrl)
+  if ctrl.step_mvar !== nothing
     # parked: not converged, not at the last block, and no whole block was
     # proposed — the step resolution is exhausted at this operating point.
     # Any accepted move un-parks (the next evaluate re-decides).

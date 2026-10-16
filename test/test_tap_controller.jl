@@ -17,6 +17,17 @@
 #          branch active-power tap control, PST reactance coupling, SVC
 #          shunts, machine RVC, YAML instantiation, and run_control!
 
+# A user-defined controller that switches itself off when it is initialized,
+# as one whose target cannot be found would; run_control! then ends with
+# :no_active_controllers after the first solve.
+mutable struct _SelfDisablingTestController <: Sparlectra.AbstractOuterController
+  enabled::Bool
+end
+function Sparlectra.control_initialize!(ctrl::_SelfDisablingTestController, ::Any, context)
+  ctrl.enabled = false
+  return Sparlectra.NoControlState()
+end
+
 function run_tap_controller_tests()
   _runner_cfg(; max_iter::Int = 30, tol::Float64 = 1e-9, control::ControlConfig = ControlConfig()) = SparlectraConfig(powerflow = PowerFlowConfig(max_iter = max_iter, tol = tol), output = OutputConfig(logfile_results = :off), control = control)
 
@@ -42,6 +53,19 @@ function run_tap_controller_tests()
     tbr.phase_max_deg = 10.0
     tbr.phase_step_deg = 1.0
 
+    return net, tbr
+  end
+
+  # _build_net plus a second AC island with its own slack, load and line:
+  # two islands that both have branches
+  function _build_two_island_net()
+    net, tbr = _build_net()
+    for bus in ("Slack2", "Load2")
+      addBus!(net = net, busName = bus, vn_kV = 110.0)
+    end
+    addProsumer!(net = net, busName = "Slack2", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "Slack2")
+    addProsumer!(net = net, busName = "Load2", type = "ENERGYCONSUMER", p = -30.0, q = -10.0)
+    addPIModelACLine!(net = net, fromBus = "Slack2", toBus = "Load2", r_pu = 0.02, x_pu = 0.12, b_pu = 0.01, status = 1)
     return net, tbr
   end
 
@@ -232,20 +256,21 @@ function run_tap_controller_tests()
 
     # probe consistency: tracking active vs. static picks the same direction,
     # and the probe restores angle and reactance
+    probe_cfg = PowerFlowConfig(max_iter = 30, tol = 1e-8, start_mode = Sparlectra.StartModeConfig(flatstart = true))
     net3, tbr3 = build_xalpha(model = formula_model())
     run_sparlectra(net = net3, config = _runner_cfg())
     addPowerTransformerControl!(net3; trafo = string(tbr3.branchIdx), mode = :branch_active_power, target_branch = ("Slack", "Mid"), p_target_mw = 0.0, control_ratio = false, control_phase = true)
     ctrl3 = only(Sparlectra._tap_controllers(net3))
     x_before = tbr3.x_pu
     phi_before = tbr3.phase_shift_deg
-    dir_model = Sparlectra._phase_probe_direction(net3, tbr3, ctrl3, 30, 1e-8, 0, :rectangular)
+    dir_model = Sparlectra._phase_probe_direction(net3, tbr3, ctrl3, probe_cfg)
     @test tbr3.x_pu == x_before
     @test tbr3.phase_shift_deg == phi_before
     net4, tbr4 = build_xalpha()
     run_sparlectra(net = net4, config = _runner_cfg())
     addPowerTransformerControl!(net4; trafo = string(tbr4.branchIdx), mode = :branch_active_power, target_branch = ("Slack", "Mid"), p_target_mw = 0.0, control_ratio = false, control_phase = true)
     ctrl4 = only(Sparlectra._tap_controllers(net4))
-    dir_static = Sparlectra._phase_probe_direction(net4, tbr4, ctrl4, 30, 1e-8, 0, :rectangular)
+    dir_static = Sparlectra._phase_probe_direction(net4, tbr4, ctrl4, probe_cfg)
     @test dir_model == dir_static
     @test abs(dir_model) == 1.0
   end)() end
@@ -514,6 +539,58 @@ function run_tap_controller_tests()
     yctrl = only(Sparlectra._shunt_controllers(ynet))
     @test yctrl.step_mvar ≈ 10.0
     @test applyConfiguredControllers!(ynet, ycfg) == 0
+
+    # A bank on its top block next to a tap controller on the same bus,
+    # both acting in every pass: bank target 0.972 pu below the tap band
+    # 0.975 .. 0.985 pu. The bus starts below the bank band, so the bank
+    # stands at its limit while the tap steps up. The last tap step lifts
+    # the bus over the bank band (0.967 .. 0.977 pu). The bank is then not
+    # at its limit any more (the error points inward) and has to switch
+    # back. Before the fix the flag of the earlier pass stayed set and the
+    # run ended :converged with the bank on its top block.
+    function bank_tap_net(name)
+      bnet = Net(name = name, baseMVA = 100.0)
+      for bus in ("Slack", "Mid", "Load")
+        addBus!(net = bnet, busName = bus, vn_kV = 110.0)
+      end
+      addProsumer!(net = bnet, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "Slack")
+      addProsumer!(net = bnet, busName = "Load", type = "LOAD", p = 90.0, q = 35.0)
+      addPIModelTrafo!(net = bnet, fromBus = "Slack", toBus = "Mid", r_pu = 0.01, x_pu = 0.08, b_pu = 0.00, ratio = 1.0, shift_deg = 0.0, status = 1)
+      addPIModelACLine!(net = bnet, fromBus = "Mid", toBus = "Load", r_pu = 0.02, x_pu = 0.12, b_pu = 0.01, status = 1)
+      tbr = getNetBranch(net = bnet, fromBus = "Slack", toBus = "Mid")
+      tbr.has_ratio_tap = true
+      (tbr.tap_min, tbr.tap_max, tbr.tap_step) = (0.90, 1.10, 0.0125)
+      return bnet, tbr
+    end
+    b7net, b7tbr = bank_tap_net("bank_limit")
+    addPowerTransformerControl!(b7net; trafo = string(b7tbr.branchIdx), mode = :voltage, target_bus = "Load", target_vm_pu = 0.98, deadband_vm_pu = 0.005)
+    b7bank = @test_logs (:warn, r"already regulates the voltage of bus Load") addShuntVoltageControl!(b7net; bus = "Load", target_vm_pu = 0.972, bs_min_mvar = 0.0, bs_max_mvar = 10.0, step_mvar = 5.0, deadband_vm_pu = 0.005, bs_start_mvar = 10.0)
+    b7res = run_control!(b7net)
+    b7rows = filter(r -> r.controller_type == "ShuntVoltageControl", b7res.trace)
+    # the bank switched back from its top block
+    @test b7bank.bs_mvar < 10.0
+    # the flag stands only on an outer block with the error pointing out:
+    # on the top block with the bus below the band, on block 0 above it
+    @test any(r -> r.at_limit, b7rows)
+    @test all(r -> !r.at_limit || (r.bs_mvar == 10.0 && r.achieved_vm_pu < 0.967) || (r.bs_mvar == 0.0 && r.achieved_vm_pu > 0.977), b7rows)
+    # no :converged with the bank outside its band
+    @test !(b7res.status === :converged && abs(get_bus_vm_pu(b7net, "Load") - 0.972) > 0.005)
+    # the same with parked: bank band 0.95 .. 0.97 pu, tap at 1.0 pu. The
+    # bank starts at 0 and climbs to its top block itself, or starts there;
+    # the tap then lifts the bus far above the bank band. A flag kept from
+    # an earlier pass, or a secant over the bank's own step with the tap's
+    # moves mixed in, left the bank parked there and the run :converged.
+    # The tap swings between two steps afterwards (its band is narrower
+    # than one step), so its status is not checked.
+    for start in (0.0, 10.0)
+      pknet, pktbr = bank_tap_net("bank_park")
+      addPowerTransformerControl!(pknet; trafo = string(pktbr.branchIdx), mode = :voltage, target_bus = "Load", target_vm_pu = 1.0, deadband_vm_pu = 0.005)
+      pkbank = @test_logs (:warn, r"already regulates the voltage of bus Load") addShuntVoltageControl!(pknet; bus = "Load", target_vm_pu = 0.96, bs_min_mvar = 0.0, bs_max_mvar = 10.0, step_mvar = 5.0, deadband_vm_pu = 0.01, bs_start_mvar = start)
+      pkres = run_control!(pknet)
+      pkrows = filter(r -> r.controller_type == "ShuntVoltageControl", pkres.trace)
+      @test any(r -> r.bs_mvar == 10.0, pkrows)
+      @test !(pkres.status === :converged && pkbank.parked && abs(get_bus_vm_pu(pknet, "Load") - 0.96) > 0.01)
+    end
   end)() end
 
   @testset "STATCOM current-limit mode (#297 Draft A)" begin (function ()
@@ -713,6 +790,85 @@ function run_tap_controller_tests()
     else
       @test ctrl.at_limit
     end
+
+    # Two AC islands that both have branches. The direction probe solved
+    # with islands switched off and refused this net with the
+    # islands-disabled error, although the run solves it island by island.
+    # The controlled island must end exactly as the same island alone.
+    pf = PowerFlowConfig(max_iter = 30, tol = 1e-9)
+    add_tap_ctrl! = n -> addPowerTransformerControl!(n; trafo = string(getNetBranch(net = n, fromBus = "Slack", toBus = "Mid").branchIdx), mode = :voltage, target_bus = "Load", target_vm_pu = 1.035, control_ratio = true, control_phase = false, is_discrete = true, deadband_vm_pu = 5e-3, max_outer_iters = 8)
+    rnet, rtbr = _build_net()
+    add_tap_ctrl!(rnet)
+    rres = run_control!(rnet; pf_config = pf)
+    inet, itbr = _build_two_island_net()
+    islands = Sparlectra.detect_ac_islands(inet).rows
+    @test length(islands) == 2 && all(row -> row.n_branch > 0, islands)
+    _, ierg0 = redirect_stdout(() -> runpf!(inet; config = pf), devnull)
+    @test ierg0 == 0
+    @test abs(get_bus_vm_pu(inet, "Load") - 1.035) > 5e-3   # starts outside the deadband
+    add_tap_ctrl!(inet)
+    ires = redirect_stdout(() -> run_control!(inet; pf_config = pf), devnull)
+    @test ires.status === :converged
+    @test only(Sparlectra._tap_controllers(inet)).converged
+    @test itbr.tap_ratio != 1.0
+    @test abs(get_bus_vm_pu(inet, "Load") - 1.035) <= 5e-3
+    @test rres.status === :converged
+    @test itbr.tap_ratio == rtbr.tap_ratio
+    @test isapprox(get_bus_vm_pu(inet, "Load"), get_bus_vm_pu(rnet, "Load"); atol = 1e-9)
+
+    # An isolated bus keeps its type through the solve. Every pass after the
+    # first solves the same net again; the bus written back as PQ was an
+    # island without a reference there and the second solve stopped.
+    xnet, xtbr = _build_net()
+    addBus!(net = xnet, busName = "Spare", vn_kV = 110.0)
+    addProsumer!(net = xnet, busName = "Spare", type = "ENERGYCONSUMER", p = -5.0, q = -1.0)
+    @test markIsolatedBuses!(net = xnet, log = false) == [4]
+    add_tap_ctrl!(xnet)
+    xres = redirect_stdout(() -> run_control!(xnet; pf_config = pf), devnull)
+    @test xres.status === :converged && xres.powerflow_solves > 1
+    @test Sparlectra.isIsolated(xnet.nodeVec[4])
+    @test xtbr.tap_ratio == rtbr.tap_ratio
+    @test isapprox(get_bus_vm_pu(xnet, "Load"), get_bus_vm_pu(rnet, "Load"); atol = 1e-9)
+    @test redirect_stdout(() -> runpf!(xnet; config = pf), devnull)[2] == 0
+
+    # A failed probe solve on the same net. The island path throws instead
+    # of returning a status, the probe must still answer as on one island
+    # (0 when the perturbed solve fails) and restore the branch. One Newton
+    # iteration keeps the solved net converged but not the probe step.
+    tight = PowerFlowConfig(max_iter = 1, tol = 1e-9)
+    r_run = itbr.tap_ratio
+    @test r_run + itbr.tap_step <= itbr.tap_max   # the probe can step up
+    rdir = redirect_stdout(() -> Sparlectra._ratio_probe_direction(inet, itbr, only(Sparlectra._tap_controllers(inet)), tight), devnull)
+    @test rdir == 0.0
+    @test itbr.tap_ratio == r_run && itbr.ratio == r_run
+    Sparlectra.clearTapControllers!(inet)
+    addPowerTransformerControl!(inet; trafo = string(itbr.branchIdx), mode = :branch_active_power, target_branch = ("Slack", "Mid"), p_target_mw = 0.0, control_ratio = false, control_phase = true)
+    redirect_stdout(() -> runpf!(inet; config = pf), devnull)
+    phi_run, x_run = itbr.phase_shift_deg, itbr.x_pu
+    pdir = redirect_stdout(() -> Sparlectra._phase_probe_direction(inet, itbr, only(Sparlectra._tap_controllers(inet)), tight), devnull)
+    @test pdir == 0.0
+    @test itbr.phase_shift_deg == phi_run && itbr.angle == phi_run && itbr.x_pu == x_run
+
+    # an unreachable target: the tap runs to tap_min and the loop ends
+    # :blocked in a pass whose probe solved one step above the limit. The
+    # closing solve leaves the voltages of the final tap on the net, equal
+    # to a single solve at that tap, and its iterations count in the total.
+    blocked_run = function (max_outer::Int)
+      bnet, bbr = _build_net()
+      addPowerTransformerControl!(bnet; trafo = string(bbr.branchIdx), mode = :voltage, target_bus = "Load", target_vm_pu = 1.2, deadband_vm_pu = 5e-3)
+      return bnet, bbr, run_control!(bnet; control_config = ControlConfig(max_outer_iterations = max_outer))
+    end
+    bnet, bbr, bres = blocked_run(20)
+    @test bres.status === :blocked
+    @test bbr.tap_ratio == bbr.tap_min && only(Sparlectra._tap_controllers(bnet)).at_limit
+    @test bres.powerflow_solves == bres.outer_iterations + 1
+    snet, sbr = _build_net()
+    (sbr.tap_ratio, sbr.ratio) = (bbr.tap_ratio, bbr.ratio)
+    @test runpf!(snet, 30, 1e-10, 0)[2] == 0
+    @test maximum(abs(bnet.nodeVec[k]._vm_pu - snet.nodeVec[k]._vm_pu) for k in eachindex(snet.nodeVec)) < 1e-8
+    _, _, short = blocked_run(bres.outer_iterations - 1)
+    @test short.status === :max_outer_iterations
+    @test bres.last_pf_iterations > 0 && bres.total_pf_iterations == short.total_pf_iterations + bres.last_pf_iterations
   end)() end
 
   @testset "Control loop console output once per run (#387)" begin (function ()
@@ -749,7 +905,11 @@ function run_tap_controller_tests()
     @test count("Q-Limit Active-Set Summary", out) == 1
     @test count("rectangular convergence:", out) == 1
     @test count("Wrong-branch check:", out) == 1
-    @test count("control pass ", out) == res.powerflow_solves - 1
+    # one line per solve after the first; a run that ends :blocked closes
+    # with one closing solve and its own line
+    closing_lines = count("control closing solve after pass ", out)
+    @test closing_lines == (res.status === :blocked ? 1 : 0)
+    @test count("control pass ", out) + closing_lines == res.powerflow_solves - 1
     @test occursin("no active-set change", out)
     @test count(l -> occursin("start projection selected", string(l.message)), logs) <= 1
     # detection off: no wrong-branch block at all, not even on the first pass
@@ -778,6 +938,69 @@ function run_tap_controller_tests()
     @test occursin("Control passes :", hdr_text)
     @test occursin("last pass", hdr_text)
     @test occursin(string(net.control_result.total_pf_iterations, " inner iterations in total"), hdr_text)
+
+    # the AC island table once per run on a net with two AC islands, also
+    # when control passes and tap probes solve it several times (every solve
+    # printed it); with the full diagnostics the run's first solve prints
+    # it. A direct solve prints it only with verbose.
+    function _island_output(f)
+      out_path = tempname()
+      # the failing auto stages log their start projection; kept off the console
+      res = open(io -> redirect_stdout(() -> Base.with_logger(f, Test.TestLogger()), io), out_path, "w")
+      return res, read(out_path, String)
+    end
+    function _island_tables(f)
+      res, out = _island_output(f)
+      return res, count("AC island detection:", out)
+    end
+    for diag in (:compact, :full)
+      inet, itbr = _build_two_island_net()
+      addPowerTransformerControl!(inet; trafo = string(itbr.branchIdx), mode = :voltage, target_bus = "Load", target_vm_pu = 1.035, control_ratio = true, control_phase = false, is_discrete = true, deadband_vm_pu = 5e-3, max_outer_iters = 8)
+      icfg = SparlectraConfig(powerflow = PowerFlowConfig(max_iter = 30, tol = 1e-9), output = OutputConfig(logfile_results = :off, console_diagnostics = diag))
+      ires, ntab = _island_tables(() -> run_sparlectra(net = inet, config = icfg))
+      @test ires.final_converged
+      @test inet.control_result.powerflow_solves > 1
+      @test ntab == 1
+    end
+    for (v, expected) in ((0, 0), (1, 1))
+      inet, _ = _build_two_island_net()
+      (_, ierg), ntab = _island_tables(() -> runpf!(inet, 30, 1e-9, v; islands_enabled = true))
+      @test ierg == 0
+      @test ntab == expected
+    end
+    # an auto run calls the execution once per escalation stage on the same
+    # net and still prints one table (max_iter = 2 and tol = 1e-12 make
+    # every stage fail)
+    inet, _ = _build_two_island_net()
+    acfg = SparlectraConfig(powerflow = PowerFlowConfig(mode = :auto, max_iter = 2, tol = 1e-12), output = OutputConfig(logfile_results = :off))
+    _, ntab = _island_tables(() -> run_sparlectra(net = inet, config = acfg))
+    @test count(a -> !isempty(a.solver), Sparlectra.auto_pf_record(inet).attempts) > 1
+    @test ntab == 1
+    # auto_slack on two islands without a slack: the run promotes the unit
+    # with the stated reference priority on bus 1, and the table names that
+    # bus as the reference of island 1, not the voltage-regulating unit on
+    # bus 2 that the island detection would pick without the promotion
+    for diag in (:compact, :full)
+      snet = Net(name = "two_islands_no_slack", baseMVA = 100.0)
+      for bus in ("A", "B", "C", "D", "E")
+        addBus!(net = snet, busName = bus, vn_kV = 110.0)
+      end
+      addProsumer!(net = snet, busName = "A", type = "SYNCHRONOUSMACHINE", p = 50.0, q = 0.0, referencePriority = 2)
+      addProsumer!(net = snet, busName = "B", type = "SYNCHRONOUSMACHINE", p = 10.0, vm_pu = 1.01)
+      addProsumer!(net = snet, busName = "C", type = "ENERGYCONSUMER", p = -55.0, q = -10.0)
+      addPIModelACLine!(net = snet, fromBus = "A", toBus = "C", r_pu = 0.01, x_pu = 0.05, b_pu = 0.0, status = 1)
+      addPIModelACLine!(net = snet, fromBus = "B", toBus = "C", r_pu = 0.01, x_pu = 0.05, b_pu = 0.0, status = 1)
+      addProsumer!(net = snet, busName = "D", type = "SYNCHRONOUSMACHINE", p = 20.0, vm_pu = 1.0)
+      addProsumer!(net = snet, busName = "E", type = "ENERGYCONSUMER", p = -20.0, q = -5.0)
+      addPIModelACLine!(net = snet, fromBus = "D", toBus = "E", r_pu = 0.01, x_pu = 0.05, b_pu = 0.0, status = 1)
+      scfg = SparlectraConfig(powerflow = PowerFlowConfig(max_iter = 30, tol = 1e-9, auto_slack = true), output = OutputConfig(logfile_results = :off, console_diagnostics = diag))
+      sres, out = _island_output(() -> run_sparlectra(net = snet, config = scfg))
+      @test sres.final_converged
+      @test snet.slackVec == [1]
+      @test count("AC island detection:", out) == 1
+      @test occursin("island 1: buses=3, branches=2, ref=1, status=has_ref", out)
+      @test findfirst("auto_slack:", out).start < findfirst("AC island detection:", out).start
+    end
   end)() end
 
   @testset "Branch active power controller (phase)" begin (function ()
@@ -985,6 +1208,7 @@ function run_tap_controller_tests()
     @test result.converged == true
     @test result.powerflow_solves == 1
     @test result.last_pf_iterations >= 1
+    @test result.total_pf_iterations == result.last_pf_iterations
     @test result.last_pf_status == :ok
     @test latest_control_result(net) === result
     @test net.control_result === result
@@ -1012,6 +1236,19 @@ function run_tap_controller_tests()
     @test result.powerflow_solves == 1
     @test result.last_pf_status == :ok
     @test latest_control_result(net) === result
+
+    # a controller that switches itself off during initialization leaves no
+    # active controller after the first solve; that solve still counts
+    snet, _ = _build_net()
+    sres = run_control!(snet;
+      controllers = AbstractOuterController[_SelfDisablingTestController(true)],
+      pf_config = PowerFlowConfig(method = :rectangular, max_iter = 30, tol = 1e-9),
+      verbose = 0,
+    )
+    @test sres.status == :no_active_controllers
+    @test sres.powerflow_solves == 1
+    @test sres.last_pf_iterations >= 1
+    @test sres.total_pf_iterations == sres.last_pf_iterations
   end)() end
 
   @testset "run_sparlectra net path honors per-call cfg.control" begin (function ()
@@ -1337,6 +1574,80 @@ control:
     @test length(rows) == 1
     @test rows[1].status == "converged"
     @test rows[1].target_bus == "Load"
+
+    # The runtime.parallel switch of the run configuration decides the island
+    # fan-out of the control solves, while the active configuration says the
+    # opposite: a SparlectraConfig handed to run_control! (control loop and
+    # disabled path) and the configuration of run_sparlectra, which hands it
+    # on to run_control! (with and without the DC seed, which rebuilds it).
+    # The fan-out needs a second thread, and gates and CI run with one, so
+    # the runs go to a child process with two threads. Its stderr lands in
+    # the same text: a warning or error of the child shows in the assertions.
+    script = test_scratch_path(".jl")
+    write(script, raw"""
+    using Sparlectra
+    function two_island_net()
+      net = Net(name = "machine_rvc_islands", baseMVA = 100.0)
+      addBus!(net = net, busName = "Slack", vn_kV = 110.0)
+      addBus!(net = net, busName = "GenBus", vn_kV = 110.0)
+      addBus!(net = net, busName = "Load", vn_kV = 110.0)
+      addProsumer!(net = net, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "Slack")
+      addProsumer!(net = net, busName = "GenBus", type = "SYNCHRONOUSMACHINE", p = 30.0, q = 0.0, qMin = -50.0, qMax = 50.0)
+      addProsumer!(net = net, busName = "Load", type = "ENERGYCONSUMER", p = -70.0, q = -20.0)
+      addPIModelACLine!(net = net, fromBus = "Slack", toBus = "GenBus", r_pu = 0.02, x_pu = 0.12, b_pu = 0.01, status = 1)
+      addPIModelACLine!(net = net, fromBus = "GenBus", toBus = "Load", r_pu = 0.02, x_pu = 0.12, b_pu = 0.01, status = 1)
+      # a separate two-bus island with its own reference
+      addBus!(net = net, busName = "Slack2", vn_kV = 110.0)
+      addBus!(net = net, busName = "Load2", vn_kV = 110.0)
+      addProsumer!(net = net, busName = "Slack2", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "Slack2")
+      addProsumer!(net = net, busName = "Load2", type = "ENERGYCONSUMER", p = -20.0, q = -5.0)
+      addPIModelACLine!(net = net, fromBus = "Slack2", toBus = "Load2", r_pu = 0.02, x_pu = 0.12, b_pu = 0.01, status = 1)
+      addMachineVoltageControl!(net; bus = "GenBus", target_bus = "Load", target_vm_pu = 1.05, deadband_vm_pu = 5e-4)
+      return net
+    end
+    function run_cfg(parallel::Bool; control::Bool = true, dc_seed::Bool = false)
+      pf = PowerFlowConfig(max_iter = 30, tol = 1e-9, islands_parallel_min_buses = 1, start_mode = Sparlectra.StartModeConfig(dc_seed_unconditional = dc_seed))
+      return SparlectraConfig(
+        powerflow = pf,
+        control = ControlConfig(enabled = control, max_outer_iterations = 15),
+        output = OutputConfig(logfile_results = :off, startup_latency_hint = false),
+        runtime = RuntimeConfig(parallel = ParallelRuntimeConfig(enabled = parallel)),
+      )
+    end
+    println("threads ", Threads.nthreads())
+    for passed in (false, true), (entry, control, dc_seed) in ((:run_control, true, false), (:run_control, false, false), (:run_sparlectra, true, false), (:run_sparlectra, true, true))
+      net = two_island_net()
+      profile = Dict{Symbol,Any}(:enabled => true)
+      cfg = run_cfg(passed; control = control, dc_seed = dc_seed)
+      with_sparlectra_config(run_cfg(!passed)) do
+        redirect_stdout(devnull) do
+          if entry === :run_control
+            run_control!(net; pf_config = cfg, control_config = cfg.control, verbose = 0, performance_profile = profile)
+          else
+            run_sparlectra(net = net, config = cfg, performance_profile = profile)
+          end
+        end
+      end
+      fanout = haskey(get(profile, :timings, Dict{Symbol,Any}()), :parallel_wall_time)
+      println("case ", entry, " control=", control, " dc_seed=", dc_seed, " passed=", passed, " status=", latest_control_result(net).status, " fanout=", fanout)
+    end
+    """)
+    library = normpath(joinpath(@__DIR__, ".."))
+    buffer = IOBuffer()
+    run(pipeline(Cmd(`$(Base.julia_cmd()) --startup-file=no --threads=2 --project=$(library) $(script)`; ignorestatus = true); stdout = buffer, stderr = buffer))
+    out = String(take!(buffer))
+    cases = collect(eachmatch(r"case (\w+) control=(\w+) dc_seed=(\w+) passed=(\w+) status=(\w+) fanout=(\w+)", out))
+    @test occursin("threads 2", out)
+    @test !occursin(r"Warning|Error|ERROR", out)
+    @test length(cases) == 8
+    length(cases) == 8 || println(out)
+    for c in cases
+      # the passed configuration decides the fan-out, not the active one; the
+      # case fields only name a failing case in the test report
+      case = (entry = c[1], control = c[2], dc_seed = c[3])
+      @test (; case..., fanout = c[6]) == (; case..., fanout = c[4])
+      @test (; case..., status = c[5]) == (; case..., status = c[2] == "true" ? "converged" : "disabled")
+    end
   end)() end
 
   @testset "Machine RVC: honest at_limit when the target is unreachable" begin (function ()

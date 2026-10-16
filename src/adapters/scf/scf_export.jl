@@ -372,7 +372,7 @@ end
     _scf_cgmes_mrids(net) -> (buses, branches, links)
 
 Resolve the CGMES mRIDs of a delivery-sourced net by their structural keys
-(`TN|<bus>`, `ACL|<a>|<b>|<k>`, `PT|<a>|<b>|<k>`, `SW|...`), so `external_id`
+(`TN|<bus>`, `ACL|<a>|<b>|<k>`, `PT|<a>|<b>|<k>`, `EQB|<a>|<b>|<k>`, `EQBT|<a>|<b>|<k>`, `SW|...`), so `external_id`
 carries the source-system identity instead of the internal component id.
 Empty dictionaries on nets from other formats.
 """
@@ -395,12 +395,15 @@ function _scf_cgmes_mrids(net::Net)
     a = get(nby, Int(br.fromBus), "")
     b = get(nby, Int(br.toBus), "")
     (isempty(a) || isempty(b)) && continue
+    # an EquivalentBranch shares the counter of its branch kind
     if _scf_is_transformer(br)
       kk = CGMESImporter.cgmesNextParallelIndex!(ctrafo, a, b)
       m = get(net.cgmes_ids, CGMESImporter.cgmesKeyPowerTransformer(a, b, kk), "")
+      isempty(m) && (m = get(net.cgmes_ids, CGMESImporter.cgmesKeyEquivalentBranchTransformer(a, b, kk), ""))
     else
       kk = CGMESImporter.cgmesNextParallelIndex!(cline, a, b)
       m = get(net.cgmes_ids, CGMESImporter.cgmesKeyACLineSegment(a, b, kk), "")
+      isempty(m) && (m = get(net.cgmes_ids, CGMESImporter.cgmesKeyEquivalentBranch(a, b, kk), ""))
     end
     isempty(m) || (branches[k] = m)
   end
@@ -859,9 +862,10 @@ one auxiliary star node. The electrical parameters therefore live exactly
 once, in `data.generic_branch`; this block only says which three branches
 belong together, which node is their star point, and which end is which.
 
-Leg direction is Sparlectra's own: `from_node` is the star node, `to_node`
-the terminal, and each end names both explicitly, so no reader has to guess
-an orientation.
+Leg direction is Sparlectra's own: `from_node` is usually the star node and
+`to_node` the terminal, a leg with its tap at the terminal runs the other
+way (`leg_direction` says which), and each end names both explicitly, so no
+reader has to guess an orientation.
 """
 function _scf_transformer3w(net::Net, ids::ScfIdMap)
   rows = Vector{Any}()
@@ -882,7 +886,11 @@ function _scf_transformer3w(net::Net, ids::ScfIdMap)
     for (j, role) in enumerate(("hv", "mv", "lv"))
       ends[j]["role"] = role
     end
-    row = Dict{String,Any}("id" => ids.transformer3w[i], "star_node" => ids.node[i], "ends" => ends, "leg_direction" => "star_to_terminal")
+    # a CGMES leg with a tap changer and every PowSyBl leg run terminal →
+    # star, so the direction is read from the legs
+    from_star = [Int(net.branchVec[k].fromBus) == i for k in legs]
+    direction = all(from_star) ? "star_to_terminal" : (any(from_star) ? "mixed" : "terminal_to_star")
+    row = Dict{String,Any}("id" => ids.transformer3w[i], "star_node" => ids.node[i], "ends" => ends, "leg_direction" => direction)
     tc = [get(ids.tap_changer, k, nothing) for k in legs]
     filter!(!isnothing, tc)
     isempty(tc) || (row["tap_changer"] = first(tc))
@@ -1101,6 +1109,10 @@ function _scf_extra(net::Net, ids::ScfIdMap)
     br.ratio == 0.0 || (meta["neutral_ratio"] = br.ratio)
     br.angle == 0.0 || (meta["neutral_shift_deg"] = br.angle)
     isempty(meta) || (d["meta"] = meta)
+    # the delivered values of a CGMES EquivalentBranch (export metadata and
+    # element-kind marker, see Net.equivalent_branch_metadata)
+    eb = get(net.equivalent_branch_metadata, Int(br.branchIdx), nothing)
+    eb === nothing || (d["equivalent_branch"] = Dict{String,Any}("r_ohm" => eb.r, "x_ohm" => eb.x, "r21_ohm" => eb.r21, "x21_ohm" => eb.x21, "vn_kv" => eb.vn_kV, "stamped" => eb.stamped))
     put(ids.branch[i], d)
   end
   for i in eachindex(net.linkVec)

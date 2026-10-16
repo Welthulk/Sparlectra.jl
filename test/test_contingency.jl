@@ -106,44 +106,7 @@ function run_contingency_tests()
       @test_throws ArgumentError ContingencyCase("x", :branch, "x", -1.0)
     end)() end
 
-    @testset "sp_case14 full N-1: serial and parallel identical" begin (function ()
-      net = load_fixture_net("sp_case14")
-      before_branches = length(net.branchVec)
-      before_vm = [n._vm_pu for n in net.nodeVec]
-      cases = generateN1Branches(net)
-      serial = runContingencies!(net, cases; parallel_enabled = false)
-      @test length(serial) == length(cases)
-      # sp_case14 islands its load-only feeder on three N-1 outages by
-      # design (the demo fixture pins 14 of 17 converged)
-      @test count(r -> r.converged, serial) >= length(cases) - 3
-      for max_tasks in (1, Threads.nthreads())
-        par = runContingencies!(net, cases; parallel_enabled = true, parallel_max_tasks = max_tasks, parallel_min_work_items = 2)
-        @test all(_contingency_results_equal(serial[i], par[i]) for i in eachindex(serial))
-      end
-      # progress callback (Web UI N-1 counter): one call per
-      # finished outage, serial and parallel, each value of 1:total exactly
-      # once with the right total, and the results unchanged by it.
-      # Repeated 5x per path (threads rule: a single parallel run can pass
-      # by luck); the callback runs on worker threads, so it locks.
-      for parallel in (false, true), rep in 1:5
-        seen = Tuple{Int,Int}[]
-        seen_lock = ReentrantLock()
-        cb = (done, total) -> lock(() -> push!(seen, (done, total)), seen_lock)
-        with_progress = runContingencies!(net, cases; parallel_enabled = parallel, parallel_max_tasks = Threads.nthreads(), parallel_min_work_items = 2, progress = cb)
-        @test length(seen) == length(cases)
-        @test all(t -> t[2] == length(cases), seen)
-        @test sort!(first.(seen)) == collect(1:length(cases))
-        @test all(_contingency_results_equal(serial[i], with_progress[i]) for i in eachindex(serial))
-      end
-      # the base net is never mutated: same branch count, same voltages
-      @test length(net.branchVec) == before_branches
-      @test isequal([n._vm_pu for n in net.nodeVec], before_vm)
-      if Threads.nthreads() > 1
-        println("contingency parallel batch: RAN with ", Threads.nthreads(), " threads")
-      else
-        println("contingency parallel batch: fallback-only run (single-threaded test process); the threaded path runs in the --threads=4 battery")
-      end
-    end)() end
+    run_contingency_parallel_tests()
 
     @testset "islanding without reference is reported, not thrown" begin (function ()
       net = Net(name = "n1_island", baseMVA = 100.0)
@@ -326,10 +289,7 @@ function run_contingency_tests()
       end
       @test count(r -> r.converged, res_ds) == 3
 
-      # serial vs parallel identity holds for generator cases too
-      gs = runContingencies!(net, gcases; parallel_enabled = false)
-      gp = runContingencies!(net, gcases; parallel_enabled = true, parallel_max_tasks = 2, parallel_min_work_items = 2)
-      @test all(_contingency_results_equal(gs[i], gp[i]) for i in eachindex(gs))
+      # serial vs parallel identity for generator cases: run_contingency_parallel_tests
 
       # unknown generator element is reported, not thrown
       unk = runContingencies!(net, [ContingencyCase("NO_SUCH_GEN", :gen, "NO_SUCH_GEN")]; parallel_enabled = false)
@@ -474,6 +434,22 @@ function run_contingency_tests()
       @test !("Aux3WT_B2_B3_B4" in m.violations)
       @test !isempty(m.violations)
       @test m.vmin == minimum(star.nodeVec[k]._vm_pu for k in eachindex(star.nodeVec) if k != grp.star)
+
+      # a bus behind a closed link (C at B) is solved with its link group:
+      # in the ring no branch outage cuts it off, opening the link does;
+      # in the radial net the outage of A-B cuts off B and C together. The
+      # import types C Isolated (branches only), which hid C's load from
+      # every cut-off and counted C as cut off nowhere.
+      ring = link_group_net(; ring = true)
+      rres = runContingencies!(ring, vcat(generateN1Branches(ring), generateLinkOutages(ring)); parallel_enabled = false)
+      @test all(r -> r.converged, rres)
+      @test [(r.kind, r.shed_load_mw, r.error) for r in rres] == [(:branch, 0.0, nothing), (:branch, 0.0, nothing), (:branch, 0.0, nothing),
+                                                                  (:link, 5.0, "islanded: bus C cut off, 5.0 MW load disconnected; the remaining network solved")]
+      radial = link_group_net(; ring = false)
+      # branch order: A-B, A-D
+      @test [(r.shed_load_mw, r.error) for r in runContingencies!(radial, generateN1Branches(radial); parallel_enabled = false)] ==
+            [(15.0, "islanded: buses B, C cut off, 15.0 MW load disconnected; the remaining network solved"),
+             (20.0, "islanded: bus D cut off, 20.0 MW load disconnected; the remaining network solved")]
     end)() end
 
     @testset "overload reporting (#331 Phase 4)" begin (function ()
@@ -656,11 +632,8 @@ function run_contingency_tests()
       longer = runContingencies!(net, cases; rescue_ladder = [:warm, :dc, :flat])
       @test count(r -> r.converged, longer) >= count(r -> r.converged, base)
       @test all(base[i].converged ? _contingency_results_equal(base[i], longer[i]) : true for i in eachindex(base))
-
-      # serial vs parallel identity holds with a multi-stage ladder too
-      serial = runContingencies!(net, cases; rescue_ladder = [:warm, :dc], parallel_enabled = false)
-      par = runContingencies!(net, cases; rescue_ladder = [:warm, :dc], parallel_enabled = true, parallel_max_tasks = 2, parallel_min_work_items = 2)
-      @test all(_contingency_results_equal(serial[i], par[i]) for i in eachindex(serial))
+      # serial vs parallel identity with a multi-stage ladder:
+      # run_contingency_parallel_tests
     end)() end
 
     @testset "non-converged base case runs the solver rescue ladder (#331)" begin (function ()
@@ -770,6 +743,64 @@ function run_contingency_tests()
   end)() end
 end
 
+# The N-1 batch on worker threads against the serial batch.
+# run_contingency_tests runs it in the pf profile; the threads profile
+# (tools/run_gates.sh threads) repeats it with four threads.
+function run_contingency_parallel_tests()
+  @testset "sp_case14 full N-1: serial and parallel identical" begin (function ()
+    net = load_fixture_net("sp_case14")
+    before_branches = length(net.branchVec)
+    before_vm = [n._vm_pu for n in net.nodeVec]
+    cases = generateN1Branches(net)
+    serial = runContingencies!(net, cases; parallel_enabled = false)
+    @test length(serial) == length(cases)
+    # sp_case14 islands its load-only feeder on three N-1 outages by
+    # design (the demo fixture pins 14 of 17 converged)
+    @test count(r -> r.converged, serial) >= length(cases) - 3
+    for max_tasks in (1, Threads.nthreads())
+      par = runContingencies!(net, cases; parallel_enabled = true, parallel_max_tasks = max_tasks, parallel_min_work_items = 2)
+      @test all(_contingency_results_equal(serial[i], par[i]) for i in eachindex(serial))
+    end
+    # progress callback (Web UI N-1 counter): one call per
+    # finished outage, serial and parallel, each value of 1:total exactly
+    # once with the right total, and the results unchanged by it.
+    # Repeated 5x per path (threads rule: a single parallel run can pass
+    # by luck); the callback runs on worker threads, so it locks.
+    for parallel in (false, true), rep in 1:5
+      seen = Tuple{Int,Int}[]
+      seen_lock = ReentrantLock()
+      cb = (done, total) -> lock(() -> push!(seen, (done, total)), seen_lock)
+      with_progress = runContingencies!(net, cases; parallel_enabled = parallel, parallel_max_tasks = Threads.nthreads(), parallel_min_work_items = 2, progress = cb)
+      @test length(seen) == length(cases)
+      @test all(t -> t[2] == length(cases), seen)
+      @test sort!(first.(seen)) == collect(1:length(cases))
+      @test all(_contingency_results_equal(serial[i], with_progress[i]) for i in eachindex(serial))
+    end
+    # the base net is never mutated: same branch count, same voltages
+    @test length(net.branchVec) == before_branches
+    @test isequal([n._vm_pu for n in net.nodeVec], before_vm)
+    parallel_comparison_report("N-1 batch on sp_case14 (5 repeats with progress)")
+  end)() end
+
+  @testset "generator outages: serial and parallel identical" begin (function ()
+    net = load_fixture_net("sp_case14")
+    gcases = generateN1Generators(net)
+    gs = runContingencies!(net, gcases; parallel_enabled = false)
+    gp = runContingencies!(net, gcases; parallel_enabled = true, parallel_max_tasks = 2, parallel_min_work_items = 2)
+    @test all(_contingency_results_equal(gs[i], gp[i]) for i in eachindex(gs))
+    parallel_comparison_report("N-1 generator outages on sp_case14")
+  end)() end
+
+  @testset "multi-stage ladder: serial and parallel identical" begin (function ()
+    net = load_fixture_net("sp_case14")
+    cases = generateN1Branches(net)
+    serial = runContingencies!(net, cases; rescue_ladder = [:warm, :dc], parallel_enabled = false)
+    par = runContingencies!(net, cases; rescue_ladder = [:warm, :dc], parallel_enabled = true, parallel_max_tasks = 2, parallel_min_work_items = 2)
+    @test all(_contingency_results_equal(serial[i], par[i]) for i in eachindex(serial))
+    parallel_comparison_report("N-1 with ladder [:warm, :dc] on sp_case14")
+  end)() end
+end
+
 # Extended profile: a small N-1 identity slice on the real case1354pegase
 # on the shipped sp_case1354. Serial vs parallel
 # field equality on a branch subset with max_tasks = 1 and auto, plus a
@@ -791,5 +822,6 @@ function run_contingency_extended_tests()
     retried = runContingencies!(net, cases; parallel_enabled = true, parallel_min_work_items = 2, rescue_ladder = [:warm, :flat])
     @test all(!serial[i].converged || _contingency_results_equal(serial[i], retried[i]) for i in eachindex(serial))
     println("contingency extended case1354: RAN (", count(r -> r.converged, serial), "/60 converged, threads = ", Threads.nthreads(), ")")
+    parallel_comparison_report("N-1 slice of 60 outages on sp_case1354")
   end)() end
 end

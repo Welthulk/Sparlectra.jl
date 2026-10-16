@@ -1,3 +1,15 @@
+# Version 0.41.0 - 2026-10-16
+
+CGMES import corrections and solver fixes.
+## Fixed
+- CGMES import: tap tables, the impedance side of tapped windings, three-winding star points, equivalent branches, magnetizing admittance, `controlEnabled` and islands without a source or reference follow the delivery, so operational models solve to their state variables.
+- Solver and controllers: Q-limit clamps with Q(U) and P(U) controllers, the tap probe on networks with several islands, parallel settings in `run_control!`, slack power at closed links, isolated buses that were retyped after every solve, and the reported generator output of slack and PV buses with their own load.
+- N-1 and short circuit: closed switch groups count as one node, so load behind a switch is shed with its group and the short circuit includes sources on coupled sections; a placeholder rated power no longer makes a machine an ideal source.
+## Deprecated
+- `addACLine!` with `c_nf_per_km` reads the susceptance as per unit and warns; the call changes in 0.50.0.
+
+Breaking only for positional construction of `CGMESImportResult`. Additive fields and keywords, see the release notes.
+
 # Version 0.40.1 - 2026-10-13
 
 ## Fixed

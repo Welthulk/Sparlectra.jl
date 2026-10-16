@@ -23,7 +23,10 @@
 Typed short-circuit source data harvested during import.
 Each entry carries the CIM mRID, the object name and — where resolvable —
 the Sparlectra bus name. Values stay in CGMES units (Ω, S, A, pu on machine
-base); nothing is evaluated in Stage 1.
+base); nothing is evaluated in Stage 1. `importCGMES` keeps the records of
+the sources it mapped onto the network (`ExternalNetworkInjection`,
+`SynchronousMachine`, `EquivalentInjection`, `AsynchronousMachine`); a
+skipped one (terminal disconnected, out of service) feeds no fault current.
 """
 struct CGMESShortCircuitData
   external_network_injections::Vector{NamedTuple}
@@ -34,6 +37,10 @@ struct CGMESShortCircuitData
   asynchronous_machines::Vector{NamedTuple}
 end
 
+# one row of _svTapStepFits (cgmes_report.jl): a tap changer whose SvTapStep
+# fits the SV flows of its transformer clearly worse than another step
+const _SvTapFitRow = NamedTuple{(:transformer, :tap_changer, :sv_step, :best_step, :sv_mismatch_mva, :best_mismatch_mva),Tuple{String,String,Int,Int,Float64,Float64}}
+
 """
 Result of `importCGMES`: the `Net`, the merged `CGMESStore`, the bus-branch
 topology, the harvested short-circuit data, the selected slack bus and the
@@ -41,9 +48,43 @@ importer's skip/notice messages. `branch_side_of_terminal` (CGMES Terminal
 mRID → `(branchIdx, :from|:to)`) and `skipped_equipment` (mRIDs that were not
 mapped) provide the provenance `compareWithSV` needs for its `SvPowerFlow`
 comparison. `no_sv_buses` lists the created buses whose TopologicalNode has no
-usable `SvVoltage` — they carry the importer's `1.0 pu / 0°` fallback, which
-weakens any comparison against the delivery's SV state (fixed-reference
-self-check, `compareWithSV`).
+usable `SvVoltage` (none, or one with `v <= 0`); they start at the voltage
+of a neighbour with an SV voltage, or at `1.0 pu / 0°` where there is none,
+which weakens any comparison against the delivery's SV state
+(fixed-reference self-check, `compareWithSV`).
+`sv_tap_step_fits` lists the tap changers whose `SvPowerFlow` fits another
+step clearly better than their `SvTapStep` (transformer, tap changer, both
+steps and both mismatches in MVA); the import counts them in one notice.
+
+`element_by_mrid` maps the mRID of every CGMES object the importer turned
+into a network element to `(kind, index)`, recorded where the element is
+created:
+
+- `:branch`: `ACLineSegment`, `SeriesCompensator` (also a boundary line built
+  as a ratio branch), `EquivalentBranch` (across two voltage levels a branch
+  with ratio 1); index into `net.branchVec`.
+- `:transformer`: a two-winding `PowerTransformer` under its own mRID; a
+  three-winding one under the mRID of each `PowerTransformerEnd`, one star
+  leg each (the `PowerTransformer` mRID itself is not a key); index into
+  `net.branchVec`.
+- `:shunt`: `LinearShuntCompensator`, `NonlinearShuntCompensator`, and the
+  charging of a line whose two terminals sit on one TopologicalNode under
+  `"<line mRID>#charging"`; index into `net.shuntVec`.
+- `:load`: `EnergyConsumer`, `ConformLoad`, `NonConformLoad`,
+  `StationSupply`, `AsynchronousMachine`; index into `net.prosumpsVec`.
+- `:generator`: `SynchronousMachine`, `StaticVarCompensator`, and
+  `EnergySource` when `map_energy_source = true`; index into
+  `net.prosumpsVec`.
+- `:external_grid`: `ExternalNetworkInjection`, `EquivalentInjection`,
+  `VsConverter`, `CsConverter`; index into `net.prosumpsVec`.
+- `:link`: a closed switch between two buses; index into `net.linkVec`.
+- `:tap_controller`: a `RatioTapChanger` or phase tap changer that became a
+  controller (`tap_control = true`); index into `_tap_controllers(net)`.
+  A tap changer that joins another one's group as follower has no entry.
+
+Skipped objects have no entry; they are in `skipped_equipment`, which also
+holds every `EnergySource` of an import with `map_energy_source = false`.
+Buses are addressed by their TopologicalNode (`topo.bus_name`), not here.
 """
 struct CGMESImportResult
   net::Sparlectra.Net
@@ -55,6 +96,8 @@ struct CGMESImportResult
   branch_side_of_terminal::Dict{String,Tuple{Int,Symbol}}
   skipped_equipment::Set{String}
   no_sv_buses::Vector{String}
+  element_by_mrid::Dict{String,Tuple{Symbol,Int}}
+  sv_tap_step_fits::Vector{_SvTapFitRow}
 end
 
 # mutable importer bookkeeping threaded through the mapping helpers.
@@ -91,9 +134,26 @@ struct _MapCtx
   # GROUP; the first one becomes the master controller, later ones join as
   # followers instead of spawning a second, fighting controller
   tap_group_masters::Dict{String,Any}
+  # CGMES mRID -> (kind, index) of the element it became, filled where the
+  # element is created; becomes CGMESImportResult.element_by_mrid
+  element_by_mrid::Dict{String,Tuple{Symbol,Int}}
+  # TapChanger mRID -> the controller it became. The position in
+  # _tap_controllers(net) is read only once all controllers exist: a
+  # controller is appended to the FIRST transformer on its bus pair, so a
+  # later parallel unit can move the controllers created before it
+  tap_controller_by_mrid::Vector{Pair{String,Sparlectra.PowerTransformerControl}}
+  # cgmes_import.map_energy_source: EnergySource objects become PQ
+  # injections; off, they are counted and listed as not mapped
+  map_energy_source::Bool
+  # bus index of every three-winding star point, in creation order; its start
+  # voltage is set by _startStarBuses! once every branch exists
+  star_buses::Vector{Int}
+  # cgmes_import.equivalent_branch_min_z_pu: an EquivalentBranch below this
+  # impedance becomes a bus link instead of a branch
+  eb_min_z_pu::Float64
 end
-_MapCtx(tap_control::Bool = false, ignore_connected::Bool = false; machine_control::Bool = false, vset_min_pu::Float64 = CGMES_VSET_MIN_PU, vset_max_pu::Float64 = CGMES_VSET_MAX_PU, strict_guards::Bool = false) =
-  _MapCtx(String[], Dict{String,Tuple{Int,Symbol}}(), Set{String}(), tap_control, machine_control, ignore_connected, vset_min_pu, vset_max_pu, Dict{String,Dict{String,String}}(), NamedTuple[], Dict{Tuple{String,String},Int}(), strict_guards, Dict{String,Int}(), Dict{String,Any}())
+_MapCtx(tap_control::Bool = false, ignore_connected::Bool = false; machine_control::Bool = false, vset_min_pu::Float64 = CGMES_VSET_MIN_PU, vset_max_pu::Float64 = CGMES_VSET_MAX_PU, strict_guards::Bool = false, map_energy_source::Bool = false, eb_min_z_pu::Float64 = 1e-6) =
+  _MapCtx(String[], Dict{String,Tuple{Int,Symbol}}(), Set{String}(), tap_control, machine_control, ignore_connected, vset_min_pu, vset_max_pu, Dict{String,Dict{String,String}}(), NamedTuple[], Dict{Tuple{String,String},Int}(), strict_guards, Dict{String,Int}(), Dict{String,Any}(), Dict{String,Tuple{Symbol,Int}}(), Pair{String,Sparlectra.PowerTransformerControl}[], map_energy_source, Int[], eb_min_z_pu)
 
 # SSH `Terminal.connected` through the ctx switch: `ignore_connected = true`
 # treats everything as connected (diagnostic mode for snapshots whose SSH
@@ -134,11 +194,57 @@ end
 
 _tapStep(tc::CIMObject, svsteps::Dict{String,Float64}) = something(get(svsteps, tc.mrid, nothing), num(tc, :step), num(tc, :neutralStep, 0.0))
 
-function _ratioTapCorrection(rtc::CIMObject, svsteps::Dict{String,Float64})::Float64
-  step = _tapStep(rtc, svsteps)
+# linear step formula of a RatioTapChanger: 1 + (step - neutral) * increment
+function _ratioTapLinearCorrection(rtc::CIMObject, step::Float64)::Float64
   neutral = num(rtc, :neutralStep, 0.0)
   incr = num(rtc, :stepVoltageIncrement, 0.0)
   return 1.0 + (step - neutral) * incr / 100.0
+end
+
+# (step, ratio) points of the RatioTapChangerTable of `rtc`, sorted by step;
+# `nothing` when the changer references no table, empty when the table has
+# no point with both values
+function _ratioTapTable(store::CGMESStore, rtc::CIMObject)::Union{Nothing,Vector{Tuple{Float64,Float64}}}
+  tmrid = get(rtc.refs, :RatioTapChangerTable, nothing)
+  tmrid === nothing && return nothing
+  pts = Tuple{Float64,Float64}[]
+  for pt in objectsOf(store, :RatioTapChangerTablePoint)
+    get(pt.refs, :RatioTapChangerTable, "") == tmrid || continue
+    s = num(pt, :step)
+    r = num(pt, :ratio)
+    (s === nothing || r === nothing) && continue
+    push!(pts, (s, r))
+  end
+  sort!(pts; by = first)
+  return pts
+end
+
+# true when a point of the RatioTapChangerTable of `rtc` carries a non-zero
+# r, x, g or b percent correction (applied to the impedance by _tapTableImpedanceFactors)
+function _ratioTapTableHasImpedance(store::CGMESStore, rtc::CIMObject)::Bool
+  tmrid = get(rtc.refs, :RatioTapChangerTable, nothing)
+  tmrid === nothing && return false
+  for pt in objectsOf(store, :RatioTapChangerTablePoint)
+    get(pt.refs, :RatioTapChangerTable, "") == tmrid || continue
+    any(!iszero(something(num(pt, attr), 0.0)) for attr in (:r, :x, :g, :b)) && return true
+  end
+  return false
+end
+
+# Ratio correction of `rtc` at `step` and whether it came from the table.
+# A table that covers the step gives the ratio of its point: the table is the
+# source of truth, its values need not follow the linear formula and need
+# not be uniform. A fractional step (continuous SvTapStep) or a step without
+# its own point inside the table range is interpolated between the
+# neighbouring points. Without a table, or with a step outside it, the
+# linear formula applies.
+function _ratioTapCorrectionAt(rtc::CIMObject, table::Union{Nothing,Vector{Tuple{Float64,Float64}}}, step::Float64)::Tuple{Float64,Bool}
+  (table === nothing || isempty(table) || step < table[1][1] || step > table[end][1]) && return (_ratioTapLinearCorrection(rtc, step), false)
+  k = findfirst(p -> p[1] >= step, table)
+  s2, r2 = table[k]
+  s2 == step && return (r2, true)
+  s1, r1 = table[k - 1]
+  return (r1 + (r2 - r1) * (step - s1) / (s2 - s1), true)
 end
 
 """
@@ -146,8 +252,8 @@ Tabular phase-tap model of `ptc` (#294 point 2): build a `:tabular`
 `PhaseTapChangerModel` from the referenced `PhaseTapChangerTable` rows.
 Returns `(model, impedance_note)` or `nothing` when the table is
 unresolvable or empty. `impedance_note` flags rows with non-zero r/x/g/b
-percent corrections — those per-step impedance deviations are NOT folded
-into the branch in this stage (ratio and angle are).
+percent corrections; the model carries ratio and angle, the corrections of
+the step reach the branch through `_tapTableImpedanceFactors`.
 """
 function _phaseTapTableModel(store::CGMESStore, ptc::CIMObject, step::Int)
   tmrid = get(ptc.refs, :PhaseTapChangerTable, nothing)
@@ -223,6 +329,64 @@ function _phaseTapRatioShift(store::CGMESStore, ptc::CIMObject, svsteps::Dict{St
   return (res.effective_ratio, res.effective_shift_deg)
 end
 
+# The table point of a tabular tap changer at its step: the row of that
+# step, else (inconsistent SSH/SV data) the row nearest to it, the same
+# clamping `_phaseTapTableModel` applies. `nothing` without a table or rows.
+function _tapTablePointAtStep(store::CGMESStore, tc::CIMObject, step::Float64)::Union{Nothing,CIMObject}
+  tabkey, pointcls = tc.class == :RatioTapChanger ? (:RatioTapChangerTable, :RatioTapChangerTablePoint) : (:PhaseTapChangerTable, :PhaseTapChangerTablePoint)
+  tmrid = get(tc.refs, tabkey, nothing)
+  tmrid === nothing && return nothing
+  best = nothing
+  bestd = Inf
+  for pt in objectsOf(store, pointcls)
+    get(pt.refs, tabkey, "") == tmrid || continue
+    s = num(pt, :step)
+    s === nothing && continue
+    d = abs(s - step)
+    d < bestd && (best = pt; bestd = d)
+  end
+  return best
+end
+
+# Impedance factors of one tabular tap changer at `step`: a
+# RatioTapChangerTablePoint or PhaseTapChangerTablePoint gives r, x, g, b as
+# deviations in percent of the nominal value, so the factors are (1 + r/100)
+# on the series resistance, (1 + x/100) on the series reactance and the same
+# for the magnetizing g and b. (1, 1, 1, 1) without a table point.
+function _tapTablePointFactors(store::CGMESStore, tc::CIMObject, step::Float64)::NTuple{4,Float64}
+  pt = _tapTablePointAtStep(store, tc, step)
+  pt === nothing && return (1.0, 1.0, 1.0, 1.0)
+  return (1.0 + num(pt, :r, 0.0) / 100.0, 1.0 + num(pt, :x, 0.0) / 100.0, 1.0 + num(pt, :g, 0.0) / 100.0, 1.0 + num(pt, :b, 0.0) / 100.0)
+end
+
+# Whether the tap correction of `tc` at its step lies in the plausibility
+# band; outside it `_applyEndTaps` ignores the changer, and so do the
+# impedance factors.
+function _tapTableChangerApplies(store::CGMESStore, svsteps::Dict{String,Float64}, tc::CIMObject)::Bool
+  tc.class in (:RatioTapChanger, :PhaseTapChangerTabular) || return false
+  corr = tc.class == :RatioTapChanger ? first(_ratioTapCorrectionAt(tc, _ratioTapTable(store, tc), _tapStep(tc, svsteps))) : first(_phaseTapRatioShift(store, tc, svsteps))
+  return CGMES_TAP_CORR_MIN <= corr <= CGMES_TAP_CORR_MAX
+end
+
+# Impedance factors of the tap changers on end `e` at their step. Without
+# tap_control the step is the solved SvTapStep, with tap_control the SSH
+# start step; a controller that moves the step then sets the impedance of
+# the new step through the branch's TapStepImpedance
+# (`_attachTapStepImpedance!`). Returns `(r, x, g, b)`, all 1.0 without
+# table points.
+function _tapTableImpedanceFactors(store::CGMESStore, svsteps::Dict{String,Float64}, e::CIMObject)::NTuple{4,Float64}
+  fr, fx, fg, fb = 1.0, 1.0, 1.0, 1.0
+  for tc in _tapChangersOfEnd(store, e.mrid)
+    _tapTableChangerApplies(store, svsteps, tc) || continue
+    f = _tapTablePointFactors(store, tc, _tapStep(tc, svsteps))
+    fr *= f[1]
+    fx *= f[2]
+    fg *= f[3]
+    fb *= f[4]
+  end
+  return (fr, fx, fg, fb)
+end
+
 # --- Stage-2 tap control (importCGMES(..., tap_control = true)) -------------
 #
 # With `tap_control = true` the importer starts from the SSH tap positions
@@ -231,11 +395,82 @@ end
 # `enabled` flag are set. The reference SvTapStep positions are then found by
 # the control loop (run via `run_sparlectra`), not copied from SV.
 
-"""Branch tap-range fields and controller for one controlled transformer end."""
-function _attachTapControl!(net, store::CGMESStore, topo::CGMESTopology, ctx::_MapCtx, svsteps::Dict{String,Float64}, e::CIMObject, branch_idx::Int, on_from_side::Bool, trafo_name::String)
-  # loop-invariant: branch_idx is a function argument, resolve it once
+# addPowerTransformerControl! returns the net, not the controller: the new
+# controller is the one entry of _tap_controllers(net) that `before` lacks.
+# Its position is resolved at the end of importCGMES (see _MapCtx).
+function _recordNewTapController!(ctx::_MapCtx, net, before::Vector{Sparlectra.PowerTransformerControl}, tc_mrid::String)
+  known = IdDict{Sparlectra.PowerTransformerControl,Nothing}(c => nothing for c in before)
+  for c in Sparlectra._tap_controllers(net)
+    haskey(known, c) || push!(ctx.tap_controller_by_mrid, tc_mrid => c)
+  end
+  return nothing
+end
+
+# A controller moves the ratio or the angle of its branch; the r/x/g/b
+# deviations of a tap table belong to the step. For every controlled
+# tabular changer (`controlled`: changer and whether it sits at the branch
+# from side) the branch gets a TapStepImpedance: the branch values without
+# the factors of these changers at their start step, and per step the
+# value the controller's actuator takes there with the factors of that
+# step. The tap controller applies it after each move. A second controlled
+# table on the same actuator cannot be told apart by the branch value; its
+# impedance stays at the start step, with a notice.
+function _attachTapStepImpedance!(net, store::CGMESStore, svsteps::Dict{String,Float64}, ctx::_MapCtx, branch_idx::Int, controlled::Vector{Tuple{CIMObject,Bool}}, trafo_name::AbstractString)
+  isempty(controlled) && return nothing
   br_pos = findfirst(b -> b.branchIdx == branch_idx, net.branchVec)
   br_pos === nothing && return nothing
+  br = net.branchVec[br_pos]
+  ratio_values, ratio_factors = Float64[], NTuple{4,Float64}[]
+  phase_values, phase_factors = Float64[], NTuple{4,Float64}[]
+  f0 = (1.0, 1.0, 1.0, 1.0)
+  for (tc, on_from_side) in controlled
+    _tapTableChangerApplies(store, svsteps, tc) || continue
+    low = Int(round(num(tc, :lowStep, 0.0)))
+    high = Int(round(num(tc, :highStep, 0.0)))
+    steps = low:high
+    facs = [_tapTablePointFactors(store, tc, Float64(s)) for s in steps]
+    all(f -> f == (1.0, 1.0, 1.0, 1.0), facs) && continue
+    ratio = tc.class == :RatioTapChanger
+    name = something(str(tc, :name), tc.mrid)
+    if !isempty(ratio ? ratio_values : phase_values)
+      push!(ctx.messages, "notice: tap controller $(trafo_name)/$(name), a second table on the same branch; its r/x/g/b deviations stay at the start step")
+      continue
+    end
+    start = _tapTablePointFactors(store, tc, _tapStep(tc, svsteps))
+    any(iszero, start) && (push!(ctx.messages, "notice: tap controller $(trafo_name)/$(name), the table point of the start step removes the impedance; its r/x/g/b deviations stay at the start step"); continue)
+    f0 = f0 .* start
+    if ratio
+      # the branch tap_ratio holds the end correction at the from side as a
+      # factor, at the to side as a divisor (see _attachTapControl!). The
+      # corrections come from the RatioTapChangerTable where there is one,
+      # like the ratios the controller steps to (tap_ratio_points)
+      table = _ratioTapTable(store, tc)
+      corr0 = first(_ratioTapCorrectionAt(tc, table, _tapStep(tc, svsteps)))
+      vals = [(c = first(_ratioTapCorrectionAt(tc, table, Float64(s))); on_from_side ? br.tap_ratio / corr0 * c : br.tap_ratio * corr0 / c) for s in steps]
+      append!(ratio_values, vals)
+      append!(ratio_factors, facs)
+    else
+      ps0 = last(_phaseTapRatioShift(store, tc, svsteps))
+      vals = [(ps = last(_phaseTapRatioShift_atstep(store, tc, s)); on_from_side ? br.phase_shift_deg - ps0 + ps : br.phase_shift_deg + ps0 - ps) for s in steps]
+      append!(phase_values, vals)
+      append!(phase_factors, facs)
+    end
+  end
+  (isempty(ratio_values) && isempty(phase_values)) && return nothing
+  br.tap_step_impedance = Sparlectra.TapStepImpedance(br.r_pu / f0[1], br.x_pu / f0[2], br.g_from_pu / f0[3], br.b_from_pu / f0[4], br.g_to_pu / f0[3], br.b_to_pu / f0[4], ratio_values, ratio_factors, phase_values, phase_factors)
+  return nothing
+end
+
+"""
+Branch tap-range fields and controller for one controlled transformer end.
+Returns the tap changers that got a controller or joined a controller
+group, each with `on_from_side`.
+"""
+function _attachTapControl!(net, store::CGMESStore, topo::CGMESTopology, ctx::_MapCtx, svsteps::Dict{String,Float64}, e::CIMObject, branch_idx::Int, on_from_side::Bool, trafo_name::String)::Vector{Tuple{CIMObject,Bool}}
+  attached = Tuple{CIMObject,Bool}[]
+  # loop-invariant: branch_idx is a function argument, resolve it once
+  br_pos = findfirst(b -> b.branchIdx == branch_idx, net.branchVec)
+  br_pos === nothing && return attached
   for tc in _tapChangersOfEnd(store, e.mrid)
     something(boolval(tc, :controlEnabled), false) || continue
     tcc = ref(store, tc, :TapChangerControl)
@@ -245,22 +480,30 @@ function _attachTapControl!(net, store::CGMESStore, topo::CGMESTopology, ctx::_M
     br = net.branchVec[br_pos]
     low = Int(round(num(tc, :lowStep, 0.0)))
     high = Int(round(num(tc, :highStep, 0.0)))
-    neutral = Int(round(num(tc, :neutralStep, 0.0)))
     name = something(str(tc, :name), tc.mrid)
 
     if tc.class == :RatioTapChanger && endswith(mode, ".voltage")
       # translate step range into branch tap-ratio limits around the branch's
-      # nominal ratio (current ratio with the initial correction removed)
-      corr0 = _ratioTapCorrection(tc, svsteps)
+      # nominal ratio (current ratio with the initial correction removed).
+      # The corrections come from the same helper as the fixed-tap import,
+      # so a RatioTapChangerTable sets the start ratio, the range and the
+      # step as well.
+      table = _ratioTapTable(store, tc)
+      corr0, _ = _ratioTapCorrectionAt(tc, table, _tapStep(tc, svsteps))
       rho_nom = on_from_side ? br.tap_ratio / corr0 : br.tap_ratio * corr0
-      corr_low = 1.0 + (low - neutral) * num(tc, :stepVoltageIncrement, 0.0) / 100.0
-      corr_high = 1.0 + (high - neutral) * num(tc, :stepVoltageIncrement, 0.0) / 100.0
-      r1 = on_from_side ? rho_nom * corr_low : rho_nom / corr_high
-      r2 = on_from_side ? rho_nom * corr_high : rho_nom / corr_low
+      ratios = Float64[(c = first(_ratioTapCorrectionAt(tc, table, Float64(k))); on_from_side ? rho_nom * c : rho_nom / c) for k in min(low, high):max(low, high)]
       br.has_ratio_tap = true
-      br.tap_min = min(r1, r2)
-      br.tap_max = max(r1, r2)
-      br.tap_step = abs(rho_nom * num(tc, :stepVoltageIncrement, 0.0) / 100.0)
+      br.tap_min = minimum(ratios)
+      br.tap_max = maximum(ratios)
+      # the linear formula keeps its uniform increment; a table hands the
+      # controller its ratio per step (tap_ratio_points), tap_step is then
+      # the mean step over the range (probe size, report)
+      if table === nothing || isempty(table)
+        br.tap_step = abs(rho_nom * num(tc, :stepVoltageIncrement, 0.0) / 100.0)
+      else
+        br.tap_step = high != low ? (br.tap_max - br.tap_min) / abs(high - low) : 0.0
+        br.tap_ratio_points = sort!(unique(ratios))
+      end
       # master/slave group dedup (#322): several tap changers referencing
       # ONE TapChangerControl are a regulated parallel-transformer group.
       # The first one becomes the master controller; every later one joins
@@ -272,6 +515,7 @@ function _attachTapControl!(net, store::CGMESStore, topo::CGMESTopology, ctx::_M
         master = ctx.tap_group_masters[tcc.mrid]
         push!(master.followers, string(branch_idx))
         push!(ctx.messages, "tap control: $(trafo_name)/$(name) follows the group of $(master.trafo) (shared TapChangerControl)")
+        push!(attached, (tc, on_from_side))
         continue
       end
       # regulated bus from the TapChangerControl terminal
@@ -280,6 +524,7 @@ function _attachTapControl!(net, store::CGMESStore, topo::CGMESTopology, ctx::_M
       target = num(tcc, :targetValue, 0.0)
       target <= 0.0 && (push!(ctx.messages, "notice: tap controller $(name) — no positive voltage target, skipped"); continue)
       deadband = num(tcc, :targetDeadband, 0.0)
+      before = Sparlectra._tap_controllers(net)
       Sparlectra.addPowerTransformerControl!(
         net;
         trafo = string(branch_idx),
@@ -290,6 +535,8 @@ function _attachTapControl!(net, store::CGMESStore, topo::CGMESTopology, ctx::_M
         control_ratio = true,
         control_phase = false,
       )
+      _recordNewTapController!(ctx, net, before, tc.mrid)
+      push!(attached, (tc, on_from_side))
       # remember the master by its unambiguous trafo id (one voltage
       # controller per imported transformer)
       for c in Sparlectra._tap_controllers(net)
@@ -322,6 +569,7 @@ function _attachTapControl!(net, store::CGMESStore, topo::CGMESTopology, ctx::_M
       target = num(tcc, :targetValue, 0.0)
       (side !== nothing && side[2] == :to) && (target = -target)
       deadband = max(num(tcc, :targetDeadband, 1.0), 0.5)
+      before = Sparlectra._tap_controllers(net)
       Sparlectra.addPowerTransformerControl!(
         net;
         trafo = string(branch_idx),
@@ -332,12 +580,14 @@ function _attachTapControl!(net, store::CGMESStore, topo::CGMESTopology, ctx::_M
         control_ratio = false,
         control_phase = true,
       )
+      _recordNewTapController!(ctx, net, before, tc.mrid)
+      push!(attached, (tc, on_from_side))
       push!(ctx.messages, "tap control: $(trafo_name)/$(name) → active power $(target) MW on $(target_branch[1]) → $(target_branch[2])")
     else
       push!(ctx.messages, "notice: tap controller $(name) — unsupported combination $(tc.class)/$(mode), skipped")
     end
   end
-  return nothing
+  return attached
 end
 
 """Phase-tap (ratio, shift) of `ptc` evaluated at an explicit step."""
@@ -345,6 +595,25 @@ function _phaseTapRatioShift_atstep(store::CGMESStore, ptc::CIMObject, step::Int
   fake = Dict{String,Float64}(ptc.mrid => Float64(step))
   return _phaseTapRatioShift(store, ptc, fake)
 end
+
+# Whether a prosumer energizes its component. A source is a generator-type
+# unit (`isGenerator`, i.e. `proSumptionType == Injection`) that either
+# injects active power (`pVal > 0`, generator sign) or holds a voltage
+# (`isRegulating`: `isRegulated`, or one of `vset_adjust`, `vstep_pu`,
+# `tap_steps_down`, `tap_steps_up`). The slack unit is covered by the second
+# test, the importer marks it `isRegulated`. Loads never count, and neither
+# does a unit without regulation that has P = 0 or draws power (`pVal < 0`):
+# real deliveries carry boundary fragments whose only units are
+# EquivalentInjections with P = 0 or drawing power, and counting them kept
+# those fragments energized without anything that could feed their load or
+# hold their voltage. A machine whose regulation targets a remote bus
+# (`machine_control = true`) is not `isRegulated` at its own bus;
+# `_deEnergizeSourcelessComponents!` counts it through its control plan.
+_isCGMESSource(ps)::Bool = Sparlectra.isGenerator(ps) && (something(ps.pVal, 0.0) > 0.0 || Sparlectra.isRegulating(ps))
+
+# Suffix of the de-energizing notices for the P that loads fed into a
+# de-energized component (load sign P < 0), empty when there is none.
+_droppedLoadInfeed(p::Float64)::String = p > 0.0 ? ", load infeed P = $(round(p; digits = 2)) MW dropped" : ""
 
 # Real deliveries contain connected component(s) without any source: every
 # generator/injection in them is switched off, or the feeding branches are
@@ -362,8 +631,19 @@ no generation and no reference — an unsolvable subsystem that would fail the
 power flow for a reason that has nothing to do with the interesting network.
 
 The pass therefore zeroes the injections, opens the branches and marks the
-buses `Isolated`. This changes the imported model, so every affected component
-is reported.
+buses `Isolated` (`markIsolatedBuses!` later sets their voltage to 0). This
+changes the imported model, so every affected component is reported, and one
+notice counts the components, their buses and the load left unsupplied.
+
+A source is a generator-type unit with P > 0 (generator sign) or with voltage
+regulation (`_isCGMESSource`). Voltage regulation includes a machine that
+regulates a remote bus of the same component with `machine_control = true`.
+A unit without regulation that has P = 0 or draws power (P < 0) does not keep
+a component energized, so a component whose units only draw power is
+de-energized as well. A load is never a source, also not one that feeds power
+in (P < 0 in load sign). The unsupplied P of a component is the P its loads
+consume plus the P its drawing units drew; the P that feeding loads put in is
+reported as dropped load infeed and not netted against it.
 
 Connectivity is evaluated over in-service branches AND closed links — the
 electrical view, since a component fed through a closed switch is energized.
@@ -389,9 +669,9 @@ function _deEnergizeSourcelessComponents!(net, ctx::_MapCtx)
     l.status == 1 && unite(Int(l.fromBus), Int(l.toBus))
   end
 
-  # Group buses by component root and record whether any source sits inside.
-  # "Source" means generator-like (machines, external network injections) --
-  # loads do not energize anything.
+  # Group buses by component root and record whether any source sits inside
+  # (_isCGMESSource: P > 0 or voltage regulation; loads and drawing units do
+  # not energize anything).
   has_source = Dict{Int,Bool}()
   members = Dict{Int,Vector{Int}}()
   for i = 1:n
@@ -400,11 +680,26 @@ function _deEnergizeSourcelessComponents!(net, ctx::_MapCtx)
     haskey(has_source, r) || (has_source[r] = false)
   end
   for ps in net.prosumpsVec
-    Sparlectra.isGenerator(ps.proSumptionType) || continue
+    _isCGMESSource(ps) || continue
     has_source[find(ps.comp.cFrom_bus)] = true
   end
+  # A machine that regulates a remote bus (machine_control = true) is not
+  # isRegulated at its own bus, so _isCGMESSource sees only its P. Its
+  # voltage regulation counts all the same, when the target bus lies in the
+  # machine's own component; a target elsewhere holds nothing here.
+  for plan in ctx.machine_ctrl_plans
+    t = get(net.busDict, plan.target_bus, nothing)
+    o = Int(net.prosumpsVec[plan.prosumer_idx].comp.cFrom_bus)
+    t !== nothing && find(t) == find(o) && (has_source[find(o)] = true)
+  end
 
-  for (r, buses) in members
+  n_comp = 0
+  n_bus = 0
+  p_unsupplied = 0.0
+  p_dropped = 0.0
+  # sorted by root (the smallest bus index of the component), so the
+  # messages come in the same order on every run
+  for (r, buses) in sort!(collect(members); by = first)
     has_source[r] && continue
     # A single bus with nothing attached is a harmless leftover (open bay,
     # unconnected boundary node) -- skip it silently instead of drowning the
@@ -415,8 +710,20 @@ function _deEnergizeSourcelessComponents!(net, ctx::_MapCtx)
     # Zero the injections rather than deleting the prosumers: the components
     # stay visible in reports, they just no longer contribute to the balance.
     nload = 0
+    p_load = 0.0
+    p_fed = 0.0
     for ps in net.prosumpsVec
       ps.comp.cFrom_bus in busset || continue
+      # unsupplied: what a load consumes, and what a generator-type unit drew
+      # (pVal <= 0 here, a unit with pVal > 0 is a source). A load that feeds
+      # in (pVal < 0) is kept apart: netting it against the drawn power would
+      # report a smaller or even negative unsupplied load.
+      p = something(ps.pVal, 0.0)
+      if Sparlectra.isGenerator(ps)
+        p_load -= p
+      else
+        p >= 0.0 ? (p_load += p) : (p_fed -= p)
+      end
       ps.pVal = 0.0
       ps.qVal = 0.0
       nload += 1
@@ -432,8 +739,13 @@ function _deEnergizeSourcelessComponents!(net, ctx::_MapCtx)
       Sparlectra.setNodeType!(net.nodeVec[i], "Isolated")
       push!(net.isoNodes, i)
     end
-    push!(ctx.messages, "notice: de-energized a component of $(length(buses)) bus(es) around $(net.nodeVec[first(buses)].comp.cName) — no source (slack/generator) inside; $(nload) injection(s) zeroed")
+    push!(ctx.messages, "notice: de-energized a component of $(length(buses)) bus(es) around $(net.nodeVec[first(buses)].comp.cName): no source inside (no unit with P > 0 or voltage regulation); $(nload) injection(s) zeroed, load P = $(round(p_load; digits = 2)) MW unsupplied$(_droppedLoadInfeed(p_fed))")
+    n_comp += 1
+    n_bus += length(buses)
+    p_unsupplied += p_load
+    p_dropped += p_fed
   end
+  n_comp > 0 && push!(ctx.messages, "notice: $(n_comp) component(s) without source de-energized: $(n_bus) bus(es), load P = $(round(p_unsupplied; digits = 2)) MW unsupplied$(_droppedLoadInfeed(p_dropped))")
   isempty(net.isoNodes) || sort!(unique!(net.isoNodes))
   return nothing
 end
@@ -512,7 +824,11 @@ end
 function _applyEndTaps(store::CGMESStore, svsteps::Dict{String,Float64}, e::CIMObject, ratio::Float64, shift::Float64, on_from_side::Bool, messages::Vector{String}; strict::Bool = false)::Tuple{Float64,Float64}
   for tc in _tapChangersOfEnd(store, e.mrid)
     if tc.class == :RatioTapChanger
-      corr = _ratioTapCorrection(tc, svsteps)
+      table = _ratioTapTable(store, tc)
+      step = _tapStep(tc, svsteps)
+      corr, from_table = _ratioTapCorrectionAt(tc, table, step)
+      (table === nothing || from_table) || push!(messages, "notice: RatioTapChanger $(something(str(tc, :name), tc.mrid)): RatioTapChangerTable does not cover step $(step), linear step formula used")
+      _ratioTapTableHasImpedance(store, tc) && push!(messages, "notice: RatioTapChanger $(something(str(tc, :name), tc.mrid)): RatioTapChangerTable carries per-step r/x/g/b corrections, the point of the step applies to the impedance")
       _tapCorrPlausible("RatioTapChanger", tc, corr, messages; strict = strict) || continue
       ratio = on_from_side ? ratio * corr : ratio / corr
     else
@@ -523,7 +839,7 @@ function _applyEndTaps(store::CGMESStore, svsteps::Dict{String,Float64}, e::CIMO
           continue
         end
         row = Sparlectra.calcPhaseTapTable(built.model)
-        push!(messages, "tabular phase tap $(something(str(tc, :name), tc.mrid)): step $(built.model.step) → ratio $(round(row.effective_ratio; digits = 5)), shift $(round(row.effective_shift_deg; digits = 3))°$(built.impedance_note ? " (per-step r/x/g/b corrections present, not applied)" : "")")
+        push!(messages, "tabular phase tap $(something(str(tc, :name), tc.mrid)): step $(built.model.step) → ratio $(round(row.effective_ratio; digits = 5)), shift $(round(row.effective_shift_deg; digits = 3))°$(built.impedance_note ? " (table with r/x/g/b corrections, the row of the step applies to the impedance)" : "")")
       end
       pratio, pshift = _phaseTapRatioShift(store, tc, svsteps)
       _tapCorrPlausible(String(tc.class), tc, pratio, messages; strict = strict) || continue
@@ -546,6 +862,13 @@ end
 
 # --- bus creation (lazy: only TNs referenced by mapped equipment) -----------
 
+# An SvVoltage with v <= 0 is left out, so the node counts as one without SV:
+# _ensureBus! gives it the 1.0 pu / 0° start (later replaced by the start of
+# a neighbour, _startNoSvBusesFromNeighbours!), the three-winding star start
+# does not take it, and it lands in no_sv_buses. compareWithSV and the
+# measurement table skip such entries in the same way. Real deliveries carry
+# energized nodes with v = 0 in the SV; taken as given, they started the
+# solve at zero voltage.
 function _svVoltageByTN(store::CGMESStore)::Dict{String,Tuple{Float64,Float64}}
   out = Dict{String,Tuple{Float64,Float64}}()
   for sv in objectsOf(store, :SvVoltage)
@@ -553,7 +876,7 @@ function _svVoltageByTN(store::CGMESStore)::Dict{String,Tuple{Float64,Float64}}
     tn === nothing && continue
     v = num(sv, :v)
     a = num(sv, :angle, 0.0)
-    v === nothing && continue
+    (v === nothing || v <= 0.0) && continue
     out[tn] = (v, a)
   end
   return out
@@ -693,7 +1016,8 @@ function _mapSwitches!(net, store, topo, created, svmap, ctx::_MapCtx)
       end
       b1 = _ensureBus!(net, created, topo, svmap, t1.tn)
       b2 = _ensureBus!(net, created, topo, svmap, t2.tn)
-      Sparlectra.addLink!(net = net, fromBus = b1, toBus = b2, status = 1)
+      lidx = Sparlectra.addLink!(net = net, fromBus = b1, toBus = b2, status = 1)
+      ctx.element_by_mrid[sw.mrid] = (:link, lidx)
       # identity capture: the link re-exports as a closed Breaker with the
       # original switch mRID
       k = cgmesNextBusEquipmentIndex!(ctx.eqp_counters, "LNK", _cgmesTrafoPairKey(b1, b2))
@@ -796,6 +1120,9 @@ function _mapLines!(net, store, topo, created, svmap, baseMVA, ctx::_MapCtx)
           b_full = num(line, :bch, 0.0)
           if g_full != 0.0 || b_full != 0.0
             Sparlectra.addShuntMatpower!(net = net, busName = b1, Gs = g_full * t2.vn_kV^2, Bs = b_full * t2.vn_kV^2)
+            # the line itself builds no element; its charging is addressed
+            # under a derived key
+            ctx.element_by_mrid[string(line.mrid, "#charging")] = (:shunt, length(net.shuntVec))
           end
         end
         push!(ctx.messages, "notice: $(cls) $(name) connects bus $(b1) to itself (both terminals on one topological node) — no branch created, charging kept as shunt")
@@ -822,6 +1149,7 @@ function _mapLines!(net, store, topo, created, svmap, baseMVA, ctx::_MapCtx)
       r_pu, x_pu, b_pu, g_pu = pu.r_pu, pu.x_pu, pu.b_pu, pu.g_pu
       if pu.ratio === nothing
         Sparlectra.addPIModelACLine!(net = net, fromBus = b1, toBus = b2, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, g_pu = g_pu, status = status, from_status = c1 ? 1 : 0, to_status = c2 ? 1 : 0)
+        ctx.element_by_mrid[line.mrid] = (:branch, length(net.branchVec))
         _recordBranchTerminals!(ctx, net, topo, line)
         # Identity capture (line + its two terminals) for a later CGMES
         # export. Terminal keys use the equipment sequence (T1 = from side),
@@ -843,6 +1171,8 @@ function _mapLines!(net, store, topo, created, svmap, baseMVA, ctx::_MapCtx)
         from = Sparlectra.geNetBusIdx(net = net, busName = b1)
         to = Sparlectra.geNetBusIdx(net = net, busName = b2)
         Sparlectra._addPIModelTrafo_by_idx!(net = net, from = from, to = to, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, g_pu = g_pu, status = status, ratio = ratio, shift_deg = 0.0, from_status = c1 ? 1 : 0, to_status = c2 ? 1 : 0)
+        # still a line in CGMES terms, so a branch, not a transformer
+        ctx.element_by_mrid[line.mrid] = (:branch, length(net.branchVec))
         _recordBranchTerminals!(ctx, net, topo, line)
         # the ratio branch counts as a transformer branch on this bus pair —
         # consume the PT counter (no capture: the source object is a line)
@@ -852,6 +1182,181 @@ function _mapLines!(net, store, topo, created, svmap, baseMVA, ctx::_MapCtx)
       end
     end
   end
+  # the equivalent branches continue this counter (_mapEquivalentBranches!)
+  return acl_parallel
+end
+
+# Phase stamp of a non-reciprocal EquivalentBranch (z12 from terminal 1, z21
+# from terminal 2, per unit on one base) on the branch model of
+# calcAdmittance: |t| = 1, phi = arg(z21/z12)/2 and the series admittance
+# ys = c e^{-j phi} with c = sqrt(|z12|/|z21|)/z12, so |zs| is the geometric
+# mean sqrt(|z12| |z21|) and zs has the angle of z12 e^{j phi}. The arms
+# y0f = c (1 - e^{-j phi}) and y0t = c e^{-j phi} (e^{-j phi} - 1) make both
+# row sums of the two-port zero: Y11 = -Y12 = c, Y22 = -Y21 = c e^{-2j phi}.
+# For |z21| = |z12| that is the two-port I1 = (V1 - V2)/z12,
+# I2 = (V2 - V1)/z21 exactly. A branch always has |Y12| = |Y21|, so
+# otherwise every entry is off in magnitude by sqrt(|z21|/|z12|) or its
+# inverse. With zero row sums that error acts on V1 - V2, of the order
+# |V1 - V2| delta / (2 |z|) per terminal with delta = ||z21|/|z12| - 1|.
+# Putting the whole error on Y21 alone (Y11, Y12, Y22 exact) acts on V1
+# instead and is of the order of the short-circuit current.
+# _ebFromPhaseStamp is the inverse; it gives back z12 and z21 with the same
+# geometric mean of the magnitudes, their ratio is not in the branch. The
+# delivered values stay in net.equivalent_branch_metadata for the export.
+function _ebPhaseStamp(z12::ComplexF64, z21::ComplexF64)
+  phi = angle(z21 / z12) / 2
+  c = sqrt(abs(z12) / abs(z21)) / z12
+  return (phi = phi, zs = cis(phi) / c, y0f = c * (1 - cis(-phi)), y0t = c * cis(-phi) * (cis(-phi) - 1))
+end
+
+# z12 and z21 back from a stamped branch (shift phi in rad, series zs, arms
+# y0f and y0t), both with the magnitude sqrt(|z12| |z21|); `nothing` when the
+# arms do not fit the stamp of zs and phi, so the branch is no stamped
+# EquivalentBranch (any more)
+function _ebFromPhaseStamp(phi::Float64, zs::ComplexF64, y0f::ComplexF64, y0t::ComplexF64)
+  iszero(zs) && return nothing
+  c = cis(phi) / zs
+  tol = 1e-9 * abs(c)
+  abs(y0f - c * (1 - cis(-phi))) <= tol || return nothing
+  abs(y0t - c * cis(-phi) * (cis(-phi) - 1)) <= tol || return nothing
+  return (z12 = 1 / c, z21 = cis(2 * phi) / c)
+end
+
+# EquivalentBranch: the series impedance of an equivalent network between two
+# terminals, r and x in ohm, no charging. Unmapped, the buses of the
+# equivalent network that hang on such branches alone end up isolated and
+# the solve runs on another network than the delivery's SV state.
+# - Mapped only with both terminals connected and the object in service;
+#   otherwise it goes to ctx.skipped like any other skipped equipment.
+# - Both terminals on one TopologicalNode: no element, one notice each.
+# - Same nominal voltage at both terminals: a pi branch without charging, r
+#   and x on that voltage base.
+# - Different nominal voltages: a branch with per-unit ratio 1 and the
+#   impedance on the base of terminal 1, which is what the SvPowerFlow of
+#   such objects in real deliveries matches. The boundary-line rule of
+#   _mapLines! (ratio vn2/vn1, impedance on the terminal-2 base) misses those
+#   flows by an order of magnitude.
+# - r21 and x21 (the impedance seen from terminal 2) are optional in CGMES and
+#   equal to r and x when absent. With other values the object is the
+#   two-port I1 = (V1 - V2)/z12, I2 = (V2 - V1)/z21, which fits the
+#   SvPowerFlow of real deliveries best. It is built as a transformer branch
+#   with the phase stamp of _ebPhaseStamp on both level kinds: exact for
+#   |z21| = |z12|, otherwise built with the geometric mean of the two
+#   magnitudes, which the notice counts per branch.
+# Identity capture: a line continues the line counter of its bus pair
+# (`acl_parallel` from _mapLines!) under `EQB|<busA>|<busB>|<k>`, a
+# transformer branch (across levels or stamped) the transformer counter under
+# `EQBT|<busA>|<busB>|<k>`, so the exporter, which walks the lines and the
+# transformer branches in the same order, finds the key and writes the
+# branch back as EquivalentBranch.
+function _mapEquivalentBranches!(net, store, topo, created, svmap, baseMVA, ctx::_MapCtx, acl_parallel::Dict{Tuple{String,String},Int})
+  ebs = collect(CIMObject, objectsOf(store, :EquivalentBranch))
+  isempty(ebs) && return nothing
+  n_same = 0
+  n_cross = 0
+  n_loop = 0
+  n_open = 0
+  n_noterm = 0
+  n_link = 0
+  n_stamp = 0
+  n_mag = 0
+  max_mag = 0.0
+  n_asym_zero = 0
+  for eb in ebs
+    t1 = busOfEquipment(topo, eb, 1)
+    t2 = busOfEquipment(topo, eb, 2)
+    name = something(str(eb, :name), eb.mrid)
+    if t1 === nothing || t2 === nothing
+      push!(ctx.messages, "skip: EquivalentBranch $(name), terminal without TopologicalNode")
+      push!(ctx.skipped, eb.mrid)
+      n_noterm += 1
+      continue
+    end
+    if t1.tn == t2.tn
+      push!(ctx.messages, "notice: EquivalentBranch $(name) connects bus $(t1.bus) to itself (both terminals on one topological node), no branch created")
+      push!(ctx.skipped, eb.mrid)
+      n_loop += 1
+      continue
+    end
+    if !(_inService(ctx, eb) && _conn(ctx, t1.connected) && _conn(ctx, t2.connected))
+      push!(ctx.skipped, eb.mrid)
+      n_open += 1
+      continue
+    end
+    r = num(eb, :r, 0.0)
+    x = num(eb, :x, 0.0)
+    z12 = complex(r, x)
+    z21 = complex(something(num(eb, :r21), r), something(num(eb, :x21), x))
+    # an impedance below cgmes_import.equivalent_branch_min_z_pu (both
+    # directions, per unit on the base of terminal 1) builds no branch: the
+    # two buses are joined as a link, like a closed switch. The link takes
+    # the next LNK counter of its pair without capture, so the switches the
+    # export walks after it keep their keys.
+    zb1 = t1.vn_kV^2 / baseMVA
+    if max(abs(z12), abs(z21)) / zb1 < ctx.eb_min_z_pu
+      b1 = _busForTerminal!(net, created, topo, svmap, ctx, eb, 1, t1.tn)
+      b2 = _busForTerminal!(net, created, topo, svmap, ctx, eb, 2, t2.tn)
+      lidx = Sparlectra.addLink!(net = net, fromBus = b1, toBus = b2, status = 1)
+      ctx.element_by_mrid[eb.mrid] = (:link, lidx)
+      cgmesNextBusEquipmentIndex!(ctx.eqp_counters, "LNK", _cgmesTrafoPairKey(b1, b2))
+      push!(ctx.messages, "notice: EquivalentBranch $(name) has an impedance below $(ctx.eb_min_z_pu) pu, no branch created, bus link $(b1) = $(b2)")
+      n_link += 1
+      continue
+    end
+    asym = abs(z21 - z12) > 1e-9 * abs(z12)
+    # a zero impedance on one side has no angle to stamp; such an object keeps
+    # the symmetric branch with r and x and is counted apart
+    stamped = asym && !iszero(z12) && !iszero(z21)
+    asym && !stamped && (n_asym_zero += 1)
+    b1 = _busForTerminal!(net, created, topo, svmap, ctx, eb, 1, t1.tn)
+    b2 = _busForTerminal!(net, created, topo, svmap, ctx, eb, 2, t2.tn)
+    # both impedances on the base of terminal 1, also across levels (per-unit
+    # ratio 1)
+    r_pu, x_pu, _, _ = Sparlectra.toPU_RXBG(r = r, x = x, v_kv = t1.vn_kV, baseMVA = baseMVA)
+    if t1.vn_kV == t2.vn_kV && !stamped
+      Sparlectra.addPIModelACLine!(net = net, fromBus = b1, toBus = b2, r_pu = r_pu, x_pu = x_pu, b_pu = 0.0, g_pu = 0.0, status = 1)
+      k = cgmesNextParallelIndex!(acl_parallel, b1, b2)
+      eqbKey = cgmesKeyEquivalentBranch(b1, b2, k)
+    else
+      from = Sparlectra.geNetBusIdx(net = net, busName = b1)
+      to = Sparlectra.geNetBusIdx(net = net, busName = b2)
+      if stamped
+        r21_pu, x21_pu, _, _ = Sparlectra.toPU_RXBG(r = real(z21), x = imag(z21), v_kv = t1.vn_kV, baseMVA = baseMVA)
+        st = _ebPhaseStamp(complex(r_pu, x_pu), complex(r21_pu, x21_pu))
+        Sparlectra._addPIModelTrafo_by_idx!(net = net, from = from, to = to, r_pu = real(st.zs), x_pu = imag(st.zs), b_pu = 0.0, g_pu = 0.0, status = 1, ratio = 1.0, shift_deg = rad2deg(st.phi),
+          g_from_pu = real(st.y0f), b_from_pu = imag(st.y0f), g_to_pu = real(st.y0t), b_to_pu = imag(st.y0t))
+        n_stamp += 1
+        dev = abs(abs(z21) / abs(z12) - 1.0)
+        if dev > 1e-9
+          n_mag += 1
+          max_mag = max(max_mag, dev)
+        end
+      else
+        Sparlectra._addPIModelTrafo_by_idx!(net = net, from = from, to = to, r_pu = r_pu, x_pu = x_pu, b_pu = 0.0, g_pu = 0.0, status = 1, ratio = 1.0, shift_deg = 0.0)
+      end
+      k = cgmesNextBusEquipmentIndex!(ctx.eqp_counters, "PT", _cgmesTrafoPairKey(b1, b2))
+      eqbKey = cgmesKeyEquivalentBranchTransformer(b1, b2, k)
+    end
+    t1.vn_kV == t2.vn_kV ? (n_same += 1) : (n_cross += 1)
+    # the delivered values, for the export and as the equivalent-branch
+    # marker of the results; the solver reads the branch only
+    net.equivalent_branch_metadata[net.branchVec[end].branchIdx] = (r = r, x = x, r21 = real(z21), x21 = imag(z21), vn_kV = t1.vn_kV, stamped = stamped)
+    ctx.element_by_mrid[eb.mrid] = (:branch, length(net.branchVec))
+    _recordBranchTerminals!(ctx, net, topo, eb)
+    net.cgmes_ids[eqbKey] = cgmesCanonicalMrid(eb.mrid)
+    ts = get(topo.terminals, eb.mrid, nothing)
+    if ts !== nothing
+      length(ts) >= 1 && (net.cgmes_ids[cgmesKeyTerminal(eqbKey, 1)] = cgmesCanonicalMrid(ts[1].mrid))
+      length(ts) >= 2 && (net.cgmes_ids[cgmesKeyTerminal(eqbKey, 2)] = cgmesCanonicalMrid(ts[2].mrid))
+    end
+  end
+  n_skip = n_loop + n_open + n_noterm
+  asym = n_stamp == 0 ? "" : ", $(n_stamp) asymmetric (r21, x21 differ from r, x) phase-stamped (ratio 1, shift arg(z21/z12)/2), $(n_mag) of them with |z21| other than |z12|"
+  n_mag == 0 || (asym *= " (max ||z21|/|z12| - 1| = $(round(max_mag; sigdigits = 3)), built with the geometric mean of |z12| and |z21|)")
+  n_asym_zero == 0 || (asym *= ", $(n_asym_zero) asymmetric with a zero impedance, mapped symmetric with r, x")
+  n_link == 0 || (asym *= ", $(n_link) below $(ctx.eb_min_z_pu) pu as bus links")
+  push!(ctx.messages, "notice: EquivalentBranch: $(n_same + n_cross) mapped ($(n_same) same voltage level, $(n_cross) across voltage levels), $(n_skip) skipped ($(n_loop) on one topological node, $(n_open) open or out of service, $(n_noterm) without topological node)$(asym)")
+  return nothing
 end
 
 function _endsOfTransformer(store::CGMESStore, pt::CIMObject)::Vector{CIMObject}
@@ -870,6 +1375,16 @@ function _terminalInfo(store::CGMESStore, topo::CGMESTopology, e::CIMObject)
   return (bus = topo.bus_name[tn], vn_kV = topo.vn_kV[tn], connected = terminalConnected(t), tn = tn)
 end
 
+# A tap changer sits at the terminal of its own end and the series impedance
+# lies on the inner side of the tap (the convention the SV of real deliveries
+# and OpenLoadFlow follow). The branch model has one ideal transformer, at
+# the from side, ahead of the impedance on the to-side base, so the end that
+# carries the tap changers is the from side. A transformer with tap changers
+# only on end 2 is therefore built from end 2 to end 1. With tap changers on
+# both ends end 1 stays the from side and the end-2 correction enters the
+# same ratio (its impedance then sits on the wrong side of that tap).
+_trafoEndHasTaps(store::CGMESStore, e::CIMObject)::Bool = !isempty(_tapChangersOfEnd(store, e.mrid))
+
 function _map2WTrafo!(net, store, topo, created, svmap, svsteps, baseMVA, pt, ends, ctx::_MapCtx)
   e1, e2 = ends[1], ends[2]
   i1 = _terminalInfo(store, topo, e1)
@@ -880,60 +1395,80 @@ function _map2WTrafo!(net, store, topo, created, svmap, svsteps, baseMVA, pt, en
     push!(ctx.skipped, pt.mrid)
     return
   end
-  U1 = something(num(e1, :ratedU), i1.vn_kV)
-  U2 = something(num(e2, :ratedU), i2.vn_kV)
-  # refer both end impedances to end 2: the branch model (calcAdmittance)
-  # expects series/shunt admittance on the TO-side base, ratio at the from side
+  taps1 = _trafoEndHasTaps(store, e1)
+  taps2 = _trafoEndHasTaps(store, e2)
+  taps1 && taps2 && push!(ctx.messages, "notice: PowerTransformer $(name) has tap changers on both ends, end 1 is the branch from side and the end-2 tap acts at the end-1 terminal")
+  # (ef, et): the ends on the branch's from and to side
+  turned = taps2 && !taps1
+  ef, et = turned ? (e2, e1) : (e1, e2)
+  i_f, i_t = turned ? (i2, i1) : (i1, i2)
+  Uf = something(num(ef, :ratedU), i_f.vn_kV)
+  Ut = something(num(et, :ratedU), i_t.vn_kV)
+  # refer both end impedances to the to-side end: the branch model
+  # (calcAdmittance) expects series/shunt admittance on the TO-side base,
+  # ratio at the from side
   z = Sparlectra.calc2WTEndsReferredRXGB(;
-    r1 = num(e1, :r, 0.0), x1 = num(e1, :x, 0.0), g1 = num(e1, :g, 0.0), b1 = num(e1, :b, 0.0),
-    r2 = num(e2, :r, 0.0), x2 = num(e2, :x, 0.0), g2 = num(e2, :g, 0.0), b2 = num(e2, :b, 0.0),
-    U1 = U1, U2 = U2,
+    r1 = num(ef, :r, 0.0), x1 = num(ef, :x, 0.0), g1 = num(ef, :g, 0.0), b1 = num(ef, :b, 0.0),
+    r2 = num(et, :r, 0.0), x2 = num(et, :x, 0.0), g2 = num(et, :g, 0.0), b2 = num(et, :b, 0.0),
+    U1 = Uf, U2 = Ut,
   )
-  r_pu, x_pu, b_pu, g_pu = Sparlectra.toPU_RXBG(r = z.r, x = z.x, g = z.g, b = z.b, v_kv = i2.vn_kV, baseMVA = baseMVA)
-  # each end keeps its magnetizing admittance on its own terminal arm
-  # (0.20.0): end 1 referred to the end-2 base is the from arm, which the
-  # stamp sees behind the ratio, end 2 the to arm
-  _, _, b_from_pu, g_from_pu = Sparlectra.toPU_RXBG(r = 0.0, x = 0.0, g = z.g_from, b = z.b_from, v_kv = i2.vn_kV, baseMVA = baseMVA)
-  _, _, b_to_pu, g_to_pu = Sparlectra.toPU_RXBG(r = 0.0, x = 0.0, g = z.g_to, b = z.b_to, v_kv = i2.vn_kV, baseMVA = baseMVA)
-  ratio = (U1 / U2) / (i1.vn_kV / i2.vn_kV)
+  # tap table r/x/g/b of both ends act on the transformer's series
+  # impedance and magnetizing admittance as a whole
+  fr1, fx1, fg1, fb1 = _tapTableImpedanceFactors(store, svsteps, ef)
+  fr2, fx2, fg2, fb2 = _tapTableImpedanceFactors(store, svsteps, et)
+  fr, fx, fg, fb = fr1 * fr2, fx1 * fx2, fg1 * fg2, fb1 * fb2
+  r_pu, x_pu, b_pu, g_pu = Sparlectra.toPU_RXBG(r = z.r * fr, x = z.x * fx, g = z.g * fg, b = z.b * fb, v_kv = i_t.vn_kV, baseMVA = baseMVA)
+  # magnetizing admittance: half of the total of both ends on each terminal
+  # arm (0.50.0), the from arm behind the ratio. The SV of SmallGrid and
+  # of MicroGrid BE and NL is computed this way (unit rows at the
+  # transformer ends 0.000 MVAr); the per-end placement of 0.20.0 left up to
+  # 3.6 MVAr there. The PowSyBl import keeps the per-end placement, the 3W
+  # legs keep the end admittance at their side terminal.
+  g_from_pu = g_to_pu = 0.5 * g_pu
+  b_from_pu = b_to_pu = 0.5 * b_pu
+  ratio = (Uf / Ut) / (i_f.vn_kV / i_t.vn_kV)
   shift = 0.0
-  ratio, shift = _applyEndTaps(store, svsteps, e1, ratio, shift, true, ctx.messages; strict = ctx.strict_guards)
-  ratio, shift = _applyEndTaps(store, svsteps, e2, ratio, shift, false, ctx.messages; strict = ctx.strict_guards)
+  ratio, shift = _applyEndTaps(store, svsteps, ef, ratio, shift, true, ctx.messages; strict = ctx.strict_guards)
+  ratio, shift = _applyEndTaps(store, svsteps, et, ratio, shift, false, ctx.messages; strict = ctx.strict_guards)
   b1 = _ensureBus!(net, created, topo, svmap, i1.tn)
   b2 = _ensureBus!(net, created, topo, svmap, i2.tn)
+  bf, bt = turned ? (b2, b1) : (b1, b2)
   # per-terminal flags (r0.9.10): a transformer with exactly one open
   # terminal stays in the model as its Schur reduction at the closed bus
   # (magnetizing branch seen through the ratio) instead of being dropped
   pt_in_service = _inService(ctx, pt)
-  ptc1 = pt_in_service && _conn(ctx, i1.connected)
-  ptc2 = pt_in_service && _conn(ctx, i2.connected)
-  status = (ptc1 && ptc2) ? 1 : 0
-  (ptc1 != ptc2) && push!(ctx.messages, "notice: PowerTransformer $(name) has one open terminal — kept as a partially open branch")
-  from = Sparlectra.geNetBusIdx(net = net, busName = b1)
-  to = Sparlectra.geNetBusIdx(net = net, busName = b2)
+  ptc_f = pt_in_service && _conn(ctx, i_f.connected)
+  ptc_t = pt_in_service && _conn(ctx, i_t.connected)
+  status = (ptc_f && ptc_t) ? 1 : 0
+  (ptc_f != ptc_t) && push!(ctx.messages, "notice: PowerTransformer $(name) has one open terminal — kept as a partially open branch")
+  from = Sparlectra.geNetBusIdx(net = net, busName = bf)
+  to = Sparlectra.geNetBusIdx(net = net, busName = bt)
   ratedS = num(e1, :ratedS)
-  Sparlectra._addPIModelTrafo_by_idx!(net = net, from = from, to = to, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, g_pu = g_pu, status = status, ratedU = U1, ratedS = ratedS, ratio = ratio, shift_deg = shift, from_status = ptc1 ? 1 : 0, to_status = ptc2 ? 1 : 0, g_from_pu = g_from_pu, b_from_pu = b_from_pu, g_to_pu = g_to_pu, b_to_pu = b_to_pu)
+  Sparlectra._addPIModelTrafo_by_idx!(net = net, from = from, to = to, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, g_pu = g_pu, status = status, ratedU = Uf, ratedS = ratedS, ratio = ratio, shift_deg = shift, from_status = ptc_f ? 1 : 0, to_status = ptc_t ? 1 : 0, g_from_pu = g_from_pu, b_from_pu = b_from_pu, g_to_pu = g_to_pu, b_to_pu = b_to_pu)
+  ctx.element_by_mrid[pt.mrid] = (:transformer, length(net.branchVec))
   idx = net.branchVec[end].branchIdx
-  tm1 = get(e1.refs, :Terminal, nothing)
-  tm2 = get(e2.refs, :Terminal, nothing)
-  tm1 === nothing || (ctx.branch_side[tm1] = (idx, :from))
-  tm2 === nothing || (ctx.branch_side[tm2] = (idx, :to))
+  tmf = get(ef.refs, :Terminal, nothing)
+  tmt = get(et.refs, :Terminal, nothing)
+  tmf === nothing || (ctx.branch_side[tmf] = (idx, :from))
+  tmt === nothing || (ctx.branch_side[tmt] = (idx, :to))
   # identity capture (transformer + ends + terminals): the PT counter runs
-  # over every transformer-typed branch on the bus pair, in creation order
+  # over every transformer-typed branch on the bus pair, in creation order.
+  # The exporter writes the from side as end 1, so the end and terminal keys
+  # follow the branch orientation: every mRID stays on its own bus
   k = cgmesNextBusEquipmentIndex!(ctx.eqp_counters, "PT", _cgmesTrafoPairKey(b1, b2))
   ptKey = cgmesKeyPowerTransformer(b1, b2, k)
   net.cgmes_ids[ptKey] = cgmesCanonicalMrid(pt.mrid)
-  net.cgmes_ids[cgmesKeyTransformerEnd(ptKey, 1)] = cgmesCanonicalMrid(e1.mrid)
-  net.cgmes_ids[cgmesKeyTransformerEnd(ptKey, 2)] = cgmesCanonicalMrid(e2.mrid)
-  tm1 === nothing || (net.cgmes_ids[cgmesKeyTerminal(ptKey, 1)] = cgmesCanonicalMrid(tm1))
-  tm2 === nothing || (net.cgmes_ids[cgmesKeyTerminal(ptKey, 2)] = cgmesCanonicalMrid(tm2))
+  net.cgmes_ids[cgmesKeyTransformerEnd(ptKey, 1)] = cgmesCanonicalMrid(ef.mrid)
+  net.cgmes_ids[cgmesKeyTransformerEnd(ptKey, 2)] = cgmesCanonicalMrid(et.mrid)
+  tmf === nothing || (net.cgmes_ids[cgmesKeyTerminal(ptKey, 1)] = cgmesCanonicalMrid(tmf))
+  tmt === nothing || (net.cgmes_ids[cgmesKeyTerminal(ptKey, 2)] = cgmesCanonicalMrid(tmt))
   # a phase tap changer keeps its mRID on the synthetic single-step changer
   # the export writes for the flattened shift
-  ptc = something(_firstPhaseTapChangerMrid(store, e1.mrid), _firstPhaseTapChangerMrid(store, e2.mrid), Some(nothing))
+  ptc = something(_firstPhaseTapChangerMrid(store, ef.mrid), _firstPhaseTapChangerMrid(store, et.mrid), Some(nothing))
   ptc === nothing || (net.cgmes_ids[string(ptKey, "|PTC")] = cgmesCanonicalMrid(ptc))
   if ctx.tap_control
-    _attachTapControl!(net, store, topo, ctx, svsteps, e1, idx, true, name)
-    _attachTapControl!(net, store, topo, ctx, svsteps, e2, idx, false, name)
+    controlled = vcat(_attachTapControl!(net, store, topo, ctx, svsteps, ef, idx, true, name), _attachTapControl!(net, store, topo, ctx, svsteps, et, idx, false, name))
+    _attachTapStepImpedance!(net, store, svsteps, ctx, idx, controlled, name)
   end
 end
 
@@ -950,43 +1485,69 @@ function _map3WTrafo!(net, store, topo, created, svmap, svsteps, baseMVA, pt, en
   U1 = something(num(e1, :ratedU), i1.vn_kV)
   vn_aux = i1.vn_kV
 
-  # star (AUX) bus at the HV-side voltage base; start voltage from the HV
-  # bus SV value — the star point has no SvVoltage of its own
+  # star (AUX) bus at the HV-side voltage base. The star point has no
+  # SvVoltage of its own: it starts at the HV bus SV value here, and
+  # _startStarBuses! replaces that with the value of its own node balance
+  # once every branch exists (the HV value stays where a side has no SV)
   auxname = "AUX3WT_" * replace(name, r"\s+" => "_")
   if !Sparlectra.hasBusInNet(net = net, busName = auxname)
     vm0, va0 = haskey(svmap, i1.tn) ? (svmap[i1.tn][1] / i1.vn_kV, svmap[i1.tn][2]) : (1.0, 0.0)
     Sparlectra.addBus!(net = net, busName = auxname, vn_kV = vn_aux, vm_pu = vm0, va_deg = va0, isAux = true)
   end
   aux = Sparlectra.geNetBusIdx(net = net, busName = auxname)
+  aux in ctx.star_buses || push!(ctx.star_buses, aux)
 
   side_buses = String[]
   for (k, e) in enumerate(ends)
     ik = infos[k]
     Uk = something(num(e, :ratedU), ik.vn_kV)
-    # each leg runs AUX → side bus; end impedances are already on their own
-    # end base = the leg's TO side, which is what calcAdmittance expects;
-    # the end's magnetizing admittance is the to arm (0.20.0), the star arm
-    # is zero
-    r_pu, x_pu, b_pu, g_pu = Sparlectra.toPU_RXBG(r = num(e, :r, 0.0), x = num(e, :x, 0.0), g = num(e, :g, 0.0), b = num(e, :b, 0.0), v_kv = ik.vn_kV, baseMVA = baseMVA)
-    ratio = (U1 / Uk) / (vn_aux / ik.vn_kV)
-    shift = 0.0
-    # the physical end sits on the branch's "to" side (AUX → side bus)
-    ratio, shift = _applyEndTaps(store, svsteps, e, ratio, shift, false, ctx.messages; strict = ctx.strict_guards)
+    # end impedances and admittances are given on their own end base; the
+    # tap table r/x/g/b of the end act on its leg
+    fr, fx, fg, fb = _tapTableImpedanceFactors(store, svsteps, e)
+    r_pu, x_pu, b_pu, g_pu = Sparlectra.toPU_RXBG(r = num(e, :r, 0.0) * fr, x = num(e, :x, 0.0) * fx, g = num(e, :g, 0.0) * fg, b = num(e, :b, 0.0) * fb, v_kv = ik.vn_kV, baseMVA = baseMVA)
+    # structural ratio of the leg seen from the star (V_star / V_side at no load)
+    t_struct = (U1 / Uk) / (vn_aux / ik.vn_kV)
     bk = _ensureBus!(net, created, topo, svmap, ik.tn)
-    to = Sparlectra.geNetBusIdx(net = net, busName = bk)
+    side = Sparlectra.geNetBusIdx(net = net, busName = bk)
     status = (_conn(ctx, ik.connected) && _inService(ctx, pt)) ? 1 : 0
-    Sparlectra._addPIModelTrafo_by_idx!(net = net, from = aux, to = to, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, g_pu = g_pu, status = status, ratedU = Uk, ratedS = num(e, :ratedS), ratio = ratio, shift_deg = shift, g_from_pu = 0.0, b_from_pu = 0.0, g_to_pu = g_pu, b_to_pu = b_pu)
+    # A leg with tap changers runs side bus → star: the tap sits at the
+    # terminal of its end, the leg impedance on the inner side (the
+    # arrangement the SV of real deliveries and OpenLoadFlow use, and the
+    # one the PowSyBl builder uses for every leg). Ratio (structural and
+    # tap) at the from side, impedance and magnetizing admittance on the
+    # star base, the magnetizing admittance as the from arm behind the
+    # ratio. A tap correction does not scale the impedance, so this is not
+    # the same as the star → side leg with z·|c|². A leg without tap
+    # changers keeps star → side with the impedance at the side bus, which
+    # is the same circuit as the turned leg.
+    turned = _trafoEndHasTaps(store, e)
+    if turned
+      ratio, shift = _applyEndTaps(store, svsteps, e, 1.0 / t_struct, 0.0, true, ctx.messages; strict = ctx.strict_guards)
+      t2 = t_struct^2
+      Sparlectra._addPIModelTrafo_by_idx!(net = net, from = side, to = aux, r_pu = r_pu * t2, x_pu = x_pu * t2, b_pu = b_pu / t2, g_pu = g_pu / t2, status = status, ratedU = Uk, ratedS = num(e, :ratedS), ratio = ratio, shift_deg = shift, g_from_pu = g_pu / t2, b_from_pu = b_pu / t2, g_to_pu = 0.0, b_to_pu = 0.0)
+    else
+      # star → side bus: the end impedance on its own end base = the leg's
+      # TO side, which is what calcAdmittance expects; the end's magnetizing
+      # admittance is the to arm (0.20.0), the star arm is zero
+      Sparlectra._addPIModelTrafo_by_idx!(net = net, from = aux, to = side, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, g_pu = g_pu, status = status, ratedU = Uk, ratedS = num(e, :ratedS), ratio = t_struct, shift_deg = 0.0, g_from_pu = 0.0, b_from_pu = 0.0, g_to_pu = g_pu, b_to_pu = b_pu)
+    end
+    # one branch per leg, so the leg is addressed by its end, not by the
+    # transformer
+    ctx.element_by_mrid[e.mrid] = (:transformer, length(net.branchVec))
     tm = get(e.refs, :Terminal, nothing)
-    tm === nothing || (ctx.branch_side[tm] = (net.branchVec[end].branchIdx, :to))
+    tm === nothing || (ctx.branch_side[tm] = (net.branchVec[end].branchIdx, turned ? :from : :to))
     # legs also consume the pair counter so a hypothetical 2W transformer on
     # the same pair keeps a consistent <k>
     cgmesNextBusEquipmentIndex!(ctx.eqp_counters, "PT", _cgmesTrafoPairKey(auxname, bk))
     push!(side_buses, bk)
     if ctx.tap_control
       # #294 point 4: the star-equivalent leg is an ordinary PI-model trafo
-      # branch (AUX → side bus, physical end on the to side), so the same
-      # controller attachment as for 2W transformers applies per leg.
-      _attachTapControl!(net, store, topo, ctx, svsteps, e, net.branchVec[end].branchIdx, false, string(name, " (leg ", k, ")"))
+      # branch, so the same controller attachment as for 2W transformers
+      # applies per leg; the tapped end is the from side of its leg
+      legname = string(name, " (leg ", k, ")")
+      legidx = net.branchVec[end].branchIdx
+      controlled = _attachTapControl!(net, store, topo, ctx, svsteps, e, legidx, true, legname)
+      _attachTapStepImpedance!(net, store, svsteps, ctx, legidx, controlled, legname)
     end
   end
   # identity capture under the three-winding key (sorted side buses): the
@@ -1017,6 +1578,162 @@ function _mapTransformers!(net, store, topo, created, svmap, svsteps, baseMVA, c
       push!(ctx.messages, "skip: PowerTransformer $(something(str(pt, :name), pt.mrid)) with $(length(ends)) ends")
     end
   end
+end
+
+"""
+    _startStarBuses!(net, ctx, topo, svmap) -> Int
+
+Start voltage of every three-winding star point from its own node balance.
+
+The star point has no SvVoltage. Its provisional start, the SV voltage of
+end 1, is off by the tap of that end and by the drop across the winding, so
+at the SV state a current flows out of the star that the delivery does not
+have, and Newton can end on a second solution at low voltage. With the start
+voltages `V_k` of the sides, the star row of the admittance matrix gives the
+one voltage at which no current leaves the star:
+
+    V_s = -sum_k Y_sk V_k / Y_ss
+
+The stamps are those `createYBUS` builds, summed over the branches at the
+star (a leg with its side end open adds its input admittance to `Y_ss`
+only). Applied when the star has at least one closed leg and every closed
+leg reaches a side whose TopologicalNode carries an SV voltage above zero;
+otherwise the provisional start stays. Runs once every branch is built, so
+the stamps hold every ratio and impedance the mapping set. The importer puts
+no shunt on a star bus. Returns the number of star buses set.
+"""
+function _startStarBuses!(net, ctx::_MapCtx, topo::CGMESTopology, svmap::Dict{String,Tuple{Float64,Float64}})::Int
+  isempty(ctx.star_buses) && return 0
+  # buses whose TopologicalNode carries a usable SV voltage (v <= 0 counts
+  # as missing, as in compareWithSV)
+  with_sv = Set{Int}()
+  for (tn, (v, _)) in svmap
+    (v > 0.0 && get(topo.vn_kV, tn, 0.0) > 0.0) || continue
+    i = get(net.busDict, get(topo.bus_name, tn, ""), 0)
+    i == 0 || push!(with_sv, i)
+  end
+  legs = Dict{Int,Vector{Int}}(s => Int[] for s in ctx.star_buses)
+  for (j, br) in enumerate(net.branchVec)
+    haskey(legs, br.fromBus) && push!(legs[br.fromBus], j)
+    haskey(legs, br.toBus) && push!(legs[br.toBus], j)
+  end
+  volt(nd) = something(nd._vm_pu, 1.0) * cis(deg2rad(something(nd._va_deg, 0.0)))
+  n_set = 0
+  for s in ctx.star_buses
+    y_ss = zero(ComplexF64)
+    i_sides = zero(ComplexF64)   # sum_k Y_sk V_k over the closed legs
+    n_closed = 0
+    usable = true
+    for j in legs[s]
+      br = net.branchVec[j]
+      state = Sparlectra._branch_terminal_state(br)
+      state == :open && continue
+      at_from = br.fromBus == s
+      if state != :closed
+        # one end open: only a closed star end sees the leg, as the reduced
+        # input admittance on the diagonal
+        (state == :open_to) == at_from && (y_ss += Sparlectra._open_terminal_yin(br))
+        continue
+      end
+      side = at_from ? br.toBus : br.fromBus
+      if !(side in with_sv)
+        usable = false
+        break
+      end
+      y11, y12, y21, y22 = Sparlectra.calcAdmittance(br, br.comp.cVN, net.baseMVA)
+      y_ss += at_from ? y11 : y22
+      i_sides += (at_from ? y12 : y21) * volt(net.nodeVec[side])
+      n_closed += 1
+    end
+    (usable && n_closed > 0 && abs(y_ss) > 0.0) || continue
+    vs = -i_sides / y_ss
+    Sparlectra.setVmVa!(node = net.nodeVec[s], vm_pu = abs(vs), va_deg = rad2deg(angle(vs)))
+    n_set += 1
+  end
+  return n_set
+end
+
+"""
+    _startNoSvBusesFromNeighbours!(net, ctx, no_sv_buses) -> Int
+
+Start voltage of the buses without a usable SvVoltage from a neighbour.
+
+Such a bus gets 1.0 pu / 0° from `_ensureBus!`. Where its neighbours sit
+far from 0°, that start can lead Newton to a second solution: a leaf bus
+without load behind a branch converges at 0 V, a short circuit behind the
+branch impedance that pulls its neighbour down (seen on a real delivery
+with neighbours at -22° to -26°). Each listed bus therefore takes magnitude
+and angle of the neighbour reached over the closed branch or closed link
+of the smallest |z| (a link counts as zero impedance, a tie goes to the
+lower bus index). The search runs breadth-first from the buses with a
+start of their own, so a chain of such buses is covered; a bus picks only
+from buses set before its layer, so the result does not depend on the
+order within a layer. A bus whose group
+touches no bus with a start keeps the default. Three-winding star points
+are left alone (`_startStarBuses!` sets them by their node balance) and
+are no source either; isolated buses carry no start and are neither.
+Returns the number of buses set.
+"""
+function _startNoSvBusesFromNeighbours!(net, ctx::_MapCtx, no_sv_buses::Vector{String})::Int
+  isempty(no_sv_buses) && return 0
+  n = length(net.nodeVec)
+  blocked = falses(n)   # star points and isolated buses: no source
+  for s in ctx.star_buses
+    blocked[s] = true
+  end
+  # a listed star point is skipped like an isolated bus: set from a
+  # neighbour it would still be no source, and a listed bus behind it would
+  # enter the next layer without a source (index 0)
+  pending = falses(n)
+  for b in no_sv_buses
+    i = get(net.busDict, b, 0)
+    (i == 0 || blocked[i] || Sparlectra.isIsolated(net.nodeVec[i])) || (pending[i] = true)
+  end
+  any(pending) || return 0
+  for i in 1:n
+    Sparlectra.isIsolated(net.nodeVec[i]) && (blocked[i] = true)
+  end
+  # (neighbour, |z|) over closed branches and closed links
+  adj = [Tuple{Int,Float64}[] for _ in 1:n]
+  for br in net.branchVec
+    Sparlectra._branch_terminal_state(br) == :closed || continue
+    z = abs(complex(br.r_pu, br.x_pu))
+    push!(adj[br.fromBus], (br.toBus, z))
+    push!(adj[br.toBus], (br.fromBus, z))
+  end
+  for l in net.linkVec
+    l.status == 1 || continue
+    push!(adj[l.fromBus], (l.toBus, 0.0))
+    push!(adj[l.toBus], (l.fromBus, 0.0))
+  end
+  known(j) = !pending[j] && !blocked[j]
+  layer = [i for i in 1:n if pending[i] && any(e -> known(e[1]), adj[i])]
+  n_set = 0
+  while !isempty(layer)
+    picks = Tuple{Int,Int}[]
+    for i in layer
+      # smallest |z|, a tie goes to the lower bus index
+      best, best_z = 0, Inf
+      for (j, z) in adj[i]
+        if known(j) && (z < best_z || (z == best_z && j < best))
+          best, best_z = j, z
+        end
+      end
+      push!(picks, (i, best))
+    end
+    for (i, j) in picks
+      src = net.nodeVec[j]
+      Sparlectra.setVmVa!(node = net.nodeVec[i], vm_pu = something(src._vm_pu, 1.0), va_deg = something(src._va_deg, 0.0))
+      pending[i] = false
+    end
+    n_set += length(picks)
+    next = Set{Int}()
+    for (i, _) in picks, (j, _) in adj[i]
+      pending[j] && push!(next, j)
+    end
+    layer = sort!(collect(next))
+  end
+  return n_set
 end
 
 function _mapShunts!(net, store, topo, created, svmap, ctx::_MapCtx)
@@ -1071,6 +1788,7 @@ function _mapShunts!(net, store, topo, created, svmap, ctx::_MapCtx)
     bus = _ensureBus!(net, created, topo, svmap, t.tn)
     # MATPOWER-style shunt: MW/MVAr injected at 1.0 pu of the bus vn
     Sparlectra.addShuntMatpower!(net = net, busName = bus, Gs = g * t.vn_kV^2, Bs = b * t.vn_kV^2)
+    ctx.element_by_mrid[sh.mrid] = (:shunt, length(net.shuntVec))
     _captureBusEquipment!(net, ctx, "SH", bus, sh.mrid; children = (T1 = _firstTerminalMrid(topo, sh),))
   end
 
@@ -1095,6 +1813,7 @@ function _mapShunts!(net, store, topo, created, svmap, ctx::_MapCtx)
     _shunt_plausible("NonlinearShuntCompensator", name, sh.mrid, b * t.vn_kV^2, g * t.vn_kV^2) || continue
     bus = _ensureBus!(net, created, topo, svmap, t.tn)
     Sparlectra.addShuntMatpower!(net = net, busName = bus, Gs = g * t.vn_kV^2, Bs = b * t.vn_kV^2)
+    ctx.element_by_mrid[sh.mrid] = (:shunt, length(net.shuntVec))
     # the aggregated characteristic re-exports as a LinearShuntCompensator,
     # keeping the original mRID
     _captureBusEquipment!(net, ctx, "SH", bus, sh.mrid; children = (T1 = _firstTerminalMrid(topo, sh),))
@@ -1126,6 +1845,7 @@ function _mapLoads!(net, store, topo, created, svmap, ctx::_MapCtx)
       q = num(load, :q, 0.0)
       bus = _ensureBus!(net, created, topo, svmap, t.tn)
       Sparlectra.addProsumer!(net = net, busName = bus, type = "ENERGYCONSUMER", p = p, q = q, defer_bus_type_refresh = true)
+      ctx.element_by_mrid[load.mrid] = (:load, length(net.prosumpsVec))
       # identity capture: all load classes re-export as EnergyConsumer, the
       # original mRID is what survives the roundtrip
       _captureBusEquipment!(net, ctx, "EC", bus, load.mrid; children = (T1 = _firstTerminalMrid(topo, load),))
@@ -1370,13 +2090,19 @@ state anyway). Two references in one island would be physically wrong. On
 clean data the guard is a no-op — Svedala's two references sit in two
 electrical islands once `Equipment.inService` is honored — but it protects
 against deliveries whose island declarations and switch states disagree.
+
+An island that has a source but neither an angle reference here nor a
+voltage-regulating unit gets its slack later, from
+`_slackForIslandsWithoutReference!`, once de-energization and isolation have
+decided which islands exist.
 """
 function _selectSlackBuses(net, ctx::_MapCtx, primary::String, angle_ref_buses::Set{String}, pending, multi_slack::Bool)::Set{String}
   chosen = Set{String}([primary])
   # Only angle references that actually carry an injection are candidates: a
   # reference node without a source cannot hold a voltage and would produce a
-  # slack bus with nothing behind it.
-  candidates = [b for b in angle_ref_buses if b != primary && any(inj -> inj.bus == b, pending)]
+  # slack bus with nothing behind it. A fixed PQ source (EnergySource,
+  # `slack_candidate = false`) does not count.
+  candidates = [b for b in angle_ref_buses if b != primary && any(inj -> inj.bus == b && get(inj, :slack_candidate, true), pending)]
   isempty(candidates) && return chosen
   if !multi_slack
     push!(ctx.messages, "notice: the SV declares further angle reference(s) ($(join(sort(candidates), ", "))) — not promoted to slack; pass multi_slack = true to give separate electrical islands their own reference")
@@ -1403,6 +2129,145 @@ function _selectSlackBuses(net, ctx::_MapCtx, primary::String, angle_ref_buses::
     push!(ctx.messages, "slack: additional reference $(b) for electrical island $(isl)")
   end
   return chosen
+end
+
+# The slack unit of an island without reference, among the prosumer indices
+# `ks` of its units; `degree` is the number of neighbour buses per bus.
+# Returns (index, reason). Candidates are only the units with infeed
+# (pVal > 0, generator sign); the caller passes only islands that have one.
+# A unit with P = 0 or drawing power is never the slack, also not by its
+# referencePriority or its reserve, because it feeds nothing into the
+# island. Among the candidates:
+#  1. the strongest referencePriority (the smallest positive value), ties to
+#     the smallest prosumer index;
+#  2. else the largest active power reserve maxP - pVal among the units with
+#     a known maxP on buses whose degree is not 1;
+#  3. else the largest infeed on a bus whose degree is not 1, and when only
+#     degree-1 buses carry infeed (all buses of a two-bus fragment have
+#     degree 1), the largest infeed on a degree-1 bus.
+# In an island of two or more buses "degree not 1" means degree greater than
+# 1; the only bus of a single-bus island has degree 0.
+function _islandSlackUnit(net, ks::Vector{Int}, degree::Vector{Int})::Tuple{Int,String}
+  pval(k) = something(net.prosumpsVec[k].pVal, 0.0)
+  inner(k) = degree[Int(net.prosumpsVec[k].comp.cFrom_bus)] != 1
+  feed = [k for k in ks if pval(k) > 0.0]
+  prio = [k for k in feed if net.prosumpsVec[k].referencePriority > 0]
+  if !isempty(prio)
+    k = first(sort(prio; by = k -> (net.prosumpsVec[k].referencePriority, k)))
+    return k, "referencePriority $(net.prosumpsVec[k].referencePriority)"
+  end
+  reserve(k) = net.prosumpsVec[k].maxP - pval(k)
+  with_reserve = [k for k in feed if inner(k) && net.prosumpsVec[k].maxP !== nothing && isfinite(net.prosumpsVec[k].maxP)]
+  if !isempty(with_reserve)
+    k = first(sort(with_reserve; by = k -> (-reserve(k), k)))
+    return k, "largest active power reserve off the degree-1 buses, $(round(reserve(k); digits = 2)) MW"
+  end
+  pool = filter(inner, feed)
+  note = isempty(pool) ? "only degree-1 buses carry infeed" : "no known maxP off the degree-1 buses"
+  isempty(pool) && (pool = feed)
+  k = first(sort(pool; by = k -> (-pval(k), k)))
+  return k, "largest infeed, P = $(round(pval(k); digits = 2)) MW, $(note)"
+end
+
+"""
+Give every energized electrical island that has infeed but no reference a
+slack.
+
+Without this, such an island leaves the import without a Slack or PV bus. The
+island-wise solve then promotes one of its units to the reference and keeps
+that bus at its start voltage, so the result there depends on the start
+value only. Real deliveries carry such islands as fragments of a network
+equivalent: two buses, one branch, two `EquivalentInjection`s without
+`referencePriority` or `maxP`.
+
+Runs after `_deEnergizeSourcelessComponents!` and `markIsolatedBuses!`, when
+the islands are final. The islands are those the power flow solves
+(`Sparlectra._power_flow_islands`): a bus the marking isolates only because it hangs on
+the network through closed switches alone belongs to the island of its
+switch group, so the parts it joins get one slack, not one each. An island
+qualifies when it has no Slack bus, no PV bus and at
+least one generator-type unit with infeed (`pVal > 0`, generator sign). An
+island whose units only draw power has no source and is already
+de-energized; one whose only source regulates its voltage has a PV bus, and
+one whose only source is a machine regulating a remote bus is left to
+`_attachMachineControls!`, which holds that machine PV at its own bus.
+
+Slack candidates are only the units with infeed; a unit with P = 0 or
+drawing power is never one, and a static var compensator neither. Among
+them (`_islandSlackUnit`): the strongest `referencePriority`, else the
+largest active power reserve `maxP - pVal` on a bus of degree greater than 1
+(degree: neighbour buses over closed in-service branches and closed links;
+the only bus of a single-bus island counts as such a bus), else the largest
+infeed on a bus of degree greater than 1, and only when no such bus carries
+infeed, the largest infeed on a bus of degree 1. The unit becomes the slack
+exactly as the importer's own slack choice does it: `referencePri` on its
+bus, `isRegulated`, and as voltage setpoint the start voltage of its bus
+(the SV voltage, 1.0 pu without one); none of its units regulates, so no
+local setpoint exists. Each choice is a `warning:` message naming island,
+unit, reason and setpoint, and one notice counts the islands. Called only
+with `multi_slack = true`.
+"""
+function _slackForIslandsWithoutReference!(net, store::CGMESStore, ctx::_MapCtx)
+  nbus = length(net.nodeVec)
+  # neighbour buses over closed in-service branches and closed links; a
+  # parallel circuit to the same neighbour does not raise the degree
+  nbrs = [Set{Int}() for _ = 1:nbus]
+  for br in net.branchVec
+    Sparlectra._branch_terminal_state(br) === :closed || continue
+    f, t = Int(br.fromBus), Int(br.toBus)
+    (f != t && 1 <= f <= nbus && 1 <= t <= nbus) || continue
+    push!(nbrs[f], t)
+    push!(nbrs[t], f)
+  end
+  for l in net.linkVec
+    l.status == 1 || continue
+    f, t = Int(l.fromBus), Int(l.toBus)
+    (f != t && 1 <= f <= nbus && 1 <= t <= nbus) || continue
+    push!(nbrs[f], t)
+    push!(nbrs[t], f)
+  end
+  degree = length.(nbrs)
+  units = Dict{Int,Vector{Int}}()   # bus -> prosumer indices of candidate units
+  for (k, ps) in enumerate(net.prosumpsVec)
+    Sparlectra.isGenerator(ps) || continue
+    ps.comp.cTyp == Sparlectra.StaticVarCompensator && continue
+    push!(get!(Vector{Int}, units, Int(ps.comp.cFrom_bus)), k)
+  end
+  # unit names for the messages, from the CGMES object each unit came from
+  name_of = Dict{Int,String}()
+  for (mrid, (kind, k)) in ctx.element_by_mrid
+    kind in (:generator, :external_grid) || continue
+    o = get(store.objects, mrid, nothing)
+    name_of[k] = o === nothing ? mrid : something(str(o, :name), mrid)
+  end
+  n_islands = 0
+  # the islands of the power flow: a part that hangs on the rest through a
+  # switch-only bus is no island of its own, it shares the reference of the
+  # rest, and a slack of its own would be a second reference in one island
+  islands, held, _ = Sparlectra._power_flow_islands(net)
+  # a switch-only bus is at 0 pu after the marking; its group voltage sits
+  # on the first member that is not isolated
+  fed = _linkFedIsolatedBuses(net)
+  for (buses, has_ref) in zip(islands, held)
+    has_ref && continue
+    ks = reduce(vcat, (get(units, b, Int[]) for b in buses); init = Int[])
+    any(k -> something(net.prosumpsVec[k].pVal, 0.0) > 0.0, ks) || continue
+    k, reason = _islandSlackUnit(net, ks, degree)
+    ps = net.prosumpsVec[k]
+    bus = Int(ps.comp.cFrom_bus)
+    vm = something(net.nodeVec[get(fed, bus, bus)]._vm_pu, 1.0)
+    ps.referencePri = bus
+    ps.isRegulated = true
+    ps.vm_pu = vm
+    n_islands += 1
+    around = something(_busDictName(net, first(buses)), net.nodeVec[first(buses)].comp.cName)
+    at = something(_busDictName(net, bus), net.nodeVec[bus].comp.cName)
+    push!(ctx.messages, "warning: electrical island of $(length(buses)) bus(es) around $(around) has infeed but no reference; $(get(name_of, k, "unit $(k)")) at $(at) made its slack ($(reason)), voltage setpoint $(round(vm; digits = 4)) pu from the start voltage of its bus")
+  end
+  n_islands == 0 && return nothing
+  Sparlectra.refreshBusTypesFromProsumers!(net)
+  push!(ctx.messages, "notice: $(n_islands) electrical island(s) without reference got a slack from the importer (one warning each)")
+  return nothing
 end
 
 """
@@ -1661,8 +2526,29 @@ instances. Runs only after `refreshBusTypesFromProsumers!` and isolation
 marking, so the final node types and `isoNodes` are authoritative — a plan
 whose buses did not end up solvable PQ is dropped with a notice, mirroring
 `_disableIneffectiveTapControllers!`.
+
+A machine whose remote regulation is the only source of its island (no
+slack, no PV bus, no unit with infeed; `_deEnergizeSourcelessComponents!`
+kept the island energized for that regulation) gets no controller either:
+the importer gives such an island no slack, and the solve would hold the
+machine bus at its start voltage as island reference, where a Q controller
+has nothing to act on. The machine is held PV at its own bus at its start
+voltage instead, as without `machine_control`, with a notice.
 """
 function _attachMachineControls!(net, ctx::_MapCtx)
+  # per island of the power flow (_power_flow_islands, switch-only buses
+  # with their group): does a node hold a voltage (Slack or PV), and does a
+  # generator-type unit inject (pVal > 0)
+  islands, held, _ = Sparlectra._power_flow_islands(net)
+  island_of = Dict{Int,Int}()
+  for (i, buses) in enumerate(islands), b in buses
+    island_of[b] = i
+  end
+  infeed = falses(length(islands))
+  for ps in net.prosumpsVec
+    i = get(island_of, Int(ps.comp.cFrom_bus), 0)
+    i != 0 && Sparlectra.isGenerator(ps) && something(ps.pVal, 0.0) > 0.0 && (infeed[i] = true)
+  end
   for plan in ctx.machine_ctrl_plans
     tidx = get(net.busDict, plan.target_bus, nothing)
     oidx = get(net.busDict, plan.bus, nothing)
@@ -1674,11 +2560,25 @@ function _attachMachineControls!(net, ctx::_MapCtx)
       "target bus $(plan.target_bus) is $(net.nodeVec[tidx]._nodeType)"
     elseif oidx !== nothing && oidx in net.isoNodes
       "machine bus $(plan.bus) is isolated"
+    elseif net.prosumpsVec[plan.prosumer_idx].referencePri !== nothing
+      # _slackForIslandsWithoutReference! made the machine the slack of its
+      # island; a slack holds its own voltage and takes no Q controller
+      "the machine is the slack of its island"
     else
       nothing
     end
     if reason !== nothing
       push!(ctx.messages, "notice: machine control $(plan.name) — skipped ($(reason))")
+      continue
+    end
+    isl = get(island_of, oidx, 0)
+    if isl != 0 && !held[isl] && !infeed[isl]
+      ps = net.prosumpsVec[plan.prosumer_idx]
+      ps.isRegulated = true
+      ps.vm_pu = _pvVoltage(net, plan.bus, nothing)
+      Sparlectra.refreshBusTypesFromProsumers!(net)
+      held[isl] = true
+      push!(ctx.messages, "notice: machine control $(plan.name) not attached (its island has no slack, no PV bus and no infeed); held PV at its own bus")
       continue
     end
     try
@@ -1836,6 +2736,284 @@ function _hvdcDerivedSlackPower(store::CGMESStore, ctx::_MapCtx)
   return derived
 end
 
+# EnergySource (cgmes_import.map_energy_source). Real deliveries carry
+# generation as EnergySource; without it
+# that generation is missing and a comparison with the delivered SV state
+# says nothing. CGMES 2.4.15 gives EnergySource.activePower and
+# reactivePower in the SSH in load sign convention ("positive sign means
+# flow out from a node"), the same convention as SvPowerFlow at its
+# terminal, so a generating source has activePower < 0 and the injection is
+# the negated value. Mapped as a fixed PQ injection of type GENERATOR (an
+# Injection, so it counts as generation in the bus sums): no voltage
+# regulation, no Q limits, and slack_candidate = false keeps it out of the
+# importer's slack choice from the delivery's reference data. In an island
+# without other reference it can still become the slack, from the importer
+# (_slackForIslandsWithoutReference!) or, with multi_slack = false, from the
+# island-wise solve (see _noticeEnergySourceOnlyIslands!). Switched off, the
+# objects go to ctx.skipped (not mapped), so compareWithSV leaves their
+# terminals out, and one notice counts them.
+function _mapEnergySources!(pending::Vector{NamedTuple}, net, store, topo, created, svmap, ctx::_MapCtx)
+  sources = collect(CIMObject, objectsOf(store, :EnergySource))
+  if !ctx.map_energy_source
+    isempty(sources) && return nothing
+    foreach(es -> push!(ctx.skipped, es.mrid), sources)
+    # count and P sum stand in the table of classes not mapped (one sign
+    # convention); this line names the switch
+    push!(ctx.messages, "notice: EnergySource not mapped, switch cgmes_import.map_energy_source (count and SSH P sum in the table of classes not mapped)")
+    return nothing
+  end
+  n_mapped = 0
+  n_skipped = 0
+  p_sum = 0.0
+  q_sum = 0.0
+  for es in sources
+    t = busOfEquipment(topo, es, 1)
+    name = something(str(es, :name), es.mrid)
+    reason = if t === nothing
+      "no TopologicalNode"
+    elseif !_conn(ctx, t.connected)
+      "terminal disconnected"
+    elseif !_inService(ctx, es)
+      "out of service, SSH inService=false"
+    else
+      nothing
+    end
+    if reason !== nothing
+      push!(ctx.messages, "skip: EnergySource $(name) ($(reason))")
+      push!(ctx.skipped, es.mrid)
+      n_skipped += 1
+      continue
+    end
+    bus = _ensureBus!(net, created, topo, svmap, t.tn)
+    p = -num(es, :activePower, 0.0)               # load convention -> injection
+    q = -num(es, :reactivePower, 0.0)
+    push!(
+      pending,
+      (
+        bus = bus,
+        type = "GENERATOR",
+        p = p,
+        q = q,
+        pMin = nothing,
+        pMax = nothing,
+        qMin = nothing,
+        qMax = nothing,
+        vm_pu = nothing,
+        isRegulated = false,
+        slack_candidate = false,
+        mrid = es.mrid,
+      ),
+    )
+    n_mapped += 1
+    p_sum += p
+    q_sum += q
+  end
+  push!(ctx.messages, "notice: map_energy_source = true: $(n_mapped) EnergySource object(s) mapped as PQ injections (P = $(round(p_sum; digits = 2)) MW, Q = $(round(q_sum; digits = 2)) MVAr injected), $(n_skipped) skipped")
+  return nothing
+end
+
+# A mapped EnergySource is no slack candidate of the delivery, but with
+# P > 0 it is generation, so _deEnergizeSourcelessComponents! keeps the
+# island it feeds energized. With multi_slack = true
+# _slackForIslandsWithoutReference! gives such an island a slack before this
+# runs, so the notice below only fires with multi_slack = false: then an
+# island whose only source is EnergySource leaves the import without a
+# reference. The island-wise solve (power_flow.islands) gives such an island
+# its strongest generating unit as reference (detect_ac_islands, status
+# promote_generator_ref), so the P of that EnergySource is a result of the
+# island balance and no longer the SSH value; with islands disabled the
+# solve rejects the island. One notice per such island makes that visible.
+# A Slack or PV bus in the island (a regulating SVC) means the solver picks
+# another reference, so those islands are left out.
+function _noticeEnergySourceOnlyIslands!(net, store, ctx::_MapCtx)
+  ctx.map_energy_source || return nothing
+  es_name = Dict{Int,String}()   # prosumer index -> EnergySource name
+  for es in objectsOf(store, :EnergySource)
+    k = get(ctx.prosumer_by_mrid, es.mrid, nothing)
+    k === nothing || (es_name[k] = something(str(es, :name), es.mrid))
+  end
+  isempty(es_name) && return nothing
+  # generating units per bus that the solver could promote (an SVC carries
+  # no active power and is never promoted)
+  units = Dict{Int,Vector{Int}}()
+  for (k, ps) in enumerate(net.prosumpsVec)
+    Sparlectra.isGenerator(ps.proSumptionType) || continue
+    ps.comp.cTyp == Sparlectra.StaticVarCompensator && continue
+    push!(get!(Vector{Int}, units, Int(ps.comp.cFrom_bus)), k)
+  end
+  # the islands of the power flow (switch-only buses with their group)
+  islands, held, _ = Sparlectra._power_flow_islands(net)
+  for (buses, has_ref) in zip(islands, held)
+    has_ref && continue
+    ks = reduce(vcat, (get(units, b, Int[]) for b in buses); init = Int[])
+    (isempty(ks) || !all(k -> haskey(es_name, k), ks)) && continue
+    names = sort!([es_name[k] for k in ks])
+    shown = length(names) <= 5 ? join(names, ", ") : join(names[1:5], ", ") * ", ..."
+    around = something(_busDictName(net, first(buses)), net.nodeVec[first(buses)].comp.cName)
+    which = length(ks) == 1 ? "it" : "the strongest of them"
+    push!(ctx.messages, "notice: electrical island of $(length(buses)) bus(es) around $(around) has no slack and no source but EnergySource ($(shown)); the island-wise solve makes $(which) the island reference, so its P follows the island balance instead of the SSH value (with power_flow.islands.enabled = false the solve rejects the island)")
+  end
+  return nothing
+end
+
+# CGMES classes with an active power value in the SSH profile (2.4.15 and
+# 3.0), with the attribute the reader stores it under. All of them use the
+# load sign: positive means flow out of the node. The reader keeps every
+# subclass under its own class, so the EnergyConsumer and RotatingMachine
+# subclasses are listed one by one; RotatingMachine.p arrives as :p on
+# SynchronousMachine and AsynchronousMachine, ACDCConverter.p on VsConverter
+# and CsConverter. PowerElectronicsConnection (3.0 only) is never mapped.
+const _SSH_ACTIVE_POWER_ATTR = [
+  :EnergyConsumer => :p,
+  :ConformLoad => :p,
+  :NonConformLoad => :p,
+  :StationSupply => :p,
+  :EnergySource => :activePower,
+  :EquivalentInjection => :p,
+  :ExternalNetworkInjection => :p,
+  :SynchronousMachine => :p,
+  :AsynchronousMachine => :p,
+  :VsConverter => :p,
+  :CsConverter => :p,
+  :PowerElectronicsConnection => :p,
+]
+
+# CGMES classes the importer turns into network elements (the class table in
+# docs/src/cgmes_import.md, the kinds of CGMESImportResult.element_by_mrid).
+# EnergySource joins them only with its switch on, see _unmappedClasses.
+const _MAPPED_EQUIPMENT_CLASSES = [
+  :ACLineSegment,
+  :SeriesCompensator,
+  :EquivalentBranch,
+  :PowerTransformer,
+  :LinearShuntCompensator,
+  :NonlinearShuntCompensator,
+  :EnergyConsumer,
+  :ConformLoad,
+  :NonConformLoad,
+  :StationSupply,
+  :AsynchronousMachine,
+  :SynchronousMachine,
+  :StaticVarCompensator,
+  :ExternalNetworkInjection,
+  :EquivalentInjection,
+  :VsConverter,
+  :CsConverter,
+]
+
+# Node equipment: a busbar section or a junction is a point of its
+# TopologicalNode, so the topology consumes it.
+const _NODE_EQUIPMENT_CLASSES = [:BusbarSection, :Junction]
+
+# The switch family of CGMES 2.4.15 and 3.0. The importer links the classes
+# of _SWITCH_CLASSES (and the topology processor merges them); the others
+# (Fuse, GroundDisconnector, Cut, DisconnectingCircuitBreaker) it neither
+# links nor merges.
+const _SWITCH_FAMILY_CLASSES = [_SWITCH_CLASSES..., :Fuse, :GroundDisconnector, :Cut, :DisconnectingCircuitBreaker]
+
+# A switch the topology consumes: open (the importer's rule: SSH `open` over
+# EQ `normalOpen`, out of service counts as open), a terminal disconnected, or
+# its terminals on fewer than two TopologicalNodes (merged by the delivery's
+# TP profile or by the topology processor). A closed switch between two nodes
+# that is no link is not consumed: the coupling it makes is missing.
+function _switchConsumed(flags::_MapCtx, sw::CIMObject, ts::Vector{CIMObject})::Bool
+  _switchIsOpen(flags, sw) && return true
+  any(t -> !_conn(flags, terminalConnected(t)), ts) && return true
+  return length(unique(tnOfTerminal(t) for t in ts if tnOfTerminal(t) !== nothing)) < 2
+end
+
+# The table of classes not mapped in the import report, so that missing
+# generation, load or network elements show up there. The candidates are the
+# classes of every object outside the boundary set that a Terminal names as
+# its ConductingEquipment, plus the classes of _SSH_ACTIVE_POWER_ATTR (they
+# count even without a terminal).
+#
+# An object is mapped when its mRID is a key of the element map, when a key
+# `<mRID>#<part>` derived from it is (the charging shunt of a line on one
+# node), or when it is the PowerTransformer of a mapped PowerTransformerEnd
+# (a three-winding leg). The parts of a mapped object (transformer ends, tap
+# changers, the units behind a generator) and the topology itself
+# (ConnectivityNode, TopologicalNode) carry no terminal of their own and are
+# never candidates.
+#
+# A class gets a row when none of its objects is mapped and some object is
+# not accounted for otherwise. Accounted for are
+# - node equipment (_NODE_EQUIPMENT_CLASSES), consumed by the topology;
+# - a switch of _SWITCH_FAMILY_CLASSES the topology consumes (_switchConsumed);
+# - an object out of service or without a connected terminal on a
+#   TopologicalNode, if its class is one the importer maps
+#   (_MAPPED_EQUIPMENT_CLASSES; EnergySource with its switch on): the
+#   importer skips it on purpose and says so.
+# Objects of a class the importer does not map count in any state.
+# The row holds the number of objects not accounted for, the sum of their SSH
+# active power in MW in load sign (`nothing` where none of them carries an
+# SSH value) and how many of them carry none. Reads only the store and the
+# element map, so the importer and the tests share it.
+function _unmappedClasses(store::CGMESStore, element_by_mrid::AbstractDict; map_energy_source::Bool = false, ignore_connected::Bool = false)
+  # carries the importer's in-service and connected rules with its override
+  flags = _MapCtx(false, ignore_connected)
+  terms = Dict{String,Vector{CIMObject}}()
+  for t in objectsOf(store, :Terminal)
+    ce = get(t.refs, :ConductingEquipment, nothing)
+    (ce === nothing || ce in store.boundary) && continue
+    push!(get!(Vector{CIMObject}, terms, ce), t)
+  end
+  mapped = Set{String}()
+  for key in keys(element_by_mrid)
+    m = haskey(store.objects, key) ? String(key) : String(first(split(key, '#'; limit = 2)))
+    push!(mapped, m)
+    o = get(store.objects, m, nothing)
+    if o !== nothing && o.class === :PowerTransformerEnd
+      pt = get(o.refs, :PowerTransformer, nothing)
+      pt === nothing || push!(mapped, pt)
+    end
+  end
+  candidates = Set{Symbol}(first(p) for p in _SSH_ACTIVE_POWER_ATTR)
+  for ce in keys(terms)
+    o = get(store.objects, ce, nothing)
+    o === nothing || push!(candidates, o.class)
+  end
+  with_path = Set{Symbol}(_MAPPED_EQUIPMENT_CLASSES)
+  map_energy_source && push!(with_path, :EnergySource)
+  no_terms = CIMObject[]
+  rows = @NamedTuple{class::Symbol, count::Int, p_mw::Union{Nothing,Float64}, no_p::Int}[]
+  for cls in sort!(collect(candidates); by = String)
+    cls in _NODE_EQUIPMENT_CLASSES && continue
+    objs = [o for o in objectsOf(store, cls) if !(o.mrid in store.boundary)]
+    (isempty(objs) || any(o -> o.mrid in mapped, objs)) && continue
+    if cls in _SWITCH_FAMILY_CLASSES
+      filter!(o -> !_switchConsumed(flags, o, get(terms, o.mrid, no_terms)), objs)
+    elseif cls in with_path
+      filter!(o -> _inService(flags, o) && any(t -> _conn(flags, terminalConnected(t)) && tnOfTerminal(t) !== nothing, get(terms, o.mrid, no_terms)), objs)
+    end
+    isempty(objs) && continue
+    k = findfirst(p -> first(p) === cls, _SSH_ACTIVE_POWER_ATTR)
+    vals = Union{Nothing,Float64}[k === nothing ? nothing : num(o, last(_SSH_ACTIVE_POWER_ATTR[k])) for o in objs]
+    no_p = count(isnothing, vals)
+    p_mw = no_p == length(vals) ? nothing : sum(v -> something(v, 0.0), vals)
+    push!(rows, (class = cls, count = length(objs), p_mw = p_mw, no_p = no_p))
+  end
+  return rows
+end
+
+# RegulatingCondEq.controlEnabled (SSH): false switches the unit's voltage
+# regulation off, whatever its RegulatingControl says. Absent counts as true
+# (Sparlectra's own export and older deliveries do not write it). Read for
+# every class the importer maps with voltage regulation: SynchronousMachine,
+# ExternalNetworkInjection, StaticVarCompensator. An EquivalentInjection is
+# no RegulatingCondEq and has no such flag; it regulates only with
+# regulationCapability (EQ) and regulationStatus (SSH) both true.
+_regulationEnabled(obj::CIMObject)::Bool = something(boolval(obj, :controlEnabled), true)
+
+# one notice per class naming the units with controlEnabled = false
+function _noteRegulationOff!(messages::Vector{String}, ctrl_off, cls::Symbol)
+  names = [u.name for u in ctrl_off if u.class == cls]
+  isempty(names) && return nothing
+  shown = length(names) <= 5 ? join(names, ", ") : join(names[1:5], ", ") * ", ..."
+  push!(messages, "notice: $(length(names)) $(cls)(s) with controlEnabled = false, no voltage regulation: $(shown)")
+  return nothing
+end
+
 function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_slack::Bool = true)
   scan = _SlackScan()
   curve_pts = _reactiveCapabilityCurvePoints(store)
@@ -1844,6 +3022,10 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
   isempty(angle_ref_buses) || push!(ctx.messages, "notice: SV declares $(length(angle_ref_buses)) angle-reference node(s) — used as slack candidate(s): $(join(sort(collect(angle_ref_buses)), ", "))")
   pending = NamedTuple[]
 
+  # mapped units with controlEnabled = false (machines, network injections,
+  # SVCs): names for one notice per class, mRIDs for the slack notice in the
+  # flush below
+  ctrl_off = @NamedTuple{class::Symbol, mrid::String, name::String}[]
   for sm in objectsOf(store, :SynchronousMachine)
     t = busOfEquipment(topo, sm, 1)
     name = something(str(sm, :name), sm.mrid)
@@ -1903,12 +3085,28 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
       push!(ctx.messages, "notice: SynchronousMachine $(name) has no usable scalar minQ/maxQ — using ±$(qwide) MVAr")
     end
     prio = num(sm, :referencePriority, 0.0)
+    # the rating ranks the slack candidates; a placeholder rating (9999 MVA
+    # and above, the rule of the short circuit) ranks like no rating, so a
+    # unit without data does not become the largest machine of the delivery
+    rank_s = ratedS >= Sparlectra.SC_RATEDS_PLACEHOLDER_MVA ? 0.0 : ratedS
     # an SV angle reference outranks referencePriority: it is what the
     # exporting tool actually used
-    bus in angle_ref_buses && push!(scan.by_priority, (0.0, -ratedS, bus))
-    prio >= 1.0 && push!(scan.by_priority, (prio, -ratedS, bus))
-    push!(scan.machines, (ratedS, bus))
-    vset, vctrl, remote_bus = _voltageSetpoint(store, topo, sm, t.tn, ctx.messages; vset_min_pu = ctx.vset_min_pu, vset_max_pu = ctx.vset_max_pu, allow_remote = ctx.machine_control)
+    bus in angle_ref_buses && push!(scan.by_priority, (0.0, -rank_s, bus))
+    prio >= 1.0 && push!(scan.by_priority, (prio, -rank_s, bus))
+    push!(scan.machines, (rank_s, bus))
+    # RegulatingCondEq.controlEnabled (SSH) switches the machine's voltage
+    # regulation off: no PV bus, no remote plan, a PQ injection at the SSH
+    # p/q with the Q limits above (_regulationEnabled). The flag concerns the
+    # regulating control only, so the slack bookkeeping above stays: a
+    # machine chosen as slack holds its bus at the SV/start voltage (slack
+    # branch where the pending tuples are flushed).
+    ctrl_enabled = _regulationEnabled(sm)
+    ctrl_enabled || push!(ctrl_off, (class = :SynchronousMachine, mrid = sm.mrid, name = name))
+    vset, vctrl, remote_bus = if ctrl_enabled
+      _voltageSetpoint(store, topo, sm, t.tn, ctx.messages; vset_min_pu = ctx.vset_min_pu, vset_max_pu = ctx.vset_max_pu, allow_remote = ctx.machine_control)
+    else
+      (nothing, false, nothing)
+    end
     sm_rc = ref(store, sm, :RegulatingControl)
     # A resolvable remote control (machine_control = true) keeps the machine
     # a PQ injection with the SSH operating point; the outer-loop controller
@@ -1947,6 +3145,7 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
       ),
     )
   end
+  _noteRegulationOff!(ctx.messages, ctrl_off, :SynchronousMachine)
 
   # AsynchronousMachine (#294 point 6) — Stage-0 model: a fixed PQ operating
   # point from SSH (`RotatingMachine.p`/`q`, load convention — a motor
@@ -1976,6 +3175,8 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
     p = num(am, :p, 0.0)
     q = num(am, :q, 0.0)
     Sparlectra.addProsumer!(net = net, busName = bus, type = "ASYNCHRONOUSMACHINE", p = p, q = q, defer_bus_type_refresh = true)
+    # a consumption-type prosumer (motor convention), hence a load
+    ctx.element_by_mrid[am.mrid] = (:load, length(net.prosumpsVec))
     # The prosumer constructor collapses the type string to a generic Load
     # component; keep the true component type on the comp so the
     # short-circuit evaluation can recognize motors (skip + lower-bound
@@ -2007,7 +3208,12 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
     bus in angle_ref_buses && push!(scan.by_priority, (0.0, -maxP, bus))
     prio >= 1.0 && push!(scan.by_priority, (prio, -maxP, bus))
     push!(scan.enis, (maxP, bus))
-    vset, vctrl, _ = _voltageSetpoint(store, topo, eni, t.tn, ctx.messages; vset_min_pu = ctx.vset_min_pu, vset_max_pu = ctx.vset_max_pu)
+    # controlEnabled = false: a PQ injection at the SSH p/q, as for the
+    # machines; the slack candidacy above stays, as slack it holds the
+    # SV/start voltage of its bus instead of its control target
+    ctrl_enabled = _regulationEnabled(eni)
+    ctrl_enabled || push!(ctrl_off, (class = :ExternalNetworkInjection, mrid = eni.mrid, name = name))
+    vset, vctrl, _ = ctrl_enabled ? _voltageSetpoint(store, topo, eni, t.tn, ctx.messages; vset_min_pu = ctx.vset_min_pu, vset_max_pu = ctx.vset_max_pu) : (nothing, false, nothing)
     eni_rc = ref(store, eni, :RegulatingControl)
     push!(
       pending,
@@ -2029,6 +3235,7 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
       ),
     )
   end
+  _noteRegulationOff!(ctx.messages, ctrl_off, :ExternalNetworkInjection)
 
   # EquivalentInjections per boundary node: an assembled model carries one EI
   # per SIDE on each X-node (e.g. BE-Inj-X… and NL-Inj-X…). Two or more EIs
@@ -2088,8 +3295,12 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
     end
     slope = num(svc, :slope, 0.0)
     slope != 0.0 && push!(ctx.messages, "notice: StaticVarCompensator $(name) — droop slope $(slope) ignored (constant-voltage model)")
-    vset, vctrl, _ = _voltageSetpoint(store, topo, svc, t.tn, ctx.messages; vset_min_pu = ctx.vset_min_pu, vset_max_pu = ctx.vset_max_pu)
-    if !vctrl && endswith(something(enumval(svc, :sVCControlMode), ""), ".voltage") && something(boolval(svc, :controlEnabled), true)
+    # controlEnabled = false: PQ at the SSH q, both for a voltage
+    # RegulatingControl and for the sVCControlMode/voltageSetPoint fallback
+    ctrl_enabled = _regulationEnabled(svc)
+    ctrl_enabled || push!(ctrl_off, (class = :StaticVarCompensator, mrid = svc.mrid, name = name))
+    vset, vctrl, _ = ctrl_enabled ? _voltageSetpoint(store, topo, svc, t.tn, ctx.messages; vset_min_pu = ctx.vset_min_pu, vset_max_pu = ctx.vset_max_pu) : (nothing, false, nothing)
+    if ctrl_enabled && !vctrl && endswith(something(enumval(svc, :sVCControlMode), ""), ".voltage")
       vsp = num(svc, :voltageSetPoint)
       (vsp !== nothing && vsp > 0.0) && ((vset, vctrl) = (vsp / t.vn_kV, true))
     end
@@ -2128,6 +3339,7 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
       ),
     )
   end
+  _noteRegulationOff!(ctx.messages, ctrl_off, :StaticVarCompensator)
 
   # HVDC converter stations, Stage-0 model: each converter becomes a fixed
   # injection at its AC connection point with the SSH operating point — the
@@ -2192,6 +3404,9 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
     push!(get!(Vector{Float64}, ei_p_bnode, bnode), num(ei, :p, 0.0))
   end
 
+  # mapped EquivalentInjections with regulationCapability = true and no SSH
+  # regulationStatus: counted for one notice below
+  n_ei_status_missing = 0
   for ei in objectsOf(store, :EquivalentInjection)
     t = busOfEquipment(topo, ei, 1)
     name = something(str(ei, :name), ei.mrid)
@@ -2217,12 +3432,50 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
       continue
     end
     bus = _busForTerminal!(net, created, topo, svmap, ctx, ei, 1, t.tn)
-    # regulationStatus + positive target → PV-like boundary
+    # regulationCapability (EQ) and regulationStatus (SSH) both true plus a
+    # positive target → PV-like boundary. An EquivalentInjection is no
+    # RegulatingCondEq: it has neither controlEnabled nor a
+    # RegulatingControl. Either flag absent counts as false; a capable unit
+    # without a status (SSH missing or incomplete) is counted for the notice.
     vset = nothing
-    if something(boolval(ei, :regulationStatus), false)
+    ei_capable = something(boolval(ei, :regulationCapability), false)
+    ei_status = boolval(ei, :regulationStatus)
+    ei_capable && ei_status === nothing && (n_ei_status_missing += 1)
+    if ei_capable && something(ei_status, false)
       target = num(ei, :regulationTarget, 0.0)
       target > 0.0 && (vset = target / t.vn_kV)
     end
+    # Q limits in the order of the machines: the ReactiveCapabilityCurve at
+    # the scheduled p, else the scalar minQ/maxQ hull. Unlike a machine an
+    # EquivalentInjection has no rating for a wide fallback, so a missing
+    # or degenerate pair (0/0) leaves it without Q limits.
+    qlo = nothing
+    qhi = nothing
+    ei_curve = get(ei.refs, :ReactiveCapabilityCurve, nothing)
+    if ei_curve !== nothing && haskey(curve_pts, ei_curve)
+      cq = _curveQHull(curve_pts[ei_curve], num(ei, :p, 0.0))
+      if cq !== nothing
+        qlo, qhi = cq
+        push!(ctx.messages, "notice: EquivalentInjection $(name): Q limits [$(round(qlo; digits = 1)), $(round(qhi; digits = 1))] MVAr from its ReactiveCapabilityCurve at P = $(num(ei, :p, 0.0)) MW")
+      end
+    end
+    if qlo === nothing
+      qlo = _limitHullMin(num(ei, :minQ), num(ei, :maxQ))
+      qhi = _limitHullMax(num(ei, :minQ), num(ei, :maxQ))
+      (qlo === nothing || qhi === nothing || (qhi - qlo) < 1e-6) && (qlo = qhi = nothing)
+    end
+    # P limits from EQ minP/maxP as delivered, in generator sign: the CIM
+    # names them limits "of the injection" (p in SSH is load sign), PowSyBl
+    # takes them unchanged as generator minP/maxP and writes them back so,
+    # and the export of a network injection writes its
+    # prosumer pMin/pMax the same way. Unlike the scalar Q pair (hull, the
+    # test sets disagree on its sign) the hull would widen an asymmetric
+    # range such as (-5, 15) to (-15, 15). A missing, degenerate (0/0) or
+    # inverted pair gives none. Distributed slack (p_mode pmax/headroom, the
+    # P-limit check) and the slack ranking read them.
+    plo = num(ei, :minP)
+    phi = num(ei, :maxP)
+    (plo === nothing || phi === nothing || (phi - plo) < 1e-6) && (plo = phi = nothing)
     push!(
       pending,
       (
@@ -2230,15 +3483,21 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
         type = "EXTERNALNETWORKINJECTION",
         p = -num(ei, :p, 0.0),
         q = -num(ei, :q, 0.0),
-        pMin = nothing,
-        pMax = nothing,
-        qMin = nothing,
-        qMax = nothing,
+        pMin = plo,
+        pMax = phi,
+        qMin = qlo,
+        qMax = qhi,
         vm_pu = vset,
         isRegulated = vset !== nothing,
+        # no `mrid` on purpose (export identity, see the flush below); the
+        # source mRID only feeds element_by_mrid
+        src_mrid = ei.mrid,
       ),
     )
   end
+  n_ei_status_missing > 0 && push!(ctx.messages, "notice: $(n_ei_status_missing) EquivalentInjection(s) with regulationCapability = true and no SSH regulationStatus, no voltage regulation")
+
+  _mapEnergySources!(pending, net, store, topo, created, svmap, ctx)
 
   slack_bus = _chooseSlack(scan, ctx.messages)
   # One slack per island: every SV angle-reference bus that carries a unit
@@ -2249,13 +3508,19 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
   ctx.machine_control && _resolveMachineControlPlans!(pending, net, slack_buses, ctx.messages)
   marked = Set{String}()
   for inj in pending
-    is_slack = inj.bus in slack_buses && !(inj.bus in marked)
+    # an EnergySource tuple carries slack_candidate = false: the importer
+    # never gives it the reference role, even on the slack bus
+    is_slack = get(inj, :slack_candidate, true) && inj.bus in slack_buses && !(inj.bus in marked)
     is_slack && push!(marked, inj.bus)
     vm = inj.vm_pu
     if is_slack && vm === nothing
       # slack needs a voltage target: use the SV/start value of its bus
       node = net.nodeVec[Sparlectra.geNetBusIdx(net = net, busName = inj.bus)]
       vm = something(node._vm_pu, 1.0)
+      # a unit with controlEnabled = false lands here too: its control
+      # target does not apply, the start voltage does
+      off_i = findfirst(u -> u.mrid == get(inj, :mrid, nothing), ctrl_off)
+      off_i === nothing || push!(ctx.messages, "notice: slack $(ctrl_off[off_i].class) $(ctrl_off[off_i].name) has controlEnabled = false and holds its bus at the start voltage $(round(vm; digits = 4)) pu (SV where present), not at its RegulatingControl target")
     end
     Sparlectra.addProsumer!(
       net = net,
@@ -2281,6 +3546,13 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
     # Record the index per source mRID for post-build steps (HVDC pairs).
     inj_mrid = get(inj, :mrid, nothing)
     inj_mrid === nothing || (ctx.prosumer_by_mrid[String(inj_mrid)] = lastindex(net.prosumpsVec))
+    # every pending tuple carries its source mRID, an EquivalentInjection
+    # as src_mrid (`something` throws for a tuple with neither); SVCs and
+    # EnergySources are injection-type prosumers like the machines,
+    # converters and equivalents share the external-grid type string
+    addr_mrid = String(something(inj_mrid, get(inj, :src_mrid, nothing)))
+    addr_kind = inj.type == "EXTERNALNETWORKINJECTION" ? :external_grid : :generator
+    ctx.element_by_mrid[addr_mrid] = (addr_kind, lastindex(net.prosumpsVec))
     # The prosumer constructor collapses the type string to a generic
     # Generator/Load component; keep the concrete class on the comp (same
     # pattern as the AsynchronousMachine marker) so a later CGMES export can
@@ -2422,7 +3694,34 @@ Import a CGMES delivery (EQ+SSH+TP, plus boundary set) into a Sparlectra
 `Net` (Stage 1: bus-branch topology from the TP profile, fixed SSH tap
 positions). Short-circuit source data is harvested into the result's
 `shortcircuit` container (read, not evaluated). Start voltages are taken
-from the SV profile where present.
+from the SV profile where present. A three-winding star point has no SV
+voltage; it starts at the voltage at which no current leaves it, given the
+SV voltages of its sides.
+
+`path` is a folder, a ZIP or a vector of either, or a `CGMESStore` already
+loaded with `loadCGMES`. The store is not modified: a delivery without a TP
+profile gets its topological nodes from the node-breaker topology
+processor, which writes them into the store, so the import then works on a
+`deepcopy`. Otherwise `result.store` is the given store itself.
+
+`result.element_by_mrid` names the element every mapped CGMES object
+became (see `CGMESImportResult`).
+
+An `EquivalentBranch` with both terminals connected and in service becomes
+a branch without charging: on one voltage level a pi branch with `r`, `x`
+on that base, across two levels a branch with per-unit ratio 1 and the
+impedance on the base of terminal 1. One whose terminals sit on the same
+TopologicalNode builds nothing and gets a notice. One whose impedance lies
+below `equivalent_branch_min_z_pu` (per unit on the base of terminal 1, both
+directions, default `1e-6`) builds no branch either: its two buses are
+joined as a bus link, with a notice. With `r21`/`x21` other
+than `r`/`x` the object becomes a transformer branch with ratio 1, phase
+shift `arg(z21/z12)/2`, series impedance of magnitude `sqrt(|z12| |z21|)`
+and unequal shunt arms with zero row sums (phase stamp, on both level
+kinds). It reproduces the two-port exactly for `|z21| = |z12|`; otherwise
+each admittance entry is off in magnitude by `sqrt(|z21|/|z12|)` or its
+inverse. One notice counts the mapped, skipped and stamped objects and the
+largest magnitude difference.
 
 With `tap_control = true` the SSH tap positions are the start point and the
 CGMES-defined tap changers become outer-loop controllers. With
@@ -2432,6 +3731,51 @@ at a *different* bus becomes a PQ injection with an outer-loop
 at its own bus); plans whose target bus is already voltage-held, isolated,
 or claimed by another machine fall back to the held-PV behavior with a
 notice in `result.messages`.
+
+A `SynchronousMachine`, `ExternalNetworkInjection` or `StaticVarCompensator`
+with SSH `controlEnabled = false` does not regulate: it is a PQ injection at
+its SSH `p`/`q` with its Q limits, whatever its `RegulatingControl` says,
+and a machine gets no `MachineVoltageControl`; an absent flag counts as
+`true`. The flag does not touch the slack choice: `referencePriority` and
+the SV angle reference still apply, and as slack the unit holds its bus at
+the start voltage (the SV value where present). One notice per class counts
+these units. An `EquivalentInjection` has no `controlEnabled`; it regulates
+only with EQ `regulationCapability = true`, SSH `regulationStatus = true` and
+a positive `regulationTarget` (an absent flag counts as `false`). One notice
+counts the units with `regulationCapability = true` and no
+`regulationStatus`.
+
+With `map_energy_source = true` every in-service, connected `EnergySource`
+on a TopologicalNode becomes a fixed PQ injection (`GENERATOR` prosumer,
+`p = -activePower`, `q = -reactivePower` from the SSH, no regulation, no Q
+limits, no slack candidate of the delivery), addressed as `:generator` in
+`element_by_mrid`; one notice counts the mapped and skipped objects with
+their P and Q sums. In an island whose only infeed is `EnergySource` the
+importer makes the largest of them the slack, by the rule for islands
+without a reference, with a warning (its P then follows the island
+balance). With `multi_slack = false` such an island gets no slack: the
+island-wise solve makes the strongest of them its reference, and one notice
+per such island says so. With
+the default `false` the objects stay out of the network, are listed in
+`skipped_equipment`, and one notice names the key that maps them; their
+count and P sum stand in the table of classes not mapped.
+
+Every class with terminals or with an SSH active power value of which no
+object outside the boundary set is mapped gets one row `class not mapped:`
+with its object count and the sum of its SSH P in MW, below one header
+notice that states the load sign (positive means flow out of the node). A
+row whose objects carry no SSH active power has no P sum. An object is
+mapped when it became a network element (also as a three-winding leg or as
+the charging shunt of a line on one node). The topology consumes
+`BusbarSection` and `Junction`, and a switch (`Switch`, `Breaker`,
+`Disconnector`, `LoadBreakSwitch`, `Jumper`, `ProtectedSwitch`, `Fuse`,
+`GroundDisconnector`, `Cut`, `DisconnectingCircuitBreaker`) that is open,
+disconnected or inside one TopologicalNode; a closed switch between two
+nodes is a bus link for the first six classes and missing for the others.
+Parts of a mapped object (transformer ends, tap changers, generating units)
+and the connectivity carry no terminal of their own and get no row. An
+object out of service or without a connected terminal on a TopologicalNode
+does not count when its class is one the importer maps.
 """
 function importCGMES(;
   path,
@@ -2444,17 +3788,26 @@ function importCGMES(;
   machine_control::Bool = false,
   ignore_connected::Bool = false,
   multi_slack::Bool = true,
+  equivalent_branch_min_z_pu::Float64 = 1e-6,
   vset_min_pu::Float64 = CGMES_VSET_MIN_PU,
   vset_max_pu::Float64 = CGMES_VSET_MAX_PU,
   strict_placeholder_guards::Bool = false,
   infer_base_voltages::Bool = false,
   hvdc_mode::Symbol = :injections,
+  map_energy_source::Bool = false,
   name::Union{Nothing,String} = nothing,
 )::CGMESImportResult
   vset_min_pu <= vset_max_pu || throw(ArgumentError("importCGMES: vset_min_pu ($(vset_min_pu)) must not exceed vset_max_pu ($(vset_max_pu))"))
   hvdc_mode in (:injections, :paired_control) || throw(ArgumentError("importCGMES: hvdc_mode must be :injections or :paired_control, got :$(hvdc_mode)"))
-  store = loadCGMES(path)
-  ctx = _MapCtx(tap_control, ignore_connected; machine_control = machine_control, vset_min_pu = vset_min_pu, vset_max_pu = vset_max_pu, strict_guards = strict_placeholder_guards)
+  # the topology processor below is the one step that writes into the store;
+  # a caller's store is copied only when it will run
+  store = if path isa CGMESStore
+    _nodeBreakerProcessorApplies(path) ? deepcopy(path) : path
+  else
+    loadCGMES(path)
+  end
+  equivalent_branch_min_z_pu >= 0.0 || throw(ArgumentError("importCGMES: equivalent_branch_min_z_pu must not be negative, got $(equivalent_branch_min_z_pu)"))
+  ctx = _MapCtx(tap_control, ignore_connected; machine_control = machine_control, vset_min_pu = vset_min_pu, vset_max_pu = vset_max_pu, strict_guards = strict_placeholder_guards, map_energy_source = map_energy_source, eb_min_z_pu = equivalent_branch_min_z_pu)
   ignore_connected && push!(ctx.messages, "notice: ignore_connected = true — SSH Terminal.connected flags are overridden, everything is treated as in service")
   messages = ctx.messages
   unresolved = unresolvedReferences(store)
@@ -2519,7 +3872,8 @@ function importCGMES(;
   # injections at non-cancelling boundary nodes land on per-side buses
   _detectNonCancellingBoundarySides!(ctx, store, topo)
 
-  _mapLines!(net, store, topo, created, svmap, baseMVA, ctx)
+  acl_parallel = _mapLines!(net, store, topo, created, svmap, baseMVA, ctx)
+  _mapEquivalentBranches!(net, store, topo, created, svmap, baseMVA, ctx, acl_parallel)
   # with tap control the SSH positions are the start point and the outer-loop
   # controllers find the solved positions themselves; without it the SvTapStep
   # positions reproduce the SV state directly (Stage 1)
@@ -2529,14 +3883,40 @@ function importCGMES(;
   _mapShunts!(net, store, topo, created, svmap, ctx)
   _mapLoads!(net, store, topo, created, svmap, ctx)
   slack_bus = _mapInjections!(net, store, topo, created, svmap, ctx; multi_slack = multi_slack)
+  # every element is mapped, so the stamps of the star rows are final
+  _startStarBuses!(net, ctx, topo, svmap)
   Sparlectra.refreshBusTypesFromProsumers!(net)
   # Real deliveries carry TopologicalNodes whose only equipment is a load or a
   # switch that never becomes a branch (RealGrid: 198 such stubs). Mark them so
   # the solver skips them instead of reporting single-bus islands without a
   # reference; the bus stays in the model for provenance.
   _deEnergizeSourcelessComponents!(net, ctx)
+  # The marking counts branches only. A bus that a closed switch joins to a
+  # bus with a branch is marked as well, but the solver merges the switch
+  # group onto one node and solves it with that bus (_merged_pf_net), so the
+  # message counts such buses apart. They stay marked: N-1, the scenario
+  # steps and the short circuit apply the same branch-only rule.
   n_iso = length(Sparlectra.markIsolatedBuses!(net = net))
-  n_iso > 0 && push!(ctx.messages, "notice: $(n_iso) isolated bus(es) without any in-service branch — marked isolated, excluded from the power flow")
+  n_fed = length(_linkFedIsolatedBuses(net))
+  n_iso > n_fed && push!(ctx.messages, "notice: $(n_iso - n_fed) isolated bus(es) without any in-service branch: marked isolated, excluded from the power flow")
+  n_fed > 0 && push!(ctx.messages, "notice: $(n_fed) bus(es) without an in-service branch marked isolated, but a closed switch joins each to a bus with one: solved with that bus")
+  # islands with a source but without reference get a slack; needs the final
+  # isolation, and runs before the EnergySource notice, which then only names
+  # islands left without reference (multi_slack = false)
+  multi_slack && _slackForIslandsWithoutReference!(net, store, ctx)
+  # needs the final isolation: an isolated bus belongs to no island
+  _noticeEnergySourceOnlyIslands!(net, store, ctx)
+  # every class with terminals or SSH active power of which no object is
+  # mapped gets one row (_unmappedClasses), so missing generation, load or
+  # network elements show up in the import report; the header states the
+  # sign convention once for all rows, and a row without any SSH value has no
+  # P sum
+  unmapped = _unmappedClasses(store, ctx.element_by_mrid; map_energy_source = ctx.map_energy_source, ignore_connected = ctx.ignore_connected)
+  isempty(unmapped) || push!(ctx.messages, "notice: classes not mapped, P sum from SSH in load sign (positive means flow out of the node):")
+  for r in unmapped
+    p_sum = r.p_mw === nothing ? "" : string(r.no_p == 0 ? "" : ", $(r.no_p) without SSH P", ", P sum $(round(r.p_mw; digits = 2)) MW")
+    push!(ctx.messages, "notice: class not mapped: $(r.class), $(r.count) object(s)$(p_sum)")
+  end
   tap_control && _disableIneffectiveTapControllers!(net, ctx)
   machine_control && _attachMachineControls!(net, ctx)
   # HVDC pairing (#297 Draft B): detection runs on the raw store, so even in
@@ -2556,24 +3936,43 @@ function importCGMES(;
   end
 
   sc = collectShortCircuitData(store, topo)
+  # a source the import did not map (terminal disconnected, out of service,
+  # no node, a boundary side that cancels) is no element of the network and
+  # feeds no fault current. Its record still carries the bus of its node,
+  # and that node can be live through other equipment, so the record goes
+  # here and not in the engine.
+  for field in (:external_network_injections, :synchronous_machines, :equivalent_injections, :asynchronous_machines)
+    filter!(r -> haskey(ctx.element_by_mrid, r.mrid), getfield(sc, field))
+  end
   isempty(sc.ac_line_segments) || push!(ctx.messages, "short-circuit data: $(length(sc.ac_line_segments)) lines (read, not evaluated)")
   isempty(sc.synchronous_machines) || push!(ctx.messages, "short-circuit data: $(length(sc.synchronous_machines)) machines (read, not evaluated)")
   isempty(sc.external_network_injections) || push!(ctx.messages, "short-circuit data: $(length(sc.external_network_injections)) external injections (read, not evaluated)")
 
-  # SV coverage: buses whose TN carries no usable SvVoltage keep the 1.0 pu /
-  # 0° fallback from _ensureBus!. Their share decides how meaningful a
+  # SV coverage: buses whose TN carries no usable SvVoltage get the 1.0 pu /
+  # 0° fallback from _ensureBus!, and then the start of a neighbour with one
+  # where there is such a neighbour (_startNoSvBusesFromNeighbours!; runs
+  # after the star start and the isolation marking, so star points and
+  # isolated buses keep theirs). Their share decides how meaningful a
   # comparison against the delivery's SV state is (fixed-reference self-check,
   # compareWithSV), so record the list and say so in the messages. Per-side
   # split buses share their TN's SV classification and are covered through the
   # primary bus name; vn <= 0 counts as "no usable SV" because _ensureBus!
-  # cannot form a per-unit magnitude there either.
+  # cannot form a per-unit magnitude there either, and an SvVoltage with
+  # v <= 0 never reaches svmap (_svVoltageByTN).
   no_sv_buses = String[]
   for (tn, bus) in topo.bus_name
     bus in created || continue
     (haskey(svmap, tn) && topo.vn_kV[tn] > 0.0) || push!(no_sv_buses, bus)
   end
   sort!(unique!(no_sv_buses))
-  isempty(no_sv_buses) || push!(ctx.messages, "notice: $(length(no_sv_buses)) of $(length(created)) buses have no usable SvVoltage — flat 1.0 pu / 0° start (list in result.no_sv_buses)")
+  isempty(no_sv_buses) || push!(ctx.messages, "notice: $(length(no_sv_buses)) of $(length(created)) buses have no usable SvVoltage (list in result.no_sv_buses)")
+  n_nb = _startNoSvBusesFromNeighbours!(net, ctx, no_sv_buses)
+  n_nb > 0 && push!(ctx.messages, "notice: $(n_nb) bus(es) without a usable SvVoltage start at the voltage of a neighbour with one")
+  # A tap step the SV was not computed with keeps the import off its own SV
+  # whatever the model does; one line here, the list per tap changer in
+  # result.sv_tap_step_fits (_svTapStepFits, cgmes_report.jl)
+  sv_tap_step_fits = _svTapStepFits(net, store, topo, ctx.element_by_mrid)
+  isempty(sv_tap_step_fits) || push!(ctx.messages, "notice: $(length(sv_tap_step_fits)) tap changer(s) whose SvTapStep fits the SV flows of its transformer clearly worse than another step (list in result.sv_tap_step_fits)")
 
   # Everything else is collected silently and inspected via result.messages.
   # "warning:" is reserved for data defects where the importer had to substitute
@@ -2587,7 +3986,15 @@ function importCGMES(;
   for field in (:external_network_injections, :synchronous_machines, :ac_line_segments, :transformer_ends, :equivalent_injections, :asynchronous_machines)
     append!(getfield(net.sc_sources, field), getfield(sc, field))
   end
-  return CGMESImportResult(net, store, topo, sc, slack_bus, ctx.messages, ctx.branch_side, ctx.skipped, no_sv_buses)
+  # every tap controller exists now, so its position in _tap_controllers(net)
+  # is final (see _MapCtx); looked up by identity of the recorded controller
+  if !isempty(ctx.tap_controller_by_mrid)
+    tap_pos = IdDict{Sparlectra.PowerTransformerControl,Int}(c => k for (k, c) in enumerate(Sparlectra._tap_controllers(net)))
+    for (mrid, c) in ctx.tap_controller_by_mrid
+      ctx.element_by_mrid[mrid] = (:tap_controller, tap_pos[c])
+    end
+  end
+  return CGMESImportResult(net, store, topo, sc, slack_bus, ctx.messages, ctx.branch_side, ctx.skipped, no_sv_buses, ctx.element_by_mrid, sv_tap_step_fits)
 end
 
 """

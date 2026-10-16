@@ -7,6 +7,7 @@ that directory.
 - [API and Services](reference_api.md): service entry points, run management, Web UI backend
 - [ACPFlow Runner](reference_acpflow.md): the configured power-flow execution path
 - [Core Model](reference_core.md): network, nodes, branches, transformers, prosumers
+- [Results and Output](reference_results.md): result tables, losses, CSV output, run session
 - [Rectangular Power Flow](reference_powerflow_rectangular.md): the Newton-Raphson solver in rectangular coordinates
 - [DC Power Flow](reference_powerflow_dc.md): the linear DC approximation
 - [Short Circuit](reference_shortcircuit.md): IEC 60909 short-circuit calculation
