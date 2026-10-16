@@ -1,3 +1,15 @@
+# Version 0.42.0 - 2026-10-16
+
+CSV view in the Web UI and CGMES import fixes.
+## Added
+- Web UI CSV view: significant digits (default 5), power columns in W, kW or MW, and rows sorted by a numeric column, largest first.
+## Fixed
+- CGMES import: three-winding legs with negative r are kept; magnetizing of three-winding transformers sits at the star point; a leg with an open side terminal stays in the model; network injection P limits are read as delivered; every tap changer carries its range, table and per-step impedance; active power limits of 9999 MW and above are placeholders and no longer win slack choices or distributed-slack weights.
+- Distributed slack: `Pg` is the schedule, `Pg eff` the delivered generation; units receive their share; island participation in network numbers.
+- Export and Web UI: no tap row at ratio 1 in the MATPOWER export; CSV export reported as skipped where no detailed CSV exists; a start from a second checkout keeps the sysimage of the other one.
+## Changed
+- Tap data is set on every imported tap changer, also one the import does not regulate; results change where a controller configured later stepped on the default grid. See the changelog for the full list.
+
 # Version 0.41.0 - 2026-10-16
 
 CGMES import corrections and solver fixes.
