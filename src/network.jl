@@ -2388,7 +2388,9 @@ function _split_proportional(total::Float64, spec::Vector{Float64})
   return abs(s) < 1e-9 ? fill(total / length(spec), length(spec)) : total .* (spec ./ s)
 end
 
-function distribute_bus_generation!(net::Net, bus::Int)
+# `unit_shares`: distributed-slack participation of the last solve per unit
+# (prosumer index to (alpha, dp_mw), `_distributed_slack_unit_shares`)
+function distribute_bus_generation!(net::Net, bus::Int; unit_shares::AbstractDict{Int,NTuple{2,Float64}} = Dict{Int,NTuple{2,Float64}}())
   node = net.nodeVec[bus]
 
   gens_idx = _generators_at_bus(net, bus)
@@ -2414,15 +2416,24 @@ function distribute_bus_generation!(net::Net, bus::Int)
 
   # --- P split ---
   # The reference units (isSlack) take what the solve gave the bus beyond the
-  # schedule of the other units, which keep their scheduled P. A proportional
-  # split of the whole bus value gave a reference unit without a schedule
-  # nothing and a 10 MW unit next to it the whole slack balance.
+  # output of the other units, which deliver their scheduled P. A
+  # proportional split of the whole bus value gave a reference unit without a
+  # schedule nothing and a 10 MW unit next to it the whole slack balance.
+  # Under a distributed slack a participating unit delivers its schedule
+  # plus its own share of lambda_P (dP), so the units add up to the
+  # delivered bus generation. At a bus without a reference unit that is
+  # what each unit gets: the bus value there is the schedule, or, at a bus
+  # an island solve promoted to reference, the solved value, which is the
+  # same schedule plus shares.
+  dP = [get(unit_shares, idx, (0.0, 0.0))[2] for idx in gens_idx]
   P_alloc = similar(P_spec)
   is_ref = [isSlack(net.prosumpsVec[idx]) for idx in gens_idx]
   if any(is_ref) && !all(is_ref)
-    residual = P_target - sum(P_spec[.!is_ref])
-    P_alloc[.!is_ref] .= P_spec[.!is_ref]
+    residual = P_target - sum(P_spec[.!is_ref] .+ dP[.!is_ref])
+    P_alloc[.!is_ref] .= P_spec[.!is_ref] .+ dP[.!is_ref]
     P_alloc[is_ref] .= _split_proportional(residual, P_spec[is_ref])
+  elseif !any(is_ref) && any(!iszero, dP)
+    P_alloc .= P_spec .+ dP
   else
     P_alloc .= _split_proportional(P_target, P_spec)
   end
@@ -2474,7 +2485,10 @@ end
     distributeBusResults!(net)
 
 Write the solved bus results back onto the attached prosumers and shunts
-(per-machine P/Q, shunt injections).
+(per-machine P/Q, shunt injections). Under a distributed slack a
+participating unit gets its schedule plus its share of `lambda_P`; a
+reference unit gets what the bus delivers beyond the other units at its
+bus.
 """
 function distributeBusResults!(net::Net)
   # reset results
@@ -2483,8 +2497,9 @@ function distributeBusResults!(net::Net)
     ps.qRes = nothing
   end
 
+  _, unit_shares = _distributed_slack_unit_shares(net)
   for node in net.nodeVec
-    distribute_bus_generation!(net, node.busIdx)
+    distribute_bus_generation!(net, node.busIdx; unit_shares = unit_shares)
     distribute_bus_loads!(net, node.busIdx)
   end
 end

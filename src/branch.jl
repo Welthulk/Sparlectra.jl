@@ -616,6 +616,24 @@ function calcBranchYserBase(branch::Branch)::ComplexF64
   return inv((branch.r_base_pu + branch.x_base_pu * im))
 end
 
+# The branchIdx of every branch whose negative series resistance or reactance
+# is taken over unchanged by the exports and the short circuit:
+#  - a branch built from a CGMES EquivalentBranch (a network equivalent, no
+#    equipment; net.equivalent_branch_metadata),
+#  - a leg of a three-winding transformer in its star equivalent
+#    (_three_winding_groups: an auxiliary star bus whose branches are all
+#    transformers). The star split of the pair impedances
+#    z1 = (z12 + z13 - z23)/2 and so on gives a negative leg r or x for real
+#    transformers; only the pair sums are physical.
+# A two-winding transformer or a line keeps the check.
+function _negative_r_allowed_branches(net)::Set{Int}
+  allowed = Set{Int}(keys(net.equivalent_branch_metadata))
+  for g in _three_winding_groups(net), k in g.legs
+    push!(allowed, Int(net.branchVec[k].branchIdx))
+  end
+  return allowed
+end
+
 """
     assertPhysicalBranchImpedances(net, context)
 
@@ -627,13 +645,16 @@ circuit and the CGMES/MATPOWER exports read the base (equipment) impedance
 them; this assertion is therefore expected NOT to fire in the normal FACTS plus
 export/SC workflow. It stays as a last-resort guard against a corrupted base
 model. `context` names the caller (e.g. "CGMES export", "MATPOWER export").
-A branch built from a CGMES `EquivalentBranch` (`net.equivalent_branch_metadata`)
-is exempt: a network equivalent is no equipment, and a negative r or x is
-normal in Ward and Kron reductions.
+Two kinds of branch are exempt (`_negative_r_allowed_branches`): a branch
+built from a CGMES `EquivalentBranch` (`net.equivalent_branch_metadata`), a
+network equivalent where a negative r or x is normal in Ward and Kron
+reductions, and a leg of a three-winding star equivalent, where a single leg
+can be negative and only the sums of two legs are physical.
 """
 function assertPhysicalBranchImpedances(net, context::AbstractString)
+  allowed = _negative_r_allowed_branches(net)
   for br in net.branchVec
-    if br.r_base_pu < 0.0 && !haskey(net.equivalent_branch_metadata, Int(br.branchIdx))
+    if br.r_base_pu < 0.0 && !(Int(br.branchIdx) in allowed)
       error("$(context): branch $(getCompName(br.comp)) has a negative base series resistance (r_base = $(br.r_base_pu) pu). The physical equipment impedance must be non-negative; check the branch model, not a FACTS operating point.")
     end
   end

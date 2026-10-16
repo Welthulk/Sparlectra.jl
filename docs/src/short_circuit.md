@@ -178,8 +178,10 @@ source types feed the fault:
 
 A branch built from a CGMES `EquivalentBranch` enters with its series
 impedance as delivered, also with a negative `r`: a network equivalent is no
-equipment. The report names the number of such branches with negative `r` in
-the islands of the fault buses in one line.
+equipment. A leg of a three-winding transformer in its star equivalent does
+the same, since only the sum of two legs is physical. The report names the
+number of such branches with negative `r` in the islands of the fault buses,
+one line for the equivalent branches and one for the three-winding legs.
 
 Voltage factors follow IEC 60909-0 Table 1 by voltage level (`c_max`
 1.05/1.10, `c_min` 0.95/1.00).

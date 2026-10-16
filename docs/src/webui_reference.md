@@ -554,7 +554,32 @@ Every finished run gets a result page: run ID, schema version, status,
 convergence and solution flags, iterations, final mismatch, reason and
 message, input paths, output directory and a **Solver** entry. A CSV artifact opens as a table
 (delimiter taken from the header line), a Markdown report rendered;
-**Raw text** shows the file as written. Other text artifacts (JSON, YAML,
+**Raw text** shows the file as written.
+
+Above a CSV table, **Significant digits** (default 5) rounds every decimal
+cell, and **Power columns** (W, kW or MW) shows power columns in whole
+units of that resolution, the unit then in the column header; 1.98e-16 MW
+shows as 0 at any resolution. A power column is one whose header name holds
+the token `mw`, `mvar` or `mva` (case-insensitive, tokens split at every
+character that is not a letter or digit: `p_mw`, `q_mvar`, `s_mva`,
+`P [MW]`); other columns, such as `vm_pu`, get the significant digits only.
+Integer cells (bus numbers, counts) stay as written unless they sit in a
+power column with a resolution; a cell that is no number of the file's own
+format always does. Values below 1e-4 show with an exponent. The decimal separator
+follows the file: a semicolon file reads and shows with the decimal comma.
+The choice is part of the address (`?digits=4&power=kW`) and carries over
+through the links to the other CSV files of the run. It changes the display
+only; **Raw text** and the download keep the file as written.
+
+The header of a column with numbers is a link that sorts the rows by that
+column, largest first; a second click sorts smallest first (`?sort=p_mw`,
+`&order=asc`). All rows the view reads (a large file is cut to the preview
+size, the page says so) are sorted before the table is cut to
+its first rows, so the largest value is on top; cells without a number go
+to the end. The sort column stays with **Apply** but not on the links to
+the other CSV files of the run.
+
+Other text artifacts (JSON, YAML,
 logs, HTML) open as escaped text, other files download, and every
 artifact page offers a download. **Download all artifacts as ZIP** packs
 the exposed artifacts into `sparlectra_run_<run_id>_artifacts.zip`.

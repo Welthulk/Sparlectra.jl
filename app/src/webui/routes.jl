@@ -368,7 +368,9 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
     download = get(query, "download", "") == "1"
     # raw=1 shows a CSV or Markdown artifact as text instead of the rendered view
     raw = get(query, "raw", "") == "1"
-    response = download ? handle_powerflow_artifact_download(run_id, artifact_name) : handle_powerflow_artifact(run_id, artifact_name; raw)
+    # digits= and power= set the number display of a CSV table (display only)
+    csv_display = _webui_csv_display(query)
+    response = download ? handle_powerflow_artifact_download(run_id, artifact_name) : handle_powerflow_artifact(run_id, artifact_name; raw, csv_display)
     _webui_log_route!(log_root, download ? "artifact_downloaded" : "artifact_opened", verb, path; status = response.status, run_id, artifact = artifact_name)
     return response
   elseif verb == "GET" && path == "/powerflow/history"

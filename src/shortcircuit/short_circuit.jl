@@ -69,9 +69,11 @@ struct ShortCircuitResult
   status_reason::Union{Nothing,String}
 end
 
-# prefix of the one message that counts the equivalent branches with a
-# negative r; printShortCircuitResult prints it as a report line
+# prefixes of the messages that count the equivalent branches and the
+# three-winding star legs with a negative r; printShortCircuitResult prints
+# them as report lines
 const _SC_EB_NEGATIVE_R = "short-circuit: equivalent branches with negative r: "
+const _SC_3W_NEGATIVE_R = "short-circuit: three-winding legs with negative r: "
 
 # IEC 60909-0 Table 1 voltage factors, keyed by nominal voltage level.
 # LV (Un <= 1 kV): c_max = 1.05 (the 1.10 variant for +10 % tolerance bands
@@ -435,7 +437,7 @@ end
 # `island_buses` are group representatives (`reps`, the closed-link map of
 # the power flow): every bus enters the matrix through the representative
 # of its group, so a closed switch is one node, as in _merged_pf_net.
-function _sc_island_matrix(net::Net, island_buses::Vector{Int}, y_add::Dict{Int,ComplexF64}, reps::Vector{Int})
+function _sc_island_matrix(net::Net, island_buses::Vector{Int}, y_add::Dict{Int,ComplexF64}, reps::Vector{Int}, neg_r_allowed::Set{Int})
   local_index = Dict{Int,Int}(bus => i for (i, bus) in enumerate(island_buses))
   n = length(island_buses)
   I = Int[]
@@ -455,16 +457,17 @@ function _sc_island_matrix(net::Net, island_buses::Vector{Int}, y_add::Dict{Int,
     f = get(local_index, rf, 0)
     t = get(local_index, rt, 0)
     (f == 0 || t == 0) && continue
-    # A physical line/transformer has r >= 0. A NEGATIVE series resistance can
     # Short circuit uses the PHYSICAL branch impedance (#329): under a fault the
     # series-FACTS converter is bypassed, so the equipment resistance/reactance
     # governs the fault current, not a compensated operating point a power-flow
     # control run stamped onto r_pu/x_pu. calcBranchYserBase reads the base
-    # (r_base_pu/x_base_pu). The base is physical, so this defensive check never
-    # fires in the normal FACTS workflow; it guards only a corrupted base model.
-    # an equivalent branch (network reduction, net.equivalent_branch_metadata)
-    # is no equipment: its negative r is taken over unchanged
-    if br.r_base_pu < 0.0 && !haskey(net.equivalent_branch_metadata, Int(br.branchIdx))
+    # (r_base_pu/x_base_pu). A physical line or transformer has r >= 0, and the
+    # base is physical, so this defensive check never fires in the normal FACTS
+    # workflow; it guards only a corrupted base model. An equivalent branch
+    # (network reduction) and a three-winding star leg are no single equipment
+    # impedance: their negative r is taken over unchanged
+    # (_negative_r_allowed_branches).
+    if br.r_base_pu < 0.0 && !(Int(br.branchIdx) in neg_r_allowed)
       error("runShortCircuit!: branch $(getCompName(br.comp)) has a negative base series resistance (r_base = $(br.r_base_pu) pu). The physical equipment impedance must be non-negative.")
     end
     ys = calcBranchYserBase(br)
@@ -625,11 +628,12 @@ function runShortCircuit!(
   # One factorization per island (and case), one triangular solve per fault
   # bus in it. The matrix has one node per group (its representative).
   island_solutions = Dict{Int,Any}()
+  neg_r_allowed = _negative_r_allowed_branches(net)
   for comp in components
     comp.island_id in needed_islands || continue
     island_buses = unique!([reps[Int(b)] for b in comp.buses if !(b in iso)])
     isempty(island_buses) && continue
-    Ysc, local_index, has_source = _sc_island_matrix(net, island_buses, y_add, reps)
+    Ysc, local_index, has_source = _sc_island_matrix(net, island_buses, y_add, reps, neg_r_allowed)
     if !has_source
       island_solutions[comp.island_id] = (factor = nothing, local_index = local_index)
       continue
@@ -637,12 +641,16 @@ function runShortCircuit!(
     island_solutions[comp.island_id] = (factor = LinearAlgebra.lu(Ysc), local_index = local_index)
   end
 
-  # equivalent branches with a negative series resistance in the islands of
-  # the fault buses: taken over unchanged, counted in one message. A branch
-  # inside one closed-link group is shorted and never enters the matrix
-  # (_sc_island_matrix), so it is not counted either.
-  n_eb_neg = count(br -> haskey(net.equivalent_branch_metadata, Int(br.branchIdx)) && br.r_base_pu < 0.0 && _branch_terminal_state(br) == :closed && reps[Int(br.fromBus)] != reps[Int(br.toBus)] && get(bus_island, Int(br.fromBus), 0) in needed_islands, net.branchVec)
+  # equivalent branches and three-winding star legs with a negative series
+  # resistance in the islands of the fault buses: taken over unchanged,
+  # counted in one message per kind. A branch inside one closed-link group is
+  # shorted and never enters the matrix (_sc_island_matrix), so it is not
+  # counted either.
+  neg_r_used = filter(br -> Int(br.branchIdx) in neg_r_allowed && br.r_base_pu < 0.0 && _branch_terminal_state(br) == :closed && reps[Int(br.fromBus)] != reps[Int(br.toBus)] && get(bus_island, Int(br.fromBus), 0) in needed_islands, net.branchVec)
+  n_eb_neg = count(br -> haskey(net.equivalent_branch_metadata, Int(br.branchIdx)), neg_r_used)
+  n_3w_neg = length(neg_r_used) - n_eb_neg
   n_eb_neg == 0 || push!(messages, string(_SC_EB_NEGATIVE_R, n_eb_neg, " in the islands of the fault buses, taken over unchanged"))
+  n_3w_neg == 0 || push!(messages, string(_SC_3W_NEGATIVE_R, n_3w_neg, " in the islands of the fault buses, taken over unchanged"))
 
   # sweep_method = :takahashi: ONE selected-inverse pass per island replaces
   # the per-bus triangular solves (Erisman-Tinney on the UMFPACK factors;
@@ -817,7 +825,7 @@ flag column), followed by the reason list of every flagged row. The Web UI
 function printShortCircuitResult(io::IO, result::ShortCircuitResult; max_rows::Int = 50)
   println(io, _sc_status_line(result))
   println(io, "Balanced 3-phase short circuit (IEC 60909-0) — case: ", result.case, result.c_factor_override > 0.0 ? ", c-factor override $(result.c_factor_override)" : ", c per IEC Table 1")
-  foreach(m -> println(io, m), filter(m -> startswith(m, _SC_EB_NEGATIVE_R), result.messages))
+  foreach(m -> println(io, m), filter(m -> startswith(m, _SC_EB_NEGATIVE_R) || startswith(m, _SC_3W_NEGATIVE_R), result.messages))
   println(io, rpad("bus", 24), rpad("Un[kV]", 9), rpad("Ik''[kA]", 11), rpad("Sk''[MVA]", 12), rpad("kappa", 8), rpad("ip[kA]", 11), rpad("status", 11), "flagged")
   shown = 0
   for row in result.rows

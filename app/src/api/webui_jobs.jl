@@ -92,6 +92,18 @@ function _webui_request_run_mode(request::AbstractDict)::Union{Nothing,String}
   return nothing
 end
 
+## Whether a run of this kind writes the detailed result CSV
+## (bus_voltages_complex.csv, branch_flows.csv). Only the single power-flow
+## pipeline (`_run_sparlectra_api`) writes it: a plain power flow (run mode
+## `nothing`) and a diagnostic run. Every other kind in the dispatch of
+## `start_powerflow_run` (state estimation, N-1 and scenario batches, short
+## circuit, import analysis, SE-started power flow) ignores the checkbox, so
+## the job logs the export as skipped for that kind instead of failed. A new
+## run kind is a skip until it is added here.
+const _WEBUI_RUN_MODES_WITH_DETAILED_CSV = Union{Nothing,String}[nothing, "diagnose"]
+
+_webui_run_mode_writes_detailed_csv(run_mode::Union{Nothing,String})::Bool = run_mode in _WEBUI_RUN_MODES_WITH_DETAILED_CSV
+
 function _check_powerflow_cancelled!(token)
   token === nothing && return nothing
   token[] || return nothing
@@ -481,7 +493,11 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
           artifact_source = rescanned_artifacts isa AbstractVector ? rescanned_artifacts : get(result, "artifacts", Any[])
           artifact_names = Set(String(get(artifact, "name", "")) for artifact in artifact_source)
           expected_csv = ["bus_voltages_complex.csv", "branch_flows.csv"]
-          if all(name -> name in artifact_names, expected_csv)
+          csv_run_mode = _webui_request_run_mode(request)
+          if !_webui_run_mode_writes_detailed_csv(csv_run_mode)
+            # the run kind never writes the files (see the rule above)
+            event_callback("detailed_result_csv_export_skipped"; run_id = job["run_id"], reason = string(csv_run_mode, "_run"), csv_format = csv_format.name, status = "skipped")
+          elseif all(name -> name in artifact_names, expected_csv)
             event_callback("detailed_result_csv_exported"; run_id = job["run_id"], csv_format = csv_format.name, artifacts = expected_csv, status = "succeeded")
           elseif get(get(result, "metadata", Dict{String,Any}()), "detailed_result_csv_status", "") == "skipped"
             event_callback("detailed_result_csv_export_skipped"; run_id = job["run_id"], reason = get(get(result, "metadata", Dict{String,Any}()), "detailed_result_csv_skip_reason", "unknown"), final_converged = get(result, "converged", false), solution_available = get(result, "solution_available", false), has_network = false, csv_format = csv_format.name, status = "skipped")

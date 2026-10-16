@@ -61,7 +61,9 @@ consistent, but only includes the columns the DC model actually defines.
 function buildDcPowerFlowReport(net::Net; ct::Float64 = 0.0, converged::Bool = true)::DcPowerFlowReport
   busNameByIdx = _bus_name_by_idx(net)
   nodes_sorted = sort(net.nodeVec, by = x -> x.busIdx)
-  power_components = _bus_power_component_cache(net)
+  # no distributed-slack shares: a DC solve has none, and the status of an
+  # earlier AC solve on the same net may still be there
+  power_components = _bus_power_component_cache(net; distributed_slack = false)
 
   node_rows = NamedTuple[]
   for n in nodes_sorted

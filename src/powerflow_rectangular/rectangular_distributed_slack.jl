@@ -267,3 +267,35 @@ function _merge_distributed_slack_diagnostics(status_build, performance_profile,
   )
   return merge(status_build, (status = (; status_build.status..., extras...),))
 end
+
+"""
+    _distributed_slack_unit_shares(net) -> (active::Bool, shares::Dict{Int,NTuple{2,Float64}})
+
+Distributed-slack participation of the last solve per unit: index in
+`net.prosumpsVec` to `(alpha, dp_mw)`, read from the persisted participation
+table of the solver status. `active` is false when the last solve ran
+without the distributed slack or no solver status exists. A unit without an
+entry did not take part; its delivered output is its schedule.
+"""
+function _distributed_slack_unit_shares(net::Net)
+  rect_status = rectangular_pf_status(net)
+  shares = Dict{Int,NTuple{2,Float64}}()
+  _rect_status_get(rect_status, :distributed_slack_active, false) || return (false, shares)
+  rows = _rect_status_get(rect_status, :distributed_slack_participation, nothing)
+  rows === nothing && return (true, shares)
+  for r in rows
+    hasproperty(r, :gen_index) || continue
+    a, d = get(shares, r.gen_index, (0.0, 0.0))
+    shares[r.gen_index] = (a + r.alpha, d + r.dp_mw)
+  end
+  return (true, shares)
+end
+
+"""
+    _island_participation_to_net(rows, buses, prosumer_idx) -> Vector
+
+Participation rows of one island solve in the numbering of the whole net:
+`buses[k]` is the net bus of island bus `k`, `prosumer_idx[g]` the net
+prosumer index of island unit `g` (see `_island_prosumer_indices`).
+"""
+_island_participation_to_net(rows, buses, prosumer_idx) = [merge(r, (bus_idx = Int(buses[r.bus_idx]), gen_index = Int(prosumer_idx[r.gen_index]))) for r in rows]

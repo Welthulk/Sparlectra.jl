@@ -2433,7 +2433,8 @@ end
 # solver wrote the representative's outcome as the generation of the
 # cluster (slack P and Q, PV Q, the clamp of a bus at a Q limit). Hence:
 #  - P of a cluster with a reference: the reference member gets the cluster
-#    generation minus the scheduled generation of the other members;
+#    generation minus the generation of the other members (their schedule,
+#    under a distributed slack plus their share of lambda_P);
 #  - Q of a cluster with a voltage-controlled or reference member: the
 #    members holding the voltage share the generator Q the other members do
 #    not schedule, each at the same relative position in its Q band (each at
@@ -2461,6 +2462,11 @@ function _split_merged_bus_powers!(net::Net, wnet::Net, reps::Vector{Int})
     (isSlack(ps) || isRegulating(ps)) && (held[b] = true)
   end
   val(x) = something(x, 0.0)
+  # distributed slack: a member outside the references delivers its
+  # schedule plus its share of lambda_P, and the solved cluster generation
+  # holds that share; the solver status is already on `net` here
+  _, ds_shares = _distributed_slack_bus_shares(net)
+  ds_dp(b) = get(ds_shares, b, (0.0, 0.0))[2]
   # per-bus Q bands of the original net (MVAr), kept current by addProsumer!
   bands = length(net.qmin_pu) == n && length(net.qmax_pu) == n
   # bus that carries the Q-limit log entries of a representative
@@ -2484,7 +2490,7 @@ function _split_merged_bus_powers!(net::Net, wnet::Net, reps::Vector{Int})
     if getNodeType(w) == Slack && w._pƩGen !== nothing
       refs = filter(b -> is_ref[b], M)
       isempty(refs) && (refs = [r])
-      others = sum((val(nodes[b]._pƩGen) for b in M if !(b in refs)); init = 0.0)
+      others = sum((val(nodes[b]._pƩGen) + ds_dp(b) for b in M if !(b in refs)); init = 0.0)
       # generation of each reference member (several share it equally)
       gen = (w._pƩGen - others) / length(refs)
       for b in refs
@@ -3068,6 +3074,12 @@ function runpf!(
     # power; per-island values remain in the per-island statuses.
     ds_islands = [st for st in values(island_statuses) if hasproperty(st, :distributed_slack_active) && st.distributed_slack_active]
     if any(st -> hasproperty(st, :distributed_slack_active), values(island_statuses))
+      # the participation tables carry island bus and unit numbers; the
+      # aggregate holds all of them in the numbering of the net, so the
+      # result tables put each share on its own bus and unit (the base
+      # status alone put one island's shares on buses 1, 2, ... of the net)
+      island_row = Dict(Int(r.island_id) => r for r in island_report.rows)
+      ds_participation = reduce(vcat, (_island_participation_to_net(st.distributed_slack_participation, island_row[Int(st.island_id)].buses, _island_prosumer_indices(wnet, Set(island_row[Int(st.island_id)].buses))) for st in ds_islands); init = NamedTuple[])
       aggregate_status = merge(
         aggregate_status,
         (;
@@ -3077,6 +3089,7 @@ function runpf!(
           distributed_slack_participants = isempty(ds_islands) ? 0 : sum(st.distributed_slack_participants for st in ds_islands),
           distributed_slack_dropped = isempty(ds_islands) ? 0 : sum(st.distributed_slack_dropped for st in ds_islands),
           distributed_slack_p_limit_violations = isempty(ds_islands) ? 0 : sum(st.distributed_slack_p_limit_violations for st in ds_islands),
+          distributed_slack_participation = ds_participation,
         ),
       )
     end

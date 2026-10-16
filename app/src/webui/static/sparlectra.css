@@ -795,11 +795,41 @@ main.artifact-page {
   font-variant-numeric: tabular-nums;
 }
 
+/* a sortable column header: a plain link back onto the view */
+.artifact-csv th a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.artifact-csv th a:hover {
+  text-decoration: underline;
+}
+
 .artifact-csv-comments {
   margin: 0 0 .75rem;
   font-size: .8rem;
   color: #5b6b82;
   white-space: pre-wrap;
+}
+
+/* number display controls and the links to the other CSV files of the run,
+   one line above the table */
+.artifact-csv-display {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .75rem;
+  margin: 0 0 .5rem;
+  font-size: .85rem;
+}
+
+.artifact-csv-display input[type="number"] {
+  width: 4.5rem;
+}
+
+.artifact-csv-siblings {
+  margin: 0 0 .75rem;
+  font-size: .85rem;
 }
 
 /* Rendered Markdown (artifact reports, help pages): reading width,

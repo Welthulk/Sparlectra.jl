@@ -1898,17 +1898,19 @@ function _read_webui_artifact_preview(path::AbstractString; max_bytes::Integer =
 end
 
 """
-    handle_powerflow_artifact(run_id, artifact_name; raw = false)
+    handle_powerflow_artifact(run_id, artifact_name; raw = false, csv_display = _WebUICsvDisplay())
 
 The artifact viewer. Text artifacts open as a page (CSV as a table, Markdown
 rendered, everything else as escaped text; `raw = true` forces the text
-panel), other types are sent as a download. The two short-circuit tables
+panel), other types are sent as a download. `csv_display` is the number display
+of a CSV table (from the query, `_webui_csv_display`); a CSV page also links
+the other CSV artifacts of the run. The two short-circuit tables
 (`short_circuit_max.csv`, `short_circuit_min.csv`) carry the head line of
 their case from the run metadata (`sc_status_line_max`/`_min`: run status,
 flagged rows, lower-bound rows) above the table. See
 `render_powerflow_artifact_page`.
 """
-function handle_powerflow_artifact(run_id::AbstractString, artifact_name::AbstractString; raw::Bool = false)::SparlectraWebUIResponse
+function handle_powerflow_artifact(run_id::AbstractString, artifact_name::AbstractString; raw::Bool = false, csv_display::_WebUICsvDisplay = _WebUICsvDisplay())::SparlectraWebUIResponse
   artifact = resolve_powerflow_artifact(run_id, artifact_name)
   if artifact isa AbstractDict
     reason = get(artifact, "reason", "artifact_error")
@@ -1917,6 +1919,13 @@ function handle_powerflow_artifact(run_id::AbstractString, artifact_name::Abstra
   end
   if artifact.mime_type in _WEBUI_TEXT_MIME_TYPES
     preview = _read_webui_artifact_preview(artifact.path)
+    csv_siblings = String[]
+    if artifact.mime_type == "text/csv" && !raw
+      # the run resolved above, so the list is a vector; a failure dict
+      # (run removed in between) only drops the links
+      listed = list_powerflow_artifacts(run_id)
+      listed isa AbstractVector && (csv_siblings = [String(get(a, "name", "")) for a in listed if get(a, "mime_type", "") == "text/csv"])
+    end
     head_line = ""
     sc_case = match(r"^short_circuit_(max|min)\.csv$", String(artifact_name))
     if sc_case !== nothing
@@ -1925,7 +1934,7 @@ function handle_powerflow_artifact(run_id::AbstractString, artifact_name::Abstra
       run = _registered_powerflow_run(run_id)
       run === nothing || (head_line = string(get(run.metadata, "sc_status_line_" * sc_case.captures[1], "")))
     end
-    return _webui_html(render_powerflow_artifact_page(artifact, preview; raw, head_line))
+    return _webui_html(render_powerflow_artifact_page(artifact, preview; raw, csv_display, csv_siblings, head_line))
   end
   bytes = read(artifact.path)
   headers = ["Content-Disposition" => "attachment; filename=\"$(replace(basename(artifact.name), '"' => '_'))\""]
