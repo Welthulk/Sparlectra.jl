@@ -44,8 +44,9 @@ end
 
 # island_feed fixture: island A keeps a classical reference, island C is fed
 # ONLY by the grid-forming converter at C2 (modeled as the island reference);
-# the island load hangs at the far end C1 so the PCC line carries real flow
-function _build_hvdc_island_feed_net(name::String; sending_mw::Float64 = 0.0)
+# the island load hangs at the far end C1 so the PCC line carries real flow;
+# `pcc_load_mw` puts a second load on the PCC C2 itself
+function _build_hvdc_island_feed_net(name::String; sending_mw::Float64 = 0.0, pcc_load_mw::Float64 = 0.0)
   net = Net(name = name, baseMVA = 100.0)
   for b in ("A1", "A2", "C1", "C2")
     addBus!(net = net, busName = b, vn_kV = 380.0)
@@ -56,6 +57,7 @@ function _build_hvdc_island_feed_net(name::String; sending_mw::Float64 = 0.0)
   addProsumer!(net = net, busName = "A2", type = "ENERGYCONSUMER", p = 40.0, q = 10.0)
   addProsumer!(net = net, busName = "C2", type = "EXTERNALNETWORKINJECTION", referencePri = "C2", vm_pu = 1.0, va_deg = 0.0)
   addProsumer!(net = net, busName = "C1", type = "ENERGYCONSUMER", p = 50.0, q = 12.0)
+  pcc_load_mw > 0.0 && addProsumer!(net = net, busName = "C2", type = "ENERGYCONSUMER", p = pcc_load_mw, q = 0.0)
   addProsumer!(net = net, busName = "A2", type = "GENERATOR", p = sending_mw, q = 0.0)
   return net, length(net.prosumpsVec)
 end
@@ -314,6 +316,14 @@ mpc.dcline = [
       @test 50.0 < draw < 51.0
       # the sending side mirrors draw + loss exactly
       @test isapprox(net.prosumpsVec[s_idx].pVal, -ctrl.p_transfer_mw; atol = 1e-9)
+      # a load on the PCC itself is part of the draw once: the slack bus
+      # generation already contains it (the controller added it a second
+      # time when the solve wrote the bus injection)
+      net_pl, _ = _build_hvdc_island_feed_net("hvdc_if_pcc_load"; pcc_load_mw = 5.0)
+      ctrl_pl = addHvdcPairControl!(net_pl; from_bus = "A2", to_bus = "C2", mode = :island_feed, loss_mw = 4.0)
+      @test _hvdc_run!(net_pl).converged
+      # (within the mirror deadband of 1e-3 MW per run)
+      @test isapprox(ctrl_pl.p_transfer_mw - ctrl.p_transfer_mw, 5.0; atol = 1e-2)
       rows = Sparlectra.control_report_rows(ctrl, net, Sparlectra.NoControlState(), (outer_iteration = ctrl.outer_iters,))
       @test rows[1].mode == :island_feed
       elems = controllableElements(net)

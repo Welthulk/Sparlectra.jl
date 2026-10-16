@@ -20,14 +20,15 @@
 
 # One CSV per case; schema mirrors the ShortCircuitResult rows (the
 # short-circuit artifact contract). `reasons` is a "; "-joined list inside
-# one CSV field. `format` (technical/excel_de/excel_us, see
+# one CSV field. `lower_bound` (the engine's typed island flag) comes after
+# it, so the columns before keep their positions. `format` (technical/excel_de/excel_us, see
 # `_resolve_detailed_csv_format`) sets delimiter and number formatting like
 # every other CSV artifact of the run (issue #376 follow-up: with excel_de
 # the power-flow files used ; and a decimal comma while this one still
 # used , and a dot - one run, two formats).
 function _write_short_circuit_csv(path::AbstractString, result::ShortCircuitResult; format = result_csv_format())::String
-  header = ("bus", "vn_kV", "island", "status", "c", "zk_ohm", "rx_ratio", "ik_kA", "sk_MVA", "kappa", "ip_kA", "flagged", "reasons")
-  rows = ((String(row.bus), Float64(row.vn_kV), row.island, row.status, Float64(row.c), Float64(row.zk_ohm), Float64(row.rx_ratio), Float64(row.ik_kA), Float64(row.sk_MVA), Float64(row.kappa), Float64(row.ip_kA), row.contains_defaulted_data, join(row.reasons, "; ")) for row in result.rows)
+  header = ("bus", "vn_kV", "island", "status", "c", "zk_ohm", "rx_ratio", "ik_kA", "sk_MVA", "kappa", "ip_kA", "flagged", "reasons", "lower_bound")
+  rows = ((String(row.bus), Float64(row.vn_kV), row.island, row.status, Float64(row.c), Float64(row.zk_ohm), Float64(row.rx_ratio), Float64(row.ik_kA), Float64(row.sk_MVA), Float64(row.kappa), Float64(row.ip_kA), row.contains_defaulted_data, join(row.reasons, "; "), row.lower_bound) for row in result.rows)
   write_result_csv(path, header, rows; format = format)
   return path
 end
@@ -122,6 +123,7 @@ function _run_short_circuit_scf(case_path::AbstractString, config::SparlectraCon
   max_csv = _write_short_circuit_csv(joinpath(output_dir, "short_circuit_max.csv"), sc_max; format = String(config.output.csv_format))
   min_csv = _write_short_circuit_csv(joinpath(output_dir, "short_circuit_min.csv"), sc_min; format = String(config.output.csv_format))
   flagged = count(row.contains_defaulted_data for row in headline.rows)
+  lower_rows = count(row.lower_bound for row in headline.rows)
   worst = _sc_worst_row(headline)
 
   open(logfile, "a") do io
@@ -151,6 +153,10 @@ function _run_short_circuit_scf(case_path::AbstractString, config::SparlectraCon
       "sc_defaults_only" => sc_state.defaults_only,
       "sc_case_rows" => length(headline.rows),
       "sc_flagged_rows" => flagged,
+      "sc_lower_bound_rows" => lower_rows,
+      # the head lines of the two printed tables, shown by the Web UI
+      "sc_status_line_max" => _sc_status_line(sc_max),
+      "sc_status_line_min" => _sc_status_line(sc_min),
       "sc_c_factor" => c_factor,
       "sc_worst_bus" => worst === nothing ? "" : String(worst.bus),
       "sc_max_ik_kA" => worst === nothing ? NaN : worst.ik_kA,
@@ -161,7 +167,7 @@ function _run_short_circuit_scf(case_path::AbstractString, config::SparlectraCon
       "run_status" => "completed",
     ),
   )
-  outcome = _sc_outcome(sc_state, flagged, length(headline.rows), "the CSV")
+  outcome = _sc_outcome(sc_state, headline, "the CSV")
   return _finalize_api_result(_api_result(
     run_id = run_id,
     status = outcome.status,
@@ -178,54 +184,34 @@ function _run_short_circuit_scf(case_path::AbstractString, config::SparlectraCon
   ))
 end
 
-# The state of the source data, the same rule for every case format. A
-# source carries data when the quantity its impedance comes from is in the
-# case: x''d of a synchronous machine, the short-circuit current of a
-# feeder, the reactance of an equivalent injection, the locked-rotor ratio
-# of a motor. A source carries NOTHING when the base of a default is
-# missing as well (a machine without rated power; a feeder, an equivalent
-# or a motor without its quantity cannot be defaulted at all).
-#   every source without anything -> the run refuses (data missing)
-#   no source with data           -> warning, the table rests on defaults
-#   some sources without data     -> warning, the rows they feed are flagged
-#   every source with data        -> success
-_sc_positive(x) = x !== nothing && isfinite(Float64(x)) && Float64(x) > 0.0
-_sc_field(record, name::Symbol) = hasproperty(record, name) ? getproperty(record, name) : nothing
-function _sc_source_data_state(sc)
-  total = 0
-  with_data = 0
-  without_any = 0
-  for m in sc.synchronous_machines
-    total += 1
-    has = _sc_positive(_sc_field(m, :satDirectSubtransX_pu))
-    has && (with_data += 1)
-    (!has && !_sc_positive(_sc_field(m, :ratedS_MVA))) && (without_any += 1)
+# The state of the source data (_sc_source_data_state) and the run status
+# (_sc_run_status) are library rules: runShortCircuit! stores status and
+# reason on the result, and the service reports them unchanged, so the
+# printed table, run.log, result.json and the Web UI say the same.
+# Here only the message that goes with the reason. The failures (refused
+# data, no evaluable bus) return before a result is finished.
+function _sc_outcome(state, result::ShortCircuitResult, table::AbstractString)
+  rows = length(result.rows)
+  flagged = count(row -> row.contains_defaulted_data, result.rows)
+  lower = count(row -> row.lower_bound, result.rows)
+  reason = result.status_reason
+  message = if reason == "short_circuit_defaults_only"
+    _sc_defaults_message(state, rows)
+  elseif reason == "short_circuit_partial_defaults"
+    "Short circuit completed with defaults: $(state.with_data) of $(state.total) source(s) carry short-circuit data, the others enter with default reactances. $(flagged) of $(rows) rows are flagged (reasons in $(table))."
+  elseif reason == "short_circuit_flagged_lower_bound"
+    "Short circuit completed - $(flagged) of $(rows) rows carry defaulted, substituted or skipped data; Ik''max is a lower bound on $(lower) of them (see reasons in $(table))."
+  elseif reason == "short_circuit_flagged_defaults"
+    "Short circuit completed - $(flagged) of $(rows) rows carry defaulted or substituted data (see reasons in $(table))."
+  elseif reason === nothing
+    "Short circuit completed."
+  else
+    # a failed status has its own early return in every service path, so a
+    # result that reaches this point with another reason is a programming
+    # error
+    error("_sc_outcome: run status $(result.status) with reason $(reason) has no completed outcome")
   end
-  for f in sc.external_network_injections
-    total += 1
-    has = _sc_positive(_sc_field(f, :maxInitialSymShCCurrent_A)) || _sc_positive(_sc_field(f, :minInitialSymShCCurrent_A))
-    has ? (with_data += 1) : (without_any += 1)
-  end
-  for e in sc.equivalent_injections
-    total += 1
-    _sc_positive(_sc_field(e, :x_ohm)) ? (with_data += 1) : (without_any += 1)
-  end
-  for m in sc.asynchronous_machines
-    total += 1
-    # a motor without its locked-rotor ratio is skipped by the engine,
-    # there is no default for it
-    _sc_positive(_sc_field(m, :iaIrRatio)) ? (with_data += 1) : (without_any += 1)
-  end
-  refused = total > 0 && without_any == total
-  return (total = total, with_data = with_data, without_any = without_any, refused = refused, defaults_only = total > 0 && with_data == 0 && !refused, partial = with_data > 0 && with_data < total, warning = !refused && with_data < total)
-end
-
-# status, reason and message of a finished run, by the state of its data
-function _sc_outcome(state, flagged::Int, rows::Int, table::AbstractString)
-  state.defaults_only && return (status = :warning, reason = "short_circuit_defaults_only", message = _sc_defaults_message(state, rows))
-  state.partial && return (status = :warning, reason = "short_circuit_partial_defaults", message = "Short circuit completed with defaults: $(state.with_data) of $(state.total) source(s) carry short-circuit data, the others enter with default reactances. $(flagged) of $(rows) rows are flagged (reasons in $(table)).")
-  flagged > 0 && return (status = :succeeded, reason = "short_circuit_flagged_lower_bound", message = "Short circuit completed - $(flagged) of $(rows) rows carry defaulted/skipped data; Ik'' is a lower bound on those buses (see reasons in $(table)).")
-  return (status = :succeeded, reason = nothing, message = "Short circuit completed.")
+  return (status = result.status, reason = reason, message = message)
 end
 
 const _SC_NO_DATA_MESSAGE = "None of the short-circuit sources of the case carries data an impedance can be derived from (a machine needs its subtransient reactance or at least its rated power, a feeder its short-circuit current)."
@@ -327,6 +313,7 @@ function _run_short_circuit_powsybl(case_path::AbstractString, config::Sparlectr
   max_csv = _write_short_circuit_csv(joinpath(output_dir, "short_circuit_max.csv"), sc_max; format = String(config.output.csv_format))
   min_csv = _write_short_circuit_csv(joinpath(output_dir, "short_circuit_min.csv"), sc_min; format = String(config.output.csv_format))
   flagged = count(row.contains_defaulted_data for row in sc_max.rows)
+  lower_rows = count(row.lower_bound for row in sc_max.rows)
   worst = _sc_worst_row(sc_max)
   data_note = with_data == length(machines) ? "every generator carries short-circuit data" : with_data == 0 ? "no generator carries short-circuit data (IIDM extension generatorShortCircuit): every source is evaluated with the default x''d" : "$(with_data) of $(length(machines)) generators carry short-circuit data (IIDM extension generatorShortCircuit), the others are evaluated with the default x''d"
   without_any > 0 && (data_note *= "; $(without_any) of them carry no rated power either")
@@ -358,6 +345,10 @@ function _run_short_circuit_powsybl(case_path::AbstractString, config::Sparlectr
       "sc_defaults_only" => defaults_only,
       "sc_case_rows" => length(sc_max.rows),
       "sc_flagged_rows" => flagged,
+      "sc_lower_bound_rows" => lower_rows,
+      # the head lines of the two printed tables, shown by the Web UI
+      "sc_status_line_max" => _sc_status_line(sc_max),
+      "sc_status_line_min" => _sc_status_line(sc_min),
       "sc_c_factor" => c_factor,
       "sc_worst_bus" => worst === nothing ? "" : String(worst.bus),
       "sc_max_ik_kA" => worst === nothing ? NaN : worst.ik_kA,
@@ -368,7 +359,7 @@ function _run_short_circuit_powsybl(case_path::AbstractString, config::Sparlectr
       "run_status" => "completed",
     ),
   )
-  outcome = _sc_outcome(sc_state, flagged, length(sc_max.rows), "short_circuit_max.csv")
+  outcome = _sc_outcome(sc_state, sc_max, "short_circuit_max.csv")
   message = defaults_only ? outcome.message * " In an IIDM file the data is the extension generatorShortCircuit of the generators." : outcome.message
   return _finalize_api_result(_api_result(
     run_id = run_id,
@@ -498,6 +489,7 @@ function _run_short_circuit_service(case_path::AbstractString, config_file::Abst
   min_csv = _write_short_circuit_csv(joinpath(output_dir, "short_circuit_min.csv"), sc_min; format = String(config.output.csv_format))
 
   flagged = count(row.contains_defaulted_data for row in sc_max.rows)
+  lower_rows = count(row.lower_bound for row in sc_max.rows)
   worst = _sc_worst_row(sc_max)
   open(logfile, "a") do io
     sc_state.defaults_only && println(io, "WARNING: none of the ", sc_state.total, " source(s) carries short-circuit data; every current below rests on default reactances, not on data of the delivery.")
@@ -525,6 +517,10 @@ function _run_short_circuit_service(case_path::AbstractString, config_file::Abst
       "sc_defaults_only" => sc_state.defaults_only,
       "sc_case_rows" => length(sc_max.rows),
       "sc_flagged_rows" => flagged,
+      "sc_lower_bound_rows" => lower_rows,
+      # the head lines of the two printed tables, shown by the Web UI
+      "sc_status_line_max" => _sc_status_line(sc_max),
+      "sc_status_line_min" => _sc_status_line(sc_min),
       "sc_c_factor" => c_factor,
       "sc_worst_bus" => worst === nothing ? "" : String(worst.bus),
       "sc_max_ik_kA" => worst === nothing ? NaN : worst.ik_kA,
@@ -537,9 +533,9 @@ function _run_short_circuit_service(case_path::AbstractString, config_file::Abst
       "run_status" => "completed",
     ),
   )
-  # A flagged Ik''max is a lower bound (skipped/defaulted contributions) —
-  # surface that as the run message so nobody reads the table unwarned.
-  outcome = _sc_outcome(sc_state, flagged, length(sc_max.rows), "short_circuit_max.csv")
+  # Flagged rows go into the run message so nobody reads the table
+  # unwarned; it names a lower bound only where a source was skipped.
+  outcome = _sc_outcome(sc_state, sc_max, "short_circuit_max.csv")
   result = _api_result(
     run_id = run_id,
     status = outcome.status,

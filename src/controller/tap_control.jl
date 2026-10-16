@@ -146,19 +146,25 @@ function control_propose_update!(ctrl::PowerTransformerControl, net::Net, ::Abst
   old_phase = br.phase_shift_deg
   new_ratio = old_ratio
   new_phase = old_phase
-  # The probe solves must follow the configured start strategy: imported
-  # networks (CGMES/MATPOWER) with off-nominal ratio branches routinely fail
-  # from a flat start while converging from their stored profile.
-  probe_flatstart = context.pf_config.start_mode.flatstart
+  # The probe solves run under the run's own power-flow configuration. Its
+  # start strategy matters because imported networks (CGMES/MATPOWER) with
+  # off-nominal ratio branches routinely fail from a flat start while
+  # converging from their stored profile; its island switches matter because
+  # a probe with islands off refused every net with two AC islands that both
+  # have branches, although the run itself solves them island by island.
+  probe_cfg = context.pf_config
   if !ctrl.converged && ctrl.control_ratio && ctrl.mode in (:voltage, :voltage_and_branch_active_power)
-    direction = _ratio_probe_direction(net, br, ctrl, context.pf_config.max_iter, context.pf_config.tol, 0, context.pf_config.method; opt_flatstart = probe_flatstart)
+    direction = _ratio_probe_direction(net, br, ctrl, probe_cfg)
     direction == 0.0 && (direction = -1.0)
     Δ = ctrl.is_discrete ? br.tap_step : 0.25 * br.tap_step
     e_v = _voltage_control_error(ctrl.achieved_vm_pu, ctrl.target_vm_pu, ctrl.voltage_error_metric)
-    new_ratio = clamp(old_ratio + ((e_v < 0.0) ? direction * Δ : -direction * Δ), br.tap_min, br.tap_max)
+    up = (e_v < 0.0) ? direction : -direction
+    # a tabular changer steps onto its next table ratio; tap_step is only
+    # the mean step there and would stop between two points
+    new_ratio = (ctrl.is_discrete && br.tap_ratio_points !== nothing) ? _ratio_points_shift(br, old_ratio, up > 0.0 ? 1 : -1) : clamp(old_ratio + up * Δ, br.tap_min, br.tap_max)
   end
   if !ctrl.converged && ctrl.control_phase && ctrl.mode in (:branch_active_power, :voltage_and_branch_active_power)
-    direction = _phase_probe_direction(net, br, ctrl, context.pf_config.max_iter, context.pf_config.tol, 0, context.pf_config.method; opt_flatstart = probe_flatstart)
+    direction = _phase_probe_direction(net, br, ctrl, probe_cfg)
     direction == 0.0 && (direction = -1.0)
     Δ = ctrl.is_discrete ? br.phase_step_deg : 0.25 * br.phase_step_deg
     e_p = ctrl.achieved_p_mw - ctrl.p_target_mw
@@ -241,6 +247,34 @@ function _move_model_step!(br::Branch, which::Symbol, target::Float64)::Bool
   return true
 end
 
+# Ratio `nsteps` table points away from `ratio` on a branch with
+# `tap_ratio_points` (positive: higher ratio), stopping at the first or last
+# point. A ratio between two points (fractional start step) counts the next
+# point in the direction as the first step.
+function _ratio_points_shift(br::Branch, ratio::Float64, nsteps::Int)::Float64
+  pts = br.tap_ratio_points
+  tol = 1e-12
+  r = ratio
+  for _ in 1:abs(nsteps)
+    k = nsteps > 0 ? findfirst(p -> p > r + tol, pts) : findlast(p -> p < r - tol, pts)
+    k === nothing && break
+    r = pts[k]
+  end
+  return r
+end
+
+# Signed number of steps a ratio move from `old` to `new` makes on the grid
+# of `br`: table points passed on a tabular changer, whole `tap_step`s on
+# the uniform grid, the sign alone without a step.
+function _ratio_steps_moved(br::Branch, old::Float64, new::Float64)::Int
+  if br.tap_ratio_points !== nothing
+    lo, hi = minmax(old, new)
+    n = count(p -> p > lo + 1e-12 && p <= hi + 1e-12, br.tap_ratio_points)
+    return new >= old ? n : -n
+  end
+  return br.tap_step > 0.0 ? round(Int, (new - old) / br.tap_step) : Int(sign(new - old))
+end
+
 # Move the model step of a derived branch by a signed number of steps,
 # clamped to the model range; returns whether the step changed.
 function _shift_model_steps!(br::Branch, which::Symbol, nsteps::Int)::Bool
@@ -274,11 +308,16 @@ function control_apply_update!(ctrl::PowerTransformerControl, net::Net, ::Abstra
       if fmodel !== nothing
         # a modelled follower moves the same number of steps in the
         # direction of the master's ratio change on its own step sign
-        nsteps = br.tap_step > 0.0 ? round(Int, (update.new_ratio - update.old_ratio) / br.tap_step) : Int(sign(update.new_ratio - update.old_ratio))
+        nsteps = _ratio_steps_moved(br, update.old_ratio, update.new_ratio)
         _shift_model_steps!(fbr, :ratio, nsteps * Int(sign(fmodel.tapStepPercent == 0.0 ? 1.0 : fmodel.tapStepPercent)))
         continue
       end
-      if br.tap_step > 0.0 && fbr.tap_step > 0.0
+      if br.tap_ratio_points !== nothing || fbr.tap_ratio_points !== nothing
+        # a tabular master or follower: count steps on the master's grid and
+        # make as many on the follower's own grid
+        nsteps = _ratio_steps_moved(br, update.old_ratio, update.new_ratio)
+        fnew = fbr.tap_ratio_points !== nothing ? _ratio_points_shift(fbr, fbr.tap_ratio, nsteps) : clamp(fbr.tap_ratio + nsteps * fbr.tap_step, fbr.tap_min, fbr.tap_max)
+      elseif br.tap_step > 0.0 && fbr.tap_step > 0.0
         nsteps = round((update.new_ratio - update.old_ratio) / br.tap_step)
         fnew = clamp(fbr.tap_ratio + nsteps * fbr.tap_step, fbr.tap_min, fbr.tap_max)
       else
@@ -300,6 +339,15 @@ function control_apply_update!(ctrl::PowerTransformerControl, net::Net, ::Abstra
       x_new = _phase_tap_reactance_at(net, ctrl, update.new_phase)
       x_new === nothing || (br.x_pu = x_new)
       moved = true
+    end
+  end
+  # tap changer tables with r/x/g/b deviations: the impedance follows the
+  # step the move reached, on the master and on every follower (a follower
+  # mirrors a ratio change even when the master's own step stayed)
+  if update.new_ratio != update.old_ratio || update.new_phase != update.old_phase
+    _apply_tap_step_impedance!(br)
+    for fname in ctrl.followers
+      _apply_tap_step_impedance!(_find_trafo_branch(net, fname))
     end
   end
   ctrl.at_limit = isapprox(br.tap_ratio, br.tap_min; atol = 1e-12) || isapprox(br.tap_ratio, br.tap_max; atol = 1e-12)
@@ -578,67 +626,42 @@ Attach a tap controller to a transformer; alias of
 """
 addTapController!(net::Net; kwargs...) = addPowerTransformerControl!(net; kwargs...)
 
+# One probe solve, returns the solver status (0 = converged). On a net with
+# several AC islands a non-converged island does not come back as a status:
+# the island path throws an ErrorException ("AC island N power-flow solve
+# failed"). That is the expected failure here. It counts as a failed probe
+# solve, as in the run's own solve (_runpf_with_config!), so the probe
+# answers the same way on one island and on several. A non-converged
+# one-island probe solve returns its status without a message, so the
+# island case gets none either. Any other exception propagates.
+function _probe_solve_status(net::Net, config::PowerFlowConfig)::Int
+  _, erg = try
+    _runpf_config_once!(net, config)
+  catch err
+    err isa ErrorException || rethrow()
+    (0, 1)
+  end
+  return erg
+end
+
 """
-    _phase_probe_direction(...)
+    _phase_probe_direction(net, br, ctrl, config) -> Float64
 
 Internal helper: determines the empirical sign of `ΔP_from_to` for a positive
 phase increment (`+phase_step_deg`) on the controlled transformer and branch.
-Returns `-1`, `0`, or `+1`.
+Both probe solves run under the run's power-flow configuration `config`
+(start mode, island switches, Q limits, Newton settings), one attempt each,
+without the rescue ladder and the DC fallback of the run's own solve.
+Returns `-1`, `0`, or `+1`: `-1` when the first solve fails, `0` when the
+perturbed solve fails (also a failed island on a net with several AC
+islands). The branch values the probe changes are restored in every case.
 """
-function _phase_probe_direction(
-  net::Net,
-  br::Branch,
-  ctrl::PowerTransformerControl,
-  max_ite::Int,
-  tol::Float64,
-  verbose::Int,
-  method::Symbol;
-  opt_flatstart::Bool = true,
-  pv_table_rows::Int = 30,
-  validate_limits_after_pf::Bool = false,
-  q_limit_violation_headroom::Float64 = 0.0,
-  lock_pv_to_pq_buses::AbstractVector{Int} = Int[],
-  qlimit_trace_buses::AbstractVector{Int} = Int[],
-  qlimit_lock_reason::Symbol = :manual,
-  qlimit_guard::Bool = DEFAULT_QLIMIT_CONFIG.guard,
-  qlimit_guard_min_q_range_pu::Float64 = DEFAULT_QLIMIT_CONFIG.guard_min_q_range_pu,
-  qlimit_guard_zero_range_mode::Symbol = :lock_pq,
-  qlimit_guard_narrow_range_mode::Symbol = DEFAULT_QLIMIT_CONFIG.guard_narrow_range_mode,
-  qlimit_guard_log::Bool = true,
-  qlimit_guard_max_switches::Int = DEFAULT_QLIMIT_CONFIG.guard_max_switches,
-  qlimit_guard_accept_bounded_violations::Bool = false,
-  qlimit_guard_max_remaining_violations::Int = 0,
-  qlimit_guard_freeze_after_repeated_switching::Bool = true,
-  qlimit_guard_violation_mode::Symbol = DEFAULT_QLIMIT_CONFIG.guard_violation_mode,
-  qlimit_guard_violation_threshold_pu::Float64 = 1e-4,
-)
+function _phase_probe_direction(net::Net, br::Branch, ctrl::PowerTransformerControl, config::PowerFlowConfig)
+  # power_flow.tol_MW is converted against this net's base, as in the run's own solve
+  probe_cfg = _resolve_tolerance_for_net(config, net)
   oldphi = br.phase_shift_deg
   step = br.phase_step_deg
-  _, erg = runpf!(
-    net,
-    max_ite,
-    tol,
-    verbose;
-    method = method,
-    opt_flatstart = opt_flatstart,
-    pv_table_rows = pv_table_rows,
-    validate_limits_after_pf = validate_limits_after_pf,
-    q_limit_violation_headroom = q_limit_violation_headroom,
-    lock_pv_to_pq_buses = lock_pv_to_pq_buses,
-    qlimit_trace_buses = qlimit_trace_buses,
-    qlimit_lock_reason = qlimit_lock_reason,
-    qlimit_guard = qlimit_guard,
-    qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu,
-    qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode,
-    qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode,
-    qlimit_guard_log = qlimit_guard_log,
-    qlimit_guard_max_switches = qlimit_guard_max_switches,
-    qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations,
-    qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations,
-    qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
-    qlimit_guard_violation_mode = qlimit_guard_violation_mode,
-    qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
-  )
+  erg = _probe_solve_status(net, probe_cfg)
   erg != 0 && return -1.0
   # branch flows live in fBranchFlow/tBranchFlow, which only calcNetLosses!
   # rewrites — without the refresh both probe reads return the same stale
@@ -660,104 +683,45 @@ function _phase_probe_direction(
     x_probe === nothing || (br.x_pu = x_probe)
   end
   dphi = br.phase_shift_deg - oldphi
-  _, erg2 = runpf!(
-    net,
-    max_ite,
-    tol,
-    verbose;
-    method = method,
-    opt_flatstart = opt_flatstart,
-    pv_table_rows = pv_table_rows,
-    validate_limits_after_pf = validate_limits_after_pf,
-    q_limit_violation_headroom = q_limit_violation_headroom,
-    lock_pv_to_pq_buses = lock_pv_to_pq_buses,
-    qlimit_trace_buses = qlimit_trace_buses,
-    qlimit_lock_reason = qlimit_lock_reason,
-    qlimit_guard = qlimit_guard,
-    qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu,
-    qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode,
-    qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode,
-    qlimit_guard_log = qlimit_guard_log,
-    qlimit_guard_max_switches = qlimit_guard_max_switches,
-    qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations,
-    qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations,
-    qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
-    qlimit_guard_violation_mode = qlimit_guard_violation_mode,
-    qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
-  )
-  erg2 == 0 && calcNetLosses!(net)
-  p1 = erg2 == 0 ? get_branch_p_from_to_mw(net, ctrl.target_branch[1], ctrl.target_branch[2]) : p0
-  if derived
-    _shift_model_steps!(br, :phase, -1)
-  else
-    br.phase_shift_deg = oldphi
-    br.angle = oldphi
-    br.x_pu = oldx
+  p1 = p0
+  try
+    if _probe_solve_status(net, probe_cfg) == 0
+      # the flows are read before the restore: calcNetLosses! uses the
+      # branch parameters, which must still be the probe's
+      calcNetLosses!(net)
+      p1 = get_branch_p_from_to_mw(net, ctrl.target_branch[1], ctrl.target_branch[2])
+    end
+  finally
+    # the probe value never stays on the branch, also when the solve throws
+    if derived
+      _shift_model_steps!(br, :phase, -1)
+    else
+      br.phase_shift_deg = oldphi
+      br.angle = oldphi
+      br.x_pu = oldx
+    end
   end
   return sign(p1 - p0) * (dphi == 0.0 ? 1.0 : sign(dphi))
 end
 
 """
-    _ratio_probe_direction(...)
+    _ratio_probe_direction(net, br, ctrl, config) -> Float64
 
 Internal helper: determines the empirical sign of `ΔVm_target` for a positive
 ratio increment (`+tap_step`) on the controlled transformer and target bus.
-Returns `-1`, `0`, or `+1`.
+Both probe solves run under the run's power-flow configuration `config`
+(start mode, island switches, Q limits, Newton settings), one attempt each,
+without the rescue ladder and the DC fallback of the run's own solve.
+Returns `-1`, `0`, or `+1`: `-1` when the first solve fails, `0` when the
+perturbed solve fails (also a failed island on a net with several AC
+islands). The branch values the probe changes are restored in every case.
 """
-function _ratio_probe_direction(
-  net::Net,
-  br::Branch,
-  ctrl::PowerTransformerControl,
-  max_ite::Int,
-  tol::Float64,
-  verbose::Int,
-  method::Symbol;
-  opt_flatstart::Bool = true,
-  pv_table_rows::Int = 30,
-  validate_limits_after_pf::Bool = false,
-  q_limit_violation_headroom::Float64 = 0.0,
-  lock_pv_to_pq_buses::AbstractVector{Int} = Int[],
-  qlimit_trace_buses::AbstractVector{Int} = Int[],
-  qlimit_lock_reason::Symbol = :manual,
-  qlimit_guard::Bool = DEFAULT_QLIMIT_CONFIG.guard,
-  qlimit_guard_min_q_range_pu::Float64 = DEFAULT_QLIMIT_CONFIG.guard_min_q_range_pu,
-  qlimit_guard_zero_range_mode::Symbol = :lock_pq,
-  qlimit_guard_narrow_range_mode::Symbol = DEFAULT_QLIMIT_CONFIG.guard_narrow_range_mode,
-  qlimit_guard_log::Bool = true,
-  qlimit_guard_max_switches::Int = DEFAULT_QLIMIT_CONFIG.guard_max_switches,
-  qlimit_guard_accept_bounded_violations::Bool = false,
-  qlimit_guard_max_remaining_violations::Int = 0,
-  qlimit_guard_freeze_after_repeated_switching::Bool = true,
-  qlimit_guard_violation_mode::Symbol = DEFAULT_QLIMIT_CONFIG.guard_violation_mode,
-  qlimit_guard_violation_threshold_pu::Float64 = 1e-4,
-)
+function _ratio_probe_direction(net::Net, br::Branch, ctrl::PowerTransformerControl, config::PowerFlowConfig)
+  # power_flow.tol_MW is converted against this net's base, as in the run's own solve
+  probe_cfg = _resolve_tolerance_for_net(config, net)
   oldratio = br.tap_ratio
   step = br.tap_step
-  _, erg = runpf!(
-    net,
-    max_ite,
-    tol,
-    verbose;
-    method = method,
-    opt_flatstart = opt_flatstart,
-    pv_table_rows = pv_table_rows,
-    validate_limits_after_pf = validate_limits_after_pf,
-    q_limit_violation_headroom = q_limit_violation_headroom,
-    lock_pv_to_pq_buses = lock_pv_to_pq_buses,
-    qlimit_trace_buses = qlimit_trace_buses,
-    qlimit_lock_reason = qlimit_lock_reason,
-    qlimit_guard = qlimit_guard,
-    qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu,
-    qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode,
-    qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode,
-    qlimit_guard_log = qlimit_guard_log,
-    qlimit_guard_max_switches = qlimit_guard_max_switches,
-    qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations,
-    qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations,
-    qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
-    qlimit_guard_violation_mode = qlimit_guard_violation_mode,
-    qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
-  )
+  erg = _probe_solve_status(net, probe_cfg)
   erg != 0 && return -1.0
   vm0 = get_bus_vm_pu(net, ctrl.target_bus)
   derived = _derived_tap_model(br, :ratio) !== nothing
@@ -774,37 +738,17 @@ function _ratio_probe_direction(
     br.ratio = newratio
   end
   dratio = br.tap_ratio - oldratio
-  _, erg2 = runpf!(
-    net,
-    max_ite,
-    tol,
-    verbose;
-    method = method,
-    opt_flatstart = opt_flatstart,
-    pv_table_rows = pv_table_rows,
-    validate_limits_after_pf = validate_limits_after_pf,
-    q_limit_violation_headroom = q_limit_violation_headroom,
-    lock_pv_to_pq_buses = lock_pv_to_pq_buses,
-    qlimit_trace_buses = qlimit_trace_buses,
-    qlimit_lock_reason = qlimit_lock_reason,
-    qlimit_guard = qlimit_guard,
-    qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu,
-    qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode,
-    qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode,
-    qlimit_guard_log = qlimit_guard_log,
-    qlimit_guard_max_switches = qlimit_guard_max_switches,
-    qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations,
-    qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations,
-    qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
-    qlimit_guard_violation_mode = qlimit_guard_violation_mode,
-    qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
-  )
-  vm1 = erg2 == 0 ? get_bus_vm_pu(net, ctrl.target_bus) : vm0
-  if derived
-    _shift_model_steps!(br, :ratio, -1)
-  else
-    br.tap_ratio = oldratio
-    br.ratio = oldratio
+  vm1 = vm0
+  try
+    _probe_solve_status(net, probe_cfg) == 0 && (vm1 = get_bus_vm_pu(net, ctrl.target_bus))
+  finally
+    # the probe value never stays on the branch, also when the solve throws
+    if derived
+      _shift_model_steps!(br, :ratio, -1)
+    else
+      br.tap_ratio = oldratio
+      br.ratio = oldratio
+    end
   end
   return sign(vm1 - vm0) * (dratio == 0.0 ? 1.0 : sign(dratio))
 end

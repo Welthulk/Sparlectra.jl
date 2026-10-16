@@ -18,7 +18,13 @@
 #          island diagnostics and mismatch-history artifacts
 _island_bus_type_symbol(node) = getNodeType(node) == Slack ? :REF : getNodeType(node) == PV ? :PV : :PQ
 
-function _ac_island_components(net::Net)
+# Connected components over the in-service branches; every bus is in one
+# component, an isolated bus forms its own. Components are numbered by
+# their smallest bus. links = true also joins the buses of one closed-link
+# group (_active_link_representative_map, the groups _merged_pf_net
+# contracts), so a bus that hangs on the network through closed switches
+# alone lands in the island of its group. n_branch counts branches only.
+function _ac_island_components(net::Net; links::Bool = false)
   n = length(net.nodeVec)
   adjacency = [Int[] for _ in 1:n]
   branch_counts = Dict{Int,Int}()
@@ -29,6 +35,16 @@ function _ac_island_components(net::Net)
     (1 <= f <= n && 1 <= t <= n) || continue
     push!(adjacency[f], t)
     push!(adjacency[t], f)
+  end
+  if links
+    # every member is joined to the representative of its group
+    reps = _active_link_representative_map(net)
+    for bus in eachindex(reps)
+      r = reps[bus]
+      r == bus && continue
+      push!(adjacency[bus], r)
+      push!(adjacency[r], bus)
+    end
   end
   seen = falses(n)
   islands = Vector{Vector{Int}}()

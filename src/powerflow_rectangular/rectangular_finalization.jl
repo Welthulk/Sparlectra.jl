@@ -26,6 +26,11 @@ function _sync_rectangular_bus_types_to_net!(net::Net, bus_types)
     # Mirror solver-internal symbolic bus states back to Net node types.
     # Only PV/PQ are synchronized here; Slack/Isolated are managed in their
     # dedicated control paths to avoid accidental role changes in finalization.
+    # An Isolated bus enters the solver as a neutral PQ row (zero injection)
+    # and keeps its type: written back as PQ, the next solve on the same net
+    # (a controller pass, a second runpf!) sees a bus without a branch and
+    # without a source as an island with no reference and stops.
+    getNodeType(net.nodeVec[k]) == Isolated && continue
     if bus_types[k] == :PQ
       setNodeType!(net.nodeVec[k], "PQ")
     elseif bus_types[k] == :PV
@@ -52,6 +57,13 @@ end
 
 function _write_rectangular_bus_power_results!(net::Net, nodes, Sbus_MVA)
   isoNodes = net.isoNodes
+  # The solve gives the bus injection V conj(Y V), generation minus what the
+  # bus draws itself. The nodes keep the GENERATION (every reader prints the
+  # bus load next to it, the Q-limit checks compare it with the generator
+  # limits), so the bus's own consumption at the solved voltage goes back on
+  # top. Up to 0.50.0 the injection itself was written: a slack or PV bus
+  # with a load showed its generation reduced by that load.
+  p_cons, q_cons = _bus_consumption_MVA(net, length(nodes))
   @inbounds for (k, node) in enumerate(nodes)
     # Isolated nodes are intentionally skipped: no physically meaningful
     # network injection should be written back for disconnected buses.
@@ -60,16 +72,16 @@ function _write_rectangular_bus_power_results!(net::Net, nodes, Sbus_MVA)
     end
 
     Sbus = Sbus_MVA[k]
-    Pbus_MW = real(Sbus)
-    Qbus_MVar = imag(Sbus)
+    Pgen_MW = real(Sbus) + p_cons[k]
+    Qgen_MVar = imag(Sbus) + q_cons[k]
 
     if node._nodeType == Sparlectra.Slack
       # Slack absorbs the system residual; both P and Q are solver outcomes.
-      node._pƩGen = Pbus_MW
-      node._qƩGen = Qbus_MVar
+      node._pƩGen = Pgen_MW
+      node._qƩGen = Qgen_MVar
     elseif node._nodeType == Sparlectra.PV
       # PV keeps scheduled active power; only reactive output is finalized here.
-      node._qƩGen = Qbus_MVar
+      node._qƩGen = Qgen_MVar
     elseif node._nodeType == Sparlectra.PQ
       if haskey(net.qLimitEvents, k)
         # Bus was converted PV->PQ due to reactive limit enforcement.
@@ -78,6 +90,10 @@ function _write_rectangular_bus_power_results!(net::Net, nodes, Sbus_MVA)
       end
     end
   end
+  # a clamped bus with a Q(U) unit that follows its characteristic: the
+  # clamp record holds that unit at its Q at the held voltage, the bus
+  # reports its physical generator Q instead
+  _clamped_bus_physical_qgen!(net, Sbus_MVA, q_cons)
   return nothing
 end
 

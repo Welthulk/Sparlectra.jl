@@ -150,8 +150,13 @@ function removeBranch!(; net::Net, branchNr::Int)::Bool
     end
   end
 
-  # Remove the branch
+  # Remove the branch, and its equivalent-branch record; the records of the
+  # branches behind it move down with their index
   deleteat!(net.branchVec, branchNr)
+  delete!(net.equivalent_branch_metadata, branchNr)
+  for k in sort!([k for k in keys(net.equivalent_branch_metadata) if k > branchNr])
+    net.equivalent_branch_metadata[k - 1] = pop!(net.equivalent_branch_metadata, k)
+  end
 
   # Update branch indices
   for i in eachindex(net.branchVec)

@@ -113,8 +113,10 @@ end
 Run the PV buses listed in `power_flow.qlimits.lock_pv_to_pq_buses` (internal
 bus positions) as PQ from the start of the solve. Each listed bus that is PV
 in `bus_types` becomes PQ with its scheduled reactive generation (the sum of
-the generator `qVal` at the bus) clamped into the bus's `[qmin, qmax]`, so the
-run cannot end with a reactive violation at a bus it was told not to regulate.
+the generator `qVal` at the bus, a Q(U) unit that follows its characteristic
+at its Q at the held voltage, as in the bus Q band) clamped into the bus's
+`[qmin, qmax]`, so the run cannot end with a reactive violation at a bus it
+was told not to regulate.
 Listed buses that are not PV (slack, PQ, already reclassified by the guard)
 and positions outside the network are left alone.
 
@@ -135,17 +137,39 @@ function _lock_listed_pv_buses_as_pq!(net::Net, bus_types::Vector{Symbol}, S::Ve
   # puts into S; only the generator part is replaced below, so loads and any
   # voltage-dependent shunt injection already in S stay untouched
   qgen_sched = zeros(Float64, nb)
+  # the same schedule in the terms of the bus Q band: a Q(U) unit that
+  # follows its characteristic counts with its Q at the held voltage, as in
+  # _buildQLimits!. The lock value is compared with the band and kept in
+  # node._qƩGen, which _reapply_qlimit_clamps! reads in band terms; with the
+  # unit's qVal there, the regulating unit ran off its schedule by
+  # qVal - Q(Vset) of the Q(U) unit.
+  qgen_band = zeros(Float64, nb)
+  held = falses(nb)
   for ps in net.prosumpsVec
     isGenerator(ps) || continue
     bus = getPosumerBusIndex(ps)
     (1 <= bus <= nb) || continue
-    qgen_sched[bus] += something(ps.qVal, 0.0) / net.baseMVA
+    (isRegulating(ps) || isSlack(ps)) && (held[bus] = true)
+  end
+  vheld = nothing
+  for ps in net.prosumpsVec
+    isGenerator(ps) || continue
+    bus = getPosumerBusIndex(ps)
+    (1 <= bus <= nb) || continue
+    q_sched = something(ps.qVal, 0.0) / net.baseMVA
+    qgen_sched[bus] += q_sched
+    if _qband_follows_characteristic(ps, held[bus])
+      vheld === nothing && (vheld = _bus_voltage_setpoints_from_prosumers(net))
+      qgen_band[bus] += first(evaluate_controller(ps.quController, vheld[bus]))
+    else
+      qgen_band[bus] += q_sched
+    end
   end
   for bus in unique(buses)
     (1 <= bus <= nb && bus_types[bus] == :PV) || continue
     qmin = bus <= length(qmin_pu) ? Float64(qmin_pu[bus]) : -Inf
     qmax = bus <= length(qmax_pu) ? Float64(qmax_pu[bus]) : Inf
-    q = qgen_sched[bus]
+    q = qgen_band[bus]
     side = q >= 0.0 ? :max : :min
     if isfinite(qmax) && q > qmax
       q, side = qmax, :max

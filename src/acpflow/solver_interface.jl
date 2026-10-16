@@ -328,8 +328,8 @@ end
 
 Write the external solution back into `net`:
 - updates node Vm/Va on all active buses
-- optionally writes Slack P/Q and PV Q generation from solved injections (same policy
-  as your rectangular NR integration)
+- optionally writes Slack P/Q and PV Q generation (solved injection plus the bus
+  load, same policy as the rectangular solver)
 
 Notes:
 - Isolated buses (not in model) are left untouched.
@@ -365,12 +365,16 @@ function applyPfSolution!(
   Sbus_MVA = Sbus_pu .* model.baseMVA
 
   # 3) Write back Slack P/Q and PV Q generation (policy as in rectangular_network_solver.jl)
+  # The model's specification is node generation minus node load
+  # (getBusData), so the generation is the solved injection plus the node
+  # load; the injection alone would show a slack or PV bus with a load
+  # reduced by that load.
   @inbounds for k in 1:n
     busIdx = model.busIdx_net[k]
     node = net.nodeVec[busIdx]
     S_MVA = Sbus_MVA[k]
-    Pbus = real(S_MVA)
-    Qbus = imag(S_MVA)
+    Pbus = real(S_MVA) + something(node._pƩLoad, 0.0)
+    Qbus = imag(S_MVA) + something(node._qƩLoad, 0.0)
 
     if getNodeType(node) == Slack
       node._pƩGen = Pbus

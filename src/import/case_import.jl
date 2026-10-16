@@ -158,18 +158,24 @@ function _detect_case_format(case_path::AbstractString; requested::Symbol = :aut
 end
 
 """
-    importCGMES(config; path, name) -> CGMESImportResult
+    importCGMES(config; path, name, hvdc_mode, ignore_connected) -> CGMESImportResult
 
 Import a CGMES delivery with everything the configuration says about it, in
-one place: the thirteen `cgmes_import` values and the bus shunt model (the
+one place: the fourteen `cgmes_import` values and the bus shunt model (the
 net-parameter stamping lives with the import dispatch:
 once per importer). The four service call sites used
 to unpack the same values by hand, and a new option had to be added in four
 places or it silently kept its default at three of them (the accompanying
 stamp was found in the wrong function once already).
 The keyword form of `importCGMES` stays for programmatic use.
+
+`path` takes everything the keyword form takes, including a `CGMESStore`
+from `loadCGMES`, which is not modified. `hvdc_mode` and `ignore_connected`
+default to `cgmes_import.hvdc_mode` and `cgmes_import.ignore_connected`; a
+caller that needs every element built whatever its SSH state passes
+`ignore_connected = true`.
 """
-function CGMESImporter.importCGMES(config::SparlectraConfig; path, name::AbstractString, hvdc_mode::Symbol = config.cgmes.hvdc_mode)
+function CGMESImporter.importCGMES(config::SparlectraConfig; path, name::AbstractString, hvdc_mode::Symbol = config.cgmes.hvdc_mode, ignore_connected::Bool = config.cgmes.ignore_connected)
   cgmes_cfg = config.cgmes
   result = importCGMES(
     path = path,
@@ -178,13 +184,15 @@ function CGMESImporter.importCGMES(config::SparlectraConfig; path, name::Abstrac
     require_boundary = cgmes_cfg.require_boundary,
     tap_control = cgmes_cfg.tap_control,
     machine_control = cgmes_cfg.machine_control,
-    ignore_connected = cgmes_cfg.ignore_connected,
+    ignore_connected = ignore_connected,
     vset_min_pu = cgmes_cfg.vset_min_pu,
     vset_max_pu = cgmes_cfg.vset_max_pu,
     multi_slack = cgmes_cfg.multi_slack,
+    equivalent_branch_min_z_pu = cgmes_cfg.equivalent_branch_min_z_pu,
     strict_placeholder_guards = cgmes_cfg.placeholder_guards === :strict,
     infer_base_voltages = cgmes_cfg.infer_base_voltages,
     hvdc_mode = hvdc_mode,
+    map_energy_source = cgmes_cfg.map_energy_source,
     name = String(name),
   )
   return result

@@ -91,6 +91,22 @@ function _scenario_branch!(log::UndoLog, net::Net, internal::Int, op::PatchOp)
   return nothing
 end
 
+# keep the bus load sums (`_pƩLoad`, `_qƩLoad`) in step with a changed or
+# removed load: _scenario_refresh_derived! rebuilds only the generator sums,
+# and the island totals, the passive-bus test and the link-flow allocation
+# read the load sums. The change is a difference on the stored sum (a bus
+# can carry load added without a prosumer), written through the undo log so
+# restore! returns the sum bitwise.
+function _shift_bus_load!(log::UndoLog, net::Net, ps::ProSumer, dp::Float64, dq::Float64)
+  isGenerator(ps) && return nothing
+  bus = _scf_prosumer_bus(ps)
+  (1 <= bus <= length(net.nodeVec)) || return nothing
+  node = net.nodeVec[bus]
+  dp == 0.0 || _undo_set!(log, node, :_pƩLoad, something(node._pƩLoad, 0.0) + dp)
+  dq == 0.0 || _undo_set!(log, node, :_qƩLoad, something(node._qƩLoad, 0.0) + dq)
+  return nothing
+end
+
 function _scenario_prosumer!(log::UndoLog, net::Net, internal::Int, op::PatchOp)
   1 <= internal <= length(net.prosumpsVec) || throw(ArgumentError(string("prosumer index ", internal, " out of range")))
   ps = net.prosumpsVec[internal]
@@ -100,8 +116,10 @@ function _scenario_prosumer!(log::UndoLog, net::Net, internal::Int, op::PatchOp)
     return nothing
   elseif op.op === :set
     if op.field === :p
+      _shift_bus_load!(log, net, ps, Float64(op.value) - something(ps.pVal, 0.0), 0.0)
       _undo_set!(log, ps, :pVal, Float64(op.value))
     elseif op.field === :q
+      _shift_bus_load!(log, net, ps, 0.0, Float64(op.value) - something(ps.qVal, 0.0))
       _undo_set!(log, ps, :qVal, Float64(op.value))
     elseif op.field === :vm_pu
       _undo_set!(log, ps, :vm_pu, Float64(op.value))
@@ -109,15 +127,28 @@ function _scenario_prosumer!(log::UndoLog, net::Net, internal::Int, op::PatchOp)
       if 1 <= bus <= length(net.nodeVec)
         _undo_set!(log, net.nodeVec[bus], :_vm_pu, Float64(op.value))
       end
+    elseif op.field === :angle_deg
+      # the angle of an external grid (SCF source.u_ref_angle), written where
+      # the reader puts it: on the unit and, through addProsumer!, on its bus.
+      # initialVrect holds a slack bus at that angle, flat start or not, so on
+      # the reference unit every angle of its island moves with the value; on
+      # a source that is not the reference it is the start angle of its bus.
+      _undo_set!(log, ps, :va_deg, Float64(op.value))
+      bus = _scf_prosumer_bus(ps)
+      if 1 <= bus <= length(net.nodeVec)
+        _undo_set!(log, net.nodeVec[bus], :_va_deg, Float64(op.value))
+      end
     else
       throw(ArgumentError(string("set field ", op.field, " does not apply to this appliance")))
     end
     log.refresh[] = true
   elseif op.op === :scale
     if op.field === nothing || op.field === :p
+      ps.pVal === nothing || _shift_bus_load!(log, net, ps, ps.pVal * op.factor - ps.pVal, 0.0)
       _undo_set!(log, ps, :pVal, ps.pVal === nothing ? nothing : ps.pVal * op.factor)
     end
     if op.field === nothing || op.field === :q
+      ps.qVal === nothing || _shift_bus_load!(log, net, ps, 0.0, ps.qVal * op.factor - ps.qVal)
       _undo_set!(log, ps, :qVal, ps.qVal === nothing ? nothing : ps.qVal * op.factor)
     end
     log.refresh[] = true
@@ -193,7 +224,9 @@ function apply!(net::Net, ops::Vector{PatchOp}, index::ScenarioIndex)::UndoLog
   for internal in sort!(unique(deletions); rev = true)
     # the contingency semantics: an outaged unit is REMOVED from the copy,
     # like _remove_contingency_generator!, with the deletion recorded so
-    # restore! reinserts it
+    # restore! reinserts it; a removed load leaves the bus load sum
+    ps = net.prosumpsVec[internal]
+    _shift_bus_load!(log, net, ps, -something(ps.pVal, 0.0), -something(ps.qVal, 0.0))
     _undo_deleteat!(log, net.prosumpsVec, internal)
     log.refresh[] = true
   end

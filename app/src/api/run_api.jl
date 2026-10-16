@@ -759,7 +759,7 @@ function _run_sparlectra_api_body(
         println(io, "  prosumers:  ", length(cgmes_result.net.prosumpsVec))
         println(io, "  shunts:     ", length(cgmes_result.net.shuntVec))
         println(io, "  slack bus:  ", cgmes_result.slack_bus)
-        println(io, "  no-SV buses: ", length(cgmes_result.no_sv_buses), " (flat 1.0 pu / 0° start)")
+        println(io, "  no-SV buses: ", length(cgmes_result.no_sv_buses), " (start from a neighbour with SV, else 1.0 pu / 0°)")
         println(io)
         sc = cgmes_result.shortcircuit
         println(io, "## Short-circuit source data (read, not evaluated — issue #277)")
@@ -782,7 +782,8 @@ function _run_sparlectra_api_body(
     emit_phase("building_sparlectra_net")
     # Per-bus SV coverage for the residual export (`has_sv` column): bus names
     # whose TopologicalNode carried no usable SvVoltage and therefore start at
-    # the flat 1.0 pu / 0° fallback instead of the delivery's SV state.
+    # the voltage of a neighbour with one (else 1.0 pu / 0°) instead of their
+    # own SV state.
     api_performance_profile[:cgmes_no_sv_buses] = Set(cgmes_result.no_sv_buses)
     if export_cgmes
       cgmes_export_sc_line_data = CGMESImporter.cgmesLineShortCircuitData(cgmes_result)
@@ -875,6 +876,9 @@ function _run_sparlectra_api_body(
       "input_format" => String(requested_case_format),
       "input_format_detected" => "cgmes",
       "cgmes_no_sv_buses" => length(cgmes_result.no_sv_buses),
+      # tap changers whose SvTapStep the SV flows contradict, listed by the
+      # fixed-reference self-check (self_check.log)
+      "cgmes_sv_tap_step_fits" => cgmes_result.sv_tap_step_fits,
       "cgmes_start_values" => String(effective_start_values),
       "cgmes_sv_compare_status" => sv_compare_status,
       "cgmes_sv_compare_n" => sv_compare === nothing ? 0 : sv_compare.n,

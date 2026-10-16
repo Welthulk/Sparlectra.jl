@@ -32,7 +32,24 @@ function _warn_apslf_controllers_inactive(net::Net, controllers)
   return nothing
 end
 
-function _execute_sparlectra_powerflow!(net::Net, cfg::SparlectraConfig; performance_profile = nothing)
+# The AC island table of a rectangular run, printed once before the solve.
+# A solve prints it only with verbose > 0, so control passes, tap probes and
+# rescue attempts do not repeat it. The solve keeps its island report to
+# itself, hence the detection here on the same link-merged net the solve
+# builds (on a net without closed links that is the net itself). Same
+# condition as in the solve: more than one island and one of them with a
+# branch. Under auto_slack the caller promotes the slack first, as the
+# solve does before its detection, so the table names the solve's reference.
+function _print_run_ac_island_table(net::Net)
+  wnet, _, _ = _merged_pf_net(net)
+  report = detect_ac_islands(wnet; promote_generators = true)
+  length(report.rows) > 1 && any(row -> row.n_branch > 0, report.rows) && _print_ac_island_summary(report)
+  return nothing
+end
+
+# print_island_table = false: the auto mode calls this once per escalation
+# stage on the same net and prints the island table only in its base attempt
+function _execute_sparlectra_powerflow!(net::Net, cfg::SparlectraConfig; performance_profile = nothing, print_island_table::Bool = true)
   pf_cfg = cfg.powerflow
   verbose = _runner_verbose(cfg)
   qlimit_preview_rows = cfg.output.console_q_limit_events === :summary || cfg.output.console_q_limit_events === :off ? 0 : cfg.output.console_max_rows
@@ -72,6 +89,15 @@ function _execute_sparlectra_powerflow!(net::Net, cfg::SparlectraConfig; perform
           _dc_seed_rectangular_angles!(net, pf_cfg; verbose = verbose, performance_profile = performance_profile)
           solve_pf_cfg = _copy_powerflow_with(pf_cfg; start_mode = _copy_start_mode_with(pf_cfg.start_mode; start_projection = false, flatstart = false))
         end
+        # once per rectangular run; with verbose the run's first solve
+        # prints the table itself (APSLF and DC never printed it)
+        rectangular = pf_cfg.solver !== :apslf && pf_cfg.solver !== :dc
+        # the solve promotes a slack under auto_slack before it detects the
+        # islands; done here already, so the table names the reference the
+        # solve uses and follows the promotion line (the solve's own call
+        # then finds the slack and changes nothing)
+        rectangular && pf_cfg.auto_slack && ensureSlack!(net; log = true)
+        rectangular && verbose == 0 && print_island_table && _print_run_ac_island_table(net)
         if pf_cfg.solver === :apslf
           # APSLF solves the static injections and never evaluates a
           # controller: the outer-loop tap/PST controllers are not run and the
@@ -103,7 +129,10 @@ function _execute_sparlectra_powerflow!(net::Net, cfg::SparlectraConfig; perform
           )
           (ite, status, :none)
         else
-          control_result = run_control!(net; controllers = controllers, pf_config = solve_pf_cfg, control_config = cfg.control, verbose = verbose, performance_profile = performance_profile)
+          # the control loop gets the whole run configuration, so its solves
+          # carry the runtime.parallel switches like the branch above
+          control_cfg = solve_pf_cfg === pf_cfg ? cfg : _sparlectra_config_with(cfg; powerflow = solve_pf_cfg)
+          control_result = run_control!(net; controllers = controllers, pf_config = control_cfg, control_config = cfg.control, verbose = verbose, performance_profile = performance_profile)
           (control_result.last_pf_iterations, control_result.status == :pf_failed ? 1 : 0, control_result.status)
         end
       end

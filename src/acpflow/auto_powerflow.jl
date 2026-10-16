@@ -651,10 +651,10 @@ end
 # returning a status); an auto attempt treats that as "not converged" and
 # escalates instead of dying. Anything else is a programming error and is
 # rethrown unchanged.
-function _auto_pf_try_execute!(net::Net, run_cfg::SparlectraConfig; performance_profile = nothing)
+function _auto_pf_try_execute!(net::Net, run_cfg::SparlectraConfig; performance_profile = nothing, print_island_table::Bool = true)
   t0 = time()
   try
-    return _execute_sparlectra_powerflow!(net, run_cfg; performance_profile = performance_profile), nothing
+    return _execute_sparlectra_powerflow!(net, run_cfg; performance_profile = performance_profile, print_island_table = print_island_table), nothing
   catch err
     err isa ErrorException || rethrow()
     # the wall time up to the throw still belongs to the attempt record
@@ -727,7 +727,8 @@ function _execute_auto_sparlectra_powerflow!(net::Net, cfg::SparlectraConfig; pe
       _restore_start_voltages!(net, snap)
       run_cfg = _copy_sparlectra_with_powerflow(cfg, pf)
       _auto_pf_clear_rescue!(performance_profile)
-      execution, stage_err = _auto_pf_try_execute!(net, run_cfg; performance_profile = performance_profile)
+      # one auto run prints the AC island table once, in the base attempt
+      execution, stage_err = _auto_pf_try_execute!(net, run_cfg; performance_profile = performance_profile, print_island_table = false)
       evidence = _auto_pf_qlimit_evidence(net)
       push!(attempts, (stage = st.id, changed = stage_err === nothing ? changed : vcat(changed, string("solver error: ", first(sprint(showerror, stage_err), 160))), solver = _auto_pf_solver_label(pf, execution), iterations = execution.iterations, converged = execution.erg == 0, elapsed_s = round(execution.elapsed_s; digits = 3), qlimit_evidence = evidence, rescue_strategy = _auto_pf_rescue_strategy(performance_profile)))
       final_stage = st.id

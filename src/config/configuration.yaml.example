@@ -221,6 +221,13 @@ power_flow:
     sk_MVA: 2000.0
     rx: 0.1
 
+  # Plausibility check of a converged AC solution. A converged run with an
+  # energized bus below vmin_warn (pu, every voltage level) gets a warning
+  # naming the lowest bus and its voltage; the run status stays unchanged.
+  # 0 switches the check off.
+  plausibility:
+    vmin_warn: 0.7
+
   # Start projection and warmstart controls.
   start_mode:
     # Allowed values: classic, dc, bus_va_blend, matpower_va
@@ -530,6 +537,12 @@ cgmes_import:
   # Diagnostic override: treat every terminal as connected. For snapshots whose
   # SSH connected flags contradict their own SV state.
   ignore_connected: false
+  # Map EnergySource objects as fixed PQ injections (P and Q from the SSH,
+  # sign inverted from the CGMES load convention; no regulation, the slack
+  # only of an island without other reference). Off by default: they are
+  # left out and counted in one import notice. Turn it on for deliveries that
+  # carry generation as EnergySource.
+  map_energy_source: false
   # Plausibility band for a voltage RegulatingControl target, in p.u. of the
   # regulated bus's nominal voltage. Outside the band the target is treated as a
   # placeholder: ignored, unit held PV at the bus voltage derived from the
@@ -544,6 +557,10 @@ cgmes_import:
   # island beyond the primary has no reference and the island-wise power flow
   # refuses to run. false forces the legacy single-reference behavior.
   multi_slack: true
+  # An EquivalentBranch whose impedance (|z12| and |z21|, per unit on the
+  # base of terminal 1) lies below this value builds no branch: its two
+  # buses are joined as a link, with a notice. 0 switches it off.
+  equivalent_branch_min_z_pu: 1.0e-6
   # Newton-Raphson start state for CGMES runs.
   # - auto (default): use the delivery's own SvVoltage state when it carries
   #   one, else the synthetic flat start. Real deliveries are built around

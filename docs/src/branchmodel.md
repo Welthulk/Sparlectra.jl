@@ -129,9 +129,15 @@ A transformer's magnetizing branch ($G$, $B$ of the no-load test) is a
 one-sided quantity. PowSyBl and OpenLoadFlow put it wholly on side 1,
 behind the ideal transformer (`twtSplitShuntAdmittance = false`), and the
 PowSyBl importer keeps it there as the from arm with the to arm zero. A
-CGMES `PowerTransformerEnd` carries `g`, `b` per end; the importer refers
-end 1 to the to-side base and keeps each end's admittance on its own
-terminal. MATPOWER has no place for the split: its reader produces the
+CGMES `PowerTransformerEnd` carries `g`, `b` per end; the importer refers both
+ends to the to-side base, sums them and puts half of the total on each
+terminal (since 0.50.0), the from half behind the tap. The SV of the
+ENTSO-E test configurations is computed this way: on SmallGrid and
+MicroGrid BE and NL the units at the transformer ends match it exactly,
+with the per-end placement they missed it by up to 3.6 MVAr. A
+three-winding leg keeps the admittance of its end at the leg's bus side; a
+leg with a tap changer runs from its bus to the star point and carries it
+as the from arm on the star base. MATPOWER has no place for the split: its reader produces the
 symmetric half, its writer puts the symmetric part on the branch and the
 excess on a bus shunt named after the branch (see
 [MATPOWER](matpower.md)).

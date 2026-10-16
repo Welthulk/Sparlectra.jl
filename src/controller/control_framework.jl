@@ -149,9 +149,16 @@ function _resolve_control_pf_config(pf_config)
   return pf_config
 end
 
+# The configuration the solves of a control run receive. A full
+# SparlectraConfig goes to runpf! as it is, so its runtime.parallel switches
+# reach the island fan-out; reduced to its PowerFlowConfig, the active
+# configuration would decide them instead. The controllers keep reading the
+# resolved PowerFlowConfig.
+_control_solve_config(pf_config, pf_config_resolved) = pf_config isa SparlectraConfig ? pf_config : pf_config_resolved
+
 function _run_control_baseline_pf!(net::Any, pf_config, verbose::Int, performance_profile, success_status::Symbol)
   pf_config_resolved = _resolve_control_pf_config(pf_config)
-  ite, erg = runpf!(net; config = pf_config_resolved, verbose = verbose, performance_profile = performance_profile)
+  ite, erg = runpf!(net; config = _control_solve_config(pf_config, pf_config_resolved), verbose = verbose, performance_profile = performance_profile)
   if erg == 0
     calcNetLosses!(net)
     calcLinkFlowsKCL!(net)
@@ -161,6 +168,7 @@ function _run_control_baseline_pf!(net::Any, pf_config, verbose::Int, performanc
     converged = erg == 0,
     powerflow_solves = 1,
     last_pf_iterations = ite,
+    total_pf_iterations = ite,
     last_pf_status = erg == 0 ? :ok : :failed,
   )
   net.control_result = result
@@ -172,7 +180,10 @@ end
 
 Outer-loop orchestration layer around `runpf!` for controller-based network updates.
 It does not replace `runpf!`; it coordinates built-in or user-defined controllers and
-returns a `ControlRunResult`.
+returns a `ControlRunResult`. A pass in which no controller moves ends the
+loop with status `:blocked` after one closing solve at the final controller
+state, so the net carries its voltages and not those of a probe solve; that
+solve counts in `powerflow_solves` and `total_pf_iterations`.
 """
 function run_control!(net::Any; controllers::Vector{<:AbstractOuterController} = collect_outer_controllers(net), pf_config = nothing, control_config::ControlConfig = ControlConfig(), verbose::Int = 0, performance_profile = nothing)
   net.control_result = nothing
@@ -194,7 +205,8 @@ function run_control!(net::Any; controllers::Vector{<:AbstractOuterController} =
   # the full output, later passes run quiet and get one summary line each
   # (control.log_iterations), unless control.verbose_passes asks for the
   # whole set on every pass.
-  pf_runner = (pass_verbose) -> runpf!(net; config = pf_config_resolved, verbose = pass_verbose, performance_profile = performance_profile)
+  solve_config = _control_solve_config(pf_config, pf_config_resolved)
+  pf_runner = (pass_verbose) -> runpf!(net; config = solve_config, verbose = pass_verbose, performance_profile = performance_profile)
   repeat_verbose = control_config.verbose_passes ? verbose : 0
   context = (pf_config = pf_config_resolved, control_config = control_config, verbose = verbose, performance_profile = performance_profile, outer_iteration = 0)
   states = AbstractControlState[control_initialize!(ctrl, net, context) for ctrl in controllers]
@@ -211,7 +223,7 @@ function run_control!(net::Any; controllers::Vector{<:AbstractOuterController} =
 
   active_ids = findall(control_enabled, controllers)
   if isempty(active_ids)
-    result = ControlRunResult(status = :no_active_controllers, converged = true, powerflow_solves = solves, last_pf_iterations = ite, last_pf_status = :ok)
+    result = ControlRunResult(status = :no_active_controllers, converged = true, powerflow_solves = solves, last_pf_iterations = ite, last_pf_status = :ok, total_pf_iterations = total_ite)
     net.control_result = result
     return result
   end
@@ -242,14 +254,17 @@ function run_control!(net::Any; controllers::Vector{<:AbstractOuterController} =
         append!(trace, control_trace_rows(controllers[i], net, states[i], ctx))
       end
     end
-    if !moved
-      status = :blocked
-      break
-    end
+    # A pass without a move ends the loop as :blocked. Its proposals may
+    # still have solved the net: a tap controller probes one step and
+    # restores the tap but not the voltages. The solve below then is the
+    # closing solve that puts the voltages of the final controller state
+    # back on the net; it counts like every other solve.
+    closing = !moved
+    closing && (status = :blocked)
     ite, erg = pf_runner(repeat_verbose)
     solves += 1
     total_ite += ite
-    verbose > 0 && control_config.log_iterations && _print_control_pass_line(net, it, max_outer, ite, erg)
+    verbose > 0 && control_config.log_iterations && _print_control_pass_line(net, it, max_outer, ite, erg; closing = closing)
     if erg != 0
       result = ControlRunResult(status = :pf_failed, converged = false, outer_iterations = it, powerflow_solves = solves, last_pf_iterations = ite, last_pf_status = :failed, trace = trace, total_pf_iterations = total_ite)
       net.control_result = result
@@ -257,6 +272,7 @@ function run_control!(net::Any; controllers::Vector{<:AbstractOuterController} =
     end
     calcNetLosses!(net)
     calcLinkFlowsKCL!(net)
+    closing && break
   end
   rows = NamedTuple[]
   for (i, ctrl) in enumerate(controllers)
@@ -270,17 +286,19 @@ end
 ## One line per control pass after the first (issue #387): convergence,
 ## mismatch and the Q-limit counters of that pass, so a change in the
 ## active set is visible without the full per-pass diagnostic blocks.
+## The closing solve after a pass without a move gets its own label.
 ## The counters come from the stored rectangular status; the DC and APSLF
 ## solvers refuse controllers, so a missing status only means the solve
 ## did not get that far.
-function _print_control_pass_line(net, it::Int, max_outer::Int, ite::Int, erg::Int)
+function _print_control_pass_line(net, it::Int, max_outer::Int, ite::Int, erg::Int; closing::Bool = false)
+  label = closing ? string("control closing solve after pass ", it, "/", max_outer) : string("control pass ", it, "/", max_outer)
   st = rectangular_pf_status(net)
   if st === nothing
-    println(stdout, "control pass ", it, "/", max_outer, ": ", erg == 0 ? "converged" : "NOT converged", " in ", ite, " iteration(s)")
+    println(stdout, label, ": ", erg == 0 ? "converged" : "NOT converged", " in ", ite, " iteration(s)")
     return nothing
   end
   changes = st.pv_pq_switching_events + st.qlimit_active_set_changes + st.qlimit_reenable_events
   change_text = changes == 0 ? "no active-set change" : string(st.pv_pq_switching_events, " PV->PQ event(s), ", st.qlimit_active_set_changes, " active-set change(s), ", st.qlimit_reenable_events, " re-enable event(s)")
-  @printf(stdout, "control pass %d/%d: %s in %d iteration(s), mismatch %.3e, %s\n", it, max_outer, st.final_converged ? "converged" : "NOT converged", ite, st.final_mismatch, change_text)
+  @printf(stdout, "%s: %s in %d iteration(s), mismatch %.3e, %s\n", label, st.final_converged ? "converged" : "NOT converged", ite, st.final_mismatch, change_text)
   return nothing
 end

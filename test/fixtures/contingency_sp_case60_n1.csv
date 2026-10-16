@@ -27,7 +27,7 @@ Rosswik_Sandbrok,branch,Rosswik_Sandbrok,1,true,5,warm,0.910288299189071,1.03283
 Sandbrok_Altbach,branch,Sandbrok_Altbach,1,true,3,warm,0.923406057286489,1.03,48.6696159004032,0,,,1,0,
 Holtried_Altbach,branch,Holtried_Altbach,1,true,4,warm,0.912585477195313,1.03,48.6796816307435,0,,,1,0,
 Neubach_Waldsee#28,branch,Neubach_Waldsee#28,1,true,4,warm,0.922631268821402,1.03,48.6710443417707,0,,,1,0,
-Neubach_Waldsee#29,branch,Neubach_Waldsee#29,1,true,4,warm,0.922631268821402,1.03,48.6710443417707,0,,,1,0,"islanded: bus Neubach_110b cut off, 0.0 MW load disconnected; the remaining network solved"
+Neubach_Waldsee#29,branch,Neubach_Waldsee#29,1,true,4,warm,0.922631268821402,1.03,48.6710443417707,0,,,1,0,
 Eichheim_Altbach,branch,Eichheim_Altbach,1,true,4,warm,0.907767810919121,1.03,52.9252698645628,0,,,1,0,
 Neuberg_Oberfeld,branch,Neuberg_Oberfeld,1,true,4,warm,0.901876598265443,1.03,48.6751923684334,0,,,1,0,
 Oberfeld_Ostdorf,branch,Oberfeld_Ostdorf,1,true,5,warm,0.901876585491411,1.03,48.6751923760478,0,,,1,0,

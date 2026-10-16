@@ -425,7 +425,9 @@ grouping states which leg is which end:
 ```
 
 `leg_direction` says that every leg runs from the star node to its
-terminal, and the roles follow the terminal voltages, highest first. A
+terminal (`terminal_to_star` for the reverse, `mixed` when the legs
+differ, as for a CGMES leg with a tap changer), and the roles follow the
+terminal voltages, highest first. A
 CGMES delivery keeps its own names from the `PowerTransformer` and its
 ends; the generated names appear only for a nameplate-built transformer.
 

@@ -1902,7 +1902,11 @@ end
 
 The artifact viewer. Text artifacts open as a page (CSV as a table, Markdown
 rendered, everything else as escaped text; `raw = true` forces the text
-panel), other types are sent as a download. See `render_powerflow_artifact_page`.
+panel), other types are sent as a download. The two short-circuit tables
+(`short_circuit_max.csv`, `short_circuit_min.csv`) carry the head line of
+their case from the run metadata (`sc_status_line_max`/`_min`: run status,
+flagged rows, lower-bound rows) above the table. See
+`render_powerflow_artifact_page`.
 """
 function handle_powerflow_artifact(run_id::AbstractString, artifact_name::AbstractString; raw::Bool = false)::SparlectraWebUIResponse
   artifact = resolve_powerflow_artifact(run_id, artifact_name)
@@ -1913,7 +1917,15 @@ function handle_powerflow_artifact(run_id::AbstractString, artifact_name::Abstra
   end
   if artifact.mime_type in _WEBUI_TEXT_MIME_TYPES
     preview = _read_webui_artifact_preview(artifact.path)
-    return _webui_html(render_powerflow_artifact_page(artifact, preview; raw))
+    head_line = ""
+    sc_case = match(r"^short_circuit_(max|min)\.csv$", String(artifact_name))
+    if sc_case !== nothing
+      # the run resolved above; a run removed in between (nothing) or one
+      # written before the head line existed (no key) shows the table alone
+      run = _registered_powerflow_run(run_id)
+      run === nothing || (head_line = string(get(run.metadata, "sc_status_line_" * sc_case.captures[1], "")))
+    end
+    return _webui_html(render_powerflow_artifact_page(artifact, preview; raw, head_line))
   end
   bytes = read(artifact.path)
   headers = ["Content-Disposition" => "attachment; filename=\"$(replace(basename(artifact.name), '"' => '_'))\""]

@@ -51,6 +51,7 @@ constructors.
 - `for001Contingencies::Vector{String}`: Optional FOR001 contingency branch names imported from MATPOWER metadata.
 - `matpowerDclineMetadata::Vector{NamedTuple}`: Optional imported MATPOWER DC-line terminal-injection metadata.
 - `cgmes_ids::Dict{String,String}`: CGMES mRIDs keyed by structural identity (e.g. `"TN|<bus>"`, `"ACL|<busA>|<busB>|<k>"`); filled by the CGMES importer and reused by the CGMES exporter so exported ids stay stable.
+- `equivalent_branch_metadata::Dict{Int,NamedTuple}`: The delivered values of every branch built from a CGMES `EquivalentBranch`, keyed by branch index: `r`, `x`, `r21`, `x21` in ohm on the base `vn_kV` of terminal 1, and `stamped` for the phase stamp of an asymmetric one. The power flow never reads it; it marks the branch as an equivalent branch in the results and lets the CGMES export write the delivered values.
 
 # Constructors
 - `Net(; name::String, baseMVA::Float64, vmin_pu = 0.9, vmax_pu = 1.1, flatstart = false, bus_shunt_model = :admittance, ...)`: Creates an empty `Net` with the given name, base MVA and voltage limits; the remaining keywords set the Q-limit parameters.
@@ -126,6 +127,10 @@ mutable struct Net
   # Filled by the CGMES importer, read by the CGMES exporter; empty for nets
   # from other sources (the exporter then mints deterministic uuid5 ids).
   cgmes_ids::Dict{String,String}
+  # Delivered r, x, r21, x21 of the branches built from a CGMES
+  # EquivalentBranch, keyed by branch index (see the docstring). Export
+  # metadata and element-kind marker only: the solver model is the branch.
+  equivalent_branch_metadata::Dict{Int,NamedTuple}
   # Native short-circuit source records (issue #299): filled by
   # addExternalGrid!, read by runShortCircuit!(net). Carrying data here must
   # never change power-flow results by itself (participationFactor precedent).
@@ -162,6 +167,11 @@ mutable struct Net
   # with the symbolic analysis and the Jacobian buffers, the Newton
   # workspace); nothing until the first power-mode solve
   _power_cache::Any
+  # the buses markIsolatedBuses! typed Isolated itself because no branch
+  # reached them; only these are typed back once a branch of their own
+  # connects them again. An import, a bus op or a user call that types a
+  # bus Isolated does not enter this list, so that type sticks.
+  _marked_iso::Vector{Int}
 
   #! format: off
   function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1, cooldown_iters::Int = DEFAULT_QLIMIT_CONFIG.cooldown_iters, q_hyst_pu::Float64 = DEFAULT_QLIMIT_CONFIG.hysteresis_pu, reenable_v_hyst_pu::Float64 = DEFAULT_QLIMIT_CONFIG.reenable_v_hyst_pu, final_q_accept_pu::Float64 = 2 * q_hyst_pu, flatstart::Bool = false, bus_shunt_model = :admittance)
@@ -205,13 +215,15 @@ mutable struct Net
         NamedTuple[],
         AbstractOuterController[],                 # machineControls
         Dict{String,String}(),                     # cgmes_ids
+        Dict{Int,NamedTuple}(),                    # equivalent_branch_metadata
         NativeShortCircuitData(),                  # sc_sources
         HvdcLink[],                                # hvdcLinks
         nothing,                                   # _rectangular_pf_status
         nothing,                                   # _dc_pf_status
         nothing,                                   # _import_config
         String[],                                  # tapModelNotices
-        nothing)                                   # _power_cache
+        nothing,                                   # _power_cache
+        Int[])                                     # _marked_iso
   end
   #! format: on
   function Base.show(io::IO, net::Net)
@@ -943,20 +955,30 @@ function updateBranchParameters!(; net::Net, branchNr::Int, branch::BranchModel)
 end
 
 """
-addACLine!: Adds an AC line segment to the network.
+    addACLine!(; net::Net, fromBus::String, toBus::String, length::Float64, r::Float64, x::Float64,
+               b = nothing, c_nf_per_km = nothing, tanδ = nothing, ratedS = nothing,
+               status::Int = 1, from_status = nothing, to_status = nothing)
 
-Parameters:
-- `net::Net`: Network object.
-- `fromBus::String`: Name of the "from" bus.
-- `toBus::String`: Name of the "to" bus.
-- `length::Float64`: Length of the line segment.
-- `r::Float64`: Resistance per Meter of the line segment.
-- `x::Float64`: Reactance per Meter of the line segment.
-- `b::Union{Nothing,Float64} = nothing`: Susceptance per Meter of the line segment (default is nothing).
-- `c_nf_per_km::Union{Nothing,Float64} = nothing`: Capacitance per Meter of the line segment in nF/km (default is nothing).
-- `tanδ::Union{Nothing,Float64} = nothing`: Tangent of the loss angle (default is nothing).
-- `ratedS::Union{Nothing, Float64}= nothing`: Rated power of the line segment in MVA (default is nothing).
-- `status::Int = 1`: Status of the line segment (default is 1).
+Adds an AC line between two buses of the same voltage level. `r`, `x` and
+`b` are per-unit values on the bus voltage and `net.baseMVA`; the branch
+takes them without conversion. For lines given in Ohm and Siemens convert
+first with `toPU_RXBG`, or use [`addPIModelACLine!`](@ref).
+
+`length` decides how `r`, `x` and `b` are read: with `length > 1` they are
+the totals of the line and `length` is not applied to them; with
+`length <= 1` they are multiplied by `length`.
+
+# Arguments
+- `net::Net`: The network.
+- `fromBus::String`, `toBus::String`: Names of the two buses.
+- `length::Float64`: Length of the line, see above.
+- `r::Float64`: Series resistance in p.u.
+- `x::Float64`: Series reactance in p.u.
+- `b::Union{Nothing,Float64} = nothing`: Total charging susceptance in p.u. When given, `c_nf_per_km` and `tanδ` are ignored.
+- `c_nf_per_km::Union{Nothing,Float64} = nothing`, `tanδ::Union{Nothing,Float64} = nothing`: Capacitance in nF/km and loss factor, used only when `b` is not given and both are set. They give `b = 2π·50 Hz·C` and `g = tanδ·b` in Siemens with `C = c_nf_per_km·length` nF. These values are not converted to per unit either: the branch reads the Siemens values as p.u. A call with `c_nf_per_km` other than 0 and without `b` logs a warning; the call changes in 0.50.0.
+- `ratedS::Union{Nothing,Float64} = nothing`: Rated power in MVA.
+- `status::Int = 1`: 1 in service, 0 out of service.
+- `from_status`, `to_status`: The switch state of each end (0 or 1); `nothing` (default) takes `status`.
 """
 function addACLine!(; net::Net, fromBus::String, toBus::String, length::Float64, r::Float64, x::Float64, b::Union{Nothing,Float64} = nothing, c_nf_per_km::Union{Nothing,Float64} = nothing, tanδ::Union{Nothing,Float64} = nothing, ratedS::Union{Nothing,Float64} = nothing, status::Int = 1, from_status::Union{Nothing,Integer} = nothing, to_status::Union{Nothing,Integer} = nothing)
   @assert fromBus != toBus "From and to bus must be different"
@@ -965,6 +987,11 @@ function addACLine!(; net::Net, fromBus::String, toBus::String, length::Float64,
   vn_kV = getNodeVn(net.nodeVec[from])
   vn_2_kV = getNodeVn(net.nodeVec[to])
   @assert vn_kV == vn_2_kV "Voltage level of the from bus $(vn_kV) does not match the to bus $(vn_2_kV)"
+  # the capacitance path stores siemens as per unit (see the docstring);
+  # 0.50.0 changes the call, so a caller who relies on it is told now
+  if c_nf_per_km !== nothing && c_nf_per_km != 0.0 && b === nothing
+    @warn "addACLine!: c_nf_per_km gives a susceptance in siemens that is read as per unit (Z_base times too small), and without tanδ it is ignored. Pass b in per unit or use addPIModelACLine!; the call changes in 0.50.0." maxlog = 1
+  end
   if length > 1.0
     _par_length = true
   else
@@ -1994,63 +2021,150 @@ function getTotalLosses(; net::Net)
 end
 
 """
-    markIsolatedBuses!(;net::Net)
+    markIsolatedBuses!(; net::Net, log::Bool = false, links::Bool = false)
 
-Finds and marks isolated buses in the network.
+Finds and marks isolated buses in the network: a bus without an in-service
+branch becomes `Isolated` with voltage 0 and is listed in `net.isoNodes`.
 
 # Arguments
 - `net::Net`: The network.
+- `log::Bool`: log every isolated bus with `@info`.
+- `links::Bool`: apply the rule of the power flow to closed bus links
+  (`net.linkVec`, status 1): the buses joined by closed links form one
+  group, the node the power flow contracts them to, and every bus of a
+  group is in service when the group has an in-service branch. A bus that
+  hangs on the rest only through a closed link therefore stays in service,
+  a group of linked buses without any branch is isolated as a whole.
+  Default `false`: only branches connect.
 
+A bus this function typed `Isolated` in an earlier call is typed back to
+`PQ` once an in-service branch of its own reaches it again (a closed link
+alone does not); `refreshBusTypesFromProsumers!`, which every `runpf!` runs,
+then gives it its type from its prosumers. A bus typed `Isolated` by an
+import, a bus op or a user call keeps that type; only `net.isoNodes` is
+rebuilt for it. An `Isolated` bus in a closed-link group with a bus that is not
+`Isolated` starts at the voltage of the first such bus instead of 0: the
+power flow contracts the group onto its smallest bus and starts it from
+there. Returns `net.isoNodes`, sorted.
 """
-function markIsolatedBuses!(; net::Net, log::Bool = false)
+function markIsolatedBuses!(; net::Net, log::Bool = false, links::Bool = false)
   empty!(net.isoNodes)
+  isolated = Set(_isolated_buses(net; links = links))
+  # without a branch of its own (links do not count): a bus of the earlier
+  # marking that is still in here keeps its type even when a closed link
+  # joins it to a fed group (the start of the group relies on that)
+  by_branch = links ? Set(_isolated_buses(net)) : isolated
+  marked_before = Set(net._marked_iso)
+  marked = Int[]
 
-  # Create a set to store the buses that appear in the branches in branchVec
-  connected_buses = Set{Int}()
+  # Iterate through all buses in nodeVec and mark the isolated buses
+  for bus in net.nodeVec
+    i = bus.busIdx
+    if i in isolated
+      # typed here, or typed by an earlier marking: the rule owns the type
+      (i in marked_before || !isIsolated(bus)) && push!(marked, i)
+      setNodeType!(bus, "Isolated")
+      setVmVa!(node = bus, vm_pu = 0.0, va_deg = 0.0)
+      push!(net.isoNodes, i)
+      if log
+        @info "Bus $(getCompName(bus.comp)) is isolated"
+      end
+    elseif i in marked_before && isIsolated(bus)
+      if i in by_branch
+        push!(marked, i)
+      else
+        # a branch reaches the bus again: PQ takes it out of the skip of
+        # refreshBusTypesFromProsumers!, which then types it (Slack, PV, PQ)
+        setNodeType!(bus, "PQ")
+      end
+    end
+  end
+  net._marked_iso = marked
+  _start_isolated_link_members!(net)
 
-  # Iterate through each branch in branchVec and add the corresponding buses
-  # to the set. A one-sided open branch (r0.9.10) connects only its CLOSED
-  # bus, and only when something can energize that bus: a prosumer there or
-  # another closed branch. A dead closed end (no injection, no other
-  # connection) stays isolated exactly like before the feature, its
-  # charging has no source to draw from.
+  sort!(net.isoNodes)
+end
+
+# The rule of markIsolatedBuses! without touching the net: the sorted bus
+# indices it marks. The scenario engine reads the isolated buses of its
+# solved template through it, where marking would zero the warm start.
+function _isolated_buses(net::Net; links::Bool = false)::Vector{Int}
+  # links = true: the bus groups of the power flow (_active_link_representative_map,
+  # the map _merged_pf_net contracts with). Every bus counts through the
+  # representative of its group, so the rule below runs on the contracted
+  # network exactly as the solver's own marking of its merged copy does.
+  # links = false: every bus is its own group.
+  reps = links ? _active_link_representative_map(net) : Int[]
+  group(i::Int) = links ? reps[i] : i
+  # the contraction only happens when a closed link joins two buses
+  merged = links && any(reps[i] != i for i in eachindex(reps))
+
+  # the groups that appear in the in-service branches of branchVec
+  connected = Set{Int}()
+
+  # A one-sided open branch (r0.9.10) connects only its CLOSED bus, and
+  # only when something can energize that bus: a prosumer there or another
+  # closed branch. A dead closed end (no injection, no other connection)
+  # stays isolated exactly like before the feature, its charging has no
+  # source to draw from.
   partial_closed = Int[]
   for br in net.branchVec
     state = _branch_terminal_state(br)
+    f = group(Int(br.fromBus))
+    t = group(Int(br.toBus))
+    # a closed branch with both ends in one group is a self-loop of the
+    # contracted node; _merged_pf_net takes it out of service, so it
+    # connects nothing here either
+    (merged && f == t && state == :closed) && continue
     if state == :open
       continue
     elseif state == :open_to
-      push!(partial_closed, Int(br.fromBus))
+      push!(partial_closed, f)
     elseif state == :open_from
-      push!(partial_closed, Int(br.toBus))
+      push!(partial_closed, t)
     else
-      push!(connected_buses, br.fromBus)
-      push!(connected_buses, br.toBus)
+      push!(connected, f)
+      push!(connected, t)
     end
   end
   if !isempty(partial_closed)
     # only a reference can balance an island on its own; a machine or load
     # behind a dead partial branch stays de-energized (pre-feature behavior)
-    reference_buses = Set{Int}(getPosumerBusIndex(ps) for ps in net.prosumpsVec if ps.referencePri !== nothing)
-    for bus in partial_closed
-      (bus in connected_buses || bus in reference_buses) && push!(connected_buses, bus)
+    reference_groups = Set{Int}(group(getPosumerBusIndex(ps)) for ps in net.prosumpsVec if ps.referencePri !== nothing)
+    for g in partial_closed
+      (g in connected || g in reference_groups) && push!(connected, g)
     end
   end
 
-  # Iterate through all buses in nodeVec and mark the isolated buses
-  for bus in net.nodeVec
-    # Check whether the bus number is not included in the set of connected buses
-    if !(bus.busIdx in connected_buses)
-      setNodeType!(bus, "Isolated")
-      setVmVa!(node = bus, vm_pu = 0.0, va_deg = 0.0)
-      push!(net.isoNodes, bus.busIdx)
-      if log
-        @info "Bus $(getCompName(bus.comp)) is isolated"
-      end
-    end
-  end
+  return sort!(Int[bus.busIdx for bus in net.nodeVec if !(group(bus.busIdx) in connected)])
+end
 
-  sort!(net.isoNodes)
+# Start values of the isolated buses in a closed-link group with a bus that
+# is not isolated (a fed group). _merged_pf_net contracts the group onto its
+# smallest bus and starts the merged node from that bus. A bus typed
+# Isolated starts at 0 V (markIsolatedBuses!, the bus isolation op of
+# apply!); when it is the smallest of a fed group, the group starts at 0 V
+# and the solve can end on the low-voltage branch. Every isolated member of
+# a fed group takes the start of the first bus of the group that is not
+# isolated. Types and isoNodes stay; isolated buses without a fed group keep
+# 0 V. Returns the number of buses set.
+function _start_isolated_link_members!(net::Net)::Int
+  isempty(net.linkVec) && return 0
+  reps = _active_link_representative_map(net)
+  first_live = Dict{Int,Int}()
+  for i in eachindex(reps)
+    isIsolated(net.nodeVec[i]) || get!(first_live, reps[i], i)
+  end
+  n = 0
+  for i in eachindex(reps)
+    isIsolated(net.nodeVec[i]) || continue
+    j = get(first_live, reps[i], 0)
+    j == 0 && continue
+    net.nodeVec[i]._vm_pu = net.nodeVec[j]._vm_pu
+    net.nodeVec[i]._va_deg = net.nodeVec[j]._va_deg
+    n += 1
+  end
+  return n
 end
 
 function _buildQLimits!(net::Net; reset::Bool = true)
@@ -2065,9 +2179,9 @@ function _buildQLimits!(net::Net; reset::Bool = true)
     resize!(net.qmax_pu, nbus)
   end
 
-  # Reinitialize limits on every call (derived data -> safe to overwrite)
-  # qmin_pu starts at +Inf (will be replaced by first finite sum)
-  # qmax_pu starts at -Inf (will be replaced by first finite sum)
+  # Reinitialize limits on every call (derived data -> safe to overwrite).
+  # A bus without a generator-type unit keeps the inverted pair +Inf/-Inf,
+  # which every reader takes as "no limit" (isfinite fails on both ends).
   fill!(net.qmin_pu, Inf)
   fill!(net.qmax_pu, -Inf)
 
@@ -2076,7 +2190,32 @@ function _buildQLimits!(net::Net; reset::Bool = true)
     resetQLimitLog!(net)
   end
 
-  # Aggregate generator Q-limits per bus
+  # Buses held by a regulating or reference unit. The band of such a bus
+  # bounds its total generator Q (net injection plus bus load, the quantity
+  # every Q-limit check compares). A unit that does not regulate runs at a
+  # fixed Q: it shifts that total by its Q and adds nothing to the range the
+  # regulating units can cover, so it enters both ends with its scheduled
+  # qVal, and its own limits (or their absence) do not count. Summing them
+  # instead widened the band, to -Inf/Inf for a fixed unit without limits.
+  # A unit with a Q(U) characteristic is fixed as well: the bus voltage is
+  # held at its setpoint, so the unit runs at Q(Vset), its characteristic
+  # (with the controller's clamp) evaluated at the held voltage. A bus
+  # without a regulating or reference unit keeps the plain sum of its units'
+  # limits; it is PQ, and only reports read its band.
+  held = Set{Int}()
+  for ps in net.prosumpsVec
+    isGenerator(ps) || continue
+    (isRegulating(ps) || isSlack(ps)) && push!(held, getPosumerBusIndex(ps))
+  end
+
+  # Held voltages, built only when a Q(U) unit sits on a held bus: the same
+  # per-bus setpoints the solver holds (regulating unit setpoint, else the
+  # node voltage, as in _bus_voltage_setpoints_from_prosumers)
+  vheld = nothing
+  # Aggregate generator Q-limits per bus. `seen` marks buses with at least
+  # one unit; the sums start at zero, so a missing limit (-Inf/Inf) stays
+  # unbounded whatever the order of the units on the bus.
+  seen = falses(nbus)
   for ps in net.prosumpsVec
     isGenerator(ps) || continue
     bus = getPosumerBusIndex(ps)
@@ -2089,16 +2228,29 @@ function _buildQLimits!(net::Net; reset::Bool = true)
         net.qmin_pu[b] = Inf
         net.qmax_pu[b] = -Inf
       end
+      resize!(seen, bus)
+      seen[(nbus+1):bus] .= false
       nbus = bus
     end
+    fixed_q = bus in held && !isRegulating(ps) && !isSlack(ps)
     # Convert to p.u., handle 'no limit' as ±Inf
-    qmin_pu = isnothing(ps.minQ) ? -Inf : ps.minQ / net.baseMVA
-    qmax_pu = isnothing(ps.maxQ) ? Inf : ps.maxQ / net.baseMVA
-    # Sum instead of min/max; respect sentinel values
-    cur_qmin = net.qmin_pu[bus]
-    net.qmin_pu[bus] = isfinite(cur_qmin) ? (cur_qmin + qmin_pu) : qmin_pu
-    cur_qmax = net.qmax_pu[bus]
-    net.qmax_pu[bus] = isfinite(cur_qmax) ? (cur_qmax + qmax_pu) : qmax_pu
+    qmin_pu, qmax_pu = if fixed_q && has_qu_controller(ps)
+      vheld === nothing && (vheld = _bus_voltage_setpoints_from_prosumers(net))
+      q_pu = first(evaluate_controller(ps.quController, vheld[bus]))
+      (q_pu, q_pu)
+    elseif fixed_q
+      q_pu = something(ps.qVal, 0.0) / net.baseMVA
+      (q_pu, q_pu)
+    else
+      (isnothing(ps.minQ) ? -Inf : ps.minQ / net.baseMVA, isnothing(ps.maxQ) ? Inf : ps.maxQ / net.baseMVA)
+    end
+    if !seen[bus]
+      seen[bus] = true
+      net.qmin_pu[bus] = 0.0
+      net.qmax_pu[bus] = 0.0
+    end
+    net.qmin_pu[bus] += qmin_pu
+    net.qmax_pu[bus] += qmax_pu
   end
 
   return nothing
@@ -2108,6 +2260,15 @@ end
     buildQLimits!(net; reset=true)
 
 Public wrapper to (re)build aggregated per-bus Q limits in p.u.
+
+The band of a bus bounds its total generator Q. On a bus with a regulating
+or reference unit it is the sum of the `minQ`/`maxQ` of its regulating
+and reference units (a missing limit makes that end unbounded) plus the
+fixed Q of every other generator-type unit at both ends: its scheduled
+`qVal`, or for a unit with a `QUController` its Q at the held bus voltage.
+Such a unit does not widen the range, whatever its own limits. On a bus
+without a regulating or reference unit the band is the sum of all its
+units' limits.
 """
 function buildQLimits!(net::Net; reset::Bool = true)
   return _buildQLimits!(net; reset = reset)
@@ -2221,13 +2382,19 @@ function _loads_at_bus(net::Net, bus::Int)
   return idx
 end
 
+# `total` split in proportion to `spec`, equally when the specs sum to zero
+function _split_proportional(total::Float64, spec::Vector{Float64})
+  s = sum(spec)
+  return abs(s) < 1e-9 ? fill(total / length(spec), length(spec)) : total .* (spec ./ s)
+end
+
 function distribute_bus_generation!(net::Net, bus::Int)
   node = net.nodeVec[bus]
 
   gens_idx = _generators_at_bus(net, bus)
   isempty(gens_idx) && return
 
-  # Zielwerte am Bus (hier: aus Node – kannst du anpassen)
+  # bus targets: the generation of the bus as the solve wrote it (node sums)
   P_target = node._pƩGen === nothing ? 0.0 : node._pƩGen
   Q_target = node._qƩGen === nothing ? 0.0 : node._qƩGen
 
@@ -2245,16 +2412,19 @@ function distribute_bus_generation!(net::Net, bus::Int)
     push!(qmax, isnothing(ps.maxQ) ? Inf : ps.maxQ)
   end
 
-  # --- P-Verteilung (ohne Limits, meist einfacher) ---
+  # --- P split ---
+  # The reference units (isSlack) take what the solve gave the bus beyond the
+  # schedule of the other units, which keep their scheduled P. A proportional
+  # split of the whole bus value gave a reference unit without a schedule
+  # nothing and a 10 MW unit next to it the whole slack balance.
   P_alloc = similar(P_spec)
-  P_sum   = sum(P_spec)
-
-  if abs(P_sum) < 1e-9
-    # gleichmäßig, wenn keine sinnvollen spec-Werte
-    fill!(P_alloc, P_target / length(P_alloc))
+  is_ref = [isSlack(net.prosumpsVec[idx]) for idx in gens_idx]
+  if any(is_ref) && !all(is_ref)
+    residual = P_target - sum(P_spec[.!is_ref])
+    P_alloc[.!is_ref] .= P_spec[.!is_ref]
+    P_alloc[is_ref] .= _split_proportional(residual, P_spec[is_ref])
   else
-    # proportional zu den specs
-    P_alloc .= P_target .* (P_spec ./ P_sum)
+    P_alloc .= _split_proportional(P_target, P_spec)
   end
 
   # --- Q-Verteilung mit Waterfilling ---
@@ -2589,6 +2759,44 @@ function has_voltage_dependent_control(net::Net)::Bool
 end
 
 @inline _safe_vm(vm::Float64; eps::Float64 = 1e-9) = vm > eps ? vm : eps
+
+# Power each bus draws apart from its branches and its admittance shunts, in
+# MW and MVAr, at the voltage magnitudes stored in the nodes: the
+# non-generator prosumers (a P(U)/Q(U) characteristic evaluated at that
+# voltage when `controllers` is set, else the scheduled pVal/qVal) and the
+# voltage-dependent shunts (|V|^2 conj(y)). This is the load part of the
+# specification the solvers build (buildControlledSVec, buildComplexSVec),
+# with the opposite sign, so the generation of a bus whose generation the
+# solve sets (slack P and Q, PV Q) is the solved injection V conj(Y V) plus
+# this value. A bus without a stored voltage counts at 1 pu.
+function _bus_consumption_MVA(net::Net, nb::Int = length(net.nodeVec); controllers::Bool = true)
+  base = net.baseMVA
+  nodes = net.nodeVec
+  p = zeros(Float64, nb)
+  q = zeros(Float64, nb)
+  vm_of(bus) = nodes[bus]._vm_pu === nothing ? 1.0 : Float64(nodes[bus]._vm_pu)
+  for ps in net.prosumpsVec
+    isGenerator(ps) && continue
+    bus = getPosumerBusIndex(ps)
+    (1 <= bus <= nb) || continue
+    p_mw = something(ps.pVal, 0.0)
+    q_mvar = something(ps.qVal, 0.0)
+    controllers && has_pu_controller(ps) && (p_mw = first(evaluate_controller(ps.puController, _safe_vm(vm_of(bus)))) * base)
+    controllers && has_qu_controller(ps) && (q_mvar = first(evaluate_controller(ps.quController, _safe_vm(vm_of(bus)))) * base)
+    p[bus] += p_mw
+    q[bus] += q_mvar
+  end
+  for sh in net.shuntVec
+    sh.status == 0 && continue
+    sh.model == :VoltageDependentInjection || continue
+    bus = sh.busIdx
+    (1 <= bus <= nb) || continue
+    s = vm_of(bus)^2 * conj(sh.y_pu_shunt) * base
+    p[bus] += real(s)
+    q[bus] += imag(s)
+  end
+  return p, q
+end
 
 """
     buildControlledSVec(net, V) -> (Sspec, dPinj_dVm, dQinj_dVm)

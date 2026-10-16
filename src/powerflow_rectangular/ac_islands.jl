@@ -171,6 +171,43 @@ function electricalIslandOfBus(net::Net)::Dict{Int,Int}
   return out
 end
 
+# The islands the power flow solves on a net that is not link-merged. The
+# branch-only isolation marking types a bus Isolated that hangs on the
+# network through closed switches alone, and electricalIslandComponents
+# splits the network at such a bus. The solver does not: _merged_pf_net
+# contracts every closed-link group onto one node, through that bus as well,
+# and refreshBusTypesFromProsumers! types the merged node from the units of
+# all members. The same calls build the partition here. Returns
+# `(islands, held, refs)`, per island: the raw bus indices of all members of
+# its merged nodes (switch-only buses included), sorted; whether a merged
+# node is Slack or PV; the members of its Slack nodes. Used by the CGMES
+# importer (island slacks, machine controls, the EnergySource notice) and
+# the SV comparison (angle alignment).
+function _power_flow_islands(net::Net)
+  wnet, reps, merged = _merged_pf_net(net)
+  # without a closed link wnet is the net itself: its types are those of
+  # the caller, and the call must not alter them
+  merged && refreshBusTypesFromProsumers!(wnet)
+  members = Dict{Int,Vector{Int}}()
+  for b in eachindex(reps)
+    push!(get!(Vector{Int}, members, reps[b]), b)
+  end
+  comps = _active_ac_island_components(wnet)
+  islands = [sort!(reduce(vcat, (members[r] for r in comp); init = Int[])) for comp in comps]
+  held = [any(r -> wnet.nodeVec[r]._nodeType in (Slack, PV), comp) for comp in comps]
+  refs = [sort!(reduce(vcat, (members[r] for r in comp if wnet.nodeVec[r]._nodeType == Slack); init = Int[])) for comp in comps]
+  return islands, held, refs
+end
+
+# Bus index -> island number of _power_flow_islands.
+function _power_flow_island_of_bus(net::Net)::Dict{Int,Int}
+  out = Dict{Int,Int}()
+  for (i, comp) in enumerate(first(_power_flow_islands(net))), b in comp
+    out[b] = i
+  end
+  return out
+end
+
 # MATPOWER DC lines are not part of the Ybus -- they are modelled as a fixed
 # injection at each of their two terminals. That is precisely why they can
 # leave the AC network split into islands while the case still looks connected
@@ -499,8 +536,10 @@ function _prepare_island_net(net::Net, row)
   # are dropped, not moved.
   inet.slackVec = [busmap[b] for b in net.slackVec if b in busset]
   # Isolated buses were filtered out when the components were built, so the
-  # island net starts without any.
+  # island net starts without any; the marking record holds net-wide bus
+  # numbers and goes with them.
   empty!(inet.isoNodes)
+  empty!(inet._marked_iso)
 
   # MATPOWER-like reference promotion: an island that brought no Slack of its
   # own gets one PV bus turned into the angle reference. detect_ac_islands has

@@ -150,7 +150,17 @@ function _write_self_check_summary(result, output_dir::AbstractString)::Nothing
     no_sv = get(result.metadata, "cgmes_no_sv_buses", nothing)
     if no_sv !== nothing
       buses = get(result.metadata, "cgmes_buses", nothing)
-      println(io, "cgmes_no_sv_buses: ", no_sv, buses === nothing ? "" : " of $(buses)", " (flat 1.0 pu / 0° start — a large share weakens the SV comparison)")
+      println(io, "cgmes_no_sv_buses: ", no_sv, buses === nothing ? "" : " of $(buses)", " (start from a neighbour with SV, else 1.0 pu / 0°; a large share weakens the SV comparison)")
+    end
+    # A tap changer whose SvTapStep the SV flows contradict leaves a residual
+    # at its transformer that no model change removes; the mismatch is the
+    # sum of |S_model - S_sv| at both terminals at the SV voltages, in MVA
+    tap_fits = get(result.metadata, "cgmes_sv_tap_step_fits", nothing)
+    if tap_fits !== nothing
+      println(io, "cgmes_sv_tap_step_fits: ", length(tap_fits), " (tap changers whose SV flows fit another step clearly better than SvTapStep)")
+      for r in tap_fits
+        println(io, "  ", r.transformer, " / ", r.tap_changer, ": SvTapStep ", r.sv_step, " mismatch ", round(r.sv_mismatch_mva; sigdigits = 4), " MVA, best step ", r.best_step, " mismatch ", round(r.best_mismatch_mva; sigdigits = 4), " MVA")
+      end
     end
   end
   return nothing
@@ -177,7 +187,9 @@ Supported inputs:
   Buses without a usable `SvVoltage` keep the importer's `1.0 pu / 0°`
   fallback; their count is reported in `self_check.log` and per bus in the
   `has_sv` column of `self_check_residuals.csv` — a large no-SV share weakens
-  the interpretation of the residual.
+  the interpretation of the residual. `self_check.log` also lists the tap
+  changers whose `SvPowerFlow` fits another step clearly better than their
+  `SvTapStep`, with both steps and mismatches.
 
 # Arguments
 - `casefile`: case path (MATPOWER file or CGMES delivery), forwarded to

@@ -94,6 +94,7 @@ the extended test profile.
 | `run_cgmes_suite.jl` | guided walkthrough plus the sweep over every ENTSO-E/ReliCapGrid test set | cgmes |
 | `cgmes/cgmes_fetch_testsets.jl` | one-time fetch of the ENTSO-E test-set package into the local cache | standalone |
 | `cgmes/cgmes_export_demo.jl` | CGMES export (`writeCGMESFiles`) on a small net | others (optional) |
+| `cgmes/cgmes_export_physical.jl` | CGMES export of a net built from line data in ohm/km and nF/km (`toPU_RXBG`, `addPIModelACLine!`), with the re-import | others |
 | `cgmes/val_realgrid_remeasure.jl` | RealGrid measurement ladder: baseline, Q-limits, distributed slack, machine control | standalone |
 
 ## DTF validation (Testnetz13 / FOR001-FOR002)

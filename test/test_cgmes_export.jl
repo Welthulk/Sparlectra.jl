@@ -16,9 +16,10 @@
 # purpose: CGMES export identity and roundtrip contract — structural keys in
 #          net.cgmes_ids, parallel-line numbering, deterministic uuid5
 #          minting, byte-identical re-export, the duplicate-mRID guard, the
-#          power-flow-identical self-roundtrip on EQ+TP+SSH+SV (transformers
-#          incl. phase shift and ratio-tap machinery, machines, SVC, loads,
-#          shunts, bus links), SSH/SV content, ZIP packaging and tool
+#          power-flow-identical self-roundtrip on EQ+TP+SSH+SV (PI and
+#          addACLine! lines, transformers incl. phase shift and ratio-tap
+#          machinery, machines, SVC, loads, shunts, bus links), SSH/SV
+#          content, ZIP packaging and tool
 #          provenance on nets built in memory, and the export-import-export
 #          identity of the checked-in deliveries under data/cgmes_demo
 #          (object-wise, with the fields the importer does not carry named).
@@ -28,10 +29,13 @@ using Sparlectra
 using Dates
 using UUIDs
 using Logging
+isdefined(@__MODULE__, :_cgmes_synth_eb_dir) || include(joinpath(@__DIR__, "cgmes_synth_eb_fixture.jl"))
 
 # Fixed header stamp: with `created` pinned the exported files are
 # byte-reproducible, which the determinism tests rely on.
 const _EXPORT_STAMP = DateTime(2026, 1, 1, 12, 0, 0)
+
+isdefined(@__MODULE__, :_cgmes_synth_tapside_dir) || include(joinpath(@__DIR__, "cgmes_synth3w_fixture.jl"))
 
 # bare-call defaults are too tight for these fixtures — always solve through
 # the explicit signature (maxIte, tol, verbose)
@@ -60,6 +64,13 @@ function _roundtrip_net()
   addBus!(net = net, busName = "HV2", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
   addBus!(net = net, busName = "MV1", vn_kV = 20.0, vm_pu = 1.0, va_deg = 0.0)
   addPIModelACLine!(net = net, fromBus = "HV1", toBus = "HV2", r_pu = 0.01, x_pu = 0.05, b_pu = 0.02, status = 1)
+  # addACLine! lines carry per-unit values as well, one per length rule
+  # (length > 1 takes r, x, b as line totals, length <= 1 multiplies them);
+  # the exporter wrote them unconverted as Ohm before 0.41.0, and the
+  # re-import came back Z_base times (121 at 110 kV, 100 MVA) too low in
+  # impedance
+  addACLine!(net = net, fromBus = "HV1B", toBus = "HV2", length = 10.0, r = 0.02, x = 0.12, b = 0.01)
+  addACLine!(net = net, fromBus = "HV1", toBus = "HV2", length = 0.5, r = 0.03, x = 0.2, b = 0.02)
   addLink!(net = net, fromBus = "HV1", toBus = "HV1B", status = 1)
   addPIModelTrafo!(net = net, fromBus = "HV2", toBus = "MV1", r_pu = 0.002, x_pu = 0.06, b_pu = 0.0, status = 1, ratio = 1.04, shift_deg = 2.0)
   addProsumer!(net = net, busName = "HV1", type = "EXTERNALNETWORKINJECTION", referencePri = "HV1", vm_pu = 1.02, va_deg = 0.0)
@@ -290,11 +301,13 @@ function run_cgmes_export_tests()
       @test length(svc) == 1
       @test svc[1].minQ == -121.0
       @test svc[1].maxQ == 121.0
+      # the re-imported model reproduces the SV flows at the SV state
+      @test compareWithSV(res).flows.max_dp < 1e-6
       # the exported SV state starts the re-import at the solution
       its, erg = _solve!(net2)
       @test erg == 0
       @test its <= 2
-      _compare_solved(original, net2)
+      _compare_solved(original, net2; atol = 1e-8)
     end)() end
 
     @testset "SSH and SV profiles carry the operating point" begin (function ()
@@ -305,6 +318,16 @@ function run_cgmes_export_tests()
       addProsumer!(net = net, busName = "A", type = "SYNCHRONOUSMACHINE", p = 25.0, q = 5.0, referencePri = "A", vm_pu = 1.02, isRegulated = true)
       addProsumer!(net = net, busName = "B", type = "ENERGYCONSUMER", p = 25.0, q = 5.0)
       addShuntMatpower!(net = net, busName = "B", Gs = 0.0, Bs = 4.0)
+      # a second line, so that no single outage cuts B off (N-1 check below)
+      addPIModelACLine!(net = net, fromBus = "A", toBus = "B", r_pu = 0.02, x_pu = 0.1, b_pu = 0.0, status = 1)
+      # C hangs on B through a closed switch alone, with a unit, a load and a
+      # shunt of its own: the re-import marks it isolated (branch rule), the
+      # solver merges it with B, and the SV comparison compares it
+      addBus!(net = net, busName = "C", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
+      addLink!(net = net, fromBus = "B", toBus = "C", status = 1)
+      addProsumer!(net = net, busName = "C", type = "SYNCHRONOUSMACHINE", p = 10.0, q = 2.0)
+      addProsumer!(net = net, busName = "C", type = "ENERGYCONSUMER", p = 4.0, q = 1.0)
+      addShuntMatpower!(net = net, busName = "C", Gs = 0.5, Bs = 2.0)
       @test _solve!(net)[2] == 0
       files = writeCGMESFiles(net; path = mktempdir(), created = _EXPORT_STAMP)
       ssh = read(files[3], String)
@@ -329,6 +352,42 @@ function run_cgmes_export_tests()
       @test !isempty(cmp.flows.rows)
       @test maximum(abs(r.dp) for r in cmp.flows.rows) < 1e-9
       @test maximum(abs(r.dq) for r in cmp.flows.rows) < 1e-9
+      # C has no branch, so the import marks it isolated, but the closed
+      # switch joins it to B: its voltage and its shunt are compared at the
+      # voltage of the switch group, and the units of B and C are balanced
+      # over the group (C alone would miss the power the switch carries)
+      @test res.net.busDict["C"] in res.net.isoNodes
+      @test any(r -> r.bus == "C", cmp.rows)
+      @test count(r -> r.kind == :shunt, cmp.flows.rows) == 2
+      @test count(r -> r.kind == :units, cmp.flows.rows) == 2
+      # the machine on C delivers 10 MW and 2 Mvar (load sign: -10, -2); a
+      # balance of C alone would give its load and shunt instead
+      a_name = res.net.nodeVec[res.net.busDict["A"]].comp.cName
+      c_units = only(r for r in cmp.flows.rows if r.kind == :units && r.bus != a_name)
+      @test isapprox(c_units.sv_p, -10.0; atol = 1e-9) && isapprox(c_units.sv_q, -2.0; atol = 1e-9)
+      @test isapprox(c_units.p, -10.0; atol = 1e-9) && isapprox(c_units.q, -2.0; atol = 1e-9)
+      # the solved state matches as well
+      @test _solve!(res.net)[2] == 0
+      solved = Sparlectra.CGMESImporter.compareWithSV(res)
+      @test solved.n == 3
+      @test solved.max_dvm < 1e-9
+      @test maximum(abs(r.dp) for r in solved.flows.rows) < 1e-6
+      # the SV export of the import keeps the voltage and the rows of C
+      files2 = writeCGMESFiles(res.net; path = mktempdir(), created = _EXPORT_STAMP)
+      res2 = importCGMES(path = dirname(files2[1]), name = "sv_back2")
+      cmp2 = Sparlectra.CGMESImporter.compareWithSV(res2)
+      @test cmp2.n == 3
+      @test cmp2.max_dvm < 1e-9
+      @test length(cmp2.flows.rows) == length(cmp.flows.rows)
+      @test maximum(abs(r.dp) for r in cmp2.flows.rows) < 1e-6
+      # N-1 applies the same branch rule after each outage: C stays marked
+      # and is neither cut off nor counted as shed load
+      n1 = runContingencies!(res.net, generateN1Branches(res.net); warm_note = Ref(""))
+      @test length(n1) == 2
+      for r in n1
+        @test r.shed_load_mw == 0.0
+        @test r.error === nothing
+      end
     end)() end
 
     @testset "regulated tap group exports one shared TapChangerControl" begin (function ()
@@ -374,6 +433,29 @@ function run_cgmes_export_tests()
       @test isapprox(c.deadband_vm_pu, 0.004; atol = 1e-9)
     end)() end
 
+    @testset "three-winding transformer with a tapped leg round-trips" begin (function ()
+      # the importer builds the tapped end-1 leg side bus -> star; the
+      # export must still write one PowerTransformer with three ends
+      res = importCGMES(path = _cgmes_synth_tapside_dir(:three_winding), name = "tap3w")
+      @test _solve!(res.net)[2] == 0
+      notes = String[]
+      files = writeCGMESFiles(res.net; path = mktempdir(), created = _EXPORT_STAMP, notices = notes)
+      @test isempty(notes)
+      eq = read(files[1], String)
+      @test count("<cim:PowerTransformer rdf:ID", eq) == 1
+      @test count("<cim:PowerTransformerEnd rdf:ID", eq) == 3
+      back = importCGMES(path = dirname(files[1]), name = "tap3w_back")
+      @test _solve!(back.net)[2] == 0
+      for bus in ("BUS1", "BUS2", "BUS3")
+        n1 = res.net.nodeVec[res.net.busDict[bus]]
+        n2 = back.net.nodeVec[back.net.busDict[bus]]
+        @test isapprox(n1._vm_pu, n2._vm_pu; atol = 1e-9)
+        @test isapprox(n1._va_deg, n2._va_deg; atol = 1e-7)
+      end
+      # the exported SV flows of the three ends are the solved leg flows
+      @test compareWithSV(back).flows.max_dp < 1e-6
+    end)() end
+
     @testset "zip packaging re-imports directly" begin (function ()
       net = _export_test_net()
       addProsumer!(net = net, busName = "A", type = "EXTERNALNETWORKINJECTION", referencePri = "A", vm_pu = 1.0, va_deg = 0.0)
@@ -383,6 +465,65 @@ function run_cgmes_export_tests()
       res = importCGMES(path = files[5], name = "zip_back")
       @test length(res.net.nodeVec) == 3
       @test length(res.net.linesAC) == 3
+    end)() end
+
+    # A branch built from an EquivalentBranch goes out under its class and
+    # mRID; written as ACLineSegment or PowerTransformer it would come back
+    # as another class with another branch model (the boundary-line ratio
+    # across two levels). The branch model of an asymmetric one uses the
+    # geometric mean of |z12| and |z21|; the export writes the delivered r, x,
+    # r21, x21 from net.equivalent_branch_metadata, so the re-import has the
+    # delivery's values and builds the same branch bit for bit. The record
+    # survives the typed case (SCF) the service path builds the net from.
+    @testset "an imported EquivalentBranch exports as EquivalentBranch" begin (function ()
+      num = Sparlectra.CGMESImporter.num
+      fields = (:r_pu, :x_pu, :g_from_pu, :b_from_pu, :g_to_pu, :b_to_pu, :ratio, :tap_ratio, :angle, :phase_shift_deg)
+      for mag in (1.0, 1.01)
+        res = importCGMES(path = _cgmes_synth_eb_dir(mag = mag), name = "synth_eb")
+        @test _solve!(res.net)[2] == 0
+        @test length(res.net.equivalent_branch_metadata) == 3
+        # the typed case keeps the record per branch
+        case = Sparlectra.cgmes_enrich_case!(Sparlectra.net_to_scfcase(res.net; source_format = "cgmes", source_reference = "synth_eb", include_start_state = true), res.net)
+        @test Sparlectra.build_net(case).equivalent_branch_metadata == res.net.equivalent_branch_metadata
+        for (label, net) in (("import", res.net), ("typed case", Sparlectra.build_net(case)))
+          @test _solve!(net)[2] == 0
+          dir = mktempdir()
+          notes = String[]
+          files = writeCGMESFiles(net; path = dir, created = _EXPORT_STAMP, notices = notes)
+          # the export names the objects whose model and export values differ
+          @test notes == (mag == 1.0 ? String[] : ["2 EquivalentBranch object(s) with |z21| other than |z12|: r, x, r21, x21 exported as delivered, the branch model uses the geometric mean of |z12| and |z21|"])
+          eq = read(files[1], String)
+          @test count("<cim:EquivalentBranch ", eq) == 3
+          @test all(m -> occursin("<cim:EquivalentBranch rdf:ID=\"_$(m)\">", eq), ("eb_same", "eb_asym", "eb_cross"))
+          @test count("<cim:EquivalentBranch.r21>", eq) == 2 && count("<cim:EquivalentBranch.x21>", eq) == 2
+          @test count("<cim:EquivalentNetwork ", eq) == 1
+          back = importCGMES(path = dir, name = "eb_back")
+          @test count(m -> startswith(m, "notice: EquivalentBranch: 3 mapped (2 same voltage level, 1 across voltage levels)") && occursin("2 asymmetric", m), back.messages) == 1
+          name_of(n) = Dict(v => k for (k, v) in n.busDict)
+          z21s = _cgmes_synth_eb_z21(mag)
+          for (m, z12, z21) in (("_eb_same", complex(1.21, 6.05), complex(1.21, 6.05)), ("_eb_asym", complex(1.5, 7.0), z21s[1]), ("_eb_cross", complex(0.6, 4.84), z21s[2]))
+            o = back.store.objects[m]
+            @test o.class == :EquivalentBranch
+            # the delivered values, exactly
+            @test complex(num(o, :r), num(o, :x)) == z12
+            if m == "_eb_same"
+              @test num(o, :r21) === nothing && num(o, :x21) === nothing
+            else
+              @test complex(num(o, :r21), num(o, :x21)) == z21
+            end
+            b1 = res.net.branchVec[res.element_by_mrid[m][2]]
+            b2 = back.net.branchVec[back.element_by_mrid[m][2]]
+            @test (name_of(back.net)[b2.fromBus], name_of(back.net)[b2.toBus]) == (name_of(res.net)[b1.fromBus], name_of(res.net)[b1.toBus])
+            # the same branch, bit for bit
+            @test all(f -> getfield(b2, f) === getfield(b1, f), fields)
+          end
+          @test back.net.equivalent_branch_metadata == res.net.equivalent_branch_metadata
+          # the exported SV is the solution: the re-import starts there
+          its, erg = _solve!(back.net)
+          @test erg == 0 && its <= 2
+          _compare_solved(res.net, back.net)
+        end
+      end
     end)() end
 
     # Export-import-export on the checked-in deliveries (data/cgmes_demo,

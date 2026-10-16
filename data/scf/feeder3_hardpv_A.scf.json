@@ -99,21 +99,26 @@
         "node_type": "PQ"
       },
       "4": {
+        "branch_index": 1,
         "name": "L_B1_B2"
       },
       "5": {
+        "branch_index": 2,
         "name": "L_B2_B3"
       },
       "6": {
+        "element_index": 1,
         "name": "Grid_B1",
         "reference_pri": true
       },
       "7": {
+        "element_index": 2,
         "name": "Load_B3",
         "prosumption_class": "Consumption",
         "prosumption_type": "Load"
       },
       "8": {
+        "element_index": 3,
         "max_q_mvar": 10.0,
         "min_q_mvar": -10.0,
         "name": "Gen_B2",

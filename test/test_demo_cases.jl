@@ -66,6 +66,19 @@ function run_demo_case_tests()
         calcNetLosses!(net)
         p_losses, _ = Sparlectra.getTotalLosses(net = net)
         @test isapprox(p_losses, fixture["power_flow"]["losses_mw"]; atol = 1e-5)
+        # the reported flows belong to the solved state: at both terminals of
+        # every closed branch they equal the flow of the model the Ybus
+        # stamps (live tap ratio and shift). sp_case14 has a nameplate tap off
+        # its neutral position, where calcNetLosses! read the neutral ratio
+        V = ComplexF64[something(nd._vm_pu, 1.0) * cis(deg2rad(something(nd._va_deg, 0.0))) for nd in net.nodeVec]
+        flow_gap = 0.0
+        for br in net.branchVec
+          (Sparlectra._branch_terminal_state(br) === :closed && !(br.fromBus in net.isoNodes) && !(br.toBus in net.isoNodes)) || continue
+          sf = Sparlectra._sv_branch_terminal_flow(br, V, :from, net.baseMVA)
+          st = Sparlectra._sv_branch_terminal_flow(br, V, :to, net.baseMVA)
+          flow_gap = max(flow_gap, abs(complex(br.fBranchFlow.pFlow, br.fBranchFlow.qFlow) - sf), abs(complex(br.tBranchFlow.pFlow, br.tBranchFlow.qFlow) - st))
+        end
+        @test flow_gap <= 1e-9
         ids = Sparlectra.scf_id_map(net)
         bus_state = fixture["power_flow"]["bus_state"]
         @test length(bus_state) == length(net.nodeVec)

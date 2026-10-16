@@ -104,7 +104,7 @@ compensator is never the first choice, it carries no active power.
 | Source | Priority |
 |---|---|
 | MATPOWER | type 3 is priority 1 for every unit of the bus, also on a second type-3 bus that stays PV in an island that already has its reference |
-| CGMES import | the `referencePriority` of every `SynchronousMachine` and `ExternalNetworkInjection`, as delivered; the slack choice of the import is unchanged ([CGMES Import](cgmes_import.md)) |
+| CGMES import | the `referencePriority` of every `SynchronousMachine` and `ExternalNetworkInjection`, as delivered; the import also takes it first among the units with infeed when it gives an island with infeed but without reference a slack ([CGMES Import](cgmes_import.md)) |
 | CGMES export | the stored priority of every machine and network injection; a slack unit without one is written with 1 ([CGMES Export](cgmes_export.md)) |
 | SCF | `extra.<appliance>.reference_priority`, optional, absent means 0 ([Case Format](scf.md)) |
 

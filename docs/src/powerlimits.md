@@ -10,7 +10,7 @@ The Q-limit state lives on the network:
 
 | field | meaning |
 |---|---|
-| `qmin_pu`, `qmax_pu` | per-bus limits in p.u., aggregated from the generators' `qMin`/`qMax` by `buildQLimits!` (or set with `setQLimits!`) before the power flow |
+| `qmin_pu`, `qmax_pu` | per-bus limits in p.u. of the total generator Q, aggregated by `buildQLimits!` (or set with `setQLimits!`) before the power flow. On a bus with a regulating or reference unit: the `qMin`/`qMax` of its regulating and reference units summed (a missing limit makes that end unbounded), plus the fixed Q of every other unit at both ends, for a Q(U) unit its Q at the held voltage (such a unit does not widen the band, whatever its own limits). On a bus without one: the sum of all its units' limits. |
 | `q_hyst_pu`, `cooldown_iters` | hysteresis band in p.u. and minimum iterations between PV/PQ state changes |
 | `reenable_v_hyst_pu`, `final_q_accept_pu` | voltage margin of the PQ→PV release and size bound of the final check |
 | `qLimitLog`, `qLimitEvents` | chronological `QLimitEvent` records and the last side (`:min` or `:max`) per bus |

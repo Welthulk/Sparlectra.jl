@@ -52,6 +52,20 @@ function run_piline_g_tests()
       @test explicit.b == 3.0e-6
     end)() end
 
+    @testset "addACLine! warns on c_nf_per_km without b" begin (function ()
+      cnet = Net(name = "cnf_warn", baseMVA = 100.0)
+      addBus!(net = cnet, busName = "A", vn_kV = 110.0)
+      addBus!(net = cnet, busName = "B", vn_kV = 110.0)
+      # the siemens of the capacitance path are read as per unit: warned
+      @test_logs (:warn, r"c_nf_per_km") addACLine!(net = cnet, fromBus = "A", toBus = "B", length = 10.0, r = 0.01, x = 0.1, c_nf_per_km = 10.0, tanδ = 0.0)
+      # without tanδ the capacitance is ignored: warned as well
+      @test_logs (:warn, r"c_nf_per_km") addACLine!(net = cnet, fromBus = "A", toBus = "B", length = 10.0, r = 0.01, x = 0.1, c_nf_per_km = 10.0)
+      # b given, or no capacitance: no warning
+      @test_logs addACLine!(net = cnet, fromBus = "A", toBus = "B", length = 10.0, r = 0.01, x = 0.1, b = 0.01)
+      @test_logs addACLine!(net = cnet, fromBus = "A", toBus = "B", length = 10.0, r = 0.01, x = 0.1, b = 0.01, c_nf_per_km = 10.0, tanδ = 0.0)
+      @test_logs addACLine!(net = cnet, fromBus = "A", toBus = "B", length = 10.0, r = 0.01, x = 0.1, c_nf_per_km = 0.0, tanδ = 0.0)
+    end)() end
+
     @testset "addPIModelACLine! end-to-end into branch and YBUS" begin (function ()
       net = Net(name = "piline_g_test", baseMVA = 100.0)
       addBus!(net = net, busName = "B1", vn_kV = 110.0)

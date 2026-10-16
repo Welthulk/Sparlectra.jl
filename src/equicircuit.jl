@@ -591,10 +591,11 @@ this referral must not rely on it. Impedances scale with `(U2/U1)²`,
 admittances with the inverse. The series values are summed (`r`, `x`); the
 shunt admittance is returned per end on the end-2 base (`g_from`, `b_from`
 for end 1, `g_to`, `b_to` for end 2, both in siemens) next to the totals
-`g`, `b`, so the branch keeps each end's magnetizing admittance on its own
-terminal. The end-2 (to-side) base matches the branch-model convention of
-`calcAdmittance` (series/shunt admittance on the to side, complex ratio at
-the from side, the from arm behind it).
+`g`, `b`. The CGMES import uses the totals and puts half of them on each
+terminal arm (since 0.50.0), the placement the SV of the ENTSO-E test
+configurations is computed with. The end-2 (to-side) base matches the
+branch-model convention of `calcAdmittance` (series/shunt admittance on the
+to side, complex ratio at the from side, the from arm behind it).
 """
 function calc2WTEndsReferredRXGB(; r1::Float64, x1::Float64, g1::Float64, b1::Float64, r2::Float64, x2::Float64, g2::Float64, b2::Float64, U1::Float64, U2::Float64)
   k = (U2 / U1)^2

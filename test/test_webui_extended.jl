@@ -1281,6 +1281,27 @@ form:
         @test button_state("ieee14.xiidm") == "missing-data"
         @test button_state("ieee14_rated.xiidm") == "ready"
         @test button_state("ieee14_sc.xiidm") == "ready"
+        # pageshow also fires on the first load, and the run form's handler
+        # sets the disabled flag of every submit button. Evaluated on the
+        # buttons of the rendered page (its expression translated to Julia,
+        # the suite has no browser), it keeps the Short circuit button the
+        # server disabled and enables the others.
+        function pageshow_disabled(case)
+          html = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow?casefile=$(case)"; output_root, runtime = export_runtime).body)
+          handler = match(r"window\.addEventListener\('pageshow', function \(\) \{\s*const form = document\.getElementById\('powerflow-run-form'\);(.*?)\n\}\);"s, html).captures[1]
+          expr = match(r"b\.disabled = ([^;]*);", handler).captures[1]
+          jexpr = replace(expr, r"b\.hasAttribute\('([^']*)'\)" => s"has(\"\1\")", r"b\.getAttribute\('([^']*)'\)" => s"attr(\"\1\")", "!==" => "!=", "===" => "==", r"'([^']*)'" => s"\"\1\"")
+          rule = eval(Meta.parse("(has, attr) -> " * jexpr))
+          states = Pair{Bool,Bool}[]
+          for tag in eachmatch(r"<button class=\"powerflow-submit[^>]*>", html)
+            attrs = Dict(String(a[1]) => something(a[2], "") for a in eachmatch(r"([a-z-]+)(?:=\"([^\"]*)\")?", tag.match))
+            push!(states, haskey(attrs, "data-sc-state") => Base.invokelatest(rule, k -> haskey(attrs, k), k -> get(attrs, k, nothing)))
+          end
+          return states
+        end
+        gated = pageshow_disabled("ieee14.xiidm")
+        @test count(first, gated) == 1 && all(p -> last(p) == first(p), gated)
+        @test all(p -> last(p) == false, pageshow_disabled("ieee14_sc.xiidm"))
         # the three exports: the SCF file through its route, the MATPOWER
         # and CGMES artifacts with a run; every export runs again through the
         # service and lands on the voltages of the source run
@@ -3579,6 +3600,68 @@ result = get_powerflow_result(run_id)
           # the operation log stays high level: no line per outage
           @test count(line -> occursin(ct_id, line), eachline(op_log_path)) < n_outages
         end
+      end
+    end
+  end)() end
+  _webui_short_circuit_status_tests()
+  return nothing
+end
+
+# The three status levels of a short-circuit run on a synthetic case with one
+# placeholder machine: island 1 is a feeder with data (A) and a machine with
+# a placeholder ratedS and no x''d (B), island 2 a feeder with data (C) and
+# one without a current (D, skipped). Rows A and B are flagged on a default,
+# rows C and D are flagged and Ik''max there is a lower bound; the run ends
+# with a warning because two of four sources carry no data.
+function _webui_short_circuit_status_tests()
+  @testset "short-circuit status levels on a placeholder machine" begin (function ()
+    mktempdir() do dir
+      root = joinpath(dir, "out")
+      casedir = mkpath(joinpath(dir, "cases"))
+      feeder(bus, ik, name) = (mrid = name, name = name, bus = bus, maxInitialSymShCCurrent_A = ik, minInitialSymShCCurrent_A = ik, maxR1ToX1Ratio = 0.1, minR1ToX1Ratio = 0.1, maxR0ToX0Ratio = nothing, maxZ0ToZ1Ratio = nothing, ikSecond = nothing, governorSCD = nothing)
+      net = Net(name = "scph", baseMVA = 100.0)
+      foreach(b -> addBus!(net = net, busName = b, vn_kV = 110.0), ("A", "B", "C", "D"))
+      addPIModelACLine!(net = net, fromBus = "A", toBus = "B", r_pu = 0.01, x_pu = 0.05, b_pu = 0.0, status = 1)
+      addPIModelACLine!(net = net, fromBus = "C", toBus = "D", r_pu = 0.01, x_pu = 0.05, b_pu = 0.0, status = 1)
+      addProsumer!(net = net, busName = "A", type = "ExternalNetworkInjection", referencePri = "A", vm_pu = 1.0, va_deg = 0.0)
+      append!(net.sc_sources.external_network_injections, [feeder("A", 10_000.0, "F_A"), feeder("C", 8_000.0, "F_C"), feeder("D", nothing, "F_D")])
+      push!(net.sc_sources.synchronous_machines, (mrid = "G_PH", name = "G_PH", bus = "B", satDirectSubtransX_pu = nothing, satDirectTransX_pu = nothing, r0_pu = nothing, x0_pu = nothing, r2_pu = nothing, x2_pu = nothing, earthing = nothing, ratedS_MVA = 141421.2, ratedU_kV = 110.0))
+      case = exportSCF(net; file = joinpath(casedir, "scph.scf.json"), short_circuit = Dict{String,Any}("case" => "max"))
+      res = SparlectraApp.start_powerflow_run(Dict{String,Any}("casefile" => case, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "short_circuit_mode" => true); case_directory = casedir)
+      @test res["status"] == "warning"
+      @test res["reason"] == "short_circuit_partial_defaults"
+      @test res["metadata"]["sc_flagged_rows"] == 4
+      @test res["metadata"]["sc_lower_bound_rows"] == 2
+      # the CSV: the row flag and the island flag per row, and the
+      # placeholder named in the reason of the rows it feeds
+      lines = readlines(joinpath(res["output_dir"], "short_circuit_max.csv"))
+      delim = occursin(';', lines[1]) ? ';' : ','
+      header = split(lines[1], delim)
+      @test header[end - 2:end] == ["flagged", "reasons", "lower_bound"]
+      by_bus = Dict(String(split(l, delim)[1]) => l for l in lines[2:end])
+      @test [split(by_bus[b], delim)[end] for b in ("A", "B", "C", "D")] == ["false", "false", "true", "true"]
+      @test all(occursin("a placeholder ratedS of 141421.2 MVA", by_bus[b]) for b in ("A", "B"))
+      # the result page: both counts on the short-circuit card
+      page = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/result/$(SparlectraApp._webui_urlencode(res["run_id"]))"; output_root = root).body)
+      card = match(r"<span class=\"summary-label\">Short circuit</span>(.*?)</div>"s, page)
+      @test card !== nothing
+      @test occursin("4 flagged", card.captures[1]) && occursin("2 lower bound", card.captures[1])
+      # the head line of each table: first line of the printed table in
+      # run.log, in the metadata, on the result page and above the table of
+      # the artifact page
+      head_max = "run status: warning (short_circuit_partial_defaults), 4 of 4 rows flagged, 2 rows with a lower bound"
+      head_min = "run status: warning (short_circuit_partial_defaults), 4 of 4 rows flagged, 0 rows with a lower bound"
+      run_log = readlines(joinpath(res["output_dir"], "run.log"))
+      for (head, case) in ((head_max, "max"), (head_min, "min"))
+        title = [run_log[i + 1] for i in findall(==(head), run_log)]
+        @test length(title) == 1 && startswith(title[1], "Balanced 3-phase short circuit") && endswith(title[1], "case: $(case), c per IEC Table 1")
+      end
+      @test (res["metadata"]["sc_status_line_max"], res["metadata"]["sc_status_line_min"]) == (head_max, head_min)
+      @test occursin(SparlectraApp._webui_escape(head_max), card.captures[1])
+      for (name, head) in (("short_circuit_max.csv", head_max), ("short_circuit_min.csv", head_min))
+        artifact_page = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/artifact/$(SparlectraApp._webui_urlencode(res["run_id"]))/$(name)"; output_root = root).body)
+        at = findfirst(SparlectraApp._webui_escape(head), artifact_page)
+        @test at !== nothing && first(at) < first(findfirst("<table>", artifact_page))
       end
     end
   end)() end

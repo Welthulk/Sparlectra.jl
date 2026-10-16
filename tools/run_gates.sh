@@ -23,12 +23,29 @@
 #          25-minute mixed-state run); (2) a lock directory serializes gate
 #          runs, so no second Julia first-start precompiles the same
 #          package concurrently. --allow-dirty skips guard 1 for a
-#          deliberate local check; the lock is never skipped. Plain sh.
-# usage:   sh tools/run_gates.sh fast|pf|se|config|webui|extd|adapters|install|workshops|extended|all|docs [--allow-dirty]
+#          deliberate local check; the lock is never skipped.
+#          --threads=N starts the test process with N threads (default: one;
+#          the threads profile always runs with four), so a profile also runs
+#          every parallel-vs-serial comparison threaded. Plain sh.
+# usage:   sh tools/run_gates.sh fast|pf|se|config|webui|extd|adapters|install|workshops|extended|all|threads|docs [--threads=N] [--allow-dirty]
 #          (SPARLECTRA_LARGE_CASES_DIR and other env pass through)
 
 gate=$1
-allow_dirty=$2
+[ $# -gt 0 ] && shift
+allow_dirty=
+julia_threads=
+for arg in "$@"
+do
+  case "$arg" in
+    --allow-dirty) allow_dirty=--allow-dirty ;;
+    --threads=[1-9]*) julia_threads=$arg ;;
+    *)
+      echo "run_gates: unknown option $arg" >&2
+      echo "usage: sh tools/run_gates.sh $gate [--threads=N] [--allow-dirty]" >&2
+      exit 2
+      ;;
+  esac
+done
 
 repo_root=$(git rev-parse --show-toplevel 2>/dev/null)
 if [ -z "$repo_root" ]
@@ -38,12 +55,21 @@ then
 fi
 
 case "$gate" in
-  fast | pf | se | config | webui | extd | adapters | install | workshops | extended | all | docs) ;;
+  fast | pf | se | config | webui | extd | adapters | install | workshops | extended | all | threads | docs) ;;
   *)
-    echo "usage: sh tools/run_gates.sh fast|pf|se|config|webui|extd|adapters|install|workshops|extended|all|docs [--allow-dirty]" >&2
+    echo "usage: sh tools/run_gates.sh fast|pf|se|config|webui|extd|adapters|install|workshops|extended|all|threads|docs [--threads=N] [--allow-dirty]" >&2
     exit 2
     ;;
 esac
+if [ "$gate" = "docs" ] && [ -n "$julia_threads" ]
+then
+  echo "run_gates: --threads applies to test profiles, not to the docs build" >&2
+  exit 2
+fi
+if [ "$gate" = "threads" ] && [ -z "$julia_threads" ]
+then
+  julia_threads=--threads=4
+fi
 
 # --- chain guard ----------------------------------------------------------
 # The gate call must be its OWN command; the known failure mode is the
@@ -263,7 +289,11 @@ then
     status=$?
   fi
 else
-  SPARLECTRA_TEST_PROFILE=$gate julia --startup-file=no --project="$run_root" "$run_root/test/runtests.jl"
+  # without --threads a profile runs single-threaded, where each parallel
+  # site takes its serial loop and a parallel-vs-serial comparison checks
+  # nothing threaded; the threads profile defaults to four threads (above)
+  [ -n "$julia_threads" ] && echo "run_gates: test process with $julia_threads"
+  SPARLECTRA_TEST_PROFILE=$gate julia --startup-file=no $julia_threads --project="$run_root" "$run_root/test/runtests.jl"
   status=$?
 fi
 exit $status

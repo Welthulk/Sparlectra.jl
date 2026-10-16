@@ -230,6 +230,11 @@ function writeBusData(net::Net, file; write_solution::Bool = true, branch_shunt_
   return hasPVBus, slackIdx, vgSlack
 end # writeBusData
 
+# Pmax and Pmin written for a unit without an active-power limit: the
+# MATPOWER convention for "unlimited" (case files carry 9999). Before, such a
+# unit got +-baseMVA, which binds a unit that produces more than baseMVA.
+const _MATPOWER_UNLIMITED_P_MW = 9999.0
+
 function writeGeneratorData(sb_mva::Float64, NodeDict::Dict{Int,Node}, ProSumVec::Vector{ProSumer}, file, hasPVBus::Bool, slackIdx::Int, vgSlack::Float64)
   #! format: off
   write(file, "%% generator data\n")
@@ -257,8 +262,8 @@ function writeGeneratorData(sb_mva::Float64, NodeDict::Dict{Int,Node}, ProSumVec
     qmin = (prosum.minQ === nothing) ? -1.0 * sb_mva : prosum.minQ
     mbase = (prosum.ratedS === nothing) ? sb_mva : prosum.ratedS
     status = 1
-    pmax = (prosum.maxP === nothing) ? sb_mva : prosum.maxP
-    pmin = (prosum.minP === nothing) ? -1.0 * sb_mva : prosum.minP
+    pmax = (prosum.maxP === nothing) ? _MATPOWER_UNLIMITED_P_MW : prosum.maxP
+    pmin = (prosum.minP === nothing) ? -_MATPOWER_UNLIMITED_P_MW : prosum.minP
     #! format: off
     line = string( bus_i, "\t", p, "\t", q, "\t", qmax,"\t", qmin, "\t", Vg, "\t",  mbase, "\t", status, "\t",  pmax, "\t", pmin, "\t",  pc1, "\t", pc2, 
                           "\t", qc1min, "\t", qc1max, "\t", qc2min, "\t", qc2max,  "\t",   ramp_agc, "\t", ramp_10,"\t",  ramp_30, "\t",  ramp_q, "\t",  apf, "; %Gen: ",  cTypStr, "_",  name, ")\n", )
@@ -272,8 +277,8 @@ function writeGeneratorData(sb_mva::Float64, NodeDict::Dict{Int,Node}, ProSumVec
     qmin = -1.0 * sb_mva
     mbase = sb_mva
     status = 1
-    pmax = sb_mva
-    pmin = -1.0 * sb_mva
+    pmax = _MATPOWER_UNLIMITED_P_MW
+    pmin = -_MATPOWER_UNLIMITED_P_MW
     pc1 = pc2 = qc1min = qc1max = qc2min = qc2max = ramp_agc = ramp_10 = ramp_30 = ramp_q = apf = 0.0
     #! format: off
     line = string(slackIdx, "\t",  p,"\t", q,"\t", qmax,"\t", qmin,"\t", vgSlack,"\t", mbase,"\t", status, "\t", pmax, "\t",  pmin, "\t", pc1, "\t", pc2, "\t", qc1min, "\t", qc1max, "\t",  qc2min, "\t", qc2max, 

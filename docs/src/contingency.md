@@ -80,7 +80,10 @@ post-outage island count either way.
 - The outage of a radial branch cuts off its far bus: the rest solves
   (`converged = true`), the result carries
   `error = "islanded: bus B cut off, X MW load disconnected, ..."` with
-  `shed_load_mw`, and the case counts as islanded.
+  `shed_load_mw`, and the case counts as islanded. Buses joined by closed
+  links count as one node, as in the power flow: a bus that hangs on B
+  through a closed link alone is cut off with B, and in service as long
+  as B is.
 - The service passes `power_flow.distributed_slack` to every post-outage
   solve; an outage that cuts the path of the reference unit's output can
   have a solution only with distributed slack (line 1-2 of the IEEE

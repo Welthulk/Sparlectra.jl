@@ -129,6 +129,33 @@ function _branch_shunt_split_kw(name::AbstractString, g_from_pu, b_from_pu, g_to
 end
 
 """
+    TapStepImpedance
+
+Impedance of a transformer branch per tap step, for tap changer tables
+whose points carry r, x, g, b deviations (CGMES `TapChangerTablePoint`).
+`r_pu`, `x_pu` and the four terminal admittances are the branch values
+without the factors of the tables listed here. `ratio_values` holds the
+branch `tap_ratio` at each step of the ratio table and `ratio_factors` the
+factors `(r, x, g, b)` of that step; `phase_values` and `phase_factors` do
+the same for `phase_shift_deg`. An empty pair means no table on that
+actuator. A tap controller that moves the branch calls
+`_apply_tap_step_impedance!`, which picks the step nearest to the live
+`tap_ratio` and `phase_shift_deg`.
+"""
+struct TapStepImpedance
+  r_pu::Float64
+  x_pu::Float64
+  g_from_pu::Float64
+  b_from_pu::Float64
+  g_to_pu::Float64
+  b_to_pu::Float64
+  ratio_values::Vector{Float64}
+  ratio_factors::Vector{NTuple{4,Float64}}
+  phase_values::Vector{Float64}
+  phase_factors::Vector{NTuple{4,Float64}}
+end
+
+"""
     Branch
 
 A mutable structure representing a branch in a power system.
@@ -150,6 +177,7 @@ A mutable structure representing a branch in a power system.
 - `tBranchFlow::Union{Nothing,BranchFlow}`: The flow from toNodeID to fromNodeID.
 - `pLosses::Union{Nothing,Float64}`: The active power losses.
 - `qLosses::Union{Nothing,Float64}`: The reactive power losses.
+- `tap_step_impedance::Union{Nothing,TapStepImpedance}`: impedance per tap step of a tap changer table, applied when a tap controller moves the branch.
 
 # Constructors
 - `Branch(; from::Int, to::Int, baseMVA::Float64, branch::AbstractBranch, id::Int, status::Integer = 1, ratio::Union{Nothing,Float64} = nothing, side::Union{Nothing,Int} = nothing, vn_kV::Union{Nothing,Float64} = nothing,
@@ -235,6 +263,14 @@ mutable struct Branch <: AbstractBranch
   taps_derived::Bool
   tap_winding::Union{Nothing,PowerTransformerWinding}
   tap_correction::Symbol
+  # discrete ratios of a tabular ratio tap changer on the legacy ratio grid
+  # (CGMES RatioTapChangerTable), sorted ascending: a discrete ratio
+  # controller moves from point to point instead of by `tap_step`, which is
+  # then only the mean step. `nothing` keeps the uniform grid.
+  tap_ratio_points::Union{Nothing,Vector{Float64}}
+  # per-step impedance of tap changer tables with r/x/g/b deviations,
+  # nothing for every branch without such a table (see TapStepImpedance)
+  tap_step_impedance::Union{Nothing,TapStepImpedance}
 
   function Branch(;
     branchIdx::Int,
@@ -280,7 +316,7 @@ mutable struct Branch <: AbstractBranch
       # (g_from, b_from, g_to, b_to): explicit split or the symmetric half;
       # the stored totals are the sums either way
       gf, bf, gt, bt = _split_branch_shunt(g_pu, b_pu, shunt_split)
-      new(c, branchIdx, from, to, r_pu, x_pu, r_pu, x_pu, bf + bt, gf + gt, gf, bf, gt, bt, 0.0, 0.0, status, branch.ratedS, nothing, nothing, nothing, nothing, 1.0, 0.0, false, false, 0.9, 1.1, 0.00625, -30.0, 30.0, 1.25, fs, ts, nothing, nothing, :none, 0.0, 0.0, 0.0, 0.0, false, nothing, :ideal)
+      new(c, branchIdx, from, to, r_pu, x_pu, r_pu, x_pu, bf + bt, gf + gt, gf, bf, gt, bt, 0.0, 0.0, status, branch.ratedS, nothing, nothing, nothing, nothing, 1.0, 0.0, false, false, 0.9, 1.1, 0.00625, -30.0, 30.0, 1.25, fs, ts, nothing, nothing, :none, 0.0, 0.0, 0.0, 0.0, false, nothing, :ideal, nothing, nothing)
     elseif isa(branch, PowerTransformer) # Transformer     
       if (isnothing(side) && branch.isBiWinder)
         side = getSideNumber2WT(branch)
@@ -317,7 +353,7 @@ mutable struct Branch <: AbstractBranch
       end
 
       gf, bf, gt, bt = _split_branch_shunt(g_pu, b_pu, shunt_split)
-      new(c, branchIdx, from, to, r_pu, x_pu, r_pu, x_pu, bf + bt, gf + gt, gf, bf, gt, bt, ratio, angle, status, sn_MVA, nothing, nothing, nothing, nothing, ratio, angle, true, true, tap_min, tap_max, tap_step, -30.0, 30.0, 1.25, fs, ts, nothing, nothing, :none, 0.0, 0.0, 0.0, 0.0, false, nothing, :ideal)
+      new(c, branchIdx, from, to, r_pu, x_pu, r_pu, x_pu, bf + bt, gf + gt, gf, bf, gt, bt, ratio, angle, status, sn_MVA, nothing, nothing, nothing, nothing, ratio, angle, true, true, tap_min, tap_max, tap_step, -30.0, 30.0, 1.25, fs, ts, nothing, nothing, :none, 0.0, 0.0, 0.0, 0.0, false, nothing, :ideal, nothing, nothing)
     elseif isa(branch, BranchModel) # PI-Model
       @assert !isnothing(vn_kV) "vn_kV must be set for PI-Model"
 
@@ -332,7 +368,7 @@ mutable struct Branch <: AbstractBranch
       initial_angle = is_tap ? branch.angle : 0.0
       # the model carries its own split; an explicit keyword overrides it
       gf, bf, gt, bt = shunt_split === nothing ? (branch.g_from_pu, branch.b_from_pu, branch.g_to_pu, branch.b_to_pu) : shunt_split
-      new(c, branchIdx, from, to, branch.r_pu, branch.x_pu, branch.r_pu, branch.x_pu, bf + bt, gf + gt, gf, bf, gt, bt, branch.ratio, branch.angle, status, branch.sn_MVA, nothing, nothing, nothing, nothing, initial_ratio, initial_angle, is_tap, is_tap, 0.9, 1.1, 0.00625, -30.0, 30.0, 1.25, fs, ts, nothing, nothing, :none, 0.0, 0.0, 0.0, 0.0, false, nothing, :ideal)
+      new(c, branchIdx, from, to, branch.r_pu, branch.x_pu, branch.r_pu, branch.x_pu, bf + bt, gf + gt, gf, bf, gt, bt, branch.ratio, branch.angle, status, branch.sn_MVA, nothing, nothing, nothing, nothing, initial_ratio, initial_angle, is_tap, is_tap, 0.9, 1.1, 0.00625, -30.0, 30.0, 1.25, fs, ts, nothing, nothing, :none, 0.0, 0.0, 0.0, 0.0, false, nothing, :ideal, nothing, nothing)
     else
       error("Branch type not supported")
     end
@@ -591,10 +627,13 @@ circuit and the CGMES/MATPOWER exports read the base (equipment) impedance
 them; this assertion is therefore expected NOT to fire in the normal FACTS plus
 export/SC workflow. It stays as a last-resort guard against a corrupted base
 model. `context` names the caller (e.g. "CGMES export", "MATPOWER export").
+A branch built from a CGMES `EquivalentBranch` (`net.equivalent_branch_metadata`)
+is exempt: a network equivalent is no equipment, and a negative r or x is
+normal in Ward and Kron reductions.
 """
 function assertPhysicalBranchImpedances(net, context::AbstractString)
   for br in net.branchVec
-    if br.r_base_pu < 0.0
+    if br.r_base_pu < 0.0 && !haskey(net.equivalent_branch_metadata, Int(br.branchIdx))
       error("$(context): branch $(getCompName(br.comp)) has a negative base series resistance (r_base = $(br.r_base_pu) pu). The physical equipment impedance must be non-negative; check the branch model, not a FACTS operating point.")
     end
   end
@@ -655,6 +694,35 @@ function set_branch_shunt!(branch::Branch; g_from_pu::Real, b_from_pu::Real, g_t
   branch.g_pu = branch.g_from_pu + branch.g_to_pu
   branch.b_pu = branch.b_from_pu + branch.b_to_pu
   return branch
+end
+
+# Factors of the step whose actuator value lies nearest to `v`; (1, 1, 1, 1)
+# without a table on that actuator.
+function _tap_step_factors(values::Vector{Float64}, factors::Vector{NTuple{4,Float64}}, v::Float64)::NTuple{4,Float64}
+  isempty(values) && return (1.0, 1.0, 1.0, 1.0)
+  best = 1
+  for k in eachindex(values)
+    abs(values[k] - v) < abs(values[best] - v) && (best = k)
+  end
+  return factors[best]
+end
+
+# Set the impedance of a branch with a TapStepImpedance to the step of its
+# live tap_ratio and phase_shift_deg. The equipment base r_base_pu/x_base_pu
+# follows as well: the table gives the impedance of the transformer at that
+# step, not an operating point. No-op without a table.
+function _apply_tap_step_impedance!(br::Branch)::Branch
+  t = br.tap_step_impedance
+  t === nothing && return br
+  ra = _tap_step_factors(t.ratio_values, t.ratio_factors, br.tap_ratio)
+  ph = _tap_step_factors(t.phase_values, t.phase_factors, br.phase_shift_deg)
+  fr, fx, fg, fb = ra[1] * ph[1], ra[2] * ph[2], ra[3] * ph[3], ra[4] * ph[4]
+  br.r_pu = t.r_pu * fr
+  br.x_pu = t.x_pu * fx
+  br.r_base_pu = br.r_pu
+  br.x_base_pu = br.x_pu
+  set_branch_shunt!(br; g_from_pu = t.g_from_pu * fg, b_from_pu = t.b_from_pu * fb, g_to_pu = t.g_to_pu * fg, b_to_pu = t.b_to_pu * fb)
+  return br
 end
 
 """
