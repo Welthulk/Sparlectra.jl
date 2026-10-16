@@ -405,7 +405,13 @@ end
 
 Base.Tuple(components::BusPowerComponents) = (components.p_gen, components.q_gen, components.p_load, components.q_load)
 
-function _bus_power_component_cache(net::Net)::Dict{Int,BusPowerComponents}
+# Per-bus generation and load of the solved net for the machine-readable
+# results (buildACPFlowReport, the bus CSV files). Under a distributed slack
+# the generation of a participating bus is what it delivers, schedule plus
+# its share of lambda_P, at every bus type, so the rows add up to load plus
+# losses. `distributed_slack = false` leaves the shares out (the DC report:
+# the status of an earlier AC solve may still sit on the net).
+function _bus_power_component_cache(net::Net; distributed_slack::Bool = true)::Dict{Int,BusPowerComponents}
   base = net.baseMVA
   totals = Dict{Int,NTuple{4,Float64}}()
   # see _effective_bus_power_components (issue #374): a Q(U)-controlled
@@ -438,6 +444,7 @@ function _bus_power_component_cache(net::Net)::Dict{Int,BusPowerComponents}
   # (typically few) clamped buses, and the limit lookup happens once here,
   # not per bus.
   qmin_pu, qmax_pu = isempty(net.qLimitEvents) ? (Float64[], Float64[]) : getQLimits_pu(net)
+  _, ds_shares = distributed_slack ? _distributed_slack_bus_shares(net) : (false, Dict{Int,NTuple{2,Float64}}())
 
   cache = Dict{Int,BusPowerComponents}()
   for node in net.nodeVec
@@ -454,6 +461,8 @@ function _bus_power_component_cache(net::Net)::Dict{Int,BusPowerComponents}
       limit_pu = side === :max ? (node.busIdx <= length(qmax_pu) ? qmax_pu[node.busIdx] : Inf) : (node.busIdx <= length(qmin_pu) ? qmin_pu[node.busIdx] : -Inf)
       isfinite(limit_pu) && (q_gen = _qv_effective_qgen(net, node.busIdx, limit_pu * net.baseMVA))
     end
+    share = get(ds_shares, node.busIdx, nothing)
+    share === nothing || (p_gen = last(_distributed_slack_bus_pgen(net, node.busIdx, share[2])))
     cache[node.busIdx] = BusPowerComponents(p_gen, q_gen, p_load, q_load)
   end
   return cache
@@ -827,25 +836,53 @@ end
 """
     _distributed_slack_bus_shares(net) -> (active::Bool, shares::Dict{Int,NTuple{2,Float64}})
 
-Per-bus distributed-slack participation for the bus table of the classical
-result print: bus index to `(alpha, dp_mw)`, aggregated over the
-generators of a bus (the persisted participation table is per generator).
-`active` is false when the last solve ran without the distributed slack or
-no solver status exists; the table then omits the participation columns.
+Per-bus distributed-slack participation for the result readers: bus index to
+`(alpha, dp_mw)`, summed over the participating units of a bus (see
+[`_distributed_slack_unit_shares`](@ref)). A unit counts at the bus it sits
+on in `net`, which in a link cluster is its own bus, not the representative
+the solver saw. `active` is false when the last solve ran without the
+distributed slack or no solver status exists.
 """
 function _distributed_slack_bus_shares(net::Net)
-  rect_status = rectangular_pf_status(net)
-  active = _rect_status_get(rect_status, :distributed_slack_active, false)
+  active, unit_shares = _distributed_slack_unit_shares(net)
   shares = Dict{Int,NTuple{2,Float64}}()
-  active || return (false, shares)
-  rows = _rect_status_get(rect_status, :distributed_slack_participation, nothing)
-  rows === nothing && return (true, shares)
-  for r in rows
-    hasproperty(r, :bus_idx) || continue
-    a, d = get(shares, r.bus_idx, (0.0, 0.0))
-    shares[r.bus_idx] = (a + r.alpha, d + r.dp_mw)
+  for (k, (alpha, dp)) in unit_shares
+    1 <= k <= length(net.prosumpsVec) || continue
+    bus = getPosumerBusIndex(net.prosumpsVec[k])
+    a, d = get(shares, bus, (0.0, 0.0))
+    shares[bus] = (a + alpha, d + dp)
   end
-  return (true, shares)
+  return (active, shares)
+end
+
+# Scheduled active generation of a bus in MW: the sum over its generating
+# units as the solver takes it for the specified injection (P(U) units at
+# the solved voltage).
+function _bus_scheduled_pgen(net::Net, bus_idx::Int)
+  vm = net.nodeVec[bus_idx]._vm_pu
+  vm_safe = vm > 1e-9 ? vm : 1e-9
+  p = 0.0
+  for ps in net.prosumpsVec
+    (isGenerator(ps) && getPosumerBusIndex(ps) == bus_idx) || continue
+    p += has_pu_controller(ps) ? first(evaluate_controller(ps.puController, vm_safe)) * net.baseMVA : something(ps.pVal, 0.0)
+  end
+  return p
+end
+
+"""
+    _distributed_slack_bus_pgen(net, bus_idx, dp_mw) -> (scheduled, delivered)
+
+Scheduled and delivered active generation (MW) of a bus that takes part in
+the distributed slack with the correction `dp_mw`: the schedule of its units
+and the schedule plus `dp_mw`. The delivered value holds at every bus type:
+the solve makes the P residual of each participant, the reference included,
+equal to its share. It is not read from the solved bus value, which carries
+the share only where the solver wrote P (a reference bus, also one an island
+solve promoted from PV) and the schedule elsewhere.
+"""
+function _distributed_slack_bus_pgen(net::Net, bus_idx::Int, dp_mw::Float64)
+  p_sched = _bus_scheduled_pgen(net, bus_idx)
+  return (p_sched, p_sched + dp_mw)
 end
 
 """
@@ -1167,6 +1204,14 @@ function printACPFlowResults(
       break
     end
     p_gen, q_gen, p_load, q_load = _effective_bus_power_components(net, n.busIdx)
+    # distributed slack: the Pg column shows the schedule at every
+    # participating bus, the Pg eff column what the bus delivers (schedule
+    # plus its share of lambda_P), the reference bus included
+    ds_share = ds_active ? get(ds_shares, n.busIdx, nothing) : nothing
+    p_gen_eff = p_gen
+    if ds_share !== nothing
+      p_gen, p_gen_eff = _distributed_slack_bus_pgen(net, n.busIdx, ds_share[2])
+    end
     if n._nodeType == Sparlectra.PQ && haskey(net.qLimitEvents, n.busIdx)
       side = net.qLimitEvents[n.busIdx]
       limit_pu = side === :max ? (n.busIdx <= length(qv_qmax_pu) ? qv_qmax_pu[n.busIdx] : Inf) : (n.busIdx <= length(qv_qmin_pu) ? qv_qmin_pu[n.busIdx] : -Inf)
@@ -1245,11 +1290,7 @@ function printACPFlowResults(
     tap_target_str = haskey(tap_target_vm, n.busIdx) ? @sprintf("%.4f", tap_target_vm[n.busIdx]) : ""
     ds_cells = ""
     if ds_active
-      share = get(ds_shares, n.busIdx, nothing)
-      # Pg eff = scheduled bus generation plus the alpha share of lambda_P;
-      # the Pg column keeps the schedule, this column shows what the
-      # participant actually delivers
-      ds_cells = share === nothing ? @sprintf(" %-10s | %-10s |", "", "") : @sprintf(" %-10s | %-10s |", @sprintf("%.4f", share[1]), @sprintf("%.3f", p_gen + share[2]))
+      ds_cells = ds_share === nothing ? @sprintf(" %-10s | %-10s |", "", "") : @sprintf(" %-10s | %-10s |", @sprintf("%.4f", ds_share[1]), @sprintf("%.3f", p_gen_eff))
     end
     @printf(
       io,

@@ -190,8 +190,10 @@ per island, and in island-wise runs each island solves with its own
 
 | Surface | Fields |
 |---|---|
-| Structured status (next to the wrong-branch metadata) | `distributed_slack_active`, `distributed_slack_mode`, `distributed_slack_lambda_p_pu`, `distributed_slack_lambda_p_mw`, `distributed_slack_participants`, `distributed_slack_alpha_sum`, `distributed_slack_dropped`, `distributed_slack_p_limit_violations`, the per-participant table `distributed_slack_participation` (bus, alpha, correction `dP`, scheduled output); at `verbose > 0` a summary with the top participants is printed. |
-| `printACPFlowResults` | Columns `dSl alpha` and `Pg eff MW` on participating buses (the `Pg` column keeps the schedule) and a header line with mode and `lambda_P`. |
+| Structured status (next to the wrong-branch metadata) | `distributed_slack_active`, `distributed_slack_mode`, `distributed_slack_lambda_p_pu`, `distributed_slack_lambda_p_mw`, `distributed_slack_participants`, `distributed_slack_alpha_sum`, `distributed_slack_dropped`, `distributed_slack_p_limit_violations`, the per-participant table `distributed_slack_participation` (bus, alpha, correction `dP`, scheduled output; in island-wise runs all islands in the bus and unit numbering of the net); at `verbose > 0` a summary with the top participants is printed. |
+| `printACPFlowResults` | Columns `dSl alpha` and `Pg eff MW` on participating buses and a header line with mode and `lambda_P`. On a participating bus `Pg` is the schedule and `Pg eff` the delivered generation (schedule plus `alpha * lambda_P`), also at the reference bus. |
+| `buildACPFlowReport`, bus CSV files | `p_gen_MW` is the delivered generation at every bus (the `Pg eff` value), so the rows add up to load plus losses. |
+| `distributeBusResults!` | A participating unit gets its schedule plus its own share as `pRes`; a reference unit gets what its bus delivers beyond the other units there. |
 
 ## [External grid source](@id pf-external-grid)
 

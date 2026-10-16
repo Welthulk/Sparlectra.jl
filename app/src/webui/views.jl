@@ -3163,6 +3163,187 @@ const _WEBUI_ARTIFACT_TABLE_ROWS = 2000
 # Only used to right-align the column, so a false positive costs nothing.
 const _WEBUI_CSV_NUMBER_PATTERN = r"^[-+]?\d[\d.,]*([eE][-+]?\d+)?$"
 
+# The number display of the CSV table: significant digits for every
+# numeric column, and for power columns optionally a resolution in W, kW or
+# MW. Display only: the file, Download and Raw text stay as written.
+const _WEBUI_CSV_DEFAULT_DIGITS = 5
+const _WEBUI_CSV_MAX_DIGITS = 15
+# resolution => factor from the MW-based unit of the file
+const _WEBUI_CSV_POWER_FACTORS = Dict("W" => 1.0e6, "kW" => 1.0e3, "MW" => 1.0)
+# unit token of a power column => the unit names per resolution
+const _WEBUI_CSV_POWER_UNITS = Dict(
+  "mw" => Dict("W" => "W", "kW" => "kW", "MW" => "MW"),
+  "mvar" => Dict("W" => "var", "kW" => "kvar", "MW" => "Mvar"),
+  "mva" => Dict("W" => "VA", "kW" => "kVA", "MW" => "MVA"),
+)
+# A cell the display may rewrite: the number pattern of the file's own format
+# with thousands separators only in groups of three. `_parse_result_csv_number`
+# strips separators blindly ("1.5" in a semicolon file reads 15); a cell that
+# does not fit here stays verbatim instead of showing a wrong value.
+const _WEBUI_CSV_STRICT_NUMBER = Dict(
+  ';' => r"^[-+]?(\d{1,3}(\.\d{3})+|\d+)(,\d+)?([eE][-+]?\d+)?$",
+  ',' => r"^[-+]?(\d{1,3}(,\d{3})+|\d+)(\.\d+)?([eE][-+]?\d+)?$",
+)
+
+"""
+    _WebUICsvDisplay(digits, power, sort = "", order = "desc")
+
+The display choice of the CSV artifact table: `digits` significant digits
+(1 to 15), `power` the resolution of power columns (`""` for none, `"W"`,
+`"kW"`, `"MW"`), and `sort` the header name of the column the rows are
+sorted by (`""` for the file order) with `order` `"desc"` (largest first)
+or `"asc"`. Built from the query by `_webui_csv_display`.
+"""
+struct _WebUICsvDisplay
+  digits::Int
+  power::String
+  sort::String
+  order::String
+end
+
+_WebUICsvDisplay(digits::Int, power::AbstractString) = _WebUICsvDisplay(digits, String(power), "", "desc")
+_WebUICsvDisplay() = _WebUICsvDisplay(_WEBUI_CSV_DEFAULT_DIGITS, "")
+
+"""
+    _webui_csv_display(query) -> _WebUICsvDisplay
+
+The display choice from the query of the artifact view: `digits` (an
+integer from 1 to 15), `power` (`W`, `kW` or `MW`), `sort` (a column name)
+and `order` (`asc`, else largest first). A missing or bad value falls back
+to the default silently (5 digits, no resolution, file order), as the other
+Web UI form parsing does; a `sort` name that is no numeric column of the
+file is ignored when the table is built.
+"""
+function _webui_csv_display(query::AbstractDict)::_WebUICsvDisplay
+  digits = tryparse(Int, strip(String(get(query, "digits", ""))))
+  (digits === nothing || !(1 <= digits <= _WEBUI_CSV_MAX_DIGITS)) && (digits = _WEBUI_CSV_DEFAULT_DIGITS)
+  power = strip(String(get(query, "power", "")))
+  haskey(_WEBUI_CSV_POWER_FACTORS, power) || (power = "")
+  sort_column = strip(String(get(query, "sort", "")))
+  order = strip(String(get(query, "order", ""))) == "asc" ? "asc" : "desc"
+  return _WebUICsvDisplay(digits, String(power), String(sort_column), order)
+end
+
+# the query string of a display choice, empty for the default, so the links
+# of an unchanged view stay plain; `sort = false` leaves the sort column out
+# (the links to the other CSV files of a run, which have other columns)
+function _webui_csv_display_query(csv_display::_WebUICsvDisplay; sort::Bool = true)::String
+  parts = String[]
+  csv_display.digits == _WEBUI_CSV_DEFAULT_DIGITS || push!(parts, "digits=$(csv_display.digits)")
+  isempty(csv_display.power) || push!(parts, "power=$(csv_display.power)")
+  if sort && !isempty(csv_display.sort)
+    push!(parts, "sort=$(_webui_urlencode(csv_display.sort))")
+    csv_display.order == "asc" && push!(parts, "order=asc")
+  end
+  return join(parts, "&")
+end
+
+# The number of a CSV cell in the file's own format, or `nothing` for an
+# empty or text cell. Same rule as the display: the strict pattern of the
+# delimiter, then the result-CSV reader.
+function _webui_csv_cell_value(cell::AbstractString, delimiter::Char)
+  text = strip(cell)
+  occursin(_WEBUI_CSV_STRICT_NUMBER[delimiter], text) || return nothing
+  return Sparlectra._parse_result_csv_number(text, delimiter)
+end
+
+# The data rows in display order. Sorted by the column `csv_display.sort`
+# when it is a header name and at least one of its cells is a number:
+# numbers by value (largest first for "desc"), cells without a number after
+# them in file order, equal values in file order (stable merge sort). Every
+# row of the preview is sorted before the table is cut to its row limit, so
+# the largest value of the file is on top. Returns the rows and the sorted
+# column index (0 for the file order).
+function _webui_csv_sorted_rows(rows::Vector{String}, header::AbstractVector{<:AbstractString}, delimiter::Char, csv_display::_WebUICsvDisplay)
+  isempty(csv_display.sort) && return rows, 0
+  j = findfirst(==(csv_display.sort), header)
+  j === nothing && return rows, 0
+  values = map(rows) do row
+    cells = _webui_compare_split_csv(row, delimiter)
+    j <= length(cells) ? _webui_csv_cell_value(cells[j], delimiter) : nothing
+  end
+  numbered = [i for i in eachindex(rows) if values[i] !== nothing]
+  isempty(numbered) && return rows, 0
+  ordered = sort(numbered; by = i -> values[i], rev = csv_display.order != "asc", alg = MergeSort)
+  rest = [i for i in eachindex(rows) if values[i] === nothing]
+  return rows[vcat(ordered, rest)], j
+end
+
+# The unit token of a power column, or `nothing`. Rule: the header name is
+# split at every character that is not a letter or digit (`_`, space,
+# brackets, slash), and a token equal to mw, mvar or mva, ignoring case,
+# makes it a power column (`p_mw`, `q_mvar`, `s_mva`, `P [MW]`, `Q MVAr`).
+# The first such token decides. `mwh` (energy) or `kw` are no power tokens.
+function _webui_csv_power_token(name::AbstractString)
+  for token in split(lowercase(name), r"[^a-z0-9]+"; keepempty = false)
+    haskey(_WEBUI_CSV_POWER_UNITS, token) && return String(token)
+  end
+  return nothing
+end
+
+# a plain decimal string ("123.5", "1.98e-16") in the file's format: decimal
+# comma and thousands dots in a semicolon file, decimal point otherwise
+function _webui_csv_localize(text::AbstractString, delimiter::Char)::String
+  sign = startswith(text, "-") ? "-" : ""
+  body = isempty(sign) ? String(text) : text[2:end]
+  marker = findfirst(c -> c in ('e', 'E'), body)
+  mantissa = marker === nothing ? body : body[begin:prevind(body, marker)]
+  exponent = marker === nothing ? "" : body[marker:end]
+  dot = findfirst(==('.'), mantissa)
+  integer_part = dot === nothing ? mantissa : mantissa[begin:prevind(mantissa, dot)]
+  fraction = dot === nothing ? "" : mantissa[nextind(mantissa, dot):end]
+  # the same grouping the writer uses: '.' in excel_de (the semicolon
+  # format), none in technical; excel_us cannot be told from technical by
+  # the delimiter, so a comma file shows no grouping
+  grouped = Sparlectra._group_csv_integer(integer_part, delimiter == ';' ? "." : "")
+  decimal = delimiter == ';' ? ',' : '.'
+  return sign * grouped * (isempty(fraction) ? "" : string(decimal, fraction)) * exponent
+end
+
+# Fixed-point text of `x` with `decimals` places. %.*f does not exist in
+# Julia's Printf, so the format is built per call.
+_webui_csv_fixed(x::Float64, decimals::Int)::String = Printf.format(Printf.Format("%.$(decimals)f"), x)
+
+# `x` with `digits` significant digits. The integer part of a value of 1 and
+# more is never rounded (1234.5 with 3 digits shows 1235, not 1230); values
+# below 1e-4 or from 1e15 on show with an exponent, so 1.98e-16 does not
+# become a row of zeros.
+function _webui_csv_significant(x::Float64, digits::Int)::String
+  isfinite(x) || return string(x)
+  x == 0 && return "0"
+  if abs(x) < 1
+    r = round(x; sigdigits = digits)
+    if abs(r) < 1
+      abs(r) < 1.0e-4 && return Printf.format(Printf.Format("%.$(digits - 1)e"), r)
+      return _webui_csv_fixed(r, digits - 1 - floor(Int, log10(abs(r))))
+    end
+    x = r
+  end
+  abs(x) >= 1.0e15 && return Printf.format(Printf.Format("%.$(digits - 1)e"), x)
+  integer_digits = floor(Int, log10(abs(x))) + 1
+  return _webui_csv_fixed(x, max(0, digits - integer_digits))
+end
+
+# The shown text of one cell. A cell that is not a number of the file's own
+# format, an integer cell outside a power column with a resolution, and
+# every text cell stay verbatim.
+function _webui_csv_display_cell(cell::AbstractString, delimiter::Char, csv_display::_WebUICsvDisplay, power_column::Bool)::String
+  text = strip(cell)
+  occursin(_WEBUI_CSV_STRICT_NUMBER[delimiter], text) || return String(cell)
+  value = Sparlectra._parse_result_csv_number(text, delimiter)
+  value === nothing && return String(cell)
+  if power_column && !isempty(csv_display.power)
+    # whole units of the chosen resolution: 1.98e-16 MW is 0 at any of them
+    scaled = round(value * _WEBUI_CSV_POWER_FACTORS[csv_display.power])
+    shown = _webui_csv_fixed(scaled, 0)
+    return _webui_csv_localize(shown == "-0" ? "0" : shown, delimiter)
+  end
+  # an integer cell (bus number, count, index) is no measured value
+  decimal = delimiter == ';' ? ',' : '.'
+  (occursin(decimal, text) || occursin(r"[eE]", text)) || return String(cell)
+  return _webui_csv_localize(_webui_csv_significant(value, csv_display.digits), delimiter)
+end
+
 """
     _webui_artifact_csv_html(text; truncated = false) -> String
 
@@ -3171,8 +3352,17 @@ same way the compare pages sniff it (`_webui_compare_csv_table`), quoted fields
 are honored, and comment lines (`#`, the measurement CSV v1 header) go above
 the table instead of into it. A truncated preview drops its last line, which
 is cut mid-row. Rows beyond `_WEBUI_ARTIFACT_TABLE_ROWS` are counted, not shown.
+
+`csv_display` (a `_WebUICsvDisplay`) sets how numbers show: decimal cells with
+`csv_display.digits` significant digits, and in power columns (see
+`_webui_csv_power_token`) with a resolution `csv_display.power` the value in
+whole W, kW or MW, the unit then named in the header. The decimal separator
+follows the file (comma in a semicolon file). The text is never changed.
+A column with a number in it gets a header link that sorts the rows by it
+(`csv_display.sort`, `_webui_csv_sorted_rows`): largest first, a second
+click smallest first.
 """
-function _webui_artifact_csv_html(text::AbstractString; truncated::Bool = false)::String
+function _webui_artifact_csv_html(text::AbstractString; truncated::Bool = false, csv_display::_WebUICsvDisplay = _WebUICsvDisplay())::String
   comments = String[]
   data = String[]
   for line in split(text, '\n')
@@ -3185,14 +3375,27 @@ function _webui_artifact_csv_html(text::AbstractString; truncated::Bool = false)
   header_line = data[1]
   delimiter = count(==(';'), header_line) > count(==(','), header_line) ? ';' : ','
   header = _webui_compare_split_csv(header_line, delimiter)
-  shown = min(length(data) - 1, _WEBUI_ARTIFACT_TABLE_ROWS)
+  power_tokens = [_webui_csv_power_token(name) for name in header]
+  rows, sorted_column = _webui_csv_sorted_rows(data[2:end], header, delimiter, csv_display)
+  # a column is sortable when one of its cells is a number
+  sortable = falses(length(header))
+  for row in rows
+    cells = _webui_compare_split_csv(row, delimiter)
+    for j in eachindex(header)
+      sortable[j] || (j <= length(cells) && _webui_csv_cell_value(cells[j], delimiter) !== nothing && (sortable[j] = true))
+    end
+    all(sortable) && break
+  end
+  shown = min(length(rows), _WEBUI_ARTIFACT_TABLE_ROWS)
   body = IOBuffer()
-  for k in 2:(shown + 1)
-    cells = _webui_compare_split_csv(data[k], delimiter)
+  for k in 1:shown
+    cells = _webui_compare_split_csv(rows[k], delimiter)
     print(body, "<tr>")
-    for cell in cells
+    for (j, cell) in enumerate(cells)
       numeric = occursin(_WEBUI_CSV_NUMBER_PATTERN, cell)
-      print(body, numeric ? "<td class=\"num\">" : "<td>", _webui_escape(cell), "</td>")
+      power_column = j <= length(power_tokens) && power_tokens[j] !== nothing
+      shown_cell = numeric ? _webui_csv_display_cell(cell, delimiter, csv_display, power_column) : cell
+      print(body, numeric ? "<td class=\"num\">" : "<td>", _webui_escape(shown_cell), "</td>")
     end
     # a short row still fills the grid, so the columns never shift
     for _ in (length(cells) + 1):length(header)
@@ -3200,11 +3403,29 @@ function _webui_artifact_csv_html(text::AbstractString; truncated::Bool = false)
     end
     print(body, "</tr>")
   end
-  head = join(("<th>$(_webui_escape(name))</th>" for name in header), "")
+  # a sortable header is a link back onto this view: the first click sorts
+  # largest first, a click on the sorted column turns the order; digits and
+  # resolution stay in the query
+  keep = _webui_csv_display_query(csv_display; sort = false)
+  head = join((begin
+    token = power_tokens[j]
+    unit = (token === nothing || isempty(csv_display.power)) ? "" : " [$(_WEBUI_CSV_POWER_UNITS[token][csv_display.power])]"
+    label = _webui_escape(name * unit)
+    if sortable[j]
+      next_order = (j == sorted_column && csv_display.order == "desc") ? "asc" : "desc"
+      query = join(filter(!isempty, [keep, "sort=$(_webui_urlencode(name))", next_order == "asc" ? "order=asc" : ""]), "&")
+      marker = j == sorted_column ? (csv_display.order == "desc" ? " &#9660;" : " &#9650;") : ""
+      title = next_order == "desc" ? "Sort largest first" : "Sort smallest first"
+      "<th><a href=\"?$(_webui_escape(query))\" title=\"$(title)\">$(label)$(marker)</a></th>"
+    else
+      "<th>$(label)</th>"
+    end
+  end for (j, name) in enumerate(header)), "")
   parts = String[]
   isempty(comments) || push!(parts, "<pre class=\"artifact-csv-comments\">$(_webui_escape(join(comments, '\n')))</pre>")
-  hidden = length(data) - 1 - shown
-  hidden > 0 && push!(parts, "<p class=\"field-help\">Table shows the first $(shown) of $(length(data) - 1) rows. Use Download or Raw text for the complete file.</p>")
+  sorted_column > 0 && push!(parts, "<p class=\"field-help artifact-csv-sorted\">Sorted by $(_webui_escape(header[sorted_column])), $(csv_display.order == "desc" ? "largest" : "smallest") first; cells without a number at the end.</p>")
+  hidden = length(rows) - shown
+  hidden > 0 && push!(parts, "<p class=\"field-help\">Table shows the first $(shown) of $(length(rows)) rows. Use Download or Raw text for the complete file.</p>")
   push!(parts, "<div class=\"artifact-csv\"><table><thead><tr>$(head)</tr></thead><tbody>$(String(take!(body)))</tbody></table></div>")
   return join(parts, "")
 end
@@ -3231,8 +3452,37 @@ function _webui_artifact_markdown_html(text::AbstractString)::String
   return "<article class=\"rendered-markdown\">$(_webui_render_markdown(text))</article>"
 end
 
+# whether the header line of a CSV text names a power column
+function _webui_csv_has_power_column(text::AbstractString)::Bool
+  for line in split(text, '\n')
+    stripped = strip(rstrip(line, '\r'))
+    (isempty(stripped) || startswith(stripped, '#')) && continue
+    delimiter = count(==(';'), stripped) > count(==(','), stripped) ? ';' : ','
+    return any(name -> _webui_csv_power_token(name) !== nothing, _webui_compare_split_csv(stripped, delimiter))
+  end
+  return false
+end
+
+# The display controls above a CSV table: a GET form back onto the same
+# artifact, so the choice lives in the query and needs no script. Without a
+# power column the resolution travels as a hidden field, so it is still set
+# on the next file of the run.
+function _webui_csv_display_form(name_href::AbstractString, csv_display::_WebUICsvDisplay, has_power::Bool)::String
+  digits_input = "<label>Significant digits <input type=\"number\" name=\"digits\" min=\"1\" max=\"$(_WEBUI_CSV_MAX_DIGITS)\" value=\"$(csv_display.digits)\"></label>"
+  power_input = if has_power
+    options = join(("<option value=\"$(value)\"$(value == csv_display.power ? " selected" : "")>$(label)</option>" for (value, label) in (("", "off (significant digits)"), ("W", "W"), ("kW", "kW"), ("MW", "MW"))), "")
+    " <label>Power columns <select name=\"power\">$(options)</select></label>"
+  else
+    isempty(csv_display.power) ? "" : "<input type=\"hidden\" name=\"power\" value=\"$(csv_display.power)\">"
+  end
+  # the sort column travels along, so Apply keeps the order of the rows
+  sort_input = isempty(csv_display.sort) ? "" :
+    "<input type=\"hidden\" name=\"sort\" value=\"$(_webui_escape(csv_display.sort))\">" * (csv_display.order == "asc" ? "<input type=\"hidden\" name=\"order\" value=\"asc\">" : "")
+  return "<form method=\"get\" action=\"$(name_href)\" class=\"artifact-csv-display\">$(digits_input)$(power_input)$(sort_input) <button type=\"submit\">Apply</button><span class=\"field-help\">Display only; Download and Raw text keep the file as written.</span></form>"
+end
+
 """
-    render_powerflow_artifact_page(artifact, preview; raw = false, head_line = "") -> String
+    render_powerflow_artifact_page(artifact, preview; raw = false, csv_display = _WebUICsvDisplay(), csv_siblings = String[], head_line = "") -> String
 
 The artifact viewer page. The artifact's MIME type decides the view: a CSV
 opens as a table, a Markdown report as rendered HTML, everything else as
@@ -3240,23 +3490,42 @@ escaped text in the wide monospace panel. `raw = true` forces the text panel
 for the two rendered kinds, and the page always carries the link to the
 other view, so a table never hides what the file really says. `preview` is
 the `(content, truncated)` tuple of `_read_webui_artifact_preview`.
+
+A CSV table shows the number display controls (`csv_display`, see
+`_webui_artifact_csv_html`) and links to the other CSV artifacts of the run
+(`csv_siblings`, names); those links and the Raw text toggle carry the
+display choice in their query, so it stays while moving between the files.
 A non-empty `head_line` is shown above the table (the run status line of a
 short-circuit table, see `handle_powerflow_artifact`).
 """
-function render_powerflow_artifact_page(artifact, preview; raw::Bool = false, head_line::AbstractString = "")::String
+function render_powerflow_artifact_page(artifact, preview; raw::Bool = false, csv_display::_WebUICsvDisplay = _WebUICsvDisplay(), csv_siblings::Vector{String} = String[], head_line::AbstractString = "")::String
   renderable = artifact.mime_type in ("text/csv", "text/markdown")
+  is_csv = artifact.mime_type == "text/csv"
   notice = preview.truncated ? "<p class=\"alert warning\">Preview truncated to $(_WEBUI_ARTIFACT_PREVIEW_BYTES) bytes. Use Download for the complete artifact.</p>" : ""
   # the same name relative to /powerflow/artifact/<run>/ is this page without a query
   name_href = _webui_urlencode(artifact.name)
+  display_query = is_csv ? _webui_csv_display_query(csv_display) : ""
+  with_query(href) = isempty(display_query) ? href : "$(href)?$(display_query)"
+  controls = ""
   if renderable && !raw
-    body = artifact.mime_type == "text/csv" ? _webui_artifact_csv_html(preview.content; truncated = preview.truncated) : _webui_artifact_markdown_html(preview.content)
-    toggle = "<a class=\"button secondary\" href=\"$(name_href)?raw=1\">Raw text</a>"
+    body = is_csv ? _webui_artifact_csv_html(preview.content; truncated = preview.truncated, csv_display) : _webui_artifact_markdown_html(preview.content)
+    toggle = "<a class=\"button secondary\" href=\"$(_webui_escape(name_href * "?raw=1" * (isempty(display_query) ? "" : "&" * display_query)))\">Raw text</a>"
+    if is_csv
+      controls = _webui_csv_display_form(name_href, csv_display, _webui_csv_has_power_column(preview.content))
+      others = [n for n in csv_siblings if n != artifact.name]
+      # the other files have other columns: their links keep digits and
+      # resolution, not the sort column
+      sibling_query = _webui_csv_display_query(csv_display; sort = false)
+      sibling_href = n -> isempty(sibling_query) ? _webui_urlencode(n) : "$(_webui_urlencode(n))?$(sibling_query)"
+      isempty(others) || (controls *= "<p class=\"artifact-csv-siblings\">Other CSV files of this run: " *
+        join(("<a href=\"$(_webui_escape(sibling_href(n)))\">$(_webui_escape(n))</a>" for n in others), " · ") * "</p>")
+    end
   else
     body = "<pre class=\"artifact-text\">$(_webui_escape(preview.content))</pre>"
-    toggle = renderable ? "<a class=\"button secondary\" href=\"$(name_href)\">$(artifact.mime_type == "text/csv" ? "Table" : "Rendered")</a>" : ""
+    toggle = renderable ? "<a class=\"button secondary\" href=\"$(_webui_escape(with_query(name_href)))\">$(is_csv ? "Table" : "Rendered")</a>" : ""
   end
   head = isempty(head_line) ? "" : "<p class=\"sc-status-line\"><code>$(_webui_escape(head_line))</code></p>"
-  page = "<section class=\"artifact-text-page\"><p>$(toggle)<a class=\"button\" href=\"?download=1\">Download</a></p>$(notice)$(head)$(body)</section>"
+  page = "<section class=\"artifact-text-page\"><p>$(toggle)<a class=\"button\" href=\"?download=1\">Download</a></p>$(notice)$(head)$(controls)$(body)</section>"
   return _webui_layout("Artifact: $(artifact.name)", page; show_back = true, main_class = "page artifact-page")
 end
 

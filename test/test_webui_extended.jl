@@ -2454,7 +2454,8 @@ result = get_powerflow_result(run_id)
         # the viewer opens a CSV as a table (semicolon file: the delimiter is sniffed), raw=1 as text
         csv_page_html = String(SparlectraApp.handle_powerflow_artifact(run_id, name).body)
         @test occursin("class=\"artifact-csv\"", csv_page_html)
-        @test occursin("<th>$(name == "bus_voltages_complex.csv" ? "vm_pu" : "from_bus")</th>", csv_page_html)
+        # a column with numbers has a sort link in its header
+        @test occursin("<th><a href=\"?sort=$(name == "bus_voltages_complex.csv" ? "vm_pu" : "from_bus")\" title=\"Sort largest first\">$(name == "bus_voltages_complex.csv" ? "vm_pu" : "from_bus")</a></th>", csv_page_html)
         @test occursin("<td class=\"num\">", csv_page_html)
         @test !occursin("class=\"artifact-text\"", csv_page_html)
         @test occursin("href=\"$(name)?raw=1\"", csv_page_html)
@@ -2485,11 +2486,89 @@ result = get_powerflow_result(run_id)
       write(comment_csv_path, "# version: 1\nbus,value\n1,0.5\n2,\"1,5\"\n")
       comment_csv_html = String(SparlectraApp.handle_powerflow_artifact(run_id, "note_rows.csv").body)
       @test occursin("class=\"artifact-csv-comments\"># version: 1</pre>", comment_csv_html)
-      @test occursin("<th>bus</th><th>value</th>", comment_csv_html)
+      @test occursin("<th><a href=\"?sort=bus\" title=\"Sort largest first\">bus</a></th><th><a href=\"?sort=value\" title=\"Sort largest first\">value</a></th>", comment_csv_html)
       @test occursin("<td class=\"num\">1,5</td>", comment_csv_html)
       truncated_table = SparlectraApp._webui_artifact_csv_html("a,b\n1,2\n3,4\n5,"; truncated = true)
       @test occursin("<td class=\"num\">3</td>", truncated_table)
       @test !occursin("<td class=\"num\">5</td>", truncated_table)
+      # number display of the CSV table: significant digits (default 5), power
+      # columns in whole W/kW/MW, pu and integer columns never converted
+      tiny = "1.98394650844228e-16"
+      display_csv = "bus,p_mw,vm_pu\n7,$(tiny),$(tiny)\n8,123.456789,123.456789\n"
+      default_table = SparlectraApp._webui_artifact_csv_html(display_csv)
+      @test occursin("<td class=\"num\">123.46</td><td class=\"num\">123.46</td>", default_table)
+      @test occursin("<td class=\"num\">1.9839e-16</td><td class=\"num\">1.9839e-16</td>", default_table)
+      @test occursin("<td class=\"num\">7</td>", default_table)
+      four_digits = SparlectraApp._webui_artifact_csv_html(display_csv; csv_display = SparlectraApp._WebUICsvDisplay(4, ""))
+      @test occursin("<td class=\"num\">123.5</td><td class=\"num\">123.5</td>", four_digits)
+      kw_table = SparlectraApp._webui_artifact_csv_html(display_csv; csv_display = SparlectraApp._WebUICsvDisplay(3, "kW"))
+      @test occursin("<td class=\"num\">7</td><td class=\"num\">0</td><td class=\"num\">1.98e-16</td>", kw_table)
+      @test occursin("<td class=\"num\">123457</td><td class=\"num\">123</td>", kw_table)
+      @test occursin("<th><a href=\"?digits=3&amp;power=kW&amp;sort=p_mw\" title=\"Sort largest first\">p_mw [kW]</a></th><th><a href=\"?digits=3&amp;power=kW&amp;sort=vm_pu\" title=\"Sort largest first\">vm_pu</a></th>", kw_table)
+      for unit in ("W", "MW")
+        @test occursin("<td class=\"num\">7</td><td class=\"num\">0</td>", SparlectraApp._webui_artifact_csv_html(display_csv; csv_display = SparlectraApp._WebUICsvDisplay(3, unit)))
+      end
+      # a semicolon file reads and shows with the decimal comma, thousands in groups of three
+      comma_csv = "bus;q_mvar;vm_pu\n1;0,000000000000000198394650844228;1,0234567\n2;1.234,5678;0,5\n"
+      comma_table = SparlectraApp._webui_artifact_csv_html(comma_csv)
+      @test occursin("<td class=\"num\">1,9839e-16</td><td class=\"num\">1,0235</td>", comma_table)
+      @test occursin("<td class=\"num\">1.234,6</td><td class=\"num\">0,50000</td>", comma_table)
+      comma_kw = SparlectraApp._webui_artifact_csv_html(comma_csv; csv_display = SparlectraApp._WebUICsvDisplay(3, "kW"))
+      @test occursin("<td class=\"num\">0</td><td class=\"num\">1,02</td>", comma_kw)
+      @test occursin("<td class=\"num\">1.234.568</td>", comma_kw)
+      @test occursin("<th><a href=\"?digits=3&amp;power=kW&amp;sort=q_mvar\" title=\"Sort largest first\">q_mvar [kvar]</a></th>", comma_kw)
+      # the choice comes from the query, stays on the links to the other CSV
+      # files and the raw view, and never changes the file or the download
+      power_csv_text = "bus;p_mw\n1;123,456789\n"
+      write(joinpath(result["output_dir"], "note_power.csv"), power_csv_text)
+      routed = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/artifact/$(run_id)/note_power.csv?digits=4&power=kW"; output_root).body)
+      @test occursin("<td class=\"num\">123.457</td>", routed)
+      @test occursin("href=\"bus_voltages_complex.csv?digits=4&amp;power=kW\"", routed)
+      @test occursin("href=\"note_power.csv?raw=1&amp;digits=4&amp;power=kW\"", routed)
+      routed_bad = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/artifact/$(run_id)/note_power.csv?digits=abc&power=GW"; output_root).body)
+      @test occursin("<td class=\"num\">123,46</td>", routed_bad)
+      @test occursin("href=\"bus_voltages_complex.csv\"", routed_bad)
+      @test SparlectraApp._webui_csv_display(Dict("digits" => "0", "power" => "kw")) == SparlectraApp._WebUICsvDisplay(5, "")
+      routed_raw = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/artifact/$(run_id)/note_power.csv?raw=1&digits=4&power=kW"; output_root).body)
+      @test occursin("123,456789", routed_raw)
+      @test String(SparlectraApp.handle_powerflow_artifact_download(run_id, "note_power.csv").body) == power_csv_text
+      # sorting by a column with numbers: largest first, then smallest
+      # first; empty and text cells at the end in file order; a text column
+      # has no sort link, an unknown or text sort column keeps the file order
+      sort_csv = "name,p_mw,vm_pu\nA,-5.5,1.01\nB,12.25,0.99\nC,,1.0\nD,3.0,x\n"
+      row_order(h) = [m.captures[1] for m in eachmatch(r"<tr><td>([A-D])</td>", h)]
+      @test row_order(SparlectraApp._webui_artifact_csv_html(sort_csv)) == ["A", "B", "C", "D"]
+      sorted_desc = SparlectraApp._webui_artifact_csv_html(sort_csv; csv_display = SparlectraApp._WebUICsvDisplay(5, "", "p_mw", "desc"))
+      @test row_order(sorted_desc) == ["B", "D", "A", "C"]
+      @test occursin("<th>name</th>", sorted_desc)
+      @test occursin("<th><a href=\"?sort=p_mw&amp;order=asc\" title=\"Sort smallest first\">p_mw &#9660;</a></th>", sorted_desc)
+      @test occursin("<th><a href=\"?sort=vm_pu\" title=\"Sort largest first\">vm_pu</a></th>", sorted_desc)
+      @test occursin("Sorted by p_mw, largest first", sorted_desc)
+      @test row_order(SparlectraApp._webui_artifact_csv_html(sort_csv; csv_display = SparlectraApp._WebUICsvDisplay(5, "", "p_mw", "asc"))) == ["A", "D", "B", "C"]
+      @test row_order(SparlectraApp._webui_artifact_csv_html(sort_csv; csv_display = SparlectraApp._WebUICsvDisplay(5, "", "vm_pu", "desc"))) == ["A", "C", "B", "D"]
+      for ignored in ("name", "nope")
+        unsorted = SparlectraApp._webui_artifact_csv_html(sort_csv; csv_display = SparlectraApp._WebUICsvDisplay(5, "", ignored, "desc"))
+        @test row_order(unsorted) == ["A", "B", "C", "D"] && !occursin("Sorted by", unsorted)
+      end
+      # the decimal comma of a semicolon file sorts by value
+      comma_sorted = SparlectraApp._webui_artifact_csv_html("bus;q_mvar\n1;0,5\n2;1.234,5\n3;-2,0\n"; csv_display = SparlectraApp._WebUICsvDisplay(5, "", "q_mvar", "desc"))
+      @test [m.captures[1] for m in eachmatch(r"<tr><td class=\"num\">(\d)</td>", comma_sorted)] == ["2", "1", "3"]
+      # every row is sorted before the table is cut to its row limit
+      limit = SparlectraApp._WEBUI_ARTIFACT_TABLE_ROWS
+      long_csv = "id,p_mw\n" * join(("$(i),$(i == limit + 50 ? 999.5 : 1.5)" for i in 1:(limit + 50)), "\n") * "\n"
+      long_sorted = SparlectraApp._webui_artifact_csv_html(long_csv; csv_display = SparlectraApp._WebUICsvDisplay(5, "", "p_mw", "desc"))
+      @test occursin("<tbody><tr><td class=\"num\">$(limit + 50)</td><td class=\"num\">999.50</td>", long_sorted)
+      @test occursin("Table shows the first $(limit) of $(limit + 50) rows", long_sorted)
+      @test SparlectraApp._webui_csv_display(Dict("sort" => " p_mw ", "order" => "up")) == SparlectraApp._WebUICsvDisplay(5, "", "p_mw", "desc")
+      # through the route: Apply keeps the sort column as hidden fields, the
+      # raw view carries it back, the links to the other CSV files do not
+      write(joinpath(result["output_dir"], "note_sort.csv"), sort_csv)
+      routed_sort = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/artifact/$(run_id)/note_sort.csv?digits=4&sort=p_mw&order=asc"; output_root).body)
+      @test row_order(routed_sort) == ["A", "D", "B", "C"]
+      @test occursin("<input type=\"hidden\" name=\"sort\" value=\"p_mw\"><input type=\"hidden\" name=\"order\" value=\"asc\">", routed_sort)
+      @test occursin("href=\"note_sort.csv?raw=1&amp;digits=4&amp;sort=p_mw&amp;order=asc\"", routed_sort)
+      @test occursin("href=\"bus_voltages_complex.csv?digits=4\"", routed_sort)
+      @test occursin("<th><a href=\"?digits=4&amp;sort=p_mw\" title=\"Sort largest first\">p_mw &#9650;</a></th>", routed_sort)
       legacy_diagnostic_path = joinpath(result["output_dir"], "diagnose.txt")
       write(legacy_diagnostic_path, "legacy diagnostics\n")
       legacy_artifacts = list_powerflow_artifacts(run_id)
@@ -3556,7 +3635,10 @@ result = get_powerflow_result(run_id)
         end
         op_log_path = SparlectraApp.webui_operation_log_path(root)
         ct_event = (event; fields...) -> SparlectraApp.record_webui_operation!(root, event; route = "/powerflow/run", method = "POST", user_action = false, fields...)
-        ct_request = Dict{String,Any}("casefile" => scf_path, "config_file" => config_path, "output_root" => root, "contingency_mode" => true, "contingency_kind" => "branch", "scenario_source" => "n1_branches", "screening_mode" => "off")
+        # detailed_result_csv on as the form sends it by default: an N-1
+        # batch writes no bus or branch CSV, so the job logs the export
+        # skipped, not failed (checked after the released run below)
+        ct_request = Dict{String,Any}("casefile" => scf_path, "config_file" => config_path, "output_root" => root, "contingency_mode" => true, "contingency_kind" => "branch", "scenario_source" => "n1_branches", "screening_mode" => "off", "detailed_result_csv" => true)
         n_outages = length(Sparlectra.generateN1Branches(Sparlectra.importSCF(scf_path)))
         for finish in (:release, :abort)
           ct_job = SparlectraApp.start_webui_powerflow_run(copy(ct_request); runner = ct_runner, event_callback = ct_event)
@@ -3591,6 +3673,9 @@ result = get_powerflow_result(run_id)
           if finish === :release
             @test final_job["status"] == "success"
             @test final_job["progress_done"] == final_job["progress_total"] == n_outages
+            ct_csv_events = [l for l in eachline(op_log_path) if occursin(ct_id, l) && occursin("\"event\":\"detailed_result_csv_export", l)]
+            @test any(l -> occursin("\"event\":\"detailed_result_csv_export_skipped\"", l) && occursin("\"reason\":\"contingency_run\"", l), ct_csv_events)
+            @test !any(l -> occursin("\"event\":\"detailed_result_csv_export_failed\"", l), ct_csv_events)
             # a finished job renders no counter (the N-1 table takes over)
             @test !occursin("id=\"batch-progress\"", String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/result/$(ct_id)"; output_root = root, runtime = rt).body))
           else

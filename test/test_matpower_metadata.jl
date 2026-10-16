@@ -438,6 +438,18 @@ mpc.sparlectra.tap_changers = [
         @test net2.branchVec[1].tap_ratio ≈ b1.tap_ratio
         @test !net2.branchVec[2].has_ratio_tap
         @test net2.branchVec[2].phase_shift_deg ≈ -3.0
+        # a transformer at ratio 1 between two buses of one level, without
+        # MATPOWER metadata (as from a CGMES import), goes to mpc.branch with
+        # TAP 0 and comes back as a line; it gets no tap changer row, which
+        # the reader would refuse
+        path110 = joinpath(dir, "case_taps_110.m")
+        write(path110, replace(read(path, String), "2 1 40 10 0 0 1 1 0 20 1 1.1 0.9;" => "2 1 40 10 0 0 1 1 0 110 1 1.1 0.9;"))
+        net3 = Sparlectra.createNetFromMatPowerFile(filename = path110)
+        delete!(net3.matpower_branch_metadata, 1)
+        net3.branchVec[1].tap_ratio = 1.0
+        path3 = joinpath(dir, "case_taps_ratio1.m")
+        Sparlectra.writeMatpowerCasefile(net3, path3; write_solution = false)
+        @test Sparlectra.createNetFromMatPowerFile(filename = path3).branchVec[1].ratio == 0.0
 
         # Delta-u PST (11th column): the mechanical grid is the
         # additional-voltage amplitude, the shift angle follows via atan

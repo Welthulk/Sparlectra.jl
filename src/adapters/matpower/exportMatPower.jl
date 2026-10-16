@@ -546,11 +546,15 @@ end
 # deviates from the constructor defaults, so legacy exports stay
 # byte-identical. Steps may be fractional (a controller can leave a tap
 # between mechanical positions). Delta-u PSTs export their position in
-# additional-voltage steps; degree-grid changers use relative degrees.
+# additional-voltage steps; degree-grid changers use relative degrees. A
+# transformer between two buses of one voltage level that mpc.branch writes
+# with TAP 0 (ratio 1, shift 0) comes back as a line, and the reader refuses
+# a changer on a line; it gets no row.
 function _sparlectra_tap_changer_rows(net::Net)::Vector{NTuple{11,Float64}}
   rows = NTuple{11,Float64}[]
   for (k, br) in enumerate(net.branchVec)
     br.ratio != 0.0 || continue
+    (_matpower_branch_kind(net, k, br) == "L" && getNodeVn(net.nodeVec[br.fromBus]) == getNodeVn(net.nodeVec[br.toBus])) && continue
     base = br.ratio
     grid_default = br.tap_step == 0.00625 && br.tap_min == 0.9 && br.tap_max == 1.1 && br.phase_step_deg == 1.25 && br.phase_min_deg == -30.0 && br.phase_max_deg == 30.0 && br.phase_du_step == 0.0
     on_neutral = br.tap_ratio == base && br.phase_shift_deg == br.angle

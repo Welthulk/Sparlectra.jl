@@ -131,13 +131,18 @@ behind the ideal transformer (`twtSplitShuntAdmittance = false`), and the
 PowSyBl importer keeps it there as the from arm with the to arm zero. A
 CGMES `PowerTransformerEnd` carries `g`, `b` per end; the importer refers both
 ends to the to-side base, sums them and puts half of the total on each
-terminal (since 0.50.0), the from half behind the tap. The SV of the
+terminal (since 0.41.0), the from half behind the tap. The SV of the
 ENTSO-E test configurations is computed this way: on SmallGrid and
 MicroGrid BE and NL the units at the transformer ends match it exactly,
 with the per-end placement they missed it by up to 3.6 MVAr. A
-three-winding leg keeps the admittance of its end at the leg's bus side; a
-leg with a tap changer runs from its bus to the star point and carries it
-as the from arm on the star base. MATPOWER has no place for the split: its reader produces the
+three-winding leg puts the admittance of its end at the star point (since
+0.42.0), the arm at the leg's bus is zero: a leg without a tap changer runs
+from the star point to its bus and carries it as the from arm behind the
+ratio, a leg with a tap changer runs from its bus to the star point and
+carries it as the to arm on the star base. With the admittance at the star
+the 3W terminal flows match the SV of the ENTSO-E sets; on MicroGrid BE the
+largest voltage deviation after the power flow drops from 1.13e-4 to
+8.1e-5 pu. MATPOWER has no place for the split: its reader produces the
 symmetric half, its writer puts the symmetric part on the branch and the
 excess on a bus shunt named after the branch (see
 [MATPOWER](matpower.md)).

@@ -592,7 +592,7 @@ admittances with the inverse. The series values are summed (`r`, `x`); the
 shunt admittance is returned per end on the end-2 base (`g_from`, `b_from`
 for end 1, `g_to`, `b_to` for end 2, both in siemens) next to the totals
 `g`, `b`. The CGMES import uses the totals and puts half of them on each
-terminal arm (since 0.50.0), the placement the SV of the ENTSO-E test
+terminal arm (since 0.41.0), the placement the SV of the ENTSO-E test
 configurations is computed with. The end-2 (to-side) base matches the
 branch-model convention of `calcAdmittance` (series/shunt admittance on the
 to side, complex ratio at the from side, the from arm behind it).

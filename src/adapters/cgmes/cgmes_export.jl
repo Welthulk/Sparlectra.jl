@@ -508,9 +508,10 @@ function _collectTrafoRecs(net::Sparlectra.Net, idx2busName::Dict{Int,String}, c
     pt3Key = cgmesKeyPowerTransformer3W(side_buses[1], side_buses[2], side_buses[3], k3)
     ends = NamedTuple[]
     for (e, br) in enumerate(lbrs)
-      # in the star → side form the physical end sits on the leg's to side,
-      # so the end admittance is the to arm; a star-side arm (none from the
-      # CGMES importer) is folded into the end value as a total
+      # the end value is the total of both arms on the end base: the CGMES
+      # importer puts it at the star (from arm of a star → side leg, to arm
+      # of a side → star leg) and a re-import puts it there again; an arm at
+      # the side bus (other sources) is folded in and comes back at the star
       zf, yf = turned[e] ? (_liveRatio(br)^2, 1.0 / _liveRatio(br)^2) : (1.0, 1.0)
       r, x, b, g = Sparlectra.fromPU_RXBG(r_pu = br.r_pu * zf, x_pu = br.x_pu * zf, g_pu = (br.g_from_pu + br.g_to_pu) * yf, b_pu = (br.b_from_pu + br.b_to_pu) * yf, v_kv = vns[e], baseMVA = net.baseMVA)
       shift = shifts[e]
@@ -625,7 +626,7 @@ function _collectTrafoRecs(net::Sparlectra.Net, idx2busName::Dict{Int,String}, c
     end
     r, x, _, _ = Sparlectra.fromPU_RXBG(r_pu = br.r_pu, x_pu = br.x_pu, g_pu = br.g_pu, b_pu = br.b_pu, v_kv = vn2, baseMVA = net.baseMVA)
     # The importer reads the magnetizing admittance of both ends back as
-    # one total and puts half of it on each terminal arm (0.50.0). A branch
+    # one total and puts half of it on each terminal arm (0.41.0). A branch
     # with equal arms writes each arm on its own end. A branch whose arms
     # differ (PowSyBl, an explicit split) writes the symmetric part,
     # the arm closer to zero, on both ends and the excess of each terminal

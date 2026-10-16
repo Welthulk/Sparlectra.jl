@@ -152,6 +152,38 @@ function sysimage_problem(path::AbstractString, project_dir::AbstractString)::Un
   return nothing
 end
 
+# a directory in one spelling: the real path when it exists (symlinked state
+# roots, case on Windows), no trailing separator (SPARLECTRA_APP_ROOT ends
+# with one, the launcher's project_dir does not)
+_comparable_dir(dir::AbstractString)::String = rstrip(isdir(dir) ? realpath(dir) : normpath(abspath(dir)), ['/', '\\'])
+
+"""
+    foreign_sysimage_owner(image, project_dir) -> Union{Nothing,String}
+
+The project directory recorded in the image metadata (`project_dir`) when it
+names another checkout than `project_dir`, otherwise `nothing`: same
+checkout, no such key (an image built before the key existed), or no
+readable metadata (`sysimage_problem` reports that case). There is one image
+per user, so a second checkout (a release clone next to the development
+checkout) finds the image of the first one; it must neither use nor delete
+it.
+"""
+function foreign_sysimage_owner(image::AbstractString, project_dir::AbstractString)::Union{Nothing,String}
+  meta_path = sysimage_meta_path(image)
+  (isfile(image) && isfile(meta_path)) || return nothing
+  meta = try
+    TOML.parsefile(meta_path)
+  catch err
+    # expected failure: a truncated or hand-edited metadata file;
+    # sysimage_problem reports it as unreadable
+    err isa TOML.ParserError || rethrow()
+    return nothing
+  end
+  recorded = get(meta, "project_dir", "")
+  (recorded isa AbstractString && !isempty(recorded)) || return nothing
+  return _comparable_dir(recorded) == _comparable_dir(project_dir) ? nothing : String(recorded)
+end
+
 """
 Ask `prompt` and return true only when the user answers yes. The build is
 opt-in: Enter, a timeout and a start without a terminal all mean no. A build
@@ -414,8 +446,10 @@ The whole decision, shared by every platform: skip when asked to
 (`SPARLECTRA_NO_SYSIMAGE=1`, `--no-sysimage`) or when this process already
 booted from the image; relaunch through a usable image; otherwise offer the
 build and relaunch through the fresh one. `--rebuild-sysimage` builds even
-when the current image is fine. Returns `nothing` when the caller should
-just continue in this process.
+when the current image is fine. An image whose metadata names another
+project directory (`foreign_sysimage_owner`) is neither used nor removed;
+the build question says that a build replaces it. Returns `nothing` when the
+caller should just continue in this process.
 """
 function handle_sysimage(args::Vector{String}, script::AbstractString, project_dir::AbstractString;
                          image::AbstractString = sysimage_path(), ask = ask_build, relaunch = relaunch_with_sysimage,
@@ -434,7 +468,10 @@ function handle_sysimage(args::Vector{String}, script::AbstractString, project_d
 
   rebuild = REBUILD_FLAG in args
   passthrough = filter(a -> a != REBUILD_FLAG && a != NO_IMAGE_FLAG, args)
-  problem = sysimage_problem(image, project_dir)
+  # the image of another checkout is not judged against this one: it is not
+  # used, and not stale either, so it is never removed from here
+  owner = foreign_sysimage_owner(image, project_dir)
+  problem = owner === nothing ? sysimage_problem(image, project_dir) : "belongs to $(owner)"
 
   if !rebuild && problem === nothing
     relaunch(image, script, project_dir, passthrough)
@@ -445,15 +482,21 @@ function handle_sysimage(args::Vector{String}, script::AbstractString, project_d
   # changed, other Julia, unreadable metadata, metadata missing) is stale;
   # the Web UI never starts on it, and unless a new one replaces it now, it
   # goes
-  stale = problem !== nothing && (isfile(image) || isfile(sysimage_meta_path(image)))
+  stale = owner === nothing && problem !== nothing && (isfile(image) || isfile(sysimage_meta_path(image)))
 
   if rebuild
     println("Rebuilding the sysimage on request ($(REBUILD_FLAG)).")
+    owner === nothing || println("This replaces the sysimage of ", owner, ".")
   else
-    println("Sysimage: ", problem, ".")
+    if owner === nothing
+      println("Sysimage: ", problem, ".")
+    else
+      println("Sysimage: the sysimage belongs to ", owner, "; it is kept and the start goes on without it.")
+    end
     println("Building one takes a few minutes. Afterwards the Web UI starts in seconds")
     println("and no page has to compile on first use.")
-    if !ask("Build the sysimage now? [y/N] ")
+    question = owner === nothing ? "Build the sysimage now? [y/N] " : "Build a sysimage for this checkout now? It replaces the sysimage of $(owner). [y/N] "
+    if !ask(question)
       if stale && remove_stale_sysimage(image) === :removed
         println("Sysimage is out of date and was removed. Start with $(basename(script)) $(REBUILD_FLAG) to build a new one.")
       end
@@ -467,7 +510,8 @@ function handle_sysimage(args::Vector{String}, script::AbstractString, project_d
   # the build writes to a staging file and replaces the image only when it
   # succeeded; a failed build leaves the old image, which is stale and goes
   if build_sysimage(project_dir)
-    problem = sysimage_problem(image, project_dir)
+    owner = foreign_sysimage_owner(image, project_dir)
+    problem = owner === nothing ? sysimage_problem(image, project_dir) : "belongs to $(owner)"
     if problem === nothing
       relaunch(image, script, project_dir, passthrough)
       return nothing

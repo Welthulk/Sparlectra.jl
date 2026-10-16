@@ -73,7 +73,10 @@ function _roundtrip_net()
   addACLine!(net = net, fromBus = "HV1", toBus = "HV2", length = 0.5, r = 0.03, x = 0.2, b = 0.02)
   addLink!(net = net, fromBus = "HV1", toBus = "HV1B", status = 1)
   addPIModelTrafo!(net = net, fromBus = "HV2", toBus = "MV1", r_pu = 0.002, x_pu = 0.06, b_pu = 0.0, status = 1, ratio = 1.04, shift_deg = 2.0)
-  addProsumer!(net = net, busName = "HV1", type = "EXTERNALNETWORKINJECTION", referencePri = "HV1", vm_pu = 1.02, va_deg = 0.0)
+  addProsumer!(net = net, busName = "HV1", type = "EXTERNALNETWORKINJECTION", referencePri = "HV1", vm_pu = 1.02, va_deg = 0.0, pMin = -30.0, pMax = 120.0)
+  # the class marker of the importer, so the slack infeed leaves as
+  # ExternalNetworkInjection with its asymmetric P band
+  net.prosumpsVec[end].comp.cTyp = Sparlectra.ExternalNetworkInjection
   addProsumer!(net = net, busName = "HV2", type = "SYNCHRONOUSMACHINE", p = 15.0, q = 0.0, vm_pu = 1.01, isRegulated = true, qMin = -50.0, qMax = 50.0, pMin = 0.0, pMax = 80.0)
   addProsumer!(net = net, busName = "MV1", type = "ENERGYCONSUMER", p = 20.0, q = 5.0)
   addShuntMatpower!(net = net, busName = "MV1", Gs = 0.0, Bs = 4.0)
@@ -301,6 +304,10 @@ function run_cgmes_export_tests()
       @test length(svc) == 1
       @test svc[1].minQ == -121.0
       @test svc[1].maxQ == 121.0
+      # the asymmetric P band of the network injection comes back as
+      # written, in generator sign, not as the hull (-120, 120)
+      eni = only(p for p in net2.prosumpsVec if p.comp.cTyp == Sparlectra.ExternalNetworkInjection)
+      @test (eni.minP, eni.maxP) == (-30.0, 120.0)
       # the re-imported model reproduces the SV flows at the SV state
       @test compareWithSV(res).flows.max_dp < 1e-6
       # the exported SV state starts the re-import at the solution
@@ -454,6 +461,26 @@ function run_cgmes_export_tests()
       end
       # the exported SV flows of the three ends are the solved leg flows
       @test compareWithSV(back).flows.max_dp < 1e-6
+      # ends 1 and 3 carry a magnetizing admittance: before and after the
+      # round trip it sits at the star node (the arm seen at the star), the
+      # arm at the side bus is zero
+      function star_arms(net)
+        s = net.busDict["AUX3WT_T3W"]
+        arms = Tuple{ComplexF64,ComplexF64}[]
+        for br in net.branchVec
+          (br.fromBus == s || br.toBus == s) || continue
+          y0f = Sparlectra._branch_y0_from(br) / abs2(Sparlectra.calcBranchRatio(br))
+          y0t = Sparlectra._branch_y0_to(br)
+          push!(arms, br.fromBus == s ? (y0f, y0t) : (y0t, y0f))
+        end
+        return arms
+      end
+      for net in (res.net, back.net)
+        arms = star_arms(net)
+        @test length(arms) == 3
+        @test all(a -> iszero(last(a)), arms)
+        @test count(a -> !iszero(first(a)), arms) == 2
+      end
     end)() end
 
     @testset "zip packaging re-imports directly" begin (function ()

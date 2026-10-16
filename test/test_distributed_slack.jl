@@ -77,6 +77,38 @@ mpc.branch = [
   return path
 end
 
+# Hand case with lossless lines: reference A scheduled 30 MW, PV B 20 MW,
+# load C 80 MW. pg_weighted gives alpha 0.6/0.4 and lambda_P = 30 MW, so A
+# delivers 48 MW and B 32 MW. With `link = true` B sits behind a closed bus
+# link at A (bus "A2"), so the solver sees both units at one bus.
+function _dslack_hand_net(; link::Bool = false)
+  b = link ? "A2" : "B"
+  net = Net(name = link ? "dslack_hand_link" : "dslack_hand", baseMVA = 100.0)
+  for name in ("A", b, "C")
+    addBus!(net = net, busName = name, vn_kV = 110.0)
+  end
+  addPIModelACLine!(net = net, fromBus = "A", toBus = "C", r_pu = 0.0, x_pu = 0.1, b_pu = 0.0, status = 1)
+  if link
+    addLink!(net = net, fromBus = "A", toBus = b, status = 1)
+  else
+    addPIModelACLine!(net = net, fromBus = b, toBus = "C", r_pu = 0.0, x_pu = 0.1, b_pu = 0.0, status = 1)
+  end
+  addProsumer!(net = net, busName = "A", type = "EXTERNALNETWORKINJECTION", p = 30.0, vm_pu = 1.0, va_deg = 0.0, referencePri = "A")
+  addProsumer!(net = net, busName = b, type = "SYNCHRONOUSMACHINE", p = 20.0, vm_pu = 1.0)
+  addProsumer!(net = net, busName = "C", type = "ENERGYCONSUMER", p = 80.0, q = 0.0)
+  return net
+end
+
+# Pg and Pg eff cells (MW) of one bus row of the printed bus table, NaN for
+# an empty cell.
+function _dslack_table_pg(rendered::String, bus::String)
+  lines = split(rendered, '\n')
+  header = strip.(split(lines[findfirst(l -> occursin("Pg eff MW", l), lines)], '|'))
+  row = strip.(split(lines[findfirst(l -> length(split(l, '|')) > 3 && strip(split(l, '|')[3]) == bus, lines)], '|'))
+  cell(name) = something(tryparse(Float64, row[findfirst(==(name), header)]), NaN)
+  return cell("Pg [MW]"), cell("Pg eff MW")
+end
+
 # Two electrically disconnected islands, each with its own reference and one
 # PV participant, so the per-island lambda_P values must be independent.
 function _dslack_two_island_net()
@@ -165,6 +197,28 @@ function run_distributed_slack_tests()
       @test occursin("dSl alpha", rendered)
       @test occursin("Pg eff MW", rendered)
       @test occursin("0.6000", rendered)
+
+      # Hand case: Pg is the schedule and Pg eff the delivered generation at
+      # every participating bus, the reference included (the share was added
+      # to the solved slack value, 66 MW); the report rows and the units
+      # carry the delivered values (B had 20 MW, the units summed to 68).
+      for link in (false, true)
+        net_h = _dslack_hand_net(link = link)
+        b = link ? "A2" : "B"
+        _, erg_h = runpf!(net_h, 30, 1e-10, 0; distributed_slack_enabled = true, distributed_slack_p_mode = :pg_weighted)
+        @test erg_h == 0
+        @test isapprox(Sparlectra.rectangular_pf_status(net_h).distributed_slack_lambda_p_mw, 30.0; atol = 1e-6)
+        tmp_h = mktempdir()
+        printACPFlowResults(net_h, 0.0, 1, 1e-10, true, tmp_h)
+        rendered_h = read(joinpath(tmp_h, "result_$(net_h.name).txt"), String)
+        pg_a, eff_a = _dslack_table_pg(rendered_h, "A")
+        pg_b, eff_b = _dslack_table_pg(rendered_h, b)
+        @test (pg_a, eff_a, pg_b, eff_b) == (30.0, 48.0, 20.0, 32.0)
+        rows = buildACPFlowReport(net_h).nodes
+        @test isapprox([r.p_gen_MW for r in rows], [48.0, 32.0, 0.0]; atol = 1e-6)
+        distributeBusResults!(net_h)
+        @test isapprox([ps.pRes for ps in net_h.prosumpsVec], [48.0, 32.0, -80.0]; atol = 1e-6)
+      end
     end)() end
 
     @testset "equivalence: all weight on the REF bus reproduces classical" begin (function ()
@@ -333,6 +387,15 @@ power_flow:
       @test agg.distributed_slack_active == true
       @test agg.distributed_slack_participants == 2
       @test isapprox(agg.distributed_slack_lambda_p_mw, sum(st.distributed_slack_lambda_p_mw for st in values(statuses)); atol = 1e-9)
+      # The aggregate participation holds both islands in the numbering of
+      # the net (it held one island's rows on buses 1 and 2). A2 and C2
+      # deliver schedule plus share in the report rows.
+      part = agg.distributed_slack_participation
+      @test sort([(r.bus_idx, r.gen_index) for r in part]) == [(2, 2), (5, 5)]
+      rows = buildACPFlowReport(net8).nodes
+      for r in part
+        @test isapprox(rows[r.bus_idx].p_gen_MW, r.pg_mw + r.dp_mw; atol = 1e-9)
+      end
     end)() end
   end)() end
 end

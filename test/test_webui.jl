@@ -1210,6 +1210,26 @@ function run_webui_fast_tests()
             for artifact in ("se_state.csv", "se_diagnostics.md", "se_view.md", "measurements.csv")
                 @test isfile(joinpath(root, id1, artifact))
             end
+            # the bus/branch CSV checkbox on Web UI jobs: an SE run writes no
+            # such files and logs the export skipped; a power flow whose CSV
+            # export really fails (a directory takes the place of
+            # bus_voltages_complex.csv) still logs failed
+            csv_events = Tuple{String,Dict{Symbol,Any}}[]
+            csv_record = (event; fields...) -> (startswith(String(event), "detailed_result_csv_export") && push!(csv_events, (String(event), Dict{Symbol,Any}(fields))); nothing)
+            se_job = SparlectraApp.start_webui_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true, "measurement_file" => mfile, "detailed_result_csv" => true); event_callback=csv_record)
+            wait(SparlectraApp._POWERFLOW_WEBUI_JOBS[se_job["run_id"]]["task"])
+            @test SparlectraApp._POWERFLOW_WEBUI_JOBS[se_job["run_id"]]["status"] == "success"
+            @test [(e, get(f, :reason, nothing)) for (e, f) in csv_events if e != "detailed_result_csv_export_enabled"] == [("detailed_result_csv_export_skipped", "se_run")]
+            empty!(csv_events)
+            blocked_runner = function (request; case_directory=nothing)
+                mkpath(joinpath(request["output_root"], request["run_id"], "bus_voltages_complex.csv"))
+                return start_powerflow_run(request; case_directory)
+            end
+            pf_job = SparlectraApp.start_webui_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "detailed_result_csv" => true); runner=blocked_runner, event_callback=csv_record)
+            wait(SparlectraApp._POWERFLOW_WEBUI_JOBS[pf_job["run_id"]]["task"])
+            @test SparlectraApp._POWERFLOW_WEBUI_JOBS[pf_job["run_id"]]["status"] == "success"
+            @test any(((e, f),) -> e == "detailed_result_csv_export_failed" && get(f, :message, "") == "Detailed result CSV artifacts were not generated.", csv_events)
+            @test !any(((e, _),) -> e == "detailed_result_csv_export_skipped", csv_events)
             runs = SparlectraApp.list_powerflow_runs(root)
             row = only(r for r in runs if string(get(r, "run_id", "")) == id1)
             @test get(row, "run_mode", "") == "se"
@@ -1845,14 +1865,15 @@ function run_webui_fast_tests()
                 slk(name, args...; kw...) = Base.invokelatest(Base.invokelatest(getfield, SL, name), args...; kw...)
                 decide(args; ask, current = "") = begin
                     relaunches = String[]
+                    prompts = String[]
                     # stdout can be redirected into a file, not into a buffer
                     capture = joinpath(tmp, "decision.txt")
                     open(capture, "w") do out
                         redirect_stdout(out) do
-                            slk(:handle_sysimage, args, "start_webui.jl", proj; image = img, ask = (_...) -> ask, relaunch = (image, _...) -> push!(relaunches, String(image)), current_image = current)
+                            slk(:handle_sysimage, args, "start_webui.jl", proj; image = img, ask = (p, _...) -> (push!(prompts, String(p)); ask), relaunch = (image, _...) -> push!(relaunches, String(image)), current_image = current)
                         end
                     end
-                    (text = read(capture, String), relaunches = relaunches)
+                    (text = read(capture, String), relaunches = relaunches, prompts = prompts)
                 end
                 # an outdated image and the answer no: image and metadata are gone,
                 # the start goes on without an image
@@ -1877,6 +1898,37 @@ function run_webui_fast_tests()
                 @test occursin("given from outside", r.text)
                 @test isempty(r.relaunches)
                 @test isfile(img) && isfile(meta)
+                # one image per user: the image of another checkout (a release
+                # clone next to the dev checkout) is neither used nor removed,
+                # even when it would pass every check for this one; the build
+                # question names the image it replaces. full_meta above has no
+                # project_dir (an image built before the key) and keeps the old
+                # behaviour, as the cases above show.
+                other = joinpath(tmp, "other_checkout", "app")
+                mkpath(other)
+                write(meta, string(full_meta, "project_dir = \"", escape_string(other), "\"\n"))
+                touch(img)
+                r = decide(String[]; ask = false)
+                @test occursin("belongs to $(other)", r.text)
+                @test isempty(r.relaunches)
+                @test isfile(img) && isfile(meta)
+                @test length(r.prompts) == 1 && occursin("replaces the sysimage of $(other)", r.prompts[1])
+                # same with an outdated Manifest: still not this checkout's image
+                write(meta, string("julia_version = \"", VERSION, "\"\nmanifest_sha256 = \"deadbeef\"\nproject_dir = \"", escape_string(other), "\"\n"))
+                r = decide(String[]; ask = false)
+                @test !occursin("was removed", r.text)
+                @test isfile(img) && isfile(meta)
+                # this checkout recorded (with a trailing separator, as
+                # SPARLECTRA_APP_ROOT writes it before normalization): used when
+                # current, removed when outdated, as before
+                write(meta, string(full_meta, "project_dir = \"", escape_string(proj * "/"), "\"\n"))
+                touch(img)
+                r = decide(String[]; ask = false)
+                @test r.relaunches == [img]
+                write(meta, string("julia_version = \"", VERSION, "\"\nmanifest_sha256 = \"deadbeef\"\nproject_dir = \"", escape_string(proj), "\"\n"))
+                r = decide(String[]; ask = false)
+                @test occursin("Sysimage is out of date and was removed.", r.text)
+                @test !isfile(img) && !isfile(meta)
                 @test slk(:external_sysimage, img; current = "") === nothing
                 @test slk(:external_sysimage, img; current = joinpath(Sys.BINDIR, "..", "lib", "julia", "sys.so")) === nothing
                 @test slk(:remove_stale_sysimage, joinpath(tmp, "nowhere.so")) === :absent
@@ -2454,6 +2506,12 @@ function run_webui_fast_tests()
                 end
                 # and the verdicts are the expected ones, not merely equal
                 @test SparlectraApp.webui_sysimage_problem(image_path=img, project_dir=proj) == "the sysimage metadata is unreadable"
+                # the owner key the package writes is the one the launcher reads:
+                # the image belongs to proj, whatever the trailing separator
+                written = SparlectraApp.write_sysimage_meta(meta; manifest_path=manifest, project_dir=proj * "/")
+                @test written["project_dir"] == rstrip(realpath(proj), ['/', '\\'])
+                @test sl(:foreign_sysimage_owner, img, proj) === nothing
+                @test sl(:foreign_sysimage_owner, img, tmp) == written["project_dir"]
             end
         end)() end
 

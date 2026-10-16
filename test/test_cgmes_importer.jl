@@ -221,10 +221,11 @@ end
 # is the TapChangerControl target, `point_x` a reactance correction in
 # percent written on every table point (the importer applies it to the series
 # reactance; the SV profile is computed without it, so a delivery with
-# `point_x` is not checked against its SV).
+# `point_x` is not checked against its SV). `control_enabled = false` writes
+# the changer with controlEnabled false, so the import regulates it not.
 const _RTC_TABLE_RATIOS = Dict(1 => 0.97, 2 => 0.985, 3 => 1.0, 4 => 1.02, 5 => 1.045)
 
-function _cgmes_synth_rtc_table_dir(; target_kV::Float64 = 20.4, point_x::Float64 = 0.0)::String
+function _cgmes_synth_rtc_table_dir(; target_kV::Float64 = 20.4, point_x::Float64 = 0.0, control_enabled::Bool = true)::String
   t = _RTC_TABLE_RATIOS[5]
   z = complex(0.6, 12.0) / (110.0^2 / 100.0)
   y = 1.0 / z
@@ -265,7 +266,7 @@ $(points)
 <md:FullModel rdf:about="urn:uuid:sshrtct"><md:Model.profile>http://entsoe.eu/CIM/SteadyStateHypothesis/1/1</md:Model.profile></md:FullModel>
 <cim:ExternalNetworkInjection rdf:about="#_eni"><cim:ExternalNetworkInjection.p>$(fmt(-real(s_from)))</cim:ExternalNetworkInjection.p><cim:ExternalNetworkInjection.q>$(fmt(-imag(s_from)))</cim:ExternalNetworkInjection.q></cim:ExternalNetworkInjection>
 <cim:EnergyConsumer rdf:about="#_load"><cim:EnergyConsumer.p>20</cim:EnergyConsumer.p><cim:EnergyConsumer.q>5</cim:EnergyConsumer.q></cim:EnergyConsumer>
-<cim:RatioTapChanger rdf:about="#_rtc"><cim:TapChanger.step>5</cim:TapChanger.step><cim:TapChanger.controlEnabled>true</cim:TapChanger.controlEnabled></cim:RatioTapChanger>
+<cim:RatioTapChanger rdf:about="#_rtc"><cim:TapChanger.step>5</cim:TapChanger.step><cim:TapChanger.controlEnabled>$(control_enabled)</cim:TapChanger.controlEnabled></cim:RatioTapChanger>
 <cim:TapChangerControl rdf:about="#_tcc"><cim:RegulatingControl.enabled>true</cim:RegulatingControl.enabled><cim:RegulatingControl.targetValue>$(target_kV)</cim:RegulatingControl.targetValue><cim:RegulatingControl.targetDeadband>0.5</cim:RegulatingControl.targetDeadband></cim:TapChangerControl>
 <cim:Terminal rdf:about="#_t_eni"><cim:ACDCTerminal.connected>true</cim:ACDCTerminal.connected></cim:Terminal>
 <cim:Terminal rdf:about="#_t_load"><cim:ACDCTerminal.connected>true</cim:ACDCTerminal.connected></cim:Terminal>
@@ -780,6 +781,66 @@ function run_cgmes_importer_tests()
       @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict{String,Any}("cgmes_import" => Dict{String,Any}("equivalent_branch_min_z_pu" => -1.0)))
     end)() end
 
+    # The star equivalent of a three-winding transformer can have a negative
+    # leg r for a real unit; only the pair sums are physical. The CGMES and
+    # MATPOWER exports and the short circuit take the leg over unchanged,
+    # while a line or a two-winding transformer with r < 0 still aborts.
+    @testset "three-winding leg with negative r" begin (function ()
+      local C = Sparlectra.CGMESImporter
+      local store = C.loadCGMES(_cgmes_synth3w_dir())
+      # end 3: -0.002 + j0.8 ohm at 20 kV; the pair sums with end 1
+      # (0.4 ohm at 220 kV, 0.0033 ohm at 20 kV) and end 2 stay positive
+      store.objects["_t3w_e3"].attrs[:r] = "-0.002"
+      merge!(store.objects["_eni"].attrs, Dict(:maxInitialSymShCCurrent => "10000", :maxR1ToX1Ratio => "0.1"))
+      local res = importCGMES(path = store, name = "t3w_negative")
+      local net = res.net
+      local leg3 = net.branchVec[res.element_by_mrid["_t3w_e3"][2]]
+      local leg1 = net.branchVec[res.element_by_mrid["_t3w_e1"][2]]
+      local z1 = complex(Sparlectra.toPU_RXBG(r = 0.4, x = 24.0, v_kv = 220.0, baseMVA = net.baseMVA)[1:2]...)
+      local z3 = complex(Sparlectra.toPU_RXBG(r = -0.002, x = 0.8, v_kv = 20.0, baseMVA = net.baseMVA)[1:2]...)
+      @test leg3.r_base_pu == real(z3) < 0.0
+      @test Int(leg3.branchIdx) in Sparlectra._negative_r_allowed_branches(net)
+      @test last(runpf!(net, 30, 1e-8, 0)) == 0
+      local dir = mktempdir()
+      @test length(writeCGMESFiles(net; path = dir, notices = String[])) == 4
+      local back = importCGMES(path = dir, name = "t3w_back")
+      @test isapprox(back.net.branchVec[back.element_by_mrid["_t3w_e3"][2]].r_pu, leg3.r_pu; rtol = 1e-9)
+      @test last(runpf!(back.net, 30, 1e-8, 0)) == 0
+      local common = [n for n in keys(back.net.busDict) if haskey(net.busDict, n)]
+      @test length(common) == length(net.nodeVec)
+      @test maximum(n -> abs(back.net.nodeVec[back.net.busDict[n]]._vm_pu - net.nodeVec[net.busDict[n]]._vm_pu), common) < 1e-8
+      writeMatpowerCasefile(net, joinpath(dir, "t3w.m"); write_solution = false)
+      @test isapprox(minimum(Sparlectra.MatpowerIO.read_case(joinpath(dir, "t3w.m")).branch[:, 3]), real(z3); rtol = 1e-6)
+      # short circuit: one count line, and at the LV bus the grid impedance
+      # seen at the HV bus plus legs 1 and 3 (both with ratio 1)
+      local sc = runShortCircuit!(net, res.shortcircuit)
+      @test count(m -> startswith(m, Sparlectra._SC_3W_NEGATIVE_R * "1 "), sc.messages) == 1
+      @test occursin(Sparlectra._SC_3W_NEGATIVE_R * "1 ", sprint(Sparlectra.printShortCircuitResult, sc))
+      local hv = only(filter(r -> r.bus_idx == Int(leg1.toBus), sc.rows))
+      local lv = only(filter(r -> r.bus_idx == Int(leg3.toBus), sc.rows))
+      @test hv.status == :ok && lv.status == :ok && lv.vn_kV == 20.0
+      local zg = hv.zk_ohm / (220.0^2 / net.baseMVA) * (hv.rx_ratio + im) / sqrt(1 + hv.rx_ratio^2)
+      local zk = zg + z1 + z3
+      @test isapprox(lv.zk_ohm / (20.0^2 / net.baseMVA), abs(zk); rtol = 1e-9)
+      @test isapprox(lv.rx_ratio, real(zk) / imag(zk); rtol = 1e-9) && lv.rx_ratio > 0.0
+
+      # a line and a two-winding transformer with r < 0 are equipment
+      for kind in (:line, :transformer)
+        local t = Sparlectra.Net(name = "neg_" * string(kind), baseMVA = 100.0)
+        foreach(b -> addBus!(net = t, busName = b, vn_kV = 110.0), ("A", "B"))
+        if kind === :line
+          addPIModelACLine!(net = t, fromBus = "A", toBus = "B", r_pu = -0.001, x_pu = 0.1, b_pu = 0.0, status = 1)
+        else
+          Sparlectra._addPIModelTrafo_by_idx!(net = t, from = 1, to = 2, r_pu = -0.001, x_pu = 0.1, b_pu = 0.0, status = 1, ratio = 1.0, shift_deg = 0.0)
+        end
+        addProsumer!(net = t, busName = "A", type = "EXTERNALNETWORKINJECTION", referencePri = "A", vm_pu = 1.0, va_deg = 0.0)
+        @test isempty(Sparlectra._negative_r_allowed_branches(t))
+        @test_throws ErrorException writeCGMESFiles(t; path = mktempdir(), notices = String[])
+        @test_throws ErrorException writeMatpowerCasefile(t, joinpath(mktempdir(), "neg.m"); write_solution = false)
+        @test_throws ErrorException runShortCircuit!(t, Sparlectra.NativeShortCircuitData())
+      end
+    end)() end
+
     @testset "rdf:ID creates, literals and inherited attributes" begin (function ()
       @test countOf(store, :ACLineSegment) == 1
       line = only(objectsOf(store, :ACLineSegment))
@@ -979,9 +1040,29 @@ function run_cgmes_importer_tests()
       # off neutral puts that value far from the HV voltage, the provisional
       # start. The SV is written from the solved model, so at
       # the start the star carries no current and the three leg flows of
-      # compareWithSV equal the SV.
-      tdir = _cgmes_synth3w_dir(end1_tap_step = 19)
+      # compareWithSV equal the SV. Every end carries a magnetizing
+      # admittance, so the star balance includes the arms at the star.
+      tdir = _cgmes_synth3w_dir(end1_tap_step = 19, magnetizing = true)
       model = importCGMES(path = tdir, name = "synth3w_tap1_model")
+      # the unregulated end-1 changer (step 19 of 1..21, 1 % per step,
+      # neutral 11) gives its leg the linear range around the nominal ratio
+      leg1 = model.net.branchVec[last(model.element_by_mrid["_t3w_e1"])]
+      rho = leg1.tap_ratio / 1.08
+      @test all(isapprox.((leg1.tap_min, leg1.tap_max, leg1.tap_step), (0.9 * rho, 1.1 * rho, 0.01 * rho); rtol = 1e-12)) && leg1.tap_ratio_points === nothing
+      # the magnetizing admittance of each end sits at the star node (0.42.0),
+      # for the tapped legs 1 and 2 (side bus -> star) and the untapped leg 3
+      # (star -> side bus): the arm seen at the star is the end's g + jb
+      # referred to the star base, the arm at the side bus is zero
+      mstar = model.net.busDict["AUX3WT_T3W"]
+      for (k, (Uk, (g, b))) in enumerate(zip((220.0, 110.0, 20.0), _CGMES_SYNTH3W_MAG))
+        br = model.net.branchVec[last(model.element_by_mrid["_t3w_e$(k)"])]
+        y0f = Sparlectra._branch_y0_from(br) / abs2(Sparlectra.calcBranchRatio(br))
+        y0t = Sparlectra._branch_y0_to(br)
+        at_star, at_side = br.fromBus == mstar ? (y0f, y0t) : (y0t, y0f)
+        @test (br.fromBus == mstar) == (k == 3)
+        @test at_star ≈ complex(g, b) * Uk^2 / model.net.baseMVA rtol = 1e-12
+        @test iszero(at_side)
+      end
       @test runpf!(model.net, 30, 1e-10, 0)[2] == 0
       Vm = [nd._vm_pu * cis(deg2rad(nd._va_deg)) for nd in model.net.nodeVec]
       sv_v = Dict(tn => (abs(Vm[model.net.busDict[bus]]) * vn, rad2deg(angle(Vm[model.net.busDict[bus]]))) for (bus, tn, vn) in (("HV_BUS", "_tn_hv", 220.0), ("MV_BUS", "_tn_mv", 110.0), ("LV_BUS", "_tn_lv", 20.0)))
@@ -1008,6 +1089,59 @@ function run_cgmes_importer_tests()
       res0 = importCGMES(path = tdir, name = "synth3w_tap1_nolv")
       nd0 = res0.net.nodeVec[res0.net.busDict["AUX3WT_T3W"]]
       @test nd0._vm_pu == sv_v["_tn_hv"][1] / 220.0 && nd0._va_deg == sv_v["_tn_hv"][2]
+
+      # An open side terminal (Terminal.connected = false, the unit in
+      # service) keeps its leg open at the side bus: the winding is still
+      # magnetized from the star, so the end's admittance stays at the star
+      # as the input admittance of the open leg. End 2 is tapped (side bus ->
+      # star, the side is the from end), end 3 untapped (star -> side bus).
+      # The side bus has no other feed and is de-energized.
+      for k in (2, 3)
+        odir = _cgmes_synth3w_dir(end1_tap_step = 19, magnetizing = true, open_end = k)
+        ores = importCGMES(path = odir, name = "synth3w_open$(k)")
+        onet = ores.net
+        ostar = onet.busDict["AUX3WT_T3W"]
+        obr = onet.branchVec[last(ores.element_by_mrid["_t3w_e$(k)"])]
+        @test obr.status == 0
+        @test Sparlectra._branch_terminal_state(obr) == (k == 3 ? :open_to : :open_from)
+        @test (obr.fromBus == ostar) == (k == 3)
+        g, b = _CGMES_SYNTH3W_MAG[k]
+        ymag = complex(g, b) * (220.0, 110.0, 20.0)[k]^2 / onet.baseMVA
+        @test Sparlectra._open_terminal_yin(obr) ≈ ymag rtol = 1e-9
+        @test runpf!(onet, 30, 1e-10, 0)[2] == 0
+        # star balance: the two closed legs feed the open leg's magnetizing
+        # admittance at the star voltage
+        V = [nd._vm_pu * cis(deg2rad(nd._va_deg)) for nd in onet.nodeVec]
+        i_legs = zero(ComplexF64)
+        for j in 1:3
+          j == k && continue
+          br = onet.branchVec[last(ores.element_by_mrid["_t3w_e$(j)"])]
+          y11, y12, y21, y22 = Sparlectra.calcAdmittance(br, 1.0, 1.0)
+          i_legs += br.fromBus == ostar ? y11 * V[br.fromBus] + y12 * V[br.toBus] : y21 * V[br.fromBus] + y22 * V[br.toBus]
+        end
+        @test abs(i_legs + ymag * V[ostar]) < 1e-9
+        # export round trip: the open terminal goes out as connected = false
+        # and comes back as the leg open at its side bus. The export flattens
+        # the taps into the end ratedU and scales the star voltage by the
+        # end-1 ratio, so the re-imported leg runs star -> side bus and its
+        # arm differs in per unit; the power it draws at the star does not.
+        files = writeCGMESFiles(onet; path = mktempdir(), notices = String[])
+        back = importCGMES(path = dirname(files[1]), name = "synth3w_open$(k)_back")
+        @test !Sparlectra.CGMESImporter.terminalConnected(back.store.objects["_t_t3w_$(k)"])
+        bbr = back.net.branchVec[last(back.element_by_mrid["_t3w_e$(k)"])]
+        bst = Sparlectra._branch_terminal_state(bbr)
+        @test bst in (:open_from, :open_to)
+        @test (bst == :open_to ? bbr.toBus : bbr.fromBus) == back.net.busDict[k == 2 ? "MV_BUS" : "LV_BUS"]
+        @test runpf!(back.net, 30, 1e-10, 0)[2] == 0
+        Vb = [nd._vm_pu * cis(deg2rad(nd._va_deg)) for nd in back.net.nodeVec]
+        bstar = back.net.busDict["AUX3WT_T3W"]
+        @test abs2(Vb[bstar]) * Sparlectra._open_terminal_yin(bbr) ≈ abs2(V[ostar]) * ymag rtol = 1e-8
+        for bus in ("HV_BUS", k == 2 ? "LV_BUS" : "MV_BUS")
+          n1 = onet.nodeVec[onet.busDict[bus]]
+          n2 = back.net.nodeVec[back.net.busDict[bus]]
+          @test abs(n1._vm_pu - n2._vm_pu) < 1e-9 && abs(n1._va_deg - n2._va_deg) < 1e-7
+        end
+      end
     end)() end
 
     @testset "RatioTapChangerTable ratio at the tap position" begin (function ()
@@ -1055,6 +1189,27 @@ function run_cgmes_importer_tests()
       xbr = xr.net.branchVec[last(xr.element_by_mrid["_t2w"])]
       @test xbr.x_pu ≈ br.x_pu * 1.05 rtol = 1e-12
       @test xbr.r_pu ≈ br.r_pu atol = 1e-15
+      # a changer the import does not regulate (no tap_control, or
+      # controlEnabled false) carries range, table ratios and impedance per
+      # step as well, the start step unchanged; a controller configured
+      # afterwards steps on the table
+      pts = sort(collect(values(_RTC_TABLE_RATIOS)))
+      for (tap_control, enabled) in ((false, true), (true, false))
+        fr = importCGMES(path = _cgmes_synth_rtc_table_dir(point_x = 5.0, control_enabled = enabled), name = "synth_rtct_free", tap_control = tap_control)
+        fbr = fr.net.branchVec[last(fr.element_by_mrid["_t2w"])]
+        @test isempty(Sparlectra._tap_controllers(fr.net))
+        @test fbr.tap_ratio ≈ _RTC_TABLE_RATIOS[5] atol = 1e-12
+        @test fbr.x_pu ≈ xbr.x_pu rtol = 1e-12
+        @test fbr.tap_ratio_points !== nothing && fbr.tap_ratio_points ≈ pts
+        @test (fbr.tap_min, fbr.tap_max) == (pts[1], pts[end])
+        t = fbr.tap_step_impedance
+        @test t !== nothing && t.ratio_values ≈ pts && all(==((1.0, 1.05, 1.0, 1.0)), t.ratio_factors) && t.x_pu ≈ br.x_pu
+        tap_control && continue
+        lv = Sparlectra._bus_name_by_idx(fr.net)[fbr.toBus]
+        addPowerTransformerControl!(fr.net; trafo = string(fbr.branchIdx), mode = :voltage, target_bus = lv, target_vm_pu = 19.73 / 20.0, deadband_vm_pu = 0.0125)
+        @test run_sparlectra(net = fr.net, config = cfg).numerical_converged
+        @test fbr.tap_ratio != _RTC_TABLE_RATIOS[5] && any(r -> isapprox(fbr.tap_ratio, r; atol = 1e-12), pts)
+      end
     end)() end
 
     @testset "tap at its own terminal, impedance on the inner side" begin (function ()
@@ -1862,7 +2017,7 @@ function run_cgmes_importer_tests()
       end
       @test n_turned == 1
       # the magnetizing admittance of a 2W transformer sits half on each
-      # terminal (0.50.0), as in the SV of SmallGrid: the unit at the end of
+      # terminal (0.41.0), as in the SV of SmallGrid: the unit at the end of
       # its one transformer with an admittance matches at the SV state; the
       # per-end placement of 0.20.0 missed it by 2.29 MVAr
       pinevlle = only(r for r in compareWithSV(res).flows.rows if r.kind == :units && occursin("Pinevlle", r.name))
@@ -1942,6 +2097,53 @@ function run_cgmes_importer_tests()
       cfg = SparlectraConfig()
       @test !any(m -> occursin("ignore_connected = true", m), importCGMES(cfg; path = loaded, name = "sg_cfg").messages)
       @test any(m -> occursin("ignore_connected = true", m), importCGMES(cfg; path = loaded, name = "sg_cfg_ic", ignore_connected = true).messages)
+
+      # P limits of 9999 MW and above are placeholders (for example
+      # +-99999.9 MW on units without a limit) and arrive as no limit. In a copy
+      # DeerCrk SM (maxOperatingP 40 MW) gets +-99999.9 on its unit and its
+      # Q pair, and the first EquivalentInjection a P pair with one
+      # placeholder side. Taken as a limit, the placeholder made DeerCrk the
+      # largest unit of the net: the replacement slack of ensureSlack! and
+      # about 0.95 of the pmax weights of the distributed slack.
+      @testset "placeholder P limits" begin (function ()
+        local ph_store = deepcopy(loaded)
+        local deer = only(sm for sm in objectsOf(ph_store, :SynchronousMachine) if str(sm, :name) == "DeerCrk SM")
+        merge!(ph_store.objects[deer.refs[:GeneratingUnit]].attrs, Dict(:minOperatingP => "-99999.9", :maxOperatingP => "99999.9"))
+        merge!(deer.attrs, Dict(:minQ => "-99999.9", :maxQ => "99999.9"))
+        local ei1 = first(objectsOf(ph_store, :EquivalentInjection))
+        merge!(ei1.attrs, Dict(:minP => "-99999.9", :maxP => "300"))
+        local ph = importCGMES(path = ph_store, name = "sg_pmax_placeholder")
+        local k_deer = last(ph.element_by_mrid[deer.mrid])
+        local ps_deer = ph.net.prosumpsVec[k_deer]
+        @test (ps_deer.minP, ps_deer.maxP) == (nothing, nothing)
+        # the Q pair stays as delivered: an open band, where a missing pair
+        # would give +-max(ratedS, baseMVA)
+        @test (ps_deer.minQ, ps_deer.maxQ) == (-99999.9, 99999.9)
+        local ps_ei1 = ph.net.prosumpsVec[last(ph.element_by_mrid[ei1.mrid])]
+        @test (ps_ei1.minP, ps_ei1.maxP) == (nothing, nothing)
+        @test "notice: P limits of 9999 MW and above read as no limit (placeholder): 1 EquivalentInjection, 1 GeneratingUnit" in ph.messages
+        @test !any(m -> occursin("read as no limit", m), res.messages)
+        @test ph.slack_bus == res.slack_bus
+        # the slack unit drops out (no reference, no priority): ensureSlack!,
+        # the replacement of an outaged slack in N-1, takes a real 800 MW
+        # machine. The three EquivalentInjections are external units and
+        # outrank every machine, so the copy leaves them out.
+        local n1 = deepcopy(ph.net)
+        filter!(p -> p.comp.cTyp != Sparlectra.ExternalNetworkInjection, n1.prosumpsVec)
+        local k_slack = only(k for (k, p) in enumerate(n1.prosumpsVec) if Sparlectra.isSlack(p))
+        n1.prosumpsVec[k_slack].referencePri = nothing
+        n1.prosumpsVec[k_slack].referencePriority = 0
+        local picked = ensureSlack!(n1; log = false)
+        @test picked != Sparlectra.getPosumerBusIndex(ps_deer)
+        @test only(p for p in n1.prosumpsVec if Sparlectra.isSlack(p)).maxP == 800.0
+        # distributed slack: no pmax or headroom weight for the placeholder unit
+        local bt = [Sparlectra.getNodeType(nd) == Sparlectra.Slack ? :Slack : Sparlectra.getNodeType(nd) == Sparlectra.PV ? :PV : :PQ for nd in ph.net.nodeVec]
+        for mode in (:pmax_weighted, :headroom_weighted)
+          local ds = Sparlectra.build_distributed_slack_state(ph.net, bt; p_mode = mode, fallback = :error)
+          @test !any(g -> g.gen_index == k_deer, ds.gen_table)
+          @test sum(ds.alpha) ≈ 1.0
+        end
+      end)() end
 
       # RegulatingCondEq.controlEnabled of a SynchronousMachine. All 19
       # SmallGrid machines carry true, each alone on its bus with a local

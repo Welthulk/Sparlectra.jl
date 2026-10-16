@@ -151,9 +151,12 @@ struct _MapCtx
   # cgmes_import.equivalent_branch_min_z_pu: an EquivalentBranch below this
   # impedance becomes a bus link instead of a branch
   eb_min_z_pu::Float64
+  # mapped units per class whose P limit was a placeholder read as no limit
+  # (_pLimitsRead!); one notice in _mapInjections! counts them
+  p_limit_placeholders::Dict{String,Int}
 end
 _MapCtx(tap_control::Bool = false, ignore_connected::Bool = false; machine_control::Bool = false, vset_min_pu::Float64 = CGMES_VSET_MIN_PU, vset_max_pu::Float64 = CGMES_VSET_MAX_PU, strict_guards::Bool = false, map_energy_source::Bool = false, eb_min_z_pu::Float64 = 1e-6) =
-  _MapCtx(String[], Dict{String,Tuple{Int,Symbol}}(), Set{String}(), tap_control, machine_control, ignore_connected, vset_min_pu, vset_max_pu, Dict{String,Dict{String,String}}(), NamedTuple[], Dict{Tuple{String,String},Int}(), strict_guards, Dict{String,Int}(), Dict{String,Any}(), Dict{String,Tuple{Symbol,Int}}(), Pair{String,Sparlectra.PowerTransformerControl}[], map_energy_source, Int[], eb_min_z_pu)
+  _MapCtx(String[], Dict{String,Tuple{Int,Symbol}}(), Set{String}(), tap_control, machine_control, ignore_connected, vset_min_pu, vset_max_pu, Dict{String,Dict{String,String}}(), NamedTuple[], Dict{Tuple{String,String},Int}(), strict_guards, Dict{String,Int}(), Dict{String,Any}(), Dict{String,Tuple{Symbol,Int}}(), Pair{String,Sparlectra.PowerTransformerControl}[], map_energy_source, Int[], eb_min_z_pu, Dict{String,Int}())
 
 # SSH `Terminal.connected` through the ctx switch: `ignore_connected = true`
 # treats everything as connected (diagnostic mode for snapshots whose SSH
@@ -406,24 +409,134 @@ function _recordNewTapController!(ctx::_MapCtx, net, before::Vector{Sparlectra.P
   return nothing
 end
 
+# Tap range of the ratio tap changer `tc` on a branch with the present ratio
+# `tap_ratio`: ratio limits, step and, with a RatioTapChangerTable, the
+# ratio of every table point (`points`). The range lies around the nominal
+# ratio, the present ratio without the correction of the start step; at the
+# branch from side the correction multiplies the ratio, at the to side it
+# divides it. The linear formula keeps its uniform increment; a table hands
+# a controller its ratio per step, and `tap_step` is then the mean step over
+# the range (probe size, report).
+function _ratioTapRange(store::CGMESStore, svsteps::Dict{String,Float64}, tc::CIMObject, tap_ratio::Float64, on_from_side::Bool)
+  low = Int(round(num(tc, :lowStep, 0.0)))
+  high = Int(round(num(tc, :highStep, 0.0)))
+  table = _ratioTapTable(store, tc)
+  corr0, _ = _ratioTapCorrectionAt(tc, table, _tapStep(tc, svsteps))
+  rho_nom = on_from_side ? tap_ratio / corr0 : tap_ratio * corr0
+  ratios = Float64[(c = first(_ratioTapCorrectionAt(tc, table, Float64(k))); on_from_side ? rho_nom * c : rho_nom / c) for k in min(low, high):max(low, high)]
+  tmin, tmax = minimum(ratios), maximum(ratios)
+  (table === nothing || isempty(table)) && return (tap_min = tmin, tap_max = tmax, tap_step = abs(rho_nom * num(tc, :stepVoltageIncrement, 0.0) / 100.0), points = nothing)
+  return (tap_min = tmin, tap_max = tmax, tap_step = high != low ? (tmax - tmin) / abs(high - low) : 0.0, points = sort!(unique(ratios)))
+end
+
+function _setRatioTapRange!(br, rng)
+  br.has_ratio_tap = true
+  br.tap_min = rng.tap_min
+  br.tap_max = rng.tap_max
+  br.tap_step = rng.tap_step
+  # a linear changer steps on the uniform grid, also where another changer
+  # of the branch gave it table points before
+  br.tap_ratio_points = rng.points
+  return br
+end
+
+# Phase range of the phase tap changer `tc` on a branch with the present
+# shift `shift_deg`: shift limits and mean step around the base shift, the
+# present shift without the contribution of the start step. An end at the
+# branch to side enters negated, as in _applyEndTaps.
+function _phaseTapRange(store::CGMESStore, svsteps::Dict{String,Float64}, tc::CIMObject, shift_deg::Float64, on_from_side::Bool)
+  low = Int(round(num(tc, :lowStep, 0.0)))
+  high = Int(round(num(tc, :highStep, 0.0)))
+  _, ps0 = _phaseTapRatioShift(store, tc, svsteps)
+  base_shift = on_from_side ? shift_deg - ps0 : shift_deg + ps0
+  _, ps_low = _phaseTapRatioShift_atstep(store, tc, low)
+  _, ps_high = _phaseTapRatioShift_atstep(store, tc, high)
+  s1 = on_from_side ? base_shift + ps_low : base_shift - ps_low
+  s2 = on_from_side ? base_shift + ps_high : base_shift - ps_high
+  return (phase_min_deg = min(s1, s2), phase_max_deg = max(s1, s2), phase_step_deg = high > low ? abs(s2 - s1) / (high - low) : 1.0)
+end
+
+function _setPhaseTapRange!(br, rng)
+  br.has_phase_tap = true
+  br.phase_min_deg = rng.phase_min_deg
+  br.phase_max_deg = rng.phase_max_deg
+  br.phase_step_deg = rng.phase_step_deg
+  return br
+end
+
+# Whether _applyEndTaps folds the correction of `tc` into the branch: not
+# for a correction outside the plausibility band, nor for a
+# PhaseTapChangerTabular whose table does not resolve.
+function _tapCorrectionApplied(store::CGMESStore, svsteps::Dict{String,Float64}, tc::CIMObject)::Bool
+  if tc.class == :RatioTapChanger
+    corr = first(_ratioTapCorrectionAt(tc, _ratioTapTable(store, tc), _tapStep(tc, svsteps)))
+  else
+    tc.class == :PhaseTapChangerTabular && _phaseTapTableModel(store, tc, Int(round(_tapStep(tc, svsteps)))) === nothing && return false
+    corr = first(_phaseTapRatioShift(store, tc, svsteps))
+  end
+  return CGMES_TAP_CORR_MIN <= corr <= CGMES_TAP_CORR_MAX
+end
+
+# Tap range, table ratios and impedance per step of the tap changers on the
+# ends `ends` (end, whether it sits at the branch from side) of branch
+# `branch_idx`, regulated or not, so that a controller configured later
+# (control section) steps on the delivered range and table. Without this a
+# configured controller stepped on the constructor grid (0.9 to 1.1 in
+# steps of 0.00625). The changers the import regulates itself
+# (`controlled`, from _attachTapControl!) keep the range of their
+# controller; of the others the first ratio and the first phase changer of
+# the branch give the range, since the branch has one ratio and one shift.
+# Left out: a changer whose correction the import ignores
+# (_tapCorrectionApplied) and a changer without a range. Ratio, shift and
+# impedance of the start step stay as they are, so the solve does not
+# change.
+function _attachTapRanges!(net, store::CGMESStore, svsteps::Dict{String,Float64}, ctx::_MapCtx, branch_idx::Int, ends::Vector{Tuple{CIMObject,Bool}}, controlled::Vector{Tuple{CIMObject,Bool}}, trafo_name::AbstractString)
+  br_pos = findfirst(b -> b.branchIdx == branch_idx, net.branchVec)
+  br_pos === nothing && return nothing
+  br = net.branchVec[br_pos]
+  ratio_done = any(c -> c[1].class == :RatioTapChanger, controlled)
+  phase_done = any(c -> c[1].class != :RatioTapChanger, controlled)
+  ranged = Tuple{CIMObject,Bool}[]
+  for (e, on_from_side) in ends, tc in _tapChangersOfEnd(store, e.mrid)
+    any(c -> c[1] === tc, controlled) && continue
+    ratio = tc.class == :RatioTapChanger
+    (ratio ? ratio_done : phase_done) && continue
+    _tapCorrectionApplied(store, svsteps, tc) || continue
+    if ratio
+      rng = _ratioTapRange(store, svsteps, tc, br.tap_ratio, on_from_side)
+      rng.tap_max > rng.tap_min || continue
+      _setRatioTapRange!(br, rng)
+      ratio_done = true
+    else
+      rng = _phaseTapRange(store, svsteps, tc, br.phase_shift_deg, on_from_side)
+      rng.phase_max_deg > rng.phase_min_deg || continue
+      _setPhaseTapRange!(br, rng)
+      phase_done = true
+    end
+    push!(ranged, (tc, on_from_side))
+  end
+  _attachTapStepImpedance!(net, store, svsteps, ctx, branch_idx, vcat(controlled, ranged), trafo_name)
+  return nothing
+end
+
 # A controller moves the ratio or the angle of its branch; the r/x/g/b
-# deviations of a tap table belong to the step. For every controlled
-# tabular changer (`controlled`: changer and whether it sits at the branch
-# from side) the branch gets a TapStepImpedance: the branch values without
-# the factors of these changers at their start step, and per step the
-# value the controller's actuator takes there with the factors of that
-# step. The tap controller applies it after each move. A second controlled
-# table on the same actuator cannot be told apart by the branch value; its
-# impedance stays at the start step, with a notice.
-function _attachTapStepImpedance!(net, store::CGMESStore, svsteps::Dict{String,Float64}, ctx::_MapCtx, branch_idx::Int, controlled::Vector{Tuple{CIMObject,Bool}}, trafo_name::AbstractString)
-  isempty(controlled) && return nothing
+# deviations of a tap table belong to the step. For every tabular changer
+# with a range on the branch (`changers`: changer and whether it sits at
+# the branch from side; the regulated ones first) the branch gets a
+# TapStepImpedance: the branch values without the factors of these
+# changers at their start step, and per step the value the actuator takes
+# there with the factors of that step. A tap controller applies it after
+# each move. A second table on the same actuator cannot be told apart by
+# the branch value; its impedance stays at the start step, with a notice.
+function _attachTapStepImpedance!(net, store::CGMESStore, svsteps::Dict{String,Float64}, ctx::_MapCtx, branch_idx::Int, changers::Vector{Tuple{CIMObject,Bool}}, trafo_name::AbstractString)
+  isempty(changers) && return nothing
   br_pos = findfirst(b -> b.branchIdx == branch_idx, net.branchVec)
   br_pos === nothing && return nothing
   br = net.branchVec[br_pos]
   ratio_values, ratio_factors = Float64[], NTuple{4,Float64}[]
   phase_values, phase_factors = Float64[], NTuple{4,Float64}[]
   f0 = (1.0, 1.0, 1.0, 1.0)
-  for (tc, on_from_side) in controlled
+  for (tc, on_from_side) in changers
     _tapTableChangerApplies(store, svsteps, tc) || continue
     low = Int(round(num(tc, :lowStep, 0.0)))
     high = Int(round(num(tc, :highStep, 0.0)))
@@ -433,11 +546,11 @@ function _attachTapStepImpedance!(net, store::CGMESStore, svsteps::Dict{String,F
     ratio = tc.class == :RatioTapChanger
     name = something(str(tc, :name), tc.mrid)
     if !isempty(ratio ? ratio_values : phase_values)
-      push!(ctx.messages, "notice: tap controller $(trafo_name)/$(name), a second table on the same branch; its r/x/g/b deviations stay at the start step")
+      push!(ctx.messages, "notice: tap changer $(trafo_name)/$(name), a second table on the same branch; its r/x/g/b deviations stay at the start step")
       continue
     end
     start = _tapTablePointFactors(store, tc, _tapStep(tc, svsteps))
-    any(iszero, start) && (push!(ctx.messages, "notice: tap controller $(trafo_name)/$(name), the table point of the start step removes the impedance; its r/x/g/b deviations stay at the start step"); continue)
+    any(iszero, start) && (push!(ctx.messages, "notice: tap changer $(trafo_name)/$(name), the table point of the start step removes the impedance; its r/x/g/b deviations stay at the start step"); continue)
     f0 = f0 .* start
     if ratio
       # the branch tap_ratio holds the end correction at the from side as a
@@ -478,32 +591,12 @@ function _attachTapControl!(net, store::CGMESStore, topo::CGMESTopology, ctx::_M
     something(boolval(tcc, :enabled), false) || continue
     mode = something(enumval(tcc, :mode), "")
     br = net.branchVec[br_pos]
-    low = Int(round(num(tc, :lowStep, 0.0)))
-    high = Int(round(num(tc, :highStep, 0.0)))
     name = something(str(tc, :name), tc.mrid)
 
     if tc.class == :RatioTapChanger && endswith(mode, ".voltage")
-      # translate step range into branch tap-ratio limits around the branch's
-      # nominal ratio (current ratio with the initial correction removed).
-      # The corrections come from the same helper as the fixed-tap import,
-      # so a RatioTapChangerTable sets the start ratio, the range and the
-      # step as well.
-      table = _ratioTapTable(store, tc)
-      corr0, _ = _ratioTapCorrectionAt(tc, table, _tapStep(tc, svsteps))
-      rho_nom = on_from_side ? br.tap_ratio / corr0 : br.tap_ratio * corr0
-      ratios = Float64[(c = first(_ratioTapCorrectionAt(tc, table, Float64(k))); on_from_side ? rho_nom * c : rho_nom / c) for k in min(low, high):max(low, high)]
-      br.has_ratio_tap = true
-      br.tap_min = minimum(ratios)
-      br.tap_max = maximum(ratios)
-      # the linear formula keeps its uniform increment; a table hands the
-      # controller its ratio per step (tap_ratio_points), tap_step is then
-      # the mean step over the range (probe size, report)
-      if table === nothing || isempty(table)
-        br.tap_step = abs(rho_nom * num(tc, :stepVoltageIncrement, 0.0) / 100.0)
-      else
-        br.tap_step = high != low ? (br.tap_max - br.tap_min) / abs(high - low) : 0.0
-        br.tap_ratio_points = sort!(unique(ratios))
-      end
+      # step range as branch tap-ratio limits around the nominal ratio, from
+      # the same corrections as the fixed-tap import (table or linear)
+      _setRatioTapRange!(br, _ratioTapRange(store, svsteps, tc, br.tap_ratio, on_from_side))
       # master/slave group dedup (#322): several tap changers referencing
       # ONE TapChangerControl are a regulated parallel-transformer group.
       # The first one becomes the master controller; every later one joins
@@ -544,18 +637,8 @@ function _attachTapControl!(net, store::CGMESStore, topo::CGMESTopology, ctx::_M
       end
       push!(ctx.messages, "tap control: $(trafo_name)/$(name) → voltage $(round(target / tinfo.vn_kV; digits = 4)) pu at $(tinfo.bus)")
     elseif tc.class != :RatioTapChanger && endswith(mode, ".activePower")
-      # phase tap: translate step range into branch phase limits around the
-      # branch's base shift (initial phase-tap contribution removed)
-      pr0, ps0 = _phaseTapRatioShift(store, tc, svsteps)
-      base_shift = on_from_side ? br.phase_shift_deg - ps0 : br.phase_shift_deg + ps0
-      _, ps_low = _phaseTapRatioShift_atstep(store, tc, low)
-      _, ps_high = _phaseTapRatioShift_atstep(store, tc, high)
-      s1 = on_from_side ? base_shift + ps_low : base_shift - ps_low
-      s2 = on_from_side ? base_shift + ps_high : base_shift - ps_high
-      br.has_phase_tap = true
-      br.phase_min_deg = min(s1, s2)
-      br.phase_max_deg = max(s1, s2)
-      br.phase_step_deg = high > low ? abs(s2 - s1) / (high - low) : 1.0
+      # phase tap: step range as branch phase limits around the base shift
+      _setPhaseTapRange!(br, _phaseTapRange(store, svsteps, tc, br.phase_shift_deg, on_from_side))
       # monitored branch side from the control terminal
       tccterm = get(tcc.refs, :Terminal, nothing)
       side = tccterm === nothing ? nothing : get(ctx.branch_side, tccterm, nothing)
@@ -1419,11 +1502,11 @@ function _map2WTrafo!(net, store, topo, created, svmap, svsteps, baseMVA, pt, en
   fr, fx, fg, fb = fr1 * fr2, fx1 * fx2, fg1 * fg2, fb1 * fb2
   r_pu, x_pu, b_pu, g_pu = Sparlectra.toPU_RXBG(r = z.r * fr, x = z.x * fx, g = z.g * fg, b = z.b * fb, v_kv = i_t.vn_kV, baseMVA = baseMVA)
   # magnetizing admittance: half of the total of both ends on each terminal
-  # arm (0.50.0), the from arm behind the ratio. The SV of SmallGrid and
+  # arm (0.41.0), the from arm behind the ratio. The SV of SmallGrid and
   # of MicroGrid BE and NL is computed this way (unit rows at the
   # transformer ends 0.000 MVAr); the per-end placement of 0.20.0 left up to
   # 3.6 MVAr there. The PowSyBl import keeps the per-end placement, the 3W
-  # legs keep the end admittance at their side terminal.
+  # legs put the end admittance at the star node (_map3WTrafo!).
   g_from_pu = g_to_pu = 0.5 * g_pu
   b_from_pu = b_to_pu = 0.5 * b_pu
   ratio = (Uf / Ut) / (i_f.vn_kV / i_t.vn_kV)
@@ -1466,10 +1549,8 @@ function _map2WTrafo!(net, store, topo, created, svmap, svsteps, baseMVA, pt, en
   # the export writes for the flattened shift
   ptc = something(_firstPhaseTapChangerMrid(store, ef.mrid), _firstPhaseTapChangerMrid(store, et.mrid), Some(nothing))
   ptc === nothing || (net.cgmes_ids[string(ptKey, "|PTC")] = cgmesCanonicalMrid(ptc))
-  if ctx.tap_control
-    controlled = vcat(_attachTapControl!(net, store, topo, ctx, svsteps, ef, idx, true, name), _attachTapControl!(net, store, topo, ctx, svsteps, et, idx, false, name))
-    _attachTapStepImpedance!(net, store, svsteps, ctx, idx, controlled, name)
-  end
+  controlled = ctx.tap_control ? vcat(_attachTapControl!(net, store, topo, ctx, svsteps, ef, idx, true, name), _attachTapControl!(net, store, topo, ctx, svsteps, et, idx, false, name)) : Tuple{CIMObject,Bool}[]
+  _attachTapRanges!(net, store, svsteps, ctx, idx, [(ef, true), (et, false)], controlled, name)
 end
 
 function _map3WTrafo!(net, store, topo, created, svmap, svsteps, baseMVA, pt, ends, ctx::_MapCtx)
@@ -1497,6 +1578,17 @@ function _map3WTrafo!(net, store, topo, created, svmap, svsteps, baseMVA, pt, en
   aux = Sparlectra.geNetBusIdx(net = net, busName = auxname)
   aux in ctx.star_buses || push!(ctx.star_buses, aux)
 
+  # A leg whose side terminal is open stays in the model open at its side
+  # bus (the per-terminal status of the 2W transformers): as long as another
+  # end is connected the star is energized and the winding stays magnetized
+  # from it, so the leg keeps its magnetizing arm at the star as the input
+  # admittance of the open leg. A unit out of service or with every end open
+  # has no live star; its legs are fully open.
+  pt_in_service = _inService(ctx, pt)
+  star_live = pt_in_service && any(i -> _conn(ctx, i.connected), infos)
+  n_open = star_live ? count(i -> !_conn(ctx, i.connected), infos) : 0
+  n_open > 0 && push!(ctx.messages, "notice: 3W PowerTransformer $(name) has $(n_open) open end terminal(s), the leg kept open at its side bus with the magnetizing admittance at the star")
+
   side_buses = String[]
   for (k, e) in enumerate(ends)
     ik = infos[k]
@@ -1509,27 +1601,37 @@ function _map3WTrafo!(net, store, topo, created, svmap, svsteps, baseMVA, pt, en
     t_struct = (U1 / Uk) / (vn_aux / ik.vn_kV)
     bk = _ensureBus!(net, created, topo, svmap, ik.tn)
     side = Sparlectra.geNetBusIdx(net = net, busName = bk)
-    status = (_conn(ctx, ik.connected) && _inService(ctx, pt)) ? 1 : 0
+    side_st = (pt_in_service && _conn(ctx, ik.connected)) ? 1 : 0
+    star_st = star_live ? 1 : 0
+    status = side_st * star_st
     # A leg with tap changers runs side bus → star: the tap sits at the
     # terminal of its end, the leg impedance on the inner side (the
     # arrangement the SV of real deliveries and OpenLoadFlow use, and the
     # one the PowSyBl builder uses for every leg). Ratio (structural and
     # tap) at the from side, impedance and magnetizing admittance on the
-    # star base, the magnetizing admittance as the from arm behind the
-    # ratio. A tap correction does not scale the impedance, so this is not
-    # the same as the star → side leg with z·|c|². A leg without tap
+    # star base. A tap correction does not scale the impedance, so this is
+    # not the same as the star → side leg with z·|c|². A leg without tap
     # changers keeps star → side with the impedance at the side bus, which
     # is the same circuit as the turned leg.
+    #
+    # The magnetizing admittance of every end sits at the star node, the
+    # side arm is zero (0.42.0). The 3W terminal flows then close against
+    # the SV at the star, not at the side terminal, and MicroGrid BE solves
+    # closer to its SV. g and b are taken as delivered, sign included.
     turned = _trafoEndHasTaps(store, e)
     if turned
       ratio, shift = _applyEndTaps(store, svsteps, e, 1.0 / t_struct, 0.0, true, ctx.messages; strict = ctx.strict_guards)
       t2 = t_struct^2
-      Sparlectra._addPIModelTrafo_by_idx!(net = net, from = side, to = aux, r_pu = r_pu * t2, x_pu = x_pu * t2, b_pu = b_pu / t2, g_pu = g_pu / t2, status = status, ratedU = Uk, ratedS = num(e, :ratedS), ratio = ratio, shift_deg = shift, g_from_pu = g_pu / t2, b_from_pu = b_pu / t2, g_to_pu = 0.0, b_to_pu = 0.0)
+      # the star is the to side: g, b referred to the star base through the
+      # structural ratio only, as the to arm on the star bus
+      Sparlectra._addPIModelTrafo_by_idx!(net = net, from = side, to = aux, r_pu = r_pu * t2, x_pu = x_pu * t2, b_pu = b_pu / t2, g_pu = g_pu / t2, status = status, ratedU = Uk, ratedS = num(e, :ratedS), ratio = ratio, shift_deg = shift, from_status = side_st, to_status = star_st, g_from_pu = 0.0, b_from_pu = 0.0, g_to_pu = g_pu / t2, b_to_pu = b_pu / t2)
     else
       # star → side bus: the end impedance on its own end base = the leg's
-      # TO side, which is what calcAdmittance expects; the end's magnetizing
-      # admittance is the to arm (0.20.0), the star arm is zero
-      Sparlectra._addPIModelTrafo_by_idx!(net = net, from = aux, to = side, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, g_pu = g_pu, status = status, ratedU = Uk, ratedS = num(e, :ratedS), ratio = t_struct, shift_deg = 0.0, g_from_pu = 0.0, b_from_pu = 0.0, g_to_pu = g_pu, b_to_pu = b_pu)
+      # TO side, which is what calcAdmittance expects. The star is the from
+      # side, so g, b on the end base are the from arm: it sits behind the
+      # ratio and reaches the star bus as y / t_struct², the end admittance
+      # referred to the star base
+      Sparlectra._addPIModelTrafo_by_idx!(net = net, from = aux, to = side, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, g_pu = g_pu, status = status, ratedU = Uk, ratedS = num(e, :ratedS), ratio = t_struct, shift_deg = 0.0, from_status = star_st, to_status = side_st, g_from_pu = g_pu, b_from_pu = b_pu, g_to_pu = 0.0, b_to_pu = 0.0)
     end
     # one branch per leg, so the leg is addressed by its end, not by the
     # transformer
@@ -1540,15 +1642,13 @@ function _map3WTrafo!(net, store, topo, created, svmap, svsteps, baseMVA, pt, en
     # the same pair keeps a consistent <k>
     cgmesNextBusEquipmentIndex!(ctx.eqp_counters, "PT", _cgmesTrafoPairKey(auxname, bk))
     push!(side_buses, bk)
-    if ctx.tap_control
-      # #294 point 4: the star-equivalent leg is an ordinary PI-model trafo
-      # branch, so the same controller attachment as for 2W transformers
-      # applies per leg; the tapped end is the from side of its leg
-      legname = string(name, " (leg ", k, ")")
-      legidx = net.branchVec[end].branchIdx
-      controlled = _attachTapControl!(net, store, topo, ctx, svsteps, e, legidx, true, legname)
-      _attachTapStepImpedance!(net, store, svsteps, ctx, legidx, controlled, legname)
-    end
+    # #294 point 4: the star-equivalent leg is an ordinary PI-model trafo
+    # branch, so the same controller attachment and tap range as for 2W
+    # transformers apply per leg; the tapped end is the from side of its leg
+    legname = string(name, " (leg ", k, ")")
+    legidx = net.branchVec[end].branchIdx
+    controlled = ctx.tap_control ? _attachTapControl!(net, store, topo, ctx, svsteps, e, legidx, true, legname) : Tuple{CIMObject,Bool}[]
+    _attachTapRanges!(net, store, svsteps, ctx, legidx, [(e, true)], controlled, legname)
   end
   # identity capture under the three-winding key (sorted side buses): the
   # exporter reassembles the star as one PowerTransformer with three ends
@@ -1599,8 +1699,10 @@ star (a leg with its side end open adds its input admittance to `Y_ss`
 only). Applied when the star has at least one closed leg and every closed
 leg reaches a side whose TopologicalNode carries an SV voltage above zero;
 otherwise the provisional start stays. Runs once every branch is built, so
-the stamps hold every ratio and impedance the mapping set. The importer puts
-no shunt on a star bus. Returns the number of star buses set.
+the stamps hold every ratio and impedance the mapping set, and `Y_ss` holds
+the magnetizing admittance of the ends, which the legs carry as their arm at
+the star. The importer puts no bus shunt on a star bus. Returns the number
+of star buses set.
 """
 function _startStarBuses!(net, ctx::_MapCtx, topo::CGMESTopology, svmap::Dict{String,Tuple{Float64,Float64}})::Int
   isempty(ctx.star_buses) && return 0
@@ -1941,6 +2043,27 @@ end
 # comment in _mapInjections!): [min(a,-b), max(b,-a)]
 _limitHullMin(a::Union{Nothing,Float64}, b::Union{Nothing,Float64}) = (a === nothing || b === nothing) ? nothing : min(a, -b)
 _limitHullMax(a::Union{Nothing,Float64}, b::Union{Nothing,Float64}) = (a === nothing || b === nothing) ? nothing : max(b, -a)
+
+# An active power limit of 9999 MW and above in magnitude is the way a
+# delivery says "no limit stated" (a placeholder such as +-99999.9 MW on
+# units without a limit, MATPOWER and IIDM cases 9999 on every unit); no unit is that
+# large. Taken as a limit, such a unit wins the slack ranking by size and the
+# island slack choice by reserve, and takes almost all of the pmax and
+# headroom weights of the distributed slack. The importer reads it as no
+# limit (nothing). One constant with the short circuit, which reads a
+# maximum of that size as no machine size: Sparlectra.SC_PMAX_PLACEHOLDER_MW.
+# The core keeps such values, because MATPOWER cases carry 9999 as their
+# ordinary Pmax and the readers there must not change.
+_pLimit(x::Union{Nothing,Float64}) = (x === nothing || abs(x) >= Sparlectra.SC_PMAX_PLACEHOLDER_MW) ? nothing : x
+
+# Both P limits of one mapped unit through _pLimit; a unit with a
+# placeholder on either side is counted once under `class` for the notice.
+function _pLimitsRead!(ctx::_MapCtx, class::String, lo::Union{Nothing,Float64}, hi::Union{Nothing,Float64})
+  plo = _pLimit(lo)
+  phi = _pLimit(hi)
+  ((plo === nothing && lo !== nothing) || (phi === nothing && hi !== nothing)) && (ctx.p_limit_placeholders[class] = get(ctx.p_limit_placeholders, class, 0) + 1)
+  return plo, phi
+end
 
 """
 Collect `ReactiveCapabilityCurve` points: curve mRID → `CurveData` tuples
@@ -3049,6 +3172,12 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
     end
     bus = _ensureBus!(net, created, topo, svmap, t.tn)
     gu = ref(store, sm, :GeneratingUnit)
+    # P limits of the unit, a placeholder of 9999 MW and above read as none
+    # (_pLimit). The Q pair is kept as delivered even when it is a
+    # placeholder: a machine without minQ/maxQ gets the band +-max(ratedS,
+    # baseMVA) below, which can bind, while +-99999.9 is an open band as
+    # stated.
+    gu_pmin, gu_pmax = gu === nothing ? (nothing, nothing) : _pLimitsRead!(ctx, "GeneratingUnit", num(gu, :minOperatingP), num(gu, :maxOperatingP))
     ratedS = num(sm, :ratedS, 0.0)
     # GeneratingUnit.normalPF → distributed-slack participation weight
     # (issue #192). Same storage rule as the MATPOWER APF path: only positive
@@ -3125,8 +3254,8 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
         referencePriority = _cgmesReferencePriority(prio),
         p = -num(sm, :p, 0.0),                       # CGMES machine sign: p < 0 = injection
         q = -num(sm, :q, 0.0),
-        pMin = gu === nothing ? nothing : num(gu, :minOperatingP),
-        pMax = gu === nothing ? nothing : num(gu, :maxOperatingP),
+        pMin = gu_pmin,
+        pMax = gu_pmax,
         # The ENTSO-E test sets are inconsistent about the sign convention of
         # machine minQ/maxQ (MicroGrid NL: load convention like p/q — the SV
         # q lies in [-maxQ, -minQ]; SmallGrid: injection convention). Stage 1
@@ -3204,7 +3333,8 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
     end
     bus = _ensureBus!(net, created, topo, svmap, t.tn)
     prio = num(eni, :referencePriority, 0.0)
-    maxP = abs(something(num(eni, :maxP), num(eni, :p, 0.0)))
+    # the size for the ranking: maxP, a placeholder (_pLimit) read as none
+    maxP = abs(something(_pLimit(num(eni, :maxP)), num(eni, :p, 0.0)))
     bus in angle_ref_buses && push!(scan.by_priority, (0.0, -maxP, bus))
     prio >= 1.0 && push!(scan.by_priority, (prio, -maxP, bus))
     push!(scan.enis, (maxP, bus))
@@ -3215,6 +3345,15 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
     ctrl_enabled || push!(ctrl_off, (class = :ExternalNetworkInjection, mrid = eni.mrid, name = name))
     vset, vctrl, _ = ctrl_enabled ? _voltageSetpoint(store, topo, eni, t.tn, ctx.messages; vset_min_pu = ctx.vset_min_pu, vset_max_pu = ctx.vset_max_pu) : (nothing, false, nothing)
     eni_rc = ref(store, eni, :RegulatingControl)
+    # P limits from EQ minP/maxP as delivered, in generator sign, as for the
+    # EquivalentInjection below: the CIM names them limits "of the
+    # injection", PowSyBl takes them unchanged as generator minP/maxP and
+    # writes them back so, and our export writes the prosumer pMin/pMax the
+    # same way. The hull would widen an asymmetric range such as (-5, 15)
+    # to (-15, 15). A missing, degenerate (0/0) or inverted pair gives none,
+    # and so does a pair with a placeholder of 9999 MW and above (_pLimit).
+    plo, phi = _pLimitsRead!(ctx, "ExternalNetworkInjection", num(eni, :minP), num(eni, :maxP))
+    (plo === nothing || phi === nothing || (phi - plo) < 1e-6) && (plo = phi = nothing)
     push!(
       pending,
       (
@@ -3223,8 +3362,8 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
         referencePriority = _cgmesReferencePriority(prio),
         p = -num(eni, :p, 0.0),                      # load convention → injection
         q = -num(eni, :q, 0.0),
-        pMin = _limitHullMin(num(eni, :minP), num(eni, :maxP)),
-        pMax = _limitHullMax(num(eni, :minP), num(eni, :maxP)),
+        pMin = plo,
+        pMax = phi,
         qMin = _limitHullMin(num(eni, :minQ), num(eni, :maxQ)),
         qMax = _limitHullMax(num(eni, :minQ), num(eni, :maxQ)),
         vm_pu = vctrl ? _pvVoltage(net, bus, vset) : nothing,
@@ -3471,10 +3610,10 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
     # prosumer pMin/pMax the same way. Unlike the scalar Q pair (hull, the
     # test sets disagree on its sign) the hull would widen an asymmetric
     # range such as (-5, 15) to (-15, 15). A missing, degenerate (0/0) or
-    # inverted pair gives none. Distributed slack (p_mode pmax/headroom, the
-    # P-limit check) and the slack ranking read them.
-    plo = num(ei, :minP)
-    phi = num(ei, :maxP)
+    # inverted pair gives none, and so does a pair with a placeholder of
+    # 9999 MW and above (_pLimit). Distributed slack (p_mode pmax/headroom,
+    # the P-limit check) and the slack ranking read them.
+    plo, phi = _pLimitsRead!(ctx, "EquivalentInjection", num(ei, :minP), num(ei, :maxP))
     (plo === nothing || phi === nothing || (phi - plo) < 1e-6) && (plo = phi = nothing)
     push!(
       pending,
@@ -3579,6 +3718,10 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
   end
   n_pf = count(inj -> get(inj, :participationFactor, nothing) !== nothing, pending)
   n_pf > 0 && push!(ctx.messages, "participation factors: $(n_pf) machines with normalPF")
+  if !isempty(ctx.p_limit_placeholders)
+    counts = join(["$(n) $(cls)" for (cls, n) in sort(collect(ctx.p_limit_placeholders))], ", ")
+    push!(ctx.messages, "notice: P limits of $(round(Int, Sparlectra.SC_PMAX_PLACEHOLDER_MW)) MW and above read as no limit (placeholder): $(counts)")
+  end
   return slack_bus
 end
 
@@ -3744,6 +3887,14 @@ only with EQ `regulationCapability = true`, SSH `regulationStatus = true` and
 a positive `regulationTarget` (an absent flag counts as `false`). One notice
 counts the units with `regulationCapability = true` and no
 `regulationStatus`.
+
+An active power limit of 9999 MW and above in magnitude
+(`GeneratingUnit.minOperatingP`/`maxOperatingP`, `minP`/`maxP` of an
+`ExternalNetworkInjection` or `EquivalentInjection`) is a placeholder and
+arrives as no limit (`nothing`): the unit is not ranked by it in a slack
+choice and gets no weight from it in the distributed slack.
+One notice counts these units per class. Q limits keep their delivered
+values.
 
 With `map_energy_source = true` every in-service, connected `EnergySource`
 on a TopologicalNode becomes a fixed PQ injection (`GENERATOR` prosumer,

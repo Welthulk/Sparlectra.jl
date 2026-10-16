@@ -73,9 +73,10 @@ failed build.
 ## Staleness
 
 `sysimage_meta.toml` next to the image records Sparlectra and Julia
-version, OS and architecture, the `Manifest.toml` SHA-256 and the build
-time; the launcher checks it before every start, the Sysimage page shows
-the same verdict, nothing is rebuilt silently.
+version, OS and architecture, the `Manifest.toml` SHA-256, the checkout
+(`project_dir`) and the build time; the launcher checks it before every
+start, the Sysimage page shows the same verdict on version, Manifest and
+sources, nothing is rebuilt silently.
 
 | Trigger | What happens |
 |---|---|
@@ -84,6 +85,7 @@ the same verdict, nothing is rebuilt silently.
 | `Manifest.toml` hash differs (package update) | `the sysimage does not match the current Manifest.toml`; deleted as above |
 | a `src/*.jl` file newer than the image (development checkout) | `the sysimage is older than <checkout>/src`; deleted as above (rebuild after every edit, or `--no-sysimage` while working) |
 | metadata unreadable | treated as outdated |
+| image built from another checkout (one image per user, e.g. a release clone next to the development checkout) | `the sysimage belongs to <dir>`; it is neither used nor removed, and a build for this checkout replaces it. An image built before 0.42.0 records no checkout and follows the rows above |
 | failed build | the previous image stays: the build compiles to a staging file and moves it into place only when complete |
 | Windows, image file kept open by another Julia | the start goes on without an image and the next start tries again |
 | image given from outside with `-J` | neither checked, rebuilt nor removed |

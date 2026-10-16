@@ -2671,15 +2671,23 @@ function test_state_estimation_tap_fallback_diagnostics_consistent()::Bool
       @test !occursin("Reverted:", diag)
       @test !occursin("Not eliminated", diag)
     end
-    # the staged start (the service default) converges on the same set, and
-    # the fixed taps fit better than the model positions (measured J 1964 at
-    # dof 75 against 2859 at dof 78), so the estimate is kept
+    # the acceptance rule of the staged start: on this set the staged
+    # estimate converges but its fixed taps fit worse than the model
+    # positions (measured J 48298 at dof 75 against 46692 at dof 78), so it
+    # is rejected and the run falls back with its own reason and note on
+    # every surface. Until a5121638 this set kept its estimate: the two
+    # 380 kV legs of the three-winding transformers (1 % steps, 1 to 33,
+    # neutral 17) fixed on the constructor grid of 0.625 %, where the
+    # estimate fit better than the model; since a5121638 they fix on their
+    # delivered 1 % steps (-1 instead of -2 steps of 0.625 % on branch 14)
     _minigrid_fallback_run(set, "minigrid_fb_staged"; staged = true) do dd, log, diag
-      @test dd["status"] == "succeeded"
+      _assert_minigrid_fallback_report(dd, log, diag, "minigrid_fb_staged", set)
       @test get(dd["metadata"], "se_tap_staged_start", false) == true
-      @test get(dd["metadata"], "se_tap_estimation_fallback", false) == false
-      @test occursin("tap estimation: staged start", log)
-      @test !occursin("repeating WITHOUT tap estimation", log)
+      @test get(dd["metadata"], "se_tap_estimation_fallback_reason", "") == "worse_fit"
+      @test occursin("tap estimation rejected:", log)
+      @test occursin(SparlectraApp._SE_TAP_REJECTED_NOTE, diag)
+      @test occursin(SparlectraApp._SE_TAP_REJECTED_NOTE, SparlectraApp._webui_se_summary(dd))
+      @test occursin(SparlectraApp._webui_escape(SparlectraApp._SE_TAP_REJECTED_NOTE), SparlectraApp._webui_se_tap_section(dd))
     end
   end
   return true
@@ -2706,17 +2714,18 @@ function test_state_estimation_elimination_reverted()::Bool
       @test occursin("(stop: not_converged)", diag)
       @test occursin("Reverted:", diag)
     end
-    # the acceptance rule of the staged start: on this set the staged
-    # estimate converges but its fixed taps fit far worse than the model
-    # positions (measured J 16382 against 1114), so it is rejected and the
-    # run falls back with its own reason and note on every surface
-    _minigrid_fallback_run(set, "minigrid_rev_staged"; staged = true) do dd, log, diag
-      _assert_minigrid_fallback_report(dd, log, diag, "minigrid_rev_staged", set)
-      @test get(dd["metadata"], "se_tap_estimation_fallback_reason", "") == "worse_fit"
-      @test occursin("tap estimation rejected:", log)
-      @test occursin(SparlectraApp._SE_TAP_REJECTED_NOTE, diag)
-      @test occursin(SparlectraApp._SE_TAP_REJECTED_NOTE, SparlectraApp._webui_se_summary(dd))
-      @test occursin(SparlectraApp._webui_escape(SparlectraApp._SE_TAP_REJECTED_NOTE), SparlectraApp._webui_se_tap_section(dd))
+    # the staged start (the service default) converges on the same set, and
+    # the fixed taps fit better than the model positions (measured J 35006
+    # at dof 75 against 39952 at dof 78), so the estimate is kept. Until
+    # a5121638 this set was rejected (J 46180 against 39952): the 380 kV
+    # legs fixed on the constructor grid of 0.625 % instead of their
+    # delivered 1 % steps
+    _minigrid_fallback_run(set, "minigrid_rev_staged"; staged = true) do dd, log, _
+      @test dd["status"] == "succeeded"
+      @test get(dd["metadata"], "se_tap_staged_start", false) == true
+      @test get(dd["metadata"], "se_tap_estimation_fallback", false) == false
+      @test occursin("tap estimation: staged start", log)
+      @test !occursin("repeating WITHOUT tap estimation", log)
     end
   end
   return true

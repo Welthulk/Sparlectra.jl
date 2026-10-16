@@ -166,9 +166,26 @@ const _CGMES_SYNTH3W_RTC1_EQ = """<cim:RatioTapChanger rdf:ID="_rtc1">
 </cim:RatioTapChanger>
 """
 
-function _cgmes_synth3w_dir(; end1_tap_step::Union{Nothing,Int} = nothing)::String
+# Magnetizing admittance g, b (siemens on the end's ratedU) per end, written
+# into the EQ by `_cgmes_synth3w_dir(magnetizing = true)`.
+const _CGMES_SYNTH3W_MAG = [(1.0e-6, -4.0e-6), (4.0e-6, -1.6e-5), (1.0e-4, -5.0e-4)]
+
+# `open_end = k` writes the terminal of end k with connected = false in the
+# SSH, the transformer stays in service.
+function _cgmes_synth3w_dir(; end1_tap_step::Union{Nothing,Int} = nothing, magnetizing::Bool = false, open_end::Union{Nothing,Int} = nothing)::String
   dir = mktempdir()
   eq, ssh = _CGMES_SYNTH3W_EQ, _CGMES_SYNTH3W_SSH
+  if open_end !== nothing
+    tline = "<cim:Terminal rdf:about=\"#_t_t3w_$(open_end)\"><cim:ACDCTerminal.connected>true<"
+    occursin(tline, ssh) || error("no SSH terminal for end $(open_end)")
+    ssh = replace(ssh, tline => replace(tline, "true" => "false"))
+  end
+  if magnetizing
+    for (k, (g, b)) in enumerate(_CGMES_SYNTH3W_MAG)
+      tline = "<cim:TransformerEnd.Terminal rdf:resource=\"#_t_t3w_$(k)\"/>"
+      eq = replace(eq, tline => "<cim:PowerTransformerEnd.g>$(g)</cim:PowerTransformerEnd.g>\n<cim:PowerTransformerEnd.b>$(b)</cim:PowerTransformerEnd.b>\n" * tline)
+    end
+  end
   if end1_tap_step !== nothing
     eq = replace(eq, "</rdf:RDF>" => _CGMES_SYNTH3W_RTC1_EQ * "</rdf:RDF>")
     ssh = replace(ssh, "</rdf:RDF>" => """<cim:RatioTapChanger rdf:about="#_rtc1"><cim:TapChanger.step>$(end1_tap_step)</cim:TapChanger.step><cim:TapChanger.controlEnabled>false</cim:TapChanger.controlEnabled></cim:RatioTapChanger>\n</rdf:RDF>""")
@@ -205,9 +222,10 @@ end
 # arrangement CGMES uses for a tapped end: the ideal transformer of the tap
 # sits at the terminal of its own end, the series impedance (referred
 # through the rated voltages only) lies on the inner side. A 3W leg has the
-# magnetizing admittance of its end on the inner side as well; a 2W
-# transformer has the total of both ends, half on each side of the
-# impedance (the SV convention of the ENTSO-E test configurations, 0.50.0).
+# magnetizing admittance of its end at the star node (end 1 tapped, end 3
+# untapped carry one); a 2W transformer has the total of both ends, half on
+# each side of the impedance (the SV conventions the importer follows since
+# 0.41.0 for two-winding and 0.42.0 for three-winding transformers).
 # Loads take the terminal flows, so the SV is a solved state of that
 # arrangement. `kind` is :three_winding or :two_winding.
 # `table` (2W only) gives the changer a RatioTapChangerTable whose point at
@@ -228,7 +246,7 @@ function _cgmes_synth_tapside_dir(kind::Symbol; table::Union{Nothing,NamedTuple}
     vn = [220.0, 110.0, 20.0]
     rated = [225.0, 115.0, 21.0]
     z = [complex(0.4, 24.0), complex(0.1, 6.0), complex(0.02, 0.8)]   # ohm on the end's ratedU
-    y = [complex(1.0e-6, -4.0e-6), 0.0im, 0.0im]                       # siemens on the end's ratedU
+    y = [complex(1.0e-6, -4.0e-6), 0.0im, complex(1.0e-4, -5.0e-4)]    # siemens on the end's ratedU
     tap_end, neutral, step, incr = 1, 11, 15, 1.25
     V = [pol(220.0, 0.0), pol(112.3, -1.7), pol(20.4, -2.3)]
   else
@@ -243,15 +261,16 @@ function _cgmes_synth_tapside_dir(kind::Symbol; table::Union{Nothing,NamedTuple}
   n = length(vn)
   S = zeros(ComplexF64, n)
   if three
-    # leg k: node k, ideal ratio (rated_k * c_k / rated_1), inner point m_k
-    # on the star side with the magnetizing admittance, impedance to the star
+    # leg k: node k, ideal ratio (rated_k * c_k / rated_1), inner point m_k,
+    # impedance to the star; the magnetizing admittance of every end at the
+    # star node, referred through the rated voltages
     c = [k == tap_end ? corr : 1.0 for k in 1:n]
     Vm = [V[k] / (rated[k] * c[k] / rated[1]) for k in 1:n]
     zs = [z[k] * (rated[1] / rated[k])^2 for k in 1:n]
     ys = [y[k] * (rated[k] / rated[1])^2 for k in 1:n]
-    Vs = sum(Vm[k] / zs[k] for k in 1:n) / sum(1.0 / zs[k] for k in 1:n)
+    Vs = sum(Vm[k] / zs[k] for k in 1:n) / (sum(1.0 / zs[k] for k in 1:n) + sum(ys))
     for k in 1:n
-      S[k] = Vm[k] * conj(ys[k] * Vm[k] + (Vm[k] - Vs) / zs[k])
+      S[k] = Vm[k] * conj((Vm[k] - Vs) / zs[k])
     end
   else
     # node 2, ideal ratio (rated_2 * c / rated_1), inner point m, impedance

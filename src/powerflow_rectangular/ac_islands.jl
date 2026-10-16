@@ -441,6 +441,12 @@ function _validate_single_reference_per_island!(net::Net, report)
   )
 end
 
+# Net prosumer indices of the units of one island, in the order the island
+# net holds them (_prepare_island_net copies them in this order). Maps the
+# unit indices of an island solve back, e.g. the distributed-slack
+# participation table.
+_island_prosumer_indices(net::Net, busset) = [k for (k, ps) in enumerate(net.prosumpsVec) if Int(ps.comp.cFrom_bus) in busset]
+
 """
 Cut one island out of `net` as a standalone `Net` that the solver can run on
 unchanged. Every bus index is renumbered to 1..n_island, so all index-carrying
@@ -501,7 +507,7 @@ function _prepare_island_net(net::Net, row)
   # Prosumers and shunts are bus-local, so island membership follows from their
   # bus alone. cTo_bus is set to the same bus: for a bus-local element both
   # terminals are the same node.
-  inet.prosumpsVec = [deepcopy(ps) for ps in net.prosumpsVec if Int(ps.comp.cFrom_bus) in busset]
+  inet.prosumpsVec = [deepcopy(net.prosumpsVec[k]) for k in _island_prosumer_indices(net, busset)]
   for ps in inet.prosumpsVec
     newbus = busmap[Int(ps.comp.cFrom_bus)]
     ps.comp.cFrom_bus = newbus
