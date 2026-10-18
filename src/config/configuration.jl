@@ -608,6 +608,35 @@ Base.@kwdef struct ObservabilityConfig
 end
 
 """
+    SESigmaLevel(; vn_kv, p_mw = nothing, q_mvar = nothing, i_a = nothing, u_kv = nothing, rel_pct = 0.0)
+
+One row of `state_estimation.sigma_by_voltage_level`: the measurement
+standard deviations of one voltage level in physical units. `vn_kv` is the
+nominal voltage of the level in kV (in a configuration file the key of the
+row), matched against the bus nominal voltage (to 1e-6 kV). `p_mw` (MW, P flows and injections), `q_mvar` (MVAr,
+Q flows, injections and shunt bays), `i_a` (A, current magnitudes) and
+`u_kv` (kV, voltage magnitudes) are the absolute sigmas; `nothing` leaves
+that measurement type on the global default. `rel_pct` (percent of the
+measured value, default 0) raises a set column to
+`max(absolute, rel_pct / 100 * |value|)`.
+
+The keyword constructor validates like the configuration parser: `vn_kv`
+and every set sigma finite and positive, at least one absolute sigma set,
+`rel_pct` finite and not negative; a violation is an `ArgumentError`. The State-Estimation
+Configuration page of the manual describes the table.
+"""
+struct SESigmaLevel
+  vn_kv::Float64
+  p_mw::Union{Nothing,Float64}
+  q_mvar::Union{Nothing,Float64}
+  i_a::Union{Nothing,Float64}
+  u_kv::Union{Nothing,Float64}
+  rel_pct::Float64
+end
+
+SESigmaLevel(; vn_kv, p_mw = nothing, q_mvar = nothing, i_a = nothing, u_kv = nothing, rel_pct = 0.0) = _parse_sigma_level_row("row", _sigma_level_vn("row", vn_kv), Dict{String,Any}("p_mw" => p_mw, "q_mvar" => q_mvar, "i_a" => i_a, "u_kv" => u_kv, "rel_pct" => rel_pct))
+
+"""
     StateEstimationConfig
 
 Typed state-estimation configuration for future SE runners and diagnostics.
@@ -656,6 +685,19 @@ Base.@kwdef struct StateEstimationConfig
   # data; the FIXED mechanical positions reach the branch fields only on
   # explicit request and only from a converged, fixed run
   update_taps::Bool = false
+  # read measurement tables (CSV keyed by mRID or name, one set per timestamp) in the
+  # SE service; on by default since 0.50.0 (the table is the measurement
+  # format the generator writes and the shipped sets use), a table given
+  # while off is refused with this key named
+  measurement_table::Bool = true
+  # zero-injection rows (ZI) at passive buses without an injection
+  # measurement: :on adds them in every SE path (measurement generator,
+  # measurement CSV, case file, measurement table), :off in none
+  zero_injection::Symbol = :on
+  # measurement sigmas per voltage level in physical units, keyed by the
+  # nominal voltage in the file (rows sorted by vn_kv, highest first); empty: every row without its own sigma takes the
+  # global default, as before the key existed
+  sigma_by_voltage_level::Vector{SESigmaLevel} = SESigmaLevel[]
   robust::Bool = false
   robust_start_iteration::Int = 3
   # bad-data thresholds (0.10.0, GUI-exposed). Two decisions, and
@@ -881,6 +923,12 @@ reading says nothing about the file's convention. `net_cache_enabled` gates
 the binary net cache (active only while `auto_profile` is `:off`).
 `preallocate_network`/`preallocate_min_buses` control container
 preallocation for large cases.
+
+`nominal_frequency_hz` (default 50.0, positive) is the system frequency of
+the network. An import sets `net.nominal_frequency_hz` from it when the case
+states no frequency (an SCF `meta.f_nom` wins); a new `Net` starts with it.
+The field turns a line capacitance into a susceptance (`addACLinePerKm!`,
+SCF/PGM `c1`); the MATPOWER conversion to SCF writes it as `f_nom`.
 """
 Base.@kwdef struct ModelConfig
   bus_shunt_model::Symbol = :admittance
@@ -891,6 +939,7 @@ Base.@kwdef struct ModelConfig
   net_cache_enabled::Bool = false
   preallocate_network::Symbol = :auto
   preallocate_min_buses::Int = 500
+  nominal_frequency_hz::Float64 = 50.0
 end
 
 """
@@ -1197,6 +1246,7 @@ const POWERFLOW_ISLAND_REFERENCE_POLICY_VALUES = (:matpower_like,)
 const RECTANGULAR_PREALLOCATE_WORKSPACE_VALUES = (:off, :on, :auto)
 const STATE_ESTIMATION_METHOD_VALUES = (:wls,)
 const STATE_ESTIMATION_ROBUST_MODE_VALUES = (:off, :staged, :replacement)
+const STATE_ESTIMATION_ZERO_INJECTION_VALUES = (:on, :off)
 const STATE_ESTIMATION_PMU_REF_OFFSET_VALUES = (:auto, :off)
 const STATE_ESTIMATION_LINEAR_SOLVER_VALUES = (:umfpack, :klu)
 const MATPOWER_PV_VOLTAGE_SOURCE_VALUES = (:gen_vg, :bus_vm, :auto, :strict_check)
@@ -1400,7 +1450,7 @@ matpower_export_config()::MatpowerExportConfig = active_sparlectra_config().matp
 
 The `model` section of the active configuration: how an imported case
 becomes a network (bus shunt model, tap changer model, auto profile,
-net cache, preallocation).
+net cache, preallocation, nominal frequency).
 """
 model_config()::ModelConfig = active_sparlectra_config().model
 """
@@ -1565,6 +1615,211 @@ end
 function _validate_positive(name::AbstractString, value::Real)
   value > 0 || throw(ArgumentError("$(name) must be positive; got $(value)."))
   return value
+end
+
+## state_estimation.sigma_by_voltage_level. One row per voltage level, keyed
+## by the nominal voltage in kV:
+##   sigma_by_voltage_level:
+##     380:
+##       p_mw: 2.0
+## The YAML reader returns the key as text ("380", "10.5"; quotes around a
+## key are stripped) and reads no "- item" lists and no flow mappings. In
+## code a key may be any positive number (a Real or its text), and a vector of SESigmaLevel
+## works as well. Every problem is an ArgumentError that names the key, the
+## row (its key in a mapping, its position in a vector), a stable reason
+## word and, for a table read from a file, the file and the line of the row
+## or column.
+const _SE_SIGMA_LEVEL_KEY = "state_estimation.sigma_by_voltage_level"
+const _SE_SIGMA_LEVEL_COLUMNS = ("p_mw", "q_mvar", "i_a", "u_kv", "rel_pct")
+# two rows whose nominal voltages differ by less than this name the same
+# level, and a bus belongs to a row within the same distance
+const SE_SIGMA_LEVEL_VN_TOL_KV = 1.0e-6
+
+# `at` is the location suffix (" (file line n)"), empty for a table that
+# does not come from a file
+function _sigma_level_error(row::AbstractString, reason::AbstractString, detail::AbstractString, at::AbstractString = "")
+  throw(ArgumentError(string(_SE_SIGMA_LEVEL_KEY, isempty(row) ? "" : string(" ", row), ": ", reason, ": ", detail, at)))
+end
+
+# a value that the YAML reader returned as text because it starts with "{"
+# is a flow mapping, which the subset does not parse; it is refused with the
+# block form instead of being read as a string
+function _sigma_level_flow_error(row::AbstractString, text::AbstractString, at::AbstractString = "")
+  _sigma_level_error(row, "flow_style", string(repr(String(text)), " is a flow mapping ({...}), which Sparlectra's YAML subset does not read. Write the table in block style, one row per level keyed by the nominal voltage in kV and one column per line:\n  sigma_by_voltage_level:\n    380:\n      p_mw: 2.0\n      u_kv: 0.5"), at)
+end
+
+function _sigma_level_number(row::AbstractString, column::AbstractString, value; allow_zero::Bool = false, at::AbstractString = "")::Float64
+  (value isa Real && !(value isa Bool)) || _sigma_level_error(row, "bad_value", string(column, " = ", repr(value), " is not a number"), at)
+  v = Float64(value)
+  isfinite(v) || _sigma_level_error(row, "bad_value", string(column, " = ", v, " is not finite"), at)
+  if allow_zero
+    v >= 0.0 || _sigma_level_error(row, "bad_value", string(column, " = ", v, " must not be negative"), at)
+  else
+    v > 0.0 || _sigma_level_error(row, "bad_value", string(column, " = ", v, " must be greater than zero"), at)
+  end
+  return v
+end
+
+# The nominal voltage of a row key in kV: a positive finite number, given
+# as a Real or as its text (the YAML reader returns the key 380 as "380").
+function _sigma_level_vn(row::AbstractString, key; at::AbstractString = "")::Float64
+  v = (key isa Real && !(key isa Bool)) ? Float64(key) : key isa AbstractString ? something(tryparse(Float64, strip(key)), NaN) : NaN
+  (isfinite(v) && v > 0.0) || _sigma_level_error(row, "bad_vn_kv", string(repr(key isa AbstractString ? String(key) : key), " is not a nominal voltage; the key of a row is the nominal voltage of the level in kV, a positive number"), at)
+  return v
+end
+
+# The row key the writers use for the nominal voltage `vn`: integer kV
+# without decimals ("380", the form the YAML reader reads as a key), any
+# other value as its shortest decimal text ("10.5"), which the YAML reader
+# accepts as a key and _sigma_level_vn reads back to the same Float64.
+_sigma_level_key(vn::Real)::String = (v = Float64(vn); (isinteger(v) && abs(v) < 1.0e15) ? string(Int(v)) : string(v))
+
+# One row (a mapping or a NamedTuple of the sigma columns) of the level
+# `vn` (kV, validated) to a validated row. `at(column)` is the location
+# suffix of a column, `at("")` that of the row.
+function _parse_sigma_level_row(row::AbstractString, vn::Float64, entry; at::Function = _ -> "")::SESigmaLevel
+  entry isa NamedTuple && (entry = Dict{String,Any}(String(k) => v for (k, v) in pairs(entry)))
+  if entry isa AbstractString
+    startswith(strip(entry), "{") && _sigma_level_flow_error(row, entry, at(""))
+    _sigma_level_error(row, "not_a_row", string(repr(String(entry)), " is no row; a row is a mapping of the sigma columns below the nominal voltage key"), at(""))
+  end
+  entry isa AbstractDict || _sigma_level_error(row, "not_a_row", string(repr(entry), " is no row; a row is a mapping of the sigma columns below the nominal voltage key"), at(""))
+  cols = Dict{String,Any}(String(k) => v for (k, v) in entry)
+  unknown = sort!([k for k in keys(cols) if !(k in _SE_SIGMA_LEVEL_COLUMNS)])
+  # vn_kv was a column until the key became the nominal voltage; it is
+  # refused like any other unknown column, with that reason named
+  isempty(unknown) || _sigma_level_error(row, "unknown_column", string(join(unknown, ", "), " (the columns are ", join(_SE_SIGMA_LEVEL_COLUMNS, ", "), "; the nominal voltage is the key of the row)"), at(first(unknown)))
+  sigma(c) = get(cols, c, nothing) === nothing ? nothing : _sigma_level_number(row, c, cols[c]; at = at(c))
+  rel = get(cols, "rel_pct", nothing) === nothing ? 0.0 : _sigma_level_number(row, "rel_pct", cols["rel_pct"]; allow_zero = true, at = at("rel_pct"))
+  absolute = (sigma("p_mw"), sigma("q_mvar"), sigma("i_a"), sigma("u_kv"))
+  # a row without an absolute sigma would change nothing (rel_pct only
+  # raises a set column), so it is refused instead of read as a no-op
+  all(isnothing, absolute) && _sigma_level_error(row, "no_sigma", string(_sigma_level_key(vn), " kV sets none of p_mw, q_mvar, i_a, u_kv; rel_pct acts only together with one of them"), at(""))
+  return SESigmaLevel(vn, absolute..., rel)
+end
+
+# The line of every key below the dotted `prefix` in the YAML file `path`,
+# keyed by the dotted path after the prefix ("" for the prefix key itself,
+# "380", "380.p_mw"; a key with a dot such as 10.5 is joined as it is,
+# "10.5.p_mw"). The YAML reader returns no line numbers, so the table
+# validation finds the line of a row here, for the message only. Lines that
+# are no "key:" line are skipped; the key forms are those of the reader
+# (_yaml_mapping_key, quotes stripped). A path that appears again keeps its
+# first line; when `repeated` is a vector, every repetition is pushed to it
+# as (path, line, depth), depth counting the keys below the prefix (1 for a
+# row), since the reader keeps only the last of two equal keys.
+function _yaml_key_lines(path::AbstractString, prefix::AbstractString; repeated::Union{Nothing,Vector{Tuple{String,Int,Int}}} = nothing)::Dict{String,Int}
+  out = Dict{String,Int}()
+  isfile(path) || return out
+  stack = Tuple{Int,String}[]
+  prefix_depth = count(==('.'), prefix) + 1
+  for (lineno, line) in enumerate(eachline(path))
+    content = lstrip(line, ' ')
+    m = _yaml_mapping_key(content)
+    m === nothing && continue
+    indent = length(line) - length(content)
+    while !isempty(stack) && stack[end][1] >= indent
+      pop!(stack)
+    end
+    push!(stack, (indent, m[1]))
+    dotted = join(last.(stack), ".")
+    sub = dotted == prefix ? "" : startswith(dotted, string(prefix, ".")) ? dotted[(length(prefix) + 2):end] : nothing
+    sub === nothing && continue
+    if haskey(out, sub)
+      repeated === nothing || push!(repeated, (sub, lineno, length(stack) - prefix_depth))
+    else
+      out[sub] = lineno
+    end
+  end
+  return out
+end
+
+"""
+    _parse_sigma_by_voltage_level(raw; source = "", lines = Dict{String,Int}()) -> Vector{SESigmaLevel}
+
+The rows of `state_estimation.sigma_by_voltage_level`, validated and sorted
+by nominal voltage (highest first). `raw` is the mapping of the YAML block
+form (nominal voltage in kV => row of sigma columns; the key is a positive
+number or its text, `"380"` as the YAML reader returns it), a vector of
+`SESigmaLevel`, `nothing`, or the empty placeholder `"{}"` of the template
+(both give no rows). A key that is not a positive number is the error
+`bad_vn_kv`, two keys of the same voltage (`380` and `380.0`) the error
+`duplicate_vn_kv` naming both, a `vn_kv` column the error `unknown_column`.
+Any other text, in particular a flow mapping `{p_mw: 2.0, ...}`, is
+refused with the block form in the message, never read as a string.
+
+For a table read from a file, `source` is the file and `lines` the line of
+each key below the table (`_yaml_key_lines`); every error then ends with
+the file name and the line of the offending column, row or table key.
+"""
+function _parse_sigma_by_voltage_level(raw; source::AbstractString = "", lines::AbstractDict = Dict{String,Int}())::Vector{SESigmaLevel}
+  raw === nothing && return SESigmaLevel[]
+  # the location suffix of a dotted path below the table, falling back to
+  # the row and then to the table key when the path has no line of its own
+  at_path(paths...) = begin
+    isempty(source) && return ""
+    for p in paths
+      n = get(lines, p, 0)
+      n > 0 && return string(" (", basename(String(source)), " line ", n, ")")
+    end
+    return ""
+  end
+  if raw isa AbstractString
+    s = strip(raw)
+    (isempty(s) || s == "{}") && return SESigmaLevel[]
+    startswith(s, "{") && _sigma_level_flow_error("", s, at_path(""))
+    _sigma_level_error("", "not_a_table", string(repr(String(s)), " is no table; write one row per level in block style, keyed by the nominal voltage in kV"), at_path(""))
+  end
+  rows = SESigmaLevel[]
+  names = String[]
+  add!(r, name, where) = begin
+    k = findfirst(x -> abs(x.vn_kv - r.vn_kv) < SE_SIGMA_LEVEL_VN_TOL_KV, rows)
+    k === nothing || _sigma_level_error(name, "duplicate_vn_kv", string(_sigma_level_key(r.vn_kv), " kV is already the level of ", names[k]), where)
+    push!(rows, r)
+    push!(names, string(name, where))
+  end
+  if raw isa AbstractDict
+    # file order where the lines are known (the duplicate names the later
+    # row), otherwise the order of the key text
+    for k in sort!(collect(keys(raw)); by = k -> (get(lines, string(k), 0), string(k)))
+      key = string(k)
+      name = string("row ", key)
+      at(c) = isempty(c) ? at_path(key, "") : at_path(string(key, ".", c), key, "")
+      vn = _sigma_level_vn(name, k; at = at(""))
+      add!(_parse_sigma_level_row(name, vn, raw[k]; at = at), name, at(""))
+    end
+  elseif raw isa AbstractVector
+    for (i, v) in enumerate(raw)
+      name = string("row ", i)
+      v isa SESigmaLevel || _sigma_level_error(name, "not_a_row", string(repr(v), " is no SESigmaLevel; a vector holds SESigmaLevel rows, a configuration table is a mapping keyed by the nominal voltage in kV"))
+      # validated again: the positional constructor does not check
+      cols = Dict{String,Any}("p_mw" => v.p_mw, "q_mvar" => v.q_mvar, "i_a" => v.i_a, "u_kv" => v.u_kv, "rel_pct" => v.rel_pct)
+      add!(_parse_sigma_level_row(name, _sigma_level_vn(name, v.vn_kv), cols), name, "")
+    end
+  else
+    _sigma_level_error("", "not_a_table", string(repr(raw), " is no table; write one row per level in block style, keyed by the nominal voltage in kV"), at_path(""))
+  end
+  return sort!(rows; by = r -> -r.vn_kv)
+end
+
+# Validate the table of one configuration file as soon as the file is
+# read, so an error names the file and the line (the merged configuration
+# no longer knows where a value came from). Nothing when the file does not
+# set the key. A row key written twice is refused here: the YAML reader
+# keeps only the second row, so the first would vanish without a word.
+function _check_sigma_levels_in_file(raw::AbstractDict, path::AbstractString)::Nothing
+  se = get(raw, "state_estimation", nothing)
+  (se isa AbstractDict && haskey(se, "sigma_by_voltage_level")) || return nothing
+  repeated = Tuple{String,Int,Int}[]
+  lines = _yaml_key_lines(path, _SE_SIGMA_LEVEL_KEY; repeated = repeated)
+  for (sub, n, depth) in repeated
+    # a row key is one level below the table; a repeated column of a row
+    # is left to the reader (10.5 is a row key, 10.5.p_mw a column)
+    depth == 1 || continue
+    _sigma_level_error(string("row ", sub), "duplicate_vn_kv", string("the key ", sub, " appears again; it is already the level of row ", sub, " (", basename(String(path)), " line ", lines[sub], ")"), string(" (", basename(String(path)), " line ", n, ")"))
+  end
+  _parse_sigma_by_voltage_level(se["sigma_by_voltage_level"]; source = path, lines = lines)
+  return nothing
 end
 
 function StartModeConfig(raw::AbstractDict)
@@ -1950,6 +2205,9 @@ function StateEstimationConfig(raw::AbstractDict)
     report_residual_correlation = _as_bool_cfg(_raw_get(merged, "report_residual_correlation", true)),
     update_shunts = _as_bool_cfg(_raw_get(merged, "update_shunts", true)),
     update_taps = _as_bool_cfg(_raw_get(merged, "update_taps", false)),
+    measurement_table = _as_bool_cfg(_raw_get(merged, "measurement_table", true)),
+    zero_injection = _validate_allowed_symbol("state_estimation.zero_injection", _as_symbol_cfg(_raw_get(merged, "zero_injection", :on)), STATE_ESTIMATION_ZERO_INJECTION_VALUES),
+    sigma_by_voltage_level = _parse_sigma_by_voltage_level(_raw_get(merged, "sigma_by_voltage_level", nothing)),
     robust = se_robust,
     robust_start_iteration = Int(_validate_positive("state_estimation.robust_start_iteration", _as_int_cfg(_raw_get(merged, "robust_start_iteration", 3)))),
     k_eliminate = Float64(_validate_positive("state_estimation.k_eliminate", _as_float_cfg(_raw_get(merged, "k_eliminate", 3.0)))),
@@ -2060,6 +2318,7 @@ function ModelConfig(raw::AbstractDict)
     net_cache_enabled = _as_bool_cfg(_raw_get(merged, "net_cache_enabled", false)),
     preallocate_network = _validate_allowed_symbol("model.preallocate_network", _as_symbol_cfg(_raw_get(merged, "preallocate_network", :auto)), [:off, :on, :auto]),
     preallocate_min_buses = _as_int_cfg(_raw_get(merged, "preallocate_min_buses", 500)),
+    nominal_frequency_hz = _validate_positive("model.nominal_frequency_hz", _as_float_cfg(_raw_get(merged, "nominal_frequency_hz", 50.0))),
   )
 end
 
@@ -2319,14 +2578,15 @@ end
 
 _canonical_config_key(key::AbstractString)::String = key == "powerflow" ? "power_flow" : key == "matpower" ? "matpower_import" : String(key)
 
-function _merge_config_overrides(raw::Dict{String,Any}, overrides::AbstractDict)
+function _merge_config_overrides(raw::Dict{String,Any}, overrides::AbstractDict; prefix::String = "")
   merged = deepcopy(raw)
   for (key, value) in overrides
     skey = _canonical_config_key(_config_key(key))
-    if value isa AbstractDict
+    path = isempty(prefix) ? skey : string(prefix, ".", skey)
+    if value isa AbstractDict && !(path in _TABLE_VALUED_CONFIG_KEYS)
       section = get!(merged, skey, Dict{String,Any}())
       section isa AbstractDict || throw(ArgumentError("Cannot merge override section $(repr(skey)) into scalar value."))
-      merged[skey] = _merge_config_overrides(Dict{String,Any}(String(k) => v for (k, v) in section), value)
+      merged[skey] = _merge_config_overrides(Dict{String,Any}(String(k) => v for (k, v) in section), value; prefix = path)
     else
       merged[skey] = value
     end
@@ -2338,7 +2598,13 @@ end
 # configuration keys, so they are exempt from unknown-key validation. The
 # default file keeps a scalar "{}" placeholder because the minimal YAML
 # reader has no flow-mapping support.
-const _FREEFORM_MAPPING_CONFIG_KEYS = ("power_flow.distributed_slack.weights", "control.controllers")
+const _FREEFORM_MAPPING_CONFIG_KEYS = ("power_flow.distributed_slack.weights", "control.controllers", "state_estimation.sigma_by_voltage_level")
+
+# Table-valued keys: the whole mapping is ONE value. Flattening stops at the
+# key (a case configuration carries it as one case-scope key, not as one
+# key per row and column) and an override replaces the table instead of
+# merging it row by row into the template's "{}" placeholder.
+const _TABLE_VALUED_CONFIG_KEYS = ("state_estimation.sigma_by_voltage_level",)
 
 # Deprecated keys stay ACCEPTED so existing user/webui configuration files
 # keep loading (a hard "unknown key" error here would brick every stored
@@ -2639,6 +2905,8 @@ function _load_and_validate_config(default_path::AbstractString, user_path::Abst
   if isfile(user_path)
     user_version = _config_file_version(user, user_path)
     _validate_config_scope(user, "general", user_path)
+    # the sigma table names its file and line on an error
+    _check_sigma_levels_in_file(user, user_path)
     user_version < CONFIG_VERSION_CURRENT && _apply_config_aliases!(user, user_version, user_path)
   end
   _validate_known_config_keys(user, defaults; strict = strict_keys)
@@ -2746,7 +3014,7 @@ end
 function _flatten_config_values!(out::Dict{String,Any}, raw::AbstractDict, prefix::String = "")
   for (key, value) in raw
     path = isempty(prefix) ? String(key) : string(prefix, ".", key)
-    value isa AbstractDict ? _flatten_config_values!(out, value, path) : (out[path] = value)
+    (value isa AbstractDict && !(path in _TABLE_VALUED_CONFIG_KEYS)) ? _flatten_config_values!(out, value, path) : (out[path] = value)
   end
   return out
 end
@@ -2954,11 +3222,13 @@ function _write_yaml_dict(io::IO, data::Dict{String,Any}; indent::Int = 0)
   pad = repeat(" ", indent)
   for key in sort(collect(keys(data)))
     value = data[key]
+    # bare or quoted as the reader reads it back (_yaml_key_text)
+    ktext = _yaml_key_text(key)
     if value isa Dict{String,Any}
-      println(io, pad, key, ":")
+      println(io, pad, ktext, ":")
       _write_yaml_dict(io, value; indent = indent + 2)
     else
-      println(io, pad, key, ": ", _yaml_scalar_text(value))
+      println(io, pad, ktext, ": ", _yaml_scalar_text(value))
     end
   end
 end

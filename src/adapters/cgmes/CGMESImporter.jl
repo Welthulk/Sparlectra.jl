@@ -28,6 +28,7 @@ module CGMESImporter
 
 import EzXML
 import ZipArchives
+import Random
 import Downloads
 import ..Sparlectra
 
@@ -38,7 +39,7 @@ export analyzeCGMES, importFailureAnalysis
 export CGMESTopology, buildTopology
 export fetchCGMESTestSet, ensureCGMESTestConfigurations, CGMES_TESTSET_ALIASES
 export fetchReliCapGridSet, RELICAPGRID_ALIASES, RELICAPGRID_COMBINED, allCGMESTestSetAliases
-export CGMESImportResult, CGMESShortCircuitData, importCGMES, createNetFromCGMES, compareWithSV, shortCircuitCoverage, printShortCircuitCoverage
+export CGMESImportResult, CGMESShortCircuitData, importCGMES, createNetFromCGMES, compareWithSV, cgmesMeasurementKeys, generateMeasurementTableFromSV, shortCircuitCoverage, printShortCircuitCoverage
 export writeCGMESFiles, CGMESLineShortCircuit, cgmesLineShortCircuitData
 
 include("cgmes_schema.jl")
@@ -51,6 +52,7 @@ include("cgmes_topology.jl")
 include("cgmes_keys.jl")
 include("cgmes_mapping.jl")
 include("cgmes_report.jl")
+include("cgmes_measurements.jl")
 include("cgmes_export.jl")
 include("cgmes_testsets.jl")
 

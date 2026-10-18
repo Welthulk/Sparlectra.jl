@@ -225,6 +225,7 @@ makedocs(
     "State Estimation" => [
       "State Estimation" => "state_estimation.md",
       "State Estimation Measurements" => "state_estimation_measurements.md",
+      "State Estimation Measurement Table" => "state_estimation_measurement_table.md",
       "State Estimation Extensions" => "state_estimation_extensions.md",
       "Observability" => "observability.md",
     ],

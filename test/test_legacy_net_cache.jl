@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# file: test/test_net_cache.jl
-# purpose: tests the opt-in binary MATPOWER net cache: miss/store, identical
+# file: test/test_legacy_net_cache.jl
+# purpose: legacy profile: the whole former net_cache group, a pin of issue #292. Tests the opt-in binary MATPOWER net cache: miss/store, identical
 #          hit results, fallback on corrupt entries, and key invalidation
 #
 # Tests the opt-in binary net cache (model.net_cache_enabled,
@@ -31,7 +31,7 @@ function _net_cache_run(case_path, output_dir; extra = Dict{String,Any}())
   return run_sparlectra_api(casefile = case_path, config_file = Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, output_dir = output_dir, config_overrides = overrides)
 end
 
-function run_net_cache_tests()
+function run_legacy_net_cache_tests()
   @testset "MATPOWER net cache (inert since the direct import)" begin (function ()
     # the cache stored the CONVERTED
     # SCFCase, the side product the direct import no longer creates, so

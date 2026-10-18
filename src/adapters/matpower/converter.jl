@@ -44,7 +44,7 @@ Base.@kwdef struct MatpowerAdapterOptions
   import_for001_contingencies::Bool = true
   enable_pq_gen_controllers::Bool = true
   tap_changer_model::Symbol = :ideal
-  f_nom::Float64 = 50.0
+  f_nom::Float64 = model_config().nominal_frequency_hz
   log::Bool = false
 end
 
@@ -110,6 +110,7 @@ function matpower_adapter_options(cfg::SparlectraConfig; log::Bool = false)
     import_for001_contingencies = mat.import_for001_contingencies,
     enable_pq_gen_controllers = mat.enable_pq_gen_controllers,
     tap_changer_model = cfg.model.tap_changer_model,
+    f_nom = cfg.model.nominal_frequency_hz,
     log = log,
   )
 end
@@ -503,7 +504,9 @@ function convert_case(::MatpowerAdapter, mpc, opts::MatpowerAdapterOptions)::SCF
       haskey(by_index, k) || throw(ArgumentError("mpc.sparlectra.tap_changers references unknown branch $(k)."))
       bid = by_index[k]
       controllers = SCFTapControllerRow[]
-      Float64(row[2]) > 0.0 && push!(controllers, SCFTapControllerRow(index = 1, alpha_deg = 0.0, step = Float64(row[2]), pos = Float64(row[5]), pos_min = Float64(row[3]), pos_max = Float64(row[4])))
+      # ratio_grid 1 (column 12) is the SCF grid "linear" of a CGMES changer
+      rgrid = (size(sp_taps, 2) >= 12 && row[12] == 1.0) ? "linear" : nothing
+      Float64(row[2]) > 0.0 && push!(controllers, SCFTapControllerRow(index = 1, alpha_deg = 0.0, step = Float64(row[2]), pos = Float64(row[5]), pos_min = Float64(row[3]), pos_max = Float64(row[4]), grid = rgrid))
       psi = size(sp_taps, 2) >= 10 ? Float64(row[10]) : 0.0
       dustep = size(sp_taps, 2) >= 11 ? Float64(row[11]) : 0.0
       # same nameplate contradiction check as applyTapNameplate! on the

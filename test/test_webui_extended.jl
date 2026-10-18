@@ -1942,6 +1942,7 @@ form:
         "power_flow_dc_fallback" => "power_flow.dc.fallback",
         "export_cgmes" => "webui.export_cgmes",
         "scf_export" => "webui.scf_export",
+        "model_nominal_frequency_hz" => "model.nominal_frequency_hz",
       )
       @test all(SparlectraApp.WEBUI_FORM_HELP_TOPICS[field] == help_topic for (field, help_topic) in expected_help_topics)
       # the option fields split across the Runs page (form_html)
@@ -2455,7 +2456,8 @@ result = get_powerflow_result(run_id)
         csv_page_html = String(SparlectraApp.handle_powerflow_artifact(run_id, name).body)
         @test occursin("class=\"artifact-csv\"", csv_page_html)
         # a column with numbers has a sort link in its header
-        @test occursin("<th><a href=\"?sort=$(name == "bus_voltages_complex.csv" ? "vm_pu" : "from_bus")\" title=\"Sort largest first\">$(name == "bus_voltages_complex.csv" ? "vm_pu" : "from_bus")</a></th>", csv_page_html)
+        sort_column, sort_index = name == "bus_voltages_complex.csv" ? ("vm_pu", 4) : ("from_bus", 3)
+        @test occursin("<th class=\"num\" data-col=\"$(sort_index)\"><a href=\"?sort=$(sort_column)\" title=\"Sort largest first\" data-csv-keep>$(sort_column)</a></th>", csv_page_html)
         @test occursin("<td class=\"num\">", csv_page_html)
         @test !occursin("class=\"artifact-text\"", csv_page_html)
         @test occursin("href=\"$(name)?raw=1\"", csv_page_html)
@@ -2486,7 +2488,7 @@ result = get_powerflow_result(run_id)
       write(comment_csv_path, "# version: 1\nbus,value\n1,0.5\n2,\"1,5\"\n")
       comment_csv_html = String(SparlectraApp.handle_powerflow_artifact(run_id, "note_rows.csv").body)
       @test occursin("class=\"artifact-csv-comments\"># version: 1</pre>", comment_csv_html)
-      @test occursin("<th><a href=\"?sort=bus\" title=\"Sort largest first\">bus</a></th><th><a href=\"?sort=value\" title=\"Sort largest first\">value</a></th>", comment_csv_html)
+      @test occursin("<th class=\"num\" data-col=\"1\"><a href=\"?sort=bus\" title=\"Sort largest first\" data-csv-keep>bus</a></th><th class=\"num\" data-col=\"2\"><a href=\"?sort=value\" title=\"Sort largest first\" data-csv-keep>value</a></th>", comment_csv_html)
       @test occursin("<td class=\"num\">1,5</td>", comment_csv_html)
       truncated_table = SparlectraApp._webui_artifact_csv_html("a,b\n1,2\n3,4\n5,"; truncated = true)
       @test occursin("<td class=\"num\">3</td>", truncated_table)
@@ -2504,7 +2506,7 @@ result = get_powerflow_result(run_id)
       kw_table = SparlectraApp._webui_artifact_csv_html(display_csv; csv_display = SparlectraApp._WebUICsvDisplay(3, "kW"))
       @test occursin("<td class=\"num\">7</td><td class=\"num\">0</td><td class=\"num\">1.98e-16</td>", kw_table)
       @test occursin("<td class=\"num\">123457</td><td class=\"num\">123</td>", kw_table)
-      @test occursin("<th><a href=\"?digits=3&amp;power=kW&amp;sort=p_mw\" title=\"Sort largest first\">p_mw [kW]</a></th><th><a href=\"?digits=3&amp;power=kW&amp;sort=vm_pu\" title=\"Sort largest first\">vm_pu</a></th>", kw_table)
+      @test occursin("<th class=\"num\" data-col=\"2\"><a href=\"?digits=3&amp;power=kW&amp;sort=p_mw\" title=\"Sort largest first\" data-csv-keep>p_mw [kW]</a></th><th class=\"num\" data-col=\"3\"><a href=\"?digits=3&amp;power=kW&amp;sort=vm_pu\" title=\"Sort largest first\" data-csv-keep>vm_pu</a></th>", kw_table)
       for unit in ("W", "MW")
         @test occursin("<td class=\"num\">7</td><td class=\"num\">0</td>", SparlectraApp._webui_artifact_csv_html(display_csv; csv_display = SparlectraApp._WebUICsvDisplay(3, unit)))
       end
@@ -2516,7 +2518,7 @@ result = get_powerflow_result(run_id)
       comma_kw = SparlectraApp._webui_artifact_csv_html(comma_csv; csv_display = SparlectraApp._WebUICsvDisplay(3, "kW"))
       @test occursin("<td class=\"num\">0</td><td class=\"num\">1,02</td>", comma_kw)
       @test occursin("<td class=\"num\">1.234.568</td>", comma_kw)
-      @test occursin("<th><a href=\"?digits=3&amp;power=kW&amp;sort=q_mvar\" title=\"Sort largest first\">q_mvar [kvar]</a></th>", comma_kw)
+      @test occursin("<th class=\"num\" data-col=\"2\"><a href=\"?digits=3&amp;power=kW&amp;sort=q_mvar\" title=\"Sort largest first\" data-csv-keep>q_mvar [kvar]</a></th>", comma_kw)
       # the choice comes from the query, stays on the links to the other CSV
       # files and the raw view, and never changes the file or the download
       power_csv_text = "bus;p_mw\n1;123,456789\n"
@@ -2533,42 +2535,78 @@ result = get_powerflow_result(run_id)
       @test occursin("123,456789", routed_raw)
       @test String(SparlectraApp.handle_powerflow_artifact_download(run_id, "note_power.csv").body) == power_csv_text
       # sorting by a column with numbers: largest first, then smallest
-      # first; empty and text cells at the end in file order; a text column
-      # has no sort link, an unknown or text sort column keeps the file order
+      # first; empty and text cells at the end in file order; an unknown
+      # sort column keeps the file order. Every row starts with its row
+      # number of the file, which stays with the row through the sort.
       sort_csv = "name,p_mw,vm_pu\nA,-5.5,1.01\nB,12.25,0.99\nC,,1.0\nD,3.0,x\n"
-      row_order(h) = [m.captures[1] for m in eachmatch(r"<tr><td>([A-D])</td>", h)]
+      row_order(h) = [m.captures[1] for m in eachmatch(r"<tr><td class=\"csv-rn\">\d+</td><td>([A-D])</td>", h)]
+      row_numbers(h) = [m.captures[1] for m in eachmatch(r"<tr><td class=\"csv-rn\">(\d+)</td>", h)]
       @test row_order(SparlectraApp._webui_artifact_csv_html(sort_csv)) == ["A", "B", "C", "D"]
       sorted_desc = SparlectraApp._webui_artifact_csv_html(sort_csv; csv_display = SparlectraApp._WebUICsvDisplay(5, "", "p_mw", "desc"))
       @test row_order(sorted_desc) == ["B", "D", "A", "C"]
-      @test occursin("<th>name</th>", sorted_desc)
-      @test occursin("<th><a href=\"?sort=p_mw&amp;order=asc\" title=\"Sort smallest first\">p_mw &#9660;</a></th>", sorted_desc)
-      @test occursin("<th><a href=\"?sort=vm_pu\" title=\"Sort largest first\">vm_pu</a></th>", sorted_desc)
+      @test row_numbers(sorted_desc) == ["2", "4", "1", "3"]
+      @test occursin("<th class=\"num\" data-col=\"2\"><a href=\"?sort=p_mw&amp;order=asc\" title=\"Sort smallest first\" data-csv-keep>p_mw &#9660;</a></th>", sorted_desc)
+      @test occursin("<th class=\"num\" data-col=\"3\"><a href=\"?sort=vm_pu\" title=\"Sort largest first\" data-csv-keep>vm_pu</a></th>", sorted_desc)
       @test occursin("Sorted by p_mw, largest first", sorted_desc)
       @test row_order(SparlectraApp._webui_artifact_csv_html(sort_csv; csv_display = SparlectraApp._WebUICsvDisplay(5, "", "p_mw", "asc"))) == ["A", "D", "B", "C"]
       @test row_order(SparlectraApp._webui_artifact_csv_html(sort_csv; csv_display = SparlectraApp._WebUICsvDisplay(5, "", "vm_pu", "desc"))) == ["A", "C", "B", "D"]
-      for ignored in ("name", "nope")
-        unsorted = SparlectraApp._webui_artifact_csv_html(sort_csv; csv_display = SparlectraApp._WebUICsvDisplay(5, "", ignored, "desc"))
-        @test row_order(unsorted) == ["A", "B", "C", "D"] && !occursin("Sorted by", unsorted)
-      end
+      unsorted = SparlectraApp._webui_artifact_csv_html(sort_csv; csv_display = SparlectraApp._WebUICsvDisplay(5, "", "nope", "desc"))
+      @test row_order(unsorted) == ["A", "B", "C", "D"] && !occursin("Sorted by", unsorted)
+      # a text column sorts alphabetically ignoring case, A to Z on the first
+      # click, Z to A on the second, empty cells at the end
+      text_csv = "name,p_mw\nb,1.0\nC,2.0\n,3.0\na,4.0\n"
+      text_plain = SparlectraApp._webui_artifact_csv_html(text_csv)
+      @test occursin("<th data-col=\"1\"><a href=\"?sort=name&amp;order=asc\" title=\"Sort A to Z\" data-csv-keep>name</a></th>", text_plain)
+      text_asc = SparlectraApp._webui_artifact_csv_html(text_csv; csv_display = SparlectraApp._WebUICsvDisplay(5, "", "name", "asc"))
+      @test row_numbers(text_asc) == ["4", "1", "2", "3"]
+      @test occursin("Sorted by name, A to Z", text_asc)
+      @test occursin("<a href=\"?sort=name\" title=\"Sort Z to A\" data-csv-keep>name &#9650;</a>", text_asc)
+      @test row_numbers(SparlectraApp._webui_artifact_csv_html(text_csv; csv_display = SparlectraApp._WebUICsvDisplay(5, "", "name", "desc"))) == ["2", "1", "4", "3"]
+      # the header of a column is right-aligned like its cells: when most of
+      # its non-empty cells are numbers (vm_pu with one NaN), else left
+      align_csv = "name,vm_pu,note\nA,1.0,x\nB,NaN,y\nC,0.9,1\n"
+      align_html = SparlectraApp._webui_artifact_csv_html(align_csv)
+      @test occursin("<th class=\"num\" data-col=\"2\">", align_html)
+      @test occursin("<th data-col=\"1\">", align_html) && occursin("<th data-col=\"3\">", align_html)
+      @test occursin("<td>A</td><td class=\"num\">1.0000</td><td>x</td>", align_html)
       # the decimal comma of a semicolon file sorts by value
       comma_sorted = SparlectraApp._webui_artifact_csv_html("bus;q_mvar\n1;0,5\n2;1.234,5\n3;-2,0\n"; csv_display = SparlectraApp._WebUICsvDisplay(5, "", "q_mvar", "desc"))
-      @test [m.captures[1] for m in eachmatch(r"<tr><td class=\"num\">(\d)</td>", comma_sorted)] == ["2", "1", "3"]
+      @test row_numbers(comma_sorted) == ["2", "1", "3"]
       # every row is sorted before the table is cut to its row limit
       limit = SparlectraApp._WEBUI_ARTIFACT_TABLE_ROWS
       long_csv = "id,p_mw\n" * join(("$(i),$(i == limit + 50 ? 999.5 : 1.5)" for i in 1:(limit + 50)), "\n") * "\n"
       long_sorted = SparlectraApp._webui_artifact_csv_html(long_csv; csv_display = SparlectraApp._WebUICsvDisplay(5, "", "p_mw", "desc"))
-      @test occursin("<tbody><tr><td class=\"num\">$(limit + 50)</td><td class=\"num\">999.50</td>", long_sorted)
+      @test occursin("<tbody><tr><td class=\"csv-rn\">$(limit + 50)</td><td class=\"num\">$(limit + 50)</td><td class=\"num\">999.50</td>", long_sorted)
       @test occursin("Table shows the first $(limit) of $(limit + 50) rows", long_sorted)
       @test SparlectraApp._webui_csv_display(Dict("sort" => " p_mw ", "order" => "up")) == SparlectraApp._WebUICsvDisplay(5, "", "p_mw", "desc")
-      # through the route: Apply keeps the sort column as hidden fields, the
-      # raw view carries it back, the links to the other CSV files do not
+      # hidden columns: column numbers from `hide=`, bad entries dropped; a
+      # style rule hides them (column j is cell j + 1 after the row number),
+      # a number beyond the last column is ignored
+      @test SparlectraApp._webui_csv_display(Dict("hide" => "3,x,1,3,0")).hide == "1,3"
+      hidden_html = SparlectraApp._webui_artifact_csv_html(sort_csv; csv_display = SparlectraApp._webui_csv_display(Dict("hide" => "1,3,9")))
+      @test occursin("<style data-csv-grid-style>.csv-grid th:nth-child(2),.csv-grid td:nth-child(2){display:none}.csv-grid th:nth-child(4),.csv-grid td:nth-child(4){display:none}</style>", hidden_html)
+      @test occursin("<style data-csv-grid-style></style>", SparlectraApp._webui_artifact_csv_html(sort_csv))
+      # through the route: Apply keeps the sort column and the hidden columns
+      # as hidden fields, the sort links and the raw view carry them, the
+      # links to the other CSV files do not
       write(joinpath(result["output_dir"], "note_sort.csv"), sort_csv)
       routed_sort = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/artifact/$(run_id)/note_sort.csv?digits=4&sort=p_mw&order=asc"; output_root).body)
       @test row_order(routed_sort) == ["A", "D", "B", "C"]
       @test occursin("<input type=\"hidden\" name=\"sort\" value=\"p_mw\"><input type=\"hidden\" name=\"order\" value=\"asc\">", routed_sort)
+      @test occursin("<input type=\"hidden\" name=\"hide\" value=\"\" data-csv-hide-input disabled>", routed_sort)
       @test occursin("href=\"note_sort.csv?raw=1&amp;digits=4&amp;sort=p_mw&amp;order=asc\"", routed_sort)
       @test occursin("href=\"bus_voltages_complex.csv?digits=4\"", routed_sort)
-      @test occursin("<th><a href=\"?digits=4&amp;sort=p_mw\" title=\"Sort largest first\">p_mw &#9650;</a></th>", routed_sort)
+      @test occursin("<th class=\"num\" data-col=\"2\"><a href=\"?digits=4&amp;sort=p_mw\" title=\"Sort largest first\" data-csv-keep>p_mw &#9650;</a></th>", routed_sort)
+      routed_hidden = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/artifact/$(run_id)/note_sort.csv?sort=p_mw&hide=3%2C1"; output_root).body)
+      @test row_order(routed_hidden) == ["B", "D", "A", "C"]
+      @test occursin("<a href=\"?sort=p_mw&amp;order=asc&amp;hide=1%2C3\" title=\"Sort smallest first\" data-csv-keep>", routed_hidden)
+      @test occursin("<a href=\"?sort=vm_pu&amp;hide=1%2C3\" title=\"Sort largest first\" data-csv-keep>", routed_hidden)
+      @test occursin("<input type=\"hidden\" name=\"hide\" value=\"1,3\" data-csv-hide-input>", routed_hidden)
+      @test occursin("href=\"note_sort.csv?raw=1&amp;sort=p_mw&amp;hide=1%2C3\"", routed_hidden)
+      @test occursin("href=\"bus_voltages_complex.csv\"", routed_hidden)
+      @test occursin(".csv-grid th:nth-child(2),.csv-grid td:nth-child(2){display:none}.csv-grid th:nth-child(4),", routed_hidden)
+      @test occursin("<input type=\"checkbox\" data-csv-col=\"1\"> name", routed_hidden) && occursin("<input type=\"checkbox\" data-csv-col=\"2\" checked> p_mw", routed_hidden)
+      @test occursin("href=\"note_sort.csv?sort=p_mw&amp;hide=1%2C3\"", String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/artifact/$(run_id)/note_sort.csv?raw=1&sort=p_mw&hide=1,3"; output_root).body))
       legacy_diagnostic_path = joinpath(result["output_dir"], "diagnose.txt")
       write(legacy_diagnostic_path, "legacy diagnostics\n")
       legacy_artifacts = list_powerflow_artifacts(run_id)
@@ -3063,120 +3101,6 @@ result = get_powerflow_result(run_id)
       @test !isopen(heartbeat_server.listener)
     end
 
-    @testset "DC power flow mode" begin (function ()
-      mktempdir() do dc_tmpdir
-        dc_casefile = _write_webui_test_case(joinpath(dc_tmpdir, "case_webui_dc.m"))
-        dc_config_file = joinpath(dc_tmpdir, "config_template.yaml")
-        cp(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, dc_config_file)
-        dc_output_root = joinpath(dc_tmpdir, "runs")
-
-        # (2a) Rendered form contains the DC selection, with AC selected by default.
-        # the solver radio group lives on the Settings page
-        rendered_form = String(
-          SparlectraApp.route_sparlectra_webui(
-            "GET",
-            "/powerflow/settings?casefile=$(SparlectraApp._webui_urlencode(dc_casefile))&config_file=$(SparlectraApp._webui_urlencode(dc_config_file))";
-            output_root = dc_output_root,
-          ).body,
-        )
-        # AC/APSLF/DC are one unified radio group on the single "power_flow_solver"
-        # field -- there is no separate "Berechnungsmodell" field/control anymore,
-        # and no dropdown duplicating the "dc" choice.
-        @test occursin("<input type=\"radio\" name=\"power_flow_solver\" value=\"rectangular\" data-solver-radio checked>", rendered_form)
-        @test occursin("<input type=\"radio\" name=\"power_flow_solver\" value=\"apslf\" data-solver-radio>", rendered_form)
-        @test occursin("<input type=\"radio\" name=\"power_flow_solver\" value=\"dc\" data-solver-radio>", rendered_form)
-        @test !occursin("<input type=\"radio\" name=\"power_flow_solver\" value=\"apslf\" data-solver-radio checked>", rendered_form)
-        @test !occursin("<input type=\"radio\" name=\"power_flow_solver\" value=\"dc\" data-solver-radio checked>", rendered_form)
-        @test occursin("DC (linear screening model, replaces Newton-Raphson entirely)", rendered_form)
-        @test !occursin("Berechnungsmodell", rendered_form)
-        @test !occursin("power_flow_calc_mode", rendered_form)
-        @test !occursin("data-calc-mode-radio", rendered_form)
-        @test !occursin("data-solver-select", rendered_form)
-        @test !occursin("<select name=\"power_flow_solver\"", rendered_form)
-        @test occursin("data-ac-only-field", rendered_form)
-        # Newton-Raphson's DC-derived start angles are documented inline next to the
-        # AC radio, distinct from the standalone DC solver option below it.
-        @test occursin("Start angle mode", rendered_form)
-        @test occursin("DC pre-pass", rendered_form)
-
-        # (2b) POST with DC mode terminates successfully; result.json carries the DC flag.
-        dc_form = _webui_test_form(dc_casefile, dc_config_file, dc_output_root)
-        dc_form["power_flow_solver"] = "dc"
-        dc_form["detailed_result_csv_format"] = "technical"
-        dc_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/run", dc_form; output_root = dc_output_root)
-        @test dc_response.status == 303
-        dc_run_id = basename(only(header.second for header in dc_response.headers if header.first == "Location"))
-        wait(SparlectraApp._POWERFLOW_WEBUI_JOBS[dc_run_id]["task"])
-        dc_result = get_powerflow_result(dc_run_id)
-        @test dc_result["success"]
-        dc_result_json = SparlectraApp._parse_service_json(read(joinpath(dc_result["output_dir"], "result.json"), String))
-        @test dc_result_json["final_outcome"]["solver"] == "dc"
-
-        # (2c) Result page marks the DC run distinctly.
-        dc_result_response = SparlectraApp.handle_powerflow_result(dc_run_id)
-        @test dc_result_response.status == 200
-        dc_result_html = String(dc_result_response.body)
-        @test occursin("DC solution", dc_result_html)
-        @test occursin("status-info", dc_result_html)
-        @test occursin("<code>dc</code>", dc_result_html)
-
-        # (2d) Artifact listing of the DC run is not empty; result.json downloads with status 200.
-        dc_artifacts = list_powerflow_artifacts(dc_run_id)
-        @test !isempty(dc_artifacts)
-        @test any(artifact -> artifact["name"] == "result.json", dc_artifacts)
-        @test any(artifact -> artifact["name"] == "bus_voltages_complex.csv", dc_artifacts)
-        @test SparlectraApp.route_sparlectra_webui("GET", "/powerflow/artifact/$(dc_run_id)/result.json?download=1"; output_root = dc_output_root).status == 200
-
-        # (2e) Regression: no solver field, and an explicit AC selection, still
-        # produce the unchanged AC report (no "dc" solver in final_outcome).
-        ac_implicit_form = _webui_test_form(dc_casefile, dc_config_file, dc_output_root)
-        ac_implicit_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/run", ac_implicit_form; output_root = dc_output_root)
-        @test ac_implicit_response.status == 303
-        ac_implicit_run_id = basename(only(header.second for header in ac_implicit_response.headers if header.first == "Location"))
-        wait(SparlectraApp._POWERFLOW_WEBUI_JOBS[ac_implicit_run_id]["task"])
-        ac_implicit_result = get_powerflow_result(ac_implicit_run_id)
-        @test ac_implicit_result["success"]
-        ac_implicit_json = SparlectraApp._parse_service_json(read(joinpath(ac_implicit_result["output_dir"], "result.json"), String))
-        @test ac_implicit_json["final_outcome"]["solver"] == "rectangular"
-
-        ac_explicit_form = _webui_test_form(dc_casefile, dc_config_file, dc_output_root)
-        ac_explicit_form["power_flow_solver"] = "rectangular"
-        ac_explicit_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/run", ac_explicit_form; output_root = dc_output_root)
-        @test ac_explicit_response.status == 303
-        ac_explicit_run_id = basename(only(header.second for header in ac_explicit_response.headers if header.first == "Location"))
-        wait(SparlectraApp._POWERFLOW_WEBUI_JOBS[ac_explicit_run_id]["task"])
-        ac_explicit_result = get_powerflow_result(ac_explicit_run_id)
-        @test ac_explicit_result["success"]
-        ac_explicit_json = SparlectraApp._parse_service_json(read(joinpath(ac_explicit_result["output_dir"], "result.json"), String))
-        @test ac_explicit_json["final_outcome"]["solver"] == "rectangular"
-        @test ac_implicit_json["final_outcome"]["converged"] == ac_explicit_json["final_outcome"]["converged"]
-        @test ac_implicit_json["final_outcome"]["iterations"] == ac_explicit_json["final_outcome"]["iterations"]
-
-        # History row shows the calculation mode for the DC run, unchanged status columns otherwise.
-        dc_runs = SparlectraApp.list_powerflow_runs(dc_output_root)
-        dc_history_html = SparlectraApp.render_powerflow_history(dc_runs, dc_output_root)
-        @test occursin("<th>Solver</th>", dc_history_html)
-        @test occursin("<td>dc</td>", dc_history_html)
-        @test occursin("<td>rectangular</td>", dc_history_html)
-
-        # (3) Plausibility: the WebUI DC run's bus angles match a direct rundcpf! call on the
-        # same case, proving both paths run the same solver code.
-        dc_bus_csv = read(joinpath(dc_result["output_dir"], "bus_voltages_complex.csv"), String)
-        dc_bus_rows = split(strip(dc_bus_csv), '\n')[2:end]
-        webui_va_deg = Dict{Int,Float64}()
-        for row in dc_bus_rows
-          fields = split(row, ',')
-          webui_va_deg[parse(Int, fields[1])] = parse(Float64, fields[5])
-        end
-        mpc = Sparlectra.MatpowerIO.read_case(dc_casefile)
-        direct_net = Sparlectra.createNetFromMatPowerCase(mpc = mpc, flatstart = true)
-        direct_report = rundcpf!(direct_net)
-        for row in direct_report.nodes
-          @test isapprox(webui_va_deg[row.bus], row.va_deg; atol = 1e-8)
-        end
-      end
-    end)() end
-
     @testset "DC-seeded Newton-Raphson start (dc_seed_unconditional)" begin (function ()
       mktempdir() do seed_tmpdir
         seed_casefile = _write_webui_test_case(joinpath(seed_tmpdir, "case_webui_dcseed.m"))
@@ -3325,95 +3249,6 @@ result = get_powerflow_result(run_id)
           @test Float64(md["se_k_suppress"]) ≈ 5.5
           @test Float64(md["se_suppression_sigma"]) ≈ 1234.0
         end
-      end
-    end)() end
-
-    @testset "Diagnose button submitter preservation" begin (function ()
-      mktempdir() do diag_tmpdir
-        diag_casefile = _write_webui_test_case(joinpath(diag_tmpdir, "case_webui_diag.m"))
-        diag_config_file = joinpath(diag_tmpdir, "config_template.yaml")
-        cp(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, diag_config_file)
-        diag_output_root = joinpath(diag_tmpdir, "runs")
-
-        # (2a) The rendered form no longer disables submit buttons synchronously
-        # before serialization; it preserves the submitter's name/value instead.
-        diag_form_html = String(
-          SparlectraApp.route_sparlectra_webui(
-            "GET",
-            "/powerflow?casefile=$(SparlectraApp._webui_urlencode(diag_casefile))&config_file=$(SparlectraApp._webui_urlencode(diag_config_file))";
-            output_root = diag_output_root,
-          ).body,
-        )
-        @test !occursin("onsubmit=\"this.classList.add('is-submitting')", diag_form_html)
-        @test occursin("<form id=\"powerflow-run-form\" data-powerflow-form method=\"post\" action=\"/powerflow/run\" class=\"panel form-grid powerflow-form-card\">", diag_form_html)
-        @test occursin("const copySubmitterValue = function (submitter)", diag_form_html)
-        @test occursin("data-submitter-value", diag_form_html)
-        @test occursin("event.submitter", diag_form_html)
-        @test occursin("powerflowForm.addEventListener('submit', function (event)", diag_form_html)
-        @test occursin("button.addEventListener('click', function () { copySubmitterValue(button); })", diag_form_html)
-        @test occursin("powerflowForm.classList.add('is-submitting')", diag_form_html)
-        @test occursin("powerflowForm.setAttribute('aria-busy', 'true')", diag_form_html)
-        @test occursin("powerflowForm.querySelectorAll('button[type=submit]').forEach(function (b) { b.disabled = true; })", diag_form_html)
-        @test occursin("staleSubmitterValue", diag_form_html)
-
-        # (1) Repro (still valid post-fix, since it exercises the unchanged server
-        # path): a POST body without "diagnose_mode" never writes diagnose.log.
-        no_diagnose_form = _webui_test_form(diag_casefile, diag_config_file, diag_output_root)
-        haskey(no_diagnose_form, "diagnose_mode") && delete!(no_diagnose_form, "diagnose_mode")
-        no_diagnose_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/run", no_diagnose_form; output_root = diag_output_root)
-        @test no_diagnose_response.status == 303
-        no_diagnose_run_id = basename(only(header.second for header in no_diagnose_response.headers if header.first == "Location"))
-        wait(SparlectraApp._POWERFLOW_WEBUI_JOBS[no_diagnose_run_id]["task"])
-        no_diagnose_result = get_powerflow_result(no_diagnose_run_id)
-        @test no_diagnose_result["success"]
-        @test !isfile(joinpath(no_diagnose_result["output_dir"], "diagnose.log"))
-
-        # (2b) POST with diagnose_mode=true writes a non-empty diagnose.log containing
-        # the "Diagnosis" section from run_diagnostic_artifacts.jl.
-        diagnose_form = _webui_test_form(diag_casefile, diag_config_file, diag_output_root)
-        diagnose_form["diagnose_mode"] = "true"
-        diagnose_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/run", diagnose_form; output_root = diag_output_root)
-        @test diagnose_response.status == 303
-        diagnose_run_id = basename(only(header.second for header in diagnose_response.headers if header.first == "Location"))
-        wait(SparlectraApp._POWERFLOW_WEBUI_JOBS[diagnose_run_id]["task"])
-        diagnose_result = get_powerflow_result(diagnose_run_id)
-        # A diagnose run takes ONE step from the case's own stored VM/VA, so
-        # a residual is the normal outcome and `success` (which mirrors
-        # convergence) is false: the service completed, the numerics did not
-        # converge, and that residual IS the diagnosis. This asserted
-        # `success` before this fix, when the forced settings still lost to
-        # the case configuration file and the run was secretly an ordinary
-        # solve.
-        @test diagnose_result["success"] === false
-        @test diagnose_result["service_status"] == "completed"
-        @test diagnose_result["run_status"] == "completed_nonconverged"
-        @test diagnose_result["iterations"] == 1
-        diagnose_log_path = joinpath(diagnose_result["output_dir"], "diagnose.log")
-        @test isfile(diagnose_log_path)
-        @test filesize(diagnose_log_path) > 0
-        diagnose_log_text = read(diagnose_log_path, String)
-        @test occursin("Diagnosis", diagnose_log_text)
-
-        # (2c) Artifact listing of the diagnostic run includes diagnose.log.
-        diagnose_artifacts = list_powerflow_artifacts(diagnose_run_id)
-        @test any(artifact -> artifact["name"] == "diagnose.log", diagnose_artifacts)
-
-        # (2d) diagnose.log downloads with status 200 and the same file content.
-        diagnose_download = SparlectraApp.route_sparlectra_webui("GET", "/powerflow/artifact/$(diagnose_run_id)/diagnose.log?download=1"; output_root = diag_output_root)
-        @test diagnose_download.status == 200
-        @test String(diagnose_download.body) == diagnose_log_text
-
-        # Regression: a plain "Start PowerFlow run" (no diagnose_mode field at all,
-        # matching what the real submit button sends) still never writes diagnose.log.
-        normal_form = _webui_test_form(diag_casefile, diag_config_file, diag_output_root)
-        haskey(normal_form, "diagnose_mode") && delete!(normal_form, "diagnose_mode")
-        normal_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/run", normal_form; output_root = diag_output_root)
-        @test normal_response.status == 303
-        normal_run_id = basename(only(header.second for header in normal_response.headers if header.first == "Location"))
-        wait(SparlectraApp._POWERFLOW_WEBUI_JOBS[normal_run_id]["task"])
-        normal_result = get_powerflow_result(normal_run_id)
-        @test normal_result["success"]
-        @test !isfile(joinpath(normal_result["output_dir"], "diagnose.log"))
       end
     end)() end
 
@@ -3746,7 +3581,7 @@ function _webui_short_circuit_status_tests()
       for (name, head) in (("short_circuit_max.csv", head_max), ("short_circuit_min.csv", head_min))
         artifact_page = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/artifact/$(SparlectraApp._webui_urlencode(res["run_id"]))/$(name)"; output_root = root).body)
         at = findfirst(SparlectraApp._webui_escape(head), artifact_page)
-        @test at !== nothing && first(at) < first(findfirst("<table>", artifact_page))
+        @test at !== nothing && first(at) < first(findfirst("<table class=\"csv-grid\"", artifact_page))
       end
     end
   end)() end

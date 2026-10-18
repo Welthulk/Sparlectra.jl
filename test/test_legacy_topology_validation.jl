@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# file: test/test_topology_validation.jl
-# purpose: topology validation (0.10.0): stage-1 pre-check matrix
+# file: test/test_legacy_topology_validation.jl
+# purpose: legacy profile, the whole former topology_validation group (pins of 0.10.0 and issue #372). Topology validation: stage-1 pre-check matrix
 #          incl. false-positive guards, the advisory contract, the stage-2
 #          fingerprint classification, the stage-3 hypothesis test with an
 #          untouched input net, and the singular-normal-equations
@@ -107,7 +107,7 @@ function test_topology_stage1()::Bool
     # the shipped sp_case14 measurement set against the shipped case: the
     # weakly loaded mesh line Moorau-Wehrden used to fire (issue #372)
     net14 = importSCF(joinpath(pkgdir(Sparlectra), "data", "scf", "sp_case14.scf.json"))
-    readMeasurementsCSV!(net14; file = joinpath(pkgdir(Sparlectra), "data", "scf", "sp_case14.measurements.csv"))
+    readMeasurementTable!(net14; file = joinpath(pkgdir(Sparlectra), "data", "scf", "sp_case14.measurements.csv"), zero_injection = false)
     pre = validate_topology(net14)
     @test !any(f -> f.kind == :closed_element_without_flow, pre.findings)
 
@@ -338,7 +338,7 @@ function test_topology_singular_normal_equations()::Bool
   return true
 end
 
-function run_topology_validation_tests()
+function run_legacy_topology_validation_tests()
   @testset "Topology validation" begin (function ()
     tests = [
       ("Stage 1 precheck matrix", test_topology_stage1),

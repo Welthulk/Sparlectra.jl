@@ -79,10 +79,19 @@ function _scenario_branch!(log::UndoLog, net::Net, internal::Int, op::PatchOp)
     end
     log.refresh[] = true
   elseif op.op === :set && op.field === :tap_pos
-    # the live ratio on the nameplate grid: tap = neutral / (1 + n * step),
-    # the same rule applyTapNameplate! documents
+    # the live ratio n positions from `ratio` on the grid of the branch, the
+    # rule applyTapNameplate! documents: a CGMES changer (tap_ratio_grid
+    # :linear) steps ratio + n * step or along its table points, nameplate
+    # data steps neutral / (1 + n * step). The fraction rule on a CGMES
+    # changer moved the ratio the other way (3W fixture, n = 8 from 1.0:
+    # 0.926 instead of 1.08).
     br.has_ratio_tap || throw(ArgumentError(string("branch ", internal, " has no ratio tap changer")))
-    _undo_set!(log, br, :tap_ratio, br.ratio / (1.0 + op.value * br.tap_step))
+    if br.tap_ratio_grid === :linear && _tap_r1_model(br) === nothing
+      (br.tap_ratio_points === nothing || isinteger(op.value)) || throw(ArgumentError(string("branch ", internal, " steps along a tap table; tap_pos needs a whole position, got ", op.value)))
+      _undo_set!(log, br, :tap_ratio, _ratio_grid_shift(br, br.ratio, op.value; window = (-Inf, Inf)))
+    else
+      _undo_set!(log, br, :tap_ratio, br.ratio / (1.0 + op.value * br.tap_step))
+    end
   elseif op.op === :set && op.field === :angle_deg
     _undo_set!(log, br, :phase_shift_deg, Float64(op.value))
   else

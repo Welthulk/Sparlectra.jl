@@ -55,8 +55,7 @@ function _add_synthetic_pi_line!(net::Net, from_bus::String, to_bus::String, r::
   from = geNetBusIdx(net = net, busName = from_bus)
   to = geNetBusIdx(net = net, busName = to_bus)
   vn_kV = getNodeVn(net.nodeVec[from])
-  acseg = ACLineSegment(vn_kv = vn_kV, from = from, to = to, length = 1.0, r = r, x = x, b = b, ratedS = nothing, paramsBasedOnLength = false, isPIModel = true)
-  acseg.g = g
+  acseg = ACLineSegment(vn_kv = vn_kV, from = from, to = to, r = r, x = x, b = b, g = g, isPIModel = true)
   push!(net.linesAC, acseg)
   addBranch!(net = net, from = from, to = to, branch = acseg, vn_kV = vn_kV, status = 1, values_are_pu = true)
   return nothing

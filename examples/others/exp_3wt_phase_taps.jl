@@ -109,11 +109,11 @@ function build_case_net(; hv_kV::Float64 = 380.0, mv_kV::Float64 = 110.0, lv_kV:
   addBus!(net = net, busName = "B5", vn_kV = mv_kV)  # load bus (at MV level)
 
   addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
-  addACLine!(net = net, fromBus = "B1", toBus = "B2", length = 1.0, r = 0.01, x = 0.10)
+  addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.01, x_pu = 0.10, b_pu = 0.0, status = 1)
 
   add_3wt_with_leg_override!(net = net, HBBus = "B2", MBBus = "B3", LVBus = "B4", r = LEG_R_OHM, x = LEG_X_OHM, b = LEG_B_SIEMENS, ratedU_kV = (hv_kV, mv_kV, lv_kV), ratedS_MVA = LEG_S_MVA, override_leg = override_leg, override_ratio = override_ratio, override_shift_deg = override_shift_deg)
 
-  addACLine!(net = net, fromBus = "B3", toBus = "B5", length = 1.0, r = 0.01, x = 0.10)
+  addPIModelACLine!(net = net, fromBus = "B3", toBus = "B5", r_pu = 0.01, x_pu = 0.10, b_pu = 0.0, status = 1)
   addProsumer!(net = net, busName = "B5", type = "ENERGYCONSUMER", p = 80.0, q = 30.0)
   addShunt!(net = net, busName = "B4", pShunt = 0.0, qShunt = 5.0)
 

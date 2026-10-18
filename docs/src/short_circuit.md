@@ -39,7 +39,9 @@ i_p = \kappa \,\sqrt{2}\; I_k'',
 
 so the R/X ratio at the fault matters, not only the impedance magnitude
 (the generic factor; Sparlectra reports the method-b form of the result
-section). Breaking and thermal equivalent currents follow as well.
+section). Sparlectra computes $I_k''$, $i_p$ and $\kappa$ (method b);
+breaking and thermal equivalent currents are not computed. None of the
+three depends on the system frequency.
 
 **Where the fault current comes from.** A synchronous machine feeds the
 fault through its subtransient reactance (`x''_d`), a network feeder
@@ -254,9 +256,10 @@ ratio of a motor.
 harvested data lacks the rated power factors), so `Ik''` is biased
 slightly high near transformers and generators. The LV `c_max` variant
 1.10 (+10 % voltage-tolerance bands) and a per-voltage-level `c` table are
-not available. Unbalanced faults and the breaking/thermal quantities need
-the zero-sequence model, whose source data (transformer vector groups and
-earthing) is already harvested.
+not available. Unbalanced faults need the zero-sequence model, whose
+source data (transformer vector groups and earthing) is already harvested.
+The breaking current $I_b$, the thermal equivalent current and $\kappa$ by
+method c are not computed.
 
 ## References
 

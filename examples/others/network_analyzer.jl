@@ -115,10 +115,12 @@ function test_debug()
   addBus!(net = net, busName = "B6", vn_kV = 20.0)
 
   # Add lines
-  addACLine!(net = net, fromBus = "B1", toBus = "B2", length = 10.0, r = 0.01, x = 0.1, b = 3.1415926535897935e-05, ratedS = 100.0)
-  addACLine!(net = net, fromBus = "B2", toBus = "B3", length = 15.0, r = 0.01, x = 0.1, b = 4.71238898038469e-05, ratedS = 100.0)
-  addACLine!(net = net, fromBus = "B3", toBus = "B4", length = 20.0, r = 0.01, x = 0.1, b = 6.283185307179587e-05, ratedS = 100.0)
-  addACLine!(net = net, fromBus = "B4", toBus = "B5", length = 25.0, r = 0.01, x = 0.1, b = 7.853981633974484e-05, ratedS = 100.0)
+  # each line 1.21 + j12.1 ohm in total (0.01 + j0.1 pu at 110 kV, 100 MVA), 10 nF/km
+  line!(f, t, len) = addACLinePerKm!(net = net, fromBus = f, toBus = t, length_km = len, r_ohm_per_km = 1.21 / len, x_ohm_per_km = 12.1 / len, c_nf_per_km = 10.0, ratedS = 100.0)
+  line!("B1", "B2", 10.0)
+  line!("B2", "B3", 15.0)
+  line!("B3", "B4", 20.0)
+  line!("B4", "B5", 25.0)
 
   # Add transformer
   add2WTrafo!(net = net, fromBus = "B1", toBus = "B6", sn_mva = 100.0, vk_percent = 10.0, vkr_percent = 0.5, pfe_kw = 20.0, i0_percent = 0.1)

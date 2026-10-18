@@ -1,3 +1,26 @@
+# Version 0.50.0 - 2026-10-18
+
+Measurement table for the state estimation, `addACLine!` in physical units.
+
+## Breaking
+- `addACLine!` takes totals in ohm and siemens, `addACLinePerKm!` takes per-km values and the system frequency; `paramsBasedOnLength` is removed. Lines built from `c_nf_per_km` had their charging Z_base times too small and give other results now. See Migrating from 0.42 in the documentation.
+## Added
+- Measurement table for the state estimation, addressed by CGMES mRID or element name, with pseudo measurements and sigma per voltage level (editable in the Web UI).
+- System frequency per network (`model.nominal_frequency_hz`, default 50 Hz), selectable in the Web UI; enters lines built from per-km capacitance and SCF `c1`, cases in ohm, siemens or per unit are unaffected.
+- Web UI CSV view sorts text columns and hides columns and rows.
+## Changed
+- The measurement table is the one measurement format: the Web UI generator and the shipped sets use it, `convertMeasurementsV1` converts old files.
+- Zero injection rows at passive buses are added in every SE path (`state_estimation.zero_injection`, default `on`).
+- Shipped demo cases rebuilt; transformer magnetizing from the nameplate is now in the files, so their results change (losses 2 to 4 percent).
+- Test suite rebuilt around reference solutions: `fast` checks known networks against MATPOWER headers, ENTSO-E state variables, hand calculations and OpenLoadFlow in under 30 s; pinned regression tests run in the new `legacy` profile; `adapters` is split into `cgmes` and `formats`.
+## Deprecated
+- The v1 measurement CSV is read with a warning and is removed in 0.60.0.
+## Fixed
+- Generated measurement sets at buses joined by closed couplers carried the coupler flow in their injections.
+- Tap positions of CGMES tap changers in SE, SCF, MATPOWER and scenarios.
+- Exports: MATPOWER lines and ratio-1 transformers, SCF shunt measurements and SVC shunts.
+- The short-circuit page claimed breaking and thermal currents were computed; only Ik'', ip and κ are.
+
 # Version 0.42.0 - 2026-10-16
 
 CSV view in the Web UI and CGMES import fixes.

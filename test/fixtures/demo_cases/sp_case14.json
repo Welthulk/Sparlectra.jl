@@ -30,75 +30,75 @@
   "power_flow": {
     "bus_state": {
       "1": {
-        "va_deg": -1.836959,
-        "vm_pu": 0.989041
+        "va_deg": -1.839944,
+        "vm_pu": 0.989008
       },
       "10": {
         "va_deg": 0.0,
         "vm_pu": 1.02
       },
       "11": {
-        "va_deg": -0.552444,
-        "vm_pu": 0.983963
+        "va_deg": -0.557949,
+        "vm_pu": 0.983959
       },
       "12": {
-        "va_deg": -4.556469,
-        "vm_pu": 0.916337
+        "va_deg": -4.565087,
+        "vm_pu": 0.916199
       },
       "13": {
-        "va_deg": -1.093774,
-        "vm_pu": 0.986999
+        "va_deg": -1.099708,
+        "vm_pu": 0.986935
       },
       "14": {
-        "va_deg": -2.968009,
-        "vm_pu": 0.974581
+        "va_deg": -2.976195,
+        "vm_pu": 0.97448
       },
       "2": {
-        "va_deg": 2.034507,
+        "va_deg": 2.028212,
         "vm_pu": 1.01
       },
       "3": {
-        "va_deg": 1.127035,
+        "va_deg": 1.120834,
         "vm_pu": 1.0
       },
       "4": {
-        "va_deg": -4.358699,
-        "vm_pu": 0.94734
+        "va_deg": -4.367261,
+        "vm_pu": 0.947207
       },
       "5": {
-        "va_deg": -1.541257,
-        "vm_pu": 0.983131
+        "va_deg": -1.545244,
+        "vm_pu": 0.983117
       },
       "6": {
-        "va_deg": -4.502433,
-        "vm_pu": 0.925723
+        "va_deg": -4.511036,
+        "vm_pu": 0.925586
       },
       "7": {
-        "va_deg": -1.113043,
-        "vm_pu": 0.990823
+        "va_deg": -1.119049,
+        "vm_pu": 0.990746
       },
       "8": {
-        "va_deg": -4.115892,
-        "vm_pu": 0.983905
+        "va_deg": -4.124388,
+        "vm_pu": 0.983778
       },
       "9": {
-        "va_deg": -0.652243,
-        "vm_pu": 1.003418
+        "va_deg": -0.65469,
+        "vm_pu": 1.003395
       }
     },
     "iterations": 1,
-    "losses_mw": 1.682823
+    "losses_mw": 1.725659
   },
   "provenance": "Self-built Sparlectra demo network; the bus count in the name does not make it the IEEE case of that size, and no data was taken from MATPOWER, DTF or any other source.",
   "scenarios": {
     "explicit": {
       "double_circuit_Ostheim_Neuwiese_out": {
         "converged": true,
-        "max_branch_loading_pct": 66.386243
+        "max_branch_loading_pct": 66.387484
       },
       "evening_peak": {
         "converged": true,
-        "max_branch_loading_pct": 73.394968
+        "max_branch_loading_pct": 73.396276
       },
       "trafo_Moorau_out_feeder_island": {
         "converged": false
@@ -118,7 +118,7 @@
   },
   "state_estimation": {
     "dof": 83,
-    "objective": 78.403364,
+    "objective": 78.402647,
     "seed": 20260914
   }
 }

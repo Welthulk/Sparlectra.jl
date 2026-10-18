@@ -20,8 +20,8 @@
 #          an adopted run state), optionally shifts transformer taps, thins
 #          flow ends and passive-node rows, makes a requested number of
 #          rows critical by targeted partner removal, injects seeded noise
-#          and gross errors, and writes a measurement CSV v1 set with the
-#          in-file case binding. Split out of run_state_estimation_service.jl
+#          and gross errors, and writes the set as a measurement table with
+#          the in-file case binding. Split out of run_state_estimation_service.jl
 #          (which keeps the SE run itself).
 
 """
@@ -56,7 +56,9 @@ Fields:
   keeps one, chosen by the injection telemetry at the terminal buses.
 - `passive_sigma`, `passive_as_zi`: passive-node balances as protected
   zero-injection constraints (`true`) or as balance rows at `passive_sigma`
-  (MW; must be positive).
+  (MW; must be positive). `nothing` (the default) takes the case's
+  effective `state_estimation.zero_injection` (`on` is `true`), the switch
+  every SE path of the case reads.
 - `seed`: RNG seed; the same seed regenerates the identical set.
 - `critical_count`: number of rows to make critical by targeted thinning
   (`0` = off; must be zero or positive).
@@ -78,7 +80,7 @@ Base.@kwdef struct MeasurementGeneratorOptions
   run_root::Union{Nothing,String} = nothing
   flow_ends::Symbol = :both
   passive_sigma::Float64 = 0.05
-  passive_as_zi::Bool = true
+  passive_as_zi::Union{Nothing,Bool} = nothing
   seed::Int = 42
   critical_count::Int = 0
   # the positional inner constructor is the one @kwdef's keyword constructor
@@ -140,17 +142,23 @@ reference tightness; `:from_run` adopts the solved voltages of run
 balance-aware flow end per branch (`flow_ends`), rewrite passive-node
 balances at `passive_sigma` or as protected zero-injection constraints
 (`passive_as_zi`), thin the set by targeted partner removal until
-`critical_count` rows are critical, generate a measurement CSV v1 with
-percent-of-reading sigmas, optional seeded noise, optional currents and
+`critical_count` rows are critical, generate a measurement table with
+percent-of-reading sigmas (a row at a level of
+`state_estimation.sigma_by_voltage_level` takes the level sigma, its noise
+drawn at that sigma), optional seeded noise, optional currents and
 current angles, optional gross errors (`gross_k` sigma on `gross_count`
 seed-randomly selected telemetry rows; protected zero-injection rows are
 never corrupted), readable name-based ids, the structured tap comment
 table, and the in-file case binding.
 
 Returns `(rows, noisy, tap_note, gross_note, island_note, truth_note,
-flow_note, passive_note, critical_note)` for the caller's confirmation
-message. Side effect: writes `out_path`. Throws `ArgumentError` with a
-user-readable text when the case has no in-service transformer for a
+flow_note, passive_note, critical_note, sigma_level_rows, measurements,
+not_written)` for the caller's confirmation message; `rows` counts the rows
+of the written measurement table, `sigma_level_rows` the rows with a level
+sigma, `measurements` is the generated set before it is written and
+`not_written` lists the rows the table cannot carry (a negative current
+magnitude drawn by the noise), also named in the file. Side effect: writes `out_path`. Throws `ArgumentError`
+with a user-readable text when the case has no in-service transformer for a
 requested deviation, the requested run state is missing or bound to
 another case, or the power flow does not converge; the option combination
 itself is already validated by the constructor of `opts`.
@@ -164,6 +172,9 @@ function _se_generate_measurement_set(case_path::AbstractString, out_path::Abstr
   imported = _se_import_case(case_path, config)
   net = imported.net
   config = imported.config
+  # not stated: the case's zero-injection switch decides, so the set and
+  # the later SE run of the case follow the same setting
+  passive_as_zi = something(passive_as_zi, config.state_estimation.zero_injection === :on)
   # A generated set REPLACES; it is never an addition. A Sparlectra Case
   # Format case brings its own measurements along, and without this the
   # generator wrote them out again next to the fresh ones (59 carried + 75
@@ -207,12 +218,14 @@ function _se_generate_measurement_set(case_path::AbstractString, out_path::Abstr
       br = net.branchVec[ti]
       if br.has_ratio_tap || !_declared_phase_tap(br)
         base_tap = br.tap_ratio == 0.0 ? br.ratio : br.tap_ratio
-        # cascade convention (reciprocal from side): n steps on the fraction
-        # grid mean tap_ratio = base / (1 + n * tap_step), so an integer n is
-        # exactly a mechanical position of the estimator's fixation grid
-        dev_step = br.tap_step > 0.0 ? br.tap_step : 0.00625
-        br.tap_ratio = base_tap / (1.0 + tap_steps * dev_step)
-        pct_note = " (~$(round((1.0 / (1.0 + tap_steps * dev_step) - 1.0) * 100.0; digits = 2))% ratio)"
+        # n steps from the live position on the ratio grid of the branch
+        # (the fraction grid of nameplate data, the steps of a CGMES or typed
+        # changer), so the truth is a mechanical position of the estimator's
+        # fixation grid
+        (!isinteger(tap_steps) && (br.taps_derived || br.tap_ratio_points !== nothing)) && throw(ArgumentError("tap deviation of $(tap_steps) steps on transformer branch $(ti): a tabular or modelled tap changer has no fractional positions"))
+        p_live = round(_tap_r1_position(br, br.ratio / base_tap - 1.0), RoundNearestTiesAway)
+        br.tap_ratio = br.ratio / (1.0 + _tap_r1_at(br, p_live + tap_steps))
+        pct_note = " (~$(round((br.tap_ratio / base_tap - 1.0) * 100.0; digits = 2))% ratio)"
         push!(notes, "tap deviation $(tap_steps) steps$(pct_note) on transformer branch $(ti) ($(get(nby, Int(br.fromBus), string(Int(br.fromBus))))-$(get(nby, Int(br.toBus), string(Int(br.toBus)))))")
       else
         # pure phase shifter (PST): the deviation lives on the changer's OWN
@@ -270,6 +283,15 @@ function _se_generate_measurement_set(case_path::AbstractString, out_path::Abstr
   # relativeSigma: the fractions below are percent-of-reading / 100.
   stddev = measurementStdDevs(vm = sigma_u_pct / 100.0, pinj = sigma_p_pct / 100.0, qinj = sigma_q_pct / 100.0, pflow = sigma_p_pct / 100.0, qflow = sigma_q_pct / 100.0, imag = sigma_i_pct / 100.0, ia = sigma_ia_deg > 0.0 ? sigma_ia_deg : 0.05)
   meas = generateMeasurementsFromPF(net; noise = noise, stddev = stddev, relativeSigma = true, includeImag = include_i, includeIa = sigma_ia_deg > 0.0, rng = Random.MersenneTwister(seed))
+  # state_estimation.sigma_by_voltage_level (case configuration first): a
+  # row at a configured level takes the level sigma, and its noise is the
+  # same draw at that sigma, so the set and the estimator agree. Without
+  # the key nothing changes.
+  level_idx = Int[]
+  if !isempty(config.state_estimation.sigma_by_voltage_level)
+    lvl_truth = generateMeasurementsFromPF(net; noise = false, stddev = stddev, relativeSigma = true, includeImag = include_i, includeIa = sigma_ia_deg > 0.0)
+    meas, level_idx = _apply_sigma_levels_to_generated(net, meas, lvl_truth, config.state_estimation.sigma_by_voltage_level)
+  end
   # readable ids: the defaults carry internal indices ("Vm_bus_1"), which
   # diverge from the bus/branch names on CGMES nets and read like a bug
   # next to mRID location columns (WebUI sets only, the API keeps its
@@ -301,6 +323,9 @@ function _se_generate_measurement_set(case_path::AbstractString, out_path::Abstr
     newid = row_id(m)
     meas[gi2] = Measurement(typ = m.typ, value = m.value, sigma = m.sigma, active = m.active, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = newid, linkIdx = m.linkIdx)
   end
+  # the level sigma per row id: the thinning and the passive rows below can
+  # drop or replace such a row, so the set's count is taken at the end
+  level_sigma = Dict{String,Float64}(meas[k].id => meas[k].sigma for k in level_idx)
   # flow measurements per branch: :both keeps the full from/to pairs;
   # :one_balance_aware keeps exactly one flow-measurement group per branch.
   # The end choice is deterministic: prefer the end whose bus carries a
@@ -499,6 +524,7 @@ function _se_generate_measurement_set(case_path::AbstractString, out_path::Abstr
     end
   end
   append!(net.measurements, meas)
+  level_rows = count(m -> get(level_sigma, m.id, NaN) == m.sigma, meas)
   # record the tap positions the set was generated from as a structured
   # table (the estimator later has to explain any deviation between these
   # and the model): electrical_step = continuous position of the generation
@@ -521,6 +547,7 @@ function _se_generate_measurement_set(case_path::AbstractString, out_path::Abstr
   # to guess from a suspiciously small J.
   noise_comment = noise ? "noise: gaussian (sigma U $(sigma_u_pct)%, P $(sigma_p_pct)%, Q $(sigma_q_pct)% of reading)" : "noise: none (ideal values, J is 0 by construction)"
   gencomments = String["generator: v2", "seed: $(seed)", noise_comment, truth_comment, "flow_ends: $(flow_ends)"]
+  level_rows > 0 && push!(gencomments, "sigma by voltage level: $(level_rows) row(s) take the sigma of state_estimation.sigma_by_voltage_level")
   isempty(passive_comment) || push!(gencomments, passive_comment)
   append!(gencomments, critical_comments)
   tailcomments = copy(flow_comments)
@@ -574,11 +601,27 @@ function _se_generate_measurement_set(case_path::AbstractString, out_path::Abstr
   # the case has no transformers at all
   ntr == 0 && (tapcomments = vcat(String["case: $(basename(case_path))"], gencomments, String["case has no transformer branches (no tap steps to estimate)"]))
   # the bulky per-branch and per-row blocks (flow_end choices, truth values)
-  # go BEHIND the data rows: the file opens with the summary, the taps table
-  # and the measurements themselves, and a preview stays readable; the
-  # readers skip comment lines wherever they stand
-  writeMeasurementsCSV(net; file = out_path, headerComments = tapcomments, footerComments = tailcomments, busReference = _se_case_format(case_path) === :cgmes ? :mrid : :name, format = String(config.output.csv_format))
-  return (rows = length(net.measurements), noisy = noise, tap_note = tap_note, gross_note = gross_note, island_note = island_note, truth_note = truth_note, flow_note = flow_note, passive_note = passive_note, critical_note = critical_note)
+  # follow the taps table, so the summary and the taps table stay at the top
+  # The set is written as a measurement table (0.50.0) through the row
+  # builder of convertMeasurementsV1, keyed the way the SE service reads it
+  # (mRIDs for a CGMES case, names otherwise). The comment blocks go in
+  # front of the header (a table has no comments after it), the row ids in
+  # the truth and critical-row lines become the ids the import gives. A row
+  # the table cannot carry (a negative current magnitude drawn by the noise)
+  # is named in the file and in the page message.
+  index = _se_measurement_index(imported, _se_case_format(case_path))
+  index === nothing && throw(ArgumentError("$(basename(case_path)): the CGMES import kept no CGMES model to key the measurement table by mRID"))
+  conv = _measurement_table_from_measurements(net, net.measurements, index)
+  comments = _measurement_table_comment_ids(vcat(tapcomments, tailcomments), conv.ids; dropped = Set(p.id for p in conv.problems))
+  for p in conv.problems
+    push!(comments, string("not written: ", p.id, ": ", p.problem, ": ", p.detail))
+  end
+  writeMeasurementTable(out_path, conv.rows; comments = comments)
+  # the level-sigma count describes the written table
+  dropped_ids = Set(p.id for p in conv.problems)
+  level_rows = count(m -> get(level_sigma, m.id, NaN) == m.sigma && !(m.id in dropped_ids), meas)
+  table_note = isempty(conv.problems) ? "" : string(", ", length(conv.problems), " row(s) not written to the table (", join(unique(string(p.problem) for p in conv.problems), ", "), ")")
+  return (rows = length(conv.rows), noisy = noise, tap_note = tap_note, gross_note = gross_note * table_note, island_note = island_note, truth_note = truth_note, flow_note = flow_note, passive_note = passive_note, critical_note = critical_note, sigma_level_rows = level_rows, measurements = Measurement[m for m in net.measurements], not_written = conv.problems)
 end
 
 ## Row cap of the targeted partner search: the search reads the full m x m

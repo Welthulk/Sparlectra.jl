@@ -286,6 +286,10 @@ function _build_success_lifecycle_metadata(raw_result::SparlectraRunResult, conf
     "q_limit_pv_to_pq_events" => pv_to_pq_events,
     "q_limit_classic_outer_loop_passes" => classic_outer_loop_passes,
     "q_limit_classic_outer_loop_stop" => classic_outer_loop_stop,
+    # the frequency the network was built with: an SCF file's meta.f_nom
+    # wins over model.nominal_frequency_hz, so effective_config.yaml (the
+    # key) can name another value than the one the run used
+    "network_nominal_frequency_hz" => raw_result.net === nothing ? nothing : raw_result.net.nominal_frequency_hz,
     "webui_request_settings" => merge(Dict{String,Any}(String(key) => value for (key, value) in config_overrides), Dict{String,Any}(
       "casefile" => casefile,
       "config_file" => config_file,

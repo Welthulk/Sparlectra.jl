@@ -172,6 +172,11 @@ const WEBUI_OPTION_SPECS = WebUIOptionSpec[
   WebUIOptionSpec("matpower_import.compare_voltage_reference", "matpower_import_compare_voltage_reference", String, :select, "imported_setpoint", MATPOWER_COMPARE_VOLTAGE_REFERENCE_VALUES, :expert, :adapter, true),
   WebUIOptionSpec("matpower_import.apply_bus_names", "matpower_import_apply_bus_names", Bool, :checkbox, false, (), :expert, :adapter, true),
   WebUIOptionSpec("model.tap_changer_model", "transformer_tap_changer_model", String, :select, "ideal", TRANSFORMER_TAP_CHANGER_MODEL_VALUES, :basic, :adapter, true),
+  # the system frequency, for every case format (Case page, own section);
+  # the configuration takes any positive value, the form offers 50 and 60.
+  # :expert by the visibility rule above (no workshop sets it, the template
+  # carries its default); its own section renders it either way
+  WebUIOptionSpec("model.nominal_frequency_hz", "model_nominal_frequency_hz", Float64, :select, 50.0, (50.0, 60.0), :expert, :case, true),
   WebUIOptionSpec("matpower_export.write_solution", "matpower_export_write_solution", Bool, :checkbox, true, (), :expert, :adapter, true),
   WebUIOptionSpec("output.logfile_results", "output_logfile_results", String, :select, "compact", OUTPUT_LOGFILE_RESULTS_VALUES, :expert, :session, true),
   # state-estimation run options and measurement-generator options: request
@@ -224,7 +229,11 @@ const WEBUI_OPTION_SPECS = WebUIOptionSpec[
   WebUIOptionSpec(nothing, "gen_truth_source", String, :select, "fresh_solve", ("fresh_solve", "from_run"), :basic, :case, true),
   WebUIOptionSpec(nothing, "gen_flow_ends", String, :select, "both", ("both", "one_balance_aware"), :basic, :case, true),
   WebUIOptionSpec(nothing, "gen_passive_sigma", Float64, :number, 0.05, (), :basic, :case, true),
-  WebUIOptionSpec(nothing, "gen_passive_as_zi", Bool, :checkbox, true, (), :basic, :case, true),
+  # the generator checkbox IS the zero-injection switch of the case: it is
+  # seeded from state_estimation.zero_injection, and a generation writes it
+  # into the case configuration, so the SE runs of the case (measurement
+  # CSV, case file, measurement table) follow the same setting
+  WebUIOptionSpec("state_estimation.zero_injection", "gen_passive_as_zi", Bool, :checkbox, true, (), :basic, :case, true),
   WebUIOptionSpec(nothing, "gen_seed", Int, :number, 42, (), :basic, :case, true),
   WebUIOptionSpec(nothing, "gen_critical_count", Int, :number, 0, (), :basic, :case, true),
   WebUIOptionSpec(nothing, "performance_timing", String, :select, "compact", _WEBUI_PERFORMANCE_TIMING_VALUES, :basic, :case, true),

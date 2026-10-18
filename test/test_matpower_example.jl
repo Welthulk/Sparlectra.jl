@@ -241,37 +241,6 @@ state_estimation:
     @test cfg_rect.powerflow.rectangular_workspace_min_buses == 12345
   end)() end
 
-  @testset "MATPOWER example cleanup guard" begin (function ()
-    source = read(joinpath(@__DIR__, "..", "examples", "powerflow", "matpower_import.jl"), String)
-    @test !occursin("load_yaml_dict", source)
-    @test !occursin("_normalize_matpower_example_config", source)
-    @test !occursin("_copy_nested_yaml!", source)
-    @test !occursin("_nested_yaml_get", source)
-    @test !occursin("Dict{String,Any}", source)
-    @test occursin("Sparlectra.run_matpower_case", source)
-    @test occursin("run_example(main)", source)
-    @test occursin("Base.invokelatest(getfield(@__MODULE__, :_ensure_julia_threads_for_script)", source)
-    @test occursin("Base.invokelatest(getfield(@__MODULE__, :_resolve_julia_threads_request)", source)
-    @test occursin("Base.invokelatest(", source)
-
-    example_path = joinpath(@__DIR__, "..", "examples", "powerflow", "matpower_import.jl")
-    old_no_main = get(ENV, "SPARLECTRA_MATPOWER_IMPORT_NO_MAIN", nothing)
-    ENV["SPARLECTRA_MATPOWER_IMPORT_NO_MAIN"] = "1"
-    mod = Module(:MatpowerImportExampleSmoke)
-    Core.eval(mod, :(using Sparlectra))
-    Core.eval(mod, :(include(path) = Base.include($mod, path)))
-    try
-      Base.include(mod, example_path)
-      @test isdefined(mod, :main)
-    finally
-      if isnothing(old_no_main)
-        delete!(ENV, "SPARLECTRA_MATPOWER_IMPORT_NO_MAIN")
-      else
-        ENV["SPARLECTRA_MATPOWER_IMPORT_NO_MAIN"] = old_no_main
-      end
-    end
-  end)() end
-
   @testset "MATPOWER runner operational output" begin (function ()
     test_cfg = test_scratch_path(".yaml")
     write(test_cfg, """

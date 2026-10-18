@@ -120,15 +120,27 @@ function _scf_bus_name(net::Net, i::Int)::String
   return getCompName(net.nodeVec[i].comp)
 end
 
+# The shunts that addShuntVoltageControl! created. Each belongs to its
+# controller (shunt_idx): the controller entry rebuilds it on import, so
+# writing it as a plain shunt as well put a second, fixed shunt on the bus
+# with every round trip, and after a control run that row held the solved
+# susceptance, which doubled the compensation.
+_scf_controller_shunts(net::Net)::Set{Int} = Set{Int}(c.shunt_idx for c in _shunt_controllers(net))
+
 """
-    scf_id_map(net) -> ScfIdMap
+    scf_id_map(net; controller_shunts = false) -> ScfIdMap
 
 Assign SCF ids deterministically: components are walked in a fixed type
 order and, inside a type, in lexicographic name order (ties broken by the
 internal index). Rebuilding the same net therefore produces the same ids and
 the same file bytes.
+
+A shunt owned by a shunt voltage controller gets no id and is not written:
+the controller entry recreates it. `controller_shunts = true` (the strict
+PGM writer, which drops the controllers) writes it as a plain shunt with its
+present susceptance.
 """
-function scf_id_map(net::Net)::ScfIdMap
+function scf_id_map(net::Net; controller_shunts::Bool = false)::ScfIdMap
   next = 0
   nid = () -> (next += 1)
   names = Dict{Int,String}()
@@ -173,7 +185,8 @@ function scf_id_map(net::Net)::ScfIdMap
     end
   end
   shunts = Dict{Int,Int}()
-  for i in sort(collect(eachindex(net.shuntVec)); by = i -> (getCompName(net.shuntVec[i].comp), i))
+  owned = controller_shunts ? Set{Int}() : _scf_controller_shunts(net)
+  for i in sort([i for i in eachindex(net.shuntVec) if !(i in owned)]; by = i -> (getCompName(net.shuntVec[i].comp), i))
     id = nid()
     shunts[i] = id
     names[id] = getCompName(net.shuntVec[i].comp)
@@ -524,6 +537,17 @@ function _scf_appliances(net::Net, ids::ScfIdMap)
   return sources, loads, gens, regs
 end
 
+# the state fields of one shunt that deviate from the defaults (status 1,
+# model Y, not estimated); shared by the shunt_state rows and the shunt of a
+# shunt voltage controller, which travels in its controller entry
+function _scf_shunt_state_fields(sh::Shunt)::Dict{String,Any}
+  d = Dict{String,Any}()
+  sh.status == 1 || (d["status"] = sh.status)
+  sh.model === :Y || (d["model"] = String(Symbol(sh.model)))
+  sh.estimate && (d["estimate"] = true)
+  return d
+end
+
 """
     _scf_shunt_state(net, ids) -> Vector
 
@@ -535,14 +559,11 @@ row, so an ordinary case file stays free of noise.
 """
 function _scf_shunt_state(net::Net, ids::ScfIdMap)
   rows = Vector{Any}()
-  for i in eachindex(net.shuntVec)
-    sh = net.shuntVec[i]
-    row = Dict{String,Any}("shunt" => ids.shunt[i])
-    sh.status == 1 || (row["status"] = sh.status)
-    sh.model === :Y || (row["model"] = String(Symbol(sh.model)))
-    sh.estimate && (row["estimate"] = true)
-    length(row) == 1 && continue
-    push!(rows, row)
+  for i in sort!(collect(keys(ids.shunt)))
+    fields = _scf_shunt_state_fields(net.shuntVec[i])
+    isempty(fields) && continue
+    fields["shunt"] = ids.shunt[i]
+    push!(rows, fields)
   end
   sort!(rows; by = r -> r["shunt"])
   return rows
@@ -578,7 +599,8 @@ end
 
 function _scf_shunts(net::Net, ids::ScfIdMap)
   rows = Vector{Any}()
-  for i in eachindex(net.shuntVec)
+  # only the shunts the id map names (controller-owned ones are left out)
+  for i in sort!(collect(keys(ids.shunt)))
     sh = net.shuntVec[i]
     zb_sh = _scf_zbase(sh.vn_kV, net.baseMVA)
     # The reader's arithmetic is not `si * zb`: it forms the shunt draw in
@@ -622,11 +644,14 @@ function _scf_sensors(net::Net, ids::ScfIdMap, next_id::Ref{Int})
   power = Vector{Any}()
   current = Vector{Any}()
   rows = Vector{Any}()
+  bay_rows = Vector{Any}()
   meas = net.measurements
-  isempty(meas) && return volt, power, current, rows
-  # position of each row in the measurement vector: the WLS objective sums in
-  # that order, so restoring it is what makes an SE round trip bit-identical
-  pos_by_id = Dict{String,Int}(m.id => i for (i, m) in enumerate(meas))
+  isempty(meas) && return volt, power, current, rows, bay_rows
+  # The groups below hold POSITIONS in the measurement vector, not the rows:
+  # the WLS objective sums in that order, so restoring it is what makes an SE
+  # round trip bit-identical. A lookup by id gave two rows with the same
+  # default id (two readings at one bus) the same position, and the reader
+  # reordered them.
   newid = () -> (next_id[] += 1)
   # Group by measured location so P/Q and Vm/Va become one PGM sensor. A
   # location can carry the quantity MORE than once (redundant transducers are
@@ -634,46 +659,64 @@ function _scf_sensors(net::Net, ids::ScfIdMap, next_id::Ref{Int})
   # a location becomes its own PGM sensor - PGM allows several sensors on one
   # measured object. Keying by location alone silently dropped every reading
   # but the last.
-  vm = Dict{Int,Vector{Measurement}}()
-  va = Dict{Int,Vector{Measurement}}()
-  pinj = Dict{Int,Vector{Measurement}}()
-  qinj = Dict{Int,Vector{Measurement}}()
-  pflow = Dict{Tuple{Int,Symbol},Vector{Measurement}}()
-  qflow = Dict{Tuple{Int,Symbol},Vector{Measurement}}()
-  imag_ = Dict{Tuple{Int,Symbol},Vector{Measurement}}()
-  iang = Dict{Tuple{Int,Symbol},Vector{Measurement}}()
+  vm = Dict{Int,Vector{Int}}()
+  va = Dict{Int,Vector{Int}}()
+  pinj = Dict{Int,Vector{Int}}()
+  qinj = Dict{Int,Vector{Int}}()
+  pflow = Dict{Tuple{Int,Symbol},Vector{Int}}()
+  qflow = Dict{Tuple{Int,Symbol},Vector{Int}}()
+  imag_ = Dict{Tuple{Int,Symbol},Vector{Int}}()
+  iang = Dict{Tuple{Int,Symbol},Vector{Int}}()
   other = Measurement[]
-  add!(d, key, m) = push!(get!(() -> Measurement[], d, key), m)
+  add!(d, key, pos) = push!(get!(() -> Int[], d, key), pos)
   # readings at one location, in the order the measurement vector holds them
   nocc(d, key) = length(get(d, key, ()))
   at(d, key, i) = (v = get(d, key, nothing); v === nothing || i > length(v) ? nothing : v[i])
-  for m in meas
+  row_at(pos) = pos === nothing ? nothing : meas[pos]
+  for (pos, m) in enumerate(meas)
     if m.typ == VmMeas && m.busIdx !== nothing
-      add!(vm, m.busIdx, m)
+      add!(vm, m.busIdx, pos)
     elseif m.typ == VaMeas && m.busIdx !== nothing
-      add!(va, m.busIdx, m)
+      add!(va, m.busIdx, pos)
     elseif m.typ == PinjMeas && m.busIdx !== nothing
-      add!(pinj, m.busIdx, m)
+      add!(pinj, m.busIdx, pos)
     elseif m.typ == QinjMeas && m.busIdx !== nothing
-      add!(qinj, m.busIdx, m)
+      add!(qinj, m.busIdx, pos)
     elseif m.typ == PflowMeas && m.branchIdx !== nothing
-      add!(pflow, (m.branchIdx, m.direction), m)
+      add!(pflow, (m.branchIdx, m.direction), pos)
     elseif m.typ == QflowMeas && m.branchIdx !== nothing
-      add!(qflow, (m.branchIdx, m.direction), m)
+      add!(qflow, (m.branchIdx, m.direction), pos)
     elseif m.typ == ImagMeas && m.branchIdx !== nothing
-      add!(imag_, (m.branchIdx, m.direction), m)
+      add!(imag_, (m.branchIdx, m.direction), pos)
     elseif m.typ == IaMeas && m.branchIdx !== nothing
-      add!(iang, (m.branchIdx, m.direction), m)
+      add!(iang, (m.branchIdx, m.direction), pos)
+    elseif m.branchIdx === nothing && m.busIdx !== nothing && (m.typ == ShuntQMeas || m.typ == ImagMeas || m.typ == IaMeas)
+      # Shunt-bay rows (bus referenced). PGM has no current sensor on a
+      # shunt, and its shunt power sensor would need the bus mapped to one
+      # shunt object and a sign convention, so these rows travel in the
+      # namespaced block with their internal units (MVar, A, degrees).
+      node = get(ids.node, m.busIdx, nothing)
+      if node === nothing
+        push!(other, m)
+        continue
+      end
+      entry = Dict{String,Any}("type" => m.typ == ShuntQMeas ? "ShuntQ" : (m.typ == ImagMeas ? "Imag" : "Ia"), "node" => node, "id" => m.id, "value" => m.value, "sigma" => m.sigma, "position" => pos)
+      m.active || (entry["active"] = false)
+      push!(bay_rows, entry)
     else
       push!(other, m)
     end
   end
+  # Whatever is left (link flow rows, rows on a bus the file does not
+  # write) has no slot in the file. Name it instead of dropping it.
+  isempty(other) || @warn "SCF export: $(length(other)) measurement row(s) have no slot in the case file and are not written" types = sort!(unique(string.(getfield.(other, :typ)))) ids = first(String[m.id for m in other], 5)
   # One PGM sensor can stand for two Sparlectra rows (P and Q, Vm and Va),
   # and PGM carries ONE sigma per sensor in SI. The authoritative internal
   # sigmas (per-unit for Vm, degrees for Va, MW/MVar for powers, kA for
   # currents) therefore travel here, so a round trip is exact; the weight is
   # derived from sigma and is never written.
-  rowrec(sensor_id, ms...) = begin
+  rowrec(sensor_id, positions::Int...) = begin
+    ms = Measurement[meas[p] for p in positions]
     entry = Dict{String,Any}("sensor" => sensor_id, "sparlectra_ids" => String[m.id for m in ms], "sigmas" => Float64[m.sigma for m in ms])
     all(m -> m.active, ms) || (entry["active"] = Bool[m.active for m in ms])
     # The PGM sensor stays the authority for the measured value. The SI
@@ -684,7 +727,7 @@ function _scf_sensors(net::Net, ids::ScfIdMap, next_id::Ref{Int})
     vals = Float64[m.value for m in ms]
     rts = Float64[_scf_roundtrip_value(m, net) for m in ms]
     vals == rts || (entry["values"] = vals)
-    entry["positions"] = Int[get(pos_by_id, m.id, 0) for m in ms]
+    entry["positions"] = Int[positions...]
     push!(rows, entry)
     return nothing
   end
@@ -694,15 +737,16 @@ function _scf_sensors(net::Net, ids::ScfIdMap, next_id::Ref{Int})
     node === nothing && continue
     u_base = _scf_u_rated(getNodeVn(net.nodeVec[bus]))
     for k = 1:nocc(vm, bus)
-      m = vm[bus][k]
+      mpos = vm[bus][k]
+      m = meas[mpos]
       sid = newid()
       row = Dict{String,Any}("id" => sid, "measured_object" => node, "u_measured" => m.value * u_base, "u_sigma" => m.sigma * u_base)
-      a = at(va, bus, k)
-      if a === nothing
-        rowrec(sid, m)
+      apos = at(va, bus, k)
+      if apos === nothing
+        rowrec(sid, mpos)
       else
-        row["u_angle_measured"] = deg2rad(a.value)
-        rowrec(sid, m, a)
+        row["u_angle_measured"] = deg2rad(meas[apos].value)
+        rowrec(sid, mpos, apos)
       end
       push!(volt, row)
     end
@@ -712,10 +756,10 @@ function _scf_sensors(net::Net, ids::ScfIdMap, next_id::Ref{Int})
     node === nothing && continue
     # angle readings that no magnitude sensor at this bus took along
     for k = (nocc(vm, bus) + 1):nocc(va, bus)
-      m = va[bus][k]
+      apos = va[bus][k]
       sid = newid()
-      push!(volt, Dict{String,Any}("id" => sid, "measured_object" => node, "u_measured" => nothing, "u_angle_measured" => deg2rad(m.value), "u_sigma" => nothing))
-      rowrec(sid, m)
+      push!(volt, Dict{String,Any}("id" => sid, "measured_object" => node, "u_measured" => nothing, "u_angle_measured" => deg2rad(meas[apos].value), "u_sigma" => nothing))
+      rowrec(sid, apos)
     end
   end
   # injection power sensors
@@ -723,8 +767,10 @@ function _scf_sensors(net::Net, ids::ScfIdMap, next_id::Ref{Int})
     node = get(ids.node, bus, nothing)
     node === nothing && continue
     for k = 1:max(nocc(pinj, bus), nocc(qinj, bus))
-      p = at(pinj, bus, k)
-      q = at(qinj, bus, k)
+      ppos = at(pinj, bus, k)
+      qpos = at(qinj, bus, k)
+      p = row_at(ppos)
+      q = row_at(qpos)
       sid = newid()
       row = Dict{String,Any}(
         "id" => sid,
@@ -741,7 +787,7 @@ function _scf_sensors(net::Net, ids::ScfIdMap, next_id::Ref{Int})
         row["q_sigma"] = q.sigma * 1.0e6
       end
       push!(power, row)
-      rowrec(sid, filter(!isnothing, [p, q])...)
+      rowrec(sid, Int[x for x in (ppos, qpos) if x !== nothing]...)
     end
   end
   # branch flow power sensors
@@ -750,8 +796,10 @@ function _scf_sensors(net::Net, ids::ScfIdMap, next_id::Ref{Int})
     bid = get(ids.branch, bidx, nothing)
     bid === nothing && continue
     for k = 1:max(nocc(pflow, key), nocc(qflow, key))
-      p = at(pflow, key, k)
-      q = at(qflow, key, k)
+      ppos = at(pflow, key, k)
+      qpos = at(qflow, key, k)
+      p = row_at(ppos)
+      q = row_at(qpos)
       sid = newid()
       frow = Dict{String,Any}(
         "id" => sid,
@@ -766,7 +814,7 @@ function _scf_sensors(net::Net, ids::ScfIdMap, next_id::Ref{Int})
         frow["q_sigma"] = q.sigma * 1.0e6
       end
       push!(power, frow)
-      rowrec(sid, filter(!isnothing, [p, q])...)
+      rowrec(sid, Int[x for x in (ppos, qpos) if x !== nothing]...)
     end
   end
   # current sensors (magnitude in kA internally, angle in degrees)
@@ -775,8 +823,10 @@ function _scf_sensors(net::Net, ids::ScfIdMap, next_id::Ref{Int})
     bid = get(ids.branch, bidx, nothing)
     bid === nothing && continue
     for k = 1:max(nocc(imag_, key), nocc(iang, key))
-      im_ = at(imag_, key, k)
-      ia = at(iang, key, k)
+      ipos = at(imag_, key, k)
+      apos = at(iang, key, k)
+      im_ = row_at(ipos)
+      ia = row_at(apos)
       sid = newid()
       row = Dict{String,Any}(
         "id" => sid,
@@ -791,14 +841,14 @@ function _scf_sensors(net::Net, ids::ScfIdMap, next_id::Ref{Int})
         row["i_angle_sigma"] = deg2rad(ia.sigma)
       end
       push!(current, row)
-      rowrec(sid, filter(!isnothing, [im_, ia])...)
+      rowrec(sid, Int[x for x in (ipos, apos) if x !== nothing]...)
     end
   end
   for v in (volt, power, current)
     sort!(v; by = r -> r["id"])
   end
   sort!(rows; by = r -> r["sensor"])
-  return volt, power, current, rows
+  return volt, power, current, rows, bay_rows
 end
 
 ## --- sparlectra section ----------------------------------------------------
@@ -968,17 +1018,36 @@ function _scf_tap_changers(net::Net, ids::ScfIdMap)
     br = net.branchVec[i]
     controllers = Vector{Any}()
     if br.has_ratio_tap && br.tap_step > 0.0
-      # position on the fraction grid: r1 = base/current - 1 over tap_step
       cur = br.tap_ratio == 0.0 ? br.ratio : br.tap_ratio
-      pos = cur == 0.0 ? 0 : Int(round((br.ratio / cur - 1.0) / br.tap_step, RoundNearestTiesAway))
-      push!(controllers, Dict{String,Any}(
-        "index" => 1,
-        "alpha_deg" => 0.0,
-        "step" => br.tap_step,
-        "pos" => pos,
-        "pos_min" => _scf_stable_step(Int(round((br.ratio / br.tap_max - 1.0) / br.tap_step, RoundNearestTiesAway)), br.ratio, br.tap_step),
-        "pos_max" => _scf_stable_step(Int(round((br.ratio / br.tap_min - 1.0) / br.tap_step, RoundNearestTiesAway)), br.ratio, br.tap_step),
-      ))
+      if br.tap_ratio_grid === :linear && _tap_r1_model(br) === nothing
+        # a CGMES changer: positions on the grid of the branch, counted
+        # from ratio_base as the tap estimation reports them
+        # (_tap_r1_position); the reader rebuilds ratio + pos * step, which
+        # gives the position back without a tie, so no snap is needed.
+        # Written on the fraction grid, the live ratio came back wrong at
+        # second order in the step (3W fixture, 8 steps: 1.100 as 1.102).
+        lo, hi = _tap_r1_band(br)
+        push!(controllers, Dict{String,Any}(
+          "index" => 1,
+          "alpha_deg" => 0.0,
+          "step" => br.tap_step,
+          "pos" => cur == 0.0 ? 0 : Int(round(_tap_r1_position(br, br.ratio / cur - 1.0), RoundNearestTiesAway)),
+          "pos_min" => Int(round(lo, RoundNearestTiesAway)),
+          "pos_max" => Int(round(hi, RoundNearestTiesAway)),
+          "grid" => "linear",
+        ))
+      else
+        # position on the fraction grid: r1 = base/current - 1 over tap_step
+        pos = cur == 0.0 ? 0 : Int(round((br.ratio / cur - 1.0) / br.tap_step, RoundNearestTiesAway))
+        push!(controllers, Dict{String,Any}(
+          "index" => 1,
+          "alpha_deg" => 0.0,
+          "step" => br.tap_step,
+          "pos" => pos,
+          "pos_min" => _scf_stable_step(Int(round((br.ratio / br.tap_max - 1.0) / br.tap_step, RoundNearestTiesAway)), br.ratio, br.tap_step),
+          "pos_max" => _scf_stable_step(Int(round((br.ratio / br.tap_min - 1.0) / br.tap_step, RoundNearestTiesAway)), br.ratio, br.tap_step),
+        ))
+      end
     end
     if br.has_phase_tap
       if br.phase_du_step > 0.0
@@ -1170,9 +1239,12 @@ function _scf_extra(net::Net, ids::ScfIdMap)
     _scf_write_voltage_control!(d, ps, net.baseMVA)
     put(ids.prosumer[i], d)
   end
-  for i in eachindex(net.shuntVec)
+  # shunt_index is the rank among the WRITTEN shunts, which is the index
+  # the reader gives the shunt (and the one scenario patches resolve to);
+  # the net index would skip a controller-owned shunt left out above it
+  for (k, i) in enumerate(sort!(collect(keys(ids.shunt))))
     sh = net.shuntVec[i]
-    put(ids.shunt[i], Dict{String,Any}("name" => getCompName(sh.comp), "external_id" => sh.comp.cID, "shunt_index" => i))
+    put(ids.shunt[i], Dict{String,Any}("name" => getCompName(sh.comp), "external_id" => sh.comp.cID, "shunt_index" => k))
   end
   return extra
 end
@@ -1188,7 +1260,7 @@ arguments). Pure: the network is not modified.
 function net_to_scf(
   net::Net;
   case_name::AbstractString = "",
-  f_nom::Float64 = 50.0,
+  f_nom::Float64 = net.nominal_frequency_hz,
   source_format::AbstractString = "",
   source_reference::AbstractString = "",
   intended_calculations::Vector{String} = String["power_flow"],
@@ -1200,8 +1272,12 @@ function net_to_scf(
   strict_pgm::Bool = false,
   created_at::AbstractString = "",
 )::Dict{String,Any}
+  # f_nom divides every line susceptance (c1 = b/(2*pi*f)): 0 gives NaN or
+  # Inf, a negative value a negative capacitance. The adapters pass their
+  # option here without going through the Net constructor check.
+  _check_nominal_frequency(f_nom, "SCF export (f_nom)")
   _scf_assert_base_impedances(net)
-  ids = scf_id_map(net)
+  ids = scf_id_map(net; controller_shunts = strict_pgm)
   next_id = Ref(isempty(ids.names) ? 0 : maximum(keys(ids.names)))
   data = Dict{String,Any}()
   nodes = _scf_nodes(net, ids)
@@ -1219,7 +1295,7 @@ function net_to_scf(
   isempty(regs) || (data["voltage_regulator"] = regs)
   shunts = _scf_shunts(net, ids)
   isempty(shunts) || (data["shunt"] = shunts)
-  volt, power, current, meas_rows = _scf_sensors(net, ids, next_id)
+  volt, power, current, meas_rows, bay_rows = _scf_sensors(net, ids, next_id)
   isempty(volt) || (data["sym_voltage_sensor"] = volt)
   isempty(power) || (data["sym_power_sensor"] = power)
   isempty(current) || (data["sym_current_sensor"] = current)
@@ -1276,8 +1352,9 @@ function net_to_scf(
   isempty(split_block) || (spar["branch_shunt_split"] = split_block)
   model_block = _scf_tap_changer_models(net, ids)
   isempty(model_block) || (spar["tap_changer_models"] = model_block)
-  if !isempty(meas_rows)
+  if !isempty(meas_rows) || !isempty(bay_rows)
     block = Dict{String,Any}("rows" => meas_rows)
+    isempty(bay_rows) || (block["shunt_bay_rows"] = bay_rows)
     # where the values came from, and above all WHETHER THEY CARRY NOISE: a
     # noise-free set has J = 0 by construction, which reads like a perfect
     # estimate and is nothing of the sort. The case file says so instead of
@@ -1326,6 +1403,9 @@ function net_to_scf(
     any(ps -> has_qu_controller(ps) || has_pu_controller(ps), net.prosumpsVec) && push!(dropped, "voltage-dependent Q(U)/P(U) control")
     haskey(spar, "start_state") && push!(dropped, "start state")
     (haskey(spar, "scenarios") || haskey(spar, "short_circuit")) && push!(dropped, "study definitions")
+    # PGM has no frequency field: c1 is written with this value, and a
+    # reader of the strict file has to bring the same frequency itself
+    push!(dropped, "system frequency (f_nom = $(f_nom) Hz)")
     # g1 on a line row is the SCF extension for a conductance tan1 cannot
     # spell (b == 0); PGM's line has no such attribute, so a strict file
     # genuinely loses that conductance
@@ -1403,8 +1483,9 @@ network twice produces byte-identical files and Git diffs stay readable.
 Keyword arguments:
 - `case_name`, `source_format`, `source_reference`, `notes`: `meta` fields;
   `case_name` defaults to the network name.
-- `f_nom`: nominal frequency in Hz (default 50.0), needed for the line
-  capacitance conversion.
+- `f_nom`: system frequency in Hz, written as `meta.f_nom` and used to
+  turn the line susceptance into the capacitance `c1`; default
+  `net.nominal_frequency_hz`.
 - `intended_calculations`: the contract of the file (default
   `["power_flow"]`).
 - `measurement_provenance`: what is known about the measurement set (`noise`,
@@ -1418,8 +1499,9 @@ Keyword arguments:
   edited net is worse than none.
 - `strict_pgm`: write ONLY the power-grid-model input dataset, without the
   namespaced `sparlectra` block, for a consumer that reads PGM and nothing
-  else. Everything that block carries is then absent from the file; the
-  export names what it dropped in a warning. Off by default.
+  else. Everything that block carries is then absent from the file,
+  `meta.f_nom` included; the export names what it dropped in a warning.
+  Off by default.
 
 Throws an `ArgumentError` when the network carries FACTS-compensated
 impedances (call `restoreBaseImpedances!` first).

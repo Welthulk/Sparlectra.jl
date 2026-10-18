@@ -6,10 +6,10 @@
   "data": {
     "generic_branch": [
       {
-        "b1": 0.0,
+        "b1": -7.806247497997999e-5,
         "from_node": 7,
         "from_status": 1,
-        "g1": 0.0,
+        "g1": 6.25e-5,
         "id": 30,
         "k": 1.0,
         "r1": 0.05,
@@ -20,10 +20,10 @@
         "x1": 1.0988630487917954
       },
       {
-        "b1": 0.0,
+        "b1": -4.337337893224368e-5,
         "from_node": 13,
         "from_status": 1,
-        "g1": 0.0,
+        "g1": 4.5e-5,
         "id": 31,
         "k": 1.0,
         "r1": 0.08,
@@ -759,6 +759,7 @@
       "41": {
         "element_index": 2,
         "external_id": "#Gen_110\\_4\\_#2",
+        "max_p_mw": 50.0,
         "max_q_mvar": 25.0,
         "min_q_mvar": -25.0,
         "name": "Gen_110",
@@ -769,6 +770,7 @@
       "42": {
         "element_index": 3,
         "external_id": "#Gen_110\\_6\\_#3",
+        "max_p_mw": 35.0,
         "max_q_mvar": 15.0,
         "min_q_mvar": -15.0,
         "name": "Gen_110",
@@ -832,7 +834,7 @@
     "format_version": "1.0",
     "meta": {
       "case_name": "sp_case14_qu",
-      "created_by": "Sparlectra 0.12.0",
+      "created_by": "Sparlectra 0.42.0",
       "f_nom": 50.0,
       "intended_calculations": ["power_flow"],
       "notes": "Self-built Sparlectra demo network (sp_case14) plus one synchronous machine at Ilmrode_110 with a voltage-dependent Q(U) characteristic: three points in per unit, natural cubic spline, +-20 MVAr. Shows that the case file carries the characteristic (extra.<machine>.qu_control) and that the result names the machine as Q(U) in the Control column. The bus count in the name does not make it the IEEE case of that size; no data was taken from MATPOWER, DTF or any other source.",
@@ -849,60 +851,60 @@
     "start_state": {
       "nodes": {
         "1": {
-          "va_deg": -1.8369592700934765,
-          "vm_pu": 0.9890405812603911
+          "va_deg": -1.8399444355433763,
+          "vm_pu": 0.9890079519563113
         },
         "10": {
           "va_deg": 0.0,
           "vm_pu": 1.02
         },
         "11": {
-          "va_deg": -0.552443611221411,
-          "vm_pu": 0.9839634050227137
+          "va_deg": -0.5579493571248788,
+          "vm_pu": 0.9839592086586679
         },
         "12": {
-          "va_deg": -4.556468507496318,
-          "vm_pu": 0.9163370083616786
+          "va_deg": -4.5650873045187605,
+          "vm_pu": 0.9161994464315135
         },
         "13": {
-          "va_deg": -1.0937737884909715,
-          "vm_pu": 0.9869986431519134
+          "va_deg": -1.0997079919118482,
+          "vm_pu": 0.9869353605629103
         },
         "14": {
-          "va_deg": -2.968008629551263,
-          "vm_pu": 0.9745809048448062
+          "va_deg": -2.976194882484937,
+          "vm_pu": 0.9744796259592913
         },
         "2": {
-          "va_deg": 2.0345071671042256,
+          "va_deg": 2.0282115365193554,
           "vm_pu": 1.01
         },
         "3": {
-          "va_deg": 1.1270353925624124,
+          "va_deg": 1.1208340284232938,
           "vm_pu": 1.0
         },
         "4": {
-          "va_deg": -4.35869947584881,
-          "vm_pu": 0.9473398918949691
+          "va_deg": -4.367260890543242,
+          "vm_pu": 0.9472069488379419
         },
         "5": {
-          "va_deg": -1.5412568876265254,
-          "vm_pu": 0.9831311344304211
+          "va_deg": -1.545244027810227,
+          "vm_pu": 0.9831172788623913
         },
         "6": {
-          "va_deg": -4.502433329780152,
-          "vm_pu": 0.9257226133937286
+          "va_deg": -4.5110360640346565,
+          "vm_pu": 0.9255864607790664
         },
         "7": {
-          "va_deg": -1.1130428771146468,
-          "vm_pu": 0.9908231253374908
+          "va_deg": -1.119048656437855,
+          "vm_pu": 0.9907458567710329
         },
         "8": {
-          "va_deg": -4.115892129063541,
-          "vm_pu": 0.9839054790841837
+          "va_deg": -4.124387959215671,
+          "vm_pu": 0.9837778468445662
         },
         "9": {
-          "va_deg": -0.6522433569153596,
-          "vm_pu": 1.003417922867611
+          "va_deg": -0.6546904090487159,
+          "vm_pu": 1.0033946676631338
         }
       },
       "source": "solved_power_flow"

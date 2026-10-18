@@ -979,15 +979,13 @@ function _writeEquivalentBranch(io::IO, ctx::CGMESContext, id::AbstractString, n
   return nothing
 end
 
-# Line parameters in Ohm and Siemens for ACLineSegment.r/x/bch/gch. Every
-# line of a Net carries per-unit values: addPIModelACLine! by definition,
-# addACLine! because it builds its branch with values_are_pu = true.
-# getLineRXBG applies the length rule of addACLine! and returns exactly the
-# per-unit model the branch was built from, so both kinds of line take the
-# same conversion on the line's nominal voltage. Writing the stored values
-# unchanged as Ohm made an addACLine! line come back from a re-import with
-# an impedance Z_base times too low.
+# Line parameters in Ohm and Siemens for ACLineSegment.r/x/bch/gch. A line
+# from addACLine! or addACLinePerKm! stores its totals in ohm and siemens and
+# is written with exactly those values; a PI-model line (addPIModelACLine!,
+# every importer) stores per unit and is converted on the line's nominal
+# voltage.
 function lineParamsOhm(net::Sparlectra.Net, line)
+  Sparlectra.isLinePIModel(line) || return Sparlectra.getLineRXBG(line)
   r_pu, x_pu, b_pu, g_pu = Sparlectra.getLineRXBG(line)
   return Sparlectra.fromPU_RXBG(r_pu = r_pu, x_pu = x_pu, g_pu = g_pu, b_pu = b_pu, v_kv = line.comp.cVN, baseMVA = net.baseMVA)
 end
@@ -1066,7 +1064,9 @@ function writeEQFile(net::Sparlectra.Net, ctx::CGMESContext, path::AbstractStrin
       println(io, "    <cim:IdentifiedObject.name>$(xmlEscape(lname))</cim:IdentifiedObject.name>")
       println(io, "    <cim:Equipment.EquipmentContainer rdf:resource=\"#_$(ctx.lineContainerIds[i])\"/>")
       println(io, "    <cim:ConductingEquipment.BaseVoltage rdf:resource=\"#_$(ctx.baseVoltageIds[vn])\"/>")
-      println(io, "    <cim:Conductor.length>$(fmtVal(line.length))</cim:Conductor.length>")
+      # Conductor.length is required in EQ; a line without a known length
+      # (every PI-model line) is written with 1.0 as before 0.50.0
+      println(io, "    <cim:Conductor.length>$(fmtVal(something(line.length_km, 1.0)))</cim:Conductor.length>")
       println(io, "    <cim:ACLineSegment.r>$(fmtVal(r))</cim:ACLineSegment.r>")
       println(io, "    <cim:ACLineSegment.x>$(fmtVal(x))</cim:ACLineSegment.x>")
       println(io, "    <cim:ACLineSegment.bch>$(fmtVal(b))</cim:ACLineSegment.bch>")

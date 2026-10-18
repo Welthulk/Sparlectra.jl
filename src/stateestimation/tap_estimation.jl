@@ -171,7 +171,7 @@ amplitude or the regulating-vector ratio, matching `_tap_r0_split`).
 The limit is derived from the changer's declared mechanical band: one
 iteration may move a regulator by at most a quarter of its full travel.
 For regulator 1 the multiplier band `[tap_min, tap_max]` maps through the
-reciprocal `1/(1+r1)` onto `[1/tap_max - 1, 1/tap_min - 1]`.
+cascade `r1 = ratio/t - 1` onto `[ratio/tap_max - 1, ratio/tap_min - 1]`.
 
 Why a step limit and NOT a hard band on the state: without any bound the
 Gauss-Newton step drives `r1` toward -1, where the cascade
@@ -192,8 +192,8 @@ function _tap_step_limits(map::TapStateMap, net::Net)::Dict{Int,Float64}
   for j in eachindex(map.branch_idxs)
     br = net.branchVec[map.branch_idxs[j]]
     if map.r1cols[j] != 0 && br.tap_min > 0.0 && br.tap_max > 0.0
-      lo = 1.0 / br.tap_max - 1.0
-      hi = 1.0 / br.tap_min - 1.0
+      lo = br.ratio / br.tap_max - 1.0
+      hi = br.ratio / br.tap_min - 1.0
       limits[map.r1cols[j]] = const_share * abs(hi - lo)
     end
     if map.r2cols[j] != 0
@@ -474,8 +474,9 @@ prosumer `q` value is only a fallback for uncontrolled machines. The
 function solves the transformer terminal equation
 for the machine angle (active-power balance) nested inside a scan over the
 tap fraction (reactive-power balance) and reports the continuous
-electrical step plus the nearest mechanical step on the `tap_step`
-fraction grid. Reporting only, no write-back.
+electrical step plus the nearest mechanical step on the ratio grid of the
+branch (`tap_ratio_grid`, as the tap estimation fixes it). Reporting only,
+no write-back.
 
 Errors: transformer released for estimation, not a machine transformer, no
 registered SE result, or no machine voltage/injection available.
@@ -538,9 +539,9 @@ function calcMachineTrafoTapFromSE(net::Net; trafo, v_machine_pu::Union{Nothing,
     end
     return (θlo + θhi) / 2
   end
-  step1 = br.tap_step > 0.0 ? br.tap_step : 0.00625
-  rlo = 1.0 / br.tap_max - 1.0
-  rhi = 1.0 / br.tap_min - 1.0
+  # the absolute range ends through the cascade r = ratio / t - 1
+  rlo = br.ratio / br.tap_max - 1.0
+  rhi = br.ratio / br.tap_min - 1.0
   # coarse scan plus refinement on |Q residual| (the Q balance carries the
   # voltage-ratio information; P is consumed by the angle solve)
   qres = function (r::Float64)
@@ -568,10 +569,98 @@ function calcMachineTrafoTapFromSE(net::Net; trafo, v_machine_pu::Union{Nothing,
     end
   end
   r = (lo + hi) / 2
-  p = r / step1
-  pfix = clamp(round(p, RoundNearestTiesAway), ceil(rlo / step1), floor(rhi / step1))
+  # steps on the ratio grid of the branch, as the tap estimation fixes them
+  p = _tap_r1_position(br, r)
+  pfix = _tap_r1_fixed_position(br, p)
   isfinite(best) || error("calcMachineTrafoTapFromSE: no machine angle satisfies the active-power schedule across the transformer; check p_mw/v_machine_pu against the SE state")
   return (branch = k, name = getCompName(br.comp), machine_bus = m, network_bus = netBus, r_est = r, electrical_step = p, fixed_step = Int(pfix), q_residual_mvar = qres(r) * net.baseMVA, v_machine_pu = vset, converged_se = st.converged)
+end
+
+# Ratio grid of regulator 1 (the longitudinal tap) in the cascade fraction
+# r1 of t = ratio / (1 + r1), the unit of the estimator's state. The
+# fixation must land on a position the network model can take, so it uses
+# the grid of the branch; positions n count from the branch's `ratio` (the
+# neutral of nameplate data, the import position of a CGMES changer, the
+# current step of a typed model):
+# - a typed ratio model (taps_derived): the model steps, evaluated by the
+#   resolver (_model_step_value), as the controllers move them;
+# - `tap_ratio_grid` :linear (CGMES RatioTapChanger): the ratio n steps
+#   away on the grid the tap controller steps on (_ratio_grid_shift:
+#   ratio + n * tap_step, or the n-th table point);
+# - `tap_ratio_grid` :fraction (applyTapNameplate!, constructor default):
+#   r1 = n * tap_step, the calcSkewAngleTap convention.
+# The grids differ at second order in the step and in sign: fixed on the
+# fraction grid, a CGMES or typed estimate landed on ratios the model
+# cannot take and was reported with the wrong number of steps.
+_tap_step1(br::Branch) = br.tap_step > 0.0 ? br.tap_step : 0.00625
+
+# the typed ratio model of the branch when it has a step increment,
+# `nothing` on the legacy grids
+function _tap_r1_model(br::Branch)
+  m = _derived_tap_model(br, :ratio)
+  return (m === nothing || m.tapStepPercent == 0.0) ? nothing : m
+end
+
+function _tap_r1_at(br::Branch, n::Real)::Float64
+  m = _tap_r1_model(br)
+  m === nothing || return br.ratio / _model_step_value(br, :ratio, m.step + Int(n)) - 1.0
+  br.tap_ratio_grid === :linear || return n * _tap_step1(br)
+  return br.ratio / _ratio_grid_shift(br, br.ratio, n; window = (-Inf, Inf)) - 1.0
+end
+
+# (position, ratio) of every table point a controller reaches from `ratio`,
+# position 0 being `ratio` itself, ordered by position
+function _tap_table_positions(br::Branch)::Vector{Tuple{Int,Float64}}
+  out = [(0, br.ratio)]
+  for dir in (1, -1)
+    r = br.ratio
+    n = 0
+    while true
+      nxt = _ratio_grid_shift(br, r, dir; window = (-Inf, Inf))
+      nxt == r && break
+      n += dir
+      r = nxt
+      push!(out, (n, r))
+    end
+  end
+  return sort!(out; by = first)
+end
+
+# continuous position of the cascade fraction r1 on the grid of
+# _tap_r1_at. A typed model is linear in its step; between two table
+# points the position interpolates linearly, beyond the last one it
+# continues with the last interval.
+function _tap_r1_position(br::Branch, r1::Real)::Float64
+  m = _tap_r1_model(br)
+  br.tap_ratio_grid === :linear || m !== nothing || return r1 / _tap_step1(br)
+  t = br.ratio / (1.0 + r1)
+  if m !== nothing
+    t0 = _model_step_value(br, :ratio, m.step)
+    return (t - t0) / (_model_step_value(br, :ratio, m.step + 1) - t0)
+  end
+  br.tap_ratio_points === nothing && return (t - br.ratio) / br.tap_step
+  pos = _tap_table_positions(br)
+  length(pos) == 1 && return (t - br.ratio) / _tap_step1(br)
+  k = findfirst(p -> p[2] >= t, pos)
+  k = k === nothing ? length(pos) : max(k, 2)
+  (n1, t1), (n2, t2) = pos[k - 1], pos[k]
+  return n1 + (n2 - n1) * (t - t1) / (t2 - t1)
+end
+
+# position band of regulator 1, lower end first: the model range of a
+# typed model, else the positions of the range ends tap_min/tap_max
+# (absolute ratios on every legacy grid)
+function _tap_r1_band(br::Branch)::Tuple{Float64,Float64}
+  m = _tap_r1_model(br)
+  m === nothing || return (Float64(min(m.lowStep, m.highStep) - m.step), Float64(max(m.lowStep, m.highStep) - m.step))
+  return minmax(_tap_r1_position(br, br.ratio / br.tap_max - 1.0), _tap_r1_position(br, br.ratio / br.tap_min - 1.0))
+end
+
+# nearest whole position to `p` inside the band; ties away from zero, the
+# band ends with a tolerance for the rounding of their own computation
+function _tap_r1_fixed_position(br::Branch, p::Real)::Float64
+  pmin, pmax = _tap_r1_band(br)
+  return clamp(round(p, RoundNearestTiesAway), ceil(pmin - 1e-9), floor(pmax + 1e-9))
 end
 
 # The shift (relative to the winding's neutral) of the model step nearest
@@ -602,8 +691,9 @@ After the estimation the taps are always fixed
 to the nearest MECHANICAL step and one more run is solved in which the tap
 is no state any more. This helper computes, per released transformer, the
 continuous (electrical) and rounded (fixed) step of each regulator on its
-OWN grid (regulator 1: the ratio grid `tap_step` with the `tap_min`/`tap_max`
-range; regulator 2: the phase grid `phase_step_deg` with its range),
+OWN grid (regulator 1: the ratio grid the branch declares in
+`tap_ratio_grid`, with `tap_step` and the `tap_min`/`tap_max` range;
+regulator 2: the phase grid `phase_step_deg` with its range),
 out-of-range flags (the fixed step is clamped into the range), the r values
 of the fixed position, a `TapStateMap` with zero state columns (all
 regulators frozen at the fixed position), and the state vector without the
@@ -618,23 +708,19 @@ function _fixate_taps(x::Vector{Float64}, map::TapStateMap, net::Net)
     α = map.alphas[j]
     r1 = map.r1cols[j] == 0 ? map.r1_0[j] : x[map.r1cols[j]]
     r2 = map.r2cols[j] == 0 ? map.r2_0[j] : x[map.r2cols[j]]
-    # regulator 1 mechanical grid: the tap FRACTION itself, r1 = n * tap_step
-    # (the calcSkewAngleTap convention; CGMES stepVoltageIncrement/100 per
-    # step). NOT the multiplier grid ratio * (1 + n * step): the two differ
-    # at second order and only the fraction grid reproduces a cascade truth
-    # exactly. The [tap_min, tap_max] multiplier band maps through the
-    # reciprocal 1/(1+r1) onto the position range.
-    step1 = br.tap_step > 0.0 ? br.tap_step : 0.00625
-    p1 = r1 / step1
-    p1min = (1.0 / br.tap_max - 1.0) / step1
-    p1max = (1.0 / br.tap_min - 1.0) / step1
+    # regulator 1 on the ratio grid of the branch (_tap_r1_at): the fraction
+    # grid r1 = n * tap_step of nameplate data, the step grid of a CGMES
+    # changer. The [tap_min, tap_max] band holds absolute ratios and maps
+    # through the cascade r1 = ratio / t - 1 onto the position range.
+    p1 = _tap_r1_position(br, r1)
+    p1min, p1max = _tap_r1_band(br)
     oor1 = map.r1cols[j] != 0 && (p1 < p1min - 0.5 || p1 > p1max + 0.5)
     # ties away from zero: banker's rounding on a half-step estimate would
     # pick the even neighbour, which has no mechanical meaning
-    p1fix = clamp(round(p1, RoundNearestTiesAway), ceil(p1min), floor(p1max))
+    p1fix = _tap_r1_fixed_position(br, p1)
     # only an ESTIMATED regulator snaps to the grid; a frozen one (no state
     # column) keeps its exact model position, off-grid or not
-    r1fix = map.r1cols[j] == 0 ? r1 : p1fix * step1
+    r1fix = map.r1cols[j] == 0 ? r1 : _tap_r1_at(br, p1fix)
     if br.phase_du_step > 0.0
       # additional-voltage stepper (Delta-u PST): the mechanical grid is
       # the additional-voltage AMPLITUDE itself, r2 = n * phase_du_step

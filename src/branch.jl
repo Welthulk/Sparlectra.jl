@@ -271,6 +271,13 @@ mutable struct Branch <: AbstractBranch
   # per-step impedance of tap changer tables with r/x/g/b deviations,
   # nothing for every branch without such a table (see TapStepImpedance)
   tap_step_impedance::Union{Nothing,TapStepImpedance}
+  # how a ratio tap position maps onto the ratio, counted in steps from
+  # `ratio`: :fraction is the cascade grid ratio / (1 + n * tap_step) of
+  # nameplate data (applyTapNameplate!) and the constructor default;
+  # :linear is ratio + n * tap_step (or the table points), the grid of a
+  # CGMES RatioTapChanger on the tapped from side, which the tap controller
+  # also steps on. The tap estimation fixes its estimate on this grid.
+  tap_ratio_grid::Symbol
 
   function Branch(;
     branchIdx::Int,
@@ -308,15 +315,13 @@ mutable struct Branch <: AbstractBranch
       else
         c = getBranchComp(vn_kV, from, to, id, "ACL")
       end
-      if values_are_pu
-        r_pu, x_pu, b_pu, g_pu = getLineRXBG(branch)
-      else 
-        r_pu, x_pu, b_pu, g_pu = getLineRXBG_pu(branch, vn_kV, baseMVA)        
-      end    
+      # the line knows the unit of its values (ohm/siemens or per unit), so
+      # values_are_pu is not consulted here; it only matters for transformers
+      r_pu, x_pu, b_pu, g_pu = getLineRXBG_pu(branch, vn_kV, baseMVA)
       # (g_from, b_from, g_to, b_to): explicit split or the symmetric half;
       # the stored totals are the sums either way
       gf, bf, gt, bt = _split_branch_shunt(g_pu, b_pu, shunt_split)
-      new(c, branchIdx, from, to, r_pu, x_pu, r_pu, x_pu, bf + bt, gf + gt, gf, bf, gt, bt, 0.0, 0.0, status, branch.ratedS, nothing, nothing, nothing, nothing, 1.0, 0.0, false, false, 0.9, 1.1, 0.00625, -30.0, 30.0, 1.25, fs, ts, nothing, nothing, :none, 0.0, 0.0, 0.0, 0.0, false, nothing, :ideal, nothing, nothing)
+      new(c, branchIdx, from, to, r_pu, x_pu, r_pu, x_pu, bf + bt, gf + gt, gf, bf, gt, bt, 0.0, 0.0, status, branch.ratedS, nothing, nothing, nothing, nothing, 1.0, 0.0, false, false, 0.9, 1.1, 0.00625, -30.0, 30.0, 1.25, fs, ts, nothing, nothing, :none, 0.0, 0.0, 0.0, 0.0, false, nothing, :ideal, nothing, nothing, :fraction)
     elseif isa(branch, PowerTransformer) # Transformer     
       if (isnothing(side) && branch.isBiWinder)
         side = getSideNumber2WT(branch)
@@ -353,7 +358,7 @@ mutable struct Branch <: AbstractBranch
       end
 
       gf, bf, gt, bt = _split_branch_shunt(g_pu, b_pu, shunt_split)
-      new(c, branchIdx, from, to, r_pu, x_pu, r_pu, x_pu, bf + bt, gf + gt, gf, bf, gt, bt, ratio, angle, status, sn_MVA, nothing, nothing, nothing, nothing, ratio, angle, true, true, tap_min, tap_max, tap_step, -30.0, 30.0, 1.25, fs, ts, nothing, nothing, :none, 0.0, 0.0, 0.0, 0.0, false, nothing, :ideal, nothing, nothing)
+      new(c, branchIdx, from, to, r_pu, x_pu, r_pu, x_pu, bf + bt, gf + gt, gf, bf, gt, bt, ratio, angle, status, sn_MVA, nothing, nothing, nothing, nothing, ratio, angle, true, true, tap_min, tap_max, tap_step, -30.0, 30.0, 1.25, fs, ts, nothing, nothing, :none, 0.0, 0.0, 0.0, 0.0, false, nothing, :ideal, nothing, nothing, :fraction)
     elseif isa(branch, BranchModel) # PI-Model
       @assert !isnothing(vn_kV) "vn_kV must be set for PI-Model"
 
@@ -368,7 +373,7 @@ mutable struct Branch <: AbstractBranch
       initial_angle = is_tap ? branch.angle : 0.0
       # the model carries its own split; an explicit keyword overrides it
       gf, bf, gt, bt = shunt_split === nothing ? (branch.g_from_pu, branch.b_from_pu, branch.g_to_pu, branch.b_to_pu) : shunt_split
-      new(c, branchIdx, from, to, branch.r_pu, branch.x_pu, branch.r_pu, branch.x_pu, bf + bt, gf + gt, gf, bf, gt, bt, branch.ratio, branch.angle, status, branch.sn_MVA, nothing, nothing, nothing, nothing, initial_ratio, initial_angle, is_tap, is_tap, 0.9, 1.1, 0.00625, -30.0, 30.0, 1.25, fs, ts, nothing, nothing, :none, 0.0, 0.0, 0.0, 0.0, false, nothing, :ideal, nothing, nothing)
+      new(c, branchIdx, from, to, branch.r_pu, branch.x_pu, branch.r_pu, branch.x_pu, bf + bt, gf + gt, gf, bf, gt, bt, branch.ratio, branch.angle, status, branch.sn_MVA, nothing, nothing, nothing, nothing, initial_ratio, initial_angle, is_tap, is_tap, 0.9, 1.1, 0.00625, -30.0, 30.0, 1.25, fs, ts, nothing, nothing, :none, 0.0, 0.0, 0.0, 0.0, false, nothing, :ideal, nothing, nothing, :fraction)
     else
       error("Branch type not supported")
     end
@@ -789,8 +794,11 @@ Apply nameplate tap-changer data to a transformer branch: the branch's own
 LIVE `tap_ratio`/`phase_shift_deg` off it on the same mechanical grids the
 tap estimation fixes to.
 
-- Ratio changer: `tap = neutral / (1 + n * tap_step)` (cascade convention);
-  a `tap_step` of 0 explicitly declares "no ratio tap changer" and keeps the
+- Ratio changer: `tap = neutral / (1 + n * tap_step)` (cascade convention,
+  `tap_ratio_grid = :fraction`); with `tap_ratio_grid = :linear` the steps
+  lie on the grid of a CGMES changer, `tap = neutral + n * tap_step`
+  (`_ratio_grid_shift`), and `ratio` is the position the steps count from.
+  A `tap_step` of 0 explicitly declares "no ratio tap changer" and keeps the
   transformer out of the estimator's mass release.
 - Phase changer, additional-voltage form (`phase_du_step > 0`): the
   mechanical grid is the additional-voltage amplitude `r2 = n *
@@ -821,20 +829,31 @@ function applyTapNameplate!(
   phase_current_step::Float64 = 0.0,
   psi_deg::Float64 = 0.0,
   phase_du_step::Float64 = 0.0,
+  tap_ratio_grid::Symbol = :fraction,
   context::AbstractString = "tap changer",
 )
   br.ratio != 0.0 || throw(ArgumentError("$(context): not a transformer branch (its neutral ratio is 0)."))
+  tap_ratio_grid in (:fraction, :linear) || throw(ArgumentError("$(context): tap_ratio_grid must be :fraction or :linear, got $(repr(tap_ratio_grid))."))
   base = br.ratio
   if tap_step > 0.0
     (tap_min_step <= 0.0 <= tap_max_step) || throw(ArgumentError("$(context): the neutral position 0 must lie inside [tap_min_step, tap_max_step]."))
     (tap_min_step <= tap_current_step <= tap_max_step) || throw(ArgumentError("$(context): tap_current_step $(tap_current_step) outside [$(tap_min_step), $(tap_max_step)]."))
     br.has_ratio_tap = true
     br.tap_step = tap_step
-    # ratio bounds from the step band on the cascade grid: the highest step
-    # gives the smallest multiplier
-    br.tap_min = base / (1.0 + tap_max_step * tap_step)
-    br.tap_max = base / (1.0 + tap_min_step * tap_step)
-    br.tap_ratio = base / (1.0 + tap_current_step * tap_step)
+    br.tap_ratio_grid = tap_ratio_grid
+    if tap_ratio_grid === :linear
+      # the grid of a CGMES changer, the one the tap controller and the tap
+      # estimation step on (whole tap_steps, or the table points if any)
+      br.tap_min = _ratio_grid_shift(br, base, tap_min_step; window = (-Inf, Inf))
+      br.tap_max = _ratio_grid_shift(br, base, tap_max_step; window = (-Inf, Inf))
+      br.tap_ratio = _ratio_grid_shift(br, base, tap_current_step; window = (-Inf, Inf))
+    else
+      # ratio bounds from the step band on the cascade grid: the highest step
+      # gives the smallest multiplier
+      br.tap_min = base / (1.0 + tap_max_step * tap_step)
+      br.tap_max = base / (1.0 + tap_min_step * tap_step)
+      br.tap_ratio = base / (1.0 + tap_current_step * tap_step)
+    end
   else
     br.has_ratio_tap = false
   end

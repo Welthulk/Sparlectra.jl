@@ -87,7 +87,7 @@ state is no solution of the model (state estimation outside the band,
 taps frozen at model positions, a non-converged run). Flows derived from
 such a state violate the node balances, and the set then contradicts the
 model before any estimation (a set built from a fallback
-run with J = 2859 produced KCL findings at every passive bus).
+run far outside the band produced KCL findings at every passive bus).
 """
 function _se_truth_run_warning(metadata::AbstractDict)::String
   reasons = String[]
@@ -312,6 +312,139 @@ function _se_service_import(case_path, config, run_id, config_file, output_dir, 
     println(io, decision)
   end
   return imported, format, nothing
+end
+
+# A measurement table (one set per timestamp) given as the measurement
+# file. Gated by state_estimation.measurement_table. The format of the case
+# picks the key index: a CGMES delivery resolves mRIDs through its model
+# (cgmesMeasurementKeys), every other format resolves element names
+# (nameMeasurementKeys). The run estimates the FIRST set of the file; the
+# import report (every set, every row that did not become a measurement) is
+# written to measurement_import.txt and summarized in the log. Returns
+# `(summary, nothing)` or `(nothing, reason)`.
+# The key index a measurement table of this case is read with, and the one
+# the converter and the Web UI generator write with: mRIDs for a CGMES case,
+# element names for every other format. `nothing` when a CGMES import kept
+# no CGMES model.
+function _se_measurement_index(imported, format::Symbol)
+  format === :cgmes || return nameMeasurementKeys(imported.net)
+  cg = get(imported.provenance, "cgmes_result", nothing)
+  return cg === nothing ? nothing : cgmesMeasurementKeys(cg)
+end
+
+"""
+    _se_convert_measurements_v1(case_path, v1_path, out; config_file = DEFAULT_SPARLECTRA_CONFIG_PATH, requested_format = :auto) -> NamedTuple
+
+`convertMeasurementsV1` for a case file: imports the case the way the SE
+service does (effective configuration of `config_file` and the case;
+`requested_format` as the service's `case_format`, needed for a bare DTF
+`.DAT`) and
+writes the table with the key index the service reads it with (mRIDs for a
+CGMES case, element names otherwise). Returns the result of
+`convertMeasurementsV1`. Throws `ArgumentError` when a CGMES import keeps no
+CGMES model, and the reader's error for a v1 file it refuses.
+"""
+function _se_convert_measurements_v1(case_path::AbstractString, v1_path::AbstractString, out::AbstractString; config_file::AbstractString = DEFAULT_SPARLECTRA_CONFIG_PATH, requested_format::Symbol = :auto)
+  config = resolve_config(config_file, case_path).config
+  imported = _se_import_case(case_path, config; requested_format = requested_format)
+  index = _se_measurement_index(imported, _se_case_format(case_path; requested = requested_format))
+  index === nothing && throw(ArgumentError("$(basename(case_path)): the CGMES import kept no CGMES model to key the table by mRID"))
+  return convertMeasurementsV1(v1_path, imported.net; out = out, index = index)
+end
+
+function _se_load_measurement_table!(net, imported, format::Symbol, measurement_file::String, config, logfile, output_dir::String)
+  name = basename(measurement_file)
+  # read first: a table the reader refuses (no version line, another
+  # version) gets the reader's message whether the switch is on or off.
+  # ArgumentError is the reader's refusal of the file as a whole.
+  rows = try
+    readMeasurementTable(measurement_file)
+  catch err
+    err isa ArgumentError || rethrow()
+    return nothing, sprint(showerror, err)
+  end
+  config.state_estimation.measurement_table || return nothing, "$(name) is a measurement table. Reading measurement tables is switched off; set state_estimation.measurement_table: true."
+  index = _se_measurement_index(imported, format)
+  index === nothing && return nothing, "$(name) is a measurement table for a CGMES case, but the import kept no CGMES model to resolve its mRIDs."
+  # rows without a sigma cell take the level sigma of the effective
+  # configuration (case configuration first), not of the process default
+  imp = importMeasurementTable(rows, index; sigma_by_voltage_level = config.state_estimation.sigma_by_voltage_level)
+  if isempty(imp.sets)
+    write(joinpath(output_dir, "measurement_import.txt"), measurementImportReport(imp))
+    return nothing, "$(name) holds no measurement row that can be assigned to a set; see measurement_import.txt."
+  end
+  set = imp.sets[1]
+  # applied before the report is written, so the report carries the
+  # zero-injection rows of state_estimation.zero_injection for this set
+  applyMeasurementSet!(net, set; zero_injection = config.state_estimation.zero_injection === :on)
+  write(joinpath(output_dir, "measurement_import.txt"), measurementImportReport(imp))
+  zi = set.counts[:zero_injection]
+  open(logfile, "a") do io
+    println(io, "measurements: measurement table ", name, ", ", length(imp.sets), " set(s); estimating set ", isempty(set.timestamp) ? "(no timestamp)" : set.timestamp, ": ", set.counts[:rows], " rows, ", length(set.measurements), " measurements (active ", set.counts[:active], ", inactive ", set.counts[:inactive], "), ", length(set.problems), " row(s) not used, see measurement_import.txt")
+    _se_log_zero_injection(io, config, zi)
+    length(imp.sets) > 1 && println(io, "note: the other sets of the table are not estimated in this run: ", join((s.timestamp for s in imp.sets[2:end]), ", "))
+  end
+  return (total = length(set.measurements), zero_injection = zi, sigma_origin = set.sigma_origin), nothing
+end
+
+# state_estimation.sigma_by_voltage_level of one run: per nominal voltage the
+# number of measurements and where their sigma came from (row, level,
+# default), plus the configured absolute sigmas in pu. `origins` is the
+# sigma origin of a measurement table set; every other set (measurement CSV
+# v1, case file) carries a sigma in each row. The same rows go to run.log,
+# se_diagnostics.md and the result metadata (se_sigma_by_voltage_level).
+function _se_sigma_level_report(net::Net, config, origins::AbstractDict)
+  summary = _sigma_level_summary(net, net.measurements; origins = origins, levels = config.state_estimation.sigma_by_voltage_level)
+  rows = Dict{String,Any}[]
+  for l in summary.levels
+    push!(rows, Dict{String,Any}(
+      "vn_kv" => l.vn_kv, "configured" => l.configured, "measurements" => l.measurements,
+      "sigma_row" => l.row, "sigma_level" => l.level, "sigma_default" => l.default,
+      "rel_pct" => l.rel_pct,
+      "p_pu" => l.sigma_pu.p, "q_pu" => l.sigma_pu.q, "i_pu" => l.sigma_pu.i, "u_pu" => l.sigma_pu.u,
+    ))
+  end
+  return (rows = rows, unused = summary.unused, unlocated = summary.unlocated, configured = !isempty(config.state_estimation.sigma_by_voltage_level))
+end
+
+_se_sigma_pu_text(x) = x === nothing ? "default" : string(round(Float64(x); sigdigits = 4))
+
+# the per-level lines of run.log and se_diagnostics.md
+function _se_sigma_level_lines(report)::Vector{String}
+  lines = String[]
+  push!(lines, string("measurement sigma by voltage level", report.configured ? "" : " (state_estimation.sigma_by_voltage_level not set: every row without its own sigma takes the default)", ":"))
+  for r in report.rows
+    push!(lines, string("  ", r["vn_kv"], " kV: ", r["measurements"], " measurement(s), sigma from the row ", r["sigma_row"], ", from the level ", r["sigma_level"], ", default ", r["sigma_default"],
+      r["configured"] ? string("; level sigma in pu: P ", _se_sigma_pu_text(r["p_pu"]), ", Q ", _se_sigma_pu_text(r["q_pu"]), ", I ", _se_sigma_pu_text(r["i_pu"]), ", U ", _se_sigma_pu_text(r["u_pu"]), r["rel_pct"] > 0 ? string(", at least ", r["rel_pct"], " % of the value") : "") : "; no row configured"))
+  end
+  for v in report.unused
+    push!(lines, string("  note: ", v, " kV is configured in state_estimation.sigma_by_voltage_level, but no bus of this case has that nominal voltage"))
+  end
+  report.unlocated > 0 && push!(lines, string("  ", report.unlocated, " measurement(s) without a bus or branch are not counted"))
+  return lines
+end
+
+# state_estimation.zero_injection on a set read from a measurement CSV or a
+# case file: the same rows applyMeasurementSet! adds for a table, added
+# before measurements.csv is written so the artifact is the estimated set.
+# A generated set already carries ZI rows or balance rows at every passive
+# bus and gets nothing added. Returns the number of rows added.
+function _se_apply_zero_injection!(net::Net, config, logfile)::Int
+  added = config.state_estimation.zero_injection === :on ? _add_missing_zero_injections!(net.measurements, net) : 0
+  open(logfile, "a") do io
+    _se_log_zero_injection(io, config, added)
+  end
+  return added
+end
+
+# the log line of the zero-injection switch, the same for every SE path
+function _se_log_zero_injection(io::IO, config, added::Int)
+  if config.state_estimation.zero_injection === :on
+    println(io, "zero injection: ", added, " row(s) added at ", added ÷ 2, " passive bus(es) without an injection measurement (state_estimation.zero_injection: on)")
+  else
+    println(io, "zero injection: off, no rows added (state_estimation.zero_injection: off)")
+  end
+  return nothing
 end
 
 ## headline mapping for the state-estimation timing file
@@ -581,18 +714,24 @@ function _run_state_estimation_service_body(
   # case is used, and the run still writes measurements.csv as its artifact so
   # every SE run stays reproducible from its own output.
   from_case_file = format === :scf && !isfile(measurement_file) && !isempty(net.measurements)
+  from_table = false
+  # rows state_estimation.zero_injection added to the set (all paths)
+  zi_rows = 0
   summary = if from_case_file
+    n_case_rows = length(net.measurements)
     open(logfile, "a") do io
-      println(io, "measurements: ", length(net.measurements), " row(s) taken from the case file itself (no separate measurement set given)")
+      println(io, "measurements: ", n_case_rows, " row(s) taken from the case file itself (no separate measurement set given)")
     end
+    zi_rows = _se_apply_zero_injection!(net, config, logfile)
     writeMeasurementsCSV(net; file = joinpath(output_dir, "measurements.csv"), busReference = :name, format = String(config.output.csv_format))
-    (total = length(net.measurements),)
+    (total = n_case_rows,)
   else
     if !isfile(measurement_file)
       hint = format === :scf ? " The case file carries no measurements either: generate a set, or export the case with its measurements." : ""
       return _api_failure("invalid_measurements", "Measurement file not found: $(measurement_file)." * hint, run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
     end
-    # case-binding gate: a set recorded for a different case would fail rows
+    # case-binding gate (measurement table and CSV v1 alike): a set recorded
+    # for a different case would fail rows
     # deep in the reader ("bus X not found"); refuse it up front with the
     # actual cause. Sets without a binding (older files) pass with a log note.
     bound_case = _webui_measurement_set_case(String(measurement_file))
@@ -607,19 +746,51 @@ function _run_state_estimation_service_body(
     isempty(bound_case) && open(logfile, "a") do io
       println(io, "note: the measurement set carries no case binding (# case: comment); older set, association checked by name only")
     end
-    read_summary = try
-      readMeasurementsCSV!(net; file = measurement_file, replace = true)
-    catch err
-      return _api_failure("invalid_measurements", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
+    # a table that lost its version line goes the table way too, so the
+    # reader names the missing line (the CSV v1 reader would complain about
+    # an unknown CSV version instead)
+    if isMeasurementTable(String(measurement_file)) || _measurement_table_without_version(String(measurement_file))
+      from_table = true
+      table_summary, table_error = _se_load_measurement_table!(net, imported, format, String(measurement_file), config, logfile, String(output_dir))
+      table_error === nothing || return _api_failure("invalid_measurements", table_error; run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
+      zi_rows = table_summary.zero_injection
+      # the comment lines of the table (case binding, generator provenance,
+      # taps table, truth values) go into the artifact as for a CSV v1 set
+      table_comments, _ = _measurement_csv_comments(measurement_file)
+      writeMeasurementsCSV(net; file = joinpath(output_dir, "measurements.csv"), headerComments = table_comments, busReference = format === :cgmes ? :mrid : :name, format = String(config.output.csv_format))
+      table_summary
+    else
+      read_summary = try
+        readMeasurementsCSV!(net; file = measurement_file, replace = true)
+      catch err
+        return _api_failure("invalid_measurements", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
+      end
+      # the library warns once per session; every run on a v1 file says it
+      base_metadata["se_measurement_csv_v1"] = true
+      open(logfile, "a") do io
+        println(io, "note: ", MEASUREMENT_CSV_V1_DEPRECATION)
+      end
+      zi_rows = _se_apply_zero_injection!(net, config, logfile)
+      # The artifact is written in the run's CSV format, not copied (a German
+      # Excel user found commas here next to semicolon result tables);
+      # the set's comment lines (case binding, generator
+      # provenance, taps table) are carried over, so the artifact still reads
+      # back as the same measurement set.
+      head_comments, tail_comments = _measurement_csv_comments(measurement_file)
+      writeMeasurementsCSV(net; file = joinpath(output_dir, "measurements.csv"), headerComments = head_comments, footerComments = tail_comments, busReference = format === :cgmes ? :mrid : :name, format = String(config.output.csv_format))
+      read_summary
     end
-    # The artifact is written in the run's CSV format, not copied (a German
-    # Excel user found commas here next to semicolon result tables);
-    # the set's comment lines (case binding, generator
-    # provenance, taps table) are carried over, so the artifact still reads
-    # back as the same measurement set.
-    head_comments, tail_comments = _measurement_csv_comments(measurement_file)
-    writeMeasurementsCSV(net; file = joinpath(output_dir, "measurements.csv"), headerComments = head_comments, footerComments = tail_comments, busReference = format === :cgmes ? :mrid : :name, format = String(config.output.csv_format))
-    read_summary
+  end
+
+  # where the sigma of every measurement came from, per voltage level; only
+  # a table row can be without its own sigma
+  sigma_level_report = _se_sigma_level_report(net, config, from_table ? summary.sigma_origin : Dict{String,Symbol}())
+  base_metadata["se_sigma_by_voltage_level"] = sigma_level_report.rows
+  isempty(sigma_level_report.unused) || (base_metadata["se_sigma_levels_not_in_case"] = sigma_level_report.unused)
+  open(logfile, "a") do io
+    for line in _se_sigma_level_lines(sigma_level_report)
+      println(io, line)
+    end
   end
 
   # Carry a duplicate finding into the run: it is the one property of a set that
@@ -627,8 +798,15 @@ function _run_state_estimation_service_body(
   # Checked on the loaded set, not on the reader result: measurements carried
   # inside a case file take the other branch above and can be doubled just the
   # same.
+  # A measurement table keeps several keys at one location as redundant
+  # meters on purpose (the import reports the same key twice as duplicate),
+  # so for a table the repeat is stated as a fact, not warned about.
   duplicate_rows = sum(values(_duplicate_measured_quantities(net.measurements)); init = 0)
-  if duplicate_rows > 0
+  if duplicate_rows > 0 && from_table
+    open(logfile, "a") do io
+      println(io, "note: $(duplicate_rows) of $(length(net.measurements)) measurements are further readings of an already measured quantity (redundant meters in the table)")
+    end
+  elseif duplicate_rows > 0
     base_metadata["se_duplicate_rows"] = duplicate_rows
     open(logfile, "a") do io
       println(io, "warning: $(duplicate_rows) of $(length(net.measurements)) measurements repeat a quantity that is already measured; expect an inflated J")
@@ -809,8 +987,8 @@ function _run_state_estimation_service_body(
   # needed 4 iterations and reached the same J. The frozen solve is also
   # the reference of the acceptance rule below, which is why it runs under
   # a configured warm start too (there the MiniGrid fixture
-  # cgmes_minigrid_elimination_reverted converged straight to the badly
-  # rounding tap estimate, J 16382 against 1114 with the model taps).
+  # cgmes_minigrid_tap_fallback converges straight to a tap estimate whose
+  # fixed positions fit worse than the model taps, J 48299 against 46692).
   # Only for the mass release: a set-documented or explicit release names
   # a few transformers and converges from flat (7 iterations on the same
   # set), and its positions are the point of the run.
@@ -869,9 +1047,10 @@ function _run_state_estimation_service_body(
   # Acceptance rule for the staged start: the staged estimate converges
   # where the cold one crawled, but on a set that cannot pin its taps it
   # converges to positions that round badly. Measured on the MiniGrid
-  # fixture cgmes_minigrid_elimination_reverted: J 1089 before the
-  # fixation, 16382 after it, against 1114 with the model taps (the cold
-  # run fell back to those). The FIXED estimate is therefore kept only if
+  # fixture cgmes_minigrid_tap_fallback: fixed J 48299 at dof 75 against
+  # 46692 at dof 78 with the model taps (the cold run fell back to those);
+  # on cgmes_minigrid_elimination_reverted the fixed estimate fits better
+  # (34251 against 39952) and is kept. The FIXED estimate is kept only if
   # it fits at least as well as the model positions in the pre-solve. The
   # comparison is conservative: the final run carries no more rows than
   # the pre-solve (eliminated rows are inactive), so a larger J here is a
@@ -915,9 +1094,9 @@ function _run_state_estimation_service_body(
       # The diagnostics above described the RELEASED-tap attempt (its J of
       # the diverged iterate, its dof with the tap states), while the
       # headline reports the frozen-tap run: se_diagnostics.md then
-      # contradicted the status line (J = 2e9 at dof 70 against J = 2859 at
-      # dof 78). The report has to describe the run it comes
-      # with, so the diagnostics repeat on the frozen taps; rows they
+      # contradicted the status line (a diverged J at the dof with tap
+      # states against the frozen run's J). The report has to describe the
+      # run it comes with, so the diagnostics repeat on the frozen taps; rows they
       # eliminate leave the reported run the same way as in the first pass.
       diag = with_sparlectra_config(() -> runse_diagnostics(net), run_cfg)
       if !isempty(diag.eliminations)
@@ -967,6 +1146,13 @@ function _run_state_estimation_service_body(
     n_elim > 0 && println(io, "- **Eliminated rows:** ", n_elim, " (identified by the diagnostics pass below; inactive in the reported run, still counted in the pass's own J)")
     (hasproperty(diag, :reverted) && diag.reverted !== nothing) && println(io, "- **Not eliminated:** `", diag.reverted.id, "` (the control solve without it did not converge; the row stays active, see the pass below)")
     println(io, "\nThese are the numbers of the status line and of `run.log`.\n")
+    println(io, "## Measurement sigma by voltage level\n")
+    sigma_lines = _se_sigma_level_lines(sigma_level_report)
+    println(io, sigma_lines[1], "\n")
+    for line in sigma_lines[2:end]
+      println(io, "- ", strip(line))
+    end
+    println(io)
     println(io, "## Diagnostics pass (every row active, before any elimination)\n")
     println(io, "The pass below ran on all rows and identified the eliminated ones; its J is therefore not the reported J. It is where a bad row shows.\n")
     print_se_diagnostics(io, diag; topN = 15, format = :markdown)
@@ -1241,7 +1427,7 @@ function _run_state_estimation_service_body(
   verdict = diag.final_diagnostics.objective
   open(logfile, "a") do io
     println(io, "State estimation on ", basename(case_path))
-    println(io, "measurements: ", summary.total, " rows from ", from_case_file ? "the case file" : basename(String(measurement_file)))
+    println(io, "measurements: ", summary.total, " rows from ", from_case_file ? "the case file" : basename(String(measurement_file)), zi_rows > 0 ? string(", plus ", zi_rows, " zero-injection row(s)") : "")
     println(io, "observability: ", obs.quality, :structural_islands in obs.notes ? " (structural islands)" : "")
     _se_log_criticality(io, net, obs)
     println(io, "converged in ", res.iterations, " iteration(s); J = ", round(res.objectiveJ; digits = 6), ", dof = ", res.dof, ", band reason = ", verdict.reason, res.activeObjective === nothing ? "" : string("; J_active = ", round(res.activeObjective.j; digits = 6), " (dof ", res.activeObjective.dof, ", without ", res.activeObjective.suppressed, " suppressed row(s); band verdict stays on J)"))
@@ -1283,6 +1469,7 @@ function _run_state_estimation_service_body(
     Dict{String,Any}(
       "input_format_detected" => String(format),
       "se_measurement_rows" => summary.total,
+      "se_zero_injection_rows" => zi_rows,
       "se_converged" => res.converged,
       # the maximum over the solves of the run, see _se_reported_iterations
       "se_iterations" => _se_reported_iterations(res),

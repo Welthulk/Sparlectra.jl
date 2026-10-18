@@ -113,7 +113,7 @@ function test_3WTPITrafo(verbose::Int = 0; method::Symbol = :rectangular, opt_sp
   addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
 
   # --- line 380 kV: B1 -- B2 ---
-  addACLine!(net = net, fromBus = "B1", toBus = "B2", length = 1.0, r = 0.01, x = 0.10)
+  addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.01, x_pu = 0.10, b_pu = 0.0, status = 1)
 
   # --- 3-winding transformer: (B2=380kV, B3=110kV, B4=20kV) ---
   # Use simple physical values; add3WTPiModelTrafo! is expected to:
@@ -133,7 +133,7 @@ function test_3WTPITrafo(verbose::Int = 0; method::Symbol = :rectangular, opt_sp
   )
 
   # --- line 110 kV: B3 -- B5 (to remote load bus) ---
-  addACLine!(net = net, fromBus = "B3", toBus = "B5", length = 1.0, r = 0.01, x = 0.10)
+  addPIModelACLine!(net = net, fromBus = "B3", toBus = "B5", r_pu = 0.01, x_pu = 0.10, b_pu = 0.0, status = 1)
 
   # --- load at B5: 80 MW / 30 MVar ---
   addProsumer!(net = net, busName = "B5", type = "ENERGYCONSUMER", p = 80.0, q = 30.0)
@@ -488,8 +488,8 @@ function test_prosumer_aggregation_preserves_bus_types_and_injections()::Bool
   addBus!(net = net, busName = "PV", vn_kV = 110.0)
   addBus!(net = net, busName = "PQ", vn_kV = 110.0)
 
-  addACLine!(net = net, fromBus = "Slack", toBus = "PV", length = 1.0, r = 0.01, x = 0.10)
-  addACLine!(net = net, fromBus = "PV", toBus = "PQ", length = 1.0, r = 0.01, x = 0.10)
+  addPIModelACLine!(net = net, fromBus = "Slack", toBus = "PV", r_pu = 0.01, x_pu = 0.10, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "PV", toBus = "PQ", r_pu = 0.01, x_pu = 0.10, b_pu = 0.0, status = 1)
 
   addProsumer!(net = net, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "Slack", defer_bus_type_refresh = true)
   addProsumer!(net = net, busName = "PV", type = "SYNCHRONOUSMACHINE", p = 50.0, q = 5.0, vm_pu = 1.01, defer_bus_type_refresh = true)
@@ -1319,12 +1319,12 @@ function testISOBusses()
   addBus!(net = net, busName = "B4", vn_kV = 220.0)
   addBus!(net = net, busName = "B5", vn_kV = 220.0)
 
-  addACLine!(net = net, fromBus = "B1", toBus = "B2", length = 100.0, r = 0.0653, x = 0.398, b = 0.0002852566129459532, ratedS = 250.0, status = 1)
-  addACLine!(net = net, fromBus = "B1", toBus = "B3", length = 100.0, r = 0.0653, x = 0.398, b = 0.0002852566129459532, ratedS = 250.0, status = 1)
-  addACLine!(net = net, fromBus = "B2", toBus = "B4", length = 100.0, r = 0.0653, x = 0.398, b = 0.0002852566129459532, ratedS = 250.0, status = 1)
-  addACLine!(net = net, fromBus = "B3", toBus = "B4", length = 100.0, r = 0.0653, x = 0.398, b = 0.0002852566129459532, ratedS = 250.0, status = 1)
-  addACLine!(net = net, fromBus = "B5", toBus = "B4", length = 300.0, r = 0.0653, x = 0.398, b = 0.0008557698388378598, ratedS = 250.0, status = 1)
-  addACLine!(net = net, fromBus = "B5", toBus = "B4", length = 300.0, r = 0.0653, x = 0.398, b = 0.0008557698388378598, ratedS = 250.0, status = 1)
+  add_test_line_pu_c!(net = net, fromBus = "B1", toBus = "B2", length_km = 100.0, r_pu = 0.0653, x_pu = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0, status = 1)
+  add_test_line_pu_c!(net = net, fromBus = "B1", toBus = "B3", length_km = 100.0, r_pu = 0.0653, x_pu = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0, status = 1)
+  add_test_line_pu_c!(net = net, fromBus = "B2", toBus = "B4", length_km = 100.0, r_pu = 0.0653, x_pu = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0, status = 1)
+  add_test_line_pu_c!(net = net, fromBus = "B3", toBus = "B4", length_km = 100.0, r_pu = 0.0653, x_pu = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0, status = 1)
+  add_test_line_pu_c!(net = net, fromBus = "B5", toBus = "B4", length_km = 300.0, r_pu = 0.0653, x_pu = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0, status = 1)
+  add_test_line_pu_c!(net = net, fromBus = "B5", toBus = "B4", length_km = 300.0, r_pu = 0.0653, x_pu = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0, status = 1)
 
   addShunt!(net = net, busName = "B3", pShunt = 0.0, qShunt = 180.0)
   addShunt!(net = net, busName = "B2", pShunt = 0.0, qShunt = 180.0)
@@ -1414,25 +1414,28 @@ function createCIGRE(lLine_6a6b = 0.01)::Net
   ###### ACLines   
   # 220kV-Lines
   # (bus1, bus2, length_km=100)
-  addACLine!(net = net, fromBus = "B1", toBus = "B2", length = 100.0, r = 0.0653, x = 0.398, b = 0.0002852566129459532)
+  add_test_line_pu_c!(net = net, fromBus = "B1", toBus = "B2", length_km = 100.0, r_pu = 0.0653, x_pu = 0.398, c_nf_per_km = 9.08, tanδ = 0.0)
   # (bus1, bus6a, length_km=300)
-  addACLine!(net = net, fromBus = "B1", toBus = "B6a", length = 300.0, r = 0.0653, x = 0.398, b = 0.0008557698388378598)
+  add_test_line_pu_c!(net = net, fromBus = "B1", toBus = "B6a", length_km = 300.0, r_pu = 0.0653, x_pu = 0.398, c_nf_per_km = 9.08, tanδ = 0.0)
   # (bus2, bus5, length_km=300)
-  addACLine!(net = net, fromBus = "B2", toBus = "B5", length = 300.0, r = 0.0653, x = 0.398, b = 0.0008557698388378598)
+  add_test_line_pu_c!(net = net, fromBus = "B2", toBus = "B5", length_km = 300.0, r_pu = 0.0653, x_pu = 0.398, c_nf_per_km = 9.08, tanδ = 0.0)
   # (bus3, bus4, length_km=100)
-  addACLine!(net = net, fromBus = "B3", toBus = "B4", length = 100.0, r = 0.0653, x = 0.398, b = 0.0002852566129459532)
+  add_test_line_pu_c!(net = net, fromBus = "B3", toBus = "B4", length_km = 100.0, r_pu = 0.0653, x_pu = 0.398, c_nf_per_km = 9.08, tanδ = 0.0)
   # (bus3, bus4, length_km=100)
-  addACLine!(net = net, fromBus = "B3", toBus = "B4", length = 300.0, r = 0.0653, x = 0.398, b = 0.0008557698388378598)
+  add_test_line_pu_c!(net = net, fromBus = "B3", toBus = "B4", length_km = 300.0, r_pu = 0.0653, x_pu = 0.398, c_nf_per_km = 9.08, tanδ = 0.0)
   # (bus4, bus5, length_km=300)
-  addACLine!(net = net, fromBus = "B4", toBus = "B5", length = 300.0, r = 0.0653, x = 0.398, b = 0.0008557698388378598)
+  add_test_line_pu_c!(net = net, fromBus = "B4", toBus = "B5", length_km = 300.0, r_pu = 0.0653, x_pu = 0.398, c_nf_per_km = 9.08, tanδ = 0.0)
   # (bus4, bus6a, length_km=300)
-  addACLine!(net = net, fromBus = "B4", toBus = "B6a", length = 300.0, r = 0.0653, x = 0.398, b = 0.0008557698388378598)
+  add_test_line_pu_c!(net = net, fromBus = "B4", toBus = "B6a", length_km = 300.0, r_pu = 0.0653, x_pu = 0.398, c_nf_per_km = 9.08, tanδ = 0.0)
   #(bus6a, bus6b, length_km=length_km_6a_6b)
-  addACLine!(net = net, fromBus = "B6a", toBus = "B6b", length = lLine_6a6b, r = 0.0653, x = 0.398, b = 2.0 * pi * 50.0 * (lLine_6a6b > 1.0 ? 9.08 * lLine_6a6b : 9.08) * 1e-9)
+  # before 0.50.0 a length up to 1 km multiplied r and x, a longer one took
+  # them as totals; the same rule applies here
+  scale_6a6b = lLine_6a6b <= 1.0 ? lLine_6a6b : 1.0
+  add_test_line_pu_c!(net = net, fromBus = "B6a", toBus = "B6b", length_km = lLine_6a6b, r_pu = 0.0653 * scale_6a6b, x_pu = 0.398 * scale_6a6b, c_nf_per_km = 9.08, tanδ = 0.0)
 
   # 380kV-Lines
   # (bus7, bus8, length_km=600)
-  addACLine!(net = net, fromBus = "B7", toBus = "B8", length = 600.0, r = 0.0328, x = 0.312, b = 0.002167698930976958)
+  add_test_line_pu_c!(net = net, fromBus = "B7", toBus = "B8", length_km = 600.0, r_pu = 0.0328, x_pu = 0.312, c_nf_per_km = 11.5, tanδ = 0.0)
 
   #### Trafos  
   # 'Trafo 1-7' (bus7, bus1, sn_mva=1000,  vn_hv_kv=380, vn_lv_kv=220, vkr_percent=0.0, vk_percent=13.0, pfe_kw=0, i0_percent=0,   shift_degree=0.0)
@@ -1479,6 +1482,8 @@ function createTest5BusNet(; cooldown = 0, hyst_pu = 0.0, qlim_min = nothing, ql
   netName = "test5bus"
   r = 0.05
   x = 0.5
+  c_nf_per_km = 10.0
+  tanδ = 0.0
 
   @debug "Creating $netName test network with qlim_min=$qlim_min, qlim_max=$qlim_max, pq_only=$pq_only"
 
@@ -1489,12 +1494,12 @@ function createTest5BusNet(; cooldown = 0, hyst_pu = 0.0, qlim_min = nothing, ql
   addBus!(net = Bus5Net, busName = "B4", vn_kV = 110.0)
   addBus!(net = Bus5Net, busName = "B5", vn_kV = 110.0)
 
-  addACLine!(net = Bus5Net, fromBus = "B1", toBus = "B3", length = 20.0, r = r, x = x, b = 6.283185307179587e-05)
-  addACLine!(net = Bus5Net, fromBus = "B3", toBus = "B5", length = 50.0, r = r, x = x, b = 0.00015707963267948968)
-  addACLine!(net = Bus5Net, fromBus = "B5", toBus = "B4", length = 100.0, r = r, x = x, b = 0.00031415926535897936)
-  addACLine!(net = Bus5Net, fromBus = "B4", toBus = "B1", length = 100.0, r = r, x = x, b = 0.00031415926535897936)
-  addACLine!(net = Bus5Net, fromBus = "B4", toBus = "B2", length = 100.0, r = r, x = x, b = 0.00031415926535897936)
-  addACLine!(net = Bus5Net, fromBus = "B2", toBus = "B1", length = 20.0, r = r, x = x, b = 6.283185307179587e-05)
+  add_test_line_pu_c!(net = Bus5Net, fromBus = "B1", toBus = "B3", length_km = 20.0, r_pu = r, x_pu = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
+  add_test_line_pu_c!(net = Bus5Net, fromBus = "B3", toBus = "B5", length_km = 50.0, r_pu = r, x_pu = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
+  add_test_line_pu_c!(net = Bus5Net, fromBus = "B5", toBus = "B4", length_km = 100.0, r_pu = r, x_pu = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
+  add_test_line_pu_c!(net = Bus5Net, fromBus = "B4", toBus = "B1", length_km = 100.0, r_pu = r, x_pu = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
+  add_test_line_pu_c!(net = Bus5Net, fromBus = "B4", toBus = "B2", length_km = 100.0, r_pu = r, x_pu = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
+  add_test_line_pu_c!(net = Bus5Net, fromBus = "B2", toBus = "B1", length_km = 20.0, r_pu = r, x_pu = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
 
   addProsumer!(net = Bus5Net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
   if mul_gens
@@ -1530,6 +1535,8 @@ function createTest2BusNet(; cooldown = 0, hyst_pu = 0.0, qlim_min = nothing, ql
   netName = "test2bus"
   r = 0.05
   x = 0.5
+  c_nf_per_km = 10.0
+  tanδ = 0.0
 
   @debug "Creating $netName test network with qlim_min=$qlim_min, qlim_max=$qlim_max"
 
@@ -1537,7 +1544,7 @@ function createTest2BusNet(; cooldown = 0, hyst_pu = 0.0, qlim_min = nothing, ql
   addBus!(net = Bus2Net, busName = "B1", vn_kV = 110.0)
   addBus!(net = Bus2Net, busName = "B2", vn_kV = 110.0)
 
-  addACLine!(net = Bus2Net, fromBus = "B1", toBus = "B2", length = 20.0, r = r, x = x, b = 6.283185307179587e-05)
+  add_test_line_pu_c!(net = Bus2Net, fromBus = "B1", toBus = "B2", length_km = 20.0, r_pu = r, x_pu = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
 
   addProsumer!(net = Bus2Net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
   addProsumer!(net = Bus2Net, busName = "B2", type = "SYNCHRONOUSMACHINE", p = 20.0, vm_pu = 1.05, va_deg = 0.0, qMax = qlim_max, qMin = qlim_min)
@@ -1622,61 +1629,12 @@ function test_5BusNet(verbose::Int = 0, qlim::Float64 = 20.0, method::Symbol = :
   return hit == true
 end
 
-# A slack or PV bus that carries a load: the node keeps the GENERATION of the
-# bus, not the injection the solve gives (generation minus load). Up to
-# 0.50.0 every write-back (rectangular, external/APSLF, DC) stored the
-# injection, so the slack showed -40 MW instead of 20 MW and the PV machine
-# 0.8 MVAr instead of 4.8 MVAr. A lossless line between two 1 pu buses gives
-# hand values: 40 MW from B to A means sin(d) = 0.4 * 0.1, and each end draws
-# (1 - cos(d)) / x of reactive power. The units of the slack bus take the bus
-# value apart: the scheduled 5 MW unit keeps its 5 MW, the reference unit
-# without a schedule takes the 15 MW rest (it got 0 and the 5 MW unit all
-# 20 MW before).
-function test_slack_and_pv_bus_generation_with_load()::Bool
-  build() = begin
-    net = Net(name = "gen_with_load", baseMVA = 100.0)
-    addBus!(net = net, busName = "A", vn_kV = 110.0)
-    addBus!(net = net, busName = "B", vn_kV = 110.0)
-    addPIModelACLine!(net = net, fromBus = "A", toBus = "B", r_pu = 0.0, x_pu = 0.1, b_pu = 0.0, status = 1)
-    addProsumer!(net = net, busName = "A", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "A")
-    addProsumer!(net = net, busName = "A", type = "GENERATOR", p = 5.0, q = 1.0)
-    addProsumer!(net = net, busName = "A", type = "ENERGYCONSUMER", p = 60.0, q = 5.0)
-    addProsumer!(net = net, busName = "B", type = "SYNCHRONOUSMACHINE", p = 50.0, vm_pu = 1.0)
-    addProsumer!(net = net, busName = "B", type = "ENERGYCONSUMER", p = 10.0, q = 4.0)
-    net
-  end
-  q_line = (1.0 - sqrt(1.0 - 0.04^2)) / 0.1 * 100.0
-  net = build()
-  ok = last(runpf!(net, 30, 1e-12, 0; method = :rectangular)) == 0
-  a, b = net.nodeVec[1], net.nodeVec[2]
-  ok &= isapprox(a._pƩGen, 20.0; atol = 1e-8) && isapprox(a._qƩGen, 5.0 + q_line; atol = 1e-8)
-  ok &= isapprox(b._qƩGen, 4.0 + q_line; atol = 1e-8)
-  rows = buildACPFlowReport(net).nodes
-  ra = only(r for r in rows if r.bus == 1)
-  rb = only(r for r in rows if r.bus == 2)
-  ok &= isapprox(ra.p_gen_MW, 20.0; atol = 1e-8) && isapprox(rb.q_gen_MVar, 4.0 + q_line; atol = 1e-8)
-  distributeBusResults!(net)
-  ok &= isapprox(net.prosumpsVec[1].pRes, 15.0; atol = 1e-8) && isapprox(net.prosumpsVec[2].pRes, 5.0; atol = 1e-12)
-  ok &= isapprox(net.prosumpsVec[4].pRes, 50.0; atol = 1e-12)
-  # the external-solver write-back on the same solved voltages
-  model = buildPfModel(net; include_limits = false)
-  V = ComplexF64[n._vm_pu * cis(deg2rad(n._va_deg)) for n in net.nodeVec]
-  a._pƩGen = b._qƩGen = 0.0
-  applyPfSolution!(net, model, PFSolution(V = V, converged = true, iters = 0, residual_inf = 0.0))
-  ok &= isapprox(a._pƩGen, 20.0; atol = 1e-8) && isapprox(b._qƩGen, 4.0 + q_line; atol = 1e-8)
-  # DC: lossless, the same 20 MW
-  dnet = build()
-  rundcpf!(dnet)
-  ok &= isapprox(dnet.nodeVec[1]._pƩGen, 20.0; atol = 1e-8)
-  return ok
-end
-
 # -----------------------------------------------------------------------------
 # Test intent: MATPOWER inline case vs manually assembled Net (with bus shunts)
 #
 # Why this exists:
 # - We want to verify that `createNetFromMatPowerCase` builds the same electrical
-#   model as the explicit Sparlectra API calls (`addBus!`, `addACLine!`,
+#   model as the explicit Sparlectra API calls (`addBus!`, `addPIModelACLine!`,
 #   `addProsumer!`, `addShunt!`).
 # - This specifically guards the bus-shunt mapping from MATPOWER bus columns
 #   `Gs/Bs` into Sparlectra's internal shunt representation.
@@ -1759,9 +1717,9 @@ function test_mp_inline_vs_manual_shunt(verbose::Int = 0; method::Symbol = :rect
   addBus!(net = net_man, busName = "B2", vn_kV = 110.0, vm_pu = 1.03, va_deg = 0.0)
   addBus!(net = net_man, busName = "B3", vn_kV = 110.0, vm_pu = 1.00, va_deg = 0.0)
   # Lines without line charging, so only bus shunts differ/drive this check.
-  addACLine!(net = net_man, fromBus = "B1", toBus = "B2", length = 1.0, r = 0.02, x = 0.06)
-  addACLine!(net = net_man, fromBus = "B1", toBus = "B3", length = 1.0, r = 0.08, x = 0.24)
-  addACLine!(net = net_man, fromBus = "B2", toBus = "B3", length = 1.0, r = 0.06, x = 0.18)
+  addPIModelACLine!(net = net_man, fromBus = "B1", toBus = "B2", r_pu = 0.02, x_pu = 0.06, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net_man, fromBus = "B1", toBus = "B3", r_pu = 0.08, x_pu = 0.24, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net_man, fromBus = "B2", toBus = "B3", r_pu = 0.06, x_pu = 0.18, b_pu = 0.0, status = 1)
 
   # Loads from MATPOWER Pd/Qd mapped to ENERGYCONSUMER.
   addProsumer!(net = net_man, busName = "B3", type = "ENERGYCONSUMER", p = 90.0, q = 30.0)
@@ -2213,8 +2171,8 @@ function test_link_bus_merge_pf()
   addBus!(net = net_link, busName = "B2", vn_kV = 110.0)
   addBus!(net = net_link, busName = "B3", vn_kV = 110.0)
 
-  addACLine!(net = net_link, fromBus = "B0", toBus = "B1", length = 5.0, r = 0.05, x = 0.5, b = 1.5707963267948967e-05)
-  addACLine!(net = net_link, fromBus = "B2", toBus = "B3", length = 20.0, r = 0.05, x = 0.5, b = 6.283185307179587e-05)
+  add_test_line_pu_c!(net = net_link, fromBus = "B0", toBus = "B1", length_km = 5.0, r_pu = 0.05, x_pu = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
+  add_test_line_pu_c!(net = net_link, fromBus = "B2", toBus = "B3", length_km = 20.0, r_pu = 0.05, x_pu = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
   addLink!(net = net_link, fromBus = "B1", toBus = "B2", status = 1)
 
   addProsumer!(net = net_link, busName = "B0", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B0")
@@ -2246,8 +2204,8 @@ function test_link_bus_merge_pf()
   addBus!(net = net_eq, busName = "B12", vn_kV = 110.0)
   addBus!(net = net_eq, busName = "B3", vn_kV = 110.0)
 
-  addACLine!(net = net_eq, fromBus = "B0", toBus = "B12", length = 5.0, r = 0.05, x = 0.5, b = 1.5707963267948967e-05)
-  addACLine!(net = net_eq, fromBus = "B12", toBus = "B3", length = 20.0, r = 0.05, x = 0.5, b = 6.283185307179587e-05)
+  add_test_line_pu_c!(net = net_eq, fromBus = "B0", toBus = "B12", length_km = 5.0, r_pu = 0.05, x_pu = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
+  add_test_line_pu_c!(net = net_eq, fromBus = "B12", toBus = "B3", length_km = 20.0, r_pu = 0.05, x_pu = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
   addProsumer!(net = net_eq, busName = "B0", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B0")
   addProsumer!(net = net_eq, busName = "B12", type = "GENERATOR", p = 10.0, q = 1.0)
   addProsumer!(net = net_eq, busName = "B12", type = "ENERGYCONSUMER", p = 15.0, q = 5.0)
@@ -2284,8 +2242,8 @@ function _build_non_representative_slack_net(name::String)
   addBus!(net = net, busName = "B2", vn_kV = 110.0)
   addBus!(net = net, busName = "B3", vn_kV = 110.0)
 
-  addACLine!(net = net, fromBus = "B0", toBus = "B1", length = 5.0, r = 0.05, x = 0.5, b = 1.5707963267948967e-05)
-  addACLine!(net = net, fromBus = "B2", toBus = "B3", length = 20.0, r = 0.05, x = 0.5, b = 6.283185307179587e-05)
+  add_test_line_pu_c!(net = net, fromBus = "B0", toBus = "B1", length_km = 5.0, r_pu = 0.05, x_pu = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
+  add_test_line_pu_c!(net = net, fromBus = "B2", toBus = "B3", length_km = 20.0, r_pu = 0.05, x_pu = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
   addLink!(net = net, fromBus = "B1", toBus = "B2", status = 1)
 
   addProsumer!(net = net, busName = "B2", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B2")
@@ -2301,8 +2259,8 @@ function _build_non_representative_slack_reference()
   addBus!(net = net, busName = "B12", vn_kV = 110.0)
   addBus!(net = net, busName = "B3", vn_kV = 110.0)
 
-  addACLine!(net = net, fromBus = "B0", toBus = "B12", length = 5.0, r = 0.05, x = 0.5, b = 1.5707963267948967e-05)
-  addACLine!(net = net, fromBus = "B12", toBus = "B3", length = 20.0, r = 0.05, x = 0.5, b = 6.283185307179587e-05)
+  add_test_line_pu_c!(net = net, fromBus = "B0", toBus = "B12", length_km = 5.0, r_pu = 0.05, x_pu = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
+  add_test_line_pu_c!(net = net, fromBus = "B12", toBus = "B3", length_km = 20.0, r_pu = 0.05, x_pu = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
 
   addProsumer!(net = net, busName = "B12", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B12")
   addProsumer!(net = net, busName = "B0", type = "ENERGYCONSUMER", p = 15.0, q = 5.0)
@@ -2492,7 +2450,7 @@ function test_island_solve_with_link_merge()::Bool
   net = _build_non_representative_slack_net("island_link_merge")
   addBus!(net = net, busName = "C0", vn_kV = 110.0)
   addBus!(net = net, busName = "C1", vn_kV = 110.0)
-  addACLine!(net = net, fromBus = "C0", toBus = "C1", length = 10.0, r = 0.05, x = 0.5, b = 3.1415926535897935e-05)
+  add_test_line_pu_c!(net = net, fromBus = "C0", toBus = "C1", length_km = 10.0, r_pu = 0.05, x_pu = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
   addProsumer!(net = net, busName = "C0", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "C0")
   addProsumer!(net = net, busName = "C1", type = "ENERGYCONSUMER", p = 8.0, q = 2.0)
 
@@ -2554,8 +2512,8 @@ function test_rectangular_link_merge_runs_without_warning()::Bool
   addBus!(net = net, busName = "B2", vn_kV = 110.0)
   addBus!(net = net, busName = "B3", vn_kV = 110.0)
 
-  addACLine!(net = net, fromBus = "B0", toBus = "B1", length = 5.0, r = 0.05, x = 0.5, b = 1.5707963267948967e-05)
-  addACLine!(net = net, fromBus = "B2", toBus = "B3", length = 20.0, r = 0.05, x = 0.5, b = 6.283185307179587e-05)
+  add_test_line_pu_c!(net = net, fromBus = "B0", toBus = "B1", length_km = 5.0, r_pu = 0.05, x_pu = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
+  add_test_line_pu_c!(net = net, fromBus = "B2", toBus = "B3", length_km = 20.0, r_pu = 0.05, x_pu = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
   addLink!(net = net, fromBus = "B1", toBus = "B2", status = 1)
   addProsumer!(net = net, busName = "B0", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B0")
   addProsumer!(net = net, busName = "B1", type = "GENERATOR", p = 10.0, q = 1.0)
@@ -2579,8 +2537,8 @@ function test_link_closed_keeps_shunt_reporting_on_original_bus()
   addBus!(net = net, busName = "B2", vn_kV = 110.0)
   addBus!(net = net, busName = "B3", vn_kV = 110.0)
 
-  addACLine!(net = net, fromBus = "B0", toBus = "B1", length = 5.0, r = 0.05, x = 0.5, b = 1.5707963267948967e-05)
-  addACLine!(net = net, fromBus = "B2", toBus = "B3", length = 20.0, r = 0.05, x = 0.5, b = 6.283185307179587e-05)
+  add_test_line_pu_c!(net = net, fromBus = "B0", toBus = "B1", length_km = 5.0, r_pu = 0.05, x_pu = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
+  add_test_line_pu_c!(net = net, fromBus = "B2", toBus = "B3", length_km = 20.0, r_pu = 0.05, x_pu = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
   addLink!(net = net, fromBus = "B1", toBus = "B2", status = 1)
   addShunt!(net = net, busName = "B2", pShunt = 0.0, qShunt = 5.0)
 
@@ -2690,8 +2648,8 @@ function test_link_ring_pf_stability()
   addBus!(net = net, busName = "B3", vn_kV = 110.0)
 
   # Two physical AC branches feed the ring from the slack side.
-  addACLine!(net = net, fromBus = "B0", toBus = "B1", length = 10.0, r = 0.05, x = 0.4, b = 3.1415926535897935e-05)
-  addACLine!(net = net, fromBus = "B0", toBus = "B2", length = 12.0, r = 0.05, x = 0.4, b = 3.7699111843077517e-05)
+  add_test_line_pu_c!(net = net, fromBus = "B0", toBus = "B1", length_km = 10.0, r_pu = 0.05, x_pu = 0.4, c_nf_per_km = 10.0, tanδ = 0.0)
+  add_test_line_pu_c!(net = net, fromBus = "B0", toBus = "B2", length_km = 12.0, r_pu = 0.05, x_pu = 0.4, c_nf_per_km = 10.0, tanδ = 0.0)
 
   # Three links form a closed loop (meshed/singular incidence structure).
   addLink!(net = net, fromBus = "B1", toBus = "B2", status = 1)
@@ -2876,7 +2834,7 @@ function test_report_uses_user_bus_names_and_pf_node_count()
   addBus!(net = net, busName = "Bus1", vn_kV = 110.0)
   addBus!(net = net, busName = "Bus1a", vn_kV = 110.0)
 
-  addACLine!(net = net, fromBus = "Slack", toBus = "Bus1", length = 5.0, r = 0.05, x = 0.5, b = 1.5707963267948967e-05)
+  add_test_line_pu_c!(net = net, fromBus = "Slack", toBus = "Bus1", length_km = 5.0, r_pu = 0.05, x_pu = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
   addLink!(net = net, fromBus = "Bus1", toBus = "Bus1a", status = 1)
 
   addProsumer!(net = net, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "Slack")
@@ -3662,7 +3620,7 @@ function test_summary_result_output_closes_file_handle()::Bool
   net = Net(name = "pv2pq_label_smoke", baseMVA = 100.0)
   addBus!(net = net, busName = "Slack", vn_kV = 110.0)
   addBus!(net = net, busName = "Load", vn_kV = 110.0)
-  addACLine!(net = net, fromBus = "Slack", toBus = "Load", r = 0.01, x = 0.05, length = 1.0)
+  addPIModelACLine!(net = net, fromBus = "Slack", toBus = "Load", r_pu = 0.01, x_pu = 0.05, b_pu = 0.0, status = 1)
   addProsumer!(net = net, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "Slack")
   addProsumer!(net = net, busName = "Load", type = "ENERGYCONSUMER", p = 1.0, q = 0.3)
   net.qLimitEvents[2] = :max
@@ -3721,7 +3679,7 @@ function test_condition_number_estimator()::Bool
   net = Net(name = "cond_check", baseMVA = 100.0)
   addBus!(net = net, busName = "Slack", vn_kV = 110.0)
   addBus!(net = net, busName = "Load", vn_kV = 110.0)
-  addACLine!(net = net, fromBus = "Slack", toBus = "Load", r = 0.01, x = 0.05, length = 1.0)
+  addPIModelACLine!(net = net, fromBus = "Slack", toBus = "Load", r_pu = 0.01, x_pu = 0.05, b_pu = 0.0, status = 1)
   addProsumer!(net = net, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "Slack")
   addProsumer!(net = net, busName = "Load", type = "ENERGYCONSUMER", p = 10.0, q = 3.0)
   ite, erg = runpf!(net, 20, 1e-8, 0; method = :rectangular)
@@ -3769,7 +3727,7 @@ function test_condition_number_estimator()::Bool
   net_unsolved = Net(name = "cond_no_thunk", baseMVA = 100.0)
   addBus!(net = net_unsolved, busName = "Slack", vn_kV = 110.0)
   addBus!(net = net_unsolved, busName = "Load", vn_kV = 110.0)
-  addACLine!(net = net_unsolved, fromBus = "Slack", toBus = "Load", r = 0.01, x = 0.05, length = 1.0)
+  addPIModelACLine!(net = net_unsolved, fromBus = "Slack", toBus = "Load", r_pu = 0.01, x_pu = 0.05, b_pu = 0.0, status = 1)
   addProsumer!(net = net_unsolved, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "Slack")
   addProsumer!(net = net_unsolved, busName = "Load", type = "ENERGYCONSUMER", p = 10.0, q = 3.0)
   Sparlectra._jacobian_condest(net_unsolved; warn_on_failure = false, require_thunk = true) === nothing || return false
@@ -3783,7 +3741,7 @@ function test_condition_number_estimator()::Bool
   addBus!(net = net_iso, busName = "Slack", vn_kV = 110.0)
   addBus!(net = net_iso, busName = "Load", vn_kV = 110.0)
   addBus!(net = net_iso, busName = "Dead", vn_kV = 110.0)
-  addACLine!(net = net_iso, fromBus = "Slack", toBus = "Load", r = 0.01, x = 0.05, length = 1.0)
+  addPIModelACLine!(net = net_iso, fromBus = "Slack", toBus = "Load", r_pu = 0.01, x_pu = 0.05, b_pu = 0.0, status = 1)
   addProsumer!(net = net_iso, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "Slack")
   addProsumer!(net = net_iso, busName = "Load", type = "ENERGYCONSUMER", p = 10.0, q = 3.0)
   markIsolatedBuses!(net = net_iso, log = false)
@@ -3814,9 +3772,9 @@ function test_remove_functions_compact()
   addBus!(net = net, busName = "B3", vn_kV = 110.0)
   addBus!(net = net, busName = "B5", vn_kV = 110.0)
   addBus!(net = net, busName = "B6", vn_kV = 20.0)
-  addACLine!(net = net, fromBus = "B1", toBus = "B2", length = 10.0, r = 0.01, x = 0.1, b = 3.1415926535897935e-05, ratedS = 100.0)
-  addACLine!(net = net, fromBus = "B2", toBus = "B3", length = 15.0, r = 0.01, x = 0.1, b = 4.71238898038469e-05, ratedS = 100.0)
-  addACLine!(net = net, fromBus = "B2", toBus = "B5", length = 15.0, r = 0.01, x = 0.1, b = 4.71238898038469e-05, ratedS = 100.0)
+  add_test_line_pu_c!(net = net, fromBus = "B1", toBus = "B2", length_km = 10.0, r_pu = 0.01, x_pu = 0.1, c_nf_per_km = 10.0, tanδ = 0.0, ratedS = 100.0)
+  add_test_line_pu_c!(net = net, fromBus = "B2", toBus = "B3", length_km = 15.0, r_pu = 0.01, x_pu = 0.1, c_nf_per_km = 10.0, tanδ = 0.0, ratedS = 100.0)
+  add_test_line_pu_c!(net = net, fromBus = "B2", toBus = "B5", length_km = 15.0, r_pu = 0.01, x_pu = 0.1, c_nf_per_km = 10.0, tanδ = 0.0, ratedS = 100.0)
   add2WTrafo!(net = net, fromBus = "B1", toBus = "B6", sn_mva = 100.0, vk_percent = 10.0, vkr_percent = 0.5, pfe_kw = 20.0, i0_percent = 0.1)
   addShunt!(net = net, busName = "B2", pShunt = 0.0, qShunt = 10.0)
   addProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER", p = 50.0, q = 20.0)
@@ -3845,308 +3803,113 @@ function test_remove_functions_compact()
   return true
 end
 
-# #375: the PQ->PV release decides on the voltage side. The shipped
-# Zeng/Chiang 14-bus case (loads +25 percent, tight Q bands) ended on a
-# non-physical solution under active_set: three machines at Qmax with the
-# voltage above the setpoint, zero releases, the Q-V check reporting all
-# three. With the voltage rule the run reaches the physical solution the
-# one-at-a-time mode finds (bus 3 clamped at Qmax at 1.0064 pu, bus 1 at
-# Qmin, bus 2 back on PV) and the Q-V check is clean. The feeder
-# with a machine clamped at Qmax and its voltage BELOW the setpoint must
-# stay clamped.
-function test_active_set_voltage_side_release()::Bool
-  @testset "Active set re-enable on the voltage side (#375)" begin (function ()
-    scf_dir = joinpath(dirname(@__DIR__), "data", "scf")
-    zeng = joinpath(scf_dir, "case14_zeng_p306_activeSet_A.scf.json")
-    cfg = Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, zeng).config
-    @test cfg.powerflow.qlimits.enforcement_mode === :active_set
-    r = run_sparlectra(casefile = zeng, config = cfg)
-    @test r.final_converged
-    st = Sparlectra.rectangular_pf_status(r.net)
-    @test st.qlimit_reenable_events >= 1
-    # bus 2 (Qmax, voltage above its setpoint) is released; bus 3 stays at
-    # Qmax with the voltage below the setpoint, bus 1 at Qmin
-    @test !haskey(r.net.qLimitEvents, 2)
-    @test get(r.net.qLimitEvents, 3, nothing) === :max && get(r.net.qLimitEvents, 1, nothing) === :min
-    @test isapprox(r.net.nodeVec[3]._vm_pu, 1.0064; atol = 1e-3)
-    @test isempty(Sparlectra.qvCharacteristicViolations(r.net))
-    # clamped at Qmax with the voltage below the setpoint: no release
-    feeder = joinpath(scf_dir, "feeder3_hardpv_A.scf.json")
-    fcfg = Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, feeder).config
-    rf = run_sparlectra(casefile = feeder, config = fcfg)
-    @test rf.final_converged
-    b2 = rf.net.busDict["B2"]
-    @test get(rf.net.qLimitEvents, b2, nothing) === :max
-    @test Sparlectra.rectangular_pf_status(rf.net).qlimit_reenable_events == 0
-    # the margin is a configuration key that reaches the net
-    @test rf.net.reenable_v_hyst_pu == fcfg.powerflow.qlimits.reenable_v_hyst_pu
-
-    # The margin is GUI-editable since 0.20.2 and therefore a case-scope key:
-    # the Zeng case carries a case configuration file, so a general file's
-    # value no longer reaches it (the case is self-contained); another
-    # margin comes as an explicit override, like any other form option.
-    cfg_a = Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, zeng, Dict{String,Any}("power_flow.qlimits.reenable_v_hyst_pu" => 1.0)).config
-    @test cfg_a.powerflow.qlimits.reenable_v_hyst_pu == 1.0
-    ra = run_sparlectra(casefile = zeng, config = cfg_a)
-    @test ra.final_converged
-    @test Sparlectra.rectangular_pf_status(ra.net).qlimit_reenable_events == 0
-    @test any(row -> row.significant, Sparlectra.qvCharacteristicViolations(ra.net))
-    # run B (r above) lands on the voltages of the classic one-at-a-time mode
-    cfg_c = Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, zeng, Dict{String,Any}("power_flow.qlimits.enforcement_mode" => "classic_one_at_a_time")).config
-    rc = run_sparlectra(casefile = zeng, config = cfg_c)
-    @test rc.final_converged
-    @test isempty(Sparlectra.qvCharacteristicViolations(rc.net))
-    @test isapprox(rc.net.nodeVec[3]._vm_pu, 1.0064; atol = 1e-3)
-    # The final Q-limit check judges both modes alike: the classic run keeps
-    # bus 6 on PV 0.68 MVAr over Qmax, inside the 1 MVAr hysteresis, and the
-    # check says so instead of failing the run; the active-set run is
-    # accepted with an ok or within_hysteresis verdict (up to 0.17.2 a
-    # released machine inside the band failed it).
-    st_c = Sparlectra.rectangular_pf_status(rc.net)
-    @test st_c.final_q_check_status === :within_hysteresis
-    row6 = only(filter(row -> row.busI == 6, st_c.final_q_check_rows))
-    @test row6.side === :high && row6.class === :within_hysteresis
-    @test isapprox(row6.dev_pu, 0.0068; atol = 5e-4)
-    @test st.final_q_check_status in (:ok, :within_hysteresis)
-    @test st.final_q_check_status !== :remaining_pv_q_limit_violations
-    # with Q-limit handling off a converged run has nothing to check: the
-    # status says so instead of claiming there was no converged solution
-    cfg_d = Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, zeng, Dict{String,Any}("power_flow.qlimits.enabled" => false)).config
-    rd = run_sparlectra(casefile = zeng, config = cfg_d)
-    @test rd.final_converged
-    @test Sparlectra.rectangular_pf_status(rd.net).final_q_check_status === :qlimits_disabled
-    @test Sparlectra.final_q_check_line(:qlimits_disabled, NamedTuple[], 100.0) == "Final Q-limit check: not evaluated (Q-limit handling disabled)."
-    @test Sparlectra.final_q_check_line(:not_evaluated, NamedTuple[], 100.0) == "Final Q-limit check: not evaluated (no converged solution)."
-    # No bound on the voltage difference between the two modes on purpose:
-    # switching variants need not end on the same point (measured:
-    # 1.3e-3 pu apart at bus 6, the machine on its Qmax edge, clamped again by
-    # the active set and kept on PV inside the hysteresis band by the classic
-    # mode). What the test guards is that each mode ends on a PHYSICAL point:
-    # the Q-V check above is clean for both.
-    # regression on the shipped case118: the rule changes neither the clamped
-    # set nor the iteration count, and nothing oscillates
-    c118 = joinpath(dirname(@__DIR__), "data", "mpower", "sp_case118.m")
-    for margin in (1.0, 1e-4)
-      cfg118 = Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, c118, Dict{String,Any}("power_flow.qlimits.reenable_v_hyst_pu" => margin)).config
-      r118 = run_sparlectra(casefile = c118, config = cfg118)
-      @test r118.final_converged
-      @test sort!(collect(keys(r118.net.qLimitEvents))) == [4, 19, 31, 32, 54, 72, 73, 77, 85, 87]
-      @test r118.iterations <= 10
-      @test Sparlectra.rectangular_pf_status(r118.net).oscillating_buses == 0
-      @test Sparlectra.rectangular_pf_status(r118.net).final_q_check_status === :ok
-    end
-    # the feeder machine sits ON its clamp, so the final check has nothing to say
-    @test Sparlectra.rectangular_pf_status(rf.net).final_q_check_status === :ok
-  end)() end
-  return true
-end
-
-# The final Q-limit check every enforcement mode ends with (task
-# final-q-check): judged by the SIZE of the overshoot with two
-# thresholds, the switching hysteresis and final_q_accept_pu. Synthetic
-# injections on the 3-bus net, so every class is hit exactly, plus the
-# configuration default and validation and the warning of the bounded class.
-function test_final_q_limit_classification()::Bool
-  @testset "Final Q-limit check: two thresholds" begin (function ()
-    net = createTest3BusNet(cooldown = 1, hyst_pu = 0.01, qlim_min = -15.0, qlim_max = 15.0)
-    pv = geNetBusIdx(net = net, busName = "STATION1")
-    nb = length(net.nodeVec)
-    bus_types = [Sparlectra.getNodeType(node) == Sparlectra.Slack ? :Slack : Sparlectra.getNodeType(node) == Sparlectra.PV ? :PV : :PQ for node in net.nodeVec]
-    @test bus_types[pv] == :PV
-    qmin_pu = fill(-Inf, nb)
-    qmax_pu = fill(Inf, nb)
-    qmin_pu[pv] = -0.15
-    qmax_pu[pv] = 0.15
-    qload = Sparlectra.build_qload_pu(net)
-    # the injection that puts the machine at Qmax + dev (or Qmin - dev)
-    injections(dev; side = :high) = [ComplexF64(0.0, i == pv ? ((side === :high ? qmax_pu[pv] + dev : qmin_pu[pv] - dev) - qload[pv]) : 0.0) for i in 1:nb]
-    classify(dev; hyst = 0.01, accept = 0.02, side = :high) = classify_final_q_limits(net, injections(dev; side), bus_types, qmin_pu, qmax_pu; q_hyst_pu = hyst, final_q_accept_pu = accept, tol = 1e-8)
-    # at the limit within the tolerance: no row, ok
-    @test classify(0.0).status === :ok
-    @test isempty(classify(0.0).rows)
-    # inside the hysteresis: a row, accepted, class within_hysteresis
-    within = classify(0.005)
-    @test within.status === :within_hysteresis
-    @test length(within.rows) == 1 && within.rows[1].class === :within_hysteresis && within.rows[1].side === :high
-    @test isapprox(within.rows[1].dev_pu, 0.005; atol = 1e-12)
-    @test within.max_dev_pu == within.rows[1].dev_pu
-    @test occursin("bus $(within.rows[1].busI) over Qmax by 0.0050 pu / 0.50 MVAr (within_hysteresis)", final_q_check_line(within.status, within.rows, net.baseMVA))
-    # beyond the hysteresis, inside the bound: bounded
-    bounded = classify(0.015)
-    @test bounded.status === :bounded_q_limit_violation
-    @test bounded.bounded == 1 && bounded.violations == 0
-    @test bounded.buses == string(bounded.rows[1].busI, ":bounded")
-    # beyond the bound: a remaining violation, the run is not accepted
-    @test classify(0.03).status === :remaining_pv_q_limit_violations
-    @test classify(0.03).violations == 1
-    # the mirror image under Qmin
-    low = classify(0.015; side = :low)
-    @test low.rows[1].side === :low && low.rows[1].class === :bounded
-    # regression: both thresholds at zero is the strict check of 0.17.2
-    @test classify(0.005; hyst = 0.0, accept = 0.0).status === :remaining_pv_q_limit_violations
-    # a PQ bus is not judged, whatever its injection
-    bus_types_pq = copy(bus_types)
-    bus_types_pq[pv] = :PQ
-    @test classify_final_q_limits(net, injections(0.03), bus_types_pq, qmin_pu, qmax_pu; q_hyst_pu = 0.01, final_q_accept_pu = 0.02, tol = 1e-8).status === :ok
-
-    # the acceptance decision: within and bounded are accepted, bounded with
-    # a warning naming bus and overshoot, a violation rejects the run
-    finalize(dev) = Sparlectra._finalize_rectangular_qlimit_summary(net, ones(ComplexF64, nb), injections(dev), bus_types, qmin_pu, qmax_pu, true, :none;
-      verbose = 0, qlimit_trace_enabled = false, q_hyst_pu = 0.01, final_q_accept_pu = 0.02, tol = 1e-8, pv_table_rows = 30,
-      qlimit_guard_accept_bounded_violations = false, qlimit_guard_max_remaining_violations = 0)
-    @test finalize(0.005).converged
-    @test finalize(0.005).final_q_check.status === :within_hysteresis
-    accepted = @test_logs (:warn, r"bounded violation accepted") finalize(0.015)
-    @test accepted.converged
-    @test accepted.rejection_reason === :bounded_q_limit_violation
-    rejected = finalize(0.03)
-    @test !rejected.converged
-    @test rejected.rejection_reason === :remaining_pv_q_limit_violations
-
-    # the key: default twice the hysteresis, never below it, stamped on the net
-    cfg = Sparlectra.QLimitConfig(Dict{String,Any}("hysteresis_pu" => 0.01))
-    @test cfg.final_q_accept_pu == 0.02
-    @test Sparlectra.QLimitConfig(Dict{String,Any}("hysteresis_pu" => 0.0)).final_q_accept_pu == 0.0
-    @test Sparlectra.QLimitConfig(Dict{String,Any}("hysteresis_pu" => 0.01, "final_q_accept_pu" => 0.05)).final_q_accept_pu == 0.05
-    @test_throws ArgumentError Sparlectra.QLimitConfig(Dict{String,Any}("hysteresis_pu" => 0.01, "final_q_accept_pu" => 0.005))
-    # auto (the template value) follows the hysteresis, so a user file that
-    # raises hysteresis_pu alone is not rejected by an inherited literal
-    @test Sparlectra.QLimitConfig(Dict{String,Any}("hysteresis_pu" => 0.03, "final_q_accept_pu" => "auto")).final_q_accept_pu == 0.06
-    @test "power_flow.qlimits.final_q_accept_pu" in Sparlectra.GUI_EDITABLE_CONFIG_KEYS
-    @test Net(name = "n", baseMVA = 100.0, q_hyst_pu = 0.03).final_q_accept_pu == 0.06
-
-    # the same status for every mode at the same operating point: sp_case14
-    # under the three enforcement modes
-    case = joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json")
-    statuses = Symbol[]
-    for mode in ("active_set", "classic_one_at_a_time", "classic_simultaneous")
-      cfg14 = Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, case, Dict{String,Any}("power_flow.qlimits.enforcement_mode" => mode)).config
-      r14 = run_sparlectra(casefile = case, config = cfg14)
-      @test r14.final_converged
-      push!(statuses, Sparlectra.rectangular_pf_status(r14.net).final_q_check_status)
-    end
-    @test length(unique(statuses)) == 1
-    @test statuses[1] in (:ok, :within_hysteresis)
-  end)() end
-  return true
-end
-
 function run_grid_fast_tests()
-  @testset "Grid and power-flow regression tests" begin (function ()
-    @testset "Active set voltage-side release" begin (function ()
-      @test test_active_set_voltage_side_release() == true
-    end)() end
-    @testset "Remove functions" begin (function ()
-      @test test_remove_functions_compact() == true
-    end)() end
-    @testset "Transformer and network validation" begin (function ()
-      @test test_transformer_nameplate_conversion() == true
-      @test test_2WTPITrafo() == true
-      @test test_3WTPITrafo() == true
-      @test test_shunt_update_matches_constructor() == true
-      @test testNetwork() == true
-      @test testISOBusses() == true
-    end)() end
+  @testset "Remove functions" begin (function ()
+    @test test_remove_functions_compact() == true
+  end)() end
+  @testset "Transformer and network validation" begin (function ()
+    @test test_transformer_nameplate_conversion() == true
+    @test test_2WTPITrafo() == true
+    @test test_3WTPITrafo() == true
+    @test test_shunt_update_matches_constructor() == true
+    @test testNetwork() == true
+    @test testISOBusses() == true
+  end)() end
 
-    @testset "MATPOWER import/export" begin (function ()
-      @test testImportMatpower() == true
-      @test test_matpower_import_defaults_no_reenable() == true
-      @test test_matpower_import_uses_bus_type_for_regulation() == true
-      @test test_matpower_flatstart_uses_generator_voltage_setpoints() == true
-      @test test_matpower_reference_override_controls_flatstart() == true
-      @test test_prosumer_aggregation_preserves_bus_types_and_injections() == true
-      @test test_matpower_build_ybus_returns_sparse_expected_values() == true
-      @test test_matpower_vmva_selfcheck_noncontiguous_bus_numbers() == true
-      @test test_matpower_vmva_selfcheck_ignores_slack_pq_spec() == true
-      @test test_matpower_compare_vmva_wraps_angle_differences() == true
-      @test test_matpower_pv_voltage_source_and_compare_modes() == true
-      @test test_matpower_compare_vmva_final_pq_after_qlimit_uses_bus_vm() == true
-      @test test_matpower_multi_generator_vg_and_fallback() == true
-      @test test_voltage_setpoint_lookup_uses_cached_linear_scan() == true
-      @test test_mp_inline_vs_manual_shunt() == true
-      @test test_bus_shunt_model_modes() == true
-      @test test_matpower_read_case_m_postprocessing() == true
-      @test test_matpower_matrix_block_scanner_whitespace() == true
-      @test test_matpower_file_import_honors_explicit_overrides() == true
-      @test test_run_sparlectra_forwards_wrong_branch_config() == true
-      @test test_wrong_branch_voltage_band_every_level() == true
-      @test test_wrong_branch_reference_branch_angle() == true
-      @test test_run_sparlectra_normalizes_projected_matpower_starts() == true
-      @test test_run_sparlectra_resolves_matpower_lock_bus_ids() == true
-    end)() end
+  @testset "MATPOWER import/export" begin (function ()
+    @test testImportMatpower() == true
+    @test test_matpower_import_defaults_no_reenable() == true
+    @test test_matpower_import_uses_bus_type_for_regulation() == true
+    @test test_matpower_flatstart_uses_generator_voltage_setpoints() == true
+    @test test_matpower_reference_override_controls_flatstart() == true
+    @test test_prosumer_aggregation_preserves_bus_types_and_injections() == true
+    @test test_matpower_build_ybus_returns_sparse_expected_values() == true
+    @test test_matpower_vmva_selfcheck_noncontiguous_bus_numbers() == true
+    @test test_matpower_vmva_selfcheck_ignores_slack_pq_spec() == true
+    @test test_matpower_compare_vmva_wraps_angle_differences() == true
+    @test test_matpower_pv_voltage_source_and_compare_modes() == true
+    @test test_matpower_compare_vmva_final_pq_after_qlimit_uses_bus_vm() == true
+    @test test_matpower_multi_generator_vg_and_fallback() == true
+    @test test_voltage_setpoint_lookup_uses_cached_linear_scan() == true
+    @test test_mp_inline_vs_manual_shunt() == true
+    @test test_bus_shunt_model_modes() == true
+    @test test_matpower_read_case_m_postprocessing() == true
+    @test test_matpower_matrix_block_scanner_whitespace() == true
+    @test test_matpower_file_import_honors_explicit_overrides() == true
+    @test test_run_sparlectra_forwards_wrong_branch_config() == true
+    @test test_wrong_branch_voltage_band_every_level() == true
+    @test test_wrong_branch_reference_branch_angle() == true
+    @test test_run_sparlectra_normalizes_projected_matpower_starts() == true
+    @test test_run_sparlectra_resolves_matpower_lock_bus_ids() == true
+  end)() end
 
-    @testset "Power flow scenarios" begin (function ()
-      @test test_5BusNet(0, 10.0) == true
-      @test test_3BusNet(0, 150.0, :rectangular, true) == true
-      @test test_slack_and_pv_bus_generation_with_load() == true
-      @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :rectangular) == true
-      @test test_rectangular_autodamp_backtracks_oversized_step() == true
-      @test test_rectangular_polar_update_rotates_without_inflation() == true
-      @test test_rectangular_polar_update_reaches_the_same_solution() == true
-      @test test_power_mode_same_solution_and_topology_change() == true
-      @test test_jacobian_reuse_same_solution() == true
-      @test test_rectangular_nonfinite_mismatch_diagnostics_use_finite_history() == true
-      @test test_rectangular_final_status_best_mismatch_ignores_nan() == true
-      @test test_rectangular_start_projection_improves_dc_seed() == true
-      @test test_rectangular_start_projection_dc_candidate_matches_rundcpf() == true
-      @test test_rectangular_start_projection_keeps_raw_without_finite_improvement() == true
-      @test test_rectangular_start_projection_ratio_profile() == true
-      @test test_q_limit_adjust_vset_success() == true
-      @test test_q_limit_adjust_vset_no_controller_switches() == true
-      @test test_q_limit_adjust_vset_multiple_controllers_error() == true
-      @test test_q_limit_adjust_vset_invalid_config_error() == true
-      @test test_q_limit_adjust_vset_step_exhaustion_fallback() == true
-      @test test_q_limit_adjust_vset_multigen_single_controller() == true
-      @test test_q_limit_default_behavior_unchanged() == true
-      @test test_q_limit_enforcement_mode_config_values() == true
-      @test test_q_limit_matpower_mode_base_failure_does_not_switch() == true
-      @test test_q_limit_matpower_mode_dispatch_no_reenable() == true
-      @test test_q_limit_reenable_voltage_rule() == true
-      @test test_final_q_limit_classification() == true
-      @test test_q_limit_start_iter_delays_switching() == true
-      @test test_q_limit_auto_accepts_switching() == true
-      @test test_q_limit_hysteresis_delays_small_pv_to_pq_overshoot() == true
-      @test test_q_limit_violation_guard_bypasses_hysteresis_for_strong_overshoot() == true
-      @test test_solve_linear_singular_sparse_qr_fallback() == true
-      @test test_solve_sparse_system_small_and_large_backends() == true
-      @test test_rectangular_jacobian_and_dc_start_matrices_are_sparse() == true
-      @test test_rectangular_singular_step_returns_nonconvergence() == true
-      @test test_condition_number_estimator() == true
-      @test test_bus_type_resolution_from_prosumers() == true
-      @test test_multiple_slack_prosumers_same_bus_supported() == true
-      @test test_regulated_generator_bus_targets_include_unregulated_generators() == true
-      @test test_addprosumer_auto_regulated_flags() == true
-    end)() end
+  @testset "Power flow scenarios" begin (function ()
+    @test test_5BusNet(0, 10.0) == true
+    @test test_3BusNet(0, 150.0, :rectangular, true) == true
+    @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :rectangular) == true
+    @test test_rectangular_autodamp_backtracks_oversized_step() == true
+    @test test_rectangular_polar_update_rotates_without_inflation() == true
+    @test test_rectangular_polar_update_reaches_the_same_solution() == true
+    @test test_power_mode_same_solution_and_topology_change() == true
+    @test test_jacobian_reuse_same_solution() == true
+    @test test_rectangular_nonfinite_mismatch_diagnostics_use_finite_history() == true
+    @test test_rectangular_final_status_best_mismatch_ignores_nan() == true
+    @test test_rectangular_start_projection_improves_dc_seed() == true
+    @test test_rectangular_start_projection_dc_candidate_matches_rundcpf() == true
+    @test test_rectangular_start_projection_keeps_raw_without_finite_improvement() == true
+    @test test_rectangular_start_projection_ratio_profile() == true
+    @test test_q_limit_adjust_vset_success() == true
+    @test test_q_limit_adjust_vset_no_controller_switches() == true
+    @test test_q_limit_adjust_vset_multiple_controllers_error() == true
+    @test test_q_limit_adjust_vset_invalid_config_error() == true
+    @test test_q_limit_adjust_vset_step_exhaustion_fallback() == true
+    @test test_q_limit_adjust_vset_multigen_single_controller() == true
+    @test test_q_limit_default_behavior_unchanged() == true
+    @test test_q_limit_enforcement_mode_config_values() == true
+    @test test_q_limit_matpower_mode_base_failure_does_not_switch() == true
+    @test test_q_limit_matpower_mode_dispatch_no_reenable() == true
+    @test test_q_limit_reenable_voltage_rule() == true
+    @test test_q_limit_start_iter_delays_switching() == true
+    @test test_q_limit_auto_accepts_switching() == true
+    @test test_q_limit_hysteresis_delays_small_pv_to_pq_overshoot() == true
+    @test test_q_limit_violation_guard_bypasses_hysteresis_for_strong_overshoot() == true
+    @test test_solve_linear_singular_sparse_qr_fallback() == true
+    @test test_solve_sparse_system_small_and_large_backends() == true
+    @test test_rectangular_jacobian_and_dc_start_matrices_are_sparse() == true
+    @test test_rectangular_singular_step_returns_nonconvergence() == true
+    @test test_condition_number_estimator() == true
+    @test test_bus_type_resolution_from_prosumers() == true
+    @test test_multiple_slack_prosumers_same_bus_supported() == true
+    @test test_regulated_generator_bus_targets_include_unregulated_generators() == true
+    @test test_addprosumer_auto_regulated_flags() == true
+  end)() end
 
-    @testset "Link behaviour and reporting" begin (function ()
-      @test test_link_kcl_simple() == true
-      @test test_link_component_type() == true
-      @test test_link_rejects_slack_connection() == true
-      @test test_link_rejects_mixed_bus_types() == true
-      @test test_link_bus_merge_pf() == true
-      @test test_link_bus_merge_pf_default_method() == true
-      @test test_link_merge_remaps_non_representative_slack() == true
-      @test test_link_merge_returns_bus_powers() == true
-      @test test_island_solve_with_link_merge() == true
-      @test test_rectangular_link_merge_runs_without_warning() == true
-      @test test_link_closed_keeps_shunt_reporting_on_original_bus() == true
-      @test test_link_kcl_ring_allocation() == true
-      @test test_link_kcl_ring_allocation_with_shunt() == true
-      @test test_link_ring_pf_stability() == true
-      @test test_acpflow_report_object() == true
-      @test test_report_uses_user_bus_names_and_pf_node_count() == true
-      @test test_wrong_branch_output_visibility() == true
-      @test test_summary_result_output_closes_file_handle() == true
-    end)() end
+  @testset "Link behaviour and reporting" begin (function ()
+    @test test_link_kcl_simple() == true
+    @test test_link_component_type() == true
+    @test test_link_rejects_slack_connection() == true
+    @test test_link_rejects_mixed_bus_types() == true
+    @test test_link_bus_merge_pf() == true
+    @test test_link_bus_merge_pf_default_method() == true
+    @test test_link_merge_remaps_non_representative_slack() == true
+    @test test_link_merge_returns_bus_powers() == true
+    @test test_island_solve_with_link_merge() == true
+    @test test_rectangular_link_merge_runs_without_warning() == true
+    @test test_link_closed_keeps_shunt_reporting_on_original_bus() == true
+    @test test_link_kcl_ring_allocation() == true
+    @test test_link_kcl_ring_allocation_with_shunt() == true
+    @test test_link_ring_pf_stability() == true
+    @test test_acpflow_report_object() == true
+    @test test_report_uses_user_bus_names_and_pf_node_count() == true
+    @test test_wrong_branch_output_visibility() == true
+    @test test_summary_result_output_closes_file_handle() == true
   end)() end
 end
 
 function run_grid_extended_tests()
-  @testset "Grid extended scale and parser coverage" begin (function ()
-    @testset "large/stress MATPOWER helpers" begin (function ()
-      @test test_matpower_build_ybus_large_sparse_smoke() == true
-      @test test_matpower_matrix_block_scanner_large_body() == true
-    end)() end
+  @testset "large/stress MATPOWER helpers" begin (function ()
+    @test test_matpower_build_ybus_large_sparse_smoke() == true
+    @test test_matpower_matrix_block_scanner_large_body() == true
   end)() end
 end
 

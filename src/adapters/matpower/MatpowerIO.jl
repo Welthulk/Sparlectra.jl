@@ -594,7 +594,9 @@ function try_parse_sparlectra_extension(txt::String)
   # fraction of the estimator's r-grid (0 = no ratio tap changer),
   # phase_step_deg the degrees per phase step (0 = no phase tap changer),
   # and current steps may be fractional (a controller can leave a tap
-  # between mechanical positions).
+  # between mechanical positions). Optional columns: 10 psi_deg, 11
+  # phase_du_step, 12 ratio_grid (0 = the fraction grid above, 1 = the
+  # linear grid of a CGMES changer, ratio = TAP + n * tap_step).
   tap_changers = nothing
   if occursin("mpc.sparlectra.tap_changers", txt)
     tap_changers = try
@@ -603,8 +605,13 @@ function try_parse_sparlectra_extension(txt::String)
       throw(ArgumentError("mpc.sparlectra.tap_changers could not be parsed: $(sprint(showerror, err))"))
     end
   end
-  if tap_changers !== nothing && !(size(tap_changers, 2) in (9, 10, 11))
-    throw(ArgumentError("mpc.sparlectra.tap_changers needs 9 columns (branch tap_step tap_min_step tap_max_step tap_current_step phase_step_deg phase_min_step phase_max_step phase_current_step) plus optional columns 10 psi_deg (PST regulating-vector direction, 0 = unspecified -> 90) and 11 phase_du_step (additional-voltage amplitude per step for a Delta-u PST; exclusive with phase_step_deg), got $(size(tap_changers, 2))."))
+  if tap_changers !== nothing && !(size(tap_changers, 2) in (9, 10, 11, 12))
+    throw(ArgumentError("mpc.sparlectra.tap_changers needs 9 columns (branch tap_step tap_min_step tap_max_step tap_current_step phase_step_deg phase_min_step phase_max_step phase_current_step) plus optional columns 10 psi_deg (PST regulating-vector direction, 0 = unspecified -> 90), 11 phase_du_step (additional-voltage amplitude per step for a Delta-u PST; exclusive with phase_step_deg) and 12 ratio_grid (0 = fraction grid, 1 = linear grid), got $(size(tap_changers, 2))."))
+  end
+  if tap_changers !== nothing && size(tap_changers, 2) == 12
+    for g in view(tap_changers, :, 12)
+      g in (0.0, 1.0) || throw(ArgumentError("mpc.sparlectra.tap_changers column 12 (ratio_grid) must be 0 (fraction grid) or 1 (linear grid), got $(g)."))
+    end
   end
   branch_shunts = nothing
   if occursin("mpc.sparlectra.branch_shunts", txt)

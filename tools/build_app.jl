@@ -69,6 +69,11 @@ function _write_app_package(appdir::String; flavor::Symbol, script::String)
     "  se <casefile>               state estimation with bad-data diagnostics\n",
     "  n1 <casefile>               N-1 branch/transformer contingency screening\n",
     "  export <casefile>           write the case as a Sparlectra Case Format file\n",
+    "  convert-measurements <casefile> <v1.csv>\n",
+    "                              write the measurement table of a measurement\n",
+    "                              CSV v1 file (keys of the case: names, mRIDs\n",
+    "                              for CGMES); --out=<file.csv>, default\n",
+    "                              <name>.table.csv next to the v1 file\n",
     "  version                     print the Sparlectra version\n",
     "  help                        print this help\n",
     "\n",
@@ -177,9 +182,10 @@ function _write_app_package(appdir::String; flavor::Symbol, script::String)
         return 0
       end
   $(webui_branch)
-      if cmd == "run" || cmd == "se" || cmd == "n1" || cmd == "export"
+      if cmd == "run" || cmd == "se" || cmd == "n1" || cmd == "export" || cmd == "convert-measurements"
         opts = _prepare(rest)
         cmd == "run" && return _cmd_run(opts)
+        cmd == "convert-measurements" && return _cmd_convert(opts)
         cmd == "se" && return _cmd_se(opts)
         cmd == "export" && return _cmd_export(opts)
         return _cmd_n1(opts)
@@ -335,7 +341,10 @@ function _write_app_package(appdir::String; flavor::Symbol, script::String)
       append!(net.measurements, Sparlectra.generateMeasurementsFromPF(net; noise = false))
     else
       println("measurements: " * mfile)
-      Sparlectra.readMeasurementsCSV!(net; file = mfile)
+      # a measurement table is keyed by the names of the case, or by its
+      # mRIDs for a CGMES case (the index of a fresh import of the same file)
+      index = Sparlectra.isMeasurementTable(mfile) ? Sparlectra._measurement_key_index(Sparlectra.import_case(String(abspath(casefile)), Sparlectra.active_sparlectra_config())) : nothing
+      Sparlectra._read_measurement_file!(net, mfile; index = index)
     end
     se = Sparlectra.runse!(net)
     println("SE converged: ", se.converged, ", iterations: ", se.iterations, ", J = ", round(se.objectiveJ, digits = 3), ", dof = ", se.dof, ", J in 3-sigma band: ", se.jWithin3Sigma)
@@ -358,12 +367,12 @@ function _write_app_package(appdir::String; flavor::Symbol, script::String)
     # to solve the case first (and a non-converging case still exports)
     net = Sparlectra._import_sparlectra_net(String(abspath(casefile)), nothing, Sparlectra.load_sparlectra_config())
     sidecar = string(first(splitext(abspath(casefile))), ".measurements.csv")
-    isfile(sidecar) && Sparlectra.readMeasurementsCSV!(net; file = sidecar)
+    isfile(sidecar) && Sparlectra._read_measurement_file!(net, sidecar)
     stem = first(splitext(basename(casefile)))
     out = isempty(opts.out_path) ? joinpath(dirname(abspath(casefile)), stem * (opts.strict_pgm ? ".pgm.json" : ".scf.json")) : opts.out_path
     path = Sparlectra.exportSCF(net; file = out, case_name = stem, source_reference = basename(casefile), strict_pgm = opts.strict_pgm)
     println("wrote ", path, " (", round(filesize(path) / 1024; digits = 1), " kB)")
-    opts.strict_pgm && println("plain power-grid-model dataset: names, slack roles, tap nameplates, measurements and configuration are NOT in this file")
+    opts.strict_pgm && println("plain power-grid-model dataset: names, slack roles, tap nameplates, measurements, configuration and the system frequency (f_nom, ", net.nominal_frequency_hz, " Hz) are NOT in this file")
     return 0
   end
 
@@ -372,6 +381,20 @@ function _write_app_package(appdir::String; flavor::Symbol, script::String)
   # behavior); file_block and external_file run the scenario model addressed
   # by SCF component ids, so they need an SCF case file. The screening mode
   # defaults to the contingency.screening configuration.
+  # measurement CSV v1 to measurement table (convertMeasurementsV1), keyed
+  # the way the SE reads the table of this case
+  function _cmd_convert(opts)
+    casefile = _casefile(opts.positionals)
+    length(opts.positionals) == 2 || error("convert-measurements expects <casefile> <v1.csv>")
+    v1 = opts.positionals[2]
+    isfile(v1) || error("measurement file not found: " * v1)
+    out = isempty(opts.out_path) ? string(chopsuffix(v1, ".csv"), ".table.csv") : opts.out_path
+    imported = Sparlectra.import_case(String(abspath(casefile)), Sparlectra.active_sparlectra_config())
+    res = Sparlectra.convertMeasurementsV1(v1, imported.net; out = out, index = Sparlectra._measurement_key_index(imported))
+    print(res.report)
+    return isempty(res.problems) ? 0 : 1
+  end
+
   function _cmd_n1(opts)
     casefile = _casefile(opts.positionals)
     source = isempty(opts.scenario_source) ? "n1_branches" : opts.scenario_source

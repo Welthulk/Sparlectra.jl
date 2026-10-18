@@ -31,7 +31,9 @@ struct DTFAdapter <: FormatAdapter end
 The adapter-scope options of the DTF conversion:
 parser strictness and base power, the transformer ratio convention, the
 legacy voltage-level collapse, the model settings consumed while the case
-is interpreted, and the outage selection (a DTF adapter option).
+is interpreted, the outage selection (a DTF adapter option), and the
+system frequency `f_nom` in Hz the conversion writes into the case
+(`model.nominal_frequency_hz`; DTF states none).
 """
 Base.@kwdef struct DTFAdapterOptions
   baseMVA::Float64 = 100.0
@@ -42,6 +44,7 @@ Base.@kwdef struct DTFAdapterOptions
   bus_shunt_model::Symbol = :admittance
   outage_mode::Symbol = :none
   outage_selection::Vector{String} = String[]
+  f_nom::Float64 = model_config().nominal_frequency_hz
 end
 
 detect(::Type{DTFAdapter}, path::AbstractString)::Bool = begin
@@ -69,7 +72,7 @@ conventions themselves (`transformer_ratio_mode`, the legacy collapse)
 have no configuration keys yet, so they stay at the importer defaults here.
 """
 function dtf_adapter_options(cfg::SparlectraConfig)
-  return DTFAdapterOptions(tap_changer_model = cfg.model.tap_changer_model, bus_shunt_model = cfg.model.bus_shunt_model)
+  return DTFAdapterOptions(tap_changer_model = cfg.model.tap_changer_model, bus_shunt_model = cfg.model.bus_shunt_model, f_nom = cfg.model.nominal_frequency_hz)
 end
 
 function convert_case(::DTFAdapter, dtf_case, opts::DTFAdapterOptions)::SCFCase
@@ -80,7 +83,10 @@ function convert_case(::DTFAdapter, dtf_case, opts::DTFAdapterOptions)::SCFCase
     transformer_ratio_mode = opts.transformer_ratio_mode,
     tap_changer_model = opts.tap_changer_model,
   )
-  case = net_to_scfcase(net; source_format = "dtf", include_start_state = true)
+  # the frequency of the conversion, not the global one: it becomes the
+  # case's meta.f_nom and the base of every line c1
+  net.nominal_frequency_hz = opts.f_nom
+  case = net_to_scfcase(net; f_nom = opts.f_nom, source_format = "dtf", include_start_state = true)
   spar = case.sparlectra
   extra = spar.extra
   # file id per net index, from the recorded build-order indices

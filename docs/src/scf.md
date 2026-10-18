@@ -233,6 +233,7 @@ keeps every attribute PGM requires.
 | `extra.<machine>.gencost` | absent | no generator cost data |
 | `extra.<branch>.meta.sn_mva` | absent | no rating recorded |
 | `components.tap_changer[].tap_est_mode` | `"none"` | the tap is not released for estimation |
+| `components.tap_changer[].controllers[].grid` | `"fraction"` | ratio positions on the cascade fraction grid; `"linear"` for a CGMES changer |
 | `components.transformer3w[].status` | `1` | in service |
 | `roles.slack.normalize` | `true` | participation factors are normalized |
 
@@ -282,21 +283,22 @@ The Sparlectra Y-bus stamps the tap on the **from** side, so
 | Key | Content |
 |---|---|
 | `format_version` | schema version of the block (`1.0`) |
-| `meta` | case name, `s_base` in VA, `f_nom` in Hz, source format and reference, producer, and `intended_calculations` as the file's contract |
+| `meta` | case name, `s_base` in VA, `f_nom` (system frequency in Hz, optional; the writer always states the frequency of the net; on read it sets the frequency of the net and wins over `model.nominal_frequency_hz`, which applies only when `f_nom` is absent, default 50 Hz; a value that is not a positive number is an `ArgumentError` naming `meta.f_nom`; see [System frequency](@ref system_frequency)), source format and reference, producer, and `intended_calculations` as the file's contract |
 | `roles` | what PGM cannot express: `slack.mode` (`single`, `distributed`, `source`) with its nodes or participation factors, auxiliary nodes, isolated nodes |
 | `extra` | per-component annotations keyed by id: `name` (the reference name every other section resolves against), `external_id` (CGMES mRID, MATPOWER index), bus/branch index, node type, ratings |
-| `components.tap_changer` | the tap cascade PGM has no model for: per controller the step grid, position, band, and nameplate angle, plus the neutral ratio and angle |
+| `components.tap_changer` | the tap cascade PGM has no model for: per controller the step grid, position, band, and nameplate angle, plus the neutral ratio and angle. Ratio positions count on the cascade fraction grid `ratio_base / (1 + pos * step)` (nameplate data), or with `grid: "linear"` on the grid of a CGMES changer, `ratio_base + pos * step` |
 | `components.transformer3w` | three-winding transformer: either the grouping of three existing `generic_branch` legs (their star node, and which end is hv/mv/lv; the electrical values stay in the legs and are never duplicated) or a nameplate that describes the transformer directly, see below |
 | `components.sc_source` | IEC 60909 source data (external network injections, machines) that PGM's `source` cannot carry beyond `sk`/`rx_ratio` |
 | `components.shunt_state` | what PGM's `g1`/`b1` cannot say: whether a shunt is in service, whether it is a voltage-dependent injection rather than an admittance, and whether its susceptance is released as a state-estimation state. Only deviating shunts produce a row |
 | `transformer_types` | named transformer nameplates in CGMES `PowerTransformerEnd` vocabulary, referenced by `components.transformer3w` entries |
 | `branch_shunt_split` | per branch id, only for a branch whose two terminal shunt arms differ: `g_from_pu`, `b_from_pu`, `g_to_pu`, `b_to_pu` in pu on the branch base. The `data` section keeps the PGM totals (`c1`, `b1`); on load the row overrides the symmetric half. Absent block: symmetric |
 | `tap_changer_models` | per branch id, the typed tap-changer models of the from-side winding: `ratio` (the `PowerTransformerTaps` inputs: `vn_kv`, `step`, `low_step`, `high_step`, `neutral_step`, `voltage_increment_kv`, `neutral_u_kv`, `convention`), `phase` (`kind` `symmetrical`, `asymmetrical` or `tabular`, the steps, `voltage_step_increment`, `step_phase_shift_increment`, `winding_connection_angle_deg`, `x_min`, `x_max`, `convention`, and `table` rows `step`, `ratio`, `angle_deg`, `x_pu` for `tabular`), and `tap_changer_model` when the impedance correction is on. On load the models are restored onto the winding and the resolver derives ratio, shift and grid from them; `components.tap_changer` rows still describe the grid for readers that know no model. The older spelling `extra[<id>].phase_taps` is still read, with a warning |
-| `components.controllers` | FACTS and regulation, in the declarative `control.controllers` schema verbatim: same type names, same keyword names. The reader hands the entries to `applyConfiguredControllers!`, so there is one construction path |
+| `components.controllers` | FACTS and regulation, in the declarative `control.controllers` schema verbatim: same type names, same keyword names. The reader hands the entries to `applyConfiguredControllers!`, so there is one construction path. The shunt of a shunt voltage controller is not written as a `shunt` row; its entry carries the present susceptance as `bs_start_mvar` and, where they deviate, the shunt's `status`, `model` and `estimate` in a `shunt_state` object with the keys of a `components.shunt_state` row |
 | `contingencies` | removed in 0.40.0. A file that still carries the block fails on load with a message naming the `scenarios` block and the Web UI scenario editor |
 | `scenarios` | the scenario model: `mode` (`explicit`, `n1_branches`, `n1_generators`, `n1_all`), `exclusions`, `events` (correlated event classes generated next to the list: `double_circuits`, `busbars`, `substations`, `links`, `name_groups`, `pairs`), and the ordered scenario list, each scenario `name`, `weight`, an optional `kind` (written when it is not `explicit`) and its `ops` (`op` = `status`/`set`/`scale`, `target` component class, `id` the SCF component id, plus `value`, `field`, `factor` as the op needs). The N-1 modes and the event classes expand through the same generators `runContingencies!` uses ([N-1 Contingency Analysis](contingency.md)); a scenario of status-0 ops only runs as one outage event |
 | `short_circuit` | IEC 60909 study definition: `case` (`max`/`min`), optional `c_factor`, `sweep` (`all_buses`/`explicit`) and, for an explicit sweep, the `buses` list of node ids |
 | `measurements.rows` | what PGM sensors cannot carry: the Sparlectra row ids and sigmas behind each sensor, their positions in the measurement vector, active flags where they deviate, and a value only where the SI conversion is not bit-reversible |
+| `measurements.shunt_bay_rows` | the bus-referenced shunt-bay rows PGM has no sensor for (`ShuntQ` in MVar, `Imag` in A, `Ia` in degrees): `type`, `node`, `id`, `value`, `sigma`, `position`, and `active` only when false |
 | `config` | case-specific dotted configuration keys (same allowlist the API and Web UI use); deprecated in favour of the case configuration file |
 | `start_state` | opt-in bus voltages as start values, never as results |
 
@@ -482,7 +484,9 @@ becomes one `sym_voltage_sensor`, a `Pinj`/`Qinj` pair one
 `sym_power_sensor` with `measured_terminal_type = node`, a `Pflow`/`Qflow`
 pair one branch power sensor, current magnitude/angle one
 `sym_current_sensor`; a missing half of a pair is `null`, and the rows
-behind each sensor are listed in `measurements.rows`. Provenance, noise,
+behind each sensor are listed in `measurements.rows`. Shunt-bay rows
+(`ShuntQMeas` and the bus-referenced `ImagMeas`/`IaMeas`) have no PGM
+sensor and go to `measurements.shunt_bay_rows`. Provenance, noise,
 file formats and generators:
 [Measurements](state_estimation_measurements.md).
 
@@ -496,8 +500,11 @@ file formats and generators:
 | **Strict PGM** | `exportSCF(net; strict_pgm = true)`, the "Export as plain PGM" button, or `sparlectra export --pgm` writes the dataset alone, for a consumer that reads PGM and nothing else |
 
 Strict mode drops the namespaced block, names what it dropped in a
-warning, and rewrites a slack generator as a PGM `source` (PGM's reference
-is a source; a generator left in place would make the node inject twice).
+warning (always `f_nom`: PGM has no frequency field, the line `c1` is
+written with the frequency of the net, and a reader of the file takes
+`model.nominal_frequency_hz`), and rewrites a slack generator as a PGM
+`source` (PGM's reference is a source; a generator left in place would
+make the node inject twice).
 
 A file written by power-grid-model has no `sparlectra` block; its
 in-service `source` components become the reference, and since PGM's

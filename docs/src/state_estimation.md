@@ -165,6 +165,11 @@ measured voltage yields a derived reactive-power pseudo-measurement
 
 **Notes**
 
+- A `ShuntQMeas` (and a bus-referenced `ImagMeas`) measures the bay of the
+  bus: its prediction is the sum over every in-service shunt at that bus,
+  as the power flow stamps them. With several shunts at a bus,
+  `setShuntEstimation!` releases the one registered last; the others stay
+  at their model values.
 - A released shunt without an active direct bay measurement (`ShuntQMeas` or
   bus-referenced `ImagMeas`) stays frozen at the model value with a warning,
   and so does a `B` column no measurement pins.
@@ -194,6 +199,16 @@ block in the WLS solver. Model them as zero-injection pseudo-measurements
 finds the buses, `addZeroInjectionMeasurements!(meas; net, sigma=...)`
 appends the rows (id prefix `ZI`); see
 [Observability](observability.md#How-zero-injection-buses-enter).
+
+`state_estimation.zero_injection` (default `on`) does this in every SE
+path that builds a set: the measurement generator, the SE service on a
+measurement CSV v1, on the measurements of a case file and on a
+measurement table, and `applyMeasurementSet!` for a table in a script. A
+passive bus gets the pair only when the set has no injection row for it,
+so a generated set, which already covers every passive bus, is estimated
+as before. `off` adds no such rows anywhere. The run log and the result
+metadata (`se_zero_injection_rows`) give the number of rows added. See
+[State-Estimation Configuration](state_estimation_configuration.md).
 
 ## Observability
 

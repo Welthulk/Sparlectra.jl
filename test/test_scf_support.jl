@@ -139,6 +139,7 @@ const _SCF_RT_ALLOWED = Dict{Symbol,Dict{Symbol,String}}(
     :busOriginalNameDict => "source-format naming aid; the reference names are compared directly",
     :busOrigIdxDict => "source-format index aid; the bus order is compared directly",
     :cgmes_ids => "CGMES mRIDs travel in `external_id` and are compared through the names",
+    :_frequency_from_case => "where the frequency came from, not the frequency: the SCF file states the key value as meta.f_nom, the direct MATPOWER import takes the key itself; nominal_frequency_hz is compared",
   ),
   :branch => Dict{Symbol,String}(
     :tap_min => "the regulation band snaps to the step grid; documented tolerance of less than one step",

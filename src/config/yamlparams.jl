@@ -192,6 +192,45 @@ function yaml_string_text(text::AbstractString)::String
   return s
 end
 
+# A mapping key is bare (letters, digits, "_" and "-", or a decimal number
+# such as 10.5) or in single or double quotes, which are stripped; the text
+# after the colon is the value. The key stays text either way, the reader
+# does not type it (the sigma table reads its row keys as kV itself). A
+# dotted name such as power_flow.max_iter is no key: the line is refused
+# instead of being read as an unknown key. Shared with the line scanner
+# _yaml_key_lines of configuration.jl, so both see the same keys.
+const _YAML_MAPPING_KEY_RE = r"^(?:\"([^\"]+)\"|'([^']+)'|([A-Za-z0-9_\-]+|[0-9]+\.[0-9]+))\s*:\s*(.*)$"
+
+# the bare key form of _YAML_MAPPING_KEY_RE; the writers quote every other key
+const _YAML_BARE_KEY_RE = r"^(?:[A-Za-z0-9_\-]+|[0-9]+\.[0-9]+)$"
+
+# (key, value text) of a "key: value" line without its indentation, or
+# nothing when the line is no mapping line
+function _yaml_mapping_key(content::AbstractString)::Union{Nothing,Tuple{String,String}}
+  m = match(_YAML_MAPPING_KEY_RE, content)
+  m === nothing && return nothing
+  return (String(something(m.captures[1], m.captures[2], m.captures[3])), String(m.captures[4]))
+end
+
+# A mapping key as both writers emit it: bare when it has the bare form,
+# otherwise quoted; the reader strips the quotes without unescaping. Double
+# quotes when the key has no double quote and does not end in a backslash
+# (inside double quotes the comment scanner reads a backslash as escaping
+# the next character, so a final one would escape the closing quote), else
+# single quotes, where a backslash is plain text. Refused: a key the reader
+# never gives back (empty, a line break, both quote kinds), and a single
+# quote with a final backslash, which no quote style keeps safe from the
+# comment scanner when the value holds a "#".
+function _yaml_key_text(key)::String
+  s = string(key)
+  occursin(_YAML_BARE_KEY_RE, s) && return s
+  if !isempty(s) && !occursin(r"[\r\n]", s)
+    (occursin('"', s) || endswith(s, '\\')) || return string('"', s, '"')
+    occursin('\'', s) || return string('\'', s, '\'')
+  end
+  throw(ArgumentError("YAML key $(repr(s)) cannot be written: the key is empty, contains a line break, or contains a single quote together with a double quote or a final backslash"))
+end
+
 """
     load_yaml_dict(path::AbstractString)::Dict{String,Any}
 
@@ -199,8 +238,11 @@ Load a simple YAML file into a `Dict{String,Any}`.
 
 Only the subset used by Sparlectra examples is supported: comments beginning
 with `#`, 2-space-indented nested dictionaries, scalar key-value pairs, and
-one-line scalar lists. Invalid indentation and unsupported lines throw clear
-errors. Use a full YAML package for general YAML documents.
+one-line scalar lists. A mapping key is bare (`380:`, `10.5:`, `max_iter:`)
+or quoted (`"10.5":`, `'380':`, the quotes stripped) and is always read as
+text; a dotted name (`power_flow.max_iter:`) is no key and throws, and a
+key at the top level must not contain a dot even in quotes. Invalid indentation and unsupported lines throw clear errors. Use a
+full YAML package for general YAML documents.
 """
 function load_yaml_dict(path::AbstractString)::Dict{String,Any}
   root = Dict{String,Any}()
@@ -219,14 +261,24 @@ function load_yaml_dict(path::AbstractString)::Dict{String,Any}
       indent_count % 2 == 0 || error("Invalid YAML indentation at $(path):$(lineno): indentation must use multiples of 2 spaces")
 
       content = strip(line)
-      m = match(r"^([A-Za-z0-9_\-]+)\s*:\s*(.*)$", content)
+      m = _yaml_mapping_key(content)
+      # a list item or a flow mapping is the usual form of a table in YAML
+      # and the one most often copied in; name the block form instead of
+      # the bare "unsupported" (the subset itself stays as it is)
+      if isnothing(m) && (startswith(content, "- ") || content == "-" || startswith(content, "{"))
+        error("Unsupported YAML line at $(path):$(lineno): $(strip(rawline)): list items (\"- ...\") and flow mappings (\"{...}\") are not part of Sparlectra's YAML subset. Write the entries as named mappings in block style, one key per line (see state_estimation.sigma_by_voltage_level and control.controllers in configuration.yaml.example).")
+      end
       isnothing(m) && error("Unsupported YAML line at $(path):$(lineno): $(strip(rawline))")
 
       level = indent_count ÷ 2
       haskey(stack, level) || error("Invalid YAML indentation at $(path):$(lineno): missing parent for indentation level $(level)")
       parent = stack[level]
-      key = String(m.captures[1])
-      value_raw = String(m.captures[2])
+      key, value_raw = m
+      # a top-level key is a section name: a dot there, also in quotes
+      # ("power_flow.max_iter"), is a configuration path written flat, and
+      # read as a key it would be dropped as unknown or applied past the
+      # checks that look at the nested form (sigma table rows)
+      level == 0 && occursin('.', key) && error("Unsupported YAML line at $(path):$(lineno): $(strip(rawline)): a top-level key must not contain a dot; write a configuration path as nested keys")
 
       if isempty(value_raw)
         child = Dict{String,Any}()

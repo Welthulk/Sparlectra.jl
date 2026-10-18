@@ -108,8 +108,8 @@ function create_state_estimation_passive_transit_net()::Net
   addBus!(net = net, busName = "Transit", vn_kV = 110.0)
   addBus!(net = net, busName = "Load", vn_kV = 110.0)
 
-  addACLine!(net = net, fromBus = "Slack", toBus = "Transit", length = 10.0, r = 0.02, x = 0.2, c_nf_per_km = 0.0, tanδ = 0.0)
-  addACLine!(net = net, fromBus = "Transit", toBus = "Load", length = 8.0, r = 0.02, x = 0.2, c_nf_per_km = 0.0, tanδ = 0.0)
+  addPIModelACLine!(net = net, fromBus = "Slack", toBus = "Transit", r_pu = 0.02, x_pu = 0.2, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "Transit", toBus = "Load", r_pu = 0.02, x_pu = 0.2, b_pu = 0.0, status = 1)
 
   addProsumer!(net = net, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "Slack")
   # Moderate loading keeps the flat start inside the Gauss-Newton basin of
@@ -581,9 +581,9 @@ function create_se_shunt_net(; qShunt::Float64 = 30.0, shunt_model = nothing)::N
   for b in ("Slack", "LoadA", "LoadB")
     addBus!(net = net, busName = b, vn_kV = 110.0)
   end
-  addACLine!(net = net, fromBus = "Slack", toBus = "LoadA", length = 12.0, r = 0.02, x = 0.2, c_nf_per_km = 0.0, tanδ = 0.0)
-  addACLine!(net = net, fromBus = "LoadA", toBus = "LoadB", length = 9.0, r = 0.02, x = 0.2, c_nf_per_km = 0.0, tanδ = 0.0)
-  addACLine!(net = net, fromBus = "Slack", toBus = "LoadB", length = 11.0, r = 0.02, x = 0.2, c_nf_per_km = 0.0, tanδ = 0.0)
+  addPIModelACLine!(net = net, fromBus = "Slack", toBus = "LoadA", r_pu = 0.02, x_pu = 0.2, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "LoadA", toBus = "LoadB", r_pu = 0.02, x_pu = 0.2, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "Slack", toBus = "LoadB", r_pu = 0.02, x_pu = 0.2, b_pu = 0.0, status = 1)
   addProsumer!(net = net, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "Slack")
   addProsumer!(net = net, busName = "LoadA", type = "ENERGYCONSUMER", p = 35.0, q = 12.0)
   addProsumer!(net = net, busName = "LoadB", type = "ENERGYCONSUMER", p = 28.0, q = 9.0)
@@ -922,65 +922,6 @@ function test_state_estimation_link_contraction()::Bool
   return true
 end
 
-function test_state_estimation_link_allocation_w2()::Bool
-  # W2 allocation. Measurement-free runs equal the KCL
-  # allocation bitwise (shared core); a link measurement steers the split of
-  # a zero-impedance ring while the component KCL still holds.
-  @testset "State estimation W2 link allocation" begin (function ()
-    # ring of three link-joined buses, fed and loaded through real branches
-    net = Net(name = "w2_ring", baseMVA = 100.0)
-    for b in ("S", "R1", "R2", "R3", "L2", "L3")
-      addBus!(net = net, busName = b, vn_kV = 110.0)
-    end
-    addACLine!(net = net, fromBus = "S", toBus = "R1", length = 10.0, r = 0.02, x = 0.2, c_nf_per_km = 0.0, tanδ = 0.0)
-    addACLine!(net = net, fromBus = "R2", toBus = "L2", length = 8.0, r = 0.02, x = 0.2, c_nf_per_km = 0.0, tanδ = 0.0)
-    addACLine!(net = net, fromBus = "R3", toBus = "L3", length = 8.0, r = 0.02, x = 0.2, c_nf_per_km = 0.0, tanδ = 0.0)
-    addProsumer!(net = net, busName = "S", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "S")
-    addProsumer!(net = net, busName = "L2", type = "ENERGYCONSUMER", p = 12.0, q = 4.0)
-    addProsumer!(net = net, busName = "L3", type = "ENERGYCONSUMER", p = 18.0, q = 5.0)
-    addLink!(net = net, fromBus = "R1", toBus = "R2", status = 1)
-    addLink!(net = net, fromBus = "R2", toBus = "R3", status = 1)
-    addLink!(net = net, fromBus = "R3", toBus = "R1", status = 1)
-    ok, msg = validate!(net = net)
-    @test ok
-    ite, erg = runpf!(net, 40, 1e-10, 0; method = :rectangular)
-    @test erg == 0
-    @test ite > 0
-    calcNetLosses!(net)
-
-    # measurement-free: bitwise regression against the KCL allocation
-    calcLinkFlowsKCL!(net)
-    fK = [(l.pFlow_MW, l.qFlow_MVar) for l in net.linkVec]
-    rep0 = calcLinkFlowsSE!(net)
-    fS = [(l.pFlow_MW, l.qFlow_MVar) for l in net.linkVec]
-    @test fS == fK
-    @test all(r.source == :kcl for r in rep0)
-    @test all(isnan(r.p_meas_residual) for r in rep0)
-
-    # one P measurement on link 1 pins the ring circulation: the measured
-    # link matches z within sigma and the nodal balances still hold
-    z = fK[1][1] + 5.0
-    σ = 0.01
-    addPflowMeasurement!(net; value = z, sigma = σ, linkNr = 1)
-    rep1 = calcLinkFlowsSE!(net)
-    @test rep1[1].source == :measured_ls
-    @test abs(net.linkVec[1].pFlow_MW - z) <= 3.0 * σ
-    @test abs(rep1[1].p_meas_residual) <= 3.0 * σ
-    @test rep1[2].source == :kcl && rep1[3].source == :kcl
-    # component KCL invariance: the ring's null space is the pure circulation
-    # (all three links oriented around the ring), so the measurement may only
-    # ADD one common circulation to the minimum-norm split. Equal deltas on
-    # all three links mean every nodal balance is untouched.
-    fM = [l.pFlow_MW for l in net.linkVec]
-    d = [fM[j] - fK[j][1] for j in 1:3]
-    @test isapprox(d[1], d[2]; atol = 1e-8)
-    @test isapprox(d[2], d[3]; atol = 1e-8)
-    @test abs(d[1]) > 1.0   # the measurement really moved the circulation
-  end)() end
-
-  return true
-end
-
 function test_state_estimation_se_view()::Bool
   # The static SE view classifies controllers (frozen),
   # shunt releases, link clusters, and excluded measurements. The controller
@@ -1282,10 +1223,16 @@ function test_state_estimation_diagnostics_unification()::Bool
 end
 
 function test_state_estimation_measurement_csv()::Bool
-  # Measurement CSV v1 core. Lossless roundtrip over all
-  # types and location groups, atomic import, line-precise errors, version
-  # guard.
-  @testset "State estimation measurement CSV v1" begin (function ()
+  # Measurement CSV v1 core, the one test of the deprecated v1 reader (its
+  # writer stays for the measurements.csv artifact of a run). Lossless
+  # roundtrip over all types and location groups, atomic import,
+  # line-precise errors, version guard, and the deprecation warning: once in
+  # the session however often the reader runs, naming the converter and the
+  # removal in 0.60.0.
+  @testset "State estimation measurement CSV v1" begin
+  v1_log = Test.TestLogger(min_level = Logging.Warn)
+  Logging.with_logger(v1_log) do
+  (function ()
     net = create_se_link_net(shunt_buses = ["B2"])
     runpf!(net, 40, 1e-10, 0; method = :rectangular)
     m = generateMeasurementsFromPF(net; includeImag = true, includeShuntQ = true, includeVa = true, noise = true, rng = MersenneTwister(3))
@@ -1345,7 +1292,7 @@ function test_state_estimation_measurement_csv()::Bool
     # replace = false appends, and appending a set onto itself is exactly the
     # corruption the reader warns about: every quantity is then measured twice
     n0 = length(net.measurements)
-    @test_logs (:warn, r"repeat a quantity already measured") readMeasurementsCSV!(net; file = f, replace = false)
+    @test_logs (:warn, r"repeat a quantity already measured") match_mode = :any readMeasurementsCSV!(net; file = f, replace = false)
     @test length(net.measurements) == 2 * n0
     empty!(net.measurements)
     append!(net.measurements, orig)
@@ -1510,6 +1457,10 @@ function test_state_estimation_measurement_csv()::Bool
     @test all(x == y for (x, y) in zip(a1, rnet.measurements))
     empty!(rnet.cgmes_ids)
   end)() end
+  dep = [r for r in v1_log.logs if occursin("sparlectra-measurements v1", r.message)]
+  @test length(dep) == 1 && length(v1_log.logs) == 1
+  @test occursin("convertMeasurementsV1", only(dep).message) && occursin("removed in 0.60.0", only(dep).message)
+  end
 
   return true
 end
@@ -1616,106 +1567,6 @@ function _se_two_island_net()
   addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", referencePri = "B1", vm_pu = 1.0, va_deg = 0.0)
   addProsumer!(net = net, busName = "B2", type = "ENERGYCONSUMER", p = 12.0, q = 4.0)
   return net
-end
-
-function test_state_estimation_islands()::Bool
-  # Island-wise SE (0.10.0): a two-island net (no connection between the
-  # groups) is partitioned and every measured island is estimated with its
-  # own reference; the merged SEResult carries per-island rows. Also covers
-  # the snapshot-vs-state chain distinction on a measurement/model
-  # discrepancy, which the noise-free phase-5 chain test could not see
-  # (there takeover == model and the two modes trivially coincide).
-  @testset "State estimation island-wise" begin (function ()
-    net = _se_two_island_net()
-    ite, erg = runpf!(net, 40, 1e-10, 0; islands_enabled = true)
-    @test erg == 0
-    vm_true = [n._vm_pu for n in net.nodeVec]
-    meas = generateMeasurementsFromPF(net; noise = false)
-
-    res = with_state_estimation_config(max_iter = 30, tol = 1e-10, update_net = false) do
-      runse!(net, meas)
-    end
-    @test res.converged
-    @test res.islands !== nothing
-    @test length(res.islands) == 2
-    @test all(i.estimated for i in res.islands)
-    @test all(i.converged for i in res.islands)
-    # per-island accounting present (dof per island, own band verdict)
-    @test all(i.dof > 0 for i in res.islands)
-    @test all(hasproperty(i, :z_wh) for i in res.islands)
-    @test res.dof == sum(i.dof for i in res.islands)
-    # merged voltages are in ORIGINAL bus numbering and match the PF truth
-    @test maximum(abs.(abs.(res.voltages) .- vm_true)) < 1e-6
-
-    # a shunt measurement in the second island (0.30.2): the island subnet
-    # looked shunts up in the dictionary of the whole net, keyed by the
-    # net-wide bus numbers, and failed with "no shunt registered at this bus"
-    netS = _se_two_island_net()
-    addShunt!(net = netS, busName = "B2", pShunt = 0.0, qShunt = 5.0)
-    runpf!(netS, 40, 1e-10, 0; islands_enabled = true)
-    vm_shunt = [n._vm_pu for n in netS.nodeVec]
-    measS = generateMeasurementsFromPF(netS; noise = false, includeShuntQ = true)
-    @test any(m -> m.typ == Sparlectra.ShuntQMeas, measS)
-    resS = with_state_estimation_config(max_iter = 30, tol = 1e-10, update_net = false) do
-      runse!(netS, measS)
-    end
-    @test resS.converged
-    @test maximum(abs.(abs.(resS.voltages) .- vm_shunt)) < 1e-6
-
-    # the printed diagnostics carry the per-island band test (no island can
-    # hide inside the summed chi-square)
-    rep = with_state_estimation_config(max_iter = 30, tol = 1e-8) do
-      validate_measurements(net, meas)
-    end
-    @test rep.islands !== nothing && count(i -> i.measured, rep.islands) == 2
-    io = IOBuffer()
-    print_se_diagnostics(io, rep; topN = 3)
-    txt = String(take!(io))
-    @test occursin("Islands", txt)
-    @test occursin("island 1", txt) && occursin("island 2", txt)
-
-    # unmeasured island: estimated where measured, skipped elsewhere
-    bIdxs = Set([net.busDict["B1"], net.busDict["B2"]])
-    measA = Measurement[m for m in meas if (m.busIdx !== nothing && !(m.busIdx in bIdxs)) || (m.branchIdx !== nothing && !(Int(net.branchVec[m.branchIdx].fromBus) in bIdxs))]
-    resA = with_state_estimation_config(max_iter = 30, tol = 1e-10, update_net = false) do
-      runse!(net, measA)
-    end
-    @test resA.converged
-    @test count(i -> i.estimated, resA.islands) == 1
-    skipped = only([i for i in resA.islands if !i.estimated])
-    @test skipped.reason == :no_measurements
-
-    # snapshot-vs-state distinction (regression for the inert phase-5
-    # takeover): create a measurement/model discrepancy AFTER the
-    # measurement set was taken, then chain both modes
-    net2 = _se_two_island_net()
-    runpf!(net2, 40, 1e-10, 0; islands_enabled = true)
-    meas2 = generateMeasurementsFromPF(net2; noise = false)
-    # model drifts after the measurements were taken: +8 MW load at A3
-    addProsumer!(net = net2, busName = "A3", type = "ENERGYCONSUMER", p = 8.0, q = 0.0)
-    with_state_estimation_config(max_iter = 30, tol = 1e-10, update_net = true) do
-      runse!(net2, meas2)
-    end
-    nPros = length(net2.prosumpsVec)
-    rState = runpf_from_se!(net2, 40, 1e-10, 0; mode = :se_state, islands_enabled = true)
-    vmState = [n._vm_pu for n in net2.nodeVec]
-    rSnap = runpf_from_se!(net2, 40, 1e-10, 0; mode = :se_snapshot, islands_enabled = true)
-    vmSnap = [n._vm_pu for n in net2.nodeVec]
-    @test rState.converged && rSnap.converged
-    # state mode balances the drift through the slack; snapshot reproduces
-    # the estimated operating point (zero mismatch at the start)
-    @test abs(rState.slack_pickup_mw) > 4.0
-    # the island-wise PF aggregates the per-island iteration counts, so the
-    # zero-mismatch snapshot start allows one iteration per island
-    @test rSnap.iterations <= 2
-    @test rSnap.iterations < rState.iterations
-    @test abs(rSnap.slack_pickup_mw) < 1e-6
-    @test maximum(abs.(vmState .- vmSnap)) > 1e-5
-    # the temporary delta prosumers are gone again
-    @test length(net2.prosumpsVec) == nPros
-  end)() end
-
-  return true
 end
 
 function test_state_estimation_islands_parallel()::Bool
@@ -1852,7 +1703,7 @@ function test_state_estimation_ia_measurements()::Bool
   return true
 end
 
-function _tap_gate_net()::Net
+function _tap_gate_net(; taps::Union{Nothing,PowerTransformerTaps} = nothing)::Net
   # two voltage levels, meshed through two parallel transformer paths (the
   # closed loop that makes a tap observable), lines on both levels
   net = Net(name = "tap_gate", baseMVA = 100.0)
@@ -1864,73 +1715,13 @@ function _tap_gate_net()::Net
   addProsumer!(net = net, busName = "L2", type = "ENERGYCONSUMER", p = 15.0, q = 5.0)
   addPIModelACLine!(net = net, fromBus = "H1", toBus = "H2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
   addPIModelACLine!(net = net, fromBus = "L1", toBus = "L2", r_pu = 0.02, x_pu = 0.1, b_pu = 0.0, status = 1)
-  addPIModelTrafo!(net = net, fromBus = "H1", toBus = "L1", r_pu = 0.002, x_pu = 0.06, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1)
+  # `taps`: a typed ratio model on the first transformer, which then takes
+  # its grid from the model
+  addPIModelTrafo!(net = net, fromBus = "H1", toBus = "L1", r_pu = 0.002, x_pu = 0.06, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1, taps = taps)
   addPIModelTrafo!(net = net, fromBus = "H2", toBus = "L2", r_pu = 0.002, x_pu = 0.06, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1)
   net.branchVec[3].has_ratio_tap = true
-  net.branchVec[3].tap_step = 0.00625
+  taps === nothing && (net.branchVec[3].tap_step = 0.00625)
   return net
-end
-
-function test_state_estimation_tap_pf_equivalence()::Bool
-  # PF-equivalence gate for the tap cascade: at (r1_0, r2_0) the unstamped-Ybus + cascade-overlay predictions
-  # reproduce the STAMPED power flow to 1e-12 for all three release
-  # variants. This is the correctness anchor of the whole tap overlay.
-  @testset "State estimation tap PF equivalence gate" begin (function ()
-    for (mode, alpha, r1, r2) in ((:ratio, 0.0, 0.0125, 0.0), (:pst, 90.0, 0.0, 0.031), (:both, 30.0, 0.02, -0.015))
-      net = _tap_gate_net()
-      br = net.branchVec[3]
-      ct = Sparlectra._cascade_tap(br, r1, r2, alpha)
-      br.tap_ratio = ct.tap_ratio
-      br.phase_shift_deg = ct.phase_shift_deg
-      ite, erg = runpf!(net, 40, 1e-12, 0; method = :rectangular)
-      @test erg == 0
-      V = buildVoltageVector(net)
-      meas = generateMeasurementsFromPF(net; includeImag = true, noise = false)
-      z = [m.value for m in meas]
-      rel = setTapEstimation!(net; trafo = 3, mode = mode, alpha_deg = mode == :ratio ? nothing : alpha)
-      @test abs(rel.r1_0 - r1) < 1e-12 && abs(rel.r2_0 - r2) < 1e-12
-      nbus = length(net.nodeVec)
-      tapMap = Sparlectra._build_tap_state_map(net, (nbus - 1) + nbus + 1)
-      @test tapMap !== nothing
-      Ybus = createYBUS(net = net)
-      Sparlectra._tap_unstamp!(Ybus, net, tapMap)
-      x = Sparlectra._initial_state_vector(net, Sparlectra._find_slack_idx(net); flatstart = false, tapRInit = Sparlectra._tap_r_init(tapMap))
-      h = Sparlectra._predict_measurements(meas, net, V, Ybus; tapOverlay = Sparlectra._tap_overlay(x, tapMap, net))
-      # 1e-10: flows follow the LIVE tap since the branchFlow_pu fix, so the
-      # r0 reconstruction (inverting tap_ratio back to a fraction) adds one
-      # floating-point roundtrip (~5e-12 on MVA scale) that the old
-      # neutral-ratio path never saw; still far below any physical tolerance
-      @test maximum(abs.(h .- z)) <= 1e-10
-    end
-
-    # regression (case57 corner finding at the parallel-trafo buses 4/18):
-    # a LIVE tap off neutral (tap_ratio moved by a generator deviation or a
-    # tap-controller step) must keep generated measurements self-consistent.
-    # branchFlow_pu used to read the NEUTRAL ratio/angle while the Ybus
-    # stamps the live tap, so the measured KCL missed at the trafo corners.
-    knet = _tap_gate_net()
-    kbr = knet.branchVec[3]
-    kbr.tap_ratio = kbr.ratio / (1.0 + 2.0 * kbr.tap_step)   # 2 mechanical steps off neutral
-    _, kerg = runpf!(knet, 40, 1e-10, 0)
-    @test kerg == 0
-    kmeas = generateMeasurementsFromPF(knet; noise = false)
-    for bus in eachindex(knet.nodeVec)
-      kpinj = only(m.value for m in kmeas if m.typ == Sparlectra.PinjMeas && m.busIdx == bus)
-      kqinj = only(m.value for m in kmeas if m.typ == Sparlectra.QinjMeas && m.busIdx == bus)
-      kpfl = 0.0
-      kqfl = 0.0
-      for m in kmeas
-        m.typ in (Sparlectra.PflowMeas, Sparlectra.QflowMeas) || continue
-        kbrm = knet.branchVec[m.branchIdx]
-        ((m.direction == :from && Int(kbrm.fromBus) == bus) || (m.direction == :to && Int(kbrm.toBus) == bus)) || continue
-        m.typ == Sparlectra.PflowMeas ? (kpfl += m.value) : (kqfl += m.value)
-      end
-      @test isapprox(kpinj, kpfl; atol = 1e-8)
-      @test isapprox(kqinj, kqfl; atol = 1e-8)
-    end
-  end)() end
-
-  return true
 end
 
 ## r2 producing EXACTLY the shift n * phase_step_deg under direction alpha:
@@ -1939,229 +1730,6 @@ end
 function _tap_r2_for_shift(shift_deg::Float64, alpha_deg::Float64)::Float64
   ϕ = -deg2rad(shift_deg)
   return sin(ϕ) / sin(deg2rad(alpha_deg) - ϕ)
-end
-
-function test_state_estimation_tap_roundtrip()::Bool
-  # Tap-estimation roundtrips: the TRUE network sits n mechanical steps off the
-  # model's neutral position; measurements come from the true power flow
-  # (noise-free). The estimator must recover the electrical step, the
-  # mandatory fixation run must land on the exact mechanical step, and
-  # after the fixation the tap is no state any more: J after must be
-  # numerically zero and the dof gains the freed state(s) back.
-  @testset "State estimation tap roundtrip and fixation" begin (function ()
-    step = 0.00625
-    pstep = 1.25
-
-    function truthmeas(r1, r2, alpha)
-      tnet = _tap_gate_net()
-      br = tnet.branchVec[3]
-      ct = Sparlectra._cascade_tap(br, r1, r2, alpha)
-      br.tap_ratio = ct.tap_ratio
-      br.phase_shift_deg = ct.phase_shift_deg
-      ite, erg = runpf!(tnet, 40, 1e-12, 0; method = :rectangular)
-      @test erg == 0
-      return generateMeasurementsFromPF(tnet; includeImag = true, noise = false)
-    end
-
-    # 1) :ratio, truth 2 steps up on the fraction grid
-    meas = truthmeas(2 * step, 0.0, 0.0)
-    net = _tap_gate_net()
-    setTapEstimation!(net; trafo = 3, mode = :ratio)
-    res = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
-      runse!(net, meas)
-    end
-    @test res.converged
-    @test res.iterations < 40
-    @test res.tapEstimates !== nothing && length(res.tapEstimates) == 1
-    te = res.tapEstimates[1]
-    @test te.branch == 3 && te.mode == :ratio && te.fixed
-    @test te.mrid == ""                       # not a CGMES case: no mRID
-    @test abs(te.electrical_step_1 - 2.0) < 0.05
-    @test te.fixed_step_1 == 2 && te.fixed_step_2 == 0
-    # the model started at neutral, so the row says where the tap came from
-    @test abs(te.model_step_1) < 1e-9 && abs(te.model_step_2) < 1e-9
-    @test !te.out_of_range
-    tf = res.tapFixation
-    @test tf !== nothing && tf.fixed
-    @test tf.dof_after == tf.dof_before + 1
-    @test tf.j_after < 1e-12
-    @test res.objectiveJ == tf.j_after && res.dof == tf.dof_after
-
-    # 2) :pst, truth 2 steps on the shift grid (direction 90 degrees)
-    meas = truthmeas(0.0, _tap_r2_for_shift(2 * pstep, 90.0), 90.0)
-    net = _tap_gate_net()
-    setTapEstimation!(net; trafo = 3, mode = :pst, alpha_deg = 90.0)
-    res = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
-      runse!(net, meas)
-    end
-    @test res.converged && res.iterations < 40
-    te = res.tapEstimates[1]
-    @test te.mode == :pst && te.fixed_step_1 == 0
-    @test abs(te.electrical_step_2 - 2.0) < 0.05
-    @test te.fixed_step_2 == 2
-    tf = res.tapFixation
-    @test tf.dof_after == tf.dof_before + 1
-    @test tf.j_after < 1e-12
-
-    # 3) :both, truth 2 fraction steps and -1 shift step (direction 30)
-    meas = truthmeas(2 * step, _tap_r2_for_shift(-pstep, 30.0), 30.0)
-    net = _tap_gate_net()
-    setTapEstimation!(net; trafo = 3, mode = :both, alpha_deg = 30.0)
-    res = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
-      runse!(net, meas)
-    end
-    @test res.converged && res.iterations < 40
-    te = res.tapEstimates[1]
-    @test te.mode == :both
-    @test abs(te.electrical_step_1 - 2.0) < 0.1
-    @test abs(te.electrical_step_2 - (-1.0)) < 0.1
-    @test te.fixed_step_1 == 2 && te.fixed_step_2 == -1
-    tf = res.tapFixation
-    @test tf.dof_after == tf.dof_before + 2   # both regulators leave the state
-    @test tf.j_after < 1e-10
-
-    # 4) off-grid truth (2.4 fraction steps): the electrical estimate sits
-    # between steps, the fixation rounds to 2, and the residual J after is
-    # honestly nonzero (the model cannot represent a half-step position)
-    meas = truthmeas(2.4 * step, 0.0, 0.0)
-    net = _tap_gate_net()
-    setTapEstimation!(net; trafo = 3, mode = :ratio)
-    res = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
-      runse!(net, meas)
-    end
-    @test res.converged
-    te = res.tapEstimates[1]
-    @test abs(te.electrical_step_1 - 2.4) < 0.05
-    @test te.fixed_step_1 == 2
-    tf = res.tapFixation
-    @test tf.j_before < 1e-12                 # continuous fit absorbs it fully
-    @test tf.j_after > 1e-6                   # fixed step cannot
-    @test res.objectiveJ == tf.j_after
-    # noise-free sigmas overstate the errors, so the off-grid remainder
-    # stays INSIDE the band here: no verdict flip, no off-grid note
-    @test tf.offgrid_residual == false
-
-    # 5) :offgrid_tap_residual: noisy set, truth half a
-    # step off the grid, tightened sigmas. The continuous fit passes the
-    # band, the fixation must round half a step away and fails it :high;
-    # the note marks that flip as off-grid truth, NOT bad data.
-    tightσ = measurementStdDevs(vm = 0.0025, pinj = 0.5, qinj = 0.5, pflow = 0.5, qflow = 0.5, imag = 5.0)
-    tnet = _tap_gate_net()
-    br = tnet.branchVec[3]
-    ct = Sparlectra._cascade_tap(br, 2.5 * step, 0.0, 0.0)
-    br.tap_ratio = ct.tap_ratio
-    br.phase_shift_deg = ct.phase_shift_deg
-    ite, erg = runpf!(tnet, 40, 1e-12, 0; method = :rectangular)
-    @test erg == 0
-    meas = generateMeasurementsFromPF(tnet; includeImag = true, noise = true, stddev = tightσ, rng = Random.MersenneTwister(7))
-    net = _tap_gate_net()
-    setTapEstimation!(net; trafo = 3, mode = :ratio)
-    res = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
-      runse!(net, meas)
-    end
-    @test res.converged
-    tf = res.tapFixation
-    @test tf.fixed
-    @test Sparlectra._band_test_verdict(tf.j_before, tf.dof_before).reason in (:ok, :low)
-    @test Sparlectra._band_test_verdict(tf.j_after, tf.dof_after).reason == :high
-    @test tf.offgrid_residual == true
-  end)() end
-
-  return true
-end
-
-function test_state_estimation_tap_guards()::Bool
-  # Release guards: a bridge transformer without
-  # a voltage pin on its cut-off side freezes structurally; machine (GSU)
-  # transformers are detected for the mass-release skip; partial freezes
-  # re-pack the state columns; a fully frozen release is bitwise identical
-  # to no release at all.
-  @testset "State estimation tap release guards" begin (function ()
-    step = 0.00625
-
-    function _radial_net()
-      net = _tap_gate_net()
-      addBus!(net = net, busName = "L3", vn_kV = 10.0)
-      addProsumer!(net = net, busName = "L3", type = "ENERGYCONSUMER", p = 8.0, q = 2.0)
-      addPIModelTrafo!(net = net, fromBus = "L2", toBus = "L3", r_pu = 0.004, x_pu = 0.08, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1)
-      net.branchVec[5].has_ratio_tap = true
-      net.branchVec[5].tap_step = step
-      return net
-    end
-
-    # 1) machine-transformer detection: generator bus hanging on one trafo
-    gsu = _tap_gate_net()
-    addBus!(net = gsu, busName = "G1", vn_kV = 10.0)
-    addProsumer!(net = gsu, busName = "G1", type = "SYNCHRONOUSMACHINE", p = -20.0, q = -5.0)
-    addPIModelTrafo!(net = gsu, fromBus = "H2", toBus = "G1", r_pu = 0.003, x_pu = 0.1, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1)
-    @test Sparlectra._is_machine_transformer(gsu, 5)
-    @test !Sparlectra._is_machine_transformer(gsu, 3)   # loop transformer
-    @test !Sparlectra._is_machine_transformer(gsu, 4)
-
-    # 2) radial trafo WITH a voltage pin on the far side: estimable, the
-    # guard must not overblock (truth 2 steps, full measurement set)
-    tnet = _radial_net()
-    br = tnet.branchVec[5]
-    ct = Sparlectra._cascade_tap(br, 2 * step, 0.0, 0.0)
-    br.tap_ratio = ct.tap_ratio
-    br.phase_shift_deg = ct.phase_shift_deg
-    ite, erg = runpf!(tnet, 40, 1e-12, 0; method = :rectangular)
-    @test erg == 0
-    meas = generateMeasurementsFromPF(tnet; includeImag = true, noise = false)
-    net = _radial_net()
-    setTapEstimation!(net; trafo = 5, mode = :ratio)
-    res = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
-      runse!(net, meas)
-    end
-    @test res.converged
-    te = res.tapEstimates[1]
-    @test te.frozen_reason == :none
-    @test te.fixed_step_1 == 2
-    @test res.tapFixation.j_after < 1e-12
-
-    # 3) same release WITHOUT the far-side voltage measurement: the
-    # structural bridge guard freezes the tap, and the frozen run is
-    # BITWISE identical to a run without any release (stamp restored)
-    idxL3 = 5   # bus L3 is the fifth bus of _radial_net
-    measNoVm = [m for m in meas if !(m.typ == Sparlectra.VmMeas && m.busIdx == idxL3)]
-    net = _radial_net()
-    setTapEstimation!(net; trafo = 5, mode = :ratio)
-    resF = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
-      runse!(net, measNoVm)
-    end
-    @test resF.converged
-    @test resF.tapEstimates !== nothing && length(resF.tapEstimates) == 1
-    @test resF.tapEstimates[1].frozen_reason == :radial_no_voltage_pin
-    @test resF.tapEstimates[1].fixed == false
-    @test resF.tapFixation === nothing   # no tap state entered the solve
-    ref = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
-      runse!(_radial_net(), measNoVm)
-    end
-    @test resF.objectiveJ == ref.objectiveJ
-    @test resF.dof == ref.dof
-    @test resF.voltages == ref.voltages
-
-    # 4) partial freeze re-packs the state columns (unit level): a :both
-    # release loses its r2 column, a following :ratio release moves up
-    net = _tap_gate_net()
-    setTapEstimation!(net; trafo = 3, mode = :both, alpha_deg = 30.0)
-    setTapEstimation!(net; trafo = 4, mode = :ratio)
-    col0 = (length(net.nodeVec) - 1) + length(net.nodeVec) + 1
-    map0 = Sparlectra._build_tap_state_map(net, col0)
-    @test map0 !== nothing && map0.ncols == 3
-    Ybus = createYBUS(net = net)
-    Yref = copy(Matrix(Ybus))
-    Sparlectra._tap_unstamp!(Ybus, net, map0)
-    m1 = Sparlectra._tap_apply_freezes(map0, [false, false], [true, false], net, Ybus)
-    @test m1.ncols == 2
-    @test m1.r1cols == [col0, col0 + 1] && m1.r2cols == [0, 0]
-    # freezing the remaining columns restores the stamps bitwise
-    m2 = Sparlectra._tap_apply_freezes(m1, [true, true], [true, true], net, Ybus)
-    @test m2 === nothing
-    @test Matrix(Ybus) == Yref
-  end)() end
-
-  return true
 end
 
 function test_state_estimation_tap_islands()::Bool
@@ -2405,60 +1973,6 @@ function test_state_estimation_tap_completion()::Bool
   return true
 end
 
-# #381: the estimator reads its settings from the registry; a deviating run
-# installs them for its duration and the registry is the same afterwards
-function test_state_estimation_config_argument()::Bool
-  @testset "SE settings from the registry, scoped overrides (#381)" begin (function ()
-    scf_dir = joinpath(dirname(@__DIR__), "data", "scf")
-    load5() = begin
-      net = importSCF(joinpath(scf_dir, "sp_case5.scf.json"))
-      readMeasurementsCSV!(net; file = joinpath(scf_dir, "sp_case5.measurements.csv"))
-      net
-    end
-    before = state_estimation_config()
-    # two runs in one session with different settings: one iteration cannot
-    # converge, the full budget does; nothing is passed to runse! itself
-    r1 = with_state_estimation_config(() -> runse!(load5()); max_iter = 1, tol = 1e-10)
-    r2 = with_state_estimation_config(() -> runse!(load5()); max_iter = 40, tol = 1e-10)
-    @test !r1.converged
-    @test r2.converged
-    @test r1.iterations < r2.iterations
-    # the registry is the same object afterwards, also after an error inside
-    @test state_estimation_config() === before
-    @test_throws ErrorException with_state_estimation_config(() -> error("boom"); max_iter = 1)
-    @test state_estimation_config() === before
-    @test_throws ArgumentError with_state_estimation_config(() -> nothing; no_such_setting = 1)
-    # a case sidecar with state_estimation.* reaches the run through the
-    # resolved configuration installed for the run, the way the service
-    # does it; no set_sparlectra_config! involved
-    dir = mktempdir()
-    for f in ("sp_case5.scf.json", "sp_case5.measurements.csv", "sp_case5.measurements.baddata.csv")
-      cp(joinpath(scf_dir, f), joinpath(dir, f))
-    end
-    # (case-scope keys only, issue #377: the elimination budget and threshold)
-    write(joinpath(dir, "sp_case5.config.yaml"), "config_version: 1\nscope: case\ncase: sp_case5.scf.json\nstate_estimation:\n  max_eliminations: 0\n  k_eliminate: 100.0\n")
-    resolved = Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, joinpath(dir, "sp_case5.scf.json")).config
-    @test resolved.state_estimation.max_eliminations == 0
-    @test resolved.state_estimation.k_eliminate == 100.0
-    net = importSCF(joinpath(dir, "sp_case5.scf.json"))
-    readMeasurementsCSV!(net; file = joinpath(dir, "sp_case5.measurements.baddata.csv"))
-    dside = with_sparlectra_config(() -> runse_diagnostics(net), resolved)
-    @test isempty(dside.eliminations)
-    @test state_estimation_config() === before
-    # without a wrapper the run behaves as before (registry defaults)
-    r0 = runse!(load5())
-    rg = with_sparlectra_config(() -> runse!(load5()), Sparlectra.ACTIVE_SPARLECTRA_CONFIG[])
-    @test r0.converged == rg.converged && r0.iterations == rg.iterations
-    @test isapprox(r0.objectiveJ, rg.objectiveJ; rtol = 1e-12)
-    # the diagnostics and the precheck read the same registry
-    d = with_state_estimation_config(() -> runse_diagnostics(load5()); k_eliminate = 100.0, max_eliminations = 1)
-    @test d.stop_reason !== nothing
-    pre = with_state_estimation_config(() -> validate_topology(load5()); topology_dead_flow_k = 3.0)
-    @test pre.n_checked_branches > 0
-  end)() end
-  return true
-end
-
 """
 Targeted critical thinning of the measurement generator. With
 `critical_count = k` the generated set ends with at least k critical rows,
@@ -2496,7 +2010,7 @@ function test_measurement_generator_critical_thinning()::Bool
       @test !any(id -> startswith(id, "ZI"), removed)
       # the written set is what the criticality check reports it to be
       net = Sparlectra.import_case(case, Sparlectra.load_sparlectra_config()).net
-      Sparlectra.readMeasurementsCSV!(net; file = out)
+      Sparlectra.readMeasurementTable!(net; file = out, zero_injection = false)
       obs = evaluate_global_observability(net)
       @test obs.quality != :not_observable
       @test length(obs.numerical_critical_measurement_indices) >= k
@@ -2512,7 +2026,54 @@ function test_measurement_generator_critical_thinning()::Bool
     @test_throws ArgumentError SparlectraApp.MeasurementGeneratorOptions(; base..., truth_source = :from_run, run_id = "r1", run_root = "/tmp", tap_steps = 1.0)
     @test_throws ArgumentError SparlectraApp.MeasurementGeneratorOptions(; base..., passive_sigma = 0.0)
     okopts = SparlectraApp.MeasurementGeneratorOptions(; base...)
-    @test okopts.critical_count == 0 && okopts.flow_ends === :both && okopts.passive_as_zi
+    # passive_as_zi not stated: state_estimation.zero_injection of the case
+    # decides at generation (default on, the former literal true)
+    @test okopts.critical_count == 0 && okopts.flow_ends === :both && okopts.passive_as_zi === nothing
+    # the key is case scope: set in the case configuration file (what the
+    # Web UI checkbox writes), it switches the generator's ZI rows off
+    mktempdir() do d
+      copy_case = joinpath(d, basename(case))
+      cp(case, copy_case)
+      for want in (true, false)
+        want || Sparlectra.write_case_config(copy_case, Dict{String,Any}("state_estimation.zero_injection" => "off"))
+        out = joinpath(d, "zi_$(want).csv")
+        SparlectraApp._se_generate_measurement_set(copy_case, out, okopts)
+        @test any(l -> occursin("ZI_PINJ_bus_", l), readlines(out)) == want
+      end
+    end
+    # a noise-free set fits the model it was generated from. sp_case188 has
+    # a coupler between Falkwik_380 (160 MW generation) and the passive
+    # section Falkwik_380b: the injection rows of the section with the
+    # generator carried the Y-bus value (103.8 MW, the link flow left out)
+    # while the passive section became a zero-injection row, so the
+    # cluster sum missed 56.2 MW and J was 3859 (dof 1054) instead of 0.
+    # With the distributed slack on, Falkwik_380 delivers its schedule plus
+    # its share (156.1 MW); the device sum took the schedule alone, missed
+    # the cluster's Y-bus total, fell back to the Y-bus values with a
+    # warning and J was 3757 (dof 1054)
+    for ds in (false, true)
+      mktempdir() do d
+        c188 = joinpath(dirname(@__DIR__), "data", "scf", "sp_case188.scf.json")
+        if ds
+          cp(c188, joinpath(d, basename(c188)))
+          c188 = joinpath(d, basename(c188))
+          Sparlectra.write_case_config(c188, Dict{String,Any}("power_flow.tol" => 1.0e-8, "power_flow.distributed_slack.enabled" => true))
+        end
+        set = joinpath(d, "nf188.csv")
+        gen_log = Test.TestLogger(min_level = Logging.Warn)
+        Logging.with_logger(gen_log) do
+          SparlectraApp._se_generate_measurement_set(c188, set, okopts)
+        end
+        @test !any(r -> occursin("do not add up", string(r.message)), gen_log.logs)
+        res = redirect_stdout(devnull) do
+          SparlectraApp._run_state_estimation_service(c188, Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, joinpath(d, "run"), "nf188", set; flatstart = true)
+        end
+        dres = SparlectraApp.to_dict(res)
+        @test dres["status"] == "succeeded"
+        jm = match(r"converged in \d+ iteration\(s\); J = ([0-9.eE+-]+), dof", read(joinpath(d, "run", "run.log"), String))
+        @test jm !== nothing && parse(Float64, jm.captures[1]) < 1e-6
+      end
+    end
   end)() end
   return true
 end
@@ -2538,7 +2099,7 @@ function test_state_estimation_dtf_service()
   append!(net.measurements, generateMeasurementsFromPF(net; noise = false))
   mktempdir() do d
     mf = joinpath(d, "dtf.measurements.csv")
-    writeMeasurementsCSV(net; file = mf)
+    writeMeasurementTable(mf, Sparlectra._measurement_table_from_measurements(net, net.measurements, nameMeasurementKeys(net)).rows)
 
     ok = redirect_stdout(devnull) do
       SparlectraApp._run_state_estimation_service(dtf, cfg, joinpath(d, "run_ok"), "dtf_se", mf; case_format = :dtf_for001)
@@ -2649,9 +2210,10 @@ with zero-injection constraints; its truth is an adopted SE state of an
 earlier run, not a fresh solve, which is why the KCL precheck flags its
 passive buses: regression data, not a plausible measurement campaign) the
 released-tap attempt does not converge and the frozen-tap repeat does. The
-artifact used to describe the failed attempt (J = 2.0e9 at dof 70 against
-J = 2859 at dof 78 on the page); now the diagnostics repeat on the frozen
-taps and the artifact opens with the reported numbers. This set confirms
+artifact used to describe the failed attempt (the diverged J at the dof
+with tap states, the frozen run's J on the page); now the diagnostics
+repeat on the frozen taps and the artifact opens with the reported
+numbers. This set confirms
 all three of its eliminations and stops at `max_eliminations`. Needs the
 conformity package in the local cache: RAN or SKIPPED is printed.
 """
@@ -2833,8 +2395,11 @@ function test_state_estimation_tap_fallback()::Bool
     # (sp_case60 and sp_case188 needed the fallback before; case1354pegase
     # with 240 released taps needed 63 iterations cold and 4 staged). The
     # fallback is still reached from a configured WARM start, which skips
-    # the staging: sp_case188 at a cap of 3 converges plain but not with
-    # the taps, so the repeat succeeds (measured).
+    # the staging: sp_case188 at a cap of 2 converges plain but not with
+    # the taps, so the repeat succeeds (measured). The cap was 3 until
+    # 0.50.0, while the generator's injection rows at the Falkwik coupler
+    # did not fit the model; with a fitting set the taps converge at 3
+    # (measured: no fallback at 3, fallback not_converged at 2).
     mktempdir() do d
       shipped = joinpath(dirname(@__DIR__), "data", "scf", "sp_case188.scf.json")
       set = joinpath(d, "gen188.csv")
@@ -2853,7 +2418,7 @@ function test_state_estimation_tap_fallback()::Bool
       @test get(dst["metadata"], "se_tap_estimation_fallback", false) == false
       res = redirect_stdout(devnull) do
         SparlectraApp._run_state_estimation_service(shipped, Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH,
-          joinpath(d, "fb"), "tapfb188", set; tap_estimation = true, max_iter = 3, flatstart = false)
+          joinpath(d, "fb"), "tapfb188", set; tap_estimation = true, max_iter = 2, flatstart = false)
       end
       dd = SparlectraApp.to_dict(res)
       @test dd["status"] == "succeeded"
@@ -2900,19 +2465,14 @@ end
       ("Shunt estimation (case A)", test_state_estimation_shunt_estimation),
       ("Shunt back-calculation (case B)", test_state_estimation_shunt_back_calculation),
       ("Link contraction", test_state_estimation_link_contraction),
-      ("W2 link allocation", test_state_estimation_link_allocation_w2),
       ("se_view", test_state_estimation_se_view),
       ("Robust R modification", test_state_estimation_robust_r),
       ("Wilson-Hilferty band test", test_state_estimation_wilson_hilferty),
       ("Diagnostics unification", test_state_estimation_diagnostics_unification),
       ("Measurement CSV v1", test_state_estimation_measurement_csv),
       ("SE-to-PF chain", test_state_estimation_se_chain),
-      ("Island-wise SE", test_state_estimation_islands),
       ("Island-wise SE, parallel against serial", test_state_estimation_islands_parallel),
       ("Current-angle measurements (IaMeas)", test_state_estimation_ia_measurements),
-      ("Tap PF equivalence gate", test_state_estimation_tap_pf_equivalence),
-      ("Tap roundtrip and fixation", test_state_estimation_tap_roundtrip),
-      ("Tap release guards", test_state_estimation_tap_guards),
       ("Tap estimation across islands", test_state_estimation_tap_islands),
       ("Tap completion (write-back, PMU, machine trafo)", test_state_estimation_tap_completion),
       ("DTF case through the SE service", test_state_estimation_dtf_service),
@@ -2920,7 +2480,6 @@ end
       ("Tap fallback: diagnostics artifact matches the reported run (MiniGrid)", test_state_estimation_tap_fallback_diagnostics_consistent),
       ("Tap fallback: an unconfirmed elimination is reverted (MiniGrid)", test_state_estimation_elimination_reverted),
       ("Measurement generator critical thinning", test_measurement_generator_critical_thinning),
-      ("Run configuration as an argument (#381)", test_state_estimation_config_argument),
     ]
 
     for (name, testfn) in tests

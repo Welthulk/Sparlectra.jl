@@ -27,7 +27,7 @@
 const WEBUI_HELP_TOPICS = Dict(
   # state-estimation page (0.10.0): estimator options come from the config
   # table (one row per key), workflow topics from state_estimation.md
-  "webui.se_measurement_file" => (label = "Measurement set (CSV v1)", hint = "Measurement CSV v1 set the estimation runs on. The set bound to the selected case is preselected; sets from other cases are labeled.", doc = "state_estimation_measurements/#se-measurement-files"),
+  "webui.se_measurement_file" => (label = "Measurement set", hint = "Measurement set the estimation runs on. Only sets of the selected case are listed (by the # case: line, else by file name), each with its case.", doc = "state_estimation_measurements/#se-measurement-files"),
   "webui.se_noise_seed" => (label = "Noise seed", hint = "Seed of the noise draw. The same seed reproduces the same noisy set, a different seed draws a fresh realization.", doc = "state_estimation_measurements/#se-case-file-measurements"),
   "state_estimation.flatstart" => (label = "SE flat start", hint = "Start the estimator from a flat voltage profile instead of the model's current state. Uncheck when a trusted start state exists.", doc = "state_estimation_configuration/#se-config"),
   "state_estimation.tol" => (label = "SE convergence tolerance", hint = "WLS convergence tolerance on the state step. The default 1e-6 is the noise floor of the finite-difference Jacobian; a tighter value is raised with a log line.", doc = "state_estimation_configuration/#se-config"),
@@ -38,7 +38,8 @@ const WEBUI_HELP_TOPICS = Dict(
   "state_estimation.suppression" => (label = "Down-weight limit and replacement sigma", hint = "Replacement mode: from this normalized residual a row is solved with the replacement sigma and loses its influence, but is not removed. Sigma in the row's unit.", doc = "state_estimation/#se-bad-data"),
   "webui.se_generator_truth" => (label = "Generator: truth state", hint = "Where the truth state comes from: fresh solve solves the case now, from run adopts the solved voltages of a successful run of this case without re-solving.", doc = "state_estimation_measurements/#se-generator-v2"),
   "webui.se_generator_flow_ends" => (label = "Generator: flows per branch", hint = "Flows per branch: both ends writes P and Q at from and to; one end keeps one flow group per branch, preferring the end whose bus has injection telemetry.", doc = "state_estimation_measurements/#se-generator-v2"),
-  "webui.se_generator_passive" => (label = "Generator: passive nodes", hint = "How a passive node enters the set: on writes a protected zero-injection constraint, off an ordinary zero balance row. The sigma applies to both, floor 1 kW.", doc = "state_estimation_measurements/#se-generator-v2"),
+  "state_estimation.sigma_by_voltage_level" => (label = "Measurement sigma by voltage level", hint = "Sigma per level in MW, MVAr, A and kV for rows without their own sigma; an empty cell keeps the default. Saved into the case configuration.", doc = "state_estimation_configuration/#se-sigma-by-level"),
+  "webui.se_generator_passive" => (label = "Generator: passive nodes", hint = "On: a protected zero-injection constraint, off: a zero balance row (sigma, floor 1 kW). Sets state_estimation.zero_injection, also read by table and CSV runs.", doc = "state_estimation_measurements/#se-generator-v2"),
   "state_estimation.update_shunts" => (label = "Write estimated shunts back", hint = "Write the estimated shunt susceptances back into the model after a converged run. Off keeps the model data authoritative.", doc = "state_estimation_configuration/#se-config"),
   "state_estimation.report_residual_correlation" => (label = "Residual-correlation (K-matrix) report", hint = "Add residual-correlation columns to the bad-data report: rows correlated above 0.707 form a group where a gross error cannot be told apart. Reporting only.", doc = "state_estimation/#se-k-report"),
   "webui.se_max_eliminations" => (label = "Sequential elimination budget", hint = "Upper bound of the sequential bad-data elimination: the worst localizable row is removed and the estimation rerun, up to this many times. 0 disables it.", doc = "state_estimation/#se-max-eliminations"),
@@ -170,6 +171,7 @@ const WEBUI_HELP_TOPICS = Dict(
   "matpower_import.pv_voltage_source" => (label = "PV voltage source", hint = "Source of the PV voltage setpoint: the generator VG (standard MATPOWER) or the bus VM; auto and strict_check use VG and warn when VG and VM differ.", doc = "matpower/#matpower-options"),
   "matpower_import.compare_voltage_reference" => (label = "Voltage reference comparison", hint = "Voltage reference used when results are compared with the case data: bus VM, generator VG, the imported setpoint, or hybrid when VM and VG disagree.", doc = "matpower/#matpower-options"),
   "model.tap_changer_model" => (label = "Tap-changer model", hint = "Tap-changer model applied to all transformers after import: ideal, or impedance correction that scales R and X with the tap position.", doc = "matpower/#matpower-options"),
+  "model.nominal_frequency_hz" => (label = "System frequency", hint = "Acts only where capacitance is used: lines from per-km capacitance, PGM/SCF c1. Short circuit is frequency independent; ohm, siemens or pu cases are unchanged.", doc = "configuration/#system_frequency"),
   "matpower_export.write_solution" => (label = "Write solution into MATPOWER export", hint = "Write the solved bus VM/VA state and the branch flow columns into the MATPOWER export. Off exports a pure model file with flat voltages.", doc = "matpower/#matpower-options"),
   "output.logfile_results" => (label = "Logfile output mode", hint = "Detail of the solved result tables in run.log: off, compact, classic (result report plus timing summary) or full (adds the effective configuration).", doc = "performance_profiling/#perf-output"),
   "webui.performance_timing" => (label = "Performance timing", hint = "Write performance.log with the phases of one request (parsing, case loading, solve, artifacts); full adds internal profile entries, off writes nothing.", doc = "webui_reference/#webui-output-modes"),
@@ -208,6 +210,9 @@ const WEBUI_FORM_HELP_TOPICS = Dict(
   "se_generator_gross_count" => "webui.se_generator_gross_count",
   "se_generator_tap_count" => "webui.se_generator_tap_count",
   "se_tap_estimation" => "webui.se_tap_estimation",
+  # the sigma table of the SE section (se_sigma_lvl_* cells; the legend
+  # carries the help link)
+  "se_sigma_lvl_n" => "state_estimation.sigma_by_voltage_level",
   "se_generator_sigmas" => "webui.se_generator_sigmas",
   "casefile" => "webui.casefile",
   "config_file" => "webui.config_file",
@@ -328,6 +333,7 @@ const WEBUI_FORM_HELP_TOPICS = Dict(
   "matpower_import_compare_voltage_reference" => "matpower_import.compare_voltage_reference",
   "matpower_import_apply_bus_names" => "matpower_import.apply_bus_names",
   "transformer_tap_changer_model" => "model.tap_changer_model",
+  "model_nominal_frequency_hz" => "model.nominal_frequency_hz",
   "matpower_export_write_solution" => "matpower_export.write_solution",
   "output_logfile_results" => "output.logfile_results",
   "performance_timing" => "webui.performance_timing",

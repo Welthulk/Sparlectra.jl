@@ -141,6 +141,9 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "powsybl_import.remote_regulation",
   "matpower_export.write_solution",
   "model.tap_changer_model",
+  # a property of the case (50 Hz Europe, 60 Hz North America), so a case
+  # sidecar or an API override can carry it
+  "model.nominal_frequency_hz",
   "short_circuit.sweep_method",
   "output.logfile_results",
   "output.console_summary",
@@ -180,6 +183,12 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "state_estimation.max_eliminations",
   "state_estimation.topology_precheck",
   "state_estimation.report_residual_correlation",
+  # the zero-injection switch, driven by the generator's passive-node
+  # checkbox and read by every SE path of the case
+  "state_estimation.zero_injection",
+  # measurement sigmas per voltage level, a table edited on the State
+  # Estimation section and saved into the case configuration
+  "state_estimation.sigma_by_voltage_level",
   # the estimator's linear-algebra switches (sparse LU, symmetric gain
   # matrix), performance choices; editable so a case sidecar can pin them
   "state_estimation.linear_solver",
@@ -232,6 +241,9 @@ function _validate_gui_override_value(key::String, value)
   elseif key in ("contingency.events.max_members", "contingency.pairs.max_pairs")
     _validate_override_type(key, value, Int)
     value >= 1 || throw(ArgumentError("Override $(key) must be at least 1; got $(value)."))
+  elseif key == "model.nominal_frequency_hz"
+    _validate_override_type(key, value, Float64)
+    isfinite(value) && value > 0 || throw(ArgumentError("Override $(key) must be finite and positive; got $(value)."))
   elseif key == "power_flow.plausibility.vmin_warn"
     # 0 switches the check off, so zero is valid here
     _validate_override_type(key, value, Float64)
@@ -312,6 +324,12 @@ function _validate_gui_override_value(key::String, value)
     _validate_allowed_symbol(key, _as_symbol_cfg(value), MATPOWER_COMPARE_VOLTAGE_REFERENCE_VALUES)
   elseif key == "state_estimation.robust_mode"
     _validate_allowed_symbol(key, _as_symbol_cfg(value), STATE_ESTIMATION_ROBUST_MODE_VALUES)
+  elseif key == "state_estimation.zero_injection"
+    _validate_allowed_symbol(key, _as_symbol_cfg(value), STATE_ESTIMATION_ZERO_INJECTION_VALUES)
+  elseif key == "state_estimation.sigma_by_voltage_level"
+    # the same parser the configuration uses: a bad row fails here, with its
+    # name and reason, before the run starts
+    _parse_sigma_by_voltage_level(value)
   elseif key == "state_estimation.linear_solver"
     _validate_allowed_symbol(key, _as_symbol_cfg(value), STATE_ESTIMATION_LINEAR_SOLVER_VALUES)
   elseif key == "matpower_import.matpower_dcline_mode"
@@ -455,6 +473,8 @@ function load_case_config(case_path::AbstractString)::Dict{String,Any}
   path = case_config_path(case_path)
   isfile(path) || return Dict{String,Any}()
   raw = load_yaml_dict(path)
+  # the sigma table names its file and line on an error
+  _check_sigma_levels_in_file(raw, path)
   version = _config_file_version(raw, path)
   version < CONFIG_VERSION_CURRENT && _apply_config_aliases!(raw, version, path)
   scope = lowercase(strip(string(get(raw, "scope", ""))))

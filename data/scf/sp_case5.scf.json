@@ -24,10 +24,10 @@
     ],
     "generic_branch": [
       {
-        "b1": 0.0,
+        "b1": -8.660254037844386e-5,
         "from_node": 2,
         "from_status": 1,
-        "g1": 0.0,
+        "g1": 5.0e-5,
         "id": 10,
         "k": 1.0,
         "r1": 0.05,
@@ -151,121 +151,121 @@
         "id": 22,
         "measured_object": 4,
         "measured_terminal_type": "node",
-        "p_measured": 2.031050289392691e7,
+        "p_measured": 2.0330277976644114e7,
         "power_sigma": 1.0e6,
-        "q_measured": 1.0622276788732711e7
+        "q_measured": 1.0631823630913211e7
       },
       {
         "id": 23,
         "measured_object": 1,
         "measured_terminal_type": "node",
-        "p_measured": -480642.85577534203,
+        "p_measured": -480642.85577533935,
         "power_sigma": 1.0e6,
-        "q_measured": 2.741165858796093e6
+        "q_measured": 2.741165858796159e6
       },
       {
         "id": 24,
         "measured_object": 5,
         "measured_terminal_type": "node",
-        "p_measured": 1.2600005347588863e7,
+        "p_measured": 1.2600005347588869e7,
         "power_sigma": 1.0e6,
-        "q_measured": 4.1585868235005573e6
+        "q_measured": 4.18724376756618e6
       },
       {
         "id": 25,
         "measured_object": 2,
         "measured_terminal_type": "node",
-        "p_measured": -2.1451550755553e7,
+        "p_measured": -2.145155075555306e7,
         "power_sigma": 1.0e6,
-        "q_measured": -5.60466996011563e6
+        "q_measured": -5.604669960115688e6
       },
       {
         "id": 26,
         "measured_object": 3,
         "measured_terminal_type": "node",
-        "p_measured": -1.1748354252756972e7,
+        "p_measured": -1.1748354252756948e7,
         "power_sigma": 1.0e6,
-        "q_measured": -2.6529830076978486e6
+        "q_measured": -2.652983007697968e6
       },
       {
         "id": 27,
         "measured_object": 7,
         "measured_terminal_type": "branch_from",
-        "p_measured": 1.0467500760705175e7,
+        "p_measured": 1.0477188696475593e7,
         "power_sigma": 1.0e6,
-        "q_measured": 4.735409456230619e6
+        "q_measured": 4.747601687278489e6
       },
       {
         "id": 28,
         "measured_object": 7,
         "measured_terminal_type": "branch_to",
-        "p_measured": -1.2514652185943391e7,
+        "p_measured": -1.2523949483737953e7,
         "power_sigma": 1.0e6,
-        "q_measured": -4.935662750044279e6
+        "q_measured": -4.946487748176598e6
       },
       {
         "id": 29,
         "measured_object": 6,
         "measured_terminal_type": "branch_from",
-        "p_measured": 1.331873407310957e7,
+        "p_measured": 1.3328031370904125e7,
         "power_sigma": 1.0e6,
-        "q_measured": 5.295858041480601e6
+        "q_measured": 5.306683039612921e6
       },
       {
         "id": 30,
         "measured_object": 6,
         "measured_terminal_type": "branch_to",
-        "p_measured": -1.3310788669814223e7,
+        "p_measured": -1.3319695329632921e7,
         "power_sigma": 1.0e6,
-        "q_measured": -4.53096318346563e6
+        "q_measured": -4.540420948682488e6
       },
       {
         "id": 31,
         "measured_object": 8,
         "measured_terminal_type": "branch_from",
-        "p_measured": 8.305986047911043e6,
+        "p_measured": 8.316073194857834e6,
         "power_sigma": 1.0e6,
-        "q_measured": 4.170307479834543e6
+        "q_measured": 4.1676620909672477e6
       },
       {
         "id": 32,
         "measured_object": 8,
         "measured_terminal_type": "branch_to",
-        "p_measured": -6.55533270383296e6,
+        "p_measured": -6.56529482649124e6,
         "power_sigma": 1.0e6,
-        "q_measured": -3.7167335665956014e6
+        "q_measured": -3.713650592718435e6
       },
       {
         "id": 33,
         "measured_object": 9,
         "measured_terminal_type": "branch_from",
-        "p_measured": 2.04764141651141e7,
+        "p_measured": 2.0486376287772425e7,
         "power_sigma": 1.0e6,
-        "q_measured": 8.40610218179863e6
+        "q_measured": 8.431676151987193e6
       },
       {
         "id": 34,
         "measured_object": 9,
         "measured_terminal_type": "branch_to",
-        "p_measured": -1.7555184690227777e7,
+        "p_measured": -1.756437678484043e7,
         "power_sigma": 1.0e6,
-        "q_measured": -7.599034075457844e6
+        "q_measured": -7.621912947486608e6
       },
       {
         "id": 35,
         "measured_object": 10,
         "measured_terminal_type": "branch_from",
-        "p_measured": 1.3892268978019511e7,
+        "p_measured": 1.391036773245078e7,
         "power_sigma": 1.0e6,
-        "q_measured": 5.28328041224575e6
+        "q_measured": 5.315617049491329e6
       },
       {
         "id": 36,
         "measured_object": 10,
         "measured_terminal_type": "branch_to",
-        "p_measured": -1.2388321366001185e7,
+        "p_measured": -1.2388321366001165e7,
         "power_sigma": 1.0e6,
-        "q_measured": -4.993066172397056e6
+        "q_measured": -4.993066172397144e6
       }
     ],
     "sym_voltage_sensor": [
@@ -278,25 +278,25 @@
       {
         "id": 18,
         "measured_object": 1,
-        "u_measured": 109679.24547494242,
+        "u_measured": 109673.69967911147,
         "u_sigma": 550.0
       },
       {
         "id": 19,
         "measured_object": 5,
-        "u_measured": 109936.62561232173,
+        "u_measured": 109936.62561232175,
         "u_sigma": 550.0
       },
       {
         "id": 20,
         "measured_object": 2,
-        "u_measured": 105734.66256357924,
+        "u_measured": 105723.80696737058,
         "u_sigma": 550.0
       },
       {
         "id": 21,
         "measured_object": 3,
-        "u_measured": 18899.259282441955,
+        "u_measured": 18896.390668497428,
         "u_sigma": 100.0
       }
     ],
@@ -487,14 +487,14 @@
           "positions": [4],
           "sensor": 18,
           "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_2"],
-          "values": [0.9970840497722038]
+          "sparlectra_ids": ["Vm_bus_2"]
         },
         {
           "positions": [7],
           "sensor": 19,
           "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_3"]
+          "sparlectra_ids": ["Vm_bus_3"],
+          "values": [0.999423869202925]
         },
         {
           "positions": [10],
@@ -506,8 +506,7 @@
           "positions": [13],
           "sensor": 21,
           "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_5"],
-          "values": [0.9449629641220977]
+          "sparlectra_ids": ["Vm_bus_5"]
         },
         {
           "positions": [2, 3],
@@ -531,7 +530,8 @@
           "positions": [11, 12],
           "sensor": 25,
           "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_4", "Qinj_bus_4"]
+          "sparlectra_ids": ["Pinj_bus_4", "Qinj_bus_4"],
+          "values": [-21.45155075555306, -5.604669960115688]
         },
         {
           "positions": [14, 15],
@@ -573,8 +573,7 @@
           "positions": [25, 27],
           "sensor": 32,
           "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pflow_branch_3_to", "Qflow_branch_3_to"],
-          "values": [-6.55533270383296, -3.7167335665956016]
+          "sparlectra_ids": ["Pflow_branch_3_to", "Qflow_branch_3_to"]
         },
         {
           "positions": [28, 30],
@@ -604,7 +603,7 @@
     },
     "meta": {
       "case_name": "sp_case5",
-      "created_by": "Sparlectra 0.11.0",
+      "created_by": "Sparlectra 0.50.0",
       "f_nom": 50.0,
       "intended_calculations": ["power_flow", "state_estimation", "short_circuit", "contingency", "scenarios"],
       "notes": "Self-built Sparlectra demo network; the bus count in the name does not make it the IEEE case of that size, and no data was taken from MATPOWER, DTF or any other source.",
@@ -657,24 +656,24 @@
     "start_state": {
       "nodes": {
         "1": {
-          "va_deg": -2.3532570931793044,
-          "vm_pu": 0.9872603372847158
+          "va_deg": -2.3546140004760585,
+          "vm_pu": 0.98720992095898
         },
         "2": {
-          "va_deg": -4.863368065814093,
-          "vm_pu": 0.9562984410588318
+          "va_deg": -4.8664318144516185,
+          "vm_pu": 0.9561997538205712
         },
         "3": {
-          "va_deg": -6.734398885156987,
-          "vm_pu": 0.9436146693293063
+          "va_deg": -6.73923023049283,
+          "vm_pu": 0.94347123863208
         },
         "4": {
           "va_deg": 0.0,
           "vm_pu": 1.02
         },
         "5": {
-          "va_deg": -1.2492434708252893,
-          "vm_pu": 1.0
+          "va_deg": -1.2513757411789044,
+          "vm_pu": 1.0000000000000002
         }
       },
       "source": "solved_power_flow"

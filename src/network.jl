@@ -16,7 +16,7 @@
 # Date: 01.04.2024
 # file: src/network.jl
 # purpose: the central Net container and its construction API: addBus!,
-#          addACLine!, add2WTrafo!, addProsumer!, addShunt!, addLink! and
+#          addACLine!, addACLinePerKm!, add2WTrafo!, addProsumer!, addShunt!, addLink! and
 #          friends, plus validation, locking, and bus/branch lookup helpers
 """
     Net
@@ -29,6 +29,7 @@ constructors.
 # Fields (selection)
 - `name::String`: Name of the network.
 - `baseMVA::Float64`: Base MVA of the network.
+- `nominal_frequency_hz::Float64`: System frequency in Hz. Read where a value given per capacitance becomes a susceptance (`addACLinePerKm!`, the line `c1` of an SCF or PGM file). Set by an SCF file (`meta.f_nom`), otherwise by `model.nominal_frequency_hz` at import (default 50).
 - `slackVec::Vector{Int}`: Vector containing indices of slack buses.
 - `vmin_pu::Float64`: Minimum voltage limit in per unit.
 - `vmax_pu::Float64`: Maximum voltage limit in per unit.
@@ -54,14 +55,15 @@ constructors.
 - `equivalent_branch_metadata::Dict{Int,NamedTuple}`: The delivered values of every branch built from a CGMES `EquivalentBranch`, keyed by branch index: `r`, `x`, `r21`, `x21` in ohm on the base `vn_kV` of terminal 1, and `stamped` for the phase stamp of an asymmetric one. The power flow never reads it; it marks the branch as an equivalent branch in the results and lets the CGMES export write the delivered values.
 
 # Constructors
-- `Net(; name::String, baseMVA::Float64, vmin_pu = 0.9, vmax_pu = 1.1, flatstart = false, bus_shunt_model = :admittance, ...)`: Creates an empty `Net` with the given name, base MVA and voltage limits; the remaining keywords set the Q-limit parameters.
+- `Net(; name::String, baseMVA::Float64, vmin_pu = 0.9, vmax_pu = 1.1, flatstart = false, bus_shunt_model = :admittance, nominal_frequency_hz = model_config().nominal_frequency_hz, ...)`: Creates an empty `Net` with the given name, base MVA and voltage limits; the remaining keywords set the Q-limit parameters. `nominal_frequency_hz` must be positive (`ArgumentError` otherwise).
 
 # Functions
 - `addBus!(; net::Net, ...)`: Adds a bus to the network.
 - `addShunt!(; net::Net, ...)`: Adds a shunt to the network.
 - `addBranch!(; net::Net, ...)`: Adds a branch to the network.
 - `addPIModelACLine!(; net::Net, ...)`: Adds a PI model AC line to the network.
-- `addACLine!(; net::Net, ...)`: Adds an AC line segment to the network.
+- `addACLine!(; net::Net, ...)`: Adds an AC line from its totals in ohm and siemens.
+- `addACLinePerKm!(; net::Net, ...)`: Adds an AC line from values per km and its length.
 - `addPIModelTrafo!(; net::Net, ...)`: Adds a transformer with PI model to the network.
 - `add2WTrafo!(; net::Net, ...)`: Adds a two-winding transformer to the network.
 - `addProsumer!(; net::Net, ...)`: Adds a prosumer to the network.
@@ -85,6 +87,9 @@ constructors.
 mutable struct Net
   name::String
   baseMVA::Float64
+  # system frequency in Hz: a property of the network, read wherever a
+  # capacitance turns into a susceptance (addACLinePerKm!, SCF/PGM c1)
+  nominal_frequency_hz::Float64
   slackVec::Vector{Int}
   vmin_pu::Float64
   vmax_pu::Float64
@@ -172,13 +177,18 @@ mutable struct Net
   # connects them again. An import, a bus op or a user call that types a
   # bus Isolated does not enter this list, so that type sticks.
   _marked_iso::Vector{Int}
+  # true when the case file stated the frequency (SCF meta.f_nom): the
+  # configuration stamp of an import then leaves nominal_frequency_hz alone
+  _frequency_from_case::Bool
 
   #! format: off
-  function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1, cooldown_iters::Int = DEFAULT_QLIMIT_CONFIG.cooldown_iters, q_hyst_pu::Float64 = DEFAULT_QLIMIT_CONFIG.hysteresis_pu, reenable_v_hyst_pu::Float64 = DEFAULT_QLIMIT_CONFIG.reenable_v_hyst_pu, final_q_accept_pu::Float64 = 2 * q_hyst_pu, flatstart::Bool = false, bus_shunt_model = :admittance)
+  function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1, cooldown_iters::Int = DEFAULT_QLIMIT_CONFIG.cooldown_iters, q_hyst_pu::Float64 = DEFAULT_QLIMIT_CONFIG.hysteresis_pu, reenable_v_hyst_pu::Float64 = DEFAULT_QLIMIT_CONFIG.reenable_v_hyst_pu, final_q_accept_pu::Float64 = 2 * q_hyst_pu, flatstart::Bool = false, bus_shunt_model = :admittance, nominal_frequency_hz::Real = model_config().nominal_frequency_hz)
     shunt_model = normalize_bus_shunt_model(bus_shunt_model)
+    _check_nominal_frequency(nominal_frequency_hz, "Net")
     
     new(name, # name
         baseMVA, # baseMVA
+        Float64(nominal_frequency_hz), # nominal_frequency_hz
         [], # slackVec
         vmin_pu, # vmin_pu
         vmax_pu, # vmax_pu
@@ -223,7 +233,8 @@ mutable struct Net
         nothing,                                   # _import_config
         String[],                                  # tapModelNotices
         nothing,                                   # _power_cache
-        Int[])                                     # _marked_iso
+        Int[],                                     # _marked_iso
+        false)                                     # _frequency_from_case
   end
   #! format: on
   function Base.show(io::IO, net::Net)
@@ -237,6 +248,13 @@ mutable struct Net
     println(io, "Tap controllers: ", sum(length, (t.side1.controls for t in net.trafos); init = 0) + sum(length, (t.side2.controls for t in net.trafos); init = 0) + sum((isnothing(t.side3) ? 0 : length(t.side3.controls) for t in net.trafos); init = 0))
     isempty(net.machineControls) || println(io, "Machine controllers: ", length(net.machineControls))
   end
+end
+
+# a frequency that is not a positive finite number would turn every line
+# capacitance into a wrong susceptance without any other sign (0 gives b = 0)
+function _check_nominal_frequency(f, context::AbstractString)
+  (f isa Real && !(f isa Bool) && isfinite(f) && f > 0) || throw(ArgumentError("$(context): nominal_frequency_hz must be a positive number in Hz, got $(repr(f))."))
+  return nothing
 end
 
 const BUS_SHUNT_ADMITTANCE = :admittance
@@ -560,7 +578,9 @@ const _NET_PARAM_STAMP_COUNT = Base.Threads.Atomic{Int}(0)
     _apply_config_net_parameters!(net, pf_cfg) -> Net
 
 Stamp the solver-behaviour parameters the configuration owns onto a network:
-the Q-limit switching cooldown and hysteresis, and the flat-start flag. Every
+the Q-limit switching cooldown and hysteresis, and the flat-start flag. The
+method for a full `SparlectraConfig` also stamps the system frequency
+(`model.nominal_frequency_hz`) unless the case file stated one. Every
 construction path calls this, and no path carries its own copy of the
 assignments, because four paths setting them differently is exactly how a
 case file came to run with hysteresis 0 whatever the configuration said.
@@ -592,7 +612,13 @@ function _apply_config_net_parameters!(net::Net, pf_cfg)
   return net
 end
 
-_apply_config_net_parameters!(net::Net, cfg::SparlectraConfig) = _apply_config_net_parameters!(net, cfg.powerflow)
+function _apply_config_net_parameters!(net::Net, cfg::SparlectraConfig)
+  _apply_config_net_parameters!(net, cfg.powerflow)
+  # the system frequency of the run, unless the case file stated its own
+  # (SCF meta.f_nom, rank 1); formats without a statement take the key
+  net._frequency_from_case || (net.nominal_frequency_hz = cfg.model.nominal_frequency_hz)
+  return net
+end
 
 """
     refreshBusTypesFromProsumers!(net)
@@ -839,7 +865,7 @@ Parameters:
 - `ratio::Union{Nothing,Float64} = nothing`: Ratio of the branch (default is nothing).
 - `side::Union{Nothing,Int} = nothing`: Side of the branch (default is nothing).
 - `vn_kV::Union{Nothing,Float64} = nothing`: Nominal voltage of the branch in kV (default is nothing).
-- `values_are_pu = false`: Boolean indicating if the values are in per unit (default is false).
+- `values_are_pu = false`: Boolean indicating if the transformer values are in per unit (default is false). Ignored for an `ACLineSegment`, which carries the unit of its values itself.
 """
 function addBranch!(; net::Net, from::Int, to::Int, branch::AbstractBranch, status::Integer = 1, ratio = nothing, side = nothing, vn_kV = nothing, values_are_pu::Bool = false, from_status::Union{Nothing,Integer} = nothing, to_status::Union{Nothing,Integer} = nothing, shunt_split::Union{Nothing,NTuple{4,Float64}} = nothing, tap_changer_model::Symbol = :ideal)
   @assert from != to "From and to bus must be different"
@@ -954,53 +980,128 @@ function updateBranchParameters!(; net::Net, branchNr::Int, branch::BranchModel)
   br.sn_MVA = branch.sn_MVA
 end
 
+# Keywords of the per-unit addACLine! before 0.50.0. They are rejected by
+# name instead of being translated: r = 0.05 meant per unit there and would
+# mean ohm now, a silent reading would change the network by Z_base.
+const _ACLINE_REMOVED_KEYWORDS = (:length, :r, :x, :b, :g, :c_nf_per_km, :tanδ)
+
+# Throw for keywords a line builder does not take. A removed keyword gets a
+# message that names the three builders and their units.
+function _reject_acline_keywords(fname::AbstractString, extra, removed)
+  isempty(extra) && return nothing
+  given = collect(keys(extra))
+  old = [k for k in given if k in removed]
+  if !isempty(old)
+    throw(ArgumentError(string(fname, ": keyword ", join(string.(old), ", "), " is no longer accepted (0.50.0). ",
+      "Use addACLine! with the line totals r_ohm, x_ohm, b_s, g_s (ohm and siemens), ",
+      "addACLinePerKm! with length_km, r_ohm_per_km, x_ohm_per_km, c_nf_per_km and g_us_per_km or tanδ, ",
+      "or addPIModelACLine! with per-unit values r_pu, x_pu, b_pu.")))
+  end
+  throw(ArgumentError(string(fname, ": unsupported keyword ", join(string.(given), ", "), ".")))
+end
+
 """
-    addACLine!(; net::Net, fromBus::String, toBus::String, length::Float64, r::Float64, x::Float64,
-               b = nothing, c_nf_per_km = nothing, tanδ = nothing, ratedS = nothing,
+    addACLine!(; net::Net, fromBus::String, toBus::String, r_ohm::Float64, x_ohm::Float64,
+               b_s::Float64 = 0.0, g_s::Float64 = 0.0, length_km = nothing, ratedS = nothing,
                status::Int = 1, from_status = nothing, to_status = nothing)
 
-Adds an AC line between two buses of the same voltage level. `r`, `x` and
-`b` are per-unit values on the bus voltage and `net.baseMVA`; the branch
-takes them without conversion. For lines given in Ohm and Siemens convert
-first with `toPU_RXBG`, or use [`addPIModelACLine!`](@ref).
+Adds an AC line between two buses of the same voltage level from the totals
+of the whole line in physical units. The values are converted to per unit on
+the bus voltage and `net.baseMVA` with [`toPU_RXBG`](@ref); the line keeps
+the ohm and siemens values (see [`ACLineSegment`](@ref)).
 
-`length` decides how `r`, `x` and `b` are read: with `length > 1` they are
-the totals of the line and `length` is not applied to them; with
-`length <= 1` they are multiplied by `length`.
+For data given per km use [`addACLinePerKm!`](@ref), for per-unit data
+[`addPIModelACLine!`](@ref).
 
 # Arguments
 - `net::Net`: The network.
 - `fromBus::String`, `toBus::String`: Names of the two buses.
-- `length::Float64`: Length of the line, see above.
-- `r::Float64`: Series resistance in p.u.
-- `x::Float64`: Series reactance in p.u.
-- `b::Union{Nothing,Float64} = nothing`: Total charging susceptance in p.u. When given, `c_nf_per_km` and `tanδ` are ignored.
-- `c_nf_per_km::Union{Nothing,Float64} = nothing`, `tanδ::Union{Nothing,Float64} = nothing`: Capacitance in nF/km and loss factor, used only when `b` is not given and both are set. They give `b = 2π·50 Hz·C` and `g = tanδ·b` in Siemens with `C = c_nf_per_km·length` nF. These values are not converted to per unit either: the branch reads the Siemens values as p.u. A call with `c_nf_per_km` other than 0 and without `b` logs a warning; the call changes in 0.50.0.
+- `r_ohm::Float64`, `x_ohm::Float64`: Series resistance and reactance of the line in ohm.
+- `b_s::Float64 = 0.0`: Total shunt susceptance in siemens, split half and half onto the two ends.
+- `g_s::Float64 = 0.0`: Total shunt conductance in siemens, split the same way.
+- `length_km::Union{Nothing,Float64} = nothing`: Length in km. Information only: used by `show` and as CGMES `Conductor.length` in the export; it does not scale the values.
 - `ratedS::Union{Nothing,Float64} = nothing`: Rated power in MVA.
 - `status::Int = 1`: 1 in service, 0 out of service.
 - `from_status`, `to_status`: The switch state of each end (0 or 1); `nothing` (default) takes `status`.
+
+The keywords of the per-unit form before 0.50.0 (`r`, `x`, `b`, `length`,
+`c_nf_per_km`, `tanδ`) throw an `ArgumentError` that names the replacement.
+
+# Example
+```julia
+addACLine!(net = net, fromBus = "B1", toBus = "B2", r_ohm = 2.4, x_ohm = 7.8, b_s = 5.7e-5, length_km = 20.0)
+```
 """
-function addACLine!(; net::Net, fromBus::String, toBus::String, length::Float64, r::Float64, x::Float64, b::Union{Nothing,Float64} = nothing, c_nf_per_km::Union{Nothing,Float64} = nothing, tanδ::Union{Nothing,Float64} = nothing, ratedS::Union{Nothing,Float64} = nothing, status::Int = 1, from_status::Union{Nothing,Integer} = nothing, to_status::Union{Nothing,Integer} = nothing)
+function addACLine!(; net::Net, fromBus::String, toBus::String, r_ohm::Union{Nothing,Float64} = nothing, x_ohm::Union{Nothing,Float64} = nothing, b_s::Float64 = 0.0, g_s::Float64 = 0.0, length_km::Union{Nothing,Float64} = nothing, ratedS::Union{Nothing,Float64} = nothing, status::Int = 1, from_status::Union{Nothing,Integer} = nothing, to_status::Union{Nothing,Integer} = nothing, kwargs...)
+  # r_ohm and x_ohm are required but declared with a nothing default: a call
+  # with the removed keywords must reach this message, not stop at Julia's
+  # UndefKeywordError for r_ohm
+  _reject_acline_keywords("addACLine!", kwargs, _ACLINE_REMOVED_KEYWORDS)
+  r_ohm === nothing && throw(UndefKeywordError(:r_ohm))
+  x_ohm === nothing && throw(UndefKeywordError(:x_ohm))
   @assert fromBus != toBus "From and to bus must be different"
+  length_km === nothing || length_km >= 0.0 || throw(ArgumentError("addACLine!: length_km must not be negative, got $(length_km)."))
   from = geNetBusIdx(net = net, busName = fromBus)
   to = geNetBusIdx(net = net, busName = toBus)
   vn_kV = getNodeVn(net.nodeVec[from])
   vn_2_kV = getNodeVn(net.nodeVec[to])
   @assert vn_kV == vn_2_kV "Voltage level of the from bus $(vn_kV) does not match the to bus $(vn_2_kV)"
-  # the capacitance path stores siemens as per unit (see the docstring);
-  # 0.50.0 changes the call, so a caller who relies on it is told now
-  if c_nf_per_km !== nothing && c_nf_per_km != 0.0 && b === nothing
-    @warn "addACLine!: c_nf_per_km gives a susceptance in siemens that is read as per unit (Z_base times too small), and without tanδ it is ignored. Pass b in per unit or use addPIModelACLine!; the call changes in 0.50.0." maxlog = 1
-  end
-  if length > 1.0
-    _par_length = true
-  else
-    _par_length = false
-  end
-  acseg = ACLineSegment(vn_kv = vn_kV, from = from, to = to, length = length, r = r, x = x, b = b, c_nf_per_km = c_nf_per_km, tanδ = tanδ, ratedS = ratedS, paramsBasedOnLength = _par_length, isPIModel = false)
+  acseg = ACLineSegment(vn_kv = vn_kV, from = from, to = to, r = r_ohm, x = x_ohm, b = b_s, g = g_s, length_km = length_km, ratedS = ratedS, isPIModel = false)
   push!(net.linesAC, acseg)
 
-  addBranch!(net = net, from = from, to = to, branch = acseg, vn_kV = vn_kV, status = status, values_are_pu = true, from_status = from_status, to_status = to_status)
+  # the branch converts the ohm and siemens totals through getLineRXBG_pu
+  addBranch!(net = net, from = from, to = to, branch = acseg, vn_kV = vn_kV, status = status, from_status = from_status, to_status = to_status)
+end
+
+"""
+    addACLinePerKm!(; net::Net, fromBus::String, toBus::String, length_km::Float64,
+                    r_ohm_per_km::Float64, x_ohm_per_km::Float64, c_nf_per_km::Float64,
+                    g_us_per_km = nothing, tanδ = nothing, ratedS = nothing,
+                    status::Int = 1, from_status = nothing, to_status = nothing)
+
+Adds an AC line from values per km (the form of pandapower line types and of
+most cable and overhead-line data sheets). Every value is multiplied by
+`length_km`, then the line takes the same path as [`addACLine!`](@ref).
+
+The susceptance comes from the capacitance, `b = 2π·f·C`, with the system
+frequency `f` of the network (`net.nominal_frequency_hz`; a new `Net` takes
+`model.nominal_frequency_hz`, default 50 Hz). The conductance comes from `g_us_per_km` or from the loss
+factor, `g = tanδ·b`; without either it is zero. Giving both is an error.
+
+# Arguments
+- `net::Net`: The network.
+- `fromBus::String`, `toBus::String`: Names of the two buses.
+- `length_km::Float64`: Length in km, greater than zero.
+- `r_ohm_per_km::Float64`, `x_ohm_per_km::Float64`: Series resistance and reactance in ohm/km.
+- `c_nf_per_km::Float64`: Capacitance in nF/km (0.0 for a line without charging).
+- `g_us_per_km::Union{Nothing,Float64} = nothing`: Shunt conductance in µS/km.
+- `tanδ::Union{Nothing,Float64} = nothing`: Loss factor of the capacitance.
+- `ratedS`, `status`, `from_status`, `to_status`: as for [`addACLine!`](@ref).
+
+# Example
+```julia
+# 20 km of a 110 kV overhead line
+addACLinePerKm!(net = net, fromBus = "B1", toBus = "B2", length_km = 20.0, r_ohm_per_km = 0.12, x_ohm_per_km = 0.39, c_nf_per_km = 9.5)
+```
+"""
+function addACLinePerKm!(; net::Net, fromBus::String, toBus::String, length_km::Union{Nothing,Float64} = nothing, r_ohm_per_km::Union{Nothing,Float64} = nothing, x_ohm_per_km::Union{Nothing,Float64} = nothing, c_nf_per_km::Union{Nothing,Float64} = nothing, g_us_per_km::Union{Nothing,Float64} = nothing, tanδ::Union{Nothing,Float64} = nothing, ratedS::Union{Nothing,Float64} = nothing, status::Int = 1, from_status::Union{Nothing,Integer} = nothing, to_status::Union{Nothing,Integer} = nothing, kwargs...)
+  # required keywords with a nothing default, for the reason given in addACLine!
+  _reject_acline_keywords("addACLinePerKm!", kwargs, _ACLINE_REMOVED_KEYWORDS)
+  for (name, value) in ((:length_km, length_km), (:r_ohm_per_km, r_ohm_per_km), (:x_ohm_per_km, x_ohm_per_km), (:c_nf_per_km, c_nf_per_km))
+    value === nothing && throw(UndefKeywordError(name))
+  end
+  length_km > 0.0 || throw(ArgumentError("addACLinePerKm!: length_km must be greater than zero, got $(length_km)."))
+  g_us_per_km === nothing || tanδ === nothing || throw(ArgumentError("addACLinePerKm!: give g_us_per_km or tanδ, not both."))
+  f_hz = net.nominal_frequency_hz
+  b_s = 2.0 * pi * f_hz * c_nf_per_km * 1.0e-9 * length_km
+  g_s = if g_us_per_km !== nothing
+    g_us_per_km * 1.0e-6 * length_km
+  elseif tanδ !== nothing
+    tanδ * b_s
+  else
+    0.0
+  end
+  return addACLine!(net = net, fromBus = fromBus, toBus = toBus, r_ohm = r_ohm_per_km * length_km, x_ohm = x_ohm_per_km * length_km, b_s = b_s, g_s = g_s, length_km = length_km, ratedS = ratedS, status = status, from_status = from_status, to_status = to_status)
 end
 
 function _addPIModelACLine_by_idx!(; net::Net, from::Int, to::Int, r_pu::Float64, x_pu::Float64, b_pu::Float64, g_pu::Union{Nothing,Float64} = nothing, status::Int, ratedS::Union{Nothing,Float64} = nothing, from_status::Union{Nothing,Integer} = nothing, to_status::Union{Nothing,Integer} = nothing, g_from_pu = nothing, b_from_pu = nothing, g_to_pu = nothing, b_to_pu = nothing)
@@ -1015,7 +1116,7 @@ function _addPIModelACLine_by_idx!(; net::Net, from::Int, to::Int, r_pu::Float64
     g_pu = split[1] + split[3]
     b_pu = split[2] + split[4]
   end
-  acseg = ACLineSegment(vn_kv = vn_kV, from = from, to = to, length = 1.0, r = r_pu, x = x_pu, b = b_pu, g = g_pu, ratedS = ratedS, paramsBasedOnLength = false, isPIModel = true)
+  acseg = ACLineSegment(vn_kv = vn_kV, from = from, to = to, r = r_pu, x = x_pu, b = b_pu, g = something(g_pu, 0.0), ratedS = ratedS, isPIModel = true)
   push!(net.linesAC, acseg)
 
   addBranch!(net = net, from = from, to = to, branch = acseg, vn_kV = vn_kV, status = status, values_are_pu = true, from_status = from_status, to_status = to_status, shunt_split = split)

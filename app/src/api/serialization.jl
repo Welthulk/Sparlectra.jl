@@ -170,16 +170,18 @@ function _write_yaml(io::IO, value; indent::Int = 0)
   if value isa AbstractDict
     for key in sort!(collect(keys(value)); by = string)
       item = value[key]
+      # bare or quoted as the reader reads it back (_yaml_key_text)
+      ktext = _yaml_key_text(key)
       if item isa AbstractDict
-        println(io, prefix, key, ":")
+        println(io, prefix, ktext, ":")
         _write_yaml(io, item; indent = indent + 2)
       elseif item isa AbstractVector && all(entry -> !(entry isa AbstractDict || entry isa AbstractVector), item)
-        println(io, prefix, key, ": [", join((_yaml_scalar(entry) for entry in item), ", "), "]")
+        println(io, prefix, ktext, ": [", join((_yaml_scalar(entry) for entry in item), ", "), "]")
       elseif item isa AbstractVector
-        println(io, prefix, key, ":")
+        println(io, prefix, ktext, ":")
         _write_yaml(io, item; indent = indent + 2)
       else
-        println(io, prefix, key, ": ", _yaml_scalar(item))
+        println(io, prefix, ktext, ": ", _yaml_scalar(item))
       end
     end
   elseif value isa AbstractVector

@@ -2735,8 +2735,7 @@ end
 # the report can put model, estimate and fixed step side by side.
 function _tap_model_steps(br::Branch)
   r10, r20 = _tap_r0_split(br, br.tap_est_mode, br.tap_est_alpha_deg)
-  step1 = br.tap_step > 0.0 ? br.tap_step : 0.00625
-  m1 = r10 / step1
+  m1 = _tap_r1_position(br, r10)
   if br.phase_du_step > 0.0
     return m1, r20 / br.phase_du_step
   end
@@ -3624,11 +3623,11 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
       k in liveIdxs && continue
       br = net.branchVec[k]
       r10, r20 = _tap_r0_split(br, br.tap_est_mode, br.tap_est_alpha_deg)
-      step1 = br.tap_step > 0.0 ? br.tap_step : 0.00625
+      p10 = _tap_r1_position(br, r10)
       s2 = calcSkewAngleTap(tap_fraction = r20, skew_angle_deg = br.tap_est_alpha_deg)
       step2 = br.phase_step_deg > 0.0 ? br.phase_step_deg : 1.25
       ob = get(cidToOrig, br.comp.cID, k)
-      push!(rows, (branch = ob, name = getCompName(br.comp), mrid = get(mrids, ob, ""), mode = br.tap_est_mode, alpha_deg = br.tap_est_alpha_deg, r1_est = r10, r2_est = r20, model_step_1 = r10 / step1, model_step_2 = _tap_model_steps(br)[2], electrical_step_1 = r10 / step1, fixed_step_1 = Int(round(r10 / step1, RoundNearestTiesAway)), electrical_step_2 = s2.effective_shift_deg / step2, fixed_step_2 = Int(round(s2.effective_shift_deg / step2, RoundNearestTiesAway)), out_of_range = false, fixed = false, frozen_reason = reason))
+      push!(rows, (branch = ob, name = getCompName(br.comp), mrid = get(mrids, ob, ""), mode = br.tap_est_mode, alpha_deg = br.tap_est_alpha_deg, r1_est = r10, r2_est = r20, model_step_1 = p10, model_step_2 = _tap_model_steps(br)[2], electrical_step_1 = p10, fixed_step_1 = Int(round(p10, RoundNearestTiesAway)), electrical_step_2 = s2.effective_shift_deg / step2, fixed_step_2 = Int(round(s2.effective_shift_deg / step2, RoundNearestTiesAway)), out_of_range = false, fixed = false, frozen_reason = reason))
     end
     tapEstimates = rows
     # write-back of the FIXED mechanical positions: only on explicit request
@@ -3857,9 +3856,8 @@ function validate_measurements(net::Net, measurements::Vector{Measurement})
       (tr.fixed && tr.frozen_reason == :none) || continue
       br = netLocal.branchVec[tr.branch]
       br.ratio == 0.0 && continue
-      step1 = br.tap_step > 0.0 ? br.tap_step : 0.00625
       step2 = br.phase_step_deg > 0.0 ? br.phase_step_deg : 1.25
-      r1 = tr.mode in (:ratio, :both) ? tr.fixed_step_1 * step1 : 0.0
+      r1 = tr.mode in (:ratio, :both) ? _tap_r1_at(br, tr.fixed_step_1) : 0.0
       r2 = 0.0
       if tr.mode in (:pst, :both)
         if br.phase_du_step > 0.0

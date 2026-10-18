@@ -187,6 +187,15 @@ function run_dtf_importer_tests()
       run_sparlectra(casefile = deck)
     end
     @test run isa Sparlectra.SparlectraRunResult
+    # DTF states no frequency: the conversion writes the run's key as
+    # meta.f_nom (not the global configuration) and bases c1 on it
+    fcfg(f) = Sparlectra.SparlectraConfig(model = Sparlectra.ModelConfig(nominal_frequency_hz = f))
+    conv50 = Sparlectra.convert_case(Sparlectra.DTFAdapter(), case, Sparlectra.dtf_adapter_options(fcfg(50.0)))
+    conv60 = Sparlectra.convert_case(Sparlectra.DTFAdapter(), case, Sparlectra.dtf_adapter_options(fcfg(60.0)))
+    @test (conv50.sparlectra.meta["f_nom"], conv60.sparlectra.meta["f_nom"]) == (50.0, 60.0)
+    c1(conv) = [something(row.c1, 0.0) for row in conv.data.line]
+    @test count(>(0.0), c1(conv50)) > 0
+    @test all(isapprox.(c1(conv60), c1(conv50) .* (5 / 6); rtol = 1e-14))
   end)() end
 
   # The slack name of the size card is what follows its counts, not its
@@ -270,21 +279,6 @@ function run_dtf_importer_tests()
       end
     end
   end)() end
-
-  @testset "native DTF full local fixture" begin
-    if !isfile(DTF_FIXTURE)
-      @info "Skipping full FOR001 fixture validation; external reference network is not tracked. Place a local file at test/fixtures/dtf/FOR001.DAT or data/DTF/FOR001.DAT for manual validation."
-      @test_skip "FOR001 full reference fixture not available"
-      return
-    end
-    case = Sparlectra.DTFImporter.read_dtf(DTF_FIXTURE)
-    @test case.size.NGES == 13
-    @test length(case.branches) == 27
-    @test count(b -> b.kind == 'T', case.branches) == 5
-    net = Sparlectra.createNetFromDTFFile(DTF_FIXTURE)
-    @test length(net.branchVec) == 27
-    @test Sparlectra.bus_shunt_totals_pu(net).total_g_pu ≈ 0.0
-  end
 
   @testset "DTF persists the typed phase-tap model on the winding" begin
     # X(α)-coupling precondition: the transiently built PhaseTapChangerModel

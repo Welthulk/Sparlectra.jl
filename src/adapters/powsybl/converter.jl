@@ -31,6 +31,8 @@ the slack choice, whether every synchronous component gets its own
 slack, how a remote voltage regulation is mapped (`:hold_local` keeps
 the unit PV at its own bus, `:pq` makes it PQ with `target_q`, `:remote`
 attaches an outer-loop machine voltage control on the regulated bus).
+`f_nom` is the system frequency in Hz the conversion writes into the case
+(`model.nominal_frequency_hz`; IIDM states none).
 """
 Base.@kwdef struct PowsyblAdapterOptions
   base_mva::Float64 = 100.0
@@ -38,6 +40,7 @@ Base.@kwdef struct PowsyblAdapterOptions
   slack_ids::Vector{String} = String[]
   multi_slack::Bool = true
   remote_regulation::Symbol = :hold_local
+  f_nom::Float64 = model_config().nominal_frequency_hz
 end
 
 include("powsybl_tables.jl")
@@ -56,7 +59,7 @@ The adapter options an effective run configuration implies (the
 """
 function powsybl_adapter_options(cfg::SparlectraConfig)::PowsyblAdapterOptions
   pw = cfg.powsybl
-  return PowsyblAdapterOptions(base_mva = pw.base_mva, hvdc_mode = pw.hvdc_mode, slack_ids = copy(pw.slack_ids), multi_slack = pw.multi_slack, remote_regulation = pw.remote_regulation)
+  return PowsyblAdapterOptions(base_mva = pw.base_mva, hvdc_mode = pw.hvdc_mode, slack_ids = copy(pw.slack_ids), multi_slack = pw.multi_slack, remote_regulation = pw.remote_regulation, f_nom = cfg.model.nominal_frequency_hz)
 end
 
 const _POWSYBL_FILE_EXTENSIONS = (".xiidm", ".xml")
@@ -142,7 +145,9 @@ Build the network and capture it as a typed case (`source_format =
 """
 function convert_case(::PowsyblAdapter, source::AbstractString, opts::PowsyblAdapterOptions)::SCFCase
   net, report, tables = _import_powsybl(source, opts)
-  case = net_to_scfcase(net; source_format = "powsybl", source_reference = basename(String(source)), include_start_state = true)
+  # the frequency of the conversion, not the global one (meta.f_nom, c1)
+  net.nominal_frequency_hz = opts.f_nom
+  case = net_to_scfcase(net; f_nom = opts.f_nom, source_format = "powsybl", source_reference = basename(String(source)), include_start_state = true)
   spar = case.sparlectra
   if spar !== nothing
     spar.meta["powsybl_import"] = Dict{String,Any}(

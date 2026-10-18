@@ -94,7 +94,7 @@ the extended test profile.
 | `run_cgmes_suite.jl` | guided walkthrough plus the sweep over every ENTSO-E/ReliCapGrid test set | cgmes |
 | `cgmes/cgmes_fetch_testsets.jl` | one-time fetch of the ENTSO-E test-set package into the local cache | standalone |
 | `cgmes/cgmes_export_demo.jl` | CGMES export (`writeCGMESFiles`) on a small net | others (optional) |
-| `cgmes/cgmes_export_physical.jl` | CGMES export of a net built from line data in ohm/km and nF/km (`toPU_RXBG`, `addPIModelACLine!`), with the re-import | others |
+| `cgmes/cgmes_export_physical.jl` | CGMES export of a net built from line data in ohm/km and nF/km (`addACLinePerKm!`), with the re-import | others |
 | `cgmes/val_realgrid_remeasure.jl` | RealGrid measurement ladder: baseline, Q-limits, distributed slack, machine control | standalone |
 
 ## DTF validation (Testnetz13 / FOR001-FOR002)
@@ -122,7 +122,9 @@ External FOR001/FOR002 datasets are not shipped; place files under
 | `state_estimation_shunt_estimation.jl` | shunt estimation as a state (case A) and as a `SHDERIV` pseudo-measurement (case B) | state_estimation |
 | `state_estimation_links_facts.jl` | SE on the contracted net (links): `LINKAGG`, `se_view` | state_estimation |
 | `state_estimation_robust.jl` | robust R modification suppressing a gross error | state_estimation |
-| `state_estimation_chain.jl` | measurement CSV v1 round trip and the SE-started PF (`runpf_from_se!`) | state_estimation |
+| `state_estimation_chain.jl` | measurement table round trip (`readMeasurementTable!`) and the SE-started PF (`runpf_from_se!`) | state_estimation |
+| `state_estimation_convert_measurements.jl` | migration from the measurement CSV v1: `convertMeasurementsV1` on `sp_case14`, the same measurements and the same estimate from both files | state_estimation |
+| `state_estimation_measurement_table.jl` | measurement table: generator and estimation on `sp_case14` (name keys, noise 0 and with noise), pseudo rows for cut injection rows, bad-data elimination on the SmallGrid fixture (mRID keys) | state_estimation |
 | `bench_takahashi_diagnostics.jl` | benchmark: dense `pinv` vs Takahashi selected inverse (`takahashi_min_states`) | (manual, not in suite) |
 | `h_matrix_observability_demo.jl` | matrix-level observability/redundancy exploration | state_estimation |
 | `mc_state_estimation_study.jl` | Monte-Carlo WLS error statistics on the 7-bus [workshop-tour network](generated/workshop_tour.md) (M = 500) | state_estimation |

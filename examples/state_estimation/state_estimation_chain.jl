@@ -15,7 +15,7 @@
 # Date: 2026-08-26
 # file: examples/state_estimation/state_estimation_chain.jl
 # purpose: SE phase 5 walkthrough of the measurement-to-N-1 chain, program
-#          side: write/read a measurement CSV v1 (lossless roundtrip), run
+#          side: write/read a measurement table (lossless roundtrip), run
 #          the SE, then start the power flow from the estimate with both
 #          modes (se_state: model authoritative; se_snapshot: balance
 #          takeover, immediate convergence, slack pickup at tolerance). The
@@ -32,9 +32,9 @@ function _create_demo_net()
   for b in ("Slack", "LoadA", "LoadB")
     addBus!(net = net, busName = b, vn_kV = 110.0)
   end
-  addACLine!(net = net, fromBus = "Slack", toBus = "LoadA", length = 12.0, r = 0.02, x = 0.2, c_nf_per_km = 0.0, tanδ = 0.0)
-  addACLine!(net = net, fromBus = "LoadA", toBus = "LoadB", length = 9.0, r = 0.02, x = 0.2, c_nf_per_km = 0.0, tanδ = 0.0)
-  addACLine!(net = net, fromBus = "Slack", toBus = "LoadB", length = 11.0, r = 0.02, x = 0.2, c_nf_per_km = 0.0, tanδ = 0.0)
+  addPIModelACLine!(net = net, fromBus = "Slack", toBus = "LoadA", r_pu = 0.02, x_pu = 0.2, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "LoadA", toBus = "LoadB", r_pu = 0.02, x_pu = 0.2, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "Slack", toBus = "LoadB", r_pu = 0.02, x_pu = 0.2, b_pu = 0.0, status = 1)
   addProsumer!(net = net, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "Slack")
   addProsumer!(net = net, busName = "LoadA", type = "ENERGYCONSUMER", p = 35.0, q = 12.0)
   addProsumer!(net = net, busName = "LoadB", type = "ENERGYCONSUMER", p = 28.0, q = 9.0)
@@ -44,21 +44,22 @@ function _create_demo_net()
 end
 
 function run_state_estimation_chain()
-  print_example_banner("examples/state_estimation/state_estimation_chain.jl", "measurement CSV roundtrip, SE, and the PF started from the estimate (se_state / se_snapshot)")
+  print_example_banner("examples/state_estimation/state_estimation_chain.jl", "measurement table roundtrip, SE, and the PF started from the estimate (se_state / se_snapshot)")
 
   net = _create_demo_net()
   iteFlat, erg = runpf!(net, 40, 1e-10, 0; method = :rectangular, opt_flatstart = true)
   erg == 0 || error("Power flow did not converge")
   @printf("flat-start PF: %d iterations\n\n", iteFlat)
 
-  # 1) measurement CSV v1: write the synthetic set, wipe, read it back
+  # 1) measurement table: write the synthetic set (keyed by element
+  # names), wipe, read it back
   dir = mktempdir()
   mfile = joinpath(dir, "demo.measurements.csv")
-  append!(net.measurements, generateMeasurementsFromPF(net; noise = false))
-  w = writeMeasurementsCSV(net; file = mfile)
+  rows = generateMeasurementTableFromPF(net; noise = false, include_injections = true)
+  writeMeasurementTable(mfile, rows; comments = ["case: se_chain_demo"])
   empty!(net.measurements)
-  r = readMeasurementsCSV!(net; file = mfile)
-  @printf("measurement CSV v1: wrote %d rows, read %d back (atomic, line-precise errors on bad files)\n\n", w.count, r.total)
+  set = readMeasurementTable!(net; file = mfile)
+  @printf("measurement table: wrote %d rows, %d measurements back (bus sums formed, %d problem row(s))\n\n", length(rows), length(set.measurements), length(set.problems))
 
   # 2) the estimation registers the chain start state
   res = with_state_estimation_config(max_iter = 30, tol = 1e-10, update_net = true) do

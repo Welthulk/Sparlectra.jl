@@ -1,43 +1,30 @@
 State Estimation Measurements
 ==============================
 
-Measurement sets travel as CSV files or inside a case file. This page
-covers the file format, the measurement generator, the case-file binding
-and the power flow chained onto an estimate. The estimator itself is on
-[State Estimation](state_estimation.md).
+Measurement sets travel as measurement tables or inside a case file. This
+page covers the files, the measurement generator, the case-file binding and
+the power flow chained onto an estimate. The estimator itself is on
+[State Estimation](state_estimation.md); the format of the table (columns,
+keys, units, signs) on [Measurement table](state_estimation_measurement_table.md).
 
 ## [Measurement files and the SE chain](@id se-measurement-files)
 
-`writeMeasurementsCSV(net; file)` and
-`readMeasurementsCSV!(net; file, replace = true)` persist measurement sets
-as UTF-8 CSV. The first line is the version comment, the second the header:
+The measurement table (first line `# sparlectra-measurement-table v1`, one
+row per measured value, keyed by element name or CGMES mRID, values in MW,
+MVAr, A, kV and degrees) is the measurement format of Sparlectra. The Web
+UI generator and "add noise" write it, and the sets shipped with the demo
+cases are tables. `readMeasurementTable!(net; file)` reads one set into
+`net.measurements`; `writeMeasurementTable(file, rows)` writes rows, for
+example from `generateMeasurementTableFromPF`. The measurement CSV v1 is
+deprecated (see [Deprecated: measurement CSV v1](@ref se_measurement_csv_v1)).
 
-    # sparlectra-measurements v1
-    type,bus,from_bus,to_bus,branch_nr,link_nr,direction,value,sigma,active,id
+The `measurements.csv` artifact of an estimation run keeps the layout of
+the CSV v1 with two verdict columns behind `id`: `bad_data` holds `*` on
+every row the diagnostics flagged, `status` says `critical measurement`
+where the loss of the row would leave the set unobservable. The table has
+no columns for that verdict.
 
-### File format
-
-| column | meaning | rule |
-|---|---|---|
-| `type` | measurement type (`VmMeas`, `PinjMeas`, ...) | an unknown type name rejects the whole file |
-| `bus` | bus of a bus-referenced row | location group 1; buses by name, matched whitespace-insensitively. On CGMES-sourced nets the generator references buses by their preserved ENTSO-E mRID (`writeMeasurementsCSV(busReference = :mrid)`); the reader resolves names, component ids and mRIDs alike; MATPOWER and DTF nets keep bus numbers/names |
-| `from_bus`, `to_bus` | branch endpoints | location group 2, together with `branch_nr` |
-| `branch_nr` | branch index | disambiguates parallel branches; the reader verifies it against the named endpoints and rejects a mismatch. Files without a `branch_nr` column are still read; their branch rows resolve by bus pair and reject parallels (same rule as `addPflowMeasurement!`) |
-| `link_nr` | link index | location group 3 |
-| `direction` | branch end (`:from`/`:to`) | branch rows only |
-| `value`, `sigma` | measured value and standard deviation in the type's unit | numbers keep their shortest round-trip form |
-| `active` | active flag | inactive rows are kept in the file |
-| `id` | measurement id | prefixes `ZI` (zero injection) and `SHDERIV` (derived shunt Q) mark protected rows |
-| `bad_data`, `status` | run artifact only: the `measurements.csv` of an estimation run repeats the verdict per row behind `id`, `bad_data` holds `*` on every row the diagnostics flagged, `status` says `critical measurement` where the loss of the row would leave the set unobservable | the reader ignores both columns, so the artifact reads back as the same set |
-
-Exactly one location group per row (`bus` |
-`from_bus`+`to_bus`+`branch_nr` | `link_nr`). Delimiter and decimal
-separator follow `output.csv_format` of the writing run or session
-(`excel_de`: semicolon and decimal comma); the reader tells the format from
-the header line, and a round trip reproduces every row exactly. The import
-is atomic with line-precise errors (`file:line: reason`).
-
-**Comment blocks**
+**Comment blocks.** A table carries them as `#` lines before its header.
 
 | comment | written by | content |
 |---|---|---|
@@ -109,7 +96,7 @@ else, because the Web UI mass release skips it and the deviation would
 leave an unexplainable model error (`J` far above `dof`); the estimator run
 warns in that case.
 
-The deviation lies on the tap-fraction grid of the estimator's fixation, so
+The deviation lies on the ratio grid the estimator fixes on, so
 tap estimation recovers it exactly and the fixation run ends near `J = 0`;
 without tap estimation the band test reports `:high` with the suspects
 clustered at that transformer. Off-grid positions are not a generator
@@ -150,8 +137,9 @@ critical measurements are configurable in the Web UI form.
 | | `from run` | adopts the solved voltages of a successful run of the same case from the run history (SE runs through `se_state.csv`, power-flow runs through `bus_voltages_complex.csv`, any CSV export format), bit-exact against the artifact |
 | Flow measurements per branch | `both ends` (default) | measures P/Q (and I) at from and to |
 | | `one end (balance-aware)` | keeps one flow group per branch; the end at a bus with injection telemetry is preferred (`ZI` rows do not count), the from end wins when both or neither qualify; the choice is documented per branch in the set's `# flow_end,...` comments |
-| Passive nodes | checkbox (default on) | buses without generation, load and shunt (`findPassiveBuses`) are written as protected zero-injection constraints (`addZeroInjectionMeasurements!` rows, prefix `ZI`, excluded from elimination and robust modification, at the configured sigma but never tighter than `ZERO_INJECTION_SIGMA` = 0.001 MW) and no duplicate injection rows |
+| Passive nodes | checkbox (`state_estimation.zero_injection`, default on) | buses without generation, load and shunt (`findPassiveBuses`) are written as protected zero-injection constraints (`addZeroInjectionMeasurements!` rows, prefix `ZI`, excluded from elimination and robust modification, at the configured sigma but never tighter than `ZERO_INJECTION_SIGMA` = 0.001 MW) and no duplicate injection rows |
 | | off | explicit zero balance rows `Pinj/Qinj = 0` at the configured sigma (default 0.05 MW/MVar) |
+| | both | the checkbox is the case's `state_estimation.zero_injection`: it is seeded from the configuration, and a generation writes it into the case configuration file, so the SE runs of the case (measurement CSV, case file, measurement table) follow it; see [State-Estimation Configuration](state_estimation_configuration.md) |
 | `critical measurements` | count (0 = off) | thins the set until that many rows are critical; the set comments name the target, the rows that ended critical and the rows removed; when the target is out of reach, the message says how many were reached |
 
 **Notes**
@@ -185,7 +173,7 @@ the file. An estimation on such a case needs no separate CSV; the run still
 writes `measurements.csv` into its output directory for reproducibility.
 Naming a set explicitly takes precedence, and a set generated for the case
 replaces the one the file carries (the newer data). Every other format
-requires a CSV.
+requires a measurement file.
 
 | | |
 |---|---|
@@ -195,7 +183,7 @@ requires a CSV.
 
 A noise-free set returns $J = 0$ by construction, which says nothing about
 the estimate. A run on a case file produces the same `se_deltas.csv` and
-tap warning as a run from a CSV set, and a set bound to the case an SCF
+tap warning as a run from a measurement file, and a set bound to the case an SCF
 file was exported from stays usable, because the file records its source.
 A set in which every quantity appears twice (one generation appended onto
 existing rows) inflates $J$ without any single residual looking wrong,
@@ -224,3 +212,39 @@ iterations and `slack_pickup_mw/mvar` stays below tolerance; active
 outer-loop controllers (taps, machine control, Q-limits) still iterate and
 legitimately move the operating point, which shows as a small residual
 pickup.
+
+## [Deprecated: measurement CSV v1](@id se_measurement_csv_v1)
+
+The measurement CSV v1 is read in 0.50.0 with a deprecation warning and the
+reader is removed in 0.60.0. `readMeasurementsCSV!` logs the warning once
+per session, the SE service writes it to `run.log` of every run on a v1
+file, and the Web UI shows it at the file. Convert a v1 file and its case
+with `convertMeasurementsV1` (see
+[Migrating from the v1 CSV](@ref se_table_migration)).
+
+`readMeasurementsCSV!(net; file, replace = true)` reads the file,
+`writeMeasurementsCSV(net; file)` writes it (the run artifact uses it). The
+first line is the version comment, the second the header:
+
+    # sparlectra-measurements v1
+    type,bus,from_bus,to_bus,branch_nr,link_nr,direction,value,sigma,active,id
+
+| column | meaning | rule |
+|---|---|---|
+| `type` | measurement type (`VmMeas`, `PinjMeas`, ...) | an unknown type name rejects the whole file |
+| `bus` | bus of a bus-referenced row | location group 1; buses by name, matched whitespace-insensitively; on CGMES-sourced nets the writer can reference buses by their mRID (`busReference = :mrid`); the reader resolves names, component ids and mRIDs alike |
+| `from_bus`, `to_bus` | branch endpoints | location group 2, together with `branch_nr` |
+| `branch_nr` | branch index | disambiguates parallel branches; the reader verifies it against the named endpoints and rejects a mismatch. Files without a `branch_nr` column are still read; their branch rows resolve by bus pair and reject parallels (same rule as `addPflowMeasurement!`) |
+| `link_nr` | link index | location group 3 |
+| `direction` | branch end (`:from`/`:to`) | branch rows only |
+| `value`, `sigma` | measured value and standard deviation in the type's unit (Vm in pu, powers in MW/MVAr, currents in A, angles in degrees) | numbers keep their shortest round-trip form |
+| `active` | active flag | inactive rows are kept in the file |
+| `id` | measurement id | prefixes `ZI` (zero injection) and `SHDERIV` (derived shunt Q) mark protected rows |
+| `bad_data`, `status` | run artifact only | the reader ignores both columns, so the artifact reads back as the same set |
+
+Exactly one location group per row (`bus` |
+`from_bus`+`to_bus`+`branch_nr` | `link_nr`). Delimiter and decimal
+separator follow `output.csv_format` of the writing run or session
+(`excel_de`: semicolon and decimal comma); the reader tells the format from
+the header line, and a round trip reproduces every row exactly. The import
+is atomic with line-precise errors (`file:line: reason`).

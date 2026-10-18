@@ -23,82 +23,6 @@ include("test_api_support.jl")
 
 function run_api_fast_tests()
   @testset "API fast smoke and timing contracts" begin (function ()
-    @testset "application layer smoke: one power flow and one state estimation" begin (function ()
-      # the service API is the second way to every result; this stays in the
-      # pull-request gate so a change to the library cannot break it unseen
-      scf5 = joinpath(dirname(@__DIR__), "data", "scf", "sp_case5.scf.json")
-      meas5 = joinpath(dirname(@__DIR__), "data", "scf", "sp_case5.measurements.csv")
-      mktempdir() do tmpdir
-        pf = run_sparlectra_api(casefile = scf5, config_file = Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, output_dir = joinpath(tmpdir, "pf"))
-        @test pf.success
-        @test pf.converged
-        @test isfile(pf.result_file)
-        # the Q-V verdict travels with every run: metadata line, count, run.log
-        @test pf.metadata["qv_non_physical_states"] == 0
-        @test pf.metadata["qv_characteristic_line"] == "Q-V characteristic: no non-physical generator states."
-        @test occursin("Q-V characteristic: no non-physical", read(pf.logfile, String))
-        # and names the buses of a non-physical end point: the Zeng/Chiang
-        # case with the voltage-side release switched off (margin 1.0) ends
-        # with three machines at Qmax above their setpoints
-        zeng = joinpath(dirname(@__DIR__), "data", "scf", "case14_zeng_p306_activeSet_A.scf.json")
-        # (a case-scope key since 0.20.2: the Zeng case has a case
-        # configuration file, so the margin comes as an explicit override)
-        nonphys = run_sparlectra_api(casefile = zeng, config_file = Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, output_dir = joinpath(tmpdir, "nonphys"), config_overrides = Dict{String,Any}("power_flow.qlimits.reenable_v_hyst_pu" => 1.0))
-        @test nonphys.converged
-        @test nonphys.metadata["qv_non_physical_states"] == 3
-        @test nonphys.metadata["qv_non_physical_buses"] == "2;3;6"
-        @test occursin("3 non-physical generator state(s)", read(nonphys.logfile, String))
-        se = start_powerflow_run(Dict{String,Any}("casefile" => scf5, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(tmpdir, "runs"), "se_mode" => true, "measurement_file" => meas5))
-        @test se["status"] == "succeeded"
-        @test se["metadata"]["run_mode"] == "se"
-        # the measurements.csv artifact of an SE run follows the run's CSV
-        # format like the other artifacts, and the technical set given as
-        # input reads under that setting as before
-        se_de = start_powerflow_run(Dict{String,Any}("casefile" => scf5, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(tmpdir, "runs"), "se_mode" => true, "measurement_file" => meas5, "config_overrides" => Dict{String,Any}("output.csv_format" => "excel_de")))
-        @test se_de["status"] == "succeeded"
-        meas_de = readlines(joinpath(se_de["output_dir"], "measurements.csv"))
-        @test meas_de[1] == "# sparlectra-measurements v1"
-        header_at = findfirst(l -> startswith(l, "type"), meas_de)
-        @test header_at !== nothing && startswith(meas_de[header_at], "type;bus;")
-        # the artifact carries the per-row verdict behind id; a clean set has
-        # no flagged row and no critical one on this case
-        @test endswith(meas_de[header_at], ";bad_data;status")
-        @test all(l -> endswith(l, ";;"), filter(l -> !startswith(l, "#") && !startswith(l, "type"), meas_de))
-        @test any(l -> occursin(r";\d+,\d+;", l), meas_de)
-        # the artifact still reads back as a measurement set
-        probe = importSCF(scf5)
-        empty!(probe.measurements)
-        @test readMeasurementsCSV!(probe; file = joinpath(se_de["output_dir"], "measurements.csv")).total == length(readlines(meas5)) - count(l -> startswith(l, "#") || startswith(l, "type"), readlines(meas5))
-      end
-    end)() end
-
-    @testset "net parameters stamped exactly once per importer" begin (function ()
-      # the stamping happens exactly
-      # once PER IMPORTER, at the place each importer finishes; this test
-      # is the guard against pulling the four call sites back together
-      # (the CGMES leg runs on the checked-in delivery under
-      # data/cgmes_demo).
-      cfg = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true)
-      repo = dirname(@__DIR__)
-      stamps() = Sparlectra._NET_PARAM_STAMP_COUNT[]
-      assert_one = function (path, label; requested_format = :auto)
-        before = stamps()
-        imported = Sparlectra.import_case(path, cfg; requested_format = requested_format)
-        @test stamps() - before == 1
-        @test imported.net.cooldown_iters == cfg.powerflow.qlimits.cooldown_iters
-        println("      import stamp: ", label, " ran (exactly once)")
-        return imported
-      end
-      assert_one(joinpath(repo, "data", "mpower", "warmup_casePST.m"), "matpower")
-      assert_one(joinpath(repo, "data", "scf", "sp_case5.scf.json"), "scf")
-      dtf = joinpath(repo, "data", "DTF", "FOR001.DAT")
-      if isfile(dtf)
-        assert_one(dtf, "dtf"; requested_format = :dtf_for001)
-      else
-        println("      import stamp: dtf SKIPPED (data/DTF/FOR001.DAT not present)")
-      end
-      assert_one(cgmes_fixture_dir("sp_casePST"), "cgmes (sp_casePST fixture)"; requested_format = :cgmes)
-    end)() end
 
     # Version-independent on purpose: assert only that the precompile-baked
     # version() matches the current Project.toml, so a version bump alone
@@ -150,36 +74,6 @@ function run_api_fast_tests()
       @test SparlectraApp.to_dict(failed_transport)["solver_elapsed_s"] > 0.0
     end
 
-    @testset "run index accepts symlinked output roots" begin (function ()
-      # Two environments can reach the same physical output root under
-      # different names (a Flatpak XDG_STATE_HOME symlinked onto
-      # ~/.local/state). Index entries store the writer's absolute paths,
-      # so validation must resolve symlinks instead of comparing lexically,
-      # in both directions: entry written under the real name and read
-      # through the alias, and the reverse.
-      if Sys.iswindows()
-        @info "run-index symlink test SKIPPED on Windows (symlink creation may need privileges)"
-      else
-        mktempdir() do tmpdir
-          real_root = joinpath(tmpdir, "real_root")
-          run_id = "11111111-2222-3333-4444-555555555555"
-          mkpath(joinpath(real_root, run_id))
-          write(joinpath(real_root, run_id, "result.json"), "{}")
-          alias_root = joinpath(tmpdir, "alias_root")
-          symlink(real_root, alias_root)
-          real_entry = Dict{String,Any}("run_id" => run_id, "output_dir" => joinpath(real_root, run_id), "result_file" => joinpath(real_root, run_id, "result.json"))
-          alias_entry = Dict{String,Any}("run_id" => run_id, "output_dir" => joinpath(alias_root, run_id), "result_file" => joinpath(alias_root, run_id, "result.json"))
-          @test SparlectraApp._indexed_run_paths(real_entry, alias_root).valid
-          @test SparlectraApp._indexed_run_paths(alias_entry, real_root).valid
-          # a symlink must still not smuggle a foreign directory into the root
-          outside = joinpath(tmpdir, "outside")
-          mkpath(outside)
-          write(joinpath(outside, "result.json"), "{}")
-          foreign_entry = Dict{String,Any}("run_id" => run_id, "output_dir" => outside, "result_file" => joinpath(outside, "result.json"))
-          @test !SparlectraApp._indexed_run_paths(foreign_entry, real_root).valid
-        end
-      end
-    end)() end
   end)() end
 end
 

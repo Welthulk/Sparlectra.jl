@@ -424,6 +424,44 @@ state_estimation:
   # overwrites tap data silently) back into the model after a converged run.
   update_shunts: true
   update_taps: false
+  # Read measurement tables (CSV with one measurement set per timestamp,
+  # keyed by CGMES mRID or by element name) in the SE service.
+  # Off: such a file is refused with this key named.
+  measurement_table: true
+  # Zero-injection rows (ZI, sigma ZERO_INJECTION_SIGMA) at passive buses
+  # (no generation, load or shunt) that carry no injection measurement:
+  # on adds them in every SE path (generator, measurement CSV, case file,
+  # measurement table), off in none. The Web UI generator checkbox
+  # "passive as zero-injection constraint" sets this key for the case.
+  zero_injection: on
+  # Measurement sigmas per voltage level in physical units, for rows that
+  # carry no sigma of their own (an empty sigma cell of a measurement
+  # table); the measurement table generators write them as well. Order:
+  # the row's own sigma, then the row of the level of the measuring bus
+  # (a branch end: the bus at that end), then the global defaults.
+  # One row per level in block style, keyed by the bus nominal voltage in
+  # kV with a decimal point where needed (10.5; the YAML subset has no
+  # "- item" lists and no {...} flow mappings), one column per
+  # line. Columns: p_mw (MW), q_mvar (MVAr), i_a (A), u_kv (kV), rel_pct
+  # (percent of the value, optional; the sigma is
+  # max(absolute, rel_pct/100 * |value|)). A missing column keeps the
+  # default for that type. The numbers below are placeholders: take them
+  # from your metering. Usually set per case in the case configuration
+  # (Web UI: State Estimation section).
+  #   sigma_by_voltage_level:
+  #     380:
+  #       p_mw: 2.0
+  #       q_mvar: 2.0
+  #       i_a: 20
+  #       u_kv: 0.5
+  #       rel_pct: 0.5
+  #     110:
+  #       p_mw: 1.0
+  #       q_mvar: 1.0
+  #       i_a: 30
+  #       u_kv: 0.3
+  #       rel_pct: 1.0
+  sigma_by_voltage_level: {}
   # Residual-correlation (K-matrix) columns in the bad-data report: one
   # dense m x m pass; above 20000 measurement rows the columns are skipped
   # with a warning and the run goes on.
@@ -670,6 +708,11 @@ model:
   # Allowed values: off, on, auto
   preallocate_network: auto
   preallocate_min_buses: 500
+  # System frequency of the network in Hz (50 in Europe, 60 in North
+  # America). Applies when the case states none: an SCF file's meta.f_nom
+  # wins. Used where a capacitance becomes a susceptance (addACLinePerKm!,
+  # SCF/PGM line c1). Positive.
+  nominal_frequency_hz: 50.0
 
 matpower_export:
   # Whether writeMatpowerCasefile writes the solved AC power-flow state back

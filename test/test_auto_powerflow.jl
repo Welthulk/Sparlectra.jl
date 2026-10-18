@@ -50,281 +50,226 @@ function _autopf_config_step_control_ok(pf)
 end
 
 function run_auto_powerflow_tests()
-  @testset "auto powerflow" begin (function ()
-    @testset "escalation ladder keeps the step-control exclusions (issue #5)" begin (function ()
-      # A hard_case profile starts with autodamp AND merit, a consistent pair.
-      # A ladder stage used to switch autodamp off while leaving merit on, and
-      # runpf_rectangular! rightly refused with
-      #   ArgumentError: merit_enabled=true requires autodamp=true
-      # The profiles the suite exercised before (case14: profile_assisted,
-      # small_default) never produced that pair, which is why nothing caught
-      # it. warmup_casePST is the case that classifies as hard_case, and it is
-      # tracked, so this runs everywhere.
-      cfg = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true)
-      case = joinpath(dirname(@__DIR__), "data", "mpower", "warmup_casePST.m")
-      net = redirect_stdout(devnull) do
-        Sparlectra._import_sparlectra_net(case, nothing, cfg)
-      end
-      decision = Sparlectra.select_auto_pf_strategy(Sparlectra.collect_auto_pf_features(net))
-      # the premise of the regression: if this case stops classifying as
-      # hard_case the test silently stops testing anything
-      @test decision.profile === :hard_case
-      @test _autopf_step_control_ok(decision.options)
 
-      pf = Sparlectra._apply_auto_pf_options(cfg.powerflow, decision.options, Set{String}())[1]
-      @test _autopf_config_step_control_ok(pf)
-      evidence = Sparlectra._auto_pf_qlimit_evidence(net)
-      for stage in Sparlectra._auto_pf_escalation_stages(pf)
-        open_gate, _ = stage.gate(evidence, pf)
-        open_gate || continue
-        pf = stage.transform(pf, evidence)[1]
-        # the tuple form names the offending stage in the failure output
-        @test (stage.id, _autopf_config_step_control_ok(pf)) == (stage.id, true)
-      end
-    end)() end
+  @testset "feature extraction on the four case classes" begin (function ()
+    cfg = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true)
+    # class 1: small transmission case (load_fixture_net: the shipped
+    # sp_case14 replaces the downloaded case14; 14 buses, machines with
+    # Q bands, one synchronous island, all the features this classifier
+    # reads)
+    net14 = SparlectraApp._se_import_case_net(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json")), cfg)
+    f14 = Sparlectra.collect_auto_pf_features(net14)
+    @test f14.n_bus == 14
+    @test f14.n_ac_islands == 1
+    @test f14.n_gen_with_q_limits > 0
+    @test f14.rx_median > 0.0
+    @test 0.0 <= f14.share_r_gt_x <= 1.0
+    # class 2: phase-shifter case (tracked PST demo case)
+    netpst = SparlectraApp._se_import_case_net(abspath(joinpath(dirname(@__DIR__), "data", "mpower", "warmup_casePST.m")), cfg)
+    fpst = Sparlectra.collect_auto_pf_features(netpst)
+    @test fpst.n_phase_shifters >= 1
+    # class 3: resistive network (R > X on every branch; test-local mutation
+    # AFTER the read-only extraction contract was already exercised above)
+    netres = SparlectraApp._se_import_case_net(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json")), cfg)
+    for br in netres.branchVec
+      br.r_pu = 2.0 * abs(br.x_pu) + 0.01
+    end
+    fres = Sparlectra.collect_auto_pf_features(netres)
+    @test fres.share_r_gt_x == 1.0
+    @test fres.rx_median > 1.0
+    # class 4: multi-island (open enough branches to isolate bus 14)
+    netisl = SparlectraApp._se_import_case_net(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json")), cfg)
+    for br in netisl.branchVec
+      (Int(br.fromBus) == 14 || Int(br.toBus) == 14) && (br.status = 0)
+    end
+    fisl = Sparlectra.collect_auto_pf_features(netisl)
+    @test fisl.n_ac_islands >= 2
+    # extraction is read-only on the untouched net: repeated calls agree
+    @test Sparlectra.collect_auto_pf_features(net14) == f14
+  end)() end
 
-    @testset "feature extraction on the four case classes" begin (function ()
-      cfg = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true)
-      # class 1: small transmission case (load_fixture_net: the shipped
-      # sp_case14 replaces the downloaded case14; 14 buses, machines with
-      # Q bands, one synchronous island, all the features this classifier
-      # reads)
-      net14 = SparlectraApp._se_import_case_net(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json")), cfg)
-      f14 = Sparlectra.collect_auto_pf_features(net14)
-      @test f14.n_bus == 14
-      @test f14.n_ac_islands == 1
-      @test f14.n_gen_with_q_limits > 0
-      @test f14.rx_median > 0.0
-      @test 0.0 <= f14.share_r_gt_x <= 1.0
-      # class 2: phase-shifter case (tracked PST demo case)
-      netpst = SparlectraApp._se_import_case_net(abspath(joinpath(dirname(@__DIR__), "data", "mpower", "warmup_casePST.m")), cfg)
-      fpst = Sparlectra.collect_auto_pf_features(netpst)
-      @test fpst.n_phase_shifters >= 1
-      # class 3: resistive network (R > X on every branch; test-local mutation
-      # AFTER the read-only extraction contract was already exercised above)
-      netres = SparlectraApp._se_import_case_net(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json")), cfg)
-      for br in netres.branchVec
-        br.r_pu = 2.0 * abs(br.x_pu) + 0.01
-      end
-      fres = Sparlectra.collect_auto_pf_features(netres)
-      @test fres.share_r_gt_x == 1.0
-      @test fres.rx_median > 1.0
-      # class 4: multi-island (open enough branches to isolate bus 14)
-      netisl = SparlectraApp._se_import_case_net(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json")), cfg)
-      for br in netisl.branchVec
-        (Int(br.fromBus) == 14 || Int(br.toBus) == 14) && (br.status = 0)
-      end
-      fisl = Sparlectra.collect_auto_pf_features(netisl)
-      @test fisl.n_ac_islands >= 2
-      # extraction is read-only on the untouched net: repeated calls agree
-      @test Sparlectra.collect_auto_pf_features(net14) == f14
-    end)() end
+  @testset "decision rules (first match wins, exclusion by construction)" begin (function ()
+    small = Sparlectra.select_auto_pf_strategy(_autopf_features((n_bus = 14,)))
+    @test small.profile === :small_default
+    assisted = Sparlectra.select_auto_pf_strategy(_autopf_features((n_bus = 300, has_start_profile = true, start_profile_plausible = true)))
+    @test assisted.profile === :profile_assisted
+    @test assisted.options["power_flow.start_mode.voltage_mode"] == "profile_blend"
+    trans = Sparlectra.select_auto_pf_strategy(_autopf_features((n_bus = 300, share_r_gt_x = 0.05)))
+    @test trans.profile === :transmission_flat
+    @test trans.options["power_flow.start_mode.angle_mode"] == "dc"
+    res = Sparlectra.select_auto_pf_strategy(_autopf_features((n_bus = 300, share_r_gt_x = 0.7, rx_median = 1.5)))
+    @test res.profile === :resistive
+    @test res.options["power_flow.start_current_iteration.enabled"] === true
+    hard = Sparlectra.select_auto_pf_strategy(_autopf_features((n_bus = 5000,)))
+    @test hard.profile === :hard_case
+    # first match wins: a plausible profile beats the hard_case trigger
+    both = Sparlectra.select_auto_pf_strategy(_autopf_features((n_bus = 5000, has_start_profile = true, start_profile_plausible = true)))
+    @test both.profile === :profile_assisted
+    # start-value core rule: plausible profile beats flat start everywhere
+    @test !haskey(both.options, "power_flow.start_mode.flatstart")
+    for d in (small, assisted, trans, res, hard, both)
+      @test _autopf_step_control_ok(d.options)
+      # the solver-internal rescue ladder stays active (calibration
+      # sweep: case13659pegase converges only through it)
+      @test !haskey(d.options, "power_flow.rescue")
+      @test !isempty(d.reasons)
+    end
+    # islands gate independent of profile
+    isl = Sparlectra.select_auto_pf_strategy(_autopf_features((n_bus = 14, n_ac_islands = 3)))
+    @test isl.options["power_flow.islands.enabled"] === true
+    # Q-limit dimension: no limits -> subsystem off; zero ranges -> locks
+    noq = Sparlectra.select_auto_pf_strategy(_autopf_features((n_bus = 14, n_gen_with_q_limits = 0)))
+    @test noq.options["power_flow.qlimits.enabled"] === false
+    zq = Sparlectra.select_auto_pf_strategy(_autopf_features((n_bus = 14, n_q_zero_range = 2)))
+    @test zq.options["power_flow.qlimits.guard_zero_range_mode"] == "lock_pq"
+    @test zq.options["power_flow.qlimits.guard_narrow_range_mode"] == "lock_pq"
+  end)() end
 
-    @testset "decision rules (first match wins, exclusion by construction)" begin (function ()
-      small = Sparlectra.select_auto_pf_strategy(_autopf_features((n_bus = 14,)))
-      @test small.profile === :small_default
-      assisted = Sparlectra.select_auto_pf_strategy(_autopf_features((n_bus = 300, has_start_profile = true, start_profile_plausible = true)))
-      @test assisted.profile === :profile_assisted
-      @test assisted.options["power_flow.start_mode.voltage_mode"] == "profile_blend"
-      trans = Sparlectra.select_auto_pf_strategy(_autopf_features((n_bus = 300, share_r_gt_x = 0.05)))
-      @test trans.profile === :transmission_flat
-      @test trans.options["power_flow.start_mode.angle_mode"] == "dc"
-      res = Sparlectra.select_auto_pf_strategy(_autopf_features((n_bus = 300, share_r_gt_x = 0.7, rx_median = 1.5)))
-      @test res.profile === :resistive
-      @test res.options["power_flow.start_current_iteration.enabled"] === true
-      hard = Sparlectra.select_auto_pf_strategy(_autopf_features((n_bus = 5000,)))
-      @test hard.profile === :hard_case
-      # first match wins: a plausible profile beats the hard_case trigger
-      both = Sparlectra.select_auto_pf_strategy(_autopf_features((n_bus = 5000, has_start_profile = true, start_profile_plausible = true)))
-      @test both.profile === :profile_assisted
-      # start-value core rule: plausible profile beats flat start everywhere
-      @test !haskey(both.options, "power_flow.start_mode.flatstart")
-      for d in (small, assisted, trans, res, hard, both)
-        @test _autopf_step_control_ok(d.options)
-        # the solver-internal rescue ladder stays active (calibration
-        # sweep: case13659pegase converges only through it)
-        @test !haskey(d.options, "power_flow.rescue")
-        @test !isempty(d.reasons)
-      end
-      # islands gate independent of profile
-      isl = Sparlectra.select_auto_pf_strategy(_autopf_features((n_bus = 14, n_ac_islands = 3)))
-      @test isl.options["power_flow.islands.enabled"] === true
-      # Q-limit dimension: no limits -> subsystem off; zero ranges -> locks
-      noq = Sparlectra.select_auto_pf_strategy(_autopf_features((n_bus = 14, n_gen_with_q_limits = 0)))
-      @test noq.options["power_flow.qlimits.enabled"] === false
-      zq = Sparlectra.select_auto_pf_strategy(_autopf_features((n_bus = 14, n_q_zero_range = 2)))
-      @test zq.options["power_flow.qlimits.guard_zero_range_mode"] == "lock_pq"
-      @test zq.options["power_flow.qlimits.guard_narrow_range_mode"] == "lock_pq"
-    end)() end
+  @testset "escalation ladder, cap, precedence, service artifacts" begin (function ()
+    # load_fixture_net: the shipped sp_case14 replaces the downloaded
+    # case14. Its start_state converges in one iteration, so the forced
+    # non-convergence adds the user flatstart override (which the auto
+    # mode must respect anyway); warmup_casePST is unusable here because
+    # its hard_case profile hits the ladder stage-combination finding
+    # recorded in the report (merit left on while autodamp is switched
+    # off)
+    case = abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json"))
+    # forced non-convergence (user-set max_iter and tol survive every
+    # stage) runs the ladder to its cap with honest skip reasons. Since
+    # AnalyticLoadFlow 0.9.15 the APSLF seed of stage L6 is good enough
+    # for a one-iteration Newton finish, so max_iter alone no longer
+    # forces the failure; the unreachable tolerance does.
+    cfg = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true, overrides = Dict{String,Any}("power_flow" => Dict{String,Any}("mode" => "auto", "max_iter" => 1, "flatstart" => true, "tol" => 1e-15)))
+    r = run_sparlectra(casefile = case, config = cfg)
+    @test !r.final_converged
+    rec = Sparlectra.auto_pf_record(r.net)
+    @test rec !== nothing
+    stages = [a.stage for a in rec.attempts]
+    @test stages[1] === :base
+    @test :L1_step_control in stages
+    @test count(a -> !isempty(a.solver) && a.stage !== :base, rec.attempts) <= Sparlectra.AUTO_PF_THRESHOLDS.escalation_max_stages
+    l1 = rec.attempts[findfirst(a -> a.stage === :L1_step_control, rec.attempts)]
+    @test any(c -> occursin("merit", c) || occursin("trust_region", c) || occursin("autodamp", c), l1.changed)
+    l5 = rec.attempts[findfirst(a -> a.stage === :L5_qlimit_mode, rec.attempts)]
+    @test isempty(l5.solver) && l5.qlimit_evidence.skipped == "skipped_no_qlimit_evidence"
+    # tolerance is untouched by every stage (the user value survives)
+    @test cfg.powerflow.tol == 1e-15
+    # every attempt names the solver-internal rescue strategy that
+    # converged inside it (:none here: nothing converges at 1e-15)
+    @test all(a -> get(pairs(a), :rescue_strategy, missing) === :none, rec.attempts)
+    # a stale rescue marker in the profile is cleared before every
+    # attempt (no strategy is attributed to a stage that did not use it)
+    stale = Dict{Symbol,Any}(:ac_rescue_strategy => :settled_qlimits)
+    r_stale = redirect_stdout(devnull) do
+      run_sparlectra(casefile = case, config = cfg, performance_profile = stale)
+    end
+    @test all(a -> a.rescue_strategy === :none, Sparlectra.auto_pf_record(r_stale.net).attempts)
+    # the decision log names the rescue strategy that converged inside a
+    # stage (the stage's own settings did not), and the final line too
+    rec_rescue = (; rec..., attempts = [(; rec.attempts[1]..., converged = true, rescue_strategy = :settled_qlimits)], final_strategy = :settled_qlimits, converged = true)
+    mktempdir() do dir
+      log = joinpath(dir, "auto_mode_decision.log")
+      Sparlectra._write_auto_mode_decision_log(log, rec_rescue)
+      text = read(log, String)
+      @test occursin("through the rescue strategy 'settled_qlimits'", text)
+      @test occursin("rescue strategy: settled_qlimits", text)
+    end
+    # precedence: the user's explicit key survives and the conflict is logged
+    cfg2 = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true, overrides = Dict{String,Any}("power_flow" => Dict{String,Any}("mode" => "auto", "autodamp" => false)))
+    r2 = run_sparlectra(casefile = case, config = cfg2)
+    rec2 = Sparlectra.auto_pf_record(r2.net)
+    @test any(c -> startswith(c, "power_flow.autodamp"), rec2.conflicts)
+    # service path: metadata mirror plus the decision-log artifact
+    root = mktempdir()
+    rs = start_powerflow_run(Dict{String,Any}("casefile" => case, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "config_overrides" => Dict{String,Any}("power_flow.mode" => "auto")))
+    @test rs["status"] == "succeeded"
+    @test rs["metadata"]["auto_mode_enabled"] === true
+    @test haskey(rs["metadata"], "auto_profile")
+    @test haskey(rs["metadata"], "auto_final_solver")
+    # the converging strategy inside the final stage: none on a run the
+    # stage's own solve finished (0.20.5)
+    @test rs["metadata"]["auto_final_strategy"] == "none"
+    logp = joinpath(rs["output_dir"], "auto_mode_decision.log")
+    @test isfile(logp)
+    logtxt = read(logp, String)
+    @test occursin("selected profile", logtxt)
+    @test occursin("attempts:", logtxt)
+    # conflict text reaches the artifact too
+    rs2 = start_powerflow_run(Dict{String,Any}("casefile" => case, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "config_overrides" => Dict{String,Any}("power_flow.mode" => "auto", "power_flow.autodamp" => false)))
+    @test occursin("kept at the user value", read(joinpath(rs2["output_dir"], "auto_mode_decision.log"), String))
+    # manual runs only carry the disabled flag
+    rman = start_powerflow_run(Dict{String,Any}("casefile" => case, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root))
+    @test rman["metadata"]["auto_mode_enabled"] === false
+    @test !haskey(rman["metadata"], "auto_profile")
+  end)() end
 
-    @testset "escalation ladder, cap, precedence, service artifacts" begin (function ()
-      # load_fixture_net: the shipped sp_case14 replaces the downloaded
-      # case14. Its start_state converges in one iteration, so the forced
-      # non-convergence adds the user flatstart override (which the auto
-      # mode must respect anyway); warmup_casePST is unusable here because
-      # its hard_case profile hits the ladder stage-combination finding
-      # recorded in the report (merit left on while autodamp is switched
-      # off)
-      case = abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json"))
-      # forced non-convergence (user-set max_iter and tol survive every
-      # stage) runs the ladder to its cap with honest skip reasons. Since
-      # AnalyticLoadFlow 0.9.15 the APSLF seed of stage L6 is good enough
-      # for a one-iteration Newton finish, so max_iter alone no longer
-      # forces the failure; the unreachable tolerance does.
-      cfg = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true, overrides = Dict{String,Any}("power_flow" => Dict{String,Any}("mode" => "auto", "max_iter" => 1, "flatstart" => true, "tol" => 1e-15)))
-      r = run_sparlectra(casefile = case, config = cfg)
-      @test !r.final_converged
-      rec = Sparlectra.auto_pf_record(r.net)
-      @test rec !== nothing
-      stages = [a.stage for a in rec.attempts]
-      @test stages[1] === :base
-      @test :L1_step_control in stages
-      @test count(a -> !isempty(a.solver) && a.stage !== :base, rec.attempts) <= Sparlectra.AUTO_PF_THRESHOLDS.escalation_max_stages
-      l1 = rec.attempts[findfirst(a -> a.stage === :L1_step_control, rec.attempts)]
-      @test any(c -> occursin("merit", c) || occursin("trust_region", c) || occursin("autodamp", c), l1.changed)
-      l5 = rec.attempts[findfirst(a -> a.stage === :L5_qlimit_mode, rec.attempts)]
-      @test isempty(l5.solver) && l5.qlimit_evidence.skipped == "skipped_no_qlimit_evidence"
-      # tolerance is untouched by every stage (the user value survives)
-      @test cfg.powerflow.tol == 1e-15
-      # every attempt names the solver-internal rescue strategy that
-      # converged inside it (:none here: nothing converges at 1e-15)
-      @test all(a -> get(pairs(a), :rescue_strategy, missing) === :none, rec.attempts)
-      # a stale rescue marker in the profile is cleared before every
-      # attempt (no strategy is attributed to a stage that did not use it)
-      stale = Dict{Symbol,Any}(:ac_rescue_strategy => :settled_qlimits)
-      r_stale = redirect_stdout(devnull) do
-        run_sparlectra(casefile = case, config = cfg, performance_profile = stale)
-      end
-      @test all(a -> a.rescue_strategy === :none, Sparlectra.auto_pf_record(r_stale.net).attempts)
-      # the decision log names the rescue strategy that converged inside a
-      # stage (the stage's own settings did not), and the final line too
-      rec_rescue = (; rec..., attempts = [(; rec.attempts[1]..., converged = true, rescue_strategy = :settled_qlimits)], final_strategy = :settled_qlimits, converged = true)
-      mktempdir() do dir
-        log = joinpath(dir, "auto_mode_decision.log")
-        Sparlectra._write_auto_mode_decision_log(log, rec_rescue)
-        text = read(log, String)
-        @test occursin("through the rescue strategy 'settled_qlimits'", text)
-        @test occursin("rescue strategy: settled_qlimits", text)
-      end
-      # precedence: the user's explicit key survives and the conflict is logged
-      cfg2 = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true, overrides = Dict{String,Any}("power_flow" => Dict{String,Any}("mode" => "auto", "autodamp" => false)))
-      r2 = run_sparlectra(casefile = case, config = cfg2)
-      rec2 = Sparlectra.auto_pf_record(r2.net)
-      @test any(c -> startswith(c, "power_flow.autodamp"), rec2.conflicts)
-      # service path: metadata mirror plus the decision-log artifact
-      root = mktempdir()
-      rs = start_powerflow_run(Dict{String,Any}("casefile" => case, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "config_overrides" => Dict{String,Any}("power_flow.mode" => "auto")))
-      @test rs["status"] == "succeeded"
-      @test rs["metadata"]["auto_mode_enabled"] === true
-      @test haskey(rs["metadata"], "auto_profile")
-      @test haskey(rs["metadata"], "auto_final_solver")
-      # the converging strategy inside the final stage: none on a run the
-      # stage's own solve finished (0.20.5)
-      @test rs["metadata"]["auto_final_strategy"] == "none"
-      logp = joinpath(rs["output_dir"], "auto_mode_decision.log")
-      @test isfile(logp)
-      logtxt = read(logp, String)
-      @test occursin("selected profile", logtxt)
-      @test occursin("attempts:", logtxt)
-      # conflict text reaches the artifact too
-      rs2 = start_powerflow_run(Dict{String,Any}("casefile" => case, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "config_overrides" => Dict{String,Any}("power_flow.mode" => "auto", "power_flow.autodamp" => false)))
-      @test occursin("kept at the user value", read(joinpath(rs2["output_dir"], "auto_mode_decision.log"), String))
-      # manual runs only carry the disabled flag
-      rman = start_powerflow_run(Dict{String,Any}("casefile" => case, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root))
-      @test rman["metadata"]["auto_mode_enabled"] === false
-      @test !haskey(rman["metadata"], "auto_profile")
-    end)() end
+  @testset "stage builders: L4 locks, L5 gate, L6 seed-only" begin (function ()
+    pf = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true).powerflow
+    stages = Sparlectra._auto_pf_escalation_stages(pf)
+    byid = Dict(s.id => s for s in stages)
+    ev_chatter = (switching_events = 30, active_set_changes = 5, reenable_events = 0, switch_counts = Dict(5 => pf.qlimits.guard_max_switches + 2, 7 => 1))
+    pf4, changed4 = byid[:L4_qlimit_relax].transform(pf, ev_chatter)
+    @test 5 in pf4.qlimits.lock_pv_to_pq_buses
+    @test !(7 in pf4.qlimits.lock_pv_to_pq_buses)
+    @test pf4.qlimits.guard_freeze_after_repeated_switching
+    @test any(c -> occursin("lock_pv_to_pq_buses", c), changed4)
+    # L5 gate: evidence runs it, no evidence skips it with a stable reason
+    ev_none = (switching_events = 0, active_set_changes = 0, reenable_events = 0, switch_counts = Dict{Int,Int}())
+    @test byid[:L5_qlimit_mode].gate(ev_chatter, pf) == (true, "")
+    @test byid[:L5_qlimit_mode].gate(ev_none, pf)[2] == "skipped_no_qlimit_evidence"
+    pf5, _ = byid[:L5_qlimit_mode].transform(pf, ev_chatter)
+    @test pf5.qlimits.enforcement_mode !== pf.qlimits.enforcement_mode
+    # L6: APSLF is a seed only; the transform enables apslf_start and the
+    # solver stays rectangular (label test). The stage used to be gated on
+    # the AnalyticLoadFlow extension being loaded; the package is a required
+    # dependency now, so the gate is always open
+    @test byid[:L6_apslf_seed].gate(ev_none, pf) == (true, "")
+    pf6, _ = byid[:L6_apslf_seed].transform(pf, ev_none)
+    @test pf6.apslf_start.enabled
+    @test pf6.solver === :rectangular
+    @test occursin("apslf-seeded", Sparlectra._auto_pf_solver_label(pf6, nothing))
+  end)() end
 
-    @testset "DC fallback: honest labeling, off by default" begin (function ()
-      # the service path cannot override power_flow.flatstart (not a GUI
-      # key), so forcing real flat-start non-convergence at max_iter=1
-      # (plus an unreachable tol, see above) needs a start_state-free copy
-      # of the shipped case
-      case = joinpath(mktempdir(), "sp_case14_flat.scf.json")
-      raw = Sparlectra.scf_json_parse(read(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json")), String))
-      delete!(raw["sparlectra"], "start_state")
-      write(case, Sparlectra.scf_json_string(raw))
-      root = mktempdir()
-      # enabled: the ladder ends in the labeled DC approximation
-      rdc = start_powerflow_run(Dict{String,Any}("casefile" => case, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "config_overrides" => Dict{String,Any}("power_flow.mode" => "auto", "power_flow.max_iter" => 1, "power_flow.tol" => 1e-15, "power_flow.dc.fallback" => true)))
-      @test rdc["status"] != "succeeded"
-      @test rdc["converged"] === false
-      @test rdc["metadata"]["dc_fallback_solution"] === true
-      @test occursin("DC fallback", rdc["message"])
-      # default: clean failure without a DC result
-      rnf = start_powerflow_run(Dict{String,Any}("casefile" => case, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "config_overrides" => Dict{String,Any}("power_flow.mode" => "auto", "power_flow.max_iter" => 1, "power_flow.tol" => 1e-15)))
-      @test rnf["metadata"]["dc_fallback_solution"] === false
-      @test occursin("skipped_dc_fallback_disabled", read(joinpath(rnf["output_dir"], "auto_mode_decision.log"), String))
-    end)() end
+  @testset "hint generator: stable ids from synthetic diagnostics" begin (function ()
+    ev(sc; se = 0, asc = 0) = (switching_events = se, active_set_changes = asc, reenable_events = 0, switch_counts = sc)
+    f_no = _autopf_features((n_gen_with_q_limits = 0,))
+    ids(h) = Set(x.id for x in h)
+    h1 = Sparlectra.auto_pf_hints(f_no, ev(Dict{Int,Int}()), NamedTuple[]; converged = true)
+    @test :q_no_limits_defined in ids(h1)
+    f_zero = _autopf_features((n_q_zero_range = 2, n_q_narrow_range = 1))
+    h2 = Sparlectra.auto_pf_hints(f_zero, ev(Dict{Int,Int}()), NamedTuple[]; converged = true)
+    @test :q_zero_range_locked in ids(h2)
+    @test :q_narrow_range in ids(h2)
+    h3 = Sparlectra.auto_pf_hints(_autopf_features(NamedTuple()), ev(Dict(3 => 12)), NamedTuple[]; converged = true)
+    @test :q_switching_frozen in ids(h3)
+    attempts = NamedTuple[(stage = :L5_qlimit_mode, converged = true)]
+    h4 = Sparlectra.auto_pf_hints(_autopf_features(NamedTuple()), ev(Dict{Int,Int}()), attempts; converged = true)
+    @test :q_mode_pinned in ids(h4)
+    h5 = Sparlectra.auto_pf_hints(_autopf_features(NamedTuple()), ev(Dict(4 => 2); se = 9), NamedTuple[]; converged = false)
+    @test :q_failure_with_switching in ids(h5)
+    for h in (h1..., h2..., h3..., h4..., h5...)
+      @test h.id isa Symbol
+      @test !isempty(h.text)
+    end
+  end)() end
 
-    @testset "stage builders: L4 locks, L5 gate, L6 seed-only" begin (function ()
-      pf = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true).powerflow
-      stages = Sparlectra._auto_pf_escalation_stages(pf)
-      byid = Dict(s.id => s for s in stages)
-      ev_chatter = (switching_events = 30, active_set_changes = 5, reenable_events = 0, switch_counts = Dict(5 => pf.qlimits.guard_max_switches + 2, 7 => 1))
-      pf4, changed4 = byid[:L4_qlimit_relax].transform(pf, ev_chatter)
-      @test 5 in pf4.qlimits.lock_pv_to_pq_buses
-      @test !(7 in pf4.qlimits.lock_pv_to_pq_buses)
-      @test pf4.qlimits.guard_freeze_after_repeated_switching
-      @test any(c -> occursin("lock_pv_to_pq_buses", c), changed4)
-      # L5 gate: evidence runs it, no evidence skips it with a stable reason
-      ev_none = (switching_events = 0, active_set_changes = 0, reenable_events = 0, switch_counts = Dict{Int,Int}())
-      @test byid[:L5_qlimit_mode].gate(ev_chatter, pf) == (true, "")
-      @test byid[:L5_qlimit_mode].gate(ev_none, pf)[2] == "skipped_no_qlimit_evidence"
-      pf5, _ = byid[:L5_qlimit_mode].transform(pf, ev_chatter)
-      @test pf5.qlimits.enforcement_mode !== pf.qlimits.enforcement_mode
-      # L6: APSLF is a seed only; the transform enables apslf_start and the
-      # solver stays rectangular (label test). The stage used to be gated on
-      # the AnalyticLoadFlow extension being loaded; the package is a required
-      # dependency now, so the gate is always open
-      @test byid[:L6_apslf_seed].gate(ev_none, pf) == (true, "")
-      pf6, _ = byid[:L6_apslf_seed].transform(pf, ev_none)
-      @test pf6.apslf_start.enabled
-      @test pf6.solver === :rectangular
-      @test occursin("apslf-seeded", Sparlectra._auto_pf_solver_label(pf6, nothing))
-    end)() end
-
-    @testset "hint generator: stable ids from synthetic diagnostics" begin (function ()
-      ev(sc; se = 0, asc = 0) = (switching_events = se, active_set_changes = asc, reenable_events = 0, switch_counts = sc)
-      f_no = _autopf_features((n_gen_with_q_limits = 0,))
-      ids(h) = Set(x.id for x in h)
-      h1 = Sparlectra.auto_pf_hints(f_no, ev(Dict{Int,Int}()), NamedTuple[]; converged = true)
-      @test :q_no_limits_defined in ids(h1)
-      f_zero = _autopf_features((n_q_zero_range = 2, n_q_narrow_range = 1))
-      h2 = Sparlectra.auto_pf_hints(f_zero, ev(Dict{Int,Int}()), NamedTuple[]; converged = true)
-      @test :q_zero_range_locked in ids(h2)
-      @test :q_narrow_range in ids(h2)
-      h3 = Sparlectra.auto_pf_hints(_autopf_features(NamedTuple()), ev(Dict(3 => 12)), NamedTuple[]; converged = true)
-      @test :q_switching_frozen in ids(h3)
-      attempts = NamedTuple[(stage = :L5_qlimit_mode, converged = true)]
-      h4 = Sparlectra.auto_pf_hints(_autopf_features(NamedTuple()), ev(Dict{Int,Int}()), attempts; converged = true)
-      @test :q_mode_pinned in ids(h4)
-      h5 = Sparlectra.auto_pf_hints(_autopf_features(NamedTuple()), ev(Dict(4 => 2); se = 9), NamedTuple[]; converged = false)
-      @test :q_failure_with_switching in ids(h5)
-      for h in (h1..., h2..., h3..., h4..., h5...)
-        @test h.id isa Symbol
-        @test !isempty(h.text)
-      end
-    end)() end
-
-    @testset "startup latency hint: once, suppressible, flavor-gated" begin (function ()
-      cfg = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true)
-      if SparlectraApp.webui_runtime_flavor().kind === :native
-        Sparlectra._STARTUP_LATENCY_HINT_SHOWN[] = false
-        @test_logs (:info, r"First run in a fresh Julia process") Sparlectra._maybe_print_startup_latency_hint(cfg)
-        # second call in the same process stays silent
-        @test_logs Sparlectra._maybe_print_startup_latency_hint(cfg)
-        # suppression key silences the first call too
-        Sparlectra._STARTUP_LATENCY_HINT_SHOWN[] = false
-        cfg_off = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true, overrides = Dict{String,Any}("output" => Dict{String,Any}("startup_latency_hint" => false)))
-        @test_logs Sparlectra._maybe_print_startup_latency_hint(cfg_off)
-      else
-        println("      auto_powerflow: startup-hint print path SKIPPED (session runs from sysimage/app); covering the gate only")
-        Sparlectra._STARTUP_LATENCY_HINT_SHOWN[] = false
-        @test_logs Sparlectra._maybe_print_startup_latency_hint(cfg)
-      end
-      Sparlectra._STARTUP_LATENCY_HINT_SHOWN[] = true
-    end)() end
+  @testset "startup latency hint: once, suppressible, flavor-gated" begin (function ()
+    cfg = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true)
+    if SparlectraApp.webui_runtime_flavor().kind === :native
+      Sparlectra._STARTUP_LATENCY_HINT_SHOWN[] = false
+      @test_logs (:info, r"First run in a fresh Julia process") Sparlectra._maybe_print_startup_latency_hint(cfg)
+      # second call in the same process stays silent
+      @test_logs Sparlectra._maybe_print_startup_latency_hint(cfg)
+      # suppression key silences the first call too
+      Sparlectra._STARTUP_LATENCY_HINT_SHOWN[] = false
+      cfg_off = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true, overrides = Dict{String,Any}("output" => Dict{String,Any}("startup_latency_hint" => false)))
+      @test_logs Sparlectra._maybe_print_startup_latency_hint(cfg_off)
+    else
+      println("      auto_powerflow: startup-hint print path SKIPPED (session runs from sysimage/app); covering the gate only")
+      Sparlectra._STARTUP_LATENCY_HINT_SHOWN[] = false
+      @test_logs Sparlectra._maybe_print_startup_latency_hint(cfg)
+    end
+    Sparlectra._STARTUP_LATENCY_HINT_SHOWN[] = true
   end)() end
 
   @testset "auto profile precedence level" begin (function ()

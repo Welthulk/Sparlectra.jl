@@ -25,8 +25,10 @@
 const _SCF_KNOWN_DATA_COMPONENTS = ("node", "line", "generic_branch", "link", "source", "sym_load", "sym_gen", "shunt", "voltage_regulator", "sym_voltage_sensor", "sym_power_sensor", "sym_current_sensor", "fault")
 const _SCF_KNOWN_ROOT_KEYS = ("version", "type", "is_batch", "attributes", "data", "sparlectra")
 const _SCF_KNOWN_SPARLECTRA_KEYS = ("format_version", "meta", "roles", "components", "extra", "measurements", "start_state", "contingencies", "short_circuit", "config", "transformer_types", "branch_shunt_split", "tap_changer_models", "scenarios")
-# what `sparlectra.measurements` may carry besides the rows
-const _SCF_KNOWN_MEASUREMENT_KEYS = ("rows", "provenance")
+# what `sparlectra.measurements` may carry besides the rows; shunt_bay_rows
+# are the bus-referenced shunt-bay readings PGM has no sensor for
+const _SCF_KNOWN_MEASUREMENT_KEYS = ("rows", "shunt_bay_rows", "provenance")
+const _SCF_SHUNT_BAY_TYPES = ("ShuntQ", "Imag", "Ia")
 const _SCF_KNOWN_COMPONENT_KINDS = ("tap_changer", "transformer3w", "sc_source", "controllers", "shunt_state", "matpower_dcline", "for001_contingency")
 
 _scf_get(d::AbstractDict, key::AbstractString, default = nothing) = get(d, key, default)
@@ -71,6 +73,18 @@ function _scf_control_limits(obj, key::AbstractString, lo_key::AbstractString, h
 end
 
 _scf_num(v, context::AbstractString)::Float64 = v isa Number ? Float64(v) : throw(ArgumentError("SCF: $(context) must be a number, got $(repr(v))."))
+
+# meta.f_nom: the system frequency the file states, or nothing when absent.
+# A value that is not a positive finite number is a named error: f_nom = 0
+# used to set every line b to zero without a word, and JSON `true` passed
+# as 1 Hz.
+function _scf_meta_f_nom(meta)::Union{Nothing,Float64}
+  (meta isa AbstractDict && haskey(meta, "f_nom")) || return nothing
+  v = meta["f_nom"]
+  (v isa Real && !(v isa Bool) && isfinite(v) && v > 0) || throw(ArgumentError("SCF: meta.f_nom must be a positive number in Hz (the system frequency), got $(repr(v))."))
+  return Float64(v)
+end
+
 _scf_int(v, context::AbstractString)::Int = v isa Integer ? Int(v) : (v isa AbstractFloat && isinteger(v) ? Int(v) : throw(ArgumentError("SCF: $(context) must be an integer, got $(repr(v)).")))
 
 # extra.<appliance>.gencost: {"p": [...], "q": [...]} with MATPOWER gencost
@@ -141,6 +155,8 @@ function _scf_validate_schema(root::AbstractDict)
     for key in keys(spar)
       String(key) in _SCF_KNOWN_SPARLECTRA_KEYS || throw(ArgumentError("SCF: unknown key \"sparlectra.$(key)\". Known keys: $(join(_SCF_KNOWN_SPARLECTRA_KEYS, ", "))."))
     end
+    # a bad frequency fails on load, before any line is built from it
+    _scf_meta_f_nom(_scf_get(spar, "meta", nothing))
     comps = _scf_get(spar, "components", Dict{String,Any}())
     comps isa AbstractDict || throw(ArgumentError("SCF: \"sparlectra.components\" must be an object."))
     for key in keys(comps)
@@ -330,7 +346,8 @@ through the existing public constructors and the network is validated with
 other importer. The document is converted to its typed form
 ([`SCFCase`](@ref)) first; this wrapper keeps the historical dict entry
 point and applies NO configuration (callers that want the run-path
-behavior use [`build_net`](@ref)).
+behavior use [`build_net`](@ref)); only a file without `meta.f_nom` takes
+the active `model.nominal_frequency_hz` as its system frequency.
 """
 function scf_to_net(root::AbstractDict)::Net
   _scf_validate_schema(root)
@@ -371,7 +388,9 @@ function scf_node_ids_in_build_order(case::SCFCase)::Vector{Int}
   return Int[e.id for e in rows]
 end
 
-function _scf_net_from_case(case::SCFCase)::Net
+# f_nom_default: the nominal frequency of a file that does not state f_nom
+# (model.nominal_frequency_hz of the configuration the caller builds with)
+function _scf_net_from_case(case::SCFCase; f_nom_default::Float64 = model_config().nominal_frequency_hz)::Net
   ids = _scf_case_id_kinds(case)
   data = case.data
   spar = case.sparlectra === nothing ? SCFSparlectra() : case.sparlectra
@@ -379,10 +398,15 @@ function _scf_net_from_case(case::SCFCase)::Net
   extra = spar.extra
   names = _scf_case_names(extra, ids)
   s_base = haskey(meta, "s_base") ? _scf_num(meta["s_base"], "meta.s_base") / 1.0e6 : 100.0
-  f_nom = haskey(meta, "f_nom") ? _scf_num(meta["f_nom"], "meta.f_nom") : 50.0
+  # rank 1 is the file's own statement, then the caller's configuration
+  stated_f_nom = _scf_meta_f_nom(meta)
+  f_nom = something(stated_f_nom, f_nom_default)
   net = Net(name = String(_scf_get(meta, "case_name", "scf_case")), baseMVA = s_base,
     vmin_pu = haskey(meta, "vmin_pu") ? _scf_num(meta["vmin_pu"], "meta.vmin_pu") : 0.9,
-    vmax_pu = haskey(meta, "vmax_pu") ? _scf_num(meta["vmax_pu"], "meta.vmax_pu") : 1.1)
+    vmax_pu = haskey(meta, "vmax_pu") ? _scf_num(meta["vmax_pu"], "meta.vmax_pu") : 1.1,
+    nominal_frequency_hz = f_nom)
+  # a stated frequency survives the configuration stamp of the import
+  net._frequency_from_case = stated_f_nom !== nothing
 
   # --- buses -----------------------------------------------------------
   aux = Set(spar.roles.aux_nodes)
@@ -593,6 +617,7 @@ function _scf_net_from_case(case::SCFCase)::Net
     psi = 0.0
     psi_given = nothing
     dustep = 0.0
+    tgrid = :fraction
     for ctrl in row.controllers
       idx = ctrl.index
       if idx == 1
@@ -600,6 +625,11 @@ function _scf_net_from_case(case::SCFCase)::Net
         tmin = Float64(something(ctrl.pos_min, 0.0))
         tmax = Float64(something(ctrl.pos_max, 0.0))
         tcur = Float64(something(ctrl.pos, 0.0))
+        # the grid the positions count on; absent is the fraction grid
+        # every file before the key was written on
+        g = something(ctrl.grid, "fraction")
+        g in ("fraction", "linear") || throw(ArgumentError("SCF: tap_changer controller grid must be \"fraction\" or \"linear\", got $(repr(g))."))
+        tgrid = Symbol(g)
       elseif idx == 2
         psi = something(ctrl.alpha_deg, 0.0)
         ctrl.alpha_deg === nothing || (psi_given = psi)
@@ -625,10 +655,12 @@ function _scf_net_from_case(case::SCFCase)::Net
     if widened
       @warn "SCF: the neutral tap position lies outside the regulation band of this transformer; the band is restored as stated in the file" branch = row.branch pos_min = tmin pos_max = tmax
     end
-    applyTapNameplate!(br; tap_step = tstep, tap_min_step = widened ? min(tmin, 0.0) : tmin, tap_max_step = widened ? max(tmax, 0.0) : tmax, tap_current_step = tcur, phase_step_deg = pstep, phase_min_step = pmin, phase_max_step = pmax, phase_current_step = pcur, psi_deg = psi, phase_du_step = dustep, context = "sparlectra.components.tap_changer for branch $(row.branch)")
+    applyTapNameplate!(br; tap_step = tstep, tap_min_step = widened ? min(tmin, 0.0) : tmin, tap_max_step = widened ? max(tmax, 0.0) : tmax, tap_current_step = tcur, phase_step_deg = pstep, phase_min_step = pmin, phase_max_step = pmax, phase_current_step = pcur, psi_deg = psi, phase_du_step = dustep, tap_ratio_grid = tgrid, context = "sparlectra.components.tap_changer for branch $(row.branch)")
     if widened
-      br.tap_min = br.ratio / (1.0 + tmax * tstep)
-      br.tap_max = br.ratio / (1.0 + tmin * tstep)
+      # the band ends on the grid of the file (_tap_r1_at gives the cascade
+      # fraction of a position on either grid)
+      br.tap_min = br.ratio / (1.0 + _tap_r1_at(br, tmax))
+      br.tap_max = br.ratio / (1.0 + _tap_r1_at(br, tmin))
     end
     # the nameplate reads psi = 0 as "not given" and substitutes the 90 deg
     # symmetric-PST convention; a file that states 0 means 0
@@ -852,7 +884,7 @@ function _scf_net_from_case(case::SCFCase)::Net
   for row in data.shunt
     se = _scf_get(extra, string(row.id), Dict{String,Any}())
     order = haskey(se, "shunt_index") ? _scf_int(se["shunt_index"], "extra.shunt_index") : row.id
-    push!(shunt_rows, (order = order, row = row, id = row.id))
+    push!(shunt_rows, (order = order, row = row, id = row.id, external_id = get(se, "external_id", nothing)))
   end
   sort!(shunt_rows; by = r -> (r.order, r.id))
   for entry in shunt_rows
@@ -867,6 +899,10 @@ function _scf_net_from_case(case::SCFCase)::Net
     # the SAME sign the file states; negating it turned a capacitor into a
     # reactor on every round trip
     addShunt!(net = net, busName = bus_by_id[node], pShunt = g_pu * s_base, qShunt = b_pu * s_base)
+    # the generated id carries the net index; a file written from a net
+    # whose controller shunt sat before a plain one has a different index
+    # here, so the file's external_id is restored (same rule as for nodes)
+    entry.external_id === nothing || (net.shuntVec[end].comp.cID = String(entry.external_id))
     shunt_index_by_id[entry.id] = length(net.shuntVec)
   end
 
@@ -911,14 +947,7 @@ function _scf_net_from_case(case::SCFCase)::Net
 
   # --- shunt state (what PGM's g1/b1 cannot say) --------------------------
   for row in comps.shunt_state
-    sh = net.shuntVec[shunt_index_by_id[row.shunt]]
-    row.status === nothing || (sh.status = row.status)
-    if row.model !== nothing
-      model = Symbol(row.model)
-      model in (:Y, :VoltageDependentInjection, :PQ) || throw(ArgumentError("SCF: shunt_state.model must be Y, VoltageDependentInjection, or PQ; got $(repr(row.model))."))
-      sh.model = model
-    end
-    row.estimate === nothing || (sh.estimate = row.estimate === true)
+    _scf_apply_shunt_state!(net.shuntVec[shunt_index_by_id[row.shunt]], row)
   end
 
   # --- feeder data a PGM `source` declares --------------------------------
@@ -1146,6 +1175,19 @@ function _scf_net_from_case(case::SCFCase)::Net
   return net
 end
 
+# one shunt_state row onto a built shunt: a components.shunt_state row, or
+# the shunt_state object of a shunt voltage controller entry
+function _scf_apply_shunt_state!(sh::Shunt, row::SCFShuntStateRow)
+  row.status === nothing || (sh.status = row.status)
+  if row.model !== nothing
+    model = Symbol(row.model)
+    model in (:Y, :VoltageDependentInjection, :PQ) || throw(ArgumentError("SCF: shunt_state.model must be Y, VoltageDependentInjection, or PQ; got $(repr(row.model))."))
+    sh.model = model
+  end
+  row.estimate === nothing || (sh.estimate = row.estimate === true)
+  return sh
+end
+
 # PGM sensors back into Sparlectra measurement rows; measurements.rows
 # supplies the original row ids, weights, and active flags
 function _scf_read_measurements!(net::Net, case::SCFCase, bus_by_id, branch_index_by_id, u_rated_by_id, names)
@@ -1252,6 +1294,22 @@ function _scf_read_measurements!(net::Net, case::SCFCase, bus_by_id, branch_inde
       push!(collected, (pos_of(id, i), Measurement(typ = IaMeas, value = value_of(id, i, rad2deg(row.i_angle_measured)), sigma = sigma_of(id, i, rad2deg(_scf_has(row.i_angle_sigma) ? row.i_angle_sigma : deg2rad(0.05))), active = active(id, i), branchIdx = branch_index_by_id[obj], direction = dir, id = sid(id, i, "Ia_$(obj)"))))
     end
   end
+  # shunt-bay rows: internal units, no PGM sensor behind them
+  for r in _scf_get(spar.measurements, "shunt_bay_rows", [])
+    r isa AbstractDict || throw(ArgumentError("SCF: measurements.shunt_bay_rows entries must be objects, got $(repr(r))."))
+    tname = String(_scf_get(r, "type", ""))
+    tname in _SCF_SHUNT_BAY_TYPES || throw(ArgumentError("SCF: measurements.shunt_bay_rows type $(repr(tname)) is not one of $(join(_SCF_SHUNT_BAY_TYPES, ", "))."))
+    typ = tname == "ShuntQ" ? ShuntQMeas : (tname == "Imag" ? ImagMeas : IaMeas)
+    node = _scf_int(_scf_get(r, "node", nothing), "measurements.shunt_bay_rows.node")
+    haskey(bus_by_id, node) || throw(ArgumentError("SCF: measurements.shunt_bay_rows references node $(node), which the file does not define."))
+    p = _scf_int(_scf_get(r, "position", 0), "measurements.shunt_bay_rows.position")
+    if p <= 0
+      next_pos[] += 1
+      p = 1_000_000 + next_pos[]
+    end
+    m = Measurement(typ = typ, value = _scf_num(_scf_get(r, "value", nothing), "measurements.shunt_bay_rows.value"), sigma = _scf_num(_scf_get(r, "sigma", nothing), "measurements.shunt_bay_rows.sigma"), active = _scf_get(r, "active", true) === true, busIdx = net.busDict[bus_by_id[node]], id = String(_scf_get(r, "id", "")))
+    push!(collected, (p, m))
+  end
   sort!(collected; by = e -> e[1])
   for (_, m) in collected
     push!(net.measurements, m)
@@ -1268,9 +1326,18 @@ constructors, then apply the run configuration's net parameters exactly
 once, here. `config` is the EFFECTIVE run configuration (the run path
 passes its resolved `ImportedCase` configuration; interactive use takes
 the active one).
+
+System frequency: `meta.f_nom` of the file sets `net.nominal_frequency_hz`;
+a file without it takes `model.nominal_frequency_hz` of `config`. When the
+user set that key explicitly and it differs from the file, the file wins
+with one warning that names both values.
 """
 function build_net(case::SCFCase; config::SparlectraConfig = active_sparlectra_config())::Net
-  net = _scf_net_from_case(case)
+  net = _scf_net_from_case(case; f_nom_default = config.model.nominal_frequency_hz)
+  key_f = config.model.nominal_frequency_hz
+  if net._frequency_from_case && "model.nominal_frequency_hz" in config.user_set_keys && net.nominal_frequency_hz != key_f
+    @warn "SCF: the case states meta.f_nom = $(net.nominal_frequency_hz) Hz, the configuration sets model.nominal_frequency_hz = $(key_f) Hz; the case value applies."
+  end
   _apply_config_net_parameters!(net, config)
   # Safe AFTER construction on this path only: a case file records the model
   # of every shunt it carries (the shunt_state block), so the field is purely

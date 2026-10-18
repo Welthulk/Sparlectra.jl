@@ -117,6 +117,19 @@ under `data/cgmes_demo` as `<case>_cgmes.zip`, and the PowSyBl IIDM files
 are hidden. FOR002-like `.DAT` files go into the optional **FOR002
 reference** field, for legacy reference comparison only.
 
+A shipped case is copied into the case directory on first use, together
+with its configuration file and measurement sets. When a new release ships
+a changed version, the Web UI replaces the copy at start, but only if the
+copy still has the content of an earlier committed version of that file
+(`data/shipped_hashes.toml` lists them; CRLF and LF line ends count as
+equal, so a copy from a Windows checkout is recognized). The new file is
+written under a temporary name first, so an interrupted start never
+leaves a half-written file. The old copy stays next to the new one as
+`<name>.replaced-<date>`, the operation log gets an entry
+`shipped_case_file_replaced` with the file name and the old and new
+SHA-256, and the start output names the file. A copy you changed is never
+replaced.
+
 A typed value overrides the list: a bare name such as `case14.m` or
 `case9241pegase.m` is downloaded into the case directory, an existing
 `.m`/`.jl` path is used as given; path-like missing inputs and URLs are
@@ -314,6 +327,9 @@ The settings and run forms offer:
 - MATPOWER import conventions: auto-profile mode (`off`, `recommend`,
   `apply`) plus transformer ratio, phase shift, bus shunt, PV voltage source
   and comparison reference;
+- **Network model** (Case page, every format): the system frequency, 50 or
+  60 Hz (`model.nominal_frequency_hz`); an SCF file preselects its own
+  `f_nom` ([System frequency](@ref system_frequency));
 - logfile output mode, performance timing and post-run diagnostics.
 
 Only keys in `GUI_EDITABLE_CONFIG_KEYS` are submitted, and each run writes
@@ -486,18 +502,35 @@ The state-estimation section of the Runs page
 (`/powerflow#state-estimation`; `/stateestimation` redirects there) uses
 the shared case selection, selects a measurement set and runs
 observability (traffic light, structural-island note), the WLS solve and
-the diagnostics of [State Estimation](state_estimation.md). Uploaded
-`.csv` files are offered when they carry the v1 version comment. Only a
-set bound to the selected case is preselected (such cases are starred); a
-case file with its own measurements offers those first, and a set bound
-to the case an SCF file was exported from stays usable.
+the diagnostics of [State Estimation](state_estimation.md). The
+generator, "add noise" and every set Sparlectra ships write the
+[measurement table](state_estimation_measurement_table.md) (version line
+`# sparlectra-measurement-table v1` plus header); the run needs
+`state_estimation.measurement_table` on (the default). Uploaded `.csv`
+files are offered when they are a measurement table or carry the version
+comment of the measurement CSV v1; a CSV v1 set shows the deprecation
+notice at the file (removed in 0.60.0, convert it with
+`convertMeasurementsV1`). The text and value editors work on both.
+
+The set list offers only the sets of the selected case: a set whose
+`# case:` line names the case (or the case an SCF file was exported from),
+and a set without that line whose file name starts with the case name
+without its extension, followed by a dot (`sp_case14.measurements.csv`
+for `sp_case14.scf.json`). An uploaded set with no `# case:` line and
+any other file name is offered for no case: add the line or rename the
+file. Each entry names its case. Without a matching
+set the section says so and points to the generator. The run still
+refuses a set bound to another case. A case file with its own
+measurements offers those first; otherwise `<case>.measurements.csv` is
+preselected (cases with a bound set are starred).
 
 Every generation and every "add noise" writes a new time-stamped file
 (`<case>.measurements.<yyyymmdd-HHMMSS>.csv`, `<case>.noisy.<stamp>.csv`)
 and arms it for the next run; later the newest set bound to the case is
 armed. **Delete measurement file** removes the armed set (never a case
 file). The set tab offers download, re-upload and an inline editor (the
-first line must stay the version comment) and renders the
+file keeps its format: a table its version line and header, a CSV v1 its
+version comment) and renders the
 `sparlectra-taps v1` tap table of a generated file. **Add noise to this
 set** perturbs each value with the sigma its own row declares. **Reset
 saved settings** under the generator deletes the per-case settings
@@ -571,13 +604,22 @@ The choice is part of the address (`?digits=4&power=kW`) and carries over
 through the links to the other CSV files of the run. It changes the display
 only; **Raw text** and the download keep the file as written.
 
-The header of a column with numbers is a link that sorts the rows by that
-column, largest first; a second click sorts smallest first (`?sort=p_mw`,
-`&order=asc`). All rows the view reads (a large file is cut to the preview
-size, the page says so) are sorted before the table is cut to
-its first rows, so the largest value is on top; cells without a number go
-to the end. The sort column stays with **Apply** but not on the links to
-the other CSV files of the run.
+A column header is a link that sorts the rows by that column: a column with
+numbers largest first, a text column A to Z (ignoring case); a second click
+turns the order (`?sort=p_mw`, `&order=asc`). All rows the view reads (a
+large file is cut to the preview size, the page says so) are sorted before
+the table is cut to its first rows, so the largest value is on top; cells
+without a number, or empty text cells, go to the end. The sort column stays
+with **Apply** but not on the links to the other CSV files of the run. The
+header of a column whose cells are mostly numbers is right-aligned like its
+numbers, and the header row stays visible while the rows scroll.
+
+Columns are hidden with the button in the header or the **Columns** list;
+they are part of the address (`&hide=2,5`, column numbers of the file) and
+stay hidden through sorting and **Apply**. Rows are hidden with their
+checkbox and **Hide selected rows** or with the filter field (rows that
+contain a text in any cell); both stay in the browser tab until
+**Show all rows**.
 
 Other text artifacts (JSON, YAML,
 logs, HTML) open as escaped text, other files download, and every

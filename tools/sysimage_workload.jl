@@ -202,8 +202,19 @@ function _trace_contingency(server)
   return nothing
 end
 
+# the measurement set of a workload run, written as a measurement table the
+# way the Web UI generator writes it (v1 rows through the converter, keyed
+# like the SE service reads them), so the table path is compiled
+function _workload_measurement_table(net, case, out; requested_format::Symbol = :auto)
+  v1 = tempname() * ".csv"
+  writeMeasurementsCSV(net; file = v1)
+  SparlectraApp._se_convert_measurements_v1(case, v1, out; requested_format = requested_format)
+  rm(v1; force = true)
+  return out
+end
+
 function _trace_state_estimation(server)
-  # measurement CSV read, observability, WLS solve, bad-data diagnostics and
+  # measurement table read, observability, WLS solve, bad-data diagnostics and
   # the se_state.csv chain anchor, so the first SE click is not estimator JIT
   se_case = _workload_matpower_case()
   isfile(se_case) || return nothing
@@ -211,7 +222,7 @@ function _trace_state_estimation(server)
   runpf!(wnet, 40, 1e-8, 0; method = :rectangular)
   append!(wnet.measurements, generateMeasurementsFromPF(wnet; noise = false))
   se_meas = joinpath(server.runtime.case_directory, "warmup_casePST.measurements.csv")
-  writeMeasurementsCSV(wnet; file = se_meas)
+  _workload_measurement_table(wnet, se_case, se_meas)
   _workload_service_run(Dict{String,Any}("casefile" => se_case, "se_mode" => true, "measurement_file" => se_meas); label = "state estimation")
   return nothing
 end
@@ -286,12 +297,12 @@ function _trace_dtf(server)
   _workload_service_run(Dict{String,Any}("casefile" => dtf_case, "case_format" => "dtf_for001"); label = "DTF power flow")
   # PF and SE per format is the requirement, so DTF gets its estimator run
   # too: the measurements come from the solved net, the service then reads
-  # them back through the CSV path like a real request.
+  # them back through the table path like a real request.
   dse = Sparlectra.DTFImporter.build_net(Sparlectra.DTFImporter.read_dtf(dtf_case))
   runpf!(dse, 40, 1e-8, 0; method = :rectangular)
   append!(dse.measurements, generateMeasurementsFromPF(dse; noise = false))
   dmeas = joinpath(server.runtime.case_directory, "dtf_for001.measurements.csv")
-  writeMeasurementsCSV(dse; file = dmeas)
+  _workload_measurement_table(dse, dtf_case, dmeas; requested_format = :dtf_for001)
   _workload_service_run(Dict{String,Any}("casefile" => dtf_case, "case_format" => "dtf_for001", "se_mode" => true, "measurement_file" => dmeas); label = "DTF state estimation")
   return nothing
 end
@@ -331,7 +342,7 @@ function _trace_cgmes(server, sc_zip)
   runpf!(cnet, 40, 1e-8, 0; method = :rectangular)
   append!(cnet.measurements, generateMeasurementsFromPF(cnet; noise = false))
   cmeas = joinpath(server.runtime.case_directory, "cgmes_minigrid.measurements.csv")
-  writeMeasurementsCSV(cnet; file = cmeas)
+  _workload_measurement_table(cnet, sc_zip, cmeas)
   _workload_service_run(Dict{String,Any}("casefile" => sc_zip, "se_mode" => true, "measurement_file" => cmeas); label = "cgmes state estimation")
   return nothing
 end
@@ -380,7 +391,9 @@ function run_workload()
     # wording differs per platform: on Windows the same condition arrives as
     # an IOError with a different text, so the build died on a busy port.
     server = try
-      start_sparlectra_webui(open_browser = false, port = candidate)
+      # the workload never touches the user's case directory: no refresh
+      # of shipped case copies here
+      start_sparlectra_webui(open_browser = false, port = candidate, _refresh_shipped_cases = false)
     catch err
       @warn "sysimage workload: port $(candidate) not usable" exception = err
       nothing
